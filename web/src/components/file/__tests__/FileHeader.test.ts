@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import FileHeader from '../FileHeader.vue'
 import { useFileShare } from '@/composables/useFileShare'
-import { syncFeatureConfig } from '@/composables/useFeatureFlags'
+import { syncFeatureConfig, syncServerFeatures } from '@/composables/useFeatureFlags'
 import { applyDockPreset } from '@/composables/useDockPlugins'
 
 // useFileShare is a module-level singleton; isolate it per test.
@@ -1023,14 +1023,25 @@ describe('FileHeader', () => {
   describe('feature switches (功能编排)', () => {
     const file = { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }
 
+    /**
+     * The six master switches come from the server registry now, so a test
+     * that turns one off has to push both snapshots (the config one still
+     * carries the per-kind share permissions).
+     */
+    function setFeature(id: string, enabled: boolean, config: Record<string, unknown> = {}) {
+      syncFeatureConfig({ [id]: { enabled, ...(config[id] as object | undefined) }, ...config })
+      syncServerFeatures([{ id, enabled, available: true, reason: enabled ? '' : 'disabled', defaultOn: true }])
+    }
+
     afterEach(() => {
       syncFeatureConfig({})
+      syncServerFeatures([])
       applyDockPreset('developer')
       mockToastShow.mockClear()
     })
 
     it('drops the share entry when 分享 is off — the dialog could not publish', async () => {
-      syncFeatureConfig({ share: { enabled: false } })
+      setFeature('share', false)
       const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
       // Still a path-backed file, so the rest of the group is intact: only the
       // share entry disappears.
@@ -1039,19 +1050,19 @@ describe('FileHeader', () => {
     })
 
     it('drops the share entry when FILE links are disallowed, even with 分享 on', async () => {
-      syncFeatureConfig({ share: { enabled: true, allow_files: false } })
+      setFeature('share', true, { share: { allow_files: false } })
       const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
       expect(await menuItemByText(wrapper, 'Share link')).toBeUndefined()
     })
 
     it('keeps the share entry when only conversation/meeting links are disallowed', async () => {
-      syncFeatureConfig({ share: { enabled: true, allow_sessions: false, allow_meetings: false } })
+      setFeature('share', true, { share: { allow_sessions: false, allow_meetings: false } })
       const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
       expect(await menuItemByText(wrapper, 'Share link')).toBeTruthy()
     })
 
     it('drops the send-by-mail button when 邮件 is off', () => {
-      syncFeatureConfig({ mail: { enabled: false } })
+      setFeature('mail', false)
       const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
       expect(renderedToolbarIds(wrapper)).not.toContain('sendByMail')
       // The neighbouring 引用对话 action stays — the mail switch gates mail only.

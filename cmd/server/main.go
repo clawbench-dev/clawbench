@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -53,6 +54,7 @@ import (
 	"clawbench/internal/kb"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/plugins"
 	"clawbench/internal/push/common"
 	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/push/feishu"
@@ -1258,9 +1260,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	defer service.StopSessionCleanupWorker()
 	defer service.StopUploadCleanupWorker()
 	defer service.StopUsageMeterWorker()
-	defer service.StopMailSyncWorker()
 	defer service.StopQueueReaper()
-	defer service.StopForgePoller()
 	defer service.StopBingWallpaperWorker()
 	defer service.StopMetricsPusher()
 
@@ -1437,57 +1437,35 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// startup (or one crossed by a non-interactive turn) still notifies.
 	service.StartUsageMeterWorker()
 
-	// Background mail polling. No-op until at least one account exists, and it
-	// keeps running while the UI is closed so the dock badge is current.
-	service.StartMailSyncWorker()
+	// Register every server-side feature BEFORE anything reads the registry.
+	//
+	// This order is load-bearing, not stylistic: startPlugins below iterates
+	// plugins.All(), and RegisterRoutes asks plugins.ForRoute which feature owns
+	// each prefix. Registering after either of them leaves the registry empty,
+	// so NO worker starts and NO route is gated — silently, with a clean boot
+	// log. (That was a real bug: mail stopped syncing, forge stopped polling and
+	// the terminal never came up.)
+	//
+	// port is already final here (CLI/env overrides applied above); only the
+	// terminal plugin uses it, to construct its Manager.
+	registerPlugins(port)
+
+	// Start every enabled plugin's background work (mail sync, forge polling,
+	// terminal manager, …). The registry decides what to start: a feature whose
+	// switch is off never gets a goroutine, and adding a worker no longer means
+	// editing this function.
+	//
+	// Started here — after the scheduler is published as
+	// service.GlobalScheduler — because the forge poller wires an
+	// event-triggered task sink onto it.
+	startPlugins(cfg)
+	defer stopPlugins()
 
 	// Start the queue reaper: a safety net that recovers user messages left
 	// stranded at queued=1 by a lost consumer handoff (stale running flag,
 	// consumer exit race). Without it such a message gets no AI response until
 	// the user cancels and re-sends.
 	service.StartQueueReaper()
-
-	// Start the GitHub/GitLab change poller. It is read-only and only runs when
-	// at least one project is bound to a repository; the provider factory is
-	// supplied by the handler package (which owns credential + TLS policy).
-	{
-		limiter := forge.NewLimiter(2, 5, 4)
-		// Broadcast forge events over the existing WS channel, and push to the
-		// active IM robot (dingtalk/feishu) when one is running.
-		dispatcher := service.NewForgeEventDispatcher(
-			func() model.Config { return model.ConfigInstance },
-			func(msg any) {
-				if m := ws.GetManager(); m != nil {
-					m.BroadcastEvent(ws.ServerMessage{
-						Type:  ws.MessageTypeEvent,
-						ID:    ws.GenerateEventID(),
-						Event: "forge_event",
-						Data:  msg,
-					})
-				}
-			},
-			forgeNotifierAdapter{},
-		)
-		// Event-triggered AI tasks run off the same derived events. The trigger
-		// owns queueing/debounce/kill-switch and the anti-recursion check; it is
-		// wired as a second sink so notification and automation stay independent.
-		trigger := service.NewForgeTaskTrigger(
-			service.GlobalScheduler,
-			func() model.Config { return model.ConfigInstance },
-			func(repo service.ForgeRepoRef) string {
-				return handler.ForgeCredentialLogin(repo.Platform, repo.Host)
-			},
-		)
-		// Exposed so the tasks master switch can discard queued events when it
-		// is turned off (see Scheduler.SetEnabled).
-		service.GlobalForgeTaskTrigger = trigger
-		// Third sink: the notification-center log. Kept separate from the
-		// dispatcher because it must record every change regardless of the
-		// per-event IM toggles (a muted event still belongs in the history).
-		recorder := service.NewForgeNotificationRecorder()
-		syncer := service.NewForgeSyncer(handler.NewForgeProvider, service.NewForgeCompositeSink(dispatcher, trigger, recorder))
-		service.StartForgePoller(syncer, limiter, func() model.Config { return model.ConfigInstance })
-	}
 
 	// Initialize the shared port registry (port forwarding) and, when enabled,
 	// the SSH tunnel server.
@@ -1612,23 +1590,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		)
 	} else {
 		defer service.StopFileWatcher()
-	}
-
-	// Initialize terminal manager (interactive web terminal)
-	if cfg.Terminal.Enabled {
-		terminalMgr := terminal.NewManager(cfg.Terminal, port)
-		handler.SetTerminalManager(terminalMgr)
-		defer func() { terminalMgr.Close() }()
-		slog.Info(
-			"terminal manager initialized",
-			slog.String("idle_timeout", func() string {
-				if cfg.Terminal.IdleTimeout == "" || cfg.Terminal.IdleTimeout == "0" {
-					return "never"
-				}
-				return cfg.Terminal.IdleTimeout
-			}()),
-			slog.Int("buffer_lines", cfg.Terminal.BufferLines),
-		)
 	}
 
 	// Initialize WS event manager
@@ -2038,6 +1999,307 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	slog.Info("server stopped")
 }
 
+// registerPlugins 登记全部服务端功能。
+//
+// 这是**唯一注册点**：internal/plugins 只提供类型与注册表，不认识任何实现，
+// 所以 Start / Stop / Reconfigure / OnDisable 这些需要 service / handler / kb
+// 的函数值都在这里注入（与上面 `_ "clawbench/internal/ai/backends/…"` 那批
+// 空白 import 同一个思路——main 是唯一知道所有实现的地方）。
+//
+// Enabled 必须读**实时值**（model.ConfigInstance / model.TasksEnabled 这类
+// 包级全局），不能读启动时的快照：热更新会在进程生命周期内改它，读快照会让
+// "关掉邮件"只对重启后的进程生效。
+//
+// Section 只声明 config.yaml 的段名，PATCH 白名单仍然手写——反射派生白名单
+// 等于把安全边界交给反射，守卫测试会检查该段下每个 yaml 字段都在白名单里。
+func registerPlugins(port int) {
+	// ── 有服务端总开关的功能 ──────────────────────────────────────────────
+	plugins.Register(&plugins.Plugin{
+		ID:        "forge",
+		Section:   "forge",
+		Enabled:   func() bool { return model.ConfigInstance.Forge.Enabled },
+		DefaultOn: true,
+		// 整个前缀归 forge 管。GET /api/forge/binding 例外：前端靠它判断
+		// "未绑定"，关闭时它必须返回空对象而不是 409（见 serveForgeBindingGet
+		// 里的关闭分支），所以按方法豁免——POST/DELETE 仍然要被拒。
+		APIPrefixes: []string{"/api/forge/"},
+		GateExempt:  []string{"GET /api/forge/binding"},
+		Start:       func(model.Config) { startForgePoller() },
+		Stop:        service.StopForgePoller,
+		// 关闭即撤销：绑定是"会对外发请求"的东西，清掉它才让"关闭"等于
+		// "不再和 GitHub/GitLab 说话"，而不只是隐藏入口。轮询器每个周期也会
+		// 自己看开关（这里是第二道防线，覆盖清空提交前的窗口）。
+		// 时机由 handler 保证：writeConfigYAML 成功之后才调用。
+		OnDisable: handler.ForgeDisableEffect,
+	})
+
+	plugins.Register(&plugins.Plugin{
+		ID:        "kb",
+		Section:   "kb",
+		Enabled:   func() bool { return model.ConfigInstance.KB.Enabled },
+		DefaultOn: true,
+		// 运行时可用性：知识库的存储/索引器没起来（初始化失败）时，
+		// 功能是开着的但跑不了，前端要灰显而不是隐藏。
+		Available:   kb.Available,
+		APIPrefixes: []string{"/api/kb/"},
+		// 热更新：索引器与嵌入客户端按新配置重建（与 rag 共享嵌入端点）。
+		Reconfigure: func(cfg model.Config) { kb.Reconfigure(cfg.KB, cfg.RAG) },
+	})
+
+	plugins.Register(&plugins.Plugin{
+		ID:        "mail",
+		Section:   "mail",
+		Enabled:   func() bool { return model.ConfigInstance.Mail.Enabled },
+		DefaultOn: true,
+		// 邮箱数据是全局的（属于人，不属于项目），前缀下没有任何项目路由。
+		APIPrefixes: []string{"/api/mail/"},
+		// 后台收信。worker 每个周期也会自己看开关（第二道防线），这里的
+		// Start/Stop 让"关掉"真的不占一个常驻 goroutine。
+		Start: func(model.Config) { service.StartMailSyncWorker() },
+		Stop:  service.StopMailSyncWorker,
+	})
+
+	plugins.Register(&plugins.Plugin{
+		ID:        "share",
+		Section:   "share",
+		Enabled:   func() bool { return model.ShareEnabled },
+		DefaultOn: true,
+		// "/api/share/" 规范化后同时覆盖精确的 "/api/share" 与 "/api/share/list"
+		// 等子路径。公开的 /api/share/{token} 不在鉴权链上，注册在
+		// registerPublic，永远不进 Gate——分享关闭时旧链接由服务端返回 404，
+		// 而不是 409。
+		APIPrefixes: []string{"/api/share/"},
+		// 关闭即撤销：链接是服务端签发的凭证，关掉必须让旧链接立刻失效。
+		// 重新打开不会恢复已撤销的链接——那是"撤销"唯一诚实的读法。
+		OnDisable: handler.ShareDisableEffect,
+	})
+
+	plugins.Register(&plugins.Plugin{
+		ID:        "tasks",
+		Section:   "tasks",
+		Enabled:   func() bool { return model.TasksEnabled },
+		DefaultOn: true,
+		// 路由表里 "/api/tasks" 与 "/api/tasks/" 是两个 pattern，声明一次即可
+		// 同时覆盖（ForRoute 抹平尾部斜杠后按段边界匹配）。
+		APIPrefixes: []string{"/api/tasks"},
+		// 任务的开关不是"整段拒绝"：关闭后仍要能读列表/详情/执行历史、取消
+		// 运行中的执行、删除任务——那是用户收拾开关留下的残局的唯一途径。
+		// 所以这里只让"新建"与"整体更新"被门控（POST /api/tasks 与
+		// PUT /api/tasks/{id}），其余方法放行；动作端点里的 resume / trigger
+		// 由 handler 自己按 action 拒绝（同一个 POST 里 cancel 必须放行）。
+		GateExempt: []string{
+			"GET /api/tasks",
+			"GET /api/tasks/",
+			"DELETE /api/tasks/",
+			"POST /api/tasks/",
+		},
+	})
+
+	plugins.Register(&plugins.Plugin{
+		ID:        "terminal",
+		Section:   "terminal",
+		Enabled:   func() bool { return model.ConfigInstance.Terminal.Enabled },
+		DefaultOn: true,
+		// 终端关掉报 503 是既有行为，保留：那是"运行时没起来"而不是"被关掉了"。
+		DisabledStatus: http.StatusServiceUnavailable,
+		Available: func() bool {
+			mgr := handler.GetTerminalManager()
+			return mgr != nil && mgr.IsPlatformSupported()
+		},
+		APIPrefixes: []string{"/api/terminal/"},
+		// 状态端点是只读能力探测，关闭时**必须**放行：前端靠它区分"功能关了"
+		// 与"这台机器跑不了终端"（设置页在 platform_supported=false 时把开关
+		// 置灰）。整段门控会让它 503，前端 catch 里把平台能力一起置 false，
+		// 于是重新打开终端后开关变成"已开但置灰"、页签也不出现，只能刷新。
+		GateExempt: []string{"/api/terminal/status"},
+		// 三个钩子就是原 hotReloadTerminal 的三条分支，拆成"进程级起停"与
+		// "热更新调参"：开关翻转走 Start/Stop，开关不变走 Reconfigure。
+		Start: func(cfg model.Config) {
+			if handler.GetTerminalManager() != nil {
+				return // 幂等：重复 Start 不叠加 Manager
+			}
+			handler.SetTerminalManager(terminal.NewManager(cfg.Terminal, port))
+			slog.Info(
+				"terminal manager initialized",
+				slog.String("idle_timeout", func() string {
+					if cfg.Terminal.IdleTimeout == "" || cfg.Terminal.IdleTimeout == "0" {
+						return "never"
+					}
+					return cfg.Terminal.IdleTimeout
+				}()),
+				slog.Int("buffer_lines", cfg.Terminal.BufferLines),
+			)
+		},
+		Stop: func() {
+			mgr := handler.GetTerminalManager()
+			if mgr == nil {
+				return // 幂等
+			}
+			mgr.CloseAllSessions()
+			handler.SetTerminalManager(nil)
+			slog.Info("terminal manager closed")
+		},
+		Reconfigure: func(cfg model.Config) {
+			if mgr := handler.GetTerminalManager(); mgr != nil {
+				mgr.Reconfigure(cfg.Terminal)
+			}
+		},
+	})
+
+	// ── 纯偏好型（没有服务端开关） ────────────────────────────────────────
+	//
+	// 它们恒 enabled=true，注册是为了让 /api/features 能回答"这个功能存在且
+	// 可用"——前端不再需要按页签 id 硬编码一份清单。可用性（能力）仍在客户端
+	// 探测：端口映射有没有可用传输、原生能力位这些只有客户端知道。
+	plugins.Register(&plugins.Plugin{
+		ID:        "live",
+		DefaultOn: true,
+		// 会议记录与信令。会议"公开纪要"那条开关属于 share，不在这个前缀下。
+		APIPrefixes: []string{"/api/live-share/"},
+	})
+
+	plugins.Register(&plugins.Plugin{
+		ID:        "notifications",
+		DefaultOn: true,
+		// 通知中心是只追加的事件日志：隐藏页签只影响入口，服务端照常写入。
+		APIPrefixes: []string{"/api/notifications"},
+	})
+
+	plugins.Register(&plugins.Plugin{
+		ID:        "stats",
+		DefaultOn: true,
+		// 用量统计页：token/积分账本 + git 统计。
+		APIPrefixes: []string{"/api/usage/", "/api/git/stats", "/api/git/cloc"},
+	})
+}
+
+// ── 插件生命周期 ──────────────────────────────────────────────────────────
+//
+// 每个插件自己声明 Start / Stop / Reconfigure，这里只负责"什么时候调"。
+// 三条规则：
+//   - 启动：遍历注册表，只启动**已启用**的（关掉的功能不该占常驻 goroutine）；
+//   - 关闭：反向遍历（后启动的先停），Stop 必须幂等；
+//   - 热更新：开关翻转 → Start/Stop，开关没变 → Reconfigure。
+//
+// 为什么要一张表来判断"翻转"：Enabled() 读的是**新**配置，插件自己回答不了
+// "上一刻我是不是开着"。表只在真正 Start/Stop 时更新，与实际的 goroutine
+// 同源，所以不会出现"以为在跑其实没跑"。
+var (
+	pluginRunningMu sync.Mutex
+	pluginRunning   = map[string]bool{}
+)
+
+func markPluginRunning(id string, running bool) {
+	pluginRunningMu.Lock()
+	defer pluginRunningMu.Unlock()
+	if running {
+		pluginRunning[id] = true
+		return
+	}
+	delete(pluginRunning, id)
+}
+
+func pluginIsRunning(id string) bool {
+	pluginRunningMu.Lock()
+	defer pluginRunningMu.Unlock()
+	return pluginRunning[id]
+}
+
+// startPlugins 启动所有已启用插件的后台资源。
+func startPlugins(cfg model.Config) {
+	for _, p := range plugins.All() {
+		if p.Start == nil || !p.IsEnabled() {
+			continue
+		}
+		p.Start(cfg)
+		markPluginRunning(p.ID, true)
+	}
+}
+
+// stopPlugins 反向停掉全部插件（后启动的先停）。
+func stopPlugins() {
+	all := plugins.All()
+	for i := len(all) - 1; i >= 0; i-- {
+		p := all[i]
+		if p.Stop == nil {
+			continue
+		}
+		p.Stop()
+		markPluginRunning(p.ID, false)
+	}
+}
+
+// syncPluginLifecycle 在热更新后把开关变化映射成起停，否则只调 Reconfigure。
+//
+// 它跑在 applyHotReloadGlobals 里（配置写盘**之前**），所以这里只允许做可逆的
+// 事：起停 goroutine / 重建 manager。不可逆的"关闭即撤销"由 handler 在写盘
+// 成功之后调 Plugin.OnDisable。
+func syncPluginLifecycle(cfg model.Config) {
+	for _, p := range plugins.All() {
+		if p.Start == nil && p.Stop == nil && p.Reconfigure == nil {
+			continue
+		}
+		enabled := p.IsEnabled()
+		running := pluginIsRunning(p.ID)
+		switch {
+		case p.Start != nil && enabled && !running:
+			p.Start(cfg)
+			markPluginRunning(p.ID, true)
+		case p.Stop != nil && !enabled && running:
+			p.Stop()
+			markPluginRunning(p.ID, false)
+		case p.Reconfigure != nil:
+			p.Reconfigure(cfg)
+		}
+	}
+}
+
+// startForgePoller wires the GitHub/GitLab change poller: event broadcasting over
+// WS, the IM push sink, the event-triggered task sink and the notification-center
+// recorder.
+//
+// The provider factory is supplied by the handler package (it owns the
+// credential + TLS policy). Read-only, and it only talks to a platform when at
+// least one project is bound to a repository.
+func startForgePoller() {
+	limiter := forge.NewLimiter(2, 5, 4)
+	// Broadcast forge events over the existing WS channel, and push to the
+	// active IM robot (dingtalk/feishu) when one is running.
+	dispatcher := service.NewForgeEventDispatcher(
+		func() model.Config { return model.ConfigInstance },
+		func(msg any) {
+			if m := ws.GetManager(); m != nil {
+				m.BroadcastEvent(ws.ServerMessage{
+					Type:  ws.MessageTypeEvent,
+					ID:    ws.GenerateEventID(),
+					Event: "forge_event",
+					Data:  msg,
+				})
+			}
+		},
+		forgeNotifierAdapter{},
+	)
+	// Event-triggered AI tasks run off the same derived events. The trigger
+	// owns queueing/debounce/kill-switch and the anti-recursion check; it is
+	// wired as a second sink so notification and automation stay independent.
+	trigger := service.NewForgeTaskTrigger(
+		service.GlobalScheduler,
+		func() model.Config { return model.ConfigInstance },
+		func(repo service.ForgeRepoRef) string {
+			return handler.ForgeCredentialLogin(repo.Platform, repo.Host)
+		},
+	)
+	// Exposed so the tasks master switch can discard queued events when it is
+	// turned off (see Scheduler.SetEnabled).
+	service.GlobalForgeTaskTrigger = trigger
+	// Third sink: the notification-center log. Kept separate from the
+	// dispatcher because it must record every change regardless of the
+	// per-event IM toggles (a muted event still belongs in the history).
+	recorder := service.NewForgeNotificationRecorder()
+	syncer := service.NewForgeSyncer(handler.NewForgeProvider, service.NewForgeCompositeSink(dispatcher, trigger, recorder))
+	service.StartForgePoller(syncer, limiter, func() model.Config { return model.ConfigInstance })
+}
+
 // hotReloadReconfigure is called by applyHotReloadGlobals() after a successful
 // config PATCH to reconfigure subsystems that support hot-reload.
 // It recreates TTS provider, TTS summarizer, and reconfigures terminal.
@@ -2064,17 +2326,20 @@ func hotReloadReconfigure(port int) {
 	ttsSummarizer := newTTSSummarizer(cfg)
 	handler.SetSummarizer(ttsSummarizer)
 
-	// --- Terminal: reconfigure or toggle enabled ---
-	hotReloadTerminal(cfg, port)
-
 	// --- SSH/Port-Forward: reconfigure or toggle enabled ---
 	hotReloadSSH(cfg, port)
 
 	// --- RAG: reconfigure embedder, indexer, cleanup worker ---
 	rag.Reconfigure(cfg.RAG)
 
-	// --- Knowledge base: same embedder settings, its own indexer ---
-	kb.Reconfigure(cfg.KB, cfg.RAG)
+	// --- Feature plugins: flip Start/Stop on a switch change, else Reconfigure ---
+	//
+	// This covers terminal (manager up/down), mail (sync worker), forge (poller)
+	// and kb (indexer, sharing the embedder settings reconfigured just above).
+	// The destructive half of a disable — clearing forge bindings, revoking share
+	// links — is NOT here: it runs after the config write succeeds (see
+	// handler.applyPluginDisableEffects).
+	syncPluginLifecycle(cfg)
 
 	// --- Session cleanup: reconfigure archive retention worker ---
 	service.ReconfigureSessionCleanup(cfg)
@@ -2412,7 +2677,8 @@ func buildAISummarizer(cfg model.Config) summarize.Summarizer {
 	if s == nil {
 		return nil
 	}
-	slog.Info("ai summarizer configured",
+	slog.Info(
+		"ai summarizer configured",
 		slog.String("format", summarize.ResolveFormat(baseURL, format)),
 		slog.String("base_url", baseURL),
 		slog.String("model", cfg.AISummary.SummaryModel()),
@@ -2588,29 +2854,6 @@ func hotReloadSSH(cfg model.Config, port int) {
 	slog.Info("hot-reload: SSH tunnel reconfigured (allowed_ports)")
 }
 
-// hotReloadTerminal reconfigures or toggles the terminal subsystem on hot-reload.
-func hotReloadTerminal(cfg model.Config, port int) {
-	if cfg.Terminal.Enabled {
-		mgr := handler.GetTerminalManager()
-		if mgr != nil {
-			mgr.Reconfigure(cfg.Terminal)
-			slog.Info("hot-reload: terminal reconfigured")
-		} else {
-			// Terminal was disabled, now enabled — create new Manager
-			terminalMgr := terminal.NewManager(cfg.Terminal, port)
-			handler.SetTerminalManager(terminalMgr)
-			slog.Info("hot-reload: terminal enabled")
-		}
-	} else {
-		mgr := handler.GetTerminalManager()
-		if mgr != nil {
-			mgr.CloseAllSessions()
-			handler.SetTerminalManager(nil)
-			slog.Info("hot-reload: terminal disabled")
-		}
-	}
-}
-
 // newSTTProvider builds the STT provider from config.
 //
 // Each branch reads its own section: a single shared set of credentials and
@@ -2649,7 +2892,8 @@ func newSTTProvider(cfg model.Config) stt.STTProvider {
 		return nil
 	case "tencent":
 		p := stt.NewTencentProvider(
-			cfg.STT.Tencent.SecretID, cfg.STT.Tencent.SecretKey, cfg.STT.Tencent.AppID)
+			cfg.STT.Tencent.SecretID, cfg.STT.Tencent.SecretKey, cfg.STT.Tencent.AppID,
+		)
 		if cfg.STT.Tencent.Model != "" {
 			p.Model = cfg.STT.Tencent.Model
 		}
@@ -2659,7 +2903,8 @@ func newSTTProvider(cfg model.Config) stt.STTProvider {
 		return p
 	default:
 		return stt.NewVLLMProvider(
-			cfg.STT.VLLM.BaseURL, cfg.STT.VLLM.Model, cfg.STT.VLLM.APIKey, cfg.STT.VLLM.Language)
+			cfg.STT.VLLM.BaseURL, cfg.STT.VLLM.Model, cfg.STT.VLLM.APIKey, cfg.STT.VLLM.Language,
+		)
 	}
 }
 

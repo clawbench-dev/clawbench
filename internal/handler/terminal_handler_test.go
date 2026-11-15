@@ -156,6 +156,15 @@ func TestTerminalWebSocketCwdRejectsAbsoluteOutsideRoots(t *testing.T) {
 
 // ---------- TerminalStatus ----------
 
+// A disabled terminal has no Manager at all: the feature being off means the
+// plugin never calls Start, so there is nothing to ask.
+//
+// The two capability fields must still report the REAL platform answers. The
+// settings switch greys itself out on platform_supported === false, so
+// hard-coding false here made "switched off" indistinguishable from "this OS
+// cannot run a terminal": turning the terminal off left the switch "enabled but
+// unsupported" and the dock tab gone until a page reload. Only `enabled` is
+// false — that is the one fact a missing manager actually proves.
 func TestTerminalStatus_NilManager(t *testing.T) {
 	origMgr := GetTerminalManager()
 	t.Cleanup(func() { SetTerminalManager(origMgr) })
@@ -168,9 +177,9 @@ func TestTerminalStatus_NilManager(t *testing.T) {
 	var result map[string]any
 	decodeRespJSON(t, w.Body, &result)
 	assert.Equal(t, false, result["enabled"])
-	assert.Equal(t, false, result["platform_supported"])
-	// No manager means no probe — the frontend must not offer live-cwd drops.
-	assert.Equal(t, false, result["cwd_probe_supported"])
+	assert.Equal(t, terminal.PlatformSupported(), result["platform_supported"],
+		"platform capability must come from the platform, not from 'no manager'")
+	assert.Equal(t, terminal.CwdProbeSupported(), result["cwd_probe_supported"])
 }
 
 func TestTerminalStatus_AllSessions(t *testing.T) {

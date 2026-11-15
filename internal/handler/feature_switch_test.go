@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+	"clawbench/internal/plugins"
 	"clawbench/internal/service"
 	"clawbench/internal/store"
 
@@ -116,22 +117,40 @@ func TestServeConfig_PatchTasksSwitchCancelsAndRestarts(t *testing.T) {
 
 // Turning share off must revoke every kind of link, and turning it back on must
 // NOT resurrect them.
+// registerDisableHookPlugin mirrors the production registration for one
+// feature: the same Section + OnDisable the plugin declares in cmd/server.
+//
+// The handler package cannot import the real registry (it is built in package
+// main), so the end-to-end "PATCH off → data revoked" tests register the hook
+// themselves. That the REAL forge/share plugins declare these hooks is pinned by
+// cmd/server's TestPluginRegistry_DestructiveDisablesDeclareHooks.
+func registerDisableHookPlugin(t *testing.T, id, section string, onDisable func() []string) {
+	t.Helper()
+	plugins.Reset()
+	t.Cleanup(plugins.Reset)
+	plugins.Register(&plugins.Plugin{ID: id, Section: section, OnDisable: onDisable})
+}
+
 func TestServeConfig_PatchShareSwitchRevokesLinks(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 	saveFeatureSwitchState(t)
+	registerDisableHookPlugin(t, "share", "share", ShareDisableEffect)
 
 	model.DataDir = t.TempDir()
 	model.ConfigInstance = model.Config{Share: model.ShareConfig{Enabled: true}}
 
 	_, err := store.WriteExec(
-		`INSERT INTO file_shares (token, path, name, root, project_id) VALUES ('ftok', '/p/a.md', 'a.md', '/p', 0)`)
+		`INSERT INTO file_shares (token, path, name, root, project_id) VALUES ('ftok', '/p/a.md', 'a.md', '/p', 0)`,
+	)
 	require.NoError(t, err)
 	_, err = store.WriteExec(
-		`INSERT INTO session_shares (token, session_id, message_ids) VALUES ('stok', 'sess-x', '[1]')`)
+		`INSERT INTO session_shares (token, session_id, message_ids) VALUES ('stok', 'sess-x', '[1]')`,
+	)
 	require.NoError(t, err)
 	_, err = store.WriteExec(
-		`INSERT INTO live_notes (token, project_id, title, status, share_enabled) VALUES ('mtok', 1, 'M', 'ready', 1)`)
+		`INSERT INTO live_notes (token, project_id, title, status, share_enabled) VALUES ('mtok', 1, 'M', 'ready', 1)`,
+	)
 	require.NoError(t, err)
 
 	patch := func(body string) *httptest.ResponseRecorder {
@@ -326,22 +345,10 @@ func TestShareDownloadSwitchForbidsDownload(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "ShareDownloadDisabled")
 }
 
-func TestServeTasks_CreateRejectedWhenTasksDisabled(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-	saveFeatureSwitchState(t)
-
-	model.TasksEnabled = false
-
-	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
-		"name": "blocked", "agent_id": "codebuddy", "prompt": "p",
-	})
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
-
-	assertStatus(t, w, http.StatusConflict)
-	assert.Contains(t, w.Body.String(), "TasksDisabled")
-}
+// "POST /api/tasks while tasks are off → 409 TasksDisabled" is now enforced by
+// the router's feature gate rather than inside ServeTasks, so it is pinned at
+// the route level in cmd/server (TestGate_TasksKeepsReadAndCleanupRoutes).
+// Calling the handler directly no longer exercises that rule.
 
 func TestServeTaskByID_TriggerRejectedWhenTasksDisabled(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -372,20 +379,8 @@ func TestServeTaskByID_TriggerRejectedWhenTasksDisabled(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "TasksDisabled")
 }
 
-func TestServeShareCreate_RejectedWhenShareDisabled(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-	saveFeatureSwitchState(t)
-
-	model.ShareEnabled = false
-
-	req := newRequest(t, http.MethodPost, "/api/share", map[string]any{"path": "a.md"})
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeShareManage, req)
-
-	assertStatus(t, w, http.StatusConflict)
-	assert.Contains(t, w.Body.String(), "ShareDisabled")
-}
+// "POST /api/share while sharing is off → 409 ShareDisabled" moved to the
+// router's feature gate; see cmd/server's TestGate_EveryDisabledPluginRejectsItsRoutes.
 
 // An old link must 404 — not render the SPA shell with a "not found" state,
 // which would leave the URL looking alive.

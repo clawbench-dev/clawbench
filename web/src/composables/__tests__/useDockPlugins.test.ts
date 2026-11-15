@@ -13,7 +13,8 @@ import {
   useDockPlugins,
   usePluginProfile,
 } from '@/composables/useDockPlugins'
-import { DOCK_TAB_BY_ID, DOCK_TAB_IDS } from '@/composables/dockTabs'
+import { DOCK_TAB_IDS } from '@/composables/dockTabs'
+import { DOCK_TAB_BY_ID } from '@/composables/dockPluginRuntime'
 import { readPanelState } from '@/utils/panelState'
 
 const PERMANENT = ['browse', 'view', 'settings']
@@ -109,10 +110,15 @@ describe('presets', () => {
     expect(DOCK_PRESET_PLANS.minimal.features).toHaveLength(6)
   })
 
-  it('minimal keeps the historical slot order so re-enabled tabs land where they were', async () => {
+  it('parks the hidden tabs before settings so a re-enabled one lands in a stable slot', async () => {
     await applyDockPreset('minimal')
     const order = useDockPlugins().order.value
-    expect(order.slice(0, 3)).toEqual(['browse', 'view', 'notifications'])
+    const hidden = new Set(DOCK_PRESET_PLANS.minimal.hidden)
+    // Only the permanent tabs are visible…
+    expect(order.filter((id) => !hidden.has(id))).toEqual(['browse', 'view', 'settings'])
+    // …and the hidden block keeps the DEFAULT relative order, parked right
+    // before settings (the order is derived, never hand-written).
+    expect(order.filter((id) => hidden.has(id))).toEqual(DOCK_TAB_IDS.filter((id) => hidden.has(id)))
     expect(order.at(-1)).toBe('settings')
   })
 

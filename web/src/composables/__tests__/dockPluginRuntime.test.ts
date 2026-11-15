@@ -142,13 +142,16 @@ describe('dock plugin runtime', () => {
     expect(resolveDockBadge('live')).toEqual({ count: 0, live: true })
   })
 
-  it('gates forge/mail on the server feature switches', () => {
+  it('leaves the feature axis to the server registry', () => {
+    // `available()` is a CAPABILITY probe only. Forge and mail are switched off
+    // through `/api/features` (see useDockAvailability), so they must not carry a
+    // second, local copy of the config check here.
     expect(isDockPluginAvailable('forge')).toBe(true)
     expect(isDockPluginAvailable('mail')).toBe(true)
 
     mocks.serverConfig.value = { forge: { enabled: false }, mail: { enabled: false } }
-    expect(isDockPluginAvailable('forge')).toBe(false)
-    expect(isDockPluginAvailable('mail')).toBe(false)
+    expect(isDockPluginAvailable('forge')).toBe(true)
+    expect(isDockPluginAvailable('mail')).toBe(true)
   })
 
   it('gates terminal/proxy on runtime capability', () => {

@@ -4,23 +4,40 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const startBackground = vi.fn()
 const stopBackground = vi.fn()
-const available = ref(true)
+const onEnter = vi.fn()
+const onLeave = vi.fn()
 const hidden = ref(new Set<string>())
+const featureDisabled = ref(new Set<string>())
+const unavailable = ref(new Set<string>())
 
 vi.mock('@/composables/dockPluginRuntime', () => ({
-  getDockPluginRuntime: (id: string) => (id === 'mail' ? { startBackground } : undefined),
-  isDockPluginAvailable: () => available.value,
+  resolveDockPlugin: (id: string) => ({
+    startBackground: id === 'mail' ? startBackground : undefined,
+    onEnter: () => onEnter(id),
+    onLeave: () => onLeave(id),
+  }),
   startDockBackground: () => {
     startBackground()
     return stopBackground
   },
-  runDockOnEnter: vi.fn(),
-  runDockOnLeave: vi.fn(),
+  runDockOnEnter: (id: string) => onEnter(id),
+  runDockOnLeave: (id: string) => onLeave(id),
 }))
 
-vi.mock('@/composables/useDockPlugins', () => ({
-  useDockPlugins: () => ({ hidden }),
-}))
+// The lifecycle reads the SAME availability object as the dock itself: a hidden
+// entry, a switched-off feature or a missing capability all stop the poller.
+vi.mock('@/composables/useDockAvailability', async () => {
+  const { computed } = await import('vue')
+  return {
+    useDockAvailability: () => ({
+      availability: computed(() => ({
+        hidden: hidden.value,
+        featureDisabled: featureDisabled.value,
+        unavailable: unavailable.value,
+      })),
+    }),
+  }
+})
 
 import { useDockLifecycle } from '@/composables/useDockLifecycle'
 
@@ -35,11 +52,14 @@ describe('useDockLifecycle', () => {
   beforeEach(() => {
     startBackground.mockClear()
     stopBackground.mockClear()
-    available.value = true
+    onEnter.mockClear()
+    onLeave.mockClear()
+    featureDisabled.value = new Set()
+    unavailable.value = new Set()
     hidden.value = new Set()
   })
 
-  it('starts a visible, available plugin background and stops it on unmount', async () => {
+  it('starts a visible, reachable plugin background and stops it on unmount', async () => {
     const wrapper = mount(Host)
     await nextTick()
     expect(startBackground).toHaveBeenCalledTimes(1)
@@ -53,13 +73,56 @@ describe('useDockLifecycle', () => {
     await nextTick()
     expect(startBackground).toHaveBeenCalledTimes(1)
 
-    available.value = false
+    unavailable.value = new Set(['mail'])
     await nextTick()
     expect(stopBackground).toHaveBeenCalledTimes(1)
 
-    available.value = true
+    unavailable.value = new Set()
     await nextTick()
     expect(startBackground).toHaveBeenCalledTimes(2)
+
+    wrapper.unmount()
+  })
+
+  it('stops when the server feature is switched off', async () => {
+    const wrapper = mount(Host)
+    await nextTick()
+    expect(startBackground).toHaveBeenCalledTimes(1)
+
+    featureDisabled.value = new Set(['mail'])
+    await nextTick()
+    expect(stopBackground).toHaveBeenCalledTimes(1)
+
+    wrapper.unmount()
+  })
+
+  it('enters a tab once, owes it a leave, and does not re-enter the same tab', () => {
+    // Mounted so the lifecycle's watcher is scoped: a bare call would leave an
+    // orphan watchEffect reacting to the next test's state.
+    let lifecycle!: ReturnType<typeof useDockLifecycle>
+    const Harness = defineComponent({
+      setup() {
+        lifecycle = useDockLifecycle()
+        return () => null
+      },
+    })
+    const wrapper = mount(Harness)
+
+    lifecycle.enter('mail')
+    lifecycle.enter('mail')
+    expect(onEnter.mock.calls.map((c) => c[0])).toEqual(['mail'])
+    expect(onLeave).not.toHaveBeenCalled()
+
+    lifecycle.enter('browse')
+    expect(onEnter.mock.calls.map((c) => c[0])).toEqual(['mail', 'browse'])
+    expect(onLeave.mock.calls.map((c) => c[0])).toEqual(['mail'])
+
+    // Leaving clears the debt, so the same tab can be entered again.
+    lifecycle.leave()
+    expect(onLeave.mock.calls.map((c) => c[0])).toEqual(['mail', 'browse'])
+    lifecycle.enter('browse')
+    expect(onEnter.mock.calls.map((c) => c[0])).toEqual(['mail', 'browse', 'browse'])
+    expect(onLeave.mock.calls.map((c) => c[0])).toEqual(['mail', 'browse'])
 
     wrapper.unmount()
   })

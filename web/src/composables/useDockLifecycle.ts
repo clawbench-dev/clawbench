@@ -1,13 +1,12 @@
 import { onUnmounted, watchEffect } from 'vue'
 import { DOCK_TAB_IDS, type DockTabId } from './dockTabs'
 import {
-  getDockPluginRuntime,
-  isDockPluginAvailable,
+  resolveDockPlugin,
   runDockOnEnter,
   runDockOnLeave,
   startDockBackground,
 } from './dockPluginRuntime'
-import { useDockPlugins } from './useDockPlugins'
+import { useDockAvailability } from './useDockAvailability'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'DockLifecycle'
@@ -16,24 +15,24 @@ const TAG = 'DockLifecycle'
  * Owns the background resources plugins declare via `startBackground`.
  *
  * A resource runs only while its plugin is visible (not user-hidden) and
- * available (feature/capability gates). The sync is a `watchEffect`, so any
- * change to the hidden set, server feature config, terminal status or port
- * forwarding capability re-evaluates it.
+ * reachable — the same three axes the dock itself applies (server feature,
+ * host capability, user preference). The sync is a `watchEffect`, so flipping a
+ * switch, losing the terminal runtime or hiding the entry re-evaluates it.
  *
  * `startBackground` is currently only used by mail (the unread poller). The
  * lifecycle is generic so a new plugin can add a poller without touching
  * App.vue.
  */
 export function useDockLifecycle() {
-  const { hidden } = useDockPlugins()
+  const { availability } = useDockAvailability()
   const cleanups = new Map<DockTabId, () => void>()
 
   function shouldRun(id: DockTabId): boolean {
-    return (
-      !!getDockPluginRuntime(id)?.startBackground &&
-      !hidden.value.has(id) &&
-      isDockPluginAvailable(id)
-    )
+    const blocked =
+      availability.value.hidden.has(id) ||
+      availability.value.featureDisabled.has(id) ||
+      availability.value.unavailable.has(id)
+    return !!resolveDockPlugin(id)?.startBackground && !blocked
   }
 
   function sync(): void {
@@ -72,14 +71,33 @@ export function useDockLifecycle() {
   watchEffect(sync)
   onUnmounted(stopAll)
 
+  /**
+   * The tab whose `onEnter` has run and whose `onLeave` is still owed.
+   *
+   * Enter is idempotent because the shell reaches it from two places (the
+   * narrow dock's switchTab and the wide layout's side effects), and a layout
+   * change can replay the same tab. Leaving is what was missing entirely: a
+   * plugin could not pause its polling when the user walked away.
+   */
+  let current: string | null = null
+
+  function enter(id: string): void {
+    if (current === id) return
+    if (current) runDockOnLeave(current)
+    current = id
+    runDockOnEnter(id)
+  }
+
+  function leave(): void {
+    if (!current) return
+    runDockOnLeave(current)
+    current = null
+  }
+
   return {
     sync,
     stopAll,
-    onEnter(id: string) {
-      runDockOnEnter(id)
-    },
-    onLeave(id: string) {
-      runDockOnLeave(id)
-    },
+    enter,
+    leave,
   }
 }

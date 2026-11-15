@@ -98,6 +98,8 @@ const APP_ONLY = new Map<string, string>([
   // Every refresh/rescan button lives in the app shell (sessions, tasks, skills).
   // The share page has none.
   ['web/src/assets/refresh-spin.css', 'no refresh buttons on the share page'],
+  // The dock (and its buttons/badges) only exists in the app shell.
+  ['web/src/assets/dock.css', 'no dock on the share page'],
 ])
 
 /**

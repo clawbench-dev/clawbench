@@ -113,9 +113,8 @@ import {
 } from 'lucide-vue-next'
 import { VueDraggable } from 'vue-draggable-plus'
 import SettingsCard from './SettingsCard.vue'
-import { DOCK_TAB_BY_ID, type DockTabDescriptor, type DockTabId, type DockFeature } from '@/composables/dockTabs'
-import { dockTabWithIcon } from '@/composables/dockTabMeta'
-import { dockUnavailableReasonKey, isDockPluginAvailable } from '@/composables/dockPluginRuntime'
+import { DOCK_TAB_BY_ID, dockTabWithIcon, dockUnavailableReasonKey, isDockPluginAvailable } from '@/composables/dockPluginRuntime'
+import type { DockTabDescriptor, DockTabId, DockFeature } from '@/composables/dockTabs'
 import {
   APPLICABLE_DOCK_PRESETS,
   DOCK_PRESET_PLANS,

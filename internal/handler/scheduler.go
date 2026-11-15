@@ -47,12 +47,9 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 		writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks, "hasUnread": hasUnread})
 
 	case http.MethodPost:
-		// The feature switch is a server-side gate, not just a hidden tab: a
-		// client that ignores the switch must not be able to create a task that
-		// will never fire.
-		if rejectIfTasksDisabled(w, r) {
-			return
-		}
+		// The tasks master switch refuses this route at the router's feature
+		// gate (see RegisterRoutes), so a client that ignores the switch cannot
+		// create a task that will never fire.
 		var req struct {
 			Name       string `json:"name"`
 			CronExpr   string `json:"cron_expr"`
@@ -457,13 +454,11 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 
 		// Full task update — task already fetched and verified above.
 		//
-		// Everything below is the "use the feature" path (edit / re-arm), so it
-		// is refused while the switch is off. The read/cancel/stop/delete-*
-		// actions above stay available: they are how a user inspects or cleans
-		// up after the switch cancelled everything.
-		if rejectIfTasksDisabled(w, r) {
-			return
-		}
+		// This is the "use the feature" path (edit / re-arm), so the router's
+		// feature gate refuses it while the switch is off. The read/cancel/
+		// stop/delete-* actions above stay available: they are how a user
+		// inspects or cleans up after the switch cancelled everything, which is
+		// why the gate exempts those methods instead of the whole prefix.
 
 		// Update fields if provided
 		if req.Name != "" {

@@ -27,13 +27,16 @@ describe('meeting quote composer wiring', () => {
     // Binding the drag handler here is the whole defect: it stages immediately
     // and switches tabs, so the button skips the composer entirely.
     //
-    // The panel receives this as a `DockPanelHost` callback (`quoteMeeting`)
-    // rather than a template `@quote` listener — the dock-plugin refactor moved
-    // every panel's events onto that host object. Asserting the old `@quote=`
-    // attribute made this test pass on stale text for as long as the binding
-    // happened to exist elsewhere in the file.
-    expect(app).toMatch(/quoteMeeting:\s*\([^)]*\)\s*=>\s*\{?\s*void handleMeetingQuoteButton\(/)
-    expect(app).not.toMatch(/quoteMeeting:\s*\([^)]*\)\s*=>\s*\{?\s*void handleMeetingQuote\(/)
+    // The panel receives this as a plugin-specific host capability
+    // (`extras.meeting.quote`) rather than a template `@quote` listener — the
+    // dock-plugin refactor moved every panel's events onto the host object, and
+    // the per-plugin capabilities now live in their own group. Asserting the old
+    // `@quote=` attribute made this test pass on stale text for as long as the
+    // binding happened to exist elsewhere in the file.
+    expect(app).toMatch(/quote:\s*\([^)]*\)\s*=>\s*\{?\s*void handleMeetingQuoteButton\(/)
+    expect(app).not.toMatch(/quote:\s*\([^)]*\)\s*=>\s*\{?\s*void handleMeetingQuote\(/)
+    // …and the live plugin is what routes the panel's emit to it.
+    expect(readWebFile('src/plugins/live/plugin.ts')).toContain('quote: extras.meeting.quote')
   })
 
   it('opens the shared composer instead of staging the card', () => {

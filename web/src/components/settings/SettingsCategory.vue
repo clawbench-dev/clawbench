@@ -1,49 +1,14 @@
 <template>
-  <!-- Agent config sub-routes -->
-  <SettingsAgentsIndex
-    v-if="categoryId === 'agents'"
-    @navigate="(id: string) => $emit('navigate', id)"
-  />
-  <SettingsAgentDetail
-    v-else-if="categoryId.startsWith('agents:')"
+  <!-- Category-specific pages (agents, the dock manager, a plugin's own custom
+       settings page, a project's detail route) are looked up in a table in the
+       script below instead of a hand-written if-chain: a plugin contributes its
+       page through `settingsPage` in `plugin.ts`. -->
+  <component
+    :is="specialPage.component"
+    v-if="specialPage"
     :key="categoryId"
-    :agent-id="categoryId.slice(7)"
-    @deleted="$emit('deleted', 'agents')"
-    @back="$emit('back', 'agents')"
-    @navigate-replace="(id: string) => $emit('navigateReplace', id)"
-    @open-sessions="(id: string) => $emit('navigate', `agentSessions:${id}`)"
-  />
-  <!-- "Conversations using this agent" (agentSessions:<id>). A dedicated route
-       rather than a card on the detail page: the list is paged and spans
-       projects, so it needs its own scroll surface. Like project:<id> it has no
-       back button — the breadcrumb crumb is the way back. The prefix is NOT
-       `agents:` on purpose: that prefix is parsed as `agents:<id>` everywhere
-       (slice(7)), so a third segment would be read as part of the agent id. -->
-  <SettingsAgentSessions
-    v-else-if="categoryId.startsWith('agentSessions:')"
-    :key="categoryId"
-    :agent-id="categoryId.slice('agentSessions:'.length)"
-  />
-  <!-- Dock plugin manager: a custom page (presets + visibility + order), not a
-       flat settings list. It emits `navigate` so its "feature settings" links
-       can drill into the plugin's own settings category. -->
-  <DockPluginSetting
-    v-else-if="categoryId === 'dockPlugins'"
-    @navigate="(id: string) => $emit('navigate', id)"
-  />
-  <!-- Knowledge base is a normal category now: its status card (KbSetting) is
-       one card among the kb.* config rows, so it renders through the card loop
-       below rather than short-circuiting the whole page. -->
-  <NotificationsSetting v-else-if="categoryId === 'notifications'" />
-  <!-- Project detail route (project:<id>): a read-only stats page, not a
-       batch-save panel, so it gets its own component rather than going through
-       subPagePanelMap. It has no back button — the breadcrumb crumb is the way
-       back — and on delete it emits `deleted` so the parent pops the detail
-       entry instead of pushing (see returnToCategory). -->
-  <ProjectDetailSetting
-    v-else-if="categoryId.startsWith('project:')"
-    :project-id="Number(categoryId.slice(8))"
-    @deleted="$emit('deleted', 'project')"
+    v-bind="specialPage.props"
+    v-on="specialPage.on"
   />
   <!-- Sub-page routes (data-driven: any colon-separated ID except agents) -->
   <div v-else-if="subPagePanel" class="settings-category">
@@ -213,7 +178,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, defineAsyncComponent, ref, watch, onMounted, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsGroupPanel from './SettingsGroupPanel.vue'
@@ -241,7 +206,6 @@ import SettingsAgentDetail from './SettingsAgentDetail.vue'
 import SettingsAgentSessions from './SettingsAgentSessions.vue'
 import DockPluginSetting from './DockPluginSetting.vue'
 import KbSetting from './KbSetting.vue'
-import NotificationsSetting from './NotificationsSetting.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
 import { useSettingsConfig, getEffectiveUIScale, autoFitUIScale } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
@@ -258,6 +222,8 @@ import { openExternalUrl } from '@/utils/externalLink'
 import { PROJECT_FEEDBACK_URL, PROJECT_GITHUB_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
+import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
+import { DOCK_SETTINGS_PAGES } from '@/composables/dockPluginRuntime'
 import { providerNameOf } from '@/utils/providerNames'
 import { THEMES } from '@/utils/themeMeta'
 import type { OptionPreview, SelectOption } from './SettingsItem.vue'
@@ -283,6 +249,29 @@ const emit = defineEmits<{
   restartNeeded: [changedFields: string[]]
   restartRequested: []
 }>()
+
+/**
+ * Custom settings pages a plugin contributes, wrapped once at module load.
+ *
+ * `defineAsyncComponent` must not run inside the resolver below: it returns a
+ * NEW component identity on every call, which remounts the page on every render.
+ */
+const PLUGIN_PAGES = new Map<string, Component>()
+for (const page of DOCK_SETTINGS_PAGES) {
+  if (page.kind === 'custom' && page.component) {
+    PLUGIN_PAGES.set(
+      page.categoryId,
+      defineAsyncComponent(buildAsyncComponentOptions({ loader: page.component })),
+    )
+  }
+}
+
+/** One resolved page for the current category, or null for the normal layout. */
+interface SpecialSettingsPage {
+  component: Component
+  props?: Record<string, unknown>
+  on?: Record<string, (...args: never[]) => void>
+}
 
 const { t } = useI18n()
 const toast = useToast()
@@ -381,6 +370,71 @@ function resolveSummaryModelStatus(item: ItemSpec): 'configured' | 'unconfigured
 }
 
 // ── Sub-page panel (data-driven) ──
+
+/**
+ * Category-specific pages, resolved from the id.
+ *
+ * A table (not a template if-chain): adding a page means adding one entry here
+ * or — for a plugin — declaring `settingsPage` in its `plugin.ts`. The
+ * colon-prefixed routes (`agents:<id>`, `agentSessions:<id>`, `project:<id>`)
+ * stay explicit because they are App-level routes, not plugin contributions.
+ */
+const specialPage = computed<SpecialSettingsPage | null>(() => {
+  const id = props.categoryId
+  if (id === 'agents') {
+    return {
+      component: SettingsAgentsIndex,
+      on: { navigate: ((cid: string) => emit('navigate', cid)) },
+    } as SpecialSettingsPage
+  }
+  if (id.startsWith('agents:')) {
+    return {
+      component: SettingsAgentDetail,
+      props: { agentId: id.slice(7) },
+      on: {
+        deleted: (() => emit('deleted', 'agents')),
+        back: (() => emit('back', 'agents')),
+        // v-on object keys are RUNTIME strings (no compiler normalization like
+        // @navigate-replace), so they must match the child's declared emit names.
+        navigateReplace: ((cid: string) => emit('navigateReplace', cid)),
+        openSessions: ((aid: string) => emit('navigate', `agentSessions:${aid}`)),
+      },
+    } as SpecialSettingsPage
+  }
+  // "Conversations using this agent" (agentSessions:<id>). A dedicated route
+  // rather than a card on the detail page: the list is paged and spans
+  // projects, so it needs its own scroll surface. Like project:<id> it has no
+  // back button — the breadcrumb crumb is the way back. The prefix is NOT
+  // `agents:` on purpose: that prefix is parsed as `agents:<id>` everywhere
+  // (slice(7)), so a third segment would be read as part of the agent id.
+  if (id.startsWith('agentSessions:')) {
+    return {
+      component: SettingsAgentSessions,
+      props: { agentId: id.slice('agentSessions:'.length) },
+    } as SpecialSettingsPage
+  }
+  // The dock manager: a custom page (presets + visibility + order), not a flat
+  // settings list. It emits `navigate` so its "feature settings" links can
+  // drill into the plugin's own settings category.
+  if (id === 'dockPlugins') {
+    return {
+      component: DockPluginSetting,
+      on: { navigate: ((cid: string) => emit('navigate', cid)) },
+    } as SpecialSettingsPage
+  }
+  // Project detail route (project:<id>): a read-only stats page, not a
+  // batch-save panel. No back button — the breadcrumb is the way back — and on
+  // delete it emits `deleted` so the parent pops the entry instead of pushing.
+  if (id.startsWith('project:')) {
+    return {
+      component: ProjectDetailSetting,
+      props: { projectId: Number(id.slice(8)) },
+      on: { deleted: (() => emit('deleted', 'project')) },
+    } as SpecialSettingsPage
+  }
+  const custom = PLUGIN_PAGES.get(id)
+  return custom ? { component: custom } : null
+})
 
 const subPagePanel = computed((): GroupPanelConfig | undefined => {
   if (isSubPageRoute(props.categoryId)) {

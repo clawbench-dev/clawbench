@@ -8,38 +8,37 @@ import { readWebFile } from '@/testUtils/readWebFile'
  * moved to the theme accent, and the dock switched from tinting the whole icon
  * to a corner dot (a share has no count to show).
  *
- * App.vue has no component test (its only tests read it as source text) and
- * `liveDotVisible` is a plain function inside `<script setup>`, so the wiring
- * is pinned as source text: the failure mode is silent — one of the three dock
- * render sites (wide dock, narrow inline overflow, narrow single-direct item)
- * keeping the old red class while the others move on.
+ * The dot is no longer a special case in App.vue: the live plugin declares
+ * `appearance.liveDot` and the shared DockTabButton draws it (suppressed on the
+ * tab you are looking at). These assertions pin the declaration, the button's
+ * suppression rule and the colours — the failure mode is silent, because a dot
+ * that stops appearing looks exactly like "nothing is being shared".
  */
 describe('live-share dock dot wiring', () => {
   const app = readWebFile('src/App.vue')
-  const template = app.slice(0, app.indexOf('\n<script setup'))
+  const plugin = readWebFile('src/plugins/live/plugin.ts')
+  const button = readWebFile('src/components/dock/DockTabButton.vue')
+  const css = readWebFile('src/assets/dock.css')
 
-  it('renders the state dot on every dock render site that can hold the live tab', () => {
-    // Wide dock secondary tabs, narrow inline overflow tabs, narrow single
-    // remaining item. Missing one leaves that layout with no indicator at all.
-    const dots = template.match(/class="dock-badge dock-badge--live"/g) ?? []
-    expect(dots.length).toBe(3)
+  it('declares the dot on the plugin, not in the host', () => {
+    expect(plugin).toContain('appearance:')
+    expect(plugin).toContain('liveDot: () => liveState().value !== \'idle\'')
+    expect(app).not.toContain('liveDotVisible')
   })
 
-  it('gates each dot on the shared helper, with the surface\'s own active tab', () => {
-    expect(template).toContain('liveDotVisible(tab, leftTab === tab)')
-    expect(template).toContain('liveDotVisible(tab, activeTab === tab)')
-    expect(template).toContain('liveDotVisible(singleDirectTab, activeTab === singleDirectTab)')
+  it('draws the dot from the shared button, for every surface', () => {
+    expect(button).toContain('dock-badge--live')
+    expect(button).toContain('appearance.value?.liveDot?.()')
+    // Every dock render site uses that one button.
+    const sites = app.match(/<DockTabButton/g) ?? []
+    expect(sites.length).toBeGreaterThanOrEqual(4)
   })
 
-  it('shows the dot only while sharing and only on the tab you are NOT looking at', () => {
-    const start = app.indexOf('function liveDotVisible(')
-    expect(start, 'liveDotVisible not found in App.vue').toBeGreaterThan(-1)
-    const body = app.slice(start, start + app.slice(start).indexOf('\n}'))
-    expect(body).toContain('tab === \'live\'')
-    expect(body).toContain('liveShareActive.value')
-    // A badge on the tab you are already looking at carries no information —
-    // same rule as every count badge in the dock.
-    expect(body).toContain('!isActive')
+  it('hides the dot on the tab you are already looking at', () => {
+    // A badge on the tab you are reading carries no information — same rule as
+    // every count badge in the dock.
+    expect(button).toContain('!suppressed.value')
+    expect(button).toContain('const suppressed = computed(() => props.suppressBadge ?? props.active)')
   })
 
   it('no longer tints the live dock icon red', () => {
@@ -50,24 +49,24 @@ describe('live-share dock dot wiring', () => {
   })
 
   it('draws the dot in the theme accent, not red', () => {
-    const start = app.indexOf('.dock-badge--live {')
-    expect(start, '.dock-badge--live rule not found in App.vue').toBeGreaterThan(-1)
-    const body = app.slice(start, start + app.slice(start).indexOf('\n}'))
+    const start = css.indexOf('.dock-badge--live {')
+    expect(start, '.dock-badge--live rule not found in dock.css').toBeGreaterThan(-1)
+    const body = css.slice(start, start + css.slice(start).indexOf('\n}'))
     // Colour comes from the shared .dock-badge rule; this modifier only adds
     // the pulse, so the accent must be declared there and not overridden.
     expect(body).not.toContain('--color-red')
-    const base = app.indexOf('.dock-badge {')
+    const base = css.indexOf('.dock-badge {')
     expect(base).toBeGreaterThan(-1)
-    const baseBody = app.slice(base, base + app.slice(base).indexOf('\n}'))
+    const baseBody = css.slice(base, base + css.slice(base).indexOf('\n}'))
     expect(baseBody).toContain('background: var(--accent-color')
   })
 
   it('freezes the pulse under reduced motion but keeps the dot visible', () => {
     // The dot is the information, the pulse is not — so the animation is
     // opt-out-able while the element itself must never be hidden.
-    const start = app.indexOf('@media (prefers-reduced-motion: reduce) {')
+    const start = css.indexOf('@media (prefers-reduced-motion: reduce) {')
     expect(start, 'reduced-motion guard not found for the live dot').toBeGreaterThan(-1)
-    const block = app.slice(start, start + 200)
+    const block = css.slice(start, start + 200)
     expect(block).toContain('.dock-badge--live')
     expect(block).toContain('animation: none')
   })

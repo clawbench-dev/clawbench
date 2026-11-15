@@ -243,9 +243,9 @@ func serveSessionShareStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveSessionShareCreate(w http.ResponseWriter, r *http.Request) {
-	if rejectIfShareDisabled(w, r) {
-		return
-	}
+	// The share master switch is enforced by the router's feature gate (this
+	// route is under /api/share). The per-kind switch is a separate rule: it
+	// only stops NEW conversation links while sharing itself stays on.
 	if !model.FeaturePolicy.ShareAllowSessions {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "ShareSessionsDisabled")
 		return

@@ -19,13 +19,13 @@ import {
   isChatPanelVisible,
   WIDE_SCREEN_DOCK_TABS,
 } from '@/composables/useWideScreenLayout'
-import { DOCK_TABS, DOCK_TAB_IDS, dockTabs, isDockTabId, type DockTabId } from '@/composables/dockTabs'
+import { DOCK_TAB_IDS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
+import { DOCK_TABS, DOCK_TABS_WITH_ICONS, dockTabs } from '@/composables/dockPluginRuntime'
 import { PANEL_KEY_PREFIX, _resetLayoutScopeForTest, setLayoutProjectRoot, setLayoutScopeMode } from '@/utils/panelState'
 import { portForwardUnavailable } from '@/utils/portForwardUtils'
 import { DEFAULT_RATIO } from '@/utils/splitRatio'
 import enMessages from '@/i18n/locales/en'
 import zhMessages from '@/i18n/locales/zh'
-import { DOCK_TABS_WITH_ICONS } from '@/composables/dockTabMeta'
 
 // Persistence keys are owned by the panel-state registry.
 const WIDE_SCREEN_SPLIT_RATIO_KEY = PANEL_KEY_PREFIX + 'split-ratio'
@@ -505,9 +505,9 @@ describe('dock tab registry (single source of truth)', () => {
   })
 
   it('every registry entry has an icon attached in the icon module', () => {
-    // Icons live in dockTabMeta.ts (kept out of dockTabs.ts so that importing
-    // the ids does not pull lucide into composable module graphs). Both halves
-    // must cover exactly the same ids.
+    // Icons live in each plugin's manifest (kept out of dockTabs.ts so that
+    // importing the ids does not pull lucide into composable module graphs).
+    // Both halves must cover exactly the same ids.
     expect(DOCK_TABS_WITH_ICONS.map((t) => t.id)).toEqual(DOCK_TABS.map((t) => t.id))
     for (const tab of DOCK_TABS_WITH_ICONS) {
       expect(tab.icon, `${tab.id} has no icon`).toBeTruthy()

@@ -70,14 +70,17 @@
             <div class="dock-active-indicator wide-dock-active-indicator" v-show="!leftCollapsed" :style="wideDockIndicatorStyle"></div>
             <!-- ONE ordered list: every left-column tab, in the user's order.
                  There is no fixed head any more — the manager can drag any
-                 entry (including settings) anywhere. -->
-            <div v-for="tab in visibleDockTabs" :key="tab" class="dock-btn-wrap">
-              <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" v-dock-tip="dockTabTitle(tab)" :aria-label="dockTabTitle(tab)" @click.stop="handleWideDockTabClick(tab)">
-                <component :is="wideDockTabIcon(tab)" />
-              </button>
-              <span v-if="liveDotVisible(tab, leftTab === tab)" class="dock-badge dock-badge--live" />
-              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
-            </div>
+                 entry (including settings) anywhere. Each button carries its
+                 own badge/dot/state classes from the plugin's declaration. -->
+            <DockTabButton
+              v-for="tab in visibleDockTabs"
+              :key="tab"
+              :tab="tab"
+              variant="wide"
+              :active="leftTab === tab && !leftCollapsed"
+              :suppress-badge="leftTab === tab"
+              @click="handleWideDockTabClick(tab)"
+            />
           </div>
         </div>
 
@@ -252,6 +255,7 @@
                     :tab-id="tab"
                     :active="panelIsActive(tab)"
                     :host="dockPanelHost"
+                    :extras="dockPanelExtras"
                   />
                 </TabPanel>
               </div>
@@ -501,30 +505,32 @@
         <div ref="dockRef" class="bottom-dock">
           <div class="dock-center">
             <div class="dock-active-indicator" :style="dockIndicatorStyle"></div>
-            <div class="dock-btn-wrap">
-              <button class="dock-btn" data-tab="chat" :class="{ active: activeTab === 'chat', 'has-unread': store.state.chatUnreadCount > 0 && activeTab !== 'chat', 'has-running': sessionIdentity.runningSessions.value.size > 0 && activeTab !== 'chat' }" @click.stop="switchTab('chat')" :title="t('nav.chat')">
-                <MessageSquare />
-              </button>
-              <span v-if="store.state.chatUnreadCount > 0 && activeTab !== 'chat'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': chatBadgeAnim }" @animationend="chatBadgeAnim = false">{{ formatBadgeCount(store.state.chatUnreadCount) }}</span>
-            </div>
+            <DockTabButton
+              tab="chat"
+              variant="inline"
+              :active="activeTab === 'chat'"
+              @click="switchTab('chat')"
+            />
             <!-- Left-column tabs: ONE ordered list, same source as the wide
                  dock. The overflow split only decides how many of them fit
                  inline; it never reorders them. -->
-            <div v-for="tab in inlineOverflowTabs" :key="tab" class="dock-btn-wrap">
-              <button class="dock-btn" :data-tab="tab" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
-                <component :is="dockTabIcon(tab)" />
-              </button>
-              <span v-if="liveDotVisible(tab, activeTab === tab)" class="dock-badge dock-badge--live" />
-              <span v-if="dockTabBadgeCount(tab) > 0 && activeTab !== tab" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
-            </div>
+            <DockTabButton
+              v-for="tab in inlineOverflowTabs"
+              :key="tab"
+              :tab="tab"
+              variant="inline"
+              :active="activeTab === tab"
+              @click="handleInlineOverflowClick(tab)"
+            />
             <!-- Single remaining popup item shown directly (no overflow menu) -->
-            <div v-if="singleDirectTab" :key="'single-' + singleDirectTab" class="dock-btn-wrap">
-              <button class="dock-btn" :data-tab="singleDirectTab" :class="dockInlineOverflowBtnClass(singleDirectTab)" @click.stop="handleInlineOverflowClick(singleDirectTab)" :title="dockTabTitle(singleDirectTab)">
-                <component :is="dockTabIcon(singleDirectTab)" />
-              </button>
-              <span v-if="liveDotVisible(singleDirectTab, activeTab === singleDirectTab)" class="dock-badge dock-badge--live" />
-              <span v-if="dockTabBadgeCount(singleDirectTab) > 0 && activeTab !== singleDirectTab" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(singleDirectTab) }" @animationend="dockTabBadgeAnimEnd(singleDirectTab)">{{ formatBadgeCount(dockTabBadgeCount(singleDirectTab)) }}</span>
-            </div>
+            <DockTabButton
+              v-if="singleDirectTab"
+              :key="'single-' + singleDirectTab"
+              :tab="singleDirectTab"
+              variant="inline"
+              :active="activeTab === singleDirectTab"
+              @click="handleInlineOverflowClick(singleDirectTab)"
+            />
             <!-- Overflow button (popup has >1 items) -->
             <div v-if="showOverflowButton" class="dock-overflow-wrapper">
               <button
@@ -538,7 +544,7 @@
               >
                 <component :is="overflowButtonIcon" />
               </button>
-              <span v-if="overflowBadgeCount > 0 && !isOverflowTabActive" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': overflowBadgeAnim }" @animationend="overflowBadgeAnim = false">{{ formatBadgeCount(overflowBadgeCount) }}</span>
+              <span v-if="overflowBadgeCount > 0 && !isOverflowTabActive" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': overflowPop }" @animationend="onOverflowBadgeAnimEnd">{{ formatBadgeCount(overflowBadgeCount) }}</span>
             </div>
           </div>
         </div>
@@ -549,22 +555,14 @@
     <Teleport to="body">
       <Transition name="dock-popup">
         <div v-if="overflowMenuOpen" class="dock-overflow-popup" :style="overflowPopupStyle" @keydown.escape="overflowMenuOpen = false">
-          <button
+          <DockTabButton
             v-for="tab in popupOverflowTabs"
             :key="tab"
-            class="dock-overflow-item"
-            :class="{ active: activeTab === tab }"
-            @click.stop="handleOverflowSelect(tab)"
-          >
-            <component :is="dockTabIcon(tab)" :size="16" />
-            <span>{{ dockTabTitle(tab) }}</span>
-            <span
-              v-if="dockTabBadgeCount(tab) > 0"
-              class="dock-overflow-count count-badge count-badge--md"
-              :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }"
-              @animationend="dockTabBadgeAnimEnd(tab)"
-            >{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
-          </button>
+            :tab="tab"
+            variant="popup"
+            :active="activeTab === tab"
+            @click="handleOverflowSelect(tab)"
+          />
         </div>
       </Transition>
     </Teleport>
@@ -579,7 +577,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, watch, onMounted, onUnmounted, provide, nextTick, type CSSProperties } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, type CSSProperties } from 'vue'
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { kbPendingQuote, consumeKBPendingQuote } from '@/utils/kbNavigation'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
@@ -595,7 +593,7 @@ import { maybePromptStartupUIScale } from '@/composables/useStartupUIScalePrompt
 import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import { useAnimatedWallpaperParams } from '@/composables/useAnimatedWallpaperParams'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, FolderOpen, Clock, MoreHorizontal, Paperclip, FileText, X, PencilLine } from 'lucide-vue-next'
+import { MessageSquare, FolderOpen, MoreHorizontal, Paperclip, FileText, X, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import DockPanelHost from './components/dock/DockPanelHost.vue'
@@ -692,7 +690,6 @@ import { useEdgeSwipeBack } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, canNavigateBack, requestExitConfirm, canNavigateBackOverlay, handleBackNavigationOverlay } from './composables/useBackHandler'
 import { useNavigationContext } from './composables/useNavigationContext'
 import { setPendingSettingsCategory } from './composables/useSettingsNavigation'
-import { setMeetingCreateReturn } from './composables/useMeetingViewState'
 import { requestOpen as requestOpenUsageMeter } from './composables/useUsageMeter'
 import { useNavigationCoordinator } from './composables/useNavigationCoordinator'
 import { useAndroidBackPress } from './composables/useAndroidBackPress'
@@ -754,19 +751,28 @@ import {
 } from './composables/useWideScreenLayout'
 // Single source of truth for dock tabs (render list, switch whitelist, icons,
 // titles). See the module doc for why this exists.
-import { DOCK_TABS, DOCK_TAB_IDS, dockTabs, isDockTabId, type DockTabId } from './composables/dockTabs'
+import { isDockTabId } from './composables/dockTabs'
 import { useDockPlugins } from './composables/useDockPlugins'
-import { isFeatureEnabled } from './composables/useFeatureFlags'
 import { useDockLifecycle } from './composables/useDockLifecycle'
+import { isDockTabBlocked, useDockAvailability } from './composables/useDockAvailability'
+import { installPluginDeeplinks } from './composables/usePluginDeeplinks'
 import {
+  DOCK_TABS,
+  dockTabIcon,
+  dockTabTitleKey,
+  dockTabs,
   isDockPluginAvailable,
   resolveDockBadge,
-  resolveDockIcon,
   resolveDockTitle,
+  runDockOnClick,
   shouldLeaveUnavailableDockTab,
 } from './composables/dockPluginRuntime'
-import type { DockPanelHost as DockPanelHostContext } from './composables/dockPluginTypes'
-import { dockTabWithIcon } from './composables/dockTabMeta'
+import { useBadgePop } from './composables/useBadgePop'
+import type {
+  DockPanelHost as DockPanelHostContext,
+  DockPanelHostExtras as DockPanelHostExtrasContext,
+} from './composables/dockPluginTypes'
+import DockTabButton from './components/dock/DockTabButton.vue'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
 import './assets/hljs-light-override.css'
@@ -775,6 +781,9 @@ import './assets/code-viewer.css'
 import './assets/mono-icon-colors.css'
 import './assets/refresh-spin.css'
 import './assets/chat-actions.css'
+// Dock button/badge primitives are global (shared between this file and the
+// DockTabButton component) — see the file header for why scoped rules cannot.
+import './assets/dock.css'
 
 const isAuthenticated = ref<boolean | null>(null)
 const { t } = useI18n()
@@ -916,8 +925,7 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
       loadProjectPanel(resolvedProjectPath),
       true,
       false,
-      isForgeTabHidden.value,
-      isMailTabHidden.value,
+      dockAvailability.value,
     )
     // Same fallback as applyProjectPanel: a panel the user hid from the dock
     // must not be restored, or the new tree would mount something with no entry
@@ -1122,8 +1130,7 @@ function applyProjectPanel(root: string) {
     loadProjectPanel(root),
     isWideScreen.value,
     !!store.state.currentFile,
-    isForgeTabHidden.value,
-    isMailTabHidden.value,
+    dockAvailability.value,
   )
   // A remembered tab with no dock entry must fall back to the layout default,
   // not restore a panel nothing points at: it may have been hidden by the user,
@@ -1378,8 +1385,10 @@ function switchTab(tab: string, force = false) {
   // scoping: a picker left open would otherwise float over the new panel, since
   // BottomSheet teleports to <body>.
   closeInertPathPicker()
-  // Plugin-specific "load on open" work lives in each feature's dock.ts.
-  dockLifecycle.onEnter(tab)
+  // Plugin-specific "load on open" work lives in each plugin.ts. `enter` is
+  // idempotent and owes the previous tab its `onLeave`, so the two call sites
+  // (this one and the wide layout's side effects) cannot double-run or skip it.
+  dockLifecycle.enter(tab)
   // Close overflow menu on any tab switch
   overflowMenuOpen.value = false
 }
@@ -1497,96 +1506,6 @@ function handleOpenTask(e: Event) {
 }
 
 /**
- * Payload of the `clawbench-open-forge` event (forge system notification tap).
- *
- * `target` and `forgeTarget` are the SAME value under two names, because the
- * event has two producers with different shapes:
- *   - the renderer's own paths (in-page notification onClick, completion card)
- *     dispatch `{ projectPath, target }`;
- *   - the native shell (Electron) forwards its whole `NotificationNav` verbatim
- *     through preload as the event detail, and that object names the field
- *     `forgeTarget`.
- * Reading only one of them silently drops the deep link on the other path —
- * which is exactly what happened on Electron (the click opened the tab and
- * stopped there). Accept both.
- */
-interface OpenForgeDetail {
-  projectPath?: string
-  target?: ForgeTarget
-  forgeTarget?: ForgeTarget
-  fromNotificationCenter?: boolean
-}
-
-/**
- * Handle clawbench-open-forge — dispatched when a forge (GitHub/GitLab) system
- * notification is clicked, or when the in-app completion card is tapped.
- *
- * The forge panel is project-scoped: it shows the repository bound to the
- * ACTIVE project. A change in a repository bound by another project must
- * therefore switch projects first, or the user lands on a panel that has no
- * such row (and the notification looks like a lie).
- *
- * The item to open is published as a module-level pending target rather than
- * passed down as a prop: the panel is mounted lazily and, when the forge tab is
- * already active, `switchTab` is a no-op — so the ref itself is the only signal
- * that reaches it. See useForgeNavigation.
- */
-function handleOpenForge(e: Event) {
-  const detail = (e as CustomEvent<OpenForgeDetail>).detail
-  const projectPath = detail?.projectPath
-  // Accept either name — see forgeTargetFromDetail. The native shell sends the
-  // whole NotificationNav (field `forgeTarget`), the in-page producers `target`.
-  const target = forgeTargetFromDetail(detail)
-
-  // Refuse the whole navigation while the integration is disabled, BEFORE any
-  // state is written. `switchTab` would otherwise reject the tab on its own, but
-  // by then this handler has already published a pending target and registered a
-  // back-origin — so the next time the panel mounts (after the user re-enables
-  // it) it would jump to a stale item, and Back would point at a jump that never
-  // happened. A notification queued before the switch was turned off is the
-  // realistic way to get here.
-  if (tabBlocked('forge')) {
-    clearPendingForgeTarget()
-    return
-  }
-
-  // Publish the target before switching tabs so the panel sees it whichever
-  // path it takes to become visible (mount, activation, or ref change).
-  //
-  // The target is stamped with the project it belongs to. Without a concrete
-  // destination the panel's own project gate has nothing to compare against and
-  // a still-mounted old-project panel would consume a target meant for another
-  // project. `projectPath` here is the attribution the server sent; empty means
-  // "whatever project is active", which is exactly the same-project case.
-  if (target) setPendingForgeTarget({ ...target, projectPath })
-
-  if (!projectPath || projectPath === store.state.projectRoot) {
-    // Same project (or the event carried no attribution): nothing to switch.
-    recordNotificationOrigin(detail)
-    switchTab('forge')
-    return
-  }
-  // hotSwitchProject resolves even when the target project is unusable — it
-  // toasts and returns early rather than rejecting — so the tab is opened after
-  // the attempt settles either way. That is also the right fallback: the user
-  // lands on the forge panel they can actually see, instead of nothing happening.
-  hotSwitchProject(projectPath)
-    .then(() => {
-      // The switch was refused (project gone / not under the configured roots),
-      // so the panel that is actually on screen is the CURRENT project's — which
-      // cannot hold this item. Drop the target rather than leave it armed: it
-      // would otherwise fire on some later activation whose project happened to
-      // match.
-      if (store.state.projectRoot !== projectPath) clearPendingForgeTarget()
-    })
-    .catch(() => {
-      appLog.w(TAG, 'clawbench-open-forge: project switch threw, opening current project')
-      clearPendingForgeTarget()
-    })
-    .finally(() => switchTab('forge'))
-}
-
-/**
  * Handle clawbench-open-usage-meter — a usage-meter notification was tapped
  * (in-app notification center row, or the Android notification).
  *
@@ -1610,88 +1529,6 @@ function handleOpenUsageMeter(e?: Event) {
   recordNotificationOrigin((e as CustomEvent<{ fromNotificationCenter?: boolean }> | undefined)?.detail)
   setPendingSettingsCategory('usageMeter')
   switchTab('settings')
-}
-
-/**
- * Payload of the `clawbench-open-mail` event (a quote jumping to the email it
- * was taken from).
- */
-interface OpenMailDetail { messageId?: number }
-
-/**
- * Handle clawbench-open-mail.
- *
- * The mail panel listens to the SAME event and opens the reader (it owns the
- * list/reader state). This handler does the one thing the panel cannot: switch
- * to the 邮件 tab. Mail is global rather than project-scoped, so unlike the
- * meeting jump there is no project to rebuild first.
- */
-function handleOpenMail(e: Event) {
-  const detail = (e as CustomEvent<OpenMailDetail>).detail
-  if (!detail?.messageId) {
-    appLog.w(TAG, 'clawbench-open-mail: no messageId in detail, ignoring')
-    return
-  }
-  if (tabBlocked('mail')) return
-  switchTab('mail')
-}
-
-/**
- * Handle clawbench-compose-mail: another panel asked for a new message with the
- * body already filled in (分享中心's 「用邮件发送」).
- *
- * The parked request itself is consumed by the mail panel — it owns the account
- * list and the composer. This handler only does what that panel cannot: switch
- * to the 邮件 tab. Refused when the feature is off, exactly like the open-mail
- * jump, so a link never strands the user on a panel with no entry pointing at
- * it.
- */
-function handleComposeMail() {
-  if (tabBlocked('mail')) return
-  switchTab('mail')
-}
-
-/**
- * Payload of the `clawbench-open-meeting` event (meeting notification tap, or
- * a quote jumping to the meeting it was taken from).
- */
-interface OpenMeetingDetail { token?: string; projectPath?: string; fromNotificationCenter?: boolean }
-
-/**
- * Handle clawbench-open-meeting.
- *
- * The meeting panel listens to the SAME event and sets its own view (it owns
- * the list/detail/stage state). This handler does the two things the panel
- * cannot: switch to the meeting tab, and — for a row from another project —
- * rebuild that project first. A meeting record is project-scoped, so opening
- * it against the old project would 404 and land on an empty detail page.
- */
-function handleOpenMeeting(e: Event) {
-  const detail = (e as CustomEvent<OpenMeetingDetail>).detail
-  if (!detail?.token) {
-    appLog.w(TAG, 'clawbench-open-meeting: no token in detail, ignoring')
-    return
-  }
-  const { token, projectPath } = detail
-  const crossProject = !!projectPath && projectPath !== store.state.projectRoot
-  if (!crossProject) recordNotificationOrigin(detail)
-  if (crossProject) {
-    // The panel already handled the original event, against the OLD project.
-    // Re-dispatch once the switch has landed: the second pass is the one whose
-    // detail fetch can find the record. (Same-project jumps need no second
-    // dispatch — the first one is already correct.)
-    hotSwitchProject(projectPath, null)
-      .then(() => {
-        switchTab('live')
-        window.dispatchEvent(new CustomEvent('clawbench-open-meeting', { detail: { token } }))
-      })
-      .catch(() => {
-        appLog.w(TAG, 'clawbench-open-meeting: project switch failed, opening the current project')
-        switchTab('live')
-      })
-    return
-  }
-  switchTab('live')
 }
 
 // Register browse-scoped drawers with tab-drawer binding
@@ -1824,12 +1661,18 @@ async function onToggleGroupParallel(enabled: boolean) {
  * SettingsPage consumes on mount or on activation.
  */
 /**
- * Mailbox configuration lives in Settings, so the mail panel's gear and its
- * empty-state button both land here instead of opening a second copy of the
- * account form inside the dock pane.
+ * Open a settings category from inside a panel.
+ *
+ * One implementation for every plugin: the jump records the panel it started
+ * from (so Back returns there) and parks the target category, which the lazily
+ * mounted settings panel consumes. Mail's gear, the meeting create form's relay
+ * jump and any future plugin all land here — the shell no longer has one
+ * `openXxxSettings` per plugin.
  */
-function openMailSettings() {
-  setPendingSettingsCategory('mail')
+function openSettingsCategory(id: string) {
+  const origin = currentPanelTab.value
+  if (isDockTabId(origin)) beginExternalJump(origin, surfaceLabel(origin))
+  setPendingSettingsCategory(id)
   switchTab('settings')
 }
 
@@ -2089,47 +1932,24 @@ const { platformSupported, loadTerminalStatus } = useTerminalStatus()
 // The terminal tab is still shown so users see a clear "unsupported" empty state.
 const isPlatformUnsupported = computed(() => platformSupported.value === false)
 
-// Availability now lives in each feature's dock.ts (terminal / proxy / forge /
-// mail). These aliases stay because a few call sites still speak in the old
-// boolean terms (project-panel restore).
-const isForgeTabHidden = computed(() => !isDockPluginAvailable('forge'))
-const isMailTabHidden = computed(() => !isDockPluginAvailable('mail'))
-
-/** Tabs whose runtime availability check currently fails. */
-const unavailableDockTabs = computed(() => {
-  const set = new Set<DockTabId>()
-  for (const id of DOCK_TAB_IDS) {
-    if (!isDockPluginAvailable(id)) set.add(id)
-  }
-  return set
-})
-
 /**
- * Tabs whose server master switch is OFF.
+ * The three reasons a dock entry can be missing, in one object.
  *
- * These switches are global server state, not per-device preferences: turning
- * one off stops background work as well as hiding the entry. `useFeatureFlags`
- * is the one reader for them (the same predicate every action entry point uses),
- * so the dock cannot disagree with the buttons that depend on it.
- *
- * A missing key reads as ON, so the entry cannot flicker away during first
- * paint while /api/config is still in flight.
+ * Server feature switch (the plugin registry), host capability, and the user's
+ * per-device preference — see useDockAvailability for why they stay separate.
+ * The dock, the navigation guards and the project-panel restore all read this
+ * one object, so a third gated plugin changes nothing here.
  */
-const featureDisabledDockTabs = computed(() => {
-  const set = new Set<DockTabId>()
-  for (const tab of DOCK_TABS) {
-    if (tab.feature && !isFeatureEnabled(tab.feature)) set.add(tab.id)
-  }
-  return set
-})
+const { availability: dockAvailability } = useDockAvailability()
+const featureDisabledDockTabs = computed(() => dockAvailability.value.featureDisabled)
+const unavailableDockTabs = computed(() => dockAvailability.value.unavailable)
 
 /**
  * Whether a tab was hidden by the user in the plugin manager.
  *
  * The dock entry is gone, so a programmatic navigation (notification deep link,
  * task jump, remembered tab replay) must be refused rather than silently
- * re-showing the tab. Declared after the composable it reads for the same TDZ
- * reason as the availability checks.
+ * re-showing the tab.
  */
 function dockTabBlocked(tab: string): boolean {
   return isDockTabHiddenById(tab)
@@ -2137,11 +1957,7 @@ function dockTabBlocked(tab: string): boolean {
 
 /** Any reason the tab cannot be entered (hidden, switched off, unavailable). */
 function tabBlocked(tab: string): boolean {
-  return (
-    dockTabBlocked(tab) ||
-    (isDockTabId(tab) && featureDisabledDockTabs.value.has(tab)) ||
-    (isDockTabId(tab) && !isDockPluginAvailable(tab))
-  )
+  return isDockTabBlocked(tab, dockAvailability.value)
 }
 
 watch(unavailableDockTabs, (set) => {
@@ -2853,11 +2669,19 @@ function registerAppEventListeners() {
   window.addEventListener('attach-to-chat', playQuoteEmitAnimation)
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
-  window.addEventListener('clawbench-open-forge', handleOpenForge)
   window.addEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
-  window.addEventListener('clawbench-open-meeting', handleOpenMeeting)
-  window.addEventListener('clawbench-open-mail', handleOpenMail)
-  window.addEventListener('clawbench-compose-mail', handleComposeMail)
+  // Deep links DECLARED BY PLUGINS (forge today). The host supplies the
+  // navigation primitives; the handler — including its order — lives in the
+  // plugin, so a new one never touches this file.
+  uninstallPluginDeeplinks = installPluginDeeplinks({
+    switchTab: (id) => switchTab(id),
+    // One argument on purpose: a deep link names a project, not a session.
+    hotSwitchProject: (path) => hotSwitchProject(path),
+    tabBlocked: (id) => tabBlocked(id),
+    recordNotificationOrigin: (detail) =>
+      recordNotificationOrigin(detail as { fromNotificationCenter?: boolean } | undefined),
+    currentProject: () => store.state.projectRoot,
+  })
   window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
@@ -3400,23 +3224,40 @@ const {
 } = navCoordinator
 
 /**
- * Host context passed to every plugin panel through DockPanelHost.
+ * The GENERIC half of the host context every plugin panel receives.
  *
- * This is the narrow contract between the shell and the panels. A plugin's
- * `dock.ts` picks the props/listeners it needs; a panel that needs something
- * new gets it here, not by importing App.vue.
+ * Adding a plugin must never widen this object: anything plugin-specific lives
+ * in `dockPanelExtras` below, keyed by plugin.
  */
+/** Uninstaller for the plugin-declared window listeners (see onMounted). */
+let uninstallPluginDeeplinks: (() => void) | null = null
+
 const dockPanelHost: DockPanelHostContext = {
   get projectPath() { return store.state.projectRoot },
-  get terminalRequestedCwd() { return terminalRequestedCwd.value },
-  get platformUnsupported() { return isPlatformUnsupported.value },
+  get isWideScreen() { return isWideScreen.value },
   openFile: (path: string) => handleSelectFile(path),
-  openTaskFile: (path: string, lineStart?: number) => handleTaskOpenFile(path, lineStart),
-  quoteMeeting: (token: string) => { void handleMeetingQuoteButton(token) },
-  openMailSettings: () => openMailSettings(),
-  requestProject: () => switchTab('chat'),
-  openMeetingRelaySettings: () => handleOpenMeetingRelaySettings(),
-  clearTerminalCwd: () => { terminalRequestedCwd.value = null },
+  openSettingsCategory: (id: string) => openSettingsCategory(id),
+  openTab: (id: string) => switchTab(id),
+}
+
+/**
+ * Plugin-specific capabilities, keyed by plugin.
+ *
+ * A panel reaches only its own group (`panel.props(host, extras)`), so a new
+ * plugin adds a key here instead of widening the shared interface.
+ */
+const dockPanelExtras: DockPanelHostExtrasContext = {
+  terminal: {
+    get requestedCwd() { return terminalRequestedCwd.value },
+    clearCwd: () => { terminalRequestedCwd.value = null },
+    get platformUnsupported() { return isPlatformUnsupported.value },
+  },
+  task: {
+    openTaskFile: (path: string, lineStart?: number) => handleTaskOpenFile(path, lineStart),
+  },
+  meeting: {
+    quote: (token: string) => { void handleMeetingQuoteButton(token) },
+  },
 }
 
 /** FileHeader「设置为主题背景」：把当前图片拷进本机图库并设为背景。 */
@@ -3508,11 +3349,6 @@ async function handleBatchDelete(paths: string[]) {
 
 async function handleRefresh() {
     await refreshCurrentFile({ loadDir: true, clearOnError: true })
-}
-
-function handleDockTerminal() {
-    terminalRequestedCwd.value = null
-    switchTab('terminal')
 }
 
 // Overflow menu state
@@ -3614,33 +3450,27 @@ watch([() => localConfig.uiScale], () => {
   })
 })
 
-// Helpers for dynamic inline overflow buttons
-function dockTabIcon(tab: string) {
-  return resolveDockIcon(tab) ?? dockTabMeta(tab)?.icon ?? Clock
-}
+/**
+ * The dock title used by the overflow button's tooltip.
+ *
+ * The buttons themselves resolve their own label (DockTabButton); this remains
+ * because the OVERFLOW button is not a plugin entry — it names whichever popup
+ * tab is currently active.
+ */
 function dockTabTitle(tab: string) {
   // Runtime title first (Forge names the bound service); otherwise the static
-  // manifest title. This is the ONLY title lookup for both docks and the
-  // overflow tooltip.
+  // manifest title.
   const runtimeTitle = resolveDockTitle(tab)
   if (runtimeTitle) return runtimeTitle
-  const meta = dockTabMeta(tab)
-  return meta ? t(meta.titleKey) : ''
+  const key = dockTabTitleKey(tab)
+  return key ? t(key) : ''
 }
-function dockInlineOverflowBtnClass(tab: string) {
-  return {
-    active: activeTab.value === tab,
-    'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab.value !== 'tasks',
-    'just-completed': tab === 'tasks' && store.state.taskJustCompleted && activeTab.value !== 'tasks',
-    'has-running': tab === 'tasks' && store.state.taskRunning && activeTab.value !== 'tasks',
-  }
-}
+
 function handleInlineOverflowClick(tab: string) {
-  if (tab === 'terminal') {
-    handleDockTerminal()
-  } else {
-    switchTab(tab)
-  }
+  // A plugin may contribute work beyond switching (terminal clears the pending
+  // directory request). Runs first: the panel reads that request on activation.
+  runDockOnClick(tab, dockPanelHost, dockPanelExtras)
+  switchTab(tab)
 }
 
 // Wide-screen mode transitions: keep useTabDrawer's currentTab coherent
@@ -3707,8 +3537,8 @@ watch(isWideScreen, (val) => {
 registerWideScreenCallbacks({
   setActiveTab: (tab) => { activeTab.value = tab },
   sideEffects: (tab) => {
-    // Browse/tasks/chat "load on open" work now lives in their dock.ts.
-    dockLifecycle.onEnter(tab)
+    // Browse/tasks/chat "load on open" work now lives in their plugin.ts.
+    dockLifecycle.enter(tab)
   },
 })
 
@@ -3918,52 +3748,6 @@ function onChatColDrop(e: DragEvent) {
   }
 }
 
-// Registry lookup shared by both docks (narrow + wide). Returns undefined for
-// unknown ids so callers can apply their own fallback icon.
-function dockTabMeta(tab: string) {
-  return dockTabWithIcon(tab)
-}
-
-function wideDockTabIcon(tab: string) {
-  return resolveDockIcon(tab) ?? dockTabMeta(tab)?.icon ?? FolderOpen
-}
-function wideDockBtnClass(tab: string) {
-  return {
-    // When the left pane is collapsed no dock tab is active (VS Code-style).
-    active: leftTab.value === tab && !leftCollapsed.value,
-    'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && leftTab.value !== 'tasks',
-    'just-completed': tab === 'tasks' && store.state.taskJustCompleted && leftTab.value !== 'tasks',
-    'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
-  }
-}
-/**
- * A live share is a STATE, not an unread count: there is no number to show, so
- * the dock marks the tab with a plain dot instead of a count pill. It is
- * deliberately not a red icon tint — red reads as an error/recording state,
- * while a share is a normal ongoing activity, so the dot borrows the theme
- * accent the panel header's own marker uses.
- *
- * Hidden while the live tab itself is active, like every other dock badge: the
- * panel header already says "live" there, and a badge on the tab you are
- * looking at carries no information.
- */
-function liveDotVisible(tab: string, isActive: boolean) {
-  return tab === 'live' && !!resolveDockBadge('live')?.live && !isActive
-}
-// Badge lookups shared by the narrow popup, the inline overflow buttons and the
-// wide-screen dock. The source is each feature's dock.ts.
-function dockTabBadgeCount(tab: string) {
-  return resolveDockBadge(tab)?.count ?? 0
-}
-function dockTabBadgeAnim(tab: string) {
-  return !!badgeAnims[tab]
-}
-function dockTabBadgeAnimEnd(tab: string) {
-  badgeAnims[tab] = false
-}
-function wideDockBadgeVisible(tab: string) {
-  return dockTabBadgeCount(tab) > 0 && leftTab.value !== tab
-}
 const wideDockActiveIndex = computed(() => {
   // The rendered dock IS the ordered list — no head/tail concatenation.
   const i = visibleDockTabs.value.indexOf(leftTab.value)
@@ -3993,46 +3777,19 @@ const overflowPopupStyle = computed<CSSProperties>(() => {
 const overflowButtonIcon = computed(() => {
   // If active tab is in the popup, show its icon on the overflow button
   if (popupOverflowTabs.value.includes(activeTab.value)) {
-    return dockTabMeta(activeTab.value)?.icon ?? MoreHorizontal
+    return dockTabIcon(activeTab.value) ?? MoreHorizontal
   }
   return MoreHorizontal
 })
 
-// Dock badge change animations. Per-tab state lives in one map; the badge
-// source is the plugin runtime, so adding a badge no longer needs a new ref and
-// a new watch in App.vue.
-const chatBadgeAnim = ref(false)
-const overflowBadgeAnim = ref(false)
-const badgeAnims = reactive<Record<string, boolean>>({})
-
-function triggerBadgeAnim(animRef: { value: boolean }) {
-  animRef.value = false
-  nextTick(() => { animRef.value = true })
-}
-
-function triggerTabBadgeAnim(tab: string) {
-  badgeAnims[tab] = false
-  nextTick(() => { badgeAnims[tab] = true })
-}
-
-const leftBadgeCounts = computed(() => {
-  const out: Record<string, number> = {}
-  for (const id of DOCK_TAB_IDS) out[id] = resolveDockBadge(id)?.count ?? 0
-  return out
-})
-watch(leftBadgeCounts, (next, prev) => {
-  if (!prev) return
-  for (const id of DOCK_TAB_IDS) {
-    if (next[id] === prev[id]) continue
-    triggerTabBadgeAnim(id)
-    if (!allInlineOverflowTabs.value.includes(id)) triggerBadgeAnim(overflowBadgeAnim)
-  }
-}, { deep: true })
-
-watch(() => store.state.chatUnreadCount, (n, o) => { if (o !== undefined && n !== o) triggerBadgeAnim(chatBadgeAnim) })
-
 const overflowBadgeCount = computed(() =>
-  popupOverflowTabs.value.reduce((sum, tab) => sum + dockTabBadgeCount(tab), 0),
+  popupOverflowTabs.value.reduce((sum, tab) => sum + (resolveDockBadge(tab)?.count ?? 0), 0),
+)
+
+// The overflow button is NOT a plugin entry, so its aggregate badge keeps its
+// own pop state here. Every plugin tab's button animates itself.
+const { popping: overflowPop, onBadgeAnimEnd: onOverflowBadgeAnimEnd } = useBadgePop(
+  () => overflowBadgeCount.value,
 )
 
 const overflowButtonTitle = computed(() => {
@@ -4060,11 +3817,10 @@ function handleOverflowSelect(tab: string) {
     return
   }
   overflowMenuOpen.value = false
-  if (tab === 'terminal') {
-    handleDockTerminal()
-  } else {
-    switchTab(tab)
-  }
+  // Same contract as the inline row: the plugin may contribute work beyond
+  // switching, and it runs before the switch.
+  runDockOnClick(tab, dockPanelHost, dockPanelExtras)
+  switchTab(tab)
 }
 
 // Close overflow menu on outside click
@@ -4271,12 +4027,6 @@ function handleOpenPortForwardSettings() {
  * The category travels through the module-level pending ref: the settings
  * TabPanel is mounted lazily and may not exist yet when this fires.
  */
-function handleOpenMeetingRelaySettings() {
-    beginExternalJump('live', surfaceLabel('live'))
-    setMeetingCreateReturn()
-    setPendingSettingsCategory('meeting')
-    switchTab('settings')
-}
 
 /**
  * New File from the file manager: open an empty Untitled buffer in the viewer
@@ -4842,11 +4592,8 @@ onUnmounted(() => {
     window.removeEventListener('attach-to-chat', playQuoteEmitAnimation)
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
-    window.removeEventListener('clawbench-open-forge', handleOpenForge)
     window.removeEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
-    window.removeEventListener('clawbench-open-meeting', handleOpenMeeting)
-    window.removeEventListener('clawbench-open-mail', handleOpenMail)
-    window.removeEventListener('clawbench-compose-mail', handleComposeMail)
+    uninstallPluginDeeplinks?.()
     window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     window.removeEventListener('clawbench-native-error', handleNativeError)
     window.removeEventListener('clawbench-share-imported', handleNativeShareImport)
@@ -5367,23 +5114,6 @@ onUnmounted(() => {
     background: var(--accent-color);
 }
 
-/* Active icon follows the theme color (VS Code activity bar) */
-.wide-dock .dock-btn.active {
-    color: var(--accent-color);
-}
-.wide-dock .dock-btn.active:hover {
-    color: var(--accent-color);
-}
-
-/* Larger glyphs on the vertical dock. The rail stays 48px and the buttons stay
-   34px (the active indicator and DOCK_STEP are pinned to that geometry), so the
-   extra icon size comes out of the button's own padding rather than the dock
-   footprint. Scoped under .wide-dock to outrank the base .dock-btn svg rule. */
-.wide-dock .dock-btn svg {
-    width: calc(20 * var(--dp));
-    height: calc(20 * var(--dp));
-}
-
 .bottom-dock {
     display: flex;
     align-items: center;
@@ -5447,190 +5177,6 @@ onUnmounted(() => {
     pointer-events: none;
 }
 
-.dock-btn {
-    position: relative;
-    width: calc(34 * var(--dp));
-    height: calc(34 * var(--dp));
-    border: none;
-    border-radius: 50%;
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: color 0.25s, transform var(--duration-base);
-    z-index: 1;
-}
-
-.dock-btn:hover {
-    color: var(--text-primary);
-}
-
-.dock-btn:active {
-    transform: scale(0.92);
-}
-
-.dock-btn.active {
-    color: #fff;
-}
-
-.dock-btn.active:hover {
-    color: #fff;
-}
-
-.dock-btn svg {
-    width: calc(16 * var(--dp));
-    height: calc(16 * var(--dp));
-}
-
-.dock-btn.disabled {
-    opacity: var(--opacity-disabled);
-    cursor: default;
-}
-
-/* Unread indicator — static badge dot (top-right corner).
- * Uses a real <span> element outside the button so it's not clipped by overflow:hidden.
- * Positioned on .dock-btn-wrap which wraps both button and badge. */
-.dock-btn-wrap {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-/* A share is on air: a state dot, not a tinted icon. Red is reserved for
-   errors and for the recording indicator; a share is ordinary ongoing work, so
-   the dot uses the theme accent (same marker colour as the panel header). */
-.dock-badge--live {
-  animation: dock-live-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes dock-live-pulse {
-  0%,
-  100% {
-    opacity: 0.45;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-/* The dot itself is the information; the pulse is not, so it can be frozen. */
-@media (prefers-reduced-motion: reduce) {
-  .dock-badge--live {
-    animation: none;
-  }
-}
-
-.dock-badge {
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: calc(8 * var(--dp));
-    height: calc(8 * var(--dp));
-    border-radius: 50%;
-    background: var(--accent-color, #0066cc);
-    z-index: 2;
-    pointer-events: none;
-}
-
-/* Shape/geometry comes from the shared .count-badge; this rule keeps only the
-   dot-reset (the base .dock-badge is an 8px circle) and the corner offset.
-   The pill radius is re-declared on purpose: the scoped `.dock-badge` rule above
-   sets `border-radius: 50%`, and a scoped selector outranks the global
-   `.count-badge`, so without this the badge would render as an ellipse. */
-.dock-badge-count {
-    width: auto;
-    height: auto;
-    border-radius: var(--radius-full);
-    font-weight: var(--font-weight-bold);
-    color: #fff;
-    top: calc(-4 * var(--dp));
-    right: calc(-6 * var(--dp));
-}
-
-/* Dock badge pop animation on count change */
-.dock-badge-pop {
-    animation: badge-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-@keyframes badge-pop {
-    0% {
-        transform: scale(1);
-    }
-    40% {
-        transform: scale(1.35);
-        box-shadow: 0 0 calc(8 * var(--dp)) calc(2 * var(--dp)) color-mix(in srgb, var(--accent-color) 50%, transparent);
-    }
-    70% {
-        transform: scale(0.9);
-    }
-    100% {
-        transform: scale(1);
-        box-shadow: 0 0 0 0 transparent;
-    }
-}
-
-.dock-btn.has-running {
-    position: relative;
-    isolation: isolate;
-    overflow: hidden;
-    border-color: transparent;
-    box-shadow: 0 0 calc(4 * var(--dp)) 1px color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
-}
-.dock-btn.has-running::before {
-    content: '';
-    position: absolute;
-    inset: calc(-2 * var(--dp));
-    border-radius: inherit;
-    background: conic-gradient(
-        from 0deg,
-        transparent 0%,
-        color-mix(in srgb, var(--accent-color, #0066cc) 15%, rgba(255,255,255,0.1)) 8%,
-        color-mix(in srgb, var(--accent-color, #0066cc) 50%, rgba(255,255,255,0.3)) 16%,
-        var(--accent-color, #0066cc) 22%,
-        color-mix(in srgb, var(--accent-color, #0066cc) 50%, rgba(255,255,255,0.3)) 28%,
-        color-mix(in srgb, var(--accent-color, #0066cc) 15%, rgba(255,255,255,0.1)) 36%,
-        transparent 50%
-    );
-    animation: dock-spin-light 2s linear infinite;
-    z-index: -2;
-}
-.dock-btn.has-running::after {
-    content: '';
-    position: absolute;
-    inset: calc(1.5 * var(--dp));
-    border-radius: inherit;
-    background: var(--bg-primary);
-    z-index: -1;
-}
-
-@keyframes dock-spin-light {
-    to { transform: rotate(360deg); }
-}
-
-.dock-btn.just-completed {
-    animation: dock-completed-flash 0.5s ease-out;
-}
-
-@keyframes dock-completed-flash {
-    0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color, #0066cc) 0%, transparent); }
-    30% { transform: scale(1.2); box-shadow: 0 0 12px 4px color-mix(in srgb, var(--accent-color, #0066cc) 50%, transparent); }
-    60% { transform: scale(1.1); box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent); }
-    100% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color, #0066cc) 0%, transparent); }
-}
-
-.dock-btn.quote-emit-receive {
-    animation: quote-emit-pulse 0.4s ease-out;
-}
-
-@keyframes quote-emit-pulse {
-    0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color, #0066cc) 60%, transparent); }
-    40% { transform: scale(1.25); box-shadow: 0 0 14px 4px color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent); }
-    100% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color, #0066cc) 0%, transparent); }
-}
-
 /* Overflow menu */
 .dock-overflow-wrapper {
     position: relative;
@@ -5658,47 +5204,6 @@ onUnmounted(() => {
     border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
     transform: rotate(45deg);
 }
-
-.dock-overflow-item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-5);
-    width: 100%;
-    padding: var(--space-4) var(--space-6);
-    border: none;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: var(--font-size-md);
-    cursor: pointer;
-    transition: background var(--duration-base), color var(--duration-base);
-    white-space: nowrap;
-}
-
-.dock-overflow-item:hover {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-}
-
-@media (hover: none) {
-    .dock-overflow-item:hover {
-        background: transparent;
-        color: var(--text-secondary);
-    }
-}
-
-.dock-overflow-item.active {
-    background: color-mix(in srgb, var(--accent-color) 15%, transparent);
-    color: var(--accent-color);
-}
-
-.dock-overflow-count {
-    margin-left: auto;
-    background: var(--accent-color);
-    color: #fff;
-    font-weight: var(--font-weight-bold);
-}
-
 
 /* Popup transition */
 .dock-popup-enter-active {

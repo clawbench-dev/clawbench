@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { DOCK_TAB_IDS, isDockTabId, mergeDockOrder, type DockTabId } from '@/composables/dockTabs'
 import {
   DOCK_FEATURE_TABS,
   DOCK_TABS,
   DOCK_TAB_BY_ID,
-  DOCK_TAB_IDS,
   dockTabs,
-  isDockTabId,
-  mergeDockOrder,
-  type DockTabId,
-} from '@/composables/dockTabs'
+} from '@/composables/dockPluginRuntime'
 
 const PERMANENT = DOCK_TABS.filter((t) => !t.closable).map((t) => t.id)
 const OPTIONAL = DOCK_TABS.filter((t) => t.closable).map((t) => t.id)

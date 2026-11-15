@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { defineComponent } from 'vue'
 import DockPluginSetting from '@/components/settings/DockPluginSetting.vue'
-import { DOCK_TABS } from '@/composables/dockTabs'
+import { DOCK_TABS } from '@/composables/dockPluginRuntime'
 import {
   _resetDockPluginsForTest,
   isDockTabHidden,
@@ -12,7 +12,7 @@ import {
 } from '@/composables/useDockPlugins'
 import * as settingsMod from '@/composables/useSettingsConfig'
 import { isDockPluginAvailable } from '@/composables/dockPluginRuntime'
-import { syncFeatureConfig } from '@/composables/useFeatureFlags'
+import { syncFeatureConfig, syncServerFeatures } from '@/composables/useFeatureFlags'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
 import { categoryItems } from '@/components/settings/settingsFieldMap'
 import zh from '@/i18n/locales/zh'
@@ -39,8 +39,11 @@ vi.mock('@/composables/useSettingsConfig', async () => {
     const group = (serverConfig.value[section] ??= {}) as Record<string, unknown>
     group[key] = value
     // The real implementation reloads the config after a PATCH, and loadConfig
-    // is what pushes the snapshot into useFeatureFlags.
+    // pushes BOTH snapshots into the readers: the config snapshot AND the
+    // feature registry (`/api/features`), which is the authority for the master
+    // switches (see useFeatureFlags).
     syncFeatureConfig(serverConfig.value)
+    syncServerFeatures(featureRowsFromConfig(serverConfig.value))
     return { needsRestart: false, changedColdFields: [], warnings: [] }
   })
   const patchConfig = vi.fn(async () => ({
@@ -67,14 +70,19 @@ vi.mock('@/composables/useSettingsConfig', async () => {
   }
 })
 
-// The dock runtime imports every feature's dock.ts; the manager only asks two
-// questions of it (is this usable here, and why not).
-vi.mock('@/composables/dockPluginRuntime', () => ({
-  isDockPluginAvailable: vi.fn(() => true),
-  dockUnavailableReasonKey: vi.fn((id: string) =>
-    id === 'terminal' ? 'settings.dockPlugins.unavailable.terminal' : undefined,
-  ),
-}))
+// The manager only asks two questions of the runtime (is this usable here, and
+// why not), but it also needs the real manifest to render its rows — so keep
+// the module's own exports and override just those two predicates.
+vi.mock('@/composables/dockPluginRuntime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/dockPluginRuntime')>()
+  return {
+    ...actual,
+    isDockPluginAvailable: vi.fn(() => true),
+    dockUnavailableReasonKey: vi.fn((id: string) =>
+      id === 'terminal' ? 'settings.dockPlugins.unavailable.terminal' : undefined,
+    ),
+  }
+})
 
 // A real confirmation dialog would wait forever with no DialogOverlay mounted.
 vi.mock('@/composables/useDialog', () => ({
@@ -122,9 +130,19 @@ function row(wrapper: ReturnType<typeof mountSetting>, id: string) {
  * `useFeatureFlags`, which keeps a snapshot pushed by `loadConfig`, so the test
  * has to push it too.
  */
+/** Build `/api/features` rows for every registered master switch. */
+function featureRowsFromConfig(cfg: Record<string, unknown>) {
+  return ['forge', 'mail', 'terminal', 'kb', 'tasks', 'share'].map((id) => {
+    const section = cfg[id] as { enabled?: unknown } | undefined
+    const enabled = section?.enabled === undefined ? true : section.enabled === true
+    return { id, enabled, available: true, reason: enabled ? '' : 'disabled', defaultOn: true }
+  })
+}
+
 function setServerConfig(cfg: Record<string, unknown>) {
   mocks.serverConfig.value = cfg
   syncFeatureConfig(cfg)
+  syncServerFeatures(featureRowsFromConfig(cfg))
 }
 
 describe('DockPluginSetting', () => {

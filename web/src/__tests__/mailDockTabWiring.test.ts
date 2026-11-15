@@ -4,17 +4,19 @@ import { readWebFile } from '@/testUtils/readWebFile'
 /**
  * The mail feature's master switch is a server setting that hides the dock
  * entry, and its unread poller is a background resource. Both used to be wired
- * in App.vue; they live in `components/mail/dock.ts` now. These assertions pin
+ * in App.vue; they live in `plugins/mail/plugin.ts` now. These assertions pin
  * the wiring so a future refactor cannot silently leave the switch or the
  * poller disconnected.
  */
 describe('mail dock runtime', () => {
-  const mail = readWebFile('src/components/mail/dock.ts')
+  const mail = readWebFile('src/plugins/mail/plugin.ts')
 
-  it('reads the switch from the SERVER config, not a per-device preference', () => {
-    expect(mail).toContain('serverConfig')
-    expect(mail).toContain('.enabled !== false')
+  it('declares the server feature switch and leaves the value to the registry', () => {
+    // The manifest names the switch; the value comes from /api/features (the
+    // plugin registry), so there is no second config read here.
+    expect(mail).toContain("feature: 'mail.enabled'")
     expect(mail, 'the per-device key must not drive this').not.toContain('localConfig')
+    expect(mail, 'availability is the capability axis').not.toContain('available:')
   })
 
   it('feeds the unread badge from the mail composable', () => {
@@ -57,7 +59,10 @@ describe('App.vue consumes the mail runtime', () => {
     const start = app.indexOf('function applyProjectPanel')
     expect(start).toBeGreaterThan(-1)
     const body = app.slice(start, start + 800)
-    expect(body).toContain('isMailTabHidden.value')
+    // Generic now: any blocked tab (hidden / switched off / unavailable) falls
+    // back to the layout default instead of a per-plugin boolean.
+    expect(body).toContain('dockAvailability.value')
+    expect(body).toContain('resolvePanelTab(')
   })
 
   it('leaves the poller to the lifecycle, not to App.vue', () => {
