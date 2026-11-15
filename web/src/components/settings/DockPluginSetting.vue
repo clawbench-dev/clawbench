@@ -50,7 +50,7 @@
             class="plugin-drag-handle"
             :title="t('settings.dockPlugins.dragHandle')"
             aria-hidden="true"
-          >≡</span>
+          ><GripVertical :size="16" /></span>
 
           <div class="plugin-row__main">
             <div class="plugin-row__text">
@@ -108,6 +108,7 @@ import {
   CodeXml,
   Feather,
   FolderOpen,
+  GripVertical,
   Settings as SettingsIcon,
 } from 'lucide-vue-next'
 import { VueDraggable } from 'vue-draggable-plus'
@@ -533,13 +534,11 @@ async function onPreset(next: Exclude<DockPreset, 'custom'>): Promise<void> {
   flex-shrink: 0;
   /* Fixed width (the icon's own size) so every row's icon stays aligned. */
   width: var(--icon-size-md);
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: grab;
   color: var(--text-muted);
-  /* 2xl, matching the agents list's handle: this is a glyph, not row text, so
-     it must not sit on the row-label step (see settingsRowTypography sweep). */
-  font-size: var(--font-size-2xl);
-  line-height: 1;
   user-select: none;
 }
 

@@ -91,6 +91,7 @@ vi.mock('@/composables/useToast', () => ({
 vi.mock('lucide-vue-next', () => ({
   ChevronRight: { name: 'ChevronRight', template: '<span class="icon-chevron" />' },
   Copy: { name: 'Copy', template: '<span class="icon-copy" />' },
+  GripVertical: { name: 'GripVertical', template: '<span class="icon-grip" />' },
   Plus: { name: 'Plus', template: '<span class="icon-plus" />' },
   RefreshCw: { name: 'RefreshCw', template: '<span class="icon-refresh" />' },
 }))
@@ -388,6 +389,20 @@ describe('SettingsAgentsIndex', () => {
     ]
     const wrapper = mountIndex()
     expect(wrapper.findAll('.settings-agents-index__drag-handle')).toHaveLength(1)
+  })
+
+  // Style alignment with the other settings pages: rows are transparent rows
+  // INSIDE the shared SettingsCard, not a full-bleed slab of --bg-secondary.
+  it('renders actions and agent rows inside the shared settings card', () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
+    ]
+    const wrapper = mountIndex()
+    const card = wrapper.find('.settings-card__body')
+    expect(card.exists()).toBe(true)
+    expect(card.find('[data-action="agent-create"]').exists()).toBe(true)
+    expect(card.find('[data-action="agent-rescan"]').exists()).toBe(true)
+    expect(card.find('.settings-agents-index__row').exists()).toBe(true)
   })
 
   it('onDragEnd persists the local order via reorderAgents', async () => {

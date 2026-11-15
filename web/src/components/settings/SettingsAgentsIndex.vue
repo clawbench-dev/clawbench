@@ -1,46 +1,51 @@
 <template>
   <div class="settings-agents-index">
-    <!-- Create a custom ACP agent (issue #557). Sits above the rescan row so
-         the two "add something" actions read together: rescan discovers
-         installed CLIs, this one adds a tool that has no built-in backend. -->
-    <div class="settings-agents-index__rescan-row" data-action="agent-create" @click="openCreate">
-      <span class="settings-agents-index__rescan-label">{{ t('settings.items.agentCreateAcp') }}</span>
-      <Plus :size="16" class="settings-agents-index__rescan-icon" />
-    </div>
-    <!-- Rescan row -->
-    <div class="settings-agents-index__rescan-row refresh-spin" data-action="agent-rescan" :class="{ 'settings-agents-index__rescan-row--disabled': rescanning, 'refresh-spin--active': rescanning }" @click="handleRescan">
-      <span class="settings-agents-index__rescan-label">{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
-      <RefreshCw :size="16" class="settings-agents-index__rescan-icon" />
-    </div>
-    <VueDraggable
-      v-if="localAgents.length > 0"
-      v-model="localAgents"
-      handle=".settings-agents-index__drag-handle"
-      @end="onDragEnd"
-    >
-      <div
-        v-for="agent in localAgents"
-        :key="agent.id"
-        class="settings-agents-index__row"
-        @click="$emit('navigate', `agents:${agent.id}`)"
+    <!-- One card, like every other settings page: the actions and the agent
+         rows are rows of the same group, so they share the card surface, the
+         rounded corners and the inset dividers instead of painting a
+         full-bleed slab of --bg-secondary that hid the page surface. -->
+    <SettingsCard>
+      <!-- Create a custom ACP agent (issue #557). Sits above the rescan row so
+           the two "add something" actions read together: rescan discovers
+           installed CLIs, this one adds a tool that has no built-in backend. -->
+      <div class="settings-agents-index__action-row" data-action="agent-create" @click="openCreate">
+        <span class="settings-agents-index__action-label">{{ t('settings.items.agentCreateAcp') }}</span>
+        <Plus :size="16" class="settings-agents-index__action-icon" />
+      </div>
+      <!-- Rescan row -->
+      <div class="settings-agents-index__action-row refresh-spin" data-action="agent-rescan" :class="{ 'settings-agents-index__action-row--disabled': rescanning, 'refresh-spin--active': rescanning }" @click="handleRescan">
+        <span class="settings-agents-index__action-label">{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
+        <RefreshCw :size="16" class="settings-agents-index__action-icon" />
+      </div>
+      <VueDraggable
+        v-if="localAgents.length > 0"
+        v-model="localAgents"
+        handle=".settings-agents-index__drag-handle"
+        @end="onDragEnd"
       >
-        <span class="settings-agents-index__drag-handle" :title="t('settings.items.agentDragHandle')" @click.stop>≡</span>
-        <div class="settings-agents-index__left">
-          <span class="settings-agents-index__icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" size="md" /></span>
-          <div class="settings-agents-index__text">
-            <div class="settings-agents-index__name-row">
-              <span class="settings-agents-index__name">{{ agent.name }}</span>
-              <span v-if="agent.id === defaultAgentId" class="settings-agents-index__default-badge">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+        <div
+          v-for="agent in localAgents"
+          :key="agent.id"
+          class="settings-agents-index__row"
+          @click="$emit('navigate', `agents:${agent.id}`)"
+        >
+          <span class="settings-agents-index__drag-handle" :title="t('settings.items.agentDragHandle')" @click.stop><GripVertical :size="16" /></span>
+          <div class="settings-agents-index__left">
+            <span class="settings-agents-index__icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" size="md" /></span>
+            <div class="settings-agents-index__text">
+              <div class="settings-agents-index__name-row">
+                <span class="settings-agents-index__name">{{ agent.name }}</span>
+                <span v-if="agent.id === defaultAgentId" class="settings-agents-index__default-badge">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+              </div>
+              <span v-if="agent.specialty" class="settings-agents-index__specialty">{{ agent.specialty }}</span>
             </div>
-            <span v-if="agent.specialty" class="settings-agents-index__specialty">{{ agent.specialty }}</span>
           </div>
         </div>
-        <ChevronRight class="settings-agents-index__arrow" :size="18" />
+      </VueDraggable>
+      <div v-else class="settings-agents-index__empty">
+        {{ t('settings.items.agentNoAgents') }}
       </div>
-    </VueDraggable>
-    <div v-if="agentList.length === 0" class="settings-agents-index__empty">
-      {{ t('settings.items.agentNoAgents') }}
-    </div>
+    </SettingsCard>
     <CreateAcpAgentDialog
       :open="createOpen"
       :error-message="createError"
@@ -52,13 +57,14 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ChevronRight, Plus, RefreshCw } from 'lucide-vue-next'
+import { GripVertical, Plus, RefreshCw } from 'lucide-vue-next'
 import { VueDraggable } from 'vue-draggable-plus'
 import { useI18n } from 'vue-i18n'
 import { useAgents } from '@/composables/useAgents'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useToast } from '@/composables/useToast'
 import CreateAcpAgentDialog from './CreateAcpAgentDialog.vue'
+import SettingsCard from './SettingsCard.vue'
 
 const emit = defineEmits<{
   navigate: [categoryId: string]
@@ -159,59 +165,22 @@ async function handleRescan() {
 
 <style scoped>
 .settings-agents-index {
-  padding: var(--space-4) 0;
+  padding: var(--space-4);
   /* Shared page surface (see --panel-page-bg). */
   background: var(--panel-page-bg);
   min-height: 100%;
 }
 
-.settings-agents-index__rescan-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: calc(38 * var(--dp));
-  padding: var(--space-4) var(--space-7);
-  cursor: pointer;
-  background: var(--bg-secondary);
-  position: relative;
+/* The trailing gap after the last card is redundant page padding (same rule as
+   SettingsIndex). */
+.settings-agents-index > :deep(.settings-card:last-child) {
+  margin-bottom: 0;
 }
 
-.settings-agents-index__rescan-row::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 0.5px;
-  background: var(--border-color);
-}
-
-@media (hover: hover) {
-  .settings-agents-index__rescan-row:hover {
-    background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
-  }
-}
-
-.settings-agents-index__rescan-row:active {
-  background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
-}
-
-.settings-agents-index__rescan-label {
-  font-size: var(--font-size-md);
-  color: var(--text-primary);
-}
-
-.settings-agents-index__rescan-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.settings-agents-index__rescan-row--disabled {
-  opacity: var(--opacity-muted);
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
+/* Rows are transparent like every other in-card settings row: the card body
+   owns the surface, so hover has to mix against --bg-secondary (a
+   --bg-secondary hover would vanish into the card). */
+.settings-agents-index__action-row,
 .settings-agents-index__row {
   display: flex;
   align-items: center;
@@ -220,29 +189,57 @@ async function handleRescan() {
   padding: var(--space-4) var(--space-7);
   cursor: pointer;
   gap: var(--space-6);
-  background: var(--bg-secondary);
+  background: transparent;
   position: relative;
 }
 
+/* Action rows carry no leading glyph, so their divider starts at the row's own
+   text inset; agent rows start after the drag handle + avatar. */
+.settings-agents-index__action-row:not(:last-child)::after,
 .settings-agents-index__row:not(:last-child)::after {
   content: '';
   position: absolute;
   bottom: 0;
-  /* Inset to the text start: row padding + drag handle + row gap + icon + gap. */
-  left: calc(var(--space-7) + var(--icon-size-md) + var(--space-6) + var(--icon-size-md) + var(--space-6));
   right: 0;
   height: 0.5px;
   background: var(--border-color);
 }
 
+.settings-agents-index__action-row:not(:last-child)::after {
+  left: calc(16 * var(--dp));
+}
+
+.settings-agents-index__row:not(:last-child)::after {
+  /* Inset to the text start: row padding + drag handle + row gap + icon + gap. */
+  left: calc(var(--space-7) + var(--icon-size-md) + var(--space-6) + var(--icon-size-md) + var(--space-6));
+}
+
 @media (hover: hover) {
+  .settings-agents-index__action-row:hover,
   .settings-agents-index__row:hover {
     background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
   }
 }
 
+.settings-agents-index__action-row:active,
 .settings-agents-index__row:active {
   background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
+}
+
+.settings-agents-index__action-label {
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+}
+
+.settings-agents-index__action-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.settings-agents-index__action-row--disabled {
+  opacity: var(--opacity-muted);
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .settings-agents-index__drag-handle {
@@ -250,11 +247,11 @@ async function handleRescan() {
   /* Fixed width (the icon's own size) so the divider inset below stays aligned
      no matter how wide the glyph renders. */
   width: var(--icon-size-md);
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: grab;
   color: var(--text-muted);
-  font-size: var(--font-size-2xl);
-  line-height: 1;
   user-select: none;
 }
 
@@ -315,12 +312,6 @@ async function handleRescan() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.settings-agents-index__arrow {
-  flex-shrink: 0;
-  color: var(--text-muted);
-  margin-left: var(--space-2);
 }
 
 .settings-agents-index__empty {

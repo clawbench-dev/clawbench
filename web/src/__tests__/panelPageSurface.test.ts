@@ -44,7 +44,10 @@ const CARD_SURFACES: Array<[file: string, selector: string]> = [
   ['src/components/settings/SettingsCard.vue', '.settings-card__body'],
   ['src/components/settings/SettingsGroupPanel.vue', '.group-panel__card'],
   ['src/components/settings/DockPluginSetting.vue', '.preset-card'],
-  ['src/components/settings/SettingsAgentsIndex.vue', '.settings-agents-index__row'],
+  // SettingsAgentsIndex deliberately has no entry: its rows are transparent
+  // rows inside the shared SettingsCard (like SettingsIndex), not cards. The
+  // row used to paint --bg-secondary full-bleed, which hid the page surface and
+  // dropped the rounded card the rest of the settings pages use.
   ['src/components/share/ShareCenterPanel.vue', '.share-row'],
   ['src/components/notifications/NotificationsPanelContent.vue', '.nc-main'],
   ['src/components/task/TaskListPage.vue', '.task-item'],
