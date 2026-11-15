@@ -204,3 +204,13 @@ const MaxToolOutputBytes = maxToolOutputBytes
 // IsGrokCompactionCompleted reports whether a Grok event type marks the end of
 // a context compaction.
 func IsGrokCompactionCompleted(eventType string) bool { return isGrokCompactionCompleted(eventType) }
+
+// ScannerInitial / ScannerMax are the shared stdout scanner buffer bounds.
+const (
+	ScannerInitial = scannerInitial
+	ScannerMax     = scannerMax
+)
+
+// IsCLICompactionMessage reports whether a parsed CLI stream message carries a
+// compaction signal.
+func IsCLICompactionMessage(msg *ClaudeStreamMessage) bool { return isCLICompactionMessage(msg) }

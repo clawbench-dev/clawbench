@@ -53,6 +53,6 @@ func TestExtractContentText_ArrayWithEmptyText(t *testing.T) {
 }
 
 func TestStreamParser_GetCapturedSessionID(t *testing.T) {
-	p := &StreamParser{}
+	p := &testLineParser{}
 	assert.Equal(t, "", p.GetCapturedSessionID())
 }

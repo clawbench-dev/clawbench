@@ -48,7 +48,7 @@ func newClaudeBackend() ai.AIBackend {
 		BackendName:  "claude",
 		Cmd:          "claude",
 		BuildArgsFn:  buildClaudeStreamArgs,
-		NewParserFn:  func() ai.LineParser { return &ai.StreamParser{} },
+		NewParserFn:  func() ai.LineParser { return NewStreamParser() },
 		FilterLineFn: nil, // skip empty lines only (default)
 		PreStartFn: func(cmd *exec.Cmd, req ai.ChatRequest) {
 			// Claude CLI in --print mode with stdout piped (non-TTY) requires prompt

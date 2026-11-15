@@ -49,7 +49,7 @@ func init() {
 					return []string{"--verbose"}
 				})
 			},
-			NewParserFn: func() LineParser { return &StreamParser{} },
+			NewParserFn: func() LineParser { return &testLineParser{} },
 			PreStartFn: func(cmd *exec.Cmd, req ChatRequest) {
 				cmd.Stdin = strings.NewReader(req.Prompt)
 			},
@@ -64,7 +64,7 @@ func init() {
 			BuildArgsFn: func(req ChatRequest) []string {
 				return BuildBaseStreamArgs(req, nil)
 			},
-			NewParserFn: func() LineParser { return &StreamParser{} },
+			NewParserFn: func() LineParser { return &testLineParser{} },
 			FilterLineFn: func(line string) (string, bool) {
 				line = strings.TrimPrefix(line, "\xEF\xBB\xBF")
 				if line == "" {
@@ -108,7 +108,7 @@ func init() {
 			BackendName: "qoder",
 			Cmd:         "qodercli",
 			BuildArgsFn: buildQoderArgs,
-			NewParserFn: func() LineParser { return &StreamParser{} },
+			NewParserFn: func() LineParser { return &testLineParser{} },
 			PreStartFn: func(cmd *exec.Cmd, req ChatRequest) {
 				cmd.Stdin = strings.NewReader(req.Prompt)
 			},
@@ -152,7 +152,7 @@ func init() {
 				}
 				return args
 			},
-			NewParserFn: func() LineParser { return &StreamParser{} },
+			NewParserFn: func() LineParser { return &testLineParser{} },
 			FilterLineFn: func(line string) (string, bool) {
 				if line == "" || !strings.HasPrefix(line, "{") {
 					return "", false

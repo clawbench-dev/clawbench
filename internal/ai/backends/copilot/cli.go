@@ -6,6 +6,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/model"
 )
 
@@ -36,7 +37,7 @@ func newCopilotBackend() ai.AIBackend {
 		BackendName: "copilot",
 		Cmd:         "copilot",
 		BuildArgsFn: buildCopilotStreamArgs,
-		NewParserFn: func() ai.LineParser { return &ai.StreamParser{} },
+		NewParserFn: func() ai.LineParser { return claude.NewStreamParser() },
 		FilterLineFn: func(line string) (string, bool) {
 			if line == "" || !strings.HasPrefix(line, "{") {
 				return "", false

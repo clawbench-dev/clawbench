@@ -1,20 +1,24 @@
-package ai
+package claude
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 	"time"
+
+	"clawbench/internal/ai"
 )
 
 // parseLine is a test helper that creates a StreamParser, parses one line, and returns the events.
-func parseLine(line string) []StreamEvent {
-	ch := make(chan StreamEvent, 64)
+func parseLine(line string) []ai.StreamEvent {
+	ch := make(chan ai.StreamEvent, 64)
 	parser := &StreamParser{}
 	parser.ParseLine(line, ch)
 	close(ch)
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -22,8 +26,8 @@ func parseLine(line string) []StreamEvent {
 }
 
 // parseLines is a test helper that feeds multiple lines through a single StreamParser.
-func parseLines(lines []string) []StreamEvent {
-	ch := make(chan StreamEvent, 64)
+func parseLines(lines []string) []ai.StreamEvent {
+	ch := make(chan ai.StreamEvent, 64)
 	parser := &StreamParser{}
 	for _, line := range lines {
 		if line != "" {
@@ -32,7 +36,7 @@ func parseLines(lines []string) []StreamEvent {
 	}
 	close(ch)
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -40,10 +44,10 @@ func parseLines(lines []string) []StreamEvent {
 }
 
 func TestStreamParser_AssistantContent(t *testing.T) {
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "text", Text: "Hello, world!"},
 			},
 		},
@@ -80,10 +84,10 @@ func TestStreamParser_SystemEventsSkipped(t *testing.T) {
 }
 
 func TestStreamParser_MultipleContentBlocks(t *testing.T) {
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "text", Text: "First block"},
 				{Type: "tool_use", ID: "tool1", Name: "Read"},
 				{Type: "text", Text: "Second block"},
@@ -119,18 +123,18 @@ func TestStreamParser_MultipleContentBlocks(t *testing.T) {
 }
 
 func TestStreamParser_ResultMetadata(t *testing.T) {
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type:         "result",
 		Subtype:      "success",
 		DurationMs:   5000,
 		TotalCostUSD: 0.05,
 		SessionID:    "sess-123",
 		IsError:      false,
-		Usage: &ClaudeStreamUsage{
+		Usage: &ai.ClaudeStreamUsage{
 			InputTokens:  100,
 			OutputTokens: 200,
 		},
-		ModelUsage: map[string]ClaudeStreamModelUsage{
+		ModelUsage: map[string]ai.ClaudeStreamModelUsage{
 			"claude-3-5-sonnet": {InputTokens: 100, OutputTokens: 200},
 		},
 	}
@@ -176,7 +180,7 @@ func TestStreamParser_ResultMetadata(t *testing.T) {
 }
 
 func TestStreamParser_ResultWithIsError(t *testing.T) {
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type:      "result",
 		IsError:   true,
 		Result:    "something went wrong",
@@ -258,10 +262,10 @@ func TestStreamParser_ThinkingDedup(t *testing.T) {
 
 func TestStreamParser_ClaudeThinkingBlock(t *testing.T) {
 	// Claude without --include-partial-messages: thinking comes in assistant message
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "thinking", Thinking: "Deep analysis here..."},
 				{Type: "text", Text: "The answer is 42."},
 			},
@@ -351,7 +355,7 @@ func TestStreamParser_ToolUseStartStop(t *testing.T) {
 	events := parseLines(lines)
 
 	// Should get 2 tool_use events: start and stop
-	// Note: both events share the same *ToolCall pointer, so after stop
+	// Note: both events share the same *ai.ToolCall pointer, so after stop
 	// sets Done=true, the start event's Tool also appears Done=true.
 	if len(events) != 2 {
 		t.Fatalf("expected 2 tool_use events, got %d", len(events))
@@ -416,7 +420,7 @@ func TestStreamParser_ConcurrentToolUse(t *testing.T) {
 	events := parseLines(lines)
 
 	// Should get: tool_A_start, tool_A_auto_closed, tool_B_start, tool_B_stop
-	toolEvents := make([]StreamEvent, 0)
+	toolEvents := make([]ai.StreamEvent, 0)
 	for _, e := range events {
 		if e.Type == "tool_use" {
 			toolEvents = append(toolEvents, e)
@@ -476,7 +480,7 @@ func TestStreamParser_MessageStartModel(t *testing.T) {
 	events := parseLines(lines)
 
 	// Find metadata event
-	var metaEvent *StreamEvent
+	var metaEvent *ai.StreamEvent
 	for i := range events {
 		if events[i].Type == "metadata" {
 			metaEvent = &events[i]
@@ -501,7 +505,7 @@ func TestStreamParser_MessageStartOverridesProviderData(t *testing.T) {
 
 	events := parseLines(lines)
 
-	var metaEvent *StreamEvent
+	var metaEvent *ai.StreamEvent
 	for i := range events {
 		if events[i].Type == "metadata" {
 			metaEvent = &events[i]
@@ -653,7 +657,7 @@ func TestStreamParser_FullCodebuddyFlow(t *testing.T) {
 	}
 
 	// Verify model from message_start
-	var metaEvent *StreamEvent
+	var metaEvent *ai.StreamEvent
 	for i := range events {
 		if events[i].Type == "metadata" {
 			metaEvent = &events[i]
@@ -672,36 +676,36 @@ func TestStreamParser_FullCodebuddyFlow(t *testing.T) {
 func TestStreamParser_FullClaudeFlow(t *testing.T) {
 	// Simulate a complete Claude streaming session (no --include-partial-messages)
 	// Claude uses --verbose which outputs full assistant messages
-	msg1 := ClaudeStreamMessage{
+	msg1 := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "thinking", Thinking: "Analyzing the code..."},
 				{Type: "tool_use", ID: "toolu_abc", Name: "Bash", Input: json.RawMessage(`{"command":"ls -la"}`)},
 			},
 		},
 	}
-	msg2 := ClaudeStreamMessage{
+	msg2 := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "tool_use", ID: "toolu_abc", Name: "Bash", Input: json.RawMessage(`{"command":"ls -la"}`)},
 				{Type: "text", Text: "Here are the files."},
 			},
 		},
 	}
-	msg3 := ClaudeStreamMessage{
+	msg3 := ai.ClaudeStreamMessage{
 		Type:       "result",
 		SessionID:  "sess-claude",
 		DurationMs: 5000,
-		Usage:      &ClaudeStreamUsage{InputTokens: 200, OutputTokens: 150},
-		ModelUsage: map[string]ClaudeStreamModelUsage{
+		Usage:      &ai.ClaudeStreamUsage{InputTokens: 200, OutputTokens: 150},
+		ModelUsage: map[string]ai.ClaudeStreamModelUsage{
 			"claude-3.5-sonnet": {InputTokens: 200, OutputTokens: 150},
 		},
 	}
 
 	lines := make([]string, 0, 3)
-	for _, msg := range []ClaudeStreamMessage{msg1, msg2, msg3} {
+	for _, msg := range []ai.ClaudeStreamMessage{msg1, msg2, msg3} {
 		data, _ := json.Marshal(msg)
 		lines = append(lines, string(data))
 	}
@@ -745,7 +749,7 @@ func TestStreamParser_FullClaudeFlow(t *testing.T) {
 	}
 
 	// Verify model from ModelUsage
-	var metaEvent *StreamEvent
+	var metaEvent *ai.StreamEvent
 	for i := range events {
 		if events[i].Type == "metadata" {
 			metaEvent = &events[i]
@@ -763,10 +767,10 @@ func TestStreamParser_FullClaudeFlow(t *testing.T) {
 
 func TestStreamParser_ToolUseFromAssistantWithInput(t *testing.T) {
 	// Tool use in assistant message should carry the full input JSON
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "tool_use", ID: "toolu_xyz", Name: "Edit", Input: json.RawMessage(`{"file_path":"/app/main.go","old_string":"hello","new_string":"world"}`)},
 			},
 		},
@@ -821,7 +825,7 @@ func TestStreamParser_ToolUseInputInContentBlockStart(t *testing.T) {
 	}
 
 	// The stop event should have the full input from content_block_start
-	var stopEvent *StreamEvent
+	var stopEvent *ai.StreamEvent
 	for i := range events {
 		if events[i].Type == "tool_use" && events[i].Tool != nil && events[i].Tool.Done {
 			stopEvent = &events[i]
@@ -852,7 +856,7 @@ func TestStreamParser_ToolUseInputInContentBlockStartWithDelta(t *testing.T) {
 	events := parseLines(lines)
 
 	// Find the stop event
-	var stopEvent *StreamEvent
+	var stopEvent *ai.StreamEvent
 	for i := range events {
 		if events[i].Type == "tool_use" && events[i].Tool != nil && events[i].Tool.Done {
 			stopEvent = &events[i]
@@ -887,7 +891,7 @@ func TestStreamParser_EmptyInputInStartDoesNotCorruptDelta(t *testing.T) {
 	events := parseLines(lines)
 
 	// Find the stop event
-	var stopEvent *StreamEvent
+	var stopEvent *ai.StreamEvent
 	for i := range events {
 		if events[i].Type == "tool_use" && events[i].Tool != nil && events[i].Tool.Done {
 			stopEvent = &events[i]
@@ -943,7 +947,7 @@ func TestStreamParser_InterleavedToolUse(t *testing.T) {
 	events := parseLines(lines)
 
 	// Should get 6 tool_use events: 3 starts + 3 stops
-	toolEvents := make([]StreamEvent, 0)
+	toolEvents := make([]ai.StreamEvent, 0)
 	for _, e := range events {
 		if e.Type == "tool_use" {
 			toolEvents = append(toolEvents, e)
@@ -1087,7 +1091,7 @@ func TestStreamParser_ToolResultContentBlockStreaming(t *testing.T) {
 	events := parseLines(lines)
 
 	// Expected: tool_use start, tool_use stop, tool_result
-	var toolResultEvents []StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, e := range events {
 		if e.Type == "tool_result" {
 			toolResultEvents = append(toolResultEvents, e)
@@ -1125,7 +1129,7 @@ func TestStreamParser_ToolResultContentBlockWithError(t *testing.T) {
 
 	events := parseLines(lines)
 
-	var toolResultEvents []StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, e := range events {
 		if e.Type == "tool_result" {
 			toolResultEvents = append(toolResultEvents, e)
@@ -1154,7 +1158,7 @@ func TestStreamParser_ToolResultContentBlockWithInitialContent(t *testing.T) {
 
 	events := parseLines(lines)
 
-	var toolResultEvents []StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, e := range events {
 		if e.Type == "tool_result" {
 			toolResultEvents = append(toolResultEvents, e)
@@ -1180,7 +1184,7 @@ func TestStreamParser_ToolResultContentBlockWithIDFallback(t *testing.T) {
 
 	events := parseLines(lines)
 
-	var toolResultEvents []StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, e := range events {
 		if e.Type == "tool_result" {
 			toolResultEvents = append(toolResultEvents, e)
@@ -1215,7 +1219,7 @@ func TestStreamParser_ToolResultTextDeltaDoesNotLeakAsContent(t *testing.T) {
 	events := parseLines(lines)
 
 	// Count content events — only the post-tool-result text should be content
-	var contentEvents []StreamEvent
+	var contentEvents []ai.StreamEvent
 	for _, e := range events {
 		if e.Type == "content" {
 			contentEvents = append(contentEvents, e)
@@ -1230,7 +1234,7 @@ func TestStreamParser_ToolResultTextDeltaDoesNotLeakAsContent(t *testing.T) {
 	}
 
 	// Verify the tool_result was properly captured
-	var toolResultEvents []StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, e := range events {
 		if e.Type == "tool_result" {
 			toolResultEvents = append(toolResultEvents, e)
@@ -1246,10 +1250,10 @@ func TestStreamParser_ToolResultTextDeltaDoesNotLeakAsContent(t *testing.T) {
 
 func TestStreamParser_ToolResultInAssistantVerbose(t *testing.T) {
 	// Tool result in assistant verbose format (non-streaming)
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "tool_use", ID: "toolu_v1", Name: "Read", Input: json.RawMessage(`{"file_path":"/a.go"}`)},
 				{Type: "tool_result", ID: "toolu_v1", Content: json.RawMessage(`"file contents"`), IsError: false},
 				{Type: "text", Text: "Here is the file."},
@@ -1261,7 +1265,7 @@ func TestStreamParser_ToolResultInAssistantVerbose(t *testing.T) {
 	events := parseLine(string(data))
 
 	// Expected: tool_use, tool_result, content
-	var toolResultEvents []StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, e := range events {
 		if e.Type == "tool_result" {
 			toolResultEvents = append(toolResultEvents, e)
@@ -1282,10 +1286,10 @@ func TestStreamParser_ToolResultInAssistantVerbose(t *testing.T) {
 }
 
 func TestStreamParser_ToolResultInAssistantVerboseError(t *testing.T) {
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "tool_result", ID: "toolu_err1", Content: json.RawMessage(`"permission denied"`), IsError: true},
 			},
 		},
@@ -1294,7 +1298,7 @@ func TestStreamParser_ToolResultInAssistantVerboseError(t *testing.T) {
 
 	events := parseLine(string(data))
 
-	var toolResultEvents []StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, e := range events {
 		if e.Type == "tool_result" {
 			toolResultEvents = append(toolResultEvents, e)
@@ -1310,10 +1314,10 @@ func TestStreamParser_ToolResultInAssistantVerboseError(t *testing.T) {
 
 func TestStreamParser_ToolResultInAssistantVerboseTextFallback(t *testing.T) {
 	// When Content is empty but Text is present, use Text as output
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "tool_result", ID: "toolu_tf1", Text: "text fallback output"},
 			},
 		},
@@ -1322,7 +1326,7 @@ func TestStreamParser_ToolResultInAssistantVerboseTextFallback(t *testing.T) {
 
 	events := parseLine(string(data))
 
-	var toolResultEvents []StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, e := range events {
 		if e.Type == "tool_result" {
 			toolResultEvents = append(toolResultEvents, e)
@@ -1356,7 +1360,7 @@ func TestStreamParser_EmptyInputJsonDeltaSupplementedByAssistant(t *testing.T) {
 	events := parseLines(lines)
 
 	// Collect all tool_use events
-	var toolUseEvents []StreamEvent
+	var toolUseEvents []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "tool_use" {
 			toolUseEvents = append(toolUseEvents, ev)
@@ -1444,7 +1448,7 @@ func TestStreamParser_ToolResultInUserMessage(t *testing.T) {
 
 	events := parseLines(lines)
 
-	var toolResultEvents []StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "tool_result" {
 			toolResultEvents = append(toolResultEvents, ev)
@@ -1473,7 +1477,7 @@ func TestStreamParser_ToolResultInUserMessageError(t *testing.T) {
 
 	events := parseLines(lines)
 
-	var toolResultEvents []StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "tool_result" {
 			toolResultEvents = append(toolResultEvents, ev)
@@ -1511,8 +1515,8 @@ func TestStreamParser_FullFlowWithEmptyInputJsonDeltaAndUserToolResult(t *testin
 
 	events := parseLines(lines)
 
-	var toolUseEvents []StreamEvent
-	var toolResultEvents []StreamEvent
+	var toolUseEvents []ai.StreamEvent
+	var toolResultEvents []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "tool_use" {
 			toolUseEvents = append(toolUseEvents, ev)
@@ -1623,26 +1627,26 @@ func TestStreamParser_ResumeDedup_AssistantVerboseWithoutDelta(t *testing.T) {
 	// Each assistant message represents a complete turn — no dedup needed.
 	// This tests the scenario where message_start resets flags correctly
 	// even without prior deltas.
-	msg1 := ClaudeStreamMessage{
+	msg1 := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "thinking", Thinking: "First thought"},
 				{Type: "text", Text: "First response."},
 			},
 		},
 	}
-	msg2 := ClaudeStreamMessage{
+	msg2 := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "text", Text: "Second response after tool."},
 			},
 		},
 	}
 
 	lines := make([]string, 0, 2)
-	for _, msg := range []ClaudeStreamMessage{msg1, msg2} {
+	for _, msg := range []ai.ClaudeStreamMessage{msg1, msg2} {
 		data, _ := json.Marshal(msg)
 		lines = append(lines, string(data))
 	}
@@ -1672,7 +1676,7 @@ func TestStreamParser_ResumeDedup_AssistantVerboseWithoutDelta(t *testing.T) {
 // assistant/user branches that used to send with a blocking `ch <- ev`.
 func assertParseLineDoesNotBlock(t *testing.T, line string) {
 	t.Helper()
-	ch := make(chan StreamEvent) // unbuffered — a blocking send would hang here
+	ch := make(chan ai.StreamEvent) // unbuffered — a blocking send would hang here
 	parser := &StreamParser{}
 	done := make(chan struct{})
 	go func() {
@@ -1689,10 +1693,10 @@ func assertParseLineDoesNotBlock(t *testing.T, line string) {
 func TestStreamParser_AssistantFullChannelDoesNotBlock(t *testing.T) {
 	// assistant message with a text + tool_use block → the events loop must use
 	// the non-blocking emitStreamEvent (drop + WARN) instead of `ch <- ev`.
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type: "assistant",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "text", Text: "Hello"},
 				{Type: "tool_use", ID: "t1", Name: "Read", Input: json.RawMessage(`{"path":"a.go"}`)},
 			},
@@ -1707,10 +1711,10 @@ func TestStreamParser_AssistantFullChannelDoesNotBlock(t *testing.T) {
 
 func TestStreamParser_UserFullChannelDoesNotBlock(t *testing.T) {
 	// user message with a tool_result block → same non-blocking guarantee.
-	msg := ClaudeStreamMessage{
+	msg := ai.ClaudeStreamMessage{
 		Type: "user",
-		Message: &ClaudeStreamMessageBody{
-			Content: []ClaudeContentBlock{
+		Message: &ai.ClaudeStreamMessageBody{
+			Content: []ai.ClaudeContentBlock{
 				{Type: "tool_result", ToolUseID: "t1", Content: json.RawMessage(`[{"type":"text","text":"result"}]`)},
 			},
 		},
@@ -1720,4 +1724,43 @@ func TestStreamParser_UserFullChannelDoesNotBlock(t *testing.T) {
 		t.Fatalf("failed to marshal: %v", err)
 	}
 	assertParseLineDoesNotBlock(t, string(data))
+}
+
+func TestStreamParser_ReportsCompactionOnce(t *testing.T) {
+	p := &StreamParser{}
+	ch := make(chan ai.StreamEvent, 32)
+
+	p.ParseLine(`{"type":"system","subtype":"compact_boundary"}`, ch)
+	p.ParseLine(`{"type":"system","subtype":"compact_boundary"}`, ch)
+	p.ParseLine(`{"type":"message","_meta":{"codebuddy.ai/isCompactInternal":true}}`, ch)
+
+	detected := 0
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type == "compact_detected" {
+				detected++
+			}
+		default:
+			assert.Equal(t, 1, detected, "a compaction must be reported exactly once per parser")
+			return
+		}
+	}
+}
+
+func TestStreamParser_NoCompactionWithoutSignal(t *testing.T) {
+	p := &StreamParser{}
+	ch := make(chan ai.StreamEvent, 32)
+	p.ParseLine(`{"type":"assistant","subtype":"text","text":"hello"}`, ch)
+	p.ParseLine(`{"type":"system","subtype":"init"}`, ch)
+	p.ParseLine(`{"type":"system","subtype":"status"}`, ch)
+
+	for {
+		select {
+		case ev := <-ch:
+			assert.NotEqual(t, "compact_detected", ev.Type)
+		default:
+			return
+		}
+	}
 }

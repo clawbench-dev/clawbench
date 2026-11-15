@@ -41,7 +41,7 @@ func setupTestBackends() {
 					BackendName: backendType,
 					Cmd:         backendType,
 					BuildArgsFn: func(req ChatRequest) []string { return nil },
-					NewParserFn: func() LineParser { return &StreamParser{} },
+					NewParserFn: func() LineParser { return &testLineParser{} },
 				}
 			},
 		}

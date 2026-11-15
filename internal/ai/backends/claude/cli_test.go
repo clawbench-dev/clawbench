@@ -35,7 +35,7 @@ func TestClaudePlugin_NewBackendIsCLIBackend(t *testing.T) {
 
 	// Verify parser is a StreamParser
 	parser := clib.NewParserFn()
-	if _, ok := parser.(*ai.StreamParser); !ok {
+	if _, ok := parser.(*StreamParser); !ok {
 		t.Errorf("expected *StreamParser, got %T", parser)
 	}
 

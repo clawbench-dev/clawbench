@@ -1,24 +1,26 @@
-package ai
+package claude
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"clawbench/internal/ai"
 )
 
 func TestParseClaudeStreamToolEvent(t *testing.T) {
 	t.Run("tool_use content_block_start", func(t *testing.T) {
 		state := ClaudeStreamToolState{
-			ActiveTools: make(map[int]*ToolCall),
+			ActiveTools: make(map[int]*ai.ToolCall),
 		}
-		ch := make(chan StreamEvent, 10)
+		ch := make(chan ai.StreamEvent, 10)
 
-		msg := &ClaudeStreamMessage{
+		msg := &ai.ClaudeStreamMessage{
 			Type: "stream_event",
-			Event: &StreamEventData{
+			Event: &ai.StreamEventData{
 				Type:  "content_block_start",
 				Index: 0,
-				ContentBlock: &StreamContentBlock{
+				ContentBlock: &ai.StreamContentBlock{
 					Type: "tool_use",
 					Name: "Read",
 					ID:   "toolu_01",
@@ -29,7 +31,7 @@ func TestParseClaudeStreamToolEvent(t *testing.T) {
 		parseClaudeStreamToolEvent(msg, &state, ch)
 		close(ch)
 
-		var events []StreamEvent
+		var events []ai.StreamEvent
 		for ev := range ch {
 			events = append(events, ev)
 		}
@@ -42,18 +44,18 @@ func TestParseClaudeStreamToolEvent(t *testing.T) {
 
 	t.Run("input_json_delta accumulates input", func(t *testing.T) {
 		state := ClaudeStreamToolState{
-			ActiveTools: map[int]*ToolCall{
+			ActiveTools: map[int]*ai.ToolCall{
 				0: {Name: "Edit", ID: "toolu_01", Input: ""},
 			},
 		}
-		ch := make(chan StreamEvent, 10)
+		ch := make(chan ai.StreamEvent, 10)
 
-		msg := &ClaudeStreamMessage{
+		msg := &ai.ClaudeStreamMessage{
 			Type: "stream_event",
-			Event: &StreamEventData{
+			Event: &ai.StreamEventData{
 				Type:  "content_block_delta",
 				Index: 0,
-				Delta: &StreamDelta{
+				Delta: &ai.StreamDelta{
 					Type:        "input_json_delta",
 					PartialJSON: `{"file_path":"/test.go"`,
 				},
@@ -66,15 +68,15 @@ func TestParseClaudeStreamToolEvent(t *testing.T) {
 
 	t.Run("content_block_stop finalizes tool", func(t *testing.T) {
 		state := ClaudeStreamToolState{
-			ActiveTools: map[int]*ToolCall{
+			ActiveTools: map[int]*ai.ToolCall{
 				0: {Name: "Edit", ID: "toolu_01", Input: `{"file_path":"/test.go"}`},
 			},
 		}
-		ch := make(chan StreamEvent, 10)
+		ch := make(chan ai.StreamEvent, 10)
 
-		msg := &ClaudeStreamMessage{
+		msg := &ai.ClaudeStreamMessage{
 			Type: "stream_event",
-			Event: &StreamEventData{
+			Event: &ai.StreamEventData{
 				Type:  "content_block_stop",
 				Index: 0,
 			},
@@ -83,7 +85,7 @@ func TestParseClaudeStreamToolEvent(t *testing.T) {
 		parseClaudeStreamToolEvent(msg, &state, ch)
 		close(ch)
 
-		var events []StreamEvent
+		var events []ai.StreamEvent
 		for ev := range ch {
 			events = append(events, ev)
 		}
@@ -97,11 +99,11 @@ func TestParseClaudeStreamToolEvent(t *testing.T) {
 		state := ClaudeStreamToolState{
 			ActiveThinkingBlocks: map[int]bool{1: true},
 		}
-		ch := make(chan StreamEvent, 10)
+		ch := make(chan ai.StreamEvent, 10)
 
-		msg := &ClaudeStreamMessage{
+		msg := &ai.ClaudeStreamMessage{
 			Type: "stream_event",
-			Event: &StreamEventData{
+			Event: &ai.StreamEventData{
 				Type:  "content_block_stop",
 				Index: 1,
 			},
@@ -110,7 +112,7 @@ func TestParseClaudeStreamToolEvent(t *testing.T) {
 		parseClaudeStreamToolEvent(msg, &state, ch)
 		close(ch)
 
-		var events []StreamEvent
+		var events []ai.StreamEvent
 		for ev := range ch {
 			events = append(events, ev)
 		}
@@ -120,14 +122,14 @@ func TestParseClaudeStreamToolEvent(t *testing.T) {
 
 	t.Run("tool_result content_block_start tracks accumulator", func(t *testing.T) {
 		state := ClaudeStreamToolState{}
-		ch := make(chan StreamEvent, 10)
+		ch := make(chan ai.StreamEvent, 10)
 
-		msg := &ClaudeStreamMessage{
+		msg := &ai.ClaudeStreamMessage{
 			Type: "stream_event",
-			Event: &StreamEventData{
+			Event: &ai.StreamEventData{
 				Type:  "content_block_start",
 				Index: 2,
-				ContentBlock: &StreamContentBlock{
+				ContentBlock: &ai.StreamContentBlock{
 					Type:      "tool_result",
 					ToolUseID: "toolu_01",
 				},
@@ -142,18 +144,18 @@ func TestParseClaudeStreamToolEvent(t *testing.T) {
 
 	t.Run("text_delta in tool_result block is suppressed", func(t *testing.T) {
 		state := ClaudeStreamToolState{
-			ActiveToolResults: map[int]*toolResultAccum{
+			ActiveToolResults: map[int]*ai.ToolResultAccum{
 				2: {ToolUseID: "toolu_01"},
 			},
 		}
-		ch := make(chan StreamEvent, 10)
+		ch := make(chan ai.StreamEvent, 10)
 
-		msg := &ClaudeStreamMessage{
+		msg := &ai.ClaudeStreamMessage{
 			Type: "stream_event",
-			Event: &StreamEventData{
+			Event: &ai.StreamEventData{
 				Type:  "content_block_delta",
 				Index: 2,
-				Delta: &StreamDelta{
+				Delta: &ai.StreamDelta{
 					Type: "text_delta",
 					Text: "tool output text",
 				},
@@ -163,8 +165,8 @@ func TestParseClaudeStreamToolEvent(t *testing.T) {
 		parseClaudeStreamToolEvent(msg, &state, ch)
 		close(ch)
 
-		// No events emitted — text accumulated into toolResultAccum
-		var events []StreamEvent
+		// No events emitted — text accumulated into ai.ToolResultAccum
+		var events []ai.StreamEvent
 		for ev := range ch {
 			events = append(events, ev)
 		}
@@ -175,10 +177,10 @@ func TestParseClaudeStreamToolEvent(t *testing.T) {
 
 func TestParseClaudeAssistantToolUse(t *testing.T) {
 	t.Run("emits tool_use and tool_result blocks", func(t *testing.T) {
-		msg := &ClaudeStreamMessage{
+		msg := &ai.ClaudeStreamMessage{
 			Type: "assistant",
-			Message: &ClaudeStreamMessageBody{
-				Content: []ClaudeContentBlock{
+			Message: &ai.ClaudeStreamMessageBody{
+				Content: []ai.ClaudeContentBlock{
 					{Type: "tool_use", Name: "Read", ID: "toolu_01", Input: []byte(`{"file_path":"/test.go"}`)},
 					{Type: "tool_result", ID: "toolu_01_r", ToolUseID: "toolu_01", Content: []byte(`"file contents"`)},
 					{Type: "text", Text: "hello"},
@@ -195,10 +197,10 @@ func TestParseClaudeAssistantToolUse(t *testing.T) {
 	})
 
 	t.Run("supplements empty input when receivedPartialToolUse", func(t *testing.T) {
-		msg := &ClaudeStreamMessage{
+		msg := &ai.ClaudeStreamMessage{
 			Type: "assistant",
-			Message: &ClaudeStreamMessageBody{
-				Content: []ClaudeContentBlock{
+			Message: &ai.ClaudeStreamMessageBody{
+				Content: []ai.ClaudeContentBlock{
 					{Type: "tool_use", Name: "Edit", ID: "toolu_02", Input: []byte(`{"file_path":"/test.go","old_string":"foo","new_string":"bar"}`)},
 				},
 			},
@@ -215,7 +217,7 @@ func TestParseClaudeAssistantToolUse(t *testing.T) {
 	})
 
 	t.Run("nil message returns nil", func(t *testing.T) {
-		msg := &ClaudeStreamMessage{Type: "assistant"}
+		msg := &ai.ClaudeStreamMessage{Type: "assistant"}
 		state := ClaudeStreamToolState{}
 		events := parseClaudeAssistantToolUse(msg, &state)
 		assert.Nil(t, events)
@@ -224,10 +226,10 @@ func TestParseClaudeAssistantToolUse(t *testing.T) {
 
 func TestParseClaudeUserToolResult(t *testing.T) {
 	t.Run("extracts tool_result from user message", func(t *testing.T) {
-		msg := &ClaudeStreamMessage{
+		msg := &ai.ClaudeStreamMessage{
 			Type: "user",
-			Message: &ClaudeStreamMessageBody{
-				Content: []ClaudeContentBlock{
+			Message: &ai.ClaudeStreamMessageBody{
+				Content: []ai.ClaudeContentBlock{
 					{Type: "tool_result", ToolUseID: "toolu_01", Content: []byte(`"output text"`)},
 					{Type: "text", Text: "ignored"},
 				},
@@ -241,7 +243,7 @@ func TestParseClaudeUserToolResult(t *testing.T) {
 	})
 
 	t.Run("nil message returns nil", func(t *testing.T) {
-		msg := &ClaudeStreamMessage{Type: "user"}
+		msg := &ai.ClaudeStreamMessage{Type: "user"}
 		events := parseClaudeUserToolResult(msg)
 		assert.Nil(t, events)
 	})

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends/claude"
 )
 
 // NewCLIBackend builds the CLIBackend used by both Qoder distributions.
@@ -24,7 +25,7 @@ func NewCLIBackend(backendName, cmd string) *ai.CLIBackend {
 		BackendName:  backendName,
 		Cmd:          cmd,
 		BuildArgsFn:  BuildStreamArgs,
-		NewParserFn:  func() ai.LineParser { return &ai.StreamParser{} },
+		NewParserFn:  func() ai.LineParser { return claude.NewStreamParser() },
 		FilterLineFn: nil, // skip empty lines only (default)
 		PreStartFn: func(cmd *exec.Cmd, req ai.ChatRequest) {
 			// Qoder CLI in --print mode with stdout piped (non-TTY) requires

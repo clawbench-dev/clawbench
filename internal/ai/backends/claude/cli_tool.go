@@ -1,15 +1,17 @@
-package ai
+package claude
 
 import (
 	"log/slog"
+
+	"clawbench/internal/ai"
 )
 
 // ClaudeStreamToolState encapsulates StreamParser's tool-call-related state,
 // passed as a parameter to tool parsing functions so they remain stateless
 // and testable.
 type ClaudeStreamToolState struct {
-	ActiveTools             map[int]*ToolCall
-	ActiveToolResults       map[int]*toolResultAccum
+	ActiveTools             map[int]*ai.ToolCall
+	ActiveToolResults       map[int]*ai.ToolResultAccum
 	ActiveThinkingBlocks    map[int]bool
 	EmittedToolInputEmpty   map[string]bool
 	ReceivedPartialToolUse  bool
@@ -19,7 +21,7 @@ type ClaudeStreamToolState struct {
 
 // parseClaudeStreamToolEvent handles stream_event messages (content_block_start/delta/stop)
 // for tool calls, tool results, and thinking blocks. Returns StreamEvents to emit.
-func parseClaudeStreamToolEvent(msg *ClaudeStreamMessage, state *ClaudeStreamToolState, ch chan<- StreamEvent) {
+func parseClaudeStreamToolEvent(msg *ai.ClaudeStreamMessage, state *ClaudeStreamToolState, ch chan<- ai.StreamEvent) {
 	if msg.Event == nil {
 		return
 	}
@@ -41,7 +43,7 @@ func parseClaudeStreamToolEvent(msg *ClaudeStreamMessage, state *ClaudeStreamToo
 }
 
 // handleClaudeContentBlockDelta processes content_block_delta events.
-func handleClaudeContentBlockDelta(msg *ClaudeStreamMessage, state *ClaudeStreamToolState, ch chan<- StreamEvent) {
+func handleClaudeContentBlockDelta(msg *ai.ClaudeStreamMessage, state *ClaudeStreamToolState, ch chan<- ai.StreamEvent) {
 	if msg.Event.Delta == nil {
 		return
 	}
@@ -57,7 +59,7 @@ func handleClaudeContentBlockDelta(msg *ClaudeStreamMessage, state *ClaudeStream
 		}
 		if msg.Event.Delta.Text != "" {
 			state.ReceivedPartial = true
-			emitStreamEvent(ch, "cli", StreamEvent{Type: "content", Content: msg.Event.Delta.Text})
+			ai.EmitStreamEvent(ch, "cli", ai.StreamEvent{Type: "content", Content: msg.Event.Delta.Text})
 		}
 	case "input_json_delta":
 		if tool, ok := state.ActiveTools[msg.Event.Index]; ok {
@@ -69,13 +71,13 @@ func handleClaudeContentBlockDelta(msg *ClaudeStreamMessage, state *ClaudeStream
 	case "thinking_delta":
 		if msg.Event.Delta.Thinking != "" {
 			state.ReceivedPartialThinking = true
-			emitStreamEvent(ch, "cli", StreamEvent{Type: "thinking", Content: msg.Event.Delta.Thinking})
+			ai.EmitStreamEvent(ch, "cli", ai.StreamEvent{Type: "thinking", Content: msg.Event.Delta.Thinking})
 		}
 	}
 }
 
 // handleClaudeContentBlockStart processes content_block_start events.
-func handleClaudeContentBlockStart(msg *ClaudeStreamMessage, state *ClaudeStreamToolState, ch chan<- StreamEvent) {
+func handleClaudeContentBlockStart(msg *ai.ClaudeStreamMessage, state *ClaudeStreamToolState, ch chan<- ai.StreamEvent) {
 	if msg.Event.ContentBlock == nil {
 		return
 	}
@@ -93,9 +95,9 @@ func handleClaudeContentBlockStart(msg *ClaudeStreamMessage, state *ClaudeStream
 }
 
 // handleClaudeToolUseStart processes a tool_use content_block_start.
-func handleClaudeToolUseStart(msg *ClaudeStreamMessage, state *ClaudeStreamToolState, ch chan<- StreamEvent) {
+func handleClaudeToolUseStart(msg *ai.ClaudeStreamMessage, state *ClaudeStreamToolState, ch chan<- ai.StreamEvent) {
 	state.ReceivedPartialToolUse = true
-	tool := &ToolCall{
+	tool := &ai.ToolCall{
 		Name: msg.Event.ContentBlock.Name,
 		ID:   msg.Event.ContentBlock.ID,
 	}
@@ -104,17 +106,17 @@ func handleClaudeToolUseStart(msg *ClaudeStreamMessage, state *ClaudeStreamToolS
 		tool.Input = string(msg.Event.ContentBlock.Input)
 	}
 	if state.ActiveTools == nil {
-		state.ActiveTools = make(map[int]*ToolCall)
+		state.ActiveTools = make(map[int]*ai.ToolCall)
 	}
 	if existing, ok := state.ActiveTools[msg.Event.Index]; ok {
 		slog.Debug("stream: auto-closing tool at reused index", "index", msg.Event.Index, "tool_id", existing.ID, "tool_name", existing.Name)
 		closed := *existing
 		closed.Done = true
-		emitStreamEvent(ch, "cli", StreamEvent{Type: "tool_use", Tool: &closed})
+		ai.EmitStreamEvent(ch, "cli", ai.StreamEvent{Type: "tool_use", Tool: &closed})
 	}
 	state.ActiveTools[msg.Event.Index] = tool
 	startCopy := *tool
-	emitStreamEvent(ch, "cli", StreamEvent{Type: "tool_use", Tool: &startCopy})
+	ai.EmitStreamEvent(ch, "cli", ai.StreamEvent{Type: "tool_use", Tool: &startCopy})
 	if tool.Input == "" {
 		if state.EmittedToolInputEmpty == nil {
 			state.EmittedToolInputEmpty = make(map[string]bool)
@@ -124,11 +126,11 @@ func handleClaudeToolUseStart(msg *ClaudeStreamMessage, state *ClaudeStreamToolS
 }
 
 // handleClaudeToolResultStart processes a tool_result content_block_start.
-func handleClaudeToolResultStart(msg *ClaudeStreamMessage, state *ClaudeStreamToolState) {
+func handleClaudeToolResultStart(msg *ai.ClaudeStreamMessage, state *ClaudeStreamToolState) {
 	if state.ActiveToolResults == nil {
-		state.ActiveToolResults = make(map[int]*toolResultAccum)
+		state.ActiveToolResults = make(map[int]*ai.ToolResultAccum)
 	}
-	accum := &toolResultAccum{
+	accum := &ai.ToolResultAccum{
 		IsError: msg.Event.ContentBlock.IsError,
 	}
 	toolUseID := msg.Event.ContentBlock.ToolUseID
@@ -143,7 +145,7 @@ func handleClaudeToolResultStart(msg *ClaudeStreamMessage, state *ClaudeStreamTo
 }
 
 // handleClaudeContentBlockStop processes content_block_stop events.
-func handleClaudeContentBlockStop(msg *ClaudeStreamMessage, state *ClaudeStreamToolState, ch chan<- StreamEvent) {
+func handleClaudeContentBlockStop(msg *ai.ClaudeStreamMessage, state *ClaudeStreamToolState, ch chan<- ai.StreamEvent) {
 	// Check if this is a tool_result block being finalized
 	if state.ActiveToolResults != nil {
 		if accum, ok := state.ActiveToolResults[msg.Event.Index]; ok {
@@ -151,9 +153,9 @@ func handleClaudeContentBlockStop(msg *ClaudeStreamMessage, state *ClaudeStreamT
 			if accum.IsError {
 				status = "error"
 			}
-			emitStreamEvent(ch, "cli", StreamEvent{Type: "tool_result", Tool: &ToolCall{
+			ai.EmitStreamEvent(ch, "cli", ai.StreamEvent{Type: "tool_result", Tool: &ai.ToolCall{
 				ID:     accum.ToolUseID,
-				Output: truncateToolOutput(accum.Output.String()),
+				Output: ai.TruncateToolOutput(accum.Output.String()),
 				Status: status,
 			}})
 			delete(state.ActiveToolResults, msg.Event.Index)
@@ -163,7 +165,7 @@ func handleClaudeContentBlockStop(msg *ClaudeStreamMessage, state *ClaudeStreamT
 	if tool, ok := state.ActiveTools[msg.Event.Index]; ok {
 		closed := *tool
 		closed.Done = true
-		emitStreamEvent(ch, "cli", StreamEvent{Type: "tool_use", Tool: &closed})
+		ai.EmitStreamEvent(ch, "cli", ai.StreamEvent{Type: "tool_use", Tool: &closed})
 		if closed.Input == "" {
 			if state.EmittedToolInputEmpty == nil {
 				state.EmittedToolInputEmpty = make(map[string]bool)
@@ -172,7 +174,7 @@ func handleClaudeContentBlockStop(msg *ClaudeStreamMessage, state *ClaudeStreamT
 		}
 		delete(state.ActiveTools, msg.Event.Index)
 	} else if state.ActiveThinkingBlocks != nil && state.ActiveThinkingBlocks[msg.Event.Index] {
-		emitStreamEvent(ch, "cli", StreamEvent{Type: "thinking_done"})
+		ai.EmitStreamEvent(ch, "cli", ai.StreamEvent{Type: "thinking_done"})
 		delete(state.ActiveThinkingBlocks, msg.Event.Index)
 	} else {
 		slog.Debug("stream: content_block_stop for unknown index", "index", msg.Event.Index)
@@ -183,12 +185,12 @@ func handleClaudeContentBlockStop(msg *ClaudeStreamMessage, state *ClaudeStreamT
 // and tool_result blocks in msg.Message.Content. When stream_event partial
 // mode was active, it supplements missing input data for tools emitted with
 // empty Input.
-func parseClaudeAssistantToolUse(msg *ClaudeStreamMessage, state *ClaudeStreamToolState) []StreamEvent {
+func parseClaudeAssistantToolUse(msg *ai.ClaudeStreamMessage, state *ClaudeStreamToolState) []ai.StreamEvent {
 	if msg.Message == nil {
 		return nil
 	}
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for _, block := range msg.Message.Content {
 		switch block.Type {
 		case "tool_use":
@@ -197,11 +199,11 @@ func parseClaudeAssistantToolUse(msg *ClaudeStreamMessage, state *ClaudeStreamTo
 			events = append(events, claudeToolResultEvent(block))
 		case "thinking":
 			if block.Thinking != "" && !state.ReceivedPartialThinking {
-				events = append(events, StreamEvent{Type: "thinking", Content: block.Thinking})
+				events = append(events, ai.StreamEvent{Type: "thinking", Content: block.Thinking})
 			}
 		case "text":
 			if block.Text != "" && !state.ReceivedPartial {
-				events = append(events, StreamEvent{Type: "content", Content: block.Text})
+				events = append(events, ai.StreamEvent{Type: "content", Content: block.Text})
 			}
 		}
 	}
@@ -209,7 +211,7 @@ func parseClaudeAssistantToolUse(msg *ClaudeStreamMessage, state *ClaudeStreamTo
 }
 
 // appendClaudeToolUseEvents appends tool_use events for an assistant content block.
-func appendClaudeToolUseEvents(events []StreamEvent, block ClaudeContentBlock, state *ClaudeStreamToolState) []StreamEvent {
+func appendClaudeToolUseEvents(events []ai.StreamEvent, block ai.ClaudeContentBlock, state *ClaudeStreamToolState) []ai.StreamEvent {
 	if state.ReceivedPartialToolUse {
 		// Supplement empty input from the complete assistant message
 		if state.EmittedToolInputEmpty != nil && state.EmittedToolInputEmpty[block.ID] {
@@ -217,7 +219,7 @@ func appendClaudeToolUseEvents(events []StreamEvent, block ClaudeContentBlock, s
 			if inputStr != "" && inputStr != "{}" {
 				slog.Debug("stream: supplementing empty tool_use input from assistant message",
 					"tool_id", block.ID, "tool_name", block.Name, "input_len", len(inputStr))
-				events = append(events, StreamEvent{Type: "tool_use", Tool: &ToolCall{
+				events = append(events, ai.StreamEvent{Type: "tool_use", Tool: &ai.ToolCall{
 					Name:  block.Name,
 					ID:    block.ID,
 					Input: inputStr,
@@ -230,7 +232,7 @@ func appendClaudeToolUseEvents(events []StreamEvent, block ClaudeContentBlock, s
 	}
 	// Emit tool_use event with full input from the complete message
 	inputStr := string(block.Input)
-	events = append(events, StreamEvent{Type: "tool_use", Tool: &ToolCall{
+	events = append(events, ai.StreamEvent{Type: "tool_use", Tool: &ai.ToolCall{
 		Name:  block.Name,
 		ID:    block.ID,
 		Input: inputStr,
@@ -239,8 +241,8 @@ func appendClaudeToolUseEvents(events []StreamEvent, block ClaudeContentBlock, s
 	return events
 }
 
-// claudeToolResultEvent creates a tool_result StreamEvent from a content block.
-func claudeToolResultEvent(block ClaudeContentBlock) StreamEvent {
+// claudeToolResultEvent creates a tool_result ai.StreamEvent from a content block.
+func claudeToolResultEvent(block ai.ClaudeContentBlock) ai.StreamEvent {
 	toolUseID := block.ToolUseID
 	if toolUseID == "" {
 		toolUseID = block.ID
@@ -249,25 +251,25 @@ func claudeToolResultEvent(block ClaudeContentBlock) StreamEvent {
 	if block.IsError {
 		status = "error"
 	}
-	output := extractContentText(block.Content)
+	output := ai.ExtractContentText(block.Content)
 	if output == "" && block.Text != "" {
 		output = block.Text
 	}
-	return StreamEvent{Type: "tool_result", Tool: &ToolCall{
+	return ai.StreamEvent{Type: "tool_result", Tool: &ai.ToolCall{
 		ID:     toolUseID,
-		Output: truncateToolOutput(output),
+		Output: ai.TruncateToolOutput(output),
 		Status: status,
 	}}
 }
 
 // parseClaudeUserToolResult handles "user" type messages containing tool_result
 // blocks. These appear when tool results are sent back to the model.
-func parseClaudeUserToolResult(msg *ClaudeStreamMessage) []StreamEvent {
+func parseClaudeUserToolResult(msg *ai.ClaudeStreamMessage) []ai.StreamEvent {
 	if msg.Message == nil {
 		return nil
 	}
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for _, block := range msg.Message.Content {
 		if block.Type != "tool_result" {
 			continue
