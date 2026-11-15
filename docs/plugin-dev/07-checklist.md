@@ -1,5 +1,7 @@
 # 07 · 检查清单：新增一个可选插件
 
+> **已过时（2026-11-15 重构）**：`DOCK_TABS` / `dockTabMeta.ts` / 各功能的 `dock.ts` 都已删除，清单与运行时资源现在写在 `web/src/plugins/<id>/plugin.ts`。操作步骤一律照 [`README.md`](README.md)；本文件只保留仍然成立的概念解释。
+
 照着从上到下做。每一步都写了“改哪、为什么”。
 
 ## 0. 先决定
@@ -7,7 +9,7 @@
 - [ ] **id**：短、稳定、英文小写，例如 `snippets`。
 - [ ] **group**：`workspace` / `project` / `personal` / `system`（只是管理器里的标签）。
 - [ ] **closable**：能不能被用户隐藏？只有常驻三项（文件管理、文件浏览、设置）填 `false`。通知中心虽然也是“读入口”，但用户可以关（它没有 `feature`，关掉只写本机偏好）。
-- [ ] **feature**：依赖服务端总开关吗？是的话在 `DockFeature` 加 key，并补 `FEATURE_FLAG_DEFAULTS`。
+- [ ] **feature**：依赖服务端总开关吗？是的话在 `dockTabs.ts` 的 `DockFeature` 与 `DOCK_FEATURES` 各加一项（默认值由服务端 `/api/features` 下发，前端没有镜像表）。
 - [ ] **capability**：依赖设备能力吗？填标记，并在 `dock.ts` 里实现 `available()`。
 - [ ] **settingsCategory**：有没有自己的设置页？有的话填分类 id（除 `settings` 外每个页签都应有）。
 
@@ -59,7 +61,7 @@ const DOCK_TAB_ICONS: Record<DockTabId, Component> = {
 只有需要“关掉就连后台一起停”的插件才做这一步。
 
 - [ ] `dockTabs.ts` 的 `DockFeature` 加 key（例如 `snippets.enabled`），清单条目填 `feature: 'snippets.enabled'`。
-- [ ] `useFeatureFlags.ts` 的 `FEATURE_FLAG_DEFAULTS` 加默认值（**缺键 = 开**）。
+- [ ] 前端不再有 `FEATURE_FLAG_DEFAULTS`：默认值与实时值都来自 `GET /api/features`（未加载时读作「全开」）。
 - [ ] 服务端：GET `/api/config` 返回、PATCH 白名单接受、关闭时接口拒绝、热更新。
 - [ ] 不需要在 `dock.ts` 里写 `available()`——`feature` 字段已经驱动渲染过滤。
 

@@ -175,7 +175,7 @@ plugins.Register(&plugins.Plugin{
 
 `Enabled` 必须读**实时值**（包级全局或 `model.ConfigInstance`），不能读启动时的快照——热更新会在进程生命周期内改它。
 
-### 4.2 一个 config 字段（连带七处机械改动）
+### 4.2 一个 config 字段（连带六处机械改动）
 
 | # | 文件 | 改什么 |
 |---|---|---|
@@ -183,9 +183,10 @@ plugins.Register(&plugins.Plugin{
 | 2 | `internal/model/defaults.go` | 缺键当开：`if !presence["foo.enabled"] { cfg.Foo.Enabled = true }` |
 | 3 | `internal/handler/settings.go` | `configResponse` 加 `Foo configFoo \`json:"foo"\`` + 定义 `configFoo` + `serveConfigGet` 里赋值（设置页要能显示它） |
 | 4 | 同上 | `PatchableConfigPaths["foo.enabled"] = true`（PATCH 白名单） |
-| 5 | 同上 | `hotReloadFields["foo.enabled"] = true`（改完立即生效） |
-| 6 | 同上 | `applyConfigPatch` 里加分支，把补丁写进 `model.ConfigInstance.Foo.Enabled`（插件读的是它） |
-| 7 | `docs/user-guide/configuration.md` | 加一行说明（`TestConfigReferenceMatchesConfigFile` 会卡：每个 yaml 字段都必须在手册里有条目） |
+| 5 | 同上 | `applyConfigPatch` 里加分支，把补丁写进 `model.ConfigInstance.Foo.Enabled`（插件读的是它） |
+| 6 | `docs/user-guide/configuration.md` | 加一行说明（`TestConfigReferenceMatchesConfigFile` 会卡：每个 yaml 字段都必须在手册里有条目） |
+
+**`hotReloadFields` 不用动**：`<section>.enabled` 由 `plugins.IsFeatureSwitchPath(path)` 自动判为热更新（它只认**已注册插件的 `Section`**，`nosuchsection.enabled` 与 `mail.sync_interval_minutes` 这类子字段都返回 false）。理由：开关在 PATCH 时已经被 `syncPluginLifecycle` 起停过了，再报"需要重启"是错的。只有**非 `.enabled` 的子字段**（例如 `foo.interval`）才需要手写进 `hotReloadFields`。
 
 ### 4.3 `PatchableConfigPaths` 为什么必须手写
 
@@ -201,7 +202,8 @@ plugins.Register(&plugins.Plugin{
 |---|---|
 | 路由门控 | `handler.RegisterRoutes` 的 `register` 闭包对每个 pattern 调 `plugins.ForRoute`，命中就套 `plugins.Gate`。**前缀下新增接口自动被拦**，不需要任何人记得写检查（邮件当年就是漏在这里：关掉只停了后台收信，`/api/mail/send` 照发）。 |
 | worker 启停 | `startPlugins` 只启动 `IsEnabled()` 的插件；`stopPlugins` 反向停；`syncPluginLifecycle` 在热更新后判断"开关翻转 ⇒ Start/Stop，开关没变 ⇒ Reconfigure"。加 worker 不用再改 `main()`。 |
-| 热更新 | 同上（`hotReloadFields` 里加上开关即可） |
+| 热更新分类 | `<section>.enabled` 由 `plugins.IsFeatureSwitchPath` 判为热更新（不报 `needs_restart`）；子字段仍看 `hotReloadFields` |
+| 热更新动作 | `syncPluginLifecycle` 在 `applyHotReloadGlobals` 里把开关翻转映射成 Start/Stop，否则 Reconfigure |
 | `GET /api/features` | 从注册表直接生成，不用登记 |
 | 关闭副作用 | `applyPluginDisableEffects` 遍历注册表，对"这次 PATCH 里 `section.enabled=false`"的插件调 `OnDisable` |
 | 守卫测试 | 见 §4.6 |
@@ -217,7 +219,7 @@ plugins.Register(&plugins.Plugin{
 三条现实用法：
 
 - **Forge**：`GET /api/forge/binding` 必须放行，前端靠它判断"未绑定"，关闭时应返回空对象而不是 409；写仍然被拒。
-- **任务**：关闭后仍要能读列表 / 详情 / 执行历史、取消运行中的执行、删除任务——这是用户收拾残局的唯一途径。所以只拦"新建"（`POST /api/tasks`）和"整体更新"（`PUT /api/tasks/{id}`）。
+- **任务**：路由层只拦"新建"（`POST /api/tasks`，method + path 就能认出来）。**`/api/tasks/` 整棵子树豁免**——因为动作和"整体更新"共用同一个 `PUT /api/tasks/{id}`，靠 body 里的 `action` 区分（`cancel` / `resume` / `trigger` / `pause` / `read` / `stop` / `deleteExecution`），而路由层读不到 body。所以由 handler 决定：`resume` / `trigger` / 整体更新调 `rejectIfTasksDisabled` 拒绝，`cancel` / `pause` / `read` / `stop` / 删除放行——关闭开关会取消所有执行，用户必须能看见并收拾残局。豁免清单因此是 `[]string{"GET /api/tasks", "/api/tasks/"}`。
 - **终端**：`/api/terminal/status` 是只读能力探测，必须放行。否则前端拿不到 `platform_supported`，会把它和"被关掉"混为一谈，重新打开后开关卡在"已开但置灰"、页签也不出现，只能刷新。
 
 豁免写错也是静默 bug，所以有守卫：`TestGate_ExemptionsNameRealRoutes`（必须命中真实路由，且必须属于自己这个插件）。
@@ -239,7 +241,8 @@ go test ./internal/model/              # config 手册漂移
 | `TestPluginRegistry_EverySectionIsFullyWhitelisted` | Section 下每个字段可 PATCH 或有登记的豁免 |
 | `TestPluginRegistry_EveryDisabledKeyIsLocalized` | 有 `Enabled` 的插件，`DisabledKey()` 中英都存在（缺键会把原始 id 给用户） |
 | `TestPluginRegistry_SectionsDeclareRoutes` | 有 Section 就必须声明 `APIPrefixes`（否则接口永远不被拦） |
-| `TestPluginRegistry_DeclaredPrefixesOwnRealRoutes` | 每个前缀真的命中至少一条路由（`/api/foos/` 这种手滑会被抓） |
+| `TestPluginRegistry_DeclaredPrefixesOwnRealRoutes` | **按前缀**逐个核对：每个声明的前缀都真的覆盖至少一条路由（按插件计数会让 `/api/git/clocx` 这种手滑被同插件另一个前缀掩盖） |
+| `TestPluginRegistry_FeatureSwitchesAreHot` | 每个已注册 `Section` 的 `<section>.enabled` 都判为热更新；未注册段与子字段判为 false |
 | `TestPluginRegistry_DestructiveDisablesDeclareHooks` | forge / share 必须有 `OnDisable` |
 | `TestGate_EveryDisabledPluginRejectsItsRoutes` | 表驱动：**每个**可开关插件关闭后，它名下的每条已鉴权路由都返回该插件的状态码与 msgKey |
 | `TestGate_TasksKeepsReadAndCleanupRoutes` | 任务关闭后读 / 取消 / 删除仍可达，新建 / 编辑被拒 |
@@ -253,7 +256,7 @@ go test ./internal/model/              # config 手册漂移
 
 ### 4.7 已知取舍
 
-- **门控是整段拒绝**，不是"逐接口声明"。好处是新增接口自动被拦；代价是"关闭后仍要能读"的功能必须显式豁免（任务），而不是写"只拦写"。
+- **门控是整段拒绝**，不是"逐接口声明"。好处是新增接口自动被拦；代价是"关闭后仍要能读"的功能必须显式豁免。更麻烦的一种情况是**同一个 method+path 既是"用功能"又是"收拾残局"**（任务的 `PUT /api/tasks/{id}`：整体更新要拒，取消执行要放行），路由层读不到 body，只能整棵子树豁免、交给 handler 按 `action` 判断。
 - **终端用 503 而不是 409**：它的语义是"运行时没起来"，与"被关掉了"不同。
 - **状态 / 探针类端点一律豁免**：它们回答的是"这台服务器能做什么"，关掉功能之后这个问题依然需要答案。
 - **公开路由不在门控内**（`registerPublic` 不经过 Gate）：`/api/share/{token}` 关闭时由它自己返回 404，而不是 409。旧链接应该"打不开"，不该告诉匿名访客"这台服务器关了分享"。

@@ -22,6 +22,8 @@
 - **打开设置分类时"从哪来"由插件自己记**。宿主只提供通用的 `openSettingsCategory(id)`；会议中继设置要能返回创建页，那一步（`setMeetingCreateReturn()`）留在插件里，宿主不参与。
 - **终端状态端点必须豁免**。设计没提。整段门控会让 `/api/terminal/status` 返回 503，前端拿不到 `platform_supported` 就把平台能力一起置 false，重新打开终端后开关卡在"已开但置灰"、页签不出现，只能刷新。
 - **启动顺序是第一版实现的真 bug**。`registerPlugins` 必须早于 `startPlugins` 与 `RegisterRoutes`：晚了注册表还是空的，于是没有任何 worker 启动、没有任何路由被门控，而启动日志干干净净。补了一条读 `main.go` 源码比位置的守卫。
+- **新增 `IsFeatureSwitchPath`**：功能开关不再需要登记 `hotReloadFields`。那个白名单决定 PATCH 响应是「即时生效」还是「需要重启」，而开关在 PATCH 时已经由 `syncPluginLifecycle` 起停过了，报「需要重启」是错的；现在 `<section>.enabled` 由注册表判为热更新，白名单只保留非 `.enabled` 的子字段。
+- **tasks 的 `GateExempt` 修正为整棵子树豁免**：动作（cancel / resume / trigger / pause / read / stop / deleteExecution）与「整体更新」共用同一个 `PUT /api/tasks/{id}`，靠 body 里的 `action` 区分，而路由层读不到 body。所以 `GateExempt` 是 `{"GET /api/tasks", "/api/tasks/"}`，只有「新建」（`POST /api/tasks`）仍由路由门控；`resume` / `trigger` / 整体更新由 handler 的 `rejectIfTasksDisabled` 拒绝。
 - **预设不是"按 group 派生"**。设计里写了 `hideGroups`，实现是纯规则 + 显式例外（`hideTabs` / `keepOnly: 'permanent'` / `parkHiddenBefore` / `disableFeatures` / `disableAllFeatures`），从 `DOCK_TAB_ORDER` 与 `DOCK_FEATURES` 派生 order 与开关计划。
 
 ### 术语纠正（按你的习惯提醒）
@@ -78,7 +80,7 @@
 | B7 | 没有接口归属概念 | `apiPrefix` 只在 `useCrudList` 里当状态桶 key，与"谁管这个前缀"无关 | 没有任何机制要求新接口加门控 → B3 的邮件洞 |
 | B8 | i18n 错误键靠人记 | `i18n_test.go` 里一个手写的 pinned keys 列表 | 新功能的 `XxxDisabled` 漏了只在一个语言里裸奔 |
 
-### 1.4 「一个服务端开关」现在要动的 12 处
+### 1.4 「一个服务端开关」重构前要动的 12 处（历史快照，别照着做）
 
 以 `mail.enabled` 为例：
 
@@ -936,7 +938,7 @@ settingsPage: {
 全部满足才算完成：
 
 1. **加一个前台页签**：新增 `plugins/<x>/plugin.ts` + `<X>Panel.vue` 两个文件，`dockTabs.ts` 加一行 id；**其余既有文件零修改**（含 App.vue / dockTabMeta / dockPluginRuntime / SettingsIndex / settingsFieldMap / 预设）。
-2. **加一个服务端功能开关**：`plugins.Register(...)` 一处 + `MailConfig` 一个字段 + 一个 i18n 键；**路由拦截、worker 启停、热更新、`/api/features`、OpenAPI 检查全部自动**。
+2. **加一个服务端功能开关**：`plugins.Register(...)` 自动派生**路由门控、worker 启停、`/api/features`、热更新分类**（`<section>.enabled` 由 `IsFeatureSwitchPath` 判为热更新，不用登记 `hotReloadFields`）。仍需手写的只有：config 字段与默认值（`model/config.go` + `defaults.go`）、`PatchableConfigPaths`（刻意的安全边界，不反射派生）、`applyConfigPatch` 的类型映射、`configResponse`（设置页要能显示）、i18n `XxxDisabled` 中英、用户手册（`TestConfigReferenceMatchesConfigFile` 卡着）。
 3. **新增一个接口**：只要它在前缀下，功能关闭时自动被拒，**不需要任何人记得写检查**。
 4. **前端不再有功能开关的默认值镜像**（`FEATURE_FLAG_DEFAULTS` 已删除）。
 5. **App.vue 里不出现任何具体插件 id**（`chat` 除外）。

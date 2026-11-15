@@ -71,6 +71,13 @@
 
 派生方法：`DisabledKey()`（`<ID 首字母大写>Disabled`，如 `forge` → `ForgeDisabled`、`kb` → `KbDisabled`）、`DisabledHTTPStatus()`、`IsEnabled()`、`IsAvailable()`、`IsGateExempt(method, path)`。
 
+包级导出（给 `handler` 与守卫测试用，不是 `Plugin` 的方法）：
+
+| 函数 | 语义 |
+|---|---|
+| `PrefixMatchesPath(prefix, path)` | `path` 是否落在 `prefix` 上（精确或段边界，两侧尾 `/` 抹平）。这是「前缀覆盖某条路由」的**唯一实现**：`ForRoute` 用它做归属判断，守卫用它**逐个前缀**核对「每个声明都真的命中路由」 |
+| `IsFeatureSwitchPath(path)` | `path` 是否正好是某个**已注册插件**的 `<section>.enabled`。`nosuchsection.enabled` 与 `mail.sync_interval_minutes` 都返回 false。用途见 §4.2：功能开关不再需要登记 `hotReloadFields` |
+
 ### 注册期的 panic
 
 以下都是编程错误，`Register` 直接 panic（静默覆盖会让两个功能抢同一批路由，那是最难排查的一类 bug）：
@@ -92,7 +99,7 @@
 - **最长前缀优先**：声明了 `/api/git/stats` 的插件压过声明 `/api/git/` 的插件（统计页签就是靠这个把 `/api/git/stats`、`/api/git/cloc` 从 Git 那一大片前缀里单独拎出来）。
 - **按路径段边界匹配**：前缀 `/api/mail` 不能匹配 `/api/mailbox`。
 
-实现上是先抹平两端尾部 `/`，再判断"路径相等，或路径以 `前缀 + "/"` 开头"。抹平是必需的：路由表里 `/api/tasks` 与 `/api/tasks/` 是两个 pattern，而插件只声明一次，两种写法都必须命中。
+实现上是先抹平两端尾部 `/`，再判断"路径相等，或路径以 `前缀 + "/"` 开头"。抹平是必需的：路由表里 `/api/tasks` 与 `/api/tasks/` 是两个 pattern，而插件只声明一次，两种写法都必须命中。这段判断抽成了导出的 `PrefixMatchesPath(prefix, path)`——`ForRoute` 与守卫测试共用同一份实现，守卫因此能**逐个前缀**核对覆盖情况（按插件计数会让一个写错的前缀被同插件另一个前缀掩盖）。
 
 `ForRoute` 对 `/` 与空前缀返回 nil（不能让某个插件接管全站）。
 
@@ -120,7 +127,7 @@
 | 插件 | 豁免 | 为什么 |
 |---|---|---|
 | `forge` | `GET /api/forge/binding` | 前端靠它判断"未绑定"，关闭时要返回空对象而不是 409；写仍然被拒 |
-| `tasks` | `GET /api/tasks`、`GET /api/tasks/`、`DELETE /api/tasks/`、`POST /api/tasks/` | 关闭后仍要能读列表 / 详情 / 执行历史、取消运行中的执行、删除任务——这是收拾残局的唯一途径。动作端点里的 `resume` / `trigger` 由 handler 自己按 action 拒绝（同一个 POST 里 `cancel` 必须放行） |
+| `tasks` | `GET /api/tasks`、`/api/tasks/` | 只有「新建」（`POST /api/tasks`）能被 method + path 识别并拦住；**整棵 `/api/tasks/` 子树豁免**，因为动作与「整体更新」共用同一个 `PUT /api/tasks/{id}`，靠 body 里的 `action` 区分，而路由层读不到 body。由 handler 决定：`resume` / `trigger` / 整体更新 `rejectIfTasksDisabled`，`cancel` / `pause` / `read` / `stop` / 删除放行（关闭开关会取消所有执行，用户必须能收拾残局） |
 | `terminal` | `/api/terminal/status` | 只读能力探测。门控它会让前端把"关了"和"跑不了"混为一谈：`platform_supported` 拿不到 ⇒ 前端把平台能力一起置 false ⇒ 重新打开后开关卡在"已开但置灰"、页签不出现，只能刷新 |
 
 **公开路由不在门控内**：`registerPublic` 不套 `Gate`。`/api/share/{token}` 关闭时由它自己返回 404，而不是 409——旧链接应该"打不开"，不该告诉匿名访客"这台服务器关了分享"。
@@ -157,9 +164,10 @@ PATCH /api/config
   └─ applyPluginDisableEffects(patch) ← 只对"这次 PATCH 里 section.enabled=false"的插件调 OnDisable
 ```
 
-三个要点：
+五个要点：
 
 - **翻转才起停，不翻转只 Reconfigure**。判错要么每次 PATCH 泄漏一个 goroutine，要么重新打开的功能永远死着。
+- **功能开关的「热更新分类」是派生的**。PATCH 响应里的 `needs_restart` / `changed_cold_fields` 由 `!hotReloadFields[f] && !plugins.IsFeatureSwitchPath(f)` 判定：`<section>.enabled` 一律算热（它已经由 `syncPluginLifecycle` 起停过，报「需要重启」是错的）。所以新增功能开关**不用**往 `hotReloadFields` 补行；那个白名单只保留非 `.enabled` 的子字段（它同时是「哪些字段真的需要重启」的文档）。
 - **`syncPluginLifecycle` 跑在写盘之前**，所以它只能做可逆的事（起停 goroutine、重建 Manager）。不可逆的撤销必须在写盘成功之后。
 - **`OnDisable` 的时机不能改**：先撤销再写盘失败会毁掉用户的数据，而开关其实还开着——两种状态里最坏的组合。守卫 `TestOnDisableRunsOnlyAfterPersist` 用一个"config 是个普通文件"的数据目录让写盘必失败，断言钩子没被调用、内存也回滚了。
 - **撤销失败是 warning，不是 500**。配置已经落盘且生效是权威事实；回 500 会让客户端把开关回滚成"开"，而服务端是关的，用户被告知"保存失败"但改动其实生效了。
@@ -229,7 +237,8 @@ PATCH /api/config
 | 有 `Enabled` ⇒ `DisabledKey()` 在中英两边都存在 | `TestPluginRegistry_EveryDisabledKeyIsLocalized` |
 | 破坏性关闭（forge / share）必须声明 `OnDisable` | `TestPluginRegistry_DestructiveDisablesDeclareHooks` |
 | 有 `Section` ⇒ `APIPrefixes` 非空 | `TestPluginRegistry_SectionsDeclareRoutes` |
-| 每个声明的前缀都命中至少一条真实路由，且该路由归回同一个插件 | `TestPluginRegistry_DeclaredPrefixesOwnRealRoutes` |
+| 每个声明的前缀都命中至少一条真实路由，且该路由归回同一个插件（**按前缀计数**，否则同插件另一个前缀会掩盖手滑） | `TestPluginRegistry_DeclaredPrefixesOwnRealRoutes` |
+| 每个已注册 `Section` 的 `<section>.enabled` 都判为热更新；未注册段与子字段判为 false | `TestPluginRegistry_FeatureSwitchesAreHot` |
 | 关闭后，插件名下每条已鉴权路由都返回该插件的状态码与 msgKey | `plugin_gate_test.go` `TestGate_EveryDisabledPluginRejectsItsRoutes`（表驱动，遍历真实路由表） |
 | 任务关闭后读 / 取消 / 删除仍可达，新建 / 编辑被拒 | `TestGate_TasksKeepsReadAndCleanupRoutes` |
 | 终端状态端点放行，且 `platform_supported` 描述平台而非开关 | `TestGate_TerminalStatusIsExempt` |
@@ -253,6 +262,7 @@ PATCH /api/config
 ## 8. 已知取舍
 
 - **门控是整段拒绝，不是逐接口声明**。好处：前缀下新增接口自动被拦（邮件当年漏的正是这里——关掉只停了后台收信，`/api/mail/send` 照发）。代价：需要"关闭后仍能读"的功能必须显式写豁免（任务），而不是写"只拦写"。
+- **同一个 method+path 可能既该拒又该放行**。任务的 `PUT /api/tasks/{id}` 就是：整体更新要拒，取消运行中的执行必须放行，区别只在 body 里的 `action`，而路由层读不到 body。这类接口只能**整棵子树豁免**、把判断交给 handler（`rejectIfTasksDisabled`），代价是"某个动作忘了判"不会像门控那样自动兜住。
 - **豁免靠人工维护，靠守卫兜底**。没法从路由表反推"这条该不该豁免"——那是个产品判断（用户关掉之后还需要做什么）。
 - **终端用 503**：既有行为，语义是"运行时没起来"，与"被关掉了"不同。前端据此区分两种灰显。
 - **`tasks` 的总开关不走 `OnDisable`**：它的效果是**双向**的（关：取消运行中的执行、丢弃排队事件；开：重启 cron），而 `OnDisable` 只有一个方向。它留在 `handler.applyFeatureDisableEffects` 里，紧跟插件钩子之后执行。
