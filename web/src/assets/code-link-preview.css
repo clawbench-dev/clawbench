@@ -775,7 +775,11 @@ body.code-preview-resizing * {
   display: block;
 }
 
-/* Video keeps its aspect ratio and stretches to the available box. */
+/* Video keeps its aspect ratio and stretches to the available box.
+   `height: 100%` only resolves where the pane has a definite height (docked
+   pane, touch sheet). In the content-sized floating card it falls back to the
+   clip's intrinsic height, so MediaPreviewBody caps the element at the card's
+   own bound — a portrait clip then letterboxes instead of being cropped. */
 .code-preview-media-video {
   max-width: 100%;
   max-height: 100%;

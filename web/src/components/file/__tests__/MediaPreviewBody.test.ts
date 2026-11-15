@@ -99,6 +99,43 @@ describe('MediaPreviewBody', () => {
     expect(video.attributes('src')).toContain('clip.mp4')
   })
 
+  it('starts the previewed clip muted so the browser will auto-play it', () => {
+    const wrapper = mountBody('video', 'clip.mp4')
+    const el = wrapper.find('video.code-preview-media-video').element as HTMLVideoElement
+    expect(el.autoplay).toBe(true)
+    expect(el.muted).toBe(true)
+    expect(wrapper.find('video.code-preview-media-video').attributes('playsinline')).toBeDefined()
+  })
+
+  it('caps the player at the floating card height so a portrait clip letterboxes', async () => {
+    // The floating card is content-sized, so `height: 100%` cannot resolve in
+    // the pane and a tall clip keeps its intrinsic height — the card's
+    // overflow then crops it. The cap makes object-fit contain letterbox it.
+    const card = document.createElement('div')
+    card.className = 'code-link-preview-floating is-media'
+    card.style.maxHeight = '400px'
+    document.body.appendChild(card)
+
+    const wrapper = mountBody('video', 'portrait.mp4')
+    card.appendChild(wrapper.element)
+    await wrapper.find('video').trigger('loadedmetadata')
+
+    // jsdom reports zero rects, so the rows above the pane cost nothing and the
+    // card's own bound is the cap.
+    expect((wrapper.find('video').element as HTMLVideoElement).style.maxHeight).toBe('400px')
+
+    wrapper.unmount()
+    card.remove()
+  })
+
+  it('leaves the player alone where the pane already has a definite height', async () => {
+    // Docked pane / touch sheet: no floating card bound to read, and the
+    // stylesheet already fits the player.
+    const wrapper = mountBody('video', 'clip.mp4')
+    await wrapper.find('video').trigger('loadedmetadata')
+    expect((wrapper.find('video').element as HTMLVideoElement).style.maxHeight).toBe('')
+  })
+
   it('renders an <audio controls> plus the file name for audio', () => {
     const wrapper = mountBody('audio', 'dir/voice.mp3')
     const audio = wrapper.find('audio.code-preview-media-audio-player')

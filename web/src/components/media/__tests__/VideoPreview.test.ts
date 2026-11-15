@@ -36,6 +36,31 @@ describe('VideoPreview', () => {
     expect(wrapper.html()).toContain('media.videoNotSupported')
   })
 
+  it('starts the clip muted so the browser will auto-play it', () => {
+    const wrapper = mountVideo()
+    const el = wrapper.find('video.video-player').element as HTMLVideoElement
+    expect(el.autoplay).toBe(true)
+    // Browsers only auto-start MUTED media — without this the viewer opens on
+    // a paused first frame.
+    expect(el.muted).toBe(true)
+    // Without this iOS/Android take the clip fullscreen on its own.
+    expect(wrapper.find('video.video-player').attributes('playsinline')).toBeDefined()
+  })
+
+  it('re-mutes the player when the next clip is opened', async () => {
+    // The same <video> is reused across files; a clip the user unmuted would
+    // otherwise block the next one's autoplay (unmuted autoplay needs a
+    // gesture), leaving it paused.
+    const wrapper = mountVideo()
+    const el = wrapper.find('video.video-player').element as HTMLVideoElement
+    el.muted = false
+
+    await wrapper.setProps({ file: { path: 'media/next.mp4', name: 'next.mp4' } })
+    await wrapper.find('video').trigger('loadedmetadata')
+
+    expect(el.muted).toBe(true)
+  })
+
   it('shows the shared failure element when the file cannot be loaded', async () => {
     // A missing / unreadable file previously left a black box with a dead
     // player — the browser reports nothing on its own.
