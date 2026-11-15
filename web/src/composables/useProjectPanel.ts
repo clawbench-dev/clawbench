@@ -84,27 +84,49 @@ export function loadProjectPanel(root: string): string | null {
  *    the file viewer" decision (commit e1bb5fb55), which this feature otherwise
  *    supersedes.
  * 4. Anything not in the dock-tab registry → the same default as rule 1.
- * 5. `forge` while the user has hidden the integration entry → the same default
- *    as rule 1. Registry membership alone is not enough here: the forge tab is
- *    still switchable (a notification deep link opens it), but the user has
- *    asked for it not to be part of the dock, so restoring a project must not
- *    land them on a panel with no entry pointing at it (issue #590).
- * 6. Same for `mail` while the mail feature is switched off.
+ * 5. A remembered tab that is blocked on this device → the same default as
+ *    rule 1. Registry membership alone is not enough: the tab may still be
+ *    switchable through a notification deep link, but restoring a project must
+ *    not land the user on a panel with no entry pointing at it (issue #590).
+ *    "Blocked" covers all three axes at once — hidden by the user, switched off
+ *    on the server, or unavailable on this host — so a third gated plugin never
+ *    changes this signature again.
  */
 export function resolvePanelTab(
   remembered: string | null,
   isWideScreen: boolean,
   hasOpenFile: boolean,
-  forgeHidden = false,
-  mailHidden = false,
+  availability?: PanelAvailability,
 ): TabId {
   const fallback: TabId = isWideScreen ? 'browse' : 'chat'
   if (!remembered) return fallback
   if (isWideScreen && remembered === 'chat') return 'browse'
   if (remembered === 'view' && !hasOpenFile) return 'browse'
-  if (remembered === 'forge' && forgeHidden) return fallback
-  if (remembered === 'mail' && mailHidden) return fallback
+  if (availability && isPanelTabBlocked(remembered, availability)) return fallback
   return isDockTabId(remembered) ? remembered : fallback
+}
+
+/**
+ * The subset of the dock's availability object this module needs.
+ *
+ * Declared structurally rather than imported from `useDockAvailability`: that
+ * module reaches the plugin registry (and through it every plugin's module
+ * graph), while this one is a leaf used all over the project workspace. A
+ * `ReadonlySet<DockTabId>` satisfies these sets as-is.
+ */
+export interface PanelAvailability {
+  hidden: ReadonlySet<string>
+  featureDisabled: ReadonlySet<string>
+  unavailable: ReadonlySet<string>
+}
+
+/** True when any of the three axes blocks the tab. */
+function isPanelTabBlocked(id: string, availability: PanelAvailability): boolean {
+  return (
+    availability.hidden.has(id) ||
+    availability.featureDisabled.has(id) ||
+    availability.unavailable.has(id)
+  )
 }
 
 /**

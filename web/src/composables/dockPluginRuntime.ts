@@ -1,89 +1,299 @@
 import type { Component } from 'vue'
-import type { TabId } from './dockTabs'
-import type { DockBadge, DockPluginRuntime } from './dockPluginTypes'
-import { chatDock } from '@/components/chat/dock'
-import { browseDock } from '@/components/file/dock'
-import { historyDock } from '@/components/git/dock'
-import { forgeDock } from '@/components/forge/dock'
-import { tasksDock } from '@/components/task/dock'
-import { terminalDock } from '@/components/terminal/dock'
-import { mailDock } from '@/components/mail/dock'
-import { liveDock } from '@/components/live/dock'
-import { proxyDock } from '@/components/proxy/dock'
-import { kbDock } from '@/components/kb/dock'
-import { shareDock } from '@/components/share/dock'
-import { notificationsDock } from '@/components/notifications/dock'
-import { statsDock } from '@/components/stats/dock'
-import { settingsDock } from '@/components/settings/dock'
+import {
+  DOCK_TAB_IDS,
+  isPermanentDockTab,
+  mergeDockOrder,
+  type DockTabDescriptor,
+  type DockTabId,
+  type TabId,
+} from './dockTabs'
+import type {
+  DockBadge,
+  DockDeepLink,
+  DockPanelHost,
+  DockPanelHostExtras,
+  DockPlugin,
+} from './dockPluginTypes'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'DockPlugins'
 
 /**
- * The one place that maps a dock id to its runtime resources.
+ * The ONE place that knows which dock plugins exist.
  *
- * Feature modules export a `dock.ts` descriptor; this file imports them and
- * the host reads everything through the resolvers below. Plugins never import
- * this module, and they never import each other.
+ * Every `web/src/plugins/<id>/plugin.ts` is pulled in here at build time by
+ * `import.meta.glob`, so adding a plugin never touches this file. The glob is
+ * eager (equivalent to the static imports it replaced — the same modules end up
+ * in the main bundle), but each plugin's PANEL stays a dynamic `import()`, so
+ * no panel code is loaded until its tab is opened.
  *
- * `chat` is included even though it is not in DOCK_TABS: it is the right-pane
- * surface and uses the same badge/onEnter contract. It has no background
- * resource, so the lifecycle loop (which walks DOCK_TABS) never touches it.
+ * Order is NOT taken from the glob: it comes from `DOCK_TAB_ORDER`
+ * (`dockTabs.ts`), because default order is a product decision and must not be
+ * decided by the filesystem's alphabetical order.
  */
-const RUNTIME: Partial<Record<TabId, DockPluginRuntime>> = {
-  chat: chatDock,
-  browse: browseDock,
-  history: historyDock,
-  forge: forgeDock,
-  tasks: tasksDock,
-  terminal: terminalDock,
-  mail: mailDock,
-  live: liveDock,
-  proxy: proxyDock,
-  kb: kbDock,
-  share: shareDock,
-  notifications: notificationsDock,
-  stats: statsDock,
-  settings: settingsDock,
+/** A plugin module as the bundler hands it over. */
+export type PluginModuleMap = Record<string, { default?: DockPlugin }>
+
+export interface AssembledPlugins {
+  /** Plugin by id; a duplicate id keeps the FIRST module and drops the rest. */
+  runtime: Partial<Record<TabId, DockPlugin>>
+  /** One descriptor per left-dock id, in `DOCK_TAB_ORDER`. */
+  tabs: (DockTabDescriptor & { icon: Component })[]
 }
 
-export function getDockPluginRuntime(id: string): DockPluginRuntime | undefined {
+/**
+ * Turn the globbed modules into the runtime map + the left-dock manifest.
+ *
+ * Exported (and pure) so the aggregation rules — duplicate ids, a missing
+ * `plugin.ts`, `chat` not being a dock tab — can be tested by calling it with
+ * a fake module map. The real call site is the only place that touches the
+ * filesystem, so those rules would otherwise be unreachable from a test.
+ */
+export function assemblePluginModules(modules: PluginModuleMap): AssembledPlugins {
+  const runtime: Partial<Record<TabId, DockPlugin>> = {}
+
+  for (const [path, mod] of Object.entries(modules)) {
+    const plugin = mod.default
+    if (!plugin?.id) {
+      appLog.w(TAG, `plugin module ${path} has no default export with an id`)
+      continue
+    }
+    if (runtime[plugin.id]) {
+      // A duplicate id would silently shadow a plugin; the id is the stable
+      // identity (config key, i18n prefix, deep-link target), so it must be
+      // unique. First wins so the outcome does not depend on glob order.
+      appLog.w(TAG, `duplicate plugin id "${plugin.id}" in ${path} — ignored`)
+      continue
+    }
+    runtime[plugin.id] = plugin
+  }
+
+  const tabs: (DockTabDescriptor & { icon: Component })[] = []
+  for (const id of DOCK_TAB_IDS) {
+    const plugin = runtime[id]
+    // `chat` is not a left-dock entry; a missing module means the id was added
+    // to DOCK_TAB_ORDER without its plugin.ts. Both are dropped here (and
+    // caught by the manifest guard test) rather than rendering a nameless
+    // button.
+    if (!plugin || plugin.id === 'chat') {
+      if (!plugin) appLog.w(TAG, `no plugin.ts for dock tab "${id}"`)
+      continue
+    }
+    tabs.push({
+      id,
+      titleKey: plugin.titleKey,
+      descriptionKey: plugin.descriptionKey,
+      group: plugin.group,
+      closable: plugin.closable,
+      feature: plugin.feature,
+      capability: plugin.capability,
+      settingsCategory: plugin.settingsCategory,
+      icon: plugin.icon,
+    })
+  }
+
+  return { runtime, tabs }
+}
+
+const { runtime: RUNTIME, tabs: assembled } = assemblePluginModules(
+  import.meta.glob<{ default: DockPlugin }>('@/plugins/*/plugin.ts', { eager: true }),
+)
+
+/** Every left-dock tab, in default order, with its manifest resolved. */
+export const DOCK_TABS: readonly DockTabDescriptor[] = assembled
+
+/** Manifest + static icon, in default order. */
+export const DOCK_TABS_WITH_ICONS: readonly (DockTabDescriptor & { icon: Component })[] = assembled
+
+/** Descriptor lookup by id. */
+export const DOCK_TAB_BY_ID: ReadonlyMap<DockTabId, DockTabDescriptor> = new Map(
+  assembled.map((t) => [t.id, t]),
+)
+
+/** Tabs whose switch writes a server master switch. */
+export const DOCK_FEATURE_TABS: readonly DockTabId[] = assembled
+  .filter((t) => t.feature)
+  .map((t) => t.id)
+
+/** A settings page contributed by a plugin, resolved and in DOCK order. */
+export interface DockSettingsPageEntry {
+  pluginId: DockTabId
+  /** Settings category this page renders (the plugin's `settingsCategory`). */
+  categoryId: string
+  /** Index group the row hangs under (`dockModules` today). */
+  group: string
+  icon: Component
+  kind: 'flat' | 'group' | 'custom'
+  /** Only for `kind: 'custom'`: the page component's lazy loader. */
+  component?: () => Promise<unknown>
+}
+
+/**
+ * Every settings page the plugins contribute, in dock order.
+ *
+ * This is what lets the settings index and the category dispatcher stop naming
+ * plugins: adding a page means declaring `settingsPage` in `plugin.ts`, not
+ * editing `SettingsIndex.vue` / `SettingsCategory.vue`.
+ */
+export const DOCK_SETTINGS_PAGES: readonly DockSettingsPageEntry[] = assembled.flatMap((tab) => {
+  const plugin = RUNTIME[tab.id]
+  if (!plugin || plugin.id === 'chat' || !plugin.settingsPage) return []
+  const page = plugin.settingsPage
+  const categoryId = page.categoryId ?? plugin.settingsCategory ?? plugin.id
+  return [{ pluginId: tab.id, categoryId, group: page.group, icon: page.icon, kind: page.kind, component: page.component }]
+})
+
+/** Every registered plugin id, `chat` included. */
+export const DOCK_PLUGIN_IDS: readonly TabId[] = Object.keys(RUNTIME) as TabId[]
+
+/** A deep link together with the plugin that declared it (for diagnostics). */
+export interface RegisteredDockDeepLink {
+  pluginId: TabId
+  link: DockDeepLink
+}
+
+/**
+ * Every deep link declared by a plugin, in plugin order.
+ *
+ * The host installs exactly these; nothing else knows the event names.
+ */
+export function dockDeepLinks(): RegisteredDockDeepLink[] {
+  const out: RegisteredDockDeepLink[] = []
+  for (const id of DOCK_PLUGIN_IDS) {
+    for (const link of RUNTIME[id]?.deeplinks ?? []) out.push({ pluginId: id, link })
+  }
+  return out
+}
+
+/** The plugin that declares `id`, if any. `chat` included. */
+export function resolveDockPlugin(id: string): DockPlugin | undefined {
   return RUNTIME[id as TabId]
 }
 
+/** Manifest + icon lookup; undefined for unknown ids. */
+export function dockTabWithIcon(
+  id: string,
+): (DockTabDescriptor & { icon: Component }) | undefined {
+  return assembled.find((t) => t.id === id)
+}
+
 export function resolveDockBadge(id: string): DockBadge | null {
-  return getDockPluginRuntime(id)?.badge?.() ?? null
+  return resolveDockPlugin(id)?.badge?.() ?? null
 }
 
 export function resolveDockTitle(id: string): string | undefined {
-  return getDockPluginRuntime(id)?.title?.()
+  return resolveDockPlugin(id)?.title?.()
 }
 
+/** Dynamic icon override (Forge's platform glyph); static icons live on the manifest. */
 export function resolveDockIcon(id: string): Component | undefined {
-  return getDockPluginRuntime(id)?.icon?.()
+  return resolveDockPlugin(id)?.dynamicIcon?.()
+}
+
+/** Static manifest icon. `chat` included — its narrow-dock button uses it. */
+export function dockTabIcon(id: string): Component | undefined {
+  return resolveDockPlugin(id)?.icon
+}
+
+/** Manifest title key. `chat` included (see dockTabIcon). */
+export function dockTabTitleKey(id: string): string | undefined {
+  return resolveDockPlugin(id)?.titleKey
+}
+
+/** Button appearance states, declared by the plugin (never by the host). */
+export function resolveDockAppearance(id: string) {
+  return resolveDockPlugin(id)?.appearance
 }
 
 /** True when the plugin is usable now; plugins without a check are usable. */
 export function isDockPluginAvailable(id: string): boolean {
-  return getDockPluginRuntime(id)?.available?.() ?? true
+  return resolveDockPlugin(id)?.available?.() ?? true
 }
 
 /** Whether the host should leave the tab when it becomes unavailable. */
 export function shouldLeaveUnavailableDockTab(id: string): boolean {
-  return getDockPluginRuntime(id)?.leaveWhenUnavailable?.() ?? true
+  return resolveDockPlugin(id)?.leaveWhenUnavailable?.() ?? true
 }
 
 export function dockUnavailableReasonKey(id: string): string | undefined {
-  return getDockPluginRuntime(id)?.unavailableReasonKey
+  return resolveDockPlugin(id)?.unavailableReasonKey
 }
 
 export function runDockOnEnter(id: string): void {
-  getDockPluginRuntime(id)?.onEnter?.()
+  resolveDockPlugin(id)?.onEnter?.()
 }
 
 export function runDockOnLeave(id: string): void {
-  getDockPluginRuntime(id)?.onLeave?.()
+  resolveDockPlugin(id)?.onLeave?.()
+}
+
+/**
+ * Extra work a dock click performs before the host switches tabs.
+ *
+ * The host owns navigation; the plugin only contributes what "clicking my entry"
+ * means beyond that (terminal clears the pending directory request).
+ */
+export function runDockOnClick(id: string, host: DockPanelHost, extras: DockPanelHostExtras): void {
+  resolveDockPlugin(id)?.onClick?.(host, extras)
 }
 
 /** Start a plugin's background resource; returns its cleanup, or null. */
 export function startDockBackground(id: string): (() => void) | null {
-  const start = getDockPluginRuntime(id)?.startBackground
+  const start = resolveDockPlugin(id)?.startBackground
   return start ? start() : null
+}
+
+export interface DockVisibilityOptions {
+  /** Tabs whose server master switch is OFF. */
+  featureDisabled?: ReadonlySet<DockTabId>
+  /** Tabs the user hid in the manager. */
+  hidden?: ReadonlySet<DockTabId>
+  /**
+   * Tabs whose runtime availability check currently fails (terminal runtime
+   * down, no wire for port forwarding, …). One set for every host limitation —
+   * App.vue derives it from each plugin's `available()`, so a capability never
+   * has a second, differently-named gate here.
+   */
+  unavailable?: ReadonlySet<DockTabId>
+  /** User order (any subset of ids; see mergeDockOrder). */
+  order?: readonly DockTabId[]
+}
+
+const EMPTY_SET: ReadonlySet<DockTabId> = new Set()
+
+function isGated(id: DockTabId, opts: DockVisibilityOptions): boolean {
+  return !!opts.unavailable?.has(id) || !!opts.featureDisabled?.has(id)
+}
+
+/**
+ * Only closable tabs can be hidden. A corrupt/stale `dockHidden` value must not
+ * hide a permanent tab (settings in particular would lock the user out of the
+ * manager that could fix it).
+ */
+function isUserHidden(id: DockTabId, hidden: ReadonlySet<DockTabId>): boolean {
+  return !isPermanentDockTab(id) && hidden.has(id)
+}
+
+/**
+ * The left dock's visible tabs, in the user's order, with every gate applied.
+ *
+ * This is the ONE render list: the wide-screen vertical dock, the narrow
+ * bottom dock's inline/overflow split and the settings manager all call it, so
+ * a tab can never be rendered in one place and missing from another (the
+ * original forge bug was exactly that divergence).
+ *
+ * Gates:
+ *  - `unavailable` — the host cannot run the feature right now (terminal
+ *    runtime down, no wire for port forwarding, …). `live` (会议) is
+ *    deliberately NOT gated on capture: a host without a screen can still read
+ *    its records, and a voice meeting only needs a microphone.
+ *  - `featureDisabled` — the server master switch is off. The tab is the
+ *    visible half of a real disable, so it disappears with the background work.
+ *  - `hidden` — the user turned the entry off in the manager (closable tabs
+ *    only). For feature tabs this is the same switch: the manager shows one
+ *    switch per tab, not two.
+ */
+export function dockTabs(opts: DockVisibilityOptions = {}): DockTabId[] {
+  const hidden = opts.hidden ?? EMPTY_SET
+  return mergeDockOrder(opts.order).filter((id) => !isGated(id, opts) && !isUserHidden(id, hidden))
 }

@@ -26,6 +26,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/plugins"
 	"clawbench/internal/service"
 	"clawbench/internal/skill"
 	"clawbench/internal/speech"
@@ -1775,30 +1776,34 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	// Sort changed fields for deterministic response
 	sort.Strings(changedFields)
 
-	// Turning the integration off clears every project's repository binding.
-	// Deliberately AFTER the config write succeeded: clearing first and then
-	// failing to persist would destroy the user's bindings while the switch
-	// stayed on, i.e. the worst of both states.
+	// Turning a feature off has irreversible side effects (clearing repository
+	// bindings, revoking share links). They are deliberately AFTER the config
+	// write succeeded: doing it first and then failing to persist would destroy
+	// the user's data while the switch stayed on, i.e. the worst of both states.
 	//
-	// Bindings are the thing that actually drives polling, so this is what makes
-	// "disabled" mean "no outbound requests" rather than just "hidden". The
-	// poller also checks the flag each cycle (belt and braces for the window
-	// before this runs).
+	// The effects themselves live on the plugins (Plugin.OnDisable) so adding a
+	// feature does not mean editing this handler; what stays here is the timing
+	// and the "did THIS patch turn it off" test.
 	//
-	// A failure here is reported as a WARNING, not a 500. The config is already
-	// persisted and in memory — that is the authoritative fact — so answering 500
-	// would make the client roll its cached `forge.enabled` back to true and
-	// redraw the dock and the switch as enabled, while the server is disabled.
-	// The user would then be told "save failed" about a change that did take
-	// effect. The stale bindings are harmless on their own (the poller checks the
-	// flag first) and the next disable attempt retries the cleanup.
-	clearWarnings := clearForgeBindingsOnDisable(patch)
-	clearWarnings = append(clearWarnings, applyFeatureDisableEffects(patch)...)
+	// A failure is reported as a WARNING, not a 500. The config is already
+	// persisted and in memory — that is the authoritative fact — so answering
+	// 500 would make the client roll its cached value back to true and redraw
+	// the switch as enabled, while the server is disabled. The user would then
+	// be told "save failed" about a change that did take effect.
+	disableWarnings := applyPluginDisableEffects(patch)
+	disableWarnings = append(disableWarnings, applyFeatureDisableEffects(patch)...)
 
-	// Classify fields into hot (no restart) and cold (needs restart)
+	// Classify fields into hot (no restart) and cold (needs restart).
+	//
+	// A registered feature's "<section>.enabled" is hot by construction: the
+	// plugin lifecycle already started or stopped its workers above, so telling
+	// the user to restart would be wrong. Deriving that from the registry means
+	// a new feature switch does not have to be added to hotReloadFields — that
+	// list stays the place for everything else (and is still hand-written, since
+	// it is the documentation of what a restart is needed for).
 	coldFields := make([]string, 0) // always non-nil so JSON serializes as [] not null
 	for _, f := range changedFields {
-		if !hotReloadFields[f] {
+		if !hotReloadFields[f] && !plugins.IsFeatureSwitchPath(f) {
 			coldFields = append(coldFields, f)
 		}
 	}
@@ -1806,7 +1811,7 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 
 	// Collect warnings from hot-reload (e.g. DingTalk connection failure)
 	warnings := applyHotReloadWarnings()
-	warnings = append(warnings, clearWarnings...)
+	warnings = append(warnings, disableWarnings...)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"needs_restart":       len(coldFields) > 0,
@@ -1847,15 +1852,51 @@ func writePatchValueError(w http.ResponseWriter, r *http.Request, err error) {
 	})
 }
 
-// applyFeatureDisableEffects applies the tasks and share master switches.
+// applyPluginDisableEffects runs every registered plugin's OnDisable hook for
+// the features THIS patch turned off.
 //
-// Like clearForgeBindingsOnDisable this runs AFTER the config write succeeded:
-// the destructive part (cancelling runs, revoking links) is irreversible, so it
-// must not happen for a change that failed to persist.
+// It is the generalized form of the two hand-written helpers it replaced
+// (clearForgeBindingsOnDisable / the share half of applyFeatureDisableEffects):
+// the destructive work lives on the plugin, and the handler only owns the
+// timing (after writeConfigYAML succeeded) and the "did this patch turn it off"
+// test.
 //
-// A failure is a WARNING, not a 500, for the same reason as forge: the config
-// is already the authoritative fact, and answering 500 would make the client
-// roll the switch back to "enabled" while the server is disabled.
+// A plugin qualifies when it declares a Section and that section carries
+// `enabled: false` in the patch. Absent `enabled` means "this patch did not
+// touch the switch", so sub-setting edits never trigger a revoke.
+//
+// The tasks master switch is deliberately NOT modeled this way: its effect is
+// bidirectional (off cancels runs and discards queued events, on restarts cron)
+// while OnDisable only has one direction. It stays in
+// applyFeatureDisableEffects, which runs right after this.
+func applyPluginDisableEffects(patch map[string]any) []string {
+	var warnings []string
+	for _, p := range plugins.All() {
+		if p.OnDisable == nil || p.Section == "" {
+			continue
+		}
+		section, ok := patch[p.Section].(map[string]any)
+		if !ok {
+			continue
+		}
+		enabled, ok := section["enabled"].(bool)
+		if !ok || enabled {
+			continue
+		}
+		warnings = append(warnings, p.OnDisable()...)
+	}
+	return warnings
+}
+
+// applyFeatureDisableEffects applies the tasks master switch.
+//
+// Like applyPluginDisableEffects this runs AFTER the config write succeeded:
+// the destructive part (cancelling runs, discarding queued events) is
+// irreversible, so it must not happen for a change that failed to persist.
+//
+// A failure is a WARNING, not a 500, for the same reason as the plugin hooks:
+// the config is already the authoritative fact, and answering 500 would make
+// the client roll the switch back to "enabled" while the server is disabled.
 func applyFeatureDisableEffects(patch map[string]any) []string {
 	var warnings []string
 
@@ -1875,46 +1916,7 @@ func applyFeatureDisableEffects(patch map[string]any) []string {
 		}
 	}
 
-	if shareMap, ok := patch["share"].(map[string]any); ok {
-		if enabled, ok := shareMap["enabled"].(bool); ok && !enabled {
-			res, err := service.RevokeAllShares()
-			if err != nil {
-				slog.Error("share: revoke all links after disable failed", "err", err)
-				warnings = append(warnings, fmt.Sprintf("share disabled, but revoking existing links failed: %v", err))
-			} else {
-				slog.Info("share: master switch off, links revoked",
-					"file", res.FileShares,
-					"session", res.SessionShares,
-					"meeting", res.MeetingShares,
-				)
-			}
-		}
-	}
-
 	return warnings
-}
-
-// clearForgeBindingsOnDisable removes every project's repository binding when
-// this patch turned the integration off. Returns warnings to surface to the
-// client.
-func clearForgeBindingsOnDisable(patch map[string]any) []string {
-	forgeMap, ok := patch["forge"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	enabled, ok := forgeMap["enabled"].(bool)
-	if !ok || enabled {
-		return nil
-	}
-	removed, cerr := service.ClearAllProjectForges()
-	if cerr != nil {
-		slog.Error("forge: clear bindings after disable failed", "err", cerr)
-		return []string{fmt.Sprintf("forge disabled, but clearing repository bindings failed: %v", cerr)}
-	}
-	if removed > 0 {
-		slog.Info("forge: integration disabled, bindings cleared", "removed", removed)
-	}
-	return nil
 }
 
 func validatePatchFields(patch map[string]any, prefix string) ([]string, error) {

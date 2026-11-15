@@ -3,18 +3,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   panel: {
-    props: ['foo', 'active'],
+    props: ['foo', 'bar', 'active'],
     emits: ['ping'],
-    template: '<button class="test-panel" @click="$emit(\'ping\')">{{ foo }}|{{ active }}</button>',
+    template: '<button class="test-panel" @click="$emit(\'ping\')">{{ foo }}|{{ active }}|{{ bar }}</button>',
   },
   onPing: vi.fn(),
 }))
 
 vi.mock('@/composables/dockPluginRuntime', () => ({
-  getDockPluginRuntime: () => ({
+  resolveDockPlugin: () => ({
     panel: {
       component: mocks.panel,
-      props: (host: { projectPath: string }) => ({ foo: host.projectPath }),
+      props: (host: { projectPath: string }, extras: { task: { openTaskFile: unknown } }) => ({
+        foo: host.projectPath,
+        bar: !!extras.task.openTaskFile,
+      }),
       on: () => ({ ping: mocks.onPing }),
     },
   }),
@@ -22,17 +25,17 @@ vi.mock('@/composables/dockPluginRuntime', () => ({
 
 import DockPanelHost from '@/components/dock/DockPanelHost.vue'
 
+// The GENERIC host half: shared by every panel, never widened by one.
 const host = {
   projectPath: '/proj',
-  terminalRequestedCwd: null,
-  platformUnsupported: false,
+  isWideScreen: true,
   openFile: vi.fn(),
-  openTaskFile: vi.fn(),
-  quoteMeeting: vi.fn(),
-  openMailSettings: vi.fn(),
-  requestProject: vi.fn(),
-  openMeetingRelaySettings: vi.fn(),
-  clearTerminalCwd: vi.fn(),
+  openSettingsCategory: vi.fn(),
+  openTab: vi.fn(),
+}
+// The per-plugin half: a panel takes only its own group.
+const extras = {
+  task: { openTaskFile: vi.fn() },
 }
 
 describe('DockPanelHost', () => {
@@ -40,14 +43,14 @@ describe('DockPanelHost', () => {
 
   it('renders the panel with active + host-derived props', () => {
     const wrapper = mount(DockPanelHost, {
-      props: { tabId: 'forge', active: true, host },
+      props: { tabId: 'forge', active: true, host, extras },
     })
-    expect(wrapper.find('.test-panel').text()).toBe('/proj|true')
+    expect(wrapper.find('.test-panel').text()).toBe('/proj|true|true')
   })
 
   it('binds host-derived event listeners', async () => {
     const wrapper = mount(DockPanelHost, {
-      props: { tabId: 'forge', active: true, host },
+      props: { tabId: 'forge', active: true, host, extras },
     })
     await wrapper.find('.test-panel').trigger('click')
     expect(mocks.onPing).toHaveBeenCalledTimes(1)

@@ -132,10 +132,18 @@ func TerminalWebSocket(w http.ResponseWriter, r *http.Request) {
 func TerminalStatus(w http.ResponseWriter, r *http.Request) {
 	mgr := GetTerminalManager()
 	if mgr == nil {
+		// No manager: the feature is switched off (a disabled feature never
+		// gets a Manager — see the terminal plugin's Start hook).
+		//
+		// The two capability fields still report the REAL platform answers.
+		// Hard-coding them to false made "switched off" indistinguishable from
+		// "this OS cannot run a terminal": the settings switch greys itself out
+		// on platform_supported === false, so turning the terminal off left it
+		// stuck as "enabled but unsupported" until a page reload.
 		writeJSON(w, http.StatusOK, map[string]any{
 			"enabled":             false,
-			"platform_supported":  false,
-			"cwd_probe_supported": false,
+			"platform_supported":  terminal.PlatformSupported(),
+			"cwd_probe_supported": terminal.CwdProbeSupported(),
 		})
 		return
 	}

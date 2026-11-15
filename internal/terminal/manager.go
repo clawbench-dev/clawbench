@@ -424,11 +424,24 @@ func (m *Manager) IsEnabled() bool {
 	return m.cfg.Enabled
 }
 
-// IsPlatformSupported returns whether the current OS supports PTY sessions.
-// Mirrors the check in startPTY() — creack/pty does not implement ConPTY,
-// so Windows always returns false.
-func (m *Manager) IsPlatformSupported() bool {
+// PlatformSupported reports whether this OS can run PTY sessions at all.
+//
+// It is a property of the platform, NOT of a running Manager, and that
+// distinction matters: when the feature is switched off no Manager is created,
+// and the status endpoint still has to answer "this OS cannot run a terminal"
+// versus "the terminal is just switched off". Reporting false for the former
+// while no manager exists made the settings switch look "unsupported" the
+// moment the user turned the feature off.
+//
+// Mirrors the check in startPTY() — creack/pty does not implement ConPTY, so
+// Windows always returns false.
+func PlatformSupported() bool {
 	return runtimeGOOS != "windows"
+}
+
+// IsPlatformSupported returns whether the current OS supports PTY sessions.
+func (m *Manager) IsPlatformSupported() bool {
+	return PlatformSupported()
 }
 
 // Reconfigure updates the terminal configuration at runtime.

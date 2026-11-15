@@ -11,8 +11,8 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent } from 'vue'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
-import { getDockPluginRuntime } from '@/composables/dockPluginRuntime'
-import type { DockPanelHost } from '@/composables/dockPluginTypes'
+import { resolveDockPlugin } from '@/composables/dockPluginRuntime'
+import type { DockPanelHost, DockPanelHostExtras } from '@/composables/dockPluginTypes'
 import type { DockTabId } from '@/composables/dockTabs'
 
 /**
@@ -24,15 +24,18 @@ import type { DockTabId } from '@/composables/dockTabs'
  *
  * `active` is passed to every panel because every panel needs to know whether
  * it is the visible one. Everything else is plugin-specific and goes through
- * `panel.props` / `panel.on`.
+ * `panel.props` / `panel.on`, which receive the generic host plus the
+ * per-plugin extras (a panel takes only its own group).
  */
 const props = defineProps<{
   tabId: DockTabId
   active: boolean
   host: DockPanelHost
+  /** Plugin-specific capabilities; a panel takes only its own group. */
+  extras: DockPanelHostExtras
 }>()
 
-const panel = computed(() => getDockPluginRuntime(props.tabId)?.panel)
+const panel = computed(() => resolveDockPlugin(props.tabId)?.panel)
 
 const panelComponent = computed(() => {
   const descriptor = panel.value
@@ -44,6 +47,6 @@ const panelComponent = computed(() => {
   return null
 })
 
-const extraProps = computed(() => panel.value?.props?.(props.host) ?? {})
-const events = computed(() => panel.value?.on?.(props.host) ?? {})
+const extraProps = computed(() => panel.value?.props?.(props.host, props.extras) ?? {})
+const events = computed(() => panel.value?.on?.(props.host, props.extras) ?? {})
 </script>

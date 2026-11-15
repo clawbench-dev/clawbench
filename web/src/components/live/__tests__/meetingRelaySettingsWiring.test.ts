@@ -20,6 +20,7 @@ import { readWebFile } from '@/testUtils/readWebFile'
 describe('meeting → relay settings wiring', () => {
   const app = readWebFile('src/App.vue')
   const panel = readWebFile('src/components/live/MeetingPanel.vue')
+  const plugin = readWebFile('src/plugins/live/plugin.ts')
 
   function functionBody(name: string): string {
     const start = app.indexOf(`function ${name}(`)
@@ -28,20 +29,28 @@ describe('meeting → relay settings wiring', () => {
     return body.slice(0, body.indexOf('\n}'))
   }
 
-  it('App.vue binds the panel’s request to its handler', () => {
-    expect(app).toContain('@relay-settings="handleOpenMeetingRelaySettings"')
-    expect(app).toContain('function handleOpenMeetingRelaySettings')
+  it('binds the panel’s request to the generic settings jump', () => {
+    // The panel is rendered by the generic DockPanelHost, so the binding lives
+    // in the live plugin's `panel.on` map (an object key, not a template
+    // attribute — the emit is camelCase at runtime). The host provides ONE
+    // settings jump for every plugin; the plugin adds what is meeting-specific.
+    expect(plugin).toContain("relaySettings: () => {")
+    expect(plugin).toContain("host.openSettingsCategory('meeting')")
+    expect(plugin).toContain('setMeetingCreateReturn()')
+    expect(app).toContain('function openSettingsCategory')
+    expect(app).not.toContain('handleOpenMeetingRelaySettings')
+    expect(app).not.toContain('openMeetingRelaySettings')
   })
 
   it('records the meeting origin before switching tabs', () => {
-    const body = functionBody('handleOpenMeetingRelaySettings')
+    const body = functionBody('openSettingsCategory')
     // Without this, Back lands on whatever tab happened to precede the jump.
-    expect(body).toMatch(/beginExternalJump\('live'/)
-    // The panel drops a 创建 form on re-entry unless this is parked.
-    expect(body).toContain('setMeetingCreateReturn()')
+    // The origin is the panel the user was on when they asked for settings —
+    // the same thing the meeting handler used to hardcode as 'live'.
+    expect(body).toMatch(/beginExternalJump\(origin/)
     // The settings TabPanel is mounted lazily, so the target travels through
     // the module-level pending category.
-    expect(body).toContain("setPendingSettingsCategory('meeting')")
+    expect(body).toContain('setPendingSettingsCategory(id)')
     expect(body).toContain("switchTab('settings')")
   })
 

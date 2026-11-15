@@ -1,8 +1,9 @@
+import { Network, ArrowLeftRight } from 'lucide-vue-next'
 import { store } from '@/stores/app'
 import { usePortForward } from '@/composables/usePortForward'
 import { getNative } from '@/utils/clawbenchNative'
 import { portForwardUnavailable } from '@/utils/portForwardUtils'
-import type { DockPluginRuntime } from '@/composables/dockPluginTypes'
+import type { DockPlugin } from '@/composables/dockPluginTypes'
 
 const { sshInfo, transportAllowsH2 } = usePortForward()
 
@@ -11,7 +12,20 @@ const { sshInfo, transportAllowsH2 } = usePortForward()
  * listener is off AND the configured transport cannot use h2. Keying off SSH
  * alone hid the tab on installs that forward over the stream tunnel.
  */
-export const proxyDock: DockPluginRuntime = {
+export default {
+  id: 'proxy',
+  titleKey: 'nav.portForward',
+  descriptionKey: 'settings.dockPlugins.desc.proxy',
+  group: 'project',
+  closable: true,
+  capability: 'portForward',
+  settingsCategory: 'portForward',
+  icon: Network,
+  settingsPage: {
+    group: 'dockModules',
+    icon: ArrowLeftRight,
+    kind: 'group',
+  },
   badge: () => ({ count: store.state.portForwardEnabledCount }),
   available: () =>
     !portForwardUnavailable(
@@ -21,6 +35,6 @@ export const proxyDock: DockPluginRuntime = {
     ),
   unavailableReasonKey: 'settings.dockPlugins.unavailable.proxy',
   panel: {
-    load: () => import('./ProxyPanelContent.vue'),
+    load: () => import('@/components/proxy/ProxyPanelContent.vue'),
   },
-}
+} satisfies DockPlugin

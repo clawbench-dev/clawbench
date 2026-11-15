@@ -24,6 +24,8 @@ tags:
     description: 系统资源与统计
   - name: Config
     description: 服务端配置读写与自检
+  - name: Features
+    description: 功能注册表（开关与可用性）
   - name: Theme
     description: 壁纸与外观
   - name: Projects
@@ -151,6 +153,60 @@ paths:
       responses:
         "200":
           description: 认证状态
+
+  # ── 功能注册表 ─────────────────────────────────────────────────────────────
+  /api/features:
+    get:
+      tags: [Features]
+      summary: 功能开关状态
+      description: |
+        返回服务端已注册的全部功能及其状态。这是"功能是否开启"的**唯一权威**：
+        客户端不再各自去 `/api/config` 里按形状掏 `forge.enabled` 之类的键，也不
+        维护一份默认值镜像。
+
+        每条记录四个判断维度：
+
+        - `enabled`：服务端功能开关（配置）。关闭即服务端真停（worker / 轮询 /
+          接口拒绝），该前缀下的接口返回 `409`（终端是 `503`）。
+        - `available`：**运行时**可用性（能力），与 `enabled` 正交。终端在
+          不支持 PTY 的平台上是 `enabled=true` + `available=false` —— 界面应
+          灰显并说明原因，而不是隐藏。
+        - `reason`：`""` / `disabled` / `capability`。`disabled` 优先：一个被
+          关掉的功能哪怕宿主也跑不了，对用户来说仍是"被关掉了"。
+        - `defaultOn`：该功能在未写入配置时的默认状态，供客户端在请求尚未落地
+          时做首屏判断（缺省当开）。
+
+        目前注册的功能：`forge`、`kb`、`mail`、`share`、`tasks`、`terminal`
+        （服务端开关），以及 `live`、`notifications`、`stats`（纯偏好型，恒为
+        `enabled=true`，注册是为了让客户端知道"这个功能存在且可用"）。
+      operationId: featuresList
+      responses:
+        "200":
+          description: 功能状态列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [features]
+                properties:
+                  features:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, enabled, available, reason, defaultOn]
+                      properties:
+                        id:
+                          type: string
+                          description: 稳定功能标识（= 前端页签 id）
+                        enabled:
+                          type: boolean
+                        available:
+                          type: boolean
+                        reason:
+                          type: string
+                          enum: ["", disabled, capability]
+                        defaultOn:
+                          type: boolean
 
   /api/config/password:
     post:

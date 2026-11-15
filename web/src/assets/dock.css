@@ -1,0 +1,255 @@
+/**
+ * Dock primitives — the button, its badge and the overflow menu item.
+ *
+ * These were scoped to App.vue while the dock was rendered there. The button is
+ * now its own component (`components/dock/DockTabButton.vue`), and a scoped rule
+ * only reaches a child component's ROOT element: the icon and the badge inside
+ * it would silently lose their styling. The shared base rules therefore live
+ * here, globally — the same rule the design guide states for every shared class.
+ *
+ * Nothing in here knows about a specific plugin: the state classes
+ * (`has-unread` / `has-running` / `just-completed`) are attached by the button
+ * from the plugin's own `appearance` declaration.
+ */
+
+/* Active icon follows the theme color (VS Code activity bar) */
+.wide-dock .dock-btn.active {
+    color: var(--accent-color);
+}
+.wide-dock .dock-btn.active:hover {
+    color: var(--accent-color);
+}
+
+/* Larger glyphs on the vertical dock. The rail stays 48px and the buttons stay
+   34px (the active indicator and DOCK_STEP are pinned to that geometry), so the
+   extra icon size comes out of the button's own padding rather than the dock
+   footprint. Scoped under .wide-dock to outrank the base .dock-btn svg rule. */
+.wide-dock .dock-btn svg {
+    width: calc(20 * var(--dp));
+    height: calc(20 * var(--dp));
+}
+
+.dock-btn {
+    position: relative;
+    width: calc(34 * var(--dp));
+    height: calc(34 * var(--dp));
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.25s, transform var(--duration-base);
+    z-index: 1;
+}
+
+.dock-btn:hover {
+    color: var(--text-primary);
+}
+
+.dock-btn:active {
+    transform: scale(0.92);
+}
+
+.dock-btn.active {
+    color: #fff;
+}
+
+.dock-btn.active:hover {
+    color: #fff;
+}
+
+.dock-btn svg {
+    width: calc(16 * var(--dp));
+    height: calc(16 * var(--dp));
+}
+
+.dock-btn.disabled {
+    opacity: var(--opacity-disabled);
+    cursor: default;
+}
+
+/* Unread indicator — static badge dot (top-right corner).
+ * Uses a real <span> element outside the button so it's not clipped by overflow:hidden.
+ * Positioned on .dock-btn-wrap which wraps both button and badge. */
+.dock-btn-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* A share is on air: a state dot, not a tinted icon. Red is reserved for
+   errors and for the recording indicator; a share is ordinary ongoing work, so
+   the dot uses the theme accent (same marker colour as the panel header). */
+.dock-badge--live {
+  animation: dock-live-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes dock-live-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* The dot itself is the information; the pulse is not, so it can be frozen. */
+@media (prefers-reduced-motion: reduce) {
+  .dock-badge--live {
+    animation: none;
+  }
+}
+
+.dock-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: calc(8 * var(--dp));
+    height: calc(8 * var(--dp));
+    border-radius: 50%;
+    background: var(--accent-color, #0066cc);
+    z-index: 2;
+    pointer-events: none;
+}
+
+/* Shape/geometry comes from the shared .count-badge; this rule keeps only the
+   dot-reset (the base .dock-badge is an 8px circle) and the corner offset.
+   The pill radius is re-declared on purpose: the base `.dock-badge` rule above
+   sets `border-radius: 50%`, and without this the badge would render as an
+   ellipse. */
+.dock-badge-count {
+    width: auto;
+    height: auto;
+    border-radius: var(--radius-full);
+    font-weight: var(--font-weight-bold);
+    color: #fff;
+    top: calc(-4 * var(--dp));
+    right: calc(-6 * var(--dp));
+}
+
+/* Dock badge pop animation on count change */
+.dock-badge-pop {
+    animation: badge-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes badge-pop {
+    0% {
+        transform: scale(1);
+    }
+    40% {
+        transform: scale(1.35);
+        box-shadow: 0 0 calc(8 * var(--dp)) calc(2 * var(--dp)) color-mix(in srgb, var(--accent-color) 50%, transparent);
+    }
+    70% {
+        transform: scale(0.9);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 transparent;
+    }
+}
+
+.dock-btn.has-running {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    border-color: transparent;
+    box-shadow: 0 0 calc(4 * var(--dp)) 1px color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
+}
+.dock-btn.has-running::before {
+    content: '';
+    position: absolute;
+    inset: calc(-2 * var(--dp));
+    border-radius: inherit;
+    background: conic-gradient(
+        from 0deg,
+        transparent 0%,
+        color-mix(in srgb, var(--accent-color, #0066cc) 15%, rgba(255,255,255,0.1)) 8%,
+        color-mix(in srgb, var(--accent-color, #0066cc) 50%, rgba(255,255,255,0.3)) 16%,
+        var(--accent-color, #0066cc) 22%,
+        color-mix(in srgb, var(--accent-color, #0066cc) 50%, rgba(255,255,255,0.3)) 28%,
+        color-mix(in srgb, var(--accent-color, #0066cc) 15%, rgba(255,255,255,0.1)) 36%,
+        transparent 50%
+    );
+    animation: dock-spin-light 2s linear infinite;
+    z-index: -2;
+}
+.dock-btn.has-running::after {
+    content: '';
+    position: absolute;
+    inset: calc(1.5 * var(--dp));
+    border-radius: inherit;
+    background: var(--bg-primary);
+    z-index: -1;
+}
+
+@keyframes dock-spin-light {
+    to { transform: rotate(360deg); }
+}
+
+.dock-btn.just-completed {
+    animation: dock-completed-flash 0.5s ease-out;
+}
+
+@keyframes dock-completed-flash {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color, #0066cc) 0%, transparent); }
+    30% { transform: scale(1.2); box-shadow: 0 0 12px 4px color-mix(in srgb, var(--accent-color, #0066cc) 50%, transparent); }
+    60% { transform: scale(1.1); box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color, #0066cc) 0%, transparent); }
+}
+
+.dock-btn.quote-emit-receive {
+    animation: quote-emit-pulse 0.4s ease-out;
+}
+
+@keyframes quote-emit-pulse {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color, #0066cc) 60%, transparent); }
+    40% { transform: scale(1.25); box-shadow: 0 0 14px 4px color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color, #0066cc) 0%, transparent); }
+}
+
+/* Overflow menu item — the narrow dock's popup row. */
+.dock-overflow-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+    width: 100%;
+    padding: var(--space-4) var(--space-6);
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--font-size-md);
+    cursor: pointer;
+    transition: background var(--duration-base), color var(--duration-base);
+    white-space: nowrap;
+}
+
+.dock-overflow-item:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+@media (hover: none) {
+    .dock-overflow-item:hover {
+        background: transparent;
+        color: var(--text-secondary);
+    }
+}
+
+.dock-overflow-item.active {
+    background: color-mix(in srgb, var(--accent-color) 15%, transparent);
+    color: var(--accent-color);
+}
+
+.dock-overflow-count {
+    margin-left: auto;
+    background: var(--accent-color);
+    color: #fff;
+    font-weight: var(--font-weight-bold);
+}

@@ -413,6 +413,8 @@ ForgeEventLabelEvent: Event
 ForgeEventLabelAuthor: Author
 ForgeEventViewDetail: View details
 ForgeDisabled: the GitHub/GitLab integration is disabled
+MailDisabled: the mail client is disabled
+KbDisabled: the knowledge base is disabled
 TasksDisabled: scheduled tasks are disabled
 ShareDisabled: sharing is disabled
 ShareFilesDisabled: file sharing is disabled

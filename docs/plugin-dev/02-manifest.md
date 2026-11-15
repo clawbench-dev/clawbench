@@ -1,5 +1,7 @@
 # 02 · 清单：在 `DOCK_TABS` 里声明一个插件
 
+> **已过时（2026-11-15 重构）**：`DOCK_TABS` / `dockTabMeta.ts` / 各功能的 `dock.ts` 都已删除，清单与运行时资源现在写在 `web/src/plugins/<id>/plugin.ts`。操作步骤一律照 [`README.md`](README.md)；本文件只保留仍然成立的概念解释。
+
 清单是 `web/src/composables/dockTabs.ts` 里的 `DOCK_TABS` 数组。它是左栏的唯一事实源：渲染列表、切换白名单、功能编排、顺序、可见性都从它派生。
 
 ## 1. 字段
@@ -82,7 +84,7 @@ export interface DockTabDescriptor {
 
 - **填了 `feature` 就自动生效**：`App.vue` 用 `isFeatureEnabled(tab.feature)` 过滤渲染，不需要在 `dock.ts` 里再写 `available()`。
 - 读取只有一条路：`useFeatureFlags.ts` 的 `isFeatureEnabled` / `useFeatureFlag`（类型 `FeatureFlagKey` 就是 `DockFeature` 的别名）。不要自己解析 `serverConfig`。
-- 新开关还要在 `FEATURE_FLAG_DEFAULTS` 补默认值：**缺键 = 开**，否则老配置升级后会凭空少一个功能。
+- 新开关在 `web/src/composables/dockTabs.ts` 的 `DockFeature` 联合类型与 `DOCK_FEATURES` 数组各加一项（`FeatureFlagKey` 从它派生）。**前端没有默认值镜像**：默认值与实时值都来自 `GET /api/features`，未加载时读作「全开」。
 - 服务端要有对应 key（GET 返回、PATCH 白名单、关闭时接口拒绝）。前端藏入口不算数。
 - 管理器会自动给这一行渲染「启用」开关、关闭前确认（破坏性项）和一次提交的预设写入。
 

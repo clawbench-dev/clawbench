@@ -27,20 +27,14 @@ import { computed } from 'vue'
 import {
   Palette,
   LayoutGrid,
-  Eye,
-  BookOpen,
-  Inbox,
-  FolderTree,
   FolderGit2,
   MessageSquare,
   MessagesSquare,
   Bot,
-  SquareTerminal,
   Volume2,
   Mic,
   Brain,
   ScanText,
-  ArrowLeftRight,
   Bell,
   Shield,
   Bug,
@@ -50,23 +44,35 @@ import {
   Plug,
   Boxes,
   ChevronRight,
-  Github,
   UserRound,
-  Mail,
-  History,
-  ListTodo,
-  ChartColumn,
-  Share2,
 } from 'lucide-vue-next'
-import { MEETING_ICON } from '@/utils/meetingIcon'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
+import { DOCK_SETTINGS_PAGES } from '@/composables/dockPluginRuntime'
 
 defineEmits<{
   navigate: [categoryId: string]
 }>()
 
 const { t } = useI18n()
+
+/**
+ * Rows of the 功能模块 group that do NOT come from a dock plugin.
+ *
+ * The manager is the one page that configures every plugin, and message push /
+ * usage meter are features with a settings page but no dock entry. Everything
+ * between them is derived from the plugin registry (see `DOCK_SETTINGS_PAGES`),
+ * in DOCK order.
+ */
+const DOCK_MODULE_ITEMS = [
+  { id: 'dockPlugins', icon: LayoutGrid },
+  ...DOCK_SETTINGS_PAGES.filter((page) => page.group === 'dockModules').map((page) => ({
+    id: page.categoryId,
+    icon: page.icon,
+  })),
+  { id: 'notification', icon: Bell },
+  { id: 'usageMeter', icon: Gauge },
+]
 
 /**
  * Category → group layout for the settings home page. Grouping is purely
@@ -109,32 +115,15 @@ const groupDefs = [
   {
     // 功能模块: everything that configures a left-dock feature lives in one
     // group. The manager comes first (it is where those switches live), then
-    // one page per plugin in DOCK order, then the two pages that configure a
-    // feature without owning a dock entry (message push, usage meter).
+    // one page per plugin in DOCK order — DERIVED from the plugin manifests, so
+    // a new plugin's settings page appears here without touching this file —
+    // then the two pages that configure a feature without owning a dock entry
+    // (message push, usage meter).
     //
     // These pages stay listed even when their plugin is hidden or switched
     // off: the user needs them to configure the feature back on.
     id: 'dockModules',
-    items: [
-      { id: 'dockPlugins', icon: LayoutGrid },
-      { id: 'files', icon: FolderTree },
-      { id: 'fileView', icon: Eye },
-      { id: 'gitHistory', icon: History },
-      { id: 'forgeIntegration', icon: Github },
-      { id: 'tasks', icon: ListTodo },
-      { id: 'terminal', icon: SquareTerminal },
-      { id: 'stats', icon: ChartColumn },
-      { id: 'mail', icon: Mail },
-      { id: 'kb', icon: BookOpen },
-      // The icon comes from utils/meetingIcon so this row matches the dock tab
-      // instead of drawing a second, unrelated meeting glyph.
-      { id: 'meeting', icon: MEETING_ICON },
-      { id: 'share', icon: Share2 },
-      { id: 'portForward', icon: ArrowLeftRight },
-      { id: 'notifications', icon: Inbox },
-      { id: 'notification', icon: Bell },
-      { id: 'usageMeter', icon: Gauge },
-    ],
+    items: DOCK_MODULE_ITEMS,
   },
   {
     // Model capability is its own top-level group: these pages configure the

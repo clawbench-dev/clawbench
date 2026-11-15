@@ -47,12 +47,9 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 		writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks, "hasUnread": hasUnread})
 
 	case http.MethodPost:
-		// The feature switch is a server-side gate, not just a hidden tab: a
-		// client that ignores the switch must not be able to create a task that
-		// will never fire.
-		if rejectIfTasksDisabled(w, r) {
-			return
-		}
+		// The tasks master switch refuses this route at the router's feature
+		// gate (see RegisterRoutes), so a client that ignores the switch cannot
+		// create a task that will never fire.
 		var req struct {
 			Name       string `json:"name"`
 			CronExpr   string `json:"cron_expr"`
@@ -461,6 +458,12 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// is refused while the switch is off. The read/cancel/stop/delete-*
 		// actions above stay available: they are how a user inspects or cleans
 		// up after the switch cancelled everything.
+		//
+		// This check cannot move to the router's feature gate: the actions above
+		// arrive as PUT with `action` in the BODY, exactly like this update, so
+		// method+path alone cannot tell "cancel a run" (must pass) from "re-arm
+		// the task" (must be refused). The gate therefore exempts the whole
+		// /api/tasks/ subtree and the decision stays here.
 		if rejectIfTasksDisabled(w, r) {
 			return
 		}

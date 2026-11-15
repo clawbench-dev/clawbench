@@ -89,6 +89,10 @@ describe('native selection action bridge', () => {
       expect(typeof qq.handleNativeSelectionAction).toBe('function')
       // Unknown actions must not throw — the native side could send a stale one.
       expect(() => qq.handleNativeSelectionAction('nope')).not.toThrow()
-    })
+      // `resetModules()` above throws the module registry away, so this import
+      // re-evaluates the composable's whole graph inside the test body. That is
+      // pure CPU (no race to wait on) and the default 5s budget is not enough
+      // when the suite runs its workers in parallel.
+    }, 20_000)
   })
 })

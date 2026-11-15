@@ -679,6 +679,16 @@ func TestServeConfig_Patch_MailEnabledRoundTrip(t *testing.T) {
 	assert.False(t, model.ConfigInstance.Mail.Enabled,
 		"mail.enabled must be applied to ConfigInstance")
 
+	// A feature switch is hot by construction: the plugin lifecycle has already
+	// stopped the mail worker, so telling the user to restart would be wrong.
+	// (In production this is derived from the registry; here it is covered by
+	// hotReloadFields, so this pins the response shape either way.)
+	var patchResp struct {
+		NeedsRestart bool `json:"needs_restart"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &patchResp))
+	assert.False(t, patchResp.NeedsRestart, "a feature switch must not ask for a restart")
+
 	getReq := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
 	withAuthCookie(getReq, model.SessionToken)
 	gw := callHandler(ServeConfig, getReq)
@@ -764,6 +774,7 @@ func TestServeConfig_Patch_ForgeDisableClearsBindings(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
+	registerDisableHookPlugin(t, "forge", "forge", ForgeDisableEffect)
 	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: true}}
 
 	// Bind the test project (and a second one) so the clear has something to do.

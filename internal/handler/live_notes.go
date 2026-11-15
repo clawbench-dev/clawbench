@@ -261,7 +261,12 @@ func ServeLiveNotesShare(w http.ResponseWriter, r *http.Request) {
 	// Publishing a record while sharing is off would create a link the server
 	// has just promised to revoke. Un-publishing stays allowed: it is the
 	// cleanup direction and is idempotent with the switch's own revocation.
-	if body.Enabled && rejectIfShareDisabled(w, r) {
+	//
+	// This check cannot move to the router's feature gate: the endpoint lives
+	// under /api/live-share/, not /api/share/, and the rule is conditional on
+	// the body (only "publish" is refused).
+	if body.Enabled && !shareFeatureEnabled() {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ShareDisabled")
 		return
 	}
 	if body.Enabled && !model.FeaturePolicy.ShareAllowMeetings {

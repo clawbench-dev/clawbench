@@ -12,7 +12,7 @@ import { setLayoutScopeMode } from '@/utils/panelState'
 import { setDefaultBlockWrap } from '@/utils/blockWrapPref'
 import { applyServerLimits } from '@/stores/app.ts'
 import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
-import { syncFeatureConfig } from '@/composables/useFeatureFlags'
+import { refreshServerFeatures, syncFeatureConfig } from '@/composables/useFeatureFlags'
 
 const LOCAL_PREFIX = SETTINGS_KEY_PREFIX
 
@@ -1096,6 +1096,13 @@ export function useSettingsConfig() {
       // the config lands, so it is also the one place they are refreshed — see
       // useFeatureFlags for why that module does not read serverConfig itself.
       syncFeatureConfig(data)
+      // The six master switches answer from the server's plugin registry, not
+      // from this snapshot (see useFeatureFlags). Refreshing it here — the one
+      // place the config lands, including after every PATCH — is what makes a
+      // flipped switch reach the entries without a reload. Not awaited: a slow
+      // /api/features must not delay the settings page, and the flags read as
+      // ON until it lands.
+      void refreshServerFeatures()
       // Mirror hot-reloadable limits into the global store so client-side
       // pre-checks (session-limit guard, upload size/count) and the session
       // header reflect a settings change immediately instead of only after a

@@ -210,25 +210,23 @@ describe('SettingsIndex', () => {
 // a category without its translation therefore ships a literal
 // "settings.categories.mcp" into the UI, which is exactly what happened.
 //
-// This guard reads the REAL locale files and the component SOURCE rather than
-// the hand-written message subset above: that subset is precisely what made the
-// bug invisible (it silently lacks skills / mcp / rag / forgeIntegration).
+// This guard reads the REAL locale files and the RENDERED rows rather than the
+// hand-written message subset above: that subset is precisely what made the bug
+// invisible (it silently lacks skills / mcp / rag / forgeIntegration). Reading
+// the DOM (not the component source) also covers the rows the 功能模块 group
+// DERIVES from the plugin registry — a source-text scrape cannot see those.
 describe('SettingsIndex category i18n coverage', () => {
   const localeFiles = import.meta.glob('../../../i18n/locales/*.ts', { eager: true }) as Record<
     string,
     Record<string, unknown>
   >
-  const componentSource = Object.entries(
-    import.meta.glob('@/components/settings/SettingsIndex.vue', {
-      eager: true,
-      query: '?raw',
-      import: 'default',
-    }) as Record<string, string>,
-  )[0]?.[1]
 
-  /** categoryIdsFromSource extracts the ids declared in groupDefs. */
-  function categoryIdsFromSource(src: string): string[] {
-    return [...src.matchAll(/\{ id: '([^']+)', icon:/g)].map((m) => m[1])
+  /** Every category id the index actually renders, in order. */
+  function renderedCategoryIds(): string[] {
+    return mountIndex()
+      .findAll('.settings-index__row')
+      .map((row) => row.attributes('data-category') ?? '')
+      .filter((id) => id !== '')
   }
 
   function categoriesOf(mod: Record<string, unknown>): Record<string, unknown> {
@@ -241,15 +239,14 @@ describe('SettingsIndex category i18n coverage', () => {
   }
 
   it('declares category ids', () => {
-    expect(componentSource).toBeTruthy()
-    expect(categoryIdsFromSource(componentSource as string).length).toBeGreaterThan(10)
+    expect(renderedCategoryIds().length).toBeGreaterThan(10)
   })
 
   // A category defined in the field map but missing from the index is
   // unreachable: its rows exist, its i18n exists, and no user can navigate to
   // it. The reverse (an index row with no category) renders an empty page.
   it('lists every field-map category exactly once, and nothing else', () => {
-    const ids = categoryIdsFromSource(componentSource as string)
+    const ids = renderedCategoryIds()
     // Sub-page routes ('tts:tts_engine') have their own category entry for the
     // panel they render, but they are reached from a parent page, not the index.
     const subPageIds = new Set(Object.keys(subPagePanelMap).map(id => id.split(':')[1]))
@@ -259,7 +256,7 @@ describe('SettingsIndex category i18n coverage', () => {
   })
 
   it('every declared category id has a non-empty label in every locale', () => {
-    const ids = categoryIdsFromSource(componentSource as string)
+    const ids = renderedCategoryIds()
     const locales = Object.entries(localeFiles)
     expect(locales.length).toBeGreaterThanOrEqual(2)
 

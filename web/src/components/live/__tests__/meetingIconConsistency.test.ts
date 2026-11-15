@@ -18,11 +18,17 @@ import { resolve } from 'node:path'
 
 const ROOT = resolve(__dirname, '../../../../..')
 
-/** Every surface that wears the meeting brand, dock tab included. */
+/**
+ * Every surface that wears the meeting brand, dock tab included.
+ *
+ * The settings index is deliberately absent: its 会议 row is DERIVED from the
+ * live plugin's `settingsPage.icon` (the same `MEETING_ICON` constant), so it
+ * can no longer pick a second glyph of its own. SettingsIndex.test.ts asserts
+ * the rendered row still draws that constant.
+ */
 const SURFACES = [
-  'web/src/composables/dockTabMeta.ts',
+  'web/src/plugins/live/plugin.ts',
   'web/src/utils/quoteSourceMeta.ts',
-  'web/src/components/settings/SettingsIndex.vue',
   'web/src/components/live/MeetingList.vue',
   'web/src/components/live/MeetingCreate.vue',
   'web/src/components/live/MeetingJoin.vue',

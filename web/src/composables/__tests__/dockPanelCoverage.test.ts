@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readWebFile } from '@/testUtils/readWebFile'
 import { DOCK_TAB_IDS } from '@/composables/dockTabs'
-import { getDockPluginRuntime } from '@/composables/dockPluginRuntime'
+import { resolveDockPlugin } from '@/composables/dockPluginRuntime'
 
 /**
  * Every left-dock tab except the two core file tabs is rendered through
@@ -13,7 +13,7 @@ describe('dock panel coverage', () => {
     if (id === 'browse' || id === 'view') continue
 
     it(`${id} declares a panel`, () => {
-      const panel = getDockPluginRuntime(id)?.panel
+      const panel = resolveDockPlugin(id)?.panel
       expect(panel, `${id} has no dock.ts panel`).toBeDefined()
       expect(panel?.component || panel?.load, `${id} panel has no component/loader`).toBeTruthy()
     })

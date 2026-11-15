@@ -43,7 +43,7 @@ vi.mock('@/utils/materialIcons', () => ({
 }))
 
 import MeetingResources from '../MeetingResources.vue'
-import { syncFeatureConfig } from '@/composables/useFeatureFlags'
+import { syncFeatureConfig, syncServerFeatures } from '@/composables/useFeatureFlags'
 import type { MeetingResourceGroup } from '@/composables/useMeetingResources'
 
 const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
@@ -110,6 +110,7 @@ beforeEach(() => {
   cleanupDragGhost.mockReset()
   confirmDialog.mockReset()
   syncFeatureConfig({})
+  syncServerFeatures([])
 })
 
 describe('MeetingResources', () => {
@@ -164,6 +165,9 @@ describe('MeetingResources', () => {
     // The server revokes every link when the switch goes off, so a publish
     // button here could only fail — and a "private" badge would be a claim
     // about a feature that no longer exists.
+    // The share MASTER switch is a server feature (registry), the per-kind
+    // permissions are config sub-options — push both, as loadConfig does.
+    syncServerFeatures([{ id: 'share', enabled: false, available: true, reason: 'disabled', defaultOn: true }])
     syncFeatureConfig({ share: { enabled: false } })
     const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
 
@@ -173,6 +177,7 @@ describe('MeetingResources', () => {
   })
 
   it('hides the link card when MEETING links are disallowed, even with 分享 on', () => {
+    syncServerFeatures([{ id: 'share', enabled: true, available: true, reason: '', defaultOn: true }])
     syncFeatureConfig({ share: { enabled: true, allow_meetings: false } })
     const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
 
@@ -180,6 +185,7 @@ describe('MeetingResources', () => {
   })
 
   it('keeps the link card when only file/conversation links are disallowed', () => {
+    syncServerFeatures([{ id: 'share', enabled: true, available: true, reason: '', defaultOn: true }])
     syncFeatureConfig({ share: { enabled: true, allow_files: false, allow_sessions: false } })
     const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
 

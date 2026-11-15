@@ -104,14 +104,18 @@ describe('skillMenuRows', () => {
   })
 
   it('dedupes by canonical name, keeping the highest-priority source', () => {
+    // Priority is the backend's dedup order (internal/skill/registry.go):
+    // own > user > project > git > other. A project skill therefore does NOT
+    // shadow a user-dir skill with the same name — the agent resolves the
+    // user-dir copy, and the menu must show the same winner.
     skills.value = [
       skill({ name: 'dup', source_kind: 'other', description: 'other' }),
-      skill({ name: 'dup', source_kind: 'user', description: 'user' }),
       skill({ name: 'dup', source_kind: 'project', description: 'project' }),
+      skill({ name: 'dup', source_kind: 'user', description: 'user' }),
     ]
     const rows = skillMenuRows()
     expect(rows).toHaveLength(1)
-    expect(rows[0].description).toBe('project')
+    expect(rows[0].description).toBe('user')
   })
 
   it('treats a leading slash and case as the same identity', () => {

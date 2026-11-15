@@ -540,11 +540,15 @@ describe('settingsFieldMap', () => {
     // manager. A second switch here would be a second source of truth.
     expect(cfg.enableKey).toBeUndefined()
     expect(cfg.enableLabelKey).toBeUndefined()
-    expect(cfg.commonFields.length).toBe(6)
+    expect(cfg.commonFields.length).toBe(7)
     expect(cfg.commonFields[0].key).toBe('terminalTheme')
     expect(cfg.commonFields[0].source).toBe('local')
     expect(cfg.commonFields[1].key).toBe('terminalFontSize')
     expect(cfg.commonFields[1].source).toBe('local')
+    // Command recording is a local switch in the middle of the list (added
+    // with the shell-history feature); name it so a reorder cannot silently
+    // change what the panel shows.
+    expect(cfg.commonFields.map((f) => f.key)).toContain('terminalHistoryEnabled')
 
     const status = categoryItems.terminal.find(
       e => e.type === 'item' && (e as { spec: ItemSpec }).spec.statusFeature === 'terminal.enabled',

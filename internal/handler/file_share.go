@@ -196,11 +196,11 @@ func resolveShareRoot(r *http.Request, absPath string) string {
 }
 
 func serveShareCreate(w http.ResponseWriter, r *http.Request) {
-	// The switch is a server-side gate: a client that ignores it must not be
-	// able to mint a link that the server would immediately have to revoke.
-	if rejectIfShareDisabled(w, r) {
-		return
-	}
+	// The share master switch is enforced by the router's feature gate (this
+	// route is under /api/share), so a client that ignores the switch cannot
+	// mint a link the server would immediately have to revoke. The per-kind
+	// switches below are NOT part of that gate: they only stop NEW links of one
+	// kind and are checked here.
 	if !model.FeaturePolicy.ShareAllowFiles {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "ShareFilesDisabled")
 		return

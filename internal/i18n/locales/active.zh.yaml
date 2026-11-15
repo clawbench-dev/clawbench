@@ -405,6 +405,8 @@ ForgeEventLabelEvent: 事件
 ForgeEventLabelAuthor: 作者
 ForgeEventViewDetail: 查看详情
 ForgeDisabled: GitHub/GitLab 集成已关闭
+MailDisabled: 邮件功能已关闭
+KbDisabled: 知识库功能已关闭
 TasksDisabled: 任务功能已关闭
 ShareDisabled: 分享功能已关闭
 ShareFilesDisabled: 文件分享已关闭

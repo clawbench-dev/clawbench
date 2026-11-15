@@ -1,7 +1,8 @@
 import { computed, ref } from 'vue'
 import {
-  DOCK_TAB_BY_ID,
-  DOCK_TABS,
+  DOCK_FEATURES,
+  DOCK_TAB_IDS,
+  isPermanentDockTab,
   mergeDockOrder,
   isDockTabId,
   type DockFeature,
@@ -53,6 +54,59 @@ export interface DockFeatureChange {
 }
 
 /**
+ * One preset, as RULES rather than a spelled-out plan.
+ *
+ * Everything a preset does derives from these declarations plus the registry
+ * constants (`DOCK_TAB_ORDER`, `DOCK_FEATURES`, the permanent-tab set), so a
+ * newly added plugin is handled correctly by all three presets with no
+ * registration anywhere.
+ *
+ *   - `hideTabs` / `keepOnly` decide which entries disappear;
+ *   - `parkHiddenBefore` decides where the hidden ones sit in the order (they
+ *     must stay IN the order, so re-enabling one lands it where the preset put
+ *     it rather than at the end);
+ *   - `disableFeatures` / `disableAllFeatures` decide the server switches —
+ *     every declared feature is written, so an unlisted one reads as ON.
+ */
+export interface DockPresetRules {
+  /** Explicit exceptions: these closable tabs are hidden. */
+  hideTabs?: readonly DockTabId[]
+  /** `"permanent"` = hide everything the user can hide; only the core tabs stay. */
+  keepOnly?: 'permanent'
+  /** Where the hidden tabs sit in the derived order. */
+  parkHiddenBefore?: DockTabId
+  /** These server switches go OFF; every other declared switch goes ON. */
+  disableFeatures?: readonly DockFeature[]
+  /** Every declared server switch goes OFF. */
+  disableAllFeatures?: boolean
+}
+
+/**
+ * The three presets as declarations.
+ *
+ * Default order is a product decision, so it is never spelled out here: a new
+ * plugin takes its slot from `DOCK_TAB_ORDER` and the presets follow.
+ */
+export const DOCK_PRESETS: Readonly<Record<Exclude<DockPreset, 'custom'>, DockPresetRules>> = {
+  developer: {
+    // All tabs, default order, every server switch on.
+  },
+  standard: {
+    // The everyday set: the developer-only tabs (Forge, terminal, port
+    // mapping) disappear and their server work stops; everything else runs.
+    hideTabs: ['forge', 'terminal', 'proxy'],
+    parkHiddenBefore: 'settings',
+    disableFeatures: ['forge.enabled', 'terminal.enabled'],
+  },
+  minimal: {
+    // Only the permanent tabs; every optional feature switched off.
+    keepOnly: 'permanent',
+    parkHiddenBefore: 'settings',
+    disableAllFeatures: true,
+  },
+}
+
+/**
  * Everything applying a preset does. Kept as data (not hidden inside the
  * apply function) so the manager can preview the consequences in its
  * confirmation dialog from the same source that performs them.
@@ -60,69 +114,59 @@ export interface DockFeatureChange {
 export interface DockPresetPlan {
   /** Tabs hidden in the dock. */
   hidden: readonly DockTabId[]
-  /** Full left-dock order (all 14 ids). */
+  /** Full left-dock order (all ids, derived from DOCK_TAB_ORDER). */
   order: readonly DockTabId[]
   /** Server master switches to write, in one request. */
   features: readonly DockFeatureChange[]
 }
 
 /**
- * The three presets, spelled out.
+ * Expand one preset's rules into the concrete plan.
  *
- * Orders are literal arrays rather than derived filters: the three presets
- * differ in ways a filter cannot express (standard parks the developer tabs at
- * the end instead of removing them, minimal keeps the historical slot order
- * so turning a feature back on lands it where it used to be).
+ * Hidden ids only ever come from the closable set: a preset cannot hide a
+ * permanent tab (that would lock the user out of the manager that fixes it).
+ * The order keeps the DEFAULT slots — visible tabs first, then the hidden block
+ * parked before `parkHiddenBefore` — so a feature re-enabled later lands where
+ * the preset put it, not at the end.
+ */
+function expandPreset(rules: DockPresetRules): DockPresetPlan {
+  const hidden = new Set<DockTabId>()
+  if (rules.keepOnly === 'permanent') {
+    for (const id of DOCK_TAB_IDS) if (!isPermanentDockTab(id)) hidden.add(id)
+  }
+  for (const id of rules.hideTabs ?? []) {
+    if (isDockTabId(id) && !isPermanentDockTab(id)) hidden.add(id)
+  }
+
+  const visible: DockTabId[] = DOCK_TAB_IDS.filter((id) => !hidden.has(id))
+  const parked: DockTabId[] = DOCK_TAB_IDS.filter((id) => hidden.has(id))
+  let order = visible
+  const before = rules.parkHiddenBefore
+  if (before && parked.length > 0) {
+    const idx = visible.indexOf(before)
+    order =
+      idx >= 0
+        ? [...visible.slice(0, idx), ...parked, ...visible.slice(idx)]
+        : [...visible, ...parked]
+  }
+
+  const off = new Set<DockFeature>(rules.disableAllFeatures ? DOCK_FEATURES : (rules.disableFeatures ?? []))
+  const features: DockFeatureChange[] = DOCK_FEATURES.map((key) => ({ key, value: !off.has(key) }))
+
+  return { hidden: [...hidden], order, features }
+}
+
+/**
+ * The three plans, derived from the declarations above.
+ *
+ * Kept as the public export because the manager previews the consequences from
+ * the same data it applies, and the guard test asserts each plan still covers
+ * the full tab set.
  */
 export const DOCK_PRESET_PLANS: Readonly<Record<Exclude<DockPreset, 'custom'>, DockPresetPlan>> = {
-  developer: {
-    hidden: [],
-    order: [
-      'browse', 'view', 'history', 'forge', 'tasks', 'terminal', 'stats',
-      'mail', 'kb', 'live', 'share', 'proxy', 'notifications', 'settings',
-    ],
-    features: [
-      { key: 'forge.enabled', value: true },
-      { key: 'mail.enabled', value: true },
-      { key: 'terminal.enabled', value: true },
-      { key: 'kb.enabled', value: true },
-      { key: 'tasks.enabled', value: true },
-      { key: 'share.enabled', value: true },
-    ],
-  },
-  standard: {
-    hidden: ['forge', 'terminal', 'proxy'],
-    order: [
-      'browse', 'view', 'history', 'tasks', 'stats', 'mail', 'kb', 'live',
-      'share', 'notifications', 'forge', 'terminal', 'proxy', 'settings',
-    ],
-    features: [
-      { key: 'forge.enabled', value: false },
-      { key: 'mail.enabled', value: true },
-      { key: 'terminal.enabled', value: false },
-      { key: 'kb.enabled', value: true },
-      { key: 'tasks.enabled', value: true },
-      { key: 'share.enabled', value: true },
-    ],
-  },
-  minimal: {
-    hidden: [
-      'notifications', 'history', 'forge', 'tasks', 'terminal', 'stats',
-      'mail', 'kb', 'live', 'share', 'proxy',
-    ],
-    order: [
-      'browse', 'view', 'notifications', 'history', 'forge', 'tasks',
-      'terminal', 'stats', 'mail', 'kb', 'live', 'share', 'proxy', 'settings',
-    ],
-    features: [
-      { key: 'forge.enabled', value: false },
-      { key: 'mail.enabled', value: false },
-      { key: 'terminal.enabled', value: false },
-      { key: 'kb.enabled', value: false },
-      { key: 'tasks.enabled', value: false },
-      { key: 'share.enabled', value: false },
-    ],
-  },
+  developer: expandPreset(DOCK_PRESETS.developer),
+  standard: expandPreset(DOCK_PRESETS.standard),
+  minimal: expandPreset(DOCK_PRESETS.minimal),
 }
 
 /** Presets that stop server-side work, so applying them needs a confirmation. */
@@ -160,14 +204,21 @@ const hiddenIds = computed<ReadonlySet<DockTabId>>(() => hidden.value)
 /** The full left-dock order (all ids, default slots preserved for new ones). */
 const orderedIds = computed<DockTabId[]>(() => mergeDockOrder(order.value))
 
-/** Only closable tabs can be hidden; a stale value must not hide a core tab. */
+/**
+ * Only closable tabs can be hidden; a stale value must not hide a core tab.
+ *
+ * The permanent ids live in `dockTabs.ts` (not only in the manifests) so this
+ * module stays a leaf: it is reached from FileHeader, which must not drag the
+ * whole plugin graph (lucide + every panel's composables) into its module load.
+ * `dockPluginManifest.test.ts` asserts the constant matches the manifests.
+ */
 function isClosable(id: DockTabId): boolean {
-  return !!DOCK_TAB_BY_ID.get(id)?.closable
+  return !isPermanentDockTab(id)
 }
 
 /** Tabs the manager shows as enabled (hidden set inverted). */
 const visibleIds = computed<DockTabId[]>(() =>
-  DOCK_TABS.filter((t) => !t.closable || !hidden.value.has(t.id)).map((t) => t.id),
+  DOCK_TAB_IDS.filter((id) => !isClosable(id) || !hidden.value.has(id)),
 )
 
 function persist(): void {
@@ -199,8 +250,7 @@ export async function applyDockPreset(
 
 /** Show/hide one tab. Core tabs ignore this; any manual change becomes custom. */
 export function setDockTabVisible(id: DockTabId, visible: boolean): void {
-  const meta = DOCK_TAB_BY_ID.get(id)
-  if (!meta || !meta.closable) return
+  if (!isDockTabId(id) || !isClosable(id)) return
   const next = new Set(hidden.value)
   if (visible) next.delete(id)
   else next.add(id)

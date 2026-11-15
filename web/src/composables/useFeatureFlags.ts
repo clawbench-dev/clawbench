@@ -8,18 +8,26 @@
  * action, or jumps to the feature's page, has to be gated too, or the user
  * presses a button that can only fail server-side.
  *
- * This module is the single reader for that question. It holds only the config
- * snapshot `loadConfig()` pushes in (see `syncFeatureConfig`), so a switch
- * flipped in settings disables the entries everywhere without a reload.
+ * This module is the single reader for that question.
  *
- * Defaults are ON and mirror the server's `ApplyDefaults`: a config file written
- * before a switch existed has no key at all, and reading that as "off" would
- * hide features from every existing install on upgrade.
+ * The six MASTER switches are no longer derived from `/api/config`: the server's
+ * plugin registry is the authority (`GET /api/features`), so the frontend keeps
+ * no default-value mirror to drift from `model.ApplyDefaults`. `loadConfig()`
+ * refreshes that snapshot (and `patchConfig` reloads it), so a switch flipped in
+ * settings disables the entries everywhere without a reload.
+ *
+ * The per-kind SHARE permissions (`share.allow_*`) are sub-options, not features:
+ * they are not in the registry, so they still come from the config snapshot and
+ * default to ON (a config written before they existed has no key at all).
  */
 import { computed, shallowRef, type ComputedRef } from 'vue'
 import i18n from '@/i18n'
 import { useToast } from '@/composables/useToast'
-import type { DockFeature } from '@/composables/dockTabs'
+import { apiGet } from '@/utils/api'
+import { appLog } from '@/utils/appLog'
+import { DOCK_FEATURES, type DockFeature } from '@/composables/dockTabs'
+
+const TAG = 'FeatureFlags'
 
 /**
  * Feature switches that also drive background work on the server.
@@ -50,26 +58,57 @@ export type FeatureFlagKey =
   | 'share.allow_download'
 
 /**
- * Built-in defaults, mirroring `model.ApplyDefaults`. All six are ON.
+ * One row of `GET /api/features` — the server's plugin registry.
  *
- * `terminal.enabled` is listed for completeness: the terminal's real runtime
- * gate is `/api/terminal/status` (see useTerminalStatus), which also covers the
- * "config says on but the manager is nil" case.
+ * `enabled` is the feature axis (a real switch: the server stops the work);
+ * `available` is the capability axis (the host cannot run it here). They are
+ * orthogonal — terminal can be enabled and unavailable at once.
  */
-export const FEATURE_FLAG_DEFAULTS: Readonly<Record<FeatureFlagKey, boolean>> = {
-  'forge.enabled': true,
-  'mail.enabled': true,
-  'terminal.enabled': true,
-  'kb.enabled': true,
-  'tasks.enabled': true,
-  'share.enabled': true,
-  // Per-kind share permissions (设置 → 分享中心). ON by default like the master
-  // switch: a config written before they existed must not silently stop every
-  // kind of link from being created.
-  'share.allow_files': true,
-  'share.allow_sessions': true,
-  'share.allow_meetings': true,
-  'share.allow_download': true,
+export interface ServerFeature {
+  id: string
+  enabled: boolean
+  available: boolean
+  reason: '' | 'disabled' | 'capability'
+  /** The server's own default, for the first paint before the request lands. */
+  defaultOn: boolean
+}
+
+/**
+ * The feature registry snapshot, pushed in by `loadConfig()`.
+ *
+ * Empty until the request lands, which reads as "every feature is on" — the same
+ * rule the server uses for a config written before a switch existed, so no entry
+ * flickers away during first paint.
+ */
+const serverFeatures = shallowRef<Record<string, ServerFeature>>({})
+
+/** Test/config hook: adopt a freshly loaded `/api/features` payload. */
+export function syncServerFeatures(list: readonly ServerFeature[] | null | undefined): void {
+  const next: Record<string, ServerFeature> = {}
+  for (const entry of list ?? []) {
+    if (entry && typeof entry.id === 'string') next[entry.id] = entry
+  }
+  serverFeatures.value = next
+}
+
+/** Refresh the registry snapshot. Failures keep the previous state (never "off"). */
+export async function refreshServerFeatures(): Promise<void> {
+  try {
+    const data = await apiGet<{ features?: ServerFeature[] }>('/api/features')
+    syncServerFeatures(data.features)
+  } catch (err) {
+    appLog.d(TAG, 'failed to load /api/features', err)
+  }
+}
+
+/** The registry row for a plugin id, or undefined before the request lands. */
+export function serverFeature(id: string): ServerFeature | undefined {
+  return serverFeatures.value[id]
+}
+
+/** True for the six master switches the server registry owns. */
+function isMasterFeature(key: FeatureFlagKey): key is DockFeature {
+  return (DOCK_FEATURES as readonly string[]).includes(key)
 }
 
 /**
@@ -102,16 +141,23 @@ function readPath(path: string): unknown {
 }
 
 /**
- * Whether a feature is on right now.
+ * Whether a feature is on right now, in three steps:
  *
- * Only an explicit `false` disables it: a missing key (old config, or a request
- * that has not landed yet) falls back to the built-in default, and a malformed
- * non-boolean value is treated as the default rather than silently disabling a
- * feature.
+ * 1. a MASTER switch the registry knows about → the registry's value (it is the
+ *    authority: it reflects the server's live state, not a snapshot);
+ * 2. otherwise the config snapshot (`/api/config`) — this covers the per-kind
+ *    share permissions AND the window before `/api/features` lands, when the
+ *    config is the only thing we have;
+ * 3. neither → ON, the same "missing means on" rule the server uses for a
+ *    config written before a switch existed.
  */
 export function isFeatureEnabled(key: FeatureFlagKey): boolean {
+  if (isMasterFeature(key)) {
+    const entry = serverFeatures.value[key.split('.')[0]]
+    if (entry) return entry.enabled
+  }
   const value = readPath(key)
-  return typeof value === 'boolean' ? value : FEATURE_FLAG_DEFAULTS[key]
+  return typeof value === 'boolean' ? value : true
 }
 
 /** Reactive form of `isFeatureEnabled` for templates and computeds. */

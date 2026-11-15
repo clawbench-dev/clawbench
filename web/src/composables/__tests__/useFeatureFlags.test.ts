@@ -1,9 +1,15 @@
 /**
  * The feature switches are the only thing standing between a disabled server
- * feature and a button that can only fail. These tests pin the three states the
- * reader has to distinguish: an explicit `false` (off), a missing key (an old
- * config file — must stay ON), and a malformed value (must fall back to the
- * default rather than silently disabling a feature).
+ * feature and a button that can only fail.
+ *
+ * The six master switches answer from the server's plugin registry
+ * (`GET /api/features`, pushed in by `loadConfig`), NOT from `/api/config` — the
+ * frontend keeps no default-value mirror. The per-kind share permissions are
+ * sub-options of the share feature and still come from the config snapshot.
+ *
+ * These tests pin the states the reader has to distinguish: an explicit `false`
+ * (off), a missing row/key (must stay ON), and a malformed value (must fall back
+ * to ON rather than silently disabling a feature).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
@@ -14,62 +20,92 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 const {
-  FEATURE_FLAG_DEFAULTS,
   isFeatureEnabled,
+  serverFeature,
   syncFeatureConfig,
+  syncServerFeatures,
   useFeatureFlag,
   useFeatureFlags,
   useShareKindAllowed,
   notifyFeatureDisabled,
 } = await import('@/composables/useFeatureFlags')
 
+const { DOCK_FEATURES } = await import('@/composables/dockTabs')
+
+/** Build one `/api/features` row. */
+function feature(id: string, enabled: boolean, available = true) {
+  return {
+    id,
+    enabled,
+    available,
+    reason: !enabled ? ('disabled' as const) : !available ? ('capability' as const) : ('' as const),
+    defaultOn: true,
+  }
+}
+
 beforeEach(() => {
   syncFeatureConfig({})
+  syncServerFeatures([])
   toastShow.mockClear()
 })
 
 describe('isFeatureEnabled', () => {
-  it('treats every switch as ON before the config loads', () => {
-    for (const key of Object.keys(FEATURE_FLAG_DEFAULTS) as (keyof typeof FEATURE_FLAG_DEFAULTS)[]) {
-      expect(isFeatureEnabled(key)).toBe(true)
-    }
+  it('treats every master switch as ON before the registry lands', () => {
+    for (const key of DOCK_FEATURES) expect(isFeatureEnabled(key)).toBe(true)
   })
 
   it('reads an explicit false as off', () => {
-    syncFeatureConfig({ share: { enabled: false }, tasks: { enabled: false } })
+    syncServerFeatures([feature('share', false), feature('tasks', false)])
     expect(isFeatureEnabled('share.enabled')).toBe(false)
     expect(isFeatureEnabled('tasks.enabled')).toBe(false)
-    // Untouched sections keep their defaults.
+    // Features the payload does not mention keep the "missing means on" rule.
     expect(isFeatureEnabled('mail.enabled')).toBe(true)
   })
 
-  it('keeps a feature ON when its section is missing (config predates the key)', () => {
-    syncFeatureConfig({ server: { port: 20000 } })
-    expect(isFeatureEnabled('tasks.enabled')).toBe(true)
-    expect(isFeatureEnabled('share.enabled')).toBe(true)
+  it('ignores the config snapshot for a master switch', () => {
+    // The registry is the authority; a stale /api/config must not resurrect a
+    // feature the server has switched off (or hide one it has switched on).
+    syncFeatureConfig({ share: { enabled: true } })
+    syncServerFeatures([feature('share', false)])
+    expect(isFeatureEnabled('share.enabled')).toBe(false)
   })
 
-  it('falls back to the default for a malformed value instead of disabling', () => {
-    syncFeatureConfig({ share: { enabled: 'no' } })
-    expect(isFeatureEnabled('share.enabled')).toBe(true)
+  it('keeps sub-options on the config snapshot, defaulting to ON', () => {
+    syncServerFeatures([feature('share', true)])
+    expect(isFeatureEnabled('share.allow_files')).toBe(true)
+
+    syncFeatureConfig({ share: { allow_files: false } })
+    expect(isFeatureEnabled('share.allow_files')).toBe(false)
+  })
+
+  it('falls back to ON for a malformed sub-option value', () => {
+    syncFeatureConfig({ share: { allow_download: 'no' } })
+    expect(isFeatureEnabled('share.allow_download')).toBe(true)
   })
 
   it('survives a null config (server returned nothing usable)', () => {
     syncFeatureConfig(null)
+    expect(isFeatureEnabled('share.allow_files')).toBe(true)
     expect(isFeatureEnabled('share.enabled')).toBe(true)
+  })
+
+  it('exposes the registry row for availability/reason consumers', () => {
+    syncServerFeatures([feature('terminal', true, false)])
+    expect(serverFeature('terminal')).toMatchObject({ enabled: true, available: false, reason: 'capability' })
+    expect(serverFeature('nope')).toBeUndefined()
   })
 })
 
 describe('useFeatureFlag', () => {
-  it('re-evaluates when a new server config is synced', async () => {
+  it('re-evaluates when the registry snapshot is replaced', async () => {
     const shareEnabled = useFeatureFlag('share.enabled')
     expect(shareEnabled.value).toBe(true)
 
-    syncFeatureConfig({ share: { enabled: false } })
+    syncServerFeatures([feature('share', false)])
     await nextTick()
     expect(shareEnabled.value).toBe(false)
 
-    syncFeatureConfig({ share: { enabled: true } })
+    syncServerFeatures([feature('share', true)])
     await nextTick()
     expect(shareEnabled.value).toBe(true)
   })
@@ -87,7 +123,7 @@ describe('useFeatureFlag', () => {
   })
 
   it('exposes every switch from useFeatureFlags', () => {
-    syncFeatureConfig({ forge: { enabled: false } })
+    syncServerFeatures([feature('forge', false)])
     const flags = useFeatureFlags()
     expect(flags.forgeEnabled.value).toBe(false)
     expect(flags.mailEnabled.value).toBe(true)
@@ -119,21 +155,24 @@ describe('notifyFeatureDisabled', () => {
 // 总开关关掉后，只按 allow_* 判断会让入口重新出现。
 describe('useShareKindAllowed', () => {
   it('requires both the master switch and the kind permission', async () => {
-    syncFeatureConfig({ share: { enabled: true, allow_files: true } })
+    syncServerFeatures([feature('share', true)])
+    syncFeatureConfig({ share: { allow_files: true } })
     await nextTick()
     expect(useShareKindAllowed('files').value).toBe(true)
 
-    syncFeatureConfig({ share: { enabled: false, allow_files: true } })
+    syncServerFeatures([feature('share', false)])
     await nextTick()
     expect(useShareKindAllowed('files').value).toBe(false)
 
-    syncFeatureConfig({ share: { enabled: true, allow_files: false } })
+    syncServerFeatures([feature('share', true)])
+    syncFeatureConfig({ share: { allow_files: false } })
     await nextTick()
     expect(useShareKindAllowed('files').value).toBe(false)
   })
 
   it('keeps the three kinds independent', async () => {
-    syncFeatureConfig({ share: { enabled: true, allow_sessions: false } })
+    syncServerFeatures([feature('share', true)])
+    syncFeatureConfig({ share: { allow_sessions: false } })
     await nextTick()
     expect(useShareKindAllowed('sessions').value).toBe(false)
     expect(useShareKindAllowed('files').value).toBe(true)
@@ -141,7 +180,8 @@ describe('useShareKindAllowed', () => {
   })
 
   it('treats a missing per-kind key as allowed (config predates it)', () => {
-    syncFeatureConfig({ share: { enabled: true } })
+    syncServerFeatures([feature('share', true)])
+    syncFeatureConfig({ share: {} })
     expect(useShareKindAllowed('files').value).toBe(true)
     expect(useShareKindAllowed('sessions').value).toBe(true)
     expect(useShareKindAllowed('meetings').value).toBe(true)
