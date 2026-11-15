@@ -1,4 +1,4 @@
-package ai
+package codebuddy
 
 import (
 	"log/slog"
@@ -6,29 +6,16 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
-	"clawbench/internal/model"
+	"clawbench/internal/ai"
 )
 
-// codebuddyPluginLoadDelay is the delay before re-emitting the commands_update
-// event after stream start, to allow time for CodeBuddy's PluginManager to
-// finish loading and send an updated AvailableCommandsUpdate. Based on observed
-// plugin load times of ~2-3s (issue #383 logs: PluginsProductProvider.provide
-// active=2 at T+3s), plus a 1s safety margin.
-const codebuddyPluginLoadDelay = 4 * time.Second
-
-// isCodeBuddyBackend returns true if the agent uses CodeBuddy as its ACP backend.
-func isCodeBuddyBackend(agent *model.Agent) bool {
-	return agent != nil && agent.Backend == "codebuddy"
-}
-
-// ScanCodeBuddyPluginCommands scans ~/.codebuddy/plugins/cache/ for slash commands
-// defined in commands/*.md files. Returns []AvailableCommandInfo parsed from YAML
+// ScanPluginCommands scans ~/.codebuddy/plugins/cache/ for slash commands
+// defined in commands/*.md files. Returns []ai.AvailableCommandInfo parsed from YAML
 // frontmatter (filename = command name, description from frontmatter).
 // Returns nil if directory doesn't exist or no commands found.
 // Not goroutine-safe — call once during connection spawn.
-func ScanCodeBuddyPluginCommands() []AvailableCommandInfo {
+func ScanPluginCommands() []ai.AvailableCommandInfo {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		slog.Debug("acp plugin scan: cannot resolve home dir", "error", err)
@@ -40,13 +27,13 @@ func ScanCodeBuddyPluginCommands() []AvailableCommandInfo {
 
 // scanPluginCommandsFromDir scans the given directory tree for commands/*.md files.
 // Separated for testability (injectable directory path).
-func scanPluginCommandsFromDir(cacheDir string) []AvailableCommandInfo {
+func scanPluginCommandsFromDir(cacheDir string) []ai.AvailableCommandInfo {
 	if _, err := os.Stat(cacheDir); os.IsNotExist(err) {
 		slog.Debug("acp plugin scan: cache directory does not exist", "path", cacheDir)
 		return nil
 	}
 
-	var cmds []AvailableCommandInfo
+	var cmds []ai.AvailableCommandInfo
 
 	err := filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -82,7 +69,7 @@ func scanPluginCommandsFromDir(cacheDir string) []AvailableCommandInfo {
 			return nil
 		}
 
-		cmds = append(cmds, AvailableCommandInfo{
+		cmds = append(cmds, ai.AvailableCommandInfo{
 			Name:        cmdName,
 			Description: description,
 		})

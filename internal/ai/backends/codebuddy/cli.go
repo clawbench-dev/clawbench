@@ -4,6 +4,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"os/exec"
 	"strings"
+	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
@@ -24,6 +25,13 @@ func init() {
 			ACPLoadSession: true,
 			InstallCmd:     "npm install -g @tencent-ai/codebuddy-code",
 			SortOrder:      2,
+			// CodeBuddy's PluginManager keeps loading for ~4s after NewSession,
+			// so the command list is incomplete until then (issue #383).
+			CommandsReEmitDelay: 4 * time.Second,
+			// Its background-task registry cannot see host-created terminals,
+			// and declaring fs.readTextFile replaces its native reader.
+			HideTerminalCapability:     true,
+			HideReadTextFileCapability: true,
 			// This comment used to claim CodeBuddy's ACP process does NOT scan
 			// ~/.codebuddy/skills. That is no longer true (measured on 2.177.0:
 			// `codebuddy --acp` reports all 21 user skills with
@@ -46,7 +54,8 @@ func init() {
 		// session/steer method, instead of queueing it for the next turn.
 		// It echoes the injected message back with a correlation id, so the
 		// reply can be SPLIT exactly at the injection point.
-		CLI: &backends.CLIPlugin{NewBackend: newCodebuddyBackend},
+		CLI:            &backends.CLIPlugin{NewBackend: newCodebuddyBackend},
+		PluginCommands: ScanPluginCommands,
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       ParseACPToolCall,
 			ParseToolCallUpdate: ParseACPToolCallUpdate,

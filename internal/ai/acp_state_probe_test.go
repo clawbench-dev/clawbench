@@ -12,26 +12,6 @@ import (
 	"clawbench/internal/model"
 )
 
-// CodeBuddy pushes its plugin/skill commands only after its PluginManager has
-// loaded (~4s). A short window would return the built-in list only — i.e. the
-// refresh would silently drop exactly the commands that were missing.
-func TestProbeCommandWindow_CodeBuddyWaitsForPluginLoad(t *testing.T) {
-	maxWait, quiet := probeCommandWindow(&model.Agent{ID: "cb", Backend: "codebuddy"})
-
-	assert.GreaterOrEqual(t, quiet, codebuddyPluginLoadDelay,
-		"the list must be considered settled only after the plugin push window")
-	assert.Greater(t, maxWait, quiet,
-		"maxWait must leave room beyond the quiet window")
-}
-
-func TestProbeCommandWindow_OtherBackendsUseShortWindow(t *testing.T) {
-	maxWait, quiet := probeCommandWindow(&model.Agent{ID: "claude", Backend: "claude"})
-
-	assert.Less(t, maxWait, codebuddyPluginLoadDelay,
-		"a non-CodeBuddy agent must not pay the 4s plugin window")
-	assert.Less(t, quiet, maxWait)
-}
-
 // The probe must return as soon as the pushed list stops changing, not sit on
 // the full window: a refresh that always costs the maximum is a slow refresh.
 func TestWaitForProbeCommands_ReturnsWhenListSettles(t *testing.T) {

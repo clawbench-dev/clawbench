@@ -1,4 +1,4 @@
-package ai
+package codebuddy
 
 import (
 	"os"
@@ -6,29 +6,9 @@ import (
 	"runtime"
 	"testing"
 
-	"clawbench/internal/model"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestIsCodeBuddyBackend(t *testing.T) {
-	tests := []struct {
-		name   string
-		agent  *model.Agent
-		expect bool
-	}{
-		{"codebuddy agent", &model.Agent{Backend: "codebuddy"}, true},
-		{"claude agent", &model.Agent{Backend: "claude"}, false},
-		{"nil agent", nil, false},
-		{"empty backend", &model.Agent{Backend: ""}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expect, isCodeBuddyBackend(tt.agent))
-		})
-	}
-}
 
 func TestParseCommandFrontmatter(t *testing.T) {
 	tests := []struct {
@@ -113,7 +93,7 @@ Body`,
 	}
 }
 
-func TestScanCodeBuddyPluginCommands_ValidDir(t *testing.T) {
+func TestScanPluginCommands_ValidDir(t *testing.T) {
 	// Create a temporary directory mimicking the plugin cache structure
 	tmpDir := t.TempDir()
 
@@ -153,12 +133,12 @@ Review code`), 0o644))
 	assert.Equal(t, "Execute plan in batches with review checkpoints", cmds[2].Description)
 }
 
-func TestScanCodeBuddyPluginCommands_MissingDir(t *testing.T) {
+func TestScanPluginCommands_MissingDir(t *testing.T) {
 	cmds := scanPluginCommandsFromDir("/nonexistent/path")
 	assert.Nil(t, cmds)
 }
 
-func TestScanCodeBuddyPluginCommands_NoCommandsDir(t *testing.T) {
+func TestScanPluginCommands_NoCommandsDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Create a plugin directory without commands/
 	pluginDir := filepath.Join(tmpDir, "some-plugin", "1.0.0", "skills")
@@ -173,7 +153,7 @@ Body`), 0o644))
 	assert.Nil(t, cmds)
 }
 
-func TestScanCodeBuddyPluginCommands_InvalidFrontmatter(t *testing.T) {
+func TestScanPluginCommands_InvalidFrontmatter(t *testing.T) {
 	tmpDir := t.TempDir()
 	cmdDir := filepath.Join(tmpDir, "test-plugin", "1.0.0", "commands")
 	require.NoError(t, os.MkdirAll(cmdDir, 0o755))
@@ -191,7 +171,7 @@ Body`), 0o644))
 	assert.Nil(t, cmds)
 }
 
-func TestScanCodeBuddyPluginCommands_SkipsNonCommandsDirs(t *testing.T) {
+func TestScanPluginCommands_SkipsNonCommandsDirs(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create .md files outside commands/ dirs — should be skipped
@@ -214,7 +194,7 @@ Body`), 0o644))
 	assert.Equal(t, "valid", cmds[0].Name)
 }
 
-func TestScanCodeBuddyPluginCommands_SkipsDotMdFilename(t *testing.T) {
+func TestScanPluginCommands_SkipsDotMdFilename(t *testing.T) {
 	tmpDir := t.TempDir()
 	cmdDir := filepath.Join(tmpDir, "test-plugin", "1.0.0", "commands")
 	require.NoError(t, os.MkdirAll(cmdDir, 0o755))
@@ -229,7 +209,7 @@ Body`), 0o644))
 	assert.Nil(t, cmds)
 }
 
-func TestScanCodeBuddyPluginCommands_SkipsUnreadableFile(t *testing.T) {
+func TestScanPluginCommands_SkipsUnreadableFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix file permissions not supported on Windows")
 	}
@@ -253,7 +233,7 @@ Body`), 0o644))
 	assert.Nil(t, cmds) // unreadable file skipped, no valid commands
 }
 
-func TestScanCodeBuddyPluginCommands_SkipsNonMdFilesInCommands(t *testing.T) {
+func TestScanPluginCommands_SkipsNonMdFilesInCommands(t *testing.T) {
 	tmpDir := t.TempDir()
 	cmdDir := filepath.Join(tmpDir, "test-plugin", "1.0.0", "commands")
 	require.NoError(t, os.MkdirAll(cmdDir, 0o755))
@@ -272,7 +252,7 @@ Body`), 0o644))
 	assert.Equal(t, "valid", cmds[0].Name)
 }
 
-func TestScanCodeBuddyPluginCommands_RealHomeDir(t *testing.T) {
+func TestScanPluginCommands_RealHomeDir(t *testing.T) {
 	// Test ScanCodeBuddyPluginCommands by overriding the home directory.
 	// On Windows, os.UserHomeDir reads USERPROFILE; on Unix, it reads HOME.
 	tmpDir := t.TempDir()
@@ -294,12 +274,12 @@ Body`), 0o644))
 		defer os.Setenv("HOME", origHome)
 	}
 
-	cmds := ScanCodeBuddyPluginCommands()
+	cmds := ScanPluginCommands()
 	require.Len(t, cmds, 1)
 	assert.Equal(t, "brainstorm", cmds[0].Name)
 }
 
-func TestScanCodeBuddyPluginCommands_RealHomeDir_NoCacheDir(t *testing.T) {
+func TestScanPluginCommands_RealHomeDir_NoCacheDir(t *testing.T) {
 	// Test ScanCodeBuddyPluginCommands when cache dir doesn't exist.
 	tmpDir := t.TempDir()
 	if runtime.GOOS == "windows" {
@@ -312,11 +292,11 @@ func TestScanCodeBuddyPluginCommands_RealHomeDir_NoCacheDir(t *testing.T) {
 		defer os.Setenv("HOME", origHome)
 	}
 
-	cmds := ScanCodeBuddyPluginCommands()
+	cmds := ScanPluginCommands()
 	assert.Nil(t, cmds)
 }
 
-func TestScanCodeBuddyPluginCommands_CannotResolveHomeDir(t *testing.T) {
+func TestScanPluginCommands_CannotResolveHomeDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("os.UserHomeDir on Windows uses USERPROFILE which always has a value")
 	}
@@ -326,6 +306,6 @@ func TestScanCodeBuddyPluginCommands_CannotResolveHomeDir(t *testing.T) {
 	os.Unsetenv("HOME")
 	defer os.Setenv("HOME", origHome)
 
-	cmds := ScanCodeBuddyPluginCommands()
+	cmds := ScanPluginCommands()
 	assert.Nil(t, cmds)
 }

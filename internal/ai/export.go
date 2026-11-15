@@ -17,8 +17,11 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/model"
 )
 
 // StreamChanSize is the buffer size of a stream event channel. Backends that
@@ -260,4 +263,45 @@ func ParseACPToolCallForTest(backendID string, tc acp.SessionUpdateToolCall) *To
 // this package.
 func ParseACPToolCallUpdateForTest(backendID string, tcu acp.SessionToolCallUpdate) *ToolCall {
 	return parseACPToolCallUpdate(backendID, tcu)
+}
+
+// LookupPluginCommandsFn resolves a backend's extra-command scanner.
+var LookupPluginCommandsFn func(backendID string) func() []AvailableCommandInfo
+
+// specForAgent returns the backend spec for an agent, or nil.
+func specForAgent(agent *model.Agent) *model.BackendSpec {
+	if agent == nil {
+		return nil
+	}
+	return model.FindSpecByBackend(agent.Backend)
+}
+
+// scanOrNil calls an optional command scanner, tolerating nil.
+func scanOrNil(scan func() []AvailableCommandInfo) []AvailableCommandInfo {
+	if scan == nil {
+		return nil
+	}
+	return scan()
+}
+
+// commandsReEmitDelay returns the backend's plugin-command settle time, or 0.
+func commandsReEmitDelay(agent *model.Agent) time.Duration {
+	if spec := specForAgent(agent); spec != nil {
+		return spec.CommandsReEmitDelay
+	}
+	return 0
+}
+
+// hasPluginCommands reports whether the backend pre-scans its own plugin
+// commands (so the ACP-provided list must be merged with them, not replaced).
+func hasPluginCommands(agent *model.Agent) bool {
+	if LookupPluginCommandsFn == nil || agent == nil {
+		return false
+	}
+	return LookupPluginCommandsFn(agent.Backend) != nil
+}
+
+// ProbeCommandWindowForTest exposes the command-settle window calculation.
+func ProbeCommandWindowForTest(agent *model.Agent) (maxWait, quiet time.Duration) {
+	return probeCommandWindow(agent)
 }

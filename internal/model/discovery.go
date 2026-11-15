@@ -46,6 +46,20 @@ type BackendSpec struct {
 	// JSON-RPC blob.
 	LoginCmd  string
 	SortOrder int // display/registration order for deterministic BackendRegistry ordering
+	// HideTerminalCapability suppresses the ACP Terminal capability for agents
+	// whose own background-task registry cannot see host-created terminals
+	// (CodeBuddy: every TaskOutput would answer "Background task not found").
+	HideTerminalCapability bool
+	// HideReadTextFileCapability suppresses fs.readTextFile. Declaring it makes
+	// some agents replace their native file reader with the host's (CodeBuddy),
+	// which is a downgrade — the agent's own reader is the one its prompts and
+	// truncation rules were written for.
+	HideReadTextFileCapability bool
+	// CommandsReEmitDelay is how long after NewSession the agent's plugin/skill
+	// commands may still be loading, so the host should re-emit the command list
+	// once more when this elapses. Zero means "commands are complete at
+	// NewSession" (every backend except CodeBuddy).
+	CommandsReEmitDelay time.Duration
 	// NativeSkillsDirs are this backend's own skill directories, relative to
 	// the user's home (e.g. ".codebuddy/skills"). A backend can have several:
 	// most read only their own dot-directory, but several also read the
@@ -242,4 +256,14 @@ func CanDiscoverModels(spec BackendSpec) bool {
 // Prefer HasModelSource for a single backend.
 func BackendsWithModelDiscovery() []string {
 	return RegisteredModelSources()
+}
+
+// SetBackendRegistryForTest installs a synthetic backend registry and returns a
+// restore function. Tests that assert spec-driven behaviour need it because the
+// real registry is populated from the backend plugin packages, which most unit
+// tests do not import (that would be an import cycle).
+func SetBackendRegistryForTest(specs []BackendSpec) func() {
+	old := BackendRegistry
+	BackendRegistry = specs
+	return func() { BackendRegistry = old }
 }

@@ -77,6 +77,9 @@ func TestAdvertiseTerminalCapability_CodeBuddyHidden(t *testing.T) {
 	ResetAdvertiseTerminalForTest()
 	defer ResetAdvertiseTerminalForTest()
 
+	defer model.SetBackendRegistryForTest([]model.BackendSpec{
+		{Backend: "codebuddy", HideTerminalCapability: true},
+	})()
 	agent := &model.Agent{ID: "cb-agent", Backend: "codebuddy"}
 	if got := advertiseTerminalCapability(agent); got {
 		t.Error("advertiseTerminalCapability(codebuddy) = true, want false (Terminal capability must be hidden for CodeBuddy so its TaskOutput registry stays consistent)")
@@ -124,6 +127,9 @@ func TestAdvertiseReadTextFileCapability_CodeBuddyHidden(t *testing.T) {
 	ResetAdvertiseReadTextFileForTest()
 	defer ResetAdvertiseReadTextFileForTest()
 
+	defer model.SetBackendRegistryForTest([]model.BackendSpec{
+		{Backend: "codebuddy", HideReadTextFileCapability: true},
+	})()
 	agent := &model.Agent{ID: "cb-agent", Backend: "codebuddy"}
 	if got := advertiseReadTextFileCapability(agent); got {
 		t.Error("advertiseReadTextFileCapability(codebuddy) = true, want false (CodeBuddy must be forced onto its native ReadTool so image Reads emit an image block instead of proxied mojibake text)")
@@ -169,6 +175,9 @@ func TestFileSystemCapabilities_ReadHiddenWriteKept(t *testing.T) {
 	// stop flowing through ClawBench's fs handlers.
 	ResetAdvertiseReadTextFileForTest()
 	defer ResetAdvertiseReadTextFileForTest()
+	defer model.SetBackendRegistryForTest([]model.BackendSpec{
+		{Backend: "codebuddy", HideReadTextFileCapability: true},
+	})()
 
 	codebuddy := &model.Agent{ID: "cb-agent", Backend: "codebuddy"}
 	got := fileSystemCapabilities(codebuddy)
@@ -197,6 +206,10 @@ func TestBuildInitializeRequest_CapabilitiesAreWired(t *testing.T) {
 	ResetAdvertiseTerminalForTest()
 	defer ResetAdvertiseReadTextFileForTest()
 	defer ResetAdvertiseTerminalForTest()
+
+	defer model.SetBackendRegistryForTest([]model.BackendSpec{
+		{Backend: "codebuddy", HideTerminalCapability: true, HideReadTextFileCapability: true},
+	})()
 
 	codebuddy := &model.Agent{ID: "cb-agent", Backend: "codebuddy"}
 	req := buildInitializeRequest(codebuddy)

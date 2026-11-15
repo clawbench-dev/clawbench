@@ -405,7 +405,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		if conn != nil {
 			agentID := conn.AgentID()
 			if agentID != "" {
-				if isCodeBuddyBackend(conn.agent) {
+				if hasPluginCommands(conn.agent) {
 					existing := GetAgentCapabilityRegistry().GetCommands(agentID)
 					infos = MergeCommands(infos, existing)
 				}

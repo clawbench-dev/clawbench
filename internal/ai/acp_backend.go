@@ -186,8 +186,8 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		// an updated AvailableCommandsUpdate with plugin skills. Re-emit commands after
 		// codebuddyPluginLoadDelay so the frontend sees the complete list.
 		var cancelCmdTimer func()
-		if isCodeBuddyBackend(b.agent) {
-			cancelCmdTimer = conn.ScheduleCommandsReEmit(ch, codebuddyPluginLoadDelay)
+		if delay := commandsReEmitDelay(b.agent); delay > 0 {
+			cancelCmdTimer = conn.ScheduleCommandsReEmit(ch, delay)
 		}
 		if cancelCmdTimer != nil {
 			defer cancelCmdTimer()

@@ -55,6 +55,11 @@ type BackendPlugin struct {
 	// always travel together.
 	ModelSource model.ModelSource
 
+	// PluginCommands scans backend-specific extra slash commands that the agent
+	// itself does not advertise at NewSession (CodeBuddy's plugin cache).
+	// nil means "the agent's own list is complete".
+	PluginCommands func() []ai.AvailableCommandInfo
+
 	// ListSessions is the on-disk ACP session scanner, used as a fallback when
 	// the agent does not implement the session/list RPC. nil means "rely on the
 	// RPC only".
