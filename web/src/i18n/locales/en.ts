@@ -3456,7 +3456,7 @@ export default {
       },
       groups: {
         workspace: 'Workspace',
-        project: 'Project tools',
+        project: 'Developer tools',
         personal: 'Communication',
         system: 'System',
       },

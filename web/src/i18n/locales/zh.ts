@@ -3454,7 +3454,7 @@ export default {
       },
       groups: {
         workspace: '工作区',
-        project: '项目工具',
+        project: '开发工具',
         personal: '沟通与资料',
         system: '系统',
       },
