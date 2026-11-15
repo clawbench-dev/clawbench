@@ -216,42 +216,6 @@ func TestStreamParser_NoCompactionWithoutSignal(t *testing.T) {
 	}
 }
 
-func TestGrokStreamParser_ReportsCompaction(t *testing.T) {
-	p := &GrokStreamParser{}
-	ch := make(chan StreamEvent, 16)
-	p.ParseLine(`{"type":"auto_compact_completed"}`, ch)
-	p.ParseLine(`{"type":"auto_compact_completed"}`, ch)
-
-	detected := 0
-	for {
-		select {
-		case ev := <-ch:
-			if ev.Type == "compact_detected" {
-				detected++
-			}
-		default:
-			assert.Equal(t, 1, detected, "grok compaction must be reported exactly once")
-			return
-		}
-	}
-}
-
-func TestGrokStreamParser_IgnoresFailedCompaction(t *testing.T) {
-	p := &GrokStreamParser{}
-	ch := make(chan StreamEvent, 16)
-	p.ParseLine(`{"type":"auto_compact_started"}`, ch)
-	p.ParseLine(`{"type":"auto_compact_failed"}`, ch)
-
-	for {
-		select {
-		case ev := <-ch:
-			assert.NotEqual(t, "compact_detected", ev.Type)
-		default:
-			return
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Compaction reported as a TOOL CALL (claude-agent-acp / codex-acp)
 // ---------------------------------------------------------------------------

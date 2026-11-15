@@ -16,6 +16,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 
 	acp "github.com/coder/acp-go-sdk"
 )
@@ -169,3 +170,37 @@ func NewToolCallDebouncerForTest(ch chan<- StreamEvent, conn *ACPConn) *toolCall
 func ResolveMemberParent(conn *ACPConn, meta map[string]any) string {
 	return resolveMemberParent(conn, meta)
 }
+
+// NormalizeToolName maps a backend's raw tool name to the canonical one.
+func NormalizeToolName(toolName string) string { return normalizeToolName(toolName) }
+
+// NormalizeToolInput rewrites a tool call's raw JSON input field names to the
+// canonical snake_case form, applying the caller's path mappings on top of the
+// shared defaults.
+func NormalizeToolInput(rawInput []byte, pathMappings map[string]string) ([]byte, error) {
+	return normalizeToolInput(rawInput, pathMappings)
+}
+
+// TruncateToolOutput bounds a tool result's text for display.
+func TruncateToolOutput(output string) string { return truncateToolOutput(output) }
+
+// StreamErrorReason turns a backend's raw error text into a user-facing reason.
+func StreamErrorReason(text string) string { return streamErrorReason(text) }
+
+// ExtractContentText flattens an ACP content block's JSON into plain text.
+func ExtractContentText(raw json.RawMessage) string { return extractContentText(raw) }
+
+// CompactDetectedEvent builds the internal compaction signal event.
+func CompactDetectedEvent(source string) StreamEvent { return compactDetectedEvent(source) }
+
+// ToolResultAccum accumulates streamed tool-result text and reports when the
+// result is complete. Backends with their own streaming format use it the same
+// way the shared parsers do.
+type ToolResultAccum = toolResultAccum
+
+// MaxToolOutputBytes is the shared display cap for a tool result's text.
+const MaxToolOutputBytes = maxToolOutputBytes
+
+// IsGrokCompactionCompleted reports whether a Grok event type marks the end of
+// a context compaction.
+func IsGrokCompactionCompleted(eventType string) bool { return isGrokCompactionCompleted(eventType) }

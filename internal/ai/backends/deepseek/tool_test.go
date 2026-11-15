@@ -1,9 +1,11 @@
-package ai
+package deepseek
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"clawbench/internal/ai"
 )
 
 // --- parseDeepSeekToolUse tests ---
@@ -23,9 +25,9 @@ func TestDeepSeekTool_EditFileInputRemap(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp/a.txt","search":"hello","replace":"world"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+	tc := parseToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Edit" {
@@ -65,9 +67,9 @@ func TestDeepSeekTool_ReadFileInputRemap(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp/b.txt"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+	tc := parseToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Read" {
@@ -89,9 +91,9 @@ func TestDeepSeekTool_WriteFileInputRemap(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp/c.txt","content":"hello"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+	tc := parseToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Write" {
@@ -110,9 +112,9 @@ func TestDeepSeekTool_ListDirInputRemap(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+	tc := parseToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "LS" {
@@ -132,9 +134,9 @@ func TestDeepSeekTool_GrepFilesPathNotRemapped(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp","pattern":"TODO"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+	tc := parseToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Grep" {
@@ -165,9 +167,9 @@ func TestDeepSeekTool_FileSearchNameNormalized(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp","pattern":"*.go"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+	tc := parseToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Glob" {
@@ -183,9 +185,9 @@ func TestDeepSeekTool_ExecShellNameNormalized(t *testing.T) {
 		Input: json.RawMessage(`{"command":"ls -la"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+	tc := parseToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Bash" {
@@ -204,9 +206,9 @@ func TestDeepSeekTool_EmptyInput(t *testing.T) {
 		Input: json.RawMessage(``),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+	tc := parseToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Bash" {
@@ -225,9 +227,9 @@ func TestDeepSeekTool_InvalidJSONInput(t *testing.T) {
 		Input: json.RawMessage(`{invalid}`),
 		Done:  false,
 	}
-	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+	tc := parseToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Input != "{invalid}" {
@@ -252,9 +254,9 @@ func TestDeepSeekTool_CamelCaseFieldRemap(t *testing.T) {
 		Input: json.RawMessage(`{"dirPath":"/tmp","filePaths":["a.go","b.go"]}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+	tc := parseToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	// filePaths→file_paths (unambiguous)
@@ -305,9 +307,9 @@ func TestDeepSeekTool_ToolNameNormalization(t *testing.T) {
 			Input: json.RawMessage(`{}`),
 			Done:  true,
 		}
-		tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
+		tc := parseToolUse(msg, deepSeekInputRemaps)
 		if tc == nil {
-			t.Fatalf("expected non-nil ToolCall for tool name '%s'", input)
+			t.Fatalf("expected non-nil ai.ToolCall for tool name '%s'", input)
 			return
 		}
 		if tc.Name != expected {
@@ -325,9 +327,9 @@ func TestDeepSeekTool_ToolResultWithID(t *testing.T) {
 		Output: "file contents here",
 		Status: "success",
 	}
-	tc := parseDeepSeekToolResult(msg)
+	tc := parseToolResult(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.ID != "call_001" {
@@ -348,7 +350,7 @@ func TestDeepSeekTool_ToolResultEmptyIDSkipped(t *testing.T) {
 		Output: "some output",
 		Status: "success",
 	}
-	tc := parseDeepSeekToolResult(msg)
+	tc := parseToolResult(msg)
 	if tc != nil {
 		t.Errorf("expected nil for empty ID tool_result, got %+v", tc)
 	}
@@ -361,9 +363,9 @@ func TestDeepSeekTool_ToolResultErrorStatus(t *testing.T) {
 		Output: "command failed",
 		Status: "error",
 	}
-	tc := parseDeepSeekToolResult(msg)
+	tc := parseToolResult(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Status != "error" {
@@ -372,20 +374,20 @@ func TestDeepSeekTool_ToolResultErrorStatus(t *testing.T) {
 }
 
 func TestDeepSeekTool_ToolResultOutputTruncation(t *testing.T) {
-	// Output exceeding maxToolOutputBytes should be truncated
-	longOutput := strings.Repeat("x", maxToolOutputBytes+1000)
+	// Output exceeding ai.MaxToolOutputBytes should be truncated
+	longOutput := strings.Repeat("x", ai.MaxToolOutputBytes+1000)
 	msg := &DeepSeekStreamMessage{
 		Type:   "tool_result",
 		ID:     "call_long",
 		Output: longOutput,
 		Status: "success",
 	}
-	tc := parseDeepSeekToolResult(msg)
+	tc := parseToolResult(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
-	if len(tc.Output) > maxToolOutputBytes+200 {
+	if len(tc.Output) > ai.MaxToolOutputBytes+200 {
 		t.Errorf("expected output to be truncated, got length %d", len(tc.Output))
 	}
 	if !strings.Contains(tc.Output, "[truncated:") {
@@ -400,9 +402,9 @@ func TestDeepSeekTool_ToolResultSmallOutputNotTruncated(t *testing.T) {
 		Output: "small output",
 		Status: "success",
 	}
-	tc := parseDeepSeekToolResult(msg)
+	tc := parseToolResult(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Output != "small output" {

@@ -1,8 +1,10 @@
-package ai
+package deepseek
 
 import (
 	"encoding/json"
 	"log/slog"
+
+	"clawbench/internal/ai"
 )
 
 // DeepSeekStreamMessage represents a single JSON line from
@@ -55,10 +57,10 @@ func (p *DeepSeekStreamParser) GetCapturedSessionID() string {
 }
 
 // ParseLine parses a single JSON line from CodeWhale's stream-json output and sends
-// StreamEvent(s) to the provided channel.
+// ai.StreamEvent(s) to the provided channel.
 //
 //nolint:gocyclo // complex stream parsing logic
-func (p *DeepSeekStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
+func (p *DeepSeekStreamParser) ParseLine(line string, ch chan<- ai.StreamEvent) {
 	var msg DeepSeekStreamMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
 		slog.Debug("deepseek stream: skipping unparseable line", "line", line, "error", err)
@@ -68,35 +70,35 @@ func (p *DeepSeekStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	switch msg.Type {
 	case "content":
 		if msg.Content != "" {
-			emitStreamEvent(ch, "deepseek", StreamEvent{Type: "content", Content: msg.Content})
+			ai.EmitStreamEvent(ch, "deepseek", ai.StreamEvent{Type: "content", Content: msg.Content})
 		}
 
 	case "thinking":
 		if msg.Content != "" {
-			emitStreamEvent(ch, "deepseek", StreamEvent{Type: "thinking", Content: msg.Content})
+			ai.EmitStreamEvent(ch, "deepseek", ai.StreamEvent{Type: "thinking", Content: msg.Content})
 		}
 
 	case "tool_use":
-		if tc := parseDeepSeekToolUse(&msg, p.InputRemaps); tc != nil {
-			emitStreamEvent(ch, "deepseek", StreamEvent{Type: "tool_use", Tool: tc})
+		if tc := parseToolUse(&msg, p.InputRemaps); tc != nil {
+			ai.EmitStreamEvent(ch, "deepseek", ai.StreamEvent{Type: "tool_use", Tool: tc})
 		}
 
 	case "tool_result":
-		if tc := parseDeepSeekToolResult(&msg); tc != nil {
-			emitStreamEvent(ch, "deepseek", StreamEvent{Type: "tool_result", Tool: tc})
+		if tc := parseToolResult(&msg); tc != nil {
+			ai.EmitStreamEvent(ch, "deepseek", ai.StreamEvent{Type: "tool_result", Tool: tc})
 		}
 
 	case "session_capture":
 		if msg.Content != "" {
 			p.sessionID = msg.Content
 			slog.Debug("deepseek stream: captured session ID", "session_id", msg.Content)
-			emitStreamEvent(ch, "deepseek", StreamEvent{Type: "session_capture", Content: msg.Content})
+			ai.EmitStreamEvent(ch, "deepseek", ai.StreamEvent{Type: "session_capture", Content: msg.Content})
 		}
 
 	case "metadata":
 		if msg.Meta != nil {
 			p.model = msg.Meta.Model
-			emitStreamEvent(ch, "deepseek", StreamEvent{Type: "metadata", Meta: &Metadata{
+			ai.EmitStreamEvent(ch, "deepseek", ai.StreamEvent{Type: "metadata", Meta: &ai.Metadata{
 				Model:        msg.Meta.Model,
 				InputTokens:  msg.Meta.InputTokens,
 				OutputTokens: msg.Meta.OutputTokens,
@@ -105,17 +107,17 @@ func (p *DeepSeekStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		}
 
 	case "done":
-		emitStreamEvent(ch, "deepseek", StreamEvent{Type: "done"})
+		ai.EmitStreamEvent(ch, "deepseek", ai.StreamEvent{Type: "done"})
 
 	case "error":
 		if msg.Error != "" {
 			// The reason is what tells the turn this is a FAILURE rather than a
 			// clean finish (classification reads warning blocks); without it a
 			// quota error was reported as a completed turn.
-			emitStreamEvent(ch, "deepseek", StreamEvent{
+			ai.EmitStreamEvent(ch, "deepseek", ai.StreamEvent{
 				Type:   "error",
 				Error:  msg.Error,
-				Reason: streamErrorReason(msg.Error),
+				Reason: ai.StreamErrorReason(msg.Error),
 			})
 		}
 

@@ -1,8 +1,10 @@
-package ai
+package grok
 
 import (
 	"encoding/json"
 	"log/slog"
+
+	"clawbench/internal/ai"
 )
 
 // GrokStreamMessage represents a single JSON line from
@@ -62,17 +64,17 @@ func (p *GrokStreamParser) GetCapturedSessionID() string {
 // Reported once per parser (per turn) so the repeated event family cannot flag
 // the same compaction several times; the latch is set only on delivery, so a
 // drop on a full channel is retried by the next matching event.
-func (p *GrokStreamParser) reportCompaction(eventType string, ch chan<- StreamEvent) {
-	if p.compactReported || !isGrokCompactionCompleted(eventType) {
+func (p *GrokStreamParser) reportCompaction(eventType string, ch chan<- ai.StreamEvent) {
+	if p.compactReported || !ai.IsGrokCompactionCompleted(eventType) {
 		return
 	}
-	if tryEmitStreamEvent(ch, "grok", compactDetectedEvent("grok_event")) {
+	if ai.TryEmitStreamEvent(ch, "grok", ai.CompactDetectedEvent("grok_event")) {
 		p.compactReported = true
 	}
 }
 
-// ParseLine parses one streaming-json event and emits StreamEvent(s).
-func (p *GrokStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
+// ParseLine parses one streaming-json event and emits ai.StreamEvent(s).
+func (p *GrokStreamParser) ParseLine(line string, ch chan<- ai.StreamEvent) {
 	var msg GrokStreamMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
 		slog.Debug("grok stream: skipping unparseable line", "line", line, "error", err)
@@ -84,12 +86,12 @@ func (p *GrokStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	switch msg.Type {
 	case "text":
 		if msg.Data != "" {
-			emitStreamEvent(ch, "grok", StreamEvent{Type: "content", Content: msg.Data})
+			ai.EmitStreamEvent(ch, "grok", ai.StreamEvent{Type: "content", Content: msg.Data})
 		}
 
 	case "thought":
 		if msg.Data != "" {
-			emitStreamEvent(ch, "grok", StreamEvent{Type: "thinking", Content: msg.Data})
+			ai.EmitStreamEvent(ch, "grok", ai.StreamEvent{Type: "thinking", Content: msg.Data})
 		}
 
 	case "end":
@@ -98,9 +100,9 @@ func (p *GrokStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 			slog.Debug("grok stream: captured session ID", "session_id", msg.SessionID)
 		}
 		if meta := grokMetadataFromEnd(&msg); meta != nil {
-			emitStreamEvent(ch, "grok", StreamEvent{Type: "metadata", Meta: meta})
+			ai.EmitStreamEvent(ch, "grok", ai.StreamEvent{Type: "metadata", Meta: meta})
 		}
-		emitStreamEvent(ch, "grok", StreamEvent{Type: "done"})
+		ai.EmitStreamEvent(ch, "grok", ai.StreamEvent{Type: "done"})
 
 	case "error":
 		errMsg := msg.Message
@@ -116,10 +118,10 @@ func (p *GrokStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		}
 		// Reason: see streamErrorReason — a bare error event becomes a warning
 		// block with no reason, which classification reads as a clean finish.
-		emitStreamEvent(ch, "grok", StreamEvent{
+		ai.EmitStreamEvent(ch, "grok", ai.StreamEvent{
 			Type:   "error",
 			Error:  errMsg,
-			Reason: streamErrorReason(errMsg),
+			Reason: ai.StreamErrorReason(errMsg),
 		})
 
 	default:
@@ -128,11 +130,11 @@ func (p *GrokStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	}
 }
 
-func grokMetadataFromEnd(msg *GrokStreamMessage) *Metadata {
+func grokMetadataFromEnd(msg *GrokStreamMessage) *ai.Metadata {
 	if msg == nil {
 		return nil
 	}
-	meta := &Metadata{
+	meta := &ai.Metadata{
 		SessionID:  msg.SessionID,
 		StopReason: msg.StopReason,
 	}

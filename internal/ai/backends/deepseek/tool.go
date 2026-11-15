@@ -1,11 +1,15 @@
-package ai
+package deepseek
 
-// parseDeepSeekToolUse extracts a tool_use ToolCall from a DeepSeek stream message.
+import (
+	"clawbench/internal/ai"
+)
+
+// parseDeepSeekToolUse extracts a tool_use ai.ToolCall from a DeepSeek stream message.
 // It normalizes the tool name and input field names using the shared normalization
 // functions. DeepSeek uses concise snake_case names (path, search, replace) that
 // differ from the canonical Claude-style names (file_path, old_string, new_string).
 // Per-tool remap overrides are applied based on the raw tool name.
-func parseDeepSeekToolUse(msg *DeepSeekStreamMessage, baseRemaps map[string]string) *ToolCall {
+func parseToolUse(msg *DeepSeekStreamMessage, baseRemaps map[string]string) *ai.ToolCall {
 	remaps := map[string]string{
 		"filePaths": "file_paths",
 		"oldString": "old_string",
@@ -27,30 +31,30 @@ func parseDeepSeekToolUse(msg *DeepSeekStreamMessage, baseRemaps map[string]stri
 		// 'path' is already canonical for Grep/Glob
 	}
 
-	normalized, err := normalizeToolInput(msg.Input, remaps)
+	normalized, err := ai.NormalizeToolInput(msg.Input, remaps)
 	input := string(msg.Input)
 	if err == nil {
 		input = string(normalized)
 	}
 
-	return &ToolCall{
-		Name:  normalizeToolName(msg.Name),
+	return &ai.ToolCall{
+		Name:  ai.NormalizeToolName(msg.Name),
 		ID:    msg.ID,
 		Input: input,
 		Done:  msg.Done,
 	}
 }
 
-// parseDeepSeekToolResult extracts a tool_result ToolCall from a DeepSeek stream message.
+// parseDeepSeekToolResult extracts a tool_result ai.ToolCall from a DeepSeek stream message.
 // Returns nil if the tool call ID is empty (DeepSeek skips empty-ID results).
-func parseDeepSeekToolResult(msg *DeepSeekStreamMessage) *ToolCall {
+func parseToolResult(msg *DeepSeekStreamMessage) *ai.ToolCall {
 	if msg.ID == "" {
 		return nil
 	}
 
-	return &ToolCall{
+	return &ai.ToolCall{
 		ID:     msg.ID,
-		Output: truncateToolOutput(msg.Output),
+		Output: ai.TruncateToolOutput(msg.Output),
 		Status: msg.Status,
 	}
 }

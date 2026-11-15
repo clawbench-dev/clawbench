@@ -7,6 +7,23 @@
 
 现在加一个后端是「新建 1 个目录 + 6 处登记 + 可能还要去核心包开 3 个文件」；做完之后是「新建 1 个目录 + 跑一次 `go generate`」。
 
+## 0.1 实施进度（2026-11-15）
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| Phase 1 注册收编 | ✅ 完成 | 4 个注册入口 → 1 次 `backends.Register`；`CLI`/`Custom` 死字段合并并接上 |
+| Phase 2 自动发现 | ✅ 完成 | `genbackendimports` + `backends/all`；`main.go` 20 行 → 1 行 |
+| Phase 3 行为钩子 | ✅ 完成（2 处例外） | 11 个 ACP 解析/桥接文件搬进子包；`ACPBehavior` 全部字段可选 |
+| Phase 4 搬 CLI 解析 | 🚧 进行中 | vecli 已完成；codex / opencode / pi / deepseek / grok / claude 的 CLI 解析器仍在核心包 |
+| Phase 5 数据搬家 | ⬜ 未开始 | `providerEnvTable` / `mcpUnsupportedBackends` / 配置目录 switch / `catalogs.go` 仍在核心包 |
+
+Phase 3 的两处例外（都写在代码注释里）：
+
+- `acp_opencode_children.go`：挂在 `ClawBenchACPClient` 的私有 map 上，是客户端逻辑而非事件映射。
+- `acp_meta_codebuddy.go`：核心的 `emitCancelledTurnUsage` / 累积逻辑的测试直接以它的解析结果为夹具；导出为 `ai.ExtractCodeBuddyMeta`，插件仍以 `ExtractMeta` 注册同一实现。
+
+另外 `codebuddy_plugin_scanner.go`（155 行）暂留核心包：搬走需要新增一个 `BackendSpec` 字段来承载「命令重发延迟」，改动面比收益大，留待 Phase 5 一起做。
+
 ---
 
 ## 1. 现状（带证据）

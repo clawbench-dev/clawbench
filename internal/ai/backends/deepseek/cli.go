@@ -55,7 +55,7 @@ func newDeepSeekBackend() ai.AIBackend {
 		Cmd:         "codewhale", // primary; legacy "deepseek" shim handled via req.Command
 		BuildArgsFn: buildDeepSeekStreamArgs,
 		NewParserFn: func() ai.LineParser {
-			return &ai.DeepSeekStreamParser{InputRemaps: DeepSeekInputRemaps}
+			return &DeepSeekStreamParser{InputRemaps: DeepSeekInputRemaps}
 		},
 		FilterLineFn: nil, // skip empty lines only (default)
 		PreStartFn:   nil, // prompt is passed as positional argument

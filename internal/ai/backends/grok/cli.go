@@ -18,7 +18,7 @@ func newGrokBackend() ai.AIBackend {
 		Cmd:         "grok",
 		BuildArgsFn: buildGrokStreamArgs,
 		NewParserFn: func() ai.LineParser {
-			return &ai.GrokStreamParser{}
+			return &GrokStreamParser{}
 		},
 		FilterLineFn: func(line string) (string, bool) {
 			if line == "" || !strings.HasPrefix(line, "{") {

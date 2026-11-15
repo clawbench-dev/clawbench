@@ -1,14 +1,16 @@
-package ai
+package deepseek
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"clawbench/internal/ai"
 )
 
 func TestDeepSeekStreamParserContent(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"content","content":"hello world"}`, ch)
 
 	select {
@@ -26,7 +28,7 @@ func TestDeepSeekStreamParserContent(t *testing.T) {
 
 func TestDeepSeekStreamParserThinking(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"thinking","content":"reasoning about the problem..."}`, ch)
 
 	select {
@@ -44,7 +46,7 @@ func TestDeepSeekStreamParserThinking(t *testing.T) {
 
 func TestDeepSeekStreamParserToolUse(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"tool_use","name":"read_file","id":"call_001","input":{"path":"/tmp/test.go"},"done":true}`, ch)
 
 	select {
@@ -78,7 +80,7 @@ func TestDeepSeekStreamParserToolUse(t *testing.T) {
 
 func TestDeepSeekStreamParserToolResult(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"tool_result","id":"call_001","output":"file contents here","status":"success"}`, ch)
 
 	select {
@@ -99,7 +101,7 @@ func TestDeepSeekStreamParserToolResult(t *testing.T) {
 
 func TestDeepSeekStreamParserSessionCapture(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"session_capture","content":"4bf83f0f-a9b6-47b4-bcde-68af7354cd9f"}`, ch)
 
 	select {
@@ -122,7 +124,7 @@ func TestDeepSeekStreamParserSessionCapture(t *testing.T) {
 
 func TestDeepSeekStreamParserMetadata(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"metadata","meta":{"model":"deepseek-v4-flash","input_tokens":100,"output_tokens":50,"session_id":"abc-123"}}`, ch)
 
 	select {
@@ -152,7 +154,7 @@ func TestDeepSeekStreamParserMetadata(t *testing.T) {
 
 func TestDeepSeekStreamParserDone(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"done"}`, ch)
 
 	select {
@@ -167,7 +169,7 @@ func TestDeepSeekStreamParserDone(t *testing.T) {
 
 func TestDeepSeekStreamParserError(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"error","error":"API rate limit exceeded"}`, ch)
 
 	select {
@@ -180,8 +182,8 @@ func TestDeepSeekStreamParserError(t *testing.T) {
 		}
 		// The reason is what makes the turn classify as failed instead of
 		// clean; a limit message must also be non-retryable.
-		if evt.Reason != ReasonQuotaExhausted {
-			t.Errorf("expected reason %q, got %q", ReasonQuotaExhausted, evt.Reason)
+		if evt.Reason != ai.ReasonQuotaExhausted {
+			t.Errorf("expected reason %q, got %q", ai.ReasonQuotaExhausted, evt.Reason)
 		}
 	default:
 		t.Error("expected event on channel")
@@ -190,7 +192,7 @@ func TestDeepSeekStreamParserError(t *testing.T) {
 
 func TestDeepSeekStreamParserSkipInvalidJSON(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	// Should not panic or send events for invalid JSON
 	parser.ParseLine("not json", ch)
 	parser.ParseLine("", ch)
@@ -205,7 +207,7 @@ func TestDeepSeekStreamParserSkipInvalidJSON(t *testing.T) {
 
 func TestDeepSeekStreamParserSkipUnknownType(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"unknown_type","data":"something"}`, ch)
 
 	select {
@@ -218,7 +220,7 @@ func TestDeepSeekStreamParserSkipUnknownType(t *testing.T) {
 
 func TestDeepSeekToolNameNormalization(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 
 	tests := map[string]string{
 		"read_file":   "Read",
@@ -253,7 +255,7 @@ func TestDeepSeekToolNameNormalization(t *testing.T) {
 
 func TestDeepSeekInputFieldNormalization(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 
 	// edit_file: {path, search, replace} → {file_path, old_string, new_string}
 	parser.ParseLine(`{"type":"tool_use","name":"edit_file","id":"e1","input":{"path":"/tmp/a.txt","search":"hello","replace":"world"},"done":true}`, ch)
@@ -304,7 +306,7 @@ func TestDeepSeekInputFieldNormalization(t *testing.T) {
 
 func TestDeepSeekStreamParser_EmptyContentSkipped(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"content","content":""}`, ch)
 
 	select {
@@ -317,7 +319,7 @@ func TestDeepSeekStreamParser_EmptyContentSkipped(t *testing.T) {
 
 func TestDeepSeekStreamParser_EmptyThinkingSkipped(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"thinking","content":""}`, ch)
 
 	select {
@@ -330,7 +332,7 @@ func TestDeepSeekStreamParser_EmptyThinkingSkipped(t *testing.T) {
 
 func TestDeepSeekStreamParser_ToolResultEmptyIDSkipped(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"tool_result","id":"","output":"some output","status":"success"}`, ch)
 
 	select {
@@ -343,7 +345,7 @@ func TestDeepSeekStreamParser_ToolResultEmptyIDSkipped(t *testing.T) {
 
 func TestDeepSeekStreamParser_MetadataNilMetaSkipped(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"metadata"}`, ch)
 
 	select {
@@ -356,7 +358,7 @@ func TestDeepSeekStreamParser_MetadataNilMetaSkipped(t *testing.T) {
 
 func TestDeepSeekStreamParser_ErrorEmptyMessageSkipped(t *testing.T) {
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"error","error":""}`, ch)
 
 	select {
@@ -371,7 +373,7 @@ func TestDeepSeekInputFieldNormalization_GrepFilesPathNotRemapped(t *testing.T) 
 	// grep_files: 'path' field should NOT be remapped to 'file_path'
 	// because Grep's canonical field is 'path', not 'file_path'
 	parser := &DeepSeekStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 
 	parser.ParseLine(`{"type":"tool_use","name":"grep_files","id":"g1","input":{"path":"/tmp","pattern":"TODO"},"done":true}`, ch)
 	evt := <-ch
@@ -386,7 +388,7 @@ func TestDeepSeekInputFieldNormalization_GrepFilesPathNotRemapped(t *testing.T) 
 func TestDeepSeekInputFieldNormalization_InvalidJSON(t *testing.T) {
 	// When tool input is invalid JSON, parseDeepSeekToolUse returns the raw string.
 	msg := DeepSeekStreamMessage{Name: "read_file", Input: json.RawMessage(`{invalid}`)}
-	tc := parseDeepSeekToolUse(&msg, nil)
+	tc := parseToolUse(&msg, nil)
 	if tc.Input == "" {
 		t.Error("expected non-empty result for invalid JSON input")
 	}
@@ -398,7 +400,7 @@ func TestDeepSeekInputFieldNormalization_InvalidJSON(t *testing.T) {
 func TestDeepSeekInputFieldNormalization_EmptyInput(t *testing.T) {
 	// Empty raw input should produce empty result
 	msg := DeepSeekStreamMessage{Name: "read_file", Input: json.RawMessage(``)}
-	tc := parseDeepSeekToolUse(&msg, nil)
+	tc := parseToolUse(&msg, nil)
 	if tc.Input != "" {
 		t.Errorf("expected empty string for empty input, got '%s'", tc.Input)
 	}

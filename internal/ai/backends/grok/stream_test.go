@@ -1,19 +1,21 @@
-package ai
+package grok
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/ai"
 )
 
-func collectGrokEvents(parser *GrokStreamParser, lines ...string) []StreamEvent {
-	ch := make(chan StreamEvent, 64)
+func collectGrokEvents(parser *GrokStreamParser, lines ...string) []ai.StreamEvent {
+	ch := make(chan ai.StreamEvent, 64)
 	for _, line := range lines {
 		parser.ParseLine(line, ch)
 	}
 	close(ch)
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for e := range ch {
 		events = append(events, e)
 	}
@@ -84,7 +86,7 @@ func TestGrokStream_ParseLine_Error(t *testing.T) {
 	assert.Contains(t, events[0].Error, "auth required")
 	// An unclassified error event is read as a clean finish by the turn
 	// classifier, so the reason is part of the contract.
-	assert.Equal(t, ReasonRequestFailed, events[0].Reason)
+	assert.Equal(t, ai.ReasonRequestFailed, events[0].Reason)
 }
 
 func TestGrokStream_ParseLine_UnknownAndInvalid(t *testing.T) {
@@ -125,7 +127,7 @@ func TestGrokStream_ParseLine_End_CamelCaseUsage(t *testing.T) {
 	)
 
 	assert.Equal(t, "sess-camel", parser.GetCapturedSessionID())
-	var meta *StreamEvent
+	var meta *ai.StreamEvent
 	for _, e := range events {
 		if e.Type == "metadata" {
 			meta = &e
@@ -174,4 +176,40 @@ func TestGrokStream_End_EmptyMetadataNoEvent(t *testing.T) {
 	}
 	assert.False(t, hasMeta, "end with no session/usage/stopReason should not emit metadata")
 	assert.True(t, hasDone)
+}
+
+func TestGrokStreamParser_ReportsCompaction(t *testing.T) {
+	p := &GrokStreamParser{}
+	ch := make(chan ai.StreamEvent, 16)
+	p.ParseLine(`{"type":"auto_compact_completed"}`, ch)
+	p.ParseLine(`{"type":"auto_compact_completed"}`, ch)
+
+	detected := 0
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type == "compact_detected" {
+				detected++
+			}
+		default:
+			assert.Equal(t, 1, detected, "grok compaction must be reported exactly once")
+			return
+		}
+	}
+}
+
+func TestGrokStreamParser_IgnoresFailedCompaction(t *testing.T) {
+	p := &GrokStreamParser{}
+	ch := make(chan ai.StreamEvent, 16)
+	p.ParseLine(`{"type":"auto_compact_started"}`, ch)
+	p.ParseLine(`{"type":"auto_compact_failed"}`, ch)
+
+	for {
+		select {
+		case ev := <-ch:
+			assert.NotEqual(t, "compact_detected", ev.Type)
+		default:
+			return
+		}
+	}
 }
