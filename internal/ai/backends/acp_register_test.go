@@ -4,15 +4,7 @@ import (
 	"testing"
 
 	"clawbench/internal/ai/backends"
-	_ "clawbench/internal/ai/backends/antigravity"
-	_ "clawbench/internal/ai/backends/claude"
-	_ "clawbench/internal/ai/backends/codebuddy"
-	_ "clawbench/internal/ai/backends/deepseek"
-	_ "clawbench/internal/ai/backends/grok"
-	_ "clawbench/internal/ai/backends/hermes"
-	_ "clawbench/internal/ai/backends/kimi"
-	_ "clawbench/internal/ai/backends/opencode"
-	_ "clawbench/internal/ai/backends/pi"
+	_ "clawbench/internal/ai/backends/all"
 )
 
 // mustLookup is a test helper that returns the plugin or fails immediately.
