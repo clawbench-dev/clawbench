@@ -7,7 +7,7 @@
 | 值 | 名称 | 隐藏 / 关闭 | 顺序 |
 |---|---|---|---|
 | `developer` | 开发 | 全开 | 默认顺序 |
-| `standard` | 办公 | 隐藏 Forge / 终端 / 端口映射，关闭 Forge / 终端 | 开发相关三项挪到设置之前 |
+| `standard` | 标准 | 隐藏 Forge / 终端 / 端口映射，关闭 Forge / 终端 | 开发相关三项挪到设置之前 |
 | `minimal` | 极简 | 只留常驻三项，其余（含通知中心）隐藏并关闭 | 常驻三项在前、设置最后，其余按默认顺序 |
 | `custom` | 自定义 | 用户手动改过，没有固定语义 | 用户当前顺序 |
 
@@ -30,7 +30,7 @@ await applyDockPreset('standard', async (changes) => {
 
 - `applyDockPreset` 是 **async**，`commit` 只调用一次；
 - `commit` 先执行、失败直接抛：本地隐藏集合与顺序一格都不改，所以失败即整体回滚；
-- 办公 / 极简会停服务、撤销链接，UI 层必须先确认（`PRESETS_NEEDING_CONFIRM`），取消则什么都不做；
+- 标准 / 极简会停服务、撤销链接，UI 层必须先确认（`PRESETS_NEEDING_CONFIRM`），取消则什么都不做；
 - `resetDockPlugins(commit)` 等价于应用 `developer`。
 
 单测里可以省略 `commit`（只验证本地状态），UI 调用必须传。
@@ -55,7 +55,7 @@ const { profile, isDeveloper, isStandard, isMinimal, isCustom } = usePluginProfi
 ### 4.1 推荐
 
 - **开发**：显示调试面板、原始 JSON、请求日志、高级开关；
-- **办公**：隐藏开发相关的高级区块，保留日常操作；
+- **标准**：隐藏开发相关的高级区块，保留日常操作；
 - **极简 / 自定义**：回到中性默认，不要猜。
 
 例子：

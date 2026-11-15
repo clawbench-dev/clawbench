@@ -3334,7 +3334,7 @@ export default {
       },
       presets: {
         developer: { name: '开发', desc: '全部开启，按默认顺序排列。适合开发和调试。' },
-        standard: { name: '办公', desc: '关闭 Forge 和终端，隐藏端口映射；邮件、知识库、任务、分享保持开启。' },
+        standard: { name: '标准', desc: '关闭 Forge 和终端，隐藏端口映射；邮件、知识库、任务、分享保持开启。' },
         minimal: { name: '极简', desc: '只保留文件管理、文件浏览和设置，其余功能全部关闭。' },
         custom: { name: '自定义', desc: '你手动调整过显示、顺序或开关。' },
       },

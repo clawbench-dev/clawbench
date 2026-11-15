@@ -148,6 +148,17 @@ describe('DockPluginSetting', () => {
     expect(DOCK_TABS).toHaveLength(14)
   })
 
+  it('gives every preset card an icon, and calls the middle one 标准', () => {
+    const wrapper = mountSetting()
+    const cards = wrapper.findAll('.preset-card')
+    for (const card of cards) {
+      // Icon sits on the name line, not floating above the description.
+      expect(card.find('.preset-card__head .preset-card__icon').exists()).toBe(true)
+    }
+    // The middle preset is the everyday set; it used to be labelled 办公.
+    expect(cards[1].find('.preset-card__name').text()).toBe('标准')
+  })
+
   it('gives EVERY row a drag handle — permanent tabs and settings included', () => {
     const wrapper = mountSetting()
     for (const tab of DOCK_TABS) {
@@ -301,7 +312,7 @@ describe('DockPluginSetting', () => {
     }
   })
 
-  it('applies the office preset in ONE request after confirmation', async () => {
+  it('applies the standard preset in ONE request after confirmation', async () => {
     const wrapper = mountSetting()
     await wrapper.findAll('.preset-card')[1].trigger('click')
     await vi.waitFor(() => expect(mocks.patchConfig).toHaveBeenCalledTimes(1))

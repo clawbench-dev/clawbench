@@ -3341,7 +3341,7 @@ export default {
       },
       presets: {
         developer: { name: 'Developer', desc: 'Everything on, in the default order. Best for development and debugging.' },
-        standard: { name: 'Office', desc: 'Turns Forge and terminal off and hides port mapping; mail, knowledge base, tasks and sharing stay on.' },
+        standard: { name: 'Standard', desc: 'Turns Forge and terminal off and hides port mapping; mail, knowledge base, tasks and sharing stay on.' },
         minimal: { name: 'Minimal', desc: 'Keeps only files, file preview and settings; every other feature is turned off.' },
         custom: { name: 'Custom', desc: 'You changed visibility, order or a switch by hand.' },
       },

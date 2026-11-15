@@ -19,7 +19,7 @@ import { DEFAULT_DOCK_PRESET, readPanelState, writePanelState } from '@/utils/pa
  *
  * Presets are the coarse choice, the manager list is the fine one:
  *   - developer: every tab shown and every server feature on, default order
- *   - standard:  office set — Forge / terminal / port mapping hidden and Forge
+ *   - standard:  everyday set — Forge / terminal / port mapping hidden and Forge
  *                + terminal switched off; everything else on
  *   - minimal:   only the permanent tabs (notifications hidden too); every
  *                optional feature switched off
@@ -70,7 +70,7 @@ export interface DockPresetPlan {
  * The three presets, spelled out.
  *
  * Orders are literal arrays rather than derived filters: the three presets
- * differ in ways a filter cannot express (office parks the developer tabs at
+ * differ in ways a filter cannot express (standard parks the developer tabs at
  * the end instead of removing them, minimal keeps the historical slot order
  * so turning a feature back on lands it where it used to be).
  */

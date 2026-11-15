@@ -14,7 +14,10 @@
           :disabled="presetBusy"
           @click="onPreset(p)"
         >
-          <span class="preset-card__name">{{ t(`settings.dockPlugins.presets.${p}.name`) }}</span>
+          <span class="preset-card__head">
+            <component :is="PRESET_ICONS[p]" :size="16" class="preset-card__icon" />
+            <span class="preset-card__name">{{ t(`settings.dockPlugins.presets.${p}.name`) }}</span>
+          </span>
           <span class="preset-card__desc">{{ t(`settings.dockPlugins.presets.${p}.desc`) }}</span>
         </button>
       </div>
@@ -98,9 +101,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { FolderOpen, Settings as SettingsIcon } from 'lucide-vue-next'
+import {
+  Briefcase,
+  CodeXml,
+  Feather,
+  FolderOpen,
+  Settings as SettingsIcon,
+} from 'lucide-vue-next'
 import { VueDraggable } from 'vue-draggable-plus'
 import SettingsCard from './SettingsCard.vue'
 import { DOCK_TAB_BY_ID, type DockTabDescriptor, type DockTabId, type DockFeature } from '@/composables/dockTabs'
@@ -135,6 +144,17 @@ const DESTRUCTIVE_FEATURES: readonly DockFeature[] = [
   'tasks.enabled',
   'share.enabled',
 ]
+
+/**
+ * One icon per preset card. Kept next to the manager rather than in
+ * `useDockPlugins` so the composable stays free of lucide imports: presets are
+ * data there, presentation here.
+ */
+const PRESET_ICONS: Record<Exclude<DockPreset, 'custom'>, Component> = {
+  developer: CodeXml,
+  standard: Briefcase,
+  minimal: Feather,
+}
 
 const emit = defineEmits<{ navigate: [categoryId: string] }>()
 
@@ -334,7 +354,7 @@ const presetStatusText = computed(() => {
 /**
  * Apply a preset.
  *
- * Office / minimal stop server work, so they ask first (with the exact list of
+ * Standard / minimal stop server work, so they ask first (with the exact list of
  * what will be stopped); cancelling applies nothing at all. The server write is
  * ONE request and runs before the local visibility/order change, so a failure
  * leaves the dock exactly as it was — no half-applied preset.
@@ -436,6 +456,21 @@ async function onPreset(next: Exclude<DockPreset, 'custom'>): Promise<void> {
 .preset-card:focus-visible {
   outline: 2px solid var(--accent-color);
   outline-offset: 1px;
+}
+
+.preset-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.preset-card__icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.preset-card.is-active .preset-card__icon {
+  color: var(--accent-color);
 }
 
 .preset-card__name {
