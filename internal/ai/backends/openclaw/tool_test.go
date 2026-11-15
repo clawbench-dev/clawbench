@@ -1,13 +1,14 @@
-package ai
+package openclaw
 
 import (
 	"encoding/json"
 	"testing"
 
 	acp "github.com/coder/acp-go-sdk"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/ai"
 )
 
 // These tests pin the OpenClaw ACP tool path against the rawInput shapes the
@@ -266,7 +267,7 @@ func TestParseOpenClawACPToolCallUpdate(t *testing.T) {
 // OpenClaw parsers rather than the generic flat remap. Without the case, a read
 // would keep `path` and the card would show no file.
 func TestParseACPToolCall_OpenClawDispatch(t *testing.T) {
-	tool := parseACPToolCall("openclaw", acp.SessionUpdateToolCall{
+	tool := ai.ParseACPToolCallForTest("openclaw", acp.SessionUpdateToolCall{
 		ToolCallId: "call_1",
 		Title:      "read: path: /a/b.go",
 		Kind:       acp.ToolKindRead,
@@ -279,7 +280,7 @@ func TestParseACPToolCall_OpenClawDispatch(t *testing.T) {
 func TestParseACPToolCallUpdate_OpenClawDispatch(t *testing.T) {
 	status := acp.ToolCallStatusCompleted
 	title := "read: path: /a/b.go"
-	tool := parseACPToolCallUpdate("openclaw", acp.SessionToolCallUpdate{
+	tool := ai.ParseACPToolCallUpdateForTest("openclaw", acp.SessionToolCallUpdate{
 		ToolCallId: "call_1",
 		Status:     &status,
 		Title:      &title,
@@ -293,7 +294,7 @@ func TestParseACPToolCallUpdate_OpenClawDispatch(t *testing.T) {
 	// omits its title can only be a file tool in practice (exec/ls titles are
 	// always present), and a blank Edit/Write header is worse than an LS card
 	// reading file_path for the handful of frames that drop the title.
-	tool = parseACPToolCallUpdate("openclaw", acp.SessionToolCallUpdate{
+	tool = ai.ParseACPToolCallUpdateForTest("openclaw", acp.SessionToolCallUpdate{
 		ToolCallId: "call_2",
 		Status:     &status,
 		RawInput:   map[string]any{"path": "/a/b.go"},

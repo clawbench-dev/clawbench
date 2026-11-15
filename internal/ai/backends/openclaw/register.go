@@ -1,6 +1,7 @@
 package openclaw
 
 import (
+	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 	"clawbench/internal/model"
 )
@@ -96,6 +97,10 @@ func init() {
 			// selection over ACP at all (no "model" config option, and
 			// session/set_model answers -32601 Method not found). Models are
 			// configured on the Gateway. Do not add a raw-RPC switch here.
+		},
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       parseOpenClawACPToolCall,
+			ParseToolCallUpdate: parseOpenClawACPToolCallUpdate,
 		},
 	})
 }

@@ -1,10 +1,13 @@
-package ai
+package openclaw
 
 import (
 	"encoding/json"
 	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends/pi"
 )
 
 // ---------------------------------------------------------------------------
@@ -76,7 +79,7 @@ func normalizeOpenClawACPInput(toolName string, rawInput []byte) string {
 	case "edit":
 		// path→file_path comes from the base table; the nested edits[] array
 		// still needs the pi normalizer.
-		return normalizePiEditInput(json.RawMessage(rawInput), remaps)
+		return pi.NormalizePiEditInput(json.RawMessage(rawInput), remaps)
 	case "ls":
 		// LS's card reads "path", so the base path→file_path remap is dropped
 		// for this tool. Deleted rather than reversed (file_path→path): the
@@ -85,7 +88,7 @@ func normalizeOpenClawACPInput(toolName string, rawInput []byte) string {
 		delete(remaps, "path")
 	}
 
-	normalized, err := normalizeToolInput(rawInput, remaps)
+	normalized, err := ai.NormalizeToolInput(rawInput, remaps)
 	if err != nil {
 		return string(rawInput)
 	}
@@ -109,10 +112,10 @@ var openClawACPBaseRemaps = map[string]string{
 	"replaceAll": "replace_all",
 }
 
-// parseOpenClawACPToolCall extracts a ToolCall from an OpenClaw ACP tool_call.
-func parseOpenClawACPToolCall(tc acp.SessionUpdateToolCall) *ToolCall {
-	tool := &ToolCall{
-		Name: extractToolName(tc.Title, tc.Kind, "openclaw", string(tc.ToolCallId)),
+// parseOpenClawACPToolCall extracts a ai.ToolCall from an OpenClaw ACP tool_call.
+func parseOpenClawACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
+	tool := &ai.ToolCall{
+		Name: ai.ExtractToolName(tc.Title, tc.Kind, "openclaw", string(tc.ToolCallId)),
 		ID:   string(tc.ToolCallId),
 		Done: false,
 	}
@@ -124,11 +127,11 @@ func parseOpenClawACPToolCall(tc acp.SessionUpdateToolCall) *ToolCall {
 	return tool
 }
 
-// parseOpenClawACPToolCallUpdate extracts a ToolCall from an OpenClaw ACP
+// parseOpenClawACPToolCallUpdate extracts a ai.ToolCall from an OpenClaw ACP
 // tool_call_update.
-func parseOpenClawACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
-	tool := &ToolCall{ID: string(tcu.ToolCallId)}
-	mapToolCallStatus(tcu.Status, tool)
+func parseOpenClawACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
+	tool := &ai.ToolCall{ID: string(tcu.ToolCallId)}
+	ai.MapToolCallStatus(tcu.Status, tool)
 	if tcu.RawInput != nil {
 		if inputBytes, err := json.Marshal(tcu.RawInput); err == nil {
 			title := ""
@@ -138,11 +141,11 @@ func parseOpenClawACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
 			tool.Input = normalizeOpenClawACPInput(openClawACPToolName(title), inputBytes)
 		}
 	} else {
-		mapToolCallInput(tcu, tool, "openclaw")
+		ai.MapToolCallInput(tcu, tool, "openclaw")
 	}
-	mapToolCallName(tcu, tool, "openclaw")
+	ai.MapToolCallName(tcu, tool, "openclaw")
 	if tool.Done {
-		mapToolCallOutput(tcu, tool)
+		ai.MapToolCallOutput(tcu, tool)
 	}
 	return tool
 }
@@ -155,16 +158,6 @@ func parseOpenClawACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
 // These thin wrappers let that package's tests exercise the real parsing paths
 // instead of re-implementing them.
 // ---------------------------------------------------------------------------
-
-// IsACPToolCallWrapperForTest exports isACPToolCallWrapper.
-func IsACPToolCallWrapperForTest(title, backendID string) bool {
-	return isACPToolCallWrapper(title, backendID)
-}
-
-// ACPModesMirrorThoughtLevelForTest exports acpModesMirrorThoughtLevel.
-func ACPModesMirrorThoughtLevelForTest(backendID string) bool {
-	return acpModesMirrorThoughtLevel(backendID)
-}
 
 // NormalizeOpenClawACPInputForTest exports normalizeOpenClawACPInput.
 func NormalizeOpenClawACPInputForTest(toolName, rawInput string) string {
@@ -185,12 +178,7 @@ func OpenClawACPBaseRemapsForTest() map[string]string {
 	return out
 }
 
-// ParseOpenClawToolCallForTest exports parseOpenClawACPToolCall.
-func ParseOpenClawToolCallForTest(tc acp.SessionUpdateToolCall) *ToolCall {
-	return parseOpenClawACPToolCall(tc)
-}
-
 // ParseOpenClawToolCallUpdateForTest exports parseOpenClawACPToolCallUpdate.
-func ParseOpenClawToolCallUpdateForTest(tcu acp.SessionToolCallUpdate) *ToolCall {
+func ParseOpenClawToolCallUpdateForTest(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
 	return parseOpenClawACPToolCallUpdate(tcu)
 }

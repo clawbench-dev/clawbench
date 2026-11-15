@@ -1,8 +1,10 @@
-package ai
+package pi
 
 import (
 	"encoding/json"
 	"log/slog"
+
+	"clawbench/internal/ai"
 )
 
 // PiStreamMessage represents a single JSON line from `pi --mode json`.
@@ -98,8 +100,8 @@ func (p *PiStreamParser) GetCapturedSessionID() string {
 }
 
 // ParseLine parses a single JSON line from Pi's --mode json output and sends
-// StreamEvent(s) to the provided channel.
-func (p *PiStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
+// ai.StreamEvent(s) to the provided channel.
+func (p *PiStreamParser) ParseLine(line string, ch chan<- ai.StreamEvent) {
 	var msg PiStreamMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
 		slog.Debug("pi stream: skipping unparseable line", "line", line, "error", err)
@@ -126,11 +128,11 @@ func (p *PiStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 
 	case "tool_execution_end":
 		if tc := parsePiToolExecutionEnd(&msg); tc != nil {
-			emitStreamEvent(ch, "pi", StreamEvent{Type: "tool_result", Tool: tc})
+			ai.EmitStreamEvent(ch, "pi", ai.StreamEvent{Type: "tool_result", Tool: tc})
 		}
 
 	case "agent_end":
-		emitStreamEvent(ch, "pi", StreamEvent{Type: "done"})
+		ai.EmitStreamEvent(ch, "pi", ai.StreamEvent{Type: "done"})
 
 	default:
 		slog.Debug("pi stream: skipping unknown message type", "type", msg.Type)
@@ -138,7 +140,7 @@ func (p *PiStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 }
 
 // parseMessageUpdate handles message_update events with assistantMessageEvent subtypes.
-func (p *PiStreamParser) parseMessageUpdate(msg *PiStreamMessage, ch chan<- StreamEvent) {
+func (p *PiStreamParser) parseMessageUpdate(msg *PiStreamMessage, ch chan<- ai.StreamEvent) {
 	if msg.AssistantMessageEvent == nil {
 		return
 	}
@@ -148,12 +150,12 @@ func (p *PiStreamParser) parseMessageUpdate(msg *PiStreamMessage, ch chan<- Stre
 	switch evt.Type {
 	case "thinking_delta":
 		if evt.Delta != "" {
-			emitStreamEvent(ch, "pi", StreamEvent{Type: "thinking", Content: evt.Delta})
+			ai.EmitStreamEvent(ch, "pi", ai.StreamEvent{Type: "thinking", Content: evt.Delta})
 		}
 
 	case "text_delta":
 		if evt.Delta != "" {
-			emitStreamEvent(ch, "pi", StreamEvent{Type: "content", Content: evt.Delta})
+			ai.EmitStreamEvent(ch, "pi", ai.StreamEvent{Type: "content", Content: evt.Delta})
 		}
 
 	case "toolcall_start", "toolcall_delta":
@@ -163,11 +165,11 @@ func (p *PiStreamParser) parseMessageUpdate(msg *PiStreamMessage, ch chan<- Stre
 
 	case "toolcall_end":
 		if tc := parsePiToolCallEnd(evt, p.InputRemaps); tc != nil {
-			emitStreamEvent(ch, "pi", StreamEvent{Type: "tool_use", Tool: tc})
+			ai.EmitStreamEvent(ch, "pi", ai.StreamEvent{Type: "tool_use", Tool: tc})
 		}
 
 	case "thinking_end":
-		emitStreamEvent(ch, "pi", StreamEvent{Type: "thinking_done"})
+		ai.EmitStreamEvent(ch, "pi", ai.StreamEvent{Type: "thinking_done"})
 
 	case "thinking_start", "text_start", "text_end":
 		// No additional event needed — deltas already streamed
@@ -175,7 +177,7 @@ func (p *PiStreamParser) parseMessageUpdate(msg *PiStreamMessage, ch chan<- Stre
 }
 
 // parseMessageEnd handles message_end events — emits metadata and/or error.
-func (p *PiStreamParser) parseMessageEnd(msg *PiStreamMessage, ch chan<- StreamEvent) {
+func (p *PiStreamParser) parseMessageEnd(msg *PiStreamMessage, ch chan<- ai.StreamEvent) {
 	if msg.Message == nil {
 		return
 	}
@@ -188,7 +190,7 @@ func (p *PiStreamParser) parseMessageEnd(msg *PiStreamMessage, ch chan<- StreamE
 		if m.Usage.Cost != nil {
 			costUSD = m.Usage.Cost.Total
 		}
-		emitStreamEvent(ch, "pi", StreamEvent{Type: "metadata", Meta: &Metadata{
+		ai.EmitStreamEvent(ch, "pi", ai.StreamEvent{Type: "metadata", Meta: &ai.Metadata{
 			InputTokens:  m.Usage.Input,
 			OutputTokens: m.Usage.Output,
 			CostUSD:      costUSD,
@@ -204,10 +206,10 @@ func (p *PiStreamParser) parseMessageEnd(msg *PiStreamMessage, ch chan<- StreamE
 		}
 		// Reason: see streamErrorReason — an unclassified error event is read as
 		// a clean finish by the turn classifier.
-		emitStreamEvent(ch, "pi", StreamEvent{
+		ai.EmitStreamEvent(ch, "pi", ai.StreamEvent{
 			Type:   "error",
 			Error:  errMsg,
-			Reason: streamErrorReason(errMsg),
+			Reason: ai.StreamErrorReason(errMsg),
 		})
 	}
 }

@@ -520,3 +520,90 @@ func ocTodos(items ...map[string]any) []any {
 	}
 	return out
 }
+
+func TestParseACPToolCall_RoutesPiToPiParser(t *testing.T) {
+	tc := ai.ParseACPToolCallForTest("pi", acp.SessionUpdateToolCall{
+		ToolCallId: "call_dispatch_1",
+		Title:      "edit",
+		Kind:       acp.ToolKindEdit,
+		RawInput: map[string]any{
+			"path":  "f.txt",
+			"edits": []any{map[string]any{"oldText": "a", "newText": "b"}},
+		},
+	})
+	m := mustParsePiACPInput(t, tc.Input)
+	if m["old_string"] != "a" || m["new_string"] != "b" {
+		t.Errorf("dispatch did not reach the Pi parser (nested edits not flattened): %v", m)
+	}
+	if m["file_path"] != "f.txt" {
+		t.Errorf("path not remapped: %v", m)
+	}
+}
+
+func TestParseACPToolCall_NonPiBackendStaysGeneric(t *testing.T) {
+	tc := ai.ParseACPToolCallForTest("grok", acp.SessionUpdateToolCall{
+		ToolCallId: "call_dispatch_2",
+		Title:      "edit",
+		Kind:       acp.ToolKindEdit,
+		RawInput: map[string]any{
+			"path":  "f.txt",
+			"edits": []any{map[string]any{"oldText": "a", "newText": "b"}},
+		},
+	})
+	if tc.Input == "" {
+		t.Fatal("generic parser produced no input")
+	}
+	m := mustParsePiACPInput(t, tc.Input)
+	// The generic flat remap does not recurse, so the flattened pair is absent.
+	if _, flattened := m["old_string"]; flattened {
+		t.Errorf("generic backend unexpectedly got Pi's nested-edits flattening: %v", m)
+	}
+}
+
+func TestParseACPToolCallUpdate_RoutesPiToPiParser(t *testing.T) {
+	title := "edit"
+	tcu := acp.SessionToolCallUpdate{
+		ToolCallId: "call_dispatch_3",
+		Title:      &title,
+		RawInput: map[string]any{
+			"path":  "f.txt",
+			"edits": []any{map[string]any{"oldText": "a", "newText": "b"}},
+		},
+	}
+	tc := ai.ParseACPToolCallUpdateForTest("pi", tcu)
+	m := mustParsePiACPInput(t, tc.Input)
+	if m["old_string"] != "a" || m["new_string"] != "b" {
+		t.Errorf("update dispatch did not reach the Pi parser: %v", m)
+	}
+}
+
+// TestParseACPToolCallUpdate_NonPiBackendStaysGeneric is the control for the
+// update-path dispatch.
+
+func TestParseACPToolCallUpdate_NonPiBackendStaysGeneric(t *testing.T) {
+	title := "edit"
+	tcu := acp.SessionToolCallUpdate{
+		ToolCallId: "call_dispatch_4",
+		Title:      &title,
+		RawInput: map[string]any{
+			"path":  "f.txt",
+			"edits": []any{map[string]any{"oldText": "a", "newText": "b"}},
+		},
+	}
+	tc := ai.ParseACPToolCallUpdateForTest("grok", tcu)
+	m := mustParsePiACPInput(t, tc.Input)
+	if _, flattened := m["old_string"]; flattened {
+		t.Errorf("generic update backend unexpectedly got Pi's flattening: %v", m)
+	}
+}
+
+// ── normalizePiACPInput / parsePiACPToolCallUpdate branches ──────────────────
+
+func mustParsePiACPInput(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("input is not valid JSON: %v (%s)", err, raw)
+	}
+	return m
+}

@@ -66,6 +66,10 @@ func init() {
 			InputRemaps: PiACPInputRemaps,
 		},
 		CLI: &backends.CLIPlugin{NewBackend: newPiBackend},
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       parsePiACPToolCall,
+			ParseToolCallUpdate: parsePiACPToolCallUpdate,
+		},
 		ModelSource: model.NewCLISource("pi", model.CLIOptions{
 			Command:       "pi",
 			Args:          []string{"--list-models"},
@@ -82,7 +86,7 @@ func newPiBackend() ai.AIBackend {
 		Cmd:         "pi",
 		BuildArgsFn: buildPiStreamArgs,
 		NewParserFn: func() ai.LineParser {
-			return &ai.PiStreamParser{InputRemaps: PiInputRemaps}
+			return &PiStreamParser{InputRemaps: PiInputRemaps}
 		},
 		FilterLineFn: nil,
 		PreStartFn:   nil,

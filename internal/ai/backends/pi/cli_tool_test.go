@@ -1,4 +1,4 @@
-package ai
+package pi
 
 import (
 	"encoding/json"
@@ -24,7 +24,7 @@ func TestParsePiToolCallEnd_ReadTool(t *testing.T) {
 
 	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Read" {
@@ -58,7 +58,7 @@ func TestParsePiToolCallEnd_WriteTool(t *testing.T) {
 
 	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Write" {
@@ -82,7 +82,7 @@ func TestParsePiToolCallEnd_EditTool(t *testing.T) {
 
 	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Edit" {
@@ -120,7 +120,7 @@ func TestParsePiToolCallEnd_BashTool(t *testing.T) {
 
 	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Bash" {
@@ -145,7 +145,7 @@ func TestParsePiToolCallEnd_GrepTool(t *testing.T) {
 
 	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Name != "Grep" {
@@ -165,7 +165,7 @@ func TestParsePiToolCallEnd_NilToolCall(t *testing.T) {
 
 	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc != nil {
-		t.Errorf("expected nil for nil ToolCall, got %+v", tc)
+		t.Errorf("expected nil for nil ai.ToolCall, got %+v", tc)
 	}
 }
 
@@ -182,7 +182,7 @@ func TestParsePiToolCallEnd_EmptyArguments(t *testing.T) {
 
 	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Input != `{}` {
@@ -203,7 +203,7 @@ func TestParsePiToolCallEnd_NilArguments(t *testing.T) {
 
 	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	// nil arguments should produce "{}"
@@ -225,7 +225,7 @@ func TestParsePiToolCallEnd_EditToolMultipleEdits(t *testing.T) {
 
 	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	// Both edits are remapped inside the array, and the first is also promoted
@@ -264,7 +264,7 @@ func TestParsePiToolCallEnd_UnknownTool(t *testing.T) {
 
 	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	// Unknown tool name is passed through as-is
@@ -305,7 +305,7 @@ func TestParsePiToolExecutionEnd_BashSuccess(t *testing.T) {
 
 	tc := parsePiToolExecutionEnd(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.ID != "call_bash1" {
@@ -334,7 +334,7 @@ func TestParsePiToolExecutionEnd_ErrorResult(t *testing.T) {
 
 	tc := parsePiToolExecutionEnd(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Status != "error" {
@@ -358,7 +358,7 @@ func TestParsePiToolExecutionEnd_MultiContent(t *testing.T) {
 
 	tc := parsePiToolExecutionEnd(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	// Multiple text content items should be joined with newline
@@ -397,7 +397,7 @@ func TestParsePiToolExecutionEnd_NilResult(t *testing.T) {
 
 	tc := parsePiToolExecutionEnd(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Output != "" {
@@ -421,7 +421,7 @@ func TestParsePiToolExecutionEnd_EmptyContentArray(t *testing.T) {
 
 	tc := parsePiToolExecutionEnd(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Output != "" {
@@ -445,7 +445,7 @@ func TestParsePiToolExecutionEnd_NonTextContentIgnored(t *testing.T) {
 
 	tc := parsePiToolExecutionEnd(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Output != "actual text" {
@@ -469,7 +469,7 @@ func TestParsePiToolExecutionEnd_EmptyTextIgnored(t *testing.T) {
 
 	tc := parsePiToolExecutionEnd(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	// Empty text items should be skipped; only non-empty text is joined
@@ -489,7 +489,7 @@ func TestParsePiToolExecutionEnd_ErrorWithNilResult(t *testing.T) {
 
 	tc := parsePiToolExecutionEnd(msg)
 	if tc == nil {
-		t.Fatal("expected non-nil ToolCall")
+		t.Fatal("expected non-nil ai.ToolCall")
 		return
 	}
 	if tc.Status != "error" {
@@ -503,7 +503,7 @@ func TestNormalizePiEditInput_SingleEdit(t *testing.T) {
 	input := json.RawMessage(`{"path":"/tmp/test.go","edits":[{"oldText":"foo","newText":"bar"}]}`)
 	topRemaps := map[string]string{"path": "file_path"}
 
-	result := normalizePiEditInput(input, topRemaps)
+	result := NormalizePiEditInput(input, topRemaps)
 
 	if !strings.Contains(result, `"file_path"`) {
 		t.Errorf("expected 'file_path' in result, got '%s'", result)
@@ -541,7 +541,7 @@ func TestNormalizePiEditInput_MultipleEdits(t *testing.T) {
 	input := json.RawMessage(`{"path":"/tmp/test.go","edits":[{"oldText":"a","newText":"b"},{"oldText":"c","newText":"d"}]}`)
 	topRemaps := map[string]string{"path": "file_path"}
 
-	result := normalizePiEditInput(input, topRemaps)
+	result := NormalizePiEditInput(input, topRemaps)
 
 	// Both edits are remapped inside the array...
 	var parsed struct {
@@ -571,7 +571,7 @@ func TestNormalizePiEditInput_MultipleEdits(t *testing.T) {
 // already sends flat old_string/new_string alongside edits).
 func TestNormalizePiEditInput_PreservesFlatFields(t *testing.T) {
 	input := json.RawMessage(`{"path":"/tmp/test.go","old_string":"flat_old","new_string":"flat_new","edits":[{"oldText":"x","newText":"y"}]}`)
-	result := normalizePiEditInput(input, map[string]string{"path": "file_path"})
+	result := NormalizePiEditInput(input, map[string]string{"path": "file_path"})
 
 	var parsed struct {
 		Old string `json:"old_string"`
@@ -589,7 +589,7 @@ func TestNormalizePiEditInput_NoEditsArray(t *testing.T) {
 	input := json.RawMessage(`{"path":"/tmp/test.go"}`)
 	topRemaps := map[string]string{"path": "file_path"}
 
-	result := normalizePiEditInput(input, topRemaps)
+	result := NormalizePiEditInput(input, topRemaps)
 
 	if !strings.Contains(result, `"file_path"`) {
 		t.Errorf("expected 'file_path' in result, got '%s'", result)
@@ -603,7 +603,7 @@ func TestNormalizePiEditInput_EmptyTopRemaps(t *testing.T) {
 	input := json.RawMessage(`{"edits":[{"oldText":"foo","newText":"bar"}]}`)
 	topRemaps := map[string]string{}
 
-	result := normalizePiEditInput(input, topRemaps)
+	result := NormalizePiEditInput(input, topRemaps)
 
 	// Even with no top-level remaps, nested edit fields should still be remapped
 	if !strings.Contains(result, `"old_string"`) {
@@ -618,7 +618,7 @@ func TestNormalizePiEditInput_InvalidJSON(t *testing.T) {
 	input := json.RawMessage(`not valid json`)
 	topRemaps := map[string]string{"path": "file_path"}
 
-	result := normalizePiEditInput(input, topRemaps)
+	result := NormalizePiEditInput(input, topRemaps)
 	// Invalid JSON should be returned as-is
 	if result != string(input) {
 		t.Errorf("expected invalid JSON returned as-is, got '%s'", result)
@@ -629,7 +629,7 @@ func TestNormalizePiEditInput_EditsNotArray(t *testing.T) {
 	input := json.RawMessage(`{"path":"/tmp/test.go","edits":"not_an_array"}`)
 	topRemaps := map[string]string{"path": "file_path"}
 
-	result := normalizePiEditInput(input, topRemaps)
+	result := NormalizePiEditInput(input, topRemaps)
 	// When edits is not an array, top-level remaps should still be applied
 	if !strings.Contains(result, `"file_path"`) {
 		t.Errorf("expected 'file_path' in result, got '%s'", result)
@@ -640,7 +640,7 @@ func TestNormalizePiEditInput_EditItemNotObject(t *testing.T) {
 	input := json.RawMessage(`{"path":"/tmp/test.go","edits":["string_item",42]}`)
 	topRemaps := map[string]string{"path": "file_path"}
 
-	result := normalizePiEditInput(input, topRemaps)
+	result := NormalizePiEditInput(input, topRemaps)
 	// Non-object items in edits array should be left as-is
 	if !strings.Contains(result, `"file_path"`) {
 		t.Errorf("expected 'file_path' in result, got '%s'", result)
@@ -651,7 +651,7 @@ func TestNormalizePiEditInput_PreservesOtherFields(t *testing.T) {
 	input := json.RawMessage(`{"path":"/tmp/test.go","edits":[{"oldText":"foo","newText":"bar","dryRun":true}],"verbose":true}`)
 	topRemaps := map[string]string{"path": "file_path"}
 
-	result := normalizePiEditInput(input, topRemaps)
+	result := NormalizePiEditInput(input, topRemaps)
 
 	// Non-remapped fields should be preserved
 	if !strings.Contains(result, `"dryRun"`) {

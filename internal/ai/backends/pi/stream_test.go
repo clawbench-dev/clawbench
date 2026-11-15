@@ -1,13 +1,15 @@
-package ai
+package pi
 
 import (
 	"strings"
 	"testing"
+
+	"clawbench/internal/ai"
 )
 
 func TestPiStreamParser_SessionEvent(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"session","version":3,"id":"019e2110-274a-73ec-9e14-f1a7b5c13e6f","timestamp":"2025-01-01T00:00:00Z","cwd":"/home/user/project"}`, ch)
 
 	// Parser captures session ID internally — CLIBackend.ExecuteStream()
@@ -19,7 +21,7 @@ func TestPiStreamParser_SessionEvent(t *testing.T) {
 
 func TestPiStreamParser_ThinkingDelta(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"The user wants me to say hello."},"message":{"role":"assistant"}}`, ch)
 
 	select {
@@ -37,7 +39,7 @@ func TestPiStreamParser_ThinkingDelta(t *testing.T) {
 
 func TestPiStreamParser_TextDelta(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"Hello!"},"message":{"role":"assistant"}}`, ch)
 
 	select {
@@ -55,7 +57,7 @@ func TestPiStreamParser_TextDelta(t *testing.T) {
 
 func TestPiStreamParser_ToolcallEnd(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","contentIndex":1,"toolCall":{"type":"toolCall","id":"call_1","name":"read","arguments":{"path":"/etc/hostname","limit":5}}},"message":{"role":"assistant"}}`, ch)
 
 	select {
@@ -86,7 +88,7 @@ func TestPiStreamParser_ToolcallEnd(t *testing.T) {
 
 func TestPiStreamParser_ToolExecutionEnd(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"tool_execution_end","toolCallId":"call_1","toolName":"bash","result":{"content":[{"type":"text","text":"xulongzhe-KLVL-WXX9"}]},"isError":false}`, ch)
 
 	select {
@@ -113,7 +115,7 @@ func TestPiStreamParser_ToolExecutionEnd(t *testing.T) {
 
 func TestPiStreamParser_ToolExecutionEndError(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"tool_execution_end","toolCallId":"call_2","toolName":"bash","result":{"content":[{"type":"text","text":"permission denied"}]},"isError":true}`, ch)
 
 	select {
@@ -131,7 +133,7 @@ func TestPiStreamParser_ToolExecutionEndError(t *testing.T) {
 
 func TestPiStreamParser_ToolExecutionEndMultiContent(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"tool_execution_end","toolCallId":"call_3","toolName":"bash","result":{"content":[{"type":"text","text":"line1"},{"type":"text","text":"line2"}]},"isError":false}`, ch)
 
 	select {
@@ -150,7 +152,7 @@ func TestPiStreamParser_ToolExecutionEndMultiContent(t *testing.T) {
 
 func TestPiStreamParser_MessageEndMetadata(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"message_end","message":{"role":"assistant","usage":{"input":1396,"output":27,"cacheRead":0,"cacheWrite":0,"totalTokens":1423,"cost":{"input":0.004188,"output":0.000405,"cacheRead":0,"cacheWrite":0,"total":0.004593}},"stopReason":"stop","responseId":"resp_123"}}`, ch)
 
 	select {
@@ -177,7 +179,7 @@ func TestPiStreamParser_MessageEndMetadata(t *testing.T) {
 
 func TestPiStreamParser_AgentEndDone(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"agent_end","messages":[]}`, ch)
 
 	select {
@@ -192,7 +194,7 @@ func TestPiStreamParser_AgentEndDone(t *testing.T) {
 
 func TestPiStreamParser_ErrorMessage(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"403 forbidden"}}`, ch)
 
 	// Should emit error event
@@ -205,8 +207,8 @@ func TestPiStreamParser_ErrorMessage(t *testing.T) {
 				t.Errorf("expected error message '403 forbidden', got '%s'", evt.Error)
 			}
 			// A missing reason made the turn look like a clean finish.
-			if evt.Reason != ReasonRequestFailed {
-				t.Errorf("expected reason %q, got %q", ReasonRequestFailed, evt.Reason)
+			if evt.Reason != ai.ReasonRequestFailed {
+				t.Errorf("expected reason %q, got %q", ai.ReasonRequestFailed, evt.Reason)
 			}
 		}
 	}
@@ -217,7 +219,7 @@ func TestPiStreamParser_ErrorMessage(t *testing.T) {
 
 func TestPiStreamParser_SkipsUnknownTypes(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	// All of these should produce no events
 	skipTypes := []string{
 		`{"type":"agent_start"}`,
@@ -245,7 +247,7 @@ func TestPiStreamParser_SkipsUnknownTypes(t *testing.T) {
 
 func TestPiStreamParser_ToolcallStartAndDeltaNoEvent(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 
 	// toolcall_start — no event emitted
 	parser.ParseLine(`{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":1},"message":{"role":"assistant","content":[{"type":"toolCall","id":"call_abc","name":"edit","arguments":{},"partialJson":"","index":1}]}}`, ch)
@@ -268,7 +270,7 @@ func TestPiStreamParser_ToolcallStartAndDeltaNoEvent(t *testing.T) {
 
 func TestPiStreamParser_ToolcallEndWithEdit(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 
 	// toolcall_end — emit tool_use with normalized name and input
 	parser.ParseLine(`{"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","contentIndex":1,"toolCall":{"type":"toolCall","id":"call_abc","name":"edit","arguments":{"path":"/tmp/test.go","edits":[{"oldText":"foo","newText":"bar"}]}}},"message":{"role":"assistant"}}`, ch)
@@ -304,7 +306,7 @@ func TestPiStreamParser_ToolcallEndWithEdit(t *testing.T) {
 
 func TestPiStreamParser_ThinkingEndEmitsThinkingDone(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0},"message":{"role":"assistant"}}`, ch)
 
 	select {
@@ -319,7 +321,7 @@ func TestPiStreamParser_ThinkingEndEmitsThinkingDone(t *testing.T) {
 
 func TestPiStreamParser_ThinkingStartNoEvent(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine(`{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0},"message":{"role":"assistant"}}`, ch)
 
 	select {
@@ -331,7 +333,7 @@ func TestPiStreamParser_ThinkingStartNoEvent(t *testing.T) {
 
 func TestPiStreamParser_UnparseableLine(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 10)
+	ch := make(chan ai.StreamEvent, 10)
 	parser.ParseLine("not json at all", ch)
 	parser.ParseLine("", ch)
 
@@ -344,7 +346,7 @@ func TestPiStreamParser_UnparseableLine(t *testing.T) {
 
 func TestPiStreamParser_FullStreamWithToolUse(t *testing.T) {
 	parser := &PiStreamParser{}
-	ch := make(chan StreamEvent, 100)
+	ch := make(chan ai.StreamEvent, 100)
 
 	lines := []string{
 		`{"type":"session","version":3,"id":"019e211b-95a0-747e-9805-b9ba8c401d08","timestamp":"2026-05-13T11:31:56.449Z","cwd":"/home/user/project"}`,
@@ -372,7 +374,7 @@ func TestPiStreamParser_FullStreamWithToolUse(t *testing.T) {
 	}
 
 	// Drain all events
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for {
 		select {
 		case evt := <-ch:
@@ -436,8 +438,8 @@ verify:
 }
 
 // drainEvents reads up to n events from the channel
-func drainEvents(ch chan StreamEvent, n int) []StreamEvent {
-	var events []StreamEvent
+func drainEvents(ch chan ai.StreamEvent, n int) []ai.StreamEvent {
+	var events []ai.StreamEvent
 	for range n {
 		select {
 		case evt := <-ch:

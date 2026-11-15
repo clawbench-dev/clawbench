@@ -1,18 +1,20 @@
-package ai
+package pi
 
 import (
 	"encoding/json"
-	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
+	"strings"
+
+	"clawbench/internal/ai"
 )
 
-// parsePiToolCallEnd extracts a tool_use ToolCall from a Pi toolcall_end event.
+// parsePiToolCallEnd extracts a tool_use ai.ToolCall from a Pi toolcall_end event.
 // Pi toolcall_end provides the complete tool arguments (Done=true).
 // Tool name is normalized via normalizeToolName; input field names are
 // remapped using the provided remap table. The edit tool uses normalizePiEditInput
 // for its nested edits array structure.
-func parsePiToolCallEnd(evt *PiAssistantMessageEvent, remaps map[string]string) *ToolCall {
+func parsePiToolCallEnd(evt *PiAssistantMessageEvent, remaps map[string]string) *ai.ToolCall {
 	if evt.ToolCall == nil {
 		return nil
 	}
@@ -20,18 +22,18 @@ func parsePiToolCallEnd(evt *PiAssistantMessageEvent, remaps map[string]string) 
 	tc := evt.ToolCall
 	normalizedInput := normalizePiToolInput(tc.Name, tc.Arguments, remaps)
 
-	return &ToolCall{
-		Name:  normalizeToolName(tc.Name),
+	return &ai.ToolCall{
+		Name:  ai.NormalizeToolName(tc.Name),
 		ID:    tc.ID,
 		Input: normalizedInput,
 		Done:  true,
 	}
 }
 
-// parsePiToolExecutionEnd extracts a tool_result ToolCall from a Pi tool_execution_end event.
+// parsePiToolExecutionEnd extracts a tool_result ai.ToolCall from a Pi tool_execution_end event.
 // Returns nil if toolCallId is empty. Output text is extracted from result.content[].text
 // (joined with newline for multiple items) and truncated via truncateToolOutput.
-func parsePiToolExecutionEnd(msg *PiStreamMessage) *ToolCall {
+func parsePiToolExecutionEnd(msg *PiStreamMessage) *ai.ToolCall {
 	if msg.ToolCallID == "" {
 		return nil
 	}
@@ -54,9 +56,9 @@ func parsePiToolExecutionEnd(msg *PiStreamMessage) *ToolCall {
 		status = "error"
 	}
 
-	return &ToolCall{
+	return &ai.ToolCall{
 		ID:     msg.ToolCallID,
-		Output: truncateToolOutput(outputText),
+		Output: ai.TruncateToolOutput(outputText),
 		Status: status,
 	}
 }
@@ -81,12 +83,12 @@ func normalizePiToolInput(toolName string, rawInput json.RawMessage, baseRemaps 
 		remaps["path"] = "file_path"
 	case "edit":
 		remaps["path"] = "file_path"
-		return normalizePiEditInput(rawInput, remaps)
+		return NormalizePiEditInput(rawInput, remaps)
 	case "bash":
 		// No additional remapping needed
 	}
 
-	normalized, err := normalizeToolInput([]byte(rawInput), remaps)
+	normalized, err := ai.NormalizeToolInput([]byte(rawInput), remaps)
 	if err != nil {
 		return string(rawInput)
 	}
@@ -127,10 +129,10 @@ var piACPBaseRemaps = map[string]string{
 	"path": "file_path",
 }
 
-// parsePiACPToolCall extracts a ToolCall from a Pi ACP tool_call event.
-func parsePiACPToolCall(tc acp.SessionUpdateToolCall) *ToolCall {
-	tool := &ToolCall{
-		Name: extractToolName(tc.Title, tc.Kind, "pi", string(tc.ToolCallId)),
+// parsePiACPToolCall extracts a ai.ToolCall from a Pi ACP tool_call event.
+func parsePiACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
+	tool := &ai.ToolCall{
+		Name: ai.ExtractToolName(tc.Title, tc.Kind, "pi", string(tc.ToolCallId)),
 		ID:   string(tc.ToolCallId),
 		Done: false,
 	}
@@ -142,10 +144,10 @@ func parsePiACPToolCall(tc acp.SessionUpdateToolCall) *ToolCall {
 	return tool
 }
 
-// parsePiACPToolCallUpdate extracts a ToolCall from a Pi ACP tool_call_update.
-func parsePiACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
-	tool := &ToolCall{ID: string(tcu.ToolCallId)}
-	mapToolCallStatus(tcu.Status, tool)
+// parsePiACPToolCallUpdate extracts a ai.ToolCall from a Pi ACP tool_call_update.
+func parsePiACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
+	tool := &ai.ToolCall{ID: string(tcu.ToolCallId)}
+	ai.MapToolCallStatus(tcu.Status, tool)
 	if tcu.RawInput != nil {
 		if inputBytes, err := json.Marshal(tcu.RawInput); err == nil {
 			title := ""
@@ -155,11 +157,11 @@ func parsePiACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
 			tool.Input = normalizePiACPInput(piACPToolNameForInput(title), inputBytes)
 		}
 	} else {
-		mapToolCallInput(tcu, tool, "pi")
+		ai.MapToolCallInput(tcu, tool, "pi")
 	}
-	mapToolCallName(tcu, tool, "pi")
+	ai.MapToolCallName(tcu, tool, "pi")
 	if tool.Done {
-		mapToolCallOutput(tcu, tool)
+		ai.MapToolCallOutput(tcu, tool)
 	}
 	return tool
 }
@@ -179,7 +181,7 @@ func piACPToolNameForInput(title string) string {
 // normalizePiEditInput handles the nested edits array in Pi's edit tool input,
 // remapping both top-level fields and nested oldText/newText fields, then
 // flattening the first edit into top-level old_string/new_string.
-func normalizePiEditInput(rawInput json.RawMessage, topRemaps map[string]string) string {
+func NormalizePiEditInput(rawInput json.RawMessage, topRemaps map[string]string) string {
 	var input map[string]any
 	if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
 		return string(rawInput)

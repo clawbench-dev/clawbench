@@ -239,3 +239,25 @@ type StreamErrorReporter = streamErrorReporter
 
 // IsLimitErrorText reports whether an error text describes a quota/limit hit.
 func IsLimitErrorText(text string) bool { return isLimitErrorText(text) }
+
+// IsACPToolCallWrapperForTest exposes the wrapper-frame predicate for tests.
+func IsACPToolCallWrapperForTest(title, backendID string) bool {
+	return isACPToolCallWrapper(title, backendID)
+}
+
+// ACPModesMirrorThoughtLevelForTest exposes the modes/effort dedup flag.
+func ACPModesMirrorThoughtLevelForTest(backendID string) bool {
+	return acpModesMirrorThoughtLevel(backendID)
+}
+
+// ParseACPToolCallForTest exposes the tool_call dispatch for tests that live
+// outside this package (they need the real backend behaviors registered).
+func ParseACPToolCallForTest(backendID string, tc acp.SessionUpdateToolCall) *ToolCall {
+	return parseACPToolCall(backendID, tc)
+}
+
+// ParseACPToolCallUpdateForTest exposes the update dispatch for tests outside
+// this package.
+func ParseACPToolCallUpdateForTest(backendID string, tcu acp.SessionToolCallUpdate) *ToolCall {
+	return parseACPToolCallUpdate(backendID, tcu)
+}
