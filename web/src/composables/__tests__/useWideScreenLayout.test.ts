@@ -401,12 +401,12 @@ describe('dock tab registry (single source of truth)', () => {
     for (const id of ids) expect(isDockTabId(id)).toBe(true)
   })
 
-  it('has four permanent tabs, and none of them has a fixed position', () => {
+  it('has three permanent tabs, and none of them has a fixed position', () => {
     // The old "primary" flag meant both "cannot be hidden" and "rendered in the
     // fixed head". Only the first survives: permanent tabs keep their default
     // slots but the user may drag them anywhere.
     const permanent = DOCK_TABS.filter((t) => !t.closable).map((t) => t.id)
-    expect(permanent).toEqual(['browse', 'view', 'notifications', 'settings'])
+    expect(permanent).toEqual(['browse', 'view', 'settings'])
     const order = [...DOCK_TAB_IDS].reverse()
     expect(dockTabs({ order })).toEqual(order)
   })

@@ -21,7 +21,8 @@ import { DEFAULT_DOCK_PRESET, readPanelState, writePanelState } from '@/utils/pa
  *   - developer: every tab shown and every server feature on, default order
  *   - standard:  office set — Forge / terminal / port mapping hidden and Forge
  *                + terminal switched off; everything else on
- *   - minimal:   only the permanent tabs; every optional feature switched off
+ *   - minimal:   only the permanent tabs (notifications hidden too); every
+ *                optional feature switched off
  *   - custom:    the user changed something by hand; plugins should treat it as
  *                the neutral default
  *
@@ -106,7 +107,7 @@ export const DOCK_PRESET_PLANS: Readonly<Record<Exclude<DockPreset, 'custom'>, D
   },
   minimal: {
     hidden: [
-      'history', 'forge', 'tasks', 'terminal', 'stats',
+      'notifications', 'history', 'forge', 'tasks', 'terminal', 'stats',
       'mail', 'kb', 'live', 'share', 'proxy',
     ],
     order: [

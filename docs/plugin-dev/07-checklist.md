@@ -6,7 +6,7 @@
 
 - [ ] **id**：短、稳定、英文小写，例如 `snippets`。
 - [ ] **group**：`workspace` / `project` / `personal` / `system`（只是管理器里的标签）。
-- [ ] **closable**：能不能被用户隐藏？只有常驻四项（文件管理、文件浏览、通知中心、设置）填 `false`。
+- [ ] **closable**：能不能被用户隐藏？只有常驻三项（文件管理、文件浏览、设置）填 `false`。通知中心虽然也是“读入口”，但用户可以关（它没有 `feature`，关掉只写本机偏好）。
 - [ ] **feature**：依赖服务端总开关吗？是的话在 `DockFeature` 加 key，并补 `FEATURE_FLAG_DEFAULTS`。
 - [ ] **capability**：依赖设备能力吗？填标记，并在 `dock.ts` 里实现 `available()`。
 - [ ] **settingsCategory**：有没有自己的设置页？有的话填分类 id（除 `settings` 外每个页签都应有）。

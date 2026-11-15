@@ -13,10 +13,10 @@ import {
   useDockPlugins,
   usePluginProfile,
 } from '@/composables/useDockPlugins'
-import { DOCK_TAB_IDS } from '@/composables/dockTabs'
+import { DOCK_TAB_BY_ID, DOCK_TAB_IDS } from '@/composables/dockTabs'
 import { readPanelState } from '@/utils/panelState'
 
-const PERMANENT = ['browse', 'view', 'notifications', 'settings']
+const PERMANENT = ['browse', 'view', 'settings']
 
 describe('useDockPlugins defaults', () => {
   beforeEach(() => {
@@ -95,13 +95,21 @@ describe('presets', () => {
     const state = useDockPlugins()
     expect(state.preset.value).toBe('minimal')
     expect(state.visibleIds.value).toEqual(PERMANENT)
-    for (const id of ['history', 'forge', 'tasks', 'terminal', 'stats', 'mail', 'kb', 'live', 'share', 'proxy']) {
+    for (const id of ['notifications', 'history', 'forge', 'tasks', 'terminal', 'stats', 'mail', 'kb', 'live', 'share', 'proxy']) {
       expect(isDockTabHidden(id), `${id} should be hidden`).toBe(true)
     }
     expect(DOCK_PRESET_PLANS.minimal.features.every((f) => !f.value)).toBe(true)
   })
 
-  it('minimal order starts with the permanent tabs and ends with settings', async () => {
+  it('minimal hides notifications without adding a server switch for it', async () => {
+    await applyDockPreset('minimal')
+    // Display-only: the log keeps being written, so the tab must carry no
+    // feature key and the plan must not try to switch one off.
+    expect(DOCK_TAB_BY_ID.get('notifications')?.feature).toBeUndefined()
+    expect(DOCK_PRESET_PLANS.minimal.features).toHaveLength(6)
+  })
+
+  it('minimal keeps the historical slot order so re-enabled tabs land where they were', async () => {
     await applyDockPreset('minimal')
     const order = useDockPlugins().order.value
     expect(order.slice(0, 3)).toEqual(['browse', 'view', 'notifications'])
@@ -148,16 +156,18 @@ describe('manual changes', () => {
     _resetDockPluginsForTest()
   })
 
-  it('ignores stale hidden values for tabs that are now permanent', () => {
+  it('ignores stale hidden values for permanent tabs but honours notifications', () => {
+    // The real key is `dock-hidden` (panelState prefixes `clawbench-panel.`);
+    // writing `dockHidden` would store nothing and make this test vacuous.
     localStorage.setItem(
-      'clawbench-panel.dockHidden',
+      'clawbench-panel.dock-hidden',
       JSON.stringify(['notifications', 'browse', 'settings']),
     )
     _resetDockPluginsForTest()
-    expect(isDockTabHidden('notifications')).toBe(false)
     expect(isDockTabHidden('browse')).toBe(false)
     expect(isDockTabHidden('settings')).toBe(false)
-    expect(useDockPlugins().visibleIds.value).toContain('notifications')
+    expect(isDockTabHidden('notifications')).toBe(true)
+    expect(useDockPlugins().visibleIds.value).not.toContain('notifications')
   })
 
   it('switches the profile to custom on a manual visibility change', () => {

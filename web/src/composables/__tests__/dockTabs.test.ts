@@ -18,11 +18,21 @@ describe('dockTabs default order', () => {
     expect(dockTabs()).toEqual(DOCK_TAB_IDS)
   })
 
-  it('has exactly one permanent head: browse / view / notifications / settings', () => {
-    // The fixed head is gone, but these four still cannot be hidden. Asserting
+  it('keeps only browse / view / settings permanent', () => {
+    // The fixed head is gone, but these three still cannot be hidden. Asserting
     // the set (not the order) keeps the test honest about what "permanent"
     // means now: no position is pinned any more.
-    expect(new Set(PERMANENT)).toEqual(new Set(['browse', 'view', 'notifications', 'settings']))
+    expect(new Set(PERMANENT)).toEqual(new Set(['browse', 'view', 'settings']))
+  })
+
+  it('lets the notification log be hidden without touching the server', () => {
+    // The log is append-only and is still written when the entry is hidden, so
+    // this must stay a display-only switch: no `feature`, and hiding it works.
+    expect(OPTIONAL).toContain('notifications')
+    expect(DOCK_TAB_BY_ID.get('notifications')?.feature).toBeUndefined()
+    expect(
+      dockTabs({ hidden: new Set<DockTabId>(['notifications']) }),
+    ).not.toContain('notifications')
   })
 
   it('lets the sharing tab be hidden', () => {
@@ -152,7 +162,7 @@ describe('dockTabs gates', () => {
 
 describe('dockTabs hidden set safety', () => {
   it('never hides a permanent tab even if the stored set is corrupt', () => {
-    const hidden = new Set<DockTabId>(['browse', 'view', 'settings', 'notifications'])
+    const hidden = new Set<DockTabId>(['browse', 'view', 'settings'])
     const result = dockTabs({ hidden })
     for (const id of PERMANENT) expect(result).toContain(id)
   })

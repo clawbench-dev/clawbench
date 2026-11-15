@@ -158,14 +158,21 @@ describe('DockPluginSetting', () => {
     }
   })
 
-  it('greys out the four permanent switches and labels them 常驻', () => {
+  it('greys out the three permanent switches and labels them 常驻', () => {
     const wrapper = mountSetting()
-    for (const id of ['browse', 'view', 'notifications', 'settings']) {
+    for (const id of ['browse', 'view', 'settings']) {
       const input = row(wrapper, id).find('input[type="checkbox"]')
       expect((input.element as HTMLInputElement).disabled, `${id} must be inert`).toBe(true)
       expect((input.element as HTMLInputElement).checked).toBe(true)
       expect(row(wrapper, id).find('.plugin-switch-label').text()).toBe('常驻')
     }
+  })
+
+  it('keeps the notification log switch operable — hiding it is display-only', () => {
+    const wrapper = mountSetting()
+    const input = row(wrapper, 'notifications').find('input[type="checkbox"]')
+    expect((input.element as HTMLInputElement).disabled).toBe(false)
+    expect(row(wrapper, 'notifications').find('.plugin-switch-label').text()).toBe('在 Dock 中显示')
   })
 
   it('labels the two switch kinds differently', () => {

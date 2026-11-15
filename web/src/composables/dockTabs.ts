@@ -68,7 +68,9 @@ export interface DockTabDescriptor {
   group: DockGroup
   /**
    * Whether the user may hide this tab. Permanent tabs (browse, view,
-   * notifications, settings) are always visible; everything else can be hidden.
+   * settings) are always visible; everything else can be hidden — including
+   * notifications, whose switch only hides the entry (the log itself keeps
+   * being written and the unread/notification mechanism is untouched).
    */
   closable: boolean
   /**
@@ -228,12 +230,17 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   // settings is the "exit" affordance at the end of the dock, and the
   // notification log is the last stop before leaving the tool tabs. Both can
   // be dragged elsewhere now.
+  //
+  // It is closable but carries NO `feature`: hiding it only removes the entry.
+  // The log keeps being appended (notifications are push + an append-only
+  // record; the dock tab is just one way to read it), so this switch must not
+  // touch the server.
   {
     id: 'notifications',
     titleKey: 'nav.notifications',
     descriptionKey: 'settings.dockPlugins.desc.notifications',
     group: 'system',
-    closable: false,
+    closable: true,
     settingsCategory: 'notifications',
   },
   {

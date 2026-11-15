@@ -115,9 +115,9 @@ available: () => terminalRuntimeEnabled.value === true,
 
 | 组合 | 含义 | 例子 |
 |---|---|---|
-| `closable: false` | 常驻：永远可见，开关灰显 | 文件管理、文件浏览、通知中心、设置 |
+| `closable: false` | 常驻：永远可见，开关灰显 | 文件管理、文件浏览、设置 |
 | `closable: true` + `feature` | 可隐藏，且开关同时控制服务端 | Forge、邮件、终端、知识库、任务、分享 |
-| `closable: true`（无 `feature`） | 只控制显示 | 历史、统计、会议、端口映射 |
+| `closable: true`（无 `feature`） | 只控制显示 | 历史、统计、会议、端口映射、通知中心 |
 
 `settings` 必须保持 `closable: false`：它是重新打开其他功能的唯一入口。
 

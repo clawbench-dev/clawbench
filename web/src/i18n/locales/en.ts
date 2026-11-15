@@ -3345,7 +3345,7 @@ export default {
       presets: {
         developer: { name: 'Developer', desc: 'Everything on, in the default order. Best for development and debugging.' },
         standard: { name: 'Office', desc: 'Turns Forge and terminal off and hides port mapping; mail, knowledge base, tasks and sharing stay on.' },
-        minimal: { name: 'Minimal', desc: 'Keeps only files, file preview, notifications and settings; every other feature is turned off.' },
+        minimal: { name: 'Minimal', desc: 'Keeps only files, file preview and settings; every other feature is turned off.' },
         custom: { name: 'Custom', desc: 'You changed visibility, order or a switch by hand.' },
       },
       groups: {
@@ -3367,7 +3367,7 @@ export default {
         live: 'Screen sharing, voice meetings and AI notes.',
         share: 'Manage public links for files, conversations and meetings.',
         proxy: 'Forward server ports to your machine over SSH or the stream tunnel.',
-        notifications: 'An append-only log of what the app did.',
+        notifications: 'An append-only log of what the app did (hiding it only removes the entry; notifications keep being produced).',
         settings: 'Configuration for the app and its features.',
       },
       // Shown under a row whose switch is inert because this host cannot run

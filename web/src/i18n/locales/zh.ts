@@ -3338,7 +3338,7 @@ export default {
       presets: {
         developer: { name: '开发', desc: '全部开启，按默认顺序排列。适合开发和调试。' },
         standard: { name: '办公', desc: '关闭 Forge 和终端，隐藏端口映射；邮件、知识库、任务、分享保持开启。' },
-        minimal: { name: '极简', desc: '只保留文件管理、文件浏览、通知中心和设置，其余功能全部关闭。' },
+        minimal: { name: '极简', desc: '只保留文件管理、文件浏览和设置，其余功能全部关闭。' },
         custom: { name: '自定义', desc: '你手动调整过显示、顺序或开关。' },
       },
       groups: {
@@ -3360,7 +3360,7 @@ export default {
         live: '屏幕共享、语音会议和 AI 听记。',
         share: '管理已经分享出去的文件、会话和会议链接。',
         proxy: '通过 SSH 或流隧道把服务器端口映射到本地。',
-        notifications: '查看应用产生的事件记录。',
+        notifications: '查看应用产生的事件记录（关掉只是隐藏入口，通知照常产生）。',
         settings: '应用和功能的配置入口。',
       },
       // Shown under a row whose switch is inert because this host cannot run
