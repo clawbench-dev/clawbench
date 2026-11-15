@@ -460,7 +460,7 @@ export const i18n = createI18n({
   messages: {
     zh: {
       file: {
-        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目', copy: '复制', cut: '剪切', copyPath: '拷贝路径', pathCopied: '路径已拷贝', shareLink: '分享链接', shareExternal: '分享', sendByMail: '用邮件发送' },
+        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', pasteToCurrentDir: '粘贴到当前目录', pasteIntoDir: '粘贴到「{name}」', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目', copy: '复制', cut: '剪切', copyPath: '拷贝路径', pathCopied: '路径已拷贝', shareLink: '分享链接', shareExternal: '分享', sendByMail: '用邮件发送' },
         uploadHere: '上传到此处',
         dropToUpload: '松开上传到当前目录',
         pasteToUpload: '粘贴上传文件...',

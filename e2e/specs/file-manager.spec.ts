@@ -149,4 +149,47 @@ test.describe('File Manager', () => {
     await page.locator('.dlg-box .dlg-ok').click()
     await expect(linkInput).toHaveCount(0, { timeout: 5000 })
   })
+
+  /**
+   * A listing that fills the pane leaves no blank background to right-click, so
+   * the paste entry must exist somewhere else. Copying from a row's menu has to
+   * make the toolbar offer paste — the only entry that works with no background
+   * left and on touch (where Ctrl+V does not exist).
+   *
+   * Nothing is pasted here: the e2e server's project IS the repository, so a
+   * paste would drop a copy into the working tree. The destination wiring is
+   * covered by the unit tests (request body assertions).
+   */
+  test('offers paste in the toolbar once something is copied', async ({ page }) => {
+    const pasteBtn = page.locator('.dir-toolbar-btns [data-action="paste"]')
+    await expect(pasteBtn).toHaveCount(0)
+
+    const fileRow = page.locator('.file-item:not(.dir-item), .grid-item:not(.grid-dir)').first()
+    await expect(fileRow).toBeVisible({ timeout: 10000 })
+
+    // Copy from the row's own menu (the entry hit zone, same as the share test).
+    await fileRow.locator('.file-name, .grid-name').first().click({ button: 'right' })
+    const menu = page.locator('.context-menu')
+    await expect(menu).toBeVisible({ timeout: 5000 })
+    await menu.locator('.context-menu-item[data-menu-item="copy"]').click()
+    await expect(menu).toBeHidden()
+
+    // The toolbar now carries paste.
+    await expect(pasteBtn).toHaveCount(1)
+    await expect(pasteBtn).toBeVisible()
+
+    // And the row menu says WHERE the clipboard lands: on a directory row it
+    // names that folder, so "paste" is no longer a guess (the label itself is
+    // translated, so assert on the folder name it must carry).
+    const dirRow = page.locator('.file-item.dir-item, .grid-item.grid-dir').first()
+    await expect(dirRow).toBeVisible({ timeout: 10000 })
+    const dirName = (await dirRow.locator('.file-name, .grid-name').first().textContent())?.trim() || ''
+    expect(dirName).not.toBe('')
+
+    await dirRow.locator('.file-name, .grid-name').first().click({ button: 'right' })
+    const pasteRow = page.locator('.context-menu .context-menu-item[data-menu-item="paste"]')
+    await expect(pasteRow).toBeVisible()
+    await expect(pasteRow).not.toHaveClass(/disabled/)
+    await expect(pasteRow).toContainText(dirName)
+  })
 })

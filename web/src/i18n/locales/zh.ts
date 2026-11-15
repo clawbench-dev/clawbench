@@ -2415,6 +2415,8 @@ export default {
       copy: '复制',
       cut: '剪切',
       paste: '粘贴',
+      pasteToCurrentDir: '粘贴到当前目录',
+      pasteIntoDir: '粘贴到「{name}」',
       copyPath: '拷贝路径',
       pathCopied: '路径已拷贝',
       newFile: '新建文件',

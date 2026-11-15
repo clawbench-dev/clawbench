@@ -82,6 +82,25 @@
             <FolderPlus :size="16" />
             <span class="action-label">{{ t('actionLabels.newFolder') }}</span>
           </button>
+          <!-- Paste appears only while the clipboard holds something: it is a
+               transient action, so a permanently greyed button would spend
+               prime toolbar space on a state that is usually false. Placed
+               early (the fold eats the tail) because it is the next thing the
+               user wants after copying. This is the only paste entry that works
+               when the listing fills the pane — there is no blank background
+               left to right-click — and the only one on touch, where Ctrl+V
+               does not exist. Hidden in search results: they come from many
+               directories, so "the current directory" is not a clear target. -->
+          <button
+            v-if="clipboard.entries.length && !searchHasQuery"
+            class="toolbar-btn"
+            data-action="paste"
+            @click="doPaste(null)"
+            :title="t('file.context.pasteToCurrentDir')"
+          >
+            <ClipboardPaste :size="16" />
+            <span class="action-label">{{ t('file.context.paste') }}</span>
+          </button>
           <button class="toolbar-btn" :disabled="dirUploading" @click="triggerUpload()" :title="t('file.uploadHere')">
             <Upload :size="16" />
             <span class="action-label">{{ t('file.uploadHere') }}</span>
@@ -424,7 +443,7 @@
       <div v-if="ctxMenu.visible" class="context-menu visible" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @click.stop @contextmenu.prevent.stop>
         <!-- Group 1: Clipboard operations -->
         <template v-if="ctxMenu.entry">
-          <div class="context-menu-item" @click.stop="doCopy">
+          <div class="context-menu-item" data-menu-item="copy" @click.stop="doCopy">
             <Copy :size="14" />
             {{ t('file.context.copy') }}
           </div>
@@ -437,9 +456,9 @@
             {{ t('file.context.copyPath') }}
           </div>
         </template>
-        <div class="context-menu-item" :class="{ disabled: !clipboard.entries.length }" @click.stop="clipboard.entries.length && doPaste()">
+        <div class="context-menu-item" :class="{ disabled: !clipboard.entries.length }" data-menu-item="paste" @click.stop="clipboard.entries.length && doPaste()">
           <ClipboardPaste :size="14" />
-          {{ t('file.context.paste') }}
+          <span class="ctx-paste-label">{{ pasteMenuLabel }}</span>
         </div>
         <!-- New file/folder when no entry selected (empty area) — only in
              directory browsing; the search results view has no "current directory" -->
@@ -1955,6 +1974,25 @@ function getDestDir(entry) {
     return idx > 0 ? entry.path.slice(0, idx) : ''
 }
 
+/**
+ * Name shown in the paste row: the directory the clipboard will land in.
+ *
+ * The row is anchored on whatever was right-clicked, but it never acts on that
+ * item — a file's own menu pastes into the file's folder. Saying "paste" alone
+ * there reads as "paste over this file", which is why a listing with no blank
+ * background felt like it had nowhere to paste. Naming the destination removes
+ * the guess; it also covers search results, where the target is the hit's own
+ * folder rather than the directory being browsed.
+ */
+const pasteMenuLabel = computed(() => {
+    const entry = ctxMenu.entry
+    if (!entry) return t('file.context.paste')
+    if (entry.type === 'dir') return t('file.context.pasteIntoDir', { name: entry.name })
+    const parent = getDestDir(entry).replace(/\/+$/, '')
+    const name = parent.split('/').pop()
+    return name ? t('file.context.pasteIntoDir', { name }) : t('file.context.paste')
+})
+
 async function doCopy() {
     clipboard.entries = [ctxMenu.entry]
     clipboard.isCut = false
@@ -1998,11 +2036,17 @@ async function doCut() {
     if (toast) toast.show(t('file.toast.cutDone'), { icon: 'cut', type: 'success', duration: 1500 })
 }
 
-async function doPaste() {
+/**
+ * Paste the clipboard into a directory.
+ *
+ * `target` is the entry the action was anchored on — a directory row means that
+ * directory, a file row means its folder. Callers with no anchor (the toolbar
+ * button, Ctrl+V) pass `null`, which means the directory being browsed.
+ */
+async function doPaste(target = ctxMenu.entry) {
     if (!clipboard.entries.length) return
-    const entry = ctxMenu.entry
     closeCtxMenu()
-    const destDir = getDestDir(entry)
+    const destDir = getDestDir(target)
     const allOk = await transferEntries(clipboard.entries, destDir, clipboard.isCut)
     // Only clear clipboard on successful cut-paste; on failure keep entries so user can retry
     if (clipboard.isCut && allOk) {
@@ -2838,15 +2882,11 @@ async function handleKeydown(e) {
         return
     }
 
-    // Ctrl+V — paste
+    // Ctrl+V — paste into the directory being browsed
     if (isCtrl && e.key === 'v') {
         if (clipboard.entries.length) {
             e.preventDefault()
-            // Paste into current directory
-            const fakeEntry = { type: 'dir', name: '', path: props.currentDir }
-            const savedEntry = ctxMenu.entry
-            ctxMenu.entry = fakeEntry
-            doPaste().then(() => { ctxMenu.entry = savedEntry })
+            doPaste(null)
         }
         return
     }
@@ -3620,6 +3660,17 @@ function scrollSelectedIntoView(path) {
     /* Same gap as the shared footer rows (`.bs-footer`), so a pair of pills
        here is spaced like a pair of pills anywhere else. */
     gap: var(--space-4);
+}
+
+/* The paste row names the directory it will land in, and directory names have
+   no length limit — truncate rather than letting one long folder stretch the
+   menu across the window. */
+.ctx-paste-label {
+    min-width: 0;
+    max-width: calc(220 * var(--dp));
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
 
 /* Truncate hint */

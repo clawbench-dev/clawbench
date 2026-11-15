@@ -2409,6 +2409,8 @@ export default {
       copy: 'Copy',
       cut: 'Cut',
       paste: 'Paste',
+      pasteToCurrentDir: 'Paste into this folder',
+      pasteIntoDir: 'Paste into "{name}"',
       copyPath: 'Copy path',
       pathCopied: 'Path copied',
       newFile: 'New file',

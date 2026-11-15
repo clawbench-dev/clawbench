@@ -158,6 +158,42 @@ describe('FileManagerContent — rendering', () => {
       'the toolbar must not carry a share-list button',
     ).toBe(false)
   })
+
+  // The paste entry that makes "paste into the folder I am looking at" work when
+  // the listing fills the pane (no blank background to right-click) and on touch
+  // (no Ctrl+V). It only exists while the clipboard holds something.
+  it('shows no paste button until something is copied', () => {
+    const wrapper = mountContent()
+    expect(wrapper.find('[data-action="paste"]').exists()).toBe(false)
+  })
+
+  it('pastes into the browsed directory from the toolbar button', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+    const wrapper = mountContent({ currentDir: 'docs' })
+
+    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'a.txt', path: 'src/a.txt' }]
+    await nextTick()
+
+    const btn = wrapper.find('[data-action="paste"]')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/file/copy', expect.objectContaining({
+      body: JSON.stringify({ path: 'src/a.txt', dest: 'docs/a.txt' }),
+    }))
+    vi.unstubAllGlobals()
+  })
+
+  it('hides the paste button in search results (no single target directory)', async () => {
+    mocks.searchState.query = 'main'
+    const wrapper = mountContent()
+    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'a.txt', path: 'src/a.txt' }]
+    await nextTick()
+
+    expect(wrapper.find('[data-action="paste"]').exists()).toBe(false)
+    mocks.searchState.query = ''
+  })
 })
 
 // ── Navigation events ──
