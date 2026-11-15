@@ -24,13 +24,34 @@ const (
 
 // skillsListResponse is the payload of GET /api/skills.
 type skillsListResponse struct {
-	Enabled      bool              `json:"enabled"`
-	Dirs         []string          `json:"dirs"`
+	Enabled bool     `json:"enabled"`
+	Dirs    []string `json:"dirs"`
+	// ProjectAutoInject reports whether the session project's
+	// <projectPath>/.agents/skills are injected automatically. The listing below
+	// includes them either way — this switch governs the system-prompt table.
+	ProjectAutoInject bool `json:"project_auto_inject"`
+	// Disabled lists canonical skill names the user switched off. Like
+	// Enabled, it only affects automatic injection: an explicit "#name"
+	// reference still resolves them.
+	Disabled     []string          `json:"disabled"`
 	RefreshHours int               `json:"refresh_hours"`
 	LastError    string            `json:"last_error"`
 	LastSyncAt   int64             `json:"last_sync_at"`
 	Repos        []configSkillRepo `json:"repos"`
 	Skills       []skillInfoJSON   `json:"skills"`
+	// Skipped lists directories that contain a SKILL.md but could not be
+	// loaded, so "I installed it and it is not in the list" has an answer.
+	Skipped []skippedSkillJSON `json:"skipped"`
+}
+
+// skippedSkillJSON is one skill-shaped directory that failed to load.
+type skippedSkillJSON struct {
+	// Path is the SKILL.md path, matching Skill.Path.
+	Path string `json:"path"`
+	// Reason is a stable code (missing_description, invalid_frontmatter,
+	// missing_name, unreadable). The UI localizes it; the wire format does not
+	// depend on the server's language.
+	Reason string `json:"reason"`
 }
 
 // skillInfoJSON is one discovered skill. Source describes where it came from.
@@ -62,6 +83,12 @@ type skillInfoJSON struct {
 	// carries an explicit path) but is NOT offered as a slash command. The UI
 	// flags it so the user can fix the skill.
 	NameMismatch bool `json:"name_mismatch,omitempty"`
+	// ShadowedBy is the SKILL.md path of the same-named skill that actually
+	// wins (empty when this row is the winner). The listing shows every copy —
+	// a user needs to see what is installed — but only one of them is what
+	// "#name" resolves to, and without this field the two rows are
+	// indistinguishable.
+	ShadowedBy string `json:"shadowed_by,omitempty"`
 }
 
 // agentIDFor returns the agent id to report for a source.
@@ -125,8 +152,15 @@ func ServeSkills(w http.ResponseWriter, r *http.Request) {
 	projectPath := middleware.GetProjectFromCookie(r)
 
 	found := skill.Global().AllForProject(projectPath)
+	// The same source priority dedupe()/ResolveForProject use, so the row the
+	// UI marks as effective is the one "#name" will resolve.
+	effective := skill.EffectivePathsFrom(found)
 	skills := make([]skillInfoJSON, 0, len(found))
 	for _, s := range found {
+		shadowedBy := ""
+		if win := effective[model.CanonicalSkillName(s.Name)]; win != "" && win != s.Path {
+			shadowedBy = win
+		}
 		skills = append(skills, skillInfoJSON{
 			Name:         s.Name,
 			Description:  s.Description,
@@ -137,6 +171,7 @@ func ServeSkills(w http.ResponseWriter, r *http.Request) {
 			Backends:     backendsFor(s.Source),
 			Shared:       s.Source.Shared,
 			NameMismatch: s.NameMismatch,
+			ShadowedBy:   shadowedBy,
 		})
 	}
 	sort.Slice(skills, func(i, j int) bool {
@@ -146,14 +181,23 @@ func ServeSkills(w http.ResponseWriter, r *http.Request) {
 		return skills[i].Path < skills[j].Path
 	})
 
+	skippedRows := skill.Global().AllSkipped(projectPath)
+	skipped := make([]skippedSkillJSON, 0, len(skippedRows))
+	for _, s := range skippedRows {
+		skipped = append(skipped, skippedSkillJSON{Path: s.Path, Reason: s.Reason})
+	}
+
 	writeJSON(w, http.StatusOK, skillsListResponse{
-		Enabled:      cfg.Skills.Enabled,
-		Dirs:         cfg.ResolveSkillsDirs(),
-		RefreshHours: cfg.Skills.RefreshHours,
-		LastError:    cfg.Skills.LastError,
-		LastSyncAt:   cfg.Skills.LastSyncAt,
-		Repos:        buildConfigSkills(cfg).Repos,
-		Skills:       skills,
+		Enabled:           cfg.Skills.Enabled,
+		Dirs:              cfg.ResolveSkillsDirs(),
+		ProjectAutoInject: cfg.Skills.ProjectAutoInject,
+		Disabled:          cfg.Skills.Disabled,
+		RefreshHours:      cfg.Skills.RefreshHours,
+		LastError:         cfg.Skills.LastError,
+		LastSyncAt:        cfg.Skills.LastSyncAt,
+		Repos:             buildConfigSkills(cfg).Repos,
+		Skills:            skills,
+		Skipped:           skipped,
 	})
 }
 

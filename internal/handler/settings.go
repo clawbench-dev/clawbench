@@ -256,10 +256,12 @@ var hotReloadFields = map[string]bool{
 	// applies to the next attempt without a restart.
 	"drawio.download_url": true,
 	// Skills — hot: the registry is invalidated and rescanned on PATCH
-	"skills.enabled":       true,
-	"skills.dirs":          true,
-	"skills.refresh_hours": true,
-	"skills.repos":         true,
+	"skills.enabled":             true,
+	"skills.project_auto_inject": true,
+	"skills.disabled":            true,
+	"skills.dirs":                true,
+	"skills.refresh_hours":       true,
+	"skills.repos":               true,
 	// MCP — hot: ACPConn compares a policy hash before each turn and
 	// reconnects with the new list. Reporting it as cold would tell the user to
 	// restart for a feature whose whole point is not needing one.
@@ -851,8 +853,13 @@ type configFonts struct {
 // Repo tokens are never included: the field is write-only, like the forge
 // credential tokens. The UI shows whether a token is set by other means.
 type configSkills struct {
-	Enabled      bool              `json:"enabled"`
-	Dirs         []string          `json:"dirs"`          // Resolved user skill directories
+	Enabled bool     `json:"enabled"`
+	Dirs    []string `json:"dirs"` // Resolved user skill directories
+	// ProjectAutoInject mirrors skills.project_auto_inject: whether the
+	// session project's <projectPath>/.agents/skills are injected automatically.
+	ProjectAutoInject bool `json:"project_auto_inject"`
+	// Disabled lists canonical skill names excluded from automatic injection.
+	Disabled     []string          `json:"disabled"`
 	RefreshHours int               `json:"refresh_hours"` // 0 = startup only
 	Repos        []configSkillRepo `json:"repos"`
 	LastError    string            `json:"last_error"`
@@ -879,12 +886,14 @@ func buildConfigSkills(cfg model.Config) configSkills {
 		})
 	}
 	return configSkills{
-		Enabled:      cfg.Skills.Enabled,
-		Dirs:         cfg.ResolveSkillsDirs(),
-		RefreshHours: cfg.Skills.RefreshHours,
-		Repos:        repos,
-		LastError:    cfg.Skills.LastError,
-		LastSyncAt:   cfg.Skills.LastSyncAt,
+		Enabled:           cfg.Skills.Enabled,
+		Dirs:              cfg.ResolveSkillsDirs(),
+		ProjectAutoInject: cfg.Skills.ProjectAutoInject,
+		Disabled:          cfg.Skills.Disabled,
+		RefreshHours:      cfg.Skills.RefreshHours,
+		Repos:             repos,
+		LastError:         cfg.Skills.LastError,
+		LastSyncAt:        cfg.Skills.LastSyncAt,
 	}
 }
 
@@ -1017,6 +1026,33 @@ func parseSkillDirs(raw []any) []string {
 		}
 	}
 	return dirs
+}
+
+// maxDisabledSkills bounds the per-skill opt-out list. The list is small by
+// nature (one entry per skill the user silenced); the cap only exists so a
+// malformed payload cannot grow config.yaml without limit.
+const maxDisabledSkills = 500
+
+// parseSkillNames canonicalizes the PATCH payload's skills.disabled array:
+// names are lowercased with a leading "/" stripped, blanks dropped, duplicates
+// collapsed. Canonicalizing on write is what makes the stored value match the
+// name the registry compares at injection time.
+func parseSkillNames(raw []any) []string {
+	seen := make(map[string]bool, len(raw))
+	names := make([]string, 0, len(raw))
+	for _, item := range raw {
+		s, ok := item.(string)
+		if !ok {
+			continue
+		}
+		key := model.CanonicalSkillName(s)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		names = append(names, key)
+	}
+	return names
 }
 
 // parseSkillRepos converts the PATCH payload's skills.repos array into typed
@@ -1240,27 +1276,29 @@ var PatchableConfigPaths = map[string]bool{
 	// Master switches for scheduled tasks and public share links. Both are
 	// destructive when set to false (cancel runs / revoke links) — see the
 	// PATCH description in the OpenAPI spec.
-	"tasks.enabled":             true,
-	"tasks.retention_enabled":   true,
-	"tasks.retention_days":      true,
-	"tasks.notify_on_success":   true,
-	"tasks.notify_on_failure":   true,
-	"tasks.timezone":            true,
-	"share.enabled":             true,
-	"share.allow_files":         true,
-	"share.allow_sessions":      true,
-	"share.allow_meetings":      true,
-	"share.allow_download":      true,
-	"share.link_ttl_days":       true,
-	"share.show_project_name":   true,
-	"git_history.page_size":     true,
-	"file_search.display_limit": true,
-	"tls.cert_dir":              true,
-	"fonts.dir":                 true,
-	"skills.enabled":            true,
-	"skills.dirs":               true,
-	"skills.refresh_hours":      true,
-	"skills.repos":              true,
+	"tasks.enabled":              true,
+	"tasks.retention_enabled":    true,
+	"tasks.retention_days":       true,
+	"tasks.notify_on_success":    true,
+	"tasks.notify_on_failure":    true,
+	"tasks.timezone":             true,
+	"share.enabled":              true,
+	"share.allow_files":          true,
+	"share.allow_sessions":       true,
+	"share.allow_meetings":       true,
+	"share.allow_download":       true,
+	"share.link_ttl_days":        true,
+	"share.show_project_name":    true,
+	"git_history.page_size":      true,
+	"file_search.display_limit":  true,
+	"tls.cert_dir":               true,
+	"fonts.dir":                  true,
+	"skills.enabled":             true,
+	"skills.project_auto_inject": true,
+	"skills.disabled":            true,
+	"skills.dirs":                true,
+	"skills.refresh_hours":       true,
+	"skills.repos":               true,
 	// MCP server list — hot: connections compare a policy hash each turn, so a
 	// change takes effect on the next turn without a restart.
 	"mcp.servers": true,
@@ -2378,6 +2416,17 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				}
 			}
 		}
+		if disabled, ok := skills["disabled"].([]any); ok {
+			if len(disabled) > maxDisabledSkills {
+				return fmt.Errorf("skills.disabled must contain at most %d entries", maxDisabledSkills)
+			}
+			for i, raw := range disabled {
+				name, _ := raw.(string)
+				if strings.TrimSpace(name) == "" {
+					return fmt.Errorf("skills.disabled[%d] must not be empty", i)
+				}
+			}
+		}
 		if repos, ok := skills["repos"].([]any); ok {
 			for i, raw := range repos {
 				repo, ok := raw.(map[string]any)
@@ -2956,6 +3005,14 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		skillsChanged := false
 		if v, ok := skillsMap["enabled"].(bool); ok {
 			cfg.Skills.Enabled = v
+			skillsChanged = true
+		}
+		if v, ok := skillsMap["project_auto_inject"].(bool); ok {
+			cfg.Skills.ProjectAutoInject = v
+			skillsChanged = true
+		}
+		if v, ok := skillsMap["disabled"].([]any); ok {
+			cfg.Skills.Disabled = parseSkillNames(v)
 			skillsChanged = true
 		}
 		if v, ok := skillsMap["dirs"].([]any); ok {

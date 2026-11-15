@@ -2,9 +2,11 @@ package skill
 
 import (
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"clawbench/internal/model"
 )
@@ -17,27 +19,37 @@ import (
 // Project-scoped scans are dropped too: their directories were read under the
 // previous global view, so a rescan invalidates them along with everything else.
 func (r *Registry) ScanAll() {
-	next := r.scanSources()
+	bySource, skipped, stamps := r.scanSources()
 
 	r.mu.Lock()
-	r.bySource = next
+	r.bySource = bySource
+	r.skippedBySource = skipped
+	r.sourceStamps = stamps
 	r.projectSources = make(map[string][]Skill)
+	r.projectSkipped = make(map[string][]Skipped)
+	r.projectStamps = make(map[string]dirStamp)
 	r.injectedProject = make(map[string][]Skill)
 	r.mu.Unlock()
 }
 
 // scanSources performs the (slow) filesystem reads and returns the new
-// bySource map without touching registry state.
-func (r *Registry) scanSources() map[string][]Skill {
+// bySource map, the per-source skip reports, and the directory stamps taken
+// after the walk (used by EnsureFresh), without touching registry state.
+func (r *Registry) scanSources() (map[string][]Skill, map[string][]Skipped, map[string]dirStamp) {
 	next := make(map[string][]Skill)
+	skipped := make(map[string][]Skipped)
 
 	// 1. User-configured local directories. All of them share SourceUserDir
 	// priority, so a name present in two of them resolves deterministically by
 	// the tie-break in sourceLess (directory path), not by list order.
 	for _, dir := range model.ConfigInstance.ResolveSkillsDirs() {
 		src := Source{Kind: SourceUserDir, Label: "user dir", Dir: dir}
-		if skills := ScanDir(dir, src); len(skills) > 0 {
+		skills, sk := ScanDirReport(dir, src)
+		if len(skills) > 0 {
 			next[src.Key()] = skills
+		}
+		if len(sk) > 0 {
+			skipped[src.Key()] = sk
 		}
 	}
 
@@ -52,34 +64,37 @@ func (r *Registry) scanSources() map[string][]Skill {
 			label = repo.URL
 		}
 		src := Source{Kind: SourceGit, Label: label, Dir: dir}
-		if skills := ScanDir(dir, src); len(skills) > 0 {
+		skills, sk := ScanDirReport(dir, src)
+		if len(skills) > 0 {
 			next[src.Key()] = skills
+		}
+		if len(sk) > 0 {
+			skipped[src.Key()] = sk
 		}
 	}
 
 	// 3. Native skill directories, one scan per distinct directory.
-	next = scanNativeDirs(next)
+	scanNativeDirs(next, skipped)
 
-	return next
+	stamps := make(map[string]dirStamp)
+	for _, dir := range r.sourceRoots() {
+		stamps[dir] = stampDir(dir)
+	}
+	return next, skipped, stamps
 }
 
-// scanNativeDirs scans every native skill directory into next, one scan per
-// distinct directory.
+// nativeDirsByAgent returns every native skill directory mapped to the agents
+// that declare it. The shared directory is always present with no owners.
 //
-// A directory declared by several agents (the shared ".agents/skills" is read
-// by six backends) is scanned ONCE: its content does not depend on who is
-// asking, and scanning per agent would list its skills once per agent.
-//
-// own-ness is deliberately not decided here — it depends on the agent being
-// served, so every native entry is stored as SourceOtherNative and InjectedFor
-// re-tags the served agent's own directories.
-func scanNativeDirs(next map[string][]Skill) map[string][]Skill {
+// It is the single source of "which directories count as native": both the
+// scan and EnsureFresh's freshness check derive their directory list from it,
+// so a directory can never be scanned but not watched (or vice versa).
+func nativeDirsByAgent() map[string][]string {
+	declaredBy := map[string][]string{}
 	// SharedSkillsDir is added unconditionally: it is where `npx skills`
 	// installs, so it must be discovered even on an install whose agents all
 	// happen to be ones that do not read it (Claude, Pi).
-	declaredBy := map[string][]string{}
-	sharedDir := ResolveNativeSkillsDir(SharedSkillsDir)
-	if sharedDir != "" {
+	if sharedDir := ResolveNativeSkillsDir(SharedSkillsDir); sharedDir != "" {
 		declaredBy[sharedDir] = nil
 	}
 	for _, agent := range model.GetAgentList() {
@@ -94,6 +109,114 @@ func scanNativeDirs(next map[string][]Skill) map[string][]Skill {
 			declaredBy[dir] = append(declaredBy[dir], agent.ID)
 		}
 	}
+	return declaredBy
+}
+
+// sourceRoots lists every directory whose DIRECT children decide whether a
+// rescan is needed: user dirs, git checkouts, and native dirs.
+func (r *Registry) sourceRoots() []string {
+	var dirs []string
+	dirs = append(dirs, model.ConfigInstance.ResolveSkillsDirs()...)
+	for _, repo := range model.ConfigInstance.Skills.Repos {
+		if dir := RepoDir(repo.Slug); dir != "" {
+			dirs = append(dirs, dir)
+		}
+	}
+	for dir := range nativeDirsByAgent() {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	return dirs
+}
+
+// dirStamp is a cheap fingerprint of a directory's immediate contents.
+//
+// mtime alone is not enough: several filesystems store timestamps at one-second
+// granularity, so a skill installed right after a scan could keep the same
+// mtime. The entry count catches add/remove even then. Editing a SKILL.md in
+// place changes neither — that still needs a manual rescan (see EnsureFresh).
+type dirStamp struct {
+	modTime int64
+	entries int
+}
+
+// stampDir returns the current stamp for dir. A missing or unreadable
+// directory yields the zero stamp, which differs from any real one — that is
+// how a newly created directory is detected.
+func stampDir(dir string) dirStamp {
+	if dir == "" {
+		return dirStamp{}
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return dirStamp{}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return dirStamp{modTime: info.ModTime().UnixNano()}
+	}
+	return dirStamp{modTime: info.ModTime().UnixNano(), entries: len(entries)}
+}
+
+// freshCheckInterval throttles EnsureFresh. Injecting the skill table happens
+// on every turn, and stat-ing a dozen directories per turn buys nothing: a
+// skill installed by hand appearing two seconds later is indistinguishable to
+// the user.
+var freshCheckInterval = 2 * time.Second
+
+// EnsureFresh rescans when a source root's contents changed since the last
+// scan, so a skill dropped into a directory by hand shows up without the user
+// clicking "rescan".
+//
+// It compares directory stamps, not contents: the walk is skipped unless
+// something was added to or removed from a source root. Directories nested
+// below a root (a category folder inside a cloned repository) are not watched —
+// those change through a git pull, which already triggers a scan.
+//
+// Safe to call from any goroutine; the actual rescan is ScanAll.
+func (r *Registry) EnsureFresh() {
+	now := time.Now()
+	r.mu.RLock()
+	last := r.lastFreshCheck
+	r.mu.RUnlock()
+
+	if now.Sub(last) < freshCheckInterval {
+		return
+	}
+
+	r.mu.Lock()
+	// Re-check under the write lock: a concurrent caller may have just
+	// refreshed and rescanned, and the second caller must not repeat it.
+	if now.Sub(r.lastFreshCheck) < freshCheckInterval {
+		r.mu.Unlock()
+		return
+	}
+	r.lastFreshCheck = now
+	stamps := r.sourceStamps
+	r.mu.Unlock()
+
+	for _, dir := range r.sourceRoots() {
+		if stampDir(dir) != stamps[dir] {
+			slog.Info("skill: source directory changed, rescanning", "dir", dir)
+			r.ScanAll()
+			return
+		}
+	}
+}
+
+// scanNativeDirs scans every native skill directory into next, one scan per
+// distinct directory.
+//
+// A directory declared by several agents (the shared ".agents/skills" is read
+// by six backends) is scanned ONCE: its content does not depend on who is
+// asking, and scanning per agent would list its skills once per agent.
+//
+// own-ness is deliberately not decided here — it depends on the agent being
+// served, so every native entry is stored as SourceOtherNative and InjectedFor
+// re-tags the served agent's own directories.
+func scanNativeDirs(next map[string][]Skill, skipped map[string][]Skipped) {
+	declaredBy := nativeDirsByAgent()
+	sharedDir := ResolveNativeSkillsDir(SharedSkillsDir)
 
 	dirs := make([]string, 0, len(declaredBy))
 	for dir := range declaredBy {
@@ -115,11 +238,14 @@ func scanNativeDirs(next map[string][]Skill) map[string][]Skill {
 			Dir:     dir,
 			Shared:  dir == sharedDir,
 		}
-		if skills := ScanDir(dir, src); len(skills) > 0 {
+		skills, sk := ScanDirReport(dir, src)
+		if len(skills) > 0 {
 			next[src.Key()] = skills
 		}
+		if len(sk) > 0 {
+			skipped[src.Key()] = sk
+		}
 	}
-	return next
 }
 
 // Invalidate drops the per-agent injection cache. Call after a config change or
@@ -135,33 +261,52 @@ func (r *Registry) Invalidate() {
 }
 
 // scanProject returns the project-scoped skills for projectPath, scanning
-// <projectPath>/.agents/skills once and caching the result.
+// <projectPath>/.agents/skills and caching the result until the directory's
+// stamp changes.
 //
 // It is the same convention qoder and codewhale read when their cwd is the
 // project root: skills committed alongside the project, visible only to that
 // project's sessions. An empty projectPath scans nothing.
 //
-// IO happens outside the lock; the result is published in one write-locked
-// store. A missing directory yields nil, which is cached like any other result
-// (the walk is cheap and the directory rarely appears mid-session).
+// The cache is validated by a directory stamp rather than kept forever: a skill
+// committed (or deleted) while the session is open must show up without the
+// user clicking "rescan". A missing directory stamps as zero, so a directory
+// created later is detected the same way.
 func (r *Registry) scanProject(projectPath string) []Skill {
 	if projectPath == "" {
 		return nil
 	}
+	dir := filepath.Join(projectPath, ".agents", "skills")
+	stamp := stampDir(dir)
 
 	r.mu.RLock()
-	if cached, ok := r.projectSources[projectPath]; ok {
-		r.mu.RUnlock()
+	cached, ok := r.projectSources[projectPath]
+	cachedStamp := r.projectStamps[projectPath]
+	r.mu.RUnlock()
+	if ok && cachedStamp == stamp {
 		return cached
 	}
-	r.mu.RUnlock()
 
-	dir := filepath.Join(projectPath, ".agents", "skills")
 	src := Source{Kind: SourceProject, Label: "project", Dir: dir}
-	skills := ScanDir(dir, src)
+	skills, skipped := ScanDirReport(dir, src)
 
+	suffix := "\x00" + projectPath
 	r.mu.Lock()
 	r.projectSources[projectPath] = skills
+	r.projectStamps[projectPath] = stamp
+	if len(skipped) > 0 {
+		r.projectSkipped[projectPath] = skipped
+	} else {
+		delete(r.projectSkipped, projectPath)
+	}
+	// The project's injected table is now stale for EVERY agent: drop those
+	// cache entries so a skill added or removed mid-session is not masked by a
+	// table built a moment earlier.
+	for key := range r.injectedProject {
+		if strings.HasSuffix(key, suffix) {
+			delete(r.injectedProject, key)
+		}
+	}
 	r.mu.Unlock()
 	return skills
 }
@@ -171,8 +316,9 @@ func (r *Registry) scanProject(projectPath string) []Skill {
 // session's project should use InjectedForProject instead.
 //
 // Dedup rule (by canonical name, priority = SourceKind order):
-//   - own native > project > user dir > git > other agent's native
+//   - own native > user dir > project > git > other agent's native
 //   - when several entries share a name, the highest-priority one wins
+//   - names listed in config skills.disabled are dropped entirely
 //   - if the winner is the agent's OWN native skill AND the backend loads that
 //     directory itself, nothing is injected for that name (the agent already
 //     has it). If the backend does NOT auto-load (e.g. CodeBuddy's ACP
@@ -185,13 +331,17 @@ func (r *Registry) InjectedFor(agentID string) []Skill {
 
 // InjectedForProject is InjectedFor with project scope: the session's project
 // root contributes its <projectPath>/.agents/skills entries at SourceProject
-// priority (above every global source, below the agent's own native dirs).
+// priority (below the agent's own native dirs and the user's configured dirs).
 //
-// A project skill is ALWAYS injected, even for a backend that loads the
+// Project entries are injected only when skills.project_auto_inject is on. The
+// working directory may be a repository the user never read, and a skill's
+// description is copied verbatim into the system prompt on every turn, so this
+// is opt-in. The listing and "#name" resolution are unaffected.
+//
+// When enabled, a project skill is injected even for a backend that loads the
 // directory itself: unlike the shared ~/.agents/skills (whose ownership is
 // declared per backend via NativeSkillsDirs), the project directory is not a
-// declared native dir, so dedupe never treats it as own. This is deliberate —
-// see the "总是注入" decision in the plan.
+// declared native dir, so dedupe never treats it as own.
 //
 // An empty projectPath is exactly InjectedFor.
 func (r *Registry) InjectedForProject(agentID, projectPath string) []Skill {
@@ -199,12 +349,28 @@ func (r *Registry) InjectedForProject(agentID, projectPath string) []Skill {
 	if agent == nil {
 		return nil
 	}
+	// A skill installed by hand since the last scan must be visible on the next
+	// turn, not after someone clicks "rescan".
+	r.EnsureFresh()
 	spec := model.FindSpecByBackend(agent.Backend)
 	var ownDirs []string
 	if spec != nil {
 		ownDirs = ResolveNativeSkillsDirs(spec.NativeSkillsDirs)
 	}
 	autoLoads := spec != nil && spec.AutoLoadsNativeSkills
+
+	enabled := model.ConfigInstance.Skills.Enabled
+	projectInject := model.ConfigInstance.Skills.ProjectAutoInject
+
+	// Scan the project directory before reading the injection cache: the scan is
+	// stamp-validated (steady state: one stat + one readdir) and is what drops
+	// this project's cached tables when a skill appears or disappears
+	// mid-session. Only needed when project skills can actually be injected —
+	// otherwise a project change cannot affect the table.
+	var projectSkills []Skill
+	if enabled && projectInject {
+		projectSkills = r.scanProject(projectPath)
+	}
 
 	cacheKey := agentID + "\x00" + projectPath
 	r.mu.RLock()
@@ -214,13 +380,20 @@ func (r *Registry) InjectedForProject(agentID, projectPath string) []Skill {
 	}
 	r.mu.RUnlock()
 
-	if !model.ConfigInstance.Skills.Enabled {
+	if !enabled {
 		return nil
 	}
 
 	candidates := r.candidatesFor(ownDirs)
-	candidates = append(candidates, r.scanProject(projectPath)...)
-	injected := dedupe(candidates, ownDirs, autoLoads)
+	// Project-scoped skills are opt-in for AUTOMATIC injection: their
+	// description is copied verbatim into the system prompt on every turn, and
+	// the working directory may be a repository the user never read. The
+	// listing and "#name" resolution are unaffected (see AllForProject and
+	// ResolveForProject).
+	if projectInject {
+		candidates = append(candidates, projectSkills...)
+	}
+	injected := dedupe(candidates, ownDirs, autoLoads, model.ConfigInstance.DisabledSkillSet())
 
 	r.mu.Lock()
 	r.injectedProject[cacheKey] = injected
@@ -268,17 +441,20 @@ func isUnderAny(path string, dirs []string) bool {
 }
 
 // dedupe groups candidates by canonical name, picks the highest-priority entry
-// per group, drops names the agent already loads natively, and returns the
-// survivors sorted by name.
+// per group, drops names the agent already loads natively, drops names the user
+// switched off, and returns the survivors sorted by name.
 //
 // A winner is dropped when it is one of the agent's own native skills AND the
 // backend loads its own directories: re-injecting it would duplicate the table
 // the backend already built.
-func dedupe(candidates []Skill, ownDirs []string, autoLoads bool) []Skill {
+//
+// disabled is applied BEFORE grouping, so switching a name off silences every
+// source carrying it — which is what a user means by "turn this skill off".
+func dedupe(candidates []Skill, ownDirs []string, autoLoads bool, disabled map[string]bool) []Skill {
 	best := make(map[string]Skill, len(candidates))
 	for _, s := range candidates {
 		key := canonicalName(s.Name)
-		if key == "" {
+		if key == "" || disabled[key] {
 			continue
 		}
 		cur, exists := best[key]
@@ -386,6 +562,7 @@ func (r *Registry) All() []Skill {
 // global entry wins; the dedup only affects this listing, not injection
 // (dedupe collapses same-named entries by source priority).
 func (r *Registry) AllForProject(projectPath string) []Skill {
+	r.EnsureFresh()
 	out := r.All()
 	if projectPath != "" {
 		seen := make(map[string]bool, len(out))
@@ -399,6 +576,69 @@ func (r *Registry) AllForProject(projectPath string) []Skill {
 		}
 	}
 	sortSkills(out)
+	return out
+}
+
+// AllSkipped returns the directories that look like skills but could not be
+// loaded, across every global source plus the project directory.
+//
+// The listing API renders these so "I installed it and it is not in the list"
+// has an answer. Paths are deduplicated because two sources may overlap (a
+// project root that is also $HOME), and sorted for deterministic output.
+func (r *Registry) AllSkipped(projectPath string) []Skipped {
+	r.EnsureFresh()
+	if projectPath != "" {
+		r.scanProject(projectPath) // populate projectSkipped
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	seen := make(map[string]bool)
+	var out []Skipped
+	appendAll := func(list []Skipped) {
+		for _, s := range list {
+			if s.Path == "" || seen[s.Path] {
+				continue
+			}
+			seen[s.Path] = true
+			out = append(out, s)
+		}
+	}
+	for _, list := range r.skippedBySource {
+		appendAll(list)
+	}
+	// Only the requested project's report: projectSkipped holds an entry per
+	// scanned project, and another project's paths must not leak into this view.
+	if projectPath != "" {
+		appendAll(r.projectSkipped[projectPath])
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
+// EffectivePathsFrom returns canonical name → winning SKILL.md path for a
+// listing, using the same source priority as dedupe/ResolveForProject.
+//
+// The settings page uses it to mark shadowed rows: two skills with the same
+// name are both listed, but only one of them is what "#name" resolves to. It
+// takes an already-fetched listing so the caller does not pay for a second
+// scan.
+func EffectivePathsFrom(skills []Skill) map[string]string {
+	best := make(map[string]Skill, len(skills))
+	for _, s := range skills {
+		key := canonicalName(s.Name)
+		if key == "" {
+			continue
+		}
+		if cur, ok := best[key]; !ok || sourceLess(s.Source, cur.Source) {
+			best[key] = s
+		}
+	}
+	out := make(map[string]string, len(best))
+	for key, s := range best {
+		out[key] = s.Path
+	}
 	return out
 }
 
@@ -417,7 +657,8 @@ func (r *Registry) AllForProject(projectPath string) []Skill {
 // resolved skill is the same entry the listing view (GET /api/skills) shows for
 // that name. Note that view reports every native directory as "other" — own-ness
 // is relative to an agent, and this view has no agent in scope — so a project
-// skill outranks a native-directory skill of the same name.
+// skill outranks a native-directory skill of the same name, and a user-dir
+// skill outranks a project one.
 // Returns false for an empty name or no match.
 func (r *Registry) ResolveForProject(name, projectPath string) (Skill, bool) {
 	key := canonicalName(name)
@@ -472,6 +713,11 @@ func ResetForTest() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.bySource = make(map[string][]Skill)
+	r.skippedBySource = make(map[string][]Skipped)
+	r.sourceStamps = make(map[string]dirStamp)
+	r.lastFreshCheck = time.Time{}
 	r.projectSources = make(map[string][]Skill)
+	r.projectSkipped = make(map[string][]Skipped)
+	r.projectStamps = make(map[string]dirStamp)
 	r.injectedProject = make(map[string][]Skill)
 }

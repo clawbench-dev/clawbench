@@ -5674,10 +5674,15 @@ paths:
         克隆的 git 仓库、当前项目的 `.agents/skills`）扫描到的 Skill 清单，以及 git 同步状态。
 
         同一名字的 Skill 可能来自多个来源；清单按来源如实列出（`source_kind` 为
-        `own` / `project` / `user` / `git` / `other`），注入系统提示词时再按优先级去重。
+        `own` / `user` / `project` / `git` / `other`），注入系统提示词时再按优先级去重。
+        优先级顺序：`own` > `user` > `project` > `git` > `other`。同名条目里只有一个会生效，
+        其余行带 `shadowed_by` 指向生效那一条的路径。
 
         项目级来源（`project`）按请求项目的 Cookie 限定：只列出**当前项目**的
-        `<projectPath>/.agents/skills`，其他项目的技能不会出现。
+        `<projectPath>/.agents/skills`，其他项目的技能不会出现。项目技能默认**不**自动注入
+        （`project_auto_inject` 为 false），清单仍照常列出。
+
+        `skipped` 列出「有 SKILL.md 但加载失败」的目录，用来回答「装了为什么看不到」。
 
         仓库令牌只写不读：`repos[].has_token` 只表示是否已配置。
       responses:
@@ -5690,6 +5695,19 @@ paths:
                 properties:
                   enabled:
                     type: boolean
+                  project_auto_inject:
+                    type: boolean
+                    description: |
+                      是否把当前项目的 `.agents/skills` 自动注入系统提示。默认 false：项目技能
+                      来自工作目录（可能是刚 clone 的陌生仓库），描述会原文进入每轮提示。清单与
+                      `#技能名` 引用不受该开关影响。
+                  disabled:
+                    type: array
+                    items:
+                      type: string
+                    description: |
+                      不参与自动注入的技能名（已规范化：小写、去掉开头的 `/`）。与 `enabled`
+                      一样只管自动注入，显式 `#技能名` 引用仍然有效。
                   dirs:
                     type: array
                     items:
@@ -5761,6 +5779,25 @@ paths:
                             frontmatter 的 `name` 与其目录名不一致（规范要求一致）。此类技能仍会注入
                             系统提示词（注入表带显式路径），但**不会**出现在斜杠命令菜单中——智能体按
                             目录解析技能，用 frontmatter 名做菜单项会是一个点不动的死项。
+                        shadowed_by:
+                          type: string
+                          description: |
+                            同名技能中实际生效那一条的 SKILL.md 路径。为空表示本行就是生效项。
+                            清单会列出每一份拷贝（用户需要看到装了什么），但只有一条会被注入。
+                  skipped:
+                    type: array
+                    description: |
+                      有 `SKILL.md` 但加载失败的目录。普通目录（没有 SKILL.md）不会出现在这里。
+                    items:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                          description: SKILL.md 的绝对路径（与 `skills[].path` 同口径）
+                        reason:
+                          type: string
+                          enum: [invalid_frontmatter, missing_name, missing_description, unreadable]
+                          description: 稳定代码，由前端本地化，不随服务端语言变化
 
   /api/skills/refresh:
     post:

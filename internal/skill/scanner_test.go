@@ -487,3 +487,78 @@ func TestScanDir_RootSkillIsNotNameChecked(t *testing.T) {
 	require.Len(t, skills, 1)
 	assert.False(t, skills[0].NameMismatch, "the scan root must be exempt from the name check")
 }
+
+// TestBuildSystemPromptSection_TruncatesDescription pins the context guard:
+// the injected table carries at most maxInjectedDescription runes of a
+// description. The listing API keeps the full text — only the every-turn table
+// is capped.
+func TestBuildSystemPromptSection_TruncatesDescription(t *testing.T) {
+	long := strings.Repeat("长", maxInjectedDescription+50)
+	section := BuildSystemPromptSection([]Skill{{Name: "long", Description: long, Path: "/p/SKILL.md"}})
+
+	assert.NotContains(t, section, long, "the full description must not reach the prompt")
+	assert.Contains(t, section, strings.Repeat("长", maxInjectedDescription)+"…")
+
+	// A description within the cap is untouched.
+	short := BuildSystemPromptSection([]Skill{{Name: "short", Description: "ok", Path: "/p/SKILL.md"}})
+	assert.Contains(t, short, "| ok |")
+}
+
+// TestScanDirReport_ReportsBrokenSkill pins the "why is my skill missing"
+// report: a directory with a SKILL.md that cannot be parsed is reported with a
+// stable reason instead of disappearing silently.
+func TestScanDirReport_ReportsBrokenSkill(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeSkill(t, tmpDir, "no-desc", "---\nname: no-desc\n---\n")
+	writeSkill(t, tmpDir, "bad-yaml", "---\nname: [unclosed\n---\n")
+	writeSkill(t, tmpDir, "no-frontmatter", "# just markdown\n")
+	writeSkill(t, tmpDir, "fine", "---\nname: fine\ndescription: d\n---\n")
+	// An ordinary directory with no SKILL.md is not a failure.
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "scripts"), 0o755))
+
+	skills, skipped := ScanDirReport(tmpDir, Source{})
+	require.Len(t, skills, 1)
+	assert.Equal(t, "fine", skills[0].Name)
+
+	reasons := map[string]string{}
+	for _, s := range skipped {
+		reasons[filepath.Base(filepath.Dir(s.Path))] = s.Reason
+	}
+	assert.Equal(t, SkipMissingDescription, reasons["no-desc"])
+	assert.Equal(t, SkipInvalidFrontmatter, reasons["bad-yaml"])
+	assert.Equal(t, SkipInvalidFrontmatter, reasons["no-frontmatter"])
+	assert.NotContains(t, reasons, "scripts", "a directory without SKILL.md is not a skipped skill")
+}
+
+// TestScanDirReport_FollowsSymlinkedSkill pins the install pattern
+// `ln -s ~/dev/myskill ~/.claude/skills/myskill`: a symlinked directory that is
+// itself a skill is discovered.
+func TestScanDirReport_FollowsSymlinkedSkill(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks requires privileges on Windows")
+	}
+	root := t.TempDir()
+	realDir := t.TempDir()
+	writeSkill(t, realDir, "linked", "---\nname: linked\ndescription: d\n---\n")
+	require.NoError(t, os.Symlink(filepath.Join(realDir, "linked"), filepath.Join(root, "linked")))
+
+	skills, _ := ScanDirReport(root, Source{})
+	require.Len(t, skills, 1)
+	assert.Equal(t, "linked", skills[0].Name)
+}
+
+// TestScanDirReport_IgnoresSymlinkedContainer pins the other half of the rule:
+// a link to a directory that merely CONTAINS skills is not followed, so a link
+// to a huge tree (or to /) cannot turn a scan into an unbounded walk.
+func TestScanDirReport_IgnoresSymlinkedContainer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks requires privileges on Windows")
+	}
+	root := t.TempDir()
+	realDir := t.TempDir()
+	writeSkill(t, realDir, "nested", "---\nname: nested\ndescription: d\n---\n")
+	require.NoError(t, os.Symlink(realDir, filepath.Join(root, "container")))
+
+	skills, _ := ScanDirReport(root, Source{})
+	assert.Empty(t, skills, "a symlinked container must not be walked")
+}

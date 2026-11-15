@@ -12,6 +12,19 @@
       :model-value="enabled"
       @update:model-value="onToggleEnabled"
     />
+
+    <!-- Project skills come from the working tree, which may be a repository
+         the user has never read, and their description is copied into the
+         system prompt on every turn. That is a different risk from a skill the
+         user configured themselves, so it gets its own switch and is off by
+         default. The listing below still shows them either way. -->
+    <SettingsItem
+      :label="t('settings.items.skillsProjectAutoInject')"
+      :description="t('settings.items.skillsProjectAutoInjectDesc')"
+      type="switch"
+      :model-value="projectAutoInject"
+      @update:model-value="onToggleProjectAutoInject"
+    />
   </div>
 </template>
 
@@ -29,7 +42,7 @@ const { getServerValueWithDefault, setServerValue } = useSettingsConfig()
 
 // Shared with the sibling cards (dirs / repos / discovered) so they all read one
 // GET /api/skills response and a change in any card is reflected in the others.
-const { enabled } = useSkillsState()
+const { enabled, projectAutoInject } = useSkillsState()
 
 function load() {
   return loadSkills(getServerValueWithDefault('skills.enabled') !== false)
@@ -39,6 +52,15 @@ async function onToggleEnabled(v: unknown) {
   enabled.value = Boolean(v)
   try {
     await setServerValue('skills.enabled', enabled.value)
+  } finally {
+    await load()
+  }
+}
+
+async function onToggleProjectAutoInject(v: unknown) {
+  projectAutoInject.value = Boolean(v)
+  try {
+    await setServerValue('skills.project_auto_inject', projectAutoInject.value)
   } finally {
     await load()
   }

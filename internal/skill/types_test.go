@@ -27,12 +27,16 @@ func TestSourceKindString(t *testing.T) {
 }
 
 // TestSourceKindPriorityOrder pins that the numeric values encode the dedup
-// priority documented on the type: own < project < user < git < other. A reorder
-// silently changes which duplicate skill wins, so guard it explicitly.
+// priority documented on the type: own < user < project < git < other. A
+// reorder silently changes which duplicate skill wins, so guard it explicitly.
+//
+// user < project is deliberate: a project directory comes from the working
+// tree (possibly a freshly cloned repository), so a same-named skill committed
+// there must not shadow the one the user wrote and configured themselves.
 func TestSourceKindPriorityOrder(t *testing.T) {
-	assert.Less(t, int(SourceOwnNative), int(SourceProject))
-	assert.Less(t, int(SourceProject), int(SourceUserDir))
-	assert.Less(t, int(SourceUserDir), int(SourceGit))
+	assert.Less(t, int(SourceOwnNative), int(SourceUserDir))
+	assert.Less(t, int(SourceUserDir), int(SourceProject))
+	assert.Less(t, int(SourceProject), int(SourceGit))
 	assert.Less(t, int(SourceGit), int(SourceOtherNative))
 }
 

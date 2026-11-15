@@ -22,12 +22,27 @@ export interface SkillRow {
   /** Frontmatter name disagrees with the directory name (spec violation). */
   name_mismatch?: boolean
   /**
+   * SKILL.md path of the same-named skill that actually wins, when this row is
+   * not the winner. The listing shows every copy; only one of them is what
+   * `#name` resolves to.
+   */
+  shadowed_by?: string
+  /**
    * The skill lives in the cross-tool shared directory (.agents/skills). Such a
    * skill is "generic": it belongs to no single agent, and the server reports it
    * as own/other depending on who is asking, so the UI must not name an agent.
    * The server also omits `agent_id` for these.
    */
   shared?: boolean
+}
+
+/**
+ * A directory that looks like a skill (it contains SKILL.md) but could not be
+ * loaded. `reason` is a stable code; the UI localizes it.
+ */
+export interface SkippedRow {
+  path: string
+  reason: 'invalid_frontmatter' | 'missing_name' | 'missing_description' | 'unreadable' | string
 }
 
 /** One configured git skill source. */
@@ -50,9 +65,18 @@ export interface RepoRow {
 // is opt-in). Overwritten by loadSkills() with the server's actual value; this
 // only avoids showing "on" for the instant before the first load resolves.
 const enabled = ref(false)
+/**
+ * Whether the session project's `.agents/skills` are injected automatically.
+ * Off by default: those skills come from the working tree, which may be a
+ * repository the user never read.
+ */
+const projectAutoInject = ref(false)
+/** Canonical names the user switched off (automatic injection only). */
+const disabled = ref<string[]>([])
 const dirs = ref<string[]>([])
 const repos = ref<RepoRow[]>([])
 const skills = ref<SkillRow[]>([])
+const skipped = ref<SkippedRow[]>([])
 const lastSyncAt = ref(0)
 const refreshing = ref(false)
 // Pure-local rescan (no git IO) — separate from `refreshing` so the two buttons
@@ -69,6 +93,23 @@ const dirsError = ref('')
 const reposError = ref('')
 const dirsSaving = ref(false)
 const reposSaving = ref(false)
+/** When the list was last loaded, for the `#` menu's staleness check. */
+let loadedAt = 0
+/**
+ * How long a `#` menu list is considered fresh. The server rescans a changed
+ * source directory on its own (directory stamps), so re-fetching is cheap; the
+ * window only avoids a request per keystroke.
+ */
+const SKILLS_CACHE_TTL_MS = 30_000
+
+/**
+ * Canonical skill name — the identity the backend compares (lowercased, one
+ * leading "/" stripped). Mirrors model.CanonicalSkillName; used for the
+ * disabled list and for the `#` menu's dedupe key.
+ */
+export function canonicalSkillName(name: string): string {
+  return name.trim().replace(/^\//, '').toLowerCase()
+}
 
 /**
  * Human-readable origin for a discovered skill.
@@ -115,14 +156,53 @@ export async function loadSkills(enabledFallback: boolean): Promise<void> {
     const res = await fetch('/api/skills')
     if (!res.ok) return
     const data = await res.json()
+    projectAutoInject.value = data?.project_auto_inject === true
+    disabled.value = Array.isArray(data?.disabled) ? data.disabled.map(String) : []
     dirs.value = Array.isArray(data?.dirs) ? data.dirs : []
     repos.value = Array.isArray(data?.repos) ? data.repos : []
     skills.value = Array.isArray(data?.skills) ? data.skills : []
+    skipped.value = Array.isArray(data?.skipped) ? data.skipped : []
     lastSyncAt.value = Number(data?.last_sync_at) || 0
     loaded.value = true
+    loadedAt = Date.now()
   } catch (err) {
     appLog.w(TAG, 'load failed', err)
   }
+}
+
+/**
+ * Turn automatic injection on or off for ONE skill name.
+ *
+ * The switch governs the system-prompt table only: an explicit `#name`
+ * reference keeps working, which is why the label says "自动注入" rather than
+ * "启用". The server canonicalizes and stores the list; this function mirrors
+ * the result locally so the row updates without a round-trip reload.
+ */
+export async function setSkillInjected(name: string, injected: boolean): Promise<void> {
+  const key = canonicalSkillName(name)
+  if (!key) return
+  const prev = disabled.value
+  const next = injected ? prev.filter((n) => n !== key) : [...new Set([...prev, key])]
+  disabled.value = next
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skills: { disabled: next } }),
+    })
+    if (!res.ok) {
+      disabled.value = prev
+      appLog.w(TAG, 'set skill injection failed', res.status)
+    }
+  } catch (err) {
+    disabled.value = prev
+    appLog.w(TAG, 'set skill injection failed', err)
+  }
+}
+
+/** Whether a skill name is currently excluded from automatic injection. */
+export function isSkillInjected(name: string): boolean {
+  return !disabled.value.includes(canonicalSkillName(name))
 }
 
 /** Force a git sync, then reload. Per-repo failures surface as `last_error`. */
@@ -183,28 +263,36 @@ export async function rescanSkills(enabledFallback: boolean): Promise<void> {
  */
 export function resetSkillsCache(): void {
   skills.value = []
+  skipped.value = []
   loaded.value = false
+  loadedAt = 0
 }
 
 /**
- * Load the discovered skills if they have not been loaded yet. This is the
- * chat input's lazy path for the `#` skill menu: the list is fetched the first
- * time the trigger appears, then reused.
+ * Load the discovered skills if the cached list is missing or stale. This is
+ * the chat input's lazy path for the `#` skill menu.
+ *
+ * The TTL matters because a skill can be installed outside ClawBench (by hand,
+ * or by another tool writing the shared directory). The server notices a
+ * changed source directory on its own; without re-fetching here the menu would
+ * keep showing the list captured when the page opened.
  *
  * It deliberately does NOT touch `enabled`. The master switch governs AUTOMATIC
  * injection (the system-prompt table); an explicit `#name` reference works
  * either way, so the menu must list skills even when the switch is off.
  */
 export async function ensureSkillsLoaded(): Promise<void> {
-  if (loaded.value) return
+  if (loaded.value && Date.now() - loadedAt < SKILLS_CACHE_TTL_MS) return
   try {
     const res = await fetch('/api/skills')
     if (!res.ok) return
     const data = await res.json()
     skills.value = Array.isArray(data?.skills) ? data.skills : []
+    skipped.value = Array.isArray(data?.skipped) ? data.skipped : []
     // Mark loaded even on an empty list: otherwise every keystroke after "#"
     // would re-fetch. A later rescan/refresh still repopulates it.
     loaded.value = true
+    loadedAt = Date.now()
   } catch (err) {
     appLog.w(TAG, 'ensure load failed', err)
   }
@@ -226,8 +314,8 @@ export async function ensureSkillsLoaded(): Promise<void> {
  */
 export const SOURCE_KIND_PRIORITY: SkillRow['source_kind'][] = [
   'own',
-  'project',
   'user',
+  'project',
   'git',
   'other',
 ]
@@ -257,7 +345,7 @@ export function skillMenuRows(): SkillRow[] {
   for (const s of skills.value) {
     if (s.name_mismatch) continue
     if (s.name.includes('#') || REF_TOKEN_END_RE.test(s.name)) continue
-    const key = s.name.trim().replace(/^\//, '').toLowerCase()
+    const key = canonicalSkillName(s.name)
     if (!key) continue
     const cur = best.get(key)
     if (!cur || sourceRank(s.source_kind) < sourceRank(cur.source_kind)) {
@@ -271,9 +359,12 @@ export function skillMenuRows(): SkillRow[] {
 export function useSkillsState() {
   return {
     enabled,
+    projectAutoInject,
+    disabled,
     dirs,
     repos,
     skills,
+    skipped,
     lastSyncAt,
     refreshing,
     rescanning,

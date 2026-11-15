@@ -55,16 +55,32 @@ const i18n = createI18n({
           skillsSourceShared: 'Generic',
           skillsOpenPath: 'Open in file manager',
           skillsPathMissing: 'File does not exist',
+          skillsAutoInjectDesc: 'automatic injection',
+          skillsShadowed: 'Shadowed',
+          skillsShadowedDesc: 'shadowed by {path}',
+          skillsSkipped: 'Skills that failed to load ({count})',
+          skillsSkipReason_missing_description: 'missing description',
         },
       },
     },
   },
 })
 
-function skillsResponse(skills: unknown[]) {
+function skillsResponse(skills: unknown[], extra: Record<string, unknown> = {}) {
   return {
     ok: true,
-    json: async () => ({ enabled: true, dirs: [], refresh_hours: 6, last_sync_at: 0, repos: [], skills }),
+    json: async () => ({
+      enabled: true,
+      project_auto_inject: false,
+      disabled: [],
+      dirs: [],
+      refresh_hours: 6,
+      last_sync_at: 0,
+      repos: [],
+      skipped: [],
+      skills,
+      ...extra,
+    }),
   } as unknown as Response
 }
 
@@ -285,5 +301,70 @@ describe('SkillsDiscoveredSetting', () => {
 
     await btn.trigger('click')
     expect(revealInFileManager).not.toHaveBeenCalled()
+  })
+
+  // Two skills can share a name; only one of them is what "#name" resolves to.
+  // The listing shows both, so it must say which one is live.
+  it('marks a shadowed row', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        skillsResponse([
+          row({ path: '/home/me/.agents/skills/demo/SKILL.md', shadowed_by: '/home/me/skills/demo/SKILL.md' }),
+          row({ path: '/home/me/skills/demo/SKILL.md', source_kind: 'user', source_label: 'user dir' }),
+        ]),
+      ),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+
+    const rows = wrapper.findAll('.skills-item')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].classes()).toContain('is-shadowed')
+    expect(rows[0].text()).toContain('Shadowed')
+    expect(rows[1].classes()).not.toContain('is-shadowed')
+    expect(rows[1].text()).not.toContain('Shadowed')
+  })
+
+  // A skill-shaped directory that failed to parse must not vanish silently:
+  // the reason is shown in a collapsed diagnostics block.
+  it('lists skills that failed to load, with a reason', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        skillsResponse([], {
+          skipped: [{ path: '/home/me/skills/broken/SKILL.md', reason: 'missing_description' }],
+        }),
+      ),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+
+    const toggle = wrapper.find('.skills-skipped__toggle')
+    expect(toggle.exists()).toBe(true)
+    expect(toggle.text()).toContain('Skills that failed to load (1)')
+    // Collapsed by default.
+    expect(wrapper.find('.skills-skipped__list').exists()).toBe(false)
+
+    await toggle.trigger('click')
+    expect(wrapper.find('.skills-skipped__list').exists()).toBe(true)
+    expect(wrapper.text()).toContain('/home/me/skills/broken/SKILL.md')
+    expect(wrapper.text()).toContain('missing description')
+  })
+
+  // The per-row switch writes the canonical name into skills.disabled. The
+  // label says "automatic injection" because "#name" keeps working.
+  it('toggles automatic injection for one skill', async () => {
+    const fetchMock = vi.fn(async () => skillsResponse([row()]))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    await wrapper.find('.skills-item-switch input').setValue(false)
+
+    const patch = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === 'PATCH')
+    expect(patch).toBeTruthy()
+    const body = JSON.parse((patch![1] as RequestInit).body as string)
+    expect(body).toEqual({ skills: { disabled: ['demo'] } })
   })
 })
