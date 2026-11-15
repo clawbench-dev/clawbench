@@ -1,10 +1,12 @@
-package ai
+package codex
 
 import (
 	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"clawbench/internal/ai"
 )
 
 // --- parseCodexToolStart tests ---
@@ -195,9 +197,9 @@ func TestCodexTool_ParseComplete_NilItem(t *testing.T) {
 }
 
 func TestCodexTool_ParseComplete_OutputTruncation(t *testing.T) {
-	// Output exceeding maxToolOutputBytes should be truncated
+	// Output exceeding ai.MaxToolOutputBytes should be truncated
 	exitCode := 0
-	longOutputBytes := make([]byte, maxToolOutputBytes+1000) // exceeds 50KB
+	longOutputBytes := make([]byte, ai.MaxToolOutputBytes+1000) // exceeds 50KB
 	for i := range longOutputBytes {
 		longOutputBytes[i] = 'x'
 	}
@@ -216,7 +218,7 @@ func TestCodexTool_ParseComplete_OutputTruncation(t *testing.T) {
 	tc := parseCodexToolComplete(msg)
 	assert.NotNil(t, tc)
 	assert.Contains(t, tc.Output, "[truncated:")
-	assert.LessOrEqual(t, len(tc.Output), maxToolOutputBytes+100) // some slack for truncation marker
+	assert.LessOrEqual(t, len(tc.Output), ai.MaxToolOutputBytes+100) // some slack for truncation marker
 }
 
 func TestCodexTool_ParseComplete_InputIsNormalizedJSON(t *testing.T) {
@@ -244,7 +246,7 @@ func TestCodexTool_ParseComplete_InputIsNormalizedJSON(t *testing.T) {
 // --- emitBashToolCall tests ---
 
 func TestCodexTool_EmitBashToolCall_Started(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
+	ch := make(chan ai.StreamEvent, 1)
 	emitBashToolCall(ch, "exec-0", `{"command":"ls"}`, "", false, nil)
 
 	select {
@@ -263,7 +265,7 @@ func TestCodexTool_EmitBashToolCall_Started(t *testing.T) {
 }
 
 func TestCodexTool_EmitBashToolCall_CompletedSuccess(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
+	ch := make(chan ai.StreamEvent, 1)
 	exitCode := 0
 	emitBashToolCall(ch, "exec-0", `{"command":"ls"}`, "file1.txt\nfile2.txt", true, &exitCode)
 
@@ -280,7 +282,7 @@ func TestCodexTool_EmitBashToolCall_CompletedSuccess(t *testing.T) {
 }
 
 func TestCodexTool_EmitBashToolCall_CompletedError(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
+	ch := make(chan ai.StreamEvent, 1)
 	exitCode := 1
 	emitBashToolCall(ch, "exec-1", `{"command":"exit 1"}`, "error output", true, &exitCode)
 
@@ -296,7 +298,7 @@ func TestCodexTool_EmitBashToolCall_CompletedError(t *testing.T) {
 }
 
 func TestCodexTool_EmitBashToolCall_CompletedNilExitCode(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
+	ch := make(chan ai.StreamEvent, 1)
 	emitBashToolCall(ch, "exec-2", `{"command":"echo hi"}`, "hi", true, nil)
 
 	select {
@@ -311,7 +313,7 @@ func TestCodexTool_EmitBashToolCall_CompletedNilExitCode(t *testing.T) {
 }
 
 func TestCodexTool_EmitBashToolCall_CompletedNoOutput(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
+	ch := make(chan ai.StreamEvent, 1)
 	exitCode := 0
 	emitBashToolCall(ch, "exec-3", `{"command":"true"}`, "", true, &exitCode)
 
@@ -327,7 +329,7 @@ func TestCodexTool_EmitBashToolCall_CompletedNoOutput(t *testing.T) {
 }
 
 func TestCodexTool_EmitBashToolCall_NonZeroExitCodeWithOutput(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
+	ch := make(chan ai.StreamEvent, 1)
 	exitCode := 2
 	emitBashToolCall(ch, "exec-4", `{"command":"bad_cmd"}`, "some error\nlines", true, &exitCode)
 

@@ -1,4 +1,6 @@
-package ai
+package codex
+
+import ()
 
 // CodexBackend implements AIBackend for OpenAI Codex CLI
 type CodexBackend struct{}

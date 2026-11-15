@@ -214,3 +214,17 @@ const (
 // IsCLICompactionMessage reports whether a parsed CLI stream message carries a
 // compaction signal.
 func IsCLICompactionMessage(msg *ClaudeStreamMessage) bool { return isCLICompactionMessage(msg) }
+
+// ExecCommandJSON builds the canonical {"command":"..."} tool input.
+func ExecCommandJSON(command string) string { return execCommandJSON(command) }
+
+// RedactArgs masks secret-looking flag values for logging.
+func RedactArgs(args []string) []string { return redactArgs(args) }
+
+// AgentProcessEnv returns the environment overrides an agent CLI needs.
+func AgentProcessEnv() []string { return agentProcessEnv() }
+
+// ProviderEnvForRequest resolves the provider environment for one turn.
+func ProviderEnvForRequest(req ChatRequest, fallback string) ([]string, error) {
+	return providerEnvForRequest(req, fallback)
+}

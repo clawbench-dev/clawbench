@@ -1,4 +1,4 @@
-package ai
+package codex
 
 import (
 	"bufio"
@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 )
 
@@ -57,8 +58,8 @@ type CodexStreamParser struct {
 func (p *CodexStreamParser) GetCapturedSessionID() string { return p.threadID }
 
 // ParseLine parses a single JSON line from Codex's --json output and sends
-// StreamEvent(s) to the provided channel.
-func (p *CodexStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
+// ai.StreamEvent(s) to the provided channel.
+func (p *CodexStreamParser) ParseLine(line string, ch chan<- ai.StreamEvent) {
 	var msg CodexStreamMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
 		slog.Debug("codex stream: skipping unparseable line", "line", line, "error", err)
@@ -80,7 +81,7 @@ func (p *CodexStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		// Structural event — no content
 	case "error":
 		if msg.Message != "" {
-			emitStreamEvent(ch, "codex", StreamEvent{Type: "warning", Content: msg.Message, Reason: ReasonRequestFailed})
+			ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "warning", Content: msg.Message, Reason: ai.ReasonRequestFailed})
 		}
 	case "turn.failed":
 		p.handleTurnFailed(&msg, ch)
@@ -90,7 +91,7 @@ func (p *CodexStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 }
 
 // handleItemCompleted processes item.completed events.
-func (p *CodexStreamParser) handleItemCompleted(msg *CodexStreamMessage, ch chan<- StreamEvent) {
+func (p *CodexStreamParser) handleItemCompleted(msg *CodexStreamMessage, ch chan<- ai.StreamEvent) {
 	if msg.Item == nil {
 		return
 	}
@@ -102,33 +103,33 @@ func (p *CodexStreamParser) handleItemCompleted(msg *CodexStreamMessage, ch chan
 		}
 		thinking, content := codexSplitThinking(text)
 		if thinking != "" {
-			emitStreamEvent(ch, "codex", StreamEvent{Type: "thinking", Content: thinking})
+			ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "thinking", Content: thinking})
 		}
 		if content != "" {
-			emitStreamEvent(ch, "codex", StreamEvent{Type: "content", Content: content})
+			ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "content", Content: content})
 		}
 	case "command_execution":
 		if tc := parseCodexToolComplete(msg); tc != nil {
-			emitStreamEvent(ch, "codex", StreamEvent{Type: "tool_use", Tool: tc})
+			ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "tool_use", Tool: tc})
 		}
 	}
 }
 
 // handleItemStarted processes item.started events.
-func (p *CodexStreamParser) handleItemStarted(msg *CodexStreamMessage, ch chan<- StreamEvent) {
+func (p *CodexStreamParser) handleItemStarted(msg *CodexStreamMessage, ch chan<- ai.StreamEvent) {
 	if msg.Item == nil {
 		return
 	}
 	if msg.Item.Type == "command_execution" {
 		if tc := parseCodexToolStart(msg); tc != nil {
-			emitStreamEvent(ch, "codex", StreamEvent{Type: "tool_use", Tool: tc})
+			ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "tool_use", Tool: tc})
 		}
 	}
 }
 
 // handleTurnCompleted processes turn.completed events.
-func (p *CodexStreamParser) handleTurnCompleted(msg *CodexStreamMessage, ch chan<- StreamEvent) {
-	meta := &Metadata{
+func (p *CodexStreamParser) handleTurnCompleted(msg *CodexStreamMessage, ch chan<- ai.StreamEvent) {
+	meta := &ai.Metadata{
 		SessionID: p.threadID,
 	}
 	if msg.Usage != nil {
@@ -145,27 +146,27 @@ func (p *CodexStreamParser) handleTurnCompleted(msg *CodexStreamMessage, ch chan
 			meta.CacheMissTokens = msg.Usage.InputTokens
 		}
 	}
-	emitStreamEvent(ch, "codex", StreamEvent{Type: "metadata", Meta: meta})
-	emitStreamEvent(ch, "codex", StreamEvent{Type: "done"})
+	ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "metadata", Meta: meta})
+	ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "done"})
 }
 
 // handleTurnFailed processes turn.failed events.
-func (p *CodexStreamParser) handleTurnFailed(msg *CodexStreamMessage, ch chan<- StreamEvent) {
+func (p *CodexStreamParser) handleTurnFailed(msg *CodexStreamMessage, ch chan<- ai.StreamEvent) {
 	errMsg := "AI request failed"
 	if msg.Error != nil && msg.Error.Message != "" {
 		errMsg = msg.Error.Message
 	}
-	emitStreamEvent(ch, "codex", StreamEvent{
+	ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{
 		Type:   "error",
 		Error:  errMsg,
-		Reason: streamErrorReason(errMsg),
+		Reason: ai.StreamErrorReason(errMsg),
 	})
-	emitStreamEvent(ch, "codex", StreamEvent{Type: "done"})
+	ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "done"})
 }
 
 // buildCodexStreamArgs constructs the CLI arguments for Codex streaming.
 // Note: returns args WITHOUT the "exec" prefix (it's added by ExecuteStream).
-func buildCodexStreamArgs(req ChatRequest) []string {
+func buildCodexStreamArgs(req ai.ChatRequest) []string {
 	var args []string
 
 	// New session: --json ...
@@ -190,7 +191,7 @@ func buildCodexStreamArgs(req ChatRequest) []string {
 	args = append(args, "--skip-git-repo-check")
 
 	// Codex CLI has no --system-prompt flag — inject into user prompt.
-	prompt := InjectSystemPrompt(req)
+	prompt := ai.InjectSystemPrompt(req)
 
 	// Prompt is the last argument for new sessions
 	args = append(args, prompt)
@@ -219,7 +220,7 @@ func buildCodexStreamArgs(req ChatRequest) []string {
 //	<response content>
 //
 //nolint:gocognit,gocyclo // complex stream parsing logic
-func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessionID string) {
+func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- ai.StreamEvent, sessionID string) {
 	role := "" // current role: "codex" or "exec"
 	inThinking := false
 	var thinkingBuf strings.Builder
@@ -236,14 +237,14 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 			// Reason: see streamErrorReason. Without one the warning block this
 			// becomes carries no classification, so the turn reported a clean
 			// finish after the error.
-			emitStreamEvent(ch, "codex", StreamEvent{
+			ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{
 				Type:   "error",
 				Error:  errMsg,
-				Reason: streamErrorReason(errMsg),
+				Reason: ai.StreamErrorReason(errMsg),
 			})
 			// ISS-079: must emit done so the stream consumer can finalize;
 			// without this, the SSE stream hangs indefinitely.
-			emitStreamEvent(ch, "codex", StreamEvent{Type: "done"})
+			ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "done"})
 			return
 		}
 
@@ -251,8 +252,8 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 		if line == "codex" || line == "user" {
 			// Flush any pending exec block
 			if role == "exec" && execCommand != "" {
-				input := execCommandJSON(execCommand)
-				output := truncateToolOutput(execOutput.String())
+				input := ai.ExecCommandJSON(execCommand)
+				output := ai.TruncateToolOutput(execOutput.String())
 				emitBashToolCall(ch, execID, input, output, true, nil)
 				execCommand = ""
 				execOutput.Reset()
@@ -264,8 +265,8 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 		if line == "exec" {
 			// Flush any pending exec block
 			if role == "exec" && execCommand != "" {
-				input := execCommandJSON(execCommand)
-				output := truncateToolOutput(execOutput.String())
+				input := ai.ExecCommandJSON(execCommand)
+				output := ai.TruncateToolOutput(execOutput.String())
 				emitBashToolCall(ch, execID, input, output, true, nil)
 				execCommand = ""
 				execOutput.Reset()
@@ -293,12 +294,12 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 				// Check if closing tag is on the same line
 				if before, afterClose, ok := strings.Cut(rest, codexThinkClose); ok {
 					if before != "" {
-						emitStreamEvent(ch, "codex", StreamEvent{Type: "thinking", Content: before})
+						ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "thinking", Content: before})
 					}
 					inThinking = false
 					afterClose = strings.TrimSpace(afterClose)
 					if afterClose != "" {
-						emitStreamEvent(ch, "codex", StreamEvent{Type: "content", Content: afterClose + "\n"})
+						ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "content", Content: afterClose + "\n"})
 					}
 				} else if rest != "" {
 					thinkingBuf.WriteString(rest)
@@ -309,7 +310,7 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 				if inThinking {
 					inThinking = false
 					if thinking := thinkingBuf.String(); thinking != "" {
-						emitStreamEvent(ch, "codex", StreamEvent{Type: "thinking", Content: thinking})
+						ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "thinking", Content: thinking})
 					}
 					thinkingBuf.Reset()
 				}
@@ -317,7 +318,7 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 				afterClose := strings.TrimPrefix(line, codexThinkClose)
 				afterClose = strings.TrimSpace(afterClose)
 				if afterClose != "" {
-					emitStreamEvent(ch, "codex", StreamEvent{Type: "content", Content: afterClose + "\n"})
+					ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "content", Content: afterClose + "\n"})
 				}
 				continue
 			}
@@ -332,12 +333,12 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 					}
 					inThinking = false
 					if thinking := thinkingBuf.String(); thinking != "" {
-						emitStreamEvent(ch, "codex", StreamEvent{Type: "thinking", Content: thinking})
+						ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "thinking", Content: thinking})
 					}
 					thinkingBuf.Reset()
 					afterClose = strings.TrimSpace(afterClose)
 					if afterClose != "" {
-						emitStreamEvent(ch, "codex", StreamEvent{Type: "content", Content: afterClose + "\n"})
+						ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "content", Content: afterClose + "\n"})
 					}
 				} else {
 					if thinkingBuf.Len() > 0 {
@@ -348,7 +349,7 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 				continue
 			}
 			if line != "" {
-				emitStreamEvent(ch, "codex", StreamEvent{Type: "content", Content: line + "\n"})
+				ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "content", Content: line + "\n"})
 			}
 			continue
 		}
@@ -361,7 +362,7 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 				execCommand = strings.TrimSuffix(line, ":")
 				execID = fmt.Sprintf("exec-%d", execCounter)
 				execCounter++
-				emitBashToolCall(ch, execID, execCommandJSON(execCommand), "", false, nil)
+				emitBashToolCall(ch, execID, ai.ExecCommandJSON(execCommand), "", false, nil)
 			} else {
 				if execOutput.Len() > 0 {
 					execOutput.WriteByte('\n')
@@ -374,8 +375,8 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 
 	// Flush any pending exec block at EOF
 	if role == "exec" && execCommand != "" {
-		input := execCommandJSON(execCommand)
-		output := truncateToolOutput(execOutput.String())
+		input := ai.ExecCommandJSON(execCommand)
+		output := ai.TruncateToolOutput(execOutput.String())
 		emitBashToolCall(ch, execID, input, output, true, nil)
 	}
 	// Also flush exec blocks when role changes (codex/exec marker)
@@ -383,19 +384,19 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 
 	// Flush remaining thinking
 	if inThinking && thinkingBuf.Len() > 0 {
-		emitStreamEvent(ch, "codex", StreamEvent{Type: "thinking", Content: thinkingBuf.String()})
+		ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "thinking", Content: thinkingBuf.String()})
 	}
 
 	// ISS-080: check scanner.Err() after the loop — truncated output due to
 	// a read error must not be silently accepted as complete.
 	if err := scanner.Err(); err != nil {
-		emitStreamEvent(ch, "codex", StreamEvent{Type: "warning", Content: fmt.Sprintf("resume output read error: %v", err), Reason: ReasonParseError})
+		ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "warning", Content: fmt.Sprintf("resume output read error: %v", err), Reason: ai.ReasonParseError})
 		// Fall through to emit done so the consumer can finalize.
 	}
 
 	// Send metadata and done events
-	emitStreamEvent(ch, "codex", StreamEvent{Type: "metadata", Meta: &Metadata{SessionID: sessionID}})
-	emitStreamEvent(ch, "codex", StreamEvent{Type: "done"})
+	ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "metadata", Meta: &ai.Metadata{SessionID: sessionID}})
+	ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "done"})
 }
 
 // emitBashToolCall has been moved to codex_tool.go
@@ -404,7 +405,7 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 // "codex exec resume" does not support --json, so output is plain text.
 // We pass -c config overrides to restore model/provider from the original session.
 // Note: returns args WITHOUT the "exec" prefix (it's added by ExecuteStream).
-func buildCodexResumeArgs(req ChatRequest, threadID string) []string {
+func buildCodexResumeArgs(req ai.ChatRequest, threadID string) []string {
 	var args []string
 
 	args = append(args, "resume") //nolint:gocritic // separated for readability with comment block
@@ -430,7 +431,7 @@ func buildCodexResumeArgs(req ChatRequest, threadID string) []string {
 	args = append(args, threadID)
 
 	// Codex CLI has no --system-prompt flag — inject into user prompt.
-	prompt := InjectSystemPrompt(req)
+	prompt := ai.InjectSystemPrompt(req)
 
 	// Prompt for the resumed session
 	args = append(args, prompt)
@@ -441,7 +442,7 @@ func buildCodexResumeArgs(req ChatRequest, threadID string) []string {
 // ExecuteStream runs the Codex CLI in streaming mode and returns a channel of events
 //
 //nolint:gocognit,gocyclo // complex stream parsing logic
-func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+func (c *CodexBackend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan ai.StreamEvent, error) {
 	// Prepend fork context to prompt if present (fork session first message).
 	if req.ForkContext != "" {
 		req.Prompt = req.ForkContext + req.Prompt
@@ -485,12 +486,12 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 	cmd.Dir = req.WorkDir
 	// Server environment, plus the user's shell startup exports when the
 	// opt-in shell_env.inherit setting is on (issue #619).
-	cmd.Env = agentProcessEnv()
+	cmd.Env = ai.AgentProcessEnv()
 
 	// Model provider injection (see providerEnvForRequest). Codex is a
 	// config-file backend: the environment only carries the secret its
 	// config.toml references, plus any env-level override when supported.
-	if providerEnv, perr := providerEnvForRequest(req, "codex"); perr != nil {
+	if providerEnv, perr := ai.ProviderEnvForRequest(req, "codex"); perr != nil {
 		return nil, perr
 	} else if len(providerEnv) > 0 {
 		cmd.Env = append(cmd.Env, providerEnv...)
@@ -526,7 +527,7 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 		// AI token must be redacted explicitly.
 		slog.String("prompt", model.RedactAIToken(req.Prompt)),
 		slog.Bool("resume", req.Resume),
-		slog.Any("args", redactArgs(fullArgs)),
+		slog.Any("args", ai.RedactArgs(fullArgs)),
 	)
 
 	// ISS-050: only create stdoutPipe for non-resume mode.
@@ -548,7 +549,7 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 		return nil, fmt.Errorf("codex stream: failed to start command: %w", err)
 	}
 
-	ch := make(chan StreamEvent, streamChanSize)
+	ch := make(chan ai.StreamEvent, ai.StreamChanSize)
 
 	go func() {
 		defer close(ch)
@@ -558,14 +559,14 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 			// (with role markers like "codex", "user", "exec") to stderr.
 			// We parse stderr to extract content, thinking, and tool_use events.
 			scanner := bufio.NewScanner(stderrPipe)
-			buf := make([]byte, scannerInitial)
-			scanner.Buffer(buf, scannerMax)
+			buf := make([]byte, ai.ScannerInitial)
+			scanner.Buffer(buf, ai.ScannerMax)
 			parseCodexResumeOutput(scanner, ch, req.SessionID)
 		} else {
 			// New session with --json: parse JSONL from stdout
 			scanner := bufio.NewScanner(stdoutPipe)
-			buf := make([]byte, scannerInitial)
-			scanner.Buffer(buf, scannerMax)
+			buf := make([]byte, ai.ScannerInitial)
+			scanner.Buffer(buf, ai.ScannerMax)
 
 			parser := &CodexStreamParser{}
 			var lastCapturedSessionID string
@@ -586,7 +587,7 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 				// is cancelled before turn.completed emits the metadata event.
 				if capturedID := parser.GetCapturedSessionID(); capturedID != "" && capturedID != lastCapturedSessionID {
 					lastCapturedSessionID = capturedID
-					emitStreamEvent(ch, "codex", StreamEvent{Type: "session_capture", Content: capturedID})
+					ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "session_capture", Content: capturedID})
 				}
 
 				// Check context after parsing
@@ -603,7 +604,7 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 
 			if err := scanner.Err(); err != nil {
 				select {
-				case ch <- StreamEvent{Type: "warning", Content: fmt.Sprintf("AI output parse error: %v", err), Reason: ReasonParseError}:
+				case ch <- ai.StreamEvent{Type: "warning", Content: fmt.Sprintf("AI output parse error: %v", err), Reason: ai.ReasonParseError}:
 				case <-ctx.Done():
 				}
 			}
@@ -624,7 +625,7 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 				slog.String("exit_error", err.Error()),
 			)
 			select {
-			case ch <- StreamEvent{Type: "warning", Content: "AI backend exited abnormally", Reason: ReasonBackendExit}:
+			case ch <- ai.StreamEvent{Type: "warning", Content: "AI backend exited abnormally", Reason: ai.ReasonBackendExit}:
 			case <-ctx.Done():
 			}
 		}

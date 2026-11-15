@@ -1,4 +1,6 @@
-package ai
+package codex
+
+import ()
 
 import "strings"
 

@@ -24,9 +24,9 @@ func TestCodexPlugin_NewBackend(t *testing.T) {
 func TestCodexPlugin_NewBackendIsCodexBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("codex")
 	backend := entry.NewBackend()
-	codexB, ok := backend.(*ai.CodexBackend)
+	codexB, ok := backend.(*CodexBackend)
 	if !ok {
-		t.Fatalf("expected *ai.CodexBackend, got %T", backend)
+		t.Fatalf("expected *CodexBackend, got %T", backend)
 	}
 	_ = codexB
 }

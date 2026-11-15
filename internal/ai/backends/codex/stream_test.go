@@ -1,4 +1,4 @@
-package ai
+package codex
 
 import (
 	"bufio"
@@ -8,14 +8,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"clawbench/internal/ai"
 )
 
-func parseCodexLine(line string) []StreamEvent {
-	ch := make(chan StreamEvent, 64)
+func parseCodexLine(line string) []ai.StreamEvent {
+	ch := make(chan ai.StreamEvent, 64)
 	parser := &CodexStreamParser{}
 	parser.ParseLine(line, ch)
 	close(ch)
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -41,7 +43,7 @@ func TestCodexStream_GetCapturedSessionID(t *testing.T) {
 	}
 
 	// thread.started captures thread ID
-	ch := make(chan StreamEvent, 64)
+	ch := make(chan ai.StreamEvent, 64)
 	parser.ParseLine(`{"type":"thread.started","thread_id":"019dc744-1f6e-75d0-9877-99c8d2f134da"}`, ch)
 	if id := parser.GetCapturedSessionID(); id != "019dc744-1f6e-75d0-9877-99c8d2f134da" {
 		t.Errorf("expected thread ID after thread.started, got %q", id)
@@ -296,7 +298,7 @@ func TestCodexStream_TurnStarted(t *testing.T) {
 // --- Multi-event / stateful tests ---
 
 func TestCodexStream_ThreadIDCapture(t *testing.T) {
-	ch := make(chan StreamEvent, 64)
+	ch := make(chan ai.StreamEvent, 64)
 	parser := &CodexStreamParser{}
 
 	threadLine := `{"type":"thread.started","thread_id":"019dc744-1f6e-75d0-9877-99c8d2f134da"}`
@@ -306,7 +308,7 @@ func TestCodexStream_ThreadIDCapture(t *testing.T) {
 	parser.ParseLine(turnLine, ch)
 	close(ch)
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -320,7 +322,7 @@ func TestCodexStream_ThreadIDCapture(t *testing.T) {
 }
 
 func TestCodexStream_FullFlow(t *testing.T) {
-	ch := make(chan StreamEvent, 64)
+	ch := make(chan ai.StreamEvent, 64)
 	parser := &CodexStreamParser{}
 
 	lines := []string{
@@ -338,7 +340,7 @@ func TestCodexStream_FullFlow(t *testing.T) {
 	}
 	close(ch)
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -367,7 +369,7 @@ func TestCodexStream_FullFlow(t *testing.T) {
 // --- buildCodexStreamArgs tests ---
 
 func TestBuildCodexStreamArgs_NewSession(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt:    "hello world",
 		WorkDir:   "/tmp/project",
 		Model:     "codex-MiniMax-M2.7",
@@ -399,7 +401,7 @@ func TestBuildCodexStreamArgs_NewSession(t *testing.T) {
 }
 
 func TestBuildCodexStreamArgs_WithModel(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt:  "test",
 		WorkDir: "/tmp",
 		Model:   "MiniMax-M2.5-highspeed",
@@ -418,7 +420,7 @@ func TestBuildCodexStreamArgs_WithModel(t *testing.T) {
 }
 
 func TestBuildCodexStreamArgs_NoModel(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt:  "test",
 		WorkDir: "/tmp",
 		Model:   "",
@@ -433,7 +435,7 @@ func TestBuildCodexStreamArgs_NoModel(t *testing.T) {
 }
 
 func TestBuildCodexStreamArgs_NoWorkDir(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt: "test",
 	}
 	args := buildCodexStreamArgs(req)
@@ -446,7 +448,7 @@ func TestBuildCodexStreamArgs_NoWorkDir(t *testing.T) {
 }
 
 func TestBuildCodexStreamArgs_WithSystemPrompt(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt:       "test",
 		SystemPrompt: "You are a helpful coding assistant.",
 	}
@@ -463,7 +465,7 @@ func TestBuildCodexStreamArgs_WithSystemPrompt(t *testing.T) {
 }
 
 func TestBuildCodexStreamArgs_NoSystemPrompt(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt:       "test",
 		SystemPrompt: "",
 	}
@@ -479,7 +481,7 @@ func TestBuildCodexStreamArgs_NoSystemPrompt(t *testing.T) {
 // --- buildCodexResumeArgs tests ---
 
 func TestBuildCodexResumeArgs(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt: "continue this task",
 		Model:  "codex-MiniMax-M2.7",
 	}
@@ -529,7 +531,7 @@ func TestBuildCodexResumeArgs(t *testing.T) {
 }
 
 func TestBuildCodexResumeArgs_NoModel(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt: "test",
 	}
 	args := buildCodexResumeArgs(req, "thread-123")
@@ -550,7 +552,7 @@ func TestBuildCodexResumeArgs_NoModel(t *testing.T) {
 }
 
 func TestBuildCodexResumeArgs_WithSystemPrompt(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt:       "continue this task",
 		Model:        "codex-MiniMax-M2.7",
 		SystemPrompt: "You are a senior developer.",
@@ -568,7 +570,7 @@ func TestBuildCodexResumeArgs_WithSystemPrompt(t *testing.T) {
 }
 
 func TestBuildCodexResumeArgs_NoSystemPrompt(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt:       "test",
 		SystemPrompt: "",
 	}
@@ -589,12 +591,12 @@ const (
 	codexThinkEnd   = "</think>"
 )
 
-func parseResumeOutput(input string) []StreamEvent {
-	ch := make(chan StreamEvent, 64)
+func parseResumeOutput(input string) []ai.StreamEvent {
+	ch := make(chan ai.StreamEvent, 64)
 	scanner := bufio.NewScanner(strings.NewReader(input))
 	parseCodexResumeOutput(scanner, ch, "test-session-id")
 	close(ch)
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -614,7 +616,7 @@ Hi there! How can I help?`
 	events := parseResumeOutput(input)
 
 	// Should have: 1 content + 1 metadata + 1 done = 3
-	var contentEvents []StreamEvent
+	var contentEvents []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "content" {
 			contentEvents = append(contentEvents, ev)
@@ -640,8 +642,8 @@ ERROR: Missing environment variable: MINIMAX_API_KEY`
 	events := parseResumeOutput(input)
 
 	// Should have: 1 error event (stops parsing after ERROR)
-	var errorEvents []StreamEvent
-	var doneEvents []StreamEvent
+	var errorEvents []ai.StreamEvent
+	var doneEvents []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "error" {
 			errorEvents = append(errorEvents, ev)
@@ -657,8 +659,8 @@ ERROR: Missing environment variable: MINIMAX_API_KEY`
 		t.Errorf("expected error to mention env var, got %q", errorEvents[0].Error)
 	}
 	// Without a reason the warning block this becomes is read as a clean finish.
-	if errorEvents[0].Reason != ReasonRequestFailed {
-		t.Errorf("expected reason %q, got %q", ReasonRequestFailed, errorEvents[0].Reason)
+	if errorEvents[0].Reason != ai.ReasonRequestFailed {
+		t.Errorf("expected reason %q, got %q", ai.ReasonRequestFailed, errorEvents[0].Reason)
 	}
 	// ISS-079: ERROR must emit a done event so the SSE stream doesn't hang
 	if len(doneEvents) == 0 {
@@ -673,8 +675,8 @@ func TestCodexResumeOutput_WithThinking(t *testing.T) {
 		"Here is my explanation of foo."
 	events := parseResumeOutput(input)
 
-	var thinkingEvents []StreamEvent
-	var contentEvents []StreamEvent
+	var thinkingEvents []ai.StreamEvent
+	var contentEvents []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "thinking" {
 			thinkingEvents = append(thinkingEvents, ev)
@@ -730,7 +732,7 @@ func TestCodexStream_TurnFailedNoMessage(t *testing.T) {
 	if events[0].Error != "AI request failed" {
 		t.Errorf("expected default error message, got %q", events[0].Error)
 	}
-	if events[0].Reason != ReasonRequestFailed {
+	if events[0].Reason != ai.ReasonRequestFailed {
 		t.Errorf("expected reason 'request_failed', got %q", events[0].Reason)
 	}
 }
@@ -748,7 +750,7 @@ func TestCodexStream_ErrorType(t *testing.T) {
 	if events[0].Content != "Something went wrong" {
 		t.Errorf("expected 'Something went wrong', got %q", events[0].Content)
 	}
-	if events[0].Reason != ReasonRequestFailed {
+	if events[0].Reason != ai.ReasonRequestFailed {
 		t.Errorf("expected reason 'request_failed', got %q", events[0].Reason)
 	}
 }
@@ -853,7 +855,7 @@ func TestCodexResumeOutput_ResumeWithCommandExecution(t *testing.T) {
 	}
 
 	// Verify tool_use has JSON input with command and output
-	var completedTools []StreamEvent
+	var completedTools []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "tool_use" && ev.Tool != nil && ev.Tool.Done {
 			completedTools = append(completedTools, ev)
@@ -1000,7 +1002,7 @@ func TestCodexResumeOutput_ExecBlockFlushedAtEOF(t *testing.T) {
 	events := parseResumeOutput(input)
 
 	// The exec block should be flushed at EOF with JSON input
-	var completedTools []StreamEvent
+	var completedTools []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "tool_use" && ev.Tool != nil && ev.Tool.Done {
 			completedTools = append(completedTools, ev)
@@ -1093,14 +1095,14 @@ func TestCodexResumeOutput_SecondSession_ResumeFlow(t *testing.T) {
 		`{"type":"turn.completed","usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":20}}`,
 	}
 
-	ch1 := make(chan StreamEvent, 64)
+	ch1 := make(chan ai.StreamEvent, 64)
 	parser := &CodexStreamParser{}
 	for _, line := range firstSessionLines {
 		parser.ParseLine(line, ch1)
 	}
 	close(ch1)
 
-	var firstEvents []StreamEvent
+	var firstEvents []ai.StreamEvent
 	var threadID string
 	for ev := range ch1 {
 		_ = append(firstEvents, ev)
@@ -1132,8 +1134,8 @@ func TestCodexResumeOutput_SecondSession_ResumeFlow(t *testing.T) {
 	secondEvents := parseResumeOutput(resumeInput)
 
 	// Verify second session produces content
-	var contentEvents []StreamEvent
-	var thinkingEvents []StreamEvent
+	var contentEvents []ai.StreamEvent
+	var thinkingEvents []ai.StreamEvent
 	for _, ev := range secondEvents {
 		if ev.Type == "content" {
 			contentEvents = append(contentEvents, ev)
@@ -1205,7 +1207,7 @@ func TestCodexResumeOutput_SecondSession_WithToolUse(t *testing.T) {
 }
 
 func TestBuildCodexResumeArgs_SandboxPermissionsPresent(t *testing.T) {
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt: "test",
 		Model:  "codex-MiniMax-M2.7",
 	}
@@ -1238,7 +1240,7 @@ func TestBuildCodexResumeArgs_SandboxWriteAccess(t *testing.T) {
 	// sandbox level (--dangerously-bypass-approvals-and-sandbox).
 	// Without write access, commands like Edit/Write are silently blocked,
 	// causing the AI to exit without producing a text response.
-	req := ChatRequest{
+	req := ai.ChatRequest{
 		Prompt: "test",
 		Model:  "codex-MiniMax-M2.7",
 	}
@@ -1279,7 +1281,7 @@ func TestCodexResumeOutput_ThinkingOpenCloseSameLine(t *testing.T) {
 		"Here is my answer.\n"
 	events := parseResumeOutput(input)
 
-	var thinkingEvents, contentEvents []StreamEvent
+	var thinkingEvents, contentEvents []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "thinking" {
 			thinkingEvents = append(thinkingEvents, ev)
@@ -1316,7 +1318,7 @@ func TestCodexResumeOutput_ThinkingOpenCloseSeparateLines(t *testing.T) {
 		"The actual response.\n"
 	events := parseResumeOutput(input)
 
-	var thinkingEvents, contentEvents []StreamEvent
+	var thinkingEvents, contentEvents []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "thinking" {
 			thinkingEvents = append(thinkingEvents, ev)
@@ -1352,7 +1354,7 @@ func TestCodexResumeOutput_ThinkingCloseInlineInMiddle(t *testing.T) {
 		"My response.\n"
 	events := parseResumeOutput(input)
 
-	var thinkingEvents, contentEvents []StreamEvent
+	var thinkingEvents, contentEvents []ai.StreamEvent
 	for _, ev := range events {
 		if ev.Type == "thinking" {
 			thinkingEvents = append(thinkingEvents, ev)
@@ -1450,11 +1452,11 @@ codex
 Hi the`
 	reader := &errorReader{data: []byte(partial), err: fmt.Errorf("i/o timeout")}
 	scanner := bufio.NewScanner(reader)
-	ch := make(chan StreamEvent, 64)
+	ch := make(chan ai.StreamEvent, 64)
 	parseCodexResumeOutput(scanner, ch, "")
 	close(ch)
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}

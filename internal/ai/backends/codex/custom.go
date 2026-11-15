@@ -45,5 +45,5 @@ func init() {
 // Codex is a custom backend — it directly implements AIBackend,
 // not using the CLIBackend skeleton.
 func newCodexBackend() ai.AIBackend {
-	return &ai.CodexBackend{}
+	return &CodexBackend{}
 }

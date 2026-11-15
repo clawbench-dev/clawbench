@@ -1,13 +1,17 @@
-package ai
+package codex
 
-// parseCodexToolStart extracts a tool_use ToolCall (Done=false) from a Codex item.started event.
+import (
+	"clawbench/internal/ai"
+)
+
+// parseCodexToolStart extracts a tool_use ai.ToolCall (Done=false) from a Codex item.started event.
 // Returns nil if the message does not contain a command_execution item.
-func parseCodexToolStart(msg *CodexStreamMessage) *ToolCall {
+func parseCodexToolStart(msg *CodexStreamMessage) *ai.ToolCall {
 	if msg.Item == nil || msg.Item.Type != "command_execution" {
 		return nil
 	}
-	input := execCommandJSON(msg.Item.Command)
-	return &ToolCall{
+	input := ai.ExecCommandJSON(msg.Item.Command)
+	return &ai.ToolCall{
 		Name:  "Bash",
 		ID:    msg.Item.ID,
 		Input: input,
@@ -15,21 +19,21 @@ func parseCodexToolStart(msg *CodexStreamMessage) *ToolCall {
 	}
 }
 
-// parseCodexToolComplete extracts a tool_use ToolCall (Done=true) from a Codex item.completed event.
+// parseCodexToolComplete extracts a tool_use ai.ToolCall (Done=true) from a Codex item.completed event.
 // Returns nil if the message does not contain a command_execution item.
-func parseCodexToolComplete(msg *CodexStreamMessage) *ToolCall {
+func parseCodexToolComplete(msg *CodexStreamMessage) *ai.ToolCall {
 	if msg.Item == nil || msg.Item.Type != "command_execution" {
 		return nil
 	}
-	input := execCommandJSON(msg.Item.Command)
-	output := truncateToolOutput(msg.Item.AggregatedOutput)
+	input := ai.ExecCommandJSON(msg.Item.Command)
+	output := ai.TruncateToolOutput(msg.Item.AggregatedOutput)
 	status := ""
 	if msg.Item.ExitCode != nil && *msg.Item.ExitCode != 0 {
 		status = "error"
 	} else if output != "" {
 		status = "success"
 	}
-	return &ToolCall{
+	return &ai.ToolCall{
 		Name:   "Bash",
 		ID:     msg.Item.ID,
 		Input:  input,
@@ -39,10 +43,10 @@ func parseCodexToolComplete(msg *CodexStreamMessage) *ToolCall {
 	}
 }
 
-// emitBashToolCall creates a Bash ToolCall StreamEvent and sends it to the channel.
+// emitBashToolCall creates a Bash ai.ToolCall ai.StreamEvent and sends it to the channel.
 // Codex only has "command_execution"; we normalize to "Bash" with {"command":"..."} input.
 // This is the canonical form used throughout the codebase for Codex tool calls.
-func emitBashToolCall(ch chan<- StreamEvent, id, input, output string, done bool, exitCode *int) {
+func emitBashToolCall(ch chan<- ai.StreamEvent, id, input, output string, done bool, exitCode *int) {
 	status := ""
 	if done {
 		if exitCode != nil && *exitCode != 0 {
@@ -51,7 +55,7 @@ func emitBashToolCall(ch chan<- StreamEvent, id, input, output string, done bool
 			status = "success"
 		}
 	}
-	emitStreamEvent(ch, "codex", StreamEvent{Type: "tool_use", Tool: &ToolCall{
+	ai.EmitStreamEvent(ch, "codex", ai.StreamEvent{Type: "tool_use", Tool: &ai.ToolCall{
 		Name:   "Bash",
 		ID:     id,
 		Input:  input,
