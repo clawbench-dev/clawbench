@@ -155,6 +155,17 @@ describe('KBDocumentDrawer', () => {
     wrapper.unmount()
   })
 
+  it('hides the semantic state when no semantic index is configured', async () => {
+    // The fixture document is ready but un-vectorized; without an embedder that
+    // is permanent, so it must read "Searchable", not "Semantic indexing".
+    const wrapper = mountDrawer({ vectorEnabled: false })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Searchable')
+    expect(wrapper.text()).not.toContain('Semantic indexing')
+    wrapper.unmount()
+  })
+
   it('translates a stable failure reason instead of showing the raw message', async () => {
     h.fetchDetail.mockResolvedValue(
       detail({

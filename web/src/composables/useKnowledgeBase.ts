@@ -550,7 +550,9 @@ export function useKnowledgeBase() {
       (d) =>
         d.status === 'pending' ||
         d.status === 'extracting' ||
-        (d.status === 'ready' && d.fts_ready && !d.vector_ready),
+        // Only meaningful when semantic search is configured: with no embedder
+        // `vector_ready` stays false forever and this would poll endlessly.
+        (vectorEnabled.value && d.status === 'ready' && d.fts_ready && !d.vector_ready),
     )
   }
 

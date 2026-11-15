@@ -66,6 +66,17 @@ describe('status helpers', () => {
     expect(statusLabel(doc({ status: 'ready', vector_ready: false }), t)).toBe('kb.statusReadyFts')
     expect(statusLabel(doc({ status: 'ready', vector_ready: true }), t)).toBe('kb.statusReady')
   })
+
+  it('treats an un-vectorized document as searchable when no semantic index exists', () => {
+    // Without an embedder `vector_ready` is false forever; that must not read
+    // as "keyword-only backlog", and the row must not claim it is indexing.
+    const unvectorized = doc({ status: 'ready', vector_ready: false })
+    expect(statusKind(unvectorized, false)).toBe('ready')
+    expect(statusLabel(unvectorized, t, false)).toBe('kb.statusReady')
+    // Real work states are still reported with the index off.
+    expect(statusKind(doc({ status: 'extracting' }), false)).toBe('working')
+    expect(statusKind(doc({ status: 'failed' }), false)).toBe('failed')
+  })
 })
 
 describe('formatSize', () => {

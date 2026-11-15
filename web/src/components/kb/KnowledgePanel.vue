@@ -420,7 +420,7 @@
                             <span class="kb-sep">·</span>
                             <span>{{ t('kb.chunks', { count: doc.chunk_count }) }}</span>
                           </template>
-                          <template v-if="doc.status === 'ready'">
+                          <template v-if="doc.status === 'ready' && vectorEnabled">
                             <span class="kb-sep">·</span>
                             <span :class="{ 'kb-muted': !doc.vector_ready }">
                               {{ doc.vector_ready ? t('kb.vectorReady') : t('kb.vectorPending') }}
@@ -607,6 +607,7 @@
       :open="drawerOpen"
       :document-id="drawerDocId"
       :focus-chunk-id="drawerChunkId"
+      :vector-enabled="vectorEnabled"
       @close="closeDocument"
       @loaded="onDocumentLoaded"
       @reindex="onDrawerReindex"
@@ -781,7 +782,11 @@ const docHealth = computed(() => {
   const total = documents.value.length
   const failed = documents.value.filter((d) => d.status === 'failed').length
   const working = documents.value.filter((d) => d.status === 'pending' || d.status === 'extracting').length
-  const ftsOnly = documents.value.filter((d) => d.status === 'ready' && !d.vector_ready).length
+  // Without a semantic index every document stays un-vectorized; that is the
+  // library's normal state (the header already says so), not a backlog.
+  const ftsOnly = vectorEnabled.value
+    ? documents.value.filter((d) => d.status === 'ready' && !d.vector_ready).length
+    : 0
   return { total, failed, working, ftsOnly }
 })
 
@@ -1065,7 +1070,14 @@ watch(
 )
 
 watch(documents, () => {
-  if (documents.value.some((d) => d.status === 'pending' || d.status === 'extracting' || (d.status === 'ready' && !d.vector_ready))) {
+  if (
+    documents.value.some(
+      (d) =>
+        d.status === 'pending' ||
+        d.status === 'extracting' ||
+        (vectorEnabled.value && d.status === 'ready' && !d.vector_ready),
+    )
+  ) {
     startPolling()
   }
 })
@@ -1689,11 +1701,11 @@ function applyHitHighlights(): void {
 watch(searchResult, () => nextTick(applyHitHighlights))
 
 function statusKindOf(doc: KBDocument): string {
-  return statusKind(doc)
+  return statusKind(doc, vectorEnabled.value)
 }
 
 function statusLabelOf(doc: KBDocument): string {
-  return statusLabel(doc, tf)
+  return statusLabel(doc, tf, vectorEnabled.value)
 }
 
 // A failed status refresh must not hide the panel; the collections call is the

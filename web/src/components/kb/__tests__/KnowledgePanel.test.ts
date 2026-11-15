@@ -261,6 +261,15 @@ describe('KnowledgePanel', () => {
   }
 
   it('lists collections grouped by scope and shows document status', async () => {
+    // With a semantic index configured, a ready document that has no vector
+    // yet is keyword-searchable only.
+    const base = h.apiGet.getMockImplementation()!
+    h.apiGet.mockImplementation(async (url: string) => {
+      if (url === '/api/kb/status') {
+        return { available: true, vector_enabled: true, stats: { collections: 2, documents: 2, ready_docs: 2, failed_docs: 0, pending_docs: 0, chunks: 6, embedded_chunks: 3, stored_bytes: 2048 } }
+      }
+      return base(url)
+    })
     const wrapper = mountPanel()
     await flushPromises()
 
@@ -276,6 +285,35 @@ describe('KnowledgePanel', () => {
     expect(rows[0].text()).toContain('Searchable')
     // The second document has no vector yet: it is keyword-searchable only.
     expect(rows[1].text()).toContain('Keywords only')
+    wrapper.unmount()
+  })
+
+  it('does not report semantic indexing for every file when no semantic index exists', async () => {
+    // Default fixture: vector_enabled is false, so `vector_ready` is false for
+    // every document. That is the library's normal state, not a backlog.
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-kb-doc]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain('Searchable')
+    expect(rows[1].text()).toContain('Searchable')
+
+    const text = wrapper.text()
+    expect(text).not.toContain('Semantic indexing')
+    expect(text).not.toContain('Keywords only')
+    expect(text).not.toContain('keyword-only')
+    expect(text).toContain('Keyword search only')
+    wrapper.unmount()
+  })
+
+  it('does not start polling for vectors when no semantic index exists', async () => {
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval')
+    const wrapper = mountPanel()
+    await flushPromises()
+    const polled = intervalSpy.mock.calls.some(([, ms]) => ms === 2500)
+    intervalSpy.mockRestore()
+    expect(polled).toBe(false)
     wrapper.unmount()
   })
 

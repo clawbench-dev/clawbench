@@ -34,19 +34,24 @@ export function formatLocation(loc: string | undefined, t: TFn): string {
 
 export type StatusKind = 'failed' | 'pending' | 'working' | 'fts' | 'ready'
 
-export function statusKind(doc: KBDocument): StatusKind {
+/**
+ * `vectorOn` tells whether the semantic index is configured at all. When it is
+ * not, `vector_ready` never becomes true, so a "ready but un-vector" document
+ * would otherwise be labelled "indexing" forever.
+ */
+export function statusKind(doc: KBDocument, vectorOn = true): StatusKind {
   if (doc.status === 'failed') return 'failed'
   if (doc.status === 'pending') return 'pending'
   if (doc.status === 'extracting') return 'working'
-  if (!doc.vector_ready) return 'fts'
+  if (vectorOn && !doc.vector_ready) return 'fts'
   return 'ready'
 }
 
-export function statusLabel(doc: KBDocument, t: TFn): string {
+export function statusLabel(doc: KBDocument, t: TFn, vectorOn = true): string {
   if (doc.status === 'failed') return t('kb.statusFailed')
   if (doc.status === 'pending') return t('kb.statusPending')
   if (doc.status === 'extracting') return t('kb.statusExtracting')
-  if (!doc.vector_ready) return t('kb.statusReadyFts')
+  if (vectorOn && !doc.vector_ready) return t('kb.statusReadyFts')
   return t('kb.statusReady')
 }
 

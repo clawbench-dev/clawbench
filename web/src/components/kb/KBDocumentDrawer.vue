@@ -28,7 +28,7 @@
             <span aria-hidden="true">·</span>
             <span>{{ t('kb.chunks', { count: detail.document.chunk_count }) }}</span>
           </template>
-          <template v-if="detail.document.status === 'ready'">
+          <template v-if="detail.document.status === 'ready' && vectorOn">
             <span aria-hidden="true">·</span>
             <span :class="{ 'is-muted': !detail.document.vector_ready }">
               {{ detail.document.vector_ready ? t('kb.vectorReady') : t('kb.vectorPending') }}
@@ -157,7 +157,12 @@ const props = defineProps<{
   documentId: number | null
   /** Passage to centre on; 0 means "start at the top". */
   focusChunkId?: number
+  /** Whether a semantic index exists; when not, `vector_ready` is always false
+   *  and must not be presented as "indexing". */
+  vectorEnabled?: boolean
 }>()
+
+const vectorOn = computed(() => props.vectorEnabled !== false)
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -194,11 +199,11 @@ const errorText = computed(() =>
 )
 
 function kindOf(doc: KBDocumentDetail['document']): string {
-  return statusKind(doc)
+  return statusKind(doc, vectorOn.value)
 }
 
 function labelOf(doc: KBDocumentDetail['document']): string {
-  return statusLabel(doc, tf)
+  return statusLabel(doc, tf, vectorOn.value)
 }
 
 function locationText(loc?: string): string {
