@@ -16,6 +16,21 @@ try {
   // web/node_modules missing or not a symlink — nothing extra to allow
 }
 
+// A git worktree created with `git worktree add` often has NO node_modules of
+// its own: the checkout's root node_modules is a symlink into the primary
+// checkout, and web/node_modules does not exist at all. Every package then
+// resolves through that symlink, so the realpath lies outside `__dirname` and
+// Vite denies it (e.g. @lobehub/icons-static-svg SVG assets). Allow the root
+// node_modules realpath too — a no-op in the primary checkout, where it is
+// already `__dirname/node_modules`.
+const rootNodeModules = resolve(__dirname, 'node_modules')
+let rootNodeModulesReal: string | null = null
+try {
+  rootNodeModulesReal = realpathSync(rootNodeModules)
+} catch {
+  // no node_modules installed — nothing extra to allow
+}
+
 // Vite plugin: resolve static asset references (e.g., /logo.png) to the
 // actual file in the assets directory so they can be found during tests.
 // In production Vite serves these from publicDir, but during unit tests
@@ -57,7 +72,11 @@ export default defineConfig({
   publicDir: resolve(__dirname, 'assets'),
   server: {
     fs: {
-      allow: [__dirname, ...(webNodeModulesReal ? [webNodeModulesReal] : [])],
+      allow: [
+        __dirname,
+        ...(webNodeModulesReal ? [webNodeModulesReal] : []),
+        ...(rootNodeModulesReal ? [rootNodeModulesReal] : []),
+      ],
     },
   },
   test: {

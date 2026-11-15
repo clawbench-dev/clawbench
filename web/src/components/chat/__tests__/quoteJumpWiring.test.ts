@@ -64,4 +64,18 @@ describe('quote jump wiring', () => {
     }
     expect(canJumpToSource(q)).toBe(false)
   })
+
+  // A forge reference leaves through `openExternalUrl`, not through the dock, so
+  // the tab's own gate cannot cover it. Turning the integration off has to be
+  // checked here or the card keeps opening GitHub after polling stopped and the
+  // bindings were cleared. Source-scanned for the same reason as the locator
+  // table above: "the browser opened nothing" is not observable in jsdom.
+  it('refuses a forge reference while forge is off, and only a forge reference', () => {
+    expect(body, 'the url branch must consult the forge switch').toContain('isForgeQuote(q)')
+    expect(body).toContain('forgeEnabled')
+    expect(body).toContain('notifyFeatureDisabled()')
+    // The classification itself is behaviour-tested in quoteItem.test.ts; this
+    // pins that it is the FORGE kind that is gated, not every external link.
+    expect(src).toMatch(/isForgeQuote\(q\) && !forgeEnabled\.value/)
+  })
 })

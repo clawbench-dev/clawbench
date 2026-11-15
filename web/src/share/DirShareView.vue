@@ -8,6 +8,8 @@
     v-if="mode === 'file'"
     :initial-path="filePath"
     can-back-out
+    :allow-download="allowDownload"
+    :project-name="projectName"
     @back-out="backToFolder"
   />
 
@@ -25,6 +27,10 @@
         <ArrowLeft :size="16" />
       </button>
       <span class="share-file-name" :title="title">{{ title }}</span>
+      <!-- Source project, when the share rules allow naming it (see ShareView). -->
+      <span v-if="projectName" class="share-project-chip" :title="projectName" data-role="share-project">
+        {{ t('share.fromProject', { name: projectName }) }}
+      </span>
       <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
       <span v-else-if="error" class="share-status share-error">{{ error }}</span>
       <span class="share-spacer" />
@@ -98,7 +104,7 @@
             <!-- A real link: right-clicking it offers the browser's "copy link
                  address", which is how a reader gets a per-file direct URL. -->
             <a
-              v-if="entry.type !== 'dir'"
+              v-if="entry.type !== 'dir' && allowDownload"
               class="share-btn dir-row-download"
               :href="entryDownloadUrl(entry)"
               :title="t('share.dir.download')"
@@ -162,6 +168,20 @@ interface ShareListing {
   crumbs?: ShareBreadcrumb[]
   entries?: ShareListEntry[]
 }
+
+const props = withDefaults(defineProps<{
+  /** Whether the server's share rules allow downloading. False hides the
+   *  per-row download buttons and is forwarded to the file view. */
+  allowDownload?: boolean
+  /** Source project name to show in the topbar, '' when the server hides it. */
+  projectName?: string
+}>(), {
+  allowDownload: true,
+  projectName: '',
+})
+// Destructured for the template; the values are fixed for the page's lifetime
+// (they come from the meta response, which is fetched before this view mounts).
+const { allowDownload, projectName } = props
 
 const { t } = useI18n()
 

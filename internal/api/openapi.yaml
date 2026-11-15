@@ -695,6 +695,23 @@ paths:
         `mail.enabled` 是内置邮件客户端的总开关（默认 `true`）：关闭后服务端停止后台
         收信与邮件触发任务，前端隐藏邮件页签；已配置的邮箱保留，重新打开即恢复。
 
+        `tasks.enabled` 是定时任务的总开关（默认 `true`）：关闭后停止 cron 调度、取消
+        运行中的执行并丢弃排队中的事件任务，手动运行与新建/编辑任务一律拒绝（`409`
+        `TasksDisabled`）。任务配置与执行历史保留；重新打开后从当时起继续调度，**不补跑**
+        关闭期间错过的运行。同级还有 `retention_enabled` / `retention_days`（执行记录
+        自动清理）、`notify_on_success` / `notify_on_failure`（成功/失败通知）和
+        `timezone`（cron 时区，空 = 服务器本地）。
+
+        `share.enabled` 是分享链接的总开关（默认 `true`）：关闭即**撤销**所有已发出的
+        文件 / 会话 / 会议分享链接（文件与会话行被删除、会议记录的公开标记被清零），
+        旧链接立即 404，新建分享返回 `409` `ShareDisabled`。重新打开**不会**恢复已撤销
+        的链接。同级还有 `allow_files` / `allow_sessions` / `allow_meetings`（按类型
+        拦新建）、`allow_download`（文件分享下载）、`link_ttl_days`（新建链接有效期，
+        `0` = 永久，写在链接上，不追溯已有链接）和 `show_project_name`（分享页显示
+        来源项目名）。
+
+        `git_history.page_size` 是 Git 历史页每次加载的提交数（默认 `30`）。
+
         `user` 是用户本人的一级身份配置：`user.nickname` 是智能体称呼你的名字（留空则
         回退静态字面量 `User`；群聊路由与会议显示名共用，不能含引号 / 尖括号 / 逗号 /
         控制字符，且不得与智能体同名）；`user.profile` 是你的自述，注入每个智能体的系统
@@ -751,6 +768,23 @@ paths:
 
         `mail.enabled` 只停后台收信与邮件触发任务并隐藏邮件页签，**不删除邮箱账号**，
         因此关闭时无需确认、随时可恢复；热更新，不需要重启。
+
+        `tasks.enabled` 与 `share.enabled` 是**破坏性**开关，都在配置写入成功后执行：
+
+        - `tasks.enabled=false`：停止 cron、取消所有运行中的执行、丢弃排队中的事件任务。
+          重新置为 `true` 会重启调度，但**不补跑**关闭期间错过的运行。
+        - `share.enabled=false`：撤销全部文件 / 会话 / 会议分享链接（删除文件与会话分享
+          行、清零会议记录的公开标记），旧链接立即 404。重新置为 `true` **不会**恢复
+          这些链接。
+
+        两者的清理失败都不返回 500（同 `forge.enabled`）：配置已是权威事实，返回 500
+        会让客户端把开关回滚成 `true`。失败原因放进 `warnings`。
+
+        子键：`tasks.retention_enabled` / `tasks.retention_days`（1–3650）、
+        `tasks.notify_on_success` / `tasks.notify_on_failure`、`tasks.timezone`
+        （IANA 名称或空，非法值返回 400）；`share.allow_files` / `allow_sessions` /
+        `allow_meetings` / `allow_download`、`share.link_ttl_days`（0–3650，0 = 永久）、
+        `share.show_project_name`；`git_history.page_size`（1–200）。全部热更新。
 
         `port_forward.enabled` 仍为白名单键，但**值被忽略**：任何值都返回 200，
         存储值恒为 `true`（功能恒可用，走哪条线由 `transport` 决定）。
@@ -4477,6 +4511,11 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           description: token 不存在或不属于当前项目
+        "409":
+          description: |
+            分享功能已关闭时不能发布（`enabled=true`，`msgKey=ShareDisabled`），
+            或会议分享被 `share.allow_meetings=false` 关闭（`msgKey=ShareMeetingsDisabled`）；
+            取消发布始终允许。
         "502":
           description: STT 转写失败（该段留空，不影响共享）
 
@@ -5242,6 +5281,10 @@ paths:
       responses:
         "200":
           description: 分享 token
+        "409":
+          description: |
+            分享功能已关闭（`msgKey=ShareDisabled`），或文件分享被
+            `share.allow_files=false` 关闭（`msgKey=ShareFilesDisabled`）。
     get:
       tags: [Share]
       summary: 列出分享
@@ -5337,6 +5380,10 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+        "409":
+          description: |
+            分享功能已关闭（`msgKey=ShareDisabled`），或会话分享被
+            `share.allow_sessions=false` 关闭（`msgKey=ShareSessionsDisabled`）。
     delete:
       tags: [Share]
       summary: 关闭会话分享
@@ -5453,6 +5500,9 @@ paths:
         支持 `?path=`）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）、
         `{token}/doc/{dirKey}/{rel}`（HTML 文档及其资源，见下）。token 不存在一律 404，
         零信息暴露。
+
+        `{token}/download` 在 `share.allow_download=false` 时返回 **403**
+        （`msgKey=ShareDownloadDisabled`）；预览与 `{token}/local/...` 不受影响。
 
         **目录分享（`{token}/list`）**返回 `{kind, name, path, root, parent, atRoot,
         crumbs, entries}`：`kind` 为 `dir` 时 `entries` 是 `{name, type, size, modified}`
@@ -5586,6 +5636,9 @@ paths:
           description: |
             `{token}/session` 专用：装配并发已达上限且排队超过服务端窗口。
             带 `Retry-After`（秒）。token 无效时仍是 404，不会因为负载变成 503。
+        "403":
+          description: |
+            `{token}/download` 专用：`share.allow_download=false`（`msgKey=ShareDownloadDisabled`）。
         "404":
           $ref: "#/components/responses/Error"
 
@@ -7246,6 +7299,8 @@ paths:
           description: 新任务
         "400":
           description: 字段缺失 / cron 非法 / 脚本超时为负，或目标 agent 已被禁用（`AgentDisabled`）
+        "409":
+          description: 任务功能已关闭（`msgKey=TasksDisabled`）
 
   /api/tasks/{id}:
     get:
@@ -7273,6 +7328,10 @@ paths:
         字段未替换的无意义结果。事件任务需等待匹配的 Forge 事件触发。
         **注意**：子路径不会被父资源兜底。对 `/api/tasks/{id}/executions` 发 PUT
         返回 405，未知子路径（如 `/api/tasks/{id}/bogus`）返回 404，均不会更新任务。
+
+        任务功能关闭（`tasks.enabled=false`）时，`resume`、`trigger` 与完整更新
+        （`action=update` / 缺省）返回 `409` `TasksDisabled`；`read`、`pause`、`cancel`、
+        `stop`、`deleteExecution`、`deleteAllExecutions` 仍可用（查看与清理）。
       operationId: taskUpdate
       parameters:
         - $ref: "#/components/parameters/Id"

@@ -17,10 +17,8 @@ import {
   computeIsWideScreen,
   isChatPanelVisible,
   WIDE_SCREEN_DOCK_TABS,
-  WIDE_SCREEN_PRIMARY_TABS,
-  wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
-import { DOCK_TABS, DOCK_TAB_IDS, isDockTabId, secondaryDockTabs } from '@/composables/dockTabs'
+import { DOCK_TABS, DOCK_TAB_IDS, dockTabs, isDockTabId, type DockTabId } from '@/composables/dockTabs'
 import { PANEL_KEY_PREFIX, _resetLayoutScopeForTest, setLayoutProjectRoot, setLayoutScopeMode } from '@/utils/panelState'
 import { portForwardUnavailable } from '@/utils/portForwardUtils'
 import { DEFAULT_RATIO } from '@/utils/splitRatio'
@@ -373,27 +371,17 @@ describe('activePane focus tracking', () => {
   })
 })
 
-describe('wideDockTabOrder', () => {
-  // Secondary tabs = the registry minus the primary head, in registry order.
-  const SECONDARY_TABS = DOCK_TABS.filter((t) => !t.primary).map((t) => t.id)
-
-  it('puts the fixed primary tabs first, then the secondary tabs in given order', () => {
-    const all = wideDockTabOrder(SECONDARY_TABS)
-    expect(all).toEqual([...WIDE_SCREEN_PRIMARY_TABS, ...SECONDARY_TABS])
-    expect(all).toEqual(WIDE_SCREEN_DOCK_TABS)
-  })
-
-  it('preserves secondary-tab order after filtering (terminal/proxy disabled)', () => {
-    expect(wideDockTabOrder(['forge', 'tasks', 'settings'])).toEqual(['browse', 'view', 'history', 'forge', 'tasks', 'settings'])
-    expect(wideDockTabOrder([])).toEqual(['browse', 'view', 'history'])
+describe('wide dock order', () => {
+  it('is the registry order — one list, no head/tail concatenation', () => {
+    expect(WIDE_SCREEN_DOCK_TABS).toEqual(DOCK_TAB_IDS)
+    expect(dockTabs()).toEqual(DOCK_TAB_IDS)
   })
 
   it('is deterministic regardless of any runtime geometry', () => {
-    const order = wideDockTabOrder(['tasks', 'settings'])
-    expect(order).toEqual(wideDockTabOrder(['tasks', 'settings']))
     // The whole visible dock never depends on measured space — regression guard
     // for the old height-measured overflow that collapsed tabs into a popup.
-    expect(order).toHaveLength(WIDE_SCREEN_PRIMARY_TABS.length + 2)
+    expect(dockTabs()).toEqual(dockTabs())
+    expect(dockTabs()).toHaveLength(DOCK_TAB_IDS.length)
   })
 })
 
@@ -413,31 +401,32 @@ describe('dock tab registry (single source of truth)', () => {
     for (const id of ids) expect(isDockTabId(id)).toBe(true)
   })
 
-  it('primary tabs are a prefix-ordered subset of the registry', () => {
-    const primary = DOCK_TABS.filter((t) => t.primary).map((t) => t.id)
-    expect(primary).toEqual([...WIDE_SCREEN_PRIMARY_TABS])
-    // Primary tabs must come first in registry order, because the dock renders
-    // WIDE_SCREEN_PRIMARY_TABS before the secondary list.
-    expect(DOCK_TABS.map((t) => t.id).slice(0, primary.length)).toEqual(primary)
+  it('has four permanent tabs, and none of them has a fixed position', () => {
+    // The old "primary" flag meant both "cannot be hidden" and "rendered in the
+    // fixed head". Only the first survives: permanent tabs keep their default
+    // slots but the user may drag them anywhere.
+    const permanent = DOCK_TABS.filter((t) => !t.closable).map((t) => t.id)
+    expect(permanent).toEqual(['browse', 'view', 'notifications', 'settings'])
+    const order = [...DOCK_TAB_IDS].reverse()
+    expect(dockTabs({ order })).toEqual(order)
   })
 
-  it('places notifications immediately before settings, which stays the final tab', () => {
+  it('places notifications immediately before settings in the DEFAULT order', () => {
     // The dock order is a product decision, not an implementation detail:
     // notifications is the last stop before leaving the tool tabs, while
-    // settings stays the last tab (the "exit" affordance at the end of the
-    // dock). Asserting the tail rather than the whole list keeps this from
-    // breaking every time an unrelated tab is inserted earlier.
+    // settings is the "exit" affordance at the end. This is the default only —
+    // both can be dragged elsewhere.
     const ids = DOCK_TABS.map((t) => t.id)
     expect(ids[ids.length - 1]).toBe('settings')
     expect(ids[ids.length - 2]).toBe('notifications')
   })
 
-  it('keeps port mapping before notifications in the rendered secondary list', () => {
+  it('keeps port mapping before notifications in the rendered list', () => {
     // Guards the concrete move: notifications used to sit between tasks and
     // terminal, so the rendered order changed even though the id set did not.
     // Without this, a revert of the registry edit would still pass every other
     // test.
-    const rendered = secondaryDockTabs()
+    const rendered = dockTabs()
     expect(rendered.indexOf('proxy')).toBeGreaterThan(rendered.indexOf('terminal'))
     expect(rendered.indexOf('proxy')).toBeGreaterThan(rendered.indexOf('stats'))
     expect(rendered.indexOf('notifications')).toBeGreaterThan(rendered.indexOf('proxy'))
@@ -449,7 +438,7 @@ describe('dock tab registry (single source of truth)', () => {
     // machine offers", and port mapping must stay the last of the pair. The
     // share centre sits on the other side of 会议, keeping the outgoing-access
     // trio together: 会议 → 分享 → 端口映射.
-    const rendered = secondaryDockTabs()
+    const rendered = dockTabs()
     expect(rendered.indexOf('live')).toBe(rendered.indexOf('share') - 1)
     expect(rendered.indexOf('share')).toBe(rendered.indexOf('proxy') - 1)
   })
@@ -458,8 +447,8 @@ describe('dock tab registry (single source of truth)', () => {
     // 会议 is no longer gated on capture: the record list is readable
     // everywhere, and a voice meeting only needs a microphone. What the host
     // cannot do is explained inside the create page.
-    expect(secondaryDockTabs()).toContain('live')
-    expect(secondaryDockTabs({ portForwardUnavailable: true })).toContain('live')
+    expect(dockTabs()).toContain('live')
+    expect(dockTabs({ unavailable: new Set<DockTabId>(['proxy']) })).toContain('live')
   })
 
   it('has no separate notes tab any more', () => {
@@ -507,13 +496,13 @@ describe('dock tab registry (single source of truth)', () => {
 describe('wide dock tab reachability (regression)', () => {
   // A tab rendered in the wide dock but not switchable is a dead button:
   // switchLeftTab() rejects it, so clicking does nothing visible. That was the
-  // forge tab bug — it was rendered by the wide dock (App.vue's overflowTabs,
-  // which starts with 'forge') but missing from the whitelist.
+  // forge tab bug — it was rendered by the wide dock but missing from the
+  // whitelist.
   //
-  // The render list comes from secondaryDockTabs(), the same function App.vue's
-  // overflowTabs computed calls, so this asserts the real render list rather
+  // The render list comes from dockTabs(), the same function App.vue's
+  // visibleDockTabs computed calls, so this asserts the real render list rather
   // than the registry compared against itself.
-  const RENDERED_ALL = wideDockTabOrder(secondaryDockTabs())
+  const RENDERED_ALL = dockTabs()
 
   it('every tab the wide dock renders can actually be switched to', () => {
     // Direct whitelist coverage: the dock renders exactly these tabs, so the
@@ -538,91 +527,96 @@ describe('wide dock tab reachability (regression)', () => {
     // The gates change *which* tabs render; every combination must remain
     // switchable. This is the case the old registry-vs-registry test could not
     // see, because the gates live outside the registry.
-    for (const terminalDisabled of [false, true]) {
-      for (const portForwardUnavailable of [false, true]) {
-        for (const forgeHidden of [false, true]) {
-          for (const mailHidden of [false, true]) {
-            const rendered = wideDockTabOrder(
-              secondaryDockTabs({ terminalDisabled, portForwardUnavailable, forgeHidden, mailHidden }),
-            )
-            expect(
-              rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab)),
-              `gate combination terminalDisabled=${terminalDisabled} portForwardUnavailable=${portForwardUnavailable} forgeHidden=${forgeHidden} mailHidden=${mailHidden}`,
-            ).toEqual([])
-          }
-        }
+    const featureSets: (Set<DockTabId> | undefined)[] = [
+      undefined,
+      new Set<DockTabId>(['forge', 'mail', 'tasks', 'share', 'kb']),
+      new Set<DockTabId>(['forge', 'mail', 'tasks', 'share', 'kb', 'terminal']),
+    ]
+    const unavailableSets: (Set<DockTabId> | undefined)[] = [
+      undefined,
+      new Set<DockTabId>(['terminal']),
+      new Set<DockTabId>(['terminal', 'proxy']),
+    ]
+    for (const unavailable of unavailableSets) {
+      for (const featureDisabled of featureSets) {
+        const rendered = dockTabs({ unavailable, featureDisabled })
+        expect(
+          rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab)),
+          `gate combination unavailable=${[...(unavailable ?? [])].join('+') || '-'} features=${[...(featureDisabled ?? [])].join('+') || '-'}`,
+        ).toEqual([])
       }
     }
   })
 
-  it('gates hide exactly terminal, proxy and forge, and nothing else', () => {
-    const all = secondaryDockTabs()
+  it('gates hide exactly terminal and proxy, and nothing else', () => {
+    const all = dockTabs()
     expect(all).toContain('terminal')
     expect(all).toContain('proxy')
-    expect(all).toContain('forge')
-    expect(secondaryDockTabs({ terminalDisabled: true })).not.toContain('terminal')
-    expect(secondaryDockTabs({ terminalDisabled: true })).toContain('proxy')
-    expect(secondaryDockTabs({ portForwardUnavailable: true })).not.toContain('proxy')
-    expect(secondaryDockTabs({ portForwardUnavailable: true })).toContain('terminal')
-    expect(secondaryDockTabs({ terminalDisabled: true, portForwardUnavailable: true })).not.toContain('terminal')
-    expect(secondaryDockTabs({ terminalDisabled: true, portForwardUnavailable: true })).not.toContain('proxy')
-    // Order is registry order with the gated ones removed, never reordered.
-    expect(secondaryDockTabs({ terminalDisabled: true, portForwardUnavailable: true })).toEqual(
+    expect(dockTabs({ unavailable: new Set<DockTabId>(['terminal']) })).not.toContain('terminal')
+    expect(dockTabs({ unavailable: new Set<DockTabId>(['terminal']) })).toContain('proxy')
+    expect(dockTabs({ unavailable: new Set<DockTabId>(['proxy']) })).not.toContain('proxy')
+    expect(dockTabs({ unavailable: new Set<DockTabId>(['proxy']) })).toContain('terminal')
+    const both = new Set<DockTabId>(['terminal', 'proxy'])
+    expect(dockTabs({ unavailable: both })).not.toContain('terminal')
+    expect(dockTabs({ unavailable: both })).not.toContain('proxy')
+    // Order is the registry order with the gated ones removed, never reordered.
+    expect(dockTabs({ unavailable: both })).toEqual(
       all.filter((t) => t !== 'terminal' && t !== 'proxy'),
     )
   })
 
-  it('hides only the forge entry when the user turns the integration off', () => {
+  it('hides only the forge entry when the feature is switched off', () => {
     // Issue #590: turning the integration off removes its dock entry. It must
     // disappear from the rendered list and NOTHING else may move.
-    const hidden = secondaryDockTabs({ forgeHidden: true })
+    const hidden = dockTabs({ featureDisabled: new Set<DockTabId>(['forge']) })
     expect(hidden).not.toContain('forge')
-    expect(hidden).toEqual(secondaryDockTabs().filter((t) => t !== 'forge'))
-    // The other gates stay independent: hiding forge must not hide terminal or
-    // proxy, and their gates must not hide forge.
+    expect(hidden).toEqual(dockTabs().filter((t) => t !== 'forge'))
+    // The other gates stay independent.
     expect(hidden).toContain('terminal')
     expect(hidden).toContain('proxy')
-    expect(secondaryDockTabs({ terminalDisabled: true, portForwardUnavailable: true })).toContain('forge')
+    expect(
+      dockTabs({ unavailable: new Set<DockTabId>(['terminal', 'proxy']) }),
+    ).toContain('forge')
   })
 
   it('shows the forge entry when the switch is unset', () => {
     // `undefined` is "config not loaded yet" (or a server that predates the
     // switch) and must read as visible — hiding the tab during the first paint
     // would make it flicker in once /api/config arrives.
-    expect(secondaryDockTabs({ forgeHidden: false })).toContain('forge')
-    expect(secondaryDockTabs({})).toContain('forge')
+    expect(dockTabs({})).toContain('forge')
+    expect(dockTabs({ featureDisabled: new Set<DockTabId>() })).toContain('forge')
   })
 
   it('hides only the mail entry when the mail feature is switched off', () => {
-    // Same contract as the forge gate: the entry disappears, nothing else moves,
-    // and the gates stay independent of each other.
-    const hidden = secondaryDockTabs({ mailHidden: true })
+    // Same contract as the forge gate: the entry disappears, nothing else moves.
+    const hidden = dockTabs({ featureDisabled: new Set<DockTabId>(['mail']) })
     expect(hidden).not.toContain('mail')
-    expect(hidden).toEqual(secondaryDockTabs().filter((t) => t !== 'mail'))
+    expect(hidden).toEqual(dockTabs().filter((t) => t !== 'mail'))
     expect(hidden).toContain('forge')
     expect(hidden).toContain('terminal')
-    expect(secondaryDockTabs({ forgeHidden: true })).toContain('mail')
-    // Unset means "not known yet" → visible, so the entry cannot flicker away
-    // during the first paint.
-    expect(secondaryDockTabs({ mailHidden: false })).toContain('mail')
-    expect(secondaryDockTabs({})).toContain('mail')
+    expect(dockTabs({ featureDisabled: new Set<DockTabId>(['forge']) })).toContain('mail')
   })
 
   it('keeps the proxy tab on an h2-only install (SSH off, h2 allowed)', () => {
     // Regression: the dock gate used to be driven by the SSH listener alone, so
     // `port_forward.enabled: false` + `transport: h2|both` — the exact scenario
     // this feature targets — filtered the port-mapping tab out of the dock and
-    // made its "port mapping unavailable" banner unreachable. The gate now
-    // consumes the shared predicate, which reads such an install as AVAILABLE.
+    // made its "port mapping unavailable" banner unreachable. The shared
+    // predicate reads such an install as AVAILABLE, and that boolean is what
+    // App.vue folds into the `unavailable` set.
     expect(portForwardUnavailable(false, true)).toBe(false)
-    expect(secondaryDockTabs({ portForwardUnavailable: portForwardUnavailable(false, true) })).toContain('proxy')
+    const unavailable = new Set<DockTabId>()
+    if (portForwardUnavailable(false, true)) unavailable.add('proxy')
+    expect(dockTabs({ unavailable })).toContain('proxy')
   })
 
   it('still hides the proxy tab when neither SSH nor h2 can carry the tunnel', () => {
     // The old, correct behaviour must survive: SSH off with no h2 path really is
     // "unavailable", so the tab stays hidden.
     expect(portForwardUnavailable(false, false)).toBe(true)
-    expect(secondaryDockTabs({ portForwardUnavailable: portForwardUnavailable(false, false) })).not.toContain('proxy')
+    const unavailable = new Set<DockTabId>()
+    if (portForwardUnavailable(false, false)) unavailable.add('proxy')
+    expect(dockTabs({ unavailable })).not.toContain('proxy')
   })
 
   it('forge is switchable', () => {

@@ -14,8 +14,11 @@ describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
     const map = getServerFieldToLabelKey()
 
-    // Key server fields that can appear in changed_cold_fields
-    expect(map['terminal.enabled']).toBeTruthy()
+    // Key server fields that can appear in changed_cold_fields. The three
+    // master switches moved to the Dock feature manager, but they are still
+    // server keys, so the restart dialog can still name them.
+    expect(map['terminal.enabled']).toBe('settings.items.terminalEnabled')
+    expect(map['terminal.buffer_lines']).toBeTruthy()
     expect(map['tts.engine']).toBeTruthy()
     expect(map['rag.base_url']).toBeTruthy()
     // port_forward.enabled is deliberately absent: the listener is always on
@@ -247,18 +250,28 @@ describe('settingsFieldMap', () => {
     expect(map['rag.search_pool_size']).toBeTruthy()
   })
 
-  it('exposes rag.batch_size as a server number field', () => {
+  it('exposes rag.batch_size as a server number field under 会话管理', () => {
+    // Batch size decides how many messages the indexer reads per pass — session
+    // retrieval behaviour, so it moved to 会话管理 with the other search knobs.
     const map = getServerFieldToLabelKey()
     expect(map['rag.batch_size']).toBeTruthy()
 
+    const field = categoryItems.sessions
+      .filter(e => e.type === 'item')
+      .map(e => (e as { type: 'item'; spec: ItemSpec }).spec)
+      .find(f => f.key === 'rag.batch_size')
+    expect(field?.type).toBe('number')
+    expect(field?.source).toBe('server')
+    expect(field?.sectionHeader).toBe('settings.items.sessionSearchSection')
+
+    // …and it is NOT on the RAG page any more.
     const panel = categoryItems['rag'].find(
       e => e.type === 'panel' && e.config.panelId === 'rag',
     )
-    const field = panel?.type === 'panel'
+    const stillThere = panel?.type === 'panel'
       ? panel.config.commonFields.find(f => f.key === 'rag.batch_size')
       : undefined
-    expect(field?.type).toBe('number')
-    expect(field?.source).toBe('server')
+    expect(stillThere).toBeUndefined()
   })
 
   it('includes tls.cert_dir as a server text field with restart', () => {
@@ -441,23 +454,25 @@ describe('settingsFieldMap', () => {
     expect(entry.spec.sectionHeader).toBe('settings.items.chatMessageSection')
   })
 
-  it('chat category has a server switch for recent-activity session ordering', () => {
-    const chatEntries = categoryItems['chat']
-    const entry = chatEntries.find(e => e.type === 'item' && e.spec.key === 'chat.session_sort_recent')
+  it('sessions category has a server switch for recent-activity session ordering', () => {
+    // Ordering is a property of the session LIST, so it lives in 会话管理 with
+    // the rest of the list options — not in 聊天 with the message display rows.
+    const entries = categoryItems['sessions']
+    const entry = entries.find(e => e.type === 'item' && e.spec.key === 'chat.session_sort_recent')
     expect(entry).toBeDefined()
     if (entry!.type !== 'item') throw new Error('expected item')
     expect(entry.spec.source).toBe('server')
     expect(entry.spec.type).toBe('switch')
-    expect(entry.spec.sectionHeader).toBe('settings.items.chatMessageSection')
+    expect(entry.spec.sectionHeader).toBe('settings.items.sessionListSection')
   })
 
   it('puts the other-project card settings in a card of their own', () => {
     // The two values are one feature (how many cards, how far back counts), so
     // they belong together — and NOT inside 消息与历史, where they read as yet
     // another row about session counts.
-    const chatEntries = categoryItems['chat']
+    const sessionEntries = categoryItems['sessions']
     const keys = ['chat.recent_project_cards_max_count', 'chat.recent_project_cards_window_hours']
-    const rows = chatEntries.filter(e => e.type === 'item' && keys.includes(e.spec.key as string))
+    const rows = sessionEntries.filter(e => e.type === 'item' && keys.includes(e.spec.key as string))
     expect(rows.length).toBe(2)
     for (const row of rows) {
       if (row.type !== 'item') continue
@@ -471,7 +486,7 @@ describe('settingsFieldMap', () => {
     // Adjacent on purpose: the renderer groups by RUNS of the same header, so
     // anything inserted between these two rows would split them into two
     // one-row cards.
-    const indices = rows.map(r => chatEntries.indexOf(r))
+    const indices = rows.map(r => sessionEntries.indexOf(r))
     expect(Math.abs(indices[1] - indices[0])).toBe(1)
   })
 
@@ -503,7 +518,9 @@ describe('settingsFieldMap', () => {
   })
 
   it('isPanelOnlyCategory identifies panel-only categories', () => {
-    expect(isPanelOnlyCategory('terminal')).toBe(true)
+    // terminal is no longer panel-only: its master switch became a read-only
+    // status row (FeatureStatusRow) above the panel.
+    expect(isPanelOnlyCategory('terminal')).toBe(false)
     expect(isPanelOnlyCategory('tts')).toBe(false)
     expect(isPanelOnlyCategory('rag')).toBe(true)
     expect(isPanelOnlyCategory('portForward')).toBe(true)
@@ -515,17 +532,25 @@ describe('settingsFieldMap', () => {
 
   // ── Terminal panel ──
 
-  it('terminal panel has enableKey and commonFields', () => {
+  it('terminal panel has no enable switch — the feature manager owns it', () => {
     const panels = getCategoryPanels('terminal')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
-    expect(cfg.enableKey).toBe('terminal.enabled')
-    expect(cfg.enableLabelKey).toBe('settings.items.terminalEnabled')
+    // One switch controls both the dock tab and the feature, so it lives in the
+    // manager. A second switch here would be a second source of truth.
+    expect(cfg.enableKey).toBeUndefined()
+    expect(cfg.enableLabelKey).toBeUndefined()
     expect(cfg.commonFields.length).toBe(6)
     expect(cfg.commonFields[0].key).toBe('terminalTheme')
     expect(cfg.commonFields[0].source).toBe('local')
     expect(cfg.commonFields[1].key).toBe('terminalFontSize')
     expect(cfg.commonFields[1].source).toBe('local')
+
+    const status = categoryItems.terminal.find(
+      e => e.type === 'item' && (e as { spec: ItemSpec }).spec.statusFeature === 'terminal.enabled',
+    )
+    expect(status).toBeDefined()
+    expect((status as { type: 'item'; spec: ItemSpec }).spec.type).toBe('info')
   })
 
   it('terminal panel exposes copy-on-select as a local switch', () => {
@@ -654,8 +679,9 @@ describe('settingsFieldMap', () => {
 
   // ── Auto rename (自动命名) ──
 
-  it('chat category exposes the auto-rename toggle with an AI-summary jump', () => {
-    const items = categoryItems.chat
+  it('sessions category exposes the auto-rename toggle with an AI-summary jump', () => {
+    // Auto-naming is a lifecycle concern, so the toggle moved to 会话管理.
+    const items = categoryItems.sessions
     const toggle = items.find(e => e.type === 'item' && e.spec.key === 'chat.auto_rename_enabled')
     expect(toggle).toBeDefined()
     const toggleSpec = (toggle as { type: 'item'; spec: ItemSpec }).spec
@@ -765,13 +791,25 @@ describe('settingsFieldMap', () => {
     expect(keys).toContain('stt.shortcut_key')
   })
 
-  it('rag panel has 13 commonFields and requiredFields', () => {
+  it('rag panel keeps status + the shared embedding block and nothing else', () => {
     const panels = getCategoryPanels('rag')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
-    expect(cfg.commonFields.length).toBe(16)
+    // 5 status rows + 7 embedding rows (vector switch, endpoint, model, key,
+    // health, chunk size, chunk overlap).
+    expect(cfg.commonFields.length).toBe(12)
     expect(cfg.commonFields[0].key).toBe('rag.status.mode')
     expect(cfg.requiredFields).toEqual(['rag.base_url'])
+
+    // The four session-retrieval knobs moved to 会话管理. Leaving a copy here
+    // would give the same server key two edit surfaces.
+    const keys = cfg.commonFields.map(f => f.key)
+    for (const moved of ['rag.retention_days', 'rag.search_limit', 'rag.search_pool_size', 'rag.batch_size']) {
+      expect(keys, `${moved} must not stay on the RAG page`).not.toContain(moved)
+    }
+    // The embedding block is shared with the knowledge base, and says so.
+    expect(cfg.commonFields.find(f => f.key === 'rag.vector_enabled')!.descriptionKey)
+      .toBe('settings.items.ragSharedDesc')
   })
 
   // ── Port Forward panel ──
@@ -849,7 +887,11 @@ describe('settingsFieldMap', () => {
 
   it('panel server fields appear in serverFieldToLabelKey', () => {
     const map = getServerFieldToLabelKey()
+    // terminal.enabled is not a settings row any more (the switch is in the
+    // feature manager) but keeps its label for the restart dialog; the panel's
+    // own server fields resolve as before.
     expect(map['terminal.enabled']).toBe('settings.items.terminalEnabled')
+    expect(map['terminal.buffer_lines']).toBe('settings.items.terminalBufferLines')
     expect(map['tts.engine']).toBe('settings.items.ttsEngine')
     expect(map['rag.base_url']).toBe('settings.items.ragBaseUrl')
     expect(map['port_forward.port']).toBe('settings.items.portForwardPort')
@@ -895,33 +937,34 @@ describe('settingsFieldMap', () => {
     expect(item!.appOnly).toBeFalsy()
   })
 
-  it('forge master switch is a SERVER switch that gates the whole integration', () => {
-    // Issue #590. Server-side, not per-device: turning it off stops polling and
-    // unlinks every project's repository, so one client cannot keep polling
-    // after another "disabled" it.
+  it('forge master switch is a read-only status row pointing at the feature manager', () => {
+    // Issue #590, then the Dock refactor: the switch itself moved to the feature
+    // manager, because one toggle there has to control BOTH the tab and the
+    // background feature. A second switch here would be a second source of
+    // truth, and the two would drift apart.
     const item = categoryItems['forgeIntegration']
       .filter(e => e.type === 'item')
       .map(e => e.spec)
-      .find(i => i.key === 'forge.enabled')
+      .find(i => i.statusFeature === 'forge.enabled')
 
     expect(item).toBeDefined()
-    expect(item!.type).toBe('switch')
+    expect(item!.type).toBe('info')
     expect(item!.source).toBe('server')
-    // Its own card, and the FIRST entry of the category: the switch decides
-    // whether the rest of the page applies at all, so sharing the credentials
-    // card made it read as one more credential field.
-    expect(item!.sectionHeader).toBe('settings.items.forgeEnabledSection')
+    // Its own card, and the FIRST entry of the category: the state decides
+    // whether the rest of the page applies at all.
+    expect(item!.sectionHeader).toBe('settings.items.featureStatusSection')
     const first = categoryItems['forgeIntegration'][0]
-    expect(first.type === 'item' && first.spec.key).toBe('forge.enabled')
-    // And it must not be grouped with the credentials row that follows it.
+    expect(first.type === 'item' && first.spec.statusFeature).toBe('forge.enabled')
+    // No switch left on this page — neither a server one nor a local one.
+    expect(categoryItems['forgeIntegration']
+      .filter(e => e.type === 'item')
+      .map(e => e.spec)
+      .find(i => i.key === 'forge.enabled')).toBeUndefined()
     const credentials = categoryItems['forgeIntegration']
       .filter(e => e.type === 'item')
       .map(e => e.spec)
       .find(i => i.key === 'forgeCredentials')
     expect(credentials!.sectionHeader).toBe('settings.items.forgeSection')
-    // It IS a restart-dialog field (it is a server key), so it must appear in the
-    // cold-field label map — otherwise a restart prompt would name it raw.
-    expect(getServerFieldToLabelKey()['forge.enabled']).toBe('settings.items.forgeEnabled')
 
     // No per-device leftover: a local `showForgeTab` would let the dock disagree
     // with the server, which is exactly what this design avoids.
@@ -932,26 +975,24 @@ describe('settingsFieldMap', () => {
     expect(localForge).toBeUndefined()
   })
 
-  it('mail master switch is a SERVER switch that opens its own card', () => {
-    // Same shape as forge.enabled: turning mail off stops the server's
-    // background IMAP sync (and the email-triggered tasks riding on it), so the
-    // choice belongs to the server, not to one device.
+  it('mail master switch is a read-only status row in its own card', () => {
+    // Same shape as forge: turning mail off stops the server's background IMAP
+    // sync (and the email-triggered tasks riding on it), so the choice belongs
+    // to the server — and the switch itself lives in the feature manager.
     const items = categoryItems['mail'].filter(e => e.type === 'item').map(e => e.spec)
-    const item = items.find(i => i.key === 'mail.enabled')
+    const item = items.find(i => i.statusFeature === 'mail.enabled')
 
     expect(item).toBeDefined()
-    expect(item!.type).toBe('switch')
+    expect(item!.type).toBe('info')
     expect(item!.source).toBe('server')
-    expect(item!.sectionHeader).toBe('settings.items.mailEnabledSection')
+    expect(item!.sectionHeader).toBe('settings.items.featureStatusSection')
     // First entry: it decides whether the rest of the page applies at all, so
     // it must not be folded into the accounts card.
     const first = categoryItems['mail'][0]
-    expect(first.type === 'item' && first.spec.key).toBe('mail.enabled')
+    expect(first.type === 'item' && first.spec.statusFeature).toBe('mail.enabled')
     expect(items.find(i => i.key === 'mailAccounts')!.sectionHeader)
       .toBe('settings.items.mailAccountsSection')
-    // Restart-dialog labels come from this map; a missing entry names the raw
-    // path if the field ever lands in a cold-field list.
-    expect(getServerFieldToLabelKey()['mail.enabled']).toBe('settings.items.mailEnabled')
+    expect(items.find(i => i.key === 'mail.enabled')).toBeUndefined()
   })
 
   it('the mail master switch has copy in both locales', () => {
@@ -1162,7 +1203,8 @@ describe('settingsFieldMap', () => {
 })
 
 describe('auto-continue settings', () => {
-  const chatItems = () => categoryItems['chat'].filter(e => e.type === 'item').map(e => e.spec)
+  // Auto-continue is a session LIFECYCLE setting, so the rows live in 会话管理.
+  const chatItems = () => categoryItems['sessions'].filter(e => e.type === 'item').map(e => e.spec)
 
   it('exposes the enable switch and the retry count as server fields', () => {
     const enabled = chatItems().find(i => i.key === 'chat.auto_continue_enabled')
@@ -1184,7 +1226,7 @@ describe('auto-continue settings', () => {
   })
 
   it('groups both items under the session recovery section', () => {
-    for (const key of ['chat.auto_continue_enabled', 'chat.auto_continue_max_retries']) {
+    for (const key of ['chat.auto_continue_enabled', 'chat.auto_continue_max_retries', 'chat.restart_resume_window_minutes']) {
       const item = chatItems().find(i => i.key === key)
       expect(item!.sectionHeader).toBe('settings.items.autoContinueSectionHeader')
     }
@@ -1446,11 +1488,11 @@ describe('usage meter cycle type', () => {
 // in one place cannot silently turn the tab bar into a no-op.
 describe('session list other-project placement', () => {
   function spec() {
-    const items = categoryItems['chat'] ?? []
+    const items = categoryItems['sessions'] ?? []
     const found = items
       .map(entry => (entry as any).spec)
       .find(s => s?.key === 'sessionOtherProjectMode')
-    expect(found, 'the row must exist in 设置 → 聊天').toBeTruthy()
+    expect(found, 'the row must exist in 设置 → 会话管理').toBeTruthy()
     return found
   }
 
@@ -1502,5 +1544,230 @@ describe('usage meter enable switch and optional fields', () => {
     expect(quota!.min).toBe(0)
     // Neither is required: a rule with only an anchor is valid.
     expect(cfg().requiredFields).toEqual([])
+  })
+})
+
+// ── Chat / sessions split ────────────────────────────────────────────────
+// 聊天 used to answer two unrelated questions: what a turn looks like, and how
+// sessions are listed and retired. The second half now lives in 会话管理, and
+// the split only holds if the rows do not creep back.
+describe('chat and session management are separate pages', () => {
+  const specs = (category: string) =>
+    (categoryItems[category] ?? [])
+      .filter(e => e.type === 'item')
+      .map(e => (e as { type: 'item'; spec: ItemSpec }).spec)
+
+  it('keeps the conversation behaviour in 聊天', () => {
+    const keys = specs('chat').map(s => s.key)
+    expect(keys).toEqual(expect.arrayContaining([
+      'autoSpeech',
+      'preventScreenLock',
+      'messageDisplayMode',
+      'compactToolCalls',
+      'chat.initial_messages',
+      'chat.page_size',
+      'chat.system_prompt_interval',
+      'chat.fork_context_budget',
+      'chat.recommend_enabled',
+      'chat.recommend_context_messages',
+      'chat.group_max_speeches',
+    ]))
+  })
+
+  it('moves the session list and lifecycle to 会话管理', () => {
+    const keys = specs('sessions').map(s => s.key)
+    expect(keys).toEqual(expect.arrayContaining([
+      // list
+      'session.max_count',
+      'chat.session_sort_recent',
+      'swipeSession',
+      'chat.recent_project_cards_max_count',
+      'chat.recent_project_cards_window_hours',
+      'sessionOtherProjectMode',
+      // lifecycle
+      'chat.auto_continue_enabled',
+      'chat.auto_continue_max_retries',
+      'chat.restart_resume_window_minutes',
+      'chat.auto_rename_enabled',
+      'session.archive_retention_enabled',
+      'session.archive_retention_days',
+      // search & indexing
+      'rag.retention_days',
+      'rag.search_limit',
+      'rag.search_pool_size',
+      'rag.batch_size',
+    ]))
+  })
+
+  it('does not leave a session row behind in 聊天', () => {
+    const chatKeys = specs('chat').map(s => s.key)
+    for (const moved of ['session.max_count', 'swipeSession', 'chat.auto_continue_enabled', 'rag.search_limit']) {
+      expect(chatKeys).not.toContain(moved)
+    }
+  })
+
+  it('gives every session row a section header, so nothing lands in 其他', () => {
+    for (const spec of specs('sessions')) {
+      expect(spec.sectionHeader, `${spec.key} has no section header`).toBeTruthy()
+    }
+  })
+
+  // Both pages reference the SAME shared summary model, but each reference
+  // follows its own feature: auto-naming here, recommended replies there.
+  it('puts the auto-rename model row in 会话管理 and the recommend one in 聊天', () => {
+    const sessionModel = specs('sessions').find(s => s.key === 'summaryModel')
+    const chatModel = specs('chat').find(s => s.key === 'summaryModel')
+    expect(sessionModel!.disableUnless).toEqual({ key: 'chat.auto_rename_enabled', value: true })
+    expect(chatModel!.disableUnless).toEqual({ key: 'chat.recommend_enabled', value: true })
+  })
+})
+
+// ── RAG split (design §6) ────────────────────────────────────────────────
+describe('RAG split', () => {
+  const ragFields = () => getCategoryPanels('rag')[0].commonFields
+
+  it('leaves the index status on the RAG page', () => {
+    const keys = ragFields().map(f => f.key)
+    for (const status of ['rag.status.mode', 'rag.status.index_progress', 'rag.status.fts_size', 'rag.status.embed_progress', 'rag.status.vec_size']) {
+      expect(keys).toContain(status)
+    }
+  })
+
+  it('keeps the embedding block on the RAG page, marked as shared', () => {
+    const keys = ragFields().map(f => f.key)
+    for (const shared of ['rag.vector_enabled', 'rag.base_url', 'rag.model', 'rag.api_key', 'rag.chunk_size', 'rag.chunk_overlap']) {
+      expect(keys).toContain(shared)
+    }
+  })
+
+  it('sends the session-retrieval knobs to 会话管理', () => {
+    const sessionKeys = categoryItems.sessions
+      .filter(e => e.type === 'item')
+      .map(e => (e as { type: 'item'; spec: ItemSpec }).spec.key)
+    for (const moved of ['rag.retention_days', 'rag.search_limit', 'rag.search_pool_size', 'rag.batch_size']) {
+      expect(sessionKeys).toContain(moved)
+    }
+  })
+})
+
+// ── Knowledge base configuration ─────────────────────────────────────────
+describe('knowledge base settings', () => {
+  const kbSpecs = () => categoryItems.kb
+    .filter(e => e.type === 'item')
+    .map(e => (e as { type: 'item'; spec: ItemSpec }).spec)
+
+  it('exposes every kb.* config key the server accepts', () => {
+    const keys = kbSpecs().map(s => s.key)
+    for (const key of [
+      'kb.auto_inject',
+      'kb.inject_top_n',
+      'kb.inject_max_chars',
+      'kb.inject_min_similarity',
+      'kb.max_file_mb',
+      'kb.max_text_mb',
+      'kb.poll_interval',
+      'kb.embed_batch_size',
+    ]) {
+      expect(keys, `${key} must be configurable`).toContain(key)
+    }
+  })
+
+  it('reports the master switch but does not own it', () => {
+    // kb.enabled stops the indexer and closes the database — a Dock feature
+    // switch, owned by the manager. The page reports its state and links there;
+    // a second switch here would let the page and the manager disagree.
+    const keys = kbSpecs().map(s => s.key)
+    expect(keys).not.toContain('kb.enabled')
+    const status = kbSpecs().find(s => s.statusFeature === 'kb.enabled')
+    expect(status).toBeDefined()
+    expect(status!.type).toBe('info')
+  })
+
+  it('opens the status card with a placeholder the component fills', () => {
+    const status = kbSpecs().find(s => s.key === 'kbStatus')
+    expect(status).toBeDefined()
+    expect(status!.type).toBe('info')
+  })
+
+  it('disables the injection knobs while auto-inject is off', () => {
+    for (const key of ['kb.inject_top_n', 'kb.inject_max_chars', 'kb.inject_min_similarity']) {
+      expect(kbSpecs().find(s => s.key === key)!.disableUnless)
+        .toEqual({ key: 'kb.auto_inject', value: true })
+    }
+  })
+})
+
+// ── Four new pages (design §5.3) ─────────────────────────────────────────
+describe('new configuration pages', () => {
+  const specs = (category: string) =>
+    (categoryItems[category] ?? [])
+      .filter(e => e.type === 'item')
+      .map(e => (e as { type: 'item'; spec: ItemSpec }).spec)
+
+  it('Git 历史 owns the list length and the three display choices', () => {
+    const byKey = new Map(specs('gitHistory').map(s => [s.key, s]))
+    // Server-side: the page size is the `git log -N` argument.
+    expect(byKey.get('git_history.page_size')!.source).toBe('server')
+    expect(byKey.get('git_history.page_size')!.type).toBe('number')
+    // Local: pure display preferences.
+    expect(byKey.get('gitHistoryHideMerges')!.source).toBe('local')
+    expect(byKey.get('gitHistoryShowGraph')!.source).toBe('local')
+    expect(byKey.get('gitHistoryTimeFormat')!.source).toBe('local')
+    expect((byKey.get('gitHistoryTimeFormat')!.options ?? []).map(o => o.value))
+      .toEqual(['relative', 'absolute'])
+  })
+
+  it('任务 reports the scheduler state and configures the scheduler', () => {
+    const byKey = new Map(specs('tasks').map(s => [s.key, s]))
+    expect(byKey.get('tasksStatus')!.statusFeature).toBe('tasks.enabled')
+    expect(byKey.get('tasks.retention_enabled')!.source).toBe('server')
+    expect(byKey.get('tasks.retention_days')!.disableUnless)
+      .toEqual({ key: 'tasks.retention_enabled', value: true })
+    // The server clamps above MaxTaskRetentionDays (3650) SILENTLY, so the row
+    // must refuse the value instead of letting a save come back different.
+    expect(byKey.get('tasks.retention_days')!.max).toBe(3650)
+    expect(byKey.get('tasks.notify_on_success')!.source).toBe('server')
+    expect(byKey.get('tasks.notify_on_failure')!.source).toBe('server')
+    expect(byKey.get('tasks.timezone')!.source).toBe('server')
+    // The list filter is a per-device view preference.
+    expect(byKey.get('tasksDefaultFilter')!.source).toBe('local')
+    expect((byKey.get('tasksDefaultFilter')!.options ?? []).map(o => o.value))
+      .toEqual(['all', 'enabled', 'paused'])
+  })
+
+  it('统计 holds only local defaults', () => {
+    const rows = specs('stats')
+    expect(rows.map(r => r.key)).toEqual(['statsDefaultTab', 'statsDefaultRange', 'statsRememberLast'])
+    expect(rows.every(r => r.source === 'local')).toBe(true)
+    // The option values must match what the panel actually understands.
+    expect((rows[0].options ?? []).map(o => o.value)).toEqual(['usage', 'cloc', 'git'])
+    expect((rows[1].options ?? []).map(o => o.value)).toEqual(['24h', '7d', '30d'])
+  })
+
+  it('分享中心 reports the global switch and owns the sharing rules', () => {
+    const byKey = new Map(specs('share').map(s => [s.key, s]))
+    expect(byKey.get('shareStatus')!.statusFeature).toBe('share.enabled')
+    for (const key of ['share.allow_files', 'share.allow_sessions', 'share.allow_meetings', 'share.allow_download', 'share.link_ttl_days', 'share.show_project_name']) {
+      expect(byKey.get(key)!.source, `${key} must be server-side`).toBe('server')
+    }
+    // Download only applies to file shares.
+    expect(byKey.get('share.allow_download')!.disableUnless)
+      .toEqual({ key: 'share.allow_files', value: true })
+    // 0 days means "never expires", so the floor must allow it; the ceiling is
+    // the server's MaxShareLinkTTLDays (3650), which it clamps silently.
+    expect(byKey.get('share.link_ttl_days')!.min).toBe(0)
+    expect(byKey.get('share.link_ttl_days')!.max).toBe(3650)
+  })
+
+  it('every module page with a master switch shows a status row instead', () => {
+    const modules = ['mail', 'forgeIntegration', 'terminal', 'tasks', 'share', 'kb']
+    for (const category of modules) {
+      const status = specs(category).find(s => !!s.statusFeature)
+      expect(status, `${category} must have a status row`).toBeDefined()
+      expect(status!.type).toBe('info')
+      expect(status!.sectionHeader).toBe('settings.items.featureStatusSection')
+      // …and no switch for the same key.
+      expect(specs(category).some(s => s.key === status!.statusFeature && s.type === 'switch')).toBe(false)
+    }
   })
 })

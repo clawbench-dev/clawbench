@@ -10,9 +10,14 @@ vi.mock('@/share/ShareView.vue', () => ({
     name: 'ShareView',
     // Typed props (not an array) so the valueless `can-back-out` attribute
     // resolves to the boolean true, exactly as in the real component.
-    props: { initialPath: String, canBackOut: Boolean },
+    props: {
+      initialPath: String,
+      canBackOut: Boolean,
+      allowDownload: Boolean,
+      projectName: String,
+    },
     emits: ['back-out'],
-    template: '<div class="file-view-stub" :data-path="initialPath" />',
+    template: '<div class="file-view-stub" :data-path="initialPath" :data-allow-download="String(allowDownload)" :data-project="projectName" />',
   },
 }))
 vi.mock('@/share/ShareThemeButton.vue', () => ({
@@ -46,6 +51,7 @@ const i18n = createI18n({
         loading: 'Loading...',
         invalidTitle: 'Cannot view this share',
         invalidUrl: 'Invalid link format',
+        fromProject: 'From {name}',
         dir: {
           title: 'Shared folder',
           up: 'Up one level',
@@ -134,8 +140,8 @@ function rootListing(overrides: Record<string, unknown> = {}) {
   }
 }
 
-async function mountView() {
-  const wrapper = mount(DirShareView, { global: { plugins: [i18n] } })
+async function mountView(props: Record<string, unknown> = {}) {
+  const wrapper = mount(DirShareView, { props, global: { plugins: [i18n] } })
   mounted.push(wrapper)
   await flushPromises()
   return wrapper
@@ -406,5 +412,63 @@ describe('DirShareView', () => {
     expect(wrapper.find('.share-file-name').text()).toBe('b')
     // The stale answer must not resurrect the skeleton either.
     expect(wrapper.find('.dir-skeleton').exists()).toBe(false)
+  })
+})
+
+// ── Share rules (allow_download / show_project_name) ────────────────────────
+// A folder share is still a FILE share, so the rule applies to its per-row
+// download buttons too — and the file view it hands off to must inherit both
+// values, or clicking a file would restore a download button the owner turned
+// off.
+describe('DirShareView — share rules', () => {
+  beforeEach(() => {
+    responses[LIST_URL] = rootListing()
+  })
+
+  it('offers per-row downloads by default', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.findAll('.dir-row-download')).toHaveLength(2) // a.md + .env
+  })
+
+  it('hides every per-row download when the rule forbids it', async () => {
+    const wrapper = await mountView({ allowDownload: false })
+    expect(wrapper.findAll('.dir-row-download')).toHaveLength(0)
+    // The rows themselves are still listed and navigable.
+    expect(wrapper.findAll('.dir-row')).toHaveLength(3)
+  })
+
+  it('forwards both rule values to the file view', async () => {
+    // A file row navigates the page (location.assign), so the hand-off is
+    // entered the way a reader enters it: through a ?path= deep link, which the
+    // backend answers with kind 'file'.
+    const target = `${ROOT}/a.md`
+    useLocation(`?path=${encodeURIComponent(target)}`)
+    responses[`${LIST_URL}?path=${encodeURIComponent(target)}`] = {
+      kind: 'file',
+      name: 'a.md',
+      path: target,
+      root: ROOT,
+      parent: ROOT,
+      atRoot: false,
+    }
+    const wrapper = await mountView({ allowDownload: false, projectName: 'clawbench' })
+    await flushPromises()
+
+    const fileView = wrapper.find('.file-view-stub')
+    expect(fileView.exists()).toBe(true)
+    expect(fileView.attributes('data-allow-download')).toBe('false')
+    expect(fileView.attributes('data-project')).toBe('clawbench')
+  })
+
+  it('shows the source project in the folder topbar', async () => {
+    const wrapper = await mountView({ projectName: 'clawbench' })
+    const chip = wrapper.find('[data-role="share-project"]')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toContain('From clawbench')
+  })
+
+  it('omits the project chip when the server hides the name', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.find('[data-role="share-project"]').exists()).toBe(false)
   })
 })

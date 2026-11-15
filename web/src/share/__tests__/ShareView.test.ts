@@ -118,6 +118,9 @@ const i18n = createI18n({
         notFound: 'Not found',
         noPreview: 'No preview',
         tooLarge: 'Too large to preview',
+        noPreviewNoDownload: 'No preview, and downloads are off',
+        tooLargeNoDownload: 'Too large to preview, and downloads are off',
+        fromProject: 'From {name}',
         renderedView: 'Rendered preview',
         sourceView: 'View source',
         back: 'Back',
@@ -152,7 +155,8 @@ afterEach(() => {
 
 async function mountShare(
   file: Record<string, unknown>,
-  fetchImpl?: (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>
+  fetchImpl?: (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>,
+  props: Record<string, unknown> = {},
 ) {
   ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string | URL | Request) => {
     if (fetchImpl) return fetchImpl(String(url))
@@ -162,6 +166,7 @@ async function mountShare(
     }
   })
   const wrapper = mount(ShareView, {
+    props,
     global: { plugins: [i18n], stubs: asyncComponentStubs },
   })
   mountedWrappers.push(wrapper)
@@ -1053,5 +1058,52 @@ describe('ShareView — preview parity with the in-app file viewer', () => {
     for (const flag of fileFlagsIn(appSource)) {
       expect(Object.keys(PREVIEW_FLAGS), `register file.${flag} in PREVIEW_FLAGS and support it in ShareView.vue`).toContain(flag)
     }
+  })
+})
+
+
+// ── Share rules from the server (share.allow_download / show_project_name) ──
+// The share SPA reads both from /api/share/{token}/meta. The download endpoint
+// answers 403 when the rule forbids it, so the page must not offer a button
+// that can only fail; and "download it to view" copy would be a lie.
+describe('ShareView — share rules', () => {
+  const md = { name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' }
+  const tooLarge = { name: 'huge.bin', path: '/repo/huge.bin', content: '', tooLarge: true }
+
+  it('offers the download link by default', async () => {
+    const wrapper = await mountShare(md)
+    expect(wrapper.find('.share-btn--download').exists()).toBe(true)
+  })
+
+  it('hides the topbar download link when downloads are off', async () => {
+    const wrapper = await mountShare(md, undefined, { allowDownload: false })
+    expect(wrapper.find('.share-btn--download').exists()).toBe(false)
+    // The rest of the topbar is untouched.
+    expect(wrapper.find('.share-logo').exists()).toBe(true)
+  })
+
+  it('hides the fallback download button and drops the "download it" copy', async () => {
+    const wrapper = await mountShare(tooLarge, undefined, { allowDownload: false })
+    const unsupported = wrapper.find('.share-unsupported')
+    expect(unsupported.exists()).toBe(true)
+    expect(unsupported.find('a.share-download-btn').exists()).toBe(false)
+    expect(unsupported.text()).toContain('downloads are off')
+  })
+
+  it('keeps the fallback download button when downloads are allowed', async () => {
+    const wrapper = await mountShare(tooLarge)
+    expect(wrapper.find('.share-unsupported a.share-download-btn').exists()).toBe(true)
+  })
+
+  it('names the source project when the server provides it', async () => {
+    const wrapper = await mountShare(md, undefined, { projectName: 'clawbench' })
+    const chip = wrapper.find('[data-role="share-project"]')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toContain('From clawbench')
+  })
+
+  it('renders no project chip when the server hides the name', async () => {
+    const wrapper = await mountShare(md)
+    expect(wrapper.find('[data-role="share-project"]').exists()).toBe(false)
   })
 })

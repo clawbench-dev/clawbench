@@ -1,7 +1,12 @@
 import { ref, computed } from 'vue'
 import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
-import type { UsageRange } from '@/composables/useUsageStats'
+import {
+  configuredStatsRange,
+  initialStatsRange,
+  rememberStatsRange,
+  type UsageRange,
+} from '@/composables/useUsageStats'
 
 /** Git code-change statistic shape returned by GET /api/git/stats. */
 export interface GitStatsTotals {
@@ -63,7 +68,10 @@ export interface ClocResponse {
 // --- Module-level singleton state ---
 // Mirrors useUsageStats: one shared state per SPA run, reset on project switch.
 
-const range = ref<UsageRange>({ rangeKey: '24h' })
+// Seeded from 设置 → 统计 → 默认时间范围, like useUsageStats. The git tab shares
+// that one setting: both panels answer "over which window", so two defaults
+// would be two answers to the same question.
+const range = ref<UsageRange>(initialStatsRange())
 const raw = ref<GitStatsResponse | null>(null)
 const loading = ref(false)
 const error = ref<{ status?: number; msgKey?: string; message?: string } | null>(null)
@@ -277,7 +285,7 @@ export function resetGitStats(): void {
     usageAbortController.abort()
     usageAbortController = null
   }
-  range.value = { rangeKey: '24h' }
+  range.value = initialStatsRange()
   raw.value = null
   error.value = null
   loading.value = false
@@ -312,7 +320,14 @@ const trend = computed<GitStatsRow[]>(() => raw.value?.trend ?? [])
 export function useGitCodeStats() {
   function setRange(r: UsageRange) {
     range.value = { ...r }
+    // Only writes while 记住上次选择 is on — see rememberStatsRange.
+    rememberStatsRange(range.value)
     void loadGitStats()
+  }
+
+  /** Put the window back to the configured default (设置 → 统计). */
+  function resetRangeToDefault() {
+    range.value = configuredStatsRange()
   }
 
   return {
@@ -333,6 +348,7 @@ export function useGitCodeStats() {
     reloadGitStats,
     loadCloc,
     resetGitStats,
+    resetRangeToDefault,
     setRange,
   }
 }

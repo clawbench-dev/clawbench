@@ -14,6 +14,12 @@
         <ArrowLeft :size="16" />
       </button>
       <span class="share-file-name" :title="file?.name || ''">{{ file?.name || '' }}</span>
+      <!-- Source project, when the share rules allow naming it. A separate chip
+           rather than a prefix on the file name: a bare project name glued to
+           the title reads as part of the filename. -->
+      <span v-if="projectName" class="share-project-chip" :title="projectName" data-role="share-project">
+        {{ t('share.fromProject', { name: projectName }) }}
+      </span>
       <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
       <span v-else-if="error" class="share-status share-error">{{ error }}</span>
       <!-- Unconditional: the right-hand actions (theme / download) must stay at
@@ -65,7 +71,7 @@
            is how a reader gets the direct URL without inspecting the network
            panel. The click handler is still what drives the progress bar. -->
       <a
-        v-if="file && !error"
+        v-if="file && !error && allowDownload"
         class="share-btn share-btn--download"
         :href="downloadUrl"
         :title="t('share.download')"
@@ -257,8 +263,14 @@
                browser's context menu. -->
           <div v-else class="share-center-hint share-unsupported">
             <FileIcon :path="file.name" :size="48" />
-            <div class="share-error-desc">{{ file.tooLarge ? t('share.tooLarge') : t('share.noPreview') }}</div>
-            <a class="share-download-btn" :href="downloadUrl" @click.prevent="handleDownload">
+            <!-- The copy must follow the rule: "download it to view" is a lie
+                 once the share forbids downloading. -->
+            <div class="share-error-desc">
+              {{ file.tooLarge
+                ? t(allowDownload ? 'share.tooLarge' : 'share.tooLargeNoDownload')
+                : t(allowDownload ? 'share.noPreview' : 'share.noPreviewNoDownload') }}
+            </div>
+            <a v-if="allowDownload" class="share-download-btn" :href="downloadUrl" @click.prevent="handleDownload">
               <Download :size="14" />
               {{ t('common.download') }}
             </a>
@@ -381,9 +393,18 @@ const props = withDefaults(defineProps<{
    *  folder: Back then returns to the folder listing instead of reloading the
    *  (directory) share target. */
   canBackOut?: boolean
+  /** Whether the server's share rules allow downloading. False hides BOTH
+   *  download affordances (the topbar link and the fallback button): the
+   *  download endpoint answers 403 in that case, and a button that only ever
+   *  produces an error is worse than no button. */
+  allowDownload?: boolean
+  /** Source project name to show in the topbar, '' when the server hides it. */
+  projectName?: string
 }>(), {
   initialPath: '',
   canBackOut: false,
+  allowDownload: true,
+  projectName: '',
 })
 
 const emit = defineEmits<{ (e: 'back-out'): void }>()

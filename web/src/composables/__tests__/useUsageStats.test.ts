@@ -16,7 +16,14 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
-import { useUsageStats } from '@/composables/useUsageStats'
+import {
+  useUsageStats,
+  configuredStatsRange,
+  initialStatsRange,
+  rememberStatsRange,
+} from '@/composables/useUsageStats'
+import { localConfig } from '@/composables/useSettingsConfig'
+import { readPanelState, writePanelState } from '@/utils/panelState'
 import { nextTick } from 'vue'
 
 const EMPTY_RESPONSE = {
@@ -222,5 +229,113 @@ describe('useUsageStats', () => {
       await nextTick()
       expect(stats.filter.value.sortDesc).toBe(false)
     })
+  })
+})
+
+describe('useUsageStats — configured default range (设置 → 统计)', () => {
+  afterEach(() => {
+    localConfig.statsDefaultRange = '24h'
+  })
+
+  it('maps the configured key, never returning custom or junk', () => {
+    localConfig.statsDefaultRange = '7d'
+    expect(configuredStatsRange()).toEqual({ rangeKey: '7d' })
+    localConfig.statsDefaultRange = '30d'
+    expect(configuredStatsRange()).toEqual({ rangeKey: '30d' })
+    // A custom window needs two dates the user has not picked yet.
+    localConfig.statsDefaultRange = 'custom'
+    expect(configuredStatsRange()).toEqual({ rangeKey: '24h' })
+    localConfig.statsDefaultRange = 'nonsense'
+    expect(configuredStatsRange()).toEqual({ rangeKey: '24h' })
+  })
+
+  it('resetRangeToDefault puts the window back to the configured one', () => {
+    vi.useFakeTimers()
+    try {
+      mockApiGet.mockResolvedValue(EMPTY_RESPONSE)
+      localConfig.statsDefaultRange = '7d'
+      const stats = useUsageStats()
+
+      stats.setRange({ rangeKey: '30d' })
+      expect(stats.filter.value.range.rangeKey).toBe('30d')
+
+      stats.resetRangeToDefault()
+      expect(stats.filter.value.range.rangeKey).toBe('7d')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+// 记住上次选择 has to survive a reload, and the module singleton does not — so
+// the window is persisted in panelState and read back at init. OFF means the
+// stored value is neither read nor written.
+describe('useUsageStats — 记住上次选择 persistence', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    localConfig.statsRememberLast = false
+    localConfig.statsDefaultRange = '24h'
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+    localConfig.statsRememberLast = false
+    localConfig.statsDefaultRange = '24h'
+  })
+
+  it('restores a stored preset window on a fresh load', () => {
+    writePanelState('statsRange', { rangeKey: '30d' })
+    localConfig.statsRememberLast = true
+
+    expect(initialStatsRange()).toEqual({ rangeKey: '30d' })
+  })
+
+  it('ignores the stored window when 记住上次选择 is off', () => {
+    writePanelState('statsRange', { rangeKey: '30d' })
+    localConfig.statsRememberLast = false
+    localConfig.statsDefaultRange = '7d'
+
+    expect(initialStatsRange()).toEqual({ rangeKey: '7d' })
+  })
+
+  it('round-trips a custom window together with its dates', () => {
+    localConfig.statsRememberLast = true
+    rememberStatsRange({ rangeKey: 'custom', customStart: '2026-01-01', customEnd: '2026-01-31' })
+
+    expect(initialStatsRange()).toEqual({
+      rangeKey: 'custom',
+      customStart: '2026-01-01',
+      customEnd: '2026-01-31',
+    })
+  })
+
+  it('drops a custom window without dates instead of restoring an empty range', () => {
+    localConfig.statsRememberLast = true
+    rememberStatsRange({ rangeKey: 'custom' })
+
+    expect(readPanelState('statsRange')).toBeNull()
+    expect(initialStatsRange()).toEqual({ rangeKey: '24h' })
+  })
+
+  it('writes nothing while 记住上次选择 is off', () => {
+    localConfig.statsRememberLast = false
+    rememberStatsRange({ rangeKey: '30d' })
+
+    expect(readPanelState('statsRange')).toBeNull()
+  })
+
+  it('persists through setRange, so a reload restores the pick', () => {
+    localConfig.statsRememberLast = true
+    vi.useFakeTimers()
+    try {
+      mockApiGet.mockResolvedValue(EMPTY_RESPONSE)
+      const stats = useUsageStats()
+      stats.setRange({ rangeKey: '7d' })
+
+      expect(readPanelState('statsRange')).toEqual({ rangeKey: '7d' })
+      expect(initialStatsRange()).toEqual({ rangeKey: '7d' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

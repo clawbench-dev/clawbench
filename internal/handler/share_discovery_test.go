@@ -78,7 +78,7 @@ func TestInjectShareDiscovery_AlwaysOffersMeta(t *testing.T) {
 // lets an agent (or a script) download the bytes instead of scraping markup.
 func TestInjectShareDiscovery_FileShareAdvertisesDirectDownload(t *testing.T) {
 	const tok = "0123456789abcdef0123456789abcdef"
-	out := injectShareDiscovery(shellDoc, shareDiscovery{Token: tok, Kind: shareKindFile})
+	out := injectShareDiscovery(shellDoc, shareDiscovery{Token: tok, Kind: shareKindFile, DownloadAllowed: true})
 
 	assert.Contains(t, out, `href="/api/share/`+tok+`/download"`,
 		"the download URL must be a machine-readable link, not only prose")
@@ -94,11 +94,23 @@ func TestInjectShareDiscovery_FileShareAdvertisesDirectDownload(t *testing.T) {
 // would hand an agent a URL that cannot work.
 func TestInjectShareDiscovery_FolderShareAdvertisesOnlyPathForm(t *testing.T) {
 	const tok = "0123456789abcdef0123456789abcdef"
-	out := injectShareDiscovery(shellDoc, shareDiscovery{Token: tok, Kind: shareKindDir})
+	out := injectShareDiscovery(shellDoc, shareDiscovery{Token: tok, Kind: shareKindDir, DownloadAllowed: true})
 
 	assert.NotContains(t, out, `type="application/octet-stream"`)
 	assert.Contains(t, out, "?path=<absolute path inside the folder>")
 	assert.Contains(t, out, `/api/share/`+tok+`/list?path=`)
+}
+
+// share.allow_download=false must remove every download pointer from the
+// discovery block: advertising a URL the server answers with 403 is worse than
+// advertising nothing.
+func TestInjectShareDiscovery_DownloadDisabledOmitsPointers(t *testing.T) {
+	const tok = "0123456789abcdef0123456789abcdef"
+	out := injectShareDiscovery(shellDoc, shareDiscovery{Token: tok, Kind: shareKindFile})
+
+	assert.NotContains(t, out, "/download")
+	assert.NotContains(t, out, "Download the file itself")
+	assert.NotContains(t, out, "octet-stream")
 }
 
 // A conversation share has no downloadable payload at all.

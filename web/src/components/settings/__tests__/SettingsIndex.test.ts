@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import SettingsIndex from '@/components/settings/SettingsIndex.vue'
+import { categoryItems, subPagePanelMap } from '@/components/settings/settingsFieldMap'
 import { MEETING_ICON } from '@/utils/meetingIcon'
 
 const i18n = createI18n({
@@ -13,19 +14,25 @@ const i18n = createI18n({
         categories: {
           appearance: '外观',
           project: '项目',
-          dockPlugins: '插件与 Dock',
-          files: '文件',
-          fileView: '文件预览',
+          dockPlugins: '功能编排',
+          files: '文件管理',
+          fileView: '文件浏览',
+          gitHistory: 'Git 历史',
+          stats: '统计',
           identity: '身份',
           chat: '聊天',
+          sessions: '会话管理',
           agents: 'Agent偏好',
+          tasks: '任务',
           terminal: '终端',
           tts: 'TTS语音',
           stt: '语音识别',
           meeting: '会议',
-          rag: '会话搜索',
+          rag: 'RAG 检索',
           kb: '知识库',
           portForward: '端口映射',
+          mail: '邮件',
+          share: '分享中心',
           notification: '消息通知',
           notifications: '通知中心',
           usageMeter: '用量',
@@ -36,6 +43,7 @@ const i18n = createI18n({
         groups: {
           projectAppearance: '项目与外观',
           aiChat: 'AI 与对话',
+          modelCapability: '模型能力',
           connectivity: '连接与集成',
           notifySecurity: '通知与安全',
           systemAbout: '系统与关于',
@@ -48,6 +56,11 @@ const i18n = createI18n({
 // Stub lucide-vue-next icons
 const globalStubs = {
   'lucide-chevron-right': true,
+  'lucide-messages-square': true,
+  'lucide-history': true,
+  'lucide-list-todo': true,
+  'lucide-chart-column': true,
+  'lucide-share-2': true,
   'lucide-palette': true,
   'lucide-layout-grid': true,
   'lucide-eye': true,
@@ -75,11 +88,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 26 category rows', () => {
+  it('renders 31 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(26)
+    expect(rows.length).toBe(31)
   })
 
   it('renders category labels', () => {
@@ -88,9 +101,17 @@ describe('SettingsIndex', () => {
     const labels = wrapper.findAll('.settings-index__label').map(el => el.text())
     expect(labels).toContain('项目')
     expect(labels).toContain('外观')
-    expect(labels).toContain('文件')
+    expect(labels).toContain('文件管理')
+    expect(labels).toContain('文件浏览')
+    expect(labels).toContain('Git 历史')
+    expect(labels).toContain('统计')
     expect(labels).toContain('身份')
     expect(labels).toContain('聊天')
+    expect(labels).toContain('会话管理')
+    expect(labels).toContain('任务')
+    expect(labels).toContain('RAG 检索')
+    expect(labels).toContain('邮件')
+    expect(labels).toContain('分享中心')
     expect(labels).toContain('端口映射')
     expect(labels).toContain('用量')
     expect(labels).toContain('安全')
@@ -98,14 +119,16 @@ describe('SettingsIndex', () => {
     expect(labels).toContain('关于')
   })
 
-  it('groups categories into 5 titled cards', () => {
+  it('groups categories into 6 titled cards', () => {
     const wrapper = mountIndex()
 
     const cards = wrapper.findAll('.settings-card')
-    expect(cards.length).toBe(5)
+    expect(cards.length).toBe(6)
 
     const titles = wrapper.findAll('.settings-card__header').map(el => el.text())
-    expect(titles).toEqual(['项目与外观', 'AI 与对话', '连接与集成', '通知与安全', '系统与关于'])
+    expect(titles).toEqual([
+      '项目与外观', 'AI 与对话', '模型能力', '连接与集成', '通知与安全', '系统与关于',
+    ])
   })
 
   it('distributes every category into exactly one group', () => {
@@ -114,22 +137,18 @@ describe('SettingsIndex', () => {
     const perCard = wrapper.findAll('.settings-card').map(card =>
       card.findAll('.settings-index__row').length,
     )
-    // 通知与安全 holds three rows: 推送通知, 用量, 安全. The usage meter sits
-    // beside push notifications rather than inside that category.
-    // AI 与对话 gained 身份 (8 → 9): the user's nickname and self-description
-    // are agent context, not chat behavior, so they lead the group.
-    // AI 摘要 was removed (9 → 8) once the model is picked where it is
-    // referenced; 会议 (10) brings the meeting defaults next to STT.
-    // 连接与集成 gained 邮箱账号 (3 → 4): a mailbox is a connection this
-    // machine holds, alongside port forwarding and the forge integration.
-    // 项目与外观 gained 插件与 Dock (3 → 4) and 文件预览 (4 → 5): the Dock
-    // manager and the preview page are presentation choices next to appearance
-    // and file display.
-    // AI 与对话 gained 知识库 (10 → 11): it sits next to 会话搜索.
-    // 通知与安全 gained 通知中心 (3 → 4): the append-only log is separate from
-    // push notifications.
-    expect(perCard).toEqual([5, 11, 4, 4, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(26)
+    // 项目与外观 (7): 项目, 外观, 功能编排, 文件管理, 文件浏览, Git 历史, 统计.
+    //   Git history and statistics are per-project surfaces with their own
+    //   defaults, so they sit beside the project and file pages.
+    // AI 与对话 (9): 身份, 聊天, 会话管理, 智能体, 任务, 技能, MCP, 知识库, 会议.
+    //   会话管理 follows 聊天; 知识库 and 会议 stay here rather than moving to
+    //   模型能力 (they are features, not model configuration).
+    // 模型能力 (4): 模型提供商, RAG 检索, 语音朗读, 语音识别 — the pages that
+    //   configure models and engines themselves.
+    // 连接与集成 (5): 终端, 端口映射, 邮件, 分享中心, GitHub/GitLab 集成.
+    // 通知与安全 (4) and 系统与关于 (2) are unchanged.
+    expect(perCard).toEqual([7, 9, 4, 5, 4, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(31)
   })
 
   // The dock tab, the meeting list header and the quote chip all draw
@@ -164,10 +183,17 @@ describe('SettingsIndex', () => {
     const wrapper = mountIndex()
 
     const expectedIds = [
-      'project', 'appearance', 'dockPlugins', 'files', 'fileView',
-      'identity', 'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'kb', 'tts', 'stt', 'meeting',
-      'terminal', 'portForward', 'mail', 'forgeIntegration',
+      // 项目与外观
+      'project', 'appearance', 'dockPlugins', 'files', 'fileView', 'gitHistory', 'stats',
+      // AI 与对话
+      'identity', 'chat', 'sessions', 'agents', 'tasks', 'skills', 'mcp', 'kb', 'meeting',
+      // 模型能力
+      'providers', 'rag', 'tts', 'stt',
+      // 连接与集成
+      'terminal', 'portForward', 'mail', 'share', 'forgeIntegration',
+      // 通知与安全
       'notification', 'notifications', 'usageMeter', 'security',
+      // 系统与关于
       'debug', 'about',
     ]
 
@@ -218,6 +244,19 @@ describe('SettingsIndex category i18n coverage', () => {
   it('declares category ids', () => {
     expect(componentSource).toBeTruthy()
     expect(categoryIdsFromSource(componentSource as string).length).toBeGreaterThan(10)
+  })
+
+  // A category defined in the field map but missing from the index is
+  // unreachable: its rows exist, its i18n exists, and no user can navigate to
+  // it. The reverse (an index row with no category) renders an empty page.
+  it('lists every field-map category exactly once, and nothing else', () => {
+    const ids = categoryIdsFromSource(componentSource as string)
+    // Sub-page routes ('tts:tts_engine') have their own category entry for the
+    // panel they render, but they are reached from a parent page, not the index.
+    const subPageIds = new Set(Object.keys(subPagePanelMap).map(id => id.split(':')[1]))
+    const declared = Object.keys(categoryItems).filter(id => !subPageIds.has(id))
+    expect([...ids].sort()).toEqual([...declared].sort())
+    expect(new Set(ids).size).toBe(ids.length)
   })
 
   it('every declared category id has a non-empty label in every locale', () => {

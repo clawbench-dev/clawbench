@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, resolveQuoteType, buildMessageQuote, quotableMessageText, type QuoteItem } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, resolveQuoteType, isForgeQuote, buildMessageQuote, quotableMessageText, type QuoteItem } from '@/utils/quoteItem.ts'
 
 describe('fromStagedQuote', () => {
   it('maps a file quote and infers sourceKind=file', () => {
@@ -601,5 +601,34 @@ describe('quotableMessageText (private notes must not be quoted)', () => {
     const t = quotableMessageText('assistant', blocks, '', '', false)
     expect(t).toContain('clawbench-mention')
     expect(t).not.toContain('clawbench-goal-satisfied')
+  })
+})
+
+// 关闭 Forge 后，聊天里的引用卡片不能再打开外部链接——但只有「指向 Forge 集成」的
+// 那几类要拦，普通外链（粘贴的地址、评论锚点）不属于集成，仍可打开。
+describe('isForgeQuote', () => {
+  function q(over: Partial<QuoteItem> = {}): QuoteItem {
+    return {
+      id: 'q1', text: 'x', note: '', filePath: '', language: '',
+      startLine: 0, endLine: 0, sourceKind: 'url', ...over,
+    }
+  }
+
+  it.each([
+    ['issue', { language: 'issue', url: 'https://github.com/acme/w/issues/7' }],
+    ['pr', { language: 'pr', url: 'https://github.com/acme/w/pull/9' }],
+    ['pipeline', { language: 'pipeline', url: 'https://ci/run/1', commitSha: 'abc123' }],
+  ])('treats a %s reference as a forge quote', (_label, over) => {
+    expect(isForgeQuote(q(over))).toBe(true)
+  })
+
+  it('does not treat a plain external link as a forge quote', () => {
+    expect(isForgeQuote(q({ url: 'https://example.com/x' }))).toBe(false)
+  })
+
+  it('does not treat a file / task / meeting quote as a forge quote', () => {
+    expect(isForgeQuote(q({ filePath: 'src/a.go', sourceKind: 'file' }))).toBe(false)
+    expect(isForgeQuote(q({ taskId: 3 }))).toBe(false)
+    expect(isForgeQuote(q({ meetingToken: 'tok' }))).toBe(false)
   })
 })

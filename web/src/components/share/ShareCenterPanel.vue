@@ -164,9 +164,14 @@
               <!-- The page link and the file itself are two different URLs, and
                    "I want to download it directly" is a different intent from
                    "open the preview". File shares only: a folder has no single
-                   file and a conversation/meeting has nothing to download. -->
+                   file and a conversation/meeting has nothing to download.
+
+                   Also hidden when 设置 → 分享中心 → 允许下载 is off: the direct
+                   endpoint answers 403 in that state, so copying the address
+                   would hand out a link that cannot work. The share PAGE stays
+                   openable — the switch governs the bytes, not the preview. -->
               <button
-                v-if="item.kind === 'file' && !item.sourceGone"
+                v-if="item.kind === 'file' && !item.sourceGone && allowDownload"
                 class="fbtn"
                 type="button"
                 data-action="copy-direct"
@@ -234,6 +239,7 @@ import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { useShareCenter, type ShareItem } from '@/composables/useShareCenter'
+import { useFeatureFlags } from '@/composables/useFeatureFlags'
 import { onShareChanged } from '@/composables/useShareEvents'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
 import type { ShareLink } from '@/composables/useShareLinks'
@@ -256,6 +262,10 @@ const dialog = useDialog()
 const toast = useToast()
 const mail = useMailCompose()
 const center = useShareCenter()
+
+// 设置 → 分享中心 → 允许下载. Off means the direct endpoint refuses (403), so
+// the "copy direct link" action is hidden; the share page itself still opens.
+const { shareAllowDownload: allowDownload } = useFeatureFlags()
 
 const { items, loading, errors } = center
 

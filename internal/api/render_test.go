@@ -236,7 +236,20 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// the mail switch must be told apart from forge's, since it stops the
 		// same background work but deletes nothing (accounts survive), so a
 		// reader cannot infer its semantics from the forge paragraph.
-		CommandMCP: 10900,
+		//
+		// Grew to 11600 when `tasks.enabled` and `share.enabled` joined the same
+		// two descriptions. Both are destructive in a way forge's paragraph does
+		// not cover: tasks cancels running work and must not replay it later,
+		// and share REVOKES every issued link. The operation selection is
+		// unchanged — this is the shared /api/config prose, not a leaked
+		// endpoint.
+		//
+		// Grew to 12200 when the sub-keys (task retention/notification/timezone,
+		// per-kind share rules, link TTL, project name, git history page size)
+		// were listed in the same descriptions. The selection is still
+		// unchanged; the bytes are the settings contract the AI must know to
+		// patch them correctly.
+		CommandMCP: 12200,
 		// Three read-only operations (collections, documents, search). The
 		// writes are deliberately absent: a question must not mutate the
 		// library. Measured at 1070; headroom covers the search contract.

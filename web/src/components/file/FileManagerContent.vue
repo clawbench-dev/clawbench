@@ -465,14 +465,14 @@
             <Download :size="14" />
             {{ t('common.download') }}
           </div>
-          <div class="context-menu-item" data-menu-item="share-link" @click.stop="doShareLink">
+          <div v-if="shareAllowed" class="context-menu-item" data-menu-item="share-link" @click.stop="doShareLink">
             <ScreenShare :size="14" />
             {{ t('file.context.shareLink') }}
           </div>
           <!-- One entry for both files and folders: a folder is packed into a
                single zip server-side, so "send by mail" means the same thing
                either way. -->
-          <div class="context-menu-item" data-menu-item="send-mail" @click.stop="doSendByMail">
+          <div v-if="mailEnabled" class="context-menu-item" data-menu-item="send-mail" @click.stop="doSendByMail">
             <Mail :size="14" />
             {{ t('file.context.sendByMail') }}
           </div>
@@ -568,6 +568,7 @@ import { navToFileInManager, openFilePath } from '@/composables/useFilePathAnnot
 import { localConfig, setLocalConfig, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
+import { useFeatureFlags, useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
@@ -837,6 +838,12 @@ const shareDialogOpen = ref(false)
 const shareTarget = ref(null)
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
+// Master switches from 功能编排. Off removes the entry outright: both actions
+// are server calls that would be refused, and a permanently-failing button is
+// worse than no button. The share entry is gated per KIND (file links), so
+// turning off conversation or meeting links leaves it alone.
+const { mailEnabled } = useFeatureFlags()
+const shareAllowed = useShareKindAllowed('files')
 const { isWideScreen } = useWideScreenLayout()
 
 const activeTab = inject('activeTab', ref(''))
@@ -2495,6 +2502,9 @@ function doDownload() {
 }
 
 function doShareLink() {
+    // The menu was opened before the switch flipped (config reloads under an
+    // open context menu), so the entry can still be pressed.
+    if (!shareAllowed.value) { closeCtxMenu(); notifyFeatureDisabled(); return }
     const entry = ctxMenu.entry
     closeCtxMenu()
     if (!entry?.path) return
@@ -2519,6 +2529,7 @@ function doShareLink() {
  * sent yet — the user still picks the recipient.
  */
 async function doSendByMail() {
+    if (!mailEnabled.value) { closeCtxMenu(); notifyFeatureDisabled(); return }
     const entry = ctxMenu.entry
     if (!entry) return
     const path = enterPathOf(entry)

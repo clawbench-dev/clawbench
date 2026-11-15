@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 
 const mockApiGet = vi.fn()
@@ -10,6 +10,8 @@ vi.mock('@/utils/appLog', () => ({
 }))
 
 import { useGitCodeStats, resetGitStats } from '@/composables/useGitCodeStats'
+import { localConfig } from '@/composables/useSettingsConfig'
+import { readPanelState, writePanelState } from '@/utils/panelState'
 
 const GIT_RESP = {
   isGit: true,
@@ -124,5 +126,75 @@ describe('useGitCodeStats usage totals', () => {
     expect(stats.usageTotals.value).toBeNull()
     expect(stats.usageLoading.value).toBe(false)
     expect(stats.usageError.value).toBeNull()
+  })
+})
+
+describe('useGitCodeStats — configured default range (设置 → 统计)', () => {
+  it('opens on the configured window and can be reset back to it', () => {
+    try {
+      localConfig.statsDefaultRange = '30d'
+      const stats = useGitCodeStats()
+
+      stats.setRange({ rangeKey: '7d' })
+      expect(stats.range.value.rangeKey).toBe('7d')
+
+      stats.resetRangeToDefault()
+      expect(stats.range.value.rangeKey).toBe('30d')
+    } finally {
+      localConfig.statsDefaultRange = '24h'
+    }
+  })
+
+  it('resetGitStats (project switch) also returns to the configured window', () => {
+    try {
+      localConfig.statsDefaultRange = '7d'
+      const stats = useGitCodeStats()
+      stats.setRange({ rangeKey: '30d' })
+
+      resetGitStats()
+      expect(stats.range.value.rangeKey).toBe('7d')
+    } finally {
+      localConfig.statsDefaultRange = '24h'
+    }
+  })
+})
+
+// The git tab shares the usage panel's remembered window: one setting ("记住上次
+// 选择") and one stored value, so switching between the two tabs cannot show two
+// different periods for the same question.
+describe('useGitCodeStats — 记住上次选择 persistence', () => {
+  afterEach(() => {
+    localStorage.clear()
+    localConfig.statsRememberLast = false
+    localConfig.statsDefaultRange = '24h'
+  })
+
+  it('restores the stored window after a project switch while remembering', () => {
+    localStorage.clear()
+    localConfig.statsDefaultRange = '24h'
+    localConfig.statsRememberLast = true
+    writePanelState('statsRange', { rangeKey: '30d' })
+
+    const stats = useGitCodeStats()
+    resetGitStats()
+    expect(stats.range.value.rangeKey).toBe('30d')
+  })
+
+  it('persists a range chosen in the git tab', () => {
+    localStorage.clear()
+    localConfig.statsRememberLast = true
+    const stats = useGitCodeStats()
+
+    stats.setRange({ rangeKey: '7d' })
+    expect(readPanelState('statsRange')).toEqual({ rangeKey: '7d' })
+  })
+
+  it('writes nothing while 记住上次选择 is off', () => {
+    localStorage.clear()
+    localConfig.statsRememberLast = false
+    const stats = useGitCodeStats()
+
+    stats.setRange({ rangeKey: '7d' })
+    expect(readPanelState('statsRange')).toBeNull()
   })
 })

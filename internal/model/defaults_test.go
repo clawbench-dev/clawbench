@@ -775,6 +775,122 @@ func TestApplyDefaults_TerminalPresenceExplicit(t *testing.T) {
 	}
 }
 
+// The two new master switches are existing features, so an install that never
+// wrote the keys must keep them on. A bool zero value would silently stop every
+// schedule and revoke every share link on upgrade.
+func TestApplyDefaults_TasksAndShareDefaultEnabled(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if !cfg.Tasks.Enabled {
+		t.Error("Tasks.Enabled should default to true when absent from config")
+	}
+	if !cfg.Share.Enabled {
+		t.Error("Share.Enabled should default to true when absent from config")
+	}
+}
+
+// An explicit false must survive: it is the user switching the feature off.
+func TestApplyDefaults_TasksAndShareExplicitFalse(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	presence := map[string]bool{"tasks.enabled": true, "share.enabled": true}
+	ApplyDefaults(&cfg, presence)
+
+	if cfg.Tasks.Enabled {
+		t.Error("Tasks.Enabled should stay false when explicitly set")
+	}
+	if cfg.Share.Enabled {
+		t.Error("Share.Enabled should stay false when explicitly set")
+	}
+}
+
+// The sub-switches default to their documented values: notifications and the
+// share permissions are ON, retention is OFF (deleting history is opt-in), and
+// the tuning numbers have usable defaults.
+func TestApplyDefaults_TasksAndShareSubSwitches(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.Tasks.RetentionEnabled {
+		t.Error("Tasks.RetentionEnabled should default to false")
+	}
+	if cfg.Tasks.RetentionDays != 30 {
+		t.Errorf("Tasks.RetentionDays = %d, want 30", cfg.Tasks.RetentionDays)
+	}
+	if !cfg.Tasks.NotifyOnSuccess || !cfg.Tasks.NotifyOnFailure {
+		t.Error("task notification switches should default to true")
+	}
+	if cfg.Tasks.Timezone != "" {
+		t.Errorf("Tasks.Timezone = %q, want empty (server local)", cfg.Tasks.Timezone)
+	}
+	if !cfg.Share.AllowFiles || !cfg.Share.AllowSessions || !cfg.Share.AllowMeetings {
+		t.Error("share allow_* switches should default to true")
+	}
+	if !cfg.Share.AllowDownload {
+		t.Error("Share.AllowDownload should default to true")
+	}
+	if !cfg.Share.ShowProjectName {
+		t.Error("Share.ShowProjectName should default to true")
+	}
+	if cfg.Share.LinkTTLDays != 0 {
+		t.Errorf("Share.LinkTTLDays = %d, want 0 (never expire)", cfg.Share.LinkTTLDays)
+	}
+	if cfg.GitHistory.PageSize != 30 {
+		t.Errorf("GitHistory.PageSize = %d, want 30", cfg.GitHistory.PageSize)
+	}
+}
+
+// Explicit false must survive for every default-ON sub-switch.
+func TestApplyDefaults_TasksAndShareSubSwitchesExplicitFalse(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	presence := map[string]bool{
+		"tasks.notify_on_success": true,
+		"tasks.notify_on_failure": true,
+		"share.allow_files":       true,
+		"share.allow_sessions":    true,
+		"share.allow_meetings":    true,
+		"share.allow_download":    true,
+		"share.show_project_name": true,
+	}
+	ApplyDefaults(&cfg, presence)
+
+	if cfg.Tasks.NotifyOnSuccess || cfg.Tasks.NotifyOnFailure {
+		t.Error("explicit false task notification switches must survive")
+	}
+	if cfg.Share.AllowFiles || cfg.Share.AllowSessions || cfg.Share.AllowMeetings {
+		t.Error("explicit false share allow_* switches must survive")
+	}
+	if cfg.Share.AllowDownload || cfg.Share.ShowProjectName {
+		t.Error("explicit false download / project-name switches must survive")
+	}
+}
+
+// A hand-edited unknown zone must not stop the server: it falls back to local
+// time. PATCH rejects the same value with a 400, so this is the load path only.
+func TestApplyDefaults_TasksTimezoneFallsBackOnInvalid(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{Tasks: TasksConfig{Timezone: "Not/AZone"}}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Tasks.Timezone != "" {
+		t.Errorf("invalid timezone should fall back to empty, got %q", cfg.Tasks.Timezone)
+	}
+
+	cfg = Config{Tasks: TasksConfig{Timezone: "Asia/Shanghai"}}
+	ApplyDefaults(&cfg, nil)
+	if cfg.Tasks.Timezone != "Asia/Shanghai" {
+		t.Errorf("valid timezone must be kept, got %q", cfg.Tasks.Timezone)
+	}
+}
+
 func TestApplyDefaults_TerminalDefaults(t *testing.T) {
 	setupTestBinDir(t)
 

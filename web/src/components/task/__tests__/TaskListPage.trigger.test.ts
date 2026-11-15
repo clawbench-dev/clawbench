@@ -9,6 +9,9 @@ vi.mock('vue-i18n', () => ({
 
 // The event-label helper (eventTypesSummary) resolves through the app i18n
 // instance, so the module-level singleton has to exist for this suite.
+// STORAGE_KEY is part of the real module's surface: the settings layer imports
+// it at module load (migrateLegacyKeys), and TaskListPage now reads a local
+// setting, so a mock without it fails the whole suite at import time.
 vi.mock('@/i18n', () => ({
   default: {
     global: {
@@ -16,6 +19,7 @@ vi.mock('@/i18n', () => ({
       locale: { value: 'en' },
     },
   },
+  STORAGE_KEY: 'clawbench-locale',
 }))
 
 // Icons are stubbed with a stable component name so assertions can identify

@@ -1,6 +1,8 @@
 import { ref, computed } from 'vue'
 import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
+import { localConfig } from '@/composables/useSettingsConfig'
+import { readPanelState, writePanelState, type StatsRangeState } from '@/utils/panelState'
 
 /** Aggregation dimension ids. Order = table column order. */
 export type UsageDimId = 'model' | 'backend' | 'agent' | 'project'
@@ -37,6 +39,62 @@ export interface UsageRange {
   // now-based UTC instants); the backend timebase is UTC.
   customStart?: string // yyyy-mm-dd, when rangeKey === 'custom'
   customEnd?: string
+}
+
+/**
+ * The window the stats panels open with (设置 → 统计 → 默认时间范围).
+ *
+ * Read at call time, not at module load, so a setting changed in the same
+ * session is picked up by the next panel activation. `custom` is never a
+ * default: it needs two concrete dates the user has not picked yet.
+ */
+export function configuredStatsRange(): UsageRange {
+  const key = localConfig.statsDefaultRange
+  return { rangeKey: key === '7d' || key === '30d' ? key : '24h' }
+}
+
+/** Whether 记住上次选择 is on. One reader, so both panels and the tab agree. */
+export function remembersStatsSelection(): boolean {
+  return localConfig.statsRememberLast === true
+}
+
+/**
+ * The window a freshly loaded panel starts on.
+ *
+ * With 记住上次选择 ON this is the stored selection, which is what makes the
+ * switch survive a page reload (the module singleton alone only survives the
+ * SPA session). With it OFF the stored value is never read — the configured
+ * default wins.
+ *
+ * A stored `custom` window without both dates is discarded: `rangeToISO`
+ * resolves that to "now → now", an empty range that reads as a bug.
+ */
+export function initialStatsRange(): UsageRange {
+  if (remembersStatsSelection()) {
+    const saved = readPanelState<StatsRangeState | null>('statsRange')
+    if (saved && (saved.rangeKey === '24h' || saved.rangeKey === '7d' || saved.rangeKey === '30d')) {
+      return { rangeKey: saved.rangeKey }
+    }
+    if (saved?.rangeKey === 'custom' && saved.customStart && saved.customEnd) {
+      return { rangeKey: 'custom', customStart: saved.customStart, customEnd: saved.customEnd }
+    }
+  }
+  return configuredStatsRange()
+}
+
+/** Persist the chosen window — a no-op while 记住上次选择 is OFF. */
+export function rememberStatsRange(range: UsageRange): void {
+  if (!remembersStatsSelection()) return
+  if (range.rangeKey === 'custom') {
+    if (!range.customStart || !range.customEnd) return
+    writePanelState<StatsRangeState | null>('statsRange', {
+      rangeKey: 'custom',
+      customStart: range.customStart,
+      customEnd: range.customEnd,
+    })
+    return
+  }
+  writePanelState<StatsRangeState | null>('statsRange', { rangeKey: range.rangeKey })
 }
 
 export interface UsageTotals {
@@ -86,7 +144,7 @@ export interface UsageFilter {
 
 const DEFAULT_FILTER: UsageFilter = {
   scope: 'project',
-  range: { rangeKey: '24h' },
+  range: initialStatsRange(),
   dims: ['model'],
   metrics: ['total'],
   sortBy: 'total',
@@ -182,7 +240,7 @@ function reloadStats(): void {
 
 /** Reset filters to defaults and fetch. */
 async function resetStatsFilter(): Promise<void> {
-  filter.value = { ...DEFAULT_FILTER, range: { ...DEFAULT_FILTER.range }, dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics] }
+  filter.value = { ...DEFAULT_FILTER, range: initialStatsRange(), dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics] }
   await loadStats()
 }
 
@@ -202,7 +260,7 @@ export function resetUsageStats(): void {
     abortController.abort()
     abortController = null
   }
-  filter.value = { ...DEFAULT_FILTER, range: { ...DEFAULT_FILTER.range }, dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics] }
+  filter.value = { ...DEFAULT_FILTER, range: initialStatsRange(), dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics] }
   raw.value = null
   error.value = null
   loading.value = false
@@ -279,7 +337,19 @@ export function useUsageStats() {
 
   function setRange(range: UsageRange) {
     filter.value.range = { ...range }
+    // Only writes while 记住上次选择 is on — the check lives in rememberStatsRange.
+    rememberStatsRange(filter.value.range)
     void loadStats()
+  }
+
+  /**
+   * Put the window back to the configured default (设置 → 统计).
+   *
+   * Called when the panel is (re)activated with 记住上次选择 off, so the panel
+   * opens where the settings say instead of where the user left it.
+   */
+  function resetRangeToDefault() {
+    filter.value.range = configuredStatsRange()
   }
 
   function setChartType(type: UsageChartType) {
@@ -299,6 +369,7 @@ export function useUsageStats() {
     reloadStats,
     resetStatsFilter,
     resetUsageStats,
+    resetRangeToDefault,
     setScope,
     setDims,
     setMetrics,

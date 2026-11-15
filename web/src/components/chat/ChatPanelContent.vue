@@ -354,6 +354,7 @@ import { queuedMessages, setActiveQueueSession, addQueued, clearQueue, getQueue,
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
+import { useFeatureFlags, useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { stopGroupMember } from '@/composables/useGroupChat'
 import { collectStopTargets } from '@/utils/chatStopTargets'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
@@ -365,7 +366,7 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
-import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText, isForgeQuote } from '@/utils/quoteItem.ts'
 import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRouting.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
@@ -564,6 +565,13 @@ const forkingMessageId = ref(null)
 const sessionShareOpen = ref(false)
 const sessionShareId = ref('')
 const toast = useToast()
+// 任务 / 分享 master switches. A quoted task and a finished conversation stay
+// readable history; only the jump / publish entries they gate are refused while
+// the feature is off.
+const { tasksEnabled, forgeEnabled } = useFeatureFlags()
+// Conversation links only: the per-kind share switches for files/meetings must
+// not block sharing a session.
+const sessionShareAllowed = useShareKindAllowed('sessions')
 const acpSyncing = ref(false)
 const acpSession = useAcpSession({ currentAgentId: identity.currentAgentId })
 
@@ -906,6 +914,7 @@ async function jumpToQuoteSource(q) {
 
     // 2. Task: open the scheduled task's detail view.
     if (q.taskId) {
+        if (!tasksEnabled.value) { notifyFeatureDisabled(); return }
         window.dispatchEvent(new CustomEvent('clawbench-open-task', {
             detail: { taskId: q.taskId, executionId: q.executionId },
         }))
@@ -943,7 +952,17 @@ async function jumpToQuoteSource(q) {
     }
 
     // 6. External address (a forge issue/PR, a CI run, a comment anchor).
+    //
+    // A forge reference is not just a link: it points into the integration that
+    // `forge.enabled` turns off (polling stops, bindings are cleared), so with
+    // the switch off it is refused like the forge tab and the forge notification
+    // rows are. A plain external link (a pasted URL, a comment anchor) is not
+    // the integration and still opens.
     if (q.url) {
+        if (isForgeQuote(q) && !forgeEnabled.value) {
+            notifyFeatureDisabled()
+            return
+        }
         openExternalUrl(q.url)
         return
     }
@@ -1880,6 +1899,7 @@ const railPendingActive = computed(() =>
  * sessions while it is open (the dialog loads its data on open, not per render).
  */
 function handleOpenSessionShare() {
+  if (!sessionShareAllowed.value) { notifyFeatureDisabled(); return }
   const sid = identity.currentSessionId.value
   if (!sid) return
   sessionShareId.value = sid

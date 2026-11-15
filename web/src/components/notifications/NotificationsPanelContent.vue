@@ -198,6 +198,7 @@ import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { useNotifications, ALL_PROJECTS } from '@/composables/useNotifications'
 import { useToast } from '@/composables/useToast'
+import { useFeatureFlags, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app'
 import { formatClockTime, formatDayLabel, formatFullTimestamp, startOfLocalDay } from '@/utils/format'
@@ -210,6 +211,10 @@ const props = defineProps<{ active: boolean }>()
 const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
+// 任务 / Forge master switches (功能编排). Rows stay readable — the log is a
+// record of what happened — but their jump targets are gone with the tabs, so
+// the press must explain instead of dispatching a dead deep link.
+const { tasksEnabled, forgeEnabled } = useFeatureFlags()
 
 const {
   items, total, hasMore, loading, loadingMore, error,
@@ -497,6 +502,14 @@ function fallbackTitle(n: NotificationItem): string {
  * the user on a page Back cannot leave (see the wiring test's per-kind guard).
  */
 async function onOpen(n: NotificationItem) {
+  // A task/forge row whose feature was turned off has no destination any more:
+  // the tab is gone and the deep link would land nowhere. Say why, and where to
+  // turn it back on. Checked before the cross-project confirm — asking "switch
+  // project?" for a jump that will not happen is worse than the plain refusal.
+  if ((n.kind === 'task' && !tasksEnabled.value) || (n.kind === 'forge' && !forgeEnabled.value)) {
+    notifyFeatureDisabled()
+    return
+  }
   if (n.sourceMissing) {
     toast.show(t('notifications.sourceDeletedHint'), { icon: 'warning', type: 'info' })
     return

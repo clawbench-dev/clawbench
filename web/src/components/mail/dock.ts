@@ -3,7 +3,6 @@ import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import type { DockPluginRuntime } from '@/composables/dockPluginTypes'
 
 const { total } = useMailUnread()
-const { serverConfig } = useSettingsConfig()
 
 /**
  * Mail runtime. The unread poller is the only background resource in the dock:
@@ -12,7 +11,13 @@ const { serverConfig } = useSettingsConfig()
  */
 export const mailDock: DockPluginRuntime = {
   badge: () => ({ count: total.value }),
-  available: () => (serverConfig.value?.mail as Record<string, unknown> | undefined)?.enabled !== false,
+  // Resolved per call, not at module load: reading the config module while this
+  // file is being imported touches it before the test/host mock is ready (TDZ).
+  // Same reason as forge/dock.ts.
+  available: () => {
+    const { serverConfig } = useSettingsConfig()
+    return (serverConfig.value?.mail as Record<string, unknown> | undefined)?.enabled !== false
+  },
   unavailableReasonKey: 'settings.dockPlugins.unavailable.mail',
   panel: {
     load: () => import('./MailPanel.vue'),

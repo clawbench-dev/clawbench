@@ -17,6 +17,7 @@ import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePla
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
 import { _resetChatDraftsForTesting } from '@/utils/chatDraftStore.ts'
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
 
 // `isAndroidUA` is a module-level constant read from navigator.userAgent, so
 // the real `_setPlatformForTest` hook cannot drive it. Override only that export
@@ -614,6 +615,41 @@ describe('ChatInputBar', () => {
   it('renders the textarea', () => {
     const wrapper = mountBar()
     expect(wrapper.find('.chat-textarea').exists()).toBe(true)
+  })
+
+  it('drops the share-session button when 分享 is off', () => {
+    const on = mountBar({ currentSessionId: 's1' })
+    expect(on.find('[data-action="share-session"]').exists()).toBe(true)
+
+    syncFeatureConfig({ share: { enabled: false } })
+    try {
+      const off = mountBar({ currentSessionId: 's1' })
+      expect(off.find('[data-action="share-session"]').exists()).toBe(false)
+      // The neighbouring session actions stay — the switch gates sharing only.
+      expect(off.find('.chat-action-btn-archive').exists()).toBe(true)
+    } finally {
+      syncFeatureConfig({})
+    }
+  })
+
+  it('keeps the share button when only file/meeting links are disallowed', () => {
+    syncFeatureConfig({ share: { enabled: true, allow_files: false, allow_meetings: false } })
+    try {
+      const wrapper = mountBar({ currentSessionId: 's1' })
+      expect(wrapper.find('[data-action="share-session"]').exists()).toBe(true)
+    } finally {
+      syncFeatureConfig({})
+    }
+  })
+
+  it('drops the share-session button when CONVERSATION links are disallowed', () => {
+    syncFeatureConfig({ share: { enabled: true, allow_sessions: false } })
+    try {
+      const wrapper = mountBar({ currentSessionId: 's1' })
+      expect(wrapper.find('[data-action="share-session"]').exists()).toBe(false)
+    } finally {
+      syncFeatureConfig({})
+    }
   })
 
   it('renders the attach button', () => {

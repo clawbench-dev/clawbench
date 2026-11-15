@@ -2,24 +2,26 @@ import { computed, ref } from 'vue'
 import {
   DOCK_TAB_BY_ID,
   DOCK_TABS,
-  REORDERABLE_DOCK_TABS,
-  isDockTabId,
   mergeDockOrder,
+  isDockTabId,
+  type DockFeature,
   type DockTabId,
 } from './dockTabs'
 import { DEFAULT_DOCK_PRESET, readPanelState, writePanelState } from '@/utils/panelState'
 
 /**
- * Dock plugin orchestration: visibility, order and the shared profile preset.
+ * Dock orchestration: visibility, order, the shared profile preset, and the
+ * server switches a preset turns on or off.
  *
  * This is the single writer for the three persisted keys (`dockHidden`,
  * `dockOrder`, `dockPreset`). The dock itself only reads the derived lists; the
  * settings manager is the only UI that mutates them.
  *
- * Presets are deliberately coarse:
- *   - developer: nothing hidden
- *   - standard:  hide dev-related tabs (terminal / port mapping / Forge)
- *   - minimal:   hide every closable tab (only chat + browse + view + notifications + settings)
+ * Presets are the coarse choice, the manager list is the fine one:
+ *   - developer: every tab shown and every server feature on, default order
+ *   - standard:  office set — Forge / terminal / port mapping hidden and Forge
+ *                + terminal switched off; everything else on
+ *   - minimal:   only the permanent tabs; every optional feature switched off
  *   - custom:    the user changed something by hand; plugins should treat it as
  *                the neutral default
  *
@@ -43,12 +45,90 @@ const PRESET_VALUES: readonly DockPreset[] = [
   'custom',
 ]
 
-/** What each preset hides. Data-driven so a new devRelated tab is covered. */
-const PRESET_HIDDEN: Readonly<Record<Exclude<DockPreset, 'custom'>, readonly DockTabId[]>> = {
-  developer: [],
-  standard: DOCK_TABS.filter((t) => t.devRelated).map((t) => t.id),
-  minimal: DOCK_TABS.filter((t) => t.closable).map((t) => t.id),
+/** One server switch a preset sets. */
+export interface DockFeatureChange {
+  key: DockFeature
+  value: boolean
 }
+
+/**
+ * Everything applying a preset does. Kept as data (not hidden inside the
+ * apply function) so the manager can preview the consequences in its
+ * confirmation dialog from the same source that performs them.
+ */
+export interface DockPresetPlan {
+  /** Tabs hidden in the dock. */
+  hidden: readonly DockTabId[]
+  /** Full left-dock order (all 14 ids). */
+  order: readonly DockTabId[]
+  /** Server master switches to write, in one request. */
+  features: readonly DockFeatureChange[]
+}
+
+/**
+ * The three presets, spelled out.
+ *
+ * Orders are literal arrays rather than derived filters: the three presets
+ * differ in ways a filter cannot express (office parks the developer tabs at
+ * the end instead of removing them, minimal keeps the historical slot order
+ * so turning a feature back on lands it where it used to be).
+ */
+export const DOCK_PRESET_PLANS: Readonly<Record<Exclude<DockPreset, 'custom'>, DockPresetPlan>> = {
+  developer: {
+    hidden: [],
+    order: [
+      'browse', 'view', 'history', 'forge', 'tasks', 'terminal', 'stats',
+      'mail', 'kb', 'live', 'share', 'proxy', 'notifications', 'settings',
+    ],
+    features: [
+      { key: 'forge.enabled', value: true },
+      { key: 'mail.enabled', value: true },
+      { key: 'terminal.enabled', value: true },
+      { key: 'kb.enabled', value: true },
+      { key: 'tasks.enabled', value: true },
+      { key: 'share.enabled', value: true },
+    ],
+  },
+  standard: {
+    hidden: ['forge', 'terminal', 'proxy'],
+    order: [
+      'browse', 'view', 'history', 'tasks', 'stats', 'mail', 'kb', 'live',
+      'share', 'notifications', 'forge', 'terminal', 'proxy', 'settings',
+    ],
+    features: [
+      { key: 'forge.enabled', value: false },
+      { key: 'mail.enabled', value: true },
+      { key: 'terminal.enabled', value: false },
+      { key: 'kb.enabled', value: true },
+      { key: 'tasks.enabled', value: true },
+      { key: 'share.enabled', value: true },
+    ],
+  },
+  minimal: {
+    hidden: [
+      'history', 'forge', 'tasks', 'terminal', 'stats',
+      'mail', 'kb', 'live', 'share', 'proxy',
+    ],
+    order: [
+      'browse', 'view', 'notifications', 'history', 'forge', 'tasks',
+      'terminal', 'stats', 'mail', 'kb', 'live', 'share', 'proxy', 'settings',
+    ],
+    features: [
+      { key: 'forge.enabled', value: false },
+      { key: 'mail.enabled', value: false },
+      { key: 'terminal.enabled', value: false },
+      { key: 'kb.enabled', value: false },
+      { key: 'tasks.enabled', value: false },
+      { key: 'share.enabled', value: false },
+    ],
+  },
+}
+
+/** Presets that stop server-side work, so applying them needs a confirmation. */
+export const PRESETS_NEEDING_CONFIRM: readonly Exclude<DockPreset, 'custom'>[] = [
+  'standard',
+  'minimal',
+]
 
 function readPreset(): DockPreset {
   const raw = readPanelState<string>('dockPreset')
@@ -76,13 +156,8 @@ const preset = ref<DockPreset>(readPreset())
 /** The current hidden set. Replaced (not mutated) so watchers fire reliably. */
 const hiddenIds = computed<ReadonlySet<DockTabId>>(() => hidden.value)
 
-/** The user order merged with the registry default (unknown ids dropped). */
+/** The full left-dock order (all ids, default slots preserved for new ones). */
 const orderedIds = computed<DockTabId[]>(() => mergeDockOrder(order.value))
-
-/** Reorderable tabs in their current order (hidden ones included). */
-const reorderableIds = computed<DockTabId[]>(() =>
-  orderedIds.value.filter((id) => REORDERABLE_DOCK_TABS.includes(id)),
-)
 
 /** Only closable tabs can be hidden; a stale value must not hide a core tab. */
 function isClosable(id: DockTabId): boolean {
@@ -100,11 +175,24 @@ function persist(): void {
   writePanelState('dockPreset', preset.value)
 }
 
-/** Apply a preset: reset visibility and order to that preset's defaults. */
-export function applyDockPreset(next: Exclude<DockPreset, 'custom'>): void {
+/**
+ * Apply a preset: one commit for every server switch, then visibility + order.
+ *
+ * `commit` performs the server write (the manager passes a single batched
+ * PATCH). It runs FIRST and its failure propagates: nothing local has been
+ * touched yet, so a failed preset leaves the dock exactly as it was — no
+ * half-applied state to unwind. `commit` is optional only so tests and
+ * non-server callers can exercise the local half; every UI caller passes one.
+ */
+export async function applyDockPreset(
+  next: Exclude<DockPreset, 'custom'>,
+  commit?: (changes: readonly DockFeatureChange[]) => Promise<void>,
+): Promise<void> {
+  const plan = DOCK_PRESET_PLANS[next]
+  if (commit && plan.features.length > 0) await commit(plan.features)
   preset.value = next
-  hidden.value = new Set(PRESET_HIDDEN[next])
-  order.value = []
+  hidden.value = new Set(plan.hidden)
+  order.value = [...plan.order]
   persist()
 }
 
@@ -125,8 +213,10 @@ export function toggleDockTab(id: DockTabId): void {
 }
 
 /**
- * Replace the reorderable order wholesale (drag and drop). Missing ids are
- * appended in registry order, so a partial list can never drop a tab.
+ * Replace the order wholesale (drag and drop). Every row in the manager is
+ * draggable, so this is normally the complete list; a partial list keeps the
+ * unmentioned tabs in their default slots (see mergeDockOrder) rather than
+ * dropping them.
  */
 export function setDockTabOrder(ids: readonly DockTabId[]): void {
   const next = mergeDockOrder(ids)
@@ -138,9 +228,11 @@ export function setDockTabOrder(ids: readonly DockTabId[]): void {
   persist()
 }
 
-/** Restore the developer preset (all tabs visible, default order). */
-export function resetDockPlugins(): void {
-  applyDockPreset('developer')
+/** Restore the developer preset (all tabs visible, default order, all on). */
+export async function resetDockPlugins(
+  commit?: (changes: readonly DockFeatureChange[]) => Promise<void>,
+): Promise<void> {
+  await applyDockPreset('developer', commit)
 }
 
 /** True when the tab is hidden by the user (unknown/core ids are never hidden). */
@@ -148,9 +240,18 @@ export function isDockTabHidden(id: string): boolean {
   return isDockTabId(id) && isClosable(id) && hidden.value.has(id)
 }
 
-/** True when the tab can be reordered (and therefore gets up/down buttons). */
-export function isDockTabReorderable(id: DockTabId): boolean {
-  return REORDERABLE_DOCK_TABS.includes(id)
+/**
+ * Mark the profile `custom` without touching visibility or order.
+ *
+ * The manager's feature switches live on the SERVER, so flipping one changes
+ * neither the hidden set nor the order — but it does mean the dock no longer
+ * matches any preset, and plugins reading the profile must stop treating it as
+ * "developer" or "standard".
+ */
+export function markDockPresetCustom(): void {
+  if (preset.value === 'custom') return
+  preset.value = 'custom'
+  persist()
 }
 
 /** Shared state + actions for the dock and the settings manager. */
@@ -158,7 +259,6 @@ export function useDockPlugins() {
   return {
     hidden: hiddenIds,
     order: orderedIds,
-    reorderableIds,
     visibleIds,
     preset,
     applyPreset: applyDockPreset,
@@ -167,7 +267,7 @@ export function useDockPlugins() {
     toggle: toggleDockTab,
     reset: resetDockPlugins,
     isHidden: isDockTabHidden,
-    isReorderable: isDockTabReorderable,
+    markCustom: markDockPresetCustom,
   }
 }
 

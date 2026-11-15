@@ -349,6 +349,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			name TEXT NOT NULL,
 			root TEXT NOT NULL DEFAULT '',
 			project_id INTEGER NOT NULL DEFAULT 0,
+			expires_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS project_forges (
@@ -378,6 +379,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			token TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
 			message_ids TEXT NOT NULL DEFAULT '[]',
+			expires_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		-- DeleteProjectData cleans this table by group_id; without it here the

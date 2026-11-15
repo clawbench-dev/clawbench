@@ -62,10 +62,11 @@ describe('App.vue consumes the forge runtime', () => {
   })
 
   it('filters the dock by a single runtime availability set', () => {
-    const start = app.indexOf('const overflowTabs = computed')
-    expect(start, 'overflowTabs computed not found in App.vue').toBeGreaterThan(-1)
-    const body = app.slice(start, start + 400)
+    const start = app.indexOf('const visibleDockTabs = computed')
+    expect(start, 'visibleDockTabs computed not found in App.vue').toBeGreaterThan(-1)
+    const body = app.slice(start, start + 500)
     expect(body).toContain('unavailable: unavailableDockTabs.value')
+    expect(body).toContain('featureDisabled: featureDisabledDockTabs.value')
     expect(body).not.toContain('forgeHidden:')
   })
 

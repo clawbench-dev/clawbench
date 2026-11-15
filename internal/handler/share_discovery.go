@@ -34,8 +34,13 @@ package handler
 import (
 	"encoding/json"
 	"html"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"clawbench/internal/model"
+	"clawbench/internal/service"
+	"clawbench/internal/store"
 )
 
 // shareDiscovery describes what the injected block should say.
@@ -49,6 +54,43 @@ type shareDiscovery struct {
 	Kind string
 	// MessageCount is the conversation's message count (0 for file shares).
 	MessageCount int
+	// ProjectName is the source project's display name. Empty when the owner
+	// switched share.show_project_name off (or the project is unknown).
+	ProjectName string
+	// DownloadAllowed mirrors share.allow_download. The discovery block does
+	// not advertise a download URL that the server would answer with 403.
+	DownloadAllowed bool
+}
+
+// shareProjectName returns the display name of a project for a public share
+// page, or "" when the owner opted out (share.show_project_name).
+func shareProjectName(projectPath string) string {
+	if !model.FeaturePolicy.ShareShowProjectName || projectPath == "" {
+		return ""
+	}
+	name := filepath.Base(filepath.Clean(projectPath))
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return ""
+	}
+	return name
+}
+
+// shareProjectNameForMeeting resolves an archived meeting's project name.
+// Unknown tokens / deleted projects answer "" rather than an error: the source
+// label is decoration on a public page, not part of the share contract.
+func shareProjectNameForMeeting(token string) string {
+	if !model.FeaturePolicy.ShareShowProjectName {
+		return ""
+	}
+	pid, ok, err := service.LiveNoteProjectID(token)
+	if err != nil || !ok {
+		return ""
+	}
+	path, ok, err := store.ProjectPathForID(pid)
+	if err != nil || !ok {
+		return ""
+	}
+	return shareProjectName(path)
 }
 
 // validShareToken reports whether a token is safe to interpolate into the
@@ -135,6 +177,12 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 	b.WriteString("         token already in the page URL — no second link is needed. -->\n")
 	b.WriteString(`    <link rel="alternate" type="application/json" href="` + dataURL + `" title="` + titleHTML + ` (JSON)">` + "\n")
 	b.WriteString(`    <link rel="alternate" type="application/json" href="` + metaURL + `" title="Share metadata">` + "\n")
+	if d.ProjectName != "" {
+		// Link unfurls (Slack/WeChat/etc.) show this as the source site. It is
+		// the only place the project name reaches a reader without the SPA
+		// rendering it, and it disappears entirely when the owner opts out.
+		b.WriteString(`    <meta property="og:site_name" content="` + html.EscapeString(d.ProjectName) + `">` + "\n")
+	}
 
 	// Direct file access. A browser that clicks the download button fetches
 	// exactly this URL, but nothing in the shell says so — and an agent reading
@@ -143,7 +191,7 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 	// "here is the file". Conversation shares have no file, so they get none of
 	// this; a folder has no single file, so its bare download URL is invalid and
 	// only the ?path= form is advertised.
-	if d.Kind != shareKindSession {
+	if d.Kind != shareKindSession && d.DownloadAllowed {
 		downloadURL := "/api/share/" + d.Token + "/download"
 		localURL := "/api/share/" + d.Token + "/local"
 		b.WriteString("\n    <!-- Direct file access (same token, no sign-in):\n")
@@ -178,12 +226,15 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 	// markup.
 	b.WriteString("    <noscript>\n")
 	b.WriteString("      <h1>" + titleHTML + "</h1>\n")
+	if d.ProjectName != "" {
+		b.WriteString("      <p>Source project: " + html.EscapeString(d.ProjectName) + "</p>\n")
+	}
 	b.WriteString("      <p>" + desc + " The full content is available as JSON at\n")
 	b.WriteString(`         <a href="` + dataURL + `">` + dataURL + "</a>.</p>\n")
-	if d.Kind == shareKindFile {
+	if d.DownloadAllowed && d.Kind == shareKindFile {
 		b.WriteString(`      <p>Download the file itself: <a href="/api/share/` + d.Token + `/download">` +
 			`/api/share/` + d.Token + `/download</a>.</p>` + "\n")
-	} else if d.Kind == shareKindDir {
+	} else if d.DownloadAllowed && d.Kind == shareKindDir {
 		b.WriteString("      <p>Download one entry: <code>/api/share/" + d.Token +
 			"/download?path=&lt;absolute path inside the folder&gt;</code>.</p>\n")
 	}

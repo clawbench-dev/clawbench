@@ -79,7 +79,7 @@
            in the More menu — it is an action on the open file, the same class
            of thing as 引用对话 next to it; ActionBar folds it away on its own
            when the header runs out of room. -->
-      <button v-if="!isUntitled && !editing" data-toolbar-id="sendByMail" class="file-header-btn" @click.stop="handleSendByMail" :title="t('file.header.sendByMail')" :aria-label="t('file.header.sendByMail')">
+      <button v-if="!isUntitled && !editing && mailEnabled" data-toolbar-id="sendByMail" class="file-header-btn" @click.stop="handleSendByMail" :title="t('file.header.sendByMail')" :aria-label="t('file.header.sendByMail')">
         <Mail :size="14" />
         <span class="action-label">{{ t('file.header.sendByMail') }}</span>
       </button>
@@ -141,7 +141,7 @@
           <GitBranch :size="14" />
           {{ t('file.header.fileHistory') }}
         </button>
-        <button v-if="permanentMenuIds.includes('shareLink')" class="ab-menu-item" :class="{ active: isShared }" @click="$emit('shareLink')">
+        <button v-if="permanentMenuIds.includes('shareLink') && shareAllowed" class="ab-menu-item" :class="{ active: isShared }" @click="$emit('shareLink')">
           <ScreenShare :size="14" />
           {{ t('file.header.shareLink') }}
           <span v-if="isShared" class="wrap-check">✓</span>
@@ -217,6 +217,8 @@ import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { useFileShare } from '@/composables/useFileShare'
 import { useToast } from '@/composables/useToast'
 import { sendPathsByMail } from '@/utils/mailAttach'
+import { useFeatureFlags, useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
+import { isDockTabHidden } from '@/composables/useDockPlugins'
 
 const props = defineProps({
     file: Object,
@@ -245,6 +247,14 @@ const { isAppMode } = useAppMode()
 const { t } = useI18n()
 const { isWideScreen } = getWideScreenState()
 const { refreshFileShare, isFileShared } = useFileShare()
+// Master switches from 功能编排 — see useFeatureFlags. The share and mail
+// entries disappear entirely when off: both open a flow that can only fail
+// server-side. The share entry is gated per KIND (file links). The file-history
+// entry follows the history TAB instead: it is a display switch, so the entry
+// stays visible but explains itself when pressed.
+const { mailEnabled } = useFeatureFlags()
+const shareAllowed = useShareKindAllowed('files')
+const historyTabHidden = computed(() => isDockTabHidden('history'))
 
 /** The open file lives outside the project root (chat annotations may name any
  *  path the server exposes; the viewer opens them like any other file). */
@@ -500,7 +510,16 @@ function handleDelete() {
     emit('delete', props.file?.path)
 }
 
+/**
+ * Open the file's commit history.
+ *
+ * The history tab is only a display switch, so hiding it must not silently
+ * remove this entry (the drawer still exists) — but pressing it would open a
+ * surface the user just chose to remove from the dock. Explain instead, and
+ * point at the place that turns it back on.
+ */
 function handleGitHistory() {
+    if (historyTabHidden.value) { notifyFeatureDisabled(); return }
     emit('openGitHistory')
 }
 

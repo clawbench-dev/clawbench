@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
 
@@ -27,11 +29,26 @@ CREATE TABLE IF NOT EXISTS file_shares (
 	name TEXT NOT NULL,
 	root TEXT NOT NULL DEFAULT '',
 	project_id INTEGER NOT NULL DEFAULT 0,
+	expires_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_file_shares_path ON file_shares(path);
 CREATE INDEX IF NOT EXISTS idx_file_shares_project ON file_shares(project_id);
 `
+
+// shareLinkExpiry returns the absolute expiry for a link created NOW, based on
+// the current share.link_ttl_days setting. nil means "never expires".
+//
+// The value is stored on the row rather than recomputed at read time: changing
+// the default must not retroactively kill (or extend) links that were handed
+// out under the old rule.
+func shareLinkExpiry() any {
+	days := model.ConfigInstance.Share.LinkTTLDays
+	if days <= 0 {
+		return nil
+	}
+	return time.Now().UTC().AddDate(0, 0, days).Format("2006-01-02 15:04:05")
+}
 
 // GenerateShareToken returns a cryptographically random 32-hex-char token
 // (128 bits of entropy), unguessable for capability-URL protection.
@@ -79,8 +96,8 @@ func UpsertFileShare(path, name, root, projectPath string) (token string, create
 		}
 	}
 	if _, err := store.WriteExec(
-		"INSERT INTO file_shares (token, path, name, root, project_id) VALUES (?, ?, ?, ?, ?)",
-		token, path, name, root, projectID,
+		"INSERT INTO file_shares (token, path, name, root, project_id, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+		token, path, name, root, projectID, shareLinkExpiry(),
 	); err != nil {
 		return "", false, fmt.Errorf("insert share: %w", err)
 	}
@@ -95,7 +112,10 @@ func GetFileShareByToken(token string) (path, name, root string, ok bool, err er
 	if token == "" {
 		return "", "", "", false, nil
 	}
-	row := store.ReadDB().QueryRow("SELECT path, name, root FROM file_shares WHERE token = ?", token)
+	row := store.ReadDB().QueryRow(
+		"SELECT path, name, root FROM file_shares WHERE token = ? AND (expires_at IS NULL OR expires_at > datetime('now'))",
+		token,
+	)
 	if err := row.Scan(&path, &name, &root); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", "", "", false, nil
@@ -134,7 +154,10 @@ func GetFileShareByPath(path string) (token, name string, ok bool, err error) {
 	if path == "" {
 		return "", "", false, nil
 	}
-	row := store.ReadDB().QueryRow("SELECT token, name FROM file_shares WHERE path = ?", path)
+	row := store.ReadDB().QueryRow(
+		"SELECT token, name FROM file_shares WHERE path = ? AND (expires_at IS NULL OR expires_at > datetime('now'))",
+		path,
+	)
 	if err := row.Scan(&token, &name); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", "", false, nil
@@ -253,7 +276,9 @@ func ListFileShares(projectPath string) ([]FileShare, error) {
 		return nil, idErr
 	}
 	rows, err := store.ReadDB().Query(
-		"SELECT token, path, name, created_at FROM file_shares WHERE project_id = ? ORDER BY rowid DESC",
+		`SELECT token, path, name, created_at FROM file_shares
+		  WHERE project_id = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
+		  ORDER BY rowid DESC`,
 		projectID,
 	)
 	if err != nil {

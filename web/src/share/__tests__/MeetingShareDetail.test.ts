@@ -239,3 +239,23 @@ describe('MeetingShareDetail', () => {
     }
   })
 })
+
+// A published meeting record is a share page, so it names its source project
+// when the server allows it (`share.show_project_name`). The value arrives from
+// ShareRoot via LiveShareView — this view only renders it.
+describe('MeetingShareDetail — source project', () => {
+  it('shows the project chip when a name is supplied', async () => {
+    const w = mountDetail({ title: 'Release review', projectName: 'clawbench' })
+    await flushPromises()
+
+    const chip = w.find('[data-role="share-project"]')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toContain('clawbench')
+  })
+
+  it('renders no chip without a name', async () => {
+    const w = mountDetail({ title: 'Release review' })
+    await flushPromises()
+    expect(w.find('[data-role="share-project"]').exists()).toBe(false)
+  })
+})

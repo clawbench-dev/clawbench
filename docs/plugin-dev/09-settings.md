@@ -8,7 +8,7 @@
 | 分组面板 | 一组字段 + 启用开关 + 测试连接 | `type: 'panel'` + `GroupPanelConfig` |
 | 自定义页面 | 列表、预设、拖拽/排序、复杂交互 | `SettingsCategory.vue` 加分支 + 自己的 `.vue` |
 
-插件管理器（`dockPlugins`）是第三种：它有预设卡片、开关、拖动排序，不适合用扁平字段描述。
+功能编排（`dockPlugins`）是第三种：它有预设卡片、拖动排序和写服务端配置的开关，不适合用扁平字段描述。
 
 ## 2. 加一个扁平分类
 
@@ -19,10 +19,10 @@ snippets: [
   {
     type: 'item',
     spec: {
-      labelKey: 'settings.items.snippetsEnabled',
-      descriptionKey: 'settings.items.snippetsEnabledDesc',
-      key: 'snippets.enabled',
-      type: 'switch',
+      labelKey: 'settings.items.snippetsPageSize',
+      descriptionKey: 'settings.items.snippetsPageSizeDesc',
+      key: 'snippets.page_size',
+      type: 'number',
       source: 'server',
       sectionHeader: 'settings.items.snippetsSection',
     },
@@ -44,8 +44,8 @@ settings: {
   categories: { snippets: '代码片段' },
   items: {
     snippetsSection: '代码片段',
-    snippetsEnabled: '启用代码片段',
-    snippetsEnabledDesc: '关闭后不再出现在 Dock。',
+    snippetsPageSize: '每页条数',
+    snippetsPageSizeDesc: '列表一页显示多少条。',
   },
 }
 ```
@@ -54,7 +54,7 @@ settings: {
 
 ## 3. 加一个自定义页面
 
-以插件管理器为例：
+以功能编排为例：
 
 1. 新建 `web/src/components/settings/SnippetsSetting.vue`。
 2. `SettingsCategory.vue` 模板加分支：
@@ -67,7 +67,7 @@ settings: {
 ```
 
 3. import 组件。
-4. `categoryItems` 加空数组（保持“每个分类都登记”的约定）：
+4. `categoryItems` 加空数组（保持“每个分类都登记”的约定；**空数组是合法状态**，专用面板不写扁平字段）：
 
 ```ts
 snippets: [],
@@ -96,7 +96,7 @@ switchTab('settings')
 
 `SettingsPage` 会在激活时消费它。不要自己维护一份 pending 状态。
 
-## 5. 插件管理器里的齿轮入口
+## 5. 功能编排里的齿轮入口
 
 `DOCK_TABS` 的 `settingsCategory` 字段就是给这个用的：
 
@@ -112,43 +112,55 @@ switchTab('settings')
 
 ### 5.1 一个页签一个配置页
 
-配置页是**一对一**的：两个页签不共用一个分类，否则改一个页签的设置会顺带改另一个。文件管理与文件预览就是这样拆开的：
+配置页是**一对一**的：两个页签不共用一个分类，否则改一个页签的设置会顺带改另一个。文件管理与文件浏览就是这样拆开的：
 
 | 页签 | `settingsCategory` | 说明 |
 |---|---|---|
 | 文件管理 `browse` | `files` | 搜索、列表/网格、排序、隐藏文件、上传 |
-| 文件预览 `view` | `fileView` | 最近文件数、自动换行、行号、粘性滚动、代码链接预览、预览模式、drawio |
-| Forge `forge` | `forgeIntegration` | 服务端开关与凭据 |
-| 终端 `terminal` | `terminal` | 终端外观与行为 |
-| 邮件 `mail` | `mail` | 账号与服务端开关 |
-| 知识库 `kb` | `kb` | 索引统计与重建 |
+| 文件浏览 `view` | `fileView` | 最近文件数、自动换行、行号、粘性滚动、代码链接预览、预览模式、drawio |
+| 历史 `history` | `gitHistory` | 每页提交数、默认隐藏合并提交、提交图、时间显示 |
+| Forge `forge` | `forgeIntegration` | 凭据与通知项（总开关在功能编排） |
+| 任务 `tasks` | `tasks` | 执行记录保留、通知、时区、默认筛选 |
+| 终端 `terminal` | `terminal` | 终端外观与行为（总开关在功能编排） |
+| 统计 `stats` | `stats` | 默认页签、默认时间范围、记住上次选择 |
+| 邮件 `mail` | `mail` | 账号、同步与阅读（总开关在功能编排） |
+| 知识库 `kb` | `kb` | 索引统计与重建（总开关在功能编排） |
 | 会议 `live` | `meeting` | 纪要模型、中继等 |
+| 分享 `share` | `share` | 允许分享的类型、下载、有效期（总开关在功能编排） |
 | 端口映射 `proxy` | `portForward` | SSH 隧道端口 |
 | 通知中心 `notifications` | `notifications` | 事件日志说明与清空 |
 
-Git 历史、任务、统计、分享没有可配的项，因此不填 `settingsCategory`，管理器里也不显示齿轮图标。**不要为了凑齐而给它们建空配置页**：一个只有标题的设置页比没有更让人困惑。
+只有 `settings` 自己没有设置页。**不要为了凑齐而给 `settings` 建空配置页**：一个只有标题的设置页比没有更让人困惑。
 
-插件被隐藏时，管理器不渲染它的齿轮图标（`v-if="plugin.settingsCategory && !isHidden(plugin.id)"`）；面板已经挂载也不会丢状态，但入口跟着消失。
+插件被隐藏或被关闭时，管理器不渲染它的齿轮图标；面板已经挂载也不会丢状态，但入口跟着消失。
 
-## 6. 不要在插件管理器里复制服务端开关
+## 6. 总开关只在功能编排里
 
-插件管理器的显示开关是**偏好**，只影响 Dock 入口。常驻页签也保留开关，但它是灰显且不可点的，只为让每一行的右侧形状一致。
+服务端总开关（`forge.enabled` / `mail.enabled` / `terminal.enabled` / `kb.enabled` / `tasks.enabled` / `share.enabled`）的**唯一**读写入口是功能编排：
 
-Forge / 邮件的服务端开关在它们自己的设置页：
+- 管理器里的开关同时管显示与后台；
+- 关闭前会确认（Forge 清空绑定、终端断开会话、任务取消运行、分享撤销链接）；
+- 预设会把这些开关连同显示、顺序一起写，一次提交、失败整体回滚。
 
-- Forge 关闭会停轮询并清空所有项目的仓库绑定，是破坏性操作，需要二次确认；
-- 邮件关闭会停 IMAP 同步和邮件触发任务，但保留账号。
+各功能自己的设置页只放**只读状态行**（`FeatureStatusRow.vue`）：显示「已启用 / 已停用」+「去功能编排」，点击 `navigate('dockPlugins')`。
 
-在管理器里再放一个“启用 Forge”的开关，会让用户以为两处是同一个东西，且容易绕过确认。管理器的职责是编排 Dock，不是管理服务端功能。
+不要在功能设置页里再放一个开关：
+
+- 用户会以为两处各管一半；
+- 关闭前的确认容易被绕过；
+- 两处状态会在配置未刷新时短暂打架。
+
+插件读开关状态用 `isFeatureEnabled(key)`（`useFeatureFlags.ts`），不要自己解析 `serverConfig`。
 
 ## 7. 设置页检查清单
 
 - [ ] 分类 id 与 `DOCK_TABS.settingsCategory` 一致；
-- [ ] `SettingsIndex` 有入口；
+- [ ] `SettingsIndex` 有入口（且只出现一次）；
 - [ ] `categoryItems` 有登记（自定义页面用空数组）；
 - [ ] 中英 `settings.categories.<id>`；
 - [ ] 中英 `settings.items.*`（如果有字段）；
 - [ ] 自定义页面用 `emit('navigate')`，不用 `pushNav`；
 - [ ] 服务端字段在 `settings.go` 有对应 key；
 - [ ] 保存失败有 toast；
-- [ ] 需要重启的字段标 `needsRestart`。
+- [ ] 需要重启的字段标 `needsRestart`；
+- [ ] 有服务端总开关的，页面里用只读状态行，不放开关。

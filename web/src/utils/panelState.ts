@@ -91,6 +91,8 @@ export type PanelId =
   | 'dockHidden'
   | 'dockOrder'
   | 'dockPreset'
+  | 'statsTab'
+  | 'statsRange'
 
 /** Physical key prefix. Every panel-state key starts with this. */
 export const PANEL_KEY_PREFIX = 'clawbench-panel.'
@@ -131,6 +133,20 @@ export const DEFAULT_DOCK_PRESET = 'developer'
 export interface SessionSidebarState {
   open: boolean
   width: number
+}
+
+/**
+ * The stats panels' remembered window (设置 → 统计 → 记住上次选择).
+ *
+ * `custom` carries its two dates: restoring the key alone would give the panel
+ * a custom window with no bounds, which `rangeToISO` resolves to "now → now" —
+ * an empty range that looks like a bug. Storing the pair keeps a custom window
+ * restorable like any preset.
+ */
+export interface StatsRangeState {
+  rangeKey: string
+  customStart?: string
+  customEnd?: string
 }
 
 // ── Runtime scope ───────────────────────────────────────────────────────────
@@ -338,6 +354,32 @@ const DEFAULT_SESSION_SIDEBAR: SessionSidebarState = {
   width: DEFAULT_SESSION_SIDEBAR_WIDTH,
 }
 
+/**
+ * JSON codec for the stats window. `null` is "nothing remembered", which is
+ * distinct from a remembered value — the caller then falls back to the
+ * configured default (设置 → 统计 → 默认时间范围).
+ */
+function statsRangeCodec(
+  def: StatsRangeState | null,
+): Pick<PanelEntry<StatsRangeState | null>, 'parse' | 'serialize'> {
+  return {
+    parse: (raw) => {
+      if (raw === null || raw === '') return def
+      try {
+        const parsed = JSON.parse(raw)
+        if (!parsed || typeof parsed !== 'object' || typeof parsed.rangeKey !== 'string') return def
+        const out: StatsRangeState = { rangeKey: parsed.rangeKey }
+        if (typeof parsed.customStart === 'string') out.customStart = parsed.customStart
+        if (typeof parsed.customEnd === 'string') out.customEnd = parsed.customEnd
+        return out
+      } catch {
+        return def
+      }
+    },
+    serialize: (v) => (v === null ? '' : JSON.stringify(v)),
+  }
+}
+
 // ── Registry ────────────────────────────────────────────────────────────────
 // The single source of truth. Adding a panel state means adding one entry here
 // and reading/writing it by id — no new key literal, no new scope decision
@@ -431,6 +473,22 @@ const entries: PanelEntry<unknown>[] = [
   {
     id: 'dockPreset', key: 'dock-preset', scope: 'global', followsLayoutMemory: false, default: DEFAULT_DOCK_PRESET,
     ...stringCodec(DEFAULT_DOCK_PRESET),
+  },
+  // Stats panel: the tab and the time window the user last chose, written only
+  // while 设置 → 统计 → 记住上次选择 is ON (the reader/writer in useUsageStats
+  // and StatsTabHost own that check — the registry cannot see the setting).
+  //
+  // Pinned to global and outside the layout-memory switch for the same reason as
+  // the dock profile: this is a device-level view preference, and "remember
+  // layout per project" must not make every project open on a different stats
+  // tab. Default null = "nothing remembered yet".
+  {
+    id: 'statsTab', key: 'stats-tab', scope: 'global', followsLayoutMemory: false, default: null,
+    ...stringCodec(null),
+  },
+  {
+    id: 'statsRange', key: 'stats-range', scope: 'global', followsLayoutMemory: false, default: null,
+    ...statsRangeCodec(null),
   },
   // The left-column tab is the ONE entry pinned to the project: which panel you
   // were on is a property of the project, not of the device (issue #474). Its

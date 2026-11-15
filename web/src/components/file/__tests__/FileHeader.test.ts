@@ -6,6 +6,8 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import FileHeader from '../FileHeader.vue'
 import { useFileShare } from '@/composables/useFileShare'
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
+import { applyDockPreset } from '@/composables/useDockPlugins'
 
 // useFileShare is a module-level singleton; isolate it per test.
 const { markShared, markUnshared, resetFileShareState } = useFileShare()
@@ -1015,6 +1017,72 @@ describe('FileHeader', () => {
       await flushPromises()
 
       expect(mockToastShow).toHaveBeenCalledWith('单个附件不能超过 25 MB', expect.anything())
+    })
+  })
+
+  describe('feature switches (功能编排)', () => {
+    const file = { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }
+
+    afterEach(() => {
+      syncFeatureConfig({})
+      applyDockPreset('developer')
+      mockToastShow.mockClear()
+    })
+
+    it('drops the share entry when 分享 is off — the dialog could not publish', async () => {
+      syncFeatureConfig({ share: { enabled: false } })
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      // Still a path-backed file, so the rest of the group is intact: only the
+      // share entry disappears.
+      expect((wrapper.vm as any).$.setupState.permanentMenuIds).toContain('gitHistory')
+      expect(await menuItemByText(wrapper, 'Share link')).toBeUndefined()
+    })
+
+    it('drops the share entry when FILE links are disallowed, even with 分享 on', async () => {
+      syncFeatureConfig({ share: { enabled: true, allow_files: false } })
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      expect(await menuItemByText(wrapper, 'Share link')).toBeUndefined()
+    })
+
+    it('keeps the share entry when only conversation/meeting links are disallowed', async () => {
+      syncFeatureConfig({ share: { enabled: true, allow_sessions: false, allow_meetings: false } })
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      expect(await menuItemByText(wrapper, 'Share link')).toBeTruthy()
+    })
+
+    it('drops the send-by-mail button when 邮件 is off', () => {
+      syncFeatureConfig({ mail: { enabled: false } })
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      expect(renderedToolbarIds(wrapper)).not.toContain('sendByMail')
+      // The neighbouring 引用对话 action stays — the mail switch gates mail only.
+      expect(renderedToolbarIds(wrapper)).toContain('attach')
+    })
+
+    it('keeps the file-history entry while the history tab is hidden, and explains instead of opening', async () => {
+      // The history tab is a display switch, not a server feature: hiding it
+      // removes the dock entry, so the file header's jump must not silently
+      // open a surface the user just removed.
+      applyDockPreset('minimal')
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      const button = await menuItemByText(wrapper, 'File history')
+      expect(button).toBeTruthy()
+
+      await button!.trigger('click')
+
+      expect(wrapper.emitted('openGitHistory')).toBeFalsy()
+      expect(mockToastShow).toHaveBeenCalledTimes(1)
+      // The toast comes from the global i18n (jsdom locale is `en`), not from
+      // this spec's local message table — pin the real copy.
+      expect(mockToastShow.mock.calls[0][0]).toBe('This feature is off. Open Feature Layout to turn it on.')
+    })
+
+    it('opens the file history normally while the history tab is visible', async () => {
+      applyDockPreset('developer')
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      const button = await menuItemByText(wrapper, 'File history')
+      await button!.trigger('click')
+      expect(wrapper.emitted('openGitHistory')).toBeTruthy()
+      expect(mockToastShow).not.toHaveBeenCalled()
     })
   })
 

@@ -30,6 +30,11 @@ import {
   LongPressPlugin,
   SplitView,
 } from './fileManagerContent.setup'
+// Imported AFTER the setup module on purpose: the setup registers the
+// `useToast` mock, and useFeatureFlags captures `useToast` when it loads. A
+// static import listed above it would capture the real singleton instead and
+// the toast assertions below would miss the call.
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
 
 describe('FileManagerContent — context menu', () => {
   it('opens context menu on right-click', async () => {
@@ -2941,5 +2946,92 @@ describe('FileManagerContent — send by mail', () => {
       expect.stringContaining('邮箱'),
       expect.objectContaining({ type: 'error' }),
     )
+  })
+})
+
+// ── Feature switches (功能编排) ──
+//
+// Turning 分享 / 邮件 off stops the server work behind them and revokes what they
+// handed out, so the menu entries that start those flows must disappear. The
+// entries are also guarded in their handlers: a context menu opened before the
+// switch flipped is still on screen when the config lands.
+describe('FileManagerContent — feature switches', () => {
+  afterEach(() => {
+    syncFeatureConfig({})
+  })
+
+  function openEntryMenu(wrapper: ReturnType<typeof mountContent>) {
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+  }
+
+  it('drops the share-link entry when 分享 is off', async () => {
+    syncFeatureConfig({ share: { enabled: false } })
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))).toBeUndefined()
+    // The system share entry is not the share center: it stays.
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('用邮件发送'))).toBeTruthy()
+  })
+
+  it('drops the share-link entry when FILE links are disallowed, even with the master on', async () => {
+    // Per-kind permission: the 分享 tab stays, but this kind of link may not be
+    // created — the server refuses it, so the entry must go too.
+    syncFeatureConfig({ share: { enabled: true, allow_files: false } })
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))).toBeUndefined()
+  })
+
+  it('keeps the share-link entry when only another kind is disallowed', async () => {
+    syncFeatureConfig({ share: { enabled: true, allow_sessions: false, allow_meetings: false } })
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))).toBeTruthy()
+  })
+
+  it('drops the send-by-mail entry when 邮件 is off', async () => {
+    syncFeatureConfig({ mail: { enabled: false } })
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('用邮件发送'))).toBeUndefined()
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))).toBeTruthy()
+  })
+
+  it('refuses doShareLink and explains when the menu predates the switch', async () => {
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+    syncFeatureConfig({ share: { enabled: false } })
+    await nextTick()
+
+    expect((wrapper.vm as any).shareAllowed).toBe(false)
+    wrapper.vm.doShareLink()
+    await nextTick()
+
+    // The refusal is the contract here; the wording is pinned by
+    // useFeatureFlags.test.ts and the file-header spec.
+    expect(wrapper.vm.shareDialogOpen).toBe(false)
+    expect(wrapper.vm.shareTarget).toBe(null)
+  })
+
+  it('refuses doSendByMail when the menu predates the switch', async () => {
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+    syncFeatureConfig({ mail: { enabled: false } })
+    await nextTick()
+
+    await wrapper.vm.doSendByMail()
+
+    expect(mocks.mockSendPathsByMail).not.toHaveBeenCalled()
   })
 })

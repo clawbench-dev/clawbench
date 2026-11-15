@@ -1,7 +1,7 @@
 import { ref, watch } from 'vue'
 import { DEFAULT_RATIO, normalizeRatio } from '@/utils/splitRatio'
 import { appLog } from '@/utils/appLog'
-import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
+import { DOCK_TAB_IDS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
 import { DEFAULT_LEFT_COLLAPSED, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 
@@ -53,23 +53,6 @@ export const WIDE_SCREEN_MIN_WIDTH = 960
  * adding a tab without updating it produced a button that did nothing on click.
  */
 export const WIDE_SCREEN_DOCK_TABS: readonly DockTabId[] = DOCK_TAB_IDS
-
-export { WIDE_SCREEN_PRIMARY_TABS }
-
-/**
- * Visible tab order of the wide-screen vertical dock: fixed primary tabs first,
- * then the (already-filtered) secondary tabs. Used for rendering and for the
- * active-indicator position. Deterministic — never depends on runtime geometry.
- *
- * `primaryTabs` defaults to the declared list so existing callers/tests keep
- * working; App.vue passes the visibility-filtered list (history can be hidden).
- */
-export function wideDockTabOrder(
-  overflowTabs: readonly string[],
-  primaryTabs: readonly string[] = WIDE_SCREEN_PRIMARY_TABS,
-): string[] {
-  return [...primaryTabs, ...overflowTabs]
-}
 
 /**
  * Wide-screen detection: active when the viewport can hold two columns at the

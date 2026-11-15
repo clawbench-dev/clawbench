@@ -303,6 +303,13 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"ForgeEventViewDetail",
 		// The forge master switch refuses bindings while it is off.
 		"ForgeDisabled",
+		// The tasks / share master switches refuse creation while off.
+		"TasksDisabled",
+		"ShareDisabled",
+		"ShareFilesDisabled",
+		"ShareSessionsDisabled",
+		"ShareMeetingsDisabled",
+		"ShareDownloadDisabled",
 		// Usage-meter rule rejections. These are the entire user-visible
 		// explanation for a rejected settings save, so a key added on only one
 		// side would ship the raw message id to that locale.
