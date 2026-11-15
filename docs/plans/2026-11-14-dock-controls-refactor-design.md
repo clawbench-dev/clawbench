@@ -306,7 +306,7 @@ Forge 关掉后：
 - `share.allow_download=false` 只拦「下载原文件」；在线预览不受影响。目录分享的每个文件下载、分享中心的直链复制也一并禁用。
 - `share.link_ttl_days` 只影响**新建**链接，已有链接保留创建时的有效期。
 - `tasks.timezone` 用 IANA 名称；PATCH 会拒绝无效时区，启动时读到无效值会回落到服务器本地时区并打警告。
-- `tasks.notify_on_success` / `notify_on_failure` 只影响新通知；历史通知不删。
+- `tasks.notify_on_success` / `notify_on_failure` 只影响新通知（通知中心、离线推送、IM 推送）；历史通知不删。浏览器/桌面自己的「任务完成」本地提示由 `desktopNotification` 控制，不在这两个键里。
 - `statsRememberLast=true` 时，统计页签和时间范围会落盘，刷新后恢复；关闭开关不读写已存记录。
 - `shareMetaResponse` 的下载字段 JSON 名是 `allowDownload`（Go 字段名 `DownloadAllowed`），不要 omitempty，否则 `false` 传不到分享页。
 - Git 历史每页条数从 `git_history.page_size` 读；旧缓存条目在配置变更后最多 30 秒内可能仍是旧页大小。
