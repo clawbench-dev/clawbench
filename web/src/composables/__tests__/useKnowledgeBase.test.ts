@@ -22,9 +22,13 @@ const collections = [
   { id: 2, name: 'Project', description: '', scope: 'project', auto_inject: true, doc_count: 0, created_at: '', updated_at: '' },
 ]
 
-const docs = [
-  { id: 10, collection_id: 2, title: 'a.txt', size_bytes: 10, status: 'ready', chunk_count: 1, fts_ready: true, vector_ready: true, created_at: '', updated_at: '' },
-]
+// A fresh object per call: loadProgress mutates rows in place, and a shared
+// fixture would leak a status change into the next test.
+function docsFixture() {
+  return [
+    { id: 10, collection_id: 2, title: 'a.txt', size_bytes: 10, status: 'ready', chunk_count: 1, fts_ready: true, vector_ready: true, created_at: '', updated_at: '' },
+  ]
+}
 
 describe('useKnowledgeBase', () => {
   beforeEach(() => {
@@ -35,7 +39,7 @@ describe('useKnowledgeBase', () => {
 
     h.apiGet.mockImplementation(async (url: string) => {
       if (url === '/api/kb/collections') return { collections }
-      if (url.startsWith('/api/kb/documents')) return { documents: docs }
+      if (url.startsWith('/api/kb/documents')) return { documents: docsFixture() }
       if (url === '/api/kb/status') {
         return { available: true, vector_enabled: true, stats: { collections: 2, documents: 1, ready_docs: 1, failed_docs: 0, pending_docs: 0, chunks: 1, embedded_chunks: 1, stored_bytes: 10 } }
       }
@@ -54,6 +58,39 @@ describe('useKnowledgeBase', () => {
     expect(kb.available.value).toBe(true)
     expect(kb.vectorEnabled.value).toBe(true)
     expect(kb.stats.value?.documents).toBe(1)
+  })
+
+  it('merges polled progress in place without replacing the row', async () => {
+    const kb = useKnowledgeBase()
+    await kb.loadCollections()
+    const row = kb.documents.value[0]
+
+    h.apiGet.mockResolvedValueOnce({
+      documents: [
+        { id: 10, status: 'failed', error: 'no_text', warning: '', chunk_count: 0, fts_ready: false, vector_ready: false },
+      ],
+    })
+    await kb.loadProgress(2)
+
+    expect(kb.documents.value[0]).toBe(row)
+    expect(row.status).toBe('failed')
+    expect(row.error).toBe('no_text')
+    expect(row.vector_ready).toBe(false)
+  })
+
+  it('ignores progress for a collection the user has left', async () => {
+    const kb = useKnowledgeBase()
+    await kb.loadCollections()
+    const row = kb.documents.value[0]
+
+    h.apiGet.mockResolvedValueOnce({
+      documents: [
+        { id: 10, status: 'failed', error: 'no_text', warning: '', chunk_count: 0, fts_ready: false, vector_ready: false },
+      ],
+    })
+    await kb.loadProgress(1)
+
+    expect(row.status).toBe('ready')
   })
 
   it('searches and clears the result', async () => {

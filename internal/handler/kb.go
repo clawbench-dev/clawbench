@@ -66,6 +66,12 @@ func writeKBError(w http.ResponseWriter, r *http.Request, err error) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
 	case errors.Is(err, kb.ErrNotDirectory):
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "KBNotDirectory")
+	case errors.Is(err, kb.ErrSourceMissing):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "KBSourceMissing")
+	case errors.Is(err, kb.ErrInvalidURL):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "KBInvalidURL")
+	case errors.Is(err, kb.ErrFetchFailed):
+		writeLocalizedErrorf(w, r, http.StatusBadGateway, "KBFetchFailed")
 	case errors.Is(err, kb.ErrUnavailable):
 		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "KBUnavailable")
 	default:
@@ -213,6 +219,7 @@ func ServeKBCollections(w http.ResponseWriter, r *http.Request) { //nolint:gocog
 			Name        *string `json:"name"`
 			Description *string `json:"description"`
 			AutoInject  *bool   `json:"auto_inject"`
+			Pinned      *bool   `json:"pinned"`
 		}
 		if !decodeJSON(w, r, &body) {
 			return
@@ -225,7 +232,7 @@ func ServeKBCollections(w http.ResponseWriter, r *http.Request) { //nolint:gocog
 			}
 			body.Name = &name
 		}
-		if err := kb.UpdateCollection(id, body.Name, body.Description, body.AutoInject); err != nil {
+		if err := kb.UpdateCollection(id, body.Name, body.Description, body.AutoInject, body.Pinned); err != nil {
 			writeKBError(w, r, err)
 			return
 		}
@@ -276,12 +283,45 @@ func ServeKBDocuments(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			if !kbRequireCollectionAccess(w, r, doc.CollectionID) {
 				return
 			}
-			chunks, err := kb.DocumentChunks(id, 20)
-			if err != nil {
-				writeKBError(w, r, err)
-				return
+			// A search hit may live far past the first page, so ?chunk_id=
+			// returns a window around it instead of the document's head. An id
+			// that no longer exists (re-indexed since the search) falls back to
+			// the first page rather than failing the whole request.
+			var chunks []kb.Chunk
+			focusChunkID := int64(0)
+			if rawChunk := r.URL.Query().Get("chunk_id"); rawChunk != "" {
+				chunkID, parseErr := strconv.ParseInt(rawChunk, 10, 64)
+				if parseErr != nil || chunkID <= 0 {
+					writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+					return
+				}
+				var target int
+				chunks, target, err = kb.DocumentChunkWindow(id, chunkID, 5, 5)
+				if err != nil {
+					writeKBError(w, r, err)
+					return
+				}
+				if target >= 0 {
+					focusChunkID = chunkID
+				} else {
+					chunks = nil
+				}
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"document": doc, "chunks": chunks})
+			if chunks == nil {
+				chunks, err = kb.DocumentChunks(id, 20)
+				if err != nil {
+					writeKBError(w, r, err)
+					return
+				}
+			}
+			if chunks == nil {
+				chunks = []kb.Chunk{}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"document":       doc,
+				"chunks":         chunks,
+				"focus_chunk_id": focusChunkID,
+			})
 			return
 		}
 		raw := r.URL.Query().Get("collection_id")
@@ -329,6 +369,40 @@ func ServeKBDocuments(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 		writeJSON(w, http.StatusCreated, doc)
 
+	case http.MethodPatch:
+		id, ok := kbQueryID(w, r)
+		if !ok {
+			return
+		}
+		doc, err := kb.GetDocument(id)
+		if err != nil {
+			writeKBError(w, r, err)
+			return
+		}
+		if !kbRequireCollectionAccess(w, r, doc.CollectionID) {
+			return
+		}
+		var body struct {
+			Tags *string `json:"tags"`
+		}
+		if !decodeJSON(w, r, &body) {
+			return
+		}
+		if body.Tags == nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		if err := kb.SetDocumentTags(id, strings.TrimSpace(*body.Tags)); err != nil {
+			writeKBError(w, r, err)
+			return
+		}
+		updated, err := kb.GetDocument(id)
+		if err != nil {
+			writeKBError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, updated)
+
 	case http.MethodDelete:
 		id, ok := kbQueryID(w, r)
 		if !ok {
@@ -349,7 +423,7 @@ func ServeKBDocuments(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		writeJSON(w, http.StatusOK, map[string]any{fieldDeleted: true})
 
 	default:
-		requireMethod(w, r, http.MethodGet, http.MethodPost, http.MethodDelete)
+		requireMethod(w, r, http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete)
 	}
 }
 
@@ -393,6 +467,72 @@ func ServeKBDocumentUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, doc)
 }
 
+// ServeKBDocumentMove handles POST /api/kb/documents/move.
+//
+// Moves one document to another collection. Both ends must be visible from the
+// current project.
+func ServeKBDocumentMove(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var body struct {
+		ID           int64 `json:"id"`
+		CollectionID int64 `json:"collection_id"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.ID <= 0 || body.CollectionID <= 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+	doc, err := kb.GetDocument(body.ID)
+	if err != nil {
+		writeKBError(w, r, err)
+		return
+	}
+	if !kbRequireCollectionAccess(w, r, doc.CollectionID) {
+		return
+	}
+	if !kbRequireCollectionAccess(w, r, body.CollectionID) {
+		return
+	}
+	if err := kb.MoveDocument(body.ID, body.CollectionID); err != nil {
+		writeKBError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"moved": true})
+}
+
+// ServeKBDocumentURL handles POST /api/kb/documents/url.
+//
+// Fetches an http(s) page and indexes it like an uploaded file.
+func ServeKBDocumentURL(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var body struct {
+		CollectionID int64  `json:"collection_id"`
+		URL          string `json:"url"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.CollectionID <= 0 || strings.TrimSpace(body.URL) == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+	if !kbRequireCollectionAccess(w, r, body.CollectionID) {
+		return
+	}
+	doc, err := kb.AddDocumentFromURL(body.CollectionID, body.URL)
+	if err != nil {
+		writeKBError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, doc)
+}
+
 // ServeKBDocumentImport handles POST /api/kb/documents/import.
 //
 // Adds every supported file under a folder in one request. The frontend could
@@ -405,6 +545,7 @@ func ServeKBDocumentImport(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		CollectionID int64  `json:"collection_id"`
 		Path         string `json:"path"`
+		DryRun       bool   `json:"dry_run"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -420,7 +561,13 @@ func ServeKBDocumentImport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := kb.ImportDirectory(body.CollectionID, absPath)
+	var result *kb.DirImportResult
+	var err error
+	if body.DryRun {
+		result, err = kb.PreviewDirectory(body.CollectionID, absPath)
+	} else {
+		result, err = kb.ImportDirectory(body.CollectionID, absPath)
+	}
 	if err != nil {
 		writeKBError(w, r, err)
 		return
@@ -450,6 +597,87 @@ func ServeKBDocumentReindex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{fieldQueued: true})
+}
+
+// ServeKBDocumentProgress handles GET /api/kb/documents/progress?collection_id=.
+//
+// Polling endpoint: only the fields that change while indexing, so the panel
+// can merge them into its list instead of replacing it.
+func ServeKBDocumentProgress(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	raw := r.URL.Query().Get("collection_id")
+	collectionID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || collectionID <= 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+	if !kbRequireCollectionAccess(w, r, collectionID) {
+		return
+	}
+	docs, err := kb.ListDocumentProgress(collectionID)
+	if err != nil {
+		writeKBError(w, r, err)
+		return
+	}
+	if docs == nil {
+		docs = []kb.DocumentProgress{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"documents": docs})
+}
+
+// ServeKBDocumentUsage handles GET /api/kb/documents/usage?collection_id=.
+func ServeKBDocumentUsage(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	raw := r.URL.Query().Get("collection_id")
+	collectionID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || collectionID <= 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+	if !kbRequireCollectionAccess(w, r, collectionID) {
+		return
+	}
+	usage, err := kb.ListDocumentUsage(collectionID)
+	if err != nil {
+		writeKBError(w, r, err)
+		return
+	}
+	if usage == nil {
+		usage = []kb.DocumentUsage{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"usage": usage})
+}
+
+// ServeKBDocumentRefresh handles POST /api/kb/documents/refresh?id=.
+//
+// Re-copies the original file over the stored copy and reindexes only when the
+// content changed. `changed:false` means the original is byte-identical.
+func ServeKBDocumentRefresh(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	id, ok := kbQueryID(w, r)
+	if !ok {
+		return
+	}
+	doc, err := kb.GetDocument(id)
+	if err != nil {
+		writeKBError(w, r, err)
+		return
+	}
+	if !kbRequireCollectionAccess(w, r, doc.CollectionID) {
+		return
+	}
+	changed, err := kb.RefreshDocumentFromSource(id)
+	if err != nil {
+		writeKBError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changed": changed})
 }
 
 // ServeKBSearch handles POST /api/kb/search.

@@ -42,6 +42,17 @@
           <MessageSquare :size="14" />
           <span class="action-label">{{ t('actionLabels.quote') }}</span>
         </button>
+        <button
+          v-if="record && kbEnabled && minutesText"
+          class="meeting-icon-btn"
+          type="button"
+          :title="t('meeting.detail.saveToKB')"
+          data-action="meeting-save-kb"
+          @click="onSaveToKB"
+        >
+          <BookOpen :size="14" />
+          <span class="action-label">{{ t('meeting.detail.saveToKB') }}</span>
+        </button>
       </ActionBar>
     </div>
 
@@ -292,6 +303,12 @@
       @confirm="confirmRegenerate"
     />
   </div>
+  <KBCollectionPickerDialog
+    :open="kbPickerOpen"
+    :initial-name="kbNote?.title || ''"
+    @close="kbPickerOpen = false"
+    @confirm="onKBPicked"
+  />
 </template>
 
 <script setup lang="ts">
@@ -307,6 +324,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
+  BookOpen,
   Captions,
   Copy,
   ExternalLink,
@@ -320,6 +338,10 @@ import {
 } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import ChatMessageRow from './ChatMessageRow.vue'
+import KBCollectionPickerDialog from '@/components/kb/KBCollectionPickerDialog.vue'
+import { kbUploadText } from '@/composables/useKnowledgeBase'
+import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
+import { useFeatureFlag } from '@/composables/useFeatureFlags'
 import TranscriptList from './TranscriptList.vue'
 import MeetingMarkdown from './MeetingMarkdown.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -388,6 +410,7 @@ const { isWideScreen } = useWideScreenLayout()
 const MEETING_TITLE_MAX_CHARS = 80
 
 const { t, locale } = useI18n()
+const kbEnabled = useFeatureFlag('kb.enabled')
 const toast = useToast()
 const dialog = useDialog()
 const history = useMeetingHistory()
@@ -842,6 +865,40 @@ function onDragStart(e: DragEvent): void {
 
 function onQuote(): void {
   if (record.value) emit('quote', record.value.token)
+}
+
+// ── Save the minutes to the knowledge base ──
+const kbPickerOpen = ref(false)
+const kbNote = ref<{ text: string; title: string } | null>(null)
+
+function onSaveToKB(): void {
+  if (!minutesText.value) return
+  const title = (record.value?.title || t('meeting.detail.kbNoteTitle'))
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .trim()
+  kbNote.value = { text: minutesText.value, title: title || t('meeting.detail.kbNoteTitle') }
+  kbPickerOpen.value = true
+}
+
+async function onKBPicked(collection: { id: number; name: string }): Promise<void> {
+  kbPickerOpen.value = false
+  const note = kbNote.value
+  kbNote.value = null
+  if (!note) return
+  try {
+    await kbUploadText(collection.id, `${note.title}.md`, note.text)
+    startKBIndexWatch()
+    toast.show(t('meeting.detail.kbSaved', { name: collection.name }), {
+      type: 'success',
+      duration: 2600,
+    })
+  } catch (e) {
+    toast.show(e instanceof Error ? e.message : String(e), {
+      icon: 'warning',
+      type: 'error',
+      duration: 4000,
+    })
+  }
 }
 
 /**

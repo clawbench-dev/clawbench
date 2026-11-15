@@ -253,14 +253,14 @@ func TestUpdateCollection(t *testing.T) {
 	name := "新名"
 	desc := "说明"
 	auto := false
-	require.NoError(t, st.UpdateCollection(id, &name, &desc, &auto))
+	require.NoError(t, st.UpdateCollection(id, &name, &desc, &auto, nil))
 	col, err := st.GetCollection(id)
 	require.NoError(t, err)
 	require.Equal(t, "新名", col.Name)
 	require.Equal(t, "说明", col.Description)
 	require.False(t, col.AutoInject)
 
-	require.NoError(t, st.UpdateCollection(id, nil, nil, nil))
+	require.NoError(t, st.UpdateCollection(id, nil, nil, nil, nil))
 }
 
 func TestDocumentTimestampsAdvance(t *testing.T) {
@@ -360,4 +360,270 @@ func TestClosedStoreErrors(t *testing.T) {
 	require.Error(t, st.DeleteCollection(1))
 	require.Error(t, st.ReplaceChunks(1, []Chunk{{DocumentID: 1, CollectionID: 1, ChunkIndex: 0, ChunkText: "x", ChunkTextSegmented: "x"}}, ""))
 	require.Error(t, st.SaveEmbeddings([]ChunkEmbedding{{ChunkID: 1, Vector: []float64{1, 0, 0}}}))
+}
+
+func TestCollectionHealthCounts(t *testing.T) {
+	st := newTestStore(t)
+	colID, err := st.CreateCollection(Collection{Name: "手册", Scope: ScopeGlobal, AutoInject: true})
+	require.NoError(t, err)
+
+	add := func(hash string) int64 {
+		id, err := st.AddDocument(Document{
+			CollectionID: colID,
+			Title:        hash + ".txt",
+			Ext:          ".txt",
+			ContentHash:  hash,
+			Status:       StatusPending,
+		})
+		require.NoError(t, err)
+		return id
+	}
+	failed := add("h1")
+	extracting := add("h2")
+	queued := add("h3")
+	ready := add("h4")
+	require.NoError(t, st.SetDocumentStatus(failed, StatusFailed, "no_text", ""))
+	require.NoError(t, st.SetDocumentStatus(extracting, StatusExtracting, "", ""))
+	require.NoError(t, st.SetDocumentStatus(queued, StatusPending, "", ""))
+	require.NoError(t, st.SetDocumentStatus(ready, StatusReady, "", ""))
+
+	cols, err := st.ListCollections(0)
+	require.NoError(t, err)
+	require.Len(t, cols, 1)
+	require.Equal(t, 4, cols[0].DocCount)
+	require.Equal(t, 1, cols[0].FailedCount)
+	// pending and extracting both read as "still working" to the user.
+	require.Equal(t, 2, cols[0].PendingCount)
+
+	col, err := st.GetCollection(colID)
+	require.NoError(t, err)
+	require.Equal(t, 1, col.FailedCount)
+	require.Equal(t, 2, col.PendingCount)
+}
+
+func TestChunkWindow(t *testing.T) {
+	st := newTestStore(t)
+	colID, err := st.CreateCollection(Collection{Name: "手册", Scope: ScopeGlobal, AutoInject: true})
+	require.NoError(t, err)
+	docID, err := st.AddDocument(Document{
+		CollectionID: colID,
+		Title:        "long.txt",
+		Ext:          ".txt",
+		ContentHash:  "hash",
+		Status:       StatusPending,
+	})
+	require.NoError(t, err)
+
+	chunks := make([]Chunk, 12)
+	for i := range chunks {
+		chunks[i] = Chunk{
+			DocumentID:         docID,
+			CollectionID:       colID,
+			ChunkIndex:         i,
+			ChunkText:          "段" + string(rune('A'+i)),
+			ChunkTextSegmented: "段",
+			Location:           "L" + string(rune('0'+i)),
+		}
+	}
+	require.NoError(t, st.ReplaceChunks(docID, chunks, ""))
+	all, err := st.ListChunks(docID, 20)
+	require.NoError(t, err)
+	require.Len(t, all, 12)
+
+	window, target, err := st.ChunkWindow(docID, all[8].ID, 2, 2)
+	require.NoError(t, err)
+	require.Equal(t, 8, target)
+	require.Len(t, window, 5)
+	require.Equal(t, 6, window[0].ChunkIndex)
+	require.Equal(t, 10, window[4].ChunkIndex)
+
+	// Near the start the window is clamped, not padded.
+	window, target, err = st.ChunkWindow(docID, all[1].ID, 2, 2)
+	require.NoError(t, err)
+	require.Equal(t, 1, target)
+	require.Equal(t, 0, window[0].ChunkIndex)
+
+	// A chunk that no longer exists falls back instead of erroring.
+	window, target, err = st.ChunkWindow(docID, 999999, 2, 2)
+	require.NoError(t, err)
+	require.Equal(t, -1, target)
+	require.Nil(t, window)
+}
+
+func TestDocumentProgress(t *testing.T) {
+	st := newTestStore(t)
+	colID, err := st.CreateCollection(Collection{Name: "手册", Scope: ScopeGlobal, AutoInject: true})
+	require.NoError(t, err)
+	docID, err := st.AddDocument(Document{
+		CollectionID: colID,
+		Title:        "scan.pdf",
+		Ext:          ".pdf",
+		ContentHash:  "h1",
+		Status:       StatusPending,
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.SetDocumentStatus(docID, StatusFailed, "pdf_no_text: scan", ""))
+
+	progress, err := st.DocumentProgress(colID)
+	require.NoError(t, err)
+	require.Len(t, progress, 1)
+	require.Equal(t, docID, progress[0].ID)
+	require.Equal(t, StatusFailed, progress[0].Status)
+	require.Equal(t, "pdf_no_text: scan", progress[0].Error)
+	require.False(t, progress[0].FTSReady)
+	require.Zero(t, progress[0].ChunkCount)
+
+	// An unrelated collection's documents do not leak in.
+	other, err := st.CreateCollection(Collection{Name: "别的", Scope: ScopeGlobal, AutoInject: true})
+	require.NoError(t, err)
+	progress, err = st.DocumentProgress(other)
+	require.NoError(t, err)
+	require.Empty(t, progress)
+}
+
+func TestCollectionPinning(t *testing.T) {
+	st := newTestStore(t)
+	first, err := st.CreateCollection(Collection{Name: "乙", Scope: ScopeGlobal, AutoInject: true})
+	require.NoError(t, err)
+	second, err := st.CreateCollection(Collection{Name: "甲", Scope: ScopeGlobal, AutoInject: true})
+	require.NoError(t, err)
+
+	// Pinned first, regardless of creation order.
+	pinned := true
+	require.NoError(t, st.UpdateCollection(second, nil, nil, nil, &pinned))
+
+	cols, err := st.ListCollections(0)
+	require.NoError(t, err)
+	require.Len(t, cols, 2)
+	require.Equal(t, second, cols[0].ID)
+	require.True(t, cols[0].Pinned)
+	require.Equal(t, first, cols[1].ID)
+	require.False(t, cols[1].Pinned)
+
+	col, err := st.GetCollection(second)
+	require.NoError(t, err)
+	require.True(t, col.Pinned)
+
+	// Unpinning restores creation order.
+	unpinned := false
+	require.NoError(t, st.UpdateCollection(second, nil, nil, nil, &unpinned))
+	cols, err = st.ListCollections(0)
+	require.NoError(t, err)
+	require.Equal(t, first, cols[0].ID)
+}
+
+func TestSourceStateFlags(t *testing.T) {
+	col := newCollectionForImport(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "policy.md")
+	require.NoError(t, os.WriteFile(src, []byte("第一版"), 0o644))
+	doc, err := AddDocumentFromPath(col.ID, src)
+	require.NoError(t, err)
+
+	fresh, err := ListDocuments(col.ID)
+	require.NoError(t, err)
+	require.Len(t, fresh, 1)
+	require.False(t, fresh[0].SourceStale)
+	require.False(t, fresh[0].SourceMissing)
+
+	// A source newer than the stored copy is stale.
+	future := time.Now().Add(2 * time.Second)
+	require.NoError(t, os.Chtimes(src, future, future))
+	stale, err := ListDocuments(col.ID)
+	require.NoError(t, err)
+	require.True(t, stale[0].SourceStale)
+
+	// A deleted source is reported separately; the copy stays usable.
+	require.NoError(t, os.Remove(src))
+	missing, err := ListDocuments(col.ID)
+	require.NoError(t, err)
+	require.True(t, missing[0].SourceMissing)
+	require.False(t, missing[0].SourceStale)
+	_, err = os.Stat(doc.StoredPath)
+	require.NoError(t, err)
+}
+
+func TestMoveDocument(t *testing.T) {
+	source := newCollectionForImport(t)
+	target, err := CreateCollection("目标库", "", ScopeGlobal, 0)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "policy.md")
+	require.NoError(t, os.WriteFile(file, []byte("制度正文"), 0o644))
+	doc, err := AddDocumentFromPath(source.ID, file)
+	require.NoError(t, err)
+	oldPath := doc.StoredPath
+
+	require.NoError(t, MoveDocument(doc.ID, target.ID))
+
+	moved, err := GetDocument(doc.ID)
+	require.NoError(t, err)
+	require.Equal(t, target.ID, moved.CollectionID)
+	require.Equal(t, StatusPending, moved.Status)
+	require.NotEqual(t, oldPath, moved.StoredPath)
+	_, err = os.Stat(moved.StoredPath)
+	require.NoError(t, err)
+	_, err = os.Stat(oldPath)
+	require.True(t, os.IsNotExist(err))
+
+	chunks, err := DocumentChunks(doc.ID, 10)
+	require.NoError(t, err)
+	require.Empty(t, chunks)
+
+	// The same content cannot land twice in the target.
+	again, err := AddDocumentFromPath(source.ID, file)
+	require.NoError(t, err)
+	err = MoveDocument(again.ID, target.ID)
+	require.ErrorIs(t, err, ErrDuplicateDocument)
+
+	// Moving to the same collection is a no-op.
+	require.NoError(t, MoveDocument(again.ID, source.ID))
+}
+
+func TestDocumentTags(t *testing.T) {
+	st := newTestStore(t)
+	colID, err := st.CreateCollection(Collection{Name: "手册", Scope: ScopeGlobal, AutoInject: true})
+	require.NoError(t, err)
+	docID, err := st.AddDocument(Document{
+		CollectionID: colID, Title: "a.md", Ext: ".md", ContentHash: "h", Status: StatusPending,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, st.SetDocumentTags(docID, "制度, 报销"))
+	got, err := st.GetDocument(docID)
+	require.NoError(t, err)
+	require.Equal(t, "制度, 报销", got.Tags)
+
+	docs, err := st.ListDocuments(colID)
+	require.NoError(t, err)
+	require.Len(t, docs, 1)
+	require.Equal(t, "制度, 报销", docs[0].Tags)
+
+	require.NoError(t, st.SetDocumentTags(docID, ""))
+	got, err = st.GetDocument(docID)
+	require.NoError(t, err)
+	require.Empty(t, got.Tags)
+}
+
+func TestDocumentUsage(t *testing.T) {
+	col := newCollectionForImport(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "policy.md")
+	require.NoError(t, os.WriteFile(file, []byte("制度"), 0o644))
+	doc, err := AddDocumentFromPath(col.ID, file)
+	require.NoError(t, err)
+
+	// One row per turn, deduped within the turn.
+	RecordDocumentUsage([]Ref{{DocumentID: doc.ID}, {DocumentID: doc.ID}}, "s1")
+	RecordDocumentUsage([]Ref{{DocumentID: doc.ID}}, "s2")
+	// No session id → ignored.
+	RecordDocumentUsage([]Ref{{DocumentID: doc.ID}}, "")
+
+	usage, err := ListDocumentUsage(col.ID)
+	require.NoError(t, err)
+	require.Len(t, usage, 1)
+	require.Equal(t, doc.ID, usage[0].DocumentID)
+	require.Equal(t, 2, usage[0].Count)
+	require.False(t, usage[0].LastUsed.IsZero())
 }

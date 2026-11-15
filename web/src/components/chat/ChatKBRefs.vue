@@ -28,6 +28,19 @@
         <!-- The passage is the document's own text (often markdown), rendered
              like the bubble body instead of showing raw # headings. -->
         <div class="chat-kb-ref-text markdown-body" v-html="refHtml(ref.text)" />
+        <!-- A citation you cannot follow is decoration. The knowledge base
+             stays the place where the passage is read in context. -->
+        <div v-if="kbEnabled && ref.documentId" class="chat-kb-ref-actions">
+          <button
+            type="button"
+            class="chat-kb-ref-open"
+            data-action="kb-ref-open"
+            @click="openInKB(ref)"
+          >
+            <ExternalLink :size="12" aria-hidden="true" />
+            <span>{{ t('chat.message.kbRefs.openInKb') }}</span>
+          </button>
+        </div>
       </article>
     </div>
   </div>
@@ -36,15 +49,24 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, ChevronDown } from 'lucide-vue-next'
+import { BookOpen, ChevronDown, ExternalLink } from 'lucide-vue-next'
 import { formatLocation, type TFn } from '@/utils/kbFormat'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+import { useFeatureFlag } from '@/composables/useFeatureFlags'
+import { showDockTab } from '@/composables/useWideScreenLayout'
+import { requestOpenKBDocument } from '@/utils/kbNavigation'
 import type { ChatKBRef } from '@/utils/kbRefs'
 
 const props = defineProps<{ refs: ChatKBRef[] }>()
 
 const { t } = useI18n()
 const open = ref(false)
+const kbEnabled = useFeatureFlag('kb.enabled')
+
+function openInKB(item: ChatKBRef): void {
+  requestOpenKBDocument(item.documentId, item.chunkId)
+  showDockTab('kb')
+}
 
 const tf: TFn = (key, named) => t(key, named ?? {})
 
@@ -187,5 +209,36 @@ function refHtml(text: string): string {
   font-weight: var(--font-weight-semibold);
   border: 0;
   padding: 0;
+}
+
+.chat-kb-ref-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+
+.chat-kb-ref-open {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .chat-kb-ref-open:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+  }
+}
+
+.chat-kb-ref-open:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
 }
 </style>

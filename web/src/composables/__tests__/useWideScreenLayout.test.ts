@@ -4,6 +4,7 @@ import {
   useWideScreenLayout,
   getWideScreenState,
   switchLeftTab,
+  showDockTab,
   setSplitRatio,
   resetWideScreenState,
   registerWideScreenCallbacks,
@@ -145,6 +146,32 @@ describe('useWideScreenLayout', () => {
 
     switchLeftTab('tasks') // same tab → early return
     expect(sideEffects).toHaveBeenCalledTimes(1)
+  })
+
+  it('showDockTab re-asserts the narrow-mode active tab even when leftTab matches', () => {
+    const setActiveTab = vi.fn()
+    registerWideScreenCallbacks({ setActiveTab })
+    switchLeftTab('kb')
+    setActiveTab.mockClear()
+
+    // The narrow-mode bug this exists for: leftTab is already kb (it is
+    // persisted), activeTab is chat, and switchLeftTab would early-return.
+    showDockTab('kb')
+    expect(setActiveTab).toHaveBeenCalledWith('kb')
+  })
+
+  it('showDockTab expands a collapsed left column on a wide screen', () => {
+    _setWideScreenForTest(true)
+    setLeftCollapsed(true)
+    showDockTab('kb')
+    const { leftCollapsed } = useWideScreenLayout()
+    expect(leftCollapsed.value).toBe(false)
+  })
+
+  it('showDockTab ignores invalid tabs', () => {
+    const { leftTab } = useWideScreenLayout()
+    showDockTab('not-a-tab' as never)
+    expect(leftTab.value).toBe('browse')
   })
 
   it('setSplitRatio normalizes and persists', () => {

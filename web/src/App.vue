@@ -581,6 +581,7 @@
 <script setup lang="ts">
 import { ref, computed, reactive, watch, onMounted, onUnmounted, provide, nextTick, type CSSProperties } from 'vue'
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
+import { kbPendingQuote, consumeKBPendingQuote } from '@/utils/kbNavigation'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
 import { attemptSavedPasswordLogin } from '@/utils/savedPasswordLogin'
@@ -3758,6 +3759,14 @@ function stageQuoteInChat(quote: QuoteData): void {
     duration: 1800,
   })
 }
+
+// The knowledge base panel cannot reach switchTab (it lives in a dock tab), so
+// a quoted passage is parked here and staged by the app that owns the chat view.
+watch(kbPendingQuote, (pending) => {
+  if (!pending) return
+  consumeKBPendingQuote(pending.token)
+  stageQuoteInChat(pending.quote)
+})
 
 async function handleMeetingQuote(token: string): Promise<void> {
   if (!token) return

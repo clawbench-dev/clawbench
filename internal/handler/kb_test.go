@@ -125,6 +125,40 @@ func TestKBHandlersEndToEnd(t *testing.T) {
 	require.NotEmpty(t, res.Results)
 	require.Equal(t, "handbook.md", res.Results[0].DocumentTitle)
 
+	// Document detail without a chunk id returns the head of the document.
+	req = newRequest(t, http.MethodGet, "/api/kb/documents?id="+strconv.FormatInt(doc.ID, 10), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocuments, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var detail struct {
+		Document     kb.Document `json:"document"`
+		Chunks       []kb.Chunk  `json:"chunks"`
+		FocusChunkID int64       `json:"focus_chunk_id"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &detail))
+	require.NotEmpty(t, detail.Chunks)
+	require.Zero(t, detail.FocusChunkID)
+
+	// With a chunk id it returns that passage and marks it as the focus.
+	hitChunk := res.Results[0].ChunkID
+	req = newRequest(t, http.MethodGet, "/api/kb/documents?id="+strconv.FormatInt(doc.ID, 10)+"&chunk_id="+strconv.FormatInt(hitChunk, 10), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocuments, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &detail))
+	require.Equal(t, hitChunk, detail.FocusChunkID)
+	require.Len(t, detail.Chunks, 1)
+	require.Equal(t, hitChunk, detail.Chunks[0].ID)
+
+	// A chunk id that no longer exists falls back to the head, not an error.
+	req = newRequest(t, http.MethodGet, "/api/kb/documents?id="+strconv.FormatInt(doc.ID, 10)+"&chunk_id=999999", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocuments, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &detail))
+	require.Zero(t, detail.FocusChunkID)
+	require.NotEmpty(t, detail.Chunks)
+
 	// Status.
 	req = newRequest(t, http.MethodGet, "/api/kb/status", nil)
 	w = callHandler(ServeKBStatus, req)
@@ -277,4 +311,102 @@ func TestKBDocumentImportEndpoint(t *testing.T) {
 	req = withProjectCookie(req, env.ProjectDir)
 	w = callHandler(ServeKBDocumentImport, req)
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+func TestKBRefreshProgressAndImportPreview(t *testing.T) {
+	env := setupKBHandlerTest(t)
+
+	req := newRequest(t, http.MethodPost, "/api/kb/collections", map[string]any{
+		"name": "刷新测试", "scope": "global",
+	})
+	w := callHandler(ServeKBCollections, req)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var col kb.Collection
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &col))
+
+	src := filepath.Join(env.ProjectDir, "refresh.md")
+	require.NoError(t, os.WriteFile(src, []byte("第一版：报销流程。"), 0o644))
+	req = newRequest(t, http.MethodPost, "/api/kb/documents", map[string]any{
+		"collection_id": col.ID, "path": src,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocuments, req)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var doc kb.Document
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc))
+	waitKBDocumentReady(t, doc.ID)
+
+	// Progress returns the volatile fields only.
+	req = newRequest(t, http.MethodGet, "/api/kb/documents/progress?collection_id="+strconv.FormatInt(col.ID, 10), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocumentProgress, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var progress struct {
+		Documents []kb.DocumentProgress `json:"documents"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &progress))
+	require.Len(t, progress.Documents, 1)
+	require.Equal(t, doc.ID, progress.Documents[0].ID)
+	require.Equal(t, kb.StatusReady, progress.Documents[0].Status)
+
+	// Unchanged source: nothing to reindex.
+	req = newRequest(t, http.MethodPost, "/api/kb/documents/refresh?id="+strconv.FormatInt(doc.ID, 10), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocumentRefresh, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var refreshed struct {
+		Changed bool `json:"changed"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &refreshed))
+	require.False(t, refreshed.Changed)
+
+	// Changed source: the stored copy is replaced and reindexed.
+	require.NoError(t, os.WriteFile(src, []byte("第二版：报销流程已更新。"), 0o644))
+	req = newRequest(t, http.MethodPost, "/api/kb/documents/refresh?id="+strconv.FormatInt(doc.ID, 10), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocumentRefresh, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &refreshed))
+	require.True(t, refreshed.Changed)
+	waitKBDocumentReady(t, doc.ID)
+
+	// A folder preview reports counts without copying anything.
+	dir := filepath.Join(env.ProjectDir, "preview-dir")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "nested"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.md"), []byte("甲"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "nested", "b.md"), []byte("乙"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "skip.png"), []byte("png"), 0o644))
+
+	req = newRequest(t, http.MethodPost, "/api/kb/documents/import", map[string]any{
+		"collection_id": col.ID, "path": dir, "dry_run": true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocumentImport, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var preview kb.DirImportResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &preview))
+	require.Equal(t, 2, preview.Added)
+	require.Equal(t, 1, preview.Skipped)
+
+	// Preview wrote nothing.
+	req = newRequest(t, http.MethodGet, "/api/kb/documents?collection_id="+strconv.FormatInt(col.ID, 10), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocuments, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var listed struct {
+		Documents []kb.Document `json:"documents"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listed))
+	require.Len(t, listed.Documents, 1)
+
+	// The real import adds both files.
+	req = newRequest(t, http.MethodPost, "/api/kb/documents/import", map[string]any{
+		"collection_id": col.ID, "path": dir,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBDocumentImport, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var imported kb.DirImportResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &imported))
+	require.Equal(t, 2, imported.Added)
 }

@@ -538,6 +538,9 @@ KBDuplicate: This file is already in the selected knowledge base
 KBFileTooLarge: The file is too large to add
 KBUnsupportedFile: This file type is not supported
 KBNotDirectory: The selected path is not a folder
+KBSourceMissing: The original file is gone, so it cannot be refreshed (the stored copy is still searchable)
+KBInvalidURL: Enter an http or https address
+KBFetchFailed: Could not open the page (network error, refused, or too large)
 KBNameRequired: A knowledge base name is required and must be at most 100 characters
 KBReasonLegacyDoc: Legacy Word format (.doc) is not supported; save it as .docx and add it again
 KBReasonLegacyXls: Legacy Excel format (.xls) is not supported; save it as .xlsx and add it again

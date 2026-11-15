@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { formatLocation, formatSize, statusKind, statusLabel, type TFn } from '../kbFormat'
+import {
+  documentErrorText,
+  errorReason,
+  formatLocation,
+  formatSize,
+  statusKind,
+  statusLabel,
+  type TFn,
+} from '../kbFormat'
 import type { KBDocument } from '@/composables/useKnowledgeBase'
 
 const t: TFn = (key, named) => `${key}${named ? JSON.stringify(named) : ''}`
@@ -66,5 +74,28 @@ describe('formatSize', () => {
     expect(formatSize(512)).toBe('512 B')
     expect(formatSize(1536)).toBe('1.5 KB')
     expect(formatSize(2 * 1024 * 1024)).toBe('2.0 MB')
+  })
+})
+
+
+describe('errorReason', () => {
+  it('extracts a known reason code from the stored message', () => {
+    expect(errorReason('pdf_no_text')).toBe('pdf_no_text')
+    expect(errorReason('pdf_no_text: scan.pdf')).toBe('pdf_no_text')
+    expect(errorReason('no_text: ')).toBe('no_text')
+  })
+
+  it('returns empty for an unknown message', () => {
+    expect(errorReason('disk read failed')).toBe('')
+    expect(errorReason('')).toBe('')
+    expect(errorReason(undefined)).toBe('')
+  })
+})
+
+describe('documentErrorText', () => {
+  it('translates a known reason and falls back to the raw message', () => {
+    expect(documentErrorText('pdf_no_text: x', t)).toBe('kb.reason.pdf_no_text')
+    expect(documentErrorText('disk read failed', t)).toBe('disk read failed')
+    expect(documentErrorText('', t)).toBe('')
   })
 })

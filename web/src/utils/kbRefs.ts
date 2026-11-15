@@ -7,6 +7,8 @@
  * instead of letting one bad row break the whole message.
  */
 export interface ChatKBRef {
+  /** Optional: messages written before chunk ids existed have none. */
+  chunkId?: number
   documentId: number
   documentTitle: string
   collectionName: string
@@ -32,6 +34,7 @@ export function parseKBRefs(raw: unknown): ChatKBRef[] {
     const text = str(r.text).trim()
     if (!text) continue
     out.push({
+      chunkId: Number(r.chunkId) || 0,
       documentId: Number(r.documentId) || 0,
       documentTitle: str(r.documentTitle),
       collectionName: str(r.collectionName),

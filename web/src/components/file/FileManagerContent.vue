@@ -492,6 +492,10 @@
             <Paperclip :size="14" />
             {{ t('chat.actions.attachToChat') }}
           </div>
+          <div class="context-menu-item" v-if="kbEnabled" data-menu-item="add-kb" @click.stop="doAddToKB">
+            <BookOpen :size="14" />
+            {{ t('file.context.addToKB') }}
+          </div>
           <div class="context-menu-item danger" @click.stop="doDelete">
             <Trash2 :size="14" />
             {{ t('common.delete') }}
@@ -535,6 +539,14 @@
       :is-dir="!!shareTarget?.isDir"
       @close="shareDialogOpen = false"
     />
+    <!-- "Add to knowledge base" from the file manager: the destination is a
+         collection, not a chat session, so it gets its own picker. -->
+    <KBCollectionPickerDialog
+      :open="kbPickerOpen"
+      :initial-name="kbPickerInitialName"
+      @close="kbPickerOpen = false"
+      @confirm="onKBPicked"
+    />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
     <DropOverlay :visible="isDragOver" :label="t('file.dropToUpload')" />
@@ -556,7 +568,10 @@ import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@
 import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail, BookOpen } from 'lucide-vue-next'
+import KBCollectionPickerDialog from '@/components/kb/KBCollectionPickerDialog.vue'
+import { kbAddByPath, kbImportDirectory, kbPreviewDirectory } from '@/composables/useKnowledgeBase'
+import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -842,7 +857,7 @@ const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 // are server calls that would be refused, and a permanently-failing button is
 // worse than no button. The share entry is gated per KIND (file links), so
 // turning off conversation or meeting links leaves it alone.
-const { mailEnabled } = useFeatureFlags()
+const { mailEnabled, kbEnabled } = useFeatureFlags()
 const shareAllowed = useShareKindAllowed('files')
 const { isWideScreen } = useWideScreenLayout()
 
@@ -2667,6 +2682,94 @@ function doAttachToChat() {
                 to: { x: animTo.left + animTo.width / 2, y: animTo.top + animTo.height / 2 },
             }
         }))
+    }
+}
+
+// ── Add to knowledge base ──
+// The file manager is the natural place to put a document into a library: the
+// file is already there. The destination is a collection, so the picker is the
+// knowledge base's own, not the chat's target picker.
+const kbPickerOpen = ref(false)
+const kbPickerInitialName = ref('')
+const kbTargets = ref([])
+
+function doAddToKB() {
+    const selected = multiSelect.active ? [...multiSelect.selected] : []
+    const entries = selected.length
+        ? selected.map(p => ({ path: p, isDir: metaForPath(p).type === 'dir' }))
+        : [{ path: ctxMenu.entry.path, isDir: ctxMenu.entry.type === 'dir' }]
+    closeCtxMenu()
+    kbTargets.value = entries
+    kbPickerInitialName.value = entries.length === 1 ? baseName(entries[0].path).replace(/\.[^.]+$/, '') : ''
+    kbPickerOpen.value = true
+}
+
+async function onKBPicked(collection) {
+    kbPickerOpen.value = false
+    const entries = kbTargets.value
+    kbTargets.value = []
+    if (!entries.length) return
+
+    const dirs = entries.filter(e => e.isDir)
+    const files = entries.filter(e => !e.isDir)
+    const totals = { added: 0, duplicates: 0, skipped: 0, failed: 0 }
+
+    if (dirs.length) {
+        // Folders are previewed first, exactly like in the knowledge base
+        // panel: a big import should not start without its numbers.
+        const preview = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false }
+        for (const dir of dirs) {
+            try {
+                const p = await kbPreviewDirectory(collection.id, dir.path)
+                preview.added += p.added
+                preview.duplicates += p.duplicates
+                preview.skipped += p.skipped
+                preview.failed += p.failed
+                preview.truncated = preview.truncated || p.truncated
+            } catch {
+                // The import below will surface the error with a real message.
+                preview.failed++
+            }
+        }
+        const ok = await dialog.confirm(t('kb.importPreviewMessage', preview), {
+            title: t('kb.importPreviewTitle'),
+            confirmText: t('kb.importContinue'),
+        })
+        if (!ok) return
+    }
+
+    for (const file of files) {
+        try {
+            await kbAddByPath(collection.id, file.path)
+            totals.added++
+        } catch {
+            totals.failed++
+        }
+    }
+    for (const dir of dirs) {
+        try {
+            const res = await kbImportDirectory(collection.id, dir.path)
+            totals.added += res.added
+            totals.duplicates += res.duplicates
+            totals.skipped += res.skipped
+            totals.failed += res.failed
+        } catch {
+            totals.failed++
+        }
+    }
+
+    if (totals.added > 0) startKBIndexWatch()
+    if (totals.added === 0 && totals.failed === 0) {
+        if (toast) toast.show(t('kb.dirImportEmpty'), { icon: 'warning', type: 'error', duration: 3000 })
+        return
+    }
+    if (toast) {
+        toast.show(
+            totals.failed > 0 || totals.skipped > 0 || totals.duplicates > 0
+                ? t('kb.dirImportSummary', totals)
+                : t('kb.added'),
+            { icon: 'success', type: totals.failed > 0 ? 'error' : 'success', duration: 3200 },
+        )
     }
 }
 

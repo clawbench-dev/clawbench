@@ -147,6 +147,7 @@
         @show-metadata="$emit('show-metadata', $event)"
         @file-tag-click="$emit('file-tag-click', $event)"
         @quote-message="(msg, el) => $emit('quote-message', msg, el)"
+        @save-to-kb="(msg) => $emit('save-to-kb', msg)"
         @task-card-click="$emit('task-card-click', $event)"
         @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
         @render-flush="emit('render-flush')"
@@ -348,7 +349,7 @@ const props = defineProps({
   userNickname: { type: String, default: GROUP_USER_TARGET_NAME },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw', 'open-agent-config'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'save-to-kb', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw', 'open-agent-config'])
 
 const messagesRef = ref(null)
 

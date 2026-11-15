@@ -526,6 +526,9 @@ KBDuplicate: 这个文件已经在当前知识库里了
 KBFileTooLarge: 文件太大，无法加入知识库
 KBUnsupportedFile: 这个文件类型不支持
 KBNotDirectory: 选中的不是一个文件夹
+KBSourceMissing: 原文件已经不在了，无法从原文件更新（知识库里的副本仍在，可以继续搜索）
+KBInvalidURL: 请填写 http 或 https 开头的网页地址
+KBFetchFailed: 打不开这个网页（网络不通、对方拒绝访问或页面太大）
 KBNameRequired: 知识库名称不能为空，且不超过 100 个字
 KBReasonLegacyDoc: 旧版 Word 格式（.doc）不支持，请另存为 .docx 后重新添加
 KBReasonLegacyXls: 旧版 Excel 格式（.xls）不支持，请另存为 .xlsx 后重新添加

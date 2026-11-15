@@ -56,3 +56,41 @@ export function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
+
+/**
+ * Stable failure reasons produced by the extractor (`FileError.Error()` is
+ * `code` or `code: detail`). The indexer stores that string as-is, so the code
+ * can be recovered without a schema change; unknown errors fall back to the
+ * raw message instead of pretending to understand them.
+ */
+const KB_ERROR_REASONS = new Set([
+  'legacy_doc',
+  'legacy_xls',
+  'legacy_ppt',
+  'image',
+  'svg',
+  'audio_video',
+  'archive',
+  'executable',
+  'binary',
+  'font',
+  'pdf_encrypted',
+  'pdf_no_text',
+  'no_text',
+  'file_too_large',
+  'not_regular_file',
+  'unknown_format',
+])
+
+export function errorReason(error: string | undefined): string {
+  if (!error) return ''
+  const code = error.split(':', 1)[0].trim()
+  return KB_ERROR_REASONS.has(code) ? code : ''
+}
+
+/** Localized failure text, falling back to the server's raw message. */
+export function documentErrorText(error: string | undefined, t: TFn): string {
+  if (!error) return ''
+  const reason = errorReason(error)
+  return reason ? t(`kb.reason.${reason}`) : error
+}

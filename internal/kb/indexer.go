@@ -134,7 +134,11 @@ func (idx *Indexer) processDocument() bool {
 
 	chunks := buildChunks(blocks, idx.ragCfg.ChunkSize, idx.ragCfg.ChunkOverlap)
 	if len(chunks) == 0 {
-		_ = idx.store.SetDocumentStatus(doc.ID, StatusFailed, ErrNoText.Error(), warning)
+		// Store the stable reason code (not the English sentinel text) so the
+		// panel can translate it. ExtractFile failures already carry a code
+		// through FileError.Error(); this branch produced the one exception.
+		reason := (&FileError{Reason: ReasonNoText, Err: ErrNoText}).Error()
+		_ = idx.store.SetDocumentStatus(doc.ID, StatusFailed, reason, warning)
 		return true
 	}
 

@@ -106,6 +106,34 @@ export async function apiPost<T = unknown>(url: string, body: unknown, opts: Api
     }
 }
 
+/**
+ * Multipart POST. Same error contract as `apiPost` (status/msgKey/detail
+ * survive), but the body is a FormData so the browser owns the boundary.
+ */
+export async function apiPostForm<T = unknown>(url: string, form: FormData, opts: ApiOptions = {}): Promise<T> {
+    const { signal, cleanup } = createSignal(opts)
+    try {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: localeHeaders(),
+            body: form,
+            signal,
+        })
+        const data = await resp.json().catch(() => ({})) as Record<string, unknown>
+        if (!resp.ok) {
+            const err = new Error(data.error ? String(data.error) : resp.statusText)
+            const typedErr = err as Error & { status?: number; msgKey?: string; detail?: unknown }
+            typedErr.status = resp.status
+            if (data.msgKey) typedErr.msgKey = String(data.msgKey)
+            if (data.detail) typedErr.detail = data.detail
+            throw err
+        }
+        return data as T
+    } finally {
+        cleanup()
+    }
+}
+
 export async function apiPut<T = unknown>(url: string, body: unknown, opts: ApiOptions = {}): Promise<T> {
     const { signal, cleanup } = createSignal(opts)
     try {

@@ -99,6 +99,7 @@ func (s *Store) initSchema() error {
 			scope       TEXT NOT NULL CHECK(scope IN ('global', 'project')),
 			project_id  INTEGER NOT NULL DEFAULT 0,
 			auto_inject INTEGER NOT NULL DEFAULT 1,
+			pinned      INTEGER NOT NULL DEFAULT 0,
 			created_at  DATETIME NOT NULL,
 			updated_at  DATETIME NOT NULL
 		);
@@ -113,6 +114,7 @@ func (s *Store) initSchema() error {
 			ext           TEXT NOT NULL DEFAULT '',
 			size_bytes    INTEGER NOT NULL DEFAULT 0,
 			content_hash  TEXT NOT NULL DEFAULT '',
+			tags          TEXT NOT NULL DEFAULT '',
 			status        TEXT NOT NULL DEFAULT 'pending',
 			error         TEXT NOT NULL DEFAULT '',
 			warning       TEXT NOT NULL DEFAULT '',
@@ -125,6 +127,13 @@ func (s *Store) initSchema() error {
 		CREATE INDEX IF NOT EXISTS idx_kb_documents_collection ON kb_documents(collection_id);
 		CREATE INDEX IF NOT EXISTS idx_kb_documents_status ON kb_documents(status);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_documents_hash ON kb_documents(collection_id, content_hash);
+
+		CREATE TABLE IF NOT EXISTS kb_document_usage (
+			document_id INTEGER NOT NULL,
+			session_id  TEXT NOT NULL,
+			used_at     INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_kb_document_usage_doc ON kb_document_usage(document_id);
 
 		CREATE TABLE IF NOT EXISTS kb_chunks (
 			id                   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,6 +171,14 @@ func (s *Store) initSchema() error {
 	if _, err := s.db.Exec(store.ProjectsDDL); err != nil {
 		return fmt.Errorf("create projects table: %w", err)
 	}
+	// Existing installs predate the pinned column.
+	if err := s.addColumnIfMissing("kb_collections", "pinned", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing("kb_documents", "tags", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -320,9 +337,30 @@ func (s *Store) ResetVector(dim int) error {
 	return nil
 }
 
+// addColumnIfMissing issues ALTER TABLE ADD COLUMN unless the column already
+// exists. Safe to run on every startup.
+func (s *Store) addColumnIfMissing(table, column, decl string) error {
+	var exists int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column,
+	).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("inspect %s.%s: %w", table, column, err)
+	}
+	if exists > 0 {
+		return nil
+	}
+	if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl)); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
 // --- Collections ---
 
 func (s *Store) CreateCollection(c Collection) (int64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	if c.Scope != ScopeGlobal && c.Scope != ScopeProject {
 		return 0, ErrInvalidScope
 	}
@@ -346,8 +384,10 @@ func (s *Store) CreateCollection(c Collection) (int64, error) {
 func (s *Store) ListCollections(projectID int64) ([]Collection, error) {
 	query := `
 		SELECT c.id, c.name, c.description, c.scope, c.project_id,
-		       COALESCE(p.path, ''), c.auto_inject, c.created_at, c.updated_at,
-		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id)
+		       COALESCE(p.path, ''), c.auto_inject, c.pinned, c.created_at, c.updated_at,
+		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id),
+		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id AND d.status = 'failed'),
+		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id AND d.status IN ('pending', 'extracting'))
 		FROM kb_collections c
 		LEFT JOIN projects p ON p.id = c.project_id
 		WHERE c.project_id = 0`
@@ -356,7 +396,7 @@ func (s *Store) ListCollections(projectID int64) ([]Collection, error) {
 		query += " OR c.project_id = ?"
 		args = append(args, projectID)
 	}
-	query += " ORDER BY CASE WHEN c.project_id = 0 THEN 0 ELSE 1 END, c.created_at ASC, c.id ASC"
+	query += " ORDER BY CASE WHEN c.project_id = 0 THEN 0 ELSE 1 END, c.pinned DESC, c.created_at ASC, c.id ASC"
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -368,11 +408,14 @@ func (s *Store) ListCollections(projectID int64) ([]Collection, error) {
 	for rows.Next() {
 		var c Collection
 		var autoInject int
+		var pinned int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.Scope, &c.ProjectID,
-			&c.ProjectPath, &autoInject, &c.CreatedAt, &c.UpdatedAt, &c.DocCount); err != nil {
+			&c.ProjectPath, &autoInject, &pinned, &c.CreatedAt, &c.UpdatedAt,
+			&c.DocCount, &c.FailedCount, &c.PendingCount); err != nil {
 			return nil, fmt.Errorf("scan collection: %w", err)
 		}
 		c.AutoInject = autoInject != 0
+		c.Pinned = pinned != 0
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -381,15 +424,19 @@ func (s *Store) ListCollections(projectID int64) ([]Collection, error) {
 func (s *Store) GetCollection(id int64) (*Collection, error) {
 	var c Collection
 	var autoInject int
+	var pinned int
 	err := s.db.QueryRow(`
 		SELECT c.id, c.name, c.description, c.scope, c.project_id,
-		       COALESCE(p.path, ''), c.auto_inject, c.created_at, c.updated_at,
-		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id)
+		       COALESCE(p.path, ''), c.auto_inject, c.pinned, c.created_at, c.updated_at,
+		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id),
+		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id AND d.status = 'failed'),
+		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id AND d.status IN ('pending', 'extracting'))
 		FROM kb_collections c
 		LEFT JOIN projects p ON p.id = c.project_id
 		WHERE c.id = ?`, id,
 	).Scan(&c.ID, &c.Name, &c.Description, &c.Scope, &c.ProjectID,
-		&c.ProjectPath, &autoInject, &c.CreatedAt, &c.UpdatedAt, &c.DocCount)
+		&c.ProjectPath, &autoInject, &pinned, &c.CreatedAt, &c.UpdatedAt,
+		&c.DocCount, &c.FailedCount, &c.PendingCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrCollectionNotFound
 	}
@@ -397,11 +444,14 @@ func (s *Store) GetCollection(id int64) (*Collection, error) {
 		return nil, fmt.Errorf("get collection: %w", err)
 	}
 	c.AutoInject = autoInject != 0
+	c.Pinned = pinned != 0
 	return &c, nil
 }
 
 // UpdateCollection applies only the supplied fields.
-func (s *Store) UpdateCollection(id int64, name, description *string, autoInject *bool) error {
+func (s *Store) UpdateCollection(id int64, name, description *string, autoInject, pinned *bool) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	sets := []string{"updated_at = ?"}
 	args := []any{time.Now()}
 	if name != nil {
@@ -415,6 +465,10 @@ func (s *Store) UpdateCollection(id int64, name, description *string, autoInject
 	if autoInject != nil {
 		sets = append(sets, "auto_inject = ?")
 		args = append(args, boolToInt(*autoInject))
+	}
+	if pinned != nil {
+		sets = append(sets, "pinned = ?")
+		args = append(args, boolToInt(*pinned))
 	}
 	args = append(args, id)
 	res, err := s.db.Exec("UPDATE kb_collections SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
@@ -508,7 +562,7 @@ func (s *Store) listCollectionIDs(projectID int64, injectOnly bool) ([]int64, er
 func (s *Store) FindDocumentByHash(collectionID int64, hash string) (*Document, error) {
 	row := s.db.QueryRow(`
 		SELECT id, collection_id, title, source_path, stored_path, ext, size_bytes,
-		       status, error, warning, chunk_count, fts_ready, vector_ready,
+		       content_hash, tags, status, error, warning, chunk_count, fts_ready, vector_ready,
 		       created_at, updated_at
 		FROM kb_documents WHERE collection_id = ? AND content_hash = ? LIMIT 1`,
 		collectionID, hash)
@@ -577,17 +631,21 @@ func (s *Store) projectCollectionIDs(projectID int64) ([]int64, error) {
 // --- Documents ---
 
 func (s *Store) AddDocument(d Document) (int64, error) {
+	// Serialize with the indexer's status/chunk writes; without the lock a
+	// concurrent index pass makes SQLite return SQLITE_BUSY instead of waiting.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	now := time.Now()
 	if d.Status == "" {
 		d.Status = StatusPending
 	}
 	res, err := s.db.Exec(`
 		INSERT INTO kb_documents (collection_id, title, source_path, stored_path, ext,
-			size_bytes, content_hash, status, error, warning, chunk_count, fts_ready,
+			size_bytes, content_hash, tags, status, error, warning, chunk_count, fts_ready,
 			vector_ready, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', 0, 0, 0, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 0, 0, 0, ?, ?)`,
 		d.CollectionID, d.Title, d.SourcePath, d.StoredPath, d.Ext,
-		d.SizeBytes, d.ContentHash, d.Status, now, now,
+		d.SizeBytes, d.ContentHash, d.Tags, d.Status, now, now,
 	)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
@@ -601,7 +659,7 @@ func (s *Store) AddDocument(d Document) (int64, error) {
 func (s *Store) ListDocuments(collectionID int64) ([]Document, error) {
 	rows, err := s.db.Query(`
 		SELECT id, collection_id, title, source_path, stored_path, ext, size_bytes,
-		       status, error, warning, chunk_count, fts_ready, vector_ready,
+		       content_hash, tags, status, error, warning, chunk_count, fts_ready, vector_ready,
 		       created_at, updated_at
 		FROM kb_documents WHERE collection_id = ? ORDER BY created_at DESC, id DESC`, collectionID)
 	if err != nil {
@@ -623,7 +681,7 @@ func (s *Store) ListDocuments(collectionID int64) ([]Document, error) {
 func (s *Store) GetDocument(id int64) (*Document, error) {
 	row := s.db.QueryRow(`
 		SELECT id, collection_id, title, source_path, stored_path, ext, size_bytes,
-		       status, error, warning, chunk_count, fts_ready, vector_ready,
+		       content_hash, tags, status, error, warning, chunk_count, fts_ready, vector_ready,
 		       created_at, updated_at
 		FROM kb_documents WHERE id = ?`, id)
 	d, err := scanDocument(row)
@@ -644,7 +702,7 @@ func scanDocument(r rowScanner) (*Document, error) {
 	var d Document
 	var fts, vec int
 	if err := r.Scan(&d.ID, &d.CollectionID, &d.Title, &d.SourcePath, &d.StoredPath,
-		&d.Ext, &d.SizeBytes, &d.Status, &d.Error, &d.Warning, &d.ChunkCount,
+		&d.Ext, &d.SizeBytes, &d.ContentHash, &d.Tags, &d.Status, &d.Error, &d.Warning, &d.ChunkCount,
 		&fts, &vec, &d.CreatedAt, &d.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -686,12 +744,81 @@ func (s *Store) DeleteDocument(id int64) (string, error) {
 }
 
 func (s *Store) SetDocumentStatus(id int64, status, errMsg, warning string) error {
+	// This is a write like any other; without the process-wide lock it races
+	// the import path and SQLite reports SQLITE_BUSY instead of waiting.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	_, err := s.db.Exec(
 		`UPDATE kb_documents SET status = ?, error = ?, warning = ?, updated_at = ? WHERE id = ?`,
 		status, errMsg, warning, time.Now(), id,
 	)
 	if err != nil {
 		return fmt.Errorf("set document status: %w", err)
+	}
+	return nil
+}
+
+// UpdateDocumentSource records the new size and content fingerprint after a
+// document's stored copy was replaced from its original file.
+func (s *Store) UpdateDocumentSource(id, size int64, hash string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_, err := s.db.Exec(
+		`UPDATE kb_documents SET size_bytes = ?, content_hash = ?, updated_at = ? WHERE id = ?`,
+		size, hash, time.Now(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("update document source: %w", err)
+	}
+	return nil
+}
+
+// MoveDocumentRecord re-points a document at another collection and requeues
+// it. The chunks (and their vectors) are dropped in the same transaction: their
+// collection/project metadata would otherwise be stale, and re-embedding is
+// cheaper than trying to patch a virtual table's metadata.
+func (s *Store) MoveDocumentRecord(id, collectionID int64, storedPath string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin document move: %w", err)
+	}
+	if err := deleteChunksByDocument(tx, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	res, err := tx.Exec(`
+		UPDATE kb_documents
+		SET collection_id = ?, stored_path = ?, status = 'pending', error = '', warning = '',
+		    chunk_count = 0, fts_ready = 0, vector_ready = 0, updated_at = ?
+		WHERE id = ?`, collectionID, storedPath, time.Now(), id)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("move document: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		_ = tx.Rollback()
+		return ErrDocumentNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit document move: %w", err)
+	}
+	return nil
+}
+
+// SetDocumentTags replaces a document's comma-separated tag list.
+func (s *Store) SetDocumentTags(id int64, tags string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	res, err := s.db.Exec(
+		`UPDATE kb_documents SET tags = ?, updated_at = ? WHERE id = ?`, tags, time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("set document tags: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrDocumentNotFound
 	}
 	return nil
 }
@@ -715,7 +842,7 @@ func (s *Store) PendingDocuments(limit int) ([]Document, error) {
 	}
 	rows, err := s.db.Query(`
 		SELECT id, collection_id, title, source_path, stored_path, ext, size_bytes,
-		       status, error, warning, chunk_count, fts_ready, vector_ready,
+		       content_hash, tags, status, error, warning, chunk_count, fts_ready, vector_ready,
 		       created_at, updated_at
 		FROM kb_documents WHERE status = 'pending' ORDER BY created_at ASC, id ASC LIMIT ?`, limit)
 	if err != nil {
@@ -857,7 +984,7 @@ func (s *Store) ListChunks(documentID int64, limit int) ([]Chunk, error) {
 	}
 	rows, err := s.db.Query(`
 		SELECT id, document_id, collection_id, project_id, chunk_index,
-		       chunk_text, location, token_count, has_embedding
+		       chunk_text, location, token_count, has_embedding, created_at
 		FROM kb_chunks WHERE document_id = ? ORDER BY chunk_index ASC LIMIT ?`, documentID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list chunks: %w", err)
@@ -868,11 +995,147 @@ func (s *Store) ListChunks(documentID int64, limit int) ([]Chunk, error) {
 		var c Chunk
 		var has int
 		if err := rows.Scan(&c.ID, &c.DocumentID, &c.CollectionID, &c.ProjectID,
-			&c.ChunkIndex, &c.ChunkText, &c.Location, &c.TokenCount, &has); err != nil {
+			&c.ChunkIndex, &c.ChunkText, &c.Location, &c.TokenCount, &has, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		c.HasEmbedding = has != 0
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ChunkWindow returns the chunk with the given id plus its neighbors, so a
+// search hit that lives past the first page can still be shown in context.
+//
+// A chunk id that no longer exists (the document was re-indexed between the
+// search and the click) returns (nil, -1, nil) instead of an error: the caller
+// opens the document at the top, which is still better than a dead end.
+func (s *Store) ChunkWindow(documentID, chunkID int64, before, after int) ([]Chunk, int, error) {
+	if before < 0 {
+		before = 0
+	}
+	if after < 0 {
+		after = 0
+	}
+	var target int
+	err := s.db.QueryRow(
+		`SELECT chunk_index FROM kb_chunks WHERE id = ? AND document_id = ?`,
+		chunkID, documentID,
+	).Scan(&target)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, -1, nil
+	}
+	if err != nil {
+		return nil, -1, fmt.Errorf("locate chunk: %w", err)
+	}
+
+	from := target - before
+	if from < 0 {
+		from = 0
+	}
+	rows, err := s.db.Query(`
+		SELECT id, document_id, collection_id, project_id, chunk_index,
+		       chunk_text, location, token_count, has_embedding, created_at
+		FROM kb_chunks
+		WHERE document_id = ? AND chunk_index BETWEEN ? AND ?
+		ORDER BY chunk_index ASC`, documentID, from, target+after)
+	if err != nil {
+		return nil, -1, fmt.Errorf("list chunk window: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Chunk
+	for rows.Next() {
+		var c Chunk
+		var has int
+		if err := rows.Scan(&c.ID, &c.DocumentID, &c.CollectionID, &c.ProjectID,
+			&c.ChunkIndex, &c.ChunkText, &c.Location, &c.TokenCount, &has, &c.CreatedAt); err != nil {
+			return nil, -1, err
+		}
+		c.HasEmbedding = has != 0
+		out = append(out, c)
+	}
+	return out, target, rows.Err()
+}
+
+// DocumentProgress returns the volatile fields for every document in a
+// collection. The caller merges them into its existing list so only rows that
+// actually changed re-render.
+func (s *Store) DocumentProgress(collectionID int64) ([]DocumentProgress, error) {
+	rows, err := s.db.Query(`
+		SELECT id, status, error, warning, chunk_count, fts_ready, vector_ready
+		FROM kb_documents WHERE collection_id = ? ORDER BY created_at DESC, id DESC`, collectionID)
+	if err != nil {
+		return nil, fmt.Errorf("list document progress: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []DocumentProgress
+	for rows.Next() {
+		var p DocumentProgress
+		var fts, vec int
+		if err := rows.Scan(&p.ID, &p.Status, &p.Error, &p.Warning, &p.ChunkCount, &fts, &vec); err != nil {
+			return nil, err
+		}
+		p.FTSReady = fts != 0
+		p.VectorReady = vec != 0
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// RecordDocumentUsage appends one row per cited document (deduped within the
+// turn). Best-effort: a failure here must never fail the chat turn.
+func (s *Store) RecordDocumentUsage(refs []Ref, sessionID string) error {
+	if len(refs) == 0 || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin usage record: %w", err)
+	}
+	now := time.Now()
+	seen := make(map[int64]bool, len(refs))
+	for _, r := range refs {
+		if r.DocumentID <= 0 || seen[r.DocumentID] {
+			continue
+		}
+		seen[r.DocumentID] = true
+		if _, err := tx.Exec(
+			`INSERT INTO kb_document_usage (document_id, session_id, used_at) VALUES (?, ?, ?)`,
+			r.DocumentID, sessionID, now.UnixMilli(),
+		); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("record usage: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit usage record: %w", err)
+	}
+	return nil
+}
+
+// DocumentUsage returns citation counts for one collection.
+func (s *Store) DocumentUsage(collectionID int64) ([]DocumentUsage, error) {
+	rows, err := s.db.Query(`
+		SELECT u.document_id, COUNT(*), MAX(u.used_at)
+		FROM kb_document_usage u
+		JOIN kb_documents d ON d.id = u.document_id
+		WHERE d.collection_id = ?
+		GROUP BY u.document_id`, collectionID)
+	if err != nil {
+		return nil, fmt.Errorf("list document usage: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []DocumentUsage
+	for rows.Next() {
+		var u DocumentUsage
+		var lastMS int64
+		if err := rows.Scan(&u.DocumentID, &u.Count, &lastMS); err != nil {
+			return nil, err
+		}
+		u.LastUsed = time.UnixMilli(lastMS)
+		out = append(out, u)
 	}
 	return out, rows.Err()
 }

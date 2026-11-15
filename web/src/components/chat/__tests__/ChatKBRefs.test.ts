@@ -9,8 +9,13 @@ import { createI18n } from 'vue-i18n'
 import ChatKBRefs from '@/components/chat/ChatKBRefs.vue'
 import type { ChatKBRef } from '@/utils/kbRefs'
 
+const h = vi.hoisted(() => ({ showDockTab: vi.fn() }))
+
 vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
   renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
+}))
+vi.mock('@/composables/useWideScreenLayout', () => ({
+  showDockTab: h.showDockTab,
 }))
 
 const i18n = createI18n({
@@ -27,6 +32,7 @@ const i18n = createI18n({
             untitled: '未命名文档',
             expand: '查看来源片段',
             collapse: '收起来源片段',
+            openInKb: '在知识库中查看',
           },
         },
       },
@@ -118,5 +124,27 @@ describe('ChatKBRefs', () => {
     ])
     await wrapper.find('[data-action="toggle-kb-refs"]').trigger('click')
     expect(wrapper.find('.chat-kb-ref-title').text()).toBe('未命名文档')
+  })
+
+  it('opens the cited document in the knowledge base', async () => {
+    const wrapper = mountRefs([
+      { chunkId: 31, documentId: 7, documentTitle: 'handbook.md', collectionName: '制度', location: 'L1-L3', text: 'x' },
+    ])
+    await wrapper.find('[data-action="toggle-kb-refs"]').trigger('click')
+    const open = wrapper.find('[data-action="kb-ref-open"]')
+    expect(open.exists()).toBe(true)
+    await open.trigger('click')
+
+    expect(h.showDockTab).toHaveBeenCalledWith('kb')
+    const { kbPendingOpen } = await import('@/utils/kbNavigation')
+    expect(kbPendingOpen.value).toMatchObject({ documentId: 7, chunkId: 31 })
+  })
+
+  it('hides the jump action for a ref without a document id', async () => {
+    const wrapper = mountRefs([
+      { documentId: 0, documentTitle: '', collectionName: '', location: '', text: 'x' },
+    ])
+    await wrapper.find('[data-action="toggle-kb-refs"]').trigger('click')
+    expect(wrapper.find('[data-action="kb-ref-open"]').exists()).toBe(false)
   })
 })

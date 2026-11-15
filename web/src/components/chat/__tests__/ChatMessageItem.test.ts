@@ -1772,6 +1772,21 @@ describe('ChatMessageItem — quote message button', () => {
     expect(wrapper.emitted('quote-message')![0][0]).toMatchObject({ id: 42, role: 'assistant' })
   })
 
+  it('emits save-to-kb for an assistant reply', async () => {
+    const wrapper = createWrapper({ msg: assistantMsg, index: 0, active: true })
+    const btn = wrapper.find('[data-action="save-to-kb"]')
+    expect(btn.exists()).toBe(true)
+
+    await btn.trigger('click')
+
+    expect(wrapper.emitted('save-to-kb')![0][0]).toMatchObject({ id: 42, role: 'assistant' })
+  })
+
+  it('does not offer save-to-kb on a user message', () => {
+    const wrapper = createWrapper({ msg: userMsg, index: 0, active: true })
+    expect(wrapper.find('[data-action="save-to-kb"]').exists()).toBe(false)
+  })
+
   it('passes the pressed button as the second argument so the bar can anchor to it', async () => {
     // The floating quote bar parks at the top of the page when it has no anchor,
     // which for a message at the bottom of a long transcript is nowhere near the

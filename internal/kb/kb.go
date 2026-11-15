@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -296,6 +299,85 @@ func AddDocumentFromReader(collectionID int64, name string, r io.Reader) (*Docum
 	return finishAdd(st, collectionID, name, "", dest, ext, hex.EncodeToString(h.Sum(nil)), written)
 }
 
+// maxURLBytes caps a remote document. Larger responses are refused instead of
+// being silently truncated: a half-indexed page is worse than a clear error.
+const maxURLBytes = 20 << 20
+
+// AddDocumentFromURL fetches an http(s) address and indexes it like an
+// uploaded file. Only the response body is kept; the URL is not recorded as a
+// source path, so "update from original" does not apply to URL documents.
+//
+// No private-address filtering: this is a user-initiated fetch on a personal
+// server, the same trust model as opening the URL in a browser. The body is
+// only stored locally and indexed; it is never sent anywhere.
+func AddDocumentFromURL(collectionID int64, rawURL string) (*Document, error) {
+	st := currentStore()
+	if st == nil {
+		return nil, ErrUnavailable
+	}
+	if _, err := st.GetCollection(collectionID); err != nil {
+		return nil, err
+	}
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, ErrInvalidURL
+	}
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, ErrInvalidURL
+	}
+	req.Header.Set("User-Agent", "ClawBench/1.0")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain,application/pdf;q=0.9,*/*;q=0.5")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrFetchFailed, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%w: HTTP %d", ErrFetchFailed, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxURLBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrFetchFailed, err)
+	}
+	if len(body) > maxURLBytes {
+		return nil, &FileError{Reason: ReasonFileTooLarge, Detail: strconv.Itoa(maxURLBytes >> 20), Err: ErrFileTooLarge}
+	}
+
+	return AddDocumentFromReader(collectionID, urlDocumentName(u), bytes.NewReader(body))
+}
+
+// urlDocumentName picks a title/extension for a fetched page. Known document
+// extensions are kept; everything else is treated as HTML, because a page
+// served from "/article" or "/view.php" is still HTML and must go through the
+// HTML extractor rather than the plain-text one.
+func urlDocumentName(u *url.URL) string {
+	name := path.Base(u.Path)
+	if unescaped, err := url.PathUnescape(name); err == nil {
+		name = unescaped
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == "/" {
+		name = u.Host
+	}
+	name = strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', 0, '\n', '\r', '\t':
+			return '_'
+		}
+		return r
+	}, name)
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".pdf", ".docx", ".xlsx", ".pptx", ".md", ".markdown", ".txt", ".csv", ".html", ".htm":
+		return name
+	default:
+		return name + ".html"
+	}
+}
+
 func finishAdd(st *Store, collectionID int64, title, sourcePath, dest, ext, hash string, size int64) (*Document, error) {
 	if existing, err := st.FindDocumentByHash(collectionID, hash); err == nil && existing != nil {
 		_ = os.Remove(dest)
@@ -433,6 +515,176 @@ func ReindexDocument(id int64) error {
 	return nil
 }
 
+// MoveDocument moves one document to another collection. The stored copy is
+// moved on disk, the row is re-pointed, and the document is requeued for
+// indexing (its chunks carried the old collection/project metadata).
+func MoveDocument(id, targetCollectionID int64) error {
+	st := currentStore()
+	if st == nil {
+		return ErrUnavailable
+	}
+	doc, err := st.GetDocument(id)
+	if err != nil {
+		return err
+	}
+	if _, err := st.GetCollection(targetCollectionID); err != nil {
+		return err
+	}
+	if doc.CollectionID == targetCollectionID {
+		return nil
+	}
+	// Same content in the target would violate the unique index.
+	if doc.ContentHash != "" {
+		other, findErr := st.FindDocumentByHash(targetCollectionID, doc.ContentHash)
+		if findErr != nil {
+			return findErr
+		}
+		if other != nil {
+			return ErrDuplicateDocument
+		}
+	}
+
+	dest, err := newStoredPath(targetCollectionID, doc.Title, doc.Ext)
+	if err != nil {
+		return err
+	}
+	if err := moveStoredFile(doc.StoredPath, dest); err != nil {
+		return err
+	}
+	if err := st.MoveDocumentRecord(id, targetCollectionID, dest); err != nil {
+		// Put the file back so the row still points at something real.
+		_ = moveStoredFile(dest, doc.StoredPath)
+		return err
+	}
+	triggerIndexer()
+	return nil
+}
+
+// moveStoredFile renames when possible (same filesystem) and falls back to a
+// copy + delete across devices.
+func moveStoredFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	if _, _, err := copyFileWithHash(src, dst); err != nil {
+		_ = os.Remove(dst)
+		return fmt.Errorf("copy stored file: %w", err)
+	}
+	if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove old copy: %w", err)
+	}
+	return nil
+}
+
+// RefreshDocumentFromSource re-reads the original file, replaces the stored
+// copy when its content changed, and reindexes only in that case.
+//
+// The copy goes to a temporary sibling and is renamed into place: a failed copy
+// must not destroy the copy the current index points at. On Windows a rename
+// cannot overwrite, so the fallback removes the target first; the index is
+// reset immediately afterwards, so the indexer never sees a half-written file.
+func RefreshDocumentFromSource(id int64) (bool, error) {
+	st := currentStore()
+	if st == nil {
+		return false, ErrUnavailable
+	}
+	doc, err := st.GetDocument(id)
+	if err != nil {
+		return false, err
+	}
+	source, err := refreshableSource(doc)
+	if err != nil {
+		return false, err
+	}
+
+	hash, err := hashFile(source)
+	if err != nil {
+		return false, err
+	}
+	if hash == doc.ContentHash {
+		return false, nil
+	}
+	// The new content may already exist as another document in this
+	// collection; the unique (collection_id, content_hash) index would reject
+	// the update, so report the same duplicate error the add path uses.
+	if other, findErr := st.FindDocumentByHash(doc.CollectionID, hash); findErr != nil {
+		return false, findErr
+	} else if other != nil && other.ID != doc.ID {
+		return false, ErrDuplicateDocument
+	}
+
+	tmp := fmt.Sprintf("%s.%d.refresh", doc.StoredPath, time.Now().UnixNano())
+	_, newSize, err := copyFileWithHash(source, tmp)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return false, err
+	}
+	if err := replaceFile(tmp, doc.StoredPath); err != nil {
+		_ = os.Remove(tmp)
+		return false, err
+	}
+	if err := st.UpdateDocumentSource(id, newSize, hash); err != nil {
+		return false, err
+	}
+	if err := st.ResetDocumentForReindex(id); err != nil {
+		return false, err
+	}
+	triggerIndexer()
+	return true, nil
+}
+
+// refreshableSource validates that the original file is still there and is
+// something the knowledge base can index. Split out to keep the refresh flow
+// readable (and below the complexity limit).
+func refreshableSource(doc *Document) (string, error) {
+	source := strings.TrimSpace(doc.SourcePath)
+	if source == "" {
+		return "", ErrSourceMissing
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", ErrSourceMissing
+		}
+		return "", fmt.Errorf("read source: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", &FileError{Reason: ReasonNotRegular, Err: ErrUnsupportedFile}
+	}
+	ext := strings.ToLower(filepath.Ext(source))
+	if vErr := ValidateFile(source, ext, info.Size(), maxFileBytes()); vErr != nil {
+		return "", vErr
+	}
+	return source, nil
+}
+
+func replaceFile(tmp, dst string) error {
+	if err := os.Rename(tmp, dst); err == nil {
+		return nil
+	}
+	// Windows: rename cannot overwrite an existing file.
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("replace stored copy: %w", err)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return fmt.Errorf("replace stored copy: %w", err)
+	}
+	return nil
+}
+
+func hashFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("hash file: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // ReindexCollections queues every document in the given collections.
 func ReindexCollections(collectionIDs []int64) error {
 	st := currentStore()
@@ -495,12 +747,12 @@ func CreateCollection(name, description, scope string, projectID int64) (*Collec
 	return st.GetCollection(id)
 }
 
-func UpdateCollection(id int64, name, description *string, autoInject *bool) error {
+func UpdateCollection(id int64, name, description *string, autoInject, pinned *bool) error {
 	st := currentStore()
 	if st == nil {
 		return ErrUnavailable
 	}
-	return st.UpdateCollection(id, name, description, autoInject)
+	return st.UpdateCollection(id, name, description, autoInject, pinned)
 }
 
 func CollectionAccessible(id, projectID int64) (bool, error) {
@@ -516,7 +768,47 @@ func ListDocuments(collectionID int64) ([]Document, error) {
 	if st == nil {
 		return nil, ErrUnavailable
 	}
-	return st.ListDocuments(collectionID)
+	docs, err := st.ListDocuments(collectionID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range docs {
+		decorateSourceState(&docs[i])
+	}
+	return docs, nil
+}
+
+// decorateSourceState fills the two read-time flags the panel uses to say
+// "the original changed" or "the original is gone". It stats only when the
+// document has a source path; URL uploads and text notes do not.
+func decorateSourceState(doc *Document) {
+	source := strings.TrimSpace(doc.SourcePath)
+	if source == "" {
+		return
+	}
+	src, err := os.Stat(source)
+	if err != nil {
+		doc.SourceMissing = true
+		return
+	}
+	if !src.Mode().IsRegular() {
+		return
+	}
+	stored, err := os.Stat(doc.StoredPath)
+	if err != nil {
+		return
+	}
+	doc.SourceStale = src.ModTime().After(stored.ModTime())
+}
+
+// DocumentProgress returns the volatile fields polling needs for one
+// collection, without the full document rows.
+func ListDocumentProgress(collectionID int64) ([]DocumentProgress, error) {
+	st := currentStore()
+	if st == nil {
+		return nil, ErrUnavailable
+	}
+	return st.DocumentProgress(collectionID)
 }
 
 // ListCollectionIDs returns every collection visible from projectID.
@@ -533,7 +825,12 @@ func GetDocument(id int64) (*Document, error) {
 	if st == nil {
 		return nil, ErrUnavailable
 	}
-	return st.GetDocument(id)
+	doc, err := st.GetDocument(id)
+	if err != nil {
+		return nil, err
+	}
+	decorateSourceState(doc)
+	return doc, nil
 }
 
 func DocumentChunks(id int64, limit int) ([]Chunk, error) {
@@ -542,6 +839,44 @@ func DocumentChunks(id int64, limit int) ([]Chunk, error) {
 		return nil, ErrUnavailable
 	}
 	return st.ListChunks(id, limit)
+}
+
+// DocumentChunkWindow returns the chunks around a known chunk id. The second
+// result is the target's chunk_index, or -1 when the id is gone.
+func DocumentChunkWindow(id, chunkID int64, before, after int) ([]Chunk, int, error) {
+	st := currentStore()
+	if st == nil {
+		return nil, -1, ErrUnavailable
+	}
+	return st.ChunkWindow(id, chunkID, before, after)
+}
+
+// SetDocumentTags replaces a document's comma-separated tag list.
+func SetDocumentTags(id int64, tags string) error {
+	st := currentStore()
+	if st == nil {
+		return ErrUnavailable
+	}
+	return st.SetDocumentTags(id, tags)
+}
+
+// RecordDocumentUsage records which documents were cited in one chat turn.
+// Best-effort: usage tracking must never fail the turn.
+func RecordDocumentUsage(refs []Ref, sessionID string) {
+	st := currentStore()
+	if st == nil {
+		return
+	}
+	_ = st.RecordDocumentUsage(refs, sessionID)
+}
+
+// ListDocumentUsage returns citation counts for one collection.
+func ListDocumentUsage(collectionID int64) ([]DocumentUsage, error) {
+	st := currentStore()
+	if st == nil {
+		return nil, ErrUnavailable
+	}
+	return st.DocumentUsage(collectionID)
 }
 
 // VectorEnabled reports whether an embedding client is configured.

@@ -251,6 +251,19 @@
         >
           <MessageSquare :size="14" />
         </button>
+        <!-- Turn a reply into knowledge. Assistant-only: a user question is
+             rarely worth keeping, and the button is meaningless without a
+             settled answer. -->
+        <button
+          v-if="msg.role === 'assistant' && kbEnabled && !readOnly && !msg.streaming && quotableText"
+          class="chat-action-btn"
+          data-action="save-to-kb"
+          :title="t('chat.message.saveToKB')"
+          :aria-label="t('chat.message.saveToKB')"
+          @click="$emit('save-to-kb', msg)"
+        >
+          <BookOpen :size="14" />
+        </button>
         <template v-if="msg.role === 'assistant'">
           <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isPlayingAudio(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
             <!-- Generating states carry NO text: the two phases are told apart by
@@ -343,7 +356,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight, Check, Coins, ArrowUp, ArrowDown } from 'lucide-vue-next'
+import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight, Check, Coins, ArrowUp, ArrowDown, BookOpen } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { formatCompactCount, formatCompactCredit, formatTailCost } from '@/utils/usageFormat.ts'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay.ts'
@@ -352,6 +365,7 @@ import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
 import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME, resolveMentionDisplayName, stripGoalSatisfiedTag } from '@/utils/groupRouting.ts'
+import { useFeatureFlag } from '@/composables/useFeatureFlags'
 import { quotableMessageText, buildMessageQuote } from '@/utils/quoteItem.ts'
 import { startQuoteDrag } from '@/utils/quoteDrag'
 import { cleanupDragGhost } from '@/utils/attachDrag'
@@ -445,7 +459,9 @@ const props = defineProps({
   userNickname: { type: String, default: GROUP_USER_TARGET_NAME },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message', 'open-agent-config'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message', 'save-to-kb', 'open-agent-config'])
+
+const kbEnabled = useFeatureFlag('kb.enabled')
 
 // Speaker for this message (null for user messages and headerless hosts).
 // Group: the member row id on the message resolves through `resolveSpeaker`.

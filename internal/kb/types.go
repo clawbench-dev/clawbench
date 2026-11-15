@@ -46,63 +46,111 @@ var (
 	ErrInvalidScope       = errors.New("invalid knowledge base scope")
 	ErrAccessDenied       = errors.New("knowledge base is not accessible from this project")
 	ErrUnavailable        = errors.New("knowledge base is not enabled")
+	// ErrSourceMissing means the original file behind a document is gone, so
+	// "update from the original" has nothing to read. The stored copy is still
+	// intact and searchable; only the refresh path fails.
+	ErrSourceMissing = errors.New("the original file is gone")
+	// ErrInvalidURL means the address is not a usable http(s) URL.
+	ErrInvalidURL = errors.New("not a valid http(s) URL")
+	// ErrFetchFailed means the URL could not be fetched (network, non-2xx,
+	// oversized body). The remote server's own message is wrapped inside.
+	ErrFetchFailed = errors.New("could not fetch the URL")
 )
 
 // Collection is one knowledge base. A global collection has ProjectID 0 and is
 // visible from every project; a project collection is visible only from the
 // project it was created in.
 type Collection struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Scope       string    `json:"scope"`
-	ProjectID   int64     `json:"-"`
-	ProjectPath string    `json:"project_path,omitempty"`
-	AutoInject  bool      `json:"auto_inject"`
-	DocCount    int       `json:"doc_count"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Scope       string `json:"scope"`
+	ProjectID   int64  `json:"-"`
+	ProjectPath string `json:"project_path,omitempty"`
+	AutoInject  bool   `json:"auto_inject"`
+	// Pinned keeps a library at the top of its scope group.
+	Pinned   bool `json:"pinned"`
+	DocCount int  `json:"doc_count"`
+	// FailedCount / PendingCount let the collection rail show which library
+	// needs attention without opening every one of them. PendingCount covers
+	// both queued and extracting documents (the two states the user reads as
+	// "still working").
+	FailedCount  int       `json:"failed_count"`
+	PendingCount int       `json:"pending_count"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Document is one file added to a collection. StoredPath is the copy inside
 // {DataDir}/knowledge/<collection id>/; SourcePath is the original location and
 // is display-only (the original may be moved or deleted).
 type Document struct {
-	ID           int64     `json:"id"`
-	CollectionID int64     `json:"collection_id"`
-	Title        string    `json:"title"`
-	SourcePath   string    `json:"source_path,omitempty"`
-	StoredPath   string    `json:"-"`
-	Ext          string    `json:"ext,omitempty"`
-	SizeBytes    int64     `json:"size_bytes"`
-	ContentHash  string    `json:"-"`
-	Status       string    `json:"status"`
-	Error        string    `json:"error,omitempty"`
-	Warning      string    `json:"warning,omitempty"`
-	ChunkCount   int       `json:"chunk_count"`
-	FTSReady     bool      `json:"fts_ready"`
-	VectorReady  bool      `json:"vector_ready"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           int64  `json:"id"`
+	CollectionID int64  `json:"collection_id"`
+	Title        string `json:"title"`
+	SourcePath   string `json:"source_path,omitempty"`
+	StoredPath   string `json:"-"`
+	Ext          string `json:"ext,omitempty"`
+	SizeBytes    int64  `json:"size_bytes"`
+	ContentHash  string `json:"-"`
+	// Tags is a free-form, comma-separated label list for organization.
+	Tags        string `json:"tags"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
+	Warning     string `json:"warning,omitempty"`
+	ChunkCount  int    `json:"chunk_count"`
+	FTSReady    bool   `json:"fts_ready"`
+	VectorReady bool   `json:"vector_ready"`
+	// SourceMissing / SourceStale are derived at read time (never stored):
+	// they answer "can I still refresh this document, and is it already out of
+	// date?" without a background scanner.
+	SourceMissing bool      `json:"source_missing,omitempty"`
+	SourceStale   bool      `json:"source_stale,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// DocumentUsage is how often a document was cited in chat.
+type DocumentUsage struct {
+	DocumentID int64     `json:"document_id"`
+	Count      int       `json:"count"`
+	LastUsed   time.Time `json:"last_used"`
+}
+
+// DocumentProgress is the small, volatile slice of a document that polling
+// needs. Shipping the full document list every couple of seconds is wasteful,
+// and replacing the list would re-render every row instead of just the ones
+// whose status changed.
+type DocumentProgress struct {
+	ID          int64  `json:"id"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
+	Warning     string `json:"warning,omitempty"`
+	ChunkCount  int    `json:"chunk_count"`
+	FTSReady    bool   `json:"fts_ready"`
+	VectorReady bool   `json:"vector_ready"`
 }
 
 // Chunk is one searchable segment of a document. Location is a human-readable
 // position ("第 12 页", "工作表 报价", "第 30–45 行") and travels with the hit so
 // the user can find the passage in the original file.
 type Chunk struct {
-	ID                 int64
-	DocumentID         int64
-	CollectionID       int64
-	ProjectID          int64
-	ChunkIndex         int
-	ChunkText          string
-	ChunkTextSegmented string
-	Location           string
-	TokenCount         int
-	Embedding          []float64
-	HasEmbedding       bool
-	EmbeddingDim       int
-	CreatedAt          time.Time
+	ID           int64  `json:"id"`
+	DocumentID   int64  `json:"document_id"`
+	CollectionID int64  `json:"collection_id"`
+	ProjectID    int64  `json:"project_id"`
+	ChunkIndex   int    `json:"chunk_index"`
+	ChunkText    string `json:"chunk_text"`
+	// Segmented text and the embedding vector are index internals. They used
+	// to be serialized by the document-detail endpoint (no json tags), which
+	// shipped thousands of floats to the browser for every chunk.
+	ChunkTextSegmented string    `json:"-"`
+	Location           string    `json:"location,omitempty"`
+	TokenCount         int       `json:"token_count"`
+	Embedding          []float64 `json:"-"`
+	HasEmbedding       bool      `json:"has_embedding"`
+	EmbeddingDim       int       `json:"embedding_dim"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 // ChunkEmbedding pairs a chunk id with its computed vector.
@@ -156,8 +204,11 @@ type IndexStats struct {
 	StoredBytes    int64 `json:"stored_bytes"`
 }
 
-// Ref is one injected snippet, kept for logging and (later) the UI chip.
+// Ref is one injected snippet, kept for logging and the UI chip.
 type Ref struct {
+	// ChunkID is what lets the chat citation open the exact passage. Messages
+	// written before it existed simply have no chunk id and open at the top.
+	ChunkID        int64  `json:"chunk_id"`
 	DocumentID     int64  `json:"document_id"`
 	DocumentTitle  string `json:"document_title"`
 	CollectionID   int64  `json:"collection_id"`

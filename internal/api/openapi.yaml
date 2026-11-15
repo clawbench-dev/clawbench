@@ -7831,6 +7831,8 @@ paths:
                   type: string
                 auto_inject:
                   type: boolean
+                pinned:
+                  type: boolean
       responses:
         "200":
           description: 修改后的知识库
@@ -7858,8 +7860,11 @@ paths:
       tags: [KnowledgeBase]
       summary: 列出文件或查看文件详情
       description: |
-        `?collection_id=` 返回该库的文件列表；`?id=` 返回单个文件及其前 20 个
-        文本片段（含定位信息，如「第 12 页」「工作表 Sheet1 第 1–50 行」）。
+        `?collection_id=` 返回该库的文件列表；`?id=` 返回单个文件及其文本片段
+        （含定位信息，如「第 12 页」「工作表 Sheet1 第 1–50 行」）。
+        带 `?chunk_id=` 时返回该片段前后各 5 段，并在 `focus_chunk_id` 里
+        回传目标片段；片段已不存在（例如期间重建过索引）时回落到前 20 段，
+        `focus_chunk_id` 为 0。
       operationId: kbDocumentsList
       parameters:
         - name: collection_id
@@ -7870,9 +7875,34 @@ paths:
           in: query
           schema:
             type: integer
+        - name: chunk_id
+          in: query
+          description: 只与 `id` 一起使用，用于打开某段附近的上下文
+          schema:
+            type: integer
       responses:
         "200":
           description: 文件列表或详情
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    description: 仅在按 collection_id 查询时返回
+                    items:
+                      type: object
+                  document:
+                    type: object
+                    description: 仅在按 id 查询时返回
+                  chunks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/KBChunk"
+                  focus_chunk_id:
+                    type: integer
+                    description: 命中的片段 id；0 表示未指定或该片段已不存在
         "400":
           description: 缺少 collection_id 或 id
     post:
@@ -7906,6 +7936,34 @@ paths:
           description: 同一知识库里已有相同内容的文件
         "413":
           description: 文件超过大小上限
+    patch:
+      tags: [KnowledgeBase]
+      summary: 修改文件的标签
+      description: |
+        `tags` 是逗号分隔的自由文本；传空字符串即清空。只改标签，不触发重建索引。
+      operationId: kbDocumentUpdate
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags]
+              properties:
+                tags:
+                  type: string
+      responses:
+        "200":
+          description: 修改后的文件
+        "404":
+          description: 文件不存在
+
     delete:
       tags: [KnowledgeBase]
       summary: 删除文件
@@ -7957,6 +8015,8 @@ paths:
         隐藏目录、依赖/构建目录（`.git`、`node_modules`、`dist` 等）不参与导入；
         符号链接一律跳过。单次最多导入 500 个文件，超出时 `truncated` 为 true。
         单个文件失败不影响其余文件。
+        `dry_run: true` 只做遍历与校验，返回「将会加入/跳过/重复/失败」的数量，
+        不复制任何文件；面板用它在大目录导入前先给用户看数字。
       operationId: kbDocumentImport
       requestBody:
         required: true
@@ -7971,6 +8031,9 @@ paths:
                 path:
                   type: string
                   description: 文件夹路径（相对项目根或绝对路径）。
+                dry_run:
+                  type: boolean
+                  description: 只预览，不写入
       responses:
         "200":
           description: |
@@ -8013,6 +8076,170 @@ paths:
           description: 已排队
         "404":
           description: 文件不存在
+
+  /api/kb/documents/url:
+    post:
+      tags: [KnowledgeBase]
+      summary: 从网页链接添加文档
+      description: |
+        抓取 http(s) 页面并像上传文件一样解析、切段、建索引。最多 20MB；
+        非 2xx、网络错误或页面过大返回 502。只保存响应正文，不把链接记成
+        「原文件」，因此不适用「用原文件更新」。
+      operationId: kbDocumentFromURL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection_id, url]
+              properties:
+                collection_id:
+                  type: integer
+                url:
+                  type: string
+                  description: http 或 https 地址
+      responses:
+        "201":
+          description: 已加入，后台开始解析与建索引
+        "400":
+          description: 地址不是 http(s)
+        "403":
+          description: 该知识库不属于当前项目
+        "502":
+          description: 抓取失败（网络、非 2xx 或页面过大）
+
+  /api/kb/documents/usage:
+    get:
+      tags: [KnowledgeBase]
+      summary: 文件被聊天引用的次数
+      description: 统计每个文件被自动检索带进聊天的次数与最近一次时间。
+      operationId: kbDocumentUsage
+      parameters:
+        - name: collection_id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 引用统计
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  usage:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        document_id: { type: integer }
+                        count: { type: integer }
+                        last_used: { type: string, format: date-time }
+
+  /api/kb/documents/move:
+    post:
+      tags: [KnowledgeBase]
+      summary: 把文件移到另一个知识库
+      description: |
+        移动磁盘副本并把文档重新排队建索引（片段里带着旧库/项目的元数据，
+        不能原地保留）。目标库已有相同内容的文件时返回 409。
+      operationId: kbDocumentMove
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, collection_id]
+              properties:
+                id:
+                  type: integer
+                collection_id:
+                  type: integer
+                  description: 目标知识库
+      responses:
+        "200":
+          description: 已移动，后台开始重建索引
+        "400":
+          description: 参数不完整
+        "403":
+          description: 源库或目标库不属于当前项目
+        "409":
+          description: 目标库已有相同内容的文件
+
+  /api/kb/documents/refresh:
+    post:
+      tags: [KnowledgeBase]
+      summary: 用原文件更新
+      description: |
+        重新读取原文件并覆盖知识库里的副本。内容没变时只返回 `changed=false`，
+        不重建索引；内容变了才替换副本并重新排队。原文件已不存在时返回 409，
+        知识库里的副本仍然可用。
+      operationId: kbDocumentRefresh
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 已处理
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changed:
+                    type: boolean
+                    description: 内容是否变化（变化才会重建索引）
+        "404":
+          description: 文件不存在
+        "409":
+          description: 原文件已经不在了
+
+  /api/kb/documents/progress:
+    get:
+      tags: [KnowledgeBase]
+      summary: 轮询文件索引状态
+      description: |
+        只返回会随索引变化的字段，供面板合并到已有列表。轮询整表会让每一行
+        都重新渲染，这个接口的目的是让只有状态变了的那几行更新。
+      operationId: kbDocumentProgress
+      parameters:
+        - name: collection_id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 文件状态列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        status:
+                          type: string
+                          enum: [pending, extracting, ready, failed]
+                        error: { type: string }
+                        warning: { type: string }
+                        chunk_count: { type: integer }
+                        fts_ready: { type: boolean }
+                        vector_ready: { type: boolean }
+        "400":
+          description: 缺少 collection_id
+        "403":
+          description: 该知识库不属于当前项目
 
   /api/kb/search:
     post:
@@ -9901,9 +10128,36 @@ components:
         scope: { type: string, enum: [global, project] }
         project_path: { type: string, description: 项目级知识库所属项目；全局库为空 }
         auto_inject: { type: boolean }
+        pinned:
+          type: boolean
+          description: 置顶；在同归属分组内排在最前
         doc_count: { type: integer }
+        failed_count:
+          type: integer
+          description: 解析失败的文件数，用于在库列表上提示需要处理
+        pending_count:
+          type: integer
+          description: 排队中或正在解析的文件数
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    KBChunk:
+      type: object
+      description: |
+        文档被切出的一个可检索片段。`location` 是语言中立的定位标签，
+        面板按界面语言格式化；`chunk_index` 从 0 开始，用于在详情里定位。
+      properties:
+        id: { type: integer }
+        document_id: { type: integer }
+        collection_id: { type: integer }
+        project_id: { type: integer }
+        chunk_index: { type: integer }
+        chunk_text: { type: string }
+        location: { type: string }
+        token_count: { type: integer }
+        has_embedding: { type: boolean }
+        embedding_dim: { type: integer }
+        created_at: { type: string, format: date-time }
 
     KBSearchHit:
       type: object

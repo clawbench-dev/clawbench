@@ -52,6 +52,17 @@ var dirImportSkip = map[string]bool{
 // the chosen folder (or loop), the latter are tool state (`.git`, `.env`) the
 // user did not mean to publish into a knowledge base.
 func ImportDirectory(collectionID int64, dirPath string) (*DirImportResult, error) {
+	return importDirectory(collectionID, dirPath, false)
+}
+
+// PreviewDirectory reports what ImportDirectory would do without copying or
+// writing anything. The panel uses it to show the counts before a large folder
+// is pulled in.
+func PreviewDirectory(collectionID int64, dirPath string) (*DirImportResult, error) {
+	return importDirectory(collectionID, dirPath, true)
+}
+
+func importDirectory(collectionID int64, dirPath string, dryRun bool) (*DirImportResult, error) {
 	st := currentStore()
 	if st == nil {
 		return nil, ErrUnavailable
@@ -71,7 +82,7 @@ func ImportDirectory(collectionID int64, dirPath string) (*DirImportResult, erro
 	if err != nil {
 		return nil, err
 	}
-	res := importFiles(collectionID, files)
+	res := importFiles(collectionID, files, dryRun)
 	res.Truncated = truncated
 	return res, nil
 }
@@ -123,8 +134,9 @@ func collectDirFiles(root string) ([]string, bool, error) {
 
 // importFiles copies each path into the collection, classifying per-file
 // outcomes. One bad file never stops the batch.
-func importFiles(collectionID int64, files []string) *DirImportResult {
+func importFiles(collectionID int64, files []string, dryRun bool) *DirImportResult {
 	res := &DirImportResult{}
+	st := currentStore()
 	for _, path := range files {
 		fi, statErr := os.Stat(path)
 		if statErr != nil {
@@ -137,6 +149,26 @@ func importFiles(collectionID int64, files []string) *DirImportResult {
 				res.Skipped++
 			} else {
 				res.Failed++
+			}
+			continue
+		}
+		if dryRun {
+			// Read-only preview: hash the file and ask whether that content is
+			// already in the collection. Nothing is copied.
+			hash, hashErr := hashFile(path)
+			if hashErr != nil {
+				res.Failed++
+				continue
+			}
+			existing, findErr := st.FindDocumentByHash(collectionID, hash)
+			if findErr != nil {
+				res.Failed++
+				continue
+			}
+			if existing != nil {
+				res.Duplicates++
+			} else {
+				res.Added++
 			}
 			continue
 		}

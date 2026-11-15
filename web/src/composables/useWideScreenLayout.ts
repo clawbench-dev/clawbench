@@ -295,6 +295,28 @@ export function switchLeftTab(tab: string) {
 }
 
 /**
+ * Bring a dock tab into view from anywhere (e.g. a chat citation opening the
+ * knowledge base).
+ *
+ * Unlike `switchLeftTab`, this also covers the narrow-mode case where `leftTab`
+ * already equals the target but `activeTab` is still chat, and it un-hides a
+ * collapsed left column — the caller is a user action that intends to SEE the
+ * panel, not a background restore.
+ */
+export function showDockTab(tab: string) {
+  if (!isDockTabId(tab)) {
+    appLog.w(TAG, `showDockTab ignored unknown tab "${tab}" — is it missing from DOCK_TABS?`)
+    return
+  }
+  if (leftTab.value !== tab) {
+    leftTab.value = tab
+    sideEffects?.(tab)
+  }
+  setActiveTab?.(tab)
+  if (isWideScreen.value) setLeftCollapsed(false)
+}
+
+/**
  * Q1A continuity rule: entering wide-screen mode adopts the current narrow-mode
  * tab as the left column tab when it is a non-chat tab; otherwise keeps the
  * current/default leftTab.

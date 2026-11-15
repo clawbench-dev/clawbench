@@ -227,6 +227,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		if ctxText, refs := kb.BuildContext(context.Background(), query, projectID, model.ConfigInstance.KB); ctxText != "" {
 			prompt = ctxText + "\n\n" + prompt
 			kbRefs = toAIKBRefs(refs)
+			kb.RecordDocumentUsage(refs, sessionID)
 			slog.Info("kb: injected context into turn",
 				slog.String("session_id", sessionID),
 				slog.Int("refs", len(refs)))
@@ -648,6 +649,7 @@ func toAIKBRefs(refs []kb.Ref) []ai.KBRef {
 	out := make([]ai.KBRef, 0, len(refs))
 	for _, r := range refs {
 		out = append(out, ai.KBRef{
+			ChunkID:        r.ChunkID,
 			DocumentID:     r.DocumentID,
 			DocumentTitle:  r.DocumentTitle,
 			CollectionName: r.CollectionName,

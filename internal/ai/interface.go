@@ -67,6 +67,9 @@ func (r ChatRequest) ShouldInjectSystemPrompt() bool {
 // assistant message metadata so the chat bubble can show which documents the
 // reply was grounded in and let the reader reopen the exact snippets later.
 type KBRef struct {
+	// ChunkID is optional: messages written before it existed have none, and
+	// their citation opens the document without highlighting a passage.
+	ChunkID        int64  `json:"chunkId,omitempty"`
 	DocumentID     int64  `json:"documentId"`
 	DocumentTitle  string `json:"documentTitle"`
 	CollectionName string `json:"collectionName,omitempty"`

@@ -1,5 +1,13 @@
 <template>
-  <div ref="rootEl" class="kb-panel">
+  <div
+    ref="rootEl"
+    class="kb-panel"
+    :class="{ 'is-drop-target': dragActive }"
+    @dragenter.prevent="onDragEnter"
+    @dragover.prevent="onDragOver"
+    @dragleave="onDragLeave"
+    @drop.prevent.stop="onDrop"
+  >
     <div class="kb-header">
       <div class="kb-title-line">
         <BookOpen :size="14" class="panel-header-icon" />
@@ -24,6 +32,39 @@
     </div>
 
     <div v-else class="kb-body">
+      <!-- Search belongs to the panel, not to a collection: on a phone the
+           collection list is the entry screen, and requiring a drill-down
+           before searching made "search everything" unreachable. -->
+      <div class="kb-search-wrap">
+        <div class="kb-search-row">
+          <SearchInput
+            v-model="searchQuery"
+            class="kb-search"
+            :placeholder="t('kb.searchPlaceholder')"
+            @enter="onSearchEnter"
+          />
+          <!-- Filters + submit travel as one block: if the row wraps they
+               move together instead of leaving the button alone. -->
+          <div class="kb-search-controls">
+            <select v-model="searchScope" class="kb-select" :title="t('kb.searchScopeTitle')" @change="rerunSearch">
+              <option value="current" :disabled="selectedId == null">{{ t('kb.searchThis') }}</option>
+              <option value="all">{{ t('kb.searchAll') }}</option>
+            </select>
+            <select v-model="searchMode" class="kb-select" @change="rerunSearch">
+              <option value="hybrid">{{ t('kb.modeHybrid') }}</option>
+              <option value="fts">{{ t('kb.modeFts') }}</option>
+            </select>
+            <button class="header-btn" type="button" data-action="kb-search" :disabled="searching || !searchQuery.trim()" @click="onSearchEnter">
+              <Search :size="14" />
+            </button>
+          </div>
+        </div>
+        <!-- A silent downgrade is worse than a slower index: say when the
+             semantic half is missing instead of labelling keyword-only results
+             "hybrid". -->
+        <div v-if="semanticHint" class="kb-index-hint">{{ semanticHint }}</div>
+      </div>
+
       <SplitView
         class="kb-split"
         orientation="horizontal"
@@ -36,7 +77,7 @@
         <!-- Collections: cards on the left. On a phone this pane is the whole
              panel; picking one drills into the detail pane. -->
         <template #left>
-          <aside v-show="split || selectedId == null" class="kb-rail">
+          <aside v-show="split || (!searchActive && selectedId == null)" class="kb-rail">
             <PanelSkeleton v-if="loadingCollections && collections.length === 0" variant="list" :rows="6" :meta="true" :label="t('common.loading')" />
 
             <div v-else-if="error" class="kb-hint kb-hint--error">
@@ -60,38 +101,120 @@
             </EmptyState>
 
             <template v-else>
+              <div class="kb-rail-tools">
+                <SearchInput
+                  v-model="collectionQuery"
+                  class="kb-col-search"
+                  :placeholder="t('kb.filterCollections')"
+                />
+                <select v-model="collectionSort" class="kb-select kb-col-sort" :title="t('kb.sortBy')">
+                  <option value="recent">{{ t('kb.sortRecent') }}</option>
+                  <option value="name">{{ t('kb.sortName') }}</option>
+                </select>
+              </div>
+
+              <div v-if="filteredCollections.length === 0" class="kb-hint">
+                <span>{{ t('kb.filterCollectionsEmpty') }}</span>
+                <button class="kb-link" type="button" @click="collectionQuery = ''">{{ t('kb.filterClear') }}</button>
+              </div>
+
               <div v-for="group in groupedCollections" :key="group.key" class="kb-group">
                 <div class="kb-group-title">
                   <span>{{ t(group.labelKey) }}</span>
                   <span class="kb-group-count">{{ group.items.length }}</span>
                 </div>
-                <button
-                  v-for="col in group.items"
-                  :key="col.id"
-                  type="button"
-                  class="kb-col"
-                  :class="{ 'is-active': col.id === selectedId }"
-                  :data-kb-collection="col.id"
-                  @click="selectCollection(col.id)"
-                >
-                  <span class="kb-col-icon"><BookOpen :size="15" /></span>
-                  <span class="kb-col-text">
-                    <span class="kb-col-name">{{ col.name }}</span>
-                    <span class="kb-col-meta">
-                      {{ t('kb.documents', { count: col.doc_count }) }}
-                      <span v-if="!col.auto_inject" class="kb-col-off">{{ t('kb.autoInjectOff') }}</span>
+                <div v-for="col in group.items" :key="col.id" class="kb-col-row">
+                  <button
+                    type="button"
+                    class="kb-col"
+                    :class="{ 'is-active': col.id === selectedId }"
+                    :data-kb-collection="col.id"
+                    @click="selectCollection(col.id)"
+                  >
+                    <span class="kb-col-icon"><BookOpen :size="15" /></span>
+                    <span class="kb-col-text">
+                      <span class="kb-col-name">{{ col.name }}</span>
+                      <span class="kb-col-meta">
+                        {{ t('kb.documents', { count: col.doc_count }) }}
+                        <span v-if="col.failed_count" class="kb-col-flag is-bad">{{ t('kb.colFailed', { count: col.failed_count }) }}</span>
+                        <span v-if="col.pending_count" class="kb-col-flag">{{ t('kb.colPending', { count: col.pending_count }) }}</span>
+                        <span v-if="!col.auto_inject" class="kb-col-off">{{ t('kb.autoInjectOff') }}</span>
+                      </span>
                     </span>
-                  </span>
-                  <ChevronRight v-if="!split" :size="16" class="kb-col-chevron" />
-                </button>
+                    <ChevronRight v-if="!split" :size="16" class="kb-col-chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    class="kb-col-pin"
+                    :class="{ 'is-on': col.pinned }"
+                    :title="col.pinned ? t('kb.unpin') : t('kb.pin')"
+                    :aria-label="col.pinned ? t('kb.unpin') : t('kb.pin')"
+                    :aria-pressed="col.pinned"
+                    :data-action="col.pinned ? 'kb-unpin' : 'kb-pin'"
+                    @click.stop="togglePin(col)"
+                  >
+                    <Pin :size="13" :fill="col.pinned ? 'currentColor' : 'none'" />
+                  </button>
+                </div>
               </div>
             </template>
           </aside>
         </template>
 
         <template #right>
-          <section v-show="split || selectedId != null" class="kb-main">
-            <template v-if="selected">
+          <section v-show="split || searchActive || selectedId != null" class="kb-main">
+            <!-- Search results replace the detail pane; the collection rail
+                 stays put on a wide screen. -->
+            <div v-if="searchActive" class="kb-results">
+              <div class="kb-results-head">
+                <span v-if="searching" class="kb-results-count">{{ t('common.loading') }}</span>
+                <span v-else-if="searchResult" class="kb-results-count">{{ t('kb.results', { count: searchResult.total }) }}</span>
+                <span v-if="searchResult" class="kb-results-mode">{{ modeLabel(searchResult.mode) }}</span>
+                <button v-if="searchResult || searchError" class="kb-link" type="button" @click="clearSearch">
+                  {{ t('common.close') }}
+                </button>
+              </div>
+
+              <div v-if="searchError" class="kb-hint kb-hint--error">
+                <AlertTriangle :size="15" />
+                <span>{{ searchError }}</span>
+              </div>
+              <EmptyState
+                v-else-if="!searching && searchResult && searchResult.results.length === 0"
+                :icon="Search"
+                :title="t('kb.searchEmpty')"
+                :desc="t('kb.searchEmptyDesc')"
+              />
+              <div v-else class="kb-result-list">
+                <article
+                  v-for="hit in searchResult?.results ?? []"
+                  :key="hit.chunk_id"
+                  class="kb-result"
+                  :data-kb-hit="hit.chunk_id"
+                  role="button"
+                  tabindex="0"
+                  :title="t('kb.openDocument')"
+                  @click="onResultClick($event, hit)"
+                  @keydown.enter="openDocumentById(hit.document_id, hit.chunk_id)"
+                >
+                  <div class="kb-result-head">
+                    <span class="kb-result-title">{{ hit.document_title }}</span>
+                    <span v-if="hit.location" class="kb-result-loc">{{ locationText(hit.location) }}</span>
+                    <span class="kb-result-col">{{ t('kb.inCollection', { name: hit.collection_name }) }}</span>
+                    <ChevronRight :size="14" class="kb-result-open" aria-hidden="true" />
+                  </div>
+                  <!-- Rendered as markdown (same as the session search
+                       drawer), with rune positions re-applied as <mark>. -->
+                  <div
+                    class="kb-result-text markdown-body"
+                    :ref="(el) => setHitRef(hit.chunk_id, el)"
+                    v-html="renderedHits[hit.chunk_id] || ''"
+                  />
+                </article>
+              </div>
+            </div>
+
+            <template v-else-if="selected">
               <!-- Detail header: identity first, actions second. They never
                    compete for the same line, so a narrow pane cannot squeeze
                    the name into a vertical column. -->
@@ -119,15 +242,30 @@
                         <span>{{ t('kb.autoInjectShort') }}</span>
                         <span class="kb-inject-state">{{ selected.auto_inject ? t('kb.on') : t('kb.off') }}</span>
                       </button>
+                      <span v-if="selectMode" class="kb-select-count">
+                        {{ t('kb.selectedCount', { count: selectedDocIds.length }) }}
+                      </span>
                     </div>
                     <div v-if="selected.description" class="kb-main-desc">{{ selected.description }}</div>
                   </div>
                 </div>
 
-                <ActionBar class="kb-main-actions" mode="menu" align="start" size="bar">
+                <ActionBar v-if="!selectMode" class="kb-main-actions" mode="menu" align="start" size="bar">
                   <button class="header-btn is-primary" type="button" data-action="kb-add" :title="t('kb.addFile')" @click="openAdd">
                     <Plus :size="15" />
                     <span class="action-label">{{ t('kb.addFile') }}</span>
+                  </button>
+                  <button class="header-btn" type="button" data-action="kb-paste-text" :title="t('kb.pasteTitle')" @click="openText">
+                    <ClipboardPaste :size="14" />
+                  </button>
+                  <button class="header-btn" type="button" data-action="kb-add-url" :title="t('kb.urlTitle')" @click="addFromURL">
+                    <Link2 :size="14" />
+                  </button>
+                  <button class="header-btn" type="button" data-action="kb-edit-collection" :title="t('kb.editCollection')" @click="openEdit">
+                    <Pencil :size="14" />
+                  </button>
+                  <button class="header-btn" type="button" data-action="kb-select-mode" :title="t('kb.select')" @click="enterSelectMode">
+                    <ListChecks :size="14" />
                   </button>
                   <button class="header-btn" type="button" data-action="kb-reindex-collection" :title="t('kb.reindex')" @click="reindexCurrent">
                     <RotateCw :size="14" />
@@ -136,70 +274,101 @@
                     <Trash2 :size="14" />
                   </button>
                 </ActionBar>
+
+                <ActionBar v-else class="kb-main-actions" mode="menu" align="start" size="bar">
+                  <button class="header-btn" type="button" data-action="kb-select-all" :title="t('kb.selectAll')" @click="toggleSelectAll">
+                    <ListChecks :size="14" />
+                    <span class="action-label">{{ allShownSelected ? t('kb.selectNone') : t('kb.selectAll') }}</span>
+                  </button>
+                  <button
+                    class="header-btn"
+                    type="button"
+                    data-action="kb-select-move"
+                    :title="t('kb.move')"
+                    :disabled="selectedDocIds.length === 0"
+                    @click="openMovePicker"
+                  >
+                    <FolderInput :size="14" />
+                  </button>
+                  <button
+                    class="header-btn"
+                    type="button"
+                    data-action="kb-select-reindex"
+                    :title="t('kb.reindex')"
+                    :disabled="selectedDocIds.length === 0"
+                    @click="reindexSelected"
+                  >
+                    <RotateCw :size="14" />
+                  </button>
+                  <button
+                    class="header-btn is-danger"
+                    type="button"
+                    data-action="kb-select-delete"
+                    :title="t('common.delete')"
+                    :disabled="selectedDocIds.length === 0"
+                    @click="deleteSelected"
+                  >
+                    <Trash2 :size="14" />
+                  </button>
+                  <button class="header-btn" type="button" data-action="kb-select-cancel" :title="t('common.cancel')" @click="exitSelectMode">
+                    <X :size="14" />
+                  </button>
+                </ActionBar>
               </header>
 
-              <div class="kb-search-row">
-                <SearchInput
-                  v-model="searchQuery"
-                  class="kb-search"
-                  :placeholder="t('kb.searchPlaceholder')"
-                  @enter="runSearch"
+              <!-- Health line: the counts that decide whether this library can
+                   be trusted. Each one is also a filter, because "1 failed"
+                   is only useful if it takes you to the file. -->
+              <div v-if="docHealth.total > 0" class="kb-health">
+                <span class="kb-health-total">{{ t('kb.healthFiles', { count: docHealth.total }) }}</span>
+                <button
+                  v-if="docHealth.failed"
+                  type="button"
+                  class="kb-health-chip is-bad"
+                  :class="{ 'is-on': docFilter === 'failed' }"
+                  data-action="kb-filter-failed"
+                  @click="toggleDocFilter('failed')"
+                >{{ t('kb.healthFailed', { count: docHealth.failed }) }}</button>
+                <button
+                  v-if="docHealth.working"
+                  type="button"
+                  class="kb-health-chip"
+                  :class="{ 'is-on': docFilter === 'working' }"
+                  data-action="kb-filter-working"
+                  @click="toggleDocFilter('working')"
+                >{{ t('kb.healthWorking', { count: docHealth.working }) }}</button>
+                <button
+                  v-if="docHealth.ftsOnly"
+                  type="button"
+                  class="kb-health-chip"
+                  :class="{ 'is-on': docFilter === 'fts' }"
+                  data-action="kb-filter-fts"
+                  @click="toggleDocFilter('fts')"
+                >{{ t('kb.healthFts', { count: docHealth.ftsOnly }) }}</button>
+                <button v-if="docFilter !== 'all'" class="kb-link" type="button" @click="docFilter = 'all'">
+                  {{ t('kb.filterClear') }}
+                </button>
+                <span class="kb-health-spacer" />
+                <select v-model="docType" class="kb-select kb-health-select" :title="t('kb.filterType')">
+                  <option value="all">{{ t('kb.typeAll') }}</option>
+                  <option value="pdf">PDF</option>
+                  <option value="word">{{ t('kb.typeWord') }}</option>
+                  <option value="excel">{{ t('kb.typeExcel') }}</option>
+                  <option value="ppt">{{ t('kb.typePpt') }}</option>
+                  <option value="text">{{ t('kb.typeText') }}</option>
+                </select>
+                <select v-model="docSort" class="kb-select kb-health-select" :title="t('kb.sortBy')">
+                  <option value="recent">{{ t('kb.sortRecent') }}</option>
+                  <option value="name">{{ t('kb.sortName') }}</option>
+                </select>
+                <input
+                  v-model="docTagQuery"
+                  class="kb-select kb-health-select kb-health-tag"
+                  :placeholder="t('kb.filterTags')"
                 />
-                <!-- Filters + submit travel as one block: if the row wraps they
-                     move together instead of leaving the button alone. -->
-                <div class="kb-search-controls">
-                  <select v-model="searchScope" class="kb-select" :title="t('kb.searchAll')" @change="searchResult && runSearch()">
-                    <option value="current">{{ t('kb.searchThis') }}</option>
-                    <option value="all">{{ t('kb.searchAll') }}</option>
-                  </select>
-                  <select v-model="searchMode" class="kb-select" @change="searchResult && runSearch()">
-                    <option value="hybrid">{{ t('kb.modeHybrid') }}</option>
-                    <option value="fts">{{ t('kb.modeFts') }}</option>
-                  </select>
-                  <button class="header-btn" type="button" data-action="kb-search" :disabled="searching || !searchQuery.trim()" @click="runSearch">
-                    <Search :size="14" />
-                  </button>
-                </div>
               </div>
 
-              <div v-if="searchResult || searching || searchError" class="kb-results">
-                <div class="kb-results-head">
-                  <span v-if="searching" class="kb-results-count">{{ t('common.loading') }}</span>
-                  <span v-else-if="searchResult" class="kb-results-count">{{ t('kb.results', { count: searchResult.total }) }}</span>
-                  <button v-if="searchResult || searchError" class="kb-link" type="button" @click="clearSearch">
-                    {{ t('common.close') }}
-                  </button>
-                </div>
-
-                <div v-if="searchError" class="kb-hint kb-hint--error">
-                  <AlertTriangle :size="15" />
-                  <span>{{ searchError }}</span>
-                </div>
-                <EmptyState
-                  v-else-if="!searching && searchResult && searchResult.results.length === 0"
-                  :icon="Search"
-                  :title="t('kb.searchEmpty')"
-                  :desc="t('kb.searchEmptyDesc')"
-                />
-                <div v-else class="kb-result-list">
-                  <article v-for="hit in searchResult?.results ?? []" :key="hit.chunk_id" class="kb-result" :data-kb-hit="hit.chunk_id">
-                    <div class="kb-result-head">
-                      <span class="kb-result-title">{{ hit.document_title }}</span>
-                      <span v-if="hit.location" class="kb-result-loc">{{ locationText(hit.location) }}</span>
-                      <span class="kb-result-col">{{ t('kb.inCollection', { name: hit.collection_name }) }}</span>
-                    </div>
-                    <!-- Rendered as markdown (same as the session search
-                         drawer), with rune positions re-applied as <mark>. -->
-                    <div
-                      class="kb-result-text markdown-body"
-                      :ref="(el) => setHitRef(hit.chunk_id, el)"
-                      v-html="renderedHits[hit.chunk_id] || ''"
-                    />
-                  </article>
-                </div>
-              </div>
-
-              <div v-else class="kb-docs">
+              <div class="kb-docs">
                 <PanelSkeleton v-if="loadingDocuments && documents.length === 0" variant="list" :rows="6" :meta="true" :label="t('common.loading')" />
 
                 <EmptyState
@@ -216,44 +385,86 @@
                   </template>
                 </EmptyState>
 
+                <div v-else-if="visibleDocuments.length === 0" class="kb-hint">
+                  <span>{{ t('kb.filterEmpty') }}</span>
+                  <button class="kb-link" type="button" @click="docFilter = 'all'">{{ t('kb.filterClear') }}</button>
+                </div>
+
                 <div v-else class="kb-doc-list">
-                  <div v-for="doc in documents" :key="doc.id" class="kb-doc" :data-kb-doc="doc.id">
-                    <span class="kb-doc-icon" :class="`kb-doc-icon--${doc.ext?.replace('.', '') || 'file'}`">
-                      <FileText :size="16" />
+                  <div v-for="doc in shownDocuments" :key="doc.id" class="kb-doc" :class="{ 'is-selected': selectMode && isSelected(doc.id) }" :data-kb-doc="doc.id">
+                    <span v-if="selectMode" class="kb-doc-check" :class="{ 'is-on': isSelected(doc.id) }" aria-hidden="true">
+                      <Check v-if="isSelected(doc.id)" :size="12" />
                     </span>
-                    <div class="kb-doc-main">
-                      <div class="kb-doc-name-line">
-                        <span class="kb-doc-name" :title="doc.title">{{ doc.title }}</span>
-                        <span class="kb-status" :class="`kb-status--${statusKindOf(doc)}`">{{ statusLabelOf(doc) }}</span>
+                    <!-- The row body is a button so a click opens the parsed
+                         content; the two icon actions stay siblings (a button
+                         cannot nest another). In select mode the same click
+                         toggles the row instead. -->
+                    <button
+                      class="kb-doc-open"
+                      type="button"
+                      :title="selectMode ? t('kb.select') : t('kb.openDocument')"
+                      :aria-pressed="selectMode ? isSelected(doc.id) : undefined"
+                      @click="selectMode ? toggleDoc(doc.id) : openDocument(doc)"
+                    >
+                      <span class="kb-doc-icon" :class="`kb-doc-icon--${doc.ext?.replace('.', '') || 'file'}`">
+                        <FileText :size="16" />
+                      </span>
+                      <div class="kb-doc-main">
+                        <div class="kb-doc-name-line">
+                          <span class="kb-doc-name" :title="doc.title">{{ doc.title }}</span>
+                          <span class="kb-status" :class="`kb-status--${statusKindOf(doc)}`">{{ statusLabelOf(doc) }}</span>
+                        </div>
+                        <div class="kb-doc-meta">
+                          <span>{{ formatSize(doc.size_bytes) }}</span>
+                          <template v-if="doc.chunk_count > 0">
+                            <span class="kb-sep">·</span>
+                            <span>{{ t('kb.chunks', { count: doc.chunk_count }) }}</span>
+                          </template>
+                          <template v-if="doc.status === 'ready'">
+                            <span class="kb-sep">·</span>
+                            <span :class="{ 'kb-muted': !doc.vector_ready }">
+                              {{ doc.vector_ready ? t('kb.vectorReady') : t('kb.vectorPending') }}
+                            </span>
+                          </template>
+                          <template v-if="doc.warning === 'truncated'">
+                            <span class="kb-sep">·</span>
+                            <span class="kb-warn">{{ t('kb.warningTruncated') }}</span>
+                          </template>
+                          <template v-if="doc.source_missing">
+                            <span class="kb-sep">·</span>
+                            <span class="kb-warn">{{ t('kb.sourceMissing') }}</span>
+                          </template>
+                          <template v-else-if="doc.source_stale">
+                            <span class="kb-sep">·</span>
+                            <span class="kb-stale">{{ t('kb.sourceStale') }}</span>
+                          </template>
+                        </div>
+                        <div v-if="doc.tags" class="kb-doc-tags">
+                          <span v-for="tag in tagList(doc.tags)" :key="tag" class="kb-doc-tag">{{ tag }}</span>
+                        </div>
+                        <!-- Two files can share a name; the path is what tells
+                             them apart. -->
+                        <div v-if="doc.source_path" class="kb-doc-source" :title="doc.source_path">{{ doc.source_path }}</div>
+                        <div v-if="doc.error" class="kb-doc-error">{{ docErrorText(doc) }}</div>
                       </div>
-                      <div class="kb-doc-meta">
-                        <span>{{ formatSize(doc.size_bytes) }}</span>
-                        <template v-if="doc.chunk_count > 0">
-                          <span class="kb-sep">·</span>
-                          <span>{{ t('kb.chunks', { count: doc.chunk_count }) }}</span>
-                        </template>
-                        <template v-if="doc.status === 'ready'">
-                          <span class="kb-sep">·</span>
-                          <span :class="{ 'kb-muted': !doc.vector_ready }">
-                            {{ doc.vector_ready ? t('kb.vectorReady') : t('kb.vectorPending') }}
-                          </span>
-                        </template>
-                        <template v-if="doc.warning === 'truncated'">
-                          <span class="kb-sep">·</span>
-                          <span class="kb-warn">{{ t('kb.warningTruncated') }}</span>
-                        </template>
-                      </div>
-                      <div v-if="doc.error" class="kb-doc-error">{{ doc.error }}</div>
-                    </div>
-                    <div class="kb-doc-actions">
-                      <button class="kb-icon-btn" type="button" data-action="kb-reindex-doc" :title="t('kb.reindex')" @click="reindexDoc(doc)">
+                    </button>
+                    <div v-if="!selectMode" class="kb-doc-actions">
+                      <button class="kb-icon-btn" type="button" data-action="kb-reindex-doc" :title="t('kb.reindex')" @click.stop="reindexDoc(doc)">
                         <RotateCw :size="14" />
                       </button>
-                      <button class="kb-icon-btn is-danger" type="button" data-action="kb-delete-doc" :title="t('common.delete')" @click="removeDoc(doc)">
+                      <button class="kb-icon-btn is-danger" type="button" data-action="kb-delete-doc" :title="t('common.delete')" @click.stop="removeDoc(doc)">
                         <Trash2 :size="14" />
                       </button>
                     </div>
                   </div>
+                  <button
+                    v-if="hasMoreDocuments"
+                    class="kb-link kb-load-more"
+                    type="button"
+                    @click="docRenderLimit += DOC_PAGE"
+                  >
+                    {{ t('kb.showMore', { count: visibleDocuments.length - docRenderLimit }) }}
+                  </button>
                 </div>
               </div>
             </template>
@@ -269,36 +480,38 @@
       </SplitView>
     </div>
 
-    <!-- Create collection -->
-    <ModalDialog :open="createOpen" :title="t('kb.createTitle')" @close="createOpen = false">
+    <!-- Create / edit collection. Scope is only editable while creating:
+         moving a library between projects would make its files appear or
+         vanish elsewhere, so the server rejects it too. -->
+    <ModalDialog :open="formOpen" :title="formTitle" @close="formOpen = false">
       <template #header>
         <BookOpen :size="16" class="modal-header-icon" />
-        <span class="modal-title">{{ t('kb.createTitle') }}</span>
+        <span class="modal-title">{{ formTitle }}</span>
       </template>
 
       <div class="kb-form">
         <label class="kb-field">
           <span class="kb-label">{{ t('kb.nameLabel') }}</span>
           <input
-            v-model="createName"
+            v-model="formName"
             class="kb-input"
             data-role="kb-name"
             :placeholder="t('kb.namePlaceholder')"
             maxlength="100"
-            @keydown.enter="submitCreate"
+            @keydown.enter="submitForm"
           />
         </label>
         <label class="kb-field">
           <span class="kb-label">{{ t('kb.descriptionLabel') }}</span>
           <textarea
-            v-model="createDescription"
+            v-model="formDescription"
             class="kb-input kb-textarea"
             data-role="kb-description"
             :placeholder="t('kb.descriptionPlaceholder')"
             rows="3"
           />
         </label>
-        <div class="kb-field">
+        <div v-if="formMode === 'create'" class="kb-field">
           <span class="kb-label">{{ t('kb.scopeLabel') }}</span>
           <!-- Segmented control, same shape as the provider form: two choices
                belong on one line, and only the CURRENT one's explanation is
@@ -308,37 +521,100 @@
             <button
               type="button"
               class="kb-seg-btn"
-              :class="{ 'is-on': createScope === 'project' }"
+              :class="{ 'is-on': formScope === 'project' }"
               :disabled="!hasProject"
               role="radio"
-              :aria-checked="createScope === 'project'"
+              :aria-checked="formScope === 'project'"
               data-role="kb-scope-project"
-              @click="createScope = 'project'"
+              @click="formScope = 'project'"
             >{{ t('kb.scopeProject') }}</button>
             <button
               type="button"
               class="kb-seg-btn"
-              :class="{ 'is-on': createScope === 'global' }"
+              :class="{ 'is-on': formScope === 'global' }"
               role="radio"
-              :aria-checked="createScope === 'global'"
+              :aria-checked="formScope === 'global'"
               data-role="kb-scope-global"
-              @click="createScope = 'global'"
+              @click="formScope = 'global'"
             >{{ t('kb.scopeGlobal') }}</button>
           </div>
           <span class="kb-hint-text">
-            {{ createScope === 'global' ? t('kb.scopeGlobalHint') : t('kb.scopeProjectHint') }}
+            {{ formScope === 'global' ? t('kb.scopeGlobalHint') : t('kb.scopeProjectHint') }}
           </span>
         </div>
-        <div v-if="createError" class="kb-form-error" role="alert">{{ createError }}</div>
+        <div v-if="formError" class="kb-form-error" role="alert">{{ formError }}</div>
       </div>
 
       <template #footer>
-        <button class="fbtn" type="button" @click="createOpen = false">{{ t('common.cancel') }}</button>
-        <button class="fbtn fbtn-primary" type="button" :disabled="creating" @click="submitCreate">
-          {{ creating ? t('common.loading') : t('kb.create') }}
+        <button class="fbtn" type="button" @click="formOpen = false">{{ t('common.cancel') }}</button>
+        <button class="fbtn fbtn-primary" type="button" :disabled="formSaving" @click="submitForm">
+          {{ formSaving ? t('common.loading') : formMode === 'create' ? t('kb.create') : t('kb.save') }}
         </button>
       </template>
     </ModalDialog>
+
+    <!-- Paste text: the fastest way to put a note into a library without
+         creating a file first. It goes through the same upload path as a file,
+         so limits and duplicate detection are identical. -->
+    <ModalDialog :open="textOpen" :title="t('kb.pasteTitle')" @close="textOpen = false">
+      <template #header>
+        <ClipboardPaste :size="16" class="modal-header-icon" />
+        <span class="modal-title">{{ t('kb.pasteTitle') }}</span>
+      </template>
+      <div class="kb-form">
+        <label class="kb-field">
+          <span class="kb-label">{{ t('kb.pasteNameLabel') }}</span>
+          <input
+            v-model="textTitle"
+            class="kb-input"
+            data-role="kb-text-title"
+            maxlength="100"
+            :placeholder="t('kb.pasteNamePlaceholder')"
+          />
+        </label>
+        <label class="kb-field">
+          <span class="kb-label">{{ t('kb.pasteBodyLabel') }}</span>
+          <textarea
+            v-model="textBody"
+            class="kb-input kb-textarea kb-paste-body"
+            data-role="kb-text-body"
+            rows="10"
+            :placeholder="t('kb.pastePlaceholder')"
+          />
+        </label>
+        <div v-if="textError" class="kb-form-error" role="alert">{{ textError }}</div>
+      </div>
+      <template #footer>
+        <button class="fbtn" type="button" @click="textOpen = false">{{ t('common.cancel') }}</button>
+        <button class="fbtn fbtn-primary" type="button" :disabled="textSaving" @click="submitText">
+          {{ textSaving ? t('common.loading') : t('kb.pasteConfirm') }}
+        </button>
+      </template>
+    </ModalDialog>
+
+    <KBCollectionPickerDialog
+      :open="movePickerOpen"
+      :allow-create="false"
+      :exclude-id="selectedId ?? undefined"
+      @close="movePickerOpen = false"
+      @confirm="onMovePicked"
+    />
+
+    <!-- Document detail: what the file was parsed into, which is the only way
+         to tell "indexed but useless" from "not indexed yet". -->
+    <KBDocumentDrawer
+      ref="documentDrawer"
+      :open="drawerOpen"
+      :document-id="drawerDocId"
+      :focus-chunk-id="drawerChunkId"
+      @close="closeDocument"
+      @loaded="onDocumentLoaded"
+      @reindex="onDrawerReindex"
+      @refresh="onDrawerRefresh"
+      @quote="onQuoteChunk"
+      @save-tags="onDrawerTags"
+      @delete="onDrawerDelete"
+    />
 
     <!-- Add documents. This is the SAME picker the chat composer opens: browse
          the project, upload from the device (with progress + terminate), or
@@ -365,15 +641,23 @@ import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
   BookOpen,
+  Check,
   ChevronLeft,
+  ClipboardPaste,
+  Link2,
   ChevronRight,
   Database,
   FileText,
+  FolderInput,
+  ListChecks,
+  Pencil,
+  Pin,
   Plus,
   RotateCw,
   Search,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-vue-next'
 import ActionBar from '@/components/common/ActionBar.vue'
 import SplitView from '@/components/common/SplitView.vue'
@@ -383,8 +667,15 @@ import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import AttachmentPicker from '@/components/attach/AttachmentPicker.vue'
+import KBDocumentDrawer from '@/components/kb/KBDocumentDrawer.vue'
 import { useDialog } from '@/composables/useDialog'
-import { useKnowledgeBase, type KBCollection, type KBDocument } from '@/composables/useKnowledgeBase'
+import {
+  useKnowledgeBase,
+  type KBCollection,
+  type KBDocument,
+  type KBDocumentDetail,
+  type KBSearchHit,
+} from '@/composables/useKnowledgeBase'
 import { useToast } from '@/composables/useToast'
 import { useUiScale } from '@/composables/useUiScale'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
@@ -392,6 +683,7 @@ import { store } from '@/stores/app'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { baseName } from '@/utils/path'
 import {
+  documentErrorText,
   formatLocation,
   formatSize,
   statusKind,
@@ -399,6 +691,10 @@ import {
   type TFn,
 } from '@/utils/kbFormat'
 import { appLog } from '@/utils/appLog'
+import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
+import { kbAddFromURL, kbUploadText } from '@/composables/useKnowledgeBase'
+import { consumeKBPendingOpen, kbPendingOpen, requestStageKBQuote } from '@/utils/kbNavigation'
+import { attachDragTargets, hasAttachDragData, readAttachDragData } from '@/utils/attachDrag'
 import { DEFAULT_KB_SPLIT_RATIO, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { highlightTermsInElement, termsFromRunePositions } from '@/utils/searchHighlight'
@@ -420,6 +716,8 @@ const {
   loadingDocuments,
   error,
   available,
+  vectorEnabled,
+  stats,
   searchQuery,
   searchScope,
   searchMode,
@@ -427,14 +725,23 @@ const {
   searchResult,
   searchError,
   selectCollection,
+  clearSelection,
+  loadDocuments,
+  reloadForProject,
   refresh,
   createCollection,
+  updateCollection,
   deleteCollection,
   setAutoInject,
+  setPinned,
   addFile,
   importDirectory,
+  previewDirectory,
   deleteDocument,
   reindexDocument,
+  refreshDocument,
+  moveDocument,
+  setDocumentTags,
   reindexCollection,
   clearSearch,
   runSearch,
@@ -446,6 +753,217 @@ const selected = computed<KBCollection | null>(
   () => collections.value.find((c) => c.id === selectedId.value) ?? null,
 )
 const hasProject = computed(() => !!store.state.projectRoot)
+
+// ── Search / health ──
+const searchActive = computed(() => !!(searchResult.value || searching.value || searchError.value))
+
+type DocFilter = 'all' | 'failed' | 'working' | 'fts'
+const docFilter = ref<DocFilter>('all')
+
+type DocType = 'all' | 'pdf' | 'word' | 'excel' | 'ppt' | 'text'
+const docType = ref<DocType>('all')
+const docSort = ref<'recent' | 'name'>('recent')
+const docTagQuery = ref('')
+
+/** File-type bucket. The knowledge base only accepts a small set, so a fixed
+ *  list beats a select that grows with whatever extensions users happen to add. */
+function typeOf(doc: KBDocument): Exclude<DocType, 'all'> {
+  const ext = (doc.ext || '').toLowerCase()
+  if (ext === '.pdf') return 'pdf'
+  if (ext === '.docx') return 'word'
+  if (ext === '.xlsx' || ext === '.csv') return 'excel'
+  if (ext === '.pptx') return 'ppt'
+  return 'text'
+}
+
+/** Counts that decide whether the library can be trusted, all from the list. */
+const docHealth = computed(() => {
+  const total = documents.value.length
+  const failed = documents.value.filter((d) => d.status === 'failed').length
+  const working = documents.value.filter((d) => d.status === 'pending' || d.status === 'extracting').length
+  const ftsOnly = documents.value.filter((d) => d.status === 'ready' && !d.vector_ready).length
+  return { total, failed, working, ftsOnly }
+})
+
+const visibleDocuments = computed(() => {
+  let out = documents.value
+  switch (docFilter.value) {
+    case 'failed':
+      out = out.filter((d) => d.status === 'failed')
+      break
+    case 'working':
+      out = out.filter((d) => d.status === 'pending' || d.status === 'extracting')
+      break
+    case 'fts':
+      out = out.filter((d) => d.status === 'ready' && !d.vector_ready)
+      break
+  }
+  if (docType.value !== 'all') {
+    out = out.filter((d) => typeOf(d) === docType.value)
+  }
+  const tagQuery = docTagQuery.value.trim().toLowerCase()
+  if (tagQuery) {
+    out = out.filter((d) => (d.tags || '').toLowerCase().includes(tagQuery))
+  }
+  if (docSort.value === 'name') {
+    out = [...out].sort((a, b) =>
+      a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }),
+    )
+  }
+  return out
+})
+
+// A 500-file import must not build 500 rows on every poll. Render a page at a
+// time; the rest is one click away.
+const DOC_PAGE = 100
+const docRenderLimit = ref(DOC_PAGE)
+const shownDocuments = computed(() => visibleDocuments.value.slice(0, docRenderLimit.value))
+const hasMoreDocuments = computed(() => visibleDocuments.value.length > docRenderLimit.value)
+
+function toggleDocFilter(kind: Exclude<DocFilter, 'all'>): void {
+  docFilter.value = docFilter.value === kind ? 'all' : kind
+}
+
+// ── Multi-select ──
+// Selecting is a mode, not a persistent checkbox column: the normal row click
+// opens the document, and that must stay the default.
+const selectMode = ref(false)
+const selectedDocIds = ref<number[]>([])
+
+function enterSelectMode(): void {
+  selectMode.value = true
+  selectedDocIds.value = []
+}
+
+function exitSelectMode(): void {
+  selectMode.value = false
+  selectedDocIds.value = []
+}
+
+function isSelected(id: number): boolean {
+  return selectedDocIds.value.includes(id)
+}
+
+function toggleDoc(id: number): void {
+  selectedDocIds.value = isSelected(id)
+    ? selectedDocIds.value.filter((x) => x !== id)
+    : [...selectedDocIds.value, id]
+}
+
+const allShownSelected = computed(
+  () => shownDocuments.value.length > 0 && shownDocuments.value.every((d) => isSelected(d.id)),
+)
+
+function toggleSelectAll(): void {
+  selectedDocIds.value = allShownSelected.value ? [] : shownDocuments.value.map((d) => d.id)
+}
+
+async function deleteSelected(): Promise<void> {
+  const count = selectedDocIds.value.length
+  if (!count) return
+  const ok = await dialog.confirm(t('kb.deleteSelectedConfirm', { count }), { dangerous: true })
+  if (!ok) return
+  const ids = [...selectedDocIds.value]
+  const errors: string[] = []
+  let done = 0
+  for (const id of ids) {
+    try {
+      await deleteDocument(id)
+      done++
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e))
+    }
+  }
+  exitSelectMode()
+  if (errors.length > 0) {
+    toast.show(errors[0], { icon: 'warning', type: 'error', duration: 4000 })
+  } else {
+    toast.show(t('kb.deleteSelectedDone', { count: done }), { type: 'success', duration: 2200 })
+  }
+}
+
+async function reindexSelected(): Promise<void> {
+  const count = selectedDocIds.value.length
+  if (!count) return
+  const ok = await dialog.confirm(t('kb.reindexSelectedConfirm', { count }))
+  if (!ok) return
+  const ids = [...selectedDocIds.value]
+  const errors: string[] = []
+  for (const id of ids) {
+    try {
+      await reindexDocument(id)
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e))
+    }
+  }
+  exitSelectMode()
+  startKBIndexWatch()
+  if (errors.length > 0) {
+    toast.show(errors[0], { icon: 'warning', type: 'error', duration: 4000 })
+  } else {
+    toast.show(t('kb.reindexSelectedDone', { count }), { type: 'success', duration: 2200 })
+  }
+}
+
+watch([docFilter, docType, docSort, docTagQuery], () => {
+  docRenderLimit.value = DOC_PAGE
+})
+
+// The status endpoint reports whether an embedding endpoint exists and how
+// much of the index it has covered. Saying it out loud beats labelling
+// keyword-only results "hybrid".
+const semanticHint = computed(() => {
+  if (!stats.value || stats.value.documents === 0) return ''
+  if (!vectorEnabled.value) return t('kb.indexOffHint')
+  if (stats.value.chunks > stats.value.embedded_chunks) {
+    return t('kb.indexPendingHint', {
+      done: stats.value.embedded_chunks,
+      total: stats.value.chunks,
+    })
+  }
+  return ''
+})
+
+// ── Drag files/folders in from the file manager ──
+// The payload is the same internal attach drag the chat column accepts; a drop
+// here means "put these into the selected library", so the existing add flow
+// (preview included) does the work.
+const dragActive = ref(false)
+let dragDepth = 0
+
+function onDragEnter(e: DragEvent): void {
+  if (!hasAttachDragData(e.dataTransfer)) return
+  dragDepth++
+  dragActive.value = true
+}
+
+function onDragOver(e: DragEvent): void {
+  if (hasAttachDragData(e.dataTransfer)) e.preventDefault()
+}
+
+function onDragLeave(): void {
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) dragActive.value = false
+}
+
+function onDrop(e: DragEvent): void {
+  dragDepth = 0
+  dragActive.value = false
+  const data = readAttachDragData(e.dataTransfer)
+  if (!data) return
+  if (!selected.value) {
+    toast.show(t('kb.dropSelectCollection'), { icon: 'warning', type: 'error', duration: 2600 })
+    return
+  }
+  void submitAdd(attachDragTargets(data))
+}
+
+watch(selectedId, () => {
+  docFilter.value = 'all'
+  docType.value = 'all'
+  docTagQuery.value = ''
+  exitSelectMode()
+})
 
 // ── Layout: split by the PANEL's width, not the window's ──
 // The dock pane is 40% of the window, so the same window can hold a wide or a
@@ -508,9 +1026,25 @@ watch(split, (on) => {
   if (target) void selectCollection(target.id)
 })
 
+const collectionQuery = ref('')
+const collectionSort = ref<'recent' | 'name'>('recent')
+
+const filteredCollections = computed(() => {
+  const q = collectionQuery.value.trim().toLowerCase()
+  let out = q ? collections.value.filter((c) => c.name.toLowerCase().includes(q)) : collections.value
+  if (collectionSort.value === 'name') {
+    out = [...out].sort(
+      (a, b) =>
+        (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) ||
+        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
+    )
+  }
+  return out
+})
+
 const groupedCollections = computed(() => {
-  const global = collections.value.filter((c) => c.scope === 'global')
-  const project = collections.value.filter((c) => c.scope === 'project')
+  const global = filteredCollections.value.filter((c) => c.scope === 'global')
+  const project = filteredCollections.value.filter((c) => c.scope === 'project')
   const groups: { key: string; labelKey: string; items: KBCollection[] }[] = []
   if (project.length) groups.push({ key: 'project', labelKey: 'kb.projectGroup', items: project })
   if (global.length) groups.push({ key: 'global', labelKey: 'kb.globalGroup', items: global })
@@ -538,42 +1072,127 @@ watch(documents, () => {
 
 onBeforeUnmount(() => {
   stopPolling()
+  if (searchTimer) clearTimeout(searchTimer)
   widthObserver?.disconnect()
   widthObserver = null
 })
 
-// ── Create ──
-const createOpen = ref(false)
-const createName = ref('')
-const createDescription = ref('')
-const createScope = ref<'project' | 'global'>('project')
-const createError = ref('')
-const creating = ref(false)
+// ── Create / edit ──
+// One dialog for both: the fields are the same, and only scope is create-only.
+const formOpen = ref(false)
+const formMode = ref<'create' | 'edit'>('create')
+const formName = ref('')
+const formDescription = ref('')
+const formScope = ref<'project' | 'global'>('project')
+const formError = ref('')
+const formSaving = ref(false)
+
+const formTitle = computed(() =>
+  formMode.value === 'create' ? t('kb.createTitle') : t('kb.editTitle'),
+)
 
 function openCreate(): void {
-  createName.value = ''
-  createDescription.value = ''
-  createScope.value = hasProject.value ? 'project' : 'global'
-  createError.value = ''
-  createOpen.value = true
+  formMode.value = 'create'
+  formName.value = ''
+  formDescription.value = ''
+  formScope.value = hasProject.value ? 'project' : 'global'
+  formError.value = ''
+  formOpen.value = true
 }
 
-async function submitCreate(): Promise<void> {
-  const name = createName.value.trim()
+function openEdit(): void {
+  const col = selected.value
+  if (!col) return
+  formMode.value = 'edit'
+  formName.value = col.name
+  formDescription.value = col.description
+  formError.value = ''
+  formOpen.value = true
+}
+
+async function submitForm(): Promise<void> {
+  const name = formName.value.trim()
   if (!name) {
-    createError.value = t('kb.nameRequired')
+    formError.value = t('kb.nameRequired')
     return
   }
-  creating.value = true
-  createError.value = ''
+  formSaving.value = true
+  formError.value = ''
   try {
-    await createCollection(name, createDescription.value.trim(), createScope.value)
-    createOpen.value = false
-    toast.show(t('kb.created'), { type: 'success', duration: 1800 })
+    if (formMode.value === 'create') {
+      await createCollection(name, formDescription.value.trim(), formScope.value)
+      toast.show(t('kb.created'), { type: 'success', duration: 1800 })
+    } else if (selected.value) {
+      await updateCollection(selected.value.id, {
+        name,
+        description: formDescription.value.trim(),
+      })
+      toast.show(t('kb.saved'), { type: 'success', duration: 1800 })
+    }
+    formOpen.value = false
   } catch (e) {
-    createError.value = e instanceof Error ? e.message : String(e)
+    formError.value = e instanceof Error ? e.message : String(e)
   } finally {
-    creating.value = false
+    formSaving.value = false
+  }
+}
+
+// ── Paste text ──
+const textOpen = ref(false)
+const textTitle = ref('')
+const textBody = ref('')
+const textSaving = ref(false)
+const textError = ref('')
+
+function openText(): void {
+  textTitle.value = ''
+  textBody.value = ''
+  textError.value = ''
+  textOpen.value = true
+}
+
+async function submitText(): Promise<void> {
+  const col = selected.value
+  if (!col || textSaving.value) return
+  const body = textBody.value.trim()
+  if (!body) {
+    textError.value = t('kb.pasteEmpty')
+    return
+  }
+  const rawTitle = textTitle.value.trim() || t('kb.pasteDefaultTitle')
+  const title = rawTitle.replace(/[\\/:*?"<>|]/g, ' ').replace(/\.md$/i, '').trim() || t('kb.pasteDefaultTitle')
+  textSaving.value = true
+  textError.value = ''
+  try {
+    await kbUploadText(col.id, `${title}.md`, body)
+    textOpen.value = false
+    await loadDocuments(col.id, true)
+    startKBIndexWatch()
+    toast.show(t('kb.pasteDone'), { type: 'success', duration: 2400 })
+  } catch (e) {
+    textError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    textSaving.value = false
+  }
+}
+
+async function addFromURL(): Promise<void> {
+  const col = selected.value
+  if (!col) return
+  const url = await dialog.prompt(t('kb.urlPrompt'), {
+    title: t('kb.urlTitle'),
+    placeholder: 'https://…',
+    confirmText: t('kb.urlConfirm'),
+    singleLine: true,
+  })
+  if (!url) return
+  try {
+    await kbAddFromURL(col.id, url.trim())
+    await loadDocuments(col.id, true)
+    startKBIndexWatch()
+    toast.show(t('kb.urlDone'), { type: 'success', duration: 2400 })
+  } catch (e) {
+    toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 4000 })
   }
 }
 
@@ -582,6 +1201,14 @@ async function toggleAutoInject(): Promise<void> {
   if (!selected.value) return
   try {
     await setAutoInject(selected.value.id, !selected.value.auto_inject)
+  } catch (e) {
+    toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
+  }
+}
+
+async function togglePin(col: KBCollection): Promise<void> {
+  try {
+    await setPinned(col.id, !col.pinned)
   } catch (e) {
     toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
   }
@@ -610,6 +1237,7 @@ async function reindexCurrent(): Promise<void> {
   if (!ok) return
   try {
     await reindexCollection(col.id)
+    startKBIndexWatch()
     toast.show(t('kb.reindexQueued'), { type: 'success', duration: 1800 })
   } catch (e) {
     toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
@@ -617,9 +1245,223 @@ async function reindexCurrent(): Promise<void> {
 }
 
 function backToCollections(): void {
-  selectedId.value = null
-  clearSearch()
+  clearSelection()
 }
+
+// ── Move selected documents ──
+const movePickerOpen = ref(false)
+const moveDocIds = ref<number[]>([])
+
+function openMovePicker(): void {
+  if (selectedDocIds.value.length === 0) return
+  moveDocIds.value = [...selectedDocIds.value]
+  movePickerOpen.value = true
+}
+
+async function onMovePicked(collection: { id: number; name: string }): Promise<void> {
+  movePickerOpen.value = false
+  const ids = moveDocIds.value
+  moveDocIds.value = []
+  if (ids.length === 0) return
+  const errors: string[] = []
+  let done = 0
+  for (const id of ids) {
+    try {
+      await moveDocument(id, collection.id)
+      done++
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e))
+    }
+  }
+  exitSelectMode()
+  await refresh(true)
+  if (errors.length > 0) {
+    toast.show(errors[0], { icon: 'warning', type: 'error', duration: 4000 })
+  } else {
+    toast.show(t('kb.moveDone', { count: done, name: collection.name }), {
+      type: 'success',
+      duration: 2400,
+    })
+  }
+}
+
+// ── Document detail ──
+const drawerOpen = ref(false)
+const drawerDocId = ref<number | null>(null)
+const drawerChunkId = ref(0)
+const documentDrawer = ref<InstanceType<typeof KBDocumentDrawer> | null>(null)
+
+function openDocument(doc: KBDocument, chunkId = 0): void {
+  drawerDocId.value = doc.id
+  drawerChunkId.value = chunkId
+  drawerOpen.value = true
+}
+
+function openDocumentById(documentId: number, chunkId = 0): void {
+  if (!documentId) return
+  drawerDocId.value = documentId
+  drawerChunkId.value = chunkId
+  drawerOpen.value = true
+}
+
+function closeDocument(): void {
+  drawerOpen.value = false
+}
+
+async function onDocumentLoaded(detail: KBDocumentDetail): Promise<void> {
+  // Opening a citation from another collection should leave the panel there
+  // after the drawer closes. Same collection is a no-op (selectCollection
+  // returns early), so search results behind a result click are not wiped.
+  if (detail.document.collection_id !== selectedId.value) {
+    await selectCollection(detail.document.collection_id)
+  }
+}
+
+async function onDrawerReindex(id: number): Promise<void> {
+  try {
+    await reindexDocument(id)
+    startKBIndexWatch()
+    toast.show(t('kb.reindexDocQueued'), { type: 'success', duration: 1800 })
+    documentDrawer.value?.reload()
+  } catch (e) {
+    toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
+  }
+}
+
+async function onDrawerRefresh(id: number): Promise<void> {
+  try {
+    const changed = await refreshDocument(id)
+    if (changed) startKBIndexWatch()
+    toast.show(changed ? t('kb.refreshChanged') : t('kb.refreshUnchanged'), {
+      type: changed ? 'success' : undefined,
+      duration: 2200,
+    })
+    if (changed) documentDrawer.value?.reload()
+  } catch (e) {
+    toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 4000 })
+  }
+}
+
+function onQuoteChunk(payload: { text: string; title: string; location?: string }): void {
+  const source = payload.location
+    ? `${payload.title} · ${locationText(payload.location)}`
+    : payload.title
+  requestStageKBQuote({
+    text: `${source}\n\n${payload.text}`,
+    filePath: payload.title,
+    language: 'markdown',
+    startLine: 0,
+    endLine: 0,
+    sourceKind: 'selection',
+  })
+  closeDocument()
+}
+
+async function onDrawerDelete(payload: { id: number; title: string }): Promise<void> {
+  const ok = await dialog.confirm(t('kb.deleteDocumentConfirm', { name: payload.title }), { dangerous: true })
+  if (!ok) return
+  const source = documents.value.find((d) => d.id === payload.id)?.source_path
+  try {
+    await deleteDocument(payload.id)
+    closeDocument()
+    offerUndo(source, t('kb.deleted'))
+  } catch (e) {
+    toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
+  }
+}
+
+// ── Search ──
+function cancelPendingSearch(): void {
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+    searchTimer = null
+  }
+}
+
+function onSearchEnter(): void {
+  // Enter means "run the selected mode now"; a pending keyword pass must not
+  // start afterwards and overwrite the hybrid result.
+  cancelPendingSearch()
+  void runSearch()
+}
+
+function rerunSearch(): void {
+  cancelPendingSearch()
+  if (searchResult.value || searchError.value) void runSearch()
+}
+
+function onResultClick(event: MouseEvent, hit: KBSearchHit): void {
+  // Links inside the rendered passage keep their own behaviour.
+  const target = event.target as HTMLElement | null
+  if (target?.closest('a, button')) return
+  openDocumentById(hit.document_id, hit.chunk_id)
+}
+
+function modeLabel(mode: string): string {
+  if (mode === 'fts') return t('kb.modeFts')
+  if (mode === 'vector') return t('kb.modeVector')
+  return t('kb.modeHybrid')
+}
+
+function tagList(tags: string | undefined): string[] {
+  return (tags || '')
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 4)
+}
+
+async function onDrawerTags(payload: { id: number; tags: string }): Promise<void> {
+  try {
+    await setDocumentTags(payload.id, payload.tags)
+    toast.show(t('kb.tagsSaved'), { type: 'success', duration: 1800 })
+  } catch (e) {
+    toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
+  }
+}
+
+function docErrorText(doc: KBDocument): string {
+  return documentErrorText(doc.error, tf)
+}
+
+// Typing runs the cheap keyword pass; Enter (or the button) runs the selected
+// mode, which may call the embedding endpoint.
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(searchQuery, (q) => {
+  cancelPendingSearch()
+  const trimmed = q.trim()
+  if (!trimmed) {
+    if (searchResult.value || searchError.value) clearSearch()
+    return
+  }
+  searchTimer = setTimeout(() => {
+    void runSearch('fts')
+  }, 260)
+})
+
+// ── Cross-panel / project wiring ──
+// A citation sets this before switching the tab; the panel may mount after the
+// request, hence `immediate`.
+watch(
+  kbPendingOpen,
+  (req) => {
+    if (!req) return
+    consumeKBPendingOpen(req.token)
+    openDocumentById(req.documentId, req.chunkId)
+  },
+  { immediate: true },
+)
+
+// The panel stays mounted (TabPanel uses v-show), so a project switch would
+// otherwise leave the previous project's libraries on screen and 403 on add.
+watch(
+  () => store.state.projectRoot,
+  () => {
+    // A document opened from the previous project must not stay on screen.
+    closeDocument()
+    void reloadForProject()
+  },
+)
 
 // ── Add documents ──
 // The selection is owned by AttachmentPicker; this panel only applies it. A
@@ -647,6 +1489,47 @@ async function submitAdd(entries: FileEntry[]): Promise<void> {
   // outcome, whichever mix the user picked.
   const totals = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false }
   try {
+    // Preview folders before pulling them in: a 500-file import is not
+    // something to start without knowing what will be skipped. A failed
+    // preview is advisory only — the real import reports its own errors.
+    if (dirs.length > 0) {
+      const preview = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false }
+      let previewed = false
+      for (const dir of dirs) {
+        try {
+          const p = await previewDirectory(dir.path)
+          preview.added += p.added
+          preview.duplicates += p.duplicates
+          preview.skipped += p.skipped
+          preview.failed += p.failed
+          preview.truncated = preview.truncated || p.truncated
+          previewed = true
+        } catch {
+          // The import below will surface the same error with a real message.
+        }
+      }
+      if (previewed) {
+        if (preview.added === 0) {
+          closeAdd()
+          toast.show(
+            preview.duplicates > 0 ? t('kb.dirImportAllDuplicates') : t('kb.dirImportEmpty'),
+            { icon: 'warning', type: 'error', duration: 3200 },
+          )
+          return
+        }
+        const message = preview.truncated
+          ? `${t('kb.importPreviewMessage', preview)}\n\n${t('kb.importPreviewTruncated')}`
+          : t('kb.importPreviewMessage', preview)
+        const ok = await dialog.confirm(message, {
+          title: t('kb.importPreviewTitle'),
+          confirmText: t('kb.importContinue'),
+        })
+        // Keep the sheet open: the user may want to drop a folder or pick
+        // another one instead of starting this import.
+        if (!ok) return
+      }
+    }
+
     for (const entry of files) {
       try {
         await addFile(entry.path)
@@ -672,6 +1555,8 @@ async function submitAdd(entries: FileEntry[]): Promise<void> {
   } finally {
     adding.value = false
   }
+
+  if (totals.added > 0) startKBIndexWatch()
 
   if (dirs.length > 0) {
     // A folder import always closes: retrying the same folder would only
@@ -712,15 +1597,48 @@ async function removeDoc(doc: KBDocument): Promise<void> {
   if (!ok) return
   try {
     await deleteDocument(doc.id)
-    toast.show(t('kb.deleted'), { type: 'success', duration: 1800 })
+    offerUndo(doc.source_path, t('kb.deleted'))
   } catch (e) {
     toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
+  }
+}
+
+/**
+ * A deleted file is only recoverable from its original path (the stored copy is
+ * gone with the row). Offer that when we have one; the toast click is the undo
+ * affordance, and the re-add reports a clear failure if the source moved away.
+ */
+function offerUndo(sourcePath: string | undefined, fallbackMessage: string): void {
+  const source = (sourcePath || '').trim()
+  if (!source) {
+    toast.show(fallbackMessage, { type: 'success', duration: 1800 })
+    return
+  }
+  toast.show(t('kb.deletedUndo'), {
+    type: 'success',
+    duration: 6000,
+    onClick: () => {
+      void undoDelete(source)
+    },
+  })
+}
+
+async function undoDelete(path: string): Promise<void> {
+  const col = selected.value
+  if (!col) return
+  try {
+    await addFile(path)
+    startKBIndexWatch()
+    toast.show(t('kb.undoDone'), { type: 'success', duration: 2000 })
+  } catch {
+    toast.show(t('kb.undoFailed'), { icon: 'warning', type: 'error', duration: 3600 })
   }
 }
 
 async function reindexDoc(doc: KBDocument): Promise<void> {
   try {
     await reindexDocument(doc.id)
+    startKBIndexWatch()
     toast.show(t('kb.reindexDocQueued'), { type: 'success', duration: 1800 })
   } catch (e) {
     toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
@@ -802,6 +1720,11 @@ defineExpose({
   background: var(--panel-page-bg);
 }
 
+.kb-panel.is-drop-target {
+  outline: 2px dashed var(--accent-color);
+  outline-offset: calc(-6 * var(--dp));
+}
+
 .kb-header {
   display: flex;
   align-items: center;
@@ -855,10 +1778,13 @@ defineExpose({
 .kb-body {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .kb-split {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 /* ── Collection rail ── */
@@ -892,6 +1818,58 @@ defineExpose({
 .kb-group-count {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.kb-rail-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.kb-col-search {
+  flex: 1;
+  min-width: 0;
+}
+
+.kb-col-sort {
+  flex: none;
+  max-width: calc(92 * var(--dp));
+}
+
+.kb-col-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.kb-col-row .kb-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.kb-col-pin {
+  flex: none;
+  width: calc(26 * var(--dp));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.kb-col-pin.is-on {
+  color: var(--accent-color);
+}
+
+@media (hover: hover) {
+  .kb-col-pin {
+    opacity: 0;
+  }
+  .kb-col-row:hover .kb-col-pin,
+  .kb-col-pin.is-on,
+  .kb-col-pin:focus-visible {
+    opacity: 1;
+  }
 }
 
 .kb-col {
@@ -953,10 +1931,20 @@ defineExpose({
 .kb-col-meta {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
   min-width: 0;
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+.kb-col-flag {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-col-flag.is-bad {
+  color: var(--color-red);
 }
 
 .kb-col-off {
@@ -1102,7 +2090,64 @@ defineExpose({
   color: var(--text-primary);
 }
 
+/* ── Health line ── */
+.kb-health {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--border-color);
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+}
+
+.kb-health-total {
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-health-chip {
+  padding: 1px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.kb-health-chip.is-bad {
+  color: var(--color-red);
+}
+
+.kb-health-chip.is-on {
+  border-color: currentColor;
+  background: transparent;
+}
+
+.kb-health-spacer {
+  flex: 1 1 auto;
+}
+
+.kb-health-select {
+  height: calc(24 * var(--dp));
+  padding: 0 var(--space-1);
+  font-size: var(--font-size-2xs);
+}
+
+.kb-load-more {
+  display: block;
+  margin: var(--space-3) auto 0;
+}
+
 /* ── Search ── */
+.kb-search-wrap {
+  flex: none;
+  background: var(--bg-primary);
+}
+
 .kb-search-row {
   display: flex;
   align-items: center;
@@ -1111,6 +2156,13 @@ defineExpose({
   padding: var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--border-color);
   flex: none;
+}
+
+.kb-index-hint {
+  padding: 0 var(--space-5) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  line-height: 1.4;
 }
 
 .kb-search {
@@ -1158,6 +2210,14 @@ defineExpose({
   font-variant-numeric: tabular-nums;
 }
 
+.kb-results-mode {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+}
+
 .kb-result-list,
 .kb-doc-list {
   display: flex;
@@ -1171,6 +2231,23 @@ defineExpose({
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .kb-result:hover {
+    border-color: color-mix(in srgb, var(--accent-color) 40%, var(--border-color));
+  }
+}
+
+.kb-result:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+
+.kb-result-open {
+  flex: none;
+  color: var(--text-muted);
 }
 
 .kb-result-head {
@@ -1275,6 +2352,89 @@ defineExpose({
   border-bottom: 0;
 }
 
+/* The clickable body: a real button so keyboard users get the same affordance,
+   reset to look exactly like the old row. */
+.kb-doc-open {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kb-doc-open:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.kb-doc-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: calc(18 * var(--dp));
+  height: calc(18 * var(--dp));
+  margin-top: calc(7 * var(--dp));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  color: #fff;
+}
+
+.kb-doc-check.is-on {
+  border-color: var(--accent-color);
+  background: var(--accent-color);
+}
+
+.kb-doc.is-selected {
+  background: color-mix(in srgb, var(--accent-color) 7%, transparent);
+}
+
+.kb-select-count {
+  flex: none;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+  color: var(--accent-color);
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-doc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: 2px;
+}
+
+.kb-doc-tag {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  color: var(--accent-color);
+  font-size: var(--font-size-2xs);
+}
+
+.kb-health-tag {
+  width: calc(96 * var(--dp));
+}
+
+.kb-doc-source {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (hover: hover) {
   .kb-doc:hover {
     background: color-mix(in srgb, var(--text-primary) 3%, transparent);
@@ -1369,6 +2529,10 @@ defineExpose({
 
 .kb-muted {
   color: var(--text-muted);
+}
+
+.kb-stale {
+  color: var(--color-orange);
 }
 
 .kb-warn {
@@ -1512,6 +2676,11 @@ defineExpose({
 
 .kb-input::placeholder {
   color: var(--text-muted);
+}
+
+.kb-paste-body {
+  min-height: calc(160 * var(--dp));
+  resize: vertical;
 }
 
 .kb-textarea {

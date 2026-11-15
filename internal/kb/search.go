@@ -255,6 +255,7 @@ func BuildContext(ctx context.Context, query string, projectID int64, cfg model.
 		perDoc[h.DocumentID]++
 		total += len(text)
 		refs = append(refs, Ref{
+			ChunkID:        h.ChunkID,
 			DocumentID:     h.DocumentID,
 			DocumentTitle:  h.DocumentTitle,
 			CollectionID:   h.CollectionID,

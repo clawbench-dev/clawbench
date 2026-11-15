@@ -39,6 +39,7 @@
       @show-metadata="showMetadata"
       @file-tag-click="handleFileTagClick"
       @quote-message="handleQuoteMessage"
+      @save-to-kb="handleSaveToKB"
       @load-more="handleLoadMore"
       @task-card-click="(taskId) => $emit('task-card-click', taskId)"
       @send-message="handleToolSendMessage"
@@ -50,6 +51,13 @@
       @fork-from-message="handleForkFromMessage"
       @rewind-from-message="handleRewindFromMessage"
       @open-agent-config="(agentId) => $emit('open-agent-config', agentId)"
+    />
+
+    <KBCollectionPickerDialog
+      :open="kbPickerOpen"
+      :initial-name="kbNote?.title || ''"
+      @close="kbPickerOpen = false"
+      @confirm="onKBNotePicked"
     />
 
     <!-- Session swipe indicator — floats above the message area -->
@@ -354,6 +362,9 @@ import { queuedMessages, setActiveQueueSession, addQueued, clearQueue, getQueue,
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
+import KBCollectionPickerDialog from '@/components/kb/KBCollectionPickerDialog.vue'
+import { kbUploadText } from '@/composables/useKnowledgeBase'
+import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
 import { useFeatureFlags, useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { stopGroupMember } from '@/composables/useGroupChat'
 import { collectStopTargets } from '@/utils/chatStopTargets'
@@ -565,6 +576,10 @@ const forkingMessageId = ref(null)
 const sessionShareOpen = ref(false)
 const sessionShareId = ref('')
 const toast = useToast()
+
+// ── Save a reply to the knowledge base ──
+const kbPickerOpen = ref(false)
+const kbNote = ref(null)
 // 任务 / 分享 master switches. A quoted task and a finished conversation stay
 // readable history; only the jump / publish entries they gate are refused while
 // the feature is off.
@@ -756,6 +771,49 @@ function handleQuoteMessage(msg, anchorEl) {
         // label could point at, so the snippet is the only identification.
         previewText: text,
     }, { anchorEl })
+}
+
+function handleSaveToKB(msg) {
+    if (!msg) return
+    // Same text as "quote this message": the speakable reply, without tool or
+    // thinking noise. A note made from a reply the user cannot read would be
+    // worse than no button.
+    const text = quotableMessageText(msg.role, msg.blocks, msg.content, msg.summary, isGroupSession.value)
+    if (!text) return
+    kbNote.value = { text, title: kbNoteTitle(text) }
+    kbPickerOpen.value = true
+}
+
+/** A stable, filesystem-safe title from the reply's first meaningful line. */
+function kbNoteTitle(text) {
+    const first = text.split('\n').map((line) => line.trim()).find(Boolean) ?? ''
+    const cleaned = first
+        .replace(/^#+\s*/, '')
+        .replace(/[\\/:*?"<>|]/g, ' ')
+        .trim()
+        .slice(0, 60)
+    return cleaned || t('chat.message.kbNoteTitle')
+}
+
+async function onKBNotePicked(collection) {
+    kbPickerOpen.value = false
+    const note = kbNote.value
+    kbNote.value = null
+    if (!note) return
+    try {
+        await kbUploadText(collection.id, `${note.title}.md`, note.text)
+        startKBIndexWatch()
+        toast.show(t('chat.message.kbNoteSaved', { name: collection.name }), {
+            type: 'success',
+            duration: 2600,
+        })
+    } catch (e) {
+        toast.show(e instanceof Error ? e.message : String(e), {
+            icon: 'warning',
+            type: 'error',
+            duration: 4000,
+        })
+    }
 }
 
 /** Remove an attached reference entry (from AttachmentTags cards or AttachDrawer
