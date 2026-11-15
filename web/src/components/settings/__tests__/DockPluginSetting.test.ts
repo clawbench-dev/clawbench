@@ -158,13 +158,13 @@ describe('DockPluginSetting', () => {
     }
   })
 
-  it('greys out the three permanent switches and labels them 常驻', () => {
+  it('greys out the three permanent switches and keeps 常驻 as their tooltip', () => {
     const wrapper = mountSetting()
     for (const id of ['browse', 'view', 'settings']) {
       const input = row(wrapper, id).find('input[type="checkbox"]')
       expect((input.element as HTMLInputElement).disabled, `${id} must be inert`).toBe(true)
       expect((input.element as HTMLInputElement).checked).toBe(true)
-      expect(row(wrapper, id).find('.plugin-switch-label').text()).toBe('常驻')
+      expect(row(wrapper, id).find('.plugin-switch').attributes('title')).toBe('常驻')
     }
   })
 
@@ -172,15 +172,50 @@ describe('DockPluginSetting', () => {
     const wrapper = mountSetting()
     const input = row(wrapper, 'notifications').find('input[type="checkbox"]')
     expect((input.element as HTMLInputElement).disabled).toBe(false)
-    expect(row(wrapper, 'notifications').find('.plugin-switch-label').text()).toBe('在 Dock 中显示')
+    expect(row(wrapper, 'notifications').find('.plugin-switch').attributes('title')).toBe(
+      '在 Dock 中显示',
+    )
   })
 
-  it('labels the two switch kinds differently', () => {
+  it('keeps the switch label out of the row — only the tooltip explains it', () => {
     const wrapper = mountSetting()
-    // Server-backed feature → 启用.
-    expect(row(wrapper, 'mail').find('.plugin-switch-label').text()).toBe('启用')
-    // Display-only → 在 Dock 中显示.
-    expect(row(wrapper, 'history').find('.plugin-switch-label').text()).toBe('在 Dock 中显示')
+    // Server-backed feature and display-only differ, but only on hover.
+    expect(row(wrapper, 'mail').find('.plugin-switch').attributes('title')).toBe('启用')
+    expect(row(wrapper, 'history').find('.plugin-switch').attributes('title')).toBe(
+      '在 Dock 中显示',
+    )
+    // Nothing is printed next to the switches any more.
+    for (const tab of DOCK_TABS) {
+      const r = row(wrapper, tab.id)
+      expect(r.find('.plugin-switch-label').exists(), `${tab.id} still prints a label`).toBe(false)
+      const actions = r.find('.plugin-row__actions').text()
+      expect(actions, `${tab.id} prints switch wording`).not.toMatch(/启用|在 Dock 中显示|常驻/)
+    }
+  })
+
+  it('puts the icon on the title line and the description on its own line', () => {
+    const wrapper = mountSetting()
+    const r = row(wrapper, 'mail')
+    // Icon shares the line with the name and the group chip.
+    const titleLine = r.find('.plugin-row__title-line')
+    expect(titleLine.find('.plugin-row__icon').exists()).toBe(true)
+    expect(titleLine.find('.plugin-row__name').exists()).toBe(true)
+    // The description is NOT inside that line, and is not inside the icon
+    // wrapper either — it is the row's second line.
+    expect(titleLine.find('.plugin-row__desc').exists()).toBe(false)
+    expect(r.find('.plugin-row__desc').exists()).toBe(true)
+    expect(r.find('.plugin-row__main > .plugin-row__icon').exists()).toBe(false)
+  })
+
+  it('folds the drag / unsupported notes into the intro instead of a footer', () => {
+    const wrapper = mountSetting()
+    const intro = wrapper.find('.plugin-intro').text()
+    // The three facts the footer used to repeat below the rows.
+    expect(intro).toContain('聊天固定在右栏')
+    expect(intro).toContain('包括常驻功能')
+    expect(intro).toContain('当前环境不支持的功能')
+    // And nothing prints them a second time under the list.
+    expect(wrapper.find('.plugin-hints').exists()).toBe(false)
   })
 
   it('hides a display-only tab locally and marks the profile custom', async () => {

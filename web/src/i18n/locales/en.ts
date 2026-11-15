@@ -3315,7 +3315,7 @@ export default {
     dockPlugins: {
       title: 'Feature Layout',
       listTitle: 'Features',
-      description: 'Every left-column feature, in one list. Drag to reorder; the switch decides whether it appears. A switch with server work behind it stops that work too.',
+      description: 'Every left-column feature, in one list (chat is fixed in the right pane and is not listed here). Every entry can be dragged into order, permanent ones included; the switch decides whether it appears, and a switch with server work behind it stops that work too. A feature this environment does not support will not appear in the left column even when switched on.',
       presetTitle: 'Preset',
       presetCustom: 'Current: Custom',
       presetCustomDesc: 'You changed visibility, order or a switch by hand.',
@@ -3325,8 +3325,6 @@ export default {
       switchVisible: 'Show in Dock',
       dragHandle: 'Drag to reorder',
       openSettings: 'Feature settings',
-      orderHint: 'Every feature can be dragged into order (permanent ones included). Chat is fixed in the right pane and is not listed here.',
-      unavailableHint: 'If the current device does not support it, showing it will not make it appear.',
       saveFailed: 'Could not save. The previous setting was restored.',
       saving: 'Saving…',
       presetApplied: 'Applied the "{name}" preset.',

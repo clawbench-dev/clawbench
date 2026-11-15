@@ -3308,7 +3308,7 @@ export default {
     dockPlugins: {
       title: '功能编排',
       listTitle: '功能列表',
-      description: '左侧栏的全部功能排成一条列表。拖动可调整顺序；开关决定它是否出现。有后台功能的开关会同时停掉服务端的工作。',
+      description: '左侧栏的全部功能排成一条列表（聊天固定在右栏，不在这个列表里）。所有条目都能拖动排序，包括常驻功能；开关决定它出不出现，有后台功能的开关会同时停掉服务端的工作。当前环境不支持的功能，即使打开也不会出现在左侧栏。',
       presetTitle: '预设',
       presetCustom: '当前：自定义',
       presetCustomDesc: '你手动调整过显示、顺序或开关。',
@@ -3318,8 +3318,6 @@ export default {
       switchVisible: '在 Dock 中显示',
       dragHandle: '拖动排序',
       openSettings: '功能设置',
-      orderHint: '所有功能都可以拖动排序（包括常驻功能）；聊天固定在右栏，不在此列表中。',
-      unavailableHint: '当前环境不支持时，即使打开也不会出现在左侧栏。',
       saveFailed: '保存失败，已恢复原来的设置。',
       saving: '保存中…',
       presetApplied: '已应用「{name}」预设。',

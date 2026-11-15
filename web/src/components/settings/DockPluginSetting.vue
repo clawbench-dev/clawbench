@@ -50,9 +50,11 @@
           >≡</span>
 
           <div class="plugin-row__main">
-            <component :is="iconFor(plugin.id)" :size="16" class="plugin-row__icon" />
             <div class="plugin-row__text">
+              <!-- Icon and title share the first line; the description is a
+                   separate line underneath, so the two never interleave. -->
               <div class="plugin-row__title-line">
+                <component :is="iconFor(plugin.id)" :size="16" class="plugin-row__icon" />
                 <span class="plugin-row__name">{{ t(plugin.titleKey) }}</span>
                 <span class="plugin-chip">{{ t(`settings.dockPlugins.groups.${plugin.group}`) }}</span>
               </div>
@@ -74,7 +76,6 @@
             >
               <SettingsIcon :size="16" />
             </button>
-            <span class="plugin-switch-label">{{ isSaving(plugin.id) ? t('settings.dockPlugins.saving') : switchLabel(plugin) }}</span>
             <label
               class="settings-item__switch plugin-switch"
               :class="{ 'plugin-switch--locked': !plugin.closable || !!blockedReason(plugin) }"
@@ -92,10 +93,6 @@
           </div>
         </div>
       </VueDraggable>
-      <div class="plugin-hints">
-        <p class="plugin-hint">{{ t('settings.dockPlugins.orderHint') }}</p>
-        <p class="plugin-hint">{{ t('settings.dockPlugins.unavailableHint') }}</p>
-      </div>
     </SettingsCard>
   </div>
 </template>
@@ -202,6 +199,11 @@ function isEnabled(plugin: DockTabDescriptor): boolean {
   return featureOn(plugin) && !isHidden(plugin.id)
 }
 
+/**
+ * Tooltip for the switch. The row shows no visible switch label any more —
+ * "启用" / "在 Dock 中显示" next to every row was noise, and a permanent row's
+ * inert switch still needs its reason on hover.
+ */
 function switchLabel(plugin: DockTabDescriptor): string {
   if (!plugin.closable) return t('settings.dockPlugins.switchPermanent')
   if (plugin.feature) return t('settings.dockPlugins.switchEnable')
@@ -604,13 +606,6 @@ async function onPreset(next: Exclude<DockPreset, 'custom'>): Promise<void> {
   outline-offset: 1px;
 }
 
-.plugin-switch-label {
-  flex-shrink: 0;
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
 .plugin-switch {
   flex-shrink: 0;
 }
@@ -625,20 +620,5 @@ async function onPreset(next: Exclude<DockPreset, 'custom'>): Promise<void> {
 
 .plugin-switch--locked .settings-item__switch-input:checked + .settings-item__switch-track {
   background: var(--bg-tertiary);
-}
-
-.plugin-hints {
-  padding: var(--space-2) var(--space-7) var(--space-3);
-  border-top: 0.5px solid var(--border-color);
-}
-
-.plugin-hint {
-  font-size: var(--font-size-sm);
-  line-height: 1.4;
-  color: var(--text-muted);
-}
-
-.plugin-hint + .plugin-hint {
-  margin-top: calc(2 * var(--dp));
 }
 </style>
