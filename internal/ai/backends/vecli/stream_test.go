@@ -1,4 +1,4 @@
-package ai
+package vecli
 
 import (
 	"encoding/json"
@@ -6,15 +6,17 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/ai"
 )
 
 // parseVeCLILine is a test helper that parses a single line through VeCLIStreamParser.
-func parseVeCLILine(line string) []StreamEvent {
-	ch := make(chan StreamEvent, 64)
+func parseVeCLILine(line string) []ai.StreamEvent {
+	ch := make(chan ai.StreamEvent, 64)
 	parser := &VeCLIStreamParser{}
 	parser.ParseLine(line, ch)
 	close(ch)
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -31,14 +33,14 @@ func TestVeCLIStream_ParseLine_ContentLine(t *testing.T) {
 }
 
 func TestVeCLIStream_ParseLine_MultipleLines(t *testing.T) {
-	ch := make(chan StreamEvent, 64)
+	ch := make(chan ai.StreamEvent, 64)
 	parser := &VeCLIStreamParser{}
 	parser.ParseLine("Line 1", ch)
 	parser.ParseLine("Line 2", ch)
 	parser.ParseLine("Line 3", ch)
 	close(ch)
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -147,7 +149,7 @@ func TestVeCLISessionSummary_EmptyModels(t *testing.T) {
 // --- parseVeCLISessionSummary additional tests ---
 
 func TestParseVeCLISessionSummary_EmptyObject(t *testing.T) {
-	summary, err := parseVeCLISessionSummary([]byte("{}"))
+	summary, err := parseSessionSummary([]byte("{}"))
 	require.NoError(t, err)
 	assert.NotNil(t, summary)
 	assert.Empty(t, summary.SessionMetrics.Models)
@@ -171,7 +173,7 @@ func TestParseVeCLISessionSummary_MultipleModels(t *testing.T) {
 		}
 	}`
 
-	summary, err := parseVeCLISessionSummary([]byte(raw))
+	summary, err := parseSessionSummary([]byte(raw))
 	require.NoError(t, err)
 	assert.Len(t, summary.SessionMetrics.Models, 2)
 }

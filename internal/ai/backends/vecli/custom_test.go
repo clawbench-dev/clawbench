@@ -28,7 +28,7 @@ func TestVeCLIPlugin_NewBackendIsVeCLIBackend(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("vecli")
 	backend := entry.NewBackend()
 	// VeCLIBackend wraps CLIBackend — verify it's a *VeCLIBackend
-	_, ok := backend.(*ai.VeCLIBackend)
+	_, ok := backend.(*VeCLIBackend)
 	if !ok {
 		t.Error("expected *VeCLIBackend type")
 	}

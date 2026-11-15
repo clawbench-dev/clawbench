@@ -23,5 +23,5 @@ func init() {
 // VeCLI is a custom backend — it wraps CLIBackend with additional
 // session-summary post-processing.
 func newVeCLIBackend() ai.AIBackend {
-	return ai.NewVeCLIBackend()
+	return newVeCLIBackendImpl()
 }
