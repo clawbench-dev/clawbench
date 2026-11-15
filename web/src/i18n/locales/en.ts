@@ -1500,7 +1500,6 @@ export default {
       subagentCollapse: 'Collapse sub-agent output',
       toolGroupOps: '{count} call | {count} calls',
       toolGroupThinking: '{count} thought | {count} thoughts',
-      toolGroupThinkingRunning: 'Thinking…',
       toolGroupFailed: '{count} failed',
       toolGroupInterrupted: '{count} interrupted',
       toolInterrupted: 'Interrupted',

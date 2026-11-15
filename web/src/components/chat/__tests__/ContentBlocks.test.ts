@@ -178,7 +178,6 @@ const i18n = createI18n({
         subagentCollapse: 'Collapse sub-agent output',
         toolGroupOps: '{count} call | {count} calls',
         toolGroupThinking: '{count} thought | {count} thoughts',
-        toolGroupThinkingRunning: 'Thinking…',
         toolGroupFailed: '{count} failed',
         // Needed by the error_source chip: getErrorSourceLabel looks up
         // `chat.contentBlocks.errorSources.<source>` and returns '' when the key
@@ -4124,10 +4123,10 @@ describe('compact tool calls', () => {
     expect(wrapper.find('[data-tool-group]').text()).toContain('1 call · 1 thought')
   })
 
-  it('takes the deep-thinking colour AND brain icon while only a thinking chip runs', async () => {
-    // Nothing but the thinking chip is live: the row keeps its count layout but
-    // wears the chip's purple, not a tool colour, and the leading glyph is the
-    // chip's brain rather than the generic "a run of tools" stack.
+  it('becomes the deep-thinking chip itself while only a thinking block runs', async () => {
+    // Nothing but the thinking block is live: the row must read as that chip
+    // (brain + label + ring), not as a summary. A count line would describe
+    // work that has not happened yet.
     const wrapper = mountBlocks({
       streaming: true,
       blocks: [tool('Read', 't1'), { type: 'thinking', think_id: 'th1', done: false }],
@@ -4136,12 +4135,14 @@ describe('compact tool calls', () => {
     const strip = wrapper.find('.chat-tool-group-strip')
     expect(strip.attributes('data-category')).toBe('thinking')
     expect(strip.find('.tool-spinner').exists()).toBe(true)
-    expect(strip.text()).toContain('1 call · 1 thought')
-    // The slot that normally names the running tool says what is happening.
-    expect(strip.find('.tool-group-thinking').text()).toBe('Thinking…')
-    // Same brain glyph as the thinking chip; not the generic stack glyph.
+    // Same label and glyph as the standalone chip, no counts.
+    expect(strip.find('.tool-name').text()).toBe('Deep Thinking')
+    expect(strip.text()).not.toContain('call')
+    expect(strip.text()).not.toContain('thought')
     expect(strip.element.querySelector(':scope > .lucide-brain'), 'leading icon is the brain').not.toBeNull()
     expect(strip.element.querySelector('.lucide-layers'), 'not the generic stack glyph').toBeNull()
+    // Still unfoldable while it thinks, so the chevron stays.
+    expect(strip.find('.tool-group-chevron').exists()).toBe(true)
   })
 
   it('wears the generic stack glyph once the run settles', async () => {
@@ -4235,8 +4236,8 @@ describe('compact tool calls', () => {
   it('looks exactly like the running tool\'s own pill while that tool works', async () => {
     // A run is a summary of work; while a step is actually executing there is
     // nothing to summarise yet, so the row drops the counts and becomes that
-    // step's pill (glyph + name + summary + ring). Only the click differs: it
-    // unfolds the run instead of opening the tool detail.
+    // step's pill (glyph + name + summary + ring). The chevron and the click
+    // differ: it unfolds the run instead of opening the tool detail.
     const wrapper = mountBlocks({
       streaming: true,
       toolCallSummary: (b: any) => (b?.name === 'Bash' ? 'npm test' : ''),
@@ -4251,8 +4252,9 @@ describe('compact tool calls', () => {
     // No counts while a step runs…
     expect(row.text()).not.toContain('calls')
     expect(row.text()).not.toContain('thoughts')
-    // …no chevron either: a standalone pill has none.
-    expect(row.find('.tool-group-chevron').exists()).toBe(false)
+    // …but the chevron stays: the row is unfoldable while it works, and the
+    // affordance must not flicker in and out as steps start and finish.
+    expect(row.find('.tool-group-chevron').exists()).toBe(true)
     // And it wears the running tool's accent, not the muted container look.
     expect(strip.attributes('data-category')).toBe('bash')
   })

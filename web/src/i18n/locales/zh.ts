@@ -1506,7 +1506,6 @@ export default {
       // 极简模式：把一段连续的工具调用与思考折成一行，只显示次数
       toolGroupOps: '{count} 次调用',
       toolGroupThinking: '{count} 次思考',
-      toolGroupThinkingRunning: '思考中…',
       toolGroupFailed: '{count} 次失败',
       toolGroupInterrupted: '{count} 次中断',
       toolInterrupted: '已中断',

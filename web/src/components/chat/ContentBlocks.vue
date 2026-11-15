@@ -156,12 +156,17 @@
             <RollingText class="tool-name" :text="group.runningName" />
             <RollingText v-if="group.runningSummary" class="tool-summary" :text="group.runningSummary" />
           </template>
-          <!-- Between two steps (a thinking chip is live) and once the run has
-               settled: counts, because there is no single step to name. -->
+          <!-- Between two steps, only a thinking chip is live: the row IS that
+               chip (brain + label + ring), exactly like the standalone one. A
+               count line here would read as a summary of work that has not
+               happened yet — the thought is the work. -->
+          <template v-else-if="group.runningThinking && streaming">
+            <RollingText class="tool-name" :text="t('chat.message.deepThinking')" />
+          </template>
+          <!-- Settled: counts, because there is no single step to name. -->
           <template v-else>
             <RollingText class="tool-name" :text="toolGroupLabel(group)" />
-            <span v-if="group.runningThinking && streaming" class="tool-summary tool-group-thinking">{{ t('chat.contentBlocks.toolGroupThinkingRunning') }}</span>
-            <span v-else-if="group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
+            <span v-if="group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
             <span v-else-if="group.interruptedCount > 0" class="tool-summary tool-group-interrupted">{{ t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }) }}</span>
           </template>
           <!-- Everything from the cancelled marker to the chevron is one block
@@ -184,10 +189,11 @@
             <XCircle v-else-if="group.failedCount > 0" :size="14" color="#ef4444" class="tool-error-icon" />
             <CircleSlash v-else-if="(group.interruptedCount || 0) > 0" :size="14" color="#f59e0b" class="tool-warn" />
             <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
-            <!-- No chevron while a tool runs: a standalone pill has none, and
-                 this row has to be indistinguishable from it. -->
-            <ChevronUp v-if="!group.runningIndex && isToolGroupOpen(group)" :size="12" class="tool-group-chevron" />
-            <ChevronDown v-else-if="!group.runningIndex" :size="12" class="tool-group-chevron" />
+            <!-- The chevron is always there, running or settled: the row is
+                 unfoldable at any time, so the affordance must not flicker in
+                 and out as steps start and finish. -->
+            <ChevronUp v-if="isToolGroupOpen(group)" :size="12" class="tool-group-chevron" />
+            <ChevronDown v-else :size="12" class="tool-group-chevron" />
           </span>
         </div>
         <!-- The run's content is rendered by a nested ContentBlocks instance,
