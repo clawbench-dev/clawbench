@@ -495,11 +495,11 @@ describe('ForgePanelContent', () => {
 
     expect(mockOpenComposer).toHaveBeenCalledTimes(1)
     const ctx = mockOpenComposer.mock.calls[0][0] as {
-      quote?: { filePath?: string; language?: string; url?: string; commitSha?: string }
+      quote?: { filePath?: string; language?: string; url?: string; locators?: Record<string, string> }
     }
     expect(ctx.quote?.language).toBe('pipeline')
     expect(ctx.quote?.filePath).toBe('deploy #12')
-    expect(ctx.quote?.commitSha).toBe('abcdef1234567')
+    expect(ctx.quote?.locators?.commit).toBe('abcdef1234567')
     // `@click.stop`: quoting must not also drill into the run.
     expect(wrapper.findComponent({ name: 'ForgePipelineDetail' }).exists()).toBe(false)
   })

@@ -377,7 +377,8 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
-import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText, isForgeQuote } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
+import { jumpToQuoteSource as jumpToQuoteSourceImpl } from '@/utils/quoteJump'
 import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRouting.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
@@ -948,93 +949,44 @@ async function saveQuoteNote(note) {
 /**
  * Jump from the drawer to the quote's source.
  *
- * Order matters: the most specific locator wins, because a quote can carry more
- * than one. A git-diff quote, for instance, has both a file path and a commit —
- * and the user who selected a hunk in a commit view means "that commit", not
- * "that file at its current state". Each branch therefore jumps to the
- * narrowest thing the quote can identify, and only falls through when that
- * locator is absent.
+ * The DECISION lives in `utils/quoteJump.ts` — a registry of one jumper per
+ * locator, ordered most-specific-first. This component only supplies the
+ * navigation primitives (open a file, open a URL, switch session, fire a
+ * cross-panel event), because those are the things it actually owns.
  *
- * All four cross-panel jumps reuse the EXISTING navigation channels rather than
- * inventing new ones: `navigate-to-commit` and `clawbench-open-task` are already
- * handled by App.vue, and the session jump goes through the same session-open
- * event the notification taps use.
+ * It used to be a seven-branch `if` chain HERE, kept aligned with the drawer's
+ * `canJumpToSource` by a test that compared the two files as text. One registry
+ * now answers both "is there somewhere to go" and "where", so a button that
+ * appears and does nothing is no longer expressible.
+ *
+ * The primitives reuse EXISTING navigation channels rather than inventing new
+ * ones: `navigate-to-commit` and `clawbench-open-task` are already handled by
+ * App.vue, and the session jump goes through the same session-open event the
+ * notification taps use.
  */
 async function jumpToQuoteSource(q) {
     if (!q) return
-
-    // 1. Commit: open the git history at that commit (not the file, which is
-    //    what the path alone would open).
-    if (q.commitSha) {
-        window.dispatchEvent(new CustomEvent('navigate-to-commit', { detail: { sha: q.commitSha } }))
-        return
-    }
-
-    // 2. Task: open the scheduled task's detail view.
-    if (q.taskId) {
-        if (!tasksEnabled.value) { notifyFeatureDisabled(); return }
-        window.dispatchEvent(new CustomEvent('clawbench-open-task', {
-            detail: { taskId: q.taskId, executionId: q.executionId },
-        }))
-        return
-    }
-
-    // 3. Meeting: switch to the 会议 tab and open that record. The panel owns
-    //    the view state, so the request travels as an event rather than a prop.
-    if (q.meetingToken) {
-        window.dispatchEvent(new CustomEvent('clawbench-open-meeting', {
-            detail: { token: q.meetingToken },
-        }))
-        return
-    }
-
-    // 4. Mail: switch to the 邮件 tab and open that message. The panel owns
-    //    the list/reader state, so the request travels as an event, like the
-    //    meeting jump above. Mail is global, so no project switch is involved.
-    if (q.mailId) {
-        window.dispatchEvent(new CustomEvent('clawbench-open-mail', {
-            detail: { messageId: q.mailId },
-        }))
-        return
-    }
-
-    // 5. Session + message: switch to the session and scroll to the message.
-    //    The request is parked in module state because the session may still
-    //    have to load (and may be a different project) — see useMessageNavigation.
-    if (q.sessionId) {
-        if (q.messageId) setPendingMessageNavigation(q.sessionId, q.messageId)
-        window.dispatchEvent(new CustomEvent('clawbench-open-session', {
-            detail: { sessionId: q.sessionId },
-        }))
-        return
-    }
-
-    // 6. External address (a forge issue/PR, a CI run, a comment anchor).
-    //
-    // A forge reference is not just a link: it points into the integration that
-    // `forge.enabled` turns off (polling stops, bindings are cleared), so with
-    // the switch off it is refused like the forge tab and the forge notification
-    // rows are. A plain external link (a pasted URL, a comment anchor) is not
-    // the integration and still opens.
-    if (q.url) {
-        if (isForgeQuote(q) && !forgeEnabled.value) {
-            notifyFeatureDisabled()
-            return
-        }
-        openExternalUrl(q.url)
-        return
-    }
-
-    // A meeting or mail quote whose locator did not survive (an old message)
-    // has no addressable source: opening the label as a path would 404 and
-    // look like a broken file.
-    if (q.language === 'meeting' && !q.meetingToken) return
-    if (q.language === 'mail' && !q.mailId) return
-
-    // 7. A file: open it at its line range.
-    if (!q.filePath) return
-    const relPath = relativizeProjectPath(q.filePath, store.state.projectRoot)
-    await openFilePath(relPath, q.startLine, q.endLine, 'chat')
+    await jumpToQuoteSourceImpl(q, {
+        openFile: async (path, startLine, endLine) => {
+            const relPath = relativizeProjectPath(path, store.state.projectRoot)
+            await openFilePath(relPath, startLine, endLine, 'chat')
+        },
+        openUrl: (url) => openExternalUrl(url),
+        forgeEnabled: () => forgeEnabled.value,
+        tasksEnabled: () => tasksEnabled.value,
+        notifyDisabled: () => notifyFeatureDisabled(),
+        openSession: (sessionId, messageId) => {
+            // Parked in module state because the session may still have to load,
+            // and may belong to another project.
+            if (messageId) setPendingMessageNavigation(sessionId, messageId)
+            window.dispatchEvent(new CustomEvent('clawbench-open-session', {
+                detail: { sessionId },
+            }))
+        },
+        dispatch: (event, detail) => {
+            window.dispatchEvent(new CustomEvent(event, { detail }))
+        },
+    })
 }
 
 const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()

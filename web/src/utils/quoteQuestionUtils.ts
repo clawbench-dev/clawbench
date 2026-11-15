@@ -114,22 +114,26 @@ export interface QuoteSource {
   language: string
   url: string
   /**
-   * Machine-readable locators for the origin. Each is optional and read from
-   * the SAME element as the label, so a region either carries a whole identity
-   * or none of it.
+   * Machine-readable locators for the origin, collected from every
+   * `data-quote-<key>` attribute on the SAME element as the label, so a region
+   * either carries a whole identity or none of it.
    *
    * They exist so the quote can jump back to its source and so the AI can
    * address it: the label is a human-readable name ("每日构建"), which is not
    * enough to find anything.
+   *
+   * Collected by PREFIX rather than by a fixed list of attribute names. The
+   * fixed-list version had to be edited in three places to declare one new
+   * locator (the attribute, this reader, and the copier), and the meeting token
+   * was in fact read but never copied out — the card said "会议" and the jump
+   * button did nothing. Now `data-quote-deploy="d-42"` on a region reaches the
+   * AI with no code change at all.
    */
-  commitSha?: string
-  taskId?: number
-  sessionId?: string
-  /** Meeting token, when the region belongs to a meeting record. */
-  meetingToken?: string
-  messageId?: number
-  executionId?: string
+  locators: Record<string, string>
 }
+
+/** `data-quote-source` / `data-quote-language` / `data-quote-url` are reserved. */
+const RESERVED_QUOTE_ATTRS = new Set(['source', 'language', 'url'])
 
 /**
  * Read the quote source label from a container's ancestors.
@@ -143,9 +147,11 @@ export interface QuoteSource {
  * `data-quote-url` carries the object's address so a forge quote can offer a
  * real jump-to-source action. Without it the label alone is not openable.
  *
- * The locator attributes (`data-quote-commit`, `-task-id`, `-session-id`,
- * `-message-id`, `-execution-id`) are read from the same element: they are the
- * machine keys behind the human-readable label.
+ * Any other `data-quote-<key>` attribute becomes a locator, verbatim: the
+ * attribute name is the key and its value is the value. Known ones today are
+ * `commit`, `task-id`, `session-id`, `message-id`, `execution-id`,
+ * `meeting-token` — but nothing here enumerates them, so a new one needs no
+ * change to this function.
  *
  * Returns null when the container is not inside a labelled region, so callers
  * can fall back to the normal file-path handling.
@@ -153,34 +159,48 @@ export interface QuoteSource {
 export function getQuoteSource(container: HTMLElement): QuoteSource | null {
   const el = container.closest<HTMLElement>('[data-quote-source]')
   const label = el?.getAttribute('data-quote-source') || ''
-  if (!label) return null
-  const taskId = intAttr(el, 'data-quote-task-id')
-  const messageId = intAttr(el, 'data-quote-message-id')
-  const commitSha = el?.getAttribute('data-quote-commit') || ''
-  const sessionId = el?.getAttribute('data-quote-session-id') || ''
-  const executionId = el?.getAttribute('data-quote-execution-id') || ''
-  const meetingToken = el?.getAttribute('data-quote-meeting-token') || ''
+  if (!el || !label) return null
   return {
     label,
-    language: el?.getAttribute('data-quote-language') || '',
-    url: el?.getAttribute('data-quote-url') || '',
-    // Omitted (not undefined-valued) when absent, so a caller spreading this
-    // into a quote does not write empty keys that then round-trip as set.
-    ...(commitSha ? { commitSha } : {}),
-    ...(taskId !== undefined ? { taskId } : {}),
-    ...(sessionId ? { sessionId } : {}),
-    ...(messageId !== undefined ? { messageId } : {}),
-    ...(executionId ? { executionId } : {}),
-    ...(meetingToken ? { meetingToken } : {}),
+    language: el.getAttribute('data-quote-language') || '',
+    url: el.getAttribute('data-quote-url') || '',
+    locators: readLocatorAttrs(el),
   }
 }
 
-/** Parse a positive-integer attribute; undefined when absent or not a number. */
-function intAttr(el: HTMLElement | null, name: string): number | undefined {
-  const raw = el?.getAttribute(name)
-  if (!raw) return undefined
-  const n = Number(raw)
-  return Number.isFinite(n) && n > 0 ? n : undefined
+/**
+ * Collect every `data-quote-<key>` attribute into a locator bag.
+ *
+ * Attribute names are mapped to prompt/locator vocabulary: `data-quote-task-id`
+ * → `task`, `data-quote-message-id` → `message`, etc. That suffix trimming is
+ * what keeps the DOM attributes readable (`task-id`, `meeting-token`) while the
+ * wire/prompt keys stay terse (`task`, `meeting`).
+ *
+ * Empty values are dropped: an attribute bound to `''` (a Vue binding whose
+ * source is absent) means "no locator", not "locator with an empty value".
+ */
+function readLocatorAttrs(el: HTMLElement): Record<string, string> {
+  const locators: Record<string, string> = {}
+  for (const attr of Array.from(el.attributes)) {
+    if (!attr.name.startsWith('data-quote-')) continue
+    const raw = attr.name.slice('data-quote-'.length)
+    if (RESERVED_QUOTE_ATTRS.has(raw)) continue
+    const value = attr.value.trim()
+    if (!value) continue
+    locators[locatorKeyFromAttr(raw)] = value
+  }
+  return locators
+}
+
+/**
+ * `task-id` → `task`, `meeting-token` → `meeting`, `execution-id` → `execution`.
+ *
+ * The DOM keeps a readable `-id`/`-token` suffix so an attribute name says what
+ * kind of handle it holds; the locator key drops it, matching the vocabulary the
+ * prompt renders (`task: 12`) and the wire bag (`locators.task`).
+ */
+function locatorKeyFromAttr(raw: string): string {
+  return raw.replace(/-(id|token|sha)$/, '')
 }
 
 /**

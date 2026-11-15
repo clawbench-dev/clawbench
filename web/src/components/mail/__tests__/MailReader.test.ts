@@ -243,7 +243,7 @@ describe('MailReader', () => {
     const ctx = composer.openComposer.mock.calls[0][0] as { quote: Record<string, unknown>; label: string }
     // The body is inlined: the AI cannot fetch an email from `mail: <id>`.
     expect(ctx.quote.text).toBe('正文第一行\n正文第二行')
-    expect(ctx.quote).toMatchObject({ sourceKind: 'mail', language: 'mail', mailId: 5 })
+    expect(ctx.quote).toMatchObject({ sourceKind: 'mail', language: 'mail', locators: { mail: '5' } })
     // The label is what the card shows: subject + sender.
     expect(ctx.quote.filePath).toContain('接口变更说明')
     expect(ctx.quote.filePath).toContain('李四')

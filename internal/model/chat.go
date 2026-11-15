@@ -63,40 +63,22 @@ type FileEntry struct {
 	// url and no path, exactly like a "message" one. Empty (legacy rows) falls
 	// back to client-side inference.
 	SourceKind string `json:"sourceKind,omitempty"`
-	// The source locators below are MACHINE-readable keys that let the client
-	// jump back to where a quote came from, and let the AI reach the origin.
-	// The human-readable name travels in Path (documented as a label).
+	// Locators are the MACHINE-readable keys that let the client jump back to
+	// where a quote came from, and let the AI reach the origin. The
+	// human-readable name travels in Path (documented as a label).
+	//
+	// An OPEN key/value bag rather than one field per source: every new source
+	// (a document, a mail thread, a deploy) used to require adding a field here,
+	// a field in QuotePrompt, a copy line in validatedQuoteEntry, a line in
+	// quoteSourceKeys, and the same four on the client — fourteen places, each
+	// one a silent-drop hazard (see validatedQuoteEntry's comment). Keys are the
+	// same vocabulary the prompt renders, so `task: 12` in a prompt and
+	// `locators["task"]` on the wire are the same thing.
 	//
 	// They round-trip because the quoted text carries no trace of them: after a
 	// reload nothing else identifies which commit, task, session or message a
 	// sent quote came from, so dropping one makes the quote silently unjumpable.
-	// CommitSHA is the commit a git-history or CI-pipeline quote came from.
-	CommitSHA string `json:"commitSha,omitempty"`
-	// TaskID is the scheduled task a task quote came from.
-	TaskID int64 `json:"taskId,omitempty"`
-	// SessionID is the chat session a message quote came from.
-	SessionID string `json:"sessionId,omitempty"`
-	// MessageID is the DB chat-message id the quote was taken from.
-	MessageID int64 `json:"messageId,omitempty"`
-	// ExecutionID is the task execution a run-detail quote came from.
-	ExecutionID string `json:"executionId,omitempty"`
-	// MeetingToken is the live-share room token a meeting quote (a quoted line
-	// of minutes or transcript) came from. It is the only route back to that
-	// meeting: the quoted text names the meeting, but a name is not
-	// addressable, so without the token the jump handler silently no-ops and
-	// the AI cannot tell which meeting the snippet came from.
-	MeetingToken string `json:"meetingToken,omitempty"`
-	// MailID is the local mail message row a mail quote came from (a quoted
-	// body, or an email referenced as a whole). Mail is global rather than
-	// project-scoped, so the id alone identifies it; the subject and sender
-	// travel in Path as the human-readable label.
-	MailID int64 `json:"mailId,omitempty"`
-	// SourceDir is a PROJECT-RELATIVE directory holding the material a quote
-	// was taken from, when that material is a folder rather than one file —
-	// a meeting's notes folder (transcript, minutes, audio, key frames).
-	// Path stays the human-readable label, so without this the AI could read
-	// the quoted lines but never open the rest of the source.
-	SourceDir string `json:"sourceDir,omitempty"`
+	Locators map[string]string `json:"locators,omitempty"`
 }
 
 // IsURL reports whether the entry is an external URL rather than a local path.

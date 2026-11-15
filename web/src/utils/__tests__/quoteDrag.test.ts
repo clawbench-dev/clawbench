@@ -80,7 +80,7 @@ describe('commitDragPayload', () => {
   it('carries the sha as the locator so the card can jump back to it', () => {
     const p = commitDragPayload({ sha: 'a1b2c3d4e5f6a7b8', msg: 'fix login' })!
 
-    expect(p.commitSha).toBe('a1b2c3d4e5f6a7b8')
+    expect(p.locators?.commit).toBe('a1b2c3d4e5f6a7b8')
     expect(p.text).toBe('')
     expect(p.filePath).toBe('a1b2c3d fix login')
     expect(resolveQuoteType(p)).toBe('diff')
@@ -108,7 +108,7 @@ describe('taskDragPayload', () => {
   it('carries the task id as the locator', () => {
     const p = taskDragPayload({ id: 42, name: 'Nightly build' })!
 
-    expect(p.taskId).toBe(42)
+    expect(p.locators?.task).toBe('42')
     expect(p.filePath).toBe('Nightly build')
     expect(resolveQuoteType(p)).toBe('task')
   })
@@ -165,14 +165,14 @@ describe('pipelineDragPayload', () => {
     const p = pipelineDragPayload({ number: 7, name: 'CI', url: 'https://x/7', sha: 'deadbeef' })!
 
     expect(p.url).toBe('https://x/7')
-    expect(p.commitSha).toBe('deadbeef')
+    expect(p.locators?.commit).toBe('deadbeef')
     expect(resolveQuoteType(p)).toBe('pipeline')
   })
 
   it('omits the sha when the run does not report one', () => {
     const p = pipelineDragPayload({ number: 7, name: 'CI', url: 'https://x/7' })!
 
-    expect(p.commitSha).toBeUndefined()
+    expect(p.locators?.commit).toBeUndefined()
     // Still a pipeline: the explicit language marker is authoritative, so a run
     // that reports no sha does not silently degrade into a plain link.
     expect(resolveQuoteType(p)).toBe('pipeline')
@@ -220,7 +220,7 @@ describe('meetingDragPayload', () => {
   it('carries the token and a readable label, and no text', () => {
     const p = meetingDragPayload({ token: 'abc123', label: 'Meeting · Release review · 11-01 14:30' })!
 
-    expect(p.meetingToken).toBe('abc123')
+    expect(p.locators?.meeting).toBe('abc123')
     expect(p.text).toBe('')
     expect(p.language).toBe('meeting')
     expect(p.filePath).toBe('Meeting · Release review · 11-01 14:30')
@@ -237,7 +237,7 @@ describe('meetingDragPayload', () => {
     // content can reach the card is in the payload itself.
     const p = meetingDragPayload({ token: 'abc123', label: '会议 · 周会', text: '张三: 你好' })!
     expect(p.text).toBe('张三: 你好')
-    expect(p.meetingToken).toBe('abc123')
+    expect(p.locators?.meeting).toBe('abc123')
   })
 
   // The drag has nothing to quote without a record to look the text up by.
@@ -251,7 +251,7 @@ describe('mailDragPayload', () => {
   it('carries the message id and a readable label, and no text', () => {
     const p = mailDragPayload({ id: 77, label: '周报 · 张三' })!
 
-    expect(p.mailId).toBe(77)
+    expect(p.locators?.mail).toBe('77')
     // Identity only: the drop handler fetches the body (dragstart cannot await).
     expect(p.text).toBe('')
     expect(p.language).toBe('mail')

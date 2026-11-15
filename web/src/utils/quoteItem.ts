@@ -89,22 +89,64 @@ export interface QuoteItem {
   url?: string
   /** Which jump affordance (if any) the drawer should offer. */
   sourceKind: QuoteSourceKind
-  /** DB message id when the quote was taken from a chat message. */
-  messageId?: number
-  /** Commit SHA when the quote came from a git-history or CI-pipeline view. */
-  commitSha?: string
-  /** Scheduled task id when the quote came from a task view. */
-  taskId?: number
-  /** Chat session id when the quote came from a chat message. */
-  sessionId?: string
-  /** Task execution id when the quote came from one run's detail view. */
-  executionId?: string
-  /** Meeting token when the quote came from a meeting record. */
-  meetingToken?: string
-  /** Local mail message id when the quote came from an email. */
-  mailId?: number
+  /**
+   * Machine-readable source locators (see `FileEntry.locators`).
+   *
+   * An open bag: `QUOTE_LOCATOR_KEYS` documents the keys this build understands
+   * and gives autocomplete, but a key it has never heard of still round-trips —
+   * which is what lets a new source be added without touching any converter.
+   */
+  locators?: QuoteLocators
+}
+
+/**
+ * The locator keys this build understands, with what each one points at.
+ *
+ * Documentation and autocomplete only — NOT a closed list. A quote may carry
+ * other keys and they must survive every conversion; that is the whole point of
+ * the bag. (The backend renders unknown keys too, sorted after the known ones.)
+ */
+export const QUOTE_LOCATOR_KEYS = {
+  /** Commit SHA a git-history or CI-pipeline quote came from. */
+  commit: 'commit',
+  /** Scheduled task id a task quote came from. */
+  task: 'task',
+  /** Chat session id a message/session quote came from. */
+  session: 'session',
+  /** DB chat-message id the quote was taken from (scroll-to-message). */
+  message: 'message',
+  /** Task execution id, when the quote came from one run's detail view. */
+  execution: 'execution',
+  /** Meeting token, when the quote came from a meeting record. */
+  meeting: 'meeting',
+  /** Local mail message id, when the quote came from an email. */
+  mail: 'mail',
   /** Project-relative folder holding the source material (a meeting's notes). */
-  sourceDir?: string
+  dir: 'dir',
+} as const
+
+/**
+ * The locator bag on a quote.
+ *
+ * `Record<string, string>` rather than a closed union: the wire format is an
+ * open bag so a new source needs no change in any converter, and typing it as a
+ * closed set would put the hazard back (the type would silently drop the new
+ * key at the first conversion). Values are always strings so the prompt renders
+ * them verbatim.
+ */
+export type QuoteLocators = Record<string, string>
+
+/** Read a locator as a string ('' when absent). */
+export function locatorOf(q: { locators?: QuoteLocators }, key: string): string {
+  return q.locators?.[key] ?? ''
+}
+
+/** Read a numeric locator as a number (0 when absent or not a number). */
+export function numericLocatorOf(q: { locators?: QuoteLocators }, key: string): number {
+  const raw = q.locators?.[key]
+  if (!raw) return 0
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : 0
 }
 
 /** The staged-quote shape owned by useChatContext (structurally compatible). */
@@ -118,14 +160,7 @@ export interface StagedQuoteLike {
   note?: string
   url?: string
   sourceKind?: QuoteSourceKind
-  messageId?: number
-  commitSha?: string
-  taskId?: number
-  sessionId?: string
-  executionId?: string
-  meetingToken?: string
-  mailId?: number
-  sourceDir?: string
+  locators?: QuoteLocators
 }
 
 /**
@@ -154,14 +189,8 @@ export function fromStagedQuote(q: StagedQuoteLike): QuoteItem {
     endLine: q.endLine || 0,
     url: q.url,
     sourceKind: inferSourceKind(q),
-    messageId: q.messageId,
-    commitSha: q.commitSha,
-    taskId: q.taskId,
-    sessionId: q.sessionId,
-    executionId: q.executionId,
-    meetingToken: q.meetingToken,
-    mailId: q.mailId,
-    sourceDir: q.sourceDir,
+    // Copied whole: a new locator key needs no change here.
+    ...(q.locators ? { locators: { ...q.locators } } : {}),
   }
 }
 
@@ -181,17 +210,9 @@ export function fromFileEntry(f: FileEntry): QuoteItem {
     // chat quote (both have no url and no path), so a round-tripped 'selection'
     // would come back as 'message' and the drawer would mislabel it.
     sourceKind: f.sourceKind || inferSourceKind({ url, filePath: f.path }),
-    // Source locators. Read back explicitly (never inferred): the quoted text
-    // carries no trace of them, so a reloaded quote would otherwise be
-    // unjumpable.
-    messageId: f.messageId,
-    commitSha: f.commitSha,
-    taskId: f.taskId,
-    sessionId: f.sessionId,
-    executionId: f.executionId,
-    meetingToken: f.meetingToken,
-    mailId: f.mailId,
-    sourceDir: f.sourceDir,
+    // Source locators, copied whole (never inferred): the quoted text carries no
+    // trace of them, so a reloaded quote would otherwise be unjumpable.
+    ...(f.locators ? { locators: { ...f.locators } } : {}),
   }
 }
 
@@ -214,19 +235,24 @@ export function fromFileEntry(f: FileEntry): QuoteItem {
  * imports useChatContext, so importing it back would create a cycle).
  *
  * The label is the session TITLE because that is what the user recognises;
- * the id is what makes it addressable, and it travels separately as `sessionId`.
+ * the id is what makes it addressable, and it travels separately as `session`.
  * With no title we fall back to the id so the card is never blank.
  *
- * `messageId` is omitted when unavailable (an optimistic message has no DB id):
+ * `message` is omitted when unavailable (an optimistic message has no DB id):
  * the quote is still valid, it just cannot be scrolled back to.
  */
 export function buildMessageQuote(
   text: string,
   session: { id?: string; title?: string },
   messageId?: number,
-): Pick<QuoteItem, 'text' | 'filePath' | 'language' | 'startLine' | 'endLine' | 'sourceKind' | 'sessionId' | 'messageId'> {
+): Pick<QuoteItem, 'text' | 'filePath' | 'language' | 'startLine' | 'endLine' | 'sourceKind' | 'locators'> {
   const sessionId = session.id || ''
   const sessionTitle = (session.title || '').trim()
+  const locators: QuoteLocators = {}
+  if (sessionId) locators.session = sessionId
+  if (typeof messageId === 'number' && Number.isFinite(messageId) && messageId > 0) {
+    locators.message = String(messageId)
+  }
   return {
     text,
     // The label is the session title (what the user recognises); the id is
@@ -237,10 +263,7 @@ export function buildMessageQuote(
     startLine: 0,
     endLine: 0,
     sourceKind: 'message',
-    ...(sessionId ? { sessionId } : {}),
-    ...(typeof messageId === 'number' && Number.isFinite(messageId) && messageId > 0
-      ? { messageId }
-      : {}),
+    ...(Object.keys(locators).length ? { locators } : {}),
   }
 }
 
@@ -273,8 +296,14 @@ export function quoteItemFromTarget(target: {
   endLine?: number
   /** Explicit origin kind; inferred from url/path when omitted. */
   sourceKind?: QuoteSourceKind
-  /** Local mail message id, for a quote taken from an email. */
-  mailId?: number
+  /**
+   * Extra locator keys to attach (merged into the quote's bag).
+   *
+   * Callers pass only what they know; unknown keys are carried through
+   * untouched, so a surface can attach an addressable handle for a source this
+   * build has no special handling for yet.
+   */
+  locators?: QuoteLocators
 }): QuoteItem {
   const filePath = target.filePath || target.label || ''
   return {
@@ -287,7 +316,9 @@ export function quoteItemFromTarget(target: {
     endLine: target.endLine || 0,
     url: target.url,
     sourceKind: target.sourceKind || inferSourceKind({ url: target.url, filePath }),
-    ...(target.mailId ? { mailId: target.mailId } : {}),
+    ...(target.locators && Object.keys(target.locators).length
+      ? { locators: { ...target.locators } }
+      : {}),
   }
 }
 
@@ -311,18 +342,10 @@ export function toFileEntry(q: QuoteItem): FileEntry {
     // Persisted so a reloaded quote keeps its real source: a terminal quote has
     // no url and no path, so without this it would be inferred as a chat quote.
     ...(q.sourceKind ? { sourceKind: q.sourceKind } : {}),
-    // Source locators. These are the only route back to the commit/task/
-    // message, so each must be written or the sent quote is unjumpable.
-    ...(q.commitSha ? { commitSha: q.commitSha } : {}),
-    ...(q.taskId ? { taskId: q.taskId } : {}),
-    ...(q.sessionId ? { sessionId: q.sessionId } : {}),
-    ...(q.messageId ? { messageId: q.messageId } : {}),
-    ...(q.executionId ? { executionId: q.executionId } : {}),
-    // Without this the sent meeting quote loses its jump target and falls back
-    // to opening its own LABEL as a file path.
-    ...(q.meetingToken ? { meetingToken: q.meetingToken } : {}),
-    ...(q.mailId ? { mailId: q.mailId } : {}),
-    ...(q.sourceDir ? { sourceDir: q.sourceDir } : {}),
+    // Source locators, copied whole. These are the only route back to the
+    // origin, so an enumerated copy here is how a locator gets lost — and with
+    // an open bag there is nothing to enumerate.
+    ...(q.locators && Object.keys(q.locators).length ? { locators: { ...q.locators } } : {}),
   }
 }
 
@@ -378,20 +401,20 @@ const TYPE_MARKER_LANGUAGE: Record<string, QuoteDisplayType> = {
  * selected a hunk means the commit, not the file.
  */
 export function resolveQuoteType(q: Pick<QuoteItem,
-  'language' | 'url' | 'filePath' | 'sourceKind' | 'commitSha' | 'taskId' | 'executionId' | 'meetingToken' | 'mailId'
+  'language' | 'url' | 'filePath' | 'sourceKind' | 'locators'
 >): QuoteDisplayType {
   // 1. An explicit type marker from the surface that produced the quote.
   const marked = q.language ? TYPE_MARKER_LANGUAGE[q.language] : undefined
   if (marked) return marked
 
   // 2. Locators, most specific first.
-  if (q.meetingToken) return 'meeting'
-  if (q.mailId) return 'mail'
-  if (q.executionId) return 'exec'
-  if (q.taskId) return 'task'
+  if (locatorOf(q, 'meeting')) return 'meeting'
+  if (locatorOf(q, 'mail')) return 'mail'
+  if (locatorOf(q, 'execution')) return 'exec'
+  if (locatorOf(q, 'task')) return 'task'
   // A CI run carries both its address and the commit it built; a git diff only
   // has the commit. That is what separates the two.
-  if (q.commitSha) return q.url ? 'pipeline' : 'diff'
+  if (locatorOf(q, 'commit')) return q.url ? 'pipeline' : 'diff'
   if (q.url) return 'link'
 
   // 3. sourceKind, for sources with no locator at all.
@@ -417,7 +440,7 @@ const FORGE_QUOTE_TYPES: ReadonlySet<QuoteDisplayType> = new Set<QuoteDisplayTyp
  * a page the app no longer tracks. A `link` quote (a pasted URL, a comment
  * anchor) is not the integration and stays openable.
  */
-export function isForgeQuote(q: Pick<QuoteItem, 'language' | 'url' | 'filePath' | 'sourceKind' | 'commitSha'>): boolean {
+export function isForgeQuote(q: Pick<QuoteItem, 'language' | 'url' | 'filePath' | 'sourceKind' | 'locators'>): boolean {
   return FORGE_QUOTE_TYPES.has(resolveQuoteType(q))
 }
 
@@ -458,31 +481,9 @@ export function quoteLineRange(q: QuoteItem): string {
 }
 
 /**
- * Whether the drawer should offer a jump-to-source action.
+ * Where a quote's jump-to-source action goes, and whether it exists at all.
  *
- * This must stay in sync with the dispatch order in
- * `jumpToQuoteSource` (ChatPanelContent.vue): every locator it can act on has
- * to be accepted here, or the button is hidden for a quote that could in fact
- * be opened.
- *
- * A quote with no locator at all (a bare text selection, e.g. from a terminal
- * or a settings pane) has nowhere to go, so the button is hidden rather than
- * rendered as a no-op.
+ * Moved to `utils/quoteJump.ts`: the answer has to come from the SAME registry
+ * that performs the jump, or the button and the handler drift apart (that is
+ * exactly what used to happen — see that module's header).
  */
-export function canJumpToSource(q: QuoteItem): boolean {
-  if (q.commitSha) return true
-  if (q.mailId) return true
-  if (q.meetingToken) return true
-  if (q.taskId) return true
-  if (q.sessionId) return true
-  if (q.sourceKind === 'message') return false
-  if (q.sourceKind === 'selection') return false
-  // A meeting/mail quote whose locator did not survive (an old message) has no
-  // addressable source. Falling through to the file branch would open its
-  // human-readable label as a path and 404 — the jump handler refuses the same
-  // two shapes, so the button must not be offered either.
-  if (q.sourceKind === 'meeting') return false
-  if (q.sourceKind === 'mail') return false
-  if (q.sourceKind === 'url') return !!q.url
-  return !!q.filePath
-}

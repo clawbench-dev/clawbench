@@ -349,7 +349,7 @@ describe('getQuoteSource', () => {
     const inner = document.createElement('div')
     wrap.appendChild(inner)
 
-    expect(getQuoteSource(inner)).toEqual({ label: 'acme/widgets#123', language: 'issue', url: '' })
+    expect(getQuoteSource(inner)).toEqual({ label: 'acme/widgets#123', language: 'issue', url: '', locators: {} })
   })
 
   it('returns null outside a labelled region so callers can fall back', () => {
@@ -371,11 +371,17 @@ describe('getQuoteSource', () => {
     wrap.setAttribute('data-quote-source', 'a/b#1')
     const inner = document.createElement('div')
     wrap.appendChild(inner)
-    expect(getQuoteSource(inner)).toEqual({ label: 'a/b#1', language: '', url: '' })
+    expect(getQuoteSource(inner)).toEqual({ label: 'a/b#1', language: '', url: '', locators: {} })
   })
 
   // The locators are the machine keys behind the human-readable label. Without
   // them a quote can name its source but never reach it.
+  //
+  // Collected by ATTRIBUTE PREFIX, not from a fixed list: adding a locator used
+  // to mean editing three places (the attribute, this reader, and the copier in
+  // deriveQuoteData), and the meeting token was in fact read but never copied —
+  // a quote made by selecting minutes said "会议" and the jump button did
+  // nothing.
   describe('source locators', () => {
     function sourceWith(attrs: Record<string, string>) {
       const wrap = document.createElement('div')
@@ -387,37 +393,54 @@ describe('getQuoteSource', () => {
     }
 
     it('reads the commit', () => {
-      expect(sourceWith({ 'data-quote-commit': 'a1b2c3d' })).toMatchObject({ commitSha: 'a1b2c3d' })
+      expect(sourceWith({ 'data-quote-commit': 'a1b2c3d' })?.locators)
+        .toEqual({ commit: 'a1b2c3d' })
     })
 
-    it('reads the task id as a number', () => {
-      expect(sourceWith({ 'data-quote-task-id': '12' })).toMatchObject({ taskId: 12 })
+    // The DOM suffix is readable (`-id`, `-token`); the locator key is the terse
+    // prompt vocabulary (`task`, `meeting`).
+    it('maps the readable attribute suffix to the prompt key', () => {
+      expect(sourceWith({ 'data-quote-task-id': '12' })?.locators).toEqual({ task: '12' })
+      expect(sourceWith({ 'data-quote-session-id': 'sess-abc' })?.locators).toEqual({ session: 'sess-abc' })
+      expect(sourceWith({ 'data-quote-message-id': '42' })?.locators).toEqual({ message: '42' })
+      expect(sourceWith({ 'data-quote-execution-id': 'exec-7' })?.locators).toEqual({ execution: 'exec-7' })
+      expect(sourceWith({ 'data-quote-meeting-token': 'tok-9' })?.locators).toEqual({ meeting: 'tok-9' })
     })
 
-    it('reads the session and message ids', () => {
-      expect(sourceWith({ 'data-quote-session-id': 'sess-abc', 'data-quote-message-id': '42' }))
-        .toMatchObject({ sessionId: 'sess-abc', messageId: 42 })
+    it('collects several locators at once', () => {
+      expect(sourceWith({
+        'data-quote-task-id': '12',
+        'data-quote-execution-id': 'exec-7',
+      })?.locators).toEqual({ task: '12', execution: 'exec-7' })
     })
 
-    it('reads the execution id', () => {
-      expect(sourceWith({ 'data-quote-execution-id': 'exec-7' })).toMatchObject({ executionId: 'exec-7' })
+    // The whole point of prefix collection: a region can declare a handle this
+    // build has no special handling for, and it still reaches the quote.
+    it('collects a locator key this build has never heard of', () => {
+      expect(sourceWith({ 'data-quote-deploy': 'd-42' })?.locators).toEqual({ deploy: 'd-42' })
     })
 
-    it('omits locators that are absent rather than setting them to undefined', () => {
-      const got = sourceWith({})
-      expect('commitSha' in got!).toBe(false)
-      expect('taskId' in got!).toBe(false)
-      expect('sessionId' in got!).toBe(false)
-      expect('messageId' in got!).toBe(false)
-      expect('executionId' in got!).toBe(false)
+    it('is an empty bag when no locator attributes are present', () => {
+      expect(sourceWith({})?.locators).toEqual({})
     })
 
-    // A non-numeric or non-positive id is not an id. Emitting 0/NaN would make
-    // the drawer offer a jump that goes nowhere.
-    it('ignores a non-numeric or non-positive id', () => {
-      expect(sourceWith({ 'data-quote-task-id': 'abc' })).not.toHaveProperty('taskId')
-      expect(sourceWith({ 'data-quote-task-id': '0' })).not.toHaveProperty('taskId')
-      expect(sourceWith({ 'data-quote-message-id': '-3' })).not.toHaveProperty('messageId')
+    // A Vue binding whose source is absent renders the attribute as ''. That
+    // means "no locator", not "a locator with an empty value" — an empty value
+    // would render `task: ` in the prompt and read as a real handle.
+    it('drops an empty attribute value', () => {
+      expect(sourceWith({ 'data-quote-task-id': '' })?.locators).toEqual({})
+      expect(sourceWith({ 'data-quote-commit': '   ' })?.locators).toEqual({})
+    })
+
+    // The reserved attributes describe the region itself, not a locator.
+    it('does not treat source/language/url as locators', () => {
+      const got = sourceWith({
+        'data-quote-language': 'issue',
+        'data-quote-url': 'https://e.com/1',
+      })
+      expect(got?.locators).toEqual({})
+      expect(got?.language).toBe('issue')
+      expect(got?.url).toBe('https://e.com/1')
     })
   })
 

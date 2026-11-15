@@ -7158,6 +7158,61 @@ paths:
         "200":
           description: 结果
 
+  /api/terminal/history:
+    get:
+      tags: [Terminal]
+      summary: 列出终端命令历史
+      description: |
+        返回当前项目与全局范围内记住的命令（同一命令合并成一条，`use_count` 是执行次数），
+        按最后使用时间倒序。全局范围来自各 shell 的 history 文件导入。
+      operationId: terminalHistoryList
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: 按命令内容模糊搜索（`%` 与 `_` 按字面匹配）。
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数，默认 100，上限 500。
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 命令列表
+    delete:
+      tags: [Terminal]
+      summary: 清空终端命令历史
+      operationId: terminalHistoryClear
+      responses:
+        "200":
+          description: 结果
+
+  /api/terminal/history/sync:
+    post:
+      tags: [Terminal]
+      summary: 从本机 shell 的 history 文件导入命令
+      description: |
+        读取 `~/.bash_history`、`~/.zsh_history`、fish 的 history 文件，导入最近若干条。
+        已存在的命令不会重复导入，也不会改变其次数。只读这些文件，不写入。
+      operationId: terminalHistorySync
+      responses:
+        "200":
+          description: 导入结果，`added` 为新增条数
+
+  /api/terminal/history/{id}:
+    delete:
+      tags: [Terminal]
+      summary: 删除一条终端命令历史
+      operationId: terminalHistoryDelete
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 结果
+
   /api/terminal/key-config:
     get:
       tags: [Terminal]
@@ -10729,41 +10784,43 @@ components:
           description: 仅 `kind=quote`：围栏代码块的语言标识（如 `go`、`issue`）。
         sourceKind:
           type: string
-          enum: [file, url, message, selection, terminal, meeting]
+          enum: [file, url, message, selection, terminal, meeting, mail]
           description: |
             仅 `kind=quote`：引用来源。`file` 本地文件、`url` 外部链接、`message` 聊天消息、
             `selection` 无来源地址的自由选区、`terminal` 终端选区（与 `selection` 同形，
-            分开是为了能标成「终端」而非泛化的「选中内容」）、`meeting` 会议（听记/纪要/转写，
-            定位键为 `meetingToken`）。
+            分开是为了能标成「终端」而非泛化的「选中内容」）、`meeting` 会议（听记/纪要/转写）、
+            `mail` 邮件。
             该字段会随 `files` 持久化：`selection`/`terminal` 与 `message` 都没有 path 与 url，
             不存下来刷新后就无法区分，抽屉会把终端引用误标为「聊天消息」。
             缺省（旧数据）由前端按 url/path 推断。
-        commitSha:
-          type: string
-          description: 仅 `kind=quote`：来源 commit（git 历史 / CI 流水线引用），用于跳转回该 commit。
-        taskId:
-          type: integer
-          description: 仅 `kind=quote`：来源计划任务 id，用于跳转回该任务；任务名在 `path` 中。
-        sessionId:
-          type: string
-          description: 仅 `kind=quote`：来源会话 id，用于跳转回该会话；会话名在 `path` 中。
-        messageId:
-          type: integer
-          description: 仅 `kind=quote`：来源消息的 DB id，用于跳转后滚动定位到该条消息。
-        executionId:
-          type: string
+        locators:
+          type: object
+          additionalProperties:
+            type: string
           description: |
-            仅 `kind=quote`：来源任务执行 id（任务执行详情页引用），用于跳转回该次运行。
-        meetingToken:
-          type: string
-          description: |
-            仅 `kind=quote`：来源会议 token，用于跳转回该会议；会议名在 `path` 中。
-            仅在会议仍存活时可用（会议是内存态，结束即失效）。
+            仅 `kind=quote`：**来源定位键**，一个开放的键值袋。
 
-            上列 `commitSha` / `taskId` / `sessionId` / `messageId` / `executionId` /
-            `meetingToken` 均为**来源定位键**：
-            客户端据此跳回源头，AI 提示词也会带上它们（形如 `[Quote 1/1] 名称 (task: 12)`），
-            以便 AI 定位源头。它们随 `files` 持久化——引用正文里不含这些信息，不存就无法再跳转。
+            客户端据此跳回源头，AI 提示词也会带上它们（形如
+            `[Quote 1/1] 名称 (task: 12, dir: .clawbench/notes/x)`），以便 AI 定位源头。
+            它们随 `files` 持久化——引用正文里不含这些信息，不存就无法再跳转。
+
+            已知键（值一律为字符串）：
+
+            | 键 | 含义 | 跳转到 |
+            |---|---|---|
+            | `commit` | git 提交 / CI 运行 | Git 历史对应提交 |
+            | `task` | 定时任务 id | 任务详情 |
+            | `execution` | 一次任务执行 id | 任务执行详情 |
+            | `session` | 会话 id | 该会话（配合 `message` 可滚到具体消息） |
+            | `message` | 消息的 DB id | 会话内该条消息 |
+            | `meeting` | 会议 token | 会议详情 |
+            | `mail` | 本地邮件 id | 邮件阅读器 |
+            | `dir` | 项目相对目录（会议的产物目录） | **不跳转**，只给 AI：让它自己打开转写/纪要/录音 |
+
+            **刻意是开放的**：加一种引用来源不需要改后端任何代码，塞一个新键即可，
+            后端会原样透传并在提示词里渲染（未知键排在已知键之后，按字典序，保证同一引用
+            每次渲染的文本完全一致）。值一律用字符串，`task: "12"` 而不是 `12`——
+            提示词是文本，数字和字符串在渲染上没有区别，统一成字符串省掉一层类型转换。
 
     GalleryItem:
       type: object

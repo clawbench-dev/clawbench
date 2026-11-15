@@ -35,7 +35,7 @@ describe('buildLiveMeetingQuote', () => {
       segments: [{ speaker: '张三', text: '决议：聚焦稳定性' }],
     })!
 
-    expect(q.meetingToken).toBe('tok-live')
+    expect(q.locators?.meeting).toBe('tok-live')
     expect(q.text).toBe('张三: 决议：聚焦稳定性')
     expect(q.language).toBe('meeting')
     expect(resolveQuoteType(q)).toBe('meeting')
@@ -48,7 +48,7 @@ describe('buildLiveMeetingQuote', () => {
     // token rather than refusing to exist.
     const q = buildLiveMeetingQuote({ token: 'tok-live', title: '周会', segments: [] })!
     expect(q.text).toBe('')
-    expect(q.meetingToken).toBe('tok-live')
+    expect(q.locators?.meeting).toBe('tok-live')
   })
 
   it('refuses to build without a token', () => {

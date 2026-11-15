@@ -77,6 +77,7 @@ import { consumePendingChatInput, _resetChatInputInjectionForTesting } from '@/u
 import { useQuoteQuestion, isPointerPressed } from '../useQuoteQuestion.ts'
 import type { QuoteData } from '../useChatContext.ts'
 import { cancelTarget, usePendingTarget } from '../useConversationTarget.ts'
+import { locatorOf } from '@/utils/quoteItem.ts'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 
 /**
@@ -91,7 +92,7 @@ const MEETING_QUOTE: QuoteData = {
   startLine: 0,
   endLine: 0,
   sourceKind: 'meeting',
-  meetingToken: 'tok-1',
+  locators: { meeting: 'tok-1' },
 }
 
 describe('useQuoteQuestion', () => {
@@ -1036,13 +1037,13 @@ describe('useQuoteQuestion', () => {
         qq.openComposer({ quote: MEETING_QUOTE, label: 'Meeting · Standup · 11-01 09:00' })
         ctx.setQuoteData({
           text: 'picked line', filePath: 'Meeting · Standup · 11-01 09:00',
-          language: 'meeting', startLine: 0, endLine: 0, meetingToken: 'tok-1',
+          language: 'meeting', startLine: 0, endLine: 0, locators: { meeting: 'tok-1' },
         })
 
         qq.addToConversation('')
 
         expect(usePendingTarget().pending.value?.quotes[0]).toMatchObject({
-          text: 'picked line', meetingToken: 'tok-1',
+          text: 'picked line', locators: { meeting: 'tok-1' },
         })
       })
     })
@@ -1396,7 +1397,7 @@ describe('useQuoteQuestion', () => {
         document.dispatchEvent(new Event('selectionchange'))
         vi.advanceTimersByTime(150)
 
-        expect(ctx.quoteData.value?.messageId).toBe(42)
+        expect(locatorOf(ctx.quoteData.value, 'message')).toBe('42')
         expect(ctx.quoteData.value?.sourceKind).toBe('message')
         // A chat quote carries no line info.
         expect(ctx.quoteData.value?.startLine).toBe(0)
@@ -1418,7 +1419,7 @@ describe('useQuoteQuestion', () => {
         vi.advanceTimersByTime(150)
 
         expect(ctx.quoteData.value?.filePath).toBe('在界面点创建定时任务按钮的时候')
-        expect(ctx.quoteData.value?.sessionId).toBe('f033de62-5b46-4f57-ab7b-99c527d37ab2')
+        expect(locatorOf(ctx.quoteData.value, 'session')).toBe('f033de62-5b46-4f57-ab7b-99c527d37ab2')
         // The id must NOT be folded into the label: the card shows the title,
         // and the id is what makes it addressable.
         expect(ctx.quoteData.value?.filePath).not.toContain('f033de62')
@@ -1438,7 +1439,7 @@ describe('useQuoteQuestion', () => {
         vi.advanceTimersByTime(150)
 
         expect(ctx.quoteData.value?.filePath).toBe('sess-abc')
-        expect(ctx.quoteData.value?.sessionId).toBe('sess-abc')
+        expect(locatorOf(ctx.quoteData.value, 'session')).toBe('sess-abc')
 
         wrapper.unmount()
       })
@@ -1454,7 +1455,7 @@ describe('useQuoteQuestion', () => {
         vi.advanceTimersByTime(150)
 
         expect(useQuoteQuestion().visible.value).toBe(true)
-        expect(ctx.quoteData.value?.messageId).toBeUndefined()
+        expect(locatorOf(ctx.quoteData.value, 'message')).toBe('')
 
         wrapper.unmount()
       })
@@ -1555,7 +1556,7 @@ describe('useQuoteQuestion', () => {
         document.dispatchEvent(new Event('selectionchange'))
         vi.advanceTimersByTime(150)
 
-        expect(ctx.quoteData.value?.meetingToken).toBe('tok-9')
+        expect(locatorOf(ctx.quoteData.value, 'meeting')).toBe('tok-9')
         expect(ctx.quoteData.value?.filePath).toBe('会议 · 产品评审会')
         expect(ctx.quoteData.value?.language).toBe('meeting')
 
@@ -1581,7 +1582,7 @@ describe('useQuoteQuestion', () => {
         vi.advanceTimersByTime(150)
 
         expect(ctx.quoteData.value?.text).toBe('这段我同意')
-        expect(ctx.quoteData.value?.meetingToken).toBe('tok-9')
+        expect(locatorOf(ctx.quoteData.value, 'meeting')).toBe('tok-9')
 
         wrapper.unmount()
       })

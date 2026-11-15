@@ -555,8 +555,10 @@ export function useMeetingHistory() {
       startLine: 0,
       endLine: 0,
       sourceKind: 'meeting',
-      meetingToken: token,
-      ...(sourceDir ? { sourceDir } : {}),
+      locators: {
+        meeting: token,
+        ...(sourceDir ? { dir: sourceDir } : {}),
+      },
     }
   }
 

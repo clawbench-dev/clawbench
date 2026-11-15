@@ -100,9 +100,10 @@ describe('draggable item rows', () => {
     expect(src).toMatch(/@dragend="cleanupDragGhost\(\)"/)
 
     // The record row of a RUNNING meeting drags too, and the server has no
-    // artifacts for it yet — App must fall back to the live transcript instead
-    // of answering "quote unavailable".
-    expect(readWebFile('src/App.vue')).toMatch(/buildLiveMeetingQuote\(/)
+    // artifacts for it yet — the drop must fall back to the live transcript
+    // instead of answering "quote unavailable". That fallback lives in the
+    // hydrator registry (shared by both drop targets), not in App.vue.
+    expect(readWebFile('src/utils/quoteHydrators.ts')).toMatch(/buildLiveMeetingQuote\(/)
   })
 
   it.each(ROWS)('%s (%s) starts the drag through startQuoteDrag', (path) => {
@@ -141,15 +142,31 @@ describe('draggable item rows', () => {
   it('the drop handler resolves the payloads that carry identity only', () => {
     // A meeting row and a mail row cannot inline their content at dragstart
     // (it would need an await), so the drop path has to fetch it. Dropping one
-    // without this branch stages an empty card — or nothing at all.
-    const src = readWebFile('src/App.vue')
+    // without that step stages an empty card — or nothing at all.
+    //
+    // Which sources need it is owned by ONE registry (utils/quoteHydrate.ts),
+    // and BOTH drop targets call it. It used to be two hand-written `if` chains
+    // — one here, one in SessionList.vue — and only this one was documented, so
+    // a mail row dragged onto a session row silently did nothing.
+    const app = readWebFile('src/App.vue')
+    const sessionList = readWebFile('src/components/session/SessionList.vue')
 
-    expect(src).toMatch(/if \(quote\.meetingToken\)/)
-    expect(src).toMatch(/if \(quote\.mailId\)/)
+    expect(app, 'the chat column must go through the registry').toMatch(/hydrateDraggedQuote\(/)
+    expect(sessionList, 'the session row must go through the SAME registry').toMatch(/hydrateDraggedQuote\(/)
+    // Neither drop site may re-grow a per-source branch of its own.
+    expect(app).not.toMatch(/if \(quote\.meetingToken\)/)
+    expect(app).not.toMatch(/if \(quote\.mailId\)/)
+    expect(sessionList).not.toMatch(/if \(payload\.meetingToken\)/)
+
+    // The two sources that need a fetch are registered in one place.
+    const hydrators = readWebFile('src/utils/quoteHydrators.ts')
+    expect(hydrators).toMatch(/registerQuoteHydrator\('meeting'/)
+    expect(hydrators).toMatch(/registerQuoteHydrator\('mail'/)
+
     // A LIVE meeting arrives with its transcript already in the payload, so the
-    // drop must stage it instead of asking the server for a record that does
+    // hydrator must stage it instead of asking the server for a record that does
     // not exist yet.
-    expect(src).toMatch(/if \(quote\.text\)/)
+    expect(hydrators).toMatch(/if \(payload\.text\) return payload/)
   })
 
   it('a chat message is dragged by its quote button, not the bubble', () => {

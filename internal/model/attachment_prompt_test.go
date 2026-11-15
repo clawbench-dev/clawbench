@@ -156,24 +156,28 @@ func TestClassifyAttachments_QuoteIsItsOwnBucket(t *testing.T) {
 func TestClassifyAttachments_QuoteCarriesSourceLocators(t *testing.T) {
 	entries := []FileEntry{{
 		Path: "每日构建 (#12)", Kind: "quote", ID: "q1", Text: "构建失败了",
-		SourceKind: "file", TaskID: 12, ExecutionID: "exec-7",
-		CommitSHA: "a1b2c3d", SessionID: "sess-abc", MessageID: 42,
+		SourceKind: "file",
+		Locators: map[string]string{
+			"task": "12", "execution": "exec-7", "commit": "a1b2c3d",
+			"session": "sess-abc", "message": "42",
+		},
 	}}
 	parts := ClassifyAttachments(entries, nil)
 
 	require.Len(t, parts.Quotes, 1)
 	got := parts.Quotes[0]
-	assert.Equal(t, int64(12), got.TaskID)
-	assert.Equal(t, "exec-7", got.ExecutionID)
-	assert.Equal(t, "a1b2c3d", got.CommitSHA)
-	assert.Equal(t, "sess-abc", got.SessionID)
-	assert.Equal(t, int64(42), got.MessageID)
+	assert.Equal(t, "12", got.Locators["task"])
+	assert.Equal(t, "exec-7", got.Locators["execution"])
+	assert.Equal(t, "a1b2c3d", got.Locators["commit"])
+	assert.Equal(t, "sess-abc", got.Locators["session"])
+	assert.Equal(t, "42", got.Locators["message"])
 }
 
 // End-to-end: the locators must actually appear in the rendered prompt.
 func TestApplyAttachmentPrefixes_QuoteRendersSourceLocators(t *testing.T) {
 	parts := ClassifyAttachments([]FileEntry{{
-		Path: "每日构建 (#12)", Kind: "quote", ID: "q1", TaskID: 12,
+		Path: "每日构建 (#12)", Kind: "quote", ID: "q1",
+		Locators: map[string]string{"task": "12"},
 	}}, nil)
 
 	got := ApplyAttachmentPrefixes("为什么失败", nil, nil, parts)
@@ -189,12 +193,13 @@ func TestApplyAttachmentPrefixes_QuoteRendersSourceLocators(t *testing.T) {
 func TestApplyAttachmentPrefixes_QuoteRendersMeetingToken(t *testing.T) {
 	entries := []FileEntry{{
 		Path: "产品评审会 · 纪要", Kind: "quote", ID: "q1", Language: "meeting",
-		Text: "决议：本季度聚焦稳定性", SourceKind: "meeting", MeetingToken: "tok-9",
+		Text: "决议：本季度聚焦稳定性", SourceKind: "meeting",
+		Locators: map[string]string{"meeting": "tok-9"},
 	}}
 	parts := ClassifyAttachments(entries, nil)
 
 	require.Len(t, parts.Quotes, 1)
-	assert.Equal(t, "tok-9", parts.Quotes[0].MeetingToken, "classification must carry the meeting locator")
+	assert.Equal(t, "tok-9", parts.Quotes[0].Locators["meeting"], "classification must carry the meeting locator")
 
 	got := ApplyAttachmentPrefixes("这段怎么理解", nil, nil, parts)
 	assert.Contains(t, got, "(meeting: tok-9)")
@@ -207,12 +212,13 @@ func TestApplyAttachmentPrefixes_QuoteRendersMeetingToken(t *testing.T) {
 func TestApplyAttachmentPrefixes_QuoteRendersMailID(t *testing.T) {
 	entries := []FileEntry{{
 		Path: "季度复盘 · 张三 <zhang@example.com>", Kind: "quote", ID: "q1", Language: "mail",
-		Text: "本季度收入同比增长 12%", SourceKind: "mail", MailID: 77,
+		Text: "本季度收入同比增长 12%", SourceKind: "mail",
+		Locators: map[string]string{"mail": "77"},
 	}}
 	parts := ClassifyAttachments(entries, nil)
 
 	require.Len(t, parts.Quotes, 1)
-	assert.Equal(t, int64(77), parts.Quotes[0].MailID, "classification must carry the mail locator")
+	assert.Equal(t, "77", parts.Quotes[0].Locators["mail"], "classification must carry the mail locator")
 
 	got := ApplyAttachmentPrefixes("帮我总结这封邮件", nil, nil, parts)
 	assert.Contains(t, got, "(mail: 77)")
@@ -224,13 +230,16 @@ func TestApplyAttachmentPrefixes_QuoteRendersMailID(t *testing.T) {
 func TestApplyAttachmentPrefixes_QuoteRendersSourceDir(t *testing.T) {
 	entries := []FileEntry{{
 		Path: "会议 · 产品评审会", Kind: "quote", ID: "q1", Language: "meeting",
-		Text: "决议：本季度聚焦稳定性", SourceKind: "meeting", MeetingToken: "tok-9",
-		SourceDir: ".clawbench/notes/2026-11-05-1430",
+		Text: "决议：本季度聚焦稳定性", SourceKind: "meeting",
+		Locators: map[string]string{
+			"meeting": "tok-9",
+			"dir":     ".clawbench/notes/2026-11-05-1430",
+		},
 	}}
 	parts := ClassifyAttachments(entries, nil)
 
 	require.Len(t, parts.Quotes, 1)
-	assert.Equal(t, ".clawbench/notes/2026-11-05-1430", parts.Quotes[0].SourceDir,
+	assert.Equal(t, ".clawbench/notes/2026-11-05-1430", parts.Quotes[0].Locators["dir"],
 		"classification must carry the folder")
 
 	got := ApplyAttachmentPrefixes("总结这场会", nil, nil, parts)
@@ -420,37 +429,37 @@ func TestQuoteHeader_CarriesSourceLocators(t *testing.T) {
 	}{
 		{
 			"task",
-			QuotePrompt{Label: "每日构建 (#12)", TaskID: 12},
+			QuotePrompt{Label: "每日构建 (#12)", Locators: map[string]string{"task": "12"}},
 			"[Quote 1/1] 每日构建 (#12) (task: 12)",
 		},
 		{
 			"commit",
-			QuotePrompt{Label: "a1b2c3d 修复登录", CommitSHA: "a1b2c3d"},
+			QuotePrompt{Label: "a1b2c3d 修复登录", Locators: map[string]string{"commit": "a1b2c3d"}},
 			"[Quote 1/1] a1b2c3d 修复登录 (commit: a1b2c3d)",
 		},
 		{
 			"session and message together",
-			QuotePrompt{Label: "修复登录 (sess-abc)", SessionID: "sess-abc", MessageID: 42},
+			QuotePrompt{Label: "修复登录 (sess-abc)", Locators: map[string]string{"session": "sess-abc", "message": "42"}},
 			"[Quote 1/1] 修复登录 (sess-abc) (session: sess-abc, message: 42)",
 		},
 		{
 			"execution",
-			QuotePrompt{Label: "每日构建 (#12)", TaskID: 12, ExecutionID: "exec-7"},
+			QuotePrompt{Label: "每日构建 (#12)", Locators: map[string]string{"task": "12", "execution": "exec-7"}},
 			"[Quote 1/1] 每日构建 (#12) (task: 12, execution: exec-7)",
 		},
 		{
 			"address leads the group",
-			QuotePrompt{Label: "a/b#1", URL: "https://e.com/1", CommitSHA: "deadbeef"},
+			QuotePrompt{Label: "a/b#1", URL: "https://e.com/1", Locators: map[string]string{"commit": "deadbeef"}},
 			"[Quote 1/1] a/b#1 (https://e.com/1, commit: deadbeef)",
 		},
 		{
 			"meeting locator",
-			QuotePrompt{Label: "产品评审会 · 纪要", Language: "meeting", MeetingToken: "tok-9"},
+			QuotePrompt{Label: "产品评审会 · 纪要", Language: "meeting", Locators: map[string]string{"meeting": "tok-9"}},
 			"[Quote 1/1] 产品评审会 · 纪要 (meeting: tok-9)",
 		},
 		{
 			"line range plus locator",
-			QuotePrompt{Label: "/a.go", StartLine: 3, EndLine: 9, CommitSHA: "deadbeef"},
+			QuotePrompt{Label: "/a.go", StartLine: 3, EndLine: 9, Locators: map[string]string{"commit": "deadbeef"}},
 			"[Quote 1/1] /a.go:3-9 (commit: deadbeef)",
 		},
 	} {
@@ -467,11 +476,28 @@ func TestQuoteHeader_CarriesSourceLocators(t *testing.T) {
 
 // Zero-valued locators must not emit empty entries ("task: 0"), which would be
 // noise and would misreport an unset id as a real one.
-func TestQuoteHeader_OmitsZeroValuedLocators(t *testing.T) {
-	got := quoteHeader(QuotePrompt{Label: "/a.go", TaskID: 0, MessageID: 0}, 1, 1)
+//
+// With an open bag the equivalent hazard is an EMPTY STRING value: a client that
+// writes `{task: ''}` (rather than omitting the key) must not produce "task: ".
+func TestQuoteHeader_OmitsEmptyLocators(t *testing.T) {
+	got := quoteHeader(QuotePrompt{Label: "/a.go", Locators: map[string]string{"task": "", "message": "  "}}, 1, 1)
 	assert.Equal(t, "[Quote 1/1] /a.go", got)
 	assert.NotContains(t, got, "task:")
 	assert.NotContains(t, got, "message:")
+}
+
+// A key this build has never heard of still reaches the AI: that is the whole
+// point of an open bag. It renders after the known keys, in sorted order, so the
+// output stays deterministic across runs.
+func TestQuoteHeader_RendersUnknownLocatorKeysDeterministically(t *testing.T) {
+	q := QuotePrompt{Label: "/a.go", Locators: map[string]string{
+		"deploy": "d-42", "task": "12", "artifact": "a-7",
+	}}
+	first := quoteHeader(q, 1, 1)
+	second := quoteHeader(q, 1, 1)
+
+	assert.Equal(t, "[Quote 1/1] /a.go (task: 12, artifact: a-7, deploy: d-42)", first)
+	assert.Equal(t, first, second, "rendering must not depend on map iteration order")
 }
 
 func TestQuotePromptPrefix_IsRegisteredAsStripRule(t *testing.T) {

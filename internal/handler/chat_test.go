@@ -1499,14 +1499,26 @@ func TestAIChat_QuoteAttachment_KeepsSourceKind(t *testing.T) {
 	assert.Empty(t, got.Path, "a selection quote has no path")
 }
 
-// TestAIChat_QuoteAttachment_KeepsSourceLocators verifies every source locator
-// survives validation and persistence.
+// TestAIChat_QuoteAttachment_KeepsLocators verifies the WHOLE locator bag
+// survives decode → validate → persist, including a key this build has never
+// heard of.
 //
-// Same field-by-field rebuild hazard as the URL and SourceKind regressions
-// above, one step worse: these are the ONLY route back to the origin. The
-// quoted text carries no trace of them, so dropping one makes the quote
-// silently unjumpable — no error, the jump button simply does nothing.
-func TestAIChat_QuoteAttachment_KeepsSourceLocators(t *testing.T) {
+// Regression history: these locators used to be one flat field per source
+// (`commitSha`, `meetingToken`, `mailId`, `sourceDir`, …). validatedQuoteEntry
+// rebuilt the entry field by field, so adding a source meant remembering to add
+// a copy line there — and `mailId`/`sourceDir` were in fact shipped without one.
+// The quote still rendered and still sent; only the jump target was gone, so
+// clicking "跳转来源" silently did nothing and the AI never learned where the
+// snippet came from.
+//
+// The bag is now copied whole, so the property worth pinning is that ARBITRARY
+// keys survive. A test that only round-tripped today's eight names would let the
+// next source regress in exactly the same way.
+//
+// The body is a raw map (not a model.FileEntry) on purpose: marshaling the
+// struct would only prove the struct has the field, not that the wire name the
+// client actually sends reaches it.
+func TestAIChat_QuoteAttachment_KeepsLocators(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -1519,11 +1531,24 @@ func TestAIChat_QuoteAttachment_KeepsSourceLocators(t *testing.T) {
 	}()
 
 	body := map[string]any{
-		"message": "这个构建为什么失败",
-		"files": []model.FileEntry{{
-			Path: "每日构建 (#12)", Kind: "quote", ID: "quote-loc-1",
-			Text: "构建失败了", CommitSHA: "a1b2c3d4e5", TaskID: 12,
-			SessionID: "sess-abc", MessageID: 42, ExecutionID: "exec-7",
+		"message": "看看这场会的原始材料",
+		"files": []map[string]any{{
+			"path": "会议 · 产品评审会", "kind": "quote", "id": "quote-loc-1",
+			"text": "决议：本季度聚焦稳定性", "language": "meeting",
+			"sourceKind": "meeting",
+			"locators": map[string]string{
+				"meeting":   "tok-9",
+				"dir":       ".clawbench/notes/2026-11-05-1430",
+				"commit":    "a1b2c3d4e5",
+				"task":      "12",
+				"session":   "sess-abc",
+				"message":   "42",
+				"execution": "exec-7",
+				"mail":      "77",
+				// A source this build knows nothing about. It must still reach
+				// the DB and the AI — that is the point of an open bag.
+				"deploy": "d-42",
+			},
 		}},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
@@ -1543,159 +1568,17 @@ func TestAIChat_QuoteAttachment_KeepsSourceLocators(t *testing.T) {
 	require.Len(t, queue[0].Files, 1)
 
 	got := queue[0].Files[0]
-	assert.Equal(t, "a1b2c3d4e5", got.CommitSHA, "commit locator must survive, or the quote cannot reach its commit")
-	assert.Equal(t, int64(12), got.TaskID, "task locator must survive, or the quote cannot reach its task")
-	assert.Equal(t, "sess-abc", got.SessionID, "session locator must survive, or the quote cannot reopen its session")
-	assert.Equal(t, int64(42), got.MessageID, "message locator must survive, or the quote cannot scroll to its message")
-	assert.Equal(t, "exec-7", got.ExecutionID, "execution locator must survive, or the quote cannot reach its run")
-}
-
-// TestAIChat_QuoteAttachment_KeepsMeetingToken verifies a meeting quote keeps
-// the token that identifies its meeting, through decode → validate → persist.
-//
-// Regression (MAJOR): the client has put `meetingToken` in the wire payload for
-// meeting quotes all along, but model.FileEntry had no such field, so the JSON
-// decoder dropped it at the boundary and validatedQuoteEntry (which rebuilds
-// the entry field by field) had nothing to copy. The quote survived the reload
-// with its "meeting" label intact — only the jump target was gone, so clicking
-// "跳转来源" silently did nothing and the AI never learned which meeting the
-// snippet came from.
-//
-// The body is a raw map (not a model.FileEntry) on purpose: marshaling the
-// struct would only prove the struct has the field, not that the wire name the
-// client actually sends reaches it.
-func TestAIChat_QuoteAttachment_KeepsMeetingToken(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-meeting", "", "", "default", "chat")
-	assert.NoError(t, err)
-	service.TrySetSessionRunning(sessionID)
-	defer func() {
-		service.SetSessionRunning(sessionID, false)
-		service.ClearQueuedMessages(sessionID)
-	}()
-
-	body := map[string]any{
-		"message": "这段怎么理解",
-		"files": []map[string]any{{
-			"path": "产品评审会 · 纪要", "kind": "quote", "id": "quote-meeting-1",
-			"text": "决议：本季度聚焦稳定性", "language": "meeting",
-			"sourceKind": "meeting", "meetingToken": "tok-9",
-		}},
+	assert.Equal(t, "quote", got.Kind, "validation must still stamp the kind")
+	want := map[string]string{
+		"meeting": "tok-9", "dir": ".clawbench/notes/2026-11-05-1430",
+		"commit": "a1b2c3d4e5", "task": "12", "session": "sess-abc",
+		"message": "42", "execution": "exec-7", "mail": "77",
+		"deploy": "d-42",
 	}
-	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(AIChat, req)
-	assertOK(t, w)
-
-	// Queued (session running), so assert on the queued row's Files.
-	queue, err := service.GetQueuedMessages(sessionID)
-	assert.NoError(t, err)
-	require.Len(t, queue, 1)
-	require.Len(t, queue[0].Files, 1)
-
-	got := queue[0].Files[0]
-	assert.Equal(t, "quote", got.Kind)
-	assert.Equal(t, "tok-9", got.MeetingToken,
-		"the meeting locator must survive, or the reloaded quote cannot jump back to its meeting")
+	assert.Equal(t, want, got.Locators,
+		"every locator must survive, or the reloaded quote cannot jump back to its source")
 }
 
-// TestAIChat_QuoteAttachment_KeepsMailID verifies a mail quote keeps the id of
-// the email it came from, through decode → validate → persist.
-//
-// Same failure shape as the meeting-token regression above: the client sends
-// `mailId`, but a field missing from model.FileEntry is dropped by the JSON
-// decoder, and validatedQuoteEntry (which rebuilds the entry field by field)
-// then has nothing to copy. The quote still renders — only its jump target is
-// gone, so clicking "跳转来源" silently does nothing.
-//
-// The body is a raw map on purpose: marshaling model.FileEntry would only prove
-// the struct has the field, not that the wire name the client sends reaches it.
-func TestAIChat_QuoteAttachment_KeepsMailID(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-mail", "", "", "default", "chat")
-	assert.NoError(t, err)
-	service.TrySetSessionRunning(sessionID)
-	defer func() {
-		service.SetSessionRunning(sessionID, false)
-		service.ClearQueuedMessages(sessionID)
-	}()
-
-	body := map[string]any{
-		"message": "帮我总结这封邮件",
-		"files": []map[string]any{{
-			"path": "季度复盘 · 张三 <zhang@example.com>", "kind": "quote", "id": "quote-mail-1",
-			"text": "本季度收入同比增长 12%", "language": "mail",
-			"sourceKind": "mail", "mailId": 77,
-		}},
-	}
-	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(AIChat, req)
-	assertOK(t, w)
-
-	queue, err := service.GetQueuedMessages(sessionID)
-	assert.NoError(t, err)
-	require.Len(t, queue, 1)
-	require.Len(t, queue[0].Files, 1)
-
-	got := queue[0].Files[0]
-	assert.Equal(t, "quote", got.Kind)
-	assert.Equal(t, int64(77), got.MailID,
-		"the mail locator must survive, or the reloaded quote cannot jump back to its email")
-}
-
-// TestAIChat_QuoteAttachment_KeepsSourceDir verifies the folder a quote came
-// from survives decode → validate → persist.
-//
-// Same failure shape as the locators above: validatedQuoteEntry rebuilds the
-// entry field by field, so a field it does not copy is silently dropped and the
-// AI never learns where the rest of the material is.
-func TestAIChat_QuoteAttachment_KeepsSourceDir(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-dir", "", "", "default", "chat")
-	assert.NoError(t, err)
-	service.TrySetSessionRunning(sessionID)
-	defer func() {
-		service.SetSessionRunning(sessionID, false)
-		service.ClearQueuedMessages(sessionID)
-	}()
-
-	body := map[string]any{
-		"message": "看看这场会的原始材料",
-		"files": []map[string]any{{
-			"path": "会议 · 产品评审会", "kind": "quote", "id": "quote-dir-1",
-			"text": "决议：本季度聚焦稳定性", "language": "meeting",
-			"sourceKind": "meeting", "meetingToken": "tok-9",
-			"sourceDir": ".clawbench/notes/2026-11-05-1430",
-		}},
-	}
-	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(AIChat, req)
-	assertOK(t, w)
-
-	queue, err := service.GetQueuedMessages(sessionID)
-	assert.NoError(t, err)
-	require.Len(t, queue, 1)
-	require.Len(t, queue[0].Files, 1)
-
-	got := queue[0].Files[0]
-	assert.Equal(t, "quote", got.Kind)
-	assert.Equal(t, ".clawbench/notes/2026-11-05-1430", got.SourceDir,
-		"the folder must survive, or the AI cannot open the rest of the material")
-}
-
-// TestAIChat_QuoteAttachment_EmptyPathAndTextOnly verifies a chat-message quote
-// (no path, message may even be empty) is accepted: files alone satisfy the
 // "message or files required" guard, and an empty Path never reaches
 // filesystem validation.
 func TestAIChat_QuoteAttachment_EmptyPathAndTextOnly(t *testing.T) {

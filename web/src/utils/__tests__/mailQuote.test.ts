@@ -53,7 +53,7 @@ describe('buildMailQuote', () => {
 
     // The AI cannot read a mailbox from an id, so the body must travel with it.
     expect(q.text).toBe('本季度收入同比增长 12%')
-    expect(q.mailId).toBe(77)
+    expect(q.locators?.mail).toBe('77')
     expect(q.filePath).toBe('季度复盘 · 张三')
     expect(resolveQuoteType(q)).toBe('mail')
   })

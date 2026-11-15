@@ -213,15 +213,15 @@ describe('useChatContext', () => {
       // was included, quoting the same sentence out of two chat messages
       // collapsed into one and the first annotation was silently kept.
       const quoted = { ...first, sourceKind: 'message' as const }
-      const fromFirst = ctx.addStagedQuote({ ...quoted, messageId: 11 }, 'first')
-      const fromSecond = ctx.addStagedQuote({ ...quoted, messageId: 22 }, 'second')
+      const fromFirst = ctx.addStagedQuote({ ...quoted, locators: { message: '11' } }, 'first')
+      const fromSecond = ctx.addStagedQuote({ ...quoted, locators: { message: '22' } }, 'second')
 
       expect(ctx.stagedQuotes.value).toHaveLength(2)
       expect(fromFirst.id).not.toBe(fromSecond.id)
     })
 
     it('still deduplicates the same text from the same message', () => {
-      const quoted = { ...first, sourceKind: 'message' as const, messageId: 11 }
+      const quoted = { ...first, sourceKind: 'message' as const, locators: { message: '11' } }
       const original = ctx.addStagedQuote(quoted, 'old')
       const duplicate = ctx.addStagedQuote({ ...quoted }, 'new')
 
@@ -236,15 +236,15 @@ describe('useChatContext', () => {
     // the label collapsed such quotes into one and silently dropped the other.
     it('treats two tasks that share a name as two quotes', () => {
       const dragged = { ...first, text: '', filePath: 'Nightly build', language: 'task' }
-      const a = ctx.addStagedQuote({ ...dragged, taskId: 11 }, 'first')
-      const b = ctx.addStagedQuote({ ...dragged, taskId: 22 }, 'second')
+      const a = ctx.addStagedQuote({ ...dragged, locators: { task: '11' } }, 'first')
+      const b = ctx.addStagedQuote({ ...dragged, locators: { task: '22' } }, 'second')
 
       expect(ctx.stagedQuotes.value).toHaveLength(2)
       expect(a.id).not.toBe(b.id)
     })
 
     it('still deduplicates the same task dragged twice', () => {
-      const dragged = { ...first, text: '', filePath: 'Nightly build', language: 'task', taskId: 11 }
+      const dragged = { ...first, text: '', filePath: 'Nightly build', language: 'task', locators: { task: '11' } }
       const original = ctx.addStagedQuote(dragged)
       const duplicate = ctx.addStagedQuote({ ...dragged })
 
@@ -254,8 +254,8 @@ describe('useChatContext', () => {
 
     it('treats two commits with the same subject as two quotes', () => {
       const dragged = { ...first, text: '', filePath: 'a1b2c3d fix login', language: 'diff' }
-      const a = ctx.addStagedQuote({ ...dragged, commitSha: 'a1b2c3d4' })
-      const b = ctx.addStagedQuote({ ...dragged, commitSha: 'e5f6a7b8' })
+      const a = ctx.addStagedQuote({ ...dragged, locators: { commit: 'a1b2c3d4' } })
+      const b = ctx.addStagedQuote({ ...dragged, locators: { commit: 'e5f6a7b8' } })
 
       expect(ctx.stagedQuotes.value).toHaveLength(2)
       expect(a.id).not.toBe(b.id)
@@ -268,6 +268,39 @@ describe('useChatContext', () => {
       const b = ctx.addStagedQuote({ ...dragged, url: 'https://b/7' })
 
       expect(ctx.stagedQuotes.value).toHaveLength(2)
+    })
+
+    // The everyday case for mailId: a thread repeats its subject and sender, so
+    // the label is identical across several genuinely different emails. Before
+    // mailId was part of the identity, quoting two of them left ONE card and the
+    // second annotation overwrote the first.
+    it('treats two emails with the same subject and sender as two quotes', () => {
+      const dragged = { ...first, text: '本周进度…', filePath: '周报 · 张三', language: 'mail', sourceKind: 'mail' as const }
+      const a = ctx.addStagedQuote({ ...dragged, locators: { mail: '11' } }, '这封怎么回')
+      const b = ctx.addStagedQuote({ ...dragged, locators: { mail: '22' } }, '那封呢')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(2)
+      expect(a.id).not.toBe(b.id)
+    })
+
+    it('still deduplicates the same email quoted twice', () => {
+      const dragged = { ...first, text: '本周进度…', filePath: '周报 · 张三', language: 'mail', sourceKind: 'mail' as const, locators: { mail: '11' } }
+      const original = ctx.addStagedQuote(dragged, 'old')
+      const duplicate = ctx.addStagedQuote({ ...dragged }, 'new')
+
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(duplicate.id).toBe(original.id)
+      expect(ctx.stagedQuotes.value[0].note).toBe('new')
+    })
+
+    it('treats two meetings with the same title as two quotes', () => {
+      // Two standups of the same series share their title verbatim.
+      const dragged = { ...first, text: '…', filePath: '每日站会', language: 'meeting', sourceKind: 'meeting' as const }
+      const a = ctx.addStagedQuote({ ...dragged, locators: { meeting: 'tok-1' } })
+      const b = ctx.addStagedQuote({ ...dragged, locators: { meeting: 'tok-2' } })
+
+      expect(ctx.stagedQuotes.value).toHaveLength(2)
+      expect(a.id).not.toBe(b.id)
     })
 
     it('updateStagedQuoteNote rewrites the addressed quote only', () => {

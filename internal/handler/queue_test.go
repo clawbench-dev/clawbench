@@ -401,7 +401,7 @@ func TestQueueHandler_Enqueue_QuoteAttachment(t *testing.T) {
 			// The queue endpoint is the other inbound decoder for file entries;
 			// it runs the same validatedQuoteEntry, so a locator dropped there
 			// makes a queued meeting quote unjumpable the moment it drains.
-			"meetingToken": "tok-9",
+			"locators": map[string]string{"meeting": "tok-9", "dir": ".clawbench/notes/x"},
 		}},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
@@ -427,7 +427,8 @@ func TestQueueHandler_Enqueue_QuoteAttachment(t *testing.T) {
 	assert.Equal(t, "go", got.Language)
 	assert.Equal(t, "src/a.go", got.Path, "the label must be preserved verbatim, not resolved")
 	assert.Equal(t, 3, got.StartLine)
-	assert.Equal(t, "tok-9", got.MeetingToken, "the meeting locator must survive the queue path too")
+	assert.Equal(t, map[string]string{"meeting": "tok-9", "dir": ".clawbench/notes/x"}, got.Locators,
+		"the locator bag must survive the queue path too")
 
 	service.CancelSession(sessionID)
 }

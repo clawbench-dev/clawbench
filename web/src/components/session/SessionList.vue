@@ -318,8 +318,8 @@ import { useToast } from '@/composables/useToast'
 import { useSessionIdentity, reconcileRunningSessions, renameSessionById } from '@/composables/useSessionIdentity.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { hasQuoteDragData, readQuoteDragData } from '@/utils/quoteDrag'
+import { hydrateDraggedQuote } from '@/utils/quoteHydrate'
 import { dispatchToTarget, mintPendingQuoteId, requestTarget } from '@/composables/useConversationTarget'
-import { useMeetingHistory } from '@/composables/useMeetingHistory'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { apiPatch, apiPut } from '@/utils/api.ts'
@@ -411,7 +411,6 @@ watch(
 // and Sortable reacts only to drags it started — a quote payload passes through
 // untouched. The handlers below return early for anything that is not a quote,
 // so reordering is unaffected.
-const meetingHistory = useMeetingHistory()
 /** Row currently under a quote drag, for the drop highlight. '' when none. */
 const quoteDropSessionId = ref('')
 
@@ -434,11 +433,23 @@ function onRowQuoteDrop(e, sessionId) {
   // Sortable listens on the container; a drop it did not start must not reach
   // it, or the list would try to reorder around a foreign payload.
   e.stopPropagation()
-  if (payload.meetingToken) {
-    void deliverMeetingQuote(payload.meetingToken, sessionId)
-    return
-  }
-  deliverQuoteToSession(payload, sessionId)
+  void deliverDraggedQuote(payload, sessionId)
+}
+
+/**
+ * Stage a DRAGGED quote into one session's draft, fetching its content first
+ * when its source needs that.
+ *
+ * Which sources need a fetch is NOT decided here: the hydrator registry owns it
+ * (utils/quoteHydrate.ts). This used to be a second hand-written `if` chain that
+ * only knew about meetings, so a mail row dragged onto a session row silently
+ * did nothing — while the same drag onto the chat column worked. Both drop sites
+ * now share one implementation.
+ */
+async function deliverDraggedQuote(payload, sessionId) {
+  const resolved = await hydrateDraggedQuote(payload)
+  if (!resolved) return
+  deliverQuoteToSession(resolved, sessionId)
 }
 
 /**
@@ -460,19 +471,6 @@ function deliverQuoteToSession(payload, sessionId) {
     (ok) => { if (!ok) requestTarget(request) },
     () => requestTarget(request),
   )
-}
-
-/**
- * A meeting drag carries only its token (dragstart cannot await), so the
- * minutes have to be fetched before there is a card to stage — the same reason
- * the chat column's drop path fetches it.
- */
-async function deliverMeetingQuote(token, sessionId) {
-  const record = await meetingHistory.get(token)
-  if (!record) return
-  const quote = await meetingHistory.buildQuote(record)
-  if (!quote) return
-  deliverQuoteToSession(quote, sessionId)
 }
 
 // The drag-bound array. It holds only TOP-LEVEL rows: a session that heads a

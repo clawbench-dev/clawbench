@@ -108,7 +108,7 @@ describe('MailListItem time', () => {
 
     const payload = readQuoteDragData(dt as unknown as DataTransfer)
     expect(payload, 'the row must write a quote payload').toBeTruthy()
-    expect(payload).toMatchObject({ mailId: 1, language: 'mail', sourceKind: 'mail', text: '' })
+    expect(payload).toMatchObject({ locators: { mail: '1' }, language: 'mail', sourceKind: 'mail', text: '' })
     expect(payload!.filePath).toBe('周报 · 老板')
   })
 })
@@ -181,12 +181,12 @@ describe('MailListItem quote action', () => {
     expect(mockApiGet).toHaveBeenCalledWith('/api/mail/messages/1')
     expect(mockOpenComposer).toHaveBeenCalledTimes(1)
     const ctx = mockOpenComposer.mock.calls[0][0] as {
-      quote?: { language?: string; text?: string; mailId?: number }
+      quote?: { language?: string; text?: string; locators?: Record<string, string> }
       label?: string
     }
     expect(ctx.quote?.language).toBe('mail')
     expect(ctx.quote?.text).toBe('本周进展全文')
-    expect(ctx.quote?.mailId).toBe(1)
+    expect(ctx.quote?.locators?.mail).toBe('1')
     expect(ctx.label).toBe('周报 · 老板')
     // `@click.stop`: quoting must not also open the mail.
     expect(wrapper.emitted('open')).toBeFalsy()

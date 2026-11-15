@@ -617,7 +617,7 @@ describe('GitCommitList', () => {
       const quoteCall = setData.mock.calls.find(c => c[0] === 'application/x-clawbench-quote')
       expect(quoteCall, 'dragstart must write the quote MIME').toBeTruthy()
       const payload = JSON.parse(quoteCall![1])
-      expect(payload.commitSha).toBe(createCommits(5)[0].sha)
+      expect(payload.locators?.commit).toBe(createCommits(5)[0].sha)
       expect(payload.language).toBe('diff')
       // No annotation: a dragged quote is staged without one.
       expect(payload.note).toBeUndefined()

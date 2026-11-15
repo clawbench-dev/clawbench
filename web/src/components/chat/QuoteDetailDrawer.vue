@@ -86,7 +86,8 @@ import { useI18n } from 'vue-i18n'
 import { MessageSquare, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { quoteLabel, quoteLineRange, canJumpToSource, resolveQuoteType, type QuoteItem } from '@/utils/quoteItem'
+import { quoteLabel, quoteLineRange, resolveQuoteType, type QuoteItem } from '@/utils/quoteItem'
+import { canJumpQuoteToSource } from '@/utils/quoteJump'
 import { QUOTE_TYPE_ICON, QUOTE_TYPE_LABEL_KEY } from '@/utils/quoteSourceMeta'
 
 const props = withDefaults(defineProps<{
@@ -161,7 +162,7 @@ onBeforeUnmount(() => {
 
 const dirty = computed(() => note.value !== (props.quote?.note || ''))
 
-const canJump = computed(() => (props.quote ? canJumpToSource(props.quote) : false))
+const canJump = computed(() => (props.quote ? canJumpQuoteToSource(props.quote) : false))
 
 /** The kind of source this quote came from, for the icon + label badge. */
 const quoteType = computed(() => (props.quote ? resolveQuoteType(props.quote) : 'selection'))

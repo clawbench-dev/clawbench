@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -71,21 +72,16 @@ type QuotePrompt struct {
 	// StartLine/EndLine are 1-based file lines, 0 when not applicable.
 	StartLine int
 	EndLine   int
-	// Source locators. These are the machine keys that let the AI (and the
-	// client's jump handler) find the origin. They are emitted in the header's
-	// parenthetical group; the human-readable name stays in Label.
-	CommitSHA   string
-	TaskID      int64
-	SessionID   string
-	MessageID   int64
-	ExecutionID string
-	// MeetingToken is the live-share room token a meeting quote came from.
-	MeetingToken string
-	// MailID is the local mail message a mail quote came from.
-	MailID int64
-	// SourceDir is the project-relative folder holding the quote's source
-	// material (a meeting's notes folder), so the AI can open the rest of it.
-	SourceDir string
+	// Locators are the machine keys that let the AI (and the client's jump
+	// handler) find the origin. They are emitted in the header's parenthetical
+	// group; the human-readable name stays in Label.
+	//
+	// An open bag for the same reason as FileEntry.Locators: one field per
+	// source meant every new source touched this struct, the classifier, the
+	// renderer and the client's mirror. Keys are the prompt vocabulary itself
+	// ("commit", "task", "dir", …), so `Locators["task"] = "12"` renders as
+	// `task: 12`.
+	Locators map[string]string
 }
 
 // ClassifyAttachments splits entries into prompt buckets. excludePaths holds
@@ -101,21 +97,15 @@ func ClassifyAttachments(entries []FileEntry, excludePaths map[string]struct{}) 
 		// there would silently drop the quoted text from the prompt.
 		if f.IsQuote() {
 			parts.Quotes = append(parts.Quotes, QuotePrompt{
-				Label:        f.Path,
-				Language:     f.Language,
-				Note:         f.Note,
-				Text:         f.Text,
-				URL:          f.URL,
-				StartLine:    f.StartLine,
-				EndLine:      f.EndLine,
-				CommitSHA:    f.CommitSHA,
-				TaskID:       f.TaskID,
-				SessionID:    f.SessionID,
-				MessageID:    f.MessageID,
-				ExecutionID:  f.ExecutionID,
-				MeetingToken: f.MeetingToken,
-				MailID:       f.MailID,
-				SourceDir:    f.SourceDir,
+				Label:     f.Path,
+				Language:  f.Language,
+				Note:      f.Note,
+				Text:      f.Text,
+				URL:       f.URL,
+				StartLine: f.StartLine,
+				EndLine:   f.EndLine,
+				// Copied whole: a new locator key needs no change here.
+				Locators: f.Locators,
 			})
 			continue
 		}
@@ -161,6 +151,29 @@ const QuotePromptPrefix = "[Quote "
 // to the quote above it.
 const QuoteNotePrefix = "[Note] "
 
+// locatorKeyOrder is the canonical rendering order for known locator keys.
+//
+// Most-specific first, with `dir` last: it is the widest handle, and the header
+// stays readable when the specific id leads.
+//
+// Order must be STABLE, not map iteration order: the same quote rendered twice
+// has to produce byte-identical prompt text. Tests pin exact prompt strings, and
+// the session-title derivation reads this line — a shuffling header would make
+// both flaky in a way that looks like a model problem.
+//
+// Keys NOT listed here still render (the bag is open by design); they are
+// appended afterwards in sorted order, so an unknown key is deterministic too.
+var locatorKeyOrder = []string{
+	"commit",
+	"task",
+	"session",
+	"message",
+	"execution",
+	"meeting",
+	"mail",
+	"dir",
+}
+
 // quoteSourceKeys renders the machine-readable source locators for a quote, in
 // a stable order, as "key: value" pairs. Empty when the quote has none.
 //
@@ -169,32 +182,34 @@ const QuoteNotePrefix = "[Note] "
 // the same keys the client uses to jump, so the AI and the UI agree on what
 // identifies a source.
 func quoteSourceKeys(q QuotePrompt) []string {
-	var keys []string
-	if q.CommitSHA != "" {
-		keys = append(keys, "commit: "+q.CommitSHA)
+	if len(q.Locators) == 0 {
+		return nil
 	}
-	if q.TaskID != 0 {
-		keys = append(keys, fmt.Sprintf("task: %d", q.TaskID))
+	keys := make([]string, 0, len(q.Locators))
+	seen := make(map[string]bool, len(q.Locators))
+	emit := func(name string) {
+		v := strings.TrimSpace(q.Locators[name])
+		if v == "" {
+			return
+		}
+		seen[name] = true
+		keys = append(keys, name+": "+v)
 	}
-	if q.SessionID != "" {
-		keys = append(keys, "session: "+q.SessionID)
+	for _, name := range locatorKeyOrder {
+		emit(name)
 	}
-	if q.MessageID != 0 {
-		keys = append(keys, fmt.Sprintf("message: %d", q.MessageID))
+	// Anything the client invented that this build does not know about still
+	// reaches the AI — that is the point of an open bag. Sorted so the output
+	// stays deterministic.
+	extra := make([]string, 0, len(q.Locators))
+	for name := range q.Locators {
+		if !seen[name] {
+			extra = append(extra, name)
+		}
 	}
-	if q.ExecutionID != "" {
-		keys = append(keys, "execution: "+q.ExecutionID)
-	}
-	if q.MeetingToken != "" {
-		keys = append(keys, "meeting: "+q.MeetingToken)
-	}
-	if q.MailID != 0 {
-		keys = append(keys, fmt.Sprintf("mail: %d", q.MailID))
-	}
-	// The directory goes last: it is the widest handle, and the header stays
-	// readable when the specific id comes first.
-	if q.SourceDir != "" {
-		keys = append(keys, "dir: "+q.SourceDir)
+	sort.Strings(extra)
+	for _, name := range extra {
+		emit(name)
 	}
 	return keys
 }

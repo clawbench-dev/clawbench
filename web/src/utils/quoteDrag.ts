@@ -102,7 +102,7 @@ export function commitDragPayload(commit: { sha: string; msg?: string }): QuoteD
     startLine: 0,
     endLine: 0,
     sourceKind: 'selection',
-    commitSha: sha,
+    locators: { commit: sha },
   }
 }
 
@@ -123,7 +123,7 @@ export function taskDragPayload(task: { id: number; name?: string }): QuoteDragP
     startLine: 0,
     endLine: 0,
     sourceKind: 'selection',
-    taskId: id,
+    locators: { task: String(id) },
   }
 }
 
@@ -186,7 +186,7 @@ export function pipelineDragPayload(run: {
     endLine: 0,
     sourceKind: 'url',
     ...(run.url ? { url: run.url } : {}),
-    ...(sha ? { commitSha: sha } : {}),
+    ...(sha ? { locators: { commit: sha } } : {}),
   }
 }
 
@@ -222,8 +222,10 @@ export function meetingDragPayload(record: {
     startLine: 0,
     endLine: 0,
     sourceKind: 'meeting',
-    meetingToken: token,
-    ...(record?.sourceDir ? { sourceDir: record.sourceDir } : {}),
+    locators: {
+      meeting: token,
+      ...(record?.sourceDir ? { dir: record.sourceDir } : {}),
+    },
   }
 }
 
@@ -248,7 +250,7 @@ export function mailDragPayload(record: {
     startLine: 0,
     endLine: 0,
     sourceKind: 'mail',
-    mailId: id,
+    locators: { mail: String(id) },
   }
 }
 

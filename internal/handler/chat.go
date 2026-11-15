@@ -1384,32 +1384,24 @@ func validatedURLEntry(w http.ResponseWriter, r *http.Request, fEntry model.File
 // url and no path, exactly like a quote taken from a chat message, so without
 // the persisted kind the two are indistinguishable after a reload.
 //
-// The source locators (CommitSHA/TaskID/SessionID/MessageID/ExecutionID/
-// MeetingToken/MailID/SourceDir) are carried through for the same reason one
-// step stronger: they are the ONLY route back to the origin, so dropping one
-// makes the quote silently unjumpable with no error anywhere.
+// The source locators are carried through for the same reason one step
+// stronger: they are the ONLY route back to the origin, so dropping one makes
+// the quote silently unjumpable with no error anywhere.
+//
+// They now live in one open `Locators` bag, which is copied whole — so a NEW
+// locator needs no change here at all. This function used to rebuild the entry
+// field by field, and that copy is exactly how `mailId` and `sourceDir` got
+// silently dropped when they were introduced (the entry still rendered and
+// still sent; only the jump target was gone). Anything the client sends now
+// survives by default, and only the fields this endpoint deliberately OWNS
+// (Kind) are overwritten.
 //
 // Shared by every endpoint that accepts file entries (chat and queue) so the
 // two cannot drift apart.
 func validatedQuoteEntry(fEntry model.FileEntry) model.FileEntry {
-	return model.FileEntry{
-		Path:         fEntry.Path,
-		Kind:         "quote",
-		ID:           fEntry.ID,
-		Text:         fEntry.Text,
-		Note:         fEntry.Note,
-		Language:     fEntry.Language,
-		URL:          fEntry.URL,
-		SourceKind:   fEntry.SourceKind,
-		CommitSHA:    fEntry.CommitSHA,
-		TaskID:       fEntry.TaskID,
-		SessionID:    fEntry.SessionID,
-		MessageID:    fEntry.MessageID,
-		ExecutionID:  fEntry.ExecutionID,
-		MeetingToken: fEntry.MeetingToken,
-		MailID:       fEntry.MailID,
-		SourceDir:    fEntry.SourceDir,
-		StartLine:    fEntry.StartLine,
-		EndLine:      fEntry.EndLine,
-	}
+	// Whole-struct copy: adding a field to model.FileEntry must not require
+	// remembering to add it here too.
+	out := fEntry
+	out.Kind = "quote"
+	return out
 }

@@ -68,7 +68,7 @@ describe('useMeetingHistory.buildQuote', () => {
     const quote = await useMeetingHistory().buildQuote({ token: 't1', title: '周会', startedAt: 0 })
 
     expect(quote?.text).toBe('REVISED')
-    expect(quote?.meetingToken).toBe('t1')
+    expect(quote?.locators?.meeting).toBe('t1')
     expect(quote?.language).toBe('meeting')
   })
 
@@ -85,7 +85,7 @@ describe('useMeetingHistory.buildQuote', () => {
       dirPath: '/proj/.clawbench/notes/2026-11-05-1430',
     })
 
-    expect(quote?.sourceDir).toBe('.clawbench/notes/2026-11-05-1430')
+    expect(quote?.locators?.dir).toBe('.clawbench/notes/2026-11-05-1430')
   })
 })
 
