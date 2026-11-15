@@ -9,7 +9,6 @@ import (
 // init registers the Grok streaming-json CLI backend as a fallback transport.
 // ACP (grok agent stdio) is preferred; when unavailable, chat falls back here.
 func init() {
-	ai.RegisterBackend("grok", newGrokBackend)
 }
 
 // newGrokBackend returns a CLIBackend for Grok headless streaming-json mode.

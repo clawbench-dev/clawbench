@@ -8,7 +8,6 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("mimo", newMimoBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "mimo",
 		Spec: model.BackendSpec{
@@ -28,6 +27,8 @@ func init() {
 		ACP: &backends.ACPPlugin{
 			InputRemaps: opencode.OpenCodeACPInputRemaps,
 		},
+		CLI:         &backends.CLIPlugin{NewBackend: newMimoBackend},
+		ModelSource: model.StaticSource("mimo", "mimo", model.MimoCatalog),
 	})
 }
 

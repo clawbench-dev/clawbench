@@ -12,10 +12,6 @@ import (
 	"clawbench/internal/platform"
 )
 
-func init() {
-	model.RegisterModelSource(model.PluginSource("codex", discoverCodexModels))
-}
-
 // codexModelRe matches OpenAI model IDs in the Codex binary's string output.
 var codexModelRe = regexp.MustCompile(`^(gpt-\d+\.\d+(-mini)?|o[34](-mini)?)$`)
 

@@ -1,19 +1,19 @@
 package backends
 
 import (
-	"os/exec"
-
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 )
 
 // BackendPlugin is the complete self-describing registration unit for an AI backend.
-// Each backend sub-package registers itself via init() calling Register().
+// Each backend sub-package registers itself via ONE init() calling Register().
 //
-// Currently, CLI-mode registration uses ai.RegisterBackend() in factory.go,
-// while ACP mapping data is registered via backends.Register() in acp_register.go.
-// Eventually, ai.RegisterBackend should be deprecated in favor of a unified
-// backends.Register() that handles both CLI and ACP data in one place.
+// Register() is the only entry point a backend needs: it forwards each non-nil
+// field to the registry that consumes it (the CLI factory table in internal/ai,
+// the model-source registry in internal/model, the on-disk session scanner
+// table). Before that, every backend had to call three or four registration
+// functions from three or four init() blocks, and forgetting one produced a
+// backend that half worked (e.g. detectable but with no models).
 type BackendPlugin struct {
 	// ID is the unique backend identifier, e.g. "claude", "kimi".
 	// Corresponds to Agent.Backend field.
@@ -23,19 +23,34 @@ type BackendPlugin struct {
 	// Collected into model.BackendRegistry at startup.
 	Spec model.BackendSpec
 
-	// CLI is the CLI-mode configuration. nil means no CLI support.
-	// Used by backends that ride the CLIBackend skeleton (most backends).
+	// CLI is the CLI-transport factory. nil means the backend has no CLI
+	// transport (ACP-only backends: cursor, commandcode, dsh, grok's ACP path…).
+	//
+	// There used to be a second `Custom` field for backends that implement
+	// AIBackend directly instead of riding the CLIBackend skeleton. Both
+	// factories have the same signature (func() ai.AIBackend), so the split
+	// carried no information — one field is enough.
 	CLI *CLIPlugin
-
-	// Custom is the custom backend factory. nil means use standard CLI or ACP path.
-	// Used by backends that directly implement AIBackend or wrap CLIBackend (e.g. Codex, VeCLI).
-	// When Custom is non-nil, Factory uses Custom.NewBackend and ignores CLI.
-	Custom *CustomPlugin
 
 	// ACP is the ACP-mode mapping data. nil means no ACP support.
 	// ACP event handling logic stays in internal/ai/ as shared infrastructure;
 	// sub-packages only register mapping data (tool names, input field remaps).
 	ACP *ACPPlugin
+
+	// ModelSource is how this backend enumerates its models (static catalog,
+	// CLI probe, or custom plugin). nil means the backend has no discovery
+	// source of its own.
+	//
+	// This used to be a separate model.RegisterModelSource() call in a
+	// discovery.go init(). Folding it in here means a backend cannot register
+	// itself without also saying how its models are discovered — the two facts
+	// always travel together.
+	ModelSource model.ModelSource
+
+	// ListSessions is the on-disk ACP session scanner, used as a fallback when
+	// the agent does not implement the session/list RPC. nil means "rely on the
+	// RPC only".
+	ListSessions ai.ListSessionsFromDiskFn
 
 	// MidTurn is the backend's optional mid-turn injection policy: how to put a
 	// user message into a turn that is already running, instead of queueing it
@@ -59,27 +74,15 @@ type BackendPlugin struct {
 	MidTurnSplitsReply bool
 }
 
-// CLIPlugin provides CLI-mode configuration for backends using the CLIBackend skeleton.
+// CLIPlugin is the CLI-transport factory for a backend.
+//
+// Tool-name normalization and input remapping deliberately do NOT live here:
+// they are properties of the line parser the factory builds (StreamJSONParser
+// holds its own ToolNameMap/InputRemaps), and duplicating them in the plugin
+// would create two sources of truth that can drift. The plugin only answers
+// "can this backend run over CLI, and how do I construct it".
 type CLIPlugin struct {
-	// NewBackend returns a CLIBackend instance (configured with buildArgs/newParser/filterLine/preStart).
-	NewBackend func() *ai.CLIBackend
-
-	// ToolNameMap is the backend's complete tool name normalization map.
-	// key: backend raw tool name → value: canonical name (e.g. "read_file" → "Read")
-	ToolNameMap map[string]string
-
-	// InputRemaps is the backend's CLI-mode tool input field remapping map.
-	// key: original field name → value: target field name (e.g. "filePath" → "file_path")
-	InputRemaps map[string]string
-
-	// PreExecHook is called before the CLI subprocess starts, for backend-specific env injection.
-	// e.g. Pi's API key injection logic. nil means no extra injection needed.
-	PreExecHook func(cmd *exec.Cmd, req ai.ChatRequest)
-}
-
-// CustomPlugin provides a custom backend factory for backends not using the CLIBackend skeleton.
-type CustomPlugin struct {
-	// NewBackend returns a custom AIBackend instance.
+	// NewBackend returns a fresh backend instance for one run.
 	NewBackend func() ai.AIBackend
 }
 

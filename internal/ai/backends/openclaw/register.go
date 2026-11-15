@@ -7,7 +7,7 @@ import (
 
 func init() {
 	// OpenClaw (openclaw) is ACP-only via its built-in `acp` subcommand: no
-	// ai.RegisterBackend (CLI factory) is registered, so chat always uses the
+	// CLI factory is set (CLI == nil), so chat always uses the
 	// ACP stdio transport.
 	//
 	// Verified against openclaw 2026.10.6 (probe:

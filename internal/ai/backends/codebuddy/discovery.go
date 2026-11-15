@@ -23,10 +23,6 @@ import (
 // rejecting legitimate ones.
 const maxCacheEntryBytes = 4 << 20 // 4 MiB
 
-func init() {
-	model.RegisterModelSource(model.PluginSource("codebuddy", discoverCodebuddyModels))
-}
-
 // codebuddyProductFiles are the product-config filenames CodeBuddy ships.
 // The npm package and native binary both reference several variants; only one
 // is present for a given distribution channel.

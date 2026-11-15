@@ -19,10 +19,6 @@ import (
 // layout inside it does not.
 const QoderTextsRelPath = ".auth/dynamic-texts.json"
 
-func init() {
-	model.RegisterModelSource(model.PluginSource("qoder", discoverQoderModels))
-}
-
 // qoderSkipModels are keys in dynamic-texts.json that are tier selectors or
 // routing aliases rather than concrete models.
 var qoderSkipModels = map[string]bool{

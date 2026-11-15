@@ -7,7 +7,7 @@ import (
 
 func init() {
 	// Hermes Agent (NousResearch) is ACP-only via its built-in `hermes acp`
-	// subcommand: no ai.RegisterBackend (CLI factory) is registered, so chat
+	// subcommand: no CLI factory is set (CLI == nil), so chat
 	// always uses the ACP stdio transport.
 	//
 	// Verified against hermes v0.21.7 (acp_adapter/): initialize advertises

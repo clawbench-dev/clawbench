@@ -7,7 +7,6 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("codex", newCodexBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "codex",
 		Spec: model.BackendSpec{
@@ -28,7 +27,10 @@ func init() {
 		// Codex can inject a message into the running turn via the ACP steering
 		// extension (_session/steering). It emits no echo boundary, so the
 		// injection MERGES into the running reply (no split).
-		MidTurn: &midTurnInjector{},
+		CLI:          &backends.CLIPlugin{NewBackend: newCodexBackend},
+		ModelSource:  model.PluginSource("codex", discoverCodexModels),
+		ListSessions: listCodexSessionsFromDisk,
+		MidTurn:      &midTurnInjector{},
 	})
 }
 

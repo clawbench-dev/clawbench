@@ -38,7 +38,6 @@ var KimiToolNameMap = map[string]string{
 }
 
 func init() {
-	ai.RegisterBackend("kimi", newKimiBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "kimi",
 		Spec: model.BackendSpec{
@@ -49,6 +48,8 @@ func init() {
 			InstallCmd:           "npm install -g kimiai-cli",
 			SortOrder:            10,
 		},
+		CLI:         &backends.CLIPlugin{NewBackend: newKimiBackend},
+		ModelSource: model.StaticSource("kimi", "kimi", model.KimiCatalog),
 		ACP: &backends.ACPPlugin{
 			ToolCallIDPrefixes: KimiACPTCIDPrefixes,
 		},

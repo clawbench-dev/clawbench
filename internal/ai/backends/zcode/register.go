@@ -7,7 +7,7 @@ import (
 
 func init() {
 	// ZCode (Zhipu GLM) is ACP-only via the zcode-acp-server bridge adapter:
-	// no ai.RegisterBackend (CLI factory) is registered, so chat always uses
+	// no CLI factory is set (CLI == nil), so chat always uses
 	// the ACP stdio transport (npx -y zcode-acp-server). The bridge spawns the
 	// real ZCode headless engine (`zcode app-server --stdio`), resolving the
 	// zcode CLI from ZCODE_BIN → PATH → the desktop-app bundle

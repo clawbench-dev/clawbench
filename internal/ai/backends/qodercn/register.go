@@ -8,7 +8,6 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("qodercn", newQoderCNBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "qodercn",
 		Spec: model.BackendSpec{
@@ -52,6 +51,10 @@ func init() {
 			NativeSkillsDirs:      []string{".qoder-cn/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
 		},
+		CLI: &backends.CLIPlugin{NewBackend: newQoderCNBackend},
+		ModelSource: model.PluginSource("qodercn", func() ([]model.AgentModel, string) {
+			return qoder.DiscoverModelsIn("qodercn", QoderCNConfigRoot)
+		}),
 	})
 }
 

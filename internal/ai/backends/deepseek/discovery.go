@@ -7,21 +7,6 @@ import (
 	"clawbench/internal/model"
 )
 
-func init() {
-	// Prefer the current CLI and scope the probe to the deepseek provider: a
-	// current CLI without --provider prints only the *active* provider's models,
-	// which is not necessarily deepseek. Older versions reject the flag with a
-	// nonzero exit, so the unscoped invocations remain as fallbacks.
-	model.RegisterModelSource(model.NewCLISource("deepseek", model.CLIOptions{
-		Commands: []model.CommandSpec{
-			{Command: "codewhale", Args: []string{"models", "--provider", "deepseek"}, CombineStderr: true},
-			{Command: "codewhale", Args: []string{"models"}, CombineStderr: true},
-			{Command: "deepseek", Args: []string{"models"}, CombineStderr: true},
-		},
-		Parse: parseDeepSeekModels,
-	}))
-}
-
 // deepseekModelLineRe matches one model row in either output format:
 //
 //	  deepseek-v4-flash (deepseek)   legacy: every provider is listed, tagged

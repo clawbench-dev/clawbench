@@ -7,7 +7,7 @@ import (
 
 func init() {
 	// Grok prefers ACP over stdio (grok agent stdio); a streaming-json CLI
-	// fallback is registered in cli.go via ai.RegisterBackend("grok", ...).
+	// fallback is wired below through CLI.NewBackend.
 	backends.Register(&backends.BackendPlugin{
 		ID: "grok",
 		Spec: model.BackendSpec{
@@ -22,5 +22,12 @@ func init() {
 			ToolCallIDPrefixes: GrokACPTCIDPrefixes,
 			InputRemaps:        GrokACPRemaps,
 		},
+		CLI: &backends.CLIPlugin{NewBackend: newGrokBackend},
+		ModelSource: model.NewCLISource("grok", model.CLIOptions{
+			Command:  "grok",
+			Args:     []string{"models"},
+			Parse:    parseGrokModels,
+			Fallback: model.GrokCatalog,
+		}),
 	})
 }

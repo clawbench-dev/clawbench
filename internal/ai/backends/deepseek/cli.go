@@ -17,7 +17,6 @@ var DeepSeekInputRemaps = map[string]string{
 }
 
 func init() {
-	ai.RegisterBackend("deepseek", newDeepSeekBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "deepseek",
 		Spec: model.BackendSpec{
@@ -35,6 +34,15 @@ func init() {
 			ToolCallIDPrefixes: CodeWhaleACPToolCallIDPrefixes,
 			InputRemaps:        CodeWhaleACPInputRemaps,
 		},
+		CLI: &backends.CLIPlugin{NewBackend: newDeepSeekBackend},
+		ModelSource: model.NewCLISource("deepseek", model.CLIOptions{
+			Commands: []model.CommandSpec{
+				{Command: "codewhale", Args: []string{"models", "--provider", "deepseek"}, CombineStderr: true},
+				{Command: "codewhale", Args: []string{"models"}, CombineStderr: true},
+				{Command: "deepseek", Args: []string{"models"}, CombineStderr: true},
+			},
+			Parse: parseDeepSeekModels,
+		}),
 	})
 }
 

@@ -10,7 +10,6 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("claude", newClaudeBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "claude",
 		Spec: model.BackendSpec{
@@ -31,7 +30,9 @@ func init() {
 		// Claude can inject a message into the running turn via the ACP
 		// steering extension (_session/steering). It emits no echo boundary, so
 		// the injection MERGES into the running reply (no split).
-		MidTurn: &midTurnInjector{},
+		CLI:         &backends.CLIPlugin{NewBackend: newClaudeBackend},
+		ModelSource: model.PluginSource("claude", discoverClaudeModels),
+		MidTurn:     &midTurnInjector{},
 	})
 }
 

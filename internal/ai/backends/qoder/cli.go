@@ -7,7 +7,6 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("qoder", newQoderBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "qoder",
 		Spec: model.BackendSpec{
@@ -29,6 +28,8 @@ func init() {
 			// login) — see backends/qodercn.
 			LoginCmd: "qodercli login",
 		},
+		CLI:         &backends.CLIPlugin{NewBackend: newQoderBackend},
+		ModelSource: model.PluginSource("qoder", discoverQoderModels),
 	})
 }
 

@@ -7,7 +7,7 @@ import (
 
 func init() {
 	// Command Code (Langbase) is ACP-only via its built-in `acp` subcommand:
-	// no ai.RegisterBackend (CLI factory) is registered, so chat always uses the
+	// no CLI factory is set (CLI == nil), so chat always uses the
 	// ACP stdio transport.
 	//
 	// Verified against command-code 1.84.0 (probe:

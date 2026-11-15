@@ -14,16 +14,36 @@ var (
 	pluginsMu sync.RWMutex
 )
 
-// Register adds a backend plugin to the global registry.
+// Register adds a backend plugin to the global registry and forwards its
+// capabilities to the registries that consume them.
 // Typically called in a sub-package's init() function.
 // Duplicate registration panics (programming error).
+//
+// Forwarding here (rather than in each sub-package) is what makes one init()
+// enough for a new backend. The alternative — every backend calling
+// ai.RegisterBackend + model.RegisterModelSource + ListSessionsFromDiskRegister
+// itself — meant a backend could be half registered, and that the set of calls
+// drifted between backends.
 func Register(p *BackendPlugin) {
 	pluginsMu.Lock()
-	defer pluginsMu.Unlock()
 	if _, exists := plugins[p.ID]; exists {
+		pluginsMu.Unlock()
 		panic(fmt.Sprintf("backend plugin already registered: %s", p.ID))
 	}
 	plugins[p.ID] = p
+	pluginsMu.Unlock()
+
+	// CLI factory (nil for ACP-only backends).
+	if p.CLI != nil && p.CLI.NewBackend != nil {
+		ai.RegisterBackend(p.ID, p.CLI.NewBackend)
+	}
+
+	if p.ModelSource != nil {
+		model.RegisterModelSource(p.ModelSource)
+	}
+	if p.ListSessions != nil {
+		ai.ListSessionsFromDiskRegister(p.ID, p.ListSessions)
+	}
 }
 
 // Lookup returns the backend plugin for the given ID, or nil if not found.

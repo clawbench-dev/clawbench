@@ -8,7 +8,7 @@ import (
 func init() {
 	// DeepSeek Harness is ACP-only: `dsh` ships a built-in `acp` profile that
 	// starts a standard Agent Client Protocol server over stdio. There is no
-	// CLI transport, so no ai.RegisterBackend (CLI factory) is registered and
+	// CLI transport, so no CLI factory is set (CLI == nil) and
 	// chat always goes through the ACP stdio transport.
 	//
 	// No ACPPlugin is needed either: dsh reports lowercase tool titles

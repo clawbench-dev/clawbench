@@ -9,8 +9,8 @@ func init() {
 	// Cursor (Anysphere) ships an ACP server as a first-class subcommand of its
 	// own CLI: `agent acp` ("Start the Cursor Agent as an ACP (Agent Client
 	// Protocol) server"). `cursor-agent` is the legacy alias for the same
-	// binary. There is no CLI transport, so no ai.RegisterBackend (CLI factory)
-	// is registered and chat always goes through the ACP stdio transport.
+	// binary. There is no CLI transport, so no CLI factory is set (CLI == nil)
+	// and chat always goes through the ACP stdio transport.
 	//
 	// Do NOT wire the third-party npm adapter `cursor-agent-acp`: it writes the
 	// child's stdin without ever closing it, while `cursor-agent -p ""` waits

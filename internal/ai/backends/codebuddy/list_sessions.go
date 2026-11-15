@@ -11,7 +11,6 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/model"
 )
 
@@ -28,10 +27,6 @@ import (
 // We scan these files to enumerate sessions as a fallback, mapping each to an
 // acp.SessionInfo so the @resume drawer works for CodeBuddy too.
 // ---------------------------------------------------------------------------
-
-func init() {
-	ai.ListSessionsFromDiskRegister("codebuddy", listCodebuddySessionsFromDisk)
-}
 
 // codebuddyDiskSession is a parsed session from a CodeBuddy JSONL file.
 type codebuddyDiskSession struct {

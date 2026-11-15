@@ -20,7 +20,11 @@ type BackendFactoryEntry struct {
 }
 
 // RegisterBackend registers a backend factory function.
-// Called by backend plugin sub-packages in their init().
+//
+// Callers are expected to be the plugin forwarding point
+// (backends.Register), not backend sub-packages: a sub-package declares its
+// CLI factory as BackendPlugin.CLI.NewBackend and gets this call for free.
+// Keeping the exported function lets tests register throwaway factories.
 func RegisterBackend(id string, newBackend func() AIBackend) {
 	backendFactoriesMu.Lock()
 	defer backendFactoriesMu.Unlock()

@@ -32,7 +32,6 @@ var PiACPInputRemaps = map[string]string{
 }
 
 func init() {
-	ai.RegisterBackend("pi", newPiBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "pi",
 		Spec: model.BackendSpec{
@@ -66,6 +65,13 @@ func init() {
 		ACP: &backends.ACPPlugin{
 			InputRemaps: PiACPInputRemaps,
 		},
+		CLI: &backends.CLIPlugin{NewBackend: newPiBackend},
+		ModelSource: model.NewCLISource("pi", model.CLIOptions{
+			Command:       "pi",
+			Args:          []string{"--list-models"},
+			CombineStderr: true,
+			Parse:         model.ParseTabular,
+		}),
 	})
 }
 

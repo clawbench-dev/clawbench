@@ -10,7 +10,6 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("copilot", newCopilotBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "copilot",
 		Spec: model.BackendSpec{
@@ -26,6 +25,8 @@ func init() {
 			NativeSkillsDirs:      []string{".copilot/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
 		},
+		CLI:         &backends.CLIPlugin{NewBackend: newCopilotBackend},
+		ModelSource: model.StaticSource("copilot", "copilot", model.CopilotCatalog),
 	})
 }
 

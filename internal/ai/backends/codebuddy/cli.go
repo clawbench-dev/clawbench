@@ -10,7 +10,6 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("codebuddy", newCodebuddyBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "codebuddy",
 		Spec: model.BackendSpec{
@@ -45,6 +44,9 @@ func init() {
 		// session/steer method, instead of queueing it for the next turn.
 		// It echoes the injected message back with a correlation id, so the
 		// reply can be SPLIT exactly at the injection point.
+		CLI:                &backends.CLIPlugin{NewBackend: newCodebuddyBackend},
+		ModelSource:        model.PluginSource("codebuddy", discoverCodebuddyModels),
+		ListSessions:       listCodebuddySessionsFromDisk,
 		MidTurn:            &midTurnInjector{},
 		MidTurnSplitsReply: true,
 	})

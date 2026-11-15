@@ -13,10 +13,6 @@ import (
 	"clawbench/internal/platform"
 )
 
-func init() {
-	model.RegisterModelSource(model.PluginSource("claude", discoverClaudeModels))
-}
-
 // claudeModelRe matches model IDs like "claude-sonnet-4-6". It requires exactly
 // two version segments, excluding date-stamped snapshots
 // ("claude-opus-4-20250514") and short aliases ("claude-sonnet-4").

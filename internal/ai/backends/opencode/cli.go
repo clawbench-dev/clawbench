@@ -37,7 +37,6 @@ var OpenCodeToolNameMap = map[string]string{
 }
 
 func init() {
-	ai.RegisterBackend("opencode", newOpenCodeBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "opencode",
 		Spec: model.BackendSpec{
@@ -57,6 +56,12 @@ func init() {
 		ACP: &backends.ACPPlugin{
 			InputRemaps: OpenCodeACPInputRemaps,
 		},
+		CLI: &backends.CLIPlugin{NewBackend: newOpenCodeBackend},
+		ModelSource: model.NewCLISource("opencode", model.CLIOptions{
+			Command: "opencode",
+			Args:    []string{"models"},
+			Parse:   model.ParseProviderModel,
+		}),
 	})
 }
 

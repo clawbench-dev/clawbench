@@ -7,7 +7,6 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("vecli", newVeCLIBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "vecli",
 		Spec: model.BackendSpec{
@@ -15,6 +14,8 @@ func init() {
 			InstallCmd: "npm install -g @volcengine/vecli",
 			SortOrder:  6,
 		},
+		CLI:         &backends.CLIPlugin{NewBackend: newVeCLIBackend},
+		ModelSource: model.PluginSource("vecli", discoverVeCLIModels),
 	})
 }
 
