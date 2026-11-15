@@ -390,18 +390,21 @@ func TestProviderEnvForAgent(t *testing.T) {
 		ID: 5, Name: "GW", Protocol: ProviderProtocolAnthropic,
 		BaseURL: "https://gw.example", APIKey: "sk-5", AuthMode: ProviderAuthAuto,
 	}})
+	// zcode is a plain environment-variable backend: claude used to stand in
+	// here, but it now receives its provider through a private config directory,
+	// which this package cannot exercise (the writer lives in service).
 	ReplaceAgents(
 		map[string]*Agent{
-			"bound":   {ID: "bound", Backend: "claude", ProviderID: &pid},
-			"unbound": {ID: "unbound", Backend: "claude"},
+			"bound":   {ID: "bound", Backend: "zcode", ProviderID: &pid},
+			"unbound": {ID: "unbound", Backend: "zcode"},
 		},
 		[]*Agent{
-			{ID: "bound", Backend: "claude", ProviderID: &pid},
-			{ID: "unbound", Backend: "claude"},
+			{ID: "bound", Backend: "zcode", ProviderID: &pid},
+			{ID: "unbound", Backend: "zcode"},
 		},
 	)
 
-	env, err := ProviderEnvForAgent("bound", "claude")
+	env, err := ProviderEnvForAgent("bound", "zcode")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -410,7 +413,7 @@ func TestProviderEnvForAgent(t *testing.T) {
 		t.Fatalf("env = %v", env)
 	}
 
-	env, err = ProviderEnvForAgent("unbound", "claude")
+	env, err = ProviderEnvForAgent("unbound", "zcode")
 	if err != nil || env != nil {
 		t.Fatalf("an unbound agent must be a no-op, got %v / %v", env, err)
 	}

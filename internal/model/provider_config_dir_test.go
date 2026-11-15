@@ -59,7 +59,7 @@ func TestProviderConfigDirModelsError(t *testing.T) {
 // would fall back to the shared env vars and two agents would overwrite each
 // other again.
 func TestProviderUsesConfigDir(t *testing.T) {
-	for _, backend := range []string{"codebuddy", "kimi", "pi"} {
+	for _, backend := range []string{"codebuddy", "kimi", "pi", "claude"} {
 		assert.True(t, model.ProviderUsesConfigDir(backend), backend)
 		assert.True(t, model.ProviderNeedsConfigWrite(backend), backend)
 		assert.NotEmpty(t, model.ProviderConfigDirEnv(backend), backend)
@@ -69,7 +69,7 @@ func TestProviderUsesConfigDir(t *testing.T) {
 	assert.False(t, model.ProviderUsesConfigDir("codex"))
 	assert.True(t, model.ProviderUsesConfigFile("codex"))
 	// Env-driven backends need no file at all.
-	for _, backend := range []string{"claude", "opencode", "deepseek", "cursor", "copilot"} {
+	for _, backend := range []string{"opencode", "deepseek", "zcode", "cursor", "copilot"} {
 		assert.False(t, model.ProviderNeedsConfigWrite(backend), backend)
 	}
 }
@@ -101,7 +101,9 @@ func TestProviderConfigSecretInFile(t *testing.T) {
 	assert.True(t, model.ProviderConfigSecretInFile("kimi"))
 	assert.False(t, model.ProviderConfigSecretInFile("pi"))
 	assert.False(t, model.ProviderConfigSecretInFile("codebuddy"))
-	assert.False(t, model.ProviderConfigSecretInFile("claude"))
+	// claude's settings.json has no ${ENV} syntax either: a "${VAR}" reference is
+	// sent verbatim (the endpoint answered 401).
+	assert.True(t, model.ProviderConfigSecretInFile("claude"))
 }
 
 // pi resolves a model as "<provider>/<model>". The picker and the declared file
@@ -137,8 +139,12 @@ func TestProviderConfigDisplayPath(t *testing.T) {
 		"/data/clawbench/providers/agents/agent-1/models.json",
 		model.ProviderConfigDisplayPath("codebuddy", "agent-1"))
 
+	assert.Equal(t,
+		"/data/clawbench/providers/agents/agent-1/settings.json",
+		model.ProviderConfigDisplayPath("claude", "agent-1"))
+
 	// An env-driven backend writes nothing, so there is nothing to show.
-	assert.Empty(t, model.ProviderConfigDisplayPath("claude", "agent-1"))
+	assert.Empty(t, model.ProviderConfigDisplayPath("zcode", "agent-1"))
 }
 
 // A protocol reachable only through the config file must pass the bind-time auth
@@ -150,4 +156,22 @@ func TestProviderAuthModeError_ConfigDirProtocol(t *testing.T) {
 	assert.NoError(t, model.ProviderAuthModeError("kimi", model.ProviderProtocolAnthropic, model.ProviderAuthBearer))
 	// A protocol the file cannot express is still refused.
 	assert.Error(t, model.ProviderAuthModeError("codebuddy", model.ProviderProtocolAnthropic, model.ProviderAuthAuto))
+}
+
+// claude is the one backend whose config file is not merely an alternative to
+// the environment variables: ANTHROPIC_BASE_URL alone creates the session but the
+// turn never replies (the ACP adapter reads the endpoint from the merged
+// settings). So the protocol must stay listed, and the models requirement must
+// NOT apply — its settings.json carries no model list.
+func TestClaudeConfigDirCapabilities(t *testing.T) {
+	assert.True(t, model.ProviderUsesConfigDir("claude"))
+	assert.Equal(t, "CLAUDE_CONFIG_DIR", model.ProviderConfigDirEnv("claude"))
+	assert.Equal(t, "settings.json", model.ProviderConfigDirFile("claude"))
+	assert.Equal(t, []string{model.ProviderProtocolAnthropic}, model.SupportedProtocols("claude"))
+
+	assert.False(t, model.ProviderConfigDirDeclaresModels("claude"),
+		"claude picks its model per session, so it must not require a declared list")
+	assert.True(t, model.ProviderConfigDirDeclaresModels("kimi"))
+	assert.True(t, model.ProviderConfigDirDeclaresModels("codebuddy"))
+	assert.True(t, model.ProviderConfigDirDeclaresModels("pi"))
 }

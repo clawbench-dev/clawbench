@@ -32,7 +32,7 @@
 
 | 后端 | 方式 | 变量 |
 |---|---|---|
-| claude | anthropic | `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` |
+| claude | **配置目录**（+ anthropic 环境变量兜底） | `settings.json` 的 `env` 段 + `CLAUDE_CONFIG_DIR` |
 | codebuddy | **配置目录** | `models.json`（逐模型 `url`）+ `CODEBUDDY_CONFIG_DIR`；环境变量 `CODEBUDDY_*` 仍作为兜底 |
 | opencode / mimo / pi / zcode | anthropic、openai | `ANTHROPIC_*` / `OPENAI_*` |
 | kimi | **配置目录**（+ OpenAI 环境变量） | `config.toml` + `KIMI_SHARE_DIR`；`KIMI_BASE_URL` / `KIMI_API_KEY` 仅 `type="kimi"` 时生效 |
@@ -82,9 +82,9 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 - 同一后端全局只能绑定一个提供商：冲突返回 409 `ProviderConfigConflict`。
 - 解绑/删除/启动对账（`ReconcileProviderConfigs`）会移除托管块并恢复原始值。
 
-## 配置目录模式（codebuddy / kimi / pi）
+## 配置目录模式（codebuddy / kimi / pi / claude）
 
-这三个后端有**配置目录开关**（`CODEBUDDY_CONFIG_DIR` / `KIMI_SHARE_DIR` / `PI_CODING_AGENT_DIR`），
+这四个后端有**配置目录开关**（`CODEBUDDY_CONFIG_DIR` / `KIMI_SHARE_DIR` / `PI_CODING_AGENT_DIR` / `CLAUDE_CONFIG_DIR`），
 所以不需要像 codex 那样改用户的文件：每个智能体在 `{data-dir}/providers/agents/<agent-id>/` 下拿到一个**私有目录**，
 里面只写 ClawBench 自己的那一个文件，其余条目**符号链接**回用户自己的配置目录。
 
@@ -101,6 +101,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 | codebuddy | `models.json` | 仅 OpenAI | `${CLAWBENCH_PROVIDER_API_KEY}` 引用，不落盘 |
 | kimi | `config.toml` | OpenAI + Anthropic | **明文**（该文件没有 `${ENV}` 语法） |
 | pi | `models.json` | OpenAI + Anthropic | `$CLAWBENCH_PROVIDER_API_KEY` 引用，不落盘 |
+| claude | `settings.json` 的 `env` 段 | 仅 Anthropic | **明文**（`${VAR}` 会被原样发出去，实测 401） |
 
 各后端的实测约束（都是真机验证过才写进表里的）：
 
@@ -111,15 +112,23 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
   因此 `ANTHROPIC_*` 那行注入已从能力表删除——它以前让绑定「成功」而端点被静默忽略。
   隔离目录必须包含 `credentials` / `device_id`（已由符号链接覆盖），否则 `session/new` 直接 `-32000`。
 - **pi**：模型寻址是 `<provider>/<model>`，所以选择器下发的是 `clawbench/<model>`（`ProviderModelIDFor`）。
+- **claude**：它是唯一一个「配置文件不是环境变量的替代品、而是必需品」的后端——只设 `ANTHROPIC_BASE_URL`
+  能建起会话，但回合永远不出结果（适配器从合并后的 settings 读端点，不读原始环境变量）。所以不接这条，
+  claude 的 Anthropic 协议绑定实际上是不可用的。
+  它的 `settings.json` 只部分属于 ClawBench：`env` 段归我们，`permissions` / `enabledPlugins` / `modelOverrides`
+  等**从用户自己的 `~/.claude/settings.json` 原样带过来**——私有目录是新建的，只写 `env` 会让这个智能体
+  突然失去全部审批规则，用户会理解成「ClawBench 把我的权限关了」。`env` 段里用户自己的其它变量（代理等）也保留。
+  它**不要求模型清单**（模型按会话选），所以 `ConfigDirDeclaresModels` 是逐后端的开关而非「有配置文件就有」。
 
 绑定行为：
 
-- **必须声明模型**：这三个后端的配置文件要列出模型，CLI 才能解析模型 id；空清单的 provider 块在它们眼里等于不存在。
+- **必须声明模型**（codebuddy / kimi / pi，**不含 claude**）：这三个后端的配置文件要列出模型，CLI 才能解析模型 id；
+  空清单的 provider 块在它们眼里等于不存在。
   所以绑定一个没有模型清单的提供商会在**绑定时**被拒绝（400 `ProviderInvalid`，`detail.field = "models"`），
   而不是等到对话时才失败。判据与写入侧完全一致（清单为空时退回到默认模型，所以只填默认模型也算数）。
 - **不能清空已有清单**：已经绑定了这类智能体的提供商，清空模型清单会被拒绝（409 `ProviderModelsRequired`），
   否则那个智能体下一轮就跑不起来。只看「配置目录后端」的智能体，环境变量后端不受影响。
-- 只有**密钥必须明文落盘**的后端（目前仅 kimi）才要求 `confirm_config_write`，前端弹的是一份专门的说明
+- 只有**密钥必须明文落盘**的后端（kimi、claude）才要求 `confirm_config_write`，前端弹的是一份专门的说明
   （文件在 ClawBench 数据目录内、不会改用户的配置、但密钥会写进这个文件）。
 - **没有跨智能体冲突检查**：每个智能体一个目录，两个智能体指向不同提供商是正常用法。
 - 解绑 / 删除智能体 / 启动对账都会清掉对应目录；agent 已不存在的孤儿目录由 `pruneOrphanConfigDirs` 清掉，
@@ -201,7 +210,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 
 ## 已知限制
 
-- Codex 的配置文件是全局的：同一后端只能有一个生效 provider。**codebuddy / kimi / pi 不受此限制**——
+- Codex 的配置文件是全局的：同一后端只能有一个生效 provider。**codebuddy / kimi / pi / claude 不受此限制**——
   它们走配置目录模式（见上），每个智能体一份，可以各自指向不同提供商。
 - 模型列表不随 provider 切换；模型 id 不属于该提供商时，错误由上游返回（401/404）。
 - `mimo` / `dsh` / `grok` 的变量名基于二进制/源码证据，尚未逐台真机验证；验证失败应降级为不支持，而不是保留「看起来支持」。

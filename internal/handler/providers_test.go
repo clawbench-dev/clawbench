@@ -170,7 +170,9 @@ func TestAgentPatch_ProviderBinding(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	agent := &model.Agent{ID: "claude-agent", Name: "Claude Agent", Backend: "claude"}
+	// zcode, not claude: this test is about the plain bind/unbind flow, and
+	// claude now additionally requires config-file consent.
+	agent := &model.Agent{ID: "zcode-agent", Name: "Zcode Agent", Backend: "zcode"}
 	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
 
 	rec := doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
@@ -383,19 +385,20 @@ func TestAgentPatch_ConfigDirBackendRequiresModels(t *testing.T) {
 	assert.Nil(t, model.GetAgent(agent.ID).ProviderID, "a refused binding must not be persisted")
 
 	// The same provider is fine for an env-driven backend: it never declares
-	// models on disk. (claude speaks anthropic, so it needs its own row.)
-	claudeProvider, err := service.CreateProvider(model.Provider{
-		Name: "ClaudeNoModels", Protocol: model.ProviderProtocolAnthropic,
+	// models on disk. zcode speaks anthropic and writes no config file, so it
+	// needs no consent and no model list.
+	envProvider, err := service.CreateProvider(model.Provider{
+		Name: "ZcodeNoModels", Protocol: model.ProviderProtocolAnthropic,
 		BaseURL: "https://api.minimaxi.com/anthropic", APIKey: "k",
 	})
 	require.NoError(t, err)
-	claudeAgent := &model.Agent{ID: "claude-agent", Name: "Claude", Backend: "claude"}
+	envAgent := &model.Agent{ID: "zcode-agent", Name: "Zcode", Backend: "zcode"}
 	model.ReplaceAgents(
-		map[string]*model.Agent{claudeAgent.ID: claudeAgent},
-		[]*model.Agent{claudeAgent},
+		map[string]*model.Agent{envAgent.ID: envAgent},
+		[]*model.Agent{envAgent},
 	)
 	rec = doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
-		"id": claudeAgent.ID, "provider_id": claudeProvider.ID,
+		"id": envAgent.ID, "provider_id": envProvider.ID,
 	})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }

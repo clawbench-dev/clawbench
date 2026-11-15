@@ -59,6 +59,15 @@ type ProviderEnvSpec struct {
 	// Every other entry in the directory is symlinked back to the user's own
 	// config dir, so their login state, skills and history stay visible.
 	ConfigDirFile string
+	// ConfigDirDeclaresModels marks backends whose config file has to LIST the
+	// models: the CLI resolves an id against that declaration, so a provider
+	// block with no models is invisible.
+	//
+	// Deliberately a per-backend flag rather than implied by ConfigDirFile:
+	// claude's settings.json carries only an endpoint and a credential, and the
+	// model is chosen per session, so requiring a list there would refuse a
+	// provider that works fine.
+	ConfigDirDeclaresModels bool
 	// ConfigDirProtocols lists the protocols this backend's config file can
 	// express. Empty means "same as ConfigProtocols".
 	ConfigDirProtocols []string
@@ -119,6 +128,23 @@ var providerEnvTable = map[string]ProviderEnvSpec{
 	},
 	"claude": {
 		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+		// CLAUDE_CONFIG_DIR relocates the whole ~/.claude tree, and the ACP
+		// adapter (claude-agent-acp) merges settings.json's `env` block into the
+		// session. Verified end-to-end: with a private directory holding ONLY
+		// settings.json (no login state at all), a turn against a third-party
+		// Anthropic-compatible endpoint returned its reply.
+		//
+		// This is the ONE backend where the config file is not merely an
+		// alternative to the environment variables: ANTHROPIC_BASE_URL alone
+		// created the session but the turn never produced a reply (the adapter
+		// reads its endpoint from the merged settings, not from the raw
+		// environment). So without this the Anthropic-protocol binding was
+		// effectively unusable for claude.
+		ConfigDirEnv:          "CLAUDE_CONFIG_DIR",
+		ConfigDirFile:         "settings.json",
+		ConfigDirProtocols:    []string{ProviderProtocolAnthropic},
+		ConfigDirProviderID:   "clawbench",
+		ConfigDirSecretInFile: true,
 	},
 	"codebuddy": {
 		// CodeBuddy speaks the OpenAI wire protocol only: its request path is
@@ -134,10 +160,11 @@ var providerEnvTable = map[string]ProviderEnvSpec{
 		// verified: a model with a url reaches that host even when
 		// CODEBUDDY_BASE_URL names a dead one). Writing one file per agent is
 		// what makes two agents on different providers possible.
-		ConfigDirEnv:        "CODEBUDDY_CONFIG_DIR",
-		ConfigDirFile:       "models.json",
-		ConfigDirProtocols:  []string{ProviderProtocolOpenAI},
-		ConfigDirProviderID: "clawbench",
+		ConfigDirEnv:            "CODEBUDDY_CONFIG_DIR",
+		ConfigDirFile:           "models.json",
+		ConfigDirProtocols:      []string{ProviderProtocolOpenAI},
+		ConfigDirProviderID:     "clawbench",
+		ConfigDirDeclaresModels: true,
 	},
 	// codex reads its provider from ~/.codex/config.toml. The managed block
 	// references this variable for env_key, so the secret never lands on disk.
@@ -186,11 +213,12 @@ var providerEnvTable = map[string]ProviderEnvSpec{
 		// isolated directory or session/new answers -32000 Authentication
 		// required even with a custom provider configured. The directory setup
 		// symlinks them back from the user's own ~/.kimi.
-		ConfigDirEnv:          "KIMI_SHARE_DIR",
-		ConfigDirFile:         "config.toml",
-		ConfigDirProtocols:    []string{ProviderProtocolOpenAI, ProviderProtocolAnthropic},
-		ConfigDirProviderID:   "clawbench",
-		ConfigDirSecretInFile: true,
+		ConfigDirEnv:            "KIMI_SHARE_DIR",
+		ConfigDirFile:           "config.toml",
+		ConfigDirProtocols:      []string{ProviderProtocolOpenAI, ProviderProtocolAnthropic},
+		ConfigDirProviderID:     "clawbench",
+		ConfigDirSecretInFile:   true,
+		ConfigDirDeclaresModels: true,
 	},
 	"mimo": {
 		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
@@ -225,11 +253,12 @@ var providerEnvTable = map[string]ProviderEnvSpec{
 		// "<provider>/<model>" (verified: declaring provider "probe" with model
 		// "deepseek-chat" makes "probe/deepseek-chat" selectable and runnable).
 		// apiKey accepts "$ENV", so the secret never has to be written out.
-		ConfigDirEnv:           "PI_CODING_AGENT_DIR",
-		ConfigDirFile:          "models.json",
-		ConfigDirProtocols:     []string{ProviderProtocolOpenAI, ProviderProtocolAnthropic},
-		ConfigDirProviderID:    "clawbench",
-		ConfigDirAddressPrefix: true,
+		ConfigDirEnv:            "PI_CODING_AGENT_DIR",
+		ConfigDirFile:           "models.json",
+		ConfigDirProtocols:      []string{ProviderProtocolOpenAI, ProviderProtocolAnthropic},
+		ConfigDirProviderID:     "clawbench",
+		ConfigDirAddressPrefix:  true,
+		ConfigDirDeclaresModels: true,
 	},
 	"zcode": {
 		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
@@ -249,6 +278,11 @@ var providerEnvTable = map[string]ProviderEnvSpec{
 	"qodercn":    {},
 	"vecli":      {},
 	"custom-acp": {},
+	// Deliberately empty: the built-in backend talks to the provider endpoint
+	// directly from this process (internal/agentcore/llm), so it needs no
+	// environment variables at all. An entry here is what the coverage test
+	// requires; it is not a placeholder for a missing implementation.
+	"builtin": {},
 }
 
 // ProviderEnvBackends lists every backend that has a provider-env entry. Used
@@ -333,7 +367,7 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 // to the default model. Anything the writer accepts must pass here, or a
 // provider that writes fine would be rejected by the binding.
 func ProviderConfigDirModelsError(backendID string, p *Provider) error {
-	if p == nil || !ProviderUsesConfigDir(backendID) {
+	if p == nil || !ProviderConfigDirDeclaresModels(backendID) {
 		return nil
 	}
 	for _, id := range p.Models {
@@ -514,6 +548,13 @@ func ProviderConfigDirFile(backendID string) string {
 func ProviderConfigSecretInFile(backendID string) bool {
 	spec, ok := providerEnvTable[backendID]
 	return ok && spec.ConfigDirSecretInFile
+}
+
+// ProviderConfigDirDeclaresModels reports whether the backend's config file has
+// to list the models it serves. See ConfigDirDeclaresModels.
+func ProviderConfigDirDeclaresModels(backendID string) bool {
+	spec, ok := providerEnvTable[backendID]
+	return ok && ProviderUsesConfigDir(backendID) && spec.ConfigDirDeclaresModels
 }
 
 // ProviderConfigProviderID returns the provider key ClawBench registers inside

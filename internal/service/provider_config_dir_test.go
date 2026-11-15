@@ -138,6 +138,101 @@ func TestApplyProviderConfigDir_PiRegistersProviderKey(t *testing.T) {
 	require.Len(t, entry.Models, 2)
 }
 
+// claude's settings.json is only PARTLY ClawBench's: the `env` block carries the
+// endpoint and credential, but permissions, plugins and the rest belong to the
+// user. The isolated directory is a new directory, so a file holding only `env`
+// would silently drop all of it — which the user experiences as "ClawBench
+// turned my approval rules off".
+func TestApplyProviderConfigDir_ClaudeKeepsUserSettings(t *testing.T) {
+	home := setupConfigDirTest(t)
+
+	userClaude := filepath.Join(home, ".claude")
+	require.NoError(t, os.MkdirAll(userClaude, 0o755))
+	userSettings := `{
+	  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+	  "env": {"MY_PROXY": "http://proxy", "ANTHROPIC_BASE_URL": "https://old.example"},
+	  "permissions": {"allow": ["Bash(git:*)"]},
+	  "enabledPlugins": {"some-plugin": true}
+	}`
+	require.NoError(t, os.WriteFile(filepath.Join(userClaude, "settings.json"), []byte(userSettings), 0o600))
+
+	p := &model.Provider{
+		ID: 9, Name: "ClaudeP", Protocol: model.ProviderProtocolAnthropic,
+		BaseURL: "https://api.deepseek.com/anthropic", APIKey: "sk-claude",
+		AuthMode: model.ProviderAuthAuto,
+	}
+	require.NoError(t, service.ApplyProviderConfigDirToAgent("claude", "agent-c", p))
+
+	data, err := os.ReadFile(filepath.Join(service.ProviderConfigDir("agent-c"), "settings.json"))
+	require.NoError(t, err)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(data, &doc))
+
+	// The user's own keys survive.
+	assert.Contains(t, doc, "permissions", "approval rules must not be dropped")
+	assert.Contains(t, doc, "enabledPlugins")
+	assert.Contains(t, doc, "$schema")
+
+	env, ok := doc["env"].(map[string]any)
+	require.True(t, ok)
+	// ClawBench owns the endpoint and credential...
+	assert.Equal(t, "https://api.deepseek.com/anthropic", env["ANTHROPIC_BASE_URL"])
+	assert.Equal(t, "sk-claude", env["ANTHROPIC_API_KEY"])
+	// ...and leaves the user's other variables alone.
+	assert.Equal(t, "http://proxy", env["MY_PROXY"])
+
+	// The user's own file is untouched.
+	original, err := os.ReadFile(filepath.Join(userClaude, "settings.json"))
+	require.NoError(t, err)
+	assert.Equal(t, userSettings, string(original))
+}
+
+// A gateway that only accepts x-api-key must not be sent a Bearer token, and
+// vice versa: claude reads whichever variable the auth mode names.
+func TestApplyProviderConfigDir_ClaudeAuthMode(t *testing.T) {
+	setupConfigDirTest(t)
+
+	apiKeyMode := &model.Provider{
+		ID: 1, Name: "K", Protocol: model.ProviderProtocolAnthropic,
+		BaseURL: "https://gw.example/anthropic", APIKey: "sk-1", AuthMode: model.ProviderAuthAPIKey,
+	}
+	require.NoError(t, service.ApplyProviderConfigDirToAgent("claude", "agent-k", apiKeyMode))
+	data, err := os.ReadFile(filepath.Join(service.ProviderConfigDir("agent-k"), "settings.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"ANTHROPIC_API_KEY": "sk-1"`)
+	assert.NotContains(t, string(data), "ANTHROPIC_AUTH_TOKEN")
+
+	bearerMode := &model.Provider{
+		ID: 2, Name: "B", Protocol: model.ProviderProtocolAnthropic,
+		BaseURL: "https://gw.example/anthropic", APIKey: "tok-1", AuthMode: model.ProviderAuthBearer,
+	}
+	require.NoError(t, service.ApplyProviderConfigDirToAgent("claude", "agent-b", bearerMode))
+	data, err = os.ReadFile(filepath.Join(service.ProviderConfigDir("agent-b"), "settings.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"ANTHROPIC_AUTH_TOKEN": "tok-1"`)
+	assert.NotContains(t, string(data), "ANTHROPIC_API_KEY")
+}
+
+// claude's file carries no model list, so requiring one would refuse a provider
+// that works. The requirement is per-backend, not implied by "has a config file".
+func TestApplyProviderConfigDir_ClaudeNeedsNoModels(t *testing.T) {
+	setupConfigDirTest(t)
+
+	p := &model.Provider{
+		ID: 3, Name: "NoModels", Protocol: model.ProviderProtocolAnthropic,
+		BaseURL: "https://api.deepseek.com/anthropic", APIKey: "k",
+	}
+	require.Empty(t, p.Models)
+	assert.NoError(t, model.ProviderConfigDirModelsError("claude", p),
+		"claude picks its model per session; it needs no declared list")
+	assert.NoError(t, service.ApplyProviderConfigDirToAgent("claude", "agent-nm", p))
+
+	// Without a base URL there is nothing to redirect, so that IS an error.
+	noURL := &model.Provider{ID: 4, Name: "NoURL", Protocol: model.ProviderProtocolAnthropic, APIKey: "k"}
+	assert.Error(t, service.ApplyProviderConfigDirToAgent("claude", "agent-nu", noURL))
+}
+
 // The user's own data (login state, skills, history) must stay visible inside
 // the isolated directory — otherwise kimi answers "Authentication required" and
 // every agent loses its skills.
@@ -213,7 +308,8 @@ func TestApplyProviderConfigDir_RefusesProviderWithNoModels(t *testing.T) {
 func TestApplyProviderConfigDir_RefusesBackendWithoutConfigDir(t *testing.T) {
 	setupConfigDirTest(t)
 
-	err := service.ApplyProviderConfigDirToAgent("claude", "agent-8", configDirProvider())
+	// deepseek is env-driven: it has no config directory to relocate.
+	err := service.ApplyProviderConfigDirToAgent("deepseek", "agent-8", configDirProvider())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no relocatable config directory")
 }

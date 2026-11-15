@@ -335,15 +335,18 @@ func TestProviderUpdate_RefusesEmptyingModelsWhileConfigDirAgentBound(t *testing
 	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
 
 	// An env-driven agent does not care about the list, so it must not block.
-	claudeProvider, err := service.CreateProvider(model.Provider{
-		Name: "ClaudeP", Protocol: model.ProviderProtocolAnthropic,
+	// zcode is env-driven: nothing on disk declares its models, so it must not
+	// block. (claude used to stand in here, but it now writes a config directory
+	// too.)
+	envProvider, err := service.CreateProvider(model.Provider{
+		Name: "ZcodeP", Protocol: model.ProviderProtocolAnthropic,
 		BaseURL: "https://x/anthropic", APIKey: "k", Models: []string{"m1"},
 	})
 	require.NoError(t, err)
-	claudeAgent := &model.Agent{ID: "claude-agent", Name: "Claude Agent", Backend: "claude", ProviderID: &claudeProvider.ID}
+	envAgent := &model.Agent{ID: "zcode-agent", Name: "Zcode Agent", Backend: "zcode", ProviderID: &envProvider.ID}
 	model.ReplaceAgents(
-		map[string]*model.Agent{agent.ID: agent, claudeAgent.ID: claudeAgent},
-		[]*model.Agent{agent, claudeAgent},
+		map[string]*model.Agent{agent.ID: agent, envAgent.ID: envAgent},
+		[]*model.Agent{agent, envAgent},
 	)
 
 	empty := []string{}
@@ -352,7 +355,7 @@ func TestProviderUpdate_RefusesEmptyingModelsWhileConfigDirAgentBound(t *testing
 	var conflict *service.ProviderModelsConflictError
 	require.ErrorAs(t, err, &conflict)
 	assert.Contains(t, conflict.AgentNames, "Pi Agent")
-	assert.NotContains(t, conflict.AgentNames, "Claude Agent",
+	assert.NotContains(t, conflict.AgentNames, "Zcode Agent",
 		"only config-directory agents depend on the declared list")
 
 	// The row is untouched by the refused update.
@@ -361,7 +364,7 @@ func TestProviderUpdate_RefusesEmptyingModelsWhileConfigDirAgentBound(t *testing
 	assert.Equal(t, []string{"m1"}, stored.Models)
 
 	// The env-driven provider CAN be emptied: nothing on disk declares its models.
-	_, err = service.UpdateProvider(claudeProvider.ID, service.ProviderPatch{Models: &empty})
+	_, err = service.UpdateProvider(envProvider.ID, service.ProviderPatch{Models: &empty})
 	require.NoError(t, err)
 }
 
