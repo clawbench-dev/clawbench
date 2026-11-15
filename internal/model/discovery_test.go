@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"os"
 	"testing"
 
 	_ "clawbench/internal/ai/backends/all"
@@ -13,16 +14,41 @@ import (
 // --- Test 1: BackendRegistry ---
 
 func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
-	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "kimi", "copilot", "mimo", "grok", "antigravity", "zcode", "dsh", "hermes", "cursor", "commandcode", "openclaw", "qodercn"}
-	assert.Len(t, model.GetBackendRegistry(), len(expectedIDs))
+	// Derived from the directory layout instead of a hand-maintained list: a new
+	// backend is a new directory, and this test then fails until it registers a
+	// spec. Keeping the list here would make "add a backend" require editing a
+	// test in a different package for no extra safety.
+	dirs := backendDirs(t)
+	require.NotEmpty(t, dirs, "the scan would be vacuous")
 
-	seen := make(map[string]bool)
-	for _, spec := range model.GetBackendRegistry() {
+	registry := model.GetBackendRegistry()
+	require.Len(t, registry, len(dirs), "every backend directory must register exactly one spec")
+
+	seen := make(map[string]bool, len(registry))
+	for _, spec := range registry {
 		seen[spec.ID] = true
 	}
-	for _, id := range expectedIDs {
-		assert.True(t, seen[id], "missing backend: %s", id)
+	for _, id := range dirs {
+		assert.True(t, seen[id], "backend directory %q has no registered spec", id)
 	}
+	for id := range seen {
+		assert.Contains(t, dirs, id, "spec %q has no backend directory", id)
+	}
+}
+
+// backendDirs lists the backend sub-packages (cwd is internal/model).
+func backendDirs(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir("../ai/backends")
+	require.NoError(t, err)
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "all" {
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	return out
 }
 
 func TestBackendRegistry_FieldsPopulated(t *testing.T) {
