@@ -3467,7 +3467,21 @@ onUnmounted(() => {
    Without this the row and the pills under it look like unrelated tools: every
    pill is a full-width rounded box of its own. Indenting them and hanging them
    off one rail that drops from the row's left edge makes the run read as the
-   row's contents instead of a new list. */
+   row's contents instead of a new list.
+
+   The rail colour is declared ONCE here — on the container, which is the common
+   ancestor of the head and the body — and consumed by both. It must be OPAQUE:
+   a translucent line composites against whatever sits behind it, and the head
+   and the body do NOT share a backdrop (the head carries the strip's own tint,
+   the body shows the message bubble through). On the theme in the bug report
+   the same `35% --text-muted / transparent` line lands on rgb(82,75,76) under
+   the head and rgb(94,87,82) under the body — a visible step exactly at the
+   seam. Mixing against an explicit backdrop makes both halves the same pixel
+   value. */
+.chat-tool-group {
+  --run-rail: color-mix(in srgb, var(--text-muted) 35%, var(--bg-secondary));
+}
+
 .chat-tool-group.is-open > .chat-tool-group-strip {
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   margin-bottom: 0;
@@ -3475,7 +3489,7 @@ onUnmounted(() => {
      and its 1px left border would leave a step against the body's 2px rail. */
   border-bottom-color: transparent;
   border-left-width: 2px;
-  border-left-color: color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-left-color: var(--run-rail);
 }
 
 /* ── A "run": a foldable sequence of steps ──
@@ -3501,7 +3515,8 @@ onUnmounted(() => {
   opacity: 1;
 }
 
-/* The rail described above. */
+/* The rail described above. Colour comes from --run-rail so the head above and
+   this body are the same pixel value (see .chat-tool-group). */
 .chat-run-body {
   /* `flow-root` keeps the first member's top margin INSIDE the box. Without it
      that margin collapses through the container's top edge, the border starts
@@ -3512,7 +3527,7 @@ onUnmounted(() => {
      animates shut. */
   min-height: 0;
   overflow: hidden;
-  border-left: 2px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-left: 2px solid var(--run-rail, color-mix(in srgb, var(--text-muted) 35%, var(--bg-secondary)));
   padding-left: calc(8 * var(--dp));
 }
 .chat-run-footer {
@@ -3585,23 +3600,33 @@ onUnmounted(() => {
    accent border, small radius). The body holds a recursive ContentBlocks
    instance, so child thinking/tool blocks keep their normal callout/pill
    styling. */
+/* The default accent lives HERE and is repeated as the pill's fallback (see
+   .chat-tool-call-group-open). It cannot be declared on a common ancestor
+   instead: nested ContentBlocks instances would then re-declare it and a
+   member's colour would stop reaching its own deep children. The two literals
+   are pinned to each other by subagentRailAccent.css.test.ts. */
 .subagent-group {
   --subagent-accent: #ec4899;
   margin: 0 0 var(--space-2);
 }
 
-/* Only when expanded does the pill's shape change: it becomes the rounded-
-   rectangle top half of the group (small radius, not a pill). */
 /* Only when expanded does the pill's shape change: it becomes the head of the
    run (small radius, not a pill). The bottom edge keeps its width (so the body
    does not shift up) but loses its colour — otherwise that horizontal border
    cuts the rail exactly where the head meets the body. Left border matches the
-   body rail's width and colour so the two meet flush. */
+   body rail's width and colour so the two meet flush.
+   The fallback is mandatory: the head pill and the group are SIBLINGS, so the
+   group's accent never reaches a pill that carries no attribution of its own.
+   Bare `var(--subagent-accent)` resolved to nothing there, `color-mix()` became
+   invalid-at-computed-value-time, the declaration was dropped, and the border
+   fell back to currentColor — a near-white sliver on dark themes. Member cards
+   set --subagent-accent inline on the pill too, so they keep their roster
+   colour and still meet the rail flush. */
 .chat-tool-call-group-open {
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   border-bottom-color: transparent;
   border-left-width: 2px;
-  border-left-color: color-mix(in srgb, var(--subagent-accent) 45%, transparent);
+  border-left-color: color-mix(in srgb, var(--subagent-accent, #ec4899) 45%, transparent);
 }
 
 /* Same rail as a tool run — a single border on the container — tinted with the
