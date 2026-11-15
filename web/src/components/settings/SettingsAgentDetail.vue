@@ -733,8 +733,16 @@ async function handleUpdate(item: AgentItem, value: unknown) {
     const a = getAgent(props.agentId)
     const providerId = value === '' || value === null || value === undefined ? null : Number(value)
     let confirmWrite = false
-    if (providerId !== null && a?.providerConfigBackend) {
-      const ok = await dialog.confirm(t('settings.items.agentProviderConsent'), { dangerous: true })
+    if (providerId !== null && (a?.providerConfigBackend || a?.providerConfigDirBackend)) {
+      // Two different kinds of write, and they must not share one sentence:
+      // the shared-file path edits the user's own file (and backs it up), while
+      // the per-agent directory path stays inside ClawBench's data dir but may
+      // have to store the key in clear text. Saying "your file will be backed
+      // up" there would describe something that never happens.
+      const key = a?.providerConfigDirBackend
+        ? 'settings.items.agentProviderConsentDir'
+        : 'settings.items.agentProviderConsent'
+      const ok = await dialog.confirm(t(key, { files: a?.providerConfigPath ?? '' }), { dangerous: true })
       if (!ok) return
       confirmWrite = true
     }

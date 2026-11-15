@@ -33,9 +33,10 @@
 | 后端 | 方式 | 变量 |
 |---|---|---|
 | claude | anthropic | `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` |
-| codebuddy | anthropic | `CODEBUDDY_BASE_URL` + `CODEBUDDY_API_KEY` / `CODEBUDDY_AUTH_TOKEN` |
+| codebuddy | **配置目录** | `models.json`（逐模型 `url`）+ `CODEBUDDY_CONFIG_DIR`；环境变量 `CODEBUDDY_*` 仍作为兜底 |
 | opencode / mimo / pi / zcode | anthropic、openai | `ANTHROPIC_*` / `OPENAI_*` |
-| kimi | openai、anthropic | `KIMI_BASE_URL` / `KIMI_API_KEY`；`ANTHROPIC_*` |
+| kimi | **配置目录**（+ OpenAI 环境变量） | `config.toml` + `KIMI_SHARE_DIR`；`KIMI_BASE_URL` / `KIMI_API_KEY` 仅 `type="kimi"` 时生效 |
+| pi | **配置目录** | `models.json` + `PI_CODING_AGENT_DIR` |
 | deepseek (codewhale) / dsh / hermes | openai | `OPENAI_BASE_URL` / `OPENAI_API_KEY` |
 | grok | openai | `GROK_XAI_API_BASE_URL` / `XAI_API_KEY` |
 | antigravity | gemini | `GOOGLE_GEMINI_BASE_URL` / `GEMINI_API_KEY` |
@@ -80,6 +81,44 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 - 首次绑定需要 `confirm_config_write: true`（否则 409 `ProviderConfigConsentRequired`），前端弹确认框。
 - 同一后端全局只能绑定一个提供商：冲突返回 409 `ProviderConfigConflict`。
 - 解绑/删除/启动对账（`ReconcileProviderConfigs`）会移除托管块并恢复原始值。
+
+## 配置目录模式（codebuddy / kimi / pi）
+
+这三个后端有**配置目录开关**（`CODEBUDDY_CONFIG_DIR` / `KIMI_SHARE_DIR` / `PI_CODING_AGENT_DIR`），
+所以不需要像 codex 那样改用户的文件：每个智能体在 `{data-dir}/providers/agents/<agent-id>/` 下拿到一个**私有目录**，
+里面只写 ClawBench 自己的那一个文件，其余条目**符号链接**回用户自己的配置目录。
+
+- 为什么用符号链接而不是复制：这些目录里有登录态（kimi 的 `credentials` / `device_id`）和用户技能，
+  codebuddy 那份实测 18 GB（blobs / file-history）。复制会既占空间又把登录冻结在复制那一刻。
+- 为什么用目录而不是改用户文件：用户那份是**全局唯一**的，两个智能体无法指向不同提供商（codex 的已知限制就是这么来的）。
+  私有目录让「一智能体一提供商」真正成立。
+- 目录布局由 `model.ProviderUsesConfigDir` / `ProviderConfigDirEnv` / `ProviderConfigDirFile` 决定，
+  实现在 `internal/service/provider_config_dir.go`。
+- `model` 不能 import `service`（会成环），所以写入函数通过 `model.ConfigDirEnvForAgent` 这个函数变量注入。
+
+| 后端 | 文件 | 协议 | 密钥 |
+|---|---|---|---|
+| codebuddy | `models.json` | 仅 OpenAI | `${CLAWBENCH_PROVIDER_API_KEY}` 引用，不落盘 |
+| kimi | `config.toml` | OpenAI + Anthropic | **明文**（该文件没有 `${ENV}` 语法） |
+| pi | `models.json` | OpenAI + Anthropic | `$CLAWBENCH_PROVIDER_API_KEY` 引用，不落盘 |
+
+各后端的实测约束（都是真机验证过才写进表里的）：
+
+- **codebuddy**：每个模型自带 `url`，且这个 `url` 的优先级**高于** `CODEBUDDY_BASE_URL`——这是它能做多提供商的唯一通道。
+  它的请求路径恒为 `/chat/completions`，`models.json` 里的 `provider` 字段填 `"anthropic"` 也照样走这条路径，
+  所以能力表里它**只声明 OpenAI**（之前被错标成 Anthropic，界面上能选到一个永远不通的组合）。
+- **kimi**：`KIMI_*` 变量只在配置里 `type = "kimi"` 时生效，`type = "anthropic"` 时**完全不读环境变量**。
+  因此 `ANTHROPIC_*` 那行注入已从能力表删除——它以前让绑定「成功」而端点被静默忽略。
+  隔离目录必须包含 `credentials` / `device_id`（已由符号链接覆盖），否则 `session/new` 直接 `-32000`。
+- **pi**：模型寻址是 `<provider>/<model>`，所以选择器下发的是 `clawbench/<model>`（`ProviderModelIDFor`）。
+
+绑定行为：
+
+- 只有**密钥必须明文落盘**的后端（目前仅 kimi）才要求 `confirm_config_write`，前端弹的是一份专门的说明
+  （文件在 ClawBench 数据目录内、不会改用户的配置、但密钥会写进这个文件）。
+- **没有跨智能体冲突检查**：每个智能体一个目录，两个智能体指向不同提供商是正常用法。
+- 解绑 / 删除智能体 / 启动对账都会清掉对应目录；agent 已不存在的孤儿目录由 `pruneOrphanConfigDirs` 清掉，
+  避免删了智能体还留一份密钥在磁盘上。
 
 ## 提供商自带模型清单
 
@@ -157,9 +196,11 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 
 ## 已知限制
 
-- Codex 的配置文件是全局的：同一后端只能有一个生效 provider。其他后端各自的配置面、能否同时挂多家提供商，见
-  [`docs/dev/multi_provider_config_research.md`](../../dev/multi_provider_config_research.md)（环境变量是进程级的，
-  因此「一个智能体一个提供商」成立，「一个智能体多家提供商」只有 opencode / mimo / kimi / codex / codebuddy /
-  grok / hermes / pi / zcode / openclaw 这类自带按提供商（或按模型）配置的后端才做得到）。
+- Codex 的配置文件是全局的：同一后端只能有一个生效 provider。**codebuddy / kimi / pi 不受此限制**——
+  它们走配置目录模式（见上），每个智能体一份，可以各自指向不同提供商。
 - 模型列表不随 provider 切换；模型 id 不属于该提供商时，错误由上游返回（401/404）。
 - `mimo` / `dsh` / `grok` 的变量名基于二进制/源码证据，尚未逐台真机验证；验证失败应降级为不支持，而不是保留「看起来支持」。
+- **zcode / grok 的配置目录开关已确认存在，但回合未跑通**，因此未纳入配置目录模式（见
+  [`docs/dev/multi_provider_config_research.md`](../../dev/multi_provider_config_research.md) 第八节）。
+- **opencode 只能走「配置内容」通道**：`OPENCODE_CONFIG_DIR` / `OPENCODE_CONFIG` / `XDG_CONFIG_HOME` 在 2.2.7 上都没能换掉配置目录。
+  另外它默认连常驻后台服务，手工用环境变量验证时必须加 `--standalone`，否则会误以为注入不生效（`opencode acp` 不受影响）。

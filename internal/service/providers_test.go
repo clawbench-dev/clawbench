@@ -314,6 +314,11 @@ func TestProviderModelsPersistAndNormalize(t *testing.T) {
 // button went green, and every turn then failed with "does not support Bearer
 // auth". Rejecting it at write time is the only place the user can still see
 // which field is wrong.
+//
+// Only gemini+bearer remains dead. openai+bearer used to be listed here too, but
+// that was true only while no OpenAI-protocol backend declared an AuthToken:
+// CodeBuddy reads CODEBUDDY_AUTH_TOKEN as a bearer token on its /chat/completions
+// path, so the combination is real now.
 func TestProviderRejectsDeadAuthMode(t *testing.T) {
 	setupProvidersDB(t)
 
@@ -322,7 +327,6 @@ func TestProviderRejectsDeadAuthMode(t *testing.T) {
 		protocol string
 		auth     string
 	}{
-		{name: "openai+bearer", protocol: model.ProviderProtocolOpenAI, auth: model.ProviderAuthBearer},
 		{name: "gemini+bearer", protocol: model.ProviderProtocolGemini, auth: model.ProviderAuthBearer},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -351,13 +355,23 @@ func TestProviderRejectsDeadAuthMode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.ProviderAuthAPIKey, openaiKey.AuthMode)
 
-	// Editing into a dead combination is refused the same way.
-	bearer := model.ProviderAuthBearer
-	_, err = service.UpdateProvider(openaiKey.ID, service.ProviderPatch{AuthMode: &bearer})
+	// openai + bearer is accepted now (CodeBuddy reads a bearer token), so the
+	// "editing into a dead combination" case uses gemini instead.
+	openaiBearer := model.ProviderAuthBearer
+	updated, err := service.UpdateProvider(openaiKey.ID, service.ProviderPatch{AuthMode: &openaiBearer})
+	require.NoError(t, err, "openai + bearer is reachable through CodeBuddy")
+	assert.Equal(t, model.ProviderAuthBearer, updated.AuthMode)
+
+	gemini, err := service.CreateProvider(model.Provider{
+		Name: "GeminiKey", Protocol: model.ProviderProtocolGemini, BaseURL: "https://gw.example", APIKey: "k",
+		AuthMode: model.ProviderAuthAPIKey,
+	})
+	require.NoError(t, err)
+	_, err = service.UpdateProvider(gemini.ID, service.ProviderPatch{AuthMode: &openaiBearer})
 	assert.ErrorIs(t, err, service.ErrProviderInvalid)
 
 	// ...and the row is untouched by the rejected update.
-	stored, err := service.GetProvider(openaiKey.ID)
+	stored, err := service.GetProvider(gemini.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.ProviderAuthAPIKey, stored.AuthMode)
 }
@@ -375,7 +389,7 @@ func TestProviderValidationErrorNamesField(t *testing.T) {
 	}{
 		{
 			name:  "dead auth mode",
-			p:     model.Provider{Name: "A", Protocol: model.ProviderProtocolOpenAI, AuthMode: model.ProviderAuthBearer},
+			p:     model.Provider{Name: "A", Protocol: model.ProviderProtocolGemini, AuthMode: model.ProviderAuthBearer},
 			field: "authMode",
 		},
 		{

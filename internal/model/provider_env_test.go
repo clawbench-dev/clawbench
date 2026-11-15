@@ -271,7 +271,11 @@ func TestProtocolSupportsAuthMode(t *testing.T) {
 		{ProviderProtocolAnthropic, ProviderAuthAPIKey, true},
 		{ProviderProtocolOpenAI, ProviderAuthAuto, true},
 		{ProviderProtocolOpenAI, ProviderAuthAPIKey, true},
-		{ProviderProtocolOpenAI, ProviderAuthBearer, false},
+		// openai + bearer became possible once CodeBuddy moved to the OpenAI
+		// protocol: it reads CODEBUDDY_AUTH_TOKEN as a bearer token
+		// (cleanBearerToken) on its /chat/completions path. This used to be
+		// false only because no OpenAI-protocol backend declared an AuthToken.
+		{ProviderProtocolOpenAI, ProviderAuthBearer, true},
 		{ProviderProtocolGemini, ProviderAuthAuto, true},
 		{ProviderProtocolGemini, ProviderAuthBearer, false},
 	}

@@ -181,6 +181,22 @@ type Agent struct {
 	// server requires confirm_config_write.
 	ProviderConfigBackend bool `json:"providerConfigBackend,omitempty"`
 
+	// ProviderConfigDirBackend is true when the backend gets a private config
+	// DIRECTORY per agent instead of a shared file. It needs its own consent
+	// text: nothing outside ClawBench's data dir is modified, and there is no
+	// backup to speak of.
+	ProviderConfigDirBackend bool `json:"providerConfigDirBackend,omitempty"`
+
+	// ProviderConfigSecretInFile is true when that private file has to hold the
+	// API key in clear text (no ${ENV} reference syntax). The consent dialog
+	// says so instead of implying the key stays out of the file.
+	ProviderConfigSecretInFile bool `json:"providerConfigSecretInFile,omitempty"`
+
+	// ProviderConfigPath is the file (or, for a shared-file backend, the list of
+	// files) a binding would write, shown in the consent dialog. Computed at
+	// load time so the client never has to reconstruct a path it does not own.
+	ProviderConfigPath string `json:"providerConfigPath,omitempty"`
+
 	// MCPServers is this agent's MCP enablement policy — which of the global
 	// servers (config.yaml `mcp.servers`) it may use.
 	//

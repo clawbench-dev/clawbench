@@ -46,15 +46,12 @@ type codexState struct {
 // ProviderConfigPaths lists the files a config-file backend needs ClawBench to
 // modify in order to apply a provider. An empty list means the backend is
 // environment-driven (or unsupported) and needs no file consent.
+//
+// Delegates to the model layer: the same layout also drives the consent dialog's
+// display path, and two copies of it drifted apart the moment a backend was
+// added.
 func ProviderConfigPaths(backend string) []string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return nil
-	}
-	if backend == backendCodex {
-		return []string{filepath.Join(home, ".codex", "config.toml")}
-	}
-	return nil
+	return model.ProviderConfigPaths(backend)
 }
 
 // ProviderBindingConflict lists the agents of the same backend that are bound
@@ -141,7 +138,9 @@ func ReconcileProviderConfigs() error {
 			return err
 		}
 	}
-	return nil
+	// Per-agent config directories are reconciled separately: they are keyed by
+	// agent, not by backend, so two agents of one backend cannot collide.
+	return ReconcileProviderConfigDirs()
 }
 
 // RestoreProviderConfig removes ClawBench's managed block and puts the original

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -257,6 +258,103 @@ func TestAgentPatch_ConfigBackendNeedsConsent(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NotNil(t, model.GetAgent(agent.ID).ProviderID)
+}
+
+// A per-agent config directory writes a file too, but only kimi's file has to
+// hold the key in clear text — so only kimi asks for consent. pi references the
+// key through the environment, and demanding consent there would train users to
+// click through a warning that says something untrue.
+func TestAgentPatch_ConfigDirBackendNeedsConsentOnlyWhenSecretInFile(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	provider, err := service.CreateProvider(model.Provider{
+		Name: "Probe", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://api.deepseek.com/v1", APIKey: "k",
+		Models: []string{"deepseek-chat"},
+	})
+	require.NoError(t, err)
+
+	kimi := &model.Agent{ID: "kimi-agent", Name: "Kimi", Backend: "kimi"}
+	pi := &model.Agent{ID: "pi-agent", Name: "Pi", Backend: "pi"}
+	model.ReplaceAgents(
+		map[string]*model.Agent{kimi.ID: kimi, pi.ID: pi},
+		[]*model.Agent{kimi, pi},
+	)
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": kimi.ID, "provider_id": provider.ID,
+	})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "ProviderConfigConsentRequired")
+	assert.Nil(t, model.GetAgent(kimi.ID).ProviderID)
+
+	rec = doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": kimi.ID, "provider_id": provider.ID, "confirm_config_write": true,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotNil(t, model.GetAgent(kimi.ID).ProviderID)
+
+	// The file really was written, into ClawBench's own directory.
+	_, err = os.Stat(filepath.Join(service.ProviderConfigDir(kimi.ID), "config.toml"))
+	require.NoError(t, err, "the isolated kimi config must exist")
+
+	// pi: no consent, but the file is written all the same.
+	rec = doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": pi.ID, "provider_id": provider.ID,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	_, err = os.Stat(filepath.Join(service.ProviderConfigDir(pi.ID), "models.json"))
+	require.NoError(t, err, "the isolated pi config must exist")
+}
+
+// Two agents of the SAME backend may point at different providers: each owns a
+// private directory, so the "last write wins" conflict that codex's shared file
+// has does not apply here.
+func TestAgentPatch_ConfigDirBackendsAllowDifferentProvidersPerAgent(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	first, err := service.CreateProvider(model.Provider{
+		Name: "First", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://api.deepseek.com/v1", APIKey: "k1", Models: []string{"deepseek-chat"},
+	})
+	require.NoError(t, err)
+	second, err := service.CreateProvider(model.Provider{
+		Name: "Second", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://api.minimaxi.com/v1", APIKey: "k2", Models: []string{"minimax-m2"},
+	})
+	require.NoError(t, err)
+
+	a := &model.Agent{ID: "pi-a", Name: "Pi A", Backend: "pi"}
+	b := &model.Agent{ID: "pi-b", Name: "Pi B", Backend: "pi"}
+	model.ReplaceAgents(
+		map[string]*model.Agent{a.ID: a, b.ID: b},
+		[]*model.Agent{a, b},
+	)
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": a.ID, "provider_id": first.ID,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// The second agent must NOT be refused as a "conflict" — that rule exists
+	// only for the shared-file backends.
+	rec = doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": b.ID, "provider_id": second.ID,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "ProviderConfigConflict")
+
+	// Each file kept its own endpoint: the two bindings did not overwrite each
+	// other, which is the whole point of per-agent directories.
+	aData, err := os.ReadFile(filepath.Join(service.ProviderConfigDir(a.ID), "models.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(aData), "https://api.deepseek.com/v1")
+	assert.NotContains(t, string(aData), "api.minimaxi.com")
+
+	bData, err := os.ReadFile(filepath.Join(service.ProviderConfigDir(b.ID), "models.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(bData), "api.minimaxi.com")
+	assert.NotContains(t, string(bData), "api.deepseek.com")
 }
 
 func TestProvidersAPI_ModelList(t *testing.T) {
@@ -826,8 +924,11 @@ func TestValidatePatchValues_AISummaryProviderErrorsAreLocatable(t *testing.T) {
 func TestProvidersAPI_InvalidAuthModeCarriesField(t *testing.T) {
 	setupProvidersHandlerTest(t)
 
+	// gemini + bearer: no backend can express it (gemini's protocol row has no
+	// AuthToken variable). openai + bearer is accepted since CodeBuddy reads a
+	// bearer token, so it can no longer stand in for "dead combination".
 	rec := doProviderRequest(t, ServeProviders, http.MethodPost, "/api/providers", map[string]any{
-		"name": "Bearer", "protocol": "openai", "baseUrl": "https://gw.example",
+		"name": "Bearer", "protocol": "gemini", "baseUrl": "https://gw.example",
 		"apiKey": "sk", "authMode": "bearer",
 	})
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())

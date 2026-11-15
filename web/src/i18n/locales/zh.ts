@@ -4583,6 +4583,7 @@ export default {
       agentProviderHint: '引用后，启动该智能体时会注入对应端点与密钥；模型列表仍由该 CLI 自身决定。',
       agentProviderUnsupported: '该智能体不支持外部提供商',
       agentProviderConsent: '该智能体需要修改配置文件才能生效（{files}）。将先备份原文件，确认继续？',
+      agentProviderConsentDir: '该智能体需要写一份独立的配置文件才能生效（{files}）。文件位于 ClawBench 数据目录内，不会改动你自己的配置；但该后端的配置文件无法用环境变量引用密钥，因此密钥会以明文写入这个文件（仅本人可读）。确认继续？',
       agentCatalogModelsDesc: '该智能体尚未上报模型，以下来自权威模型目录，仅用于预设默认模型。',
       agentCatalogModelsNote: '首次连接后以 ACP 上报的模型列表为准',
       customModelOption: '自定义…',

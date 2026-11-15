@@ -1174,6 +1174,61 @@ describe('SettingsAgentDetail', () => {
     await flushPromises()
   }
 
+  // The two config-write paths are not the same promise to the user: the shared
+  // file path edits THEIR file (and backs it up), while the per-agent directory
+  // path stays inside ClawBench's data dir but may store the key in clear text.
+  // One shared sentence would misdescribe one of them.
+  it('asks for consent with the per-agent wording for a config-dir backend', async () => {
+    mockDialogConfirm.mockResolvedValueOnce(true)
+    const wrapper = mountDetail({
+      providerProtocols: ['openai'],
+      providerConfigDirBackend: true,
+      providerConfigSecretInFile: true,
+      providerConfigPath: '/data/clawbench/providers/agents/test-agent/config.toml',
+    })
+
+    await bindProvider(wrapper, 5)
+
+    expect(mockDialogConfirm).toHaveBeenCalledWith(
+      expect.stringContaining('agentProviderConsentDir'),
+      expect.objectContaining({ dangerous: true }),
+    )
+    expect(mockApiPatch).toHaveBeenCalledWith(
+      '/api/agents',
+      expect.objectContaining({ provider_id: 5, confirm_config_write: true }),
+    )
+  })
+
+  it('uses the shared-file wording for a config-file backend', async () => {
+    mockDialogConfirm.mockResolvedValueOnce(true)
+    const wrapper = mountDetail({
+      providerProtocols: ['openai'],
+      providerConfigBackend: true,
+      providerConfigPath: '/home/u/.codex/config.toml',
+    })
+
+    await bindProvider(wrapper, 5)
+
+    expect(mockDialogConfirm).toHaveBeenCalledWith(
+      expect.stringContaining('agentProviderConsent'),
+      expect.objectContaining({ dangerous: true }),
+    )
+  })
+
+  // An env-driven backend writes nothing, so there is nothing to consent to.
+  it('binds without a dialog when no file is written', async () => {
+    const wrapper = mountDetail({ providerProtocols: ['openai'] })
+    await bindProvider(wrapper, 5)
+
+    expect(mockDialogConfirm).not.toHaveBeenCalled()
+    expect(mockApiPatch).toHaveBeenCalledWith(
+      '/api/agents',
+      expect.objectContaining({ provider_id: 5 }),
+    )
+    const payload = mockApiPatch.mock.calls.at(-1)![1] as Record<string, unknown>
+    expect(payload).not.toHaveProperty('confirm_config_write')
+  })
+
   it('surfaces the backend reason when binding a provider is refused', async () => {
     // The server answers this path with the actionable part — which agents
     // conflict on the protocol, why the provider is invalid, or that the

@@ -1341,7 +1341,24 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 					map[string]any{"Reason": aerr.Error(), "field": "authMode"})
 				return
 			}
-			if model.ProviderUsesConfigFile(agent.Backend) {
+			if model.ProviderUsesConfigDir(agent.Backend) {
+				// Per-agent directory: no cross-agent conflict is possible, but
+				// the write still touches disk, so it needs consent when the
+				// backend cannot keep the secret in the environment.
+				if model.ProviderConfigSecretInFile(agent.Backend) {
+					if confirmed, _ := patch["confirm_config_write"].(bool); !confirmed {
+						writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderConfigConsentRequired",
+							map[string]any{"Files": service.ProviderConfigDir(agentID)})
+						return
+					}
+				}
+				if werr := service.ApplyProviderConfigDirToAgent(agent.Backend, agentID, provider); werr != nil {
+					slog.Error("apply provider config dir failed",
+						"agent_id", agentID, "backend", agent.Backend, "error", werr)
+					writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+					return
+				}
+			} else if model.ProviderUsesConfigFile(agent.Backend) {
 				conflicts, cerr := service.ProviderBindingConflict(agent.Backend, agentID, providerID)
 				if cerr != nil {
 					writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
@@ -1481,9 +1498,11 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	// A cleared binding must also undo the config-file edit — but only when no
 	// other agent of the same backend still needs it. Reconcile covers both
 	// directions (restore when unbound, re-apply when bound).
-	if _, touched := patch["provider_id"]; touched && model.ProviderUsesConfigFile(agent.Backend) {
-		if rerr := service.ReconcileProviderConfigs(); rerr != nil {
-			slog.Warn("reconcile provider configs failed", "agent_id", agentID, "error", rerr)
+	if _, touched := patch["provider_id"]; touched {
+		if model.ProviderNeedsConfigWrite(agent.Backend) {
+			if rerr := service.ReconcileProviderConfigs(); rerr != nil {
+				slog.Warn("reconcile provider configs failed", "agent_id", agentID, "error", rerr)
+			}
 		}
 	}
 

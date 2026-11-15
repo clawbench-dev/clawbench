@@ -4584,6 +4584,7 @@ export default {
       agentProviderHint: 'When set, the endpoint and key are injected when this agent starts. The model list still comes from the CLI itself.',
       agentProviderUnsupported: 'This agent cannot take an external provider',
       agentProviderConsent: 'This agent needs a config file change to apply the provider ({files}). The original file will be backed up first. Continue?',
+      agentProviderConsentDir: 'This agent needs its own config file to apply the provider ({files}). It lives inside ClawBench\'s data directory, so your own configuration is left untouched — but this backend cannot reference the key through an environment variable, so the key is written into that file in clear text (readable only by you). Continue?',
       agentCatalogModelsDesc: 'This agent has not reported its models yet; the list below comes from the authoritative catalogue and only pre-fills a default.',
       agentCatalogModelsNote: 'The ACP-reported list takes over after the first connection',
       customModelOption: 'Custom…',
