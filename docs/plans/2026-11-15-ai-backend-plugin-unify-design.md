@@ -14,8 +14,10 @@
 | Phase 1 注册收编 | ✅ 完成 | 4 个注册入口 → 1 次 `backends.Register`；`CLI`/`Custom` 死字段合并并接上 |
 | Phase 2 自动发现 | ✅ 完成 | `genbackendimports` + `backends/all`；`main.go` 20 行 → 1 行 |
 | Phase 3 行为钩子 | ✅ 完成（2 处例外） | 11 个 ACP 解析/桥接文件搬进子包；`ACPBehavior` 全部字段可选 |
-| Phase 4 搬 CLI 解析 | 🚧 进行中 | vecli 已完成；codex / opencode / pi / deepseek / grok / claude 的 CLI 解析器仍在核心包 |
+| Phase 4 搬 CLI 解析 | 🚧 3/8 | vecli / deepseek / grok 已完成；claude / codex / opencode / pi / openclaw 仍在核心包（原因见下） |
 | Phase 5 数据搬家 | ⬜ 未开始 | `providerEnvTable` / `mcpUnsupportedBackends` / 配置目录 switch / `catalogs.go` 仍在核心包 |
+
+Phase 4 剩下的 5 个后端不是「同样的活再干五遍」，它们卡在同一个结构问题上：**这几个解析器不是被 switch 调用的，而是被共享的 `StreamParser` 骨架内联调用的**（`parseClaudeStreamToolEvent`、`parseClaudeAssistantToolUse` 等直接写在 `stream_parser.go` 的分支里）。搬走它们要先把这个依赖反过来——骨架通过函数变量回调子包，而 `internal/ai` 自己的 `stream_parser_test.go` 又会因此失去 handler。这比 ACP 侧（本来就是 switch 分派）复杂一档，值得单独一轮做，不要混进这次。
 
 Phase 3 的两处例外（都写在代码注释里）：
 
