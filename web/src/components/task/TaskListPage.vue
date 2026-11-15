@@ -20,6 +20,29 @@
         </button>
       </ActionBar>
     </div>
+    <!-- Status filter. Three chips rather than a dropdown: the whole set is
+         three items and the choice is a view mode, so hiding two of them behind
+         a menu would cost a tap just to see what the options are. Hidden when
+         there are no tasks at all — the empty state already carries the only
+         useful action there. -->
+    <div
+      v-if="tasks.length > 0"
+      class="task-filter-bar"
+      role="group"
+      :aria-label="t('task.filter.label')"
+    >
+      <button
+        v-for="f in FILTER_OPTIONS"
+        :key="f.value"
+        class="task-filter-chip"
+        :class="{ active: statusFilter === f.value }"
+        :data-filter="f.value"
+        :aria-pressed="statusFilter === f.value"
+        @click="setFilter(f.value)"
+      >
+        {{ t(f.labelKey) }}
+      </button>
+    </div>
     <div class="task-list-body">
       <div v-if="loading && tasks.length === 0" class="task-loading task-loading--skeleton">
         <PanelSkeleton variant="list" :rows="8" :meta="true" :label="t('common.loading')" />
@@ -38,8 +61,16 @@
         </template>
       </EmptyState>
       <div v-else class="task-items-container">
+        <!-- Everything is filtered out: say which filter is hiding the rows and
+             give the one-tap way back, rather than an empty scroll area. -->
+        <div v-if="filteredTasks.length === 0" class="task-filter-empty">
+          <span>{{ t('task.filter.empty', { filter: t(currentFilterLabelKey) }) }}</span>
+          <button class="task-filter-empty-btn" data-action="task-filter-show-all" @click="setFilter('all')">
+            {{ t('task.filter.showAll') }}
+          </button>
+        </div>
         <div
-          v-for="task in tasks"
+          v-for="task in filteredTasks"
           :key="task.id"
           class="task-item"
           :class="[task.status, { 'has-unread': task.unreadCount > 0, 'is-running': task.runningCount > 0 }]"
@@ -141,7 +172,7 @@
 
 <script setup lang="ts">
 import { Plus, CalendarX, Clock, Repeat, CheckCheck, Zap, Mail, MessageSquare } from 'lucide-vue-next'
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useAgents } from '@/composables/useAgents'
@@ -158,6 +189,7 @@ import { startQuoteDrag, taskDragPayload } from '@/utils/quoteDrag'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { cleanupDragGhost } from '@/utils/attachDrag'
+import { localConfig } from '@/composables/useSettingsConfig'
 
 const { t } = useI18n()
 
@@ -225,6 +257,57 @@ function mailRowLabel(task: TaskItem): string {
 }
 
 const tasks = computed(() => store.state.tasks as unknown as TaskItem[])
+
+// ── Status filter (设置 → 任务 → 任务列表默认筛选) ──
+
+type TaskStatusFilter = 'all' | 'enabled' | 'paused'
+
+const FILTER_OPTIONS: { value: TaskStatusFilter; labelKey: string }[] = [
+  { value: 'all', labelKey: 'task.filter.all' },
+  { value: 'enabled', labelKey: 'task.filter.enabled' },
+  { value: 'paused', labelKey: 'task.filter.paused' },
+]
+
+function normalizeFilter(value: unknown): TaskStatusFilter {
+  return value === 'enabled' || value === 'paused' ? value : 'all'
+}
+
+const statusFilter = ref<TaskStatusFilter>(normalizeFilter(localConfig.tasksDefaultFilter))
+
+/**
+ * Whether the user has picked a filter in this view.
+ *
+ * The configured default only applies while they have not: changing it in
+ * settings must reach an already-open list, but it must never override a choice
+ * the user just made in the toolbar.
+ */
+let userPickedFilter = false
+
+function setFilter(next: TaskStatusFilter) {
+  userPickedFilter = true
+  statusFilter.value = next
+}
+
+watch(() => localConfig.tasksDefaultFilter, (value) => {
+  if (userPickedFilter) return
+  statusFilter.value = normalizeFilter(value)
+})
+
+const currentFilterLabelKey = computed(
+  () => FILTER_OPTIONS.find(f => f.value === statusFilter.value)!.labelKey,
+)
+
+/**
+ * Rows the list shows. 启用 is the status that actually fires (the scheduler only
+ * runs `active` tasks) and 暂停 is `paused`; a completed task is neither, so it
+ * appears only under 全部. The filter names states — it does not quietly fold
+ * finished work into one of them.
+ */
+const filteredTasks = computed(() => {
+  if (statusFilter.value === 'all') return tasks.value
+  const wanted = statusFilter.value === 'enabled' ? 'active' : 'paused'
+  return tasks.value.filter(task => task.status === wanted)
+})
 const hasUnread = computed(() => store.state.taskUnreadCount > 0)
 const loading = ref(false)
 
@@ -311,6 +394,63 @@ onMounted(refresh)
    that is what triggers folding. */
 .list-header-actions {
   flex: 1 1 auto;
+}
+
+/* ── Status filter ──
+   Same pill language as the stats range chips (`.stats-chip`): a short,
+   mutually-exclusive view choice sitting inline above a list. Scoped here
+   because that rule lives inside its own component. */
+.task-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-6);
+  flex-shrink: 0;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+.task-filter-chip {
+  flex-shrink: 0;
+  border: 1px solid var(--border-color);
+  background: var(--bg-elevated, var(--bg-primary));
+  color: var(--text-secondary);
+  border-radius: var(--radius-full);
+  padding: calc(3 * var(--dp)) calc(11 * var(--dp));
+  font-size: var(--font-size-sm);
+  line-height: calc(18 * var(--dp));
+  cursor: pointer;
+  transition: background var(--duration-base), color var(--duration-base), border-color var(--duration-base);
+  -webkit-tap-highlight-color: transparent;
+}
+@media (hover: hover) {
+  .task-filter-chip:hover {
+    border-color: var(--accent-color);
+    color: var(--text-primary);
+  }
+}
+.task-filter-chip.active {
+  background: var(--accent-color, #4f8cff);
+  border-color: var(--accent-color, #4f8cff);
+  color: #fff;
+}
+.task-filter-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-9) var(--space-6);
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  text-align: center;
+}
+.task-filter-empty-btn {
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--accent-color);
+  border-radius: var(--radius-full);
+  padding: calc(4 * var(--dp)) calc(14 * var(--dp));
+  font-size: var(--font-size-sm);
+  cursor: pointer;
 }
 
 /* Create button — the one primary action in this bar, hence `.is-primary`. */

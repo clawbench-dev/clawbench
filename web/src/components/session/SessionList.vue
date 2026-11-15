@@ -255,8 +255,12 @@
              "Share link" item): highlighted, with a trailing check, when this
              conversation already has a live public link. The label itself stays
              plain — the check is the same "this option is on" language the file
-             menu uses for word wrap / line numbers. -->
+             menu uses for word wrap / line numbers.
+             Gone entirely when the 分享 master switch is off: turning it off
+             revokes every conversation link server-side, so the entry could
+             only open a dialog that cannot publish. -->
         <div
+          v-if="shareAllowed"
           class="context-menu-item"
           :class="{ active: isSessionShared(contextMenu.sessionId) }"
           @click.stop="openShareDialogFromMenu(contextMenu.sessionId)"
@@ -324,6 +328,7 @@ import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
 import { rowStatus, statusLabelKey } from '@/utils/sessionRowStatus'
 import OtherProjectCards from '@/components/session/OtherProjectCards.vue'
 import { toFixedCSS, getZoomedViewport, localConfig } from '@/composables/useSettingsConfig'
+import { useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
 import { buildRenameGenerateOptions } from '@/utils/sessionRename'
@@ -362,9 +367,14 @@ const DRAG_FALLBACK_TOLERANCE = 12
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName, getAgentAvatar, getAgentModel } = useAgents()
-const { isSessionShared, setSharedSessionIds } = useSessionShare()
+const { isSessionShared, setSharedSessionIds, resetSessionShareState } = useSessionShare()
 const dialog = useDialog()
 const toast = useToast()
+// 分享 switches (功能编排). Off revokes every conversation link, so the
+// "已分享" badges must go too — a stale check would advertise a link that 404s.
+// Gated per KIND: only conversation links are created from this menu, so a
+// per-kind switch for files/meetings must not remove it.
+const shareAllowed = useShareKindAllowed('sessions')
 const { runningSessionsVersion } = useSessionIdentity()
 const { groups: crossGroups } = useCrossProjectSessions()
 
@@ -1005,6 +1015,7 @@ const shareDialog = reactive({ open: false, sessionId: '' })
 
 function openShareDialogFromMenu(sessionId) {
   closeContextMenu()
+  if (!shareAllowed.value) { notifyFeatureDisabled(); return }
   shareDialog.sessionId = sessionId
   shareDialog.open = true
 }
@@ -1120,6 +1131,12 @@ watch(() => store.state.sessionListVersion, async () => {
  * failures are silent because a missing badge must never block the list.
  */
 async function refreshSessionShares() {
+  // With 分享 off there are no live links to badge: skip the request and make
+  // sure nothing cached from before the switch survives on the rows.
+  if (!shareAllowed.value) {
+    resetSessionShareState()
+    return
+  }
   try {
     const resp = await fetch('/api/share/session/list')
     if (!resp.ok) return
@@ -1129,6 +1146,15 @@ async function refreshSessionShares() {
     appLog.w('SessionList', 'refresh session shares failed:', err)
   }
 }
+
+// Flipping 分享 off in settings must clear the badges already on screen, not
+// only stop seeding new ones.
+watch(shareAllowed, (enabled, wasEnabled) => {
+  if (!enabled) resetSessionShareState()
+  // Re-seed only on a real off → on transition: the config landing at startup
+  // also flips this computed, and that must not add a second list request.
+  else if (wasEnabled === false) void refreshSessionShares()
+})
 
 defineExpose({ loadSessions, addSessionLocally, reload })
 

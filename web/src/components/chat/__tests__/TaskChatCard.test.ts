@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
+import { useToast } from '@/composables/useToast'
 
 // ── Mocks ──
 
@@ -284,6 +286,25 @@ describe('TaskChatCard', () => {
       const wrapper = mountCard({ task: eventTask })
       await wrapper.trigger('click')
       expect(wrapper.emitted('select')).toHaveLength(1)
+    })
+
+    it('refuses the jump while 任务 is off, keeping the history readable', async () => {
+      // The card is a record of a past run, so it stays; only the jump to the
+      // (now missing) task page is refused, with an explanation.
+      syncFeatureConfig({ tasks: { enabled: false } })
+      try {
+        useToast().dismiss()
+        const wrapper = mountCard({ task: eventTask })
+
+        expect(wrapper.find('.stask-body').exists()).toBe(true)
+        await wrapper.trigger('click')
+
+        expect(wrapper.emitted('select')).toBeFalsy()
+        expect(useToast().visible.value).toBe(true)
+      } finally {
+        syncFeatureConfig({})
+        useToast().dismiss()
+      }
     })
   })
 

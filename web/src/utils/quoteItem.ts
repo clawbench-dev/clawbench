@@ -401,6 +401,26 @@ export function resolveQuoteType(q: Pick<QuoteItem,
   return 'selection'
 }
 
+/** Quote types that address the Forge integration itself (not a plain link). */
+const FORGE_QUOTE_TYPES: ReadonlySet<QuoteDisplayType> = new Set<QuoteDisplayType>([
+  'issue',
+  'pr',
+  'pipeline',
+])
+
+/**
+ * Whether a quote points INTO the Forge integration.
+ *
+ * These references are the only ones whose destination lives behind
+ * `forge.enabled`: switching the integration off stops polling and clears every
+ * project's repository binding, so opening the URL afterwards lands the user on
+ * a page the app no longer tracks. A `link` quote (a pasted URL, a comment
+ * anchor) is not the integration and stays openable.
+ */
+export function isForgeQuote(q: Pick<QuoteItem, 'language' | 'url' | 'filePath' | 'sourceKind' | 'commitSha'>): boolean {
+  return FORGE_QUOTE_TYPES.has(resolveQuoteType(q))
+}
+
 /**
  * Materialise staged quotes into the attachment entries a send carries.
  *

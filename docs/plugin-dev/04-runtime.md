@@ -27,9 +27,9 @@ export interface DockPluginRuntime {
 | `title` | 标题随状态变（Forge 跟着绑定平台） | `resolveDockTitle(tab)` |
 | `badge` | 有数字角标或进行中红点 | `resolveDockBadge(tab)` |
 | `panel` | 提供面板组件/加载器、额外 props、事件 | `DockPanelHost` |
-| `available` | 依赖服务端功能或设备能力 | `isDockPluginAvailable(tab)` |
+| `available` | 依赖**设备能力**（终端 PTY、端口映射传输） | `isDockPluginAvailable(tab)` |
 | `leaveWhenUnavailable` | 不可用时是否把用户切走（终端在平台不支持时返回 false） | `shouldLeaveUnavailableDockTab(tab)` |
-| `unavailableReasonKey` | 管理器显示“为什么不可用” | 设置页 |
+| `unavailableReasonKey` | 功能编排显示“为什么不可用” | 设置页 |
 | `onEnter` | 打开页签时加载数据 | `useDockLifecycle().onEnter(tab)` |
 | `onLeave` | 离开页签时取消/清理 | `useDockLifecycle().onLeave(tab)` |
 | `startBackground` | 页签关闭也要跑的资源（角标轮询） | `useDockLifecycle` 启停 |
@@ -71,8 +71,15 @@ const RUNTIME: Partial<Record<TabId, DockPluginRuntime>> = {
   mail: mailDock,
   live: liveDock,
   proxy: proxyDock,
+  kb: kbDock,
+  share: shareDock,
+  notifications: notificationsDock,
+  stats: statsDock,
+  settings: settingsDock,
 }
 ```
+
+服务端总开关**不走** `available()`：清单里填了 `feature` 的页签由 `App.vue` 用 `isFeatureEnabled(tab.feature)` 过滤，`dock.ts` 不需要再写一遍（Forge / 邮件历史上写过，保留即可，但新插件不要再加）。`available()` 只回答“这台机器/这个宿主能不能跑”。
 
 宿主只读这些解析函数：
 

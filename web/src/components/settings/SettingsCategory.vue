@@ -31,7 +31,9 @@
     v-else-if="categoryId === 'dockPlugins'"
     @navigate="(id: string) => $emit('navigate', id)"
   />
-  <KbSetting v-else-if="categoryId === 'kb'" />
+  <!-- Knowledge base is a normal category now: its status card (KbSetting) is
+       one card among the kb.* config rows, so it renders through the card loop
+       below rather than short-circuiting the whole page. -->
   <NotificationsSetting v-else-if="categoryId === 'notifications'" />
   <!-- Project detail route (project:<id>): a read-only stats page, not a
        batch-save panel, so it gets its own component rather than going through
@@ -125,14 +127,28 @@
           v-if="card.title === t('settings.items.allProjectsSection')"
           @navigate="(id: string) => $emit('navigate', id)"
         />
+        <!-- Knowledge-base index status + rebuild action. A dedicated card body
+             (counters and a destructive reindex button have no generic row), so
+             the placeholder item only opens the card. -->
+        <KbSetting v-if="card.title === t('settings.items.kbStatusSection')" />
+        <!-- Feature master switches live in the Dock feature manager. These
+             rows report the state and link there; the row itself carries no
+             control (see FeatureStatusRow). -->
         <template
           v-for="item in card.items"
-          :key="item.key + (item.key === 'forge.enabled' ? '-' + configRenderEpoch : '')"
+          :key="item.key"
         >
+          <FeatureStatusRow
+            v-if="item.statusFeature"
+            :enable-key="item.statusFeature"
+            :label="getItemLabel(item)"
+            :description="item.descriptionKey ? t(item.descriptionKey) : ''"
+            @navigate="$emit('navigate', 'dockPlugins')"
+          />
           <!-- The summary model is chosen where it is referenced, not on a
                separate page: this row opens a provider → model picker. -->
           <SettingsItem
-            v-if="item.type === 'summaryModel'"
+            v-else-if="item.type === 'summaryModel'"
             :setting-key="item.key"
             :label="getItemLabel(item)"
             :description="item.descriptionKey ? t(item.descriptionKey) : ''"
@@ -201,6 +217,7 @@ import { computed, ref, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsGroupPanel from './SettingsGroupPanel.vue'
+import FeatureStatusRow from './FeatureStatusRow.vue'
 import SettingsCard from './SettingsCard.vue'
 import SettingsAboutBrand from './SettingsAboutBrand.vue'
 import WallpaperSetting from './WallpaperSetting.vue'
@@ -269,15 +286,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
-// Bumped to force ONE settings row to re-mount after a rejected change. The
-// switch checkbox is uncontrolled (`:checked` + `@change`), so cancelling a
-// destructive toggle has to replace the element — otherwise it stays visually
-// flipped while the model value is still the old one.
-//
-// Scoped to the forge row in the template key: remounting every row of the card
-// would also destroy any in-progress edit state (an open inline editor, a
-// half-typed text field) for a change that was rejected anyway.
-const configRenderEpoch = ref(0)
 const dialog = useDialog()
 const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, setServerValue } = useSettingsConfig()
 const { loadAgents } = useAgents()
@@ -462,7 +470,8 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert', 'mailAccounts', 'meetingRelay'])
+        //   - kbStatus       → rendered by KbSetting (counters + reindex)
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert', 'mailAccounts', 'meetingRelay', 'kbStatus'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }
@@ -622,31 +631,6 @@ function getItemDisabled(item: ItemSpec): boolean {
 async function handleUpdate(item: ItemSpec, value: unknown) {
   if (item.type === 'password') {
     if (!value) return
-  }
-
-  // Disabling the forge integration is destructive: the server clears every
-  // project's repository binding, and re-enabling does NOT bring them back. A
-  // switch that silently deletes data on the way off needs a confirmation, or
-  // a stray tap costs the user all their bindings.
-  //
-  // Only the OFF transition asks. Turning it back on is not destructive, and
-  // prompting there would train users to click through the dialog.
-  if (item.key === 'forge.enabled' && value === false) {
-    const ok = await dialog.confirm(
-      t('settings.items.forgeDisableConfirm'),
-      {
-        title: t('settings.items.forgeDisableConfirmTitle'),
-        confirmText: t('settings.items.forgeDisableConfirmAction'),
-        dangerous: true,
-      },
-    )
-    if (!ok) {
-      // Re-render the switch in its current (on) position: the checkbox has
-      // already flipped visually, and the model value only changes after the
-      // server round trip, so nothing else would undo the DOM state.
-      configRenderEpoch.value++
-      return
-    }
   }
 
   if (item.source === 'local') {

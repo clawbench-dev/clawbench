@@ -33,6 +33,7 @@ import {
   FolderTree,
   FolderGit2,
   MessageSquare,
+  MessagesSquare,
   Bot,
   SquareTerminal,
   Volume2,
@@ -51,6 +52,10 @@ import {
   Github,
   UserRound,
   Mail,
+  History,
+  ListTodo,
+  ChartColumn,
+  Share2,
 } from 'lucide-vue-next'
 import { MEETING_ICON } from '@/utils/meetingIcon'
 import { useI18n } from 'vue-i18n'
@@ -64,11 +69,13 @@ const { t } = useI18n()
 
 /**
  * Category → group layout for the settings home page. Grouping is purely
- * presentational: the category IDs (and their i18n labels) are unchanged, so
- * deep links and the navigation stack keep working.
+ * presentational: the category IDs are unchanged, so deep links and the
+ * navigation stack keep working (only the display labels are translated).
  *
- * Keep this list in sync with `categoryItems` in settingsFieldMap.ts — every
- * category defined there must appear here exactly once.
+ * Every category defined in `categoryItems` (settingsFieldMap.ts) must appear
+ * here exactly once; `SettingsIndex.test.ts` enforces both directions, because a
+ * category with no row is unreachable and a row with no category is a blank
+ * page.
  */
 const groupDefs = [
   {
@@ -79,6 +86,10 @@ const groupDefs = [
       { id: 'dockPlugins', icon: LayoutGrid },
       { id: 'files', icon: FolderTree },
       { id: 'fileView', icon: Eye },
+      // Both are per-project surfaces with their own defaults, so they sit with
+      // the project and the file pages rather than with the AI features.
+      { id: 'gitHistory', icon: History },
+      { id: 'stats', icon: ChartColumn },
     ],
   },
   {
@@ -88,19 +99,35 @@ const groupDefs = [
       // agent sees, and they are not specific to chat or group chat.
       { id: 'identity', icon: UserRound },
       { id: 'chat', icon: MessageSquare },
+      // 会话管理 right after 聊天: it is the same subject one level up (sessions
+      // as objects, not the conversation), and separating them made users hunt
+      // for the session-list options in two places.
+      { id: 'sessions', icon: MessagesSquare },
       { id: 'agents', icon: Bot },
-      { id: 'providers', icon: Boxes },
+      { id: 'tasks', icon: ListTodo },
       { id: 'skills', icon: Wand2 },
       { id: 'mcp', icon: Plug },
-      { id: 'rag', icon: Brain },
+      // 知识库 stays here, next to the other AI features. It shares the embedder
+      // with RAG, but its own configuration is about what gets indexed, not
+      // about the model.
       { id: 'kb', icon: BookOpen },
+      // Meeting defaults sit next to the AI features they depend on. The icon
+      // comes from utils/meetingIcon so this row matches the dock tab instead
+      // of drawing a second, unrelated meeting glyph.
+      { id: 'meeting', icon: MEETING_ICON },
+    ],
+  },
+  {
+    // Model capability is its own top-level group: these four pages configure
+    // the models and engines themselves (provider credentials, the embedder,
+    // speech synthesis and recognition), which is a different question from how
+    // the chat behaves.
+    id: 'modelCapability',
+    items: [
+      { id: 'providers', icon: Boxes },
+      { id: 'rag', icon: Brain },
       { id: 'tts', icon: Volume2 },
       { id: 'stt', icon: Mic },
-      // Meeting defaults sit next to the speech settings they depend on:
-      // transcription (STT) and the shared summary model (providers).
-      // The icon comes from utils/meetingIcon so this row matches the dock
-      // tab instead of drawing a second, unrelated meeting glyph.
-      { id: 'meeting', icon: MEETING_ICON },
     ],
   },
   {
@@ -111,6 +138,9 @@ const groupDefs = [
       // Mailbox accounts sit with the other outbound integrations: they are a
       // connection this machine holds, not a per-project setting.
       { id: 'mail', icon: Mail },
+      // Sharing is an outbound integration too: it hands content to people who
+      // are not logged in.
+      { id: 'share', icon: Share2 },
       { id: 'forgeIntegration', icon: Github },
     ],
   },

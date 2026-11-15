@@ -43,6 +43,7 @@ describe('panelState registry shape', () => {
       'tocDockOpen', 'tocDockWidth', 'tocDockSide', 'fmPreviewRatio',
       'fmPreviewOpen', 'mailSplitRatio', 'kbSplitRatio', 'gitBranchCollapsed', 'gitWorktreeCollapsed',
       'gitManageTab', 'leftTab', 'dockHidden', 'dockOrder', 'dockPreset',
+      'statsTab', 'statsRange',
     ]
     expect(new Set(declared)).toEqual(new Set(Object.keys(PANEL_ENTRIES)))
   })
@@ -56,7 +57,7 @@ describe('panelState registry shape', () => {
       .filter((e) => e.followsLayoutMemory === false)
       .map((e) => e.id)
       .sort()
-    expect(pinned).toEqual(['dockHidden', 'dockOrder', 'dockPreset', 'leftTab'].sort())
+    expect(pinned).toEqual(['dockHidden', 'dockOrder', 'dockPreset', 'leftTab', 'statsTab', 'statsRange'].sort())
     expect(PANEL_ENTRIES.leftTab.scope).toBe('project')
     expect(PANEL_ENTRIES.dockHidden.scope).toBe('global')
     expect(PANEL_ENTRIES.dockOrder.scope).toBe('global')

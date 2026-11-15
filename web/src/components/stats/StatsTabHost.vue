@@ -61,8 +61,10 @@ import { useUsageStats } from '@/composables/useUsageStats'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
 import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
+import { localConfig } from '@/composables/useSettingsConfig'
+import { readPanelState, writePanelState } from '@/utils/panelState'
 
-defineProps<{
+const props = defineProps<{
   active: boolean
 }>()
 
@@ -99,7 +101,40 @@ const sections: { id: StatsSection; labelKey: string; icon: typeof Coins }[] = [
   { id: 'git', labelKey: 'gitStats.tabDelta', icon: GitCommitHorizontal },
 ]
 
-const section = ref<StatsSection>('usage')
+/**
+ * Which tab the panel opens on (设置 → 统计 → 默认页签). `cloc` is the "code
+ * inventory" tab and `git` the "code arriving via commits" one; anything
+ * unrecognised (an older/newer config) falls back to usage.
+ */
+function configuredSection(): StatsSection {
+  const v = localConfig.statsDefaultTab
+  return v === 'cloc' || v === 'git' ? v : 'usage'
+}
+
+/**
+ * The tab a freshly loaded panel starts on.
+ *
+ * With 记住上次选择 ON this is the stored tab, which is what makes the switch
+ * survive a page reload — the component instance is recreated on reload, so
+ * "remember" has to come from storage, not from a ref.
+ */
+function initialSection(): StatsSection {
+  if (localConfig.statsRememberLast === true) {
+    const saved = readPanelState<string | null>('statsTab')
+    if (saved === 'usage' || saved === 'cloc' || saved === 'git') return saved
+  }
+  return configuredSection()
+}
+
+const section = ref<StatsSection>(initialSection())
+
+// Persist the user's tab while 记住上次选择 is on. Off means never write (and
+// never read, see initialSection): the panel then always opens on the
+// configured default.
+watch(section, (next) => {
+  if (localConfig.statsRememberLast !== true) return
+  writePanelState('statsTab', next)
+})
 
 // ── Tab strip scrolling ──
 // A narrow panel cannot fit all three labels. Before this the row simply
@@ -166,6 +201,25 @@ onBeforeUnmount(() => {
 // The shared refresh button drives whichever panel is active.
 const usageStats = useUsageStats()
 const gitStats = useGitCodeStats()
+
+/**
+ * Apply the configured defaults each time the stats tab is opened.
+ *
+ * 记住上次选择 (statsRememberLast) decides which half of this runs: off means
+ * every visit starts from the two defaults in 设置 → 统计; on means the panel
+ * keeps whatever the user last chose (the composables' singleton state already
+ * survives, so doing nothing is the whole implementation).
+ */
+watch(
+  () => props.active,
+  (nowActive) => {
+    if (!nowActive || localConfig.statsRememberLast === true) return
+    section.value = configuredSection()
+    usageStats.resetRangeToDefault()
+    gitStats.resetRangeToDefault()
+  },
+  { immediate: true },
+)
 const refreshing = computed(() => {
   if (section.value === 'usage') return usageStats.loading.value
   if (section.value === 'cloc') return gitStats.clocLoading.value

@@ -268,9 +268,11 @@ describe('SettingsPage', () => {
     })
 
     it('isPanelOnlyCategory identifies panel-only categories', () => {
-      expect(isPanelOnlyCategory('terminal')).toBe(true)
+      // terminal is mixed now: a read-only feature-status row sits above the
+      // panel, because its master switch moved to the feature manager.
+      expect(isPanelOnlyCategory('terminal')).toBe(false)
       expect(isPanelOnlyCategory('tts')).toBe(false)
-      expect(isPanelOnlyCategory('terminal')).toBe(true)
+      expect(isPanelOnlyCategory('rag')).toBe(true)
     })
 
     it('isPanelOnlyCategory returns false for flat-only categories', () => {

@@ -98,6 +98,10 @@ CREATE TABLE IF NOT EXISTS live_notes (
 	-- It does NOT gate the live room: joining an in-progress meeting is the
 	-- reason the link exists. Only the archived record endpoints check it.
 	share_enabled INTEGER NOT NULL DEFAULT 0,
+	-- share_expires_at bounds the publication when share.link_ttl_days is set.
+	-- NULL means "no expiry" (the default, and every row created before the
+	-- setting existed).
+	share_expires_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -963,13 +967,15 @@ func SetMeetingShareEnabled(projectID int64, token string, enabled bool) error {
 		return ErrMeetingNotFound
 	}
 	flag := 0
+	var expires any
 	if enabled {
 		flag = 1
+		expires = shareLinkExpiry()
 	}
 	res, err := store.WriteExec(
-		`UPDATE live_notes SET share_enabled = ?, updated_at = CURRENT_TIMESTAMP
+		`UPDATE live_notes SET share_enabled = ?, share_expires_at = ?, updated_at = CURRENT_TIMESTAMP
 		  WHERE token = ? AND project_id = ? AND hidden = 0`,
-		flag, token, projectID,
+		flag, expires, token, projectID,
 	)
 	if err != nil {
 		return fmt.Errorf("live notes: set share flag: %w", err)
@@ -994,7 +1000,12 @@ func MeetingShareEnabled(token string) (bool, error) {
 	}
 	var flag int
 	err := store.ReadDB().QueryRow(
-		`SELECT share_enabled FROM live_notes WHERE token = ?`, token,
+		`SELECT CASE
+		          WHEN share_enabled = 1
+		           AND (share_expires_at IS NULL OR share_expires_at > datetime('now'))
+		          THEN 1 ELSE 0
+		        END
+		   FROM live_notes WHERE token = ?`, token,
 	).Scan(&flag)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -1305,7 +1316,9 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 	rows, err := store.ReadDB().Query(
 		`SELECT token, title, started_at, ended_at, dir_name,
 		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000,
-		        share_enabled
+		        CASE WHEN share_enabled = 1
+		              AND (share_expires_at IS NULL OR share_expires_at > datetime('now'))
+		             THEN 1 ELSE 0 END
 		   FROM live_notes
 		  WHERE project_id = ? AND hidden = 0
 		  ORDER BY started_at DESC, token DESC
@@ -1392,7 +1405,9 @@ func GetMeetingRecord(projectPath string, projectID int64, token string) (Meetin
 	err := store.ReadDB().QueryRow(
 		`SELECT token, title, started_at, ended_at, dir_name,
 		        CAST(strftime('%s', updated_at) AS INTEGER) * 1000,
-		        share_enabled
+		        CASE WHEN share_enabled = 1
+		              AND (share_expires_at IS NULL OR share_expires_at > datetime('now'))
+		             THEN 1 ELSE 0 END
 		   FROM live_notes WHERE token = ? AND project_id = ? AND hidden = 0`, token, projectID,
 	).Scan(&m.Token, &m.Title, &m.StartedAt, &m.EndedAt, &dirName, &updatedMS, &shareEnabled)
 	if errors.Is(err, sql.ErrNoRows) {

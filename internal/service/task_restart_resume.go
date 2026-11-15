@@ -42,6 +42,19 @@ import (
 // off or there was nothing to do) — the return value is what lets tests assert
 // the gate without racing the goroutine.
 func StartTaskRestartResume() []int64 {
+	// The tasks master switch gates this too: a run interrupted by a restart
+	// must not be resurrected while scheduled tasks are switched off. Clearing
+	// the flags is deliberate — otherwise turning the switch on later would
+	// replay a run from an older boot, which is exactly the "补跑" the switch
+	// promises not to do.
+	if !model.TasksEnabled {
+		if ids := interruptedExecutionIDs(); len(ids) > 0 {
+			clearInterruptedExecutions(ids)
+			slog.Info("task restart resume: skipped, scheduled tasks are disabled",
+				slog.Int("executions", len(ids)))
+		}
+		return nil
+	}
 	return startTaskRestartResume(defaultRestartResumeDelay, ResumeTaskExecution)
 }
 

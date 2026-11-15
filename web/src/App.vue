@@ -68,15 +68,10 @@
         <div v-show="isWideScreen" class="wide-dock">
           <div class="wide-dock-center">
             <div class="dock-active-indicator wide-dock-active-indicator" v-show="!leftCollapsed" :style="wideDockIndicatorStyle"></div>
-            <!-- Primary tabs (always visible) -->
-            <div v-for="tab in visiblePrimaryTabs" :key="tab" class="dock-btn-wrap">
-              <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" v-dock-tip="dockTabTitle(tab)" :aria-label="dockTabTitle(tab)" @click.stop="handleWideDockTabClick(tab)">
-                <component :is="wideDockTabIcon(tab)" />
-              </button>
-              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
-            </div>
-            <!-- Secondary tabs (always shown inline; the dock scrolls if too short) -->
-            <div v-for="tab in overflowTabs" :key="tab" class="dock-btn-wrap">
+            <!-- ONE ordered list: every left-column tab, in the user's order.
+                 There is no fixed head any more — the manager can drag any
+                 entry (including settings) anywhere. -->
+            <div v-for="tab in visibleDockTabs" :key="tab" class="dock-btn-wrap">
               <button class="dock-btn" :data-tab="tab" :class="wideDockBtnClass(tab)" v-dock-tip="dockTabTitle(tab)" :aria-label="dockTabTitle(tab)" @click.stop="handleWideDockTabClick(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
@@ -512,19 +507,9 @@
               </button>
               <span v-if="store.state.chatUnreadCount > 0 && activeTab !== 'chat'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': chatBadgeAnim }" @animationend="chatBadgeAnim = false">{{ formatBadgeCount(store.state.chatUnreadCount) }}</span>
             </div>
-            <button class="dock-btn" data-tab="browse" :class="{ active: activeTab === 'browse' }" @click.stop="switchTab('browse')" :title="t('nav.fileManager')">
-              <FolderOpen />
-            </button>
-            <button class="dock-btn" data-tab="view" :class="{ active: activeTab === 'view' }" @click.stop="switchTab('view')" :title="t('nav.fileView')">
-              <FileText />
-            </button>
-            <div v-if="!isDockTabHiddenById('history')" class="dock-btn-wrap">
-              <button class="dock-btn" data-tab="history" :class="{ active: activeTab === 'history' }" @click.stop="switchTab('history')" :title="t('git.history.projectHistory')">
-                <GitBranch />
-              </button>
-              <span v-if="dockTabBadgeCount('history') > 0 && activeTab !== 'history'" class="dock-badge dock-badge-count count-badge" :class="{ 'dock-badge-pop': dockTabBadgeAnim('history') }" @animationend="dockTabBadgeAnimEnd('history')">{{ formatBadgeCount(dockTabBadgeCount('history')) }}</span>
-            </div>
-            <!-- Inline overflow tabs (rendered in overflowTabs order — settings always last) -->
+            <!-- Left-column tabs: ONE ordered list, same source as the wide
+                 dock. The overflow split only decides how many of them fit
+                 inline; it never reorders them. -->
             <div v-for="tab in inlineOverflowTabs" :key="tab" class="dock-btn-wrap">
               <button class="dock-btn" :data-tab="tab" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="dockTabIcon(tab)" />
@@ -609,7 +594,7 @@ import { maybePromptStartupUIScale } from '@/composables/useStartupUIScalePrompt
 import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 import { useAnimatedWallpaperParams } from '@/composables/useAnimatedWallpaperParams'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, PencilLine } from 'lucide-vue-next'
+import { MessageSquare, FolderOpen, Clock, MoreHorizontal, Paperclip, FileText, X, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import DockPanelHost from './components/dock/DockPanelHost.vue'
@@ -763,14 +748,14 @@ import {
   toggleChatPane,
   isChatPanelVisible,
   registerWideScreenCallbacks,
-  wideDockTabOrder,
   PANE_LEFT,
   PANE_RIGHT,
 } from './composables/useWideScreenLayout'
 // Single source of truth for dock tabs (render list, switch whitelist, icons,
 // titles). See the module doc for why this exists.
-import { DOCK_TAB_IDS, primaryDockTabs, secondaryDockTabs, isDockTabId, type DockTabId } from './composables/dockTabs'
+import { DOCK_TABS, DOCK_TAB_IDS, dockTabs, isDockTabId, type DockTabId } from './composables/dockTabs'
 import { useDockPlugins } from './composables/useDockPlugins'
+import { isFeatureEnabled } from './composables/useFeatureFlags'
 import { useDockLifecycle } from './composables/useDockLifecycle'
 import {
   isDockPluginAvailable,
@@ -1139,10 +1124,11 @@ function applyProjectPanel(root: string) {
     isForgeTabHidden.value,
     isMailTabHidden.value,
   )
-  // A remembered tab the user has since hidden must fall back to the layout
-  // default, not restore a panel with no dock entry pointing at it.
+  // A remembered tab with no dock entry must fall back to the layout default,
+  // not restore a panel nothing points at: it may have been hidden by the user,
+  // switched off on the server, or become unavailable here.
   applyPanelTab(
-    isDockTabHiddenById(resolved)
+    isDockTabId(resolved) && !visibleDockTabs.value.includes(resolved)
       ? (isWideScreen.value ? 'browse' : 'chat')
       : resolved,
   )
@@ -1318,8 +1304,7 @@ function dp(designPx: number): number {
 }
 
 const dockActiveIndex = computed(() => {
-  const visibleTabs = ['chat', ...visiblePrimaryTabs.value, ...inlineOverflowTabs.value]
-  if (singleDirectTab.value) visibleTabs.push(singleDirectTab.value)
+  const visibleTabs = ['chat', ...allInlineOverflowTabs.value]
   if (showOverflowButton.value) visibleTabs.push('__overflow__')
   const idx = visibleTabs.indexOf(activeTab.value)
   if (idx >= 0) return idx
@@ -1357,6 +1342,9 @@ function switchTab(tab: string, force = false) {
   // `returnToOrigin()`/`abandonJump()` replaying a remembered tab. Refuse rather
   // than landing on a panel with no dock entry pointing at it.
   if (isDockTabId(tab) && !isDockPluginAvailable(tab)) return
+  // A feature whose server master switch is off is not reachable either: the
+  // tab is gone from the dock AND the server refuses the work behind it.
+  if (isDockTabId(tab) && featureDisabledDockTabs.value.has(tab)) return
   // Opening the Issues & PRs tab does NOT clear its unread badge. Read state is
   // per item now: opening a row clears that row, and the "mark all read" button
   // clears the rest. Clearing on tab open is what made the badge number
@@ -2116,6 +2104,25 @@ const unavailableDockTabs = computed(() => {
 })
 
 /**
+ * Tabs whose server master switch is OFF.
+ *
+ * These switches are global server state, not per-device preferences: turning
+ * one off stops background work as well as hiding the entry. `useFeatureFlags`
+ * is the one reader for them (the same predicate every action entry point uses),
+ * so the dock cannot disagree with the buttons that depend on it.
+ *
+ * A missing key reads as ON, so the entry cannot flicker away during first
+ * paint while /api/config is still in flight.
+ */
+const featureDisabledDockTabs = computed(() => {
+  const set = new Set<DockTabId>()
+  for (const tab of DOCK_TABS) {
+    if (tab.feature && !isFeatureEnabled(tab.feature)) set.add(tab.id)
+  }
+  return set
+})
+
+/**
  * Whether a tab was hidden by the user in the plugin manager.
  *
  * The dock entry is gone, so a programmatic navigation (notification deep link,
@@ -2127,9 +2134,13 @@ function dockTabBlocked(tab: string): boolean {
   return isDockTabHiddenById(tab)
 }
 
-/** Any reason the tab cannot be entered (hidden or currently unavailable). */
+/** Any reason the tab cannot be entered (hidden, switched off, unavailable). */
 function tabBlocked(tab: string): boolean {
-  return dockTabBlocked(tab) || (isDockTabId(tab) && !isDockPluginAvailable(tab))
+  return (
+    dockTabBlocked(tab) ||
+    (isDockTabId(tab) && featureDisabledDockTabs.value.has(tab)) ||
+    (isDockTabId(tab) && !isDockPluginAvailable(tab))
+  )
 }
 
 watch(unavailableDockTabs, (set) => {
@@ -2147,6 +2158,14 @@ watch(hiddenDockTabs, () => {
   // at it. Same rule as the availability watcher above.
   const current = isWideScreen.value ? leftTab.value : activeTab.value
   if (isDockTabHiddenById(current)) switchTab('browse')
+})
+watch(featureDisabledDockTabs, (set) => {
+  // Same rule for a feature switched off while its panel is open: the entry
+  // disappears, so leaving is the only consistent state. Share in particular
+  // must leave — its panel would otherwise keep showing links that were just
+  // revoked.
+  const current = isWideScreen.value ? leftTab.value : activeTab.value
+  if (isDockTabId(current) && set.has(current)) switchTab('browse')
 })
 const { navigateToTaskSettings, openExecDetail, loadTasks } = useTaskTab()
 registerSwitchTab(switchTab)
@@ -3498,31 +3517,24 @@ function handleDockTerminal() {
 // Overflow menu state
 const overflowMenuOpen = ref(false)
 const overflowBtnRef = ref<HTMLElement | null>(null)
-// Secondary (non-primary) dock tabs, in registry order, minus the ones the
-// current runtime has disabled. The render list, the switch whitelist and the
-// icon/title lookups all derive from DOCK_TABS — see composables/dockTabs.ts.
-// The filtering itself lives in secondaryDockTabs() so a test can assert the
-// render list stays a subset of the switch whitelist.
-const overflowTabs = computed(() =>
-  secondaryDockTabs({
+// The ONE left-dock render list: every tab, in the user's order, with the
+// runtime/feature gates and the user's hidden set applied. Both docks and the
+// overflow split derive from it — see dockTabs() for why it must not be
+// re-derived per surface.
+const visibleDockTabs = computed(() =>
+  dockTabs({
     hidden: hiddenDockTabs.value,
     unavailable: unavailableDockTabs.value,
+    featureDisabled: featureDisabledDockTabs.value,
     order: dockTabOrder.value,
   }),
-)
-
-// The wide dock's fixed head. `history` is primary but closable, so the list
-// has to be filtered before rendering — rendering WIDE_SCREEN_PRIMARY_TABS
-// directly would leave a button for a tab the user just hid.
-const visiblePrimaryTabs = computed(() =>
-  primaryDockTabs({ hidden: hiddenDockTabs.value }),
 )
 
 // Left-dock tabs rendered through the generic DockPanelHost. Browse and view
 // keep their explicit panels because they are core and need the file manager's
 // large prop surface; every other plugin supplies its panel in dock.ts.
 const genericDockTabs = computed(() =>
-  DOCK_TAB_IDS.filter((id) => id !== 'browse' && id !== 'view'),
+  DOCK_TABS.map((tab) => tab.id).filter((id) => id !== 'browse' && id !== 'view'),
 )
 
 // Responsive dock overflow — ResizeObserver drives inline promotion
@@ -3537,12 +3549,15 @@ const {
   stopObserving: stopDockResize,
 } = useDockOverflow(
   () => dockRef.value,
-  () => overflowTabs.value,
+  () => visibleDockTabs.value,
+  // Only chat is pinned before the overflow area now; every left-column tab
+  // takes part in the measured split.
+  { primaryCount: 1 },
 )
 
-// Wide-screen vertical dock: all tabs are always shown inline (fixed primary
-// tabs + every secondary tab). No height measurement, no overflow popup — the
-// vertical dock has plenty of space on wide screens, and the container scrolls
+// Wide-screen vertical dock: all tabs are always shown inline (the ordered
+// list). No height measurement, no overflow popup — the vertical dock has
+// plenty of space on wide screens, and the container scrolls
 // if the window is ever too short. The dock's availability is never dependent
 // on runtime geometry, so it cannot collapse on mount/login/resize.
 
@@ -3989,8 +4004,8 @@ function wideDockBadgeVisible(tab: string) {
   return dockTabBadgeCount(tab) > 0 && leftTab.value !== tab
 }
 const wideDockActiveIndex = computed(() => {
-  // Visible order mirrors the rendered dock: fixed primary tabs + all secondary tabs.
-  const i = wideDockTabOrder(overflowTabs.value, visiblePrimaryTabs.value).indexOf(leftTab.value)
+  // The rendered dock IS the ordered list — no head/tail concatenation.
+  const i = visibleDockTabs.value.indexOf(leftTab.value)
   return i >= 0 ? i : 0
 })
 const wideDockIndicatorStyle = computed(() => ({

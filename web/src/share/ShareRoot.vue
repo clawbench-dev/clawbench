@@ -20,9 +20,17 @@
     </div>
 
     <LiveShareView v-else-if="kind === 'live'" :meta="meta" />
-    <SessionShareView v-else-if="kind === 'session'" />
-    <DirShareView v-else-if="kind === 'dir'" />
-    <ShareView v-else-if="kind === 'file'" />
+    <SessionShareView v-else-if="kind === 'session'" :project-name="projectName" />
+    <DirShareView
+      v-else-if="kind === 'dir'"
+      :allow-download="allowDownload"
+      :project-name="projectName"
+    />
+    <ShareView
+      v-else-if="kind === 'file'"
+      :allow-download="allowDownload"
+      :project-name="projectName"
+    />
 
     <!-- Download progress. Floats under the share topbar (44px, taller than the
          app's --header-height, hence the offset override) and is out of flow.
@@ -56,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileX2 } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
@@ -85,7 +93,22 @@ const kind = ref<'file' | 'dir' | 'session' | 'live' | ''>('')
  * join gate) and the title, so the record header is named before its first
  * fetch returns.
  */
-const meta = ref<{ ended?: boolean; title?: string } | null>(null)
+const meta = ref<{
+  ended?: boolean
+  title?: string
+  /** Whether the share rules allow downloading (`share.allow_download`). */
+  allowDownload?: boolean
+  /** Source project name, absent when `share.show_project_name` is off. */
+  projectName?: string
+} | null>(null)
+
+/**
+ * Download is allowed unless the server says otherwise. `!== false` (rather than
+ * `=== true`) keeps an older server — whose meta has no such field — behaving
+ * exactly as before.
+ */
+const allowDownload = computed(() => meta.value?.allowDownload !== false)
+const projectName = computed(() => meta.value?.projectName ?? '')
 
 /** Extract the capability token from /share/{token}. */
 function parseTokenFromPath(): string {
@@ -110,7 +133,14 @@ onMounted(async () => {
       return
     }
     const data = await resp.json()
-    meta.value = { ended: data.ended === true, title: typeof data.title === 'string' ? data.title : '' }
+    meta.value = {
+      ended: data.ended === true,
+      title: typeof data.title === 'string' ? data.title : '',
+      // Both are optional: an older server sends neither, and the page then
+      // behaves exactly as before (downloads allowed, no project chip).
+      allowDownload: data.allowDownload !== false,
+      projectName: typeof data.projectName === 'string' ? data.projectName : '',
+    }
     // Four kinds now. Anything unrecognized falls back to 'file' — the
     // pre-existing behaviour — so an older server cannot break this page.
     kind.value =

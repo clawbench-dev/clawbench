@@ -1,7 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
 
 /**
  * Behaviour of the share centre: which rows appear, what the row says about its
@@ -176,6 +177,7 @@ async function openRow(name: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  syncFeatureConfig({})
   // Listeners live in module state, so one test's mounted panel would otherwise
   // still be subscribed during the next one.
   _resetShareChangedForTest()
@@ -327,6 +329,22 @@ describe('ShareCenterPanel — actions', () => {
     // the bytes: opening it downloads the file instead of rendering a preview.
     expect(h.copyText).toHaveBeenCalledWith('http://10.0.0.5:20000/api/share/f1/download')
     expect(h.toastShow).toHaveBeenCalledWith('Direct link copied — opens the file', expect.anything())
+  })
+
+  it('hides the direct-download action when 允许下载 is off', async () => {
+    // The direct endpoint answers 403 in that state, so copying the address
+    // would hand out a link that cannot work. The page link stays: the switch
+    // governs the bytes, not the preview.
+    syncFeatureConfig({ share: { enabled: true, allow_download: false } })
+    try {
+      stubAll()
+      const wrapper = await openRow('report.md')
+
+      expect(wrapper.find('[data-action="copy-direct"]').exists()).toBe(false)
+      expect(wrapper.find('[data-action="open-page"]').exists()).toBe(true)
+    } finally {
+      syncFeatureConfig({})
+    }
   })
 
   it('offers the direct link only for a file that still exists', async () => {

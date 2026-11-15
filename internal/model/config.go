@@ -36,6 +36,15 @@ func ParseSHA256Hash(password string) string {
 // carries no context-window sizes.
 const DefaultForkContextBudget = 100000
 
+// Upper bounds for the tasks / share / git-history settings. They exist so a
+// hand-edited config.yaml cannot ask for an unbounded retention window or a
+// page size that would make one git log call read the whole repository.
+const (
+	MaxTaskRetentionDays  = 3650
+	MaxShareLinkTTLDays   = 3650
+	MaxGitHistoryPageSize = 200
+)
+
 // PushModeDisabled is the push_mode value that turns every outbound
 // notification channel off. The notification-center row is unaffected: it is
 // an in-app log, not a push.
@@ -243,8 +252,11 @@ type Config struct {
 	WeChat      WeChatConfig      `yaml:"wechat"`       // Personal WeChat (iLink Bot) push credentials, obtained by QR scan
 	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "wechat", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
+	GitHistory  GitHistoryConfig  `yaml:"git_history"`  // Git history page tuning
 	Forge       ForgeConfig       `yaml:"forge"`        // GitHub / GitLab integration (read-only issue & PR browsing)
 	Mail        MailConfig        `yaml:"mail"`         // Built-in mail client master switch
+	Tasks       TasksConfig       `yaml:"tasks"`        // Scheduled-task master switch
+	Share       ShareConfig       `yaml:"share"`        // Share-link master switch
 	Skills      SkillsConfig      `yaml:"skills"`       // Cross-agent skill discovery (native dirs + custom dirs + git repos)
 	UsageMeter  UsageMeterConfig  `yaml:"usage_meter"`  // Periodic usage budget + over-plan notification
 	Drawio      DrawioConfig      `yaml:"drawio"`       // On-demand draw.io editor (downloaded, not embedded)
@@ -404,6 +416,99 @@ type ForgeNotifyConfig struct {
 	Reopened  bool `yaml:"reopened"`
 	Commented bool `yaml:"commented"`
 	Pipeline  bool `yaml:"pipeline"`
+}
+
+// TasksConfig is the scheduled-task master switch.
+//
+// Server-side like Forge.Enabled and Mail.Enabled, for the same reason: what is
+// being turned off is the cron scheduler and the running executions, which live
+// on the server. A per-device flag would leave one client's tasks firing after
+// another device had "disabled" them.
+//
+// Off means: no cron firing, no event/mail-triggered run, no manual run, and
+// every running execution is cancelled. Existing tasks, their configuration and
+// their execution history are kept — turning the switch back on resumes the
+// schedules from that moment and deliberately does NOT replay runs missed while
+// it was off.
+type TasksConfig struct {
+	// Enabled defaults to TRUE via ApplyDefaults' presence check: scheduled
+	// tasks are an existing feature, so an install that never wrote the key must
+	// keep them.
+	Enabled bool `yaml:"enabled"`
+
+	// RetentionEnabled turns the automatic purge of old execution rows on.
+	// Default OFF: deleting history is irreversible, so it is an explicit
+	// opt-in (the same reasoning as upload.retention_enabled).
+	RetentionEnabled bool `yaml:"retention_enabled"`
+	// RetentionDays is how old an execution row must be to be purged. Defaults
+	// to 30 even while disabled so flipping the switch has an immediate effect.
+	RetentionDays int `yaml:"retention_days"`
+
+	// NotifyOnSuccess / NotifyOnFailure gate the notification-center row and
+	// the push/IM delivery for finished runs. Both default ON; the in-app task
+	// history (task_executions) is never affected.
+	NotifyOnSuccess bool `yaml:"notify_on_success"`
+	NotifyOnFailure bool `yaml:"notify_on_failure"`
+
+	// Timezone is the IANA zone cron expressions are interpreted in. Empty
+	// means the server's local zone. Invalid values are rejected by PATCH and
+	// ignored (with a warning) on load.
+	Timezone string `yaml:"timezone"`
+}
+
+// ShareConfig is the share-link master switch.
+//
+// Server-side because the links themselves are server-issued capability URLs:
+// turning sharing off has to revoke them everywhere, which one browser cannot
+// do for another.
+//
+// Off means: every file/session share row is deleted and every meeting record's
+// public flag is cleared (old links 404 immediately), and creating a new share
+// is refused. Turning the switch back on does NOT restore revoked links — they
+// must be created again, which is the only honest reading of "revoke".
+type ShareConfig struct {
+	// Enabled defaults to TRUE via ApplyDefaults' presence check: sharing is an
+	// existing feature, so an install that never wrote the key must keep it.
+	Enabled bool `yaml:"enabled"`
+
+	// AllowFiles / AllowSessions / AllowMeetings are per-kind creation rules.
+	// They default ON and only gate NEW links; existing links are governed by
+	// Enabled and the expiry below.
+	AllowFiles    bool `yaml:"allow_files"`
+	AllowSessions bool `yaml:"allow_sessions"`
+	AllowMeetings bool `yaml:"allow_meetings"`
+
+	// AllowDownload gates the raw download endpoint of a file/folder share.
+	// Preview (the JSON content endpoint) is unaffected.
+	AllowDownload bool `yaml:"allow_download"`
+
+	// LinkTTLDays is how long a newly created link stays valid. 0 means
+	// permanent. Stored per link at creation time, so changing it never
+	// retroactively expires (or extends) links that already exist.
+	LinkTTLDays int `yaml:"link_ttl_days"`
+
+	// ShowProjectName includes the source project's name in the public share
+	// page (link previews and the injected discovery block).
+	ShowProjectName bool `yaml:"show_project_name"`
+}
+
+// FeaturePolicyConfig mirrors the sub-switches of the tasks and share features
+// that default to true. See FeaturePolicy.
+type FeaturePolicyConfig struct {
+	TasksNotifyOnSuccess bool
+	TasksNotifyOnFailure bool
+	ShareAllowFiles      bool
+	ShareAllowSessions   bool
+	ShareAllowMeetings   bool
+	ShareAllowDownload   bool
+	ShareShowProjectName bool
+}
+
+// GitHistoryConfig holds the Git history page's server-side tuning.
+type GitHistoryConfig struct {
+	// PageSize is how many commits one history request returns. Defaults to 30
+	// (the value that used to be hard-coded in the handler).
+	PageSize int `yaml:"page_size"`
 }
 
 // MailConfig holds the built-in mail client's server-side settings: the master
@@ -889,6 +994,31 @@ var (
 	ServerPort              int // Server listen port — set once at startup before HTTP listeners start, read-only afterwards. Do NOT modify after server starts; cookie names must be stable.
 	SessionCookie           = "clawbench_session"
 	DefaultAgentID          string // Default agent for new sessions, set from config or first agent
+	// TasksEnabled / ShareEnabled mirror the two server-side master switches
+	// (tasks.enabled / share.enabled). They are package globals rather than
+	// direct ConfigInstance reads for the same reason as ChatAutoRenameEnabled:
+	// hot-reload handlers and tests can reset ConfigInstance without silently
+	// turning a feature off, and the zero value of ConfigInstance is not a
+	// meaningful "off" for either switch.
+	//
+	// Default true so a process that never ran ApplyDefaults (tests) behaves
+	// like a default install.
+	TasksEnabled = true
+	ShareEnabled = true
+	// FeaturePolicy holds the default-ON sub-switches of the two features
+	// above (task notifications, per-kind share creation, download, project
+	// name). They are mirrored here for the same reason as the master
+	// switches: handlers and background workers must not read a zero-valued
+	// ConfigInstance and silently conclude "everything is off".
+	FeaturePolicy = FeaturePolicyConfig{
+		TasksNotifyOnSuccess: true,
+		TasksNotifyOnFailure: true,
+		ShareAllowFiles:      true,
+		ShareAllowSessions:   true,
+		ShareAllowMeetings:   true,
+		ShareAllowDownload:   true,
+		ShareShowProjectName: true,
+	}
 	// Language is the resolved UI language ("zh" / "en"), read by background
 	// goroutines that must localize without an HTTP request in scope.
 	Language string

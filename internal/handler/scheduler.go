@@ -47,6 +47,12 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 		writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks, "hasUnread": hasUnread})
 
 	case http.MethodPost:
+		// The feature switch is a server-side gate, not just a hidden tab: a
+		// client that ignores the switch must not be able to create a task that
+		// will never fire.
+		if rejectIfTasksDisabled(w, r) {
+			return
+		}
 		var req struct {
 			Name       string `json:"name"`
 			CronExpr   string `json:"cron_expr"`
@@ -332,6 +338,9 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			return
 		}
 		if req.Action == "resume" {
+			if rejectIfTasksDisabled(w, r) {
+				return
+			}
 			if err := service.GlobalScheduler.ResumeTask(taskID); err != nil {
 				model.WriteError(w, model.Internal(err))
 				return
@@ -359,6 +368,12 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			return
 		}
 		if req.Action == "trigger" {
+			// Manual runs are refused while the switch is off, independently of
+			// the scheduler's own gate: the API must say why, not start a run
+			// that silently does nothing.
+			if rejectIfTasksDisabled(w, r) {
+				return
+			}
 			// An event task's prompt is written against the event context the
 			// trigger injects ({{TITLE}}, {{URL}}, ...). A manual run has no
 			// event to inject, so the prompt would execute with its placeholders
@@ -440,7 +455,15 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			return
 		}
 
-		// Full task update — task already fetched and verified above
+		// Full task update — task already fetched and verified above.
+		//
+		// Everything below is the "use the feature" path (edit / re-arm), so it
+		// is refused while the switch is off. The read/cancel/stop/delete-*
+		// actions above stay available: they are how a user inspects or cleans
+		// up after the switch cancelled everything.
+		if rejectIfTasksDisabled(w, r) {
+			return
+		}
 
 		// Update fields if provided
 		if req.Name != "" {

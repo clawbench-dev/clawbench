@@ -45,66 +45,58 @@ export type DockGroup = 'workspace' | 'project' | 'personal' | 'system'
 /** A condition the host/environment must satisfy before the tab is usable. */
 export type DockCapability = 'terminal' | 'portForward'
 
-/** A server-side feature switch that also controls background work. */
-export type DockFeature = 'forge.enabled' | 'mail.enabled'
+/**
+ * A server-side master switch. Turning one of these off stops the server's
+ * background work as well as hiding the tab, so the manager's switch writes
+ * the server config rather than a per-device preference.
+ */
+export type DockFeature =
+  | 'forge.enabled'
+  | 'mail.enabled'
+  | 'terminal.enabled'
+  | 'kb.enabled'
+  | 'tasks.enabled'
+  | 'share.enabled'
 
 export interface DockTabDescriptor {
   id: DockTabId
   /** i18n key for the tab label / tooltip. */
   titleKey: string
-  /** i18n key for the one-line description in the plugin manager. */
+  /** i18n key for the one-line description in the manager. */
   descriptionKey: string
   /** Settings-manager grouping; does not change dock order. */
   group: DockGroup
   /**
-   * Always rendered in the wide-screen dock's fixed head, in this order.
-   * Non-primary tabs follow as the dock's secondary (overflow) tabs.
-   *
-   * `primary` is a POSITION, not a lock: a primary tab may still be closable
-   * (history is). The wide dock must filter primary tabs by visibility before
-   * rendering them.
-   */
-  primary?: boolean
-  /**
-   * Whether the user may hide this tab. Core tabs (chat, browse, view,
-   * settings) are always visible; everything else can be hidden.
+   * Whether the user may hide this tab. Permanent tabs (browse, view,
+   * notifications, settings) are always visible; everything else can be hidden.
    */
   closable: boolean
   /**
-   * Development-related tab. The "standard" preset hides these; the manager
-   * shows a "dev" chip. Data-driven so the preset does not hard-code ids.
+   * Server master switch this plugin depends on. Present ⇒ the manager's
+   * switch writes the server config and the tab disappears when it is off.
+   * Absent ⇒ the switch only hides the entry locally.
    */
-  devRelated?: boolean
-  /** Server feature switch this plugin depends on. Metadata for the manager;
-   *  the runtime gate is still wired in App.vue until the availability layer
-   *  lands (see docs/plugin-dev/04-runtime.md). */
   feature?: DockFeature
-  /** Host/environment capability. Metadata for the manager; same caveat as
-   *  `feature` — the actual gate lives in App.vue today. */
+  /** Host/environment capability. When it is missing the entry is hidden and
+   *  the manager greys the switch out with a reason. */
   capability?: DockCapability
   /** Settings category that owns this plugin's own configuration. */
   settingsCategory?: string
 }
 
 /**
- * The single source of truth for dock tabs: order, ids, i18n keys and the
- * primary/secondary split. Everything the dock renders and switches derives
- * from this array.
+ * The single source of truth for dock tabs: ids, i18n keys, default order and
+ * which switch (if any) governs each tab.
  *
- * This exists because the dock previously kept the *same fact* in two places
- * that had to be hand-synced: what the dock renders (`overflowTabs` +
- * `wideScreenTabMeta` in App.vue) and what switching accepts
- * (`WIDE_SCREEN_DOCK_TABS` in useWideScreenLayout.ts). Nothing derived one from
- * the other, so adding a tab and forgetting the whitelist produced a button
- * that rendered but silently did nothing on click — exactly what happened to
- * the forge tab.
+ * Everything the dock renders and switches derives from this array, so adding
+ * a tab here makes it renderable *and* switchable at once. (Its icon is added
+ * in dockTabMeta.ts.)
  *
- * Now the render list, the switch whitelist and the dock order all derive from
- * this array, so that class of divergence cannot recur: adding a tab here makes
- * it renderable *and* switchable at once. (Its icon is added in dockTabMeta.ts.)
+ * Order is the DEFAULT order. It is also the "developer" preset's order — the
+ * user can drag every entry (including settings) into any order afterwards.
  *
- * Order is the dock's display order. Runtime-gated tabs (terminal, proxy) are
- * still declared here; App.vue filters them out when the feature is disabled.
+ * Runtime-gated tabs (terminal, proxy) are still declared here; `dockTabs()`
+ * applies the gate when building the render list.
  */
 export const DOCK_TABS: readonly DockTabDescriptor[] = [
   {
@@ -112,7 +104,6 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     titleKey: 'nav.fileManager',
     descriptionKey: 'settings.dockPlugins.desc.browse',
     group: 'workspace',
-    primary: true,
     closable: false,
     settingsCategory: 'files',
   },
@@ -121,7 +112,6 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     titleKey: 'nav.fileView',
     descriptionKey: 'settings.dockPlugins.desc.view',
     group: 'workspace',
-    primary: true,
     closable: false,
     settingsCategory: 'fileView',
   },
@@ -130,8 +120,8 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     titleKey: 'git.history.projectHistory',
     descriptionKey: 'settings.dockPlugins.desc.history',
     group: 'workspace',
-    primary: true,
     closable: true,
+    settingsCategory: 'gitHistory',
   },
   // Forge's registry title is the platform-NEUTRAL label ("issues & change
   // requests"). The dock does not use it: `dockTabTitle` in App.vue resolves
@@ -146,7 +136,6 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     descriptionKey: 'settings.dockPlugins.desc.forge',
     group: 'project',
     closable: true,
-    devRelated: true,
     feature: 'forge.enabled',
     settingsCategory: 'forgeIntegration',
   },
@@ -156,6 +145,8 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     descriptionKey: 'settings.dockPlugins.desc.tasks',
     group: 'project',
     closable: true,
+    feature: 'tasks.enabled',
+    settingsCategory: 'tasks',
   },
   {
     id: 'terminal',
@@ -163,7 +154,7 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     descriptionKey: 'settings.dockPlugins.desc.terminal',
     group: 'project',
     closable: true,
-    devRelated: true,
+    feature: 'terminal.enabled',
     capability: 'terminal',
     settingsCategory: 'terminal',
   },
@@ -173,6 +164,7 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     descriptionKey: 'settings.dockPlugins.desc.stats',
     group: 'project',
     closable: true,
+    settingsCategory: 'stats',
   },
   // 邮件: a full mail client (accounts, folders, reading, composing). Data is
   // global rather than per-project — a mailbox belongs to the person, not to a
@@ -195,6 +187,7 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     descriptionKey: 'settings.dockPlugins.desc.kb',
     group: 'personal',
     closable: true,
+    feature: 'kb.enabled',
     settingsCategory: 'kb',
   },
   // 视频会议: the meeting records, and the meeting itself — screen/camera or
@@ -219,6 +212,8 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     descriptionKey: 'settings.dockPlugins.desc.share',
     group: 'project',
     closable: true,
+    feature: 'share.enabled',
+    settingsCategory: 'share',
   },
   {
     id: 'proxy',
@@ -226,13 +221,13 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
     descriptionKey: 'settings.dockPlugins.desc.proxy',
     group: 'project',
     closable: true,
-    devRelated: true,
     capability: 'portForward',
     settingsCategory: 'portForward',
   },
-  // Notifications sits immediately before settings: settings stays the final
-  // tab (it is the "exit" affordance at the end of the dock), and the
-  // notification log is the last stop before leaving the tool tabs.
+  // Notifications sits immediately before settings in the DEFAULT order:
+  // settings is the "exit" affordance at the end of the dock, and the
+  // notification log is the last stop before leaving the tool tabs. Both can
+  // be dragged elsewhere now.
   {
     id: 'notifications',
     titleKey: 'nav.notifications',
@@ -250,17 +245,17 @@ export const DOCK_TABS: readonly DockTabDescriptor[] = [
   },
 ]
 
-/** All left-column tab ids, in dock order. Derived — never hand-maintained. */
+/** All left-column tab ids, in default order. Derived — never hand-maintained. */
 export const DOCK_TAB_IDS: readonly DockTabId[] = DOCK_TABS.map((t) => t.id)
-
-/** Tabs always rendered in the wide-screen dock's fixed head, in order. */
-export const WIDE_SCREEN_PRIMARY_TABS: readonly DockTabId[] = DOCK_TABS.filter(
-  (t) => t.primary,
-).map((t) => t.id)
 
 /** Descriptor lookup by id. */
 export const DOCK_TAB_BY_ID: ReadonlyMap<DockTabId, DockTabDescriptor> = new Map(
   DOCK_TABS.map((t) => [t.id, t]),
+)
+
+/** Tabs whose switch writes a server master switch. */
+export const DOCK_FEATURE_TABS: readonly DockTabId[] = DOCK_TABS.filter((t) => t.feature).map(
+  (t) => t.id,
 )
 
 /** True when `tab` is a known left-column tab id. */
@@ -269,77 +264,62 @@ export function isDockTabId(tab: string): tab is DockTabId {
 }
 
 /**
- * The secondary (non-primary) dock tabs that should be rendered, in registry
- * order, with the runtime-gated ones filtered out.
+ * Merge a stored order with the registry's default order.
  *
- * This is the *render* list the narrow dock's overflow area and the wide-screen
- * dock's tail both use. It lives here (not inline in App.vue) so a test can
- * assert it is a subset of the switch whitelist: the original forge bug was
- * precisely the render list diverging from what `switchLeftTab` accepts, and an
- * inline computed in a .vue file is not reachable from a unit test.
+ * The rule is "default positions, stored relative order": every id the stored
+ * array mentions keeps the SLOT it occupies in the default order, and those
+ * slots are filled in the stored sequence. Ids the stored array does not
+ * mention stay where the default puts them.
  *
- * `terminal`/`proxy` are hidden when their feature is unavailable at runtime
- * (terminal: the PTY manager is not up yet or the platform cannot run it; proxy:
- * port forwarding is genuinely unusable — no wire can carry it). Both are still
- * declared in DOCK_TABS — this function is where the runtime gate is applied.
+ * This is what makes the upgrade from the old format safe. Before every tab
+ * became draggable, `dockOrder` only ever contained the movable tail (forge …
+ * proxy). Appending those to the end — or starting the list from them — would
+ * push the permanent tabs (file manager first of all) out of place. With slot
+ * preservation the old array only reorders the movable slots, exactly as it
+ * did before, and every permanent tab keeps its default position.
  *
- * `live` (会议) is deliberately NOT gated: a host that cannot capture a screen
- * can still read its meeting records, and a voice meeting only needs a
- * microphone. The create page explains what is missing instead.
- *
- * `forgeHidden` is a USER-facing switch, not a runtime capability: issue #590 asks
- * for a way to turn the integration off when it is not in use. On the server
- * that switch stops polling and clears every project's repository binding, so by
- * the time this flag is true there is nothing left for the panel to show — the
- * dock entry is simply the visible half of a real disable.
- *
- * `mailHidden` is the same kind of switch for the mail client: off stops the
- * server's background IMAP sync (and the email-triggered tasks riding on it) and
- * hides the dock entry. Unlike forge it deletes nothing — the accounts stay, so
- * the switch is trivially reversible.
- *
- * The proxy flag is `portForwardUnavailable`, not `sshDisabled`: an install
- * forwarding over the stream tunnel has no SSH listener yet works fine, so
- * keying the dock off SSH alone hid the whole tab there. Callers compute it with
- * `portForwardUnavailable()` from utils/portForwardUtils — this module stays
- * import-free on purpose (see the header), so it takes the resulting boolean.
+ * A complete array (what the manager writes after a drag) is reproduced
+ * verbatim: all ids are mentioned, so all slots are refilled in its order.
+ * Unknown and duplicate ids are dropped.
  */
+export function mergeDockOrder(order: readonly DockTabId[] = []): DockTabId[] {
+  const stored: DockTabId[] = []
+  const seen = new Set<DockTabId>()
+  for (const id of order) {
+    if (!isDockTabId(id) || seen.has(id)) continue
+    seen.add(id)
+    stored.push(id)
+  }
+  if (stored.length === 0) return [...DOCK_TAB_IDS]
+  let next = 0
+  return DOCK_TAB_IDS.map((id) => (seen.has(id) ? stored[next++] : id))
+}
+
 export interface DockVisibilityOptions {
-  terminalDisabled?: boolean
-  portForwardUnavailable?: boolean
-  forgeHidden?: boolean
-  mailHidden?: boolean
-  /** Tabs the user hid in the plugin manager. */
+  /** Tabs whose server master switch is OFF. */
+  featureDisabled?: ReadonlySet<DockTabId>
+  /** Tabs the user hid in the manager. */
   hidden?: ReadonlySet<DockTabId>
-  /** Tabs whose runtime availability check currently fails. */
+  /**
+   * Tabs whose runtime availability check currently fails (terminal runtime
+   * down, no wire for port forwarding, …). One set for every host limitation —
+   * App.vue derives it from each plugin's `available()`, so a capability never
+   * has a second, differently-named gate here.
+   */
   unavailable?: ReadonlySet<DockTabId>
-  /** User order for the reorderable secondary tabs; missing ids keep default order. */
+  /** User order (any subset of ids; see mergeDockOrder). */
   order?: readonly DockTabId[]
 }
 
-const EMPTY_HIDDEN: ReadonlySet<DockTabId> = new Set()
-
-/**
- * Non-primary, closable tabs the user can reorder. `settings` is excluded on
- * purpose: it is the exit affordance and must stay last.
- */
-export const REORDERABLE_DOCK_TABS: readonly DockTabId[] = DOCK_TABS
-  .filter((t) => !t.primary && t.closable && t.id !== 'settings')
-  .map((t) => t.id)
+const EMPTY_SET: ReadonlySet<DockTabId> = new Set()
 
 function isGated(id: DockTabId, opts: DockVisibilityOptions): boolean {
-  if (opts.unavailable?.has(id)) return true
-  return (
-    (id === 'terminal' && !!opts.terminalDisabled) ||
-    (id === 'proxy' && !!opts.portForwardUnavailable) ||
-    (id === 'forge' && !!opts.forgeHidden) ||
-    (id === 'mail' && !!opts.mailHidden)
-  )
+  return !!opts.unavailable?.has(id) || !!opts.featureDisabled?.has(id)
 }
 
 /**
  * Only closable tabs can be hidden. A corrupt/stale `dockHidden` value must not
- * hide a core tab (settings in particular would lock the user out of the
+ * hide a permanent tab (settings in particular would lock the user out of the
  * manager that could fix it).
  */
 function isUserHidden(id: DockTabId, hidden: ReadonlySet<DockTabId>): boolean {
@@ -347,74 +327,25 @@ function isUserHidden(id: DockTabId, hidden: ReadonlySet<DockTabId>): boolean {
 }
 
 /**
- * Merge a stored order with the registry order. Unknown/duplicate ids are
- * dropped; ids added in a later release are appended in their default order so
- * they never disappear just because the stored array predates them.
+ * The left dock's visible tabs, in the user's order, with every gate applied.
+ *
+ * This is the ONE render list: the wide-screen vertical dock, the narrow
+ * bottom dock's inline/overflow split and the settings manager all call it, so
+ * a tab can never be rendered in one place and missing from another (the
+ * original forge bug was exactly that divergence).
+ *
+ * Gates:
+ *  - `unavailable` — the host cannot run the feature right now (terminal
+ *    runtime down, no wire for port forwarding, …). `live` (会议) is
+ *    deliberately NOT gated on capture: a host without a screen can still read
+ *    its records, and a voice meeting only needs a microphone.
+ *  - `featureDisabled` — the server master switch is off. The tab is the
+ *    visible half of a real disable, so it disappears with the background work.
+ *  - `hidden` — the user turned the entry off in the manager (closable tabs
+ *    only). For feature tabs this is the same switch: the manager shows one
+ *    switch per tab, not two.
  */
-export function mergeDockOrder(order: readonly DockTabId[] = []): DockTabId[] {
-  const seen = new Set<DockTabId>()
-  const out: DockTabId[] = []
-  for (const id of order) {
-    if (!REORDERABLE_DOCK_TABS.includes(id) || seen.has(id)) continue
-    seen.add(id)
-    out.push(id)
-  }
-  for (const id of REORDERABLE_DOCK_TABS) {
-    if (!seen.has(id)) out.push(id)
-  }
-  return out
-}
-
-/** Visible tabs in the wide dock's fixed head (history may be hidden). */
-export function primaryDockTabs(
-  opts: Pick<DockVisibilityOptions, 'hidden'> = {},
-): DockTabId[] {
-  const hidden = opts.hidden ?? EMPTY_HIDDEN
-  return WIDE_SCREEN_PRIMARY_TABS.filter((id) => !isUserHidden(id, hidden))
-}
-
-/**
- * The secondary (non-primary) dock tabs that should be rendered, in the user's
- * order, with runtime gates and user-hidden tabs filtered out.
- *
- * `settings` is always appended last: it is the only non-primary core tab and
- * the exit affordance. `REORDERABLE_DOCK_TABS` covers everything before it.
- *
- * This is the *render* list the narrow dock's overflow area and the wide-screen
- * dock's tail both use. It lives here (not inline in App.vue) so a test can
- * assert it is a subset of the switch whitelist: the original forge bug was
- * precisely the render list diverging from what `switchLeftTab` accepts, and an
- * inline computed in a .vue file is not reachable from a unit test.
- *
- * `terminal`/`proxy` are hidden when their feature is unavailable at runtime
- * (terminal: the PTY manager is not up yet or the platform cannot run it; proxy:
- * port forwarding is genuinely unusable — no wire can carry it). Both are still
- * declared in DOCK_TABS — this function is where the runtime gate is applied.
- *
- * `live` (会议) is deliberately NOT gated: a host that cannot capture a screen
- * can still read its meeting records, and a voice meeting only needs a
- * microphone. The create page explains what is missing instead.
- *
- * `forgeHidden` / `mailHidden` are server feature switches: off stops the
- * server's work too, so the dock entry is the visible half of a real disable.
- * `hidden` is the per-device preference from the plugin manager — it only
- * removes the entry and never stops background work.
- */
-export function secondaryDockTabs(opts: DockVisibilityOptions = {}): DockTabId[] {
-  const hidden = opts.hidden ?? EMPTY_HIDDEN
-  const order = mergeDockOrder(opts.order)
-  const visible = (id: DockTabId) => !isGated(id, opts) && !isUserHidden(id, hidden)
-
-  const reorderable = order.filter(visible)
-  const settings = DOCK_TABS.filter((t) => t.id === 'settings' && visible(t.id)).map((t) => t.id)
-  // Future non-primary tabs that are neither reorderable nor the fixed tail
-  // (none today). Keeping this branch means adding such a tab never silently
-  // drops it from the dock.
-  const rest = DOCK_TABS.filter(
-    (t) => !t.primary && t.id !== 'settings' && !REORDERABLE_DOCK_TABS.includes(t.id),
-  )
-    .filter((t) => visible(t.id))
-    .map((t) => t.id)
-
-  return [...reorderable, ...rest, ...settings]
+export function dockTabs(opts: DockVisibilityOptions = {}): DockTabId[] {
+  const hidden = opts.hidden ?? EMPTY_SET
+  return mergeDockOrder(opts.order).filter((id) => !isGated(id, opts) && !isUserHidden(id, hidden))
 }

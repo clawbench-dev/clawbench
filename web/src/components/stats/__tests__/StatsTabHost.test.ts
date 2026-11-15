@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { shallowMount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
@@ -20,8 +20,10 @@ vi.mock('@/stores/app', () => ({
 }))
 
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
-import { resetUsageStats } from '@/composables/useUsageStats'
-import { resetGitStats } from '@/composables/useGitCodeStats'
+import { resetUsageStats, useUsageStats } from '@/composables/useUsageStats'
+import { resetGitStats, useGitCodeStats } from '@/composables/useGitCodeStats'
+import { localConfig } from '@/composables/useSettingsConfig'
+import { readPanelState, writePanelState } from '@/utils/panelState'
 
 const zhMessages = {
   common: { loading: '加载中' },
@@ -265,5 +267,158 @@ describe('StatsTabHost lazy panels', () => {
     // Each loader must be wrapped, not handed straight to defineAsyncComponent.
     expect((src.match(/buildAsyncComponentOptions\(\{/g) ?? [])).toHaveLength(3)
     expect(src).not.toMatch(/defineAsyncComponent\(\{\s*loader:/)
+  })
+})
+
+// ── 设置 → 统计: default tab / range, and 记住上次选择 ──
+describe('StatsTabHost — configured defaults', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetUsageStats()
+    resetGitStats()
+    mockApiGet.mockResolvedValue({ totals: {}, rows: [], languages: [] })
+    localConfig.statsDefaultTab = 'usage'
+    localConfig.statsDefaultRange = '24h'
+    localConfig.statsRememberLast = false
+  })
+
+  afterEach(() => {
+    localConfig.statsDefaultTab = 'usage'
+    localConfig.statsDefaultRange = '24h'
+    localConfig.statsRememberLast = false
+  })
+
+  function activePanel(wrapper: Awaited<ReturnType<typeof mountHost>>): string {
+    if (wrapper.findComponent({ name: 'usage-panel' }).props('active')) return 'usage'
+    if (wrapper.findComponent({ name: 'cloc-panel' }).props('active')) return 'cloc'
+    return 'git'
+  }
+
+  it('opens on the configured default tab', async () => {
+    localConfig.statsDefaultTab = 'git'
+    const wrapper = await mountHost()
+    expect(activePanel(wrapper)).toBe('git')
+  })
+
+  it('returns to the default tab when the tab is reopened with 记住上次选择 off', async () => {
+    localConfig.statsDefaultTab = 'usage'
+    const wrapper = await mountHost()
+
+    await wrapper.findAll('.stats-tab').find(b => b.text() === '代码增量')!.trigger('click')
+    await nextTick()
+    expect(activePanel(wrapper)).toBe('git')
+
+    await wrapper.setProps({ active: false })
+    await wrapper.setProps({ active: true })
+    await nextTick()
+    expect(activePanel(wrapper)).toBe('usage')
+  })
+
+  it('keeps the last tab when 记住上次选择 is on', async () => {
+    localConfig.statsRememberLast = true
+    const wrapper = await mountHost()
+
+    await wrapper.findAll('.stats-tab').find(b => b.text() === '代码增量')!.trigger('click')
+    await nextTick()
+
+    await wrapper.setProps({ active: false })
+    await wrapper.setProps({ active: true })
+    await nextTick()
+    expect(activePanel(wrapper)).toBe('git')
+  })
+
+  it('resets both panels to the configured range on reopen when not remembering', async () => {
+    localConfig.statsDefaultRange = '7d'
+    const wrapper = await mountHost()
+    const usage = useUsageStats()
+    const git = useGitCodeStats()
+
+    usage.setRange({ rangeKey: '30d' })
+    git.setRange({ rangeKey: '30d' })
+    expect(usage.filter.value.range.rangeKey).toBe('30d')
+
+    await wrapper.setProps({ active: false })
+    await wrapper.setProps({ active: true })
+    await nextTick()
+
+    expect(usage.filter.value.range.rangeKey).toBe('7d')
+    expect(git.range.value.rangeKey).toBe('7d')
+  })
+
+  it('leaves a chosen range alone when 记住上次选择 is on', async () => {
+    localConfig.statsRememberLast = true
+    localConfig.statsDefaultRange = '7d'
+    const wrapper = await mountHost()
+    const usage = useUsageStats()
+
+    usage.setRange({ rangeKey: '30d' })
+    await wrapper.setProps({ active: false })
+    await wrapper.setProps({ active: true })
+    await nextTick()
+
+    expect(usage.filter.value.range.rangeKey).toBe('30d')
+  })
+})
+
+// ── 记住上次选择: survives a reload ──
+//
+// The refs alone only survive the SPA session; a reload recreates the component
+// and reloads the module, so "remember" has to come from storage. These tests
+// write/read the same panelState entry the component uses, which is exactly
+// what a reload does (fresh mount, storage intact).
+describe('StatsTabHost — 记住上次选择 persistence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetUsageStats()
+    resetGitStats()
+    mockApiGet.mockResolvedValue({ totals: {}, rows: [], languages: [] })
+    localStorage.clear()
+    localConfig.statsDefaultTab = 'usage'
+    localConfig.statsRememberLast = false
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+    localConfig.statsRememberLast = false
+  })
+
+  function activePanel(wrapper: Awaited<ReturnType<typeof mountHost>>): string {
+    if (wrapper.findComponent({ name: 'usage-panel' }).props('active')) return 'usage'
+    if (wrapper.findComponent({ name: 'cloc-panel' }).props('active')) return 'cloc'
+    return 'git'
+  }
+
+  it('restores the stored tab on a fresh mount', async () => {
+    writePanelState('statsTab', 'git')
+    localConfig.statsRememberLast = true
+
+    const wrapper = await mountHost()
+    expect(activePanel(wrapper)).toBe('git')
+  })
+
+  it('persists the chosen tab', async () => {
+    localConfig.statsRememberLast = true
+    const wrapper = await mountHost()
+
+    await wrapper.findAll('.stats-tab').find(b => b.text() === '代码增量')!.trigger('click')
+    await nextTick()
+
+    expect(readPanelState<string | null>('statsTab')).toBe('git')
+  })
+
+  it('ignores the stored tab and never writes when 记住上次选择 is off', async () => {
+    writePanelState('statsTab', 'git')
+    localConfig.statsRememberLast = false
+
+    const wrapper = await mountHost()
+    // The configured default wins over a leftover stored value.
+    expect(activePanel(wrapper)).toBe('usage')
+
+    await wrapper.findAll('.stats-tab').find(b => b.text() === '代码增量')!.trigger('click')
+    await nextTick()
+    // Nothing new was written: the stale 'git' is still the only record.
+    expect(readPanelState<string | null>('statsTab')).toBe('git')
+    // …and the user's click still works for this view.
+    expect(activePanel(wrapper)).toBe('git')
   })
 })

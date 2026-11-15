@@ -966,6 +966,17 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
+	model.TasksEnabled = cfg.Tasks.Enabled
+	model.ShareEnabled = cfg.Share.Enabled
+	model.FeaturePolicy = model.FeaturePolicyConfig{
+		TasksNotifyOnSuccess: cfg.Tasks.NotifyOnSuccess,
+		TasksNotifyOnFailure: cfg.Tasks.NotifyOnFailure,
+		ShareAllowFiles:      cfg.Share.AllowFiles,
+		ShareAllowSessions:   cfg.Share.AllowSessions,
+		ShareAllowMeetings:   cfg.Share.AllowMeetings,
+		ShareAllowDownload:   cfg.Share.AllowDownload,
+		ShareShowProjectName: cfg.Share.ShowProjectName,
+	}
 
 	// Apply TTS text processing config (defaults applied in ApplyDefaults)
 	summarize.InlineCodeMaxLen = cfg.TTS.InlineCodeMaxLen
@@ -1349,11 +1360,22 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Initialize and start scheduler (MUST be after agents are loaded so model.Agents is populated)
 	scheduler := service.NewScheduler()
 
+	// The zone must be set BEFORE the tasks are registered: registration parses
+	// the cron expression with the scheduler's current zone.
+	if err := scheduler.SetTimezone(cfg.Tasks.Timezone); err != nil {
+		slog.Warn("failed to apply tasks.timezone, using server local time", slog.String("err", err.Error()))
+	}
+
 	// Load all tasks from all projects
 	if err := scheduler.LoadTasksFromDB(""); err != nil {
 		slog.Warn("failed to load tasks", slog.String("err", err.Error()))
 	}
 	scheduler.Start()
+	// Apply the tasks master switch: when it is off the scheduler must not
+	// fire, and the cron entries loaded above simply stay registered until the
+	// switch comes back (their next activation is recomputed from that moment,
+	// so runs missed while off are not replayed).
+	scheduler.SetEnabled(cfg.Tasks.Enabled)
 	defer scheduler.Stop()
 	service.GlobalScheduler = scheduler
 
@@ -1370,6 +1392,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			}
 			service.CleanupPendingEvents()
 			service.CleanupNotifications()
+			// Throttled internally to a few times a day; reads the current
+			// retention rule on every call.
+			_, _ = service.MaybeCleanupTaskExecutions()
 		}
 	}()
 
@@ -1453,6 +1478,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 				return handler.ForgeCredentialLogin(repo.Platform, repo.Host)
 			},
 		)
+		// Exposed so the tasks master switch can discard queued events when it
+		// is turned off (see Scheduler.SetEnabled).
+		service.GlobalForgeTaskTrigger = trigger
 		// Third sink: the notification-center log. Kept separate from the
 		// dispatcher because it must record every change regardless of the
 		// per-event IM toggles (a muted event still belongs in the history).

@@ -232,11 +232,15 @@ describe('wide dock tooltip wiring', () => {
   const app = readWebFile('src/App.vue')
   const main = readWebFile('src/main.ts')
 
-  it('labels both wide-dock button loops with the shared lookup', () => {
-    const labels = app.match(/v-dock-tip="dockTabTitle\(tab\)"/g) ?? []
-    expect(labels.length).toBe(2)
+  it('labels the single wide-dock button loop with the shared lookup', () => {
+    // The wide dock is ONE ordered list now (the fixed head is gone), so there
+    // is exactly one loop to label.
+    const wideDock = app.slice(app.indexOf('class="wide-dock"'), app.indexOf('class="content-area"'))
+    expect(wideDock).toContain('v-for="tab in visibleDockTabs"')
+    const labels = wideDock.match(/v-dock-tip="dockTabTitle\(tab\)"/g) ?? []
+    expect(labels.length).toBe(1)
     // Accessible name has to survive dropping the native title attribute.
-    expect((app.match(/:aria-label="dockTabTitle\(tab\)"/g) ?? []).length).toBe(2)
+    expect((wideDock.match(/:aria-label="dockTabTitle\(tab\)"/g) ?? []).length).toBe(1)
   })
 
   it('does not keep a native title on the wide dock (it would double up)', () => {

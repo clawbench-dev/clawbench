@@ -7,7 +7,6 @@ import type { DockPluginRuntime } from '@/composables/dockPluginTypes'
 
 const { forgeUnreadCount } = useForgeUnread()
 const { platform } = useForgeBinding()
-const { serverConfig } = useSettingsConfig()
 
 /**
  * Forge is the one plugin whose icon and title depend on runtime state: the
@@ -17,7 +16,14 @@ export const forgeDock: DockPluginRuntime = {
   icon: () => (forgeDockIconKind(platform.value) === 'gitlab' ? Gitlab : Github),
   title: () => i18n.global.t(forgeTabTitleKey(platform.value)),
   badge: () => ({ count: forgeUnreadCount.value }),
-  available: () => (serverConfig.value?.forge as Record<string, unknown> | undefined)?.enabled !== false,
+  // Resolved per call, not at module load: reading the config module while
+  // this file is being imported touches it before the test/host mock is ready
+  // (TDZ in SettingsCategory's mock). A composable call is cheap and returns
+  // the same shared refs.
+  available: () => {
+    const { serverConfig } = useSettingsConfig()
+    return (serverConfig.value?.forge as Record<string, unknown> | undefined)?.enabled !== false
+  },
   unavailableReasonKey: 'settings.dockPlugins.unavailable.forge',
   panel: {
     load: () => import('./ForgePanelContent.vue'),

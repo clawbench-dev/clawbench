@@ -62,10 +62,15 @@ import { useCompletionPopover } from '@/composables/useCompletionPopover'
 import { useAgents } from '@/composables/useAgents'
 import { gt } from '@/composables/useLocale'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { useFeatureFlags, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 
 const { active, dismiss, pauseAutoDismiss, resumeAutoDismiss } = useCompletionPopover()
 const { getAgentBackend, getAgentAvatar } = useAgents()
 const { isTouchPrimary } = usePlatformDetect()
+// 任务 / Forge master switches. The card itself is a live event (a task just
+// finished, a PR just merged) and stays readable; only its jump is gone once
+// the feature is off — the tab it used to open no longer exists.
+const { tasksEnabled, forgeEnabled } = useFeatureFlags()
 
 // 桌面端右下角滑入、移动端顶部滑下——两套动效方向相反，靠 Transition 名称切换。
 const transitionName = computed(() => isTouchPrimary.value ? 'completion-notify-mobile' : 'completion-notify-desktop')
@@ -113,6 +118,14 @@ const navigateLabel = computed(() => {
 function activate(): void {
     const item = active.value
     if (!item) return
+    // Refuse the jump when the feature is off, before marking read: the click
+    // does not reach the destination, so it must not consume the notification
+    // either. The card dismisses so the refusal is visible as a toast.
+    if ((item.kind === 'task' && !tasksEnabled.value) || (item.kind === 'forge' && !forgeEnabled.value)) {
+        notifyFeatureDisabled()
+        dismiss()
+        return
+    }
     markRead(item)
     if (item.kind === 'task') {
         window.dispatchEvent(new CustomEvent('clawbench-open-task', {

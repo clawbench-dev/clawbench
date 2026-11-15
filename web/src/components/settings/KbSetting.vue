@@ -1,63 +1,61 @@
 <template>
+  <!-- Card BODY, not a page: the 知识库索引 card is opened by a placeholder item
+       in settingsFieldMap (see PLACEHOLDER_ITEMS in SettingsCategory), and the
+       kb.* configuration rows live in the cards below it. -->
   <div class="kb-setting">
-    <SettingsCard :title="t('settings.items.kbStatusSection')">
-      <div v-if="status" class="kb-stats">
-        <div class="kb-stat">
-          <span class="kb-stat__label">{{ t('settings.items.kbCollections') }}</span>
-          <strong class="kb-stat__value">{{ status.stats.collections }}</strong>
-        </div>
-        <div class="kb-stat">
-          <span class="kb-stat__label">{{ t('settings.items.kbDocuments') }}</span>
-          <strong class="kb-stat__value">{{ status.stats.documents }}</strong>
-        </div>
-        <div class="kb-stat">
-          <span class="kb-stat__label">{{ t('settings.items.kbReadyDocs') }}</span>
-          <strong class="kb-stat__value">{{ status.stats.ready_docs }}</strong>
-        </div>
-        <div class="kb-stat">
-          <span class="kb-stat__label">{{ t('settings.items.kbFailedDocs') }}</span>
-          <strong class="kb-stat__value" :class="{ 'is-bad': status.stats.failed_docs > 0 }">
-            {{ status.stats.failed_docs }}
-          </strong>
-        </div>
-        <div class="kb-stat">
-          <span class="kb-stat__label">{{ t('settings.items.kbPendingDocs') }}</span>
-          <strong class="kb-stat__value">{{ status.stats.pending_docs }}</strong>
-        </div>
-        <div class="kb-stat">
-          <span class="kb-stat__label">{{ t('settings.items.kbChunks') }}</span>
-          <strong class="kb-stat__value">{{ status.stats.chunks }}</strong>
-        </div>
-        <div class="kb-stat">
-          <span class="kb-stat__label">{{ t('settings.items.kbEmbeddedChunks') }}</span>
-          <strong class="kb-stat__value">{{ status.stats.embedded_chunks }}</strong>
-        </div>
-        <div class="kb-stat">
-          <span class="kb-stat__label">{{ t('settings.items.kbStoredBytes') }}</span>
-          <strong class="kb-stat__value">{{ formatBytes(status.stats.stored_bytes) }}</strong>
-        </div>
+    <div v-if="status" class="kb-stats">
+      <div class="kb-stat">
+        <span class="kb-stat__label">{{ t('settings.items.kbCollections') }}</span>
+        <strong class="kb-stat__value">{{ status.stats.collections }}</strong>
       </div>
-      <div v-else class="kb-loading">
-        {{ statusError || t('settings.items.kbLoading') }}
+      <div class="kb-stat">
+        <span class="kb-stat__label">{{ t('settings.items.kbDocuments') }}</span>
+        <strong class="kb-stat__value">{{ status.stats.documents }}</strong>
       </div>
-      <div class="kb-actions">
-        <button class="fbtn" type="button" :disabled="loading" @click="load">
-          {{ t('settings.items.kbRefresh') }}
-        </button>
-        <button
-          class="fbtn fbtn-primary"
-          type="button"
-          :disabled="reindexing || !status?.available"
-          @click="reindex"
-        >
-          {{ reindexing ? t('settings.items.kbReindexing') : t('settings.items.kbReindex') }}
-        </button>
+      <div class="kb-stat">
+        <span class="kb-stat__label">{{ t('settings.items.kbReadyDocs') }}</span>
+        <strong class="kb-stat__value">{{ status.stats.ready_docs }}</strong>
       </div>
-    </SettingsCard>
-
-    <SettingsCard :title="t('settings.items.kbManageSection')">
-      <p class="kb-note">{{ t('settings.items.kbManageDesc') }}</p>
-    </SettingsCard>
+      <div class="kb-stat">
+        <span class="kb-stat__label">{{ t('settings.items.kbFailedDocs') }}</span>
+        <strong class="kb-stat__value" :class="{ 'is-bad': status.stats.failed_docs > 0 }">
+          {{ status.stats.failed_docs }}
+        </strong>
+      </div>
+      <div class="kb-stat">
+        <span class="kb-stat__label">{{ t('settings.items.kbPendingDocs') }}</span>
+        <strong class="kb-stat__value">{{ status.stats.pending_docs }}</strong>
+      </div>
+      <div class="kb-stat">
+        <span class="kb-stat__label">{{ t('settings.items.kbChunks') }}</span>
+        <strong class="kb-stat__value">{{ status.stats.chunks }}</strong>
+      </div>
+      <div class="kb-stat">
+        <span class="kb-stat__label">{{ t('settings.items.kbEmbeddedChunks') }}</span>
+        <strong class="kb-stat__value">{{ status.stats.embedded_chunks }}</strong>
+      </div>
+      <div class="kb-stat">
+        <span class="kb-stat__label">{{ t('settings.items.kbStoredBytes') }}</span>
+        <strong class="kb-stat__value">{{ formatBytes(status.stats.stored_bytes) }}</strong>
+      </div>
+    </div>
+    <div v-else class="kb-loading">
+      {{ statusError || t('settings.items.kbLoading') }}
+    </div>
+    <div class="kb-actions">
+      <button class="fbtn" type="button" :disabled="loading" @click="load">
+        {{ t('settings.items.kbRefresh') }}
+      </button>
+      <button
+        class="fbtn fbtn-primary"
+        type="button"
+        :disabled="reindexing || !status?.available"
+        @click="reindex"
+      >
+        {{ reindexing ? t('settings.items.kbReindexing') : t('settings.items.kbReindex') }}
+      </button>
+    </div>
+    <p class="kb-note">{{ t('settings.items.kbManageDesc') }}</p>
   </div>
 </template>
 
@@ -67,7 +65,6 @@ import { useI18n } from 'vue-i18n'
 import { apiGet, apiPost } from '@/utils/api'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
-import SettingsCard from './SettingsCard.vue'
 import '@/assets/modal-footer-btn.css'
 
 interface KbStats {
@@ -145,13 +142,9 @@ onMounted(load)
 
 <style scoped>
 .kb-setting {
-  padding: var(--space-4);
-  background: var(--bg-secondary);
-  min-height: 100%;
-}
-
-.kb-setting > :deep(.settings-card:last-child) {
-  margin-bottom: 0;
+  /* Card body: the surface and the title come from SettingsCard, so this only
+     lays out its own contents. */
+  background: transparent;
 }
 
 .kb-stats {

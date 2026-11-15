@@ -835,8 +835,17 @@ func TestLegacyProjectPathIndexes_AreAllRecreated(t *testing.T) {
 		// same source, so scanning it would make this test pass even after the
 		// index was renamed HERE — a false negative, not a stricter check.
 		// Matches the exclusion list in vitest.config.ts.
-		if strings.Contains(path, "/.worktrees/") || strings.Contains(path, "/.codebuddy/worktrees/") {
-			return nil
+		//
+		// The check is RELATIVE to the module root: this test itself may be
+		// running from a worktree that lives under .codebuddy/worktrees/, in
+		// which case every ABSOLUTE path carries the excluded substring and a
+		// naive Contains would skip the entire tree (the scan then finds zero
+		// indexes). What must be excluded is a nested sibling, not the root.
+		if rel, relErr := filepath.Rel(root, path); relErr == nil {
+			rel = "/" + filepath.ToSlash(rel) + "/"
+			if strings.Contains(rel, "/.worktrees/") || strings.Contains(rel, "/.codebuddy/worktrees/") {
+				return nil
+			}
 		}
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil

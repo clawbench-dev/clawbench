@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"clawbench/internal/model"
 )
 
 // unescapeGitPath decodes git's C-style octal escape sequences in quoted paths.
@@ -250,7 +252,14 @@ func resolveRefCommit(projectPath, ref string) (string, error) {
 // pointing at the same commit share one entry and a branch that moved misses
 // the cache automatically.
 func getProjectHistory(projectPath string, skip int, refSHA string) ([]commitInfo, bool) {
-	key := fmt.Sprintf("%s|%d|%s", projectPath, skip, refSHA)
+	// Read the configured page size at request time: it is a hot setting, and
+	// the value is part of the cache key so a change cannot serve a page of the
+	// old size for the next 30 seconds.
+	pageSize := model.ConfigInstance.GitHistory.PageSize
+	if pageSize <= 0 {
+		pageSize = 30
+	}
+	key := fmt.Sprintf("%s|%d|%s|%d", projectPath, skip, refSHA, pageSize)
 
 	projectHistoryCache.Lock()
 	if e, ok := projectHistoryCache.entries[key]; ok && time.Since(e.loadedAt) < projectHistoryCacheTTL {
@@ -263,7 +272,7 @@ func getProjectHistory(projectPath string, skip int, refSHA string) ([]commitInf
 	// Format: SHA|parents|subject|date|author+refs
 	// --topo-order ensures branches display contiguously
 	// --decorate-refs-exclude hides remote-tracking refs
-	logArgs := []string{"log", "--format=%H|%P|%s|%ad|%an%d", "--date=iso-strict", "--topo-order", "--decorate-refs-exclude=refs/remotes", "-30"}
+	logArgs := []string{"log", "--format=%H|%P|%s|%ad|%an%d", "--date=iso-strict", "--topo-order", "--decorate-refs-exclude=refs/remotes", fmt.Sprintf("-%d", pageSize)}
 	if skip > 0 {
 		logArgs = append(logArgs, "--skip", fmt.Sprintf("%d", skip))
 	}
@@ -279,7 +288,7 @@ func getProjectHistory(projectPath string, skip int, refSHA string) ([]commitInf
 	output, _ := cmd.CombinedOutput()
 
 	commits := parseGitLog(string(output))
-	hasMore := len(commits) == 30
+	hasMore := len(commits) == pageSize
 
 	projectHistoryCache.Lock()
 	if len(projectHistoryCache.entries) >= 100 {

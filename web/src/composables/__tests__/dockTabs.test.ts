@@ -1,94 +1,186 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DOCK_FEATURE_TABS,
   DOCK_TABS,
-  REORDERABLE_DOCK_TABS,
+  DOCK_TAB_BY_ID,
+  DOCK_TAB_IDS,
+  dockTabs,
+  isDockTabId,
   mergeDockOrder,
-  primaryDockTabs,
-  secondaryDockTabs,
   type DockTabId,
 } from '@/composables/dockTabs'
 
-const defaultSecondary = DOCK_TABS.filter((t) => !t.primary).map((t) => t.id)
+const PERMANENT = DOCK_TABS.filter((t) => !t.closable).map((t) => t.id)
+const OPTIONAL = DOCK_TABS.filter((t) => t.closable).map((t) => t.id)
 
-describe('secondaryDockTabs ordering and visibility', () => {
-  it('defaults to the registry order with settings last', () => {
-    expect(secondaryDockTabs()).toEqual(defaultSecondary)
-    expect(secondaryDockTabs().at(-1)).toBe('settings')
+describe('dockTabs default order', () => {
+  it('renders every left-column tab in registry order when nothing is hidden', () => {
+    expect(dockTabs()).toEqual(DOCK_TAB_IDS)
   })
 
-  it('applies the user order before the runtime gates', () => {
-    const order: DockTabId[] = ['mail', 'forge', 'tasks']
-    const result = secondaryDockTabs({ order })
-    expect(result.slice(0, 3)).toEqual(['mail', 'forge', 'tasks'])
-    expect(result.at(-1)).toBe('settings')
+  it('has exactly one permanent head: browse / view / notifications / settings', () => {
+    // The fixed head is gone, but these four still cannot be hidden. Asserting
+    // the set (not the order) keeps the test honest about what "permanent"
+    // means now: no position is pinned any more.
+    expect(new Set(PERMANENT)).toEqual(new Set(['browse', 'view', 'notifications', 'settings']))
   })
 
-  it('drops hidden tabs but keeps them out of the aggregate order', () => {
+  it('lets the sharing tab be hidden', () => {
+    expect(OPTIONAL).toContain('share')
+    expect(dockTabs({ hidden: new Set<DockTabId>(['share']) })).not.toContain('share')
+  })
+})
+
+describe('dockTabs ordering', () => {
+  it('follows a complete user order verbatim — settings included', () => {
+    const order = [...DOCK_TAB_IDS].reverse()
+    expect(dockTabs({ order })).toEqual(order)
+    // settings is no longer forced to the end: it is just another row.
+    expect(dockTabs({ order })[0]).toBe('settings')
+  })
+
+  it('keeps a tab that is not mentioned in its default slot', () => {
+    // A partial order must never drop a tab — it just leaves the rest alone.
+    const order: DockTabId[] = ['mail']
+    const result = dockTabs({ order })
+    expect(result).toHaveLength(DOCK_TAB_IDS.length)
+    expect(new Set(result)).toEqual(new Set(DOCK_TAB_IDS))
+  })
+
+  it('drops hidden tabs but keeps their slot for when they come back', () => {
     const hidden = new Set<DockTabId>(['mail', 'tasks'])
-    const result = secondaryDockTabs({ hidden })
+    const result = dockTabs({ hidden })
     expect(result).not.toContain('mail')
     expect(result).not.toContain('tasks')
     expect(result).toContain('kb')
   })
-
-  it('always keeps settings last even when it is reordered by a stale value', () => {
-    const order: DockTabId[] = ['settings', 'mail', 'tasks']
-    const result = secondaryDockTabs({ order })
-    expect(result.at(-1)).toBe('settings')
-    expect(result.slice(0, 2)).toEqual(['mail', 'tasks'])
-  })
-
-  it('still applies the capability and feature gates', () => {
-    expect(secondaryDockTabs({ terminalDisabled: true })).not.toContain('terminal')
-    expect(secondaryDockTabs({ portForwardUnavailable: true })).not.toContain('proxy')
-    expect(secondaryDockTabs({ forgeHidden: true })).not.toContain('forge')
-    expect(secondaryDockTabs({ mailHidden: true })).not.toContain('mail')
-    expect(secondaryDockTabs()).toContain('live')
-  })
-
-  it('keeps a hidden tab out even if it is also feature-disabled', () => {
-    const hidden = new Set<DockTabId>(['mail'])
-    expect(secondaryDockTabs({ hidden, mailHidden: true })).not.toContain('mail')
-  })
-})
-
-describe('primaryDockTabs', () => {
-  it('returns browse / view / history by default', () => {
-    expect(primaryDockTabs()).toEqual(['browse', 'view', 'history'])
-  })
-
-  it('filters history when the user hides it', () => {
-    expect(primaryDockTabs({ hidden: new Set<DockTabId>(['history']) })).toEqual([
-      'browse',
-      'view',
-    ])
-  })
-
-  it('never hides a core tab even if the stored set is corrupt', () => {
-    const hidden = new Set<DockTabId>(['browse', 'view', 'settings'])
-    expect(primaryDockTabs({ hidden })).toEqual(['browse', 'view', 'history'])
-    expect(secondaryDockTabs({ hidden })).toContain('settings')
-  })
 })
 
 describe('mergeDockOrder', () => {
-  it('drops unknown and duplicate ids and appends missing ones', () => {
+  it('reproduces a complete stored order', () => {
+    const stored: DockTabId[] = [
+      'settings', 'browse', 'view', 'history', 'forge', 'tasks', 'terminal',
+      'stats', 'mail', 'kb', 'live', 'share', 'proxy', 'notifications',
+    ]
+    expect(mergeDockOrder(stored)).toEqual(stored)
+  })
+
+  it('migrates the old movable-only order without moving the permanent tabs', () => {
+    // Pre-upgrade `dockOrder` only ever held the reorderable tail. Appending it
+    // (or starting the list from it) would push the file manager to the end;
+    // the stored sequence must only reorder the slots those ids occupy.
+    const legacy: DockTabId[] = [
+      'mail', 'forge', 'tasks', 'terminal', 'stats', 'kb', 'live', 'share', 'proxy',
+    ]
+    const merged = mergeDockOrder(legacy)
+    expect(merged.slice(0, 3)).toEqual(['browse', 'view', 'history'])
+    expect(merged.at(-2)).toBe('notifications')
+    expect(merged.at(-1)).toBe('settings')
+    // The nine movable ids keep their slots but take the stored sequence.
+    expect(merged.slice(3, 12)).toEqual(legacy)
+    expect(merged).toHaveLength(DOCK_TAB_IDS.length)
+  })
+
+  it('drops unknown and duplicate ids', () => {
     const merged = mergeDockOrder([
       'mail',
       'mail',
       'not-a-tab' as DockTabId,
       'forge',
     ])
-    expect(merged.slice(0, 2)).toEqual(['mail', 'forge'])
-    expect(merged).toHaveLength(REORDERABLE_DOCK_TABS.length)
+    expect(merged).toHaveLength(DOCK_TAB_IDS.length)
     expect(new Set(merged).size).toBe(merged.length)
-    for (const id of REORDERABLE_DOCK_TABS) expect(merged).toContain(id)
+    for (const id of DOCK_TAB_IDS) expect(merged).toContain(id)
   })
 
-  it('never includes primary tabs or settings', () => {
-    const merged = mergeDockOrder(['history', 'settings', 'browse'] as DockTabId[])
-    expect(merged).not.toContain('history')
-    expect(merged).not.toContain('settings')
-    expect(merged).not.toContain('browse')
+  it('falls back to the default order for an empty or absent value', () => {
+    expect(mergeDockOrder([])).toEqual(DOCK_TAB_IDS)
+    expect(mergeDockOrder()).toEqual(DOCK_TAB_IDS)
+  })
+
+  it('never drops a tab added after the order was saved', () => {
+    const saved: DockTabId[] = ['mail', 'tasks']
+    const merged = mergeDockOrder(saved)
+    for (const id of DOCK_TAB_IDS) expect(merged).toContain(id)
+  })
+})
+
+describe('dockTabs gates', () => {
+  it('hides tabs whose server feature is switched off', () => {
+    const featureDisabled = new Set<DockTabId>(['forge', 'share'])
+    const result = dockTabs({ featureDisabled })
+    expect(result).not.toContain('forge')
+    expect(result).not.toContain('share')
+    expect(result).toEqual(DOCK_TAB_IDS.filter((id) => id !== 'forge' && id !== 'share'))
+  })
+
+  it('declares the six server-switch tabs', () => {
+    expect(new Set(DOCK_FEATURE_TABS)).toEqual(
+      new Set(['forge', 'mail', 'terminal', 'kb', 'tasks', 'share']),
+    )
+  })
+
+  it('applies the capability gates through the one unavailable set', () => {
+    expect(dockTabs({ unavailable: new Set<DockTabId>(['terminal']) })).not.toContain('terminal')
+    expect(dockTabs({ unavailable: new Set<DockTabId>(['proxy']) })).not.toContain('proxy')
+  })
+
+  it('keeps 会议 on every host (records are readable without capture)', () => {
+    expect(dockTabs()).toContain('live')
+    expect(
+      dockTabs({ unavailable: new Set<DockTabId>(['terminal', 'proxy']) }),
+    ).toContain('live')
+  })
+
+  it('drops runtime-unavailable tabs', () => {
+    const unavailable = new Set<DockTabId>(['mail'])
+    expect(dockTabs({ unavailable })).not.toContain('mail')
+  })
+
+  it('applies gates to the user order, not the other way round', () => {
+    const order = [...DOCK_TAB_IDS].reverse()
+    const result = dockTabs({
+      order,
+      unavailable: new Set<DockTabId>(['terminal']),
+      hidden: new Set<DockTabId>(['share']),
+    })
+    expect(result).not.toContain('terminal')
+    expect(result).not.toContain('share')
+    expect(result[0]).toBe('settings')
+  })
+})
+
+describe('dockTabs hidden set safety', () => {
+  it('never hides a permanent tab even if the stored set is corrupt', () => {
+    const hidden = new Set<DockTabId>(['browse', 'view', 'settings', 'notifications'])
+    const result = dockTabs({ hidden })
+    for (const id of PERMANENT) expect(result).toContain(id)
+  })
+
+  it('ignores unknown ids in the stored order', () => {
+    expect(dockTabs({ order: ['nope' as DockTabId] })).toEqual(DOCK_TAB_IDS)
+  })
+})
+
+describe('registry integrity', () => {
+  it('has unique ids and every id is reachable by the type guard', () => {
+    expect(new Set(DOCK_TAB_IDS).size).toBe(DOCK_TAB_IDS.length)
+    for (const id of DOCK_TAB_IDS) expect(isDockTabId(id)).toBe(true)
+  })
+
+  it('has no chat entry — chat is the right-hand pane', () => {
+    expect(isDockTabId('chat')).toBe(false)
+  })
+
+  it('points the history tab at its own settings page', () => {
+    // The manager renders a gear for every tab that declares a category. A tab
+    // whose settings page exists but is not declared here is unreachable from
+    // the manager (the "双向可达" rule), which is how git history was missed.
+    expect(DOCK_TAB_BY_ID.get('history')?.settingsCategory).toBe('gitHistory')
+  })
+
+  it('only the settings tab itself has no settings page', () => {
+    const withoutPage = DOCK_TABS.filter((t) => !t.settingsCategory).map((t) => t.id)
+    expect(withoutPage).toEqual(['settings'])
   })
 })

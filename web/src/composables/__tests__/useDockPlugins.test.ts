@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   _resetDockPluginsForTest,
+  APPLICABLE_DOCK_PRESETS,
+  DOCK_PRESET_PLANS,
   applyDockPreset,
   isDockTabHidden,
+  markDockPresetCustom,
   resetDockPlugins,
   setDockTabOrder,
   setDockTabVisible,
@@ -10,9 +13,12 @@ import {
   useDockPlugins,
   usePluginProfile,
 } from '@/composables/useDockPlugins'
+import { DOCK_TAB_IDS } from '@/composables/dockTabs'
 import { readPanelState } from '@/utils/panelState'
 
-describe('useDockPlugins', () => {
+const PERMANENT = ['browse', 'view', 'notifications', 'settings']
+
+describe('useDockPlugins defaults', () => {
   beforeEach(() => {
     localStorage.clear()
     _resetDockPluginsForTest()
@@ -24,10 +30,39 @@ describe('useDockPlugins', () => {
     expect(state.hidden.value.size).toBe(0)
     expect(state.visibleIds.value).toContain('terminal')
     expect(state.visibleIds.value).toContain('forge')
+    expect(state.order.value).toEqual(DOCK_TAB_IDS)
   })
 
-  it('standard hides exactly the dev-related tabs', () => {
-    applyDockPreset('standard')
+  it('keeps the order list complete after a legacy partial order', () => {
+    localStorage.setItem('clawbench-panel.dockOrder', JSON.stringify(['mail', 'forge']))
+    _resetDockPluginsForTest()
+    const state = useDockPlugins()
+    expect(state.order.value).toHaveLength(DOCK_TAB_IDS.length)
+    expect(state.order.value.slice(0, 3)).toEqual(['browse', 'view', 'history'])
+  })
+})
+
+describe('presets', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    _resetDockPluginsForTest()
+  })
+
+  it('offers exactly the three applicable presets', () => {
+    expect(APPLICABLE_DOCK_PRESETS).toEqual(['developer', 'standard', 'minimal'])
+  })
+
+  it('developer shows everything and turns every server feature on', async () => {
+    await applyDockPreset('developer')
+    const state = useDockPlugins()
+    expect(state.preset.value).toBe('developer')
+    expect(state.hidden.value.size).toBe(0)
+    expect(state.order.value).toEqual(DOCK_TAB_IDS)
+    expect(DOCK_PRESET_PLANS.developer.features.every((f) => f.value)).toBe(true)
+  })
+
+  it('office hides and switches off forge + terminal, keeps the rest on', async () => {
+    await applyDockPreset('standard')
     const state = useDockPlugins()
     expect(state.preset.value).toBe('standard')
     expect(isDockTabHidden('forge')).toBe(true)
@@ -35,22 +70,85 @@ describe('useDockPlugins', () => {
     expect(isDockTabHidden('proxy')).toBe(true)
     expect(isDockTabHidden('mail')).toBe(false)
     expect(isDockTabHidden('tasks')).toBe(false)
+
+    const features = Object.fromEntries(
+      DOCK_PRESET_PLANS.standard.features.map((f) => [f.key, f.value]),
+    )
+    expect(features['forge.enabled']).toBe(false)
+    expect(features['terminal.enabled']).toBe(false)
+    expect(features['mail.enabled']).toBe(true)
+    expect(features['kb.enabled']).toBe(true)
+    expect(features['tasks.enabled']).toBe(true)
+    expect(features['share.enabled']).toBe(true)
   })
 
-  it('minimal keeps only the permanent tabs visible', () => {
-    applyDockPreset('minimal')
+  it('office order parks the hidden developer tabs before settings', async () => {
+    await applyDockPreset('standard')
+    expect(useDockPlugins().order.value).toEqual([
+      'browse', 'view', 'history', 'tasks', 'stats', 'mail', 'kb', 'live',
+      'share', 'notifications', 'forge', 'terminal', 'proxy', 'settings',
+    ])
+  })
+
+  it('minimal keeps only the permanent tabs and turns every feature off', async () => {
+    await applyDockPreset('minimal')
     const state = useDockPlugins()
     expect(state.preset.value).toBe('minimal')
-    // Left dock: browse / view / notifications / settings stay; every closable
-    // tab is hidden. Notifications is a permanent module now.
-    expect(state.visibleIds.value).toEqual(['browse', 'view', 'notifications', 'settings'])
-    expect(isDockTabHidden('history')).toBe(true)
-    expect(isDockTabHidden('notifications')).toBe(false)
+    expect(state.visibleIds.value).toEqual(PERMANENT)
+    for (const id of ['history', 'forge', 'tasks', 'terminal', 'stats', 'mail', 'kb', 'live', 'share', 'proxy']) {
+      expect(isDockTabHidden(id), `${id} should be hidden`).toBe(true)
+    }
+    expect(DOCK_PRESET_PLANS.minimal.features.every((f) => !f.value)).toBe(true)
   })
 
-  it('ignores stale hidden values for tabs that are now core', () => {
-    // Notifications used to be closable; a user who hid it then must not lose
-    // the tab (and with it every event log) after the upgrade.
+  it('minimal order starts with the permanent tabs and ends with settings', async () => {
+    await applyDockPreset('minimal')
+    const order = useDockPlugins().order.value
+    expect(order.slice(0, 3)).toEqual(['browse', 'view', 'notifications'])
+    expect(order.at(-1)).toBe('settings')
+  })
+
+  it('commits every server switch in ONE call', async () => {
+    const commit = vi.fn(async () => {})
+    await applyDockPreset('minimal', commit)
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(commit).toHaveBeenCalledWith(DOCK_PRESET_PLANS.minimal.features)
+  })
+
+  it('applies NOTHING when the commit fails', async () => {
+    const commit = vi.fn(async () => {
+      throw new Error('network down')
+    })
+    await expect(applyDockPreset('minimal', commit)).rejects.toThrow('network down')
+    const state = useDockPlugins()
+    // Nothing local moved: the preset, the hidden set and the order are exactly
+    // what they were before the failed attempt.
+    expect(state.preset.value).toBe('developer')
+    expect(state.hidden.value.size).toBe(0)
+    expect(state.order.value).toEqual(DOCK_TAB_IDS)
+  })
+
+  it('does not leave a half-applied preset behind when the second attempt fails', async () => {
+    await applyDockPreset('standard')
+    await expect(
+      applyDockPreset('minimal', async () => {
+        throw new Error('boom')
+      }),
+    ).rejects.toThrow('boom')
+    const state = useDockPlugins()
+    expect(state.preset.value).toBe('standard')
+    expect(isDockTabHidden('mail')).toBe(false)
+    expect(state.order.value).toEqual(DOCK_PRESET_PLANS.standard.order)
+  })
+})
+
+describe('manual changes', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    _resetDockPluginsForTest()
+  })
+
+  it('ignores stale hidden values for tabs that are now permanent', () => {
     localStorage.setItem(
       'clawbench-panel.dockHidden',
       JSON.stringify(['notifications', 'browse', 'settings']),
@@ -62,7 +160,7 @@ describe('useDockPlugins', () => {
     expect(useDockPlugins().visibleIds.value).toContain('notifications')
   })
 
-  it('manual visibility changes switch the profile to custom', () => {
+  it('switches the profile to custom on a manual visibility change', () => {
     setDockTabVisible('mail', false)
     expect(isDockTabHidden('mail')).toBe(true)
     expect(useDockPlugins().preset.value).toBe('custom')
@@ -71,10 +169,9 @@ describe('useDockPlugins', () => {
     expect(useDockPlugins().preset.value).toBe('custom')
   })
 
-  it('refuses to hide a core tab', () => {
+  it('refuses to hide a permanent tab', () => {
     setDockTabVisible('browse', false)
     expect(isDockTabHidden('browse')).toBe(false)
-    // Core changes are no-ops, so the preset is untouched too.
     expect(useDockPlugins().preset.value).toBe('developer')
   })
 
@@ -85,24 +182,41 @@ describe('useDockPlugins', () => {
     expect(isDockTabHidden('tasks')).toBe(false)
   })
 
-  it('replaces the order wholesale after a drag', () => {
+  it('replaces the order wholesale after a drag, settings included', () => {
     const state = useDockPlugins()
     const ids = [...state.order.value]
-    ids.splice(ids.indexOf('mail'), 1)
-    ids.push('mail')
+    ids.splice(ids.indexOf('settings'), 1)
+    ids.unshift('settings')
     setDockTabOrder(ids)
-    expect(state.order.value.at(-1)).toBe('mail')
+    expect(state.order.value[0]).toBe('settings')
     expect(state.preset.value).toBe('custom')
-
-    // A partial list (one tab) must not drop the others.
-    setDockTabOrder(['mail'])
-    expect(state.order.value[0]).toBe('mail')
-    expect(state.order.value).toHaveLength(state.reorderableIds.value.length)
   })
 
-  it('persists visibility, order and preset', () => {
-    applyDockPreset('standard')
+  it('keeps the other tabs when the dragged list is partial', () => {
     setDockTabOrder(['mail'])
+    const order = useDockPlugins().order.value
+    expect(order).toHaveLength(DOCK_TAB_IDS.length)
+    expect(order.slice(0, 3)).toEqual(['browse', 'view', 'history'])
+  })
+
+  it('marks the profile custom without touching visibility or order', () => {
+    markDockPresetCustom()
+    const state = useDockPlugins()
+    expect(state.preset.value).toBe('custom')
+    expect(state.hidden.value.size).toBe(0)
+    expect(state.order.value).toEqual(DOCK_TAB_IDS)
+  })
+})
+
+describe('persistence', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    _resetDockPluginsForTest()
+  })
+
+  it('persists visibility, order and preset', async () => {
+    await applyDockPreset('standard')
+    setDockTabOrder(['mail', ...DOCK_TAB_IDS.filter((id) => id !== 'mail')])
     setDockTabVisible('tasks', false)
 
     expect(readPanelState<string[]>('dockHidden')).toContain('tasks')
@@ -115,17 +229,26 @@ describe('useDockPlugins', () => {
     expect(useDockPlugins().preset.value).toBe('custom')
   })
 
-  it('reset restores the developer preset', () => {
-    applyDockPreset('minimal')
-    resetDockPlugins()
+  it('reset restores the developer preset through the same commit path', async () => {
+    const commit = vi.fn(async () => {})
+    await applyDockPreset('minimal')
+    await resetDockPlugins(commit)
     const state = useDockPlugins()
     expect(state.preset.value).toBe('developer')
     expect(state.hidden.value.size).toBe(0)
-    expect(state.order.value).toEqual(state.reorderableIds.value)
+    expect(state.order.value).toEqual(DOCK_TAB_IDS)
+    expect(commit).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('usePluginProfile', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    _resetDockPluginsForTest()
   })
 
-  it('exposes the preset to plugins through usePluginProfile', () => {
-    applyDockPreset('standard')
+  it('exposes the preset to plugins', async () => {
+    await applyDockPreset('standard')
     const profile = usePluginProfile()
     expect(profile.profile.value).toBe('standard')
     expect(profile.isStandard.value).toBe(true)

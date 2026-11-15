@@ -1,9 +1,17 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach, beforeAll } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { ref, reactive, nextTick } from 'vue'
-import SettingsCategory from '@/components/settings/SettingsCategory.vue'
+import { ref, reactive, nextTick, type Component } from 'vue'
 import PasswordChangeDialog from '@/components/settings/PasswordChangeDialog.vue'
+
+// Imported lazily (in beforeAll) rather than statically: the settings module
+// graph now reaches modules that call `useSettingsConfig()` at MODULE level
+// (the dock plugin runtime reads the feature switches that way). A static
+// import evaluates that graph before this file's `localConfig` / `serverConfig`
+// fixtures exist, and the vi.mock factory below then hits their TDZ. Importing
+// after the fixtures are initialised keeps the mock factory happy without
+// making the fixtures hoisted refs.
+let SettingsCategory: Component
 import { rememberProviderNames } from '@/utils/providerNames'
 
 // Mock composables
@@ -330,7 +338,8 @@ const i18n = createI18n({
           uploadMaxFiles: '上传文件上限',
           uploadMaxFilesDesc: '上传文件上限',
           ragChunkSize: '分块大小',
-          ragSearchLimit: '搜索限制',
+          ragSearchLimit: '搜索结果数',
+          ragBatchSize: '索引器批次大小',
           ragRetentionDays: '保留天数',
           aboutServerVersion: '服务器版本',
           aboutServerVersionDesc: '服务器版本',
@@ -349,6 +358,20 @@ const i18n = createI18n({
           forgeEnabledSection: '启用',
           forgeSection: '凭据',
           forgeEnabled: '启用 GitHub/GitLab 集成',
+          featureStatusSection: '功能状态',
+          featureStatusEnabled: '已启用',
+          featureStatusDisabled: '已停用',
+          featureStatusGoManage: '去功能编排',
+          featureStatusForge: 'GitHub/GitLab 集成',
+          featureStatusMail: '邮件功能',
+          featureStatusTerminal: '终端',
+          featureStatusTasks: '任务调度',
+          featureStatusShare: '分享中心',
+          forgeEnabledDesc: '关闭后会停止同步',
+          mailEnabledDesc: '关闭后不再后台收信',
+          terminalStatusDesc: '开关在「功能编排」里。',
+          tasksStatusDesc: '开关在「功能编排」里。',
+          shareStatusDesc: '开关在「功能编排」里。',
           forgeEnabledDesc: '关闭后会停止同步，并解除所有项目已关联的仓库。',
           forgeDisableConfirmTitle: '关闭 GitHub/GitLab 集成',
           forgeDisableConfirm: '关闭后将解除所有项目已关联的仓库。',
@@ -443,6 +466,14 @@ const i18n = createI18n({
   },
 })
 
+// The settings module graph is imported only once the fixtures above exist
+// (see the note at the import site). `mountCategory` runs inside cases, so a
+// file-level beforeAll is early enough for every one of them. The generous
+// timeout covers transforming that graph on a cold cache.
+beforeAll(async () => {
+  SettingsCategory = (await import('@/components/settings/SettingsCategory.vue')).default
+}, 120_000)
+
 function mountCategory(categoryId: string, { deep = false, attach = false }: { deep?: boolean; attach?: boolean } = {}) {
   return mount(SettingsCategory, {
     props: { categoryId },
@@ -520,26 +551,6 @@ describe('SettingsCategory', () => {
       expect(mockSetLocalConfig).toHaveBeenCalledWith('autoSpeech', true)
     })
 
-    it('renders swipeSession as switch item', () => {
-      const wrapper = mountCategory('chat')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const swipeSessionItem = allItems.find(i => i.props().label === '滑动切换会话')
-      expect(swipeSessionItem).toBeTruthy()
-      expect(swipeSessionItem!.props().type).toBe('switch')
-    })
-
-    it('saves swipeSession locally when toggled', async () => {
-      const wrapper = mountCategory('chat')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const swipeSessionItem = allItems.find(i => i.props().label === '滑动切换会话')
-      expect(swipeSessionItem).toBeTruthy()
-
-      await swipeSessionItem!.vm.$emit('update:modelValue', true)
-      await wrapper.vm.$nextTick()
-
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('swipeSession', true)
-    })
-
     it('PATCHes chat.initial_messages when number changed', async () => {
       const wrapper = mountCategory('chat')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
@@ -552,8 +563,41 @@ describe('SettingsCategory', () => {
       expect(mockSetServerValue).toHaveBeenCalledWith('chat.initial_messages', 30)
     })
 
-    it('PATCHes session.max_count when number changed', async () => {
+    // The session list and the session lifecycle moved to 会话管理. Keeping a
+    // copy here is what the split was meant to end, so pin the absence.
+    it('no longer owns the session-list rows', () => {
       const wrapper = mountCategory('chat')
+      const labels = wrapper.findAllComponents({ name: 'SettingsItem' }).map(i => i.props().label)
+      expect(labels).not.toContain('滑动切换会话')
+      expect(labels).not.toContain('最大会话数')
+      expect(labels).not.toContain('会话按最近活动排序')
+    })
+  })
+
+  // ─── Sessions category ──────────────────────────
+  describe('sessions category', () => {
+    it('renders swipeSession as switch item', () => {
+      const wrapper = mountCategory('sessions')
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const swipeSessionItem = allItems.find(i => i.props().label === '滑动切换会话')
+      expect(swipeSessionItem).toBeTruthy()
+      expect(swipeSessionItem!.props().type).toBe('switch')
+    })
+
+    it('saves swipeSession locally when toggled', async () => {
+      const wrapper = mountCategory('sessions')
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const swipeSessionItem = allItems.find(i => i.props().label === '滑动切换会话')
+      expect(swipeSessionItem).toBeTruthy()
+
+      await swipeSessionItem!.vm.$emit('update:modelValue', true)
+      await wrapper.vm.$nextTick()
+
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('swipeSession', true)
+    })
+
+    it('PATCHes session.max_count when number changed', async () => {
+      const wrapper = mountCategory('sessions')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '最大会话数')
       expect(item).toBeTruthy()
@@ -565,7 +609,7 @@ describe('SettingsCategory', () => {
     })
 
     it('session.max_count should NOT be marked as needsRestart (hot-reload field)', async () => {
-      const wrapper = mountCategory('chat')
+      const wrapper = mountCategory('sessions')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '最大会话数')
       expect(item).toBeTruthy()
@@ -576,7 +620,7 @@ describe('SettingsCategory', () => {
     it('PATCHes chat.session_sort_recent and bumps sessionListVersion', async () => {
       const { store } = await import('@/stores/app')
       const before = store.state.sessionListVersion
-      const wrapper = mountCategory('chat')
+      const wrapper = mountCategory('sessions')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '会话按最近活动排序')
       expect(item).toBeTruthy()
@@ -591,9 +635,17 @@ describe('SettingsCategory', () => {
       // event reloaded it.
       expect(store.state.sessionListVersion).toBe(before + 1)
     })
+
+    it('keeps the session-search knobs here, not on the RAG page', () => {
+      const wrapper = mountCategory('sessions')
+      const labels = wrapper.findAllComponents({ name: 'SettingsItem' }).map(i => i.props().label)
+      expect(labels).toContain('保留天数')
+      expect(labels).toContain('搜索结果数')
+      expect(labels).toContain('搜索池大小')
+      expect(labels).toContain('索引器批次大小')
+    })
   })
 
-  // ─── TTS category ──────────────────────────────
   describe('tts category', () => {
     // Cards are grouped by CONSECUTIVE sectionHeader, so a summary row without
     // one is flushed into the trailing "其他" card. That split the voice
@@ -682,7 +734,7 @@ describe('SettingsCategory', () => {
 
     it('leaves rows without the opt-in flag without a status', () => {
       ;(serverConfig.value as Record<string, unknown>).ai_summary = { provider_id: 7 }
-      const wrapper = mountCategory('chat')
+      const wrapper = mountCategory('sessions')
       const plain = wrapper
         .findAllComponents({ name: 'SettingsItem' })
         .find(i => i.props().label === '最大会话数')
@@ -1589,63 +1641,119 @@ describe('SettingsCategory', () => {
 })
 
 
-describe('forge master switch (issue #590)', () => {
-  // `vi.clearAllMocks()` in the outer beforeEach clears call history but NOT the
-  // `mockResolvedValueOnce` queue, so a queued answer from a previous case leaks
-  // into the next one and the assertion order becomes meaningless. Reset the
-  // dialog mock to a known state per case.
-  beforeEach(() => {
-    mockDialogConfirm.mockReset()
-    mockDialogConfirm.mockResolvedValue(false)
+  // ─── New configuration pages ───────────────────────────
+  // These four pages are data-driven (rows come from settingsFieldMap), so the
+  // render check is about the rows actually reaching the DOM under the right
+  // category id — the structure itself is pinned in settingsFieldMap.test.ts.
+  describe('new configuration pages', () => {
+    const hasKey = (category: string, key: string) =>
+      mountCategory(category).find(`[data-settings-key="${key}"]`).exists()
+
+    it('Git 历史 renders the list length and the display choices', () => {
+      expect(hasKey('gitHistory', 'git_history.page_size')).toBe(true)
+      expect(hasKey('gitHistory', 'gitHistoryHideMerges')).toBe(true)
+      expect(hasKey('gitHistory', 'gitHistoryShowGraph')).toBe(true)
+      expect(hasKey('gitHistory', 'gitHistoryTimeFormat')).toBe(true)
+    })
+
+    it('任务 renders the scheduler state row and its settings', () => {
+      const wrapper = mountCategory('tasks')
+      expect(wrapper.findComponent({ name: 'FeatureStatusRow' }).props().enableKey).toBe('tasks.enabled')
+      for (const key of ['tasks.retention_enabled', 'tasks.retention_days', 'tasks.notify_on_success', 'tasks.notify_on_failure', 'tasks.timezone', 'tasksDefaultFilter']) {
+        expect(wrapper.find(`[data-settings-key="${key}"]`).exists(), key).toBe(true)
+      }
+    })
+
+    it('统计 renders its three local defaults', () => {
+      expect(hasKey('stats', 'statsDefaultTab')).toBe(true)
+      expect(hasKey('stats', 'statsDefaultRange')).toBe(true)
+      expect(hasKey('stats', 'statsRememberLast')).toBe(true)
+    })
+
+    it('分享中心 renders the status row and the sharing rules', () => {
+      const wrapper = mountCategory('share')
+      expect(wrapper.findComponent({ name: 'FeatureStatusRow' }).props().enableKey).toBe('share.enabled')
+      for (const key of ['share.allow_files', 'share.allow_sessions', 'share.allow_meetings', 'share.allow_download', 'share.link_ttl_days', 'share.show_project_name']) {
+        expect(wrapper.find(`[data-settings-key="${key}"]`).exists(), key).toBe(true)
+      }
+    })
+
+    it('知识库 renders the status card plus the kb.* rows, and no master switch', async () => {
+      const wrapper = mountCategory('kb')
+      await flushPromises()
+      expect(wrapper.findComponent({ name: 'KbSetting' }).exists()).toBe(true)
+      for (const key of ['kb.auto_inject', 'kb.inject_top_n', 'kb.inject_max_chars', 'kb.inject_min_similarity', 'kb.max_file_mb', 'kb.max_text_mb', 'kb.poll_interval', 'kb.embed_batch_size']) {
+        expect(wrapper.find(`[data-settings-key="${key}"]`).exists(), key).toBe(true)
+      }
+      // The switch itself stays in the feature manager; this page only reports
+      // it, so there is no checkbox for kb.enabled.
+      const statusRow = wrapper.findComponent({ name: 'FeatureStatusRow' })
+      expect(statusRow.exists()).toBe(true)
+      expect(statusRow.props().enableKey).toBe('kb.enabled')
+      expect(statusRow.find('input[type="checkbox"]').exists()).toBe(false)
+    })
+
+    it('RAG 检索 renders one panel and nothing from 会话管理', () => {
+      // The RAG page is a single group panel; its fields are pinned in
+      // settingsFieldMap.test.ts (the panel renders its own row markup, which
+      // has no per-key hook). What matters here is that the page still routes
+      // to that panel and that no flat session row leaked onto it.
+      const wrapper = mountCategory('rag')
+      expect(wrapper.findComponent({ name: 'SettingsGroupPanel' }).exists()).toBe(true)
+      const labels = wrapper.findAllComponents({ name: 'SettingsItem' }).map(i => i.props().label)
+      expect(labels).not.toContain('搜索结果数')
+      expect(labels).not.toContain('索引器批次大小')
+    })
   })
 
-  // Disabling is destructive on the server: it clears every project's
-  // repository binding, and re-enabling does not restore them. A switch that
-  // silently deletes data on the way off must ask first, and a refused
-  // confirmation must not send the PATCH at all.
-  it('asks for confirmation before disabling and sends nothing when refused', async () => {
-    mockDialogConfirm.mockResolvedValueOnce(false)
+// The forge master switch moved to the Dock feature manager (功能编排): one
+// toggle there has to control BOTH the dock tab and the background feature, so
+// a second switch on this page would be a second source of truth. What remains
+// here is a read-only status row that links to the manager — including the
+// destructive-disable confirmation, which now lives where the switch is.
+describe('feature status rows', () => {
+  it('reports the forge integration as enabled and offers a link to the manager', async () => {
+    ;(serverConfig.value as Record<string, unknown>).forge = { enabled: true }
     const wrapper = mountCategory('forgeIntegration')
-    const item = wrapper
-      .findAllComponents({ name: 'SettingsItem' })
-      .find(i => i.props().label === '启用 GitHub/GitLab 集成')
-    expect(item, 'the master switch row must render').toBeTruthy()
 
-    await item!.vm.$emit('update:modelValue', false)
-    await flushPromises()
+    const row = wrapper.findComponent({ name: 'FeatureStatusRow' })
+    expect(row.exists()).toBe(true)
+    expect(row.props().enableKey).toBe('forge.enabled')
+    expect(row.text()).toContain('已启用')
+    expect(row.text()).toContain('去功能编排')
 
-    expect(mockDialogConfirm).toHaveBeenCalledTimes(1)
+    // The page no longer renders a switch for it — that is the whole point.
+    const labels = wrapper.findAllComponents({ name: 'SettingsItem' }).map(i => i.props().label)
+    expect(labels).not.toContain('启用 GitHub/GitLab 集成')
+  })
+
+  it('reports a disabled feature as 已停用', () => {
+    ;(serverConfig.value as Record<string, unknown>).forge = { enabled: false }
+    const wrapper = mountCategory('forgeIntegration')
+
+    const row = wrapper.findComponent({ name: 'FeatureStatusRow' })
+    expect(row.text()).toContain('已停用')
+  })
+
+  it('clicking 去功能编排 navigates to the feature manager', async () => {
+    ;(serverConfig.value as Record<string, unknown>).forge = { enabled: true }
+    const wrapper = mountCategory('forgeIntegration')
+
+    await wrapper.find('[data-action="feature-status-manage"]').trigger('click')
+    expect(wrapper.emitted('navigate')).toBeTruthy()
+    expect(wrapper.emitted('navigate')![0]).toEqual(['dockPlugins'])
+  })
+
+  it('never PATCHes the enable key from this page', async () => {
+    // Every module page that owns a master switch shows a status row instead:
+    // mail, forge, terminal, tasks and share.
+    for (const category of ['mail', 'forgeIntegration', 'terminal', 'tasks', 'share']) {
+      const wrapper = mountCategory(category)
+      const row = wrapper.findComponent({ name: 'FeatureStatusRow' })
+      expect(row.exists(), `${category} must show a status row`).toBe(true)
+      expect(row.find('input[type="checkbox"]').exists()).toBe(false)
+    }
     expect(mockSetServerValue).not.toHaveBeenCalled()
-  })
-
-  it('PATCHes forge.enabled when the confirmation is accepted', async () => {
-    mockDialogConfirm.mockResolvedValueOnce(true)
-    const wrapper = mountCategory('forgeIntegration')
-    const item = wrapper
-      .findAllComponents({ name: 'SettingsItem' })
-      .find(i => i.props().label === '启用 GitHub/GitLab 集成')
-
-    await item!.vm.$emit('update:modelValue', false)
-    await flushPromises()
-
-    expect(mockDialogConfirm).toHaveBeenCalledTimes(1)
-    expect(mockSetServerValue).toHaveBeenCalledWith('forge.enabled', false)
-  })
-
-  it('does NOT ask when enabling — only the destructive direction prompts', async () => {
-    // Prompting on the safe direction trains users to click through the dialog,
-    // which is exactly what makes the dangerous one useless.
-    mockDialogConfirm.mockClear()
-    const wrapper = mountCategory('forgeIntegration')
-    const item = wrapper
-      .findAllComponents({ name: 'SettingsItem' })
-      .find(i => i.props().label === '启用 GitHub/GitLab 集成')
-
-    await item!.vm.$emit('update:modelValue', true)
-    await flushPromises()
-
-    expect(mockDialogConfirm).not.toHaveBeenCalled()
-    expect(mockSetServerValue).toHaveBeenCalledWith('forge.enabled', true)
   })
 })
 

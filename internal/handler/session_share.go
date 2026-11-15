@@ -243,6 +243,13 @@ func serveSessionShareStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveSessionShareCreate(w http.ResponseWriter, r *http.Request) {
+	if rejectIfShareDisabled(w, r) {
+		return
+	}
+	if !model.FeaturePolicy.ShareAllowSessions {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ShareSessionsDisabled")
+		return
+	}
 	req, ok := decodeSessionShareRequest(w, r)
 	if !ok {
 		return
@@ -468,6 +475,12 @@ type shareMetaResponse struct {
 	// case): the record view shows when the meeting ran.
 	StartedAt int64 `json:"startedAt,omitempty"`
 	EndedAt   int64 `json:"endedAt,omitempty"`
+	// ProjectName is the source project's display name, present only when
+	// share.show_project_name is on. The SPA may render it as a source label.
+	ProjectName string `json:"projectName,omitempty"`
+	// DownloadAllowed tells the SPA whether to offer the download button for a
+	// file/folder share (share.allow_download). The server enforces it too.
+	DownloadAllowed bool `json:"allowDownload"`
 }
 
 // serveShareMeta reports whether a token is a file share or a session share.
@@ -489,7 +502,16 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 			Title:        room.Title(),
 			NotesEnabled: room.NotesEnabled(),
 			Video:        room.VideoEnabled(),
+			ProjectName:  shareProjectName(room.ProjectKey()),
 		})
+		return
+	}
+
+	// Sharing is off: every non-live token is dead. The running-room branch
+	// above is exempt because that link is how viewers join a meeting that is
+	// already under way — the switch is about published share links.
+	if !shareFeatureEnabled() {
+		http.NotFound(w, r)
 		return
 	}
 
@@ -504,11 +526,12 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 		return
 	} else if ok {
 		writeJSON(w, http.StatusOK, shareMetaResponse{
-			Kind:      shareKindLive,
-			Title:     note.Title,
-			Ended:     true,
-			StartedAt: note.StartedAt,
-			EndedAt:   note.EndedAt,
+			Kind:        shareKindLive,
+			Title:       note.Title,
+			Ended:       true,
+			StartedAt:   note.StartedAt,
+			EndedAt:     note.EndedAt,
+			ProjectName: shareProjectNameForMeeting(token),
 		})
 		return
 	}
@@ -520,10 +543,15 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 		return
 	}
 	if ok {
+		projectName := ""
+		if info := service.GetSessionFullInfo(share.SessionID); info != nil {
+			projectName = shareProjectName(info.ProjectPath)
+		}
 		writeJSON(w, http.StatusOK, shareMetaResponse{
 			Kind:         shareKindSession,
 			Title:        share.Title,
 			MessageCount: share.MessageCount,
+			ProjectName:  projectName,
 		})
 		return
 	}
@@ -544,7 +572,16 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 		if shareIsFolderShare(path, root) {
 			kind = shareKindDir
 		}
-		writeJSON(w, http.StatusOK, shareMetaResponse{Kind: kind, Title: name})
+		projectName := ""
+		if p, found, perr := service.GetFileShareProjectByToken(token); perr == nil && found {
+			projectName = shareProjectName(p)
+		}
+		writeJSON(w, http.StatusOK, shareMetaResponse{
+			Kind:            kind,
+			Title:           name,
+			ProjectName:     projectName,
+			DownloadAllowed: model.FeaturePolicy.ShareAllowDownload,
+		})
 		return
 	}
 	http.NotFound(w, r)

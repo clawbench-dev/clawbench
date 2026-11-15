@@ -953,6 +953,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			name TEXT NOT NULL,
 			root TEXT NOT NULL DEFAULT '',
 			project_id INTEGER NOT NULL DEFAULT 0,
+			expires_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_file_shares_path ON file_shares(path);
@@ -971,6 +972,23 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// session_shares.go as a constant so tests share one source of truth.
 	if _, err := store.WriteExec(SessionSharesDDL); err != nil {
 		return fmt.Errorf("failed to create session_shares table: %w", err)
+	}
+	// Link expiry (share.link_ttl_days). NULL means "never expires", which is
+	// the right value for every row created before the setting existed.
+	for _, m := range []struct{ table, col, stmt string }{
+		{"file_shares", "expires_at", "ALTER TABLE file_shares ADD COLUMN expires_at DATETIME"},
+		{"session_shares", "expires_at", "ALTER TABLE session_shares ADD COLUMN expires_at DATETIME"},
+	} {
+		var present int
+		_ = store.ReadDB().QueryRow(
+			fmt.Sprintf("SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?", m.table), m.col,
+		).Scan(&present)
+		if present > 0 {
+			continue
+		}
+		if _, err := store.WriteExec(m.stmt); err != nil {
+			return fmt.Errorf("failed to add %s.%s column: %w", m.table, m.col, err)
+		}
 	}
 	// AI 听记 transcripts and generated minutes for live shares. Defined in
 	// live_notes.go so the handler tests can create the same schema.
@@ -1021,6 +1039,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		// reading: those meetings were never explicitly shared by their owner,
 		// and their links only worked because nothing checked.
 		"share_enabled": "ALTER TABLE live_notes ADD COLUMN share_enabled INTEGER NOT NULL DEFAULT 0",
+		// Bounds the publication when share.link_ttl_days is set. NULL on every
+		// existing row: those links were created under "never expire" and must
+		// not be retroactively killed.
+		"share_expires_at": "ALTER TABLE live_notes ADD COLUMN share_expires_at DATETIME",
 	} {
 		var present int
 		_ = store.ReadDB().QueryRow(

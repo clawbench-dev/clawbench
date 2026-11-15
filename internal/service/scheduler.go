@@ -5,12 +5,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"clawbench/internal/store"
@@ -49,6 +51,11 @@ type RunningExecution struct {
 	Phase string
 }
 
+// ErrTasksDisabled is returned by manual triggers while the tasks master switch
+// is off. Handlers map it to a 409 so the client can show "feature disabled"
+// instead of a generic internal error.
+var ErrTasksDisabled = errors.New("scheduled tasks are disabled")
+
 // Scheduler manages cron-scheduled AI tasks.
 type Scheduler struct {
 	cron              *cron.Cron
@@ -56,6 +63,137 @@ type Scheduler struct {
 	mu                sync.Mutex
 	runningExecutions sync.Map // key: executionID, value: *RunningExecution
 	taskRunning       sync.Map // key: taskID (int64), value: struct{}{} — atomic check-and-set to prevent duplicate executions (ISS-187)
+	// disabled is the tasks master switch. Read on every trigger (cron, event,
+	// mail, manual) and at the top of executeTask, so a run that was already
+	// queued when the switch went off still refuses to start.
+	//
+	// Default false, NOT derived from config, because tests build a Scheduler
+	// directly and expect triggers to work without starting it.
+	disabled atomic.Bool
+	// timezone is the IANA zone cron expressions are interpreted in ("" = the
+	// server's local zone). Guarded by mu. It is applied by prefixing each
+	// expression with CRON_TZ= at registration, so changing it re-registers the
+	// entries instead of recreating the cron instance.
+	timezone string
+}
+
+// SetEnabled starts or stops task execution according to the master switch.
+//
+// Turning it OFF stops the cron scheduler, cancels every running execution and
+// discards queued forge events. Turning it back ON restarts cron, which
+// recomputes every entry's next activation from "now" — robfig/cron does that
+// on Start — so runs missed while the switch was off are NOT replayed.
+//
+// Idempotent: a repeated call with the same value does nothing, so the PATCH
+// path and any other caller can both apply the config without fighting.
+func (s *Scheduler) SetEnabled(enabled bool) {
+	if s == nil {
+		return
+	}
+	if enabled {
+		if !s.disabled.Swap(false) {
+			return
+		}
+		s.cron.Start()
+		slog.Info("scheduler enabled")
+		return
+	}
+	if s.disabled.Swap(true) {
+		return
+	}
+	s.cron.Stop()
+	// Deliberately NOT CancelAllRunning: that marks executions
+	// restart_interrupted so the NEXT process resumes them. A run cancelled by
+	// the switch must not come back after a restart ("恢复后不补跑").
+	s.cancelAllRunning(false)
+	DiscardQueuedForgeEvents()
+	slog.Info("scheduler disabled: running executions cancelled, queued events discarded")
+}
+
+// TasksDisabled reports whether task execution is currently switched off.
+func (s *Scheduler) TasksDisabled() bool {
+	return s == nil || s.disabled.Load()
+}
+
+// SetTimezone changes the zone cron expressions are interpreted in and
+// re-registers every cron task under it. An empty zone means the server's local
+// zone. An unknown zone is rejected and leaves the current zone untouched.
+//
+// The zone is applied by prefixing each expression with `CRON_TZ=`, which the
+// standard parser understands; that keeps the change to "remove + add entries"
+// instead of rebuilding the cron instance (and its ID bookkeeping).
+func (s *Scheduler) SetTimezone(zone string) error {
+	if s == nil {
+		return nil
+	}
+	zone = strings.TrimSpace(zone)
+	if zone != "" {
+		if _, err := time.LoadLocation(zone); err != nil {
+			return fmt.Errorf("unknown timezone %q: %w", zone, err)
+		}
+	}
+
+	// Load before taking the lock: GetTasks does database IO and holding mu
+	// across it would block every trigger.
+	tasks, err := GetTasks("")
+	if err != nil {
+		return fmt.Errorf("load tasks for timezone change: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.timezone == zone {
+		return nil
+	}
+	s.timezone = zone
+	// Startup calls this BEFORE LoadTasksFromDB, when nothing is registered
+	// yet. Re-registering here would make the loader add every task a second
+	// time, so an empty scheduler only records the zone; new registrations pick
+	// it up through cronSpec.
+	if len(s.entries) == 0 {
+		return nil
+	}
+	for id, entryID := range s.entries {
+		s.cron.Remove(entryID)
+		delete(s.entries, id)
+	}
+	s.timezone = zone
+	for i := range tasks {
+		task := &tasks[i]
+		if task.Status != "active" || task.HasEventSource() {
+			continue
+		}
+		if err := s.registerTaskLocked(task); err != nil {
+			slog.Warn("failed to re-register task after timezone change",
+				slog.Int64("task_id", task.ID), slog.String("err", err.Error()))
+			continue
+		}
+		// Keep the stored next_run_at in step with the new zone: the history
+		// list shows it directly, and a stale value would look like the change
+		// did nothing until the next tick.
+		if sch, perr := cron.ParseStandard(s.cronSpec(task.CronExpr)); perr == nil {
+			if next := sch.Next(time.Now()); !next.IsZero() {
+				_, _ = store.WriteExec(
+					"UPDATE scheduled_tasks SET next_run_at = ? WHERE id = ?", next, task.ID)
+			}
+		}
+	}
+	slog.Info("scheduler timezone updated", slog.String("timezone", zone))
+	return nil
+}
+
+// cronSpec applies the scheduler's zone to a cron expression. A task that
+// already carries its own TZ=/CRON_TZ= prefix keeps it (the task's explicit
+// choice wins over the global setting).
+func (s *Scheduler) cronSpec(expr string) string {
+	if s.timezone == "" {
+		return expr
+	}
+	trimmed := strings.TrimSpace(expr)
+	if strings.HasPrefix(trimmed, "TZ=") || strings.HasPrefix(trimmed, "CRON_TZ=") {
+		return expr
+	}
+	return "CRON_TZ=" + s.timezone + " " + expr
 }
 
 // NewScheduler creates a new Scheduler instance.
@@ -228,6 +366,14 @@ func (s *Scheduler) CancelAllExecutions(taskID int64) {
 // (streaming=0 + final content) before the DB closes — without it, a long-
 // running CLI task would keep streaming into a DB that is about to close.
 func (s *Scheduler) CancelAllRunning() {
+	s.cancelAllRunning(true)
+}
+
+// cancelAllRunning is the shared implementation. markRestartInterrupted is true
+// only for the graceful-shutdown path: those runs SHOULD be picked up by the
+// next process, while a run cancelled by turning the tasks switch off must not
+// be replayed.
+func (s *Scheduler) cancelAllRunning(markRestartInterrupted bool) {
 	if s == nil {
 		return
 	}
@@ -242,13 +388,14 @@ func (s *Scheduler) CancelAllRunning() {
 		// Only the AI phase owns a resumable execution row. A script-phase entry
 		// is keyed "script-<id>" and has not written a row yet, so marking it
 		// would update nothing; its run is re-evaluated on the next tick anyway.
-		if exec.Phase == RunningPhaseAI {
+		if markRestartInterrupted && exec.Phase == RunningPhaseAI {
 			markExecutionRestartInterrupted(exec.ID)
 		}
 		slog.Info(
-			"shutdown: cancelled running execution",
+			"cancelled running execution",
 			slog.String("exec_id", exec.ID),
 			slog.Int64("task_id", exec.TaskID),
+			slog.Bool("restart_resume", markRestartInterrupted),
 		)
 		return true
 	})
@@ -372,7 +519,7 @@ func (s *Scheduler) AddTask(task *model.ScheduledTask) error {
 	}
 
 	// Calculate next run time
-	schedule, err := cron.ParseStandard(task.CronExpr)
+	schedule, err := cron.ParseStandard(s.cronSpec(task.CronExpr))
 	if err != nil {
 		return fmt.Errorf("invalid cron expression: %w", err)
 	}
@@ -491,6 +638,9 @@ func (s *Scheduler) ResumeTask(id int64) error {
 
 // TriggerTask runs a task immediately in a background goroutine, regardless of its status.
 func (s *Scheduler) TriggerTask(id int64) error {
+	if s.TasksDisabled() {
+		return ErrTasksDisabled
+	}
 	task, err := GetTaskByID(id)
 	if err != nil {
 		return fmt.Errorf("task not found: %w", err)
@@ -512,6 +662,13 @@ func (s *Scheduler) TriggerTask(id int64) error {
 // requeue the event in that case — dropping it would lose the event, which is
 // the bug this whole queue exists to avoid.
 func (s *Scheduler) triggerTaskWithContext(id int64, triggerType string, ec EventContext) bool {
+	// Switched off: consume the event instead of retrying it. Returning false
+	// would make the forge queue hold it and retry for minutes, and replaying
+	// it after the switch comes back would be exactly the "补跑" we must not do.
+	if s.TasksDisabled() {
+		slog.Debug("event task suppressed: tasks are disabled", slog.Int64("task_id", id))
+		return true
+	}
 	task, err := GetTaskByID(id)
 	if err != nil {
 		slog.Warn("event task not found", slog.Int64("task_id", id), slog.String("err", err.Error()))
@@ -532,6 +689,12 @@ func (s *Scheduler) triggerTaskWithContext(id int64, triggerType string, ec Even
 // stall the next folder. It returns false when the task is already running so
 // the caller can release its dedupe claim and retry on the next sync.
 func (s *Scheduler) TriggerTaskWithMailContext(id int64, mc MailEventContext) bool {
+	// Same reasoning as triggerTaskWithContext: consume, never retry, never
+	// replay after the switch comes back.
+	if s.TasksDisabled() {
+		slog.Debug("mail task suppressed: tasks are disabled", slog.Int64("task_id", id))
+		return true
+	}
 	task, err := GetTaskByID(id)
 	if err != nil {
 		slog.Warn("mail task not found", slog.Int64("task_id", id), slog.String("err", err.Error()))
@@ -833,12 +996,21 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	// identity pending_events uses).
 	eventID := ws.GenerateEventID()
 
+	// The success/failure toggles decide whether this run produces a
+	// NOTIFICATION (center row + push + IM). The WS broadcast below still
+	// happens: the task list and dock badge are driven by it, and muting
+	// notifications must not freeze the UI. "running" and "cancelled" are not
+	// success or failure and are never muted here.
+	notify := taskNotificationsAllowed(status)
+
 	// Notification-center log. Deliberately BEFORE the mgr == nil guard: the log
 	// records what happened, which does not depend on a WS manager existing.
 	// Independent of the push_mode gate below too: that decides whether to
 	// PUSH, this decides whether to RECORD. A user with push disabled still
 	// wants the task history.
-	RecordTaskNotification(eventID, taskID, status, executionID, sessionID, projectPath, taskName, data)
+	if notify {
+		RecordTaskNotification(eventID, taskID, status, executionID, sessionID, projectPath, taskName, data)
+	}
 
 	mgr := ws.GetManager()
 	if mgr == nil {
@@ -852,12 +1024,28 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	}
 	// Write-ahead: persist before broadcast so event log has no gaps
 	// Skip when push_mode is "disabled" — no notifications desired
-	if model.ConfigInstance.PushMode != model.PushModeDisabled {
+	if notify && model.ConfigInstance.PushMode != model.PushModeDisabled {
 		StoreNotifiableEvent(msg)
 	}
 	mgr.BroadcastEvent(msg)
 
-	pushTaskEventToIM(msg.ID, taskID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath)
+	if notify {
+		pushTaskEventToIM(msg.ID, taskID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath)
+	}
+}
+
+// taskNotificationsAllowed reports whether this task status may produce a
+// notification. Only success and failure are configurable; every other status
+// (running, cancelled) keeps its existing behavior.
+func taskNotificationsAllowed(status string) bool {
+	switch status {
+	case statusCompleted:
+		return model.FeaturePolicy.TasksNotifyOnSuccess
+	case statusFailed:
+		return model.FeaturePolicy.TasksNotifyOnFailure
+	default:
+		return true
+	}
 }
 
 // pushTaskEventToIM forwards a task event to whichever IM backend is running.
@@ -920,6 +1108,14 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// paths (agent not found, session creation failure, backend creation failure).
 	// Without this, the task is permanently stuck — no future execution possible (ISS-303).
 	defer s.taskRunning.Delete(task.ID)
+
+	// A run that was already queued (manual goroutine, event drain) when the
+	// switch went off must not start. The deferred delete above releases the
+	// per-task flag so the task is usable again once the switch comes back.
+	if s.TasksDisabled() {
+		slog.Info("task run skipped: tasks are disabled", slog.Int64("task_id", task.ID))
+		return
+	}
 
 	// The context is hoisted to the top because the optional pre-AI script and
 	// the AI turn share it: cancelling the run (CancelExecution /

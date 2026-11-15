@@ -107,8 +107,14 @@ import AgentIcon from '@/components/common/AgentIcon.vue'
 import { humanizeCron, repeatLabel, formatRelativeTime, stripMarkdownPreview } from '@/utils/format'
 import { statusClass, statusLabel } from '@/utils/contentBlocks.ts'
 import { eventChips, eventKindLabel } from '@/utils/forgeEventLabels'
+import { useFeatureFlag, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 
 const { t } = useI18n()
+
+// 任务 master switch (功能编排). The card keeps rendering its history — a past
+// run is a fact — but the jump to the task page is refused while the feature is
+// off, because that page is gone.
+const tasksEnabled = useFeatureFlag('tasks.enabled')
 
 const props = defineProps<{
   /** Task record from /api/tasks (or the shared block store). */
@@ -180,7 +186,9 @@ const quoteSourceLabel = computed(() => {
 })
 
 function handleClick() {
-  if (actionable.value) emit('select')
+  if (!actionable.value) return
+  if (!tasksEnabled.value) { notifyFeatureDisabled(); return }
+  emit('select')
 }
 
 // The status helpers take `t` explicitly (they are shared with non-component

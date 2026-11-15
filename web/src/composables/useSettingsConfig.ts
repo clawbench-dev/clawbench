@@ -12,6 +12,7 @@ import { setLayoutScopeMode } from '@/utils/panelState'
 import { setDefaultBlockWrap } from '@/utils/blockWrapPref'
 import { applyServerLimits } from '@/stores/app.ts'
 import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
 
 const LOCAL_PREFIX = SETTINGS_KEY_PREFIX
 
@@ -571,6 +572,20 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   liveCameraFps: '24',
   liveCameraBitrate: '2.5',
   liveAutoDowngrade: true,
+  // ── Git history (设置 → Git 历史) ──
+  // The list used to start with merges shown, absolute dates and the graph on
+  // every time, because nothing persisted the three toggles. Defaults keep that
+  // behaviour for anyone who never opens the page.
+  gitHistoryHideMerges: false,
+  gitHistoryShowGraph: true,
+  gitHistoryTimeFormat: 'relative',
+  // ── Statistics (设置 → 统计) ──
+  // 'usage' / '24h' are what the panel opened on before it had settings.
+  statsDefaultTab: 'usage',
+  statsDefaultRange: '24h',
+  statsRememberLast: false,
+  // ── Tasks (设置 → 任务) ──
+  tasksDefaultFilter: 'all',
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -641,6 +656,42 @@ const serverDefaults: Record<string, unknown> = {
   // Mail master switch defaults ON, mirroring ApplyDefaults so the dock does not
   // flash the tab away before /api/config arrives.
   'mail.enabled': true,
+  // Task scheduler / share-center master switches (功能编排). Same reasoning:
+  // ON by default so nothing flickers off before the config lands, and so a
+  // config written before these keys existed keeps the feature enabled.
+  'tasks.enabled': true,
+  'share.enabled': true,
+  'kb.enabled': true,
+  // Knowledge-base index tuning. Mirrors model.ApplyDefaults — the rows used to
+  // have no UI at all, so these are the first values anyone sees.
+  'kb.auto_inject': true,
+  'kb.inject_top_n': 4,
+  'kb.inject_max_chars': 2000,
+  'kb.inject_min_similarity': 0.35,
+  'kb.max_file_mb': 50,
+  'kb.max_text_mb': 20,
+  'kb.poll_interval': '2s',
+  'kb.embed_batch_size': 16,
+  // Task scheduler rules (设置 → 任务). Retention is opt-in, like the upload and
+  // archive retention rows; both notifications default ON so a failure is not
+  // silent.
+  'tasks.retention_enabled': false,
+  'tasks.retention_days': 30,
+  'tasks.notify_on_success': true,
+  'tasks.notify_on_failure': true,
+  'tasks.timezone': '',
+  // Share-center rules (设置 → 分享中心). All three content types are shareable
+  // by default (that is what the feature has always done), downloads allowed,
+  // links never expire until the user sets a lifetime.
+  'share.allow_files': true,
+  'share.allow_sessions': true,
+  'share.allow_meetings': true,
+  'share.allow_download': true,
+  'share.link_ttl_days': 0,
+  'share.show_project_name': true,
+  // Git history page size — the `git log -N` argument, hardcoded to 30 before
+  // this page existed.
+  'git_history.page_size': 30,
   // Sync tuning, same reason as above: without these the rows render 0 until
   // the config lands — and for body_prefetch 0 means "do not prefetch", so the
   // panel would briefly show a value the server is not using.
@@ -1041,6 +1092,10 @@ export function useSettingsConfig() {
     try {
       const data = await apiGet<Record<string, unknown>>('/api/config')
       serverConfig.value = data
+      // Feed the 功能编排 switches to their single reader. This is the one place
+      // the config lands, so it is also the one place they are refreshed — see
+      // useFeatureFlags for why that module does not read serverConfig itself.
+      syncFeatureConfig(data)
       // Mirror hot-reloadable limits into the global store so client-side
       // pre-checks (session-limit guard, upload size/count) and the session
       // header reflect a settings change immediately instead of only after a

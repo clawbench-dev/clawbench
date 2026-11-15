@@ -198,40 +198,57 @@ var hotReloadFields = map[string]bool{
 	"rag.search_pool_size": true,
 	"rag.retention_days":   true,
 	// Knowledge base — its own indexer, sharing the RAG embedder settings
-	"kb.enabled":                true,
-	"kb.auto_inject":            true,
-	"kb.inject_top_n":           true,
-	"kb.inject_max_chars":       true,
-	"kb.inject_min_similarity":  true,
-	"kb.max_file_mb":            true,
-	"kb.max_text_mb":            true,
-	"kb.poll_interval":          true,
-	"kb.embed_batch_size":       true,
-	"dingtalk.enabled":          true,
-	"dingtalk.app_key":          true,
-	"dingtalk.app_secret":       true,
-	"dingtalk.agent_id":         true,
-	"dingtalk.users":            true,
-	"feishu.enabled":            true,
-	"feishu.app_id":             true,
-	"feishu.app_secret":         true,
-	"feishu.users":              true,
-	"push_mode":                 true,
-	"forge.enabled":             true,
-	"forge.insecure_tls":        true,
-	"forge.notify.opened":       true,
-	"forge.notify.closed":       true,
-	"forge.notify.merged":       true,
-	"forge.notify.reopened":     true,
-	"forge.notify.commented":    true,
-	"forge.notify.pipeline":     true,
-	"forge.pause_event_tasks":   true,
+	"kb.enabled":               true,
+	"kb.auto_inject":           true,
+	"kb.inject_top_n":          true,
+	"kb.inject_max_chars":      true,
+	"kb.inject_min_similarity": true,
+	"kb.max_file_mb":           true,
+	"kb.max_text_mb":           true,
+	"kb.poll_interval":         true,
+	"kb.embed_batch_size":      true,
+	"dingtalk.enabled":         true,
+	"dingtalk.app_key":         true,
+	"dingtalk.app_secret":      true,
+	"dingtalk.agent_id":        true,
+	"dingtalk.users":           true,
+	"feishu.enabled":           true,
+	"feishu.app_id":            true,
+	"feishu.app_secret":        true,
+	"feishu.users":             true,
+	"push_mode":                true,
+	"forge.enabled":            true,
+	"forge.insecure_tls":       true,
+	"forge.notify.opened":      true,
+	"forge.notify.closed":      true,
+	"forge.notify.merged":      true,
+	"forge.notify.reopened":    true,
+	"forge.notify.commented":   true,
+	"forge.notify.pipeline":    true,
+	"forge.pause_event_tasks":  true,
 	// Mail — the worker re-reads these on every poll/pass, so a change
 	// applies without a restart.
 	"mail.enabled":               true,
 	"mail.sync_interval_minutes": true,
 	"mail.sync_window":           true,
 	"mail.body_prefetch":         true,
+	// Tasks / Share — the PATCH path stops or restarts the scheduler and
+	// revokes links immediately, so neither needs a restart. The sub-switches
+	// are read at use time (worker tick, request, cron registration).
+	"tasks.enabled":             true,
+	"tasks.retention_enabled":   true,
+	"tasks.retention_days":      true,
+	"tasks.notify_on_success":   true,
+	"tasks.notify_on_failure":   true,
+	"tasks.timezone":            true,
+	"share.enabled":             true,
+	"share.allow_files":         true,
+	"share.allow_sessions":      true,
+	"share.allow_meetings":      true,
+	"share.allow_download":      true,
+	"share.link_ttl_days":       true,
+	"share.show_project_name":   true,
+	"git_history.page_size":     true,
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
@@ -377,6 +394,10 @@ type configResponse struct {
 	Appearance     configAppearance     `json:"appearance"`
 	Forge          configForge          `json:"forge"`
 	Mail           configMail           `json:"mail"`
+	Tasks          configTasks          `json:"tasks"`
+	Share          configShare          `json:"share"`
+	KB             configKB             `json:"kb"`
+	GitHistory     configGitHistory     `json:"git_history"`
 	UsageMeter     configUsageMeter     `json:"usage_meter"`
 	MCP            configMCP            `json:"mcp"`
 	ShellEnv       configShellEnv       `json:"shell_env"`
@@ -764,6 +785,48 @@ type configMail struct {
 	SyncIntervalMinutes int  `json:"sync_interval_minutes"`
 	SyncWindow          int  `json:"sync_window"`
 	BodyPrefetch        int  `json:"body_prefetch"`
+}
+
+// configTasks exposes the scheduled-task settings. The tasks themselves live in
+// the database and are served by /api/tasks.
+type configTasks struct {
+	Enabled          bool   `json:"enabled"`
+	RetentionEnabled bool   `json:"retention_enabled"`
+	RetentionDays    int    `json:"retention_days"`
+	NotifyOnSuccess  bool   `json:"notify_on_success"`
+	NotifyOnFailure  bool   `json:"notify_on_failure"`
+	Timezone         string `json:"timezone"`
+}
+
+// configShare exposes the share-link settings. Existing links are not listed
+// here — they belong to the share center endpoints.
+type configShare struct {
+	Enabled         bool `json:"enabled"`
+	AllowFiles      bool `json:"allow_files"`
+	AllowSessions   bool `json:"allow_sessions"`
+	AllowMeetings   bool `json:"allow_meetings"`
+	AllowDownload   bool `json:"allow_download"`
+	LinkTTLDays     int  `json:"link_ttl_days"`
+	ShowProjectName bool `json:"show_project_name"`
+}
+
+// configKB exposes the knowledge-base tuning that the settings page edits.
+// Runtime status (indexing progress, counts) lives on /api/kb/*, not here.
+type configKB struct {
+	Enabled             bool    `json:"enabled"`
+	AutoInject          bool    `json:"auto_inject"`
+	InjectTopN          int     `json:"inject_top_n"`
+	InjectMaxChars      int     `json:"inject_max_chars"`
+	InjectMinSimilarity float64 `json:"inject_min_similarity"`
+	MaxFileMB           int     `json:"max_file_mb"`
+	MaxTextMB           int     `json:"max_text_mb"`
+	PollInterval        string  `json:"poll_interval"`
+	EmbedBatchSize      int     `json:"embed_batch_size"`
+}
+
+// configGitHistory exposes the Git history page tuning.
+type configGitHistory struct {
+	PageSize int `json:"page_size"`
 }
 
 type configFileSearch struct {
@@ -1174,13 +1237,30 @@ var PatchableConfigPaths = map[string]bool{
 	"mail.sync_interval_minutes":             true,
 	"mail.sync_window":                       true,
 	"mail.body_prefetch":                     true,
-	"file_search.display_limit":              true,
-	"tls.cert_dir":                           true,
-	"fonts.dir":                              true,
-	"skills.enabled":                         true,
-	"skills.dirs":                            true,
-	"skills.refresh_hours":                   true,
-	"skills.repos":                           true,
+	// Master switches for scheduled tasks and public share links. Both are
+	// destructive when set to false (cancel runs / revoke links) — see the
+	// PATCH description in the OpenAPI spec.
+	"tasks.enabled":             true,
+	"tasks.retention_enabled":   true,
+	"tasks.retention_days":      true,
+	"tasks.notify_on_success":   true,
+	"tasks.notify_on_failure":   true,
+	"tasks.timezone":            true,
+	"share.enabled":             true,
+	"share.allow_files":         true,
+	"share.allow_sessions":      true,
+	"share.allow_meetings":      true,
+	"share.allow_download":      true,
+	"share.link_ttl_days":       true,
+	"share.show_project_name":   true,
+	"git_history.page_size":     true,
+	"file_search.display_limit": true,
+	"tls.cert_dir":              true,
+	"fonts.dir":                 true,
+	"skills.enabled":            true,
+	"skills.dirs":               true,
+	"skills.refresh_hours":      true,
+	"skills.repos":              true,
 	// MCP server list — hot: connections compare a policy hash each turn, so a
 	// change takes effect on the next turn without a restart.
 	"mcp.servers": true,
@@ -1485,6 +1565,35 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			SyncWindow:          cfg.Mail.SyncWindow,
 			BodyPrefetch:        cfg.Mail.BodyPrefetch,
 		},
+		Tasks: configTasks{
+			Enabled:          cfg.Tasks.Enabled,
+			RetentionEnabled: cfg.Tasks.RetentionEnabled,
+			RetentionDays:    cfg.Tasks.RetentionDays,
+			NotifyOnSuccess:  cfg.Tasks.NotifyOnSuccess,
+			NotifyOnFailure:  cfg.Tasks.NotifyOnFailure,
+			Timezone:         cfg.Tasks.Timezone,
+		},
+		Share: configShare{
+			Enabled:         cfg.Share.Enabled,
+			AllowFiles:      cfg.Share.AllowFiles,
+			AllowSessions:   cfg.Share.AllowSessions,
+			AllowMeetings:   cfg.Share.AllowMeetings,
+			AllowDownload:   cfg.Share.AllowDownload,
+			LinkTTLDays:     cfg.Share.LinkTTLDays,
+			ShowProjectName: cfg.Share.ShowProjectName,
+		},
+		KB: configKB{
+			Enabled:             cfg.KB.Enabled,
+			AutoInject:          cfg.KB.AutoInject,
+			InjectTopN:          cfg.KB.InjectTopN,
+			InjectMaxChars:      cfg.KB.InjectMaxChars,
+			InjectMinSimilarity: cfg.KB.InjectMinSimilarity,
+			MaxFileMB:           cfg.KB.MaxFileMB,
+			MaxTextMB:           cfg.KB.MaxTextMB,
+			PollInterval:        cfg.KB.PollInterval,
+			EmbedBatchSize:      cfg.KB.EmbedBatchSize,
+		},
+		GitHistory: configGitHistory{PageSize: cfg.GitHistory.PageSize},
 		UsageMeter: configUsageMeter{
 			Enabled:    cfg.UsageMeter.Enabled,
 			AnchorDate: cfg.UsageMeter.AnchorDate,
@@ -1579,6 +1688,12 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 
 	// Snapshot current config for rollback on write failure
 	snapshot := model.ConfigInstance
+	// The master-switch globals are separate from ConfigInstance (a test or a
+	// partial config can leave ConfigInstance zero-valued), so snapshot them as
+	// they are rather than re-deriving them from the config on rollback.
+	snapshotTasksEnabled := model.TasksEnabled
+	snapshotShareEnabled := model.ShareEnabled
+	snapshotFeaturePolicy := model.FeaturePolicy
 
 	applyConfigPatch(patch)
 	// Republish the MCP snapshot: applyConfigPatch rewrites ConfigInstance in
@@ -1601,6 +1716,13 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	if err := writeConfigYAML(writePatch); err != nil {
 		// Rollback memory state — disk write failed
 		model.ConfigInstance = snapshot
+		// applyHotReloadGlobals does not touch these two (they are synced by
+		// applyConfigPatch only when the key is present), so restore them
+		// explicitly or a failed write would leave the feature switched off in
+		// memory while config.yaml still says on.
+		model.TasksEnabled = snapshotTasksEnabled
+		model.ShareEnabled = snapshotShareEnabled
+		model.FeaturePolicy = snapshotFeaturePolicy
 		model.PublishMCPSnapshot(model.ConfigInstance.MCP)
 		// Re-apply hot-reload globals from snapshot
 		applyHotReloadGlobals()
@@ -1633,6 +1755,7 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	// effect. The stale bindings are harmless on their own (the poller checks the
 	// flag first) and the next disable attempt retries the cleanup.
 	clearWarnings := clearForgeBindingsOnDisable(patch)
+	clearWarnings = append(clearWarnings, applyFeatureDisableEffects(patch)...)
 
 	// Classify fields into hot (no restart) and cold (needs restart)
 	coldFields := make([]string, 0) // always non-nil so JSON serializes as [] not null
@@ -1684,6 +1807,53 @@ func writePatchValueError(w http.ResponseWriter, r *http.Request, err error) {
 		"error":   "invalid_value",
 		"message": err.Error(),
 	})
+}
+
+// applyFeatureDisableEffects applies the tasks and share master switches.
+//
+// Like clearForgeBindingsOnDisable this runs AFTER the config write succeeded:
+// the destructive part (cancelling runs, revoking links) is irreversible, so it
+// must not happen for a change that failed to persist.
+//
+// A failure is a WARNING, not a 500, for the same reason as forge: the config
+// is already the authoritative fact, and answering 500 would make the client
+// roll the switch back to "enabled" while the server is disabled.
+func applyFeatureDisableEffects(patch map[string]any) []string {
+	var warnings []string
+
+	if tasksMap, ok := patch["tasks"].(map[string]any); ok {
+		if enabled, ok := tasksMap["enabled"].(bool); ok {
+			// Handles BOTH directions: false stops cron, cancels running
+			// executions and discards queued events; true restarts cron with
+			// every next activation recomputed from now (no catch-up).
+			service.GlobalScheduler.SetEnabled(enabled)
+		}
+		if tz, ok := tasksMap["timezone"].(string); ok {
+			// Re-registers every cron entry under the new zone. A change to the
+			// zone is not destructive, so a failure is only a warning.
+			if err := service.GlobalScheduler.SetTimezone(tz); err != nil {
+				warnings = append(warnings, fmt.Sprintf("tasks.timezone could not be applied: %v", err))
+			}
+		}
+	}
+
+	if shareMap, ok := patch["share"].(map[string]any); ok {
+		if enabled, ok := shareMap["enabled"].(bool); ok && !enabled {
+			res, err := service.RevokeAllShares()
+			if err != nil {
+				slog.Error("share: revoke all links after disable failed", "err", err)
+				warnings = append(warnings, fmt.Sprintf("share disabled, but revoking existing links failed: %v", err))
+			} else {
+				slog.Info("share: master switch off, links revoked",
+					"file", res.FileShares,
+					"session", res.SessionShares,
+					"meeting", res.MeetingShares,
+				)
+			}
+		}
+	}
+
+	return warnings
 }
 
 // clearForgeBindingsOnDisable removes every project's repository binding when
@@ -2565,6 +2735,31 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			return fmt.Errorf("mail.body_prefetch must be between 0 and 50")
 		}
 	}
+	if tasksCfg, ok := patch["tasks"].(map[string]any); ok {
+		// 0 would mean "delete everything today"; a retention window needs at
+		// least one day. The cap mirrors ApplyDefaults.
+		if v, ok := tasksCfg["retention_days"].(float64); ok && (v < 1 || v > model.MaxTaskRetentionDays) {
+			return fmt.Errorf("tasks.retention_days must be between 1 and %d", model.MaxTaskRetentionDays)
+		}
+		if v, ok := tasksCfg["timezone"].(string); ok {
+			if tz := strings.TrimSpace(v); tz != "" {
+				if _, err := time.LoadLocation(tz); err != nil {
+					return fmt.Errorf("tasks.timezone must be a valid IANA timezone (e.g. Asia/Shanghai): %v", err)
+				}
+			}
+		}
+	}
+	if shareCfg, ok := patch["share"].(map[string]any); ok {
+		// 0 is valid and means "never expire"; negative is not.
+		if v, ok := shareCfg["link_ttl_days"].(float64); ok && (v < 0 || v > model.MaxShareLinkTTLDays) {
+			return fmt.Errorf("share.link_ttl_days must be between 0 and %d", model.MaxShareLinkTTLDays)
+		}
+	}
+	if ghCfg, ok := patch["git_history"].(map[string]any); ok {
+		if v, ok := ghCfg["page_size"].(float64); ok && (v < 1 || v > model.MaxGitHistoryPageSize) {
+			return fmt.Errorf("git_history.page_size must be between 1 and %d", model.MaxGitHistoryPageSize)
+		}
+	}
 	session, ok := patch["session"].(map[string]any)
 	if ok {
 		if v, ok := session["max_count"].(float64); ok && v < 0 {
@@ -3277,6 +3472,70 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := mailMap["body_prefetch"].(float64); ok {
 			cfg.Mail.BodyPrefetch = int(v)
+		}
+	}
+
+	// Tasks / Share: the two master switches plus their sub-settings. The
+	// destructive side effects (cancelling runs, revoking links) run AFTER the
+	// config write succeeds — see applyFeatureDisableEffects.
+	if tasksMap, ok := patch["tasks"].(map[string]any); ok {
+		if v, ok := tasksMap["enabled"].(bool); ok {
+			cfg.Tasks.Enabled = v
+			// Synced here rather than in applyHotReloadGlobals so an unrelated
+			// PATCH (which may run against a zero-valued ConfigInstance in
+			// tests) cannot silently flip the switch.
+			model.TasksEnabled = v
+		}
+		if v, ok := tasksMap["retention_enabled"].(bool); ok {
+			cfg.Tasks.RetentionEnabled = v
+		}
+		if v, ok := tasksMap["retention_days"].(float64); ok {
+			cfg.Tasks.RetentionDays = int(v)
+		}
+		if v, ok := tasksMap["notify_on_success"].(bool); ok {
+			cfg.Tasks.NotifyOnSuccess = v
+			model.FeaturePolicy.TasksNotifyOnSuccess = v
+		}
+		if v, ok := tasksMap["notify_on_failure"].(bool); ok {
+			cfg.Tasks.NotifyOnFailure = v
+			model.FeaturePolicy.TasksNotifyOnFailure = v
+		}
+		if v, ok := tasksMap["timezone"].(string); ok {
+			cfg.Tasks.Timezone = strings.TrimSpace(v)
+		}
+	}
+	if shareMap, ok := patch["share"].(map[string]any); ok {
+		if v, ok := shareMap["enabled"].(bool); ok {
+			cfg.Share.Enabled = v
+			model.ShareEnabled = v
+		}
+		if v, ok := shareMap["allow_files"].(bool); ok {
+			cfg.Share.AllowFiles = v
+			model.FeaturePolicy.ShareAllowFiles = v
+		}
+		if v, ok := shareMap["allow_sessions"].(bool); ok {
+			cfg.Share.AllowSessions = v
+			model.FeaturePolicy.ShareAllowSessions = v
+		}
+		if v, ok := shareMap["allow_meetings"].(bool); ok {
+			cfg.Share.AllowMeetings = v
+			model.FeaturePolicy.ShareAllowMeetings = v
+		}
+		if v, ok := shareMap["allow_download"].(bool); ok {
+			cfg.Share.AllowDownload = v
+			model.FeaturePolicy.ShareAllowDownload = v
+		}
+		if v, ok := shareMap["link_ttl_days"].(float64); ok {
+			cfg.Share.LinkTTLDays = int(v)
+		}
+		if v, ok := shareMap["show_project_name"].(bool); ok {
+			cfg.Share.ShowProjectName = v
+			model.FeaturePolicy.ShareShowProjectName = v
+		}
+	}
+	if gh, ok := patch["git_history"].(map[string]any); ok {
+		if v, ok := gh["page_size"].(float64); ok {
+			cfg.GitHistory.PageSize = int(v)
 		}
 	}
 

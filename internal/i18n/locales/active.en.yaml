@@ -412,6 +412,12 @@ ForgeEventLabelEvent: Event
 ForgeEventLabelAuthor: Author
 ForgeEventViewDetail: View details
 ForgeDisabled: the GitHub/GitLab integration is disabled
+TasksDisabled: scheduled tasks are disabled
+ShareDisabled: sharing is disabled
+ShareFilesDisabled: file sharing is disabled
+ShareSessionsDisabled: conversation sharing is disabled
+ShareMeetingsDisabled: meeting sharing is disabled
+ShareDownloadDisabled: downloads are disabled for shared files
 PortForwardUnavailable: port forwarding is not available
 TunnelTransportDisabled: the server uses the SSH tunnel, so the HTTP/2 tunnel is disabled
 TunnelTargetUnreachable: tunnel target is unreachable

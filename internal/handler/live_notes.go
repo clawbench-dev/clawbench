@@ -258,6 +258,16 @@ func ServeLiveNotesShare(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	// Publishing a record while sharing is off would create a link the server
+	// has just promised to revoke. Un-publishing stays allowed: it is the
+	// cleanup direction and is idempotent with the switch's own revocation.
+	if body.Enabled && rejectIfShareDisabled(w, r) {
+		return
+	}
+	if body.Enabled && !model.FeaturePolicy.ShareAllowMeetings {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ShareMeetingsDisabled")
+		return
+	}
 	if err := service.SetMeetingShareEnabled(projectID, token, body.Enabled); err != nil {
 		if errors.Is(err, service.ErrMeetingNotFound) {
 			http.NotFound(w, r)

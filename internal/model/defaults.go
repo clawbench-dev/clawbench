@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ParsePresenceMap walks a raw YAML map and returns a flat set of dot-separated
@@ -738,6 +739,81 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 	if !presence["mail.body_prefetch"] {
 		cfg.Mail.BodyPrefetch = 10
+	}
+
+	// --- Tasks (scheduled tasks) ---
+	// The master switch defaults to ON for the same reason as forge.enabled:
+	// a bool zero value would silently stop every existing schedule for any
+	// install that has never written the key. An explicit `enabled: false` is
+	// respected.
+	if !presence["tasks.enabled"] {
+		cfg.Tasks.Enabled = true
+	}
+	// Retention defaults to OFF (deleting history is irreversible), but the day
+	// count defaults to 30 anyway so flipping the switch has an immediate
+	// effect instead of meaning "keep forever".
+	if cfg.Tasks.RetentionDays <= 0 {
+		cfg.Tasks.RetentionDays = 30
+	}
+	if cfg.Tasks.RetentionDays > MaxTaskRetentionDays {
+		cfg.Tasks.RetentionDays = MaxTaskRetentionDays
+	}
+	// Notification toggles default to ON: a bool zero value would silently
+	// mute every task notification on an install that never wrote the keys.
+	if !presence["tasks.notify_on_success"] {
+		cfg.Tasks.NotifyOnSuccess = true
+	}
+	if !presence["tasks.notify_on_failure"] {
+		cfg.Tasks.NotifyOnFailure = true
+	}
+	// An unknown zone is a bad preference, not a broken install: fall back to
+	// the server's local zone (the pre-existing behavior) and keep starting.
+	cfg.Tasks.Timezone = strings.TrimSpace(cfg.Tasks.Timezone)
+	if cfg.Tasks.Timezone != "" {
+		if _, err := time.LoadLocation(cfg.Tasks.Timezone); err != nil {
+			slog.Warn("tasks.timezone is not a known IANA zone, using server local time",
+				slog.String("timezone", cfg.Tasks.Timezone), slog.String("err", err.Error()))
+			cfg.Tasks.Timezone = ""
+		}
+	}
+
+	// --- Share (public share links) ---
+	// Defaults to ON for the same reason. Turning it off is destructive (it
+	// revokes every issued link), so it must never happen merely because the
+	// key is absent from an older config.yaml.
+	if !presence["share.enabled"] {
+		cfg.Share.Enabled = true
+	}
+	// Per-kind rules and the download switch also default ON.
+	if !presence["share.allow_files"] {
+		cfg.Share.AllowFiles = true
+	}
+	if !presence["share.allow_sessions"] {
+		cfg.Share.AllowSessions = true
+	}
+	if !presence["share.allow_meetings"] {
+		cfg.Share.AllowMeetings = true
+	}
+	if !presence["share.allow_download"] {
+		cfg.Share.AllowDownload = true
+	}
+	if !presence["share.show_project_name"] {
+		cfg.Share.ShowProjectName = true
+	}
+	// 0 is MEANINGFUL ("never expire"), so only a negative value is clamped.
+	if cfg.Share.LinkTTLDays < 0 {
+		cfg.Share.LinkTTLDays = 0
+	}
+	if cfg.Share.LinkTTLDays > MaxShareLinkTTLDays {
+		cfg.Share.LinkTTLDays = MaxShareLinkTTLDays
+	}
+
+	// --- Git history ---
+	if cfg.GitHistory.PageSize <= 0 {
+		cfg.GitHistory.PageSize = 30
+	}
+	if cfg.GitHistory.PageSize > MaxGitHistoryPageSize {
+		cfg.GitHistory.PageSize = MaxGitHistoryPageSize
 	}
 
 	// --- Skills (cross-agent skill discovery) ---
