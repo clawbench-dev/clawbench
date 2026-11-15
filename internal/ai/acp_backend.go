@@ -582,7 +582,7 @@ func isACPQuotaError(err error) bool {
 	if hs, ok := data["httpStatus"].(float64); ok && int(hs) == 402 {
 		return true
 	}
-	if name, ok := data["errorName"].(string); ok && openCodeLimitTypes[strings.ToLower(name)] {
+	if name, ok := data["errorName"].(string); ok && OpenCodeLimitTypes[strings.ToLower(name)] {
 		return true
 	}
 	haystack := reqErr.Message + " " + fmt.Sprint(reqErr.Data)

@@ -83,7 +83,7 @@ func newOpenCodeBackend() ai.AIBackend {
 		Cmd:         "opencode",
 		BuildArgsFn: BuildOpenCodeStreamArgs,
 		NewParserFn: func() ai.LineParser {
-			return &ai.OpenCodeStreamParser{
+			return &OpenCodeStreamParser{
 				ToolNameMap: OpenCodeToolNameMap,
 				InputRemaps: OpenCodeInputRemaps,
 			}

@@ -34,7 +34,7 @@ func TestOpenCodePlugin_NewBackendIsCLIBackend(t *testing.T) {
 
 	// Verify parser is an OpenCodeStreamParser
 	parser := clib.NewParserFn()
-	if _, ok := parser.(*ai.OpenCodeStreamParser); !ok {
+	if _, ok := parser.(*OpenCodeStreamParser); !ok {
 		t.Errorf("expected *OpenCodeStreamParser, got %T", parser)
 	}
 

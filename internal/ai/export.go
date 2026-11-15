@@ -228,3 +228,14 @@ func AgentProcessEnv() []string { return agentProcessEnv() }
 func ProviderEnvForRequest(req ChatRequest, fallback string) ([]string, error) {
 	return providerEnvForRequest(req, fallback)
 }
+
+// CriticalSendTimeout is the bounded wait a critical event may spend waiting
+// for room in a full stream channel.
+var CriticalSendTimeout = criticalSendTimeout
+
+// StreamErrorReporter is implemented by parsers that track whether they already
+// reported a stream error, so the skeleton does not double-report.
+type StreamErrorReporter = streamErrorReporter
+
+// IsLimitErrorText reports whether an error text describes a quota/limit hit.
+func IsLimitErrorText(text string) bool { return isLimitErrorText(text) }

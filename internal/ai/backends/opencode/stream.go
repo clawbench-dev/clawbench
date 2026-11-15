@@ -1,10 +1,12 @@
-package ai
+package opencode
 
 import (
 	"encoding/json"
 	"log/slog"
 	"strconv"
 	"strings"
+
+	"clawbench/internal/ai"
 )
 
 // OpenCodeStreamMessage represents a single JSON line from `opencode run --format json`
@@ -170,7 +172,7 @@ type OpenCodeStreamParser struct {
 	sessionID string // captured from any message that has a sessionID
 
 	// ToolNameMap maps backend-specific tool names to canonical names.
-	// When set, ParseLine uses this map instead of the global normalizeToolName().
+	// When set, ParseLine uses this map instead of the global ai.NormalizeToolName().
 	ToolNameMap map[string]string
 
 	// InputRemaps maps input field names for tool input normalization.
@@ -214,7 +216,7 @@ func (u *openCodeTurnUsage) reset() { *u = openCodeTurnUsage{} }
 func (p *OpenCodeStreamParser) GetCapturedSessionID() string { return p.sessionID }
 
 // ReportedStreamError reports whether this parser already emitted the turn's
-// terminal error event (see streamErrorReporter).
+// terminal error event (see ai.StreamErrorReporter).
 //
 // The CLI driver uses it to suppress its own "AI backend exited abnormally"
 // warning. OpenCode reports upstream failures as a stdout frame AND exits 1, so
@@ -224,8 +226,8 @@ func (p *OpenCodeStreamParser) GetCapturedSessionID() string { return p.sessionI
 func (p *OpenCodeStreamParser) ReportedStreamError() bool { return p.errorReported }
 
 // ParseLine parses a single JSON line from OpenCode's stream-json output and sends
-// StreamEvent(s) to the provided channel.
-func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
+// ai.StreamEvent(s) to the provided channel.
+func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- ai.StreamEvent) {
 	var msg OpenCodeStreamMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
 		slog.Debug("opencode stream: skipping unparseable line", "line", line, "error", err)
@@ -246,7 +248,7 @@ func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 
 	case "tool_use":
 		if tc := parseOpenCodeToolEvent(&msg, p.ToolNameMap, p.InputRemaps); tc != nil {
-			emitStreamEvent(ch, "opencode", StreamEvent{Type: "tool_use", Tool: tc})
+			ai.EmitStreamEvent(ch, "opencode", ai.StreamEvent{Type: "tool_use", Tool: tc})
 		}
 
 	case "step_finish":
@@ -277,9 +279,9 @@ func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		slog.Debug("opencode stream: retrying upstream failure",
 			"error_type", errorTypeOf(msg.Error),
 			"status", errorStatusOf(msg.Error))
-		emitStreamEvent(ch, "opencode", StreamEvent{
+		ai.EmitStreamEvent(ch, "opencode", ai.StreamEvent{
 			Type: "retry_notice",
-			RetryNotice: &RetryNoticeData{
+			RetryNotice: &ai.RetryNoticeData{
 				Attempt:    msg.Attempt,
 				Message:    errorMessageOf(msg.Error),
 				HTTPStatus: errorStatusOf(msg.Error),
@@ -297,7 +299,7 @@ func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 // Extracted from ParseLine to keep that dispatch within the lint budget
 // (gocyclo > 15 fails the release lint, which runs unfiltered), same as
 // parseStepFinish.
-func (p *OpenCodeStreamParser) emitTextLike(raw json.RawMessage, eventType string, ch chan<- StreamEvent) {
+func (p *OpenCodeStreamParser) emitTextLike(raw json.RawMessage, eventType string, ch chan<- ai.StreamEvent) {
 	var part OpenCodeTextPart
 	if err := json.Unmarshal(raw, &part); err != nil {
 		slog.Debug("opencode stream: skipping unparseable text part", "event_type", eventType, "error", err)
@@ -311,7 +313,7 @@ func (p *OpenCodeStreamParser) emitTextLike(raw json.RawMessage, eventType strin
 	if text == "" {
 		return
 	}
-	emitStreamEvent(ch, "opencode", StreamEvent{Type: eventType, Content: text})
+	ai.EmitStreamEvent(ch, "opencode", ai.StreamEvent{Type: eventType, Content: text})
 }
 
 // handleErrorFrame turns OpenCode's terminal `{"type":"error"}` frame into a
@@ -329,9 +331,9 @@ func (p *OpenCodeStreamParser) emitTextLike(raw json.RawMessage, eventType strin
 // event the executor treats the closed channel as "the process died", which
 // auto-continue then retries — for a quota error that means re-sending a request
 // that can only fail again (and, for a 429, one that takes ~85s per attempt).
-func (p *OpenCodeStreamParser) handleErrorFrame(msg OpenCodeStreamMessage, ch chan<- StreamEvent) {
+func (p *OpenCodeStreamParser) handleErrorFrame(msg OpenCodeStreamMessage, ch chan<- ai.StreamEvent) {
 	errText := "AI request failed"
-	reason := ReasonRequestFailed
+	reason := ai.ReasonRequestFailed
 	httpStatus := 0
 	detail := ""
 	if msg.Error != nil {
@@ -341,7 +343,7 @@ func (p *OpenCodeStreamParser) handleErrorFrame(msg OpenCodeStreamMessage, ch ch
 		}
 		httpStatus = errorStatusOf(msg.Error)
 		if isOpenCodeQuotaError(msg.Error) {
-			reason = ReasonQuotaExhausted
+			reason = ai.ReasonQuotaExhausted
 		}
 	}
 	slog.Error("opencode stream: agent reported an error",
@@ -350,7 +352,7 @@ func (p *OpenCodeStreamParser) handleErrorFrame(msg OpenCodeStreamMessage, ch ch
 		"message", errText,
 		"reason", reason)
 	// `error` is a critical event, so the send gets the full delivery grace
-	// (non-blocking first, then up to criticalSendTimeout). The report matters
+	// (non-blocking first, then up to ai.CriticalSendTimeout). The report matters
 	// for CLASSIFICATION, not just display: this flag suppresses the CLI
 	// driver's generic "backend exited abnormally" warning, and that warning is
 	// the only thing that would otherwise tell classification the turn failed.
@@ -360,7 +362,7 @@ func (p *OpenCodeStreamParser) handleErrorFrame(msg OpenCodeStreamMessage, ch ch
 	// On a drop the flag stays false, so the driver's generic warning (tagged
 	// ReasonBackendExit, i.e. retryable) still lands: the turn degrades to the
 	// pre-fix behavior rather than to a false success.
-	p.errorReported = emitCriticalStreamEventReport(ch, "opencode", StreamEvent{
+	p.errorReported = ai.EmitCriticalStreamEventReport(ch, "opencode", ai.StreamEvent{
 		Type:        "error",
 		Error:       errText,
 		Reason:      reason,
@@ -368,7 +370,7 @@ func (p *OpenCodeStreamParser) handleErrorFrame(msg OpenCodeStreamMessage, ch ch
 		ErrorDetail: detail,
 		ErrorSource: "agent",
 	})
-	emitStreamEvent(ch, "opencode", StreamEvent{Type: "done"})
+	ai.EmitStreamEvent(ch, "opencode", ai.StreamEvent{Type: "done"})
 }
 
 // errorTypeOf returns the provider error type for logging ("" when absent).
@@ -414,28 +416,6 @@ func errorMessageOf(e *OpenCodeError) string {
 	return ""
 }
 
-// openCodeLimitTypes are OpenCode's own error-type identifiers for "the account
-// cannot make this call right now". Matched on the TYPE before any message text
-// is inspected, because these are stable machine-readable values while the
-// message wording is the upstream provider's and changes without notice.
-//
-// Every entry was read out of the opencode 2.2.6 binary. The provider.*-limit
-// ones matter beyond accuracy: their messages ("OpenCode Go usage limit
-// reached…", "subscription_sharing_usage_limit_exceeded") contain none of the
-// phrases below, so before this list they were classified as request_failed —
-// which auto-continue then retried against an account that cannot pay.
-var openCodeLimitTypes = map[string]bool{
-	"provider.quota":         true,
-	"provider.rate-limit":    true,
-	"provider.free-limit":    true,
-	"provider.go-limit":      true,
-	"provider.chatgpt-limit": true,
-	"budgetlimiterror":       true,
-	"gousagelimiterror":      true,
-	"freeusagelimiterror":    true,
-	"creditlimitexceeded":    true,
-}
-
 // isOpenCodeQuotaError reports whether an error frame means the account is out
 // of credit or over its limit, i.e. retrying the same request cannot help.
 //
@@ -457,10 +437,10 @@ func isOpenCodeQuotaError(e *OpenCodeError) bool {
 	if errorStatusOf(e) == 402 {
 		return true
 	}
-	if openCodeLimitTypes[strings.ToLower(errorTypeOf(e))] {
+	if ai.OpenCodeLimitTypes[strings.ToLower(errorTypeOf(e))] {
 		return true
 	}
-	return isLimitErrorText(errorMessageOf(e))
+	return ai.IsLimitErrorText(errorMessageOf(e))
 }
 
 // parseStepFinish handles a step_finish part, emitting the turn's terminal
@@ -468,7 +448,7 @@ func isOpenCodeQuotaError(e *OpenCodeError) bool {
 //
 // Split out of ParseLine to keep that dispatch within the complexity budget:
 // the token/cost mapping has enough conditionals of its own.
-func (p *OpenCodeStreamParser) parseStepFinish(raw json.RawMessage, ch chan<- StreamEvent) {
+func (p *OpenCodeStreamParser) parseStepFinish(raw json.RawMessage, ch chan<- ai.StreamEvent) {
 	var part OpenCodeFinishPart
 	if err := json.Unmarshal(raw, &part); err != nil {
 		slog.Debug("opencode stream: skipping unparseable step_finish part", "error", err)
@@ -492,7 +472,7 @@ func (p *OpenCodeStreamParser) parseStepFinish(raw json.RawMessage, ch chan<- St
 		return
 	}
 
-	meta := &Metadata{
+	meta := &ai.Metadata{
 		SessionID:  p.sessionID,
 		StopReason: "stop",
 		CostUSD:    part.Cost,
@@ -507,12 +487,12 @@ func (p *OpenCodeStreamParser) parseStepFinish(raw json.RawMessage, ch chan<- St
 		meta.CostCumulative = true
 		meta.CostSessionTotal = meta.CostUSD
 	}
-	emitStreamEvent(ch, "opencode", StreamEvent{Type: "metadata", Meta: meta})
-	emitStreamEvent(ch, "opencode", StreamEvent{Type: "done"})
+	ai.EmitStreamEvent(ch, "opencode", ai.StreamEvent{Type: "metadata", Meta: meta})
+	ai.EmitStreamEvent(ch, "opencode", ai.StreamEvent{Type: "done"})
 	p.turn.reset()
 }
 
-// applyTurnUsage copies the accumulated turn totals onto a Metadata.
+// applyTurnUsage copies the accumulated turn totals onto a ai.Metadata.
 //
 // CACHE NORMALIZATION: OpenCode reports the cached prompt OUTSIDE input
 // (verified over 42,538 steps in its own storage: total = input + output +
@@ -520,7 +500,7 @@ func (p *OpenCodeStreamParser) parseStepFinish(raw json.RawMessage, ch chan<- St
 // shape where input is the FULL prompt, so the cache counters are folded into
 // input — otherwise OpenCode's cached traffic is invisible and its cache-hit
 // rate has no denominator, exactly the defect fixed for Claude/Codex.
-func (p *OpenCodeStreamParser) applyTurnUsage(meta *Metadata) {
+func (p *OpenCodeStreamParser) applyTurnUsage(meta *ai.Metadata) {
 	t := &p.turn
 	meta.InputTokens = t.input
 	meta.OutputTokens = t.output

@@ -1,4 +1,4 @@
-package ai
+package opencode
 
 import (
 	"encoding/json"
@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"clawbench/internal/ai"
 )
 
 // openCodeInputRemaps mirrors backends/openCodeInputRemaps for testing.
@@ -160,7 +162,7 @@ func TestOpenCodeTool_NonObjectInput(t *testing.T) {
 }
 
 func TestOpenCodeTool_OutputTruncation(t *testing.T) {
-	longOutput := strings.Repeat("x", maxToolOutputBytes+1000)
+	longOutput := strings.Repeat("x", ai.MaxToolOutputBytes+1000)
 	msg := newOpenCodeMsg("tool_use", OpenCodeToolPart{
 		Type:   "tool",
 		Tool:   "bash",
@@ -175,7 +177,7 @@ func TestOpenCodeTool_OutputTruncation(t *testing.T) {
 	tc := parseOpenCodeToolEvent(msg, nil, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 	assert.True(t, tc.Done)
-	assert.LessOrEqual(t, len(tc.Output), maxToolOutputBytes+100) // +100 for truncation marker
+	assert.LessOrEqual(t, len(tc.Output), ai.MaxToolOutputBytes+100) // +100 for truncation marker
 	assert.Contains(t, tc.Output, "[truncated:")
 }
 

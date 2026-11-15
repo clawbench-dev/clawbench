@@ -1,4 +1,4 @@
-package ai
+package opencode
 
 import (
 	"encoding/json"

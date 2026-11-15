@@ -50,7 +50,7 @@ func newMimoBackend() ai.AIBackend {
 		Cmd:         "mimo",
 		BuildArgsFn: opencode.BuildOpenCodeStreamArgs,
 		NewParserFn: func() ai.LineParser {
-			return &ai.OpenCodeStreamParser{
+			return &opencode.OpenCodeStreamParser{
 				ToolNameMap: opencode.OpenCodeToolNameMap,
 				InputRemaps: opencode.OpenCodeInputRemaps,
 			}

@@ -7,19 +7,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"clawbench/internal/ai"
 )
-
-func newOpenCodeMsg(msgType string, part any) *ai.OpenCodeStreamMessage {
-	partBytes, _ := json.Marshal(part)
-	return &ai.OpenCodeStreamMessage{
-		Type:      msgType,
-		Timestamp: 1,
-		SessionID: "ses_test",
-		Part:      partBytes,
-	}
-}
 
 func TestParseOpenCodeACPToolCall_EmptyRawInput(t *testing.T) {
 	tc := acp.SessionUpdateToolCall{

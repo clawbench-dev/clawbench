@@ -1,4 +1,4 @@
-package ai
+package opencode
 
 import (
 	"encoding/json"
@@ -6,15 +6,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 )
 
-func parseOpenCodeLine(line string) []StreamEvent {
-	ch := make(chan StreamEvent, 64)
+func parseOpenCodeLine(line string) []ai.StreamEvent {
+	ch := make(chan ai.StreamEvent, 64)
 	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
 	parser.ParseLine(line, ch)
 	close(ch)
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -193,14 +194,14 @@ func TestOpenCodeStream_MultiStepAccumulatesUsage(t *testing.T) {
 		`{"type":"step_finish","timestamp":3,"sessionID":"ses_acc","part":{"reason":"stop","tokens":{"total":3000,"input":300,"output":30,"cache":{"read":2600,"write":70}},"cost":0.25}}`,
 	}
 
-	ch := make(chan StreamEvent, 32)
+	ch := make(chan ai.StreamEvent, 32)
 	parser := &OpenCodeStreamParser{}
 	for _, line := range lines {
 		parser.ParseLine(line, ch)
 	}
 	close(ch)
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -238,14 +239,14 @@ func TestOpenCodeStream_MultiStepAccumulatesUsage(t *testing.T) {
 
 // Two consecutive turns must not leak usage into each other.
 func TestOpenCodeStream_TurnsDoNotLeak(t *testing.T) {
-	ch := make(chan StreamEvent, 32)
+	ch := make(chan ai.StreamEvent, 32)
 	parser := &OpenCodeStreamParser{}
 
 	parser.ParseLine(`{"type":"step_finish","timestamp":1,"part":{"reason":"stop","tokens":{"total":500,"input":400,"output":100},"cost":0}}`, ch)
 	parser.ParseLine(`{"type":"step_finish","timestamp":2,"part":{"reason":"stop","tokens":{"total":700,"input":600,"output":100},"cost":0}}`, ch)
 	close(ch)
 
-	var metas []*Metadata
+	var metas []*ai.Metadata
 	for ev := range ch {
 		if ev.Type == "metadata" && ev.Meta != nil {
 			metas = append(metas, ev.Meta)
@@ -281,7 +282,7 @@ func TestOpenCodeStream_GetCapturedSessionID(t *testing.T) {
 	}
 
 	// step_start captures session ID
-	ch := make(chan StreamEvent, 64)
+	ch := make(chan ai.StreamEvent, 64)
 	parser.ParseLine(`{"type":"step_start","timestamp":1,"sessionID":"ses_test123","part":{"type":"step-start"}}`, ch)
 	if id := parser.GetCapturedSessionID(); id != "ses_test123" {
 		t.Errorf("expected session ID ses_test123 after step_start, got %q", id)
@@ -324,7 +325,7 @@ func TestOpenCodeStream_ParseLine_UnknownType(t *testing.T) {
 
 func TestOpenCodeStream_SessionIDCapture(t *testing.T) {
 	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
-	ch := make(chan StreamEvent, 64)
+	ch := make(chan ai.StreamEvent, 64)
 
 	// First message captures session ID
 	line1 := `{"type":"step_start","timestamp":1,"sessionID":"ses_captured123","part":{"type":"step-start"}}`
@@ -335,7 +336,7 @@ func TestOpenCodeStream_SessionIDCapture(t *testing.T) {
 	parser.ParseLine(line2, ch)
 	close(ch)
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -359,14 +360,14 @@ func TestOpenCodeStream_MultiStepFlow(t *testing.T) {
 		`{"type":"step_finish","timestamp":6,"sessionID":"ses_multi","part":{"reason":"stop","tokens":{"total":600,"input":500,"output":100},"cost":0}}`,
 	}
 
-	ch := make(chan StreamEvent, 64)
+	ch := make(chan ai.StreamEvent, 64)
 	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
 	for _, line := range lines {
 		parser.ParseLine(line, ch)
 	}
 	close(ch)
 
-	var events []StreamEvent
+	var events []ai.StreamEvent
 	for ev := range ch {
 		events = append(events, ev)
 	}
@@ -432,9 +433,9 @@ func TestNormalizeOpenCodeToolName(t *testing.T) {
 		{"", ""},
 	}
 	for _, tt := range tests {
-		got := normalizeToolName(tt.input)
+		got := ai.NormalizeToolName(tt.input)
 		if got != tt.expected {
-			t.Errorf("normalizeToolName(%q) = %q, want %q", tt.input, got, tt.expected)
+			t.Errorf("ai.NormalizeToolName(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
 	}
 }
@@ -442,7 +443,7 @@ func TestNormalizeOpenCodeToolName(t *testing.T) {
 func TestNormalizeOpenCodeInput_FieldRemapping(t *testing.T) {
 	// filePath → file_path
 	input1 := json.RawMessage(`{"filePath":"/tmp/test.go"}`)
-	norm1, err := normalizeToolInput(input1, map[string]string{"oldString": "old_string", "newString": "new_string"})
+	norm1, err := ai.NormalizeToolInput(input1, map[string]string{"oldString": "old_string", "newString": "new_string"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -462,7 +463,7 @@ func TestNormalizeOpenCodeInput_FieldRemapping(t *testing.T) {
 
 	// oldString → old_string
 	input2 := json.RawMessage(`{"oldString":"foo","newString":"bar"}`)
-	norm2, err := normalizeToolInput(input2, map[string]string{"oldString": "old_string", "newString": "new_string"})
+	norm2, err := ai.NormalizeToolInput(input2, map[string]string{"oldString": "old_string", "newString": "new_string"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -488,7 +489,7 @@ func TestNormalizeOpenCodeInput_FieldRemapping(t *testing.T) {
 
 	// Combined: filePath + oldString + newString
 	input3 := json.RawMessage(`{"filePath":"main.go","oldString":"hello","newString":"world","replace_all":true}`)
-	norm3, err := normalizeToolInput(input3, map[string]string{"oldString": "old_string", "newString": "new_string"})
+	norm3, err := ai.NormalizeToolInput(input3, map[string]string{"oldString": "old_string", "newString": "new_string"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -515,7 +516,7 @@ func TestNormalizeOpenCodeInput_FieldRemapping(t *testing.T) {
 
 func TestNormalizeOpenCodeInput_UnparseableJSON(t *testing.T) {
 	bad := json.RawMessage(`not valid json`)
-	_, err := normalizeToolInput(bad, nil)
+	_, err := ai.NormalizeToolInput(bad, nil)
 	if err == nil {
 		t.Error("expected error for unparseable JSON")
 	}
@@ -524,7 +525,7 @@ func TestNormalizeOpenCodeInput_UnparseableJSON(t *testing.T) {
 func TestNormalizeOpenCodeInput_AlreadyCanonical(t *testing.T) {
 	// If input already uses snake_case, no remapping needed
 	input := json.RawMessage(`{"file_path":"/tmp/test.go","old_string":"foo","new_string":"bar"}`)
-	norm, err := normalizeToolInput(input, map[string]string{"oldString": "old_string", "newString": "new_string"})
+	norm, err := ai.NormalizeToolInput(input, map[string]string{"oldString": "old_string", "newString": "new_string"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -721,7 +722,7 @@ func TestOpenCodeStream_ParseLine_StepFinishRaisesInconsistentTotal(t *testing.T
 // kill the stream.
 func TestOpenCodeStream_ParseLine_StepFinishUnparseable(t *testing.T) {
 	p := &OpenCodeStreamParser{}
-	ch := make(chan StreamEvent, 8)
+	ch := make(chan ai.StreamEvent, 8)
 	p.parseStepFinish(json.RawMessage(`not json`), ch)
 	close(ch)
 	if len(ch) != 0 {
@@ -747,8 +748,8 @@ func TestOpenCodeStream_ErrorFrame_QuotaIsClassifiedAndTerminal(t *testing.T) {
 	if errEv.Type != "error" {
 		t.Fatalf("expected an error event first, got %q", errEv.Type)
 	}
-	if errEv.Reason != ReasonQuotaExhausted {
-		t.Errorf("a 402 must be classified as %q, got %q", ReasonQuotaExhausted, errEv.Reason)
+	if errEv.Reason != ai.ReasonQuotaExhausted {
+		t.Errorf("a 402 must be classified as %q, got %q", ai.ReasonQuotaExhausted, errEv.Reason)
 	}
 	if errEv.Error != "Insufficient Balance" {
 		t.Errorf("the provider's own message must reach the user, got %q", errEv.Error)
@@ -771,8 +772,8 @@ func TestOpenCodeStream_ErrorFrame_NonQuotaStaysRequestFailed(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("expected error + done, got %d events", len(events))
 	}
-	if events[0].Reason != ReasonRequestFailed {
-		t.Errorf("expected %q, got %q", ReasonRequestFailed, events[0].Reason)
+	if events[0].Reason != ai.ReasonRequestFailed {
+		t.Errorf("expected %q, got %q", ai.ReasonRequestFailed, events[0].Reason)
 	}
 }
 
@@ -849,7 +850,7 @@ func TestOpenCodeStream_RetryFrame_EmitsTransientNoticeOnly(t *testing.T) {
 			// The whole point: no block, no reason — a recovered retry must leave
 			// the transcript (and the turn's classification) untouched.
 			var blocks []model.ContentBlock
-			AccumulateBlock(&blocks, ev)
+			ai.AccumulateBlock(&blocks, ev)
 			if len(blocks) != 0 {
 				t.Fatalf("a retry notice must not accumulate a block, got %+v", blocks)
 			}
@@ -861,7 +862,7 @@ func TestOpenCodeStream_RetryFrame_EmitsTransientNoticeOnly(t *testing.T) {
 // must not make the real failure silent.
 func TestOpenCodeStream_RetryThenTerminalQuotaReportsOnlyTheTerminal(t *testing.T) {
 	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
-	ch := make(chan StreamEvent, 16)
+	ch := make(chan ai.StreamEvent, 16)
 	parser.ParseLine(`{"type":"retry","timestamp":1,"sessionID":"ses_q","attempt":2,"error":{"type":"provider.rate-limit","message":"Rate limit exceeded","status":429}}`, ch)
 	parser.ParseLine(`{"type":"error","timestamp":2,"sessionID":"ses_q","error":{"type":"provider.rate-limit","message":"Rate limit exceeded","status":429}}`, ch)
 	close(ch)
@@ -869,7 +870,7 @@ func TestOpenCodeStream_RetryThenTerminalQuotaReportsOnlyTheTerminal(t *testing.
 	var quotaBlocks int
 	var gotDone bool
 	for ev := range ch {
-		if ev.Reason == ReasonQuotaExhausted {
+		if ev.Reason == ai.ReasonQuotaExhausted {
 			quotaBlocks++
 		}
 		if ev.Type == "done" {
@@ -894,11 +895,11 @@ func TestOpenCodeStream_ErrorFrameV1Shape_ClassifiesQuota(t *testing.T) {
 	const line = `{"type":"error","timestamp":1794225317669,"sessionID":"ses_e3fd65d5effeeh3aSZEsXDkeSa","error":{"name":"APIError","data":{"message":"Insufficient Balance","statusCode":402,"isRetryable":false,"responseHeaders":{"content-type":"application/json"},"responseBody":"{\"error\":{\"message\":\"Insufficient Balance\"}}","metadata":{"url":"http://127.0.0.1:18999/v1/chat/completions"}}}}`
 
 	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
-	ch := make(chan StreamEvent, 16)
+	ch := make(chan ai.StreamEvent, 16)
 	parser.ParseLine(line, ch)
 	close(ch)
 
-	var errEvents []StreamEvent
+	var errEvents []ai.StreamEvent
 	var gotDone bool
 	for ev := range ch {
 		switch ev.Type {
@@ -912,7 +913,7 @@ func TestOpenCodeStream_ErrorFrameV1Shape_ClassifiesQuota(t *testing.T) {
 		t.Fatalf("the error frame must produce exactly one error event, got %+v", errEvents)
 	}
 	ev := errEvents[0]
-	assert.Equal(t, ReasonQuotaExhausted, ev.Reason,
+	assert.Equal(t, ai.ReasonQuotaExhausted, ev.Reason,
 		"a 402 delivered in the 1.x shape is still an exhausted quota")
 	assert.Equal(t, "Insufficient Balance", ev.Error)
 	assert.Equal(t, "Insufficient Balance", ev.ErrorDetail)
@@ -935,24 +936,24 @@ func TestOpenCodeStream_ErrorFrameToleratesOddDataShape(t *testing.T) {
 	}{
 		"2.x with non-object data": {
 			line:       `{"type":"error","timestamp":1,"sessionID":"ses_q","error":{"type":"provider.quota","message":"Insufficient Balance","status":402,"data":"not-an-object"}}`,
-			wantReason: ReasonQuotaExhausted,
+			wantReason: ai.ReasonQuotaExhausted,
 			wantStatus: 402,
 		},
 		"1.x with quoted statusCode": {
 			line:       `{"type":"error","timestamp":1,"sessionID":"ses_q","error":{"name":"APIError","data":{"message":"Insufficient Balance","statusCode":"402"}}}`,
-			wantReason: ReasonQuotaExhausted,
+			wantReason: ai.ReasonQuotaExhausted,
 			wantStatus: 402,
 		},
 		"1.x with array data": {
 			line:       `{"type":"error","timestamp":1,"sessionID":"ses_q","error":{"name":"APIError","data":[1,2,3]}}`,
-			wantReason: ReasonRequestFailed,
+			wantReason: ai.ReasonRequestFailed,
 			wantStatus: 0,
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			events := parseOpenCodeLine(tc.line)
-			var got *StreamEvent
+			var got *ai.StreamEvent
 			for i := range events {
 				if events[i].Type == "error" {
 					got = &events[i]
@@ -972,7 +973,7 @@ func TestOpenCodeStream_ErrorFrameToleratesOddDataShape(t *testing.T) {
 // transcript and classification read it as the turn's outcome.
 func TestOpenCodeStream_RetryThenSuccessHasNoFailureBlock(t *testing.T) {
 	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
-	ch := make(chan StreamEvent, 32)
+	ch := make(chan ai.StreamEvent, 32)
 	parser.ParseLine(`{"type":"step_start","timestamp":1,"sessionID":"ses_q","part":{}}`, ch)
 	parser.ParseLine(`{"type":"retry","timestamp":2,"sessionID":"ses_q","attempt":2,"error":{"type":"provider.rate-limit","message":"Rate limit exceeded","status":429}}`, ch)
 	parser.ParseLine(`{"type":"text","timestamp":3,"sessionID":"ses_q","part":{"type":"text","text":"the answer"}}`, ch)
@@ -989,7 +990,7 @@ func TestOpenCodeStream_RetryThenSuccessHasNoFailureBlock(t *testing.T) {
 // retryable "backend exited abnormally" warning on top of the classified error.
 func TestOpenCodeStream_ReportedStreamError(t *testing.T) {
 	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
-	ch := make(chan StreamEvent, 16)
+	ch := make(chan ai.StreamEvent, 16)
 
 	if parser.ReportedStreamError() {
 		t.Fatal("a fresh parser must not claim to have reported an error")
