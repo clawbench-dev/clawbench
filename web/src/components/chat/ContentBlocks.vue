@@ -148,27 +148,22 @@
                verdict — as a leading child it pushed the counts around and left
                the right edge empty. -->
           <component :is="groupLeadingIcon(group)" :size="12" class="tool-icon" />
-          <!-- While a tool runs this row IS that tool's pill: same glyph, name
-               and summary as the standalone pill, and no count line — a count is
-               a summary of the run, and the run is not done summarising. It stays
-               clickable, so it can still be unfolded while it works. -->
-          <template v-if="group.runningIndex">
-            <RollingText class="tool-name" :text="group.runningName" />
-            <RollingText v-if="group.runningSummary" class="tool-summary" :text="group.runningSummary" />
-          </template>
-          <!-- Between two steps, only a thinking chip is live: the row IS that
-               chip (brain + label + ring), exactly like the standalone one. A
-               count line here would read as a summary of work that has not
-               happened yet — the thought is the work. -->
-          <template v-else-if="group.runningThinking && streaming">
-            <RollingText class="tool-name" :text="t('chat.message.deepThinking')" />
-          </template>
-          <!-- Settled: counts, because there is no single step to name. -->
-          <template v-else>
-            <RollingText class="tool-name" :text="toolGroupLabel(group)" />
-            <span v-if="group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
-            <span v-else-if="group.interruptedCount > 0" class="tool-summary tool-group-interrupted">{{ t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }) }}</span>
-          </template>
+          <!-- While a tool runs this row IS that tool's pill (same glyph, name
+               and summary, no count — a count is a summary of the run, and the
+               run is not done summarising). Between steps only a thought is
+               live, so the row IS that chip (brain + 深度思考). Settled, it is
+               a container again and names itself with counts.
+               All three states share ONE rolling line: the label changes under
+               the reader, and the roll is what makes the switch readable — per
+               state branches would swap the node out and the new text would
+               just snap in. -->
+          <RollingText class="tool-name" :text="toolGroupTitle(group)" />
+          <!-- The running step's own summary; nothing at rest. -->
+          <RollingText v-if="toolGroupDetail(group)" class="tool-summary" :text="toolGroupDetail(group)" />
+          <!-- Settled only: a failure earlier in the run is not news while a
+               later step is still executing. -->
+          <span v-if="!isGroupRunning(group) && group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
+          <span v-else-if="!isGroupRunning(group) && group.interruptedCount > 0" class="tool-summary tool-group-interrupted">{{ t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }) }}</span>
           <!-- Everything from the cancelled marker to the chevron is one block
                pinned to the right edge. Grouping it is what keeps the row
                aligned in every state: while only a thinking chip runs there is
@@ -1951,6 +1946,21 @@ function toolGroupLabel(group: ToolCallGroup): string {
     parts.push(t('chat.contentBlocks.toolGroupThinking', group.thinkingCount, { named: { count: group.thinkingCount } }))
   }
   return parts.join(' · ')
+}
+
+/** The row's single rolling label: the running tool's name while a tool works,
+ *  the deep-thinking label while only a thought runs (the row then IS that
+ *  chip), else the settled counts. */
+function toolGroupTitle(group: ToolCallGroup): string {
+  if (group.runningIndex) return group.runningName
+  if (group.runningThinking && props.streaming) return t('chat.message.deepThinking')
+  return toolGroupLabel(group)
+}
+
+/** The line under the label: the running tool's own summary, and nothing at
+ *  rest — a settled run describes itself with counts, not one step's detail. */
+function toolGroupDetail(group: ToolCallGroup): string {
+  return group.runningIndex ? group.runningSummary : ''
 }
 
 /** A run is still running while a tool OR a thinking chip in it is unfinished.

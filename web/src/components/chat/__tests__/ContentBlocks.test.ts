@@ -4145,6 +4145,37 @@ describe('compact tool calls', () => {
     expect(strip.find('.tool-group-chevron').exists()).toBe(true)
   })
 
+  it('rolls ONE label through the state switches instead of snapping', async () => {
+    // The label goes Bash → 深度思考 → counts as a run moves on. Each switch is
+    // a text change on the same RollingText, which holds the old line for its
+    // settle delay and then rolls. Per-state branches would swap the node out
+    // and the new text would appear instantly — no roll at all.
+    vi.useFakeTimers()
+    try {
+      const wrapper = mountBlocks({
+        streaming: true,
+        toolCallSummary: (b: any) => (b?.name === 'Bash' ? 'npm test' : ''),
+        blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
+      })
+      await nextTick()
+      expect(wrapper.find('.tool-name').text()).toBe('Bash')
+
+      // Bash finished, a thought is now the live step: the same node is still
+      // showing the old line, which is what "it will roll" looks like.
+      await wrapper.setProps({
+        blocks: [tool('Read', 't1'), tool('Bash', 't2'), { type: 'thinking', think_id: 'th1', done: false }],
+      })
+      await nextTick()
+      expect(wrapper.find('.tool-name').text()).toBe('Bash')
+
+      vi.advanceTimersByTime(200)
+      await nextTick()
+      expect(wrapper.find('.tool-name').text()).toContain('Deep Thinking')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('wears the generic stack glyph once the run settles', async () => {
     // A finished run mixes categories (file / bash / search), so no single
     // tool's icon (and not the brain) can stand for it.
