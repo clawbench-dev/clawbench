@@ -5,6 +5,7 @@ import {
   detectDelimiter,
   detectNumericColumns,
   filterAndSortRows,
+  isIndexColumn,
   isNumericTable,
   parseDelimited,
   parseNumericCell,
@@ -297,5 +298,29 @@ describe('isNumericTable', () => {
 
   it('still rejects a table with one text cell', () => {
     expect(isNumericTable(['name', 'value'], [['a', '3450,75'], ['b', '暂无']])).toBe(false)
+  })
+})
+
+describe('isIndexColumn', () => {
+  it('recognises an index header even when the values are not 1..N', () => {
+    expect(isIndexColumn('序号', ['1', '2', '3'])).toBe(true)
+    expect(isIndexColumn('编号', ['A-01', 'A-02'])).toBe(true)
+    expect(isIndexColumn('ID', ['1001', '1002'])).toBe(true)
+    expect(isIndexColumn('No.', ['1', '2'])).toBe(true)
+    expect(isIndexColumn('#', ['1', '2'])).toBe(true)
+  })
+
+  it('recognises a 1..N column without any header', () => {
+    expect(isIndexColumn('', ['1', '2', '3', '4'])).toBe(true)
+    expect(isIndexColumn('行', ['1', '2', '3'])).toBe(true)
+  })
+
+  it('leaves real measures alone', () => {
+    expect(isIndexColumn('数量', ['3', '5', '8'])).toBe(false)
+    expect(isIndexColumn('', ['10', '20', '30'])).toBe(false)
+    // 只有两行不算：短表里 1、2 更可能是巧合
+    expect(isIndexColumn('', ['1', '2'])).toBe(false)
+    // 断号的序列不算编号
+    expect(isIndexColumn('', ['1', '2', '4'])).toBe(false)
   })
 })

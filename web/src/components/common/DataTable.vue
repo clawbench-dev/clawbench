@@ -333,6 +333,7 @@ import {
   computeColumnStats,
   detectNumericColumns,
   filterAndSortRows,
+  isIndexColumn,
   isNumericTable,
   parseNumericCell,
   type SortDirection,
@@ -385,6 +386,19 @@ const frozenLeft = ref(0)
 
 const pageSize = computed(() => props.pageSize ?? 0)
 
+/**
+ * 第一列是编号（序号 / 编号 / ID，或内容就是 1、2、3…）时默认不画数据条：
+ * 行号的长短没有含义。列菜单里仍然可以手动打开。
+ *
+ * 写成函数而不是 computed：下面那个复位 watcher 是 immediate 的，会在
+ * computed 声明之前求值（TDZ）。
+ */
+function defaultBarsOff(): Set<number> {
+  if (props.headers.length === 0) return new Set()
+  const first = props.rows.map(row => row[0] ?? '')
+  return isIndexColumn(props.headers[0] ?? '', first) ? new Set([0]) : new Set()
+}
+
 /** 内容变了（换文件 / 换消息里的表）就把视图状态全部复位，否则会拿旧筛选条件去筛新表。 */
 watch(
   () => [props.headers, props.rows],
@@ -397,7 +411,7 @@ watch(
     page.value = 1
     hidden.value = new Set()
     frozen.value = null
-    barsOff.value = new Set()
+    barsOff.value = defaultBarsOff()
     valueFilters.value = new Map()
     closePop()
     void nextTick(measureFrozen)

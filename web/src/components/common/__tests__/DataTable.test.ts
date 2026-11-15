@@ -269,6 +269,30 @@ describe('DataTable', () => {
     wrapper.unmount()
   })
 
+  it('skips data bars on a 序号 first column unless the user asks for them', async () => {
+    const wrapper = mountTable(
+      ['序号', 'q1', 'q2'],
+      [['1', '10', '20'], ['2', '5', '7'], ['3', '3', '9']],
+    )
+    // 只有 q1 / q2 画条：3 行 × 2 列
+    expect(wrapper.findAll('.dt-cell-bar')).toHaveLength(6)
+
+    // 编号列的菜单里是「显示数据条」——默认关着，但可以手动打开
+    await wrapper.findAll('.dt-funnel')[0].trigger('click')
+    await menuItem(wrapper, 'Show data bars').trigger('click')
+    expect(wrapper.findAll('.dt-cell-bar')).toHaveLength(9)
+    wrapper.unmount()
+  })
+
+  it('skips data bars when the first column is a 1..N sequence without a header', () => {
+    const wrapper = mountTable(
+      ['', 'q1'],
+      [['1', '10'], ['2', '20'], ['3', '30']],
+    )
+    expect(wrapper.findAll('.dt-cell-bar')).toHaveLength(3)
+    wrapper.unmount()
+  })
+
   it('copies a column in the current order', async () => {
     const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS)
     await wrapper.findAll('.dt-funnel')[1].trigger('click')

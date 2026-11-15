@@ -400,6 +400,32 @@ export function detectNumericColumns(rows: string[][], columnCount: number): boo
     return result
 }
 
+/** 表头一眼就是行号的写法。 */
+const INDEX_HEADER_RE = /^(?:序号|编号|行号|索引|id|no\.?|#|index)$/i
+
+/**
+ * 这一列是不是「编号列」——只是行号，不代表大小。
+ *
+ * 两条判据：表头写着序号 / 编号 / ID / No. / # / index；或者整列内容就是
+ * 1、2、3… 一直数到 N（至少 3 行）。编号列不画数据条：给 1、2、3 画长短条
+ * 只会让人以为这个数字有业务含义。
+ */
+export function isIndexColumn(header: string, values: string[]): boolean {
+    if (INDEX_HEADER_RE.test(header.trim())) return true
+
+    let expected = 1
+    let seen = 0
+    for (const raw of values) {
+        const text = (raw ?? '').trim()
+        if (text === '') continue
+        const n = parseNumericCell(text)
+        if (n === null || !Number.isInteger(n) || n !== expected) return false
+        expected += 1
+        seen += 1
+    }
+    return seen >= 3
+}
+
 /** What the column menu shows about one column. */
 export interface ColumnStats {
     rows: number
