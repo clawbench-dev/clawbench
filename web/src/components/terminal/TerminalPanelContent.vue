@@ -1647,7 +1647,10 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .terminal-tab-bar {
   display: flex;
   align-items: stretch;
-  height: calc(28 * var(--dp));
+  /* Panel-header row height, same token as every other page (the shared
+     header rule enforces it in both layouts; declared here so the bar keeps a
+     definite height on its own). */
+  height: var(--header-height);
   padding: 0;
   flex-shrink: 0;
   background: var(--bg-secondary);
@@ -1766,14 +1769,13 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   align-items: center;
   justify-content: center;
   width: calc(28 * var(--dp));
-  /* The bar is not 28dp tall on wide screens: components.css forces
-     `.terminal-tab-bar` to --header-height (36dp) so the window-controls
-     overlay lines up with every other panel header. With `align-items:
-     stretch`, a child that keeps a definite height is aligned at the TOP of
-     that taller bar — a `height: calc(28 * var(--dp))` here left the icons
-     ~4dp above the row's centre. Fill the row instead (same as the window
-     controls on the same bar); on narrow screens the bar is 28dp, so
-     stretching is a no-op there. */
+  /* The bar is a panel-header row (--header-height, 36dp, in BOTH layouts —
+     see the shared rule in components.css) so the window-controls overlay
+     lines up with every other page. With `align-items: stretch`, a child that
+     keeps a definite height is aligned at the TOP of that taller bar — a
+     `height: calc(28 * var(--dp))` here left the icons ~4dp above the row's
+     centre. Fill the row instead (same as the window controls on the same
+     bar). */
   align-self: stretch;
   border: none;
   border-radius: 0;

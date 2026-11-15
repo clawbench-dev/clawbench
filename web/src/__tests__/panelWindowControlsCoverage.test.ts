@@ -66,6 +66,18 @@ const PANEL_VIEWS = [
   'src/components/settings/SettingsPage.vue',
 ]
 
+/**
+ * The declaration block of the first rule whose selector is exactly `.cls`
+ * inside a component's `<style>` block. The template is skipped because SFC
+ * interpolations contain braces the rule regex would mis-parse.
+ */
+function headerRule(sfc: string, cls: string): string {
+  const style = sfc.match(/<style[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? ''
+  const clean = style.replace(/\/\*[\s\S]*?\*\//g, '')
+  const m = clean.match(new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`))
+  return m ? m[1] : ''
+}
+
 describe('one panel header row', () => {
   const APP = readWebFile('src/App.vue')
 
@@ -94,9 +106,12 @@ describe('one panel header row', () => {
     expect(rule![2]).toMatch(
       /padding-right:\s*calc\(52 \* var\(--dp\) \+ var\(--space-2\)\)/,
     )
-    expect(rule![2]).toMatch(/height:\s*var\(--header-height\)/)
-    expect(rule![2]).toMatch(/background:\s*var\(--bg-secondary\)/)
-    expect(rule![2]).toMatch(/border-bottom:\s*1px solid var\(--border-color\)/)
+    // Height, surface and divider moved to the both-layouts rule: keeping them
+    // here made them wide-screen only, so narrow screens fell back to each
+    // panel's own value and a drill-down page changed the header height.
+    expect(rule![2]).not.toMatch(/height:/)
+    expect(rule![2]).not.toMatch(/background:/)
+    expect(rule![2]).not.toMatch(/border-bottom:/)
   })
 
   it('uses one horizontal inset token for every header in both layouts', () => {
@@ -108,10 +123,20 @@ describe('one panel header row', () => {
     }
     expect(rule![2]).toMatch(/padding-left:\s*var\(--panel-header-pad-x\)/)
     expect(rule![2]).toMatch(/padding-right:\s*var\(--panel-header-pad-x\)/)
+    // ONE row height in both layouts, with the vertical padding reset: a header
+    // that keeps 4dp of vertical padding renders taller than the token says.
+    expect(rule![2]).toMatch(/height:\s*var\(--header-height\)/)
+    expect(rule![2]).toMatch(/padding-top:\s*0/)
+    expect(rule![2]).toMatch(/padding-bottom:\s*0/)
+    expect(rule![2]).toMatch(/border-bottom:\s*1px solid var\(--border-color\)/)
+    expect(rule![2]).toMatch(/flex-shrink:\s*0/)
 
     const vars = readWebFile('css/variables.css')
     expect(vars, 'the horizontal-inset token must be declared once').toMatch(
       /--panel-header-pad-x:\s*var\(--space-7\)/,
+    )
+    expect(vars, 'the row-height token must be declared once').toMatch(
+      /--header-height:\s*calc\(36 \* var\(--dp\)\)/,
     )
   })
 
@@ -209,17 +234,48 @@ describe('one panel header row', () => {
     }
   })
 
-  it('flattens the mail bar wrapper to one 36px row', () => {
-    // The mail bar is a padded wrapper around its row; left alone it renders
-    // 44px tall, the only header that is taller than the rest.
+  it('gives the mail rows the same height as every other header', () => {
+    // The mail bar is a wrapper around its row, and the reader / composer
+    // heads are rows of their own. All three used to size themselves (34dp for
+    // the wrapper, ~28dp for the drill-down heads), so opening a mail made the
+    // header shorter than the list toolbar it came from. Height and vertical
+    // padding now come from the shared rule, and the wrapper's row fills it.
     const css = readWebFile('css/components.css')
-    const mail = css.match(/\.col-left--chrome \.tab-panel :is\(\.mail-bar[^)]*\)\s*\{([^}]*)\}/)
-    expect(mail, 'the mail wrapper must own the row height').not.toBeNull()
-    expect(mail![1]).toMatch(/padding-top:\s*0/)
-    expect(mail![1]).toMatch(/padding-bottom:\s*0/)
-    const fill = css.match(/\.col-left--chrome \.tab-panel \.mail-bar > :is\([^)]*\)\s*\{([^}]*)\}/)
-    expect(fill, 'the inner row must fill the wrapper').not.toBeNull()
+    const shared = css.match(/\.col-left \.tab-panel :is\(([\s\S]*?)\)\s*\{([\s\S]*?)\}/)
+    expect(shared, 'the shared header rule must exist').not.toBeNull()
+    expect(shared![2]).toMatch(/height:\s*var\(--header-height\)/)
+    expect(shared![2]).toMatch(/padding-top:\s*0/)
+    expect(shared![2]).toMatch(/padding-bottom:\s*0/)
+
+    const fill = readWebFile('src/components/mail/MailFolderBar.vue').match(
+      /\.mail-bar__top,\s*\.mail-bar__search-row\s*\{([^}]*)\}/,
+    )
+    expect(fill, 'the mail row must fill the wrapper').not.toBeNull()
     expect(fill![1]).toMatch(/flex:\s*1 1 auto/)
+  })
+
+  it('keeps no header on a private row height', () => {
+    // The magic values that used to live in these rules (file toolbar 32,
+    // stats / mail 34, terminal 28) are exactly what made the header change
+    // height between layouts and between a page and its drill-down.
+    const cases: Array<[string, string]> = [
+      ['src/components/file/FileManagerContent.vue', 'dir-toolbar'],
+      ['src/components/stats/StatsTabHost.vue', 'stats-tab-bar'],
+      ['src/components/terminal/TerminalPanelContent.vue', 'terminal-tab-bar'],
+      ['src/components/mail/MailFolderBar.vue', 'mail-bar'],
+      ['src/components/mail/MailReader.vue', 'mail-reader__head'],
+      ['src/components/mail/MailCompose.vue', 'mail-compose__head'],
+    ]
+    for (const [file, cls] of cases) {
+      const decls = headerRule(readWebFile(file), cls)
+      expect(decls, `.${cls} rule must exist in ${file}`).not.toBe('')
+      expect(decls, `.${cls} must use the header token`).toMatch(
+        /height:\s*var\(--header-height\)/,
+      )
+      expect(decls, `.${cls} must not carry a magic height`).not.toMatch(
+        /height:\s*(calc\(|\d)/,
+      )
+    }
   })
 
   it('reserves exactly two button-widths for the controls', () => {

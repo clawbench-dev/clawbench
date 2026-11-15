@@ -1859,6 +1859,17 @@
     .terminal-tab-bar,
     .terminal-empty-header
 ) {
+    /* ONE row height for every panel header, in BOTH layouts. This used to be
+       declared by the wide-screen chrome rule only, so narrow screens fell back
+       to each panel's own value (file toolbar 32, stats / mail tab bar 34,
+       terminal tab bar 28, mail reader / composer ~28): opening a drill-down
+       page visibly changed the header height, and the mail reader was shorter
+       than the list toolbar it was opened from. */
+    height: var(--header-height);
+    /* The row owns its height, so vertical padding would be added on top of it
+       (the mail wrapper rendered 26 + 2 × 4 = 34dp that way). */
+    padding-top: 0;
+    padding-bottom: 0;
     padding-left: var(--panel-header-pad-x);
     padding-right: var(--panel-header-pad-x);
     /* Same surface as the wide-screen chrome rule below. Panels that painted
@@ -1866,12 +1877,18 @@
        (mail, meeting, file toolbar) used to read as a different bar on narrow
        screens; the header is one surface in both layouts. */
     background: var(--bg-secondary);
+    /* Same divider too — terminal / stats painted their own mix of the text
+       colour, which was overridden on wide screens anyway. */
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
 }
 
-/* Wide-screen chrome: one row height and surface, plus room for the two
-   window controls at the right end. The controls sit flush against the panel
-   edge (they are window chrome, not header content), so the reservation is
-   exactly their width plus the gap before them. */
+/* Wide-screen chrome: the two window controls are overlaid on whatever header
+   the current view draws. They sit flush against the panel edge (they are
+   window chrome, not header content), so the only thing left to do here is the
+   reservation — exactly their width plus the gap before them. Height, surface
+   and divider are owned by the shared rule above, so narrow and wide cannot
+   drift apart. */
 .col-left--chrome .tab-panel :is(
     .dir-toolbar,
     .file-header-bar,
@@ -1895,14 +1912,6 @@
     .terminal-tab-bar,
     .terminal-empty-header
 ) {
-    /* One row height everywhere, so the overlay's cells line up with whatever
-       header the current view draws (32 / 28 / 34px rows otherwise). */
-    height: var(--header-height);
-    /* One surface for every header, like the app header above it. Panels used
-       to paint --bg-primary, --bg-secondary or nothing at all, so switching
-       tabs changed the bar's colour. */
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border-color);
     /* Two 26px control cells (flush with the edge) + the gap before them. */
     padding-right: calc(52 * var(--dp) + var(--space-2));
 }
@@ -1915,19 +1924,4 @@
     flex: 0 0 auto;
     align-self: center;
     color: var(--text-muted);
-}
-
-/* The mail bar is a wrapper with 4px vertical padding around its row; left as
-   is it renders 44px tall (the extra 8px showed up as a taller header than
-   every other panel). The wrapper owns the row height, its single visible
-   child fills it, and the vertical padding goes away. The two mail sub-views
-   carry the same 4px padding on their own row, so they get the same reset. */
-.col-left--chrome .tab-panel :is(.mail-bar, .mail-reader__head, .mail-compose__head) {
-    padding-top: 0;
-    padding-bottom: 0;
-}
-
-.col-left--chrome .tab-panel .mail-bar > :is(.mail-bar__top, .mail-bar__search-row) {
-    flex: 1 1 auto;
-    min-height: 0;
 }

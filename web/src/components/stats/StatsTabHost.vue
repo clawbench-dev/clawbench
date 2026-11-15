@@ -13,7 +13,7 @@
            row overflow its box (which painted the last tab on top of the
            refresh button and under the panel's window controls). Touch pans
            natively; a mouse drags and the wheel scrolls sideways, because the
-           scrollbar is hidden — it would be taller than the 34px row. -->
+           scrollbar is hidden — it would be taller than the 36px row. -->
       <div
         ref="tabStripRef"
         class="stats-tab-list"
@@ -142,7 +142,7 @@ watch(section, (next) => {
 // under the panel's window controls. The strip now clips at its own edge and
 // scrolls: touch pans natively, the mouse drags (attachDragScroll) and the
 // wheel scrolls sideways — the scrollbar stays hidden because it is taller
-// than the 34px row.
+// than the 36px row.
 const tabStripRef = ref<HTMLElement | null>(null)
 const tabStripOverflow = ref(false)
 let stopTabDragScroll: (() => void) | null = null
@@ -250,7 +250,10 @@ function onRefresh() {
 .stats-tab-bar {
   display: flex;
   align-items: stretch;
-  height: calc(34 * var(--dp));
+  /* Panel-header row height, same token as every other page (the shared
+     header rule enforces it in both layouts; declared here so the bar still
+     has a definite height on its own). */
+  height: var(--header-height);
   flex-shrink: 0;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
@@ -275,7 +278,7 @@ function onRefresh() {
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
-  /* Hidden scrollbar: it would be taller than the 34px row, and a visible bar
+  /* Hidden scrollbar: it would be taller than the 36px row, and a visible bar
      under the labels reads as a second border. */
   scrollbar-width: none;
 }
@@ -343,7 +346,7 @@ function onRefresh() {
   flex-shrink: 0;
 }
 /* Colour and hover come from the shared ActionBar language; the size stays 28
-   because this bar is 34 tall and a 26 button would float inside it. */
+   because this bar is 36 tall and a 26 button would float inside it. */
 .stats-tab-refresh {
   width: calc(28 * var(--dp));
   height: calc(28 * var(--dp));

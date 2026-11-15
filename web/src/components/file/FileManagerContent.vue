@@ -3074,10 +3074,12 @@ function scrollSelectedIntoView(path) {
     align-items: center;
     min-width: 0;
     background: transparent;
-    /* Height comes from the shared token, not from the tallest child: the browse
-       toolbar and the multi-select toolbar swap in this slot, and a row sized by
-       its content shrank by 8px the moment multi-select opened. */
-    height: var(--toolbar-row-height);
+    /* Panel-header row height (same token as every other page, enforced by the
+       shared rule in components.css), not `--toolbar-row-height`: this slot IS
+       the page header, and the browse / multi-select toolbars swap inside it.
+       The row must not size to its content either — it shrank by 8px the
+       moment multi-select opened. */
+    height: var(--header-height);
     padding: 0 var(--space-4);
     /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
 }

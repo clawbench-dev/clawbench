@@ -360,16 +360,23 @@ function onSearchInput(value: string): void {
 .mail-bar {
   display: flex;
   flex-direction: column;
-  padding: var(--space-2, 4px) var(--space-3, 6px);
+  /* One row, same geometry as the reader / composer heads. The shared
+     panel-header rule also pins height and strips vertical padding, so the
+     wrapper cannot be taller than the row it contains (it used to be
+     26 + 2 × 4 = 34dp on narrow screens). */
+  height: var(--header-height);
+  padding: 0 var(--space-3, 6px);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 /* Both states are one row of the same height, so swapping the toolbar for the
-   search field does not move the list below. */
+   search field does not move the list below. The row fills the wrapper's
+   header height. */
 .mail-bar__top,
 .mail-bar__search-row {
   display: flex;
   align-items: center;
+  flex: 1 1 auto;
   min-height: calc(26 * var(--dp));
   gap: var(--space-4);
 }
