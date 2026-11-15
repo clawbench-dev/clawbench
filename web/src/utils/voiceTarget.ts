@@ -165,9 +165,15 @@ function clamp(value: number, max: number): number {
  */
 export function createVoiceTarget(el: Element | null): VoiceTarget | null {
   if (!el) return null
-  // Opt-out for widgets that own their keyboard handling (terminal, canvases
-  // pretending to be inputs, …).
+  // Opt-out for widgets that own their keyboard handling (canvases pretending
+  // to be inputs, command boxes whose content is not prose, …).
   if (el.closest('[data-voice-ignore]')) return null
+  // The terminal is such a widget: xterm keeps focus on a hidden textarea and
+  // consumes function keys itself, and what goes into a shell prompt is a
+  // command, not prose. Checked here rather than in `findVoiceTarget` alone so
+  // the touch mic button — which resolves the focused element directly — obeys
+  // the same rule; it used to float over the terminal and dictate into it.
+  if (el.closest('.xterm')) return null
 
   let anchor: HTMLElement
   let host: VoiceTargetHost
@@ -205,8 +211,6 @@ export function createVoiceTarget(el: Element | null): VoiceTarget | null {
 export function findVoiceTarget(doc: Document = document): VoiceTarget | null {
   const active = doc.activeElement
   if (!active || active === doc.body) return null
-  // xterm keeps focus on a hidden textarea and consumes function keys itself.
-  if (active.closest('.xterm')) return null
   return createVoiceTarget(active)
 }
 

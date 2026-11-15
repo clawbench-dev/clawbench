@@ -78,6 +78,37 @@ describe('VoiceOverlay', () => {
     await vi.waitFor(() => expect(document.querySelector('.voice-fab')).not.toBeNull())
   })
 
+  it('keeps the touch mic button off the terminal', async () => {
+    _setPlatformForTest({ isTouchPrimary: true })
+    serverConfig.value = { stt: { provider: 'vllm' } }
+    mountOverlay()
+
+    // xterm focuses a hidden textarea; dictating there would type a spoken
+    // sentence into a shell prompt.
+    const term = document.createElement('div')
+    term.className = 'xterm'
+    const hidden = document.createElement('textarea')
+    term.appendChild(hidden)
+    document.body.appendChild(term)
+    hidden.focus()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(document.querySelector('.voice-fab')).toBeNull()
+  })
+
+  it('keeps the touch mic button off fields that opt out (terminal command box)', async () => {
+    _setPlatformForTest({ isTouchPrimary: true })
+    serverConfig.value = { stt: { provider: 'vllm' } }
+    mountOverlay()
+
+    const opted = document.createElement('textarea')
+    opted.value = 'git status'
+    opted.setAttribute('data-voice-ignore', '')
+    document.body.appendChild(opted)
+    opted.focus()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(document.querySelector('.voice-fab')).toBeNull()
+  })
+
   it('writes into whichever field holds the caret when F9 is released', async () => {
     mountOverlay()
     const el = field('帮我', 2)

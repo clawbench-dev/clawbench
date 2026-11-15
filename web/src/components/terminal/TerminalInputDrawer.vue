@@ -15,10 +15,14 @@
     </template>
 
     <div class="ti-content">
+      <!-- data-voice-ignore: this box takes a shell command, not prose.
+           Dictation here could only produce something that runs nothing, and
+           the floating mic button would sit on top of the drawer. -->
       <textarea
         ref="textareaRef"
         v-model="text"
         class="ti-textarea"
+        data-voice-ignore
         :placeholder="t('terminal.inputPlaceholder')"
         rows="8"
         @keydown.enter.exact.prevent="doInput"

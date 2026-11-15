@@ -114,6 +114,11 @@ describe('voiceTarget', () => {
     document.body.appendChild(term)
     inner.focus()
     expect(findVoiceTarget()).toBeNull()
+    // The touch mic button resolves the focused element directly instead of
+    // going through `findVoiceTarget`, so the terminal has to be refused here
+    // too — otherwise tapping the terminal pops a mic that dictates into the
+    // shell prompt.
+    expect(createVoiceTarget(inner)).toBeNull()
   })
 
   it('refuses anything marked data-voice-ignore', () => {

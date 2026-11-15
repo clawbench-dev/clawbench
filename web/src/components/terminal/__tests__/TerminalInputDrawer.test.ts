@@ -3,6 +3,7 @@ import { mount, VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import TerminalInputDrawer from '@/components/terminal/TerminalInputDrawer.vue'
+import { createVoiceTarget } from '@/utils/voiceTarget'
 
 // ── Mocks ────────────────────────────────────────────────────
 const { mockReadClipboardText, mockToastShow } = vi.hoisted(() => ({
@@ -100,6 +101,17 @@ describe('TerminalInputDrawer', () => {
       await nextTick()
       expect($('.ti-btn-fill')).toBeTruthy()
       expect($('.ti-btn-send')).toBeTruthy()
+    })
+
+    it('offers no dictation: the box takes a command, not prose', async () => {
+      mountDrawer()
+      await nextTick()
+      const box = $('textarea.ti-textarea')!
+      box.focus()
+      // Voice input is global (mic button on touch, F9 on desktop); a shell
+      // command dictated out loud runs nothing, so this field must not be a
+      // dictation target.
+      expect(createVoiceTarget(box)).toBeNull()
     })
   })
 
