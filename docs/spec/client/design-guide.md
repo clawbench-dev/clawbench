@@ -50,6 +50,8 @@
 
 组件里 `import '@/assets/x.css'` 或 `@import`，**不加 scoped**，所以同样是全局作用域。放的是**成组的基础设施样式**：`modal-card.css`、`modal-footer-btn.css`（`.fbtn`）、`meeting-form.css`（会议表单原语：分组标题 / 输入框 / 提示行 / 勾选行，创建页与会中会议管理共用）、`refresh-spin.css`、`search-bar.css`、`theme-picker.css`、`resize-divider.css`、`code-link-preview.css` 等。
 
+**`dock.css`**（Dock 按钮 `.dock-btn` / 角标 `.dock-badge*` / 溢出菜单行 `.dock-overflow-*`）也在这里，而不是留在 App.vue 的 scoped 块里：Dock 按钮已经抽成 `components/dock/DockTabButton.vue`，scoped 规则**只能到子组件的根元素**，图标与角标在它内部会静默丢样式。状态类（`has-unread` / `has-running` / `just-completed`）由按钮按插件自己声明的 `appearance` 谓词挂上，样式仍留在本文件。
+
 判断标准：这套样式是**一个原语**（按钮语言、弹窗外壳、刷新动效），且被多个组件用 → 放这里。
 
 ### 第三层：SFC `<style scoped>` — 组件私有
@@ -779,9 +781,11 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 ### 加一个 dock tab
 
-- [ ] `dockTabs.ts`（union + `DOCK_TABS`，**保持零 import**）
-- [ ] `dockTabMeta.ts` 加图标
-- [ ] 深链接：模块级 pending ref + `watch([pending, active])`
+- [ ] `web/src/plugins/<id>/plugin.ts`（清单 + 运行时资源；**不能** import 自己的面板）
+- [ ] `dockTabs.ts` 的 `DOCK_TAB_ORDER` 加一行 id（**保持零 import**；顺序是产品决策，手写）
+- [ ] 按钮外观要新状态 → 加 `appearance` 谓词，样式写 `assets/dock.css`，**不要**在 App.vue 里给具体插件加分支
+- [ ] 深链接：在 `plugin.ts` 的 `deeplinks` 里声明，用 `ctx` 的导航原语（`switchTab` / `hotSwitchProject` / `tabBlocked`），不要在 App.vue 写 handler
+- [ ] 完整字段与验证清单见 [`docs/plugin-dev/README.md`](../../plugin-dev/README.md)
 
 ### 加一个面板 / 面板里的新视图
 

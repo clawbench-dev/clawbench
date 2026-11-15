@@ -73,34 +73,31 @@ export type DockGroup = 'workspace' | 'project' | 'personal' | 'system'
 export type DockCapability = 'terminal' | 'portForward'
 
 /**
- * A server-side master switch. Turning one of these off stops the server's
- * background work as well as hiding the tab, so the manager's switch writes
- * the server config rather than a per-device preference.
- */
-export type DockFeature =
-  | 'forge.enabled'
-  | 'mail.enabled'
-  | 'terminal.enabled'
-  | 'kb.enabled'
-  | 'tasks.enabled'
-  | 'share.enabled'
-
-/**
  * Every server master switch a dock plugin may gate on.
  *
  * Declared here (not only in the manifests) so the preset rules in
  * `useDockPlugins` — a leaf module — can say "switch everything off" without
  * importing the plugin graph. `dockPluginManifest.test.ts` asserts this list
  * equals the set the manifests actually declare.
+ *
+ * The TYPE is derived from this array, so adding a switch is one line here —
+ * not the two hand-maintained lists that used to drift apart.
  */
-export const DOCK_FEATURES: readonly DockFeature[] = [
+export const DOCK_FEATURES = [
   'forge.enabled',
   'mail.enabled',
   'terminal.enabled',
   'kb.enabled',
   'tasks.enabled',
   'share.enabled',
-]
+] as const
+
+/**
+ * A server-side master switch. Turning one of these off stops the server's
+ * background work as well as hiding the tab, so the manager's switch writes
+ * the server config rather than a per-device preference.
+ */
+export type DockFeature = (typeof DOCK_FEATURES)[number]
 
 /**
  * The assembled view of a dock tab: manifest fields declared by the plugin,
