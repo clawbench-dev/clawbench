@@ -147,6 +147,19 @@ describe('DataTable 单元格边框（不许叠成 2px）', () => {
     }
   })
 
+  it('表头栏与工具条也画左右两条竖线（否则竖线到工具条就断了）', () => {
+    // 网格的第一列有 border-left、最后一格有 border-right，上方两条栏
+    // （.dt-head / .dt-bar）若不画，这两条竖线在工具条处中断。
+    for (const selector of ['\\.dt-head', '\\.dt-bar']) {
+      expect(dataTableSrc, `${selector} 必须保留 border-left`).toMatch(
+        new RegExp(`${selector}\\s*\\{[^}]*border-left:\\s*1px solid var\\(--border-color\\)`),
+      )
+      expect(dataTableSrc, `${selector} 必须保留 border-right`).toMatch(
+        new RegExp(`${selector}\\s*\\{[^}]*border-right:\\s*1px solid var\\(--border-color\\)`),
+      )
+    }
+  })
+
   it('字号挂在 `.dt .dt-grid` 上（否则会被 .markdown-body table 抢走）', () => {
     expect(decl(ruleFor('.dt .dt-grid'), 'font-size')).toBe('var(--font-size-sm)')
   })
