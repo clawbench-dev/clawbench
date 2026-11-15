@@ -307,8 +307,8 @@ func TestReplayFilter_MultiRequestIDTurn_LiveTurnUnaffected(t *testing.T) {
 	// Turn A observed two ids (via the production accumulation path), then
 	// completed with the first one as its canonical id.
 	conn.resetTurnRequestIDs()
-	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A1"}})
-	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A2"}})
+	conn.mergeMetaExtraction(&MetaExtraction{Trace: &MetaTrace{RequestID: "rid-A1"}})
+	conn.mergeMetaExtraction(&MetaExtraction{Trace: &MetaTrace{RequestID: "rid-A2"}})
 	conn.setLastCompletedRequestID("rid-A1")
 
 	conn.resetTurnRequestIDs()
@@ -334,13 +334,13 @@ func TestReplayFilter_TurnRequestIDsDoNotAccumulateAcrossTurns(t *testing.T) {
 
 	// Turn A.
 	conn.resetTurnRequestIDs()
-	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A"}})
+	conn.mergeMetaExtraction(&MetaExtraction{Trace: &MetaTrace{RequestID: "rid-A"}})
 	conn.setLastCompletedRequestID("rid-A")
 	assert.True(t, conn.isCompletedTurnRequestID("rid-A"))
 
 	// Turn B completes with only its own id.
 	conn.resetTurnRequestIDs()
-	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-B"}})
+	conn.mergeMetaExtraction(&MetaExtraction{Trace: &MetaTrace{RequestID: "rid-B"}})
 	conn.setLastCompletedRequestID("rid-B")
 
 	assert.True(t, conn.isCompletedTurnRequestID("rid-B"), "turn B's id is the current baseline")
@@ -362,12 +362,12 @@ func TestReplayFilter_CancelledTurnIDsDoNotPolluteNextBaseline(t *testing.T) {
 	// Turn A is cancelled mid-stream: ids are observed, then Prompt returns on
 	// the cancel path without ever calling setLastCompletedRequestID.
 	conn.resetTurnRequestIDs()
-	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A1"}})
-	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A2"}})
+	conn.mergeMetaExtraction(&MetaExtraction{Trace: &MetaTrace{RequestID: "rid-A1"}})
+	conn.mergeMetaExtraction(&MetaExtraction{Trace: &MetaTrace{RequestID: "rid-A2"}})
 
 	// Turn B starts — the per-Prompt reset runs here — and completes normally.
 	conn.resetTurnRequestIDs()
-	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-B1"}})
+	conn.mergeMetaExtraction(&MetaExtraction{Trace: &MetaTrace{RequestID: "rid-B1"}})
 	conn.setLastCompletedRequestID("rid-B1")
 
 	assert.True(t, conn.isCompletedTurnRequestID("rid-B1"))
@@ -382,8 +382,8 @@ func TestReplayFilter_CancelledTurnIDsDoNotPolluteNextBaseline(t *testing.T) {
 func TestReplayFilter_RidlessTurnKeepsBaselineSet(t *testing.T) {
 	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
 	conn.resetTurnRequestIDs()
-	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A1"}})
-	conn.mergeMetaExtraction(&metaExtraction{Trace: &metaTrace{RequestID: "rid-A2"}})
+	conn.mergeMetaExtraction(&MetaExtraction{Trace: &MetaTrace{RequestID: "rid-A1"}})
+	conn.mergeMetaExtraction(&MetaExtraction{Trace: &MetaTrace{RequestID: "rid-A2"}})
 	conn.setLastCompletedRequestID("rid-A1")
 
 	conn.resetTurnRequestIDs()

@@ -1,9 +1,11 @@
-package ai
+package codebuddy
 
 import (
 	"log/slog"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/ai"
 )
 
 // ---------------------------------------------------------------------------
@@ -65,7 +67,7 @@ func codebuddyTaskStatusToPlan(status string) string {
 //
 // Returns (nil, false) when no task snapshot can be located — the caller must
 // not emit a plan_update in that case.
-func parseCodeBuddyTaskMetaTodos(meta map[string]any) ([]PlanEntry, bool) {
+func parseCodeBuddyTaskMetaTodos(meta map[string]any) ([]ai.PlanEntry, bool) {
 	if len(meta) == 0 {
 		return nil, false
 	}
@@ -86,7 +88,7 @@ func parseCodeBuddyTaskMetaTodos(meta map[string]any) ([]PlanEntry, bool) {
 		return nil, false
 	}
 
-	entries := make([]PlanEntry, 0, len(items))
+	entries := make([]ai.PlanEntry, 0, len(items))
 	for _, it := range items {
 		m, ok := it.(map[string]any)
 		if !ok {
@@ -101,7 +103,7 @@ func parseCodeBuddyTaskMetaTodos(meta map[string]any) ([]PlanEntry, bool) {
 			continue
 		}
 		status, _ := m["status"].(string)
-		entries = append(entries, PlanEntry{
+		entries = append(entries, ai.PlanEntry{
 			Content:  content,
 			Priority: "medium", // CodeBuddy tasks have no priority field
 			Status:   codebuddyTaskStatusToPlan(status),
@@ -121,7 +123,7 @@ func parseCodeBuddyTaskMetaTodos(meta map[string]any) ([]PlanEntry, bool) {
 // The bridge only calls this for completed updates, so the title fallback
 // mirrors the parse function's non-done path (tool.Name set from _meta or title).
 func codebuddyToolCallNameFromUpdate(tcu acp.SessionToolCallUpdate) string {
-	if name := extractMetaToolNameFlat(tcu.Meta); name != "" {
+	if name := ai.ExtractMetaToolNameFlat(tcu.Meta); name != "" {
 		return name
 	}
 	if tcu.Title != nil && *tcu.Title != "" {
@@ -129,12 +131,12 @@ func codebuddyToolCallNameFromUpdate(tcu acp.SessionToolCallUpdate) string {
 		if tcu.Kind != nil {
 			kind = *tcu.Kind
 		}
-		return extractToolName(*tcu.Title, kind, "codebuddy", string(tcu.ToolCallId))
+		return ai.ExtractToolName(*tcu.Title, kind, "codebuddy", string(tcu.ToolCallId))
 	}
 	return ""
 }
 
-// bridgeCodeBuddyPlanFromToolUpdate synthesizes a plan_update StreamEvent (and
+// BridgePlanFromToolUpdate synthesizes a plan_update StreamEvent (and
 // caches the plan) from a terminal CodeBuddy Task* tool result. It is a no-op
 // unless the update is a completed TaskCreate/TaskUpdate/TaskList result whose
 // _meta carries a full todos snapshot.
@@ -149,7 +151,7 @@ func codebuddyToolCallNameFromUpdate(tcu acp.SessionToolCallUpdate) string {
 // mapACPSessionUpdate), so acquiring c.mu here cannot deadlock.
 //
 // Returns the number of plan_update events forwarded (0 or 1).
-func bridgeCodeBuddyPlanFromToolUpdate(ch chan<- StreamEvent, conn *ACPConn, tcu acp.SessionToolCallUpdate) int {
+func BridgePlanFromToolUpdate(conn *ai.ACPConn, ch chan<- ai.StreamEvent, tcu acp.SessionToolCallUpdate) int {
 	if tcu.Status == nil || *tcu.Status != acp.ToolCallStatusCompleted {
 		return 0
 	}
@@ -162,8 +164,8 @@ func bridgeCodeBuddyPlanFromToolUpdate(ch chan<- StreamEvent, conn *ACPConn, tcu
 		slog.Debug("codebuddy plan bridge: no todos snapshot in _meta", "tool", name, "tool_call_id", tcu.ToolCallId)
 		return 0
 	}
-	plan := &PlanState{Entries: entries}
-	forwardACPEvent(ch, StreamEvent{Type: "plan_update", Plan: plan})
+	plan := &ai.PlanState{Entries: entries}
+	ai.ForwardACPEvent(ch, ai.StreamEvent{Type: "plan_update", Plan: plan})
 	if conn != nil {
 		conn.SetCachedPlanState(plan)
 	}

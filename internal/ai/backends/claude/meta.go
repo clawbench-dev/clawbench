@@ -1,4 +1,23 @@
-package ai
+package claude
+
+// ---------------------------------------------------------------------------
+// Claude / Codex ACP _meta adapter
+// ---------------------------------------------------------------------------
+//
+// Claude (`npx @agentclientprotocol/claude-agent-acp`) and Codex
+// (`npx @agentclientprotocol/codex-acp`) share the same bridge protocol stack
+// and report per-model token counts in the PromptResponse._meta:
+//
+//	_meta.quota.token_count = {
+//	  cachedInputTokens, cachedWriteTokens, inputTokens, outputTokens,
+//	  reasoningOutputTokens, totalTokens
+//	}
+//	_meta.quota.model_usage = [ { model: "...", token_count: {...} } ]
+//
+// Codex reuses this package's ExtractMeta for the same reason qoder/qodercn
+// reuse its tool parser: one bridge stack, one parser.
+
+import "clawbench/internal/ai"
 
 // ---------------------------------------------------------------------------
 // Claude / Codex ACP _meta adapter
@@ -24,7 +43,7 @@ const (
 	metaKeyModelUsage = "model_usage"
 )
 
-// tokenUsageFromClaudeTokenCount builds a metaTokenUsage from a Claude/Codex
+// tokenUsageFromClaudeTokenCount builds a MetaTokenUsage from a Claude/Codex
 // _meta.quota.token_count map (shared aggregate and per-model breakdown shape).
 //
 // Both bridges report the cache counters OUTSIDE inputTokens: their totals
@@ -45,14 +64,14 @@ const (
 // TotalTokens is unchanged (it already equals the normalized input + output).
 // The identity is checked before applying, so an agent that reports cache
 // INSIDE input (or omits the counters) is left alone rather than double-counted.
-func tokenUsageFromClaudeTokenCount(tc map[string]any) *metaTokenUsage {
-	u := &metaTokenUsage{
-		InputTokens:       metaInt(tc["inputTokens"]),
-		OutputTokens:      metaInt(tc["outputTokens"]),
-		TotalTokens:       metaInt(tc["totalTokens"]),
-		CachedReadTokens:  metaInt(tc["cachedInputTokens"]),
-		CachedWriteTokens: metaInt(tc["cachedWriteTokens"]),
-		ThoughtTokens:     metaInt(tc["reasoningOutputTokens"]),
+func tokenUsageFromClaudeTokenCount(tc map[string]any) *ai.MetaTokenUsage {
+	u := &ai.MetaTokenUsage{
+		InputTokens:       ai.MetaInt(tc["inputTokens"]),
+		OutputTokens:      ai.MetaInt(tc["outputTokens"]),
+		TotalTokens:       ai.MetaInt(tc["totalTokens"]),
+		CachedReadTokens:  ai.MetaInt(tc["cachedInputTokens"]),
+		CachedWriteTokens: ai.MetaInt(tc["cachedWriteTokens"]),
+		ThoughtTokens:     ai.MetaInt(tc["reasoningOutputTokens"]),
 	}
 	// Cache split + input normalization, only when the counters are internally
 	// consistent. A total of 0 means the agent reported no aggregate snapshot
@@ -70,8 +89,8 @@ func tokenUsageFromClaudeTokenCount(tc map[string]any) *metaTokenUsage {
 	return u
 }
 
-// extractClaudeMeta parses a Claude/Codex _meta payload.
-func extractClaudeMeta(meta map[string]any) *metaExtraction {
+// ExtractMeta parses a Claude/Codex _meta payload.
+func ExtractMeta(meta map[string]any) *ai.MetaExtraction {
 	if len(meta) == 0 {
 		return nil
 	}
@@ -79,7 +98,7 @@ func extractClaudeMeta(meta map[string]any) *metaExtraction {
 	if !ok {
 		return nil
 	}
-	ext := &metaExtraction{}
+	ext := &ai.MetaExtraction{}
 
 	// Aggregate per-model token counts.
 	// _meta.quota.token_count = { cachedInputTokens, cachedWriteTokens,
@@ -107,7 +126,7 @@ func extractClaudeMeta(meta map[string]any) *metaExtraction {
 		if trace := claudeModelUsageTrace(mus); trace.HasData() {
 			ext.Trace = trace
 		}
-		if ext.Usage == nil || !ext.Usage.hasTokenCounters() {
+		if ext.Usage == nil || !ext.Usage.HasTokenCounters() {
 			ext.Usage = claudeModelUsageFallback(mus)
 		}
 	}
@@ -120,14 +139,14 @@ func extractClaudeMeta(meta map[string]any) *metaExtraction {
 
 // claudeModelUsageTrace extracts the response model id from a model_usage
 // breakdown (the first entry naming a model).
-func claudeModelUsageTrace(mus []any) *metaTrace {
-	trace := &metaTrace{}
+func claudeModelUsageTrace(mus []any) *ai.MetaTrace {
+	trace := &ai.MetaTrace{}
 	for _, m := range mus {
 		entry, ok := m.(map[string]any)
 		if !ok {
 			continue
 		}
-		if modelName := metaString(entry["model"]); modelName != "" && trace.ResponseModelID == "" {
+		if modelName := ai.MetaString(entry["model"]); modelName != "" && trace.ResponseModelID == "" {
 			trace.ResponseModelID = modelName
 		}
 	}
@@ -136,14 +155,14 @@ func claudeModelUsageTrace(mus []any) *metaTrace {
 
 // claudeModelUsageFallback returns the FIRST per-model token_count snapshot
 // when no top-level aggregate was present. Single entry — never max-stitched.
-func claudeModelUsageFallback(mus []any) *metaTokenUsage {
+func claudeModelUsageFallback(mus []any) *ai.MetaTokenUsage {
 	for _, m := range mus {
 		entry, ok := m.(map[string]any)
 		if !ok {
 			continue
 		}
 		if tc, ok := entry[metaKeyTokenCount].(map[string]any); ok {
-			if u := tokenUsageFromClaudeTokenCount(tc); u != nil && u.hasTokenCounters() {
+			if u := tokenUsageFromClaudeTokenCount(tc); u != nil && u.HasTokenCounters() {
 				return u
 			}
 		}

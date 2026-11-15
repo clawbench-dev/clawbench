@@ -30,7 +30,13 @@ func init() {
 		// Claude can inject a message into the running turn via the ACP
 		// steering extension (_session/steering). It emits no echo boundary, so
 		// the injection MERGES into the running reply (no split).
-		CLI:         &backends.CLIPlugin{NewBackend: newClaudeBackend},
+		CLI: &backends.CLIPlugin{NewBackend: newClaudeBackend},
+		// qoder and qodercn are Claude Code forks and reuse these hooks; they
+		// import this package rather than copying the parsers.
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       ParseACPToolCall,
+			ParseToolCallUpdate: ParseACPToolCallUpdate,
+		},
 		ModelSource: model.PluginSource("claude", discoverClaudeModels),
 		MidTurn:     &midTurnInjector{},
 	})

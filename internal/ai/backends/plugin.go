@@ -37,6 +37,14 @@ type BackendPlugin struct {
 	// sub-packages only register mapping data (tool names, input field remaps).
 	ACP *ACPPlugin
 
+	// Behavior holds the backend's ACP event-mapping hooks (custom tool
+	// parsing, private _meta payloads, plan/team bridges). Every field is
+	// optional: nil falls back to the generic implementation in internal/ai.
+	//
+	// This is behavior, not mapping data, so it sits beside ACP rather than
+	// inside it. Backends that speak plain ACP leave it nil.
+	Behavior *ai.ACPBehavior
+
 	// ModelSource is how this backend enumerates its models (static catalog,
 	// CLI probe, or custom plugin). nil means the backend has no discovery
 	// source of its own.

@@ -3,6 +3,7 @@ package qoder
 import (
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/model"
 )
 
@@ -28,7 +29,14 @@ func init() {
 			// login) — see backends/qodercn.
 			LoginCmd: "qodercli login",
 		},
-		CLI:         &backends.CLIPlugin{NewBackend: newQoderBackend},
+		CLI: &backends.CLIPlugin{NewBackend: newQoderBackend},
+		// Qoder is a Claude Code fork: same ACP tool/meta wire shapes, so the
+		// parsers are imported rather than copied.
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       claude.ParseACPToolCall,
+			ParseToolCallUpdate: claude.ParseACPToolCallUpdate,
+			ExtractMeta:         claude.ExtractMeta,
+		},
 		ModelSource: model.PluginSource("qoder", discoverQoderModels),
 	})
 }

@@ -48,7 +48,11 @@ func init() {
 			InstallCmd:           "npm install -g kimiai-cli",
 			SortOrder:            10,
 		},
-		CLI:         &backends.CLIPlugin{NewBackend: newKimiBackend},
+		CLI: &backends.CLIPlugin{NewBackend: newKimiBackend},
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       parseACPToolCall,
+			ParseToolCallUpdate: parseACPToolCallUpdate,
+		},
 		ModelSource: model.StaticSource("kimi", "kimi", model.KimiCatalog),
 		ACP: &backends.ACPPlugin{
 			ToolCallIDPrefixes: KimiACPTCIDPrefixes,

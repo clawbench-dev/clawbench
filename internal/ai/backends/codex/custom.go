@@ -3,6 +3,7 @@ package codex
 import (
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/model"
 )
 
@@ -27,7 +28,13 @@ func init() {
 		// Codex can inject a message into the running turn via the ACP steering
 		// extension (_session/steering). It emits no echo boundary, so the
 		// injection MERGES into the running reply (no split).
-		CLI:          &backends.CLIPlugin{NewBackend: newCodexBackend},
+		CLI: &backends.CLIPlugin{NewBackend: newCodexBackend},
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       ParseACPToolCall,
+			ParseToolCallUpdate: ParseACPToolCallUpdate,
+			// codex-acp shares claude's _meta.quota shape (same bridge stack).
+			ExtractMeta: claude.ExtractMeta,
+		},
 		ModelSource:  model.PluginSource("codex", discoverCodexModels),
 		ListSessions: listCodexSessionsFromDisk,
 		MidTurn:      &midTurnInjector{},

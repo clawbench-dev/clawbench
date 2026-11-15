@@ -5,6 +5,7 @@ import (
 	"clawbench/internal/ai/backends"
 	"clawbench/internal/ai/backends/opencode"
 	"clawbench/internal/model"
+	acp "github.com/coder/acp-go-sdk"
 )
 
 func init() {
@@ -27,7 +28,15 @@ func init() {
 		ACP: &backends.ACPPlugin{
 			InputRemaps: opencode.OpenCodeACPInputRemaps,
 		},
-		CLI:         &backends.CLIPlugin{NewBackend: newMimoBackend},
+		CLI: &backends.CLIPlugin{NewBackend: newMimoBackend},
+		// MiMo-Code is an OpenCode fork: same ACP wire shapes, shared parsers.
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       opencode.ParseACPToolCall,
+			ParseToolCallUpdate: opencode.ParseACPToolCallUpdate,
+			OnToolCallUpdate: func(conn *ai.ACPConn, ch chan<- ai.StreamEvent, tcu acp.SessionToolCallUpdate) {
+				opencode.BridgePlanFromToolUpdate(conn, ch, tcu)
+			},
+		},
 		ModelSource: model.StaticSource("mimo", "mimo", model.MimoCatalog),
 	})
 }

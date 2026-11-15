@@ -20,11 +20,12 @@ import (
 // the pre-interruption cards to show the member name too.
 //
 // Two candidate causes, and this probe distinguishes them:
-//   A. the spawn frame carries `_meta.memberName` but the mapper drops it, so
-//      the block never learns the name; or
-//   B. the spawn frame carries no `memberName` at all, and only `subagentType`
-//      ("general-purpose") — in which case nothing on the wire can name it and
-//      the name has to come from the team roster join instead.
+//
+//	A. the spawn frame carries `_meta.memberName` but the mapper drops it, so
+//	   the block never learns the name; or
+//	B. the spawn frame carries no `memberName` at all, and only `subagentType`
+//	   ("general-purpose") — in which case nothing on the wire can name it and
+//	   the name has to come from the team roster join instead.
 //
 // Run:
 //

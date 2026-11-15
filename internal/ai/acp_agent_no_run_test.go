@@ -93,8 +93,8 @@ func TestACPConn_TurnOutputCounter(t *testing.T) {
 // a perfectly normal CodeBuddy turn look like it billed nothing.
 func TestPromptResponseTokens_FallsBackToAccumulatedMeta(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "s1")
-	conn.mergeMetaExtraction(&metaExtraction{
-		Usage: &metaTokenUsage{InputTokens: 216509, OutputTokens: 664, TotalTokens: 217173, Present: true},
+	conn.mergeMetaExtraction(&MetaExtraction{
+		Usage: &MetaTokenUsage{InputTokens: 216509, OutputTokens: 664, TotalTokens: 217173, Present: true},
 	})
 
 	resp := acp.PromptResponse{StopReason: acp.StopReasonEndTurn}
@@ -111,8 +111,8 @@ func TestPromptResponseTokens_FallsBackToAccumulatedMeta(t *testing.T) {
 // accumulator (e.g. an agent that reports both).
 func TestPromptResponseTokens_PrefersLargerSource(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "a1", Backend: "acp-stdio"}, "s1")
-	conn.mergeMetaExtraction(&metaExtraction{
-		Usage: &metaTokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12, Present: true},
+	conn.mergeMetaExtraction(&MetaExtraction{
+		Usage: &MetaTokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12, Present: true},
 	})
 
 	resp := acp.PromptResponse{
@@ -137,8 +137,8 @@ func TestPromptResponseTokens_EmptyWhenNothingReported(t *testing.T) {
 // consumes it afterwards to persist the turn's metadata.
 func TestPeekMetaAccumUsage_DoesNotConsume(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "s1")
-	conn.mergeMetaExtraction(&metaExtraction{
-		Usage: &metaTokenUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, Present: true},
+	conn.mergeMetaExtraction(&MetaExtraction{
+		Usage: &MetaTokenUsage{InputTokens: 100, OutputTokens: 5, TotalTokens: 105, Present: true},
 	})
 
 	in, out, total := conn.peekMetaAccumUsage()

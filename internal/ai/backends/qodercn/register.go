@@ -3,6 +3,7 @@ package qodercn
 import (
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/ai/backends/qoder"
 	"clawbench/internal/model"
 )
@@ -52,6 +53,12 @@ func init() {
 			AutoLoadsNativeSkills: true,
 		},
 		CLI: &backends.CLIPlugin{NewBackend: newQoderCNBackend},
+		// Same protocol family as qoder (and claude): shared parsers.
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       claude.ParseACPToolCall,
+			ParseToolCallUpdate: claude.ParseACPToolCallUpdate,
+			ExtractMeta:         claude.ExtractMeta,
+		},
 		ModelSource: model.PluginSource("qodercn", func() ([]model.AgentModel, string) {
 			return qoder.DiscoverModelsIn("qodercn", QoderCNConfigRoot)
 		}),

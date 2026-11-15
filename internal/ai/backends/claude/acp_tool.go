@@ -1,46 +1,48 @@
-package ai
+package claude
 
 import (
 	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/ai"
 )
 
-// parseClaudeACPToolCall extracts a ToolCall from a Claude/Qoder ACP ToolCall event.
+// ParseACPToolCall extracts a ToolCall from a Claude/Qoder ACP ToolCall event.
 // Claude ACP specifics:
-//   - Tool name from _meta.claudeCode.toolName (preferred), fallback to extractToolName
+//   - Tool name from _meta.claudeCode.toolName (preferred), fallback to ExtractToolName
 //   - rawInput already uses snake_case field names (file_path, old_string, new_string)
 //   - Content may include diff-type blocks
 //   - rawOutput is plain text string
 //   - _meta.claudeCode.toolResponse contains stdout/stderr/interrupted on completed
-func parseClaudeACPToolCall(tc acp.SessionUpdateToolCall) *ToolCall {
+func ParseACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
 	// Extract tool name: prefer _meta.claudeCode.toolName
-	name := extractMetaToolName(tc.Meta)
+	name := ai.ExtractMetaToolName(tc.Meta)
 	if name == "" {
-		name = extractToolName(tc.Title, tc.Kind, "claude", string(tc.ToolCallId))
+		name = ai.ExtractToolName(tc.Title, tc.Kind, "claude", string(tc.ToolCallId))
 	}
 
-	tool := &ToolCall{
+	tool := &ai.ToolCall{
 		Name: name,
 		ID:   string(tc.ToolCallId),
 		Done: false,
 	}
 
 	// Claude ACP rawInput already uses snake_case, defaultMappings sufficient
-	resolveACPToolInput(tc, tool, getRemaps("claude_acp"))
+	ai.ResolveACPToolInput(tc, tool, ai.GetRemaps("claude_acp"))
 	return tool
 }
 
-// parseClaudeACPToolCallUpdate extracts a ToolCall from a Claude/Qoder ACP ToolCallUpdate.
-func parseClaudeACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
-	tool := &ToolCall{
+// ParseACPToolCallUpdate extracts a ToolCall from a Claude/Qoder ACP ToolCallUpdate.
+func ParseACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
+	tool := &ai.ToolCall{
 		ID: string(tcu.ToolCallId),
 	}
 
-	mapToolCallStatus(tcu.Status, tool)
+	ai.MapToolCallStatus(tcu.Status, tool)
 
 	// Extract tool name: prefer _meta.claudeCode.toolName
-	name := extractMetaToolName(tcu.Meta)
+	name := ai.ExtractMetaToolName(tcu.Meta)
 	if name != "" {
 		tool.Name = name
 	} else if !tool.Done && tcu.Title != nil && *tcu.Title != "" {
@@ -50,13 +52,13 @@ func parseClaudeACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
 			if tcu.Kind != nil {
 				kind = *tcu.Kind
 			}
-			tool.Name = extractToolName(*tcu.Title, kind, "claude", string(tcu.ToolCallId))
+			tool.Name = ai.ExtractToolName(*tcu.Title, kind, "claude", string(tcu.ToolCallId))
 		}
 	}
 
-	mapToolCallInput(tcu, tool, "claude")
+	ai.MapToolCallInput(tcu, tool, "claude")
 	if tool.Done {
-		mapToolCallOutput(tcu, tool)
+		ai.MapToolCallOutput(tcu, tool)
 	}
 
 	return tool

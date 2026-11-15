@@ -27,9 +27,9 @@ import (
 // shape, an unknown backend falls through to a generic recursive scan, and
 // callers merge whatever is found into the canonical UsageState / Metadata.
 
-// metaTokenUsage is the canonical, agent-agnostic token/cost detail extracted
+// MetaTokenUsage is the canonical, agent-agnostic token/cost detail extracted
 // from a _meta payload.
-type metaTokenUsage struct {
+type MetaTokenUsage struct {
 	// Token counters (0 = not reported by this agent).
 	InputTokens       int
 	OutputTokens      int
@@ -57,7 +57,7 @@ type metaTokenUsage struct {
 
 // addFrom sums a sibling call's counters into u. Used by the turn accumulator
 // for agents that report per-call usage (see Accumulate).
-func (u *metaTokenUsage) addFrom(o *metaTokenUsage) {
+func (u *MetaTokenUsage) addFrom(o *MetaTokenUsage) {
 	if u == nil || o == nil {
 		return
 	}
@@ -77,8 +77,8 @@ func (u *metaTokenUsage) addFrom(o *metaTokenUsage) {
 	u.Accumulate = false
 }
 
-// metaTrace is the canonical trace/identity detail extracted from a _meta payload.
-type metaTrace struct {
+// MetaTrace is the canonical trace/identity detail extracted from a _meta payload.
+type MetaTrace struct {
 	RequestID        string
 	TraceID          string
 	TraceParent      string
@@ -93,25 +93,25 @@ type metaTrace struct {
 }
 
 // HasData reports whether any trace field was found.
-func (t *metaTrace) HasData() bool {
+func (t *MetaTrace) HasData() bool {
 	return t != nil && (t.RequestID != "" || t.TraceID != "" || t.TraceParent != "" ||
 		t.MessageID != "" || t.MessageRequestID != "" || t.RequestModelID != "" ||
 		t.RequestModelName != "" || t.ResponseModelID != "" || t.FinishReason != "" ||
 		t.Outcome != "" || t.AgentPhase != "")
 }
 
-// metaCategoryUsage extracts the context-window breakdown map. Currently only
+// MetaCategoryUsage extracts the context-window breakdown map. Currently only
 // CodeBuddy reports it (_meta.codebuddy.ai/usageByCategory).
-type metaCategoryUsage struct {
+type MetaCategoryUsage struct {
 	Categories map[string]int64
 	Present    bool
 }
 
-// metaExtraction bundles everything extracted from one _meta payload.
-type metaExtraction struct {
-	Usage    *metaTokenUsage
-	Trace    *metaTrace
-	Category *metaCategoryUsage
+// MetaExtraction bundles everything extracted from one _meta payload.
+type MetaExtraction struct {
+	Usage    *MetaTokenUsage
+	Trace    *MetaTrace
+	Category *MetaCategoryUsage
 	// RequestCredits is the agent's own per-request running credit total
 	// (CodeBuddy: _meta["codebuddy.ai/requestCredits"] = {requestId: credit}).
 	//
@@ -131,7 +131,7 @@ type metaExtraction struct {
 }
 
 // HasData reports whether any field was extracted.
-func (e *metaExtraction) HasData() bool {
+func (e *MetaExtraction) HasData() bool {
 	return e != nil && ((e.Usage != nil && e.Usage.Present) || (e.Trace != nil && e.Trace.HasData()) ||
 		(e.Category != nil && e.Category.Present) || len(e.RequestCredits) > 0 || e.CostCredit > 0)
 }
@@ -149,7 +149,7 @@ func (e *metaExtraction) HasData() bool {
 // therefore the most complete figure — and because each one is itself
 // monotonic, max-merge keeps a re-delivered or out-of-order frame from
 // regressing the value.
-func (e *metaExtraction) creditTotal() float64 {
+func (e *MetaExtraction) CreditTotal() float64 {
 	if e == nil {
 		return 0
 	}
@@ -169,24 +169,29 @@ func (e *metaExtraction) creditTotal() float64 {
 
 // traceRequestID returns the trace requestId carried by this extraction, or ""
 // when absent. Used for replay-drop logging.
-func (e *metaExtraction) traceRequestID() string {
+func (e *MetaExtraction) traceRequestID() string {
 	if e == nil || e.Trace == nil {
 		return ""
 	}
 	return e.Trace.RequestID
 }
 
-// extractMetaUsage dispatches _meta parsing to the per-agent adapter.
+// extractMetaUsage dispatches _meta parsing to the backend's registered
+// behavior hook, falling back to the generic recursive scan.
 // backend is the BackendID (e.g. "codebuddy", "claude", "codex", "opencode").
-func extractMetaUsage(backend string, meta map[string]any) *metaExtraction {
-	switch backend {
-	case "codebuddy":
-		return extractCodeBuddyMeta(meta)
-	case "claude", "codex", "qoder", "qodercn":
-		return extractClaudeMeta(meta)
-	default:
-		return extractGenericMeta(meta)
+func extractMetaUsage(backend string, meta map[string]any) *MetaExtraction {
+	if b := acpBehavior(backend); b != nil && b.ExtractMeta != nil {
+		return b.ExtractMeta(meta)
 	}
+	return extractMetaUsageLegacy(backend, meta)
+}
+
+// TODO(phase3): delete once every backend registers ExtractMeta.
+func extractMetaUsageLegacy(backend string, meta map[string]any) *MetaExtraction {
+	if backend == "codebuddy" {
+		return ExtractCodeBuddyMeta(meta)
+	}
+	return extractGenericMeta(meta)
 }
 
 // ---------------------------------------------------------------------------
@@ -241,14 +246,14 @@ func metaMaxInt(base int, vals ...int) int {
 }
 
 // hasTokenCounters reports whether the usage carries real token counters.
-func (u *metaTokenUsage) hasTokenCounters() bool {
+func (u *MetaTokenUsage) HasTokenCounters() bool {
 	return u.InputTokens != 0 || u.OutputTokens != 0 || u.TotalTokens != 0 ||
 		u.CachedReadTokens != 0 || u.CachedWriteTokens != 0 || u.ThoughtTokens != 0 ||
 		u.CacheCreationTokens != 0 || u.CacheHitTokens != 0 || u.CacheMissTokens != 0
 }
 
 // metaMergeTrace overlays src onto dst, filling empty fields.
-func metaMergeTrace(dst *metaTrace, src *metaTrace) {
+func metaMergeTrace(dst *MetaTrace, src *MetaTrace) {
 	if src == nil || dst == nil {
 		return
 	}
@@ -309,14 +314,14 @@ func metaMergeTrace(dst *metaTrace, src *metaTrace) {
 // combined counters taken at different moments into one internally
 // inconsistent row (e.g. a cacheMiss from an early tool call with input from a
 // later one) — which corrupted chat_metadata usage stats.
-func metaMergeExtraction(dst *metaExtraction, src *metaExtraction) {
+func metaMergeExtraction(dst *MetaExtraction, src *MetaExtraction) {
 	if src == nil || dst == nil {
 		return
 	}
-	if src.Usage != nil && src.Usage.hasTokenCounters() {
+	if src.Usage != nil && src.Usage.HasTokenCounters() {
 		if src.Usage.Accumulate {
 			if dst.Usage == nil {
-				dst.Usage = &metaTokenUsage{}
+				dst.Usage = &MetaTokenUsage{}
 			}
 			dst.Usage.addFrom(src.Usage)
 			dst.Usage.Present = true
@@ -327,7 +332,7 @@ func metaMergeExtraction(dst *metaExtraction, src *metaExtraction) {
 	}
 	if src.Trace != nil && src.Trace.HasData() {
 		if dst.Trace == nil {
-			dst.Trace = &metaTrace{}
+			dst.Trace = &MetaTrace{}
 		}
 		metaMergeTrace(dst.Trace, src.Trace)
 	}
@@ -336,7 +341,7 @@ func metaMergeExtraction(dst *metaExtraction, src *metaExtraction) {
 	// usageByCategory on a separate update), so it is independent of the usage
 	// block above.
 	if src.Category != nil && src.Category.Present && len(src.Category.Categories) > 0 {
-		dst.Category = &metaCategoryUsage{Present: true, Categories: src.Category.Categories}
+		dst.Category = &MetaCategoryUsage{Present: true, Categories: src.Category.Categories}
 	}
 	// Per-request credit totals are CUMULATIVE on the agent side (it re-reports
 	// the running total for that requestId on every notification), so merge by
@@ -349,7 +354,7 @@ func metaMergeExtraction(dst *metaExtraction, src *metaExtraction) {
 }
 
 // metaMergeCredit folds src's credit sources into dst. See metaMergeExtraction.
-func metaMergeCredit(dst, src *metaExtraction) {
+func metaMergeCredit(dst, src *MetaExtraction) {
 	if len(src.RequestCredits) > 0 {
 		if dst.RequestCredits == nil {
 			dst.RequestCredits = make(map[string]float64, len(src.RequestCredits))
@@ -387,7 +392,7 @@ func setFloatIfNonZero(dst *float64, v float64) {
 
 // applyMetaExtractionToUsageState overlays a parsed _meta extraction onto a
 // UsageState (used for the usage_update event payload and cached state).
-func applyMetaExtractionToUsageState(state *UsageState, ext *metaExtraction) {
+func applyMetaExtractionToUsageState(state *UsageState, ext *MetaExtraction) {
 	if ext == nil || state == nil {
 		return
 	}
@@ -405,7 +410,7 @@ func applyMetaExtractionToUsageState(state *UsageState, ext *metaExtraction) {
 
 // applyMetaExtractionToMetadata overlays a parsed _meta extraction onto a
 // message-level Metadata (used for the metadata event / DB persistence).
-func applyMetaExtractionToMetadata(meta *Metadata, ext *metaExtraction) {
+func applyMetaExtractionToMetadata(meta *Metadata, ext *MetaExtraction) {
 	if ext == nil || meta == nil {
 		return
 	}
@@ -439,11 +444,11 @@ func applyMetaExtractionToMetadata(meta *Metadata, ext *metaExtraction) {
 // the session panel showed the LAST CALL's credit while the ledger stored the
 // turn SUM. The accumulator is cleared at the start of each prompt, so max
 // never leaks across turns.
-func applyCreditTo(dst *float64, ext *metaExtraction) {
+func applyCreditTo(dst *float64, ext *MetaExtraction) {
 	if dst == nil {
 		return
 	}
-	if v := ext.creditTotal(); v > *dst {
+	if v := ext.CreditTotal(); v > *dst {
 		*dst = v
 	}
 }
@@ -455,7 +460,7 @@ func applyCreditTo(dst *float64, ext *metaExtraction) {
 // Credit is deliberately NOT handled here: it has a second source outside the
 // usage block (see applyCreditTo).
 func applyTokenUsageTo(input, output, total, cachedRead, cachedWrite, thought,
-	cacheCreation, cacheHit, cacheMiss *int, u *metaTokenUsage,
+	cacheCreation, cacheHit, cacheMiss *int, u *MetaTokenUsage,
 ) {
 	setIntIfNonZero(input, u.InputTokens)
 	setIntIfNonZero(output, u.OutputTokens)
@@ -470,7 +475,7 @@ func applyTokenUsageTo(input, output, total, cachedRead, cachedWrite, thought,
 
 // applyTraceToMetadata overlays the non-empty trace/identity fields of tr
 // onto a message-level Metadata.
-func applyTraceToMetadata(meta *Metadata, tr *metaTrace) {
+func applyTraceToMetadata(meta *Metadata, tr *MetaTrace) {
 	if tr.RequestID != "" {
 		meta.RequestID = tr.RequestID
 	}

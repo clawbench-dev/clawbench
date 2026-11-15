@@ -300,3 +300,62 @@ func TestOpenCodeTool_AlreadyCanonicalInput(t *testing.T) {
 	assert.Equal(t, "foo", input["old_string"])
 	assert.Equal(t, "bar", input["new_string"])
 }
+
+func TestOpenCodeTool_WithToolNameMap_Hit(t *testing.T) {
+	toolNameMap := map[string]string{
+		"custom_read": "Read",
+		"custom_edit": "Edit",
+	}
+	msg := newOpenCodeMsg("tool_use", OpenCodeToolPart{
+		Type:   "tool",
+		Tool:   "custom_read",
+		CallID: "call_tnm_001",
+		State: &OpenCodeToolState{
+			Status: "completed",
+			Input:  json.RawMessage(`{"filePath":"/tmp/test.go"}`),
+			Output: "ok",
+		},
+	})
+
+	tc := parseOpenCodeToolEvent(msg, toolNameMap, openCodeInputRemaps)
+	assert.NotNil(t, tc)
+	assert.Equal(t, "Read", tc.Name, "toolNameMap should map custom_read → Read")
+}
+
+func TestOpenCodeTool_WithToolNameMap_Miss(t *testing.T) {
+	toolNameMap := map[string]string{
+		"custom_read": "Read",
+	}
+	msg := newOpenCodeMsg("tool_use", OpenCodeToolPart{
+		Type:   "tool",
+		Tool:   "unknown_tool",
+		CallID: "call_tnm_002",
+		State: &OpenCodeToolState{
+			Status: "completed",
+			Input:  json.RawMessage(`{}`),
+			Output: "ok",
+		},
+	})
+
+	tc := parseOpenCodeToolEvent(msg, toolNameMap, openCodeInputRemaps)
+	assert.NotNil(t, tc)
+	// Not in toolNameMap → falls through to normalizeToolName
+	assert.Equal(t, "unknown_tool", tc.Name)
+}
+
+func TestOpenCodeTool_WithToolNameMap_Nil(t *testing.T) {
+	msg := newOpenCodeMsg("tool_use", OpenCodeToolPart{
+		Type:   "tool",
+		Tool:   "bash",
+		CallID: "call_tnm_003",
+		State: &OpenCodeToolState{
+			Status: "completed",
+			Input:  json.RawMessage(`{}`),
+			Output: "ok",
+		},
+	})
+
+	tc := parseOpenCodeToolEvent(msg, nil, openCodeInputRemaps)
+	assert.NotNil(t, tc)
+	assert.Equal(t, "Bash", tc.Name)
+}

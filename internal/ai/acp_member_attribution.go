@@ -1,8 +1,6 @@
 package ai
 
 import (
-	"log/slog"
-
 	acp "github.com/coder/acp-go-sdk"
 )
 
@@ -35,8 +33,6 @@ import (
 // unchanged (integration plan §3.2, "方案 A").
 
 const (
-	// metaKeyCodeBuddyTeamUpdate carries the team snapshot.
-	metaKeyCodeBuddyTeamUpdate = "codebuddy.ai/teamUpdate"
 	// metaKeyCodeBuddyMemberEvent marks a frame as produced by a team member;
 	// its value is the member name.
 	metaKeyCodeBuddyMemberEvent = "codebuddy.ai/memberEvent"
@@ -96,86 +92,11 @@ func memberColorByName(conn *ACPConn, name string) string {
 
 // parseTeamState converts the raw teamUpdate object into a TeamState. It fails
 // closed (nil) when the shape is unrecognizable so a malformed extension never
-// wipes a live team panel with an empty snapshot.
-func parseTeamState(raw map[string]any) *TeamState {
-	if len(raw) == 0 {
-		return nil
-	}
-	typ, _ := raw["type"].(string)
-	if typ == "" {
-		return nil
-	}
-	state := &TeamState{
-		Type:     typ,
-		TeamName: metaString(raw["teamName"]),
-	}
-	// isAutoTeam and hasLiveMembers are both absent on some snapshots (observed
-	// on the first member_status_change), so only trust an explicit bool. Keeping
-	// HasLive as a pointer preserves the absent state through serialization.
-	if v, ok := raw["isAutoTeam"].(bool); ok {
-		state.IsAutoTeam = v
-	}
-	if v, ok := raw["hasLiveMembers"].(bool); ok {
-		state.HasLive = &v
-	}
-	if members, ok := raw["members"].([]any); ok {
-		state.Members = make([]TeamMember, 0, len(members))
-		for _, m := range members {
-			if member, ok := parseTeamMember(m); ok {
-				state.Members = append(state.Members, member)
-			}
-		}
-	}
-	return state
-}
 
 // parseTeamMember converts one entry of the teamUpdate members array. It reports
 // false for entries that are not objects or lack a name, so the caller can skip
-// them without duplicating the shape checks.
-func parseTeamMember(m any) (TeamMember, bool) {
-	mm, ok := m.(map[string]any)
-	if !ok {
-		return TeamMember{}, false
-	}
-	name := metaString(mm["name"])
-	if name == "" {
-		return TeamMember{}, false
-	}
-	member := TeamMember{
-		Name:        name,
-		AgentType:   metaString(mm["agentType"]),
-		Color:       metaString(mm["color"]),
-		Description: metaString(mm["description"]),
-		Status:      metaString(mm["status"]),
-		Activity:    metaString(mm["activity"]),
-		Lifecycle:   metaString(mm["lifecycle"]),
-		TaskID:      metaString(mm["taskId"]),
-		SessionID:   metaString(mm["sessionId"]),
-	}
-	if n, ok := mm["toolCallCount"].(float64); ok {
-		member.ToolCallCount = int(n)
-	}
-	if tu, ok := mm["tokenUsage"].(map[string]any); ok {
-		member.TokenUsage = parseTeamTokenUsage(tu)
-	}
-	return member, true
-}
 
 // parseTeamTokenUsage extracts the token counters from a member's tokenUsage
-// object; absent fields stay zero.
-func parseTeamTokenUsage(tu map[string]any) *TeamTokenUsage {
-	usage := &TeamTokenUsage{}
-	if n, ok := tu["inputTokens"].(float64); ok {
-		usage.InputTokens = int(n)
-	}
-	if n, ok := tu["outputTokens"].(float64); ok {
-		usage.OutputTokens = int(n)
-	}
-	if n, ok := tu["lastContextWindow"].(float64); ok {
-		usage.LastContextWindow = int(n)
-	}
-	return usage
-}
 
 // bridgeCodeBuddyTeamUpdate synthesizes a team_update StreamEvent from a
 // session_info_update carrying the teamUpdate extension. It is a no-op for any
@@ -184,50 +105,10 @@ func parseTeamTokenUsage(tu map[string]any) *TeamTokenUsage {
 //
 // DEADLOCK SAFETY: runs on the SDK notification goroutine and only calls
 // forwardACPEvent (non-blocking send) plus SetCachedTeamState (stateMu leaf
-// lock) — the same safe pattern as the plan bridge.
-func bridgeCodeBuddyTeamUpdate(ch chan<- StreamEvent, conn *ACPConn, meta map[string]any) {
-	if len(meta) == 0 {
-		return
-	}
-	raw, ok := meta[metaKeyCodeBuddyTeamUpdate].(map[string]any)
-	if !ok {
-		return
-	}
-	state := parseTeamState(raw)
-	if state == nil {
-		slog.Debug("codebuddy team bridge: unparseable teamUpdate", "meta", meta)
-		return
-	}
-	forwardACPEvent(ch, StreamEvent{Type: "team_update", Team: state})
-	if conn != nil {
-		if state.Type == "team_deleted" {
-			// A deleted team has no members to show; clear the cache so a
-			// reconnect does not resurrect the panel.
-			conn.SetCachedTeamState(nil)
-		} else {
-			conn.SetCachedTeamState(state)
-		}
-	}
-	slog.Debug("codebuddy team bridge: team_update", "type", state.Type, "team", state.TeamName, "members", len(state.Members))
-}
 
 // noteCodeBuddyMemberSpawn records the member name → Agent tool-call id mapping
 // when a frame is an Agent spawn for a team member. Both meta keys must be
 // present: memberName alone also appears on some non-spawn frames, while
-// subagentType alone appears on ordinary (non-team) sub-agents.
-func noteCodeBuddyMemberSpawn(conn *ACPConn, meta map[string]any, toolCallID string) {
-	if conn == nil || len(meta) == 0 {
-		return
-	}
-	name := metaString(meta[metaKeyCodeBuddyMemberName])
-	if name == "" {
-		return
-	}
-	if metaString(meta[metaKeyCodeBuddySubagentType]) == "" {
-		return
-	}
-	conn.SetMemberToolCallID(name, toolCallID)
-}
 
 // resolveMemberParent maps a frame's team member name to the Agent tool-call id
 // that spawned it, so member content can reuse the existing sub-agent grouping.

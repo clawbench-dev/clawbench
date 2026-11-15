@@ -1,9 +1,11 @@
-package ai
+package opencode
 
 import (
 	"log/slog"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/ai"
 )
 
 // ---------------------------------------------------------------------------
@@ -100,13 +102,13 @@ func opencodeTodoItems(rawInput, rawOutput any) ([]any, bool) {
 // parseOpenCodeTodoSnapshot extracts PlanEntry items from an opencode todowrite
 // tool frame. Returns (nil, false) when no todo snapshot can be located — the
 // caller must not emit a plan_update in that case.
-func parseOpenCodeTodoSnapshot(rawInput, rawOutput any) ([]PlanEntry, bool) {
+func parseOpenCodeTodoSnapshot(rawInput, rawOutput any) ([]ai.PlanEntry, bool) {
 	items, ok := opencodeTodoItems(rawInput, rawOutput)
 	if !ok {
 		return nil, false
 	}
 
-	entries := make([]PlanEntry, 0, len(items))
+	entries := make([]ai.PlanEntry, 0, len(items))
 	for _, it := range items {
 		m, ok := it.(map[string]any)
 		if !ok {
@@ -118,7 +120,7 @@ func parseOpenCodeTodoSnapshot(rawInput, rawOutput any) ([]PlanEntry, bool) {
 		}
 		status, _ := m["status"].(string)
 		priority, _ := m["priority"].(string)
-		entries = append(entries, PlanEntry{
+		entries = append(entries, ai.PlanEntry{
 			Content:  content,
 			Priority: opencodeTodoPriorityToPlan(priority),
 			Status:   opencodeTodoStatusToPlan(status),
@@ -133,7 +135,7 @@ func parseOpenCodeTodoSnapshot(rawInput, rawOutput any) ([]PlanEntry, bool) {
 	return entries, true
 }
 
-// bridgeOpenCodePlanFromToolUpdate synthesizes a plan_update StreamEvent (and
+// BridgePlanFromToolUpdate synthesizes a plan_update StreamEvent (and
 // caches the plan) from a terminal opencode todowrite tool result. It is a
 // no-op unless the update is a completed tool frame carrying a todos snapshot.
 //
@@ -146,7 +148,7 @@ func parseOpenCodeTodoSnapshot(rawInput, rawOutput any) ([]PlanEntry, bool) {
 // window, so acquiring c.mu here cannot deadlock.
 //
 // Returns the number of plan_update events forwarded (0 or 1).
-func bridgeOpenCodePlanFromToolUpdate(ch chan<- StreamEvent, conn *ACPConn, tcu acp.SessionToolCallUpdate) int {
+func BridgePlanFromToolUpdate(conn *ai.ACPConn, ch chan<- ai.StreamEvent, tcu acp.SessionToolCallUpdate) int {
 	if tcu.Status == nil || *tcu.Status != acp.ToolCallStatusCompleted {
 		return 0
 	}
@@ -154,8 +156,8 @@ func bridgeOpenCodePlanFromToolUpdate(ch chan<- StreamEvent, conn *ACPConn, tcu 
 	if !ok {
 		return 0
 	}
-	plan := &PlanState{Entries: entries}
-	forwardACPEvent(ch, StreamEvent{Type: "plan_update", Plan: plan})
+	plan := &ai.PlanState{Entries: entries}
+	ai.ForwardACPEvent(ch, ai.StreamEvent{Type: "plan_update", Plan: plan})
 	if conn != nil {
 		conn.SetCachedPlanState(plan)
 	}

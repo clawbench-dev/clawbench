@@ -160,6 +160,17 @@ func LookupACPModesMirrorThoughtLevel(backendID string) bool {
 	return false
 }
 
+// LookupACPBehavior returns the backend's ACP event-mapping hooks, or nil when
+// it declares none (the generic implementation applies).
+func LookupACPBehavior(backendID string) *ai.ACPBehavior {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok {
+		return p.Behavior
+	}
+	return nil
+}
+
 // LookupMidTurnInjector returns the backend's mid-turn injection policy, or nil
 // when the backend cannot inject a message into a running turn.
 func LookupMidTurnInjector(backendID string) ai.MidTurnInjector {

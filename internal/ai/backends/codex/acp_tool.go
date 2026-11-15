@@ -1,9 +1,11 @@
-package ai
+package codex
 
 import (
 	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/ai"
 )
 
 // ---------------------------------------------------------------------------
@@ -91,39 +93,39 @@ func isCodexSubagentControlTitle(title string) bool {
 	return strings.HasPrefix(lower, "subagent-completed-")
 }
 
-// parseCodexACPToolCall extracts a ToolCall from a Codex ACP ToolCall event.
+// ParseACPToolCall extracts a ToolCall from a Codex ACP ToolCall event.
 // Codex-specific rules:
 //   - `_meta.codex.subagent` present (or sub-agent control title) → "Agent" and
 //     the rawInput is passed through unchanged so agent_thread_id survives.
 //   - `_meta.codex.collaboration` present (title "wait") → name stays "wait".
 //   - Otherwise fall back to the generic path (kind→canonical for read/execute).
-func parseCodexACPToolCall(tc acp.SessionUpdateToolCall) *ToolCall {
+func ParseACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
 	if extractCodexSubagentMeta(tc.Meta) != "" || isCodexSubagentControlTitle(tc.Title) {
-		tool := &ToolCall{
+		tool := &ai.ToolCall{
 			Name: "Agent",
 			ID:   string(tc.ToolCallId),
 			Done: false,
 		}
-		resolveACPToolInput(tc, tool, acpRemapsForBackend("codex"))
+		ai.ResolveACPToolInput(tc, tool, ai.ACPRemapsForBackend("codex"))
 		return tool
 	}
 	if tool := extractCodexCollaborationTool(tc.Meta); tool != "" {
-		return &ToolCall{
+		return &ai.ToolCall{
 			Name: tool,
 			ID:   string(tc.ToolCallId),
 			Done: false,
 		}
 	}
-	return parseGenericACPToolCall(tc, "codex")
+	return ai.ParseGenericACPToolCall(tc, "codex")
 }
 
-// parseCodexACPToolCallUpdate extracts a ToolCall from a Codex ACP ToolCallUpdate.
-// Name resolution mirrors parseCodexACPToolCall; meta sub-agent control updates
+// ParseACPToolCallUpdate extracts a ToolCall from a Codex ACP ToolCallUpdate.
+// Name resolution mirrors ParseACPToolCall; meta sub-agent control updates
 // and the title fallback map to "Agent".
-func parseCodexACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
-	tool := &ToolCall{ID: string(tcu.ToolCallId)}
+func ParseACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
+	tool := &ai.ToolCall{ID: string(tcu.ToolCallId)}
 
-	mapToolCallStatus(tcu.Status, tool)
+	ai.MapToolCallStatus(tcu.Status, tool)
 
 	// Prefer meta-disambiguated names. When the completed "Complete subagent"
 	// update carries no _meta (some codex-acp versions only attach meta on the
@@ -142,12 +144,12 @@ func parseCodexACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
 		if tcu.Kind != nil {
 			kind = *tcu.Kind
 		}
-		tool.Name = extractToolName(title, kind, "codex", string(tcu.ToolCallId))
+		tool.Name = ai.ExtractToolName(title, kind, "codex", string(tcu.ToolCallId))
 	}
 
-	mapToolCallInput(tcu, tool, "codex")
+	ai.MapToolCallInput(tcu, tool, "codex")
 	if tool.Done {
-		mapToolCallOutput(tcu, tool)
+		ai.MapToolCallOutput(tcu, tool)
 	}
 	return tool
 }

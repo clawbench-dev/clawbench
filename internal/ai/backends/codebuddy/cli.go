@@ -1,6 +1,7 @@
 package codebuddy
 
 import (
+	acp "github.com/coder/acp-go-sdk"
 	"os/exec"
 	"strings"
 
@@ -44,7 +45,24 @@ func init() {
 		// session/steer method, instead of queueing it for the next turn.
 		// It echoes the injected message back with a correlation id, so the
 		// reply can be SPLIT exactly at the injection point.
-		CLI:                &backends.CLIPlugin{NewBackend: newCodebuddyBackend},
+		CLI: &backends.CLIPlugin{NewBackend: newCodebuddyBackend},
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       ParseACPToolCall,
+			ParseToolCallUpdate: ParseACPToolCallUpdate,
+			ExtractMeta:         ai.ExtractCodeBuddyMeta,
+			// Agent Teams: record member → spawn-call joins, bridge the team
+			// snapshot, and bridge Task* tool results into plan_update.
+			OnToolCall: func(conn *ai.ACPConn, tc *acp.SessionUpdateToolCall) {
+				NoteMemberSpawn(conn, tc.Meta, ai.ToolCallIDOf(tc.ToolCallId))
+			},
+			OnToolCallUpdate: func(conn *ai.ACPConn, ch chan<- ai.StreamEvent, tcu acp.SessionToolCallUpdate) {
+				if conn == nil {
+					return
+				}
+				BridgePlanFromToolUpdate(conn, ch, tcu)
+			},
+			OnSessionInfoUpdate: BridgeTeamUpdate,
+		},
 		ModelSource:        model.PluginSource("codebuddy", discoverCodebuddyModels),
 		ListSessions:       listCodebuddySessionsFromDisk,
 		MidTurn:            &midTurnInjector{},

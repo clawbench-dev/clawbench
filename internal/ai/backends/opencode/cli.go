@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	acp "github.com/coder/acp-go-sdk"
 	"strings"
 
 	"clawbench/internal/ai"
@@ -57,6 +58,16 @@ func init() {
 			InputRemaps: OpenCodeACPInputRemaps,
 		},
 		CLI: &backends.CLIPlugin{NewBackend: newOpenCodeBackend},
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       ParseACPToolCall,
+			ParseToolCallUpdate: ParseACPToolCallUpdate,
+			// OpenCode exposes its checklist through the `todowrite` tool rather
+			// than ACP plan notifications.
+			OnToolCallUpdate: func(conn *ai.ACPConn, ch chan<- ai.StreamEvent, tcu acp.SessionToolCallUpdate) {
+				BridgePlanFromToolUpdate(conn, ch, tcu)
+			},
+			IsChildSessionUpdate: IsChildSessionUpdate,
+		},
 		ModelSource: model.NewCLISource("opencode", model.CLIOptions{
 			Command: "opencode",
 			Args:    []string{"models"},
