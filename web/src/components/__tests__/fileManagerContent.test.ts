@@ -150,7 +150,8 @@ const i18n = createI18n({
   messages: {
     zh: {
       file: {
-        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', pasteToCurrentDir: '粘贴到当前目录', pasteIntoDir: '粘贴到「{name}」', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目' },
+        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', pasteIntoDir: '粘贴到「{name}」', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目' },
+        pasteBar: { count: '{n} 个项目', pasteTo: '粘贴到「{name}」', moveTo: '移动到「{name}」', paste: '粘贴', move: '移动', cancel: '取消复制', cancelCut: '取消剪切', currentDir: '当前目录' },
         uploadHere: '上传到此处',
         sortDefault: '排序',
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },

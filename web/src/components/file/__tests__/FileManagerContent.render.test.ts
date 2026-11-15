@@ -159,15 +159,45 @@ describe('FileManagerContent — rendering', () => {
     ).toBe(false)
   })
 
-  // The paste entry that makes "paste into the folder I am looking at" work when
-  // the listing fills the pane (no blank background to right-click) and on touch
-  // (no Ctrl+V). It only exists while the clipboard holds something.
-  it('shows no paste button until something is copied', () => {
+  // The clipboard footer is what makes "paste into the folder I am looking at"
+  // work when the listing fills the pane (no blank background to right-click)
+  // and on touch (no Ctrl+V). It exists only while the clipboard holds
+  // something, and it says what is in hand and where it will land.
+  it('shows no clipboard footer until something is copied', () => {
     const wrapper = mountContent()
-    expect(wrapper.find('[data-action="paste"]').exists()).toBe(false)
+    expect(wrapper.find('[data-role="paste-bar"]').exists()).toBe(false)
   })
 
-  it('pastes into the browsed directory from the toolbar button', async () => {
+  it('shows the clipboard footer with the item and the destination', async () => {
+    const wrapper = mountContent({ currentDir: 'docs' })
+
+    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'a.txt', path: 'src/a.txt' }]
+    await nextTick()
+
+    const bar = wrapper.find('[data-role="paste-bar"]')
+    expect(bar.exists()).toBe(true)
+    expect(bar.find('.paste-bar-summary').text()).toBe('a.txt')
+    expect(bar.find('.paste-bar-dest').text()).toBe('粘贴到「docs」')
+  })
+
+  it('counts multiple entries and switches to move language for a cut', async () => {
+    const wrapper = mountContent({ currentDir: 'docs' })
+
+    wrapper.vm.clipboard.entries = [
+      { type: 'file', name: 'a.txt', path: 'src/a.txt' },
+      { type: 'file', name: 'b.txt', path: 'src/b.txt' },
+    ]
+    wrapper.vm.clipboard.isCut = true
+    await nextTick()
+
+    const bar = wrapper.find('[data-role="paste-bar"]')
+    expect(bar.find('.paste-bar-summary').text()).toBe('2 个项目')
+    expect(bar.find('.paste-bar-dest').text()).toBe('移动到「docs」')
+    // The action button follows the same wording — a cut MOVES.
+    expect(bar.find('[data-action="paste"]').text()).toBe('移动')
+  })
+
+  it('pastes into the browsed directory from the footer button', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', fetchSpy)
     const wrapper = mountContent({ currentDir: 'docs' })
@@ -175,9 +205,7 @@ describe('FileManagerContent — rendering', () => {
     wrapper.vm.clipboard.entries = [{ type: 'file', name: 'a.txt', path: 'src/a.txt' }]
     await nextTick()
 
-    const btn = wrapper.find('[data-action="paste"]')
-    expect(btn.exists()).toBe(true)
-    await btn.trigger('click')
+    await wrapper.find('[data-role="paste-bar"] [data-action="paste"]').trigger('click')
 
     expect(fetchSpy).toHaveBeenCalledWith('/api/file/copy', expect.objectContaining({
       body: JSON.stringify({ path: 'src/a.txt', dest: 'docs/a.txt' }),
@@ -185,13 +213,27 @@ describe('FileManagerContent — rendering', () => {
     vi.unstubAllGlobals()
   })
 
-  it('hides the paste button in search results (no single target directory)', async () => {
+  it('closing the footer abandons the copy', async () => {
+    const wrapper = mountContent({ currentDir: 'docs' })
+    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'a.txt', path: 'src/a.txt' }]
+    wrapper.vm.clipboard.isCut = true
+    await nextTick()
+
+    await wrapper.find('[data-role="paste-bar"] [data-action="paste-cancel"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.vm.clipboard.entries.length).toBe(0)
+    expect(wrapper.vm.clipboard.isCut).toBe(false)
+    expect(wrapper.find('[data-role="paste-bar"]').exists()).toBe(false)
+  })
+
+  it('hides the footer in search results (no single target directory)', async () => {
     mocks.searchState.query = 'main'
     const wrapper = mountContent()
     wrapper.vm.clipboard.entries = [{ type: 'file', name: 'a.txt', path: 'src/a.txt' }]
     await nextTick()
 
-    expect(wrapper.find('[data-action="paste"]').exists()).toBe(false)
+    expect(wrapper.find('[data-role="paste-bar"]').exists()).toBe(false)
     mocks.searchState.query = ''
   })
 })

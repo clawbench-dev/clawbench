@@ -82,25 +82,6 @@
             <FolderPlus :size="16" />
             <span class="action-label">{{ t('actionLabels.newFolder') }}</span>
           </button>
-          <!-- Paste appears only while the clipboard holds something: it is a
-               transient action, so a permanently greyed button would spend
-               prime toolbar space on a state that is usually false. Placed
-               early (the fold eats the tail) because it is the next thing the
-               user wants after copying. This is the only paste entry that works
-               when the listing fills the pane — there is no blank background
-               left to right-click — and the only one on touch, where Ctrl+V
-               does not exist. Hidden in search results: they come from many
-               directories, so "the current directory" is not a clear target. -->
-          <button
-            v-if="clipboard.entries.length && !searchHasQuery"
-            class="toolbar-btn"
-            data-action="paste"
-            @click="doPaste(null)"
-            :title="t('file.context.pasteToCurrentDir')"
-          >
-            <ClipboardPaste :size="16" />
-            <span class="action-label">{{ t('file.context.paste') }}</span>
-          </button>
           <button class="toolbar-btn" :disabled="dirUploading" @click="triggerUpload()" :title="t('file.uploadHere')">
             <Upload :size="16" />
             <span class="action-label">{{ t('file.uploadHere') }}</span>
@@ -437,6 +418,39 @@
         </div>
       </template>
     </SplitView>
+
+    <!-- Clipboard footer. A copy/cut has to stay visible while the user walks to
+         the target folder, and the toolbar could not carry that: the button only
+         existed when the clipboard was non-empty (so it appeared and vanished),
+         and in a narrow panel it could fold into the "more" menu. This bar is
+         the standing "you have N things in hand, drop them here" state — plus
+         the X that abandons the copy, which otherwise needs another copy to
+         clear. Hidden in search results: they come from many directories, so
+         "here" would be a lie. -->
+    <Transition name="paste-bar">
+      <div
+        v-if="clipboard.entries.length && !searchHasQuery"
+        class="paste-bar"
+        data-role="paste-bar"
+      >
+        <component :is="clipboard.isCut ? Scissors : ClipboardPaste" :size="15" class="paste-bar-icon" />
+        <div class="paste-bar-text">
+          <span class="paste-bar-summary">{{ clipboardSummary }}</span>
+          <span class="paste-bar-dest">{{ pasteBarDest }}</span>
+        </div>
+        <button class="fbtn fbtn-primary paste-bar-go" data-action="paste" @click="doPaste(null)">
+          {{ clipboard.isCut ? t('file.pasteBar.move') : t('file.pasteBar.paste') }}
+        </button>
+        <button
+          class="paste-bar-close"
+          data-action="paste-cancel"
+          :title="clipboard.isCut ? t('file.pasteBar.cancelCut') : t('file.pasteBar.cancel')"
+          @click="cancelClipboard"
+        >
+          <X :size="15" />
+        </button>
+      </div>
+    </Transition>
 
     <!-- Context menu -->
     <Teleport to="body">
@@ -1992,6 +2006,28 @@ const pasteMenuLabel = computed(() => {
     const name = parent.split('/').pop()
     return name ? t('file.context.pasteIntoDir', { name }) : t('file.context.paste')
 })
+
+/** What the clipboard footer says is in hand: one name, or how many. */
+const clipboardSummary = computed(() => {
+    const entries = clipboard.entries
+    if (entries.length === 1) return entries[0].name
+    return t('file.pasteBar.count', { n: entries.length })
+})
+
+/** The footer's second line: where its button will drop the clipboard. */
+const pasteBarDest = computed(() => {
+    const dir = currentDirPath().replace(/\/+$/, '')
+    const name = dir.split('/').pop() || t('file.pasteBar.currentDir')
+    return clipboard.isCut
+        ? t('file.pasteBar.moveTo', { name })
+        : t('file.pasteBar.pasteTo', { name })
+})
+
+/** Abandon the copy/cut — the footer's close button. */
+function cancelClipboard() {
+    clipboard.entries = []
+    clipboard.isCut = false
+}
 
 async function doCopy() {
     clipboard.entries = [ctxMenu.entry]
@@ -3671,6 +3707,95 @@ function scrollSelectedIntoView(path) {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+}
+
+/* ── Clipboard footer ──
+   A status strip, not a dialog footer: two lines of text (what is in hand /
+   where it goes) plus the action and the dismiss. The pills are shorter than
+   the shared 30dp dialog pill so the bar reads as part of the panel edge. */
+.paste-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-shrink: 0;
+    padding: var(--space-3) var(--space-5);
+    border-top: 1px solid var(--border-color, #e5e5e5);
+    background: var(--bg-secondary, #fafafa);
+}
+
+.paste-bar-icon {
+    flex-shrink: 0;
+    color: var(--accent-color, #0066cc);
+}
+
+.paste-bar-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    line-height: 1.35;
+}
+
+.paste-bar-summary {
+    font-size: var(--font-size-md);
+    color: var(--text-primary);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.paste-bar-dest {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted, #999);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.paste-bar-go {
+    height: calc(26 * var(--dp));
+    padding: 0 var(--space-5);
+    border-radius: calc(13 * var(--dp));
+}
+
+.paste-bar-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: calc(26 * var(--dp));
+    height: calc(26 * var(--dp));
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted, #999);
+    cursor: pointer;
+    transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.paste-bar-close:hover {
+    background: var(--bg-tertiary, #f1f3f5);
+    color: var(--text-primary);
+}
+
+/* Slides out from under the list: the bar lives at the panel's bottom edge, so
+   fading it in place would look like a paint glitch. */
+.paste-bar-enter-active,
+.paste-bar-leave-active {
+    transition: opacity var(--duration-fast) ease, transform var(--duration-fast) ease;
+}
+
+.paste-bar-enter-from,
+.paste-bar-leave-to {
+    opacity: 0;
+    transform: translateY(100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .paste-bar-enter-active,
+    .paste-bar-leave-active {
+        transition: none;
+    }
 }
 
 /* Truncate hint */
