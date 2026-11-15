@@ -5,7 +5,10 @@ import { teamMemberColorVar } from '@/utils/teamMemberColor'
 // (renderToolDetail), so a member must resolve to the same colour in both.
 describe('teamMemberColorVar', () => {
   it('maps every wire colour name to a theme token', () => {
-    for (const name of ['blue', 'green', 'red', 'yellow', 'orange', 'purple', 'pink', 'cyan']) {
+    // `magenta` is a real wire value (verified on stored team blocks: it is the
+    // second most common colour after yellow). Missing it silently rendered
+    // those members grey in BOTH the roster and their card pill.
+    for (const name of ['blue', 'green', 'red', 'yellow', 'orange', 'purple', 'pink', 'magenta', 'cyan']) {
       const v = teamMemberColorVar(name)
       expect(v).toBeTruthy()
       expect(v).not.toBe(teamMemberColorVar('__unknown__'))

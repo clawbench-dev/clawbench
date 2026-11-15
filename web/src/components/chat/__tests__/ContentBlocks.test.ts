@@ -2736,6 +2736,52 @@ describe('ContentBlocks — member presentation is identical before and after an
     expect(pill.attributes('style')).toContain('--subagent-accent')
   })
 
+  it('paints the member card pill with the member colour, not the agent pink', () => {
+    // The pill body (tint, border, icon, title, spinner) is painted from
+    // --tool-accent, which the category rule pins to the agent pink. A team
+    // member's card must carry its roster colour in BOTH properties:
+    // --subagent-accent for the open pill's left border / group rail,
+    // --tool-accent for the pill itself.
+    const wrapper = mountBlocks({ blocks: memberBlocks() })
+    const style = wrapper.find('.chat-tool-call-group').attributes('style') || ''
+    const toolAccent = /--tool-accent:\s*([^;]+)/.exec(style)?.[1]?.trim()
+    expect(toolAccent).toBeTruthy()
+    expect(toolAccent).toContain('--color-green')
+  })
+
+  it('paints the member fallback header pill with the member colour too', () => {
+    // The fallback header is the same pill as the Agent card, just synthetic,
+    // so it must not be the only one left pink.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha one', member_name: 'alpha', member_color: 'blue' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, member_name: 'alpha', member_color: 'blue' },
+      ],
+    })
+    const style = wrapper.find('.member-group .chat-tool-call').attributes('style') || ''
+    const toolAccent = /--tool-accent:\s*([^;]+)/.exec(style)?.[1]?.trim()
+    expect(toolAccent).toBeTruthy()
+    expect(toolAccent).toContain('--color-info')
+  })
+
+  it('keeps the member\'s own tool pills on their category accent', () => {
+    // A member's Read/Bash blocks carry member_color as well. Only the
+    // Agent/Task card stands in for the member; tinting every tool it ran would
+    // erase the category colour the pill language is built on.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_a', done: true, input: {}, member_name: 'android-reviewer', member_color: 'green' },
+        { type: 'tool_use', name: 'Bash', id: 't1', parent_tool_call_id: 'call_a', done: true, input: {}, member_name: 'android-reviewer', member_color: 'green' },
+      ],
+      expandedTools: { 'subagent-call_a': true },
+    })
+    const body = wrapper.find('.subagent-group')
+    expect(body.exists()).toBe(true)
+    const bashPill = body.findAll('.chat-tool-call').at(-1)
+    expect(bashPill!.attributes('style') || '').not.toContain('--tool-accent')
+    expect(bashPill!.attributes('data-category')).toBe('bash')
+  })
+
   it('renders both paths with the SAME accent and the SAME glyph', () => {
     // The whole point: a member must look the same whether its Agent card is
     // still resolvable (pre-interruption) or gone (post-interruption). Compare
@@ -2796,6 +2842,9 @@ describe('ContentBlocks — member presentation is identical before and after an
     })
     const pill = wrapper.find('.chat-tool-call-group')
     expect(pill.attributes('style') || '').not.toContain('--subagent-accent')
+    // …and keeps the agent pink: the member accent must not leak onto a
+    // sub-agent nobody attributed.
+    expect(pill.attributes('style') || '').not.toContain('--tool-accent')
     expect(pill.find('svg.lucide-users').exists()).toBe(false)
   })
 })

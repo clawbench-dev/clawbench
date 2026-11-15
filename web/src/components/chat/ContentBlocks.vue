@@ -241,7 +241,7 @@
            message, so the member's output groups under a synthetic header at
            its first block instead of interleaving with the lead's. -->
       <div v-else-if="memberGroupNameForAnchor(block)" class="subagent-group member-group" :class="{ 'subagent-group-open': isMemberGroupOpen(memberGroupNameForAnchor(block)) }" :style="memberGroupAccentStyle(memberGroupNameForAnchor(block))">
-        <div :ref="(el) => setMemberPillRef(memberGroupKey(memberGroupNameForAnchor(block)), el)" class="chat-tool-call chat-run-head" :class="{ done: !memberGroupStreaming(memberGroupNameForAnchor(block)), 'chat-tool-call-group': true, 'chat-tool-call-group-open': isMemberGroupOpen(memberGroupNameForAnchor(block)) }" data-category="agent" :data-member-name="memberGroupNameForAnchor(block)" @click.stop="toggleMemberGroup(memberGroupNameForAnchor(block))">
+        <div :ref="(el) => setMemberPillRef(memberGroupKey(memberGroupNameForAnchor(block)), el)" class="chat-tool-call chat-run-head" :class="{ done: !memberGroupStreaming(memberGroupNameForAnchor(block)), 'chat-tool-call-group': true, 'chat-tool-call-group-open': isMemberGroupOpen(memberGroupNameForAnchor(block)) }" data-category="agent" :data-member-name="memberGroupNameForAnchor(block)" :style="memberGroupPillStyle(memberGroupNameForAnchor(block))" @click.stop="toggleMemberGroup(memberGroupNameForAnchor(block))">
           <Users :size="12" class="tool-icon" />
           <span class="tool-name">{{ memberGroupNameForAnchor(block) }}</span>
           <RollingText v-if="memberFallbackStepCount(memberGroupNameForAnchor(block)) > 0" class="subagent-group-count" :text="t('chat.contentBlocks.subagentSteps', { count: memberFallbackStepCount(memberGroupNameForAnchor(block)) })" />
@@ -373,7 +373,7 @@
           </div>
         </div>
         <template v-else>
-          <div :ref="(el) => setSubagentPillRef(subagentGroupKey(bi, block), el)" class="chat-tool-call chat-run-head" :class="{ done: block.done, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" :style="memberAccentStyle(block)" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
+          <div :ref="(el) => setSubagentPillRef(subagentGroupKey(bi, block), el)" class="chat-tool-call chat-run-head" :class="{ done: block.done, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" :style="memberPillStyle(block)" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <!-- A team member's card wears the team glyph, exactly like the
                  member fallback group header below. Two paths render the same
                  member, so they must look identical: before this, the card
@@ -819,6 +819,15 @@ function agentPillTitle(block: any): string {
   return toolDisplayName(block?.name, block?.input, block?.display_name)
 }
 
+/** Whether this block is an Agent/Task tool call — the only cards that can
+ *  stand in for a team member (SendMessage/TeamCreate share the `agent` icon
+ *  category but are never member cards). */
+function isAgentToolBlock(block: any): boolean {
+  if (block?.type !== 'tool_use') return false
+  const name = String(block?.name || '').toLowerCase()
+  return name === 'agent' || name === 'task'
+}
+
 /** Whether this tool pill IS an Agent card hosting a member timeline — i.e. the
  *  member-name titling applies.
  *
@@ -828,9 +837,7 @@ function agentPillTitle(block: any): string {
  *  carry `member_name` too — titling those with the member name would turn a
  *  tool trace into a wall of identical names. */
 function isAgentCardWithMembers(block: any): boolean {
-  if (block?.type !== 'tool_use') return false
-  const name = String(block?.name || '').toLowerCase()
-  if (name !== 'agent' && name !== 'task') return false
+  if (!isAgentToolBlock(block)) return false
   // Any member evidence counts: the card's own attribution, a child's, or a
   // colour. Colour alone is enough because it is written by the same member
   // frames — and requiring the NAME would leave a card that has only the colour
@@ -1451,11 +1458,32 @@ function isMemberGroupOpen(name: string): boolean {
   return !!props.expandedTools[memberGroupKey(name)]
 }
 
-/** Accent style for a member fallback group header. */
+/**
+ * CSS custom properties that paint a team member's accent.
+ *
+ * Two properties carry the same colour on purpose:
+ *   - `--subagent-accent` paints the group rail and the open pill's left border;
+ *   - `--tool-accent` paints the pill body itself (tint, border, icon, title,
+ *     spinner). The category rules pin `--tool-accent` to the agent pink, so
+ *     without the second property every team member's card stayed pink while
+ *     the rail under it already wore the roster colour.
+ */
+function memberAccentVars(color?: string | null): Record<string, string> | undefined {
+  if (!color) return undefined
+  const accent = teamMemberColorVar(color)
+  return { '--subagent-accent': accent, '--tool-accent': accent }
+}
+
+/** Accent style for a member fallback group (rail + open header border). */
 function memberGroupAccentStyle(name: string): Record<string, string> | undefined {
   const color = memberFallbackColor(name)
   if (!color) return undefined
   return { '--subagent-accent': teamMemberColorVar(color) }
+}
+
+/** Accent style for a member fallback group's header pill (see memberAccentVars). */
+function memberGroupPillStyle(name: string): Record<string, string> | undefined {
+  return memberAccentVars(memberFallbackColor(name))
 }
 
 // Pill elements by group key, so collapsing can anchor the pill to the top of
@@ -1685,17 +1713,29 @@ function hasSubagentGroup(block: any): boolean {
 }
 
 /**
- * Per-block accent style for Agent Team members.
+ * Per-block accent style for the expanded group of an Agent Team member.
  *
  * An Agent card that hosts a team member's timeline is attributed to that member
  * (member_name/member_color on the block, see codebuddy_team_bridge.go). Setting
- * --subagent-accent on the card makes the group border match the member's colour
- * in the roster; a block without attribution keeps the default accent.
+ * --subagent-accent on the group makes its rail match the member's colour in the
+ * roster; a block without attribution keeps the default accent.
  */
 function memberAccentStyle(block: any): Record<string, string> | undefined {
   const color = memberColorOf(block)
   if (!color) return undefined
   return { '--subagent-accent': teamMemberColorVar(color) }
+}
+
+/**
+ * Accent style for the member's Agent card pill (see memberAccentVars).
+ *
+ * Only the Agent/Task card wears the roster colour: the member's own Read/Bash
+ * cards carry `member_color` too, and tinting those would erase the tool-category
+ * cue the whole pill language is built on.
+ */
+function memberPillStyle(block: any): Record<string, string> | undefined {
+  if (!isAgentToolBlock(block)) return undefined
+  return memberAccentVars(memberColorOf(block))
 }
 
 /**
