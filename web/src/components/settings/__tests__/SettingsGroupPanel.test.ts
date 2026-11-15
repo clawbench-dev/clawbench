@@ -1396,8 +1396,48 @@ describe('SettingsGroupPanel', () => {
       const indexProgress = vm.$.setupState.resolveProgress({ key: 'rag.status.index_progress' })
       expect(indexProgress).toEqual({ value: 80, max: 100 })
 
+      // Embedding progress carries `active`: the bar only animates while the
+      // embedder is actually reachable.
       const embedProgress = vm.$.setupState.resolveProgress({ key: 'rag.status.embed_progress' })
-      expect(embedProgress).toEqual({ value: 60, max: 100 })
+      expect(embedProgress).toEqual({ value: 60, max: 100, active: true })
+    })
+
+    it('does not animate embedding progress when the embedder is down', () => {
+      Object.assign(mockRagStatus, {
+        available: true, mode: 'fts', has_fts_data: true, has_vec_data: false,
+        embedder_healthy: false, total_messages: 100, indexed_messages: 80, embedded_messages: 60,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      const embedProgress = vm.$.setupState.resolveProgress({ key: 'rag.status.embed_progress' })
+      expect(embedProgress).toEqual({ value: 60, max: 100, active: false })
+    })
+
+    it('resolves a dependency owned by another panel from the saved config', () => {
+      // The vector switch moved to 文本嵌入. The index page still gates two rows
+      // on it, and those keys are no longer in this panel's localValues — the
+      // resolver must fall back to the saved server value instead of treating
+      // the dependency as unmet (which left the rows permanently disabled).
+      const prev = mockGetServerValueWithDefault.getMockImplementation()
+      mockGetServerValueWithDefault.mockImplementation((key: string) =>
+        key === 'rag.vector_enabled' ? true : undefined,
+      )
+      try {
+        const field: ItemSpec = {
+          labelKey: 'settings.items.ragEmbedProgress',
+          key: 'rag.status.embed_progress',
+          type: 'info',
+          source: 'server',
+          disableUnless: { key: 'rag.vector_enabled', value: true },
+        }
+        const wrapper = mountPanel({ panelId: 'rag', commonFields: [field] })
+        const vm = wrapper.vm as any
+        expect(vm.$.setupState.isFieldDisabled(field)).toBe(false)
+      } finally {
+        if (prev) mockGetServerValueWithDefault.mockImplementation(prev)
+        else mockGetServerValueWithDefault.mockReset()
+      }
     })
 
     it('returns undefined progress when total_messages is 0', () => {

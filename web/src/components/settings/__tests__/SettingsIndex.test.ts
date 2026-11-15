@@ -28,7 +28,8 @@ const i18n = createI18n({
           tts: 'TTS语音',
           stt: '语音识别',
           meeting: '会议',
-          rag: 'RAG 检索',
+          rag: '会话索引',
+          embedding: '文本嵌入',
           kb: '知识库',
           portForward: '端口映射',
           mail: '邮件',
@@ -73,6 +74,7 @@ const globalStubs = {
   'lucide-volume2': true,
   'lucide-mic': true,
   'lucide-brain': true,
+  'lucide-scan-text': true,
   'lucide-arrow-left-right': true,
   'lucide-bell': true,
   'lucide-shield': true,
@@ -87,11 +89,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 31 category rows', () => {
+  it('renders 32 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(31)
+    expect(rows.length).toBe(32)
   })
 
   it('renders category labels', () => {
@@ -108,7 +110,8 @@ describe('SettingsIndex', () => {
     expect(labels).toContain('聊天')
     expect(labels).toContain('会话管理')
     expect(labels).toContain('任务')
-    expect(labels).toContain('RAG 检索')
+    expect(labels).toContain('会话索引')
+    expect(labels).toContain('文本嵌入')
     expect(labels).toContain('邮件')
     expect(labels).toContain('分享中心')
     expect(labels).toContain('端口映射')
@@ -138,13 +141,13 @@ describe('SettingsIndex', () => {
       card.findAll('.settings-index__row').length,
     )
     // 项目与外观 (2): 项目, 外观.
-    // AI 与对话 (6): 身份, 聊天, 会话管理, 智能体, 技能, MCP.
+    // AI 与对话 (7): 身份, 聊天, 会话管理, 会话索引, 智能体, 技能, MCP.
     // 功能模块 (16): 功能编排 + one page per dock plugin in DOCK order, then
     //   消息推送 and 用量监控 (features with a page but no dock entry).
-    // 模型能力 (4): 模型提供商, RAG 检索, 语音朗读, 语音识别.
+    // 模型能力 (4): 模型提供商, 文本嵌入, 语音朗读, 语音识别.
     // 系统 (3): 调试, 安全, 关于.
-    expect(perCard).toEqual([2, 6, 16, 4, 3])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(31)
+    expect(perCard).toEqual([2, 7, 16, 4, 3])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(32)
   })
 
   // The dock tab, the meeting list header and the quote chip all draw
@@ -182,13 +185,13 @@ describe('SettingsIndex', () => {
       // 项目与外观
       'project', 'appearance',
       // AI 与对话
-      'identity', 'chat', 'sessions', 'agents', 'skills', 'mcp',
+      'identity', 'chat', 'sessions', 'rag', 'agents', 'skills', 'mcp',
       // 功能模块
       'dockPlugins', 'files', 'fileView', 'gitHistory', 'forgeIntegration', 'tasks',
       'terminal', 'stats', 'mail', 'kb', 'meeting', 'share', 'portForward',
       'notifications', 'notification', 'usageMeter',
       // 模型能力
-      'providers', 'rag', 'tts', 'stt',
+      'providers', 'embedding', 'tts', 'stt',
       // 系统
       'debug', 'security', 'about',
     ]

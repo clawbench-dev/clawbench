@@ -171,6 +171,16 @@ func TestKBHandlersEndToEnd(t *testing.T) {
 	require.True(t, status.Available)
 	require.Equal(t, 1, status.Stats.Documents)
 
+	// Project scope resolves through the project cookie. The collection here is
+	// visible to this project, so the counters must match the global ones; the
+	// filtering itself is covered in the store tests.
+	req = newRequest(t, http.MethodGet, "/api/kb/status?scope=project", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeKBStatus, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &status))
+	require.Equal(t, 1, status.Stats.Documents)
+
 	// Upload a second, different file.
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)

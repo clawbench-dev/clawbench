@@ -40,7 +40,7 @@ describe('useKnowledgeBase', () => {
     h.apiGet.mockImplementation(async (url: string) => {
       if (url === '/api/kb/collections') return { collections }
       if (url.startsWith('/api/kb/documents')) return { documents: docsFixture() }
-      if (url === '/api/kb/status') {
+      if (url.startsWith('/api/kb/status')) {
         return { available: true, vector_enabled: true, stats: { collections: 2, documents: 1, ready_docs: 1, failed_docs: 0, pending_docs: 0, chunks: 1, embedded_chunks: 1, stored_bytes: 10 } }
       }
       return {}

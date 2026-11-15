@@ -103,7 +103,7 @@
     <!-- Progress bar for info-type items (only when data exists) -->
     <div v-if="type === 'info' && progress && progress.max > 0" class="settings-item__progress">
       <div class="settings-item__progress-track">
-        <div class="settings-item__progress-bar" :class="{ 'settings-item__progress-bar--active': !disabled && progress.value < progress.max }" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
+        <div class="settings-item__progress-bar" :class="{ 'settings-item__progress-bar--active': !disabled && progress.active !== false && progress.value < progress.max }" :style="{ width: Math.min((progress.value / progress.max) * 100, 100) + '%' }" />
       </div>
     </div>
   </div>
@@ -404,8 +404,9 @@ interface Props {
   defaultValue?: unknown
   displayFormat?: 'percent' | 'raw'
   displayTransform?: (value: unknown) => unknown
-  /** Progress bar for info-type items: { value, max }. Bar hidden when value >= max. */
-  progress?: { value: number; max: number }
+  /** Progress bar for info-type items: { value, max }. `active: false` renders
+   *  the bar without stripes, for backlog that cannot progress right now. */
+  progress?: { value: number; max: number; active?: boolean }
   /** Show a refresh icon inside the progress bar area */
   refreshable?: boolean
   /** Refresh animation state */

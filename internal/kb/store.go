@@ -1358,21 +1358,40 @@ func (s *Store) SearchVector(queryEmbedding []float64, limit int, collectionIDs 
 // --- Stats ---
 
 func (s *Store) Stats() (IndexStats, error) {
+	return s.statsScoped("", nil)
+}
+
+// StatsForProject counts only what the given project can see: its own
+// collections plus the global ones. The knowledge-base panel lists exactly that
+// set, so a whole-installation count there would report work from other
+// projects the user cannot even open. projectID <= 0 falls back to Stats(),
+// which is what the settings page wants (installation-wide totals).
+func (s *Store) StatsForProject(projectID int64) (IndexStats, error) {
+	if projectID <= 0 {
+		return s.Stats()
+	}
+	return s.statsScoped(" WHERE c.project_id = 0 OR c.project_id = ?", []any{projectID})
+}
+
+func (s *Store) statsScoped(where string, args []any) (IndexStats, error) {
 	var st IndexStats
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM kb_collections`).Scan(&st.Collections); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM kb_collections c`+where, args...).Scan(&st.Collections); err != nil {
 		return st, err
 	}
 	if err := s.db.QueryRow(`
 		SELECT COUNT(*),
-		       COALESCE(SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN status IN ('pending', 'extracting') THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(size_bytes), 0)
-		FROM kb_documents`).Scan(&st.Documents, &st.ReadyDocs, &st.FailedDocs, &st.PendingDocs, &st.StoredBytes); err != nil {
+		       COALESCE(SUM(CASE WHEN d.status = 'ready' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN d.status = 'failed' THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN d.status IN ('pending', 'extracting') THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(d.size_bytes), 0)
+		FROM kb_documents d
+		JOIN kb_collections c ON c.id = d.collection_id`+where, args...).Scan(&st.Documents, &st.ReadyDocs, &st.FailedDocs, &st.PendingDocs, &st.StoredBytes); err != nil {
 		return st, err
 	}
 	if err := s.db.QueryRow(`
-		SELECT COUNT(*), COALESCE(SUM(has_embedding), 0) FROM kb_chunks`).Scan(&st.Chunks, &st.EmbeddedChunks); err != nil {
+		SELECT COUNT(*), COALESCE(SUM(k.has_embedding), 0)
+		FROM kb_chunks k
+		JOIN kb_collections c ON c.id = k.collection_id`+where, args...).Scan(&st.Chunks, &st.EmbeddedChunks); err != nil {
 		return st, err
 	}
 	return st, nil

@@ -39,6 +39,7 @@ import {
   Volume2,
   Mic,
   Brain,
+  ScanText,
   ArrowLeftRight,
   Bell,
   Shield,
@@ -96,6 +97,10 @@ const groupDefs = [
       // as objects, not the conversation), and separating them made users hunt
       // for the session-list options in two places.
       { id: 'sessions', icon: MessagesSquare },
+      // 会话索引 right after 会话管理: it is the index those sessions are
+      // searched through, so it belongs with the sessions rather than with the
+      // model services.
+      { id: 'rag', icon: Brain },
       { id: 'agents', icon: Bot },
       { id: 'skills', icon: Wand2 },
       { id: 'mcp', icon: Plug },
@@ -132,14 +137,17 @@ const groupDefs = [
     ],
   },
   {
-    // Model capability is its own top-level group: these four pages configure
-    // the models and engines themselves (provider credentials, the embedder,
-    // speech synthesis and recognition), which is a different question from how
-    // the chat behaves.
+    // Model capability is its own top-level group: these pages configure the
+    // models and engines themselves (provider credentials, the shared
+    // embedding service, speech synthesis and recognition), which is a
+    // different question from how the chat behaves.
     id: 'modelCapability',
     items: [
       { id: 'providers', icon: Boxes },
-      { id: 'rag', icon: Brain },
+      // The embedding service sits next to the providers because it IS one:
+      // one endpoint, one model, one key. Both 会话索引 and 知识库 call it, so it
+      // owns its own page instead of living inside either consumer.
+      { id: 'embedding', icon: ScanText },
       { id: 'tts', icon: Volume2 },
       { id: 'stt', icon: Mic },
     ],

@@ -15,6 +15,13 @@ import i18n from '@/i18n'
 
 const TAG = 'KnowledgeBase'
 const POLL_MS = 3000
+/**
+ * Upper bound on one watch. Without it, a configured-but-unreachable embedder
+ * leaves a vector backlog forever and the module-level watcher would poll for
+ * the lifetime of the tab. Giving up is silent: the progress UI is the primary
+ * signal now, and this watcher only exists to announce completion.
+ */
+const MAX_WATCH_MS = 20 * 60 * 1000
 
 const pending = ref(0)
 const failed = ref(0)
@@ -23,6 +30,7 @@ let timer: ReturnType<typeof setInterval> | null = null
 let watching = false
 let sawPending = false
 let failedAtStart = 0
+let watchStartedAt = 0
 
 export function useKBIndexStatus() {
   return { pending, failed }
@@ -40,6 +48,7 @@ export function startKBIndexWatch(): void {
   watching = true
   sawPending = false
   failedAtStart = failed.value
+  watchStartedAt = Date.now()
   void pollKBIndex()
 }
 
@@ -56,7 +65,13 @@ async function pollKBIndex(): Promise<void> {
   try {
     const res = await apiGet<{
       available: boolean
-      stats?: { pending_docs: number; failed_docs: number }
+      vector_enabled?: boolean
+      stats?: {
+        pending_docs: number
+        failed_docs: number
+        chunks: number
+        embedded_chunks: number
+      }
     }>('/api/kb/status')
     if (!res.available || !res.stats) {
       stopKBIndexWatch()
@@ -65,7 +80,19 @@ async function pollKBIndex(): Promise<void> {
     pending.value = res.stats.pending_docs
     failed.value = res.stats.failed_docs
 
-    if (pending.value > 0) {
+    if (Date.now() - watchStartedAt > MAX_WATCH_MS) {
+      // Too long to keep a background poller alive. Stop quietly rather than
+      // claim completion: the work may still be running.
+      stopKBIndexWatch()
+      return
+    }
+
+    // Extraction finishing is not the end of indexing: the embedding backlog
+    // still runs afterwards. Reporting "done" at pending_docs === 0 made the
+    // toast fire while the semantic index was still being filled.
+    const vectorPending =
+      !!res.vector_enabled && res.stats.chunks > res.stats.embedded_chunks
+    if (pending.value > 0 || vectorPending) {
       sawPending = true
       ensureTimer()
       return

@@ -23,10 +23,16 @@ import {
   useKBIndexStatus,
 } from '@/composables/useKBIndexStatus'
 
-function status(pending: number, failed = 0) {
+function status(pending: number, failed = 0, chunks = 0, embedded = 0, vectorEnabled = false) {
   return {
     available: true,
-    stats: { pending_docs: pending, failed_docs: failed },
+    vector_enabled: vectorEnabled,
+    stats: {
+      pending_docs: pending,
+      failed_docs: failed,
+      chunks,
+      embedded_chunks: embedded,
+    },
   }
 }
 
@@ -71,6 +77,31 @@ describe('useKBIndexStatus', () => {
     )
   })
 
+  it('waits for the embedding backlog before reporting completion', async () => {
+    // Extraction is done (pending_docs 0) but only 4 of 10 chunks are embedded.
+    // Reporting "finished" here was the old behaviour and it was wrong.
+    h.apiGet
+      .mockResolvedValueOnce(status(0, 0, 10, 4, true))
+      .mockResolvedValueOnce(status(0, 0, 10, 10, true))
+    startKBIndexWatch()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.show).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(h.show).toHaveBeenCalledTimes(1)
+    expect(h.show).toHaveBeenCalledWith('kb.indexDone', expect.objectContaining({ type: 'success' }))
+  })
+
+  it('ignores a chunk backlog when vectorization is off', async () => {
+    h.apiGet
+      .mockResolvedValueOnce(status(1, 0, 10, 0, false))
+      .mockResolvedValueOnce(status(0, 0, 10, 0, false))
+    startKBIndexWatch()
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(h.show).toHaveBeenCalledWith('kb.indexDone', expect.anything())
+  })
+
   it('stays silent when it never saw work', async () => {
     h.apiGet.mockResolvedValue(status(0))
     startKBIndexWatch()
@@ -78,6 +109,22 @@ describe('useKBIndexStatus', () => {
 
     expect(h.show).not.toHaveBeenCalled()
     expect(h.apiGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up after the watch cap without claiming completion', async () => {
+    h.apiGet.mockResolvedValue(status(1))
+    startKBIndexWatch()
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A stalled embedder keeps the queue non-empty forever; the background
+    // watcher must not poll for the lifetime of the tab.
+    vi.setSystemTime(Date.now() + 21 * 60 * 1000)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(h.show).not.toHaveBeenCalled()
+
+    const calls = h.apiGet.mock.calls.length
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(h.apiGet).toHaveBeenCalledTimes(calls)
   })
 
   it('keeps polling through a transient status failure', async () => {

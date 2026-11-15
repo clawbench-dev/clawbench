@@ -124,7 +124,10 @@ const i18n = createI18n({
         colFailed: '{count} failed',
         colPending: '{count} indexing',
         indexOffHint: 'Keyword search only',
-        indexPendingHint: 'Semantic index: {done} / {total}',
+        indexDocsProgress: 'Parsing {done} / {total}',
+        indexVectorsProgress: 'Embedding {done} / {total}',
+        indexFailedCount: '{count} failed',
+        indexReady: 'Index ready',
         modeVector: 'Semantic',
         openDocument: 'View parsed content',
         searchScopeTitle: 'Search scope',
@@ -218,7 +221,7 @@ describe('KnowledgePanel', () => {
       if (url.startsWith('/api/kb/documents')) {
         return { documents: [doc(1), doc(2)] }
       }
-      if (url === '/api/kb/status') {
+      if (url.startsWith('/api/kb/status')) {
         return { available: true, vector_enabled: false, stats: { collections: 2, documents: 2, ready_docs: 2, failed_docs: 0, pending_docs: 0, chunks: 6, embedded_chunks: 3, stored_bytes: 2048 } }
       }
       return {}
@@ -265,7 +268,7 @@ describe('KnowledgePanel', () => {
     // yet is keyword-searchable only.
     const base = h.apiGet.getMockImplementation()!
     h.apiGet.mockImplementation(async (url: string) => {
-      if (url === '/api/kb/status') {
+      if (url.startsWith('/api/kb/status')) {
         return { available: true, vector_enabled: true, stats: { collections: 2, documents: 2, ready_docs: 2, failed_docs: 0, pending_docs: 0, chunks: 6, embedded_chunks: 3, stored_bytes: 2048 } }
       }
       return base(url)
@@ -491,7 +494,7 @@ describe('KnowledgePanel', () => {
       if (url.startsWith('/api/kb/documents')) {
         return { documents: [doc(1), doc(2, { status: 'failed', error: 'no_text', chunk_count: 0 })] }
       }
-      if (url === '/api/kb/status') {
+      if (url.startsWith('/api/kb/status')) {
         return { available: true, vector_enabled: true, stats: { collections: 2, documents: 2, ready_docs: 1, failed_docs: 1, pending_docs: 0, chunks: 3, embedded_chunks: 3, stored_bytes: 2048 } }
       }
       return {}
@@ -681,7 +684,7 @@ describe('KnowledgePanel', () => {
       if (url.startsWith('/api/kb/documents')) {
         return { documents: [doc(1, { source_stale: true }), doc(2, { source_missing: true })] }
       }
-      if (url === '/api/kb/status') {
+      if (url.startsWith('/api/kb/status')) {
         return { available: true, vector_enabled: false, stats: { collections: 1, documents: 2, ready_docs: 2, failed_docs: 0, pending_docs: 0, chunks: 6, embedded_chunks: 0, stored_bytes: 2048 } }
       }
       return {}
@@ -736,7 +739,7 @@ describe('KnowledgePanel', () => {
         }
       }
       if (url.startsWith('/api/kb/documents')) return { documents: [] }
-      if (url === '/api/kb/status') {
+      if (url.startsWith('/api/kb/status')) {
         return { available: true, vector_enabled: false, stats: { collections: 2, documents: 0, ready_docs: 0, failed_docs: 0, pending_docs: 0, chunks: 0, embedded_chunks: 0, stored_bytes: 0 } }
       }
       return {}
@@ -783,7 +786,7 @@ describe('KnowledgePanel', () => {
       if (url.startsWith('/api/kb/documents')) {
         return { documents: [doc(1, { tags: '制度, 报销' }), doc(2, { tags: '产品' })] }
       }
-      if (url === '/api/kb/status') {
+      if (url.startsWith('/api/kb/status')) {
         return { available: true, vector_enabled: false, stats: { collections: 1, documents: 2, ready_docs: 2, failed_docs: 0, pending_docs: 0, chunks: 6, embedded_chunks: 0, stored_bytes: 2048 } }
       }
       return {}
@@ -806,7 +809,7 @@ describe('KnowledgePanel', () => {
       if (url.startsWith('/api/kb/documents')) {
         return { documents: [doc(1, { source_path: '/p/a.md' })] }
       }
-      if (url === '/api/kb/status') {
+      if (url.startsWith('/api/kb/status')) {
         return { available: true, vector_enabled: false, stats: { collections: 1, documents: 1, ready_docs: 1, failed_docs: 0, pending_docs: 0, chunks: 3, embedded_chunks: 0, stored_bytes: 1024 } }
       }
       return {}

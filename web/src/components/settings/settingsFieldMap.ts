@@ -152,8 +152,10 @@ export interface ItemSpec {
    * actually configured — the backend silently skips when it is not.
    */
   showSummaryModelStatus?: boolean
-  /** Progress bar for info-type items: { value, max }. Bar hidden when value >= max. */
-  progress?: { value: number; max: number }
+  /** Progress bar for info-type items: { value, max }. `active: false` shows the
+   *  bar without the moving stripes (backlog that cannot progress right now,
+   *  e.g. the embedder is unreachable). */
+  progress?: { value: number; max: number; active?: boolean }
   /**
    * Render this row as a read-only feature status (已启用 / 已停用) with a
    * 「去功能编排」 link, instead of a control. The value is the server enable
@@ -1094,42 +1096,51 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // is a test-then-store action, neither of which the generic row can do.
     { type: 'item', spec: { labelKey: 'settings.items.meetingRelaySection', key: 'meetingRelay', type: 'info', source: 'server', sectionHeader: 'settings.items.meetingRelaySection' } },
   ],
-  rag: [
+  // 文本嵌入: the shared embedding service, its own page.
+  //
+  // Deliberately NOT a block inside 会话索引. The knowledge base calls the same
+  // endpoint, and a shared service buried inside one consumer's page reads as
+  // that consumer's private setting — which is exactly how the old
+  // 「向量嵌入（知识库共用）」section was being read. One page owns the
+  // endpoint, model, key and chunking; both consumers point here.
+  embedding: [
     { type: 'panel', config: {
-      panelId: 'rag',
+      panelId: 'embedding',
       commonFields: [
-        // ── Status indicators (top of panel) ──
-        // The index itself: what the search backend is doing right now. This is
-        // the only thing left here that is purely about the index — the four
-        // knobs that decide how a SESSION search behaves (retention, hit count,
-        // candidate pool, batch size) moved to 会话管理.
-        { labelKey: 'settings.items.ragSearchMode', descriptionKey: 'settings.items.ragSearchModeDesc', key: 'rag.status.mode', type: 'info', source: 'server', sectionHeader: 'settings.items.ragStatusSectionHeader' },
-        { labelKey: 'settings.items.ragIndexProgress', descriptionKey: 'settings.items.ragIndexProgressDesc', key: 'rag.status.index_progress', type: 'info', source: 'server' },
-        { labelKey: 'settings.items.ragFtsSize', descriptionKey: 'settings.items.ragFtsSizeDesc', key: 'rag.status.fts_size', type: 'info', source: 'server' },
-        { labelKey: 'settings.items.ragEmbedProgress', descriptionKey: 'settings.items.ragEmbedProgressDesc', key: 'rag.status.embed_progress', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
-        { labelKey: 'settings.items.ragVecSize', descriptionKey: 'settings.items.ragVecSizeDesc', key: 'rag.status.vec_size', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
-        // ── Vector embedding: SHARED with the knowledge base ──
-        // The knowledge base does not carry its own endpoint, model or key; it
-        // calls this one. That is why these rows stay here instead of moving to
-        // the knowledge-base page with the rest of `kb.*`: moving them would
-        // leave the RAG page without a single configuration entry, and the two
-        // features would silently drift apart the moment someone changed one.
-        // The section title says 共用 so nobody wonders where the KB's embedder
-        // is configured.
-        { labelKey: 'settings.items.ragEnabled', descriptionKey: 'settings.items.ragSharedDesc', key: 'rag.vector_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.ragVectorSectionHeader' },
+        // ── Service ──
+        { labelKey: 'settings.items.embeddingEnabled', descriptionKey: 'settings.items.embeddingEnabledDesc', key: 'rag.vector_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.embeddingServiceSection' },
+        { labelKey: 'settings.items.ragEmbedderStatus', descriptionKey: 'settings.items.ragEmbedderStatusDesc', key: 'rag.status.embedder_healthy', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
         { labelKey: 'settings.items.ragBaseUrl', descriptionKey: 'settings.items.ragBaseUrlDesc', key: 'rag.base_url', type: 'text', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
         { labelKey: 'settings.items.ragModel', descriptionKey: 'settings.items.ragModelDesc', key: 'rag.model', type: 'text', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
         { labelKey: 'settings.items.ragApiKey', descriptionKey: 'settings.items.ragApiKeyDesc', key: 'rag.api_key', type: 'password', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
-        { labelKey: 'settings.items.ragEmbedderStatus', descriptionKey: 'settings.items.ragEmbedderStatusDesc', key: 'rag.status.embedder_healthy', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
-        // Chunking is shared by the FTS index and the vector index, and the
-        // knowledge base chunks with the same numbers — hence 共用, same as the
-        // rows above.
-        { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
+        // ── Chunking ──
+        // Chunk size and overlap decide what gets embedded, and the knowledge
+        // base chunks with the same numbers, so they belong with the service
+        // rather than with either consumer.
+        { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true }, sectionHeader: 'settings.items.embeddingChunkSection' },
         { labelKey: 'settings.items.ragChunkOverlap', descriptionKey: 'settings.items.ragChunkOverlapDesc', key: 'rag.chunk_overlap', type: 'number', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
       ],
       requiredFields: ['rag.base_url'],
       hasConnectivityTest: (v) => !!v['rag.base_url'] && !!v['rag.vector_enabled'],
       getTestCategories: (values) => [{ category: 'rag', values }],
+    }},
+  ],
+  // 会话索引: what the CHAT index is doing right now.
+  //
+  // Only chat counters live here. The knowledge base has its own queue, its own
+  // failures and its own progress (shown on the 知识库 page and in its panel),
+  // and the embedding endpoint is configured on 文本嵌入. Keeping the three
+  // apart is what stops this page from reading as "the whole RAG status".
+  rag: [
+    { type: 'panel', config: {
+      panelId: 'rag',
+      commonFields: [
+        { labelKey: 'settings.items.ragSearchMode', descriptionKey: 'settings.items.ragSearchModeDesc', key: 'rag.status.mode', type: 'info', source: 'server', sectionHeader: 'settings.items.ragStatusSectionHeader' },
+        { labelKey: 'settings.items.ragIndexProgress', descriptionKey: 'settings.items.ragIndexProgressDesc', key: 'rag.status.index_progress', type: 'info', source: 'server' },
+        { labelKey: 'settings.items.ragFtsSize', descriptionKey: 'settings.items.ragFtsSizeDesc', key: 'rag.status.fts_size', type: 'info', source: 'server' },
+        { labelKey: 'settings.items.ragEmbedProgress', descriptionKey: 'settings.items.ragEmbedProgressDesc', key: 'rag.status.embed_progress', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
+        { labelKey: 'settings.items.ragVecSize', descriptionKey: 'settings.items.ragVecSizeDesc', key: 'rag.status.vec_size', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
+      ],
     }},
   ],
   // Knowledge base. `kb.enabled` is deliberately NOT here: it is a Dock feature

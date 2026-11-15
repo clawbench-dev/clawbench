@@ -7,7 +7,7 @@
  * queued/parsing OR while it is keyword-ready but not vector-ready — the row's
  * badge changes in place instead of the user having to refresh.
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { apiDelete, apiGet, apiPatch, apiPost, apiPostForm } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 
@@ -258,7 +258,10 @@ export function useKnowledgeBase() {
 
   async function loadStatus(): Promise<void> {
     try {
-      const res = await apiGet<KBStatusResponse>('/api/kb/status')
+      // Project scope: the panel lists global + current-project collections, so
+      // its counters must describe the same set. Without the scope a pending
+      // queue in another project would show up here and never move.
+      const res = await apiGet<KBStatusResponse>('/api/kb/status?scope=project')
       available.value = res.available
       vectorEnabled.value = res.vector_enabled
       stats.value = res.stats
@@ -556,15 +559,33 @@ export function useKnowledgeBase() {
     )
   }
 
+  /**
+   * Whether the project-wide counters still have work behind them. The
+   * per-document check above only knows about the selected collection; the
+   * progress strip is project-wide, so an empty selection must still keep the
+   * numbers moving while another collection is being indexed.
+   */
+  const statsActive = computed(() => {
+    const s = stats.value
+    if (!s) return false
+    if (s.pending_docs > 0) return true
+    return vectorEnabled.value && s.chunks > s.embedded_chunks
+  })
+
   function startPolling(): void {
     if (pollTimer != null) return
     pollTimer = setInterval(() => {
-      if (selectedId.value == null) return
-      if (!needsPolling()) {
+      const docsPending = needsPolling()
+      if (!docsPending && !statsActive.value) {
         stopPolling()
         return
       }
-      void loadProgress(selectedId.value)
+      // Keep the global counters fresh as well: they drive the progress strip
+      // and, unlike the per-document rows, are not touched by loadProgress.
+      void loadStatus()
+      if (selectedId.value != null && docsPending) {
+        void loadProgress(selectedId.value)
+      }
     }, 2500)
   }
 
@@ -586,6 +607,7 @@ export function useKnowledgeBase() {
     available,
     vectorEnabled,
     stats,
+    statsActive,
     searchQuery,
     searchScope,
     searchMode,

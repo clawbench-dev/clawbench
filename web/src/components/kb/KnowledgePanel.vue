@@ -59,10 +59,9 @@
             </button>
           </div>
         </div>
-        <!-- A silent downgrade is worse than a slower index: say when the
-             semantic half is missing instead of labelling keyword-only results
-             "hybrid". -->
-        <div v-if="semanticHint" class="kb-index-hint">{{ semanticHint }}</div>
+        <!-- Index progress lives here because this is where files are added:
+             the user should see the queue move without opening settings. -->
+        <KbIndexProgress :stats="stats" :vector-enabled="vectorEnabled" compact />
       </div>
 
       <SplitView
@@ -699,6 +698,7 @@ import { attachDragTargets, hasAttachDragData, readAttachDragData } from '@/util
 import { DEFAULT_KB_SPLIT_RATIO, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { highlightTermsInElement, termsFromRunePositions } from '@/utils/searchHighlight'
+import KbIndexProgress from './KbIndexProgress.vue'
 
 const props = defineProps<{ active?: boolean }>()
 
@@ -719,6 +719,7 @@ const {
   available,
   vectorEnabled,
   stats,
+  statsActive,
   searchQuery,
   searchScope,
   searchMode,
@@ -914,21 +915,6 @@ watch([docFilter, docType, docSort, docTagQuery], () => {
   docRenderLimit.value = DOC_PAGE
 })
 
-// The status endpoint reports whether an embedding endpoint exists and how
-// much of the index it has covered. Saying it out loud beats labelling
-// keyword-only results "hybrid".
-const semanticHint = computed(() => {
-  if (!stats.value || stats.value.documents === 0) return ''
-  if (!vectorEnabled.value) return t('kb.indexOffHint')
-  if (stats.value.chunks > stats.value.embedded_chunks) {
-    return t('kb.indexPendingHint', {
-      done: stats.value.embedded_chunks,
-      total: stats.value.chunks,
-    })
-  }
-  return ''
-})
-
 // ── Drag files/folders in from the file manager ──
 // The payload is the same internal attach drag the chat column accepts; a drop
 // here means "put these into the selected library", so the existing add flow
@@ -1061,7 +1047,12 @@ watch(
   () => props.active,
   (on) => {
     if (on) {
-      void refresh(split.value)
+      void refresh(split.value).then(() => {
+        // The panel may be opened mid-index, possibly on an empty collection.
+        // Start the counter poll from the freshly loaded stats, not from a
+        // document list that has nothing pending.
+        if (statsActive.value) startPolling()
+      })
     } else {
       stopPolling()
     }
@@ -2168,13 +2159,6 @@ defineExpose({
   padding: var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--border-color);
   flex: none;
-}
-
-.kb-index-hint {
-  padding: 0 var(--space-5) var(--space-2);
-  color: var(--text-muted);
-  font-size: var(--font-size-2xs);
-  line-height: 1.4;
 }
 
 .kb-search {

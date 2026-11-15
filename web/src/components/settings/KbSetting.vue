@@ -42,8 +42,16 @@
     <div v-else class="kb-loading">
       {{ statusError || t('settings.items.kbLoading') }}
     </div>
+    <!-- Two-phase index progress. Sits between the counters and the actions:
+         the counters say what exists, this says how far the indexer has got. -->
+    <KbIndexProgress
+      v-if="status"
+      class="kb-progress"
+      :stats="status.stats"
+      :vector-enabled="status.vector_enabled"
+    />
     <div class="kb-actions">
-      <button class="fbtn" type="button" :disabled="loading" @click="load">
+      <button class="fbtn" type="button" :disabled="loading" @click="load()">
         {{ t('settings.items.kbRefresh') }}
       </button>
       <button
@@ -60,11 +68,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { apiGet, apiPost } from '@/utils/api'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
+import KbIndexProgress from '@/components/kb/KbIndexProgress.vue'
 import '@/assets/modal-footer-btn.css'
 
 interface KbStats {
@@ -105,18 +114,57 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
 }
 
-async function load(): Promise<void> {
-  loading.value = true
+async function load(silent = false): Promise<void> {
+  if (!silent) loading.value = true
   statusError.value = ''
   try {
+    // Installation-wide on purpose: this page reports the whole knowledge base,
+    // unlike the panel which is scoped to the current project.
     status.value = await apiGet<KbStatus>('/api/kb/status')
   } catch (err) {
-    status.value = null
-    statusError.value = err instanceof Error ? err.message : String(err)
+    if (!silent) {
+      status.value = null
+      statusError.value = err instanceof Error ? err.message : String(err)
+    }
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
+    syncPolling()
   }
 }
+
+/**
+ * Keep the counters and the progress bar moving while the indexer works.
+ *
+ * Polls silently: reusing `loading` would swap the whole card for a skeleton
+ * every few seconds (and spin the refresh button). Stops by itself once the
+ * queue and the embedding backlog are both empty.
+ */
+const indexActive = computed(() => {
+  const s = status.value?.stats
+  if (!s) return false
+  if (s.pending_docs > 0) return true
+  return !!status.value?.vector_enabled && s.chunks > s.embedded_chunks
+})
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+function syncPolling(): void {
+  if (indexActive.value) {
+    if (pollTimer == null) {
+      pollTimer = setInterval(() => void load(true), 3000)
+    }
+  } else if (pollTimer != null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+onBeforeUnmount(() => {
+  if (pollTimer != null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+})
 
 async function reindex(): Promise<void> {
   const ok = await dialog.confirm(t('settings.items.kbReindexConfirm'), {
@@ -137,7 +185,9 @@ async function reindex(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+})
 </script>
 
 <style scoped>
@@ -181,6 +231,12 @@ onMounted(load)
   padding: var(--space-6) var(--space-7);
   font-size: var(--font-size-sm);
   color: var(--text-muted);
+}
+
+/* The component brings its own rows; only the card's horizontal rhythm is
+   added here (it has no idea which container it lands in). */
+.kb-progress {
+  padding: 0 var(--space-7) var(--space-5);
 }
 
 .kb-actions {

@@ -884,11 +884,22 @@ func VectorEnabled() bool {
 	return currentEmbedder() != nil
 }
 
-// Stats returns the current index health snapshot.
+// Stats returns the current index health snapshot for the whole installation.
 func Stats() (IndexStats, error) {
 	st := currentStore()
 	if st == nil {
 		return IndexStats{}, ErrUnavailable
 	}
 	return st.Stats()
+}
+
+// StatsForProject returns the snapshot restricted to the collections a project
+// can see (its own plus the global ones). projectID <= 0 means "whole
+// installation" and is equivalent to Stats().
+func StatsForProject(projectID int64) (IndexStats, error) {
+	st := currentStore()
+	if st == nil {
+		return IndexStats{}, ErrUnavailable
+	}
+	return st.StatsForProject(projectID)
 }

@@ -791,25 +791,52 @@ describe('settingsFieldMap', () => {
     expect(keys).toContain('stt.shortcut_key')
   })
 
-  it('rag panel keeps status + the shared embedding block and nothing else', () => {
+  it('splits the session index from the shared embedding service', () => {
     const panels = getCategoryPanels('rag')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
-    // 5 status rows + 7 embedding rows (vector switch, endpoint, model, key,
-    // health, chunk size, chunk overlap).
-    expect(cfg.commonFields.length).toBe(12)
-    expect(cfg.commonFields[0].key).toBe('rag.status.mode')
-    expect(cfg.requiredFields).toEqual(['rag.base_url'])
+    // Status only. The endpoint, model, key and chunking moved to 文本嵌入 so
+    // the shared service is not buried inside one of its two consumers.
+    expect(cfg.commonFields.map(f => f.key)).toEqual([
+      'rag.status.mode',
+      'rag.status.index_progress',
+      'rag.status.fts_size',
+      'rag.status.embed_progress',
+      'rag.status.vec_size',
+    ])
+    expect(cfg.requiredFields).toBeUndefined()
+    expect(cfg.hasConnectivityTest).toBeUndefined()
 
     // The four session-retrieval knobs moved to 会话管理. Leaving a copy here
     // would give the same server key two edit surfaces.
     const keys = cfg.commonFields.map(f => f.key)
     for (const moved of ['rag.retention_days', 'rag.search_limit', 'rag.search_pool_size', 'rag.batch_size']) {
-      expect(keys, `${moved} must not stay on the RAG page`).not.toContain(moved)
+      expect(keys, `${moved} must not stay on the session-index page`).not.toContain(moved)
     }
-    // The embedding block is shared with the knowledge base, and says so.
+  })
+
+  it('embedding page owns the shared endpoint, credentials and chunking', () => {
+    const panels = getCategoryPanels('embedding')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.panelId).toBe('embedding')
+    expect(cfg.commonFields.map(f => f.key)).toEqual([
+      'rag.vector_enabled',
+      'rag.status.embedder_healthy',
+      'rag.base_url',
+      'rag.model',
+      'rag.api_key',
+      'rag.chunk_size',
+      'rag.chunk_overlap',
+    ])
+    // The switch says who shares the service, because that is the thing a user
+    // needs to know before turning it off.
     expect(cfg.commonFields.find(f => f.key === 'rag.vector_enabled')!.descriptionKey)
-      .toBe('settings.items.ragSharedDesc')
+      .toBe('settings.items.embeddingEnabledDesc')
+    // Connectivity test travels with the credentials it exercises.
+    expect(cfg.requiredFields).toEqual(['rag.base_url'])
+    expect(typeof cfg.hasConnectivityTest).toBe('function')
+    expect(cfg.getTestCategories!({})).toEqual([{ category: 'rag', values: {} }])
   })
 
   // ── Port Forward panel ──
@@ -1168,8 +1195,8 @@ describe('settingsFieldMap', () => {
     }
   })
 
-  it('RAG panel hasConnectivityTest is conditional', () => {
-    const panels = getCategoryPanels('rag')
+  it('embedding panel hasConnectivityTest is conditional', () => {
+    const panels = getCategoryPanels('embedding')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
     expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
@@ -1633,10 +1660,11 @@ describe('RAG split', () => {
     }
   })
 
-  it('keeps the embedding block on the RAG page, marked as shared', () => {
-    const keys = ragFields().map(f => f.key)
+  it('keeps the embedding block on the 文本嵌入 page, not on the index page', () => {
+    const embKeys = getCategoryPanels('embedding')[0].commonFields.map(f => f.key)
     for (const shared of ['rag.vector_enabled', 'rag.base_url', 'rag.model', 'rag.api_key', 'rag.chunk_size', 'rag.chunk_overlap']) {
-      expect(keys).toContain(shared)
+      expect(embKeys).toContain(shared)
+      expect(ragFields().map(f => f.key), `${shared} must not stay on the index page`).not.toContain(shared)
     }
   })
 

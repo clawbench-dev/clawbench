@@ -8361,7 +8361,17 @@ paths:
         `available` 表示知识库已启用；`vector_enabled` 表示配置了嵌入服务；
         `stats` 含库数、文件数（就绪/失败/排队）、片段数、已嵌入片段数与
         磁盘副本占用。
+        `scope=project` 只统计当前项目可见的知识库（全局库 + 本项目库），
+        与左侧知识库面板列出的集合一致；不传则返回整个安装的总量。
       operationId: kbStatus
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          description: 传 `project` 时按当前项目过滤统计；缺省为全安装口径。
+          schema:
+            type: string
+            enum: [project]
       responses:
         "200":
           description: 状态快照

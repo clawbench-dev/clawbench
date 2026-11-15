@@ -757,6 +757,12 @@ func ServeKBReindex(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeKBStatus handles GET /api/kb/status.
+//
+// `scope=project` restricts the counters to what the current project can see
+// (its own collections plus the global ones), which is exactly what the
+// knowledge-base panel lists. Every other caller gets installation-wide totals:
+// the settings page is global, and the completion watcher runs outside any
+// project context.
 func ServeKBStatus(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -765,12 +771,16 @@ func ServeKBStatus(w http.ResponseWriter, r *http.Request) {
 	vectorEnabled := kb.VectorEnabled()
 	var stats kb.IndexStats
 	if available {
-		st, err := kb.Stats()
+		var err error
+		if r.URL.Query().Get("scope") == "project" {
+			stats, err = kb.StatsForProject(kbProjectID(r))
+		} else {
+			stats, err = kb.Stats()
+		}
 		if err != nil {
 			writeKBError(w, r, err)
 			return
 		}
-		stats = st
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"available":      available,

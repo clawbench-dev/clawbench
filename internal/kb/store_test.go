@@ -232,6 +232,60 @@ func TestStats(t *testing.T) {
 	require.Equal(t, int64(2048), stt.StoredBytes)
 }
 
+func TestStatsForProject(t *testing.T) {
+	st := newTestStore(t)
+
+	// One global collection, one owned by project 7, one by project 8. Each
+	// holds a single ready document with one chunk.
+	add := func(name string, scope string, projectID int64, hash string) {
+		colID, err := st.CreateCollection(Collection{Name: name, Scope: scope, ProjectID: projectID, AutoInject: true})
+		require.NoError(t, err)
+		docID, err := st.AddDocument(Document{
+			CollectionID: colID, Title: name + ".txt", ContentHash: hash, Status: StatusReady, SizeBytes: 100,
+		})
+		require.NoError(t, err)
+		require.NoError(t, st.ReplaceChunks(docID, []Chunk{{
+			DocumentID:         docID,
+			CollectionID:       colID,
+			ProjectID:          projectID,
+			ChunkText:          name,
+			ChunkTextSegmented: rag.SegmentText(name),
+			ChunkIndex:         0,
+		}}, ""))
+	}
+	add("global", ScopeGlobal, 0, "g")
+	add("own", ScopeProject, 7, "o")
+	add("other", ScopeProject, 8, "x")
+
+	// Whole installation: everything.
+	all, err := st.Stats()
+	require.NoError(t, err)
+	require.Equal(t, 3, all.Collections)
+	require.Equal(t, 3, all.Documents)
+	require.Equal(t, 3, all.Chunks)
+	require.Equal(t, int64(300), all.StoredBytes)
+
+	// Project 7: global + its own. The project-8 collection must not leak into
+	// the counters the panel shows next to a list that cannot see it.
+	own, err := st.StatsForProject(7)
+	require.NoError(t, err)
+	require.Equal(t, 2, own.Collections)
+	require.Equal(t, 2, own.Documents)
+	require.Equal(t, 2, own.Chunks)
+	require.Equal(t, int64(200), own.StoredBytes)
+
+	// A project with no collections of its own still sees the global one.
+	other, err := st.StatsForProject(9)
+	require.NoError(t, err)
+	require.Equal(t, 1, other.Collections)
+	require.Equal(t, 1, other.Documents)
+
+	// 0 is the settings-page scope: installation-wide, same as Stats().
+	fallback, err := st.StatsForProject(0)
+	require.NoError(t, err)
+	require.Equal(t, all, fallback)
+}
+
 func TestResetStuckDocuments(t *testing.T) {
 	st := newTestStore(t)
 	colID, err := st.CreateCollection(Collection{Name: "c", Scope: ScopeGlobal, AutoInject: true})
