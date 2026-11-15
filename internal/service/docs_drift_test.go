@@ -237,6 +237,13 @@ func TestSpecDocsBackendCountMatchesRegistry(t *testing.T) {
 		if !e.IsDir() {
 			continue // all.go / acp_wire.go / plugin.go live here
 		}
+		if e.Name() == "all" {
+			// "all" is the generated import list, not a backend: its whole job is
+			// to blank-import every other directory. Skipping it is safe because
+			// TestAllImportsMatchDirectories (in that package) fails when the list
+			// and the directories disagree.
+			continue
+		}
 		dir := filepath.Join(backendsDir, e.Name())
 		files, err := os.ReadDir(dir)
 		if err != nil {
