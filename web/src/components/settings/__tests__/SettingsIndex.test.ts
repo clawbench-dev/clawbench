@@ -33,9 +33,9 @@ const i18n = createI18n({
           portForward: '端口映射',
           mail: '邮件',
           share: '分享中心',
-          notification: '消息通知',
+          notification: '消息推送',
           notifications: '通知中心',
-          usageMeter: '用量',
+          usageMeter: '用量监控',
           security: '安全',
           debug: '调试',
           about: '关于',
@@ -43,10 +43,9 @@ const i18n = createI18n({
         groups: {
           projectAppearance: '项目与外观',
           aiChat: 'AI 与对话',
+          dockModules: '功能模块',
           modelCapability: '模型能力',
-          connectivity: '连接与集成',
-          notifySecurity: '通知与安全',
-          systemAbout: '系统与关于',
+          system: '系统',
         },
       },
     },
@@ -113,21 +112,22 @@ describe('SettingsIndex', () => {
     expect(labels).toContain('邮件')
     expect(labels).toContain('分享中心')
     expect(labels).toContain('端口映射')
-    expect(labels).toContain('用量')
+    expect(labels).toContain('消息推送')
+    expect(labels).toContain('用量监控')
     expect(labels).toContain('安全')
     expect(labels).toContain('调试')
     expect(labels).toContain('关于')
   })
 
-  it('groups categories into 6 titled cards', () => {
+  it('groups categories into 5 titled cards', () => {
     const wrapper = mountIndex()
 
     const cards = wrapper.findAll('.settings-card')
-    expect(cards.length).toBe(6)
+    expect(cards.length).toBe(5)
 
     const titles = wrapper.findAll('.settings-card__header').map(el => el.text())
     expect(titles).toEqual([
-      '项目与外观', 'AI 与对话', '模型能力', '连接与集成', '通知与安全', '系统与关于',
+      '项目与外观', 'AI 与对话', '功能模块', '模型能力', '系统',
     ])
   })
 
@@ -137,17 +137,13 @@ describe('SettingsIndex', () => {
     const perCard = wrapper.findAll('.settings-card').map(card =>
       card.findAll('.settings-index__row').length,
     )
-    // 项目与外观 (7): 项目, 外观, 功能编排, 文件管理, 文件浏览, Git 历史, 统计.
-    //   Git history and statistics are per-project surfaces with their own
-    //   defaults, so they sit beside the project and file pages.
-    // AI 与对话 (9): 身份, 聊天, 会话管理, 智能体, 任务, 技能, MCP, 知识库, 会议.
-    //   会话管理 follows 聊天; 知识库 and 会议 stay here rather than moving to
-    //   模型能力 (they are features, not model configuration).
-    // 模型能力 (4): 模型提供商, RAG 检索, 语音朗读, 语音识别 — the pages that
-    //   configure models and engines themselves.
-    // 连接与集成 (5): 终端, 端口映射, 邮件, 分享中心, GitHub/GitLab 集成.
-    // 通知与安全 (4) and 系统与关于 (2) are unchanged.
-    expect(perCard).toEqual([7, 9, 4, 5, 4, 2])
+    // 项目与外观 (2): 项目, 外观.
+    // AI 与对话 (6): 身份, 聊天, 会话管理, 智能体, 技能, MCP.
+    // 功能模块 (16): 功能编排 + one page per dock plugin in DOCK order, then
+    //   消息推送 and 用量监控 (features with a page but no dock entry).
+    // 模型能力 (4): 模型提供商, RAG 检索, 语音朗读, 语音识别.
+    // 系统 (3): 调试, 安全, 关于.
+    expect(perCard).toEqual([2, 6, 16, 4, 3])
     expect(perCard.reduce((a, b) => a + b, 0)).toBe(31)
   })
 
@@ -184,17 +180,17 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       // 项目与外观
-      'project', 'appearance', 'dockPlugins', 'files', 'fileView', 'gitHistory', 'stats',
+      'project', 'appearance',
       // AI 与对话
-      'identity', 'chat', 'sessions', 'agents', 'tasks', 'skills', 'mcp', 'kb', 'meeting',
+      'identity', 'chat', 'sessions', 'agents', 'skills', 'mcp',
+      // 功能模块
+      'dockPlugins', 'files', 'fileView', 'gitHistory', 'forgeIntegration', 'tasks',
+      'terminal', 'stats', 'mail', 'kb', 'meeting', 'share', 'portForward',
+      'notifications', 'notification', 'usageMeter',
       // 模型能力
       'providers', 'rag', 'tts', 'stt',
-      // 连接与集成
-      'terminal', 'portForward', 'mail', 'share', 'forgeIntegration',
-      // 通知与安全
-      'notification', 'notifications', 'usageMeter', 'security',
-      // 系统与关于
-      'debug', 'about',
+      // 系统
+      'debug', 'security', 'about',
     ]
 
     const rows = wrapper.findAll('.settings-index__row')

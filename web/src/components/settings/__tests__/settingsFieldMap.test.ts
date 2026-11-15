@@ -1378,8 +1378,8 @@ describe('placeholder items (section openers)', () => {
   })
 })
 
-// The usage meter is its own settings category, sitting beside 推送通知 in the
-// 通知与安全 group — not a card nested inside the push-channel category. It is
+// The usage meter is its own settings category, sitting beside 消息推送 in the
+// 功能模块 group — not a card nested inside the push-channel category. It is
 // a notification feature, but "cycle / metric / budget" is a separate subject;
 // nesting it under push made it read as one more push channel.
 describe('usage meter is a sibling of push notifications', () => {

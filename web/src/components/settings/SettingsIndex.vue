@@ -83,13 +83,6 @@ const groupDefs = [
     items: [
       { id: 'project', icon: FolderGit2 },
       { id: 'appearance', icon: Palette },
-      { id: 'dockPlugins', icon: LayoutGrid },
-      { id: 'files', icon: FolderTree },
-      { id: 'fileView', icon: Eye },
-      // Both are per-project surfaces with their own defaults, so they sit with
-      // the project and the file pages rather than with the AI features.
-      { id: 'gitHistory', icon: History },
-      { id: 'stats', icon: ChartColumn },
     ],
   },
   {
@@ -104,17 +97,38 @@ const groupDefs = [
       // for the session-list options in two places.
       { id: 'sessions', icon: MessagesSquare },
       { id: 'agents', icon: Bot },
-      { id: 'tasks', icon: ListTodo },
       { id: 'skills', icon: Wand2 },
       { id: 'mcp', icon: Plug },
-      // 知识库 stays here, next to the other AI features. It shares the embedder
-      // with RAG, but its own configuration is about what gets indexed, not
-      // about the model.
+    ],
+  },
+  {
+    // 功能模块: everything that configures a left-dock feature lives in one
+    // group. The manager comes first (it is where those switches live), then
+    // one page per plugin in DOCK order, then the two pages that configure a
+    // feature without owning a dock entry (message push, usage meter).
+    //
+    // These pages stay listed even when their plugin is hidden or switched
+    // off: the user needs them to configure the feature back on.
+    id: 'dockModules',
+    items: [
+      { id: 'dockPlugins', icon: LayoutGrid },
+      { id: 'files', icon: FolderTree },
+      { id: 'fileView', icon: Eye },
+      { id: 'gitHistory', icon: History },
+      { id: 'forgeIntegration', icon: Github },
+      { id: 'tasks', icon: ListTodo },
+      { id: 'terminal', icon: SquareTerminal },
+      { id: 'stats', icon: ChartColumn },
+      { id: 'mail', icon: Mail },
       { id: 'kb', icon: BookOpen },
-      // Meeting defaults sit next to the AI features they depend on. The icon
-      // comes from utils/meetingIcon so this row matches the dock tab instead
-      // of drawing a second, unrelated meeting glyph.
+      // The icon comes from utils/meetingIcon so this row matches the dock tab
+      // instead of drawing a second, unrelated meeting glyph.
       { id: 'meeting', icon: MEETING_ICON },
+      { id: 'share', icon: Share2 },
+      { id: 'portForward', icon: ArrowLeftRight },
+      { id: 'notifications', icon: Inbox },
+      { id: 'notification', icon: Bell },
+      { id: 'usageMeter', icon: Gauge },
     ],
   },
   {
@@ -131,36 +145,10 @@ const groupDefs = [
     ],
   },
   {
-    id: 'connectivity',
-    items: [
-      { id: 'terminal', icon: SquareTerminal },
-      { id: 'portForward', icon: ArrowLeftRight },
-      // Mailbox accounts sit with the other outbound integrations: they are a
-      // connection this machine holds, not a per-project setting.
-      { id: 'mail', icon: Mail },
-      // Sharing is an outbound integration too: it hands content to people who
-      // are not logged in.
-      { id: 'share', icon: Share2 },
-      { id: 'forgeIntegration', icon: Github },
-    ],
-  },
-  {
-    id: 'notifySecurity',
-    items: [
-      { id: 'notification', icon: Bell },
-      { id: 'notifications', icon: Inbox },
-      // Side by side with 推送通知, not inside it: the usage meter is a
-      // notification feature but its configuration (cycle / metric / budget)
-      // is a separate subject, and nesting it under the push-channel card made
-      // it read as one more push channel.
-      { id: 'usageMeter', icon: Gauge },
-      { id: 'security', icon: Shield },
-    ],
-  },
-  {
-    id: 'systemAbout',
+    id: 'system',
     items: [
       { id: 'debug', icon: Bug },
+      { id: 'security', icon: Shield },
       { id: 'about', icon: Info },
     ],
   },

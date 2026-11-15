@@ -169,9 +169,13 @@ describe('generated site', () => {
   it('builds a table of contents from the page headings', () => {
     const html = read('settings.html')
     expect(html).toContain('class="docs-toc"')
-    // 目录链接与正文标题的 id 必须是同一个字符串，否则点了没反应
-    expect(html).toContain('href="#用量"')
-    expect(html).toContain('id="用量"')
+    // 目录链接与正文标题的 id 必须是同一个字符串，否则点了没反应。
+    // 锚点从源文件里的真实标题算出来：写死某一个标题会在改章节名时变脆，
+    // 而这条守卫要证明的是「两处用的是同一个字符串」，不是某个标题叫什么。
+    const md = readFileSync(join(DEFAULT_SRC, 'settings.md'), 'utf8')
+    const anchor = slugify(md.match(/^## (.+)$/m)![1].trim())
+    expect(html).toContain(`href="#${anchor}"`)
+    expect(html).toContain(`id="${anchor}"`)
   })
 
   it('wraps tables for horizontal scrolling and highlights code', () => {
