@@ -413,6 +413,10 @@ defineExpose({
   flex-shrink: 0;
   width: calc(24 * var(--dp));
   height: calc(24 * var(--dp));
+  /* Same reason as .modal-header-icon (modal-card.css): this class is usually
+     put straight on a lucide <svg>, so the 24dp box would otherwise stretch the
+     16dp glyph to 24dp. The padding keeps the glyph native and the tile intact. */
+  padding: calc(4 * var(--dp));
   border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);

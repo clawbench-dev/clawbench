@@ -163,6 +163,16 @@
   flex-shrink: 0;
   width: calc(24 * var(--dp));
   height: calc(24 * var(--dp));
+  /* The tile is 24dp but the glyph must stay at its native 16dp with 4dp of
+     breathing room. When this class lands DIRECTLY on a lucide <svg>, the
+     width/height declarations below would stretch the glyph to fill the whole
+     24dp box (box-sizing is border-box globally, and the width ATTRIBUTE is
+     overridden by CSS), reading ~1.5× larger than every neighbouring icon.
+     The padding shrinks the SVG viewport (content box) back to 16dp — the
+     viewBox then scales into it. On the <span>-wrapper call sites the padding
+     is a no-op: the child is 16–18dp and was already centered in the tile by
+     inline-flex. */
+  padding: calc(4 * var(--dp));
   border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);

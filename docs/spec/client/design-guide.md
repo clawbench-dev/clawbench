@@ -501,6 +501,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
   - **自绘外壳的弹窗也得在同一把尺子上**：`DialogOverlay`（通用确认/输入）、`UpgradeDialog`、`UpgradePromptOverlay`、`SettingsRestartDialog`、`AgentInstallDialog`、`WelcomeOverlay` 不用共享组件，但它们的 `max-width` 一律写 `var(--modal-width-narrow)`——否则同一屏又出现 320/380/420 三种宽度。
   - **窄屏（手机）不受影响**：`.modal-dialog` 是 `width: 100%`，overlay 左右各有 `--space-8`(20px) 内边距，任何 ≥ 视口宽度的 `max-width` 都不会生效。
 - **共享外壳的关闭按钮与返回**：两个外壳各有一个右上角圆形关闭按钮 `.modal-close-btn`（lucide `X`、28px，与下钻返回键 `.fd-back-btn` 同尺寸；底色沿用 `.window-controls` 的 `--text-primary` 混入 `--bg-secondary` 配方，静止 16% / hover 24% / active 32%，跨 36 主题最差对比 1.110，hover 用 `@media (hover:hover)` 门控避免触屏残留）。**它必须绝对定位**——header 的右侧动作簇（如 `.bs-header-actions`）自带 `margin-left:auto`，把它作为 flex 子项会被挤走；因此 header 预留对应右内边距（窄屏 BottomSheet 用 `.bs-header-has-close` 修饰类，因 TabPanel 复用 `.bs-header` 却无关闭按钮）。**header 点击不再关闭**（避免误触），backdrop 点击与 Escape 保留。**ModalDialog 会注册返回处理器**（优先级 `PRIORITY_OVERLAY+1`，高于所有 BottomSheet 抽屉），因此 Android 返回键与左右边缘内划都能关闭弹窗——此前它没注册，弹窗对返回无响应。
+- **标题图标方块自带 4dp 内边距**（`.bs-header-icon` / `.modal-header-icon`，24dp 方块）：这两个类大多数时候**直接挂在 lucide `<svg>` 上**，CSS 的宽高会盖过 svg 的 width 属性——没有内边距时 16dp 的图形会被拉满整个 24dp 方块，看起来比旁边所有图标胖一圈。内边距把 svg 的可视区收回 16dp。**例外**：`AgentIcon` / `FileIcon` 这类自己定尺寸的组件不要直接挂（内边距会挤小它们自己的盒子），要包一层 `<span class="bs-header-icon">`（AcpSessionDrawer / FileDiffsDrawer / FileDetailsDrawer / CodeLinkPreview 是先例）。守卫：`assets/__tests__/modalHeaderIcon.css.test.ts`。
 - **跨面板弹层不要用 `useTabDrawer` 的单 tab 绑定**（`effectiveOpen = currentTab===tabId && open`）——窄屏下会把可从多面板触发的弹层在其它 tab 静默吞掉。正解是直绑共享 `open` + 切 tab 时显式关闭。
 
 ### 块级横屏查看（表格 / 代码块）
@@ -833,6 +834,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/live/__tests__/meetingFooterButtons.test.ts` | 会议页脚动作条与任务动作条逐声明一致（`padding` / `background` / `border-top` / `flex-shrink`）、页脚里只能用 `.fbtn`（不得回退 `.meeting-btn`）、每个组件自己 import `modal-footer-btn.css` |
 | `components/live/__tests__/meetingFormParity.test.ts` | 创建会议与会中「会议管理」是同一套表单：原语只在 `assets/meeting-form.css` 声明一次（组件不得各写一份）、画面都是 `CaptureSourceGrid`（含「不共享」格子，不得回退屏幕勾选框）、摄像头/麦克风都是 `DeviceChoiceGrid`、分组标题都是 `meeting.create.av`、勾选行都是 `.meeting-check`；会中 tab 页不得给 `.live-panel__body.live-dialog` 设 `max-width`/`width`/`margin`（内容随面板宽度铺满） |
 | `assets/__tests__/modalWidth.css.test.ts` | **宽度只有两档**：`--modal-width-narrow/wide` 各一份且窄 < 宽、`modal-card.css` 只把修饰类映射到 token、全仓组件**不得**自设 `--modal-max-width` 或给弹窗外壳写裸 `max-width` 数字 |
+| `assets/__tests__/modalHeaderIcon.css.test.ts` | 标题图标方块：`.bs-header-icon` / `.modal-header-icon` 都保持 24dp 且**必须带 4dp 内边距**（否则直接挂在 lucide svg 上时 16dp 图形被拉满 24dp 方块）、两处几何声明逐项一致 |
 | `components/common/__tests__/wallpaperSurfaceTransparency.css.test.ts` | 壁纸开启后各表面透明度不叠乘 |
 | `components/common/__tests__/wallpaperBlurCost.css.test.ts` | 壁纸模糊不留 `will-change` |
 | `components/common/__tests__/resizeDivider.css.test.ts` | 拖拽分隔条外观 |

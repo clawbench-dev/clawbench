@@ -4,7 +4,11 @@
       <button class="fd-back-btn" :title="t('common.back')" :aria-label="t('common.back')" @click.stop="$emit('back')">
         <ArrowLeft :size="16" />
       </button>
-      <FileIcon :path="filePath" :size="16" class="bs-header-icon" />
+      <!-- Wrapped: .bs-header-icon's 4dp padding would shrink FileIcon's own
+           16dp box (it sets width/height inline) rather than pad around it. -->
+      <span class="bs-header-icon">
+        <FileIcon :path="filePath" :size="16" />
+      </span>
       <span class="fd-header-path">{{ baseName }}</span>
     </template>
     <div class="fd-body tool-detail-body" @click="handleBodyClick" @input="handleBodyInput" @mousedown="onTableMouseDown" @touchstart.passive="onTableTouchStart">

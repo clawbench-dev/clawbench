@@ -1,7 +1,11 @@
 <template>
   <BottomSheet :open="open" auto @close="$emit('close')">
     <template #header>
-      <FileIcon :path="file?.name || ''" :size="16" class="bs-header-icon" />
+      <!-- Wrapped: .bs-header-icon's 4dp padding would shrink FileIcon's own
+           16dp box (it sets width/height inline) rather than pad around it. -->
+      <span class="bs-header-icon">
+        <FileIcon :path="file?.name || ''" :size="16" />
+      </span>
       <span class="bs-header-title">{{ t('file.details.title') }}</span>
     </template>
 
