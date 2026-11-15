@@ -1498,7 +1498,7 @@ export default {
       subagentSteps: '{count} steps',
       subagentExpand: 'Expand sub-agent output',
       subagentCollapse: 'Collapse sub-agent output',
-      toolGroupOps: '{count} operation | {count} operations',
+      toolGroupOps: '{count} call | {count} calls',
       toolGroupThinking: '{count} thought | {count} thoughts',
       toolGroupThinkingRunning: 'Thinking…',
       toolGroupFailed: '{count} failed',

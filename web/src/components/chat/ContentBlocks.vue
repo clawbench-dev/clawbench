@@ -140,12 +140,14 @@
           :data-category="groupAccentCategory(group)"
           @click.stop="toggleToolGroup(group)"
         >
-          <!-- Leading icon follows the tool that is actually running, so the row
-               reads as that tool's pill; at rest the run is a container, so it
-               wears the generic stack glyph. The ring loader lives in the tail
-               (right edge) with every other status verdict — as a leading child
-               it pushed the counts around and left the right edge empty. -->
-          <component :is="group.runningToolName ? getToolIcon(group.runningToolName).icon : Layers" :size="12" class="tool-icon" />
+          <!-- Leading icon follows what is actually running, so the row reads as
+               that step's own pill: the running tool's glyph, or the brain while
+               only a thinking chip runs (same glyph as the chip). At rest the run
+               is a container, so it wears the generic stack glyph. The ring
+               loader lives in the tail (right edge) with every other status
+               verdict — as a leading child it pushed the counts around and left
+               the right edge empty. -->
+          <component :is="groupLeadingIcon(group)" :size="12" class="tool-icon" />
           <!-- Counts first — this row is a summary, not a log line. While a
                tool runs, the right-hand side says WHICH one ("Bash · npm test");
                what colour it wears comes from that same tool. -->
@@ -1977,6 +1979,15 @@ function groupAccentCategory(group: ToolCallGroup): string | undefined {
   if (group.runningIndex) return group.runningCategory || undefined
   if (group.runningThinking && props.streaming) return 'thinking'
   return undefined
+}
+
+/** Leading glyph: the running tool's own icon; the deep-thinking brain while
+ *  only a thinking chip runs (the row then IS that chip); the generic stack
+ *  glyph once the run settles, because a finished run mixes categories. */
+function groupLeadingIcon(group: ToolCallGroup) {
+  if (group.runningToolName) return getToolIcon(group.runningToolName).icon
+  if (group.runningThinking && props.streaming) return Brain
+  return Layers
 }
 
 /**

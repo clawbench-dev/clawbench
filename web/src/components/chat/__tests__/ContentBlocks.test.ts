@@ -176,7 +176,7 @@ const i18n = createI18n({
         subagentSteps: '{count} steps',
         subagentExpand: 'Expand sub-agent output',
         subagentCollapse: 'Collapse sub-agent output',
-        toolGroupOps: '{count} operation | {count} operations',
+        toolGroupOps: '{count} call | {count} calls',
         toolGroupThinking: '{count} thought | {count} thoughts',
         toolGroupThinkingRunning: 'Thinking…',
         toolGroupFailed: '{count} failed',
@@ -4094,7 +4094,7 @@ describe('compact tool calls', () => {
     const row = wrapper.find('[data-tool-group]')
     expect(row.exists()).toBe(true)
     expect(row.attributes('data-tool-count')).toBe('3')
-    expect(row.text()).toContain('3 operations')
+    expect(row.text()).toContain('3 calls')
     // The individual pills are gone — the row IS the run.
     expect(wrapper.findAll('.chat-tool-call')).toHaveLength(1)
   })
@@ -4109,7 +4109,7 @@ describe('compact tool calls', () => {
     expect(row.attributes('data-thinking-count')).toBe('2')
     expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
     // Counts only — the row is a summary, not a log line.
-    expect(row.text()).toContain('2 operations · 2 thoughts')
+    expect(row.text()).toContain('2 calls · 2 thoughts')
   })
 
   it('folds a live thinking chip into the run instead of splitting it out', async () => {
@@ -4121,12 +4121,13 @@ describe('compact tool calls', () => {
     })
     await nextTick()
     expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
-    expect(wrapper.find('[data-tool-group]').text()).toContain('1 operation · 1 thought')
+    expect(wrapper.find('[data-tool-group]').text()).toContain('1 call · 1 thought')
   })
 
-  it('takes the deep-thinking colour while only a thinking chip runs', async () => {
+  it('takes the deep-thinking colour AND brain icon while only a thinking chip runs', async () => {
     // Nothing but the thinking chip is live: the row keeps its count layout but
-    // wears the chip's purple, not a tool colour.
+    // wears the chip's purple, not a tool colour, and the leading glyph is the
+    // chip's brain rather than the generic "a run of tools" stack.
     const wrapper = mountBlocks({
       streaming: true,
       blocks: [tool('Read', 't1'), { type: 'thinking', think_id: 'th1', done: false }],
@@ -4135,9 +4136,25 @@ describe('compact tool calls', () => {
     const strip = wrapper.find('.chat-tool-group-strip')
     expect(strip.attributes('data-category')).toBe('thinking')
     expect(strip.find('.tool-spinner').exists()).toBe(true)
-    expect(strip.text()).toContain('1 operation · 1 thought')
+    expect(strip.text()).toContain('1 call · 1 thought')
     // The slot that normally names the running tool says what is happening.
     expect(strip.find('.tool-group-thinking').text()).toBe('Thinking…')
+    // Same brain glyph as the thinking chip; not the generic stack glyph.
+    expect(strip.element.querySelector(':scope > .lucide-brain'), 'leading icon is the brain').not.toBeNull()
+    expect(strip.element.querySelector('.lucide-layers'), 'not the generic stack glyph').toBeNull()
+  })
+
+  it('wears the generic stack glyph once the run settles', async () => {
+    // A finished run mixes categories (file / bash / search), so no single
+    // tool's icon (and not the brain) can stand for it.
+    const wrapper = mountBlocks({
+      blocks: [tool('Read', 't1'), thinking('th1')],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.attributes('data-category')).toBeUndefined()
+    expect(strip.element.querySelector(':scope > .lucide-layers')).not.toBeNull()
+    expect(strip.element.querySelector('.lucide-brain')).toBeNull()
   })
 
   it('unfolds the run in place, keeping every block reachable', async () => {
@@ -4208,7 +4225,7 @@ describe('compact tool calls', () => {
     await nextTick()
     const row = wrapper.find('[data-tool-group]')
     expect(row.find('.tool-spinner').exists()).toBe(true)
-    expect(row.text()).toContain('2 operations')
+    expect(row.text()).toContain('2 calls')
     // WHICH tool is running still matters — only the "Running 2/2" prefix went away.
     expect(row.text()).toContain('Bash · npm test')
   })
