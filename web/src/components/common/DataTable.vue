@@ -483,9 +483,13 @@ const emptyText = computed(() =>
   props.rows.length === 0 ? t('dataTable.empty') : t('dataTable.noMatches'),
 )
 
+/**
+ * 高度上限走自定义属性而不是内联 `max-height`：内联样式会赢过任何选择器，
+ * 触屏上那条「不要嵌套纵向滚动」的媒体查询就永远压不掉它。
+ */
 const scrollStyle = computed(() => {
   if (props.fill) return undefined
-  return { maxHeight: props.maxHeight ?? '420px' }
+  return { '--dt-scroll-max-h': props.maxHeight ?? '420px' }
 })
 
 function isNumCol(col: number): boolean {
@@ -1115,8 +1119,22 @@ defineExpose({ focusSearch, closeSearch })
 .dt-scroll {
   flex: 1;
   min-height: 0;
+  max-height: var(--dt-scroll-max-h, none);
   overflow: auto;
-  overscroll-behavior: contain;
+  /* 只拦横向。`overscroll-behavior: contain` 是整条轴的：只要这个盒子是
+     滚动容器（表格比气泡宽就够了），竖滑就再也不会链给外层 —— 手指落在
+     表格上，屏幕一动不动。横向仍要拦，否则表格滑到头会把滑动甩给聊天区
+     （那里挂着切换会话的手势）。 */
+  overscroll-behavior-x: contain;
+}
+
+/* 触屏上没有「嵌套纵向滚动」这回事：手指落在表格上竖滑，屏幕必须跟着走。
+   所以触屏不给高度上限，表格跟着消息一起长，滚动交给消息本身。要专心读
+   长表用表头栏的「横屏查看」——浮层里由浮层自己滚（见 code-block-header.css）。 */
+@media (pointer: coarse) {
+  .dt-scroll {
+    max-height: none;
+  }
 }
 
 .is-data .dt-arrow {
