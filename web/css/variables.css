@@ -194,8 +194,11 @@
 
     /* ── Horizontal edge inset of every left-panel tab header. One token for
        both sides and for both layouts: the section glyph on the left and the
-       right-most control must sit the same distance from the panel edge. ── */
-    --panel-header-pad-x: var(--space-7);
+       right-most control must sit the same distance from the panel edge.
+       It matches the chat title bar's horizontal padding (`.chat-title-bar`
+       in App.vue, also `--space-4`): the two panes sit side by side, so a
+       wider inset on one of them reads as "that header is too roomy". ── */
+    --panel-header-pad-x: var(--space-4);
 
     /* ── The page surface behind EVERY left-panel tab. It is one token so
        switching tabs never changes the page colour: panels either paint their

@@ -133,8 +133,16 @@ describe('one panel header row', () => {
 
     const vars = readWebFile('css/variables.css')
     expect(vars, 'the horizontal-inset token must be declared once').toMatch(
-      /--panel-header-pad-x:\s*var\(--space-7\)/,
+      /--panel-header-pad-x:\s*var\(--space-4\)/,
     )
+    // The two panes sit side by side, so the dock headers' inset must stay the
+    // same step as the chat title bar's horizontal padding — a wider value on
+    // one of them reads as "that header is too roomy" even though both are
+    // internally consistent.
+    const app = readWebFile('src/App.vue')
+    const chatTitle = app.match(/\.chat-title-bar\s*\{([\s\S]*?)\}/)
+    expect(chatTitle, '.chat-title-bar rule must exist').not.toBeNull()
+    expect(chatTitle![1]).toMatch(/padding:\s*var\(--space-1\) var\(--space-4\)/)
     expect(vars, 'the row-height token must be declared once').toMatch(
       /--header-height:\s*calc\(36 \* var\(--dp\)\)/,
     )
