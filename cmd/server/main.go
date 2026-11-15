@@ -2082,16 +2082,19 @@ func registerPlugins(port int) {
 		// 路由表里 "/api/tasks" 与 "/api/tasks/" 是两个 pattern，声明一次即可
 		// 同时覆盖（ForRoute 抹平尾部斜杠后按段边界匹配）。
 		APIPrefixes: []string{"/api/tasks"},
-		// 任务的开关不是"整段拒绝"：关闭后仍要能读列表/详情/执行历史、取消
-		// 运行中的执行、删除任务——那是用户收拾开关留下的残局的唯一途径。
-		// 所以这里只让"新建"与"整体更新"被门控（POST /api/tasks 与
-		// PUT /api/tasks/{id}），其余方法放行；动作端点里的 resume / trigger
-		// 由 handler 自己按 action 拒绝（同一个 POST 里 cancel 必须放行）。
+		// 任务只有"新建"能被前缀门控——它是唯一靠 method+path 就能识别的操作。
+		//
+		// 其余全部豁免，因为**动作也走 PUT /api/tasks/{id}**，靠 body 里的
+		// action 区分（cancel / resume / trigger / pause / read / stop /
+		// deleteExecution），而路由层读不到 body：PUT 既可能是"整体更新"
+		// （要拒），也可能是"取消运行中的执行"（必须放行——关闭开关会取消
+		// 所有执行，用户得能看到并收拾残局）。所以 PUT 交给 handler 按 action
+		// 判断（见 ServeTaskByID），这里整棵子树豁免。
+		//
+		// GET 列表（精确的 "/api/tasks"）也要豁免：关闭后仍要能看。
 		GateExempt: []string{
 			"GET /api/tasks",
-			"GET /api/tasks/",
-			"DELETE /api/tasks/",
-			"POST /api/tasks/",
+			"/api/tasks/",
 		},
 	})
 

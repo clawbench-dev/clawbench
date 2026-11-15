@@ -12,6 +12,7 @@ import {
   DOCK_TABS,
   DOCK_TABS_WITH_ICONS,
   DOCK_TAB_BY_ID,
+  assemblePluginModules,
   resolveDockPlugin,
 } from '@/composables/dockPluginRuntime'
 import { DOCK_PRESET_PLANS } from '@/composables/useDockPlugins'
@@ -94,6 +95,56 @@ describe('plugin modules and dock order', () => {
     expect([...DOCK_PERMANENT_TAB_IDS].sort()).toEqual([...notClosable].sort())
     for (const id of DOCK_PERMANENT_TAB_IDS) expect(isPermanentDockTab(id)).toBe(true)
     expect(isPermanentDockTab('mail')).toBe(false)
+  })
+})
+
+describe('assemblePluginModules', () => {
+  /** A minimal valid left-dock manifest for `id`. */
+  function plugin(id: string, extra: Record<string, unknown> = {}) {
+    return {
+      id,
+      titleKey: 'nav.mail',
+      descriptionKey: 'settings.dockPlugins.desc.mail',
+      group: 'personal' as const,
+      closable: true,
+      icon: { name: id },
+      ...extra,
+    }
+  }
+
+  it('keeps the FIRST module when two declare the same id', () => {
+    // The id is the plugin's stable identity (config key, i18n prefix,
+    // deep-link target), so a duplicate must not depend on glob order.
+    const { runtime, tabs } = assemblePluginModules({
+      'a/mail.ts': { default: plugin('mail', { titleKey: 'first' }) },
+      'b/mail.ts': { default: plugin('mail', { titleKey: 'second' }) },
+    })
+    expect((runtime.mail as { titleKey?: string }).titleKey).toBe('first')
+    expect(tabs.filter((t) => t.id === 'mail')).toHaveLength(1)
+  })
+
+  it('drops a module with no default export instead of throwing', () => {
+    const { runtime } = assemblePluginModules({
+      'a/mail.ts': {},
+      'b/kb.ts': { default: plugin('kb') },
+    })
+    expect(runtime.mail).toBeUndefined()
+    expect(runtime.kb).toBeDefined()
+  })
+
+  it('emits no descriptor for a dock id whose module is missing', () => {
+    // The guard test in this file catches the missing file; the assembly must
+    // still not produce a nameless button if one slips through.
+    const { tabs } = assemblePluginModules({ 'a/mail.ts': { default: plugin('mail') } })
+    expect(tabs.map((t) => t.id)).toEqual(['mail'])
+  })
+
+  it('never turns chat into a left-dock tab', () => {
+    const { runtime, tabs } = assemblePluginModules({
+      'a/chat.ts': { default: plugin('chat', { titleKey: 'nav.chat', icon: { name: 'chat' } }) },
+    })
+    expect(runtime.chat).toBeDefined()
+    expect(tabs).toHaveLength(0)
   })
 })
 

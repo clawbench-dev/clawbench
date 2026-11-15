@@ -454,11 +454,19 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 
 		// Full task update — task already fetched and verified above.
 		//
-		// This is the "use the feature" path (edit / re-arm), so the router's
-		// feature gate refuses it while the switch is off. The read/cancel/
-		// stop/delete-* actions above stay available: they are how a user
-		// inspects or cleans up after the switch cancelled everything, which is
-		// why the gate exempts those methods instead of the whole prefix.
+		// Everything below is the "use the feature" path (edit / re-arm), so it
+		// is refused while the switch is off. The read/cancel/stop/delete-*
+		// actions above stay available: they are how a user inspects or cleans
+		// up after the switch cancelled everything.
+		//
+		// This check cannot move to the router's feature gate: the actions above
+		// arrive as PUT with `action` in the BODY, exactly like this update, so
+		// method+path alone cannot tell "cancel a run" (must pass) from "re-arm
+		// the task" (must be refused). The gate therefore exempts the whole
+		// /api/tasks/ subtree and the decision stays here.
+		if rejectIfTasksDisabled(w, r) {
+			return
+		}
 
 		// Update fields if provided
 		if req.Name != "" {

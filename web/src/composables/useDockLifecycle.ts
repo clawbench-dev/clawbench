@@ -69,7 +69,6 @@ export function useDockLifecycle() {
   }
 
   watchEffect(sync)
-  onUnmounted(stopAll)
 
   /**
    * The tab whose `onEnter` has run and whose `onLeave` is still owed.
@@ -93,6 +92,14 @@ export function useDockLifecycle() {
     runDockOnLeave(current)
     current = null
   }
+
+  // Unmount is a leave too: the panel is going away, so the plugin must be told
+  // once — then its background resource is stopped. Without this, `leave()` had
+  // no caller outside `enter()`, i.e. the hook was only half wired.
+  onUnmounted(() => {
+    leave()
+    stopAll()
+  })
 
   return {
     sync,

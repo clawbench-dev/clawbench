@@ -127,6 +127,28 @@ describe('useDockLifecycle', () => {
     wrapper.unmount()
   })
 
+  it('owes the current tab its onLeave on unmount, exactly once', async () => {
+    // Unmounting is leaving: without this the hook only fired from `enter()`,
+    // so a plugin could never pause work when its host went away.
+    let lifecycle!: ReturnType<typeof useDockLifecycle>
+    const Harness = defineComponent({
+      setup() {
+        lifecycle = useDockLifecycle()
+        return () => null
+      },
+    })
+    const harness = mount(Harness)
+    await nextTick()
+
+    lifecycle.enter('mail')
+    expect(onLeave).not.toHaveBeenCalled()
+
+    harness.unmount()
+    // Exactly once: a second call would mean `leave()` ran both here and in
+    // `enter`'s bookkeeping.
+    expect(onLeave.mock.calls.map((c) => c[0])).toEqual(['mail'])
+  })
+
   it('stops when the plugin is hidden by the user', async () => {
     const wrapper = mount(Host)
     await nextTick()

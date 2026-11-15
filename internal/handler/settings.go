@@ -1793,10 +1793,17 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	disableWarnings := applyPluginDisableEffects(patch)
 	disableWarnings = append(disableWarnings, applyFeatureDisableEffects(patch)...)
 
-	// Classify fields into hot (no restart) and cold (needs restart)
+	// Classify fields into hot (no restart) and cold (needs restart).
+	//
+	// A registered feature's "<section>.enabled" is hot by construction: the
+	// plugin lifecycle already started or stopped its workers above, so telling
+	// the user to restart would be wrong. Deriving that from the registry means
+	// a new feature switch does not have to be added to hotReloadFields — that
+	// list stays the place for everything else (and is still hand-written, since
+	// it is the documentation of what a restart is needed for).
 	coldFields := make([]string, 0) // always non-nil so JSON serializes as [] not null
 	for _, f := range changedFields {
-		if !hotReloadFields[f] {
+		if !hotReloadFields[f] && !plugins.IsFeatureSwitchPath(f) {
 			coldFields = append(coldFields, f)
 		}
 	}

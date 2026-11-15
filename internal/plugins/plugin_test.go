@@ -158,6 +158,25 @@ func TestIsGateExempt(t *testing.T) {
 		"an entry without a method exempts every method")
 }
 
+func TestIsFeatureSwitchPath(t *testing.T) {
+	resetRegistry(t)
+	assert.False(t, IsFeatureSwitchPath("mail.enabled"), "empty registry: nothing is a feature switch")
+
+	Register(&Plugin{ID: "mail", Section: "mail"})
+	Register(&Plugin{ID: "stats"}) // no section: a pure-preference plugin
+
+	assert.True(t, IsFeatureSwitchPath("mail.enabled"))
+	assert.False(t, IsFeatureSwitchPath("stats.enabled"),
+		"a plugin without a Section has no config switch")
+	assert.False(t, IsFeatureSwitchPath("forge.enabled"), "section not registered")
+	assert.False(t, IsFeatureSwitchPath("mail.sync_interval_minutes"),
+		"only the master switch is derived, not every field of the section")
+	assert.False(t, IsFeatureSwitchPath("mail.enabled.extra"))
+	assert.False(t, IsFeatureSwitchPath(".enabled"))
+	assert.False(t, IsFeatureSwitchPath("enabled"))
+	assert.False(t, IsFeatureSwitchPath(""))
+}
+
 func TestStartStopAreOptional(t *testing.T) {
 	// Nothing calls them here; this pins the shape the worker lifecycle in
 	// cmd/server relies on (nil hooks are legal and mean "no background work").

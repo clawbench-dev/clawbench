@@ -379,6 +379,72 @@ func TestServeTaskByID_TriggerRejectedWhenTasksDisabled(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "TasksDisabled")
 }
 
+// The tasks switch is the one feature whose routes cannot be split at the
+// router: every action (cancel / resume / trigger / pause / read / stop /
+// deleteExecution) is a PUT on /api/tasks/{id} with `action` in the body — the
+// same shape as a full update. So the router exempts the whole subtree and the
+// decision has to live here, which makes this table the real contract:
+//
+//   - "use the feature" directions are refused (resume / trigger / full update);
+//   - cleanup directions are NOT (cancel / stop / pause) — after the switch
+//     cancelled every run, the user must still be able to see and stop what is
+//     left.
+//
+// A regression here is silent at the route level: gating the subtree would make
+// "cancel" return 409 in exactly the situation it exists for.
+func TestServeTaskByID_ActionsRespectTasksSwitch(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	saveFeatureSwitchState(t)
+
+	s := service.NewScheduler()
+	t.Cleanup(s.Stop)
+	service.GlobalScheduler = s
+
+	task := &model.ScheduledTask{
+		ProjectPath: env.ProjectDir,
+		Name:        "switch-actions",
+		CronExpr:    "0 * * * *",
+		AgentID:     "codebuddy",
+		Prompt:      "p",
+		RepeatMode:  "unlimited",
+	}
+	require.NoError(t, s.AddTask(task))
+
+	model.TasksEnabled = false
+
+	put := func(body map[string]any) *httptest.ResponseRecorder {
+		req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), body)
+		req = withProjectCookie(req, env.ProjectDir)
+		return callHandler(ServeTaskByID, req)
+	}
+
+	refused := []map[string]any{
+		{"action": "resume"},
+		{"action": "trigger"},
+		{"name": "renamed"}, // full update (no action) — the same "use it" path
+	}
+	for _, body := range refused {
+		w := put(body)
+		assert.Equalf(t, http.StatusConflict, w.Code, "body %v must be refused", body)
+		assert.Containsf(t, w.Body.String(), "TasksDisabled", "body %v must name the switch", body)
+	}
+
+	// "cancel" without an execution id proves it got PAST the switch check: it
+	// fails on its own validation one step later.
+	w := put(map[string]any{"action": "cancel"})
+	assertStatus(t, w, http.StatusBadRequest)
+	assert.Contains(t, w.Body.String(), "TaskExecutionIdRequired")
+
+	// "stop" is the idempotent task-level cancel: it must succeed with nothing
+	// running, and it must not be blocked by the switch.
+	w = put(map[string]any{"action": "stop"})
+	assertStatus(t, w, http.StatusOK)
+
+	w = put(map[string]any{"action": "pause"})
+	assertStatus(t, w, http.StatusOK)
+}
+
 // "POST /api/share while sharing is off → 409 ShareDisabled" moved to the
 // router's feature gate; see cmd/server's TestGate_EveryDisabledPluginRejectsItsRoutes.
 

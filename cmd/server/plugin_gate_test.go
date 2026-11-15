@@ -56,7 +56,14 @@ func newGatedMux(t *testing.T) *http.ServeMux {
 }
 
 func callRoute(mux *http.ServeMux, method, path string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, strings.NewReader("{}"))
+	return callRouteJSON(mux, method, path, "{}")
+}
+
+// callRouteJSON sends a real body. The tasks action endpoints dispatch on
+// `action` inside a PUT body, so an empty "{}" would never reach the branches
+// these tests are about.
+func callRouteJSON(mux *http.ServeMux, method, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -279,34 +286,45 @@ func TestGate_TerminalStatusIsExempt(t *testing.T) {
 	}
 }
 
-// TestGate_TasksKeepsReadAndCleanupRoutes is the reason tasks is not a plain
-// prefix gate: while tasks are off the user must still be able to inspect the
-// list and cancel/delete what the switch left behind.
-func TestGate_TasksKeepsReadAndCleanupRoutes(t *testing.T) {
+// TestGate_TasksOnlyGatesCreation pins the exact split the router can enforce
+// for tasks.
+//
+// Creation is the only tasks operation identified by method+path alone. Every
+// action (cancel / resume / trigger / pause / read / stop / deleteExecution) is
+// a PUT on /api/tasks/{id} carrying `action` in the BODY — the same shape as a
+// full update — so the router cannot tell "cancel the run the switch just
+// orphaned" (must pass) from "re-arm the task" (must be refused). Gating the
+// subtree would have made cancel impossible exactly when it is most needed.
+//
+// The body-level decisions are therefore in the handler and pinned there:
+// internal/handler's TestServeTaskByID_ActionsRespectTasksSwitch.
+func TestGate_TasksOnlyGatesCreation(t *testing.T) {
 	withFeatureSwitches(t, func() { model.TasksEnabled = false })
 	mux := newGatedMux(t)
 
-	allowed := []struct{ method, path string }{
-		{http.MethodGet, "/api/tasks"},
-		{http.MethodGet, "/api/tasks/7"},
-		{http.MethodDelete, "/api/tasks/7"},
-		{http.MethodPost, "/api/tasks/7"}, // action endpoint; resume/trigger decide in the handler
+	w := callRoute(mux, http.MethodPost, "/api/tasks")
+	assert.Equal(t, http.StatusConflict, w.Code, "creating a task must be refused")
+	assert.Contains(t, w.Body.String(), "TasksDisabled")
+
+	// Everything under the subtree reaches the handler, whatever the body says.
+	allowed := []struct {
+		method, path, body string
+	}{
+		{http.MethodGet, "/api/tasks", ""},
+		{http.MethodGet, "/api/tasks/7", ""},
+		{http.MethodDelete, "/api/tasks/7", ""},
+		{http.MethodPut, "/api/tasks/7", `{"action":"cancel","executionId":"e1"}`},
+		{http.MethodPut, "/api/tasks/7", `{"action":"resume"}`},
+		{http.MethodPut, "/api/tasks/7", `{"action":"trigger"}`},
+		{http.MethodPut, "/api/tasks/7", `{"name":"renamed"}`},
 	}
 	for _, tc := range allowed {
-		w := callRoute(mux, tc.method, tc.path)
+		w := callRouteJSON(mux, tc.method, tc.path, tc.body)
 		assert.NotEqualf(t, http.StatusConflict, w.Code,
-			"%s %s must stay reachable while tasks are off", tc.method, tc.path)
-	}
-
-	refused := []struct{ method, path string }{
-		{http.MethodPost, "/api/tasks"},  // create
-		{http.MethodPut, "/api/tasks/7"}, // edit / re-arm
-	}
-	for _, tc := range refused {
-		w := callRoute(mux, tc.method, tc.path)
-		assert.Equalf(t, http.StatusConflict, w.Code,
-			"%s %s must be refused while tasks are off", tc.method, tc.path)
-		assert.Contains(t, w.Body.String(), "TasksDisabled")
+			"%s %s %s must not be refused by the router gate (it decides in the handler)",
+			tc.method, tc.path, tc.body)
+		assert.NotContains(t, w.Body.String(), "TasksDisabled",
+			"%s %s %s must not carry the tasks-switch error", tc.method, tc.path, tc.body)
 	}
 }
 

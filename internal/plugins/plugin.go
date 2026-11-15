@@ -244,14 +244,13 @@ func All() []*Plugin {
 //     先被抹平——路由表里 "/api/tasks" 与 "/api/tasks/" 是两个 pattern，
 //     而插件只声明一次，两种写法都必须命中。
 func ForRoute(path string) *Plugin {
-	clean := trimPath(path)
 	mu.RLock()
 	defer mu.RUnlock()
 	var best *Plugin
 	bestLen := -1
 	for _, p := range ordered {
 		for _, prefix := range p.APIPrefixes {
-			if !pathMatches(clean, prefix) {
+			if !PrefixMatchesPath(prefix, path) {
 				continue
 			}
 			// 用规范化后的长度比较，避免 "/api/x/" 与 "/api/x" 互相打架。
@@ -261,6 +260,32 @@ func ForRoute(path string) *Plugin {
 		}
 	}
 	return best
+}
+
+// IsFeatureSwitchPath 报告 path 是否正好是某个已注册插件 config 段的总开关
+// （"<section>.enabled"）。
+//
+// 它让"新增一个功能开关"不必再往 handler 的 hotReloadFields 里补一行。那个
+// 白名单决定 PATCH 的响应是即时生效还是 needs_restart；而功能开关在 PATCH
+// 时已经由插件生命周期起停过了（syncPluginLifecycle），报"需要重启"是错的。
+// 白名单本身保持手写（它是"哪些字段热更新"的文档），这里只是让功能开关这
+// 一类不再需要重复登记。
+//
+// 只认已注册插件声明的 Section：一个不存在的段（或子配置项，如
+// "mail.sync_interval_minutes"）返回 false，交给白名单判断。
+func IsFeatureSwitchPath(path string) bool {
+	section, ok := strings.CutSuffix(path, ".enabled")
+	if !ok || section == "" {
+		return false
+	}
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, p := range ordered {
+		if p.Section == section {
+			return true
+		}
+	}
+	return false
 }
 
 // Reset 清空注册表。**仅供测试**：生产代码里注册表一旦建立就不该再变，
@@ -278,6 +303,19 @@ func trimPath(path string) string {
 		return path
 	}
 	return strings.TrimSuffix(path, "/")
+}
+
+// PrefixMatchesPath 报告 path 是否落在 prefix 上（精确或按路径段边界），
+// 两侧尾部斜杠都会被抹平。
+//
+// 它是"这个前缀是否覆盖这条路由"的唯一实现：ForRoute 用它做归属判断，
+// 守卫测试用它逐个前缀核对"每个声明都真的命中路由"。测试里必须按**前缀**
+// 计数——只判断 ForRoute(pattern)==插件 会让一个写错的前缀（/api/git/clocx）
+// 被同插件的另一个前缀掩盖，那条路由就静默脱管了。
+//
+// 例："/api/mail" 命中 "/api/mail" 与 "/api/mail/send"，不命中 "/api/mailbox"。
+func PrefixMatchesPath(prefix, path string) bool {
+	return pathMatches(trimPath(path), prefix)
 }
 
 // pathMatches 报告已规范化的路径是否落在 prefix 上（精确或按段边界）。

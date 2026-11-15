@@ -31,51 +31,73 @@ const TAG = 'DockPlugins'
  * (`dockTabs.ts`), because default order is a product decision and must not be
  * decided by the filesystem's alphabetical order.
  */
-const modules = import.meta.glob<{ default: DockPlugin }>('@/plugins/*/plugin.ts', {
-  eager: true,
-})
+/** A plugin module as the bundler hands it over. */
+export type PluginModuleMap = Record<string, { default?: DockPlugin }>
 
-const RUNTIME: Partial<Record<TabId, DockPlugin>> = {}
-
-for (const [path, mod] of Object.entries(modules)) {
-  const plugin = mod.default
-  if (!plugin?.id) {
-    appLog.w(TAG, `plugin module ${path} has no default export with an id`)
-    continue
-  }
-  if (RUNTIME[plugin.id]) {
-    // A duplicate id would silently shadow a plugin; the id is the stable
-    // identity (config key, i18n prefix, deep-link target), so it must be unique.
-    appLog.w(TAG, `duplicate plugin id "${plugin.id}" in ${path} — ignored`)
-    continue
-  }
-  RUNTIME[plugin.id] = plugin
+export interface AssembledPlugins {
+  /** Plugin by id; a duplicate id keeps the FIRST module and drops the rest. */
+  runtime: Partial<Record<TabId, DockPlugin>>
+  /** One descriptor per left-dock id, in `DOCK_TAB_ORDER`. */
+  tabs: (DockTabDescriptor & { icon: Component })[]
 }
 
-/** One assembled descriptor per declared tab id, in default order. */
-const assembled: (DockTabDescriptor & { icon: Component })[] = []
+/**
+ * Turn the globbed modules into the runtime map + the left-dock manifest.
+ *
+ * Exported (and pure) so the aggregation rules — duplicate ids, a missing
+ * `plugin.ts`, `chat` not being a dock tab — can be tested by calling it with
+ * a fake module map. The real call site is the only place that touches the
+ * filesystem, so those rules would otherwise be unreachable from a test.
+ */
+export function assemblePluginModules(modules: PluginModuleMap): AssembledPlugins {
+  const runtime: Partial<Record<TabId, DockPlugin>> = {}
 
-for (const id of DOCK_TAB_IDS) {
-  const plugin = RUNTIME[id]
-  // `chat` is not a left-dock entry; a missing module means the id was added to
-  // DOCK_TAB_ORDER without its plugin.ts. Both are dropped here (and caught by
-  // the manifest guard test) rather than rendering a nameless button.
-  if (!plugin || plugin.id === 'chat') {
-    if (!plugin) appLog.w(TAG, `no plugin.ts for dock tab "${id}"`)
-    continue
+  for (const [path, mod] of Object.entries(modules)) {
+    const plugin = mod.default
+    if (!plugin?.id) {
+      appLog.w(TAG, `plugin module ${path} has no default export with an id`)
+      continue
+    }
+    if (runtime[plugin.id]) {
+      // A duplicate id would silently shadow a plugin; the id is the stable
+      // identity (config key, i18n prefix, deep-link target), so it must be
+      // unique. First wins so the outcome does not depend on glob order.
+      appLog.w(TAG, `duplicate plugin id "${plugin.id}" in ${path} — ignored`)
+      continue
+    }
+    runtime[plugin.id] = plugin
   }
-  assembled.push({
-    id,
-    titleKey: plugin.titleKey,
-    descriptionKey: plugin.descriptionKey,
-    group: plugin.group,
-    closable: plugin.closable,
-    feature: plugin.feature,
-    capability: plugin.capability,
-    settingsCategory: plugin.settingsCategory,
-    icon: plugin.icon,
-  })
+
+  const tabs: (DockTabDescriptor & { icon: Component })[] = []
+  for (const id of DOCK_TAB_IDS) {
+    const plugin = runtime[id]
+    // `chat` is not a left-dock entry; a missing module means the id was added
+    // to DOCK_TAB_ORDER without its plugin.ts. Both are dropped here (and
+    // caught by the manifest guard test) rather than rendering a nameless
+    // button.
+    if (!plugin || plugin.id === 'chat') {
+      if (!plugin) appLog.w(TAG, `no plugin.ts for dock tab "${id}"`)
+      continue
+    }
+    tabs.push({
+      id,
+      titleKey: plugin.titleKey,
+      descriptionKey: plugin.descriptionKey,
+      group: plugin.group,
+      closable: plugin.closable,
+      feature: plugin.feature,
+      capability: plugin.capability,
+      settingsCategory: plugin.settingsCategory,
+      icon: plugin.icon,
+    })
+  }
+
+  return { runtime, tabs }
 }
+
+const { runtime: RUNTIME, tabs: assembled } = assemblePluginModules(
+  import.meta.glob<{ default: DockPlugin }>('@/plugins/*/plugin.ts', { eager: true }),
+)
 
 /** Every left-dock tab, in default order, with its manifest resolved. */
 export const DOCK_TABS: readonly DockTabDescriptor[] = assembled

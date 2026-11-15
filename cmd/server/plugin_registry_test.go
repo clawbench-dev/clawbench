@@ -166,8 +166,13 @@ func TestPluginRegistry_DeclaredPrefixesOwnRealRoutes(t *testing.T) {
 
 	// Populate the route table, then check that every declared prefix actually
 	// covers at least one registered pattern and that the registry attributes
-	// that pattern back to the same plugin. A typo ("/api/mails/") would
-	// otherwise leave the feature silently ungated.
+	// that pattern back to the same plugin.
+	//
+	// The match is counted PER PREFIX, not per plugin. Counting per plugin hides
+	// the failure this guard exists for: stats declares "/api/usage/",
+	// "/api/git/stats" and "/api/git/cloc", so a typo in the last one still
+	// leaves the other two matching and the guard stays green while that route
+	// silently drops out of the gate.
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	routes := handler.RegisteredRoutes()
@@ -177,13 +182,37 @@ func TestPluginRegistry_DeclaredPrefixesOwnRealRoutes(t *testing.T) {
 		for _, prefix := range p.APIPrefixes {
 			matched := 0
 			for _, route := range routes {
-				if plugins.ForRoute(route.Pattern) == p {
+				if plugins.ForRoute(route.Pattern) == p && plugins.PrefixMatchesPath(prefix, route.Pattern) {
 					matched++
 				}
 			}
-			assert.NotZerof(t, matched, "plugin %q declares prefix %q but no registered route maps to it", p.ID, prefix)
+			assert.NotZerof(t, matched,
+				"plugin %q declares prefix %q but no registered route is covered by THAT prefix", p.ID, prefix)
 		}
 	}
+}
+
+// TestPluginRegistry_FeatureSwitchesAreHot pins the derived half of the PATCH
+// classification: every registered section's "<section>.enabled" must be treated
+// as hot, so a new feature switch does not have to be added to hotReloadFields
+// (and can never make the UI say "restart required" for a switch that already
+// took effect).
+func TestPluginRegistry_FeatureSwitchesAreHot(t *testing.T) {
+	all := registeredPluginsForTest(t)
+
+	checked := 0
+	for _, p := range all {
+		if p.Section == "" {
+			continue
+		}
+		checked++
+		assert.Truef(t, plugins.IsFeatureSwitchPath(p.Section+".enabled"),
+			"%s.enabled must classify as hot (the lifecycle already started/stopped it)", p.Section)
+	}
+	assert.NotZero(t, checked, "no plugin declares a Section — the guard would be vacuous")
+
+	assert.False(t, plugins.IsFeatureSwitchPath("nosuchsection.enabled"))
+	assert.False(t, plugins.IsFeatureSwitchPath("mail.sync_interval_minutes"))
 }
 
 // sectionYAMLFields returns "<section>.<yaml field>" for every exported yaml
