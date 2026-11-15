@@ -262,6 +262,7 @@ func serveProviderDelete(w http.ResponseWriter, r *http.Request, id int64) {
 // writeProviderError maps the service sentinels to HTTP status + i18n keys.
 func writeProviderError(w http.ResponseWriter, r *http.Request, err error) {
 	var conflict *service.ProviderProtocolConflictError
+	var modelsConflict *service.ProviderModelsConflictError
 	switch {
 	case errors.Is(err, service.ErrProviderNotFound):
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "ProviderNotFound")
@@ -285,6 +286,9 @@ func writeProviderError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &conflict):
 		writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderProtocolConflict",
 			map[string]any{"Agents": strings.Join(conflict.AgentNames, ", ")})
+	case errors.As(err, &modelsConflict):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderModelsRequired",
+			map[string]any{"Agents": strings.Join(modelsConflict.AgentNames, ", ")})
 	default:
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 	}

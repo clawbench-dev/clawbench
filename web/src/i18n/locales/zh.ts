@@ -4541,7 +4541,7 @@ export default {
       providerClearKey: '清除已保存的密钥',
       providerModelsLabel: '模型',
       providerModelsChoose: '选择模型',
-      providerModelsNone: '还没有选择模型；绑定该提供商的智能体会继续用自身发现结果',
+      providerModelsNone: '还没有选择模型；codebuddy / kimi / pi 必须先选模型才能绑定，其他后端会继续用自身发现结果',
       providerModelsSummary: '已选 {count} 个',
       providerModelsManage: '管理',
       providerModelsAll: '全选',

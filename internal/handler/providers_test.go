@@ -357,6 +357,49 @@ func TestAgentPatch_ConfigDirBackendsAllowDifferentProvidersPerAgent(t *testing.
 	assert.NotContains(t, string(bData), "api.deepseek.com")
 }
 
+// Binding a provider with no model list to a config-directory backend used to
+// be accepted and then fail on EVERY turn at spawn, with a bare "InternalError"
+// pointing at nothing. The refusal belongs here, where the message can name the
+// model list.
+func TestAgentPatch_ConfigDirBackendRequiresModels(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	empty, err := service.CreateProvider(model.Provider{
+		Name: "NoModels", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://api.deepseek.com/v1", APIKey: "k",
+	})
+	require.NoError(t, err)
+	require.Empty(t, empty.Models, "the fixture must really have no models")
+
+	agent := &model.Agent{ID: "kimi-agent", Name: "Kimi", Backend: "kimi"}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": agent.ID, "provider_id": empty.ID, "confirm_config_write": true,
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"field":"models"`,
+		"the form branches on detail.field to point at the right control")
+	assert.Nil(t, model.GetAgent(agent.ID).ProviderID, "a refused binding must not be persisted")
+
+	// The same provider is fine for an env-driven backend: it never declares
+	// models on disk. (claude speaks anthropic, so it needs its own row.)
+	claudeProvider, err := service.CreateProvider(model.Provider{
+		Name: "ClaudeNoModels", Protocol: model.ProviderProtocolAnthropic,
+		BaseURL: "https://api.minimaxi.com/anthropic", APIKey: "k",
+	})
+	require.NoError(t, err)
+	claudeAgent := &model.Agent{ID: "claude-agent", Name: "Claude", Backend: "claude"}
+	model.ReplaceAgents(
+		map[string]*model.Agent{claudeAgent.ID: claudeAgent},
+		[]*model.Agent{claudeAgent},
+	)
+	rec = doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{
+		"id": claudeAgent.ID, "provider_id": claudeProvider.ID,
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
 func TestProvidersAPI_ModelList(t *testing.T) {
 	setupProvidersHandlerTest(t)
 

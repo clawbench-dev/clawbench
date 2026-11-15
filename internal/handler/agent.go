@@ -1342,6 +1342,15 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 				return
 			}
 			if model.ProviderUsesConfigDir(agent.Backend) {
+				// The file has to declare the models, or the CLI cannot resolve
+				// any id and every turn fails at spawn. Refuse it here, where the
+				// message can point at the model list, instead of letting the
+				// writer fail with a bare 500.
+				if merr := model.ProviderConfigDirModelsError(agent.Backend, provider); merr != nil {
+					writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid",
+						map[string]any{"Reason": merr.Error(), "field": "models"})
+					return
+				}
 				// Per-agent directory: no cross-agent conflict is possible, but
 				// the write still touches disk, so it needs consent when the
 				// backend cannot keep the secret in the environment.

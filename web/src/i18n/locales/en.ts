@@ -4542,7 +4542,7 @@ export default {
       providerClearKey: 'Clear the stored key',
       providerModelsLabel: 'Models',
       providerModelsChoose: 'Choose models',
-      providerModelsNone: 'No models selected yet; agents bound to this provider keep using their own discovery',
+      providerModelsNone: 'No models selected yet; codebuddy / kimi / pi require at least one before binding, other backends keep using their own discovery',
       providerModelsSummary: '{count} selected',
       providerModelsManage: 'Manage',
       providerModelsAll: 'Select all',

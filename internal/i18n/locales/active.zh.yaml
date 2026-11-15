@@ -179,6 +179,7 @@ ProviderUnsupported: 智能体 {{.Backend}} 不支持 {{.Protocol}} 协议的模
 ProviderProtocolConflict: 以下智能体不支持该协议：{{.Agents}}
 ProviderConfigConflict: 智能体 {{.Agents}} 已绑定其他提供商；该后端共用一份全局配置文件，只能绑定一个
 ProviderConfigConsentRequired: 该智能体需要修改配置文件才能生效：{{.Files}}。请确认后重试
+ProviderModelsRequired: 智能体 {{.Agents}} 绑定的这个后端必须列出至少一个模型，不能清空模型清单
 InvalidSHA: 无效的提交SHA格式
 InvalidBranchName: 无效的分支名
 UnknownBranch: 该分支不存在或已被删除

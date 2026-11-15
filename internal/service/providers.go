@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 
@@ -243,7 +244,82 @@ func validateProviderUpdate(id int64, current, next model.Provider) error {
 	if next.BaseURL == "" && summaryUsesProvider(id) {
 		return ErrProviderUsedBySummary
 	}
+	// A config-directory backend resolves model ids against the list the file
+	// declares, so emptying the list breaks every agent bound to it — the same
+	// failure the bind-time check prevents, reached by editing the provider
+	// instead. Only checked when the list actually became empty, so an unrelated
+	// edit to a row that was already empty is not blocked here (those agents are
+	// caught by the bind-time check when they rebind).
+	if len(next.Models) == 0 && next.DefaultModel == "" && len(current.Models) > 0 {
+		agents, err := agentsUsingConfigDirBackend(id)
+		if err != nil {
+			return err
+		}
+		if len(agents) > 0 {
+			return &ProviderModelsConflictError{AgentNames: agents}
+		}
+	}
 	return nil
+}
+
+// ProviderModelsConflictError reports agents that would break if a provider's
+// model list were emptied.
+type ProviderModelsConflictError struct {
+	AgentNames []string
+}
+
+func (e *ProviderModelsConflictError) Error() string {
+	return fmt.Sprintf("provider model list cannot be emptied while these agents use it: %s",
+		strings.Join(e.AgentNames, ", "))
+}
+
+// agentsUsingConfigDirBackend lists the agents bound to the provider whose
+// backend needs the model list on disk.
+//
+// Reads BOTH the database and the in-memory snapshot. The database is the
+// durable truth, but the snapshot is what the spawn path resolves providers
+// against, and the two can disagree for a moment after a rebind (or in tests
+// that publish agents directly). Missing an agent here means letting the edit
+// through and breaking that agent's next turn, so the union is the safe answer.
+func agentsUsingConfigDirBackend(providerID int64) ([]string, error) {
+	seen := make(map[string]struct{})
+	var names []string
+	add := func(name, backend string) {
+		if !model.ProviderUsesConfigDir(backend) {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+
+	rows, err := store.ReadDB().Query(
+		"SELECT name, backend FROM agents WHERE provider_id = ? ORDER BY name", providerID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list provider agents: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name, backend string
+		if err := rows.Scan(&name, &backend); err != nil {
+			return nil, err
+		}
+		add(name, backend)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, a := range model.GetAgentList() {
+		if a.ProviderID != nil && *a.ProviderID == providerID {
+			add(a.Name, a.Backend)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // applyProviderPatch overlays the non-nil fields and normalizes the result.

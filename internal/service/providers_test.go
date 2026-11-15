@@ -16,9 +16,17 @@ func setupProvidersDB(t *testing.T) {
 	t.Helper()
 	db, err := service.InitInMemoryDB()
 	require.NoError(t, err)
+	// Sandbox the data dir too. Provider bindings to a config-directory backend
+	// WRITE files under {DataDir}/providers/agents/, so a test that leaves
+	// DataDir at its default scribbles into the source tree (it did: a stray
+	// internal/service/providers/agents/... appeared after a test run) and can
+	// collide with a real installation's data.
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
 	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
+		model.DataDir = origDataDir
 		_ = db.Close()
 		model.ReplaceProviders(nil)
 	})
@@ -308,6 +316,53 @@ func TestProviderModelsPersistAndNormalize(t *testing.T) {
 	updated, err = service.UpdateProvider(created.ID, service.ProviderPatch{DefaultModel: &def})
 	require.NoError(t, err)
 	assert.Equal(t, "m3", updated.DefaultModel)
+}
+
+// Emptying a provider's model list breaks every agent bound to it through a
+// config-directory backend: the file no longer declares any model, so the CLI
+// cannot resolve an id. The bind-time check cannot catch this because the
+// binding already exists — the edit itself has to be refused.
+func TestProviderUpdate_RefusesEmptyingModelsWhileConfigDirAgentBound(t *testing.T) {
+	setupProvidersDB(t)
+
+	created, err := service.CreateProvider(model.Provider{
+		Name: "WithModels", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://api.deepseek.com/v1", APIKey: "k", Models: []string{"m1"},
+	})
+	require.NoError(t, err)
+
+	agent := &model.Agent{ID: "pi-agent", Name: "Pi Agent", Backend: "pi", ProviderID: &created.ID}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	// An env-driven agent does not care about the list, so it must not block.
+	claudeProvider, err := service.CreateProvider(model.Provider{
+		Name: "ClaudeP", Protocol: model.ProviderProtocolAnthropic,
+		BaseURL: "https://x/anthropic", APIKey: "k", Models: []string{"m1"},
+	})
+	require.NoError(t, err)
+	claudeAgent := &model.Agent{ID: "claude-agent", Name: "Claude Agent", Backend: "claude", ProviderID: &claudeProvider.ID}
+	model.ReplaceAgents(
+		map[string]*model.Agent{agent.ID: agent, claudeAgent.ID: claudeAgent},
+		[]*model.Agent{agent, claudeAgent},
+	)
+
+	empty := []string{}
+	_, err = service.UpdateProvider(created.ID, service.ProviderPatch{Models: &empty})
+	require.Error(t, err)
+	var conflict *service.ProviderModelsConflictError
+	require.ErrorAs(t, err, &conflict)
+	assert.Contains(t, conflict.AgentNames, "Pi Agent")
+	assert.NotContains(t, conflict.AgentNames, "Claude Agent",
+		"only config-directory agents depend on the declared list")
+
+	// The row is untouched by the refused update.
+	stored, err := service.GetProvider(created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"m1"}, stored.Models)
+
+	// The env-driven provider CAN be emptied: nothing on disk declares its models.
+	_, err = service.UpdateProvider(claudeProvider.ID, service.ProviderPatch{Models: &empty})
+	require.NoError(t, err)
 }
 
 // An auth mode no backend can express is a dead row: it saved fine, the test

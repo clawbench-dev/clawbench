@@ -318,6 +318,35 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 	return spec.KeyOnly != "" && !spec.ConfigOnly && p.BaseURL == ""
 }
 
+// ProviderConfigDirModelsError explains why backendID cannot take this provider
+// row, or returns nil when it can.
+//
+// A config-directory backend's file has to DECLARE the models: the CLI resolves
+// an id against that declaration, so a provider block with no models is
+// invisible and every turn fails at spawn. The write path already refuses such a
+// row (applyProviderConfigDir), but that refusal lands at bind time as a bare
+// 500 "InternalError" — the user gets no idea that the provider is simply
+// missing its model list. Checking here names the actual problem while the user
+// is still on the form that can fix it.
+//
+// The predicate mirrors providerModelIDs exactly: the curated list, falling back
+// to the default model. Anything the writer accepts must pass here, or a
+// provider that writes fine would be rejected by the binding.
+func ProviderConfigDirModelsError(backendID string, p *Provider) error {
+	if p == nil || !ProviderUsesConfigDir(backendID) {
+		return nil
+	}
+	for _, id := range p.Models {
+		if strings.TrimSpace(id) != "" {
+			return nil
+		}
+	}
+	if strings.TrimSpace(p.DefaultModel) != "" {
+		return nil
+	}
+	return fmt.Errorf("backend %q needs the provider to declare at least one model", backendID)
+}
+
 // ProviderAuthModeError explains why backendID cannot express the provider's
 // auth mode, or returns nil when it can.
 //

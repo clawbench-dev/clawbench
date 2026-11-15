@@ -4,9 +4,55 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/model"
 )
+
+// A config-directory backend's file has to declare the models, or the CLI cannot
+// resolve any id and every turn fails at spawn. The check must mirror the
+// writer's own predicate exactly: a provider the writer accepts must not be
+// rejected here, and one it refuses must be caught while the user can still fix
+// the form.
+func TestProviderConfigDirModelsError(t *testing.T) {
+	base := model.Provider{
+		ID: 1, Name: "P", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://x", APIKey: "k",
+	}
+
+	empty := base
+	for _, backend := range []string{"codebuddy", "kimi", "pi"} {
+		err := model.ProviderConfigDirModelsError(backend, &empty)
+		require.Error(t, err, backend)
+		assert.Contains(t, err.Error(), "at least one model", backend)
+	}
+
+	// A curated list satisfies it.
+	withModels := base
+	withModels.Models = []string{"m1"}
+	for _, backend := range []string{"codebuddy", "kimi", "pi"} {
+		assert.NoError(t, model.ProviderConfigDirModelsError(backend, &withModels), backend)
+	}
+
+	// So does a lone default model: the writer falls back to it, so rejecting it
+	// here would refuse a provider that writes fine.
+	onlyDefault := base
+	onlyDefault.DefaultModel = "m1"
+	for _, backend := range []string{"codebuddy", "kimi", "pi"} {
+		assert.NoError(t, model.ProviderConfigDirModelsError(backend, &onlyDefault), backend)
+	}
+
+	// Blank entries are not models — the writer skips them, so this must too.
+	blank := base
+	blank.Models = []string{"", "   "}
+	assert.Error(t, model.ProviderConfigDirModelsError("kimi", &blank))
+
+	// Backends that do not write a file are unaffected: env-driven ones have no
+	// such requirement, and codex's managed block does not declare models.
+	for _, backend := range []string{"claude", "opencode", "deepseek", "codex"} {
+		assert.NoError(t, model.ProviderConfigDirModelsError(backend, &empty), backend)
+	}
+}
 
 // The config-directory switch is what makes "one provider per agent" real for
 // codebuddy / kimi / pi. If a backend silently lost its entry, its bindings
