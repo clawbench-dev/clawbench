@@ -148,18 +148,22 @@
                verdict — as a leading child it pushed the counts around and left
                the right edge empty. -->
           <component :is="groupLeadingIcon(group)" :size="12" class="tool-icon" />
-          <!-- Counts first — this row is a summary, not a log line. While a
-               tool runs, the right-hand side says WHICH one ("Bash · npm test");
-               what colour it wears comes from that same tool. -->
-          <RollingText class="tool-name" :text="toolGroupLabel(group)" />
-          <RollingText
-            v-if="group.runningIndex"
-            class="tool-summary"
-            :text="group.runningSummary ? group.runningName + ' · ' + group.runningSummary : group.runningName"
-          />
-          <span v-else-if="group.runningThinking && streaming" class="tool-summary tool-group-thinking">{{ t('chat.contentBlocks.toolGroupThinkingRunning') }}</span>
-          <span v-else-if="group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
-          <span v-else-if="group.interruptedCount > 0" class="tool-summary tool-group-interrupted">{{ t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }) }}</span>
+          <!-- While a tool runs this row IS that tool's pill: same glyph, name
+               and summary as the standalone pill, and no count line — a count is
+               a summary of the run, and the run is not done summarising. It stays
+               clickable, so it can still be unfolded while it works. -->
+          <template v-if="group.runningIndex">
+            <RollingText class="tool-name" :text="group.runningName" />
+            <RollingText v-if="group.runningSummary" class="tool-summary" :text="group.runningSummary" />
+          </template>
+          <!-- Between two steps (a thinking chip is live) and once the run has
+               settled: counts, because there is no single step to name. -->
+          <template v-else>
+            <RollingText class="tool-name" :text="toolGroupLabel(group)" />
+            <span v-if="group.runningThinking && streaming" class="tool-summary tool-group-thinking">{{ t('chat.contentBlocks.toolGroupThinkingRunning') }}</span>
+            <span v-else-if="group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
+            <span v-else-if="group.interruptedCount > 0" class="tool-summary tool-group-interrupted">{{ t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }) }}</span>
+          </template>
           <!-- Everything from the cancelled marker to the chevron is one block
                pinned to the right edge. Grouping it is what keeps the row
                aligned in every state: while only a thinking chip runs there is
@@ -180,57 +184,67 @@
             <XCircle v-else-if="group.failedCount > 0" :size="14" color="#ef4444" class="tool-error-icon" />
             <CircleSlash v-else-if="(group.interruptedCount || 0) > 0" :size="14" color="#f59e0b" class="tool-warn" />
             <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
-            <ChevronUp v-if="isToolGroupOpen(group)" :size="12" class="tool-group-chevron" />
-            <ChevronDown v-else :size="12" class="tool-group-chevron" />
+            <!-- No chevron while a tool runs: a standalone pill has none, and
+                 this row has to be indistinguishable from it. -->
+            <ChevronUp v-if="!group.runningIndex && isToolGroupOpen(group)" :size="12" class="tool-group-chevron" />
+            <ChevronDown v-else-if="!group.runningIndex" :size="12" class="tool-group-chevron" />
           </span>
         </div>
         <!-- The run's content is rendered by a nested ContentBlocks instance,
              exactly like a sub-agent group: one real container, so the rail is a
              single border instead of per-row segments stitched together. -->
-        <div v-if="isToolGroupOpen(group)" class="chat-run-body-wrapper chat-run-body-open">
+        <!-- The wrapper is always in the DOM and the body folds with a grid
+             0fr↔1fr transition, exactly like a sub-agent group — so opening AND
+             closing both animate. The members themselves are mounted on first
+             open and kept: unmounting on collapse would make the body vanish
+             instantly instead of folding. A never-opened run pays nothing. -->
+        <div class="chat-run-body-wrapper" :class="{ 'chat-run-body-open': isToolGroupOpen(group) }">
           <div class="chat-run-body">
-            <ContentBlocks
-              :blocks="groupMembers(group)"
-              :root-blocks="rootBlocksResolved"
-              :nested="true"
-              :disable-tool-groups="true"
-              :msg-id="props.msgId"
-              :msg-index="props.msgIndex"
-              :session-id="props.sessionId"
-              :expanded-tools="props.expandedTools"
-              :block-tasks="props.blockTasks"
-              :block-ask-questions="props.blockAskQuestions"
-              :streaming="props.streaming"
-              :started-at="props.startedAt"
-              :cancelled="props.cancelled"
-              :render-text-block="props.renderTextBlock"
-              :format-tool-input="props.formatToolInput"
-              :tool-call-summary="props.toolCallSummary"
-              :truncate="props.truncate"
-              :get-agent-backend="props.getAgentBackend"
-              :get-agent-name="props.getAgentName"
-              :get-agent-avatar="props.getAgentAvatar"
-              :static-block-cache="props.staticBlockCache"
-              :active="props.active"
-              :read-only="props.readOnly"
-              :role="props.role"
-              @toggle-tool="$emit('toggle-tool', $event)"
-              @show-tool-detail="$emit('show-tool-detail', $event)"
-              @task-card-click="$emit('task-card-click', $event)"
-              @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
-              @render-flush="$emit('render-flush')"
-              @resume-session="$emit('resume-session', $event)"
-              @reset-session="$emit('reset-session', $event)"
-            />
-            <button
-              type="button"
-              class="chat-run-footer"
-              :aria-label="t('chat.contentBlocks.toolGroupCollapse')"
-              @click.stop="toggleToolGroup(group)"
-            >
-              <ChevronUp :size="12" />
-              <span>{{ t('chat.contentBlocks.toolGroupCollapse') }}</span>
-            </button>
+            <template v-if="isToolGroupMounted(group)">
+              <ContentBlocks
+                :blocks="groupMembers(group)"
+                :root-blocks="rootBlocksResolved"
+                :nested="true"
+                :disable-tool-groups="true"
+                :msg-id="props.msgId"
+                :msg-index="props.msgIndex"
+                :session-id="props.sessionId"
+                :expanded-tools="props.expandedTools"
+                :block-tasks="props.blockTasks"
+                :block-ask-questions="props.blockAskQuestions"
+                :streaming="props.streaming"
+                :started-at="props.startedAt"
+                :cancelled="props.cancelled"
+                :render-text-block="props.renderTextBlock"
+                :format-tool-input="props.formatToolInput"
+                :tool-call-summary="props.toolCallSummary"
+                :truncate="props.truncate"
+                :get-agent-backend="props.getAgentBackend"
+                :get-agent-name="props.getAgentName"
+                :get-agent-avatar="props.getAgentAvatar"
+                :static-block-cache="props.staticBlockCache"
+                :active="props.active"
+                :read-only="props.readOnly"
+                :role="props.role"
+                @toggle-tool="$emit('toggle-tool', $event)"
+                @show-tool-detail="$emit('show-tool-detail', $event)"
+                @task-card-click="$emit('task-card-click', $event)"
+                @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
+                @render-flush="$emit('render-flush')"
+                @resume-session="$emit('resume-session', $event)"
+                @reset-session="$emit('reset-session', $event)"
+              />
+              <button
+                v-if="isToolGroupOpen(group)"
+                type="button"
+                class="chat-run-footer"
+                :aria-label="t('chat.contentBlocks.toolGroupCollapse')"
+                @click.stop="toggleToolGroup(group)"
+              >
+                <ChevronUp :size="12" />
+                <span>{{ t('chat.contentBlocks.toolGroupCollapse') }}</span>
+              </button>
+            </template>
           </div>
         </div>
       </div>
@@ -261,7 +275,7 @@
             <ChevronDown v-else :size="12" />
           </button>
         </div>
-        <div class="subagent-group-body-wrapper" :class="{ 'subagent-group-body-open': isMemberGroupOpen(memberGroupNameForAnchor(block)), 'subagent-group-body-nostransition': collapsingMemberGroups[memberGroupKey(memberGroupNameForAnchor(block))] }">
+        <div class="subagent-group-body-wrapper" :class="{ 'subagent-group-body-open': isMemberGroupOpen(memberGroupNameForAnchor(block)) }">
           <div class="subagent-group-body">
             <ContentBlocks
               v-if="isMemberGroupMounted(memberGroupNameForAnchor(block))"
@@ -434,7 +448,7 @@
              pink. The member fallback group below sets it here for exactly that
              reason — both paths must paint the same member the same colour. -->
         <div v-if="hasSubagentGroup(block)" class="subagent-group" :class="{ 'subagent-group-open': isSubagentGroupOpen(bi, block) }" :style="memberAccentStyle(block)">
-          <div class="subagent-group-body-wrapper" :class="{ 'subagent-group-body-open': isSubagentGroupOpen(bi, block), 'subagent-group-body-nostransition': collapsingSubagentGroups[subagentGroupKey(bi, block)] }">
+          <div class="subagent-group-body-wrapper" :class="{ 'subagent-group-body-open': isSubagentGroupOpen(bi, block) }">
             <div class="subagent-group-body">
               <ContentBlocks
                 v-if="isSubagentGroupMounted(bi, block)"
@@ -1497,41 +1511,40 @@ function setMemberPillRef(key: string, el: any) {
 }
 
 /**
+ * Anchor a run's pill to the top of the chat scroller just before it folds
+ * shut, so a collapse that removes a thousand pixels does not drag everything
+ * below it up by that much.
+ *
+ * The body folds to zero height, so the post-collapse max scroll is known up
+ * front (current scroll height minus the body's height). That lets the anchor
+ * be applied BEFORE the fold: the animation runs afterwards, and the scroll
+ * position never has to be corrected mid-transition.
+ */
+function anchorCollapsingRun(pill: HTMLElement | undefined, body: HTMLElement | null) {
+  const scroller = pill?.closest('.chat-messages') as HTMLElement | null
+  if (!pill || !scroller || !body) return
+  const pillTopInContent = scroller.scrollTop + (pill.getBoundingClientRect().top - scroller.getBoundingClientRect().top)
+  const maxScrollAfter = Math.max(0, scroller.scrollHeight - body.offsetHeight - scroller.clientHeight)
+  const target = Math.max(0, Math.min(pillTopInContent, maxScrollAfter))
+  if (Math.abs(target - scroller.scrollTop) > 1) scroller.scrollTop = target
+}
+
+/**
  * Toggle a member fallback group. Mirrors toggleSubagentGroup: collapsing
  * shrinks a potentially huge group, so the pill is anchored to the top of the
- * scroll container and restored after the DOM updates.
+ * scroll container before it folds shut.
  */
 function toggleMemberGroup(name: string) {
   const key = memberGroupKey(name)
-  const wasOpen = isMemberGroupOpen(name)
-  if (!wasOpen) {
-    emit('toggle-tool', key)
-    return
+  if (isMemberGroupOpen(name)) {
+    const pill = memberPillEls.get(key)
+    anchorCollapsingRun(pill, pill?.nextElementSibling as HTMLElement | null)
   }
-  const pill = memberPillEls.get(key)
-  const scroller = pill?.closest('.chat-messages') as HTMLElement | null
-  if (!pill || !scroller) {
-    emit('toggle-tool', key)
-    return
-  }
-  const pillTopInContent = scroller.scrollTop + (pill.getBoundingClientRect().top - scroller.getBoundingClientRect().top)
-  collapsingMemberGroups[key] = true
   emit('toggle-tool', key)
-  nextTick(() => {
-    const maxScroll = scroller.scrollHeight - scroller.clientHeight
-    const target = Math.max(0, Math.min(pillTopInContent, maxScroll))
-    if (Math.abs(target - scroller.scrollTop) > 1) {
-      scroller.scrollTop = target
-    }
-    requestAnimationFrame(() => { delete collapsingMemberGroups[key] })
-  })
 }
 
 /** Groups whose recursive body has been mounted at least once. */
 const mountedMemberGroups = reactive<Record<string, boolean>>({})
-
-/** Groups mid-collapse (transition disabled so the anchor can be measured). */
-const collapsingMemberGroups = reactive<Record<string, boolean>>({})
 
 function isMemberGroupMounted(name: string): boolean {
   const k = memberGroupKey(name)
@@ -1643,53 +1656,22 @@ function setSubagentPillRef(key: string, el: any) {
 /**
  * Toggle a sub-agent group. Collapsing shrinks the group by potentially
  * thousands of pixels, which would violently shift everything below the
- * viewport. Before collapsing we anchor the Agent pill to the top of its
- * scroll container and restore that offset after the DOM updates, so the
- * pill (and the following content) stay put instead of jumping.
+ * viewport. Before it folds shut we anchor the Agent pill to the top of its
+ * scroll container so the pill (and the following content) stay put.
  */
 function toggleSubagentGroup(bi: number, block: any) {
   const key = subagentGroupKey(bi, block)
-  const wasOpen = isSubagentGroupOpen(bi, block)
-  if (!wasOpen) {
-    // Expanding: no anchoring needed (content grows below the pill).
-    emit('toggle-tool', key)
-    return
+  if (isSubagentGroupOpen(bi, block)) {
+    const pill = subagentPillEls.get(key)
+    anchorCollapsingRun(pill, pill?.nextElementSibling?.querySelector<HTMLElement>('.subagent-group-body-wrapper') || null)
   }
-  const pill = subagentPillEls.get(key)
-  const scroller = pill?.closest('.chat-messages') as HTMLElement | null
-  if (!pill || !scroller) {
-    emit('toggle-tool', key)
-    return
-  }
-  // Distance from the pill's top to the scroller's visible top, plus the
-  // current scrollTop. After collapse we restore scrollTop so the pill keeps
-  // the same on-screen position (clamped to the pill's new max scroll).
-  const pillTopInContent = scroller.scrollTop + (pill.getBoundingClientRect().top - scroller.getBoundingClientRect().top)
-  // Disable the grid transition for this collapse so the height change is
-  // applied synchronously — nextTick then measures the final layout and the
-  // anchor restore is exact. Expansion animates normally.
-  collapsingSubagentGroups[key] = true
   emit('toggle-tool', key)
-  nextTick(() => {
-    const maxScroll = scroller.scrollHeight - scroller.clientHeight
-    const target = Math.max(0, Math.min(pillTopInContent, maxScroll))
-    if (Math.abs(target - scroller.scrollTop) > 1) {
-      scroller.scrollTop = target
-    }
-    // Re-enable the transition on the next frame so a later expand animates.
-    requestAnimationFrame(() => { delete collapsingSubagentGroups[key] })
-  })
 }
 
 // Groups whose recursive body has been mounted at least once. Once mounted it
 // stays mounted so the collapse animation works on subsequent toggles; an
 // unopened group never instantiates its (possibly huge) child subtree.
 const mountedSubagentGroups = reactive<Record<string, boolean>>({})
-
-// Groups mid-collapse. Collapse is instant (transition disabled) so the
-// viewport anchor can be restored at nextTick against the final height; only
-// expansion animates.
-const collapsingSubagentGroups = reactive<Record<string, boolean>>({})
 
 /** Whether to mount the recursive body for this group (first open or later). */
 function isSubagentGroupMounted(bi: number, block: any): boolean {
@@ -2009,6 +1991,18 @@ function toolGroupKeyOf(group: ToolCallGroup): string {
 function isToolGroupOpen(group: ToolCallGroup): boolean {
   return !!openToolGroups.value[toolGroupKeyOf(group)]
 }
+
+/** Runs whose body has been mounted at least once. Kept mounted afterwards so
+ *  the fold animation has something to fold on the way out — unmounting on
+ *  collapse would make the body vanish instead of closing. A run the user never
+ *  opened instantiates nothing. */
+const mountedToolGroups = reactive<Record<string, boolean>>({})
+function isToolGroupMounted(group: ToolCallGroup): boolean {
+  const k = toolGroupKeyOf(group)
+  if (isToolGroupOpen(group)) mountedToolGroups[k] = true
+  return !!mountedToolGroups[k]
+}
+
 function toggleToolGroup(group: ToolCallGroup) {
   const key = toolGroupKeyOf(group)
   if (openToolGroups.value[key]) delete openToolGroups.value[key]
@@ -3356,10 +3350,6 @@ onUnmounted(() => {
    comes from the running block), so it reads as the pill it stands in for; the
    colour cross-fades as the run moves on to the next tool. */
 .chat-tool-group-strip {
-  /* One step further back than a single tool pill: this row is a container, not
-     an action, so it must not compete with the pills it summarises. */
-  background: color-mix(in srgb, var(--text-muted) 3%, var(--bg-secondary));
-  border-color: color-mix(in srgb, var(--text-muted) 10%, var(--border-color));
   /* Background / border / text all move together — a run can hop file → bash →
      search within a second, and a hard cut would read as a flicker. */
   transition:
@@ -3368,11 +3358,14 @@ onUnmounted(() => {
     color var(--duration-slow) ease;
 }
 
-/* Running: same accent mix as the running tool's own pill would have (or the
-   deep-thinking purple, via [data-category="thinking"]). */
-.chat-tool-group-strip[data-category] {
-  background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
-  border-color: color-mix(in srgb, var(--tool-accent) 15%, var(--border-color));
+/* At rest the row is a CONTAINER, one step further back than a single tool
+   pill, so it does not compete with the pills it summarises. While a tool runs
+   it must be indistinguishable from that tool's own pill, so this muted look is
+   only applied when there is no accent to wear — with `data-category` present
+   the shared `.chat-tool-call` rules already paint exactly what a pill gets. */
+.chat-tool-group-strip:not([data-category]) {
+  background: color-mix(in srgb, var(--text-muted) 3%, var(--bg-secondary));
+  border-color: color-mix(in srgb, var(--text-muted) 10%, var(--border-color));
 }
 
 @media (hover: hover) {
@@ -3383,7 +3376,9 @@ onUnmounted(() => {
   }
 }
 
-.chat-tool-group-strip .tool-name {
+/* Only the summary row (no accent) is muted; while a tool runs the name takes
+   that tool's accent, exactly like the standalone pill. */
+.chat-tool-group-strip:not([data-category]) .tool-name {
   color: var(--text-secondary);
   /* The count changes while the run streams; tabular digits keep the row from
      twitching left and right. */
@@ -3457,15 +3452,34 @@ onUnmounted(() => {
    The rail is the container's own left BORDER, not a pseudo-element per row:
    one unbroken line for the whole run, and it grows/shrinks with the container
    instead of being stitched together from segments. */
+/* Fold/unfold animation — the same grid 0fr↔1fr trick as the sub-agent body
+   and the thinking chip, so a run opens AND closes instead of snapping. */
+.chat-run-body-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows var(--duration-slow) ease, opacity var(--duration-slow) ease;
+}
+
+.chat-run-body-wrapper.chat-run-body-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+/* The rail described above. */
 .chat-run-body {
   /* `flow-root` keeps the first member's top margin INSIDE the box. Without it
      that margin collapses through the container's top edge, the border starts
      below it, and the rail visibly detaches from the head above. */
   display: flow-root;
+  /* Grid children default to min-height:auto, which would refuse to shrink the
+     row below its content; `overflow: hidden` is what clips it while the row
+     animates shut. */
+  min-height: 0;
+  overflow: hidden;
   border-left: 2px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
   padding-left: calc(8 * var(--dp));
 }
-
 .chat-run-footer {
   display: flex;
   align-items: center;
@@ -3600,12 +3614,6 @@ onUnmounted(() => {
 .subagent-group-body-wrapper.subagent-group-body-open {
   grid-template-rows: 1fr;
   opacity: 1;
-}
-
-/* Collapse is applied without a transition so the viewport anchor restore
-   (toggleSubagentGroup) can measure the final height synchronously. */
-.subagent-group-body-wrapper.subagent-group-body-nostransition {
-  transition: none;
 }
 
 .subagent-group-body {

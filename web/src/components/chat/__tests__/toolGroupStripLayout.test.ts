@@ -40,3 +40,36 @@ describe('folded-run row layout', () => {
     expect(cssBlock('.chat-tool-call[data-category="thinking"]')).toMatch(/--tool-accent:\s*#8b5cf6/)
   })
 })
+
+/**
+ * Both foldable runs — the compact tool-call row and the sub-agent group — must
+ * animate in BOTH directions. jsdom applies no SFC styles and never runs a
+ * transition, so the geometry is pinned at the source level.
+ */
+describe('fold animation', () => {
+  function cssRule(selectorWithBrace: string): string {
+    const src = readWebFile('src/components/chat/ContentBlocks.vue')
+    const idx = src.indexOf(selectorWithBrace)
+    expect(idx, `${selectorWithBrace} must exist`).toBeGreaterThan(-1)
+    return src.slice(idx, src.indexOf('}', src.indexOf('{', idx)) + 1)
+  }
+
+  it('folds the compact tool-call body instead of unmounting it', () => {
+    const base = cssRule('.chat-run-body-wrapper {')
+    expect(base).toMatch(/display:\s*grid/)
+    expect(base).toMatch(/grid-template-rows:\s*0fr/)
+    expect(base).toMatch(/transition:[^;]*grid-template-rows/)
+    expect(cssRule('.chat-run-body-wrapper.chat-run-body-open')).toMatch(/grid-template-rows:\s*1fr/)
+    // The row must be allowed to shrink below its content, or 0fr does nothing.
+    expect(cssRule('.chat-run-body {')).toMatch(/overflow:\s*hidden/)
+  })
+
+  it('leaves no instant-collapse escape hatch on either run', () => {
+    // Sub-agent collapse used to switch the transition off so the scroll anchor
+    // could be measured synchronously. The anchor is now computed before the
+    // fold, so nothing may re-introduce an un-animated close.
+    const src = readWebFile('src/components/chat/ContentBlocks.vue')
+    expect(src).not.toContain('subagent-group-body-nostransition')
+    expect(src).not.toContain('chat-run-body-nostransition')
+  })
+})

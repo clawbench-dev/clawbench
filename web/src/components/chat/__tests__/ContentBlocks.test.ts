@@ -4202,9 +4202,25 @@ describe('compact tool calls', () => {
     expect(footer.exists()).toBe(true)
     await footer.trigger('click')
     await nextTick()
-    // Collapsed again: one row, no members, no footer.
-    expect(wrapper.findAll('.chat-tool-call')).toHaveLength(1)
+    // Closed again: the affordance goes away and the wrapper is shut. The
+    // members stay mounted — that is what the fold animation closes over.
     expect(wrapper.find('.chat-run-footer').exists()).toBe(false)
+    expect(wrapper.find('.chat-run-body-open').exists()).toBe(false)
+  })
+
+  it('folds the body open and shut instead of snapping it away', async () => {
+    // The body used to be behind a `v-if`: it appeared and vanished within one
+    // frame, so neither direction had any motion. It now sits in a grid wrapper
+    // that animates 0fr↔1fr (same trick as the sub-agent body), and it is
+    // mounted on first open so the closing frame has something to fold.
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2')] })
+    await nextTick()
+    expect(wrapper.find('.chat-run-body-wrapper').exists(), 'wrapper is always present').toBe(true)
+    expect(wrapper.find('.chat-run-body .content-blocks-nested').exists(), 'nothing mounted before the first open').toBe(false)
+    await wrapper.find('.chat-tool-group-strip').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.chat-run-body-wrapper').classes()).toContain('chat-run-body-open')
+    expect(wrapper.find('.chat-run-body .content-blocks-nested').exists()).toBe(true)
   })
 
   it('shows the failure count instead of hiding it', async () => {
@@ -4216,7 +4232,11 @@ describe('compact tool calls', () => {
     expect(wrapper.find('[data-tool-group]').text()).toContain('1 failed')
   })
 
-  it('keeps naming the tool that is running, next to the counts', async () => {
+  it('looks exactly like the running tool\'s own pill while that tool works', async () => {
+    // A run is a summary of work; while a step is actually executing there is
+    // nothing to summarise yet, so the row drops the counts and becomes that
+    // step's pill (glyph + name + summary + ring). Only the click differs: it
+    // unfolds the run instead of opening the tool detail.
     const wrapper = mountBlocks({
       streaming: true,
       toolCallSummary: (b: any) => (b?.name === 'Bash' ? 'npm test' : ''),
@@ -4224,10 +4244,17 @@ describe('compact tool calls', () => {
     })
     await nextTick()
     const row = wrapper.find('[data-tool-group]')
+    const strip = row.find('.chat-tool-group-strip')
     expect(row.find('.tool-spinner').exists()).toBe(true)
-    expect(row.text()).toContain('2 calls')
-    // WHICH tool is running still matters — only the "Running 2/2" prefix went away.
-    expect(row.text()).toContain('Bash · npm test')
+    expect(strip.find('.tool-name').text()).toBe('Bash')
+    expect(strip.find('.tool-summary').text()).toBe('npm test')
+    // No counts while a step runs…
+    expect(row.text()).not.toContain('calls')
+    expect(row.text()).not.toContain('thoughts')
+    // …no chevron either: a standalone pill has none.
+    expect(row.find('.tool-group-chevron').exists()).toBe(false)
+    // And it wears the running tool's accent, not the muted container look.
+    expect(strip.attributes('data-category')).toBe('bash')
   })
 
   it('puts the running ring in the right-hand tail and keeps a real tool icon on the left', async () => {
