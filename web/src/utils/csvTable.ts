@@ -356,12 +356,18 @@ export function filterAndSortRows(rows: string[][], filter: RowFilter): string[]
  * Is this table a "data table"?
  *
  * 产品定的规则：**任意一列是纯数字**（非空的格子全是数字，空格子算缺失），
- * 整张表就默认按数据表展示。第一列不特殊对待——序号、年份、金额都可能落在
+ * 整张表就默认按数据表展示。第一列不特殊对待——年份、金额、数量都可能落在
  * 第一列，按内容判断而不是按位置。
+ *
+ * 唯一例外是**编号列**：1、2、3… 数到 N 的那一列（「步」「序号」「#」）是
+ * 行号，不是可以被排序/求和的量。把它算成数据列，AI 写的步骤表、清单表
+ * 全会被抬成数据表——聊天的表格十有八九带这么一列。判据复用
+ * `isIndexColumn`（与「不给编号列画数据条」同一条）。
  */
 export function isNumericTable(headers: string[], rows: string[][]): boolean {
     if (headers.length < 2 || rows.length < 1) return false
     for (let c = 0; c < headers.length; c++) {
+        if (isIndexColumn(headers[c] ?? '', rows.map(row => row[c] ?? ''))) continue
         let seen = 0
         let allNumeric = true
         for (const row of rows) {

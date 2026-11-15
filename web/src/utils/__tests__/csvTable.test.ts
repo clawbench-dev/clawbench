@@ -267,10 +267,25 @@ describe('isNumericTable', () => {
     )).toBe(true)
   })
 
-  it('counts the first column too — a numeric 序号 column makes it a data table', () => {
+  it('编号列不算数据列：只有序号是数字的表格按普通表显示', () => {
     expect(isNumericTable(
       ['序号', '名称', '说明'],
       [['1', '网关', '正常'], ['2', '鉴权', '正常']],
+    )).toBe(false)
+  })
+
+  it('列名不带「序号」、内容就是 1..N 的也算编号列', () => {
+    // 真实回归：AI 写的「步 / 优先级 / 做什么 / 手感变化」八步清单曾被判成数据表
+    expect(isNumericTable(
+      ['步', '优先级', '做什么'],
+      [['1', 'P0', '项目技能默认不自动注入'], ['2', 'P0', '用户目录提到项目之前'], ['3', 'P1', '描述截到 200 字']],
+    )).toBe(false)
+  })
+
+  it('编号列之外还有真数字列时仍然是数据表', () => {
+    expect(isNumericTable(
+      ['序号', '名称', '数量'],
+      [['1', '网关', '12'], ['2', '鉴权', '8']],
     )).toBe(true)
   })
 

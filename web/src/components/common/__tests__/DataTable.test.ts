@@ -93,6 +93,22 @@ describe('DataTable', () => {
     wrapper.unmount()
   })
 
+  it('步骤表的「步」列是编号，不把整张表抬成数据表', () => {
+    // 真实回归：AI 写的「步 / 优先级 / 做什么 / 手感变化」清单被判成数据表，
+    // 顶上多出搜索框与每列漏斗，用户第一反应是「这怎么也被识别成数据表了」。
+    const wrapper = mountTable(
+      ['步', '优先级', '做什么', '手感变化'],
+      [
+        ['1', 'P0', '项目技能默认不自动注入', '不再往系统提示塞内容'],
+        ['2', 'P0', '用户目录提到项目之前', '#deploy 命中你自己写的那个'],
+        ['3', 'P1', '注入表描述截到 200 字', '防止超长描述挤爆上下文'],
+      ],
+    )
+    expect(wrapper.find('.dt').classes()).not.toContain('is-data')
+    expect(wrapper.find('.dt-bar').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('lets a text table switch to data mode too (toolbar, no totals)', async () => {
     const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
     expect(wrapper.find('.dt-bar').exists()).toBe(false)
