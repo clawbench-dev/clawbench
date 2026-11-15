@@ -148,22 +148,29 @@
                verdict — as a leading child it pushed the counts around and left
                the right edge empty. -->
           <component :is="groupLeadingIcon(group)" :size="12" class="tool-icon" />
-          <!-- While a tool runs this row IS that tool's pill (same glyph, name
+          <!-- Collapsed, a live run mirrors the step that is actually working:
+               while a tool runs the row IS that tool's pill (same glyph, name
                and summary, no count — a count is a summary of the run, and the
-               run is not done summarising). Between steps only a thought is
-               live, so the row IS that chip (brain + 深度思考). Settled, it is
-               a container again and names itself with counts.
-               All three states share ONE rolling line: the label changes under
-               the reader, and the roll is what makes the switch readable — per
+               run is not done summarising); between steps only a thought is
+               live, so the row IS that chip (brain + 深度思考). Unfolded (and
+               once settled) the header is a static summary of the whole run:
+               counts only, no live step, because the body underneath already
+               shows what is running and a label rolling up here would be pure
+               motion while the reader is reading.
+               Every state shares ONE rolling line: the label changes under the
+               reader, and the roll is what makes the switch readable — per
                state branches would swap the node out and the new text would
                just snap in. -->
           <RollingText class="tool-name" :text="toolGroupTitle(group)" />
-          <!-- The running step's own summary; nothing at rest. -->
+          <!-- The running step's own summary; nothing while the header is a
+               summary. -->
           <RollingText v-if="toolGroupDetail(group)" class="tool-summary" :text="toolGroupDetail(group)" />
-          <!-- Settled only: a failure earlier in the run is not news while a
-               later step is still executing. -->
-          <span v-if="!isGroupRunning(group) && group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
-          <span v-else-if="!isGroupRunning(group) && group.interruptedCount > 0" class="tool-summary tool-group-interrupted">{{ t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }) }}</span>
+          <!-- Settled or unfolded: counts, including what went wrong. A failure
+               earlier in the run is not news while a later step is still
+               executing, but an unfolded header is a summary of the whole run,
+               so it reports every part of it. -->
+          <span v-if="groupHeaderIsSummary(group) && group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
+          <span v-else-if="groupHeaderIsSummary(group) && group.interruptedCount > 0" class="tool-summary tool-group-interrupted">{{ t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }) }}</span>
           <!-- Everything from the cancelled marker to the chevron is one block
                pinned to the right edge. Grouping it is what keeps the row
                aligned in every state: while only a thinking chip runs there is
@@ -1948,19 +1955,29 @@ function toolGroupLabel(group: ToolCallGroup): string {
   return parts.join(' · ')
 }
 
+/** Whether the header is a static summary (counts) instead of a live mirror of
+ *  the step that is running: always once the run settles, and always while it
+ *  is unfolded — the body already shows what is running, so a label rolling
+ *  under the reader's eyes up here is pure motion. */
+function groupHeaderIsSummary(group: ToolCallGroup): boolean {
+  return isToolGroupOpen(group) || !isGroupRunning(group)
+}
+
 /** The row's single rolling label: the running tool's name while a tool works,
  *  the deep-thinking label while only a thought runs (the row then IS that
  *  chip), else the settled counts. */
 function toolGroupTitle(group: ToolCallGroup): string {
+  if (groupHeaderIsSummary(group)) return toolGroupLabel(group)
   if (group.runningIndex) return group.runningName
-  if (group.runningThinking && props.streaming) return t('chat.message.deepThinking')
-  return toolGroupLabel(group)
+  return t('chat.message.deepThinking')
 }
 
-/** The line under the label: the running tool's own summary, and nothing at
- *  rest — a settled run describes itself with counts, not one step's detail. */
+/** The line under the label: the running tool's own summary. Empty whenever the
+ *  header is a summary — a run at rest (or unfolded) describes itself with
+ *  counts, not with one step's detail. */
 function toolGroupDetail(group: ToolCallGroup): string {
-  return group.runningIndex ? group.runningSummary : ''
+  if (groupHeaderIsSummary(group) || !group.runningIndex) return ''
+  return group.runningSummary
 }
 
 /** A run is still running while a tool OR a thinking chip in it is unfinished.
@@ -1972,20 +1989,22 @@ function isGroupRunning(group: ToolCallGroup): boolean {
 
 /** Accent of the row: the running tool's category; the deep-thinking purple
  *  while only a thinking chip runs (so the bar matches that chip's colour);
- *  none (neutral) once the run settles. */
+ *  none (neutral) once the header is a summary — a summary must not keep
+ *  changing colour as steps come and go underneath it. */
 function groupAccentCategory(group: ToolCallGroup): string | undefined {
+  if (groupHeaderIsSummary(group)) return undefined
   if (group.runningIndex) return group.runningCategory || undefined
-  if (group.runningThinking && props.streaming) return 'thinking'
-  return undefined
+  return 'thinking'
 }
 
 /** Leading glyph: the running tool's own icon; the deep-thinking brain while
  *  only a thinking chip runs (the row then IS that chip); the generic stack
- *  glyph once the run settles, because a finished run mixes categories. */
+ *  glyph once the header is a summary — a finished run mixes categories, and an
+ *  unfolded one is showing every step in its body anyway. */
 function groupLeadingIcon(group: ToolCallGroup) {
+  if (groupHeaderIsSummary(group)) return Layers
   if (group.runningToolName) return getToolIcon(group.runningToolName).icon
-  if (group.runningThinking && props.streaming) return Brain
-  return Layers
+  return Brain
 }
 
 /**

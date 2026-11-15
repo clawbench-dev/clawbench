@@ -4176,6 +4176,42 @@ describe('compact tool calls', () => {
     }
   })
 
+  it('freezes the header to counts while unfolded, even mid-run', async () => {
+    // The unfolded body already shows which step is running, so the header
+    // becomes a summary of the whole run and stops following the live step —
+    // otherwise the label rolls under the reader's eyes while they read.
+    vi.useFakeTimers()
+    try {
+      const wrapper = mountBlocks({
+        streaming: true,
+        toolCallSummary: (b: any) => (b?.name === 'Bash' ? 'npm test' : ''),
+        blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
+      })
+      await nextTick()
+      const strip = wrapper.find('.chat-tool-group-strip')
+      expect(strip.find('.tool-name').text()).toBe('Bash')
+      expect(strip.attributes('data-category')).toBe('bash')
+
+      await strip.trigger('click')
+      vi.advanceTimersByTime(200)
+      await nextTick()
+      expect(strip.find('.tool-name').text()).toBe('2 calls')
+      // No live-step detail, no live-step colour or glyph either.
+      expect(strip.find('.tool-summary').exists()).toBe(false)
+      expect(strip.attributes('data-category')).toBeUndefined()
+      expect(strip.element.querySelector(':scope > .lucide-layers')).not.toBeNull()
+
+      // Folding it back makes it a live pill again.
+      await strip.trigger('click')
+      vi.advanceTimersByTime(200)
+      await nextTick()
+      expect(strip.find('.tool-name').text()).toBe('Bash')
+      expect(strip.attributes('data-category')).toBe('bash')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('wears the generic stack glyph once the run settles', async () => {
     // A finished run mixes categories (file / bash / search), so no single
     // tool's icon (and not the brain) can stand for it.
