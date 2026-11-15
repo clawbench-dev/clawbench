@@ -35,6 +35,10 @@ var projectScopedDeleteTables = []string{
 	tableSessionTags,
 	"scheduled_tasks",
 	tableTerminalQuickCommands,
+	// Command history is scoped per project too (global rows have project_id
+	// NULL and are deliberately untouched). Without this the rows survive the
+	// project forever: project_id no longer resolves, so nothing can list them.
+	"terminal_command_history",
 	// Meeting records and everything hanging off them. Without these the rows
 	// become unreachable orphans: project_id no longer resolves after the
 	// project is gone, so nothing can list or delete them again.

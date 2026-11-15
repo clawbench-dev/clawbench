@@ -817,6 +817,19 @@ IM 机器人推送的暂存队列（**不是**通知中心的数据源，两者�
 
 部分唯一索引：`idx_quick_commands_auto_execute UNIQUE(COALESCE(project_id, 0), auto_execute) WHERE auto_execute = 1` —— 每个作用域至多一条自动执行命令。
 
+### terminal_command_history（终端命令历史）
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| command | TEXT | NOT NULL | — | 命令行 |
+| project_id | INTEGER | | `NULL` | 项目作用域（NULL=全局，来自 shell history 文件导入） |
+| use_count | INTEGER | NOT NULL | `1` | 执行次数 |
+| last_used_at | DATETIME | NOT NULL | CURRENT_TIMESTAMP | 最后使用时间（列表排序依据） |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
+
+部分唯一索引：`idx_terminal_history_command UNIQUE(COALESCE(project_id, 0), command)` —— 同一作用域内同一命令只有一行，重复执行只累加 `use_count`，不做流水账。另有 `idx_terminal_history_recent(last_used_at DESC)` 支撑列表查询。行数上限 2000 条 / 90 天，超限按 `last_used_at` 淘汰。
+
 ### terminal_key_config（终端按键配置）
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
@@ -1568,6 +1581,15 @@ erDiagram
         INTEGER project_id
         DATETIME created_at
         DATETIME updated_at
+    }
+
+    terminal_command_history {
+        INTEGER id PK
+        TEXT command
+        INTEGER project_id
+        INTEGER use_count
+        DATETIME last_used_at
+        DATETIME created_at
     }
 
     terminal_key_config {

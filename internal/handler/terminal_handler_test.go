@@ -563,3 +563,143 @@ func TestGetTerminalManager_ConcurrentAccess(t *testing.T) {
 	result := GetTerminalManager()
 	assert.NotNil(t, result)
 }
+
+// ---------- ServeTerminalHistory ----------
+
+func TestServeTerminalHistory_ListEmpty(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/terminal/history", nil)
+	w := callHandler(ServeTerminalHistory, req)
+	assertOK(t, w)
+
+	var items []service.TerminalCommand
+	decodeRespJSON(t, w.Body, &items)
+	assert.NotNil(t, items, "should return empty array, not nil")
+	assert.Empty(t, items)
+}
+
+func TestServeTerminalHistory_ListAfterRecord(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_, err := service.RecordTerminalCommand("git status", "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/terminal/history", nil)
+	w := callHandler(ServeTerminalHistory, req)
+	assertOK(t, w)
+
+	var items []service.TerminalCommand
+	decodeRespJSON(t, w.Body, &items)
+	require.Len(t, items, 1)
+	assert.Equal(t, "git status", items[0].Command)
+	assert.Equal(t, 1, items[0].UseCount)
+}
+
+func TestServeTerminalHistory_SearchQuery(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_, err := service.RecordTerminalCommand("git status", "")
+	require.NoError(t, err)
+	_, err = service.RecordTerminalCommand("ls -la", "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/terminal/history?q=git", nil)
+	w := callHandler(ServeTerminalHistory, req)
+	assertOK(t, w)
+
+	var items []service.TerminalCommand
+	decodeRespJSON(t, w.Body, &items)
+	require.Len(t, items, 1)
+	assert.Equal(t, "git status", items[0].Command)
+}
+
+func TestServeTerminalHistory_Clear(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_, err := service.RecordTerminalCommand("git status", "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodDelete, "/api/terminal/history", nil)
+	w := callHandler(ServeTerminalHistory, req)
+	assertOK(t, w)
+
+	items, err := service.ListTerminalCommands("", "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, items)
+}
+
+func TestServeTerminalHistory_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPut, "/api/terminal/history", nil)
+	w := callHandler(ServeTerminalHistory, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeTerminalHistoryByID_Delete(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_, err := service.RecordTerminalCommand("git status", "")
+	require.NoError(t, err)
+	items, err := service.ListTerminalCommands("", "", 10)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+
+	req := newRequest(t, http.MethodDelete, fmt.Sprintf("/api/terminal/history/%d", items[0].ID), nil)
+	w := callHandler(ServeTerminalHistoryByID, req)
+	assertOK(t, w)
+
+	items, err = service.ListTerminalCommands("", "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, items)
+}
+
+func TestServeTerminalHistoryByID_InvalidID(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodDelete, "/api/terminal/history/not-a-number", nil)
+	w := callHandler(ServeTerminalHistoryByID, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeTerminalHistoryByID_Sync(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Point HOME at a temp dir so the sync reads a file we control rather than
+	// whatever this machine's real shell history happens to contain.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "xdg"))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_history"),
+		[]byte("git status\nls -la\n"), 0o600))
+
+	req := newRequest(t, http.MethodPost, "/api/terminal/history/sync", nil)
+	w := callHandler(ServeTerminalHistoryByID, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	decodeRespJSON(t, w.Body, &result)
+	assert.Equal(t, float64(2), result["added"])
+
+	items, err := service.ListTerminalCommands("", "", 10)
+	require.NoError(t, err)
+	assert.Len(t, items, 2)
+}
+
+func TestServeTerminalHistoryByID_SyncRejectsGet(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/terminal/history/sync", nil)
+	w := callHandler(ServeTerminalHistoryByID, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}

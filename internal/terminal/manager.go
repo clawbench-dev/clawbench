@@ -24,6 +24,11 @@ type Manager struct {
 	cfg         TerminalConfig
 	port        int
 	maxSessions int
+	// recordCommand persists a command the user submitted at a shell prompt.
+	// Injected by the handler layer (SetTerminalManager) because persisting it
+	// belongs to the service package, which already imports this one — calling
+	// it directly here would create an import cycle.
+	recordCommand func(projectPath, command string)
 }
 
 // GlobalManager is the package-level singleton, set from main.go.
@@ -56,6 +61,14 @@ func NewManager(cfg model.TerminalConfig, port int) *Manager {
 		port:        port,
 		maxSessions: cfg.MaxSessions,
 	}
+}
+
+// SetCommandRecorder installs the sink for commands submitted at a shell
+// prompt. Passing nil disables capture.
+func (m *Manager) SetCommandRecorder(fn func(projectPath, command string)) {
+	m.mu.Lock()
+	m.recordCommand = fn
+	m.mu.Unlock()
 }
 
 // Close shuts down the manager and all active sessions.
@@ -250,6 +263,12 @@ func (m *Manager) handleClientMessages(session *Session, conn *websocket.Conn) {
 			if err := session.HandleInput(msg.Data); err != nil {
 				slog.Debug("terminal: input error", slog.String("error", err.Error()))
 			}
+		case "command":
+			// Sent by the client immediately BEFORE the newline that submits the
+			// line, so the foreground process is still the shell here and program
+			// input (vim's `:wq`) can be rejected. Persisting is best-effort: a
+			// failure must never disturb the terminal session.
+			m.recordSubmittedCommand(session, msg.Data)
 		case "resize":
 			if err := session.HandleResize(msg.Cols, msg.Rows); err != nil {
 				slog.Debug("terminal: resize error", slog.String("error", err.Error()))
@@ -265,6 +284,24 @@ func (m *Manager) handleClientMessages(session *Session, conn *websocket.Conn) {
 			return
 		}
 	}
+}
+
+// recordSubmittedCommand hands one submitted line to the recorder, after
+// checking that the line really came from a shell prompt.
+func (m *Manager) recordSubmittedCommand(session *Session, line string) {
+	if line == "" {
+		return
+	}
+	if !session.IsForegroundShell() {
+		return
+	}
+	m.mu.Lock()
+	rec := m.recordCommand
+	m.mu.Unlock()
+	if rec == nil {
+		return
+	}
+	rec(session.ProjectPath(), line)
 }
 
 // hasSessionSlotLocked reports whether a new session can be created. If the

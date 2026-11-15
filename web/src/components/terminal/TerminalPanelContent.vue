@@ -255,8 +255,26 @@
       @close-all="handleTabMenuCloseAll"
     />
 
+    <!-- Destructive-command confirmation. A speed bump, not a guard: the line is
+         still on the shell's input line (or in the drawer) and the user decides. -->
+    <ModalDialog
+      :open="pendingDanger !== null"
+      :title="t('terminal.dangerTitle')"
+      size="narrow"
+      @close="cancelDanger"
+    >
+      <div class="danger-body">
+        <p class="danger-reason">{{ dangerReasonText }}</p>
+        <pre class="danger-command">{{ pendingDanger?.command }}</pre>
+      </div>
+      <template #footer>
+        <button class="fbtn" data-action="danger-cancel" @click="cancelDanger">{{ t('common.cancel') }}</button>
+        <button class="fbtn fbtn-danger" data-action="danger-run" @click="confirmDanger">{{ t('terminal.dangerRun') }}</button>
+      </template>
+    </ModalDialog>
+
     <!-- Quick command edit dialog — only open when terminal tab is active -->
-    <QuickCommandDrawer :open="quickCmdDrawer.effectiveOpen.value" @close="quickCmdDrawer.close()" />
+    <QuickCommandDrawer :open="quickCmdDrawer.effectiveOpen.value" @close="quickCmdDrawer.close()" @insert="insertCommand" />
 
     <!-- Key config drawer — only open when terminal tab is active -->
     <KeyConfigDrawer
@@ -327,8 +345,10 @@ import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
 import TerminalInputDrawer from '@/components/terminal/TerminalInputDrawer.vue'
 import TerminalHelpDrawer from '@/components/terminal/TerminalHelpDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
+import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 import { readTerminalTabs, saveTerminalTabs } from '@/utils/terminalProjectTabs'
+import { detectDangerousCommand, type DangerKind } from '@/utils/dangerousCommand'
 import type { Terminal as TerminalType, ITheme } from '@xterm/xterm'
 import { copyText, readClipboardText } from '@/utils/clipboard.ts'
 import { isCopySelectionShortcut, isPasteSelectionShortcut } from '@/utils/terminalClipboardUtils'
@@ -530,6 +550,19 @@ async function openInput() {
 
 function inputToTerminal(text: string) {
   if (!text) return
+  // The drawer bypasses the keystroke tracker, so the confirmation has to be
+  // raised here; `onInputLine: false` tells the dialog the text has not been
+  // sent yet.
+  const danger = detectDangerousCommand(text)
+  if (danger) {
+    pendingDanger.value = {
+      tabId: activeTab.value?.id ?? '',
+      command: text,
+      reason: danger,
+      onInputLine: false,
+    }
+    return
+  }
   activeTab.value?.session.sendInput(text + '\r')
   toast.show(t('terminal.inputSent'), { icon: 'copy', type: 'success', duration: 1200 })
 }
@@ -681,6 +714,67 @@ const terminalKeys = useTerminalKeys((data: string) => {
 const projectPathAtMount = store.state.projectRoot || ''
 // Tabs recorded for this project by a previous visit or an earlier page load.
 const savedTabsAtMount = readTerminalTabs(projectPathAtMount)
+
+/**
+ * A command waiting for the user to confirm before it runs.
+ *
+ * `onInputLine` records WHERE it is parked: a command typed at the prompt is
+ * already sitting on the shell's input line (only the newline was held back),
+ * while one sent from the input drawer has not left the browser yet. Confirming
+ * must resume from the right place, or the command either runs twice or not at
+ * all.
+ */
+interface PendingDanger {
+  tabId: string
+  command: string
+  reason: DangerKind
+  onInputLine: boolean
+}
+
+const pendingDanger = ref<PendingDanger | null>(null)
+
+/** i18n key per danger kind — the dialog explains WHY, not just "are you sure". */
+const DANGER_REASON_KEY: Record<DangerKind, string> = {
+  'recursive-delete': 'terminal.dangerRecursiveDelete',
+  'disk-write': 'terminal.dangerDiskWrite',
+  'mkfs': 'terminal.dangerMkfs',
+  'fork-bomb': 'terminal.dangerForkBomb',
+  'force-push': 'terminal.dangerForcePush',
+  'power': 'terminal.dangerPower',
+  'drop-data': 'terminal.dangerDropData',
+}
+
+const dangerReasonText = computed(() => {
+  const pending = pendingDanger.value
+  return pending ? t(DANGER_REASON_KEY[pending.reason]) : ''
+})
+
+function confirmDanger() {
+  const pending = pendingDanger.value
+  pendingDanger.value = null
+  if (!pending) return
+  const tab = tabManager.getTab(pending.tabId)
+  if (!tab) return
+  // Recording is gated by the same setting as any other command.
+  if (localConfig.terminalHistoryEnabled !== false) tab.session.sendCommand(pending.command)
+  if (pending.onInputLine) {
+    // The line is already on the shell's input line; only the newline is owed.
+    tab.commandLine.reset()
+    tab.session.sendInput('\r')
+  } else {
+    tab.session.sendInput(pending.command + '\r')
+  }
+  focusTerminal()
+}
+
+function cancelDanger() {
+  const pending = pendingDanger.value
+  pendingDanger.value = null
+  // Nothing to undo: the line is still where it was (on the shell's input line,
+  // or in the drawer's textarea) and the tracker still holds it, so the user can
+  // edit it or press Enter again.
+  if (pending?.onInputLine) focusTerminal()
+}
 
 // 选中即复制 — read the setting at copy time so toggling it in Settings takes
 // effect on already-open terminals without a remount.
@@ -883,9 +977,16 @@ const tabManager = useTerminalTabs(getWsUrl, {
   },
   autoExecCommand,
   onAutoExec: (tabId, command) => {
-    tabManager.getTab(tabId)?.session.sendInput(command + '\r')
+    tabManager.runCommandLine(tabId, command)
   },
   processInput: terminalKeys.processInput,
+  // Read at submit time so flipping the setting takes effect without reopening
+  // the terminal.
+  shouldRecordHistory: () => localConfig.terminalHistoryEnabled !== false,
+  detectDanger: detectDangerousCommand,
+  onDangerousCommand: (tabId, command, reason) => {
+    pendingDanger.value = { tabId, command, reason: reason as DangerKind, onInputLine: true }
+  },
   restore: savedTabsAtMount,
 })
 
@@ -1387,8 +1488,20 @@ function handleReconnect(tab: TerminalTab) {
 
 // Rebuild (re-create) the active tab's session
 function executeCommand(cmd: { id: number; label: string; command: string }) {
-  activeTab.value?.session.sendInput(cmd.command + '\r')
+  if (activeTab.value) tabManager.runCommandLine(activeTab.value.id, cmd.command)
   showCommands.value = false
+  focusTerminal()
+}
+
+/**
+ * Put a remembered command on the input line without running it.
+ *
+ * Deliberately not `executeCommand`: a history entry may reference a directory
+ * or a branch that no longer exists, so the user gets a chance to look at it
+ * first. Pressing Enter from there submits it normally.
+ */
+function insertCommand(command: string) {
+  if (activeTab.value) tabManager.insertCommandLine(activeTab.value.id, command)
   focusTerminal()
 }
 
@@ -2216,4 +2329,36 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .theme-picker-status { padding: var(--space-5) var(--space-6); text-align: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 .theme-picker-error { display: flex; flex-direction: column; gap: var(--space-4); align-items: center; }
 .theme-retry-btn { padding: var(--space-2) var(--space-6); border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: transparent; color: var(--text-primary); cursor: pointer; font-size: var(--font-size-sm); }
+
+/* Destructive-command confirmation. Unscoped because ModalDialog teleports to
+   body, and the body carries no inset of its own (see ModalDialog). */
+.danger-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-6) var(--space-5);
+}
+
+.danger-reason {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+}
+
+/* The exact line that is about to run — the user must be able to read it in
+   full, including the arguments that made it dangerous. */
+.danger-command {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-xs);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: calc(160 * var(--dp));
+  overflow-y: auto;
+}
 </style>

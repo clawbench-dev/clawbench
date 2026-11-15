@@ -524,7 +524,7 @@ describe('AgentSelectorDrawer', () => {
       await flushPromises()
       vi.advanceTimersByTime(500)
 
-      expect(wrapper.find('.agent-mode-switch').exists()).toBe(false)
+      expect(wrapper.find('.segmented-tabs').exists()).toBe(false)
     })
 
     it('renders the switch when showModeSwitch is set and at least one agent is selectable', async () => {
@@ -532,9 +532,9 @@ describe('AgentSelectorDrawer', () => {
       await flushPromises()
       vi.advanceTimersByTime(500)
 
-      const sw = wrapper.find('.agent-mode-switch')
+      const sw = wrapper.find('.segmented-tabs')
       expect(sw.exists()).toBe(true)
-      expect(sw.findAll('.agent-mode-tab').length).toBe(2)
+      expect(sw.findAll('.segmented-tab').length).toBe(2)
       // Single mode -> the single tab is active.
       expect(sw.find('[data-mode="single"]').classes()).toContain('active')
       expect(sw.find('[data-mode="group"]').classes()).not.toContain('active')
@@ -545,7 +545,7 @@ describe('AgentSelectorDrawer', () => {
       await flushPromises()
       vi.advanceTimersByTime(500)
 
-      const sw = wrapper.find('.agent-mode-switch')
+      const sw = wrapper.find('.segmented-tabs')
       expect(sw.find('[data-mode="group"]').classes()).toContain('active')
       expect(sw.find('[data-mode="single"]').classes()).not.toContain('active')
     })
@@ -577,9 +577,9 @@ describe('AgentSelectorDrawer', () => {
         await flushPromises()
         vi.advanceTimersByTime(500)
 
-        const sw = wrapper.find('.agent-mode-switch')
+        const sw = wrapper.find('.segmented-tabs')
         expect(sw.exists()).toBe(true)
-        expect(sw.findAll('.agent-mode-tab').length).toBe(2)
+        expect(sw.findAll('.segmented-tab').length).toBe(2)
       } finally {
         mockAgents.splice(0, mockAgents.length, ...original)
       }
@@ -593,7 +593,7 @@ describe('AgentSelectorDrawer', () => {
         const wrapper = mountDrawer({ showModeSwitch: true })
         await flushPromises()
         vi.advanceTimersByTime(500)
-        expect(wrapper.find('.agent-mode-switch').exists()).toBe(false)
+        expect(wrapper.find('.segmented-tabs').exists()).toBe(false)
         expect(wrapper.find('.agent-list-empty').exists()).toBe(true)
       } finally {
         mockAgents.splice(0, mockAgents.length, ...original)
@@ -611,7 +611,7 @@ describe('AgentSelectorDrawer', () => {
         const wrapper = mountDrawer({ showModeSwitch: true })
         await flushPromises()
         vi.advanceTimersByTime(500)
-        expect(wrapper.find('.agent-mode-switch').exists()).toBe(false)
+        expect(wrapper.find('.segmented-tabs').exists()).toBe(false)
         expect(wrapper.find('.agent-list-empty').exists()).toBe(true)
       } finally {
         mockAgents.splice(0, mockAgents.length, ...original)

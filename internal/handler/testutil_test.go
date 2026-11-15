@@ -84,6 +84,11 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	if _, err = db.Exec(service.LiveNotesDDL); err != nil {
 		t.Fatalf("failed to create live notes tables: %v", err)
 	}
+	// Terminal command history — same reasoning: project-scoped rows are purged
+	// with the project, so the table must exist for project-delete tests too.
+	if _, err = db.Exec(service.TerminalHistoryDDL); err != nil {
+		t.Fatalf("failed to create terminal command history table: %v", err)
+	}
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

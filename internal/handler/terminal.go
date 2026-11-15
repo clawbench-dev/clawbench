@@ -24,7 +24,19 @@ var (
 
 // SetTerminalManager sets the terminal manager for handlers.
 // Goroutine-safe: concurrent handler reads are protected by RWMutex.
+//
+// Also wires command-history capture: the terminal package cannot call into
+// service itself (service imports terminal for the history-file parsers), so
+// the sink is injected here. Both creation sites — startup and hot reload —
+// go through this function, so neither can forget it.
 func SetTerminalManager(m *terminal.Manager) {
+	if m != nil {
+		m.SetCommandRecorder(func(projectPath, command string) {
+			if _, err := service.RecordTerminalCommand(command, projectPath); err != nil {
+				slog.Warn("terminal: failed to record command", slog.String("error", err.Error()))
+			}
+		})
+	}
 	terminalMgrMu.Lock()
 	terminalMgr = m
 	terminalMgrMu.Unlock()
@@ -323,6 +335,83 @@ func ServeQuickCommandByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
+}
+
+// ServeTerminalHistory handles the command-history collection:
+//
+//	GET    /api/terminal/history?q=&limit=   list (project + global scope)
+//	DELETE /api/terminal/history             clear everything
+func ServeTerminalHistory(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		limit := 0
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				limit = n
+			}
+		}
+		items, err := service.ListTerminalCommands(
+			middleware.GetProjectFromCookie(r), r.URL.Query().Get("q"), limit)
+		if err != nil {
+			slog.Error("failed to list terminal history", slog.String("error", err.Error()))
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		if items == nil {
+			items = []service.TerminalCommand{}
+		}
+		writeJSON(w, http.StatusOK, items)
+
+	case http.MethodDelete:
+		if err := service.ClearTerminalHistory(); err != nil {
+			slog.Error("failed to clear terminal history", slog.String("error", err.Error()))
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+
+	default:
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+	}
+}
+
+// ServeTerminalHistoryByID handles:
+//
+//	POST   /api/terminal/history/sync   import from the local shells' history files
+//	DELETE /api/terminal/history/{id}   remove one entry
+func ServeTerminalHistoryByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/terminal/history/"), "/")
+
+	if path == "sync" {
+		if r.Method != http.MethodPost {
+			writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+			return
+		}
+		added, err := service.SyncTerminalHistory(terminal.ReadShellHistory())
+		if err != nil {
+			slog.Error("failed to sync terminal history", slog.String("error", err.Error()))
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"added": added})
+		return
+	}
+
+	id, err := strconv.ParseInt(path, 10, 64)
+	if err != nil || id <= 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+	if r.Method != http.MethodDelete {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	if err := service.DeleteTerminalCommand(id); err != nil {
+		slog.Error("failed to delete terminal command", slog.String("error", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 // ServeKeyConfig handles GET (list by type) and PUT (full replace) for terminal key/symbol configuration.

@@ -917,6 +917,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/terminal/close", TerminalClose)
 	register("/api/terminal/quick-commands", ServeQuickCommands)
 	register("/api/terminal/quick-commands/", ServeQuickCommandByID)
+	register("/api/terminal/history", ServeTerminalHistory)
+	register("/api/terminal/history/", ServeTerminalHistoryByID)
 	register("/api/terminal/key-config", ServeKeyConfig)
 
 	// Global event WebSocket (replaces polling for session/task status)

@@ -206,6 +206,21 @@ export function useTerminalSession(
     }
   }
 
+  /**
+   * Report a command the user submitted at the prompt, so the backend can
+   * remember it. Sent immediately before the newline's `sendInput`, which is
+   * what lets the server reject program input (it checks that the foreground
+   * process is still the shell at that instant).
+   *
+   * Best-effort: history capture must never affect the terminal session, so a
+   * closed socket is simply a dropped message.
+   */
+  function sendCommand(command: string) {
+    if (ws.value?.readyState === WebSocket.OPEN) {
+      ws.value.send(JSON.stringify({ type: 'command', data: command }))
+    }
+  }
+
   function sendResize(cols: number, rows: number) {
     if (ws.value?.readyState === WebSocket.OPEN) {
       ws.value.send(JSON.stringify({ type: 'resize', cols, rows }))
@@ -243,6 +258,7 @@ export function useTerminalSession(
     reset,
     setCallbacks,
     sendInput,
+    sendCommand,
     sendResize,
     sendClose,
     sendReplayDone,

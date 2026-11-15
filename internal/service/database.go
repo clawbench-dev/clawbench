@@ -1145,6 +1145,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := store.WriteExec(BtwQuestionsDDL); err != nil {
 		return fmt.Errorf("failed to create btw_questions table: %w", err)
 	}
+	// Terminal command history. Defined in terminal_history.go as a constant so
+	// tests share one source of truth for the schema.
+	if _, err := store.WriteExec(TerminalHistoryDDL); err != nil {
+		return fmt.Errorf("failed to create terminal_command_history table: %w", err)
+	}
 	// Notification-center log. Defined in notifications.go as a constant so
 	// tests share one source of truth for the schema.
 	if _, err := store.WriteExec(NotificationsDDL); err != nil {

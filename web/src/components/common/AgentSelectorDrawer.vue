@@ -15,26 +15,16 @@
            Only the empty list hides the switch — there is nothing to build a
            group from. @click.stop is required — the whole .bs-header is a close
            target (BottomSheet's own click handler). -->
-      <div v-if="showModeSwitch && selectableAgents.length > 0" class="agent-mode-switch" role="tablist">
-        <button
-          type="button"
-          class="agent-mode-tab"
-          :class="{ active: !groupMode }"
-          role="tab"
-          :aria-selected="!groupMode"
-          data-mode="single"
-          @click.stop="emit('switch-mode', 'single')"
-        >{{ t('session.singleChat') }}</button>
-        <button
-          type="button"
-          class="agent-mode-tab"
-          :class="{ active: groupMode }"
-          role="tab"
-          :aria-selected="groupMode"
-          data-mode="group"
-          @click.stop="emit('switch-mode', 'group')"
-        >{{ t('session.groupChat') }}</button>
-      </div>
+      <SegmentedTabs
+        v-if="showModeSwitch && selectableAgents.length > 0"
+        class="agent-mode-slot"
+        :model-value="groupMode ? 'group' : 'single'"
+        :options="[
+          { value: 'single', label: t('session.singleChat') },
+          { value: 'group', label: t('session.groupChat') },
+        ]"
+        @update:model-value="(v: string) => emit('switch-mode', v as 'single' | 'group')"
+      />
     </template>
     <div class="agent-list">
       <PanelSkeleton v-if="agentsLoading" variant="list" :rows="8" :meta="false" :label="t('common.loading')" />
@@ -179,6 +169,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import GroupModeHint from '@/components/common/GroupModeHint.vue'
+import SegmentedTabs from '@/components/common/SegmentedTabs.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useAgents } from '@/composables/useAgents'
@@ -781,43 +772,12 @@ watch(() => props.open, async (val) => {
 
 /* Single/group segmented switch (create page). Same connected-tab language as
    SessionListTabs / SummaryToggle, compacted for the header line. */
-.agent-mode-switch {
+/* Layout only — the control itself is SegmentedTabs. Placed on the component
+   root (Vue forwards the class), so the switch keeps the trailing edge of the
+   header without the shared component knowing about this header. */
+.agent-mode-slot {
   flex-shrink: 0;
   margin-left: auto;
-  display: inline-flex;
-  align-items: stretch;
-  border: 1px solid var(--border-color, #ccc);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.agent-mode-tab {
-  border: none;
-  background: none;
-  color: var(--text-secondary, #666);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  line-height: 1;
-  padding: calc(4 * var(--dp)) var(--space-4);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color var(--duration-base), background var(--duration-base);
-}
-
-.agent-mode-tab + .agent-mode-tab {
-  border-left: 1px solid var(--border-color, #ccc);
-}
-
-.agent-mode-tab.active {
-  color: var(--accent-color, #0066cc);
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
-}
-
-@media (hover: hover) {
-  .agent-mode-tab:not(.active):hover {
-    color: var(--text-primary, #1a1a1a);
-    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  }
 }
 
 /* Footer leading group: one auto margin absorbs the slack so the confirm pill

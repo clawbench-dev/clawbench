@@ -1,10 +1,29 @@
-import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, defineComponent } from 'vue'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
+import { _resetCommandHistoryForTesting } from '@/composables/useCommandHistory'
+import { localConfig } from '@/composables/useSettingsConfig'
+
+// The history tab runs the real useCommandHistory against mocked HTTP helpers,
+// so the drawer's wiring (refresh on tab switch, tap-to-insert) is exercised
+// rather than stubbed away.
+const mockApiGet = vi.fn()
+const mockApiPost = vi.fn()
+const mockApiDelete = vi.fn()
+
+vi.mock('@/utils/api', () => ({
+  apiGet: (...args: any[]) => mockApiGet(...args),
+  apiPost: (...args: any[]) => mockApiPost(...args),
+  apiDelete: (...args: any[]) => mockApiDelete(...args),
+}))
+
+vi.mock('@/utils/appLog', () => ({
+  appLog: { w: vi.fn(), d: vi.fn(), i: vi.fn(), e: vi.fn() },
+}))
 
 vi.mock('lucide-vue-next', () => ({
   ZapIcon: { name: 'ZapIcon', template: '<span />' },
@@ -12,6 +31,8 @@ vi.mock('lucide-vue-next', () => ({
   Trash2Icon: { name: 'Trash2Icon', template: '<span />' },
   PlusIcon: { name: 'PlusIcon', template: '<span />' },
   EyeOffIcon: { name: 'EyeOffIcon', template: '<span />' },
+  PinIcon: { name: 'PinIcon', template: '<span />' },
+  HistoryIcon: { name: 'HistoryIcon', template: '<span />' },
   MoreVerticalIcon: { name: 'MoreVerticalIcon', template: '<span />' },
   DownloadIcon: { name: 'DownloadIcon', template: '<span />' },
   UploadIcon: { name: 'UploadIcon', template: '<span />' },
@@ -20,6 +41,8 @@ vi.mock('lucide-vue-next', () => ({
   Trash2: { name: 'Trash2Icon', template: '<span />' },
   Plus: { name: 'PlusIcon', template: '<span />' },
   EyeOff: { name: 'EyeOffIcon', template: '<span />' },
+  Pin: { name: 'PinIcon', template: '<span />' },
+  History: { name: 'HistoryIcon', template: '<span />' },
   MoreVertical: { name: 'MoreVerticalIcon', template: '<span />' },
   Download: { name: 'DownloadIcon', template: '<span />' },
   Upload: { name: 'UploadIcon', template: '<span />' },
@@ -76,6 +99,14 @@ vi.mock('@/composables/useToast', () => ({
 
 describe('QuickCommandDrawer', () => {
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } })
+
+  beforeEach(() => {
+    mockApiGet.mockReset().mockResolvedValue([])
+    mockApiPost.mockReset().mockResolvedValue({ added: 0 })
+    mockApiDelete.mockReset().mockResolvedValue({ success: true })
+    _resetCommandHistoryForTesting()
+    localConfig.terminalHistoryEnabled = true
+  })
 
   function mountDrawer() {
     return mount(QuickCommandDrawer, {
@@ -139,6 +170,75 @@ describe('QuickCommandDrawer', () => {
       expect(vue).toMatch(/\.bs-header-actions\s*\{[^}]*margin-left:\s*auto;/)
       // A second auto margin on `.create-btn` would re-split the space.
       expect(vue).not.toMatch(/\.create-btn\s*\{[^}]*margin-left:\s*auto;/)
+    })
+  })
+
+  describe('recent commands tab', () => {
+    it('loads history when the tab is opened', async () => {
+      mockApiGet.mockResolvedValue([
+        { id: 1, command: 'git status', use_count: 2, last_used_at: '', project_path: '', project_only: false },
+      ])
+      const wrapper = mountDrawer()
+
+      ;(wrapper.vm as any).activeTab = 'recent'
+      await flushPromises()
+
+      expect(mockApiGet).toHaveBeenCalledWith(expect.stringContaining('/api/terminal/history'))
+      expect(wrapper.findAll('.qc-history-row')).toHaveLength(1)
+    })
+
+    it('emits insert (not run) when a remembered command is tapped', async () => {
+      mockApiGet.mockResolvedValue([
+        { id: 7, command: 'git log --oneline', use_count: 1, last_used_at: '', project_path: '', project_only: false },
+      ])
+      const wrapper = mountDrawer()
+      ;(wrapper.vm as any).activeTab = 'recent'
+      await flushPromises()
+
+      await wrapper.find('.qc-history-row').trigger('click')
+
+      expect(wrapper.emitted('insert')).toEqual([['git log --oneline']])
+      expect(wrapper.emitted('close')).toBeTruthy()
+    })
+
+    it('shows the empty state when there is nothing recorded', async () => {
+      const wrapper = mountDrawer()
+      ;(wrapper.vm as any).activeTab = 'recent'
+      await flushPromises()
+
+      expect(wrapper.find('.qc-empty').exists()).toBe(true)
+      expect(wrapper.findAll('.qc-history-row')).toHaveLength(0)
+    })
+
+    it('explains that history is off instead of importing it', async () => {
+      localConfig.terminalHistoryEnabled = false
+      const wrapper = mountDrawer()
+      ;(wrapper.vm as any).activeTab = 'recent'
+      await flushPromises()
+
+      expect(wrapper.find('.qc-empty').exists()).toBe(true)
+      // Recording is off, so the panel must not read the shell history files.
+      expect(mockApiPost).not.toHaveBeenCalled()
+      expect(mockApiGet).not.toHaveBeenCalled()
+    })
+
+    it('needs two taps to clear history', async () => {
+      mockApiGet.mockResolvedValue([
+        { id: 1, command: 'ls', use_count: 1, last_used_at: '', project_path: '', project_only: false },
+      ])
+      const wrapper = mountDrawer()
+      ;(wrapper.vm as any).activeTab = 'recent'
+      await flushPromises()
+
+      // First tap only arms the button.
+      await wrapper.find('.bs-header-actions .create-btn:last-child').trigger('click')
+      await wrapper.vm.$nextTick()
+      expect(mockApiDelete).not.toHaveBeenCalled()
+      expect(wrapper.find('.create-btn.danger').exists()).toBe(true)
+
+      await wrapper.find('.bs-header-actions .create-btn:last-child').trigger('click')
+      await flushPromises()
+      expect(mockApiDelete).toHaveBeenCalledWith('/api/terminal/history')
     })
   })
 })

@@ -1,9 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mount, VueWrapper } from '@vue/test-utils'
+import { mount, flushPromises, VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import TerminalInputDrawer from '@/components/terminal/TerminalInputDrawer.vue'
-import { createVoiceTarget } from '@/utils/voiceTarget'
 
 // ── Mocks ────────────────────────────────────────────────────
 const { mockReadClipboardText, mockToastShow } = vi.hoisted(() => ({
@@ -18,6 +17,27 @@ vi.mock('@/utils/clipboard', () => ({
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
 }))
+
+// The drawer now lists recently used commands. Without this the real composable
+// would fire an HTTP request from jsdom: it "passes" only because the rejection
+// is swallowed, which makes the result depend on the environment.
+const { mockApiGet, mockApiPost } = vi.hoisted(() => ({
+  mockApiGet: vi.fn(),
+  mockApiPost: vi.fn(),
+}))
+
+vi.mock('@/utils/api', () => ({
+  apiGet: (...args: any[]) => mockApiGet(...args),
+  apiPost: (...args: any[]) => mockApiPost(...args),
+  apiDelete: vi.fn(),
+}))
+
+vi.mock('@/utils/appLog', () => ({
+  appLog: { w: vi.fn(), d: vi.fn(), i: vi.fn(), e: vi.fn() },
+}))
+
+import { _resetCommandHistoryForTesting } from '@/composables/useCommandHistory'
+import { createVoiceTarget } from '@/utils/voiceTarget'
 
 // ── i18n ─────────────────────────────────────────────────────
 const i18n = createI18n({
@@ -43,6 +63,9 @@ let container: HTMLDivElement
 beforeEach(() => {
   mockReadClipboardText.mockReset()
   mockToastShow.mockReset()
+  mockApiGet.mockReset().mockResolvedValue([])
+  mockApiPost.mockReset().mockResolvedValue({ added: 0 })
+  _resetCommandHistoryForTesting()
   container = document.createElement('div')
   document.body.appendChild(container)
 })
@@ -174,6 +197,77 @@ describe('TerminalInputDrawer', () => {
       await nextTick()
 
       expect(wrapper!.emitted('input')).toBeUndefined()
+    })
+  })
+
+  describe('recent commands', () => {
+    it('lists the five most recent commands and fills one on tap', async () => {
+      mockApiGet.mockResolvedValue(
+        Array.from({ length: 8 }, (_, i) => ({
+          id: i + 1,
+          command: `cmd-${i + 1}`,
+          use_count: 1,
+          last_used_at: '',
+          project_path: '',
+          project_only: false,
+        })),
+      )
+      // Mount closed then open: the refresh hangs off the open transition, so
+      // mounting already-open would never fire it (and that is the real flow).
+      mountDrawer(false)
+      await wrapper!.setProps({ open: true })
+      await flushPromises()
+
+      const items = Array.from(document.body.querySelectorAll('.ti-recent-item')) as HTMLElement[]
+      expect(items).toHaveLength(5)
+      expect(items[0].textContent?.trim()).toBe('cmd-1')
+
+      click(items[0])
+      await nextTick()
+      expect(getText()).toBe('cmd-1')
+    })
+
+    it('narrows the list as the user types', async () => {
+      mockApiGet.mockResolvedValue([
+        { id: 1, command: 'git status', use_count: 3, last_used_at: '', project_path: '', project_only: false },
+        { id: 2, command: 'git log --oneline', use_count: 2, last_used_at: '', project_path: '', project_only: false },
+        { id: 3, command: 'docker ps', use_count: 1, last_used_at: '', project_path: '', project_only: false },
+      ])
+      mountDrawer(false)
+      await wrapper!.setProps({ open: true })
+      await flushPromises()
+      expect(document.body.querySelectorAll('.ti-recent-item')).toHaveLength(3)
+
+      const textarea = document.body.querySelector('textarea.ti-textarea') as HTMLTextAreaElement
+      textarea.value = 'git'
+      textarea.dispatchEvent(new Event('input'))
+      await nextTick()
+
+      const items = Array.from(document.body.querySelectorAll('.ti-recent-item')) as HTMLElement[]
+      expect(items.map(el => el.textContent?.trim())).toEqual(['git status', 'git log --oneline'])
+    })
+
+    it('hides the list when nothing matches what was typed', async () => {
+      mockApiGet.mockResolvedValue([
+        { id: 1, command: 'git status', use_count: 1, last_used_at: '', project_path: '', project_only: false },
+      ])
+      mountDrawer(false)
+      await wrapper!.setProps({ open: true })
+      await flushPromises()
+
+      const textarea = document.body.querySelector('textarea.ti-textarea') as HTMLTextAreaElement
+      textarea.value = 'zzz'
+      textarea.dispatchEvent(new Event('input'))
+      await nextTick()
+
+      expect(document.body.querySelector('.ti-recent')).toBeNull()
+    })
+
+    it('hides the recent block when there is no history', async () => {
+      mountDrawer(false)
+      await wrapper!.setProps({ open: true })
+      await flushPromises()
+      expect($('.ti-recent')).toBeNull()
     })
   })
 
