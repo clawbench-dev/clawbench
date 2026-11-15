@@ -663,8 +663,7 @@ import { useChatKeyboard } from './composables/useChatKeyboard.ts'
 import { useSoftKeyboard } from './composables/useSoftKeyboard.ts'
 import { useVisualViewportInset } from './composables/useVisualViewportInset.ts'
 import { usePortForward } from './composables/usePortForward.ts'
-import { useLiveShare } from './composables/useLiveShare.ts'
-import { meetingSourceDir, useMeetingHistory } from './composables/useMeetingHistory.ts'
+import { useMeetingHistory } from './composables/useMeetingHistory.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
@@ -730,12 +729,13 @@ import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
 import { readQuoteDragData, hasQuoteDragData } from './utils/quoteDrag'
-import { buildMailQuote } from '@/utils/mailQuote'
-import { buildLiveMeetingQuote } from '@/utils/liveMeetingQuote'
-import { useLiveNotes } from './composables/useLiveNotes.ts'
+// Side-effect import: registers the hydrators that fill in a dragged quote's
+// content (a meeting token / a mail id carries no text). Must load before any
+// drop can happen — importing it here, at the app's root, is what guarantees
+// that.
+import './utils/quoteHydrators'
+import { hydrateDraggedQuote } from './utils/quoteHydrate'
 import type { QuoteData } from '@/composables/useChatContext'
-import { apiGet } from '@/utils/api'
-import type { MailMessageDetail } from '@/utils/mailTypes'
 import SplitView from './components/common/SplitView.vue'
 import {
   useWideScreenLayout,
@@ -3749,7 +3749,9 @@ const meetingHistory = useMeetingHistory()
  * written yet produces no card at all — a quote with only a title would spend a
  * prompt slot saying nothing.
  */
-/** Stage a quote card into the live input and bring the chat into view. */
+/**
+ * Stage a quote card into the live input and bring the chat into view.
+ */
 function stageQuoteInChat(quote: QuoteData): void {
   addStagedQuote(quote)
   switchTab('chat')
@@ -3760,6 +3762,25 @@ function stageQuoteInChat(quote: QuoteData): void {
   })
 }
 
+/**
+ * Stage a DRAGGED quote, fetching its content first when its source needs that.
+ *
+ * A drag carries identity only for some sources (a meeting token, a mail id) —
+ * `dragstart` cannot await. Which sources those are is not decided here: the
+ * hydrator registry owns that (utils/quoteHydrate.ts), so the chat column and a
+ * session row behave identically and a new source needs no change at either
+ * drop site.
+ *
+ * A null result means the source has nothing to quote right now (a meeting with
+ * no artifacts yet); the drag is dropped silently, which is what the old
+ * per-source `if` chains did.
+ */
+async function stageDraggedQuote(quote: QuoteData): Promise<void> {
+  const resolved = await hydrateDraggedQuote(quote)
+  if (!resolved) return
+  stageQuoteInChat(resolved)
+}
+
 // The knowledge base panel cannot reach switchTab (it lives in a dock tab), so
 // a quoted passage is parked here and staged by the app that owns the chat view.
 watch(kbPendingQuote, (pending) => {
@@ -3767,55 +3788,6 @@ watch(kbPendingQuote, (pending) => {
   consumeKBPendingQuote(pending.token)
   stageQuoteInChat(pending.quote)
 })
-
-async function handleMeetingQuote(token: string): Promise<void> {
-  if (!token) return
-  const record = await meetingHistory.get(token)
-  if (!record) return
-  const quote = await meetingHistory.buildQuote(record)
-  if (quote) {
-    stageQuoteInChat(quote)
-    return
-  }
-  // No artifacts yet = the meeting is still running. Its record row is
-  // draggable like any other, and it used to answer "quote unavailable" —
-  // the live transcript is the content, so quote that instead.
-  const live = liveMeetingQuote(token, meetingSourceDir(record))
-  if (live) {
-    stageQuoteInChat(live)
-    return
-  }
-  toast.show(t('meeting.quote.unavailable'), { type: 'error', icon: 'warning' })
-}
-
-/** The running meeting's quote, when the token is the one being published. */
-function liveMeetingQuote(token: string, sourceDir: string): QuoteData | null {
-  const share = useLiveShare()
-  if (share.token.value !== token) return null
-  return buildLiveMeetingQuote({
-    token,
-    title: share.title.value || '',
-    segments: useLiveNotes().segments.value,
-    sourceDir,
-  })
-}
-
-/**
- * A mail drag carries only the message id (a dragstart cannot await), so the
- * email is fetched here before the card is staged — the same shape as the
- * meeting drop above, and the same builder the reader's button uses.
- */
-async function handleMailQuote(mailId: number): Promise<void> {
-  if (!mailId) return
-  try {
-    const data = await apiGet<{ message: MailMessageDetail }>(`/api/mail/messages/${mailId}`)
-    if (!data?.message) return
-    stageQuoteInChat(buildMailQuote(data.message, t('mail.list.noSubject')))
-  } catch (e) {
-    appLog.w(TAG, 'mail quote drop failed', e)
-    toast.show(t('common.operationFailed'), { type: 'error', icon: 'warning' })
-  }
-}
 
 /**
  * "Quote in chat" from the meeting detail header — the SAME interaction as the
@@ -3935,27 +3907,7 @@ function onChatColDrop(e: DragEvent) {
   const quote = readQuoteDragData(e.dataTransfer)
   if (quote) {
     e.preventDefault()
-    // A meeting drag carries identity only (dragstart cannot await); the text
-    // is fetched here before the card is staged.
-    if (quote.meetingToken) {
-      // A RUNNING meeting carries its transcript in the payload: it has no
-      // record artifacts yet, so there is nothing to fetch and the card is
-      // staged straight from what the stage already holds.
-      if (quote.text) {
-        stageQuoteInChat(quote)
-        return
-      }
-      void handleMeetingQuote(quote.meetingToken)
-      return
-    }
-    // Same reason: a mail row carries its id only, so the body is fetched here.
-    if (quote.mailId) {
-      void handleMailQuote(quote.mailId)
-      return
-    }
-    addStagedQuote(quote)
-    switchTab('chat')
-    toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), { icon: 'chat', type: 'success', duration: 1800 })
+    void stageDraggedQuote(quote)
     return
   }
   // OS file drop → upload & auto-attach each file.
