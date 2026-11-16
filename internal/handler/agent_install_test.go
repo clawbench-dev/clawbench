@@ -175,7 +175,7 @@ func TestServeBackendInstall_SuccessRescansAndReturnsAgents(t *testing.T) {
 		Output  string `json:"output"`
 		// Auto-rescan is the difference between "installed" and "installed and
 		// usable without pressing Rescan".
-		Refreshed bool `json:"refreshed"`
+		Refreshed bool  `json:"refreshed"`
 		Agents    []any `json:"agents"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
