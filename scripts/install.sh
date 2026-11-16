@@ -124,11 +124,26 @@ major_of() {
   esac
 }
 
+# Node 官方二进制是动态链接的，最小化系统（容器、server 版、部分精简发行版）
+# 常常没有 libatomic1，解压完一跑就 "error while loading shared libraries"。
+# 那种报错对用户没有任何指向性，这里换成一句能照着做的提示。
+node_runtime_error() {
+  die "Node.js 装好了但启动不了：
+    $1
+    这通常是系统缺运行库（最常见是 libatomic1）。
+    Debian / Ubuntu 可以执行：sudo apt-get install -y libatomic1
+    或者直接用系统包管理器装 Node.js 20 及以上，再执行：npm install -g $NPM_PACKAGE"
+}
+
 NODE_READY=0
 
 if [ -x "$NODE_DIR/bin/node" ]; then
-  info "已有本脚本装的 Node.js $(node -v 2>/dev/null || echo '')，直接使用"
-  NODE_READY=1
+  if bundled_version="$(node -v 2>&1)"; then
+    info "已有本脚本装的 Node.js $bundled_version，直接使用"
+    NODE_READY=1
+  else
+    node_runtime_error "$bundled_version"
+  fi
 elif command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
   current="$(node -v 2>/dev/null || echo '')"
   if [ "$(major_of "$current")" -ge "$NODE_MIN_MAJOR" ]; then
@@ -193,7 +208,11 @@ if [ "$NODE_READY" = 0 ]; then
   mkdir -p "$CLAWBENCH_HOME"
   rm -rf "$NODE_DIR"
   mv "$tmp/node-$version-$OS-$ARCH" "$NODE_DIR"
-  ok "Node.js $(node -v) 已就位：$NODE_DIR"
+
+  if ! installed_version="$(node -v 2>&1)"; then
+    node_runtime_error "$installed_version"
+  fi
+  ok "Node.js $installed_version 已就位：$NODE_DIR"
 fi
 
 command -v npm >/dev/null 2>&1 || die "找不到 npm，Node.js 安装似乎不完整"

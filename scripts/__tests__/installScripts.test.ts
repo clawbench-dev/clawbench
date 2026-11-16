@@ -73,6 +73,17 @@ describe('install.sh', () => {
     expect(src).toContain('https://registry.npmjs.org')
   })
 
+  it('解压完要确认 Node 真能跑，不能拿空版本号报成功', () => {
+    // 最小化的 Linux（容器、server 版）常缺 libatomic1，Node 官方二进制解压完
+    // 一跑就 "error while loading shared libraries"。之前的写法是直接
+    // ok "Node.js $(node -v) 已就位"，于是打出一行「✓ Node.js  已就位」
+    // （版本号是空的），直到 npm 才炸出一句没有指向性的错。
+    const src = readFileSync(INSTALL_SH, 'utf8')
+    expect(src).toContain('node_runtime_error')
+    expect(src).toContain('libatomic1')
+    expect(src).toMatch(/if ! installed_version="\$\(node -v 2>&1\)"/)
+  })
+
   it('PATH 只写一次（重复执行不会把 rc 文件撑爆）', () => {
     const src = readFileSync(INSTALL_SH, 'utf8')
     // 写入前先 grep 同一个标记；两处用的是同一个常量字符串
