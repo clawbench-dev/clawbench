@@ -72,6 +72,23 @@ function num(val: unknown): number | undefined {
 }
 
 /**
+ * Read the file path out of a tool input object, accepting both field names.
+ *
+ * Two conventions exist in the wild and both reach this renderer:
+ *   - `file_path` — Claude / CodeBuddy / most ACP agents, and the shape every
+ *     renderer here was originally written against;
+ *   - `path` — the built-in agent's own tools (read/write/edit/glob/grep).
+ *
+ * Reading only `file_path` made every built-in-agent call render a header with
+ * no path at all, and made the Read preview look up a language for an empty
+ * string, so the whole detail view came up blank even though the data was
+ * present. Accepting both keeps one renderer for both shapes.
+ */
+function inputPath(input: ToolInput): string {
+  return str(input.file_path) || str(input.path)
+}
+
+/**
  * Coerce a 1-based line number from tool input: accepts numbers and numeric
  * strings (some CLIs serialize JSON numbers as strings). Returns undefined for
  * non-numeric, fractional, negative, or zero values — matching the codebase's
@@ -109,7 +126,7 @@ function toolContentHeaderHtml(contentSelector: string): string {
  * Includes content header with copy + wrap toggle.
  */
 function renderEditDiff(input: ToolInput): string {
-  const filePath = str(input.file_path)
+  const filePath = inputPath(input)
   const oldStr = str(input.old_string)
   const newStr = str(input.new_string)
   const replaceAll = input.replace_all
@@ -219,7 +236,7 @@ function renderBashTerminal(input: ToolInput): string {
  * button so clicking jumps to that location (annotation-style path:80-100).
  */
 function filePathHeader(input: ToolInput, extraBadge = '', lineStart?: number, lineEnd?: number): string {
-  const filePath = str(input.file_path)
+  const filePath = inputPath(input)
   const projectRoot = store.state.projectRoot || ''
   const homeDir = store.state.homeDir || ''
   const resolvedPath = resolveFilePath(filePath, projectRoot, homeDir)
@@ -241,10 +258,18 @@ function filePathHeader(input: ToolInput, extraBadge = '', lineStart?: number, l
  * Shows clickable file path + syntax-highlighted content preview.
  * Includes content header with copy + wrap toggle when content is present.
  */
-function renderReadPreview(input: ToolInput): string {
-  const filePath = str(input.file_path)
+function renderReadPreview(input: ToolInput, ctx?: ToolBlockCtx): string {
+  const filePath = inputPath(input)
   const lang = detectLang(filePath)
-  const content = str(input.content)
+  // Content comes from one of two places depending on the backend's contract:
+  //   - `input.content` — Claude/CodeBuddy put the file body in the tool input
+  //     (the read result IS the input);
+  //   - `ctx.output` — the built-in agent returns the body as the tool's
+  //     OUTPUT, with only the path in the input.
+  //
+  // Reading only the first left every built-in-agent read showing an empty
+  // preview: the header said the right file, and the body was blank.
+  const content = str(input.content) || str(ctx?.output)
   const hasContent = !!content
 
   const offset = lineNum(input.offset)
@@ -282,7 +307,7 @@ function renderReadPreview(input: ToolInput): string {
  * Includes content header with copy + wrap toggle.
  */
 function renderWritePreview(input: ToolInput): string {
-  const filePath = str(input.file_path)
+  const filePath = inputPath(input)
   const lang = detectLang(filePath)
 
   let html = '<div class="file-write-view tool-content-wrap word-wrap">'
