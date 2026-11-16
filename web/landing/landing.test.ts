@@ -494,14 +494,14 @@ describe('landing page', () => {
       dom.window.close()
     })
 
-    it('keeps the packages behind the third deploy tab', () => {
-      // Downloads live inside 部署 → 安装包, after npm and Docker: the tab
+    it('keeps the packages behind the fourth deploy tab', () => {
+      // Downloads live inside 部署 → 安装包, after 一键 / npm / Docker: the tab
       // order is the install-path order, and the panel starts hidden so the
-      // first thing a visitor sees is still the one-line npm command.
+      // first thing a visitor sees is the one-line installer.
       const dom = boot('zh-CN')
       const doc = dom.window.document
       const labels = Array.from(doc.querySelectorAll('.tabs .tab')).map((t) => t.getAttribute('data-tab'))
-      expect(labels).toEqual(['npm', 'docker', 'binary'])
+      expect(labels).toEqual(['script', 'npm', 'docker', 'binary'])
 
       const panel = doc.querySelector('.dl-panel[data-panel="binary"]') as HTMLElement
       expect(panel.hidden).toBe(true)
@@ -510,6 +510,23 @@ describe('landing page', () => {
       expect((doc.querySelector('[data-panel="npm"]') as HTMLElement).hidden).toBe(true)
       // 安装包页签只留服务端产物，客户端在第二步
       expect(panel.querySelectorAll('a[data-asset]').length).toBe(6)
+      dom.window.close()
+    })
+
+    it('opens on the one-line installer, with one command per OS', () => {
+      // 一键脚本是第一页签，也是首屏默认面板：新用户最省事的那条路不该藏在
+      // 第二个页签后面。两个系统各一块代码、各自复制，粘错平台的概率就低了。
+      const dom = boot('zh-CN')
+      const doc = dom.window.document
+      expect((doc.querySelector('.tab.is-active') as HTMLElement).dataset.tab).toBe('script')
+
+      const panel = doc.querySelector('[data-panel="script"]') as HTMLElement
+      expect(panel.hidden).toBe(false)
+      const copies = Array.from(panel.querySelectorAll('.copy-btn')).map((b) => b.getAttribute('data-copy'))
+      expect(copies).toEqual([
+        'curl -fsSL https://clawbench.pages.dev/install.sh | bash',
+        'irm https://clawbench.pages.dev/install.ps1 | iex',
+      ])
       dom.window.close()
     })
 
@@ -539,12 +556,20 @@ describe('landing page', () => {
       ;(doc.getElementById('langToggle') as HTMLElement).click()
 
       const tabs = Array.from(doc.querySelectorAll('.tabs .tab'))
-      expect(tabs.length).toBe(3)
+      expect(tabs.length).toBe(4)
       for (const tab of tabs) expect(tab.querySelector('svg use')).toBeTruthy()
       expect(
-        tabs[2].querySelector('[data-i18n]')?.getAttribute('data-i18n'),
+        tabs[3].querySelector('[data-i18n]')?.getAttribute('data-i18n'),
       ).toBe('dep.tab.binary')
       dom.window.close()
+    })
+
+    it('keeps tab labels on one line on narrow screens', () => {
+      // 四个页签在 390px 的手机上放不下。没有 flex:none / nowrap 时，flex 会把
+      // 按钮压到 min-content，「一键」直接折成竖排的「一 / 键」——jsdom 没有
+      // 布局，只有源码守卫能拦住这一类。
+      expect(css).toMatch(/\.tab\s*\{[^}]*flex:\s*none/)
+      expect(css).toMatch(/\.tab\s*\{[^}]*white-space:\s*nowrap/)
     })
 
     it('runs the server through npx, with a comment on every command', () => {

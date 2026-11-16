@@ -152,11 +152,12 @@
     'dep.title': 'Server first,<br>then clients.',
     'dep.lede':
       'Two steps: start the server, then connect from desktop, phone or a browser.',
+    'dep.tab.script': 'One-line',
     'dep.tab.binary': 'Binary',
     'dep.copy': 'Copy',
 
     'step.server.t': 'Start the server',
-    'step.server.d': 'Pick one of three ways. The first run prints a random password to the console.',
+    'step.server.d': 'Pick any one way. The first run prints a random password to the console.',
     'step.server.note': 'The console prints the address and a random password once it is up — you need them in the next step.',
     'step.next': 'Next: connect a client',
     'step.client.t': 'Connect a client',
