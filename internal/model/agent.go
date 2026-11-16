@@ -166,20 +166,14 @@ type Agent struct {
 	// decides which model ids are offered).
 	ProviderID *int64 `json:"providerId,omitempty"`
 
-	// CodeBuddyTokenMode selects CodeBuddy's own account token as this agent's
-	// credential instead of the CLI's logged-in account (or a bound provider).
-	// It is the third choice in the settings "model provider" picker and only
-	// means something for the codebuddy backend.
+	// ProviderOwnService reports whether this agent's backend accepts a
+	// provider with NO endpoint as "use the backend's own official service"
+	// (CodeBuddy's account token). Computed at load time, like ProviderProtocols.
 	//
-	// The token itself is NOT stored here: it is one server-wide setting
-	// (Config.CodeBuddy.APIKey), because the account owns it and every agent
-	// that turns this mode on shares it.
-	CodeBuddyTokenMode bool `json:"codebuddyTokenMode,omitempty"`
-
-	// CodeBuddyTokenSupported reports whether this agent's backend offers the
-	// own-token mode at all. Computed at load time (like ProviderProtocols) so
-	// the settings UI never has to match on a backend id.
-	CodeBuddyTokenSupported bool `json:"codebuddyTokenSupported,omitempty"`
+	// The settings picker uses it to keep such a provider visible regardless of
+	// its protocol — the protocol is irrelevant in that mode — and to skip the
+	// config-file consent prompt, because no file is written.
+	ProviderOwnService bool `json:"providerOwnService,omitempty"`
 
 	// ProviderProtocols lists the wire protocols this agent's backend can be
 	// pointed at, computed at load time from model.ProviderEnvSpec. An empty

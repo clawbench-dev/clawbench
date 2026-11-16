@@ -70,19 +70,6 @@ func patchAndReadConfig(t *testing.T, body string) map[string]any {
 	return cfg
 }
 
-// The shared CodeBuddy token is an ordinary config field: it must pass the
-// PATCH whitelist, land in memory, and be written to config.yaml. Without the
-// whitelist entry the settings field is rejected with 400 and can never be
-// saved, which would leave the agent's token mode permanently unusable.
-func TestConfigPatch_CodeBuddyToken(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	cfg := patchAndReadConfig(t, `{"codebuddy":{"api_key":"ck-shared"}}`)
-	assert.Equal(t, "ck-shared", getNestedValue(cfg, "codebuddy.api_key"))
-	assert.Equal(t, "ck-shared", model.ConfigInstance.CodeBuddy.APIKey)
-}
-
 // getNestedValue reads a dot-path value from a nested map.
 func getNestedValue(m map[string]any, path string) any {
 	parts := strings.Split(path, ".")

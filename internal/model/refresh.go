@@ -698,8 +698,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, project_id,
-		provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
-		codebuddy_token_mode
+		provider_id, thinking_effort_by_model, mcp_servers, tool_policy
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -721,7 +720,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 	agent := &Agent{}
 	var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON, toolPolicyJSON string
-	var autoDetected, autoApprove, disabled, codebuddyTokenMode int
+	var autoDetected, autoApprove, disabled int
 	var projectID, providerID sql.NullInt64
 
 	if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
@@ -729,16 +728,14 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 		&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 		&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
 		&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
-		&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON,
-		&codebuddyTokenMode); err != nil {
+		&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON); err != nil {
 		return nil, err
 	}
 
 	agent.ModelsAutoDetected = autoDetected == 1
 	agent.AutoApprove = autoApprove == 1
 	agent.Disabled = disabled == 1
-	agent.CodeBuddyTokenMode = codebuddyTokenMode == 1
-	agent.CodeBuddyTokenSupported = agent.Backend == CodeBuddyBackend
+	agent.ProviderOwnService = ProviderOwnServiceSupported(agent.Backend)
 	if projectID.Valid {
 		id := projectID.Int64
 		agent.ProjectID = &id

@@ -407,13 +407,6 @@ type configResponse struct {
 	MCP            configMCP            `json:"mcp"`
 	ShellEnv       configShellEnv       `json:"shell_env"`
 	Drawio         configDrawio         `json:"drawio"`
-	CodeBuddy      configCodeBuddy      `json:"codebuddy"`
-}
-
-// configCodeBuddy is the shared CodeBuddy account token. One key serves every
-// CodeBuddy agent that enables the own-token mode (agents keep only the switch).
-type configCodeBuddy struct {
-	APIKey string `json:"api_key"`
 }
 
 // configDrawio is where the on-demand draw.io editor is downloaded from.
@@ -1336,9 +1329,6 @@ var PatchableConfigPaths = map[string]bool{
 	// draw.io editor download source. Validated and applied below; without this
 	// entry the settings field is rejected with 400 and can never be saved.
 	"drawio.download_url": true,
-	// Shared CodeBuddy account token. One key serves every CodeBuddy agent that
-	// enables the own-token mode; the per-agent switch is an agent column.
-	"codebuddy.api_key": true,
 }
 
 // Engine identifiers for the TTS vendor engines. Constants because the same
@@ -1620,7 +1610,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		MCP:        buildConfigMCP(cfg),
 		ShellEnv:   configShellEnv{Inherit: cfg.ShellEnv.Inherit},
 		Drawio:     configDrawio{DownloadURL: cfg.Drawio.DownloadURL},
-		CodeBuddy:  configCodeBuddy{APIKey: cfg.CodeBuddy.APIKey},
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
 		Mail: configMail{
@@ -3013,12 +3002,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if drawioMap, ok := patch["drawio"].(map[string]any); ok {
 		if v, ok := drawioMap["download_url"].(string); ok {
 			cfg.Drawio.DownloadURL = strings.TrimSpace(v)
-		}
-	}
-
-	if codeBuddyMap, ok := patch["codebuddy"].(map[string]any); ok {
-		if v, ok := codeBuddyMap["api_key"].(string); ok {
-			cfg.CodeBuddy.APIKey = strings.TrimSpace(v)
 		}
 	}
 

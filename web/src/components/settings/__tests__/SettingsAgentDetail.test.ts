@@ -1327,7 +1327,7 @@ describe('SettingsAgentDetail', () => {
     expect(mockToastShow).toHaveBeenCalledWith('Save failed', expect.objectContaining({ type: 'error' }))
   })
 
-  // ─── CodeBuddy own API key ─────────────────────
+  // ─── Credential-only provider (CodeBuddy account token) ─────────────
 
   /** The provider row's rendered options. */
   function providerOptionsOf(wrapper: ReturnType<typeof mountDetail>) {
@@ -1337,65 +1337,53 @@ describe('SettingsAgentDetail', () => {
     return item!.props('options') as { label: string; value: unknown }[]
   }
 
-  it('offers the CodeBuddy API key choice only for the codebuddy backend', () => {
-    const cb = mountDetail({ backend: 'codebuddy', codebuddyTokenSupported: true })
-    expect(providerOptionsOf(cb).some((o) => o.value === 'codebuddy-token')).toBe(true)
+  const tokenProvider = { id: 7, name: 'CodeBuddy Token', protocol: 'anthropic', baseUrl: '', hasKey: true }
+  const endpointProvider = { id: 8, name: 'GW', protocol: 'anthropic', baseUrl: 'https://gw', hasKey: true }
 
-    // Without the server-computed flag the picker has no such option (a
-    // protocol-less backend renders the row as plain info, hence `?? []`).
-    const claude = mountDetail({ backend: 'claude' })
-    const claudeRow = claude.findAllComponents({ name: 'SettingsItem' })
-      .find((it: any) => it.props('label') === 'settings.items.agentProvider')
-    expect(((claudeRow?.props('options') as unknown[] | undefined) ?? []).some(
-      (o: any) => o.value === 'codebuddy-token',
-    )).toBe(false)
-  })
-
-  it('selecting the CodeBuddy API key clears the provider and turns the mode on', async () => {
+  it('offers a no-endpoint provider to a credential-only backend whatever its protocol', async () => {
+    mockApiGet.mockResolvedValue({ providers: [tokenProvider, endpointProvider] })
     const wrapper = mountDetail({
       backend: 'codebuddy',
-      codebuddyTokenSupported: true,
       providerProtocols: ['openai'],
+      providerOwnService: true,
     })
+    await flushPromises()
 
-    await bindProvider(wrapper, 'codebuddy-token')
+    const values = providerOptionsOf(wrapper).map((o) => o.value)
+    // The token provider is anthropic-protocol, yet it belongs here: in
+    // credential-only mode the protocol never reaches the wire.
+    expect(values).toContain(7)
+    // The endpoint provider is anthropic-protocol and this backend speaks openai.
+    expect(values).not.toContain(8)
+  })
 
+  it('hides a no-endpoint provider from a backend without the mode', async () => {
+    mockApiGet.mockResolvedValue({ providers: [tokenProvider] })
+    const wrapper = mountDetail({ backend: 'claude', providerProtocols: ['openai'] })
+    await flushPromises()
+
+    expect(providerOptionsOf(wrapper).map((o) => o.value)).not.toContain(7)
+  })
+
+  it('binds a credential-only provider without asking about a config file', async () => {
+    mockApiGet.mockResolvedValue({ providers: [tokenProvider] })
+    const wrapper = mountDetail({
+      backend: 'codebuddy',
+      providerProtocols: ['openai'],
+      providerOwnService: true,
+      providerConfigDirBackend: true,
+      providerConfigPath: '/data/providers/agents/test-agent/models.json',
+    })
+    await flushPromises()
+
+    await bindProvider(wrapper, 7)
+
+    expect(mockDialogConfirm).not.toHaveBeenCalled()
     expect(mockApiPatch).toHaveBeenCalledWith(
       '/api/agents',
-      expect.objectContaining({ id: 'test-agent', provider_id: null, codebuddy_token_mode: true }),
+      expect.objectContaining({ id: 'test-agent', provider_id: 7 }),
     )
-  })
-
-  it('shows the shared-token status only while the mode is on', () => {
-    const off = mountDetail({ backend: 'codebuddy', codebuddyTokenSupported: true, codebuddyTokenMode: false })
-    expect(off.findAllComponents({ name: 'SettingsItem' })
-      .some((it: any) => it.props('label') === 'settings.items.agentCodeBuddyToken')).toBe(false)
-
-    mockGetServerValue.mockReturnValue('ck-abc')
-    const on = mountDetail({
-      backend: 'codebuddy',
-      codebuddyTokenSupported: true,
-      codebuddyTokenMode: true,
-    })
-    const row = on.findAllComponents({ name: 'SettingsItem' })
-      .find((it: any) => it.props('label') === 'settings.items.agentCodeBuddyToken')
-    expect(row).toBeDefined()
-    // The token is shared config, so the agent page only reports whether it is
-    // filled in — there is no key input here any more.
-    expect(row!.props('type')).toBe('info')
-    expect(row!.props('modelValue')).toBe('settings.items.agentCodeBuddyTokenConfigured')
-  })
-
-  it('flags a token mode with no shared token configured', () => {
-    mockGetServerValue.mockReturnValue('')
-    const wrapper = mountDetail({
-      backend: 'codebuddy',
-      codebuddyTokenSupported: true,
-      codebuddyTokenMode: true,
-    })
-    const row = wrapper.findAllComponents({ name: 'SettingsItem' })
-      .find((it: any) => it.props('label') === 'settings.items.agentCodeBuddyToken')
-    expect(row).toBeDefined()
-    expect(row!.props('modelValue')).toBe('settings.items.agentCodeBuddyTokenMissing')
+    const payload = mockApiPatch.mock.calls.at(-1)![1] as Record<string, unknown>
+    expect(payload).not.toHaveProperty('confirm_config_write')
   })
 })

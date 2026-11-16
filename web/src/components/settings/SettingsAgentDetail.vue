@@ -226,7 +226,7 @@ import AgentAvatarPicker from './AgentAvatarPicker.vue'
 import AgentInstallDialog from '@/components/AgentInstallDialog.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
-import { patchAgentField, useSettingsConfig } from '@/composables/useSettingsConfig'
+import { patchAgentField } from '@/composables/useSettingsConfig'
 import { apiGet, apiPatch } from '@/utils/api'
 import type { ModelPrice } from '@/utils/modelPrice'
 import { useToast } from '@/composables/useToast'
@@ -262,19 +262,8 @@ const toast = useToast()
 const dialog = useDialog()
 const selfTest = useAgentSelfTest()
 const { loadAgents, getAgent, agentsLoaded, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP, getAgentAvailableModes } = useAgents()
-// The CodeBuddy token is server-wide config, so its configured/empty state has
-// to be read from the settings snapshot rather than from the agent record.
-const { getServerValue } = useSettingsConfig()
 const activeKey = ref<string | null>(null)
 const copying = ref(false)
-
-/**
- * Sentinel value for CodeBuddy's own-API-key mode in the provider picker.
- *
- * The other choices are a numeric provider id and '' ("not set"), so a string
- * can never collide with a real binding.
- */
-const CODEBUDDY_TOKEN_OPTION = 'codebuddy-token'
 
 // Server-side copy failure (e.g. the name is already taken) shown inside the
 // dialog; the dialog stays open so the user can pick another name.
@@ -389,13 +378,19 @@ const providerOptions = computed(() => {
   const a = agent.value
   const allowed = a?.providerProtocols ?? []
   const keyOnly = a?.providerKeyOnly === true
+  const credentialOnly = a?.providerOwnService === true
   const bound = a?.providerId ?? null
   return providers.value.filter((p) => {
     if (p.id === bound) return true
     if (allowed.includes(p.protocol)) return true
     // A key-only backend never reads an endpoint, so a provider WITH one would
     // be a binding that fails on the next turn; only bare credentials qualify.
-    return keyOnly && !p.baseUrl
+    if (keyOnly && !p.baseUrl) return true
+    // A credential-only backend (CodeBuddy's own account token) also takes a
+    // provider with no endpoint, and there the protocol is irrelevant: the
+    // request goes to the backend's own service. Without this clause an
+    // anthropic-protocol token provider would be hidden from a codebuddy agent.
+    return credentialOnly && !p.baseUrl
   })
 })
 
@@ -520,9 +515,7 @@ const items = computed<AgentItem[]>(() => {
   // ask for consent because they modify a file outside ClawBench.
   // Key-only backends advertise no protocols yet still take a provider, so the
   // gate cannot be "has protocols" alone (it hid the picker for cursor).
-  // CodeBuddy also offers a third choice: its own API key, which needs no
-  // provider row at all.
-  if ((a.providerProtocols && a.providerProtocols.length > 0) || a.providerKeyOnly || a.codebuddyTokenSupported) {
+  if ((a.providerProtocols && a.providerProtocols.length > 0) || a.providerKeyOnly) {
     result.push({
       key: 'provider_id',
       label: t('settings.items.agentProvider'),
@@ -530,9 +523,6 @@ const items = computed<AgentItem[]>(() => {
       type: 'select',
       options: [
         { label: t('settings.items.agentProviderNone'), value: '' },
-        ...(a.codebuddyTokenSupported
-          ? [{ label: t('settings.items.agentProviderCodeBuddyKey'), value: CODEBUDDY_TOKEN_OPTION }]
-          : []),
         ...providerOptions.value.map((p) => ({
           // The provider list marks a keyless row in orange; without carrying
           // that into this picker the user binds it and only finds out on the
@@ -545,24 +535,6 @@ const items = computed<AgentItem[]>(() => {
       ],
       patchField: 'provider_id',
     })
-
-    // The token itself is NOT here: it is one server-wide setting shared by every
-    // CodeBuddy agent in this mode. This row only reports whether it is filled
-    // in, so a mode with no token is visible before the next turn fails.
-    if (a.codebuddyTokenSupported && a.codebuddyTokenMode) {
-      const configured = String(getServerValue('codebuddy.api_key') ?? '').trim() !== ''
-      result.push({
-        key: 'codebuddy_token_status',
-        label: t('settings.items.agentCodeBuddyToken'),
-        description: configured
-          ? t('settings.items.agentCodeBuddyTokenConfiguredDesc')
-          : t('settings.items.agentCodeBuddyTokenMissingDesc'),
-        type: 'info',
-        value: configured
-          ? t('settings.items.agentCodeBuddyTokenConfigured')
-          : t('settings.items.agentCodeBuddyTokenMissing'),
-      })
-    }
   } else {
     result.push({
       key: 'provider_id',
@@ -751,10 +723,7 @@ function getItemValue(item: AgentItem): unknown {
     case 'preferred_thinking_effort':
       return a.preferredThinkingEffort || ''
     case 'provider_id':
-      // A provider id is a number; the CodeBuddy token mode has no provider row,
-      // so it gets its own sentinel value in the same picker.
-      if (a.providerId != null) return a.providerId
-      return a.codebuddyTokenMode ? CODEBUDDY_TOKEN_OPTION : ''
+      return a.providerId ?? ''
     case 'preferred_mode':
       return a.preferredMode || ''
     case 'transport':
@@ -820,12 +789,16 @@ async function handleUpdate(item: AgentItem, value: unknown) {
   // consent, and the request must carry confirm_config_write in the same call.
   if (item.patchField === 'provider_id') {
     const a = getAgent(props.agentId)
-    const tokenSelected = value === CODEBUDDY_TOKEN_OPTION
-    const providerId = value === '' || value === null || value === undefined || tokenSelected
-      ? null
-      : Number(value)
+    const providerId = value === '' || value === null || value === undefined ? null : Number(value)
+    // A credential-only provider (no endpoint, e.g. CodeBuddy's own account
+    // token) writes no config file at all: the server injects the credential
+    // through the environment, so the consent prompt would describe a file that
+    // never appears.
+    const selected = providerId === null ? undefined : providers.value.find((p) => p.id === providerId)
+    const writesConfigDir = a?.providerConfigDirBackend
+      && !(a?.providerOwnService && selected && !selected.baseUrl)
     let confirmWrite = false
-    if (providerId !== null && (a?.providerConfigBackend || a?.providerConfigDirBackend)) {
+    if (providerId !== null && (a?.providerConfigBackend || writesConfigDir)) {
       // Two different kinds of write, and they must not share one sentence:
       // the shared-file path edits the user's own file (and backs it up), while
       // the per-agent directory path stays inside ClawBench's data dir but may
@@ -842,9 +815,6 @@ async function handleUpdate(item: AgentItem, value: unknown) {
       await apiPatch('/api/agents', {
         id: props.agentId,
         provider_id: providerId,
-        // The two credential sources are exclusive; send the switch in the same
-        // request so the server never sees a moment where both are set.
-        ...(a?.codebuddyTokenSupported ? { codebuddy_token_mode: tokenSelected } : {}),
         ...(confirmWrite ? { confirm_config_write: true } : {}),
       })
       await loadAgents(true)

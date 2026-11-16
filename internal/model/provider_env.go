@@ -86,6 +86,19 @@ type ProviderEnvSpec struct {
 	// which is where the key already lives in the database.
 	ConfigDirSecretInFile bool
 
+	// OwnServiceEnv names the variable a config-directory backend reads
+	// when a provider carries NO endpoint. Such a provider means the backend's
+	// own official service (a CodeBuddy account token, say): the config file
+	// cannot express it because it needs a URL per model, so the config-directory
+	// writer is skipped and the credential goes in through the environment.
+	//
+	// Empty means the backend has no such mode and a provider without an endpoint
+	// keeps going down its normal path.
+	OwnServiceEnv string
+	// OwnServiceExtra is injected verbatim alongside OwnServiceEnv, for
+	// the fixed switches that mode needs (CodeBuddy's cloudhosted deployment).
+	OwnServiceExtra map[string]string
+
 	// InlineConfigEnv names an environment variable that takes config CONTENT	// (not a path). It exists for backends that validate a model id against
 	// their own provider catalog before sending anything: the endpoint
 	// variables above redirect where requests go, but they do not ADD models to
@@ -237,6 +250,12 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 	if !ok {
 		return false
 	}
+	// A credential-only provider (no endpoint, backend's own official service)
+	// is valid whatever protocol it carries: the protocol never reaches the wire
+	// in that mode.
+	if ProviderOwnServiceMode(backendID, p) {
+		return true
+	}
 	if spec.supportsProtocol(p.Protocol) {
 		return true
 	}
@@ -259,6 +278,12 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 // provider that writes fine would be rejected by the binding.
 func ProviderConfigDirModelsError(backendID string, p *Provider) error {
 	if p == nil || !ProviderConfigDirDeclaresModels(backendID) {
+		return nil
+	}
+	// A credential-only provider never reaches the config file, so its model
+	// list is not required (and would be meaningless: the backend's own service
+	// publishes the models).
+	if ProviderOwnServiceMode(backendID, p) {
 		return nil
 	}
 	for _, id := range p.Models {
@@ -412,6 +437,31 @@ func ProviderUsesConfigFile(backendID string) bool {
 func ProviderUsesConfigDir(backendID string) bool {
 	spec, ok := providerEnvSpec(backendID)
 	return ok && spec.ConfigDirEnv != "" && spec.ConfigDirFile != ""
+}
+
+// ProviderOwnServiceMode reports whether this provider means the backend's own
+// official service: a credential with no endpoint, for a backend that declares
+// OwnServiceEnv. That mode bypasses the config-directory writer (whose file
+// format needs an endpoint per model) and injects the credential, plus the
+// backend's fixed switches, through the environment.
+//
+// A provider WITH an endpoint is never credential-only, even on such a backend:
+// it is a normal custom-endpoint binding and keeps going through the config file.
+func ProviderOwnServiceMode(backendID string, p *Provider) bool {
+	if p == nil || strings.TrimSpace(p.BaseURL) != "" {
+		return false
+	}
+	spec, ok := providerEnvSpec(backendID)
+	return ok && spec.OwnServiceEnv != ""
+}
+
+// ProviderOwnServiceSupported reports whether the backend offers the
+// credential-only mode at all. The settings picker uses it to keep a provider
+// with no endpoint visible regardless of the provider's protocol: that protocol
+// is irrelevant when all we do is inject the backend's own credential.
+func ProviderOwnServiceSupported(backendID string) bool {
+	spec, ok := providerEnvSpec(backendID)
+	return ok && spec.OwnServiceEnv != ""
 }
 
 // ProviderNeedsConfigWrite reports whether binding a provider to this backend
@@ -574,6 +624,19 @@ func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]stri
 	}
 	if p.APIKey == "" {
 		return nil, fmt.Errorf("provider %q has no API key", p.Name)
+	}
+	// A provider with no endpoint on a backend that has an official service
+	// (CodeBuddy's account token): inject the credential plus the fixed switches
+	// and skip every protocol/config-file path. The protocol is irrelevant here —
+	// the request goes to the backend's own endpoint.
+	if ProviderOwnServiceMode(backendID, p) {
+		env := make([]string, 0, 1+len(spec.OwnServiceExtra))
+		env = append(env, spec.OwnServiceEnv+"="+p.APIKey)
+		for name, value := range spec.OwnServiceExtra {
+			env = append(env, name+"="+value)
+		}
+		sort.Strings(env)
+		return env, nil
 	}
 	if spec.ConfigOnly || (spec.KeyOnly != "" && p.BaseURL == "" && protocolEnvFor(spec, p.Protocol) == nil) {
 		return keyOnlyEnv(backendID, spec, p)
@@ -935,16 +998,7 @@ var ConfigDirEnvForAgent func(backend, agentID string, p *Provider) ([]string, e
 func ProviderEnvForAgent(agentID, backendID string) ([]string, error) {
 	p := AgentProvider(agentID)
 	if p == nil {
-		// CodeBuddy's own account token is the other credential source: it needs
-		// no provider row, but it is still environment the spawn must receive.
-		return CodeBuddyTokenEnv(GetAgent(agentID))
-	}
-	// The two sources are mutually exclusive (the settings picker and the PATCH
-	// handler both enforce it). A row that carries both is hand-edited state:
-	// refusing is the only honest answer, since either choice would silently
-	// ignore a credential the user configured.
-	if a := GetAgent(agentID); a != nil && a.CodeBuddyTokenMode {
-		return nil, fmt.Errorf("agent %s has both a model provider and CodeBuddy token mode enabled", agentID)
+		return nil, nil
 	}
 	pinned := ""
 	if agent := GetAgent(agentID); agent != nil {
@@ -963,7 +1017,7 @@ func BuildProviderEnvForAgent(agentID, backendID string, p *Provider, pinnedMode
 	if p == nil {
 		return nil, nil
 	}
-	if ProviderUsesConfigDir(backendID) {
+	if ProviderUsesConfigDir(backendID) && !ProviderOwnServiceMode(backendID, p) {
 		if ConfigDirEnvForAgent == nil {
 			return nil, fmt.Errorf("backend %q needs a config file but no writer is registered", backendID)
 		}

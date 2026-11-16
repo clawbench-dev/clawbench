@@ -1396,12 +1396,17 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			// hand), so the binding is the last place to catch a combination
 			// the CLI cannot express — otherwise the agent saves and then fails
 			// every turn with nothing pointing at the auth mode.
-			if aerr := model.ProviderAuthModeError(agent.Backend, provider.Protocol, provider.AuthMode); aerr != nil {
-				writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid",
-					map[string]any{"Reason": aerr.Error(), "field": "authMode"})
-				return
+			//
+			// Credential-only providers (no endpoint, the backend's own official
+			// service) never reach the wire with a protocol, so the mode is moot.
+			if !model.ProviderOwnServiceMode(agent.Backend, provider) {
+				if aerr := model.ProviderAuthModeError(agent.Backend, provider.Protocol, provider.AuthMode); aerr != nil {
+					writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid",
+						map[string]any{"Reason": aerr.Error(), "field": "authMode"})
+					return
+				}
 			}
-			if model.ProviderUsesConfigDir(agent.Backend) {
+			if model.ProviderUsesConfigDir(agent.Backend) && !model.ProviderOwnServiceMode(agent.Backend, provider) {
 				// The file has to declare the models, or the CLI cannot resolve
 				// any id and every turn fails at spawn. Refuse it here, where the
 				// message can point at the model list, instead of letting the
@@ -1456,46 +1461,6 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			}
 			ap.ProviderID = &providerID
 		}
-	}
-
-	// CodeBuddy's own-token mode. Only the switch lives on the agent: the token
-	// itself is server-wide config (codebuddy.api_key), shared by every agent
-	// that turns this on.
-	//
-	// Provider and token mode are mutually exclusive: both supply the same
-	// credential slot, so accepting both would silently ignore one of them.
-	if v, exists := patch["codebuddy_token_mode"]; exists {
-		mode, ok := v.(bool)
-		if !ok {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
-			return
-		}
-		if mode && agent.Backend != model.CodeBuddyBackend {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "CodeBuddyTokenUnsupported")
-			return
-		}
-		ap.CodeBuddyTokenMode = &mode
-	}
-	// Reject the combined state no matter which of the two fields introduced it:
-	// binding a provider to an agent that already runs on its own token is the
-	// same conflict as enabling the mode on a bound agent. Guarded on "one of
-	// them was in this patch" so an unrelated edit to an already-inconsistent
-	// row is not refused.
-	_, modeTouched := patch["codebuddy_token_mode"]
-	_, providerTouched := patch["provider_id"]
-	tokenMode := agent.CodeBuddyTokenMode
-	if ap.CodeBuddyTokenMode != nil {
-		tokenMode = *ap.CodeBuddyTokenMode
-	}
-	boundProvider := agent.ProviderID != nil
-	if ap.ClearProviderID {
-		boundProvider = false
-	} else if ap.ProviderID != nil {
-		boundProvider = true
-	}
-	if (modeTouched || providerTouched) && tokenMode && boundProvider {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "CodeBuddyTokenProviderConflict")
-		return
 	}
 
 	// Persist to database
@@ -1584,9 +1549,6 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		} else if ap.ProviderID != nil {
 			pid := *ap.ProviderID
 			agent.ProviderID = &pid
-		}
-		if ap.CodeBuddyTokenMode != nil {
-			agent.CodeBuddyTokenMode = *ap.CodeBuddyTokenMode
 		}
 	})
 

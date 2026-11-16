@@ -1,10 +1,11 @@
 package codebuddy
 
 import (
-	acp "github.com/coder/acp-go-sdk"
 	"os/exec"
 	"strings"
 	"time"
+
+	acp "github.com/coder/acp-go-sdk"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
@@ -96,6 +97,17 @@ func init() {
 			ConfigDirProtocols:      []string{model.ProviderProtocolOpenAI},
 			ConfigDirProviderID:     "clawbench",
 			ConfigDirDeclaresModels: true,
+			// A provider with NO endpoint means the CodeBuddy account's own
+			// token: the request goes to CodeBuddy's own service, so the models
+			// file (which needs a URL per model) is skipped and the credential
+			// plus the deployment switch are injected through the environment.
+			OwnServiceEnv: "CODEBUDDY_API_KEY",
+			OwnServiceExtra: map[string]string{
+				// The public CodeBuddy account lives in the cloudhosted
+				// deployment; without this the CLI assumes an internal one and
+				// rejects the token.
+				"CODEBUDDY_INTERNET_ENVIRONMENT": "cloudhosted",
+			},
 		},
 	})
 }

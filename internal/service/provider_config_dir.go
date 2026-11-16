@@ -430,6 +430,15 @@ func ReconcileProviderConfigDirs() error {
 		if p == nil {
 			continue
 		}
+		// A credential-only provider (no endpoint, the backend's own official
+		// service) never uses a config file: remove any leftover from an earlier
+		// endpoint binding and leave the directory unmarked so it can be pruned.
+		if model.ProviderOwnServiceMode(a.Backend, p) {
+			if err := RestoreProviderConfigDir(a.ID); err != nil {
+				return err
+			}
+			continue
+		}
 		bound[a.ID] = true
 		if _, err := applyProviderConfigDir(a.Backend, a.ID, p); err != nil {
 			return err

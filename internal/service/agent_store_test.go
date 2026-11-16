@@ -303,9 +303,6 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"project_id": true,
 		// Model-provider binding (NULL = use the CLI's own configuration).
 		"provider_id": true,
-		// CodeBuddy's own-token mode switch. The token itself is server-wide
-		// config (codebuddy.api_key), so the agents table holds no secret.
-		"codebuddy_token_mode": true,
 		// Per-agent MCP enablement policy (JSON). The definitions live in
 		// config.yaml, not here — see model.MCPServerPolicy.
 		"mcp_servers": true,

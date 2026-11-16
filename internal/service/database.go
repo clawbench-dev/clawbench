@@ -2238,18 +2238,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
-	// Migrate: CodeBuddy's own-token mode switch. The token itself is
-	// server-wide config (codebuddy.api_key), not an agent column, because the
-	// account owns it and every agent in this mode shares it. Existing agents
-	// get mode=0, so nothing changes after the upgrade.
-	var hasCodeBuddyTokenMode int
-	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='codebuddy_token_mode'").Scan(&hasCodeBuddyTokenMode)
-	if hasCodeBuddyTokenMode == 0 {
-		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN codebuddy_token_mode INTEGER NOT NULL DEFAULT 0"); err != nil {
-			return fmt.Errorf("failed to add codebuddy_token_mode column to agents: %w", err)
-		}
-	}
-
 	// Migrate: per-model thinking-effort picks (issue #552). A JSON object
 	// keyed by model id; '{}' means "no per-model pick", so the agent's
 	// model-independent default still applies. Additive and nullable-by-default,
