@@ -1,0 +1,134 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import AgentToolPolicySection from '@/components/settings/AgentToolPolicySection.vue'
+
+const patchAgentField = vi.fn()
+
+vi.mock('@/composables/useSettingsConfig', () => ({
+    useSettingsConfig: () => ({ patchAgentField }),
+}))
+
+// The constants come from useAgents, whose module body registers a WebSocket
+// listener via a floating promise. Importing it for real leaks that promise
+// into the test run, so the module is mocked down to what this component reads.
+vi.mock('@/composables/useAgents', () => ({
+    CAP_FS_READ: 'fs.read',
+    CAP_FS_WRITE: 'fs.write',
+    CAP_EXEC: 'exec',
+}))
+
+vi.mock('vue-i18n', async () => {
+    const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
+    return {
+        ...actual,
+        useI18n: () => ({ t: (key: string) => key }),
+    }
+})
+
+/** Find the checkbox whose row label matches a capability label key. */
+function checkboxFor(wrapper: ReturnType<typeof mount>, labelKey: string) {
+    const rows = wrapper.findAll('.agent-tools__row')
+    for (const row of rows) {
+        if (row.text().includes(labelKey)) {
+            return row.find('input[type="checkbox"]')
+        }
+    }
+    throw new Error(`no row for ${labelKey}`)
+}
+
+function mountSection(toolPolicy?: { allow: string[] }) {
+    return mount(AgentToolPolicySection, {
+        props: { agent: { id: 'builtin', toolPolicy } },
+    })
+}
+
+describe('AgentToolPolicySection', () => {
+    beforeEach(() => {
+        patchAgentField.mockReset()
+        patchAgentField.mockResolvedValue(undefined)
+    })
+
+    it('renders every capability unchecked for an empty policy', () => {
+        const wrapper = mountSection({ allow: [] })
+        const boxes = wrapper.findAll('input[type="checkbox"]')
+        expect(boxes).toHaveLength(3)
+        for (const box of boxes) {
+            expect((box.element as HTMLInputElement).checked).toBe(false)
+        }
+        // The "no tools" note must be visible: an agent with no grant can only chat.
+        expect(wrapper.text()).toContain('settings.items.toolPolicyNoTools')
+    })
+
+    it('ticks read when read is granted', () => {
+        const wrapper = mountSection({ allow: ['fs.read'] })
+        expect((checkboxFor(wrapper, 'settings.items.toolPolicyRead').element as HTMLInputElement).checked).toBe(true)
+        expect((checkboxFor(wrapper, 'settings.items.toolPolicyWrite').element as HTMLInputElement).checked).toBe(false)
+    })
+
+    it('ticks and locks write when exec is granted', () => {
+        const wrapper = mountSection({ allow: ['exec'] })
+        const write = checkboxFor(wrapper, 'settings.items.toolPolicyWrite')
+        expect((write.element as HTMLInputElement).checked).toBe(true)
+        // Locked, because exec implies write and the server stores it closed.
+        expect((write.element as HTMLInputElement).disabled).toBe(true)
+        // And the consequence is stated where the grant is made.
+        expect(wrapper.text()).toContain('settings.items.toolPolicyExecWarning')
+    })
+
+    it('sends the closure when exec is ticked', async () => {
+        const wrapper = mountSection({ allow: [] })
+        await checkboxFor(wrapper, 'settings.items.toolPolicyExec').setValue(true)
+
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'tool_policy', {
+            allow: ['fs.read', 'fs.write', 'exec'],
+        })
+    })
+
+    it('unticking read also clears write and exec', async () => {
+        const wrapper = mountSection({ allow: ['fs.read', 'fs.write', 'exec'] })
+        await checkboxFor(wrapper, 'settings.items.toolPolicyRead').setValue(false)
+
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'tool_policy', { allow: [] })
+    })
+
+    it('unticking write keeps read but drops exec', async () => {
+        const wrapper = mountSection({ allow: ['fs.write'] })
+        await checkboxFor(wrapper, 'settings.items.toolPolicyWrite').setValue(false)
+
+        // read is preserved: it was granted implicitly and does not depend on
+        // write. Only the dependent (exec) goes with it.
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'tool_policy', { allow: ['fs.read'] })
+    })
+
+    it('preserves budget fields when the grant changes', async () => {
+        const wrapper = mount(AgentToolPolicySection, {
+            props: {
+                agent: {
+                    id: 'builtin',
+                    toolPolicy: { allow: [], maxRounds: 9, bashTimeoutSec: 30 },
+                },
+            },
+        })
+        await checkboxFor(wrapper, 'settings.items.toolPolicyRead').setValue(true)
+
+        // A partial object would make the server treat the budgets as "leave
+        // alone" only because they were omitted — but an omitted field is
+        // indistinguishable from a cleared one in some patch paths, so the
+        // whole policy is sent.
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'tool_policy', {
+            allow: ['fs.read'],
+            maxRounds: 9,
+            bashTimeoutSec: 30,
+        })
+    })
+
+    it('surfaces a save failure instead of silently reverting', async () => {
+        patchAgentField.mockRejectedValue(new Error('server said no'))
+        const wrapper = mountSection({ allow: [] })
+
+        await checkboxFor(wrapper, 'settings.items.toolPolicyRead').setValue(true)
+        await vi.waitFor(() => {
+            expect(wrapper.text()).toContain('server said no')
+        })
+    })
+})

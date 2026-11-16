@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -1292,6 +1293,33 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		ap.MCPServers = &normalized
 	}
 
+	// Tool grant (built-in backend only). Decoded from the same raw JSON the
+	// agent's own column uses, so the client sends one shape and the server
+	// stores it verbatim (after normalization).
+	//
+	// Accepted for ANY backend rather than only builtin: a user may configure
+	// the grant before switching the agent's backend, and rejecting it would
+	// lose that work. It has no effect on an external CLI, which is what the
+	// settings page communicates by hiding the editor.
+	if v, exists := patch["tool_policy"]; exists {
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		var policy model.ToolPolicy
+		if err := json.Unmarshal(encoded, &policy); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		if err := model.ValidateToolPolicy(policy); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		normalized := policy.Normalized()
+		ap.ToolPolicy = &normalized
+	}
+
 	// Validate and apply project_scope (仅当前项目). true binds the agent to the
 	// caller's current project; false clears the scope back to global. The
 	// default agent must stay globally visible, so scoping it is refused —
@@ -1488,6 +1516,12 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			policy := *ap.MCPServers
 			policy.Names = append([]string(nil), policy.Names...)
 			agent.MCPServers = policy
+		}
+		if ap.ToolPolicy != nil {
+			// Same slice-copy reasoning as the MCP policy above.
+			policy := *ap.ToolPolicy
+			policy.Allow = append([]string(nil), policy.Allow...)
+			agent.ToolPolicy = policy
 		}
 		if ap.ClearProjectID {
 			agent.ProjectID = nil

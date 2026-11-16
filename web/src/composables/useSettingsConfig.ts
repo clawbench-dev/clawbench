@@ -900,6 +900,14 @@ export async function patchAgentField(
     await loadAgents(true)
     return
   }
+  // tool_policy: same reason, and stronger — the server closes the capability
+  // set over its implications (exec implies write implies read). Mirroring the
+  // raw payload would leave the UI showing "exec only" while the agent can also
+  // write, which is exactly the lie this editor exists to avoid.
+  if (field === 'tool_policy') {
+    await loadAgents(true)
+    return
+  }
   const fieldMap: Record<string, string> = {
     preferred_model: 'preferredModel',
     preferred_thinking_effort: 'preferredThinkingEffort',

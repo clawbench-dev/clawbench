@@ -20,6 +20,21 @@ type ChatRequestOption func(*chatRequestOptions)
 type chatRequestOptions struct {
 	injectKB bool
 	kbQuery  string
+	// currentMessageID is this turn's own user message, already persisted when
+	// the request is built. It bounds the replayed history for self-hosted
+	// backends so the prompt does not appear twice (see buildBuiltinHistory).
+	currentMessageID int64
+}
+
+// WithCurrentMessageID tells BuildChatRequest which persisted row is this
+// turn's own user message.
+//
+// Only the built-in backend reads it (to bound the replayed history); every
+// other backend resumes its own transcript and ignores history entirely. A
+// caller that omits it still works — the history simply includes the current
+// message, which the model sees twice.
+func WithCurrentMessageID(id int64) ChatRequestOption {
+	return func(o *chatRequestOptions) { o.currentMessageID = id }
 }
 
 // WithKBInjection prepends knowledge base snippets retrieved with this turn's
@@ -134,7 +149,20 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	// After the first AI response, session_capture persists external_session_id,
 	// so resolvedExtID != "" and the above resume branch uses it directly,
 	// bypassing this fork detection.
-	forkContext, forkResume := resolveForkInjection(sessionID, backendName, agentID, resume, isACP, resolvedExtID)
+	// A self-hosted backend replays its history from OUR OWN records (see
+	// buildBuiltinHistory below), so the fork-context injection must be skipped
+	// entirely. Without this guard the same history arrives twice: once rendered
+	// as a "previous conversation" text block, once as real messages — and the
+	// block is the larger of the two, which made every turn re-overflow the
+	// window and compact again forever.
+	//
+	// A fork still works: buildBuiltinHistory reads the copied rows like any
+	// other history.
+	var forkContext string
+	forkResume := resume
+	if !builtinHistoryEnabled(backendName) {
+		forkContext, forkResume = resolveForkInjection(sessionID, backendName, agentID, resume, isACP, resolvedExtID)
+	}
 	if forkContext != "" {
 		resume = forkResume
 	}
@@ -251,6 +279,17 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		ForkContext:            forkContext,
 		KBRefs:                 kbRefs,
 		Compacted:              compacted,
+	}
+
+	// Self-hosted backends replay the conversation from our own history: they
+	// have no external transcript to resume. Populated last so every branch
+	// above (fork context, KB refs) is already reflected in what is stored.
+	if builtinHistoryEnabled(backendName) {
+		// A summary from an earlier compaction stands in for the turns it
+		// replaced, so those turns are not replayed (and not re-summarized).
+		prior := GetBuiltinSummary(sessionID)
+		req.PriorSummary = prior.Text
+		req.History = buildBuiltinHistory(sessionID, reqOpts.currentMessageID, prior)
 	}
 
 	// The identity section rides the system prompt; on a resumed turn (which

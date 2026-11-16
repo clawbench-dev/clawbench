@@ -6,7 +6,7 @@ import { getAgentSvg } from '@/utils/agentIcons'
 const ALL_BACKENDS = [
     'claude', 'codebuddy', 'opencode', 'codex',
     'copilot', 'qoder', 'kimi', 'mimo', 'pi', 'deepseek', 'dsh', 'vecli', 'grok', 'antigravity', 'hermes', 'cursor',
-    'commandcode', 'openclaw', 'qodercn', 'custom-acp',
+    'commandcode', 'openclaw', 'qodercn', 'custom-acp', 'builtin',
 ]
 
 describe('agentIcons', () => {

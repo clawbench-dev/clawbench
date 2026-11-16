@@ -28,6 +28,7 @@ import (
 	"clawbench/internal/ai"
 	_ "clawbench/internal/ai/backends"
 	_ "clawbench/internal/ai/backends/antigravity"
+	_ "clawbench/internal/ai/backends/builtin"
 	_ "clawbench/internal/ai/backends/claude"
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/codex"

@@ -54,5 +54,11 @@
    and stays legible on all 36 themes without a hard-coded pair per theme. */
 .mono-custom-acp { color: var(--text-secondary); }
 
+/* ---- Built-in agent: generic mark, no brand to borrow ----
+   Same reasoning as custom-acp: this is ClawBench's own tool loop, not a
+   product, so it tracks --text-secondary and adapts to every theme instead of
+   inventing a brand colour. */
+.mono-builtin { color: var(--text-secondary); }
+
 /* ---- Kimi: brand blue — readable on both themes, no backdrop needed ---- */
 .mono-kimi { color: #1783FF; }

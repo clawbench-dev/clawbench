@@ -2891,6 +2891,72 @@ func PatchContextStateMerge(sessionID string, patches map[string]string) {
 // fork injected into its target session. See SetForkContext.
 const forkContextKey = "fork_context"
 
+// builtinSummaryKey is where the built-in backend's compaction state lives in
+// chat_sessions.context_state.
+//
+// It is stored per session rather than recomputed every turn: re-summarizing
+// the same history on each turn would cost a model call per turn and would
+// summarize an already-summarized conversation, degrading the facts each time.
+const builtinSummaryKey = "builtin_summary"
+
+// builtinSummary is the persisted compaction state for a session.
+//
+// The summary text alone is not enough: it says WHAT was folded away but not
+// WHERE it stopped. Without the boundary the next turn cannot tell which stored
+// messages the summary already stands for, so it would either replay them (undo
+// the compaction) or drop messages that came after it (lose real content).
+type builtinSummary struct {
+	// Text is the summary itself.
+	Text string `json:"text"`
+	// UpToMessageID is the highest chat_history id the summary covers.
+	// Messages with a lower id are represented by the summary and must not be
+	// replayed.
+	UpToMessageID int64 `json:"upToMessageId"`
+}
+
+// SetBuiltinSummary stores a compaction summary plus the boundary it covers.
+//
+// Best-effort like the fork context: losing it degrades to "the next turn
+// compacts again", which costs a model call but never a wrong answer.
+func SetBuiltinSummary(sessionID string, s builtinSummary) {
+	if sessionID == "" || strings.TrimSpace(s.Text) == "" {
+		return
+	}
+	payload, err := json.Marshal(s)
+	if err != nil {
+		slog.Warn("setBuiltinSummary: marshal failed", "err", err, "sid", sessionID)
+		return
+	}
+	PatchContextStateMerge(sessionID, map[string]string{builtinSummaryKey: string(payload)})
+}
+
+// GetBuiltinSummary returns the stored compaction state for a session.
+//
+// An unreadable value reads as "never compacted": the next turn then replays the
+// full history and compacts again, which is slower but never wrong.
+func GetBuiltinSummary(sessionID string) builtinSummary {
+	if sessionID == "" || !store.ReadDBReady() {
+		return builtinSummary{}
+	}
+	var raw string
+	if err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(json_extract(context_state, '$."+builtinSummaryKey+"'), '') FROM chat_sessions WHERE id = ?",
+		sessionID,
+	).Scan(&raw); err != nil {
+		return builtinSummary{}
+	}
+	if raw == "" {
+		return builtinSummary{}
+	}
+	// json_extract returns the JSON encoding of the stored value; decode it so
+	// the caller gets the object rather than a quoted literal.
+	var s builtinSummary
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		return builtinSummary{}
+	}
+	return s
+}
+
 // SetForkContext stores the rendered background a fork injects into a session.
 //
 // It lives in chat_sessions.context_state rather than a dedicated column for the

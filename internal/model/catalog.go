@@ -42,6 +42,12 @@ type CatalogModel struct {
 	// provider bills by subscription, which the upstream marks as 0/0).
 	InputPrice  float64 `json:"inputPrice,omitempty"`
 	OutputPrice float64 `json:"outputPrice,omitempty"`
+	// Vision marks a model that accepts image input (models.dev
+	// modalities.input includes "image"). Only the built-in agent reads it: it
+	// decides whether a read of a PNG becomes an image part or an explanation
+	// that this model cannot see pictures. External CLIs decide that
+	// themselves and ignore this flag.
+	Vision bool `json:"vision,omitempty"`
 }
 
 // CatalogProvider is one provider in the snapshot, reduced to the fields this
@@ -203,6 +209,86 @@ func CatalogOutputLimitForModel(modelID string) int {
 	return limit
 }
 
+// ModelContextWindow returns the context window (in tokens) the catalog
+// publishes for a model id, or 0 when the snapshot has no entry for it.
+//
+// Like CatalogOutputLimitForModel the match is by model id alone across every
+// provider: the same id carries the same window wherever it is served, and a
+// BYOK endpoint serving a known id keeps it. When several providers disagree the
+// SMALLEST wins — this value is used as a budget the caller must stay UNDER, so
+// assuming a larger window than the endpoint really has produces a hard API
+// error mid-conversation.
+//
+// Zero means "unknown", and callers must treat it as such rather than as a
+// tiny window: guessing low would compact conversations that fit perfectly.
+func ModelContextWindow(modelID string) int {
+	cat := CatalogSnapshot()
+	if cat == nil || modelID == "" {
+		return 0
+	}
+	bare := bareModelID(cat, modelID)
+	window := 0
+	for _, p := range cat.Providers {
+		for _, m := range p.Models {
+			if m.ID != bare || m.Context <= 0 {
+				continue
+			}
+			if window == 0 || m.Context < window {
+				window = m.Context
+			}
+		}
+	}
+	return window
+}
+
+// bareModelID strips a "<provider>/" prefix when it names a catalog provider.
+//
+// Several backends address a model as "<provider>/<model>" (opencode, pi).
+// The catalog knows the bare id, so the prefix is only stripped when it
+// actually names a provider — otherwise a model id that legitimately contains a
+// slash would be truncated.
+func bareModelID(cat *Catalog, modelID string) string {
+	if i := strings.LastIndex(modelID, "/"); i >= 0 && i+1 < len(modelID) {
+		if _, ok := cat.Providers[modelID[:i]]; ok {
+			return modelID[i+1:]
+		}
+	}
+	return modelID
+}
+
+// ModelSupportsVision reports whether the catalog knows this model accepts
+// image input.
+//
+// Only the built-in agent consults it, and it must fail CLOSED: an unknown
+// model returns false. Sending an image to a model that cannot read one
+// produces a hard API error the user cannot diagnose, whereas wrongly saying
+// "this model cannot see images" costs only a degraded answer.
+//
+// A provider-specific lookup is not needed: the same model id carries the same
+// input modalities wherever it is served, and a self-hosted gateway serving a
+// known id keeps that capability. A model absent from the catalog stays
+// text-only until the snapshot learns about it.
+func ModelSupportsVision(protocol, modelID string) bool {
+	cat := CatalogSnapshot()
+	if cat == nil || modelID == "" {
+		return false
+	}
+	bare := bareModelID(cat, modelID)
+	for _, p := range cat.Providers {
+		// A provider for another wire protocol may publish the same id with
+		// different capabilities; only the matching protocol counts.
+		if protocol != "" && p.Protocol != protocol {
+			continue
+		}
+		for _, m := range p.Models {
+			if m.ID == bare && m.Vision {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // CatalogProviderForPreset returns the provider entry itself (used by the
 // provider-models endpoint when the live probe fails).
 func CatalogProviderForPreset(presetID string) *CatalogProvider {
@@ -316,6 +402,14 @@ type catalogDocument map[string]struct {
 			Input  float64 `json:"input"`
 			Output float64 `json:"output"`
 		} `json:"cost"`
+		// Modalities lists the input/output kinds a model accepts, e.g.
+		// {"input":["text","image"],"output":["text"]}. Only "image" in the
+		// input list matters here: it is what decides whether the built-in
+		// agent's read tool may return a picture.
+		Modalities struct {
+			Input  []string `json:"input"`
+			Output []string `json:"output"`
+		} `json:"modalities"`
 	} `json:"models"`
 }
 
@@ -357,6 +451,7 @@ func parseCatalog(body []byte) (*Catalog, error) {
 			models = append(models, CatalogModel{
 				ID: mid, Name: name, Context: m.Limit.Context, Output: m.Limit.Output,
 				InputPrice: m.Cost.Input, OutputPrice: m.Cost.Output,
+				Vision: containsString(m.Modalities.Input, "image"),
 			})
 		}
 		sort.Slice(models, func(i, j int) bool { return models[i].Name < models[j].Name })

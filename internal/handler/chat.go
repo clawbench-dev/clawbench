@@ -753,6 +753,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		if !ai.IsACPSlashCommand(req.Message) {
 			firstOpts = append(firstOpts, service.WithKBInjection())
 		}
+		// The current message is already persisted (msgID above), so the
+		// self-hosted backend's replayed history must stop just before it —
+		// otherwise the prompt reaches the model twice.
+		firstOpts = append(firstOpts, service.WithCurrentMessageID(msgID))
 		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments, firstOpts...)
 
 		// Execute first message

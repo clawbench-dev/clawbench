@@ -7,6 +7,7 @@ import (
 
 	"clawbench/internal/ai/backends"
 	_ "clawbench/internal/ai/backends/antigravity"
+	_ "clawbench/internal/ai/backends/builtin"
 	_ "clawbench/internal/ai/backends/claude"
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/codex"
@@ -72,6 +73,12 @@ var skillAwareBackends = map[string]bool{
 	"grok":        false,
 	"zcode":       false,
 	"vecli":       false,
+	// builtin has no skill directory of its own: its tools are ClawBench's,
+	// not a CLI's, and it never reads SKILL.md on its own. It therefore takes
+	// the shared table through ClawBench's normal injection (or gets nothing
+	// when skills are disabled globally) — which is why this is false and not
+	// a "no directory" case with special handling.
+	"builtin": false,
 }
 
 // TestBackendSkillAwarenessMatchesReviewedTable fails if a backend's actual

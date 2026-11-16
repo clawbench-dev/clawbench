@@ -645,6 +645,46 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		return
 	}
 
+	// compacted: the built-in backend just folded older turns into a summary.
+	// Persist the summary WITH its boundary so the next turn replays only what
+	// came after it; without the boundary the same history would be compacted
+	// again on every turn.
+	//
+	// The event is forwarded (unlike compact_detected) because the user must see
+	// it: "it forgot what I said" and "it summarized what I said" look identical
+	// from the outside, and only one of them is a problem.
+	if event.Type == "compacted" {
+		if event.Summary != "" {
+			// The boundary is the newest FINALIZED message that exists right
+			// now. The engine compacted exactly the messages it was given, and
+			// those are all older than the streaming placeholder this run is
+			// writing — so "everything finalized so far" is the right boundary.
+			SetBuiltinSummary(e.cfg.SessionID, builtinSummary{
+				Text:          event.Summary,
+				UpToMessageID: lastCoveredMessageID(e.cfg.SessionID, 0),
+			})
+		}
+		// Forward as a system_message so it lands in the transcript as a
+		// timeline note. The "compacted" type is an internal signal: the
+		// frontend has no renderer for it, and an unhandled type would be
+		// dropped (the notice would silently never appear).
+		notice := ""
+		if event.SystemMessage != nil {
+			notice = event.SystemMessage.Content
+		}
+		if notice != "" {
+			if id, err := AddSystemMessage(e.cfg.ProjectPath, e.timelineSID(), notice); err != nil {
+				slog.Warn("compaction notice: persist failed", "err", err, "sid", e.cfg.SessionID)
+			} else {
+				ws.EmitToSession(e.timelineSID(), ai.StreamEvent{
+					Type:          eventTypeSystemMessage,
+					SystemMessage: &ai.SystemMessageData{MessageID: id, Content: notice},
+				})
+			}
+		}
+		return
+	}
+
 	// Inject per-tool duration into completion events before forwarding,
 	// so WS clients and AccumulateBlock both see it.
 	if event.Type == eventTypeToolUse || event.Type == eventTypeToolResult {

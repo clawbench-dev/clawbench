@@ -64,7 +64,7 @@ sequenceDiagram
 
 ### 功能清单
 
-- **后端检测面板**：显示 `model.GetBackendRegistry()` 里的 20 个注册后端，每项标注：
+- **后端检测面板**：显示 `model.GetBackendRegistry()` 里的 21 个注册后端，每项标注：
   - 后端名称 + 描述
   - 是否已检测到 CLI（来自 `agents` 表）
   - 安装命令（`BackendSpec.InstallCmd`，如 `"npm install -g @anthropic-ai/claude-code"`）

@@ -2280,6 +2280,22 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: per-agent tool grant. Only the built-in backend reads it; every
+	// external backend's tools live inside its own CLI, where a column here
+	// would do nothing.
+	//
+	// Default is the empty grant (no read, no write, no exec): a fresh agent
+	// can chat but cannot touch anything. The built-in backend is new, so no
+	// existing row needs a backfill — an agent that was never granted tools
+	// must not silently acquire them on upgrade.
+	var hasAgentToolPolicy int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='tool_policy'").Scan(&hasAgentToolPolicy)
+	if hasAgentToolPolicy == 0 {
+		if _, err := store.WriteExec(`ALTER TABLE agents ADD COLUMN tool_policy TEXT NOT NULL DEFAULT '{"allow":[]}'`); err != nil {
+			return fmt.Errorf("failed to add tool_policy column to agents: %w", err)
+		}
+	}
+
 	// Migrate: ensure the project scope column on the quick-send /
 	// quick-command tables (project-scoped / 仅本项目 items). NULL means global;
 	// a value scopes the item to that project only.

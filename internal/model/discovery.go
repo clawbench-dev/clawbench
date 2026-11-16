@@ -65,6 +65,17 @@ type BackendSpec struct {
 	// binary/package for "SKILL.md" or "available_skills", and confirm the
 	// transport ClawBench uses (CLI vs ACP) shares that code path.
 	AutoLoadsNativeSkills bool
+
+	// Builtin marks a backend whose tools are implemented by ClawBench itself
+	// rather than by an external CLI. Such a backend has no install command, no
+	// login, no external command line, no MCP injection and no skill injection
+	// — the UI must hide all of those instead of offering fields that do
+	// nothing, and the settings page must not present the tool grant as if it
+	// applied to a CLI that would ignore it.
+	//
+	// Placed last so adding it does not re-align every field above (a
+	// cosmetic churn that hides the real change in review).
+	Builtin bool
 }
 
 // LoadBackendSpecs is set by the backends package at init time to provide
@@ -222,8 +233,16 @@ func FindSpecByBackend(backend string) *BackendSpec {
 	return nil
 }
 
-// FindBackendSpecByDefaultCmd returns the BackendSpec whose DefaultCmd matches, or nil.
+// FindBackendSpecByDefaultCmd resolves a backend by the command it is detected
+// with.
+//
+// An empty command resolves to nothing. Without that guard, any backend with no
+// CLI command (NoCLI ones such as builtin) matches "" and a caller probing an
+// empty command would be handed an unrelated backend.
 func FindBackendSpecByDefaultCmd(cmd string) *BackendSpec {
+	if cmd == "" {
+		return nil
+	}
 	registry := GetBackendRegistry()
 	for i := range registry {
 		if registry[i].DefaultCmd == cmd {

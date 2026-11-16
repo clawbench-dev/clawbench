@@ -6557,7 +6557,7 @@ paths:
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`acp_command`、`name`、`specialty`、`custom_system_prompt`、
         `avatar`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
-        `mcp_servers`、`provider_id`。
+        `mcp_servers`、`provider_id`、`tool_policy`。
         `avatar` 为原始 SVG 字符串；空串恢复内置图标，非空时校验大小与安全性。
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
         `custom-acp` 可改**：非空同时把 `transport` 切到 `acp-stdio` 并重启其连接；
@@ -6573,6 +6573,15 @@ paths:
         `mcp_servers` 是 MCP 启用策略
         `{"mode":"all"|"none"|"selected","names":["a"]}`：只存策略（定义在
         `mcp.servers`），省略 `mode` 即 `all`，下一轮生效。
+
+        `tool_policy` 是工具授权
+        `{"allow":["fs.read"|"fs.write"|"exec"],"maxRounds":N,"maxToolCalls":N,"bashTimeoutSec":N}`，
+        **只对内置智能体（`backend=builtin`）有意义**：它的工具由 ClawBench 自己实现，
+        未授权的工具根本不会声明给模型。外部 CLI 的工具在其进程内，本字段对它无效。
+        服务端会把授权集按蕴含关系闭包后存储（`exec` ⇒ `fs.write` ⇒ `fs.read`），
+        因为 `exec` 本身就能写文件，允许「禁止写但允许跑命令」会让设置页说谎。
+        `allow` 为空表示不开放任何工具（只能对话）。预算字段 `0` 表示用服务端默认值；
+        `maxRounds`/`maxToolCalls` 为负、或 `bashTimeoutSec` 超出 `0..3600` 返回 `400`。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 返回 `409` +
         `AgentNameTaken`；改成群聊用户称谓返回 `409` + `AgentNameReserved`。

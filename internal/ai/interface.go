@@ -36,6 +36,35 @@ type ChatRequest struct {
 	// consumed by the turn that reads it (see service.BuildChatRequest), so it
 	// triggers exactly one extra injection.
 	Compacted bool
+
+	// History is the prior conversation, oldest first, for backends that run
+	// the model themselves instead of delegating to an external CLI.
+	//
+	// It is populated only for the built-in backend (see
+	// ai/backends/builtin). Every external backend keeps its own transcript on
+	// its side and resumes it by id, so replaying ours would duplicate the
+	// conversation. A backend that ignores this field loses nothing.
+	History []HistoryMessage
+
+	// PriorSummary is the compaction summary an earlier turn produced for this
+	// session, or "" when the session has never been compacted.
+	//
+	// It replaces the turns it stood for, so a long session compacts once
+	// instead of re-summarizing the same history every turn. Only the built-in
+	// backend reads it: an external CLI manages its own compaction.
+	PriorSummary string
+}
+
+// HistoryMessage is one prior turn handed to a self-hosted backend.
+//
+// Only text is carried: the built-in agent's own tool calls are already
+// summarized in its replies, and replaying raw tool results would re-send file
+// contents the model has since moved past.
+type HistoryMessage struct {
+	// Role is "user" or "assistant".
+	Role string
+	// Text is the message body.
+	Text string
 }
 
 // ShouldInjectSystemPrompt determines whether the system prompt should be injected
@@ -546,6 +575,10 @@ type StreamEvent struct {
 	ToolMeta       *ToolCallMeta          // Extracted tool metadata for WS forwarding (Type=tool_use, Type=tool_result)
 	UserMessage    *UserMessageData       // User message for cross-device sync (Type=user_message)
 	SystemMessage  *SystemMessageData     // System timeline event (Type=system_message)
+	// Summary carries a compaction summary (Type=compacted). The executor
+	// persists it so the next turn starts from the compacted state instead of
+	// re-summarizing the same history.
+	Summary string
 	QueueAdded     *QueueAddedData        // A message was enqueued (Type=queue_added)
 	StreamStart    *StreamStartData       // Stream start (Type=stream_start) — carries streaming message DB id
 	// StreamFinish is set on a "stream_finalize" event: ONE producer turn has

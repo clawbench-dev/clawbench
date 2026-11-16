@@ -137,10 +137,17 @@
         </ul>
       </div>
     </div>
+    <!-- Tool grant. Only meaningful for the built-in backend, whose tools are
+         ClawBench's own; an external CLI ships its tools and ignores this. -->
+    <SettingsCard v-if="isBuiltinBackend" :title="t('settings.items.toolPolicySection')">
+      <AgentToolPolicySection :agent="agent ?? null" />
+    </SettingsCard>
+
     <!-- MCP enable policy. A dedicated block rather than a SettingsItem: the
          control is a three-way mode plus a per-server checklist, which the
-         generic row types cannot express. -->
-    <SettingsCard :title="t('settings.items.mcpAgentSection')">
+         generic row types cannot express. Hidden for the built-in agent: it has
+         no MCP client at all, so every option here would be inert. -->
+    <SettingsCard v-if="!isBuiltinBackend" :title="t('settings.items.mcpAgentSection')">
       <AgentMCPSection :agent="agent ?? null" />
     </SettingsCard>
 
@@ -212,6 +219,7 @@ import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import { CUSTOM_OPTION_VALUE } from './settingsFieldMap'
 import AgentMCPSection from './AgentMCPSection.vue'
+import AgentToolPolicySection from './AgentToolPolicySection.vue'
 import SettingsCard from './SettingsCard.vue'
 import CopyAgentDialog from './CopyAgentDialog.vue'
 import AgentAvatarPicker from './AgentAvatarPicker.vue'
@@ -329,6 +337,15 @@ const isCustomAcpAgent = computed(() => agent.value?.backend === 'custom-acp')
  * an edit the API rejects — or hide one it would accept.
  */
 const hasBackendSpec = computed(() => agent.value?.backendHasSpec === true)
+
+/**
+ * Whether this agent's tools are ClawBench's own (the built-in backend).
+ *
+ * The server computes the flag so this page never matches on a backend id: a
+ * built-in agent has no CLI command, no install command and no MCP client, so
+ * every one of those fields would be an inert control that looks editable.
+ */
+const isBuiltinBackend = computed(() => agent.value?.builtinBackend === true)
 
 // Determine if agent supports both ACP and CLI (dual transport)
 const isDualTransport = computed(() => {

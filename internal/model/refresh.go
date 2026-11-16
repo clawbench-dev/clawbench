@@ -498,19 +498,26 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	if err != nil {
 		return err
 	}
+	// A newly discovered agent starts with NO tools. The built-in backend's
+	// tools are ours, so granting them by default would hand every fresh agent
+	// the ability to write files before the user has seen a single switch.
+	toolPolicyJSON, err := EncodeToolPolicy(agent.ToolPolicy)
+	if err != nil {
+		return err
+	}
 
 	_, err = db.Exec(`INSERT INTO agents (id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, provider_id, thinking_effort_by_model,
-		mcp_servers)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		mcp_servers, tool_policy)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
 		transport, agent.AcpCommand, autoApprove, disabled, agent.ProviderID, string(effortByModelJSON),
-		string(mcpServersJSON))
+		string(mcpServersJSON), string(toolPolicyJSON))
 	return err
 }
 
@@ -636,6 +643,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 		if spec := FindSpecByBackend(agent.Backend); spec != nil {
 			agent.CanRefreshModels = HasModelSource(agent.Backend)
 			agent.BackendHasSpec = true
+			agent.BuiltinBackend = spec.Builtin
 			if len(agent.ThinkingEffortLevels) == 0 && len(spec.ThinkingEffortLevels) > 0 {
 				agent.ThinkingEffortLevels = spec.ThinkingEffortLevels
 			}
@@ -690,7 +698,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, project_id,
-		provider_id, thinking_effort_by_model, mcp_servers
+		provider_id, thinking_effort_by_model, mcp_servers, tool_policy
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -711,7 +719,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 // scanAgentRow reads one agent row, including the JSON-encoded columns.
 func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 	agent := &Agent{}
-	var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string
+	var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON, toolPolicyJSON string
 	var autoDetected, autoApprove, disabled int
 	var projectID, providerID sql.NullInt64
 
@@ -720,7 +728,7 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 		&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 		&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
 		&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
-		&providerID, &effortByModelJSON, &mcpServersJSON); err != nil {
+		&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON); err != nil {
 		return nil, err
 	}
 
@@ -737,6 +745,7 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 	}
 
 	decodeAgentColumns(agent, modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON)
+	agent.ToolPolicy = DecodeToolPolicy(toolPolicyJSON)
 	return agent, nil
 }
 

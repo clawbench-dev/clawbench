@@ -85,8 +85,7 @@ type ProviderEnvSpec struct {
 	// which is where the key already lives in the database.
 	ConfigDirSecretInFile bool
 
-	// InlineConfigEnv names an environment variable that takes config CONTENT
-	// (not a path). It exists for backends that validate a model id against
+	// InlineConfigEnv names an environment variable that takes config CONTENT	// (not a path). It exists for backends that validate a model id against
 	// their own provider catalog before sending anything: the endpoint
 	// variables above redirect where requests go, but they do not ADD models to
 	// that catalog, so a provider model outside it is rejected (opencode:
@@ -104,6 +103,15 @@ type ProviderEnvSpec struct {
 	// addressable only as "openai/openai/…". With our own id the prefix is
 	// unambiguous: "<our id>/<curated id verbatim>".
 	InlineConfigProviderIDs map[string]string
+
+	// InProcess marks a backend that calls the provider endpoint from THIS
+	// process (the built-in agent) instead of handing credentials to a spawned
+	// CLI.
+	//
+	// It changes one thing: an auth mode is never wrong, because no credential
+	// variable has to exist. Every other check still applies — the protocol
+	// list is what makes the agent bindable in the first place.
+	InProcess bool
 }
 
 // providerEnvTable is the single place that knows which environment variables
@@ -278,11 +286,22 @@ var providerEnvTable = map[string]ProviderEnvSpec{
 	"qodercn":    {},
 	"vecli":      {},
 	"custom-acp": {},
-	// Deliberately empty: the built-in backend talks to the provider endpoint
-	// directly from this process (internal/agentcore/llm), so it needs no
-	// environment variables at all. An entry here is what the coverage test
-	// requires; it is not a placeholder for a missing implementation.
-	"builtin": {},
+	// The built-in backend talks to the provider endpoint directly from this
+	// process (internal/agentcore/llm) instead of handing it to a spawned CLI,
+	// so it needs no environment variables at all.
+	//
+	// It DOES need the protocol slots below: SupportedProtocols drives the
+	// settings page's provider picker, and an empty entry would leave the agent
+	// unbindable — no model, no way to run. The two wire formats it speaks are
+	// exactly the two declared here; Gemini is deliberately absent because
+	// agentcore has no Gemini client.
+	"builtin": {
+		Anthropic: protoEnv("", "", ""),
+		OpenAI:    protoEnv("", "", ""),
+		// It calls the endpoint itself, so no credential variable has to exist
+		// and no auth mode can be "unsupported".
+		InProcess: true,
+	},
 }
 
 // ProviderEnvBackends lists every backend that has a provider-env entry. Used
@@ -400,6 +419,12 @@ func ProviderAuthModeError(backendID, protocol, authMode string) error {
 			return nil
 		}
 		return fmt.Errorf("backend %q does not support the %s protocol", backendID, protocol)
+	}
+	// An in-process backend reads the credential from the database and calls
+	// the endpoint itself: there is no variable to match an auth mode against,
+	// and every mode it can express is one the HTTP client can send.
+	if spec.InProcess {
+		return nil
 	}
 	if authModeFits(pe, authMode) {
 		return nil
@@ -666,6 +691,14 @@ func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]stri
 	spec, ok := providerEnvTable[backendID]
 	if !ok {
 		return nil, fmt.Errorf("backend %q does not support model providers", backendID)
+	}
+	// An in-process backend (the built-in agent) reads the credential from the
+	// database and calls the endpoint itself. There is no spawned process to
+	// hand variables to, so the environment is empty by construction — NOT a
+	// silently-dropped binding: the caller passes the provider object straight
+	// to the HTTP client.
+	if spec.InProcess {
+		return nil, nil
 	}
 	if p.APIKey == "" {
 		return nil, fmt.Errorf("provider %q has no API key", p.Name)

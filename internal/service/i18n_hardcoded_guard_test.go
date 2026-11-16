@@ -73,6 +73,12 @@ var allowedCJKFiles = map[string]string{
 	"internal/summarize/task.go":               "AI summarization prompt",
 	"internal/summarize/recommend.go":          "AI recommendation prompt + its quick-command header",
 	"internal/summarize/title.go":              "AI title-output prefix stripping (标题：)",
+	// The built-in backend's BackendSpec.Specialty. It is shipped data that the
+	// client renders as-is for the agent card, exactly like every other
+	// backend's specialty (claude, codex, …) — those are Chinese literals in
+	// their own packages too. Localizing it would require a spec-to-locale-key
+	// table for all 21 backends, which is a separate change.
+	"internal/ai/backends/builtin/backend.go": "BackendSpec.Specialty shipped data (rendered like every other backend's)",
 	// Knowledge base retrieval context: the block is prepended to the model's
 	// prompt ([知识库参考] + citation rules). It never reaches a human; the
 	// user-facing notice is a frontend chip.

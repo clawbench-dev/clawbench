@@ -90,6 +90,16 @@ type Agent struct {
 	// cannot, because the edit would silently revert.
 	BackendHasSpec bool `json:"backendHasSpec"`
 
+	// BuiltinBackend reports whether this agent's tools are implemented by
+	// ClawBench itself (the built-in agent) rather than by an external CLI.
+	//
+	// The settings UI uses it to hide fields that would do nothing for such an
+	// agent — the CLI command, the install command, the MCP section, the
+	// skills section — and to show the tool-grant editor instead. Echoing the
+	// flag (rather than letting the client match on the backend id) keeps one
+	// definition of "built-in" on the server.
+	BuiltinBackend bool `json:"builtinBackend"`
+
 	// CLIModels is the pure CLI-discovered list, without any ACP merge. It is
 	// populated only in API responses, so a client can show the CLI view when the
 	// agent is switched to CLI transport without re-deriving it.
@@ -208,6 +218,15 @@ type Agent struct {
 	// global list makes that a no-op, so the default is safe and adding a
 	// server does not require ticking every agent.
 	MCPServers MCPServerPolicy `json:"mcpServers"`
+
+	// ToolPolicy is the tool grant for backends whose tools ClawBench itself
+	// implements (the built-in agent). It is ignored by every external backend:
+	// their tools live inside the CLI, so the only way to restrict them is a
+	// flag that backend understands, not a field here.
+	//
+	// Zero value grants nothing (see ToolPolicy) — an agent whose policy was
+	// never set can chat but cannot read, write or execute.
+	ToolPolicy ToolPolicy `json:"toolPolicy"`
 }
 
 // DefaultModelID returns the default model ID for this agent.

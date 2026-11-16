@@ -306,6 +306,9 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		// Per-agent MCP enablement policy (JSON). The definitions live in
 		// config.yaml, not here — see model.MCPServerPolicy.
 		"mcp_servers": true,
+		// Per-agent tool grant (JSON) for the built-in backend. Only that
+		// backend reads it; an external CLI's tools live in its own process.
+		"tool_policy": true,
 		"created_at":  true, "updated_at": true,
 	}
 

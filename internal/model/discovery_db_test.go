@@ -57,6 +57,7 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			project_id INTEGER DEFAULT NULL,
 			provider_id INTEGER DEFAULT NULL,
 			mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}',
+			tool_policy TEXT NOT NULL DEFAULT '{"allow":[]}',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

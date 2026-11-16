@@ -95,8 +95,18 @@ const agentSvgMap: Record<string, AgentSvgData> = {
         viewBox: '0 0 24 24',
     },
 
-    // User-defined ACP agents (issue #557) all share the `custom-acp` backend
-    // id, so no single brand mark can stand for them — and without an entry
+    // The built-in agent has no vendor mark: it is not a product, it is
+    // ClawBench's own tool loop. A terminal-with-prompt glyph states what it
+    // does (read, write, run) without pretending to be a brand. Monochrome via
+    // currentColor so it adapts to all themes; a user-set avatar still outranks
+    // it in AgentIcon.
+    builtin: {
+        svg: '<path d="M4.5 3h15A1.5 1.5 0 0121 4.5v15A1.5 1.5 0 0119.5 21h-15A1.5 1.5 0 013 19.5v-15A1.5 1.5 0 014.5 3zm0 1.8a.3.3 0 00-.3.3v13.8a.3.3 0 00.3.3h15a.3.3 0 00.3-.3V5.1a.3.3 0 00-.3-.3h-15z" fill="currentColor"/><path d="M6.9 8.1a.9.9 0 011.27.07l2.4 2.65a.9.9 0 010 1.2l-2.4 2.65a.9.9 0 11-1.34-1.2l1.94-2.14L6.83 9.2A.9.9 0 016.9 8.1z" fill="currentColor"/><rect x="11.4" y="13.6" width="5.2" height="1.8" rx=".9" fill="currentColor"/>',
+        viewBox: '0 0 24 24',
+        monoCssClass: 'mono-builtin',
+    },
+
+    // User-defined ACP agents (issue #557) all share the `custom-acp` backend    // id, so no single brand mark can stand for them — and without an entry
     // here every one of them fell back to an initial letter, which reads as a
     // broken/missing icon rather than "your own agent". This is a generic
     // terminal prompt (`>_`): what these agents actually are is a spawn command

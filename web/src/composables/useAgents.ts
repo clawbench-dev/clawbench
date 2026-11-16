@@ -8,6 +8,31 @@ import { appLog } from '@/utils/appLog'
 
 const TAG = 'Agents'
 
+/**
+ * Tool grant for the built-in agent.
+ *
+ * Capabilities are coarser than tool names on purpose: `exec` can write files
+ * (`cat > f`, `sed -i`), so a per-tool allowlist would let the UI claim
+ * "cannot write" while the agent writes through bash. The server closes the
+ * implications on save, so `allow` is always the truth.
+ */
+export interface ToolPolicy {
+  /** Granted capabilities: 'fs.read' | 'fs.write' | 'exec'. Empty = no tools. */
+  allow: string[]
+  /** Model round-trip budget per turn (0 = server default). */
+  maxRounds?: number
+  /** Tool invocation budget per turn (0 = server default). */
+  maxToolCalls?: number
+  /** Per-command timeout in seconds (0 = server default). */
+  bashTimeoutSec?: number
+}
+
+/** Capability identifiers, mirroring model.CapFSRead / CapFSWrite / CapExec. */
+export const CAP_FS_READ = 'fs.read'
+export const CAP_FS_WRITE = 'fs.write'
+export const CAP_EXEC = 'exec'
+
+
 // ───────────────────────────────────────────────────────────
 // Break circular dependency with useSessionIdentity:
 // useSessionIdentity imports useAgents, so useAgents cannot
@@ -72,6 +97,16 @@ interface AgentRecord {
    * the same predicate when it refuses the PATCH.
    */
   backendHasSpec?: boolean
+  /**
+   * Whether this agent's tools are ClawBench's own (the built-in backend) rather
+   * than an external CLI's. The server computes it so the UI never matches on a
+   * backend id: when true, the CLI command, install command, MCP section and
+   * skills section are meaningless and must be hidden, and the tool-grant editor
+   * takes their place.
+   */
+  builtinBackend?: boolean
+  /** Tool grant (built-in backend only). Zero value grants nothing. */
+  toolPolicy?: ToolPolicy
   supportsCLI?: boolean
   supportsMidTurn?: boolean
   autoApprove?: boolean
