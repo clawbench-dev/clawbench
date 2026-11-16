@@ -34,8 +34,8 @@ func TestProviderEnvTableCoversEveryBackend(t *testing.T) {
 	}
 	for id := range registeredAtInit {
 		if !model.HasProviderEnvEntry(id) {
-			t.Errorf("backend %q has no provider-env entry; add one to model.providerEnvTable "+
-				"(an empty entry is a valid 'cannot take a provider' decision)", id)
+			t.Errorf("backend %q has no provider-env entry; set ProviderEnv on its "+
+				"BackendPlugin (an empty spec is a valid 'cannot take a provider' decision)", id)
 		}
 	}
 

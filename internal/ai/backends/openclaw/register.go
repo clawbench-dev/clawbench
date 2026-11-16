@@ -25,8 +25,8 @@ func init() {
 	//     the client only sees an initialize timeout — there is no protocol-level
 	//     error to translate. `openclaw gateway start` is the fix, which is what
 	//     LoginCmd names below.
-	//  2. Per-session mcpServers are REFUSED (session/new fails), so openclaw is
-	//     in model.mcpUnsupportedBackends. Its MCP must be configured on the
+	//  2. Per-session mcpServers are REFUSED (session/new fails), so this spec
+	//     sets MCPUnsupported. Its MCP must be configured on the
 	//     Gateway/agent instead.
 	//  3. session/resume only resolves ids created by the CURRENT bridge process;
 	//     after a restart the same id must be recovered with session/load, which
