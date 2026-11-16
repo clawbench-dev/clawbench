@@ -16,6 +16,16 @@ type ReadToolNoVision struct{}
 
 func (ReadToolNoVision) Name() string { return "read" }
 
+func (ReadToolNoVision) Snippet() string {
+	return "Read a text file (with line numbers)"
+}
+
+func (ReadToolNoVision) Guidelines() []string {
+	return []string{
+		"Use read to examine files instead of cat, head, tail or sed.",
+	}
+}
+
 func (ReadToolNoVision) Spec() Spec {
 	return Spec{
 		Name: "read",

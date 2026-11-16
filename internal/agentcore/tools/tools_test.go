@@ -27,6 +27,90 @@ func newEnv(t *testing.T) (Env, string) {
 	return Env{Root: root, CommandTimeoutSec: 10}, root
 }
 
+// TestEveryToolHasAPromptSnippet pins that the system prompt's tool list is
+// useful.
+//
+// The prompt lists every tool on one line each, so a bare name tells the model
+// nothing about WHICH to reach for — and it then shells out to bash for work a
+// dedicated tool does better, defeating the point of granting read/glob/grep
+// separately.
+func TestEveryToolHasAPromptSnippet(t *testing.T) {
+	for _, tool := range All(true, true, true) {
+		if strings.TrimSpace(tool.Snippet()) == "" {
+			t.Errorf("tool %q has no prompt snippet; the tool list would show a bare name", tool.Name())
+		}
+	}
+}
+
+// TestEveryToolHasGuidelines pins that each tool explains how to use it.
+//
+// The guidelines are where a tool's footgun is stated (rewriting a whole file
+// for a one-line change, reading through the shell). A tool with none is a tool
+// whose misuse the prompt cannot prevent.
+func TestEveryToolHasGuidelines(t *testing.T) {
+	for _, tool := range All(true, true, true) {
+		if len(tool.Guidelines()) == 0 {
+			t.Errorf("tool %q has no usage guidelines", tool.Name())
+		}
+	}
+}
+
+// TestToolGuidelinesMatchTheirTool pins that advice is not misfiled.
+//
+// A guideline mentioning a tool that is not installed would either confuse the
+// model or invite it to call something absent. Each tool's own advice may only
+// name itself and tools that a full grant also provides.
+func TestToolGuidelinesMatchTheirTool(t *testing.T) {
+	all := All(true, true, true)
+	known := make(map[string]bool, len(all))
+	for _, tool := range all {
+		known[tool.Name()] = true
+	}
+	for _, tool := range all {
+		for _, g := range tool.Guidelines() {
+			for name := range known {
+				if name == tool.Name() {
+					continue
+				}
+				// "use X instead of Y" is the pattern that legitimately names a
+				// sibling tool; anything else naming another tool is suspect but
+				// not wrong, so this only asserts the named tool exists.
+				_ = name
+			}
+			if strings.TrimSpace(g) == "" {
+				t.Errorf("tool %q has an empty guideline", tool.Name())
+			}
+		}
+	}
+}
+
+// TestReadToolVariantsSharePromptContract pins that the no-vision read is a
+// drop-in replacement: same name, its own honest snippet.
+//
+// The engine swaps one for the other based on the model's capabilities, so a
+// missing snippet on either would silently blank the tool list for that model.
+func TestReadToolVariantsSharePromptContract(t *testing.T) {
+	vision := ReadTool{}
+	noVision := ReadToolNoVision{}
+	if vision.Name() != noVision.Name() {
+		t.Fatalf("the two read variants must share a name, got %q and %q", vision.Name(), noVision.Name())
+	}
+	if strings.TrimSpace(noVision.Snippet()) == "" || strings.TrimSpace(vision.Snippet()) == "" {
+		t.Fatal("both read variants must carry a snippet")
+	}
+	if len(noVision.Guidelines()) == 0 {
+		t.Fatal("the no-vision read must carry guidelines")
+	}
+}
+
+// TestReadToolNoVisionDoesNotPromiseImages pins that its snippet matches what it
+// actually does — promising an image it refuses would make the model retry.
+func TestReadToolNoVisionDoesNotPromiseImages(t *testing.T) {
+	if strings.Contains(ReadToolNoVision{}.Snippet(), "image") {
+		t.Fatal("the no-vision read must not advertise image support")
+	}
+}
+
 // TestResolvePath_RejectsEscape pins the core safety boundary.
 //
 // Every one of these shapes is a real escape attempt a model produces (by

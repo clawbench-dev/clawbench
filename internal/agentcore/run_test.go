@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"clawbench/internal/agentcore/llm"
+	"clawbench/internal/agentcore/tools"
 	"clawbench/internal/model"
 )
 
@@ -386,9 +387,88 @@ func TestRunSync_ReturnsTextAndCounters(t *testing.T) {
 // for a way to write the file.
 func TestBuildSystemPrompt_StatesDeniedCapabilities(t *testing.T) {
 	got := buildSystemPrompt("You are helpful.", "/tmp/x", nil, model.ToolPolicy{})
-	for _, want := range []string{"You are helpful.", "/tmp/x", "cannot read files", "run shell commands"} {
+	for _, want := range []string{
+		"You are helpful.",
+		"/tmp/x",
+		"cannot read files",
+		"run shell commands",
+		"write or modify files",
+	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("system prompt must contain %q, got:\n%s", want, got)
+		}
+	}
+}
+
+// TestBuildSystemPrompt_UsesPiStyleSections pins the prompt's shape.
+//
+// Sections are wrapped rather than flattened into prose because a model reads a
+// tagged list as rules to follow and the same text as prose as something to
+// summarize. The preamble stays unwrapped and first: it is the agent's own
+// instructions and must outrank the mechanical text below it.
+func TestBuildSystemPrompt_UsesPiStyleSections(t *testing.T) {
+	list := tools.All(true, false, false)
+	got := buildSystemPrompt("AGENT-INSTRUCTIONS", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead}})
+
+	if !strings.HasPrefix(got, "AGENT-INSTRUCTIONS") {
+		t.Fatalf("the agent's own prompt must lead and be unwrapped, got:\n%s", got)
+	}
+	for _, tag := range []string{"<tools>", "</tools>", "<rules>", "</rules>", "<environment>", "</environment>"} {
+		if !strings.Contains(got, tag) {
+			t.Fatalf("prompt must contain section tag %q, got:\n%s", tag, got)
+		}
+	}
+	// Order matters: tools before rules before environment.
+	if !(strings.Index(got, "<tools>") < strings.Index(got, "<rules>") &&
+		strings.Index(got, "<rules>") < strings.Index(got, "<environment>")) {
+		t.Fatalf("sections are out of order, got:\n%s", got)
+	}
+}
+
+// TestBuildSystemPrompt_ToolListCarriesPurpose pins that each tool is described,
+// not merely named.
+//
+// A bare list of names tells the model nothing about WHICH tool to reach for, so
+// it shells out to bash for work a dedicated tool does better — and the whole
+// point of granting read/glob/grep separately is that they are better at it.
+func TestBuildSystemPrompt_ToolListCarriesPurpose(t *testing.T) {
+	list := tools.All(true, true, false)
+	got := buildSystemPrompt("", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead, model.CapFSWrite}})
+
+	for _, t2 := range list {
+		snippet := t2.Snippet()
+		if snippet == "" {
+			continue
+		}
+		want := "- " + t2.Name() + ": " + snippet
+		if !strings.Contains(got, want) {
+			t.Fatalf("the tool list must describe %q, got:\n%s", t2.Name(), got)
+		}
+	}
+}
+
+// TestBuildSystemPrompt_OnlyGrantedToolsAreListed pins that a denied capability
+// produces no mention of the tool — not even in the rules.
+//
+// The tool's own guidelines would otherwise leak the existence of a tool the
+// model cannot call, which invites it to try. This caught a real case: read's
+// guidelines said "read before editing", which a read-only agent has no use for
+// and which points at a tool that is not installed.
+func TestBuildSystemPrompt_OnlyGrantedToolsAreListed(t *testing.T) {
+	// Read-only: the write/edit/bash guidelines must not appear, and neither
+	// may any rule that only makes sense with them.
+	list := tools.All(true, false, false)
+	got := buildSystemPrompt("", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead}})
+
+	for _, forbidden := range []string{
+		"Use write only for new files",
+		"Use edit for targeted changes",
+		"Use bash for commands",
+		"old_string",
+		"Read the file first",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("a read-only prompt must not carry advice for an ungranted tool (%q), got:\n%s", forbidden, got)
 		}
 	}
 }
@@ -400,6 +480,33 @@ func TestBuildSystemPrompt_OmitsDenialsWhenGranted(t *testing.T) {
 	got := buildSystemPrompt("", "/tmp/x", nil, policy)
 	if strings.Contains(got, "You cannot") {
 		t.Fatalf("a fully granted agent must not be told it is restricted, got:\n%s", got)
+	}
+}
+
+// TestBuildSystemPrompt_NoWorkDirIsStated pins the empty-workdir case: the model
+// must know the file tools are unusable rather than trying them and failing.
+func TestBuildSystemPrompt_NoWorkDirIsStated(t *testing.T) {
+	got := buildSystemPrompt("", "", nil, model.ToolPolicy{})
+	if !strings.Contains(got, "No working directory") {
+		t.Fatalf("an empty workdir must be stated, got:\n%s", got)
+	}
+}
+
+// TestJoinWithOr pins the denial phrasing helper.
+func TestJoinWithOr(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want string
+	}{
+		{nil, ""},
+		{[]string{"a"}, "a"},
+		{[]string{"a", "b"}, "a or b"},
+		{[]string{"a", "b", "c"}, "a, b or c"},
+	}
+	for _, c := range cases {
+		if got := joinWithOr(c.in); got != c.want {
+			t.Errorf("joinWithOr(%v) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 

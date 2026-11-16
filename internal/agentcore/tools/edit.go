@@ -18,6 +18,12 @@ type EditTool struct{}
 
 func (EditTool) Name() string { return "edit" }
 
+func (EditTool) Snippet() string { return "Replace exact text in a file" }
+
+func (EditTool) Guidelines() []string {
+	return []string{"Use edit for targeted changes; keep old_string short but unique.", "Batch several changes to one file into one edit call rather than one call per change."}
+}
+
 func (EditTool) Spec() Spec {
 	return Spec{
 		Name: "edit",

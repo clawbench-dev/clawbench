@@ -37,6 +37,12 @@ var globSkipDirs = map[string]bool{
 
 func (GlobTool) Name() string { return "glob" }
 
+func (GlobTool) Snippet() string { return "Find files by name pattern" }
+
+func (GlobTool) Guidelines() []string {
+	return []string{"Use glob to locate a file before reading it, instead of guessing paths or listing with bash."}
+}
+
 func (GlobTool) Spec() Spec {
 	return Spec{
 		Name: "glob",

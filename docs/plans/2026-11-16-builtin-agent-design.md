@@ -54,6 +54,28 @@ internal/ai/backends/builtin/  后端注册：让它在 UI 里是个普通智能
 | `agentcore.Run` | 聊天、群聊、任务系统 | 流式事件，边跑边发 |
 | `agentcore.RunSync` | 后台任务（会议纪要、Skill 提取） | 一次返回结果 + 用量 |
 
+## 系统提示词
+
+参考 pi 的结构（`buildSystemPromptSections`）：一段 preamble + 每个关注点一个 XML 段。
+
+```
+preamble（agent 自己的指令，不包裹，排最前）
+<tools>        每个工具一行 "name: 一句话用途"
+<rules>        使用规则，按当前装了哪些工具条件生成
+<environment>  工作目录
+<output>       回答约定
+```
+
+**为什么包标签而不是写成散文**：模型把 `<rules>` 里的列表当成要遵守的条目，把同样的话写成散文当成要概括的内容。同样的文字，行为不同。
+
+**为什么 preamble 不包裹且排最前**：那是用户写的东西，必须压过下面的机械文本。
+
+**为什么工具要带一句话用途**：第一版只列工具名，模型不知道**该选哪个**，于是用 bash 干 read/glob/grep 更擅长的事——而分别授予这些工具的全部意义就是它们做得更好。用途写在 `Tool.Snippet()`，与 schema 里的 `Description` 分开：提示词里是「在多个工具之间选」，schema 里是「这一个工具怎么用」。
+
+**规则必须与已授予的工具一致**：`Tool.Guidelines()` 返回的规则只在该工具存在时出现。这条踩过坑——`read` 里原本写「编辑前先读文件」，只读模式下它指向一个根本没装的工具，属于噪音甚至误导。现在这句归 `edit` 自己。
+
+**能力缺失要明说**：`You cannot write or modify files or run shell commands`。工具**不存在**在模型看来是「我忘了」，不说明它会花几轮去找一个永远不会出现的写文件工具。
+
 ## 权限模型
 
 ### 能力位，不是工具白名单
@@ -152,6 +174,7 @@ root/link/secret.txt     # 文本路径在 root 内，实际指向 /etc
 
 - 内核循环：模型 → 工具 → 结果回喂，预算（轮数/工具数/命令超时），取消
 - 六个工具：`read`（含图片）、`write`、`edit`、`glob`、`grep`、`bash`
+- **系统提示词参考 pi**：preamble + `<tools>`（每工具一句话用途）+ `<rules>`（按已授权工具条件生成）+ `<environment>` + `<output>`
 - 路径边界（含符号链接逃逸）
 - 能力位权限 + 服务端闭包 + 前端编辑器
 - 两个协议客户端（OpenAI / Anthropic），流式 + tool_calls + 用量

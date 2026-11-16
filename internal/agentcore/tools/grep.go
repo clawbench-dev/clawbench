@@ -25,6 +25,12 @@ const (
 
 func (GrepTool) Name() string { return "grep" }
 
+func (GrepTool) Snippet() string { return "Search file contents" }
+
+func (GrepTool) Guidelines() []string {
+	return []string{"Use grep to find where something is defined or used, then read only the matching files."}
+}
+
 func (GrepTool) Spec() Spec {
 	return Spec{
 		Name: "grep",

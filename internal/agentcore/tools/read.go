@@ -13,6 +13,12 @@ type ReadTool struct{}
 
 func (ReadTool) Name() string { return "read" }
 
+func (ReadTool) Snippet() string { return "Read a file (text with line numbers, or an image)" }
+
+func (ReadTool) Guidelines() []string {
+	return []string{"Use read to examine files instead of cat, head, tail or sed."}
+}
+
 func (ReadTool) Spec() Spec {
 	return Spec{
 		Name: "read",

@@ -70,6 +70,24 @@ type Env struct {
 type Tool interface {
 	// Name is the identifier the model uses. It must match the spec.
 	Name() string
+	// Snippet is a one-line "what is this for" shown in the system prompt's
+	// tool list.
+	//
+	// It is deliberately separate from Spec().Description: the prompt lists
+	// every tool together, so the model needs a compact phrase to CHOOSE
+	// between them, while the schema description can afford detail about one.
+	// Listing bare names (as the first version did) tells the model nothing
+	// about which to reach for, and it then shells out to bash for things a
+	// dedicated tool does better.
+	Snippet() string
+	// Guidelines are usage rules for this tool, rendered into the prompt's
+	// rules section.
+	//
+	// They live here rather than in a central table so a tool's advice cannot
+	// drift away from the tool. Most tools return nil; the ones with a real
+	// footgun (reading through the shell, rewriting a whole file for a
+	// one-line change) return one line each.
+	Guidelines() []string
 	// Spec is the declaration sent to the model.
 	Spec() Spec
 	// Run executes one call with raw JSON arguments.

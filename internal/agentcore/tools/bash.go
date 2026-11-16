@@ -21,6 +21,12 @@ type BashTool struct{}
 
 func (BashTool) Name() string { return "bash" }
 
+func (BashTool) Snippet() string { return "Run a shell command (git, builds, tests, find)" }
+
+func (BashTool) Guidelines() []string {
+	return []string{"Use bash for commands, not for reading or searching files: read, glob and grep are more precise and their output is easier to act on."}
+}
+
 func (BashTool) Spec() Spec {
 	return Spec{
 		Name: "bash",
