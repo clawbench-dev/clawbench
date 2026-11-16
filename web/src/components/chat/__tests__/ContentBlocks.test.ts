@@ -1294,6 +1294,26 @@ describe('ContentBlocks', () => {
     // that position in the message and copy ITS done/status/duration onto this
     // card — a summary pill then showed "still executing" because an unrelated,
     // unfinished tool happened to share the index.
+    it('shows the tool summary on a summary-view pill', async () => {
+      // The original-view pill carries the step's own line ("Read file ·
+      // utils/path.ts"); the summary view rebuilt the same pill without it, so
+      // every row read as a bare tool name.
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        toolCallSummary: (b: any) => b?.summary || '',
+        summaryCards: {
+          tools: [{ name: 'Read', id: 'tool-sum', done: true, status: 'success', summary: 'utils/path.ts' }],
+          taskIDs: [],
+          askQuestions: [],
+        },
+      })
+      const card = wrapper.findAll('.chat-tool-call').find((c) => c.text().includes('Read'))
+      expect(card).toBeTruthy()
+      expect(card!.find('.tool-summary').text()).toBe('utils/path.ts')
+    })
+
     it('does not hand a block index to the drawer for a summary tool card', async () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'tool_use', name: 'Bash', id: 'tool-live', done: false }],
@@ -4096,6 +4116,54 @@ describe('compact tool calls', () => {
     expect(row.text()).toContain('3 calls')
     // The individual pills are gone — the row IS the run.
     expect(wrapper.findAll('.chat-tool-call')).toHaveLength(1)
+  })
+
+  it('keeps the last step\'s summary on the settled row', async () => {
+    // A folded run must still say WHAT it did: counts alone ("3 calls") tell the
+    // reader nothing about the command / file the agent actually touched. The
+    // most recent step is the one the row was showing while it ran.
+    const wrapper = mountBlocks({
+      toolCallSummary: (b: any) => b?.summary || '',
+      blocks: [
+        tool('Read', 't1', { summary: 'run.go' }),
+        tool('Bash', 't2', { summary: 'rebuild the frontend' }),
+      ],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.find('.tool-name').text()).toBe('2 calls')
+    expect(strip.find('.tool-summary').text()).toBe('Bash · rebuild the frontend')
+  })
+
+  it('drops the summary again once the run is unfolded', async () => {
+    // The body lists every step, so a repeated one-liner up here would just be
+    // duplicated information.
+    const wrapper = mountBlocks({
+      toolCallSummary: (b: any) => b?.summary || '',
+      blocks: [tool('Read', 't1', { summary: 'run.go' }), tool('Bash', 't2', { summary: 'npm test' })],
+    })
+    await nextTick()
+    expect(wrapper.find('.chat-tool-group-strip .tool-summary').exists()).toBe(true)
+    await wrapper.find('.chat-tool-group-strip').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.chat-tool-group-strip .tool-summary').exists()).toBe(false)
+  })
+
+  it('shows no step summary while only a thought is running', async () => {
+    // The row IS the thinking chip in that moment, and a chip has no summary —
+    // the previous step's line would read as the thought's own.
+    const wrapper = mountBlocks({
+      streaming: true,
+      toolCallSummary: (b: any) => b?.summary || '',
+      blocks: [
+        tool('Bash', 't1', { summary: 'npm test' }),
+        { type: 'thinking', think_id: 'th1', done: false },
+      ],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.find('.tool-name').text()).toBe('Deep Thinking')
+    expect(strip.find('.tool-summary').exists()).toBe(false)
   })
 
   it('spans thinking chips inside the run and counts them', async () => {

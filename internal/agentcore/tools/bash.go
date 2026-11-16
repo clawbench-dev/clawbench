@@ -23,7 +23,12 @@ func (BashTool) Name() string { return "bash" }
 func (BashTool) Snippet() string { return "Run a shell command (git, builds, tests, find)" }
 
 func (BashTool) Guidelines() []string {
-	return []string{"Use bash for commands, not for reading or searching files: read, glob and grep are more precise and their output is easier to act on."}
+	return []string{
+		"Use bash for commands, not for reading or searching files: read, glob and grep are more precise and their output is easier to act on.",
+		// The tool card shows this line, not the command: without it a run of
+		// shell calls is a wall of pipes in the chat.
+		"Always write `description` as one short sentence saying what the command does — it is what the user sees in the chat.",
+	}
 }
 
 func (BashTool) Spec() Spec {
@@ -38,12 +43,17 @@ func (BashTool) Spec() Spec {
 					"type":        "string",
 					"description": "Shell command to run. Runs with /bin/sh -c.",
 				},
+				"description": map[string]any{
+					"type": "string",
+					"description": "One short sentence describing what this command does, in the user's " +
+						"language. Shown in the tool card instead of the raw command.",
+				},
 				"timeout": map[string]any{
 					"type":        "integer",
 					"description": "Timeout in seconds. Omit for the configured default.",
 				},
 			},
-			"required": []string{"command"},
+			"required": []string{"command", "description"},
 		},
 	}
 }

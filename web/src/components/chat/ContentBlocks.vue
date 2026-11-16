@@ -84,6 +84,7 @@
           <div class="chat-tool-call done" :data-category="getToolIcon(tool.name).category" @click.stop="handleSummaryToolClick(tool, ti)">
             <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ toolDisplayName(tool.name, tool.input, tool.display_name) }}</span>
+            <span v-if="toolCallSummary(tool)" class="tool-summary">{{ toolCallSummary(tool) }}</span>
             <XCircle v-if="tool.status === 'error'" :size="14" color="#ef4444" class="tool-error-icon" />
             <CircleSlash v-else-if="isToolInterrupted(tool)" :size="14" color="#f59e0b" class="tool-interrupted-icon" :title="t('chat.contentBlocks.toolInterrupted')" />
             <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
@@ -162,8 +163,10 @@
                state branches would swap the node out and the new text would
                just snap in. -->
           <RollingText class="tool-name" :text="toolGroupTitle(group)" />
-          <!-- The running step's own summary; nothing while the header is a
-               summary. -->
+          <!-- The running step's own summary; once the run settles, the last
+               step's — a folded run must still say WHAT it did, otherwise the
+               row is a bare count. Nothing while unfolded (the body lists every
+               step) or while only a thought runs (it has no summary). -->
           <RollingText v-if="toolGroupDetail(group)" class="tool-summary" :text="toolGroupDetail(group)" />
           <!-- Settled or unfolded: counts, including what went wrong. A failure
                earlier in the run is not news while a later step is still
@@ -1972,12 +1975,32 @@ function toolGroupTitle(group: ToolCallGroup): string {
   return t('chat.message.deepThinking')
 }
 
-/** The line under the label: the running tool's own summary. Empty whenever the
- *  header is a summary — a run at rest (or unfolded) describes itself with
- *  counts, not with one step's detail. */
+/** The line under the label: the running tool's own summary, or — once the run
+ *  has settled — the last step's, so a folded run still says WHAT it did
+ *  ("Run command · rebuild the frontend") instead of leaving only a count.
+ *  Nothing while unfolded: the body underneath shows every step. */
 function toolGroupDetail(group: ToolCallGroup): string {
-  if (groupHeaderIsSummary(group) || !group.runningIndex) return ''
-  return group.runningSummary
+  if (isToolGroupOpen(group)) return ''
+  if (group.runningIndex) return group.runningSummary
+  // Between steps only a thought is live — that chip has no summary of its own,
+  // and the previous step's line under it would read as the thought's.
+  if (isGroupRunning(group)) return ''
+  return groupLastStepDetail(group)
+}
+
+/** Name + summary of the last step in the run that has one. A settled run of 81
+ *  calls cannot describe itself in one line, so it reports the most recent
+ *  action — the same thing the row showed while that step was running. */
+function groupLastStepDetail(group: ToolCallGroup): string {
+  for (let bi = group.end; bi >= group.start; bi--) {
+    const block = props.blocks[bi]
+    if (block?.type !== 'tool_use') continue
+    const summary = props.toolCallSummary(block)
+    if (!summary) continue
+    const name = toolDisplayName(block.name, block.input, block.display_name)
+    return name ? `${name} · ${summary}` : summary
+  }
+  return ''
 }
 
 /** A run is still running while a tool OR a thinking chip in it is unfinished.

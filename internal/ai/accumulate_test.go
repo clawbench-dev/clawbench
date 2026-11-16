@@ -911,7 +911,7 @@ func TestAccumulateBlock_ToolUseSlimFields(t *testing.T) {
 			Type: "tool_use",
 			Tool: &ToolCall{Name: "Read", ID: "t1", Input: `{"file_path":"/src/main.go"}`, Done: true},
 		})
-		assert.Equal(t, "main.go", blocks[0].Summary, "summary should be basename of file_path")
+		assert.Equal(t, "src/main.go", blocks[0].Summary, "summary should keep the last two path segments")
 		assert.Equal(t, "/src/main.go", blocks[0].FilePath, "file_path should be extracted")
 	})
 
@@ -962,7 +962,7 @@ func TestAccumulateBlock_ToolUseSlimFields(t *testing.T) {
 			Type: "tool_result",
 			Tool: &ToolCall{ID: "t5", Input: `{"file_path":"/app/Go"}`, Output: "contents", Status: "success"},
 		})
-		assert.Equal(t, "Go", blocks[0].Summary, "summary should be refreshed from tool_result input")
+		assert.Equal(t, "app/Go", blocks[0].Summary, "summary should be refreshed from tool_result input")
 		assert.Equal(t, "/app/Go", blocks[0].FilePath)
 	})
 }

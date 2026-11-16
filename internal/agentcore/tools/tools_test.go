@@ -424,6 +424,28 @@ func TestGrepTool_RejectsInvalidRegexp(t *testing.T) {
 	}
 }
 
+// TestBashTool_DeclaresADescription pins the field the chat card shows instead
+// of the raw command. It must be declared AND required: an optional field is
+// skipped by models, which puts the wall of shell back in the transcript.
+func TestBashTool_DeclaresADescription(t *testing.T) {
+	spec := BashTool{}.Spec()
+	params := spec.Parameters
+	props, _ := params["properties"].(map[string]any)
+	if _, ok := props["description"]; !ok {
+		t.Fatal("the bash tool must declare a description parameter")
+	}
+	required, _ := params["required"].([]string)
+	found := false
+	for _, r := range required {
+		if r == "description" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("description must be required, got %v", required)
+	}
+}
+
 func TestBashTool_RunsInRootAndReportsExitStatus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell")

@@ -489,10 +489,17 @@ describe('toolCallSummary', () => {
     })).toBe('Fix bug')
   })
 
-  it('shows baseName for file_path', () => {
+  it('keeps the last two segments of file_path', () => {
     expect(toolCallSummary({
       input: { file_path: '/home/user/main.go' },
-    })).toBe('main.go')
+    })).toBe('user/main.go')
+  })
+
+  it('disambiguates same-named files by their parent directory', () => {
+    expect(toolCallSummary({ name: 'Edit', input: { file_path: '/p/internal/agentcore/run.go' } }))
+      .toBe('agentcore/run.go')
+    expect(toolCallSummary({ name: 'Edit', input: { file_path: '/p/internal/model/run.go' } }))
+      .toBe('model/run.go')
   })
 
   it('shows full command without truncation', () => {
@@ -520,15 +527,16 @@ describe('toolCallSummary', () => {
     expect(toolCallSummary({ name: 'Agent', input: { prompt: 'Research this' } })).toBe('Research this')
   })
 
-  it('shows baseName for path', () => {
-    expect(toolCallSummary({ input: { path: '/home/user/src' } })).toBe('src')
+  it('keeps the last two segments of path', () => {
+    expect(toolCallSummary({ input: { path: '/home/user/src' } })).toBe('user/src')
   })
 
-  it('shows src → dst for move', () => {
+  it('shows src → dst for move, with parent dirs when they differ', () => {
     expect(toolCallSummary({
       input: { src_path: '/old/file.go', dst_path: '/new/file.go' },
-    })).toBe('file.go → file.go')
+    })).toBe('old/file.go → new/file.go')
   })
+
 
   it('uses first string value as fallback', () => {
     expect(toolCallSummary({ input: { custom: 'hello' } })).toBe('hello')
@@ -561,7 +569,7 @@ describe('toolCallSummary', () => {
         toolInput: JSON.stringify({ file_path: '/home/user/project/main.go' }),
         options: [],
       },
-    })).toBe('/home/user/project/main.go')
+    })).toBe('project/main.go')
   })
 
   it('PermissionApproval falls back to the requesting tool name', () => {

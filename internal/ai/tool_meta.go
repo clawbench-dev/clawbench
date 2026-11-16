@@ -60,6 +60,9 @@ func ExtractToolCallMetaFromInput(name, toolID string, input map[string]any) Too
 // description > file_path > command > pattern > query > url > skill >
 // prompt (agent only) > path > src_path+dst_path > first string value
 // (deterministic: lexicographically-first key).
+//
+// File paths keep their last two segments so two same-named files stay
+// distinguishable in a one-line pill.
 func ExtractSummary(name string, input map[string]any) string {
 	if input == nil {
 		return ""
@@ -117,7 +120,7 @@ func genericFallbackSummary(input map[string]any) string {
 	// src_path + dst_path pair
 	if src, srcOk := input["src_path"].(string); srcOk {
 		if dst, dstOk := input["dst_path"].(string); dstOk {
-			return truncateStr(baseName(src) + " → " + baseName(dst))
+			return truncateStr(tailPath(src) + " → " + tailPath(dst))
 		}
 	}
 
@@ -208,15 +211,18 @@ type summaryField struct {
 }
 
 // summaryPriorityFields lists fields checked in order for ExtractSummary.
+// File paths keep their last two segments (see tailPath): a bare basename made
+// every Read/Edit of the same file name look identical ("run.go" ×6 in one run),
+// while a full absolute path would eat the whole one-line pill.
 var summaryPriorityFields = []summaryField{
 	{key: "description", format: truncateStr},
-	{key: "file_path", format: func(v string) string { return truncateStr(baseName(v)) }},
+	{key: "file_path", format: func(v string) string { return truncateStr(tailPath(v)) }},
 	{key: "command", format: truncateStr},
 	{key: "pattern", format: truncateStr},
 	{key: "query", format: truncateStr},
 	{key: "url", format: truncateStr},
 	{key: "skill", format: truncateStr},
-	{key: "path", format: func(v string) string { return truncateStr(baseName(v)) }},
+	{key: "path", format: func(v string) string { return truncateStr(tailPath(v)) }},
 }
 
 // extractAskUserQuestionSummary extracts summary from AskUserQuestion input.
@@ -247,7 +253,7 @@ func extractPermissionApprovalSummary(input map[string]any) string {
 				return truncateStr(v)
 			}
 			if v, _ := parsed["file_path"].(string); v != "" {
-				return truncateStr(baseName(v))
+				return truncateStr(tailPath(v))
 			}
 		}
 	}
@@ -417,6 +423,29 @@ func baseName(p string) string {
 		return p
 	}
 	return p[idx+1:]
+}
+
+// summaryPathSegments is how many trailing path segments a summary keeps: two
+// ("agentcore/run.go") separates same-named files without the absolute path
+// eating the whole one-line pill.
+const summaryPathSegments = 2
+
+// tailPath keeps the last summaryPathSegments segments of a path, so a summary
+// can tell two same-named files apart ("agentcore/run.go" vs "model/run.go")
+// without paying for the whole absolute path. Handles both separators and
+// collapses repeated ones; a path with fewer segments is returned as-is.
+func tailPath(p string) string {
+	p = strings.ReplaceAll(p, "\\", "/")
+	p = strings.TrimRight(p, "/")
+	if p == "" {
+		return ""
+	}
+	parts := strings.Split(p, "/")
+	start := len(parts) - summaryPathSegments
+	if start < 0 {
+		start = 0
+	}
+	return strings.Join(parts[start:], "/")
 }
 
 // truncateStr truncates a string to maxSummaryLen runes and appends "..." if truncated.

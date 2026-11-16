@@ -2,7 +2,7 @@
  * Pure functions extracted from useChatRender composable.
  * These have no Vue reactivity dependencies and can be tested in isolation.
  */
-import { baseName } from '@/utils/path.ts'
+import { tailPath } from '@/utils/path.ts'
 import { extractPlainText } from '@/utils/userMsgIndexUtils'
 import { TOOL_STATUS_INTERRUPTED } from '@/utils/toolStatus'
 
@@ -134,6 +134,8 @@ export function parseAssistantContent(content: string, opts?: ParseAssistantCont
 /**
  * Generate a human-readable summary for a tool call block.
  * Uses a priority chain: description > file_path > command > pattern > query > url > skill > prompt > path > src_path+dst_path > firstVal
+ * File paths keep their last two segments (mirroring Go ExtractSummary) so
+ * same-named files stay distinguishable in a one-line pill.
  * Shows full content — no artificial truncation.
  */
 export function toolCallSummary(block: { input?: Record<string, unknown>; name?: string; summary?: string }): string {
@@ -159,7 +161,7 @@ export function toolCallSummary(block: { input?: Record<string, unknown>; name?:
       try {
         const parsed = JSON.parse(raw)
         if (parsed && typeof parsed.command === 'string' && parsed.command) return parsed.command
-        if (parsed && (typeof parsed.file_path === 'string' && parsed.file_path)) return parsed.file_path
+        if (parsed && (typeof parsed.file_path === 'string' && parsed.file_path)) return tailPath(parsed.file_path)
       } catch { /* non-JSON — fall through */ }
     }
     if (typeof block.input.toolName === 'string' && block.input.toolName) return block.input.toolName
@@ -183,15 +185,15 @@ export function toolCallSummary(block: { input?: Record<string, unknown>; name?:
   }
   if (block.input.description) return block.input.description as string
   const obj = block.input
-  if (obj.file_path) return baseName(obj.file_path as string)
+  if (obj.file_path) return tailPath(obj.file_path as string)
   if (obj.command) return obj.command as string
   if (obj.pattern) return obj.pattern as string
   if (obj.query) return obj.query as string
   if (obj.url) return obj.url as string
   if (obj.skill) return obj.skill as string
   if (obj.prompt && name === 'agent') return obj.prompt as string
-  if (obj.path) return baseName(obj.path as string)
-  if (obj.src_path && obj.dst_path) return `${baseName(obj.src_path as string)} → ${baseName(obj.dst_path as string)}`
+  if (obj.path) return tailPath(obj.path as string)
+  if (obj.src_path && obj.dst_path) return `${tailPath(obj.src_path as string)} → ${tailPath(obj.dst_path as string)}`
   // Deterministic fallback: pick the first string value by lexicographic key order
   // (Object.keys is already lexicographic for string keys), mirroring the sorted
   // fallback in Go ExtractSummary.
