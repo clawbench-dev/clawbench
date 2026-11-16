@@ -27,6 +27,37 @@ test.describe('Meeting tab', () => {
     await expect(page.locator('[data-role="meeting-title"]')).toHaveCount(0)
   })
 
+  /**
+   * 清空 sits in the same ActionBar as 刷新. The click itself is covered at the
+   * component level (and by the server tests); what the browser has to prove is
+   * that the button is wired to a confirmation instead of deleting on sight —
+   * the one destructive action in this panel that touches rows the user never
+   * opened.
+   */
+  test('clear-all sits beside the refresh and asks before deleting', async ({ page }) => {
+    const bar = page.locator('.meeting-header .ab')
+    const refresh = bar.locator('[data-action="meeting-refresh"]')
+    const clear = bar.locator('[data-action="meeting-clear-all"]')
+
+    await expect(refresh).toBeVisible()
+    await expect(clear).toBeVisible()
+    // The row is disabled only while there is nothing to clear.
+    const rows = page.locator('.meeting-row')
+    const count = await rows.count()
+    if (count === 0) {
+      await expect(clear).toBeDisabled()
+      return
+    }
+    await expect(clear).toBeEnabled()
+
+    await clear.click()
+    await expect(page.locator('.dlg-box')).toBeVisible({ timeout: 5000 })
+    // Refusing must leave every record exactly where it was.
+    await page.locator('.dlg-cancel').click()
+    await expect(page.locator('.dlg-box')).toHaveCount(0)
+    await expect(rows).toHaveCount(count)
+  })
+
   test('create is its own page, with the name first and the picture as cards', async ({ page }) => {
     await page.locator('[data-action="meeting-create"]').click()
 

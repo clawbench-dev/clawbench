@@ -1393,6 +1393,38 @@ func ListMeetingRecords(projectPath string, projectID int64, limit int) ([]Meeti
 	return out, nil
 }
 
+// ListMeetingTokens returns every meeting token of one project, newest first,
+// INCLUDING hidden rows.
+//
+// The list view skips hidden rows (pre-record meetings the upgrade could not
+// place on a timeline), but "clear all" must not leave them behind: they are
+// rows and transcript segments with no other way to reach them, so a project
+// that was cleared would still carry them forever.
+func ListMeetingTokens(projectID int64) ([]string, error) {
+	rows, err := store.ReadDB().Query(
+		`SELECT token FROM live_notes
+		  WHERE project_id = ?
+		  ORDER BY started_at DESC, token DESC`, projectID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("live notes: list meeting tokens: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]string, 0, 16)
+	for rows.Next() {
+		var token string
+		if scanErr := rows.Scan(&token); scanErr != nil {
+			return nil, fmt.Errorf("live notes: scan meeting token: %w", scanErr)
+		}
+		out = append(out, token)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("live notes: iterate meeting tokens: %w", rowsErr)
+	}
+	return out, nil
+}
+
 // GetMeetingRecord returns one record by token, scoped to the project.
 //
 // A hidden row is reported as not found, exactly like a missing one: the detail

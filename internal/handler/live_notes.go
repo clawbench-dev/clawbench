@@ -552,6 +552,65 @@ func serveLiveNotesDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// ServeLiveNotesClear handles DELETE /api/live-share/notes/sessions/all
+// (authenticated, project-scoped): remove every meeting record of this project,
+// folders included.
+//
+// The same two refusals the single delete makes apply per meeting, but they are
+// SKIPPED rather than aborting the whole call: one meeting that is still live,
+// or whose minutes are being generated, must not block the user from clearing
+// the other ninety-nine. The response reports how many went and how many were
+// left behind, so the panel can say "3 skipped" instead of silently keeping
+// rows the user just asked to delete.
+//
+// Hidden rows are included (see service.ListMeetingTokens): the list view never
+// shows them, so nothing else can ever clean them up.
+func ServeLiveNotesClear(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodDelete) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	tokens, err := service.ListMeetingTokens(projectID)
+	if err != nil {
+		slog.Error("live notes: clear list failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	deleted, skipped := 0, 0
+	for _, token := range tokens {
+		if liveRegistry.Get(token) != nil {
+			skipped++
+			continue
+		}
+		active, jobErr := service.ArtifactJobActive(token, time.Now().UnixMilli())
+		if jobErr != nil {
+			// A lookup failure is about this one row; the rest of the list is
+			// still deletable, and refusing everything would be worse than
+			// leaving one meeting behind.
+			slog.Warn("live notes: clear job lookup failed", "token", token, "err", jobErr)
+			skipped++
+			continue
+		}
+		if active {
+			skipped++
+			continue
+		}
+		if delErr := service.DeleteMeetingRecord(projectPath, projectID, token); delErr != nil {
+			if errors.Is(delErr, service.ErrMeetingNotFound) {
+				continue
+			}
+			slog.Warn("live notes: clear delete failed", "token", token, "err", delErr)
+			skipped++
+			continue
+		}
+		deleted++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted, "skipped": skipped})
+}
+
 // ServeLiveShareNoteShot is the one path with two verbs: POST uploads a frame,
 // DELETE removes one. They share the path because they address the same
 // resource; the router keys on the path alone, so the switch lives here.

@@ -757,6 +757,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// default: the token is minted automatically for viewers to join, which is
 	// not the same as publishing the archived record.
 	register("/api/live-share/notes/sessions/share", ServeLiveNotesShare)
+	// Clear every record of this project in one call. Its own path (not a query
+	// flag on the single delete) because the two answer differently: one either
+	// deletes or refuses, the other deletes what it can and reports the rest.
+	register("/api/live-share/notes/sessions/all", ServeLiveNotesClear)
 	register("/api/live-share/notes/sessions/artifact", ServeLiveNotesArtifact)
 	register("/api/live-share/notes/sessions/chat", ServeLiveNotesChat)
 	// Import an existing recording or video as a meeting: the file is decoded to

@@ -1789,6 +1789,122 @@ func TestServeLiveNotesDelete_AllowsDeletingAnInterruptedGeneration(t *testing.T
 	assert.False(t, exists)
 }
 
+// ── Clear all ─────────────────────────────────────────────────────────────
+
+// Clear-all is the list header's "清空". It must remove the folders as well as
+// the rows, and it must not be blocked by the one meeting it cannot delete.
+func TestServeLiveNotesClear_RemovesEverythingItCanAndReportsTheRest(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+
+	// Two deletable meetings, each with a folder on disk.
+	folders := make([]string, 0, 2)
+	for i, token := range []string{
+		"0123456789abcdef0123456789abcdef",
+		"fedcba9876543210fedcba9876543210",
+	} {
+		require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000+int64(i)))
+		paths, dirErr := service.EnsureMeetingDir(token, pid, project, "周会", 1_700_000_000_000+int64(i))
+		require.NoError(t, dirErr)
+		require.NoError(t, os.WriteFile(paths.Minutes, []byte("MINUTES"), 0o644))
+		folders = append(folders, paths.Dir)
+	}
+
+	// One that is still being published: skipped, folder and row untouched.
+	room, err := liveRegistry.Create(projPath(project), "进行中的会")
+	require.NoError(t, err)
+	t.Cleanup(func() { liveRegistry.Delete(room.Token()) })
+	require.NoError(t, service.StartLiveNote(room.Token(), pid, "进行中的会", 1_700_000_100_000))
+
+	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions/all", project)
+	req.Method = http.MethodDelete
+	rec := httptest.NewRecorder()
+	ServeLiveNotesClear(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Deleted int `json:"deleted"`
+		Skipped int `json:"skipped"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, 2, body.Deleted)
+	assert.Equal(t, 1, body.Skipped, "the live meeting is reported, not silently kept")
+
+	for _, dir := range folders {
+		_, statErr := os.Stat(dir)
+		assert.True(t, os.IsNotExist(statErr), "the folder goes with the record")
+	}
+	_, exists, err := service.GetLiveNote(room.Token())
+	require.NoError(t, err)
+	assert.True(t, exists, "a meeting that is still running survives a clear-all")
+}
+
+// A running minutes job would recreate the folder seconds after the delete, so
+// it is skipped exactly like the single delete skips it.
+func TestServeLiveNotesClear_SkipsAMeetingWhoseArtifactsAreGenerating(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "周会", 1_700_000_000_000))
+	require.NoError(t, service.SetLiveNoteMinutes(token, pid, "周会", service.LiveNotesStatusGenerating, "", "", ""))
+
+	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions/all", project)
+	req.Method = http.MethodDelete
+	rec := httptest.NewRecorder()
+	ServeLiveNotesClear(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Deleted int `json:"deleted"`
+		Skipped int `json:"skipped"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, 0, body.Deleted)
+	assert.Equal(t, 1, body.Skipped)
+	_, exists, err := service.GetLiveNote(token)
+	require.NoError(t, err)
+	assert.True(t, exists)
+}
+
+// Hidden rows never appear in the list, so clear-all is the only thing that can
+// ever remove them — and leaving them behind would mean "cleared" still has
+// transcript segments on disk.
+func TestServeLiveNotesClear_AlsoRemovesHiddenRows(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	pid, err := store.ProjectIDForPath(project)
+	require.NoError(t, err)
+	token := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, service.StartLiveNote(token, pid, "旧记录", 0))
+	_, err = store.WriteExec(`UPDATE live_notes SET hidden = 1 WHERE token = ?`, token)
+	require.NoError(t, err)
+
+	req := liveNotesProjectRequest(t, "/api/live-share/notes/sessions/all", project)
+	req.Method = http.MethodDelete
+	rec := httptest.NewRecorder()
+	ServeLiveNotesClear(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Deleted int `json:"deleted"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, 1, body.Deleted)
+	_, exists, err := service.GetLiveNote(token)
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
 // ── Rename ─────────────────────────────────────────────────────────────────
 
 func TestServeLiveNotesRename_UpdatesTheRecordTitle(t *testing.T) {

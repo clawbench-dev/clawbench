@@ -27,6 +27,21 @@
         >
           <span class="action-label">{{ t('common.refresh') }}</span>
         </RefreshButton>
+        <!-- Clear-all sits beside the refresh it complements: one re-reads the
+             list, the other empties it. Disabled while there is nothing to
+             clear, and while a reload is in flight (the button would race the
+             list it is about to empty). -->
+        <button
+          class="meeting-icon-btn is-danger"
+          type="button"
+          :disabled="sessions.length === 0 || loading || clearing"
+          :title="t('meeting.list.clearAllTip')"
+          data-action="meeting-clear-all"
+          @click="askClearAll"
+        >
+          <Trash2 :size="14" />
+          <span class="action-label">{{ t('meeting.list.clearAll') }}</span>
+        </button>
       </ActionBar>
     </div>
 
@@ -647,6 +662,8 @@ const rows = computed(() =>
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 const anyGenerating = computed(() => sessions.value.some((s) => Boolean(s.generation)))
+/** True while a clear-all request is in flight; keeps the header honest. */
+const clearing = ref(false)
 
 /**
  * Poll the list only while a row is generating, and stop the moment none is.
@@ -692,6 +709,44 @@ async function askDelete(s: MeetingRecord): Promise<void> {
     res.reason === 'busy' ? t('meeting.detail.deleteBusy') : t('meeting.detail.deleteFailed'),
     { type: 'error', icon: 'warning' },
   )
+}
+
+/**
+ * Clear every record of this project.
+ *
+ * One confirmation for the whole list, naming the count: this is the one
+ * destructive action in the panel that cannot be undone and that touches rows
+ * the user is not looking at individually.
+ *
+ * The server skips what cannot go (a live meeting, a running minutes job), so
+ * the toast reports both numbers instead of claiming a full clear — the skipped
+ * rows are still on screen after the reload.
+ */
+async function askClearAll(): Promise<void> {
+  const total = sessions.value.length
+  if (total === 0) return
+  const ok = await dialog.confirm(t('meeting.list.clearAllConfirm', { n: total }), {
+    dangerous: true,
+  })
+  if (!ok) return
+  clearing.value = true
+  try {
+    const res = await history.clearAll()
+    if (!res.ok) {
+      toast.show(t('meeting.list.clearAllFailed'), { type: 'error', icon: 'warning' })
+      return
+    }
+    schedulePoll()
+    if (res.skipped > 0) {
+      toast.show(t('meeting.list.clearAllPartial', { n: res.deleted, skipped: res.skipped }), {
+        type: 'info', icon: 'info', duration: 4000,
+      })
+      return
+    }
+    toast.show(t('meeting.list.clearAllDone', { n: res.deleted }), { type: 'success', icon: 'delete' })
+  } finally {
+    clearing.value = false
+  }
 }
 
 // Switching back to the tab re-reads the list: a meeting that finished while

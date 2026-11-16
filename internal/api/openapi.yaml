@@ -5128,6 +5128,35 @@ paths:
         "409":
           description: 会议仍在进行，或纪要正在生成
 
+  /api/live-share/notes/sessions/all:
+    delete:
+      tags: [LiveShare]
+      summary: 清空本项目的全部会议记录
+      description: |
+        逐个删除本项目所有会议（记录行、转写、聊天、录音、画面，以及磁盘上的会议目录），
+        **不可恢复**。隐藏行（升级时无法归到时间线上的旧记录）也在清理范围内——列表看不到它们，
+        没有别的入口能删。
+
+        与单条删除不同：仍在发布中的会议、纪要/校对任务仍在运行的会议会被**跳过**而不是整批拒绝，
+        返回值里分别给出删掉几条、跳过几条。一次清空不该被一场正在开的会卡住。
+      operationId: liveShareNotesClearAll
+      responses:
+        "200":
+          description: 已按可删范围清理完毕
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: integer
+                    description: 实际删除的会议数
+                  skipped:
+                    type: integer
+                    description: 被跳过的会议数（仍在进行、或产物任务正在运行）
+        "403":
+          description: 缺少项目上下文
+
   /api/live-share/notes/sessions/share:
     patch:
       tags: [LiveShare]

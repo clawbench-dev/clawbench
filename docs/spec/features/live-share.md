@@ -631,6 +631,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 发布端  ── GET  /api/live-share/notes/sessions/artifact （按 token 读产物）
 发布端  ── GET  /api/live-share/notes/sessions/chat     （按 token 读聊天）
 发布端  ── DELETE /api/live-share/notes/sessions?token= （删除记录 + 目录）
+发布端  ── DELETE /api/live-share/notes/sessions/all   （清空本项目全部记录，跳过我删不掉的）
 ```
 
 - **鉴权**：发布端端点需登录 + 项目 cookie，token 必须属于本项目。归属依据是**会议记录行**（发布端连上信令时就已创建），所以「结束共享」瞬间的最后一段上传与聊天仍能落地。
@@ -650,6 +651,7 @@ viewer:<id> 每个观众的麦克风，一人一条
 - `GET /api/live-share/notes/sessions/artifact?token=&kind=` 读 `minutes.md` / `transcript.vtt` / `transcript-revised.md` / `chat.md`。目录由服务端从记录行解析，**客户端不传任何路径**。记录没有任何产物时 404。
 - `GET /api/live-share/notes/sessions/chat?token=` 读落库的聊天（按服务端行 id 升序）。
 - `DELETE /api/live-share/notes/sessions?token=` 删除记录：**先删目录、再删行**；房间仍在发布、或纪要/校对任务正在运行时返回 409。
+- `DELETE /api/live-share/notes/sessions/all` 清空本项目全部记录（列表 header 的「清空」按钮）。与单条删除不同：仍在发布、或产物任务仍在运行的会议**跳过而非整批拒绝**，返回 `{deleted, skipped}`；**隐藏行也在清理范围内**（列表看不到它们，没有别的入口能删）。
 - 「打开」走前端已有的文件查看器，传目录里那个文件的绝对路径。
 - 每次切到页签、以及会议结束后都会重读一次，另有手动刷新按钮。
 - **结束会议直接进入记录详情**，没有单独的「会后纪要」界面；生成中 / 生成失败 / 无产物都在详情里表达。

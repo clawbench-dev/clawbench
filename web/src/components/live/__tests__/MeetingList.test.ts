@@ -62,6 +62,8 @@ const loading = ref(false)
 const importAvailable = ref(true)
 const loadMock = vi.hoisted(() => vi.fn(async () => undefined))
 const removeMock = vi.hoisted(() => vi.fn(async () => ({ ok: true })))
+const clearAllMock = vi.hoisted(() =>
+  vi.fn(async () => ({ ok: true, deleted: 2, skipped: 0 })))
 const importMock = vi.hoisted(() => vi.fn(async () => ({ ok: true, token: 'imported-token' })))
 vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
   // Keep the real helpers (the state labels live in i18n); only the
@@ -76,6 +78,7 @@ vi.mock('@/composables/useMeetingHistory', async (importOriginal) => {
       importAvailability: computed(() => ({ available: importAvailable.value, reason: '' })),
       load: loadMock,
       remove: removeMock,
+      clearAll: clearAllMock,
       importFile: importMock,
     }),
   }
@@ -163,6 +166,95 @@ describe('MeetingList header', () => {
     await w.find('[data-action="meeting-refresh"]').trigger('click')
 
     expect(loadMock).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * Clear-all lives in the same ActionBar as the refresh it complements, so the
+   * two read as one control pair instead of a stray icon somewhere else.
+   */
+  it('puts the clear-all button beside the refresh in the header bar', () => {
+    sessions.value = [record()]
+    const w = mountList()
+
+    const bar = w.find('.meeting-header .ab')
+    expect(bar.exists()).toBe(true)
+    expect(bar.find('[data-action="meeting-refresh"]').exists()).toBe(true)
+    expect(bar.find('[data-action="meeting-clear-all"]').exists()).toBe(true)
+    expect(bar.find('[data-action="meeting-clear-all"]').text()).toBe(enMessages.meeting.list.clearAll)
+    // Destructive, so it wears the shared danger colour.
+    expect(bar.find('[data-action="meeting-clear-all"]').classes()).toContain('is-danger')
+  })
+
+  it('disables clear-all when there is nothing to clear', async () => {
+    const empty = mountList()
+    expect(empty.find('[data-action="meeting-clear-all"]').attributes('disabled')).toBeDefined()
+
+    sessions.value = [record()]
+    const w = mountList()
+    expect(w.find('[data-action="meeting-clear-all"]').attributes('disabled')).toBeUndefined()
+
+    loading.value = true
+    await flushPromises()
+    expect(w.find('[data-action="meeting-clear-all"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('clears every record after one confirmation and reloads the list', async () => {
+    sessions.value = [record(), record({ token: 'two' })]
+    const w = mountList()
+    clearAllMock.mockClear()
+    loadMock.mockClear()
+
+    await w.find('[data-action="meeting-clear-all"]').trigger('click')
+    await flushPromises()
+
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    // The confirmation names the count: this is the one destructive action that
+    // touches rows the user is not looking at one by one.
+    expect(confirmMock.mock.calls[0][0]).toContain('2')
+    expect(clearAllMock).toHaveBeenCalledTimes(1)
+    expect(toastShow).toHaveBeenCalledWith('Cleared 2 meetings', expect.anything())
+  })
+
+  it('does not clear anything when the confirmation is refused', async () => {
+    confirmMock.mockResolvedValueOnce(false)
+    sessions.value = [record()]
+    const w = mountList()
+    clearAllMock.mockClear()
+
+    await w.find('[data-action="meeting-clear-all"]').trigger('click')
+    await flushPromises()
+
+    expect(clearAllMock).not.toHaveBeenCalled()
+  })
+
+  it('says how many meetings were kept back', async () => {
+    // The server skips live meetings and running jobs. Reporting "cleared"
+    // would be a lie the list itself contradicts a second later.
+    clearAllMock.mockResolvedValueOnce({ ok: true, deleted: 3, skipped: 1 })
+    sessions.value = [record()]
+    const w = mountList()
+
+    await w.find('[data-action="meeting-clear-all"]').trigger('click')
+    await flushPromises()
+
+    expect(toastShow).toHaveBeenCalledWith(
+      'Cleared 3 meetings, kept 1 (still running or generating)',
+      expect.anything(),
+    )
+  })
+
+  it('reports a failed clear instead of looking like it worked', async () => {
+    clearAllMock.mockResolvedValueOnce({ ok: false, deleted: 0, skipped: 0 })
+    sessions.value = [record()]
+    const w = mountList()
+
+    await w.find('[data-action="meeting-clear-all"]').trigger('click')
+    await flushPromises()
+
+    expect(toastShow).toHaveBeenCalledWith(
+      enMessages.meeting.list.clearAllFailed,
+      expect.anything(),
+    )
   })
 
   /**
