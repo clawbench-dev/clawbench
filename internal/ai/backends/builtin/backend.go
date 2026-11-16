@@ -31,10 +31,9 @@ import (
 const BackendID = "builtin"
 
 func init() {
-	ai.RegisterBackend(BackendID, newBackend)
-
 	backends.Register(&backends.BackendPlugin{
-		ID: BackendID,
+		ID:  BackendID,
+		CLI: &backends.CLIPlugin{NewBackend: newBackend},
 		Spec: model.BackendSpec{
 			ID:      BackendID,
 			Backend: BackendID,
@@ -59,6 +58,15 @@ func init() {
 			// the agent with no skills at all.
 			AutoLoadsNativeSkills: false,
 			SortOrder:             0,
+		},
+		ProviderEnv: &model.ProviderEnvSpec{
+			// The two protocols are declared with EMPTY variable names on
+			// purpose: this backend calls the endpoint itself, so no credential
+			// variable has to exist and no auth mode can be "unsupported".
+			// InProcess is what tells the rest of the stack that (see its doc).
+			Anthropic: model.ProtoEnv("", "", ""),
+			OpenAI:    model.ProtoEnv("", "", ""),
+			InProcess: true,
 		},
 	})
 }

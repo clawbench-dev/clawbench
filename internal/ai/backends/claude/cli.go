@@ -41,6 +41,23 @@ func init() {
 		MidTurn:     &midTurnInjector{},
 		ProviderEnv: &model.ProviderEnvSpec{
 			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+			// CLAUDE_CONFIG_DIR relocates the whole ~/.claude tree, and the ACP
+			// adapter (claude-agent-acp) merges settings.json's `env` block into
+			// the session. Verified end-to-end: with a private directory holding
+			// ONLY settings.json (no login state at all), a turn against a
+			// third-party Anthropic-compatible endpoint returned its reply.
+			//
+			// This is the ONE backend where the config file is not merely an
+			// alternative to the environment variables: ANTHROPIC_BASE_URL alone
+			// created the session but the turn never produced a reply (the
+			// adapter reads its endpoint from the merged settings, not from the
+			// raw environment). So without this the Anthropic-protocol binding
+			// was effectively unusable for claude.
+			ConfigDirEnv:          "CLAUDE_CONFIG_DIR",
+			ConfigDirFile:         "settings.json",
+			ConfigDirProtocols:    []string{model.ProviderProtocolAnthropic},
+			ConfigDirProviderID:   "clawbench",
+			ConfigDirSecretInFile: true,
 		},
 	})
 }

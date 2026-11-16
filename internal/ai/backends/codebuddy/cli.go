@@ -85,6 +85,17 @@ func init() {
 			// under Anthropic, which let the UI offer an Anthropic provider that
 			// could never answer.
 			OpenAI: model.ProtoEnv("CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN"),
+			// The environment variables can only point the process at ONE
+			// endpoint. models.json carries a url per model, and that url WINS
+			// over CODEBUDDY_BASE_URL (resolveModelBaseURL returns modelConfigUrl
+			// first — verified: a model with a url reaches that host even when
+			// CODEBUDDY_BASE_URL names a dead one). Writing one file per agent is
+			// what makes two agents on different providers possible.
+			ConfigDirEnv:            "CODEBUDDY_CONFIG_DIR",
+			ConfigDirFile:           "models.json",
+			ConfigDirProtocols:      []string{model.ProviderProtocolOpenAI},
+			ConfigDirProviderID:     "clawbench",
+			ConfigDirDeclaresModels: true,
 		},
 	})
 }

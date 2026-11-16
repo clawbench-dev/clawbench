@@ -82,6 +82,17 @@ func init() {
 		ProviderEnv: &model.ProviderEnvSpec{
 			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
 			OpenAI:    model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
+			// models.json holds a providers table, and a model is addressed as
+			// "<provider>/<model>" (verified: declaring provider "probe" with
+			// model "deepseek-chat" makes "probe/deepseek-chat" selectable and
+			// runnable). apiKey accepts "$ENV", so the secret never has to be
+			// written out.
+			ConfigDirEnv:            "PI_CODING_AGENT_DIR",
+			ConfigDirFile:           "models.json",
+			ConfigDirProtocols:      []string{model.ProviderProtocolOpenAI, model.ProviderProtocolAnthropic},
+			ConfigDirProviderID:     "clawbench",
+			ConfigDirAddressPrefix:  true,
+			ConfigDirDeclaresModels: true,
 		},
 	})
 }

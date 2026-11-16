@@ -24,12 +24,16 @@ func setupProviderAgent(t *testing.T, agentID, backend string, provider *model.P
 }
 
 func TestProviderEnvForRequest_UsesAgentBackend(t *testing.T) {
-	setupProviderAgent(t, "agent-claude", "claude", &model.Provider{
+	// zcode, not claude: claude is a config-directory backend now, so its
+	// provider goes into settings.json and the only variable injected is
+	// CLAUDE_CONFIG_DIR — there is no ANTHROPIC_BASE_URL to assert on. zcode is
+	// still an env-only Anthropic backend, which is what this test is about.
+	setupProviderAgent(t, "agent-claude", "zcode", &model.Provider{
 		ID: 1, Name: "P", Protocol: model.ProviderProtocolAnthropic,
 		BaseURL: "https://gw.example", APIKey: "sk-x", AuthMode: model.ProviderAuthAuto,
 	})
 
-	// The fallback (b.BackendName) says codebuddy; the agent says claude. The
+	// The fallback (b.BackendName) says codebuddy; the agent says zcode. The
 	// agent must win, otherwise a custom command wrapper gets the wrong vars.
 	env, err := providerEnvForRequest(ChatRequest{AgentID: "agent-claude"}, "codebuddy")
 	if err != nil {
@@ -75,7 +79,9 @@ func TestProviderEnvForRequest_UnsupportedBackendFails(t *testing.T) {
 // metacharacters. A re-executed helper observes the environment exactly as any
 // real CLI backend would.
 func TestCLIBackend_InjectsProviderEnvIntoProcess(t *testing.T) {
-	setupProviderAgent(t, "agent-cli", "claude", &model.Provider{
+	// zcode for the same reason as the test above: claude's provider now lands
+	// in settings.json and only CLAUDE_CONFIG_DIR reaches the child.
+	setupProviderAgent(t, "agent-cli", "zcode", &model.Provider{
 		ID: 3, Name: "P3", Protocol: model.ProviderProtocolAnthropic,
 		BaseURL: "https://injected.example", APIKey: "sk-injected", AuthMode: model.ProviderAuthAuto,
 	})
