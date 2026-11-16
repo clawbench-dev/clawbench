@@ -40,9 +40,13 @@ func init() {
 			Backend: BackendID,
 			// NoCLI makes the backend "always present" without a PATH probe:
 			// there is no binary to find, the implementation is this process.
-			NoCLI:     true,
-			Builtin:   true,
-			Name:      "Builtin",
+			NoCLI:   true,
+			Builtin: true,
+			// The product name, not a description of the mechanism: this agent
+			// IS ClawBench running its own tool loop, so it is named after the
+			// product rather than after the fact that it is "built in" (which
+			// describes how it is implemented, not what it is).
+			Name:      "ClawBench Agent",
 			Specialty: "内置智能体：文件读写与命令执行，工具权限可精细控制", // i18n-exempt: backend spec specialty, localized by the client
 			// No AcpCommand: this backend never spawns a process. Transport is
 			// always "cli" in the sense of "the in-process path", and

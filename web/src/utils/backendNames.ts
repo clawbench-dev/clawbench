@@ -26,9 +26,9 @@ const backendDisplayNames: Record<string, string> = {
   cursor: 'Cursor',
   openclaw: 'OpenClaw',
   // The built-in agent's tools live inside ClawBench itself (no external CLI).
-  // The name is deliberately plain: it is the agent you reach for when you
-  // want to hand out a narrow tool grant rather than run someone else's binary.
-  builtin: 'Builtin',
+  // Named after the product rather than "Builtin", which described the
+  // implementation instead of the agent.
+  builtin: 'ClawBench Agent',
   // User-defined ACP agents (issue #557) all share one backend id; the agent's
   // own name is what distinguishes them, so this label is only a fallback for
   // places that show the backend alone (share header, resume drawer).

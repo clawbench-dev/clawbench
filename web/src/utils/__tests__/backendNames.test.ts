@@ -14,7 +14,7 @@ describe('getBackendDisplayName', () => {
     expect(getBackendDisplayName('commandcode')).toBe('Command Code')
     expect(getBackendDisplayName('openclaw')).toBe('OpenClaw')
     expect(getBackendDisplayName('qodercn')).toBe('Qoder CN')
-    expect(getBackendDisplayName('builtin')).toBe('Builtin')
+    expect(getBackendDisplayName('builtin')).toBe('ClawBench Agent')
   })
 
   it('falls back to the backend id for unknown backends', () => {

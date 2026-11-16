@@ -19,7 +19,7 @@ func TestSaveAgent_PersistsToolPolicy(t *testing.T) {
 
 	agent := &model.Agent{
 		ID:      "builtin",
-		Name:    "Builtin",
+		Name:    "ClawBench Agent",
 		Backend: "builtin",
 		ToolPolicy: model.ToolPolicy{
 			Allow:          []string{model.CapFSRead},
@@ -49,7 +49,7 @@ func TestSaveAgent_UpdatesToolPolicyOnConflict(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	agent := &model.Agent{
-		ID: "builtin", Name: "Builtin", Backend: "builtin",
+		ID: "builtin", Name: "ClawBench Agent", Backend: "builtin",
 		ToolPolicy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
 	}
 	require.NoError(t, service.SaveAgent(db, agent))
@@ -90,7 +90,7 @@ func TestLoadAgentsFromDB_ReadsToolPolicy(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	agent := &model.Agent{
-		ID: "builtin", Name: "Builtin", Backend: "builtin",
+		ID: "builtin", Name: "ClawBench Agent", Backend: "builtin",
 		ToolPolicy: model.ToolPolicy{Allow: []string{model.CapFSWrite}, MaxRounds: 5},
 	}
 	require.NoError(t, service.SaveAgent(db, agent))
@@ -124,7 +124,7 @@ func TestLoadAgentsFromDB_UnreadableToolPolicyGrantsNothing(t *testing.T) {
 func TestPatchAgentFields_UpdatesToolPolicy(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
-	agent := &model.Agent{ID: "builtin", Name: "Builtin", Backend: "builtin"}
+	agent := &model.Agent{ID: "builtin", Name: "ClawBench Agent", Backend: "builtin"}
 	require.NoError(t, service.SaveAgent(db, agent))
 
 	policy := model.ToolPolicy{Allow: []string{model.CapFSRead}}
@@ -141,7 +141,7 @@ func TestPatchAgentFields_UpdatesToolPolicy(t *testing.T) {
 func TestPatchAgentFields_RejectsInvalidBudget(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
-	agent := &model.Agent{ID: "builtin", Name: "Builtin", Backend: "builtin"}
+	agent := &model.Agent{ID: "builtin", Name: "ClawBench Agent", Backend: "builtin"}
 	require.NoError(t, service.SaveAgent(db, agent))
 
 	bad := model.ToolPolicy{MaxRounds: -1}

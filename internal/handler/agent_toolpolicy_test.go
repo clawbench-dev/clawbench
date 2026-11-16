@@ -82,7 +82,7 @@ func TestServeAgentsGet_ReportsBuiltinBackend(t *testing.T) {
 	// the flag is exercised on both a built-in and an external backend.
 	builtin := *model.GetAgent("claude")
 	builtin.ID = "builtin"
-	builtin.Name = "Builtin"
+	builtin.Name = "ClawBench Agent"
 	builtin.Backend = "builtin"
 	builtin.BuiltinBackend = true
 	model.Agents["builtin"] = &builtin

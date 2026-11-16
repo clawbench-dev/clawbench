@@ -209,3 +209,18 @@ func TestSpecIsBuiltinAndNoCLI(t *testing.T) {
 		t.Fatal("the backend has no skill directory of its own; claiming it self-loads would leave it with no skills at all")
 	}
 }
+
+// TestSpecNameIsTheProductName pins the display name.
+//
+// It is the product's name, not a description of the mechanism: this agent IS
+// ClawBench running its own tool loop. "Builtin" described how it is
+// implemented, which is not what a user is choosing between in a picker.
+func TestSpecNameIsTheProductName(t *testing.T) {
+	spec := model.FindSpecByBackend(BackendID)
+	if spec == nil {
+		t.Fatal("the backend must be registered")
+	}
+	if spec.Name != "ClawBench Agent" {
+		t.Fatalf("expected the product name, got %q", spec.Name)
+	}
+}
