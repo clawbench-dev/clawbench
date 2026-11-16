@@ -70,7 +70,11 @@
 **仍留在核心包的 3 个后端专属文件**（都在代码注释里写明原因）：
 
 - `acp_opencode_children.go`：挂在 `ClawBenchACPClient` 的私有 map 上，是客户端逻辑而非事件映射。
-- `acp_meta_codebuddy.go`：核心的取消回合用量累积测试以它的解析结果为夹具；导出为 `ai.ExtractCodeBuddyMeta`，插件仍以 `ExtractMeta` 注册同一实现。
+- `acp_meta_codebuddy.go`：**不只是测试夹具**。`costFieldCarriesCredit`（CodeBuddy 把
+  额度塞进标准 `usage_update.cost`，这条判断决定它能不能被记成美元成本）和
+  `refusalDetailFromMeta` 都被通用 prompt 路径直接调用，另有十来个 `codebuddy.ai/*`
+  键常量散落在核心与核心测试里。搬走要先给这两条策略找到能力位，属于重新设计而不是
+  搬家。导出为 `ai.ExtractCodeBuddyMeta`，插件以 `ExtractMeta` 注册同一实现。
 - `opencode_error_types.go`：ACP 侧错误分类器与 CLI 解析器共用的一张表。
 
 **合并 main 时注意**：本分支从 `4ce9378c4` 分叉，main 后来加了「每智能体独立配置目录」
@@ -206,18 +210,23 @@ Cursor 那次剩下的 12 个：3 个前端展示（`backendNames.ts` / `agentIc
 
 ```
 internal/ai/
-├── backendplugin/          ← 新增：叶子包，只放插件类型 + 注册表
-│   ├── plugin.go           BackendPlugin / CLIPlugin / ACPPlugin / ACPBehavior
-│   ├── registry.go         Register / Lookup / All
-│   └── hooks.go            ACPBehavior 查找（由 backends 注入）
 ├── acp_*.go                ← ACP 引擎（连接、事件、会话），只留通用逻辑
+├── acp_behavior.go         ← 后端钩子接口 + 查表（由 backends 注入）
 ├── cli_backend.go          ← CLI 骨架，保留
 └── backends/
-    ├── all/all.go          ← 新增：生成的空导入清单
-    ├── claude/             ← spec + CLI 解析 + ACP 解析 + meta + midturn
-    ├── codebuddy/          ← spec + 团队桥接 + 计划桥接 + 插件扫描 + …
+    ├── plugin.go           ← 插件类型（BackendPlugin / CLIPlugin / ACPPlugin）
+    ├── registry.go         ← Register / Lookup / All（Register 负责转发到各注册表）
+    ├── acp_wire.go         ← 把查表函数注入 internal/ai，避免成环
+    ├── all/all.go          ← 生成的空导入清单（go generate）
+    ├── claude/             ← spec + CLI 解析 + ACP 解析 + meta + midturn + catalog
+    ├── codebuddy/          ← spec + 团队桥接 + 计划桥接 + 命令扫描 + …
     └── …
 ```
+
+> 与最初设想的差异：原计划把类型与注册表下沉到一个新的叶子包 `backendplugin`，
+> 让 `backends` 能反向 import 子包。实际实施时发现没必要——保留 `backends` 作为
+> 类型 + 注册表所在包，另建 `backends/all`（生成）专门负责 import 全部子包即可，
+> 环同样被打破，而且少一个包、少一层重命名。成环约束写在 `all.go` 的文件注释里。
 
 **为什么需要 `backendplugin` 这个新包**：现在子包 import `backends`，所以 `backends` 不能反过来 import 子包（`all.go:13` 的成环说明）。把「类型 + 注册表」下沉到叶子包后，子包只 import 叶子包，`backends/all` 就能 import 全部子包了。
 

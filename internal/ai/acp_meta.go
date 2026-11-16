@@ -178,18 +178,14 @@ func (e *MetaExtraction) traceRequestID() string {
 
 // extractMetaUsage dispatches _meta parsing to the backend's registered
 // behavior hook, falling back to the generic recursive scan.
-// backend is the BackendID (e.g. "codebuddy", "claude", "codex", "opencode").
+//
+// Every backend with a private _meta shape registers ExtractMeta on its
+// ACPBehavior (codebuddy, claude, codex, qoder, qodercn); the generic scan is
+// the right answer for the rest. There is deliberately no per-backend switch
+// here — that would put backend knowledge back in the core package.
 func extractMetaUsage(backend string, meta map[string]any) *MetaExtraction {
 	if b := acpBehavior(backend); b != nil && b.ExtractMeta != nil {
 		return b.ExtractMeta(meta)
-	}
-	return extractMetaUsageLegacy(backend, meta)
-}
-
-// TODO(phase3): delete once every backend registers ExtractMeta.
-func extractMetaUsageLegacy(backend string, meta map[string]any) *MetaExtraction {
-	if backend == "codebuddy" {
-		return ExtractCodeBuddyMeta(meta)
 	}
 	return extractGenericMeta(meta)
 }
