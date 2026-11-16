@@ -4514,7 +4514,7 @@ export default {
       providerBaseUrlHint: 'Optional — leave empty to only inject the key, with no endpoint.',
       providerProtocol: 'Protocol',
       providerProtocolPrivate: 'Private protocol',
-      providerPrivateHint: 'The private protocol takes no endpoint or auth mode: fill only the key; the agent decides where to connect (currently CodeBuddy only).',
+      providerPrivateHint: 'The private protocol takes no endpoint or auth mode: fill only the key; the agent decides where to connect. Only agents that support it (CodeBuddy, Cursor, Command Code, Antigravity) can see and bind it.',
       providerAuthLabel: 'Authentication',
       providerKeyStateSaved: 'Saved',
       providerKeyStateMissing: 'Not set',
