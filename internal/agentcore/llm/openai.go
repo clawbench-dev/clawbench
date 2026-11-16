@@ -41,13 +41,20 @@ func (c *openAIClient) SupportsVision() bool { return c.cfg.SupportsVision }
 // fields in responses are ignored by encoding/json.
 
 type oaRequest struct {
-	Model       string        `json:"model"`
-	Messages    []oaMessage   `json:"messages"`
-	Tools       []oaTool      `json:"tools,omitempty"`
-	Stream      bool          `json:"stream"`
-	StreamOpts  *oaStreamOpts `json:"stream_options,omitempty"`
-	Temperature float64       `json:"temperature"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Model      string        `json:"model"`
+	Messages   []oaMessage   `json:"messages"`
+	Tools      []oaTool      `json:"tools,omitempty"`
+	Stream     bool          `json:"stream"`
+	StreamOpts *oaStreamOpts `json:"stream_options,omitempty"`
+	// Temperature is omitted when zero. Reasoning models (o-series, GPT-5)
+	// reject any explicit temperature, so the reasoning path clears it instead
+	// of sending a value the model refuses.
+	Temperature float64 `json:"temperature,omitempty"`
+	MaxTokens   int     `json:"max_tokens,omitempty"`
+	// ReasoningEffort is the standard OpenAI field for o-series / GPT-5 class
+	// models. Omitted entirely for "auto" so a plain chat model never receives
+	// a parameter it does not know.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type oaStreamOpts struct {
@@ -101,8 +108,14 @@ type oaToolFunc struct {
 type oaStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string       `json:"content"`
-			ToolCalls []oaToolCall `json:"tool_calls"`
+			Content string `json:"content"`
+			// ReasoningContent is the vendor field DeepSeek/GLM/Qwen gateways
+			// use for the thinking stream; OpenRouter calls the same thing
+			// "reasoning". Both are read so a reasoning level produces a
+			// visible thinking block instead of silently doing nothing.
+			ReasoningContent string       `json:"reasoning_content"`
+			Reasoning        string       `json:"reasoning"`
+			ToolCalls        []oaToolCall `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -178,15 +191,25 @@ func (c *openAIClient) buildBody(req Request) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	effort := normalizeEffort(req.ReasoningEffort)
+	temperature := resolveTemperature(req)
+	if effort != "" {
+		// Reasoning models only accept their own default temperature; sending
+		// ours is a 400. Clearing it here (omitempty) is what lets the level
+		// actually take effect instead of failing on a parameter the user never
+		// chose.
+		temperature = 0
+	}
 	body := oaRequest{
 		Model:    c.cfg.Model,
 		Messages: msgs,
 		Stream:   true,
 		// Usage on a streamed response is omitted unless asked for. Without
 		// this the turn has no token accounting at all.
-		StreamOpts:  &oaStreamOpts{IncludeUsage: true},
-		Temperature: resolveTemperature(req),
-		MaxTokens:   req.MaxOutputTokens,
+		StreamOpts:      &oaStreamOpts{IncludeUsage: true},
+		Temperature:     temperature,
+		MaxTokens:       req.MaxOutputTokens,
+		ReasoningEffort: effort,
 	}
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, oaTool{
@@ -391,6 +414,15 @@ func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<-
 		}
 
 		for _, choice := range chunk.Choices {
+			if reasoning := choice.Delta.ReasoningContent; reasoning != "" {
+				if !emit(ctx, ch, Event{Kind: KindReasoning, Reasoning: reasoning}) {
+					return
+				}
+			} else if reasoning := choice.Delta.Reasoning; reasoning != "" {
+				if !emit(ctx, ch, Event{Kind: KindReasoning, Reasoning: reasoning}) {
+					return
+				}
+			}
 			if choice.Delta.Content != "" {
 				sawContent = true
 				if !emit(ctx, ch, Event{Kind: KindText, Text: choice.Delta.Content}) {

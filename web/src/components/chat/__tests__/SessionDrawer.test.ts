@@ -154,6 +154,10 @@ const mockAgents = {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return !!a?.acpCommand
   }),
+  isBuiltinAgent: vi.fn((agentId: string) => {
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    return a?.builtinBackend === true
+  }),
   supportsCLI: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return a ? a.supportsCLI !== false : false

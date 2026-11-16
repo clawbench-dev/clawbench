@@ -198,7 +198,7 @@
 
     <!-- Mode tab -->
     <div v-if="activeTab === 'mode'" class="model-tab-content">
-      <div v-if="effectiveModes.length === 0 || !isACP" class="tab-empty-hint">
+      <div v-if="effectiveModes.length === 0 || (!isACP && !isBuiltin)" class="tab-empty-hint">
         {{ t('chat.sessionSetting.notAvailable') }}
       </div>
       <template v-else>
@@ -373,7 +373,7 @@ const REFRESH_TIMEOUT_MS = 180_000
 
 const { t } = useI18n()
 const toast = useToast()
-const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshAgentState, supportsACP, supportsCLI, getAgentTransport } = useAgents()
+const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshAgentState, supportsACP, supportsCLI, getAgentTransport, isBuiltinAgent } = useAgents()
 const identity = useSessionIdentity()
 const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove, cruise, toggleCruise } = identity
 
@@ -591,6 +591,11 @@ const isACP = computed(() => {
   if (effectiveTransport.value) return effectiveTransport.value === 'acp-stdio'
   return getAgentTransport(props.agentId || '') === 'acp-stdio'
 })
+
+// The built-in agent has no ACP connection but does define its own modes.
+// Without this the mode tab renders "not available" for the one backend whose
+// modes this build actually controls.
+const isBuiltin = computed(() => isBuiltinAgent(props.agentId || ''))
 
 const agentName = computed(() => {
   const agent = getAgent(props.agentId || '')

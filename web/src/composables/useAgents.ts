@@ -524,6 +524,23 @@ function getEffectiveModeId(agentId: string): string {
     return agent?.preferredMode || ''
 }
 
+/**
+ * The mode options the server reported for an agent.
+ *
+ * Read from the same acpStates cache the chat drawer uses, so a built-in agent
+ * (whose modes are fixed by the build) and an ACP agent (which advertises them
+ * at session/new) reach the settings picker the same way.
+ */
+function getAgentAvailableModes(agentId: string): Array<{ id: string; name: string }> {
+    const state = acpStatesCache[agentId] as AcpState | undefined
+    return state?.modeState?.availableModes || []
+}
+
+/** Whether an agent runs on the in-process backend. */
+function isBuiltinAgent(agentId: string): boolean {
+    return agents.value.find(a => a.id === agentId)?.builtinBackend === true
+}
+
 /** Check if an agent has a preferred mode configured. */
 function hasPreferredMode(agentId: string): boolean {
     return getEffectiveModeId(agentId) !== ''
@@ -990,6 +1007,8 @@ export function useAgents() {
         getEffectiveThinkingEffortForModel,
         setThinkingEffortForModelLocal,
         getEffectiveModeId,
+        getAgentAvailableModes,
+        isBuiltinAgent,
         hasPreferredMode,
         updateAgentField,
         setDefaultAgent,

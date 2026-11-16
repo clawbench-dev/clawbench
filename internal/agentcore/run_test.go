@@ -563,3 +563,52 @@ func TestRun_RecoversPanicAsTerminalError(t *testing.T) {
 		t.Fatalf("expected exactly one terminal event, got %d (%v)", terminals, kinds)
 	}
 }
+
+// TestRun_ReplaysThinkingWithToolCalls pins the round-trip that extended
+// thinking requires: the reasoning block (and its signature) must travel back
+// with the tool call it justified. Dropping it makes Anthropic reject every
+// round after the first, so a thinking level would break the agent loop.
+func TestRun_ReplaysThinkingWithToolCalls(t *testing.T) {
+	client := &scriptedClient{rounds: []func(llm.Request) []llm.Event{
+		func(llm.Request) []llm.Event {
+			return []llm.Event{
+				{Kind: llm.KindReasoning, Reasoning: "need the file"},
+				{Kind: llm.KindReasoningSignature, Signature: "sig-1"},
+				{Kind: llm.KindToolCallStart, ToolCall: &llm.ToolCall{ID: "c1", Name: "read"}},
+				{Kind: llm.KindToolCallDelta, ToolCall: &llm.ToolCall{Arguments: `{"path":"a.txt"}`}},
+				{Kind: llm.KindDone},
+			}
+		},
+		textRound("done"),
+	}}
+
+	spec := Spec{
+		Client:  client,
+		Prompt:  "hi",
+		WorkDir: t.TempDir(),
+		Policy:  model.ToolPolicy{Allow: []string{model.CapFSRead}}.Normalized(),
+	}
+	collect(t, Run(context.Background(), spec))
+
+	if client.roundCount() < 2 {
+		t.Fatalf("expected a second round, got %d", client.roundCount())
+	}
+	req := client.request(1)
+	var found *llm.Thinking
+	for _, m := range req.Messages {
+		if m.Role != llm.RoleAssistant {
+			continue
+		}
+		for _, p := range m.Parts {
+			if p.Thinking != nil {
+				found = p.Thinking
+			}
+		}
+	}
+	if found == nil {
+		t.Fatal("the reasoning block must be replayed in the assistant turn")
+	}
+	if found.Text != "need the file" || found.Signature != "sig-1" {
+		t.Fatalf("thinking = %+v, want text and signature preserved", *found)
+	}
+}

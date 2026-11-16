@@ -452,3 +452,237 @@ func TestResolveEndpoint(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenAI_ReasoningEffort pins the one field that carries the user's
+// thinking level on this protocol. "auto" must send NOTHING: a plain chat model
+// given reasoning_effort is a 400 the user cannot act on.
+func TestOpenAI_ReasoningEffort(t *testing.T) {
+	cases := []struct {
+		name   string
+		effort string
+		want   string
+	}{
+		{"high", "high", "high"},
+		{"auto", "auto", ""},
+		{"empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody oaRequest
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(raw, &gotBody)
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+			}))
+			defer srv.Close()
+
+			c, _ := New(Config{Protocol: ProtocolOpenAI, BaseURL: srv.URL, Model: "m"})
+			ch, err := c.Stream(context.Background(), Request{
+				Messages:        []Message{TextMessage(RoleUser, "hi")},
+				ReasoningEffort: tc.effort,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			collectEvents(t, ch)
+			if gotBody.ReasoningEffort != tc.want {
+				t.Fatalf("reasoning_effort = %q, want %q", gotBody.ReasoningEffort, tc.want)
+			}
+			// A reasoning request must NOT carry a temperature: o-series and
+			// GPT-5 reject any explicit value, so the level would fail on a
+			// parameter the user never set.
+			if tc.want != "" && gotBody.Temperature != 0 {
+				t.Fatalf("temperature = %v, want omitted while reasoning is on", gotBody.Temperature)
+			}
+			if tc.want == "" && gotBody.Temperature != DefaultTemperature {
+				t.Fatalf("temperature = %v, want the default %v", gotBody.Temperature, DefaultTemperature)
+			}
+		})
+	}
+}
+
+// TestAnthropic_ThinkingBudget pins the translation of a level into the
+// extended-thinking request, including the two constraints the API enforces:
+// max_tokens must exceed the budget, and temperature must be 1.
+func TestAnthropic_ThinkingBudget(t *testing.T) {
+	var gotBody anRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolAnthropic, BaseURL: srv.URL, Model: "claude-x"})
+	ch, err := c.Stream(context.Background(), Request{
+		Messages:        []Message{TextMessage(RoleUser, "hi")},
+		ReasoningEffort: EffortHigh,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch)
+
+	if gotBody.Thinking == nil {
+		t.Fatal("high effort must enable extended thinking")
+	}
+	if gotBody.Thinking.Type != "enabled" || gotBody.Thinking.BudgetTokens != 8192 {
+		t.Fatalf("thinking = %+v, want enabled/8192", *gotBody.Thinking)
+	}
+	if gotBody.MaxTokens <= gotBody.Thinking.BudgetTokens {
+		t.Fatalf("max_tokens (%d) must exceed budget_tokens (%d)", gotBody.MaxTokens, gotBody.Thinking.BudgetTokens)
+	}
+	if gotBody.Temperature != 1 {
+		t.Fatalf("temperature = %v, want 1 while thinking is enabled", gotBody.Temperature)
+	}
+}
+
+// TestAnthropic_AutoEffortSendsNoThinking pins the absence direction: "auto"
+// must not turn reasoning on behind the user's back.
+func TestAnthropic_AutoEffortSendsNoThinking(t *testing.T) {
+	var gotBody anRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolAnthropic, BaseURL: srv.URL, Model: "claude-x"})
+	ch, _ := c.Stream(context.Background(), Request{
+		Messages:        []Message{TextMessage(RoleUser, "hi")},
+		ReasoningEffort: EffortAuto,
+	})
+	collectEvents(t, ch)
+
+	if gotBody.Thinking != nil {
+		t.Fatalf("auto must not enable thinking, got %+v", *gotBody.Thinking)
+	}
+	if gotBody.Temperature != DefaultTemperature {
+		t.Fatalf("temperature = %v, want the default %v", gotBody.Temperature, DefaultTemperature)
+	}
+}
+
+// TestOpenAI_ReasoningContentBecomesThinking pins the vendor reasoning field.
+//
+// A reasoning level on a DeepSeek/GLM/Qwen gateway produces the thinking stream
+// in `reasoning_content` (OpenRouter: `reasoning`). Ignoring it made the level
+// look like it did nothing: the turn took longer and showed no thinking block.
+func TestOpenAI_ReasoningContentBecomesThinking(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range []string{
+			`{"choices":[{"delta":{"reasoning_content":"think "}}]}`,
+			`{"choices":[{"delta":{"content":"answer"}}]}`,
+			`[DONE]`,
+		} {
+			_, _ = io.WriteString(w, "data: "+f+"\n\n")
+		}
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolOpenAI, BaseURL: srv.URL, Model: "m"})
+	ch, err := c.Stream(context.Background(), Request{
+		Messages:        []Message{TextMessage(RoleUser, "hi")},
+		ReasoningEffort: EffortHigh,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := collectEvents(t, ch)
+
+	var kinds []EventKind
+	for _, ev := range events {
+		kinds = append(kinds, ev.Kind)
+	}
+	if len(kinds) < 3 || kinds[0] != KindReasoning || kinds[1] != KindText {
+		t.Fatalf("events = %v, want reasoning then text", kinds)
+	}
+	if events[0].Reasoning != "think " {
+		t.Fatalf("reasoning = %q", events[0].Reasoning)
+	}
+}
+
+// TestAnthropic_ReplaysThinkingBlock pins the wire shape required when an
+// extended-thinking turn also calls a tool: the assistant message must carry
+// the thinking block (with signature) before the tool_use block.
+func TestAnthropic_ReplaysThinkingBlock(t *testing.T) {
+	var gotBody anRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolAnthropic, BaseURL: srv.URL, Model: "claude-x"})
+	ch, err := c.Stream(context.Background(), Request{
+		Messages: []Message{
+			TextMessage(RoleUser, "read it"),
+			{Role: RoleAssistant, Parts: []Part{
+				{Thinking: &Thinking{Text: "I should read it", Signature: "sig-1"}},
+				{ToolCall: &ToolCall{ID: "c1", Name: "read", Arguments: `{"path":"a.txt"}`}},
+			}},
+			{Role: RoleTool, Parts: []Part{{ToolResult: &ToolResult{CallID: "c1", Parts: []Part{{Text: "body"}}}}}},
+		},
+		ReasoningEffort: EffortHigh,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch)
+
+	var assistant *anMessage
+	for i := range gotBody.Messages {
+		if gotBody.Messages[i].Role == "assistant" {
+			assistant = &gotBody.Messages[i]
+		}
+	}
+	if assistant == nil || len(assistant.Content) < 2 {
+		t.Fatalf("assistant message = %+v, want thinking + tool_use", assistant)
+	}
+	first := assistant.Content[0]
+	if first.Type != "thinking" || first.Thinking != "I should read it" || first.Signature != "sig-1" {
+		t.Fatalf("first block = %+v, want the thinking block with its signature", first)
+	}
+	if assistant.Content[1].Type != "tool_use" {
+		t.Fatalf("second block = %+v, want tool_use", assistant.Content[1])
+	}
+}
+
+// TestAnthropic_SignatureDeltaBecomesAnEvent pins the capture half: the client
+// must surface the signature so the loop can replay it.
+func TestAnthropic_SignatureDeltaBecomesAnEvent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range []string{
+			`{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hm"}}`,
+			`{"type":"content_block_delta","delta":{"type":"signature_delta","signature":"sig-9"}}`,
+			`{"type":"message_stop"}`,
+		} {
+			_, _ = io.WriteString(w, "data: "+f+"\n\n")
+		}
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolAnthropic, BaseURL: srv.URL, Model: "claude-x"})
+	ch, _ := c.Stream(context.Background(), Request{
+		Messages:        []Message{TextMessage(RoleUser, "hi")},
+		ReasoningEffort: EffortHigh,
+	})
+	events := collectEvents(t, ch)
+
+	var signature string
+	for _, ev := range events {
+		if ev.Kind == KindReasoningSignature {
+			signature = ev.Signature
+		}
+	}
+	if signature != "sig-9" {
+		t.Fatalf("signature = %q, want sig-9", signature)
+	}
+}

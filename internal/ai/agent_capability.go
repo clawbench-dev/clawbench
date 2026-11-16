@@ -147,6 +147,37 @@ var (
 	globalCapabilityRegistryOnce sync.Once
 )
 
+// staticCapabilities holds option sets that are a property of the BACKEND, not
+// of anything the backend reported at runtime. The built-in agent is the only
+// user today: its modes and thinking levels are fixed by this build, so there
+// is no handshake to learn them from.
+//
+// Keyed by backend id (not agent id) so a copied agent — new id, same backend —
+// gets the same options without registering again.
+var staticCapabilities sync.Map // backendID -> *AgentCapability
+
+// RegisterStaticCapabilities publishes a backend's fixed option set. The value
+// is treated as read-only by every reader: Get returns it without cloning.
+func RegisterStaticCapabilities(backendID string, cap *AgentCapability) {
+	if backendID == "" || cap == nil {
+		return
+	}
+	staticCapabilities.Store(backendID, cap)
+}
+
+// staticCapabilitiesForAgent resolves the fixed option set for an agent by its
+// backend. Returns nil when the agent is unknown or its backend registered none.
+func staticCapabilitiesForAgent(agentID string) *AgentCapability {
+	agent := model.GetAgent(agentID)
+	if agent == nil || agent.Backend == "" {
+		return nil
+	}
+	if v, ok := staticCapabilities.Load(agent.Backend); ok {
+		return v.(*AgentCapability)
+	}
+	return nil
+}
+
 // GetAgentCapabilityRegistry returns the global AgentCapabilityRegistry singleton.
 func GetAgentCapabilityRegistry() *AgentCapabilityRegistry {
 	globalCapabilityRegistryOnce.Do(func() {
@@ -158,11 +189,18 @@ func GetAgentCapabilityRegistry() *AgentCapabilityRegistry {
 }
 
 // Get returns the capability for the given agent ID.
-// Returns nil if no capability has been registered yet.
+//
+// A backend with a static option set answers even before it has reported
+// anything at runtime, which is what makes the built-in agent's mode and
+// thinking pickers appear on a fresh session. Returns nil if nothing is known.
 func (r *AgentCapabilityRegistry) Get(agentID string) *AgentCapability {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.caps[agentID]
+	cap := r.caps[agentID]
+	r.mu.RUnlock()
+	if cap != nil {
+		return cap
+	}
+	return staticCapabilitiesForAgent(agentID)
 }
 
 // Update updates the capability for an agent and persists to DB.
@@ -295,6 +333,14 @@ func (r *AgentCapabilityRegistry) ThinkingEffortsForModel(agentID, modelID strin
 func (r *AgentCapabilityRegistry) GetThinkingEffortStateForModel(agentID, modelID, currentID string) *ThinkingEffortState {
 	levels, ok := r.ThinkingEffortsForModel(agentID, modelID)
 	if !ok {
+		// A backend with a fixed list (the built-in agent) has no per-model
+		// entries to learn; its list is the answer for every model.
+		if static := staticCapabilitiesForAgent(agentID); static != nil && len(static.AvailableThinkingEfforts) > 0 {
+			levels = static.AvailableThinkingEfforts
+			ok = true
+		}
+	}
+	if !ok {
 		return nil
 	}
 	state := &ThinkingEffortState{CurrentID: currentID, AvailableLevels: levels}
@@ -420,15 +466,22 @@ func (r *AgentCapabilityRegistry) ForceUpdateIfNeeded(agentID string, modes []Mo
 // GetModeState returns a ModeState combining agent-level available modes
 // with the session-level current mode ID.
 func (r *AgentCapabilityRegistry) GetModeState(agentID, currentModeID string) *ModeState {
-	r.mu.RLock()
-	agentCap, ok := r.caps[agentID]
-	r.mu.RUnlock()
-	if !ok || agentCap == nil {
+	agentCap := r.Get(agentID)
+	if agentCap == nil {
 		return nil
 	}
 	if len(agentCap.AvailableModes) > 0 {
+		current := currentModeID
+		if current == "" {
+			// The built-in agent has no session handshake to report its default,
+			// so derive it from the tool grant. Without this every fresh session
+			// would render the list with nothing selected.
+			if a := model.GetAgent(agentID); a != nil && a.BuiltinBackend {
+				current = a.EffectiveModeID()
+			}
+		}
 		return &ModeState{
-			CurrentModeID:  currentModeID,
+			CurrentModeID:  current,
 			AvailableModes: agentCap.AvailableModes,
 		}
 	}
@@ -446,10 +499,8 @@ func (r *AgentCapabilityRegistry) GetModeState(agentID, currentModeID string) *M
 // GetThinkingEffortState returns a ThinkingEffortState combining agent-level
 // available levels with the session-level current ID.
 func (r *AgentCapabilityRegistry) GetThinkingEffortState(agentID, currentID string) *ThinkingEffortState {
-	r.mu.RLock()
-	agentCap, ok := r.caps[agentID]
-	r.mu.RUnlock()
-	if !ok || agentCap == nil {
+	agentCap := r.Get(agentID)
+	if agentCap == nil {
 		return nil
 	}
 	if len(agentCap.AvailableThinkingEfforts) > 0 {
@@ -630,10 +681,8 @@ func (r *AgentCapabilityRegistry) HasModelList(agentID string) bool {
 }
 
 func (r *AgentCapabilityRegistry) IsModeAvailable(agentID, modeID string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	agentCap, ok := r.caps[agentID]
-	if !ok || agentCap == nil {
+	agentCap := r.Get(agentID)
+	if agentCap == nil {
 		return false
 	}
 	for _, m := range agentCap.AvailableModes {

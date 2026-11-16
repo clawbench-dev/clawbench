@@ -224,3 +224,57 @@ func TestSpecNameIsTheProductName(t *testing.T) {
 		t.Fatalf("expected the product name, got %q", spec.Name)
 	}
 }
+
+// TestStaticCapability_OffersModesAndEfforts pins the option set the chat
+// drawer and settings page read.
+func TestStaticCapability_OffersModesAndEfforts(t *testing.T) {
+	cap := staticCapability()
+
+	var modeIDs []string
+	for _, m := range cap.AvailableModes {
+		modeIDs = append(modeIDs, m.ID)
+	}
+	if len(modeIDs) != 3 || modeIDs[0] != model.ModeRead || modeIDs[1] != model.ModeWrite || modeIDs[2] != model.ModeFull {
+		t.Fatalf("modes = %v, want [read write full]", modeIDs)
+	}
+
+	var effortIDs []string
+	for _, l := range cap.AvailableThinkingEfforts {
+		effortIDs = append(effortIDs, l.ID)
+	}
+	if len(effortIDs) != 4 || effortIDs[0] != "auto" || effortIDs[3] != "high" {
+		t.Fatalf("efforts = %v, want [auto low medium high]", effortIDs)
+	}
+}
+
+// TestStaticCapability_ReachesRegistryForCopiedAgents pins the backend-keyed
+// lookup: a copied agent has a new id but the same backend, and must still see
+// the options without registering them again.
+func TestStaticCapability_ReachesRegistryForCopiedAgents(t *testing.T) {
+	const id = "builtin-copy-test"
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	model.Agents[id] = &model.Agent{ID: id, Backend: BackendID, BuiltinBackend: true}
+	defer delete(model.Agents, id)
+
+	reg := ai.GetAgentCapabilityRegistry()
+
+	ms := reg.GetModeState(id, "")
+	if ms == nil || len(ms.AvailableModes) != 3 {
+		t.Fatalf("GetModeState = %+v, want three modes", ms)
+	}
+	// The empty current id is derived from the grant so a fresh session has a
+	// selection instead of an unhighlighted list.
+	if ms.CurrentModeID == "" {
+		t.Fatal("a fresh session must report a default mode")
+	}
+	if !reg.IsModeAvailable(id, model.ModeRead) {
+		t.Fatal("mode validation must accept the static list")
+	}
+
+	es := reg.GetThinkingEffortStateForModel(id, "any-model", "")
+	if es == nil || len(es.AvailableLevels) != 4 {
+		t.Fatalf("GetThinkingEffortStateForModel = %+v, want four levels", es)
+	}
+}

@@ -41,6 +41,11 @@ type Spec struct {
 	WorkDir string
 	// Policy decides which tools exist at all.
 	Policy model.ToolPolicy
+	// ThinkingEffort is the reasoning level the user picked ("low", "medium",
+	// "high"), or "" / "auto" for "let the model decide". It is advisory: a
+	// model that does not support reasoning fails the call rather than silently
+	// ignoring it, so the user sees which level was rejected.
+	ThinkingEffort string
 	// MaxOutputTokens caps one model reply. Zero uses the client's default.
 	MaxOutputTokens int
 	// Timeout bounds the whole run. Zero means no extra bound beyond ctx.
@@ -301,7 +306,7 @@ func (r *runner) run(ctx context.Context) {
 		}
 		r.rounds++
 
-		calls, text, err := r.runModelRound(runCtx, system)
+		calls, text, thinking, err := r.runModelRound(runCtx, system)
 		if err != nil {
 			if runCtx.Err() != nil {
 				r.finishStopped(runCtx, StopCancelled)
@@ -312,7 +317,12 @@ func (r *runner) run(ctx context.Context) {
 		}
 
 		// Record the assistant turn so the next round sees what it decided.
-		assistantParts := make([]llm.Part, 0, len(text)+len(calls))
+		// Thinking goes FIRST: Anthropic requires the reasoning block to lead
+		// the assistant turn that carries the tool calls it justified.
+		assistantParts := make([]llm.Part, 0, len(text)+len(calls)+1)
+		if thinking != nil {
+			assistantParts = append(assistantParts, llm.Part{Thinking: thinking})
+		}
 		for _, t := range text {
 			assistantParts = append(assistantParts, llm.Part{Text: t})
 		}
@@ -409,7 +419,7 @@ func filterVisionlessRead(list []tools.Tool) []tools.Tool {
 }
 
 // runModelRound performs one streaming model call and collects its tool calls.
-func (r *runner) runModelRound(ctx context.Context, system string) ([]llm.ToolCall, []string, error) {
+func (r *runner) runModelRound(ctx context.Context, system string) ([]llm.ToolCall, []string, *llm.Thinking, error) {
 	specs := make([]llm.ToolSpec, 0, len(r.toolList))
 	for _, t := range r.toolList {
 		s := t.Spec()
@@ -421,16 +431,19 @@ func (r *runner) runModelRound(ctx context.Context, system string) ([]llm.ToolCa
 		Messages:        r.messages,
 		Tools:           specs,
 		MaxOutputTokens: r.spec.MaxOutputTokens,
+		ReasoningEffort: r.spec.ThinkingEffort,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	var (
-		texts   []string
-		calls   []llm.ToolCall
-		partial map[int]*strings.Builder
-		index   []int // ordered indexes, so call order is preserved
+		texts     []string
+		calls     []llm.ToolCall
+		partial   map[int]*strings.Builder
+		index     []int // ordered indexes, so call order is preserved
+		reasoning strings.Builder
+		signature string
 	)
 	partial = make(map[int]*strings.Builder)
 
@@ -446,7 +459,7 @@ func (r *runner) runModelRound(ctx context.Context, system string) ([]llm.ToolCa
 		select {
 		case <-ctx.Done():
 			go drainStream(stream)
-			return nil, nil, ctx.Err()
+			return nil, nil, nil, ctx.Err()
 		case ev, ok = <-stream:
 			if !ok {
 				goto drained
@@ -459,7 +472,12 @@ func (r *runner) runModelRound(ctx context.Context, system string) ([]llm.ToolCa
 			r.emit(Event{Kind: EventText, Text: ev.Text})
 
 		case llm.KindReasoning:
+			reasoning.WriteString(ev.Reasoning)
 			r.emit(Event{Kind: EventReasoning, Reasoning: ev.Reasoning})
+
+		case llm.KindReasoningSignature:
+			// Needed to replay the block when this turn also calls tools.
+			signature = ev.Signature
 
 		case llm.KindToolCallStart:
 			idx := len(index)
@@ -487,7 +505,7 @@ func (r *runner) runModelRound(ctx context.Context, system string) ([]llm.ToolCa
 		case llm.KindError:
 			// Drain any remaining events so the producer can exit, then fail.
 			go drainStream(stream)
-			return nil, nil, ev.Err
+			return nil, nil, nil, ev.Err
 
 		case llm.KindDone:
 			// Terminal; the channel closes next.
@@ -505,7 +523,11 @@ drained:
 			calls[i].ID = fmt.Sprintf("call_%d_%d", r.rounds, i)
 		}
 	}
-	return calls, texts, nil
+	var thinking *llm.Thinking
+	if reasoning.Len() > 0 {
+		thinking = &llm.Thinking{Text: reasoning.String(), Signature: signature}
+	}
+	return calls, texts, thinking, nil
 }
 
 // drainStream consumes a stream to completion in the background.

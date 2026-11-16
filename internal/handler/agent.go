@@ -316,6 +316,16 @@ func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 	// next refresh would treat ACP-only models as CLI-discovered.
 	for i, a := range agents {
 		if !a.SupportsACP() {
+			// The built-in agent has no ACP handshake, but its mode and thinking
+			// options are fixed by this build. Publishing them here is what lets
+			// the settings page offer a default mode/level without a live
+			// session — the same shape an ACP agent's snapshot has.
+			if a.BuiltinBackend {
+				states[a.ID] = &acpState{
+					Mode:   reg.GetModeState(a.ID, ""),
+					Effort: reg.GetThinkingEffortStateForModel(a.ID, a.DefaultModelID(), ""),
+				}
+			}
 			// CLI agents inherit the curated list too: the endpoint is custom,
 			// so the CLI's own discovery is not authoritative for it.
 			if pm := providerModelsForAgent(a); pm != nil {

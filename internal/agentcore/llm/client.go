@@ -47,6 +47,19 @@ type Image struct {
 	Data      []byte
 }
 
+// Thinking is one reasoning block the assistant produced.
+//
+// It is kept on the message (not only streamed to the UI) because Anthropic
+// requires the block to be replayed verbatim — signature included — when the
+// same assistant turn also requested a tool. Dropping it makes every round
+// after the first fail with a 400.
+type Thinking struct {
+	Text string
+	// Signature is the provider's opaque proof that it produced this block.
+	// Empty for providers that do not issue one.
+	Signature string
+}
+
 // Part is one piece of a message's content.
 //
 // A message is a list of parts because a tool result may carry text AND
@@ -62,6 +75,9 @@ type Part struct {
 	ToolCall *ToolCall
 	// ToolResult is set for the result of a tool call the CLIENT is returning.
 	ToolResult *ToolResult
+	// Thinking is set for a reasoning block the ASSISTANT produced. Clients
+	// that cannot express it ignore it; Anthropic replays it.
+	Thinking *Thinking
 }
 
 // ToolCall is one tool invocation requested by the model.
@@ -124,6 +140,37 @@ type Request struct {
 	// valid value (deterministic), so callers that do not care should leave it
 	// at DefaultTemperature.
 	Temperature float64
+	// ReasoningEffort asks the model to think harder ("low", "medium", "high").
+	// Empty, "auto" and "default" all mean "let the model decide" and send no
+	// reasoning parameter at all.
+	//
+	// The two protocols express this differently (OpenAI: reasoning_effort,
+	// Anthropic: an extended-thinking budget), so each client translates it.
+	// Neither is emulated: a model that cannot reason must fail loudly rather
+	// than quietly produce a normal answer under a level the user chose.
+	ReasoningEffort string
+}
+
+// Reasoning effort levels. Auto is the absence of a request, not a value sent
+// to the provider.
+const (
+	EffortAuto   = "auto"
+	EffortLow    = "low"
+	EffortMedium = "medium"
+	EffortHigh   = "high"
+)
+
+// normalizeEffort maps "no preference" to the empty string so the request
+// builders can treat it uniformly. Unknown values pass through: a provider may
+// accept levels this build has never heard of, and dropping them silently would
+// make the setting look broken.
+func normalizeEffort(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "", EffortAuto, "default":
+		return ""
+	default:
+		return strings.ToLower(strings.TrimSpace(level))
+	}
 }
 
 // DefaultTemperature is used when a caller leaves Temperature at zero and has
@@ -140,6 +187,9 @@ type Event struct {
 	Text string
 	// Reasoning is the incremental reasoning/thinking text (KindReasoning).
 	Reasoning string
+	// Signature is set on KindReasoningSignature: the provider's opaque proof
+	// for the reasoning block that just streamed, needed to replay it.
+	Signature string
 	// ToolCall is set on KindToolCallStart (ID+Name, Arguments empty) and on
 	// KindToolCallDelta (Arguments holds the increment). It is nil otherwise.
 	ToolCall *ToolCall
@@ -158,6 +208,9 @@ const (
 	// KindReasoning is an incremental piece of the model's reasoning, when the
 	// endpoint exposes it. Never mixed into the answer.
 	KindReasoning EventKind = "reasoning"
+	// KindReasoningSignature carries the signature that closes the reasoning
+	// block. It must be replayed with the block when the turn also calls tools.
+	KindReasoningSignature EventKind = "reasoning_signature"
 	// KindToolCallStart opens a tool call (ID and Name are known).
 	KindToolCallStart EventKind = "tool_call_start"
 	// KindToolCallDelta appends to the current tool call's argument JSON.

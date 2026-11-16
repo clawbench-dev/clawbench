@@ -261,7 +261,7 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const selfTest = useAgentSelfTest()
-const { loadAgents, getAgent, agentsLoaded, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP } = useAgents()
+const { loadAgents, getAgent, agentsLoaded, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP, getAgentAvailableModes } = useAgents()
 const activeKey = ref<string | null>(null)
 const copying = ref(false)
 // Server-side copy failure (e.g. the name is already taken) shown inside the
@@ -541,6 +541,9 @@ const items = computed<AgentItem[]>(() => {
     result.push({
       key: 'preferred_thinking_effort',
       label: t('settings.items.agentPreferredThinkingEffort'),
+      // The built-in agent's levels are translated by our own client, and a
+      // model that cannot reason rejects the parameter instead of ignoring it.
+      description: a.builtinBackend ? t('settings.items.agentPreferredThinkingEffortDesc') : undefined,
       type: 'select',
       options: a.thinkingEffortLevels.map((l: string) => ({ label: l, value: l })),
       patchField: 'preferred_thinking_effort',
@@ -561,13 +564,18 @@ const items = computed<AgentItem[]>(() => {
     })
   }
 
-  // Preferred Mode (only for ACP agents with available modes)
-  if (a.acpCommand && a.acpAvailableModes && a.acpAvailableModes.length > 0) {
+  // Preferred Mode. ACP agents advertise their modes at session/new; the
+  // built-in agent's modes are fixed by the build. Both arrive through the same
+  // acpStates cache, so the picker is driven by "what the server reported",
+  // not by "does this agent have an acp_command".
+  const availableModes = getAgentAvailableModes(a.id)
+  if (availableModes.length > 0) {
     result.push({
       key: 'preferred_mode',
       label: t('settings.items.agentPreferredMode'),
+      description: a.builtinBackend ? t('settings.items.agentPreferredModeDesc') : undefined,
       type: 'select',
-      options: a.acpAvailableModes.map((m: { name: string; id: string }) => ({ label: m.name || m.id, value: m.id })),
+      options: availableModes.map((m: { name: string; id: string }) => ({ label: m.name || m.id, value: m.id })),
       patchField: 'preferred_mode',
     })
   }

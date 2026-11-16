@@ -863,6 +863,16 @@ type sessionState struct {
 	ReplayPending bool
 }
 
+// isBuiltinAgent reports whether an agent runs on the in-process backend.
+//
+// Its transport is "cli" for the same reason a real CLI's is — there is no ACP
+// connection — but that is not a reason to hide the options this build defines
+// itself.
+func isBuiltinAgent(agentID string) bool {
+	a := model.GetAgent(agentID)
+	return a != nil && a.BuiltinBackend
+}
+
 // sessionStateSnapshot resolves a session's cached ACP state, falling back to
 // the agent-level registry and then to the persisted context_state.
 //
@@ -872,7 +882,14 @@ type sessionState struct {
 // other would keep showing a stale mode.
 func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) sessionState {
 	var st sessionState
-	if sessionID == "" || sessionTransport == "cli" {
+	if sessionID == "" {
+		return st
+	}
+	// An explicit "cli" transport means there is no ACP connection to ask. The
+	// built-in agent is the exception: its transport is "cli" by construction
+	// (it runs in-process), yet its mode and thinking options are static and
+	// must still reach the drawer.
+	if sessionTransport == "cli" && !isBuiltinAgent(sessionAgentID) {
 		return st
 	}
 	// A session row can carry an EMPTY transport (a group member row never had
@@ -962,7 +979,10 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 	// seeded before the mode was persisted). Treating that as "already known"
 	// skipped the fallback and left the chip blank until the next send, even
 	// though context_state held the choice.
-	if st.Mode == nil || modeStateHasNoSelection(st.Mode) || st.Effort == nil || st.Usage == nil {
+	// The built-in agent always consults context_state: its registry answer
+	// carries a derived default selection, which would otherwise look like a
+	// real per-session choice and mask the one the user persisted.
+	if st.Mode == nil || modeStateHasNoSelection(st.Mode) || st.Effort == nil || st.Usage == nil || isBuiltinAgent(sessionAgentID) {
 		if ctxState := service.GetContextState(sessionID); ctxState != nil {
 			// The per-session record wins over the agent-level registry for the
 			// parts it covers. The registry is keyed by AGENT and shared by every
@@ -974,7 +994,20 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 			// already have, so it only replaces an ABSENT mode — otherwise the
 			// fallback could turn a populated list into an empty selection.
 			if ctxState.Mode != nil && (ctxState.Mode.CurrentModeID != "" || st.Mode == nil) {
-				st.Mode = ctxState.Mode
+				merged := *ctxState.Mode
+				// The persisted patch carries only the selection. Keep the
+				// option list resolved above when it has none: the built-in
+				// agent's modes never arrive as ACP events, so replacing the
+				// list with the stored (empty) one would leave the drawer with
+				// a selection and nothing to select from.
+				if len(merged.AvailableModes) == 0 {
+					if prev, ok := st.Mode.(*ai.ModeState); ok && prev != nil {
+						for _, m := range prev.AvailableModes {
+							merged.AvailableModes = append(merged.AvailableModes, service.ModeDef{ID: m.ID, Name: m.Name})
+						}
+					}
+				}
+				st.Mode = &merged
 			}
 			// Restore the effort when the user picked it — OR when nothing else
 			// describes this session. The userPicked guard exists so an agent's

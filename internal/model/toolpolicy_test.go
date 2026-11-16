@@ -143,3 +143,65 @@ func TestEncodeToolPolicy_NilAllowIsEmptyArray(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, encoded, `"allow":[]`)
 }
+
+// TestToolPolicy_ForMode_NeverWidens pins the direction of the mode switch.
+//
+// The mode is a ceiling on the session, not a grant: a session that asks for
+// "full" on an agent that was only granted fs.read must still be read-only.
+// Getting this backwards would let one click in the chat drawer escalate past
+// the settings switch the user set on purpose.
+func TestToolPolicy_ForMode_NeverWidens(t *testing.T) {
+	readOnly := ToolPolicy{Allow: []string{CapFSRead}}.Normalized()
+
+	cases := []struct {
+		name string
+		p    ToolPolicy
+		mode string
+		want []string
+	}{
+		{"read on read-only grant", readOnly, ModeRead, []string{CapFSRead}},
+		{"write on read-only grant", readOnly, ModeWrite, []string{CapFSRead}},
+		{"full on read-only grant", readOnly, ModeFull, []string{CapFSRead}},
+		{"read narrows a full grant", ToolPolicy{Allow: []string{CapExec}}.Normalized(), ModeRead, []string{CapFSRead}},
+		{"write narrows a full grant", ToolPolicy{Allow: []string{CapExec}}.Normalized(), ModeWrite, []string{CapFSRead, CapFSWrite}},
+		{"full keeps a full grant", ToolPolicy{Allow: []string{CapExec}}.Normalized(), ModeFull, []string{CapFSRead, CapFSWrite, CapExec}},
+		// No mode chosen: the grant is used as-is (background tasks, older clients).
+		{"empty mode keeps the grant", ToolPolicy{Allow: []string{CapExec}}.Normalized(), "", []string{CapFSRead, CapFSWrite, CapExec}},
+		// A leftover mode id from another backend must fail closed, not pass through.
+		{"unknown mode fails closed", ToolPolicy{Allow: []string{CapExec}}.Normalized(), "code", []string{CapFSRead}},
+		{"zero grant stays empty", ToolPolicy{}.Normalized(), ModeFull, []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.p.ForMode(tc.mode)
+			assert.Equal(t, tc.want, got.Allow)
+			// The budgets are not part of the mode decision.
+			assert.Equal(t, tc.p.MaxRounds, got.MaxRounds)
+			assert.Equal(t, tc.p.MaxToolCalls, got.MaxToolCalls)
+			assert.Equal(t, tc.p.BashTimeoutSec, got.BashTimeoutSec)
+		})
+	}
+}
+
+// TestToolPolicy_DefaultMode pins the mode a fresh session starts in: the
+// narrowest one that still expresses the grant, so the chip never advertises
+// more (or less) than the agent will run.
+func TestToolPolicy_DefaultMode(t *testing.T) {
+	assert.Equal(t, ModeFull, ToolPolicy{}.DefaultMode())
+	assert.Equal(t, ModeRead, ToolPolicy{Allow: []string{CapFSRead}}.DefaultMode())
+	assert.Equal(t, ModeWrite, ToolPolicy{Allow: []string{CapFSWrite}}.DefaultMode())
+	assert.Equal(t, ModeFull, ToolPolicy{Allow: []string{CapExec}}.DefaultMode())
+}
+
+// TestBuiltinModes_AreOrderedByPrivilege pins the display order and that the
+// returned slice is a copy (callers register it into the AI registry).
+func TestBuiltinModes_AreOrderedByPrivilege(t *testing.T) {
+	modes := BuiltinModes()
+	require.Len(t, modes, 3)
+	assert.Equal(t, ModeRead, modes[0].ID)
+	assert.Equal(t, ModeWrite, modes[1].ID)
+	assert.Equal(t, ModeFull, modes[2].ID)
+
+	modes[0].ID = "mutated"
+	assert.Equal(t, ModeRead, BuiltinModes()[0].ID, "BuiltinModes must return a copy")
+}

@@ -58,6 +58,12 @@ func init() {
 			// the agent with no skills at all.
 			AutoLoadsNativeSkills: false,
 			SortOrder:             0,
+			// The reasoning levels this backend understands. They are static
+			// (every model gets the same list) because the choice is translated
+			// by our own client, not advertised per model by an external agent.
+			ThinkingEffortLevels: []string{
+				llm.EffortAuto, llm.EffortLow, llm.EffortMedium, llm.EffortHigh,
+			},
 		},
 		ProviderEnv: &model.ProviderEnvSpec{
 			// The two protocols are declared with EMPTY variable names on
@@ -69,6 +75,30 @@ func init() {
 			InProcess: true,
 		},
 	})
+
+	// Mode and thinking-level options live in the capability registry so every
+	// reader (the chat drawer, the settings page, the PATCH validators) sees
+	// them through the same path as an ACP agent's advertised options.
+	ai.RegisterStaticCapabilities(BackendID, staticCapability())
+}
+
+// staticCapability is the option set this backend offers to every agent that
+// runs on it. A copied agent (new id, same backend) gets the same list.
+func staticCapability() *ai.AgentCapability {
+	modes := model.BuiltinModes()
+	modeDefs := make([]ai.ModeDef, 0, len(modes))
+	for _, m := range modes {
+		modeDefs = append(modeDefs, ai.ModeDef{ID: m.ID, Name: m.Name})
+	}
+	return &ai.AgentCapability{
+		AvailableModes: modeDefs,
+		AvailableThinkingEfforts: []ai.ThinkingEffortDef{
+			{ID: llm.EffortAuto, Name: "Auto"},
+			{ID: llm.EffortLow, Name: "Low"},
+			{ID: llm.EffortMedium, Name: "Medium"},
+			{ID: llm.EffortHigh, Name: "High"},
+		},
+	}
 }
 
 // newBackend constructs the in-process backend.
@@ -134,7 +164,10 @@ func buildSpec(ctx context.Context, req ai.ChatRequest) (agentcore.Spec, error) 
 		Prompt:       req.Prompt,
 		History:      historyFor(req),
 		WorkDir:      req.WorkDir,
-		Policy:       agent.ToolPolicy.Normalized(),
+		// The session mode narrows the agent's grant; it never widens it. An
+		// empty mode (background task, older client) leaves the grant as-is.
+		Policy:         agent.ToolPolicy.Normalized().ForMode(req.Mode),
+		ThinkingEffort: req.ThinkingEffort,
 		// The window comes from the model catalog. Zero means "unknown", which
 		// disables compaction rather than guessing: compacting a conversation
 		// that fits loses information for nothing.

@@ -421,10 +421,20 @@ func (a *Agent) SetThinkingEffortForModel(modelID, level string) {
 	a.ThinkingEffortByModel = next
 }
 
-// EffectiveModeID returns the mode ID for new ACP sessions.
-// Priority: PreferredMode (user preference) > empty (agent's default from session/new).
+// EffectiveModeID returns the mode ID for new sessions.
+//
+// For an ACP agent it is the user's preferred mode or empty, which lets the
+// agent report its own default at session/new. The built-in agent has no agent
+// to ask, so an unset preference falls back to the mode its tool grant
+// expresses — otherwise every new session would start with no mode selected.
 func (a *Agent) EffectiveModeID() string {
-	return a.PreferredMode
+	if a.PreferredMode != "" {
+		return a.PreferredMode
+	}
+	if a.BuiltinBackend {
+		return a.ToolPolicy.Normalized().DefaultMode()
+	}
+	return ""
 }
 
 // SupportsACP returns true if the agent has ACP capability (has an acp_command configured),

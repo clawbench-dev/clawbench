@@ -29,6 +29,103 @@ const (
 // privilege first, so a policy's JSON reads as an increasing grant.
 var toolCapabilityOrder = []string{CapFSRead, CapFSWrite, CapExec}
 
+// Modes the built-in agent offers in the session picker.
+//
+// A mode NARROWS the agent's tool grant; it never widens it. The grant in the
+// agent settings is the ceiling, and a session can ask for less (a read-only
+// pass over a repository) but not for more. Making the mode authoritative
+// instead would turn a single click in the chat drawer into a permission
+// escalation past the switch the user deliberately set.
+const (
+	// ModeRead allows only fs.read.
+	ModeRead = "read"
+	// ModeWrite allows fs.read + fs.write.
+	ModeWrite = "write"
+	// ModeFull applies no extra narrowing — the agent's own grant is the limit.
+	ModeFull = "full"
+)
+
+// ToolMode is one selectable mode: the id stored/compared, and the label the
+// client renders. The label is English because every other agent's mode names
+// come from the agent itself and are English too; a Chinese-only label here
+// would be the odd one out.
+type ToolMode struct {
+	ID   string
+	Name string
+}
+
+var builtinModes = []ToolMode{
+	{ID: ModeRead, Name: "Read only"},
+	{ID: ModeWrite, Name: "Read & write"},
+	{ID: ModeFull, Name: "Full access"},
+}
+
+// BuiltinModes returns the mode list for the built-in agent, least privilege
+// first. The slice is a copy: callers register it into the AI capability
+// registry, and a shared backing array would let one caller's append corrupt
+// another's view.
+func BuiltinModes() []ToolMode {
+	out := make([]ToolMode, len(builtinModes))
+	copy(out, builtinModes)
+	return out
+}
+
+// ForMode narrows the grant to what the mode allows.
+//
+// The empty string means "no mode chosen" and leaves the policy untouched, so a
+// turn from a caller that never had a mode (a background task, an older client)
+// runs with exactly the grant the agent was configured with.
+//
+// An UNKNOWN non-empty mode narrows to read-only rather than passing through:
+// mode ids are backend-specific, and a leftover ACP mode ("code", "ask") must
+// not silently mean "everything". Failing closed here is the only direction
+// that cannot hand out more access than the user asked for.
+func (p ToolPolicy) ForMode(mode string) ToolPolicy {
+	allowed := map[string]bool{}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", ModeFull:
+		return p
+	case ModeRead:
+		allowed[CapFSRead] = true
+	case ModeWrite:
+		allowed[CapFSRead] = true
+		allowed[CapFSWrite] = true
+	default:
+		allowed[CapFSRead] = true
+	}
+
+	out := p
+	out.Allow = []string{}
+	for _, c := range toolCapabilityOrder {
+		// Intersection: the mode can only remove capabilities, never add one
+		// the agent was not granted.
+		if allowed[c] && p.Has(c) {
+			out.Allow = append(out.Allow, c)
+		}
+	}
+	return out.Normalized()
+}
+
+// DefaultMode reports the narrowest mode that still expresses the grant.
+//
+// Used as the selected mode for a session that has never picked one, so the
+// drawer highlights the grant the agent will actually run instead of an empty
+// selection. An empty grant reports ModeFull: every mode is equivalent there,
+// and "full" is the one that promises no extra narrowing rather than
+// advertising a read permission the agent does not have.
+func (p ToolPolicy) DefaultMode() string {
+	switch {
+	case p.Has(CapExec):
+		return ModeFull
+	case p.Has(CapFSWrite):
+		return ModeWrite
+	case p.Has(CapFSRead):
+		return ModeRead
+	default:
+		return ModeFull
+	}
+}
+
 // DefaultToolPolicyBudgets are the limits applied when a policy leaves a
 // budget at zero. A built-in agent runs a model loop with no user watching the
 // intermediate steps, so an unbounded loop is never the safe default.

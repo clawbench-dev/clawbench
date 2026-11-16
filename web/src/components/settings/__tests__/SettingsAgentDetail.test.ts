@@ -135,6 +135,9 @@ vi.mock('@/composables/useAgents', async () => {
       deleteAgent: mockDeleteAgent,
       duplicateAgent: mockDuplicateAgent,
       defaultAgentId: mockDefaultAgentId,
+      // The mode picker asks the acpStates cache; the mock reports no modes so
+      // the row is simply absent (the tests that need it can override).
+      getAgentAvailableModes: () => [],
     }),
     populateACPStateFromCache: mockPopulateACPStateFromCache,
   }

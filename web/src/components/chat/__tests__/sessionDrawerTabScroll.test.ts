@@ -48,6 +48,7 @@ vi.mock('@/composables/useAgents', () => ({
     canRefreshModels: () => false,
     canRefreshAgentState: () => false,
     supportsACP: () => true,
+    isBuiltinAgent: () => false,
     supportsCLI: () => true,
     getAgentTransport: () => 'acp-stdio',
   }),

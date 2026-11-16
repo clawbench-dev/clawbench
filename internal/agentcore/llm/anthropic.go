@@ -48,6 +48,27 @@ type anRequest struct {
 	MaxTokens   int         `json:"max_tokens"`
 	Stream      bool        `json:"stream"`
 	Temperature float64     `json:"temperature,omitempty"`
+	// Thinking turns on extended reasoning. Omitted for "auto".
+	Thinking *anThinking `json:"thinking,omitempty"`
+}
+
+// anThinking is the Anthropic extended-thinking switch.
+//
+// Two constraints come with it, both enforced in buildBody: max_tokens must be
+// strictly greater than budget_tokens, and temperature must be 1.
+type anThinking struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens"`
+}
+
+// thinkingBudgets maps a user-facing level to a token budget. High stays below
+// the largest models' ceilings on purpose: an older model then rejects the
+// request with a message the user can act on (pick a lower level), instead of
+// a number no model accepts.
+var thinkingBudgets = map[string]int{
+	EffortLow:    1024,
+	EffortMedium: 4096,
+	EffortHigh:   8192,
 }
 
 type anMessage struct {
@@ -70,6 +91,9 @@ type anBlock struct {
 	ToolUseID string    `json:"tool_use_id,omitempty"`
 	Content   []anBlock `json:"content,omitempty"`
 	IsError   bool      `json:"is_error,omitempty"`
+	// thinking
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 type anImageSource struct {
@@ -101,6 +125,7 @@ type anStreamEvent struct {
 		Type        string `json:"type"`
 		Text        string `json:"text"`
 		Thinking    string `json:"thinking"`
+		Signature   string `json:"signature"`
 		PartialJSON string `json:"partial_json"`
 	} `json:"delta"`
 	// message_delta
@@ -157,14 +182,28 @@ func (c *anthropicClient) buildBody(req Request) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	maxTokens := resolveMaxTokens(req)
+	temperature := resolveTemperature(req)
+	var thinking *anThinking
+	if budget, ok := thinkingBudgets[normalizeEffort(req.ReasoningEffort)]; ok {
+		// The API rejects max_tokens <= budget_tokens, so grow the cap when the
+		// caller's default is too small to hold the thinking plus an answer.
+		if maxTokens <= budget {
+			maxTokens = budget + 4096
+		}
+		// Extended thinking requires temperature 1; any other value is a 400.
+		temperature = 1
+		thinking = &anThinking{Type: "enabled", BudgetTokens: budget}
+	}
 	body := anRequest{
 		Model:    c.cfg.Model,
 		System:   req.System,
 		Messages: msgs,
 		Stream:   true,
 		// max_tokens is REQUIRED by this API; there is no server default.
-		MaxTokens:   resolveMaxTokens(req),
-		Temperature: resolveTemperature(req),
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
+		Thinking:    thinking,
 	}
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, anTool{
@@ -239,6 +278,14 @@ func (c *anthropicClient) buildMessages(req Request) ([]anMessage, error) {
 			var blocks []anBlock
 			for _, p := range m.Parts {
 				switch {
+				case p.Thinking != nil:
+					// Replayed verbatim, signature included: this API rejects a
+					// tool-use turn whose thinking block was dropped.
+					blocks = append(blocks, anBlock{
+						Type:      "thinking",
+						Thinking:  p.Thinking.Text,
+						Signature: p.Thinking.Signature,
+					})
 				case p.ToolCall != nil:
 					input := json.RawMessage(p.ToolCall.Arguments)
 					if len(input) == 0 || !json.Valid(input) {
@@ -420,6 +467,15 @@ func (c *anthropicClient) readStream(ctx context.Context, body io.Reader, ch cha
 				if ev.Delta.Thinking != "" {
 					sawAny = true
 					if !emit(ctx, ch, Event{Kind: KindReasoning, Reasoning: ev.Delta.Thinking}) {
+						return
+					}
+				}
+			case "signature_delta":
+				// The signature closes the thinking block. It must travel with
+				// the block when the turn also calls a tool, or the next round
+				// is rejected.
+				if ev.Delta.Signature != "" {
+					if !emit(ctx, ch, Event{Kind: KindReasoningSignature, Signature: ev.Delta.Signature}) {
 						return
 					}
 				}

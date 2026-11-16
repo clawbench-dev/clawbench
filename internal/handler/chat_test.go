@@ -5081,3 +5081,50 @@ func TestSessionStateSnapshot_FallsBackWhenCachedModeHasNoSelection(t *testing.T
 	assert.Equal(t, "bypassPermissions", mode.CurrentModeID,
 		"a cached list with no selection must not hide the persisted choice")
 }
+
+// TestSessionStateSnapshot_BuiltinOptionsSurviveCLITransport pins the exception
+// to the "cli means no ACP state" rule: the built-in agent runs in-process, so
+// its transport is always cli, yet its mode/thinking options are defined by this
+// build and must reach the drawer. Without the exception the two tabs render
+// "not available" for the one backend whose options we fully control.
+func TestSessionStateSnapshot_BuiltinOptionsSurviveCLITransport(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const agentID = "builtin-snapshot"
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	model.Agents[agentID] = &model.Agent{
+		ID:             agentID,
+		Backend:        "builtin",
+		BuiltinBackend: true,
+		// A read-only grant: the derived default mode must be read, not full.
+		ToolPolicy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	}
+	defer delete(model.Agents, agentID)
+
+	sessionID, err := service.CreateSession(env.ProjectDir, agentID, "builtin snapshot", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	st := sessionStateSnapshot(sessionID, agentID, "cli")
+
+	mode, ok := st.Mode.(*ai.ModeState)
+	require.True(t, ok, "the built-in agent must report modes even on cli, got %T", st.Mode)
+	require.Len(t, mode.AvailableModes, 3)
+	assert.Equal(t, model.ModeRead, mode.CurrentModeID, "the default must follow the read-only grant")
+
+	effort, ok := st.Effort.(*ai.ThinkingEffortState)
+	require.True(t, ok, "the built-in agent must report thinking levels on cli, got %T", st.Effort)
+	require.Len(t, effort.AvailableLevels, 4)
+
+	// A persisted selection must not wipe the option list. The stored patch
+	// only carries currentModeId (no ACP event ever supplied availableModes for
+	// this backend), so the resolved list has to survive the DB fallback.
+	persistContextStateModeChange(sessionID, model.ModeWrite)
+	st = sessionStateSnapshot(sessionID, agentID, "cli")
+	persisted, ok := st.Mode.(*service.ModeStatePersist)
+	require.True(t, ok, "the DB fallback answers with the persisted shape, got %T", st.Mode)
+	assert.Equal(t, model.ModeWrite, persisted.CurrentModeID)
+	assert.Len(t, persisted.AvailableModes, 3, "the persisted selection must keep the static option list")
+}

@@ -418,7 +418,7 @@ import ActionBar from '@/components/common/ActionBar.vue'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, cruise, toggleCruise, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
-const { supportsACP, hasPreferredMode, getAgentAvatar } = useAgents()
+const { supportsACP, hasPreferredMode, getAgentAvatar, isBuiltinAgent } = useAgents()
 const toast = useToast()
 const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
 
@@ -426,6 +426,9 @@ const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
 // Used for mode chips — these are ACP features
 // that apply regardless of the current session's transport mode.
 const isACP = computed(() => supportsACP(props.currentAgentId || ''))
+// The built-in agent defines its own modes even though it never speaks ACP, so
+// the mode chip must not be gated on ACP alone.
+const isBuiltin = computed(() => isBuiltinAgent(props.currentAgentId || ''))
 
 // isACPTransport: true when the current session is using ACP transport.
 // Slash commands are only available in ACP transport mode — even if the
@@ -474,7 +477,7 @@ const freeDialogTitle = computed(() => {
   }
 })
 
-const showModeInfo = computed(() => isACP.value && (availableModes.value.length > 0 || hasPreferredMode(props.currentAgentId || '')))
+const showModeInfo = computed(() => (isACP.value || isBuiltin.value) && (availableModes.value.length > 0 || hasPreferredMode(props.currentAgentId || '')))
 
 function onModeClick() {
   if (modeMouseLongFired) {

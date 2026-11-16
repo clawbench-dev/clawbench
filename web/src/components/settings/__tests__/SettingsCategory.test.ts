@@ -124,6 +124,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgent: (agentId: string) => {
       return mockAgents.find(a => a.id === agentId) || null
     },
+    getAgentAvailableModes: () => [],
   }),
 }))
 
