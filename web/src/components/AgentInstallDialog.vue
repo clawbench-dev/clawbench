@@ -269,7 +269,9 @@ onBeforeUnmount(() => {
   line-height: var(--line-height-normal);
   color: var(--text-secondary, #555);
   white-space: pre-wrap;
-  word-break: break-word;
+  /* `break-word` is deprecated for word-break; overflow-wrap does the same job
+     and is what every other wrapping surface in the app uses. */
+  overflow-wrap: anywhere;
 }
 
 .install-actions {
