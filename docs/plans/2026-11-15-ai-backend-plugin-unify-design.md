@@ -90,6 +90,10 @@
   同时改了三张测试的期望值（`ProtocolSupportsAuthMode`、`TestProviderRejectsDeadAuthMode`、
   `TestProvidersAPI_InvalidAuthModeCarriesField`），已与 main 对齐。
 - 本分支删除了 `model/catalogs.go`，main 未改动该文件，不会冲突。
+- `service/provider_config.go` 的 `ApplyProviderConfigToBackend` 在本分支还写死
+  `if backend == backendCodex`；main 已把它泛化成配置目录机制（claude / kimi / pi /
+  codebuddy 都支持）。**合并时用 main 的版本，不要在分支上重复实现一遍**——那只会
+  制造第二个冲突点。
 
 **测试环境的两处既有失败**（与本改造无关，在主仓同样可复现或可解释）：
 
