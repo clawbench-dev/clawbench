@@ -663,8 +663,9 @@ const serverDefaults: Record<string, unknown> = {
   'share.enabled': true,
   'kb.enabled': true,
   // Knowledge-base index tuning. Mirrors model.ApplyDefaults — the rows used to
-  // have no UI at all, so these are the first values anyone sees.
-  'kb.auto_inject': true,
+  // have no UI at all, so these are the first values anyone sees. Auto-inject is
+  // opt-in (default off), so a fresh install never prepends snippets silently.
+  'kb.auto_inject': false,
   'kb.inject_top_n': 4,
   'kb.inject_max_chars': 2000,
   'kb.inject_min_similarity': 0.35,

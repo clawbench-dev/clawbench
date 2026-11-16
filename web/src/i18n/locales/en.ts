@@ -3546,7 +3546,7 @@ export default {
       kbManageDesc: 'Collections, files and search live in the Knowledge Base panel on the left; this page only shows global index status, the rebuild action and the indexing parameters. The embedding service is configured on the Text Embedding page and shared with session indexing.',
       kbInjectSection: 'Auto-inject',
       kbAutoInject: 'Inject knowledge base content',
-      kbAutoInjectDesc: 'Before each turn, prepend the retrieved knowledge-base snippets to your message. Individual collections can still opt out.',
+      kbAutoInjectDesc: 'Before each turn, prepend the retrieved knowledge-base snippets to your message (off by default). Individual collections can still opt out.',
       kbInjectTopN: 'Snippets per turn',
       kbInjectTopNDesc: 'How many snippets a single turn may inject (default 4). More snippets means more context, and more of the model\'s input budget.',
       kbInjectMaxChars: 'Total injected characters',

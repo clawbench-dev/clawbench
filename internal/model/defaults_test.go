@@ -2048,8 +2048,11 @@ func TestApplyDefaults_MeetingClampsAndSanitizes(t *testing.T) {
 func TestApplyDefaults_KnowledgeBase(t *testing.T) {
 	cfg := Config{}
 	ApplyDefaults(&cfg, map[string]bool{})
-	if !cfg.KB.Enabled || !cfg.KB.AutoInject {
-		t.Fatalf("KB switches must default to true: %+v", cfg.KB)
+	if !cfg.KB.Enabled {
+		t.Fatalf("KB master switch must default to true: %+v", cfg.KB)
+	}
+	if cfg.KB.AutoInject {
+		t.Fatalf("KB auto-inject must default to false (opt-in): %+v", cfg.KB)
 	}
 	if cfg.KB.InjectTopN != 4 || cfg.KB.InjectMaxChars != 2000 {
 		t.Fatalf("unexpected injection defaults: %+v", cfg.KB)

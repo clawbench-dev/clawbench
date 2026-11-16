@@ -114,6 +114,13 @@
       <span class="chat-file-changes-count count-badge count-badge--md">{{ fileChanges.created.length + fileChanges.modified.length }}</span>
     </button>
 
+    <!-- Knowledge-base citations for THIS reply. The chip states how many
+         passages were prepended to the prompt; expanding it shows the exact
+         snippets. Sits INSIDE the bubble and right after the file-changes
+         banner: both are "what this turn touched", so they read as one block at
+         the bottom of the reply instead of floating on the panel background. -->
+    <ChatKBRefs v-if="msg.role === 'assistant' && kbRefs.length > 0" :refs="kbRefs" />
+
     <!-- Injected-into-running-reply marker (user bubbles only). A mid-turn
          injection that MERGED into the running reply (claude/codex: no split
          boundary) lands AFTER the still-streaming assistant reply with nothing
@@ -198,12 +205,6 @@
       <span v-else-if="usageTail.cost" class="chat-usage-money is-cost">{{ usageTail.cost }}</span>
     </div>
     </div><!-- /.msg-card -->
-
-    <!-- Knowledge-base citations for THIS reply. The chip states how many
-         passages were prepended to the prompt; expanding it shows the exact
-         snippets. It sits outside the bubble so the source cards read on the
-         panel background, and before the meta bar so the actions stay last. -->
-    <ChatKBRefs v-if="msg.role === 'assistant' && kbRefs.length > 0" :refs="kbRefs" />
 
     <!-- ── Meta bar (OUTSIDE the bubble, both roles) ──
          Assistant: duration + friendly time on the left, actions on the right.

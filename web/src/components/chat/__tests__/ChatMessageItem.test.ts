@@ -1881,17 +1881,40 @@ describe('ChatMessageItem — knowledge-base citations', () => {
     },
   }
 
-  it('shows the citation chip below the bubble and expands to the snippet', async () => {
+  it('shows the citation chip INSIDE the bubble and expands to the snippet', async () => {
     const wrapper = createWrapper({ msg: withRefs, index: 0, active: true })
 
     const toggle = wrapper.find('[data-action="toggle-kb-refs"]')
     expect(toggle.exists()).toBe(true)
+    expect(wrapper.find('.msg-card .chat-kb-refs').exists()).toBe(true)
     expect(toggle.text()).toContain('参考了知识库 · 1 段')
 
     await toggle.trigger('click')
     expect(wrapper.find('.chat-kb-ref-title').text()).toBe('handbook.md')
     expect(wrapper.find('.chat-kb-ref-location').text()).toBe('第 1–3 行')
     expect(wrapper.find('.chat-kb-ref-text').text()).toBe('报销流程：先提交申请。')
+  })
+
+  it('sits after the file-changes banner inside the same bubble', () => {
+    const wrapper = createWrapper({
+      msg: {
+        ...withRefs,
+        id: 81,
+        blocks: [
+          { type: 'text', text: 'answer' },
+          { type: 'tool_use', id: 't1', name: 'Write', done: true, input: { file_path: '/p/a.md' } },
+        ],
+      },
+      index: 0,
+      active: true,
+    })
+
+    const card = wrapper.find('.msg-card')
+    const order = Array.from(card.element.children).map((el) => el.className)
+    const banner = order.findIndex((c) => c.includes('chat-file-changes-banner'))
+    const refs = order.findIndex((c) => c.includes('chat-kb-refs'))
+    expect(banner).toBeGreaterThanOrEqual(0)
+    expect(refs).toBeGreaterThan(banner)
   })
 
   it('renders no chip when the turn had no refs', () => {

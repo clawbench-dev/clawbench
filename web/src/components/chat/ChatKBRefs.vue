@@ -1,8 +1,9 @@
 <template>
   <div v-if="refs.length" class="chat-kb-refs">
-    <!-- Quiet citation line under the reply. The chip states how many passages
-         were prepended to the prompt; expanding it shows the exact snippets so
-         the reader can audit a claim without leaving the conversation. -->
+    <!-- Quiet citation line at the bottom of the reply bubble (inside .msg-card,
+         after the file-changes banner). The chip states how many passages were
+         prepended to the prompt; expanding it shows the exact snippets so the
+         reader can audit a claim without leaving the conversation. -->
     <button
       type="button"
       class="chat-kb-refs-toggle"
@@ -94,8 +95,9 @@ function refHtml(text: string): string {
 
 <style scoped>
 .chat-kb-refs {
+  /* Lives inside the message bubble, whose .msg-card already carries the
+     horizontal padding — adding our own would double-indent the chip. */
   margin-top: var(--space-2);
-  padding: 0 var(--space-6);
 }
 
 .chat-kb-refs-toggle {

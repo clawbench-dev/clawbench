@@ -3544,7 +3544,7 @@ export default {
       kbManageDesc: '知识库的集合、文件和搜索都在左侧「知识库」面板里管理；这里只放全局索引状态、重建操作和索引参数。嵌入服务在「文本嵌入」页配置，知识库和会话索引共用那一份。',
       kbInjectSection: '自动注入',
       kbAutoInject: '自动注入知识库内容',
-      kbAutoInjectDesc: '每轮对话前，把检索到的知识库片段拼到你的消息前面。单个知识库还可以单独关掉。',
+      kbAutoInjectDesc: '每轮对话前，把检索到的知识库片段拼到你的消息前面（默认关闭）。单个知识库还可以单独关掉。',
       kbInjectTopN: '每次注入几段',
       kbInjectTopNDesc: '一轮最多注入几个片段（默认 4）。数值越大上下文越全，也越占模型的输入长度。',
       kbInjectMaxChars: '注入总字数上限',

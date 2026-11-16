@@ -266,6 +266,21 @@ test.describe('Knowledge base end to end', () => {
         await expect(doc.locator('.kb-status')).toHaveClass(/kb-status--(fts|ready)/, { timeout: 30000 })
       })
 
+      await test.step('turn on the global auto-injection switch', async () => {
+        // kb.auto_inject is opt-in (default off); the per-collection toggle only
+        // refines it, so the global switch must be on before either branch below
+        // can prove anything about the per-collection gate.
+        const status = await page.evaluate(async () => {
+          const resp = await fetch('/api/config', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kb: { auto_inject: true } }),
+          })
+          return resp.status
+        })
+        expect(status).toBe(200)
+      })
+
       await test.step('with auto-injection off, a reply carries no citation marker', async () => {
         await page.locator('[data-action="kb-toggle-auto-inject"]').click()
         await expect(page.locator('[data-action="kb-toggle-auto-inject"]')).toHaveClass(/is-off/)

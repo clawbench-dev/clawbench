@@ -131,7 +131,7 @@ flowchart TD
 
 ### 聊天自动带片段
 
-- 总开关 `kb.auto_inject`（默认开）+ 每个库的 `auto_inject` 开关。
+- 总开关 `kb.auto_inject`（默认关，opt-in）+ 每个库的 `auto_inject` 开关。
 - 时机：每次用户发消息，用这句话检索「当前项目库 + 全局库」。
 - 预算：`inject_top_n`（默认 4 段）、`inject_max_chars`（默认 2000 字）、同一文件最多 2 段、纯语义命中低于 `inject_min_similarity`（默认 0.35）不带。
 - 时限：1.5 秒。超时、嵌入服务不可用或没有命中都返回空，**绝不阻塞聊天**。
