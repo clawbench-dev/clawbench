@@ -176,7 +176,7 @@ const i18n = createI18n({
         subagentSteps: '{count} steps',
         subagentExpand: 'Expand sub-agent output',
         subagentCollapse: 'Collapse sub-agent output',
-        toolGroupSteps: '{count} step | {count} steps',
+        toolGroupSteps: 'Completed {count} step | Completed {count} steps',
         toolGroupStepIndex: 'Step {count}',
         toolGroupFailed: '{count} failed',
         toolGroupInterrupted: '{count} interrupted',
@@ -4115,8 +4115,8 @@ describe('compact tool calls', () => {
     expect(row.exists()).toBe(true)
     expect(row.attributes('data-tool-count')).toBe('3')
     // A settled run reports its steps the way a sub-agent row does: "3 steps".
-    expect(row.find('.tool-name').text()).toBe('3 steps')
-    expect(row.find('.chat-tool-group-strip').attributes('aria-label')).toContain('3 steps')
+    expect(row.find('.tool-name').text()).toBe('Completed 3 steps')
+    expect(row.find('.chat-tool-group-strip').attributes('aria-label')).toContain('Completed 3 steps')
     // The individual pills are gone — the row IS the run.
     expect(wrapper.findAll('.chat-tool-call')).toHaveLength(1)
   })
@@ -4134,7 +4134,7 @@ describe('compact tool calls', () => {
     })
     await nextTick()
     const strip = wrapper.find('.chat-tool-group-strip')
-    expect(strip.find('.tool-name').text()).toBe('2 steps')
+    expect(strip.find('.tool-name').text()).toBe('Completed 2 steps')
     expect(strip.find('.tool-summary').text()).toBe('Bash · rebuild the frontend')
   })
 
@@ -4180,7 +4180,7 @@ describe('compact tool calls', () => {
     expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
     // Counts only — the row is a summary, not a log line. Thinking chips ride
     // along in the run but are not steps, so they are not counted.
-    expect(row.find('.tool-name').text()).toBe('2 steps')
+    expect(row.find('.tool-name').text()).toBe('Completed 2 steps')
     expect(row.text()).not.toContain('thought')
   })
 
@@ -4193,7 +4193,7 @@ describe('compact tool calls', () => {
     })
     await nextTick()
     expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
-    expect(wrapper.find('[data-tool-group] .tool-name').text()).toBe('1 step')
+    expect(wrapper.find('[data-tool-group] .tool-name').text()).toBe('Completed 1 step')
   })
 
   it('becomes the deep-thinking chip itself while only a thinking block runs', async () => {
@@ -4268,12 +4268,12 @@ describe('compact tool calls', () => {
       await strip.trigger('click')
       vi.advanceTimersByTime(200)
       await nextTick()
-      expect(strip.find('.tool-name').text()).toBe('2 steps')
-      // No live-step detail, no live-step colour, no live-step name or glyph:
-      // the header is a summary now.
+      expect(strip.find('.tool-name').text()).toBe('Completed 2 steps')
+      // No live-step detail, no live-step colour, no live-step name: the header
+      // is a summary now, and its glyph is the generic stack one.
       expect(strip.find('.tool-summary').exists()).toBe(false)
       expect(strip.attributes('data-category')).toBeUndefined()
-      expect(strip.element.querySelector(':scope > .tool-icon')).toBeNull()
+      expect(strip.element.querySelector(':scope > .lucide-layers')).not.toBeNull()
 
       // Folding it back makes it a live pill again.
       await strip.trigger('click')
@@ -4286,18 +4286,19 @@ describe('compact tool calls', () => {
     }
   })
 
-  it('drops the leading glyph once the run settles — the step count speaks for itself', async () => {
+  it('wears the generic stack glyph once the run settles', async () => {
     // A finished run mixes categories (file / bash / search), so no single
-    // tool's icon can stand for it. The row says how many steps it took, the
-    // same way a sub-agent row does, with nothing in the leading slot.
+    // tool's icon (and not the brain) can stand for it — the stack glyph says
+    // "a run of steps" and the label says how many.
     const wrapper = mountBlocks({
       blocks: [tool('Read', 't1'), thinking('th1')],
     })
     await nextTick()
     const strip = wrapper.find('.chat-tool-group-strip')
     expect(strip.attributes('data-category')).toBeUndefined()
-    expect(strip.element.querySelector(':scope > .tool-icon')).toBeNull()
-    expect(strip.find('.tool-name').text()).toBe('1 step')
+    expect(strip.element.querySelector(':scope > .lucide-layers')).not.toBeNull()
+    expect(strip.element.querySelector(':scope > .lucide-brain')).toBeNull()
+    expect(strip.find('.tool-name').text()).toBe('Completed 1 step')
   })
 
   it('unfolds the run in place, keeping every block reachable', async () => {

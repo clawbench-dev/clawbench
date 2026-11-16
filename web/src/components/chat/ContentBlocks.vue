@@ -147,11 +147,12 @@
                its summary — plus "第 N 步" in the tail, so a long run still says
                where it is. Between steps only a thought is live, and the row IS
                that chip (brain + 深度思考).
-               Once settled (or unfolded) the header is a static summary: how many
-               steps the run took, exactly like a sub-agent row ("N 步"). Thoughts
-               are not counted — they are not steps the reader tracks, and the
-               chips themselves are one click away in the body. -->
-          <component v-if="!groupHeaderIsSummary(group)" :is="groupLeadingIcon(group)" :size="12" class="tool-icon" />
+               Once settled (or unfolded) the header is a static summary: the
+               generic stack glyph (the run mixes categories) and "已完成 N 步",
+               like a sub-agent row. Thoughts are not counted — they are not
+               steps the reader tracks, and the chips themselves are one click
+               away in the body. -->
+          <component :is="groupLeadingIcon(group)" :size="12" class="tool-icon" />
           <!-- One rolling label for both shapes, so the switch from the last
                step's name to "N 步" rolls instead of snapping. -->
           <RollingText class="tool-name" :text="toolGroupTitle(group)" />
@@ -646,7 +647,7 @@ import { detectAskQuestion } from '@/utils/streamPerf.ts'
 import { askItemsToInputMap } from '@/utils/askQuestion.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
-import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, CircleSlash, Bot, Wrench, Sparkles, Users } from 'lucide-vue-next'
+import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, CircleSlash, Bot, Wrench, Sparkles, Users, Layers } from 'lucide-vue-next'
 import RichTextBlock from '@/components/chat/RichTextBlock.vue'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoginCommandButton from '@/components/chat/LoginCommandButton.vue'
@@ -1967,9 +1968,9 @@ function toolGroupLabel(group: ToolCallGroup): string {
   return parts.join(' · ')
 }
 
-/** How many steps the run took — the same "N 步" a sub-agent row shows. A run
- *  made only of thinking chips has no steps; it falls back to the chip's own
- *  name rather than claiming "0 步". */
+/** How many steps the run took — "已完成 12 步", the same shape a sub-agent row
+ *  uses. A run made only of thinking chips has no steps; it falls back to the
+ *  chip's own name rather than claiming "已完成 0 步". */
 function toolGroupStepLabel(group: ToolCallGroup): string {
   if (group.toolCount <= 0) return t('chat.message.deepThinking')
   return t('chat.contentBlocks.toolGroupSteps', group.toolCount, { named: { count: group.toolCount } })
@@ -2037,11 +2038,12 @@ function groupAccentCategory(group: ToolCallGroup): string | undefined {
   return 'thinking'
 }
 
-/** Leading glyph while a step is live: the running tool's own icon; the
- *  deep-thinking brain while only a thinking chip runs (the row then IS that
- *  chip). A settled header has no leading glyph at all — "N 步" is the whole
- *  label, exactly like a sub-agent row. */
+/** Leading glyph: the running tool's own icon; the deep-thinking brain while
+ *  only a thinking chip runs (the row then IS that chip); the generic stack
+ *  glyph once the header is a summary — a finished run mixes categories, so no
+ *  single tool's icon can stand for it. */
 function groupLeadingIcon(group: ToolCallGroup) {
+  if (groupHeaderIsSummary(group)) return Layers
   if (group.runningToolName) return getToolIcon(group.runningToolName).icon
   return Brain
 }
@@ -3451,7 +3453,7 @@ onUnmounted(() => {
 }
 
 /* While a tool runs the name takes that tool's accent, exactly like the
-   standalone pill. (A settled header's name is "N 步" and has no accent.) */
+   standalone pill. (A settled header's name is "已完成 N 步" and has no accent.) */
 .chat-tool-group-strip:not([data-category]) .tool-name {
   color: var(--text-secondary);
   transition: color var(--duration-slow) ease;

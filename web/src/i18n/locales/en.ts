@@ -1611,7 +1611,7 @@ export default {
       subagentSteps: '{count} steps',
       subagentExpand: 'Expand sub-agent output',
       subagentCollapse: 'Collapse sub-agent output',
-      toolGroupSteps: '{count} step | {count} steps',
+      toolGroupSteps: 'Completed {count} step | Completed {count} steps',
       toolGroupStepIndex: 'Step {count}',
       toolGroupFailed: '{count} failed',
       toolGroupInterrupted: '{count} interrupted',
