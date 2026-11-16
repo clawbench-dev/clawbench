@@ -85,6 +85,10 @@ func init() {
 			// passed through — full BYOK still requires the CLI's own
 			// configuration.
 			KeyOnly: "COMMAND_CODE_API_KEY",
+			// The private protocol hides the endpoint-shaped fields: Command Code's
+			// credential always goes to its own service, and full BYOK still needs
+			// its config files (see above).
+			OwnServiceEnv: "COMMAND_CODE_API_KEY",
 		},
 	})
 }

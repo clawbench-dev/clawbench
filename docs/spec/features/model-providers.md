@@ -42,9 +42,9 @@
 | pi | **配置目录** | `models.json` + `PI_CODING_AGENT_DIR` |
 | deepseek (codewhale) / dsh / hermes | openai | `OPENAI_BASE_URL` / `OPENAI_API_KEY` |
 | grok | openai | `GROK_XAI_API_BASE_URL` / `XAI_API_KEY` |
-| antigravity | gemini | `GOOGLE_GEMINI_BASE_URL` / `GEMINI_API_KEY` |
-| cursor | key-only | `CURSOR_API_KEY`（不支持自定义端点） |
-| commandcode | key-only | `COMMAND_CODE_API_KEY`（完整 BYOK 仍需其 providers.json） |
+| antigravity | gemini | `GOOGLE_GEMINI_BASE_URL` / `GEMINI_API_KEY`；也支持私有协议 |
+| cursor | key-only | `CURSOR_API_KEY`（不支持自定义端点）；也支持私有协议 |
+| commandcode | key-only | `COMMAND_CODE_API_KEY`（完整 BYOK 仍需其 providers.json）；也支持私有协议 |
 | codex | **配置文件** | `~/.codex/config.toml` 托管块 + `CLAWBENCH_PROVIDER_API_KEY` |
 | copilot / qoder / qodercn / vecli / openclaw / custom-acp | 不支持 | 绑定时 400 `ProviderUnsupported` |
 
@@ -202,20 +202,25 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 | GET/PUT/DELETE | `/api/providers/{id}` | 详情 / 更新（`apiKey` 空=不变，`clearApiKey`）/ 删除（被引用 409） |
 | PATCH | `/api/agents` | 新增 `provider_id`（null 清除） |
 
-## 私有协议（CodeBuddy 自有 Token）
+## 私有协议（自有 Token）
 
 提供商表单的协议除了 anthropic / openai / gemini，还有一个 **私有协议**（`private`）。它不是线上协议，
 而是「这份凭据属于该后端自己的官方服务」：没有端点可填、没有认证方式可选、也不需要列模型。
 
-CodeBuddy 的 `ProviderEnv` 声明了 `OwnServiceEnv` / `OwnServiceExtra`（`internal/ai/backends/codebuddy/cli.go`）：
+每个支持它的后端在 `ProviderEnv` 里声明 `OwnServiceEnv`（要注入的变量）和可选的 `OwnServiceExtra`
+（固定开关）：
 
-- 私有协议 → **跳过配置目录写入**（它的 `models.json` 要求每个模型自带 URL，装不下这种模式），
-  改为注入 `CODEBUDDY_API_KEY=<key>` + `CODEBUDDY_INTERNET_ENVIRONMENT=cloudhosted`；
-- 其他协议 → 仍是普通自定义端点绑定，走配置目录，和以前一样（要列模型）；
-- `SupportedProtocols` 只对声明了 `OwnServiceEnv` 的后端列出 `private`，所以只有 CodeBuddy 的智能体能选到它；
-  绑定时也不会弹「要写配置文件」的确认框。
+| 后端 | 注入 | 说明 |
+|---|---|---|
+| codebuddy | `CODEBUDDY_API_KEY` + `CODEBUDDY_INTERNET_ENVIRONMENT=cloudhosted` | 还要**跳过配置目录写入**（它的 `models.json` 要求每个模型自带 URL，装不下这种模式） |
+| cursor | `CURSOR_API_KEY` | 本来就没有自定义端点 |
+| commandcode | `COMMAND_CODE_API_KEY` | 完整 BYOK 仍需它自己的配置文件，私有协议只负责凭据 |
+| antigravity | `GEMINI_API_KEY` | 走 Google 自己的服务 |
 
-一个私有协议的提供商可以绑给多个 CodeBuddy 智能体，换 Token 只改一处——和其他智能体的「自有 key」完全同一套机制。
+`SupportedProtocols` 只对声明了 `OwnServiceEnv` 的后端列出 `private`；其他后端的智能体看不到、也绑不上。
+绑定时都不会弹「要写配置文件」的确认框。
+
+一个私有协议的提供商可以绑给同一后端的多个智能体，换 key 只改一处——和其他智能体的「自有 key」完全同一套机制。
 表单在选中私有协议后会隐藏端点、认证方式、模型和「测试连接」，提交时强制 `base_url=''`、`auth_mode=auto`。
 
 ## 前端

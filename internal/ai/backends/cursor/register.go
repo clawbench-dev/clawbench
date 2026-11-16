@@ -66,6 +66,10 @@ func init() {
 		},
 		ProviderEnv: &model.ProviderEnvSpec{
 			KeyOnly: "CURSOR_API_KEY",
+			// The private protocol is the same credential with the endpoint-shaped
+			// fields hidden: cursor has no custom endpoint, so "use the official
+			// service with my key" is the only meaningful binding.
+			OwnServiceEnv: "CURSOR_API_KEY",
 		},
 	})
 }

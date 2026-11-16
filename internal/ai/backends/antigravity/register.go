@@ -60,6 +60,9 @@ func init() {
 		ProviderEnv: &model.ProviderEnvSpec{
 			Gemini:  model.ProtoEnv("GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY", ""),
 			KeyOnly: "GEMINI_API_KEY",
+			// The private protocol is the account key with the endpoint fields
+			// hidden: it always talks to Google's own service.
+			OwnServiceEnv: "GEMINI_API_KEY",
 		},
 	})
 }
