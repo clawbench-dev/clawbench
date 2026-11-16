@@ -102,6 +102,50 @@
 - 6 个 `TestServeSharePage_*` / `TestSharePage_*`：需要 `internal/frontend/dist` 里有
   构建产物，全新 worktree 里那是空目录。跑过 `npm run build` 即消失。
 
+## 0.5 旧测试有没有跟着搬（2026-11-16 审计）
+
+按**测试函数名**和**每个函数里的断言条数**逐条对比改造前后（基线 `4ce9378c4`）：
+
+| 指标 | 改造前 | 现在 |
+|---|---|---|
+| 测试函数名（去重） | 13,595 | 13,600 |
+| 断言总数（`assert.` / `require.`） | 38,872 | 38,878 |
+| `t.Skip` | 366 | 366 |
+| 新增 `//go:build` 标签 | — | 0 |
+
+**基线里有、现在没有的用例只有 12 个**，全部有对等物：
+
+- 11 个 `TestScanCodeBuddyPluginCommands_*` → 改名为 `TestScanPluginCommands_*`
+  （文件搬进 `backends/codebuddy/`，包名已经是 codebuddy，前缀多余）。
+  逐条断言数完全一致：12/1/3/4/6/3/4/5/6/3/1 = 48 条，一条没少。
+- `TestIsCodeBuddyBackend` → 被测的 `isCodeBuddyBackend()` 已经不存在（团队桥接现在只
+  可能由 codebuddy 插件触发）。它保护的行为由
+  `TestMapACPSessionUpdate_TeamUpdateIgnoredForOtherBackends` 覆盖。
+
+三个被删的测试文件（`acp_coverage_test.go` / `acp_per_agent_tool_test.go` /
+`codebuddy_team_bridge_test.go`，共 43 个用例）全部能在新包里按名字找到。
+
+**审计中发现并修掉的真问题**：带 `//go:build integration` 的测试默认不参与
+`go test ./...`，所以这次搬迁把 3 个集成测试文件留在原地、引用了已经搬走的符号，
+而 CI 一直绿：
+
+- `integration_test.go`：手工注册了 10 个后端（模拟插件），搬走 `CodexBackend` /
+  `NewVeCLIBackend` / 4 个 StreamParser 后编译失败；即使能编译，也会因为插件已经
+  注册过而在 `init()` 里 panic。
+- `compact_probe_integration_test.go`：同样的手工注册（带幂等守卫，不会 panic，
+  但引用 `GrokStreamParser` 编译失败）。
+- `codebuddy_team_description_probe_integration_test.go`：引用 `parseTeamState` 与
+  `metaKeyCodeBuddyTeamUpdate`。
+
+修法不是把它们搬进子包（这些探针依赖 `internal/ai` 的私有连接/通知设施，搬走等于
+再造一套），而是**让它们用真插件**：删掉手工注册与镜像的 argv 构造器，`NewBackend(id)`
+直接走生产工厂；那个只需要三个字段的探针在本地读 `_meta`（并在注释里指向规范实现）。
+同时给 CI 加了一步 `go vet -tags integration ./...`——`go vet` 也会类型检查测试文件，
+以后再有符号搬走、集成测试掉队，PR 就会红。
+
+**注意**：集成测试的语义从「简化版后端」变成了「真后端」。它们本来就要连真 CLI 才能
+跑，所以需要在装了 CLI 的机器上重跑一遍；`cliTestConfig` 里那几个
+`HasTokenUsageInMeta` 之类的能力位是按旧解析器标的，可能要与真实输出对齐。
 
 ---
 

@@ -11,6 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// teamUpdateMetaKey is the _meta key carrying the roster snapshot. The canonical
+// reader is backends/codebuddy's parseTeamState, which this package cannot
+// import (ai → backends → ai), so this diagnostic probe reads only the three
+// fields it reports and mirrors the wire shape documented there.
+const teamUpdateMetaKey = "codebuddy.ai/teamUpdate"
+
 // TestCodebuddyACP_TeamMemberDescriptionProbe answers ONE question with real
 // wire data: does the roster's `description` equal the spawn frame's `prompt`?
 //
@@ -80,18 +86,27 @@ func TestCodebuddyACP_TeamMemberDescriptionProbe(t *testing.T) {
 		if info == nil {
 			continue
 		}
-		raw, ok := info.Meta[metaKeyCodeBuddyTeamUpdate].(map[string]any)
+		raw, ok := info.Meta[teamUpdateMetaKey].(map[string]any)
 		if !ok {
 			continue
 		}
-		state := parseTeamState(raw)
-		if state == nil {
+		typ, _ := raw["type"].(string)
+		if typ == "" {
 			continue
 		}
+		members, _ := raw["members"].([]any)
 		teamUpdates++
-		t.Logf("  team_update type=%q teamName=%q members=%d", state.Type, state.TeamName, len(state.Members))
-		for _, m := range state.Members {
-			roster = append(roster, rosterMember{m.Name, m.AgentType, m.Description})
+		t.Logf("  team_update type=%q teamName=%q members=%d", typ, metaString(raw["teamName"]), len(members))
+		for _, m := range members {
+			mm, ok := m.(map[string]any)
+			if !ok {
+				continue
+			}
+			name := metaString(mm["name"])
+			if name == "" {
+				continue
+			}
+			roster = append(roster, rosterMember{name, metaString(mm["agentType"]), metaString(mm["description"])})
 		}
 	}
 	t.Logf("=== teamUpdate snapshots: %d ===", teamUpdates)
