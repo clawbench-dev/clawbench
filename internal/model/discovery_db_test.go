@@ -56,6 +56,7 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			disabled INTEGER NOT NULL DEFAULT 0,
 			project_id INTEGER DEFAULT NULL,
 			provider_id INTEGER DEFAULT NULL,
+			codebuddy_token_mode INTEGER NOT NULL DEFAULT 0,
 			mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}',
 			tool_policy TEXT NOT NULL DEFAULT '{"allow":[]}',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

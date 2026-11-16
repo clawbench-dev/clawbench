@@ -935,7 +935,16 @@ var ConfigDirEnvForAgent func(backend, agentID string, p *Provider) ([]string, e
 func ProviderEnvForAgent(agentID, backendID string) ([]string, error) {
 	p := AgentProvider(agentID)
 	if p == nil {
-		return nil, nil
+		// CodeBuddy's own account token is the other credential source: it needs
+		// no provider row, but it is still environment the spawn must receive.
+		return CodeBuddyTokenEnv(GetAgent(agentID))
+	}
+	// The two sources are mutually exclusive (the settings picker and the PATCH
+	// handler both enforce it). A row that carries both is hand-edited state:
+	// refusing is the only honest answer, since either choice would silently
+	// ignore a credential the user configured.
+	if a := GetAgent(agentID); a != nil && a.CodeBuddyTokenMode {
+		return nil, fmt.Errorf("agent %s has both a model provider and CodeBuddy token mode enabled", agentID)
 	}
 	pinned := ""
 	if agent := GetAgent(agentID); agent != nil {

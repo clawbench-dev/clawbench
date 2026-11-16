@@ -260,6 +260,11 @@ type Config struct {
 	Skills      SkillsConfig      `yaml:"skills"`       // Cross-agent skill discovery (native dirs + custom dirs + git repos)
 	UsageMeter  UsageMeterConfig  `yaml:"usage_meter"`  // Periodic usage budget + over-plan notification
 	Drawio      DrawioConfig      `yaml:"drawio"`       // On-demand draw.io editor (downloaded, not embedded)
+	// CodeBuddy is the shared credential for CodeBuddy's own account token.
+	// It is a server-wide setting rather than a per-agent column because the
+	// token belongs to the account, not to one agent: every CodeBuddy agent that
+	// enables the own-token mode uses this same key.
+	CodeBuddy CodeBuddyConfig `yaml:"codebuddy"`
 	// MCP is the global MCP server list shared by every ACP agent. Agents only
 	// store a policy (all / none / selected), never the definitions — see
 	// internal/model/mcp.go. CLI backends ignore it: they have no mcpServers

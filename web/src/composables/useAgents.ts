@@ -128,8 +128,18 @@ interface AgentRecord {
   /** Backend takes only a credential (no endpoint slot): any provider without
    *  a base_url is a valid binding even though providerProtocols is empty. */
   providerKeyOnly?: boolean
+  /** True when this agent runs on the shared CodeBuddy account token instead of
+   *  a provider or the CLI's logged-in account. Mutually exclusive with providerId. */
+  codebuddyTokenMode?: boolean
+  /** True when this agent's backend offers the own-token mode (CodeBuddy only). */
+  codebuddyTokenSupported?: boolean
   /** True when the provider is applied by editing the CLI's config file (needs consent). */
   providerConfigBackend?: boolean
+  /** True when the backend gets a private config DIRECTORY per agent instead of
+   *  one shared file (needs its own consent wording). */
+  providerConfigDirBackend?: boolean
+  /** File (or file list) a binding would write, shown in the consent dialog. */
+  providerConfigPath?: string
   /**
    * Catalogue models shown while the backend has not reported its own list
    * (ACP before the first session). Configuration only — the turn keeps letting

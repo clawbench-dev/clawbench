@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	disabled INTEGER NOT NULL DEFAULT 0,
 	project_id INTEGER DEFAULT NULL,  -- NULL = global; value = project-only (see model.Agent.ProjectID)
 	provider_id INTEGER DEFAULT NULL,  -- NULL = use the CLI's own config; value = row in providers
+	codebuddy_token_mode INTEGER NOT NULL DEFAULT 0,  -- 1 = run on the shared CodeBuddy account token (config codebuddy.api_key)
 	mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}',  -- per-agent MCP policy (see model.MCPServerPolicy)
 	tool_policy TEXT NOT NULL DEFAULT '{"allow":[]}',  -- tool grant for the built-in backend (see model.ToolPolicy); empty = no tools
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -127,7 +128,8 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve, disabled, project_id,
-			provider_id, thinking_effort_by_model, mcp_servers, tool_policy
+			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
+			codebuddy_token_mode
 		FROM agents ORDER BY id
 	`)
 	if err != nil {
@@ -139,7 +141,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 	for rows.Next() {
 		a := &model.Agent{}
 		var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON, toolPolicyJSON string
-		var modelsAutoDetected, autoApprove, disabled int
+		var modelsAutoDetected, autoApprove, disabled, codebuddyTokenMode int
 		var projectID, providerID sql.NullInt64
 
 		err := rows.Scan(
@@ -150,6 +152,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.SortOrder,
 			&a.Transport, &a.AcpCommand, &autoApprove, &disabled, &projectID,
 			&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON,
+			&codebuddyTokenMode,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
@@ -158,6 +161,8 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		a.ModelsAutoDetected = modelsAutoDetected == 1
 		a.AutoApprove = autoApprove == 1
 		a.Disabled = disabled == 1
+		a.CodeBuddyTokenMode = codebuddyTokenMode == 1
+		a.CodeBuddyTokenSupported = a.Backend == model.CodeBuddyBackend
 		if projectID.Valid {
 			id := projectID.Int64
 			a.ProjectID = &id
@@ -235,8 +240,9 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve, disabled, project_id,
-			provider_id, thinking_effort_by_model, mcp_servers, tool_policy)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
+			codebuddy_token_mode)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -261,6 +267,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			thinking_effort_by_model = excluded.thinking_effort_by_model,
 			mcp_servers = excluded.mcp_servers,
 			tool_policy = excluded.tool_policy,
+			codebuddy_token_mode = excluded.codebuddy_token_mode,
 			updated_at = CURRENT_TIMESTAMP
 	`, agentInsertArgs(agent, cols)...)
 	if err != nil {
@@ -339,6 +346,7 @@ func agentInsertArgs(agent *model.Agent, cols agentJSONColumns) []any {
 		agentTransportForSave(agent), agent.AcpCommand, boolToInt(agent.AutoApprove), boolToInt(agent.Disabled),
 		nullableIDArg(agent.ProjectID), nullableIDArg(agent.ProviderID), cols.effortByModel,
 		cols.mcpServers, cols.toolPolicy,
+		boolToInt(agent.CodeBuddyTokenMode),
 	}
 }
 
@@ -560,6 +568,9 @@ type AgentPatch struct {
 	// project scope above).
 	ProviderID      *int64
 	ClearProviderID bool
+	// CodeBuddyTokenMode toggles the shared CodeBuddy account token as the
+	// credential. Nil leaves the switch untouched.
+	CodeBuddyTokenMode *bool
 }
 
 // ThinkingEffortModelPatch is a per-model effort write: ModelID is required;
@@ -656,6 +667,7 @@ func buildAgentSetClauses(id string, patch AgentPatch) ([]string, []any, error) 
 	}
 	setClauses, args = applyProjectScopeSet(patch, setClauses, args)
 	setClauses, args = applyProviderSet(patch, setClauses, args)
+	setClauses, args = applyCodeBuddyTokenSet(patch, setClauses, args)
 	return setClauses, args, nil
 }
 
@@ -854,6 +866,16 @@ func applyProviderSet(patch AgentPatch, setClauses []string, args []any) ([]stri
 	return setClauses, args
 }
 
+// applyCodeBuddyTokenSet appends the CodeBuddy token-mode switch. The token
+// itself is server-wide config (codebuddy.api_key), not an agent column.
+func applyCodeBuddyTokenSet(patch AgentPatch, setClauses []string, args []any) ([]string, []any) {
+	if patch.CodeBuddyTokenMode != nil {
+		setClauses = append(setClauses, "codebuddy_token_mode = ?")
+		args = append(args, boolToInt(*patch.CodeBuddyTokenMode))
+	}
+	return setClauses, args
+}
+
 // ensureAgentNameFree returns ErrAgentNameTaken (wrapped with the agent id)
 // when name is already used by a different agent. Split out of
 // PatchAgentFields to keep its branch count in budget.
@@ -962,6 +984,13 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		// The provider binding IS copied for the same reason: the copy runs the
 		// same backend and should reach the same endpoint without re-picking it.
 		ProviderID: source.ProviderID,
+		// CodeBuddy's own-token mode is a credential choice exactly like the
+		// provider binding above, so the copy keeps the switch. The token itself
+		// is server-wide config, so there is nothing to copy.
+		CodeBuddyTokenMode: source.CodeBuddyTokenMode,
+		// Runtime-derived flag: the clone is published straight into the live
+		// map and nothing recomputes it until the next reload.
+		CodeBuddyTokenSupported: source.CodeBuddyTokenSupported,
 		// Disabled is deliberately NOT copied: a duplicate is a new, usable
 		// agent — inheriting "disabled" would hand the user a copy that is
 		// invisible in every picker with no hint why.

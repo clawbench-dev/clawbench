@@ -433,6 +433,14 @@
 |---|---|---|
 | `download_url` | 空 | 下载 draw.io 的完整地址。留空＝先用内置镜像，再回落到 github.com。内网环境可以指向自己的镜像 |
 
+### CodeBuddy 自有 Token `codebuddy`
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `api_key` | 空 | CodeBuddy 账号自己的 API Key。填一次，所有在「模型提供商」里选了「CodeBuddy API Key（自有 Token）」的 CodeBuddy 智能体共用；留空时这些智能体启动会直接报错，不会悄悄退回 CLI 里登录的账号 |
+
+> 界面入口：设置 → 模型提供商 → CodeBuddy 自有 Token。模型列表仍由 CodeBuddy CLI 自己决定。
+
 ### MCP 服务 `mcp.servers`
 
 给所有走 ACP 的智能体共用的外部工具服务列表。每条：

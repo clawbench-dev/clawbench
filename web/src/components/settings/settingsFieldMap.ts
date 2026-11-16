@@ -568,6 +568,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // section: the card body is ProviderSetting, so this placeholder item only
     // opens the section and must be listed in PLACEHOLDER_ITEMS.
     { type: 'item', spec: { labelKey: 'settings.items.providerSection', descriptionKey: 'settings.items.providerDesc', key: 'providersCard', type: 'info', source: 'server', sectionHeader: 'settings.items.providerSection' } },
+    // The shared CodeBuddy account token. Its own card because it is not a
+    // provider row (it has no endpoint and needs the cloudhosted switch), but it
+    // IS shared the same way: one value, every CodeBuddy agent in token mode.
+    { type: 'item', spec: { labelKey: 'settings.items.codebuddyTokenLabel', descriptionKey: 'settings.items.codebuddyTokenDesc', key: 'codebuddy.api_key', type: 'password', source: 'server', sectionHeader: 'settings.items.codebuddyTokenSection' } },
   ],
   // Share center. The global switch (`share.enabled`) is a Dock feature switch:
   // turning it off revokes every link already handed out, which is far more

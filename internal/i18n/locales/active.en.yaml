@@ -180,6 +180,8 @@ ProviderProtocolConflict: "These agents do not support this protocol: {{.Agents}
 ProviderConfigConflict: Agent(s) {{.Agents}} are bound to another provider; this backend shares one global config file and can only bind one
 ProviderConfigConsentRequired: "This agent needs a config file change to apply the provider: {{.Files}}. Confirm and retry"
 ProviderModelsRequired: "Agent(s) {{.Agents}} use a backend that must declare at least one model; the model list cannot be emptied"
+CodeBuddyTokenUnsupported: Only CodeBuddy agents support using their own API key
+CodeBuddyTokenProviderConflict: A model provider and the CodeBuddy own API key cannot be used together; clear one of them first
 InvalidSHA: Invalid commit SHA format
 InvalidBranchName: Invalid branch name
 UnknownBranch: This branch no longer exists

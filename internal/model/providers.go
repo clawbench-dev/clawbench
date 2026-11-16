@@ -212,7 +212,16 @@ func AgentProvider(agentID string) *Provider {
 func ProviderEnvVersion(agentID string) string {
 	p := AgentProvider(agentID)
 	if p == nil {
-		return ""
+		// CodeBuddy's own token mode is the other way an agent receives
+		// credential environment, so it has to fingerprint too: toggling the
+		// mode (or replacing the key) must respawn a live ACP connection, whose
+		// environment is fixed at exec time.
+		env, err := CodeBuddyTokenEnv(GetAgent(agentID))
+		if err != nil || len(env) == 0 {
+			return ""
+		}
+		sum := sha256.Sum256([]byte(strings.Join(env, "\x00")))
+		return hex.EncodeToString(sum[:8])
 	}
 	declared := ""
 	if spec, ok := providerEnvSpec(backendOf(agentID)); ok && spec.InlineConfigEnv != "" {

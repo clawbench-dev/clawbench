@@ -18,7 +18,7 @@ vi.mock('@/utils/api', async (importOriginal) => {
   }
 })
 
-const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDuplicateAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded } = vi.hoisted(() => ({
+const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDuplicateAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded, mockGetServerValue } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockPatchAgentField: vi.fn().mockResolvedValue(undefined),
@@ -30,6 +30,7 @@ const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDe
   // Plain hoisted holder; the mock factory below turns it into a real ref so
   // the component's computed tracks it (see the vi.mock body).
   mockAgentsLoaded: { value: true },
+  mockGetServerValue: vi.fn(),
 }))
 
 vi.mock('vue-i18n', async (importOriginal) => {
@@ -149,7 +150,7 @@ vi.mock('@/composables/useSettingsConfig', () => ({
   // through the composable. Keep the mock total: a partial mock makes the
   // component's setup throw, which fails EVERY test in this file.
   useSettingsConfig: () => ({
-    getServerValue: () => [],
+    getServerValue: mockGetServerValue,
     patchAgentField: mockPatchAgentField,
   }),
 }))
@@ -1324,5 +1325,77 @@ describe('SettingsAgentDetail', () => {
     await bindProvider(wrapper, 6)
 
     expect(mockToastShow).toHaveBeenCalledWith('Save failed', expect.objectContaining({ type: 'error' }))
+  })
+
+  // ─── CodeBuddy own API key ─────────────────────
+
+  /** The provider row's rendered options. */
+  function providerOptionsOf(wrapper: ReturnType<typeof mountDetail>) {
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'settings.items.agentProvider')
+    expect(item).toBeDefined()
+    return item!.props('options') as { label: string; value: unknown }[]
+  }
+
+  it('offers the CodeBuddy API key choice only for the codebuddy backend', () => {
+    const cb = mountDetail({ backend: 'codebuddy', codebuddyTokenSupported: true })
+    expect(providerOptionsOf(cb).some((o) => o.value === 'codebuddy-token')).toBe(true)
+
+    // Without the server-computed flag the picker has no such option (a
+    // protocol-less backend renders the row as plain info, hence `?? []`).
+    const claude = mountDetail({ backend: 'claude' })
+    const claudeRow = claude.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'settings.items.agentProvider')
+    expect(((claudeRow?.props('options') as unknown[] | undefined) ?? []).some(
+      (o: any) => o.value === 'codebuddy-token',
+    )).toBe(false)
+  })
+
+  it('selecting the CodeBuddy API key clears the provider and turns the mode on', async () => {
+    const wrapper = mountDetail({
+      backend: 'codebuddy',
+      codebuddyTokenSupported: true,
+      providerProtocols: ['openai'],
+    })
+
+    await bindProvider(wrapper, 'codebuddy-token')
+
+    expect(mockApiPatch).toHaveBeenCalledWith(
+      '/api/agents',
+      expect.objectContaining({ id: 'test-agent', provider_id: null, codebuddy_token_mode: true }),
+    )
+  })
+
+  it('shows the shared-token status only while the mode is on', () => {
+    const off = mountDetail({ backend: 'codebuddy', codebuddyTokenSupported: true, codebuddyTokenMode: false })
+    expect(off.findAllComponents({ name: 'SettingsItem' })
+      .some((it: any) => it.props('label') === 'settings.items.agentCodeBuddyToken')).toBe(false)
+
+    mockGetServerValue.mockReturnValue('ck-abc')
+    const on = mountDetail({
+      backend: 'codebuddy',
+      codebuddyTokenSupported: true,
+      codebuddyTokenMode: true,
+    })
+    const row = on.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'settings.items.agentCodeBuddyToken')
+    expect(row).toBeDefined()
+    // The token is shared config, so the agent page only reports whether it is
+    // filled in — there is no key input here any more.
+    expect(row!.props('type')).toBe('info')
+    expect(row!.props('modelValue')).toBe('settings.items.agentCodeBuddyTokenConfigured')
+  })
+
+  it('flags a token mode with no shared token configured', () => {
+    mockGetServerValue.mockReturnValue('')
+    const wrapper = mountDetail({
+      backend: 'codebuddy',
+      codebuddyTokenSupported: true,
+      codebuddyTokenMode: true,
+    })
+    const row = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'settings.items.agentCodeBuddyToken')
+    expect(row).toBeDefined()
+    expect(row!.props('modelValue')).toBe('settings.items.agentCodeBuddyTokenMissing')
   })
 })

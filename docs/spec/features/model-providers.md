@@ -200,17 +200,41 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 | GET | `/api/providers/presets` | 内置预设（models.dev 快照，209 家） |
 | POST | `/api/providers/test` | 不带 `model`：`GET {base}/models` 探活；带 `model`：按协议真实发一次最小对话请求（诊断，不改状态） |
 | GET/PUT/DELETE | `/api/providers/{id}` | 详情 / 更新（`apiKey` 空=不变，`clearApiKey`）/ 删除（被引用 409） |
-| PATCH | `/api/agents` | 新增 `provider_id`（null 清除） |
+| PATCH | `/api/agents` | 新增 `provider_id`（null 清除）；`codebuddy_token_mode` 是 CodeBuddy 自有 Token 开关（见下） |
+| PATCH | `/api/config` | `codebuddy.api_key` 是全局共享的 CodeBuddy Token |
+
+## CodeBuddy 自有 Token 模式
+
+模型提供商选择器对 CodeBuddy 有第三个选项（除「不指定」和已配置的提供商之外）：使用 CodeBuddy 账号自己的 Token。
+
+Token 本身是**服务端全局配置** `codebuddy.api_key`（设置 → 模型提供商 → CodeBuddy 自有 Token 卡片），
+所有 CodeBuddy 智能体共用一份；智能体上只有开关 `agents.codebuddy_token_mode`。换 Token 只改一处，
+与提供商「定义一次、多个智能体引用」的思路一致。绑定提供商和该模式**互斥**——两者抢同一个凭据位，
+PATCH 会以 `CodeBuddyTokenProviderConflict` 拒绝同时开启。
+
+启动时注入两个变量（`internal/model/codebuddy_token.go`）：
+
+```
+CODEBUDDY_API_KEY=<全局配置里的 token>
+CODEBUDDY_INTERNET_ENVIRONMENT=cloudhosted
+```
+
+- 模式开启但全局 Token 为空时**不回退**到 CLI 登录，spawn 直接报错：否则智能体会静默跑在另一个账号上，只有额度/账单能看出不对。
+- Token 只在服务端使用，任何智能体接口都不回传；智能体页只显示「已配置 / 未配置」并指向上面的设置位置。
+- `ProviderEnvVersion` 把这两个变量计入指纹，切换模式或换 Token 会让存活的 ACP 连接重启（环境变量只在 exec 时生效）。
+- 模型列表仍由 CodeBuddy CLI 自己的发现结果决定，和绑定提供商时的规则一致。
 
 ## 前端
-
 - 设置 → AI 与对话 → **模型提供商**：列表整行可点即编辑，右侧只留测试 / 删除两个图标；密钥状态是「圆点 + 文字」，目录状态在列表底部。
 - 编辑是**一个弹窗里的三个视图**（表单 / 预设 / 模型），不是三层叠加的弹窗：头部返回箭头与 Android 返回键都先回表单，不叠第二层遮罩。
   - **表单**按「连接 / 凭据 / Codex 调用方式 / 模型」分段，每个控件都有可见标签（早期只有 placeholder，填完就不知道这格是什么）；协议是三段式；密钥状态显式显示，「清除密钥」是可撤销的显式动作而不是随手点一下。
   - **模型**内联管理：搜索、全选 / 清空、星标设默认、逐模型实测（结果就地显示）。表单里只留已选 chips 与默认标记——模型与默认模型分散在两个地方，用户永远不知道哪个才是生效的。
   - 底部「测试连接」用**当前未保存的草稿值**验证端点，所以可以先测再存。
   - 创建成功后不关弹窗，直接转入模型视图并提示「已创建」——省掉「关掉 → 找到行 → 再编辑 → 再开弹窗」这一圈。
-- 智能体详情 → 偏好设置 → **模型提供商**：仅列出该后端支持的协议；配置文件后端选中后弹确认框。
+- 智能体详情 → 偏好设置 → **模型提供商**：仅列出该后端支持的协议；配置文件后端选中后弹确认框。CodeBuddy 额外多一个
+  「CodeBuddy API Key（自有 Token）」选项；Token 本身在「模型提供商」页的 **CodeBuddy 自有 Token** 卡片里填（全局共用），
+  智能体页只显示「已配置 / 未配置」，不提供密钥输入框。
+- 「模型提供商」页底部（列表之后）还有一张 **CodeBuddy 自有 Token** 卡片：一个密码输入，填一次供所有 CodeBuddy 智能体共用。
 - 预设来自 `internal/model/provider_presets.json`（由 `scripts/gen-provider-presets.mjs` 从 models.dev 生成），只预填名称/协议/端点。
 
 ## 已知限制
