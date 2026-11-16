@@ -312,8 +312,8 @@ func TestProviderEnvVersion_ChangesWithWireAPI(t *testing.T) {
 // backend registry in sync, so it must list every entry exactly once, sorted.
 func TestProviderEnvBackends_SortedAndComplete(t *testing.T) {
 	backends := ProviderEnvBackends()
-	if len(backends) != len(providerEnvTable) {
-		t.Fatalf("backends = %d, table = %d", len(backends), len(providerEnvTable))
+	if len(backends) != len(providerEnvSpecs()) {
+		t.Fatalf("backends = %d, registry = %d", len(backends), len(providerEnvSpecs()))
 	}
 	if !sort.StringsAreSorted(backends) {
 		t.Fatalf("backends must be sorted: %v", backends)

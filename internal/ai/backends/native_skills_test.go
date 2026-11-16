@@ -6,27 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"clawbench/internal/ai/backends"
-	_ "clawbench/internal/ai/backends/antigravity"
-	_ "clawbench/internal/ai/backends/builtin"
-	_ "clawbench/internal/ai/backends/claude"
-	_ "clawbench/internal/ai/backends/codebuddy"
-	_ "clawbench/internal/ai/backends/codex"
-	_ "clawbench/internal/ai/backends/commandcode"
-	_ "clawbench/internal/ai/backends/copilot"
-	_ "clawbench/internal/ai/backends/cursor"
-	_ "clawbench/internal/ai/backends/deepseek"
-	_ "clawbench/internal/ai/backends/dsh"
-	_ "clawbench/internal/ai/backends/grok"
-	_ "clawbench/internal/ai/backends/hermes"
-	_ "clawbench/internal/ai/backends/kimi"
-	_ "clawbench/internal/ai/backends/mimo"
-	_ "clawbench/internal/ai/backends/openclaw"
-	_ "clawbench/internal/ai/backends/opencode"
-	_ "clawbench/internal/ai/backends/pi"
-	_ "clawbench/internal/ai/backends/qoder"
-	_ "clawbench/internal/ai/backends/qodercn"
-	_ "clawbench/internal/ai/backends/vecli"
-	_ "clawbench/internal/ai/backends/zcode"
+	_ "clawbench/internal/ai/backends/all"
 )
 
 // skillAwareBackends is the EXPECTED mapping of backend → does it load its own

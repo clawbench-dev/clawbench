@@ -36,7 +36,7 @@ import (
 // chat_metadata.cost_usd would inflate the cost stats with a unit-less credit
 // number, so it is never treated as money. It is still real billing, though:
 // the cost-only paths (generation tools, team-member turns) carry no usage
-// block, so that amount is captured as metaExtraction.CostCredit.
+// block, so that amount is captured as MetaExtraction.CostCredit.
 // Every other agent reports a real monetary cost (e.g. Claude's USD).
 func costFieldCarriesCredit(backend string) bool {
 	return backend == "codebuddy"
@@ -157,10 +157,10 @@ func truncateRunes(s string, n int) string {
 	return string([]rune(s)[:n]) + "…"
 }
 
-// tokenUsageFromCodeBuddyUsage builds a metaTokenUsage from the OpenAI-style
+// tokenUsageFromCodeBuddyUsage builds a MetaTokenUsage from the OpenAI-style
 // _meta.usage block that CodeBuddy reports.
-func tokenUsageFromCodeBuddyUsage(m map[string]any) *metaTokenUsage {
-	u := &metaTokenUsage{
+func tokenUsageFromCodeBuddyUsage(m map[string]any) *MetaTokenUsage {
+	u := &MetaTokenUsage{
 		InputTokens:         metaInt(m["prompt_tokens"]),
 		OutputTokens:        metaInt(m["completion_tokens"]),
 		TotalTokens:         metaInt(m["total_tokens"]),
@@ -184,11 +184,11 @@ func tokenUsageFromCodeBuddyUsage(m map[string]any) *metaTokenUsage {
 }
 
 // extractCodeBuddyMeta parses a CodeBuddy _meta payload.
-func extractCodeBuddyMeta(meta map[string]any) *metaExtraction {
+func ExtractCodeBuddyMeta(meta map[string]any) *MetaExtraction {
 	if len(meta) == 0 {
 		return nil
 	}
-	ext := &metaExtraction{}
+	ext := &MetaExtraction{}
 
 	// OpenAI-style usage block.
 	if m, ok := meta[metaKeyCodeBuddyUsage].(map[string]any); ok {
@@ -205,7 +205,7 @@ func extractCodeBuddyMeta(meta map[string]any) *metaExtraction {
 
 	// Context-window breakdown.
 	if m, ok := meta[metaKeyCodeBuddyByCategory].(map[string]any); ok {
-		cat := &metaCategoryUsage{Categories: map[string]int64{}}
+		cat := &MetaCategoryUsage{Categories: map[string]int64{}}
 		for _, k := range []string{"conversation", "tools", "systemPrompt", "skills", "mcp"} {
 			if v, ok := m[k]; ok {
 				cat.Categories[k] = int64(metaInt(v))
@@ -225,7 +225,7 @@ func extractCodeBuddyMeta(meta map[string]any) *metaExtraction {
 	ext.RequestCredits = codeBuddyRequestCredits(meta[metaKeyCodeBuddyRequestCredits])
 
 	// Trace/identity namespace.
-	t := &metaTrace{
+	t := &MetaTrace{
 		RequestID:        metaString(meta[metaKeyCodeBuddyRequestID]),
 		TraceID:          metaString(meta[metaKeyCodeBuddyTraceID]),
 		TraceParent:      metaString(meta[metaKeyCodeBuddyTraceParent]),

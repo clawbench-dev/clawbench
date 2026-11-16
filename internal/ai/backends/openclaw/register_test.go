@@ -170,7 +170,7 @@ func TestOpenClawModesMirrorThoughtLevelIsWired(t *testing.T) {
 
 // sharedRemapKeys are the remaps that must be IDENTICAL in both tables:
 // OpenClawACPInputRemaps (this package, wired into the generic flat remap) and
-// ai.openClawACPBaseRemaps (internal/ai, used by the per-tool OpenClaw
+// openClawACPBaseRemaps (internal/ai, used by the per-tool OpenClaw
 // normalizer). They live in different packages — internal/ai must not import
 // this one (cycle) — so nothing but this test keeps them aligned. A drift means
 // the same field is normalized two different ways depending on which code path
@@ -188,7 +188,7 @@ var sharedRemapKeys = []string{
 }
 
 func TestOpenClawRemapTablesAgreeOnSharedKeys(t *testing.T) {
-	base := ai.OpenClawACPBaseRemapsForTest()
+	base := openClawACPBaseRemaps
 	require.NotEmpty(t, base, "the base table must not be empty")
 
 	for _, key := range sharedRemapKeys {
@@ -198,11 +198,11 @@ func TestOpenClawRemapTablesAgreeOnSharedKeys(t *testing.T) {
 				"are kept in sync by this test alone", key)
 		got, ok := base[key]
 		require.True(t, ok,
-			"ai.openClawACPBaseRemaps must carry the shared key %q — the two tables "+
+			"openClawACPBaseRemaps must carry the shared key %q — the two tables "+
 				"are kept in sync by this test alone", key)
 		assert.Equal(t, want, got,
 			"remap %q diverges between the packages: OpenClawACPInputRemaps says %q, "+
-				"ai.openClawACPBaseRemaps says %q", key, want, got)
+				"openClawACPBaseRemaps says %q", key, want, got)
 	}
 }
 
@@ -212,7 +212,7 @@ func TestOpenClawRemapTablesAgreeOnSharedKeys(t *testing.T) {
 // The per-tool normalizer is what makes path→file_path safe, and it must still
 // carry it (WARN-012: an unlisted tool such as apply_patch carries "path" too).
 func TestOpenClawPathRemapLivesInTheBaseTableOnly(t *testing.T) {
-	base := ai.OpenClawACPBaseRemapsForTest()
+	base := openClawACPBaseRemaps
 	assert.Equal(t, "file_path", base["path"],
 		"the per-tool base table must remap path — openclaw's tool set grows, and an "+
 			"unlisted tool carrying \"path\" would otherwise render a blank file header")
@@ -227,11 +227,11 @@ func TestOpenClawPathRemapLivesInTheBaseTableOnly(t *testing.T) {
 // target.
 func TestOpenClawBaseRemapsAreAppliedByThePerToolNormalizer(t *testing.T) {
 	raw := `{"path":"/p","filePath":"/f","oldString":"a","newString":"b","replaceAll":true}`
-	got := ai.NormalizeOpenClawACPInputForTest("read", raw)
+	got := normalizeOpenClawACPInput("read", []byte(raw))
 
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal([]byte(got), &parsed))
-	base := ai.OpenClawACPBaseRemapsForTest()
+	base := openClawACPBaseRemaps
 	for _, key := range append([]string{"path"}, sharedRemapKeys...) {
 		target, ok := base[key]
 		require.True(t, ok, "the base table must carry %q", key)
@@ -246,7 +246,7 @@ func TestOpenClawBaseRemapsAreAppliedByThePerToolNormalizer(t *testing.T) {
 // `path` for `ls` too and blank the LS card. Pinned through the real normalizer
 // so the "drop it for ls" branch cannot be removed unnoticed.
 func TestOpenClawLsKeepsPathDespiteTheFlatTable(t *testing.T) {
-	got := ai.NormalizeOpenClawACPInputForTest("ls", `{"path":"/tmp/x"}`)
+	got := normalizeOpenClawACPInput("ls", []byte(`{"path":"/tmp/x"}`))
 	assert.JSONEq(t, `{"path":"/tmp/x"}`, got)
 }
 
@@ -255,23 +255,23 @@ func TestOpenClawLsKeepsPathDespiteTheFlatTable(t *testing.T) {
 // nested edits[] array.
 func TestOpenClawInputNormalization(t *testing.T) {
 	t.Run("read_path_becomes_file_path", func(t *testing.T) {
-		got := ai.NormalizeOpenClawACPInputForTest("read", `{"path":"/a/b.go"}`)
+		got := normalizeOpenClawACPInput("read", []byte(`{"path":"/a/b.go"}`))
 		assert.JSONEq(t, `{"file_path":"/a/b.go"}`, got)
 	})
 
 	t.Run("ls_path_stays_path", func(t *testing.T) {
-		got := ai.NormalizeOpenClawACPInputForTest("ls", `{"path":"/tmp/x"}`)
+		got := normalizeOpenClawACPInput("ls", []byte(`{"path":"/tmp/x"}`))
 		assert.JSONEq(t, `{"path":"/tmp/x"}`, got)
 	})
 
 	t.Run("write_path_becomes_file_path", func(t *testing.T) {
-		got := ai.NormalizeOpenClawACPInputForTest("write", `{"path":"/x","content":"hi"}`)
+		got := normalizeOpenClawACPInput("write", []byte(`{"path":"/x","content":"hi"}`))
 		assert.JSONEq(t, `{"file_path":"/x","content":"hi"}`, got)
 	})
 
 	t.Run("edit_promotes_first_edit", func(t *testing.T) {
 		raw := `{"path":"/x","edits":[{"oldText":"aaa","newText":"bbb"}]}`
-		got := ai.NormalizeOpenClawACPInputForTest("edit", raw)
+		got := normalizeOpenClawACPInput("edit", []byte(raw))
 		var parsed map[string]any
 		require.NoError(t, json.Unmarshal([]byte(got), &parsed))
 		assert.Equal(t, "/x", parsed["file_path"], "path must be remapped for the edit card")
@@ -281,12 +281,12 @@ func TestOpenClawInputNormalization(t *testing.T) {
 	})
 
 	t.Run("exec_command_untouched", func(t *testing.T) {
-		got := ai.NormalizeOpenClawACPInputForTest("exec", `{"command":"echo hi","workdir":"/tmp"}`)
+		got := normalizeOpenClawACPInput("exec", []byte(`{"command":"echo hi","workdir":"/tmp"}`))
 		assert.JSONEq(t, `{"command":"echo hi","workdir":"/tmp"}`, got)
 	})
 
 	t.Run("empty_input_is_empty_object", func(t *testing.T) {
-		assert.Equal(t, "{}", ai.NormalizeOpenClawACPInputForTest("read", ""))
+		assert.Equal(t, "{}", normalizeOpenClawACPInput("read", []byte("")))
 	})
 }
 
@@ -299,7 +299,7 @@ func TestParseOpenClawToolCall(t *testing.T) {
 		Kind:       acp.ToolKindRead,
 		RawInput:   map[string]any{"path": "/a/b.go"},
 	}
-	tool := ai.ParseOpenClawToolCallForTest(tc)
+	tool := parseOpenClawACPToolCall(tc)
 	require.NotNil(t, tool)
 	assert.Equal(t, "Read", tool.Name)
 	assert.Equal(t, "call_abc", tool.ID)
@@ -316,7 +316,7 @@ func TestParseOpenClawToolCallUpdate_Completed(t *testing.T) {
 		Title:      &title,
 		RawInput:   map[string]any{"command": "echo hi"},
 	}
-	tool := ai.ParseOpenClawToolCallUpdateForTest(tcu)
+	tool := parseOpenClawACPToolCallUpdate(tcu)
 	require.NotNil(t, tool)
 	assert.True(t, tool.Done)
 	// mapToolCallName deliberately skips name extraction for a Done update: the
@@ -339,7 +339,7 @@ func TestParseOpenClawToolCallUpdate_DoesNotRenameOnCompletion(t *testing.T) {
 		Status:     &status,
 		Title:      &title,
 	}
-	tool := ai.ParseOpenClawToolCallUpdateForTest(tcu)
+	tool := parseOpenClawACPToolCallUpdate(tcu)
 	require.NotNil(t, tool)
 	assert.Empty(t, tool.Name,
 		"a completed update must not derive a tool name from its title")

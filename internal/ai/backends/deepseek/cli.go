@@ -17,7 +17,6 @@ var DeepSeekInputRemaps = map[string]string{
 }
 
 func init() {
-	ai.RegisterBackend("deepseek", newDeepSeekBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "deepseek",
 		Spec: model.BackendSpec{
@@ -30,10 +29,25 @@ func init() {
 			// shared ".agents/skills"), so ClawBench must not inject them again.
 			NativeSkillsDirs:      []string{".codewhale/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
+			// Measured 2026-10-19: session/new accepts `mcpServers`, returns no
+			// error, and the tool never appears.
+			MCPUnsupported: true,
 		},
 		ACP: &backends.ACPPlugin{
 			ToolCallIDPrefixes: CodeWhaleACPToolCallIDPrefixes,
 			InputRemaps:        CodeWhaleACPInputRemaps,
+		},
+		CLI: &backends.CLIPlugin{NewBackend: newDeepSeekBackend},
+		ModelSource: model.NewCLISource("deepseek", model.CLIOptions{
+			Commands: []model.CommandSpec{
+				{Command: "codewhale", Args: []string{"models", "--provider", "deepseek"}, CombineStderr: true},
+				{Command: "codewhale", Args: []string{"models"}, CombineStderr: true},
+				{Command: "deepseek", Args: []string{"models"}, CombineStderr: true},
+			},
+			Parse: parseDeepSeekModels,
+		}),
+		ProviderEnv: &model.ProviderEnvSpec{
+			OpenAI: model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
 		},
 	})
 }
@@ -47,7 +61,7 @@ func newDeepSeekBackend() ai.AIBackend {
 		Cmd:         "codewhale", // primary; legacy "deepseek" shim handled via req.Command
 		BuildArgsFn: buildDeepSeekStreamArgs,
 		NewParserFn: func() ai.LineParser {
-			return &ai.DeepSeekStreamParser{InputRemaps: DeepSeekInputRemaps}
+			return &DeepSeekStreamParser{InputRemaps: DeepSeekInputRemaps}
 		},
 		FilterLineFn: nil, // skip empty lines only (default)
 		PreStartFn:   nil, // prompt is passed as positional argument

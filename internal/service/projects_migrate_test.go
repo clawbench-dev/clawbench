@@ -836,16 +836,16 @@ func TestLegacyProjectPathIndexes_AreAllRecreated(t *testing.T) {
 		// index was renamed HERE — a false negative, not a stricter check.
 		// Matches the exclusion list in vitest.config.ts.
 		//
-		// The check is RELATIVE to the module root: this test itself may be
-		// running from a worktree that lives under .codebuddy/worktrees/, in
-		// which case every ABSOLUTE path carries the excluded substring and a
-		// naive Contains would skip the entire tree (the scan then finds zero
-		// indexes). What must be excluded is a nested sibling, not the root.
-		if rel, relErr := filepath.Rel(root, path); relErr == nil {
-			rel = "/" + filepath.ToSlash(rel) + "/"
-			if strings.Contains(rel, "/.worktrees/") || strings.Contains(rel, "/.codebuddy/worktrees/") {
-				return nil
-			}
+		// The match runs on the path RELATIVE to root: when this test itself
+		// runs inside such a worktree, root's own prefix contains the pattern
+		// and an absolute-path match would exclude every file in the module,
+		// reporting "the scan is broken" for a tree that is perfectly fine.
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		if isWorktreePath(filepath.ToSlash(rel)) {
+			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
@@ -901,6 +901,21 @@ func repoRootForTest(t *testing.T) string {
 		}
 		dir = parent
 	}
+}
+
+// isWorktreePath reports whether a module-relative, slash-separated path points
+// into a nested checkout (a git worktree). Those hold a full copy of the same
+// source, so counting their indexes would mask a rename in this tree.
+//
+// Both the leading form (".worktrees/…", when the nested tree sits at the module
+// root) and the embedded form ("internal/.worktrees/…") count.
+func isWorktreePath(rel string) bool {
+	for _, dir := range []string{".worktrees/", ".codebuddy/worktrees/"} {
+		if strings.HasPrefix(rel, dir) || strings.Contains(rel, "/"+dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // ── Rebuild-table dedup coverage (WARN-102) ──────────────────────────────

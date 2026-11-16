@@ -12,6 +12,28 @@ import (
 	"clawbench/internal/model"
 )
 
+// cbExtraction builds the MetaExtraction CodeBuddy reports for ONE model call.
+// Constructed directly rather than through the parser: these tests are about
+// usage accumulation, and the parser itself is covered in
+// internal/ai/backends/codebuddy/meta_test.go.
+func cbExtraction(msgID, requestID string, prompt, completion int, credit float64) *MetaExtraction {
+	ext := &MetaExtraction{
+		Usage: &MetaTokenUsage{
+			InputTokens:  prompt,
+			OutputTokens: completion,
+			TotalTokens:  prompt + completion,
+			Credit:       credit,
+			CallID:       msgID,
+			Accumulate:   true,
+			Present:      true,
+		},
+	}
+	if requestID != "" {
+		ext.Trace = &MetaTrace{RequestID: requestID}
+	}
+	return ext
+}
+
 // ---------------------------------------------------------------------------
 // Cancelled-turn usage
 //
@@ -41,16 +63,7 @@ func TestEmitCancelledTurnUsage_EmitsAccumulatedUsage(t *testing.T) {
 		{"msg-1", 38229, 1.93},
 		{"msg-2", 38328, 1.92},
 	} {
-		conn.mergeMetaExtraction(extractCodeBuddyMeta(map[string]any{
-			metaKeyCodeBuddyMessageID: call.msgID,
-			metaKeyCodeBuddyRequestID: "req-cancel",
-			metaKeyCodeBuddyUsage: map[string]any{
-				"prompt_tokens":     call.prompt,
-				"completion_tokens": 10,
-				"total_tokens":      call.prompt + 10,
-				"credit":            call.credit,
-			},
-		}))
+		conn.mergeMetaExtraction(cbExtraction(call.msgID, "req-cancel", call.prompt, 10, call.credit))
 	}
 
 	conn.emitCancelledTurnUsage(ch)
@@ -91,10 +104,7 @@ func TestEmitCancelledTurnUsage_SilentWhenNothingConsumed(t *testing.T) {
 func TestEmitCancelledTurnUsage_ClearsAccumulator(t *testing.T) {
 	ch := make(chan StreamEvent, 10)
 	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
-	conn.mergeMetaExtraction(extractCodeBuddyMeta(map[string]any{
-		metaKeyCodeBuddyMessageID: "msg-1",
-		"usage":                   map[string]any{"prompt_tokens": 500, "completion_tokens": 5},
-	}))
+	conn.mergeMetaExtraction(cbExtraction("msg-1", "", 500, 5, 0))
 
 	conn.emitCancelledTurnUsage(ch)
 	close(ch)
@@ -109,11 +119,7 @@ func TestEmitCancelledTurnUsage_RecordsCompletedRequestID(t *testing.T) {
 	ch := make(chan StreamEvent, 10)
 	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
 	conn.setLastCompletedRequestID("prev-turn-rid")
-	conn.mergeMetaExtraction(extractCodeBuddyMeta(map[string]any{
-		metaKeyCodeBuddyMessageID: "msg-1",
-		metaKeyCodeBuddyRequestID: "cancelled-turn-rid",
-		"usage":                   map[string]any{"prompt_tokens": 500, "completion_tokens": 5},
-	}))
+	conn.mergeMetaExtraction(cbExtraction("msg-1", "cancelled-turn-rid", 500, 5, 0))
 
 	conn.emitCancelledTurnUsage(ch)
 	close(ch)

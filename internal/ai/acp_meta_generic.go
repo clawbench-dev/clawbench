@@ -14,24 +14,24 @@ package ai
 // tokenKeyPatterns maps a recognized _meta key to its canonical usage field.
 // OpenAI-style keys (CodeBuddy) and camelCase bridge keys (Claude/Codex) are
 // both covered.
-var genericTokenKeys = map[string]func(u *metaTokenUsage, v any){
-	"prompt_tokens":               func(u *metaTokenUsage, v any) { u.InputTokens = metaInt(v) },
-	"inputTokens":                 func(u *metaTokenUsage, v any) { u.InputTokens = metaInt(v) },
-	"completion_tokens":           func(u *metaTokenUsage, v any) { u.OutputTokens = metaInt(v) },
-	"outputTokens":                func(u *metaTokenUsage, v any) { u.OutputTokens = metaInt(v) },
-	"total_tokens":                func(u *metaTokenUsage, v any) { u.TotalTokens = metaInt(v) },
-	"totalTokens":                 func(u *metaTokenUsage, v any) { u.TotalTokens = metaInt(v) },
-	"prompt_cache_hit_tokens":     func(u *metaTokenUsage, v any) { u.CacheHitTokens = metaInt(v); u.CachedReadTokens = metaInt(v) },
-	"cachedInputTokens":           func(u *metaTokenUsage, v any) { u.CachedReadTokens = metaInt(v) },
-	"cache_read_input_tokens":     func(u *metaTokenUsage, v any) { u.CachedReadTokens = metaInt(v) },
-	"prompt_cache_write_tokens":   func(u *metaTokenUsage, v any) { u.CachedWriteTokens = metaInt(v) },
-	"cache_creation_input_tokens": func(u *metaTokenUsage, v any) { u.CacheCreationTokens = metaInt(v) },
-	"cachedWriteTokens":           func(u *metaTokenUsage, v any) { u.CachedWriteTokens = metaInt(v) },
-	"prompt_cache_miss_tokens":    func(u *metaTokenUsage, v any) { u.CacheMissTokens = metaInt(v) },
-	"completion_thinking_tokens":  func(u *metaTokenUsage, v any) { u.ThoughtTokens = metaInt(v) },
-	"reasoningOutputTokens":       func(u *metaTokenUsage, v any) { u.ThoughtTokens = metaInt(v) },
-	"thoughtTokens":               func(u *metaTokenUsage, v any) { u.ThoughtTokens = metaInt(v) },
-	"credit":                      func(u *metaTokenUsage, v any) { u.Credit = metaFloat(v) },
+var genericTokenKeys = map[string]func(u *MetaTokenUsage, v any){
+	"prompt_tokens":               func(u *MetaTokenUsage, v any) { u.InputTokens = metaInt(v) },
+	"inputTokens":                 func(u *MetaTokenUsage, v any) { u.InputTokens = metaInt(v) },
+	"completion_tokens":           func(u *MetaTokenUsage, v any) { u.OutputTokens = metaInt(v) },
+	"outputTokens":                func(u *MetaTokenUsage, v any) { u.OutputTokens = metaInt(v) },
+	"total_tokens":                func(u *MetaTokenUsage, v any) { u.TotalTokens = metaInt(v) },
+	"totalTokens":                 func(u *MetaTokenUsage, v any) { u.TotalTokens = metaInt(v) },
+	"prompt_cache_hit_tokens":     func(u *MetaTokenUsage, v any) { u.CacheHitTokens = metaInt(v); u.CachedReadTokens = metaInt(v) },
+	"cachedInputTokens":           func(u *MetaTokenUsage, v any) { u.CachedReadTokens = metaInt(v) },
+	"cache_read_input_tokens":     func(u *MetaTokenUsage, v any) { u.CachedReadTokens = metaInt(v) },
+	"prompt_cache_write_tokens":   func(u *MetaTokenUsage, v any) { u.CachedWriteTokens = metaInt(v) },
+	"cache_creation_input_tokens": func(u *MetaTokenUsage, v any) { u.CacheCreationTokens = metaInt(v) },
+	"cachedWriteTokens":           func(u *MetaTokenUsage, v any) { u.CachedWriteTokens = metaInt(v) },
+	"prompt_cache_miss_tokens":    func(u *MetaTokenUsage, v any) { u.CacheMissTokens = metaInt(v) },
+	"completion_thinking_tokens":  func(u *MetaTokenUsage, v any) { u.ThoughtTokens = metaInt(v) },
+	"reasoningOutputTokens":       func(u *MetaTokenUsage, v any) { u.ThoughtTokens = metaInt(v) },
+	"thoughtTokens":               func(u *MetaTokenUsage, v any) { u.ThoughtTokens = metaInt(v) },
+	"credit":                      func(u *MetaTokenUsage, v any) { u.Credit = metaFloat(v) },
 }
 
 // genericScanDepth bounds the recursive scan to avoid descending into large
@@ -39,21 +39,21 @@ var genericTokenKeys = map[string]func(u *metaTokenUsage, v any){
 const genericScanDepth = 4
 
 // extractGenericMeta scans a _meta payload for recognizable token keys.
-func extractGenericMeta(meta map[string]any) *metaExtraction {
+func extractGenericMeta(meta map[string]any) *MetaExtraction {
 	if len(meta) == 0 {
 		return nil
 	}
-	u := &metaTokenUsage{}
+	u := &MetaTokenUsage{}
 	found := scanMetaForTokens(meta, u, 0)
 	if !found {
 		return nil
 	}
 	u.Present = true
-	return &metaExtraction{Usage: u}
+	return &MetaExtraction{Usage: u}
 }
 
 // scanMetaForTokens recursively walks v, applying known key handlers.
-func scanMetaForTokens(v any, u *metaTokenUsage, depth int) bool {
+func scanMetaForTokens(v any, u *MetaTokenUsage, depth int) bool {
 	if depth > genericScanDepth || v == nil {
 		return false
 	}

@@ -1174,7 +1174,7 @@ type ACPConn struct {
 	// metaAccum holds the merged _meta extensions observed during the turn
 	// (CodeBuddy usage/trace/category). Consumed when emitting the final
 	// metadata event in emitPromptResponseUsage and cleared each Prompt.
-	metaAccum *metaExtraction
+	metaAccum *MetaExtraction
 	// metaCallSeen records which per-call usage notifications have already been
 	// summed into metaAccum (guarded by metaMu). CodeBuddy reports one usage
 	// update per model call and may re-deliver a notification; summing by
@@ -2107,7 +2107,7 @@ func (c *ACPConn) GetCachedUsageState() *UsageState {
 // as a replay (isReplayedTurnMeta) must not contribute its id, or the baseline
 // would grow to include the previous turn's ids and start filtering the live
 // stream.
-func (c *ACPConn) mergeMetaExtraction(ext *metaExtraction) {
+func (c *ACPConn) mergeMetaExtraction(ext *MetaExtraction) {
 	if ext == nil {
 		return
 	}
@@ -2134,7 +2134,7 @@ func (c *ACPConn) mergeMetaExtraction(ext *metaExtraction) {
 			dup := *ext
 			dup.Usage = nil
 			if c.metaAccum == nil {
-				c.metaAccum = &metaExtraction{}
+				c.metaAccum = &MetaExtraction{}
 			}
 			metaMergeExtraction(c.metaAccum, &dup)
 			return
@@ -2142,14 +2142,14 @@ func (c *ACPConn) mergeMetaExtraction(ext *metaExtraction) {
 		c.metaCallSeen[ext.Usage.CallID] = struct{}{}
 	}
 	if c.metaAccum == nil {
-		c.metaAccum = &metaExtraction{}
+		c.metaAccum = &MetaExtraction{}
 	}
 	metaMergeExtraction(c.metaAccum, ext)
 }
 
 // getAndClearMetaAccum returns the accumulated _meta extensions and resets the
 // accumulator for the next turn.
-func (c *ACPConn) getAndClearMetaAccum() *metaExtraction {
+func (c *ACPConn) getAndClearMetaAccum() *MetaExtraction {
 	c.metaMu.Lock()
 	defer c.metaMu.Unlock()
 	acc := c.metaAccum
@@ -2186,7 +2186,7 @@ func (c *ACPConn) peekMetaAccumCredit() float64 {
 	if c.metaAccum == nil {
 		return 0
 	}
-	return c.metaAccum.creditTotal()
+	return c.metaAccum.CreditTotal()
 }
 
 // getLastCompletedRequestID returns the canonical (first-seen) requestId of the
@@ -2402,7 +2402,7 @@ func (c *ACPConn) forgetDroppedWrapperToolCallID(id string) {
 }
 
 // getMetaAccum returns the accumulated _meta extensions without clearing.
-func (c *ACPConn) getMetaAccum() *metaExtraction {
+func (c *ACPConn) getMetaAccum() *MetaExtraction {
 	c.metaMu.Lock()
 	defer c.metaMu.Unlock()
 	return c.metaAccum

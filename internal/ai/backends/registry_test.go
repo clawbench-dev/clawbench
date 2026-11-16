@@ -23,11 +23,9 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 			Specialty: "test backend",
 		},
 		CLI: &backends.CLIPlugin{
-			NewBackend: func() *ai.CLIBackend {
+			NewBackend: func() ai.AIBackend {
 				return &ai.CLIBackend{}
 			},
-			ToolNameMap: map[string]string{"read_file": "Read"},
-			InputRemaps: map[string]string{"filePath": "file_path"},
 		},
 	}
 
@@ -39,6 +37,11 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 	}
 	if got.CLI == nil {
 		t.Error("expected CLI plugin to be non-nil")
+	}
+	// Register() must forward the CLI factory to internal/ai — that is what
+	// makes a single init() enough for a backend.
+	if ai.LookupBackendFactoryForTest("test-backend") == nil {
+		t.Error("expected Register to forward CLI.NewBackend to the ai factory table")
 	}
 }
 

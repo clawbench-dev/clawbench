@@ -14,16 +14,42 @@ var (
 	pluginsMu sync.RWMutex
 )
 
-// Register adds a backend plugin to the global registry.
+// Register adds a backend plugin to the global registry and forwards its
+// capabilities to the registries that consume them.
 // Typically called in a sub-package's init() function.
 // Duplicate registration panics (programming error).
+//
+// Forwarding here (rather than in each sub-package) is what makes one init()
+// enough for a new backend. The alternative — every backend calling
+// ai.RegisterBackend + model.RegisterModelSource + ListSessionsFromDiskRegister
+// itself — meant a backend could be half registered, and that the set of calls
+// drifted between backends.
 func Register(p *BackendPlugin) {
 	pluginsMu.Lock()
-	defer pluginsMu.Unlock()
 	if _, exists := plugins[p.ID]; exists {
+		pluginsMu.Unlock()
 		panic(fmt.Sprintf("backend plugin already registered: %s", p.ID))
 	}
 	plugins[p.ID] = p
+	pluginsMu.Unlock()
+
+	// CLI factory (nil for ACP-only backends).
+	if p.CLI != nil && p.CLI.NewBackend != nil {
+		ai.RegisterBackend(p.ID, p.CLI.NewBackend)
+	}
+
+	if p.ModelSource != nil {
+		model.RegisterModelSource(p.ModelSource)
+	}
+	if p.ListSessions != nil {
+		ai.ListSessionsFromDiskRegister(p.ID, p.ListSessions)
+	}
+	if p.Spec.MCPUnsupported {
+		model.RegisterMCPUnsupported(p.ID)
+	}
+	if p.ProviderEnv != nil {
+		model.RegisterProviderEnvSpec(p.ID, *p.ProviderEnv)
+	}
 }
 
 // Lookup returns the backend plugin for the given ID, or nil if not found.
@@ -138,6 +164,27 @@ func LookupACPModesMirrorThoughtLevel(backendID string) bool {
 		return p.ACP.ModesMirrorThoughtLevel
 	}
 	return false
+}
+
+// LookupACPBehavior returns the backend's ACP event-mapping hooks, or nil when
+// it declares none (the generic implementation applies).
+func LookupACPBehavior(backendID string) *ai.ACPBehavior {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok {
+		return p.Behavior
+	}
+	return nil
+}
+
+// LookupPluginCommands returns the backend's extra-command scanner, or nil.
+func LookupPluginCommands(backendID string) func() []ai.AvailableCommandInfo {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok {
+		return p.PluginCommands
+	}
+	return nil
 }
 
 // LookupMidTurnInjector returns the backend's mid-turn injection policy, or nil

@@ -73,7 +73,7 @@ flowchart TD
 
   纯 ACP 后端（zcode / dsh / hermes / cursor / commandcode）不注册 `ModelSource`：它们的模型清单只来自 ACP 的 `configOptions` / `session/new` 的 `models`（`ResolveModels` 的 ACP 独有分支），因此没有 CLI 侧的「刷新模型」入口。
 
-  发现结果由 `DiscoveryCache` 按后端缓存 5 分钟；显式刷新（`refresh-models` / `rescan`）会先失效缓存再重新探测。内置清单集中在 `internal/model/catalogs.go`，更新清单是单文件改动
+  发现结果由 `DiscoveryCache` 按后端缓存 5 分钟；显式刷新（`refresh-models` / `rescan`）会先失效缓存再重新探测。内置清单分散在各后端子包的 `catalog.go`（`internal/ai/backends/<id>/`），更新清单只动那个后端自己的目录
 - **模型列表由服务端合并**：`ResolveModels`（`internal/model/modelcatalog.go`）是唯一的合并点。规则：
   - **具体 ACP 列表在存在时对成员资格有权威性** —— agent 最清楚自己能跑哪些模型；CLI 列表可能过时（端点被重定向、模型在服务端下线），ACP 未上报的 CLI 模型会被剔除
   - **档位别名（tier alias）不参与成员资格判定**。claude 经 ACP 上报的是 `opus`/`sonnet`/`haiku` 这类**档位** ID，其显示名携带被重定向后的真实模型；CLI 发现的是 `claude-sonnet-4-6` 这类具体 ID，两者 ID 永不相等。若把别名列表也当作成员资格依据，会剔掉全部 CLI 模型、只留若干条显示同名真实模型的别名条目（这正是历史上 Issue #404 的问题）。因此别名改为**对齐到对应的 CLI 骨架条目**：保留具体 ID（CLI 仍能识别），仅取其显示名。CLI 骨架无法代表的别名仍会追加，避免用户可选档位静默丢失；元档位 `default` 是回退标记而非模型，始终跳过
@@ -160,7 +160,7 @@ flowchart TD
 - **部分后端无 CLI 模型列表**：VeCLI、Qoder 等后端没有 `--list-models` 类命令，其发现函数只能返回内置默认清单或读取本地缓存，也可由用户手动提供模型。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确
 - **发现失败的原因随返回值传递**：`ModelSource.Discover` 返回 `(models, detail)`，detail 说明探测了哪些位置。此前 codebuddy 用进程级全局变量记录失败原因，并发刷新会互相串台；现在原因随调用返回，不会误归因
 - **默认值只用 presence 判定，不用零值比较**：新增的 `chat.auto_continue_max_retries` 中 `-1`（不限）与 `0`（不重试）**都有意义**，因此"未设置时回退到默认值"不能写成 `if v <= 0 { v = default }`——那会把用户显式选择的 0 冲成 3。凡是有多个合法特殊值的数值配置项都必须区分"字段缺省"与"显式零值"
-- **Codex 的多级发现**：Codex 无列模型命令且发布的是 stripped Rust 二进制，因此按可信度依次尝试——先读 CLI 缓存的完整模型目录（`~/.codex/models_cache.json`，含账号可用清单），再扫描二进制字符串，最后落到 `internal/model/catalogs.go` 中的内置清单。原先的 state SQLite 分支是死代码（定位到文件后无条件 `return nil`），已删除
+- **Codex 的多级发现**：Codex 无列模型命令且发布的是 stripped Rust 二进制，因此按可信度依次尝试——先读 CLI 缓存的完整模型目录（`~/.codex/models_cache.json`，含账号可用清单），再扫描二进制字符串，最后落到 `internal/ai/backends/codex/catalog.go` 中的内置清单。原先的 state SQLite 分支是死代码（定位到文件后无条件 `return nil`），已删除
 - **CLI 模型输出会随版本漂移，解析必须 header 感知**：CodeWhale 0.10.0 的 `models` 输出改为本地化（中/英）、只列 active provider、行内不再带 provider 标签，旧正则两个方向都失配（模型列表刷新后解析为 0 条）。因此解析器同时兼容中英 header 与有无标签两种行格式、尾部锚定挡住 banner/footer，并新增 `scopedProvider`：**无标签的行只在 header 为空或等于目标 provider 时才接受**——否则未 scope 的 fallback 输出会把别的 provider 的模型误标成本 provider。命令链也随版本分叉（0.10.0 无 `--provider` 时只打印 active provider 的模型，故显式 scope；旧版二进制拒绝该 flag 会 exit 2，自动回退到无 scope 调用）。教训：解析第三方 CLI 的文本输出不是稳定契约，需对"标签缺失/本地化/多 provider"三种漂移同时设防
 
 ## 迁移台账（schema_migrations）

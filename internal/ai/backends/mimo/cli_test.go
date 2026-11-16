@@ -50,7 +50,7 @@ func TestMimoPlugin_NewBackendIsCLIBackend(t *testing.T) {
 
 	// Verify parser is an OpenCodeStreamParser with OpenCode mappings
 	parser := clib.NewParserFn()
-	ocsp, ok := parser.(*ai.OpenCodeStreamParser)
+	ocsp, ok := parser.(*opencode.OpenCodeStreamParser)
 	if !ok {
 		t.Fatalf("expected *OpenCodeStreamParser, got %T", parser)
 	}

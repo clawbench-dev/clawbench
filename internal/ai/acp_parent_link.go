@@ -78,7 +78,8 @@ func isOpenCodeChildSessionUpdate(update acp.SessionUpdate) bool {
 
 // extractParentToolCallID returns the id of the parent tool call that spawned
 // the sub-agent which produced this event, or "" for top-level (non-sub-agent)
-// content. backendID selects the per-agent meta encoding.
+// content. backendID selects the backend's registered decoder; backends that
+// declare none get the best-effort decoder that accepts either known encoding.
 func extractParentToolCallID(backendID string, meta map[string]any) string {
 	if len(meta) == 0 {
 		return ""
@@ -88,23 +89,21 @@ func extractParentToolCallID(backendID string, meta map[string]any) string {
 	if v := metaString(meta[metaKeyClawBenchParentToolCallID]); v != "" {
 		return v
 	}
-	switch backendID {
-	case "codebuddy":
-		return metaString(meta[metaKeyCodeBuddyParentToolCallID])
-	case "claude", "qoder", "qodercn":
-		if ns, ok := meta["claudeCode"].(map[string]any); ok {
-			return metaString(ns[metaKeyClaudeParentToolUseID])
-		}
-		return ""
-	default:
-		// Unknown/other backends: best-effort — accept either encoding so a new
-		// agent reusing one of the conventions still groups correctly.
-		if v := metaString(meta[metaKeyCodeBuddyParentToolCallID]); v != "" {
-			return v
-		}
-		if ns, ok := meta["claudeCode"].(map[string]any); ok {
-			return metaString(ns[metaKeyClaudeParentToolUseID])
-		}
-		return ""
+	if b := acpBehavior(backendID); b != nil && b.ParentToolCallID != nil {
+		return b.ParentToolCallID(meta)
 	}
+	return extractParentToolCallIDBestEffort(meta)
+}
+
+// extractParentToolCallIDBestEffort accepts either known encoding. It is the
+// default for backends that declare no decoder, so a new agent reusing one of
+// the conventions still groups correctly.
+func extractParentToolCallIDBestEffort(meta map[string]any) string {
+	if v := metaString(meta[metaKeyCodeBuddyParentToolCallID]); v != "" {
+		return v
+	}
+	if ns, ok := meta["claudeCode"].(map[string]any); ok {
+		return metaString(ns[metaKeyClaudeParentToolUseID])
+	}
+	return ""
 }

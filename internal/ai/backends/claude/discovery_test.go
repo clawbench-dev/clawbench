@@ -54,8 +54,8 @@ func TestClaudeModelRe(t *testing.T) {
 }
 
 func TestClaudeCatalog_Structure(t *testing.T) {
-	assert.NotEmpty(t, model.ClaudeCatalog)
-	for _, m := range model.ClaudeCatalog {
+	assert.NotEmpty(t, ClaudeCatalog)
+	for _, m := range ClaudeCatalog {
 		assert.NotEmpty(t, m.ID)
 		assert.NotEmpty(t, m.Name)
 	}
@@ -63,7 +63,7 @@ func TestClaudeCatalog_Structure(t *testing.T) {
 
 func TestClaudeCatalog_ContainsKnownModels(t *testing.T) {
 	ids := make(map[string]bool)
-	for _, m := range model.ClaudeCatalog {
+	for _, m := range ClaudeCatalog {
 		ids[m.ID] = true
 	}
 	assert.True(t, ids["claude-sonnet-4-20250514"], "should contain Claude Sonnet 4")
@@ -207,7 +207,7 @@ func TestClaudeSource_FallsBackWhenCLIAbsent(t *testing.T) {
 
 	models, detail := discoverClaudeModels()
 
-	require.Len(t, models, len(model.ClaudeCatalog))
+	require.Len(t, models, len(ClaudeCatalog))
 	assert.Contains(t, detail, "not found", "the reason must say the CLI is missing")
 }
 

@@ -5,10 +5,10 @@ import (
 	"clawbench/internal/ai/backends"
 	"clawbench/internal/ai/backends/opencode"
 	"clawbench/internal/model"
+	acp "github.com/coder/acp-go-sdk"
 )
 
 func init() {
-	ai.RegisterBackend("mimo", newMimoBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "mimo",
 		Spec: model.BackendSpec{
@@ -28,6 +28,20 @@ func init() {
 		ACP: &backends.ACPPlugin{
 			InputRemaps: opencode.OpenCodeACPInputRemaps,
 		},
+		CLI: &backends.CLIPlugin{NewBackend: newMimoBackend},
+		// MiMo-Code is an OpenCode fork: same ACP wire shapes, shared parsers.
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       opencode.ParseACPToolCall,
+			ParseToolCallUpdate: opencode.ParseACPToolCallUpdate,
+			OnToolCallUpdate: func(conn *ai.ACPConn, ch chan<- ai.StreamEvent, tcu acp.SessionToolCallUpdate) {
+				opencode.BridgePlanFromToolUpdate(conn, ch, tcu)
+			},
+		},
+		ModelSource: model.StaticSource("mimo", "mimo", MimoCatalog),
+		ProviderEnv: &model.ProviderEnvSpec{
+			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+			OpenAI:    model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
+		},
 	})
 }
 
@@ -40,7 +54,7 @@ func newMimoBackend() ai.AIBackend {
 		Cmd:         "mimo",
 		BuildArgsFn: opencode.BuildOpenCodeStreamArgs,
 		NewParserFn: func() ai.LineParser {
-			return &ai.OpenCodeStreamParser{
+			return &opencode.OpenCodeStreamParser{
 				ToolNameMap: opencode.OpenCodeToolNameMap,
 				InputRemaps: opencode.OpenCodeInputRemaps,
 			}

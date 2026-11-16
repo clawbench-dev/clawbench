@@ -185,8 +185,8 @@ func ProbeACPState(ctx context.Context, agent *model.Agent, cwd string) (*ACPSta
 // built-in list only — i.e. the refresh would silently drop exactly the commands
 // that were missing in the first place.
 func probeCommandWindow(agent *model.Agent) (maxWait, quiet time.Duration) {
-	if isCodeBuddyBackend(agent) {
-		return codebuddyPluginLoadDelay + time.Second, codebuddyPluginLoadDelay
+	if delay := commandsReEmitDelay(agent); delay > 0 {
+		return delay + time.Second, delay
 	}
 	return 1500 * time.Millisecond, 400 * time.Millisecond
 }

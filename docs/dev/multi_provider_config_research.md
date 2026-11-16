@@ -14,7 +14,8 @@
 
 ## 一、现状（作为对照）
 
-`internal/model/provider_env.go` 的 `providerEnvTable` 是唯一事实来源，按「后端 × 协议」给出环境变量名。
+`internal/model/provider_env.go` 的注册表是唯一事实来源，按「后端 × 协议」给出环境变量名
+（数据现在写在各后端的 `BackendPlugin.ProviderEnv` 里，注册表只负责汇总与查询）。
 三处 spawn 点（CLI / codex 流 / ACP）在 `os.Environ()` 之后追加，重复键后者生效 —— 也就是说：
 
 - 一个进程只能被指向**一个**端点；

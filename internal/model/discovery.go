@@ -46,6 +46,20 @@ type BackendSpec struct {
 	// JSON-RPC blob.
 	LoginCmd  string
 	SortOrder int // display/registration order for deterministic BackendRegistry ordering
+	// HideTerminalCapability suppresses the ACP Terminal capability for agents
+	// whose own background-task registry cannot see host-created terminals
+	// (CodeBuddy: every TaskOutput would answer "Background task not found").
+	HideTerminalCapability bool
+	// HideReadTextFileCapability suppresses fs.readTextFile. Declaring it makes
+	// some agents replace their native file reader with the host's (CodeBuddy),
+	// which is a downgrade — the agent's own reader is the one its prompts and
+	// truncation rules were written for.
+	HideReadTextFileCapability bool
+	// CommandsReEmitDelay is how long after NewSession the agent's plugin/skill
+	// commands may still be loading, so the host should re-emit the command list
+	// once more when this elapses. Zero means "commands are complete at
+	// NewSession" (every backend except CodeBuddy).
+	CommandsReEmitDelay time.Duration
 	// NativeSkillsDirs are this backend's own skill directories, relative to
 	// the user's home (e.g. ".codebuddy/skills"). A backend can have several:
 	// most read only their own dot-directory, but several also read the
@@ -73,9 +87,23 @@ type BackendSpec struct {
 	// nothing, and the settings page must not present the tool grant as if it
 	// applied to a CLI that would ignore it.
 	//
-	// Placed last so adding it does not re-align every field above (a
-	// cosmetic churn that hides the real change in review).
+	// Appended (not inserted) so adding it does not re-align every field above
+	// (a cosmetic churn that hides the real change in review).
 	Builtin bool
+	// MCPUnsupported marks a backend the probe measured as accepting the
+	// `mcpServers` field and then ignoring it completely.
+	//
+	// Measured 2026-10-19 (docs/dev/acp_mcp_probe_results.md): session/new
+	// succeeds, no error, and the tool never appears — two turns each, so this
+	// is not a slow-start artifact. Filtering here (rather than only graying the
+	// UI) matters because the default policy is `all`: without this flag every
+	// user would hit the silently-ineffective case by default, which is exactly
+	// what the UI is supposed to prevent.
+	//
+	// This used to be a central map in model/mcp.go. It is a fact about ONE
+	// backend, so it belongs in that backend's Spec: the map made every new
+	// backend edit a file in another package.
+	MCPUnsupported bool
 }
 
 // LoadBackendSpecs is set by the backends package at init time to provide
@@ -261,4 +289,14 @@ func CanDiscoverModels(spec BackendSpec) bool {
 // Prefer HasModelSource for a single backend.
 func BackendsWithModelDiscovery() []string {
 	return RegisteredModelSources()
+}
+
+// SetBackendRegistryForTest installs a synthetic backend registry and returns a
+// restore function. Tests that assert spec-driven behaviour need it because the
+// real registry is populated from the backend plugin packages, which most unit
+// tests do not import (that would be an import cycle).
+func SetBackendRegistryForTest(specs []BackendSpec) func() {
+	old := BackendRegistry
+	BackendRegistry = specs
+	return func() { BackendRegistry = old }
 }

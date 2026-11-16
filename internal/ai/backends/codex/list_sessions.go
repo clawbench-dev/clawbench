@@ -17,7 +17,6 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/model"
 )
 
@@ -48,10 +47,6 @@ type codexSessionMeta struct {
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
 	Timestamp string `json:"timestamp"`
-}
-
-func init() {
-	ai.ListSessionsFromDiskRegister("codex", listCodexSessionsFromDisk)
 }
 
 func listCodexSessionsFromDisk(_ *model.Agent, cwd string) ([]acp.SessionInfo, error) {

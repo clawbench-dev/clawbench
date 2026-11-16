@@ -12,10 +12,6 @@ import (
 	"clawbench/internal/platform"
 )
 
-func init() {
-	model.RegisterModelSource(model.PluginSource("codex", discoverCodexModels))
-}
-
 // codexModelRe matches OpenAI model IDs in the Codex binary's string output.
 var codexModelRe = regexp.MustCompile(`^(gpt-\d+\.\d+(-mini)?|o[34](-mini)?)$`)
 
@@ -40,7 +36,7 @@ func discoverCodexModels() ([]model.AgentModel, string) {
 	if models := discoverCodexModelsFromBinary(); len(models) > 0 {
 		return models, ""
 	}
-	return model.CodexCatalog, "codex: no model catalog cached and binary strings unavailable, using built-in catalog"
+	return CodexCatalog, "codex: no model catalog cached and binary strings unavailable, using built-in catalog"
 }
 
 // discoverCodexModelsFromCache reads the catalog modern Codex versions fetch
@@ -129,8 +125,8 @@ func discoverCodexModelsFromBinary() []model.AgentModel {
 	}
 
 	sort.Slice(models, func(i, j int) bool {
-		oi, okI := model.CodexModelOrder[models[i].ID]
-		oj, okJ := model.CodexModelOrder[models[j].ID]
+		oi, okI := CodexModelOrder[models[i].ID]
+		oj, okJ := CodexModelOrder[models[j].ID]
 		switch {
 		case okI && okJ:
 			return oi < oj

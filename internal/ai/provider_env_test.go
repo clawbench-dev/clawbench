@@ -99,7 +99,7 @@ func TestCLIBackend_InjectsProviderEnvIntoProcess(t *testing.T) {
 		BuildArgsFn: func(ChatRequest) []string {
 			return []string{"-test.run=^TestProviderEnvHelperProcess$"}
 		},
-		NewParserFn: func() LineParser { return &StreamParser{} },
+		NewParserFn: func() LineParser { return &testLineParser{} },
 		PreStartFn: func(cmd *exec.Cmd, _ ChatRequest) {
 			// The helper's selector and destination travel in the child's
 			// environment: the provider vars are what is under test, and argv

@@ -104,6 +104,16 @@ jobs:
           cp -r .clawbench-web internal/frontend/dist
         shell: bash
 
+      - name: Compile integration tests
+        # The integration suites sit behind `//go:build integration`, so the
+        # step below never compiles them. That is exactly how a refactor can
+        # move a symbol out of internal/ai and leave three integration files
+        # referencing it while every PR stays green (it happened: moving the
+        # per-backend parsers into backends/<id>/ broke integration_test.go,
+        # compact_probe_integration_test.go and the team-description probe).
+        # `go vet` type-checks test files too, so this is a compile-only guard.
+        run: go vet -tags integration ./...
+
       - name: Go test
         # `-timeout` is per TEST BINARY (one per package), and the default is
         # 10 minutes. `internal/service` already runs 271–464 s on the Windows

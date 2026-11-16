@@ -28,7 +28,10 @@
 
 ## 后端能力表
 
-`internal/model/provider_env.go` 的 `providerEnvTable` 是唯一事实来源，覆盖全部已注册后端 + `custom-acp`。**双向覆盖测试**（`internal/ai/backends/provider_env_coverage_test.go`）保证新增后端必须归类。
+每个后端在自己的 `BackendPlugin.ProviderEnv` 里声明能力（`internal/ai/backends/<id>/`），
+`model.RegisterProviderEnvSpec` 汇总成注册表（`internal/model/provider_env.go` 只留注册与查表），
+覆盖全部已注册后端 + `custom-acp`（后者没有插件，条目留在 `model` 里）。**双向覆盖测试**
+（`internal/ai/backends/provider_env_coverage_test.go`）保证新增后端必须归类。
 
 | 后端 | 方式 | 变量 |
 |---|---|---|

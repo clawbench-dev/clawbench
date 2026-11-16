@@ -1,16 +1,18 @@
 package codebuddy
 
 import (
+	acp "github.com/coder/acp-go-sdk"
 	"os/exec"
 	"strings"
+	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/model"
 )
 
 func init() {
-	ai.RegisterBackend("codebuddy", newCodebuddyBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "codebuddy",
 		Spec: model.BackendSpec{
@@ -23,6 +25,13 @@ func init() {
 			ACPLoadSession: true,
 			InstallCmd:     "npm install -g @tencent-ai/codebuddy-code",
 			SortOrder:      2,
+			// CodeBuddy's PluginManager keeps loading for ~4s after NewSession,
+			// so the command list is incomplete until then (issue #383).
+			CommandsReEmitDelay: 4 * time.Second,
+			// Its background-task registry cannot see host-created terminals,
+			// and declaring fs.readTextFile replaces its native reader.
+			HideTerminalCapability:     true,
+			HideReadTextFileCapability: true,
 			// This comment used to claim CodeBuddy's ACP process does NOT scan
 			// ~/.codebuddy/skills. That is no longer true (measured on 2.177.0:
 			// `codebuddy --acp` reports all 21 user skills with
@@ -45,8 +54,38 @@ func init() {
 		// session/steer method, instead of queueing it for the next turn.
 		// It echoes the injected message back with a correlation id, so the
 		// reply can be SPLIT exactly at the injection point.
+		CLI:            &backends.CLIPlugin{NewBackend: newCodebuddyBackend},
+		PluginCommands: ScanPluginCommands,
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       ParseACPToolCall,
+			ParseToolCallUpdate: ParseACPToolCallUpdate,
+			ExtractMeta:         ai.ExtractCodeBuddyMeta,
+			// Agent Teams: record member → spawn-call joins, bridge the team
+			// snapshot, and bridge Task* tool results into plan_update.
+			OnToolCall: func(conn *ai.ACPConn, tc *acp.SessionUpdateToolCall) {
+				NoteMemberSpawn(conn, tc.Meta, ai.ToolCallIDOf(tc.ToolCallId))
+			},
+			OnToolCallUpdate: func(conn *ai.ACPConn, ch chan<- ai.StreamEvent, tcu acp.SessionToolCallUpdate) {
+				if conn == nil {
+					return
+				}
+				BridgePlanFromToolUpdate(conn, ch, tcu)
+			},
+			OnSessionInfoUpdate: BridgeTeamUpdate,
+		},
+		ModelSource:        model.PluginSource("codebuddy", discoverCodebuddyModels),
+		ListSessions:       listCodebuddySessionsFromDisk,
 		MidTurn:            &midTurnInjector{},
 		MidTurnSplitsReply: true,
+		ProviderEnv: &model.ProviderEnvSpec{
+			// CodeBuddy speaks the OpenAI wire protocol only: its request path is
+			// hardcoded to /chat/completions and ignores the entry's "provider"
+			// field (verified with provider:"anthropic" — it still POSTed to
+			// /chat/completions). The CODEBUDDY_* variables were previously listed
+			// under Anthropic, which let the UI offer an Anthropic provider that
+			// could never answer.
+			OpenAI: model.ProtoEnv("CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN"),
+		},
 	})
 }
 
@@ -56,7 +95,7 @@ func newCodebuddyBackend() ai.AIBackend {
 		BackendName: "codebuddy",
 		Cmd:         "codebuddy",
 		BuildArgsFn: buildCodebuddyStreamArgs,
-		NewParserFn: func() ai.LineParser { return &ai.StreamParser{} },
+		NewParserFn: func() ai.LineParser { return claude.NewStreamParser() },
 		FilterLineFn: func(line string) (string, bool) {
 			line = strings.TrimPrefix(line, "\xEF\xBB\xBF") // UTF-8 BOM
 			if line == "" {

@@ -10,10 +10,10 @@ import (
 )
 
 func TestMimoCatalog_Structure(t *testing.T) {
-	require.NotEmpty(t, model.MimoCatalog, "should have a default catalog")
+	require.NotEmpty(t, MimoCatalog, "should have a default catalog")
 
 	defaultCount := 0
-	for _, m := range model.MimoCatalog {
+	for _, m := range MimoCatalog {
 		assert.NotEmpty(t, m.ID, "model ID should not be empty")
 		assert.NotEmpty(t, m.Name, "model Name should not be empty")
 		if m.Default {
@@ -24,14 +24,14 @@ func TestMimoCatalog_Structure(t *testing.T) {
 }
 
 func TestMimoCatalog_FirstIsDefault(t *testing.T) {
-	require.NotEmpty(t, model.MimoCatalog)
-	assert.True(t, model.MimoCatalog[0].Default, "first model should be default")
-	assert.Equal(t, "mimo/mimo-auto", model.MimoCatalog[0].ID)
+	require.NotEmpty(t, MimoCatalog)
+	assert.True(t, MimoCatalog[0].Default, "first model should be default")
+	assert.Equal(t, "mimo/mimo-auto", MimoCatalog[0].ID)
 }
 
 func TestMimoCatalog_ContainsKnownModels(t *testing.T) {
 	ids := make(map[string]bool)
-	for _, m := range model.MimoCatalog {
+	for _, m := range MimoCatalog {
 		ids[m.ID] = true
 	}
 	assert.True(t, ids["mimo/mimo-auto"], "should contain MiMo Auto")

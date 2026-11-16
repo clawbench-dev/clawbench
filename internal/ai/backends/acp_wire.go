@@ -28,6 +28,14 @@ func init() {
 	// without importing the backends package.
 	ai.LookupACPModelSwitchMethodFn = LookupACPModelSwitchMethod
 
+	// Wire up the ACP behavior hooks so the event loop can ask a backend for
+	// its own tool/meta mapping without importing this package.
+	ai.LookupACPBehaviorFn = LookupACPBehavior
+
+	// Wire up the extra-command scanner so the connection lifecycle can pre-scan
+	// a backend's own plugin directory without knowing which backend it is.
+	ai.LookupPluginCommandsFn = LookupPluginCommands
+
 	// Wire up the mid-turn injection policy lookup so core flow can ask a
 	// backend whether a mid-turn message can join the running turn (e.g.
 	// CodeBuddy's session/steer) without importing the backends package.

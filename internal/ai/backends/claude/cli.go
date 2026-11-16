@@ -10,7 +10,6 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("claude", newClaudeBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "claude",
 		Spec: model.BackendSpec{
@@ -31,7 +30,18 @@ func init() {
 		// Claude can inject a message into the running turn via the ACP
 		// steering extension (_session/steering). It emits no echo boundary, so
 		// the injection MERGES into the running reply (no split).
-		MidTurn: &midTurnInjector{},
+		CLI: &backends.CLIPlugin{NewBackend: newClaudeBackend},
+		// qoder and qodercn are Claude Code forks and reuse these hooks; they
+		// import this package rather than copying the parsers.
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       ParseACPToolCall,
+			ParseToolCallUpdate: ParseACPToolCallUpdate,
+		},
+		ModelSource: model.PluginSource("claude", discoverClaudeModels),
+		MidTurn:     &midTurnInjector{},
+		ProviderEnv: &model.ProviderEnvSpec{
+			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+		},
 	})
 }
 
@@ -41,7 +51,7 @@ func newClaudeBackend() ai.AIBackend {
 		BackendName:  "claude",
 		Cmd:          "claude",
 		BuildArgsFn:  buildClaudeStreamArgs,
-		NewParserFn:  func() ai.LineParser { return &ai.StreamParser{} },
+		NewParserFn:  func() ai.LineParser { return NewStreamParser() },
 		FilterLineFn: nil, // skip empty lines only (default)
 		PreStartFn: func(cmd *exec.Cmd, req ai.ChatRequest) {
 			// Claude CLI in --print mode with stdout piped (non-TTY) requires prompt

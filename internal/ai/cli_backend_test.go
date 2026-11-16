@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"os/exec"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ func TestCLIBackend_ExecuteStream_CommandFailure(t *testing.T) {
 		BackendName: "test",
 		Cmd:         "nonexistent-cli-command-12345",
 		BuildArgsFn: func(req ChatRequest) []string { return []string{} },
-		NewParserFn: func() LineParser { return &StreamParser{} },
+		NewParserFn: func() LineParser { return &testLineParser{} },
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -37,7 +38,7 @@ func TestCLIBackend_ExecuteStream_ContextCancellation(t *testing.T) {
 		BackendName: "test",
 		Cmd:         "sleep", // will be cancelled
 		BuildArgsFn: func(req ChatRequest) []string { return []string{"300"} },
-		NewParserFn: func() LineParser { return &StreamParser{} },
+		NewParserFn: func() LineParser { return &testLineParser{} },
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -78,7 +79,7 @@ func TestCLIBackend_ExecuteStream_ContextCancelReapsProcess(t *testing.T) {
 		BackendName: "test",
 		Cmd:         "cat",
 		BuildArgsFn: func(req ChatRequest) []string { return []string{} },
-		NewParserFn: func() LineParser { return &StreamParser{} },
+		NewParserFn: func() LineParser { return &testLineParser{} },
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -123,7 +124,7 @@ func TestCLIBackend_ExecuteStream_WaitReapsWhenChildHoldsPipe(t *testing.T) {
 		BuildArgsFn: func(req ChatRequest) []string {
 			return []string{"-c", `echo '{"type":"result","session_id":"sess"}'; (sleep 10 2>/dev/null) 2>/dev/null &`}
 		},
-		NewParserFn: func() LineParser { return &StreamParser{} },
+		NewParserFn: func() LineParser { return &testLineParser{} },
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -169,7 +170,7 @@ func TestCLIBackend_ExecuteStream_ChildHoldsStderrClosesPromptly(t *testing.T) {
 		BuildArgsFn: func(req ChatRequest) []string {
 			return []string{"-c", `echo '{"type":"result","session_id":"sess"}'; (sleep 20 1>/dev/null) &`}
 		},
-		NewParserFn: func() LineParser { return &StreamParser{} },
+		NewParserFn: func() LineParser { return &testLineParser{} },
 	}
 	t.Cleanup(func() { _ = exec.Command("pkill", "-f", "sleep 20 1").Run() })
 
@@ -214,7 +215,7 @@ func TestCLIBackend_ExecuteStream_WatchdogTerminatesStalledStream(t *testing.T) 
 		BuildArgsFn: func(req ChatRequest) []string {
 			return []string{"-c", `echo '{"type":"assistant","subtype":"text","text":"hi"}'; sleep 311`}
 		},
-		NewParserFn:       func() LineParser { return &StreamParser{} },
+		NewParserFn:       func() LineParser { return &testLineParser{} },
 		NoProgressTimeout: 500 * time.Millisecond,
 	}
 	t.Cleanup(func() { _ = exec.Command("pkill", "-f", "sleep 311").Run() })
@@ -253,7 +254,7 @@ func TestCLIBackend_ExecuteStream_WatchdogDisabled(t *testing.T) {
 		BuildArgsFn: func(req ChatRequest) []string {
 			return []string{"-c", `echo '{"type":"assistant","subtype":"text","text":"hi"}'; sleep 2`}
 		},
-		NewParserFn:       func() LineParser { return &StreamParser{} },
+		NewParserFn:       func() LineParser { return &testLineParser{} },
 		NoProgressTimeout: -1,
 	}
 
@@ -306,7 +307,7 @@ func TestCLIBackend_ExecuteStream_CancelKillsProcessGroup(t *testing.T) {
 		BuildArgsFn: func(req ChatRequest) []string {
 			return []string{"-c", `echo '{"type":"assistant","subtype":"text","text":"hi"}'; sleep 313`}
 		},
-		NewParserFn: func() LineParser { return &StreamParser{} },
+		NewParserFn: func() LineParser { return &testLineParser{} },
 	}
 	t.Cleanup(func() { _ = exec.Command("pkill", "-f", "sleep 313").Run() })
 
@@ -398,7 +399,7 @@ func TestCLIBackend_KeepsGenericExitWarningWithoutParserReport(t *testing.T) {
 		BackendName: "test",
 		Cmd:         "sh",
 		BuildArgsFn: func(req ChatRequest) []string { return []string{"-c", `echo '{"x":1}'; exit 1`} },
-		NewParserFn: func() LineParser { return &StreamParser{} },
+		NewParserFn: func() LineParser { return &testLineParser{} },
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -416,3 +417,32 @@ func TestCLIBackend_KeepsGenericExitWarningWithoutParserReport(t *testing.T) {
 	assert.Contains(t, reasons, ReasonBackendExit,
 		"a plain parser must still produce the abnormal-exit warning")
 }
+
+// testLineParser is a no-op LineParser. The real Claude-format parser lives in
+// internal/ai/backends/claude now; this test only needs *a* parser so the
+// CLIBackend skeleton has something to call.
+type testLineParser struct{}
+
+// ParseLine emits one content event per non-empty line. The CLIBackend tests
+// only need the skeleton to produce *some* event so they can assert on process
+// lifecycle (reaping, watchdogs); the real Claude-format parser lives in
+// internal/ai/backends/claude.
+func (p *testLineParser) ParseLine(line string, ch chan<- StreamEvent) {
+	if line == "" {
+		return
+	}
+	// Mirror the two behaviours the skeleton relies on: content for ordinary
+	// lines, `done` for the terminal result message. Everything else (tool
+	// calls, thinking, usage) is out of scope for these lifecycle tests.
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal([]byte(line), &envelope)
+	if envelope.Type == "result" {
+		ch <- StreamEvent{Type: "done"}
+		return
+	}
+	ch <- StreamEvent{Type: "content", Content: line}
+}
+
+func (p *testLineParser) GetCapturedSessionID() string { return "" }

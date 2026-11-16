@@ -6,11 +6,11 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/model"
 )
 
 func init() {
-	ai.RegisterBackend("copilot", newCopilotBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "copilot",
 		Spec: model.BackendSpec{
@@ -26,6 +26,10 @@ func init() {
 			NativeSkillsDirs:      []string{".copilot/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
 		},
+		CLI:         &backends.CLIPlugin{NewBackend: newCopilotBackend},
+		ModelSource: model.StaticSource("copilot", "copilot", CopilotCatalog),
+		// Deliberately empty: GitHub sign-in only, no verified override exists.
+		ProviderEnv: &model.ProviderEnvSpec{},
 	})
 }
 
@@ -35,7 +39,7 @@ func newCopilotBackend() ai.AIBackend {
 		BackendName: "copilot",
 		Cmd:         "copilot",
 		BuildArgsFn: buildCopilotStreamArgs,
-		NewParserFn: func() ai.LineParser { return &ai.StreamParser{} },
+		NewParserFn: func() ai.LineParser { return claude.NewStreamParser() },
 		FilterLineFn: func(line string) (string, bool) {
 			if line == "" || !strings.HasPrefix(line, "{") {
 				return "", false

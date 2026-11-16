@@ -1231,6 +1231,18 @@ func TestMapACPSessionUpdate_AvailableCommandsUpdate_CodeBuddyMerge(t *testing.T
 	// When conn.agent is CodeBuddy and the registry already has pre-scanned plugin
 	// commands, an incoming AvailableCommandsUpdate (built-in only) should merge
 	// with the existing commands rather than overwriting them.
+	// hasPluginCommands() resolves through the plugin registry, which unit tests
+	// do not load; stub it so this backend looks like CodeBuddy (pre-scanned
+	// plugin commands present).
+	oldLookup := LookupPluginCommandsFn
+	LookupPluginCommandsFn = func(id string) func() []AvailableCommandInfo {
+		if id == "codebuddy" {
+			return func() []AvailableCommandInfo { return nil }
+		}
+		return nil
+	}
+	t.Cleanup(func() { LookupPluginCommandsFn = oldLookup })
+
 	agent := &model.Agent{ID: "test-cb-merge-cmds", Backend: "codebuddy", AcpCommand: "echo"}
 	conn := newACPConn(agent, "test-cb-merge-sid")
 

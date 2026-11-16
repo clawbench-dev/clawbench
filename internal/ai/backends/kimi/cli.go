@@ -38,7 +38,6 @@ var KimiToolNameMap = map[string]string{
 }
 
 func init() {
-	ai.RegisterBackend("kimi", newKimiBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "kimi",
 		Spec: model.BackendSpec{
@@ -49,8 +48,29 @@ func init() {
 			InstallCmd:           "npm install -g kimiai-cli",
 			SortOrder:            10,
 		},
+		CLI: &backends.CLIPlugin{NewBackend: newKimiBackend},
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       parseACPToolCall,
+			ParseToolCallUpdate: parseACPToolCallUpdate,
+		},
+		ModelSource: model.StaticSource("kimi", "kimi", KimiCatalog),
 		ACP: &backends.ACPPlugin{
 			ToolCallIDPrefixes: KimiACPTCIDPrefixes,
+		},
+		ProviderEnv: &model.ProviderEnvSpec{
+			// kimi-cli's own provider is OpenAI-compatible and reads KIMI_*.
+			//
+			// NO Anthropic row on purpose. llm.py's
+			// augment_provider_with_env_vars only rewrites base_url/api_key for
+			// provider type "kimi" (KIMI_*) and "openai_legacy" (OPENAI_*); for
+			// type "anthropic" it does nothing at all. Verified: with
+			// type="anthropic", ANTHROPIC_BASE_URL pointing at a dead host and
+			// ANTHROPIC_API_KEY holding a valid key, the request still went to
+			// the config file's base_url and authenticated with the config
+			// file's key (the 401 named that key). Declaring an Anthropic row
+			// here therefore accepted the binding and then silently ignored the
+			// endpoint on every turn.
+			OpenAI: model.ProtoEnv("KIMI_BASE_URL", "KIMI_API_KEY", ""),
 		},
 	})
 }
