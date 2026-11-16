@@ -158,7 +158,6 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		a.ModelsAutoDetected = modelsAutoDetected == 1
 		a.AutoApprove = autoApprove == 1
 		a.Disabled = disabled == 1
-		a.ProviderOwnService = model.ProviderOwnServiceSupported(a.Backend)
 		if projectID.Valid {
 			id := projectID.Int64
 			a.ProjectID = &id

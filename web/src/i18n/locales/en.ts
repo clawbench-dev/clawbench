@@ -4509,6 +4509,8 @@ export default {
       providerBaseUrlPlaceholder: 'https://api.example.com/v1',
       providerBaseUrlHint: 'Optional — leave empty to only inject the key, with no endpoint.',
       providerProtocol: 'Protocol',
+      providerProtocolPrivate: 'Private protocol',
+      providerPrivateHint: 'The private protocol takes no endpoint or auth mode: fill only the key; the agent decides where to connect (currently CodeBuddy only).',
       providerAuthLabel: 'Authentication',
       providerKeyStateSaved: 'Saved',
       providerKeyStateMissing: 'Not set',

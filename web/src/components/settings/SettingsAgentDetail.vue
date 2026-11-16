@@ -378,21 +378,22 @@ const providerOptions = computed(() => {
   const a = agent.value
   const allowed = a?.providerProtocols ?? []
   const keyOnly = a?.providerKeyOnly === true
-  const credentialOnly = a?.providerOwnService === true
   const bound = a?.providerId ?? null
   return providers.value.filter((p) => {
     if (p.id === bound) return true
+    // The private protocol is listed by the backends that support it (CodeBuddy),
+    // so a private-protocol provider shows up here like any other protocol.
     if (allowed.includes(p.protocol)) return true
     // A key-only backend never reads an endpoint, so a provider WITH one would
     // be a binding that fails on the next turn; only bare credentials qualify.
-    if (keyOnly && !p.baseUrl) return true
-    // A credential-only backend (CodeBuddy's own account token) also takes a
-    // provider with no endpoint, and there the protocol is irrelevant: the
-    // request goes to the backend's own service. Without this clause an
-    // anthropic-protocol token provider would be hidden from a codebuddy agent.
-    return credentialOnly && !p.baseUrl
+    return keyOnly && !p.baseUrl
   })
 })
+
+/** Only the private protocol has a name that differs from its wire id. */
+function protocolLabel(protocol: string): string {
+  return protocol === 'private' ? t('settings.items.providerProtocolPrivate') : protocol
+}
 
 const items = computed<AgentItem[]>(() => {
   const a = agent.value
@@ -528,8 +529,8 @@ const items = computed<AgentItem[]>(() => {
           // that into this picker the user binds it and only finds out on the
           // next turn ("provider has no API key").
           label: p.hasKey === false
-            ? `${p.name} · ${p.protocol} · ${t('settings.items.providerNoKey')}`
-            : `${p.name} · ${p.protocol}`,
+            ? `${p.name} · ${protocolLabel(p.protocol)} · ${t('settings.items.providerNoKey')}`
+            : `${p.name} · ${protocolLabel(p.protocol)}`,
           value: p.id,
         })),
       ],
@@ -795,8 +796,10 @@ async function handleUpdate(item: AgentItem, value: unknown) {
     // through the environment, so the consent prompt would describe a file that
     // never appears.
     const selected = providerId === null ? undefined : providers.value.find((p) => p.id === providerId)
-    const writesConfigDir = a?.providerConfigDirBackend
-      && !(a?.providerOwnService && selected && !selected.baseUrl)
+    // The private protocol never writes a config file: the backend injects the
+    // credential through the environment, so the consent prompt would describe a
+    // file that never appears.
+    const writesConfigDir = a?.providerConfigDirBackend && selected?.protocol !== 'private'
     let confirmWrite = false
     if (providerId !== null && (a?.providerConfigBackend || writesConfigDir)) {
       // Two different kinds of write, and they must not share one sentence:

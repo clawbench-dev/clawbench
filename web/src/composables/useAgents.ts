@@ -130,10 +130,6 @@ interface AgentRecord {
   providerKeyOnly?: boolean
   /** True when the provider is applied by editing the CLI's config file (needs consent). */
   providerConfigBackend?: boolean
-  /** True when the backend takes a provider with NO endpoint as its own official
-   *  service (CodeBuddy's account token): the credential is injected through the
-   *  environment and no config file is written. */
-  providerOwnService?: boolean
   /** True when the backend gets a private config DIRECTORY per agent instead of
    *  one shared file (needs its own consent wording). */
   providerConfigDirBackend?: boolean

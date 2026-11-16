@@ -528,7 +528,16 @@ func validateProviderFields(p model.Provider) error {
 	// can express for this protocol is a dead row: it saved fine and then
 	// failed every turn. The bind-time check (handler) still guards rows that
 	// predate this rule.
-	if !model.ProtocolSupportsAuthMode(p.Protocol, p.AuthMode) {
+	//
+	// The private protocol has no endpoint and no header of its own: the backend
+	// injects its fixed credential variable, so the auth mode is meaningless
+	// there and must not be validated against a protocol table that does not
+	// contain it.
+	if p.Protocol == model.ProviderProtocolPrivate {
+		if strings.TrimSpace(p.BaseURL) != "" {
+			return &ProviderFieldError{Field: "baseUrl", Reason: "the private protocol takes no endpoint"}
+		}
+	} else if !model.ProtocolSupportsAuthMode(p.Protocol, p.AuthMode) {
 		return &ProviderFieldError{
 			Field:  "authMode",
 			Reason: fmt.Sprintf("no backend supports %s auth for the %s protocol", p.AuthMode, p.Protocol),

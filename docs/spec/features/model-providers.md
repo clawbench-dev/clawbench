@@ -36,7 +36,7 @@
 | 后端 | 方式 | 变量 |
 |---|---|---|
 | claude | **配置目录**（+ anthropic 环境变量兜底） | `settings.json` 的 `env` 段 + `CLAUDE_CONFIG_DIR` |
-| codebuddy | **配置目录** | `models.json`（逐模型 `url`）+ `CODEBUDDY_CONFIG_DIR`；环境变量 `CODEBUDDY_*` 仍作为兜底 |
+| codebuddy | **配置目录**（+ 私有协议） | `models.json`（逐模型 `url`）+ `CODEBUDDY_CONFIG_DIR`；环境变量 `CODEBUDDY_*` 仍作为兜底；私有协议走 `CODEBUDDY_API_KEY` + cloudhosted |
 | opencode / mimo / pi / zcode | anthropic、openai | `ANTHROPIC_*` / `OPENAI_*` |
 | kimi | **配置目录**（+ OpenAI 环境变量） | `config.toml` + `KIMI_SHARE_DIR`；`KIMI_BASE_URL` / `KIMI_API_KEY` 仅 `type="kimi"` 时生效 |
 | pi | **配置目录** | `models.json` + `PI_CODING_AGENT_DIR` |
@@ -202,20 +202,21 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 | GET/PUT/DELETE | `/api/providers/{id}` | 详情 / 更新（`apiKey` 空=不变，`clearApiKey`）/ 删除（被引用 409） |
 | PATCH | `/api/agents` | 新增 `provider_id`（null 清除） |
 
-## 无端点的提供商（CodeBuddy 自有 Token）
+## 私有协议（CodeBuddy 自有 Token）
 
-「只填 key、端点留空」的提供商对大多数后端表示「只注入密钥、不换端点」。对 **CodeBuddy** 它有更具体的含义：
-使用 CodeBuddy 账号自己的 Token，请求直接去 CodeBuddy 官方服务。
+提供商表单的协议除了 anthropic / openai / gemini，还有一个 **私有协议**（`private`）。它不是线上协议，
+而是「这份凭据属于该后端自己的官方服务」：没有端点可填、没有认证方式可选、也不需要列模型。
 
-CodeBuddy 的 `ProviderEnv` 声明了 `CredentialOnlyEnv` / `CredentialOnlyExtra`（`internal/ai/backends/codebuddy/cli.go`）：
+CodeBuddy 的 `ProviderEnv` 声明了 `OwnServiceEnv` / `OwnServiceExtra`（`internal/ai/backends/codebuddy/cli.go`）：
 
-- 端点为空 → 视为账号 Token：**跳过配置目录写入**（它的 `models.json` 要求每个模型自带 URL，装不下这种模式），
+- 私有协议 → **跳过配置目录写入**（它的 `models.json` 要求每个模型自带 URL，装不下这种模式），
   改为注入 `CODEBUDDY_API_KEY=<key>` + `CODEBUDDY_INTERNET_ENVIRONMENT=cloudhosted`；
-- 端点非空 → 仍是普通自定义端点绑定，走配置目录，和以前一样（要列模型）；
-- 该模式下提供商的协议无关紧要（请求不会带协议去线上），所以智能体的提供商下拉不会按协议把它过滤掉；
+- 其他协议 → 仍是普通自定义端点绑定，走配置目录，和以前一样（要列模型）；
+- `SupportedProtocols` 只对声明了 `OwnServiceEnv` 的后端列出 `private`，所以只有 CodeBuddy 的智能体能选到它；
   绑定时也不会弹「要写配置文件」的确认框。
 
-一个这样的提供商可以绑给多个 CodeBuddy 智能体，换 Token 只改一处——和其他智能体的「自有 key」完全同一套机制。
+一个私有协议的提供商可以绑给多个 CodeBuddy 智能体，换 Token 只改一处——和其他智能体的「自有 key」完全同一套机制。
+表单在选中私有协议后会隐藏端点、认证方式、模型和「测试连接」，提交时强制 `base_url=''`、`auth_mode=auto`。
 
 ## 前端
 - 设置 → AI 与对话 → **模型提供商**：列表整行可点即编辑，右侧只留测试 / 删除两个图标；密钥状态是「圆点 + 文字」，目录状态在列表底部。
@@ -225,7 +226,7 @@ CodeBuddy 的 `ProviderEnv` 声明了 `CredentialOnlyEnv` / `CredentialOnlyExtra
   - 底部「测试连接」用**当前未保存的草稿值**验证端点，所以可以先测再存。
   - 创建成功后不关弹窗，直接转入模型视图并提示「已创建」——省掉「关掉 → 找到行 → 再编辑 → 再开弹窗」这一圈。
 - 智能体详情 → 偏好设置 → **模型提供商**：仅列出该后端支持的协议；配置文件后端选中后弹确认框。
-  无端点的提供商在 CodeBuddy 上不做协议过滤，也不会弹配置文件确认（见上）。
+  私有协议只对 CodeBuddy 列出，且不会弹配置文件确认（见上）。
 - 预设来自 `internal/model/provider_presets.json`（由 `scripts/gen-provider-presets.mjs` 从 models.dev 生成），只预填名称/协议/端点。
 
 ## 已知限制

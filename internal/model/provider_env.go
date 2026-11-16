@@ -250,12 +250,6 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 	if !ok {
 		return false
 	}
-	// A credential-only provider (no endpoint, backend's own official service)
-	// is valid whatever protocol it carries: the protocol never reaches the wire
-	// in that mode.
-	if ProviderOwnServiceMode(backendID, p) {
-		return true
-	}
 	if spec.supportsProtocol(p.Protocol) {
 		return true
 	}
@@ -376,6 +370,11 @@ func (s ProviderEnvSpec) any() bool {
 // Config-file protocols are checked first: a ConfigOnly backend has no
 // ProtocolEnv entry, but its file format still expresses a protocol.
 func (s ProviderEnvSpec) supportsProtocol(protocol string) bool {
+	// The private protocol is not a wire protocol: only backends that declare
+	// their own official service (OwnServiceEnv) can take it.
+	if protocol == ProviderProtocolPrivate {
+		return s.OwnServiceEnv != ""
+	}
 	for _, p := range s.ConfigProtocols {
 		if p == protocol {
 			return true
@@ -440,26 +439,17 @@ func ProviderUsesConfigDir(backendID string) bool {
 }
 
 // ProviderOwnServiceMode reports whether this provider means the backend's own
-// official service: a credential with no endpoint, for a backend that declares
+// official service: the private protocol, for a backend that declares
 // OwnServiceEnv. That mode bypasses the config-directory writer (whose file
 // format needs an endpoint per model) and injects the credential, plus the
 // backend's fixed switches, through the environment.
 //
-// A provider WITH an endpoint is never credential-only, even on such a backend:
+// A provider with a real protocol is never own-service, even on such a backend:
 // it is a normal custom-endpoint binding and keeps going through the config file.
 func ProviderOwnServiceMode(backendID string, p *Provider) bool {
-	if p == nil || strings.TrimSpace(p.BaseURL) != "" {
+	if p == nil || p.Protocol != ProviderProtocolPrivate {
 		return false
 	}
-	spec, ok := providerEnvSpec(backendID)
-	return ok && spec.OwnServiceEnv != ""
-}
-
-// ProviderOwnServiceSupported reports whether the backend offers the
-// credential-only mode at all. The settings picker uses it to keep a provider
-// with no endpoint visible regardless of the provider's protocol: that protocol
-// is irrelevant when all we do is inject the backend's own credential.
-func ProviderOwnServiceSupported(backendID string) bool {
 	spec, ok := providerEnvSpec(backendID)
 	return ok && spec.OwnServiceEnv != ""
 }
@@ -572,6 +562,11 @@ func SupportedProtocols(backendID string) []string {
 	// they have no environment-variable slot for them (kimi's anthropic type).
 	// Without this the picker hides a protocol the backend can actually run.
 	out = append(out, spec.configDirProtocols()...)
+	// The private protocol belongs to backends with their own official service
+	// (CodeBuddy's account token); other backends must not offer it.
+	if spec.OwnServiceEnv != "" {
+		out = append(out, ProviderProtocolPrivate)
+	}
 	return dedupeSorted(out)
 }
 

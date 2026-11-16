@@ -4508,6 +4508,8 @@ export default {
       providerBaseUrlPlaceholder: 'https://api.example.com/v1',
       providerBaseUrlHint: '可留空：只把密钥注入智能体进程，不指定端点。',
       providerProtocol: '协议',
+      providerProtocolPrivate: '私有协议',
+      providerPrivateHint: '私有协议不需要端点，也不用选认证方式：只填密钥，连接地址由对应的智能体自己决定（目前只有 CodeBuddy 支持）。',
       providerAuthLabel: '认证方式',
       providerKeyStateSaved: '已保存',
       providerKeyStateMissing: '未配置',

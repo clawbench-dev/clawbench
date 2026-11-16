@@ -166,15 +166,6 @@ type Agent struct {
 	// decides which model ids are offered).
 	ProviderID *int64 `json:"providerId,omitempty"`
 
-	// ProviderOwnService reports whether this agent's backend accepts a
-	// provider with NO endpoint as "use the backend's own official service"
-	// (CodeBuddy's account token). Computed at load time, like ProviderProtocols.
-	//
-	// The settings picker uses it to keep such a provider visible regardless of
-	// its protocol — the protocol is irrelevant in that mode — and to skip the
-	// config-file consent prompt, because no file is written.
-	ProviderOwnService bool `json:"providerOwnService,omitempty"`
-
 	// ProviderProtocols lists the wire protocols this agent's backend can be
 	// pointed at, computed at load time from model.ProviderEnvSpec. An empty
 	// list means the backend cannot take a provider at all (the settings UI

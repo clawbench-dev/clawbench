@@ -86,8 +86,11 @@ func TestSupportedProtocols_IncludesConfigDirProtocols(t *testing.T) {
 
 	// codebuddy hardcodes /chat/completions regardless of the entry's provider
 	// field, so it must advertise OpenAI only — offering anthropic would accept a
-	// binding that can never answer.
-	assert.Equal(t, []string{model.ProviderProtocolOpenAI}, model.SupportedProtocols("codebuddy"))
+	// binding that can never answer. The private protocol is not a wire protocol:
+	// it is the account-token credential, which bypasses the config file.
+	assert.Equal(t,
+		[]string{model.ProviderProtocolOpenAI, model.ProviderProtocolPrivate},
+		model.SupportedProtocols("codebuddy"))
 
 	pi := model.SupportedProtocols("pi")
 	assert.Contains(t, pi, model.ProviderProtocolAnthropic)

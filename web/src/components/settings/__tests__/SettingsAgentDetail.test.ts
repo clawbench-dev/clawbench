@@ -1337,27 +1337,24 @@ describe('SettingsAgentDetail', () => {
     return item!.props('options') as { label: string; value: unknown }[]
   }
 
-  const tokenProvider = { id: 7, name: 'CodeBuddy Token', protocol: 'anthropic', baseUrl: '', hasKey: true }
+  const tokenProvider = { id: 7, name: 'CodeBuddy Token', protocol: 'private', baseUrl: '', hasKey: true }
   const endpointProvider = { id: 8, name: 'GW', protocol: 'anthropic', baseUrl: 'https://gw', hasKey: true }
 
-  it('offers a no-endpoint provider to a credential-only backend whatever its protocol', async () => {
+  it('offers a private-protocol provider to a backend that lists it', async () => {
     mockApiGet.mockResolvedValue({ providers: [tokenProvider, endpointProvider] })
     const wrapper = mountDetail({
       backend: 'codebuddy',
-      providerProtocols: ['openai'],
-      providerOwnService: true,
+      providerProtocols: ['openai', 'private'],
     })
     await flushPromises()
 
     const values = providerOptionsOf(wrapper).map((o) => o.value)
-    // The token provider is anthropic-protocol, yet it belongs here: in
-    // credential-only mode the protocol never reaches the wire.
     expect(values).toContain(7)
     // The endpoint provider is anthropic-protocol and this backend speaks openai.
     expect(values).not.toContain(8)
   })
 
-  it('hides a no-endpoint provider from a backend without the mode', async () => {
+  it('hides a private-protocol provider from a backend that does not list it', async () => {
     mockApiGet.mockResolvedValue({ providers: [tokenProvider] })
     const wrapper = mountDetail({ backend: 'claude', providerProtocols: ['openai'] })
     await flushPromises()
@@ -1369,8 +1366,7 @@ describe('SettingsAgentDetail', () => {
     mockApiGet.mockResolvedValue({ providers: [tokenProvider] })
     const wrapper = mountDetail({
       backend: 'codebuddy',
-      providerProtocols: ['openai'],
-      providerOwnService: true,
+      providerProtocols: ['openai', 'private'],
       providerConfigDirBackend: true,
       providerConfigPath: '/data/providers/agents/test-agent/models.json',
     })

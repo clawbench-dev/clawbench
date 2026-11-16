@@ -735,7 +735,6 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 	agent.ModelsAutoDetected = autoDetected == 1
 	agent.AutoApprove = autoApprove == 1
 	agent.Disabled = disabled == 1
-	agent.ProviderOwnService = ProviderOwnServiceSupported(agent.Backend)
 	if projectID.Valid {
 		id := projectID.Int64
 		agent.ProjectID = &id

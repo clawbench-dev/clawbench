@@ -58,6 +58,7 @@
         </div>
         <div class="provider-row-actions">
           <button
+            v-if="p.protocol !== 'private'"
             type="button"
             class="provider-icon-btn"
             data-action="provider-test"
@@ -201,9 +202,17 @@ function authLabel(mode: string): string {
 
 /** One muted line under the name: how it authenticates and who depends on it. */
 function metaLine(p: ProviderRow): string {
-  const parts = [p.protocol, authLabel(p.authMode)]
+  // The private protocol has no auth mode of its own: the backend injects its
+  // fixed credential variable, so showing "auto" there would be noise.
+  const parts = [protocolLabel(p.protocol)]
+  if (p.protocol !== 'private') parts.push(authLabel(p.authMode))
   if (p.agentCount > 0) parts.push(t('settings.items.providerUsedBy', { count: p.agentCount }))
   return parts.join(' · ')
+}
+
+/** Only the private protocol has a name that differs from its wire id. */
+function protocolLabel(protocol: string): string {
+  return protocol === 'private' ? t('settings.items.providerProtocolPrivate') : protocol
 }
 
 /** One muted line under the endpoint: what this provider offers and who uses
