@@ -13,6 +13,7 @@ import { setDefaultBlockWrap } from '@/utils/blockWrapPref'
 import { applyServerLimits } from '@/stores/app.ts'
 import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
 import { refreshServerFeatures, syncFeatureConfig } from '@/composables/useFeatureFlags'
+import { useTerminalStatus } from '@/composables/useTerminalStatus'
 
 const LOCAL_PREFIX = SETTINGS_KEY_PREFIX
 
@@ -1149,6 +1150,14 @@ export function useSettingsConfig() {
     // are masked server-side and must be re-fetched rather than using the
     // plaintext value the user just submitted).
     await loadConfig()
+    // A feature switch can start or stop a server-side runtime (turning
+    // terminal.enabled off tears the PTY manager down). The entries that gate
+    // on the RUNTIME — the terminal dock tab and the file manager's
+    // "open in terminal" menu item — read `terminalRuntimeEnabled`, not the
+    // switch, so they would keep the pre-PATCH answer until a page reload.
+    // Re-probe after every write; `loadConfig` refreshes the switch axis
+    // (`/api/features`) and cannot answer this one.
+    void useTerminalStatus().loadTerminalStatus()
     return {
       needsRestart: result.needs_restart ?? false,
       changedColdFields: result.changed_cold_fields ?? [],

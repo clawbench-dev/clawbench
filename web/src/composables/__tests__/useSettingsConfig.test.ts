@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { useSettingsConfig, applyUIScale, getUIScale, getEffectiveUIScale, applyEffectiveUIScale, autoFitUIScale, toFixedCSS, getZoomedViewport, localConfig, applyStoredTheme, syncThemeFromSystem, startSystemThemeWatcher } from '@/composables/useSettingsConfig'
+import { useTerminalStatus } from '@/composables/useTerminalStatus'
 
 // Mock api.ts
 vi.mock('@/utils/api', () => ({
@@ -65,6 +66,28 @@ describe('useSettingsConfig', () => {
     }
     expect(result.needsRestart).toBe(true)
     expect(result.changedColdFields).toEqual(['ssh.enabled'])
+  })
+
+  it('re-probes the terminal runtime after a PATCH', async () => {
+    // Turning terminal.enabled off stops the server's PTY manager, and the
+    // entries that gate on the RUNTIME (terminal dock tab, the file manager's
+    // "open in terminal" menu item) read that probe rather than the switch.
+    // Without this refresh they keep the pre-PATCH answer until a reload.
+    mockedApiPatch.mockResolvedValue({})
+    mockedApiGet.mockImplementation(async (url: string) => {
+      if (url === '/api/terminal/status') {
+        return { enabled: false, platform_supported: true, cwd_probe_supported: false }
+      }
+      return {}
+    })
+    const { terminalRuntimeEnabled } = useTerminalStatus()
+    terminalRuntimeEnabled.value = true
+
+    const { patchConfig } = useSettingsConfig()
+    await patchConfig({ terminal: { enabled: false } })
+
+    expect(mockedApiGet).toHaveBeenCalledWith('/api/terminal/status')
+    await vi.waitFor(() => expect(terminalRuntimeEnabled.value).toBe(false))
   })
 
   it('restartServer calls API', async () => {
