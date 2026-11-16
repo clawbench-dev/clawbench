@@ -342,6 +342,11 @@ GroupCruiseSatisfied: '自动巡航：任务已确认完成，共 {{.Rounds}} �
 CruiseConfirming: '自动巡航：正在确认任务完成情况'
 CruiseSatisfied: '自动巡航：任务已确认完成，共 {{.Rounds}} 轮'
 CruiseMaxRounds: '自动巡航：已达确认轮数上限'
+# 内置智能体一轮用完步数预算时的系统行。写入时按当前语言本地化并持久化，
+# 与巡航的系统行同一类。
+BuiltinMaxRoundsNotice: '本轮已达到 {{.Rounds}} 轮模型往返上限，智能体已提前收尾。回复「继续」可接着做。'
+BuiltinMaxToolCallsNotice: '本轮已达到 {{.ToolCalls}} 次工具调用上限，智能体已提前收尾。回复「继续」可接着做。'
+BuiltinTruncatedNotice: '这条回复达到模型单次输出上限，内容可能不完整。回复「继续」可以让它接着写。'
 # 群时间线的系统行。这些文案是「写入时」按当前语言本地化并持久化到 chat_history，
 # 同时还会以 "[系统] <文案>" 注入每个成员的上下文（group_inject.go），因此必须是
 # 可读句子、绝不能是键名。切换语言不会追溯翻译历史（与决策 96b 一致）。

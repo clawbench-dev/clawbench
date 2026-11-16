@@ -645,6 +645,25 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		return
 	}
 
+	// system_message: a backend-emitted timeline note. Today the only producer
+	// is the built-in agent announcing that a turn used up its step budget.
+	// It is persisted and announced exactly like the compaction notice, and the
+	// raw event is swallowed: the generic forward path would send it without a
+	// database row, so a reload would lose it.
+	if event.Type == eventTypeSystemMessage {
+		if event.SystemMessage != nil && event.SystemMessage.Content != "" {
+			if id, err := AddSystemMessage(e.cfg.ProjectPath, e.timelineSID(), event.SystemMessage.Content); err != nil {
+				slog.Warn("system message: persist failed", "err", err, "sid", e.cfg.SessionID)
+			} else {
+				ws.EmitToSession(e.timelineSID(), ai.StreamEvent{
+					Type:          eventTypeSystemMessage,
+					SystemMessage: &ai.SystemMessageData{MessageID: id, Content: event.SystemMessage.Content},
+				})
+			}
+		}
+		return
+	}
+
 	// compacted: the built-in backend just folded older turns into a summary.
 	// Persist the summary WITH its boundary so the next turn replays only what
 	// came after it; without the boundary the same history would be compacted
@@ -873,6 +892,20 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 			}
 			if event.Type == eventTypeDone || event.Type == eventTypeError {
 				e.receivedTerminal = true
+				// The terminal event carries the run's own accounting: the stop
+				// reason and the TOTALS across every round. Nothing else reports
+				// those — the per-round metadata events each carry one round, so
+				// ignoring this Meta recorded only the LAST round's token counts
+				// and left stop_reason empty in the ledger, which is why a turn
+				// that hit its budget looked identical to one that answered.
+				if event.Meta != nil {
+					e.mu.Lock()
+					if e.responseMetadata == nil {
+						e.responseMetadata = &ai.Metadata{}
+					}
+					ai.MergeMetadata(e.responseMetadata, event.Meta)
+					e.mu.Unlock()
+				}
 				// For "error" events, AccumulateBlock handles them.
 				// We process the error event but still finalize.
 				if event.Type == eventTypeError {

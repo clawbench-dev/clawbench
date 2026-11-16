@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,15 @@ func TestRunBuiltinAgentTask_CallsToolsEndToEnd(t *testing.T) {
 			// no way to look anything up and this test would be vacuous.
 			if !strings.Contains(string(body), `"name":"read"`) {
 				t.Errorf("the read tool must be declared, body: %.400s", body)
+			}
+			// An explicit output budget must be requested: leaving max_tokens
+			// out lets the provider default cut a reasoning round off.
+			var sent struct {
+				MaxTokens int `json:"max_tokens"`
+			}
+			_ = json.Unmarshal(body, &sent)
+			if sent.MaxTokens <= 0 {
+				t.Errorf("the built-in agent must send max_tokens, body: %.400s", body)
 			}
 			_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read","arguments":"{\"path\":\"marker.txt\"}"}}]}}]}`+"\n\n")
 			_, _ = io.WriteString(w, "data: [DONE]\n\n")
@@ -103,6 +113,137 @@ func TestRunBuiltinAgentTask_ReadOnlyPolicyCannotWrite(t *testing.T) {
 		Policy:  model.ToolPolicy{Allow: []string{model.CapFSRead}},
 	}); err != nil {
 		t.Fatalf("run failed: %v", err)
+	}
+}
+
+// TestRunBuiltinAgentTask_BudgetStopIsAnError pins that a background task
+// never accepts a half-finished run as its artifact.
+//
+// The closing round gives the model a chance to say what is missing; that text
+// is useful in the error, but it must NOT be returned as the answer — a
+// minutes document that reads "I ran out of steps" is worse than a visible
+// failure.
+func TestRunBuiltinAgentTask_BudgetStopIsAnError(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "marker.txt"), []byte("PROJECT-SAYS-HI"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var round atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		n := round.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n == 1 {
+			_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read","arguments":"{\"path\":\"marker.txt\"}"}}]}}]}`+"\n\n")
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		// The closing round must be called with NO tools declared, and its
+		// answer is the hand-off note, not the artifact.
+		if strings.Contains(string(body), `"tools"`) {
+			t.Errorf("the closing round must be called without tools, body: %.400s", body)
+		}
+		_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":"还差配置面板的保存逻辑"}}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	withBuiltinAgent(t, srv.URL, model.ToolPolicy{Allow: []string{model.CapFSRead}})
+
+	got, err := RunBuiltinAgentTask(context.Background(), BuiltinAgentTask{
+		Prompt:       "写一份纪要",
+		SystemPrompt: "你是会议记录员",
+		WorkDir:      root,
+		Policy:       model.ToolPolicy{Allow: []string{model.CapFSRead}, MaxRounds: 1},
+	})
+	if err == nil {
+		t.Fatalf("a budget stop must fail the task, got answer %q", got)
+	}
+	if !strings.Contains(err.Error(), "max_rounds") {
+		t.Fatalf("the error must name the stop reason, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "还差配置面板") {
+		t.Fatalf("the hand-off note must be carried in the error, got %v", err)
+	}
+	if got != "" {
+		t.Fatalf("the hand-off note must not be returned as the artifact, got %q", got)
+	}
+}
+
+// TestRunBuiltinAgentTask_ContinuesTruncatedReply pins the whole path for a
+// reply the endpoint cut off at its output cap: the agent must ask the model to
+// carry on, and the artifact must contain BOTH halves — not just the prefix.
+func TestRunBuiltinAgentTask_ContinuesTruncatedReply(t *testing.T) {
+	root := t.TempDir()
+	var round atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		n := round.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n == 1 {
+			_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":"第一段。"},"finish_reason":"length"}]}`+"\n\n")
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		// The continuation must be asked to carry on, and must NOT be given
+		// tools again just because a new round started.
+		if !strings.Contains(string(body), "cut off") {
+			t.Errorf("the continuation round must be asked to carry on, body: %.400s", body)
+		}
+		_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":"第二段。"}}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	withBuiltinAgent(t, srv.URL, model.ToolPolicy{Allow: []string{model.CapFSRead}})
+
+	got, err := RunBuiltinAgentTask(context.Background(), BuiltinAgentTask{
+		Prompt:       "写一份纪要",
+		SystemPrompt: "你是会议记录员",
+		WorkDir:      root,
+		Policy:       model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if !strings.Contains(got, "第一段") || !strings.Contains(got, "第二段") {
+		t.Fatalf("both halves must reach the artifact, got %q", got)
+	}
+	if round.Load() != 2 {
+		t.Fatalf("expected exactly one continuation, got %d rounds", round.Load())
+	}
+}
+
+// TestRunBuiltinAgentTask_TruncatedAnswerIsAnError pins that an artifact is
+// never produced from a reply that kept hitting the output cap. The chat path
+// can say "reply continue"; a generated document cannot.
+func TestRunBuiltinAgentTask_TruncatedAnswerIsAnError(t *testing.T) {
+	root := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":"第一段。"},"finish_reason":"length"}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	withBuiltinAgent(t, srv.URL, model.ToolPolicy{Allow: []string{model.CapFSRead}})
+
+	got, err := RunBuiltinAgentTask(context.Background(), BuiltinAgentTask{
+		Prompt:       "写一份纪要",
+		SystemPrompt: "你是会议记录员",
+		WorkDir:      root,
+		Policy:       model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	})
+	if err == nil {
+		t.Fatalf("a permanently truncated answer must fail the task, got %q", got)
+	}
+	if !strings.Contains(err.Error(), "cut off") {
+		t.Fatalf("the error must name truncation, got %v", err)
+	}
+	if got != "" {
+		t.Fatalf("a prefix must not be returned as the artifact, got %q", got)
 	}
 }
 

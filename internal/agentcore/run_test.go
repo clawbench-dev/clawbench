@@ -281,8 +281,290 @@ func TestRun_RoundBudgetStops(t *testing.T) {
 	if terminal.StopReason != StopMaxRounds {
 		t.Fatalf("expected max_rounds, got %q", terminal.StopReason)
 	}
-	if client.roundCount() > 4 {
-		t.Fatalf("the round budget must bound model calls, got %d", client.roundCount())
+	// Three budgeted rounds plus ONE closing round: the run must spend a final
+	// call explaining where the work stands instead of ending on a tool result.
+	if got := client.roundCount(); got != 4 {
+		t.Fatalf("expected 3 budgeted rounds + 1 closing round, got %d calls", got)
+	}
+	if terminal.Rounds != 4 {
+		t.Fatalf("the totals must include the closing call, got %d", terminal.Rounds)
+	}
+	if terminal.Limit != 3 {
+		t.Fatalf("the limit must be the configured cap, not the closing call, got %d", terminal.Limit)
+	}
+	closing := client.request(3)
+	if len(closing.Tools) != 0 {
+		t.Fatalf("the closing round must be called without tools, got %d", len(closing.Tools))
+	}
+	last := closing.Messages[len(closing.Messages)-1]
+	if last.Role != llm.RoleUser || !strings.Contains(last.Parts[0].Text, "used up this turn") {
+		t.Fatalf("the closing round must be asked for a hand-off, got %+v", last)
+	}
+}
+
+// TestRun_ToolArgsArriveBeforeTheToolRuns pins that the chat card can name what
+// is running: the arguments are announced as soon as they are complete, BEFORE
+// the tool executes. Only announcing them on the result (or not at all) left a
+// long bash call as a bare tool name for its whole duration.
+func TestRun_ToolArgsArriveBeforeTheToolRuns(t *testing.T) {
+	rounds := []func(llm.Request) []llm.Event{
+		toolRound("c1", "glob", `{"pattern":"*.go"}`),
+		textRound("done"),
+	}
+	client := &scriptedClient{rounds: rounds}
+
+	var (
+		order []EventKind
+		args  Event
+	)
+	for ev := range Run(context.Background(), Spec{
+		Client: client, Prompt: "go", WorkDir: t.TempDir(),
+		Policy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	}) {
+		switch ev.Kind {
+		case EventToolStart, EventToolArgs, EventToolEnd:
+			order = append(order, ev.Kind)
+			if ev.Kind == EventToolArgs {
+				args = ev
+			}
+		}
+	}
+
+	want := []EventKind{EventToolStart, EventToolArgs, EventToolEnd}
+	if len(order) != len(want) {
+		t.Fatalf("tool events = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("tool events = %v, want %v", order, want)
+		}
+	}
+	if args.ToolCallID != "c1" {
+		t.Fatalf("args event must identify the call, got %q", args.ToolCallID)
+	}
+	if args.ToolInput != `{"pattern":"*.go"}` {
+		t.Fatalf("args event must carry the final arguments, got %q", args.ToolInput)
+	}
+}
+
+// TestRun_ClosingRoundTextIsStreamed pins the user-visible half of the budget
+// stop: whatever the closing round says must reach the transcript, and a tool
+// call it emits anyway must not open a card that can never finish.
+func TestRun_ClosingRoundTextIsStreamed(t *testing.T) {
+	rounds := []func(llm.Request) []llm.Event{
+		toolRound("c1", "glob", `{"pattern":"*.go"}`),
+		// The closing round: text plus a stray tool call (a provider that
+		// ignores the empty tool list).
+		func(llm.Request) []llm.Event {
+			return []llm.Event{
+				{Kind: llm.KindText, Text: "已定位到配置面板，还差保存逻辑。"},
+				{Kind: llm.KindToolCallStart, ToolCall: &llm.ToolCall{ID: "stray", Name: "glob"}},
+				{Kind: llm.KindDone},
+			}
+		},
+	}
+	client := &scriptedClient{rounds: rounds}
+
+	var (
+		terminal Event
+		text     strings.Builder
+		starts   int
+	)
+	for ev := range Run(context.Background(), Spec{
+		Client: client, Prompt: "go", WorkDir: t.TempDir(),
+		Policy: model.ToolPolicy{Allow: []string{model.CapFSRead}, MaxRounds: 1},
+	}) {
+		switch ev.Kind {
+		case EventText:
+			text.WriteString(ev.Text)
+		case EventToolStart:
+			starts++
+		case EventDone:
+			terminal = ev
+		}
+	}
+
+	if terminal.StopReason != StopMaxRounds {
+		t.Fatalf("expected max_rounds, got %q", terminal.StopReason)
+	}
+	if !strings.Contains(text.String(), "还差保存逻辑") {
+		t.Fatalf("the closing text must be streamed to the user, got %q", text.String())
+	}
+	if starts != 1 {
+		t.Fatalf("a stray tool call in the closing round must not be announced, got %d starts", starts)
+	}
+}
+
+// TestRun_EmptyRoundIsNotAnAnswer pins the other half of "the turn ended with
+// nothing in it": a round that produced only reasoning used to be accepted as
+// the final answer. It must be treated as a stall and continued.
+func TestRun_EmptyRoundIsNotAnAnswer(t *testing.T) {
+	rounds := []func(llm.Request) []llm.Event{
+		func(llm.Request) []llm.Event {
+			return []llm.Event{
+				{Kind: llm.KindReasoning, Reasoning: "I should look at the config panel."},
+				{Kind: llm.KindDone},
+			}
+		},
+		textRound("配置面板在 settings 里，已加上开关。"),
+	}
+	client := &scriptedClient{rounds: rounds}
+
+	var (
+		terminal Event
+		text     strings.Builder
+	)
+	for ev := range Run(context.Background(), Spec{
+		Client: client, Prompt: "go", WorkDir: t.TempDir(),
+		Policy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	}) {
+		if ev.Kind == EventText {
+			text.WriteString(ev.Text)
+		}
+		if ev.Kind == EventDone {
+			terminal = ev
+		}
+	}
+
+	if client.roundCount() != 2 {
+		t.Fatalf("an empty round must be followed by a continuation round, got %d calls", client.roundCount())
+	}
+	if !strings.Contains(text.String(), "已加上开关") {
+		t.Fatalf("the answer after the nudge must reach the user, got %q", text.String())
+	}
+	if terminal.StopReason != StopComplete {
+		t.Fatalf("expected a normal completion after the nudge, got %q", terminal.StopReason)
+	}
+	second := client.request(1)
+	last := second.Messages[len(second.Messages)-1]
+	if last.Role != llm.RoleUser || !strings.Contains(last.Parts[0].Text, "no message to the user") {
+		t.Fatalf("the continuation round must be asked to continue, got %+v", last)
+	}
+}
+
+// truncatedRound answers with text that the endpoint cut off at its output cap.
+func truncatedRound(text string) func(llm.Request) []llm.Event {
+	return func(llm.Request) []llm.Event {
+		return []llm.Event{
+			{Kind: llm.KindText, Text: text},
+			{Kind: llm.KindDone, Truncated: true},
+		}
+	}
+}
+
+// TestRun_TruncatedReplyIsContinued pins that a reply cut off at the output cap
+// is not accepted as the answer. The old behaviour ended the turn mid-sentence
+// and looked exactly like a normal finish.
+func TestRun_TruncatedReplyIsContinued(t *testing.T) {
+	client := &scriptedClient{rounds: []func(llm.Request) []llm.Event{
+		truncatedRound("配置面板在 settings 里，"),
+		textRound("保存逻辑在 useSettingsConfig。"),
+	}}
+
+	var (
+		terminal Event
+		text     strings.Builder
+	)
+	for ev := range Run(context.Background(), Spec{
+		Client: client, Prompt: "go", WorkDir: t.TempDir(),
+		Policy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	}) {
+		if ev.Kind == EventText {
+			text.WriteString(ev.Text)
+		}
+		if ev.Kind == EventDone {
+			terminal = ev
+		}
+	}
+
+	if client.roundCount() != 2 {
+		t.Fatalf("a truncated reply must be continued, got %d calls", client.roundCount())
+	}
+	if !strings.Contains(text.String(), "保存逻辑") {
+		t.Fatalf("the continuation must reach the user, got %q", text.String())
+	}
+	if terminal.Truncated {
+		t.Fatal("the run finished on an untruncated round, so it must not be marked truncated")
+	}
+	second := client.request(1)
+	last := second.Messages[len(second.Messages)-1]
+	if last.Role != llm.RoleUser || !strings.Contains(last.Parts[0].Text, "cut off") {
+		t.Fatalf("the continuation round must be asked to carry on, got %+v", last)
+	}
+}
+
+// TestRun_TruncationContinuationsAreBounded pins the cap: an endpoint whose
+// output limit is far too small must not turn the whole round budget into
+// continuations, and the terminal event must say the answer is a prefix.
+func TestRun_TruncationContinuationsAreBounded(t *testing.T) {
+	rounds := make([]func(llm.Request) []llm.Event, 10)
+	for i := range rounds {
+		rounds[i] = truncatedRound("partial ")
+	}
+	client := &scriptedClient{rounds: rounds}
+
+	terminal, _ := collect(t, Run(context.Background(), Spec{
+		Client: client, Prompt: "go", WorkDir: t.TempDir(),
+		Policy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	}))
+
+	if got := client.roundCount(); got != maxTruncationContinuations+1 {
+		t.Fatalf("expected 1 round + %d continuations, got %d", maxTruncationContinuations, got)
+	}
+	if terminal.Kind != EventDone {
+		t.Fatalf("a truncated answer is still a done turn, got %v", terminal.Kind)
+	}
+	if !terminal.Truncated {
+		t.Fatal("the terminal event must report that the answer is incomplete")
+	}
+}
+
+// TestRun_CancelDuringClosingRoundIsACancellation pins that pressing stop while
+// the closing summary is running reports a cancellation, not a completed turn.
+func TestRun_CancelDuringClosingRoundIsACancellation(t *testing.T) {
+	rounds := []func(llm.Request) []llm.Event{
+		toolRound("c1", "glob", `{"pattern":"*.go"}`),
+		func(llm.Request) []llm.Event {
+			// The closing round is still in flight when the context ends.
+			time.Sleep(500 * time.Millisecond)
+			return []llm.Event{{Kind: llm.KindText, Text: "too late"}}
+		},
+	}
+	client := &scriptedClient{rounds: rounds}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	terminal, _ := collect(t, Run(ctx, Spec{
+		Client: client, Prompt: "go", WorkDir: t.TempDir(),
+		Policy: model.ToolPolicy{Allow: []string{model.CapFSRead}, MaxRounds: 1},
+	}))
+	if terminal.Kind != EventError || !errors.Is(terminal.Err, context.Canceled) {
+		t.Fatalf("expected a cancellation, got %v (%v)", terminal.Kind, terminal.Err)
+	}
+}
+
+// TestRun_EmptyRoundNudgeIsBounded pins the cap: an endpoint that keeps
+// returning nothing must not be nudged forever.
+func TestRun_EmptyRoundNudgeIsBounded(t *testing.T) {
+	empty := func(llm.Request) []llm.Event {
+		return []llm.Event{{Kind: llm.KindDone}}
+	}
+	client := &scriptedClient{rounds: []func(llm.Request) []llm.Event{empty, empty, empty, empty}}
+
+	terminal, _ := collect(t, Run(context.Background(), Spec{
+		Client: client, Prompt: "go", WorkDir: t.TempDir(),
+		Policy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	}))
+
+	if got := client.roundCount(); got != maxEmptyRoundNudges+1 {
+		t.Fatalf("expected %d calls (one nudge, then stop), got %d", maxEmptyRoundNudges+1, got)
+	}
+	if terminal.Kind != EventDone || terminal.StopReason != StopComplete {
+		t.Fatalf("a persistently empty model must still end cleanly, got %v/%q", terminal.Kind, terminal.StopReason)
 	}
 }
 

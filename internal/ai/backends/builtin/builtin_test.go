@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"clawbench/internal/agentcore"
@@ -108,6 +109,32 @@ func TestTranslate_ToolStartIsNotDone(t *testing.T) {
 	}
 }
 
+// TestTranslate_ToolArgsCarriesInputBeforeRun pins that the arguments reach the
+// card while the tool is still executing: the start frame has none (they stream
+// in afterwards) and the end frame arrives when the work is already done, so
+// without this event a long-running bash call had no summary to show.
+func TestTranslate_ToolArgsCarriesInputBeforeRun(t *testing.T) {
+	tr := &translator{}
+	got := tr.translate(agentcore.Event{
+		Kind:       agentcore.EventToolArgs,
+		ToolCallID: "c1",
+		ToolName:   "bash",
+		ToolInput:  `{"command":"npm test","description":"Run the tests"}`,
+	})
+	if len(got) != 1 || got[0].Tool == nil {
+		t.Fatalf("expected one tool_use event, got %+v", got)
+	}
+	if got[0].Type != "tool_use" {
+		t.Fatalf("event type = %q, want tool_use", got[0].Type)
+	}
+	if got[0].Tool.Done {
+		t.Fatal("the args frame must not be marked done — the tool has not run yet")
+	}
+	if got[0].Tool.Input != `{"command":"npm test","description":"Run the tests"}` {
+		t.Fatalf("input must be forwarded verbatim, got %q", got[0].Tool.Input)
+	}
+}
+
 // TestTranslate_InvalidToolInputIsStillReadable pins that a malformed argument
 // blob does not silently disappear from the card.
 func TestTranslate_InvalidToolInputIsStillReadable(t *testing.T) {
@@ -145,6 +172,169 @@ func TestTranslate_RealErrorIsRequestFailed(t *testing.T) {
 	}
 	if got[0].Error != "boom" {
 		t.Fatalf("the message must be carried, got %q", got[0].Error)
+	}
+}
+
+// TestBuildSpec_RequestsAnOutputBudget pins the chat path's max_tokens.
+//
+// Without it the endpoint applies its own default, which is often smaller than
+// one reasoning round — the reply then stops at the cap and looks finished.
+// The background-task path has its own default (service.RunBuiltinAgentTask),
+// so this covers the turn a user actually types into.
+func TestBuildSpec_RequestsAnOutputBudget(t *testing.T) {
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	prevProvider := model.GetProvider(1)
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 1, Name: "test", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "http://127.0.0.1:1", APIKey: "k", Models: []string{"test-model"}, DefaultModel: "test-model",
+	}})
+	t.Cleanup(func() {
+		if prevProvider != nil {
+			model.ReplaceProviders([]*model.Provider{prevProvider})
+			return
+		}
+		model.ReplaceProviders(nil)
+	})
+
+	const id = "builtin-budget-test"
+	pid := int64(1)
+	model.Agents[id] = &model.Agent{
+		ID: id, Backend: BackendID, BuiltinBackend: true,
+		ProviderID: &pid, PreferredModel: "test-model",
+		ToolPolicy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	}
+	defer delete(model.Agents, id)
+
+	spec, err := buildSpec(context.Background(), ai.ChatRequest{AgentID: id, Prompt: "hi"})
+	if err != nil {
+		t.Fatalf("buildSpec: %v", err)
+	}
+	if spec.MaxOutputTokens <= 0 {
+		t.Fatal("the built-in agent must request an explicit output budget, not the provider default")
+	}
+}
+
+// TestOutputBudget pins the max_tokens the built-in agent requests.
+//
+// Leaving it unset (the old behaviour) hands the choice to the provider, whose
+// default is often smaller than one reasoning round — the endpoint then cuts the
+// reply off and the turn looks finished. Asking for more than the model supports
+// is a hard API error, so a published limit always wins.
+func TestOutputBudget(t *testing.T) {
+	model.ReplaceCatalog(&model.Catalog{
+		Providers: map[string]model.CatalogProvider{
+			"p": {ID: "p", Models: []model.CatalogModel{
+				{ID: "small-output", Output: 8192},
+				{ID: "huge-output", Output: 384000},
+			}},
+		},
+	})
+	t.Cleanup(func() { model.ReplaceCatalog(nil) })
+
+	if got := model.OutputTokenBudget("small-output"); got != 8192 {
+		t.Fatalf("a published limit below the ceiling must be used as-is, got %d", got)
+	}
+	if got := model.OutputTokenBudget("huge-output"); got != model.MaxOutputTokenBudget {
+		t.Fatalf("a huge published limit must be capped at the ceiling, got %d", got)
+	}
+	if got := model.OutputTokenBudget("never-heard-of-it"); got != model.MaxOutputTokenBudget {
+		t.Fatalf("an unknown model must get the ceiling, got %d", got)
+	}
+	if got := model.OutputTokenBudget(""); got != model.MaxOutputTokenBudget {
+		t.Fatalf("an empty model id must get the ceiling, got %d", got)
+	}
+}
+
+// TestTranslate_BudgetStopAddsANotice pins the user-visible half of a budget
+// stop: without a note, a turn that ran out of steps is indistinguishable from
+// one the model finished, so the user reads it as the agent dying mid-task.
+func TestTranslate_BudgetStopAddsANotice(t *testing.T) {
+	tr := &translator{locale: "zh"}
+	got := tr.translate(agentcore.Event{
+		Kind: agentcore.EventDone, StopReason: agentcore.StopMaxRounds,
+		// Rounds is one past the cap (the closing summary call); the notice
+		// must name the configured limit, not that total.
+		Rounds: 101, Limit: 100,
+	})
+	if len(got) != 2 {
+		t.Fatalf("expected notice + done, got %+v", got)
+	}
+	if got[0].Type != "system_message" || got[0].SystemMessage == nil {
+		t.Fatalf("expected a system message first, got %+v", got[0])
+	}
+	if !strings.Contains(got[0].SystemMessage.Content, "100") {
+		t.Fatalf("the notice must name the limit that was hit, got %q", got[0].SystemMessage.Content)
+	}
+	if strings.Contains(got[0].SystemMessage.Content, "101") {
+		t.Fatalf("the notice must not report the closing call as the limit, got %q", got[0].SystemMessage.Content)
+	}
+	if got[1].Type != "done" || got[1].Meta == nil || got[1].Meta.StopReason != agentcore.StopMaxRounds {
+		t.Fatalf("the stop reason must still reach the ledger, got %+v", got[1])
+	}
+}
+
+// TestTranslate_ToolCallBudgetNoticeNamesToolCalls pins that the two budgets
+// are not reported as one generic "limit".
+func TestTranslate_ToolCallBudgetNoticeNamesToolCalls(t *testing.T) {
+	tr := &translator{locale: "en"}
+	got := tr.translate(agentcore.Event{
+		Kind: agentcore.EventDone, StopReason: agentcore.StopMaxToolCalls, ToolCalls: 300, Limit: 300,
+	})
+	if len(got) != 2 || got[0].SystemMessage == nil {
+		t.Fatalf("expected notice + done, got %+v", got)
+	}
+	if !strings.Contains(got[0].SystemMessage.Content, "300") ||
+		!strings.Contains(got[0].SystemMessage.Content, "tool calls") {
+		t.Fatalf("the notice must name the tool-call budget, got %q", got[0].SystemMessage.Content)
+	}
+}
+
+// TestTranslate_TruncatedAnswerAddsANotice pins that a reply cut off at the
+// output cap is called out. The text the user sees just stops; without the note
+// there is nothing to distinguish "the model finished" from "the model was cut
+// off".
+func TestTranslate_TruncatedAnswerAddsANotice(t *testing.T) {
+	tr := &translator{locale: "zh"}
+	got := tr.translate(agentcore.Event{
+		Kind: agentcore.EventDone, StopReason: agentcore.StopComplete, Truncated: true,
+	})
+	if len(got) != 2 || got[0].Type != "system_message" || got[0].SystemMessage == nil {
+		t.Fatalf("expected a notice + done, got %+v", got)
+	}
+	if !strings.Contains(got[0].SystemMessage.Content, "输出上限") {
+		t.Fatalf("the notice must say why, got %q", got[0].SystemMessage.Content)
+	}
+	if got[1].Type != "done" {
+		t.Fatalf("the done event must follow the notice, got %q", got[1].Type)
+	}
+}
+
+// TestTranslate_TruncatedAndBudgetAddTwoNotices pins that the two facts are not
+// collapsed into one: "you ran out of steps" and "the reply was cut off" are
+// different, and a user acts on them differently.
+func TestTranslate_TruncatedAndBudgetAddTwoNotices(t *testing.T) {
+	tr := &translator{locale: "en"}
+	got := tr.translate(agentcore.Event{
+		Kind: agentcore.EventDone, StopReason: agentcore.StopMaxRounds, Limit: 100, Truncated: true,
+	})
+	if len(got) != 3 {
+		t.Fatalf("expected two notices + done, got %d events", len(got))
+	}
+	for _, ev := range got[:2] {
+		if ev.Type != "system_message" || ev.SystemMessage == nil {
+			t.Fatalf("expected system messages first, got %+v", ev)
+		}
+	}
+}
+
+// TestTranslate_CompleteStopHasNoNotice pins that the normal ending stays quiet.
+func TestTranslate_CompleteStopHasNoNotice(t *testing.T) {
+	tr := &translator{locale: "zh"}
+	got := tr.translate(agentcore.Event{Kind: agentcore.EventDone, StopReason: agentcore.StopComplete})
+	if len(got) != 1 || got[0].Type != "done" {
+		t.Fatalf("a normal completion must produce only the done event, got %+v", got)
 	}
 }
 

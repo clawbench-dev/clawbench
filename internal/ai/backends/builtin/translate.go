@@ -7,6 +7,8 @@ import (
 
 	"clawbench/internal/agentcore"
 	"clawbench/internal/ai"
+	"clawbench/internal/i18n"
+	"clawbench/internal/model"
 )
 
 // emitTimeout bounds how long one event may wait for the consumer.
@@ -26,6 +28,9 @@ const emitTimeout = 30 * time.Second
 // the periodic flush persists as in_progress, so a reload adopts it too.
 type translator struct {
 	reasoningOpen bool
+	// locale is the UI language the budget notice is written in. Empty falls
+	// back to the product default rather than emitting a raw message id.
+	locale string
 }
 
 // translate maps one agentcore event to the ai.StreamEvents to forward.
@@ -66,18 +71,21 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 			},
 		})
 
+	case agentcore.EventToolArgs:
+		// Arguments are final but the tool has not run yet. Carrying them here
+		// is what lets the card show the command / file while it executes —
+		// the start event had none, and the end event arrives minutes later.
+		out = append(out, ai.StreamEvent{
+			Type: "tool_use",
+			Tool: &ai.ToolCall{
+				ID:    ev.ToolCallID,
+				Name:  ev.ToolName,
+				Input: toolInputJSON(ev.ToolInput),
+				Done:  false,
+			},
+		})
+
 	case agentcore.EventToolEnd:
-		input := ev.ToolInput
-		if input != "" && !json.Valid([]byte(input)) {
-			// A malformed argument blob would make AccumulateBlock drop the
-			// input silently; sending it as a JSON string keeps the card
-			// readable instead of showing an empty input.
-			if raw, err := json.Marshal(input); err == nil {
-				input = string(raw)
-			} else {
-				input = ""
-			}
-		}
 		status := "success"
 		if ev.ToolIsError {
 			status = "error"
@@ -87,7 +95,7 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 			Tool: &ai.ToolCall{
 				ID:         ev.ToolCallID,
 				Name:       ev.ToolName,
-				Input:      input,
+				Input:      toolInputJSON(ev.ToolInput),
 				Output:     ev.ToolOutput,
 				Status:     status,
 				Done:       true,
@@ -124,12 +132,7 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 		})
 
 	case agentcore.EventDone:
-		out = append(out, ai.StreamEvent{Type: "done", Meta: &ai.Metadata{
-			Transport:    "builtin",
-			StopReason:   ev.StopReason,
-			InputTokens:  ev.TotalUsage.InputTokens,
-			OutputTokens: ev.TotalUsage.OutputTokens,
-		}})
+		out = append(out, t.doneEvents(ev)...)
 
 	case agentcore.EventError:
 		out = append(out, ai.StreamEvent{
@@ -139,6 +142,72 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 		})
 	}
 	return out
+}
+
+// toolInputJSON normalizes a tool call's argument blob for the frontend.
+//
+// A malformed blob would make AccumulateBlock drop the input silently; sending
+// it as a JSON string keeps the card readable instead of showing an empty input.
+// Shared by the args and end events so both carry the same shape.
+func toolInputJSON(raw string) string {
+	if raw == "" || json.Valid([]byte(raw)) {
+		return raw
+	}
+	if quoted, err := json.Marshal(raw); err == nil {
+		return string(quoted)
+	}
+	return ""
+}
+
+// doneEvents renders the terminal frame.
+//
+// A budget stop ends the turn the same way a finished one does, so without a
+// note the user cannot tell "it gave up" from "it answered". The note is a
+// system timeline row (same channel as the compaction notice) because it is not
+// part of the model's answer. The done event still carries the stop reason and
+// the totals so the ledger records why the turn ended.
+func (t *translator) doneEvents(ev agentcore.Event) []ai.StreamEvent {
+	var out []ai.StreamEvent
+	for _, notice := range t.doneNotices(ev) {
+		out = append(out, ai.StreamEvent{
+			Type:          "system_message",
+			SystemMessage: &ai.SystemMessageData{Content: notice},
+		})
+	}
+	return append(out, ai.StreamEvent{Type: "done", Meta: &ai.Metadata{
+		Transport:    "builtin",
+		StopReason:   ev.StopReason,
+		InputTokens:  ev.TotalUsage.InputTokens,
+		OutputTokens: ev.TotalUsage.OutputTokens,
+	}})
+}
+
+// doneNotices renders the system lines a turn's ending needs.
+//
+// Two different facts can be true at once — the step budget ran out, and the
+// last reply was cut off by the output cap — so this returns a list rather than
+// one message. A normal completion returns none.
+func (t *translator) doneNotices(ev agentcore.Event) []string {
+	var out []string
+	if ev.Truncated {
+		out = append(out, t.localize("BuiltinTruncatedNotice"))
+	}
+	switch ev.StopReason {
+	case agentcore.StopMaxRounds:
+		out = append(out, t.localize("BuiltinMaxRoundsNotice", map[string]any{"Rounds": ev.Limit}))
+	case agentcore.StopMaxToolCalls:
+		out = append(out, t.localize("BuiltinMaxToolCallsNotice", map[string]any{"ToolCalls": ev.Limit}))
+	}
+	return out
+}
+
+// localize renders one message id in the UI language.
+func (t *translator) localize(id string, data ...map[string]any) string {
+	locale := t.locale
+	if locale == "" {
+		locale = model.DefaultLanguage
+	}
+	return i18n.T(i18n.LocalizerForLocale(locale), id, data...)
 }
 
 // compactionNotice renders the user-facing line shown when the conversation was

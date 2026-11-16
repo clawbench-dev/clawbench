@@ -39,6 +39,42 @@
       {{ t('settings.items.toolPolicyNoTools') }}
     </div>
 
+    <!-- Per-turn budgets. A real repository task routinely needs dozens of
+         rounds, so these are settings rather than constants: too small and the
+         agent stops mid-task, too large and one turn can run for a long time.
+         Empty / 0 means "use the server default", which is what the
+         placeholders show. -->
+    <div class="agent-tools__budgets">
+      <label class="agent-tools__budget">
+        <span class="agent-tools__name">{{ t('settings.items.toolPolicyMaxRounds') }}</span>
+        <input
+          type="number"
+          min="0"
+          step="1"
+          inputmode="numeric"
+          :value="props.agent?.toolPolicy?.maxRounds || ''"
+          :placeholder="String(DEFAULT_MAX_ROUNDS)"
+          :disabled="saving"
+          @change="saveBudget('maxRounds', $event)"
+        />
+        <span class="agent-tools__desc">{{ t('settings.items.toolPolicyMaxRoundsDesc') }}</span>
+      </label>
+      <label class="agent-tools__budget">
+        <span class="agent-tools__name">{{ t('settings.items.toolPolicyMaxToolCalls') }}</span>
+        <input
+          type="number"
+          min="0"
+          step="1"
+          inputmode="numeric"
+          :value="props.agent?.toolPolicy?.maxToolCalls || ''"
+          :placeholder="String(DEFAULT_MAX_TOOL_CALLS)"
+          :disabled="saving"
+          @change="saveBudget('maxToolCalls', $event)"
+        />
+        <span class="agent-tools__desc">{{ t('settings.items.toolPolicyMaxToolCallsDesc') }}</span>
+      </label>
+    </div>
+
     <div v-if="error" class="agent-tools__error">
       <AlertCircle :size="13" />
       <span>{{ error }}</span>
@@ -67,6 +103,16 @@ const { patchAgentField } = useSettingsConfig()
 
 const error = ref('')
 const saving = ref(false)
+
+/**
+ * Mirrors model.DefaultMaxRounds / DefaultMaxToolCalls.
+ *
+ * Shown as the placeholder (not written into the field) so an untouched agent
+ * keeps "unset" semantics and picks up a future default change instead of
+ * being pinned to today's number.
+ */
+const DEFAULT_MAX_ROUNDS = 100
+const DEFAULT_MAX_TOOL_CALLS = 300
 
 /**
  * The granted set, normalized the same way the server does it.
@@ -128,6 +174,55 @@ async function save(nextAllow: string[]) {
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
     appLog.w('AgentToolPolicySection', 'save failed', error.value)
+  } finally {
+    saving.value = false
+  }
+}
+
+/**
+ * Persist one budget field.
+ *
+ * 0 / empty is stored as 0, which the server reads as "use the default". The
+ * field is reset to what is actually stored when the entry is not a positive
+ * number, so the UI never shows a budget the agent is not running with.
+ *
+ * Sending the whole policy (not just the changed field) matches save() above:
+ * a partial object would rely on the server's "missing means leave alone"
+ * behaviour, which is exactly what drops the other budget.
+ */
+async function saveBudget(field: 'maxRounds' | 'maxToolCalls', event: Event) {
+  const input = event.target as HTMLInputElement
+  const stored = props.agent?.toolPolicy?.[field] ?? 0
+  if (!props.agent || saving.value) {
+    input.value = stored > 0 ? String(stored) : ''
+    return
+  }
+  const raw = input.value.trim()
+  const parsed = Number.parseInt(raw, 10)
+  // Empty means "use the default"; anything else must be a positive integer.
+  // A negative or non-numeric entry is rejected outright rather than silently
+  // rewritten to 0, which would look like the user had cleared the field.
+  if (raw !== '' && (!Number.isFinite(parsed) || parsed <= 0)) {
+    input.value = stored > 0 ? String(stored) : ''
+    return
+  }
+  const value = raw === '' ? 0 : parsed
+  input.value = value > 0 ? String(value) : ''
+  if (value === stored) return
+
+  saving.value = true
+  error.value = ''
+  try {
+    await patchAgentField(props.agent.id, 'tool_policy', {
+      ...(props.agent.toolPolicy ?? {}),
+      allow: granted.value,
+      [field]: value,
+    })
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    appLog.w('AgentToolPolicySection', 'save budget failed', error.value)
+    // A failed save must not leave the typed number looking accepted.
+    input.value = stored > 0 ? String(stored) : ''
   } finally {
     saving.value = false
   }
@@ -210,6 +305,35 @@ watch(
   font-size: var(--font-size-sm);
   color: var(--text-muted);
   line-height: var(--line-height-normal);
+}
+.agent-tools__budgets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-color);
+}
+.agent-tools__budget {
+  display: grid;
+  grid-template-columns: 1fr 92px;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+}
+.agent-tools__budget .agent-tools__desc {
+  grid-column: 1 / -1;
+}
+.agent-tools__budget input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  text-align: right;
+}
+.agent-tools__budget input:disabled {
+  opacity: 0.6;
 }
 .agent-tools__warn,
 .agent-tools__error {

@@ -385,6 +385,11 @@ func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<-
 	seenCall := make(map[int]bool)
 	var usage *Usage
 	sawContent := false
+	// truncated records finish_reason=length: the model was cut off at the
+	// output cap, so the reply is a prefix. Some gateways send the reason on a
+	// chunk with no other content, which is why it is tracked outside the
+	// per-choice body below.
+	truncated := false
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -414,6 +419,9 @@ func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<-
 		}
 
 		for _, choice := range chunk.Choices {
+			if choice.FinishReason == "length" {
+				truncated = true
+			}
 			if reasoning := choice.Delta.ReasoningContent; reasoning != "" {
 				if !emit(ctx, ch, Event{Kind: KindReasoning, Reasoning: reasoning}) {
 					return
@@ -455,6 +463,14 @@ func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<-
 	}
 	if usage != nil {
 		emit(ctx, ch, Event{Kind: KindUsage, Usage: usage})
+	}
+	if truncated {
+		// Checked before ErrNoOutput: a reply cut off during reasoning has no
+		// content at all, and "the answer is incomplete" is the useful fact —
+		// "the endpoint produced nothing" would send the caller down a retry
+		// path that hits the same cap again.
+		emitTruncated(ctx, ch)
+		return
 	}
 	if !sawContent && usage == nil && len(seenCall) == 0 {
 		// The endpoint accepted the request and then produced nothing. That is

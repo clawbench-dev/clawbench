@@ -260,6 +260,12 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"CruiseConfirming",
 		"CruiseSatisfied",
 		"CruiseMaxRounds",
+		// The built-in agent's budget notice is written from the backend, not a
+		// request handler, so a one-sided add would surface a raw key id in the
+		// other language.
+		"BuiltinMaxRoundsNotice",
+		"BuiltinMaxToolCallsNotice",
+		"BuiltinTruncatedNotice",
 		"GroupCruiseSatisfied",
 		"GroupMemberJoined",
 		"GroupMemberDisabled",

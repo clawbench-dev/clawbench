@@ -75,6 +75,11 @@ const (
 	EventReasoning EventKind = "reasoning"
 	// EventToolStart announces a tool call before it runs.
 	EventToolStart EventKind = "tool_start"
+	// EventToolArgs carries a call's arguments once they are complete, just
+	// before the tool runs. The start event cannot: arguments stream in after
+	// it, so a tool that runs for minutes had no summary — no command, no file —
+	// until its result arrived.
+	EventToolArgs EventKind = "tool_args"
 	// EventToolEnd reports a finished tool call.
 	EventToolEnd EventKind = "tool_end"
 	// EventUsage reports token accounting for one model round.
@@ -124,6 +129,15 @@ type Event struct {
 	// StopReason is set on EventDone: why the run ended (see the Stop*
 	// constants). "complete" is the normal case.
 	StopReason string
+	// Limit is set on EventDone when a budget stopped the run: the cap that
+	// was hit. It is NOT the same as Rounds/ToolCalls — the closing summary is
+	// one model call past the cap, so reporting the totals as the limit would
+	// name a number the user never configured.
+	Limit int
+	// Truncated is set on EventDone when the run ended while the model's reply
+	// was still cut off at the output cap (the continuation budget ran out).
+	// The answer is then a prefix and the UI should say so.
+	Truncated bool
 	// Rounds and ToolCalls are set on EventDone: the run's totals.
 	Rounds    int
 	ToolCalls int
@@ -151,6 +165,11 @@ type RunResult struct {
 	// compacted. A caller persists it so the next turn starts from the
 	// compacted state instead of re-summarizing the same history.
 	Summary string
+	// Truncated reports that the run ended while the model's reply was still
+	// cut off at the output cap: Text is a prefix, not a finished answer. A
+	// caller that produces an artifact (rather than a chat turn) must not treat
+	// it as complete.
+	Truncated bool
 }
 
 // Stop reasons.
@@ -228,6 +247,7 @@ func RunSync(ctx context.Context, spec Spec, onEvent func(Event)) (RunResult, er
 			res.ToolCalls = ev.ToolCalls
 			res.Usage = ev.TotalUsage
 			res.Summary = ev.Summary
+			res.Truncated = ev.Truncated
 		case EventError:
 			res.StopReason = StopError
 			runErr = ev.Err
@@ -252,10 +272,55 @@ type runner struct {
 	// summary is the most recent compaction summary, reported on EventDone so
 	// the caller can persist it across the turn boundary.
 	summary string
+	// nudges counts how many times a model round produced neither text nor a
+	// tool call and was answered with a continuation prompt. Capped so a
+	// provider that keeps returning nothing cannot loop forever.
+	nudges int
+	// truncations counts how many times a reply was continued after the
+	// endpoint cut it off at the output cap.
+	truncations int
+	// lastTruncated records that the most recent round was cut off at the
+	// output cap, so the terminal event can say the answer may be incomplete.
+	lastTruncated bool
 	// terminated records that a done/error event was already sent. The panic
 	// guard reads it so a panic after the terminal event cannot emit a second.
 	terminated bool
 }
+
+// maxEmptyRoundNudges bounds how many times one run asks the model to continue
+// after a round that produced nothing visible.
+//
+// One is enough for the case this exists for (a reasoning-only round, or a
+// reply truncated before any content arrived). More would just burn model calls
+// against an endpoint that is consistently returning empty responses.
+const maxEmptyRoundNudges = 1
+
+// maxTruncationContinuations bounds how many times one run continues a reply
+// that the endpoint cut off at its output cap.
+//
+// Each continuation is a full model round (and costs a round of the budget), so
+// an unbounded loop would turn a too-small max_tokens into a very expensive
+// turn. Two continuations cover a long answer split into three parts; past that
+// the run ends and says the reply may be incomplete.
+const maxTruncationContinuations = 2
+
+// truncationNudge asks the model to carry on from a cut-off reply.
+//
+// "Do not repeat" matters: without it the model usually restarts the answer
+// from the beginning, which duplicates everything the user already read.
+const truncationNudge = "Your previous reply was cut off by the output-token limit. " +
+	"Continue from exactly where it stopped, without repeating anything you already wrote " +
+	"and without starting over."
+
+// emptyRoundNudge is sent when a round produced neither text nor a tool call.
+//
+// Such a round is a stall, not an answer: the model reasoned and then stopped,
+// which used to end the turn with nothing visible. Naming both acceptable
+// outcomes ("result" or "next tool call") keeps it from answering the nudge
+// with another empty round.
+const emptyRoundNudge = "Your previous reply contained no message to the user and no tool call. " +
+	"Continue the user's task now: either take the next step with a tool call, " +
+	"or, if the task is already finished, state the result in your reply."
 
 func (r *runner) run(ctx context.Context) {
 	if r.spec.Client == nil {
@@ -296,71 +361,50 @@ func (r *runner) run(ctx context.Context) {
 	r.compactIfNeeded(runCtx, system)
 
 	for {
-		if err := runCtx.Err(); err != nil {
-			r.finishStopped(runCtx, StopCancelled)
+		if runCtx.Err() != nil {
+			r.finishCancelled()
 			return
 		}
 		if r.rounds >= r.spec.Policy.Rounds() {
-			r.finishStopped(runCtx, StopMaxRounds)
+			r.finishWithClosing(runCtx, StopMaxRounds, system)
 			return
 		}
 		r.rounds++
 
-		calls, text, thinking, err := r.runModelRound(runCtx, system)
+		out, err := r.runModelRound(runCtx, system, true)
 		if err != nil {
 			if runCtx.Err() != nil {
-				r.finishStopped(runCtx, StopCancelled)
+				r.finishCancelled()
 				return
 			}
 			r.fail(err)
 			return
 		}
 
-		// Record the assistant turn so the next round sees what it decided.
-		// Thinking goes FIRST: Anthropic requires the reasoning block to lead
-		// the assistant turn that carries the tool calls it justified.
-		assistantParts := make([]llm.Part, 0, len(text)+len(calls)+1)
-		if thinking != nil {
-			assistantParts = append(assistantParts, llm.Part{Thinking: thinking})
-		}
-		for _, t := range text {
-			assistantParts = append(assistantParts, llm.Part{Text: t})
-		}
-		for _, c := range calls {
-			assistantParts = append(assistantParts, llm.Part{ToolCall: &llm.ToolCall{
-				ID: c.ID, Name: c.Name, Arguments: c.Arguments,
-			}})
-		}
-		if len(assistantParts) > 0 {
-			r.messages = append(r.messages, llm.Message{Role: llm.RoleAssistant, Parts: assistantParts})
-		}
+		r.lastTruncated = out.truncated
+		r.recordAssistantTurn(out.texts, out.calls, out.thinking)
 
-		// No tool calls means the model is answering. That is the normal end.
-		if len(calls) == 0 {
-			r.emit(Event{
-				Kind:       EventDone,
-				StopReason: StopComplete,
-				Rounds:     r.rounds,
-				ToolCalls:  r.toolCalls,
-				TotalUsage: r.usage,
-				Summary:    r.summary,
-			})
+		// No tool calls means the model is answering. That is the normal end —
+		// but only when it actually finished saying something: a reply cut off
+		// at the output cap is a prefix, and a round with no text at all is a
+		// stall.
+		if len(out.calls) == 0 {
+			if r.continueTruncated(out) {
+				continue
+			}
+			if r.nudgeEmptyRound(out.texts) {
+				continue
+			}
+			r.finish(StopComplete, 0)
 			return
 		}
 
-		results := r.executeTools(runCtx, env, calls)
+		results := r.executeTools(runCtx, env, out.calls)
 		if runCtx.Err() != nil {
-			r.finishStopped(runCtx, StopCancelled)
+			r.finishCancelled()
 			return
 		}
-		// Tool results go back as one message; the clients split it per
-		// protocol (Anthropic merges blocks into a user message, OpenAI emits
-		// one tool message per result).
-		var parts []llm.Part
-		for _, res := range results {
-			parts = append(parts, llm.Part{ToolResult: res})
-		}
-		r.messages = append(r.messages, llm.Message{Role: llm.RoleTool, Parts: parts})
+		r.recordToolResults(results)
 
 		// A single turn can overflow the window on its own: reading a large file
 		// or running a verbose command adds tens of thousands of tokens in one
@@ -373,10 +417,84 @@ func (r *runner) run(ctx context.Context) {
 			// The budget is spent. Do one last model round WITHOUT tools so the
 			// model has a chance to summarize what it found instead of the turn
 			// ending with a bare tool result the user never sees.
-			r.finishStopped(runCtx, StopMaxToolCalls)
+			r.finishWithClosing(runCtx, StopMaxToolCalls, system)
 			return
 		}
 	}
+}
+
+// continueTruncated asks the model to carry on after the endpoint cut its reply
+// off at the output cap. It reports whether the run should keep going.
+//
+// The partial reply is already in the conversation (recordAssistantTurn ran), so
+// the model sees where it stopped. The cap exists so a model whose output limit
+// is far too small cannot burn the whole round budget on continuations.
+func (r *runner) continueTruncated(out roundOutput) bool {
+	if !out.truncated || r.truncations >= maxTruncationContinuations {
+		return false
+	}
+	r.truncations++
+	slog.Info("agentcore: reply hit the output cap, asking the model to continue",
+		"round", r.rounds, "continuation", r.truncations)
+	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, truncationNudge))
+	return true
+}
+
+// recordAssistantTurn appends the model's reply to the conversation.
+//
+// Thinking goes FIRST: Anthropic requires the reasoning block to lead the
+// assistant turn that carries the tool calls it justified.
+//
+// A round that produced neither text nor tool calls is NOT recorded: it carries
+// no decision, and an assistant turn with nothing but reasoning is rejected by
+// some providers once the continuation prompt is appended to the conversation.
+func (r *runner) recordAssistantTurn(text []string, calls []llm.ToolCall, thinking *llm.Thinking) {
+	if len(text) == 0 && len(calls) == 0 {
+		return
+	}
+	parts := make([]llm.Part, 0, len(text)+len(calls)+1)
+	if thinking != nil {
+		parts = append(parts, llm.Part{Thinking: thinking})
+	}
+	for _, t := range text {
+		parts = append(parts, llm.Part{Text: t})
+	}
+	for _, c := range calls {
+		parts = append(parts, llm.Part{ToolCall: &llm.ToolCall{
+			ID: c.ID, Name: c.Name, Arguments: c.Arguments,
+		}})
+	}
+	if len(parts) > 0 {
+		r.messages = append(r.messages, llm.Message{Role: llm.RoleAssistant, Parts: parts})
+	}
+}
+
+// recordToolResults appends the tool outputs as one message; the clients split
+// it per protocol (Anthropic merges blocks into a user message, OpenAI emits one
+// tool message per result).
+func (r *runner) recordToolResults(results []*llm.ToolResult) {
+	parts := make([]llm.Part, 0, len(results))
+	for _, res := range results {
+		parts = append(parts, llm.Part{ToolResult: res})
+	}
+	r.messages = append(r.messages, llm.Message{Role: llm.RoleTool, Parts: parts})
+}
+
+// nudgeEmptyRound asks the model to continue after a round that produced
+// neither text nor a tool call. It reports whether the run should keep going.
+//
+// Such a round is a stall, not an answer: the model reasoned and then stopped.
+// Treating it as the answer is how a turn ends with nothing visible in it. The
+// nudge is bounded so a provider that keeps returning nothing cannot loop.
+func (r *runner) nudgeEmptyRound(text []string) bool {
+	if hasVisibleText(text) || r.nudges >= maxEmptyRoundNudges {
+		return false
+	}
+	r.nudges++
+	slog.Info("agentcore: empty model round, asking the model to continue",
+		"round", r.rounds)
+	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, emptyRoundNudge))
+	return true
 }
 
 // buildTools materialises the tool list from the policy.
@@ -419,34 +537,25 @@ func filterVisionlessRead(list []tools.Tool) []tools.Tool {
 }
 
 // runModelRound performs one streaming model call and collects its tool calls.
-func (r *runner) runModelRound(ctx context.Context, system string) ([]llm.ToolCall, []string, *llm.Thinking, error) {
-	specs := make([]llm.ToolSpec, 0, len(r.toolList))
-	for _, t := range r.toolList {
-		s := t.Spec()
-		specs = append(specs, llm.ToolSpec{Name: s.Name, Description: s.Description, Parameters: s.Parameters})
-	}
-
+//
+// allowTools false withholds the tool declarations for this round: the closing
+// summary runs that way, because a model that could still call tools would ask
+// for work the budget cannot pay for. A provider that emits a tool call anyway
+// is ignored rather than announced, so the UI never shows a card whose result
+// will never arrive.
+func (r *runner) runModelRound(ctx context.Context, system string, allowTools bool) (roundOutput, error) {
 	stream, err := r.spec.Client.Stream(ctx, llm.Request{
 		System:          system,
 		Messages:        r.messages,
-		Tools:           specs,
+		Tools:           r.toolSpecs(allowTools),
 		MaxOutputTokens: r.spec.MaxOutputTokens,
 		ReasoningEffort: r.spec.ThinkingEffort,
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return roundOutput{}, err
 	}
 
-	var (
-		texts     []string
-		calls     []llm.ToolCall
-		partial   map[int]*strings.Builder
-		index     []int // ordered indexes, so call order is preserved
-		reasoning strings.Builder
-		signature string
-	)
-	partial = make(map[int]*strings.Builder)
-
+	acc := newRoundAccumulator(allowTools)
 	for {
 		// The channel is drained with an explicit select rather than a range:
 		// a client whose Stream implementation ignores its context (a stalled
@@ -459,75 +568,145 @@ func (r *runner) runModelRound(ctx context.Context, system string) ([]llm.ToolCa
 		select {
 		case <-ctx.Done():
 			go drainStream(stream)
-			return nil, nil, nil, ctx.Err()
+			return roundOutput{}, ctx.Err()
 		case ev, ok = <-stream:
 			if !ok {
-				goto drained
+				return acc.result(r.rounds), nil
 			}
 		}
-
-		switch ev.Kind {
-		case llm.KindText:
-			texts = append(texts, ev.Text)
-			r.emit(Event{Kind: EventText, Text: ev.Text})
-
-		case llm.KindReasoning:
-			reasoning.WriteString(ev.Reasoning)
-			r.emit(Event{Kind: EventReasoning, Reasoning: ev.Reasoning})
-
-		case llm.KindReasoningSignature:
-			// Needed to replay the block when this turn also calls tools.
-			signature = ev.Signature
-
-		case llm.KindToolCallStart:
-			idx := len(index)
-			index = append(index, idx)
-			partial[idx] = &strings.Builder{}
-			calls = append(calls, llm.ToolCall{ID: ev.ToolCall.ID, Name: ev.ToolCall.Name})
-			// Announce immediately so the UI can open a card before the
-			// arguments finish streaming.
-			r.emit(Event{Kind: EventToolStart, ToolCallID: ev.ToolCall.ID, ToolName: ev.ToolCall.Name})
-
-		case llm.KindToolCallDelta:
-			if len(index) == 0 {
-				continue
-			}
-			last := index[len(index)-1]
-			partial[last].WriteString(ev.ToolCall.Arguments)
-
-		case llm.KindUsage:
-			if ev.Usage != nil {
-				r.usage.InputTokens += ev.Usage.InputTokens
-				r.usage.OutputTokens += ev.Usage.OutputTokens
-				r.emit(Event{Kind: EventUsage, Usage: ev.Usage})
-			}
-
-		case llm.KindError:
+		if err := acc.apply(ev, r); err != nil {
 			// Drain any remaining events so the producer can exit, then fail.
 			go drainStream(stream)
-			return nil, nil, nil, ev.Err
-
-		case llm.KindDone:
-			// Terminal; the channel closes next.
+			return roundOutput{}, err
 		}
 	}
+}
 
-drained:
-	for i := range calls {
-		if b, ok := partial[i]; ok {
-			calls[i].Arguments = b.String()
+// roundOutput is one model round's result.
+type roundOutput struct {
+	calls    []llm.ToolCall
+	texts    []string
+	thinking *llm.Thinking
+	// truncated means the endpoint stopped at its output cap: the reply is a
+	// prefix of what the model was writing.
+	truncated bool
+}
+
+// toolSpecs declares the tools for one round, or none when the round must not
+// call any.
+func (r *runner) toolSpecs(allowTools bool) []llm.ToolSpec {
+	if !allowTools {
+		return nil
+	}
+	specs := make([]llm.ToolSpec, 0, len(r.toolList))
+	for _, t := range r.toolList {
+		s := t.Spec()
+		specs = append(specs, llm.ToolSpec{Name: s.Name, Description: s.Description, Parameters: s.Parameters})
+	}
+	return specs
+}
+
+// roundAccumulator collects one model round's output as its events arrive.
+//
+// It is a separate type rather than locals in runModelRound so the event switch
+// (one case per stream event, each with its own rule) does not live inside the
+// read loop, where the two concerns made the function hard to follow and hard
+// to keep under the complexity limit.
+type roundAccumulator struct {
+	// allowTools is false for the closing round: tool calls are dropped instead
+	// of announced.
+	allowTools bool
+	texts      []string
+	calls      []llm.ToolCall
+	partial    map[int]*strings.Builder
+	// index keeps the call order: deltas address their call by position, and
+	// map iteration order is random.
+	index     []int
+	reasoning strings.Builder
+	signature string
+	// truncated records that the stream ended at the output cap, so the reply
+	// is a prefix rather than the whole answer.
+	truncated bool
+}
+
+func newRoundAccumulator(allowTools bool) *roundAccumulator {
+	return &roundAccumulator{
+		allowTools: allowTools,
+		partial:    make(map[int]*strings.Builder),
+	}
+}
+
+// apply consumes one stream event and reports a terminal stream error.
+func (a *roundAccumulator) apply(ev llm.Event, r *runner) error {
+	switch ev.Kind {
+	case llm.KindText:
+		a.texts = append(a.texts, ev.Text)
+		r.emit(Event{Kind: EventText, Text: ev.Text})
+
+	case llm.KindReasoning:
+		a.reasoning.WriteString(ev.Reasoning)
+		r.emit(Event{Kind: EventReasoning, Reasoning: ev.Reasoning})
+
+	case llm.KindReasoningSignature:
+		// Needed to replay the block when this turn also calls tools.
+		a.signature = ev.Signature
+
+	case llm.KindToolCallStart:
+		if !a.allowTools {
+			// Tools were withheld for this round; a call here would open a card
+			// that can never complete.
+			return nil
 		}
-		if calls[i].ID == "" {
+		idx := len(a.index)
+		a.index = append(a.index, idx)
+		a.partial[idx] = &strings.Builder{}
+		a.calls = append(a.calls, llm.ToolCall{ID: ev.ToolCall.ID, Name: ev.ToolCall.Name})
+		// Announce immediately so the UI can open a card before the arguments
+		// finish streaming.
+		r.emit(Event{Kind: EventToolStart, ToolCallID: ev.ToolCall.ID, ToolName: ev.ToolCall.Name})
+
+	case llm.KindToolCallDelta:
+		if !a.allowTools || len(a.index) == 0 {
+			return nil
+		}
+		last := a.index[len(a.index)-1]
+		_, _ = a.partial[last].WriteString(ev.ToolCall.Arguments)
+
+	case llm.KindUsage:
+		if ev.Usage != nil {
+			r.usage.InputTokens += ev.Usage.InputTokens
+			r.usage.OutputTokens += ev.Usage.OutputTokens
+			r.emit(Event{Kind: EventUsage, Usage: ev.Usage})
+		}
+
+	case llm.KindError:
+		return ev.Err
+
+	case llm.KindDone:
+		// Terminal; the channel closes next. The truncation flag rides the
+		// done event.
+		a.truncated = ev.Truncated
+	}
+	return nil
+}
+
+// result assembles the round's output once the stream has closed.
+func (a *roundAccumulator) result(round int) roundOutput {
+	for i := range a.calls {
+		if b, ok := a.partial[i]; ok {
+			a.calls[i].Arguments = b.String()
+		}
+		if a.calls[i].ID == "" {
 			// Some gateways omit the id. Minting a stable one here keeps the
 			// result/call pairing intact downstream.
-			calls[i].ID = fmt.Sprintf("call_%d_%d", r.rounds, i)
+			a.calls[i].ID = fmt.Sprintf("call_%d_%d", round, i)
 		}
 	}
 	var thinking *llm.Thinking
-	if reasoning.Len() > 0 {
-		thinking = &llm.Thinking{Text: reasoning.String(), Signature: signature}
+	if a.reasoning.Len() > 0 {
+		thinking = &llm.Thinking{Text: a.reasoning.String(), Signature: a.signature}
 	}
-	return calls, texts, thinking, nil
+	return roundOutput{calls: a.calls, texts: a.texts, thinking: thinking, truncated: a.truncated}
 }
 
 // drainStream consumes a stream to completion in the background.
@@ -705,6 +884,11 @@ func (r *runner) executeTools(ctx context.Context, env tools.Env, calls []llm.To
 		}
 		r.toolCalls++
 
+		// Arguments are complete now — tell the UI before running, so the tool
+		// card can show WHAT is running (the command, the file) instead of a
+		// bare tool name for the whole execution.
+		r.emit(Event{Kind: EventToolArgs, ToolCallID: c.ID, ToolName: c.Name, ToolInput: c.Arguments})
+
 		start := time.Now()
 		tool, ok := r.toolIndex[c.Name]
 		var res tools.Result
@@ -776,23 +960,90 @@ func (r *runner) fail(err error) {
 	r.emit(Event{Kind: EventError, Err: err})
 }
 
-// finishStopped ends the run after a budget or cancellation stop.
+// finishCancelled ends a run the user (or the turn timeout) stopped.
 //
-// A budget stop is not a failure: the user sees whatever the model produced so
-// far plus a note saying why it ended, which is far more useful than a generic
-// error. A cancellation is reported as cancellation so the caller can tell it
-// apart from "the model finished".
-func (r *runner) finishStopped(ctx context.Context, reason string) {
-	if reason == StopCancelled || ctx.Err() != nil {
-		r.emit(Event{Kind: EventError, Err: context.Canceled})
+// A cancellation is an error rather than a done event so the caller can tell
+// "the model finished" from "the user cut it short".
+func (r *runner) finishCancelled() {
+	r.emit(Event{Kind: EventError, Err: context.Canceled})
+}
+
+// closingPrompt tells the model its budget is spent and asks for a written
+// hand-off.
+//
+// It names the reason because "you have no tools" alone reads as a glitch; the
+// model then either apologizes vaguely or pretends the work is finished. The
+// three questions are the three things a user needs from a turn that stopped
+// early: what got done, what is left, what would come next.
+func closingPrompt(reason string) string {
+	limit := "step budget for this turn"
+	if reason == StopMaxToolCalls {
+		limit = "tool-call budget for this turn"
+	}
+	return "You have used up this turn's " + limit + ", so no further tools can run. " +
+		"Reply to the user in a few sentences: what you have actually completed, " +
+		"what is still missing, and what the next step would be. " +
+		"Do not claim anything you did not actually do."
+}
+
+// finishWithClosing ends a budget-stopped run with one last model call that has
+// no tools.
+//
+// Without it the transcript stops on a tool result — the user sees a wall of
+// `sed`/`grep` output and no answer, which reads as the agent dying mid-task.
+// The call is best-effort: if it fails, the run still ends with the same stop
+// reason and whatever the model already produced.
+func (r *runner) finishWithClosing(ctx context.Context, reason, system string) {
+	limit := r.spec.Policy.Rounds()
+	if reason == StopMaxToolCalls {
+		limit = r.spec.Policy.ToolCalls()
+	}
+	if ctx.Err() != nil {
+		r.finishCancelled()
 		return
 	}
+	// Counted in Rounds because it really is a model call; the budget is
+	// already spent, so this is deliberately the one call past the cap.
+	r.rounds++
+	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, closingPrompt(reason)))
+	if out, err := r.runModelRound(ctx, system, false); err != nil {
+		// Pressing stop during the closing round is still a cancellation, not
+		// a completed turn that happened to run out of budget.
+		if ctx.Err() != nil {
+			r.finishCancelled()
+			return
+		}
+		slog.Warn("agentcore: closing round failed, ending without a summary",
+			"err", err, "stop_reason", reason)
+	} else {
+		r.lastTruncated = out.truncated
+	}
+	r.finish(reason, limit)
+}
+
+// finish sends the terminal success event with the run's totals.
+func (r *runner) finish(reason string, limit int) {
 	r.emit(Event{
 		Kind:       EventDone,
 		StopReason: reason,
+		Limit:      limit,
+		Truncated:  r.lastTruncated,
 		Rounds:     r.rounds,
 		ToolCalls:  r.toolCalls,
 		TotalUsage: r.usage,
 		Summary:    r.summary,
 	})
+}
+
+// hasVisibleText reports whether a round produced anything the user can read.
+//
+// Whitespace-only output counts as nothing: some gateways emit a single newline
+// before closing a stream, and that must not be mistaken for an answer.
+func hasVisibleText(parts []string) bool {
+	for _, p := range parts {
+		if strings.TrimSpace(p) != "" {
+			return true
+		}
+	}
+	return false
 }

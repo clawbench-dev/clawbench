@@ -92,13 +92,21 @@ func RunBuiltinAgentTask(ctx context.Context, task BuiltinAgentTask) (string, er
 		return "", err
 	}
 
+	// A caller that sets no budget must not fall through to the provider's
+	// default: that default is often smaller than one reasoning round, and the
+	// endpoint then cuts the answer off. Same rule as the chat path.
+	maxOut := task.MaxOutputTokens
+	if maxOut <= 0 {
+		maxOut = model.OutputTokenBudget(modelID)
+	}
+
 	spec := agentcore.Spec{
 		Client:          client,
 		SystemPrompt:    task.SystemPrompt,
 		Prompt:          task.Prompt,
 		WorkDir:         task.WorkDir,
 		Policy:          task.Policy.Normalized(),
-		MaxOutputTokens: task.MaxOutputTokens,
+		MaxOutputTokens: maxOut,
 		Timeout:         task.Timeout,
 		ContextWindow:   model.ModelContextWindow(modelID),
 	}
@@ -109,9 +117,23 @@ func RunBuiltinAgentTask(ctx context.Context, task BuiltinAgentTask) (string, er
 	}
 	// A run that stopped on a budget is not a failure, but it IS an incomplete
 	// answer. Returning it silently would hand the caller half a document that
-	// looks whole; naming the stop reason lets the caller decide.
-	if res.StopReason != agentcore.StopComplete && strings.TrimSpace(res.Text) == "" {
-		return "", fmt.Errorf("the built-in agent stopped before answering (%s)", res.StopReason)
+	// looks whole, so a background task treats every non-complete stop as an
+	// error — a chat turn can say "reply continue", a generated artifact
+	// cannot. The closing round (agentcore.finishWithClosing) usually leaves a
+	// note saying what is missing; that note is the error detail rather than
+	// being thrown away.
+	if res.StopReason != agentcore.StopComplete {
+		detail := strings.TrimSpace(res.Text)
+		if detail == "" {
+			return "", fmt.Errorf("the built-in agent stopped before answering (%s)", res.StopReason)
+		}
+		return "", fmt.Errorf("the built-in agent stopped before finishing (%s): %s", res.StopReason, detail)
+	}
+	// A reply still cut off at the output cap is a prefix. The chat path tells
+	// the user and offers "continue"; an artifact has nobody to ask, so it is a
+	// failure like any other incomplete run.
+	if res.Truncated {
+		return "", fmt.Errorf("the built-in agent's answer was cut off at the model's output limit")
 	}
 	return strings.TrimSpace(res.Text), nil
 }

@@ -195,6 +195,14 @@ type Event struct {
 	ToolCall *ToolCall
 	// Usage is set on KindUsage, usually the last event of a round.
 	Usage *Usage
+	// Truncated is set on KindDone: the endpoint stopped at its output-token
+	// cap (OpenAI finish_reason=length, Anthropic stop_reason=max_tokens), so
+	// what arrived is a PREFIX of the reply, not the whole answer.
+	//
+	// It is reported separately from KindError because nothing failed: the
+	// call succeeded, the answer is just incomplete. Treating it as a normal
+	// finish is what makes a long reply stop mid-sentence and look done.
+	Truncated bool
 	// Err is set on KindError, which is always the last event.
 	Err error
 }
@@ -313,4 +321,12 @@ func emitTerminal(ctx context.Context, ch chan<- Event, err error) {
 		return
 	}
 	emit(ctx, ch, Event{Kind: KindDone})
+}
+
+// emitTruncated sends the terminal event for a reply that hit the output cap.
+//
+// It is a KindDone, not a KindError: the call succeeded. The flag is what lets
+// the agent loop continue the reply instead of accepting a prefix as the answer.
+func emitTruncated(ctx context.Context, ch chan<- Event) {
+	emit(ctx, ch, Event{Kind: KindDone, Truncated: true})
 }

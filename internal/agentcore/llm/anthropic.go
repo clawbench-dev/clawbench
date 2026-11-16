@@ -120,13 +120,16 @@ type anStreamEvent struct {
 	// content_block_start
 	Index        int      `json:"index"`
 	ContentBlock *anBlock `json:"content_block"`
-	// content_block_delta
+	// content_block_delta / message_delta. StopReason only appears on the
+	// latter ("end_turn", "max_tokens", ...); the same struct is reused because
+	// both events carry a "delta" object.
 	Delta *struct {
 		Type        string `json:"type"`
 		Text        string `json:"text"`
 		Thinking    string `json:"thinking"`
 		Signature   string `json:"signature"`
 		PartialJSON string `json:"partial_json"`
+		StopReason  string `json:"stop_reason"`
 	} `json:"delta"`
 	// message_delta
 	Usage *struct {
@@ -414,6 +417,8 @@ func (c *anthropicClient) readStream(ctx context.Context, body io.Reader, ch cha
 		callID   = make(map[int]string)
 		callName = make(map[int]string)
 		sawAny   bool
+		// stopReason arrives on message_delta, one event before message_stop.
+		stopReason string
 	)
 
 	for scanner.Scan() {
@@ -488,6 +493,9 @@ func (c *anthropicClient) readStream(ctx context.Context, body io.Reader, ch cha
 			}
 
 		case "message_delta":
+			if ev.Delta != nil && ev.Delta.StopReason != "" {
+				stopReason = ev.Delta.StopReason
+			}
 			if ev.Usage != nil {
 				emit(ctx, ch, Event{Kind: KindUsage, Usage: &Usage{
 					InputTokens:  inputTokens,
@@ -496,6 +504,13 @@ func (c *anthropicClient) readStream(ctx context.Context, body io.Reader, ch cha
 			}
 
 		case "message_stop":
+			if stopReason == "max_tokens" {
+				// The reply was cut off at the output cap. Reported before the
+				// empty-stream check for the same reason as the OpenAI client:
+				// a reply cut off during thinking has no content at all.
+				emitTruncated(ctx, ch)
+				return
+			}
 			if !sawAny {
 				emitTerminal(ctx, ch, ErrNoOutput)
 				return

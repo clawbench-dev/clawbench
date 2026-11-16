@@ -132,7 +132,7 @@ func (b *Backend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan
 		defer close(ch)
 		// One translator per turn: it tracks whether a reasoning block is
 		// still open, so the closing event is emitted exactly once.
-		tr := &translator{}
+		tr := &translator{locale: model.Language}
 		runEvents := agentcore.Run(ctx, spec)
 		for ev := range runEvents {
 			if !forward(ch, tr, ev) {
@@ -168,6 +168,10 @@ func buildSpec(ctx context.Context, req ai.ChatRequest) (agentcore.Spec, error) 
 		// empty mode (background task, older client) leaves the grant as-is.
 		Policy:         agent.ToolPolicy.Normalized().ForMode(req.Mode),
 		ThinkingEffort: req.ThinkingEffort,
+		// A reply budget derived from the model, not the provider default: a
+		// reasoning model spends it on thinking first, and an unset max_tokens
+		// is where "the answer stops mid-sentence" came from.
+		MaxOutputTokens: model.OutputTokenBudget(modelID),
 		// The window comes from the model catalog. Zero means "unknown", which
 		// disables compaction rather than guessing: compacting a conversation
 		// that fits loses information for nothing.

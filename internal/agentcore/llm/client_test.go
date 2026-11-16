@@ -419,6 +419,114 @@ func TestAnthropic_ErrorEventIsTerminal(t *testing.T) {
 	}
 }
 
+// TestOpenAI_FinishReasonLengthIsTruncated pins the signal behind "the answer
+// stopped mid-sentence and looked finished": the endpoint reports the cap with
+// finish_reason=length, which must reach the caller instead of being parsed and
+// ignored.
+func TestOpenAI_FinishReasonLengthIsTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range []string{
+			`{"choices":[{"delta":{"content":"The config lives in"}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"length"}]}`,
+			`[DONE]`,
+		} {
+			_, _ = io.WriteString(w, "data: "+f+"\n\n")
+		}
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolOpenAI, BaseURL: srv.URL, Model: "m"})
+	ch, _ := c.Stream(context.Background(), Request{Messages: []Message{TextMessage(RoleUser, "go")}})
+	events := collectEvents(t, ch)
+
+	last := events[len(events)-1]
+	if last.Kind != KindDone {
+		t.Fatalf("truncation is not a failure, expected done, got %v (%v)", last.Kind, last.Err)
+	}
+	if !last.Truncated {
+		t.Fatal("finish_reason=length must be reported as truncated")
+	}
+}
+
+// TestOpenAI_TruncatedBeforeEmptyStream pins the ordering: a reply cut off
+// during reasoning has no content at all, and "incomplete" is the useful
+// diagnosis — reporting ErrNoOutput would send the caller into a retry that hits
+// the same cap.
+func TestOpenAI_TruncatedBeforeEmptyStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range []string{
+			`{"choices":[{"delta":{"reasoning_content":"thinking..."},"finish_reason":"length"}]}`,
+			`[DONE]`,
+		} {
+			_, _ = io.WriteString(w, "data: "+f+"\n\n")
+		}
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolOpenAI, BaseURL: srv.URL, Model: "m"})
+	ch, _ := c.Stream(context.Background(), Request{Messages: []Message{TextMessage(RoleUser, "go")}})
+	events := collectEvents(t, ch)
+
+	last := events[len(events)-1]
+	if last.Kind != KindDone || !last.Truncated {
+		t.Fatalf("expected a truncated done, got %v (truncated=%v, err=%v)", last.Kind, last.Truncated, last.Err)
+	}
+}
+
+// TestAnthropic_MaxTokensIsTruncated pins the Anthropic spelling of the same
+// signal: stop_reason=max_tokens arrives on message_delta, one event before
+// message_stop.
+func TestAnthropic_MaxTokensIsTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range []string{
+			`{"type":"message_start","message":{"usage":{"input_tokens":5}}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`,
+			`{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":99}}`,
+			`{"type":"message_stop"}`,
+		} {
+			_, _ = io.WriteString(w, "data: "+f+"\n\n")
+		}
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolAnthropic, BaseURL: srv.URL, Model: "m"})
+	ch, _ := c.Stream(context.Background(), Request{Messages: []Message{TextMessage(RoleUser, "go")}})
+	events := collectEvents(t, ch)
+
+	last := events[len(events)-1]
+	if last.Kind != KindDone || !last.Truncated {
+		t.Fatalf("expected a truncated done, got %v (truncated=%v, err=%v)", last.Kind, last.Truncated, last.Err)
+	}
+}
+
+// TestAnthropic_EndTurnIsNotTruncated pins the negative: a normal stop must not
+// be reported as truncated, or every answer would be continued.
+func TestAnthropic_EndTurnIsNotTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range []string{
+			`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}`,
+			`{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`,
+			`{"type":"message_stop"}`,
+		} {
+			_, _ = io.WriteString(w, "data: "+f+"\n\n")
+		}
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolAnthropic, BaseURL: srv.URL, Model: "m"})
+	ch, _ := c.Stream(context.Background(), Request{Messages: []Message{TextMessage(RoleUser, "go")}})
+	events := collectEvents(t, ch)
+
+	last := events[len(events)-1]
+	if last.Kind != KindDone || last.Truncated {
+		t.Fatalf("a normal end_turn must not be truncated, got %v (truncated=%v)", last.Kind, last.Truncated)
+	}
+}
+
 func TestNew_RejectsUnsupportedProtocol(t *testing.T) {
 	if _, err := New(Config{Protocol: "gemini"}); err == nil {
 		t.Fatal("an unsupported protocol must fail loudly rather than silently doing nothing")

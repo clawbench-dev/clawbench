@@ -214,6 +214,32 @@ func CatalogOutputLimitForModel(modelID string) int {
 	return limit
 }
 
+// OutputTokenBudget is the max_tokens to request for one model call on modelID
+// when the caller has no cap of its own.
+//
+// It exists because an UNSET max_tokens means "whatever the provider defaults
+// to", and that default is often smaller than one reasoning round: a reasoning
+// model spends the budget thinking first, so the endpoint returns empty content
+// (or a half-written answer) with finish_reason=length. Asking for the model's
+// own limit fixes that; the ceiling keeps one call from asking for hundreds of
+// thousands of tokens, which some endpoints reject or reserve quota for.
+//
+// An unknown model (a local proxy, an id the catalog has never seen) gets the
+// ceiling, which is only an upper bound — a model that does not need it stops
+// earlier.
+func OutputTokenBudget(modelID string) int {
+	if limit := CatalogOutputLimitForModel(modelID); limit > 0 && limit < MaxOutputTokenBudget {
+		return limit
+	}
+	return MaxOutputTokenBudget
+}
+
+// MaxOutputTokenBudget is the ceiling OutputTokenBudget will request.
+//
+// 16384 covers a long reasoning round plus a long answer without asking an
+// endpoint for a number it may reject or reserve quota against.
+const MaxOutputTokenBudget = 16384
+
 // ModelContextWindow returns the context window (in tokens) the catalog
 // publishes for a model id, or 0 when the snapshot has no entry for it.
 //

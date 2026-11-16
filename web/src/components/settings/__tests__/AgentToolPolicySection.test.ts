@@ -36,10 +36,15 @@ function checkboxFor(wrapper: ReturnType<typeof mount>, labelKey: string) {
     throw new Error(`no row for ${labelKey}`)
 }
 
-function mountSection(toolPolicy?: { allow: string[] }) {
+function mountSection(toolPolicy?: { allow: string[]; maxRounds?: number; maxToolCalls?: number }) {
     return mount(AgentToolPolicySection, {
         props: { agent: { id: 'builtin', toolPolicy } },
     })
+}
+
+/** The budget inputs, in template order: rounds first, tool calls second. */
+function budgetInputs(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('.agent-tools__budget input[type="number"]')
 }
 
 describe('AgentToolPolicySection', () => {
@@ -130,5 +135,59 @@ describe('AgentToolPolicySection', () => {
         await vi.waitFor(() => {
             expect(wrapper.text()).toContain('server said no')
         })
+    })
+
+    it('shows the stored budgets and the defaults as placeholders', () => {
+        const wrapper = mountSection({ allow: [], maxRounds: 40 })
+        const [rounds, calls] = budgetInputs(wrapper)
+
+        expect((rounds.element as HTMLInputElement).value).toBe('40')
+        // Unset means "server default": the placeholder states it without
+        // pinning the agent to today's number.
+        expect((calls.element as HTMLInputElement).value).toBe('')
+        expect((calls.element as HTMLInputElement).placeholder).toBe('300')
+    })
+
+    it('saves a changed round budget with the whole policy', async () => {
+        const wrapper = mountSection({ allow: ['fs.read'], maxToolCalls: 50 })
+        await budgetInputs(wrapper)[0].setValue('80')
+
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'tool_policy', {
+            allow: ['fs.read'],
+            maxToolCalls: 50,
+            maxRounds: 80,
+        })
+    })
+
+    it('clearing a budget sends 0, which the server reads as "use the default"', async () => {
+        const wrapper = mountSection({ allow: [], maxToolCalls: 50 })
+        await budgetInputs(wrapper)[1].setValue('')
+
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'tool_policy', {
+            allow: [],
+            maxToolCalls: 0,
+        })
+    })
+
+    it('rejects a non-positive budget without sending it', async () => {
+        const wrapper = mountSection({ allow: [], maxRounds: 40 })
+        const input = budgetInputs(wrapper)[0]
+        await input.setValue('-5')
+
+        // The field snaps back to the stored value; nothing is persisted.
+        expect((input.element as HTMLInputElement).value).toBe('40')
+        expect(patchAgentField).not.toHaveBeenCalled()
+    })
+
+    it('restores the stored budget when the save fails', async () => {
+        patchAgentField.mockRejectedValue(new Error('server said no'))
+        const wrapper = mountSection({ allow: [], maxRounds: 40 })
+        const input = budgetInputs(wrapper)[0]
+
+        await input.setValue('80')
+        await vi.waitFor(() => {
+            expect(wrapper.text()).toContain('server said no')
+        })
+        expect((input.element as HTMLInputElement).value).toBe('40')
     })
 })

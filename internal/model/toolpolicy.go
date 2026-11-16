@@ -129,9 +129,15 @@ func (p ToolPolicy) DefaultMode() string {
 // DefaultToolPolicyBudgets are the limits applied when a policy leaves a
 // budget at zero. A built-in agent runs a model loop with no user watching the
 // intermediate steps, so an unbounded loop is never the safe default.
+//
+// The numbers are sized for real repository work, not for a demo. A "find the
+// settings panel and add an option" task measured 24+ model rounds and 40+
+// tool calls before the first edit — the old 24/60 pair cut such a turn off
+// mid-exploration, and the agent then ended with no answer at all. Both are
+// per-turn and configurable per agent (settings → tool permissions).
 const (
-	DefaultMaxRounds      = 24
-	DefaultMaxToolCalls   = 60
+	DefaultMaxRounds      = 100
+	DefaultMaxToolCalls   = 300
 	DefaultBashTimeoutSec = 120
 	// MaxBashTimeoutSec caps the per-command timeout a policy may request.
 	MaxBashTimeoutSec = 3600

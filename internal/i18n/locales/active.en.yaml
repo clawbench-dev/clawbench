@@ -343,6 +343,11 @@ GroupCruiseSatisfied: "Auto-cruise: task confirmed complete after {{.Rounds}} me
 CruiseConfirming: "Auto-cruise: checking whether the task is complete"
 CruiseSatisfied: "Auto-cruise: task confirmed complete after {{.Rounds}} rounds"
 CruiseMaxRounds: "Auto-cruise: reached the confirmation-round limit"
+# Built-in agent system row when one turn uses up its step budget. Written in
+# the active locale and persisted, same class as the cruise rows above.
+BuiltinMaxRoundsNotice: "This turn reached its limit of {{.Rounds}} model rounds, so the agent wrapped up early. Reply \"continue\" to keep going."
+BuiltinMaxToolCallsNotice: "This turn reached its limit of {{.ToolCalls}} tool calls, so the agent wrapped up early. Reply \"continue\" to keep going."
+BuiltinTruncatedNotice: "This reply hit the model's output limit, so it may be incomplete. Reply \"continue\" to have it carry on."
 # Group-timeline system rows. These are WRITTEN (not rendered) in the active
 # locale: the text is persisted to chat_history and ALSO injected into every
 # member's context as "[系统] <text>" (group_inject.go), so it must be a
