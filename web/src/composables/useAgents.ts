@@ -111,6 +111,12 @@ interface AgentRecord {
   sessionCount?: number
   taskCount?: number
   membershipCount?: number
+  /**
+   * The backend's built-in install command (same string GET /api/backends
+   * reports), or empty when the backend has none. Drives the settings page's
+   * one-click install, so both surfaces run the exact same command.
+   */
+  installCmd?: string
 }
 
 const agents = ref<AgentRecord[]>([])

@@ -144,11 +144,24 @@
       <AgentMCPSection :agent="agent ?? null" />
     </SettingsCard>
 
-    <!-- Copy / disable / delete on the same row -->
+    <!-- Copy / install / disable / delete on the same row -->
     <div class="settings-agent-detail__actions">
       <button class="fbtn settings-agent-detail__action-btn" @click="startCopy">
         <Copy :size="16" class="settings-agent-detail__action-icon" />
         <span>{{ t('settings.items.agentCopy') }}</span>
+      </button>
+      <!-- One-click install / reinstall. Same command the welcome panel runs
+           (the server owns it), so this is the "reinstall or upgrade" path for
+           an agent that is already detected but broken or out of date. Hidden
+           when the backend ships no installer. -->
+      <button
+        v-if="agent?.installCmd"
+        class="fbtn settings-agent-detail__action-btn"
+        data-action="agent-install"
+        @click="installDialogOpen = true"
+      >
+        <PackagePlus :size="16" class="settings-agent-detail__action-icon" />
+        <span>{{ t('settings.items.agentInstall') }}</span>
       </button>
       <!-- Disable / enable toggle. The default agent cannot be disabled (the
            backend refuses it too), so its button is inert with a tooltip. -->
@@ -179,12 +192,22 @@
       @close="avatarPickerOpen = false"
       @saved="handleAvatarSaved"
     />
+    <!-- Same dialog the welcome panel uses: command, run button, and the
+         installer's own output on failure. -->
+    <AgentInstallDialog
+      v-if="installDialogOpen && agent?.installCmd"
+      :backend-id="agent.backend"
+      :backend-name="agent.name"
+      :install-cmd="agent.installCmd"
+      @close="installDialogOpen = false"
+      @installed="handleInstalled"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { Activity, ArrowLeft, Ban, ChevronRight, Copy, Play, Trash2, UserX, Zap } from 'lucide-vue-next'
+import { Activity, ArrowLeft, Ban, ChevronRight, Copy, PackagePlus, Play, Trash2, UserX, Zap } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import { CUSTOM_OPTION_VALUE } from './settingsFieldMap'
@@ -192,6 +215,7 @@ import AgentMCPSection from './AgentMCPSection.vue'
 import SettingsCard from './SettingsCard.vue'
 import CopyAgentDialog from './CopyAgentDialog.vue'
 import AgentAvatarPicker from './AgentAvatarPicker.vue'
+import AgentInstallDialog from '@/components/AgentInstallDialog.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { patchAgentField } from '@/composables/useSettingsConfig'
@@ -236,6 +260,7 @@ const copying = ref(false)
 // dialog; the dialog stays open so the user can pick another name.
 const copyError = ref('')
 const avatarPickerOpen = ref(false)
+const installDialogOpen = ref(false)
 
 /**
  * Model providers the user configured in Settings → Model Providers. Fetched
@@ -794,6 +819,17 @@ async function handleAvatarSaved(svg: string) {
   } catch {
     toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
+}
+
+/**
+ * After a successful install: re-read the agent list.
+ *
+ * The server already ran its own rescan and broadcast `agents_updated`, so this
+ * is only about the page in front of the user — its model list, transport and
+ * capability snapshot may all have changed under it.
+ */
+async function handleInstalled() {
+  await loadAgents(true)
 }
 
 function handleEditToggle(key: string, open: boolean) {

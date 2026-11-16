@@ -188,6 +188,14 @@ ModelDiscoveryFailed: 模型发现未返回结果
 ModelSwitchFailed: 切换模型失败
 ModelSwitchFailedDetail: 切换模型失败：{{.Detail}}
 CLINotFound: 未找到CLI工具，请先安装
+# 一键安装（POST /api/backends/{id}/install）。三类失败要给三种不同的话：
+# 没有可执行命令、缺 Node 运行时、命令自己失败（后者必须带上输出尾巴）。
+BackendNotFound: 未找到该智能体后端
+InstallCommandUnavailable: 该智能体没有内置的安装命令，请按官方文档手动安装
+NodeRuntimeMissing: 未检测到 {{.Tool}}，请先安装 Node.js（包含 npm/npx）后重试
+AgentInstallBusy: 已有一个安装任务正在运行，请等它结束再试
+AgentInstallFailed: 安装失败：{{.Output}}
+AgentInstallFailedNoOutput: 安装失败，命令没有输出任何信息（退出码非 0）
 CustomURLOpenAIFormat: OpenAI 格式的自定义 URL 应以 /chat/completions 结尾
 CustomURLAnthropicFormat: Anthropic 格式的自定义 URL 应以 /v1/messages 结尾
 CustomURLInvalid: URL 格式无效

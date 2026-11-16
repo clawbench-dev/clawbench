@@ -666,6 +666,49 @@ describe('SettingsAgentDetail', () => {
     })
   })
 
+  // ─── One-click install ───────────────────────────────────────────────
+  // The same dialog the welcome panel uses, opened from the agent's own page
+  // (the "reinstall / upgrade" path for an agent that is already detected).
+  describe('install button', () => {
+    it('is hidden when the backend ships no installer', () => {
+      const wrapper = mountDetail({ installCmd: '' })
+      expect(wrapper.find('[data-action="agent-install"]').exists()).toBe(false)
+    })
+
+    it('opens the install dialog with the backend id and its command', async () => {
+      const wrapper = mountDetail({ installCmd: 'npm install -g @anthropic-ai/claude-code' })
+      const btn = wrapper.find('[data-action="agent-install"]')
+      expect(btn.exists()).toBe(true)
+
+      // Nothing rendered before the click: mounting the dialog eagerly would run
+      // its back-handler registration on every agent page.
+      expect(wrapper.findComponent({ name: 'AgentInstallDialog' }).exists()).toBe(false)
+
+      await btn.trigger('click')
+
+      const dialog = wrapper.findComponent({ name: 'AgentInstallDialog' })
+      expect(dialog.exists()).toBe(true)
+      // Keyed by BACKEND, not agent id: the server installs per backend, and a
+      // duplicated agent shares its backend's package.
+      expect(dialog.props('backendId')).toBe('claude')
+      expect(dialog.props('installCmd')).toBe('npm install -g @anthropic-ai/claude-code')
+    })
+
+    it('re-reads the agent list after a successful install', async () => {
+      // The server already rescanned; this page's own model list and capability
+      // snapshot changed underneath it and must be re-fetched.
+      const wrapper = mountDetail({ installCmd: 'npm install -g x' })
+      await wrapper.find('[data-action="agent-install"]').trigger('click')
+      mockLoadAgents.mockClear()
+
+      await wrapper.findComponent({ name: 'AgentInstallDialog' }).vm.$emit('installed', {
+        ok: true, backend: 'claude', command: 'x', output: '', durationMs: 1, refreshed: true,
+      })
+
+      expect(mockLoadAgents).toHaveBeenCalledWith(true)
+    })
+  })
+
   // ─── Usage counts (Information section) ──────────────────────────────
   describe('usage counts', () => {
     // SettingsItem is stubbed, so the TASK count rides on the stub's model-value

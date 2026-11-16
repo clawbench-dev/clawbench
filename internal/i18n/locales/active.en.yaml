@@ -188,6 +188,12 @@ ModelDiscoveryFailed: Model discovery returned no results
 ModelSwitchFailed: Could not switch model
 ModelSwitchFailedDetail: "Could not switch model: {{.Detail}}"
 CLINotFound: CLI tool not found, please install it first
+BackendNotFound: No such agent backend
+InstallCommandUnavailable: This agent has no built-in install command; install it manually following the official docs
+NodeRuntimeMissing: "{{.Tool}} was not found. Install Node.js (which provides npm/npx) and try again"
+AgentInstallBusy: Another install is already running; wait for it to finish
+AgentInstallFailed: "Install failed: {{.Output}}"
+AgentInstallFailedNoOutput: Install failed — the command printed nothing (non-zero exit status)
 CustomURLOpenAIFormat: Custom URL for OpenAI format should end with /chat/completions
 CustomURLAnthropicFormat: Custom URL for Anthropic format should end with /v1/messages
 CustomURLInvalid: Invalid URL format

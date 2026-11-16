@@ -83,12 +83,14 @@
   <!-- iOS install instructions sheet -->
   <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
 
-  <!-- Agent install command dialog -->
+  <!-- Agent install dialog -->
   <AgentInstallDialog
     v-if="selectedBackend"
+    :backend-id="selectedBackend.id"
     :backend-name="selectedBackend.name"
     :install-cmd="selectedBackend.install_cmd || ''"
     @close="selectedBackend = null"
+    @installed="handleInstalled"
   />
 </template>
 
@@ -200,6 +202,16 @@ async function rescan() {
 
 function startInstall(b: BackendInfo) {
   selectedBackend.value = b
+}
+
+/**
+ * A successful install means the backend is now usable — refresh the panel so
+ * its row flips from "Install" to "Installed" without the user pressing
+ * "Rescan". The server already ran its own rescan; this only re-reads the two
+ * lists the panel renders.
+ */
+async function handleInstalled() {
+  await loadBackends()
 }
 
 async function handlePwaInstall() {

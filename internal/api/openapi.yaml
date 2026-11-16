@@ -2058,6 +2058,13 @@ paths:
       description: |
         新建会话。显式指定 `agentId` 时，若该 agent 已被禁用，返回 `400` +
         `msgKey=AgentDisabled`（禁用只影响新建；已存在会话继续可用）。
+
+        若目标是一个 **ACP 智能体且从未上报过任何能力**（模型 / 思考档位 / 模式 /
+        斜杠命令全空），服务端会在响应返回后**在后台**跑一次与
+        `POST /api/agents/{id}/refresh-models` 相同的探测（临时开会话、采集、删除），
+        完成后广播 `agents_updated`。目的是让新建会话里的模型/模式选择器不是空的。
+        **不阻塞创建**，也**不会**因探测失败而报错（未登录、进程起不来都是常见情况，
+        第一条消息本来就会握手补齐），失败只记日志。
       requestBody:
         required: true
         content:
@@ -6510,6 +6517,10 @@ paths:
             `group_member` 成员行计入）；`taskCount` = 定时任务数；`membershipCount`
             = 活跃群成员关系数（是 `sessionCount` 的子集，单列供 UI 说明其中有群聊）。
 
+            `installCmd` 是该 agent 后端的**内置安装命令**（与 GET /api/backends 的
+            `install_cmd` 同源，同一个服务端实现，两处不会漂移），供设置页的「安装」
+            按钮使用，无需再拉一次 /api/backends。后端没有内置安装器时省略该键。
+
             `backendHasSpec` 是**运行期派生字段**（加载时由 `FindSpecByBackend != nil`
             算出，非持久化列）：`true` 表示该 agent 的 `acp_command` 由自动发现按
             backend 重写，客户端**不应**把它渲染成可编辑输入（PATCH 也会以
@@ -6954,7 +6965,52 @@ paths:
       operationId: backendsList
       responses:
         "200":
-          description: 后端列表
+          description: |
+            后端列表，每项含 `id/name/specialty/default_cmd/thinking_effort_levels?/
+            install_cmd?`。`install_cmd` 是后端注册表里内置的安装命令（国内会自动追加
+            npm 镜像源），与 `POST /api/backends/{id}/install` 实际执行的命令**同源**。
+
+  /api/backends/{id}/install:
+    post:
+      tags: [Agents]
+      summary: 一键安装智能体
+      description: |
+        在本机执行该后端的**内置**安装命令（`BackendSpec.InstallCmd`），然后自动重扫
+        一次，使新装的智能体无需再手动点「重新扫描」即出现在列表里。
+
+        **命令只来自服务端注册表，请求体里的任何字段都被忽略**：否则这个已鉴权端点
+        就变成了任意远程执行。
+
+        执行位置是**运行 ClawBench 的机器**——远端服务器或容器里装的是那台机器，
+        不是打开界面的设备。
+
+        命令走用户登录 shell（部分后端是 `curl … | bash` 管道），独立进程组，超时
+        10 分钟；超时或断开请求都不会中止已开始的安装（避免留下半个 npm 包）。
+        同一时刻只允许一个安装（共用全局 npm prefix），并发请求返回 `409`。
+
+        失败分三类，给三种不同的话：缺 `npm`/`npx`（`400 NodeRuntimeMissing`，
+        `detail.Tool` 指出缺哪个）、命令自己失败（`500 AgentInstallFailed`，
+        `detail.Output` 是输出**末尾**一段——失败原因总在最后；命令没有任何输出时
+        用 `AgentInstallFailedNoOutput`）、后端没有内置安装命令
+        （`400 InstallCommandUnavailable`）。
+      operationId: backendInstall
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: |
+            `{ ok, backend, command, output, durationMs, refreshed, agents,
+            defaultAgent }`。`refreshed=false` 表示装好了但自动重扫失败，客户端应
+            提示手动重新扫描；`agents`/`defaultAgent` 与 GET /api/agents 同形（按当前
+            项目过滤），供调用方直接渲染。
+        "400":
+          description: 缺 Node 运行时（`NodeRuntimeMissing`）或该后端无内置安装命令（`InstallCommandUnavailable`）
+        "404":
+          description: 未注册的后端（`BackendNotFound`）
+        "409":
+          description: 已有安装任务在运行（`AgentInstallBusy`）
+        "500":
+          description: 安装命令失败（`AgentInstallFailed` / `AgentInstallFailedNoOutput`）
 
   # ── TTS ───────────────────────────────────────────────────────────────────
   /api/tts/generate:

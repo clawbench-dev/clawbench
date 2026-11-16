@@ -817,6 +817,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Authoritative model catalog (models.dev snapshot): status + refresh.
 	register("/api/catalog", ServeCatalog)
 	register("/api/backends", ServeBackends)
+	// One-click install: runs a backend's built-in install command on this
+	// machine, then rescans so the agent appears without a manual rescan.
+	register("/api/backends/", ServeBackendInstall)
 	register("/api/tts/generate", TTSGenerate)
 	register("/api/tts/preview", TTSPreview)
 	register("/api/tts/stream/", TTSStream)

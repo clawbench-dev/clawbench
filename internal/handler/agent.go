@@ -449,6 +449,21 @@ func applyModelPrices(agents []*model.Agent, states map[string]*acpState) {
 	}
 }
 
+// backendInstallCmd returns the backend's built-in install command, prepared
+// for display (China mirror appended), or "" when it has none.
+//
+// One implementation for both surfaces that show it: GET /api/backends (the
+// welcome panel's per-backend row) and GET /api/agents (an agent's settings
+// page). Two copies would let the welcome panel show a mirror-rewritten command
+// while the settings page offered the bare one.
+func backendInstallCmd(backend string) string {
+	spec := model.FindSpecByBackend(backend)
+	if spec == nil {
+		return ""
+	}
+	return prepareInstallCmd(spec.InstallCmd)
+}
+
 func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 	configMutex.RLock()
 	agents := model.GetAgentList()
@@ -483,6 +498,12 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		SessionCount    int `json:"sessionCount"`
 		TaskCount       int `json:"taskCount"`
 		MembershipCount int `json:"membershipCount"`
+		// InstallCmd is the backend's built-in installer, same value GET
+		// /api/backends reports. Carried here so an agent's settings page can
+		// offer one-click install without a second request — and so the two
+		// surfaces cannot disagree about which command it is. Empty when the
+		// backend has no built-in installer.
+		InstallCmd string `json:"installCmd,omitempty"`
 	}
 	usageByAgent, usageErr := service.GetAllAgentUsage()
 	if usageErr != nil {
@@ -498,6 +519,7 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 			SessionCount:    u.Sessions,
 			TaskCount:       u.Tasks,
 			MembershipCount: u.Memberships,
+			InstallCmd:      backendInstallCmd(a.Backend),
 		}
 	}
 

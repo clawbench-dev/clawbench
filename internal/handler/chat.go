@@ -80,6 +80,10 @@ func resolveOrCreateProjectSession(w http.ResponseWriter, r *http.Request, proje
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
 		return "", "", false
 	}
+	// Same first-session auto probe as POST /api/ai/sessions: a project whose
+	// only session was just created implicitly would otherwise show empty
+	// pickers too.
+	maybeAutoProbeAgentState(model.GetAgent(agentID), projectPath)
 	return createdID, agentBackend, true
 }
 
