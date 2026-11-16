@@ -176,9 +176,10 @@ const i18n = createI18n({
         subagentSteps: '{count} steps',
         subagentExpand: 'Expand sub-agent output',
         subagentCollapse: 'Collapse sub-agent output',
-        toolGroupOps: '{count} call | {count} calls',
-        toolGroupThinking: '{count} thought | {count} thoughts',
+        toolGroupSteps: '{count} step | {count} steps',
+        toolGroupStepIndex: 'Step {count}',
         toolGroupFailed: '{count} failed',
+        toolGroupInterrupted: '{count} interrupted',
         // Needed by the error_source chip: getErrorSourceLabel looks up
         // `chat.contentBlocks.errorSources.<source>` and returns '' when the key
         // is missing (mirrors the real t()).
@@ -4113,7 +4114,9 @@ describe('compact tool calls', () => {
     const row = wrapper.find('[data-tool-group]')
     expect(row.exists()).toBe(true)
     expect(row.attributes('data-tool-count')).toBe('3')
-    expect(row.text()).toContain('3 calls')
+    // A settled run reports its steps the way a sub-agent row does: "3 steps".
+    expect(row.find('.tool-name').text()).toBe('3 steps')
+    expect(row.find('.chat-tool-group-strip').attributes('aria-label')).toContain('3 steps')
     // The individual pills are gone — the row IS the run.
     expect(wrapper.findAll('.chat-tool-call')).toHaveLength(1)
   })
@@ -4131,7 +4134,7 @@ describe('compact tool calls', () => {
     })
     await nextTick()
     const strip = wrapper.find('.chat-tool-group-strip')
-    expect(strip.find('.tool-name').text()).toBe('2 calls')
+    expect(strip.find('.tool-name').text()).toBe('2 steps')
     expect(strip.find('.tool-summary').text()).toBe('Bash · rebuild the frontend')
   })
 
@@ -4175,8 +4178,10 @@ describe('compact tool calls', () => {
     expect(row.attributes('data-tool-count')).toBe('2')
     expect(row.attributes('data-thinking-count')).toBe('2')
     expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
-    // Counts only — the row is a summary, not a log line.
-    expect(row.text()).toContain('2 calls · 2 thoughts')
+    // Counts only — the row is a summary, not a log line. Thinking chips ride
+    // along in the run but are not steps, so they are not counted.
+    expect(row.find('.tool-name').text()).toBe('2 steps')
+    expect(row.text()).not.toContain('thought')
   })
 
   it('folds a live thinking chip into the run instead of splitting it out', async () => {
@@ -4188,7 +4193,7 @@ describe('compact tool calls', () => {
     })
     await nextTick()
     expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
-    expect(wrapper.find('[data-tool-group]').text()).toContain('1 call · 1 thought')
+    expect(wrapper.find('[data-tool-group] .tool-name').text()).toBe('1 step')
   })
 
   it('becomes the deep-thinking chip itself while only a thinking block runs', async () => {
@@ -4205,7 +4210,7 @@ describe('compact tool calls', () => {
     expect(strip.find('.tool-spinner').exists()).toBe(true)
     // Same label and glyph as the standalone chip, no counts.
     expect(strip.find('.tool-name').text()).toBe('Deep Thinking')
-    expect(strip.text()).not.toContain('call')
+    expect(strip.text()).not.toContain('step')
     expect(strip.text()).not.toContain('thought')
     expect(strip.element.querySelector(':scope > .lucide-brain'), 'leading icon is the brain').not.toBeNull()
     expect(strip.element.querySelector('.lucide-layers'), 'not the generic stack glyph').toBeNull()
@@ -4263,11 +4268,12 @@ describe('compact tool calls', () => {
       await strip.trigger('click')
       vi.advanceTimersByTime(200)
       await nextTick()
-      expect(strip.find('.tool-name').text()).toBe('2 calls')
-      // No live-step detail, no live-step colour or glyph either.
+      expect(strip.find('.tool-name').text()).toBe('2 steps')
+      // No live-step detail, no live-step colour, no live-step name or glyph:
+      // the header is a summary now.
       expect(strip.find('.tool-summary').exists()).toBe(false)
       expect(strip.attributes('data-category')).toBeUndefined()
-      expect(strip.element.querySelector(':scope > .lucide-layers')).not.toBeNull()
+      expect(strip.element.querySelector(':scope > .tool-icon')).toBeNull()
 
       // Folding it back makes it a live pill again.
       await strip.trigger('click')
@@ -4280,17 +4286,18 @@ describe('compact tool calls', () => {
     }
   })
 
-  it('wears the generic stack glyph once the run settles', async () => {
+  it('drops the leading glyph once the run settles — the step count speaks for itself', async () => {
     // A finished run mixes categories (file / bash / search), so no single
-    // tool's icon (and not the brain) can stand for it.
+    // tool's icon can stand for it. The row says how many steps it took, the
+    // same way a sub-agent row does, with nothing in the leading slot.
     const wrapper = mountBlocks({
       blocks: [tool('Read', 't1'), thinking('th1')],
     })
     await nextTick()
     const strip = wrapper.find('.chat-tool-group-strip')
     expect(strip.attributes('data-category')).toBeUndefined()
-    expect(strip.element.querySelector(':scope > .lucide-layers')).not.toBeNull()
-    expect(strip.element.querySelector('.lucide-brain')).toBeNull()
+    expect(strip.element.querySelector(':scope > .tool-icon')).toBeNull()
+    expect(strip.find('.tool-name').text()).toBe('1 step')
   })
 
   it('unfolds the run in place, keeping every block reachable', async () => {
@@ -4364,8 +4371,17 @@ describe('compact tool calls', () => {
       blocks: [tool('Read', 't1'), tool('Bash', 't2', { status: 'error' })],
     })
     await nextTick()
-    expect(wrapper.find('[data-tool-group]').attributes('data-tool-failed')).toBe('1')
-    expect(wrapper.find('[data-tool-group]').text()).toContain('1 failed')
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.attributes('data-tool-failed')).toBe('1')
+    // Glyph · number on the right — no "1 failed" sentence, and no second red
+    // status icon next to it.
+    const verdict = row.find('.tool-group-verdict')
+    expect(verdict.classes()).toContain('tool-group-failed')
+    expect(verdict.find('.verdict-n').text()).toBe('1')
+    expect(verdict.find('.tool-error-icon').exists()).toBe(true)
+    expect(row.text()).not.toContain('failed')
+    // The right-hand verdict replaces the plain check mark.
+    expect(row.find('.tool-check').exists()).toBe(false)
   })
 
   it('looks exactly like the running tool\'s own pill while that tool works', async () => {
@@ -4384,8 +4400,8 @@ describe('compact tool calls', () => {
     expect(row.find('.tool-spinner').exists()).toBe(true)
     expect(strip.find('.tool-name').text()).toBe('Bash')
     expect(strip.find('.tool-summary').text()).toBe('npm test')
-    // No counts while a step runs…
-    expect(row.text()).not.toContain('calls')
+    // No counts while a step runs — only where it is ("Step 2", tested above).
+    expect(row.text()).not.toContain('steps')
     expect(row.text()).not.toContain('thoughts')
     // …but the chevron stays: the row is unfoldable while it works, and the
     // affordance must not flicker in and out as steps start and finish.
@@ -4410,6 +4426,28 @@ describe('compact tool calls', () => {
     expect(tail.find('.tool-spinner').exists(), 'ring is pinned to the right edge').toBe(true)
     expect(strip.element.children[0].classList.contains('tool-icon'), 'leading slot keeps an icon').toBe(true)
     expect(strip.element.children[0].querySelector('.tool-spinner')).toBeNull()
+  })
+
+  it('says which step is running, left of the ring', async () => {
+    // A run is a sequence, and the header is the only place that says how far
+    // along it is without unfolding. The counter sits immediately before the
+    // ring, so "Step 2 · spinner" reads as one status.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [
+        tool('Read', 't1'),
+        tool('Bash', 't2', { done: false, status: '' }),
+        tool('Grep', 't3'),
+      ],
+    })
+    await nextTick()
+    const tail = wrapper.find('.chat-tool-group-tail')
+    expect(tail.find('.tool-group-step').text()).toBe('Step 2')
+    const children = Array.from(tail.element.children) as HTMLElement[]
+    const stepAt = children.findIndex((el) => el.classList.contains('tool-group-step'))
+    const ringAt = children.findIndex((el) => el.classList.contains('tool-spinner'))
+    expect(stepAt).toBeGreaterThanOrEqual(0)
+    expect(ringAt).toBe(stepAt + 1)
   })
 
   it('never folds an interactive card or an Agent card with a sub-agent group', async () => {

@@ -139,41 +139,27 @@
           class="chat-tool-call chat-tool-group-strip chat-run-head"
           :class="{ done: !isGroupRunning(group) }"
           :data-category="groupAccentCategory(group)"
+          :aria-label="toolGroupLabel(group)"
           @click.stop="toggleToolGroup(group)"
         >
-          <!-- Leading icon follows what is actually running, so the row reads as
-               that step's own pill: the running tool's glyph, or the brain while
-               only a thinking chip runs (same glyph as the chip). At rest the run
-               is a container, so it wears the generic stack glyph. The ring
-               loader lives in the tail (right edge) with every other status
-               verdict — as a leading child it pushed the counts around and left
-               the right edge empty. -->
-          <component :is="groupLeadingIcon(group)" :size="12" class="tool-icon" />
-          <!-- Collapsed, a live run mirrors the step that is actually working:
-               while a tool runs the row IS that tool's pill (same glyph, name
-               and summary, no count — a count is a summary of the run, and the
-               run is not done summarising); between steps only a thought is
-               live, so the row IS that chip (brain + 深度思考). Unfolded (and
-               once settled) the header is a static summary of the whole run:
-               counts only, no live step, because the body underneath already
-               shows what is running and a label rolling up here would be pure
-               motion while the reader is reading.
-               Every state shares ONE rolling line: the label changes under the
-               reader, and the roll is what makes the switch readable — per
-               state branches would swap the node out and the new text would
-               just snap in. -->
+          <!-- Two shapes share this row.
+               While a tool runs the row IS that tool's pill: its glyph, its name,
+               its summary — plus "第 N 步" in the tail, so a long run still says
+               where it is. Between steps only a thought is live, and the row IS
+               that chip (brain + 深度思考).
+               Once settled (or unfolded) the header is a static summary: how many
+               steps the run took, exactly like a sub-agent row ("N 步"). Thoughts
+               are not counted — they are not steps the reader tracks, and the
+               chips themselves are one click away in the body. -->
+          <component v-if="!groupHeaderIsSummary(group)" :is="groupLeadingIcon(group)" :size="12" class="tool-icon" />
+          <!-- One rolling label for both shapes, so the switch from the last
+               step's name to "N 步" rolls instead of snapping. -->
           <RollingText class="tool-name" :text="toolGroupTitle(group)" />
           <!-- The running step's own summary; once the run settles, the last
                step's — a folded run must still say WHAT it did, otherwise the
                row is a bare count. Nothing while unfolded (the body lists every
                step) or while only a thought runs (it has no summary). -->
           <RollingText v-if="toolGroupDetail(group)" class="tool-summary" :text="toolGroupDetail(group)" />
-          <!-- Settled or unfolded: counts, including what went wrong. A failure
-               earlier in the run is not news while a later step is still
-               executing, but an unfolded header is a summary of the whole run,
-               so it reports every part of it. -->
-          <span v-if="groupHeaderIsSummary(group) && group.failedCount > 0" class="tool-summary tool-group-failed">{{ t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }) }}</span>
-          <span v-else-if="groupHeaderIsSummary(group) && group.interruptedCount > 0" class="tool-summary tool-group-interrupted">{{ t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }) }}</span>
           <!-- Everything from the cancelled marker to the chevron is one block
                pinned to the right edge. Grouping it is what keeps the row
                aligned in every state: while only a thinking chip runs there is
@@ -186,13 +172,36 @@
                  Only while folded — the opened body renders the chip's own one. -->
             <span v-if="!isToolGroupOpen(group) && groupHidesTailThinking(group) && cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.cancelled') }}</span>
             <span v-else-if="!isToolGroupOpen(group) && groupHidesTailThinking(group) && stopped && !cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.stopped') }}</span>
+            <!-- Where the run is: left of the ring, so the two read as one
+               status ("第 3 步 · 转圈"). Only while a TOOL runs — a live thought
+               has no step number. -->
+            <span v-if="group.runningIndex" class="tool-group-step">{{ t('chat.contentBlocks.toolGroupStepIndex', { count: group.runningIndex }) }}</span>
             <!-- Running: the ring sits in the same right-hand slot as every
                  other verdict, so the row's left and right edges stay put as it
                  moves between running and settled. -->
             <LoadingIndicator v-if="isGroupRunning(group)" class="tool-spinner" size="sm" inline />
-            <!-- Finished: same success/failure language as a single tool pill. -->
-            <XCircle v-else-if="group.failedCount > 0" :size="14" color="#ef4444" class="tool-error-icon" />
-            <CircleSlash v-else-if="(group.interruptedCount || 0) > 0" :size="14" color="#f59e0b" class="tool-warn" />
+            <!-- Finished: same success/failure language as a single tool pill.
+                 A failure or an interruption carries its own count instead of a
+                 sentence ("2 次失败"): the glyph already says what happened, so
+                 the number is all that is missing. -->
+            <span
+              v-else-if="group.failedCount > 0"
+              class="tool-group-verdict tool-group-failed"
+              :title="t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount })"
+            >
+              <XCircle :size="14" color="#ef4444" class="tool-error-icon" />
+              <span class="verdict-x">×</span>
+              <span class="verdict-n">{{ group.failedCount }}</span>
+            </span>
+            <span
+              v-else-if="(group.interruptedCount || 0) > 0"
+              class="tool-group-verdict tool-group-interrupted"
+              :title="t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount })"
+            >
+              <CircleSlash :size="14" color="#f59e0b" class="tool-warn" />
+              <span class="verdict-x">×</span>
+              <span class="verdict-n">{{ group.interruptedCount }}</span>
+            </span>
             <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
             <!-- The chevron is always there, running or settled: the row is
                  unfoldable at any time, so the affordance must not flicker in
@@ -637,7 +646,7 @@ import { detectAskQuestion } from '@/utils/streamPerf.ts'
 import { askItemsToInputMap } from '@/utils/askQuestion.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
-import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, CircleSlash, Bot, Wrench, Sparkles, Users, Layers } from 'lucide-vue-next'
+import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, CircleSlash, Bot, Wrench, Sparkles, Users } from 'lucide-vue-next'
 import RichTextBlock from '@/components/chat/RichTextBlock.vue'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoginCommandButton from '@/components/chat/LoginCommandButton.vue'
@@ -1946,20 +1955,28 @@ const toolGroups = computed(() => {
   })
 })
 
-/** "3 operations · 2 thoughts" — whichever counts are non-zero. */
+/** "12 步 · 2 次失败" — the row's spoken label. Thoughts are not counted, so
+ *  they are not mentioned either. */
 function toolGroupLabel(group: ToolCallGroup): string {
-  const parts: string[] = []
-  if (group.toolCount > 0) {
-    parts.push(t('chat.contentBlocks.toolGroupOps', group.toolCount, { named: { count: group.toolCount } }))
-  }
-  if (group.thinkingCount > 0) {
-    parts.push(t('chat.contentBlocks.toolGroupThinking', group.thinkingCount, { named: { count: group.thinkingCount } }))
+  const parts: string[] = [toolGroupStepLabel(group)]
+  if (group.failedCount > 0) {
+    parts.push(t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }))
+  } else if ((group.interruptedCount || 0) > 0) {
+    parts.push(t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }))
   }
   return parts.join(' · ')
 }
 
-/** Whether the header is a static summary (counts) instead of a live mirror of
- *  the step that is running: always once the run settles, and always while it
+/** How many steps the run took — the same "N 步" a sub-agent row shows. A run
+ *  made only of thinking chips has no steps; it falls back to the chip's own
+ *  name rather than claiming "0 步". */
+function toolGroupStepLabel(group: ToolCallGroup): string {
+  if (group.toolCount <= 0) return t('chat.message.deepThinking')
+  return t('chat.contentBlocks.toolGroupSteps', group.toolCount, { named: { count: group.toolCount } })
+}
+
+/** Whether the header is a static summary (step count) instead of a live mirror
+ *  of the step that is running: always once the run settles, and always while it
  *  is unfolded — the body already shows what is running, so a label rolling
  *  under the reader's eyes up here is pure motion. */
 function groupHeaderIsSummary(group: ToolCallGroup): boolean {
@@ -1968,9 +1985,9 @@ function groupHeaderIsSummary(group: ToolCallGroup): boolean {
 
 /** The row's single rolling label: the running tool's name while a tool works,
  *  the deep-thinking label while only a thought runs (the row then IS that
- *  chip), else the settled counts. */
+ *  chip), else the step count. */
 function toolGroupTitle(group: ToolCallGroup): string {
-  if (groupHeaderIsSummary(group)) return toolGroupLabel(group)
+  if (groupHeaderIsSummary(group)) return toolGroupStepLabel(group)
   if (group.runningIndex) return group.runningName
   return t('chat.message.deepThinking')
 }
@@ -2020,12 +2037,11 @@ function groupAccentCategory(group: ToolCallGroup): string | undefined {
   return 'thinking'
 }
 
-/** Leading glyph: the running tool's own icon; the deep-thinking brain while
- *  only a thinking chip runs (the row then IS that chip); the generic stack
- *  glyph once the header is a summary — a finished run mixes categories, and an
- *  unfolded one is showing every step in its body anyway. */
+/** Leading glyph while a step is live: the running tool's own icon; the
+ *  deep-thinking brain while only a thinking chip runs (the row then IS that
+ *  chip). A settled header has no leading glyph at all — "N 步" is the whole
+ *  label, exactly like a sub-agent row. */
 function groupLeadingIcon(group: ToolCallGroup) {
-  if (groupHeaderIsSummary(group)) return Layers
   if (group.runningToolName) return getToolIcon(group.runningToolName).icon
   return Brain
 }
@@ -3434,13 +3450,10 @@ onUnmounted(() => {
   }
 }
 
-/* Only the summary row (no accent) is muted; while a tool runs the name takes
-   that tool's accent, exactly like the standalone pill. */
+/* While a tool runs the name takes that tool's accent, exactly like the
+   standalone pill. (A settled header's name is "N 步" and has no accent.) */
 .chat-tool-group-strip:not([data-category]) .tool-name {
   color: var(--text-secondary);
-  /* The count changes while the run streams; tabular digits keep the row from
-     twitching left and right. */
-  font-variant-numeric: tabular-nums;
   transition: color var(--duration-slow) ease;
 }
 
@@ -3455,19 +3468,51 @@ onUnmounted(() => {
   transition: border-top-color var(--duration-slow) ease;
 }
 
+/* Where the run is, left of the ring: "第 3 步" reads as the ring's caption.
+   Quiet — it is a position, not a verdict — and only a tool step has one. */
+.tool-group-step {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Failure / interruption: the glyph already says what happened, so the number
+   is all that is missing. It replaces the old "N 次失败" sentence AND the bare
+   status icon — two red marks for one fact was one too many. */
+.tool-group-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(2 * var(--dp));
+  line-height: 1;
+  flex-shrink: 0;
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-group-verdict .verdict-n {
+  font-size: var(--font-size-xs);
+  color: inherit;
+}
+
+/* The × belongs to the verdict's colour, just a step back from the number. */
+.tool-group-verdict .verdict-x {
+  font-size: 10px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.8;
+  margin-left: calc(1 * var(--dp));
+  transform: translateY(calc(0.4 * var(--dp)));
+}
+
 .chat-tool-group-strip .tool-group-failed {
   color: #ef4444;
-  font-weight: var(--font-weight-semibold);
-  /* Right-aligned so the count sits next to its status icon instead of crowding
-     the operation count on the left. */
-  text-align: right;
 }
 
 /* Same slot, but amber: nothing failed here, the turn stopped waiting. */
 .chat-tool-group-strip .tool-group-interrupted {
   color: #f59e0b;
-  font-weight: var(--font-weight-semibold);
-  text-align: right;
 }
 
 /* Everything from the cancelled marker to the chevron is one block pinned to the
