@@ -84,7 +84,7 @@ func (GrepTool) Run(env Env, raw json.RawMessage) Result {
 
 	target := absRoot
 	if strings.TrimSpace(args.Path) != "" {
-		target, err = resolvePath(absRoot, args.Path)
+		target, err = env.resolve(args.Path)
 		if err != nil {
 			return Result{Text: err.Error(), IsError: true}
 		}
@@ -173,6 +173,12 @@ func grepFile(path, root string, re *regexp.Regexp, out *[]string) int {
 		rel = path
 	}
 	rel = filepath.ToSlash(rel)
+	// A search that left the working directory has no meaningful relative
+	// form — "../../.." repeated per line is noise. Absolute is the readable
+	// answer there.
+	if strings.HasPrefix(rel, "../") || rel == ".." {
+		rel = filepath.ToSlash(path)
+	}
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxGrepLineLen*4)

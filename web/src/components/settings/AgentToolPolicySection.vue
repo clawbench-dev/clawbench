@@ -39,6 +39,30 @@
       {{ t('settings.items.toolPolicyNoTools') }}
     </div>
 
+    <!-- Whether the FILE tools may leave the project. Stated as the permission
+         ("allow access outside") because that is the question a user asks;
+         the stored field is the restriction, so the checkbox is its negation.
+         Shown only when a file tool is granted: with no tools there is nothing
+         for the switch to affect, and a live-looking toggle would imply it
+         does something. -->
+    <div v-if="granted.length > 0" class="agent-tools__scope">
+      <label class="agent-tools__row">
+        <input
+          type="checkbox"
+          :checked="allowOutsideWorkDir"
+          :disabled="saving"
+          @change="saveOutsideAccess(($event.target as HTMLInputElement).checked)"
+        />
+        <span class="agent-tools__body">
+          <span class="agent-tools__name">{{ t('settings.items.toolPolicyOutside') }}</span>
+          <span class="agent-tools__desc">{{ t('settings.items.toolPolicyOutsideDesc') }}</span>
+        </span>
+      </label>
+      <div v-if="granted.includes(CAP_EXEC)" class="agent-tools__hint agent-tools__hint--nested">
+        {{ t('settings.items.toolPolicyOutsideExecNote') }}
+      </div>
+    </div>
+
     <!-- Per-turn budgets. A real repository task routinely needs dozens of
          rounds, so these are settings rather than constants: too small and the
          agent stops mid-task, too large and one turn can run for a long time.
@@ -228,6 +252,43 @@ async function saveBudget(field: 'maxRounds' | 'maxToolCalls', event: Event) {
   }
 }
 
+/**
+ * Whether the file tools may reach outside the working directory.
+ *
+ * The stored field is `restrictToWorkDir`, so this is its negation — and an
+ * ABSENT value must read as "allowed" (true), matching the server's zero value
+ * and the default this setting shipped with. Written as `!== true` rather than
+ * `?? true` so a JSON `null` also lands on the allowed side.
+ */
+const allowOutsideWorkDir = computed<boolean>(
+  () => props.agent?.toolPolicy?.restrictToWorkDir !== true,
+)
+
+/**
+ * Persist the outside-access switch.
+ *
+ * The whole policy is sent for the same reason save() and saveBudget() do it:
+ * a partial object relies on the server's "missing means leave alone"
+ * behaviour, and a field the server does not treat that way would be reset.
+ */
+async function saveOutsideAccess(allow: boolean) {
+  if (!props.agent || saving.value) return
+  saving.value = true
+  error.value = ''
+  try {
+    await patchAgentField(props.agent.id, 'tool_policy', {
+      ...(props.agent.toolPolicy ?? {}),
+      allow: granted.value,
+      restrictToWorkDir: !allow,
+    })
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    appLog.w('AgentToolPolicySection', 'save outside access failed', error.value)
+  } finally {
+    saving.value = false
+  }
+}
+
 function toggle(cap: string, checked: boolean) {
   const next = new Set(granted.value)
   if (checked) {
@@ -305,6 +366,17 @@ watch(
   font-size: var(--font-size-sm);
   color: var(--text-muted);
   line-height: var(--line-height-normal);
+}
+.agent-tools__scope {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-color);
+}
+.agent-tools__hint--nested {
+  padding-left: calc(16px + var(--space-3));
+  font-size: var(--font-size-sm);
 }
 .agent-tools__budgets {
   display: flex;

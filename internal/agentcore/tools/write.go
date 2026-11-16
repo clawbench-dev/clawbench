@@ -50,7 +50,7 @@ func (WriteTool) Run(env Env, raw json.RawMessage) Result {
 	if err := decodeArgs(raw, &args); err != nil {
 		return Result{Text: err.Error(), IsError: true}
 	}
-	abs, err := resolvePath(env.Root, args.Path)
+	abs, err := env.resolve(args.Path)
 	if err != nil {
 		return Result{Text: err.Error(), IsError: true}
 	}

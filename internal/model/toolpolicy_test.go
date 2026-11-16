@@ -125,6 +125,38 @@ func TestToolPolicy_EncodeDecodeRoundTrip(t *testing.T) {
 	assert.Equal(t, 7, out.MaxRounds)
 }
 
+// TestToolPolicy_RestrictToWorkDirSurvivesNormalized pins the bug this setting
+// shipped with: Normalized runs on every save and every load, so a field it
+// forgets to copy is silently reset to false the first time a user touches any
+// OTHER control on the same panel.
+//
+// Both polarities are checked. A test that only covers true would still pass if
+// Normalized hard-coded false; one that only covers false would pass if it
+// hard-coded true.
+func TestToolPolicy_RestrictToWorkDirSurvivesNormalized(t *testing.T) {
+	assert.True(t, ToolPolicy{Allow: []string{CapFSRead}, RestrictToWorkDir: true}.Normalized().RestrictToWorkDir,
+		"a confinement the user turned on must not be dropped by Normalized")
+	assert.False(t, ToolPolicy{Allow: []string{CapFSRead}}.Normalized().RestrictToWorkDir,
+		"the default must stay 'not confined'")
+}
+
+// TestToolPolicy_RestrictToWorkDirDefaultsToOpen pins which way the zero value
+// points.
+//
+// The field stores the RESTRICTION, so the default (an agent that never touched
+// the switch) is "not confined". Flipping the field's meaning would silently
+// fence every existing agent on upgrade, so the direction is worth pinning.
+func TestToolPolicy_RestrictToWorkDirDefaultsToOpen(t *testing.T) {
+	assert.False(t, ToolPolicy{}.ConfinesToWorkDir())
+	assert.True(t, ToolPolicy{RestrictToWorkDir: true}.ConfinesToWorkDir())
+
+	// A stored policy round-trips through JSON, which is how the handler and the
+	// database both carry it.
+	encoded, err := EncodeToolPolicy(ToolPolicy{Allow: []string{CapFSRead}, RestrictToWorkDir: true})
+	require.NoError(t, err)
+	assert.True(t, DecodeToolPolicy(encoded).ConfinesToWorkDir())
+}
+
 // TestDecodeToolPolicy_DegradesToNoGrants pins the fail-closed read path.
 //
 // A corrupt column must never be read as "everything allowed" — that would turn

@@ -81,14 +81,16 @@ func (GlobTool) Run(env Env, raw json.RawMessage) Result {
 	}
 
 	// The pattern's literal prefix decides where the walk starts, so a
-	// pattern confined to a subdirectory does not scan the whole tree.
+	// pattern confined to a subdirectory does not scan the whole tree. With
+	// the work-directory fence off, an absolute prefix outside the project is
+	// a legitimate place to search.
 	base := absRoot
 	if literal := literalPrefix(pattern); literal != "" {
 		candidate := literal
 		if !filepath.IsAbs(candidate) {
 			candidate = filepath.Join(absRoot, candidate)
 		}
-		if resolved, err := resolvePath(absRoot, candidate); err == nil {
+		if resolved, err := env.resolve(candidate); err == nil {
 			if info, statErr := os.Stat(resolved); statErr == nil && info.IsDir() {
 				base = resolved
 			}
@@ -111,8 +113,14 @@ func (GlobTool) Run(env Env, raw json.RawMessage) Result {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		if globMatch(pattern, rel) {
-			matches = append(matches, rel)
+		// Outside the project, "relative to the working directory" would be a
+		// chain of ".."; the absolute path is the readable form there.
+		display := rel
+		if strings.HasPrefix(rel, "../") {
+			display = filepath.ToSlash(path)
+		}
+		if globMatch(pattern, rel) || (display != rel && globMatch(pattern, display)) {
+			matches = append(matches, display)
 			if len(matches) >= maxGlobResults {
 				return fs.SkipAll
 			}

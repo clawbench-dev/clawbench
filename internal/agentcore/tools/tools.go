@@ -1,9 +1,10 @@
 // Package tools implements the four tools the built-in agent can use.
 //
-// Every tool takes an absolute-or-relative path that MUST resolve inside the
-// turn's working directory; see resolvePath. That confinement is enforced here,
-// once, rather than in each tool, because a tool that forgets it is not a
-// smaller bug than the others — it is arbitrary filesystem access.
+// Every tool takes an absolute-or-relative path, and WHETHER it may leave the
+// turn's working directory is decided in one place (Env.ConfineToWorkDir; see
+// resolvePath and resolveAnywhere). The check lives here rather than in each
+// tool because a tool that forgets it is not a smaller bug than the others —
+// it is arbitrary filesystem access.
 package tools
 
 import (
@@ -56,8 +57,21 @@ type Image struct {
 // Env is what a tool is allowed to touch. It is constructed per turn from the
 // agent's policy, so a tool cannot widen its own reach.
 type Env struct {
-	// Root is the working directory. Every path must resolve inside it.
+	// Root is the working directory. It is the base for relative paths, and —
+	// when ConfineToWorkDir is set — the fence every path must stay inside.
 	Root string
+	// ConfineToWorkDir refuses any path that resolves outside Root.
+	//
+	// The zero value (false) lets the file tools reach anywhere the process
+	// can: absolute paths, ".." outside the project, symlinks pointing out.
+	// That is the default because the project directory is a starting point,
+	// not a fence — and an agent that is refused spends rounds hunting for a
+	// way around the refusal instead of doing the task.
+	//
+	// true is the sandbox: use it when the agent runs on a machine with files
+	// the user does not want read. It covers the FILE TOOLS only; a shell can
+	// read the whole disk whatever this says.
+	ConfineToWorkDir bool
 	// CommandTimeoutSec bounds one shell command.
 	CommandTimeoutSec int
 	// Ctx is the turn's context. A tool that spawns a process must honour it,
@@ -99,6 +113,19 @@ type Spec struct {
 	Name        string
 	Description string
 	Parameters  map[string]any
+}
+
+// resolve turns a caller-supplied path into an absolute path, applying this
+// turn's confinement rule.
+//
+// Every tool goes through here rather than calling resolvePath directly, so the
+// "may it leave the working directory" decision has exactly one implementation
+// and cannot drift between tools.
+func (e Env) resolve(p string) (string, error) {
+	if e.ConfineToWorkDir {
+		return resolvePath(e.Root, p)
+	}
+	return resolveAnywhere(e.Root, p)
 }
 
 // resolvePath turns a caller-supplied path into an absolute path that is
@@ -143,6 +170,30 @@ func resolvePath(root, p string) (string, error) {
 		return "", fmt.Errorf("path %q resolves outside the working directory (to %s)", p, resolved)
 	}
 	return candidate, nil
+}
+
+// resolveAnywhere is resolvePath without the fence: the path is still made
+// absolute (relative paths stay relative to the working directory, so "src/x.go"
+// means the same thing either way) and cleaned, but containment is not checked.
+//
+// The containment re-check is skipped too, which is the point: a symlink inside
+// the project that points at another directory is a legitimate layout once the
+// fence is off.
+func resolveAnywhere(root, p string) (string, error) {
+	if strings.TrimSpace(p) == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p), nil
+	}
+	if root == "" {
+		return "", fmt.Errorf("no working directory is set for this turn, so a relative path cannot be resolved")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve working directory: %w", err)
+	}
+	return filepath.Clean(filepath.Join(absRoot, p)), nil
 }
 
 // isWithin reports whether child is root or inside it.

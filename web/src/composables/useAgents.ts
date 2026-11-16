@@ -25,6 +25,16 @@ export interface ToolPolicy {
   maxToolCalls?: number
   /** Per-command timeout in seconds (0 = server default). */
   bashTimeoutSec?: number
+  /**
+   * Confines the FILE tools to the working directory.
+   *
+   * Stored as the restriction, not the permission, so the absent/`false` value
+   * means "may read outside the project" — which is the default this field
+   * shipped with. The settings switch shows the opposite polarity
+   * ("allow access outside the project", on by default) because that is the
+   * question a user is actually asking.
+   */
+  restrictToWorkDir?: boolean
 }
 
 /** Capability identifiers, mirroring model.CapFSRead / CapFSWrite / CapExec. */

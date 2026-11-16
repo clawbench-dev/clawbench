@@ -92,7 +92,16 @@ func renderRules(toolList []tools.Tool, policy model.ToolPolicy, hasWorkDir bool
 	}
 
 	if hasWorkDir {
-		add("Every file path must stay inside the working directory. Paths outside it are refused, so do not try.")
+		// Two different worlds, so two different rules. Telling the model its
+		// paths are refused when they are not makes it refuse work it could do
+		// (and waste rounds re-reading inside the project); telling it the disk
+		// is open when it is fenced makes it burn a failed call per attempt.
+		if policy.ConfinesToWorkDir() {
+			add("Every file path must stay inside the working directory. Paths outside it are refused, so do not try.")
+		} else {
+			add("Paths outside the working directory are allowed when the task needs them: " +
+				"use an absolute path (or ../) to reach one. Relative paths resolve against the working directory.")
+		}
 	} else {
 		add("No working directory is set, so the file tools cannot be used at all.")
 	}

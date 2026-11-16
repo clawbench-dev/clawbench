@@ -73,7 +73,7 @@ func (EditTool) Run(env Env, raw json.RawMessage) Result {
 	if args.OldString == args.NewString {
 		return Result{Text: "old_string and new_string are identical; nothing would change.", IsError: true}
 	}
-	abs, err := resolvePath(env.Root, args.Path)
+	abs, err := env.resolve(args.Path)
 	if err != nil {
 		return Result{Text: err.Error(), IsError: true}
 	}

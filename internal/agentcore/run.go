@@ -351,6 +351,7 @@ func (r *runner) run(ctx context.Context) {
 
 	env := tools.Env{
 		Root:              r.spec.WorkDir,
+		ConfineToWorkDir:  r.spec.Policy.ConfinesToWorkDir(),
 		CommandTimeoutSec: r.spec.Policy.CommandTimeout(),
 		Ctx:               runCtx,
 	}

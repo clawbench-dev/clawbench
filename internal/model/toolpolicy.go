@@ -159,6 +159,34 @@ type ToolPolicy struct {
 	MaxToolCalls int `json:"maxToolCalls,omitempty"`
 	// BashTimeoutSec bounds one shell command (0 = DefaultBashTimeoutSec).
 	BashTimeoutSec int `json:"bashTimeoutSec,omitempty"`
+	// RestrictToWorkDir confines the file tools to the working directory.
+	//
+	// It is phrased as the RESTRICTION rather than as the permission so the
+	// zero value means "not confined", which is the behaviour this field was
+	// added with (the switch is on for every agent that never touched it).
+	// Storing the permission instead would make the zero value "confined" and
+	// silently change what existing agents can do on upgrade.
+	//
+	// false (default) — the file tools may reach anywhere the process can:
+	// absolute paths, `..` outside the project, symlinks pointing out. That is
+	// what the user asked for by default: the project directory is a starting
+	// point, not a fence, and an agent told "no" spends rounds hunting for a
+	// way around it.
+	// true — every path must resolve inside the working directory; anything
+	// else is refused with an explanation. This is the sandbox: use it when
+	// the agent runs on a machine with files the user does not want read.
+	//
+	// Exec is not affected either way — a shell can read the whole disk
+	// whatever this says, which is why the setting is described in the UI as
+	// covering the file tools only.
+	RestrictToWorkDir bool `json:"restrictToWorkDir,omitempty"`
+}
+
+// ConfinesToWorkDir reports whether file paths are limited to the working
+// directory. The negation lives here so callers never have to remember which
+// way the field points.
+func (p ToolPolicy) ConfinesToWorkDir() bool {
+	return p.RestrictToWorkDir
 }
 
 // Normalized returns a copy with unknown capabilities dropped, the implied ones
@@ -191,6 +219,10 @@ func (p ToolPolicy) Normalized() ToolPolicy {
 		MaxRounds:      p.MaxRounds,
 		MaxToolCalls:   p.MaxToolCalls,
 		BashTimeoutSec: p.BashTimeoutSec,
+		// Carried over, not defaulted: Normalized runs on every save and every
+		// load, so dropping it here would silently reset the switch to "off"
+		// the first time a user touched any other field on this panel.
+		RestrictToWorkDir: p.RestrictToWorkDir,
 	}
 	for _, c := range toolCapabilityOrder {
 		if have[c] {

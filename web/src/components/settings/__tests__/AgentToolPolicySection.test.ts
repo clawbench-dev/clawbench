@@ -36,10 +36,26 @@ function checkboxFor(wrapper: ReturnType<typeof mount>, labelKey: string) {
     throw new Error(`no row for ${labelKey}`)
 }
 
-function mountSection(toolPolicy?: { allow: string[]; maxRounds?: number; maxToolCalls?: number }) {
+function mountSection(toolPolicy?: {
+    allow: string[]
+    maxRounds?: number
+    maxToolCalls?: number
+    restrictToWorkDir?: boolean
+}) {
     return mount(AgentToolPolicySection, {
         props: { agent: { id: 'builtin', toolPolicy } },
     })
+}
+
+/**
+ * The outside-access switch.
+ *
+ * Looked up by its label rather than by position: the capability checkboxes
+ * share the same row class, and its position among them depends on which tools
+ * are granted.
+ */
+function outsideSwitch(wrapper: ReturnType<typeof mount>) {
+    return checkboxFor(wrapper, 'settings.items.toolPolicyOutside')
 }
 
 /** The budget inputs, in template order: rounds first, tool calls second. */
@@ -189,5 +205,55 @@ describe('AgentToolPolicySection', () => {
             expect(wrapper.text()).toContain('server said no')
         })
         expect((input.element as HTMLInputElement).value).toBe('40')
+    })
+
+    // The outside-access switch is the one setting whose stored polarity is the
+    // OPPOSITE of what the checkbox shows (stored: restrict; shown: allow). Both
+    // directions are pinned, because a single inverted mapping would silently
+    // fence every agent or open every agent.
+
+    it('shows outside access as on when the policy never set it', () => {
+        const wrapper = mountSection({ allow: ['fs.read'] })
+        // Absent means allowed — the default this shipped with. An unset field
+        // must not read as "off", which would look like the fence was enabled.
+        expect((outsideSwitch(wrapper).element as HTMLInputElement).checked).toBe(true)
+    })
+
+    it('shows outside access as off when the policy restricts to the work dir', () => {
+        const wrapper = mountSection({ allow: ['fs.read'], restrictToWorkDir: true })
+        expect((outsideSwitch(wrapper).element as HTMLInputElement).checked).toBe(false)
+    })
+
+    it('turning outside access off stores the restriction, not the permission', async () => {
+        const wrapper = mountSection({ allow: ['fs.read'], maxRounds: 40 })
+        await outsideSwitch(wrapper).setValue(false)
+
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'tool_policy', {
+            allow: ['fs.read'],
+            maxRounds: 40,
+            restrictToWorkDir: true,
+        })
+    })
+
+    it('turning outside access back on clears the restriction', async () => {
+        const wrapper = mountSection({ allow: ['fs.read'], restrictToWorkDir: true })
+        await outsideSwitch(wrapper).setValue(true)
+
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'tool_policy', {
+            allow: ['fs.read'],
+            restrictToWorkDir: false,
+        })
+    })
+
+    it('hides the outside switch when no tool is granted', () => {
+        const wrapper = mountSection({ allow: [] })
+        // Nothing for the switch to govern: a live-looking toggle would imply
+        // it does something.
+        expect(wrapper.text()).not.toContain('settings.items.toolPolicyOutside')
+    })
+
+    it('explains that the switch does not cover command execution', () => {
+        const wrapper = mountSection({ allow: ['exec'] })
+        expect(wrapper.text()).toContain('settings.items.toolPolicyOutsideExecNote')
     })
 })
