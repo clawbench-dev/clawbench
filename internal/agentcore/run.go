@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -177,6 +178,22 @@ func Run(ctx context.Context, spec Spec) <-chan Event {
 	go func() {
 		defer close(ch)
 		r := &runner{spec: spec, ch: ch}
+		// A panic anywhere below — a tool, a malformed provider response, a
+		// bug in this package — must not take the server down. This agent runs
+		// inside the ClawBench process, so an unrecovered panic is an outage
+		// for every other session and feature; an ACP backend would only lose
+		// its own child process. Turn it into the run's terminal error instead.
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("agentcore: panic during run",
+					"panic", rec, "stack", string(debug.Stack()))
+				// A panic after the terminal event (e.g. in a deferred cleanup)
+				// must not emit a second one.
+				if !r.terminated {
+					r.emit(Event{Kind: EventError, Err: fmt.Errorf("internal error: %v", rec)})
+				}
+			}
+		}()
 		r.run(ctx)
 	}()
 	return ch
@@ -230,6 +247,9 @@ type runner struct {
 	// summary is the most recent compaction summary, reported on EventDone so
 	// the caller can persist it across the turn boundary.
 	summary string
+	// terminated records that a done/error event was already sent. The panic
+	// guard reads it so a panic after the terminal event cannot emit a second.
+	terminated bool
 }
 
 func (r *runner) run(ctx context.Context) {
@@ -713,6 +733,9 @@ func (r *runner) availableToolNames() string {
 
 // emit sends an event, giving up if the consumer went away.
 func (r *runner) emit(ev Event) {
+	if ev.Kind == EventDone || ev.Kind == EventError {
+		r.terminated = true
+	}
 	select {
 	case r.ch <- ev:
 	case <-time.After(emitGrace):

@@ -529,3 +529,37 @@ func TestRun_NoVisionClientGetsTextOnlyRead(t *testing.T) {
 		}
 	}
 }
+
+// panickingClient fails the way a broken tool or a malformed provider response
+// would: a panic inside the run loop.
+type panickingClient struct{}
+
+func (panickingClient) Model() string        { return "stub" }
+func (panickingClient) SupportsVision() bool { return false }
+func (panickingClient) Stream(context.Context, llm.Request) (<-chan llm.Event, error) {
+	panic("boom")
+}
+
+// TestRun_RecoversPanicAsTerminalError pins the blast-radius guard: the built-in
+// agent runs inside the ClawBench process, so an unrecovered panic here would
+// take the whole server (and every other session) down. It must instead surface
+// as this run's terminal error, exactly once.
+func TestRun_RecoversPanicAsTerminalError(t *testing.T) {
+	terminal, kinds := collect(t, Run(context.Background(), Spec{Client: panickingClient{}}))
+
+	if terminal.Kind != EventError {
+		t.Fatalf("a panic must end the run with an error, got %v", terminal.Kind)
+	}
+	if terminal.Err == nil || !strings.Contains(terminal.Err.Error(), "internal error") {
+		t.Fatalf("the panic must be reported as an internal error, got %v", terminal.Err)
+	}
+	terminals := 0
+	for _, k := range kinds {
+		if k == EventDone || k == EventError {
+			terminals++
+		}
+	}
+	if terminals != 1 {
+		t.Fatalf("expected exactly one terminal event, got %d (%v)", terminals, kinds)
+	}
+}

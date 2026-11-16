@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -88,24 +87,27 @@ func (BashTool) Run(env Env, raw json.RawMessage) Result {
 	cmd.Dir = env.Root
 	setProcessGroup(cmd)
 	// Keep stdout and stderr separate so the model can tell "the command
-	// failed" from "the command printed to stderr but worked".
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// failed" from "the command printed to stderr but worked". Both capture
+	// writers enforce the size cap as bytes arrive: a command that prints
+	// gigabytes must not grow the server's memory before it is truncated.
+	stdout := newBoundedOutput(MaxBashOutputBytes)
+	stderr := newBoundedOutput(MaxBashOutputBytes)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	runErr := cmd.Run()
 	timedOut := ctx.Err() == context.DeadlineExceeded
 
 	var b strings.Builder
 	if stdout.Len() > 0 {
-		b.WriteString(truncateOutput(stdout.String()))
+		b.WriteString(stdout.String())
 	}
 	if stderr.Len() > 0 {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString("[stderr]\n")
-		b.WriteString(truncateOutput(stderr.String()))
+		b.WriteString(stderr.String())
 	}
 	if b.Len() == 0 {
 		b.WriteString("(no output)")
@@ -122,20 +124,75 @@ func (BashTool) Run(env Env, raw json.RawMessage) Result {
 	return Result{Text: b.String(), Display: firstLine(args.Command)}
 }
 
-// truncateOutput keeps the head and the tail of a large output.
+// boundedOutput captures a command's output under a fixed memory budget.
+//
+// The previous implementation buffered the whole stream and truncated
+// afterwards, so `cat` on a multi-gigabyte file (or a runaway `yes`) could
+// exhaust the process's memory before the cap was ever applied — and this
+// process also serves every other chat, terminal and HTTP request. Here the
+// cap is enforced while writing: the first half is kept, the last half is
+// kept, and the middle is counted and dropped.
 //
 // Both ends matter: the head says what the command did, the tail says how it
 // ended (an error, a summary line, a final test result). Keeping only the head
 // hides the failure, which is the part the model needs.
-func truncateOutput(s string) string {
-	if len(s) <= MaxBashOutputBytes {
-		return s
+type boundedOutput struct {
+	limit int
+	head  []byte
+	tail  []byte
+	total int
+}
+
+func newBoundedOutput(limit int) *boundedOutput {
+	return &boundedOutput{limit: limit}
+}
+
+func (b *boundedOutput) Write(p []byte) (int, error) {
+	written := len(p)
+	half := b.limit / 2
+	if half <= 0 {
+		// A non-positive budget keeps nothing, but the command still runs:
+		// returning an error here would make exec kill it.
+		b.total += written
+		return written, nil
 	}
-	half := MaxBashOutputBytes / 2
-	omitted := len(s) - 2*half
-	return s[:half] +
+	for len(p) > 0 {
+		if len(b.head) < half {
+			n := half - len(b.head)
+			if n > len(p) {
+				n = len(p)
+			}
+			b.head = append(b.head, p[:n]...)
+			p = p[n:]
+			continue
+		}
+		// Bounded chunking keeps a single huge Write from allocating a
+		// transient copy as large as itself.
+		n := len(p)
+		if n > half {
+			n = half
+		}
+		b.tail = append(b.tail, p[:n]...)
+		if len(b.tail) > half {
+			b.tail = append(b.tail[:0], b.tail[len(b.tail)-half:]...)
+		}
+		p = p[n:]
+	}
+	b.total += written
+	return written, nil
+}
+
+// Len reports how many bytes the command produced, not how many were kept.
+func (b *boundedOutput) Len() int { return b.total }
+
+func (b *boundedOutput) String() string {
+	if b.total <= b.limit {
+		return string(b.head) + string(b.tail)
+	}
+	omitted := b.total - len(b.head) - len(b.tail)
+	return string(b.head) +
 		fmt.Sprintf("\n[... %d bytes omitted ...]\n", omitted) +
-		s[len(s)-half:]
+		string(b.tail)
 }
 
 // firstLine renders a command's first line for the tool card.

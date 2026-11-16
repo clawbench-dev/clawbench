@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -501,4 +502,68 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestBoundedOutputCapsMemoryWhileStreaming pins the fix for a command that
+// prints without end. The old code buffered the whole stream and truncated
+// afterwards, so `cat` on a multi-gigabyte file (or a runaway `yes`) could
+// exhaust the server process's memory before the 30 KB cap was ever applied.
+func TestBoundedOutputCapsMemoryWhileStreaming(t *testing.T) {
+	w := newBoundedOutput(MaxBashOutputBytes)
+	chunk := bytes.Repeat([]byte("a"), 4096)
+	const writes = 2000 // ~8 MB, far past the cap
+	for i := range writes {
+		if _, err := w.Write(chunk); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if kept := len(w.head) + len(w.tail); kept > MaxBashOutputBytes {
+			t.Fatalf("kept %d bytes after %d writes, over the %d cap", kept, i+1, MaxBashOutputBytes)
+		}
+	}
+	if want := writes * len(chunk); w.Len() != want {
+		t.Fatalf("Len() = %d, want the full byte count %d", w.Len(), want)
+	}
+	if got := len(w.String()); got > MaxBashOutputBytes+128 {
+		t.Fatalf("rendered output is %d bytes, over the cap", got)
+	}
+}
+
+// TestBoundedOutputKeepsHeadAndTail pins what the model needs to see: how the
+// command started and how it ended, with the omitted size stated.
+func TestBoundedOutputKeepsHeadAndTail(t *testing.T) {
+	w := newBoundedOutput(20)
+	if _, err := w.Write([]byte("HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(bytes.Repeat([]byte("x"), 100)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("TAIL")); err != nil {
+		t.Fatal(err)
+	}
+	got := w.String()
+	if !strings.HasPrefix(got, "HEAD") {
+		t.Fatalf("head was dropped: %q", got)
+	}
+	if !strings.HasSuffix(got, "TAIL") {
+		t.Fatalf("tail was dropped: %q", got)
+	}
+	if !strings.Contains(got, "[... 88 bytes omitted ...]") {
+		t.Fatalf("omitted size must be stated, got %q", got)
+	}
+}
+
+// TestBoundedOutputPassesSmallOutputThrough pins that the cap changes nothing
+// for ordinary commands, including stdout+stderr ordering.
+func TestBoundedOutputPassesSmallOutputThrough(t *testing.T) {
+	w := newBoundedOutput(MaxBashOutputBytes)
+	if _, err := w.Write([]byte("hello ")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("world")); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.String(); got != "hello world" {
+		t.Fatalf("small output must pass through unchanged, got %q", got)
+	}
 }
