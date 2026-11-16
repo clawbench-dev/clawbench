@@ -9,14 +9,29 @@ const ALL_BACKENDS = [
     'commandcode', 'openclaw', 'qodercn', 'custom-acp', 'builtin',
 ]
 
+/**
+ * Backends whose mark only exists as a raster image (no inline SVG source in the
+ * repo). They render through the <img> branch of AgentIcon and are exempt from
+ * the SVG-only assertions below.
+ */
+const RASTER_BACKENDS = ['builtin']
+
 describe('agentIcons', () => {
     describe('getAgentSvg', () => {
         it('returns SVG data for every known backend', () => {
             for (const id of ALL_BACKENDS) {
                 const data = getAgentSvg(id)
-                expect(data, `backend "${id}" should have SVG data`).not.toBeNull()
-                expect(data!.svg.length, `backend "${id}" SVG should not be empty`).toBeGreaterThan(0)
+                expect(data, `backend "${id}" should have icon data`).not.toBeNull()
                 expect(data!.viewBox, `backend "${id}" should have viewBox`).toBeTruthy()
+                if (RASTER_BACKENDS.includes(id)) {
+                    // A raster mark: the image URL is the payload, and there is
+                    // deliberately no inline SVG.
+                    expect(data!.imageUrl, `backend "${id}" should have imageUrl`).toBeTruthy()
+                    expect(data!.svg, `backend "${id}" should not also carry inline SVG`).toBe('')
+                } else {
+                    expect(data!.svg.length, `backend "${id}" SVG should not be empty`).toBeGreaterThan(0)
+                    expect(data!.imageUrl, `backend "${id}" should not be raster-backed`).toBeFalsy()
+                }
             }
         })
 
@@ -26,7 +41,7 @@ describe('agentIcons', () => {
         })
 
         it('all SVG data contains path or rect elements', () => {
-            for (const id of ALL_BACKENDS) {
+            for (const id of ALL_BACKENDS.filter(x => !RASTER_BACKENDS.includes(x))) {
                 const data = getAgentSvg(id)!
                 expect(
                     data.svg.includes('<path') || data.svg.includes('<rect'),
@@ -103,7 +118,7 @@ describe('agentIcons', () => {
             const LIGHT_RGB = rgb(LIGHT)!
             const DARK_RGB = rgb(DARK)!
 
-            for (const id of ALL_BACKENDS) {
+            for (const id of ALL_BACKENDS.filter(x => !RASTER_BACKENDS.includes(x))) {
                 const data = getAgentSvg(id)!
                 // A theme-aware mono colour or a backdrop already guarantees
                 // separation from the surface; only bare colour icons can fail.

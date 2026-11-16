@@ -46,6 +46,16 @@ interface AgentSvgData {
     needsBg?: boolean
     /** CSS class name for monochrome icons that need theme-aware color */
     monoCssClass?: string
+    /**
+     * URL of a raster image (PNG) to render instead of inline SVG. Set for
+     * backends whose mark only exists as a bitmap — the built-in agent uses the
+     * ClawBench product logo, which has no SVG source in the repo.
+     *
+     * Rendered through the same <img> branch as a user avatar: the image is
+     * sandboxed (no scripts, no external loads) and sidesteps the scoped-CSS
+     * red line that v-html would hit.
+     */
+    imageUrl?: string
 }
 
 const agentSvgMap: Record<string, AgentSvgData> = {
@@ -95,15 +105,21 @@ const agentSvgMap: Record<string, AgentSvgData> = {
         viewBox: '0 0 24 24',
     },
 
-    // The built-in agent has no vendor mark: it is not a product, it is
-    // ClawBench's own tool loop. A terminal-with-prompt glyph states what it
-    // does (read, write, run) without pretending to be a brand. Monochrome via
-    // currentColor so it adapts to all themes; a user-set avatar still outranks
-    // it in AgentIcon.
+    // The built-in agent IS ClawBench itself — its tools are ours, not a
+    // vendor's. So it wears the product logo rather than an invented glyph: an
+    // agent whose mark is a made-up terminal prompt reads as "some other
+    // agent", while the crab reads as "this is ClawBench doing it".
+    //
+    // A raster image, not inline SVG: the repo has no SVG source for the mark
+    // (only assets/logo-*.png). imageUrl routes it through the same sandboxed
+    // <img> branch a user avatar uses.
+    //
+    // No monoCssClass: the logo has its own colours and must not be recoloured
+    // by the theme (that would paint the crab flat and unrecognizable).
     builtin: {
-        svg: '<path d="M4.5 3h15A1.5 1.5 0 0121 4.5v15A1.5 1.5 0 0119.5 21h-15A1.5 1.5 0 013 19.5v-15A1.5 1.5 0 014.5 3zm0 1.8a.3.3 0 00-.3.3v13.8a.3.3 0 00.3.3h15a.3.3 0 00.3-.3V5.1a.3.3 0 00-.3-.3h-15z" fill="currentColor"/><path d="M6.9 8.1a.9.9 0 011.27.07l2.4 2.65a.9.9 0 010 1.2l-2.4 2.65a.9.9 0 11-1.34-1.2l1.94-2.14L6.83 9.2A.9.9 0 016.9 8.1z" fill="currentColor"/><rect x="11.4" y="13.6" width="5.2" height="1.8" rx=".9" fill="currentColor"/>',
-        viewBox: '0 0 24 24',
-        monoCssClass: 'mono-builtin',
+        svg: '',
+        viewBox: '0 0 64 64',
+        imageUrl: '/logo-64.png',
     },
 
     // User-defined ACP agents (issue #557) all share the `custom-acp` backend    // id, so no single brand mark can stand for them — and without an entry

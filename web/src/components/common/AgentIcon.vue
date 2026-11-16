@@ -1,5 +1,6 @@
 <template>
     <img v-if="avatarSrc" class="agent-icon-img" :class="sizeClass" :src="avatarSrc" :alt="name || backend" />
+    <img v-else-if="imageUrl" class="agent-icon-img" :class="sizeClass" :src="imageUrl" :alt="name || backend" />
     <svg v-else-if="processedSvg" class="agent-icon-svg" :class="[sizeClass, svgData!.needsBg ? 'agent-icon-bg' : '', svgData!.monoCssClass]" :viewBox="svgData!.viewBox" role="img" :aria-label="name || backend" v-html="processedSvg" />
     <span v-else class="agent-icon-initial" :class="sizeClass">{{ initial }}</span>
 </template>
@@ -37,6 +38,10 @@ const sizeClass = computed(() => `agent-icon--${props.size}`)
 
 const svgData = computed(() => getAgentSvg(props.backend))
 
+// A backend whose mark only exists as a raster image (the built-in agent uses
+// the ClawBench product logo, which has no SVG source in the repo).
+const imageUrl = computed(() => svgData.value?.imageUrl ?? '')
+
 // A custom avatar is rendered as an <img> with a data URI, NOT via v-html:
 // the <img> context is sandboxed (no script execution, no external loads) and
 // sidesteps the scoped-CSS red line.
@@ -48,6 +53,10 @@ const avatarSrc = computed(() => (props.avatar ? svgToDataUri(props.avatar) : ''
 const processedSvg = computed(() => {
     const data = svgData.value
     if (!data) return null
+    // A raster-backed entry has no inline SVG at all (see AgentSvgData.imageUrl).
+    // Returning null keeps this branch from rendering an empty <svg>, which
+    // would occupy the box and hide the image branch behind it.
+    if (!data.svg) return null
     // Two-step replacement to handle different ID boundary characters:
     // 1. id="..." and href="#..." — ID ends at quote ("')
     // 2. url(#...) — ID ends at closing paren )
