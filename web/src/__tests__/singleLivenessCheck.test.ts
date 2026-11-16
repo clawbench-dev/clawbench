@@ -92,11 +92,14 @@ describe('WS liveness is decided in exactly one place', () => {
     // otherwise a socket that never opens is never inspected, which is the
     // original bug. Starting it inside `onopen` would silently restore that.
     const code = stripComments(readWebFile(SOURCE))
-    const connectStart = code.indexOf('function connect()')
+    // Matches `function connect(` regardless of the parameter list: the resume
+    // path passes an option, and the guard is about WHERE the tick starts.
+    const connectStart = code.indexOf('function connect(')
     expect(connectStart).toBeGreaterThan(-1)
     const onopen = code.indexOf('ws.onopen', connectStart)
+    expect(onopen).toBeGreaterThan(connectStart)
     const body = code.slice(connectStart, onopen)
 
-    expect(body, 'startHeartbeat() must run before the socket can open').toContain('startHeartbeat()')
+    expect(body, 'startHeartbeat() must run before the socket can open').toContain('startHeartbeat(')
   })
 })

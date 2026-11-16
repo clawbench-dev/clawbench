@@ -159,6 +159,10 @@ const CHECK = 5000
 const HANDSHAKE_TIMEOUT = 15000
 const MESSAGE_STALE = 60000
 const RECONNECT_BASE_DELAY = 2000
+// Resume pacing (useGlobalEvents.ts RESUME_* constants).
+const RESUME_CHECK = 1000
+const RESUME_HANDSHAKE_TIMEOUT = 6000
+const RESUME_BASE_DELAY = 500
 
 describe('useGlobalEvents', () => {
     let originalWebSocket: typeof WebSocket
@@ -891,18 +895,107 @@ describe('useGlobalEvents', () => {
             vi.useRealTimers()
         })
 
-        it('does not restart a handshake that was started on this resume', () => {
-            // A fresh dial is a genuine in-flight attempt — replacing it would
-            // be churn on every resume.
+        it('does not rebuild twice for one physical resume (double signal)', () => {
+            // Android can deliver BOTH the native resume hook and a
+            // visibilitychange for one resume, and those are two separate
+            // listener chains (useAppForeground's dedupe does not cover this
+            // pair). Rebuilding on the second call would close the socket the
+            // first one just dialled, and repeated pairs could keep the
+            // handshake from ever completing.
             vi.useFakeTimers()
             appModeState.value = true
             events.init()
-            const ws = getLatestWs()
+            const first = getLatestWs()
+
+            fireAppResume()
+            const rebuilt = getLatestWs()
+            expect(rebuilt).not.toBe(first)
+
+            // Second signal of the same resume, immediately after.
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'visible', writable: true, configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+
+            expect(getLatestWs()).toBe(rebuilt)
+            expect(rebuilt.readyState).toBe(MockWebSocket.CONNECTING)
+
+            vi.useRealTimers()
+        })
+
+        it('rebuilds the socket on a mobile resume even when it still looks healthy', () => {
+            // The reported symptom: back from background, the app sat on
+            // "连接断开，正在重连…" for a long time. On a frozen Android page the
+            // socket usually reads OPEN while being dead at the far end, so any
+            // "does it look usable?" test answered yes and cost a full silence
+            // window before anything happened. The app path must rebuild
+            // unconditionally — nothing on that socket is worth preserving.
+            appModeState.value = true
+            events.init()
+            const ws = connectAndGetWs()
+            expect(events.wsStatus.value).toBe('connected')
 
             fireAppResume()
 
-            expect(getLatestWs()).toBe(ws)
-            expect(ws.readyState).toBe(MockWebSocket.CONNECTING)
+            const rebuilt = getLatestWs()
+            expect(rebuilt).not.toBe(ws)
+            expect(ws.readyState).toBe(MockWebSocket.CLOSED)
+
+            rebuilt.simulateOpen()
+            expect(events.wsStatus.value).toBe('connected')
+        })
+
+        it('redials quickly when the resume rebuild keeps failing', () => {
+            // The user is looking at the screen, so the retry ladder restarts at
+            // a much shorter base delay than the normal 2s. A failed resume dial
+            // must not leave the overlay up for seconds at a time.
+            vi.useFakeTimers()
+            appModeState.value = true
+            events.init()
+
+            fireAppResume()
+            const first = getLatestWs()
+            expect(first.readyState).toBe(MockWebSocket.CONNECTING)
+
+            first.onclose?.(new CloseEvent('close'))
+            vi.advanceTimersByTime(RESUME_BASE_DELAY)
+            expect(mockWsInstances.length).toBeGreaterThan(2)
+
+            vi.useRealTimers()
+        })
+
+        it('uses a short handshake bound for the resume dial', () => {
+            // A handshake started right after a resume is the one most likely to
+            // hang (the radio is still re-attaching). Waiting the normal 15s for
+            // it is the delay being complained about.
+            vi.useFakeTimers()
+            appModeState.value = true
+            events.init()
+
+            fireAppResume()
+            const dialled = getLatestWs()
+            expect(dialled.readyState).toBe(MockWebSocket.CONNECTING)
+
+            vi.advanceTimersByTime(RESUME_HANDSHAKE_TIMEOUT + RESUME_CHECK)
+            expect(dialled.readyState).toBe(MockWebSocket.CLOSED)
+
+            vi.useRealTimers()
+        })
+
+        it('goes back to the normal cadence once the rebuilt socket opens', () => {
+            // The tighter pacing is only for the resume window; a later
+            // mid-session blip must use the ordinary handshake bound.
+            vi.useFakeTimers()
+            appModeState.value = true
+            events.init()
+
+            fireAppResume()
+            getLatestWs().simulateOpen()
+
+            events.connect()
+            const normal = getLatestWs()
+            vi.advanceTimersByTime(RESUME_HANDSHAKE_TIMEOUT + RESUME_CHECK * 2)
+            expect(normal.readyState).toBe(MockWebSocket.CONNECTING)
 
             vi.useRealTimers()
         })
