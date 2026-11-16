@@ -968,6 +968,17 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	summarize.MaxSummarizeRunes = cfg.TTS.MaxSummarizeRunes
 	summarize.AutoJunkRatio = cfg.Summarize.AutoJunkRatio
 
+	// 把用户 shell 的 PATH 目录补到本进程 PATH 后面。
+	//
+	// 服务端经常不是从终端启动的（桌面图标、systemd、容器外的守护进程），
+	// 那样的 PATH 里没有用户自己装的东西：一键安装脚本把 Node.js 放在
+	// ~/.local/share/clawbench，nvm 也是从 .bashrc 里加的。不补的话，
+	// 欢迎界面点「安装」会报「未检测到 npm」，装完的智能体也探测不到。
+	//
+	// 后台跑：读 shell 启动文件可能要一两秒，不能拖住启动；正常情况下等用户
+	// 打开网页、点按钮时早就合并完了。已有的 PATH 项位置不变，只往后追加。
+	go platform.InheritUserPath()
+
 	// NOTE: TTS summarizer initialization is deferred until after DB init.
 
 	// Initialize TTS synthesis provider from config

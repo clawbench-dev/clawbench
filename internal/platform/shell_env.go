@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -144,6 +145,85 @@ func MergeLoginShellEnv(env []string) []string {
 		slog.Debug("inherited environment from user shell startup files", slog.Int("added", added))
 	}
 	return env
+}
+
+// LoginShellPathDirs returns the PATH directories reported by the user's shell
+// startup files, in the shell's order, or nil when they cannot be read (always
+// nil on Windows, where startup files are not the mechanism).
+//
+// PATH needs its own accessor: MergeLoginShellEnv deliberately lets an existing
+// value win, and the server always has a PATH. So a tool the user installed
+// from .bashrc — the one-line installer's Node.js, nvm, … — would stay
+// invisible to a server started from a desktop launcher or a systemd unit.
+func LoginShellPathDirs() []string {
+	var pathValue string
+	for _, kv := range LoginShellEnv() {
+		if value, ok := strings.CutPrefix(kv, "PATH="); ok {
+			pathValue = value
+			break
+		}
+	}
+	if pathValue == "" {
+		return nil
+	}
+
+	dirs := filepath.SplitList(pathValue)
+	out := make([]string, 0, len(dirs))
+	seen := make(map[string]bool, len(dirs))
+	for _, dir := range dirs {
+		// 空项在 PATH 里表示「当前目录」，exec.LookPath 也这么解释。
+		// 带进来等于每次查找都先看一遍工作目录，不是这里要的东西。
+		if dir == "" || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		out = append(out, dir)
+	}
+	return out
+}
+
+// InheritUserPath appends the directories only the user's shell knows about to
+// this process's PATH. Existing entries keep their position, so nothing that
+// resolved before starts resolving somewhere else.
+//
+// This is what makes the one-click agent install work on a server that was not
+// started from a terminal: npm lives in a directory exported from ~/.bashrc,
+// and the server's own environment never saw it.
+func InheritUserPath() {
+	extra := LoginShellPathDirs()
+	if len(extra) == 0 {
+		return
+	}
+
+	current := os.Getenv("PATH")
+	sep := string(os.PathListSeparator)
+	seen := make(map[string]bool, len(extra)+8)
+	for _, dir := range filepath.SplitList(current) {
+		seen[dir] = true
+	}
+
+	added := make([]string, 0, len(extra))
+	for _, dir := range extra {
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		added = append(added, dir)
+	}
+	if len(added) == 0 {
+		return
+	}
+
+	merged := strings.Join(added, sep)
+	if current != "" {
+		merged = current + sep + merged
+	}
+	if err := os.Setenv("PATH", merged); err != nil {
+		slog.Warn("could not append the user shell PATH", slog.String("error", err.Error()))
+		return
+	}
+	slog.Info("appended user shell PATH directories", slog.Int("added", len(added)))
+	slog.Debug("user shell PATH entries appended", slog.Any("dirs", added))
 }
 
 // resetLoginShellEnvCache clears the cached snapshot. Test-only.
