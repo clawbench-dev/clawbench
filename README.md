@@ -36,9 +36,30 @@ HarmonyOS 原生客户端正在实验性移植中，开发构建、已支持能�
 - **一台 PC（Linux / macOS / Windows）或装有 Termux 的安卓手机**：用于运行 ClawBench 服务端，并安装至少一个 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi）
 - **任意设备**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或用任意浏览器（桌面 / 平板 / 手机）访问服务端地址
 
+### 一键安装脚本（连 Node.js 一起装好）
+
+不想自己折腾 Node.js？一条命令搞定：
+
+```bash
+# Linux / macOS
+curl -fsSL https://clawbench.pages.dev/install.sh | bash
+```
+
+```powershell
+# Windows（PowerShell 窗口里执行）
+irm https://clawbench.pages.dev/install.ps1 | iex
+```
+
+脚本只做两件事：准备 Node.js（本机已有 20 及以上就直接用，否则下载一份），再用 npm 装 ClawBench。
+
+- 不需要管理员权限，不写系统目录：Linux / macOS 装在 `~/.local/share/clawbench`，Windows 装在 `%LOCALAPPDATA%\clawbench`
+- 国内默认走 npmmirror（Node.js 和 npm 包都是），连不上自动换官方源
+- 装完运行 `clawbench`，浏览器打开 `http://localhost:20000`，首次启动会把随机密码打印在终端里
+- **AI 智能体不用在这里装**：打开网页后，欢迎界面里每个智能体都有「安装」按钮，点一下就在这台机器上装好，同样自动走国内镜像
+
 ### npm 安装
 
-通过 npm 一键安装，国内用户走淘宝源秒下：
+已经装过 Node.js 的话，也可以自己来。国内用户走淘宝源秒下：
 
 ```bash
 # 配置淘宝镜像（仅需一次）

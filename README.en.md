@@ -34,9 +34,30 @@ An experimental native HarmonyOS client is available for development. See the [H
 - **A PC (Linux / macOS / Windows) or an Android phone with [Termux](docs/user-guide/TERMUX.md)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, or Kimi)
 - **Any device**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or open the server address in any browser — desktop, tablet, or phone
 
+### One-line Installer (Node.js included)
+
+Don't want to set up Node.js yourself? One command:
+
+```bash
+# Linux / macOS
+curl -fsSL https://clawbench.pages.dev/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://clawbench.pages.dev/install.ps1 | iex
+```
+
+The script does two things: makes sure Node.js is available (reuses an existing 20+ install, otherwise downloads one), then installs ClawBench with npm.
+
+- No admin rights, nothing written outside your home: Linux / macOS install to `~/.local/share/clawbench`, Windows to `%LOCALAPPDATA%\clawbench`
+- Inside mainland China it uses the npmmirror CDN for both Node.js and npm, and falls back to the official sources when the mirror is unreachable
+- Run `clawbench` afterwards and open `http://localhost:20000`; the random password is printed on first start
+- **AI agents are not installed here.** Open the web UI — every agent in the welcome panel has an "Install" button that installs it on this machine, also through the China mirror
+
 ### npm Install
 
-Install via npm in one command:
+If Node.js is already set up, you can do it yourself:
 
 ```bash
 npm install -g @xulongzhe/clawbench

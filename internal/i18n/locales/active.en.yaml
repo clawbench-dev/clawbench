@@ -190,7 +190,7 @@ ModelSwitchFailedDetail: "Could not switch model: {{.Detail}}"
 CLINotFound: CLI tool not found, please install it first
 BackendNotFound: No such agent backend
 InstallCommandUnavailable: This agent has no built-in install command; install it manually following the official docs
-NodeRuntimeMissing: "{{.Tool}} was not found. Install Node.js (which provides npm/npx) and try again"
+NodeRuntimeMissing: "{{.Tool}} was not found. Install Node.js (which provides npm/npx) and try again. One-line installer: https://clawbench.pages.dev/install.sh"
 AgentInstallBusy: Another install is already running; wait for it to finish
 AgentInstallFailed: "Install failed: {{.Output}}"
 AgentInstallFailedNoOutput: Install failed — the command printed nothing (non-zero exit status)

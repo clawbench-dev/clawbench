@@ -18,6 +18,10 @@ on:
       - 'web/landing/**'
       - 'web/docs/**'
       - 'docs/user-guide/**'
+      # 一键安装脚本由 landing 站点托管（/install.sh、/install.ps1），
+      # 改脚本不重新部署的话，README 里的地址会一直发旧版本。
+      - 'scripts/install.sh'
+      - 'scripts/install.ps1'
       - '.github/workflows/deploy-landing.yml'
   workflow_dispatch:
 
@@ -70,6 +74,10 @@ jobs:
           cp -r web/landing/css web/landing/img web/landing/js \
                 web/landing/index.html web/landing/_headers \
                 web/landing/robots.txt web/landing/sitemap.xml dist/
+          # 一键安装脚本随站点发布，README 里给的就是这两个地址：
+          #   https://clawbench.pages.dev/install.sh
+          #   https://clawbench.pages.dev/install.ps1
+          cp scripts/install.sh scripts/install.ps1 dist/
           rm -f dist/*.test.ts
 
       # The manual lives at /docs/ next to the landing page and links back to
