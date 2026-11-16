@@ -828,6 +828,8 @@ const serverDefaults: Record<string, unknown> = {
   'meeting.language': '',
   'meeting.file_excerpts': true,
   'meeting.minutes_max_tokens': 0,
+  'meeting.agent_minutes': false,
+  'meeting.agent_minutes_max_rounds': 0,
   'port_forward.allowed_ports': '1024-65535',
   // Mirrors the server default (h2) so the transport row shows a value before
   // /api/config lands instead of a blank select.

@@ -176,11 +176,13 @@ var hotReloadFields = map[string]bool{
 	"ai_summary.provider_id":    true,
 	// Meeting minutes — read at generation time from ConfigInstance, so a
 	// changed default takes effect on the next meeting without a restart.
-	"meeting.auto_minutes":       true,
-	"meeting.proofread":          true,
-	"meeting.language":           true,
-	"meeting.file_excerpts":      true,
-	"meeting.minutes_max_tokens": true,
+	"meeting.auto_minutes":             true,
+	"meeting.proofread":                true,
+	"meeting.language":                 true,
+	"meeting.file_excerpts":            true,
+	"meeting.minutes_max_tokens":       true,
+	"meeting.agent_minutes":            true,
+	"meeting.agent_minutes_max_rounds": true,
 	// Port Forward — transport decides which listener exists; switching it
 	// starts or stops the SSH listener (see hotReloadSSH in cmd/server).
 	"port_forward.enabled":       true,
@@ -712,13 +714,20 @@ type configAISummary struct {
 }
 
 // configMeeting exposes the meeting-minutes defaults and output limit. It has
-// no model fields on purpose: minutes reuse the shared ai_summary model.
+// no model fields on purpose: minutes reuse the shared ai_summary model — unless
+// AgentMinutes is on, in which case they run on the built-in agent.
 type configMeeting struct {
 	AutoMinutes      bool   `json:"auto_minutes"`
 	Proofread        bool   `json:"proofread"`
 	Language         string `json:"language"`
 	FileExcerpts     bool   `json:"file_excerpts"`
 	MinutesMaxTokens int    `json:"minutes_max_tokens"`
+	// AgentMinutes runs the minutes and the proofreading on the built-in agent,
+	// which can read project files to check how a term is actually spelled.
+	AgentMinutes bool `json:"agent_minutes"`
+	// AgentMinutesMaxRounds bounds the agent's round-trips per artifact.
+	// 0 uses the built-in default.
+	AgentMinutesMaxRounds int `json:"agent_minutes_max_rounds"`
 }
 
 type configDingTalk struct {
@@ -1251,6 +1260,8 @@ var PatchableConfigPaths = map[string]bool{
 	"meeting.language":                       true,
 	"meeting.file_excerpts":                  true,
 	"meeting.minutes_max_tokens":             true,
+	"meeting.agent_minutes":                  true,
+	"meeting.agent_minutes_max_rounds":       true,
 	"dingtalk.enabled":                       true,
 	"dingtalk.app_key":                       true,
 	"dingtalk.app_secret":                    true,
@@ -1562,6 +1573,9 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Language:         cfg.Meeting.Language,
 			FileExcerpts:     cfg.Meeting.FileExcerpts,
 			MinutesMaxTokens: cfg.Meeting.MinutesMaxTokens,
+			AgentMinutes:     cfg.Meeting.AgentMinutes,
+
+			AgentMinutesMaxRounds: cfg.Meeting.AgentMinutesMaxRounds,
 		},
 		DingTalk: configDingTalk{
 			Enabled:   cfg.DingTalk.Enabled,
@@ -2306,6 +2320,11 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 					},
 				}
 			}
+		}
+		// 0 = the built-in default; a negative budget would make the agent stop
+		// before its first round, which reads as "the agent did nothing".
+		if v, ok := meeting["agent_minutes_max_rounds"].(float64); ok && v < 0 {
+			return fmt.Errorf("meeting.agent_minutes_max_rounds must not be negative")
 		}
 	}
 	tts, ok := patch["tts"].(map[string]any)
@@ -3437,6 +3456,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := meeting["minutes_max_tokens"].(float64); ok {
 			cfg.Meeting.MinutesMaxTokens = int(v)
+		}
+		if v, ok := meeting["agent_minutes"].(bool); ok {
+			cfg.Meeting.AgentMinutes = v
+		}
+		if v, ok := meeting["agent_minutes_max_rounds"].(float64); ok {
+			cfg.Meeting.AgentMinutesMaxRounds = int(v)
 		}
 	}
 

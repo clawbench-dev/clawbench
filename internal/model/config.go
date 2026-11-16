@@ -849,6 +849,21 @@ type MeetingConfig struct {
 	// manual cap (still clamped to that limit, since asking for more than a
 	// model supports is an API error). It is a cap rather than a target.
 	MinutesMaxTokens int `yaml:"minutes_max_tokens"`
+	// AgentMinutes runs the minutes and the proofreading on the built-in agent
+	// instead of the shared summary model.
+	//
+	// The difference is not the model — it is the TOOLS. The summary path can
+	// only see the text it is handed; the built-in agent can open files in the
+	// project, read the previous meeting's minutes, and look up how a term is
+	// actually spelled in the code. That is what makes a meeting about
+	// "the config loader" produce minutes that name the real file.
+	//
+	// Off by default: it needs the built-in agent to have a provider bound, and
+	// it costs tool calls on top of the model calls.
+	AgentMinutes bool `yaml:"agent_minutes"`
+	// AgentMinutesMaxRounds bounds the agent's model round-trips per artifact.
+	// 0 uses the built-in default (model.DefaultMaxRounds).
+	AgentMinutesMaxRounds int `yaml:"agent_minutes_max_rounds"`
 }
 
 // RAGConfig holds configuration for the RAG history memory system.
@@ -877,8 +892,8 @@ type RAGConfig struct {
 type KBConfig struct {
 	Enabled bool `yaml:"enabled"` // Master switch (default: true)
 	// AutoInject prepends retrieved snippets to each user turn. Per-collection
-	// toggles refine this; this is the global switch.
-	AutoInject bool `yaml:"auto_inject"` // default: true
+	// toggles refine this; this is the global switch. Opt-in: default false.
+	AutoInject bool `yaml:"auto_inject"` // default: false
 	// InjectTopN caps how many chunks are prepended per turn.
 	InjectTopN int `yaml:"inject_top_n"` // default: 4
 	// InjectMaxChars caps the total characters of injected snippets.

@@ -2786,6 +2786,13 @@ type LiveNotesMinutesOptions struct {
 	// MaxTokens caps the final minutes. <= 0 uses the default. The cap is a
 	// limit, not a target: the model may stop earlier.
 	MaxTokens int
+	// WorkDir is the project root the built-in agent may read, in agent mode.
+	//
+	// Empty means "no file tools", which makes agent mode fall back to the
+	// summary path: an agent with no working directory can only see the text it
+	// was handed, so running it would cost tool-less round-trips for an
+	// identical result.
+	WorkDir string
 }
 
 // liveNotesLanguageDirective is appended AFTER the base prompt (and after the
@@ -2836,6 +2843,17 @@ func GenerateLiveNotesMinutesWithOptions(
 	opts LiveNotesMinutesOptions,
 	progress ...func(done, total int, phase string),
 ) (string, error) {
+	// Agent mode is a different EXECUTION of the same task, not a different
+	// task: the chunking, prompts, context block and language directive are
+	// identical, only the model call is replaced. The fallback to the summary
+	// path is deliberate — an unavailable agent must not fail a meeting the
+	// user is waiting on, because the summary path produces a usable document.
+	if model.ConfigInstance.Meeting.AgentMinutes {
+		if workDir := opts.WorkDir; workDir != "" && BuiltinAgentAvailable() {
+			return generateLiveNotesMinutesWithAgent(ctx, title, transcript, contextSection, self, opts, workDir, progress...)
+		}
+	}
+
 	if strings.TrimSpace(transcript) == "" {
 		return "", ErrLiveNotesEmpty
 	}

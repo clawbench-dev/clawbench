@@ -403,6 +403,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Meeting.MinutesMaxTokens > MaxMeetingMinutesMaxTokens {
 		cfg.Meeting.MinutesMaxTokens = MaxMeetingMinutesMaxTokens
 	}
+	// A negative round budget would stop the agent before its first model call,
+	// which looks like "the agent did nothing" rather than a bad setting. 0 is
+	// the sentinel for "use the built-in default" and must survive.
+	if cfg.Meeting.AgentMinutesMaxRounds < 0 {
+		cfg.Meeting.AgentMinutesMaxRounds = 0
+	}
 	// Empty means "follow the transcript". An unknown value from a hand-edited
 	// file falls back to the same default rather than producing a prompt in a
 	// language the user did not choose.
@@ -628,13 +634,13 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- Knowledge base ---
-	// Bool zero-value trap: both switches default to true when absent.
+	// Bool zero-value trap: the master switch defaults to true when absent.
 	if !presence["kb.enabled"] {
 		cfg.KB.Enabled = true
 	}
-	if !presence["kb.auto_inject"] {
-		cfg.KB.AutoInject = true
-	}
+	// Auto-inject is opt-in: a fresh install must not silently prepend retrieved
+	// snippets to every prompt. Zero value (false) is the intended default, so
+	// there is deliberately no presence branch here.
 	if cfg.KB.InjectTopN <= 0 {
 		cfg.KB.InjectTopN = 4
 	}

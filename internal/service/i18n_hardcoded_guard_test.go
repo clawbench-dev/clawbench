@@ -58,7 +58,10 @@ var allowedCJKFiles = map[string]string{
 	// instructions to the model (section headings, "mark uncertain parts"),
 	// never rendered to a user. The transcript itself is model output.
 	"internal/service/live_notes.go": "AI meeting-minutes prompts (chunk + final summary)",
-	// Shipped VALUES of `stt.trigger_words` / `stt.barge_in_words`: written into
+	// Agent-mode minutes/proofreading: the same prompts, plus the role
+	// instructions for the agent run. AI-facing like the rows above; nothing
+	// here is rendered to a user.
+	"internal/service/live_notes_agent.go": "AI meeting-minutes prompts, agent mode (role + chunk + final)", // Shipped VALUES of `stt.trigger_words` / `stt.barge_in_words`: written into
 	// config.yaml and compared against recognized speech, never rendered. The
 	// labels the settings page shows come from the locale tables.
 	"internal/model/defaults.go": "default trigger / barge-in word values (config data, not UI copy)",

@@ -1046,6 +1046,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     ]} },
     { type: 'item', spec: { labelKey: 'settings.items.meetingFileExcerpts', descriptionKey: 'settings.items.meetingFileExcerptsDesc', key: 'meeting.file_excerpts', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.meetingMinutesMaxTokens', descriptionKey: 'settings.items.meetingMinutesMaxTokensDesc', key: 'meeting.minutes_max_tokens', type: 'number', source: 'server', min: 0, max: 8000, step: 500, sectionHeader: 'settings.items.meetingSummarySection' } },
+    // Agent mode: same inputs, same prompts, but the model call is made by the
+    // built-in agent, which can READ project files to check how a term is
+    // actually spelled. Placed after the summary-model rows because it replaces
+    // them for this task — reading it before them would suggest it is additive.
+    { type: 'item', spec: { labelKey: 'settings.items.meetingAgentMinutes', descriptionKey: 'settings.items.meetingAgentMinutesDesc', key: 'meeting.agent_minutes', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingAgentMinutesMaxRounds', descriptionKey: 'settings.items.meetingAgentMinutesMaxRoundsDesc', key: 'meeting.agent_minutes_max_rounds', type: 'number', source: 'server', min: 0, max: 100, step: 1, sectionHeader: 'settings.items.meetingSummarySection' } },
     // New-meeting defaults. These are local (per device) because they seed the
     // create form; the room-level value is still chosen per meeting and can be
     // changed in the stage's 会议管理 tab.

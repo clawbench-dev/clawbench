@@ -95,6 +95,8 @@ describe('settingsFieldMap', () => {
       'meeting.language',
       'meeting.file_excerpts',
       'meeting.minutes_max_tokens',
+      'meeting.agent_minutes',
+      'meeting.agent_minutes_max_rounds',
       'meetingDefaultNotes',
       'meetingDefaultShots',
       'meetingDefaultAllowTalk',

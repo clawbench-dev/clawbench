@@ -1852,6 +1852,10 @@ func (c *artifactChain) buildMinutes(ctx context.Context) error {
 		service.LiveNotesMinutesOptions{
 			Language:  model.ConfigInstance.Meeting.Language,
 			MaxTokens: model.ConfigInstance.Meeting.MinutesMaxTokens,
+			// The project root is what makes agent mode worth running: without
+			// it the agent can only see the text it was handed, which is what
+			// the summary path already does.
+			WorkDir: c.projectPath,
 		},
 		progress,
 	)

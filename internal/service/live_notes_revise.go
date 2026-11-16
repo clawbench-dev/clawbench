@@ -190,6 +190,16 @@ type LiveNotesReviseInput struct {
 func ReviseLiveNotesTranscript(
 	ctx context.Context, in LiveNotesReviseInput, progress ...func(done, total int),
 ) (string, error) {
+	// Agent mode: same pairs, same applier, but the model may READ the project
+	// to check how a term is actually spelled. Falls back to the summary path
+	// when the agent is unavailable — a meeting the user is waiting on must not
+	// fail because a background capability is off.
+	if model.ConfigInstance.Meeting.AgentMinutes {
+		if workDir := strings.TrimSpace(in.ProjectPath); workDir != "" && BuiltinAgentAvailable() {
+			return reviseLiveNotesTranscriptWithAgent(ctx, in, workDir, progress...)
+		}
+	}
+
 	transcript := BuildLiveNotesTranscript(in.Segments)
 	if strings.TrimSpace(transcript) == "" {
 		return "", ErrLiveNotesEmpty
