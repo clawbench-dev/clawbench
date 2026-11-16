@@ -81,6 +81,26 @@ describe('modal width tokens', () => {
   })
 })
 
+describe('welcome launcher width', () => {
+  it('uses its own scaled token and stays viewport-capped', () => {
+    // The welcome panel is a 3-column grid, not a form dialog, so it is the one
+    // sanctioned exception to the two-tier rule above. Pin BOTH halves: the
+    // token must scale with --dp, and the component must still cap at 100% so a
+    // phone never overflows.
+    const m = stripComments(VARS_CSS).match(/--welcome-panel-width:\s*([^;]+);/)
+    expect(m, '--welcome-panel-width must be declared').not.toBeNull()
+    expect(m![1], 'a literal px width would not follow the UI scale').toMatch(
+      /calc\(\s*\d+\s*\*\s*var\(--dp\)\s*\)/,
+    )
+
+    const sfc = readWebFile('src/components/WelcomeOverlay.vue')
+    expect(sfc).toMatch(/width:\s*min\(var\(--welcome-panel-width\),\s*100%\)/)
+    expect(sfc, 'the welcome panel must not invent its own width').not.toMatch(
+      /\.welcome-panel[\w-]*\s*\{[^}]*max-width:\s*(?:calc\(|\d)/,
+    )
+  })
+})
+
 describe('shared shell width', () => {
   it('falls back to the narrow tier when no modifier class is present', () => {
     const decls = declsOf(CARD_CSS, '.modal-dialog, .bs-panel.bs-wide-auto')

@@ -115,6 +115,13 @@
     --modal-width-narrow: calc(520 * var(--dp));
     --modal-width-wide: calc(960 * var(--dp));
 
+    /* The first-run launcher (WelcomeOverlay) is a 3-column agent grid, not a
+       form dialog, so it gets its own width: wide enough for three cards at a
+       readable size, still capped by `100%` on small screens. Deliberately NOT
+       a third `--modal-width-*` tier — the modal ladder stays at two.
+       Guard: assets/__tests__/modalWidth.css.test.ts. */
+    --welcome-panel-width: calc(1120 * var(--dp));
+
     /* ── The chat column's reading measure. ONE number for the whole chat
        pane: the message column, the composer block (action bar / recommendation
        / input box / session info) and the stacked cards above it (plan, team,

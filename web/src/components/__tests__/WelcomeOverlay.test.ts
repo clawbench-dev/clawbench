@@ -51,11 +51,20 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', template: '<span class="agent-icon-stub" />' },
 }))
 
+vi.mock('@/components/AgentInstallDialog.vue', () => ({
+  default: {
+    name: 'AgentInstallDialog',
+    props: ['backendId', 'backendName', 'installCmd'],
+    emits: ['close', 'installed'],
+    template: '<div class="mock-install-dialog" :data-backend="backendId" />',
+  },
+}))
+
 import WelcomeOverlay from '@/components/WelcomeOverlay.vue'
 
 const BACKENDS = [
-  { id: 'codebuddy', name: 'CodeBuddy', specialty: 'Coding', default_cmd: 'codebuddy' },
-  { id: 'claude', name: 'Claude Code', specialty: 'Coding', default_cmd: 'claude' },
+  { id: 'codebuddy', name: 'CodeBuddy', specialty: 'Coding', default_cmd: 'codebuddy', install_cmd: 'npm install -g @tencent-ai/codebuddy-code' },
+  { id: 'claude', name: 'Claude Code', specialty: 'Coding', default_cmd: 'claude', install_cmd: 'npm install -g @anthropic-ai/claude-code' },
 ]
 
 /**
@@ -149,6 +158,103 @@ describe('WelcomeOverlay — backend detection loading indicator', () => {
     await nextTick()
 
     expect(wrapper.find('.backends-loading').exists()).toBe(false)
+
+    wrapper.unmount()
+  })
+})
+
+describe('WelcomeOverlay — grid, filters and install entry points', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  function mockFetchResolved(agents: Array<{ id: string; backend: string }> = []) {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/backends') return { ok: true, json: async () => ({ backends: BACKENDS }) }
+      if (url === '/api/agents') return { ok: true, json: async () => ({ agents }) }
+      return { ok: true, json: async () => ({}) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  async function mountLoaded(agents: Array<{ id: string; backend: string }> = []) {
+    mockFetchResolved(agents)
+    const wrapper = mount(WelcomeOverlay)
+    await nextTick()
+    wrapper.vm.forceShow()
+    await flushPromises()
+    await nextTick()
+    return wrapper
+  }
+
+  it('puts installed backends first and filters by state', async () => {
+    const wrapper = await mountLoaded([{ id: 'agent-claude', backend: 'claude' }])
+
+    const cards = wrapper.findAll('.backend-item')
+    expect(cards).toHaveLength(2)
+    expect(cards[0].attributes('data-backend')).toBe('claude')
+
+    const tabs = wrapper.findAll('.segmented-tab')
+    await tabs[1].trigger('click')
+    expect(wrapper.findAll('.backend-item')).toHaveLength(1)
+    expect(wrapper.find('.backend-item').attributes('data-backend')).toBe('claude')
+
+    await tabs[2].trigger('click')
+    expect(wrapper.findAll('.backend-item')).toHaveLength(1)
+    expect(wrapper.find('.backend-item').attributes('data-backend')).toBe('codebuddy')
+
+    wrapper.unmount()
+  })
+
+  it('filters by name or specialty through the search box', async () => {
+    const wrapper = await mountLoaded()
+
+    await wrapper.find('.welcome-search-input').setValue('codebuddy')
+    expect(wrapper.findAll('.backend-item')).toHaveLength(1)
+    expect(wrapper.find('.backend-item').attributes('data-backend')).toBe('codebuddy')
+
+    await wrapper.find('.welcome-search-input').setValue('nope')
+    expect(wrapper.findAll('.backend-item')).toHaveLength(0)
+    expect(wrapper.find('.welcome-empty').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('opens the install dialog when an uninstalled card is clicked', async () => {
+    const wrapper = await mountLoaded()
+
+    await wrapper.find('[data-backend="codebuddy"]').trigger('click')
+
+    const dialog = wrapper.findComponent({ name: 'AgentInstallDialog' })
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.props('backendId')).toBe('codebuddy')
+
+    wrapper.unmount()
+  })
+
+  it('starts a chat with the installed agent when its card is clicked', async () => {
+    const wrapper = await mountLoaded([{ id: 'agent-claude', backend: 'claude' }])
+
+    await wrapper.find('[data-backend="claude"]').trigger('click')
+
+    expect(wrapper.emitted('startChat')).toEqual([['agent-claude']])
+    expect((wrapper.vm as unknown as { visible: boolean }).visible).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('does not emit startChat for an installable card', async () => {
+    const wrapper = await mountLoaded()
+
+    await wrapper.find('[data-backend="codebuddy"]').trigger('click')
+
+    expect(wrapper.emitted('startChat')).toBeUndefined()
 
     wrapper.unmount()
   })

@@ -38,7 +38,7 @@
         />
         <div class="wallpaper-scrim"></div>
       </div>
-      <WelcomeOverlay ref="welcomeOverlay" />
+      <WelcomeOverlay ref="welcomeOverlay" @start-chat="handleSessionCreate" />
       <UpgradePromptOverlay ref="upgradePromptOverlay" />
       <UpgradeDialog ref="upgradeDialogRef" />
       <AppHeader

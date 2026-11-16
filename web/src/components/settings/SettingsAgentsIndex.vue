@@ -1,9 +1,7 @@
 <template>
   <div class="settings-agents-index">
-    <!-- One card, like every other settings page: the actions and the agent
-         rows are rows of the same group, so they share the card surface, the
-         rounded corners and the inset dividers instead of painting a
-         full-bleed slab of --bg-secondary that hid the page surface. -->
+    <!-- The actions get their own card: "add something" is a different job
+         from managing what is already installed. -->
     <SettingsCard>
       <!-- Create a custom ACP agent (issue #557). Sits above the rescan row so
            the two "add something" actions read together: rescan discovers
@@ -17,6 +15,9 @@
         <span class="settings-agents-index__action-label">{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
         <RefreshCw :size="16" class="settings-agents-index__action-icon" />
       </div>
+    </SettingsCard>
+
+    <SettingsCard :title="installedTitle">
       <VueDraggable
         v-if="localAgents.length > 0"
         v-model="localAgents"
@@ -46,11 +47,54 @@
         {{ t('settings.items.agentNoAgents') }}
       </div>
     </SettingsCard>
+
+    <!-- Backends the server knows how to install but that are not on this
+         machine yet. Sits after the installed list; when there is nothing to
+         install it still reports that instead of disappearing and making the
+         feature look absent. -->
+    <SettingsCard
+      v-if="!catalogLoading && catalogBackends.length > 0"
+      :title="installableTitle"
+    >
+      <template v-if="installableBackends.length > 0">
+        <div class="settings-agents-index__install-hint">{{ t('settings.items.agentInstallHint') }}</div>
+        <div
+          v-for="backend in installableBackends"
+          :key="backend.id"
+          class="settings-agents-index__install-row"
+          :data-backend="backend.id"
+        >
+          <span class="settings-agents-index__icon">
+            <AgentIcon :backend="backend.id" :name="backend.name" size="md" />
+          </span>
+          <div class="settings-agents-index__text">
+            <span class="settings-agents-index__name">{{ backend.name }}</span>
+            <span class="settings-agents-index__specialty">{{ backend.specialty }}</span>
+          </div>
+          <button class="fbtn settings-agents-index__install-btn" type="button" @click="startInstall(backend)">
+            {{ t('settings.items.agentInstall') }}
+          </button>
+        </div>
+      </template>
+      <div v-else class="settings-agents-index__install-empty">
+        {{ t('settings.items.agentInstallNone') }}
+      </div>
+    </SettingsCard>
+
     <CreateAcpAgentDialog
       :open="createOpen"
       :error-message="createError"
       @close="createOpen = false"
       @confirmed="handleCreateConfirmed"
+    />
+
+    <AgentInstallDialog
+      v-if="installDialogBackend"
+      :backend-id="installDialogBackend.id"
+      :backend-name="installDialogBackend.name"
+      :install-cmd="installDialogBackend.install_cmd || ''"
+      @close="installDialogBackend = null"
+      @installed="handleInstalled"
     />
   </div>
 </template>
@@ -61,10 +105,13 @@ import { GripVertical, Plus, RefreshCw } from 'lucide-vue-next'
 import { VueDraggable } from 'vue-draggable-plus'
 import { useI18n } from 'vue-i18n'
 import { useAgents } from '@/composables/useAgents'
+import { useBackendCatalog, type BackendInfo } from '@/composables/useBackendCatalog'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useToast } from '@/composables/useToast'
 import CreateAcpAgentDialog from './CreateAcpAgentDialog.vue'
+import AgentInstallDialog from '@/components/AgentInstallDialog.vue'
 import SettingsCard from './SettingsCard.vue'
+import '@/assets/modal-footer-btn.css'
 
 const emit = defineEmits<{
   navigate: [categoryId: string]
@@ -73,9 +120,11 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const toast = useToast()
 const { agents, defaultAgentId, loadAgents, rescanAgents, reorderAgents, createAcpAgent } = useAgents()
+const { backends: catalogBackends, loading: catalogLoading, load: loadCatalog } = useBackendCatalog()
 
 const rescanning = ref(false)
 const createOpen = ref(false)
+const installDialogBackend = ref<BackendInfo | null>(null)
 // Server-side create failure (name collision, empty command) shown inside the
 // dialog, which stays open so the user can correct the input and retry.
 const createError = ref('')
@@ -127,11 +176,48 @@ async function handleCreateConfirmed({ name, command }: { name: string; command:
 
 onMounted(() => {
   loadAgents(true)
+  void loadCatalog()
 })
 
 const agentList = computed(() =>
   [...agents.value].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
 )
+
+/**
+ * Backends already represented by at least one agent row. A backend can have
+ * several agents (copies); one is enough to make it "installed".
+ */
+const installedBackendIds = computed(() => new Set(agents.value.map(a => a.backend)))
+
+/**
+ * Catalogue entries that are not installed here but carry a built-in install
+ * command. Registry order is kept — it is the server's own display order, and
+ * re-sorting would make the list jump between visits.
+ */
+const installableBackends = computed(() =>
+  catalogBackends.value.filter(b => !!b.install_cmd && !installedBackendIds.value.has(b.id)),
+)
+
+const installableTitle = computed(() =>
+  `${t('settings.items.agentInstallable')} · ${installableBackends.value.length}`,
+)
+
+const installedTitle = computed(() =>
+  `${t('settings.items.agentInstalled')} · ${agents.value.length}`,
+)
+
+function startInstall(backend: BackendInfo) {
+  installDialogBackend.value = backend
+}
+
+/**
+ * A successful install makes the backend usable; re-read the agent list so the
+ * row moves from "available" to "installed" without a manual rescan. The
+ * catalogue itself does not change (the install command is a static spec).
+ */
+async function handleInstalled() {
+  await loadAgents(true)
+}
 
 // Local mirror the draggable mutates in place. Synced from the server order so
 // a failed reorder (rolled back) or a background reload lands here too.
@@ -319,5 +405,50 @@ async function handleRescan() {
   text-align: center;
   color: var(--text-muted);
   font-size: var(--font-size-lg);
+}
+
+/* ── Installable backends ──
+   A read-only catalogue row: only the trailing button acts, so the row has no
+   hover/press state of its own. The divider starts at the text column, same as
+   the installed rows. */
+.settings-agents-index__install-hint {
+  padding: var(--space-4) var(--space-7) var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: var(--line-height-normal);
+}
+
+.settings-agents-index__install-empty {
+  padding: var(--space-5) var(--space-7);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.settings-agents-index__install-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: calc(38 * var(--dp));
+  padding: var(--space-4) var(--space-7);
+}
+
+.settings-agents-index__install-row .settings-agents-index__text {
+  flex: 1;
+}
+
+.settings-agents-index__install-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  left: calc(var(--space-7) + var(--icon-size-md) + var(--space-6));
+  height: 0.5px;
+  background: var(--border-color);
+}
+
+.settings-agents-index__install-btn {
+  margin-left: auto;
 }
 </style>
