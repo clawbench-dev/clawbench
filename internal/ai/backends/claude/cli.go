@@ -39,6 +39,9 @@ func init() {
 		},
 		ModelSource: model.PluginSource("claude", discoverClaudeModels),
 		MidTurn:     &midTurnInjector{},
+		ProviderEnv: &model.ProviderEnvSpec{
+			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+		},
 	})
 }
 

@@ -57,5 +57,8 @@ func init() {
 			// session/set_model (server.py: set_session_model → _switch_model).
 			ModelSwitchMethod: backends.ACPModelSwitchSetModel,
 		},
+		ProviderEnv: &model.ProviderEnvSpec{
+			OpenAI: model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
+		},
 	})
 }

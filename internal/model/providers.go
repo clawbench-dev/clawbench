@@ -215,7 +215,7 @@ func ProviderEnvVersion(agentID string) string {
 		return ""
 	}
 	declared := ""
-	if spec, ok := providerEnvTable[backendOf(agentID)]; ok && spec.InlineConfigEnv != "" {
+	if spec, ok := providerEnvSpec(backendOf(agentID)); ok && spec.InlineConfigEnv != "" {
 		declared = strings.Join(p.Models, ",")
 		if agent := GetAgent(agentID); agent != nil {
 			declared += "\x00" + agent.PreferredModel

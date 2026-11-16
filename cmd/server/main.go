@@ -25,7 +25,6 @@ import (
 
 	"clawbench/docs/user-guide"
 	"clawbench/internal/ai"
-	_ "clawbench/internal/ai/backends"
 	// Registers every backend sub-package for its init() side effect.
 	// Generated: add a backend by creating its directory, then
 	// go generate ./internal/ai/backends/all

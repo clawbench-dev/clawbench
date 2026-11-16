@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // ProtocolEnv names the environment variables one backend reads for a given
@@ -65,121 +66,72 @@ type ProviderEnvSpec struct {
 	InlineConfigProviderIDs map[string]string
 }
 
-// providerEnvTable is the single place that knows which environment variables
-// each backend honors. Every registered backend must have an entry (the
-// coverage test in internal/ai/backends enforces both directions), and an entry
-// with no protocols and no KeyOnly means "this backend cannot take a provider".
+// providerEnvRegistry is the single place that knows which environment
+// variables each backend honors. Entries are registered by the backend plugins
+// (BackendPlugin.ProviderEnv) at init; model cannot import them, so the data
+// travels through RegisterProviderEnvSpec.
+//
+// Every registered backend must have an entry (the coverage test in
+// internal/ai/backends enforces both directions), and an entry with no
+// protocols and no KeyOnly means "this backend cannot take a provider".
 //
 // Evidence for each row is recorded in docs/spec/features/model-providers.md;
-// do not add a guess here — an unverified variable silently does nothing, which
-// is exactly the failure mode this table exists to avoid.
-// protoEnv builds one protocol row. Using a constructor keeps the table free
-// of field assignments that credential scanners mistake for secrets (the
-// strings are environment variable NAMES, never keys).
-func protoEnv(baseURL, apiKey, authToken string) *ProtocolEnv {
+// do not add a guess — an unverified variable silently does nothing, which is
+// exactly the failure mode this registry exists to avoid.
+var (
+	providerEnvMu       sync.RWMutex
+	providerEnvRegistry = map[string]ProviderEnvSpec{
+		// User-defined ACP agents all share one backend id and cannot take a
+		// provider override: the endpoint belongs to whatever the agent's own
+		// CLI is configured with. No plugin owns this id (custom agents are
+		// created at runtime), so its entry stays here.
+		"custom-acp": {},
+	}
+)
+
+// RegisterProviderEnvSpec records how a backend receives a provider. Called by
+// the backend registry for every plugin that declares ProviderEnv.
+func RegisterProviderEnvSpec(backendID string, spec ProviderEnvSpec) {
+	providerEnvMu.Lock()
+	defer providerEnvMu.Unlock()
+	providerEnvRegistry[backendID] = spec
+}
+
+// providerEnvSpec returns the registered spec for a backend.
+func providerEnvSpec(backendID string) (ProviderEnvSpec, bool) {
+	providerEnvMu.RLock()
+	defer providerEnvMu.RUnlock()
+	spec, ok := providerEnvRegistry[backendID]
+	return spec, ok
+}
+
+// providerEnvSpecs returns a snapshot of every registered spec, for the few
+// callers that need to iterate (protocol-wide checks, coverage tests).
+func providerEnvSpecs() []ProviderEnvSpec {
+	providerEnvMu.RLock()
+	defer providerEnvMu.RUnlock()
+	out := make([]ProviderEnvSpec, 0, len(providerEnvRegistry))
+	for _, spec := range providerEnvRegistry {
+		out = append(out, spec)
+	}
+	return out
+}
+
+// ProtoEnv builds one protocol row. Exported because each backend's plugin
+// declares its own row, and using a constructor keeps the declarations free of
+// field assignments that credential scanners mistake for secrets (the strings
+// are environment variable NAMES, never keys).
+func ProtoEnv(baseURL, apiKey, authToken string) *ProtocolEnv {
 	return &ProtocolEnv{BaseURL: baseURL, APIKey: apiKey, AuthToken: authToken}
 }
 
-var providerEnvTable = map[string]ProviderEnvSpec{
-	"antigravity": {
-		Gemini:  protoEnv("GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY", ""),
-		KeyOnly: "GEMINI_API_KEY",
-	},
-	"claude": {
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-	},
-	"codebuddy": {
-		Anthropic: protoEnv("CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN"),
-	},
-	// codex reads its provider from ~/.codex/config.toml. The managed block
-	// references this variable for env_key, so the secret never lands on disk.
-	"codex": {
-		ConfigOnly:      true,
-		ConfigProtocols: []string{ProviderProtocolOpenAI},
-		KeyOnly:         "CLAWBENCH_PROVIDER_API_KEY",
-	},
-	// commandcode: BYOK needs providers.json + config.json (see the ACP probe
-	// notes). Writing those files is not implemented, so only the credential is
-	// passed through — full BYOK still requires the CLI's own configuration.
-	"commandcode": {
-		KeyOnly: "COMMAND_CODE_API_KEY",
-	},
-	"cursor": {
-		KeyOnly: "CURSOR_API_KEY",
-	},
-	"deepseek": {
-		OpenAI: protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-	"dsh": {
-		OpenAI: protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-	"grok": {
-		OpenAI: protoEnv("GROK_XAI_API_BASE_URL", "XAI_API_KEY", ""),
-	},
-	"hermes": {
-		OpenAI: protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-	"kimi": {
-		// kimi-cli's own provider is OpenAI-compatible and reads KIMI_*; its
-		// Anthropic path goes through the standard ANTHROPIC_* variables.
-		OpenAI:    protoEnv("KIMI_BASE_URL", "KIMI_API_KEY", ""),
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-	},
-	"mimo": {
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-		OpenAI:    protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-	"opencode": {
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-		OpenAI:    protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-		// opencode resolves a model id against its own provider catalog before
-		// it sends anything, and a provider redirect does not extend that
-		// catalog: OPENAI_BASE_URL/OPENAI_API_KEY alone leave "glm-…"
-		// unresolvable ("model not found"), which is issue #651. Declaring the
-		// provider's models through the config content is the only lever that
-		// makes them resolvable. Content (not a file path) so nothing is
-		// written to the user's home.
-		//
-		// The ids are ours, not opencode's built-in ones: it addresses a
-		// declared model as "<provider>/<key>", so reusing "openai" would turn a
-		// curated id that already says "openai/gpt-4o" into "openai/openai/…"
-		// (verified against 2.2.6). With a dedicated id the rule is simply
-		// "<our id>/<curated id verbatim>".
-		InlineConfigEnv: "OPENCODE_CONFIG_CONTENT",
-		InlineConfigProviderIDs: map[string]string{
-			ProviderProtocolOpenAI:    "clawbench-openai",
-			ProviderProtocolAnthropic: "clawbench-anthropic",
-		},
-	},
-	"pi": {
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-		OpenAI:    protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-	"zcode": {
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-		OpenAI:    protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-
-	// Deliberately empty: no verified override exists.
-	//
-	//   copilot   GitHub sign-in only
-	//   openclaw  the provider belongs to the Gateway process, not the ACP bridge
-	//   qoder     login-based; the CLI binary contains no provider variables
-	//   qodercn   same as qoder
-	//   vecli     no evidence available
-	"copilot":    {},
-	"openclaw":   {},
-	"qoder":      {},
-	"qodercn":    {},
-	"vecli":      {},
-	"custom-acp": {},
-}
-
 // ProviderEnvBackends lists every backend that has a provider-env entry. Used
-// by the coverage test to keep the table and the backend registry in sync.
+// by the coverage test to keep the registry and the backend registry in sync.
 func ProviderEnvBackends() []string {
-	out := make([]string, 0, len(providerEnvTable))
-	for id := range providerEnvTable {
+	providerEnvMu.RLock()
+	defer providerEnvMu.RUnlock()
+	out := make([]string, 0, len(providerEnvRegistry))
+	for id := range providerEnvRegistry {
 		out = append(out, id)
 	}
 	sort.Strings(out)
@@ -190,14 +142,14 @@ func ProviderEnvBackends() []string {
 // with no protocols still counts: it records the deliberate "cannot take a
 // provider" decision instead of leaving the backend unclassified.
 func HasProviderEnvEntry(backendID string) bool {
-	_, ok := providerEnvTable[backendID]
+	_, ok := providerEnvSpec(backendID)
 	return ok
 }
 
 // ProviderEnvSupported reports whether the backend can receive a provider with
 // this protocol (an empty protocol asks "any protocol at all").
 func ProviderEnvSupported(backendID, protocol string) bool {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok {
 		return false
 	}
@@ -216,7 +168,7 @@ func ProviderEnvSupported(backendID, protocol string) bool {
 // it has no endpoint slot at all, so a provider bound to it must carry no
 // base_url (see BuildProviderEnv).
 func BackendIsKeyOnly(backendID string) bool {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	return ok && spec.KeyOnly != "" && !spec.ConfigOnly
 }
 
@@ -232,7 +184,7 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 	if p == nil {
 		return false
 	}
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok {
 		return false
 	}
@@ -251,7 +203,7 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 // mode as the cause. Key-only and config-file backends take the credential (or
 // the config file) and never read an auth mode, so no mode can be wrong there.
 func ProviderAuthModeError(backendID, protocol, authMode string) error {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok {
 		return fmt.Errorf("backend %q does not support model providers", backendID)
 	}
@@ -283,7 +235,7 @@ func ProviderAuthModeError(backendID, protocol, authMode string) error {
 // Config-file and key-only backends are skipped because they ignore the auth
 // mode — they neither prove nor disprove that the pair works.
 func ProtocolSupportsAuthMode(protocol, authMode string) bool {
-	for _, spec := range providerEnvTable {
+	for _, spec := range providerEnvSpecs() {
 		pe := protocolEnvFor(spec, protocol)
 		if pe != nil && authModeFits(pe, authMode) {
 			return true
@@ -335,14 +287,14 @@ func (s ProviderEnvSpec) supportsProtocol(protocol string) bool {
 // through a config file rather than environment variables. Those bindings need
 // an explicit user confirmation because they modify files outside ClawBench.
 func ProviderUsesConfigFile(backendID string) bool {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	return ok && spec.ConfigOnly
 }
 
 // SupportedProtocols lists the protocols a backend can be pointed at. An empty
 // list means the backend cannot take a provider (only a bare key at most).
 func SupportedProtocols(backendID string) []string {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok {
 		return nil
 	}
@@ -377,7 +329,7 @@ func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]stri
 	if p == nil {
 		return nil, nil
 	}
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok {
 		return nil, fmt.Errorf("backend %q does not support model providers", backendID)
 	}
@@ -586,7 +538,7 @@ func keyEnvVar(backendID string, pe *ProtocolEnv, p *Provider) (string, error) {
 // returns the id unchanged — the caller's own validation already rejected those
 // combinations.
 func ProviderModelIDFor(backendID, protocol, id string) string {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok || spec.InlineConfigProviderIDs == nil {
 		return id
 	}
@@ -604,7 +556,7 @@ func ProviderModelIDFor(backendID, protocol, id string) string {
 // "<provider>/" namespace so a wire-form id can be compared with the provider's
 // stored list.
 func ProviderBareModelID(backendID, protocol, id string) string {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok || spec.InlineConfigProviderIDs == nil {
 		return id
 	}

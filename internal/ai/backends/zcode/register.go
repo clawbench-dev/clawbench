@@ -24,5 +24,9 @@ func init() {
 			InstallCmd:           "npm install -g zcode-acp-server",
 			SortOrder:            15,
 		},
+		ProviderEnv: &model.ProviderEnvSpec{
+			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+			OpenAI:    model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
+		},
 	})
 }

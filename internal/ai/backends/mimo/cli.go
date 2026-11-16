@@ -37,7 +37,11 @@ func init() {
 				opencode.BridgePlanFromToolUpdate(conn, ch, tcu)
 			},
 		},
-		ModelSource: model.StaticSource("mimo", "mimo", model.MimoCatalog),
+		ModelSource: model.StaticSource("mimo", "mimo", MimoCatalog),
+		ProviderEnv: &model.ProviderEnvSpec{
+			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+			OpenAI:    model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
+		},
 	})
 }
 

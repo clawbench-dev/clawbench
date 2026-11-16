@@ -55,7 +55,11 @@ func init() {
 			// 启动白等 10s，这里收紧到 5s：登录用户的一次真实拉取足够，
 			// 未登录用户少等一半。
 			Timeout:  5 * time.Second,
-			Fallback: model.AntigravityCatalog,
+			Fallback: AntigravityCatalog,
 		}),
+		ProviderEnv: &model.ProviderEnvSpec{
+			Gemini:  model.ProtoEnv("GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY", ""),
+			KeyOnly: "GEMINI_API_KEY",
+		},
 	})
 }

@@ -61,6 +61,9 @@ func init() {
 			// backends' declarations, and Pi does NOT read .agents/skills.
 			NativeSkillsDirs:      []string{".pi/agent/skills"},
 			AutoLoadsNativeSkills: true,
+			// Measured 2026-10-19: session/new accepts `mcpServers`, returns no
+			// error, and the tool never appears.
+			MCPUnsupported: true,
 		},
 		ACP: &backends.ACPPlugin{
 			InputRemaps: PiACPInputRemaps,
@@ -76,6 +79,10 @@ func init() {
 			CombineStderr: true,
 			Parse:         model.ParseTabular,
 		}),
+		ProviderEnv: &model.ProviderEnvSpec{
+			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+			OpenAI:    model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
+		},
 	})
 }
 

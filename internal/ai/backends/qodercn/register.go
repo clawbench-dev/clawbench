@@ -62,6 +62,8 @@ func init() {
 		ModelSource: model.PluginSource("qodercn", func() ([]model.AgentModel, string) {
 			return qoder.DiscoverModelsIn("qodercn", QoderCNConfigRoot)
 		}),
+		// Deliberately empty: same as qoder — login-based, no provider vars.
+		ProviderEnv: &model.ProviderEnvSpec{},
 	})
 }
 

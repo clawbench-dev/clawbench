@@ -322,7 +322,6 @@ func TestProviderRejectsDeadAuthMode(t *testing.T) {
 		protocol string
 		auth     string
 	}{
-		{name: "openai+bearer", protocol: model.ProviderProtocolOpenAI, auth: model.ProviderAuthBearer},
 		{name: "gemini+bearer", protocol: model.ProviderProtocolGemini, auth: model.ProviderAuthBearer},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -351,13 +350,23 @@ func TestProviderRejectsDeadAuthMode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.ProviderAuthAPIKey, openaiKey.AuthMode)
 
-	// Editing into a dead combination is refused the same way.
-	bearer := model.ProviderAuthBearer
-	_, err = service.UpdateProvider(openaiKey.ID, service.ProviderPatch{AuthMode: &bearer})
+	// openai + bearer is accepted now (CodeBuddy reads a bearer token), so the
+	// "editing into a dead combination" case uses gemini instead.
+	openaiBearer := model.ProviderAuthBearer
+	updated, err := service.UpdateProvider(openaiKey.ID, service.ProviderPatch{AuthMode: &openaiBearer})
+	require.NoError(t, err, "openai + bearer is reachable through CodeBuddy")
+	assert.Equal(t, model.ProviderAuthBearer, updated.AuthMode)
+
+	gemini, err := service.CreateProvider(model.Provider{
+		Name: "GeminiKey", Protocol: model.ProviderProtocolGemini, BaseURL: "https://gw.example", APIKey: "k",
+		AuthMode: model.ProviderAuthAPIKey,
+	})
+	require.NoError(t, err)
+	_, err = service.UpdateProvider(gemini.ID, service.ProviderPatch{AuthMode: &openaiBearer})
 	assert.ErrorIs(t, err, service.ErrProviderInvalid)
 
 	// ...and the row is untouched by the rejected update.
-	stored, err := service.GetProvider(openaiKey.ID)
+	stored, err := service.GetProvider(gemini.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.ProviderAuthAPIKey, stored.AuthMode)
 }
@@ -375,7 +384,7 @@ func TestProviderValidationErrorNamesField(t *testing.T) {
 	}{
 		{
 			name:  "dead auth mode",
-			p:     model.Provider{Name: "A", Protocol: model.ProviderProtocolOpenAI, AuthMode: model.ProviderAuthBearer},
+			p:     model.Provider{Name: "A", Protocol: model.ProviderProtocolGemini, AuthMode: model.ProviderAuthBearer},
 			field: "authMode",
 		},
 		{

@@ -27,7 +27,9 @@ func init() {
 			AutoLoadsNativeSkills: true,
 		},
 		CLI:         &backends.CLIPlugin{NewBackend: newCopilotBackend},
-		ModelSource: model.StaticSource("copilot", "copilot", model.CopilotCatalog),
+		ModelSource: model.StaticSource("copilot", "copilot", CopilotCatalog),
+		// Deliberately empty: GitHub sign-in only, no verified override exists.
+		ProviderEnv: &model.ProviderEnvSpec{},
 	})
 }
 

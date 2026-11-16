@@ -305,7 +305,7 @@ func (a *Agent) providerAcceptsPin(p *Provider, pref string) bool {
 	if containsString(p.Models, ProviderBareModelID(a.Backend, p.Protocol, pref)) {
 		return true
 	}
-	spec, ok := providerEnvTable[a.Backend]
+	spec, ok := providerEnvSpec(a.Backend)
 	return ok && spec.InlineConfigEnv != "" && providerEnvSupportsProtocol(spec, p.Protocol)
 }
 

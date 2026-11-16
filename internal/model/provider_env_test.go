@@ -271,7 +271,11 @@ func TestProtocolSupportsAuthMode(t *testing.T) {
 		{ProviderProtocolAnthropic, ProviderAuthAPIKey, true},
 		{ProviderProtocolOpenAI, ProviderAuthAuto, true},
 		{ProviderProtocolOpenAI, ProviderAuthAPIKey, true},
-		{ProviderProtocolOpenAI, ProviderAuthBearer, false},
+		// openai + bearer became possible once CodeBuddy moved to the OpenAI
+		// protocol: it reads CODEBUDDY_AUTH_TOKEN as a bearer token
+		// (cleanBearerToken) on its /chat/completions path. This used to be
+		// false only because no OpenAI-protocol backend declared an AuthToken.
+		{ProviderProtocolOpenAI, ProviderAuthBearer, true},
 		{ProviderProtocolGemini, ProviderAuthAuto, true},
 		{ProviderProtocolGemini, ProviderAuthBearer, false},
 	}
@@ -308,8 +312,8 @@ func TestProviderEnvVersion_ChangesWithWireAPI(t *testing.T) {
 // backend registry in sync, so it must list every entry exactly once, sorted.
 func TestProviderEnvBackends_SortedAndComplete(t *testing.T) {
 	backends := ProviderEnvBackends()
-	if len(backends) != len(providerEnvTable) {
-		t.Fatalf("backends = %d, table = %d", len(backends), len(providerEnvTable))
+	if len(backends) != len(providerEnvSpecs()) {
+		t.Fatalf("backends = %d, registry = %d", len(backends), len(providerEnvSpecs()))
 	}
 	if !sort.StringsAreSorted(backends) {
 		t.Fatalf("backends must be sorted: %v", backends)

@@ -827,7 +827,7 @@ func TestProvidersAPI_InvalidAuthModeCarriesField(t *testing.T) {
 	setupProvidersHandlerTest(t)
 
 	rec := doProviderRequest(t, ServeProviders, http.MethodPost, "/api/providers", map[string]any{
-		"name": "Bearer", "protocol": "openai", "baseUrl": "https://gw.example",
+		"name": "Bearer", "protocol": "gemini", "baseUrl": "https://gw.example",
 		"apiKey": "sk", "authMode": "bearer",
 	})
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())

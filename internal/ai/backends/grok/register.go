@@ -27,7 +27,10 @@ func init() {
 			Command:  "grok",
 			Args:     []string{"models"},
 			Parse:    parseGrokModels,
-			Fallback: model.GrokCatalog,
+			Fallback: GrokCatalog,
 		}),
+		ProviderEnv: &model.ProviderEnvSpec{
+			OpenAI: model.ProtoEnv("GROK_XAI_API_BASE_URL", "XAI_API_KEY", ""),
+		},
 	})
 }

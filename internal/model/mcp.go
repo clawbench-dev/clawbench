@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -112,39 +113,35 @@ type MCPCapabilities struct {
 	SSE  bool
 }
 
-// mcpUnsupportedBackends lists backends the probe measured as accepting the
-// `mcpServers` field and then ignoring it completely.
+// mcpUnsupported is the set of backends whose BackendSpec declares
+// MCPUnsupported. Populated by the backend registry at init; the fact itself
+// lives in the backend's own Spec, not here.
 //
-// Measured 2026-10-19 (docs/dev/acp_mcp_probe_results.md): session/new succeeds,
-// no error, and the tool never appears — two turns each, so this is not a
-// slow-start artifact. Filtering here (rather than only graying the UI) matters
-// because the default policy is `all`: without this list every user would hit
-// the silently-ineffective case by default, which is exactly what the UI is
-// supposed to prevent.
-var mcpUnsupportedBackends = map[string]bool{
-	"dsh":      true,
-	"deepseek": true,
-	"pi":       true,
-	// openclaw's `acp` subcommand is a bridge, not an agent: it explicitly
-	// refuses per-session MCP servers ("ACP bridge mode does not support
-	// per-session MCP servers. Configure MCP on the OpenClaw gateway or agent
-	// instead."). Unlike the three above it does not silently ignore the field —
-	// session/new FAILS, so every turn would error out if we injected anything.
-	//
-	// The rejection is payload-dependent (measured 2026-10-24): an entry with
-	// only {name, command} is accepted and ignored, while {name, command,
-	// args: [], env: []} — exactly what toACPMcpServers emits — is refused.
-	// Do not "fix" this by trimming empty slices; that would trade a hard
-	// failure for a silently useless injection.
-	"openclaw": true,
+// It stays a registry rather than reading BackendRegistry on every call because
+// ResolveMCPServers runs on the prompt hot path and BackendRegistry is a slice
+// that a test can reset.
+var (
+	mcpUnsupportedMu sync.RWMutex
+	mcpUnsupported   = map[string]bool{}
+)
+
+// RegisterMCPUnsupported records that backendID silently ignores the
+// `mcpServers` field. Called by the backend registry for every plugin whose
+// Spec sets MCPUnsupported. Idempotent: re-registering the same id is a no-op.
+func RegisterMCPUnsupported(backendID string) {
+	mcpUnsupportedMu.Lock()
+	defer mcpUnsupportedMu.Unlock()
+	mcpUnsupported[backendID] = true
 }
 
 // BackendSupportsMCP reports whether the probe found this backend honoring the
-// `mcpServers` field. Unknown backends are assumed to support it: the list above
+// `mcpServers` field. Unknown backends are assumed to support it: the registry
 // only contains measured negatives, and new backends should be probed rather
 // than silently disabled.
 func BackendSupportsMCP(backend string) bool {
-	return !mcpUnsupportedBackends[backend]
+	mcpUnsupportedMu.RLock()
+	defer mcpUnsupportedMu.RUnlock()
+	return !mcpUnsupported[backend]
 }
 
 // ResolveMCPServers returns the servers to inject for one agent, already

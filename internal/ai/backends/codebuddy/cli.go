@@ -77,6 +77,15 @@ func init() {
 		ListSessions:       listCodebuddySessionsFromDisk,
 		MidTurn:            &midTurnInjector{},
 		MidTurnSplitsReply: true,
+		ProviderEnv: &model.ProviderEnvSpec{
+			// CodeBuddy speaks the OpenAI wire protocol only: its request path is
+			// hardcoded to /chat/completions and ignores the entry's "provider"
+			// field (verified with provider:"anthropic" — it still POSTed to
+			// /chat/completions). The CODEBUDDY_* variables were previously listed
+			// under Anthropic, which let the UI offer an Anthropic provider that
+			// could never answer.
+			OpenAI: model.ProtoEnv("CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN"),
+		},
 	})
 }
 

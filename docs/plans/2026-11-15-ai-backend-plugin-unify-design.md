@@ -5,7 +5,8 @@
 
 ## 0. 一句话
 
-现在加一个后端是「新建 1 个目录 + 6 处登记 + 可能还要去核心包开 3 个文件」；做完之后是「新建 1 个目录 + 跑一次 `go generate`」。
+改造前加一个后端是「新建 1 个目录 + 6 处登记 + 可能还要去核心包开 3 个文件」；现在
+是「新建 1 个目录 + 跑一次 `go generate` + 两处人工声明」。
 
 ## 0.1 实施进度（2026-11-16）
 
@@ -13,47 +14,86 @@
 |---|---|---|
 | Phase 1 注册收编 | ✅ 完成 | 4 个注册入口 → 1 次 `backends.Register`；`CLI`/`Custom` 合并并接上 |
 | Phase 2 自动发现 | ✅ 完成 | `genbackendimports` + `backends/all`；`main.go` 20 行 → 1 行 |
-| Phase 3 行为钩子 | ✅ 完成（2 处例外） | 11 个 ACP 解析/桥接文件搬进子包 |
+| Phase 3 行为钩子 | ✅ 完成（3 处例外） | 11 个 ACP 解析/桥接文件搬进子包 |
 | Phase 4 搬 CLI 解析 | ✅ 完成 | vecli / deepseek / grok / claude(+StreamParser) / codex / opencode / pi / openclaw 全部搬走 |
-| Phase 5 数据搬家 | 🚧 部分 | 守卫已改为派生；4 张数据表仍在核心包（原因见下） |
+| Phase 5 数据搬家 | ✅ 完成 | 4 张数据表全部搬进子包（见 0.2） |
 
-**实测结论**：新建一个后端目录 + `go generate ./internal/ai/backends/all` + `go build` 即可通过；
-随后 3 条守卫会点名要你补声明：
+**加一个后端现在要做的全部事情**：
 
-1. `TestProviderEnvTableCoversEveryBackend` → `internal/model/provider_env.go` 一行
-2. `TestBackendSkillAwarenessMatchesReviewedTable` → 技能目录审阅表一行（这是人拍板的结论，应该手工）
-3. `TestSpecDocsBackendCountMatchesRegistry` → 文档里的后端计数
+1. 新建 `internal/ai/backends/<id>/`，一个 `init()` 里 `backends.Register(&BackendPlugin{...})`
+2. `go generate ./internal/ai/backends/all`
+3. 跑测试，两条守卫会点名要你补声明——都是**该由人拍板**的结论，不是遗漏：
+   - `TestBackendSkillAwarenessMatchesReviewedTable` → 这个后端到底自不自己加载技能（1 行）
+   - `TestSpecDocsBackendCountMatchesRegistry` → 文档里的后端计数（当前 4 处、2 个文件）
 
-比改造前的 14–22 个文件少了约 80%。
+`cmd/server/main.go` 不用改，`model` / `service` / `handler` 的源码也不用改。
 
-**Phase 5 为什么没做完数据表**：`providerEnvTable` / `mcpUnsupportedBackends` /
-`provider_config_dir` 的 switch / `catalogs.go` 都被 `model`、`service` 的
-**包内测试**直接读取，而这些测试不 import 后端插件（会成环）。把数据搬进
-插件，等于要求几十个测试文件先转成外部测试包（`package model_test`）并各自
-播种夹具——那是一次独立的测试重构，硬塞进这一轮只会做出「生产对了、测试全红」
-的半成品。本次先做完了其中纯收益的两条（目录派生、路径放行）。
+**实测**（2026-11-16，临时加了一个 `fakeacp` 后端再删掉）：改动只有 2 个文件——
+新建的 `register.go` 与生成出来的 `all.go`；`go build ./...` 一次通过；守卫恰好点出
+上面两条。改造前同样的事是 14 个文件（cursor）/ 22 个文件（command code）。
 
-Phase 3/4 的例外（都写在代码注释里）：
+## 0.2 Phase 5 搬了什么
+
+| 数据 | 原位置 | 现位置 |
+|---|---|---|
+| `providerEnvTable`（20 行 BYOK 环境变量） | `model/provider_env.go` | 各子包的 `ProviderEnv:` 字段 |
+| `mcpUnsupportedBackends`（4 个） | `model/mcp.go` | `BackendSpec.MCPUnsupported` |
+| 7 个内置模型目录 + 5 张名称表 + 2 张顺序表 | `model/catalogs.go` | 各子包的 `catalog.go` |
+| 配置目录写入的 switch | `service/provider_config_dir.go` | 本分支已不存在（见 0.4） |
+
+`model` 侧只剩「注册表 + 查表」：`RegisterProviderEnvSpec` / `RegisterMCPUnsupported`，
+由 `backends.Register` 在 init 时转发。`model/catalogs.go` 整个文件删掉了。
+
+## 0.3 搬完之后测试怎么接线（重要）
+
+数据搬进插件后，**任何不 import 插件的测试二进制里注册表都是空的**。这不会让测试
+静默通过，而是让每个 `BuildProviderEnv("claude", …)` 之类断言失败——所以每个受影响的
+包都要有一个「只为副作用存在」的外部测试文件：
+
+| 文件 | 为什么在这里 |
+|---|---|
+| `internal/model/backend_plugins_test.go` | `provider_env_test.go` / `mcp_test.go` 是 `package model`，内部测试包 import `backends/all` 会成环 |
+| `internal/ai/backend_plugins_test.go` | 同上，`package ai` |
+| `internal/service/backend_plugins_test.go` | codex 配置文件的测试读 `ProviderUsesConfigFile` |
+| `internal/handler/backend_plugins_test.go` | provider / agent 绑定校验读真实后端的能力面 |
+
+机制：外部测试包（`package xxx_test`）与内部测试包编译进同一个二进制，Go 在任何测试
+函数之前完成所有 import 的 init。**这是唯一能让包内测试看到插件数据的办法**，不要
+改成在测试里手工播种夹具——那等于把刚搬走的数据再抄一份。
+
+**副作用（值得知道）**：`TestAgentSelfTest_CliTransportOnAcpOnlyBackendFails` 原本用
+`grok` 当「没有 CLI 实现」的样本，靠的正是「handler 测试没注册插件所以 grok 查不到
+工厂」。注册表被填上后这个前提失效（grok 有 CLI 回退了），已改用 `cursor`。
+
+## 0.4 例外与合并注意
+
+**仍留在核心包的 3 个后端专属文件**（都在代码注释里写明原因）：
 
 - `acp_opencode_children.go`：挂在 `ClawBenchACPClient` 的私有 map 上，是客户端逻辑而非事件映射。
 - `acp_meta_codebuddy.go`：核心的取消回合用量累积测试以它的解析结果为夹具；导出为 `ai.ExtractCodeBuddyMeta`，插件仍以 `ExtractMeta` 注册同一实现。
 - `opencode_error_types.go`：ACP 侧错误分类器与 CLI 解析器共用的一张表。
 
----|---|---|
-| Phase 1 注册收编 | ✅ 完成 | 4 个注册入口 → 1 次 `backends.Register`；`CLI`/`Custom` 死字段合并并接上 |
-| Phase 2 自动发现 | ✅ 完成 | `genbackendimports` + `backends/all`；`main.go` 20 行 → 1 行 |
-| Phase 3 行为钩子 | ✅ 完成（2 处例外） | 11 个 ACP 解析/桥接文件搬进子包；`ACPBehavior` 全部字段可选 |
-| Phase 4 搬 CLI 解析 | 🚧 3/8 | vecli / deepseek / grok 已完成；claude / codex / opencode / pi / openclaw 仍在核心包（原因见下） |
-| Phase 5 数据搬家 | ⬜ 未开始 | `providerEnvTable` / `mcpUnsupportedBackends` / 配置目录 switch / `catalogs.go` 仍在核心包 |
+**合并 main 时注意**：本分支从 `4ce9378c4` 分叉，main 后来加了「每智能体独立配置目录」
+（`ProviderEnvSpec` 新增 `ConfigDir*` 字段）。冲突面只有 `model/provider_env.go` 与
+`service/provider_config.go` 两个文件，但语义要人工搬：
 
-Phase 4 剩下的 5 个后端不是「同样的活再干五遍」，它们卡在同一个结构问题上：**这几个解析器不是被 switch 调用的，而是被共享的 `StreamParser` 骨架内联调用的**（`parseClaudeStreamToolEvent`、`parseClaudeAssistantToolUse` 等直接写在 `stream_parser.go` 的分支里）。搬走它们要先把这个依赖反过来——骨架通过函数变量回调子包，而 `internal/ai` 自己的 `stream_parser_test.go` 又会因此失去 handler。这比 ACP 侧（本来就是 switch 分派）复杂一档，值得单独一轮做，不要混进这次。
+- claude / kimi / pi / codebuddy 的 `ConfigDirEnv` / `ConfigDirFile` /
+  `ConfigDirProtocols` / `ConfigDirProviderID` / `ConfigDirSecretInFile` /
+  `ConfigDirDeclaresModels` / `ConfigDirAddressPrefix`，要跟着各自的
+  `ProviderEnv` 一起进子包。
+- main 修正过的**协议归属**已经先搬进本分支：codebuddy 的 `CODEBUDDY_*` 从
+  Anthropic 改成 OpenAI、kimi 删掉 Anthropic 行（依据见两处代码注释）。这两处
+  同时改了三张测试的期望值（`ProtocolSupportsAuthMode`、`TestProviderRejectsDeadAuthMode`、
+  `TestProvidersAPI_InvalidAuthModeCarriesField`），已与 main 对齐。
+- 本分支删除了 `model/catalogs.go`，main 未改动该文件，不会冲突。
 
-Phase 3 的两处例外（都写在代码注释里）：
+**测试环境的两处既有失败**（与本改造无关，在主仓同样可复现或可解释）：
 
-- `acp_opencode_children.go`：挂在 `ClawBenchACPClient` 的私有 map 上，是客户端逻辑而非事件映射。
-- `acp_meta_codebuddy.go`：核心的 `emitCancelledTurnUsage` / 累积逻辑的测试直接以它的解析结果为夹具；导出为 `ai.ExtractCodeBuddyMeta`，插件仍以 `ExtractMeta` 注册同一实现。
+- `TestCleanupOrphans_KillsReParentedProcess`：需要子进程被 re-parent 到 PID 1，在本机
+  的进程监管下不是 PID 1（实测 1435）。主仓同样失败。
+- 6 个 `TestServeSharePage_*` / `TestSharePage_*`：需要 `internal/frontend/dist` 里有
+  构建产物，全新 worktree 里那是空目录。跑过 `npm run build` 即消失。
 
-另外 `codebuddy_plugin_scanner.go`（155 行）暂留核心包：搬走需要新增一个 `BackendSpec` 字段来承载「命令重发延迟」，改动面比收益大，留待 Phase 5 一起做。
 
 ---
 
@@ -346,18 +386,20 @@ const StreamChanSize = streamChanSize
 
 ---
 
-### Phase 5｜数据搬家 + 清理
+### Phase 5｜数据搬家 + 清理（已完成）
 
-| 项 | 现在 | 之后 |
+| 项 | 改造前 | 现在 |
 |---|---|---|
-| `providerEnvTable` | `model/provider_env.go:115` 一张大表 | 每个后端在自己的 `register.go` 里写 `ProviderEnv:`；`model` 提供 `RegisterProviderEnvSpec` |
-| `mcpUnsupportedBackends` | `model/mcp.go:124` | `Spec.MCPUnsupported = true`（openclaw 那段长注释跟着搬过去） |
-| `userConfigDir` / `applyProviderConfigDir` 的 switch | `service/provider_config_dir.go:56/167` | `model.RegisterProviderConfigWriter(id, fn)`，写文件的函数搬进子包 |
-| 静态模型目录 `model/catalogs.go` | 一个 127 行的中心文件 | 搬进各自子包的 `discovery.go`（每个目录现在只被自己的子包引用，见 `copilot/discovery.go:8` 等） |
-| 守卫表 | 4 张手工清单 | `discovery_test` 改成「注册表 == 目录列表」；`native_skills_test` 保留（它编码的是人拍板的结论）；`i18n` 白名单改成按路径放行 `backends/*/register.go` |
-| 死代码 | `plugin.CLI` / `plugin.Custom` 无人用 | Phase 1 之后自动变成真字段，此处只做确认 |
+| `providerEnvTable` | `model/provider_env.go` 一张 20 行大表 | 每个后端在自己的注册文件里写 `ProviderEnv:`；`model` 提供 `RegisterProviderEnvSpec` |
+| `mcpUnsupportedBackends` | `model/mcp.go` | `Spec.MCPUnsupported = true`（openclaw 那段长注释跟着搬过去） |
+| `userConfigDir` / `applyProviderConfigDir` 的 switch | `service/provider_config_dir.go` | **本分支已不存在**：配置目录写入只剩 codex 一条路径，没有按后端分派的 switch |
+| 静态模型目录 `model/catalogs.go` | 一个 127 行的中心文件 | 搬进各自子包的 `catalog.go`（没有塞进 `discovery.go`：两者生命周期不同，目录是数据、发现是逻辑） |
+| 守卫表 | 4 张手工清单 | 后端总数 / BYOK 覆盖 / i18n 白名单均已派生；`native_skills_test` 保留（它编码的是人拍板的结论） |
+| 死代码 | `plugin.CLI` / `plugin.Custom` 无人用 | 已合并成 `CLI` 一个真字段；grok 里遗留的空 `init()` 已删 |
 
-**`catalogs.go` 搬走的代价**：现在「所有内置模型目录在一个文件里，一眼能看全」。搬走之后要靠一条测试或文档列出全部目录。我的建议是保留这个收益：新增 `docs/spec/core/backend-catalogs.md`（或一条测试打印清单），不要因为搬家把可维护性换掉。
+**`catalogs.go` 搬走的代价**：以前「所有内置模型目录在一个文件里，一眼能看全」。现在
+的可发现性靠一行命令：`grep -rl "Catalog = \[\]model.AgentModel" internal/ai/backends/`
+（`docs/spec/core/ai-backend.md` 里写了这条）。
 
 ---
 
@@ -387,18 +429,21 @@ const StreamChanSize = streamChanSize
 
 ---
 
-## 7. 验收标准
+## 7. 验收结果（2026-11-16）
 
-1. **新增一个假后端**（`backends/fake-acp`，只有 spec + `AcpCommand`）：
-   - 只新建 1 个目录、跑 1 次 `go generate`
-   - `go build ./...` 通过
-   - `/api/backends` 能看到它
-   - `go test ./internal/ai/... ./internal/model/...` 全绿
-   - 记录实际改动的文件数，写进本文档末尾（当前是 14 / 22，目标是 1 + 生成物）
-2. `internal/ai/*.go` 里不再有以具体后端命名的文件（守卫测试钉住）。
-3. 一个后端只有一次 `init()`（守卫测试钉住：统计每个子包的 `func init()` 数量）。
-4. `cmd/server/main.go` 里只有一行后端 import。
-5. 所有既有测试通过；覆盖率不低于基线。
+1. **新增一个假后端**（`backends/fakeacp`，只有 spec + `AcpCommand` + 空 `ProviderEnv`）：
+   - ✅ 只新建 1 个目录、跑 1 次 `go generate`（共 2 个文件）
+   - ✅ `go build ./...` 通过
+   - ✅ 两条守卫点名要求补声明（技能审阅表、文档计数），其余全绿
+   - ✅ `/api/backends` 会自动带上它（列表来自 `BackendRegistry`，不需要改 handler）
+   - 实测完已删除，`all.go` 回到 20 个后端
+2. `internal/ai/*.go` 里不再有以具体后端命名的文件 —— **未完全达成，剩 3 个**，理由见 0.4
+   （`acp_opencode_children.go` / `acp_meta_codebuddy.go` / `opencode_error_types.go`）。
+   已加守卫 `TestCorePackageHasNoBackendSpecificFiles`：白名单只允许这 3 个文件名，
+   新增的必须搬进子包（变异验证：临时放一个 `codex_probe.go` 会被点名）。
+3. ✅ 一个后端只有一次 `init()`（20 个子包实测全为 1）。
+4. ✅ `cmd/server/main.go` 只有一行后端 import（`_ "clawbench/internal/ai/backends/all"`）。
+5. ✅ `go test ./...` 只剩两组环境性失败（见 0.4），其余全绿。
 
 ---
 

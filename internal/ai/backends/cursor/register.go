@@ -64,5 +64,8 @@ func init() {
 			// model. When cursor does advertise thought_level, the frontend's
 			// getAgentThinkingEffortLevelsIncludingACP picks it up at runtime.
 		},
+		ProviderEnv: &model.ProviderEnvSpec{
+			KeyOnly: "CURSOR_API_KEY",
+		},
 	})
 }

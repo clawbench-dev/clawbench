@@ -16,6 +16,8 @@ func init() {
 		},
 		CLI:         &backends.CLIPlugin{NewBackend: newVeCLIBackend},
 		ModelSource: model.PluginSource("vecli", discoverVeCLIModels),
+		// Deliberately empty: no evidence of any provider override variable.
+		ProviderEnv: &model.ProviderEnvSpec{},
 	})
 }
 

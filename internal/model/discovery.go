@@ -79,6 +79,20 @@ type BackendSpec struct {
 	// binary/package for "SKILL.md" or "available_skills", and confirm the
 	// transport ClawBench uses (CLI vs ACP) shares that code path.
 	AutoLoadsNativeSkills bool
+	// MCPUnsupported marks a backend the probe measured as accepting the
+	// `mcpServers` field and then ignoring it completely.
+	//
+	// Measured 2026-10-19 (docs/dev/acp_mcp_probe_results.md): session/new
+	// succeeds, no error, and the tool never appears — two turns each, so this
+	// is not a slow-start artifact. Filtering here (rather than only graying the
+	// UI) matters because the default policy is `all`: without this flag every
+	// user would hit the silently-ineffective case by default, which is exactly
+	// what the UI is supposed to prevent.
+	//
+	// This used to be a central map in model/mcp.go. It is a fact about ONE
+	// backend, so it belongs in that backend's Spec: the map made every new
+	// backend edit a file in another package.
+	MCPUnsupported bool
 }
 
 // LoadBackendSpecs is set by the backends package at init time to provide

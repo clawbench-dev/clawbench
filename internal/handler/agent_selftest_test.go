@@ -82,9 +82,13 @@ func TestAgentSelfTest_CliTransportOnAcpOnlyBackendFails(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	agent := &model.Agent{
-		ID:                  "selftest-cli-acponly",
-		Name:                "CLI on ACP-only",
-		Backend:             "grok", // registered spec, no CLI factory
+		ID:   "selftest-cli-acponly",
+		Name: "CLI on ACP-only",
+		// cursor is ACP-only: it registers a spec but no CLI factory. (grok used
+		// to stand in here, but it gained a streaming-json CLI fallback, so the
+		// premise "no CLI implementation" no longer held — the test passed only
+		// because this binary did not register the plugins at all.)
+		Backend:             "cursor",
 		Transport:           "cli",
 		RuntimeSystemPrompt: "prompt",
 	}

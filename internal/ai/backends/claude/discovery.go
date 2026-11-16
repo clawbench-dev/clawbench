@@ -27,17 +27,17 @@ var claudeConfigDir = platform.ClaudeConfigDir
 func discoverClaudeModels() ([]model.AgentModel, string) {
 	path := platform.ResolveCLIPath("claude")
 	if path == "" {
-		return model.ClaudeCatalog, "claude: CLI not found on PATH, using built-in catalog"
+		return ClaudeCatalog, "claude: CLI not found on PATH, using built-in catalog"
 	}
 
 	lines, err := platform.ExtractStrings(path, 4)
 	if err != nil {
-		return model.ClaudeCatalog, fmt.Sprintf("claude: cannot extract strings from %s: %v", path, err)
+		return ClaudeCatalog, fmt.Sprintf("claude: cannot extract strings from %s: %v", path, err)
 	}
 
 	models := parseClaudeModels(lines)
 	if len(models) == 0 {
-		return model.ClaudeCatalog, fmt.Sprintf("claude: no model IDs found in %s (binary likely stripped)", path)
+		return ClaudeCatalog, fmt.Sprintf("claude: no model IDs found in %s (binary likely stripped)", path)
 	}
 
 	models = applyClaudeOverrides(models)
@@ -59,7 +59,7 @@ func parseClaudeModels(lines []string) []model.AgentModel {
 
 		name := line
 		if parts := strings.SplitN(line, "-", 3); len(parts) == 3 {
-			if family, ok := model.ClaudeModelNames[parts[1]]; ok {
+			if family, ok := ClaudeModelNames[parts[1]]; ok {
 				name = "Claude " + family + " " + strings.ReplaceAll(parts[2], "-", ".")
 			}
 		}
@@ -117,8 +117,8 @@ func sortClaudeModels(models []model.AgentModel) {
 		fi := strings.SplitN(models[i].ID, "-", 3)
 		fj := strings.SplitN(models[j].ID, "-", 3)
 		if len(fi) >= 2 && len(fj) >= 2 {
-			oi, okI := model.ClaudeModelOrder[fi[1]]
-			oj, okJ := model.ClaudeModelOrder[fj[1]]
+			oi, okI := ClaudeModelOrder[fi[1]]
+			oj, okJ := ClaudeModelOrder[fj[1]]
 			if okI && okJ && oi != oj {
 				return oi < oj
 			}

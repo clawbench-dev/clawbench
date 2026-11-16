@@ -79,5 +79,12 @@ func init() {
 			// and cannot be selected here. A BYOK setup must pin the model in
 			// ~/.commandcode/config.json instead (model + modelProvider).
 		},
+		ProviderEnv: &model.ProviderEnvSpec{
+			// BYOK needs providers.json + config.json (see the ACP probe notes).
+			// Writing those files is not implemented, so only the credential is
+			// passed through — full BYOK still requires the CLI's own
+			// configuration.
+			KeyOnly: "COMMAND_CODE_API_KEY",
+		},
 	})
 }

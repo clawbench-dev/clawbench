@@ -44,6 +44,12 @@ func Register(p *BackendPlugin) {
 	if p.ListSessions != nil {
 		ai.ListSessionsFromDiskRegister(p.ID, p.ListSessions)
 	}
+	if p.Spec.MCPUnsupported {
+		model.RegisterMCPUnsupported(p.ID)
+	}
+	if p.ProviderEnv != nil {
+		model.RegisterProviderEnvSpec(p.ID, *p.ProviderEnv)
+	}
 }
 
 // Lookup returns the backend plugin for the given ID, or nil if not found.

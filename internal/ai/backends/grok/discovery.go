@@ -9,6 +9,6 @@ import (
 // model IDs, and skips section headers.
 func parseGrokModels(output string) []model.AgentModel {
 	return model.ParseBulletList(output, model.BulletOptions{
-		Names: model.GrokModelNames,
+		Names: GrokModelNames,
 	})
 }

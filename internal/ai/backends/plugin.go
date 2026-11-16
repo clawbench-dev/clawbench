@@ -55,6 +55,17 @@ type BackendPlugin struct {
 	// always travel together.
 	ModelSource model.ModelSource
 
+	// ProviderEnv declares how this backend receives a BYOK provider: which
+	// environment variables carry the endpoint and the credential, or that it
+	// reads them from a config file. A non-nil entry with no protocols is the
+	// deliberate "this backend cannot take a provider" decision — an absent
+	// entry means "not classified", which a coverage test rejects.
+	//
+	// This used to be a 20-row table in model/provider_env.go, which meant every
+	// new backend edited a file in another package. The fact is per-backend, so
+	// it lives here.
+	ProviderEnv *model.ProviderEnvSpec
+
 	// PluginCommands scans backend-specific extra slash commands that the agent
 	// itself does not advertise at NewSession (CodeBuddy's plugin cache).
 	// nil means "the agent's own list is complete".

@@ -38,6 +38,9 @@ func init() {
 			ExtractMeta:         claude.ExtractMeta,
 		},
 		ModelSource: model.PluginSource("qoder", discoverQoderModels),
+		// Deliberately empty: login-based, and the CLI binary contains no
+		// provider variables.
+		ProviderEnv: &model.ProviderEnvSpec{},
 	})
 }
 

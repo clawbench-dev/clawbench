@@ -38,6 +38,13 @@ func init() {
 			// skill tool), so ClawBench must not inject them again.
 			NativeSkillsDirs:      []string{".dsh/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
+			// Measured 2026-10-19: session/new accepts `mcpServers`, returns no
+			// error, and the tool never appears (two turns each, so not a
+			// slow-start artifact).
+			MCPUnsupported: true,
+		},
+		ProviderEnv: &model.ProviderEnvSpec{
+			OpenAI: model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
 		},
 	})
 }

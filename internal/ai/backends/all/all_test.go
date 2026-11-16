@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/model"
 )
 
 // TestAllImportsMatchDirectories is the guard that makes "add a directory" a
@@ -64,6 +66,37 @@ func TestAllPackageRegistersEveryBackend(t *testing.T) {
 	registered := len(backends.All())
 	if registered != want {
 		t.Fatalf("registry has %d backends after importing this package, want %d", registered, want)
+	}
+}
+
+// TestAllPackageInstallsWiring proves the backends package's init() ran and
+// connected internal/ai's lookup function variables.
+//
+// cmd/server/main.go imports ONLY this package (not the backends package
+// directly): the wiring happens as a side effect of the sub-packages importing
+// backends. If that ever stops holding, nothing fails to compile — tool names
+// silently stop being normalized and backend specs go missing. This test is the
+// only thing that would catch it.
+func TestAllPackageInstallsWiring(t *testing.T) {
+	checks := []struct {
+		name string
+		fn   any
+	}{
+		{"ai.LookupACPRemapsFn", ai.LookupACPRemapsFn},
+		{"ai.LookupACPToolCallIDPrefixesFn", ai.LookupACPToolCallIDPrefixesFn},
+		{"ai.LookupACPTitlePrefixesFn", ai.LookupACPTitlePrefixesFn},
+		{"ai.LookupACPToolCallWrapperPrefixesFn", ai.LookupACPToolCallWrapperPrefixesFn},
+		{"ai.LookupACPModesMirrorThoughtLevelFn", ai.LookupACPModesMirrorThoughtLevelFn},
+		{"ai.LookupACPModelSwitchMethodFn", ai.LookupACPModelSwitchMethodFn},
+		{"ai.LookupMidTurnInjectorFn", ai.LookupMidTurnInjectorFn},
+		{"model.LoadBackendSpecs", model.LoadBackendSpecs},
+		{"model.BackendSupportsCLIFn", model.BackendSupportsCLIFn},
+	}
+	for _, c := range checks {
+		if c.fn == nil {
+			t.Errorf("%s is nil: importing backends/all no longer installs the "+
+				"function-variable wiring (see internal/ai/backends/acp_wire.go)", c.name)
+		}
 	}
 }
 

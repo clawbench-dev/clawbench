@@ -29,6 +29,9 @@ func init() {
 			// shared ".agents/skills"), so ClawBench must not inject them again.
 			NativeSkillsDirs:      []string{".codewhale/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
+			// Measured 2026-10-19: session/new accepts `mcpServers`, returns no
+			// error, and the tool never appears.
+			MCPUnsupported: true,
 		},
 		ACP: &backends.ACPPlugin{
 			ToolCallIDPrefixes: CodeWhaleACPToolCallIDPrefixes,
@@ -43,6 +46,9 @@ func init() {
 			},
 			Parse: parseDeepSeekModels,
 		}),
+		ProviderEnv: &model.ProviderEnvSpec{
+			OpenAI: model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
+		},
 	})
 }
 

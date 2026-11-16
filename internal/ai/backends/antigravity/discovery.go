@@ -16,7 +16,7 @@ var agyLogPrefixRE = regexp.MustCompile(`^[IWEF]\d{4}\s`)
 // display name. Diagnostics (progress, auth failures, log noise) are dropped.
 func parseAgyModels(output string) []model.AgentModel {
 	return model.ParsePlainLines(output, model.PlainLineOptions{
-		Names: model.AntigravityModelNames,
+		Names: AntigravityModelNames,
 		Skip:  isAgyStatusLine,
 	})
 }
