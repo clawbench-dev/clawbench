@@ -22,19 +22,19 @@
           <p v-if="phase === 'failed' && errorText" class="drawio-error">{{ errorText }}</p>
 
           <button
-            v-if="phase !== 'installing' && !uploading && !readonly"
+            v-if="phase !== 'installing' && !uploading && (!readonly || allowInstall)"
             class="drawio-action"
             @click="startInstall"
           >
             {{ phase === 'failed' ? t('file.viewer.drawioRetry') : t('file.viewer.drawioInstall') }}
           </button>
-          <p v-else-if="phase !== 'installing' && !uploading && readonly" class="drawio-gate-desc">
+          <p v-else-if="phase !== 'installing' && !uploading && readonly && !allowInstall" class="drawio-gate-desc">
             {{ t('file.viewer.drawioReadonlyMissing') }}
           </p>
 
           <!-- Offline path: the server may have no route to github.com at all,
                so the archive can also be handed over from this machine. -->
-          <div v-if="!readonly" class="drawio-upload">
+          <div v-if="!readonly || allowInstall" class="drawio-upload">
             <span class="drawio-upload-hint">{{ t('file.viewer.drawioUploadHint') }}</span>
             <button
               class="drawio-upload-btn"
@@ -98,8 +98,13 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
 const props = defineProps({
   file: Object,
-  /** Preview-only (the public share page): no editing state, no save flow. */
+  /** Preview-only (the public share page / the quick preview card): no
+   *  editing state, no save flow. */
   readonly: { type: Boolean, default: false },
+  /** Read-only but still allowed to install the editor. The in-app quick
+   *  preview is exactly this: it cannot edit, but it is not a public page and
+   *  may legitimately trigger the one-time server-side install. */
+  allowInstall: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['requestClose'])

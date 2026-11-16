@@ -30,7 +30,7 @@
       </div>
     </template>
 
-    <div class="code-preview-sheet-body">
+    <div class="code-preview-sheet-body" :class="{ 'is-fill-view': isFillView }">
       <!-- The drawer reuses the SAME tool row as the floating card and the
            file manager's docked pane (CodePreviewToolbar). It previously had a
            sheet-only tool row here plus a pill-button footer below, so the same
@@ -64,18 +64,20 @@
         @view-lightbox="handleViewLightbox"
       />
       <!-- Notices -->
-      <div v-if="preview.isLargeFile.value" class="code-preview-notice notice-warning">
-        {{ t('file.codePreview.largeFileNotice') }}
-      </div>
-      <div v-if="preview.slicedCode.value?.lineOutOfRange" class="code-preview-notice notice-warning">
-        {{ t('file.codePreview.lineOutOfRange') }}
-      </div>
-      <div v-if="preview.slicedCode.value?.renderTruncated" class="code-preview-notice notice-info">
-        {{ t('file.codePreview.truncatedNotice', { size: '512KB' }) }}
-      </div>
-      <div v-if="preview.windowTruncated.value" class="code-preview-notice notice-warning">
-        {{ t('file.codePreview.windowTruncatedNotice') }}
-      </div>
+      <template v-if="showSnippetNotices">
+        <div v-if="preview.isLargeFile.value" class="code-preview-notice notice-warning">
+          {{ t('file.codePreview.largeFileNotice') }}
+        </div>
+        <div v-if="preview.slicedCode.value?.lineOutOfRange" class="code-preview-notice notice-warning">
+          {{ t('file.codePreview.lineOutOfRange') }}
+        </div>
+        <div v-if="preview.slicedCode.value?.renderTruncated" class="code-preview-notice notice-info">
+          {{ t('file.codePreview.truncatedNotice', { size: '512KB' }) }}
+        </div>
+        <div v-if="preview.windowTruncated.value" class="code-preview-notice notice-warning">
+          {{ t('file.codePreview.windowTruncatedNotice') }}
+        </div>
+      </template>
 
       <!-- Mobile In-Preview Search Bar. Gated on showTextTools too: retargeting
            an open search onto a binary/media/directory file must not leave a
@@ -140,6 +142,31 @@
         :refresh-nonce="preview.mediaRefreshNonce?.value ?? 0"
         @loaded="onMediaLoaded"
       />
+      <OfficePreview
+        v-else-if="isOfficeView"
+        :key="`office-${preview.mediaRefreshNonce?.value ?? 0}`"
+        :file="officeFile"
+      />
+      <ExcalidrawViewer
+        v-else-if="isExcalidrawView && bodyReady"
+        :file="diagramFile"
+        :readonly="true"
+      />
+      <DrawioViewer
+        v-else-if="isDrawioView && bodyReady"
+        :file="diagramFile"
+        :readonly="true"
+        :allow-install="true"
+      />
+      <TablePreviewBody
+        v-else-if="isRenderedView && isTableView && bodyReady"
+        :file="tableFile"
+      />
+      <OpenApiPreview
+        v-else-if="isRenderedView && isOpenapiView && openapiReady"
+        :file="specFile"
+        :chat-quote="true"
+      />
       <HtmlPreviewBody
         v-else-if="isRenderedView && isHtmlView"
         ref="bodyRef"
@@ -154,7 +181,7 @@
         @refresh="preview.refresh()"
       />
       <MarkdownPreviewBody
-        v-else-if="isRenderedView"
+        v-else-if="isRenderedView && isMarkdownView"
         ref="bodyRef"
         :status="preview.status.value"
         :error-message-text="errorMessageText"
@@ -208,6 +235,7 @@
         'is-resizing': isResizingCard,
         'is-media': isMediaView,
         'is-page-content': growsToAvailableHeight,
+        'is-fill-view': isFillView,
         'is-docked': docked,
         'is-user-sized': cardW !== null || cardH !== null,
       }"
@@ -368,7 +396,7 @@
       </div>
 
       <!-- Notices -->
-      <div class="code-preview-notices">
+      <div v-if="showSnippetNotices" class="code-preview-notices">
         <div v-if="preview.isLargeFile.value" class="code-preview-notice notice-warning">
           {{ t('file.codePreview.largeFileNotice') }}
         </div>
@@ -419,6 +447,31 @@
         :refresh-nonce="preview.mediaRefreshNonce?.value ?? 0"
         @loaded="onMediaLoaded"
       />
+      <OfficePreview
+        v-else-if="isOfficeView"
+        :key="`office-${preview.mediaRefreshNonce?.value ?? 0}`"
+        :file="officeFile"
+      />
+      <ExcalidrawViewer
+        v-else-if="isExcalidrawView && bodyReady"
+        :file="diagramFile"
+        :readonly="true"
+      />
+      <DrawioViewer
+        v-else-if="isDrawioView && bodyReady"
+        :file="diagramFile"
+        :readonly="true"
+        :allow-install="true"
+      />
+      <TablePreviewBody
+        v-else-if="isRenderedView && isTableView && bodyReady"
+        :file="tableFile"
+      />
+      <OpenApiPreview
+        v-else-if="isRenderedView && isOpenapiView && openapiReady"
+        :file="specFile"
+        :chat-quote="true"
+      />
       <HtmlPreviewBody
         v-else-if="isRenderedView && isHtmlView"
         ref="bodyRef"
@@ -433,7 +486,7 @@
         @refresh="preview.refresh()"
       />
       <MarkdownPreviewBody
-        v-else-if="isRenderedView"
+        v-else-if="isRenderedView && isMarkdownView"
         ref="bodyRef"
         :status="preview.status.value"
         :error-message-text="errorMessageText"
@@ -489,18 +542,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, inject, type Ref } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, inject, defineAsyncComponent, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp, Download, Pin, X } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { refreshTick } from '@/composables/useFileRefresh.ts'
+import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 import CodePreviewToolbar from '@/components/file/CodePreviewToolbar.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
 import HtmlPreviewBody from '@/components/file/HtmlPreviewBody.vue'
 import MediaPreviewBody from '@/components/file/MediaPreviewBody.vue'
+import TablePreviewBody from '@/components/file/TablePreviewBody.vue'
 import DirPreviewBody from '@/components/file/DirPreviewBody.vue'
 import UnsupportedFileBody from '@/components/file/UnsupportedFileBody.vue'
+// Heavy, type-specific bodies load on demand: the quick preview is opened from
+// chat, so its chunk must not pull in the office/docx/excel/pptx runtimes (or
+// the diagram editors) for every code-slice preview.
+const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
+const ExcalidrawViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/ExcalidrawViewer.vue') }))
+const DrawioViewer = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/DrawioViewer.vue') }))
+const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/OpenApiPreview.vue') }))
 import FileIcon from '@/components/common/FileIcon.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
@@ -599,6 +661,38 @@ const showRenderToggle = computed(() => Boolean(props.preview.canRenderDocument?
  *  markdown pipeline). Markdown keeps using MarkdownPreviewBody. */
 const isHtmlView = computed(() => Boolean(props.preview.isHtml?.value))
 
+// ── Type-specific bodies ───────────────────────────────────────────────────
+// Every one of these is a view of the composable's single `previewKind`
+// classification (see utils/filePreviewKind.ts), so the card cannot drift from
+// the full-screen viewer's type support.
+/** CSV / TSV rendered as the shared data table. */
+const isTableView = computed(() => Boolean(props.preview.isTableView?.value))
+/** Office documents (docx / xlsx / pptx / xls) rendered from their raw URL. */
+const isOfficeView = computed(() => Boolean(props.preview.isOfficeView?.value))
+/** Excalidraw / draw.io scenes, mounted read-only in their editors. */
+const isExcalidrawView = computed(() => Boolean(props.preview.isExcalidrawView?.value))
+const isDrawioView = computed(() => Boolean(props.preview.isDrawioView?.value))
+/** OpenAPI / Swagger specs rendered through the shared Swagger UI. */
+const isOpenapiView = computed(() => Boolean(props.preview.isOpenapiView?.value))
+/** Bodies that own their box (table / office / diagram / OpenAPI docs). An
+ *  unsupported target (binary / too large) keeps the compact placeholder box. */
+const isFillView = computed(() => Boolean(props.preview.isFillView?.value) && !isUnsupportedView.value)
+/** The markdown renderer is the fallback for a rendered view: HTML, tables and
+ *  OpenAPI specs each have their own body above it, and `canRenderDocument`
+ *  guarantees nothing else can be in the rendered view. */
+const isMarkdownView = computed(() =>
+  isRenderedView.value && !isHtmlView.value && !isTableView.value && !isOpenapiView.value
+)
+/** True once the fetched content is usable — a table / spec / diagram body is
+ *  mounted only then, so it never renders an empty document while loading. */
+const bodyReady = computed(() => props.preview.status.value === 'ready')
+/** Swagger UI needs the WHOLE spec. The first (windowed) response already
+ *  carries the subtype, but its content is a truncated document; the body waits
+ *  for the whole-file upgrade (no `windowStart`) before mounting. */
+const openapiReady = computed(() =>
+  bodyReady.value && props.preview.fileContent.value?.windowStart === undefined
+)
+
 // ── Media body (image / SVG / video / audio / PDF) ─────────────────────────
 // When the target is a media file the card renders MediaPreviewBody instead of
 // the code/markdown bodies, and all text-viewer tools (search, wrap, line
@@ -620,8 +714,26 @@ const mediaKind = computed<'image' | 'video' | 'audio' | 'pdf' | null>(() => {
 // Text-slice tools are only meaningful when a code/markdown body is showing.
 // An unsupported file (binary / past the whole-file cap) renders the
 // placeholder instead, so it has no searchable, wrappable or copyable text
-// either — the same rule the full-screen viewer applies.
-const showTextTools = computed(() => !isMediaView.value && !isDirView.value && !isUnsupportedView.value)
+// either — the same rule the full-screen viewer applies. Office documents and
+// diagrams are opaque bodies: their own toolbars own their controls.
+const showTextTools = computed(() =>
+  !isMediaView.value
+  && !isDirView.value
+  && !isUnsupportedView.value
+  && !isOfficeView.value
+  && !isExcalidrawView.value
+  && !isDrawioView.value
+)
+
+/** Code-slice notices ("large file", "truncated window") describe the line
+ *  slice. A table / spec / diagram shows its whole document, so they would be
+ *  false there. */
+const showSnippetNotices = computed(() =>
+  !isOfficeView.value
+  && !isExcalidrawView.value
+  && !isDrawioView.value
+  && !(isRenderedView.value && (isTableView.value || isOpenapiView.value))
+)
 
 /**
  * The file cannot be sliced as text (binary sniff, or past the whole-file cap)
@@ -906,9 +1018,10 @@ const contextMeta = computed(() => {
   if (size !== undefined && size > 0) {
     parts.push(formatFileSize(size))
   }
-  // Media targets have no fetched content (no line count / size), so surface
-  // the file type label instead of leaving the meta row blank.
-  if (parts.length === 0 && isMediaView.value) {
+  // Media targets and raw-URL documents have no fetched content (no line count
+  // / size), so surface the file type label instead of leaving the meta row
+  // blank.
+  if (parts.length === 0 && (isMediaView.value || isOfficeView.value || isExcalidrawView.value || isDrawioView.value)) {
     const label = getFileType(filePath).label
     if (label) parts.push(label)
   }
@@ -1232,6 +1345,26 @@ const fileDirPath = computed(() => {
   const idx = p.lastIndexOf('/')
   return idx >= 0 ? p.slice(0, idx) : ''
 })
+
+/** OfficePreview loads the document itself from this path — only name (it
+ *  picks the docx/xlsx/pptx renderer from the extension) and path matter. */
+const officeFile = computed(() => ({ name: fileBaseName.value, path: targetFilePath.value }))
+
+/** The diagram editors receive the fetched document (scene JSON / mxfile XML). */
+const diagramFile = computed(() => props.preview.fileContent.value)
+
+/** TablePreviewBody parses this content into rows (whole file, see the
+ *  composable's whole-file fetch rule). */
+const tableFile = computed(() => ({
+  name: fileBaseName.value,
+  path: targetFilePath.value,
+  content: props.preview.fileContent.value?.content ?? '',
+  truncated: props.preview.fileContent.value?.truncated === true,
+}))
+
+/** Swagger UI reads `specJson` (YAML already converted by the backend) or the
+ *  raw spec document. */
+const specFile = computed(() => props.preview.fileContent.value)
 
 /** Canonical `:90-91,309,938-943` suffix (empty when no line target). */
 const lineRangeSuffix = computed(() => {

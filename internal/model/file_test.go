@@ -665,3 +665,64 @@ func TestIsOfficeFile(t *testing.T) {
 		})
 	}
 }
+
+// DetectSubtypeWindow exists for the quick-preview line-window endpoint, where
+// the content is a PREFIX of the document. The important case is JSON: a window
+// is never valid JSON as a whole, so the ordinary parser cannot see the spec key.
+func TestDetectSubtypeWindow(t *testing.T) {
+	t.Run("JSON window truncated mid-document", func(t *testing.T) {
+		// The opening window of a JSON spec ends inside `info`, so
+		// json.Unmarshal fails — the streaming top-level key scan must still
+		// identify it.
+		window := `{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Test",`
+		assert.Equal(t, model.SubtypeOpenAPI, model.DetectSubtypeWindow("api.json", window))
+	})
+
+	t.Run("JSON window with swagger key", func(t *testing.T) {
+		window := `{
+  "swagger": "2.0",
+  "info": {`
+		assert.Equal(t, model.SubtypeOpenAPI, model.DetectSubtypeWindow("api.json", window))
+	})
+
+	t.Run("JSON window whose spec key is not first", func(t *testing.T) {
+		window := `{
+  "x-generated": true,
+  "openapi": "3.1.0",
+  "info": {`
+		assert.Equal(t, model.SubtypeOpenAPI, model.DetectSubtypeWindow("api.json", window))
+	})
+
+	t.Run("nested openapi key does not classify", func(t *testing.T) {
+		// Only depth-1 keys count: an unrelated document may legitimately
+		// contain an `openapi` field inside one of its objects.
+		window := `{
+  "config": {
+    "openapi": "3.0.0"`
+		assert.Equal(t, "", model.DetectSubtypeWindow("config.json", window))
+	})
+
+	t.Run("JSON window with no spec key", func(t *testing.T) {
+		window := `{
+  "name": "pkg",
+  "version": "1.0.0",`
+		assert.Equal(t, "", model.DetectSubtypeWindow("package.json", window))
+	})
+
+	t.Run("YAML window", func(t *testing.T) {
+		window := "openapi: 3.0.0\ninfo:\n  title: Test"
+		assert.Equal(t, model.SubtypeOpenAPI, model.DetectSubtypeWindow("api.yaml", window))
+	})
+
+	t.Run("extension-based subtypes still work on a window", func(t *testing.T) {
+		assert.Equal(t, model.SubtypeExcalidraw, model.DetectSubtypeWindow("scene.excalidraw", `{"type":"excalidraw"`))
+		assert.Equal(t, model.SubtypeDrawio, model.DetectSubtypeWindow("flow.drawio", `<mxfile><diagram`))
+	})
+
+	t.Run("plain text window", func(t *testing.T) {
+		assert.Equal(t, "", model.DetectSubtypeWindow("notes.txt", "openapi: not really"))
+	})
+}

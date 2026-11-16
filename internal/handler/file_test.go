@@ -2092,6 +2092,32 @@ func TestGetFileLineWindow(t *testing.T) {
 		assert.False(t, fc.WindowTruncated)
 	})
 
+	t.Run("WindowResponseCarriesOpenAPISubtype", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// A JSON window is a prefix, never valid JSON as a whole. The preview
+		// card needs the subtype to switch from the code slice to the spec
+		// renderer, so the window response must classify it too.
+		createTestFile(t, env.ProjectDir, "api.json", `{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Test"
+  },
+  "paths": {}
+}`)
+
+		req := newRequest(t, http.MethodGet, "/api/fs/file/api.json?lineStart=1&lineEnd=3", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, model.SubtypeOpenAPI, fc.Subtype)
+	})
+
 	t.Run("LoneLineStartMeansSingleLine", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()

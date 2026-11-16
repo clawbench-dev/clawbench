@@ -202,6 +202,64 @@ func DetectSubtype(filename, content string) (subtype string) {
 	}
 }
 
+// DetectSubtypeWindow classifies a PARTIAL document, such as a line-window
+// response from the file preview endpoint.
+//
+// It exists because a preview window is not a whole file: JSON cut at a line
+// boundary never parses, so the ordinary detector can never see an OpenAPI
+// spec in it. YAML is line-oriented and already parses as a prefix, so it goes
+// through DetectSubtype unchanged. For JSON the spec version key is a
+// TOP-LEVEL key (normally the first one), which a streaming scan can read
+// without the rest of the document.
+//
+// Returning "" is always safe: the caller then treats the window as plain
+// source text.
+func DetectSubtypeWindow(filename, content string) string {
+	if subtype := DetectSubtype(filename, content); subtype != "" {
+		return subtype
+	}
+	lower := strings.ToLower(filename)
+	if strings.HasSuffix(lower, ".json") || strings.HasSuffix(lower, ".jsonc") || strings.HasSuffix(lower, ".json5") {
+		return detectSubtypeJSONPrefix(content)
+	}
+	return ""
+}
+
+// detectSubtypeJSONPrefix reads the first few TOP-LEVEL keys of a possibly
+// truncated JSON document. Only keys at depth 1 are considered, so a nested
+// `openapi` field inside some other object cannot misclassify the file. A
+// truncated value stops the scan, which is why the spec key is normally found
+// on the first iteration.
+func detectSubtypeJSONPrefix(content string) string {
+	dec := json.NewDecoder(strings.NewReader(content))
+	tok, err := dec.Token()
+	if err != nil {
+		return ""
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return ""
+	}
+	for i := 0; i < 8; i++ {
+		tok, err = dec.Token()
+		if err != nil {
+			return ""
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return ""
+		}
+		if key == "openapi" || key == "swagger" {
+			return SubtypeOpenAPI
+		}
+		// Skip this key's value. A window that ends inside it ends the scan.
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return ""
+		}
+	}
+	return ""
+}
+
 // detectSubtypeYAML parses YAML content and checks for openapi/swagger top-level keys.
 func detectSubtypeYAML(content string) string {
 	var root map[string]interface{}

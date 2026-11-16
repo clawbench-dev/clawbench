@@ -497,6 +497,17 @@ func writeLineWindowResponse(w http.ResponseWriter, m fileResponseMeta, winStart
 	}
 	respPath := responsePath(m.absPath, m.projectPath, m.isExternal)
 	linkTarget, isSymlink := resolveLinkTarget(m.absPath, m.projectPath, m.isExternal)
+	// Only the opening window can identify a subtype: the spec version key sits
+	// at the top of the document, and extension-based subtypes are already known
+	// to the frontend. This also keeps scroll-driven growth windows (which start
+	// mid-file) from paying for a YAML/JSON sniff on every request.
+	//
+	// The preview card classifies a `.yaml`/`.json` target from it: an OpenAPI
+	// spec must render as docs, not as a code slice.
+	subtype := ""
+	if win.Start <= 1 {
+		subtype = model.DetectSubtypeWindow(m.info.Name(), win.Text)
+	}
 	writeJSON(w, http.StatusOK, FileContent{
 		Content:         win.Text,
 		Name:            m.info.Name(),
@@ -504,6 +515,7 @@ func writeLineWindowResponse(w http.ResponseWriter, m fileResponseMeta, winStart
 		Supported:       model.IsSupportedFile(m.info.Name()),
 		Size:            m.info.Size(),
 		Truncated:       win.Truncated,
+		Subtype:         subtype,
 		LinkTarget:      linkTarget,
 		IsSymlink:       isSymlink,
 		TotalLines:      win.TotalLines,

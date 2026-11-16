@@ -20,6 +20,7 @@ import { parseLineRanges } from '@/utils/lineRanges'
 import { joinPath, isAbsolutePath } from '@/utils/path'
 import { buildDirListUrl } from '@/utils/dirList'
 import { getFileType } from '@/utils/fileType'
+import { filePreviewKind, kindHasRenderedView, type FilePreviewKind } from '@/utils/filePreviewKind'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
@@ -76,9 +77,16 @@ export function isHtmlTarget(target: PreviewTarget | null): boolean {
 }
 
 /** Whether the preview target is a document renderable in the rendered view
- *  (Markdown or HTML). Non-document files (code, media, directory) are not. */
+ *  (Markdown, HTML or a data table). Non-document files (code, media,
+ *  directory, OpenAPI before its subtype is known) are not. */
 export function isRenderableTarget(target: PreviewTarget | null): boolean {
-  return isMarkdownTarget(target) || isHtmlTarget(target)
+  return isMarkdownTarget(target) || isHtmlTarget(target) || isTableTarget(target)
+}
+
+/** Whether the preview target is a delimited text file (CSV / TSV). */
+export function isTableTarget(target: PreviewTarget | null): boolean {
+  const filePath = target?.filePath || ''
+  return filePath ? Boolean(getFileType(filePath).isTable) : false
 }
 
 /** Whether the preview target carries an explicit line annotation. */
@@ -166,18 +174,23 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   // authoritative (it came from the server's stat), so every extension-based
   // classification defers to it. Without this, such a directory would render a
   // media body or a bogus markdown toggle instead of its listing.
-  const isMarkdown = computed(() => {
-    if (isDirTarget.value) return false
+  //
+  // `previewKind` is the single classification every body branch reads. It
+  // defers to the backend's content subtype when one is known (an OpenAPI spec
+  // is a `.yaml`/`.json` file, not a distinct extension) and otherwise to the
+  // shared `filePreviewKind` table — the same table the drift guard checks
+  // against FileType's renderer flags.
+  const previewKind = computed<FilePreviewKind>(() => {
+    if (isDirTarget.value) return 'dir'
     const filePath = target.value?.filePath || ''
-    return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
+    if (!filePath) return 'text'
+    return filePreviewKind(filePath, fileContent.value?.subtype)
   })
 
+  const isMarkdown = computed(() => previewKind.value === 'markdown')
+
   /** Whether the current target is an HTML file (renderable in the doc view). */
-  const isHtml = computed(() => {
-    if (isDirTarget.value) return false
-    const filePath = target.value?.filePath || ''
-    return filePath ? Boolean(getFileType(filePath).isHtml) : false
-  })
+  const isHtml = computed(() => previewKind.value === 'html')
 
   const dirEntries = ref<DirPreviewEntry[]>([])
   const dirLoading = ref(false)
@@ -253,21 +266,34 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   // cap, inline), NOT by /api/file — which is JSON, 10 MiB-capped and reports
   // every raster image as binary. The preview short-circuits the fetch for
   // them and renders a media body straight from the URL.
-  const fileType = computed(() => {
-    if (isDirTarget.value) return null
-    const filePath = target.value?.filePath || ''
-    return filePath ? getFileType(filePath) : null
-  })
-  const isImageTarget = computed(() => Boolean(fileType.value?.isImage))
-  const isVideoTarget = computed(() => Boolean(fileType.value?.isVideo))
-  const isAudioTarget = computed(() => Boolean(fileType.value?.isAudio))
-  const isPdfTarget = computed(() => Boolean(fileType.value?.isPdf))
+  //
+  // Every kind flag below is a view of `previewKind`, so a body branch can
+  // never disagree with the classification (or with the other surfaces).
+  const isImageTarget = computed(() => previewKind.value === 'image')
+  const isVideoTarget = computed(() => previewKind.value === 'video')
+  const isAudioTarget = computed(() => previewKind.value === 'audio')
+  const isPdfTarget = computed(() => previewKind.value === 'pdf')
   const isMediaTarget = computed(() =>
     isImageTarget.value || isVideoTarget.value || isAudioTarget.value || isPdfTarget.value
   )
 
-  // Bumped by refresh() for media targets so the media element re-requests its
-  // URL (media bypasses the JSON fetch/cache entirely).
+  // ── Non-media bodies ─────────────────────────────────────────────────────
+  /** Office documents render from the raw URL, like media: the binary never
+   *  travels through the JSON content endpoint. */
+  const isOfficeView = computed(() => previewKind.value === 'office')
+  /** Excalidraw / draw.io scenes are text (JSON / XML), so the editor needs the
+   *  document itself — fetched whole, not sliced. */
+  const isExcalidrawView = computed(() => previewKind.value === 'excalidraw')
+  const isDrawioView = computed(() => previewKind.value === 'drawio')
+  const isDiagramView = computed(() => isExcalidrawView.value || isDrawioView.value)
+  /** Delimited text rendered as the shared data table. */
+  const isTableView = computed(() => previewKind.value === 'table')
+  /** An OpenAPI/Swagger spec, known only after the backend reports the
+   *  subtype. It renders through the shared Swagger UI, like the full viewer. */
+  const isOpenapiView = computed(() => previewKind.value === 'openapi')
+
+  // Bumped by refresh() for targets whose body owns its own fetch (media raw
+  // URL, office documents) so the element re-requests / remounts.
   const mediaRefreshNonce = ref(0)
 
   const hasExplicitLineRange = computed(() => {
@@ -277,17 +303,28 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
   /**
    * Whether the current target can be shown in the rendered document view.
-   * Markdown and HTML both qualify; code/media/directory do not.
+   * Markdown, HTML, CSV/TSV tables and OpenAPI specs qualify; code/media/
+   * directory do not.
    */
   // `isMarkdown`, `isHtml` and `isMediaTarget` already return false for a
   // directory target (see their definitions), so this stays a plain alias.
-  const canRenderDocument = computed(() => isMarkdown.value || isHtml.value)
+  const canRenderDocument = computed(() => kindHasRenderedView(previewKind.value))
 
   // A renderable document default-renders unless the annotation pinned a line
   // range (the source slice is the useful view then). Re-evaluate on each
   // target change.
   const effectiveRenderMode = computed<PreviewRenderMode>(() =>
     canRenderDocument.value ? renderMode.value : 'source'
+  )
+
+  /** Kinds whose body fills a definite box instead of hugging a code slice.
+   *  Office documents and diagrams always do; a table / OpenAPI spec only while
+   *  its rendered view is showing (the source toggle goes back to a code
+   *  slice). */
+  const isFillView = computed(() =>
+    isOfficeView.value
+    || isDiagramView.value
+    || (effectiveRenderMode.value === 'rendered' && (isTableView.value || isOpenapiView.value))
   )
 
   // Timers & concurrency
@@ -546,14 +583,49 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     const rect = el.getBoundingClientRect()
     // Realistic card dimensions (compact initial estimate before DOM measurement).
     // Width is the SAME for every target type — one card width, matching the
-    // CSS base rule. Only the height estimate differs: a media card holds the
-    // file itself and grows taller, while a code slice stays compact.
-    const media = isMediaTarget.value
+    // CSS base rule. Only the height estimate differs: a body that owns its box
+    // (media, table, office document, diagram, OpenAPI docs) opens taller than
+    // a code slice.
+    const tall = isMediaTarget.value || isFillView.value
     const defaultWidth = 720
-    const defaultHeight = media ? 420 : 260
+    const defaultHeight = tall ? 420 : 260
     const cardWidth = customWidth ?? Math.min(defaultWidth, typeof window !== 'undefined' ? window.innerWidth - 24 : 700)
     const cardHeight = customHeight ?? Math.min(defaultHeight, typeof window !== 'undefined' ? Math.min(defaultHeight, window.innerHeight * 0.6) : 240)
     placement.value = placeNearAnchor(rect, cardWidth, cardHeight)
+  }
+
+  /**
+   * A window response identified the file as an OpenAPI spec. The renderer
+   * needs the WHOLE document — a spec cut at a line window cannot be parsed,
+   * and the whole-file path is also what converts YAML to the JSON ReDoc
+   * consumes. Specs are capped by the backend's sniff limit (1 MiB), so this
+   * second request is small and only ever runs for a file the server already
+   * classified as a spec.
+   *
+   * Failure is non-fatal: the source slice from the window is still on screen
+   * and remains a valid preview.
+   */
+  const adoptOpenapiDocument = async (reqId: number) => {
+    const filePath = target.value?.filePath
+    if (!filePath) return
+    try {
+      const resp = await apiGet<FileContentResponse>(buildPreviewUrl(filePath, null), {
+        signal: currentAbortController?.signal,
+        timeoutMs: 10_000,
+      })
+      if (reqId !== currentRequestId) return
+      fileContent.value = resp
+      seedHeldContent(resp)
+      updateSlice()
+      status.value = 'ready'
+      // The rendered view is the useful one for a spec; an explicit line
+      // annotation keeps the source slice, exactly like Markdown.
+      if (!hasExplicitLineRange.value) renderMode.value = 'rendered'
+    } catch (err: unknown) {
+      const errObj = err as { name?: string }
+      if (errObj?.name === 'AbortError') return
+      appLog.w('CodeLinkPreview', 'Failed to load the full OpenAPI document', { path: filePath, error: err })
+    }
   }
 
   const fetchPreview = async (
@@ -603,18 +675,34 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       return
     }
 
+    // Office documents take the same raw-URL path: the bytes are a binary
+    // container that only the office renderer can read. The full viewer has
+    // always done this; the quick preview used to fall through to /api/file and
+    // land on the binary placeholder.
+    if (isOfficeView.value) {
+      resetHeldContent()
+      status.value = 'ready'
+      return
+    }
+
     // Ask for just the lines this preview can render (plus margin), so a large
     // file is never transferred in full. Later growth is incremental
     // (fetchChunk / loadMore) instead of one ever-wider request.
     //
-    // HTML is the exception, but ONLY for an external (absolute-path) file:
-    // that case renders via srcdoc, which needs the WHOLE document (a line
-    // window would truncate it). A project-relative HTML file renders through
-    // the iframe's own URL, so the source view keeps the ordinary windowed
-    // slicing — same as any other code file.
+    // Whole-file exceptions:
+    //  - external (absolute-path) HTML renders via srcdoc, which needs the
+    //    whole document (a line window would truncate it);
+    //  - a CSV/TSV table parses the entire file into rows;
+    //  - an Excalidraw / draw.io scene is handed to its editor as one document.
+    // A project-relative HTML file renders through the iframe's own URL, so its
+    // source view keeps the ordinary windowed slicing — same as any code file.
     const htmlNeedsWholeFile = isHtmlTarget(newTarget) && isAbsolutePath(newTarget.filePath)
+    const needsWholeFile = htmlNeedsWholeFile
+      || isTableTarget(newTarget)
+      || isExcalidrawView.value
+      || isDrawioView.value
     const win: FetchWindow | null = windowOverride
-      ?? (htmlNeedsWholeFile ? null : computeFetchWindow(newTarget, fileTotalLines.value))
+      ?? (needsWholeFile ? null : computeFetchWindow(newTarget, fileTotalLines.value))
 
     const projectRoot = store.state.projectRoot || ''
     const cacheKey = previewCache.buildKey(projectRoot, newTarget.filePath, win)
@@ -630,6 +718,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
         seedHeldContent(cached)
         updateSlice()
         status.value = 'ready'
+        if (cached.subtype === 'openapi') void adoptOpenapiDocument(reqId)
         return
       }
     }
@@ -659,6 +748,10 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
       updateSlice()
       status.value = 'ready'
+      // A `.yaml`/`.json` file can be an OpenAPI spec — a content fact, not an
+      // extension. The window response carries the backend's subtype, so the
+      // card upgrades to the Swagger UI once the whole document is in.
+      if (resp.subtype === 'openapi') void adoptOpenapiDocument(reqId)
       // The opening window does not always cover what the slice wants to show:
       // an annotation past EOF gets an empty window, and a server-clamped window
       // can fall short. A blank pane never scrolls, so the body cannot recover
@@ -723,9 +816,11 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     mediaRefreshNonce.value = 0
     visible.value = true
 
-    // Renderable documents (Markdown / HTML) without a pinned line range
-    // default to the rendered document view on every open; anything else
-    // (line-annotated paths, code, media) stays in the source slice view.
+    // Renderable documents (Markdown / HTML / CSV table) without a pinned line
+    // range default to the rendered document view on every open; anything else
+    // (line-annotated paths, code, media) stays in the source slice view. An
+    // OpenAPI spec upgrades to the rendered view once its subtype is known
+    // (see adoptOpenapiDocument).
     renderMode.value = isRenderableTarget(newTarget) && !hasLineRange(newTarget) ? 'rendered' : 'source'
 
     // Once pinned (including after dragging), retain the current placement
@@ -792,7 +887,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   }
 
   /** Toggle between the rendered document and the source slice
-   *  (Markdown / HTML only). */
+   *  (Markdown / HTML / table / OpenAPI). */
   const toggleRenderMode = () => {
     if (!canRenderDocument.value) return
     renderMode.value = renderMode.value === 'rendered' ? 'source' : 'rendered'
@@ -812,6 +907,18 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     // nonce feeds MediaPreviewBody's cache-busting param.
     if (isMediaTarget.value) {
       mediaRefreshNonce.value += 1
+      return
+    }
+    // Office documents also skip the JSON fetch (OfficePreview loads the raw
+    // URL itself), so remount it instead.
+    if (isOfficeView.value) {
+      mediaRefreshNonce.value += 1
+      return
+    }
+    // Diagrams need their document re-fetched AND the editor reloaded.
+    if (isDiagramView.value) {
+      mediaRefreshNonce.value += 1
+      fetchPreview(target.value, true)
       return
     }
     fetchPreview(target.value, true)
@@ -1040,6 +1147,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     extraBelowLines,
     placement,
     renderMode,
+    previewKind,
     isMarkdown,
     isHtml,
     hasExplicitLineRange,
@@ -1050,6 +1158,14 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     isAudioTarget,
     isPdfTarget,
     isMediaTarget,
+    // Non-media bodies that used to fall through to the code slice.
+    isTableView,
+    isOfficeView,
+    isExcalidrawView,
+    isDrawioView,
+    isDiagramView,
+    isOpenapiView,
+    isFillView,
     // Directory targets (the card lists the directory instead of slicing code).
     isDirTarget,
     dirEntries,

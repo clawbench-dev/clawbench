@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref, reactive, computed, nextTick, type Ref } from 'vue'
+import { ref, reactive, computed, defineComponent, h, nextTick, type Ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { store } from '@/stores/app'
@@ -13,6 +13,27 @@ import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePla
 import { applyUIScale } from '@/utils/uiScale'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { FILE_PREVIEW_KINDS } from '@/utils/filePreviewKind'
+
+// Type-specific bodies are lazily imported by the component. Stub the heavy
+// ones so the type-coverage guard only proves the dispatch, not the document
+// renderers (each has its own suite).
+vi.mock('@/components/media/OfficePreview.vue', () => ({
+  __esModule: true,
+  default: defineComponent({ name: 'OfficePreview', props: ['file'], render: () => h('div', { class: 'office-preview-stub' }) }),
+}))
+vi.mock('@/components/file/ExcalidrawViewer.vue', () => ({
+  __esModule: true,
+  default: defineComponent({ name: 'ExcalidrawViewer', props: ['file', 'readonly'], render: () => h('div', { class: 'excalidraw-stub' }) }),
+}))
+vi.mock('@/components/file/DrawioViewer.vue', () => ({
+  __esModule: true,
+  default: defineComponent({ name: 'DrawioViewer', props: ['file', 'readonly', 'allowInstall'], render: () => h('div', { class: 'drawio-stub' }) }),
+}))
+vi.mock('@/components/file/OpenApiPreview.vue', () => ({
+  __esModule: true,
+  default: defineComponent({ name: 'OpenApiPreview', props: ['file', 'chatQuote'], render: () => h('div', { class: 'openapi-stub' }) }),
+}))
 
 // Mock highlightCode
 vi.mock('@/utils/globals', () => ({
@@ -244,6 +265,23 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
   const isAudioTarget = computed(() => mediaKind.value === 'audio' && !isDirTarget.value)
   const isPdfTarget = computed(() => mediaKind.value === 'pdf' && !isDirTarget.value)
   const isMediaTarget = computed(() => mediaKind.value !== null && !isDirTarget.value)
+  // ── Type-specific bodies (drift-guard tests) ──
+  // The component reads one flag per body, all derived from the composable's
+  // single `previewKind`. Adopt a caller-supplied kind so a test can exercise
+  // any body without wiring six refs.
+  const previewKind = (overrides.previewKind as Ref<string> | undefined) ?? ref('text')
+  const kindIs = (kind: string) => computed(() => previewKind.value === kind)
+  const isTableView = kindIs('table')
+  const isOfficeView = kindIs('office')
+  const isExcalidrawView = kindIs('excalidraw')
+  const isDrawioView = kindIs('drawio')
+  const isDiagramView = computed(() => isExcalidrawView.value || isDrawioView.value)
+  const isOpenapiView = kindIs('openapi')
+  const isFillView = computed(() =>
+    isOfficeView.value
+    || isDiagramView.value
+    || (effectiveRenderMode.value === 'rendered' && (isTableView.value || isOpenapiView.value))
+  )
   const toggleRenderMode = vi.fn(() => {
     if (!canRenderDocument.value) return
     renderMode.value = renderMode.value === 'rendered' ? 'source' : 'rendered'
@@ -288,6 +326,14 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     isAudioTarget,
     isPdfTarget,
     isMediaTarget,
+    previewKind,
+    isTableView,
+    isOfficeView,
+    isExcalidrawView,
+    isDrawioView,
+    isDiagramView,
+    isOpenapiView,
+    isFillView,
     mediaRefreshNonce: ref(0),
     showPreview: vi.fn(),
     close: vi.fn(() => {
@@ -3817,4 +3863,75 @@ describe('code-link-preview.css — one shared tool row (no sheet-only toolbar)'
     expect(sheet![1]).toMatch(/cursor:\s*default/)
     expect(sheet![1]).toMatch(/touch-action:\s*auto/)
   })
+})
+
+// ── Quick-preview type coverage (drift guard) ───────────────────────────────
+// The classification itself is guarded in utils/__tests__/filePreviewKind.test.ts.
+// This proves each kind reaches a BODY: a new kind added to the classification
+// without a branch in CodeLinkPreview fails here instead of silently rendering
+// the code slice. Kinds share one fixture; only the flag and the expected body
+// differ.
+describe('quick-preview type coverage (drift guard)', () => {
+  const fileContent = ref<any>({
+    content: 'name,count\nalpha,1\nbeta,2',
+    name: 'sample.csv',
+    path: 'sample.csv',
+    supported: true,
+    size: 28,
+  })
+
+  // Kinds whose bodies have their own suites below/above. Listing them here
+  // makes FILE_PREVIEW_KINDS exhaustive: a new kind fails until it is either
+  // covered by an existing suite or added to `cases` with a body assertion.
+  const coveredByOtherSuites = ['dir', 'markdown', 'html', 'image', 'video', 'audio', 'pdf', 'text']
+
+  const cases: Array<{ kind: string; selector: string; rendered?: boolean; fill?: boolean }> = [
+    { kind: 'table', selector: '.table-preview', rendered: true, fill: true },
+    { kind: 'openapi', selector: '.openapi-stub', rendered: true, fill: true },
+    { kind: 'office', selector: '.office-preview-stub', fill: true },
+    { kind: 'excalidraw', selector: '.excalidraw-stub', fill: true },
+    { kind: 'drawio', selector: '.drawio-stub', fill: true },
+  ]
+
+  it('covers every declared preview kind', () => {
+    const covered = new Set([...coveredByOtherSuites, ...cases.map(c => c.kind)])
+    for (const kind of FILE_PREVIEW_KINDS) {
+      expect(covered.has(kind), `${kind} has no body test — add one to this drift guard`).toBe(true)
+    }
+  })
+
+  for (const testCase of cases) {
+    it(`renders the ${testCase.kind} body`, async () => {
+      const preview = createMockPreviewController({
+        target: ref({ filePath: 'sample.csv', anchorEl: document.createElement('span') }),
+        previewKind: ref(testCase.kind),
+        status: ref('ready'),
+        fileContent,
+        canRenderDocument: ref(Boolean(testCase.rendered)),
+        effectiveRenderMode: ref(testCase.rendered ? 'rendered' : 'source'),
+        isFillView: ref(Boolean(testCase.fill)),
+      })
+
+      const wrapper = mount(CodeLinkPreview, {
+        props: { preview },
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+      await nextTick()
+
+      const floating = document.querySelector('.code-link-preview-floating')
+      expect(floating, 'the card must render').not.toBeNull()
+      expect(
+        floating?.querySelector(testCase.selector),
+        `${testCase.kind} must render ${testCase.selector}, not a code slice`,
+      ).not.toBeNull()
+      // None of these may fall through to the source slice.
+      expect(floating?.querySelector('.code-preview-line-row')).toBeNull()
+      if (testCase.fill) {
+        expect(floating?.classList.contains('is-fill-view')).toBe(true)
+      }
+
+      wrapper.unmount()
+    })
+  }
 })

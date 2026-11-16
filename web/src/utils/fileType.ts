@@ -18,7 +18,9 @@ export interface FileType {
     isTable?: boolean
 }
 
-const FILE_TYPES: FileType[] = [
+/** The full registry. Exported so the quick-preview drift guard can assert
+ *  every registered type has a preview kind (see filePreviewKind.ts). */
+export const FILE_TYPES: FileType[] = [
     { exts: ['cmakelists.txt'], lang: 'cmake', label: 'CMake', color: '#064f8c', isMarkdown: false },
     { exts: ['dockerfile', '.dockerfile', '.dockerignore'], lang: 'dockerfile', label: 'Docker', color: '#384d54', isMarkdown: false },
     { exts: ['makefile', 'gnumakefile', '.makefile', '.mak'], lang: 'makefile', label: 'Make', color: '#6d8086', isMarkdown: false },
