@@ -82,6 +82,16 @@ describe('install.sh', () => {
 })
 
 describe('install.ps1', () => {
+  it('带 UTF-8 BOM，否则 PowerShell 5.1 会把中文按 GBK 解码', () => {
+    // Windows PowerShell 5.1 读没有 BOM 的脚本时用系统 ANSI 代码页（中文机器上
+    // 是 GBK）。UTF-8 的中文按 GBK 两两配对时会把后面的引号、花括号一起吃掉，
+    // 报出来的是「switch 语句的子句中缺少语句块」这种跟中文毫无关系的语法错。
+    // 带 BOM 时 5.1 才会按 UTF-8 解码；`irm | iex` 那条路 StreamReader 也会
+    // 识别 BOM 并剥掉，所以两边都安全。
+    const buf = readFileSync(INSTALL_PS1)
+    expect([...buf.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
+  })
+
   it('出错就停，且不关掉用户的窗口', () => {
     const src = readFileSync(INSTALL_PS1, 'utf8')
     expect(src).toContain("$ErrorActionPreference = 'Stop'")

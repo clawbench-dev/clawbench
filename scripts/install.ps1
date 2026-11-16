@@ -1,4 +1,4 @@
-# ClawBench 一键安装脚本 — Windows (PowerShell)
+﻿# ClawBench 一键安装脚本 — Windows (PowerShell)
 #
 # 做两件事：
 #   1. 准备 Node.js（本机已有 20 及以上就直接用，否则下载一份到自己的目录）
