@@ -5394,7 +5394,8 @@ export default {
       unavailable: 'This meeting has nothing to quote yet',
     },
     list: {
-      title: 'Meetings',
+      // Same wording as the dock tab: one entry point, one name.
+      title: 'Video meetings',
       count: '{n} total',
       refresh: 'Refresh',
       empty: 'No meetings yet',
