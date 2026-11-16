@@ -239,6 +239,7 @@
                       >
                         <Sparkles :size="11" />
                         <span>{{ t('kb.autoInjectShort') }}</span>
+                        <span class="kb-inject-dot" aria-hidden="true" />
                         <span class="kb-inject-state">{{ selected.auto_inject ? t('kb.on') : t('kb.off') }}</span>
                       </button>
                       <span v-if="selectMode" class="kb-select-count">
@@ -1968,20 +1969,26 @@ defineExpose({
   background: var(--bg-primary);
 }
 
+/* Identity + actions read as one card, like the document rows below: the
+   header used to be bare text on the panel surface, separated by hairlines,
+   which made it float above the list instead of belonging to it. */
 .kb-main-head {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-5) var(--space-5) var(--space-3);
-  border-bottom: 1px solid var(--border-color);
+  margin: var(--space-4) var(--panel-body-pad) 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
   flex: none;
+  overflow: hidden;
 }
 
 .kb-main-title-line {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-3);
   min-width: 0;
+  padding: var(--space-4) var(--space-4) 0;
 }
 
 .kb-main-title-text {
@@ -1994,9 +2001,9 @@ defineExpose({
   align-items: center;
   justify-content: center;
   flex: none;
-  width: calc(34 * var(--dp));
-  height: calc(34 * var(--dp));
-  border-radius: var(--radius-md);
+  width: calc(30 * var(--dp));
+  height: calc(30 * var(--dp));
+  border-radius: calc(9 * var(--dp));
   color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
@@ -2029,7 +2036,10 @@ defineExpose({
 
 .kb-scope {
   flex: none;
-  padding: 1px var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  height: calc(17 * var(--dp));
+  padding: 0 var(--space-2);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-full);
   color: var(--text-muted);
@@ -2049,7 +2059,8 @@ defineExpose({
   align-items: center;
   gap: var(--space-1);
   flex: none;
-  padding: 1px var(--space-2);
+  height: calc(17 * var(--dp));
+  padding: 0 var(--space-2);
   border: 1px solid color-mix(in srgb, var(--accent-color) 35%, transparent);
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
@@ -2065,14 +2076,24 @@ defineExpose({
   color: var(--text-muted);
 }
 
+/* State reads as a dot, not a rule: a 1px vertical line at this size looks like
+   a caret left in the label. */
+.kb-inject-dot {
+  flex: none;
+  width: calc(4 * var(--dp));
+  height: calc(4 * var(--dp));
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
+}
+
 .kb-inject-state {
-  padding-left: var(--space-1);
-  border-left: 1px solid currentColor;
-  opacity: 0.75;
+  opacity: 0.8;
 }
 
 .kb-main-actions {
   width: 100%;
+  padding: var(--space-3) var(--space-4) var(--space-4);
 }
 
 .kb-back {
@@ -2080,10 +2101,12 @@ defineExpose({
   align-items: center;
   justify-content: center;
   flex: none;
-  padding: var(--space-1);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
   color: var(--text-secondary);
   cursor: pointer;
 }
