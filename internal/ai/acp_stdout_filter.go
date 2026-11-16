@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -325,8 +326,9 @@ func (f *acpStdoutFilter) cacheModelsFromResponse(line []byte) {
 	}
 	for _, m := range state.AvailableModels {
 		ml.Models = append(ml.Models, model.AgentModel{
-			ID:   m.ModelID,
-			Name: m.Name,
+			ID:      m.ModelID,
+			Name:    m.Name,
+			Credits: m.credits(),
 		})
 	}
 
@@ -353,4 +355,22 @@ type acpSessionModelState struct {
 type acpModelInfo struct {
 	ModelID string `json:"modelId"`
 	Name    string `json:"name"`
+	// Meta is the extension bag. CodeBuddy puts the billing multiplier under
+	// `credits` ("x0.06 credits") here; no other agent reports one today.
+	Meta map[string]any `json:"_meta"`
+}
+
+// credits returns the model's billing multiplier from the extension bag, or ""
+// when the agent publishes none. Only a string is accepted: a numeric or
+// structured value is not a multiplier we know how to render, and guessing one
+// would put a made-up number in front of the user.
+func (m acpModelInfo) credits() string {
+	if m.Meta == nil {
+		return ""
+	}
+	s, ok := m.Meta["credits"].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
 }

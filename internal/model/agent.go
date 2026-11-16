@@ -17,6 +17,13 @@ type AgentModel struct {
 	// weekly, so a stored copy would freeze last month's number. Nil means no
 	// trustworthy price — the picker then shows no tag at all.
 	Price *ModelPrice `json:"price,omitempty"`
+	// Credits is the agent's own billing multiplier for this model, verbatim as
+	// the agent reports it (CodeBuddy: "x0.06 credits"; issue #657). Unlike
+	// Price it is agent-owned metadata, not a catalog derivation, so it IS
+	// persisted with the model list and replaced on every discovery/refresh.
+	// Empty means the agent does not publish one — the picker then shows the
+	// price tag instead (or nothing).
+	Credits string `json:"credits,omitempty"`
 }
 
 // Agent represents an AI agent with its own system prompt, backend, and models.

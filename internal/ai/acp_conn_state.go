@@ -142,6 +142,7 @@ func (c *ACPConn) extractLoadedSessionState(loadResp *acp.LoadSessionResponse) s
 		ext.models = modelList.Models
 		ext.modelCurrentID = modelList.CurrentModelID
 		ext.modelConfigID = modelList.ConfigID
+		c.mergeCachedModelCredits(ext.models)
 		slog.Info("acp: extracted model list from loaded session", "current", modelList.CurrentModelID, "available", len(modelList.Models))
 	} else if c.stdoutFilter != nil {
 		if cached := c.stdoutFilter.GetAndClearCachedModels(); cached != nil {
@@ -192,6 +193,7 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 			ext.models = modelList.Models
 			ext.modelCurrentID = modelList.CurrentModelID
 			ext.modelConfigID = modelList.ConfigID
+			c.mergeCachedModelCredits(ext.models)
 			slog.Info("acp: extracted model list", "current", modelList.CurrentModelID, "available", len(modelList.Models))
 		} else if c.stdoutFilter != nil {
 			if cached := c.stdoutFilter.GetAndClearCachedModels(); cached != nil {
@@ -226,6 +228,7 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 			ext.models = modelList.Models
 			ext.modelCurrentID = modelList.CurrentModelID
 			ext.modelConfigID = modelList.ConfigID
+			c.mergeCachedModelCredits(ext.models)
 		} else if c.stdoutFilter != nil {
 			if cached := c.stdoutFilter.GetAndClearCachedModels(); cached != nil {
 				ext.models = cached.Models
@@ -241,6 +244,36 @@ func (c *ACPConn) extractSessionState(getResp func() (*acp.NewSessionResponse, *
 
 	ext.fillModeFromConfigOptions()
 	return ext
+}
+
+// mergeCachedModelCredits fills each model's Credits from the raw
+// SessionModelState extension captured by the stdout filter.
+//
+// CodeBuddy reports its model list twice: as a `category: "model"` config
+// option (which wins extraction) and as the legacy `models` field. Only the
+// latter carries the per-model `_meta.credits` multiplier, so the config-option
+// path would otherwise drop it and the picker would show no multiplier
+// (issue #657). A value already present on the config-option path wins — it
+// came from the same response.
+func (c *ACPConn) mergeCachedModelCredits(models []model.AgentModel) {
+	if c.stdoutFilter == nil || len(models) == 0 {
+		return
+	}
+	cached := c.stdoutFilter.GetAndClearCachedModels()
+	if cached == nil {
+		return
+	}
+	creditsByID := make(map[string]string, len(cached.Models))
+	for _, m := range cached.Models {
+		if m.Credits != "" {
+			creditsByID[m.ID] = m.Credits
+		}
+	}
+	for i := range models {
+		if models[i].Credits == "" {
+			models[i].Credits = creditsByID[models[i].ID]
+		}
+	}
 }
 
 // fillModeFromConfigOptions derives mode state from the agent's `configOptions`

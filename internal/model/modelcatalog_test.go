@@ -930,3 +930,46 @@ func TestTierAliasForModelID(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ResolveModels — billing multiplier (issue #657)
+//
+// The multiplier is agent-owned metadata carried on either source. It must
+// survive the merge, otherwise the picker shows no tag for a model whose agent
+// published one.
+// ---------------------------------------------------------------------------
+
+func TestResolveModels_CarriesCreditsFromCLIEntry(t *testing.T) {
+	cli := []AgentModel{{ID: "deepseek-v4-flash", Name: "Deepseek-V4-Flash", Credits: "x0.06 credits"}}
+	acp := []AgentModel{{ID: "deepseek-v4-flash", Name: "Deepseek-V4-Flash"}}
+
+	got := ResolveModels(cli, acp, "")
+	require.Len(t, got, 1)
+	assert.Equal(t, "x0.06 credits", got[0].Credits, "the CLI list's multiplier must survive the merge")
+}
+
+func TestResolveModels_ACPCreditsWinOverCLI(t *testing.T) {
+	cli := []AgentModel{{ID: "glm-5.3", Name: "GLM 5.3", Credits: "x0.5 credits"}}
+	acp := []AgentModel{{ID: "glm-5.3", Name: "GLM 5.3", Credits: "x0.4 credits"}}
+
+	got := ResolveModels(cli, acp, "")
+	require.Len(t, got, 1)
+	assert.Equal(t, "x0.4 credits", got[0].Credits, "the live handshake is fresher than the CLI snapshot")
+}
+
+func TestResolveModels_CarriesCreditsOnACPOnlyEntry(t *testing.T) {
+	acp := []AgentModel{{ID: "custom-local:hy3", Name: "Hy3", Credits: "x0.2 credits"}}
+
+	got := ResolveModels(nil, acp, "")
+	require.Len(t, got, 1)
+	assert.Equal(t, "x0.2 credits", got[0].Credits)
+}
+
+func TestResolveModels_NoCreditsStaysEmpty(t *testing.T) {
+	cli := []AgentModel{{ID: "auto", Name: "Auto"}}
+	acp := []AgentModel{{ID: "auto", Name: "Auto"}}
+
+	got := ResolveModels(cli, acp, "")
+	require.Len(t, got, 1)
+	assert.Empty(t, got[0].Credits, "an agent that publishes no multiplier must not gain one")
+}

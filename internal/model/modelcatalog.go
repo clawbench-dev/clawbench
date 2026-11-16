@@ -442,7 +442,19 @@ func resolveCLIEntry(
 			usedAliases[alias] = struct{}{}
 		}
 	}
-	return AgentModel{ID: id, Name: name}, true
+	return AgentModel{ID: id, Name: name, Credits: pickCredits(acpByID[id].Credits, m.Credits)}, true
+}
+
+// pickCredits chooses the billing multiplier to carry into a resolved entry.
+//
+// The live ACP handshake is fresher than the CLI-discovered snapshot, so its
+// value wins; discovery is the fallback for agents whose ACP model list omits
+// the multiplier. Empty means neither source published one.
+func pickCredits(acpCredits, cliCredits string) string {
+	if acpCredits != "" {
+		return acpCredits
+	}
+	return cliCredits
 }
 
 // resolveACPOnlyEntry maps an ACP entry with no CLI counterpart. A tier alias is
@@ -472,7 +484,7 @@ func resolveACPOnlyEntry(
 		}
 	}
 	seen[id] = struct{}{}
-	return AgentModel{ID: id, Name: acpByID[id].Name}, true
+	return AgentModel{ID: id, Name: acpByID[id].Name, Credits: acpByID[id].Credits}, true
 }
 
 // tierAliases are ACP model IDs that name a capability TIER rather than a model.

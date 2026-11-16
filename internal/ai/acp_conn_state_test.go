@@ -1775,3 +1775,59 @@ func TestMergeLoadedSessionStatePopulatesWireConfigIDs(t *testing.T) {
 
 	assert.Equal(t, "effort", conn.resolveWireConfigID("thought_level", "thinkingEffort"))
 }
+
+// CodeBuddy reports its model list twice: as a `category: "model"` config
+// option and as the legacy `models` extension. Only the extension carries
+// `_meta.credits`, and the config option wins extraction — without the merge
+// the picker loses the multiplier entirely (issue #657).
+func TestExtractSessionState_NewResp_MergesCreditsFromModelExtension(t *testing.T) {
+	agent := &model.Agent{ID: "test-merge-credits", Backend: "codebuddy", AcpCommand: "codebuddy --acp"}
+	conn := newACPConn(agent, "test-merge-credits")
+
+	modelCat := acp.SessionConfigOptionCategoryModel
+	newResp := &acp.NewSessionResponse{
+		ConfigOptions: []acp.SessionConfigOption{{
+			Select: &acp.SessionConfigOptionSelect{
+				Category:     &modelCat,
+				Id:           "model",
+				Name:         "Model",
+				CurrentValue: "deepseek-v4-flash",
+				Options: acp.SessionConfigSelectOptions{
+					Ungrouped: &acp.SessionConfigSelectOptionsUngrouped{
+						{Value: "deepseek-v4-flash", Name: "Deepseek-V4-Flash"},
+						// An agent that puts the multiplier on the option itself
+						// must not be overwritten by the extension.
+						{Value: "glm-5.3", Name: "GLM 5.3", Meta: map[string]any{"credits": "x0.4 credits"}},
+					},
+				},
+			},
+		}},
+	}
+
+	filter := newACPStdoutFilter(strings.NewReader(""))
+	defer filter.Close()
+	filter.modelsMu.Lock()
+	filter.cachedModels = &ModelListState{
+		CurrentModelID: "deepseek-v4-flash",
+		Models: []model.AgentModel{
+			{ID: "deepseek-v4-flash", Name: "Deepseek-V4-Flash", Credits: "x0.06 credits"},
+			{ID: "glm-5.3", Name: "GLM 5.3", Credits: "x0.5 credits"},
+		},
+	}
+	filter.modelsMu.Unlock()
+	conn.stdoutFilter = filter
+
+	ext := conn.extractSessionState(func() (*acp.NewSessionResponse, *acp.ResumeSessionResponse) {
+		return newResp, nil
+	})
+
+	require.Len(t, ext.models, 2)
+	assert.Equal(t, "x0.06 credits", ext.models[0].Credits, "credits from the models extension must reach the config-option list")
+	assert.Equal(t, "x0.4 credits", ext.models[1].Credits, "a value on the config option itself wins")
+
+	// The extension must be consumed, not left behind for the next response.
+	filter.modelsMu.Lock()
+	cached := filter.cachedModels
+	filter.modelsMu.Unlock()
+	assert.Nil(t, cached, "cached models should be cleared after the merge")
+}

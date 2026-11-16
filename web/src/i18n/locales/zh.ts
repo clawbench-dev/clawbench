@@ -1228,6 +1228,7 @@ export default {
       noSearchResults: '未找到匹配的模型',
       priceHint: '每百万 token 的美元单价（输入 / 输出）',
       priceApproxHint: '参考价：来自第三方渠道，不是该智能体官方报价',
+      creditsHint: '智能体自己上报的积分倍率：x0.06 表示消耗基础模型 0.06 倍的积分',
     },
     thinkingEffortSwitcher: {
       title: '思考',

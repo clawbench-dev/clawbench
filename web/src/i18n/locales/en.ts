@@ -1221,6 +1221,7 @@ export default {
       noSearchResults: 'No matching models',
       priceHint: 'USD per million tokens (input / output)',
       priceApproxHint: 'Reference price from third-party providers, not this agent\'s own list price',
+      creditsHint: 'Billing multiplier reported by the agent: x0.06 means this model consumes 0.06× the credits of the base model',
     },
     thinkingEffortSwitcher: {
       title: 'Thinking',

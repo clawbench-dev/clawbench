@@ -259,6 +259,7 @@
           :name="opt.label"
           :model-id="opt.modelId"
           :price="opt.modelPrice"
+          :credits="opt.modelCredits"
           :active="modelValue === opt.value"
           :icon-size="14"
         >
@@ -492,6 +493,9 @@ export interface SelectOption {
   /** Per-million-token list price; absent when the catalog has no trustworthy
    *  number for this model (the row then shows no tag). */
   modelPrice?: ModelPrice
+  /** The agent's own billing multiplier ("x0.06 credits"). Takes precedence
+   *  over `modelPrice` in the row's single cost tag. */
+  modelCredits?: string
   groupKey?: string
   badgeKey?: string
   /** CSS font-family used to render this option's label in its own font. */
