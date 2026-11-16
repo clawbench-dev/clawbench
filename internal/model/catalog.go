@@ -123,18 +123,23 @@ func CatalogStale() bool {
 	if time.Since(cat.FetchedAt) > CatalogTTL {
 		return true
 	}
-	// A snapshot written before prices were parsed carries PriceSchema 0 and no
-	// prices at all. Without this it would keep the model picker price-less for
+	// A snapshot written by an older parser is missing whatever fields were
+	// added since. Without this check it would keep the app on stale data for
 	// up to a full TTL after the upgrade, which reads as "the feature does not
-	// work". Keyed on the schema marker rather than "has no prices" so a
-	// catalog that genuinely has none cannot force a download on every boot.
+	// work" — exactly how vision support first shipped: the snapshot predated
+	// the modalities field, so every model looked text-only and the built-in
+	// agent refused to open images. Keyed on the schema marker rather than on
+	// "is some field empty" so a catalog that genuinely lacks a field cannot
+	// force a download on every boot.
 	return cat.PriceSchema < CatalogPriceSchema
 }
 
-// CatalogPriceSchema is bumped when the fields extracted from models.dev
-// change, so older snapshots are refetched once instead of being read with
-// silently missing data.
-const CatalogPriceSchema = 1
+// CatalogPriceSchema is bumped whenever the fields extracted from models.dev
+// change — prices (1), vision modalities (2) — so older snapshots are
+// refetched once instead of being read with silently missing data.
+//
+// The name is historical: it marks the extraction schema, not just prices.
+const CatalogPriceSchema = 2
 
 // CatalogPath is where the snapshot lives.
 func CatalogPath() string {
