@@ -107,7 +107,9 @@
 
 1. **DOMPurify** 清洗：去脚本、事件属性，并禁掉 `<form>/<input>/<button>/<iframe>` 等能伪装成应用控件或自行加载内容的标签。
 2. **`<iframe sandbox>`**：`allow-same-origin allow-popups allow-popups-to-escape-sandbox`，**没有 `allow-scripts`**——即使清洗漏了，脚本也跑不起来。`allow-same-origin` 只为了让父页面能改写链接，不解除脚本限制。
-3. **文档内 CSP**：`default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:`。**远程图片默认不放行**（追踪像素），用户点「显示图片」才把 `https: http:` 加进 `img-src`。
+3. **文档内 CSP**：`default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:`。**远程图片默认放行**（`img-src` 直接含 `https: http:`，排版与真实邮件一致）；在意追踪像素 / 阅读回执的用户可以在本机设置里关掉，关掉后 CSP 回到只允许 `self` + `data:`，顶部出现「外部图片已拦截」，单封点「显示图片」才把 `https: http:` 加进 `img-src`（单封放行不解除全局拦截）。
+
+> **开关是本机设置（`mailLoadRemoteImages`，默认开）**，只影响这台设备怎么画邮件，不动服务端收信。默认放行是有意的：图片被一律拦掉时邮件排版几乎全废，而多数用户并不知道「显示图片」这个按钮存在；把风险写进设置描述（发件人可得知已打开、看到 IP），需要隐私的人自己关。
 
 `cid:` 内嵌图在服务端就重写成 `/api/mail/messages/{id}/attachments/{aid}`，浏览器永远看不到解析不了的 cid URL。
 

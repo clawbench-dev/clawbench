@@ -472,15 +472,15 @@ SESSION=sh ./snap.sh "share-page"
 
 页面 `document.title` 是 **`ClawBench Share`**，可按此断言。只读渲染 + 右侧 TOC + 下载入口。
 
-### 已分享文件抽屉
+### 分享中心（左栏「分享」页签）
 
-入口：文件管理器工具栏 `button[title="已分享文件"]`。容器是 `.bs-panel`，内部：
+入口：左栏 Dock 的 `data-tab="share"`（标题「分享中心」）。文件、文件夹、会话、会议的公开链接都在这里，**文件管理器与会话列表头原先的两个「已分享」抽屉已删除**，不要再去找 `button[title="已分享文件"]`。
 
 | 元素 | 选择器 |
 |---|---|
-| 一键清空 | `.shared-files-clear` |
-| 单条复制链接 | `.shared-file-btn` |
-| 单条取消分享 | `.shared-file-btn.danger` |
+| 类型筛选 | `.share-filter[data-filter="all\|file\|session\|meeting"]`（文件夹归在 `file`） |
+| 单行（展开/收起） | `.share-row[data-share-key]` 内的 `.share-row-main` |
+| 一键清空 | `[data-action="clear-all"]` |
 
 ### 撤销分享（必做，恢复数据）
 
