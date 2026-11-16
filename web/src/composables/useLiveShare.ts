@@ -25,6 +25,7 @@ import { useLiveNotes } from './useLiveNotes'
 import { useDialog } from './useDialog'
 import { useMeetingShots, _resetMeetingShotsForTest } from './useMeetingShots'
 import { useInkBoard } from '@/share/useInkBoard'
+import { inkSyncFrame } from '@/share/inkSync'
 import { notesRecordingSupported } from './liveNotes'
 import { startMeetingFileTracking, stopMeetingFileTracking, _resetMeetingFileTrackerForTest } from '@/utils/meetingFileTracker'
 import { acquireMic, describeMicError, logMicEnv } from '@/utils/micCapture'
@@ -879,6 +880,14 @@ function handleRelayData(payload: Uint8Array, from: string): void {
     return
   }
   if (!VIEWER_MESSAGE_TYPES.has(msg.t)) return
+  // Same answer as the per-viewer path, but the relay has ONE data channel for
+  // everybody: there is no channel to address, so the snapshot is broadcast and
+  // every viewer's board is replaced by the same strokes it already had.
+  if (msg.t === 'ink-sync-req') {
+    const snapshot = inkSyncFrame(inkMirror.strokes.value)
+    if (snapshot && relayRoom) void sendRelayData(relayRoom, snapshot)
+    return
+  }
   const frame = stampViewerFrame(viewerId, msg)
   controlHandlers.forEach((cb) => cb(frame))
 }
@@ -2569,6 +2578,16 @@ export function useLiveShare() {
     const msg = parseControlMessage(String(raw))
     if (!msg) return
     if (!VIEWER_MESSAGE_TYPES.has(msg.t)) return
+    // "What is on the board?" is answered here, not by the UI: the strokes live
+    // in this module's mirror, and the reply is one frame the panel has no
+    // business building. Without it a viewer that joins mid-drawing sits in
+    // front of a blank picture — the strokes it missed were live frames sent
+    // before it had a channel.
+    if (msg.t === 'ink-sync-req') {
+      const snapshot = inkSyncFrame(inkMirror.strokes.value)
+      if (snapshot) sendControlTo(viewerId, snapshot)
+      return
+    }
     const frame = stampViewerFrame(viewerId, msg)
     controlHandlers.forEach((cb) => cb(frame))
     // A viewer's strokes are part of the picture too; mirror them so a frame

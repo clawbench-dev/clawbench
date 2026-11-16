@@ -33,6 +33,23 @@ export type ControlMessage =
   | { t: 'ink'; phase: 'start' | 'move' | 'end'; x: number; y: number; color: string; width: number; from?: string }
   | { t: 'ink-clear' }
   | { t: 'ink-undo' }
+  /**
+   * Publisher → viewer: the strokes already on the board, sent to a viewer that
+   * just opened its control channel.
+   *
+   * Ink is a stream of live frames, so a viewer that joins after the presenter
+   * has drawn would otherwise sit in front of a blank picture: the strokes it
+   * missed were never addressed to it. The frame REPLACES the receiver's board
+   * rather than adding to it — it is a snapshot of the presenter's, which is
+   * the same thing everybody else is looking at.
+   */
+  | { t: 'ink-sync'; strokes: InkStroke[] }
+  /**
+   * Viewer → publisher: "I am on the channel, send me the board." Sent at the
+   * same moment as `chat-history-req` — the control channel is only usable once
+   * both ends agree it is open, and that is the one moment a viewer can ask.
+   */
+  | { t: 'ink-sync-req' }
   | { t: 'chat'; id: string; from: string; name: string; text: string; at: number }
   /**
    * Publisher → viewer: the transcript so far, replayed to a viewer that just
@@ -75,6 +92,7 @@ export const VIEWER_MESSAGE_TYPES = new Set([
   'ink',
   'ink-clear',
   'ink-undo',
+  'ink-sync-req',
   'chat',
   'chat-history-req',
   'presence',
@@ -122,6 +140,16 @@ export const LIVE_CHAT_MAX = 500
 export const CHAT_HISTORY_FRAME_CHARS = 24 * 1024
 
 /**
+ * Character budget for one ink snapshot.
+ *
+ * The same 64 KiB parser ceiling applies, and a stroke carries every sampled
+ * point, so a long scribble is far heavier than a chat line. Left well under
+ * the ceiling: the reply must never be a frame the receiver drops, which is
+ * exactly the bug the snapshot exists to fix.
+ */
+export const INK_SYNC_FRAME_CHARS = 48 * 1024
+
+/**
  * Upper bound for one `kind=text` frame, in characters.
  *
  * Must stay in step with `maxTextRunes` in internal/inputinject/event.go (512):
@@ -153,6 +181,31 @@ function parseChatWire(raw: unknown): ChatWire | null {
     name: typeof m.name === 'string' ? m.name : '',
     text: m.text.slice(0, CHAT_MAX_CHARS),
     at: typeof m.at === 'number' ? m.at : 0,
+  }
+}
+
+/**
+ * One stroke inside a snapshot.
+ *
+ * Deliberately the same shape a live stroke builds, so the receiver can hand
+ * the result straight to its board; a stroke whose points are not all
+ * coordinates is dropped whole, because a half-stroke is a line to nowhere.
+ */
+function parseInkStroke(raw: unknown): InkStroke | null {
+  if (!raw || typeof raw !== 'object') return null
+  const m = raw as Record<string, unknown>
+  if (!Array.isArray(m.points) || m.points.length === 0) return null
+  const points: Array<{ x: number; y: number }> = []
+  for (const item of m.points) {
+    if (!item || typeof item !== 'object') return null
+    const p = item as Record<string, unknown>
+    if (typeof p.x !== 'number' || typeof p.y !== 'number') return null
+    points.push({ x: clamp01(p.x), y: clamp01(p.y) })
+  }
+  return {
+    color: typeof m.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(m.color) ? m.color : '#ff3b30',
+    width: typeof m.width === 'number' ? Math.min(24, Math.max(1, m.width)) : 3,
+    points,
   }
 }
 
@@ -204,6 +257,20 @@ export function parseControlMessage(raw: string): ControlMessage | null {
       return { t: 'ink-clear' }
     case 'ink-undo':
       return { t: 'ink-undo' }
+    case 'ink-sync': {
+      if (!Array.isArray(m.strokes)) return null
+      const strokes: InkStroke[] = []
+      for (const item of m.strokes) {
+        const stroke = parseInkStroke(item)
+        if (stroke) strokes.push(stroke)
+      }
+      // A board with nothing on it needs no replay: the viewer starts empty,
+      // and any stroke it already has came from this same publisher.
+      if (strokes.length === 0) return null
+      return { t: 'ink-sync', strokes }
+    }
+    case 'ink-sync-req':
+      return { t: 'ink-sync-req' }
     case 'chat': {
       if (typeof m.text !== 'string' || !m.text.trim()) return null
       const text = m.text.slice(0, CHAT_MAX_CHARS)

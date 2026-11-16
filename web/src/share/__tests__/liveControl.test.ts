@@ -76,6 +76,35 @@ describe('parseControlMessage', () => {
     expect(parseControlMessage('{"t":"chat-history-req"}')).toEqual({ t: 'chat-history-req' })
   })
 
+  it('parses an ink snapshot and keeps only whole strokes', () => {
+    const m = parseControlMessage(
+      JSON.stringify({
+        t: 'ink-sync',
+        strokes: [
+          { color: '#00ff00', width: 4, points: [{ x: 0.1, y: 0.2 }, { x: 0.3, y: 0.4 }] },
+          // One bad point makes the stroke a line to nowhere: drop it whole.
+          { color: '#fff', width: 2, points: [{ x: 0.1, y: 0.2 }, { x: 'nope', y: 0.4 }] },
+          { color: '#fff', width: 2, points: [] },
+        ],
+      }),
+    )
+    expect(m).toEqual({
+      t: 'ink-sync',
+      strokes: [{ color: '#00ff00', width: 4, points: [{ x: 0.1, y: 0.2 }, { x: 0.3, y: 0.4 }] }],
+    })
+  })
+
+  it('drops an ink snapshot with nothing usable in it', () => {
+    expect(parseControlMessage('{"t":"ink-sync","strokes":[]}')).toBeNull()
+    expect(parseControlMessage('{"t":"ink-sync","strokes":"nope"}')).toBeNull()
+    expect(parseControlMessage('{"t":"ink-sync"}')).toBeNull()
+    expect(parseControlMessage('{"t":"ink-sync","strokes":[{"points":[]}]}')).toBeNull()
+  })
+
+  it('parses the ink snapshot request', () => {
+    expect(parseControlMessage('{"t":"ink-sync-req"}')).toEqual({ t: 'ink-sync-req' })
+  })
+
   it('keeps a whole IME commit and only caps it at the injector limit', () => {
     // 32 was the old limit and silently cut the tail of an IME commit (a
     // pinyin/speech input that lands 40 characters at once). The Go injector

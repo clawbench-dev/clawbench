@@ -1580,6 +1580,46 @@ describe('control channel', () => {
     expect(dc2.sentJSON()).toHaveLength(0)
   })
 
+  it('hands a viewer that joins mid-drawing the ink already on the board', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    const [dc1] = FakeDataChannel.instances
+
+    // The presenter annotates before the second viewer has a channel, so the
+    // strokes went out as live frames it could not receive.
+    share.sendControl({ t: 'ink', phase: 'start', x: 0.1, y: 0.1, color: '#ff3b30', width: 3 })
+    share.sendControl({ t: 'ink', phase: 'move', x: 0.2, y: 0.2, color: '#ff3b30', width: 3 })
+    share.sendControl({ t: 'ink', phase: 'end', x: 0.2, y: 0.2, color: '#ff3b30', width: 3 })
+
+    await joinAndOffer('v2')
+    const dc2 = FakeDataChannel.instances[1]
+    const seen: unknown[] = []
+    share.onControl((m) => seen.push(m))
+
+    dc2.emit({ t: 'ink-sync-req' })
+
+    const replies = dc2.sentJSON().filter((m) => m.t === 'ink-sync')
+    expect(replies).toHaveLength(1)
+    const strokes = replies[0].strokes as Array<{ points: unknown[] }>
+    expect(strokes).toHaveLength(1)
+    expect(strokes[0].points).toHaveLength(2)
+    // The board lives in this module; the panel has nothing to answer with.
+    expect(seen).toHaveLength(0)
+    // …and the reply is addressed to the asker, not broadcast to the room.
+    expect(dc1.sentJSON().filter((m) => m.t === 'ink-sync')).toHaveLength(0)
+  })
+
+  it('says nothing when a late viewer asks for an empty board', async () => {
+    const { share } = await startSharing()
+    await joinAndOffer('v1')
+    const dc = FakeDataChannel.instances[0]
+
+    dc.emit({ t: 'ink-sync-req' })
+
+    // An empty snapshot carries nothing: there is no stale ink it could clear.
+    expect(dc.sentJSON().filter((m) => m.t === 'ink-sync')).toHaveLength(0)
+  })
+
   it('addresses a grant to one viewer instead of broadcasting it', async () => {
     const { share } = await startSharing()
     await joinAndOffer('v1')

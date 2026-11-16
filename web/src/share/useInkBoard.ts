@@ -90,6 +90,25 @@ export function useInkBoard() {
   }
 
   /**
+   * Replace the board with a snapshot from the publisher.
+   *
+   * A replacement, not an append: the snapshot IS the publisher's board, so a
+   * viewer that already has strokes (a rejoin, or a live frame that overtook
+   * the reply) ends up with exactly what the presenter sees rather than a
+   * doubled line. Copies are made because the same rule as a live stroke has to
+   * hold — the board must not alias the message it came from.
+   */
+  function load(next: readonly InkStroke[]): void {
+    active = null
+    const bounded = next.slice(-MAX_STROKES).map((s) => ({
+      color: s.color,
+      width: s.width,
+      points: s.points.slice(-MAX_POINTS_PER_STROKE).map((p) => ({ x: p.x, y: p.y })),
+    }))
+    strokes.value = bounded
+  }
+
+  /**
    * Applies a frame that arrived over the wire.
    *
    * `from` is ignored here: a viewer's stroke is drawn exactly like the
@@ -121,6 +140,9 @@ export function useInkBoard() {
       case 'ink-clear':
         clear()
         return true
+      case 'ink-sync':
+        load(msg.strokes)
+        return true
       default:
         return false
     }
@@ -139,6 +161,7 @@ export function useInkBoard() {
     endStroke,
     undo,
     clear,
+    load,
     apply,
     hideLaser,
     dispose,

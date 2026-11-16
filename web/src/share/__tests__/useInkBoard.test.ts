@@ -38,6 +38,44 @@ describe('useInkBoard', () => {
     expect(board.strokes.value[0].points).toHaveLength(1)
   })
 
+  it('replaces the board with a snapshot from the publisher', () => {
+    const board = useInkBoard()
+    // A viewer that joins mid-drawing has strokes the snapshot does not know
+    // about (a live frame that overtook the reply). Appending would leave a
+    // doubled line; the snapshot IS the presenter's board.
+    board.apply({ t: 'ink', phase: 'start', x: 0, y: 0, color: '#fff', width: 2 })
+    board.apply({ t: 'ink', phase: 'end', x: 0, y: 0, color: '#fff', width: 2 })
+
+    board.apply({
+      t: 'ink-sync',
+      strokes: [
+        { color: '#f00', width: 3, points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.2 }] },
+        { color: '#0f0', width: 1, points: [{ x: 0.5, y: 0.5 }] },
+      ],
+    })
+
+    expect(board.strokes.value).toHaveLength(2)
+    expect(board.strokes.value[1]).toEqual({
+      color: '#0f0',
+      width: 1,
+      points: [{ x: 0.5, y: 0.5 }],
+    })
+  })
+
+  it('keeps a snapshot inside the same bounds as locally drawn strokes', () => {
+    const board = useInkBoard()
+    // A peer must not be able to grow the board past what the renderer and the
+    // key-frame compositor were built for.
+    const strokes = Array.from({ length: MAX_STROKES + 20 }, () => ({
+      color: '#fff',
+      width: 2,
+      points: [{ x: 0, y: 0 }],
+    }))
+    board.apply({ t: 'ink-sync', strokes })
+
+    expect(board.strokes.value).toHaveLength(MAX_STROKES)
+  })
+
   it('undoes and clears', () => {
     const board = useInkBoard()
     board.apply({ t: 'ink', phase: 'start', x: 0, y: 0, color: '#fff', width: 2 })
