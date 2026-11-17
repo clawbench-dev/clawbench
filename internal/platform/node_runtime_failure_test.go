@@ -258,18 +258,8 @@ func TestDownloadNodeRelease_ReplacesANonEmptyTarget(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(ManagedNodeDir(), "stale")); !os.IsNotExist(err) {
 		t.Fatal("the previous tree must be replaced, not merged")
 	}
-	nodes, err := os.ReadDir(ManagedNodeDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := false
-	for _, e := range nodes {
-		if e.Name() == "bin" && e.IsDir() {
-			bin = true
-		}
-	}
-	if !bin {
-		t.Fatal("the newly unpacked bin/ directory is missing")
+	if _, err := os.Stat(filepath.Join(ManagedNodeDir(), "bin")); err != nil {
+		t.Fatalf("the newly unpacked bin/ directory is missing: %v", err)
 	}
 }
 
@@ -354,13 +344,22 @@ func TestUnpackNodeArchive_DispatchesOnExtension(t *testing.T) {
 // A zip member whose name escapes the destination is refused, and the refusal
 // happens before anything is written: the archive comes from a mirror, so its
 // entry names are untrusted input.
+//
+// The absolute case uses a path that is absolute on THIS host: a bare
+// "/etc/escaped.txt" has no volume name on Windows and is not an absolute path
+// there, so it would be (correctly) treated as a path inside the destination.
 func TestUnpackZipArchive_RejectsAbsoluteAndTraversalEntries(t *testing.T) {
-	for _, name := range []string{"../escaped.txt", "/etc/escaped.txt"} {
+	outside := t.TempDir()
+	for _, name := range []string{
+		"../escaped.txt",
+		filepath.Join(outside, "escaped.txt"),
+		filepath.Join(outside, "nested", "escaped.txt"),
+	} {
 		var buf bytes.Buffer
 		zw := zip.NewWriter(&buf)
 		entry, err := zw.Create(name)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("entry %q: %v", name, err)
 		}
 		if _, err := entry.Write([]byte("pwned")); err != nil {
 			t.Fatal(err)
@@ -378,8 +377,14 @@ func TestUnpackZipArchive_RejectsAbsoluteAndTraversalEntries(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "escapes the install directory") {
 			t.Fatalf("entry %q: expected an escape error, got %v", name, err)
 		}
-		if _, statErr := os.Stat(filepath.Join(filepath.Dir(dest), "escaped.txt")); !os.IsNotExist(statErr) {
-			t.Fatalf("entry %q wrote outside the destination", name)
+		for _, leaked := range []string{
+			filepath.Join(filepath.Dir(dest), "escaped.txt"),
+			filepath.Join(outside, "escaped.txt"),
+			filepath.Join(outside, "nested", "escaped.txt"),
+		} {
+			if _, statErr := os.Stat(leaked); !os.IsNotExist(statErr) {
+				t.Fatalf("entry %q wrote outside the destination (%s)", name, leaked)
+			}
 		}
 	}
 }

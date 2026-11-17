@@ -79,6 +79,13 @@ func TestParseNodeVersion(t *testing.T) {
 }
 
 func TestUnpackTarGzArchive_KeepsExecutableBitAndSymlinks(t *testing.T) {
+	// The release is the POSIX one, so on Windows this covers nothing the
+	// platform installs — and a test that skips half of its own body per
+	// platform is exactly the kind of implicit POSIX assumption this guards.
+	// Content and extraction are covered on both OSes by the zip fixtures.
+	if IsWindows() {
+		t.Skip("tar.gz is the POSIX release; executable bits and symlinks are POSIX-only")
+	}
 	top := "node-v22.11.0-linux-x64"
 	archive := buildTarGz(t, map[string]tarEntry{
 		top + "/bin/node":     {body: "#!/bin/sh\necho v22.11.0\n", mode: 0o755},
@@ -99,6 +106,13 @@ func TestUnpackTarGzArchive_KeepsExecutableBitAndSymlinks(t *testing.T) {
 	}
 	if info.Mode().Perm()&0o100 == 0 {
 		t.Fatalf("node binary lost its executable bit: %v", info.Mode())
+	}
+	body, err := os.ReadFile(node)
+	if err != nil {
+		t.Fatalf("node binary unreadable: %v", err)
+	}
+	if string(body) != "#!/bin/sh\necho v22.11.0\n" {
+		t.Fatalf("node binary content = %q", body)
 	}
 	link := filepath.Join(dest, top, "bin", "npm-link")
 	target, err := os.Readlink(link)
@@ -394,6 +408,9 @@ func TestEnsureNodeRuntime_RejectsRuntimeThatDoesNotRun(t *testing.T) {
 // A private copy left by the one-line installer is reused instead of downloaded
 // again — the download sources must not even be consulted.
 func TestEnsureNodeRuntime_ReusesAnExistingPrivateRuntime(t *testing.T) {
+	if IsWindows() {
+		t.Skip("the fake runtime is a POSIX shell script")
+	}
 	t.Setenv("CLAWBENCH_HOME", t.TempDir())
 	t.Setenv("PATH", "")
 	writeFakeNode(t, managedNodeBinDir(), "#!/bin/sh\necho v22.11.0\n")
@@ -642,15 +659,24 @@ func serveNodeRelease(t *testing.T, file string, archive []byte, checksum string
 	}))
 }
 
+// writeFakeNode plants an executable fake `node` + `npm` in dir. On Windows the
+// files are named node.exe / npm.cmd, so `exec.LookPath` (which consults PATHEXT
+// there) and managedNodeInstalled — both judging by the OS's own spelling — see
+// exactly what a real install leaves behind. The script body still has to be a
+// batch file on Windows; callers that pass a POSIX shell script must skip there.
 func writeFakeNode(t *testing.T, dir, script string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "node"), []byte(script), 0o755); err != nil {
+	nodeName, npmName, npmBody := "node", "npm", "#!/bin/sh\nexit 0\n"
+	if IsWindows() {
+		nodeName, npmName, npmBody = "node.exe", "npm.cmd", "@echo off\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, nodeName), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "npm"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, npmName), []byte(npmBody), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -589,12 +589,18 @@ func TestUnpackNodeArchive_RejectsTruncatedGzip(t *testing.T) {
 	}
 }
 
+// safeArchivePath cleans an entry name and hands back the path the extractor
+// will join onto the destination — i.e. an OS path, not a POSIX one ("/" becomes
+// "\" on Windows). The expectations are therefore built with filepath.FromSlash,
+// and the "absolute" cases use a name that is absolute on THIS host: a bare
+// "/abs" carries no volume name on Windows and is a rooted-but-not-absolute path
+// there, which is covered separately below.
 func TestSafeArchivePath(t *testing.T) {
 	ok := map[string]string{
-		"node-v22/bin/node": "node-v22/bin/node",
-		"./node/bin":        "node/bin",
+		"node-v22/bin/node": filepath.FromSlash("node-v22/bin/node"),
+		"./node/bin":        filepath.FromSlash("node/bin"),
 		".":                 "",
-		"a/../b/c":          "b/c",
+		"a/../b/c":          filepath.FromSlash("b/c"),
 	}
 	for name, want := range ok {
 		got, err := safeArchivePath(name)
@@ -606,10 +612,53 @@ func TestSafeArchivePath(t *testing.T) {
 			t.Errorf("safeArchivePath(%q) = %q, want %q", name, got, want)
 		}
 	}
-	for _, name := range []string{"..", "../x", "/abs", "a/../../x"} {
+
+	escaping := []string{"..", "../x", "a/../../x", filepath.Join(t.TempDir(), "escaped.txt")}
+	for _, name := range escaping {
 		if _, err := safeArchivePath(name); err == nil {
 			t.Errorf("safeArchivePath(%q) must fail", name)
 		}
+	}
+}
+
+// A member rooted at "/" ("/abs", "/etc/x") is an absolute path on POSIX. On
+// Windows it has no volume name, so filepath.IsAbs is false and it cleans to
+// `\abs` instead — see TestSafeArchivePath_RootRelativeNameIsNotEscapedOnWindows
+// for what the code does there. POSIX-only assertion, hence the guard.
+func TestSafeArchivePath_RootRelativeNameIsRejected(t *testing.T) {
+	if IsWindows() {
+		t.Skip("a bare /abs has no volume name on Windows and is not an absolute path")
+	}
+	for _, name := range []string{"/abs", "/etc/x"} {
+		if _, err := safeArchivePath(name); err == nil {
+			t.Errorf("safeArchivePath(%q) must fail", name)
+		}
+	}
+}
+
+// ── root-relative archive names (Windows) ──────────────────────────────────
+
+// safeArchivePath rejects absolute names, but on Windows "/abs" has no volume
+// name: filepath.IsAbs says false and it cleans to `\abs`. That is still safe —
+// the extractors join it onto dest, so `C:\dest` + `\abs` is `C:\dest\abs`
+// because a rooted path without a volume keeps the joined volume. This test
+// pins that behaviour on Windows only (a POSIX host never sees it, where the
+// same name is absolute and refused by TestSafeArchivePath_RootRelativeNameIsRejected).
+func TestSafeArchivePath_RootRelativeNameIsNotEscapedOnWindows(t *testing.T) {
+	if !IsWindows() {
+		t.Skip("a bare /abs is an absolute path on POSIX and is rejected there")
+	}
+	got, err := safeArchivePath("/abs")
+	if err != nil {
+		t.Fatalf("safeArchivePath(/abs) = %v; the containment check is what must hold", err)
+	}
+	if filepath.IsAbs(got) {
+		t.Fatalf("safeArchivePath(/abs) = %q, which is absolute and would escape the destination", got)
+	}
+	dest := filepath.Join(t.TempDir(), "dest")
+	target := filepath.Join(dest, got)
+	if !strings.HasPrefix(target, dest+string(filepath.Separator)) {
+		t.Fatalf("Join(%q, %q) = %q, which is outside the destination", dest, got, target)
 	}
 }
 
@@ -720,6 +769,9 @@ func TestEnsureNodeRuntime_ReplacesTooOldPrivateRuntime(t *testing.T) {
 // A private runtime that is already new enough is returned as-is, without a
 // download: the note is empty because nothing was installed.
 func TestEnsureNodeRuntime_AcceptsAnUpToDatePrivateRuntimeWithoutDownloading(t *testing.T) {
+	if IsWindows() {
+		t.Skip("the fake runtime is a POSIX shell script")
+	}
 	t.Setenv("CLAWBENCH_HOME", t.TempDir())
 	t.Setenv("PATH", "")
 	writeFakeNode(t, managedNodeBinDir(), "#!/bin/sh\necho v22.11.0\n")
