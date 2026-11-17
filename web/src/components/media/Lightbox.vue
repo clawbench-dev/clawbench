@@ -1060,7 +1060,18 @@ onUnmounted(() => {
     padding: var(--space-2) var(--space-6);
     border-radius: var(--radius-lg);
     backdrop-filter: blur(calc(4 * var(--dp)));
-    flex: 1;
+    /* Shrink-wrap the pill to the filename: `flex: 1` used to stretch it to the
+       full toolbar width, painting a full-width dim bar behind a short name.
+       The cap (and the min-width: 0 that lets it shrink below that cap) keeps
+       a long name from pushing the action buttons off screen. */
+    flex: 0 1 auto;
+    /* No `align-self` stretching: left-align the pill at its natural width so a
+       short name sits as a small tag on the left instead of a centred bar. */
+    align-self: center;
+    justify-self: start;
+    text-align: left;
+    min-width: 0;
+    max-width: calc(100% - 168 * var(--dp));
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

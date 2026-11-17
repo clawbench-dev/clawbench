@@ -12,9 +12,11 @@ const item={platform:'gitlab',host:'gitlab.com',owner:'acme',repo:'widgets',type
  for (const W of [900, 663]) {
   const ctx=await browser.newContext({viewport:{width:W,height:800},ignoreHTTPSErrors:true,deviceScaleFactor:2});
   const page=await ctx.newPage();
+  await page.addInitScript(()=>{ localStorage.setItem('clawbench_welcome_dismissed','true'); });
+  await page.route('**/api/upgrade/**', r=>r.fulfill({status:200,contentType:'application/json',body:'{"has_upgrade":false,"latest_version":""}'}));
   await page.route('**/api/forge/**', route=>{
     const p=new URL(route.request().url()).pathname;
-    if(p==='/api/forge/binding') return route.fulfill({json:binding});
+    if(p==='/api/forge/binding') return route.fulfill({json:{binding}});
     if(p==='/api/forge/unread') return route.fulfill({json:{count:0,items:[]}});
     if(p==='/api/forge/items') return route.fulfill({json:{items:[item],hasMore:false,nextPage:1,binding}});
     if(p==='/api/forge/item') return route.fulfill({json:{item,binding}});
@@ -30,8 +32,11 @@ const item={platform:'gitlab',host:'gitlab.com',owner:'acme',repo:'widgets',type
   await page.goto(BASE+'/'); await page.waitForTimeout(2500);
   const forgeBtn = page.locator('.dock-btn[data-tab="forge"]').filter({visible:true}).first();
   await forgeBtn.click(); await page.waitForTimeout(1500);
-  await page.locator('text=#681').first().click({timeout:10000});
-  await page.waitForTimeout(1200);
+  await page.screenshot({path:`/tmp/list_${W}.png`});
+  await page.waitForTimeout(300);
+  await page.screenshot({path:`/tmp/after_click_${W}.png`});
+  const rows = await page.evaluate(()=>[...document.querySelectorAll('.forge-panel *')].filter(e=>e.children.length===0&&e.textContent&&e.textContent.includes('681')).map(e=>e.className));
+  console.log('681 nodes', rows);
   await page.screenshot({path:`/tmp/detail_${W}.png`});
   const dump=await page.evaluate(()=>{
     const h=document.querySelector('.forge-detail-header');

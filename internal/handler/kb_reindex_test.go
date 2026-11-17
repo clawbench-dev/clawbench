@@ -109,23 +109,43 @@ func TestKBReindexAllRebuildsVisibleCollections(t *testing.T) {
 	col := newCollectionInProjectDataDir(t, env.ProjectDir, "本项目库")
 	docID := seedReadyDocument(t, col.ID, "a.md")
 
+	// Read the pre-existing chunk BEFORE the handler runs. The reindex worker
+	// starts with the request, and on a fast machine it has already deleted and
+	// re-created the chunks by the time this test looks — so the "before"
+	// snapshot has to be taken first for the identity check to mean anything.
+	check, err := kb.NewStoreForTest(filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	defer func() { _ = check.Close() }()
+	oldChunk, err := check.ListChunks(docID, 10)
+	require.NoError(t, err)
+	require.Len(t, oldChunk, 1, "the fixture must seed exactly one chunk to be reset")
+
 	req := newRequest(t, http.MethodPost, "/api/kb/reindex", map[string]any{})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeKBReindex, req)
 	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
 
-	check, err := kb.NewStoreForTest(filepath.Join(model.DataDir, "ClawBench.db"))
-	require.NoError(t, err)
-	defer func() { _ = check.Close() }()
-	// The reindex worker runs concurrently, so the document may move on from
-	// "pending" to "extracting" before this assertion reads it. What the handler
-	// contracts to is "this document was reset for a rebuild" — its old chunks
-	// are gone and it is queued again — not a snapshot of one status string.
+	// The reindex worker runs concurrently with this test: it may have moved the
+	// document from "pending" through "extracting" and all the way back to
+	// "ready" with a freshly embedded chunk before this reads it. The handler's
+	// contract is "this document was reset and queued for a rebuild", NOT a
+	// snapshot of one status string — asserting "pending" (or "no chunks") made
+	// this fail on a correct reindex whenever the worker was fast.
+	//
+	// The reset is visible either as "chunks gone" or as "a different chunk row
+	// exists": ReplaceChunks deletes the old rows inside its transaction, so a
+	// row that survives with the SAME id means the reindex never ran.
 	require.Eventually(t, func() bool {
-		chunks, err := check.ListChunks(docID, 10)
-		return err == nil && len(chunks) == 0
-	}, 5*time.Second, 20*time.Millisecond,
-		"the visible collection must be reset for a rebuild (chunks cleared)")
+		chunks, listErr := check.ListChunks(docID, 10)
+		if listErr != nil {
+			return false
+		}
+		if len(chunks) == 0 {
+			return true
+		}
+		return chunks[0].ID != oldChunk[0].ID
+	}, 10*time.Second, 20*time.Millisecond,
+		"the visible collection must be reset for a rebuild (its old chunk is gone)")
 	doc, err := check.GetDocument(docID)
 	require.NoError(t, err)
 	require.NotEqual(t, kb.StatusFailed, doc.Status,
