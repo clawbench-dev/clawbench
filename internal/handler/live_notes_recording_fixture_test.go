@@ -3,13 +3,17 @@ package handler
 // The meeting-recording upload tests, hosted from this file so the shared
 // helper below is the only copy.
 //
-// Why the resolve step exists: `sameProjectPath` (the ownership check every
-// notes endpoint goes through) compares EvalSymlinks'd paths. On Windows a temp
-// dir is a short-name path (RUNNER~1 vs runneradmin) and the project cookie holds
-// the RAW spelling — so a fixture that signs the cookie with one spelling and
-// resolves with the other is rejected with 404 before the recording code runs.
-// The cookie is therefore signed with the resolved path, which is also what a
-// real browser sends (the server handed it out).
+// Two platform traps live here, both about the project cookie:
+//
+//  1. `sameProjectPath` (the ownership check every notes endpoint goes through)
+//     compares EvalSymlinks'd paths, and on Windows a temp dir is a short-name
+//     path (RUNNER~1 vs runneradmin). The fixture therefore signs the cookie with
+//     the resolved spelling — the same one the server handed the browser.
+//  2. The server stores the path URL-ESCAPED in the cookie (`setAppCookie(...,
+//     url.QueryEscape(path))`), and Go's net/http DROPS a Cookie whose value
+//     contains a raw backslash. On Windows `C:\\Users\\...` is exactly that, so an
+//     unescaped fixture cookie vanished and every request answered 404 before the
+//     handler ran. Every cookie built in these tests goes through url.QueryEscape.
 
 import (
 	"os"

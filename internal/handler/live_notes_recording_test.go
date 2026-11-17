@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -42,7 +43,7 @@ func recordingUpload(t *testing.T, project, token, id string, seq int, body []by
 	if project != "" {
 		req.AddCookie(&http.Cookie{
 			Name:  model.ScopedCookieName("clawbench_project"),
-			Value: project,
+			Value: url.QueryEscape(project),
 		})
 	}
 	return req
@@ -57,7 +58,7 @@ func recordingFinish(t *testing.T, project, token, id string) *http.Request {
 	if project != "" {
 		req.AddCookie(&http.Cookie{
 			Name:  model.ScopedCookieName("clawbench_project"),
-			Value: project,
+			Value: url.QueryEscape(project),
 		})
 	}
 	return req
@@ -172,7 +173,7 @@ func TestServeLiveShareNoteRecording_DefaultsTheStartTime(t *testing.T) {
 
 	target := "/api/live-share/notes/recording?token=" + token + "&recordingId=rec-at&seq=0"
 	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader("x"))
-	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: project})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(project)})
 	w := httptest.NewRecorder()
 	ServeLiveShareNoteRecording(w, req)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -248,7 +249,7 @@ func TestServeLiveShareNoteRecording_RejectsBadRequests(t *testing.T) {
 	for _, tc := range cases {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, tc.target, strings.NewReader(tc.body))
-		req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: project})
+		req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(project)})
 		ServeLiveShareNoteRecording(w, req)
 		assert.NotEqual(t, http.StatusOK, w.Code, tc.name)
 	}
@@ -258,7 +259,7 @@ func TestServeLiveShareNoteRecording_RejectsBadRequests(t *testing.T) {
 	ServeLiveShareNoteRecording(w, recordingUpload(t, project, token, "rec-1", 0, []byte("x")))
 	// (the POST above is valid; the method check is covered by its own request)
 	req := httptest.NewRequest(http.MethodGet, "/api/live-share/notes/recording?token="+token, http.NoBody)
-	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: project})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(project)})
 	w = httptest.NewRecorder()
 	ServeLiveShareNoteRecording(w, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
