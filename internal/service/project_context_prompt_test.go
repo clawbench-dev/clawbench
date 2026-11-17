@@ -32,9 +32,14 @@ func TestAppendProjectContextSection_LoadsAgentsMD(t *testing.T) {
 
 	got := AppendProjectContextSection("BASE", root, "")
 
+	// The tag carries the path AS THE LOADER SAW IT, which is the resolved one:
+	// on macOS a temp dir is under /var, a symlink to /private/var, so the raw
+	// t.TempDir() path does not appear in the prompt at all.
+	resolved, err := filepath.EvalSymlinks(src)
+	require.NoError(t, err)
 	assert.Contains(t, got, "BASE", "the caller's prompt must survive")
 	assert.Contains(t, got, "<project_context>")
-	assert.Contains(t, got, `<project_instructions path="`+filepath.ToSlash(src)+`">`)
+	assert.Contains(t, got, `<project_instructions path="`+filepath.ToSlash(resolved)+`">`)
 	assert.Contains(t, got, "Use tabs. Never touch vendor/.")
 	assert.Contains(t, got, "</project_context>")
 }
