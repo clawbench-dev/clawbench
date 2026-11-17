@@ -337,7 +337,7 @@ func TestServeLiveShareNoteRecordingFinish_ValidatesInput(t *testing.T) {
 	token := createShotMeeting(t, project)
 
 	bad := httptest.NewRequest(http.MethodPost, "/api/live-share/notes/recording/finish", strings.NewReader("{"))
-	bad.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: project})
+	bad.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(project)})
 	w := httptest.NewRecorder()
 	ServeLiveShareNoteRecordingFinish(w, bad)
 	assert.Equal(t, http.StatusBadRequest, w.Code)

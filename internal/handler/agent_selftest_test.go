@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"clawbench/internal/ai"
@@ -390,7 +391,7 @@ func TestServeAgentSelfTestDeep_RefusesOnStaticFailure(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/agents/deep-broken/self-test-deep", nil)
 	withAuthCookie(req, model.SessionToken)
-	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: projectDir})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(projectDir)})
 	w := callHandler(ServeAgentSelfTestDeep, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
@@ -427,7 +428,7 @@ func TestServeAgentSelfTestDeep_Guards(t *testing.T) {
 	projectDir := t.TempDir()
 
 	withProject := func(req *http.Request) *http.Request {
-		req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: projectDir})
+		req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(projectDir)})
 		return req
 	}
 
