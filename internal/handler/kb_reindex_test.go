@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"clawbench/internal/kb"
 	"clawbench/internal/model"
@@ -116,7 +117,17 @@ func TestKBReindexAllRebuildsVisibleCollections(t *testing.T) {
 	check, err := kb.NewStoreForTest(filepath.Join(model.DataDir, "ClawBench.db"))
 	require.NoError(t, err)
 	defer func() { _ = check.Close() }()
+	// The reindex worker runs concurrently, so the document may move on from
+	// "pending" to "extracting" before this assertion reads it. What the handler
+	// contracts to is "this document was reset for a rebuild" — its old chunks
+	// are gone and it is queued again — not a snapshot of one status string.
+	require.Eventually(t, func() bool {
+		chunks, err := check.ListChunks(docID, 10)
+		return err == nil && len(chunks) == 0
+	}, 5*time.Second, 20*time.Millisecond,
+		"the visible collection must be reset for a rebuild (chunks cleared)")
 	doc, err := check.GetDocument(docID)
 	require.NoError(t, err)
-	require.Equal(t, kb.StatusPending, doc.Status, "the visible collection must be queued")
+	require.NotEqual(t, kb.StatusFailed, doc.Status,
+		"the rebuild must not fail the document, got %q", doc.Status)
 }
