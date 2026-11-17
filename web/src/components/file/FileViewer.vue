@@ -196,7 +196,11 @@
 
       <!-- HTML file -->
       <template v-else-if="isHtml">
-        <div v-if="markdownViewMode === 'rendered'" class="html-preview-pane">
+        <!-- Rendered browse. Gated on `!editing` like the markdown preview:
+             starting an edit from here swaps in the source editor and leaving
+             it returns to the rendered page, so the eye toggle never has to be
+             pressed first. -->
+        <div v-if="!editing && markdownViewMode === 'rendered'" class="html-preview-pane">
           <iframe
             ref="htmlPreviewRef"
             class="html-preview-iframe"
@@ -225,7 +229,12 @@
           :word-wrap="wordWrap"
           :show-line-numbers="showLineNumbers"
           :sticky-scroll="stickyScroll"
-          :editable="false"
+          :editable="editing"
+          :saving="saving"
+          @save="handleSave"
+          @save-and-exit="handleSaveAndExit"
+          @cancel="editing = false"
+          @exit-edit="handleExitEdit"
           @search-change="emit('searchChange', $event)"
         />
       </template>
@@ -233,7 +242,7 @@
       <!-- OpenAPI / Swagger spec file -->
       <template v-else-if="isOpenapi">
         <OpenApiPreview
-          v-if="markdownViewMode === 'rendered'"
+          v-if="!editing && markdownViewMode === 'rendered'"
           :file="file"
           :view-mode="markdownViewMode"
           :chat-quote="true"
@@ -247,7 +256,12 @@
             :word-wrap="wordWrap"
             :show-line-numbers="showLineNumbers"
             :sticky-scroll="stickyScroll"
-            :editable="false"
+            :editable="editing"
+            :saving="saving"
+            @save="handleSave"
+            @save-and-exit="handleSaveAndExit"
+            @cancel="editing = false"
+            @exit-edit="handleExitEdit"
             @search-change="emit('searchChange', $event)"
           />
         </div>
@@ -406,14 +420,15 @@ const isTableRenderedView = computed(
 // Whether the current view is rendered by CodeMirrorViewer. Code/plain text is
 // always CodeMirror. Markdown uses the SearchDrawer only for the rendered
 // preview; raw source view and editing are CodeMirror. HTML/OpenAPI rendered
-// views (iframe/ReDoc) fall back to the SearchDrawer as well. Media/binary/
-// oversized/errored files never render CodeMirror.
+// views (iframe/ReDoc) fall back to the SearchDrawer as well — but an edit
+// session started from that preview IS the source editor, so it counts as
+// CodeMirror too. Media/binary/oversized/errored files never render CodeMirror.
 const isCodeMirrorView = computed(() => {
     if (!props.file || props.file.isExcalidraw || props.file.isDrawio) return false
     if (props.file.isImage || props.file.isAudio || props.file.isVideo || props.file.isPdf || props.file.isOffice) return false
     if (props.file.isBinary || props.file.tooLarge || props.file.error) return false
     if (isMarkdown.value) return (editing.value && markdownEditMode.value === 'source') || (!editing.value && props.markdownViewMode !== 'rendered')
-    if (isHtml.value || isOpenapi.value) return props.markdownViewMode !== 'rendered'
+    if (isHtml.value || isOpenapi.value) return editing.value || props.markdownViewMode !== 'rendered'
     if (isTableFile.value) return !isTableRenderedView.value
     return true
 })

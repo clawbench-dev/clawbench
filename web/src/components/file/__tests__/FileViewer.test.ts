@@ -250,6 +250,10 @@ const mockTableFocusSearch = vi.fn()
 const mockTableCloseSearch = vi.fn()
 const codeMirrorViewerStub = {
   name: 'CodeMirrorViewer',
+  // Declared so the viewer tests can assert which editing state each preview
+  // type hands the source editor (read-only browse vs. a live edit session).
+  props: ['editable', 'saving', 'untitled'],
+  emits: ['save', 'saveAndExit', 'cancel', 'exitEdit', 'searchChange'],
   template: '<div class="cm-stub" />',
   methods: {
     handleExit: (...args: unknown[]) => mockHandleExit(...args),
@@ -281,6 +285,14 @@ const tablePreviewStub = {
   },
 }
 
+// The docs renderer is a lazily-loaded iframe host; the editing tests only need
+// to know whether it is mounted.
+const openApiPreviewStub = {
+  name: 'OpenApiPreview',
+  props: ['file', 'viewMode', 'chatQuote'],
+  template: '<div class="openapi-preview-stub" />',
+}
+
 // Stub child components
 const stubs = {
   FileHeader: true,
@@ -300,6 +312,7 @@ const stubs = {
   CodeMirrorViewer: codeMirrorViewerStub,
   MilkdownEditor: milkdownEditorStub,
   TablePreviewBody: tablePreviewStub,
+  OpenApiPreview: openApiPreviewStub,
   DiffDrawer: true,
   TocDock: {
     name: 'TocDock',
@@ -370,6 +383,78 @@ describe('FileViewer', () => {
 
       wrapper.vm.closeSearchInput()
       expect(mockTableCloseSearch).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // HTML and OpenAPI have a rendered body (iframe / Swagger UI) with a source
+  // editor behind it. Both used to hand that editor `editable: false` while the
+  // header still offered the pencil, so the toggle lit up and nothing else
+  // happened. They now behave like markdown: edit from either view, and the
+  // preview comes back when the session ends.
+  describe('templated previews (HTML / OpenAPI) source editing', () => {
+    const htmlFile = { name: 'index.html', path: '/tmp/index.html', content: '<h1>hi</h1>' }
+    const openapiFile = { name: 'api.yaml', path: '/tmp/api.yaml', content: 'openapi: 3.0.0\ninfo: {}\n', subtype: 'openapi' }
+
+    function setupState(wrapper: ReturnType<typeof mount>) {
+      return (wrapper.vm as any).$.setupState
+    }
+
+    it('swaps the rendered HTML preview for an editable source editor', async () => {
+      const wrapper = mountViewer({ file: htmlFile })
+      expect(wrapper.find('.html-preview-pane').exists()).toBe(true)
+
+      setupState(wrapper).handleToggleEdit()
+      await nextTick()
+
+      expect(wrapper.find('.html-preview-pane').exists()).toBe(false)
+      const cm = wrapper.findComponent({ name: 'CodeMirrorViewer' })
+      expect(cm.exists()).toBe(true)
+      expect(cm.props('editable')).toBe(true)
+    })
+
+    it('returns to the rendered HTML preview when the edit session ends', async () => {
+      const wrapper = mountViewer({ file: htmlFile })
+      setupState(wrapper).handleToggleEdit()
+      await nextTick()
+
+      setupState(wrapper).handleExitEdit()
+      await nextTick()
+
+      expect(wrapper.find('.html-preview-pane').exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).exists()).toBe(false)
+    })
+
+    it('saves edits made in the HTML source view', async () => {
+      mockSaveFile.mockResolvedValue(true)
+      const wrapper = mountViewer({ file: htmlFile })
+      setupState(wrapper).handleToggleEdit()
+      await nextTick()
+
+      wrapper.findComponent({ name: 'CodeMirrorViewer' }).vm.$emit('save', '<h1>edited</h1>')
+      await flushPromises()
+
+      expect(mockSaveFile).toHaveBeenCalledWith('/tmp/index.html', '<h1>edited</h1>')
+    })
+
+    it('opens the source editor from the rendered OpenAPI docs', async () => {
+      const wrapper = mountViewer({ file: openapiFile })
+      expect(wrapper.find('.openapi-preview-stub').exists()).toBe(true)
+
+      setupState(wrapper).handleToggleEdit()
+      await nextTick()
+
+      expect(wrapper.find('.openapi-preview-stub').exists()).toBe(false)
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).props('editable')).toBe(true)
+    })
+
+    it('keeps the OpenAPI source view read-only until editing starts, then editable', async () => {
+      const wrapper = mountViewer({ file: openapiFile, markdownViewMode: 'raw' })
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).props('editable')).toBe(false)
+
+      setupState(wrapper).handleToggleEdit()
+      await nextTick()
+
+      expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).props('editable')).toBe(true)
     })
   })
 
