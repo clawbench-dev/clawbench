@@ -642,7 +642,7 @@ func TestSafeArchivePath_RootRelativeNameIsRejected(t *testing.T) {
 // name: filepath.IsAbs says false and it cleans to `\abs`. That is still safe —
 // the extractors join it onto dest, so `C:\dest` + `\abs` is `C:\dest\abs`
 // because a rooted path without a volume keeps the joined volume. This test
-// pins that behaviour on Windows only (a POSIX host never sees it, where the
+// pins that behavior on Windows only (a POSIX host never sees it, where the
 // same name is absolute and refused by TestSafeArchivePath_RootRelativeNameIsRejected).
 func TestSafeArchivePath_RootRelativeNameIsNotEscapedOnWindows(t *testing.T) {
 	if !IsWindows() {
