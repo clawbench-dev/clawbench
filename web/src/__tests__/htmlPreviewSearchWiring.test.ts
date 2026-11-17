@@ -46,6 +46,21 @@ describe('Ctrl+F routing for the rendered HTML preview', () => {
     expect(app).toMatch(/isMarkdownRenderedView\.value,\s*isHtmlRenderedView\.value/)
   })
 
+  it('treats an edit session on HTML/OpenAPI as the CodeMirror view', () => {
+    // Editing from the rendered preview replaces the iframe/docs with the
+    // source editor, so search must follow the editor rather than a preview
+    // that is no longer on screen.
+    const body = app.slice(app.indexOf('const isCodeMirrorFileView = computed('))
+    const head = body.slice(0, body.indexOf('\n})'))
+    expect(head).toMatch(/isHtml \|\| f\.subtype === 'openapi'[\s\S]{0,400}return fileEditor\.isEditing\(\)/)
+  })
+
+  it('drops the preview find bar while an edit session is open', () => {
+    const body = app.slice(app.indexOf('const isHtmlRenderedView = computed('))
+    const head = body.slice(0, body.indexOf('\n})'))
+    expect(head).toContain('!fileEditor.isEditing()')
+  })
+
   it('enables the quote bridge for the rendered preview (chatQuote)', () => {
     // The bridge is what lets a text selection inside the iframe surface the
     // quote bar at all — the host document never sees that selection.

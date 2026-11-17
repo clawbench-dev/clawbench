@@ -338,8 +338,12 @@ const isWallpaperSource = computed(() => {
   const ext = props.file.name.split('.').pop()?.toLowerCase() ?? ''
   return wallpaperExts.includes(ext)
 })
-// Editable: text/source files in raw view (excludes media).
-// Markdown is always editable (even in rendered view) so users can edit the source.
+// Editable: any file with text content (media is excluded above). Every
+// rendered body — markdown, the HTML preview, the OpenAPI docs, the CSV table —
+// has a source editor behind it, so the edit toggle is offered from either
+// view; entering it swaps the preview for that editor and leaving returns to
+// the preview. Offering it only in the source view used to strand the
+// templated types: the toggle existed but the editor behind it was read-only.
 //
 // An Untitled buffer is excluded: it is always in edit mode, so an "edit" toggle
 // would only offer to drop it back to a read-only view of a file that does not
@@ -347,12 +351,7 @@ const isWallpaperSource = computed(() => {
 const isEditable = computed(() => {
     if (isUntitled.value) return false
     if (!hasTextContent.value || isMediaFile.value) return false
-    if (isMarkdown.value) return true
-    // The table view is read-only by nature, but the file is still text: the
-    // edit button opens it in the source editor (same as markdown's preview).
-    if (isTableFile.value) return true
-    // Other templated types (HTML/OpenAPI) are only editable in source view
-    return !isMarkdownRendered.value
+    return true
 })
 const hasToc = computed(() => fileSupportsToc(props.file, effectiveViewMode.value))
 

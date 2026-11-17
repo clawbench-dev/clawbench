@@ -755,6 +755,28 @@ describe('FileHeader', () => {
       expect(renderedToolbarIds(wrapper)).toContain('edit')
     })
 
+    // Rendered bodies (HTML preview, OpenAPI docs) are backed by the same
+    // source editor, so the toggle must be reachable from the rendered view
+    // too. It used to be offered only in source view — and there the editor
+    // behind it was hard-wired read-only, so the button did nothing.
+    it('shows edit button for an HTML file in the rendered view', () => {
+      const wrapper = mountHeader({
+        file: { name: 'index.html', path: '/tmp/index.html', content: '<h1>hi</h1>' },
+        viewMode: 'rendered',
+      })
+      expect((wrapper.vm as any).$.setupState.isEditable).toBe(true)
+      expect(renderedToolbarIds(wrapper)).toContain('edit')
+    })
+
+    it('shows edit button for an OpenAPI spec in the rendered view', () => {
+      const wrapper = mountHeader({
+        file: { name: 'api.yaml', path: '/tmp/api.yaml', content: 'openapi: 3.0.0', subtype: 'openapi' },
+        viewMode: 'rendered',
+      })
+      expect((wrapper.vm as any).$.setupState.isEditable).toBe(true)
+      expect(renderedToolbarIds(wrapper)).toContain('edit')
+    })
+
     it('shows edit button and code features for a newly-created empty text file', () => {
       const wrapper = mountHeader({ file: { name: 'newfile.ts', path: '/tmp/newfile.ts', content: '' } })
       const vm = wrapper.vm as any

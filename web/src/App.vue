@@ -3027,7 +3027,9 @@ const isCodeMirrorFileView = computed(() => {
         return editing || markdownViewMode.value !== 'rendered'
     }
     if (ft.isHtml || f.subtype === 'openapi') {
-        return markdownViewMode.value !== 'rendered'
+        // Editing from the rendered preview swaps the iframe/docs for the
+        // source editor, so the search UI must follow it.
+        return fileEditor.isEditing() || markdownViewMode.value !== 'rendered'
     }
     // CSV/TSV render as a data table (own search box, no CodeMirror).
     if (ft.isTable) {
@@ -3052,7 +3054,9 @@ const isHtmlRenderedView = computed(() => {
     const f = currentFile.value
     if (!f || typeof f.content !== 'string') return false
     const ft = getFileType(f.name || '')
-    return ft.isHtml && markdownViewMode.value === 'rendered'
+    // An edit session replaces the iframe with the source editor, so the
+    // preview's own search bar is not on screen anymore.
+    return ft.isHtml && markdownViewMode.value === 'rendered' && !fileEditor.isEditing()
 })
 // Rendered CSV/TSV table. It carries its own search box (the table's), so the
 // header search button and Ctrl+F focus that instead of CodeMirror/the drawer.
