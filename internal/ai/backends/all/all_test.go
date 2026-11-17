@@ -90,7 +90,7 @@ func TestAllPackageInstallsWiring(t *testing.T) {
 		{"ai.LookupACPModelSwitchMethodFn", ai.LookupACPModelSwitchMethodFn},
 		{"ai.LookupMidTurnInjectorFn", ai.LookupMidTurnInjectorFn},
 		{"model.LoadBackendSpecs", model.LoadBackendSpecs},
-		{"model.BackendSupportsCLIFn", model.BackendSupportsCLIFn},
+		{"model.LookupBackendCapabilitiesFn", model.LookupBackendCapabilitiesFn},
 	}
 	for _, c := range checks {
 		if c.fn == nil {

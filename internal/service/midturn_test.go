@@ -187,9 +187,11 @@ func TestInjectQueuedMessage_SplitBackendNotMarkedInjected(t *testing.T) {
 	db := setupDB(t)
 	_ = db
 
-	orig := model.BackendMidTurnSplitsReplyFn
-	model.BackendMidTurnSplitsReplyFn = func(backendID string) bool { return backendID == "codebuddy" }
-	t.Cleanup(func() { model.BackendMidTurnSplitsReplyFn = orig })
+	orig := model.LookupBackendCapabilitiesFn
+	model.LookupBackendCapabilitiesFn = func(backendID string) (model.BackendCapabilities, bool) {
+		return model.BackendCapabilities{MidTurnSplitsReply: backendID == "codebuddy"}, true
+	}
+	t.Cleanup(func() { model.LookupBackendCapabilitiesFn = orig })
 
 	sid := helperCreateSession(t, "/project", "codebuddy", "Insert Split")
 

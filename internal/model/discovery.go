@@ -111,53 +111,10 @@ type BackendSpec struct {
 // injection to avoid import cycles (model cannot import backends).
 var LoadBackendSpecs func() []BackendSpec
 
-// BackendSupportsCLIFn is set by the backends package at init time to report
-// whether a backend has a CLI implementation (a registered CLI backend factory).
-// Uses function-variable injection to avoid import cycles (model cannot import ai).
-var BackendSupportsCLIFn func(backendID string) bool
-
-// BackendSupportsCLI reports whether the given backend has a CLI implementation.
-// Falls back to false when the function variable is not wired (e.g. isolated tests).
-func BackendSupportsCLI(backendID string) bool {
-	if BackendSupportsCLIFn == nil {
-		return false
-	}
-	return BackendSupportsCLIFn(backendID)
-}
-
-// BackendSupportsMidTurnFn is set by the backends package at init time to report
-// whether a backend can inject a message into an ALREADY RUNNING turn (rather
-// than queueing it for the next one). Uses function-variable injection to avoid
-// an import cycle (model cannot import ai).
-var BackendSupportsMidTurnFn func(backendID string) bool
-
-// BackendSupportsMidTurn reports whether the given backend can join a running
-// turn. Falls back to false when the function variable is not wired (isolated
-// tests, or a build without the backends package) — callers then use the
-// "interrupt and send" affordance instead.
-func BackendSupportsMidTurn(backendID string) bool {
-	if BackendSupportsMidTurnFn == nil {
-		return false
-	}
-	return BackendSupportsMidTurnFn(backendID)
-}
-
-// BackendMidTurnSplitsReplyFn is set by the backends package at init time to
-// report whether a backend's mid-turn injection SPLITS the running assistant
-// reply into two rather than merely merging into it. Uses function-variable
-// injection to avoid an import cycle (model cannot import ai).
-var BackendMidTurnSplitsReplyFn func(backendID string) bool
-
-// BackendMidTurnSplitsReply reports whether an injected message splits the
-// running reply. Falls back to false (merge-only) when not wired or unknown —
-// the conservative default, since a merge-only injection is the case that needs
-// the "回复已并入上一轮" hint.
-func BackendMidTurnSplitsReply(backendID string) bool {
-	if BackendMidTurnSplitsReplyFn == nil {
-		return false
-	}
-	return BackendMidTurnSplitsReplyFn(backendID)
-}
+// The per-capability lookups (CLI, mid-turn, splits-reply) used to live here as
+// three separate function variables. They are now one snapshot — see
+// LookupBackendCapabilities in backend_capabilities.go — so a caller asks once
+// instead of knowing which field to inspect.
 
 // CustomACPBackend is the backend ID carried by user-defined ACP agents
 // (issue #557). It deliberately appears in NO registry entry:

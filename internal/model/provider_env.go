@@ -570,6 +570,50 @@ func SupportedProtocols(backendID string) []string {
 	return dedupeSorted(out)
 }
 
+// ProviderMethods lists the delivery channels this backend declares, in a
+// stable order: env, config-dir, config-file, inline-config, own-service,
+// in-process.
+//
+// This is the taxonomy a reader used to have to reconstruct by noticing which
+// ProviderEnvSpec fields were non-empty. An entry means "a bound provider can
+// reach the spawned process this way"; a backend may declare several.
+//
+// An empty result means no provider can reach it (openclaw: the provider
+// belongs to its Gateway; qoder/copilot/vecli: no channel exists).
+func ProviderMethods(backendID string) []string {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok {
+		return nil
+	}
+	var out []string
+	if spec.Anthropic.anyVar() || spec.OpenAI.anyVar() || spec.Gemini.anyVar() {
+		out = append(out, ProviderMethodEnv)
+	}
+	if spec.ConfigDirEnv != "" && spec.ConfigDirFile != "" {
+		out = append(out, ProviderMethodConfigDir)
+	}
+	if spec.ConfigOnly {
+		out = append(out, ProviderMethodConfigFile)
+	}
+	if spec.InlineConfigEnv != "" {
+		out = append(out, ProviderMethodInlineConfig)
+	}
+	if spec.OwnServiceEnv != "" {
+		out = append(out, ProviderMethodOwnService)
+	}
+	if spec.InProcess {
+		out = append(out, ProviderMethodInProcess)
+	}
+	return out
+}
+
+// anyVar reports whether this protocol row names at least one variable. A row
+// with no variable names is not an env channel: the built-in agent declares
+// both protocols that way because it calls the endpoint itself.
+func (pe *ProtocolEnv) anyVar() bool {
+	return pe != nil && (pe.BaseURL != "" || pe.APIKey != "" || pe.AuthToken != "")
+}
+
 // dedupeSorted sorts and removes duplicates, so a protocol declared by both an
 // env slot and the config-dir file is listed once.
 func dedupeSorted(in []string) []string {

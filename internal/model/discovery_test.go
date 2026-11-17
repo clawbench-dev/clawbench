@@ -139,11 +139,11 @@ func TestBackendSupportsCLI_ComputedFromFactoryRegistry(t *testing.T) {
 }
 
 func TestBackendSupportsCLI_UnwiredFnFallsBack(t *testing.T) {
-	// When the function variable is not wired (isolated test), the helper
+	// When the capability lookup is not wired (isolated test), the helper
 	// falls back to false instead of panicking.
-	orig := model.BackendSupportsCLIFn
-	t.Cleanup(func() { model.BackendSupportsCLIFn = orig })
-	model.BackendSupportsCLIFn = nil
+	orig := model.LookupBackendCapabilitiesFn
+	t.Cleanup(func() { model.LookupBackendCapabilitiesFn = orig })
+	model.LookupBackendCapabilitiesFn = nil
 
 	assert.False(t, model.BackendSupportsCLI("claude"))
 	assert.False(t, model.BackendSupportsCLI("grok"))
