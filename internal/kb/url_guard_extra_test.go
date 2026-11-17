@@ -37,7 +37,10 @@ func TestDialPublicOnlyRefusesAtDialTime(t *testing.T) {
 	// A hostname that resolves to a private address is refused even though the
 	// URL-level check let it through: that is the whole reason this dialer
 	// exists instead of net.Dialer's own resolver.
-	_, err = dial(t.Context(), "tcp", "ip6-localhost:80")
+	// A literal, not a host alias: `ip6-localhost` exists in Debian's hosts file
+	// and does not on a Windows runner, where the lookup fails before the
+	// address is ever classified.
+	_, err = dial(t.Context(), "tcp", "[::1]:80")
 	require.ErrorIs(t, err, ErrPrivateAddress)
 
 	// Nothing usable resolves at all: the error names the host so the panel can

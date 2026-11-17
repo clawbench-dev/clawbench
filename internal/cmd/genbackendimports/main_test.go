@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -129,7 +130,10 @@ func TestCollectBackends_ErrorsAreReported(t *testing.T) {
 	// A sub-directory this process cannot read is an error, not "no Go files":
 	// silently dropping a backend is exactly the failure this generator exists
 	// to prevent. Root ignores permissions, so the check only runs unprivileged.
-	if os.Geteuid() != 0 {
+	// A directory made unreadable with chmod is not a portable way to produce an
+	// error: Windows has no POSIX permission bits (chmod 0000 is a no-op there),
+	// so this check only runs where the bits mean something.
+	if runtime.GOOS != "windows" && os.Geteuid() != 0 {
 		root := t.TempDir()
 		locked := filepath.Join(root, "locked")
 		if err := os.MkdirAll(locked, 0o755); err != nil {
@@ -193,8 +197,17 @@ func TestRepoGenerationMatchesCommittedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if !bytes.Equal(committed, generated) {
+	// Line endings are normalized before comparing: git checks the file out with
+	// CRLF on Windows, while the generator always writes LF. The invariant is
+	// "same content", not "same bytes in the working tree".
+	if !bytes.Equal(normalizeEOL(committed), normalizeEOL(generated)) {
 		t.Fatalf("internal/ai/backends/all/all.go is stale; run go generate ./internal/ai/backends/all\n"+
 			"--- committed ---\n%s\n--- generated ---\n%s", committed, generated)
 	}
+}
+
+// normalizeEOL makes a CRLF working tree compare equal to the generator's LF
+// output.
+func normalizeEOL(b []byte) []byte {
+	return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
 }

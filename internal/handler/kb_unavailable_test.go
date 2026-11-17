@@ -2,6 +2,8 @@ package handler
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -75,8 +77,13 @@ func TestKBAddDocumentFromPath_RefusesOutsideEveryRoot(t *testing.T) {
 	col, err := kb.CreateCollection("资料", "", kb.ScopeGlobal, 0)
 	require.NoError(t, err)
 
+	// An absolute path outside every root, built from this machine rather than
+	// written as "/etc/passwd": on Windows a leading separator resolves against
+	// the current drive, which is not necessarily outside the project.
+	outside := filepath.Join(t.TempDir(), "passwd")
+	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o600))
 	w := callHandler(ServeKBDocuments, withProjectCookie(newRequest(t, http.MethodPost, "/api/kb/documents", map[string]any{
-		"collection_id": col.ID, "path": "/etc/passwd",
+		"collection_id": col.ID, "path": outside,
 	}), env.ProjectDir))
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 

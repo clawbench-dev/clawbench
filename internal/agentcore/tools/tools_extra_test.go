@@ -98,7 +98,16 @@ func TestResolvePath_ErrorMessages(t *testing.T) {
 	// The resolver falls back to the raw absolute root when the directory does
 	// not exist, so a missing root yields the tool's own "does not exist" rather
 	// than a containment error about a directory that was never there.
-	missingRoot := filepath.Join(root, "not-created")
+	//
+	// The root is resolved first: the containment check compares against
+	// EvalSymlinks(root), and on Windows a temp dir is a short-name path
+	// (RUNNER~1 vs runneradmin) that a case-sensitive-ish prefix test rejects
+	// even though both name the same directory.
+	realRootForMissing, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("eval symlinks: %v", err)
+	}
+	missingRoot := filepath.Join(realRootForMissing, "not-created")
 	got, err := resolvePath(missingRoot, "a.txt")
 	if err != nil {
 		t.Fatalf("a not-yet-created root must still resolve: %v", err)
