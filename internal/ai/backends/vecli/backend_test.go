@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -25,6 +26,13 @@ import (
 // and exits with the given status.
 func writeFakeVeCLI(t *testing.T, body string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		// The fake is a POSIX shell script and the backend runs it as a program:
+		// a Windows runner has no /bin/sh to exec (`executable file not found in
+		// %PATH%`). The behaviour under test is the summary parsing, which is
+		// covered on the platforms where this fixture can run at all.
+		t.Skip("the fake CLI is a POSIX shell script")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "vecli")
 	script := "#!/bin/sh\n" + body + "\n"

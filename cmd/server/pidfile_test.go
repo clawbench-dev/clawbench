@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 
@@ -26,9 +27,17 @@ func TestWritePIDFile_NamesThisProcessAndCleansUp(t *testing.T) {
 
 	// 0600: the PID is not a secret, but the data directory may be shared with
 	// other OS users, and there is no reason to advertise it.
-	info, statErr := os.Stat(path)
-	require.NoError(t, statErr)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	//
+	// Windows does not have POSIX permission bits: os.WriteFile with 0600 still
+	// produces a file whose permission bits read as 0666, so the assertion only
+	// holds where the bits mean what they say.
+	var statErr error
+	if runtime.GOOS != "windows" {
+		var info os.FileInfo
+		info, statErr = os.Stat(path)
+		require.NoError(t, statErr)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 
 	cleanup()
 	_, statErr = os.Stat(path)

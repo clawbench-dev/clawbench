@@ -117,7 +117,10 @@ func TestResolveAnywhere_Errors(t *testing.T) {
 	if _, err := resolveAnywhere("", "rel.txt"); err == nil || !strings.Contains(err.Error(), "relative path cannot be resolved") {
 		t.Fatalf("a relative path without a root must be refused, got %v", err)
 	}
-	abs := filepath.Join(string(filepath.Separator), "tmp", "x.txt")
+	// Built from the temp dir rather than a literal "/tmp/x.txt": on Windows a
+	// leading separator resolves against the current drive, which is not where
+	// the test's own temp dir necessarily lives.
+	abs := filepath.Join(t.TempDir(), "x.txt")
 	got, err := resolveAnywhere("", abs)
 	if err != nil || got != filepath.Clean(abs) {
 		t.Fatalf("an absolute path must resolve to itself: %q %v", got, err)
@@ -133,8 +136,15 @@ func TestResolveExistingPrefix_ReappendsMissingTail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != target {
-		t.Fatalf("got %q, want %q", got, target)
+	// The resolved value is EvalSymlinks'd, and on Windows the temp dir is a
+	// short-name path (RUNNER~1), so the expectation has to be resolved too.
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("eval symlinks: %v", err)
+	}
+	want = filepath.Join(want, "a", "b", "c.txt")
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 
