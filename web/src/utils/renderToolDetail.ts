@@ -599,10 +599,18 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
   // handle on that pending request.
   const elicitationId = str(input.elicitationId)
   const elicitationAttr = elicitationId ? ` data-elicitation-id="${escapeHtml(elicitationId)}"` : ''
-  // Once answered (block done) the request no longer exists: render the card as
-  // a record instead of an answerable one, otherwise a reload would show live
-  // buttons whose POST can only fail.
-  const readOnly = !!elicitationId && !!blockCtx?.done
+  // The pending request disappears in three ways: the user answered (success),
+  // nobody answered within the 30-minute backstop (error), or the turn ended
+  // first (interrupted). Only the answered one is a finished record; the other
+  // two mean "未作答", and the card must stay clickable so a late answer can
+  // still be submitted — as an ordinary chat message, since the RPC is gone
+  // (see submitAskView).
+  const elicitationDone = !!elicitationId && !!blockCtx?.done
+  const answered = elicitationDone && blockCtx?.status === 'success'
+  // Still blocking the agent: Submit must travel back as the RPC result.
+  const live = !!elicitationId && !elicitationDone
+  const liveAttr = live ? ' data-elicitation-live="1"' : ''
+  const readOnly = answered
   const readOnlyAttr = readOnly ? ' data-readonly="1"' : ''
 
   // `tabindex="-1"` makes the card programmatically focusable (not tab-reachable,
@@ -610,7 +618,7 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
   // Ctrl/Cmd+Enter shortcut work after a MOUSE selection: the options are
   // <div>s, so clicking one leaves focus on <body>, and a keydown fired there
   // never reaches the card container the shortcut is bound to. See focusAskView.
-  let html = `<div class="ask-question-view"${askKeyAttr}${elicitationAttr}${readOnlyAttr} tabindex="-1">`
+  let html = `<div class="ask-question-view"${askKeyAttr}${elicitationAttr}${liveAttr}${readOnlyAttr} tabindex="-1">`
 
   for (let qi = 0; qi < questions.length; qi++) {
     const q = questions[qi]
@@ -697,8 +705,9 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
     // "Recommend" asks the AI for a suggestion by sending a chat message. That
     // is meaningless while the agent is blocked on this very request (the
     // message would queue behind the turn it is supposed to unblock), so a live
-    // elicitation card offers only Submit.
-    if (!elicitationId) {
+    // elicitation card offers only Submit. Once the request is gone (timed out /
+    // turn ended) a chat message is exactly what Submit does anyway.
+    if (!live) {
       html += `<button class="ask-question-recommend">${gt('tool.askUser.recommend')}</button>`
     }
     html += `<button class="ask-question-submit" disabled>${gt('tool.askUser.submit')}</button>`
@@ -2162,13 +2171,20 @@ async function respondPermission(sessionId: string, toolCallId: string, optionId
 /**
  * Call the elicitation respond API — the answer to a blocking ACP
  * `elicitation/create` (see submitElicitation).
+ *
+ * Three outcomes, because they need different recovery:
+ *   ok    — the agent got the answer;
+ *   gone  — the server no longer has the request (404: timed out, or the turn
+ *           ended first), so the card must switch to the chat-message exit;
+ *   error — transient (network / 5xx); the card stays live so a retry can
+ *           still deliver the answer over the RPC.
  */
 async function respondElicitation(
   sessionId: string,
   elicitationId: string,
   content: Record<string, unknown>,
-): Promise<boolean> {
-  if (isShareMode()) return false
+): Promise<'ok' | 'gone' | 'error'> {
+  if (isShareMode()) return 'error'
 
   try {
     const resp = await fetch('/api/ai/elicitation/respond', {
@@ -2176,10 +2192,11 @@ async function respondElicitation(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, elicitationId, content }),
     })
-    return resp.ok
+    if (resp.ok) return 'ok'
+    return resp.status === 404 ? 'gone' : 'error'
   } catch (e) {
     appLog.e(TAG, 'elicitation respond failed:', e)
-    return false
+    return 'error'
   }
 }
 
@@ -2669,8 +2686,16 @@ function commitAskSubmission(view: Element): string {
  * the form has exactly one question that carries one (OpenCode always adds such
  * a companion field). With several questions one shared box cannot be attributed
  * to a question, so it is ignored rather than guessed at.
+ *
+ * When the server says the request is gone, the same answer is re-submitted
+ * through the ordinary chat-message exit (`emit`) — the card must never become
+ * a dead end just because it still looked live.
  */
-function submitElicitation(view: Element, elicitationId: string): boolean {
+function submitElicitation(
+  view: Element,
+  elicitationId: string,
+  emit: (type: string, payload?: unknown, detail?: unknown) => void,
+): boolean {
   const content: Record<string, unknown> = {}
   const items = view.querySelectorAll('.ask-question-item')
   for (const item of items) {
@@ -2706,13 +2731,20 @@ function submitElicitation(view: Element, elicitationId: string): boolean {
   const toolDetail = view.closest('.tool-detail') as HTMLElement | null
   const sessionId = toolDetail?.dataset?.sessionId || getCurrentSessionId()
 
-  void respondElicitation(sessionId, elicitationId, content).then(ok => {
-    if (ok) return
-    // The request is gone (turn already ended, or a stale card restored from
-    // history). Undo the terminal look so the user sees that nothing was sent
-    // instead of a card that silently claims to be answered.
+  void respondElicitation(sessionId, elicitationId, content).then(result => {
+    if (result === 'ok') return
+    // Undo the terminal look first, so the card never silently claims to be
+    // answered when nothing was delivered.
     if (cardKey) revertAskSubmission(cardKey)
     else makeAskViewAnswerable(view)
+    if (result !== 'gone') return
+    // The request no longer exists but the card still looked live (a block
+    // restored from history whose tool_result never arrived). The agent can
+    // still get the answer as an ordinary chat message: drop the live flag and
+    // take that exit. `submitAskView` re-collects the selection from the DOM,
+    // so nothing is lost by the round trip through the server.
+    delete (view as HTMLElement).dataset.elicitationLive
+    submitAskView(view, emit)
   })
 
   return true
@@ -2740,11 +2772,15 @@ function submitAskView(view: Element, emit: (type: string, payload?: unknown, de
   if (view.classList.contains('ask-submitted')) return true
   if (!askViewReady(view)) return false
 
-  // A live elicitation is a BLOCKED agent, not a finished turn: its answer has
+  // A LIVE elicitation is a BLOCKED agent, not a finished turn: its answer has
   // to travel back as the RPC result, not as a chat message (which would queue
-  // behind the very turn it is meant to unblock).
-  const elicitationId = (view as HTMLElement).dataset?.elicitationId || ''
-  if (elicitationId) return submitElicitation(view, elicitationId)
+  // behind the very turn it is meant to unblock). An elicitation whose request
+  // is already gone (nobody answered it in time, or the turn ended) falls
+  // through to the ordinary chat-message path below — that is the only way a
+  // late answer can still reach the agent.
+  const viewEl = view as HTMLElement
+  const elicitationId = viewEl.dataset?.elicitationId || ''
+  if (elicitationId && viewEl.dataset?.elicitationLive === '1') return submitElicitation(view, elicitationId, emit)
 
   const answers: string[] = []
   const items = view.querySelectorAll('.ask-question-item')
