@@ -343,18 +343,8 @@ describe('ImagePreview', () => {
 
   it('pans by dragging while zoomed, clamped to the scaled image bounds', async () => {
     const wrapper = mountPreview()
-    const body = wrapper.find('.image-preview-body').element as HTMLElement
-    const img = wrapper.find('.image-preview-img').element as HTMLElement
-    // jsdom has no layout: give the pane and the image real dimensions so the
-    // clamp has something to work with. At 1.15× a 400×300 image in a 200×200
-    // pane, the pan range is ±130 × ±72.5.
-    Object.defineProperty(body, 'clientWidth', { value: 200, configurable: true })
-    Object.defineProperty(body, 'clientHeight', { value: 200, configurable: true })
-    Object.defineProperty(img, 'offsetWidth', { value: 400, configurable: true })
-    Object.defineProperty(img, 'offsetHeight', { value: 300, configurable: true })
-    // Zoom anchored at the pane centre keeps tx/ty at 0, so the assertions
-    // below measure the drag itself rather than the anchor offset.
-    body.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200, right: 200, bottom: 200, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    // At 1.15× a 400×300 image in a 200×200 pane, the pan range is ±130 × ±72.5.
+    const img = stubLayout(wrapper)
     await zoomIn(wrapper)
 
     await fireMouse(img, 'mousedown', 100, 100)
@@ -420,6 +410,70 @@ describe('ImagePreview', () => {
 
     expect(wrapper.find('.image-preview-img').attributes('draggable')).toBe('false')
     _resetForTest()
+  })
+
+  // jsdom has no TouchEvent constructor: hand the handler a plain event with
+  // the shape it reads.
+  function fireTouch(target: EventTarget, type: string, points: Array<[number, number]>) {
+    const ev = new Event(type, { bubbles: true, cancelable: true })
+    const touches = points.map(([clientX, clientY]) => ({ clientX, clientY }))
+    Object.assign(ev, { touches, changedTouches: touches })
+    target.dispatchEvent(ev)
+    return nextTick()
+  }
+
+  function stubLayout(wrapper: ReturnType<typeof mountPreview>) {
+    const body = wrapper.find('.image-preview-body').element as HTMLElement
+    const img = wrapper.find('.image-preview-img').element as HTMLElement
+    Object.defineProperty(body, 'clientWidth', { value: 200, configurable: true })
+    Object.defineProperty(body, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(img, 'offsetWidth', { value: 400, configurable: true })
+    Object.defineProperty(img, 'offsetHeight', { value: 300, configurable: true })
+    body.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200, right: 200, bottom: 200, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    return img
+  }
+
+  it('pinch-zooms on touch, then pans with one finger', async () => {
+    const wrapper = mountPreview()
+    const img = stubLayout(wrapper)
+
+    // Two fingers 40px apart → 80px apart = 2×.
+    await fireTouch(img, 'touchstart', [[80, 100], [120, 100]])
+    await fireTouch(img, 'touchmove', [[60, 100], [140, 100]])
+    expect(transformOf(wrapper)).toContain('scale(2)')
+
+    // Lift one finger: the remaining one becomes a pan handle.
+    await fireTouch(img, 'touchend', [[140, 100]])
+    await fireTouch(img, 'touchmove', [[180, 130]])
+    expect(transformOf(wrapper)).toContain('translate(40px, 30px)')
+    expect(transformOf(wrapper)).toContain('scale(2)')
+
+    await fireTouch(img, 'touchend', [])
+    await fireTouch(img, 'touchmove', [[0, 0]])
+    expect(transformOf(wrapper)).toContain('translate(40px, 30px)')
+  })
+
+  it('pinching back to the resting size resets the zoom', async () => {
+    const wrapper = mountPreview()
+    const img = stubLayout(wrapper)
+
+    await fireTouch(img, 'touchstart', [[80, 100], [120, 100]])
+    await fireTouch(img, 'touchmove', [[40, 100], [160, 100]])
+    expect(transformOf(wrapper)).toContain('scale(3)')
+
+    await fireTouch(img, 'touchmove', [[95, 100], [105, 100]])
+    expect(transformOf(wrapper)).toContain('scale(1)')
+    expect(wrapper.find('.img-zoom-badge').exists()).toBe(false)
+  })
+
+  it('leaves one-finger touches alone at the resting size', async () => {
+    const wrapper = mountPreview()
+    const img = stubLayout(wrapper)
+
+    await fireTouch(img, 'touchstart', [[100, 100]])
+    await fireTouch(img, 'touchmove', [[180, 150]])
+
+    expect(transformOf(wrapper)).toContain('translate(0px, 0px)')
   })
 
   // ── Load failure (the full-screen image viewer) ──

@@ -20,7 +20,11 @@
         @dragstart="onImageDragStart"
         @dragend="onImageDragEnd"
         @mousedown="handleMouseDown"
-        @dblclick="resetZoom" />
+        @dblclick="resetZoom"
+        @touchstart="handleTouchStart"
+        @touchmove="handleTouchMove"
+        @touchend="handleTouchEnd"
+        @touchcancel="handleTouchEnd" />
       <!-- Prev overlay -->
       <div v-if="hasPrev" class="img-nav-hint img-nav-prev" @click="goPrev">
         <ChevronLeft :size="18" />
@@ -112,8 +116,10 @@ function clampPan() {
     // exactly the base the scale multiplies.
     const maxX = Math.max(0, (img.offsetWidth * scale.value - body.clientWidth) / 2)
     const maxY = Math.max(0, (img.offsetHeight * scale.value - body.clientHeight) / 2)
-    tx.value = Math.min(maxX, Math.max(-maxX, tx.value))
-    ty.value = Math.min(maxY, Math.max(-maxY, ty.value))
+    // Round to hundredths: the scale factors produce long float tails, and
+    // sub-pixel precision is invisible anyway.
+    tx.value = Math.round(Math.min(maxX, Math.max(-maxX, tx.value)) * 100) / 100
+    ty.value = Math.round(Math.min(maxY, Math.max(-maxY, ty.value)) * 100) / 100
 }
 
 function resetZoom() {
@@ -146,9 +152,16 @@ let panStartX = 0
 let panStartY = 0
 let panBaseX = 0
 let panBaseY = 0
+/**
+ * Time of the last touch event. Chrome synthesises compatibility mouse events
+ * after a tap; without this guard a one-finger pan would be applied twice (once
+ * by the touch handler, once by the ghost mousedown/mousemove pair).
+ */
+let lastTouchAt = 0
 
 function handleMouseDown(e) {
     if (e.button !== 0 || !isZoomed.value) return
+    if (Date.now() - lastTouchAt < 500) return
     e.preventDefault()
     isDragging.value = true
     panStartX = e.clientX
@@ -174,6 +187,94 @@ function handleMouseUp() {
 }
 
 onUnmounted(handleMouseUp)
+
+// ── Touch: pinch to zoom, one finger to pan once zoomed ──
+// One finger at the resting size is left alone (no preventDefault) so the
+// surrounding shell keeps its edge-swipe gestures; two fingers are ours.
+let pinchDistance = 0
+let pinchBaseScale = 1
+let pinchBaseX = 0
+let pinchBaseY = 0
+let pinchAnchorX = 0
+let pinchAnchorY = 0
+
+function touchMidpoint(touches) {
+    return {
+        x: (touches[0].clientX + touches[1].clientX) / 2,
+        y: (touches[0].clientY + touches[1].clientY) / 2,
+    }
+}
+
+function touchDistance(touches) {
+    return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
+}
+
+function beginPinch(touches) {
+    const body = bodyRef.value
+    if (!body) return
+    const rect = body.getBoundingClientRect()
+    const mid = touchMidpoint(touches)
+    pinchDistance = touchDistance(touches)
+    pinchBaseScale = scale.value
+    pinchBaseX = tx.value
+    pinchBaseY = ty.value
+    // Anchor in the same "offset from the pane centre" space the wheel uses.
+    pinchAnchorX = mid.x - rect.left - rect.width / 2
+    pinchAnchorY = mid.y - rect.top - rect.height / 2
+    // Suppress the transform transition for the duration of the gesture;
+    // without this the image lags behind the fingers.
+    isDragging.value = true
+}
+
+function beginTouchPan(touch) {
+    isDragging.value = true
+    panStartX = touch.clientX
+    panStartY = touch.clientY
+    panBaseX = tx.value
+    panBaseY = ty.value
+}
+
+function handleTouchStart(e) {
+    lastTouchAt = Date.now()
+    if (e.touches.length === 2) beginPinch(e.touches)
+    else if (e.touches.length === 1 && isZoomed.value) beginTouchPan(e.touches[0])
+}
+
+function handleTouchMove(e) {
+    lastTouchAt = Date.now()
+    if (e.touches.length === 2 && pinchDistance > 0) {
+        e.preventDefault()
+        const body = bodyRef.value
+        if (!body) return
+        const rect = body.getBoundingClientRect()
+        const mid = touchMidpoint(e.touches)
+        const next = Math.min(MAX_ZOOM, Math.max(1, pinchBaseScale * (touchDistance(e.touches) / pinchDistance)))
+        if (next === 1) { resetZoom(); return }
+        // The content point that was under the starting midpoint follows the
+        // moving midpoint: tx' = mid' - (anchor - tx) * (scale' / scale).
+        const k = next / pinchBaseScale
+        tx.value = mid.x - rect.left - rect.width / 2 - (pinchAnchorX - pinchBaseX) * k
+        ty.value = mid.y - rect.top - rect.height / 2 - (pinchAnchorY - pinchBaseY) * k
+        scale.value = next
+        clampPan()
+    } else if (e.touches.length === 1 && isDragging.value) {
+        e.preventDefault()
+        tx.value = panBaseX + (e.touches[0].clientX - panStartX)
+        ty.value = panBaseY + (e.touches[0].clientY - panStartY)
+        clampPan()
+    }
+}
+
+function handleTouchEnd(e) {
+    lastTouchAt = Date.now()
+    pinchDistance = 0
+    if (e.touches.length === 1 && isZoomed.value) {
+        // Two fingers became one: rebase the pan on the finger that stayed.
+        beginTouchPan(e.touches[0])
+    } else if (e.touches.length === 0) {
+        isDragging.value = false
+    }
+}
 
 // Build list of image files in the same directory
 const siblingImages = computed(() => {
@@ -268,6 +369,10 @@ watch(() => props.file, () => {
     object-fit: contain;
     cursor: default;
     box-shadow: 0 calc(2 * var(--dp)) calc(12 * var(--dp)) rgba(0, 0, 0, 0.08);
+    /* The image owns its gestures: the browser must not take over the pinch
+       (visual-viewport zoom) or start a scroll before our handler sees it. The
+       surrounding padding still reaches the shell's edge-swipe gestures. */
+    touch-action: none;
 }
 
 /* Zoomed: the transform is the only thing that grows, so the scrollable
