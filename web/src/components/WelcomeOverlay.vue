@@ -1258,7 +1258,7 @@ defineExpose({ show, forceShow, visible })
   color: var(--accent-color);
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
-  letter-spacing: 0.3px;
+  letter-spacing: 0.02em;
   line-height: calc(16 * var(--dp));
 }
 

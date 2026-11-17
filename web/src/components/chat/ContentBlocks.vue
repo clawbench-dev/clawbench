@@ -3608,7 +3608,7 @@ onUnmounted(() => {
 
 /* The × belongs to the verdict's colour, just a step back from the number. */
 .tool-group-verdict .verdict-x {
-  font-size: 10px;
+  font-size: var(--font-size-2xs, 10px);
   line-height: 1;
   color: inherit;
   opacity: 0.8;

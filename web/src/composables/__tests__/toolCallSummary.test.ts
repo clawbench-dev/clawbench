@@ -77,10 +77,14 @@ describe('toolCallSummary', () => {
   })
 
   // ── file_path ──
-  it('shows baseName for file_path', () => {
+  it('keeps the last TWO path segments for file_path', () => {
+    // Changed deliberately (see chatBlocks.toolCallSummary): a bare base name
+    // made two same-named files in different directories indistinguishable in
+    // the one-line pill, and the Go side's ExtractSummary keeps two segments, so
+    // a one-segment frontend drifted from the stored summary.
     expect(toolCallSummary({
       input: { file_path: '/home/user/project/main.go' },
-    })).toBe('main.go')
+    })).toBe('project/main.go')
   })
 
   it('shows baseName for file_path with no directory', () => {
@@ -215,17 +219,18 @@ describe('toolCallSummary', () => {
   })
 
   // ── path ──
-  it('shows baseName for path', () => {
+  it('keeps the last two segments for path', () => {
+    // Same rule as file_path: two segments keep same-named paths apart.
     expect(toolCallSummary({
       input: { path: '/home/user/project/src' },
-    })).toBe('src')
+    })).toBe('project/src')
   })
 
   // ── src_path + dst_path ──
   it('shows src → dst for move operations', () => {
     expect(toolCallSummary({
       input: { src_path: '/old/path/file.go', dst_path: '/new/path/file.go' },
-    })).toBe('file.go → file.go')
+    })).toBe('path/file.go → path/file.go')
   })
 
   it('src_path without dst_path falls through to firstVal', () => {

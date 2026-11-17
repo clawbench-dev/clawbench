@@ -21,7 +21,7 @@
         @dragend="onImageDragEnd"
         @mousedown="handleMouseDown"
         @dblclick="resetZoom"
-        @touchstart="handleTouchStart"
+        @touchstart.passive="handleTouchStart"
         @touchmove="handleTouchMove"
         @touchend="handleTouchEnd"
         @touchcancel="handleTouchEnd" />
