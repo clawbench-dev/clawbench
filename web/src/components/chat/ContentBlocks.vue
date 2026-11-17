@@ -242,7 +242,7 @@
           <div class="chat-card-strip" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ unifiedCardTitle(block.name, block.input, block.display_name) }}</span>
-            <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
+            <span v-if="cardSummary(block)" class="tool-summary">{{ cardSummary(block) }}</span>
             <!-- Pending spinner: only meaningful when the tool is actually answerable.
                  Malformed AskUserQuestion input (no valid questions) can never be answered,
                  so it renders as a done card with an invalid-format notice instead. -->
@@ -271,7 +271,7 @@
             <Users v-if="isAgentCardWithMembers(block)" :size="12" class="tool-icon" />
             <component v-else :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ isAgentCardWithMembers(block) ? agentPillTitle(block) : toolDisplayName(block.name, block.input, block.display_name) }}</span>
-            <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
+            <span v-if="cardSummary(block)" class="tool-summary">{{ cardSummary(block) }}</span>
             <!-- Sub-agent: step count + expand/collapse toggle live IN the pill,
                  so the Agent call and its sub-agent work are one row instead of
                  two stacked bars showing the same name. -->
@@ -493,6 +493,8 @@ import { askCardKey } from '@/utils/askQuestionState.ts'
 import { detectAskQuestion } from '@/utils/streamPerf.ts'
 import { askItemsToInputMap } from '@/utils/askQuestion.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
+import { backgroundTaskLabels } from '@/utils/backgroundTaskLabels'
+import { toolCardSummary } from '@/utils/toolCardSummary'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
 import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, Bot, Wrench, Sparkles, Users } from 'lucide-vue-next'
 import RichTextBlock from '@/components/chat/RichTextBlock.vue'
@@ -532,6 +534,12 @@ import {
 const TAG = 'ContentBlocks'
 
 const { t } = useI18n()
+
+/** Card summary with the background-task label applied (see toolCardSummary). */
+function cardSummary(block: any): string {
+  return toolCardSummary(block, props.toolCallSummary, backgroundTaskLabelByCallId.value)
+}
+
 const thinkingContent = useThinkingContent()
 
 /**
@@ -1121,6 +1129,26 @@ function scheduledTaskKeys(bi: number) {
 // not carry), so in summary mode it would only render dead buttons. Older
 // persisted summaries may still contain it, hence the defensive filter.
 const summaryTools = computed(() => (props.summaryCards?.tools || []).filter((t: any) => !isPermissionApproval(t?.name || '')))
+
+/**
+ * TaskOutput / TaskStop summaries, borrowed from the Bash block of THIS message
+ * that launched the same background task (issue #682). The lookup blocks carry
+ * nothing but a random task id, so their card would otherwise read "oAVlC6"
+ * while the launcher card right above it says "跑全量测试落盘并取汇总行".
+ *
+ * Searched over the ROOT blocks: a nested (sub-agent) instance only holds the
+ * sub-agent's own blocks, while the launcher may sit anywhere in the message.
+ *
+ * KNOWN GAP (deliberate): it almost never fires in practice, because the two
+ * things it needs are exactly what persistence drops. A reloaded Bash block is
+ * slim — no `input` (so no description) and no `output` (so no `task_id`); the
+ * launch announcement lives only in chat_tool_calls, which this render path
+ * never loads. Measured on a real library: 0 of 1274 lookups paired. The live
+ * turn is the one case left (a streaming Bash block still holds its output).
+ * Closing the gap needs a bulk "tool input by message" load — a separate
+ * change, not a render-side guess.
+ */
+const backgroundTaskLabelByCallId = computed(() => backgroundTaskLabels(rootBlocksResolved.value))
 const summaryTaskIDs = computed(() => props.summaryCards?.taskIDs || [])
 const summaryAskQuestions = computed(() => props.summaryCards?.askQuestions || [])
 const summaryWarnings = computed(() => props.summaryCards?.warnings || [])
