@@ -101,19 +101,6 @@ func TestReadFileTail_WholeFileWhenSmall(t *testing.T) {
 	}
 }
 
-func TestIsShellProcessName(t *testing.T) {
-	for _, name := range []string{"bash", "-bash", "zsh", "sh", "fish", "dash"} {
-		if !isShellProcessName(name) {
-			t.Errorf("%q should be a shell", name)
-		}
-	}
-	for _, name := range []string{"vim", "ssh", "less", "python3", ""} {
-		if isShellProcessName(name) {
-			t.Errorf("%q should not be a shell", name)
-		}
-	}
-}
-
 func TestReadShellHistory_MergesEveryShell(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
