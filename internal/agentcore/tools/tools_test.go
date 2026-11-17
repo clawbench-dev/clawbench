@@ -219,13 +219,23 @@ func TestReadToolNoVisionDoesNotPromiseImages(t *testing.T) {
 // the read-only policy meaningless.
 func TestResolvePath_RejectsEscape(t *testing.T) {
 	root := t.TempDir()
-	escapes := []string{
+	escapes := make([]string, 0, 5)
+	escapes = append(
+		escapes,
 		"../outside.txt",
 		"../../etc/passwd",
 		"sub/../../outside.txt",
-		"/etc/passwd",
-		"/tmp/whatever",
-	}
+	)
+	// An ABSOLUTE path is not inherently an escape on Windows: the temp dir is
+	// on the same drive (`C:\Users\...\Temp`), so `/etc/passwd` becomes
+	// `C:\etc\passwd`, which legitimately sits OUTSIDE the root and is rejected —
+	// but the drive letter of the root is not portable, so these two cases are
+	// built from the root instead of being written as literals.
+	escapes = append(
+		escapes,
+		filepath.Join(filepath.Dir(root), "outside-abs.txt"),
+		filepath.Join(root, "..", "outside-parent.txt"),
+	)
 	for _, p := range escapes {
 		t.Run(p, func(t *testing.T) {
 			if _, err := resolvePath(root, p); err == nil {

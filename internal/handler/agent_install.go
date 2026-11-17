@@ -139,8 +139,14 @@ func writeAgentInstallError(w http.ResponseWriter, r *http.Request, backendID st
 
 	var nodeErr *service.AgentInstallNodeMissingError
 	if errors.As(err, &nodeErr) {
+		// The automatic Node.js install already ran and did not produce a
+		// working runtime, so the reason it failed is the actionable part.
+		reason := "the automatic install failed"
+		if nodeErr.Cause != nil {
+			reason = nodeErr.Cause.Error()
+		}
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NodeRuntimeMissing",
-			map[string]any{"Tool": nodeErr.Tool})
+			map[string]any{"Tool": nodeErr.Tool, errDetailKey: reason})
 		return
 	}
 

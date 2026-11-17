@@ -59,7 +59,11 @@ func TestResolve_OpenKeepsRelativeInside(t *testing.T) {
 func TestResolve_ConfinedStillRefusesEscape(t *testing.T) {
 	root := t.TempDir()
 	env := Env{Root: root, ConfineToWorkDir: true}
-	for _, p := range []string{"../outside.txt", "../../etc/passwd", "/etc/passwd"} {
+	// Built from the root rather than written as "/etc/passwd": on Windows a
+	// leading slash resolves against the current drive, which may BE the temp
+	// root's drive — the escape has to be stated as an actual sibling.
+	escapes := []string{"../outside.txt", "../../etc/passwd", filepath.Join(filepath.Dir(root), "outside-abs.txt")}
+	for _, p := range escapes {
 		if _, err := env.resolve(p); err == nil {
 			t.Fatalf("%q must be refused while confined", p)
 		}

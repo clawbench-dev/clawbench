@@ -119,35 +119,27 @@ func TestKBReindexAllRebuildsVisibleCollections(t *testing.T) {
 	oldChunk, err := check.ListChunks(docID, 10)
 	require.NoError(t, err)
 	require.Len(t, oldChunk, 1, "the fixture must seed exactly one chunk to be reset")
+	// A document that starts "ready" is the only state in which "it was reset"
+	// means anything: a row that starts pending would look reset already.
+	before, err := check.GetDocument(docID)
+	require.NoError(t, err)
+	require.Equal(t, kb.StatusReady, before.Status)
 
 	req := newRequest(t, http.MethodPost, "/api/kb/reindex", map[string]any{})
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeKBReindex, req)
 	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
 
-	// The reindex worker runs concurrently with this test: it may have moved the
-	// document from "pending" through "extracting" and all the way back to
-	// "ready" with a freshly embedded chunk before this reads it. The handler's
-	// contract is "this document was reset and queued for a rebuild", NOT a
-	// snapshot of one status string — asserting "pending" (or "no chunks") made
-	// this fail on a correct reindex whenever the worker was fast.
-	//
-	// The reset is visible either as "chunks gone" or as "a different chunk row
-	// exists": ReplaceChunks deletes the old rows inside its transaction, so a
-	// row that survives with the SAME id means the reindex never ran.
+	// This handler test has no embedder and no worker: what it can prove is the
+	// HANDLER's half — the document was reset for a rebuild and queued — which is
+	// that the request was accepted and its old chunk is gone. It cannot prove
+	// the document ends up "ready": with no embedding endpoint configured the
+	// worker's re-index legitimately fails, and on a fast runner it has already
+	// done so by the time this reads the row. (The "a real rebuild succeeds"
+	// half is covered where an embedder exists — see the kb package tests.)
 	require.Eventually(t, func() bool {
 		chunks, listErr := check.ListChunks(docID, 10)
-		if listErr != nil {
-			return false
-		}
-		if len(chunks) == 0 {
-			return true
-		}
-		return chunks[0].ID != oldChunk[0].ID
+		return listErr == nil && len(chunks) == 0
 	}, 10*time.Second, 20*time.Millisecond,
 		"the visible collection must be reset for a rebuild (its old chunk is gone)")
-	doc, err := check.GetDocument(docID)
-	require.NoError(t, err)
-	require.NotEqual(t, kb.StatusFailed, doc.Status,
-		"the rebuild must not fail the document, got %q", doc.Status)
 }
