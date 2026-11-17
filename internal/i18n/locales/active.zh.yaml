@@ -313,6 +313,7 @@ SearchQueryRequired: 请输入搜索关键词
 UserGuideNotAvailable: 本实例的用户手册不可用
 InvalidRegex: '正则表达式无效：{{.Error}}'
 UpgradeInProgress: 升级正在进行中
+ManagedByEmbedder: 服务端由桌面端启动，随桌面端一起更新。请使用桌面端的更新方式。
 AlreadyLatestVersion: 已是最新版本
 RAGNotAvailable: 全文检索不可用
 RAGResetInProgress: 已有重建任务在执行

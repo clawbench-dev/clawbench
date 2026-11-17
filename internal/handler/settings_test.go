@@ -3992,3 +3992,36 @@ func TestServeConfig_Patch_ShellEnvInherit(t *testing.T) {
 	assert.Equal(t, http.StatusOK, getResp.Code)
 	assert.Contains(t, getResp.Body.String(), `"shell_env":{"inherit":true}`)
 }
+
+// --- ServeConfigRestart: managed by the desktop shell ---
+
+// Restarting a managed server either orphans the shell (the child exits and
+// nothing brings it back) or hands the port to a sentinel the shell does not
+// own. Refuse, and say why, instead of pretending a restart is coming.
+func TestServeConfigRestart_RefusedWhenManaged(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origManaged := model.ManagedByEmbedder
+	model.ManagedByEmbedder = true
+	defer func() { model.ManagedByEmbedder = origManaged }()
+
+	origRestartFunc := restartFunc
+	called := false
+	restartFunc = func() error {
+		called = true
+		return nil
+	}
+	defer func() { restartFunc = origRestartFunc }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/config/restart", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigRestart, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.False(t, called, "the restart function must not run on a managed server")
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "ManagedByEmbedder", resp["msgKey"])
+}

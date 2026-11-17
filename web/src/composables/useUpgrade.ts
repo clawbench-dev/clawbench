@@ -53,6 +53,17 @@ export interface UpgradeState {
   verification_issues?: string
 }
 
+/**
+ * True when the desktop app started this server. In that case the server is part
+ * of the app package and the app's own updater replaces it; the server refuses
+ * /api/upgrade/start and /api/config/restart, so the UI must not offer them —
+ * a button that always fails reads as a bug, not as a policy.
+ *
+ * A plain ref rather than reactive state: the value only changes when the app is
+ * replaced, which also reloads the page.
+ */
+export const managedByEmbedder = ref(false)
+
 /** Failure id emitted when the install directory is not writable. */
 export const ERR_INSTALL_DIR_NOT_WRITABLE = 'install_dir_not_writable'
 
@@ -297,6 +308,12 @@ export function useUpgrade() {
    * unknown, so no upgrade may start.
    */
   async function checkUpgrade(): Promise<boolean> {
+    if (managedByEmbedder.value) {
+      // Nothing to ask: the server cannot upgrade itself under the app, and the
+      // marker was set by an earlier successful check in this session.
+      hasUpgrade.value = false
+      return false
+    }
     checking.value = true
     try {
       const data = await apiGet<{
@@ -309,7 +326,17 @@ export function useUpgrade() {
         verification_warning?: string
         verification_issues?: string
         skipped_version?: string
+        managed?: boolean
       }>('/api/upgrade/check')
+      // Absent on older servers — false (this server owns its own binary).
+      managedByEmbedder.value = data.managed === true
+      // A managed server cannot upgrade itself, so there is nothing to offer —
+      // even though the registry still has a newer release. Without this the
+      // startup prompt would offer an install that the server answers with 403.
+      if (managedByEmbedder.value) {
+        hasUpgrade.value = false
+        return true
+      }
       state.current_version = data.current_version
       state.latest_version = data.latest_version
       hasUpgrade.value = data.has_upgrade
@@ -516,6 +543,7 @@ export function useUpgrade() {
     state,
     checking,
     hasUpgrade,
+    managedByEmbedder,
     releaseNotesUrl,
     showProgressDialog,
     installWritable,

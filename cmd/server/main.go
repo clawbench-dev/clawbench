@@ -749,7 +749,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		fmt.Println()
 		fmt.Println("Server options:")
 		fmt.Println("  --port PORT       Server port (overrides config file, default: 20000)")
+		fmt.Println("  --host ADDR       Bind address (overrides config file, default: 0.0.0.0)")
 		fmt.Println("  --data-dir DIR    Runtime data directory (default: ~/.clawbench)")
+		fmt.Println("  --exit-on-stdin-close")
+		fmt.Println("                    Shut down when stdin closes (used by the desktop")
+		fmt.Println("                    shell, which holds the pipe as the server's owner)")
+		fmt.Println("  --managed         Refuse self-upgrade and in-app restart (the")
+		fmt.Println("                    embedding program owns the binary)")
 		fmt.Println("  --gen-cert        Generate a self-signed HTTPS certificate and exit")
 		fmt.Println("                    (add --host IP[,IP] for addresses to cover)")
 		fmt.Println("  --version         Print version and exit")
@@ -777,6 +783,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Parse CLI flags
 	cliPort := 0
 	cliDataDir := ""
+	// cliHost is "" when --host was not given, which must stay distinguishable
+	// from an explicit empty value: "" means "keep whatever config.yaml says"
+	// (0.0.0.0 by default), not "bind nowhere".
+	cliHost := ""
 	for i, arg := range os.Args[1:] {
 		if arg == "--port" && i+1 < len(os.Args[1:]) {
 			if p, err := strconv.Atoi(os.Args[i+2]); err == nil && p > 0 && p <= 65535 {
@@ -786,7 +796,15 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		if arg == "--data-dir" && i+1 < len(os.Args[1:]) {
 			cliDataDir = os.Args[i+2]
 		}
+		if arg == "--host" && i+1 < len(os.Args[1:]) {
+			cliHost = os.Args[i+2]
+		}
 	}
+	// Managed mode: the desktop shell owns this process (it starts it, holds
+	// its stdin and decides when it dies). Self-upgrade and restart are disabled
+	// because both would replace or relaunch the binary the shell shipped with,
+	// leaving the shell pointed at a server it no longer controls.
+	model.ManagedByEmbedder = hasFlag("--managed")
 
 	// Determine binary directory for config search path
 	absBinPath, _ := filepath.Abs(os.Args[0])
@@ -1181,6 +1199,16 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer instanceLock.Release()
 
+	// Record the PID only after the lock: before it, another process owns this
+	// data directory and a PID file would point a future recovery at the wrong
+	// process. Removed on a graceful exit; left behind by a hard kill so the
+	// desktop shell can find and stop the server it left running.
+	if cleanupPID, pidErr := writePIDFile(model.DataDir); pidErr != nil {
+		slog.Warn("failed to write server.pid", slog.String("err", pidErr.Error()))
+	} else {
+		defer cleanupPID()
+	}
+
 	// Initialize SQLite database (runFromServer=true: clean up orphaned streaming messages)
 	if err := service.InitDB(true); err != nil {
 		slog.Error("failed to initialize database", slog.String("err", err.Error()))
@@ -1412,6 +1440,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}()
 
 	host := cfg.Host
+	// --host overrides the bind address without touching config.yaml. It exists
+	// for embedders (the desktop shell) that must pin one address regardless of
+	// what a previous standalone run wrote into the config file.
+	if cliHost != "" {
+		host = cliHost
+	}
 	addr := fmt.Sprintf("%s:%d", host, port)
 	slog.Info(
 		"server ready",
@@ -1848,6 +1882,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Graceful shutdown on SIGINT/SIGTERM
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Embedded mode: the program that started us holds our stdin. Its closing
+	// (a deliberate quit, or the shell crashing) is a shutdown request. Armed
+	// only now, after the listeners are bound, so the watcher and the shutdown
+	// goroutine below start in an order where the channel already has a reader.
+	enableParentPipeExit()
 
 	// shutdownComplete is closed by the shutdown goroutine AFTER every in-flight
 	// stream has finalized and the AI processes are reaped. main blocks on it

@@ -100,7 +100,7 @@ vi.mock('@/utils/version', () => ({
 
 // ── Import after mocks ──
 
-import { useUpgrade } from '@/composables/useUpgrade'
+import { useUpgrade, managedByEmbedder } from '@/composables/useUpgrade'
 
 describe('useUpgrade', () => {
   beforeEach(() => {
@@ -114,6 +114,8 @@ describe('useUpgrade', () => {
     mockGetNative.mockReset()
     mockConnected.value = true
     mockServerConfig.value = { version: 'v1.0.0' }
+    // Module-level: reset so one test's managed marker cannot leak into the next.
+    managedByEmbedder.value = false
     mockLoadConfig.mockResolvedValue(undefined)
 
     // Reset localStorage and sessionStorage
@@ -577,6 +579,39 @@ describe('useUpgrade', () => {
 
       const upgrade = useUpgrade()
       await expect(upgrade.fetchStatus()).resolves.toBeUndefined()
+    })
+  })
+
+  // ── managed by the desktop app ──
+
+  describe('managedByEmbedder', () => {
+    it('is set from the check response, so later checks are skipped locally', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        managed: true,
+      })
+      const upgrade = useUpgrade()
+      await upgrade.checkUpgrade()
+      expect(managedByEmbedder.value).toBe(true)
+
+      // The server refuses /api/upgrade/start under the app, so the prompt must
+      // not even ask again.
+      mockApiGet.mockClear()
+      expect(await upgrade.checkForUpgradePrompt()).toBeNull()
+      expect(mockApiGet).not.toHaveBeenCalled()
+    })
+
+    it('stays false on a server that updates itself', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+      })
+      const upgrade = useUpgrade()
+      expect(await upgrade.checkForUpgradePrompt()).toBe('v1.1.0')
+      expect(managedByEmbedder.value).toBe(false)
     })
   })
 

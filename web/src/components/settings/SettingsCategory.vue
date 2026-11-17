@@ -217,6 +217,7 @@ import { getNative } from '@/utils/clawbenchNative'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useDesktopDownload } from '@/composables/useDesktopDownload'
+import { managedByEmbedder as upgradeManagedByEmbedder } from '@/composables/useUpgrade'
 import { downloadByUrl } from '@/utils/download'
 import { openExternalUrl } from '@/utils/externalLink'
 import { PROJECT_FEEDBACK_URL, PROJECT_GITHUB_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
@@ -471,6 +472,9 @@ const renderList = computed(() => {
       // also keeps the row off Android, Harmony and the plain browser, where the
       // dialog can never appear.
       if (entry.spec.key === 'closeAction' && getNative()?.hasCustomWindowControls?.() !== true) continue
+      // The desktop app owns the server it ships: it refuses both, so these rows
+      // would only ever fail. See useUpgrade's managedByEmbedder.
+      if ((entry.spec.key === 'restartServer' || entry.spec.key === 'checkUpgrade') && upgradeManagedByEmbedder.value) continue
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
       if (entry.spec.appOnly && !isNativeApp.value) continue
       if (entry.spec.androidOnly && !isAndroidApp.value) continue

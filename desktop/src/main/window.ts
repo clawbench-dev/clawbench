@@ -19,6 +19,8 @@ import {
 import { nextZoomFactor, type ZoomAction } from './zoom'
 import { shouldUseFramelessWindow } from './windowChrome'
 import { cancelPendingQuit, handleCloseRequest, isAppQuitting, noteOsShutdown } from './closeFlow'
+import { isEmbeddedServerActive } from './localServer'
+import { embeddedServerLabels } from './labels'
 import { boundsToPersist, resolveStartupBounds, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, type WindowBounds } from './windowGeometry'
 import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
 
@@ -59,6 +61,13 @@ export function cancelSplash(): void {
  * current one.
  */
 export function checkVersionGateFor(url: string): void {
+  // The embedded server is part of this package and updates with it, so its
+  // version can never be a mismatch this gate could fix — and walking the
+  // middle of a download here would only offer to replace the app under itself.
+  if (isEmbeddedServerActive()) {
+    setActiveGate(null)
+    return
+  }
   const gen = beginNavigation()
   void checkVersionGate(url, gen)
     .then((info) => {
@@ -137,6 +146,35 @@ function notifyMainWindowCreated(win: BrowserWindow): void {
 
 function loginPagePath(): string {
   return path.join(process.resourcesPath, 'login.html')
+}
+
+/**
+ * Show the server-selection login page, or explain why there is nothing to show.
+ *
+ * In the normal build there is always something to pick, so this is the login
+ * page plus the connection error it must display. In the embedded build the
+ * server lives in this package: if it is unreachable there is no other server
+ * to choose, and the login form would be a dead end for a problem it cannot
+ * fix. That case gets a dialog naming the address instead — the overlay may
+ * already be gone, so a page change alone would look like a plain failure.
+ */
+async function serveLoginOrExplain(reason: string): Promise<void> {
+  if (isEmbeddedServerActive()) {
+    const labels = embeddedServerLabels(resolveNativeLanguage())
+    const url = getStore().get('serverUrl')
+    dialog.showErrorBox(
+      labels.stoppedTitle,
+      labels.stoppedMessage.replace('{url}', url) + (reason ? `\n\n${reason}` : ''),
+    )
+    return
+  }
+  try {
+    await mainWindow?.loadFile(loginPagePath())
+    const wc = mainWindow?.webContents
+    if (wc) void wc.executeJavaScript(buildConnectErrorScript(reason), true)
+  } catch {
+    /* login page itself failed to load; nothing to report to */
+  }
 }
 
 /**
@@ -503,14 +541,7 @@ export function createMainWindow(): BrowserWindow {
       // Both paths land on the login page. A timeout also reports why, through
       // the same onConnectError hook the did-fail-load fallback uses — without
       // it the user would be returned to the login page with no explanation.
-      void mainWindow?.loadFile(loginPagePath())
-        .then(() => {
-          if (reason !== 'timeout') return
-          const wc = mainWindow?.webContents
-          if (!wc) return
-          void wc.executeJavaScript(buildConnectErrorScript('Connection timed out'), true)
-        })
-        .catch(() => { /* login page itself failed to load; nothing to report to */ })
+      void serveLoginOrExplain(reason)
     },
   })
 
@@ -550,18 +581,9 @@ export function createMainWindow(): BrowserWindow {
     // login page the user is about to see.
     abortVersionGate()
     // Server page failed to load (unreachable) — fall back to the server-selection
-    // login page so the user can pick another server instead of a blank page.
-    // loadFile resolves once the page is ready, so the failure can then be
-    // handed to the page's onConnectError() — the same hook Android calls.
-    // Without it the fallback was silent: the user got the login page back
-    // with no indication of why the connection failed.
-    void mainWindow?.loadFile(loginPagePath())
-      .then(() => {
-        const wc = mainWindow?.webContents
-        if (!wc) return
-        void wc.executeJavaScript(buildConnectErrorScript(errorDesc || ''), true)
-      })
-      .catch(() => { /* login page itself failed to load; nothing to report to */ })
+    // login page so the user can pick another server instead of a blank page,
+    // handing it the reason the same way Android does.
+    void serveLoginOrExplain(errorDesc || '')
   })
   setTimeout(showWindow, 2000)
 

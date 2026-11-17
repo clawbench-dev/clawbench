@@ -21,6 +21,8 @@ clawbench.exe
 # the host binary — see build.sh step 3). Must stay listed: a stray
 # clawbench-linux-amd64 is ~150MB and would otherwise show as untracked.
 /clawbench-*
+# Release artifact downloaded for the desktop build (desktop/scripts/build-server.mjs).
+/clawbench-server/
 clawbench-dev
 dev-clawbench
 coverage.out

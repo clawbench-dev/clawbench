@@ -4128,6 +4128,15 @@ func ServeConfigRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Under the desktop app the process is a child of the shell: restarting it
+	// here would either leave the shell holding a dead pipe (the server exits
+	// and nothing brings it back) or hand the port to a sentinel process the
+	// shell does not own. Settings that need a restart therefore apply on the
+	// next start of the app, and the panel hides this action.
+	if managedRefusal(w, r) {
+		return
+	}
+
 	if restartFunc == nil {
 		slog.Warn("restart function not set, cannot restart server")
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RestartUnavailable")

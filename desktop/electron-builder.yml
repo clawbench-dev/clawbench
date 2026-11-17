@@ -44,6 +44,20 @@ files:
 win:
   target: dir
   icon: build/icon.png
+  # The ClawBench server this app starts by itself (the "all-in-one" build).
+  # Built by scripts/build-server.mjs at prebuild time; see src/main/localServer.ts
+  # for the lifecycle. Windows-only on purpose: Linux/macOS packages keep using
+  # the login page and a server elsewhere.
+  #
+  # extraFiles, NOT extraResources: it lands at the app root (next to the
+  # executable), outside `resources/`. That is what keeps the ~150MB binary out
+  # of the desktop payload, which is the `resources/` directory and nothing
+  # else — a payload install must never replace (or add) the server under the
+  # app's feet. The release job zips the fused package before stripping
+  # `server/` for the thin one.
+  extraFiles:
+    - from: assets/server
+      to: server
   # NOTE: do NOT add `signAndEditExecutable: false` here. It was set historically
   # to allow cross-building the Windows package from Linux, but it also skips
   # writing the icon and version metadata into the .exe (electron-builder warns

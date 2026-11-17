@@ -313,6 +313,7 @@ SearchQueryRequired: Search query is required
 UserGuideNotAvailable: User guide is not available on this instance
 InvalidRegex: 'Invalid regular expression: {{.Error}}'
 UpgradeInProgress: Upgrade already in progress
+ManagedByEmbedder: This server was started by the desktop app and is updated together with it. Use the desktop app's update flow.
 AlreadyLatestVersion: Already on the latest version
 RAGNotAvailable: RAG is not available
 RAGResetInProgress: An index rebuild is already running

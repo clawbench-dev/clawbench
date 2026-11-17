@@ -170,6 +170,44 @@ export function unloadGuardLabels(locale: string): UnloadGuardLabels {
   }
 }
 
+/** Labels for the built-in server surfaces (name in the server list, failures). */
+export interface EmbeddedServerLabels {
+  /** Display name of the embedded server in the server switcher. */
+  name: string
+  startFailedTitle: string
+  startFailedMessage: string
+  /** `{url}` is the address the app tried to open. */
+  stoppedMessage: string
+  stoppedTitle: string
+}
+
+/**
+ * Labels for the "all-in-one" desktop build's own server.
+ *
+ * These render outside the web page (a native dialog and the native server
+ * switcher), so they cannot come from vue-i18n — same rule as the other tables
+ * here. The name is also stored on the server entry on first run, which is why
+ * it lives here rather than in the caller.
+ */
+export function embeddedServerLabels(locale: string): EmbeddedServerLabels {
+  if (normalizeNativeLanguage(locale) === 'zh') {
+    return {
+      name: '本机',
+      startFailedTitle: '本机服务启动失败',
+      startFailedMessage: 'ClawBench 自带的本机服务没能启动。',
+      stoppedTitle: '本机服务已停止',
+      stoppedMessage: '本机服务（{url}）没有响应。',
+    }
+  }
+  return {
+    name: 'This device',
+    startFailedTitle: 'Built-in server failed to start',
+    startFailedMessage: 'The ClawBench server bundled with this app could not be started.',
+    stoppedTitle: 'Built-in server stopped',
+    stoppedMessage: 'The built-in server at {url} stopped responding.',
+  }
+}
+
 /**
  * Labels for the "what should closing do?" dialog in `closeFlow.ts`.
  *

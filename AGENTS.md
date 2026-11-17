@@ -49,6 +49,20 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 - 杀进程树按子孙先 TERM → 再 KILL 顺序，避免留下新僵尸
 - `--kill-protected` 可显式覆盖保护（危险，谨慎使用）
 
+## 融合版桌面（Windows）
+
+Windows 桌面安装包里自带一份服务端，启动客户端就等于启动服务端，退出客户端就等于退出服务端，中间不需要登录。其他平台（Linux/macOS 桌面、Android、网页）仍然连别的机器上的服务端，不受影响。
+
+- **组成**：`desktop/assets/server/clawbench.exe` 由 `desktop/scripts/build-server.mjs` 在打包前生成（发布流水线里是直接取 `build-windows` job 产出的 `windows-server` artifact，那份已经内嵌了前端）。electron-builder 通过 Windows 的 `extraFiles` 把它放到 `<安装目录>/server/`——**故意不放进 `resources/`**：桌面端的增量更新只替换 `resources/`，服务端在它外面才不会被一次更新顺手删掉。
+- **两个安装包**：发布产物里 `clawbench-desktop-windows-x64-<tag>.zip` 是原来的瘦客户端（连别的机器），`clawbench-desktop-windows-x64-local-<tag>.zip` 才是带服务端的融合版。融合版由发布 job 用"瘦包 + 本次的 `clawbench.exe`"现场组装，所以即使客户端壳复用了上一版，每个 release 也一定有对应的融合包。
+- **启动顺序**（`desktop/src/main/localServer.ts`）：选端口（上次用过的优先，被占就往上找；被别的已保存服务器占用的端口跳过）→ 拉起服务端 → 轮询 `/api/health` 直到它自报 `app=clawbench` → 用 `{userData}/server/auto-password` 里的密码走 `POST /login` 拿 cookie 并写入 Electron 的 cookie jar → 写 `serverUrl` → 再建窗口。用户看不到登录页，也看不到版本不一致的拦截（`checkVersionGateFor` 在本机模式下直接返回）。
+- **退出**：客户端关闭服务端的 stdin。服务端在 `--exit-on-stdin-close` 下把这个"管道断了"当成优雅退出指令（Windows 上没法给子进程发可捕获的信号），所以客户端正常退出、崩溃、被强杀都会让服务端跟着走，不留孤儿。15 秒没退完就强杀。
+- **受管模式**：服务端带 `--managed` 启动，`/api/upgrade/start` 与 `/api/config/restart` 一律 403，`/api/upgrade/check` 返回 `managed: true`，网页端据此隐藏「检查更新」和「重启服务端」。原因：这两条路会把安装包里的二进制换掉或重新拉起，客户端就不再管得住那个进程；桌面端自己的更新走客户端的更新器。
+- **数据目录**：`{userData}/server`，和手动安装的 `~/.clawbench` 分开，避免两边抢实例锁。
+- **网络**：默认 `--host 0.0.0.0`，同一局域网的手机/同事可以照旧访问（首次可能有防火墙提示）；登录仍然用那个随机密码，网页端可以改。只有客户端自己免登录。
+- **崩溃残留**：服务端启动时会在数据目录写 `server.pid`（优雅退出时删掉）。上次如果是崩溃/强杀，文件会留下；新一次启动先读它，确认这个 PID 还活着且进程名是 `clawbench` 才发信号（Windows 用 `taskkill`，其他平台先 SIGTERM），再拉起新的。不按进程名批量杀，避免误伤用户自己另装的实例。
+- **兜底**：内嵌服务端起不来时弹窗说明原因，并退回普通登录页，客户端仍可连别的机器，不会卡在启动遮罩里。
+
 ## 客户端日志回传
 
 前端 JS、Android 原生与 Electron 主进程日志统一回传服务器，汇入**单文件** `{data-dir}/logs/client.log`，行内用 `[js]` / `[android]` / `[electron]` 标记区分来源。
