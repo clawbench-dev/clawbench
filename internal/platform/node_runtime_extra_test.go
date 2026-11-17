@@ -566,3 +566,241 @@ func buildNodeTarGz(t *testing.T, top string) []byte {
 	}
 	return buf.Bytes()
 }
+
+// ── mirror ordering, staged install, archive replacement ───────────────────
+
+// The mirror choice follows the same region probe the npm registry rewrite uses:
+// a machine in mainland China must try npmmirror first (nodejs.org/dist is often
+// unreachable or slow there) and vice versa. Getting the order wrong is a
+// one-click install that either times out or falls back on every single attempt.
+func TestNodeDownloadBases_RegionPicksTheFirstSource(t *testing.T) {
+	if _, _, err := nodeReleasePlatform(); err != nil {
+		t.Skip("no release naming on this platform; the installer never asks for a source")
+	}
+	// Pin the probe's cached verdict instead of letting it hit the network, then
+	// put the previous value back: the result is a package-level cache every
+	// other test in this binary shares.
+	prev := ChinaMirrorChecked.Load()
+	t.Cleanup(func() { ChinaMirrorChecked.Store(prev) })
+
+	ChinaMirrorChecked.Store(1)
+	got := nodeDownloadBases()
+	if strings.Join(got, ",") != nodeMirrorBaseURL+","+nodeDistBaseURL {
+		t.Fatalf("bases in mainland China = %v, want the npmmirror mirror first", got)
+	}
+
+	ChinaMirrorChecked.Store(2)
+	got = nodeDownloadBases()
+	if strings.Join(got, ",") != nodeDistBaseURL+","+nodeMirrorBaseURL {
+		t.Fatalf("bases elsewhere = %v, want nodejs.org first", got)
+	}
+}
+
+// Every source has to fail before the install gives up, and the error must be
+// the last real cause rather than a generic "download failed": the caller prints
+// it to the user, who needs to know whether the index or the archive broke.
+func TestInstallManagedNode_ReportsTheCauseWhenAllSourcesFail(t *testing.T) {
+	t.Setenv("CLAWBENCH_HOME", t.TempDir())
+	indexless := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer indexless.Close()
+
+	// First source: index.json is not JSON at all.
+	garbled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index.json" {
+			_, _ = w.Write([]byte("not json"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer garbled.Close()
+
+	restore := stubNodeDownloadBasesValue(t, []string{garbled.URL, indexless.URL})
+	defer restore()
+
+	_, err := installManagedNode()
+	if err == nil {
+		t.Fatal("expected an error when no source serves an index")
+	}
+	// The last source's failure is HTTP 404 from index.json, not the first
+	// source's JSON syntax error.
+	if !strings.Contains(err.Error(), "HTTP 404") {
+		t.Fatalf("error must name the last real cause, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "/index.json") {
+		t.Fatalf("error must say which file was unusable, got %v", err)
+	}
+}
+
+// A private runtime that unpacks but is too old is not "usable": the agent CLIs
+// require nodeMinMajor, so the download must still happen instead of the old
+// copy being silently accepted.
+func TestEnsureNodeRuntime_ReplacesTooOldPrivateRuntime(t *testing.T) {
+	file, archive := fakeNodeRelease(t, "#!/bin/sh\necho v22.11.0\n")
+	t.Setenv("CLAWBENCH_HOME", t.TempDir())
+	t.Setenv("PATH", "")
+	writeFakeNode(t, managedNodeBinDir(), "#!/bin/sh\necho v18.20.4\n")
+
+	server := serveNodeRelease(t, file, archive, checksumOf(archive))
+	defer server.Close()
+	restore := stubNodeDownloadBases(t, []string{server.URL})
+	defer restore()
+
+	note, err := EnsureNodeRuntime()
+	if err != nil {
+		t.Fatalf("EnsureNodeRuntime: %v", err)
+	}
+	if !strings.Contains(note, "v22.11.0") {
+		t.Fatalf("note = %q, want it to report the newly installed version", note)
+	}
+	if major := nodeMajorVersion(); major != 22 {
+		t.Fatalf("node on PATH reports major %d, want the downloaded 22", major)
+	}
+}
+
+// A private runtime that is already new enough is returned as-is, without a
+// download: the note is empty because nothing was installed.
+func TestEnsureNodeRuntime_AcceptsAnUpToDatePrivateRuntimeWithoutDownloading(t *testing.T) {
+	t.Setenv("CLAWBENCH_HOME", t.TempDir())
+	t.Setenv("PATH", "")
+	writeFakeNode(t, managedNodeBinDir(), "#!/bin/sh\necho v22.11.0\n")
+	restore := stubNodeDownloadBases(t, nil)
+	defer restore()
+
+	note, err := EnsureNodeRuntime()
+	if err != nil {
+		t.Fatalf("EnsureNodeRuntime: %v", err)
+	}
+	if note != "" {
+		t.Fatalf("note = %q, want empty for a reused runtime", note)
+	}
+}
+
+// The staging directory is created inside the destination's parent so the final
+// move is a rename, and it must not survive a failed run — a leftover per attempt
+// would fill the data directory of a machine whose network never works.
+//
+// The index is served here so the failure happens while fetching the archive,
+// which is the only point where the staging directory exists.
+func TestDownloadNodeRelease_FailedRunLeavesNoStagingDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAWBENCH_HOME", home)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
+	}))
+	defer server.Close()
+	restore := stubNodeDownloadBasesValue(t, []string{server.URL})
+	defer restore()
+
+	_, err := installManagedNode()
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Fatalf("expected the archive 404 to be reported, got %v", err)
+	}
+	entries, readErr := os.ReadDir(home)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".node-staging-") {
+			t.Fatalf("staging directory %q survived a failed download", e.Name())
+		}
+	}
+}
+
+// The archive name is what the download URL is built from: a version that
+// already carries the `v` must not become `node-vv22…`, and the platform pair
+// must match what Node actually publishes — a wrong name is a 404 for every
+// user on that platform.
+func TestDownloadNodeRelease_RequestsThePlatformArchiveName(t *testing.T) {
+	t.Setenv("CLAWBENCH_HOME", t.TempDir())
+
+	var asked []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index.json" {
+			_, _ = w.Write([]byte(`[{"version":"v22.11.0","lts":"Jod"}]`))
+			return
+		}
+		asked = append(asked, r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	restore := stubNodeDownloadBasesValue(t, []string{server.URL})
+	defer restore()
+
+	_, _ = installManagedNode()
+	if len(asked) == 0 {
+		t.Fatal("no archive was requested")
+	}
+	ext := nodeArchiveExt()
+	want := "/v22.11.0/node-v22.11.0-" + osReleaseName(t) + "-" + archReleaseName(t) + ext
+	if asked[0] != want {
+		t.Fatalf("archive requested at %q, want %q", asked[0], want)
+	}
+}
+
+// osReleaseName / archReleaseName return the release names of this machine, for
+// the URL assertion above.
+func osReleaseName(t *testing.T) string {
+	t.Helper()
+	osName, _, err := nodeReleasePlatform()
+	if err != nil {
+		t.Skipf("no release naming for this platform: %v", err)
+	}
+	return osName
+}
+
+func archReleaseName(t *testing.T) string {
+	t.Helper()
+	_, arch, err := nodeReleasePlatform()
+	if err != nil {
+		t.Skipf("no release naming for this platform: %v", err)
+	}
+	return arch
+}
+
+// stubNodeDownloadBasesValue replaces the source list unconditionally, for tests
+// that run when Node may or may not be installed.
+func stubNodeDownloadBasesValue(t *testing.T, bases []string) func() {
+	t.Helper()
+	prev := nodeDownloadBases
+	nodeDownloadBases = func() []string { return bases }
+	return func() { nodeDownloadBases = prev }
+}
+
+// ── private runtime failing to run ─────────────────────────────────────────
+
+// An older private copy that still cannot run must not be treated as usable: the
+// installer downloads a fresh one, and if the fresh one does not run either the
+// error has to name the missing-libraries cause (the fix is a system package, not
+// clicking install again). The stale copy must be replaced, not left in place.
+func TestEnsureNodeRuntime_ReplacesAnUnusablePrivateRuntime(t *testing.T) {
+	file, archive := fakeNodeRelease(t, "#!/bin/sh\necho not-a-version\n")
+	home := t.TempDir()
+	t.Setenv("CLAWBENCH_HOME", home)
+	t.Setenv("PATH", "")
+	writeFakeNode(t, managedNodeBinDir(), "#!/bin/sh\necho v18.20.4\n")
+
+	server := serveNodeRelease(t, file, archive, checksumOf(archive))
+	defer server.Close()
+	restore := stubNodeDownloadBases(t, []string{server.URL})
+	defer restore()
+
+	_, err := EnsureNodeRuntime()
+	if err == nil || !strings.Contains(err.Error(), "does not run") {
+		t.Fatalf("expected the unpacked runtime to be reported as unusable, got %v", err)
+	}
+	// The install itself succeeded (the file is the new one), it just does not
+	// run — so the message must also name where it went, for the user to inspect.
+	if !strings.Contains(err.Error(), ManagedNodeDir()) {
+		t.Fatalf("error must name the install directory, got %v", err)
+	}
+	body, readErr := os.ReadFile(filepath.Join(managedNodeBinDir(), nodeExecutableName()))
+	if readErr != nil {
+		t.Fatalf("runtime missing after the failed activation: %v", readErr)
+	}
+	if !strings.Contains(string(body), "not-a-version") {
+		t.Fatalf("the stale private copy was not replaced: %q", body)
+	}
+}

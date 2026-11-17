@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -188,4 +189,21 @@ func TestURLFetchClient_AcceptsCompressedBodies(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), "报销流程", "the transport must decompress the body")
+}
+
+// A name that cannot be resolved at all is the user's typo, not a policy
+// decision: reporting it as a private address would send them looking for a
+// firewall rule. The dialer must say the lookup failed, and then say it again
+// when no address it did get was usable.
+func TestDialPublicOnly_ReportsLookupFailuresSeparatelyFromPolicy(t *testing.T) {
+	dial := dialPublicOnly(time.Second)
+
+	_, err := dial(t.Context(), "tcp", "no-such-host.invalid:443")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrPrivateAddress)
+
+	// An address list that resolves but holds nothing dialable ends in the same
+	// "no usable address" failure instead of a nil error and a nil connection.
+	var dnsErr *net.DNSError
+	require.ErrorAs(t, err, &dnsErr)
 }

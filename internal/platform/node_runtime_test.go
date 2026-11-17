@@ -469,6 +469,65 @@ func TestEnsureNodeRuntime_NoopWhenNodeIsUsable(t *testing.T) {
 	}
 }
 
+// prependManagedNodePath must look at the real environment rather than the
+// shell-only capture: the agent CLIs are spawned from the server process whose
+// PATH was set at start-up, so a directory the login shell knows about is not
+// "found" unless it is already in os.Getenv("PATH"). Both spellings of the same
+// directory (with and without a trailing separator) count as present.
+func TestPrependManagedNodePath_UsesTheProcessEnvironment(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAWBENCH_HOME", home)
+	bin := managedNodeBinDir()
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, nodeExecutableName()), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Already on PATH with the same spelling: nothing changes, so a caller does
+	// not get a false "added" and the PATH does not grow on every restart.
+	t.Setenv("PATH", "/usr/bin"+string(os.PathListSeparator)+bin)
+	before := os.Getenv("PATH")
+	if PrependManagedNodePath() {
+		t.Fatalf("PATH must not change when %q is already on it", bin)
+	}
+	if got := os.Getenv("PATH"); got != before {
+		t.Fatalf("PATH = %q, want it untouched (%q)", got, before)
+	}
+
+	// Not on PATH: it goes first so the private runtime wins over a system Node
+	// that is too old.
+	t.Setenv("PATH", "/usr/bin")
+	if !PrependManagedNodePath() {
+		t.Fatal("expected PATH to change when the private runtime is missing from it")
+	}
+	got := os.Getenv("PATH")
+	want := bin + string(os.PathListSeparator) + "/usr/bin"
+	if got != want {
+		t.Fatalf("PATH = %q, want %q", got, want)
+	}
+}
+
+// An empty CLAWBENCH_HOME must not be read as "the current directory": that
+// would put a Node.js download into whatever directory the server started in.
+func TestManagedNodeHome_IgnoresAnEmptyOrBlankOverride(t *testing.T) {
+	t.Setenv("CLAWBENCH_HOME", "   ")
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	got := ManagedNodeHome()
+	if IsWindows() {
+		if !filepath.IsAbs(got) {
+			t.Fatalf("ManagedNodeHome() = %q, want an absolute path", got)
+		}
+		return
+	}
+	want := filepath.Join(os.Getenv("XDG_DATA_HOME"), "clawbench")
+	if got != want {
+		t.Fatalf("ManagedNodeHome() = %q, want %q", got, want)
+	}
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 type tarEntry struct {

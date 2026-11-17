@@ -175,6 +175,26 @@ export const PRESETS_NEEDING_CONFIRM: readonly Exclude<DockPreset, 'custom'>[] =
   'minimal',
 ]
 
+/**
+ * `[{key:'forge.enabled',value:false}]` → `{ forge: { enabled: false } }`.
+ *
+ * The PATCH body a preset writes. Shared by every entry point that applies one
+ * (the settings manager and the first-run wizard) so the shape is defined once:
+ * two hand-written copies would drift the moment a feature key grows a third
+ * segment.
+ */
+export function dockFeatureChangesToConfig(
+  changes: readonly DockFeatureChange[],
+): Record<string, Record<string, boolean>> {
+  const out: Record<string, Record<string, boolean>> = {}
+  for (const { key, value } of changes) {
+    const [section, field] = key.split('.')
+    if (!out[section]) out[section] = {}
+    out[section][field] = value
+  }
+  return out
+}
+
 function readPreset(): DockPreset {
   const raw = readPanelState<string>('dockPreset')
   return (PRESET_VALUES as readonly string[]).includes(raw)

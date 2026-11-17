@@ -57,7 +57,10 @@ function runWith(fakeNpx: string): RunResult {
     writeFileSync(join(dir, 'sudo'), '#!/bin/sh\nshift\n"$@"\n')
     chmodSync(join(dir, 'sudo'), 0o755)
 
-    const res = spawnSync('bash', [SCRIPT, 'chromium'], {
+    // Run the script BY PATH, the way the workflow does. `bash <file>` works
+    // locally but not on the CI runner, where the checkout is not executable:
+    // bash then tries to open it as a file, gets EACCES, and exits 127.
+    const res = spawnSync(SCRIPT, ['chromium'], {
       env: {
         ...process.env,
         PATH: `${dir}:${process.env.PATH ?? ''}`,

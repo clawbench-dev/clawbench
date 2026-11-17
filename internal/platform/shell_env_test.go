@@ -188,6 +188,41 @@ func TestInheritUserPath(t *testing.T) {
 	}
 }
 
+// 用户 shell 里的目录全都已经在服务端 PATH 上时，PATH 必须原样保留：
+// 追加一个已在的目录会让 PATH 每启动一次就长一截。
+func TestInheritUserPath_AllDirsAlreadyPresent(t *testing.T) {
+	t.Cleanup(resetLoginShellEnvCache)
+	if IsWindows() {
+		t.Skip("shell startup capture is POSIX-only")
+	}
+
+	seedShellEnvCache([]string{"PATH=/usr/bin:/server/bin"})
+	t.Setenv("PATH", "/usr/bin:/server/bin")
+
+	InheritUserPath()
+	if got := os.Getenv("PATH"); got != "/usr/bin:/server/bin" {
+		t.Fatalf("PATH = %q, want it untouched", got)
+	}
+}
+
+// 服务端 PATH 为空时直接写入用户 shell 的目录，不能留下开头的分隔符
+// （POSIX 上 ":" 开头等于把当前目录放进 PATH）。
+func TestInheritUserPath_FromEmptyPath(t *testing.T) {
+	t.Cleanup(resetLoginShellEnvCache)
+	if IsWindows() {
+		t.Skip("shell startup capture is POSIX-only")
+	}
+
+	seedShellEnvCache([]string{"PATH=/from/bashrc:/usr/bin"})
+	t.Setenv("PATH", "")
+
+	InheritUserPath()
+	want := "/from/bashrc" + string(os.PathListSeparator) + "/usr/bin"
+	if got := os.Getenv("PATH"); got != want {
+		t.Fatalf("PATH = %q, want %q", got, want)
+	}
+}
+
 func TestInheritUserPath_KeepsPathWhenShellIsUnreadable(t *testing.T) {
 	t.Cleanup(resetLoginShellEnvCache)
 	if IsWindows() {

@@ -29,7 +29,7 @@ const (
 )
 
 func main() {
-	names, err := generate(backendsDir)
+	names, err := generate()
 	if err != nil {
 		fail(err)
 	}
@@ -39,7 +39,7 @@ func main() {
 // generate renders the package source and writes it to targetFile in the
 // current directory (which is internal/ai/backends/all when run via go
 // generate). It returns the import list it wrote, for the log line.
-func generate(backendsDir string) ([]string, error) {
+func generate() ([]string, error) {
 	src, names, err := render(backendsDir)
 	if err != nil {
 		return nil, err

@@ -54,7 +54,7 @@ func TestGenerate_WritesSortedBlankImports(t *testing.T) {
 	allDir := newRepoFixture(t)
 	t.Chdir(allDir)
 
-	names, err := generate("..")
+	names, err := generate()
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestGenerate_WritesSortedBlankImports(t *testing.T) {
 
 	// Idempotent: the generated file is itself Go source, but it lands in
 	// `all`, which is excluded.
-	if _, err := generate(".."); err != nil {
+	if _, err := generate(); err != nil {
 		t.Fatalf("second generate: %v", err)
 	}
 	again, err := os.ReadFile(targetFile)

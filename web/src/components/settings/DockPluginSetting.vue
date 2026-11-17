@@ -136,8 +136,8 @@ import {
   APPLICABLE_DOCK_PRESETS,
   DOCK_PRESET_PLANS,
   PRESETS_NEEDING_CONFIRM,
+  dockFeatureChangesToConfig,
   useDockPlugins,
-  type DockFeatureChange,
   type DockPreset,
 } from '@/composables/useDockPlugins'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
@@ -386,17 +386,6 @@ function onResetOrder(): void {
   localPlugins.value = [...orderedPlugins.value]
 }
 
-/** `[{key:'forge.enabled',value:false}]` → `{ forge: { enabled: false } }`. */
-function toConfigChanges(changes: readonly DockFeatureChange[]): Record<string, unknown> {
-  const out: Record<string, Record<string, boolean>> = {}
-  for (const { key, value } of changes) {
-    const [section, field] = key.split('.')
-    if (!out[section]) out[section] = {}
-    out[section][field] = value
-  }
-  return out
-}
-
 /** Which preset is in force — or that a preset write is still in flight. */
 const presetStatusText = computed(() => {
   if (presetBusy.value) return t('settings.dockPlugins.saving')
@@ -437,7 +426,7 @@ async function onPreset(next: Exclude<DockPreset, 'custom'>): Promise<void> {
   presetBusy.value = true
   try {
     await applyPreset(next, async (changes) => {
-      await patchConfig(toConfigChanges(changes))
+      await patchConfig(dockFeatureChangesToConfig(changes))
     })
     toast.show(t('settings.dockPlugins.presetApplied', {
       name: t(`settings.dockPlugins.presets.${next}.name`),

@@ -403,17 +403,29 @@ func TestClosedStoreErrors(t *testing.T) {
 	st := newTestStore(t)
 	require.NoError(t, st.Close())
 
+	// Every read and write must come back as an error against a closed handle:
+	// the panel shows "failed" for those, so a silent success (nil error, zero
+	// rows) would be reported to the user as an empty library instead.
 	_, err := st.Stats()
+	require.Error(t, err)
+	_, err = st.StatsForProject(7)
 	require.Error(t, err)
 	_, err = st.PendingDocuments(1)
 	require.Error(t, err)
 	_, err = st.ListDocuments(1)
+	require.Error(t, err)
+	_, err = st.ListInjectCollectionIDs(0)
 	require.Error(t, err)
 	_, err = st.DeleteDocument(1)
 	require.Error(t, err)
 	require.Error(t, st.DeleteCollection(1))
 	require.Error(t, st.ReplaceChunks(1, []Chunk{{DocumentID: 1, CollectionID: 1, ChunkIndex: 0, ChunkText: "x", ChunkTextSegmented: "x"}}, "", 1))
 	require.Error(t, st.SaveEmbeddings([]ChunkEmbedding{{ChunkID: 1, Vector: []float64{1, 0, 0}}}))
+	require.Error(t, st.UpdateDocumentSource(1, 10, "h"))
+	require.Error(t, st.MoveDocumentRecord(1, 2, "/tmp/x"))
+	require.Error(t, st.ResetDocumentForReindex(1))
+	_, err = st.DeleteProjectData(1)
+	require.Error(t, err, "DeleteProjectData must not silently succeed")
 }
 
 func TestCollectionHealthCounts(t *testing.T) {

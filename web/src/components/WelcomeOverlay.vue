@@ -15,106 +15,216 @@
           </button>
         </div>
 
-        <div class="welcome-toolbar">
-          <SegmentedTabs v-model="filter" class="welcome-filter" :options="filterOptions" />
-          <div class="welcome-toolbar-right">
-            <label class="welcome-search">
-              <Search :size="14" class="welcome-search-icon" />
-              <input
-                v-model="query"
-                type="search"
-                class="welcome-search-input"
-                :placeholder="t('welcomeInfo.searchPlaceholder')"
-                :aria-label="t('welcomeInfo.searchPlaceholder')"
-              />
-            </label>
-            <button
-              class="btn-rescan refresh-spin"
-              :class="{ 'refresh-spin--active': rescanning }"
-              :disabled="rescanning"
-              :title="t('welcomeInfo.rescan')"
-              :aria-label="t('welcomeInfo.rescan')"
-              @click="rescan"
-            >
-              <LoadingIndicator v-if="rescanning" class="rescan-spinner" size="sm" inline />
-              <RefreshCw v-else :size="14" />
-              <span>{{ rescanning ? t('welcomeInfo.rescanning') : t('welcomeInfo.rescan') }}</span>
-            </button>
-          </div>
-        </div>
+        <!-- Two steps, not two pages: the first run has exactly two decisions
+             (which agent, which feature layout), and the stepper is what makes
+             the second one feel like part of the same setup instead of a
+             settings page that popped up on its own. -->
+        <nav class="welcome-steps">
+          <button
+            type="button"
+            class="welcome-step"
+            :class="{ 'is-active': step === 1, 'is-done': step > 1 }"
+            :aria-current="step === 1 ? 'step' : undefined"
+            @click="step = 1"
+          >
+            <span class="welcome-step-num">
+              <Check v-if="step > 1" :size="11" />
+              <template v-else>1</template>
+            </span>
+            <span class="welcome-step-label">{{ t('welcomeInfo.stepAgents') }}</span>
+          </button>
+          <span class="welcome-step-line"></span>
+          <button
+            type="button"
+            class="welcome-step"
+            :class="{ 'is-active': step === 2 }"
+            :aria-current="step === 2 ? 'step' : undefined"
+            @click="step = 2"
+          >
+            <span class="welcome-step-num">2</span>
+            <span class="welcome-step-label">{{ t('welcomeInfo.stepPresets') }}</span>
+          </button>
+        </nav>
 
-        <div class="welcome-grid-wrap">
-          <!-- /api/agents runs a real detection scan that can take seconds. The
-               grid stays hidden until BOTH fetches settle, so the panel never
-               flashes a half-built catalogue. -->
-          <LoadingIndicator
-            v-if="loading"
-            class="backends-loading"
-            size="md"
-            :label="t('welcomeInfo.detecting')"
-          />
-          <div v-else-if="visibleBackends.length > 0" class="welcome-grid">
-            <button
-              v-for="b in visibleBackends"
-              :key="b.id"
-              type="button"
-              class="backend-item"
-              :data-backend="b.id"
-              :class="{
-                'backend-item--installed': isInstalled(b),
-                'backend-item--installable': canInstall(b),
-              }"
-              :disabled="!isInstalled(b) && !canInstall(b)"
-              @click="onBackendClick(b)"
-            >
-              <span class="backend-icon"><AgentIcon :backend="b.id" :name="b.name" size="lg" /></span>
-              <span class="backend-name-row">
-                <span class="backend-name">{{ b.name }}</span>
-                <span v-if="isInstalled(b)" class="backend-badge badge-installed">
-                  <Check :size="12" />
-                  {{ t('welcomeInfo.detected') }}
+        <div class="welcome-body">
+          <!-- ── Step 1: agents ─────────────────────────────────── -->
+          <section v-if="step === 1" class="welcome-step-pane" data-step="1">
+            <div class="welcome-step-head">
+              <h4>{{ t('welcomeInfo.step1Title') }}</h4>
+              <span class="welcome-step-hint">{{ t('welcomeInfo.step1Hint') }}</span>
+            </div>
+
+            <div class="welcome-toolbar">
+              <SegmentedTabs v-model="filter" class="welcome-filter" :options="filterOptions" />
+              <div class="welcome-toolbar-right">
+                <label class="welcome-search">
+                  <Search :size="14" class="welcome-search-icon" />
+                  <input
+                    v-model="query"
+                    type="search"
+                    class="welcome-search-input"
+                    :placeholder="t('welcomeInfo.searchPlaceholder')"
+                    :aria-label="t('welcomeInfo.searchPlaceholder')"
+                  />
+                </label>
+                <button
+                  class="btn-rescan refresh-spin"
+                  :class="{ 'refresh-spin--active': rescanning }"
+                  :disabled="rescanning"
+                  :title="t('welcomeInfo.rescan')"
+                  :aria-label="t('welcomeInfo.rescan')"
+                  @click="rescan"
+                >
+                  <LoadingIndicator v-if="rescanning" class="rescan-spinner" size="sm" inline />
+                  <RefreshCw v-else :size="14" />
+                  <span>{{ rescanning ? t('welcomeInfo.rescanning') : t('welcomeInfo.rescan') }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- /api/agents runs a real detection scan that can take seconds. The
+                 grid stays hidden until BOTH fetches settle, so the panel never
+                 flashes a half-built catalogue. -->
+            <LoadingIndicator
+              v-if="loading"
+              class="backends-loading"
+              size="md"
+              :label="t('welcomeInfo.detecting')"
+            />
+            <div v-else-if="visibleBackends.length > 0" class="welcome-grid">
+              <button
+                v-for="b in visibleBackends"
+                :key="b.id"
+                type="button"
+                class="backend-item"
+                :data-backend="b.id"
+                :class="{
+                  'backend-item--installed': isInstalled(b),
+                  'backend-item--installable': canInstall(b),
+                }"
+                :disabled="!isInstalled(b) && !canInstall(b)"
+                @click="onBackendClick(b)"
+              >
+                <span class="backend-icon"><AgentIcon :backend="b.id" :name="b.name" size="lg" /></span>
+                <span class="backend-name-row">
+                  <span class="backend-name">{{ b.name }}</span>
+                  <!-- The built-in agent is part of this process: it is
+                       "installed" the moment the server runs, so calling it
+                       that would imply the user did something. -->
+                  <span
+                    v-if="isInstalled(b)"
+                    class="backend-badge"
+                    :class="b.id === BUILTIN_BACKEND ? 'badge-builtin' : 'badge-installed'"
+                  >
+                    <Check :size="12" />
+                    {{ b.id === BUILTIN_BACKEND ? t('welcomeInfo.noInstallNeeded') : t('welcomeInfo.detected') }}
+                  </span>
                 </span>
-              </span>
-              <span class="backend-specialty">{{ b.specialty }}</span>
-              <span v-if="isInstalled(b)" class="backend-action">
-                {{ t('welcomeInfo.openChat') }} <ArrowRight :size="13" />
-              </span>
-              <span v-else-if="canInstall(b)" class="backend-action">
-                {{ t('welcomeInfo.install') }} <ArrowRight :size="13" />
-              </span>
-              <span v-else class="backend-action backend-action--muted">
-                {{ t('welcomeInfo.notDetected') }}
-              </span>
-            </button>
-          </div>
-          <div v-else class="welcome-empty">{{ t('welcomeInfo.noResults') }}</div>
-        </div>
+                <span class="backend-specialty">{{ b.specialty }}</span>
+                <span v-if="isInstalled(b)" class="backend-action">
+                  {{ t('welcomeInfo.openChat') }} <ArrowRight :size="13" />
+                </span>
+                <span v-else-if="canInstall(b)" class="backend-action">
+                  {{ t('welcomeInfo.install') }} <ArrowRight :size="13" />
+                </span>
+                <span v-else class="backend-action backend-action--muted">
+                  {{ t('welcomeInfo.notDetected') }}
+                </span>
+              </button>
+            </div>
+            <div v-else class="welcome-empty">{{ t('welcomeInfo.noResults') }}</div>
 
-        <!-- Install section (mobile web only) -->
-        <div v-if="showInstallSection" class="welcome-install">
-          <div v-if="pwaInstall.showPwaInstall.value" class="welcome-install-row" role="button" tabindex="0" @click="handlePwaInstall" @keydown.enter="handlePwaInstall">
-            <MonitorSmartphone :size="16" />
-            <span>{{ t('pwa.addToHomeScreen') }}</span>
-          </div>
-          <div v-if="pwaInstall.showApkDownload.value" class="welcome-install-row" role="button" tabindex="0" @click="handleApkDownload" @keydown.enter="handleApkDownload">
-            <Smartphone :size="16" />
-            <span>{{ t('pwa.downloadAndroidApp') }}</span>
-          </div>
-          <div v-if="desktopDownload.isDesktop && desktopDownload.currentDownloadUrl()" class="welcome-install-row" role="button" tabindex="0" @click="desktopDownload.downloadDesktop()" @keydown.enter="desktopDownload.downloadDesktop()">
-            <Monitor :size="16" />
-            <span>{{ t('pwa.downloadDesktopApp') }}</span>
-          </div>
+            <!-- Install section (mobile web only) -->
+            <div v-if="showInstallSection" class="welcome-install">
+              <div v-if="pwaInstall.showPwaInstall.value" class="welcome-install-row" role="button" tabindex="0" @click="handlePwaInstall" @keydown.enter="handlePwaInstall">
+                <MonitorSmartphone :size="16" />
+                <span>{{ t('pwa.addToHomeScreen') }}</span>
+              </div>
+              <div v-if="pwaInstall.showApkDownload.value" class="welcome-install-row" role="button" tabindex="0" @click="handleApkDownload" @keydown.enter="handleApkDownload">
+                <Smartphone :size="16" />
+                <span>{{ t('pwa.downloadAndroidApp') }}</span>
+              </div>
+              <div v-if="desktopDownload.isDesktop && desktopDownload.currentDownloadUrl()" class="welcome-install-row" role="button" tabindex="0" @click="desktopDownload.downloadDesktop()" @keydown.enter="desktopDownload.downloadDesktop()">
+                <Monitor :size="16" />
+                <span>{{ t('pwa.downloadDesktopApp') }}</span>
+              </div>
+            </div>
+
+            <!-- Install commands run on the server, not on this device. It is
+                 easy to assume the opposite (the button is right here), so it
+                 is stated where the install list is, not only in the footer. -->
+            <div class="welcome-note">
+              <Info :size="13" class="welcome-note-icon" />
+              <div class="welcome-note-body">
+                <b>{{ t('welcomeInfo.serverNote') }}</b>
+                <span>{{ t('welcomeInfo.installRunsOnServer') }}</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- ── Step 2: feature layout ─────────────────────────── -->
+          <section v-if="step === 2" class="welcome-step-pane" data-step="2">
+            <div class="welcome-step-head">
+              <h4>{{ t('welcomeInfo.step2Title') }}</h4>
+              <span class="welcome-step-hint">{{ t('welcomeInfo.step2Hint') }}</span>
+              <span class="step-head-spacer"></span>
+              <button type="button" class="welcome-adv" @click="openDockSettings">
+                <SlidersHorizontal :size="13" />
+                {{ t('welcomeInfo.adjust') }}
+              </button>
+            </div>
+
+            <div class="preset-grid" role="radiogroup" :aria-label="t('welcomeInfo.step2Title')">
+              <button
+                v-for="p in presetCards"
+                :key="p.key"
+                type="button"
+                class="preset-card"
+                :class="{ 'is-selected': selectedPreset === p.key }"
+                :data-preset="p.key"
+                role="radio"
+                :aria-checked="selectedPreset === p.key"
+                @click="selectedPreset = p.key"
+              >
+                <span class="preset-check"><Check :size="11" /></span>
+                <span class="preset-head">
+                  <span class="preset-glyph"><component :is="p.icon" :size="14" /></span>
+                  <span class="preset-name">{{ p.name }}</span>
+                  <span v-if="p.recommended" class="preset-rec">{{ t('welcomeInfo.recommended') }}</span>
+                </span>
+                <span class="preset-desc">{{ p.desc }}</span>
+                <span class="preset-block">
+                  <span class="preset-block-title">
+                    {{ t('welcomeInfo.dockTabsCount', { count: p.tabs.length }) }}
+                  </span>
+                  <span class="preset-chips">
+                    <span v-for="tab in p.tabs" :key="tab.id" class="preset-tab">
+                      <component :is="tab.icon" :size="11" />
+                      {{ t(tab.titleKey) }}
+                    </span>
+                  </span>
+                  <span v-if="p.hiddenTabs.length" class="preset-collapse">{{ collapseText(p.hiddenTabs) }}</span>
+                </span>
+              </button>
+            </div>
+          </section>
         </div>
 
         <div class="welcome-footer">
           <button class="btn-dont-show" @click="dontShowAgain">
             {{ t('welcomeInfo.dontShowAgain') }}
           </button>
-          <span class="footer-note">{{ t('welcomeInfo.serverNote') }}</span>
+          <span class="footer-note" :class="{ 'footer-note--warn': showNoAgentsHint }">{{ footerNote }}</span>
           <div class="footer-spacer"></div>
-          <button class="btn-ok" @click="close">
-            {{ t('welcomeInfo.start') }}
-          </button>
+          <div class="footer-actions">
+            <button v-if="step === 2" type="button" class="btn-back" @click="step = 1">
+              <ArrowLeft :size="14" />
+              {{ t('welcomeInfo.back') }}
+            </button>
+            <button class="btn-ok" :disabled="applying" @click="onNext">
+              {{ step === 1 ? t('welcomeInfo.next') : t('welcomeInfo.start') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -135,14 +245,38 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight, Check, Monitor, MonitorSmartphone, RefreshCw, Search, Smartphone, X } from 'lucide-vue-next'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Briefcase,
+  Check,
+  CodeXml,
+  Feather,
+  Info,
+  Monitor,
+  MonitorSmartphone,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  Smartphone,
+  X,
+} from 'lucide-vue-next'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useDesktopDownload } from '@/composables/useDesktopDownload'
 import { useAgents } from '@/composables/useAgents'
 import { useBackendCatalog, type BackendInfo } from '@/composables/useBackendCatalog'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import {
+  DOCK_PRESET_PLANS,
+  dockFeatureChangesToConfig,
+  useDockPlugins,
+  type DockPreset,
+} from '@/composables/useDockPlugins'
+import { DOCK_TABS_WITH_ICONS } from '@/composables/dockPluginRuntime'
+import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import { useToast } from '@/composables/useToast'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
 import AgentInstallDialog from './AgentInstallDialog.vue'
 import AgentIcon from './common/AgentIcon.vue'
@@ -153,10 +287,17 @@ import { downloadByUrl } from '@/utils/download'
 
 const STORAGE_KEY = 'clawbench_welcome_dismissed'
 
+/** The one backend that ships inside the server process. */
+const BUILTIN_BACKEND = 'builtin'
+
+const TAG = 'WelcomeOverlay'
+
 const emit = defineEmits<{
   dismissed: []
   /** An installed card was clicked: open a chat with that agent. */
   startChat: [agentId: string]
+  /** "Fine-tune" was clicked: leave the wizard and open that settings page. */
+  openSettings: [categoryId: string]
 }>()
 
 const { t } = useI18n()
@@ -164,7 +305,13 @@ const pwaInstall = usePwaInstall()
 const desktopDownload = useDesktopDownload()
 const { rescanAgents } = useAgents()
 const { backends, load: loadCatalog } = useBackendCatalog()
+const { preset: currentPreset, applyPreset } = useDockPlugins()
+const { patchConfig } = useSettingsConfig()
+const toast = useToast()
 const visible = ref(false)
+const step = ref<1 | 2>(1)
+const selectedPreset = ref<Exclude<DockPreset, 'custom'>>('standard')
+const applying = ref(false)
 const detectedBackends = ref<Set<string>>(new Set())
 const showIosSheet = ref(false)
 const selectedBackend = ref<BackendInfo | null>(null)
@@ -213,9 +360,14 @@ const visibleBackends = computed(() => {
   })
 })
 
+/**
+ * "Ready" rather than "installed": the built-in agent is usable without the
+ * user installing anything, so an "installed" count would never match the
+ * badges on the cards.
+ */
 const filterOptions = computed(() => [
   { value: 'all', label: `${t('welcomeInfo.filterAll')} ${backends.value.length}` },
-  { value: 'installed', label: `${t('welcomeInfo.filterInstalled')} ${installedCount.value}` },
+  { value: 'installed', label: `${t('welcomeInfo.filterReady')} ${installedCount.value}` },
   { value: 'avail', label: `${t('welcomeInfo.filterAvailable')} ${installableCount.value}` },
 ])
 
@@ -240,7 +392,7 @@ async function loadBackends() {
     if (agentsResp.ok) {
       const data = await agentsResp.json()
       const raw = data.agents || data
-      const list = (Array.isArray(raw) ? raw : []) as Array<{ id?: string; backend?: string }>
+      const list = (Array.isArray(raw) ? raw : []) as Array<{ id?: string; backend?: string; name?: string; specialty?: string }>
       const detected = new Set<string>()
       const byBackend = new Map<string, string>()
       for (const a of list) {
@@ -251,19 +403,50 @@ async function loadBackends() {
       }
       detectedBackends.value = detected
       agentByBackend = byBackend
+
+      // The built-in agent is NOT in the catalogue: that catalogue lists
+      // backends with a CLI to install, and the built-in agent IS the server
+      // process. It is still an agent the user can chat with, so the welcome
+      // list shows it — synthesised here rather than in the server's catalogue,
+      // which every other surface (Settings › Agents) reads as "installable
+      // backends".
+      if (detected.has(BUILTIN_BACKEND) && !backends.value.some((b) => b.id === BUILTIN_BACKEND)) {
+        const agent = list.find((a) => (a.backend || a.id) === BUILTIN_BACKEND)
+        backends.value = [
+          {
+            id: BUILTIN_BACKEND,
+            name: agent?.name || 'ClawBench Agent',
+            specialty: agent?.specialty || '',
+            default_cmd: '',
+          },
+          ...backends.value,
+        ]
+      }
     }
   } catch (err) {
     // Keep whatever the previous scan found; the panel still renders the
     // catalogue with every card in its "installable" state.
-    appLog.w('WelcomeOverlay', 'backend detection failed', err)
+    appLog.w(TAG, 'backend detection failed', err)
   } finally {
     loading.value = false
   }
 }
 
+function open() {
+  step.value = 1
+  // First run: offer the recommended layout. `developer` is the factory
+  // default, not a choice the user made, so pre-selecting it would make the
+  // whole step a no-op. Re-opened later: start from what is in force, so
+  // pressing "Start" cannot rewrite a dock the user left alone. `custom` is not
+  // a card, so the recommended preset stands in for it.
+  const firstRun = localStorage.getItem(STORAGE_KEY) !== 'true'
+  selectedPreset.value = firstRun || currentPreset.value === 'custom' ? 'standard' : currentPreset.value
+  visible.value = true
+}
+
 function show() {
   if (localStorage.getItem(STORAGE_KEY) === 'true') return
-  visible.value = true
+  open()
 }
 
 function close() {
@@ -284,7 +467,7 @@ async function rescan() {
     await rescanAgents()
     await loadBackends()
   } catch (e) {
-    appLog.w('WelcomeOverlay', 'rescan failed', e)
+    appLog.w(TAG, 'rescan failed', e)
   } finally {
     rescanning.value = false
   }
@@ -328,7 +511,104 @@ function handleApkDownload() {
 }
 
 function forceShow() {
-  visible.value = true
+  open()
+}
+
+/* ── Step 2: feature layout ─────────────────────────────────── */
+
+const PRESET_KEYS = ['developer', 'standard', 'minimal'] as const
+
+/** One icon per preset, matching the settings manager's cards. */
+const PRESET_ICONS: Record<Exclude<DockPreset, 'custom'>, Component> = {
+  developer: CodeXml,
+  standard: Briefcase,
+  minimal: Feather,
+}
+
+/**
+ * The three cards, derived from the SAME plans the manager applies.
+ *
+ * The tab chips come from the plugin registry (icon + title key), so a new
+ * plugin shows up in all three cards without touching this file — a hand-kept
+ * list here would silently omit it.
+ */
+const presetCards = computed(() =>
+  PRESET_KEYS.map((key) => {
+    const hidden = new Set<string>(DOCK_PRESET_PLANS[key].hidden)
+    return {
+      key,
+      icon: PRESET_ICONS[key],
+      name: t(`settings.dockPlugins.presets.${key}.name`),
+      desc: t(`settings.dockPlugins.presets.${key}.desc`),
+      tabs: DOCK_TABS_WITH_ICONS.filter((tab) => !hidden.has(tab.id)),
+      hiddenTabs: DOCK_TABS_WITH_ICONS.filter((tab) => hidden.has(tab.id)),
+      recommended: key === 'standard',
+    }
+  }),
+)
+
+function collapseText(hiddenTabs: readonly { titleKey: string }[]): string {
+  if (hiddenTabs.length > 4) {
+    return t('welcomeInfo.presetCollapseRest', { count: hiddenTabs.length })
+  }
+  return t('welcomeInfo.presetCollapse', {
+    names: hiddenTabs.map((tab) => t(tab.titleKey)).join(t('common.listSeparator')),
+  })
+}
+
+const footerNote = computed(() => {
+  if (step.value === 2) return t('welcomeInfo.presetNote')
+  return installedCount.value === 0
+    ? t('welcomeInfo.noneReady')
+    : t('welcomeInfo.readyCount', { count: installedCount.value, total: backends.value.length })
+})
+
+const showNoAgentsHint = computed(() => step.value === 1 && installedCount.value === 0)
+
+function onNext() {
+  if (step.value === 1) {
+    step.value = 2
+    return
+  }
+  void finish()
+}
+
+/**
+ * Apply the chosen layout and close.
+ *
+ * The write is the manager's: one batched PATCH for the server switches, then
+ * visibility + order, and `patchConfig` refreshes the feature snapshot so the
+ * dock reacts without a reload. Nothing is written when the selection already
+ * matches what is in force — opening the wizard again must not rewrite a dock
+ * the user left alone.
+ *
+ * No confirmation dialog here, deliberately: the card the user clicked spells
+ * out which features disappear, and "Start" is the confirm. The manager keeps
+ * its dialog because there a preset is one click away from a list they were
+ * only browsing.
+ */
+async function finish() {
+  if (applying.value) return
+  applying.value = true
+  try {
+    if (selectedPreset.value !== currentPreset.value) {
+      await applyPreset(selectedPreset.value, async (changes) => {
+        await patchConfig(dockFeatureChangesToConfig(changes))
+      })
+    }
+    visible.value = false
+  } catch (err) {
+    appLog.e(TAG, `failed to apply preset ${selectedPreset.value}`, err)
+    toast.show(t('welcomeInfo.presetFailed'), { icon: 'warning', type: 'error' })
+  } finally {
+    applying.value = false
+  }
+}
+
+/** Leave the wizard and open the manager for a per-row override. */
+function openDockSettings() {
+  visible.value = false
+  emit('openSettings', 'dockPlugins')
 }
 
 // Register back handler when overlay opens, unregister on close
@@ -337,7 +617,13 @@ watch(visible, (v) => {
     unregisterBack = registerBackHandler({
       id: 'welcome-overlay',
       canGoBack: () => visible.value,
-      goBack: () => { visible.value = false },
+      // Step 2 is a place inside the wizard: back returns to step 1 before it
+      // leaves the overlay, otherwise a phone's back gesture would silently
+      // discard the layout choice.
+      goBack: () => {
+        if (step.value === 2) step.value = 1
+        else visible.value = false
+      },
       priority: PRIORITY_OVERLAY,
     })
   } else if (unregisterBack) {
@@ -384,7 +670,7 @@ defineExpose({ show, forceShow, visible })
   width: min(var(--welcome-panel-width), 100%);
   /* A launcher, not a full-screen page: cap the height so the desktop keeps a
      visible margin instead of the panel growing to the whole viewport. The
-     grid scrolls inside. */
+     body scrolls inside. */
   max-height: min(calc(780 * var(--dp)), 100%);
   display: flex;
   flex-direction: column;
@@ -411,7 +697,7 @@ defineExpose({ show, forceShow, visible })
   display: flex;
   align-items: flex-start;
   gap: var(--space-6);
-  padding: calc(18 * var(--dp)) var(--space-9) var(--space-5);
+  padding: calc(18 * var(--dp)) var(--space-9) var(--space-4);
 }
 
 .welcome-logo {
@@ -468,12 +754,135 @@ defineExpose({ show, forceShow, visible })
   }
 }
 
+/* ── Stepper ── */
+
+.welcome-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: 0 var(--space-9) var(--space-5);
+}
+
+.welcome-step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2);
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  font-family: inherit;
+  cursor: default;
+  transition: color var(--duration-base);
+}
+
+.welcome-step.is-active {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.welcome-step.is-done {
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.welcome-step-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(20 * var(--dp));
+  height: calc(20 * var(--dp));
+  flex-shrink: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: var(--bg-primary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+  transition: background var(--duration-base), border-color var(--duration-base), color var(--duration-base);
+}
+
+.welcome-step.is-active .welcome-step-num {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #fff;
+}
+
+.welcome-step.is-done .welcome-step-num {
+  background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
+  color: var(--accent-color);
+}
+
+.welcome-step-line {
+  width: calc(148 * var(--dp));
+  height: 1px;
+  background: var(--border-color);
+}
+
+/* ── Body ── */
+
+.welcome-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-1) var(--space-9) var(--space-6);
+  scrollbar-width: thin;
+}
+
+.welcome-step-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-5);
+  padding: var(--space-3) 0 var(--space-5);
+}
+
+.welcome-step-head h4 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.welcome-step-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.step-head-spacer {
+  flex: 1;
+}
+
+.welcome-adv {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-color);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .welcome-adv:hover {
+    text-decoration: underline;
+  }
+}
+
 .welcome-toolbar {
   display: flex;
   align-items: center;
   gap: var(--space-5);
   flex-wrap: wrap;
-  padding: 0 var(--space-9) var(--space-5);
+  padding: 0 0 var(--space-5);
 }
 
 .welcome-toolbar-right {
@@ -548,14 +957,6 @@ defineExpose({ show, forceShow, visible })
     border-color: var(--accent-color);
     color: var(--accent-color);
   }
-}
-
-.welcome-grid-wrap {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 var(--space-9) var(--space-6);
-  scrollbar-width: thin;
 }
 
 .welcome-grid {
@@ -680,6 +1081,13 @@ defineExpose({ show, forceShow, visible })
   color: var(--accent-color);
 }
 
+/* "No install needed" is a positive-but-different fact from "you installed
+   this", so it gets its own hue rather than sharing the accent. */
+.badge-builtin {
+  background: color-mix(in srgb, var(--color-green) 15%, transparent);
+  color: var(--color-green);
+}
+
 .backend-action {
   grid-area: action;
   justify-self: end;
@@ -710,7 +1118,7 @@ defineExpose({ show, forceShow, visible })
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-4);
-  padding: 0 var(--space-9) var(--space-5);
+  padding: var(--space-5) 0 0;
 }
 
 .welcome-install-row {
@@ -736,6 +1144,192 @@ defineExpose({ show, forceShow, visible })
   }
 }
 
+/* ── Note under the install list ── */
+
+.welcome-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.welcome-note-icon {
+  flex-shrink: 0;
+  margin-top: calc(1 * var(--dp));
+  color: var(--accent-color);
+  opacity: 0.85;
+}
+
+.welcome-note-body b {
+  display: block;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+}
+
+.welcome-note-body span {
+  font-size: var(--font-size-2xs);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* ── Step 2: preset cards ── */
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-5);
+}
+
+.preset-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-6);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--duration-base) ease, border-color var(--duration-base) ease,
+    box-shadow var(--duration-base) ease;
+}
+
+@media (hover: hover) {
+  .preset-card:hover {
+    border-color: color-mix(in srgb, var(--accent-color) 34%, var(--border-color));
+  }
+}
+
+.preset-card:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: calc(2 * var(--dp));
+}
+
+.preset-card.is-selected {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 6%, var(--bg-primary));
+  box-shadow: 0 0 0 calc(3 * var(--dp)) color-mix(in srgb, var(--accent-color) 14%, transparent);
+}
+
+.preset-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.preset-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  color: var(--accent-color);
+}
+
+.preset-name {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.preset-rec {
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
+  color: var(--accent-color);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.3px;
+  line-height: calc(16 * var(--dp));
+}
+
+.preset-check {
+  position: absolute;
+  top: var(--space-6);
+  right: var(--space-6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(17 * var(--dp));
+  height: calc(17 * var(--dp));
+  border-radius: var(--radius-full);
+  background: var(--accent-color);
+  color: #fff;
+  opacity: 0;
+  transform: scale(0.7);
+  transition: opacity var(--duration-base) ease, transform var(--duration-base) ease;
+}
+
+.preset-card.is-selected .preset-check {
+  opacity: 1;
+  transform: none;
+}
+
+.preset-desc {
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.55;
+  color: var(--text-muted);
+  /* Two lines on every card keeps the tab lists starting at the same height. */
+  min-height: calc(34 * var(--dp));
+}
+
+.preset-block {
+  margin-top: auto;
+  padding-top: var(--space-5);
+  border-top: 1px dashed var(--border-color);
+}
+
+.preset-block-title {
+  display: block;
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-hint);
+}
+
+.preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.preset-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: calc(20 * var(--dp));
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-xs);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  white-space: nowrap;
+}
+
+.preset-tab svg {
+  color: var(--text-muted);
+}
+
+.preset-collapse {
+  display: block;
+  margin-top: var(--space-4);
+  font-size: var(--font-size-2xs);
+  line-height: 1.5;
+  color: var(--text-hint);
+}
+
+/* ── Footer ── */
+
 .welcome-footer {
   display: flex;
   align-items: center;
@@ -750,8 +1344,43 @@ defineExpose({ show, forceShow, visible })
   color: var(--text-muted);
 }
 
+.footer-note--warn {
+  color: var(--accent-color);
+}
+
 .footer-spacer {
   flex: 1;
+}
+
+.footer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: calc(34 * var(--dp));
+  padding: 0 var(--space-6);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--duration-base), color var(--duration-base);
+}
+
+@media (hover: hover) {
+  .btn-back:hover {
+    border-color: var(--text-muted);
+    color: var(--text-primary);
+  }
 }
 
 .btn-ok {
@@ -767,6 +1396,11 @@ defineExpose({ show, forceShow, visible })
   white-space: nowrap;
   cursor: pointer;
   transition: opacity var(--duration-slow);
+}
+
+.btn-ok:disabled {
+  opacity: var(--opacity-muted);
+  cursor: default;
 }
 
 @media (hover: hover) {
@@ -799,6 +1433,14 @@ defineExpose({ show, forceShow, visible })
   .welcome-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .preset-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .preset-desc {
+    min-height: 0;
+  }
 }
 
 @media (max-width: 620px) {
@@ -818,7 +1460,7 @@ defineExpose({ show, forceShow, visible })
 
   .welcome-header {
     gap: var(--space-4);
-    padding: calc(14 * var(--dp)) var(--space-7) var(--space-4);
+    padding: calc(14 * var(--dp)) var(--space-7) var(--space-3);
   }
 
   .welcome-logo {
@@ -830,8 +1472,25 @@ defineExpose({ show, forceShow, visible })
     font-size: var(--font-size-xl);
   }
 
-  .welcome-toolbar {
+  .welcome-steps {
     padding: 0 var(--space-7) var(--space-4);
+    gap: var(--space-3);
+  }
+
+  .welcome-step-line {
+    width: calc(32 * var(--dp));
+  }
+
+  .welcome-step-label {
+    white-space: nowrap;
+  }
+
+  .welcome-body {
+    padding: var(--space-1) var(--space-7) var(--space-5);
+  }
+
+  .welcome-toolbar {
+    padding: 0 0 var(--space-4);
   }
 
   .welcome-filter {
@@ -876,12 +1535,8 @@ defineExpose({ show, forceShow, visible })
     column-gap: var(--space-3);
   }
 
-  .welcome-grid-wrap {
-    padding: 0 var(--space-7) var(--space-5);
-  }
-
   .welcome-install {
-    padding: 0 var(--space-7) var(--space-4);
+    padding: var(--space-4) 0 0;
   }
 
   .welcome-footer {
@@ -892,6 +1547,18 @@ defineExpose({ show, forceShow, visible })
 
   .footer-note {
     display: none;
+  }
+
+  .footer-spacer {
+    display: none;
+  }
+
+  .footer-actions {
+    margin-left: auto;
+  }
+
+  .welcome-step-head {
+    gap: var(--space-1) var(--space-4);
   }
 }
 
