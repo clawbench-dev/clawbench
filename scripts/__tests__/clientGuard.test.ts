@@ -4,12 +4,15 @@ import { resolve } from 'node:path'
 import {
   BRIDGE_CONTRACT_PATH,
   CONTRACT_PATHS,
+  DESKTOP_BRIDGE_IMPLEMENTATION_PATH,
   PROTOCOL_FILE,
   bridgeBreakingChanges,
   bridgeMembers,
   contractViolation,
   decideClientBuild,
   parseProtocol,
+  preloadBridgeBreakingChanges,
+  preloadBridgeMembers,
   previousTag,
 } from '../lib/client-guard.mjs'
 
@@ -243,6 +246,71 @@ describe('bridgeBreakingChanges', () => {
   })
 })
 
+describe('preloadBridgeBreakingChanges', () => {
+  const preload = (...members: string[]) =>
+    [
+      'contextBridge.exposeInMainWorld(\'ClawBenchNative\', {',
+      ...members,
+      '})',
+    ].join('\n')
+
+  const before = preload(
+    '  isNativeApp: () => true,',
+    '  getLanguage: () => \'zh\',',
+    '  downloadFile: (url: string) => { ipcRenderer.send(\'download\', { url }) },',
+  )
+
+  it('accepts an added optional method', () => {
+    // The real case: the desktop gained getCloseAction/setCloseAction and an old
+    // shell simply lacks them, so the page must keep working (v0.141.0 failed
+    // here because the whole preload file was treated as all-or-nothing).
+    const after = preload(
+      '  isNativeApp: () => true,',
+      '  getLanguage: () => \'zh\',',
+      '  downloadFile: (url: string) => { ipcRenderer.send(\'download\', { url }) },',
+      '  getCloseAction: () => { try { return ipcRenderer.sendSync(\'x\') } catch { return \'ask\' } },',
+      '  setCloseAction: (action: string) => { ipcRenderer.send(\'y\', action) },',
+    )
+    expect(preloadBridgeBreakingChanges(before, after)).toEqual([])
+  })
+
+  it('rejects a removed method', () => {
+    const after = preload('  isNativeApp: () => true,', '  getLanguage: () => \'zh\',')
+    expect(preloadBridgeBreakingChanges(before, after)).toEqual([
+      'preload: downloadFile was removed',
+    ])
+  })
+
+  it('counts a member added later as a removal when it is dropped again', () => {
+    // The release guard compares the previous tag to the new one, so a method
+    // that only ever existed in the newer release must still be caught: the
+    // page's interface declares it, and the shell that just shipped had it.
+    const baseline = preload('  isNativeApp: () => true,', '  getLanguage: () => \'zh\',')
+    const added = preload(
+      '  isNativeApp: () => true,',
+      '  getLanguage: () => \'zh\',',
+      '  downloadFile: (url: string) => { ipcRenderer.send(\'download\', { url }) },',
+    )
+    expect(preloadBridgeBreakingChanges(baseline, added)).toEqual([])
+    expect(preloadBridgeBreakingChanges(added, baseline)).toEqual([
+      'preload: downloadFile was removed',
+    ])
+  })
+
+  it('finds members even when a method body has its own braces', () => {
+    expect([...preloadBridgeMembers(before).keys()]).toEqual([
+      'isNativeApp',
+      'getLanguage',
+      'downloadFile',
+    ])
+  })
+
+  it('fails closed when either side cannot be read', () => {
+    expect(preloadBridgeBreakingChanges(before, null)).toHaveLength(1)
+    expect(preloadBridgeBreakingChanges('', before)).toHaveLength(1)
+  })
+})
+
 describe('parseProtocol', () => {
   it('accepts a positive integer with surrounding whitespace', () => {
     expect(parseProtocol('1\n')).toBe(1)
@@ -319,6 +387,7 @@ describe('release workflow wiring', () => {
 
   it('keeps the contract list in one place', () => {
     expect(CONTRACT_PATHS).toContain('web/src/utils/clawbenchNative.ts')
+    expect(CONTRACT_PATHS).toContain('desktop/src/preload')
     expect(PROTOCOL_FILE).toBe('internal/version/client_protocol.txt')
   })
 })
