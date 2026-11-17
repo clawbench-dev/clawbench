@@ -86,8 +86,14 @@ func TestServeLiveShareNotesRegenerate_StartsAndCompletes(t *testing.T) {
 		Session service.MeetingRecord `json:"session"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.NotNil(t, resp.Session.Generation)
-	assert.Equal(t, service.ArtifactTranscript, resp.Session.Generation.Step)
+	// The job runs on a goroutine, so the record may already have been reported
+	// finished by the time this response is decoded — asserting "the transcript
+	// step is running" pinned a moment that a fast machine skips. What the
+	// handler must do is START the job; the eventual completion is asserted
+	// below.
+	if resp.Session.Generation != nil {
+		assert.Equal(t, service.ArtifactTranscript, resp.Session.Generation.Step)
+	}
 
 	pid := cacheProjectID(t, project)
 	require.Eventually(t, func() bool {
