@@ -1,76 +1,111 @@
-import { test, expect, type Page } from '../fixtures'
+import { test, expect } from '../fixtures'
+import type { Page } from '@playwright/test'
 
 /**
- * Guard: the panel's window-control cluster must never sit ON panel content.
+ * Guard: the left panel's window controls must not be drawn over panel content.
  *
- * In the wide layout App.vue overlays the left panel's two window controls
- * (minimise / maximise) on whatever header the current view draws — that is how
- * one row serves both the app chrome and a drill-down page's own header. The
- * cluster is 52dp wide, flush with the panel's right edge, translucent and
- * z-indexed above the panel, so EVERY header row has to reserve that width with
- * padding-right.
+ * In the wide layout App.vue overlays two window controls (minimise /
+ * maximise) on whatever header the current view draws — that is how one row
+ * serves both the app chrome and a drill-down page's own header. The cluster is
+ * a fixed 52dp strip at the panel's right edge, translucent and z-indexed above
+ * the panel, so every header row has to reserve that width with
+ * `padding-right` — and every new header has to be added to that list by hand.
+ * The forge issue/PR (and pipeline) drill-down missed it: its own quote /
+ * open-in-browser buttons rendered UNDER the cluster, so the minimise glyph (a
+ * single line) showed through next to the chat bubble and the cluster's tint
+ * cut the button in half. The user reported it as "buttons overlapping".
  *
- * A header that forgets renders its own right-hand buttons UNDER the cluster:
- * the minimise glyph (a single horizontal line) shows through next to the
- * page's icon, and the cluster's tint cuts the button's background in half, so
- * two buttons read as one overlapping blob. Nothing throws, no unit test sees
- * it (jsdom does not lay out), and the CSS list that prevents it is maintained
- * by hand — which is exactly how the forge drill-down lost its reservation.
+ * HOW THIS CATCHES IT. Two cheaper probes were tried against a build with the
+ * fix removed and both PASSED, i.e. neither can see the defect:
  *
- * So this spec asserts the invariant BEHAVIOURALLY: walk the dock, open the
- * drill-downs we can reach, and at each step check that nothing interactive
- * inside the panel is under the cluster. A new dock tab is covered without
- * anyone remembering to add it anywhere.
+ *  - hit-testing (`elementsFromPoint`): the cluster is a real element on top,
+ *    so the point always resolves to the cluster, fixed or broken;
+ *  - pixel diffing: the cluster's tint is translucent, so the header's own
+ *    surface shows through it either way and the colours barely move.
+ *
+ * What is unambiguous is geometry — see `contentInControls()` below.
  */
 
 const CONTROLS = '.panel-window-controls'
+const PANEL_HEAD = '.panel-head'
 
-interface OverlapReport {
-  missing: boolean
-  hits: string[]
-}
-
-/** Sample the cluster's box and report panel controls found underneath it. */
-async function overlapUnderControls(page: Page): Promise<OverlapReport> {
-  return page.evaluate((selector) => {
-    const controls = document.querySelector(selector)
-    if (!controls) return { missing: true, hits: [] }
-    const rect = controls.getBoundingClientRect()
-    const hits: string[] = []
-    for (const fy of [0.25, 0.5, 0.75]) {
-      for (const fx of [0.15, 0.5, 0.85]) {
-        const x = rect.left + rect.width * fx
-        const y = rect.top + rect.height * fy
-        for (const el of document.elementsFromPoint(x, y)) {
-          // The cluster itself and its transparent overlay host are expected.
-          if (el === controls || controls.contains(el)) continue
-          if (el.classList.contains('panel-head')) continue
-          if (!el.closest('.col-left')) continue
-          if (!['BUTTON', 'A', 'INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) continue
-          const label = (el.getAttribute('title') || el.getAttribute('aria-label') || el.textContent || '')
-            .trim()
-            .slice(0, 30)
-          hits.push(`${el.tagName.toLowerCase()}.${el.className || '(no class)'} [${label}]`)
-        }
-      }
+/**
+ * Panel content drawn underneath the window-control cluster.
+ *
+ * The cluster is a fixed 52dp strip pinned to the panel's right edge and
+ * z-index'ed above the panel, so any control of the panel's own that ends up
+ * inside that strip is (partly) painted over.
+ *
+ * A control counts as covered only when a SIDE of its box lies inside the strip
+ * — both corners of that side — so a button that merely ends at the strip's
+ * left edge does not trip it.
+ *
+ * Two cheaper detectors were tried against a build with the fix removed and
+ * both PASSED, i.e. neither can see this defect, which is why this is geometry:
+ * hit-testing always resolves to the cluster (it is a real element on top), and
+ * pixel comparison is defeated by the cluster's translucency (the header's own
+ * surface shows through it either way).
+ */
+async function contentInControls(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const cluster = document.querySelector('.panel-window-controls')
+    if (!cluster) return []
+    const c = cluster.getBoundingClientRect()
+    const coveredSides = (r: DOMRect): string[] => {
+      const inside = (x: number, y: number) => x > c.left && x < c.right && y > c.top && y < c.bottom
+      const sides: string[] = []
+      if (inside(r.right, r.top) && inside(r.right, r.bottom)) sides.push('right')
+      if (inside(r.left, r.top) && inside(r.left, r.bottom)) sides.push('left')
+      if (inside(r.left, r.top) && inside(r.right, r.top)) sides.push('top')
+      if (inside(r.left, r.bottom) && inside(r.right, r.bottom)) sides.push('bottom')
+      return sides
     }
-    return { missing: false, hits: [...new Set(hits)] }
-  }, CONTROLS)
+    const out: string[] = []
+    for (const el of Array.from(document.querySelectorAll('.col-left .tab-panel *'))) {
+      if (el.closest('.panel-head')) continue
+      const control = el.closest('button, a, input, select, textarea')
+      if (!control || !control.closest('.col-left .tab-panel')) continue
+      const r = control.getBoundingClientRect()
+      if (r.width === 0 || r.height === 0) continue
+      const sides = coveredSides(r)
+      if (sides.length === 0) continue
+      const label = (control.getAttribute('title') || control.getAttribute('aria-label') || control.textContent || '')
+        .trim()
+        .slice(0, 24)
+      out.push(
+        `${control.tagName.toLowerCase()}.${control.className} [${label}] ${sides.join('+')} side inside controls ` +
+          `(control.right=${Math.round(r.right)}, controls.left=${Math.round(c.left)})`,
+      )
+    }
+    return Array.from(new Set(out))
+  })
 }
 
 async function expectChromeClear(page: Page, where: string): Promise<void> {
-  const report = await overlapUnderControls(page)
-  expect(report.missing, `${where}: 面板窗口按钮没有出现（视口不够宽？）`).toBe(false)
-  expect(report.hits, `${where}: 这些控件被面板窗口按钮盖住了`).toEqual([])
+  await expectClusterVisible(page, where)
+  const covered = await contentInControls(page)
+  expect(covered, `${where}: 这些内容伸进了面板窗口按钮所占的位置，说明被盖住了`).toEqual([])
 }
 
 /**
- * Open a dock tab.
+ * Enter the wide two-column layout with the left pane expanded.
  *
- * Clicking the ACTIVE tab is the VS Code-style "collapse the pane" gesture, so
- * bounce through another tab first — otherwise the pane closes and the cluster
- * (and every header) disappears.
+ * Left-pane collapsed state is persisted, so a fresh context starts collapsed
+ * (the default) and every assertion here would run against a pane that does not
+ * exist. Clicking a dock tab that is NOT the active one expands the pane
+ * explicitly (`handleWideDockTabClick`), so the first `openDockTab` call does
+ * it — but the guard must not silently measure nothing, hence the explicit
+ * wait for a non-zero cluster below.
  */
+async function expectClusterVisible(page: Page, where: string): Promise<void> {
+  await expect
+    .poll(async () => {
+      const box = await page.locator(CONTROLS).boundingBox()
+      return box ? box.width : 0
+    }, { message: `${where}: the cluster never appeared`, timeout: 10000 })
+    .toBeGreaterThan(0)
+}
+
 async function openDockTab(page: Page, tab: string): Promise<void> {
   const button = page.locator(`.dock-btn[data-tab="${tab}"]`).filter({ visible: true }).first()
   await expect(button).toBeVisible({ timeout: 15000 })
@@ -91,7 +126,7 @@ test.describe('panel window controls never cover panel content', () => {
       timeout: 15000,
     })
     const tabs = await page.evaluate(() =>
-      [...document.querySelectorAll('.dock-btn[data-tab]')]
+      Array.from(document.querySelectorAll('.dock-btn[data-tab]'))
         .filter(b => b.getBoundingClientRect().width > 0)
         .map(b => b.getAttribute('data-tab') as string),
     )
@@ -99,6 +134,10 @@ test.describe('panel window controls never cover panel content', () => {
 
     for (const tab of tabs) {
       await openDockTab(page, tab)
+      // `openDockTab` must have EXPANDED the pane (a click on a non-active tab
+      // expands explicitly). If it did not, the guard below would measure
+      // nothing and pass vacuously — fail loudly instead.
+      await expectClusterVisible(page, `页签 ${tab}`)
       await expectChromeClear(page, `页签 ${tab}`)
     }
   })
