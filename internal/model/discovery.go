@@ -292,7 +292,7 @@ func BackendsWithModelDiscovery() []string {
 }
 
 // SetBackendRegistryForTest installs a synthetic backend registry and returns a
-// restore function. Tests that assert spec-driven behaviour need it because the
+// restore function. Tests that assert spec-driven behavior need it because the
 // real registry is populated from the backend plugin packages, which most unit
 // tests do not import (that would be an import cycle).
 //

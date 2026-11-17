@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -99,25 +98,36 @@ type oaTool struct {
 	Function oaToolFunc `json:"function"`
 }
 
-type oaToolFunc struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Parameters  map[string]any `json:"parameters"`
+// Content-part type names on the wire. `text` is the only one a request body
+// ever repeats (image_url is appended once per image).
+const (
+	oaPartText     = "text"
+	oaPartImageURL = "image_url"
+)
+
+// oaCallTypeFunction is the only tool type this API accepts.
+const oaCallTypeFunction = "function"
+
+// oaToolFunc is the request-side shape of a declared tool: the same three
+// fields as ToolSpec, nested one level deeper, so the conversion is a cast.
+type oaToolFunc ToolSpec
+
+// oaDelta is one choice's incremental content.
+type oaDelta struct {
+	Content string `json:"content"`
+	// ReasoningContent is the vendor field DeepSeek/GLM/Qwen gateways use for
+	// the thinking stream; OpenRouter calls the same thing "reasoning". Both
+	// are read so a reasoning level produces a visible thinking block instead
+	// of silently doing nothing.
+	ReasoningContent string       `json:"reasoning_content"`
+	Reasoning        string       `json:"reasoning"`
+	ToolCalls        []oaToolCall `json:"tool_calls"`
 }
 
 type oaStreamChunk struct {
 	Choices []struct {
-		Delta struct {
-			Content string `json:"content"`
-			// ReasoningContent is the vendor field DeepSeek/GLM/Qwen gateways
-			// use for the thinking stream; OpenRouter calls the same thing
-			// "reasoning". Both are read so a reasoning level produces a
-			// visible thinking block instead of silently doing nothing.
-			ReasoningContent string       `json:"reasoning_content"`
-			Reasoning        string       `json:"reasoning"`
-			ToolCalls        []oaToolCall `json:"tool_calls"`
-		} `json:"delta"`
-		FinishReason string `json:"finish_reason"`
+		Delta        oaDelta `json:"delta"`
+		FinishReason string  `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -213,12 +223,8 @@ func (c *openAIClient) buildBody(req Request) ([]byte, error) {
 	}
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, oaTool{
-			Type: "function",
-			Function: oaToolFunc{
-				Name:        t.Name,
-				Description: t.Description,
-				Parameters:  t.Parameters,
-			},
+			Type:     oaCallTypeFunction,
+			Function: oaToolFunc(t),
 		})
 	}
 	return json.Marshal(body)
@@ -252,7 +258,7 @@ func (c *openAIClient) buildMessages(req Request) ([]oaMessage, error) {
 				case p.ToolCall != nil:
 					msg.ToolCalls = append(msg.ToolCalls, oaToolCall{
 						ID:   p.ToolCall.ID,
-						Type: "function",
+						Type: oaCallTypeFunction,
 						Function: oaFunction{
 							Name:      p.ToolCall.Name,
 							Arguments: p.ToolCall.Arguments,
@@ -329,10 +335,10 @@ func (c *openAIClient) buildUserParts(parts []Part) (any, error) {
 		// 400. The caller turns this into a tool error the model can read.
 		return nil, ErrVisionUnsupported
 	}
-	out := []oaContentPart{{Type: "text", Text: text.String()}}
+	out := []oaContentPart{{Type: oaPartText, Text: text.String()}}
 	for _, img := range images {
 		out = append(out, oaContentPart{
-			Type:     "image_url",
+			Type:     oaPartImageURL,
 			ImageURL: &oaImageURL{URL: dataURL(img)},
 		})
 	}
@@ -343,11 +349,11 @@ func (c *openAIClient) buildUserParts(parts []Part) (any, error) {
 func imageParts(images []Image, lead string) []oaContentPart {
 	out := make([]oaContentPart, 0, len(images)+1)
 	if lead != "" {
-		out = append(out, oaContentPart{Type: "text", Text: lead})
+		out = append(out, oaContentPart{Type: oaPartText, Text: lead})
 	}
 	for _, img := range images {
 		out = append(out, oaContentPart{
-			Type:     "image_url",
+			Type:     oaPartImageURL,
 			ImageURL: &oaImageURL{URL: dataURL(img)},
 		})
 	}
@@ -372,40 +378,37 @@ func dataURL(img Image) string {
 	return "data:" + img.MediaType + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
 }
 
-// readStream parses the SSE body, emitting events until the stream ends.
-func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<- Event) {
-	scanner := bufio.NewScanner(body)
-	// A single SSE line carrying a long tool-call argument easily exceeds the
-	// 64KiB default; 4MiB covers a large file write without unbounded growth.
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	// Tool calls stream as fragments keyed by index; the name arrives once and
-	// the arguments arrive in pieces. Collect per index and emit a start event
-	// on first sight so the UI can open a card immediately.
-	seenCall := make(map[int]bool)
-	var usage *Usage
-	sawContent := false
+// openAIStreamState is one stream's running totals.
+type openAIStreamState struct {
+	// seenCall records the provider slots already announced, so a start event
+	// opens each UI card exactly once. Tool calls stream as fragments keyed by
+	// index: the name arrives once and the arguments arrive in pieces.
+	seenCall map[int]bool
+	usage    *Usage
+	// sawContent records that the model produced text; a stream that produced
+	// nothing at all is a distinct failure (ErrNoOutput).
+	sawContent bool
 	// truncated records finish_reason=length: the model was cut off at the
 	// output cap, so the reply is a prefix. Some gateways send the reason on a
 	// chunk with no other content, which is why it is tracked outside the
 	// per-choice body below.
-	truncated := false
+	truncated bool
+}
 
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") {
-			continue
+// readStream parses the SSE body, emitting events until the stream ends.
+func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<- Event) {
+	st := &openAIStreamState{seenCall: make(map[int]bool)}
+	scanner := newSSEScanner(body)
+	for {
+		payload, ok := nextSSEPayload(scanner)
+		if !ok {
+			break
 		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if payload == "[DONE]" {
 			break
 		}
-
-		var chunk oaStreamChunk
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+		chunk, parsed := decodeOAStreamChunk(payload)
+		if !parsed {
 			// A single unparseable frame is not worth failing the turn over:
 			// gateways inject keepalives and vendor-specific frames.
 			continue
@@ -415,49 +418,11 @@ func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<-
 			return
 		}
 		if chunk.Usage != nil {
-			usage = &Usage{InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}
+			st.usage = &Usage{InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}
 		}
-
-		for _, choice := range chunk.Choices {
-			if choice.FinishReason == "length" {
-				truncated = true
-			}
-			if reasoning := choice.Delta.ReasoningContent; reasoning != "" {
-				if !emit(ctx, ch, Event{Kind: KindReasoning, Reasoning: reasoning}) {
-					return
-				}
-			} else if reasoning := choice.Delta.Reasoning; reasoning != "" {
-				if !emit(ctx, ch, Event{Kind: KindReasoning, Reasoning: reasoning}) {
-					return
-				}
-			}
-			if choice.Delta.Content != "" {
-				sawContent = true
-				if !emit(ctx, ch, Event{Kind: KindText, Text: choice.Delta.Content}) {
-					return
-				}
-			}
-			for _, tc := range choice.Delta.ToolCalls {
-				idx := 0
-				if tc.Index != nil {
-					idx = *tc.Index
-				}
-				// The provider's slot number rides every event: parallel calls
-				// stream interleaved, so the consumer needs to know which call a
-				// fragment belongs to rather than assuming "the last one".
-				index := idx
-				if !seenCall[idx] {
-					seenCall[idx] = true
-					if !emit(ctx, ch, Event{Kind: KindToolCallStart, ToolCall: &ToolCall{ID: tc.ID, Name: tc.Function.Name, Index: &index}}) {
-						return
-					}
-				}
-				if tc.Function.Arguments != "" {
-					if !emit(ctx, ch, Event{Kind: KindToolCallDelta, ToolCall: &ToolCall{Arguments: tc.Function.Arguments, Index: &index}}) {
-						return
-					}
-				}
-			}
+		// A false result means the consumer is gone; the caller stops.
+		if !st.consumeDelta(ctx, ch, chunk) {
+			return
 		}
 	}
 
@@ -465,10 +430,10 @@ func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<-
 		emitTerminal(ctx, ch, fmt.Errorf("openai: read stream: %w", err))
 		return
 	}
-	if usage != nil {
-		emit(ctx, ch, Event{Kind: KindUsage, Usage: usage})
+	if st.usage != nil {
+		emit(ctx, ch, Event{Kind: KindUsage, Usage: st.usage})
 	}
-	if truncated {
+	if st.truncated {
 		// Checked before ErrNoOutput: a reply cut off during reasoning has no
 		// content at all, and "the answer is incomplete" is the useful fact —
 		// "the endpoint produced nothing" would send the caller down a retry
@@ -476,7 +441,7 @@ func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<-
 		emitTruncated(ctx, ch)
 		return
 	}
-	if !sawContent && usage == nil && len(seenCall) == 0 {
+	if !st.sawContent && st.usage == nil && len(st.seenCall) == 0 {
 		// The endpoint accepted the request and then produced nothing. That is
 		// a distinct failure from "the model answered with nothing" and the
 		// caller surfaces it differently.
@@ -484,6 +449,70 @@ func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<-
 		return
 	}
 	emitTerminal(ctx, ch, nil)
+}
+
+// consumeDelta applies one chunk's choices, emitting what the UI needs. It
+// reports false when an event could not be delivered.
+func (st *openAIStreamState) consumeDelta(ctx context.Context, ch chan<- Event, chunk oaStreamChunk) bool {
+	for _, choice := range chunk.Choices {
+		if choice.FinishReason == "length" {
+			st.truncated = true
+		}
+		if !emitEach(ctx, ch, reasoningEvents(choice.Delta)) {
+			return false
+		}
+		if choice.Delta.Content != "" {
+			st.sawContent = true
+			if !emit(ctx, ch, Event{Kind: KindText, Text: choice.Delta.Content}) {
+				return false
+			}
+		}
+		if !st.emitToolCalls(ctx, ch, choice.Delta.ToolCalls) {
+			return false
+		}
+	}
+	return true
+}
+
+// reasoningEvents renders a chunk's reasoning text.
+//
+// Two field names exist in the wild for the same thing
+// (reasoning_content from DeepSeek-style endpoints, reasoning from the
+// OpenRouter family); they are mutually exclusive per chunk.
+func reasoningEvents(delta oaDelta) []Event {
+	for _, reasoning := range []string{delta.ReasoningContent, delta.Reasoning} {
+		if reasoning != "" {
+			return []Event{{Kind: KindReasoning, Reasoning: reasoning}}
+		}
+	}
+	return nil
+}
+
+// emitToolCalls announces each call on first sight and forwards its argument
+// fragments.
+func (st *openAIStreamState) emitToolCalls(ctx context.Context, ch chan<- Event, calls []oaToolCall) bool {
+	for _, tc := range calls {
+		idx := 0
+		if tc.Index != nil {
+			idx = *tc.Index
+		}
+		// The provider's slot number rides every event: parallel calls stream
+		// interleaved, so the consumer needs to know which call a fragment
+		// belongs to rather than assuming "the last one".
+		index := idx
+		if !st.seenCall[idx] {
+			st.seenCall[idx] = true
+			if !emit(ctx, ch, Event{Kind: KindToolCallStart, ToolCall: &ToolCall{ID: tc.ID, Name: tc.Function.Name, Index: &index}}) {
+				return false
+			}
+		}
+		if tc.Function.Arguments != "" {
+			if !emit(ctx, ch, Event{Kind: KindToolCallDelta, ToolCall: &ToolCall{Arguments: tc.Function.Arguments, Index: &index}}) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // ErrNoOutput means the endpoint returned a well-formed empty stream.

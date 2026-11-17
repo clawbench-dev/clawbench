@@ -253,7 +253,7 @@ func TestReplaceChunks_RejectsDeletedDocument(t *testing.T) {
 
 // TestProcessDocumentDropsResultAfterMove drives the indexer itself: the
 // document is moved between the pending read and the write, which the test
-// simulates through the store guard it must honour.
+// simulates through the store guard it must honor.
 func TestIndexerDiscardsResultForMovedDocument(t *testing.T) {
 	st := newTestStore(t)
 	colA, err := st.CreateCollection(Collection{Name: "A", Scope: ScopeProject, ProjectID: 1, AutoInject: true})

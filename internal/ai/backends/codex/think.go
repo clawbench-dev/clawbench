@@ -1,7 +1,5 @@
 package codex
 
-import ()
-
 import "strings"
 
 // Codex resume output uses these Unicode tags for thinking blocks.
@@ -27,23 +25,23 @@ func codexSplitThinking(text string) (thinking, content string) {
 		// Content is everything after the closing tag
 		rest := text[closeIdx+len(codexThinkClose):]
 		content = strings.TrimSpace(rest)
-		return
+		return thinking, content
 	}
 
 	// Check if text starts with the open tag (closing tag might be missing)
 	if openIdx == 0 && closeIdx < 0 {
 		thinking = strings.TrimSpace(text[len(codexThinkOpen):])
-		return
+		return thinking, content
 	}
 
 	// Fallback: split on first \n\n (Codex's native format)
 	if idx := strings.Index(text, "\n\n"); idx >= 0 {
 		thinking = text[:idx]
 		content = text[idx+2:]
-		return
+		return thinking, content
 	}
 
 	// No separator — entire text is content
 	content = text
-	return
+	return thinking, content
 }

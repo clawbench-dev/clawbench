@@ -98,11 +98,13 @@ func openZipXML(f *zip.File, budget *officeBudget) (io.ReadCloser, error) {
 	return struct {
 		io.Reader
 		io.Closer
-	}{&budgetReader{r: io.LimitReader(rc, limit), used: used, limit: limit},
+	}{
+		&budgetReader{r: io.LimitReader(rc, limit), used: used, limit: limit},
 		closerFunc(func() error {
 			budget.spend(*used)
 			return rc.Close()
-		})}, nil
+		}),
+	}, nil
 }
 
 type closerFunc func() error

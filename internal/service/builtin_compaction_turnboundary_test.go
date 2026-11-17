@@ -165,9 +165,12 @@ func TestCompaction_BoundarySurvivesTheExecutor(t *testing.T) {
 	setupTestDBForBuiltinHistory(t)
 	const session = "cmp-turn-3"
 	ids := seedHistoryWithIDs(t, session, [][2]string{
-		{"user", "OLD-Q1"}, {"assistant", "OLD-A1"},
-		{"user", "OLD-Q2"}, {"assistant", "OLD-A2"},
-		{"user", "KEPT-Q"}, {"assistant", "KEPT-A"},
+		{"user", "OLD-Q1"},
+		{"assistant", "OLD-A1"},
+		{"user", "OLD-Q2"},
+		{"assistant", "OLD-A2"},
+		{"user", "KEPT-Q"},
+		{"assistant", "KEPT-A"},
 	})
 	prior := buildBuiltinHistory(session, 0, builtinSummary{})
 	if len(prior) != 6 {

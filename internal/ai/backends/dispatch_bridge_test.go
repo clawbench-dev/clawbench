@@ -23,21 +23,7 @@ func ocAgent(backend string) *model.Agent {
 	}
 }
 
-// ocTodos builds the OpenCode todos array shape (content/priority/status).
-
-func ocCompletedTcu(rawInput, rawOutput any) acp.SessionToolCallUpdate {
-	st := acp.ToolCallStatusCompleted
-	return acp.SessionToolCallUpdate{
-		ToolCallId: acp.ToolCallId("call_todo"),
-		Status:     &st,
-		Title:      ptrStr("3 todos"),
-		RawInput:   rawInput,
-		RawOutput:  rawOutput,
-	}
-}
-
-// --- parseOpenCodeTodoSnapshot ---
-
+// ptrStr is a test helper for the *string fields of tool-call updates.
 func ptrStr(s string) *string { return &s }
 
 // cbCodebuddyAgent returns a CodeBuddy ACP agent for bridge unit tests.
@@ -49,19 +35,9 @@ func cbCodebuddyAgent() *model.Agent {
 	}
 }
 
-// cbTaskMeta builds a _meta map carrying the rawResponse snapshot shape
-// CodeBuddy actually emits (verified by the wire probe): rawResponse contains
-// the full `todos` snapshot after the operation.
-func cbTaskMeta(rawResp map[string]any) map[string]any {
-	return map[string]any{
-		"codebuddy.ai/rawResponse": rawResp,
-	}
-}
-
 // CodeBuddy _meta keys used by the team-attribution dispatch tests.
 const (
 	metaKeyMemberEvent       = "codebuddy.ai/memberEvent"
-	metaKeyParentToolCallID  = "codebuddy.ai/parentToolCallId"
 	metaKeyTeamUpdateLocal   = "codebuddy.ai/teamUpdate"
 	metaKeyMemberNameLocal   = "codebuddy.ai/memberName"
 	metaKeySubagentTypeLocal = "codebuddy.ai/subagentType"
@@ -78,7 +54,7 @@ func TestMapACPSessionUpdate_MemberContentAttributed(t *testing.T) {
 			Meta:    map[string]any{metaKeyMemberEvent: "probe-alpha"},
 		},
 	}
-	ai.MapACPSessionUpdateWithConnForTest(update, ch, t.Context(), conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(t.Context(), update, ch, conn, nil)
 
 	var content *ai.StreamEvent
 	for len(ch) > 0 {
@@ -109,7 +85,7 @@ func TestMapACPSessionUpdate_MemberToolCallAttributed(t *testing.T) {
 			"codebuddy.ai/toolName": "Bash",
 		},
 	}
-	ai.MapACPSessionUpdateWithConnForTest(acp.SessionUpdate{ToolCall: &tc}, ch, t.Context(), conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(t.Context(), acp.SessionUpdate{ToolCall: &tc}, ch, conn, nil)
 
 	var tool *ai.StreamEvent
 	for len(ch) > 0 {
@@ -135,7 +111,7 @@ func TestMapACPSessionUpdate_TeamUpdateRouted(t *testing.T) {
 	update := teamInfoUpdate(map[string]any{
 		metaKeyTeamUpdateLocal: mustMeta(t, teamUpdateMemberStatus),
 	})
-	ai.MapACPSessionUpdateWithConnForTest(update, ch, t.Context(), conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(t.Context(), update, ch, conn, nil)
 
 	var team *ai.StreamEvent
 	for len(ch) > 0 {
@@ -159,7 +135,7 @@ func TestMapACPSessionUpdate_SessionInfoNoTeamNoEvent(t *testing.T) {
 	ch := make(chan ai.StreamEvent, 16)
 
 	update := teamInfoUpdate(map[string]any{"codebuddy.ai/agentPhase": "running"})
-	ai.MapACPSessionUpdateWithConnForTest(update, ch, t.Context(), conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(t.Context(), update, ch, conn, nil)
 	assert.Empty(t, ch, "plain session_info_update must not emit events")
 }
 
@@ -172,7 +148,7 @@ func TestMapACPSessionUpdate_TeamUpdateIgnoredForOtherBackends(t *testing.T) {
 	update := teamInfoUpdate(map[string]any{
 		metaKeyTeamUpdateLocal: mustMeta(t, teamUpdateCreated),
 	})
-	ai.MapACPSessionUpdateWithConnForTest(update, ch, t.Context(), conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(t.Context(), update, ch, conn, nil)
 	assert.Empty(t, ch, "team bridge is CodeBuddy-only")
 }
 
@@ -196,7 +172,7 @@ func TestMapACPSessionUpdate_SpawnFrameGetsMemberColor(t *testing.T) {
 			"codebuddy.ai/toolName":  "Agent",
 		},
 	}
-	ai.MapACPSessionUpdateWithConnForTest(acp.SessionUpdate{ToolCall: &tc}, ch, t.Context(), conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(t.Context(), acp.SessionUpdate{ToolCall: &tc}, ch, conn, nil)
 
 	var tool *ai.StreamEvent
 	for len(ch) > 0 {
@@ -233,7 +209,7 @@ func TestMapACPSessionUpdate_CodebuddyTaskCreate_BridgesPlanUpdate(t *testing.T)
 
 	// nil debouncer → the ToolCallUpdate branch falls through to the fallback
 	// forward path, then our bridge call (placed before deb) runs too.
-	ai.MapACPSessionUpdateWithConnForTest(update, ch, ctx, conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(ctx, update, ch, conn, nil)
 
 	// tool_use/tool_result + plan_update. Gather events, look for plan_update.
 	planEvents := 0
@@ -283,7 +259,7 @@ func TestMapACPSessionUpdate_NonCodebuddy_NoBridge(t *testing.T) {
 			},
 		},
 	}
-	ai.MapACPSessionUpdateWithConnForTest(update, ch, ctx, conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(ctx, update, ch, conn, nil)
 
 	hasPlan := false
 drainLoop2:
@@ -325,7 +301,7 @@ func TestMapACPSessionUpdate_OpenCodeTodoWrite_BridgesPlanUpdate(t *testing.T) {
 
 	// nil debouncer → the ToolCallUpdate branch falls through to the fallback
 	// forward path, then our bridge call (placed before deb) runs too.
-	ai.MapACPSessionUpdateWithConnForTest(update, ch, ctx, conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(ctx, update, ch, conn, nil)
 
 	planEvents := 0
 	toolEvents := 0
@@ -380,7 +356,7 @@ func TestMapACPSessionUpdate_OpenCodeTodoWrite_WithDebouncer(t *testing.T) {
 			},
 		},
 	}
-	ai.MapACPSessionUpdateWithConnForTest(update, ch, ctx, conn, deb)
+	ai.MapACPSessionUpdateWithConnForTest(ctx, update, ch, conn, deb)
 
 	planEvents := 0
 drainDeb:
@@ -418,7 +394,7 @@ func TestMapACPSessionUpdate_MimoTodoWrite_BridgesPlanUpdate(t *testing.T) {
 			},
 		},
 	}
-	ai.MapACPSessionUpdateWithConnForTest(update, ch, ctx, conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(ctx, update, ch, conn, nil)
 
 	planEvents := 0
 drainLoop:
@@ -455,7 +431,7 @@ func TestMapACPSessionUpdate_NonOpenCodeBackend_NoTodoBridge(t *testing.T) {
 			},
 		},
 	}
-	ai.MapACPSessionUpdateWithConnForTest(update, ch, ctx, conn, nil)
+	ai.MapACPSessionUpdateWithConnForTest(ctx, update, ch, conn, nil)
 
 	hasPlan := false
 drainLoop2:

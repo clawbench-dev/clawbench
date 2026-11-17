@@ -20,7 +20,7 @@ import (
 // TestSearchHybridReportsVectorFailure covers the silent degradation: with a
 // stale kb_vec the model answers a query vector of the wrong width, sqlite-vec
 // fails with a dimension mismatch, and the old code dropped that error — the
-// user saw keyword results labelled "hybrid" with no hint the semantic half was
+// user saw keyword results labeled "hybrid" with no hint the semantic half was
 // missing. The keyword hits must survive, but the response must say so.
 func TestSearchHybridReportsVectorFailure(t *testing.T) {
 	st := newTestStore(t)

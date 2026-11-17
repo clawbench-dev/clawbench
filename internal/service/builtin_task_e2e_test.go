@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -39,15 +40,31 @@ func TestRunBuiltinAgentTask_CallsToolsEndToEnd(t *testing.T) {
 		if n == 1 {
 			// The model must be offered the read tool, otherwise the agent has
 			// no way to look anything up and this test would be vacuous.
-			if !strings.Contains(string(body), `"name":"read"`) {
-				t.Errorf("the read tool must be declared, body: %.400s", body)
+			//
+			// Checked on the decoded request rather than the raw bytes: the
+			// declaration is keyed by a struct tag, so `"name":"read"` never
+			// appears literally and a substring check was reporting the tool's
+			// absence (or would pass only if a message mentioned it).
+			var sent struct {
+				Tools []struct {
+					Function struct {
+						Name string `json:"name"`
+					} `json:"function"`
+				} `json:"tools"`
+				MaxTokens int `json:"max_tokens"`
+			}
+			if err := json.Unmarshal(body, &sent); err != nil {
+				t.Fatalf("request body is not JSON: %v", err)
+			}
+			declared := make([]string, 0, len(sent.Tools))
+			for _, tool := range sent.Tools {
+				declared = append(declared, tool.Function.Name)
+			}
+			if !slices.Contains(declared, "read") {
+				t.Errorf("the read tool must be declared, declared: %v", declared)
 			}
 			// An explicit output budget must be requested: leaving max_tokens
 			// out lets the provider default cut a reasoning round off.
-			var sent struct {
-				MaxTokens int `json:"max_tokens"`
-			}
-			_ = json.Unmarshal(body, &sent)
 			if sent.MaxTokens <= 0 {
 				t.Errorf("the built-in agent must send max_tokens, body: %.400s", body)
 			}

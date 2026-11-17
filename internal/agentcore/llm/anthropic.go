@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -70,6 +69,23 @@ var thinkingBudgets = map[string]int{
 	EffortMedium: 4096,
 	EffortHigh:   8192,
 }
+
+// Content-block types and the user role, as they appear on the wire. They are
+// written by the request builder and read back by the stream parser, so a typo
+// in either direction is a 400 or an event the caller never sees.
+const (
+	anBlockText       = "text"
+	anBlockImage      = "image"
+	anBlockToolUse    = "tool_use"
+	anBlockToolResult = "tool_result"
+	anBlockThinking   = "thinking"
+
+	// anDeltaText is the streaming variant of anBlockText.
+	anDeltaText = "text_delta"
+
+	anRoleUser      = "user"
+	anRoleAssistant = "assistant"
+)
 
 type anMessage struct {
 	Role    string    `json:"role"`
@@ -234,109 +250,142 @@ func resolveMaxTokens(req Request) int {
 // — sending them as separate messages violates the alternating-role rule the
 // API enforces.
 func (c *anthropicClient) buildMessages(req Request) ([]anMessage, error) {
-	var out []anMessage
-
-	appendBlocks := func(role string, blocks []anBlock) {
-		if len(blocks) == 0 {
-			return
-		}
-		// Merge into the previous message when the role matches: the API
-		// requires alternating roles, and a tool result followed by another
-		// tool result is the common case.
-		if n := len(out); n > 0 && out[n-1].Role == role {
-			out[n-1].Content = append(out[n-1].Content, blocks...)
-			return
-		}
-		out = append(out, anMessage{Role: role, Content: blocks})
-	}
-
-	// appendToolResults is the tool-result variant of appendBlocks. This API
-	// requires tool_result blocks to come FIRST in the user turn that answers
-	// them; appending after a text block is a 400 the user cannot read.
-	appendToolResults := func(blocks []anBlock) {
-		if len(blocks) == 0 {
-			return
-		}
-		if n := len(out); n > 0 && out[n-1].Role == "user" {
-			out[n-1].Content = append(append([]anBlock{}, blocks...), out[n-1].Content...)
-			return
-		}
-		out = append(out, anMessage{Role: "user", Content: blocks})
-	}
-
+	b := &anMessageBuilder{}
 	for _, m := range req.Messages {
-		switch m.Role {
-		case RoleSystem:
-			// A system message mid-conversation cannot be expressed; fold it
-			// into the user turn rather than dropping it silently.
-			var text strings.Builder
-			for _, p := range m.Parts {
-				text.WriteString(p.Text)
-			}
-			if text.Len() > 0 {
-				appendBlocks("user", []anBlock{{Type: "text", Text: text.String()}})
-			}
-
-		case RoleAssistant:
-			var blocks []anBlock
-			for _, p := range m.Parts {
-				switch {
-				case p.Thinking != nil:
-					// Replayed verbatim, signature included: this API rejects a
-					// tool-use turn whose thinking block was dropped.
-					blocks = append(blocks, anBlock{
-						Type:      "thinking",
-						Thinking:  p.Thinking.Text,
-						Signature: p.Thinking.Signature,
-					})
-				case p.ToolCall != nil:
-					input := json.RawMessage(p.ToolCall.Arguments)
-					if len(input) == 0 || !json.Valid(input) {
-						// An empty or malformed argument object is sent as {}
-						// so the provider does not reject the whole request.
-						// The tool layer will report the missing arguments.
-						input = json.RawMessage("{}")
-					}
-					blocks = append(blocks, anBlock{
-						Type:  "tool_use",
-						ID:    p.ToolCall.ID,
-						Name:  p.ToolCall.Name,
-						Input: input,
-					})
-				case p.Image != nil:
-					return nil, errors.New("anthropic: assistant messages cannot carry images")
-				default:
-					if p.Text != "" {
-						blocks = append(blocks, anBlock{Type: "text", Text: p.Text})
-					}
-				}
-			}
-			appendBlocks("assistant", blocks)
-
-		case RoleTool:
-			var blocks []anBlock
-			for _, p := range m.Parts {
-				if p.ToolResult == nil {
-					continue
-				}
-				blocks = append(blocks, anBlock{
-					Type:      "tool_result",
-					ToolUseID: p.ToolResult.CallID,
-					Content:   c.toolResultContent(p.ToolResult),
-					IsError:   p.ToolResult.IsError,
-				})
-			}
-			appendToolResults(blocks)
-
-		default: // user
-			blocks, err := c.userBlocks(m.Parts)
-			if err != nil {
-				return nil, err
-			}
-			appendBlocks("user", blocks)
+		if err := b.add(c, m); err != nil {
+			return nil, err
 		}
 	}
-	return out, nil
+	return b.out, nil
+}
+
+// anMessageBuilder accumulates messages while enforcing the alternating-role
+// rule this API validates.
+type anMessageBuilder struct {
+	out []anMessage
+}
+
+// appendBlocks adds blocks under role, merging into the previous message when
+// the role matches: the API requires alternating roles, and two assistant turns
+// in a row (text, then a tool_use turn) are the common case.
+func (b *anMessageBuilder) appendBlocks(role string, blocks []anBlock) {
+	if len(blocks) == 0 {
+		return
+	}
+	if n := len(b.out); n > 0 && b.out[n-1].Role == role {
+		b.out[n-1].Content = append(b.out[n-1].Content, blocks...)
+		return
+	}
+	b.out = append(b.out, anMessage{Role: role, Content: blocks})
+}
+
+// appendToolResults is the tool-result variant of appendBlocks. This API
+// requires tool_result blocks to come FIRST in the user turn that answers them;
+// appending after a text block is a 400 the user cannot read.
+func (b *anMessageBuilder) appendToolResults(blocks []anBlock) {
+	if len(blocks) == 0 {
+		return
+	}
+	if n := len(b.out); n > 0 && b.out[n-1].Role == anRoleUser {
+		b.out[n-1].Content = append(append([]anBlock{}, blocks...), b.out[n-1].Content...)
+		return
+	}
+	b.out = append(b.out, anMessage{Role: anRoleUser, Content: blocks})
+}
+
+// add converts one part-based message into this protocol's shape.
+func (b *anMessageBuilder) add(c *anthropicClient, m Message) error {
+	switch m.Role {
+	case RoleSystem:
+		b.appendSystem(m.Parts)
+
+	case RoleAssistant:
+		blocks, err := assistantBlocks(m.Parts)
+		if err != nil {
+			return err
+		}
+		b.appendBlocks(anRoleAssistant, blocks)
+
+	case RoleTool:
+		b.appendToolResults(toolResultBlocks(c, m.Parts))
+
+	default: // user
+		blocks, err := c.userBlocks(m.Parts)
+		if err != nil {
+			return err
+		}
+		b.appendBlocks(anRoleUser, blocks)
+	}
+	return nil
+}
+
+// appendSystem folds a system message into a user turn: the protocol has no
+// mid-conversation system role, and dropping it silently would lose the
+// instruction.
+func (b *anMessageBuilder) appendSystem(parts []Part) {
+	var text strings.Builder
+	for _, p := range parts {
+		text.WriteString(p.Text)
+	}
+	if text.Len() > 0 {
+		b.appendBlocks(anRoleUser, []anBlock{{Type: anBlockText, Text: text.String()}})
+	}
+}
+
+// assistantBlocks renders an assistant turn: its thinking, its tool calls and
+// its text, in the order they were produced.
+func assistantBlocks(parts []Part) ([]anBlock, error) {
+	var blocks []anBlock
+	for _, p := range parts {
+		switch {
+		case p.Thinking != nil:
+			// Replayed verbatim, signature included: this API rejects a
+			// tool-use turn whose thinking block was dropped.
+			blocks = append(blocks, anBlock{
+				Type:      anBlockThinking,
+				Thinking:  p.Thinking.Text,
+				Signature: p.Thinking.Signature,
+			})
+		case p.ToolCall != nil:
+			input := json.RawMessage(p.ToolCall.Arguments)
+			if len(input) == 0 || !json.Valid(input) {
+				// An empty or malformed argument object is sent as {} so the
+				// provider does not reject the whole request. The tool layer
+				// will report the missing arguments.
+				input = json.RawMessage("{}")
+			}
+			blocks = append(blocks, anBlock{
+				Type:  anBlockToolUse,
+				ID:    p.ToolCall.ID,
+				Name:  p.ToolCall.Name,
+				Input: input,
+			})
+		case p.Image != nil:
+			return nil, errors.New("anthropic: assistant messages cannot carry images")
+		default:
+			if p.Text != "" {
+				blocks = append(blocks, anBlock{Type: anBlockText, Text: p.Text})
+			}
+		}
+	}
+	return blocks, nil
+}
+
+// toolResultBlocks renders the tool_result blocks of one tool message.
+func toolResultBlocks(c *anthropicClient, parts []Part) []anBlock {
+	var blocks []anBlock
+	for _, p := range parts {
+		if p.ToolResult == nil {
+			continue
+		}
+		blocks = append(blocks, anBlock{
+			Type:      anBlockToolResult,
+			ToolUseID: p.ToolResult.CallID,
+			Content:   c.toolResultContent(p.ToolResult),
+			IsError:   p.ToolResult.IsError,
+		})
+	}
+	return blocks
 }
 
 // toolResultContent renders a tool result. Images ride INSIDE the tool result
@@ -347,11 +396,11 @@ func (c *anthropicClient) toolResultContent(tr *ToolResult) []anBlock {
 		switch {
 		case p.Image != nil:
 			if !c.SupportsVision() {
-				blocks = append(blocks, anBlock{Type: "text", Text: "[image omitted: the current model cannot read images]"})
+				blocks = append(blocks, anBlock{Type: anBlockText, Text: "[image omitted: the current model cannot read images]"})
 				continue
 			}
 			blocks = append(blocks, anBlock{
-				Type: "image",
+				Type: anBlockImage,
 				Source: &anImageSource{
 					Type:      "base64",
 					MediaType: p.Image.MediaType,
@@ -360,13 +409,13 @@ func (c *anthropicClient) toolResultContent(tr *ToolResult) []anBlock {
 			})
 		default:
 			if p.Text != "" {
-				blocks = append(blocks, anBlock{Type: "text", Text: p.Text})
+				blocks = append(blocks, anBlock{Type: anBlockText, Text: p.Text})
 			}
 		}
 	}
 	if len(blocks) == 0 {
 		// The API rejects an empty content array.
-		blocks = append(blocks, anBlock{Type: "text", Text: "(no output)"})
+		blocks = append(blocks, anBlock{Type: anBlockText, Text: "(no output)"})
 	}
 	return blocks
 }
@@ -380,7 +429,7 @@ func (c *anthropicClient) userBlocks(parts []Part) ([]anBlock, error) {
 				return nil, ErrVisionUnsupported
 			}
 			blocks = append(blocks, anBlock{
-				Type: "image",
+				Type: anBlockImage,
 				Source: &anImageSource{
 					Type:      "base64",
 					MediaType: p.Image.MediaType,
@@ -389,159 +438,70 @@ func (c *anthropicClient) userBlocks(parts []Part) ([]anBlock, error) {
 			})
 		case p.ToolResult != nil:
 			blocks = append(blocks, anBlock{
-				Type:      "tool_result",
+				Type:      anBlockToolResult,
 				ToolUseID: p.ToolResult.CallID,
 				Content:   c.toolResultContent(p.ToolResult),
 				IsError:   p.ToolResult.IsError,
 			})
 		default:
 			if p.Text != "" {
-				blocks = append(blocks, anBlock{Type: "text", Text: p.Text})
+				blocks = append(blocks, anBlock{Type: anBlockText, Text: p.Text})
 			}
 		}
 	}
 	if len(blocks) == 0 {
-		blocks = append(blocks, anBlock{Type: "text", Text: "(empty)"})
+		blocks = append(blocks, anBlock{Type: anBlockText, Text: "(empty)"})
 	}
 	return blocks, nil
 }
 
+// anStreamState is one stream's running totals.
+type anStreamState struct {
+	// inputTokens arrives on message_start and is repeated on the usage event,
+	// because the API reports output tokens separately on message_delta.
+	inputTokens int
+	// Per-index accumulation of tool_use argument JSON. The API streams
+	// partial_json fragments that must be concatenated.
+	callID   map[int]string
+	callName map[int]string
+	// openToolBlock is the content-block index of the tool_use block whose
+	// arguments are currently streaming, or -1 when none is open. An
+	// input_json_delta carries no id of its own — it belongs to the
+	// content_block_start that opened it — so it has to be tracked here to
+	// tell parallel calls apart.
+	openToolBlock int
+	sawAny        bool
+	// stopReason arrives on message_delta, one event before message_stop.
+	stopReason string
+}
+
+func newAnStreamState() *anStreamState {
+	return &anStreamState{
+		callID:        make(map[int]string),
+		callName:      make(map[int]string),
+		openToolBlock: -1,
+	}
+}
+
 func (c *anthropicClient) readStream(ctx context.Context, body io.Reader, ch chan<- Event) {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	scanner := newSSEScanner(body)
+	st := newAnStreamState()
 
-	var (
-		inputTokens int
-		// Per-index accumulation of tool_use argument JSON. The API streams
-		// partial_json fragments that must be concatenated.
-		callID   = make(map[int]string)
-		callName = make(map[int]string)
-		// openToolBlock is the content-block index of the tool_use block whose
-		// arguments are currently streaming, or -1 when none is open. An
-		// input_json_delta carries no id of its own — it belongs to the
-		// content_block_start that opened it — so it has to be tracked here to
-		// tell parallel calls apart.
-		openToolBlock = -1
-		sawAny        bool
-		// stopReason arrives on message_delta, one event before message_stop.
-		stopReason string
-	)
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") {
+	for {
+		payload, ok := nextSSEPayload(scanner)
+		if !ok {
+			break
+		}
+		ev, parsed := decodeAnStreamEvent(payload)
+		if !parsed {
+			// One malformed frame is not worth failing an otherwise complete
+			// answer over; gateways inject frames this parser does not model.
 			continue
 		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-
-		var ev anStreamEvent
-		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-			continue
-		}
-
-		switch ev.Type {
-		case "message_start":
-			if ev.Message != nil && ev.Message.Usage != nil {
-				inputTokens = ev.Message.Usage.InputTokens
-			}
-			sawAny = true
-
-		case "content_block_start":
-			sawAny = true
-			openToolBlock = -1
-			if ev.ContentBlock != nil && ev.ContentBlock.Type == "tool_use" {
-				callID[ev.Index] = ev.ContentBlock.ID
-				callName[ev.Index] = ev.ContentBlock.Name
-				openToolBlock = ev.Index
-				index := ev.Index
-				if !emit(ctx, ch, Event{Kind: KindToolCallStart, ToolCall: &ToolCall{
-					ID:    ev.ContentBlock.ID,
-					Name:  ev.ContentBlock.Name,
-					Index: &index,
-				}}) {
-					return
-				}
-			}
-
-		case "content_block_delta":
-			if ev.Delta == nil {
-				continue
-			}
-			switch ev.Delta.Type {
-			case "text_delta":
-				if ev.Delta.Text != "" {
-					sawAny = true
-					if !emit(ctx, ch, Event{Kind: KindText, Text: ev.Delta.Text}) {
-						return
-					}
-				}
-			case "thinking_delta":
-				if ev.Delta.Thinking != "" {
-					sawAny = true
-					if !emit(ctx, ch, Event{Kind: KindReasoning, Reasoning: ev.Delta.Thinking}) {
-						return
-					}
-				}
-			case "signature_delta":
-				// The signature closes the thinking block. It must travel with
-				// the block when the turn also calls a tool, or the next round
-				// is rejected.
-				if ev.Delta.Signature != "" {
-					if !emit(ctx, ch, Event{Kind: KindReasoningSignature, Signature: ev.Delta.Signature}) {
-						return
-					}
-				}
-			case "input_json_delta":
-				if ev.Delta.PartialJSON != "" {
-					// No open tool_use block means this fragment belongs to a
-					// block this client never saw start (a gateway quirk);
-					// emitting it without an index would let the consumer
-					// append it to an unrelated call.
-					if openToolBlock < 0 {
-						continue
-					}
-					index := openToolBlock
-					if !emit(ctx, ch, Event{Kind: KindToolCallDelta, ToolCall: &ToolCall{Arguments: ev.Delta.PartialJSON, Index: &index}}) {
-						return
-					}
-				}
-			}
-
-		case "message_delta":
-			if ev.Delta != nil && ev.Delta.StopReason != "" {
-				stopReason = ev.Delta.StopReason
-			}
-			if ev.Usage != nil {
-				emit(ctx, ch, Event{Kind: KindUsage, Usage: &Usage{
-					InputTokens:  inputTokens,
-					OutputTokens: ev.Usage.OutputTokens,
-				}})
-			}
-
-		case "message_stop":
-			if stopReason == "max_tokens" {
-				// The reply was cut off at the output cap. Reported before the
-				// empty-stream check for the same reason as the OpenAI client:
-				// a reply cut off during thinking has no content at all.
-				emitTruncated(ctx, ch)
-				return
-			}
-			if !sawAny {
-				emitTerminal(ctx, ch, ErrNoOutput)
-				return
-			}
-			emitTerminal(ctx, ch, nil)
+		if terminate, ok := st.handle(ctx, ch, ev); terminate {
 			return
-
-		case "error":
-			msg := "stream error"
-			if ev.Error != nil && ev.Error.Message != "" {
-				msg = ev.Error.Message
-			}
-			emitTerminal(ctx, ch, fmt.Errorf("anthropic: %s", msg))
+		} else if !ok {
+			// The consumer is gone.
 			return
 		}
 	}
@@ -553,7 +513,136 @@ func (c *anthropicClient) readStream(ctx context.Context, body io.Reader, ch cha
 	// The body ended without message_stop. Treat it as success if anything
 	// arrived — some gateways close the connection instead of sending the
 	// terminator — and as an empty reply otherwise.
-	if !sawAny {
+	st.finish(ctx, ch)
+}
+
+// handle applies one event. It reports (terminate, delivered): terminate means a
+// terminal event was emitted and the caller must stop reading, delivered=false
+// means the consumer went away.
+func (st *anStreamState) handle(ctx context.Context, ch chan<- Event, ev anStreamEvent) (terminate, delivered bool) {
+	switch ev.Type {
+	case "message_start":
+		st.messageStart(ev)
+		return false, true
+
+	case "content_block_start":
+		return false, st.contentBlockStart(ctx, ch, ev)
+
+	case "content_block_delta":
+		return false, st.contentBlockDelta(ctx, ch, ev)
+
+	case "message_delta":
+		st.messageDelta(ctx, ch, ev)
+		return false, true
+
+	case "message_stop":
+		if st.stopReason == "max_tokens" {
+			// The reply was cut off at the output cap. Reported before the
+			// empty-stream check for the same reason as the OpenAI client:
+			// a reply cut off during thinking has no content at all.
+			emitTruncated(ctx, ch)
+			return true, true
+		}
+		st.finish(ctx, ch)
+		return true, true
+
+	case "error":
+		msg := "stream error"
+		if ev.Error != nil && ev.Error.Message != "" {
+			msg = ev.Error.Message
+		}
+		emitTerminal(ctx, ch, fmt.Errorf("anthropic: %s", msg))
+		return true, true
+	}
+	return false, true
+}
+
+func (st *anStreamState) messageStart(ev anStreamEvent) {
+	if ev.Message != nil && ev.Message.Usage != nil {
+		st.inputTokens = ev.Message.Usage.InputTokens
+	}
+	st.sawAny = true
+}
+
+// contentBlockStart opens a content block. A tool_use block is announced
+// immediately so the UI can open a card before its arguments finish streaming.
+func (st *anStreamState) contentBlockStart(ctx context.Context, ch chan<- Event, ev anStreamEvent) bool {
+	st.sawAny = true
+	st.openToolBlock = -1
+	if ev.ContentBlock == nil || ev.ContentBlock.Type != anBlockToolUse {
+		return true
+	}
+	st.callID[ev.Index] = ev.ContentBlock.ID
+	st.callName[ev.Index] = ev.ContentBlock.Name
+	st.openToolBlock = ev.Index
+	index := ev.Index
+	return emit(ctx, ch, Event{Kind: KindToolCallStart, ToolCall: &ToolCall{
+		ID:    ev.ContentBlock.ID,
+		Name:  ev.ContentBlock.Name,
+		Index: &index,
+	}})
+}
+
+// contentBlockDelta forwards one delta of the open block.
+func (st *anStreamState) contentBlockDelta(ctx context.Context, ch chan<- Event, ev anStreamEvent) bool {
+	if ev.Delta == nil {
+		return true
+	}
+	switch ev.Delta.Type {
+	case anDeltaText:
+		if ev.Delta.Text == "" {
+			return true
+		}
+		st.sawAny = true
+		return emit(ctx, ch, Event{Kind: KindText, Text: ev.Delta.Text})
+
+	case "thinking_delta":
+		if ev.Delta.Thinking == "" {
+			return true
+		}
+		st.sawAny = true
+		return emit(ctx, ch, Event{Kind: KindReasoning, Reasoning: ev.Delta.Thinking})
+
+	case "signature_delta":
+		// The signature closes the thinking block. It must travel with the
+		// block when the turn also calls a tool, or the next round is rejected.
+		if ev.Delta.Signature == "" {
+			return true
+		}
+		return emit(ctx, ch, Event{Kind: KindReasoningSignature, Signature: ev.Delta.Signature})
+
+	case "input_json_delta":
+		if ev.Delta.PartialJSON == "" {
+			return true
+		}
+		// No open tool_use block means this fragment belongs to a block this
+		// client never saw start (a gateway quirk); emitting it without an
+		// index would let the consumer append it to an unrelated call.
+		if st.openToolBlock < 0 {
+			return true
+		}
+		index := st.openToolBlock
+		return emit(ctx, ch, Event{Kind: KindToolCallDelta, ToolCall: &ToolCall{Arguments: ev.Delta.PartialJSON, Index: &index}})
+	}
+	return true
+}
+
+func (st *anStreamState) messageDelta(ctx context.Context, ch chan<- Event, ev anStreamEvent) {
+	if ev.Delta != nil && ev.Delta.StopReason != "" {
+		st.stopReason = ev.Delta.StopReason
+	}
+	if ev.Usage != nil {
+		emit(ctx, ch, Event{Kind: KindUsage, Usage: &Usage{
+			InputTokens:  st.inputTokens,
+			OutputTokens: ev.Usage.OutputTokens,
+		}})
+	}
+}
+
+// finish emits the terminal event for a stream that ended: success when
+// anything arrived, ErrNoOutput otherwise.
+func (st *anStreamState) finish(ctx context.Context, ch chan<- Event) {
+	if !st.sawAny {
 		emitTerminal(ctx, ch, ErrNoOutput)
 		return
 	}

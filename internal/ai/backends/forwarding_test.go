@@ -14,9 +14,7 @@ import (
 // pluginsAtInit snapshots the registry during package init, before any test can
 // call ResetForTest. Go runs tests in one process in file order, so a test that
 // reads backends.All() directly may legitimately see an empty registry.
-var pluginsAtInit = func() []*backends.BackendPlugin {
-	return backends.All()
-}()
+var pluginsAtInit = backends.All()
 
 // TestRegisterForwardsCapabilities pins the contract that makes ONE init()
 // enough for a backend: everything a plugin declares must reach the registry
@@ -61,7 +59,7 @@ func TestRegisterForwardsCapabilities(t *testing.T) {
 // drift this design removes — a backend that half-registers itself, or one
 // whose CLI factory outlives the plugin that declared it.
 //
-// It cannot be expressed behaviourally: a direct call produces exactly the same
+// It cannot be expressed behaviorally: a direct call produces exactly the same
 // registries, just from a second place.
 func TestSubPackagesDoNotRegisterDirectly(t *testing.T) {
 	forbidden := []string{

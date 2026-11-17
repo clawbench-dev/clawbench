@@ -14,7 +14,7 @@ import (
 // then receives a text note concludes the read failed.
 type ReadToolNoVision struct{}
 
-func (ReadToolNoVision) Name() string { return "read" }
+func (ReadToolNoVision) Name() string { return toolReadName }
 
 func (ReadToolNoVision) Snippet() string {
 	return "Read a text file (with line numbers)"
@@ -28,26 +28,26 @@ func (ReadToolNoVision) Guidelines() []string {
 
 func (ReadToolNoVision) Spec() Spec {
 	return Spec{
-		Name: "read",
+		Name: toolReadName,
 		Description: "Read a text file from the working directory, with line numbers. " +
 			"Binary files cannot be read. Use offset and limit to read a long file in pieces.",
 		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"path": map[string]any{
-					"type":        "string",
-					"description": "File path, absolute or relative to the working directory.",
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
+				argPath: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: argPathDescription,
 				},
-				"offset": map[string]any{
-					"type":        "integer",
-					"description": "1-based line to start at.",
+				argOffset: map[string]any{
+					schemaType:        schemaInteger,
+					schemaDescription: "1-based line to start at.",
 				},
-				"limit": map[string]any{
-					"type":        "integer",
-					"description": fmt.Sprintf("Maximum lines to return (default and maximum %d).", MaxReadLines),
+				argLimit: map[string]any{
+					schemaType:        schemaInteger,
+					schemaDescription: fmt.Sprintf("Maximum lines to return (default and maximum %d).", MaxReadLines),
 				},
 			},
-			"required": []string{"path"},
+			schemaRequired: []string{argPath},
 		},
 	}
 }
@@ -76,7 +76,7 @@ func (ReadToolNoVision) Run(env Env, raw json.RawMessage) Result {
 	}
 	if mt, ok := imageMediaType(abs); ok {
 		// Naming the reason is what lets the model route around it (ask the
-		// user, read a neighbouring text file) instead of retrying.
+		// user, read a neighboring text file) instead of retrying.
 		return Result{
 			Text: fmt.Sprintf("%s is an image (%s) and the current model cannot read images. "+
 				"Ask the user to describe it, or work from text files instead.", args.Path, mt),

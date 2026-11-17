@@ -3,50 +3,11 @@ package ai
 import (
 	"testing"
 
-	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/model"
 )
-
-// Payloads below are verbatim shapes captured from a real `codebuddy --acp`
-// process (see docs/dev/codebuddy_acp_team_integration.md §1 and the probe at
-// codebuddy_acp_team_probe_integration_test.go). Keep them in sync with the
-// wire — they are the regression anchor for the team bridge.
-
-// teamUpdateMemberStatus is a member_status_change snapshot with two members,
-// one running and one completed+idle.
-const teamUpdateMemberStatus = `{
-  "type": "member_status_change",
-  "teamName": "clawbench-probe",
-  "isAutoTeam": false,
-  "hasLiveMembers": true,
-  "members": [
-    {"name":"probe-alpha","agentType":"general-purpose","color":"blue",
-     "description":"alpha task","status":"running","activity":"working",
-     "lifecycle":"alive","taskId":"agent-08d3","sessionId":"sess-a",
-     "tokenUsage":{"inputTokens":56763,"outputTokens":229,"lastContextWindow":28430},
-     "toolCallCount":2},
-    {"name":"probe-beta","agentType":"general-purpose","color":"green",
-     "description":"beta task","status":"completed","activity":"idle",
-     "lifecycle":"alive","taskId":"agent-ced1","sessionId":"sess-b",
-     "tokenUsage":{"inputTokens":85190,"outputTokens":205,"lastContextWindow":28520},
-     "toolCallCount":2}
-  ]
-}`
-
-// teamUpdateCreated is the minimal creation event.
-const teamUpdateCreated = `{"type":"team_created","teamName":"clawbench-probe","hasLiveMembers":false}`
-
-func teamInfoUpdate(meta map[string]any) acp.SessionUpdate {
-	return acp.SessionUpdate{
-		SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
-			SessionUpdate: "session_info_update",
-			Meta:          meta,
-		},
-	}
-}
 
 // ---------------------------------------------------------------------------
 // parseTeamState

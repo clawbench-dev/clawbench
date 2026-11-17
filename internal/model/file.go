@@ -239,7 +239,7 @@ func detectSubtypeJSONPrefix(content string) string {
 	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
 		return ""
 	}
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		tok, err = dec.Token()
 		if err != nil {
 			return ""

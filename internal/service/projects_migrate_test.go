@@ -397,7 +397,8 @@ func TestMigrateProjectsToIDs_PreservesRowsAndLateColumns(t *testing.T) {
 	requireNoError(t, store.UnsafeDBForTest().QueryRow(`
 		SELECT title, source_session_id, transport, auto_approve, pinned, sort_order
 		  FROM chat_sessions WHERE id = 's1'`).Scan(
-		&title, &sourceSessionID, &transport, &autoApprove, &pinned, &sortOrder))
+		&title, &sourceSessionID, &transport, &autoApprove, &pinned, &sortOrder,
+	))
 	if title != "kept" {
 		t.Errorf("title = %q, want kept", title)
 	}
@@ -438,9 +439,11 @@ func TestMigrateProjectsToIDs_KeepsGlobalSessionTagsDistinct(t *testing.T) {
 
 	var globalID, projectID int64
 	requireNoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT project_id FROM session_tags WHERE scope = 'global'").Scan(&globalID))
+		"SELECT project_id FROM session_tags WHERE scope = 'global'",
+	).Scan(&globalID))
 	requireNoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT project_id FROM session_tags WHERE scope = 'project'").Scan(&projectID))
+		"SELECT project_id FROM session_tags WHERE scope = 'project'",
+	).Scan(&projectID))
 	if globalID != store.GlobalScopeProjectID {
 		t.Errorf("global tag project_id = %d, want the 0 sentinel", globalID)
 	}
@@ -571,14 +574,16 @@ func TestMigrateProjectsToIDs_FoldsForgeOptOut(t *testing.T) {
 
 	var optOut int
 	requireNoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT forge_bind_opt_out FROM projects WHERE path = ?", store.NormalizeProjectPath("/tmp/proj")).Scan(&optOut))
+		"SELECT forge_bind_opt_out FROM projects WHERE path = ?", store.NormalizeProjectPath("/tmp/proj"),
+	).Scan(&optOut))
 	if optOut != 1 {
 		t.Errorf("forge_bind_opt_out = %d, want 1", optOut)
 	}
 
 	var metaExists int
 	requireNoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_meta'").Scan(&metaExists))
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_meta'",
+	).Scan(&metaExists))
 	if metaExists != 0 {
 		t.Error("project_meta must be dropped once folded into projects")
 	}
@@ -605,7 +610,8 @@ func TestMigrateProjectsToIDs_DropsRagVec(t *testing.T) {
 
 	var vecExists int
 	requireNoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vec'").Scan(&vecExists))
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vec'",
+	).Scan(&vecExists))
 	if vecExists != 0 {
 		t.Error("rag_vec must be dropped so the RAG store rebuilds it with project_id")
 	}
@@ -842,7 +848,11 @@ func TestLegacyProjectPathIndexes_AreAllRecreated(t *testing.T) {
 		// reporting "the scan is broken" for a tree that is perfectly fine.
 		rel, relErr := filepath.Rel(root, path)
 		if relErr != nil {
-			return nil
+			// Surfacing the error would abort the walk with a misleading
+			// "scan is broken" verdict; the assertion below already fails when
+			// the visit found nothing, and this path cannot occur for a root
+			// that filepath.WalkDir itself produced.
+			return nil //nolint:nilerr // walk continues; absence of files is caught by the assertion
 		}
 		if isWorktreePath(filepath.ToSlash(rel)) {
 			return nil

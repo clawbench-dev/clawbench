@@ -2,9 +2,9 @@ package pi
 
 import (
 	"encoding/json"
+	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
-	"strings"
 
 	"clawbench/internal/ai"
 )

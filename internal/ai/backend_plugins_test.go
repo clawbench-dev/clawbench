@@ -44,7 +44,7 @@ var backendSpecificFilesAllowedInCore = map[string]bool{
 }
 
 // TestCorePackageHasNoBackendSpecificFiles fails when a file in internal/ai is
-// named after a backend. Backend behaviour belongs in
+// named after a backend. Backend behavior belongs in
 // internal/ai/backends/<id>/; a new file here means the plugin boundary was
 // bypassed, and the next person adding a backend has to edit the core package.
 //

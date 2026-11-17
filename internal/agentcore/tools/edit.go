@@ -16,7 +16,7 @@ import (
 // round; guessing costs a file.
 type EditTool struct{}
 
-func (EditTool) Name() string { return "edit" }
+func (EditTool) Name() string { return toolEditName }
 
 func (EditTool) Snippet() string { return "Replace exact text in a file" }
 
@@ -26,31 +26,31 @@ func (EditTool) Guidelines() []string {
 
 func (EditTool) Spec() Spec {
 	return Spec{
-		Name: "edit",
+		Name: toolEditName,
 		Description: "Replace an exact string in a file. old_string must appear exactly once unless " +
 			"replace_all is true. Include enough surrounding text to make it unique. " +
 			"Read the file first — you must reproduce its whitespace exactly.",
 		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"path": map[string]any{
-					"type":        "string",
-					"description": "File path, absolute or relative to the working directory.",
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
+				argPath: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: argPathDescription,
 				},
 				"old_string": map[string]any{
-					"type":        "string",
-					"description": "Exact text to replace, including indentation.",
+					schemaType:        schemaString,
+					schemaDescription: "Exact text to replace, including indentation.",
 				},
 				"new_string": map[string]any{
-					"type":        "string",
-					"description": "Replacement text. Use an empty string to delete the matched text.",
+					schemaType:        schemaString,
+					schemaDescription: "Replacement text. Use an empty string to delete the matched text.",
 				},
 				"replace_all": map[string]any{
-					"type":        "boolean",
-					"description": "Replace every occurrence instead of requiring a unique match.",
+					schemaType:        schemaBoolean,
+					schemaDescription: "Replace every occurrence instead of requiring a unique match.",
 				},
 			},
-			"required": []string{"path", "old_string", "new_string"},
+			schemaRequired: []string{argPath, "old_string", "new_string"},
 		},
 	}
 }

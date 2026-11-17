@@ -48,7 +48,8 @@ func TestCompacted_ReportsTheLastFoldedHistoryMessage(t *testing.T) {
 	// that: compaction folds the large stretch and keeps the recent turn
 	// verbatim, which is exactly the shape the next turn must not lose.
 	history := manyTurns(6, 2000)
-	history = append(history,
+	history = append(
+		history,
 		llm.TextMessage(llm.RoleUser, strings.Repeat("r", 300)),
 		llm.TextMessage(llm.RoleAssistant, strings.Repeat("s", 300)),
 	)
@@ -113,7 +114,7 @@ func TestCompacted_ToolResultsOnlyBoundaryDoesNotCoverHistory(t *testing.T) {
 		summaryReplies: []string{"read a large file repeatedly"},
 	}
 	root := t.TempDir()
-	writeFile(t, root, "a.txt", big)
+	writeFile(t, root, big)
 
 	// No stored history at all: every message in flight belongs to this turn, so
 	// the tool-results fold demonstrably removes nothing a caller could replay.
@@ -196,7 +197,7 @@ func TestCompacted_KeptHistoryIsNotClaimedAsCovered(t *testing.T) {
 func TestCompacted_SecondPassKeepsItsOwnBoundary(t *testing.T) {
 	root := t.TempDir()
 	big := strings.Repeat("y", 40000)
-	writeFile(t, root, "a.txt", big)
+	writeFile(t, root, big)
 
 	// Two stored turns, then several large tool rounds so the run keeps
 	// compacting past its first pass.
@@ -256,7 +257,7 @@ func TestCompacted_NoHistoryReportsNoBoundary(t *testing.T) {
 		summaryReplies: []string{"read a file"},
 	}
 	root := t.TempDir()
-	writeFile(t, root, "a.txt", big)
+	writeFile(t, root, big)
 
 	events := collectCompacted(t, Spec{
 		Client:        client,
@@ -353,11 +354,11 @@ func compactedSizes(events []Event) []int {
 func TestCompaction_DoesNotStopWhileItIsGainingRoom(t *testing.T) {
 	big := strings.Repeat("x", 40000) // ~10k tokens per result
 	root := t.TempDir()
-	writeFile(t, root, "a.txt", big)
+	writeFile(t, root, big)
 
 	const rounds = 12
 	script := make([]func(llm.Request) []llm.Event, 0, rounds+1)
-	for i := 0; i < rounds; i++ {
+	for i := range rounds {
 		script = append(script, toolRound(fmt.Sprintf("c%d", i), "read", `{"path":"a.txt"}`))
 	}
 	script = append(script, textRound("finally"))

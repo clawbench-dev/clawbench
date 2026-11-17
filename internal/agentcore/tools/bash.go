@@ -19,7 +19,7 @@ import (
 // model.ToolPolicy.Normalized, which closes fs.write in when exec is granted.
 type BashTool struct{}
 
-func (BashTool) Name() string { return "bash" }
+func (BashTool) Name() string { return toolBashName }
 
 func (BashTool) Snippet() string { return "Run a shell command (git, builds, tests, find)" }
 
@@ -34,27 +34,27 @@ func (BashTool) Guidelines() []string {
 
 func (BashTool) Spec() Spec {
 	return Spec{
-		Name: "bash",
+		Name: toolBashName,
 		Description: "Run a shell command in the working directory. Use it for git, builds, tests and file " +
 			"inspection (find, grep, ls). Output is truncated to the first and last part when large.",
 		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"command": map[string]any{
-					"type":        "string",
-					"description": "Shell command to run. Runs with /bin/sh -c.",
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
+				argCommand: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: "Shell command to run. Runs with /bin/sh -c.",
 				},
-				"description": map[string]any{
-					"type": "string",
-					"description": "One short sentence describing what this command does, in the user's " +
+				argDescription: map[string]any{
+					schemaType: schemaString,
+					schemaDescription: "One short sentence describing what this command does, in the user's " +
 						"language. Shown in the tool card instead of the raw command.",
 				},
 				"timeout": map[string]any{
-					"type":        "integer",
-					"description": "Timeout in seconds. Omit for the configured default.",
+					schemaType:        schemaInteger,
+					schemaDescription: "Timeout in seconds. Omit for the configured default.",
 				},
 			},
-			"required": []string{"command", "description"},
+			schemaRequired: []string{argCommand, argDescription},
 		},
 	}
 }

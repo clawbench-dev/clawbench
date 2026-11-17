@@ -174,7 +174,7 @@ func ValidateFile(path, ext string, size, maxFileBytes int64) error {
 	if reason, bad := unsupportedExtensions[ext]; bad {
 		return &FileError{Reason: reason, Detail: ext, Err: ErrUnsupportedFile}
 	}
-	if textExtensions[ext] || isOfficeExt(ext) || ext == ".pdf" {
+	if textExtensions[ext] || isOfficeExt(ext) || ext == extPDF {
 		return nil
 	}
 	// Unknown extension: let the content decide. A NUL byte in the head is the
@@ -197,6 +197,11 @@ func ValidateFile(path, ext string, size, maxFileBytes int64) error {
 func isOfficeExt(ext string) bool {
 	return ext == ".docx" || ext == ".xlsx" || ext == ".pptx"
 }
+
+// extPDF is the one document extension that is neither plain text nor an
+// office container: it has its own extractor, so it needs its own predicate at
+// every place that asks "can this be indexed".
+const extPDF = ".pdf"
 
 // ExtractFile turns a file into text blocks. maxTextBytes caps the retained
 // text; longer output is truncated and the returned warning code says so.

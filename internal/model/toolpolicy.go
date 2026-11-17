@@ -70,6 +70,45 @@ func BuiltinModes() []ToolMode {
 	return out
 }
 
+// ToolPolicy is an agent's tool grant.
+//
+// The zero value grants NOTHING: a freshly created agent can chat but cannot
+// touch the filesystem or spawn a process. That direction is deliberate — a
+// forgotten policy must fail closed, and every existing backend defaults to
+// full access, so an agent that quietly inherited "everything" would be the
+// one failure mode users never notice.
+type ToolPolicy struct {
+	// Allow lists the granted capabilities (see CapFSRead/CapFSWrite/CapExec).
+	Allow []string `json:"allow"`
+	// MaxRounds bounds model round-trips per turn (0 = DefaultMaxRounds).
+	MaxRounds int `json:"maxRounds,omitempty"`
+	// MaxToolCalls bounds tool invocations per turn (0 = DefaultMaxToolCalls).
+	MaxToolCalls int `json:"maxToolCalls,omitempty"`
+	// BashTimeoutSec bounds one shell command (0 = DefaultBashTimeoutSec).
+	BashTimeoutSec int `json:"bashTimeoutSec,omitempty"`
+	// RestrictToWorkDir confines the file tools to the working directory.
+	//
+	// It is phrased as the RESTRICTION rather than as the permission so the
+	// zero value means "not confined", which is the behavior this field was
+	// added with (the switch is on for every agent that never touched it).
+	// Storing the permission instead would make the zero value "confined" and
+	// silently change what existing agents can do on upgrade.
+	//
+	// false (default) — the file tools may reach anywhere the process can:
+	// absolute paths, `..` outside the project, symlinks pointing out. That is
+	// what the user asked for by default: the project directory is a starting
+	// point, not a fence, and an agent told "no" spends rounds hunting for a
+	// way around it.
+	// true — every path must resolve inside the working directory; anything
+	// else is refused with an explanation. This is the sandbox: use it when
+	// the agent runs on a machine with files the user does not want read.
+	//
+	// Exec is not affected either way — a shell can read the whole disk
+	// whatever this says, which is why the setting is described in the UI as
+	// covering the file tools only.
+	RestrictToWorkDir bool `json:"restrictToWorkDir,omitempty"`
+}
+
 // ForMode narrows the grant to what the mode allows.
 //
 // The empty string means "no mode chosen" and leaves the policy untouched, so a
@@ -142,45 +181,6 @@ const (
 	// MaxBashTimeoutSec caps the per-command timeout a policy may request.
 	MaxBashTimeoutSec = 3600
 )
-
-// ToolPolicy is an agent's tool grant.
-//
-// The zero value grants NOTHING: a freshly created agent can chat but cannot
-// touch the filesystem or spawn a process. That direction is deliberate — a
-// forgotten policy must fail closed, and every existing backend defaults to
-// full access, so an agent that quietly inherited "everything" would be the
-// one failure mode users never notice.
-type ToolPolicy struct {
-	// Allow lists the granted capabilities (see CapFSRead/CapFSWrite/CapExec).
-	Allow []string `json:"allow"`
-	// MaxRounds bounds model round-trips per turn (0 = DefaultMaxRounds).
-	MaxRounds int `json:"maxRounds,omitempty"`
-	// MaxToolCalls bounds tool invocations per turn (0 = DefaultMaxToolCalls).
-	MaxToolCalls int `json:"maxToolCalls,omitempty"`
-	// BashTimeoutSec bounds one shell command (0 = DefaultBashTimeoutSec).
-	BashTimeoutSec int `json:"bashTimeoutSec,omitempty"`
-	// RestrictToWorkDir confines the file tools to the working directory.
-	//
-	// It is phrased as the RESTRICTION rather than as the permission so the
-	// zero value means "not confined", which is the behaviour this field was
-	// added with (the switch is on for every agent that never touched it).
-	// Storing the permission instead would make the zero value "confined" and
-	// silently change what existing agents can do on upgrade.
-	//
-	// false (default) — the file tools may reach anywhere the process can:
-	// absolute paths, `..` outside the project, symlinks pointing out. That is
-	// what the user asked for by default: the project directory is a starting
-	// point, not a fence, and an agent told "no" spends rounds hunting for a
-	// way around it.
-	// true — every path must resolve inside the working directory; anything
-	// else is refused with an explanation. This is the sandbox: use it when
-	// the agent runs on a machine with files the user does not want read.
-	//
-	// Exec is not affected either way — a shell can read the whole disk
-	// whatever this says, which is why the setting is described in the UI as
-	// covering the file tools only.
-	RestrictToWorkDir bool `json:"restrictToWorkDir,omitempty"`
-}
 
 // ConfinesToWorkDir reports whether file paths are limited to the working
 // directory. The negation lives here so callers never have to remember which
@@ -278,7 +278,7 @@ func (p ToolPolicy) CommandTimeout() int {
 	return DefaultBashTimeoutSec
 }
 
-// ValidateToolPolicy rejects a policy this build cannot honour.
+// ValidateToolPolicy rejects a policy this build cannot honor.
 //
 // Only the budget range is enforced: capability names are closed by
 // Normalized() instead, because an unknown name there means "a UI offered a

@@ -67,9 +67,7 @@ var skillAwareBackends = map[string]bool{
 // registry for its own cases, and Go runs tests in one process in file order,
 // so a shuffled run would otherwise compare this table against an empty (or
 // test-only) registry — vacuous in one order, failing in another.
-var pluginsForSkillCheck = func() []*backends.BackendPlugin {
-	return backends.All()
-}()
+var pluginsForSkillCheck = backends.All()
 
 // TestBackendSkillAwarenessMatchesReviewedTable fails if a backend's actual
 // skill behavior differs from the reviewed table, in either direction.

@@ -23,7 +23,7 @@ const (
 	maxGrepFileBytes = 4 * 1024 * 1024
 )
 
-func (GrepTool) Name() string { return "grep" }
+func (GrepTool) Name() string { return toolGrepName }
 
 func (GrepTool) Snippet() string { return "Search file contents" }
 
@@ -33,27 +33,27 @@ func (GrepTool) Guidelines() []string {
 
 func (GrepTool) Spec() Spec {
 	return Spec{
-		Name: "grep",
+		Name: toolGrepName,
 		Description: "Search file contents with a regular expression (RE2 syntax). " +
 			"Returns matching lines with their file and line number. " +
 			"Use include to restrict to certain file names, e.g. \"*.go\".",
 		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"pattern": map[string]any{
-					"type":        "string",
-					"description": "Regular expression to search for.",
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
+				argPattern: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: "Regular expression to search for.",
 				},
-				"path": map[string]any{
-					"type":        "string",
-					"description": "File or directory to search. Defaults to the whole working directory.",
+				argPath: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: "File or directory to search. Defaults to the whole working directory.",
 				},
 				"include": map[string]any{
-					"type":        "string",
-					"description": "Only search files whose base name matches this glob, e.g. \"*.go\".",
+					schemaType:        schemaString,
+					schemaDescription: "Only search files whose base name matches this glob, e.g. \"*.go\".",
 				},
 			},
-			"required": []string{"pattern"},
+			schemaRequired: []string{argPattern},
 		},
 	}
 }
@@ -95,52 +95,13 @@ func (GrepTool) Run(env Env, raw json.RawMessage) Result {
 		return Result{Text: fmt.Sprintf("cannot access %s: %v", args.Path, statErr), IsError: true}
 	}
 
-	var files []string
-	if info.IsDir() {
-		walkErr := filepath.WalkDir(target, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.IsDir() {
-				if globSkipDirs[d.Name()] {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if args.Include != "" {
-				if ok, matchErr := filepath.Match(args.Include, d.Name()); matchErr != nil || !ok {
-					return nil
-				}
-			}
-			files = append(files, path)
-			return nil
-		})
-		if walkErr != nil {
-			return Result{Text: fmt.Sprintf("cannot search: %v", walkErr), IsError: true}
-		}
-	} else {
-		files = []string{target}
+	files, err := grepTargets(target, info, args.Include)
+	if err != nil {
+		return Result{Text: err.Error(), IsError: true}
 	}
 	sort.Strings(files)
 
-	var (
-		lines   []string
-		hits    int
-		scanned int
-	)
-	for _, f := range files {
-		if hits >= maxGrepMatches {
-			break
-		}
-		if fi, statErr := os.Stat(f); statErr != nil || fi.Size() > maxGrepFileBytes {
-			continue
-		}
-		if isLikelyBinary(f) {
-			continue
-		}
-		scanned++
-		hits += grepFile(f, absRoot, re, &lines)
-	}
+	lines, hits, scanned := grepFiles(files, absRoot, re)
 
 	if len(lines) == 0 {
 		return Result{
@@ -157,6 +118,69 @@ func (GrepTool) Run(env Env, raw json.RawMessage) Result {
 		fmt.Fprintf(&b, "\n[stopped after %d matches; narrow the pattern or path]", maxGrepMatches)
 	}
 	return Result{Text: strings.TrimRight(b.String(), "\n"), Display: args.Pattern}
+}
+
+// grepTargets lists the files to search: the target itself, or every file
+// under it when it is a directory, filtered by the include glob.
+func grepTargets(target string, info os.FileInfo, include string) ([]string, error) {
+	if !info.IsDir() {
+		return []string{target}, nil
+	}
+	var files []string
+	walkErr := filepath.WalkDir(target, func(path string, d os.DirEntry, walkErr error) error {
+		return collectGrepFile(path, d, walkErr, include, &files)
+	})
+	if walkErr != nil {
+		return nil, fmt.Errorf("cannot search: %w", walkErr)
+	}
+	return files, nil
+}
+
+// collectGrepFile is the WalkDir callback behind grepTargets: it adds path to
+// files when it passes the directory skip list and the include filter.
+//
+// Both nil returns are deliberate skips, not swallowed failures. An unreadable
+// entry must not hide every match elsewhere in the tree, and a malformed
+// include pattern matches nothing — failing the search over it would answer
+// nothing at all.
+func collectGrepFile(path string, d os.DirEntry, walkErr error, include string, files *[]string) error {
+	if walkErr != nil {
+		return nil //nolint:nilerr // unreadable entries are skipped rather than failing the whole search
+	}
+	if d.IsDir() {
+		if globSkipDirs[d.Name()] {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	if include != "" {
+		ok, err := filepath.Match(include, d.Name())
+		if err != nil || !ok {
+			return nil //nolint:nilerr // a malformed filter or a non-matching name selects nothing
+		}
+	}
+	*files = append(*files, path)
+	return nil
+}
+
+// grepFiles scans candidates until the match cap is reached and reports the
+// formatted lines, the match count and how many files were actually read.
+func grepFiles(files []string, absRoot string, re *regexp.Regexp) (lines []string, hits, scanned int) {
+	for _, f := range files {
+		if hits >= maxGrepMatches {
+			break
+		}
+		fi, statErr := os.Stat(f)
+		if statErr != nil || fi.Size() > maxGrepFileBytes {
+			continue
+		}
+		if isLikelyBinary(f) {
+			continue
+		}
+		scanned++
+		hits += grepFile(f, absRoot, re, &lines)
+	}
+	return lines, hits, scanned
 }
 
 // grepFile appends formatted matches for one file and returns how many it

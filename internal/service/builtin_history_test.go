@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -10,8 +11,6 @@ import (
 
 	_ "clawbench/internal/ai/backends/builtin"
 
-	"database/sql"
-
 	_ "modernc.org/sqlite"
 )
 
@@ -20,8 +19,8 @@ import (
 //
 // It is a local fixture rather than a shared one because AddChatMessage updates
 // chat_sessions.updated_at and creates a session row: a fixture missing those
-// columns would fail for a reason unrelated to the behaviour under test.
-func setupTestDBForBuiltinHistory(t *testing.T) *sql.DB {
+// columns would fail for a reason unrelated to the behavior under test.
+func setupTestDBForBuiltinHistory(t *testing.T) {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -81,7 +80,6 @@ func setupTestDBForBuiltinHistory(t *testing.T) *sql.DB {
 		cleanup()
 		_ = db.Close()
 	})
-	return db
 }
 
 // seedHistory inserts finalized messages into the fixture DB.
@@ -213,8 +211,8 @@ func TestBuildBuiltinHistory_AnnouncesTruncation(t *testing.T) {
 
 	// Each turn is ~1000 runes; 60 turns exceed the 40k budget.
 	long := strings.Repeat("x", 1000)
-	var turns [][2]string
-	for i := 0; i < 60; i++ {
+	turns := make([][2]string, 0, 60)
+	for i := range 60 {
 		role := roleUser
 		if i%2 == 1 {
 			role = roleAssistant
@@ -228,7 +226,11 @@ func TestBuildBuiltinHistory_AnnouncesTruncation(t *testing.T) {
 		t.Fatal("expected a truncated window, got nothing")
 	}
 	if !strings.Contains(got[0].Text, "Earlier conversation omitted") {
-		t.Fatalf("the first entry must announce the truncation, got %q", got[0].Text[:min(60, len(got[0].Text))])
+		head := got[0].Text
+		if len(head) > 60 {
+			head = head[:60]
+		}
+		t.Fatalf("the first entry must announce the truncation, got %q", head)
 	}
 	// The most recent turns must survive: that is what the next reply depends on.
 	if len(got) < 10 {
@@ -242,8 +244,8 @@ func TestBuildBuiltinHistory_StaysWithinBudget(t *testing.T) {
 	setupTestDBForBuiltinHistory(t)
 
 	long := strings.Repeat("y", 2000)
-	var turns [][2]string
-	for i := 0; i < 50; i++ {
+	turns := make([][2]string, 0, 50)
+	for range 50 {
 		turns = append(turns, [2]string{roleUser, long})
 	}
 	seedHistory(t, "s3", turns)
@@ -453,11 +455,4 @@ func TestBuiltinBackendIDMatchesSpec(t *testing.T) {
 		t.Fatalf("no backend is registered as %q; the constant has drifted from the plugin id",
 			builtinBackendID)
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

@@ -110,7 +110,8 @@ func TestCleanupOrphans_KillsReParentedProcess(t *testing.T) {
 	// cannot be reaped by anyone else, so "the parent is gone" below is a fact
 	// this process establishes rather than a race it hopes to win.
 	parent := exec.Command(helper, "-test.run=^TestCleanupOrphans_OrphanHelper$")
-	parent.Env = append(os.Environ(),
+	parent.Env = append(
+		os.Environ(),
 		OrphanChildEnvVar,
 		"GO_WANT_ORPHAN_HELPER=1",
 		"CLAWBENCH_HELPER_PID_FILE="+pidFile,
@@ -141,7 +142,7 @@ func TestCleanupOrphans_KillsReParentedProcess(t *testing.T) {
 	waitForNoProcEntry(t, parentPID)
 
 	// Release the child: it now starts as a process whose PPid is a dead PID.
-	_, err = releaseW.Write([]byte("go"))
+	_, err = releaseW.WriteString("go")
 	require.NoError(t, err, "should be able to release the gated child")
 
 	// Preconditions the cleanup decision rests on. If any fails, cleanup has

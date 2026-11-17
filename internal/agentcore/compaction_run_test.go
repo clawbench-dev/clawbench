@@ -92,7 +92,7 @@ func (c *summaryClient) summaryCount() int {
 // withSummary wires a client's own summary path as the run's summarizer.
 //
 // Without it the engine falls back to DigestSummary (a deterministic digest
-// used when no summarizer is configured), which is correct behaviour but does
+// used when no summarizer is configured), which is correct behavior but does
 // not exercise the model-summary path these tests are about.
 func withSummary(c llm.Client) func(context.Context, string) (string, error) {
 	return func(ctx context.Context, text string) (string, error) {
@@ -116,15 +116,18 @@ func withSummary(c llm.Client) func(context.Context, string) (string, error) {
 // manyTurns builds a history of n exchanges, each large enough to matter.
 func manyTurns(n int, size int) []llm.Message {
 	body := strings.Repeat("word ", size/5)
-	var out []llm.Message
-	for i := 0; i < n; i++ {
-		out = append(out, llm.TextMessage(llm.RoleUser, "question "+body))
-		out = append(out, llm.TextMessage(llm.RoleAssistant, "answer "+body))
+	out := make([]llm.Message, 0, 2*n)
+	for range n {
+		out = append(
+			out,
+			llm.TextMessage(llm.RoleUser, "question "+body),
+			llm.TextMessage(llm.RoleAssistant, "answer "+body),
+		)
 	}
 	return out
 }
 
-// TestRun_CompactsWhenHistoryOverflows pins the core behaviour: a conversation
+// TestRun_CompactsWhenHistoryOverflows pins the core behavior: a conversation
 // that does not fit is summarized rather than truncated.
 //
 // Before this, an overflowing history was silently cut from the front — the
@@ -237,7 +240,7 @@ func TestRun_PriorSummaryIsReused(t *testing.T) {
 	}
 }
 
-// TestRun_NoWindowMeansNoCompaction pins the unknown-model behaviour.
+// TestRun_NoWindowMeansNoCompaction pins the unknown-model behavior.
 func TestRun_NoWindowMeansNoCompaction(t *testing.T) {
 	client := &summaryClient{rounds: []func(llm.Request) []llm.Event{textRound("ok")}}
 
@@ -274,7 +277,7 @@ func TestRun_CompactsWithinOneTurn(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	writeFile(t, root, "a.txt", big)
+	writeFile(t, root, big)
 
 	terminal, kinds := collect(t, Run(context.Background(), Spec{
 		Client:        client,
@@ -319,7 +322,6 @@ func TestRun_CompactionFailureIsNotFatal(t *testing.T) {
 			return "", errors.New("summarizer exploded")
 		},
 	}, nil)
-
 	if err != nil {
 		t.Fatalf("a summarizer failure must not fail the turn: %v", err)
 	}

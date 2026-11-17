@@ -16,6 +16,48 @@ import (
 	"strings"
 )
 
+// JSON Schema vocabulary shared by every Spec(). They are literal keyword
+// names, not tunables: keeping them here is what stops five copies of "type"
+// from drifting apart.
+const (
+	schemaType        = "type"
+	schemaProperties  = "properties"
+	schemaDescription = "description"
+	schemaRequired    = "required"
+
+	schemaObject  = "object"
+	schemaString  = "string"
+	schemaInteger = "integer"
+	schemaBoolean = "boolean"
+)
+
+// Tool names, and the argument names that recur across specs. A name is the
+// identifier the model calls AND the one the spec declares; keeping the two in
+// one constant is what stops them from drifting apart.
+//
+// toolReadName is shared: ReadTool and ReadToolNoVision publish under the same
+// identifier.
+const (
+	toolReadName   = "read"
+	toolWriteName  = "write"
+	toolEditName   = "edit"
+	toolGlobName   = "glob"
+	toolGrepName   = "grep"
+	toolBashName   = "bash"
+	argPath        = "path"
+	argPattern     = "pattern"
+	argCommand     = "command"
+	argContent     = "content"
+	argDescription = "description"
+	argOffset      = "offset"
+	argLimit       = "limit"
+)
+
+// argPathDescription documents the shared `path` argument: four specs resolve
+// it identically (see Env.resolve), so one rephrasing would make one tool lie
+// about the others.
+const argPathDescription = "File path, absolute or relative to the working directory."
+
 // Limits applied to tool input/output. They exist so one tool call cannot
 // consume the whole context window or the whole turn budget.
 const (
@@ -74,7 +116,7 @@ type Env struct {
 	ConfineToWorkDir bool
 	// CommandTimeoutSec bounds one shell command.
 	CommandTimeoutSec int
-	// Ctx is the turn's context. A tool that spawns a process must honour it,
+	// Ctx is the turn's context. A tool that spawns a process must honor it,
 	// otherwise the user's cancel button stops the loop but leaves the command
 	// running.
 	Ctx context.Context
@@ -162,7 +204,7 @@ func resolvePath(root, p string) (string, error) {
 	// a missing root then fails at the tool's own stat/open with a message about
 	// the file, instead of a containment error that is not the real problem.
 	realRoot := absRoot
-	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+	if resolved, evalErr := filepath.EvalSymlinks(absRoot); evalErr == nil {
 		realRoot = resolved
 	}
 
@@ -253,16 +295,6 @@ func resolveExistingPrefix(p string) (string, error) {
 		missing = append(missing, filepath.Base(cur))
 		cur = parent
 	}
-}
-
-// displayPath renders a path relative to root for the tool card, falling back
-// to the absolute path when it is the root itself.
-func displayPath(root, abs string) string {
-	rel, err := filepath.Rel(root, abs)
-	if err != nil || rel == "." {
-		return abs
-	}
-	return rel
 }
 
 // decodeArgs unmarshals tool arguments, tolerating an empty payload.

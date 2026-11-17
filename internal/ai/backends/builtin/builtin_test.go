@@ -207,7 +207,7 @@ func TestBuildSpec_RequestsAnOutputBudget(t *testing.T) {
 	}
 	defer delete(model.Agents, id)
 
-	spec, err := buildSpec(context.Background(), ai.ChatRequest{AgentID: id, Prompt: "hi"})
+	spec, err := buildSpec(ai.ChatRequest{AgentID: id, Prompt: "hi"})
 	if err != nil {
 		t.Fatalf("buildSpec: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestBuildSpec_RequestsAnOutputBudget(t *testing.T) {
 
 // TestOutputBudget pins the max_tokens the built-in agent requests.
 //
-// Leaving it unset (the old behaviour) hands the choice to the provider, whose
+// Leaving it unset (the old behavior) hands the choice to the provider, whose
 // default is often smaller than one reasoning round — the endpoint then cuts the
 // reply off and the turn looks finished. Asking for more than the model supports
 // is a hard API error, so a published limit always wins.
@@ -418,18 +418,18 @@ func TestSpecNameIsTheProductName(t *testing.T) {
 // TestStaticCapability_OffersModesAndEfforts pins the option set the chat
 // drawer and settings page read.
 func TestStaticCapability_OffersModesAndEfforts(t *testing.T) {
-	cap := staticCapability()
+	capability := staticCapability()
 
-	var modeIDs []string
-	for _, m := range cap.AvailableModes {
+	modeIDs := make([]string, 0, len(capability.AvailableModes))
+	for _, m := range capability.AvailableModes {
 		modeIDs = append(modeIDs, m.ID)
 	}
 	if len(modeIDs) != 3 || modeIDs[0] != model.ModeRead || modeIDs[1] != model.ModeWrite || modeIDs[2] != model.ModeFull {
 		t.Fatalf("modes = %v, want [read write full]", modeIDs)
 	}
 
-	var effortIDs []string
-	for _, l := range cap.AvailableThinkingEfforts {
+	effortIDs := make([]string, 0, len(capability.AvailableThinkingEfforts))
+	for _, l := range capability.AvailableThinkingEfforts {
 		effortIDs = append(effortIDs, l.ID)
 	}
 	if len(effortIDs) != 4 || effortIDs[0] != "auto" || effortIDs[3] != "high" {

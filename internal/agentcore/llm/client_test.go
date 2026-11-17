@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -123,8 +124,8 @@ func TestOpenAI_HTTPErrorIsTyped(t *testing.T) {
 	if err == nil {
 		t.Fatal("a 401 must be an error")
 	}
-	he, ok := err.(*HTTPError)
-	if !ok {
+	var he *HTTPError
+	if !errors.As(err, &he) {
 		t.Fatalf("expected an HTTPError, got %T", err)
 	}
 	if he.Status != http.StatusUnauthorized {
@@ -151,7 +152,7 @@ func TestOpenAI_EmptyStreamIsAnError(t *testing.T) {
 	ch, _ := c.Stream(context.Background(), Request{Messages: []Message{TextMessage(RoleUser, "hi")}})
 	events := collectEvents(t, ch)
 	last := events[len(events)-1]
-	if last.Kind != KindError || last.Err != ErrNoOutput {
+	if last.Kind != KindError || !errors.Is(last.Err, ErrNoOutput) {
 		t.Fatalf("an empty stream must be reported, got %v / %v", last.Kind, last.Err)
 	}
 }
@@ -219,7 +220,7 @@ func TestOpenAI_ToolResultWithImageBecomesTrailingUserMessage(t *testing.T) {
 	}
 }
 
-// TestOpenAI_RefusesImageWithoutVisionSupport pins the fail-fast behaviour: an
+// TestOpenAI_RefusesImageWithoutVisionSupport pins the fail-fast behavior: an
 // opaque 400 from the endpoint is worse than a clear local error.
 func TestOpenAI_RefusesImageWithoutVisionSupport(t *testing.T) {
 	c, _ := New(Config{Protocol: ProtocolOpenAI, BaseURL: "http://127.0.0.1:1", Model: "m"})
@@ -286,7 +287,7 @@ func TestAnthropic_PutsToolResultsInUserMessage(t *testing.T) {
 	if len(last.Content) < 2 {
 		t.Fatalf("both tool results must be present, got %d blocks", len(last.Content))
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if last.Content[i].Type != "tool_result" {
 			t.Fatalf("block %d must be tool_result (they must lead the message), got %q", i, last.Content[i].Type)
 		}
@@ -702,7 +703,7 @@ func TestOpenAI_ReasoningContentBecomesThinking(t *testing.T) {
 	}
 	events := collectEvents(t, ch)
 
-	var kinds []EventKind
+	kinds := make([]EventKind, 0, len(events))
 	for _, ev := range events {
 		kinds = append(kinds, ev.Kind)
 	}

@@ -36,7 +36,8 @@ func panickyPDF(t *testing.T) string {
 		{byte(offsets[3] >> 8), byte(offsets[3]), 0},
 		{byte(offsets[4] >> 8), byte(offsets[4]), 0},
 	}
-	var xref []byte
+	// Four bytes per row (type 2 = inside an object stream).
+	xref := make([]byte, 0, 4*len(rows))
 	for _, r := range rows {
 		xref = append(xref, 2, r.off2, r.off3, r.gen) // type 2 = inside an object stream
 	}

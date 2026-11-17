@@ -116,7 +116,7 @@ func TestToolGuidelinesMatchTheirTool(t *testing.T) {
 				// grants write (ToolPolicy.Normalized closes fs.write in under
 				// exec). Its grant list is therefore the full one, not the
 				// read-only set that happens to include exec.
-				if !grant[name] && !(tool.Name() == "bash" && name == "write") {
+				if !grant[name] && (tool.Name() != "bash" || name != "write") {
 					t.Errorf("tool %q's guideline recommends %q, which is not granted alongside %q",
 						tool.Name(), name, tool.Name())
 				}
@@ -287,11 +287,11 @@ func TestResolvePath_AllowsSymlinkInside(t *testing.T) {
 		t.Skip("symlink creation needs privileges on Windows")
 	}
 	root := t.TempDir()
-	real := filepath.Join(root, "real")
-	if err := os.MkdirAll(real, 0o755); err != nil {
+	inside := filepath.Join(root, "inside")
+	if err := os.MkdirAll(inside, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, filepath.Join(root, "alias")); err != nil {
+	if err := os.Symlink(inside, filepath.Join(root, "alias")); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
 	if _, err := resolvePath(root, "alias/file.txt"); err != nil {
@@ -308,7 +308,7 @@ func TestResolvePath_RequiresRoot(t *testing.T) {
 	}
 }
 
-// TestReadTool_ReturnsLineNumbersAndContinuation pins the two behaviours a
+// TestReadTool_ReturnsLineNumbersAndContinuation pins the two behaviors a
 // model depends on: numbered lines (so it can address them) and an explicit
 // "there is more" note (so it does not assume the file ended).
 func TestReadTool_ReturnsLineNumbersAndContinuation(t *testing.T) {
@@ -686,10 +686,10 @@ func TestResolvePath_AllowsASymlinkedRoot(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation needs privileges on Windows")
 	}
-	real := t.TempDir()
+	realRoot := t.TempDir()
 	linkParent := t.TempDir()
 	link := filepath.Join(linkParent, "proj")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realRoot, link); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
 	env := Env{Root: link, ConfineToWorkDir: true}
@@ -700,7 +700,7 @@ func TestResolvePath_AllowsASymlinkedRoot(t *testing.T) {
 	}
 	// The file must land in the REAL directory, not somewhere derived from the
 	// link's own path.
-	if _, err := os.Stat(filepath.Join(real, "a.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(realRoot, "a.txt")); err != nil {
 		t.Fatalf("the write must land inside the real root: %v", err)
 	}
 	res = mustRun(t, ReadTool{}, env, map[string]any{"path": "a.txt"})
@@ -716,17 +716,17 @@ func TestResolvePath_RejectsEscapeThroughASymlinkedRoot(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation needs privileges on Windows")
 	}
-	real := t.TempDir()
+	realRoot := t.TempDir()
 	outside := t.TempDir()
 	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("s"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(real, "resources")); err != nil {
+	if err := os.Symlink(outside, filepath.Join(realRoot, "resources")); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
 	linkParent := t.TempDir()
 	link := filepath.Join(linkParent, "proj")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realRoot, link); err != nil {
 		t.Skipf("cannot create symlink: %v", err)
 	}
 
@@ -817,20 +817,6 @@ func TestBashTool_TruncatesLargeOutput(t *testing.T) {
 	if !strings.Contains(res.Text, "bytes omitted") {
 		t.Fatal("truncation must be announced so the model knows output is missing")
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // TestBoundedOutputCapsMemoryWhileStreaming pins the fix for a command that

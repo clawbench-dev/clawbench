@@ -463,7 +463,8 @@ func (s *Store) GetCollection(id int64) (*Collection, error) {
 	var c Collection
 	var autoInject int
 	var pinned int
-	err := s.db.QueryRow(`
+	err := s.db.QueryRow(
+		`
 		SELECT c.id, c.name, c.description, c.scope, c.project_id,
 		       COALESCE(p.path, ''), c.auto_inject, c.pinned, c.created_at, c.updated_at,
 		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id),
@@ -677,7 +678,8 @@ func (s *Store) AddDocument(d Document) (int64, error) {
 	if d.Status == "" {
 		d.Status = StatusPending
 	}
-	res, err := s.db.Exec(`
+	res, err := s.db.Exec(
+		`
 		INSERT INTO kb_documents (collection_id, title, source_path, stored_path, ext,
 			size_bytes, content_hash, tags, status, error, warning, chunk_count, fts_ready,
 			vector_ready, created_at, updated_at)
@@ -823,9 +825,9 @@ func (s *Store) MoveDocumentRecord(id, collectionID int64, storedPath string) er
 	if err != nil {
 		return fmt.Errorf("begin document move: %w", err)
 	}
-	if err := deleteChunksByDocument(tx, id); err != nil {
+	if chunksErr := deleteChunksByDocument(tx, id); chunksErr != nil {
 		_ = tx.Rollback()
-		return err
+		return chunksErr
 	}
 	res, err := tx.Exec(`
 		UPDATE kb_documents
@@ -851,7 +853,8 @@ func (s *Store) SetDocumentTags(id int64, tags string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	res, err := s.db.Exec(
-		`UPDATE kb_documents SET tags = ?, updated_at = ? WHERE id = ?`, tags, time.Now(), id)
+		`UPDATE kb_documents SET tags = ?, updated_at = ? WHERE id = ?`, tags, time.Now(), id,
+	)
 	if err != nil {
 		return fmt.Errorf("set document tags: %w", err)
 	}
@@ -983,7 +986,7 @@ func (s *Store) ResetDocumentForReindex(id int64) error {
 // deleted meanwhile, the chunks are dropped and ErrDocumentChanged is returned.
 // Without it a move left the text searchable in the OLD collection (the new
 // one showed nothing) and a delete left orphaned chunks behind.
-func (s *Store) ReplaceChunks(docID int64, chunks []Chunk, warning string, expectedCollectionID int64) error { //nolint:gocognit // one transaction: guard, delete, insert, update
+func (s *Store) ReplaceChunks(docID int64, chunks []Chunk, warning string, expectedCollectionID int64) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -1009,7 +1012,8 @@ func (s *Store) ReplaceChunks(docID int64, chunks []Chunk, warning string, expec
 	now := time.Now()
 	for i := range chunks {
 		c := &chunks[i]
-		res, err := tx.Exec(`
+		res, err := tx.Exec(
+			`
 			INSERT INTO kb_chunks (document_id, collection_id, project_id, chunk_index,
 				chunk_text, chunk_text_segmented, location, token_count,
 				has_embedding, embedding_dim, created_at)
@@ -1246,22 +1250,8 @@ func (s *Store) SaveEmbeddings(entries []ChunkEmbedding) error {
 	if dim == 0 {
 		return fmt.Errorf("empty embedding")
 	}
-
-	// Resolve the table width before opening the transaction: querying inside
-	// would deadlock on a single-connection store. Reading the stored width
-	// first is what catches a model switch before EnsureDimension gets a say:
-	// saving a 4-dim vector over a 3-dim table would leave the table rejecting
-	// every query vector, and nothing would notice until the next startup.
-	vecDim, haveTable := s.vecDimFromSchema()
-	if haveTable && vecDim != dim {
-		slog.Warn("kb: embedding model changed while embeddings were pending, rebuilding vector index",
-			slog.Int("old", vecDim), slog.Int("new", dim))
-	}
-	if err := s.EnsureDimension(dim); err != nil {
+	if err := s.prepareEmbeddingDimension(dim); err != nil {
 		return err
-	}
-	if vecDim, _ = s.vecDimFromSchema(); vecDim != 0 && vecDim != dim {
-		return fmt.Errorf("embedding dimension mismatch: got %d, kb_vec expects %d", dim, vecDim)
 	}
 
 	s.writeMu.Lock()
@@ -1273,28 +1263,60 @@ func (s *Store) SaveEmbeddings(entries []ChunkEmbedding) error {
 	}
 	s.closeStrangerVecRows(tx)
 
+	if err := s.insertEmbeddingBatch(tx, entries, dim); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit save embeddings: %w", err)
+	}
+	return nil
+}
+
+// prepareEmbeddingDimension reconciles the vector table width with the vectors
+// about to be written.
+//
+// The stored width is read BEFORE opening the transaction: querying inside
+// would deadlock on a single-connection store. Reading it first is what catches
+// a model switch before EnsureDimension gets a say: saving a 4-dim vector over
+// a 3-dim table would leave the table rejecting every query vector, and nothing
+// would notice until the next startup.
+func (s *Store) prepareEmbeddingDimension(dim int) error {
+	vecDim, haveTable := s.vecDimFromSchema()
+	if haveTable && vecDim != dim {
+		slog.Warn("kb: embedding model changed while embeddings were pending, rebuilding vector index",
+			slog.Int("old", vecDim), slog.Int("new", dim))
+	}
+	if err := s.EnsureDimension(dim); err != nil {
+		return err
+	}
+	if vecDim, _ = s.vecDimFromSchema(); vecDim != 0 && vecDim != dim {
+		return fmt.Errorf("embedding dimension mismatch: got %d, kb_vec expects %d", dim, vecDim)
+	}
+	return nil
+}
+
+// insertEmbeddingBatch writes the vectors and flips each touched document's
+// vector_ready flag in one shot. The caller owns rollback.
+func (s *Store) insertEmbeddingBatch(tx *sql.Tx, entries []ChunkEmbedding, dim int) error {
 	now := time.Now()
 	docIDs := map[int64]struct{}{}
 	for _, e := range entries {
 		if len(e.Vector) != dim {
-			_ = tx.Rollback()
 			return fmt.Errorf("embedding dimension mismatch inside batch")
 		}
 		if err := validateEmbedding(e.Vector); err != nil {
-			_ = tx.Rollback()
 			return fmt.Errorf("invalid embedding: %w", err)
 		}
 		blob := serializeFloat32(float64ToFloat32(e.Vector))
 		if _, err := tx.Exec(`
 			INSERT INTO kb_vec(rowid, embedding, collection_id, project_id)
 			VALUES (?, ?, ?, ?)`, e.ChunkID, blob, e.CollectionID, e.ProjectID); err != nil {
-			_ = tx.Rollback()
 			return fmt.Errorf("insert vec entry for chunk %d: %w", e.ChunkID, err)
 		}
 		if _, err := tx.Exec(`
 			UPDATE kb_chunks SET embedding = ?, has_embedding = 1, embedding_dim = ? WHERE id = ?`,
 			serializeEmbedding(e.Vector), dim, e.ChunkID); err != nil {
-			_ = tx.Rollback()
 			return fmt.Errorf("update chunk %d embedding: %w", e.ChunkID, err)
 		}
 		docIDs[e.DocumentID] = struct{}{}
@@ -1305,12 +1327,8 @@ func (s *Store) SaveEmbeddings(entries []ChunkEmbedding) error {
 			WHERE id = ? AND NOT EXISTS (
 				SELECT 1 FROM kb_chunks WHERE document_id = ? AND has_embedding = 0
 			)`, now, docID, docID); err != nil {
-			_ = tx.Rollback()
 			return fmt.Errorf("update document %d vector flag: %w", docID, err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit save embeddings: %w", err)
 	}
 	return nil
 }

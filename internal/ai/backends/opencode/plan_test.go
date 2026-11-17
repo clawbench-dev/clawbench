@@ -52,10 +52,12 @@ func ocCompletedTcu(rawInput, rawOutput any) acp.SessionToolCallUpdate {
 
 func ptrStr(s string) *string { return &s }
 
-func ocAgent(backend string) *model.Agent {
+// ocAgent builds the agent every bridge test runs against. It is always the
+// opencode backend: the per-backend dispatch these tests exercise keys off it.
+func ocAgent() *model.Agent {
 	return &model.Agent{
-		ID:        backend + "-bridge-test",
-		Backend:   backend,
+		ID:        "opencode-bridge-test",
+		Backend:   "opencode",
 		Transport: "acp-stdio",
 	}
 }
@@ -196,7 +198,7 @@ func TestParseOpenCodeTodoSnapshot_RawInputFallbackWhenNoRawOutput(t *testing.T)
 // --- bridgeOpenCodePlanFromToolUpdate ---
 
 func TestBridgeOpenCodePlanFromToolUpdate_EmitsAndCaches(t *testing.T) {
-	conn := ai.NewACPConnForTest(ocAgent("opencode"), "session-oc-bridge-1")
+	conn := ai.NewACPConnForTest(ocAgent(), "session-oc-bridge-1")
 	ch := make(chan ai.StreamEvent, 8)
 
 	tcu := ocCompletedTcu(nil, map[string]any{
@@ -224,7 +226,7 @@ func TestBridgeOpenCodePlanFromToolUpdate_EmitsAndCaches(t *testing.T) {
 }
 
 func TestBridgeOpenCodePlanFromToolUpdate_SkipsNonCompleted(t *testing.T) {
-	conn := ai.NewACPConnForTest(ocAgent("opencode"), "session-oc-bridge-2")
+	conn := ai.NewACPConnForTest(ocAgent(), "session-oc-bridge-2")
 	ch := make(chan ai.StreamEvent, 8)
 
 	st := acp.ToolCallStatusInProgress
@@ -240,7 +242,7 @@ func TestBridgeOpenCodePlanFromToolUpdate_SkipsNonCompleted(t *testing.T) {
 }
 
 func TestBridgeOpenCodePlanFromToolUpdate_SkipsNoSnapshot(t *testing.T) {
-	conn := ai.NewACPConnForTest(ocAgent("opencode"), "session-oc-bridge-3")
+	conn := ai.NewACPConnForTest(ocAgent(), "session-oc-bridge-3")
 	ch := make(chan ai.StreamEvent, 8)
 
 	// A completed tool frame that is not a todowrite (e.g. a write) — no todos.
@@ -255,7 +257,7 @@ func TestBridgeOpenCodePlanFromToolUpdate_SkipsNoSnapshot(t *testing.T) {
 }
 
 func TestBridgeOpenCodePlanFromToolUpdate_EmptySnapshotClears(t *testing.T) {
-	conn := ai.NewACPConnForTest(ocAgent("opencode"), "session-oc-bridge-4")
+	conn := ai.NewACPConnForTest(ocAgent(), "session-oc-bridge-4")
 	ch := make(chan ai.StreamEvent, 8)
 
 	tcu := ocCompletedTcu(nil, map[string]any{

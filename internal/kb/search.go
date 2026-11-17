@@ -155,7 +155,7 @@ func Search(ctx context.Context, params SearchParams) (*SearchResult, error) { /
 		if vecErr != nil {
 			// Vector search failing (typically "Dimension mismatch": the model
 			// was swapped and kb_vec still has the old width) used to be
-			// discarded here, so the user got keyword results labelled
+			// discarded here, so the user got keyword results labeled
 			// "hybrid" with no hint that the semantic half was missing.
 			slog.Warn("kb: vector search failed, serving keyword results",
 				slog.String("err", vecErr.Error()))

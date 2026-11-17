@@ -340,7 +340,7 @@ func AddDocumentFromReader(collectionID int64, name string, r io.Reader) (*Docum
 		return nil, fmt.Errorf("read upload: %w", readErr)
 	}
 	head = head[:n]
-	if !textExtensions[ext] && !isOfficeExt(ext) && ext != ".pdf" {
+	if !textExtensions[ext] && !isOfficeExt(ext) && ext != extPDF {
 		for _, b := range head {
 			if b == 0 {
 				return nil, &FileError{Reason: ReasonBinary, Err: ErrUnsupportedFile}
@@ -389,8 +389,8 @@ const maxURLRedirects = 5
 // The fetch is user-initiated, but its result is indexed and then injected into
 // AI prompts automatically, so the target is restricted to public addresses
 // (see newURLFetchClient).
-func AddDocumentFromURL(collectionID int64, rawURL string) (*Document, error) {
-	return addDocumentFromURL(collectionID, rawURL, true)
+func AddDocumentFromURL(ctx context.Context, collectionID int64, rawURL string) (*Document, error) {
+	return addDocumentFromURL(ctx, collectionID, rawURL, true)
 }
 
 // newURLFetchClient builds the HTTP client a page fetch uses. guard=false is
@@ -426,7 +426,9 @@ func newURLFetchClient(guard bool) *http.Client {
 		}
 		return nil
 	}
-	client.Transport.(*http.Transport).DialContext = dialPublicOnly(10 * time.Second)
+	if transport, isHTTP := client.Transport.(*http.Transport); isHTTP {
+		transport.DialContext = dialPublicOnly(10 * time.Second)
+	}
 	return client
 }
 
@@ -434,7 +436,7 @@ func newURLFetchClient(guard bool) *http.Client {
 // listen on loopback, so the whole filter (URL, redirect, dial) is skipped —
 // deciding it in one place is what keeps a "guard off" test testable instead of
 // half-enforced.
-func addDocumentFromURL(collectionID int64, rawURL string, guard bool) (*Document, error) {
+func addDocumentFromURL(ctx context.Context, collectionID int64, rawURL string, guard bool) (*Document, error) {
 	st := currentStore()
 	if st == nil {
 		return nil, ErrUnavailable
@@ -451,7 +453,7 @@ func addDocumentFromURL(collectionID int64, rawURL string, guard bool) (*Documen
 	}
 
 	client := newURLFetchClient(guard)
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
 	if err != nil {
 		return nil, ErrInvalidURL
 	}
@@ -459,7 +461,7 @@ func addDocumentFromURL(collectionID int64, rawURL string, guard bool) (*Documen
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain,application/pdf;q=0.9,*/*;q=0.5")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrFetchFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -468,7 +470,7 @@ func addDocumentFromURL(collectionID int64, rawURL string, guard bool) (*Documen
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxURLBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrFetchFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrFetchFailed, err)
 	}
 	if len(body) > maxURLBytes {
 		return nil, &FileError{Reason: ReasonFileTooLarge, Detail: strconv.Itoa(maxURLBytes >> 20), Err: ErrFileTooLarge}
@@ -498,7 +500,7 @@ func urlDocumentName(u *url.URL) string {
 		return r
 	}, name)
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".pdf", ".docx", ".xlsx", ".pptx", ".md", ".markdown", ".txt", ".csv", ".html", ".htm":
+	case extPDF, ".docx", ".xlsx", ".pptx", ".md", ".markdown", ".txt", ".csv", ".html", ".htm":
 		return name
 	default:
 		return name + ".html"
@@ -654,8 +656,8 @@ func MoveDocument(id, targetCollectionID int64) error {
 	if err != nil {
 		return err
 	}
-	if _, err := st.GetCollection(targetCollectionID); err != nil {
-		return err
+	if _, collErr := st.GetCollection(targetCollectionID); collErr != nil {
+		return collErr
 	}
 	if doc.CollectionID == targetCollectionID {
 		return nil

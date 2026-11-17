@@ -158,11 +158,11 @@ var staticCapabilities sync.Map // backendID -> *AgentCapability
 
 // RegisterStaticCapabilities publishes a backend's fixed option set. The value
 // is treated as read-only by every reader: Get returns it without cloning.
-func RegisterStaticCapabilities(backendID string, cap *AgentCapability) {
-	if backendID == "" || cap == nil {
+func RegisterStaticCapabilities(backendID string, caps *AgentCapability) {
+	if backendID == "" || caps == nil {
 		return
 	}
-	staticCapabilities.Store(backendID, cap)
+	staticCapabilities.Store(backendID, caps)
 }
 
 // staticCapabilitiesForAgent resolves the fixed option set for an agent by its
@@ -173,7 +173,9 @@ func staticCapabilitiesForAgent(agentID string) *AgentCapability {
 		return nil
 	}
 	if v, ok := staticCapabilities.Load(agent.Backend); ok {
-		return v.(*AgentCapability)
+		if caps, isCaps := v.(*AgentCapability); isCaps {
+			return caps
+		}
 	}
 	return nil
 }
@@ -195,10 +197,10 @@ func GetAgentCapabilityRegistry() *AgentCapabilityRegistry {
 // thinking pickers appear on a fresh session. Returns nil if nothing is known.
 func (r *AgentCapabilityRegistry) Get(agentID string) *AgentCapability {
 	r.mu.RLock()
-	cap := r.caps[agentID]
+	caps := r.caps[agentID]
 	r.mu.RUnlock()
-	if cap != nil {
-		return cap
+	if caps != nil {
+		return caps
 	}
 	return staticCapabilitiesForAgent(agentID)
 }

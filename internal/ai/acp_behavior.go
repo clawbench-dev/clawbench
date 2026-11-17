@@ -67,7 +67,7 @@ func acpBehavior(backendID string) *ACPBehavior {
 
 // isChildSessionUpdate reports whether an update was projected from a
 // sub-agent's own session into the parent's stream. Backends that declare a
-// predicate win; the default recognises OpenCode v2's child-session tag.
+// predicate win; the default recognizes OpenCode v2's child-session tag.
 func isChildSessionUpdate(backendID string, update acp.SessionUpdate) bool {
 	if b := acpBehavior(backendID); b != nil && b.IsChildSessionUpdate != nil {
 		return b.IsChildSessionUpdate(acpUpdateMeta(update))

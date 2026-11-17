@@ -1,6 +1,7 @@
 package kb
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,7 @@ import (
 // listens on loopback: the SSRF filter has to be off for that to reach it.
 func fetchForTest(t *testing.T, collectionID int64, raw string) (*Document, error) {
 	t.Helper()
-	return addDocumentFromURL(collectionID, raw, false)
+	return addDocumentFromURL(context.Background(), collectionID, raw, false)
 }
 
 func TestAddDocumentFromURL(t *testing.T) {
@@ -84,7 +85,7 @@ func TestAddDocumentFromURL_RejectsPrivateTargets(t *testing.T) {
 		"http://[fe80::1]/",
 		"http://[fd00::1]/",
 	} {
-		_, err := AddDocumentFromURL(col.ID, raw)
+		_, err := AddDocumentFromURL(context.Background(), col.ID, raw)
 		require.ErrorIs(t, err, ErrPrivateAddress, raw)
 		var fe *FileError
 		require.ErrorAs(t, err, &fe, raw)

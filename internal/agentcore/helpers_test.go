@@ -8,15 +8,15 @@ import (
 	"clawbench/internal/agentcore/llm"
 )
 
-// writeFile is a test helper that writes a file under root, creating parents.
-func writeFile(t *testing.T, root, rel, content string) {
+// writeFile is a test helper that writes a.txt under root, creating parents.
+//
+// Every caller writes the same file: the tests are about how a conversation
+// references it, not about directory layouts.
+func writeFile(t *testing.T, root, content string) {
 	t.Helper()
-	full := filepath.Join(root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
+	full := filepath.Join(root, "a.txt")
 	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", rel, err)
+		t.Fatalf("write a.txt: %v", err)
 	}
 }
 

@@ -40,55 +40,84 @@ func kbProjectID(r *http.Request) int64 {
 }
 
 func writeKBError(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		// The client went away while a long operation was running; there is no
-		// one left to read a body. 499 is the de-facto "client closed request".
-		w.WriteHeader(499)
-	case errors.Is(err, kb.ErrPrivateAddress):
+	// Typed file rejections and typed sentinels go through their own helpers;
+	// the switch below only keeps the ones needing bespoke bodies (499, the
+	// private-address detail blob, the reason-coded extraction errors).
+	if errors.Is(err, kb.ErrPrivateAddress) {
 		var fileErr *kb.FileError
 		data := map[string]any{}
 		if errors.As(err, &fileErr) {
 			data[fieldDetail] = fileErr.Detail
 		}
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "KBPrivateAddress", data)
-	case errors.Is(err, kb.ErrCollectionNotFound), errors.Is(err, kb.ErrDocumentNotFound):
-		writeLocalizedErrorf(w, r, http.StatusNotFound, "KBNotFound")
-	case errors.Is(err, kb.ErrDuplicateDocument):
-		writeLocalizedErrorf(w, r, http.StatusConflict, "KBDuplicate")
-	case errors.Is(err, kb.ErrFileTooLarge), errors.Is(err, kb.ErrUnsupportedFile), errors.Is(err, kb.ErrNoText):
-		var fileErr *kb.FileError
-		if errors.As(err, &fileErr) {
-			status := http.StatusBadRequest
-			if errors.Is(err, kb.ErrFileTooLarge) {
-				status = http.StatusRequestEntityTooLarge
-			}
-			data := map[string]any{fieldDetail: fileErr.Detail}
-			if fileErr.Reason == kb.ReasonFileTooLarge {
-				data["MaxMB"] = fileErr.Detail
-				data["LimitMB"] = strconv.FormatInt(kb.MaxFileBytes()>>20, 10)
-			}
-			writeLocalizedErrorf(w, r, status, kbReasonKey(fileErr.Reason), data)
-			return
-		}
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "KBUnsupportedFile")
-	case errors.Is(err, kb.ErrAccessDenied):
-		writeLocalizedErrorf(w, r, http.StatusForbidden, "AccessDenied")
-	case errors.Is(err, kb.ErrInvalidScope):
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
-	case errors.Is(err, kb.ErrNotDirectory):
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "KBNotDirectory")
-	case errors.Is(err, kb.ErrSourceMissing):
-		writeLocalizedErrorf(w, r, http.StatusConflict, "KBSourceMissing")
-	case errors.Is(err, kb.ErrInvalidURL):
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "KBInvalidURL")
-	case errors.Is(err, kb.ErrFetchFailed):
-		writeLocalizedErrorf(w, r, http.StatusBadGateway, "KBFetchFailed")
-	case errors.Is(err, kb.ErrUnavailable):
-		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "KBUnavailable")
-	default:
-		writeLocalizedError(w, r, model.Internal(err))
+		return
 	}
+	if errors.Is(err, kb.ErrFileTooLarge) || errors.Is(err, kb.ErrUnsupportedFile) || errors.Is(err, kb.ErrNoText) {
+		writeKBFileError(w, r, err)
+		return
+	}
+	if status, key := kbErrorStatus(err); status != 0 {
+		writeLocalizedErrorf(w, r, status, key)
+		return
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		// The client went away while a long operation was running; there is no
+		// one left to read a body. 499 is the de-facto "client closed request".
+		w.WriteHeader(499)
+		return
+	}
+	writeLocalizedError(w, r, model.Internal(err))
+}
+
+// kbFileErrorStatus is the HTTP status for a typed extraction error: too large
+// gets 413, everything else is a 400.
+func kbFileErrorStatus(err error) int {
+	if errors.Is(err, kb.ErrFileTooLarge) {
+		return http.StatusRequestEntityTooLarge
+	}
+	return http.StatusBadRequest
+}
+
+// writeKBFileError renders a typed kb.FileError, passing its reason to the
+// locale table so the user sees WHY a file was rejected rather than "failed".
+func writeKBFileError(w http.ResponseWriter, r *http.Request, err error) {
+	var fileErr *kb.FileError
+	if !errors.As(err, &fileErr) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "KBUnsupportedFile")
+		return
+	}
+	data := map[string]any{fieldDetail: fileErr.Detail}
+	if fileErr.Reason == kb.ReasonFileTooLarge {
+		data["MaxMB"] = fileErr.Detail
+		data["LimitMB"] = strconv.FormatInt(kb.MaxFileBytes()>>20, 10)
+	}
+	writeLocalizedErrorf(w, r, kbFileErrorStatus(err), kbReasonKey(fileErr.Reason), data)
+}
+
+// kbErrorStatus maps the remaining kb sentinels to (status, message key).
+// Returns 0 when err matches none of them.
+func kbErrorStatus(err error) (status int, msgKey string) {
+	switch {
+	case errors.Is(err, kb.ErrCollectionNotFound), errors.Is(err, kb.ErrDocumentNotFound):
+		return http.StatusNotFound, "KBNotFound"
+	case errors.Is(err, kb.ErrDuplicateDocument):
+		return http.StatusConflict, "KBDuplicate"
+	case errors.Is(err, kb.ErrAccessDenied):
+		return http.StatusForbidden, "AccessDenied"
+	case errors.Is(err, kb.ErrInvalidScope):
+		return http.StatusBadRequest, "InvalidRequestBody"
+	case errors.Is(err, kb.ErrNotDirectory):
+		return http.StatusBadRequest, "KBNotDirectory"
+	case errors.Is(err, kb.ErrSourceMissing):
+		return http.StatusConflict, "KBSourceMissing"
+	case errors.Is(err, kb.ErrInvalidURL):
+		return http.StatusBadRequest, "KBInvalidURL"
+	case errors.Is(err, kb.ErrFetchFailed):
+		return http.StatusBadGateway, "KBFetchFailed"
+	case errors.Is(err, kb.ErrUnavailable):
+		return http.StatusServiceUnavailable, "KBUnavailable"
+	}
+	return 0, ""
 }
 
 // kbReasonKey maps a stable extraction reason to its i18n key. The codes live
@@ -406,8 +435,8 @@ func ServeKBDocuments(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
 			return
 		}
-		if err := kb.SetDocumentTags(id, strings.TrimSpace(*body.Tags)); err != nil {
-			writeKBError(w, r, err)
+		if tagsErr := kb.SetDocumentTags(id, strings.TrimSpace(*body.Tags)); tagsErr != nil {
+			writeKBError(w, r, tagsErr)
 			return
 		}
 		updated, err := kb.GetDocument(id)
@@ -539,7 +568,7 @@ func ServeKBDocumentURL(w http.ResponseWriter, r *http.Request) {
 	if !kbRequireCollectionAccess(w, r, body.CollectionID) {
 		return
 	}
-	doc, err := kb.AddDocumentFromURL(body.CollectionID, body.URL)
+	doc, err := kb.AddDocumentFromURL(r.Context(), body.CollectionID, body.URL)
 	if err != nil {
 		writeKBError(w, r, err)
 		return

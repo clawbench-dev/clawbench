@@ -2814,7 +2814,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if v, ok := tasksCfg["timezone"].(string); ok {
 			if tz := strings.TrimSpace(v); tz != "" {
 				if _, err := time.LoadLocation(tz); err != nil {
-					return fmt.Errorf("tasks.timezone must be a valid IANA timezone (e.g. Asia/Shanghai): %v", err)
+					return fmt.Errorf("tasks.timezone must be a valid IANA timezone (e.g. Asia/Shanghai): %w", err)
 				}
 			}
 		}

@@ -66,7 +66,7 @@ func maybeAutoProbeAgentState(agent *model.Agent, projectPath string) {
 	// here keeps the two in step: an agent that shows the catalog fallback is
 	// exactly an agent whose probe would still help.
 	reg := ai.GetAgentCapabilityRegistry()
-	if cap := reg.Get(agent.ID); cap != nil && cap.HasData() {
+	if caps := reg.Get(agent.ID); caps != nil && caps.HasData() {
 		return
 	}
 

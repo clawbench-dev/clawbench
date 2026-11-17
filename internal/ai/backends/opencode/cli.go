@@ -1,8 +1,9 @@
 package opencode
 
 import (
-	acp "github.com/coder/acp-go-sdk"
 	"strings"
+
+	acp "github.com/coder/acp-go-sdk"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"

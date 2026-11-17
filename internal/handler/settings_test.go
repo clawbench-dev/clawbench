@@ -734,7 +734,7 @@ func TestServeConfig_Patch_MailSyncTuningRoundTrip(t *testing.T) {
 // TestServeConfig_Patch_MailSyncTuningBounds keeps the stored value inside the
 // range the UI advertises. PATCH does not re-run ApplyDefaults, so whatever is
 // accepted here is echoed back by GET — an out-of-range number would make the
-// panel show a value the worker cannot honour.
+// panel show a value the worker cannot honor.
 func TestServeConfig_Patch_MailSyncTuningBounds(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2289,7 +2289,8 @@ func TestServeConfigPatch_DropsLegacySTTKeys(t *testing.T) {
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 	configPath := filepath.Join(configDir, "config.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte(
-		"stt:\n  provider: vllm\n  api_key: old-flat-key\n  base_url: http://old/v1\n  streaming: true\n"), 0o600))
+		"stt:\n  provider: vllm\n  api_key: old-flat-key\n  base_url: http://old/v1\n  streaming: true\n",
+	), 0o600))
 
 	model.ConfigInstance = model.Config{}
 

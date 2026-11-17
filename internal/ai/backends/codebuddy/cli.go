@@ -118,7 +118,7 @@ func newCodebuddyBackend() ai.AIBackend {
 		BackendName: "codebuddy",
 		Cmd:         "codebuddy",
 		BuildArgsFn: buildCodebuddyStreamArgs,
-		NewParserFn: func() ai.LineParser { return claude.NewStreamParser() },
+		NewParserFn: claude.NewStreamParser,
 		FilterLineFn: func(line string) (string, bool) {
 			line = strings.TrimPrefix(line, "\xEF\xBB\xBF") // UTF-8 BOM
 			if line == "" {

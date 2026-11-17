@@ -29,7 +29,7 @@ import (
 // expectations about buffering stay uniform.
 const StreamChanSize = streamChanSize
 
-// EmitStreamEvent sends one event to a stream channel, honouring the critical
+// EmitStreamEvent sends one event to a stream channel, honoring the critical
 // event policy (critical events wait briefly for room, deltas are dropped).
 func EmitStreamEvent(ch chan<- StreamEvent, source string, event StreamEvent) {
 	emitStreamEvent(ch, source, event)
@@ -158,7 +158,7 @@ func ExtractMetaUsageForTest(backendID string, meta map[string]any) *MetaExtract
 // connection, so per-backend behaviors are resolved (they key off the agent's
 // backend id). Tests outside this package need it because the hooks are wired
 // by internal/ai/backends.
-func MapACPSessionUpdateWithConnForTest(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, conn *ACPConn, deb *toolCallDebouncer) {
+func MapACPSessionUpdateWithConnForTest(ctx context.Context, update acp.SessionUpdate, ch chan<- StreamEvent, conn *ACPConn, deb *toolCallDebouncer) {
 	mapACPSessionUpdate(update, ch, ctx, conn, deb)
 }
 

@@ -16,19 +16,25 @@ import (
 // fails outright on the next model call, and the user loses the work entirely
 // instead of losing the wording.
 func DigestSummary(rendered string) string {
-	lines := strings.Split(strings.TrimSpace(rendered), "\n")
+	userTurns, assistant, tools := collectDigestFacts(rendered)
+	if len(userTurns) == 0 && len(tools) == 0 && len(assistant) == 0 {
+		return ""
+	}
 
-	var (
-		userTurns []string
-		assistant []string
-		tools     []string
-	)
+	var b strings.Builder
+	b.WriteString("Earlier in this conversation:\n")
+	writeDigestList(&b, "\nThe user asked, in order:", userTurns, 8, 200)
+	writeDigestTools(&b, tools)
+	writeDigestList(&b, "\nThe assistant had said:", assistant, 4, 200)
+	b.WriteString("\n(The original messages are no longer in the context window.)")
+	return b.String()
+}
 
-	for _, line := range lines {
+// collectDigestFacts sorts the rendered lines into the three fact lists the
+// digest keeps.
+func collectDigestFacts(rendered string) (userTurns, assistant, tools []string) {
+	for _, line := range strings.Split(strings.TrimSpace(rendered), "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
 		switch {
 		case strings.HasPrefix(line, "[tool call]"):
 			// Tool calls are the most useful fact in a digest: they say which
@@ -44,39 +50,36 @@ func DigestSummary(rendered string) string {
 			assistant = append(assistant, strings.TrimSpace(strings.TrimPrefix(line, "Assistant:")))
 		}
 	}
+	return userTurns, assistant, tools
+}
 
-	var b strings.Builder
-	b.WriteString("Earlier in this conversation:\n")
+// writeDigestList renders the last n entries of a fact list under a heading.
+func writeDigestList(b *strings.Builder, heading string, list []string, n, width int) {
+	if len(list) == 0 {
+		return
+	}
+	b.WriteString(heading)
+	b.WriteString("\n")
+	for _, entry := range tail(list, n) {
+		fmt.Fprintf(b, "- %s\n", truncate(entry, width))
+	}
+}
 
-	if len(userTurns) > 0 {
-		b.WriteString("\nThe user asked, in order:\n")
-		for _, u := range tail(userTurns, 8) {
-			fmt.Fprintf(&b, "- %s\n", truncate(u, 200))
+// writeDigestTools renders the tool list with duplicates removed: a loop that
+// ran the same command five times is one fact, not five.
+func writeDigestTools(b *strings.Builder, tools []string) {
+	if len(tools) == 0 {
+		return
+	}
+	b.WriteString("\nTools used:\n")
+	seen := make(map[string]bool, len(tools))
+	for _, t := range tail(tools, 20) {
+		if seen[t] {
+			continue
 		}
+		seen[t] = true
+		fmt.Fprintf(b, "- %s\n", truncate(t, 160))
 	}
-	if len(tools) > 0 {
-		b.WriteString("\nTools used:\n")
-		seen := make(map[string]bool, len(tools))
-		for _, t := range tail(tools, 20) {
-			if seen[t] {
-				continue
-			}
-			seen[t] = true
-			fmt.Fprintf(&b, "- %s\n", truncate(t, 160))
-		}
-	}
-	if len(assistant) > 0 {
-		b.WriteString("\nThe assistant had said:\n")
-		for _, a := range tail(assistant, 4) {
-			fmt.Fprintf(&b, "- %s\n", truncate(a, 200))
-		}
-	}
-
-	if len(userTurns) == 0 && len(tools) == 0 && len(assistant) == 0 {
-		return ""
-	}
-	b.WriteString("\n(The original messages are no longer in the context window.)")
-	return b.String()
 }
 
 // tail returns the last n entries, or all of them when shorter.

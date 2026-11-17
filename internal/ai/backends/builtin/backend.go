@@ -122,7 +122,7 @@ func (b *Backend) Name() string { return BackendID }
 // The returned channel is always closed and always ends with exactly one
 // terminal event, matching the AIBackend contract.
 func (b *Backend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan ai.StreamEvent, error) {
-	spec, err := buildSpec(ctx, req)
+	spec, err := buildSpec(req)
 	if err != nil {
 		return nil, err
 	}
@@ -135,19 +135,14 @@ func (b *Backend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan
 		tr := &translator{locale: model.Language}
 		runEvents := agentcore.Run(ctx, spec)
 		for ev := range runEvents {
-			if !forward(ch, tr, ev) {
-				// The consumer is gone; keep draining so the producer can exit.
-				for range runEvents {
-				}
-				return
-			}
+			forward(ch, tr, ev)
 		}
 	}()
 	return ch, nil
 }
 
 // buildSpec resolves everything a run needs from the agent and the request.
-func buildSpec(ctx context.Context, req ai.ChatRequest) (agentcore.Spec, error) {
+func buildSpec(req ai.ChatRequest) (agentcore.Spec, error) {
 	agent := model.GetAgent(req.AgentID)
 	if agent == nil {
 		return agentcore.Spec{}, fmt.Errorf("builtin: agent %q not found", req.AgentID)
@@ -184,7 +179,7 @@ func buildSpec(ctx context.Context, req ai.ChatRequest) (agentcore.Spec, error) 
 		// so a long session compacts once instead of re-summarizing the same
 		// history on every turn.
 		PriorSummary: req.PriorSummary,
-		Summarize:    summarizer(client, req.Model, modelID),
+		Summarize:    summarizer(client),
 	}, nil
 }
 
@@ -198,7 +193,10 @@ func buildSpec(ctx context.Context, req ai.ChatRequest) (agentcore.Spec, error) 
 // The system prompt is fixed and separate from the agent's own: compaction is a
 // mechanical transcription task, and handing it the agent's persona would make
 // it answer the conversation instead of summarizing it.
-func summarizer(client llm.Client, modelOverride, modelID string) func(context.Context, string) (string, error) {
+//
+// The model is the client's own: buildClient already resolved the turn's model
+// into its Config, so there is no separate override to apply here.
+func summarizer(client llm.Client) func(context.Context, string) (string, error) {
 	return func(ctx context.Context, text string) (string, error) {
 		stream, err := client.Stream(ctx, llm.Request{
 			System:          compaction.SummaryPrompt,
@@ -265,16 +263,16 @@ var ErrNoProvider = fmt.Errorf("this agent has no model provider bound; " +
 
 // forward translates one agentcore event into ai.StreamEvent.
 //
-// It reports false when the event could not be delivered, which is the signal
-// to stop reading.
-func forward(ch chan<- ai.StreamEvent, tr *translator, ev agentcore.Event) bool {
+// It never reports failure: a consumer that stops reading (the emit timeout)
+// is logged and the remaining events are still delivered, because the producer
+// must keep draining its own stream until it closes.
+func forward(ch chan<- ai.StreamEvent, tr *translator, ev agentcore.Event) {
 	for _, out := range tr.translate(ev) {
 		select {
 		case ch <- out:
 		case <-time.After(emitTimeout):
 			slog.Warn("builtin: consumer stopped reading, dropping event", "kind", ev.Kind)
-			return true
+			return
 		}
 	}
-	return true
 }

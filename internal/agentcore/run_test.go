@@ -135,7 +135,7 @@ func TestRun_ToolCallFeedsResultBack(t *testing.T) {
 		textRound("done reading"),
 	}}
 	root := t.TempDir()
-	writeFile(t, root, "a.txt", "file body")
+	writeFile(t, root, "file body")
 
 	terminal, kinds := collect(t, Run(context.Background(), Spec{
 		Client: client, Prompt: "read a.txt", WorkDir: root,
@@ -453,7 +453,7 @@ func truncatedRound(text string) func(llm.Request) []llm.Event {
 }
 
 // TestRun_TruncatedReplyIsContinued pins that a reply cut off at the output cap
-// is not accepted as the answer. The old behaviour ended the turn mid-sentence
+// is not accepted as the answer. The old behavior ended the turn mid-sentence
 // and looked exactly like a normal finish.
 func TestRun_TruncatedReplyIsContinued(t *testing.T) {
 	client := &scriptedClient{rounds: []func(llm.Request) []llm.Event{
@@ -639,7 +639,7 @@ func TestRunSync_ReturnsTextAndCounters(t *testing.T) {
 		textRound("final answer"),
 	}}
 	root := t.TempDir()
-	writeFile(t, root, "a.txt", "x")
+	writeFile(t, root, "x")
 
 	res, err := RunSync(context.Background(), Spec{
 		Client: client, Prompt: "go", WorkDir: root,
@@ -701,8 +701,10 @@ func TestBuildSystemPrompt_UsesPiStyleSections(t *testing.T) {
 		}
 	}
 	// Order matters: tools before rules before environment.
-	if !(strings.Index(got, "<tools>") < strings.Index(got, "<rules>") &&
-		strings.Index(got, "<rules>") < strings.Index(got, "<environment>")) {
+	// The Contains loop above proved every index is >= 0, so the comparison
+	// below is about order and nothing else.
+	toolsAt, rulesAt, envAt := strings.Index(got, "<tools>"), strings.Index(got, "<rules>"), strings.Index(got, "<environment>")
+	if toolsAt > rulesAt || rulesAt > envAt {
 		t.Fatalf("sections are out of order, got:\n%s", got)
 	}
 }

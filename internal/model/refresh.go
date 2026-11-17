@@ -531,7 +531,7 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
 		transport, agent.AcpCommand, autoApprove, disabled, agent.ProviderID, string(effortByModelJSON),
-		string(mcpServersJSON), string(toolPolicyJSON))
+		string(mcpServersJSON), toolPolicyJSON)
 	return err
 }
 

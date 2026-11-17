@@ -11,7 +11,7 @@ import (
 // ReadTool reads a text file, or returns an image for a supported binary.
 type ReadTool struct{}
 
-func (ReadTool) Name() string { return "read" }
+func (ReadTool) Name() string { return toolReadName }
 
 func (ReadTool) Snippet() string { return "Read a file (text with line numbers, or an image)" }
 
@@ -21,27 +21,27 @@ func (ReadTool) Guidelines() []string {
 
 func (ReadTool) Spec() Spec {
 	return Spec{
-		Name: "read",
+		Name: toolReadName,
 		Description: "Read a file from the working directory. Text files come back with line numbers. " +
 			"Image files (PNG, JPEG, GIF, WebP) come back as an image you can look at. " +
 			"Use offset and limit to read a long file in pieces.",
 		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"path": map[string]any{
-					"type":        "string",
-					"description": "File path, absolute or relative to the working directory.",
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
+				argPath: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: argPathDescription,
 				},
-				"offset": map[string]any{
-					"type":        "integer",
-					"description": "1-based line to start at. Omit to start from the beginning.",
+				argOffset: map[string]any{
+					schemaType:        schemaInteger,
+					schemaDescription: "1-based line to start at. Omit to start from the beginning.",
 				},
-				"limit": map[string]any{
-					"type":        "integer",
-					"description": fmt.Sprintf("Maximum number of lines to return (default and maximum %d).", MaxReadLines),
+				argLimit: map[string]any{
+					schemaType:        schemaInteger,
+					schemaDescription: fmt.Sprintf("Maximum number of lines to return (default and maximum %d).", MaxReadLines),
 				},
 			},
-			"required": []string{"path"},
+			schemaRequired: []string{argPath},
 		},
 	}
 }
@@ -130,21 +130,8 @@ func readText(abs, display string, offset, limit int) Result {
 		truncatedByBytes = true
 	}
 
-	lines := strings.Split(string(data), "\n")
-	// A trailing newline produces a final empty element that is not a line.
-	if n := len(lines); n > 0 && lines[n-1] == "" {
-		lines = lines[:n-1]
-	}
-	// The cap cut the buffer at an arbitrary byte, so the last element is an
-	// INCOMPLETE line: it is neither shown (the model would get half a line) nor
-	// counted (the note would point at content that was never shown).
+	lines := splitReadLines(string(data), truncatedByBytes)
 	completeLines := len(lines)
-	if truncatedByBytes {
-		completeLines--
-	}
-	if completeLines < 0 {
-		completeLines = 0
-	}
 
 	start := 0
 	if offset > 0 {
@@ -187,6 +174,28 @@ func readText(abs, display string, offset, limit int) Result {
 		fmt.Fprintf(&b, "\n[%d more lines. Call read again with offset=%d to continue.]", completeLines-end, end+1)
 	}
 	return Result{Text: b.String(), Display: display}
+}
+
+// splitReadLines splits the bytes already read into addressable lines, dropping
+// the element a trailing newline leaves behind and — when the byte cap cut the
+// buffer — the final INCOMPLETE line.
+//
+// The incomplete line is neither shown (the model would get half a line) nor
+// counted (the note would point at content that was never shown). It is dropped
+// rather than kept-but-hidden so the count the note quotes is the count the
+// model can address.
+func splitReadLines(text string, truncatedByBytes bool) []string {
+	lines := strings.Split(text, "\n")
+	// A trailing newline produces a final empty element that is not a line.
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	// The cap cut the buffer at an arbitrary byte, so the last element is a
+	// partial line.
+	if truncatedByBytes && len(lines) > 0 {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
 }
 
 // imageMediaType maps an extension to the media type the model APIs accept.

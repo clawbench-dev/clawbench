@@ -169,7 +169,7 @@ type Event struct {
 	TotalUsage llm.Usage
 }
 
-// RunResult summarises a completed run. It is what an internal caller (a
+// RunResult summarizes a completed run. It is what an internal caller (a
 // background task that has no user to stream to) gets back.
 type RunResult struct {
 	// Text is the model's final answer.
@@ -291,7 +291,6 @@ type runner struct {
 	rounds    int
 	toolCalls int
 	usage     llm.Usage
-	finalText strings.Builder
 	// summary is the most recent compaction summary, reported on EventDone so
 	// the caller can persist it across the turn boundary.
 	summary string
@@ -428,7 +427,7 @@ func (r *runner) run(ctx context.Context) {
 			return
 		}
 
-		results := r.executeTools(runCtx, env, out.calls)
+		results := r.executeTools(env, out.calls)
 		if runCtx.Err() != nil {
 			r.finishCancelled()
 			return
@@ -526,7 +525,7 @@ func (r *runner) nudgeEmptyRound(text []string) bool {
 	return true
 }
 
-// buildTools materialises the tool list from the policy.
+// buildTools materializes the tool list from the policy.
 //
 // A capability the policy does not grant produces no tool at all — the model
 // never learns it exists. That is the whole safety model: it is not a filter
@@ -656,7 +655,7 @@ type roundAccumulator struct {
 	// numbering, while calls is ordered by when they started.
 	slotByProviderIndex map[int]int
 	// lastSlot receives fragments that arrive with no index at all (a provider
-	// that omits it); it is the previous behaviour, kept only as a fallback.
+	// that omits it); it is the previous behavior, kept only as a fallback.
 	lastSlot  int
 	reasoning strings.Builder
 	signature string
@@ -690,47 +689,10 @@ func (a *roundAccumulator) apply(ev llm.Event, r *runner) error {
 		a.signature = ev.Signature
 
 	case llm.KindToolCallStart:
-		if !a.allowTools {
-			// Tools were withheld for this round; a call here would open a card
-			// that can never complete.
-			return nil
-		}
-		slot := len(a.calls)
-		if ev.ToolCall.Index != nil {
-			a.slotByProviderIndex[*ev.ToolCall.Index] = slot
-		}
-		a.lastSlot = slot
-		a.partial = append(a.partial, &strings.Builder{})
-		a.calls = append(a.calls, llm.ToolCall{ID: ev.ToolCall.ID, Name: ev.ToolCall.Name})
-		// Announce immediately so the UI can open a card before the arguments
-		// finish streaming.
-		r.emit(Event{Kind: EventToolStart, ToolCallID: ev.ToolCall.ID, ToolName: ev.ToolCall.Name})
+		a.startToolCall(ev, r)
 
 	case llm.KindToolCallDelta:
-		if !a.allowTools || len(a.calls) == 0 {
-			return nil
-		}
-		// Address the call by the provider's index. Parallel calls stream
-		// INTERLEAVED (fragment for call 0, fragment for call 1, more for call
-		// 0), so appending to "the last call started" splices two argument
-		// objects into one invalid blob. Events with no index at all fall back
-		// to the most recent call, which is what a single-call stream means.
-		slot := a.lastSlot
-		if idx := ev.ToolCall.Index; idx != nil {
-			known, ok := a.slotByProviderIndex[*idx]
-			if !ok {
-				// A fragment for a call whose start was never seen. Creating it
-				// here would announce a call the UI never opened; dropping it
-				// keeps the round consistent (the call is reported with the
-				// arguments it did receive).
-				return nil
-			}
-			slot = known
-		}
-		if slot < 0 || slot >= len(a.partial) {
-			return nil
-		}
-		_, _ = a.partial[slot].WriteString(ev.ToolCall.Arguments)
+		a.appendToolArgs(ev)
 
 	case llm.KindUsage:
 		if ev.Usage != nil {
@@ -748,6 +710,52 @@ func (a *roundAccumulator) apply(ev llm.Event, r *runner) error {
 		a.truncated = ev.Truncated
 	}
 	return nil
+}
+
+// startToolCall opens the slot for a call and announces it, so the UI can show
+// a card before the arguments have finished streaming.
+func (a *roundAccumulator) startToolCall(ev llm.Event, r *runner) {
+	if !a.allowTools {
+		// Tools were withheld for this round; a call here would open a card
+		// that can never complete.
+		return
+	}
+	slot := len(a.calls)
+	if ev.ToolCall.Index != nil {
+		a.slotByProviderIndex[*ev.ToolCall.Index] = slot
+	}
+	a.lastSlot = slot
+	a.partial = append(a.partial, &strings.Builder{})
+	a.calls = append(a.calls, llm.ToolCall{ID: ev.ToolCall.ID, Name: ev.ToolCall.Name})
+	r.emit(Event{Kind: EventToolStart, ToolCallID: ev.ToolCall.ID, ToolName: ev.ToolCall.Name})
+}
+
+// appendToolArgs writes one argument fragment into the slot it belongs to.
+func (a *roundAccumulator) appendToolArgs(ev llm.Event) {
+	if !a.allowTools || len(a.calls) == 0 {
+		return
+	}
+	// Address the call by the provider's index. Parallel calls stream
+	// INTERLEAVED (fragment for call 0, fragment for call 1, more for call
+	// 0), so appending to "the last call started" splices two argument
+	// objects into one invalid blob. Events with no index at all fall back
+	// to the most recent call, which is what a single-call stream means.
+	slot := a.lastSlot
+	if idx := ev.ToolCall.Index; idx != nil {
+		known, ok := a.slotByProviderIndex[*idx]
+		if !ok {
+			// A fragment for a call whose start was never seen. Creating it
+			// here would announce a call the UI never opened; dropping it
+			// keeps the round consistent (the call is reported with the
+			// arguments it did receive).
+			return
+		}
+		slot = known
+	}
+	if slot < 0 || slot >= len(a.partial) {
+		return
+	}
+	_, _ = a.partial[slot].WriteString(ev.ToolCall.Arguments)
 }
 
 // result assembles the round's output once the stream has closed.
@@ -797,7 +805,7 @@ func drainStream(stream <-chan llm.Event) {
 // A pass that removes no tokens ends the loop. That is not a theoretical case:
 // once the conversation is [summary, kept tail, this turn], SplitPoint measures
 // the keep budget from the newest exchange, which always "fits" on its own, so
-// it returns the index of the previous summary — and the fold then summarises
+// it returns the index of the previous summary — and the fold then summarizes
 // that one message into a summary of the same size. Tokens after == tokens
 // before, ShouldCompact still holds, and the next pass does the same thing. Each
 // pass is a model call that spends the user's quota and replaces a summary with
@@ -821,7 +829,7 @@ func (r *runner) compactIfNeeded(ctx context.Context, system string) {
 
 	before := compaction.ConversationTokens(system, r.messages)
 	const maxPasses = 4
-	for pass := 0; pass < maxPasses; pass++ {
+	for pass := range maxPasses {
 		if !compaction.ShouldCompact(system, r.messages, r.spec.ContextWindow) {
 			return
 		}
@@ -883,8 +891,8 @@ func (r *runner) compactOnce(ctx context.Context, system string) bool {
 		// not touch are COPIED OUT of whatever slice it is given, and this one may
 		// be the caller's Spec.History.
 		foldedPrefix := append([]llm.Message{}, r.messages[:cut]...)
-		prefix := compaction.FoldToolResults(foldedPrefix, cut)
-		recent = append(prefix, r.messages[cut:]...)
+		recent = compaction.FoldToolResults(foldedPrefix, cut)
+		recent = append(recent, r.messages[cut:]...)
 	}
 
 	summary, err := r.summarize(ctx, older)
@@ -1077,59 +1085,63 @@ func mergeSummaries(previous, next string) string {
 }
 
 // executeTools runs every call in order and returns the results.
-func (r *runner) executeTools(ctx context.Context, env tools.Env, calls []llm.ToolCall) []*llm.ToolResult {
+func (r *runner) executeTools(env tools.Env, calls []llm.ToolCall) []*llm.ToolResult {
 	results := make([]*llm.ToolResult, 0, len(calls))
 	for _, c := range calls {
-		if r.toolCalls >= r.spec.Policy.ToolCalls() {
-			results = append(results, &llm.ToolResult{
-				CallID:  c.ID,
-				IsError: true,
-				Parts:   []llm.Part{{Text: "Tool call budget for this turn is exhausted; no further tools will run."}},
-			})
-			continue
-		}
-		r.toolCalls++
-
-		// Arguments are complete now — tell the UI before running, so the tool
-		// card can show WHAT is running (the command, the file) instead of a
-		// bare tool name for the whole execution.
-		r.emit(Event{Kind: EventToolArgs, ToolCallID: c.ID, ToolName: c.Name, ToolInput: c.Arguments})
-
-		start := time.Now()
-		tool, ok := r.toolIndex[c.Name]
-		var res tools.Result
-		if !ok {
-			// A hallucinated tool name. Telling the model which tools exist
-			// lets it correct itself instead of retrying the same name.
-			res = tools.Result{
-				Text:    fmt.Sprintf("There is no tool named %q. Available tools: %s.", c.Name, r.availableToolNames()),
-				IsError: true,
-			}
-		} else {
-			res = tool.Run(env, []byte(c.Arguments))
-		}
-		elapsed := time.Since(start)
-
-		r.emit(Event{
-			Kind:         EventToolEnd,
-			ToolCallID:   c.ID,
-			ToolName:     c.Name,
-			ToolInput:    c.Arguments,
-			ToolOutput:   res.Text,
-			ToolIsError:  res.IsError,
-			ToolDuration: elapsed,
-		})
-
-		parts := []llm.Part{{Text: res.Text}}
-		// An image only travels to a model that can see it. A text-only model
-		// already got a note from ReadToolNoVision, so reaching here with an
-		// image means the client supports vision.
-		if res.Image != nil {
-			parts = append(parts, llm.Part{Image: &llm.Image{MediaType: res.Image.MediaType, Data: res.Image.Data}})
-		}
-		results = append(results, &llm.ToolResult{CallID: c.ID, Parts: parts, IsError: res.IsError})
+		results = append(results, r.executeTool(env, c))
 	}
 	return results
+}
+
+// executeTool runs one call and reports it to the UI before and after.
+func (r *runner) executeTool(env tools.Env, c llm.ToolCall) *llm.ToolResult {
+	if r.toolCalls >= r.spec.Policy.ToolCalls() {
+		return &llm.ToolResult{
+			CallID:  c.ID,
+			IsError: true,
+			Parts:   []llm.Part{{Text: "Tool call budget for this turn is exhausted; no further tools will run."}},
+		}
+	}
+	r.toolCalls++
+
+	// Arguments are complete now — tell the UI before running, so the tool
+	// card can show WHAT is running (the command, the file) instead of a
+	// bare tool name for the whole execution.
+	r.emit(Event{Kind: EventToolArgs, ToolCallID: c.ID, ToolName: c.Name, ToolInput: c.Arguments})
+
+	start := time.Now()
+	tool, ok := r.toolIndex[c.Name]
+	var res tools.Result
+	if !ok {
+		// A hallucinated tool name. Telling the model which tools exist
+		// lets it correct itself instead of retrying the same name.
+		res = tools.Result{
+			Text:    fmt.Sprintf("There is no tool named %q. Available tools: %s.", c.Name, r.availableToolNames()),
+			IsError: true,
+		}
+	} else {
+		res = tool.Run(env, []byte(c.Arguments))
+	}
+	elapsed := time.Since(start)
+
+	r.emit(Event{
+		Kind:         EventToolEnd,
+		ToolCallID:   c.ID,
+		ToolName:     c.Name,
+		ToolInput:    c.Arguments,
+		ToolOutput:   res.Text,
+		ToolIsError:  res.IsError,
+		ToolDuration: elapsed,
+	})
+
+	parts := []llm.Part{{Text: res.Text}}
+	// An image only travels to a model that can see it. A text-only model
+	// already got a note from ReadToolNoVision, so reaching here with an
+	// image means the client supports vision.
+	if res.Image != nil {
+		parts = append(parts, llm.Part{Image: &llm.Image{MediaType: res.Image.MediaType, Data: res.Image.Data}})
+	}
+	return &llm.ToolResult{CallID: c.ID, Parts: parts, IsError: res.IsError}
 }
 
 func (r *runner) availableToolNames() string {

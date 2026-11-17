@@ -13,6 +13,10 @@ import (
 	"clawbench/internal/ws"
 )
 
+// fieldCommand is the JSON key for the install command echoed back to the
+// caller. Several install/terminal payloads use it, so it is named once.
+const fieldCommand = "command"
+
 // ServeBackendInstall handles POST /api/backends/{id}/install — runs a
 // backend's built-in install command on this machine.
 //
@@ -73,7 +77,7 @@ func ServeBackendInstall(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{
 		"ok":         true,
 		"backend":    spec.ID,
-		"command":    res.Command,
+		fieldCommand: res.Command,
 		"output":     res.Output,
 		"durationMs": res.DurationMs,
 		"refreshed":  refreshed,

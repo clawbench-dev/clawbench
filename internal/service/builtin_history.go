@@ -56,33 +56,61 @@ func buildBuiltinHistory(sessionID string, beforeMessageID int64, summary builti
 		return nil
 	}
 
-	type turn struct {
-		role string
-		text string
-		// id is the chat_history row id, carried so a compaction can report WHICH
-		// stored turn it folded (see builtinSummaryFromCompaction).
-		id int64
+	turns := collectBuiltinTurns(messages, beforeMessageID, summary)
+	if len(turns) == 0 {
+		return nil
 	}
-	var turns []turn
 
-	// keptTurns is the number of REPLAYABLE turns seen so far, and it is the
-	// list index the stored boundary counts against. It is an explicit counter
-	// rather than len(turns) because the two are not the same number here — and
-	// because "which list is being counted" is the whole content of this
-	// function, so it must be readable at the point of use:
-	//
-	//   - turns only receives entries that pass every filter below, while
-	//     keptTurns also counts the rows the summary position was measured on.
-	//     On a session whose stored form contains anything the replay drops, the
-	//     two diverge — and the boundary belongs to the count, not to len(turns).
-	//   - turns is appended to AFTER the boundary has been consulted, so the
-	//     number means "the first N replayed turns are covered", not "the N-th
-	//     entry is" — an off-by-one here either re-summarises one turn or drops
-	//     it from the model's context for good.
-	//
-	// The two counters advance together at the bottom of the loop (every row the
-	// summary has not covered is, by definition, part of the replayed list) and
-	// apart inside the covered branch above.
+	start := builtinHistoryStart(turns)
+	out := make([]ai.HistoryMessage, 0, len(turns)-start)
+	if start > 0 {
+		// Tell the model that earlier turns exist but were omitted, so it does
+		// not treat the visible history as the whole conversation.
+		out = append(out, ai.HistoryMessage{
+			Role: roleUser,
+			Text: "[Earlier conversation omitted to fit the context window. " +
+				"The visible messages continue from here.]",
+		})
+	}
+	for _, t := range turns[start:] {
+		out = append(out, ai.HistoryMessage{Role: t.role, Text: t.text, ID: t.id})
+	}
+	return out
+}
+
+// builtinTurn is one replayable turn: its role, its flattened text, and the
+// chat_history row id it came from.
+type builtinTurn struct {
+	role string
+	text string
+	// id is the chat_history row id, carried so a compaction can report WHICH
+	// stored turn it folded (see builtinSummaryFromCompaction).
+	id int64
+}
+
+// collectBuiltinTurns filters a session's stored messages down to the turns the
+// built-in backend replays.
+//
+// keptTurns is the number of REPLAYABLE turns seen so far, and it is the list
+// index the stored boundary counts against. It is an explicit counter rather
+// than len(turns) because the two are not the same number here — and because
+// "which list is being counted" is the whole content of this function, so it
+// must be readable at the point of use:
+//
+//   - turns only receives entries that pass every filter below, while keptTurns
+//     also counts the rows the summary position was measured on. On a session
+//     whose stored form contains anything the replay drops, the two diverge —
+//     and the boundary belongs to the count, not to len(turns).
+//   - turns is appended to AFTER the boundary has been consulted, so the number
+//     means "the first N replayed turns are covered", not "the N-th entry is" —
+//     an off-by-one here either re-summarizes one turn or drops it from the
+//     model's context for good.
+//
+// The two counters advance together at the bottom of the loop (every row the
+// summary has not covered is, by definition, part of the replayed list) and
+// apart inside the covered branch.
+func collectBuiltinTurns(messages []model.ChatMessage, beforeMessageID int64, summary builtinSummary) []builtinTurn {
+	var turns []builtinTurn
 	keptTurns := 0
 	for _, m := range messages {
 		// Exclude this turn: the user message being answered is already in the
@@ -119,21 +147,23 @@ func buildBuiltinHistory(sessionID string, beforeMessageID int64, summary builti
 			continue
 		}
 		keptTurns++
-		turns = append(turns, turn{role: role, text: text, id: m.ID})
+		turns = append(turns, builtinTurn{role: role, text: text, id: m.ID})
 	}
-	if len(turns) == 0 {
-		return nil
-	}
+	return turns
+}
 
-	// Walk backwards accumulating runes until the budget is spent, then emit
-	// the kept tail in order.
+// builtinHistoryStart returns the index of the first turn that fits the budget.
+//
+// It walks backwards accumulating runes until the budget is spent: the kept tail
+// is what the next reply depends on. A single oversized message is truncated
+// rather than dropped when it would otherwise leave nothing — it is the turn the
+// user is most likely asking about.
+func builtinHistoryStart(turns []builtinTurn) int {
 	budget := builtinHistoryBudgetChars
 	start := len(turns)
 	for i := len(turns) - 1; i >= 0; i-- {
 		n := len([]rune(turns[i].text))
 		if n > budget {
-			// A single oversized message is truncated rather than dropped: it
-			// is the turn the user is most likely asking about.
 			if start == len(turns) {
 				turns[i].text = truncateRunes(turns[i].text, budget)
 				start = i
@@ -143,21 +173,7 @@ func buildBuiltinHistory(sessionID string, beforeMessageID int64, summary builti
 		budget -= n
 		start = i
 	}
-
-	out := make([]ai.HistoryMessage, 0, len(turns)-start)
-	if start > 0 {
-		// Tell the model that earlier turns exist but were omitted, so it does
-		// not treat the visible history as the whole conversation.
-		out = append(out, ai.HistoryMessage{
-			Role: roleUser,
-			Text: "[Earlier conversation omitted to fit the context window. " +
-				"The visible messages continue from here.]",
-		})
-	}
-	for _, t := range turns[start:] {
-		out = append(out, ai.HistoryMessage{Role: t.role, Text: t.text, ID: t.id})
-	}
-	return out
+	return start
 }
 
 // builtinSummaryFromCompaction turns a compaction event into the boundary to

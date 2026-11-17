@@ -55,7 +55,7 @@ func TestResolve_OpenKeepsRelativeInside(t *testing.T) {
 }
 
 // TestResolve_ConfinedStillRefusesEscape pins that the fence, when on, is the
-// old behaviour exactly: the same escape shapes stay refused.
+// old behavior exactly: the same escape shapes stay refused.
 func TestResolve_ConfinedStillRefusesEscape(t *testing.T) {
 	root := t.TempDir()
 	env := Env{Root: root, ConfineToWorkDir: true}

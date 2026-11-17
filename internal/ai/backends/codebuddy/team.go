@@ -44,8 +44,6 @@ const (
 	// metaKeyMemberEvent marks a frame as produced by a team member; its value
 	// is the member name.
 	metaKeyMemberEvent = "codebuddy.ai/memberEvent"
-	// metaKeyParentToolCallID is the flat key stamped on sub-agent content.
-	metaKeyParentToolCallID = "codebuddy.ai/parentToolCallId"
 )
 
 // NoteMemberSpawn records the member name → Agent tool-call id mapping when a

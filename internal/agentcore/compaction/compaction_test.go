@@ -97,8 +97,8 @@ func TestShouldCompact_TriggersBeforeTheLimit(t *testing.T) {
 
 // TestSplitPoint_KeepsRecentExchanges pins the "summary + recent verbatim" rule.
 func TestSplitPoint_KeepsRecentExchangesWithinBudget(t *testing.T) {
-	var msgs []llm.Message
-	for i := 0; i < 5; i++ {
+	msgs := make([]llm.Message, 0, 10)
+	for range 5 {
 		msgs = append(msgs, userMsg("q"), assistantMsg("a"))
 	}
 	// Each exchange is exactly 10 tokens. A 25-token budget fits 2 exchanges,
@@ -254,16 +254,19 @@ func TestToolResultSplitPoint_FoldsInsideOneExchange(t *testing.T) {
 	KeepRecentToolRounds = 1
 	defer func() { KeepRecentToolRounds = old }()
 
-	var msgs []llm.Message
+	msgs := make([]llm.Message, 0, 7) // one prompt + 3 × (call, result)
 	msgs = append(msgs, userMsg("read three files"))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		id := string(rune('a' + i))
-		msgs = append(msgs, llm.Message{Role: llm.RoleAssistant, Parts: []llm.Part{
-			{ToolCall: &llm.ToolCall{ID: id, Name: "read", Arguments: `{"path":"f"}`}},
-		}})
-		msgs = append(msgs, llm.Message{Role: llm.RoleTool, Parts: []llm.Part{
-			{ToolResult: &llm.ToolResult{CallID: id, Parts: []llm.Part{{Text: strings.Repeat("x", 5000)}}}},
-		}})
+		msgs = append(
+			msgs,
+			llm.Message{Role: llm.RoleAssistant, Parts: []llm.Part{
+				{ToolCall: &llm.ToolCall{ID: id, Name: "read", Arguments: `{"path":"f"}`}},
+			}},
+			llm.Message{Role: llm.RoleTool, Parts: []llm.Part{
+				{ToolResult: &llm.ToolResult{CallID: id, Parts: []llm.Part{{Text: strings.Repeat("x", 5000)}}}},
+			}},
+		)
 	}
 
 	cut := ToolResultSplitPoint(msgs)

@@ -39,7 +39,7 @@ func newCopilotBackend() ai.AIBackend {
 		BackendName: "copilot",
 		Cmd:         "copilot",
 		BuildArgsFn: buildCopilotStreamArgs,
-		NewParserFn: func() ai.LineParser { return claude.NewStreamParser() },
+		NewParserFn: claude.NewStreamParser,
 		FilterLineFn: func(line string) (string, bool) {
 			if line == "" || !strings.HasPrefix(line, "{") {
 				return "", false

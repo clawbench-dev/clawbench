@@ -43,11 +43,21 @@ func init() {
 	model.ConfigDirEnvForAgent = applyProviderConfigDir
 }
 
+const (
+	// backendCodebuddy appears in both the read (user config dir) and write
+	// (config-dir writer) switches; a typo in either would silently disable the
+	// relocation for that backend.
+	backendCodebuddy = "codebuddy"
+	// jsonKeyName is the model-display-name key inside the generated JSON
+	// config documents.
+	jsonKeyName = "name"
+)
+
 // ProviderConfigDir returns the private config directory for one agent.
 //
 // The name is the agent id, which is already a filesystem-safe slug
 // (agent-<hex> / user-chosen ids are validated elsewhere). It is intentionally
-// NOT hashed: a directory the user cannot recognise in a stack trace is worse
+// NOT hashed: a directory the user cannot recognize in a stack trace is worse
 // than one they can.
 func ProviderConfigDir(agentID string) string {
 	return filepath.Join(providerConfigDirRoot(), agentID)
@@ -65,7 +75,7 @@ func userConfigDir(backend string) string {
 		return filepath.Join(home, ".kimi")
 	case "pi":
 		return filepath.Join(home, ".pi", "agent")
-	case "codebuddy":
+	case backendCodebuddy:
 		return filepath.Join(home, ".codebuddy")
 	case "claude":
 		// CLAUDE_CONFIG_DIR relocates the whole ~/.claude tree.
@@ -74,7 +84,7 @@ func userConfigDir(backend string) string {
 	return ""
 }
 
-// ensureProviderConfigDir materialises the agent's config directory: it creates
+// ensureProviderConfigDir materializes the agent's config directory: it creates
 // the directory and links every entry of the user's own config dir into it,
 // except the file ClawBench owns.
 //
@@ -169,7 +179,7 @@ func applyProviderConfigDir(backend, agentID string, p *model.Provider) ([]strin
 		content, err = kimiConfigContent(p)
 	case "pi":
 		content, err = piModelsContent(p)
-	case "codebuddy":
+	case backendCodebuddy:
 		content, err = codebuddyModelsContent(p)
 	case "claude":
 		content, err = claudeSettingsContent(p)
@@ -230,7 +240,10 @@ func tomlKey(s string) string {
 		return tomlString(s)
 	}
 	for _, r := range s {
-		if !(r == '-' || r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+		bare := r == '-' || r == '_' ||
+			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9')
+		if !bare {
 			return tomlString(s)
 		}
 	}
@@ -253,13 +266,13 @@ func piModelsContent(p *model.Provider) ([]byte, error) {
 	}
 	declared := make([]map[string]any, 0, len(models))
 	for _, m := range models {
-		declared = append(declared, map[string]any{"id": m, "name": m})
+		declared = append(declared, map[string]any{"id": m, jsonKeyName: m})
 	}
 	doc := map[string]any{
 		"providers": map[string]any{
 			id: map[string]any{
-				"name":    "ClawBench " + p.Name,
-				"baseUrl": p.BaseURL,
+				jsonKeyName: "ClawBench " + p.Name,
+				"baseUrl":   p.BaseURL,
 				// pi expands $ENV in apiKey, so the secret stays in ClawBench's
 				// database and is handed to the process through the environment.
 				"apiKey": "$" + model.ProviderSecretEnvName(),
@@ -285,7 +298,7 @@ func codebuddyModelsContent(p *model.Provider) ([]byte, error) {
 	for _, m := range models {
 		declared = append(declared, map[string]any{
 			"id":               m,
-			"name":             m,
+			jsonKeyName:        m,
 			"provider":         "openai",
 			"url":              p.BaseURL,
 			"apiKey":           "${" + model.ProviderSecretEnvName() + "}",

@@ -10,7 +10,7 @@ import (
 // WriteTool creates or overwrites a file.
 type WriteTool struct{}
 
-func (WriteTool) Name() string { return "write" }
+func (WriteTool) Name() string { return toolWriteName }
 
 func (WriteTool) Snippet() string { return "Create or overwrite a file" }
 
@@ -20,22 +20,22 @@ func (WriteTool) Guidelines() []string {
 
 func (WriteTool) Spec() Spec {
 	return Spec{
-		Name: "write",
+		Name: toolWriteName,
 		Description: "Write a file, creating it if it does not exist and replacing it entirely if it does. " +
 			"Parent directories are created automatically. To change part of an existing file, use edit instead.",
 		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"path": map[string]any{
-					"type":        "string",
-					"description": "File path, absolute or relative to the working directory.",
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
+				argPath: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: argPathDescription,
 				},
-				"content": map[string]any{
-					"type":        "string",
-					"description": "Full file content. This replaces whatever is there now.",
+				argContent: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: "Full file content. This replaces whatever is there now.",
 				},
 			},
-			"required": []string{"path", "content"},
+			schemaRequired: []string{argPath, argContent},
 		},
 	}
 }

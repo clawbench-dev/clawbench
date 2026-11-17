@@ -431,7 +431,7 @@ func (p *testLineParser) ParseLine(line string, ch chan<- StreamEvent) {
 	if line == "" {
 		return
 	}
-	// Mirror the two behaviours the skeleton relies on: content for ordinary
+	// Mirror the two behaviors the skeleton relies on: content for ordinary
 	// lines, `done` for the terminal result message. Everything else (tool
 	// calls, thinking, usage) is out of scope for these lifecycle tests.
 	var envelope struct {
