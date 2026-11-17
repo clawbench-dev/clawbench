@@ -290,7 +290,7 @@ func TestServeLiveShareNoteRecording_RefusesWhenTableIsFull(t *testing.T) {
 	token := createShotMeeting(t, project)
 
 	liveRecordingMu.Lock()
-	for i := 0; i < liveNoteRecordingMaxSessions; i++ {
+	for i := range liveNoteRecordingMaxSessions {
 		liveRecordingSessions[liveRecordingKey("other", strconv.Itoa(i))] = &liveRecordingSession{
 			fileName: "recording/x.webm",
 			started:  time.Now(),

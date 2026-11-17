@@ -111,20 +111,8 @@ func ServeLiveShareNoteRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	note, exists, err := service.GetLiveNote(token)
-	if err != nil {
-		slog.Error("live notes: recording meeting lookup failed", "err", err)
-		model.WriteError(w, model.Internal(err))
-		return
-	}
-	if !exists {
-		http.NotFound(w, r)
-		return
-	}
-	paths, err := service.EnsureMeetingDir(token, projectID, projectPath, note.Title, note.StartedAt)
-	if err != nil {
-		slog.Warn("live notes: meeting folder unavailable for recording", "err", err)
-		model.WriteError(w, model.Internal(err))
+	paths, ok := liveRecordingMeetingDir(w, r, token, projectID, projectPath)
+	if !ok {
 		return
 	}
 
@@ -157,6 +145,30 @@ func ServeLiveShareNoteRecording(w http.ResponseWriter, r *http.Request) {
 		slog.Error("live notes: append recording failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 	}
+}
+
+// liveRecordingMeetingDir resolves the folder the chunks are appended to,
+// answering the request itself when the meeting is gone or its folder cannot be
+// created. Split out of the handler because both failures are "log and return
+// 500-ish", which is what pushed the handler over the complexity budget.
+func liveRecordingMeetingDir(w http.ResponseWriter, r *http.Request, token string, projectID int64, projectPath string) (service.LiveNotesPaths, bool) {
+	note, exists, err := service.GetLiveNote(token)
+	if err != nil {
+		slog.Error("live notes: recording meeting lookup failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return service.LiveNotesPaths{}, false
+	}
+	if !exists {
+		http.NotFound(w, r)
+		return service.LiveNotesPaths{}, false
+	}
+	paths, err := service.EnsureMeetingDir(token, projectID, projectPath, note.Title, note.StartedAt)
+	if err != nil {
+		slog.Warn("live notes: meeting folder unavailable for recording", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return service.LiveNotesPaths{}, false
+	}
+	return paths, true
 }
 
 // readRecordingChunk reads the raw body, answering 413 for an oversized one.
@@ -214,7 +226,7 @@ func appendLiveRecordingChunk(
 		// O_EXCL: a leftover file with the same name means this id was already
 		// used, and appending to it would mix two recordings.
 		path := filepath.Join(paths.Dir, name)
-		file, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		file, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if createErr != nil {
 			return "", 0, 0, http.StatusConflict, createErr
 		}
@@ -235,7 +247,7 @@ func appendLiveRecordingChunk(
 		return "", 0, 0, http.StatusRequestEntityTooLarge, errors.New("recording too large")
 	}
 	path := filepath.Join(paths.Dir, sess.fileName)
-	file, openErr := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	file, openErr := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 	if openErr != nil {
 		return "", 0, 0, http.StatusInternalServerError, openErr
 	}
