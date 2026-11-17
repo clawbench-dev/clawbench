@@ -102,8 +102,9 @@ func dialFirstServer(ctx context.Context, network string, servers []string, dial
 // address are skipped, as the Go resolver skips them; an unreadable file yields
 // nothing.
 func readNameservers(path string) []string {
-	var servers []string
-	for _, addr := range parseNameserverAddrs(path) {
+	parsed := parseNameserverAddrs(path)
+	servers := make([]string, 0, len(parsed))
+	for _, addr := range parsed {
 		servers = append(servers, net.JoinHostPort(addr.String(), "53"))
 	}
 	return servers

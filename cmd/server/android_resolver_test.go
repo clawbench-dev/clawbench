@@ -55,7 +55,7 @@ func TestSetupAndroidResolver_InstallsResolver(t *testing.T) {
 	}
 }
 
-// TestDialFirstServer covers the behaviour the installed resolver relies on:
+// TestDialFirstServer covers the behavior the installed resolver relies on:
 // which servers are tried, in which order, and that the last error is the one
 // reported. The dial function is injected, so this asserts on the addresses
 // rather than on Go's lookup machinery.
