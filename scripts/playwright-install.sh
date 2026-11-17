@@ -15,7 +15,13 @@
 # browser install on a supported image must never be silently skipped.
 #
 # Usage: scripts/playwright-install.sh <browser>
-# Exit:  0 = installed (or skipped for an unsupported image), 1 = real failure.
+# Exit:  0 = installed, 78 = this image cannot install it (caller must skip the
+#        suite), 1 = real failure.
+#
+# The skip is a distinct EXIT CODE rather than exit 0 because the caller cannot
+# otherwise tell "installed" from "gave up": with exit 0 the specs would run and
+# every one of them would fail on a missing browser executable, which is the
+# same red build with a more confusing message.
 set -euo pipefail
 
 BROWSER="${1:?usage: playwright-install.sh <browser>}"
@@ -38,7 +44,7 @@ for attempt in 1 2 3; do
   if grep -q "Playwright does not support .* on " "$log"; then
     echo "::warning::Playwright cannot install ${BROWSER} on this runner image (unsupported distro)." \
          "Skipping the E2E shard instead of failing it; the browser suite must be re-run once the image or Playwright is updated."
-    exit 0
+    exit 78
   fi
   echo "::warning::playwright install failed (attempt ${attempt}/3); retrying"
   # The test harness sets this so a policy assertion does not spend a minute on

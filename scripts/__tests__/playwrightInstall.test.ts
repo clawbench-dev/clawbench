@@ -80,10 +80,12 @@ describe('scripts/playwright-install.sh', () => {
     expect(res.status).toBe(0)
   })
 
-  it('skips (exit 0) with a warning when the RUNNER image is unsupported', () => {
+  it('reports the unsupported image with a dedicated exit code, not success', () => {
     const res = runWith('echo "Error: ERROR: Playwright does not support chromium on ubuntu26.04-x64" >&2; exit 1')
-    // A red E2E job here would be reporting the runner's distro, not the patch.
-    expect(res.status).toBe(0)
+    // 78 is "this image cannot install it": the workflow turns it into a skipped
+    // suite. Exiting 0 would let the specs run and report a missing executable
+    // as dozens of failures — the same red build with a worse message.
+    expect(res.status).toBe(78)
     expect(res.stdout).toContain('::warning::')
     expect(res.stdout).toContain('unsupported distro')
   })

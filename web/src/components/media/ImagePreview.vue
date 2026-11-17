@@ -3,7 +3,8 @@
     @keydown="handleKeyDown"
     tabindex="0"
     ref="containerRef">
-    <div class="image-preview-body">
+    <div class="image-preview-body" ref="bodyRef" :class="{ 'is-zoomed': isZoomed }"
+      @wheel.prevent="handleWheel">
       <!-- Draggable (wide-screen) onto the chat column to attach the existing
            file — same internal payload the file manager uses, no re-upload.
            `:key` is load-bearing: the pending-media placeholder is keyed on the
@@ -12,9 +13,14 @@
            change (navigating to a sibling image) would keep the stamp and leave
            the placeholder permanently suppressed for the new image. -->
       <img :key="mediaUrl" :src="mediaUrl" :alt="file.name" class="image-preview-img lightbox-img"
-        :draggable="isWideScreen"
+        ref="imgRef"
+        :style="imgStyle"
+        :class="{ 'is-zoomed': isZoomed, 'is-panning': isDragging }"
+        :draggable="isWideScreen && !isZoomed"
         @dragstart="onImageDragStart"
-        @dragend="onImageDragEnd" />
+        @dragend="onImageDragEnd"
+        @mousedown="handleMouseDown"
+        @dblclick="resetZoom" />
       <!-- Prev overlay -->
       <div v-if="hasPrev" class="img-nav-hint img-nav-prev" @click="goPrev">
         <ChevronLeft :size="18" />
@@ -26,12 +32,17 @@
     </div>
     <!-- Counter badge -->
     <div v-if="imageCount > 1" class="img-counter">{{ currentIndex + 1 }} / {{ imageCount }}</div>
+    <!-- Zoom badge: shows the current zoom and is the explicit way back to
+         "fit the pane" (double-click / Escape do the same). -->
+    <button v-if="isZoomed" class="img-zoom-badge" :title="t('file.header.resetZoom')"
+      @click="resetZoom">{{ zoomPercent }}%</button>
   </div>
 </template>
 
 <script setup>
 import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { store } from '@/stores/app.ts'
 import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
@@ -43,6 +54,8 @@ import { mediaVersionFor, trackMediaPath } from '@/composables/useMediaWatch.ts'
 const props = defineProps({
     file: Object,
 })
+
+const { t } = useI18n()
 
 // Reactivity trigger: changes the computed URL when the file prop changes,
 // forcing Vue to re-fetch rather than reusing the same <img> element.
@@ -71,6 +84,96 @@ const mediaUrl = computed(() => {
 
 const containerRef = ref(null)
 const { isWideScreen } = useWideScreenLayout()
+
+// ── Zoom & pan ──
+// The pane is dedicated to one image, so the wheel always belongs to it: no
+// click-to-activate step like inline markdown media (there is no page text to
+// scroll past here). Zoom is anchored on the cursor, panning is clamped to the
+// scaled image's own bounds so it can never be dragged out of the frame.
+const MAX_ZOOM = 8
+const scale = ref(1)
+const tx = ref(0)
+const ty = ref(0)
+const isDragging = ref(false)
+const bodyRef = ref(null)
+const imgRef = ref(null)
+const isZoomed = computed(() => scale.value > 1.001)
+const zoomPercent = computed(() => Math.round(scale.value * 100))
+const imgStyle = computed(() => ({
+    transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
+    transition: isDragging.value ? 'none' : 'transform 120ms ease-out',
+}))
+
+function clampPan() {
+    const img = imgRef.value
+    const body = bodyRef.value
+    if (!img || !body) return
+    // `offsetWidth` is the layout size (unaffected by the transform), which is
+    // exactly the base the scale multiplies.
+    const maxX = Math.max(0, (img.offsetWidth * scale.value - body.clientWidth) / 2)
+    const maxY = Math.max(0, (img.offsetHeight * scale.value - body.clientHeight) / 2)
+    tx.value = Math.min(maxX, Math.max(-maxX, tx.value))
+    ty.value = Math.min(maxY, Math.max(-maxY, ty.value))
+}
+
+function resetZoom() {
+    scale.value = 1
+    tx.value = 0
+    ty.value = 0
+}
+
+function handleWheel(e) {
+    const body = bodyRef.value
+    if (!body) return
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
+    const next = Math.min(MAX_ZOOM, Math.max(1, scale.value * factor))
+    if (next === scale.value) return
+    if (next === 1) { resetZoom(); return }
+    // Keep the point under the cursor stationary: with the transform origin at
+    // the centre, a point at screen offset `p` from the centre sits at
+    // `tx + p * scale`, so preserving it means scaling `tx - p` too.
+    const rect = body.getBoundingClientRect()
+    const px = e.clientX - rect.left - rect.width / 2
+    const py = e.clientY - rect.top - rect.height / 2
+    const k = next / scale.value
+    tx.value = px - (px - tx.value) * k
+    ty.value = py - (py - ty.value) * k
+    scale.value = next
+    clampPan()
+}
+
+let panStartX = 0
+let panStartY = 0
+let panBaseX = 0
+let panBaseY = 0
+
+function handleMouseDown(e) {
+    if (e.button !== 0 || !isZoomed.value) return
+    e.preventDefault()
+    isDragging.value = true
+    panStartX = e.clientX
+    panStartY = e.clientY
+    panBaseX = tx.value
+    panBaseY = ty.value
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+}
+
+function handleMouseMove(e) {
+    if (!isDragging.value) return
+    e.preventDefault()
+    tx.value = panBaseX + (e.clientX - panStartX)
+    ty.value = panBaseY + (e.clientY - panStartY)
+    clampPan()
+}
+
+function handleMouseUp() {
+    isDragging.value = false
+    window.removeEventListener('mousemove', handleMouseMove)
+    window.removeEventListener('mouseup', handleMouseUp)
+}
+
+onUnmounted(handleMouseUp)
 
 // Build list of image files in the same directory
 const siblingImages = computed(() => {
@@ -107,6 +210,7 @@ function goNext() {
 function handleKeyDown(e) {
     if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev() }
     else if (e.key === 'ArrowRight') { e.preventDefault(); goNext() }
+    else if (e.key === 'Escape' && isZoomed.value) { e.preventDefault(); resetZoom() }
 }
 
 /** Drag the previewed image onto the chat column → attach this path (no upload). */
@@ -125,8 +229,10 @@ onMounted(() => {
     containerRef.value?.focus()
 })
 
-// Re-focus when file changes
+// Re-focus when file changes, and drop any zoom: it belongs to the previous
+// image, not to the pane.
 watch(() => props.file, () => {
+    resetZoom()
     containerRef.value?.focus()
 })
 </script>
@@ -162,6 +268,20 @@ watch(() => props.file, () => {
     object-fit: contain;
     cursor: default;
     box-shadow: 0 calc(2 * var(--dp)) calc(12 * var(--dp)) rgba(0, 0, 0, 0.08);
+}
+
+/* Zoomed: the transform is the only thing that grows, so the scrollable
+   overflow it creates would just add scrollbars next to the pan gesture. */
+.image-preview-body.is-zoomed {
+    overflow: hidden;
+}
+
+.image-preview-img.is-zoomed {
+    cursor: grab;
+}
+
+.image-preview-img.is-panning {
+    cursor: grabbing;
 }
 
 :global([data-theme-base="dark"]) .image-preview-img {
@@ -221,5 +341,30 @@ watch(() => props.file, () => {
     backdrop-filter: blur(calc(4 * var(--dp)));
     pointer-events: none;
     user-select: none;
+}
+
+/* Zoom badge / reset affordance, mirroring the nav hints' floating style. */
+.img-zoom-badge {
+    position: absolute;
+    bottom: calc(12 * var(--dp));
+    right: calc(12 * var(--dp));
+    border: none;
+    background: rgba(0, 0, 0, 0.5);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: var(--font-size-sm);
+    font-family: inherit;
+    padding: var(--space-1) var(--space-4);
+    border-radius: var(--radius-md);
+    backdrop-filter: blur(calc(4 * var(--dp)));
+    cursor: pointer;
+    user-select: none;
+    z-index: 2;
+    transition: background var(--duration-base);
+}
+
+@media (hover: hover) {
+    .img-zoom-badge:hover {
+        background: rgba(0, 0, 0, 0.7);
+    }
 }
 </style>

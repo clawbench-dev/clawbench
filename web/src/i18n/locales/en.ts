@@ -2654,6 +2654,7 @@ export default {
       },
       zoomIn: 'Zoom in',
       zoomOut: 'Zoom out',
+      resetZoom: 'Reset zoom',
       fitWidth: 'Fit width',
       openDirectory: 'Open directory',
       setAsBackground: 'Set as theme background',

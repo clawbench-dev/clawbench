@@ -5,6 +5,11 @@ import ImagePreview from '@/components/media/ImagePreview.vue'
 import { readAttachDragData, cleanupDragGhost } from '@/utils/attachDrag'
 import { installLocalMediaFallback, uninstallLocalMediaFallback } from '@/utils/localMediaFallback'
 
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  return { ...actual, useI18n: () => ({ t: (k: string) => k }) }
+})
+
 // Drive the draggable gate directly instead of depending on jsdom's viewport.
 const mockIsWideScreen = ref(false)
 vi.mock('@/composables/useWideScreenLayout.ts', () => ({
@@ -281,6 +286,139 @@ describe('ImagePreview', () => {
 
     img.element.dispatchEvent(new Event('dragend'))
     expect(document.querySelector('[data-attach-ghost]')).toBeNull()
+    _resetForTest()
+  })
+
+  // ── Zoom & pan ──
+
+  // `trigger()` cannot set clientX/deltaY (jsdom exposes them as getters), so
+  // these dispatch real events instead.
+  function fireWheel(wrapper: ReturnType<typeof mountPreview>, deltaY: number, clientX = 100, clientY = 100) {
+    wrapper.find('.image-preview-body').element.dispatchEvent(
+      new WheelEvent('wheel', { deltaY, clientX, clientY, bubbles: true, cancelable: true }),
+    )
+    return nextTick()
+  }
+
+  function zoomIn(wrapper: ReturnType<typeof mountPreview>) {
+    return fireWheel(wrapper, -100)
+  }
+
+  function fireMouse(target: EventTarget, type: string, clientX = 0, clientY = 0) {
+    target.dispatchEvent(new MouseEvent(type, { clientX, clientY, bubbles: true, cancelable: true, button: 0 }))
+    return nextTick()
+  }
+
+  function transformOf(wrapper: ReturnType<typeof mountPreview>) {
+    return (wrapper.find('.image-preview-img').element as HTMLElement).style.transform
+  }
+
+  it('zooms in on wheel up and shows the zoom badge', async () => {
+    const wrapper = mountPreview()
+    expect(wrapper.find('.img-zoom-badge').exists()).toBe(false)
+
+    await zoomIn(wrapper)
+
+    expect(transformOf(wrapper)).toContain('scale(1.15)')
+    expect(wrapper.find('.img-zoom-badge').text()).toBe('115%')
+  })
+
+  it('zooms back out to the resting size and drops the badge', async () => {
+    const wrapper = mountPreview()
+    await zoomIn(wrapper)
+
+    await fireWheel(wrapper, 100)
+
+    expect(transformOf(wrapper)).toContain('scale(1)')
+    expect(wrapper.find('.img-zoom-badge').exists()).toBe(false)
+  })
+
+  it('never zooms out below the resting size', async () => {
+    const wrapper = mountPreview()
+    await fireWheel(wrapper, 100, 10, 10)
+
+    expect(transformOf(wrapper)).toContain('scale(1)')
+    expect(wrapper.find('.img-zoom-badge').exists()).toBe(false)
+  })
+
+  it('pans by dragging while zoomed, clamped to the scaled image bounds', async () => {
+    const wrapper = mountPreview()
+    const body = wrapper.find('.image-preview-body').element as HTMLElement
+    const img = wrapper.find('.image-preview-img').element as HTMLElement
+    // jsdom has no layout: give the pane and the image real dimensions so the
+    // clamp has something to work with. At 1.15× a 400×300 image in a 200×200
+    // pane, the pan range is ±130 × ±72.5.
+    Object.defineProperty(body, 'clientWidth', { value: 200, configurable: true })
+    Object.defineProperty(body, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(img, 'offsetWidth', { value: 400, configurable: true })
+    Object.defineProperty(img, 'offsetHeight', { value: 300, configurable: true })
+    // Zoom anchored at the pane centre keeps tx/ty at 0, so the assertions
+    // below measure the drag itself rather than the anchor offset.
+    body.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200, right: 200, bottom: 200, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+    await zoomIn(wrapper)
+
+    await fireMouse(img, 'mousedown', 100, 100)
+    await fireMouse(window, 'mousemove', 140, 120)
+    expect(transformOf(wrapper)).toContain('translate(40px, 20px)')
+
+    // Dragging far past the edge stops at the bound instead of losing the image.
+    await fireMouse(window, 'mousemove', 999, 999)
+    expect(transformOf(wrapper)).toContain('translate(130px, 72.5px)')
+
+    await fireMouse(window, 'mouseup', 999, 999)
+    await fireMouse(window, 'mousemove', 0, 0)
+    expect(transformOf(wrapper)).toContain('translate(130px, 72.5px)')
+  })
+
+  it('does not pan at the resting size', async () => {
+    const wrapper = mountPreview()
+    const img = wrapper.find('.image-preview-img').element as HTMLElement
+    await fireMouse(img, 'mousedown', 100, 100)
+    await fireMouse(window, 'mousemove', 160, 160)
+
+    expect(transformOf(wrapper)).toContain('translate(0px, 0px)')
+  })
+
+  it('resets the zoom on Escape, double click and the badge', async () => {
+    const wrapper = mountPreview()
+    const img = wrapper.find('.image-preview-img').element as HTMLElement
+
+    await zoomIn(wrapper)
+    wrapper.find('.image-preview-container').element.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    )
+    await nextTick()
+    expect(transformOf(wrapper)).toContain('scale(1)')
+
+    await zoomIn(wrapper)
+    await fireMouse(img, 'dblclick')
+    expect(transformOf(wrapper)).toContain('scale(1)')
+
+    await zoomIn(wrapper)
+    await wrapper.find('.img-zoom-badge').trigger('click')
+    expect(transformOf(wrapper)).toContain('scale(1)')
+    expect(wrapper.find('.img-zoom-badge').exists()).toBe(false)
+  })
+
+  it('drops the zoom when navigating to another image', async () => {
+    const wrapper = mountPreview()
+    await zoomIn(wrapper)
+    expect(wrapper.find('.img-zoom-badge').exists()).toBe(true)
+
+    await wrapper.setProps({ file: { path: '/project/src/photo.jpg', name: 'photo.jpg' } })
+
+    expect(transformOf(wrapper)).toContain('scale(1)')
+    expect(wrapper.find('.img-zoom-badge').exists()).toBe(false)
+  })
+
+  it('gives up native drag-to-attach while zoomed so the drag pans instead', async () => {
+    _setWideScreenForTest(true)
+    const wrapper = mountPreview()
+    expect(wrapper.find('.image-preview-img').attributes('draggable')).toBe('true')
+
+    await zoomIn(wrapper)
+
+    expect(wrapper.find('.image-preview-img').attributes('draggable')).toBe('false')
     _resetForTest()
   })
 

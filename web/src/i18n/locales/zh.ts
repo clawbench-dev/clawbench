@@ -2655,6 +2655,7 @@ export default {
       },
       zoomIn: '放大',
       zoomOut: '缩小',
+      resetZoom: '重置缩放',
       fitWidth: '适合宽度',
       openDirectory: '打开目录',
       setAsBackground: '设置为主题背景',
