@@ -123,6 +123,7 @@
           <Folder v-if="group.key === 'folder'" :size="11" />
           <AudioLines v-else-if="group.key === 'audio'" :size="11" />
           <ImageIcon v-else-if="group.key === 'shots'" :size="11" />
+          <Clapperboard v-else-if="group.key === 'recording'" :size="11" />
           <Link2 v-else :size="11" />
           {{ group.title }}
           <span class="res-group__count">{{ group.items.length }}</span>
@@ -219,6 +220,7 @@ import { useI18n } from 'vue-i18n'
 import {
   AudioLines,
   Captions,
+  Clapperboard,
   Copy,
   ExternalLink,
   FileText,

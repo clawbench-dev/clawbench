@@ -396,6 +396,7 @@ func serveLiveShareEnd(w http.ResponseWriter, r *http.Request, projectPath strin
 	// the share" rather than a bare socket close.
 	room.BroadcastToViewers(liveshare.ViewerMessage{Type: liveshare.MsgPublisherGone, Reason: "ended"}, "")
 	liveRegistry.Delete(token)
+	dropLiveNoteRecordingSessions(token)
 	if projectID, err := store.ProjectIDForPath(projectPath); err == nil {
 		finalizeLiveNotes(token, projectID, projectPath)
 	}
@@ -604,6 +605,7 @@ func endPublisherSession(room *liveshare.Room, token string, projectID int64, pr
 	// known. Best effort: losing the archive must not keep the meeting open.
 	finalizeLiveNotes(token, projectID, projectPath)
 	liveRegistry.Delete(token)
+	dropLiveNoteRecordingSessions(token)
 }
 
 // readPublisherFrames applies publisher control frames until the socket dies or

@@ -5568,6 +5568,18 @@ export default {
       reasonSpeech: '讲解重点',
       reasonChange: '画面变化',
     },
+    recording: {
+      start: '录制',
+      stop: '停止录制',
+      startHint: '把当前画面、标注和会议声音录成视频，存进这场会议的记录',
+      stopHint: '停止录制并保存视频',
+      saved: '录制已保存：{name}',
+      unsupported: '这个环境不支持录屏。',
+      noSource: '现在没有可录制的画面。',
+      failed: '录制已停止：视频没能保存。',
+      overflow: '录制已停止：网络太慢，待上传的片段已经占满缓冲。',
+      gap: '录制已停止：上传中断，这段视频无法继续。',
+    },
     join: {
       title: '加入会议',
       nick: '我的称谓',

@@ -348,6 +348,50 @@ describe('LiveMixer', () => {
     expect(mixer.outTrackFor('A')).toBeNull()
   })
 
+  it('recordStream mixes system, mic and every viewer, and stays stable', () => {
+    const ctx = new FakeCtx()
+    const mixer = new LiveMixer(ctx as unknown as AudioContext, stream('sys'), stream('mic'))
+    mixer.addViewer('A')
+    mixer.attachRemote('A', stream('a-voice'))
+
+    const recording = mixer.recordStream()!
+    const dest = destFor(ctx, recording.getAudioTracks()[0].id)
+
+    // A recording is the meeting, not one viewer's mix: it excludes nobody.
+    expect(fedBy(dest, ctx, 'sys')).toBe(true)
+    expect(fedBy(dest, ctx, 'mic')).toBe(true)
+    expect(fedBy(dest, ctx, 'a-voice')).toBe(true)
+
+    // The same stream for the whole recording: a late viewer or a mic swap must
+    // not hand the recorder a new track (MediaRecorder is already attached).
+    expect(mixer.recordStream()).toBe(recording)
+  })
+
+  it('adds a viewer that joins after the recording started', () => {
+    const ctx = new FakeCtx()
+    const mixer = new LiveMixer(ctx as unknown as AudioContext, null, null)
+    const recording = mixer.recordStream()!
+    const dest = destFor(ctx, recording.getAudioTracks()[0].id)
+
+    mixer.addViewer('B')
+    mixer.attachRemote('B', stream('b-voice'))
+
+    expect(fedBy(dest, ctx, 'b-voice')).toBe(true)
+  })
+
+  it('rewires the recording mix after a microphone swap', () => {
+    const ctx = new FakeCtx()
+    const mixer = new LiveMixer(ctx as unknown as AudioContext, null, stream('old-mic'))
+    const recording = mixer.recordStream()!
+    const dest = destFor(ctx, recording.getAudioTracks()[0].id)
+    expect(fedBy(dest, ctx, 'old-mic')).toBe(true)
+
+    mixer.setMicStream(stream('new-mic'))
+
+    expect(fedBy(dest, ctx, 'new-mic')).toBe(true)
+    expect(fedBy(dest, ctx, 'old-mic')).toBe(false)
+  })
+
   it('outTrackFor returns null for an unknown viewer', () => {
     const ctx = new FakeCtx()
     const mixer = new LiveMixer(ctx as unknown as AudioContext, null, null)
