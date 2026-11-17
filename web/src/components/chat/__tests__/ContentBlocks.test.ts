@@ -1161,6 +1161,25 @@ describe('ContentBlocks', () => {
       expect(wrapper.html()).toContain('Summary text')
     })
 
+    // 默认「混合」模式下除最后一条回复外都显示摘要，而摘要正文和原文是同一份
+    // markdown HTML。摘要必须走 RichTextBlock，否则里面的表格停在旧表头、
+    // 没有「简单表 / 数据表」切换（用户 2026-11-17 报告）。
+    it('renders tables in the summary body through the shared DataTable', () => {
+      const tableHtml = '<div class="table-block-wrapper word-wrap">'
+        + '<div class="table-block-header"><span class="table-block-label">Table</span></div>'
+        + '<div class="table-wrap"><table><thead><tr><th>region</th><th>q1</th></tr></thead>'
+        + '<tbody><tr><td>East</td><td>10</td></tr><tr><td>West</td><td>5</td></tr></tbody></table></div></div>'
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'Summary with table',
+        showingSummary: true,
+        renderTextBlock: () => tableHtml,
+      })
+      expect(wrapper.find('.dt').exists()).toBe(true)
+      expect(wrapper.find('.mode-switch').exists()).toBe(true)
+      expect(wrapper.find('.dt-grid tbody tr').exists()).toBe(true)
+    })
+
     it('renders restart warning banner from summaryCards.warnings (summary view)', async () => {
       const wrapper = mountBlocks({
         blocks: [],

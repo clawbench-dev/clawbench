@@ -7,7 +7,12 @@
          branch to render as an empty comment node because Vue 3's patch
          algorithm fails to correctly transition between different Fragment
          structures (summary div vs blocks template v-for). -->
-    <div v-if="!nested" v-show="showingSummary && summary" v-html="renderTextBlock(summary || '', msgId, 0, false)"></div>
+    <div v-if="!nested" v-show="showingSummary && summary">
+      <!-- 摘要正文也要走 RichTextBlock：默认的「混合」模式下除最后一条回复外
+           都显示摘要，而摘要里的 markdown 表格和原文是同一份 HTML。裸 v-html
+           会让这些表格停在旧表头（没有「简单表 / 数据表」切换）。 -->
+      <RichTextBlock :html="renderTextBlock(summary || '', msgId, 0, false)" />
+    </div>
     <!-- Summary mode: render structured cards (tools / tasks / ask-questions)
          directly from summaryCards — NOT by traversing blocks (which may be empty in
          summary-first loading). -->
