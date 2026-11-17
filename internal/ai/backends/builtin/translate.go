@@ -17,7 +17,9 @@ import (
 // channel closes; it only stops early when the turn was cancelled. Waiting
 // forever on a dead consumer would leak the goroutine and the model call, so
 // the event is dropped after this and the loop keeps draining.
-const emitTimeout = 30 * time.Second
+// It is a variable only so a test can shorten it; nothing in production
+// assigns to it.
+var emitTimeout = 30 * time.Second
 
 // translator converts agentcore events into ai.StreamEvent values.
 //

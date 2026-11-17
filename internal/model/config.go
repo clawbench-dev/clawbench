@@ -1014,9 +1014,9 @@ var (
 	// the shell's own install directory — the shell would then be talking to a
 	// server it can no longer stop. Auth is unaffected: the random password on
 	// disk stays the credential, and LAN clients keep logging in with it.
-	ManagedByEmbedder       bool
-	SessionCookie           = "clawbench_session"
-	DefaultAgentID          string // Default agent for new sessions, set from config or first agent
+	ManagedByEmbedder bool
+	SessionCookie     = "clawbench_session"
+	DefaultAgentID    string // Default agent for new sessions, set from config or first agent
 	// TasksEnabled / ShareEnabled mirror the two server-side master switches
 	// (tasks.enabled / share.enabled). They are package globals rather than
 	// direct ConfigInstance reads for the same reason as ChatAutoRenameEnabled:

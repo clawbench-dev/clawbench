@@ -29,13 +29,39 @@ const (
 )
 
 func main() {
-	module, err := readModulePath()
+	names, err := generate(backendsDir)
 	if err != nil {
 		fail(err)
 	}
-	names, err := backendDirs()
+	fmt.Printf("genbackendimports: wrote %s (%d backends)\n", targetFile, len(names))
+}
+
+// generate renders the package source and writes it to targetFile in the
+// current directory (which is internal/ai/backends/all when run via go
+// generate). It returns the import list it wrote, for the log line.
+func generate(backendsDir string) ([]string, error) {
+	src, names, err := render(backendsDir)
 	if err != nil {
-		fail(err)
+		return nil, err
+	}
+	if err := os.WriteFile(targetFile, src, 0o644); err != nil {
+		return nil, err
+	}
+	return names, nil
+}
+
+// render generates the package source for the backends found under backendsDir.
+//
+// It is split out of main so the generator can be tested against a temporary
+// directory tree; main only decides where to write the result.
+func render(backendsDir string) ([]byte, []string, error) {
+	module, err := readModulePath(backendsDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	names, err := collectBackends(backendsDir)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	var b bytes.Buffer
@@ -55,17 +81,14 @@ func main() {
 
 	src, err := format.Source(b.Bytes())
 	if err != nil {
-		fail(fmt.Errorf("gofmt generated source: %w", err))
+		return nil, nil, fmt.Errorf("gofmt generated source: %w", err)
 	}
-	if err := os.WriteFile(targetFile, src, 0o644); err != nil {
-		fail(err)
-	}
-	fmt.Printf("genbackendimports: wrote %s (%d backends)\n", targetFile, len(names))
+	return src, names, nil
 }
 
-// backendDirs returns the sub-directory names of the backends package that
+// collectBackends returns the sub-directory names of the backends package that
 // contain Go source, excluding this generator's own package.
-func backendDirs() ([]string, error) {
+func collectBackends(backendsDir string) ([]string, error) {
 	entries, err := os.ReadDir(backendsDir)
 	if err != nil {
 		return nil, err
@@ -103,9 +126,10 @@ func dirHasGoFile(dir string) (bool, error) {
 	return false, nil
 }
 
-// readModulePath finds the enclosing go.mod and returns its module path.
-func readModulePath() (string, error) {
-	dir, err := os.Getwd()
+// readModulePath finds the enclosing go.mod above startDir and returns its
+// module path.
+func readModulePath(startDir string) (string, error) {
+	dir, err := filepath.Abs(startDir)
 	if err != nil {
 		return "", err
 	}

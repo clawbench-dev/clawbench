@@ -113,9 +113,17 @@ func (b *VeCLIBackend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<
 		// Process exited normally — try to read session-summary for metadata
 		summaryPath, ok := b.summaryMap.LoadAndDelete(summaryKey)
 		if ok {
+			// The map is written by vecliPreStart and read here; a value that is
+			// not a string cannot have come from this code, so it is treated as
+			// "no summary" instead of being handed to os.ReadFile/os.Remove.
+			// Previously the non-string branch fell through with an empty path,
+			// which logged a second, misleading debug line ("file not found") and
+			// called os.Remove("").
 			path, typeOk := summaryPath.(string)
 			if !typeOk {
 				slog.Debug("vecli: summaryPath is not a string", "summaryKey", summaryKey)
+				ai.EmitStreamEvent(outCh, "vecli", ai.StreamEvent{Type: "done"})
+				return
 			}
 			defer func() { _ = os.Remove(path) }()
 

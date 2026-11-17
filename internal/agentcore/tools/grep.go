@@ -127,7 +127,7 @@ func grepTargets(target string, info os.FileInfo, include string) ([]string, err
 		return []string{target}, nil
 	}
 	var files []string
-	walkErr := filepath.WalkDir(target, func(path string, d os.DirEntry, walkErr error) error {
+	walkErr := grepWalkDir(target, func(path string, d os.DirEntry, walkErr error) error {
 		return collectGrepFile(path, d, walkErr, include, &files)
 	})
 	if walkErr != nil {
@@ -135,6 +135,11 @@ func grepTargets(target string, info os.FileInfo, include string) ([]string, err
 	}
 	return files, nil
 }
+
+// grepWalkDir is the directory walk behind grepTargets. It is a variable only so
+// a test can inject a walk failure — the "the tree could not be read" branch has
+// no portable filesystem trigger (root ignores permissions).
+var grepWalkDir = filepath.WalkDir
 
 // collectGrepFile is the WalkDir callback behind grepTargets: it adds path to
 // files when it passes the directory skip list and the include filter.
