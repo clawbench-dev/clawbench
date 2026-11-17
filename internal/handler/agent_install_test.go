@@ -95,7 +95,10 @@ func TestServeBackendInstall_MissingNodeIsActionable(t *testing.T) {
 	prevLook := service.SetAgentInstallLookPathForTest(func(string) (string, error) {
 		return "", errors.New("not found")
 	})
-	defer prevLook()
+	prevNode := service.SetAgentInstallNodeRuntimeForTest(func() (string, error) {
+		return "", errors.New("dial tcp: connection refused")
+	})
+	defer func() { prevLook(); prevNode() }()
 
 	req := newRequest(t, http.MethodPost, "/api/backends/claude/install", nil)
 	withProjectCookie(req, env.ProjectDir)
@@ -103,6 +106,7 @@ func TestServeBackendInstall_MissingNodeIsActionable(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 	var resp struct {
+		Error  string         `json:"error"`
 		MsgKey string         `json:"msgKey"`
 		Detail map[string]any `json:"detail"`
 	}
@@ -111,6 +115,48 @@ func TestServeBackendInstall_MissingNodeIsActionable(t *testing.T) {
 	// install Node.js.
 	assert.Equal(t, "NodeRuntimeMissing", resp.MsgKey)
 	assert.Equal(t, "npm", resp.Detail["Tool"])
+	// The automatic install already ran, so WHY it failed is the actionable
+	// part — without it the user cannot tell a blocked network from a broken
+	// machine. It must also survive templating into the message, not just the
+	// detail map.
+	assert.Contains(t, resp.Detail["Error"], "connection refused")
+	assert.Contains(t, resp.Error, "connection refused")
+	assert.NotContains(t, resp.Error, "<no value>")
+}
+
+// A machine without Node.js installs one and then finishes the job: the endpoint
+// must not stop at "npm was not found".
+func TestServeBackendInstall_InstallsNodeRuntimeThenAgent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	lookups := 0
+	prevLook := service.SetAgentInstallLookPathForTest(func(string) (string, error) {
+		lookups++
+		if lookups == 1 {
+			return "", errors.New("not found")
+		}
+		return "/usr/local/bin/npm", nil
+	})
+	prevNode := service.SetAgentInstallNodeRuntimeForTest(func() (string, error) {
+		return "ClawBench installed Node.js v22.11.0 (private copy: /x)", nil
+	})
+	prevRun := service.SetAgentInstallRunForTest(func(context.Context, string) (string, error) {
+		return "added 1 package", nil
+	})
+	defer func() { prevLook(); prevNode(); prevRun() }()
+
+	req := newRequest(t, http.MethodPost, "/api/backends/claude/install", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeBackendInstall, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Output string `json:"output"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Output, "Node.js v22.11.0")
+	assert.Contains(t, resp.Output, "added 1 package")
 }
 
 func TestServeBackendInstall_CommandFailureShowsOutput(t *testing.T) {

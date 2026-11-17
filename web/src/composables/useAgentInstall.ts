@@ -17,13 +17,15 @@ const TAG = 'AgentInstall'
  */
 
 /**
- * The server's own budget is 10 minutes (service.DefaultAgentInstallTimeout).
- * The client waits slightly longer so a slow-but-successful install is not
- * reported as a failure while the server is still finishing — the request would
- * be abandoned but the install would keep running, which reads as a phantom
+ * The server's own budget is 10 minutes for the install command plus up to 5
+ * minutes for downloading a private Node.js when the machine has none
+ * (service.DefaultAgentInstallTimeout + platform's node install budget). The
+ * client waits slightly longer so a slow-but-successful install is not reported
+ * as a failure while the server is still finishing — the request would be
+ * abandoned but the install would keep running, which reads as a phantom
  * failure and invites a second, conflicting attempt.
  */
-const INSTALL_TIMEOUT_MS = 11 * 60 * 1000
+const INSTALL_TIMEOUT_MS = 16 * 60 * 1000
 
 /** The shape of a successful install response. */
 export interface AgentInstallResponse {

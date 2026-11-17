@@ -22,6 +22,11 @@
              "it says installed but my laptop has nothing" report. -->
         <div class="install-note">{{ t('welcomeInfo.installRunsOnServer') }}</div>
 
+        <!-- A machine with no Node.js at all used to stop here with "npm was
+             not found". Saying up front that the runtime comes along avoids the
+             user aborting a download they did not expect. -->
+        <div class="install-note">{{ t('welcomeInfo.installNodeAuto') }}</div>
+
         <!-- Progress / outcome. Kept in one block so the dialog height does not
              jump between states. -->
         <div v-if="installing" class="install-status install-status--busy">

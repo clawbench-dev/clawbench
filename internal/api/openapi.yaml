@@ -7025,10 +7025,16 @@ paths:
         10 分钟；超时或断开请求都不会中止已开始的安装（避免留下半个 npm 包）。
         同一时刻只允许一个安装（共用全局 npm prefix），并发请求返回 `409`。
 
-        失败分三类，给三种不同的话：缺 `npm`/`npx`（`400 NodeRuntimeMissing`，
-        `detail.Tool` 指出缺哪个）、命令自己失败（`500 AgentInstallFailed`，
-        `detail.Output` 是输出**末尾**一段——失败原因总在最后；命令没有任何输出时
-        用 `AgentInstallFailedNoOutput`）、后端没有内置安装命令
+        命令需要 `npm`/`npx` 而那台机器上没有（或 Node 低于 20）时，**先自动装一份
+        私有 Node.js LTS**（下载 + 校验 + 解压到 `$CLAWBENCH_HOME/node`，国内优先走
+        npmmirror 镜像、失败换官方源；不需要 sudo），再执行安装命令。这一步的结果
+        以一行说明写进 `output` 开头。
+
+        失败分三类，给三种不同的话：Node 自动安装也没成功（`400
+        NodeRuntimeMissing`，`detail.Tool` 指出缺哪个、`detail.Error` 是自动安装失败
+        的原因）、命令自己失败（`500 AgentInstallFailed`，`detail.Output` 是输出
+        **末尾**一段——失败原因总在最后；命令没有任何输出时用
+        `AgentInstallFailedNoOutput`）、后端没有内置安装命令
         （`400 InstallCommandUnavailable`）。
       operationId: backendInstall
       parameters:
@@ -7041,7 +7047,9 @@ paths:
             提示手动重新扫描；`agents`/`defaultAgent` 与 GET /api/agents 同形（按当前
             项目过滤），供调用方直接渲染。
         "400":
-          description: 缺 Node 运行时（`NodeRuntimeMissing`）或该后端无内置安装命令（`InstallCommandUnavailable`）
+          description: |
+            Node 运行时缺失且自动安装失败（`NodeRuntimeMissing`），或该后端无内置
+            安装命令（`InstallCommandUnavailable`）
         "404":
           description: 未注册的后端（`BackendNotFound`）
         "409":

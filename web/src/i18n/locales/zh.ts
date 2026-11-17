@@ -5221,6 +5221,7 @@ export default {
     serverNote: '安装命令在运行 ClawBench 的服务器上执行',
     manualInstallHint: '安装命令：',
     installRunsOnServer: '安装在运行 ClawBench 的机器上；如果服务端在远端服务器或容器里，装的是那台机器，不是当前设备。',
+    installNodeAuto: '如果那台机器上没有 Node.js，会先自动装一份（国内优先走 npmmirror 镜像）。',
     installNow: '开始安装',
     installing: '正在安装…',
     installSuccess: '安装成功，已自动识别该智能体。',

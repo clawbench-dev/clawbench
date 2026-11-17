@@ -26,6 +26,13 @@ func stubInstallLookPath(t *testing.T, fn func(string) (string, error)) {
 	t.Cleanup(func() { agentInstallLookPath = prev })
 }
 
+func stubInstallNodeRuntime(t *testing.T, fn func() (string, error)) {
+	t.Helper()
+	prev := agentInstallNodeRuntime
+	agentInstallNodeRuntime = fn
+	t.Cleanup(func() { agentInstallNodeRuntime = prev })
+}
+
 func TestInstallAgent_EmptyCommand(t *testing.T) {
 	// A backend with no installer must be told apart from a failed install: the
 	// UI shows "install manually" instead of an error banner.
@@ -68,6 +75,9 @@ func TestInstallAgent_CommandFailureCarriesOutput(t *testing.T) {
 // buried in output into an actionable "install Node.js".
 func TestInstallAgent_MissingNpmIsNamedUpFront(t *testing.T) {
 	stubInstallLookPath(t, func(string) (string, error) { return "", errors.New("not found") })
+	// The automatic Node.js install must not reach the network here; it also
+	// fails, which is the case this test is about (nothing could provide npm).
+	stubInstallNodeRuntime(t, func() (string, error) { return "", errors.New("download blocked") })
 	ran := false
 	stubInstallRun(t, func(context.Context, string) (string, error) {
 		ran = true
@@ -83,8 +93,55 @@ func TestInstallAgent_MissingNpmIsNamedUpFront(t *testing.T) {
 	assert.False(t, ran, "the command must not be attempted without its runtime")
 }
 
+// The runtime is installed rather than reported: a machine that has never had
+// Node.js must be able to finish the one-click install.
+func TestInstallAgent_InstallsMissingNodeThenRuns(t *testing.T) {
+	lookups := 0
+	stubInstallLookPath(t, func(string) (string, error) {
+		lookups++
+		if lookups == 1 {
+			return "", errors.New("not found")
+		}
+		return "/home/user/.local/share/clawbench/node/bin/npm", nil
+	})
+	installed := false
+	stubInstallNodeRuntime(t, func() (string, error) {
+		installed = true
+		return "ClawBench installed Node.js v22.11.0 (private copy: /x)", nil
+	})
+	stubInstallRun(t, func(context.Context, string) (string, error) {
+		return "added 1 package in 3s", nil
+	})
+
+	res, err := InstallAgent("claude", "npm install -g @anthropic-ai/claude-code")
+	require.NoError(t, err)
+	assert.True(t, installed, "a missing runtime must be installed, not just reported")
+	assert.Contains(t, res.Output, "Node.js v22.11.0")
+	assert.Contains(t, res.Output, "added 1 package in 3s")
+}
+
+// A runtime that installs but still does not resolve is its own failure: the
+// install command would otherwise fail with the same "command not found".
+func TestInstallAgent_NodeInstalledButStillMissingIsReported(t *testing.T) {
+	stubInstallLookPath(t, func(string) (string, error) { return "", errors.New("not found") })
+	stubInstallNodeRuntime(t, func() (string, error) { return "", nil })
+	ran := false
+	stubInstallRun(t, func(context.Context, string) (string, error) {
+		ran = true
+		return "", nil
+	})
+
+	_, err := InstallAgent("claude", "npm install -g @anthropic-ai/claude-code")
+	require.Error(t, err)
+	var nodeErr *AgentInstallNodeMissingError
+	require.ErrorAs(t, err, &nodeErr)
+	assert.Contains(t, nodeErr.Error(), "still not on PATH")
+	assert.False(t, ran)
+}
+
 func TestInstallAgent_MissingNpxIsNamedUpFront(t *testing.T) {
 	stubInstallLookPath(t, func(string) (string, error) { return "", errors.New("not found") })
+	stubInstallNodeRuntime(t, func() (string, error) { return "", errors.New("download blocked") })
 
 	_, err := InstallAgent("zcode", "npx -y zcode-acp-server")
 	var nodeErr *AgentInstallNodeMissingError

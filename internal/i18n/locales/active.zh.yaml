@@ -194,7 +194,7 @@ CLINotFound: 未找到CLI工具，请先安装
 # 没有可执行命令、缺 Node 运行时、命令自己失败（后者必须带上输出尾巴）。
 BackendNotFound: 未找到该智能体后端
 InstallCommandUnavailable: 该智能体没有内置的安装命令，请按官方文档手动安装
-NodeRuntimeMissing: 未检测到 {{.Tool}}，请先安装 Node.js（包含 npm/npx）后重试。也可以跑一键安装脚本：https://clawbench.pages.dev/install.sh
+NodeRuntimeMissing: 未检测到 {{.Tool}}，自动安装 Node.js 也失败了：{{.Error}}。请检查服务器网络后重试；也可以手动安装 Node.js 20 及以上，或跑一键安装脚本：https://clawbench.pages.dev/install.sh
 AgentInstallBusy: 已有一个安装任务正在运行，请等它结束再试
 AgentInstallFailed: 安装失败：{{.Output}}
 AgentInstallFailedNoOutput: 安装失败，命令没有输出任何信息（退出码非 0）

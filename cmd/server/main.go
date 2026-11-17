@@ -980,6 +980,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	summarize.MaxSummarizeRunes = cfg.TTS.MaxSummarizeRunes
 	summarize.AutoJunkRatio = cfg.Summarize.AutoJunkRatio
 
+	// ClawBench 自己那份 Node.js（一键安装脚本装的、或点「安装智能体」时自动
+	// 装的）放在固定目录里，不走 shell 启动文件。下面那步只把 shell 里的目录
+	// 追加在后面，这里放到最前面：装好的智能体 CLI 是按这份 Node 解析的，
+	// 让更旧的系统 Node 抢先会在启动时报语法错误。目录不存在时什么也不做。
+	// 必须在 InheritUserPath 之前：那个函数按「当前 PATH 里有没有」去重。
+	platform.PrependManagedNodePath()
+
 	// 把用户 shell 的 PATH 目录补到本进程 PATH 后面。
 	//
 	// 服务端经常不是从终端启动的（桌面图标、systemd、容器外的守护进程），

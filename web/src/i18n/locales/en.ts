@@ -5227,6 +5227,7 @@ export default {
     serverNote: 'Install commands run on the ClawBench server',
     manualInstallHint: 'Install command:',
     installRunsOnServer: 'Installs on the machine running ClawBench. If the server is remote or in a container, that is where it lands — not this device.',
+    installNodeAuto: 'If that machine has no Node.js, one is installed first (via the npmmirror mirror in mainland China).',
     installNow: 'Install now',
     installing: 'Installing…',
     installSuccess: 'Installed — the agent has been detected automatically.',

@@ -182,6 +182,12 @@ func LoginShellPathDirs() []string {
 	return out
 }
 
+// pathMu serializes read-modify-write cycles on this process's PATH.
+// InheritUserPath runs in the background at startup while an agent install may
+// be prepending the private Node.js at the same moment; without the lock one of
+// the two updates is silently dropped.
+var pathMu sync.Mutex
+
 // InheritUserPath appends the directories only the user's shell knows about to
 // this process's PATH. Existing entries keep their position, so nothing that
 // resolved before starts resolving somewhere else.
@@ -194,6 +200,9 @@ func InheritUserPath() {
 	if len(extra) == 0 {
 		return
 	}
+
+	pathMu.Lock()
+	defer pathMu.Unlock()
 
 	current := os.Getenv("PATH")
 	sep := string(os.PathListSeparator)

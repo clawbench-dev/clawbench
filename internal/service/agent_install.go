@@ -51,16 +51,27 @@ var (
 )
 
 // AgentInstallNodeMissingError reports that the command needs npm/npx and it is
-// not on PATH. Named so the handler can turn it into actionable text (install
-// Node.js) instead of echoing "exec: npm: executable file not found".
+// not on PATH, even after ClawBench tried to install a private Node.js. Named so
+// the handler can turn it into actionable text instead of echoing
+// "exec: npm: executable file not found".
 type AgentInstallNodeMissingError struct {
 	// Tool is the missing executable, e.g. "npm" or "npx".
 	Tool string
+	// Cause is why the automatic Node.js install did not produce it: the
+	// download failed, the unpacked binary does not run, or it still is not on
+	// PATH. Shown to the user — "npm is missing" alone leaves them guessing
+	// whether the network or their machine is at fault.
+	Cause error
 }
 
 func (e *AgentInstallNodeMissingError) Error() string {
-	return fmt.Sprintf("%s was not found on PATH", e.Tool)
+	if e.Cause == nil {
+		return fmt.Sprintf("%s was not found on PATH", e.Tool)
+	}
+	return fmt.Sprintf("%s was not found on PATH: %v", e.Tool, e.Cause)
 }
+
+func (e *AgentInstallNodeMissingError) Unwrap() error { return e.Cause }
 
 // AgentInstallCommandError wraps a command that ran and failed (non-zero exit,
 // timeout, or failure to start) together with its output tail, which is the
@@ -100,6 +111,10 @@ var (
 	agentInstallLookPath = exec.LookPath
 	agentInstallRun      = runAgentInstallCommand
 
+	// agentInstallNodeRuntime installs a private Node.js when the machine has
+	// none. A variable so tests do not download 30MB from a real mirror.
+	agentInstallNodeRuntime = platform.EnsureNodeRuntime
+
 	// agentInstallTimeout is a variable so a test can shorten it.
 	agentInstallTimeout = DefaultAgentInstallTimeout
 )
@@ -118,6 +133,14 @@ func SetAgentInstallLookPathForTest(fn func(string) (string, error)) func() {
 	prev := agentInstallLookPath
 	agentInstallLookPath = fn
 	return func() { agentInstallLookPath = prev }
+}
+
+// SetAgentInstallNodeRuntimeForTest replaces the Node.js installer and returns a
+// restore function. Production code must not call this.
+func SetAgentInstallNodeRuntimeForTest(fn func() (string, error)) func() {
+	prev := agentInstallNodeRuntime
+	agentInstallNodeRuntime = fn
+	return func() { agentInstallNodeRuntime = prev }
 }
 
 // InstallAgent runs one backend's install command and returns its output tail.
@@ -145,12 +168,29 @@ func InstallAgent(backendID, command string) (*AgentInstallResult, error) {
 		agentInstallMu.Unlock()
 	}()
 
-	// npm/npx are the one dependency worth naming up front. Without this the
-	// user gets "npm: command not found" buried in a wall of shell output and no
-	// hint that the fix is installing Node.js.
+	// npm/npx are the one dependency worth handling up front. Without this the
+	// user gets "npm: command not found" buried in a wall of shell output, and a
+	// machine that has never had Node.js — a fresh container, a Windows desktop,
+	// a phone-only user's server — cannot recover from that message by itself.
+	// So a missing runtime is installed rather than reported.
+	var runtimeNote string
 	if tool := nodeToolForCommand(command); tool != "" {
 		if _, err := agentInstallLookPath(tool); err != nil {
-			return nil, &AgentInstallNodeMissingError{Tool: tool}
+			note, installErr := agentInstallNodeRuntime()
+			if installErr != nil {
+				return nil, &AgentInstallNodeMissingError{Tool: tool, Cause: installErr}
+			}
+			runtimeNote = note
+			// The installer only reports success after putting the private
+			// Node.js on PATH, so this can only fail if that PATH edit did not
+			// take effect — worth naming instead of letting the command fail
+			// with "command not found" again.
+			if _, err := agentInstallLookPath(tool); err != nil {
+				return nil, &AgentInstallNodeMissingError{
+					Tool:  tool,
+					Cause: fmt.Errorf("installed Node.js but %s is still not on PATH", tool),
+				}
+			}
 		}
 	}
 
@@ -177,9 +217,23 @@ func InstallAgent(backendID, command string) (*AgentInstallResult, error) {
 	return &AgentInstallResult{
 		Backend:    backendID,
 		Command:    command,
-		Output:     output,
+		Output:     joinInstallOutput(runtimeNote, output),
 		DurationMs: elapsed.Milliseconds(),
 	}, nil
+}
+
+// joinInstallOutput puts the runtime note above the installer's own output, so
+// the user can see that Node.js came along with the agent.
+func joinInstallOutput(note, output string) string {
+	output = strings.TrimSpace(output)
+	switch {
+	case note == "":
+		return output
+	case output == "":
+		return note
+	default:
+		return note + "\n" + output
+	}
 }
 
 // nodeToolForCommand reports the Node.js tool a command needs, or "".
