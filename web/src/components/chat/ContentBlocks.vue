@@ -1994,14 +1994,17 @@ const toolGroups = computed(() => {
     isThinking: isFoldableThinking,
     describe: (block) => ({
       name: toolDisplayName(block.name, block.input, block.display_name),
-      summary: props.toolCallSummary(block),
+      // cardSummary, not toolCallSummary: a folded TaskOutput/TaskStop row must
+      // describe the background task exactly like the unfolded pill does,
+      // otherwise folding (on by default) brings the bare id back (issue #682).
+      summary: cardSummary(block),
       category: getToolIcon(block.name).category,
       toolName: block.name || '',
     }),
     // The settled row's "last step" line. Resolved here, once per rebuild,
     // instead of in the row on every streamed frame.
     displayName: (block) => toolDisplayName(block.name, block.input, block.display_name),
-    summarize: (block) => props.toolCallSummary(block),
+    summarize: (block) => cardSummary(block),
   })
 })
 

@@ -24,6 +24,8 @@ function launchBlock(taskId: string) {
     id: `call_bash_${taskId}`,
     input: { description: '跑全量测试落盘并取汇总行', command: 'go test ./... 2>&1 | tee /tmp/t.log', run_in_background: true },
     output: `Status: Running in background with task_id: ${taskId}\nReason: Launched directly in background.`,
+    // The launcher's own pill shows this; the label must not leak back onto it.
+    summary: '跑全量测试落盘并取汇总行',
     done: true,
   }
 }
@@ -32,11 +34,22 @@ function lookupBlock(taskId: string) {
   return { type: 'tool_use', name: 'TaskOutput', id: `call_out_${taskId}`, input: { task_id: taskId, block: true }, summary: taskId, done: true }
 }
 
+/**
+ * RollingText stub that still shows its text: the folded run row renders both
+ * its name and its summary through it, so a bare <span /> would make the row
+ * look empty.
+ */
+const RollingTextStub = { props: ['text'], template: '<span>{{ text }}</span>' }
+
 function mountWithBlocks(blocks: Record<string, unknown>[], extraProps: Record<string, unknown> = {}) {
   return mount(ContentBlocks, {
     props: {
       blocks,
       msgId: 'msg-bg-1',
+      // Folding is ON by default and collapses a run of tool calls into one row,
+      // which hides the per-card strip these cases assert on. The folded row has
+      // its own case below.
+      disableToolGroups: true,
       ...extraProps,
       renderTextBlock: (text: string) => `<p>${text}</p>`,
       formatToolInput: () => '',
@@ -59,9 +72,7 @@ function mountWithBlocks(blocks: Record<string, unknown>[], extraProps: Record<s
         TaskChatCard: LucideStub,
         Users: LucideStub,
         CircleSlash: LucideStub,
-        // Tool-call folding is ON by default and would collapse both cards into
-        // one row; this guard is about a card's own strip.
-        RollingText: LucideStub,
+        RollingText: RollingTextStub,
       },
     },
   })
@@ -71,13 +82,11 @@ describe('TaskOutput card strip — background task label (issue #682)', () => {
   it('shows the launcher description, with the id kept as secondary info', () => {
     const wrapper = mountWithBlocks([launchBlock('Ooj0bz'), lookupBlock('Ooj0bz')])
     // The plain tool pill carries no data-tool-name; find it by its title.
-    const lookupCard = wrapper.findAll('.chat-tool-call').find((c) => c.find('.tool-name').text() === 'View background task output')
-    expect(lookupCard).toBeTruthy()
-    expect(lookupCard!.find('.tool-summary').text()).toBe('跑全量测试落盘并取汇总行 · Ooj0bz')
-    // The launcher card is not relabelled: its summary is whatever the generic
-    // summarizer derived (its own description), not the "<desc> · <id>" form.
-    const launcherCard = wrapper.findAll('.chat-tool-call').find((c) => c.find('.tool-name').text() === 'Bash')
-    expect(launcherCard!.find('.tool-summary').exists()).toBe(false)
+    // Launcher keeps its own description; only the lookup gains the pair.
+    expect(wrapper.findAll('.tool-summary').map((el) => el.text())).toEqual([
+      '跑全量测试落盘并取汇总行',
+      '跑全量测试落盘并取汇总行 · Ooj0bz',
+    ])
     wrapper.unmount()
   })
 
@@ -106,6 +115,18 @@ describe('TaskOutput card strip — background task label (issue #682)', () => {
   it('keeps the bare id when the launcher is not in the message', () => {
     const wrapper = mountWithBlocks([lookupBlock('KYAfrK')])
     expect(wrapper.findAll('.tool-summary').map((s) => s.text())).toEqual(['KYAfrK'])
+    wrapper.unmount()
+  })
+
+  it('shows the same label on the FOLDED run row', () => {
+    // Folding is on by default, so this is what the user actually sees for a
+    // run of tool calls: one row whose summary is the LAST step's. If that path
+    // kept the generic summarizer, the bare id would come back for most users.
+    const wrapper = mountWithBlocks([launchBlock('Ooj0bz'), lookupBlock('Ooj0bz')], { disableToolGroups: false })
+    const row = wrapper.find('.chat-tool-group-strip')
+    expect(row.exists()).toBe(true)
+    // The row reads "<last step's name> · <its summary>" (buildToolCallGroups).
+    expect(row.find('.tool-summary').text()).toContain('跑全量测试落盘并取汇总行 · Ooj0bz')
     wrapper.unmount()
   })
 })
