@@ -250,6 +250,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、M
   - **可分发二进制**：`go build` / 交叉编译前必须同步 embed（`cp -r .clawbench-web internal/frontend/dist`），否则二进制内没有前端。
 - **覆盖率门槛**：每 PR / 推送到 main 强制执行——包级覆盖率不低于基线、变更行覆盖率 ≥ 80%。
 - **推送前必须运行本地检查**：`./scripts/pre-push-checks.sh`
+- **绝不用 squash 方式合并 PR**：合入远端 `main` 一律用 **merge commit**（`gh pr merge --merge`），保留分支上的每个提交与它的信息。squash 会把整条分支压成一个提交，丢掉每步「为什么这么改」的历史，出问题时没法二分、也没法单独回滚其中一条。同理不用 rebase merge（会重写每个提交的哈希，其他人的本地分支全部失效）。仓库若开了 Auto-merge，也要确认它用的方法不是 SQUASH（`gh pr view <n> --json autoMergeRequest` 可查）。
 - **跑全量测试前先评估成本，且不得与并发 agent 争抢**：主工作区可能同时有多个 agent 在改同一棵树，全量测试是**共享的稀缺资源**——实测全量 vitest 约 14 分钟、`go test ./internal/service` 约 128 秒、前端构建 1.5–4 分钟；并发时彼此争抢 CPU/内存，会把对方拖到超时（同一命令并发下撞 600s 超时，单独跑仅 128s）并产生假失败。
   - **先评估要不要跑全量**：能用隔离测试回答的问题（`npx vitest run <file>`、`go test ./internal/<pkg>/ -run <TestName>`）就不要跑全量。判「是否我引入的回归」一律先隔离单跑。
   - **跑之前先检查他人是否已在跑**：`ps -eo pid,ppid,etime,cmd | grep -E "vitest|go test|npm run build" | grep -v grep`。有则 `sleep` 等待其结束后再跑，不要并发起跑。
