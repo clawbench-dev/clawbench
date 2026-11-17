@@ -138,7 +138,7 @@ describe('WelcomeOverlay — backend detection loading indicator', () => {
 
   it('shows a section-level spinner while agent detection is in flight', async () => {
     const { resolveAgents } = mockFetchWithPendingAgents()
-    const wrapper = mount(WelcomeOverlay)
+    const wrapper = mount(WelcomeOverlay, { global: { stubs: { teleport: true } } })
     await nextTick()
     wrapper.vm.forceShow()
     await nextTick()
@@ -156,7 +156,7 @@ describe('WelcomeOverlay — backend detection loading indicator', () => {
 
   it('replaces the spinner with the backend list once detection resolves', async () => {
     const { resolveAgents } = mockFetchWithPendingAgents()
-    const wrapper = mount(WelcomeOverlay)
+    const wrapper = mount(WelcomeOverlay, { global: { stubs: { teleport: true } } })
     await nextTick()
     wrapper.vm.forceShow()
     await nextTick()
@@ -183,7 +183,7 @@ describe('WelcomeOverlay — backend detection loading indicator', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const wrapper = mount(WelcomeOverlay)
+    const wrapper = mount(WelcomeOverlay, { global: { stubs: { teleport: true } } })
     await nextTick()
     wrapper.vm.forceShow()
     await flushPromises()
@@ -217,7 +217,7 @@ describe('WelcomeOverlay — grid, filters and install entry points', () => {
 
   async function mountLoaded(agents: Array<{ id: string; backend: string }> = []) {
     mockFetchResolved(agents)
-    const wrapper = mount(WelcomeOverlay)
+    const wrapper = mount(WelcomeOverlay, { global: { stubs: { teleport: true } } })
     await nextTick()
     wrapper.vm.forceShow()
     await flushPromises()
@@ -312,7 +312,7 @@ describe('WelcomeOverlay — two-step wizard', () => {
       return { ok: true, json: async () => ({}) }
     })
     vi.stubGlobal('fetch', fetchMock)
-    const wrapper = mount(WelcomeOverlay)
+    const wrapper = mount(WelcomeOverlay, { global: { stubs: { teleport: true } } })
     await nextTick()
     wrapper.vm.forceShow()
     await flushPromises()

@@ -1,4 +1,9 @@
 <template>
+  <!-- Teleported to <body>, like every other overlay shell. It has to sit
+       outside `.app-container`: that container is position:fixed, which is a
+       stacking context, so any z-index set here would lose to the teleported
+       app header no matter how high it goes. -->
+  <Teleport to="body">
   <Transition name="welcome-fade">
     <div v-if="visible" class="welcome-overlay" @click.self="close">
       <div class="welcome-panel">
@@ -229,6 +234,7 @@
       </div>
     </div>
   </Transition>
+  </Teleport>
 
   <!-- iOS install instructions sheet -->
   <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
@@ -655,7 +661,11 @@ defineExpose({ show, forceShow, visible })
 .welcome-overlay {
   position: fixed;
   inset: 0;
-  z-index: var(--z-overlay);
+  /* Above the app header, not under it: the first run is a takeover of the
+     whole window, and a live header strip showing through reads as the panel
+     being stuck underneath the title bar. Still below anything opened FROM
+     the panel (AgentInstallDialog uses --z-modal). */
+  z-index: calc(var(--z-header) + 1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1445,10 +1455,10 @@ defineExpose({ show, forceShow, visible })
 
 @media (max-width: 620px) {
   .welcome-overlay {
-    /* The app header sits above the overlay (--z-header > --z-overlay). A
-       full-bleed panel would slide under it and hide the title, so start below
-       the header instead of covering it. */
-    padding: calc(var(--header-height) + var(--header-safe-area-top)) 0 0;
+    /* Full-bleed: the overlay now paints above the header, so the panel can
+       start at the very top. Only the device's safe area is left clear — a
+       notch is not something the panel should draw under. */
+    padding: var(--header-safe-area-top) 0 0;
   }
 
   .welcome-panel {
