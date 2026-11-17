@@ -17,7 +17,15 @@ import { join } from 'node:path'
  * sliding indicator from the buttons it highlights.
  */
 
-const appVue = readFileSync(join(__dirname, '..', '..', 'App.vue'), 'utf8')
+// The dock is split across two files since the plugin architecture landed: the
+// glyph and button rules live in assets/dock.css (shared by every tab), while
+// the rail's own geometry and the active indicator are still scoped in App.vue.
+// Reading only one of them reads half the contract — that is what made these
+// assertions fail with "the rule must exist" for rules that do exist.
+const appVue = [
+  readFileSync(join(__dirname, '..', '..', 'assets', 'dock.css'), 'utf8'),
+  readFileSync(join(__dirname, '..', '..', 'App.vue'), 'utf8'),
+].join('\n')
 
 function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '')
