@@ -103,6 +103,12 @@ func dialFirstServer(ctx context.Context, network string, servers []string, dial
 // nothing.
 func readNameservers(path string) []string {
 	parsed := parseNameserverAddrs(path)
+	if len(parsed) == 0 {
+		// No file (or nothing usable in it) means "no servers", not "an empty
+		// non-nil slice": the caller distinguishes the two, and a preallocated
+		// empty slice would report a readable-but-empty file for a missing one.
+		return nil
+	}
 	servers := make([]string, 0, len(parsed))
 	for _, addr := range parsed {
 		servers = append(servers, net.JoinHostPort(addr.String(), "53"))
