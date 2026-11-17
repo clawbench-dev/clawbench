@@ -809,6 +809,18 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		model.DataDir = filepath.Join(homeDir, ".clawbench")
 	}
 
+	// Give the resolver Termux's DNS configuration when Go cannot read the
+	// system one (see android_resolver.go, issue #679). Before anything that
+	// may resolve a name — config loading below already reaches the network.
+	// A failure only means outbound DNS stays broken, so it must not stop the
+	// server: local data and LAN access still work.
+	if err := setupAndroidResolver(); err != nil {
+		// Written straight to stderr: the logging handler is configured much
+		// later in startup, and this line is the only hint a Termux user gets
+		// about why outbound requests still fail.
+		fmt.Fprintf(os.Stderr, "Warning: Android DNS setup failed: %v\n", err)
+	}
+
 	// --gen-cert: write a self-signed certificate covering this machine's
 	// addresses and exit. Dispatched after the data directory is resolved
 	// because the default cert directory lives inside it.
