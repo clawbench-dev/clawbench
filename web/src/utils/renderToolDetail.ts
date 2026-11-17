@@ -612,6 +612,15 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
   const liveAttr = live ? ' data-elicitation-live="1"' : ''
   const readOnly = answered
   const readOnlyAttr = readOnly ? ' data-readonly="1"' : ''
+  // The note box has to have somewhere to go: on an elicitation it becomes the
+  // single question's "other" value (`customKey`) or the answer of a free-text
+  // question. On a multi-question form, or a single multiple-choice question
+  // without an "other" field, the agent would reject it — so it is not offered
+  // (see askViewReady and submitElicitation for the same rule).
+  const onlyQuestion = questions.length === 1 ? questions[0] : null
+  const noteDeliverable = !!onlyQuestion
+    && (!!str(onlyQuestion.customKey) || !Array.isArray(onlyQuestion.options) || onlyQuestion.options.length === 0)
+  const showSupplementaryNote = !(live && !noteDeliverable)
 
   // `tabindex="-1"` makes the card programmatically focusable (not tab-reachable,
   // so it does not add a stop to keyboard navigation). This is what lets the
@@ -683,16 +692,20 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
   // A read-only elicitation card (already answered) shows the questions as a
   // record: no note field and no buttons, since the pending request is gone.
   if (!readOnly) {
-    html += '<div class="ask-question-supplementary">'
-    html += `<label class="ask-supplementary-label">${escapeHtml(gt('tool.askUser.supplementary'))}</label>`
-    // A textarea (not an input) so the note can run to several lines — a long
-    // answer is unreadable in a single-line field. `rows="1"` + the auto-grow in
-    // fitAskSupplementaryInput give the one-line look until the text wraps;
-    // Enter inserts a newline (submission stays on the button), which is the
-    // expectation a multiline box sets up. The class name is kept because every
-    // read/write site (value, disabled) treats both elements identically.
-    html += `<textarea class="ask-supplementary-input" rows="1" placeholder="${escapeHtml(gt('tool.askUser.supplementaryPlaceholder'))}"></textarea>`
-    html += '</div>'
+    // Only offered when the note can actually be delivered (see
+    // showSupplementaryNote above).
+    if (showSupplementaryNote) {
+      html += '<div class="ask-question-supplementary">'
+      html += `<label class="ask-supplementary-label">${escapeHtml(gt('tool.askUser.supplementary'))}</label>`
+      // A textarea (not an input) so the note can run to several lines — a long
+      // answer is unreadable in a single-line field. `rows="1"` + the auto-grow in
+      // fitAskSupplementaryInput give the one-line look until the text wraps;
+      // Enter inserts a newline (submission stays on the button), which is the
+      // expectation a multiline box sets up. The class name is kept because every
+      // read/write site (value, disabled) treats both elements identically.
+      html += `<textarea class="ask-supplementary-input" rows="1" placeholder="${escapeHtml(gt('tool.askUser.supplementaryPlaceholder'))}"></textarea>`
+      html += '</div>'
+    }
 
     html += '<div class="ask-question-actions">'
     // The chord hint sits in the empty space to the LEFT of the buttons (the row
@@ -2470,6 +2483,14 @@ export function revertAskSubmission(key: string): void {
  * A card with no questions (a malformed/empty card renders no actions row at
  * all) counts as answered, matching the historical button state; `submitAskView`
  * still refuses to send when there is no answer and no note.
+ *
+ * The note is only a substitute answer when it has somewhere to go. A native
+ * card sends it as a chat message, so anything works; an ACP elicitation can
+ * carry it only as the question's "other" property (`customKey`) or as the
+ * answer of a free-text question. Sending it as the value of a multiple-choice
+ * field is rejected by the agent ("Invalid option for form field: …"), and on a
+ * multi-question form it is dropped, so the form goes out half-filled and the
+ * agent asks the same questions again.
  */
 function askViewReady(view: Element): boolean {
   const items = view.querySelectorAll('.ask-question-item')
@@ -2482,7 +2503,12 @@ function askViewReady(view: Element): boolean {
   }
   if (allAnswered) return true
   const supplementaryInput = askSupplementaryField(view)
-  return !!supplementaryInput?.value?.trim()
+  if (!supplementaryInput?.value?.trim()) return false
+  const elicitationId = (view as HTMLElement).dataset?.elicitationId || ''
+  if (!elicitationId) return true
+  if (items.length !== 1) return false
+  const el = items[0] as HTMLElement
+  return !!el.dataset.customKey || el.querySelectorAll('.ask-question-option').length === 0
 }
 
 export function updateAskSubmitState(view: Element) {
@@ -2718,7 +2744,15 @@ function submitElicitation(
     // A free-text question (a schema property with no options) has no companion
     // field — the note IS its answer. Without this the card would show an
     // enabled Submit that silently sends nothing.
-    else if (fieldKey && content[fieldKey] === undefined) content[fieldKey] = note
+    //
+    // A multiple-choice question is the opposite case: the note is NOT one of
+    // its options, and the agent rejects it outright ("Invalid option for form
+    // field: …"). Never let it stand in for a choice the user did not make —
+    // `askViewReady` already keeps Submit locked, this is the wire-payload
+    // guard for the same rule.
+    else if (fieldKey && content[fieldKey] === undefined && !el.querySelector('.ask-question-option')) {
+      content[fieldKey] = note
+    }
   }
 
   if (Object.keys(content).length === 0) return false

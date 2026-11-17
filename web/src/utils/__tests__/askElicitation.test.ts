@@ -130,6 +130,89 @@ describe('elicitation ask card', () => {
     expect(body.content).toEqual({ name: '泷泽' })
   })
 
+  it('drops the shared note on a multi-question form and refuses a partial submit', () => {
+    // The agent wants one value per schema property, so the note has no property
+    // to live in. It used to be rendered anyway: typing in it unlocked Submit
+    // with the other questions unanswered, the form went out half-filled, and
+    // the agent reported the missing answers as "Unanswered" and asked the same
+    // questions again — an endless loop on multi-question cards.
+    const twoQuestions = {
+      elicitationId: 'elic_5_5',
+      questions: [
+        { key: 'q0', header: '部署方式', customKey: 'q0_custom', options: [{ label: 'Docker', value: 'docker' }] },
+        { key: 'q1', header: '要日志吗', customKey: 'q1_custom', options: [{ label: '要', value: 'yes' }, { label: '不要', value: 'no' }] },
+      ],
+    }
+    const { view, emit } = mount(twoQuestions)
+
+    expect(view.querySelector('.ask-supplementary-input')).toBeNull()
+
+    const items = [...view.querySelectorAll('.ask-question-item')] as HTMLElement[]
+    const submit = view.querySelector('.ask-question-submit') as HTMLButtonElement
+
+    click(items[0].querySelector('.ask-question-option') as HTMLElement, emit)
+    // One of two answered: Submit must stay locked, or the form goes out with
+    // q1 missing and the agent asks everything again.
+    expect(submit.disabled).toBe(true)
+
+    click(items[1].querySelector('.ask-question-option') as HTMLElement, emit)
+    expect(submit.disabled).toBe(false)
+
+    click(submit, emit)
+    const body = JSON.parse(elicitationCall()[1].body)
+    expect(body.content).toEqual({ q0: 'docker', q1: 'yes' })
+  })
+
+  it('keeps the note on a multi-question card once the request is gone (chat-message exit)', () => {
+    // The chat-message path appends the note to the message, so it is delivered
+    // there — only the live RPC form has nowhere to put it.
+    const { view } = mount({
+      elicitationId: 'elic_6_6',
+      questions: [
+        { key: 'q0', options: [{ label: 'A', value: 'a' }] },
+        { key: 'q1', options: [{ label: 'B', value: 'b' }] },
+      ],
+    }, { done: true, status: 'error' })
+
+    expect(view.querySelector('.ask-supplementary-input')).not.toBeNull()
+    expect(view.querySelector('.ask-question-submit')).not.toBeNull()
+  })
+
+  it('refuses to send a note as the answer of a multiple-choice field', () => {
+    // OpenCode (and MCP servers) validate the answer against the field's
+    // options: "Invalid option for form field: choice". A note typed on such a
+    // card used to unlock Submit and go out as the value, so every attempt was
+    // rejected with a 400 and the same form came back.
+    const { view, emit } = mount({
+      elicitationId: 'elic_7_7',
+      questions: [
+        {
+          key: 'choice',
+          question: 'Allow OpenCode to search the web?',
+          options: [
+            { label: 'Allow search via Exa', value: 'allow' },
+            { label: 'Disable web search', value: 'disable' },
+          ],
+        },
+      ],
+    })
+    // Nowhere to put free text: the box is not offered at all.
+    expect(view.querySelector('.ask-supplementary-input')).toBeNull()
+
+    const submit = view.querySelector('.ask-question-submit') as HTMLButtonElement
+    expect(submit.disabled).toBe(true)
+    click(submit, emit)
+    expect(emit).not.toHaveBeenCalled()
+    expect((fetch as any).mock.calls.some((c: any[]) => c[0] === '/api/ai/elicitation/respond')).toBe(false)
+
+    // Picking one of the offered values still works.
+    const option = view.querySelector('.ask-question-option') as HTMLElement
+    click(option, emit)
+    expect(submit.disabled).toBe(false)
+    click(submit, emit)
+    expect(JSON.parse(elicitationCall()[1].body).content).toEqual({ choice: 'allow' })
+  })
+
   it('keeps every selection of a multi-select question as an array', () => {
     const { view, emit } = mount({
       elicitationId: 'elic_2_2',
@@ -156,9 +239,10 @@ describe('elicitation ask card', () => {
     expect(body.content).toEqual({ q0: ['logs', 'metrics'] })
   })
 
-  it('ignores the shared note when several questions could claim it', () => {
+  it('has no shared note box when several questions could claim it', () => {
     // One box cannot be attributed to one of N questions; guessing would send
-    // the user's sentence to the wrong property.
+    // the user's sentence to the wrong property, so the box is not offered at
+    // all (see the partial-submit test above).
     const { view, emit } = mount({
       elicitationId: 'elic_3_3',
       questions: [
@@ -166,13 +250,13 @@ describe('elicitation ask card', () => {
         { key: 'q1', question: 'B?', customKey: 'q1_custom', options: [{ label: 'b', value: 'b' }] },
       ],
     })
+    expect(view.querySelector('.ask-supplementary-input')).toBeNull()
+
     const items = [...view.querySelectorAll('.ask-question-item')] as HTMLElement[]
-    const note = view.querySelector('.ask-supplementary-input') as HTMLTextAreaElement
     const submit = view.querySelector('.ask-question-submit') as HTMLElement
 
     click(items[0].querySelector('.ask-question-option') as HTMLElement, emit)
     click(items[1].querySelector('.ask-question-option') as HTMLElement, emit)
-    note.value = '补充一句'
     click(submit, emit)
 
     const body = JSON.parse(elicitationCall()[1].body)
