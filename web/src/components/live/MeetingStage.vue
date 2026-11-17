@@ -456,6 +456,25 @@
       >
         <PenLine :size="14" />{{ t('liveShare.annotate') }}
       </button>
+      <!-- Screen recording: a whole-meeting tool like 标注画面, and the only
+           way to keep a video of what the audience saw. Hidden without a
+           picture — there is nothing to record, and the same rule as key
+           frames keeps the two consistent. The button IS the indicator: a
+           filled dot and the elapsed time while it runs. -->
+      <button
+        v-if="canRecord"
+        class="fbtn live-rec-btn"
+        :class="{ 'fbtn-primary': recording }"
+        type="button"
+        data-action="record"
+        :aria-pressed="recording"
+        :title="recording ? t('meeting.recording.stopHint') : t('meeting.recording.startHint')"
+        @click="toggleRecording"
+      >
+        <span class="live-rec-dot" data-role="record-dot" />
+        {{ recording ? t('meeting.recording.stop') : t('meeting.recording.start') }}
+        <span v-if="recording" class="live-rec-time" data-role="record-time">{{ recordingClock }}</span>
+      </button>
     </div>
   </div>
 </template>
@@ -508,6 +527,8 @@ import { meetingFileEntries, meetingFilesVersion } from '@/utils/meetingFileTrac
 import { shotFullUrl, shotThumbUrl } from '@/utils/meetingShots'
 import { DEFAULT_DEVICE, useMeetingOptions } from '@/composables/useMeetingOptions'
 import { useMeetingShots } from '@/composables/useMeetingShots'
+import { useMeetingRecorder, type RecordingError } from '@/composables/useMeetingRecorder'
+import { baseName } from '@/utils/path'
 import { useScreenWindow, ANNOTATE_WINDOW_NAME, SCREEN_WINDOW_NAME } from '@/composables/useScreenWindow'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { getNative, isDesktopApp } from '@/utils/clawbenchNative'
@@ -595,6 +616,7 @@ function onQuoteDragStart(e: DragEvent): void {
 }
 const options = useMeetingOptions()
 const shots = useMeetingShots()
+const recorder = useMeetingRecorder()
 const { serverConfig } = useSettingsConfig()
 
 /**
@@ -665,6 +687,16 @@ const shotsOn = computed(() => shots.active.value && !shots.paused.value)
  * about what is on screen, not who is on camera.
  */
 const shotSourceReady = computed(() => hasScreen.value || Boolean(share.screenSharer.value))
+/**
+ * A recording needs a picture, and it follows the SAME source rule as key
+ * frames: a member who took the screen is what everyone is looking at, so that
+ * is what gets recorded. A camera-only meeting has nothing to record here.
+ */
+const canRecord = shotSourceReady
+/** The switch is on and the file is being written. */
+const recording = computed(() => recorder.active.value)
+/** `mm:ss` (or `h:mm:ss` past an hour) next to the stop label. */
+const recordingClock = computed(() => formatRecordingClock(recorder.elapsedMs.value))
 /** Whether this machine has a camera at all, so the group is worth showing. */
 const cameraAvailable = ref(true)
 /** Guards the async start/stop of a screen capture (it opens a picker). */
@@ -1251,6 +1283,53 @@ function onToggleShots(on: boolean): void {
 function captureShot(): void {
   void shots.captureNow('manual')
 }
+
+/** `mm:ss`, or `h:mm:ss` once a recording passes the hour mark. */
+function formatRecordingClock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+  const mm = String(minutes).padStart(2, '0')
+  const ss = String(seconds).padStart(2, '0')
+  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`
+}
+
+/**
+ * Start or stop the screen recording.
+ *
+ * Stopping waits for the last chunks (bounded), then tells the host where the
+ * file landed — a recording nobody can find is the same as one that was never
+ * made. Failures are surfaced by the watcher below, so this only handles the
+ * success message.
+ */
+async function toggleRecording(): Promise<void> {
+  if (recorder.active.value) {
+    await share.stopRecording()
+    if (!recorder.error.value && recorder.savedName.value) {
+      toast.show(
+        t('meeting.recording.saved', { name: baseName(recorder.savedName.value) }),
+        { type: 'success', icon: 'save' },
+      )
+    }
+    return
+  }
+  await share.startRecording()
+}
+
+/** One toast per failure, with the reason spelled out — "录制失败" alone
+ *  leaves the host guessing whether to retry, free space, or check the network. */
+const RECORDING_ERROR_KEYS: Record<Exclude<RecordingError, ''>, string> = {
+  unsupported: 'meeting.recording.unsupported',
+  noSource: 'meeting.recording.noSource',
+  failed: 'meeting.recording.failed',
+  overflow: 'meeting.recording.overflow',
+  gap: 'meeting.recording.gap',
+}
+watch(recorder.error, (err) => {
+  if (!err) return
+  toast.show(t(RECORDING_ERROR_KEYS[err]), { type: 'error', icon: 'warning' })
+})
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 onMounted(() => {
@@ -2037,6 +2116,28 @@ watch(
   background: var(--accent-color, #4a90d9);
   animation: live-panel-pulse 1.4s ease-in-out infinite;
   flex-shrink: 0;
+}
+
+/* The recording switch: a hollow dot while idle, a pulsing filled one while
+   the file is being written, plus the elapsed time. The dot is the only state
+   marker — a separate "REC" badge would compete with the 听记 dot in the tab
+   bar, which means something else entirely. */
+.live-rec-btn .live-rec-dot {
+  width: calc(7 * var(--dp));
+  height: calc(7 * var(--dp));
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+  flex-shrink: 0;
+}
+
+.live-rec-btn.fbtn-primary .live-rec-dot {
+  opacity: 1;
+  animation: live-panel-pulse 1.4s ease-in-out infinite;
+}
+
+.live-rec-time {
+  font-variant-numeric: tabular-nums;
 }
 
 /* The recorder is on but not producing: a dead microphone looks exactly like a

@@ -5573,6 +5573,18 @@ export default {
       reasonSpeech: 'Key point',
       reasonChange: 'Screen changed',
     },
+    recording: {
+      start: 'Record',
+      stop: 'Stop recording',
+      startHint: 'Record the current picture, annotations and meeting audio into this meeting\'s record',
+      stopHint: 'Stop and save the recording',
+      saved: 'Recording saved: {name}',
+      unsupported: 'This environment cannot record video.',
+      noSource: 'There is no picture to record right now.',
+      failed: 'Recording stopped: the video could not be saved.',
+      overflow: 'Recording stopped: the network is too slow and the upload buffer is full.',
+      gap: 'Recording stopped: the upload was interrupted, so this video cannot be completed.',
+    },
     join: {
       title: 'Join meeting',
       nick: 'My name',

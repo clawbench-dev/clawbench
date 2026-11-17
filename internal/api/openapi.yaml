@@ -5008,6 +5008,93 @@ paths:
         "404":
           description: token 不存在或不属于当前项目
 
+  /api/live-share/notes/recording:
+    post:
+      tags: [LiveShare]
+      summary: 追加一段屏幕录制
+      description: |
+        发布端在本地把「画面 + 标注」合成后录制，按固定间隔切片上传；服务端按
+        `seq` 顺序追加到同一个 WebM 文件。
+
+        **有序且幂等**：同一 `(token, recordingId, seq)` 重试只返回当前状态，
+        不会把同一段字节写两遍（文件中间多一段就等于整段视频损坏）；`seq` 跳号
+        返回 409，客户端据此停止录制并报错——缺片段的 WebM 无法解码。
+
+        文件名由服务端生成（`recording/<开始毫秒>-<recordingId>.webm`），与录音、
+        关键画面同目录，因此会议记录的「资源」页签会直接列出它。单个切片 ≤16 MiB，
+        单个录制文件 ≤4 GiB。
+      operationId: liveShareNoteRecordingAppend
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+        - name: recordingId
+          in: query
+          required: true
+          schema: { type: string, maxLength: 64, pattern: "^[A-Za-z0-9_-]+$" }
+          description: 客户端生成，一次「开始录制」一个
+        - { name: seq, in: query, required: true, schema: { type: integer, minimum: 0 } }
+        - { name: at, in: query, required: false, schema: { type: integer, format: int64 }, description: 开始录制的 Unix 毫秒，用于文件排序 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: MediaRecorder 切片（第一片带容器头）
+      responses:
+        "200":
+          description: 已追加（或该片已在文件中）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fileName: { type: string, description: 相对会议目录的路径 }
+                  bytes: { type: integer, format: int64 }
+                  nextSeq: { type: integer, description: 下一段期望的序号 }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+        "409":
+          description: seq 跳号或文件已存在（服务端丢了会话/客户端跳片），客户端应停止录制
+        "413":
+          description: 切片超过 16 MiB 或录制文件超过 4 GiB
+
+  /api/live-share/notes/recording/finish:
+    post:
+      tags: [LiveShare]
+      summary: 结束一段屏幕录制
+      description: |
+        关闭服务端为这段录制保留的会话并回报文件状态。**文件在最后一片写入时就
+        已完整**，这个调用只负责停止记忆会话、让前端拿到落盘路径；重复调用（或
+        会议已结束、会话已被清理）返回空 `fileName`，不报错。
+      operationId: liveShareNoteRecordingFinish
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, recordingId]
+              properties:
+                token: { type: string }
+                recordingId: { type: string }
+      responses:
+        "200":
+          description: 会话已关闭
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fileName: { type: string, description: 相对会议目录的路径；空表示会话不存在 }
+                  bytes: { type: integer, format: int64 }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+
   /api/live-share/notes/sessions:
     get:
       tags: [LiveShare]

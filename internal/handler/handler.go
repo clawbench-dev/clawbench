@@ -750,6 +750,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// uploads one, DELETE removes one, GET (below) lists them.
 	register("/api/live-share/notes/shot", ServeLiveShareNoteShot)
 	register("/api/live-share/notes/shots", ServeLiveNotesShots)
+	// Screen recording (picture + annotations + the meeting's audio mix). The
+	// publisher appends ordered chunks while the switch is on; finish closes the
+	// session. The file lives beside the other artifacts, so the record's
+	// resource tab lists it with no extra table.
+	register("/api/live-share/notes/recording", ServeLiveShareNoteRecording)
+	register("/api/live-share/notes/recording/finish", ServeLiveShareNoteRecordingFinish)
 	// Meeting records: GET lists the project's meetings (the database row is the
 	// record, permanent), DELETE removes one with its folder.
 	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)

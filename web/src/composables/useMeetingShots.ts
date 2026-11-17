@@ -13,6 +13,7 @@ import { ref, watch, type WatchStopHandle } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { isMeetingFileTracking, meetingFileEntries, onMeetingFileOpened } from '@/utils/meetingFileTracker'
 import type { InkStroke } from '@/share/liveControl'
+import { drawInkStrokes } from '@/share/inkCanvas'
 import {
   ShotQueue,
   ShotScheduler,
@@ -187,25 +188,9 @@ async function attach(el: HTMLVideoElement, stream: MediaStream): Promise<void> 
 }
 
 function drawStrokes(ctx: CanvasRenderingContext2D, strokes: InkStroke[], w: number, h: number): void {
-  // Same normalisation and width scaling as LiveInkLayer: the strokes are
-  // relative to the picture, so the same numbers land in the same place.
-  const scale = Math.max(1, w / 800)
-  for (const stroke of strokes) {
-    if (stroke.points.length === 0) continue
-    ctx.beginPath()
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.strokeStyle = stroke.color
-    ctx.lineWidth = Math.max(1, stroke.width * scale)
-    const [first, ...rest] = stroke.points
-    ctx.moveTo(first.x * w, first.y * h)
-    if (rest.length === 0) {
-      ctx.lineTo(first.x * w + 0.01, first.y * h)
-    } else {
-      for (const p of rest) ctx.lineTo(p.x * w, p.y * h)
-    }
-    ctx.stroke()
-  }
+  // Same normalisation and width scaling as the annotation layer, shared with
+  // the screen recorder so a still and a video of the same moment match.
+  drawInkStrokes(ctx, strokes, w, h)
 }
 
 function hashOf(source: CanvasImageSource): string {

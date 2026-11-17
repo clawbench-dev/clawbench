@@ -108,6 +108,15 @@ export class LiveMixer {
    */
   private readonly analysers = new Map<string, AnalyserNode>()
   private levelBuf = new Uint8Array(256)
+  /**
+   * The recording mix: system audio + the publisher's microphone + every
+   * viewer, in one destination.
+   *
+   * Created on demand (only while a recording runs). Unlike the per-viewer
+   * destinations this one excludes nobody: a recording is the meeting, so the
+   * host's own voice belongs in it.
+   */
+  private recordDest: MediaStreamAudioDestinationNode | null = null
 
   constructor(ctx: AudioContext, systemStream: MediaStream | null, micStream: MediaStream | null) {
     this.ctx = ctx
@@ -139,6 +148,7 @@ export class LiveMixer {
     this.systemSource = next ? this.ctx.createMediaStreamSource(next) : null
     if (this.systemSource) {
       for (const slot of this.slots.values()) this.systemSource.connect(slot.dest)
+      if (this.recordDest) this.systemSource.connect(this.recordDest)
     }
     if (previous) {
       // Drops every edge, including the per-viewer ones just replaced.
@@ -170,6 +180,7 @@ export class LiveMixer {
     this.micSource = next ? this.ctx.createMediaStreamSource(next) : null
     if (this.micSource) {
       for (const slot of this.slots.values()) this.micSource.connect(slot.dest)
+      if (this.recordDest) this.micSource.connect(this.recordDest)
     }
     this.analysers.delete('self')
     if (previous) {
@@ -211,6 +222,26 @@ export class LiveMixer {
     }
     analyser.getByteTimeDomainData(this.levelBuf)
     return rmsLevel(this.levelBuf)
+  }
+
+  /**
+   * The recording mix, created on first use and stable afterwards.
+   *
+   * A viewer who joins after the recording started is wired into the existing
+   * destination by `attachRemote`, and a microphone swap is rewired by
+   * `setMicStream` — the recorder holds this stream for its whole lifetime.
+   */
+  recordStream(): MediaStream | null {
+    if (!this.recordDest) {
+      if (typeof this.ctx.createMediaStreamDestination !== 'function') return null
+      this.recordDest = this.ctx.createMediaStreamDestination()
+      if (this.systemSource) this.systemSource.connect(this.recordDest)
+      if (this.micSource) this.micSource.connect(this.recordDest)
+      for (const slot of this.slots.values()) {
+        if (slot.remoteSource) slot.remoteSource.connect(this.recordDest)
+      }
+    }
+    return this.recordDest.stream
   }
 
   /** Number of viewers currently in the graph (for tests and diagnostics). */
@@ -276,6 +307,7 @@ export class LiveMixer {
       if (otherId === viewerId) continue
       src.connect(other.dest)
     }
+    if (this.recordDest) src.connect(this.recordDest)
     // The publisher must hear the audience too, otherwise "allow viewers to
     // speak" is a one-way announcement rather than a conversation. This is the
     // ONLY edge into ctx.destination: the publisher's own system audio and mic
@@ -333,6 +365,8 @@ export class LiveMixer {
     } catch {
       /* not connected */
     }
+    // The removed viewer's own audio was already unplugged from every
+    // destination (including the recording mix) by `detachRemote` above.
     try {
       if (this.micSource) this.micSource.disconnect(slot.dest)
     } catch {
@@ -349,5 +383,11 @@ export class LiveMixer {
   /** Tear the whole graph down. */
   close(): void {
     for (const id of [...this.slots.keys()]) this.removeViewer(id)
+    try {
+      this.recordDest?.disconnect()
+    } catch {
+      /* not connected */
+    }
+    this.recordDest = null
   }
 }

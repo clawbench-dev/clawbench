@@ -24,6 +24,7 @@ import {
 import { useLiveNotes } from './useLiveNotes'
 import { useDialog } from './useDialog'
 import { useMeetingShots, _resetMeetingShotsForTest } from './useMeetingShots'
+import { useMeetingRecorder } from './useMeetingRecorder'
 import { useInkBoard } from '@/share/useInkBoard'
 import { inkSyncFrame } from '@/share/inkSync'
 import { notesRecordingSupported } from './liveNotes'
@@ -355,6 +356,18 @@ let lastRelaySpeakers: string[] = []
  * host, which is exactly backwards.
  */
 const relayMonitors = new Map<string, { src: MediaStreamAudioSourceNode; sink: RemoteAudioSink }>()
+/**
+ * The recording mix in relay mode.
+ *
+ * Peer-to-peer has `LiveMixer` holding every source already, so the recorder
+ * asks it. A relayed meeting has no per-viewer mixer slot: remote audio exists
+ * only as the monitor nodes above, and the host's own system/mic tracks are
+ * never in this AudioContext. Both halves are wired into this destination on
+ * demand, only while a recording runs.
+ */
+let relayRecordDest: MediaStreamAudioDestinationNode | null = null
+/** Source nodes for the host's own audio in the relay recording mix. */
+let relayRecordInputs: MediaStreamAudioSourceNode[] = []
 /** UI subscribers for control frames coming from viewers. */
 const controlHandlers = new Set<(msg: ControlMessage) => void>()
 /**
@@ -513,6 +526,11 @@ function resetSession(): void {
   preferredVideoMime = null
   // Disconnect before dropping the handle: leaving the LiveKit room open keeps
   // the server's participant alive and the OS camera/mic indicators lit.
+  // A recorder must never outlive the streams it reads; `stop()` finalises it
+  // explicitly, this only covers the paths that reset without stopping first.
+  useMeetingRecorder().cancel()
+  relayRecordDest = null
+  relayRecordInputs = []
   stopAllRelayMonitors()
   closeRelay(relayRoom)
   relayRoom = null
@@ -964,6 +982,7 @@ function monitorRelayAudio(track: MediaStreamTrack): void {
     // The only edge into `destination` on this path: the host's own microphone
     // is never monitored (it would be heard twice, once delayed).
     src.connect(audioCtx.destination)
+    if (relayRecordDest) src.connect(relayRecordDest)
     relayMonitors.set(track.id, { src, sink: openRemoteAudioSink(new MediaStream([track])) })
     track.addEventListener('ended', () => stopRelayMonitor(track.id))
   } catch (e) {
@@ -981,6 +1000,54 @@ function stopRelayMonitor(trackId: string): void {
     /* already disconnected */
   }
   relayMonitors.delete(trackId)
+}
+
+/**
+ * (Re)connect the host's own audio into the relay recording mix.
+ *
+ * Called when the mix is created and after a microphone or screen swap: the
+ * source nodes point at the stream that existed at creation time, so a swapped
+ * device would otherwise record silence (or the old device) for the rest of the
+ * meeting.
+ */
+function connectRelayRecordInputs(): void {
+  if (!relayRecordDest || !audioCtx) return
+  for (const node of relayRecordInputs) {
+    try {
+      node.disconnect()
+    } catch {
+      /* already disconnected */
+    }
+  }
+  relayRecordInputs = []
+  for (const stream of [displayStream, micStream]) {
+    if (!stream || stream.getAudioTracks().length === 0) continue
+    try {
+      const node = audioCtx.createMediaStreamSource(stream)
+      node.connect(relayRecordDest)
+      relayRecordInputs.push(node)
+    } catch (e) {
+      appLog.w(TAG, 'could not route local audio into the recording', e)
+    }
+  }
+}
+
+/**
+ * The audio track for the recording: the mixer's own mix in peer-to-peer mode,
+ * a dedicated destination in relay mode. Null when the meeting has no audio
+ * graph at all — the recording then carries video only, which is still useful.
+ */
+function recordingAudioStream(): MediaStream | null {
+  if (relayMode) {
+    if (!audioCtx || typeof audioCtx.createMediaStreamDestination !== 'function') return null
+    if (!relayRecordDest) {
+      relayRecordDest = audioCtx.createMediaStreamDestination()
+      for (const monitor of relayMonitors.values()) monitor.src.connect(relayRecordDest)
+      connectRelayRecordInputs()
+    }
+    return relayRecordDest.stream
+  }
+  return mixer?.recordStream() ?? null
 }
 
 function stopAllRelayMonitors(): void {
@@ -1772,6 +1839,7 @@ export function useLiveShare() {
     watchMicTrack(next)
     mixer?.setMicStream(next)
     useLiveNotes().setMicStream(next)
+    connectRelayRecordInputs()
   }
 
   /**
@@ -1988,6 +2056,29 @@ export function useLiveShare() {
   /** Stop keeping frames. The queue drains on its own (it carries the token). */
   function stopShots(): void {
     useMeetingShots().stop()
+  }
+
+  /**
+   * Start recording the picture the audience sees, with the annotations on top.
+   *
+   * Same source rule as key frames: a member who took the screen is what
+   * everyone is looking at, so that is what gets recorded. The getters are read
+   * continuously, so a switch or a new sharer mid-recording is followed without
+   * restarting the file.
+   */
+  function startRecording(): Promise<boolean> {
+    if (!token.value || state.value !== 'publishing') return Promise.resolve(false)
+    return useMeetingRecorder().start({
+      token: token.value,
+      getSource: () => (screenSharer.value ? remoteScreenStream.value : previewStream.value),
+      getStrokes: () => inkMirror.strokes.value,
+      getAudio: recordingAudioStream,
+    })
+  }
+
+  /** Stop the recording and wait (bounded) for its last chunks to land. */
+  function stopRecording(): Promise<void> {
+    return useMeetingRecorder().stop()
   }
 
   async function openSocket(): Promise<void> {
@@ -2462,6 +2553,7 @@ export function useLiveShare() {
     displayStream = next
     previewStream.value = next
     mixer?.setSystemStream(next)
+    connectRelayRecordInputs()
     await applyPicture()
     next.getVideoTracks()[0]?.addEventListener('ended', () => {
       void stopScreen()
@@ -2721,6 +2813,10 @@ export function useLiveShare() {
     await reportScreenSharer('')
     // Stop grabbing before resetSession() nulls the streams the getter reads.
     useMeetingShots().stop()
+    // The recording is a file the user asked for: close it (and flush its last
+    // chunks) while the picture and the audio graph still exist. resetSession()
+    // closes the AudioContext, which would cut the last chunk short.
+    await useMeetingRecorder().stop()
 
     send({ type: 'end' })
     resetSession()
@@ -2780,6 +2876,8 @@ export function useLiveShare() {
     muteAll,
     setScreenEnabled,
     revokeScreen,
+    startRecording,
+    stopRecording,
     sendControl,
     sendControlTo,
     onControl,

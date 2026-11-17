@@ -22,7 +22,17 @@ import type { MeetingRecord } from './useMeetingHistory.ts'
 
 const TAG = 'MeetingResources'
 
-export type MeetingResourceKind = 'minutes' | 'transcript' | 'revised' | 'markdown' | 'audio' | 'image' | 'code' | 'file' | 'dir'
+export type MeetingResourceKind =
+  | 'minutes'
+  | 'transcript'
+  | 'revised'
+  | 'markdown'
+  | 'audio'
+  | 'video'
+  | 'image'
+  | 'code'
+  | 'file'
+  | 'dir'
 
 export interface MeetingResourceItem {
   /** Stable list key (path + group). */
@@ -43,7 +53,7 @@ export interface MeetingResourceItem {
 }
 
 export interface MeetingResourceGroup {
-  key: 'folder' | 'audio' | 'shots' | 'referenced'
+  key: 'folder' | 'audio' | 'shots' | 'recording' | 'referenced'
   title: string
   /** Longer explanation, shown under the group label when present. */
   hint?: string
@@ -228,6 +238,7 @@ export function useMeetingResources(options: {
       const folderItems: MeetingResourceItem[] = []
       const audioItems: MeetingResourceItem[] = []
       const shotItems: MeetingResourceItem[] = []
+      const recordingItems: MeetingResourceItem[] = []
 
       if (relDir) {
         const rootEntries = await listDir(relDir)
@@ -237,6 +248,28 @@ export function useMeetingResources(options: {
             if (entry.name === 'audio') continue
             // Key frames get their own group: they are images, and opening the
             // folder to find them one by one defeats the point of the record.
+            // Screen recordings get their own group: they are video, and a
+            // single "recording/" folder row would hide how many there are.
+            if (entry.name === 'recording') {
+              const recordings = await listDir(`${relDir}/recording`)
+              if (seq !== loadSeq) return
+              for (const file of recordings) {
+                if (file.type === 'dir') continue
+                recordingItems.push({
+                  key: `rec:${relDir}/recording/${file.name}`,
+                  name: file.name,
+                  path: `${relDir}/recording/${file.name}`,
+                  displayPath: `recording/${file.name}`,
+                  kind: 'video',
+                  typeLabel: typeLabelOf(file.name, false, t('meeting.resources.file')),
+                  size: file.size,
+                  modified: file.modified,
+                  isDir: false,
+                })
+              }
+              recordingItems.sort((a, b) => a.name.localeCompare(b.name))
+              continue
+            }
             if (entry.name === 'shots') {
               const frames = await listDir(`${relDir}/shots`)
               if (seq !== loadSeq) return
@@ -342,6 +375,9 @@ export function useMeetingResources(options: {
       }
       if (shotItems.length) {
         next.push({ key: 'shots', title: 'shots/', items: shotItems })
+      }
+      if (recordingItems.length) {
+        next.push({ key: 'recording', title: 'recording/', items: recordingItems })
       }
       if (referencedItems.length) {
         next.push({
