@@ -68,7 +68,7 @@ func TestServeLiveShareNoteRecording_AppendsOrderedChunks(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
+	project := recordingProject(t)
 	token := createShotMeeting(t, project)
 
 	var last struct {
@@ -130,7 +130,7 @@ func TestServeLiveShareNoteRecording_RejectsGap(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
+	project := recordingProject(t)
 	token := createShotMeeting(t, project)
 
 	w := httptest.NewRecorder()
@@ -151,7 +151,7 @@ func TestServeLiveShareNoteRecording_RequiresAMeetingRecord(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
+	project := recordingProject(t)
 	room, err := liveRegistry.Create(project, "无记录")
 	require.NoError(t, err)
 
@@ -167,7 +167,7 @@ func TestServeLiveShareNoteRecording_DefaultsTheStartTime(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
+	project := recordingProject(t)
 	token := createShotMeeting(t, project)
 
 	target := "/api/live-share/notes/recording?token=" + token + "&recordingId=rec-at&seq=0"
@@ -189,8 +189,8 @@ func TestServeLiveShareNoteRecording_RequiresOwnership(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
-	other := t.TempDir()
+	project := recordingProject(t)
+	other := recordingProject(t)
 	token := createShotMeeting(t, project)
 
 	w := httptest.NewRecorder()
@@ -208,7 +208,7 @@ func TestServeLiveShareNoteRecording_RejectsBadID(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
+	project := recordingProject(t)
 	token := createShotMeeting(t, project)
 
 	for _, id := range []string{"../escape", "a/b", "", strings.Repeat("a", 65)} {
@@ -233,7 +233,7 @@ func TestServeLiveShareNoteRecording_RejectsBadRequests(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
+	project := recordingProject(t)
 	token := createShotMeeting(t, project)
 
 	cases := []struct {
@@ -271,7 +271,7 @@ func TestServeLiveShareNoteRecording_RejectsOversizedChunk(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
+	project := recordingProject(t)
 	token := createShotMeeting(t, project)
 
 	huge := strings.Repeat("x", liveNoteRecordingChunkMaxBytes+1)
@@ -286,7 +286,7 @@ func TestServeLiveShareNoteRecording_RefusesWhenTableIsFull(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
+	project := recordingProject(t)
 	token := createShotMeeting(t, project)
 
 	liveRecordingMu.Lock()
@@ -309,7 +309,7 @@ func TestServeLiveShareNoteRecording_RefusesToReuseAnExistingFile(t *testing.T) 
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
+	project := recordingProject(t)
 	token := createShotMeeting(t, project)
 
 	_, err := service.EnsureMeetingDir(token, mustProjectID(t, project), project, "发版评审", 1_700_000_000_000)
@@ -331,8 +331,8 @@ func TestServeLiveShareNoteRecordingFinish_ValidatesInput(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetLiveRegistry(t)
 	resetLiveRecordings(t)
-	project := t.TempDir()
-	other := t.TempDir()
+	project := recordingProject(t)
+	other := recordingProject(t)
 	token := createShotMeeting(t, project)
 
 	bad := httptest.NewRequest(http.MethodPost, "/api/live-share/notes/recording/finish", strings.NewReader("{"))
