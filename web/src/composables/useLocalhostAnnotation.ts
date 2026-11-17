@@ -136,9 +136,9 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
     // AND no h2 path). Keying off the SSH listener alone skipped the whole
     // annotation step on an h2-only install, which forwards localhost ports
     // over the stream tunnel — its URLs would render as dead plain text.
-    const { sshInfo, transportAllowsH2 } = usePortForward()
+    const { sshInfo, sshInfoResolved, transportAllowsH2 } = usePortForward()
     if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value,
-        getNative()?.getCapabilities?.().tunnel !== false)) return false
+        getNative()?.getCapabilities?.().tunnel !== false, sshInfoResolved.value)) return false
 
     // ── Step 1: localhost URLs already rendered as an <a> OR as one of our
     //    external-link spans → append the icon button ──
@@ -301,7 +301,7 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
  */
 export function useLocalhostUrlClickHandler() {
     const { isAppMode } = useAppMode()
-    const { ensurePortRegistered, openPort, sshInfo, transportAllowsH2 } = usePortForward()
+    const { ensurePortRegistered, openPort, sshInfo, sshInfoResolved, transportAllowsH2 } = usePortForward()
     const toast = useToast()
 
     // Module-level guard to prevent double-clicks
@@ -314,9 +314,11 @@ export function useLocalhostUrlClickHandler() {
     async function openLocalhostUrl(element: Element, port: number, protocol: string, path?: string): Promise<boolean> {
         if (urlOpening.value) return true
         // Refuse only when neither wire can carry the forward. An h2-only
-        // install has no SSH listener but still forwards, so it must open.
+        // install has no SSH listener but still forwards, so it must open. An
+        // SSH answer that never arrived (`sshInfoResolved === false`) is not a
+        // refusal either — let the attempt run and report real errors.
         const hostTunnelSupported = getNative()?.getCapabilities?.().tunnel !== false
-        if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value, hostTunnelSupported)) {
+        if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value, hostTunnelSupported, sshInfoResolved.value)) {
             toast.show(gt('chat.localhost.sshDisabled'), { icon: 'info', type: 'info' })
             // Consume a disabled host's click instead of opening the device's localhost.
             return !hostTunnelSupported

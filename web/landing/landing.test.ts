@@ -524,10 +524,72 @@ describe('landing page', () => {
       expect(panel.hidden).toBe(false)
       const copies = Array.from(panel.querySelectorAll('.copy-btn')).map((b) => b.getAttribute('data-copy'))
       expect(copies).toEqual([
-        'curl -fsSL https://clawbench.pages.dev/install.sh | bash',
-        'irm https://clawbench.pages.dev/install.ps1 | iex',
+        'curl -fsSL https://clawbench.example/install.sh | bash',
+        'irm https://clawbench.example/install.ps1 | iex',
       ])
       dom.window.close()
+    })
+
+    it('says the installer tracks latest and prints the installed version', () => {
+      // 脚本装 latest，两次跑的结果可以不同。页面必须如实说出来并给出固定版本的
+      // 办法，否则「一键安装」会被当成可复现的安装方式，而这正是它做不到的。
+      // 两个语言都要有这段（英文缺 key 会静默显示中文，见文件头的说明）。
+      for (const lang of ['zh-CN', 'en-US']) {
+        const dom = boot(lang)
+        const doc = dom.window.document
+        const note = doc.querySelector('[data-i18n-html="dep.script.note"]') as HTMLElement
+        expect(note, lang).toBeTruthy()
+        expect((note.parentElement as HTMLElement).hidden, lang).toBe(false)
+        expect(note.querySelector('code')?.textContent, lang).toContain('CLAWBENCH_VERSION')
+        expect(note.querySelector('a')?.getAttribute('href'), lang).toMatch(/\/releases$/)
+        expect(note.textContent || '', lang).toMatch(/最新版|latest/)
+        dom.window.close()
+      }
+    })
+
+    it('points the installer commands at the host that served the page', () => {
+      // 两个域名各托管一份脚本副本（Cloudflare Pages + GitHub Pages）。写死
+      // Cloudflare 地址时，从 GitHub Pages 访问的人拿到的命令指向另一个
+      // 域名——副本更新不同步就会装出不同版本，而且没有任何迹象。
+      // 命令按 location.host 生成后，用户拿到的是「他正在看的这份」。
+      const cases = [
+        'https://clawbench.pages.dev/',
+        'https://clawbench-dev.github.io/clawbench/',
+        'http://localhost:8080/',
+      ]
+      for (const url of cases) {
+        const dom = new JSDOM(html, { url, runScripts: 'outside-only' })
+        const { window } = dom
+        window.matchMedia = ((query: string) => ({
+          matches: false,
+          media: query,
+          addEventListener() {},
+          removeEventListener() {},
+          addListener() {},
+          removeListener() {},
+          dispatchEvent: () => false,
+        })) as unknown as typeof window.matchMedia
+        window.requestAnimationFrame = ((cb: FrameRequestCallback) =>
+          setTimeout(() => cb(0), 16)) as unknown as typeof window.requestAnimationFrame
+        window.cancelAnimationFrame = ((id: number) => clearTimeout(id)) as unknown as typeof window.cancelAnimationFrame
+        window.eval(script)
+
+        const host = new URL(url).host
+        const doc = window.document
+        const codes = Array.from(
+          doc.querySelectorAll('[data-panel="script"] .copy-btn'),
+        ).map((b) => b.getAttribute('data-copy') || '')
+
+        expect(codes.length, url).toBe(2)
+        expect(codes[0], url).toMatch(new RegExp(`^curl -fsSL https?://${host}/install\\.sh \\| bash$`))
+        expect(codes[1], url).toMatch(new RegExp(`^irm https?://${host}/install\\.ps1 \\| iex$`))
+        // 可见的代码块与复制按钮必须是同一条命令（否则看到的和复制的对不上）
+        const visible = Array.from(doc.querySelectorAll('[data-panel="script"] pre code')).map(
+          (el) => (el.textContent || '').trim(),
+        )
+        expect(visible, url).toEqual(codes)
+        window.close()
+      }
     })
 
     it('walks from the server step to the client step', () => {

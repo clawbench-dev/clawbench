@@ -57,6 +57,42 @@ irm https://clawbench.pages.dev/install.ps1 | iex
 - 装完运行 `clawbench`，浏览器打开 `http://localhost:20000`，首次启动会把随机密码打印在终端里
 - **AI 智能体不用在这里装**：打开网页后，欢迎界面里每个智能体都有「安装」按钮，点一下就在这台机器上装好，同样自动走国内镜像
 
+**版本与校验**：脚本默认装**最新版**，所以两次运行装到的版本可能不同——它不是可复现的安装方式。需要固定版本时显式指定，装完会打印**实际装上**的版本号：
+
+```bash
+# Linux / macOS：固定版本
+curl -fsSL https://clawbench.pages.dev/install.sh | CLAWBENCH_VERSION=0.130.0 bash
+```
+
+```powershell
+# Windows：固定版本（`irm | iex` 里没法传参数，用环境变量）
+$env:CLAWBENCH_VERSION = '0.130.0'; irm https://clawbench.pages.dev/install.ps1 | iex
+```
+
+想连脚本本身一起固定，先存下来再校验（sha256 在 [Release 说明](https://github.com/clawbench-dev/clawbench/releases)里给出，与对应 tag 的脚本一致）：
+
+```bash
+curl -fsSL https://clawbench.pages.dev/install.sh -o install.sh
+echo "<sha256>  install.sh" | sha256sum -c - && bash install.sh
+```
+
+npm 包本身由 npm 校验 tarball 的 `dist.integrity`，脚本不再重复做这件事。
+
+**卸载**：
+
+```bash
+# Linux / macOS
+curl -fsSL https://clawbench.pages.dev/install.sh | bash -s -- --uninstall
+```
+
+```powershell
+# Windows：先存成文件，再执行
+irm https://clawbench.pages.dev/install.ps1 -OutFile install.ps1
+.\install.ps1 -Uninstall
+```
+
+卸载只清脚本写过的三处状态（安装目录、rc 文件里的 PATH 标记 / 用户 PATH），**不动用户数据**（会话、配置、`.clawbench` 数据目录）。
+
 ### npm 安装
 
 已经装过 Node.js 的话，也可以自己来。国内用户走淘宝源秒下：

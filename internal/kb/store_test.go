@@ -116,7 +116,7 @@ func TestDocumentLifecycleAndFTS(t *testing.T) {
 			TokenCount:         10,
 		},
 	}
-	require.NoError(t, st.ReplaceChunks(docID, chunks, ""))
+	require.NoError(t, st.ReplaceChunks(docID, chunks, "", colID))
 
 	doc, err := st.GetDocument(docID)
 	require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestDeleteCollectionCascades(t *testing.T) {
 		ChunkText:          "数据库查询优化",
 		ChunkTextSegmented: rag.SegmentText("数据库查询优化"),
 		ChunkIndex:         0,
-	}}, ""))
+	}}, "", colID))
 
 	require.NoError(t, st.DeleteCollection(colID))
 	_, err = st.GetCollection(colID)
@@ -191,7 +191,7 @@ func TestResetDocumentForReindex(t *testing.T) {
 		ChunkText:          "旧内容",
 		ChunkTextSegmented: rag.SegmentText("旧内容"),
 		ChunkIndex:         0,
-	}}, ""))
+	}}, "", colID))
 
 	require.NoError(t, st.ResetDocumentForReindex(docID))
 	doc, err := st.GetDocument(docID)
@@ -220,7 +220,7 @@ func TestStats(t *testing.T) {
 		ChunkText:          "统计测试",
 		ChunkTextSegmented: rag.SegmentText("统计测试"),
 		ChunkIndex:         0,
-	}}, ""))
+	}}, "", colID))
 
 	stt, err := st.Stats()
 	require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestStatsForProject(t *testing.T) {
 			ChunkText:          name,
 			ChunkTextSegmented: rag.SegmentText(name),
 			ChunkIndex:         0,
-		}}, ""))
+		}}, "", colID))
 	}
 	add("global", ScopeGlobal, 0, "g")
 	add("own", ScopeProject, 7, "o")
@@ -380,7 +380,7 @@ func TestLoadEmbeddingDimOnReopen(t *testing.T) {
 	require.NoError(t, st.ReplaceChunks(docID, []Chunk{{
 		DocumentID: docID, CollectionID: colID, ChunkIndex: 0,
 		ChunkText: "x", ChunkTextSegmented: "x",
-	}}, ""))
+	}}, "", colID))
 	pending, err := st.PendingEmbeddingChunks(10)
 	require.NoError(t, err)
 	require.NoError(t, st.SaveEmbeddings([]ChunkEmbedding{{
@@ -412,7 +412,7 @@ func TestClosedStoreErrors(t *testing.T) {
 	_, err = st.DeleteDocument(1)
 	require.Error(t, err)
 	require.Error(t, st.DeleteCollection(1))
-	require.Error(t, st.ReplaceChunks(1, []Chunk{{DocumentID: 1, CollectionID: 1, ChunkIndex: 0, ChunkText: "x", ChunkTextSegmented: "x"}}, ""))
+	require.Error(t, st.ReplaceChunks(1, []Chunk{{DocumentID: 1, CollectionID: 1, ChunkIndex: 0, ChunkText: "x", ChunkTextSegmented: "x"}}, "", 1))
 	require.Error(t, st.SaveEmbeddings([]ChunkEmbedding{{ChunkID: 1, Vector: []float64{1, 0, 0}}}))
 }
 
@@ -479,7 +479,7 @@ func TestChunkWindow(t *testing.T) {
 			Location:           "L" + string(rune('0'+i)),
 		}
 	}
-	require.NoError(t, st.ReplaceChunks(docID, chunks, ""))
+	require.NoError(t, st.ReplaceChunks(docID, chunks, "", colID))
 	all, err := st.ListChunks(docID, 20)
 	require.NoError(t, err)
 	require.Len(t, all, 12)

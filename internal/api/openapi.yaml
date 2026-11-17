@@ -730,76 +730,61 @@ paths:
       summary: 读取服务端配置
       description: |
         返回完整配置（密码等敏感字段被剥离）。`appearance` 只含服务端持有的共享壁纸
-        资源（图库清单与 Bing 缓存）；来源 / 总开关 / 选中项是每台设备各自的浏览器
-        偏好，不在配置中。
+        资源；来源 / 总开关 / 选中项是每台设备的浏览器偏好，不在配置中。
 
-        `port_forward` 段包含 `enabled`、`port`、`transport`（`host_key` 与
-        `allowed_ports` 不下发）。`enabled` **恒为 `true`**：端口映射功能本身总是
-        可用，具体走哪条线由 `transport` 决定。
+        `port_forward` 段只有 `enabled` / `port` / `transport`（`host_key` 与
+        `allowed_ports` 不下发），`enabled` **恒为 `true`**。
 
-        `transport` 是**服务端开关**，取 `ssh` 或 `h2`（默认 `h2`）：
-        `ssh` 时服务端监听 SSH 端口（`port`）并让 `/api/tunnel/*` 返回 503；
-        `h2` 时服务端**完全不监听** SSH 端口，转发走主 HTTP 端口的
-        `/api/tunnel/*`。已废弃的 `both` 仍被接受（老客户端会发），归一为 `h2`。
-        客户端通过 `/api/ssh/info` 的 `transport` 字段跟随该值，不再各自持有偏好。
+        `transport` 是**服务端开关**，取 `ssh` 或 `h2`（默认 `h2`）：`ssh` 时监听
+        SSH 端口并让 `/api/tunnel/*` 返回 503；`h2` 时**完全不监听** SSH 端口。
+        已废弃的 `both` 仍被接受，归一为 `h2`。
 
-        `forge.enabled` 是 GitHub/GitLab 集成的总开关（默认 `true`）。关闭后服务端
-        停止轮询、不再产生 forge 事件与通知，**并清空所有项目的仓库绑定**（见
-        `PATCH` 段）。这是服务端开关而非每设备偏好：轮询与凭据都在服务端，同一服务器
-        的所有客户端必须一致。
+        `forge.enabled` 是 GitHub/GitLab 集成的总开关（默认 `true`）：关闭后停止轮询、
+        不再产生事件与通知，**并清空所有项目的仓库绑定**（见 `PATCH` 段）。它是服务端
+        开关而非每设备偏好。
 
-        `mail.enabled` 是内置邮件客户端的总开关（默认 `true`）：关闭后服务端停止后台
-        收信与邮件触发任务，前端隐藏邮件页签；已配置的邮箱保留，重新打开即恢复。
+        `mail.enabled` 是内置邮件客户端的总开关（默认 `true`）：关闭后停止后台收信与
+        邮件触发任务、隐藏邮件页签；邮箱账号保留。
 
         `tasks.enabled` 是定时任务的总开关（默认 `true`）：关闭后停止 cron 调度、取消
-        运行中的执行并丢弃排队中的事件任务，手动运行与新建/编辑任务一律拒绝（`409`
-        `TasksDisabled`）。任务配置与执行历史保留；重新打开后从当时起继续调度，**不补跑**
-        关闭期间错过的运行。同级还有 `retention_enabled` / `retention_days`（执行记录
-        自动清理）、`notify_on_success` / `notify_on_failure`（成功/失败通知）和
-        `timezone`（cron 时区，空 = 服务器本地）。
+        运行中的执行并丢弃排队的事件任务，手动运行与增删改一律 `409` `TasksDisabled`；
+        配置与历史保留，重新打开**不补跑**。同级子键见 `PATCH` 段。
 
         `share.enabled` 是分享链接的总开关（默认 `true`）：关闭即**撤销**所有已发出的
-        文件 / 会话 / 会议分享链接（文件与会话行被删除、会议记录的公开标记被清零），
-        旧链接立即 404，新建分享返回 `409` `ShareDisabled`。重新打开**不会**恢复已撤销
-        的链接。同级还有 `allow_files` / `allow_sessions` / `allow_meetings`（按类型
-        拦新建）、`allow_download`（文件分享下载）、`link_ttl_days`（新建链接有效期，
-        `0` = 永久，写在链接上，不追溯已有链接）和 `show_project_name`（分享页显示
-        来源项目名）。
+        文件 / 会话 / 会议链接（行被删除、会议记录的公开标记清零），旧链接 404、新建返回
+        `409` `ShareDisabled`，重新打开**不会**恢复。同级子键见 `PATCH` 段。
 
         `git_history.page_size` 是 Git 历史页每次加载的提交数（默认 `30`）。
 
-        `user` 是用户本人的一级身份配置：`user.nickname` 是智能体称呼你的名字（留空则
-        回退静态字面量 `User`；群聊路由与会议显示名共用，不能含引号 / 尖括号 / 逗号 /
-        控制字符，且不得与智能体同名）；`user.profile` 是你的自述，注入每个智能体的系统
-        提示词（上限 4000 字符）。
+        `user` 是用户本人的身份配置：`user.nickname` 是智能体称呼你的名字（留空回退
+        `User`；不能含引号 / 尖括号 / 逗号 / 控制字符，且不得与智能体同名）；
+        `user.profile` 是你的自述，注入系统提示词（上限 4000 字符）。
 
-        `chat.group_max_speeches` 是群聊中智能体相互发言的次数上限（默认 `100`），
-        含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
-        语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
-        AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
+        `chat.group_max_speeches` 是群聊中智能体相互发言的次数上限（默认 `100`，含
+        主持人模式，主持人自身的路由 / 汇总回合不计）。`chat.recent_project_cards_max_count`
+        （默认 `10`）与 `chat.recent_project_cards_window_hours`（默认 `24`）控制会话
+        列表底部「其他项目」卡片，`PATCH` 时均须 ≥ 1。
 
-        `chat.recent_project_cards_max_count` 是会话列表底部「其他项目」卡片的
-        数量上限（默认 `10`）。卡片优先给有活跃会话的项目，其次是最近活跃过的
-        项目；上限在排除当前项目之后生效。`PATCH` 时须 ≥ 1。
+        `meeting` 段是会议 AI 纪要的全局默认值：`auto_minutes`（默认 `true`）、
+        `proofread`（默认 `true`）、`language`（`""` / `zh` / `en`）、`file_excerpts`
+        （默认 `true`）、`minutes_max_tokens`（默认 `3000`，范围 `1000`–`8000`）。
+        它**不含模型字段**：纪要复用 `ai_summary`，与其共享一次改动。
 
-        `chat.recent_project_cards_window_hours` 决定「最近活跃」是多久之内
-        （默认 `24` 小时）：项目在这么多小时内用过、但当前没有活跃会话，就会以
-        收起的卡片出现。`PATCH` 时须 ≥ 1。
-
-        `meeting` 段是会议 AI 纪要的全局默认值：`auto_minutes`（会议结束后由主持人
-        客户端自动生成纪要，默认 `true`）、`proofread`（生成前先校对转写，默认
-        `true`）、`language`（`""` 跟随转写 / `zh` / `en`）、`file_excerpts`
-        （是否把会议中打开的文件内容摘录发给纪要模型，默认 `true`）、
-        `minutes_max_tokens`（最终纪要输出上限，默认 `3000`，范围 `1000`–`8000`）。
-        它**不含模型字段**：纪要复用 `ai_summary`，改一次模型会同时影响语音摘要、
-        推荐回复、自动命名等所有摘要功能。
-        `mcp.servers` 是全局 MCP 服务列表，供所有 ACP 传输的智能体使用（CLI
-        传输没有该参数，读各自的配置文件，因此不受影响）。`env` / `headers`
-        **明文返回**，与 `stt` / `rag` / `tts` 的 `api_key` 一致。
+        `mcp.servers` 是全局 MCP 服务列表，供所有 ACP 传输的智能体使用（CLI 传输读
+        各自配置文件，不受影响）。`env` / `headers` **明文返回**，与 `stt` / `rag` /
+        `tts` 的 `api_key` 一致。
 
         每个智能体能用到哪些由它自己的 `mcpServers` 策略决定（见
         `PATCH /api/agents`），并按该智能体在 ACP `initialize` 中广告的
         `mcpCapabilities` 过滤：stdio 是协议强制项，http / sse 未广告则不发。
+      # 同 agentsList 的理由：斜杠命令（/cb-mcp）读这个端点是为了先拿到 `mcp.servers`
+      # 再整体写回，其余字段（壁纸、端口转发、TTS、用户称谓、群聊、会议…）它一个字都
+      # 用不上。渲染整段会让 /cb-mcp 的体积预算超限。上面那段仍是读 API 文档的人要看的
+      # 配置契约，因此只在提示词侧覆盖，不删原文。完整的键清单与 PATCH 语义见
+      # `PATCH /api/config` 的 note。
+      x-prompt-note: |
+        返回完整配置。改 MCP 前只用 `mcp.servers`（全局列表：`name` / `transport` /
+        `command` / `args` / `env` / `url` / `headers`）；`env` / `headers` 明文返回。
       operationId: getConfig
       responses:
         "200":
@@ -808,47 +793,40 @@ paths:
       tags: [Config]
       summary: 局部更新配置
       description: |
-        仅白名单内的键可写；类型不符直接 400（避免写入后 `yaml.Unmarshal` 失败）。
-        壁纸的共享资源（`appearance.local.items` / `appearance.bing.file`）不在白名单，
-        须经专用端点写入；每设备的壁纸选择（来源 / 开关 / 选中项）存在浏览器
-        localStorage，PATCH 会被白名单拒绝。
+        仅白名单内的键可写；类型不符直接 400。壁纸的共享资源
+        （`appearance.local.items` / `appearance.bing.file`）不在白名单，须经专用
+        端点写入；每设备的壁纸选择存在浏览器 localStorage。
 
-        `forge.enabled` 是**破坏性**开关：置为 `false` 时，在配置写入成功后清空
-        `project_forges` 全表（所有项目的仓库绑定），并把**原本有绑定**的项目标记为
-        「已解绑」，以免下一次 GET 按 git remote 自动绑回。从未绑定过的项目不会被标记。
-        重新置为 `true` **不会**恢复这些绑定（要重新关联需显式绑定一次）。
+        `forge.enabled` 是**破坏性**开关：置为 `false` 时在配置写入成功后清空
+        `project_forges` 全表，并把**原本有绑定**的项目标记为「已解绑」，以免下一次
+        GET 按 git remote 自动绑回；从未绑定过的项目不会被标记。重新置为 `true`
+        **不会**恢复这些绑定。
 
-        清空失败**不返回 500**：配置已是权威事实，返回 500 会让客户端把
-        `forge.enabled` 回滚成 `true`，界面显示「已启用」而服务端实际已停用。改为
-        `200` + `warnings` 里的一条说明；残留绑定本身无害（轮询器先判开关）。
+        清空失败**不返回 500**：配置已是权威事实，返回 500 会让客户端把开关回滚成
+        `true`，界面显示「已启用」而服务端实际已停用。改为 `200` + `warnings` 里一条
+        说明；残留绑定本身无害（轮询器先判开关）。
 
-        `mail.enabled` 只停后台收信与邮件触发任务并隐藏邮件页签，**不删除邮箱账号**，
-        因此关闭时无需确认、随时可恢复；热更新，不需要重启。
+        `mail.enabled` 只停后台收信与邮件触发任务、隐藏邮件页签，**不删除邮箱账号**；
+        热更新，无需重启。
 
         `tasks.enabled` 与 `share.enabled` 是**破坏性**开关，都在配置写入成功后执行：
-
-        - `tasks.enabled=false`：停止 cron、取消所有运行中的执行、丢弃排队中的事件任务。
-          重新置为 `true` 会重启调度，但**不补跑**关闭期间错过的运行。
-        - `share.enabled=false`：撤销全部文件 / 会话 / 会议分享链接（删除文件与会话分享
-          行、清零会议记录的公开标记），旧链接立即 404。重新置为 `true` **不会**恢复
-          这些链接。
-
-        两者的清理失败都不返回 500（同 `forge.enabled`）：配置已是权威事实，返回 500
-        会让客户端把开关回滚成 `true`。失败原因放进 `warnings`。
+        `tasks.enabled=false` 停止 cron、取消运行中的执行、丢弃排队的事件任务，重新置为
+        `true` 会重启调度但**不补跑**；`share.enabled=false` 撤销全部文件 / 会话 / 会议
+        链接（删行、清零公开标记），旧链接 404，重新置为 `true` **不会**恢复。两者的清理
+        失败都不返回 500（同 `forge.enabled`），失败原因放进 `warnings`。
 
         子键：`tasks.retention_enabled` / `tasks.retention_days`（1–3650）、
         `tasks.notify_on_success` / `tasks.notify_on_failure`、`tasks.timezone`
-        （IANA 名称或空，非法值返回 400）；`share.allow_files` / `allow_sessions` /
+        （IANA 名称或空，非法值 400）；`share.allow_files` / `allow_sessions` /
         `allow_meetings` / `allow_download`、`share.link_ttl_days`（0–3650，0 = 永久）、
         `share.show_project_name`；`git_history.page_size`（1–200）。全部热更新。
 
-        `port_forward.enabled` 仍为白名单键，但**值被忽略**：任何值都返回 200，
-        存储值恒为 `true`（功能恒可用，走哪条线由 `transport` 决定）。
+        `port_forward.enabled` 仍是白名单键但**值被忽略**，存储值恒为 `true`。
 
-        `port_forward.transport` 是真正的服务端开关：`ssh` / `h2` 会落库并在热更新里
-        立即启停 SSH 监听器（不需要重启）；已废弃的 `both` 仍返回 200 但存储为 `h2`。
-        其他值返回 400（`port_forward.transport must be one of: ssh,h2,both`），
-        非字符串返回 400（`port_forward.transport must be a string`）。
+        `port_forward.transport` 是真正的服务端开关：`ssh` / `h2` 落库并立即启停 SSH
+        监听器（不需要重启），已废弃的 `both` 仍返回 200 但存储为 `h2`。其他值返回 400
+        （`port_forward.transport must be one of: ssh,h2,both`），非字符串返回 400
+        （`port_forward.transport must be a string`）。
 
         `user.nickname` 非法值返回 400，与智能体同名返回 **409**
         （`msgKey=UserNicknameTaken`）；`user.profile` 超 4000 字符返回 400
@@ -856,33 +834,37 @@ paths:
 
         `meeting.language` 只接受 `""` / `zh` / `en`；`meeting.minutes_max_tokens`
         超出 `1000`–`8000` 返回 400（`msgKey=MeetingMinutesMaxTokensRange`，
-        `detail.field=meeting.minutes_max_tokens`）。`meeting.*` 全部是热更新：
-        生成时读取 `ConfigInstance`，不需要重启。
+        `detail.field=meeting.minutes_max_tokens`）。`meeting.*` 全部热更新。
 
         `tts.engine` 接受 `edge` / `openai` / `alibaba` / `tencent` / `volcano` / `minimax`，
-        其他值返回 400（`tts.engine must be one of: edge,openai,alibaba,tencent,volcano,minimax`）。
-        三家国内厂商的凭据**分节存放**（`tts.alibaba.*` / `tts.tencent.*` /
-        `tts.volcano.*`），编辑一家不会改动另一家的配置；当引擎已经切到该厂商后，
-        缺少必填凭据返回 400（`tts.alibaba.api_key` / `tts.tencent.secret_id` +
-        `secret_key` / `tts.volcano.api_key` / `tts.minimax.api_key`）。`tts.alibaba.base_url`
-        与 `tts.minimax.base_url` 非法返回 400（`tts.alibaba.base_url must be a valid URL`）。
+        其他值返回 400（`tts.engine must be one of: ...`）。各厂商凭据**分节存放**
+        （`tts.alibaba.*` / `tts.tencent.*` / `tts.volcano.*` / `tts.minimax.*`），
+        编辑一家不改动另一家；引擎已切到该厂商后缺必填凭据（`api_key`、腾讯的
+        `secret_id` + `secret_key`）返回 400。`tts.alibaba.base_url`
+        与 `tts.minimax.base_url` 非法返回 400（`... must be a valid URL`）。
 
-        `tts.openai.stream_mode`（OpenAI 兼容 TTS 的请求方式）只接受
-        `auto` / `sse` / `audio`，其他值返回 400
-        （`tts.openai.stream_mode must be one of: auto,sse,audio`）。`auto`
-        按模型名决定（`tts-1` / `tts-1-hd` 走 `audio`，其余走 `sse`），
-        `sse` / `audio` 强制指定。
+        `tts.openai.stream_mode` 只接受 `auto` / `sse` / `audio`，其他值返回 400
+        （`tts.openai.stream_mode must be one of: auto,sse,audio`）。`auto` 按模型名决定
+        （`tts-1` / `tts-1-hd` 走 `audio`，其余走 `sse`），另两个值强制指定。
 
-        `mcp.servers` 是**整体替换**的对象数组（与 `skills.repos` 一致）：
-        数组里没有的条目即被删除。元素校验：
+        `mcp.servers` 是**整体替换**的对象数组（与 `skills.repos` 一致）：数组里没有的
+        条目即被删除。元素校验：
         - `name` 非空、全局唯一，只允许字母 / 数字 / `_` / `-`
         - `transport` ∈ `stdio` / `http` / `sse`
-        - stdio 必须有 `command`，且该命令必须能在 `PATH` 中找到（保存即拒绝——
-          这是最常见的配置错误，也是唯一能在 agent 启动前拦住的）
+        - stdio 必须有 `command`，且该命令必须能在 `PATH` 中找到（保存即拒绝）
         - http / sse 必须有 `http(s)` URL
 
         该键是**热更新**：连接在每一轮开始前比对策略哈希，变了就带着新列表重连，
         因此不会出现在 `changed_cold_fields` 里，也不需要重启。
+      # /cb-mcp 只需要「mcp.servers 是整体替换 + 元素校验 + 热更新」这三件事；上面那段
+      # 覆盖了同一批校验，但也带着壁纸、端口转发、TTS、用户称谓、群聊、会议、分享、
+      # 定时任务的逐键规则——那些是写 API 文档的人要的，不是 MCP 命令要的。渲染整段
+      # 正是 /cb-mcp 超预算的来源。原文保留，提示词侧改用下面这条摘要。
+      x-prompt-note: |
+        `mcp.servers` 是**整体替换**的数组：先 GET、改完再整份写回，没带的条目即被删除。
+        元素 `name`（唯一，字母 / 数字 / `_` / `-`）、`transport` ∈ `stdio` / `http` / `sse`；
+        stdio 必须有 `command` 且在 `PATH` 中，http / sse 必须有 `http(s)` URL，否则 400 并
+        指出出错的 index。全部热更新，无需重启。其余键也在此白名单内，但不属于 MCP 配置。
       operationId: patchConfig
       requestBody:
         required: true
@@ -5619,9 +5601,16 @@ paths:
         实际以分享范围校验为准（编码 `/` 或项目外目录一律 404）。其余资源类型走
         `.css/.js/.woff2` 等网页资源 MIME；基础表 `mimeTypes` 仍**不得**含 `.html`。
 
-        会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` / `dir` /
-        `session` / `live`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
+        会话分享走另外两个子路径：`{token}/meta` 与 `{token}/session`（返回**实时装配**的
         会话 JSON）。两者同样免鉴权、token 不存在一律 404。
+
+        **`{token}/meta`** 返回 `{kind, title?, messageCount?, projectName?, allowDownload, ...}`：
+        `kind` 为 `file` / `dir` / `session` / `live`，供分享页判断该渲染哪种视图（直播的
+        `live` 另有 `notesEnabled` / `video` / `ended` / `startedAt` / `endedAt`）。
+        - `projectName`：来源项目显示名，**仅当 `share.show_project_name` 打开时出现**；
+          关闭后该字段整体省略（文件、会话、会议三种分享一致，直播房间同样过滤）。
+        - `allowDownload`：是否允许下载（`share.allow_download`），文件/目录分享页据此决定
+          是否给出下载按钮；服务端在 `{token}/download` 上同样强制该开关，两者不会不一致。
 
         **直播共享**另有 `{token}/signal`（信令 WebSocket）与 `{token}/notes`
         （AI 听记时间线 + 纪要状态，`?since=` 增量）。
@@ -6815,7 +6804,9 @@ paths:
         "400":
           description: 字段非法（`ProviderInvalid`）
         "409":
-          description: 名称已被占用（`ProviderNameTaken`）
+          description: |
+            名称已被占用（`ProviderNameTaken`），或新协议与已绑定的智能体冲突
+            （`ProviderProtocolConflict`，`detail.Agents` 列出这些智能体）。
 
   /api/providers/presets:
     get:
@@ -6896,10 +6887,18 @@ paths:
       responses:
         "200":
           description: 更新结果
+        "400":
+          description: 字段非法（`ProviderInvalid`，`detail.field` 指出出错字段）
         "404":
           description: 不存在（`ProviderNotFound`）
         "409":
-          description: 名称冲突（`ProviderNameTaken`）或协议与已绑定智能体冲突（`ProviderProtocolConflict`）
+          description: |
+            名称冲突（`ProviderNameTaken`）；协议与已绑定智能体冲突
+            （`ProviderProtocolConflict`，`detail.Agents` 列出这些智能体）；
+            摘要模型正在使用而端点被清空（`ProviderUsedBySummary`）；或把
+            模型清单清空（且没有 `defaultModel`）而仍有改用配置文件的智能体
+            绑定它（`ProviderModelsRequired`，`detail.Agents` 列出这些智能体 —
+            这些后端按清单里的模型 id 解析，清单为空会让它们下一轮直接报错）。
     delete:
       tags: [Providers]
       summary: 删除模型提供商
@@ -8532,6 +8531,11 @@ paths:
                   mode:
                     type: string
                     enum: [hybrid, vector, fts]
+                  vector_degraded:
+                    type: boolean
+                    description: 语义这一路没跑成（嵌入服务不可用 / 索引重建中 / 向量宽度不符）；此时 mode 回落为 fts，vector_error 说明原因
+                  vector_error:
+                    type: string
 
   /api/kb/reindex:
     post:
@@ -8540,7 +8544,8 @@ paths:
       description: |
         `{"collection_id": 3}` 重建一个库；`{"kind": "vector"}` 只丢弃并重建
         语义索引（换嵌入模型后用）；空对象重建当前可见的全部知识库。
-        全部立即返回 202，由后台索引器执行。
+        有队列时立即返回 202。当前项目没有可见知识库时返回 200 与
+        `queued:false`、`detail:"no_collections"`，不会退化成“重建全部”。
       operationId: kbReindex
       requestBody:
         required: false
@@ -8555,6 +8560,8 @@ paths:
                   type: string
                   enum: [vector]
       responses:
+        "200":
+          description: 没有可重建的知识库（queued=false）
         "202":
           description: 已排队
 

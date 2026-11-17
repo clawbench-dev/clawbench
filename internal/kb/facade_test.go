@@ -76,7 +76,7 @@ func TestFacades(t *testing.T) {
 		ChunkText:          "报销流程：先提交申请。",
 		ChunkTextSegmented: rag.SegmentText("报销流程：先提交申请。"),
 		ChunkIndex:         0,
-	}}, ""))
+	}}, "", col.ID))
 
 	chunks, err := DocumentChunks(doc.ID, 10)
 	require.NoError(t, err)

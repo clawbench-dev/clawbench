@@ -55,6 +55,15 @@ var (
 	// ErrFetchFailed means the URL could not be fetched (network, non-2xx,
 	// oversized body). The remote server's own message is wrapped inside.
 	ErrFetchFailed = errors.New("could not fetch the URL")
+	// ErrDocumentChanged means the document moved to another collection, was
+	// re-queued, or was deleted while it was being extracted, so the freshly
+	// produced chunks describe a row that no longer exists in this shape.
+	//
+	// It is NOT a document failure: the indexer drops the result and leaves the
+	// row pending so the next pass re-reads whatever the document is now.
+	// Writing the stale chunk set would put searchable text into the old
+	// collection (and leave orphans behind a deleted document).
+	ErrDocumentChanged = errors.New("the document changed while it was being indexed")
 )
 
 // Collection is one knowledge base. A global collection has ProjectID 0 and is
@@ -190,6 +199,14 @@ type SearchResult struct {
 	Results []SearchHit `json:"results"`
 	Total   int         `json:"total"`
 	Mode    string      `json:"mode"` // "hybrid" | "vector" | "fts"
+	// VectorDegraded is set when the request asked for semantic search but only
+	// keyword results are present: no embedding model, a dead endpoint, or a
+	// vector table whose width no longer matches the model. Mode is "fts" in
+	// that case; the flag exists so the panel can say WHY instead of pretending
+	// the query simply had no semantic matches.
+	VectorDegraded bool `json:"vector_degraded,omitempty"`
+	// VectorError is the user-facing reason (never raw SQL).
+	VectorError string `json:"vector_error,omitempty"`
 }
 
 // Stats is the index health snapshot shown in the panel.

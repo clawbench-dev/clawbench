@@ -92,6 +92,20 @@ func NewBackendForAgent(backendType, agentID string) (AIBackend, error) {
 // If the override requests acp-stdio but the agent doesn't support it, falls back
 // to CLI backend gracefully instead of erroring out.
 func NewBackendForAgentWithTransport(backendType, agentID, transportOverride string) (AIBackend, error) {
+	return NewBackendForAgentWithTransportFn(backendType, agentID, transportOverride)
+}
+
+// NewBackendForAgentWithTransportFn is the indirection behind
+// NewBackendForAgentWithTransport.
+//
+// It exists so a test can observe the exact ai.ChatRequest a caller handed to
+// the backend (the turn runners build it, then resolve a backend, then execute).
+// Asserting on the backend's input is the only way to catch a request assembly
+// bug without also depending on real streaming: a stubbed turn runner would
+// assert on the caller instead of on the request the backend actually sees.
+var NewBackendForAgentWithTransportFn = newBackendForAgentWithTransport
+
+func newBackendForAgentWithTransport(backendType, agentID, transportOverride string) (AIBackend, error) {
 	// agentID and backendType are different identifiers (agent ID vs backend
 	// name) and are not interchangeable: resolving an agent by backendType is
 	// only a best-effort recovery for callers that omitted the agent ID. It is

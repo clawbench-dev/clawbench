@@ -46,7 +46,7 @@ func seedDoc(t *testing.T, st *Store, colID int64, title, text, location string)
 		Location:           location,
 		ChunkIndex:         0,
 		TokenCount:         10,
-	}}, ""))
+	}}, "", colID))
 	return docID
 }
 

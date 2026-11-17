@@ -502,7 +502,11 @@ func serveShareMeta(w http.ResponseWriter, r *http.Request, token string) {
 			Title:        room.Title(),
 			NotesEnabled: room.NotesEnabled(),
 			Video:        room.VideoEnabled(),
-			ProjectName:  shareProjectName(room.ProjectKey()),
+			// Filtered through the same policy as every other share kind: the
+			// live path took ProjectKey() raw, so switching
+			// share.show_project_name off still left the project directory name
+			// in this response (and, via the discovery block, in og:site_name).
+			ProjectName: shareProjectNameForLiveRoom(room),
 		})
 		return
 	}

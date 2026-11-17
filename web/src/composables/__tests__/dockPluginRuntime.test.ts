@@ -22,6 +22,9 @@ const mocks = vi.hoisted(() => ({
   terminalEnabled: { value: true },
   platformSupported: { value: true },
   sshInfo: { value: { enabled: true } as { enabled: boolean } | null },
+  // Whether `/api/ssh/info` answered. A failed request leaves `sshInfo` null
+  // without disabling anything (see portForwardUnavailable's `sshLoaded`).
+  sshInfoResolved: { value: true },
   transportH2: { value: true },
   liveState: { value: 'idle' },
   startMail: vi.fn(),
@@ -65,6 +68,7 @@ vi.mock('@/composables/useTerminalStatus', () => ({
 vi.mock('@/composables/usePortForward', () => ({
   usePortForward: () => ({
     sshInfo: mocks.sshInfo,
+    sshInfoResolved: mocks.sshInfoResolved,
     transportAllowsH2: mocks.transportH2,
   }),
 }))
@@ -109,6 +113,7 @@ describe('dock plugin runtime', () => {
     mocks.terminalEnabled.value = true
     mocks.platformSupported.value = true
     mocks.sshInfo.value = { enabled: true }
+    mocks.sshInfoResolved.value = true
     mocks.transportH2.value = true
     mocks.liveState.value = 'idle'
     mocks.serverConfig.value = { forge: { enabled: true }, mail: { enabled: true } }
@@ -163,6 +168,13 @@ describe('dock plugin runtime', () => {
     mocks.sshInfo.value = { enabled: false }
     mocks.transportH2.value = false
     expect(isDockPluginAvailable('proxy')).toBe(false)
+
+    // An SSH answer that never arrived is NOT "SSH is off": the value never
+    // retries, so reading the failed request as disabled hid the tab for the
+    // rest of the session.
+    mocks.sshInfoResolved.value = false
+    mocks.sshInfo.value = null
+    expect(isDockPluginAvailable('proxy')).toBe(true)
   })
 
   it('resolves the forge title from the bound platform', () => {

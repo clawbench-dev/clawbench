@@ -165,6 +165,8 @@
     'step.client.note': 'No client needed — open the same address in any browser (<code>http://your-server-ip:20000</code>) and you get the same interface.',
     'code.npm.mirror': '# Mirror first if you are in mainland China — much faster',
     'code.npm.cmt': '# No global install — runs the latest version',
+    'dep.script.note':
+      'The script installs the <strong>latest</strong> version, so it is not reproducible; pin it with <code>CLAWBENCH_VERSION=x.y.z</code> (on Windows, <code>$env:CLAWBENCH_VERSION</code>) — the actual installed version is printed at the end. To verify the script itself, use the sha256 published in the <a href="https://github.com/clawbench-dev/clawbench/releases">release notes</a>.',
 
     'gal.kicker': 'Screenshots',
     'gal.title': 'Screenshots beat adjectives.',
@@ -346,6 +348,31 @@
   }
 
   setLang(detectLang(), false);
+
+  /* ── 安装脚本地块按当前域名生成 ───────────────────────────────
+     两个域名（Cloudflare Pages 主站 + GitHub Pages 项目页）各托管一份
+     install.sh / install.ps1。写死主站地址时，从另一个域名访问的人拿到
+     的命令指向副本 A，而页面本身是副本 B——两者更新不同步就会装出不同
+     版本，且用户完全看不出来。改成按 location.host 生成：拿到的永远是
+     「他正在看的这份」。代码块与复制内容一起改，避免看到的和复制的不一致。 */
+  (function () {
+    if (!window.location || !window.location.host) return;
+    var base = window.location.protocol + '//' + window.location.host;
+    var block = document.querySelector('[data-panel="script"]');
+    if (!block) return;
+    var commands = [
+      { code: 'curl -fsSL ' + base + '/install.sh | bash' },
+      { code: 'irm ' + base + '/install.ps1 | iex' }
+    ];
+    var panels = block.querySelectorAll('.code-panel');
+    for (var i = 0; i < panels.length && i < commands.length; i++) {
+      var cmd = commands[i].code;
+      var codeEl = panels[i].querySelector('pre code');
+      var copyBtn = panels[i].querySelector('.copy-btn');
+      if (codeEl) codeEl.textContent = cmd;
+      if (copyBtn) copyBtn.dataset.copy = cmd;
+    }
+  })();
 
   /* ── 下载直链 ─────────────────────────────────────────────────
      资产名里带版本号（clawbench-desktop-linux-x64-v0.99.1.zip），所以

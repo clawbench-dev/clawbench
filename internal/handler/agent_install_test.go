@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -334,4 +335,65 @@ func TestCreateSession_DoesNotProbeCLIAgents(t *testing.T) {
 		t.Fatal("a CLI agent must not be probed over ACP")
 	case <-timeoutAfter(t):
 	}
+}
+
+// The install rescan must probe ONLY the backend that was just installed.
+//
+// Probing every backend is not merely slow (~18s serial, since each probe forks
+// a vendor CLI and antigravity hangs out its timeout when logged out): it ran
+// while holding configMutex, so every concurrent PATCH /api/config, agent edit
+// and project switch queued behind a one-click install to learn nothing — the
+// other backends' model lists cannot have changed.
+func TestRescanAfterInstall_ProbesOnlyInstalledBackend(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	prevDiscoverModels := model.DiscoverModels
+	prevWithDetail := model.DiscoverWithDetail
+	t.Cleanup(func() {
+		model.DiscoverModels = prevDiscoverModels
+		model.DiscoverWithDetail = prevWithDetail
+	})
+
+	var mu sync.Mutex
+	var probed []string
+	model.DiscoverWithDetail = func(backend string) ([]model.AgentModel, string) {
+		mu.Lock()
+		probed = append(probed, backend)
+		mu.Unlock()
+		return []model.AgentModel{{ID: backend + "-model", Name: backend + "-model"}}, ""
+	}
+	model.DiscoverModels = func(backend string) []model.AgentModel {
+		models, _ := model.DiscoverWithDetail(backend)
+		return models
+	}
+
+	require.True(t, rescanAfterInstall("claude"), "the rescan must succeed for a registered backend")
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"claude"}, probed,
+		"only the installed backend may be probed; probing the rest is the 18s under configMutex")
+}
+
+// A backend with no discovery source still needs the rescan to insert its agent
+// row — that is the whole reason the install endpoint runs the refresh at all.
+// Narrowing the probe list must not turn into "skip the refresh".
+func TestRescanAfterInstall_NarrowProbeStillRefreshesAgents(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	prevDiscoverModels := model.DiscoverModels
+	prevWithDetail := model.DiscoverWithDetail
+	t.Cleanup(func() {
+		model.DiscoverModels = prevDiscoverModels
+		model.DiscoverWithDetail = prevWithDetail
+	})
+	probed := 0
+	model.DiscoverWithDetail = func(string) ([]model.AgentModel, string) {
+		probed++
+		return nil, ""
+	}
+	model.DiscoverModels = func(string) []model.AgentModel { return nil }
+
+	require.True(t, rescanAfterInstall("claude"))
+	assert.LessOrEqual(t, probed, 1, "at most the installed backend may be probed")
 }

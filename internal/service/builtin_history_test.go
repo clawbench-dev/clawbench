@@ -91,12 +91,21 @@ func setupTestDBForBuiltinHistory(t *testing.T) *sql.DB {
 // make every summary write silently match zero rows.
 func seedHistory(t *testing.T, sessionID string, turns [][2]string) {
 	t.Helper()
+	seedHistoryWithIDs(t, sessionID, turns)
+}
+
+// seedHistoryWithIDs is seedHistory that also reports the row id of each turn,
+// in order — the tests that follow a compaction boundary need to say WHICH
+// stored message an event refers to.
+func seedHistoryWithIDs(t *testing.T, sessionID string, turns [][2]string) []int64 {
+	t.Helper()
 	if _, err := store.WriteExec(
 		`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title) VALUES (?, 0, 'builtin', '')`,
 		sessionID,
 	); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
+	ids := make([]int64, 0, len(turns))
 	for _, turn := range turns {
 		content, err := json.Marshal(map[string]any{
 			"blocks": []map[string]any{{"type": "text", "text": turn[1]}},
@@ -104,10 +113,13 @@ func seedHistory(t *testing.T, sessionID string, turns [][2]string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := AddChatMessage("/tmp/p", "builtin", sessionID, turn[0], string(content), nil, false, ""); err != nil {
+		id, err := AddChatMessage("/tmp/p", "builtin", sessionID, turn[0], string(content), nil, false, "")
+		if err != nil {
 			t.Fatalf("seed message: %v", err)
 		}
+		ids = append(ids, id)
 	}
+	return ids
 }
 
 // TestBuildBuiltinHistory_ReplaysTurnsInOrder pins the basic contract: the

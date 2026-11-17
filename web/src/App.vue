@@ -2655,6 +2655,49 @@ async function pullPendingShareImport() {
 }
 
 let appEventListenersRegistered = false
+
+/** Theme changed somewhere else (settings drawer): repaint the shell and let
+ *  native chrome follow. */
+async function handleAppThemeChange(e: Event) {
+  const resolved = (e as CustomEvent<string>).detail
+  applyThemeAttributes(resolved)
+  theme.value = resolved
+  // Recompute the wallpaper scrim strength for the new light/dark base.
+  applyWallpaperScrim(isDarkTheme(resolved))
+  // Notify native app to update status bar/nav bar/floating window colors
+  const palette = buildThemePalette(resolved)
+  getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
+  const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
+  await initMermaid()
+  await reRenderMermaid()
+}
+
+async function handleAppFontChange() {
+  // If a self-hosted bundled font was just selected, wait for its file so
+  // the re-rendered mermaid SVG text is measured with the real font.
+  await ensureSelectedBundledFontsLoaded()
+  // Re-render mermaid diagrams so their SVG text picks up the new font.
+  // (Other text follows --font-ui/--font-mono CSS vars automatically.)
+  const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
+  await initMermaid()
+  await reRenderMermaid()
+}
+
+function handleAppShowHiddenChange(e: Event) {
+  showHidden.value = (e as CustomEvent<boolean>).detail
+}
+
+function handleAppSortChange(e: Event) {
+  const detail = (e as CustomEvent<{ field?: string; dir?: string }>).detail
+  if (detail.field !== undefined) sortField.value = detail.field
+  if (detail.dir !== undefined) sortDir.value = detail.dir
+}
+
+/** Attach the global DOM listeners. Idempotent for the lifetime of one
+ *  instance; `unregisterAppEventListeners` resets the guard so a remounted app
+ *  registers again (a module-level "already registered" flag outlives the
+ *  component that registered, and the second instance would then run with the
+ *  first one's closures — pointing at unmounted state). */
 function registerAppEventListeners() {
   if (appEventListenersRegistered) return
   appEventListenersRegistered = true
@@ -2684,37 +2727,10 @@ function registerAppEventListeners() {
   })
   window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
-  window.addEventListener('clawbench-theme-change', async (e: Event) => {
-      const resolved = (e as CustomEvent<string>).detail
-      applyThemeAttributes(resolved)
-      theme.value = resolved
-      // Recompute the wallpaper scrim strength for the new light/dark base.
-      applyWallpaperScrim(isDarkTheme(resolved))
-      // Notify native app to update status bar/nav bar/floating window colors
-      const palette = buildThemePalette(resolved)
-      getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
-      const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
-      await initMermaid()
-      await reRenderMermaid()
-  })
-  window.addEventListener('clawbench-font-change', async () => {
-      // If a self-hosted bundled font was just selected, wait for its file so
-      // the re-rendered mermaid SVG text is measured with the real font.
-      await ensureSelectedBundledFontsLoaded()
-      // Re-render mermaid diagrams so their SVG text picks up the new font.
-      // (Other text follows --font-ui/--font-mono CSS vars automatically.)
-      const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
-      await initMermaid()
-      await reRenderMermaid()
-  })
-  window.addEventListener('clawbench-showhidden-change', (e: Event) => {
-      showHidden.value = (e as CustomEvent<boolean>).detail
-  })
-  window.addEventListener('clawbench-sort-change', (e: Event) => {
-      const detail = (e as CustomEvent<{ field?: string; dir?: string }>).detail
-      if (detail.field !== undefined) sortField.value = detail.field
-      if (detail.dir !== undefined) sortDir.value = detail.dir
-  })
+  window.addEventListener('clawbench-theme-change', handleAppThemeChange)
+  window.addEventListener('clawbench-font-change', handleAppFontChange)
+  window.addEventListener('clawbench-showhidden-change', handleAppShowHiddenChange)
+  window.addEventListener('clawbench-sort-change', handleAppSortChange)
   // Follow the system light/dark preference while the theme is 'auto'.
   // Registered here (not in onMounted) because it is part of the global
   // listener set that both cold start and post-login initialization install.
@@ -2748,6 +2764,42 @@ function registerAppEventListeners() {
   // did-finish-load happens well before this point (initialization awaits the
   // project load and session bootstrap first).
   getNative()?.rendererReady?.()
+}
+
+/**
+ * Detach everything `registerAppEventListeners` attached — and reset its guard.
+ *
+ * The two halves must stay symmetrical: a listener left behind here keeps the
+ * unmounted component alive (its closures write to `ref`s and call `toast` on a
+ * disposed app) and fires again on the next instance's behalf, while one that is
+ * never removed at all accumulates one copy per mount. `App.vue`'s guard test
+ * compares the two call-site sets for exactly this reason.
+ */
+function unregisterAppEventListeners() {
+  window.removeEventListener('clawbench-native-error', handleNativeError)
+  window.removeEventListener('clawbench-share-imported', handleNativeShareImport)
+  window.removeEventListener('open-file-manager', handleOpenFileManager)
+  window.removeEventListener('open-file-overlay', handleOpenFileOverlay)
+  window.removeEventListener('open-directory-from-context', handleOpenDirectoryFromEvent)
+  window.removeEventListener('close-file-overlay', handleOverlayClose)
+  window.removeEventListener('open-port-forward-settings', handleOpenPortForwardSettings)
+  window.removeEventListener('navigate-to-commit', handleNavigateToCommit)
+  window.removeEventListener('attach-to-chat', playQuoteEmitAnimation)
+  window.removeEventListener('clawbench-open-session', handleOpenSession)
+  window.removeEventListener('clawbench-open-task', handleOpenTask)
+  window.removeEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
+  uninstallPluginDeeplinks?.()
+  uninstallPluginDeeplinks = null
+  window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
+  document.removeEventListener('click', handleOverflowOutsideClick)
+  window.removeEventListener('clawbench-theme-change', handleAppThemeChange)
+  window.removeEventListener('clawbench-font-change', handleAppFontChange)
+  window.removeEventListener('clawbench-showhidden-change', handleAppShowHiddenChange)
+  window.removeEventListener('clawbench-sort-change', handleAppSortChange)
+  // The guard is module-level, so it outlives the component: without this a
+  // remounted app would skip registration entirely and run on the previous
+  // instance's (unmounted) closures.
+  appEventListenersRegistered = false
 }
 
 /**
@@ -4583,21 +4635,7 @@ onUnmounted(() => {
     disposeAndroidBackPress()
     window.removeEventListener('clawbench-reconnect', handleReconnect)
     destroyGlobalEvents()
-    window.removeEventListener('open-file-manager', handleOpenFileManager)
-    window.removeEventListener('open-file-overlay', handleOpenFileOverlay)
-    window.removeEventListener('open-directory-from-context', handleOpenDirectoryFromEvent)
-    window.removeEventListener('close-file-overlay', handleOverlayClose)
-    window.removeEventListener('open-port-forward-settings', handleOpenPortForwardSettings)
-    window.removeEventListener('navigate-to-commit', handleNavigateToCommit)
-    window.removeEventListener('attach-to-chat', playQuoteEmitAnimation)
-    window.removeEventListener('clawbench-open-session', handleOpenSession)
-    window.removeEventListener('clawbench-open-task', handleOpenTask)
-    window.removeEventListener('clawbench-open-usage-meter', handleOpenUsageMeter)
-    uninstallPluginDeeplinks?.()
-    window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
-    window.removeEventListener('clawbench-native-error', handleNativeError)
-    window.removeEventListener('clawbench-share-imported', handleNativeShareImport)
-    document.removeEventListener('click', handleOverflowOutsideClick)
+    unregisterAppEventListeners()
     document.removeEventListener('keydown', handleCtrlF)
     document.removeEventListener('keydown', handleCtrlG)
     stopFlushTimer()

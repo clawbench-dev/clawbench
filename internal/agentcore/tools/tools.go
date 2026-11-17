@@ -136,9 +136,17 @@ func (e Env) resolve(p string) (string, error) {
 // and doing it explicitly keeps the failure mode visible in this file instead
 // of behind a library call.
 //
-// A symlink escaping root is caught by resolving the DEEPEST EXISTING ancestor
-// and re-checking containment: a write to root/link/new.txt where link points
-// at /etc must fail even though the final component does not exist yet.
+// Both the root AND the candidate are compared in their symlink-resolved form.
+// Comparing a raw root against a resolved candidate is what broke the whole
+// sandbox when the working directory itself is a link (macOS "/tmp",
+// "~/work/proj -> /data/proj"): every path then resolved to somewhere outside
+// the raw root string, so read/write/edit/glob/grep all failed with "outside the
+// working directory" and nothing the user could do made it work.
+//
+// The escape check is unaffected: a symlink escaping root is caught by resolving
+// the DEEPEST EXISTING ancestor and re-checking containment against the resolved
+// root — a write to root/link/new.txt where link points at /etc still fails even
+// though the final component does not exist yet.
 func resolvePath(root, p string) (string, error) {
 	if strings.TrimSpace(p) == "" {
 		return "", fmt.Errorf("path is required")
@@ -149,6 +157,13 @@ func resolvePath(root, p string) (string, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("resolve working directory: %w", err)
+	}
+	// Fall back to the raw absolute path when the root does not exist (yet):
+	// a missing root then fails at the tool's own stat/open with a message about
+	// the file, instead of a containment error that is not the real problem.
+	realRoot := absRoot
+	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+		realRoot = resolved
 	}
 
 	candidate := p
@@ -166,7 +181,7 @@ func resolvePath(root, p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !isWithin(absRoot, resolved) {
+	if !isWithin(realRoot, resolved) {
 		return "", fmt.Errorf("path %q resolves outside the working directory (to %s)", p, resolved)
 	}
 	return candidate, nil

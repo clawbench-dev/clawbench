@@ -16,6 +16,60 @@ import (
 // capped by MaxFileMB, but a zip can expand far beyond its compressed size.
 const maxOfficeXMLBytes = 64 << 20
 
+// ErrOfficeBudgetSpent is returned with (or instead of) blocks when a document
+// decompressed more than maxOfficeTotalBytes. Callers keep what was parsed and
+// mark the text truncated; it is a size condition, not a broken file. Must stay
+// a sentinel see extract.go's errors.Is check.
+var ErrOfficeBudgetSpent = errors.New("office document exceeded its decompression budget")
+
+// officeTotalBudget is maxOfficeTotalBytes at runtime. It is a variable only so
+// a test can shrink it instead of zipping hundreds of megabytes.
+var officeTotalBudget int64 = maxOfficeTotalBytes
+
+// maxOfficeTotalBytes caps everything one Office file may decompress across all
+// of its parts. The per-part cap alone left the total unbounded: a small xlsx
+// can hold thousands of worksheets, each under 64MB, and every one of them is
+// parsed before capBlocks ever sees the text. Four times the per-part cap keeps
+// a legitimately large workbook working while making the worst case a constant.
+const maxOfficeTotalBytes = 4 * maxOfficeXMLBytes
+
+// officeBudget tracks how many decompressed bytes one Office document may still
+// read. Readers wrap each part in a budgeted reader, so a part that runs past
+// the remaining allowance stops exactly there instead of after its own 64MB.
+type officeBudget struct{ left int64 }
+
+func (b *officeBudget) remaining() int64 {
+	if b == nil || b.left <= 0 {
+		return 0
+	}
+	return b.left
+}
+
+func (b *officeBudget) spend(n int64) {
+	if b == nil {
+		return
+	}
+	b.left -= n
+}
+
+type budgetReader struct {
+	r     io.Reader
+	used  *int64
+	limit int64
+}
+
+func (b *budgetReader) Read(p []byte) (int, error) {
+	if *b.used >= b.limit {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > b.limit-*b.used {
+		p = p[:b.limit-*b.used]
+	}
+	n, err := b.r.Read(p)
+	*b.used += int64(n)
+	return n, err
+}
+
 func findZipFile(zr *zip.ReadCloser, name string) *zip.File {
 	for _, f := range zr.File {
 		if f.Name == name {
@@ -25,16 +79,35 @@ func findZipFile(zr *zip.ReadCloser, name string) *zip.File {
 	return nil
 }
 
-func openZipXML(f *zip.File) (io.ReadCloser, error) {
+// openZipXML opens one part as XML, capped by both the per-part limit and the
+// document's remaining budget. The returned closer also records how much of the
+// budget that part consumed.
+func openZipXML(f *zip.File, budget *officeBudget) (io.ReadCloser, error) {
 	rc, err := f.Open()
 	if err != nil {
 		return nil, err
 	}
+	limit := int64(maxOfficeXMLBytes)
+	if rem := budget.remaining(); rem < limit {
+		limit = rem
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	used := new(int64)
 	return struct {
 		io.Reader
 		io.Closer
-	}{io.LimitReader(rc, maxOfficeXMLBytes), rc}, nil
+	}{&budgetReader{r: io.LimitReader(rc, limit), used: used, limit: limit},
+		closerFunc(func() error {
+			budget.spend(*used)
+			return rc.Close()
+		})}, nil
 }
+
+type closerFunc func() error
+
+func (f closerFunc) Close() error { return f() }
 
 func attrValue(attrs []xml.Attr, local string) string {
 	for _, a := range attrs {
@@ -58,7 +131,7 @@ func extractDocx(path string) ([]Block, error) { //nolint:gocyclo // streaming O
 	if f == nil {
 		return nil, &FileError{Reason: ReasonNoText, Err: ErrNoText}
 	}
-	rc, err := openZipXML(f)
+	rc, err := openZipXML(f, &officeBudget{left: officeTotalBudget})
 	if err != nil {
 		return nil, fmt.Errorf("read docx body: %w", err)
 	}
@@ -151,15 +224,21 @@ func extractXlsx(path string) ([]Block, error) {
 	}
 	defer func() { _ = zr.Close() }()
 
-	shared := readSharedStrings(zr)
-	sheets := readSheetRefs(zr)
+	budget := &officeBudget{left: officeTotalBudget}
+	shared := readSharedStrings(zr, budget)
+	sheets := readSheetRefs(zr, budget)
 	if len(sheets) == 0 {
 		return nil, &FileError{Reason: ReasonNoText, Err: ErrNoText}
 	}
 
 	var out []Block
 	for i, sh := range sheets {
-		rows, err := readSheetRows(zr, sh.Target, shared)
+		// Out of budget: stop opening parts instead of looping over the
+		// remaining thousand worksheets that can only read zero bytes.
+		if budget.remaining() <= 0 {
+			break
+		}
+		rows, err := readSheetRows(zr, sh.Target, shared, budget)
 		if err != nil {
 			continue
 		}
@@ -170,17 +249,23 @@ func extractXlsx(path string) ([]Block, error) {
 		out = append(out, groupSheetRows(rows, name)...)
 	}
 	if len(out) == 0 {
+		if budget.remaining() <= 0 {
+			return nil, ErrOfficeBudgetSpent
+		}
 		return nil, ErrNoText
+	}
+	if budget.remaining() <= 0 {
+		return out, ErrOfficeBudgetSpent
 	}
 	return out, nil
 }
 
-func readSharedStrings(zr *zip.ReadCloser) []string { //nolint:gocyclo // streaming OOXML parser
+func readSharedStrings(zr *zip.ReadCloser, budget *officeBudget) []string { //nolint:gocyclo // streaming OOXML parser
 	f := findZipFile(zr, "xl/sharedStrings.xml")
 	if f == nil {
 		return nil
 	}
-	rc, err := openZipXML(f)
+	rc, err := openZipXML(f, budget)
 	if err != nil {
 		return nil
 	}
@@ -224,10 +309,10 @@ func readSharedStrings(zr *zip.ReadCloser) []string { //nolint:gocyclo // stream
 	return out
 }
 
-func readSheetRefs(zr *zip.ReadCloser) []sheetRef { //nolint:gocognit,gocyclo // streaming OOXML: rels + workbook + fallback
+func readSheetRefs(zr *zip.ReadCloser, budget *officeBudget) []sheetRef { //nolint:gocognit,gocyclo // streaming OOXML: rels + workbook + fallback
 	rels := map[string]string{}
 	if f := findZipFile(zr, "xl/_rels/workbook.xml.rels"); f != nil {
-		if rc, err := openZipXML(f); err == nil {
+		if rc, err := openZipXML(f, budget); err == nil {
 			dec := xml.NewDecoder(rc)
 			for {
 				tok, err := dec.Token()
@@ -248,7 +333,7 @@ func readSheetRefs(zr *zip.ReadCloser) []sheetRef { //nolint:gocognit,gocyclo //
 
 	var sheets []sheetRef
 	if f := findZipFile(zr, "xl/workbook.xml"); f != nil {
-		if rc, err := openZipXML(f); err == nil {
+		if rc, err := openZipXML(f, budget); err == nil {
 			dec := xml.NewDecoder(rc)
 			for {
 				tok, err := dec.Token()
@@ -294,12 +379,12 @@ func normalizeZipTarget(target string) string {
 	return "xl/" + target
 }
 
-func readSheetRows(zr *zip.ReadCloser, target string, shared []string) ([]string, error) { //nolint:gocognit,gocyclo // streaming OOXML parser
+func readSheetRows(zr *zip.ReadCloser, target string, shared []string, budget *officeBudget) ([]string, error) { //nolint:gocognit,gocyclo // streaming OOXML parser
 	f := findZipFile(zr, target)
 	if f == nil {
 		return nil, fmt.Errorf("sheet %s not found", target)
 	}
-	rc, err := openZipXML(f)
+	rc, err := openZipXML(f, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -406,9 +491,13 @@ func extractPptx(path string) ([]Block, error) {
 		return nil, &FileError{Reason: ReasonNoText, Err: ErrNoText}
 	}
 
+	budget := &officeBudget{left: officeTotalBudget}
 	var out []Block
 	for i, name := range names {
-		text, err := readSlideText(zr, name)
+		if budget.remaining() <= 0 {
+			break
+		}
+		text, err := readSlideText(zr, name, budget)
 		if err != nil {
 			continue
 		}
@@ -419,17 +508,23 @@ func extractPptx(path string) ([]Block, error) {
 		out = append(out, Block{Text: text, Location: Location{Kind: "slide", Start: i + 1}})
 	}
 	if len(out) == 0 {
+		if budget.remaining() <= 0 {
+			return nil, ErrOfficeBudgetSpent
+		}
 		return nil, ErrNoText
+	}
+	if budget.remaining() <= 0 {
+		return out, ErrOfficeBudgetSpent
 	}
 	return out, nil
 }
 
-func readSlideText(zr *zip.ReadCloser, name string) (string, error) { //nolint:gocyclo // streaming OOXML parser
+func readSlideText(zr *zip.ReadCloser, name string, budget *officeBudget) (string, error) { //nolint:gocyclo // streaming OOXML parser
 	f := findZipFile(zr, name)
 	if f == nil {
 		return "", fmt.Errorf("slide %s not found", name)
 	}
-	rc, err := openZipXML(f)
+	rc, err := openZipXML(f, budget)
 	if err != nil {
 		return "", err
 	}

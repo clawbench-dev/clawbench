@@ -145,40 +145,72 @@ func (s *Scheduler) SetTimezone(zone string) error {
 	if s.timezone == zone {
 		return nil
 	}
-	s.timezone = zone
 	// Startup calls this BEFORE LoadTasksFromDB, when nothing is registered
 	// yet. Re-registering here would make the loader add every task a second
 	// time, so an empty scheduler only records the zone; new registrations pick
 	// it up through cronSpec.
 	if len(s.entries) == 0 {
+		s.timezone = zone
 		return nil
 	}
-	for id, entryID := range s.entries {
-		s.cron.Remove(entryID)
-		delete(s.entries, id)
-	}
+
+	// Two phases, because the old shape (remove, then add, per task) turned a
+	// single bad expression into a permanently dead job: the entry was gone but
+	// the row stayed `active`, and nothing re-registers an active task — so the
+	// user saw a task that never runs again until they edited it by hand.
+	//
+	// Phase 1 parses every expression under the NEW zone without touching the
+	// cron instance. registerTaskLocked ignores cronSpec, so its own validation
+	// cannot catch a broken `CRON_TZ=`/`TZ=` prefix — that only shows up in the
+	// effective spec. Parsing here makes the whole switch all-or-nothing for
+	// validation failures.
+	prevZone := s.timezone
 	s.timezone = zone
+	type pendingReg struct {
+		task     *model.ScheduledTask
+		schedule cron.Schedule
+	}
+	pending := make([]pendingReg, 0, len(s.entries))
+	var invalid []string
 	for i := range tasks {
 		task := &tasks[i]
 		if task.Status != "active" || task.HasEventSource() {
 			continue
 		}
-		if err := s.registerTaskLocked(task); err != nil {
-			slog.Warn("failed to re-register task after timezone change",
-				slog.Int64("task_id", task.ID), slog.String("err", err.Error()))
+		schedule, perr := cron.ParseStandard(s.cronSpec(task.CronExpr))
+		if perr != nil {
+			invalid = append(invalid, fmt.Sprintf("task %d (%q): %v", task.ID, task.CronExpr, perr))
 			continue
 		}
+		pending = append(pending, pendingReg{task: task, schedule: schedule})
+	}
+	if len(invalid) > 0 {
+		// Nothing was removed yet, so every task keeps running on its previous
+		// entry — under the OLD zone, which is still the honest description of
+		// how they will fire.
+		s.timezone = prevZone
+		return fmt.Errorf("timezone %q rejected, tasks left on the previous zone: %s",
+			zone, strings.Join(invalid, "; "))
+	}
+
+	for id, entryID := range s.entries {
+		s.cron.Remove(entryID)
+		delete(s.entries, id)
+	}
+	for _, p := range pending {
+		task := p.task
+		entryID := s.cron.Schedule(p.schedule, s.cronJob(task))
+		s.entries[task.ID] = entryID
 		// Keep the stored next_run_at in step with the new zone: the history
 		// list shows it directly, and a stale value would look like the change
 		// did nothing until the next tick.
-		if sch, perr := cron.ParseStandard(s.cronSpec(task.CronExpr)); perr == nil {
-			if next := sch.Next(time.Now()); !next.IsZero() {
-				_, _ = store.WriteExec(
-					"UPDATE scheduled_tasks SET next_run_at = ? WHERE id = ?", next, task.ID)
-			}
+		if next := p.schedule.Next(time.Now()); !next.IsZero() {
+			_, _ = store.WriteExec(
+				"UPDATE scheduled_tasks SET next_run_at = ? WHERE id = ?", next, task.ID)
 		}
 	}
-	slog.Info("scheduler timezone updated", slog.String("timezone", zone))
+	slog.Info("scheduler timezone updated", slog.String("timezone", zone),
+		slog.Int("re_registered", len(pending)))
 	return nil
 }
 
@@ -916,9 +948,31 @@ func (s *Scheduler) registerTaskLocked(task *model.ScheduledTask) error {
 
 	// Capture task by value for the closure
 	taskID := task.ID
-	projectPath := task.ProjectPath
 
-	entryID := s.cron.Schedule(schedule, cron.FuncJob(func() {
+	entryID := s.cron.Schedule(schedule, s.cronJob(task))
+
+	// Lock is already held by caller
+	s.entries[taskID] = entryID
+
+	slog.Info(
+		"registered cron task",
+		slog.Int64("task_id", taskID),
+		slog.String("cron", task.CronExpr),
+	)
+	return nil
+}
+
+// cronJob builds the job closure for one task.
+//
+// Shared by registerTaskLocked and SetTimezone's re-registration, so the two
+// cannot drift: a task that survives a timezone change must keep exactly the
+// trigger semantics it had before (DB reload, single-flight claim, "auto"
+// trigger type). Duplicating the body is how a re-registered task silently
+// loses one of them.
+func (s *Scheduler) cronJob(task *model.ScheduledTask) cron.Job {
+	taskID := task.ID
+	projectPath := task.ProjectPath
+	return cron.FuncJob(func() {
 		// Reload task from DB to get latest state
 		current, err := GetTaskByID(taskID)
 		if err != nil || current.Status != "active" {
@@ -936,17 +990,7 @@ func (s *Scheduler) registerTaskLocked(task *model.ScheduledTask) error {
 			return
 		}
 		s.executeTask(current, projectPath, "auto", nil, nil)
-	}))
-
-	// Lock is already held by caller
-	s.entries[taskID] = entryID
-
-	slog.Info(
-		"registered cron task",
-		slog.Int64("task_id", taskID),
-		slog.String("cron", task.CronExpr),
-	)
-	return nil
+	})
 }
 
 // UpdateTaskStats increments run_count and updates last_run_at for a task.

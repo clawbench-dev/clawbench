@@ -546,6 +546,7 @@ KBUnsupportedFile: 这个文件类型不支持
 KBNotDirectory: 选中的不是一个文件夹
 KBSourceMissing: 原文件已经不在了，无法从原文件更新（知识库里的副本仍在，可以继续搜索）
 KBInvalidURL: 请填写 http 或 https 开头的网页地址
+KBPrivateAddress: 这个地址属于内网（本机、局域网或云元数据地址），不能添加
 KBFetchFailed: 打不开这个网页（网络不通、对方拒绝访问或页面太大）
 KBNameRequired: 知识库名称不能为空，且不超过 100 个字
 KBReasonLegacyDoc: 旧版 Word 格式（.doc）不支持，请另存为 .docx 后重新添加
@@ -559,8 +560,10 @@ KBReasonExecutable: 可执行文件无法作为知识库内容
 KBReasonBinary: 这个文件看起来是二进制内容，没有可索引的文字
 KBReasonFont: 字体文件无法作为知识库内容
 KBReasonPDFEncrypted: 打开 PDF 失败（文件可能损坏或已加密）
+KBReasonPDFMalformed: PDF 文件已损坏，无法解析
 KBReasonPDFNoText: 这份 PDF 里没有可提取的文字（可能是扫描件）
 KBReasonNoText: 这个文件里没有可提取的文字
 KBReasonFileTooLarge: "文件太大（{{.MaxMB}} MB），上限 {{.LimitMB}} MB"
 KBReasonNotRegular: 只能添加文件，不能添加目录
 KBReasonUnknownFormat: 无法解析这个文件（可能已损坏或已加密）
+KBReasonPrivateAddress: 这个地址属于内网（本机、局域网或云元数据地址），不能添加

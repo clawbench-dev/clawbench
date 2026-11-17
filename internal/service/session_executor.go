@@ -674,14 +674,12 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// from the outside, and only one of them is a problem.
 	if event.Type == "compacted" {
 		if event.Summary != "" {
-			// The boundary is the newest FINALIZED message that exists right
-			// now. The engine compacted exactly the messages it was given, and
-			// those are all older than the streaming placeholder this run is
-			// writing — so "everything finalized so far" is the right boundary.
-			SetBuiltinSummary(e.cfg.SessionID, builtinSummary{
-				Text:          event.Summary,
-				UpToMessageID: lastCoveredMessageID(e.cfg.SessionID, 0),
-			})
+			// The boundary is what the ENGINE folded, not "everything finalized
+			// so far" — see builtinSummaryFromCompaction. Without it, the same
+			// history is compacted again on every turn; with the wrong one, the
+			// turns the engine deliberately kept are silently dropped next turn.
+			SetBuiltinSummary(e.cfg.SessionID,
+				builtinSummaryFromCompaction(event, e.cfg.ChatRequest.History))
 		}
 		// Forward as a system_message so it lands in the transcript as a
 		// timeline note. The "compacted" type is an internal signal: the
@@ -787,9 +785,18 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	e.forwardEvent(event)
 
 	// metadata capture
+	//
+	// Accumulated rather than replaced. A backend may report accounting
+	// incrementally, and replacing kept only whatever arrived last; the token
+	// counters therefore SUM (each frame reports one model round) while every
+	// other field is filled in only when still empty. The terminal frame below
+	// merges on top of this.
 	if event.Type == contentKeyMetadata && event.Meta != nil {
 		e.mu.Lock()
-		e.responseMetadata = event.Meta
+		if e.responseMetadata == nil {
+			e.responseMetadata = &ai.Metadata{}
+		}
+		e.addMetadataUsage(e.responseMetadata, event.Meta)
 		e.mu.Unlock()
 		if event.Meta.SessionID != "" {
 			e.captureExternalSessionID(event.Meta.SessionID)
@@ -1088,6 +1095,21 @@ func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time
 		Metadata:         e.responseMetadata,
 		WallMs:           wallMs,
 	}
+}
+
+// addMetadataUsage folds one incremental metadata frame into the turn's
+// accounting.
+//
+// Token counters SUM: a backend that reports each model round separately (the
+// in-process agent does) would otherwise leave only the last round's numbers.
+// Every other field is filled in only when still empty — that is what
+// MergeMetadata is for — so a later frame can add usage without erasing the
+// model, transport or stop reason an earlier one already set. The caller holds
+// e.mu.
+func (e *SessionExecutor) addMetadataUsage(dst, src *ai.Metadata) {
+	dst.InputTokens += src.InputTokens
+	dst.OutputTokens += src.OutputTokens
+	ai.MergeMetadata(dst, src)
 }
 
 // captureExternalSessionID persists the external session ID if not already set.
@@ -1812,10 +1834,9 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent) {
 			}
 			e.mu.Lock()
 			if e.responseMetadata == nil {
-				e.responseMetadata = event.Meta
-			} else {
-				ai.MergeMetadata(e.responseMetadata, event.Meta)
+				e.responseMetadata = &ai.Metadata{}
 			}
+			e.addMetadataUsage(e.responseMetadata, event.Meta)
 			e.mu.Unlock()
 			if event.Meta.SessionID != "" {
 				e.captureExternalSessionID(event.Meta.SessionID)

@@ -106,4 +106,50 @@ describe('buildToolCallGroups', () => {
     expect(buildToolCallGroups([], opts).groups).toEqual([])
     expect(buildToolCallGroups(null as any, opts).groups).toEqual([])
   })
+
+  describe('lastStepDetail', () => {
+    // Folded into the group so the transcript row does not rescan the run on
+    // every streamed frame (it used to, twice per frame: once for the v-if and
+    // once for the text).
+    const withSummary = {
+      ...opts,
+      displayName: (b: any) => `Display:${b.id}`,
+      summarize: (b: any) => b.summary ?? '',
+    }
+
+    it('reports the most recent step that HAS a summary', () => {
+      const { groups } = buildToolCallGroups(
+        [
+          tool('a', { summary: 'run.go' }),
+          tool('b', { summary: 'npm test' }),
+          tool('c', { summary: '' }),
+        ],
+        withSummary,
+      )
+      expect(groups[0].lastStepDetail).toBe('Display:b · npm test')
+    })
+
+    it('falls back to the summary alone when the block has no display name', () => {
+      const { groups } = buildToolCallGroups(
+        [tool('a', { summary: 'one' }), tool('b', { summary: 'two' })],
+        { ...withSummary, displayName: () => '' },
+      )
+      expect(groups[0].lastStepDetail).toBe('two')
+    })
+
+    it('skips thinking chips and is empty when no step has a summary', () => {
+      const { groups } = buildToolCallGroups(
+        [tool('a'), thinking('t1'), tool('b')],
+        withSummary,
+      )
+      expect(groups[0].lastStepDetail).toBe('')
+    })
+
+    it('still resolves one when the caller supplies only `describe`', () => {
+      // `describe` is the pre-existing option; a caller that never passes the
+      // new namers must keep a working (if empty) line rather than throw.
+      const { groups } = buildToolCallGroups([tool('a'), tool('b')], opts)
+      expect(groups[0].lastStepDetail).toBe('')
+    })
+  })
 })

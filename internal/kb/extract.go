@@ -1,6 +1,7 @@
 package kb
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -72,6 +73,7 @@ const (
 	ReasonBinary        = "binary"
 	ReasonFont          = "font"
 	ReasonPDFEncrypted  = "pdf_encrypted"
+	ReasonPDFMalformed  = "pdf_malformed"
 	ReasonPDFNoText     = "pdf_no_text"
 	ReasonNoText        = "no_text"
 	ReasonFileTooLarge  = "file_too_large"
@@ -202,6 +204,7 @@ func ExtractFile(path, ext string, maxTextBytes int64) ([]Block, string, error) 
 	ext = strings.ToLower(ext)
 	var blocks []Block
 	var err error
+	var warning string
 	switch ext {
 	case ".pdf":
 		blocks, err = extractPDF(path)
@@ -209,8 +212,17 @@ func ExtractFile(path, ext string, maxTextBytes int64) ([]Block, string, error) 
 		blocks, err = extractDocx(path)
 	case ".xlsx":
 		blocks, err = extractXlsx(path)
+		if errors.Is(err, ErrOfficeBudgetSpent) {
+			// A workbook that decompressed more than the budget is not a parse
+			// failure: keep what was already read and mark the text as
+			// truncated, so the document stays searchable.
+			err, warning = nil, WarningTruncated
+		}
 	case ".pptx":
 		blocks, err = extractPptx(path)
+		if errors.Is(err, ErrOfficeBudgetSpent) {
+			err, warning = nil, WarningTruncated
+		}
 	case ".html", ".htm", ".xhtml":
 		blocks, err = extractHTML(path)
 	default:
@@ -219,7 +231,10 @@ func ExtractFile(path, ext string, maxTextBytes int64) ([]Block, string, error) 
 	if err != nil {
 		return nil, "", err
 	}
-	blocks, warning := capBlocks(blocks, maxTextBytes)
+	blocks, capWarning := capBlocks(blocks, maxTextBytes)
+	if capWarning != "" {
+		warning = capWarning
+	}
 	if len(blocks) == 0 {
 		return nil, warning, &FileError{Reason: ReasonNoText, Err: ErrNoText}
 	}

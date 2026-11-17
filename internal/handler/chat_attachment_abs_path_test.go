@@ -237,7 +237,7 @@ func TestBuildChatRequestFromQueue_AbsoluteDirAttachment_ClassifiedAsDirectory(t
 		Files:     []model.FileEntry{{Path: dir, IsDir: true}},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 
 	assert.Contains(t, req.Prompt, "[Current directory: "+dir+"]",

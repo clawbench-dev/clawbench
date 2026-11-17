@@ -2,6 +2,7 @@ package kb
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -29,6 +30,10 @@ var (
 	globalEmbedder *rag.EmbeddingClient
 	globalCfg      model.KBConfig
 	globalRAG      model.RAGConfig
+
+	// reconcileWG tracks the background embedding-width reconciliation so
+	// Shutdown can wait for it before the store is closed under it.
+	reconcileWG sync.WaitGroup
 )
 
 // Available reports whether the knowledge base is initialized and enabled.
@@ -107,7 +112,69 @@ func Init(cfg model.KBConfig, ragCfg model.RAGConfig) error {
 	slog.Info("kb: initialized",
 		slog.Bool("vector", emb != nil),
 		slog.String("dir", KnowledgeDir()))
+	// Reconcile the vector width as soon as a model is configured. Without it
+	// the mismatch is only noticed by SaveEmbeddings, i.e. only when there
+	// happens to be a pending chunk — a library that was fully embedded with
+	// the old model keeps the old width, hybrid search silently degrades to
+	// keywords and mode:"vector" fails on every request until someone adds a
+	// new file.
+	//
+	// It runs in the background: Init is called while the server boots, and a
+	// probe against a slow (or unreachable) embedding endpoint must not hold up
+	// startup. Until it finishes, search reports vector_degraded instead of
+	// pretending the semantic index worked.
+	if emb != nil {
+		reconcileWG.Add(1)
+		go reconcileEmbeddingDimension(st, emb)
+	}
 	return nil
+}
+
+// reconcileEmbeddingDimension aligns kb_vec with the configured model. It is
+// best-effort and must never fail Init: the knowledge base stays usable with
+// keyword search even when the embedding service is down.
+//
+// It makes exactly one cheap embed call (a single short token), and only when
+// there is something to compare: a mismatch is only detectable by asking the
+// model for its width, and skipping the probe would leave the stale table in
+// place, which is the bug this exists to fix. When the probe itself errors the
+// embedder is unusable and every vector search falls back anyway, so nothing is
+// dropped on a guess.
+func reconcileEmbeddingDimension(st *Store, emb *rag.EmbeddingClient) {
+	defer reconcileWG.Done()
+	if st == nil || emb == nil {
+		return
+	}
+	oldDim, haveTable := st.vecDimFromSchema()
+	if !haveTable && !st.HasEmbeddings() {
+		// Nothing was ever embedded: SaveEmbeddings creates the table at the
+		// right width on the first batch.
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	probe, err := emb.Embed(ctx, "dimension probe")
+	if err != nil || len(probe) == 0 {
+		slog.Warn("kb: embedding dimension probe failed, keeping the existing vector index",
+			slog.Bool("table", haveTable), slog.String("err", errText(err)))
+		return
+	}
+	if haveTable && oldDim == len(probe) {
+		return
+	}
+	if err := st.EnsureDimension(len(probe)); err != nil {
+		slog.Warn("kb: reconcile embedding dimension failed", slog.String("err", err.Error()))
+		return
+	}
+	slog.Info("kb: vector index rebuilt for the configured embedding model",
+		slog.Int("old_dim", oldDim), slog.Int("new_dim", len(probe)))
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // StartIndexer starts the background worker.
@@ -164,12 +231,21 @@ func Reconfigure(cfg model.KBConfig, ragCfg model.RAGConfig) {
 			slog.Warn("kb: re-init failed", slog.String("err", err.Error()))
 			return
 		}
+	} else {
+		// Same reconciliation Init does: a model switch arrives through this
+		// path (settings are patched live), and without it the stale width only
+		// shows up when a new chunk happens to be embedded.
+		if emb != nil {
+			reconcileWG.Add(1)
+			go reconcileEmbeddingDimension(st, emb)
+		}
 	}
 	StartIndexer()
 }
 
 // Shutdown stops the worker and closes the store.
 func Shutdown() {
+	reconcileWG.Wait()
 	mu.Lock()
 	idx := globalIndexer
 	globalIndexer = nil
@@ -303,14 +379,62 @@ func AddDocumentFromReader(collectionID int64, name string, r io.Reader) (*Docum
 // being silently truncated: a half-indexed page is worse than a clear error.
 const maxURLBytes = 20 << 20
 
+// maxURLRedirects is how many redirects a fetched page may follow.
+const maxURLRedirects = 5
+
 // AddDocumentFromURL fetches an http(s) address and indexes it like an
 // uploaded file. Only the response body is kept; the URL is not recorded as a
 // source path, so "update from original" does not apply to URL documents.
 //
-// No private-address filtering: this is a user-initiated fetch on a personal
-// server, the same trust model as opening the URL in a browser. The body is
-// only stored locally and indexed; it is never sent anywhere.
+// The fetch is user-initiated, but its result is indexed and then injected into
+// AI prompts automatically, so the target is restricted to public addresses
+// (see newURLFetchClient).
 func AddDocumentFromURL(collectionID int64, rawURL string) (*Document, error) {
+	return addDocumentFromURL(collectionID, rawURL, true)
+}
+
+// newURLFetchClient builds the HTTP client a page fetch uses. guard=false is
+// test-only and drops the address filter entirely (tests run against loopback
+// httptest servers); everything else is identical.
+//
+// With the guard on, the address is judged twice: CheckRedirect re-checks every
+// hop (a public URL redirecting to 169.254.169.254 would otherwise index the
+// metadata service), and DialContext judges the address actually connected to,
+// which is the only place a public hostname resolving to a LAN address can be
+// caught.
+func newURLFetchClient(guard bool) *http.Client {
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 15 * time.Second,
+		},
+	}
+	if !guard {
+		return client
+	}
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxURLRedirects {
+			return fmt.Errorf("too many redirects")
+		}
+		if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+			return fmt.Errorf("redirect to a non-http URL")
+		}
+		if isPrivateHost(req.URL.Host) {
+			return &FileError{Reason: ReasonPrivateAddress, Detail: req.URL.Hostname(), Err: ErrPrivateAddress}
+		}
+		return nil
+	}
+	client.Transport.(*http.Transport).DialContext = dialPublicOnly(10 * time.Second)
+	return client
+}
+
+// addDocumentFromURL does the fetch. guard=false is test-only: httptest servers
+// listen on loopback, so the whole filter (URL, redirect, dial) is skipped —
+// deciding it in one place is what keeps a "guard off" test testable instead of
+// half-enforced.
+func addDocumentFromURL(collectionID int64, rawURL string, guard bool) (*Document, error) {
 	st := currentStore()
 	if st == nil {
 		return nil, ErrUnavailable
@@ -322,8 +446,11 @@ func AddDocumentFromURL(collectionID int64, rawURL string) (*Document, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, ErrInvalidURL
 	}
+	if guard && isPrivateHost(u.Host) {
+		return nil, &FileError{Reason: ReasonPrivateAddress, Detail: u.Hostname(), Err: ErrPrivateAddress}
+	}
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := newURLFetchClient(guard)
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, ErrInvalidURL
@@ -685,11 +812,17 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// ReindexCollections queues every document in the given collections.
+// ReindexCollections queues every document in the given collections. A nil
+// slice means every collection; an empty non-nil slice means none (the store is
+// strict about the difference, so callers that resolved "visible here" to an
+// empty list cannot clear the whole installation).
 func ReindexCollections(collectionIDs []int64) error {
 	st := currentStore()
 	if st == nil {
 		return ErrUnavailable
+	}
+	if collectionIDs != nil && len(collectionIDs) == 0 {
+		return nil
 	}
 	if err := st.ResetDocumentsForReindex(collectionIDs); err != nil {
 		return err

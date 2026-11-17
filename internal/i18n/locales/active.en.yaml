@@ -556,6 +556,7 @@ KBUnsupportedFile: This file type is not supported
 KBNotDirectory: The selected path is not a folder
 KBSourceMissing: The original file is gone, so it cannot be refreshed (the stored copy is still searchable)
 KBInvalidURL: Enter an http or https address
+KBPrivateAddress: This address is on a private network (loopback, LAN or metadata service) and cannot be added
 KBFetchFailed: Could not open the page (network error, refused, or too large)
 KBNameRequired: A knowledge base name is required and must be at most 100 characters
 KBReasonLegacyDoc: Legacy Word format (.doc) is not supported; save it as .docx and add it again
@@ -569,8 +570,10 @@ KBReasonExecutable: Executable files cannot be knowledge base content
 KBReasonBinary: This file looks like binary data and has no indexable text
 KBReasonFont: Font files cannot be knowledge base content
 KBReasonPDFEncrypted: Could not open the PDF (the file may be damaged or encrypted)
+KBReasonPDFMalformed: This PDF is damaged and could not be parsed
 KBReasonPDFNoText: This PDF has no extractable text (it may be a scanned document)
 KBReasonNoText: This file has no extractable text
 KBReasonFileTooLarge: "The file is too large ({{.MaxMB}} MB); the limit is {{.LimitMB}} MB"
 KBReasonNotRegular: Only files can be added, not directories
 KBReasonUnknownFormat: Could not parse this file (it may be damaged or encrypted)
+KBReasonPrivateAddress: This address is on a private network (loopback, LAN or metadata service) and cannot be added

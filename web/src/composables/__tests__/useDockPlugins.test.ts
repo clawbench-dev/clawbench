@@ -222,6 +222,44 @@ describe('manual changes', () => {
     expect(state.hidden.value.size).toBe(0)
     expect(state.order.value).toEqual(DOCK_TAB_IDS)
   })
+
+  describe('unknown ids in the stored order', () => {
+    // A plugin removed/renamed in a later build leaves its id behind in the
+    // saved order. The dock must ignore it (no tab), but the settings manager
+    // has to SEE it — otherwise the row vanishes from every UI while the tab it
+    // refers to is still drawn, and only clearing localStorage could fix it.
+    beforeEach(() => {
+      localStorage.setItem(
+        'clawbench-panel.dock-order',
+        JSON.stringify(['weather', ...DOCK_TAB_IDS]),
+      )
+      _resetDockPluginsForTest()
+    })
+
+    it('keeps the id in storedOrder and out of the visible order', () => {
+      const state = useDockPlugins()
+      expect(state.storedOrder.value).toContain('weather')
+      expect(state.order.value).not.toContain('weather')
+      expect(state.order.value).toEqual(DOCK_TAB_IDS)
+    })
+
+    it('writeOrder persists the list verbatim, removing the unknown id', () => {
+      const state = useDockPlugins()
+      state.writeOrder([...state.order.value])
+      expect(state.storedOrder.value).not.toContain('weather')
+      expect(readPanelState<string[]>('dockOrder')).toEqual([...DOCK_TAB_IDS])
+    })
+
+    it('setOrder alone cannot clear it when the merged order is unchanged', () => {
+      // The reason `writeOrder` exists: the merged result already equals the
+      // visible order, so `setOrder` returns early and the stale id survives.
+      const state = useDockPlugins()
+      setDockTabOrder([...state.order.value])
+      expect(state.storedOrder.value).toContain('weather')
+      state.writeOrder([...state.order.value])
+      expect(state.storedOrder.value).not.toContain('weather')
+    })
+  })
 })
 
 describe('persistence', () => {

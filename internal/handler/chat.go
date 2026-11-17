@@ -767,9 +767,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			SessionID:   sessionID,
 			ProjectPath: projectPath,
 			BackendName: backendName,
-			ExecuteRunWithMessage: func(_ int64, row service.QueuedRow) service.DrainResult {
+			ExecuteRunWithMessage: func(msgID int64, row service.QueuedRow) service.DrainResult {
 				qMsg := row.ToModel()
-				nextChatReq, buildErr := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
+				nextChatReq, buildErr := buildChatRequestFromQueue(qMsg, msgID, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
 				if buildErr != nil {
 					return service.DrainResult{Err: buildErr.Error()}
 				}
@@ -792,7 +792,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				SessionID:   sessionID,
 				ProjectPath: projectPath,
 				RunTurn: func(prompt string) service.DrainResult {
-					retryChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false)
+					// The continue prompt is persisted by the turn runner, which
+					// makes it the newest row — bound the replayed history there
+					// so the built-in backend does not see it twice.
+					retryOpts := []service.ChatRequestOption{service.WithCurrentMessageID(service.LastChatMessageID(sessionID))}
+					retryChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false, retryOpts...)
 					retryResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, retryChatReq, fileDir)
 					return service.DrainResult{
 						CancelReason:   retryResult.cancelReason,
@@ -813,7 +817,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				ProjectPath: projectPath,
 				BackendName: backendName,
 				RunTurn: func(prompt string) service.DrainResult {
-					confirmReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false)
+					// Same bound as auto-continue: the confirmation prompt is
+					// persisted by the runner before the request is built.
+					confirmOpts := []service.ChatRequestOption{service.WithCurrentMessageID(service.LastChatMessageID(sessionID))}
+					confirmReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false, confirmOpts...)
 					confirmResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, confirmReq, fileDir)
 					return service.DrainResult{
 						CancelReason: confirmResult.cancelReason,
@@ -1131,7 +1138,13 @@ func buildForkContext(sessionID string) string {
 // buildChatRequestFromQueue constructs an ai.ChatRequest from a queued message.
 // It returns an error only when a ClawBench built-in command's endpoint
 // reference cannot be rendered from the embedded spec.
-func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath, backendName, agentID, fileDir string) (ai.ChatRequest, error) {
+//
+// msgID is the chat_history row the drain just materialized for this message.
+// It must reach the request: the built-in backend replays history from that
+// table, and without the bound the question being answered is replayed as
+// context and reaches the model twice. A queued message is the one case where
+// the frontend cannot supply the id — it did not exist until the claim.
+func buildChatRequestFromQueue(qMsg model.QueuedMessage, msgID int64, sessionID, projectPath, backendName, agentID, fileDir string) (ai.ChatRequest, error) {
 	prompt := qMsg.Text
 	var filePaths, dirPaths []string
 	if len(qMsg.FilePaths) > 0 {
@@ -1191,6 +1204,7 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	if !ai.IsACPSlashCommand(qMsg.Text) {
 		opts = append(opts, service.WithKBInjection())
 	}
+	opts = append(opts, service.WithCurrentMessageID(msgID))
 	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, "", "", "", "", fileDir, hasAttachments, opts...), nil
 }
 

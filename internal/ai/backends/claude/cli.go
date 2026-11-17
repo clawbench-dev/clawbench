@@ -31,11 +31,18 @@ func init() {
 		// steering extension (_session/steering). It emits no echo boundary, so
 		// the injection MERGES into the running reply (no split).
 		CLI: &backends.CLIPlugin{NewBackend: newClaudeBackend},
-		// qoder and qodercn are Claude Code forks and reuse these hooks; they
-		// import this package rather than copying the parsers.
+		// This is the definition of the Claude-family ACP hook set. qoder /
+		// qodercn are Claude Code forks and re-export these same function
+		// values rather than copying the parsers; codex shares ExtractMeta too.
+		// Every hook Claude's bridge protocol needs must be listed here — a hook
+		// missing from this struct silently degrades to the generic fallback for
+		// claude AND every fork that re-exports it (which is exactly how
+		// ExtractMeta was lost once), so keep the set complete and let
+		// TestClaudeFamilyBehaviorsAreShared catch a fork that stops sharing.
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       ParseACPToolCall,
 			ParseToolCallUpdate: ParseACPToolCallUpdate,
+			ExtractMeta:         ExtractMeta,
 		},
 		ModelSource: model.PluginSource("claude", discoverClaudeModels),
 		MidTurn:     &midTurnInjector{},

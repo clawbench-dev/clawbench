@@ -2912,6 +2912,18 @@ type builtinSummary struct {
 	// Messages with a lower id are represented by the summary and must not be
 	// replayed.
 	UpToMessageID int64 `json:"upToMessageId"`
+	// CoversThroughTurn is UpToMessageID as a POSITION in the replayed turn
+	// list (1-based: how many prior turns the summary stands for), or 0 when the
+	// boundary is only known as an id.
+	//
+	// Two boundaries exist because two things can shift the ids out from under a
+	// stored summary: deleting a message, and rewinding to an earlier point.
+	// Both remove rows, and a summary that covered them must keep covering the
+	// turns it was actually built from — reading the boundary back as "skip
+	// every id" then silently skipped the turns the engine deliberately kept
+	// verbatim. The position survives both edits; the id is kept as the fallback
+	// for summaries written before this field existed.
+	CoversThroughTurn int `json:"coversThroughTurn,omitempty"`
 }
 
 // SetBuiltinSummary stores a compaction summary plus the boundary it covers.
@@ -3294,6 +3306,23 @@ func GetAssistantMessageCount(sessionID string) int {
 	var count int
 	store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0", sessionID).Scan(&count)
 	return count
+}
+
+// LastChatMessageID returns the id of the newest persisted row in a session, or
+// 0 when the session has no rows yet.
+//
+// It exists for the turns that AUTO-START (auto-continue after an abnormal
+// finish, a single-chat cruise confirmation) — they also persist their user
+// message before building the request, but never see its id because the
+// persistence happens inside the turn runner. The newest row IS that message,
+// so passing this as WithCurrentMessageID gives the built-in backend the same
+// "stop replaying just before this row" bound a direct send gets. Without it
+// the replayed history included the message being answered and the model saw
+// the same question twice.
+func LastChatMessageID(sessionID string) int64 {
+	var id int64
+	store.ReadDB().QueryRow("SELECT COALESCE(MAX(id), 0) FROM chat_history WHERE session_id = ?", sessionID).Scan(&id)
+	return id
 }
 
 // UpdateStreamingMessageByID updates the content of a SPECIFIC streaming

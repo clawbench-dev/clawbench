@@ -1113,7 +1113,7 @@ func TestBuildChatRequestFromQueue_BasicFields(t *testing.T) {
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
 	require.NoError(t, err)
 	assert.NotNil(t, req)
 	assert.Equal(t, "queued message", req.Prompt)
@@ -1134,7 +1134,7 @@ func TestBuildChatRequestFromQueue_WithFiles(t *testing.T) {
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
 	require.NoError(t, err)
 	assert.NotNil(t, req)
 	// The prompt should contain the original text (may be prefixed with file annotations)
@@ -1723,7 +1723,7 @@ func TestBuildChatRequestFromQueue_FilePathsAndFiles(t *testing.T) {
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
 	require.NoError(t, err)
 	require.NotNil(t, req)
 	assert.Contains(t, req.Prompt, "review these files")

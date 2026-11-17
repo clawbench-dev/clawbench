@@ -92,6 +92,18 @@ type ToolCall struct {
 	// here: the tool layer parses it, so a malformed argument produces a tool
 	// error the model can read and correct instead of a turn-ending failure.
 	Arguments string
+	// Index is the PROVIDER's slot number for this call, set on the streaming
+	// events only (nil on a call read back from a conversation). It exists
+	// because parallel calls stream INTERLEAVED — chunk for call 0, chunk for
+	// call 1, more for call 0 — so a consumer cannot assume that an argument
+	// fragment belongs to the most recently started call. Without it the two
+	// calls' JSON gets spliced together into one blob that is not valid JSON.
+	//
+	// It is deliberately distinct from "the Nth call this round": providers
+	// number their slots in their own order, and a consumer that conflated the
+	// two would append fragments to the wrong call whenever the numbering is not
+	// a dense 0..n-1 sequence.
+	Index *int
 }
 
 // ToolResult is the outcome of one tool call, returned to the model.
@@ -192,6 +204,8 @@ type Event struct {
 	Signature string
 	// ToolCall is set on KindToolCallStart (ID+Name, Arguments empty) and on
 	// KindToolCallDelta (Arguments holds the increment). It is nil otherwise.
+	// Its Index identifies WHICH call the event belongs to, so interleaved
+	// parallel calls can be reassembled.
 	ToolCall *ToolCall
 	// Usage is set on KindUsage, usually the last event of a round.
 	Usage *Usage

@@ -11,11 +11,14 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/model"
 )
 
 // shellDoc is a minimal stand-in for share.html: the pieces the injector looks
@@ -393,4 +396,70 @@ func TestServeSharePage_UnknownTokenKeepsPlaceholderTitle(t *testing.T) {
 	w := callHandler(ServeSharePage, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "<title>ClawBench Share</title>")
+}
+
+// setShareShowProjectName flips the public-share project-name policy for one
+// test. It is a FeaturePolicy field, not a ConfigInstance copy: this is what
+// every share endpoint reads.
+func setShareShowProjectName(t *testing.T, on bool) {
+	t.Helper()
+	prev := model.FeaturePolicy.ShareShowProjectName
+	model.FeaturePolicy.ShareShowProjectName = on
+	t.Cleanup(func() { model.FeaturePolicy.ShareShowProjectName = prev })
+}
+
+// TestShareMeta_LiveProjectNameObeysPolicy pins the leak that bypassed the
+// switch.
+//
+// The running-room branch passed room.ProjectKey() through raw, so with
+// share.show_project_name OFF the project's directory name still appeared in
+// this response and in the injected discovery block (og:site_name, <noscript>) —
+// reachable by anyone holding a meeting link. The policy has to filter this kind
+// exactly like files and sessions.
+func TestShareMeta_LiveProjectNameObeysPolicy(t *testing.T) {
+	resetLiveRegistry(t)
+	room, err := liveRegistry.Create(projPath("/proj/secret-project"), "live")
+	require.NoError(t, err)
+
+	setShareShowProjectName(t, false)
+	w := httptest.NewRecorder()
+	serveShareMeta(w, newRequest(t, http.MethodGet, "/api/share/"+room.Token()+"/meta", nil), room.Token())
+	require.Equal(t, http.StatusOK, w.Code)
+	var off shareMetaResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &off))
+	assert.Equal(t, shareKindLive, off.Kind)
+	assert.Empty(t, off.ProjectName, "a running meeting must not reveal the project name when the owner opted out")
+
+	// The discovery block fed to the page reads the same decision.
+	d, ok := shareDiscoveryFor(room.Token())
+	require.True(t, ok)
+	assert.Equal(t, shareKindLive, d.Kind)
+	assert.Empty(t, d.ProjectName)
+	page := injectShareDiscovery(shellDoc, d)
+	assert.NotContains(t, page, "secret-project", "the page must not carry the project name after the opt-out")
+	assert.NotContains(t, page, "og:site_name")
+
+	setShareShowProjectName(t, true)
+	w = httptest.NewRecorder()
+	serveShareMeta(w, newRequest(t, http.MethodGet, "/api/share/"+room.Token()+"/meta", nil), room.Token())
+	var on shareMetaResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &on))
+	assert.Equal(t, "secret-project", on.ProjectName,
+		"with the policy on, the live share keeps showing its source project like every other kind")
+}
+
+// TestShareDiscoveryFor_LiveRoomHasBlock pins the other half: a running meeting's
+// share page used to get NO discovery block at all (the lookup only knew file
+// and session tokens), while its own /meta answered kind=live.
+func TestShareDiscoveryFor_LiveRoomHasBlock(t *testing.T) {
+	resetLiveRegistry(t)
+	setShareShowProjectName(t, true)
+	room, err := liveRegistry.Create(projPath("/proj/live-project"), "Standup")
+	require.NoError(t, err)
+
+	d, ok := shareDiscoveryFor(room.Token())
+	require.True(t, ok, "a running room must resolve, or the page gets no discovery at all")
+	assert.Equal(t, shareKindLive, d.Kind)
+	assert.Equal(t, "Standup", d.Title)
+	assert.Equal(t, "live-project", d.ProjectName)
 }

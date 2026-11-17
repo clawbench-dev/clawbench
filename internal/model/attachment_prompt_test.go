@@ -478,7 +478,7 @@ func TestQuoteHeader_CarriesSourceLocators(t *testing.T) {
 // noise and would misreport an unset id as a real one.
 //
 // With an open bag the equivalent hazard is an EMPTY STRING value: a client that
-// writes `{task: ''}` (rather than omitting the key) must not produce "task: ".
+// writes `{task: ”}` (rather than omitting the key) must not produce "task: ".
 func TestQuoteHeader_OmitsEmptyLocators(t *testing.T) {
 	got := quoteHeader(QuotePrompt{Label: "/a.go", Locators: map[string]string{"task": "", "message": "  "}}, 1, 1)
 	assert.Equal(t, "[Quote 1/1] /a.go", got)

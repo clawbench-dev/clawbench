@@ -15,7 +15,7 @@ func (WriteTool) Name() string { return "write" }
 func (WriteTool) Snippet() string { return "Create or overwrite a file" }
 
 func (WriteTool) Guidelines() []string {
-	return []string{"Use write only for new files or complete rewrites.", "To change part of an existing file, use edit instead: a rewrite loses everything you did not reproduce."}
+	return []string{"Use write only for new files or complete rewrites.", "To change part of an existing file, use edit instead: a rewrite loses everything you did not reproduce and re-sends the whole file."}
 }
 
 func (WriteTool) Spec() Spec {

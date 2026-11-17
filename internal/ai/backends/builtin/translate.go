@@ -104,16 +104,17 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 		})
 
 	case agentcore.EventUsage:
-		if ev.Usage != nil {
-			out = append(out, ai.StreamEvent{
-				Type: "metadata",
-				Meta: &ai.Metadata{
-					InputTokens:  ev.Usage.InputTokens,
-					OutputTokens: ev.Usage.OutputTokens,
-					Transport:    "builtin",
-				},
-			})
-		}
+		// Deliberately NOT forwarded as a `metadata` frame.
+		//
+		// One metadata frame per model round is a REPLACEMENT in the executor
+		// (e.responseMetadata = event.Meta), and the terminal `done` frame only
+		// fills fields that are still empty. So a turn with tool calls — several
+		// rounds — recorded the LAST round's tokens, and the `done` total was
+		// ignored: usage and cost were understated on every multi-round turn.
+		// The per-round figure has no consumer here (the UI shows the turn's
+		// total, which the `done` frame below carries), and a single-round turn
+		// is unaffected — done reports the same numbers this frame used to.
+		return nil
 
 	case agentcore.EventCompacted:
 		// Two things ride this event: the summary (persisted by the executor so
@@ -126,6 +127,11 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 		out = append(out, ai.StreamEvent{
 			Type:    "compacted",
 			Summary: ev.Summary,
+			// The boundary the executor records. Without it the executor had to
+			// write its own newest message id, which marked the turns the engine
+			// kept verbatim as "already summarized".
+			CompactedThroughHistory:   ev.CompactedThroughHistory,
+			CompactedThroughMessageID: ev.CompactedThroughMessageID,
 			SystemMessage: &ai.SystemMessageData{
 				Content: compactionNotice(ev.Dropped, ev.SummaryTokens, ev.WindowTokens),
 			},

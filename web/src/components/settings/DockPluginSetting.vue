@@ -96,6 +96,23 @@
           </div>
         </div>
       </VueDraggable>
+      <!-- Orphan ids: still in the stored order (`order`), but this build has no
+           plugin definition for them (a removed/renamed plugin, or a hand-edited
+           value). They render no row in the list above, so without this block
+           the left column would show a tab whose switch can never be reached —
+           the only fix used to be clearing localStorage. Shown as a plain,
+           non-draggable notice with the one action that removes them. -->
+      <div v-if="unknownTabIds.length > 0" class="plugin-orphans" data-plugin-orphans>
+        <p class="plugin-orphans__hint">{{ t('settings.dockPlugins.unknownTabHint') }}</p>
+        <ul class="plugin-orphans__list">
+          <li v-for="id in unknownTabIds" :key="id" class="plugin-orphans__item" :data-unknown-tab="id">
+            {{ t('settings.dockPlugins.unknownTab', { id }) }}
+          </li>
+        </ul>
+        <button type="button" class="fbtn" data-plugin-orphans-reset :disabled="presetBusy" @click="onResetOrder">
+          {{ t('settings.dockPlugins.unknownTabReset') }}
+        </button>
+      </div>
     </SettingsCard>
   </div>
 </template>
@@ -170,10 +187,12 @@ const { platformSupported } = useTerminalStatus()
 const {
   preset,
   order,
+  storedOrder,
   applyPreset,
   setVisible,
   isHidden,
   setOrder,
+  writeOrder,
   markCustom,
 } = useDockPlugins()
 
@@ -182,6 +201,19 @@ const orderedPlugins = computed<DockTabDescriptor[]>(() =>
   order.value
     .map((id) => DOCK_TAB_BY_ID.get(id))
     .filter((tab): tab is DockTabDescriptor => !!tab),
+)
+
+/**
+ * Ids that are in the stored order but have no plugin definition in this build.
+ *
+ * `orderedPlugins` drops them silently (there is no descriptor to render a row
+ * from) and the merged `order` has already lost any id that is not a known dock
+ * id at all — so the check has to read the STORED order. Without an entry here
+ * the row simply vanishes from the manager while the dashboard still draws the
+ * tab, and its switch cannot be reached.
+ */
+const unknownTabIds = computed<string[]>(() =>
+  [...new Set(storedOrder.value.filter((id) => !DOCK_TAB_BY_ID.has(id as DockTabId)))],
 )
 
 // Local mirror the draggable mutates in place. Synced from the store order so
@@ -330,6 +362,28 @@ async function writeFeature(plugin: DockTabDescriptor, value: boolean): Promise<
     next.delete(plugin.id)
     saving.value = next
   }
+}
+
+/**
+ * Drop the orphan ids from the stored order.
+ *
+ * The full "restore default" preset would also rewrite visibility and the
+ * server switches — far more than the user asked for when the only problem is
+ * a stale id. This writes JUST the order.
+ */
+function onResetOrder(): void {
+  if (presetBusy.value) return
+  // Everything the manager can see, in the order it shows. `setOrder` merges
+  // against the registry, which is what reinserts a tab the local array never
+  // held — and what decides the saved value.
+  setOrder(localPlugins.value.map((p) => p.id))
+  // …but that merge compares against the VISIBLE order and short-circuits when
+  // they are equal, while the stored value still carries the orphan. Write the
+  // visible order itself so the stale id is really gone.
+  if (storedOrder.value.length !== orderedPlugins.value.length) {
+    writeOrder(orderedPlugins.value.map((p) => p.id))
+  }
+  localPlugins.value = [...orderedPlugins.value]
 }
 
 /** `[{key:'forge.enabled',value:false}]` → `{ forge: { enabled: false } }`. */
@@ -653,5 +707,46 @@ async function onPreset(next: Exclude<DockPreset, 'custom'>): Promise<void> {
 
 .plugin-switch--locked .settings-item__switch-input:checked + .settings-item__switch-track {
   background: var(--bg-tertiary);
+}
+
+/* Orphan ids (in the stored order, no plugin in this build). Deliberately NOT
+   a row: there is no plugin behind it to toggle, drag or open settings for —
+   only the notice and the one action that clears it. */
+.plugin-orphans {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--dp));
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.plugin-orphans__hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.plugin-orphans__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--dp));
+}
+
+.plugin-orphans__item {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.plugin-orphans .fbtn {
+  align-self: flex-start;
 }
 </style>

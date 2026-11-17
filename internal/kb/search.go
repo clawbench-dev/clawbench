@@ -3,6 +3,7 @@ package kb
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -37,6 +38,11 @@ type SearchParams struct {
 }
 
 // Search runs a keyword, semantic or hybrid query.
+//
+// A failed semantic leg never fails the request: it falls back to keywords and
+// says so through SearchResult.VectorDegraded / VectorError. Silently returning
+// keyword-only results under Mode "hybrid" is what made a stale vector index
+// indistinguishable from "nothing semantic matched".
 func Search(ctx context.Context, params SearchParams) (*SearchResult, error) { //nolint:gocognit,gocyclo // multi-mode search with fallback
 	st := currentStore()
 	if st == nil {
@@ -95,6 +101,10 @@ func Search(ctx context.Context, params SearchParams) (*SearchResult, error) { /
 
 	var hits []SearchHit
 	var err error
+	// vectorErr is set when the semantic leg was requested but could not run.
+	// It is turned into a user-facing explanation at the end, never into an
+	// error: the keyword hits are still a valid answer.
+	var vectorErr error
 	switch mode {
 	case SearchModeFTS:
 		hits, err = st.SearchFTS(query, limit, ids)
@@ -103,6 +113,7 @@ func Search(ctx context.Context, params SearchParams) (*SearchResult, error) { /
 		if !vectorReady {
 			hits, err = st.SearchFTS(query, limit, ids)
 			mode = SearchModeFTS
+			vectorErr = errNoVectorIndex(emb, st)
 			break
 		}
 		var vec []float64
@@ -110,14 +121,22 @@ func Search(ctx context.Context, params SearchParams) (*SearchResult, error) { /
 		if err != nil {
 			hits, err = st.SearchFTS(query, limit, ids)
 			mode = SearchModeFTS
+			vectorErr = fmt.Errorf("embedding service unavailable: %w", err)
 			break
 		}
 		hits, err = st.SearchVector(vec, limit, ids)
 		mode = SearchModeVector
+		if err != nil {
+			slog.Warn("kb: vector search failed", slog.String("err", err.Error()))
+			vectorErr = err
+			hits, err = st.SearchFTS(query, limit, ids)
+			mode = SearchModeFTS
+		}
 	default:
 		if !vectorReady {
 			hits, err = st.SearchFTS(query, limit, ids)
 			mode = SearchModeFTS
+			vectorErr = errNoVectorIndex(emb, st)
 			break
 		}
 		var vec []float64
@@ -126,16 +145,43 @@ func Search(ctx context.Context, params SearchParams) (*SearchResult, error) { /
 			// Embedding is optional: a dead endpoint must not break search.
 			hits, err = st.SearchFTS(query, limit, ids)
 			mode = SearchModeFTS
+			vectorErr = fmt.Errorf("embedding service unavailable: %w", err)
 			break
 		}
 		var vecHits, ftsHits []SearchHit
-		vecHits, _ = st.SearchVector(vec, pool, ids)
-		ftsHits, _ = st.SearchFTS(query, pool, ids)
+		var vecErr, ftsErr error
+		vecHits, vecErr = st.SearchVector(vec, pool, ids)
+		ftsHits, ftsErr = st.SearchFTS(query, pool, ids)
+		if vecErr != nil {
+			// Vector search failing (typically "Dimension mismatch": the model
+			// was swapped and kb_vec still has the old width) used to be
+			// discarded here, so the user got keyword results labelled
+			// "hybrid" with no hint that the semantic half was missing.
+			slog.Warn("kb: vector search failed, serving keyword results",
+				slog.String("err", vecErr.Error()))
+			vectorErr = vecErr
+		}
+		if ftsErr != nil {
+			// Keyword search is the safety net; if IT fails there is no answer
+			// to give, unless the vector half came back.
+			if vecErr != nil || len(vecHits) == 0 {
+				return nil, ftsErr
+			}
+		}
 		hits = fuseRRF(vecHits, ftsHits, limit)
-		mode = SearchModeHybrid
+		if vectorErr != nil {
+			mode = SearchModeFTS
+		} else {
+			mode = SearchModeHybrid
+		}
 	}
 	if err != nil {
 		return nil, err
+	}
+	// A vector-mode request whose semantic leg failed has already replaced the
+	// error with the keyword results; anything else that went wrong is real.
+	if mode == SearchModeVector && vectorErr != nil {
+		mode = SearchModeFTS
 	}
 
 	for i := range hits {
@@ -147,7 +193,41 @@ func Search(ctx context.Context, params SearchParams) (*SearchResult, error) { /
 			}
 		}
 	}
-	return &SearchResult{Results: hits, Total: len(hits), Mode: mode}, nil
+	res := &SearchResult{Results: hits, Total: len(hits), Mode: mode}
+	if vectorErr != nil {
+		res.VectorDegraded = true
+		res.VectorError = explainVectorError(vectorErr)
+	}
+	return res, nil
+}
+
+// errNoVectorIndex explains why a vector leg cannot run at all. "No rows" and
+// "no model" are different facts and the panel shows them differently: an empty
+// index is normal right after a rebuild, a missing model is a setting.
+func errNoVectorIndex(emb *rag.EmbeddingClient, st *Store) error {
+	if emb == nil {
+		return fmt.Errorf("no embedding service is configured")
+	}
+	if !st.HasEmbeddings() {
+		return fmt.Errorf("the semantic index is empty — files are still being indexed")
+	}
+	return fmt.Errorf("the semantic index is being rebuilt")
+}
+
+// explainVectorError turns an internal error into something a user can act on.
+// SQL text ("Dimension mismatch: kb_vec expects 3...") is not an instruction.
+func explainVectorError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "Dimension mismatch") || strings.Contains(msg, "dimension mismatch") {
+		return "the embedding model changed; the semantic index is being rebuilt — keyword search works meanwhile"
+	}
+	if strings.Contains(msg, "no such table") {
+		return "the semantic index is still being built — keyword search works meanwhile"
+	}
+	return msg
 }
 
 // fuseRRF merges two ranked lists with Reciprocal Rank Fusion.

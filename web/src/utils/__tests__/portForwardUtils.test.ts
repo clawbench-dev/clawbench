@@ -250,4 +250,22 @@ describe('portForwardUnavailable', () => {
     expect(portForwardUnavailable(undefined, false)).toBe(false)
     expect(portForwardUnavailable(null, true)).toBe(false)
   })
+
+  it('does not treat a FAILED sshInfo request as disabled', () => {
+    // A failed load leaves sshInfo null and never retries, so reading it as
+    // "SSH off" hid the proxy tab for the whole session (only a reload brought
+    // it back). A request that never landed reads as ON, same as
+    // useFeatureFlags.
+    expect(portForwardUnavailable(null, false, true, false)).toBe(false)
+    // Even a value that looks like "off" is not evidence when the request
+    // failed to land — keep it reachable rather than hide its only entry.
+    expect(portForwardUnavailable(false, false, true, false)).toBe(false)
+    // The host genuinely lacking tunnels still gates it: that is not unknown.
+    expect(portForwardUnavailable(null, true, false, false)).toBe(true)
+  })
+
+  it('reads an ANSWERED "off" as off', () => {
+    expect(portForwardUnavailable(false, false, true, true)).toBe(true)
+    expect(portForwardUnavailable(false, true, true, true)).toBe(false)
+  })
 })

@@ -72,7 +72,13 @@ jobs:
                 web/landing/index.html dist/
           # 与 deploy-landing.yml 保持同一份站点内容：一键安装脚本也要在这里，
           # 否则换到 GitHub Pages 访问时 README 里的地址是 404。
+          #
+          # 落地页里的脚本地址由 js/landing.js 按 location.host 生成，所以这个
+          # 域名下的访客拿到的正是这一份副本——它和 Cloudflare 那份必须来自
+          # 同一个 checkout。少了任何一个，页面上的 `curl ... | bash` 就是 404。
           cp scripts/install.sh scripts/install.ps1 dist/
+          test -s dist/install.sh
+          test -s dist/install.ps1
           rm -f dist/*.test.ts
           # Jekyll is skipped for artifact deploys, but the marker keeps the
           # site intact if the Pages source is ever switched to a branch.

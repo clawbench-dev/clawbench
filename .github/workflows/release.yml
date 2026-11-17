@@ -1769,6 +1769,41 @@ jobs:
 
           NOTES="${NOTES}---\n\n**完整变更日志**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}\n"
 
-          # Write notes to file and update release
           printf '%b\n' "$NOTES" > /tmp/release-notes.md
+
+          # 安装脚本的 sha256 写进 Release 说明：落地页不提供校验值（脚本由
+          # workflow 从同一个 checkout 复制过去，页面自己算既不权威也容易与用户
+          # 下载到的字节不一致），发布方给出的这份才是唯一可信来源。
+          # 这个步骤没有 working-directory，路径就是仓库根。
+          # 两个空格是关键：`sha256sum -c` 只认 `<hash>  <file>` 这种格式，
+          # 写成 `sha256(x) = <hash>` 用户还得自己拼。
+          {
+            echo ''
+            echo '## 🔐 一键安装脚本校验值'
+            echo ''
+            echo '普通校验（通过后再执行）：'
+            echo ''
+            echo '```bash'
+            echo 'curl -fsSL https://clawbench.pages.dev/install.sh -o install.sh'
+            echo 'sha256sum -c <<\EOF'
+            echo "$(sha256sum scripts/install.sh | sed 's#scripts/##')"
+            echo 'EOF'
+            echo 'bash install.sh'
+            echo '```'
+            echo ''
+            echo 'Windows（先存成 install.ps1）：以下哈希应一致'
+            echo ''
+            echo '```'
+            echo "$(sha256sum scripts/install.ps1 | sed 's#scripts/##')"
+            echo '```'
+            echo ''
+            echo '```powershell'
+            echo '(Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLower()'
+            echo '```'
+            echo ''
+            echo '注意：脚本默认安装**最新版**，两次运行装到的版本可能不同；需要可复现'
+            echo '请传 `CLAWBENCH_VERSION`（Windows 用 `$env:CLAWBENCH_VERSION`）。'
+            echo ''
+          } >> /tmp/release-notes.md
+
           gh release edit "$TAG" --notes-file /tmp/release-notes.md

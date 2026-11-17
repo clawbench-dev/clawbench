@@ -29,7 +29,7 @@ func TestVectorIndexLifecycle(t *testing.T) {
 		ChunkText:          "报销流程：先提交申请。",
 		ChunkTextSegmented: rag.SegmentText("报销流程：先提交申请。"),
 		ChunkIndex:         0,
-	}}, ""))
+	}}, "", colID))
 
 	pending, err := st.PendingEmbeddingChunks(10)
 	require.NoError(t, err)
@@ -104,7 +104,7 @@ func TestHybridSearchWithEmbedder(t *testing.T) {
 		ChunkText:          "报销流程：先提交申请，再等财务审批。",
 		ChunkTextSegmented: rag.SegmentText("报销流程：先提交申请，再等财务审批。"),
 		ChunkIndex:         0,
-	}}, ""))
+	}}, "", colID))
 
 	pending, err := st.PendingEmbeddingChunks(10)
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestEnsureDimensionMismatchResetsVectors(t *testing.T) {
 	require.NoError(t, st.ReplaceChunks(docID, []Chunk{{
 		DocumentID: docID, CollectionID: colID, ChunkIndex: 0,
 		ChunkText: "x", ChunkTextSegmented: "x",
-	}}, ""))
+	}}, "", colID))
 	pending, err := st.PendingEmbeddingChunks(10)
 	require.NoError(t, err)
 	require.NoError(t, st.SaveEmbeddings([]ChunkEmbedding{{

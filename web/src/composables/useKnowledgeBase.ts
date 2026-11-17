@@ -173,25 +173,36 @@ export async function kbAddFromURL(collectionId: number, url: string): Promise<K
   return apiPost<KBDocument>('/api/kb/documents/url', { collection_id: collectionId, url })
 }
 
+/**
+ * Folder import and its preview are synchronous requests on the server: one
+ * HTTP call walks the folder, copies up to 500 files and writes their rows.
+ * The default 10s budget cuts that off in the middle for anything but a tiny
+ * folder, and the user then sees a failure for an import that is still going.
+ */
+export const KB_DIR_IMPORT_TIMEOUT_MS = 300_000
+
 export async function kbImportDirectory(
   collectionId: number,
   path: string,
 ): Promise<KBDirImportResult> {
-  return apiPost<KBDirImportResult>('/api/kb/documents/import', {
-    collection_id: collectionId,
-    path,
-  })
+  return apiPost<KBDirImportResult>(
+    '/api/kb/documents/import',
+    { collection_id: collectionId, path },
+    { timeoutMs: KB_DIR_IMPORT_TIMEOUT_MS },
+  )
 }
 
 export async function kbPreviewDirectory(
   collectionId: number,
   path: string,
 ): Promise<KBDirImportResult> {
-  return apiPost<KBDirImportResult>('/api/kb/documents/import', {
-    collection_id: collectionId,
-    path,
-    dry_run: true,
-  })
+  return apiPost<KBDirImportResult>(
+    '/api/kb/documents/import',
+    { collection_id: collectionId, path, dry_run: true },
+    // The preview hashes every file in the folder to detect duplicates, so it
+    // is I/O bound in the same way the real import is.
+    { timeoutMs: KB_DIR_IMPORT_TIMEOUT_MS },
+  )
 }
 
 export async function kbCreateCollection(

@@ -77,7 +77,10 @@ jobs:
           # 一键安装脚本随站点发布，README 里给的就是这两个地址：
           #   https://clawbench.pages.dev/install.sh
           #   https://clawbench.pages.dev/install.ps1
+          # 落地页按 location.host 生成命令，所以这份副本必须一直在。
           cp scripts/install.sh scripts/install.ps1 dist/
+          test -s dist/install.sh
+          test -s dist/install.ps1
           rm -f dist/*.test.ts
 
       # The manual lives at /docs/ next to the landing page and links back to

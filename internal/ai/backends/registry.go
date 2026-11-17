@@ -91,10 +91,36 @@ func AllSpecsSorted() []model.BackendSpec {
 }
 
 // ResetForTest clears the registry. For testing only.
-func ResetForTest() {
+//
+// It returns a restore function that reinstates the plugin snapshot taken
+// BEFORE the clear, so callers must use it and defer the restore:
+//
+//	restore := backends.ResetForTest()
+//	defer restore()
+//
+// The snapshot is the real one registered by the backend init()s, which is what
+// clears the ordering hazard: this package's tests used to wipe the global
+// registry and never put it back, so every other test in the same binary only
+// passed while Go ran the files in registry_test.go's order. Under -shuffle
+// (or a future rename) dozens of unrelated assertions failed for a reason that
+// had nothing to do with the code under test.
+//
+// The restore is pointer-copy based — plugins are not mutated by ResetForTest —
+// so nested helper registrations still see the same plugin values.
+func ResetForTest() func() {
 	pluginsMu.Lock()
-	defer pluginsMu.Unlock()
+	snapshot := make(map[string]*BackendPlugin, len(plugins))
+	for id, p := range plugins {
+		snapshot[id] = p
+	}
 	plugins = make(map[string]*BackendPlugin)
+	pluginsMu.Unlock()
+
+	return func() {
+		pluginsMu.Lock()
+		defer pluginsMu.Unlock()
+		plugins = snapshot
+	}
 }
 
 // LookupACPRemaps returns the ACP input remapping map for the given backend.

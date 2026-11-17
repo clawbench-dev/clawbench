@@ -2,6 +2,7 @@ package kb
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -122,7 +123,16 @@ func (idx *Indexer) processDocument() bool {
 	if err != nil {
 		slog.Warn("kb: extract failed",
 			slog.Int64("doc", doc.ID), slog.String("title", doc.Title), slog.String("err", err.Error()))
-		_ = idx.store.SetDocumentStatus(doc.ID, StatusFailed, err.Error(), "")
+		// A move/delete/requeue during extraction has already decided the
+		// document's fate; stamping "failed" here would resurrect a row the
+		// user deleted as a broken entry, or make a moved document show a stale
+		// extraction error that describes the file it no longer is.
+		if cur, getErr := idx.store.GetDocument(doc.ID); getErr == nil && cur.CollectionID != doc.CollectionID {
+			return true
+		}
+		if setErr := idx.store.SetDocumentStatus(doc.ID, StatusFailed, err.Error(), ""); setErr != nil {
+			slog.Warn("kb: mark extract failed", slog.Int64("doc", doc.ID), slog.String("err", setErr.Error()))
+		}
 		return true
 	}
 
@@ -138,7 +148,9 @@ func (idx *Indexer) processDocument() bool {
 		// panel can translate it. ExtractFile failures already carry a code
 		// through FileError.Error(); this branch produced the one exception.
 		reason := (&FileError{Reason: ReasonNoText, Err: ErrNoText}).Error()
-		_ = idx.store.SetDocumentStatus(doc.ID, StatusFailed, reason, warning)
+		if err := idx.store.SetDocumentStatus(doc.ID, StatusFailed, reason, warning); err != nil {
+			slog.Warn("kb: mark no-text failed", slog.Int64("doc", doc.ID), slog.String("err", err.Error()))
+		}
 		return true
 	}
 
@@ -155,10 +167,23 @@ func (idx *Indexer) processDocument() bool {
 			TokenCount:         c.TokenCount,
 		})
 	}
-	if err := idx.store.ReplaceChunks(doc.ID, stored, warning); err != nil {
+	// expectedCollectionID is the collection read before extraction: the
+	// extractor can run for tens of seconds, and a move (or delete) during that
+	// window must not be overwritten with chunks stamped for the old library.
+	if err := idx.store.ReplaceChunks(doc.ID, stored, warning, doc.CollectionID); err != nil {
+		if errors.Is(err, ErrDocumentChanged) {
+			// Not a failure: the row was moved/re-queued/deleted. A move and a
+			// requeue already left it pending, so the next pass reads it again;
+			// a delete has nothing left to do.
+			slog.Info("kb: document changed while indexing, dropping extracted chunks",
+				slog.Int64("doc", doc.ID), slog.String("title", doc.Title))
+			return true
+		}
 		slog.Error("kb: store chunks failed",
 			slog.Int64("doc", doc.ID), slog.String("title", doc.Title), slog.String("err", err.Error()))
-		_ = idx.store.SetDocumentStatus(doc.ID, StatusFailed, err.Error(), warning)
+		if statusErr := idx.store.SetDocumentStatus(doc.ID, StatusFailed, err.Error(), warning); statusErr != nil {
+			slog.Warn("kb: mark chunking failed", slog.Int64("doc", doc.ID), slog.String("err", statusErr.Error()))
+		}
 		return true
 	}
 	slog.Info("kb: document indexed",

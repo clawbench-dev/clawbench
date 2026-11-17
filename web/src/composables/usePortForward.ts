@@ -80,6 +80,13 @@ const loading = ref(false)
 // of an already-rendered list — the rows should stay put while the round runs.
 const refreshing = ref(false)
 const sshInfo = ref<SSHInfo | null>(null)
+// Whether `/api/ssh/info/full` has answered at least once. `sshInfo === null`
+// alone cannot be told apart from "the request failed", and the dock's gate
+// treats the two differently: a failed load must not be read as "SSH is off"
+// (that hid the proxy tab for the rest of the session — the value never
+// retries, so only a page reload brought the tab back). It starts as resolved
+// when a previous module instance already had an answer.
+const sshInfoResolved = ref(false)
 const tunnelStatus = ref<TunnelStatus>('unknown')
 const tunnelMessage = ref('')
 const tunnelChecking = ref(false)
@@ -862,8 +869,12 @@ export function usePortForward() {
     try {
       const data = await apiGet<SSHInfo>('/api/ssh/info/full')
       sshInfo.value = data
+      // Even a null/undefined body means the endpoint answered: the shape is
+      // known now, so the gate may read it.
     } catch {
       sshInfo.value = null
+    } finally {
+      sshInfoResolved.value = true
     }
   }
 
@@ -1500,6 +1511,7 @@ export function usePortForward() {
     refreshing,
     isAppMode,
     sshInfo,
+    sshInfoResolved,
     tunnelStatus,
     tunnelMessage,
     tunnelChecking,

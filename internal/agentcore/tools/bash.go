@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -96,28 +97,53 @@ func (BashTool) Run(env Env, raw json.RawMessage) Result {
 	cmd := exec.CommandContext(ctx, shell, flag, args.Command)
 	cmd.Dir = env.Root
 	setProcessGroup(cmd)
+	// WaitDelay bounds how long Wait keeps waiting for the output pipes after
+	// the shell has exited.
+	//
+	// Without it, a command that leaves a BACKGROUND child holding stdout
+	// (`sleep 5 &` , `npm run dev &`) makes Wait block on the pipe copy long
+	// after the shell is gone: waitpid has returned, so the context watcher has
+	// already finished and Cancel is never called — the tool call then waits for
+	// the child (or, for a daemon, forever) while the timeout has no effect.
+	// Go closes its pipes after this delay, Wait returns exec.ErrWaitDelay, and
+	// the output captured so far is kept.
+	cmd.WaitDelay = bashWaitDelay(timeout)
 	// Keep stdout and stderr separate so the model can tell "the command
 	// failed" from "the command printed to stderr but worked". Both capture
 	// writers enforce the size cap as bytes arrive: a command that prints
 	// gigabytes must not grow the server's memory before it is truncated.
-	stdout := newBoundedOutput(MaxBashOutputBytes)
-	stderr := newBoundedOutput(MaxBashOutputBytes)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	//
+	// These are writers, not os.Pipe ends, and that is what makes WaitDelay
+	// work: exec then owns the pipe and the copying goroutine, and closes them
+	// when the delay expires. With StdoutPipe the pipe is the CALLER's, and Go
+	// cannot close it — the child holds the write end, so Wait keeps waiting for
+	// as long as the background process lives, which is the bug this bounds.
+	outW := newBoundedOutput(MaxBashOutputBytes)
+	errW := newBoundedOutput(MaxBashOutputBytes)
+	cmd.Stdout = outW
+	cmd.Stderr = errW
 
 	runErr := cmd.Run()
+
+	// What actually happened, now that Wait has returned. The three outcomes are
+	// distinct and were previously conflated:
+	//   - timedOut: our deadline fired and the process group was killed.
+	//   - leftBackground: the shell itself exited, but a child it started kept
+	//     the output pipes open until WaitDelay closed them (ErrWaitDelay).
+	//   - cancelled: the user stopped the turn.
 	timedOut := ctx.Err() == context.DeadlineExceeded
+	leftBackground := errors.Is(runErr, exec.ErrWaitDelay) && !timedOut
 
 	var b strings.Builder
-	if stdout.Len() > 0 {
-		b.WriteString(stdout.String())
+	if outW.Len() > 0 {
+		b.WriteString(outW.String())
 	}
-	if stderr.Len() > 0 {
+	if errW.Len() > 0 {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString("[stderr]\n")
-		b.WriteString(stderr.String())
+		b.WriteString(errW.String())
 	}
 	if b.Len() == 0 {
 		b.WriteString("(no output)")
@@ -127,12 +153,64 @@ func (BashTool) Run(env Env, raw json.RawMessage) Result {
 		fmt.Fprintf(&b, "\n[command timed out after %d seconds and was killed]", timeout)
 		return Result{Text: b.String(), IsError: true, Display: firstLine(args.Command)}
 	}
+	if leftBackground {
+		// The shell itself finished; a child it started kept the output pipes
+		// open. Saying "timed out and was killed" here was the lie that made this
+		// state undiagnosable — nothing was killed, and nothing timed out.
+		fmt.Fprintf(&b, "\n[the command exited%s but left a background process holding its output; "+
+			"the output above was captured up to that point and may be truncated]", exitSuffix(runErr))
+		return Result{Text: b.String(), IsError: false, Display: firstLine(args.Command)}
+	}
 	if runErr != nil {
 		fmt.Fprintf(&b, "\n[exit status: %v]", runErr)
 		return Result{Text: b.String(), IsError: true, Display: firstLine(args.Command)}
 	}
 	return Result{Text: b.String(), Display: firstLine(args.Command)}
 }
+
+// exitSuffix renders the exit status part of a "left a background process"
+// note, or "" when the shell exited cleanly.
+func exitSuffix(err error) string {
+	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
+		return ""
+	}
+	return fmt.Sprintf(" with %v", err)
+}
+
+// bashWaitDelay is how long Wait waits for the output pipes after the shell
+// exited.
+//
+// It is capped by the command's own timeout so a very long budget does not allow
+// the wait to outlive the turn, and floored so a very short budget still drains
+// the tail of ordinary output.
+//
+// It is deliberately shorter than the command's budget: the case this exists for
+// is "the shell exited, a background child still holds the pipe". When the whole
+// budget has already gone to the command, waiting the same amount again would
+// double the wall time of a turn the user is waiting on — and, for `nohup ... &`
+// style daemons, would keep doubling it.
+func bashWaitDelay(timeoutSec int) time.Duration {
+	if timeoutSec <= 0 {
+		return minBashWaitDelay
+	}
+	d := time.Duration(timeoutSec) * time.Second / 2
+	if d > maxBashWaitDelay {
+		d = maxBashWaitDelay
+	}
+	if d < minBashWaitDelay {
+		d = minBashWaitDelay
+	}
+	return d
+}
+
+const (
+	// minBashWaitDelay is the floor: enough for the tail of a normal command's
+	// output to be read after the shell exits.
+	minBashWaitDelay = 500 * time.Millisecond
+	// maxBashWaitDelay is the ceiling: a daemon started by the command must not
+	// hold a tool call open longer than this once the shell is gone.
+	maxBashWaitDelay = 2 * time.Second
+)
 
 // boundedOutput captures a command's output under a fixed memory budget.
 //

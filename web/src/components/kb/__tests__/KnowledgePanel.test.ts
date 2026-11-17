@@ -405,19 +405,22 @@ describe('KnowledgePanel', () => {
     picker.vm.$emit('confirm', [{ path: 'docs', isDir: true }])
     await flushPromises()
 
-    expect(h.apiPost).toHaveBeenNthCalledWith(1, '/api/kb/documents/import', {
-      collection_id: 2,
-      path: 'docs',
-      dry_run: true,
-    })
+    expect(h.apiPost).toHaveBeenNthCalledWith(
+      1,
+      '/api/kb/documents/import',
+      { collection_id: 2, path: 'docs', dry_run: true },
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
+    )
     expect(h.confirm).toHaveBeenCalledWith(
       '3 to add, 2 skipped, 1 already there, 0 failed. Continue?',
       expect.objectContaining({ confirmText: 'Import' }),
     )
-    expect(h.apiPost).toHaveBeenNthCalledWith(2, '/api/kb/documents/import', {
-      collection_id: 2,
-      path: 'docs',
-    })
+    expect(h.apiPost).toHaveBeenNthCalledWith(
+      2,
+      '/api/kb/documents/import',
+      { collection_id: 2, path: 'docs' },
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
+    )
     expect(h.toast).toHaveBeenCalledWith(
       '3 added, 2 skipped, 1 already there, 0 failed',
       expect.objectContaining({ type: 'success' }),

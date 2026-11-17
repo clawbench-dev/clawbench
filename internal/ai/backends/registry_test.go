@@ -12,7 +12,7 @@ import (
 )
 
 func TestRegistry_RegisterAndLookup(t *testing.T) {
-	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest())
 
 	p := &backends.BackendPlugin{
 		ID: "test-backend",
@@ -46,7 +46,7 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 }
 
 func TestRegistry_LookupNotFound(t *testing.T) {
-	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest())
 
 	got := backends.Lookup("nonexistent")
 	if got != nil {
@@ -55,7 +55,7 @@ func TestRegistry_LookupNotFound(t *testing.T) {
 }
 
 func TestRegistry_RegisterDuplicatePanics(t *testing.T) {
-	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest())
 
 	p := &backends.BackendPlugin{ID: "dup"}
 	backends.Register(p)
@@ -69,7 +69,7 @@ func TestRegistry_RegisterDuplicatePanics(t *testing.T) {
 }
 
 func TestRegistry_All(t *testing.T) {
-	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest())
 
 	backends.Register(&backends.BackendPlugin{ID: "a"})
 	backends.Register(&backends.BackendPlugin{ID: "b"})
@@ -89,7 +89,7 @@ func TestRegistry_All(t *testing.T) {
 }
 
 func TestRegistry_AllSpecs(t *testing.T) {
-	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest())
 
 	backends.Register(&backends.BackendPlugin{
 		ID: "spec-test",
@@ -110,22 +110,37 @@ func TestRegistry_AllSpecs(t *testing.T) {
 }
 
 func TestRegistry_ResetForTest(t *testing.T) {
-	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest())
 
 	backends.Register(&backends.BackendPlugin{ID: "temp"})
 	if backends.Lookup("temp") == nil {
 		t.Fatal("expected to find 'temp' after registration")
 	}
 
-	backends.ResetForTest()
+	restore := backends.ResetForTest()
 
 	if backends.Lookup("temp") != nil {
 		t.Error("expected nil after ResetForTest, but found backend")
 	}
+
+	// The restore function must put back what was registered before the clear.
+	// Tests used to clear without restoring, which left every later test in this
+	// binary reading an empty registry when the file order changed.
+	backends.Register(&backends.BackendPlugin{ID: "temp-2"})
+	restore()
+	if backends.Lookup("temp-2") != nil {
+		t.Error("restore reinstated the registry from the wrong point: a plugin registered after the clear survived")
+	}
+	if backends.Lookup("temp") == nil {
+		t.Error("restore lost the plugin that was registered before the clear")
+	}
+	if got := len(backends.All()); got != 1 {
+		t.Errorf("restore left %d plugins, want the single pre-clear plugin", got)
+	}
 }
 
 func TestRegistry_ResetForTestConcurrent(t *testing.T) {
-	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest())
 
 	var wg sync.WaitGroup
 	for i := range 10 {
@@ -144,7 +159,7 @@ func TestRegistry_ResetForTestConcurrent(t *testing.T) {
 }
 
 func TestRegistry_LookupACPRemaps(t *testing.T) {
-	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest())
 
 	// Backend with ACP remaps
 	backends.Register(&backends.BackendPlugin{
@@ -186,7 +201,7 @@ func TestRegistry_LookupACPRemaps(t *testing.T) {
 }
 
 func TestRegistry_LookupACPRemapsEmptyMapFallback(t *testing.T) {
-	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest())
 
 	// Backend with empty ACP remaps should fall back to generic
 	backends.Register(&backends.BackendPlugin{
@@ -206,7 +221,7 @@ func TestRegistry_LookupACPRemapsEmptyMapFallback(t *testing.T) {
 }
 
 func TestRegistry_LookupACPToolCallIDPrefixes(t *testing.T) {
-	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest())
 
 	backends.Register(&backends.BackendPlugin{
 		ID: "kimi",
@@ -234,8 +249,7 @@ func TestRegistry_LookupACPToolCallIDPrefixes(t *testing.T) {
 // TestLookupMidTurnInjector verifies the mid-turn policy lookup used by core
 // flow: registered backends resolve, everything else is nil (queue as usual).
 func TestLookupMidTurnInjector(t *testing.T) {
-	backends.ResetForTest()
-	t.Cleanup(backends.ResetForTest)
+	t.Cleanup(backends.ResetForTest())
 
 	stub := &stubMidTurnInjector{}
 	backends.Register(&backends.BackendPlugin{ID: "with-inject", MidTurn: stub})
@@ -263,8 +277,7 @@ func (s *stubMidTurnInjector) Inject(context.Context, ai.RawRPCTransport, ai.Mid
 // It is wired into ai.LookupACPToolCallWrapperPrefixesFn during init(), and a
 // backend that emits no wrappers must resolve to nil so the filter stays off.
 func TestLookupACPToolCallWrapperPrefixes(t *testing.T) {
-	backends.ResetForTest()
-	t.Cleanup(backends.ResetForTest)
+	t.Cleanup(backends.ResetForTest())
 
 	backends.Register(&backends.BackendPlugin{
 		ID: "with-wrappers",
@@ -297,8 +310,7 @@ func TestLookupACPToolCallWrapperPrefixes(t *testing.T) {
 // A false result is the default and must also be returned for unknown backends
 // and for backends whose ACP plugin is nil.
 func TestLookupACPModesMirrorThoughtLevel(t *testing.T) {
-	backends.ResetForTest()
-	t.Cleanup(backends.ResetForTest)
+	t.Cleanup(backends.ResetForTest())
 
 	backends.Register(&backends.BackendPlugin{
 		ID:  "mirrored",

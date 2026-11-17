@@ -1295,7 +1295,20 @@ func shareDiscoveryFor(token string) (shareDiscovery, bool) {
 	if !validShareToken(token) {
 		return shareDiscovery{}, false
 	}
-	// Conversation first, mirroring serveShareMeta: the two token spaces are
+	// A RUNNING meeting first, mirroring serveShareMeta: its token is minted
+	// automatically and resolves to the live room before any file/session row.
+	// Without this branch a running meeting's share page carried no discovery
+	// block at all, while the endpoint's own meta did.
+	if room := liveRegistry.Get(token); room != nil {
+		return shareDiscovery{
+			Token:           token,
+			Title:           room.Title(),
+			Kind:            shareKindLive,
+			ProjectName:     shareProjectNameForLiveRoom(room),
+			DownloadAllowed: model.FeaturePolicy.ShareAllowDownload,
+		}, true
+	}
+	// Conversation next, mirroring serveShareMeta: the two token spaces are
 	// distinct, so the order only matters for clarity.
 	if s, ok, err := service.GetSessionShareByToken(token); err == nil && ok {
 		projectName := ""

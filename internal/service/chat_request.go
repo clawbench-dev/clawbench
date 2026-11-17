@@ -33,6 +33,13 @@ type chatRequestOptions struct {
 // other backend resumes its own transcript and ignores history entirely. A
 // caller that omits it still works — the history simply includes the current
 // message, which the model sees twice.
+//
+// EVERY interactive turn that has already persisted its user row must pass it:
+// the direct send, the queue drain, auto-continue and the single-chat cruise
+// round. Leaving it out on one of them is invisible with an external CLI (which
+// replays its own transcript) and shows up only on the built-in backend, as the
+// same question reaching the model twice in one prompt. See
+// TestBuildChatRequest_EveryTurnBoundsItsOwnMessage for the guard.
 func WithCurrentMessageID(id int64) ChatRequestOption {
 	return func(o *chatRequestOptions) { o.currentMessageID = id }
 }

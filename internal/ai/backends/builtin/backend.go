@@ -163,7 +163,11 @@ func buildSpec(ctx context.Context, req ai.ChatRequest) (agentcore.Spec, error) 
 		SystemPrompt: req.SystemPrompt,
 		Prompt:       req.Prompt,
 		History:      historyFor(req),
-		WorkDir:      req.WorkDir,
+		// Parallel to History: the boundary a compaction reports is an id from
+		// here, so the caller records exactly which stored turn the summary
+		// stands for.
+		HistoryMessageIDs: historyIDs(req),
+		WorkDir:           req.WorkDir,
 		// The session mode narrows the agent's grant; it never widens it. An
 		// empty mode (background task, older client) leaves the grant as-is.
 		Policy:         agent.ToolPolicy.Normalized().ForMode(req.Mode),

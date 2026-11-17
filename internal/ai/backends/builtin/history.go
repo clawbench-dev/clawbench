@@ -44,3 +44,28 @@ func historyFor(req ai.ChatRequest) []llm.Message {
 	}
 	return out
 }
+
+// historyIDs returns req.History's stored ids, parallel to historyFor's output.
+//
+// It exists so a compaction can say WHICH stored turn it folded instead of "the
+// newest one": the engine keeps the most recent turns verbatim, and a boundary
+// that ignored that dropped them on the next turn. Synthetic entries (the fork
+// context) get 0 — the engine then reports an index-only boundary and the caller
+// writes no id at all, which replays rather than drops.
+func historyIDs(req ai.ChatRequest) []int64 {
+	out := make([]int64, 0, len(req.History)+1)
+	if req.ForkContext != "" {
+		out = append(out, 0)
+	}
+	for _, m := range req.History {
+		role := llm.Role(m.Role)
+		switch role {
+		case llm.RoleUser, llm.RoleAssistant:
+			if m.Text == "" {
+				continue
+			}
+			out = append(out, m.ID)
+		}
+	}
+	return out
+}

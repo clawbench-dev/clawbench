@@ -2,7 +2,9 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -413,16 +415,26 @@ func ApplyProviderConfigDirToAgent(backend, agentID string, p *model.Provider) e
 // ReconcileProviderConfigDirs rewrites every agent's private config file at
 // startup, so a provider edit made while the server was down cannot leave a
 // stale endpoint on disk. Directories of unbound agents are removed.
+//
+// Best effort per agent, like DeleteProjectData: every agent is visited even
+// after one fails, and the errors are summarized at the end. Stopping at the
+// first failure would leave the remaining agents on stale endpoints — and, far
+// worse, would skip the cleanup of unbound/deleted agents entirely, leaving
+// their plaintext API keys on disk after the user unbound or deleted them.
+// Those files cannot be repaired by a later retry the user knows about, so the
+// cleanup half especially must not be abandoned.
 func ReconcileProviderConfigDirs() error {
 	agents := model.GetAgentList()
 	bound := make(map[string]bool, len(agents))
+	var errs []error
+
 	for _, a := range agents {
 		if !model.ProviderUsesConfigDir(a.Backend) {
 			continue
 		}
 		if a.ProviderID == nil {
 			if err := RestoreProviderConfigDir(a.ID); err != nil {
-				return err
+				errs = append(errs, fmt.Errorf("restore %s: %w", a.ID, err))
 			}
 			continue
 		}
@@ -435,16 +447,28 @@ func ReconcileProviderConfigDirs() error {
 		// endpoint binding and leave the directory unmarked so it can be pruned.
 		if model.ProviderOwnServiceMode(a.Backend, p) {
 			if err := RestoreProviderConfigDir(a.ID); err != nil {
-				return err
+				errs = append(errs, fmt.Errorf("restore %s: %w", a.ID, err))
 			}
 			continue
 		}
 		bound[a.ID] = true
 		if _, err := applyProviderConfigDir(a.Backend, a.ID, p); err != nil {
-			return err
+			// Keep the directory marked as bound: a write failure must not turn
+			// into "prune it", which would delete the agent's working config
+			// because of a transient permission error.
+			errs = append(errs, fmt.Errorf("apply %s: %w", a.ID, err))
 		}
 	}
-	return pruneOrphanConfigDirs(bound)
+
+	if err := pruneOrphanConfigDirs(bound); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		slog.Warn("provider config dir reconcile had failures",
+			slog.Int("failed", len(errs)), slog.Int("agents", len(agents)))
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // pruneOrphanConfigDirs removes directories whose agent no longer exists, so a

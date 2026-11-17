@@ -1855,7 +1855,7 @@ func TestBuildChatRequestFromQueue_URLAttachment_ReferencedLink(t *testing.T) {
 		},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 
 	assert.Contains(t, req.Prompt, "[Referenced external link: https://github.com/acme/widgets/issues/451]",
@@ -1885,7 +1885,7 @@ func TestBuildChatRequestFromQueue_URLAndFile_BothPrefixed(t *testing.T) {
 		},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 
 	assert.Contains(t, req.Prompt, "/src/main.go:3-9", "the file keeps its line-aware label")
@@ -3291,7 +3291,7 @@ func TestBuildChatRequestFromQueue_UsesSessionModel(t *testing.T) {
 
 	// buildChatRequestFromQueue should use the session model
 	qMsg := model.QueuedMessage{Text: "next message", CreatedAt: time.Now().Format(time.RFC3339)}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", req.Model,
 		"queued message should use session-persisted model, not agent default")
@@ -3323,7 +3323,7 @@ func TestBuildChatRequest_DirectAndQueuePathsAgree(t *testing.T) {
 	direct := buildChatRequest(text, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
 
 	qMsg := model.QueuedMessage{Text: text, CreatedAt: time.Now().Format(time.RFC3339)}
-	queued, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	queued, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 
 	assert.Equal(t, direct.Model, queued.Model, "model must not depend on the send path")
@@ -3350,7 +3350,7 @@ func TestBuildChatRequestFromQueue_HasAttachments_WithFiles(t *testing.T) {
 		Files:     []model.FileEntry{{Path: "/some/path/file.go"}},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 	assert.True(t, req.HasAttachments)
 	assert.Contains(t, req.SystemPrompt, "Media File Handling")
@@ -3368,7 +3368,7 @@ func TestBuildChatRequestFromQueue_HasAttachments_NoFiles(t *testing.T) {
 		Text:      "just text",
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 	assert.False(t, req.HasAttachments)
 	assert.NotContains(t, req.SystemPrompt, "Media File Handling")
@@ -4603,7 +4603,7 @@ func TestBuildChatRequestFromQueue_LineNumbers(t *testing.T) {
 		},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 	assert.Contains(t, req.Prompt, "/src/foo.ts:10-20", "prompt should include line range for foo.ts")
 	assert.Contains(t, req.Prompt, "/src/bar.go:5", "prompt should include single line for bar.go")
@@ -5127,4 +5127,48 @@ func TestSessionStateSnapshot_BuiltinOptionsSurviveCLITransport(t *testing.T) {
 	require.True(t, ok, "the DB fallback answers with the persisted shape, got %T", st.Mode)
 	assert.Equal(t, model.ModeWrite, persisted.CurrentModeID)
 	assert.Len(t, persisted.AvailableModes, 3, "the persisted selection must keep the static option list")
+}
+
+// TestBuildChatRequestFromQueue_BindsMaterializedMessage pins the queue drain's
+// message-id binding.
+//
+// The drain has just materialized the user row, so the built-in backend must be
+// told to stop replaying history there. It is the one path where the frontend
+// cannot supply the id (the row did not exist when the message was queued), and
+// leaving it out is invisible on external CLIs — they resume their own
+// transcript — while the built-in backend hands the model the same question
+// twice in one prompt.
+func TestBuildChatRequestFromQueue_BindsMaterializedMessage(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const agentID = "builtin-queue-bind"
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	model.Agents[agentID] = &model.Agent{ID: agentID, Backend: "builtin", BuiltinBackend: true}
+	defer delete(model.Agents, agentID)
+
+	sessionID, err := service.CreateSession(env.ProjectDir, agentID, "queue bind", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	// An earlier exchange, then the row the drain materialized for this message.
+	for _, role := range []string{"user", "assistant"} {
+		_, err := service.AddChatMessage(env.ProjectDir, "builtin", sessionID, role,
+			`{"blocks":[{"type":"text","text":"earlier turn"}]}`, nil, false, "")
+		require.NoError(t, err)
+	}
+	msgID, err := service.AddChatMessage(env.ProjectDir, "builtin", sessionID, "user",
+		`{"blocks":[{"type":"text","text":"queued question"}]}`, nil, false, "")
+	require.NoError(t, err)
+
+	req, err := buildChatRequestFromQueue(model.QueuedMessage{Text: "queued question"}, msgID,
+		sessionID, env.ProjectDir, "builtin", agentID, "")
+	require.NoError(t, err)
+
+	require.NotEmpty(t, req.History, "the earlier exchange must be replayed, or the check is vacuous")
+	for _, h := range req.History {
+		assert.NotEqual(t, "queued question", h.Text,
+			"the queued message's own row must be excluded from the replayed history")
+	}
 }

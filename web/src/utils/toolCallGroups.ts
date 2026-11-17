@@ -55,6 +55,16 @@ export interface ToolCallGroup {
   runningName: string
   /** One-line summary of the running tool, e.g. "npm test". */
   runningSummary: string
+  /**
+   * Name + summary of the last tool in the run that has one, e.g.
+   * "Bash · rebuild the frontend"; `''` when no step has a summary.
+   *
+   * Computed HERE (one reverse scan per run, when the run is built) rather than
+   * by the row: the transcript row re-renders on every streamed frame, and it
+   * used to walk the run from its end twice per frame — once for the `v-if` on
+   * the summary line and once for its text.
+   */
+  lastStepDetail: string
 }
 
 export interface ToolCallGroupOptions {
@@ -64,6 +74,14 @@ export interface ToolCallGroupOptions {
   isThinking: (block: any, index: number) => boolean
   /** Display name, summary, colour category and raw name of the running tool. */
   describe: (block: any) => { name: string; summary: string; category: string; toolName: string }
+  /**
+   * Display name of a block, used for the settled row's "last step" line. Falls
+   * back to `describe`.name so a caller that only supplies one namer keeps
+   * working.
+   */
+  displayName?: (block: any) => string
+  /** One-line summary of an arbitrary tool block (the row's own summariser). */
+  summarize?: (block: any) => string
 }
 
 export interface ToolCallGroups {
@@ -122,6 +140,16 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
     const described = runningBlock
       ? opts.describe(runningBlock)
       : { name: '', summary: '', category: '', toolName: '' }
+    let lastStepDetail = ''
+    for (let idx = end; idx >= start; idx--) {
+      const block = list[idx]
+      if (!opts.isTool(block, idx)) continue
+      const summary = opts.summarize ? opts.summarize(block) : ''
+      if (!summary) continue
+      const name = opts.displayName ? opts.displayName(block) : opts.describe(block).name
+      lastStepDetail = name ? `${name} · ${summary}` : summary
+      break
+    }
     const group: ToolCallGroup = {
       start,
       end,
@@ -135,6 +163,7 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
       runningToolName: described.toolName,
       runningName: described.name,
       runningSummary: described.summary,
+      lastStepDetail,
     }
     groups.push(group)
     for (let idx = start; idx <= end; idx++) byIndex.set(idx, group)

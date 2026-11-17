@@ -40,7 +40,7 @@ func (GlobTool) Name() string { return "glob" }
 func (GlobTool) Snippet() string { return "Find files by name pattern" }
 
 func (GlobTool) Guidelines() []string {
-	return []string{"Use glob to locate a file before reading it, instead of guessing paths or listing with bash."}
+	return []string{"Use glob to locate a file before reading it, instead of guessing paths."}
 }
 
 func (GlobTool) Spec() Spec {

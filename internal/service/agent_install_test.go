@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -130,6 +131,20 @@ func TestInstallAgent_RefusesConcurrentRuns(t *testing.T) {
 
 	close(release)
 	require.NoError(t, <-done)
+
+	// Wait for the first call to COMPLETELY finish before the follow-up.
+	//
+	// The busy gate is a package-level bool protected by a mutex, and the runner
+	// stub is a package-level variable. Reading `<-done` only proves the goroutine
+	// sent on the channel — its deferred `agentInstallRunning = false` and this
+	// test's own `t.Cleanup` restore both race the next call, which under -race
+	// shows up as an intermittent failure or as a stale gate that refuses the
+	// follow-up for a reason unrelated to the assertion.
+	require.Eventually(t, func() bool {
+		agentInstallMu.Lock()
+		defer agentInstallMu.Unlock()
+		return !agentInstallRunning
+	}, 2*time.Second, time.Millisecond, "the install slot must be released once the call returns")
 
 	// The slot must be released afterwards, or the feature would work once.
 	stubInstallRun(t, func(context.Context, string) (string, error) { return "", nil })

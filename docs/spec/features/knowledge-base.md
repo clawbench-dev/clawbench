@@ -173,16 +173,16 @@ FTS 删除必须用 `INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, chunk_text_
 | POST | `/api/kb/documents/upload` | 上传文件（multipart） |
 | POST | `/api/kb/documents/import` | 导入文件夹；`dry_run: true` 只预览不写入 |
 | POST | `/api/kb/documents/url` | 抓取网页并入库（http/https，最多 20MB） |
-| POST | `/api/kb/documents/move` | 移动到另一个知识库（重新排队建索引） |
+| POST | `/api/kb/documents/move` | 移动到另一个知识库（重新排队建索引；目标库已有相同内容返回 409） |
 | PATCH | `/api/kb/documents?id=` | 修改标签（`tags` 逗号分隔） |
 | GET | `/api/kb/documents/usage?collection_id=` | 文件被聊天引用的次数与最近时间 |
 | DELETE | `/api/kb/documents?id=` | 删除文件 |
 | POST | `/api/kb/documents/reindex?id=` | 重建单文件 |
-| POST | `/api/kb/documents/refresh?id=` | 用原文件更新（内容没变返回 `changed:false`） |
+| POST | `/api/kb/documents/refresh?id=` | 用原文件更新（内容没变返回 `changed:false`；原文件不在返回 409） |
 | GET | `/api/kb/documents/progress?collection_id=` | 轮询状态（只返回会变化的字段） |
-| POST | `/api/kb/search` | 混合/关键词/语义搜索 |
-| POST | `/api/kb/reindex` | 按库重建 / 仅重建语义层 |
-| GET | `/api/kb/status` | 库数、文件数、片段数、已嵌入数、磁盘占用 |
+| POST | `/api/kb/search` | 混合/关键词/语义搜索；语义这一路没跑成时 `vector_degraded=true`，`mode` 回落 `fts`，`vector_error` 说明原因 |
+| POST | `/api/kb/reindex` | 按库重建 / 仅重建语义层；无可见库时 `200` + `queued:false`（`detail:"no_collections"`），不会退化成重建全部 |
+| GET | `/api/kb/status` | 库数、文件数、片段数、已嵌入数、磁盘占用；`?scope=project` 只统计全局 + 当前项目的库 |
 
 ## 配置
 

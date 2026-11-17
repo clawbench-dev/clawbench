@@ -23,6 +23,7 @@ vi.mock('@/composables/useAppMode', () => ({
 vi.mock('@/composables/usePortForward', () => ({
   usePortForward: () => ({
     sshInfo: { value: { enabled: false } },
+    sshInfoResolved: { value: true },
     transportAllowsH2: { value: false },
   }),
 }))

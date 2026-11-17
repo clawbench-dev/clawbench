@@ -84,11 +84,35 @@ describe('install.sh', () => {
     expect(src).toMatch(/if ! installed_version="\$\(node -v 2>&1\)"/)
   })
 
-  it('PATH 只写一次（重复执行不会把 rc 文件撑爆）', () => {
+  it('版本检查失败时把 stderr 一起打出来', () => {
+    // 平台包缺失 / 动态库缺失时，真正的原因只在 stderr 里。之前的
+    // `clawbench --version 2>/dev/null` 把这条唯一的线索扔了，用户只看到
+    // 一句「多半是平台包没装上」。
     const src = readFileSync(INSTALL_SH, 'utf8')
-    // 写入前先 grep 同一个标记；两处用的是同一个常量字符串
-    expect(src).toContain('>>> clawbench installer >>>')
-    expect(src).toContain("grep -q '>>> clawbench installer >>>'")
+    expect(src).toMatch(/if ! version="\$\(clawbench --version 2>&1\)"/)
+    expect(src).toContain('$version')
+    // 打印实际装上的版本（npm 可能解析到比 request 更新的版本）
+    expect(src).toContain('actual_version="${version#clawbench }"')
+  })
+
+  it('支持固定版本，并在收尾写明卸载方式', () => {
+    const src = readFileSync(INSTALL_SH, 'utf8')
+    expect(src).toContain('CLAWBENCH_VERSION')
+    expect(src).toMatch(/NPM_SPEC="\$NPM_PACKAGE@\$CLAWBENCH_VERSION"/)
+    expect(src).toContain('--uninstall')
+    expect(src).toMatch(/json_lts_versions\(\).*"lts":"/s)
+  })
+
+  it('PATH 只写一次（重复执行不会把 rc 文件撑爆）', () => {
+    // 标记字符串只有一份常量（RC_MARKER），写入与检查都用它——
+    // 两处各写一份字面量就会在改名时悄然分成两个标记。
+    const src = readFileSync(INSTALL_SH, 'utf8')
+    expect(src).toContain("RC_MARKER='>>> clawbench installer >>>'")
+    expect(src).toMatch(/grep -qF "\$RC_MARKER" "\$RC"/)
+    // 写入与检测必须用同一个常量。允许常量定义 + 两处用户提示（warn 里
+    // 告诉用户手动删哪一段），再多就说明有人在别处又写了一份字面量。
+    const literals = src.match(/>>> clawbench installer >>>/g) || []
+    expect(literals.length).toBeLessThanOrEqual(3)
   })
 })
 

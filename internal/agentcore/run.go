@@ -37,6 +37,12 @@ type Spec struct {
 	Prompt string
 	// History is the prior conversation, oldest first. Empty for a new session.
 	History []llm.Message
+	// HistoryMessageIDs is parallel to History: the caller's identifier for each
+	// replayed turn (0 = synthetic). Compaction reports the boundary as one of
+	// these ids so the caller can record how much of ITS OWN transcript the
+	// summary stands for, rather than recomputing an index. Empty means the
+	// caller keeps no per-message ids; the boundary is then index-only.
+	HistoryMessageIDs []int64
 	// WorkDir confines every file path the tools touch.
 	WorkDir string
 	// Policy decides which tools exist at all.
@@ -120,6 +126,23 @@ type Event struct {
 	Summary string
 	// Dropped is set on EventCompacted: how many messages the summary replaced.
 	Dropped int
+	// CompactedThroughHistory is set on EventCompacted: the INDEX in
+	// Spec.History of the last stored message that was folded into the summary,
+	// or -1 when no stored message was folded (only this turn's tool results
+	// were, or the caller passed no history at all).
+	//
+	// It exists because Dropped alone cannot tell a caller WHAT to stop
+	// replaying: the engine keeps the most recent turns verbatim, so "I folded
+	// the older part" is not "everything finalized so far is now the summary".
+	// A caller that wrote its own newest message id as the boundary dropped the
+	// deliberately kept turns on the next turn — they were skipped as "covered"
+	// while the summary did not mention them.
+	CompactedThroughHistory int
+	// CompactedThroughMessageID carries the same boundary as an opaque
+	// caller-side identifier (ChatRequest.HistoryMessage.ID): the engine does
+	// not interpret it, it only passes it back so the caller does not have to
+	// rely on the two histories having the same indexes.
+	CompactedThroughMessageID int64
 	// SummaryTokens and WindowTokens are set on EventCompacted: the estimated
 	// size after compaction and the model's window, so the UI can say how full
 	// the context is.
@@ -338,7 +361,12 @@ func (r *runner) run(ctx context.Context) {
 	r.buildTools()
 
 	// The conversation starts from the stored history plus this turn's prompt.
-	r.messages = append([]llm.Message{}, r.spec.History...)
+	// The history is NOT copied on purpose: compaction identifies the replayed
+	// messages by their position at the front of the conversation (see
+	// historyBoundary). Every step below REPLACES r.messages instead of writing
+	// into it, so the caller's slice is never mutated; the defensive copy at the
+	// top of foldToolResults covers the one helper that does slice its input.
+	r.messages = r.spec.History
 	// A summary from an earlier compaction replaces the turns it stood for.
 	// It goes FIRST: everything after it is either recent (kept verbatim) or
 	// this turn.
@@ -619,10 +647,17 @@ type roundAccumulator struct {
 	allowTools bool
 	texts      []string
 	calls      []llm.ToolCall
-	partial    map[int]*strings.Builder
-	// index keeps the call order: deltas address their call by position, and
-	// map iteration order is random.
-	index     []int
+	// partial holds each call's argument fragments by SLOT (the position of the
+	// call in calls), not by the provider's index: a provider may number its
+	// slots however it likes.
+	partial []*strings.Builder
+	// slotByProviderIndex maps a provider's call index to our slot. The two are
+	// different numbers: providers stream parallel calls under their own
+	// numbering, while calls is ordered by when they started.
+	slotByProviderIndex map[int]int
+	// lastSlot receives fragments that arrive with no index at all (a provider
+	// that omits it); it is the previous behaviour, kept only as a fallback.
+	lastSlot  int
 	reasoning strings.Builder
 	signature string
 	// truncated records that the stream ended at the output cap, so the reply
@@ -632,8 +667,10 @@ type roundAccumulator struct {
 
 func newRoundAccumulator(allowTools bool) *roundAccumulator {
 	return &roundAccumulator{
-		allowTools: allowTools,
-		partial:    make(map[int]*strings.Builder),
+		allowTools:          allowTools,
+		partial:             make([]*strings.Builder, 0, 4),
+		slotByProviderIndex: make(map[int]int),
+		lastSlot:            -1,
 	}
 }
 
@@ -658,20 +695,42 @@ func (a *roundAccumulator) apply(ev llm.Event, r *runner) error {
 			// that can never complete.
 			return nil
 		}
-		idx := len(a.index)
-		a.index = append(a.index, idx)
-		a.partial[idx] = &strings.Builder{}
+		slot := len(a.calls)
+		if ev.ToolCall.Index != nil {
+			a.slotByProviderIndex[*ev.ToolCall.Index] = slot
+		}
+		a.lastSlot = slot
+		a.partial = append(a.partial, &strings.Builder{})
 		a.calls = append(a.calls, llm.ToolCall{ID: ev.ToolCall.ID, Name: ev.ToolCall.Name})
 		// Announce immediately so the UI can open a card before the arguments
 		// finish streaming.
 		r.emit(Event{Kind: EventToolStart, ToolCallID: ev.ToolCall.ID, ToolName: ev.ToolCall.Name})
 
 	case llm.KindToolCallDelta:
-		if !a.allowTools || len(a.index) == 0 {
+		if !a.allowTools || len(a.calls) == 0 {
 			return nil
 		}
-		last := a.index[len(a.index)-1]
-		_, _ = a.partial[last].WriteString(ev.ToolCall.Arguments)
+		// Address the call by the provider's index. Parallel calls stream
+		// INTERLEAVED (fragment for call 0, fragment for call 1, more for call
+		// 0), so appending to "the last call started" splices two argument
+		// objects into one invalid blob. Events with no index at all fall back
+		// to the most recent call, which is what a single-call stream means.
+		slot := a.lastSlot
+		if idx := ev.ToolCall.Index; idx != nil {
+			known, ok := a.slotByProviderIndex[*idx]
+			if !ok {
+				// A fragment for a call whose start was never seen. Creating it
+				// here would announce a call the UI never opened; dropping it
+				// keeps the round consistent (the call is reported with the
+				// arguments it did receive).
+				return nil
+			}
+			slot = known
+		}
+		if slot < 0 || slot >= len(a.partial) {
+			return nil
+		}
+		_, _ = a.partial[slot].WriteString(ev.ToolCall.Arguments)
 
 	case llm.KindUsage:
 		if ev.Usage != nil {
@@ -694,8 +753,8 @@ func (a *roundAccumulator) apply(ev llm.Event, r *runner) error {
 // result assembles the round's output once the stream has closed.
 func (a *roundAccumulator) result(round int) roundOutput {
 	for i := range a.calls {
-		if b, ok := a.partial[i]; ok {
-			a.calls[i].Arguments = b.String()
+		if i < len(a.partial) {
+			a.calls[i].Arguments = a.partial[i].String()
 		}
 		if a.calls[i].ID == "" {
 			// Some gateways omit the id. Minting a stable one here keeps the
@@ -728,9 +787,28 @@ func drainStream(stream <-chan llm.Event) {
 // turns (replayed history) and within one turn (tool results).
 //
 // It loops: one pass may not be enough when the kept tail is itself oversized
-// (a small window with several long recent turns). Each pass folds strictly more
-// than the last, so the loop terminates; the cap is a belt-and-braces guard
-// against a pathological estimate.
+// (a small window with several long recent turns). A pass that folded history
+// leaves strictly fewer messages behind, so the loop terminates that way; the
+// pass count is compared against the conversation size BEFORE the loop instead
+// of trusting each pass to make progress, because one pass does not always do
+// so (see below). The cap is a belt-and-braces guard against a pathological
+// estimate.
+//
+// A pass that removes no tokens ends the loop. That is not a theoretical case:
+// once the conversation is [summary, kept tail, this turn], SplitPoint measures
+// the keep budget from the newest exchange, which always "fits" on its own, so
+// it returns the index of the previous summary — and the fold then summarises
+// that one message into a summary of the same size. Tokens after == tokens
+// before, ShouldCompact still holds, and the next pass does the same thing. Each
+// pass is a model call that spends the user's quota and replaces a summary with
+// a slightly longer one, and since every turn starts compacted at that size, the
+// user pays for all four passes again after EVERY message. Measured before the
+// guard: a 20-tool-round turn made 69 summary calls in 0.18s.
+//
+// "Equal" counts as no progress, not just "larger": the fold can trade a
+// message for a summary of exactly the same estimated size, which is the same
+// non-convergence with a tidier name. The estimate is deterministic, so equal
+// really does mean the next pass would reproduce it.
 //
 // Failure is non-fatal: a conversation that could not be compacted continues
 // as-is and the model call will either succeed or fail with the provider's own
@@ -741,6 +819,7 @@ func (r *runner) compactIfNeeded(ctx context.Context, system string) {
 		return
 	}
 
+	before := compaction.ConversationTokens(system, r.messages)
 	const maxPasses = 4
 	for pass := 0; pass < maxPasses; pass++ {
 		if !compaction.ShouldCompact(system, r.messages, r.spec.ContextWindow) {
@@ -752,12 +831,32 @@ func (r *runner) compactIfNeeded(ctx context.Context, system string) {
 			// very thing the user just asked about.
 			return
 		}
+		after := compaction.ConversationTokens(system, r.messages)
+		if after >= before {
+			// The pass only rewrote the conversation (folded a tool result into
+			// a note, or replaced the previous summary with a longer one).
+			// Another pass would call the summarizer again and land on the same
+			// size, so stop here — the model call that follows decides whether
+			// this is good enough. In practice the kept tail plus the summary
+			// always fits; if it does not, the provider's own error is a more
+			// useful outcome than four more summary calls.
+			slog.Info("agentcore: compaction made no progress, stopping",
+				"tokens_before", before, "tokens_after", after,
+				"pass", pass+1, "window", r.spec.ContextWindow)
+			return
+		}
+		before = after
 	}
 }
 
 // compactOnce performs one compaction pass. It reports whether anything was
 // folded.
 func (r *runner) compactOnce(ctx context.Context, system string) bool {
+	// The replayed history occupies the front of the conversation. Everything
+	// harvested below is re-appended as COPIES, so this identity is the only
+	// record of which messages a caller could still replay.
+	historySnapshot := r.historyPrefix()
+
 	before := compaction.ConversationTokens(system, r.messages)
 	split := compaction.SplitPoint(r.messages, compaction.KeepBudget(r.spec.ContextWindow))
 	var (
@@ -780,7 +879,11 @@ func (r *runner) compactOnce(ctx context.Context, system string) bool {
 		// the whole conversation with those results replaced by short notes —
 		// the calls stay, so the pairing the API validates stays intact.
 		older = r.messages[:cut]
-		prefix := compaction.FoldToolResults(r.messages[:cut], cut)
+		// A copy: FoldToolResults builds its own slice, but the messages it does
+		// not touch are COPIED OUT of whatever slice it is given, and this one may
+		// be the caller's Spec.History.
+		foldedPrefix := append([]llm.Message{}, r.messages[:cut]...)
+		prefix := compaction.FoldToolResults(foldedPrefix, cut)
 		recent = append(prefix, r.messages[cut:]...)
 	}
 
@@ -804,6 +907,12 @@ func (r *runner) compactOnce(ctx context.Context, system string) bool {
 		summary = mergeSummaries(r.summary, summary)
 	}
 
+	// HOW MUCH HISTORY the summary now stands for. Measured HERE, before the
+	// conversation is rewritten: the kept tail is assembled from copies below, so
+	// after the rewrite the replayed messages are no longer identifiable by
+	// position.
+	through, throughID := r.historyBoundary(historySnapshot, folded)
+
 	r.messages = append([]llm.Message{compaction.SummaryMessage(summary)}, recent...)
 	r.summary = summary
 
@@ -811,16 +920,112 @@ func (r *runner) compactOnce(ctx context.Context, system string) bool {
 	slog.Info("agentcore: compacted conversation",
 		"dropped", len(older), "kept", len(recent),
 		"tokens_before", before, "tokens_after", after,
-		"window", r.spec.ContextWindow, "tool_results_folded", folded)
+		"window", r.spec.ContextWindow, "tool_results_folded", folded,
+		"history_through", through)
 
 	r.emit(Event{
-		Kind:          EventCompacted,
-		Summary:       summary,
-		Dropped:       len(older),
-		SummaryTokens: after,
-		WindowTokens:  r.spec.ContextWindow,
+		Kind:                      EventCompacted,
+		Summary:                   summary,
+		Dropped:                   len(older),
+		CompactedThroughHistory:   through,
+		CompactedThroughMessageID: throughID,
+		SummaryTokens:             after,
+		WindowTokens:              r.spec.ContextWindow,
 	})
 	return true
+}
+
+// historyBoundary reports how much of Spec.History this compaction folded.
+//
+// It returns the index of the last folded history message (-1 when none was),
+// plus that message's caller-side id when one was supplied.
+//
+// The answer cannot be read off `older`, because `older` is a slice of
+// r.messages, and r.messages is NOT Spec.History: it is PriorSummary (at most
+// one synthetic message) followed by Spec.History followed by this turn's
+// messages — and every earlier pass REPLACED the front of it with a second
+// synthetic message. So a second compaction's `older` contains the previous
+// summary, and "len(older) minus one" would over-count the history by exactly
+// the messages it did not fold.
+//
+// The reliable measure is what SURVIVED: the kept tail always begins with a
+// contiguous run of history messages (SplitPoint cuts on an exchange boundary
+// inside history, or — for the tool-results-only path — history is a prefix of
+// the conversation). Whatever history is not in that run was folded, so the
+// boundary is "history messages still present in the conversation after the
+// summary", counted by identity. history must be the snapshot taken before
+// compactOnce touched r.messages.
+func (r *runner) historyBoundary(history []llm.Message, toolResultsOnly bool) (int, int64) {
+	kept := r.keptHistoryCount(history)
+	if kept < len(history) {
+		// Part of the replayed history is gone, so the summary stands for it. The
+		// last one folded is the message right before the first one kept.
+		idx := kept - 1
+		return idx, r.historyIDAt(idx)
+	}
+	// Every replayed turn is still in the conversation.
+	if toolResultsOnly {
+		// The fold landed on this turn's own tool output, which it replaced with
+		// notes; nothing of the stored history was touched. Reporting an ID here
+		// told the next turn to skip messages that are still there — the defect
+		// this boundary exists to prevent — so it is index-only.
+		return len(history) - 1, 0
+	}
+	// The whole history was folded into the summary.
+	return len(history) - 1, r.historyIDAt(len(history) - 1)
+}
+
+// historyPrefix returns the messages at the front of the conversation that this
+// call was REPLAYED from the caller's transcript.
+//
+// A prior summary leads the conversation, so the replayed turns start after it.
+// Skipping it is what keeps the boundary an index into Spec.History: counting it
+// would point the caller at a message it never sent.
+func (r *runner) historyPrefix() []llm.Message {
+	n := len(r.spec.History)
+	if n == 0 {
+		return nil
+	}
+	base := 0
+	if r.spec.PriorSummary != "" {
+		base = 1
+	}
+	// Folding inside one turn never removes history, so by the time compaction
+	// runs the replayed turns are still all there; clamp defensively anyway.
+	if base+n > len(r.messages) {
+		n = len(r.messages) - base
+	}
+	if n <= 0 {
+		return nil
+	}
+	return r.messages[base : base+n]
+}
+
+// keptHistoryCount counts the replayed turns still present at the FRONT of the
+// conversation.
+//
+// A prefix is the only possibility: everything compaction keeps is a suffix of
+// the old conversation, so the kept tail either starts with history messages or
+// starts after all of them. Anything else means a rewrite happened in between,
+// and then nothing about the history is claimable — which is the safe answer,
+// because a wrong boundary drops content.
+func (r *runner) keptHistoryCount(history []llm.Message) int {
+	kept := 0
+	for kept < len(history) && kept < len(r.messages) {
+		if &r.messages[kept] != &history[kept] {
+			break
+		}
+		kept++
+	}
+	return kept
+}
+
+// historyIDAt returns the caller-supplied id of history message i, or 0.
+func (r *runner) historyIDAt(i int) int64 {
+	if i < 0 || i >= len(r.spec.HistoryMessageIDs) {
+		return 0
+	}
+	return r.spec.HistoryMessageIDs[i]
 }
 
 // summarize turns the dropped messages into a summary.

@@ -280,8 +280,57 @@ func TestFindSpecByBackend_AllBackends(t *testing.T) {
 	}
 }
 
-// --- Test 7: Registered model sources ---
+// TestSetBackendRegistryForTest_RestoresRealSnapshot pins the restore contract.
+//
+// The registry is populated by a sync.Once, so restoring a nil snapshot (what
+// a direct read of BackendRegistry yields before the first GetBackendRegistry)
+// leaves the process unable to rebuild it: the Once is spent, so every later
+// caller in the same binary sees an empty registry. That made this helper a
+// one-way valve and silently broke unrelated tests when they were shuffled.
+//
+// Deliberately asserts on the codebuddy spec's readiness FLAGS (not the
+// capability flags): this test lives in package model_test, which does not link
+// any backend package, so the real registry it restores is whatever the caller
+// registered. The capability flags are asserted where they are real — see
+// TestRealBackendSpecsCarryCodeBuddyCapabilityFlags in internal/ai.
+func TestSetBackendRegistryForTest_RestoresRealSnapshot(t *testing.T) {
+	realRegistry := model.GetBackendRegistry()
+	require.NotEmpty(t, realRegistry, "no specs registered; the restore check would be vacuous")
+	restoredID := realRegistry[0].ID
 
+	restore := model.SetBackendRegistryForTest([]model.BackendSpec{
+		{ID: "synthetic", Backend: "synthetic"},
+	})
+	require.Nil(t, model.FindSpecByBackend(restoredID),
+		"the helper must actually replace the registry for the test body")
+	restore()
+
+	spec := model.FindSpecByBackend(restoredID)
+	require.NotNil(t, spec,
+		"restore must bring back the real snapshot, not the nil snapshot taken before lazy init")
+	assert.Nil(t, model.FindSpecByBackend("synthetic"))
+	assert.Len(t, model.GetBackendRegistry(), len(realRegistry))
+}
+
+// TestSetBackendRegistryForTest_KeepsRealSpecFields is the direct regression for
+// the nil-restore bug: it restores while the lazily-initialized registry has
+// never been read, which is the state the helper is used in first. Restoring a
+// nil snapshot there leaves the process with an empty registry forever, because
+// the sync.Once is already spent.
+func TestSetBackendRegistryForTest_KeepsRealSpecFields(t *testing.T) {
+	realRegistry := model.GetBackendRegistry()
+	require.NotEmpty(t, realRegistry)
+
+	restore := model.SetBackendRegistryForTest([]model.BackendSpec{{ID: "only", Backend: "only"}})
+	restore()
+
+	assert.Equal(t, len(realRegistry), len(model.GetBackendRegistry()),
+		"restore must return the full registry; an empty one can never be rebuilt (the sync.Once is spent)")
+	assert.Equal(t, realRegistry, model.GetBackendRegistry(),
+		"restore must return the same specs, not a placeholder rebuild")
+}
+
+// --- Test 7: Registered model sources ---
 func TestBackendsWithModelDiscovery_NonEmpty(t *testing.T) {
 	backends := model.BackendsWithModelDiscovery()
 	assert.NotEmpty(t, backends, "the linked backend packages register model sources at init")

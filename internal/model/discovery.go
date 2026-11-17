@@ -295,8 +295,19 @@ func BackendsWithModelDiscovery() []string {
 // restore function. Tests that assert spec-driven behaviour need it because the
 // real registry is populated from the backend plugin packages, which most unit
 // tests do not import (that would be an import cycle).
+//
+// The snapshot is taken through GetBackendRegistry(), not read off
+// BackendRegistry: the real registry is populated lazily by a sync.Once, so a
+// direct read before the first caller sees nil. Restoring that nil would put
+// the process into a state it can never leave — the Once is already spent, so
+// nothing would ever populate BackendRegistry again, and every later test in
+// the binary (and the production code path it exercises) would see an empty
+// backend registry.
 func SetBackendRegistryForTest(specs []BackendSpec) func() {
-	old := BackendRegistry
+	old := GetBackendRegistry()
+	snapshot := make([]BackendSpec, len(old))
+	copy(snapshot, old)
+
 	BackendRegistry = specs
-	return func() { BackendRegistry = old }
+	return func() { BackendRegistry = snapshot }
 }

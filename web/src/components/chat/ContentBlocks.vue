@@ -135,12 +135,23 @@
         :data-thinking-count="group.thinkingCount"
         :data-tool-failed="group.failedCount"
       >
+        <!-- The row IS the control that unfolds the run, so it has to be one to
+             a keyboard and a screen reader, not only to a mouse. Same recipe as
+             the sub-agent pill's toggle: a real role, a tab stop, an
+             `aria-expanded` that follows the body, and Enter/Space. Without a
+             focusable row, a run left folded by the "收起工具调用" preference could
+             not be opened at all without a pointer (the bottom collapse button
+             only exists once the body is already mounted). -->
         <div
           class="chat-tool-call chat-tool-group-strip chat-run-head"
           :class="{ done: !isGroupRunning(group) }"
-          :data-category="groupAccentCategory(group)"
-          :aria-label="toolGroupLabel(group)"
+          :data-category="groupHead(group).category"
+          role="button"
+          tabindex="0"
+          :aria-expanded="isToolGroupOpen(group)"
+          :aria-label="toolGroupAriaLabel(group)"
           @click.stop="toggleToolGroup(group)"
+          @keydown.enter.space.prevent="toggleToolGroup(group)"
         >
           <!-- Two shapes share this row.
                While a tool runs the row IS that tool's pill: its glyph, its name,
@@ -152,15 +163,15 @@
                like a sub-agent row. Thoughts are not counted — they are not
                steps the reader tracks, and the chips themselves are one click
                away in the body. -->
-          <component :is="groupLeadingIcon(group)" :size="12" class="tool-icon" />
+          <component :is="groupHead(group).icon" :size="12" class="tool-icon" />
           <!-- One rolling label for both shapes, so the switch from the last
                step's name to "N 步" rolls instead of snapping. -->
-          <RollingText class="tool-name" :text="toolGroupTitle(group)" />
+          <RollingText class="tool-name" :text="groupHead(group).title" />
           <!-- The running step's own summary; once the run settles, the last
                step's — a folded run must still say WHAT it did, otherwise the
                row is a bare count. Nothing while unfolded (the body lists every
                step) or while only a thought runs (it has no summary). -->
-          <RollingText v-if="toolGroupDetail(group)" class="tool-summary" :text="toolGroupDetail(group)" />
+          <RollingText v-if="groupHead(group).detail" class="tool-summary" :text="groupHead(group).detail" />
           <!-- Everything from the cancelled marker to the chevron is one block
                pinned to the right edge. Grouping it is what keeps the row
                aligned in every state: while only a thinking chip runs there is
@@ -177,16 +188,18 @@
                status ("第 3 步 · 转圈"). Only while a TOOL runs — a live thought
                has no step number. -->
             <span v-if="group.runningIndex" class="tool-group-step">{{ t('chat.contentBlocks.toolGroupStepIndex', { count: group.runningIndex }) }}</span>
-            <!-- Running: the ring sits in the same right-hand slot as every
-                 other verdict, so the row's left and right edges stay put as it
-                 moves between running and settled. -->
-            <LoadingIndicator v-if="isGroupRunning(group)" class="tool-spinner" size="sm" inline />
-            <!-- Finished: same success/failure language as a single tool pill.
+            <!-- Failure / interruption first, then the ring: a step that already
+                 failed does not become "running again" just because later steps
+                 are still in flight, and while the run is live the verdict was
+                 previously swallowed by the spinner branch — the number vanished
+                 exactly when the user was watching the run. Both can be true at
+                 once (2 failures so far, step 4 spinning), so they sit side by
+                 side instead of in one v-if/v-else chain.
                  A failure or an interruption carries its own count instead of a
                  sentence ("2 次失败"): the glyph already says what happened, so
                  the number is all that is missing. -->
             <span
-              v-else-if="group.failedCount > 0"
+              v-if="group.failedCount > 0"
               class="tool-group-verdict tool-group-failed"
               :title="t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount })"
             >
@@ -203,7 +216,11 @@
               <span class="verdict-x">×</span>
               <span class="verdict-n">{{ group.interruptedCount }}</span>
             </span>
-            <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
+            <!-- Running: the ring sits in the same right-hand slot as every
+                 other verdict, so the row's left and right edges stay put as it
+                 moves between running and settled. -->
+            <LoadingIndicator v-if="isGroupRunning(group)" class="tool-spinner" size="sm" inline />
+            <CheckCircle2 v-else-if="group.failedCount === 0 && !(group.interruptedCount || 0)" :size="14" color="#22c55e" class="tool-check" />
             <!-- The chevron is always there, running or settled: the row is
                  unfoldable at any time, so the affordance must not flicker in
                  and out as steps start and finish. -->
@@ -1953,18 +1970,38 @@ const toolGroups = computed(() => {
       category: getToolIcon(block.name).category,
       toolName: block.name || '',
     }),
+    // The settled row's "last step" line. Resolved here, once per rebuild,
+    // instead of in the row on every streamed frame.
+    displayName: (block) => toolDisplayName(block.name, block.input, block.display_name),
+    summarize: (block) => props.toolCallSummary(block),
   })
 })
 
-/** "12 步 · 2 次失败" — the row's spoken label. Thoughts are not counted, so
- *  they are not mentioned either. */
-function toolGroupLabel(group: ToolCallGroup): string {
-  const parts: string[] = [toolGroupStepLabel(group)]
+/** What a screen reader announces for the row.
+ *
+ *  The row IS the unfold control, so the label has to say what it unfolds
+ *  ("已完成 12 步 · 2 次失败") AND what pressing it does. It used to claim
+ *  "已完成 N 步" while N steps were still in flight — the visible text said
+ *  "第 2 步" — so the reader was told the run had finished. A live run now says
+ *  where it is instead, and keeps its failed / interrupted counts: those are
+ *  facts, not a verdict. Thoughts are not counted, so they are not mentioned
+ *  either. */
+function toolGroupAriaLabel(group: ToolCallGroup): string {
+  const parts: string[] = []
+  const head = groupHead(group)
+  if (isGroupHeaderSummary(isToolGroupOpen(group), isGroupRunning(group))) parts.push(head.title)
+  else if (group.runningIndex) parts.push(t('chat.contentBlocks.toolGroupRunning', { count: group.runningIndex, name: head.title }))
+  else parts.push(head.title)
   if (group.failedCount > 0) {
     parts.push(t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount }))
   } else if ((group.interruptedCount || 0) > 0) {
     parts.push(t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount }))
   }
+  parts.push(
+    isToolGroupOpen(group)
+      ? t('chat.contentBlocks.toolGroupCollapse')
+      : t('chat.contentBlocks.toolGroupExpand'),
+  )
   return parts.join(' · ')
 }
 
@@ -1978,47 +2015,27 @@ function toolGroupStepLabel(group: ToolCallGroup): string {
 
 /** Whether the header is a static summary (step count) instead of a live mirror
  *  of the step that is running: always once the run settles, and always while it
- *  is unfolded — the body already shows what is running, so a label rolling
- *  under the reader's eyes up here is pure motion. */
-function groupHeaderIsSummary(group: ToolCallGroup): boolean {
-  return isToolGroupOpen(group) || !isGroupRunning(group)
-}
-
-/** The row's single rolling label: the running tool's name while a tool works,
- *  the deep-thinking label while only a thought runs (the row then IS that
- *  chip), else the step count. */
-function toolGroupTitle(group: ToolCallGroup): string {
-  if (groupHeaderIsSummary(group)) return toolGroupStepLabel(group)
-  if (group.runningIndex) return group.runningName
-  return t('chat.message.deepThinking')
+ *  is unfolded. Takes the two flags (rather than the group) so the row's single
+ *  `groupHead()` evaluation can pass the ones it already resolved. */
+function isGroupHeaderSummary(open: boolean, running: boolean): boolean {
+  return open || !running
 }
 
 /** The line under the label: the running tool's own summary, or — once the run
  *  has settled — the last step's, so a folded run still says WHAT it did
  *  ("Run command · rebuild the frontend") instead of leaving only a count.
  *  Nothing while unfolded: the body underneath shows every step. */
-function toolGroupDetail(group: ToolCallGroup): string {
+function toolGroupDetailFor(group: ToolCallGroup, summaryHeader: boolean): string {
   if (isToolGroupOpen(group)) return ''
   if (group.runningIndex) return group.runningSummary
   // Between steps only a thought is live — that chip has no summary of its own,
   // and the previous step's line under it would read as the thought's.
-  if (isGroupRunning(group)) return ''
-  return groupLastStepDetail(group)
-}
-
-/** Name + summary of the last step in the run that has one. A settled run of 81
- *  calls cannot describe itself in one line, so it reports the most recent
- *  action — the same thing the row showed while that step was running. */
-function groupLastStepDetail(group: ToolCallGroup): string {
-  for (let bi = group.end; bi >= group.start; bi--) {
-    const block = props.blocks[bi]
-    if (block?.type !== 'tool_use') continue
-    const summary = props.toolCallSummary(block)
-    if (!summary) continue
-    const name = toolDisplayName(block.name, block.input, block.display_name)
-    return name ? `${name} · ${summary}` : summary
-  }
-  return ''
+  if (!summaryHeader) return ''
+  // Folded away in `buildToolCallGroups` (it rescans the run once, there)
+  // instead of here: this row is re-rendered on every streamed frame, and
+  // walking the run from its end each time meant the same scan twice per frame
+  // (once for the `v-if`, once for the text).
+  return group.lastStepDetail
 }
 
 /** A run is still running while a tool OR a thinking chip in it is unfinished.
@@ -2032,8 +2049,8 @@ function isGroupRunning(group: ToolCallGroup): boolean {
  *  while only a thinking chip runs (so the bar matches that chip's colour);
  *  none (neutral) once the header is a summary — a summary must not keep
  *  changing colour as steps come and go underneath it. */
-function groupAccentCategory(group: ToolCallGroup): string | undefined {
-  if (groupHeaderIsSummary(group)) return undefined
+function groupAccentCategoryFor(group: ToolCallGroup, summaryHeader: boolean): string | undefined {
+  if (summaryHeader) return undefined
   if (group.runningIndex) return group.runningCategory || undefined
   return 'thinking'
 }
@@ -2041,11 +2058,57 @@ function groupAccentCategory(group: ToolCallGroup): string | undefined {
 /** Leading glyph: the running tool's own icon; the deep-thinking brain while
  *  only a thinking chip runs (the row then IS that chip); the generic stack
  *  glyph once the header is a summary — a finished run mixes categories, so no
- *  single tool's icon can stand for it. */
-function groupLeadingIcon(group: ToolCallGroup) {
-  if (groupHeaderIsSummary(group)) return Layers
+ *  single tool's icon can stand for it.
+ *
+ *  A run with NO tools is all thoughts: its summary is "深度思考", so the stack
+ *  glyph (which says "a run of steps") would contradict the label. */
+function groupLeadingIconFor(group: ToolCallGroup, summaryHeader: boolean, running: boolean) {
+  if (group.toolCount <= 0) return Brain
+  if (summaryHeader) return Layers
+  // A live thought between steps: the row IS that chip.
+  if (!running) return Brain
   if (group.runningToolName) return getToolIcon(group.runningToolName).icon
   return Brain
+}
+
+/** Everything the header row derives, resolved ONCE per render.
+ *
+ *  The four branches all start from the same question — "is this header a
+ *  summary or the live step?" — and each used to ask it again (and the detail
+ *  scan twice more), on a row that re-renders per streamed frame. Template code
+ *  has no local variables, so callers read the fields off one object instead of
+ *  calling four functions: `v-if="groupHead(g).detail"` and
+ *  `:text="groupHead(g).detail"` are the same computed value, not two calls. */
+interface ToolGroupHeadParts {
+  title: string
+  detail: string
+  icon: unknown
+  category: string | undefined
+}
+
+const toolGroupHeadCache = new WeakMap<ToolCallGroup, { open: boolean; running: boolean; parts: ToolGroupHeadParts }>()
+
+function groupHead(group: ToolCallGroup): ToolGroupHeadParts {
+  const open = isToolGroupOpen(group)
+  const running = isGroupRunning(group)
+  const cached = toolGroupHeadCache.get(group)
+  // Cache only what the group itself cannot change (its members are rebuilt by
+  // buildToolCallGroups on every change). The open flag lives on this component
+  // and the streaming flag on the props, so both are part of the key.
+  if (cached && cached.open === open && cached.running === running) return cached.parts
+  const summaryHeader = isGroupHeaderSummary(open, running)
+  const parts: ToolGroupHeadParts = {
+    title: summaryHeader
+      ? toolGroupStepLabel(group)
+      : group.runningIndex
+        ? group.runningName
+        : t('chat.message.deepThinking'),
+    detail: toolGroupDetailFor(group, summaryHeader),
+    icon: groupLeadingIconFor(group, summaryHeader, running),
+    category: groupAccentCategoryFor(group, summaryHeader),
+  }
+  toolGroupHeadCache.set(group, { open, running, parts })
+  return parts
 }
 
 /**
@@ -3432,6 +3495,15 @@ onUnmounted(() => {
     background-color var(--duration-slow) ease,
     border-color var(--duration-slow) ease,
     color var(--duration-slow) ease;
+}
+
+/* The row is a real button now (role="button" + tabindex), so it needs a focus
+   ring a keyboard user can see. Drawn as an outline on the row itself: the row
+   is full-width, so an inset ring would overlap the text, and `outline` neither
+   shifts layout nor fights the running-tool accent the row wears. */
+.chat-tool-group-strip:focus-visible {
+  outline: 2px solid var(--accent-color, var(--tool-accent, var(--text-secondary)));
+  outline-offset: calc(1 * var(--dp));
 }
 
 /* At rest the row is a CONTAINER, one step further back than a single tool

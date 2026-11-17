@@ -189,7 +189,11 @@ function readHidden(): Set<DockTabId> {
 
 function readOrder(): DockTabId[] {
   const raw = readPanelState<string[]>('dockOrder') ?? []
-  return raw.filter(isDockTabId)
+  // Deliberately NOT filtered: an id this build does not know is exactly what
+  // the settings manager has to report (it could not otherwise be removed).
+  // `mergeDockOrder` drops unknown ids when building the visible order, so the
+  // dock never sees them.
+  return raw.filter((id): id is DockTabId => typeof id === 'string')
 }
 
 // Module-level singleton: every consumer (dock, settings manager, plugins)
@@ -203,6 +207,12 @@ const hiddenIds = computed<ReadonlySet<DockTabId>>(() => hidden.value)
 
 /** The full left-dock order (all ids, default slots preserved for new ones). */
 const orderedIds = computed<DockTabId[]>(() => mergeDockOrder(order.value))
+
+/**
+ * The stored order verbatim, unions included: ids this build does not know are
+ * exactly the ones the manager has to report (see `useDockPlugins().storedOrder`).
+ */
+const readonlyOrder = computed<readonly string[]>(() => order.value)
 
 /**
  * Only closable tabs can be hidden; a stale value must not hide a core tab.
@@ -292,6 +302,23 @@ export function isDockTabHidden(id: string): boolean {
 }
 
 /**
+ * Replace the stored order with exactly `ids`.
+ *
+ * `setDockTabOrder` merges the list against the registry, which both reinserts
+ * missing tabs and drops unknown ones — but it short-circuits when the merged
+ * result already equals the visible order, and in that case the STORED value
+ * (still holding an id no plugin defines) is never touched. This is the escape
+ * hatch for the settings manager: it persists the visible order verbatim, so a
+ * stale id is actually removed rather than merely ignored.
+ */
+export function writeDockOrder(ids: readonly string[]): void {
+  const next = [...new Set(ids)]
+  order.value = next as DockTabId[]
+  preset.value = 'custom'
+  persist()
+}
+
+/**
  * Mark the profile `custom` without touching visibility or order.
  *
  * The manager's feature switches live on the SERVER, so flipping one changes
@@ -310,6 +337,13 @@ export function useDockPlugins() {
   return {
     hidden: hiddenIds,
     order: orderedIds,
+    /**
+     * The order EXACTLY as stored — unlike `order`, which is merged against the
+     * registry and therefore silently drops an id that has no plugin (or is not
+     * a known dock id at all). The settings manager reads this one to show such
+     * orphans instead of letting them vanish from every UI with no way back.
+     */
+    storedOrder: readonlyOrder,
     visibleIds,
     preset,
     applyPreset: applyDockPreset,
@@ -317,6 +351,7 @@ export function useDockPlugins() {
     setOrder: setDockTabOrder,
     toggle: toggleDockTab,
     reset: resetDockPlugins,
+    writeOrder: writeDockOrder,
     isHidden: isDockTabHidden,
     markCustom: markDockPresetCustom,
   }

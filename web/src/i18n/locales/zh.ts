@@ -357,6 +357,9 @@ export default {
     importPreviewMessage: '将加入 {added} 个文件，跳过 {skipped} 个，重复 {duplicates} 个，失败 {failed} 个。继续导入？',
     importPreviewTruncated: '文件太多，本次只会导入前 500 个。',
     importContinue: '继续导入',
+    move: '移动',
+    moveDone: '已把 {count} 个文件移到「{name}」',
+    pickEmpty: '没有其他知识库可以移动过去',
     searchPlaceholder: '搜索知识库…',
     searchAll: '全部',
     searchThis: '当前库',
@@ -483,6 +486,7 @@ export default {
       binary: '二进制文件没有可提取的文字',
       font: '字体文件不支持',
       pdf_encrypted: 'PDF 有密码，无法读取',
+      pdf_malformed: 'PDF 文件已损坏，无法解析',
       pdf_no_text: '没有可提取的文字，可能是扫描件',
       no_text: '没有可提取的文字',
       file_too_large: '文件超过大小上限',
@@ -1621,13 +1625,17 @@ export default {
       subagentSteps: '{count} 步',
       subagentExpand: '展开子智能体输出',
       subagentCollapse: '收起子智能体输出',
-      // 极简模式：把一段连续的工具调用与思考折成一行，只显示次数
+      // 极简模式：把一段连续的工具调用与思考折成一行。折叠态显示「已完成 N 步」，
+      // 运行中则直接是正在执行的那一步（工具名 + 摘要，或「深度思考」），
+      // 右侧带「第 N 步」与进度圈
       toolGroupSteps: '已完成 {count} 步',
       toolGroupStepIndex: '第 {count} 步',
+      toolGroupRunning: '正在执行 {name}（第 {count} 步）',
       toolGroupFailed: '{count} 次失败',
       toolGroupInterrupted: '{count} 次中断',
       toolInterrupted: '已中断',
       toolGroupCollapse: '收起',
+      toolGroupExpand: '展开工具调用',
       warningReasons: {
         user_cancel: '用户已中断',
         disconnect: '连接已断开，AI 响应中断',
@@ -3450,6 +3458,9 @@ export default {
       openSettings: '功能设置',
       saveFailed: '保存失败，已恢复原来的设置。',
       saving: '保存中…',
+      unknownTab: '缺少插件定义：{id}',
+      unknownTabHint: '这条记录的顺序里有它，但当前版本没有对应的插件，所以左侧栏会显示成一个点不动的页签。重置顺序即可清掉它。',
+      unknownTabReset: '重置顺序',
       presetApplied: '已应用「{name}」预设。',
       presetConfirmTitle: '应用「{name}」预设？',
       presetConfirmIntro: '以下操作会立即生效：',

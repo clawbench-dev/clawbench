@@ -55,6 +55,42 @@ The script does two things: makes sure Node.js is available (reuses an existing 
 - Run `clawbench` afterwards and open `http://localhost:20000`; the random password is printed on first start
 - **AI agents are not installed here.** Open the web UI — every agent in the welcome panel has an "Install" button that installs it on this machine, also through the China mirror
 
+**Versions and verification.** The script installs the **latest** version, so two runs may install different builds — it is not a reproducible install. Pin it explicitly when you need that; the version actually installed is printed at the end:
+
+```bash
+# Linux / macOS: pin the version
+curl -fsSL https://clawbench.pages.dev/install.sh | CLAWBENCH_VERSION=0.130.0 bash
+```
+
+```powershell
+# Windows: pin the version (no way to pass arguments through `irm | iex`)
+$env:CLAWBENCH_VERSION = '0.130.0'; irm https://clawbench.pages.dev/install.ps1 | iex
+```
+
+To pin the script itself, save it first and verify it (the sha256 is published in the [release notes](https://github.com/clawbench-dev/clawbench/releases) for the matching tag):
+
+```bash
+curl -fsSL https://clawbench.pages.dev/install.sh -o install.sh
+echo "<sha256>  install.sh" | sha256sum -c - && bash install.sh
+```
+
+The npm package itself is covered by npm's `dist.integrity` check; the script does not re-implement that.
+
+**Uninstall:**
+
+```bash
+# Linux / macOS
+curl -fsSL https://clawbench.pages.dev/install.sh | bash -s -- --uninstall
+```
+
+```powershell
+# Windows: save it first, then run
+irm https://clawbench.pages.dev/install.ps1 -OutFile install.ps1
+.\install.ps1 -Uninstall
+```
+
+Uninstalling only removes the three things the script wrote (the install directory, the PATH marker in your rc file / user PATH). **Your data is left alone** — sessions, config and the `.clawbench` data directory stay where they are.
+
 ### npm Install
 
 If Node.js is already set up, you can do it yourself:

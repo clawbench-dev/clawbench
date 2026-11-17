@@ -358,3 +358,60 @@ func TestBuildProviderEnvForAgent_SecretInFileSkipsEnvVar(t *testing.T) {
 			"kimi's file holds the key; the environment must not claim otherwise")
 	}
 }
+
+// TestReconcileProviderConfigDirs_ContinuesAfterOneFailure pins the best-effort
+// contract.
+//
+// The files these directories hold contain the API key in PLAINTEXT. Aborting on
+// the first error skipped three things at once: the remaining agents kept stale
+// endpoints, the unbound agents' files were never removed, and the orphan prune
+// never ran — so an unbound or deleted agent kept its key on disk after the user
+// had unbound it, and no later retry the user knows about would clean it up.
+// Exactly the failure mode the startup reconcile exists to prevent.
+func TestReconcileProviderConfigDirs_ContinuesAfterOneFailure(t *testing.T) {
+	setupConfigDirTest(t)
+	t.Cleanup(func() {
+		model.ReplaceProviders(nil)
+		model.ReplaceAgents(nil, nil)
+	})
+
+	p := configDirProvider()
+	model.ReplaceProviders([]*model.Provider{p})
+	pid := p.ID
+
+	// Agent "aaa" is bound, but its private directory is blocked by a regular
+	// file where the directory should be — MkdirAll fails for it alone.
+	root := filepath.Join(model.DataDir, "providers", "agents")
+	require.NoError(t, os.MkdirAll(root, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "aaa-bad"), []byte("not a dir"), 0o600))
+
+	// Agent "mmm-good" is bound and healthy: it must still be written.
+	// Agent "zzz-unbound" has no provider: its directory must still be removed.
+	goodDir := filepath.Join(root, "mmm-good")
+	unboundDir := filepath.Join(root, "zzz-unbound")
+	for _, dir := range []string{goodDir, unboundDir} {
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "models.json"), []byte(`{"apiKey":"sk-stale"}`), 0o600))
+	}
+
+	agents := []*model.Agent{
+		{ID: "aaa-bad", Backend: "codebuddy", ProviderID: &pid},
+		{ID: "mmm-good", Backend: "codebuddy", ProviderID: &pid},
+		{ID: "zzz-unbound", Backend: "codebuddy"},
+	}
+	model.ReplaceAgents(
+		map[string]*model.Agent{"aaa-bad": agents[0], "mmm-good": agents[1], "zzz-unbound": agents[2]},
+		agents)
+
+	err := service.ReconcileProviderConfigDirs()
+	require.Error(t, err, "the failing agent must be reported")
+
+	// The healthy agent was still processed.
+	data, readErr := os.ReadFile(filepath.Join(goodDir, "models.json"))
+	require.NoError(t, readErr, "the agent after the failing one must still have its config written")
+	assert.Contains(t, string(data), p.BaseURL, "the healthy agent's file must carry the current endpoint")
+
+	// The unbound agent's plaintext key is gone.
+	assert.NoDirExists(t, unboundDir,
+		"an unbound agent's config dir holds a plaintext key and must be removed even when another agent failed")
+}

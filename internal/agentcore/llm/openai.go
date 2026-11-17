@@ -442,14 +442,18 @@ func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<-
 				if tc.Index != nil {
 					idx = *tc.Index
 				}
+				// The provider's slot number rides every event: parallel calls
+				// stream interleaved, so the consumer needs to know which call a
+				// fragment belongs to rather than assuming "the last one".
+				index := idx
 				if !seenCall[idx] {
 					seenCall[idx] = true
-					if !emit(ctx, ch, Event{Kind: KindToolCallStart, ToolCall: &ToolCall{ID: tc.ID, Name: tc.Function.Name}}) {
+					if !emit(ctx, ch, Event{Kind: KindToolCallStart, ToolCall: &ToolCall{ID: tc.ID, Name: tc.Function.Name, Index: &index}}) {
 						return
 					}
 				}
 				if tc.Function.Arguments != "" {
-					if !emit(ctx, ch, Event{Kind: KindToolCallDelta, ToolCall: &ToolCall{Arguments: tc.Function.Arguments}}) {
+					if !emit(ctx, ch, Event{Kind: KindToolCallDelta, ToolCall: &ToolCall{Arguments: tc.Function.Arguments, Index: &index}}) {
 						return
 					}
 				}

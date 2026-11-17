@@ -91,14 +91,19 @@ func ServeBackendInstall(w http.ResponseWriter, r *http.Request) {
 // rescanAfterInstall re-runs the discovery pipeline and tells every client the
 // agent list changed. Reports whether the rescan succeeded.
 //
-// Only the installed backend's discovery cache is dropped: a full invalidation
-// would re-probe every backend (each spawning a CLI, ~18s in total) to learn
-// nothing new about them. Keyed on the backend (not the spec id) because that
-// is the key the discovery cache and DiscoverWithDetail use.
+// Only the installed backend is probed. A full refresh forks every backend's CLI
+// (~18s serial, antigravity alone hangs out its timeout when logged out) to
+// learn nothing — the other backends did not change — and it did so while
+// holding configMutex, so every concurrent PATCH /api/config, agent edit and
+// project switch queued behind an install. The refresh still has to run
+// synchronously: it is what inserts the agent row for the backend that was just
+// installed, and the response below returns that list.
 func rescanAfterInstall(backend string) bool {
 	configMutex.Lock()
 	model.InvalidateDiscoveredModels(backend)
-	_, err := model.RefreshAgents(store.WriteDB(), model.RefreshOptions{})
+	_, err := model.RefreshAgents(store.WriteDB(), model.RefreshOptions{
+		DiscoveryBackends: []string{backend},
+	})
 	configMutex.Unlock()
 	if err != nil {
 		slog.Warn("agent rescan after install failed", "backend", backend, "error", err)

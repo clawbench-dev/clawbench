@@ -38,6 +38,7 @@ import (
 	"strconv"
 	"strings"
 
+	"clawbench/internal/liveshare"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/store"
@@ -91,6 +92,22 @@ func shareProjectNameForMeeting(token string) string {
 		return ""
 	}
 	return shareProjectName(path)
+}
+
+// shareProjectNameForLiveRoom resolves a RUNNING live room's project name.
+//
+// The room carries its project key for its own bookkeeping; publishing that key
+// on a public page is the same disclosure as a file/session share's project name
+// and must obey the same policy. Passing it through unfiltered meant a viewer
+// given only a meeting link could read the project's directory name from
+// og:site_name / <noscript> even after the owner switched
+// share.show_project_name off — the switch was simply not consulted on this
+// path.
+func shareProjectNameForLiveRoom(room *liveshare.Room) string {
+	if room == nil {
+		return ""
+	}
+	return shareProjectName(room.ProjectKey())
 }
 
 // validShareToken reports whether a token is safe to interpolate into the

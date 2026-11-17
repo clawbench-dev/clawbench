@@ -58,6 +58,12 @@ type RefreshOptions struct {
 	// detection. Used by callers that want agent presence refreshed without
 	// paying for every backend probe.
 	SkipDiscovery bool
+	// DiscoveryBackends narrows step 3 to these backends. Nil means "every
+	// registered source". A caller that caused exactly one backend to become
+	// available (the install endpoint) uses this so the refresh triggers a
+	// single CLI probe instead of forking all ~20 vendor CLIs (~18s serial,
+	// while holding whatever lock the caller needs).
+	DiscoveryBackends []string
 }
 
 // RefreshResult reports what a refresh changed. Callers log it; tests assert on it.
@@ -112,7 +118,13 @@ func RefreshAgents(db dbutil.Writer, opts RefreshOptions) (*RefreshResult, error
 
 	// Step 3: model discovery, persisted for auto-managed agents.
 	if !opts.SkipDiscovery {
-		discovered, updated := discoverAndPersistModels(db)
+		var targets []string
+		if opts.DiscoveryBackends != nil {
+			targets = opts.DiscoveryBackends
+		} else {
+			targets = RegisteredModelSources()
+		}
+		discovered, updated := discoverAndPersistModels(db, targets)
 		result.DiscoveredModels = discovered
 		result.ModelRefreshedBackends = updated
 	}
@@ -342,8 +354,10 @@ const maxConcurrentProbes = 4
 // The empty-and-flag-0 case must be included: step 1 inserts agents with an empty
 // list and no flag, so excluding it would leave every freshly installed backend
 // with an empty model picker until a manual refresh.
-func discoverAndPersistModels(db dbutil.Writer) (map[string][]AgentModel, []string) {
-	backends := RegisteredModelSources()
+//
+// backends is the explicit probe target list (see RefreshOptions.DiscoveryBackends);
+// a nil list means "every registered source".
+func discoverAndPersistModels(db dbutil.Writer, backends []string) (map[string][]AgentModel, []string) {
 	type probeResult struct {
 		backend string
 		models  []AgentModel
@@ -419,7 +433,7 @@ func StartModelDiscoveryAsync(db dbutil.Writer, withAgentsLock func(func()), onC
 			}
 		}()
 
-		discovered, updated := discoverAndPersistModels(db)
+		discovered, updated := discoverAndPersistModels(db, RegisteredModelSources())
 		slog.Info("async model discovery complete",
 			"backends", len(discovered), "rows_updated", len(updated))
 

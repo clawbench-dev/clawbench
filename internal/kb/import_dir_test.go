@@ -1,6 +1,7 @@
 package kb
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,7 +55,7 @@ func TestImportDirectory_AddsSupportedFilesRecursively(t *testing.T) {
 		"node_modules/x.md": "dependency",
 	})
 
-	res, err := ImportDirectory(col.ID, root)
+	res, err := ImportDirectory(context.Background(), col.ID, root)
 	require.NoError(t, err)
 	require.Equal(t, 3, res.Added)
 	require.Equal(t, 1, res.Skipped)
@@ -67,7 +68,7 @@ func TestImportDirectory_AddsSupportedFilesRecursively(t *testing.T) {
 	require.Len(t, docs, 3)
 
 	// A second run re-copies nothing: every file is already in the collection.
-	res, err = ImportDirectory(col.ID, root)
+	res, err = ImportDirectory(context.Background(), col.ID, root)
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Added)
 	require.Equal(t, 3, res.Duplicates)
@@ -79,7 +80,7 @@ func TestImportDirectory_RejectsAFilePath(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"a.md": "text"})
 
-	_, err := ImportDirectory(col.ID, filepath.Join(root, "a.md"))
+	_, err := ImportDirectory(context.Background(), col.ID, filepath.Join(root, "a.md"))
 	require.ErrorIs(t, err, ErrNotDirectory)
 }
 
@@ -92,7 +93,7 @@ func TestImportDirectory_ReportsTruncation(t *testing.T) {
 	}
 	writeTree(t, root, files)
 
-	res, err := ImportDirectory(col.ID, root)
+	res, err := ImportDirectory(context.Background(), col.ID, root)
 	require.NoError(t, err)
 	require.Equal(t, maxDirImportFiles, res.Added)
 	require.True(t, res.Truncated)

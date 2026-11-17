@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -326,6 +327,50 @@ func TestRefreshAgents_SkipDiscoveryLeavesModelsAlone(t *testing.T) {
 	var modelsJSON string
 	require.NoError(t, db.QueryRow("SELECT models FROM agents WHERE id = 'auto'").Scan(&modelsJSON))
 	assert.Equal(t, "[]", modelsJSON, "SkipDiscovery must not probe or persist models")
+}
+
+// TestRefreshAgents_DiscoveryBackendsNarrowsProbes pins the install path's
+// option.
+//
+// A caller that caused exactly ONE backend to become available must not pay for
+// (or hold its lock across) a probe of every other backend: each probe forks a
+// vendor CLI and antigravity alone hangs out its timeout when logged out
+// (~18s in total). The narrowing is about which sources actually RUN, so it is
+// asserted on the probes' own observations, not on the option struct.
+func TestRefreshAgents_DiscoveryBackendsNarrowsProbes(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+	isolateAgentGlobals(t)
+
+	for _, id := range []string{"probed", "skipped"} {
+		_, err := db.Exec(`INSERT INTO agents (id, name, backend, models, models_auto_detected) VALUES (?, ?, ?, '[]', 1)`, id, id, id)
+		require.NoError(t, err)
+	}
+
+	restore := isolateModelSources(t)
+	defer restore()
+	var mu sync.Mutex
+	var probed []string
+	for _, id := range []string{"probed", "skipped"} {
+		modelID := id
+		RegisterModelSource(PluginSource(modelID, func() ([]AgentModel, string) {
+			mu.Lock()
+			probed = append(probed, modelID)
+			mu.Unlock()
+			return []AgentModel{{ID: modelID + "-model", Name: modelID}}, ""
+		}))
+	}
+
+	_, err := RefreshAgents(db, RefreshOptions{DiscoveryBackends: []string{"probed"}})
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"probed"}, probed,
+		"only the named backend may be probed; probing the rest is the 18s the install path triggered")
+
+	var skippedModels string
+	require.NoError(t, db.QueryRow("SELECT models FROM agents WHERE id = 'skipped'").Scan(&skippedModels))
+	assert.Equal(t, "[]", skippedModels, "an unprobed backend's list must be left untouched")
 }
 
 func TestRefreshAgents_LoadsAgentsIntoMemory(t *testing.T) {
@@ -714,7 +759,7 @@ func TestDiscoverAndPersistModels_SkipsBackendWithNoModels(t *testing.T) {
 	defer restore()
 	RegisterModelSource(StaticSource("empty-disc", "", nil)) // yields nothing
 
-	_, updated := discoverAndPersistModels(db)
+	_, updated := discoverAndPersistModels(db, nil)
 
 	assert.NotContains(t, updated, "empty-disc", "a backend that discovered nothing must not be reported as updated")
 	var modelsJSON string
@@ -735,7 +780,7 @@ func TestDiscoverAndPersistModels_SkipsUserManagedAgents(t *testing.T) {
 	defer restore()
 	RegisterModelSource(StaticSource("disc-user", "", []AgentModel{{ID: "theirs", Name: "Theirs"}}))
 
-	_, updated := discoverAndPersistModels(db)
+	_, updated := discoverAndPersistModels(db, nil)
 
 	assert.Empty(t, updated, "a user-managed agent must not be updated by discovery")
 	var modelsJSON string
@@ -884,7 +929,7 @@ func TestDiscoverAndPersistModels_RunsProbesConcurrently(t *testing.T) {
 	}
 
 	start := time.Now()
-	discoverAndPersistModels(db)
+	discoverAndPersistModels(db, nil)
 	elapsed := time.Since(start)
 
 	assert.Less(t, elapsed, 3*delay,

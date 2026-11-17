@@ -192,6 +192,20 @@ func (s *Store) loadEmbeddingDimFromDB() {
 	}
 }
 
+// HasEmbeddings reports whether any chunk still carries a vector. It is what
+// tells the startup reconciliation whether a kb_vec table is expected at all: a
+// store that never embedded anything needs no table until the first batch.
+func (s *Store) HasEmbeddings() bool {
+	if s.isVecTableReady() {
+		return true
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM kb_chunks WHERE has_embedding = 1`).Scan(&n); err != nil {
+		return false
+	}
+	return n > 0
+}
+
 func (s *Store) setEmbDim(dim int) {
 	s.mu.Lock()
 	s.embDim = dim
@@ -263,6 +277,28 @@ func (s *Store) ensureVecTable(dim int) error {
 	}
 
 	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.ensureVecTableLocked(dim)
+}
+
+// ensureVecTableLocked is ensureVecTable's body for callers that already hold
+// writeMu (ResetVector). The lock is not reentrant, so routing those callers
+// through ensureVecTable itself deadlocks the WHOLE application: this is the
+// shared write lock that also serializes chat persistence, tasks and the
+// project registry.
+func (s *Store) ensureVecTableLocked(dim int) error {
+	if dim <= 0 {
+		return fmt.Errorf("cannot create kb_vec: embedding dimension unknown")
+	}
+	if s.isVecTableReady() {
+		return nil
+	}
+	if d, ok := s.vecDimFromSchema(); ok {
+		s.setEmbDim(d)
+		s.markVecTableReady()
+		return nil
+	}
+
 	_, err := s.db.Exec(fmt.Sprintf(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS kb_vec USING vec0(
 			embedding float[%d] distance_metric=cosine,
@@ -270,7 +306,6 @@ func (s *Store) ensureVecTable(dim int) error {
 			project_id INTEGER
 		)
 	`, dim))
-	s.writeMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("create kb_vec: %w", err)
 	}
@@ -332,7 +367,10 @@ func (s *Store) ResetVector(dim int) error {
 	s.invalidateVecTable()
 	s.setEmbDim(0)
 	if dim > 0 {
-		return s.ensureVecTable(dim)
+		// Already holding writeMu: go straight to the locked body. Calling
+		// ensureVecTable here would re-lock the same mutex and hang every
+		// writer in the process (sync.Mutex is not reentrant).
+		return s.ensureVecTableLocked(dim)
 	}
 	return nil
 }
@@ -862,8 +900,17 @@ func (s *Store) PendingDocuments(limit int) ([]Document, error) {
 }
 
 // ResetDocumentsForReindex clears chunks and queues the documents for a fresh
-// extraction. When collectionIDs is empty every collection is reset.
+// extraction.
+//
+// A nil slice means "every collection"; a non-nil but EMPTY slice means "no
+// collections" and does nothing. The distinction is what keeps a project that
+// has no visible library from wiping the whole installation: the handler builds
+// the list from ListCollectionIDs(projectID), which returns an empty (non-nil)
+// slice there, and an empty slice used to be read as "everything".
 func (s *Store) ResetDocumentsForReindex(collectionIDs []int64) error {
+	if collectionIDs != nil && len(collectionIDs) == 0 {
+		return nil
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -871,7 +918,7 @@ func (s *Store) ResetDocumentsForReindex(collectionIDs []int64) error {
 	if err != nil {
 		return fmt.Errorf("begin reindex reset: %w", err)
 	}
-	if len(collectionIDs) == 0 {
+	if collectionIDs == nil {
 		if err := deleteAllChunks(tx); err != nil {
 			_ = tx.Rollback()
 			return err
@@ -929,13 +976,31 @@ func (s *Store) ResetDocumentForReindex(id int64) error {
 
 // ReplaceChunks swaps a document's chunks atomically. The new chunks start
 // without vectors; the indexer backfills them.
-func (s *Store) ReplaceChunks(docID int64, chunks []Chunk, warning string) error {
+//
+// expectedCollectionID is the collection the caller read the document from
+// BEFORE extraction, which can take tens of seconds. The check runs inside the
+// same transaction as the chunk writes: if the document was moved, re-queued or
+// deleted meanwhile, the chunks are dropped and ErrDocumentChanged is returned.
+// Without it a move left the text searchable in the OLD collection (the new
+// one showed nothing) and a delete left orphaned chunks behind.
+func (s *Store) ReplaceChunks(docID int64, chunks []Chunk, warning string, expectedCollectionID int64) error { //nolint:gocognit // one transaction: guard, delete, insert, update
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin replace chunks: %w", err)
+	}
+	var collectionID int64
+	err = tx.QueryRow(`SELECT collection_id FROM kb_documents WHERE id = ?`,
+		docID).Scan(&collectionID)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && collectionID != expectedCollectionID) {
+		_ = tx.Rollback()
+		return ErrDocumentChanged
+	}
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("check document before storing chunks: %w", err)
 	}
 	if err := deleteChunksByDocument(tx, docID); err != nil {
 		_ = tx.Rollback()
@@ -1181,14 +1246,21 @@ func (s *Store) SaveEmbeddings(entries []ChunkEmbedding) error {
 	if dim == 0 {
 		return fmt.Errorf("empty embedding")
 	}
+
+	// Resolve the table width before opening the transaction: querying inside
+	// would deadlock on a single-connection store. Reading the stored width
+	// first is what catches a model switch before EnsureDimension gets a say:
+	// saving a 4-dim vector over a 3-dim table would leave the table rejecting
+	// every query vector, and nothing would notice until the next startup.
+	vecDim, haveTable := s.vecDimFromSchema()
+	if haveTable && vecDim != dim {
+		slog.Warn("kb: embedding model changed while embeddings were pending, rebuilding vector index",
+			slog.Int("old", vecDim), slog.Int("new", dim))
+	}
 	if err := s.EnsureDimension(dim); err != nil {
 		return err
 	}
-
-	// Resolve the table width before opening the transaction: querying inside
-	// would deadlock on a single-connection store.
-	vecDim, _ := s.vecDimFromSchema()
-	if vecDim != 0 && vecDim != dim {
+	if vecDim, _ = s.vecDimFromSchema(); vecDim != 0 && vecDim != dim {
 		return fmt.Errorf("embedding dimension mismatch: got %d, kb_vec expects %d", dim, vecDim)
 	}
 
@@ -1199,6 +1271,8 @@ func (s *Store) SaveEmbeddings(entries []ChunkEmbedding) error {
 	if err != nil {
 		return fmt.Errorf("begin save embeddings: %w", err)
 	}
+	s.closeStrangerVecRows(tx)
+
 	now := time.Now()
 	docIDs := map[int64]struct{}{}
 	for _, e := range entries {
@@ -1239,6 +1313,23 @@ func (s *Store) SaveEmbeddings(entries []ChunkEmbedding) error {
 		return fmt.Errorf("commit save embeddings: %w", err)
 	}
 	return nil
+}
+
+// closeStrangerVecRows drops vector rows that do not belong to a chunk of this
+// store. Embedding-dimension reconciliation ignores an empty kb_vec (there is
+// nothing to compare against), so a table left over from another install at a
+// different width — the same database file reused with a copied knowledge dir —
+// would only be noticed halfway through the first embedding batch, after every
+// chunk of that batch had already been embedded against it. Clearing the
+// strangers once, BEFORE the first insert, turns that into a clean rebuild.
+func (s *Store) closeStrangerVecRows(tx *sql.Tx) {
+	res, err := tx.Exec(`DELETE FROM kb_vec WHERE rowid NOT IN (SELECT id FROM kb_chunks)`)
+	if err != nil {
+		return // oldest sqlite-vec builds reject it; the insert below reports the real problem
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		slog.Warn("kb: dropped vector rows that belonged to no chunk", slog.Int64("rows", n))
+	}
 }
 
 // HasVecData reports whether kb_vec holds any rows.

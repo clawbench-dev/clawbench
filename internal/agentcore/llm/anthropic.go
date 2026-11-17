@@ -416,7 +416,13 @@ func (c *anthropicClient) readStream(ctx context.Context, body io.Reader, ch cha
 		// partial_json fragments that must be concatenated.
 		callID   = make(map[int]string)
 		callName = make(map[int]string)
-		sawAny   bool
+		// openToolBlock is the content-block index of the tool_use block whose
+		// arguments are currently streaming, or -1 when none is open. An
+		// input_json_delta carries no id of its own — it belongs to the
+		// content_block_start that opened it — so it has to be tracked here to
+		// tell parallel calls apart.
+		openToolBlock = -1
+		sawAny        bool
 		// stopReason arrives on message_delta, one event before message_stop.
 		stopReason string
 	)
@@ -445,12 +451,16 @@ func (c *anthropicClient) readStream(ctx context.Context, body io.Reader, ch cha
 
 		case "content_block_start":
 			sawAny = true
+			openToolBlock = -1
 			if ev.ContentBlock != nil && ev.ContentBlock.Type == "tool_use" {
 				callID[ev.Index] = ev.ContentBlock.ID
 				callName[ev.Index] = ev.ContentBlock.Name
+				openToolBlock = ev.Index
+				index := ev.Index
 				if !emit(ctx, ch, Event{Kind: KindToolCallStart, ToolCall: &ToolCall{
-					ID:   ev.ContentBlock.ID,
-					Name: ev.ContentBlock.Name,
+					ID:    ev.ContentBlock.ID,
+					Name:  ev.ContentBlock.Name,
+					Index: &index,
 				}}) {
 					return
 				}
@@ -486,7 +496,15 @@ func (c *anthropicClient) readStream(ctx context.Context, body io.Reader, ch cha
 				}
 			case "input_json_delta":
 				if ev.Delta.PartialJSON != "" {
-					if !emit(ctx, ch, Event{Kind: KindToolCallDelta, ToolCall: &ToolCall{Arguments: ev.Delta.PartialJSON}}) {
+					// No open tool_use block means this fragment belongs to a
+					// block this client never saw start (a gateway quirk);
+					// emitting it without an index would let the consumer
+					// append it to an unrelated call.
+					if openToolBlock < 0 {
+						continue
+					}
+					index := openToolBlock
+					if !emit(ctx, ch, Event{Kind: KindToolCallDelta, ToolCall: &ToolCall{Arguments: ev.Delta.PartialJSON, Index: &index}}) {
 						return
 					}
 				}

@@ -420,4 +420,47 @@ describe('DockPluginSetting', () => {
     const wrapper = mountSetting()
     expect(row(wrapper, 'mail').find('.plugin-gear').exists()).toBe(false)
   })
+
+  describe('orphan tab ids', () => {
+    // `localPlugins` is derived from the DESCRIPTOR map, so an id that is in the
+    // stored order but has no plugin definition in this build renders no row —
+    // the dock still draws the tab, and its switch became unreachable (the only
+    // fix was clearing localStorage).
+    const seedOrder = (ids: string[]) => {
+      localStorage.setItem('clawbench-panel.dock-order', JSON.stringify(ids))
+      _resetDockPluginsForTest()
+    }
+
+
+    it('lists an id that has no plugin definition and offers a reset', () => {
+      seedOrder(['weather', ...DOCK_TABS.map((t) => t.id)])
+      const wrapper = mountSetting()
+      const orphans = wrapper.find('[data-plugin-orphans]')
+      expect(orphans.exists()).toBe(true)
+      expect(orphans.find('[data-unknown-tab="weather"]').text()).toContain('缺少插件定义：weather')
+      expect(orphans.find('[data-plugin-orphans-reset]').text()).toBe('重置顺序')
+      // The orphan is NOT a row: there is no plugin behind it to toggle, drag
+      // or open settings for.
+      expect(row(wrapper, 'weather').exists()).toBe(false)
+    })
+
+    it('shows no notice when every id resolves', () => {
+      const wrapper = mountSetting()
+      expect(wrapper.find('[data-plugin-orphans]').exists()).toBe(false)
+    })
+
+    it('drops the orphan from the stored order and hides the notice', async () => {
+      seedOrder(['weather', ...DOCK_TABS.map((t) => t.id)])
+      const wrapper = mountSetting()
+      expect(wrapper.find('[data-plugin-orphans]').exists()).toBe(true)
+      await wrapper.find('[data-plugin-orphans-reset]').trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('[data-plugin-orphans]').exists()).toBe(false))
+      expect(useDockPlugins().storedOrder.value).not.toContain('weather')
+      const stored = JSON.parse(localStorage.getItem('clawbench-panel.dock-order') || '[]')
+      expect(stored).not.toContain('weather')
+      expect(stored).toHaveLength(DOCK_TABS.length)
+      // …and every real row is still there.
+      for (const tab of DOCK_TABS) expect(row(wrapper, tab.id).exists()).toBe(true)
+    })
+  })
 })

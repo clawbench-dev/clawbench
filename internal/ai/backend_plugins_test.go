@@ -19,8 +19,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"clawbench/internal/ai/backends"
 	_ "clawbench/internal/ai/backends/all"
+	"clawbench/internal/model"
 )
 
 // backendSpecificFilesAllowedInCore are the exceptions that must stay: each one
@@ -82,4 +86,48 @@ func TestCorePackageHasNoBackendSpecificFiles(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestRealBackendSpecsCarryCodeBuddyCapabilityFlags is the guard that the
+// spec-driven capability flags had been missing.
+//
+// internal/ai cannot import backends/all (import cycle), so
+// acp_conn_lifecycle_test.go drives advertiseTerminalCapability /
+// advertiseReadTextFileCapability through a SYNTHETIC spec installed with
+// model.SetBackendRegistryForTest. Those tests prove the wiring reads the spec,
+// but they would stay green if the real CodeBuddy spec flipped both flags back
+// to false — the user-visible regressions (TaskOutput "not found", images read
+// as mojibake) would return with every test passing. The assertion has to live
+// in this package, which sees the real registry.
+func TestRealBackendSpecsCarryCodeBuddyCapabilityFlags(t *testing.T) {
+	spec := model.FindSpecByBackend("codebuddy")
+	require.NotNil(t, spec, "the real backend registry must contain codebuddy")
+	assert.True(t, spec.HideTerminalCapability,
+		"CodeBuddy must hide the ACP Terminal capability: host-created terminals never enter its background-task registry, so every TaskOutput fails")
+	assert.True(t, spec.HideReadTextFileCapability,
+		"CodeBuddy must hide fs.readTextFile: advertising it replaces its native Read tool with a text-only proxy that turns images into mojibake")
+}
+
+// TestRealBackendSpecsNeedNoCapabilityHiding pins the other direction: hiding
+// these capabilities is a CodeBuddy-specific workaround, so an agent that does
+// not swap its tools on them must keep both advertised.
+func TestRealBackendSpecsNeedNoCapabilityHiding(t *testing.T) {
+	for _, backend := range []string{"claude", "codex", "opencode", "qoder", "hermes", "openclaw"} {
+		spec := model.FindSpecByBackend(backend)
+		require.NotNil(t, spec, "missing spec for %s", backend)
+		assert.False(t, spec.HideTerminalCapability, "%s must keep the Terminal capability", backend)
+		assert.False(t, spec.HideReadTextFileCapability, "%s must keep fs.readTextFile", backend)
+	}
+
+	// openclaw has its own tool-call parsers but no _meta parser, while
+	// hermes declares no behavior at all. In both cases the generic _meta scan
+	// must apply — inheriting Claude's parser would read the wrong wire shape.
+	var inherited []string
+	for _, id := range []string{"openclaw", "hermes"} {
+		if behavior := backends.LookupACPBehavior(id); behavior != nil && behavior.ExtractMeta != nil {
+			inherited = append(inherited, id)
+		}
+	}
+	assert.Empty(t, inherited,
+		"these agents do not share the claude ACP bridge; they must rely on the generic _meta scan, not a copied Claude parser")
 }

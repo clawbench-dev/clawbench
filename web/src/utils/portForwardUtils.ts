@@ -71,6 +71,14 @@ export function tunnelStatusFromPorts(ports: ForwardedPort[]): 'ok' | 'degraded'
  * "not loaded yet" and must NOT read as disabled — only an explicit `false`
  * counts, otherwise the gate would flash on every load.
  *
+ * `sshLoaded` says whether that answer actually arrived. A failed request
+ * leaves `sshEnabled` null too, and there the conservative choice is the
+ * opposite one: the value will not retry on its own, so reading "unknown" as
+ * disabled hid the proxy tab for the whole session (only a reload brought it
+ * back after SSH recovered). The rule matches `useFeatureFlags` — a request
+ * that never landed reads as ON. Pass `true` (the default) when the caller only
+ * has the value and cannot tell the two cases apart.
+ *
  * `transportAllowsH2` is the caller's read of the server's
  * `port_forward.transport` (see usePortForward's `transportAllowsH2`).
  *
@@ -82,7 +90,11 @@ export function portForwardUnavailable(
   sshEnabled: boolean | null | undefined,
   transportAllowsH2: boolean,
   hostTunnelSupported: boolean = true,
+  sshLoaded: boolean = true,
 ): boolean {
+  // A request that never landed is not evidence of anything: keep the feature
+  // reachable rather than hiding its only entry point until the page reloads.
+  if (!sshLoaded) return !hostTunnelSupported
   return !hostTunnelSupported || (sshEnabled === false && !transportAllowsH2)
 }
 

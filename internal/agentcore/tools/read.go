@@ -121,8 +121,9 @@ func readText(abs, display string, offset, limit int) Result {
 		return Result{Text: fmt.Sprintf("%s is empty.", display), Display: display}
 	}
 
-	// A byte cap is applied before line handling so a single enormous line
-	// cannot bypass the line limit.
+	// The byte cap bounds ONE read. The cut is made on a line boundary: half a
+	// line handed to the model is a line it will try to address, and continuing
+	// from it would either duplicate or drop content.
 	truncatedByBytes := false
 	if len(data) > MaxReadBytes {
 		data = data[:MaxReadBytes]
@@ -134,14 +135,27 @@ func readText(abs, display string, offset, limit int) Result {
 	if n := len(lines); n > 0 && lines[n-1] == "" {
 		lines = lines[:n-1]
 	}
+	// The cap cut the buffer at an arbitrary byte, so the last element is an
+	// INCOMPLETE line: it is neither shown (the model would get half a line) nor
+	// counted (the note would point at content that was never shown).
+	completeLines := len(lines)
+	if truncatedByBytes {
+		completeLines--
+	}
+	if completeLines < 0 {
+		completeLines = 0
+	}
 
 	start := 0
 	if offset > 0 {
 		start = offset - 1
 	}
-	if start > len(lines) {
+	// One line past the last complete line is legal: that is exactly the offset
+	// this tool's own note hands out when the cut left the last line incomplete,
+	// and answering it with "has only N lines" sent the model in a circle.
+	if start > completeLines {
 		return Result{
-			Text:    fmt.Sprintf("%s has only %d lines; offset %d is past the end.", display, len(lines), offset),
+			Text:    fmt.Sprintf("%s has only %d lines; offset %d is past the end.", display, completeLines, offset),
 			IsError: true,
 		}
 	}
@@ -151,8 +165,8 @@ func readText(abs, display string, offset, limit int) Result {
 		want = limit
 	}
 	end := start + want
-	if end > len(lines) {
-		end = len(lines)
+	if end > completeLines {
+		end = completeLines
 	}
 
 	var b strings.Builder
@@ -160,11 +174,17 @@ func readText(abs, display string, offset, limit int) Result {
 		fmt.Fprintf(&b, "%d: %s\n", i+1, lines[i])
 	}
 
-	remaining := len(lines) - end
-	if remaining > 0 {
-		fmt.Fprintf(&b, "\n[%d more lines. Call read again with offset=%d to continue.]", remaining, end+1)
-	} else if truncatedByBytes {
-		b.WriteString(fmt.Sprintf("\n[stopped at the %d-byte read limit; the file continues beyond this point.]", MaxReadBytes))
+	switch {
+	case truncatedByBytes:
+		// The BYTE cap stopped this read, so more of the file exists after what
+		// was shown. Naming the next offset is the whole point: without it the
+		// model guessed one and got "has only N lines" — N being the fiction the
+		// cut had just created. When the cut left the LAST line incomplete the
+		// next offset points at the same line, which is by then complete.
+		fmt.Fprintf(&b, "\n[Stopped at the %d-byte read limit. More of the file follows; "+
+			"call read again with offset=%d to continue.]", MaxReadBytes, end+1)
+	case end < completeLines:
+		fmt.Fprintf(&b, "\n[%d more lines. Call read again with offset=%d to continue.]", completeLines-end, end+1)
 	}
 	return Result{Text: b.String(), Display: display}
 }

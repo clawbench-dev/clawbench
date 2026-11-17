@@ -59,8 +59,31 @@ func buildBuiltinHistory(sessionID string, beforeMessageID int64, summary builti
 	type turn struct {
 		role string
 		text string
+		// id is the chat_history row id, carried so a compaction can report WHICH
+		// stored turn it folded (see builtinSummaryFromCompaction).
+		id int64
 	}
-	turns := make([]turn, 0, len(messages))
+	var turns []turn
+
+	// keptTurns is the number of REPLAYABLE turns seen so far, and it is the
+	// list index the stored boundary counts against. It is an explicit counter
+	// rather than len(turns) because the two are not the same number here — and
+	// because "which list is being counted" is the whole content of this
+	// function, so it must be readable at the point of use:
+	//
+	//   - turns only receives entries that pass every filter below, while
+	//     keptTurns also counts the rows the summary position was measured on.
+	//     On a session whose stored form contains anything the replay drops, the
+	//     two diverge — and the boundary belongs to the count, not to len(turns).
+	//   - turns is appended to AFTER the boundary has been consulted, so the
+	//     number means "the first N replayed turns are covered", not "the N-th
+	//     entry is" — an off-by-one here either re-summarises one turn or drops
+	//     it from the model's context for good.
+	//
+	// The two counters advance together at the bottom of the loop (every row the
+	// summary has not covered is, by definition, part of the replayed list) and
+	// apart inside the covered branch above.
+	keptTurns := 0
 	for _, m := range messages {
 		// Exclude this turn: the user message being answered is already in the
 		// prompt, and anything newer is not part of the context yet.
@@ -68,7 +91,23 @@ func buildBuiltinHistory(sessionID string, beforeMessageID int64, summary builti
 			continue
 		}
 		// Exclude everything the stored summary already stands for.
-		if summary.UpToMessageID > 0 && m.ID <= summary.UpToMessageID {
+		//
+		// The boundary is taken by POSITION when the stored summary knows it
+		// (see builtinSummary.CoversThroughTurn). The id-based boundary is a
+		// snapshot of the table taken at compaction time, and deleting a message
+		// or rewinding the session shifts ids — it would then skip turns the
+		// engine deliberately kept verbatim, and the model loses them while the
+		// summary does not cover them either.
+		//
+		// The position counts REPLAYABLE turns only (zero-based, exactly like the
+		// engine's Spec.History): the boundary the caller stores is "the first N
+		// of these", so both sides must count the same list the same way.
+		if summary.CoversThroughTurn > 0 {
+			if keptTurns < summary.CoversThroughTurn {
+				keptTurns++
+				continue
+			}
+		} else if summary.UpToMessageID > 0 && m.ID <= summary.UpToMessageID {
 			continue
 		}
 		role := m.Role
@@ -79,7 +118,8 @@ func buildBuiltinHistory(sessionID string, beforeMessageID int64, summary builti
 		if text == "" {
 			continue
 		}
-		turns = append(turns, turn{role: role, text: text})
+		keptTurns++
+		turns = append(turns, turn{role: role, text: text, id: m.ID})
 	}
 	if len(turns) == 0 {
 		return nil
@@ -115,9 +155,42 @@ func buildBuiltinHistory(sessionID string, beforeMessageID int64, summary builti
 		})
 	}
 	for _, t := range turns[start:] {
-		out = append(out, ai.HistoryMessage{Role: t.role, Text: t.text})
+		out = append(out, ai.HistoryMessage{Role: t.role, Text: t.text, ID: t.id})
 	}
 	return out
+}
+
+// builtinSummaryFromCompaction turns a compaction event into the boundary to
+// persist alongside its summary.
+//
+// The boundary is what the ENGINE folded, not "everything finalized so far".
+// The engine deliberately keeps the most recent turns verbatim, and those are
+// already-persisted rows with ids — the old "newest id" boundary marked them
+// covered while the summary said nothing about them, so the next turn silently
+// dropped the turns the model had just been told to keep in mind.
+//
+// Two boundaries are stored because they fail differently. The position
+// (CoversThroughTurn) is measured on the replayed turn list and therefore
+// survives a deleted message or a rewind; the id is the older form and is kept
+// so a summary written by an older build still resolves. When the event names
+// nothing usable, NO boundary is written at all: the next turn replays the
+// history and compacts again — one redundant summary call, never lost content.
+func builtinSummaryFromCompaction(event ai.StreamEvent, history []ai.HistoryMessage) builtinSummary {
+	s := builtinSummary{Text: event.Summary}
+	last := event.CompactedThroughHistory
+	if last < 0 || last >= len(history) {
+		return s
+	}
+	s.CoversThroughTurn = last + 1
+	if id := event.CompactedThroughMessageID; id > 0 {
+		s.UpToMessageID = id
+	} else {
+		// The turn's own id is the same fact. An entry without one (the fork
+		// context header) leaves the id unset, which is harmless: the position is
+		// what the next turn uses.
+		s.UpToMessageID = history[last].ID
+	}
+	return s
 }
 
 // lastCoveredMessageID returns the highest chat_history id at or below

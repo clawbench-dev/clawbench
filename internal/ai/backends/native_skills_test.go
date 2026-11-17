@@ -61,10 +61,23 @@ var skillAwareBackends = map[string]bool{
 	"builtin": false,
 }
 
+// pluginsForSkillCheck snapshots the registry at package init.
+//
+// It cannot read backends.All() inside the test: registry_test.go clears the
+// registry for its own cases, and Go runs tests in one process in file order,
+// so a shuffled run would otherwise compare this table against an empty (or
+// test-only) registry — vacuous in one order, failing in another.
+var pluginsForSkillCheck = func() []*backends.BackendPlugin {
+	return backends.All()
+}()
+
 // TestBackendSkillAwarenessMatchesReviewedTable fails if a backend's actual
 // skill behavior differs from the reviewed table, in either direction.
 func TestBackendSkillAwarenessMatchesReviewedTable(t *testing.T) {
-	for _, p := range backends.All() {
+	if len(pluginsForSkillCheck) == 0 {
+		t.Fatal("no backends registered at init; the review check would be vacuous")
+	}
+	for _, p := range pluginsForSkillCheck {
 		// Test-only plugins register with an empty Backend stub.
 		if p.Spec.Backend == "" {
 			continue
@@ -84,7 +97,7 @@ func TestBackendSkillAwarenessMatchesReviewedTable(t *testing.T) {
 // ClawBench cannot dedup against it (the skill would be injected twice under a
 // different source).
 func TestSkillAwareBackendsDeclareTheirDirectory(t *testing.T) {
-	for _, p := range backends.All() {
+	for _, p := range pluginsForSkillCheck {
 		if p.Spec.Backend == "" {
 			continue
 		}
@@ -99,7 +112,7 @@ func TestSkillAwareBackendsDeclareTheirDirectory(t *testing.T) {
 // relative to the user's home (it is joined with os.UserHomeDir), so an
 // absolute path would be silently mis-resolved.
 func TestNativeSkillsDirsAreHomeRelative(t *testing.T) {
-	for _, p := range backends.All() {
+	for _, p := range pluginsForSkillCheck {
 		for _, dir := range p.Spec.NativeSkillsDirs {
 			assert.NotContains(t, dir, "\\", "backend %q: use forward slashes", p.ID)
 			assert.NotEqual(t, byte('/'), dir[0],
@@ -118,7 +131,7 @@ func TestSharedSkillsDirDeclaredWhereReadable(t *testing.T) {
 		"mimo": true, "qoder": true, "qodercn": true, "dsh": true, "deepseek": true,
 		"cursor": true, "commandcode": true, "openclaw": true,
 	}
-	for _, p := range backends.All() {
+	for _, p := range pluginsForSkillCheck {
 		if !readsShared[p.ID] {
 			continue
 		}

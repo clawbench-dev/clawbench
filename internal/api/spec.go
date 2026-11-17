@@ -232,12 +232,17 @@ func (sc *schema) propertySchema(name string) *schema {
 
 // endpoint is one rendered operation: a method, a path, and its inputs.
 type endpoint struct {
-	OperationID  string
-	Tags         []string
-	Method       string
-	Path         string
-	Summary      string
-	Description  string
+	OperationID string
+	Tags        []string
+	Method      string
+	Path        string
+	Summary     string
+	Description string
+	// PromptNote records whether Description came from the operation's
+	// `x-prompt-note` rather than its `description`. It is not rendered; it
+	// exists so the size-budget failure can say which of the two the bytes came
+	// from (a note is deliberately terse, so a huge note is a bug, not a spec).
+	PromptNote   bool
 	PathParams   []parameter
 	QueryParams  []parameter
 	BodyFields   []bodyField
@@ -326,8 +331,10 @@ func buildEndpoint(s *spec, method, path string, op *operation) endpoint {
 	// The prompt fragment is a different audience from the spec reader: when an
 	// endpoint carries an explicit prompt note, that is the whole note the AI
 	// sees. See operation.PromptNote for why the two cannot share one string.
+	fromNote := false
 	if note := strings.TrimSpace(op.PromptNote); note != "" {
 		desc = note
+		fromNote = true
 	}
 	ep := endpoint{
 		OperationID: op.OperationID,
@@ -336,6 +343,7 @@ func buildEndpoint(s *spec, method, path string, op *operation) endpoint {
 		Path:        path,
 		Summary:     strings.TrimSpace(op.Summary),
 		Description: desc,
+		PromptNote:  fromNote,
 	}
 	for _, raw := range op.Parameters {
 		p := s.resolve(raw)

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -40,6 +41,17 @@ func kbProjectID(r *http.Request) int64 {
 
 func writeKBError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		// The client went away while a long operation was running; there is no
+		// one left to read a body. 499 is the de-facto "client closed request".
+		w.WriteHeader(499)
+	case errors.Is(err, kb.ErrPrivateAddress):
+		var fileErr *kb.FileError
+		data := map[string]any{}
+		if errors.As(err, &fileErr) {
+			data[fieldDetail] = fileErr.Detail
+		}
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "KBPrivateAddress", data)
 	case errors.Is(err, kb.ErrCollectionNotFound), errors.Is(err, kb.ErrDocumentNotFound):
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "KBNotFound")
 	case errors.Is(err, kb.ErrDuplicateDocument):
@@ -116,6 +128,8 @@ func kbReasonKey(reason string) string { //nolint:gocyclo // flat reason-code lo
 		return "KBReasonNotRegular"
 	case kb.ReasonUnknownFormat:
 		return "KBReasonUnknownFormat"
+	case kb.ReasonPrivateAddress:
+		return "KBReasonPrivateAddress"
 	default:
 		return "KBUnsupportedFile"
 	}
@@ -564,11 +578,16 @@ func ServeKBDocumentImport(w http.ResponseWriter, r *http.Request) {
 	var result *kb.DirImportResult
 	var err error
 	if body.DryRun {
-		result, err = kb.PreviewDirectory(body.CollectionID, absPath)
+		result, err = kb.PreviewDirectory(r.Context(), body.CollectionID, absPath)
 	} else {
-		result, err = kb.ImportDirectory(body.CollectionID, absPath)
+		result, err = kb.ImportDirectory(r.Context(), body.CollectionID, absPath)
 	}
 	if err != nil {
+		// A client that hung up (or hit its own timeout) leaves nothing to
+		// answer; the import has already stopped copying.
+		if r.Context().Err() != nil {
+			return
+		}
 		writeKBError(w, r, err)
 		return
 	}
@@ -746,6 +765,17 @@ func ServeKBReindex(w http.ResponseWriter, r *http.Request) {
 		ids, err = kb.ListCollectionIDs(pid)
 		if err != nil {
 			writeKBError(w, r, err)
+			return
+		}
+		// Nothing visible here means nothing to rebuild. Passing the empty
+		// slice through is still safe (the store reads it as "no collections"),
+		// but returning early keeps the response honest instead of accepting a
+		// "rebuild started" that will not touch anything.
+		if len(ids) == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{
+				fieldQueued: false,
+				fieldDetail: "no_collections",
+			})
 			return
 		}
 	}

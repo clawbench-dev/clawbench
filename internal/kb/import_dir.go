@@ -1,6 +1,7 @@
 package kb
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -51,18 +52,29 @@ var dirImportSkip = map[string]bool{
 // collection. Symlinks and hidden entries are ignored: the former can escape
 // the chosen folder (or loop), the latter are tool state (`.git`, `.env`) the
 // user did not mean to publish into a knowledge base.
-func ImportDirectory(collectionID int64, dirPath string) (*DirImportResult, error) {
-	return importDirectory(collectionID, dirPath, false)
+//
+// It stops as soon as ctx is done and returns ctx.Err() with the counts of what
+// it had already copied: this is a synchronous request that can run for
+// minutes, and when the client gives up the server must not keep copying files
+// nobody is waiting for.
+func ImportDirectory(ctx context.Context, collectionID int64, dirPath string) (*DirImportResult, error) {
+	return importDirectory(ctx, collectionID, dirPath, false)
 }
 
 // PreviewDirectory reports what ImportDirectory would do without copying or
 // writing anything. The panel uses it to show the counts before a large folder
 // is pulled in.
-func PreviewDirectory(collectionID int64, dirPath string) (*DirImportResult, error) {
-	return importDirectory(collectionID, dirPath, true)
+func PreviewDirectory(ctx context.Context, collectionID int64, dirPath string) (*DirImportResult, error) {
+	return importDirectory(ctx, collectionID, dirPath, true)
 }
 
-func importDirectory(collectionID int64, dirPath string, dryRun bool) (*DirImportResult, error) {
+func importDirectory(ctx context.Context, collectionID int64, dirPath string, dryRun bool) (*DirImportResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	st := currentStore()
 	if st == nil {
 		return nil, ErrUnavailable
@@ -78,23 +90,29 @@ func importDirectory(collectionID int64, dirPath string, dryRun bool) (*DirImpor
 		return nil, ErrNotDirectory
 	}
 
-	files, truncated, err := collectDirFiles(dirPath)
+	files, truncated, err := collectDirFiles(ctx, dirPath)
 	if err != nil {
 		return nil, err
 	}
-	res := importFiles(collectionID, files, dryRun)
+	res, cancelErr := importFiles(ctx, collectionID, files, dryRun)
 	res.Truncated = truncated
+	if cancelErr != nil {
+		return res, cancelErr
+	}
 	return res, nil
 }
 
 // collectDirFiles walks the tree and returns the regular files worth trying,
 // capped at maxDirImportFiles. `truncated` says the cap actually cut something
 // off (a full cap alone does not mean there was more).
-func collectDirFiles(root string) ([]string, bool, error) {
+func collectDirFiles(ctx context.Context, root string) ([]string, bool, error) {
 	root = filepath.Clean(root)
 	var files []string
 	truncated := false
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			// An unreadable entry is skipped; one locked file must not abort
 			// the rest of the folder.
@@ -129,15 +147,22 @@ func collectDirFiles(root string) ([]string, bool, error) {
 	if walkErr != nil {
 		return nil, false, fmt.Errorf("walk folder: %w", walkErr)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	return files, truncated, nil
 }
 
 // importFiles copies each path into the collection, classifying per-file
-// outcomes. One bad file never stops the batch.
-func importFiles(collectionID int64, files []string, dryRun bool) *DirImportResult {
+// outcomes. One bad file never stops the batch; a cancelled request does. The
+// second result is the context error, with the counts gathered so far.
+func importFiles(ctx context.Context, collectionID int64, files []string, dryRun bool) (*DirImportResult, error) {
 	res := &DirImportResult{}
 	st := currentStore()
 	for _, path := range files {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 		fi, statErr := os.Stat(path)
 		if statErr != nil {
 			res.Failed++
@@ -187,5 +212,5 @@ func importFiles(collectionID int64, files []string, dryRun bool) *DirImportResu
 		}
 		res.Added++
 	}
-	return res
+	return res, nil
 }

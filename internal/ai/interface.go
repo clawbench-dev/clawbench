@@ -65,6 +65,12 @@ type HistoryMessage struct {
 	Role string
 	// Text is the message body.
 	Text string
+	// ID is the caller's identifier for this turn (a chat_history row id, or 0
+	// when the turn is synthetic). It is opaque to the engine, which only
+	// carries it back on a compaction boundary so the caller can tell exactly
+	// which stored turn the summary stopped at — the engine's own index into the
+	// list is not enough when the two lists are built by different code.
+	ID int64 `json:"id,omitempty"`
 }
 
 // ShouldInjectSystemPrompt determines whether the system prompt should be injected
@@ -579,8 +585,18 @@ type StreamEvent struct {
 	// persists it so the next turn starts from the compacted state instead of
 	// re-summarizing the same history.
 	Summary string
-	QueueAdded     *QueueAddedData        // A message was enqueued (Type=queue_added)
-	StreamStart    *StreamStartData       // Stream start (Type=stream_start) — carries streaming message DB id
+	// CompactedThroughHistory is the index (in ChatRequest.History, the list of
+	// turns replayed to the backend) of the last turn the summary folded, or -1
+	// when no replayed turn was folded (Type=compacted). The executor turns it
+	// into a stored boundary so the next turn does not skip the recent turns the
+	// engine deliberately kept verbatim.
+	CompactedThroughHistory int
+	// CompactedThroughMessageID is the stored id (HistoryMessage.ID) of that
+	// same turn, 0 when unknown. It is the boundary the executor records; the
+	// index is the fallback.
+	CompactedThroughMessageID int64
+	QueueAdded                *QueueAddedData  // A message was enqueued (Type=queue_added)
+	StreamStart               *StreamStartData // Stream start (Type=stream_start) — carries streaming message DB id
 	// StreamFinish is set on a "stream_finalize" event: ONE producer turn has
 	// ended and its streaming bubble should be finalized, WITHOUT ending the
 	// whole run. Used by group chats, where each member turn must close its own

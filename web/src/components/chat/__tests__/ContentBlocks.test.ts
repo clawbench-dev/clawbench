@@ -178,8 +178,11 @@ const i18n = createI18n({
         subagentCollapse: 'Collapse sub-agent output',
         toolGroupSteps: 'Completed {count} step | Completed {count} steps',
         toolGroupStepIndex: 'Step {count}',
+        toolGroupRunning: 'Running {name} (step {count})',
         toolGroupFailed: '{count} failed',
         toolGroupInterrupted: '{count} interrupted',
+        toolGroupCollapse: 'Collapse',
+        toolGroupExpand: 'Expand tool calls',
         // Needed by the error_source chip: getErrorSourceLabel looks up
         // `chat.contentBlocks.errorSources.<source>` and returns '' when the key
         // is missing (mirrors the real t()).
@@ -4449,6 +4452,128 @@ describe('compact tool calls', () => {
     const ringAt = children.findIndex((el) => el.classList.contains('tool-spinner'))
     expect(stepAt).toBeGreaterThanOrEqual(0)
     expect(ringAt).toBe(stepAt + 1)
+  })
+
+  it('keeps the failure count visible while the run is still going', async () => {
+    // The spinner branch used to come FIRST in one v-if/v-else chain, so a run
+    // with an already-failed step showed neither the number nor its tooltip
+    // while it streamed — the one moment the user is watching it. Both facts
+    // are true at once (2 failures so far, step 3 spinning), so both show.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [
+        tool('Read', 't1', { status: 'error' }),
+        tool('Bash', 't2', { done: false, status: '' }),
+        tool('Grep', 't3'),
+      ],
+    })
+    await nextTick()
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.attributes('data-tool-failed')).toBe('1')
+    const verdict = row.find('.tool-group-verdict')
+    expect(verdict.exists()).toBe(true)
+    expect(verdict.classes()).toContain('tool-group-failed')
+    expect(verdict.find('.verdict-n').text()).toBe('1')
+    expect(verdict.attributes('title')).toBe('1 failed')
+    // …and the ring is still there, next to it.
+    expect(row.find('.tool-spinner').exists()).toBe(true)
+  })
+
+  it('keeps the interruption count visible while the run is still going', async () => {
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [
+        tool('Read', 't1', { status: 'interrupted' }),
+        tool('Bash', 't2', { done: false, status: '' }),
+      ],
+    })
+    await nextTick()
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.find('.tool-group-interrupted .verdict-n').text()).toBe('1')
+    expect(row.find('.tool-spinner').exists()).toBe(true)
+  })
+
+  it('never announces a live run as completed', async () => {
+    // The row is the unfold control, so its aria-label IS what a screen reader
+    // hears. It used to read "Completed 2 steps" while the visible text said
+    // "Step 2" — telling the user the run had finished mid-stream.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
+    })
+    await nextTick()
+    const label = wrapper.find('.chat-tool-group-strip').attributes('aria-label') || ''
+    expect(label).not.toContain('Completed')
+    expect(label).toContain('Running Bash (step 2)')
+    // The failure count is a fact, not a verdict: it stays in the spoken label.
+    await wrapper.setProps({ blocks: [tool('Read', 't1', { status: 'error' }), tool('Bash', 't2', { done: false, status: '' })] })
+    await nextTick()
+    const live = wrapper.find('.chat-tool-group-strip').attributes('aria-label') || ''
+    expect(live).not.toContain('Completed')
+    expect(live).toContain('1 failed')
+  })
+
+  it('is a real button: focusable, with aria-expanded following the body', async () => {
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2')] })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.attributes('role')).toBe('button')
+    expect(strip.attributes('tabindex')).toBe('0')
+    expect(strip.attributes('aria-expanded')).toBe('false')
+    // The spoken label says what pressing it does, and (settled) what it holds.
+    expect(strip.attributes('aria-label')).toContain('Completed 2 steps')
+    expect(strip.attributes('aria-label')).toContain('Expand tool calls')
+    await strip.trigger('click')
+    await nextTick()
+    expect(wrapper.find('.chat-tool-group-strip').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('.chat-tool-group-strip').attributes('aria-label')).toContain('Collapse')
+  })
+
+  it('unfolds from the keyboard with Enter and Space', async () => {
+    // "收起工具调用" is the default, so a run of 20 steps arrives folded. Without
+    // a keydown handler the only way in was the mouse (the bottom collapse
+    // button is mounted on first open, so a keyboard user never reached it).
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2')] })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+
+    await strip.trigger('keydown', { key: 'Enter' })
+    await nextTick()
+    expect(strip.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.findAll('.chat-run-body .chat-tool-call')).toHaveLength(2)
+
+    await strip.trigger('keydown', { key: ' ' })
+    await nextTick()
+    expect(strip.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('gives the pure-thinking run a brain, not the stack glyph', async () => {
+    // A run of thinking chips only has no steps: its label is "Deep Thinking",
+    // so the stack glyph ("a run of steps") contradicted it.
+    const wrapper = mountBlocks({
+      blocks: [thinking('th1'), thinking('th2')],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.find('.tool-name').text()).toBe('Deep Thinking')
+    // Brain is stubbed by this suite (Layers is not, so its absence is real).
+    // `getToolIcon` resolves to WrenchIcon for an unknown name, which the mock
+    // points at the same stub — so check the resolved component the row picked
+    // instead of a glyph class.
+    const icon = strip.element.children[0] as HTMLElement
+    expect(icon.classList.contains('lucide-layers')).toBe(false)
+    expect(icon.classList.contains('tool-icon')).toBe(true)
+  })
+
+  it('keeps the collapsed row\'s summary that buildToolCallGroups computed', async () => {
+    // The detail is folded into the group (one reverse scan per rebuild) instead
+    // of being recomputed by the row on every streamed frame.
+    const wrapper = mountBlocks({
+      toolCallSummary: (b: any) => b?.summary || '',
+      blocks: [tool('Read', 't1', { summary: 'run.go' }), tool('Bash', 't2', { summary: 'npm test' })],
+    })
+    await nextTick()
+    expect(wrapper.find('.chat-tool-group-strip .tool-summary').text()).toBe('Bash · npm test')
   })
 
   it('never folds an interactive card or an Agent card with a sub-agent group', async () => {

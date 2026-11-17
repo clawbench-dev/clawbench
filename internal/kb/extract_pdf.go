@@ -10,7 +10,19 @@ import (
 // extractPDF emits one block per page. It is deliberately tolerant: a malformed
 // page is skipped with a warning rather than failing the whole document, and the
 // library's panics on broken cross-reference tables are recovered per page.
+//
+// The recover has to wrap the WHOLE body, not just a page: NumPage() resolves
+// the page tree and the library panics with bare strings there too. An
+// uncaught panic in a goroutine takes the server down, and the document is
+// re-queued on the next start, so the same file would crash it in a loop.
 func extractPDF(path string) (blocks []Block, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			blocks = nil
+			err = &FileError{Reason: ReasonPDFMalformed, Err: fmt.Errorf("PDF parse failed: %v", rec)}
+		}
+	}()
+
 	f, r, err := pdf.Open(path)
 	if err != nil {
 		return nil, &FileError{Reason: ReasonPDFEncrypted, Err: err}

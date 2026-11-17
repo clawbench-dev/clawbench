@@ -19,10 +19,28 @@ function clamp(value: number, max: number): number {
 }
 
 /**
+ * Whether the view would silently drop a write right now.
+ *
+ * `EditorState.readOnly` is checked on every write, not only when the host is
+ * created: `CodeMirrorViewer` flips it through a compartment when `editable`
+ * goes false (a file gained a diff, the preview switched to read-only), and the
+ * registered host keeps a reference to the live view — a host resolved while
+ * the editor was writable outlives that. CodeMirror ignores a transaction from
+ * a read-only state without throwing, so an unchecked `replace()` reported
+ * success while nothing landed: the mic stayed on, no text appeared, and Esc
+ * "undid" text that was never written.
+ */
+function viewRejectsWrites(view: EditorView): boolean {
+  return !view.dom.isConnected || view.state.readOnly
+}
+
+/**
  * Wraps a live `EditorView` as a host.
  *
  * Only call this while the view accepts input — read-only views must not
- * resolve to a host at all (see `registerVoiceHost`'s factory).
+ * resolve to a host at all (see `registerVoiceHost`'s factory). The host still
+ * re-checks `state.readOnly` on every write: the view can become read-only
+ * after the host was resolved.
  */
 export function codeMirrorVoiceHost(view: EditorView): VoiceTargetHost {
   return {
@@ -33,6 +51,9 @@ export function codeMirrorVoiceHost(view: EditorView): VoiceTargetHost {
     },
     focused: () => view.hasFocus,
     replace(from, to, text) {
+      // A read-only view ignores transactions silently — answering `true` would
+      // make voiceTarget believe the transcript landed (see viewRejectsWrites).
+      if (viewRejectsWrites(view)) return false
       const length = view.state.doc.length
       const start = clamp(from, length)
       const end = Math.max(start, clamp(to, length))
@@ -46,6 +67,7 @@ export function codeMirrorVoiceHost(view: EditorView): VoiceTargetHost {
       return true
     },
     select(from, to) {
+      if (viewRejectsWrites(view)) return
       const length = view.state.doc.length
       view.dispatch({ selection: { anchor: clamp(from, length), head: clamp(to, length) } })
     },
