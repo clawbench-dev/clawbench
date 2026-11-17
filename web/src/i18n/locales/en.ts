@@ -1368,7 +1368,6 @@ export default {
       creditUsed: 'Credits used this turn: {value}',
       costUsed: 'Cost this turn: {value}',
       tokenUsed: 'Input {input} / Output {output}',
-      turnInProgress: 'This turn is still running — details are partial',
       kbRefs: {
         summary: 'Referenced {count} knowledge base passages',
         summaryOne: 'Referenced {count} knowledge base passage',
@@ -1377,10 +1376,12 @@ export default {
         expand: 'View source passages',
         collapse: 'Hide source passages',
         openInKb: 'Open in knowledge base',
-        saveToKB: 'Save to knowledge base',
-        kbNoteTitle: 'AI note',
-        kbNoteSaved: 'Saved to “{name}”',
       },
+      // The chat message's own "save as knowledge" action (the header menu),
+      // keyed at the message level: t('chat.message.saveToKB').
+      saveToKB: 'Save to knowledge base',
+      kbNoteTitle: 'AI note',
+      kbNoteSaved: 'Saved to “{name}”',
     },
     fileChanges: {
       title: 'View Changed Files',
@@ -5578,6 +5579,11 @@ export default {
     detail: {
       back: 'Back to list',
       quote: 'Quote in chat',
+      // Saving the meeting's minutes into the knowledge base from the detail
+      // page (会议纪要 → 知识库).
+      saveToKB: 'Save to knowledge base',
+      kbNoteTitle: 'Meeting minutes',
+      kbSaved: 'Meeting minutes saved to “{name}”',
       dragHint: 'Drag onto the chat to quote this meeting',
       rename: 'Rename meeting',
       renameTitle: 'Rename meeting',

@@ -1370,7 +1370,6 @@ export default {
       creditUsed: '本次消耗 {value} 积分',
       costUsed: '本次花费 {value}',
       tokenUsed: '输入 {input} / 输出 {output}',
-      turnInProgress: '本轮进行中，详情尚不完整',
       kbRefs: {
         summary: '参考了知识库 · {count} 段',
         summaryOne: '参考了知识库 · {count} 段',
@@ -1379,10 +1378,12 @@ export default {
         expand: '查看来源片段',
         collapse: '收起来源片段',
         openInKb: '在知识库中查看',
-        saveToKB: '存为知识',
-        kbNoteTitle: 'AI 笔记',
-        kbNoteSaved: '已存入知识库「{name}」',
       },
+      // 消息自身的「存为知识」动作（头部菜单），键在 message 层：
+      // t('chat.message.saveToKB')。
+      saveToKB: '存为知识',
+      kbNoteTitle: 'AI 笔记',
+      kbNoteSaved: '已存入知识库「{name}」',
     },
     fileChanges: {
       title: '查看变更文件',
