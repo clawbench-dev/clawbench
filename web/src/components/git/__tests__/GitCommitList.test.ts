@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick, defineComponent } from 'vue'
 import GitCommitList from '@/components/git/GitCommitList.vue'
+import { localConfig } from '@/composables/useSettingsConfig'
 
 // ── Mocks ────────────────────────────────────────────────────
 // importOriginal, not a bare replacement: the component now also pulls in
@@ -55,9 +56,11 @@ vi.mock('@/utils/gitGraph', () => ({
   refLabelText: (ref: string) => ref,
 }))
 
+// Prefixed so a test can tell which formatter ran; nothing else asserts on the
+// rendered date text.
 vi.mock('@/utils/format', () => ({
-  formatRelativeTime: (d: string) => d,
-  formatDateTime: (d: string) => d,
+  formatRelativeTime: (d: string) => `rel:${d}`,
+  formatDateTime: (d: string) => `abs:${d}`,
 }))
 
 // The two "number" buttons report through a toast when there is nothing to
@@ -614,7 +617,7 @@ describe('GitCommitList', () => {
       const quoteCall = setData.mock.calls.find(c => c[0] === 'application/x-clawbench-quote')
       expect(quoteCall, 'dragstart must write the quote MIME').toBeTruthy()
       const payload = JSON.parse(quoteCall![1])
-      expect(payload.commitSha).toBe(createCommits(5)[0].sha)
+      expect(payload.locators?.commit).toBe(createCommits(5)[0].sha)
       expect(payload.language).toBe('diff')
       // No annotation: a dragged quote is staged without one.
       expect(payload.note).toBeUndefined()
@@ -962,5 +965,74 @@ describe('divergence detail', () => {
     expect(wrapper.find('.branch-track-ahead').text()).toBe('↑2')
     expect(wrapper.find('[data-action="track-ahead"]').exists()).toBe(false)
     expect(wrapper.find('[data-action="track-behind"]').exists()).toBe(false)
+  })
+})
+
+// ── 设置 → Git 历史 的本地默认值 ──
+//
+// Three per-device view preferences: hide merges by default, show the commit
+// graph, and how timestamps read. Each one has to be honoured on mount AND
+// followed when the setting changes under an already-open list, because the
+// settings page and this list can be on screen at the same time on wide layouts.
+describe('GitCommitList — 设置 → Git 历史 defaults', () => {
+  const mergeCommits = [
+    { sha: 'm'.repeat(40), msg: 'Merge branch X', date: '2025-01-01', author: 'A', refs: [], parents: ['a'.repeat(40), 'b'.repeat(40)] },
+    { sha: 'a'.repeat(40), msg: 'real work', date: '2025-01-01', author: 'A', refs: [], parents: ['c'.repeat(40)] },
+  ]
+
+  afterEach(() => {
+    localConfig.gitHistoryHideMerges = false
+    localConfig.gitHistoryShowGraph = true
+    localConfig.gitHistoryTimeFormat = 'relative'
+  })
+
+  it('opens with merge commits hidden when 默认隐藏合并提交 is on', () => {
+    localConfig.gitHistoryHideMerges = true
+    const wrapper = mountList({ commits: mergeCommits })
+    expect(wrapper.findAll('.drilldown-item')).toHaveLength(1)
+    expect(wrapper.text()).toContain('real work')
+  })
+
+  it('shows merge commits when the setting is off', () => {
+    const wrapper = mountList({ commits: mergeCommits })
+    expect(wrapper.findAll('.drilldown-item')).toHaveLength(2)
+  })
+
+  it('follows a settings change on an already-mounted list', async () => {
+    const wrapper = mountList({ commits: mergeCommits })
+    expect(wrapper.findAll('.drilldown-item')).toHaveLength(2)
+
+    localConfig.gitHistoryHideMerges = true
+    await nextTick()
+    expect(wrapper.findAll('.drilldown-item')).toHaveLength(1)
+  })
+
+  it('still lets the toolbar toggle override the default', async () => {
+    localConfig.gitHistoryHideMerges = true
+    const wrapper = mountList({ commits: mergeCommits })
+    expect(wrapper.findAll('.drilldown-item')).toHaveLength(1)
+
+    await wrapper.find('[data-action="toggle-merge-commits"]').trigger('click')
+    expect(wrapper.findAll('.drilldown-item')).toHaveLength(2)
+  })
+
+  it('drops the graph entirely when 显示提交图 is off', async () => {
+    const on = mountList()
+    expect(on.find('.graph-stub').exists()).toBe(true)
+
+    localConfig.gitHistoryShowGraph = false
+    const off = mountList()
+    expect(off.find('.graph-stub').exists()).toBe(false)
+    // The list itself is untouched.
+    expect(off.findAll('.drilldown-item').length).toBeGreaterThan(0)
+  })
+
+  it('prints absolute dates when the time format is absolute', () => {
+    const relative = mountList()
+    expect(relative.find('.git-commit-meta').text()).toContain('rel:2025-01-01')
+
+    localConfig.gitHistoryTimeFormat = 'absolute'
+    const absolute = mountList()
+    expect(absolute.find('.git-commit-meta').text()).toContain('abs:2025-01-01')
   })
 })

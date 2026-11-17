@@ -6,6 +6,7 @@ import { RunningSweepDirective } from '@/directives/runningSweep'
 import { LongPressDirective } from '@/directives/longPress'
 import { readWebFile } from '@/testUtils/readWebFile'
 import { localConfig } from '@/composables/useSettingsConfig'
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
 
 // UI zoom factor driving toFixedCSS()/getZoomedViewport() in the component's
 // clamp math. Defaults to 1 (no zoom); individual tests raise it to prove the
@@ -44,7 +45,7 @@ const { mockGetAgentBackend, mockGetAgentName, mockGetAgentModel, mockDialogHold
   // projectRoot/homeDir are required by useCrossProjectSessions' "exclude the
   // current project" filter — without them the filter compares against
   // undefined and the test can never exercise the exclusion.
-  const mockStore = { state: reactive({ chatSessionPageSize: 10, sessionListVersion: 0, sessionCount: 0, projectRoot: '/proj/current', homeDir: '/home/u' }) }
+  const mockStore = { state: reactive({ sessionListVersion: 0, sessionCount: 0, projectRoot: '/proj/current', homeDir: '/home/u' }) }
   const mockCrossState: {
     groups: any
     loading: any
@@ -409,6 +410,74 @@ describe('SessionList', () => {
     expect(after!.querySelector('.wrap-check')).not.toBeNull()
 
     resetSessionShareState()
+    wrapper.unmount()
+  })
+
+  it('drops the share menu item when 分享 is off', async () => {
+    syncFeatureConfig({ share: { enabled: false } })
+    const s1 = sessionsFixture().s1
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [s1], hasMore: false }) })
+
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+    await openRowMenu(wrapper, s1.id)
+
+    const menus = document.body.querySelectorAll('.context-menu.visible')
+    const menu = menus[menus.length - 1]
+    const shareItem = Array.from(menu.querySelectorAll('.context-menu-item'))
+      .find(i => (i.textContent || '').includes('sessionShare.'))
+    expect(shareItem).toBeUndefined()
+    // The menu still carries the other five actions.
+    expect(menu.querySelectorAll('.context-menu-item').length).toBe(5)
+
+    syncFeatureConfig({})
+    wrapper.unmount()
+  })
+
+  it('drops the share menu item when CONVERSATION links are disallowed', async () => {
+    syncFeatureConfig({ share: { enabled: true, allow_sessions: false } })
+    const s1 = sessionsFixture().s1
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [s1], hasMore: false }) })
+
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+    await openRowMenu(wrapper, s1.id)
+
+    const menus = document.body.querySelectorAll('.context-menu.visible')
+    const menu = menus[menus.length - 1]
+    expect(Array.from(menu.querySelectorAll('.context-menu-item'))
+      .find(i => (i.textContent || '').includes('sessionShare.'))).toBeUndefined()
+
+    syncFeatureConfig({})
+    wrapper.unmount()
+  })
+
+  it('clears the seeded share state when 分享 is turned off', async () => {
+    const { useSessionShare } = await import('@/composables/useSessionShare')
+    const { resetSessionShareState, isSessionShared } = useSessionShare()
+    resetSessionShareState()
+
+    mockFetch.mockImplementation((url: string) => {
+      if (String(url).includes('/api/share/session/list')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ shares: [{ sessionId: 's1', token: 't1' }] }) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    })
+
+    const wrapper = await mountList()
+    await flushPromises()
+    expect(isSessionShared('s1')).toBe(true)
+
+    // The server revokes every link when the switch goes off, so a surviving
+    // check on the row would advertise a link that now 404s.
+    syncFeatureConfig({ share: { enabled: false } })
+    await nextTick()
+
+    expect(isSessionShared('s1')).toBe(false)
+    resetSessionShareState()
+    syncFeatureConfig({})
     wrapper.unmount()
   })
 

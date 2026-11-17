@@ -597,3 +597,29 @@ func TestACPStdoutFilter_NotificationTee(t *testing.T) {
 	assert.Contains(t, buf.String(), "session/request_permission")
 	assert.Contains(t, buf.String(), "session/steer")
 }
+
+// CodeBuddy reports each model's billing multiplier in the SessionModelState
+// extension's `_meta.credits` (issue #657). The value must survive extraction
+// verbatim so the picker can render the same "x0.06" the CLI shows; a missing
+// or non-string value yields no multiplier rather than a guessed one.
+func TestACPStdoutFilter_CacheModelsFromResponse_Credits(t *testing.T) {
+	f := newACPStdoutFilter(strings.NewReader(""))
+	defer f.Close()
+
+	f.cacheModelsFromResponse([]byte(`{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s1","models":{"availableModels":[` +
+		`{"modelId":"deepseek-v4-flash","name":"Deepseek-V4-Flash","_meta":{"credits":"x0.06 credits"}},` +
+		`{"modelId":"auto","name":"Auto","_meta":{"credits":""}},` +
+		`{"modelId":"custom-local:hy3","name":"Hy3","_meta":{"credits":null}},` +
+		`{"modelId":"no-meta","name":"No Meta"},` +
+		`{"modelId":"numeric","name":"Numeric","_meta":{"credits":0.06}}` +
+		`],"currentModelId":"deepseek-v4-flash"}}}`))
+
+	cached := f.GetAndClearCachedModels()
+	require.NotNil(t, cached)
+	require.Len(t, cached.Models, 5)
+	assert.Equal(t, "x0.06 credits", cached.Models[0].Credits)
+	assert.Empty(t, cached.Models[1].Credits, "the auto router reports an empty multiplier")
+	assert.Empty(t, cached.Models[2].Credits, "a null multiplier is not a value")
+	assert.Empty(t, cached.Models[3].Credits, "no _meta means no multiplier")
+	assert.Empty(t, cached.Models[4].Credits, "a numeric value is not the agent's own string, so it is ignored")
+}

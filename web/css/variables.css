@@ -115,6 +115,13 @@
     --modal-width-narrow: calc(520 * var(--dp));
     --modal-width-wide: calc(960 * var(--dp));
 
+    /* The first-run launcher (WelcomeOverlay) is a 3-column agent grid, not a
+       form dialog, so it gets its own width: wide enough for three cards at a
+       readable size, still capped by `100%` on small screens. Deliberately NOT
+       a third `--modal-width-*` tier — the modal ladder stays at two.
+       Guard: assets/__tests__/modalWidth.css.test.ts. */
+    --welcome-panel-width: calc(1120 * var(--dp));
+
     /* ── The chat column's reading measure. ONE number for the whole chat
        pane: the message column, the composer block (action bar / recommendation
        / input box / session info) and the stacked cards above it (plan, team,
@@ -191,6 +198,22 @@
     --space-8: calc(20 * var(--dp));
     --space-9: calc(24 * var(--dp));
     --space-10: calc(28 * var(--dp));
+
+    /* ── Horizontal edge inset of every left-panel tab header. One token for
+       both sides and for both layouts: the section glyph on the left and the
+       right-most control must sit the same distance from the panel edge.
+       It matches the chat title bar's horizontal padding (`.chat-title-bar`
+       in App.vue, also `--space-4`): the two panes sit side by side, so a
+       wider inset on one of them reads as "that header is too roomy". ── */
+    --panel-header-pad-x: var(--space-4);
+
+    /* ── The page surface behind EVERY left-panel tab. It is one token so
+       switching tabs never changes the page colour: panels either paint their
+       own root with it or stay transparent and let `.col-left .tab-panel`
+       show it. The chat pane is deliberately not included (it is a pane, not
+       a tab). Currently `--bg-primary`, i.e. the surface the git history tab
+       has always used. ── */
+    --panel-page-bg: var(--bg-primary);
 
     /* ── The empty-state glyph. Every "nothing here yet" surface in the app —
        the dock tabs, the meeting tabs, the drawers and search dialogs — draws

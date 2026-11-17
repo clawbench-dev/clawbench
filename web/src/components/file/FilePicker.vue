@@ -6,7 +6,7 @@
          would otherwise turn a one-tap attach into "hunt for it in the list". -->
     <div v-if="showQuick" class="fp-quick">
       <button
-        v-if="currentDirPath"
+        v-if="currentDirPath && allowDir"
         type="button"
         class="fp-row fp-quick-row"
         :class="{ 'fp-row-selected': isSelected(currentDirPath) }"
@@ -102,7 +102,7 @@
              tap enters and this trailing button selects. Files have only one
              meaning, so the whole row toggles them. -->
         <button
-          v-if="row.type === 'dir'"
+          v-if="row.type === 'dir' && allowDir"
           type="button"
           class="fp-dir-pick"
           :class="{ 'fp-dir-pick-on': isSelected(row.path) }"

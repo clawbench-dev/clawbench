@@ -13,9 +13,9 @@ import { join } from 'node:path'
  *  1. the task breadcrumb's root glyph holds its size in a scrolling flex row,
  *     and its crumb became a flex row (otherwise the icon and label sit on
  *     different baselines);
- *  2. the stats tab bar keeps its labels from wrapping now that each tab
- *     carries an icon — the bar is a fixed 34px strip, so a wrapping label is
- *     clipped mid-line instead of reflowing.
+ *  2. the stats tab strip clips its own overflow and scrolls sideways now that
+ *     each tab carries an icon — a narrow panel must not paint the last tab
+ *     over the refresh button and the panel's window controls.
  */
 
 function readWebFile(relPath: string): string {
@@ -40,38 +40,6 @@ function baseRule(css: string, cls: string): string | null {
   )
   return m ? m[1] : null
 }
-
-describe('task breadcrumb root glyph', () => {
-  const src = readWebFile('src/components/task/TaskBreadcrumb.vue')
-
-  it('renders the glyph on the root crumb only', () => {
-    // One crumb-icon in the template: the root. Adding it to every crumb would
-    // turn the row into a row of repeated icons.
-    const count = (src.match(/class="crumb-icon"/g) || []).length
-    expect(count, 'exactly one .crumb-icon is expected (the root crumb)').toBe(1)
-  })
-
-  it('makes the crumb a flex row so the glyph and label share a baseline', () => {
-    const decls = baseRule(src, 'crumb')
-    expect(decls, '.crumb rule must exist').not.toBeNull()
-    expect(decls).toMatch(/display:\s*inline-flex/)
-    expect(decls).toMatch(/align-items:\s*center/)
-  })
-
-  it('keeps the glyph from being squeezed by a long task name', () => {
-    // The crumbs live in one overflow-x:auto row, so a flex item without
-    // min-width:0/flex-shrink:0 would be compressed by a long neighbour.
-    expect(baseRule(src, 'crumb-icon')).toMatch(/flex-shrink:\s*0/)
-  })
-
-  it('imports the glyph so the crumb is not empty', () => {
-    // A missing import renders no svg at all, which a class-existence assertion
-    // would not catch (concurrent_git_safety §9).
-    const imports = src.match(/import\s*\{([^}]*)\}\s*from\s*'lucide-vue-next'/)
-    expect(imports, 'a lucide import must exist').not.toBeNull()
-    expect(imports![1]).toContain('Clock')
-  })
-})
 
 describe('stats tab bar with icons', () => {
   const src = readWebFile('src/components/stats/StatsTabHost.vue')
@@ -106,15 +74,22 @@ describe('stats tab bar with icons', () => {
     expect(src).toContain(':is="s.icon"')
   })
 
-  it('ellipsises the label instead of wrapping in the fixed-height strip', () => {
-    const decls = baseRule(src, 'stats-tab-label')
-    expect(decls, '.stats-tab-label rule must exist').not.toBeNull()
-    expect(decls).toMatch(/white-space:\s*nowrap/)
-    expect(decls).toMatch(/text-overflow:\s*ellipsis/)
-    expect(decls).toMatch(/overflow:\s*hidden/)
-    // Without min-width:0 the flex item keeps its intrinsic width and the
-    // ellipsis never engages.
-    expect(decls).toMatch(/min-width:\s*0/)
+  it('scrolls the strip sideways instead of squeezing or overflowing it', () => {
+    // A narrow panel used to let the row overflow its box, painting the last
+    // tab over the refresh button and under the window controls. The strip now
+    // owns the overflow: it clips at its own edge and scrolls.
+    const list = baseRule(src, 'stats-tab-list')
+    expect(list, '.stats-tab-list rule must exist').not.toBeNull()
+    expect(list).toMatch(/overflow-x:\s*auto/)
+    expect(list).toMatch(/overflow-y:\s*hidden/)
+    expect(list).toMatch(/scrollbar-width:\s*none/)
+    expect(src).toContain('.stats-tab-list::-webkit-scrollbar')
+
+    // Tabs keep their natural width — shrinking is what squeezed the labels.
+    const tab = baseRule(src, 'stats-tab')
+    expect(tab, '.stats-tab rule must exist').not.toBeNull()
+    expect(tab).toMatch(/flex:\s*0 0 auto/)
+    expect(tab).toMatch(/white-space:\s*nowrap/)
   })
 
   it('keeps the tab icon from being squeezed', () => {

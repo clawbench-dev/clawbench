@@ -75,10 +75,10 @@ func TestCodexTargetTriple(t *testing.T) {
 }
 
 func TestCodexCatalog_Structure(t *testing.T) {
-	require.NotEmpty(t, model.CodexCatalog)
+	require.NotEmpty(t, CodexCatalog)
 
 	defaultCount := 0
-	for _, m := range model.CodexCatalog {
+	for _, m := range CodexCatalog {
 		assert.NotEmpty(t, m.ID)
 		assert.NotEmpty(t, m.Name)
 		if m.Default {
@@ -86,8 +86,8 @@ func TestCodexCatalog_Structure(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, defaultCount, "exactly one model should be default")
-	assert.Equal(t, "gpt-5.5", model.CodexCatalog[0].ID)
-	assert.True(t, model.CodexCatalog[0].Default)
+	assert.Equal(t, "gpt-5.5", CodexCatalog[0].ID)
+	assert.True(t, CodexCatalog[0].Default)
 }
 
 func TestCodexSource_Registered(t *testing.T) {
@@ -252,7 +252,7 @@ func TestDiscoverCodexModels_FallsBackToCatalog(t *testing.T) {
 
 	models, detail := discoverCodexModels()
 
-	require.Len(t, models, len(model.CodexCatalog))
+	require.Len(t, models, len(CodexCatalog))
 	assert.Equal(t, "gpt-5.5", models[0].ID)
 	assert.Contains(t, detail, "built-in catalog", "the fallback must be reported, not silent")
 }

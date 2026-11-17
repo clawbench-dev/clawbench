@@ -102,6 +102,11 @@ type GroupOrchestrator struct {
 	// bookkeeping itself. A fresh orchestrator is built per turn, so it starts
 	// false.
 	firstTurnDone bool
+	// kbOnce injects knowledge base context into exactly ONE member turn per
+	// user round — the first non-host speaker. sync.Once keeps that true when a
+	// parallel group starts several members at the same time. A fresh
+	// orchestrator is built per drained message, so it naturally resets.
+	kbOnce sync.Once
 	// userMessage is the drained user message's literal text. In free mode it
 	// carries the initial @-mentions that seed the relay queue; host mode
 	// ignores it (humans never route in host mode, decision #47).
@@ -2381,6 +2386,21 @@ func advanceCursorOnSuccess(memberID string, preH int64, res groupMemberResult) 
 	SetMemberCursor(memberID, preH)
 }
 
+// kbOptions returns the knowledge base injection option for exactly one member
+// turn per user round. The host is skipped: its turn only routes speakers, so
+// retrieved passages would be spent on a decision that never reaches the user.
+func (o *GroupOrchestrator) kbOptions(memberID string) []ChatRequestOption {
+	if memberID == o.hostMemberID() {
+		return nil
+	}
+	inject := false
+	o.kbOnce.Do(func() { inject = true })
+	if !inject {
+		return nil
+	}
+	return []ChatRequestOption{WithKBQuery(o.userMessage)}
+}
+
 // buildMemberTurnSpec assembles the TurnSpec for one member (or host) turn.
 //
 // Extracted from defaultRunner so the wiring can be unit-tested without running
@@ -2391,7 +2411,7 @@ func (o *GroupOrchestrator) buildMemberTurnSpec(ctx context.Context, groupID str
 	project := o.project
 	agentID := ResolveAgentID(turn.MemberRowID, "")
 	backend := groupBackend(turn.MemberRowID)
-	req := BuildChatRequest(turn.Prompt, turn.MemberRowID, project, backend, agentID, "", "", "", "", resolveFileDir(project), false)
+	req := BuildChatRequest(turn.Prompt, turn.MemberRowID, project, backend, agentID, "", "", "", "", resolveFileDir(project), false, o.kbOptions(turn.MemberRowID)...)
 	// Fix the chat_history-derived resume signals for a member row.
 	applyMemberResumeOverrides(&req, GetExternalSessionID(turn.MemberRowID), resolveIsACP(agentID, ""))
 	return TurnSpec{

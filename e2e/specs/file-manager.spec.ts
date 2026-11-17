@@ -149,4 +149,56 @@ test.describe('File Manager', () => {
     await page.locator('.dlg-box .dlg-ok').click()
     await expect(linkInput).toHaveCount(0, { timeout: 5000 })
   })
+
+  /**
+   * A listing that fills the pane leaves no blank background to right-click, so
+   * the paste entry has to live somewhere that does not depend on finding
+   * empty space. Copying from a row's menu must raise the clipboard footer —
+   * what is in hand, where it will land, and a way to abandon it.
+   *
+   * Nothing is pasted here: the e2e server's project IS the repository, so a
+   * paste would drop a copy into the working tree. The destination wiring is
+   * covered by the unit tests (request body assertions).
+   */
+  test('raises a clipboard footer after copying, and closes on demand', async ({ page }) => {
+    const bar = page.locator('[data-role="paste-bar"]')
+    await expect(bar).toHaveCount(0)
+
+    const fileRow = page.locator('.file-item:not(.dir-item), .grid-item:not(.grid-dir)').first()
+    await expect(fileRow).toBeVisible({ timeout: 10000 })
+    const fileName = (await fileRow.locator('.file-name, .grid-name').first().textContent())?.trim() || ''
+    expect(fileName).not.toBe('')
+
+    // Copy from the row's own menu (the entry hit zone, same as the share test).
+    await fileRow.locator('.file-name, .grid-name').first().click({ button: 'right' })
+    const menu = page.locator('.context-menu')
+    await expect(menu).toBeVisible({ timeout: 5000 })
+    await menu.locator('.context-menu-item[data-menu-item="copy"]').click()
+    await expect(menu).toBeHidden()
+
+    // The footer names what is in hand, and the action lives in it.
+    await expect(bar).toBeVisible()
+    await expect(bar.locator('.paste-bar-summary')).toHaveText(fileName)
+    await expect(bar.locator('[data-action="paste"]')).toBeVisible()
+
+    // Closing it abandons the copy — the footer goes away.
+    await bar.locator('[data-action="paste-cancel"]').click()
+    await expect(bar).toHaveCount(0)
+
+    // The row menu also says WHERE the clipboard lands: on a directory row it
+    // names that folder, so "paste" is no longer a guess (the label itself is
+    // translated, so assert on the folder name it must carry).
+    await fileRow.locator('.file-name, .grid-name').first().click({ button: 'right' })
+    await menu.locator('.context-menu-item[data-menu-item="copy"]').click()
+    const dirRow = page.locator('.file-item.dir-item, .grid-item.grid-dir').first()
+    await expect(dirRow).toBeVisible({ timeout: 10000 })
+    const dirName = (await dirRow.locator('.file-name, .grid-name').first().textContent())?.trim() || ''
+    expect(dirName).not.toBe('')
+
+    await dirRow.locator('.file-name, .grid-name').first().click({ button: 'right' })
+    const pasteRow = page.locator('.context-menu .context-menu-item[data-menu-item="paste"]')
+    await expect(pasteRow).toBeVisible()
+    await expect(pasteRow).not.toHaveClass(/disabled/)
+    await expect(pasteRow).toContainText(dirName)
+  })
 })

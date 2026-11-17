@@ -6,26 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"clawbench/internal/ai/backends"
-	_ "clawbench/internal/ai/backends/antigravity"
-	_ "clawbench/internal/ai/backends/claude"
-	_ "clawbench/internal/ai/backends/codebuddy"
-	_ "clawbench/internal/ai/backends/codex"
-	_ "clawbench/internal/ai/backends/commandcode"
-	_ "clawbench/internal/ai/backends/copilot"
-	_ "clawbench/internal/ai/backends/cursor"
-	_ "clawbench/internal/ai/backends/deepseek"
-	_ "clawbench/internal/ai/backends/dsh"
-	_ "clawbench/internal/ai/backends/grok"
-	_ "clawbench/internal/ai/backends/hermes"
-	_ "clawbench/internal/ai/backends/kimi"
-	_ "clawbench/internal/ai/backends/mimo"
-	_ "clawbench/internal/ai/backends/openclaw"
-	_ "clawbench/internal/ai/backends/opencode"
-	_ "clawbench/internal/ai/backends/pi"
-	_ "clawbench/internal/ai/backends/qoder"
-	_ "clawbench/internal/ai/backends/qodercn"
-	_ "clawbench/internal/ai/backends/vecli"
-	_ "clawbench/internal/ai/backends/zcode"
+	_ "clawbench/internal/ai/backends/all"
 )
 
 // skillAwareBackends is the EXPECTED mapping of backend → does it load its own
@@ -72,12 +53,29 @@ var skillAwareBackends = map[string]bool{
 	"grok":        false,
 	"zcode":       false,
 	"vecli":       false,
+	// builtin has no skill directory of its own: its tools are ClawBench's,
+	// not a CLI's, and it never reads SKILL.md on its own. It therefore takes
+	// the shared table through ClawBench's normal injection (or gets nothing
+	// when skills are disabled globally) — which is why this is false and not
+	// a "no directory" case with special handling.
+	"builtin": false,
 }
+
+// pluginsForSkillCheck snapshots the registry at package init.
+//
+// It cannot read backends.All() inside the test: registry_test.go clears the
+// registry for its own cases, and Go runs tests in one process in file order,
+// so a shuffled run would otherwise compare this table against an empty (or
+// test-only) registry — vacuous in one order, failing in another.
+var pluginsForSkillCheck = backends.All()
 
 // TestBackendSkillAwarenessMatchesReviewedTable fails if a backend's actual
 // skill behavior differs from the reviewed table, in either direction.
 func TestBackendSkillAwarenessMatchesReviewedTable(t *testing.T) {
-	for _, p := range backends.All() {
+	if len(pluginsForSkillCheck) == 0 {
+		t.Fatal("no backends registered at init; the review check would be vacuous")
+	}
+	for _, p := range pluginsForSkillCheck {
 		// Test-only plugins register with an empty Backend stub.
 		if p.Spec.Backend == "" {
 			continue
@@ -97,7 +95,7 @@ func TestBackendSkillAwarenessMatchesReviewedTable(t *testing.T) {
 // ClawBench cannot dedup against it (the skill would be injected twice under a
 // different source).
 func TestSkillAwareBackendsDeclareTheirDirectory(t *testing.T) {
-	for _, p := range backends.All() {
+	for _, p := range pluginsForSkillCheck {
 		if p.Spec.Backend == "" {
 			continue
 		}
@@ -112,7 +110,7 @@ func TestSkillAwareBackendsDeclareTheirDirectory(t *testing.T) {
 // relative to the user's home (it is joined with os.UserHomeDir), so an
 // absolute path would be silently mis-resolved.
 func TestNativeSkillsDirsAreHomeRelative(t *testing.T) {
-	for _, p := range backends.All() {
+	for _, p := range pluginsForSkillCheck {
 		for _, dir := range p.Spec.NativeSkillsDirs {
 			assert.NotContains(t, dir, "\\", "backend %q: use forward slashes", p.ID)
 			assert.NotEqual(t, byte('/'), dir[0],
@@ -131,7 +129,7 @@ func TestSharedSkillsDirDeclaredWhereReadable(t *testing.T) {
 		"mimo": true, "qoder": true, "qodercn": true, "dsh": true, "deepseek": true,
 		"cursor": true, "commandcode": true, "openclaw": true,
 	}
-	for _, p := range backends.All() {
+	for _, p := range pluginsForSkillCheck {
 		if !readsShared[p.ID] {
 			continue
 		}

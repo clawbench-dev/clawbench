@@ -137,12 +137,14 @@ describe('git history header matches the forge panel header', () => {
   })
 
   it('gives the page root the surface the transparent bar sits on', () => {
-    // Without an explicit bg-primary the tab-panel's bg-secondary shows through,
-    // so the bar is not transparent in effect AND the row hover disappears.
+    // Without an explicit page surface the tab-panel's own background shows
+    // through, so the bar is not transparent in effect AND the row hover
+    // disappears. The root now reads the shared left-panel page token, so
+    // switching tabs never changes the page colour.
     const content = readWebFile('src/components/git/GitHistoryContent.vue')
     const rule = content.match(/\.git-history-content\s*\{([^}]*)\}/)
     expect(rule, '.git-history-content rule must exist').not.toBeNull()
-    expect(rule![1]).toMatch(/background:\s*var\(--bg-primary/)
+    expect(rule![1]).toMatch(/background:\s*var\(--panel-page-bg\)/)
   })
 
   it('uses the square-round 28px icon button, like .forge-header-btn', () => {

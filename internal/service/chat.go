@@ -2891,6 +2891,84 @@ func PatchContextStateMerge(sessionID string, patches map[string]string) {
 // fork injected into its target session. See SetForkContext.
 const forkContextKey = "fork_context"
 
+// builtinSummaryKey is where the built-in backend's compaction state lives in
+// chat_sessions.context_state.
+//
+// It is stored per session rather than recomputed every turn: re-summarizing
+// the same history on each turn would cost a model call per turn and would
+// summarize an already-summarized conversation, degrading the facts each time.
+const builtinSummaryKey = "builtin_summary"
+
+// builtinSummary is the persisted compaction state for a session.
+//
+// The summary text alone is not enough: it says WHAT was folded away but not
+// WHERE it stopped. Without the boundary the next turn cannot tell which stored
+// messages the summary already stands for, so it would either replay them (undo
+// the compaction) or drop messages that came after it (lose real content).
+type builtinSummary struct {
+	// Text is the summary itself.
+	Text string `json:"text"`
+	// UpToMessageID is the highest chat_history id the summary covers.
+	// Messages with a lower id are represented by the summary and must not be
+	// replayed.
+	UpToMessageID int64 `json:"upToMessageId"`
+	// CoversThroughTurn is UpToMessageID as a POSITION in the replayed turn
+	// list (1-based: how many prior turns the summary stands for), or 0 when the
+	// boundary is only known as an id.
+	//
+	// Two boundaries exist because two things can shift the ids out from under a
+	// stored summary: deleting a message, and rewinding to an earlier point.
+	// Both remove rows, and a summary that covered them must keep covering the
+	// turns it was actually built from — reading the boundary back as "skip
+	// every id" then silently skipped the turns the engine deliberately kept
+	// verbatim. The position survives both edits; the id is kept as the fallback
+	// for summaries written before this field existed.
+	CoversThroughTurn int `json:"coversThroughTurn,omitempty"`
+}
+
+// SetBuiltinSummary stores a compaction summary plus the boundary it covers.
+//
+// Best-effort like the fork context: losing it degrades to "the next turn
+// compacts again", which costs a model call but never a wrong answer.
+func SetBuiltinSummary(sessionID string, s builtinSummary) {
+	if sessionID == "" || strings.TrimSpace(s.Text) == "" {
+		return
+	}
+	payload, err := json.Marshal(s)
+	if err != nil {
+		slog.Warn("setBuiltinSummary: marshal failed", "err", err, "sid", sessionID)
+		return
+	}
+	PatchContextStateMerge(sessionID, map[string]string{builtinSummaryKey: string(payload)})
+}
+
+// GetBuiltinSummary returns the stored compaction state for a session.
+//
+// An unreadable value reads as "never compacted": the next turn then replays the
+// full history and compacts again, which is slower but never wrong.
+func GetBuiltinSummary(sessionID string) builtinSummary {
+	if sessionID == "" || !store.ReadDBReady() {
+		return builtinSummary{}
+	}
+	var raw string
+	if err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(json_extract(context_state, '$."+builtinSummaryKey+"'), '') FROM chat_sessions WHERE id = ?",
+		sessionID,
+	).Scan(&raw); err != nil {
+		return builtinSummary{}
+	}
+	if raw == "" {
+		return builtinSummary{}
+	}
+	// json_extract returns the JSON encoding of the stored value; decode it so
+	// the caller gets the object rather than a quoted literal.
+	var s builtinSummary
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		return builtinSummary{}
+	}
+	return s
+}
+
 // SetForkContext stores the rendered background a fork injects into a session.
 //
 // It lives in chat_sessions.context_state rather than a dedicated column for the
@@ -3228,6 +3306,23 @@ func GetAssistantMessageCount(sessionID string) int {
 	var count int
 	store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0", sessionID).Scan(&count)
 	return count
+}
+
+// LastChatMessageID returns the id of the newest persisted row in a session, or
+// 0 when the session has no rows yet.
+//
+// It exists for the turns that AUTO-START (auto-continue after an abnormal
+// finish, a single-chat cruise confirmation) — they also persist their user
+// message before building the request, but never see its id because the
+// persistence happens inside the turn runner. The newest row IS that message,
+// so passing this as WithCurrentMessageID gives the built-in backend the same
+// "stop replaying just before this row" bound a direct send gets. Without it
+// the replayed history included the message being answered and the model saw
+// the same question twice.
+func LastChatMessageID(sessionID string) int64 {
+	var id int64
+	store.ReadDB().QueryRow("SELECT COALESCE(MAX(id), 0) FROM chat_history WHERE session_id = ?", sessionID).Scan(&id)
+	return id
 }
 
 // UpdateStreamingMessageByID updates the content of a SPECIFIC streaming

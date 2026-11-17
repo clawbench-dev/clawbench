@@ -1,6 +1,6 @@
 # 语音合成（TTS）
 
-语音合成让用户不用盯着屏幕也能"听"AI 的回复——在移动场景下尤其有用，比如走路时听代码审查结果。系统支持 Edge TTS 与 OpenAI 兼容 TTS 两种引擎，通过统一的 `SpeechProvider` 接口切换，TTS 前由 summarizer 将长文本压缩为适合朗读的短文本。
+语音合成让用户不用盯着屏幕也能"听"AI 的回复——在移动场景下尤其有用，比如走路时听代码审查结果。系统支持 Edge TTS、OpenAI 兼容 TTS、阿里云百炼、腾讯云、火山引擎与 MiniMax 六种服务端引擎（通过统一的 `SpeechProvider` 接口切换），手机 App 还可改用设备自带的语音引擎；TTS 前由 summarizer 将长文本压缩为适合朗读的短文本。
 
 ## 流程图
 
@@ -35,6 +35,7 @@ sequenceDiagram
 ### 功能清单
 
 - **六种引擎**：支持 Edge TTS（微软语音）、OpenAI 兼容 TTS（`/v1/audio/speech`）、阿里云百炼（DashScope）、腾讯云语音合成、火山引擎（豆包）与 MiniMax，用户按需选择引擎。Edge 开箱即用，其余可接入对应厂商的账号
+- **手机系统朗读是客户端的第七种"引擎"**：手机 App 可以直接用设备自带的 TTS 念，音频不出设备。它**不写服务端的 `tts.engine`**，只在本机存一个开关（`systemSpeech`），所以同一服务器的其他设备仍用服务端引擎——引擎下拉里刻意把它和六个服务端引擎放在同一列表（对用户来说只是"换了个声音"），但语义是每设备的。三条取舍：①**选中前先探测**本机有没有引擎、有没有中文语音，缺了当场说明，否则会变成"选了却永远没声音"；②**失败不回退服务端合成**——两种声音混着出，听众分不清刚才那句是谁念的，失败时带上引擎回报的原因并结束这一条；③手机引擎单段上限约 120 字（接长文本时部分机型要等 30 秒才报错），长回复按句切段排队播
 - **总结后端三选一**：长文本先经 summarizer 压缩再合成语音。后端可选 `simple`（纯文本清洗，零延迟零成本）、`api`（LLM 二次压缩，复用 `ai_summary` 配置）或 `auto`（**按内容自动分流**：剥离出的"杂质"占比 ≥ `summarize.auto_junk_ratio`（默认 0.5），或清洗后文本超过 simple 的截断上限时走 LLM，否则直接朗读清洗文本）。短文本（< 300 字符）跳过摘要直接合成。`auto` 在未配置 `ai_summary` 时降级为 `simple`，不像 `api` 那样硬失败
 - **压缩失败就读全文，不从半截开始**：摘要模型出错（典型是推理模型把输出额度花在思考上、正文返回空）时，朗读文本退化为**清洗后的完整回复**，一个字不丢——此前兜底是「只留最后 1000 字」，听众听到的是从半句话开始的残段，而且听不出这是残段。这条兜底**不写摘要缓存**：它是原始文本而非浓缩，缓存下来会把一次临时失败永久钉在那条消息上，以后再也不重试压缩
 - **长回复按段合成、边合成边播**：Edge TTS 按句切成约 500 字一段，一段一个请求、各自独立超时，首段先出声、单段失败立即中止；整体合成预算按「能把长回复读完」给（10 分钟），不再按短句的量级掐断
@@ -47,7 +48,7 @@ sequenceDiagram
 
 ### 设计要点
 
-- **两个引擎都是纯 HTTP 客户端**：Edge TTS 走 WebSocket 流式合成，OpenAI 兼容引擎走 `/v1/audio/speech`，两者都不依赖本地可执行文件
+- **服务端引擎都是纯网络客户端**：Edge TTS 走 WebSocket 流式合成，其余走各自的 HTTP 接口（OpenAI 兼容 `/v1/audio/speech`、阿里云、腾讯云、火山、MiniMax），都不依赖本地可执行文件
 - **国内三家的实现约束**（阿里云 / 腾讯云 / 火山引擎）：
   - **必须输出 MP3**。整条链路只认 MP3——缓存文件名是 `.mp3`、浏览器按 `audio/mpeg` 播放、设备侧用 go-mp3 解码。因此阿里云走的是 `/api/v1/services/audio/tts/SpeechSynthesizer`（`input.format` 可指定 mp3），**不支持只出 WAV 的 `qwen3-tts-flash`**；**`sambert-*` 是例外，它只认 WebSocket**（HTTP 会回 `current user api does not support http call`），按模型名前缀分派到 `wss://.../api-ws/v1/inference`：run-task 里必须直接带 `input.text`（用 continue-task 送文本会被回 `Request text is invalid!` 且不出音频），收到 `task-started` 后发 finish-task，二进制帧即音频，`task-finished` 收尾；三家 provider 共用 `audioSink`，在写入前嗅探前 16 字节，服务端换了格式会立刻报「不是 mp3」而不是缓存一个放不出来的文件
   - **单请求长度都有限**，长回复按句切段后写进同一个文件（与 Edge 同一套 `splitSpeechSegments`）：阿里云 500 rune、火山 500 rune、腾讯 120 rune（接口上限 150 汉字）
@@ -56,7 +57,7 @@ sequenceDiagram
   - **MiniMax 的音频是十六进制字符串不是 base64**（`output_format: "hex"`），且错误放在 200 响应的 `base_resp.status_code` 里；GroupId 只有老账号需要，故作为可选查询参数
   - **失败必须点名**：三家都把厂商的原始 code/message 带进错误里（腾讯云是 200 响应里的 `Response.Error`，火山是行内 `code`，阿里云是 200 响应里的 `code`/`status_code`），否则「音色填错」会表现成一句无信息量的失败
 - **OpenAI 兼容引擎双形态流式**：`/v1/audio/speech` 的 `stream_format` 有两种取值。`sse` 每块音频是一个 `speech.audio.delta` 事件（base64），由 `speech.audio.done` 收尾，**只有新模型（`gpt-4o-mini-tts` 系）支持**；`audio` 是原始音频字节流（HTTP chunked），所有模型都支持。因此 provider **先请求 `sse`，收到 400 才回退 `audio`**——这样新模型拿到逐块事件、老模型（`tts-1` / `tts-1-hd`）仍然能流式播放而不会硬失败。判断实际返回的是哪种形态**看 `Content-Type` 而不是请求参数**：兼容服务器可能直接忽略 `stream_format` 并回原始音频，按请求参数判断会解析错。两条路径共用同一个 chunk 通道，因此前端 MSE 播放路径无需改动。**`tts.openai.stream_mode` 可手动覆盖**（`auto` 默认按模型名判断 / `sse` 强制逐块 / `audio` 强制整体）——当兼容服务的模型名无法判断是否支持 SSE 时给用户一条出路；该字段也折进 `CacheIdentity`（改变请求形状即改变音频来源）
-- **音色按引擎分开存，语速共用**：`tts.voice` 是 Edge 的音色，OpenAI 兼容引擎用自己的 `tts.openai.voice`，两者互不覆盖。这条以前是反的——共用一个 `tts.voice` 还不够糟，设置页在**切换引擎时还会主动把音色重置成新引擎的第一个**，于是「试一下另一个引擎」就等于把原来选的音色清掉，切回来也找不回。语速相反，它是「我想听多快」这一个偏好，两个引擎都按它执行，共有一份
+- **音色按引擎分开存，语速共用**：`tts.voice` 是 Edge 的音色，OpenAI 兼容引擎用自己的 `tts.openai.voice`，两者互不覆盖。这条以前是反的——共用一个 `tts.voice` 还不够糟，设置页在**切换引擎时还会主动把音色重置成新引擎的第一个**，于是「试一下另一个引擎」就等于把原来选的音色清掉，切回来也找不回。语速相反，它是「我想听多快」这一个偏好，所有引擎都按它执行，共有一份
 - **模型名与音色由用户填写，不设默认**：兼容服务器接受哪些模型/音色不受 OpenAI 文档列表约束（自定义音色以 `{"id":"voice_xxx"}` 引用），猜一个默认值只会在请求时得到一条难懂的上游错误。空值时 provider 在 `validate()` 阶段就报错并指名缺失的配置路径
 - **摘要与 TTS 共享 summarizer 接口**：TTS 摘要和任务摘要使用同一个 `Summarizer` 接口，但配置不同——TTS 摘要剥离 Markdown（朗读不需要格式），任务摘要保留 Markdown（记录需要格式）
 - **`auto` 是"内容感知"而非"配置感知"**：`simple` 与 `api` 的取舍是固定的（要么总是清洗、要么总是调 LLM），用户得为整份会话选一种。`auto` 把决策下移到单条消息——大多数回复是干净散文，清洗即可朗读，不该为它付 LLM 延迟与费用；只有代码/表格/公式占比高、清洗后成了断句碎片时，才值得让 LLM 重新组织。它用 `StripMarkdownStats` 的删除比例作为判据，复用清理阶段已有的产物，不额外解析文本

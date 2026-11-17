@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -315,6 +316,16 @@ func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 	// next refresh would treat ACP-only models as CLI-discovered.
 	for i, a := range agents {
 		if !a.SupportsACP() {
+			// The built-in agent has no ACP handshake, but its mode and thinking
+			// options are fixed by this build. Publishing them here is what lets
+			// the settings page offer a default mode/level without a live
+			// session — the same shape an ACP agent's snapshot has.
+			if a.BuiltinBackend {
+				states[a.ID] = &acpState{
+					Mode:   reg.GetModeState(a.ID, ""),
+					Effort: reg.GetThinkingEffortStateForModel(a.ID, a.DefaultModelID(), ""),
+				}
+			}
 			// CLI agents inherit the curated list too: the endpoint is custom,
 			// so the CLI's own discovery is not authoritative for it.
 			if pm := providerModelsForAgent(a); pm != nil {
@@ -449,6 +460,21 @@ func applyModelPrices(agents []*model.Agent, states map[string]*acpState) {
 	}
 }
 
+// backendInstallCmd returns the backend's built-in install command, prepared
+// for display (China mirror appended), or "" when it has none.
+//
+// One implementation for both surfaces that show it: GET /api/backends (the
+// welcome panel's per-backend row) and GET /api/agents (an agent's settings
+// page). Two copies would let the welcome panel show a mirror-rewritten command
+// while the settings page offered the bare one.
+func backendInstallCmd(backend string) string {
+	spec := model.FindSpecByBackend(backend)
+	if spec == nil {
+		return ""
+	}
+	return prepareInstallCmd(spec.InstallCmd)
+}
+
 func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 	configMutex.RLock()
 	agents := model.GetAgentList()
@@ -483,6 +509,12 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		SessionCount    int `json:"sessionCount"`
 		TaskCount       int `json:"taskCount"`
 		MembershipCount int `json:"membershipCount"`
+		// InstallCmd is the backend's built-in installer, same value GET
+		// /api/backends reports. Carried here so an agent's settings page can
+		// offer one-click install without a second request — and so the two
+		// surfaces cannot disagree about which command it is. Empty when the
+		// backend has no built-in installer.
+		InstallCmd string `json:"installCmd,omitempty"`
 	}
 	usageByAgent, usageErr := service.GetAllAgentUsage()
 	if usageErr != nil {
@@ -498,6 +530,7 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 			SessionCount:    u.Sessions,
 			TaskCount:       u.Tasks,
 			MembershipCount: u.Memberships,
+			InstallCmd:      backendInstallCmd(a.Backend),
 		}
 	}
 
@@ -1236,6 +1269,20 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		ap.Disabled = &disabled
 	}
 
+	// Project context injection (AGENTS.md / CLAUDE.md). Built-in backend only:
+	// an external backend reads those files itself, and its own flag silences
+	// them, so the switch has no meaning there. Accepted for any backend anyway
+	// (same reasoning as tool_policy above) so configuring before switching
+	// backend does not lose the choice.
+	if v, exists := patch["skip_project_context"]; exists {
+		skip, ok := v.(bool)
+		if !ok {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		ap.SkipProjectContext = &skip
+	}
+
 	// MCP enablement policy. The payload is the policy object itself:
 	//   {"mode":"all"|"none"|"selected","names":["a","b"]}
 	// Only the policy is stored; the server definitions live in config.yaml.
@@ -1268,6 +1315,33 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 		normalized := policy.Normalized()
 		ap.MCPServers = &normalized
+	}
+
+	// Tool grant (built-in backend only). Decoded from the same raw JSON the
+	// agent's own column uses, so the client sends one shape and the server
+	// stores it verbatim (after normalization).
+	//
+	// Accepted for ANY backend rather than only builtin: a user may configure
+	// the grant before switching the agent's backend, and rejecting it would
+	// lose that work. It has no effect on an external CLI, which is what the
+	// settings page communicates by hiding the editor.
+	if v, exists := patch["tool_policy"]; exists {
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		var policy model.ToolPolicy
+		if err := json.Unmarshal(encoded, &policy); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		if err := model.ValidateToolPolicy(policy); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		normalized := policy.Normalized()
+		ap.ToolPolicy = &normalized
 	}
 
 	// Validate and apply project_scope (仅当前项目). true binds the agent to the
@@ -1336,12 +1410,43 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			// hand), so the binding is the last place to catch a combination
 			// the CLI cannot express — otherwise the agent saves and then fails
 			// every turn with nothing pointing at the auth mode.
-			if aerr := model.ProviderAuthModeError(agent.Backend, provider.Protocol, provider.AuthMode); aerr != nil {
-				writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid",
-					map[string]any{"Reason": aerr.Error(), "field": "authMode"})
-				return
+			//
+			// Credential-only providers (no endpoint, the backend's own official
+			// service) never reach the wire with a protocol, so the mode is moot.
+			if !model.ProviderOwnServiceMode(agent.Backend, provider) {
+				if aerr := model.ProviderAuthModeError(agent.Backend, provider.Protocol, provider.AuthMode); aerr != nil {
+					writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid",
+						map[string]any{"Reason": aerr.Error(), "field": "authMode"})
+					return
+				}
 			}
-			if model.ProviderUsesConfigFile(agent.Backend) {
+			if model.ProviderUsesConfigDir(agent.Backend) && !model.ProviderOwnServiceMode(agent.Backend, provider) {
+				// The file has to declare the models, or the CLI cannot resolve
+				// any id and every turn fails at spawn. Refuse it here, where the
+				// message can point at the model list, instead of letting the
+				// writer fail with a bare 500.
+				if merr := model.ProviderConfigDirModelsError(agent.Backend, provider); merr != nil {
+					writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProviderInvalid",
+						map[string]any{"Reason": merr.Error(), "field": "models"})
+					return
+				}
+				// Per-agent directory: no cross-agent conflict is possible, but
+				// the write still touches disk, so it needs consent when the
+				// backend cannot keep the secret in the environment.
+				if model.ProviderConfigSecretInFile(agent.Backend) {
+					if confirmed, _ := patch["confirm_config_write"].(bool); !confirmed {
+						writeLocalizedErrorf(w, r, http.StatusConflict, "ProviderConfigConsentRequired",
+							map[string]any{"Files": service.ProviderConfigDir(agentID)})
+						return
+					}
+				}
+				if werr := service.ApplyProviderConfigDirToAgent(agent.Backend, agentID, provider); werr != nil {
+					slog.Error("apply provider config dir failed",
+						"agent_id", agentID, "backend", agent.Backend, "error", werr)
+					writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+					return
+				}
+			} else if model.ProviderUsesConfigFile(agent.Backend) {
 				conflicts, cerr := service.ProviderBindingConflict(agent.Backend, agentID, providerID)
 				if cerr != nil {
 					writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
@@ -1441,6 +1546,12 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			policy.Names = append([]string(nil), policy.Names...)
 			agent.MCPServers = policy
 		}
+		if ap.ToolPolicy != nil {
+			// Same slice-copy reasoning as the MCP policy above.
+			policy := *ap.ToolPolicy
+			policy.Allow = append([]string(nil), policy.Allow...)
+			agent.ToolPolicy = policy
+		}
 		if ap.ClearProjectID {
 			agent.ProjectID = nil
 		} else if ap.ProjectID != nil {
@@ -1481,9 +1592,11 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	// A cleared binding must also undo the config-file edit — but only when no
 	// other agent of the same backend still needs it. Reconcile covers both
 	// directions (restore when unbound, re-apply when bound).
-	if _, touched := patch["provider_id"]; touched && model.ProviderUsesConfigFile(agent.Backend) {
-		if rerr := service.ReconcileProviderConfigs(); rerr != nil {
-			slog.Warn("reconcile provider configs failed", "agent_id", agentID, "error", rerr)
+	if _, touched := patch["provider_id"]; touched {
+		if model.ProviderNeedsConfigWrite(agent.Backend) {
+			if rerr := service.ReconcileProviderConfigs(); rerr != nil {
+				slog.Warn("reconcile provider configs failed", "agent_id", agentID, "error", rerr)
+			}
 		}
 	}
 

@@ -1,0 +1,189 @@
+/**
+ * Pure decisions for the embedded ("all-in-one") desktop build.
+ *
+ * In this build the desktop app starts a ClawBench server of its own from inside
+ * its install directory, logs in with the password that server generated, and
+ * quits the server when the app quits. Everything that is a DECISION lives here
+ * so it can be tested without Electron, a spawned process or a network — the
+ * same split as `splashPolicy.ts` / `loadFailure.ts`. The Electron-facing half is
+ * `localServer.ts`.
+ */
+
+/** Where the server lives inside the app's resources directory. */
+export const EMBEDDED_SERVER_DIR = 'server'
+
+/** Windows executable name inside {@link EMBEDDED_SERVER_DIR}. */
+export const EMBEDDED_SERVER_EXE = 'clawbench.exe'
+
+/**
+ * Default port. Matches the standalone server's default so an embedded install
+ * and a hand-run one are the same address when only one of them is up.
+ */
+export const EMBEDDED_DEFAULT_PORT = 20000
+
+/**
+ * How long the server may take to answer /api/health before the app gives up.
+ *
+ * First launch is the slow case: the server creates its SQLite schema, extracts
+ * the user guide and probes installed agents before it starts listening. 60s is
+ * generous on purpose — giving up early on a slow disk would turn a slow start
+ * into a broken install.
+ */
+export const EMBEDDED_STARTUP_TIMEOUT_MS = 60_000
+
+/** How often to probe /api/health while waiting. */
+export const EMBEDDED_HEALTH_INTERVAL_MS = 250
+
+/**
+ * How long to wait for a graceful exit after closing the server's stdin before
+ * killing it. The server's own worst-case drain is ~8s (finalize + ACP grace),
+ * plus HTTP drain; killing earlier would leave a half-written last reply.
+ */
+export const EMBEDDED_EXIT_GRACE_MS = 15_000
+
+/**
+ * Ports an embedded server must never be started on.
+ *
+ * - Every saved REMOTE server: an embedded server bound to the same port would
+ *   collide with the remote one whenever that machine is also local — and worse,
+ *   the app's saved URL for it would then silently resolve to the embedded
+ *   server (a different data set behind the same address).
+ * - The hub's SFTP/frp SSH port pair is out of scope: those are server-side and
+ *   the embedded server owns its own.
+ */
+export function reservedPortsForEmbedded(savedServerUrls: readonly string[]): number[] {
+  const out = new Set<number>()
+  for (const raw of savedServerUrls) {
+    try {
+      const u = new URL(raw)
+      const port = u.port ? Number(u.port) : u.protocol === 'https:' ? 443 : u.protocol === 'http:' ? 80 : NaN
+      if (Number.isInteger(port) && port > 0 && port <= 65535) out.add(port)
+    } catch {
+      // A malformed saved URL is reported by the login page; it cannot reserve
+      // anything here.
+    }
+  }
+  return [...out]
+}
+
+export interface ChooseEmbeddedPortInput {
+  /** Port this data directory used last time, 0 when unknown. */
+  preferred: number
+  /** Ports already in use on this machine. */
+  inUse: readonly number[]
+  /** Ports that belong to saved remote servers (see reservedPortsForEmbedded). */
+  reserved: readonly number[]
+  /** Overrides the starting point; defaults to EMBEDDED_DEFAULT_PORT. */
+  startAt?: number
+}
+
+/**
+ * Pick the port for the embedded server.
+ *
+ * The preferred port comes first: the app's own browser storage (theme,
+ * wallpaper, panel layout, the current project) is keyed by origin, so opening
+ * on a different port looks like a fresh install. Only when it is taken or
+ * reserved does the walk start, from the default upwards.
+ *
+ * A reserved port is skipped even when it is free: saving the embedded URL into
+ * the server list under a port a remote server also uses would make the two
+ * indistinguishable on the next launch.
+ */
+export function chooseEmbeddedPort(input: ChooseEmbeddedPortInput): number {
+  const blocked = new Set([...input.inUse, ...input.reserved])
+  if (isUsablePort(input.preferred, blocked) && !isPrivilegedPool(input.preferred)) return input.preferred
+  const start = input.startAt ?? EMBEDDED_DEFAULT_PORT
+  for (let p = start; p <= 65535; p++) {
+    if (isUsablePort(p, blocked)) return p
+  }
+  // Nothing free above the default: scan below rather than fail outright. Ports
+  // under 1024 are avoided (they need privilege on Unix, and the first block is
+  // full of other services anyway).
+  for (let p = 1024; p < start; p++) {
+    if (isUsablePort(p, blocked)) return p
+  }
+  return 0
+}
+
+function isUsablePort(p: number, blocked: ReadonlySet<number>): boolean {
+  return Number.isInteger(p) && p > 0 && p <= 65535 && !blocked.has(p)
+}
+
+// Ports under 1024 need privilege on Unix, so the fallback scan below never
+// starts there. A PREFERRED port below 1024 is skipped too: it was recorded by
+// an older build and re-using it would fail at bind time on macOS/Linux.
+function isPrivilegedPool(p: number): boolean {
+  return p < 1024
+}
+
+/** Build the URL the app loads and stores for the embedded server. */
+export function embeddedServerUrl(port: number): string {
+  return `http://127.0.0.1:${port}`
+}
+
+export interface EmbeddedArgsInput {
+  port: number
+  dataDir: string
+  /**
+   * Bind address. Defaults to `0.0.0.0`, i.e. reachable from other devices on
+   * the LAN; the server keeps its generated password, so they still log in.
+   */
+  host?: string
+}
+
+/**
+ * Command-line arguments for the embedded server.
+ *
+ * `--exit-on-stdin-close` is what makes "app quits, server quits" work on
+ * Windows, where a child cannot be signalled gracefully; `--managed` stops the
+ * server from replacing its own binary or restarting itself behind the app's
+ * back.
+ */
+export function embeddedServerArgs(input: EmbeddedArgsInput): string[] {
+  return [
+    '--port', String(input.port),
+    '--data-dir', input.dataDir,
+    '--host', input.host || '0.0.0.0',
+    '--exit-on-stdin-close',
+    '--managed',
+  ]
+}
+
+/** True for urls that point at this machine (the embedded server). */
+export function isLocalServerUrl(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return (
+      (u.protocol === 'http:' || u.protocol === 'https:') &&
+      (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]' || u.hostname === '::1')
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Health response fields the app depends on. */
+export interface HealthBody {
+  app?: string
+  version?: string
+}
+
+/**
+ * Whether a /api/health body is really a ClawBench server. A 200 alone is not
+ * enough: the preferred port may be held by an unrelated service, and loading
+ * its page would show a stranger's UI instead of ours.
+ */
+export function isClawBenchHealth(body: unknown): body is HealthBody & { app: 'clawbench' } {
+  return !!body && typeof body === 'object' && (body as HealthBody).app === 'clawbench'
+}
+
+/**
+ * The session cookie name for a server on `port`.
+ *
+ * Mirrors the server's `ScopedCookieName`: cookies are prefixed with the port
+ * unless it is the default one. The app needs the exact name to plant the login
+ * cookie itself instead of driving the login form.
+ */
+export function sessionCookieName(port: number): string {
+  return port === EMBEDDED_DEFAULT_PORT ? 'clawbench_session' : `cb${port}_clawbench_session`
+}

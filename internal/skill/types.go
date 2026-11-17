@@ -13,8 +13,10 @@
 package skill
 
 import (
-	"strings"
 	"sync"
+	"time"
+
+	"clawbench/internal/model"
 )
 
 // SourceKind classifies where a skill entry came from.
@@ -27,14 +29,17 @@ type SourceKind int
 const (
 	// SourceOwnNative is the skill directory owned by the agent being served.
 	SourceOwnNative SourceKind = 0
-	// SourceProject is the project-scoped skill directory
-	// (<projectPath>/.agents/skills) of the session's working directory. It
-	// outranks every global source: a skill committed with the project is the
-	// most specific answer to "what does this project use".
-	SourceProject SourceKind = 1
 	// SourceUserDir is a directory the user configured explicitly
 	// (config skills.dir).
-	SourceUserDir SourceKind = 2
+	//
+	// It outranks SourceProject deliberately: a project directory comes from the
+	// working tree and may be a freshly cloned repository the user never read,
+	// so a same-named skill committed there must not shadow the one the user
+	// wrote and configured themselves.
+	SourceUserDir SourceKind = 1
+	// SourceProject is the project-scoped skill directory
+	// (<projectPath>/.agents/skills) of the session's working directory.
+	SourceProject SourceKind = 2
 	// SourceGit is a skill repository cloned from a remote git URL
 	// (config skills.repos).
 	SourceGit SourceKind = 3
@@ -114,12 +119,41 @@ type Skill struct {
 	Source       Source
 }
 
-// canonicalName normalizes a skill name for cross-source identity comparison:
-// lowercased with a single leading "/" stripped. Producers disagree on the
-// slash prefix (CodeBuddy's ACP strips it, a frontmatter name may carry it),
-// and comparing raw names would let one skill win twice.
+// Skip reasons. They are stable identifiers emitted by the API; the UI maps
+// them to localized text, so the wire format does not depend on the server's
+// language.
+const (
+	// SkipInvalidFrontmatter: the file does not start with a YAML frontmatter
+	// block, or the block does not parse.
+	SkipInvalidFrontmatter = "invalid_frontmatter"
+	// SkipMissingName: the frontmatter parses but carries no string `name`.
+	SkipMissingName = "missing_name"
+	// SkipMissingDescription: the frontmatter parses but carries no string
+	// `description`.
+	SkipMissingDescription = "missing_description"
+	// SkipUnreadable: SKILL.md exists but cannot be read.
+	SkipUnreadable = "unreadable"
+)
+
+// Skipped is a directory that looks like a skill — it contains SKILL.md — but
+// could not be loaded.
+//
+// It exists so the settings page can answer "I installed it, why is it not in
+// the list?": before this, a malformed SKILL.md was dropped with a debug log
+// nobody reads.
+type Skipped struct {
+	// Path is the SKILL.md path (not the directory), matching Skill.Path.
+	Path string
+	// Reason is one of the Skip* constants.
+	Reason string
+}
+
+// canonicalName normalizes a skill name for cross-source identity comparison.
+// It delegates to model.CanonicalSkillName so the settings handler (which
+// writes the disabled list) and the registry (which applies it) can never
+// disagree about what counts as the same name.
 func canonicalName(name string) string {
-	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(name), "/"))
+	return model.CanonicalSkillName(name)
 }
 
 // Registry holds the aggregated scan results and the per-agent injection cache.
@@ -127,10 +161,24 @@ type Registry struct {
 	mu sync.RWMutex
 	// bySource maps Source.Key() to the skills found in that source.
 	bySource map[string][]Skill
+	// skippedBySource maps Source.Key() to the directories that look like a
+	// skill (they contain SKILL.md) but could not be loaded. Reported by the
+	// listing API so a skill that silently failed to parse is explainable.
+	skippedBySource map[string][]Skipped
+	// sourceStamps fingerprints each source root as of the last scan, so
+	// EnsureFresh can tell whether a rescan is needed without walking.
+	sourceStamps map[string]dirStamp
+	// lastFreshCheck throttles EnsureFresh.
+	lastFreshCheck time.Time
 	// projectSources caches project-scoped scans keyed by project path. A
 	// project's directory does not change between global rescans, so a scan is
 	// reused until the next ScanAll. Cleared by ScanAll.
 	projectSources map[string][]Skill
+	// projectSkipped mirrors skippedBySource for the project directory.
+	projectSkipped map[string][]Skipped
+	// projectStamps records the stamp each cached project scan was taken at, so
+	// a project directory that changes mid-session is rescanned.
+	projectStamps map[string]dirStamp
 	// injectedProject caches injected results, keyed by
 	// agentID + "\x00" + projectPath (the NUL cannot occur in either). An empty
 	// project path is the global (project-less) view. Cleared by Invalidate and
@@ -146,11 +194,21 @@ var (
 // Global returns the process-wide registry singleton.
 func Global() *Registry {
 	globalRegistryOnce.Do(func() {
-		globalRegistry = &Registry{
-			bySource:        make(map[string][]Skill),
-			projectSources:  make(map[string][]Skill),
-			injectedProject: make(map[string][]Skill),
-		}
+		globalRegistry = newRegistry()
 	})
 	return globalRegistry
+}
+
+// newRegistry returns an empty registry with every map allocated, so a lookup
+// that happens before the first ScanAll cannot panic on a nil map write.
+func newRegistry() *Registry {
+	return &Registry{
+		bySource:        make(map[string][]Skill),
+		skippedBySource: make(map[string][]Skipped),
+		sourceStamps:    make(map[string]dirStamp),
+		projectSources:  make(map[string][]Skill),
+		projectSkipped:  make(map[string][]Skipped),
+		projectStamps:   make(map[string]dirStamp),
+		injectedProject: make(map[string][]Skill),
+	}
 }

@@ -12,297 +12,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// extractCodeBuddyMeta — OpenAI-style usage + usageByCategory + trace
-// ---------------------------------------------------------------------------
-
-func TestExtractCodeBuddyMeta_Usage(t *testing.T) {
-	meta := map[string]any{
-		"usage": map[string]any{
-			"prompt_tokens":               29495,
-			"completion_tokens":           3,
-			"completion_thinking_tokens":  0,
-			"prompt_cache_hit_tokens":     8192,
-			"prompt_cache_miss_tokens":    21303,
-			"prompt_cache_write_tokens":   0,
-			"cache_creation_input_tokens": 0,
-			"credit":                      1.48,
-		},
-	}
-	ext := extractCodeBuddyMeta(meta)
-	require.NotNil(t, ext)
-	require.NotNil(t, ext.Usage)
-	u := ext.Usage
-	assert.True(t, u.Present)
-	assert.Equal(t, 29495, u.InputTokens)
-	assert.Equal(t, 3, u.OutputTokens)
-	assert.Equal(t, 8192, u.CacheHitTokens)
-	assert.Equal(t, 8192, u.CachedReadTokens)
-	assert.Equal(t, 21303, u.CacheMissTokens)
-	assert.Equal(t, 1.48, u.Credit)
-}
-
-func TestExtractCodeBuddyMeta_UsageByCategory(t *testing.T) {
-	meta := map[string]any{
-		"codebuddy.ai/usageByCategory": map[string]any{
-			"conversation": 3894,
-			"tools":        22701,
-			"systemPrompt": 1769,
-			"skills":       1121,
-			"mcp":          10,
-			"version":      1,
-		},
-	}
-	ext := extractCodeBuddyMeta(meta)
-	require.NotNil(t, ext)
-	require.NotNil(t, ext.Category)
-	assert.True(t, ext.Category.Present)
-	assert.Equal(t, int64(3894), ext.Category.Categories["conversation"])
-	assert.Equal(t, int64(22701), ext.Category.Categories["tools"])
-	assert.Equal(t, int64(1769), ext.Category.Categories["systemPrompt"])
-	assert.Equal(t, int64(1121), ext.Category.Categories["skills"])
-	assert.Equal(t, int64(10), ext.Category.Categories["mcp"])
-}
-
-func TestExtractCodeBuddyMeta_Trace(t *testing.T) {
-	meta := map[string]any{
-		"codebuddy.ai/requestId":        "req-123",
-		"codebuddy.ai/traceId":          "trace-456",
-		"codebuddy.ai/messageId":        "msg-789",
-		"codebuddy.ai/messageRequestId": "msgreq-abc",
-		"codebuddy.ai/requestModelId":   "glm-5.1",
-		"codebuddy.ai/requestModelName": "GLM-5.1",
-		"codebuddy.ai/responseModelId":  "ep-b3mrev6r",
-		"codebuddy.ai/finishReason":     "stop",
-		"codebuddy.ai/outcome":          "SUCCESS",
-		"codebuddy.ai/agentPhase":       "completing",
-	}
-	ext := extractCodeBuddyMeta(meta)
-	require.NotNil(t, ext)
-	require.NotNil(t, ext.Trace)
-	tr := ext.Trace
-	assert.True(t, tr.HasData())
-	assert.Equal(t, "req-123", tr.RequestID)
-	assert.Equal(t, "trace-456", tr.TraceID)
-	assert.Equal(t, "msg-789", tr.MessageID)
-	assert.Equal(t, "msgreq-abc", tr.MessageRequestID)
-	assert.Equal(t, "glm-5.1", tr.RequestModelID)
-	assert.Equal(t, "GLM-5.1", tr.RequestModelName)
-	assert.Equal(t, "ep-b3mrev6r", tr.ResponseModelID)
-	assert.Equal(t, "stop", tr.FinishReason)
-	assert.Equal(t, "SUCCESS", tr.Outcome)
-	assert.Equal(t, "completing", tr.AgentPhase)
-}
-
-func TestExtractCodeBuddyMeta_TraceParentFallsBackToTraceID(t *testing.T) {
-	// When the dedicated traceId key is absent, the W3C traceparent header's
-	// second component carries the root trace id.
-	meta := map[string]any{
-		"codebuddy.ai/requestId":   "req-123",
-		"codebuddy.ai/messageId":   "msg-789",
-		"codebuddy.ai/traceparent": "00-fa10f96dcc82d9db346922057b96c706-97fb1ee7db62a4ab-01",
-	}
-	ext := extractCodeBuddyMeta(meta)
-	require.NotNil(t, ext)
-	require.NotNil(t, ext.Trace)
-	tr := ext.Trace
-	assert.Equal(t, "fa10f96dcc82d9db346922057b96c706", tr.TraceID)
-	assert.Equal(t, "00-fa10f96dcc82d9db346922057b96c706-97fb1ee7db62a4ab-01", tr.TraceParent)
-}
-
-func TestExtractCodeBuddyMeta_Empty(t *testing.T) {
-	assert.Nil(t, extractCodeBuddyMeta(nil))
-	assert.Nil(t, extractCodeBuddyMeta(map[string]any{}))
-	// Only unrecognized keys → nil (no data).
-	assert.Nil(t, extractCodeBuddyMeta(map[string]any{"timestamp": "2026-01-01"}))
-}
-
-// ---------------------------------------------------------------------------
-// extractClaudeMeta — quota.token_count (Claude / Codex shared shape)
-// ---------------------------------------------------------------------------
-
-func TestExtractClaudeMeta_Quota(t *testing.T) {
-	meta := map[string]any{
-		"quota": map[string]any{
-			"token_count": map[string]any{
-				"cachedInputTokens":     0,
-				"cachedWriteTokens":     41053,
-				"inputTokens":           142,
-				"outputTokens":          18,
-				"reasoningOutputTokens": 0,
-				"totalTokens":           41213,
-			},
-		},
-	}
-	ext := extractClaudeMeta(meta)
-	require.NotNil(t, ext)
-	require.NotNil(t, ext.Usage)
-	u := ext.Usage
-	assert.True(t, u.Present)
-	// inputTokens is the UNCACHED remainder in this bridge's shape
-	// (total = input+output+cacheRead+cacheWrite), so it is normalized to the
-	// full prompt: 142 + 0 + 41053.
-	assert.Equal(t, 41195, u.InputTokens)
-	assert.Equal(t, 18, u.OutputTokens)
-	assert.Equal(t, 41213, u.TotalTokens)
-	assert.Equal(t, 41053, u.CachedWriteTokens)
-	assert.Equal(t, 0, u.CachedReadTokens)
-	assert.Equal(t, 0, u.ThoughtTokens)
-	// Cache split derived from the same identity: no cache read → 0% hit rate
-	// with the whole prompt counted as a miss.
-	assert.Equal(t, 0, u.CacheHitTokens)
-	assert.Equal(t, 142, u.CacheMissTokens)
-	assert.Equal(t, 41213, u.InputTokens+u.OutputTokens, "row stays internally consistent")
-}
-
-func TestExtractClaudeMeta_ReasoningTokens(t *testing.T) {
-	// Codex reports reasoningOutputTokens.
-	meta := map[string]any{
-		"quota": map[string]any{
-			"token_count": map[string]any{
-				"inputTokens":           13085,
-				"outputTokens":          32,
-				"reasoningOutputTokens": 30,
-				"totalTokens":           13117,
-			},
-		},
-	}
-	ext := extractClaudeMeta(meta)
-	require.NotNil(t, ext)
-	require.NotNil(t, ext.Usage)
-	assert.Equal(t, 30, ext.Usage.ThoughtTokens)
-	assert.Equal(t, 13117, ext.Usage.TotalTokens)
-}
-
-func TestExtractClaudeMeta_MissingQuota(t *testing.T) {
-	assert.Nil(t, extractClaudeMeta(nil))
-	assert.Nil(t, extractClaudeMeta(map[string]any{"goal": map[string]any{"supported": true}}))
-	// quota without token_count or model_usage → nil.
-	assert.Nil(t, extractClaudeMeta(map[string]any{"quota": map[string]any{"model_usage": []any{}}}))
-}
-
-func TestExtractClaudeMeta_ModelUsage(t *testing.T) {
-	// Real Codex wire shape: model_usage[].model reveals the actually-executed
-	// model (an alias can route to a concrete model), which must surface as
-	// the trace's ResponseModelID.
-	meta := map[string]any{
-		"quota": map[string]any{
-			"model_usage": []any{
-				map[string]any{
-					"model": "deepseek-v4-flash",
-					"token_count": map[string]any{
-						"cachedInputTokens": 12672,
-						"inputTokens":       105,
-						"outputTokens":      2,
-						"totalTokens":       12779,
-					},
-				},
-			},
-			"token_count": map[string]any{
-				"cachedInputTokens": 12672,
-				"inputTokens":       105,
-				"outputTokens":      2,
-				"totalTokens":       12779,
-			},
-		},
-	}
-	ext := extractClaudeMeta(meta)
-	require.NotNil(t, ext)
-	// Aggregate usage extracted from token_count. inputTokens excludes the
-	// cached portion, so it is normalized to 105 + 12672 = 12777.
-	require.NotNil(t, ext.Usage)
-	assert.Equal(t, 12777, ext.Usage.InputTokens)
-	assert.Equal(t, 2, ext.Usage.OutputTokens)
-	assert.Equal(t, 12779, ext.Usage.TotalTokens)
-	assert.Equal(t, 12672, ext.Usage.CachedReadTokens)
-	assert.Equal(t, 12672, ext.Usage.CacheHitTokens)
-	assert.Equal(t, 105, ext.Usage.CacheMissTokens)
-	// Model name surfaced as ResponseModelID.
-	require.NotNil(t, ext.Trace)
-	assert.Equal(t, "deepseek-v4-flash", ext.Trace.ResponseModelID)
-}
-
-func TestExtractClaudeMeta_AggregateWinsOverModelUsage(t *testing.T) {
-	// When both top-level aggregate token_count AND per-model entries are
-	// present but disagree, the aggregate is authoritative (per-model counters
-	// must never be merged in — that is what produced total==10x input rows).
-	meta := map[string]any{
-		"quota": map[string]any{
-			"model_usage": []any{
-				map[string]any{
-					"model": "claude-opus-4-6",
-					"token_count": map[string]any{
-						"inputTokens": 14170, "outputTokens": 246, "totalTokens": 147352,
-					},
-				},
-			},
-			"token_count": map[string]any{
-				"inputTokens": 45575, "outputTokens": 52, "totalTokens": 45627,
-			},
-		},
-	}
-	ext := extractClaudeMeta(meta)
-	require.NotNil(t, ext)
-	require.NotNil(t, ext.Usage)
-	assert.Equal(t, 45575, ext.Usage.InputTokens, "aggregate wins over per-model")
-	assert.Equal(t, 52, ext.Usage.OutputTokens)
-	assert.Equal(t, 45627, ext.Usage.TotalTokens)
-	require.NotNil(t, ext.Trace)
-	assert.Equal(t, "claude-opus-4-6", ext.Trace.ResponseModelID)
-}
-
-func TestExtractClaudeMeta_ZeroAggregateFallsBackToModelUsage(t *testing.T) {
-	// Top-level token_count present but all-zero (a zeroed final snapshot):
-	// must still fall back to the per-model entry that carries real counters.
-	meta := map[string]any{
-		"quota": map[string]any{
-			"model_usage": []any{
-				map[string]any{
-					"model": "claude-sonnet-4-6",
-					"token_count": map[string]any{
-						"inputTokens": 142, "outputTokens": 44, "totalTokens": 40904,
-					},
-				},
-			},
-			"token_count": map[string]any{},
-		},
-	}
-	ext := extractClaudeMeta(meta)
-	require.NotNil(t, ext)
-	require.NotNil(t, ext.Usage)
-	assert.Equal(t, 142, ext.Usage.InputTokens, "per-model counters used when aggregate is all-zero")
-	assert.Equal(t, 44, ext.Usage.OutputTokens)
-	assert.Equal(t, 40904, ext.Usage.TotalTokens)
-}
-
-func TestExtractClaudeMeta_ModelUsage_NoAggregate(t *testing.T) {
-	// model_usage present but no top-level token_count: usage still extracted
-	// from the per-model entries, model name still surfaced.
-	meta := map[string]any{
-		"quota": map[string]any{
-			"model_usage": []any{
-				map[string]any{
-					"model": "claude-sonnet-4-6",
-					"token_count": map[string]any{
-						"inputTokens":  142,
-						"outputTokens": 44,
-						"totalTokens":  40904,
-					},
-				},
-			},
-		},
-	}
-	ext := extractClaudeMeta(meta)
-	require.NotNil(t, ext)
-	require.NotNil(t, ext.Usage)
-	assert.Equal(t, 142, ext.Usage.InputTokens)
-	assert.Equal(t, 44, ext.Usage.OutputTokens)
-	assert.Equal(t, 40904, ext.Usage.TotalTokens)
-	require.NotNil(t, ext.Trace)
-	assert.Equal(t, "claude-sonnet-4-6", ext.Trace.ResponseModelID)
-}
-
-// ---------------------------------------------------------------------------
-// extractGenericMeta — recursive fallback for unknown backends
+// usage accumulation — OpenAI-style per-call usage + usageByCategory + trace
 // ---------------------------------------------------------------------------
 
 func TestExtractGenericMeta_OpenAIKeys(t *testing.T) {
@@ -348,35 +58,13 @@ func TestExtractGenericMeta_NoMatches(t *testing.T) {
 // extractMetaUsage dispatch
 // ---------------------------------------------------------------------------
 
-func TestExtractMetaUsage_Dispatch(t *testing.T) {
-	cbMeta := map[string]any{"usage": map[string]any{"prompt_tokens": 10}}
-	ext := extractMetaUsage("codebuddy", cbMeta)
-	require.NotNil(t, ext)
-	assert.Equal(t, 10, ext.Usage.InputTokens)
-
-	clMeta := map[string]any{"quota": map[string]any{"token_count": map[string]any{"inputTokens": 5}}}
-	for _, backend := range []string{"claude", "codex", "qoder"} {
-		ext := extractMetaUsage(backend, clMeta)
-		require.NotNil(t, ext, backend)
-		assert.Equal(t, 5, ext.Usage.InputTokens, backend)
-	}
-
-	// Unknown backend falls through to generic scan.
-	ext = extractMetaUsage("mystery-agent", map[string]any{"deep": map[string]any{"outputTokens": 7}})
-	require.NotNil(t, ext)
-	assert.Equal(t, 7, ext.Usage.OutputTokens)
-
-	// OpenCode reports no _meta extensions.
-	assert.Nil(t, extractMetaUsage("opencode", map[string]any{"timestamp": "t"}))
-}
-
 // ---------------------------------------------------------------------------
 // applyMetaExtractionToUsageState / applyMetaExtractionToMetadata
 // ---------------------------------------------------------------------------
 
 func TestApplyMetaExtractionToUsageState(t *testing.T) {
-	ext := &metaExtraction{
-		Usage: &metaTokenUsage{
+	ext := &MetaExtraction{
+		Usage: &MetaTokenUsage{
 			Present:             true,
 			InputTokens:         29495,
 			OutputTokens:        3,
@@ -386,7 +74,7 @@ func TestApplyMetaExtractionToUsageState(t *testing.T) {
 			CacheCreationTokens: 0,
 			Credit:              1.48,
 		},
-		Category: &metaCategoryUsage{Present: true, Categories: map[string]int64{"tools": 22701}},
+		Category: &MetaCategoryUsage{Present: true, Categories: map[string]int64{"tools": 22701}},
 	}
 	state := &UsageState{Used: 29495, Size: 200000}
 	applyMetaExtractionToUsageState(state, ext)
@@ -400,8 +88,8 @@ func TestApplyMetaExtractionToUsageState(t *testing.T) {
 }
 
 func TestApplyMetaExtractionToMetadata(t *testing.T) {
-	ext := &metaExtraction{
-		Usage: &metaTokenUsage{
+	ext := &MetaExtraction{
+		Usage: &MetaTokenUsage{
 			Present:           true,
 			InputTokens:       142,
 			OutputTokens:      18,
@@ -409,7 +97,7 @@ func TestApplyMetaExtractionToMetadata(t *testing.T) {
 			CachedWriteTokens: 41053,
 			ThoughtTokens:     30,
 		},
-		Trace: &metaTrace{
+		Trace: &MetaTrace{
 			RequestID:        "req-1",
 			TraceID:          "trace-1",
 			MessageID:        "msg-1",
@@ -421,7 +109,7 @@ func TestApplyMetaExtractionToMetadata(t *testing.T) {
 			Outcome:          "SUCCESS",
 			AgentPhase:       "completing",
 		},
-		Category: &metaCategoryUsage{Present: true, Categories: map[string]int64{"conversation": 3894}},
+		Category: &MetaCategoryUsage{Present: true, Categories: map[string]int64{"conversation": 3894}},
 	}
 	meta := &Metadata{Model: "preset-model"}
 	applyMetaExtractionToMetadata(meta, ext)
@@ -804,8 +492,8 @@ func TestMergeUsageState_NakedZeroWithWindowBackfill(t *testing.T) {
 // metaMergeExtraction — latest-informative-snapshot semantics
 // ---------------------------------------------------------------------------
 
-func usageExt(i, o, t int) *metaExtraction {
-	return &metaExtraction{Usage: &metaTokenUsage{Present: true, InputTokens: i, OutputTokens: o, TotalTokens: t}}
+func usageExt(i, o, t int) *MetaExtraction {
+	return &MetaExtraction{Usage: &MetaTokenUsage{Present: true, InputTokens: i, OutputTokens: o, TotalTokens: t}}
 }
 
 func TestMetaMergeExtraction_LatestInformativeSnapshotReplaces(t *testing.T) {
@@ -813,7 +501,7 @@ func TestMetaMergeExtraction_LatestInformativeSnapshotReplaces(t *testing.T) {
 	// must REPLACE the accumulator wholesale — even when an earlier one carried
 	// a larger input (the pre-change max-stitch kept the bigger value and
 	// produced internally inconsistent input/output/total).
-	var acc metaExtraction
+	var acc MetaExtraction
 	metaMergeExtraction(&acc, usageExt(32635, 84, 32719))
 	metaMergeExtraction(&acc, usageExt(32752, 30, 32782))
 	require.NotNil(t, acc.Usage)
@@ -826,9 +514,9 @@ func TestMetaMergeExtraction_LatestInformativeSnapshotReplaces(t *testing.T) {
 func TestMetaMergeExtraction_NakedNotificationDoesNotRegress(t *testing.T) {
 	// A cost-only "naked" notification (all token counters zero) must not wipe
 	// the adopted token snapshot.
-	var acc metaExtraction
+	var acc MetaExtraction
 	metaMergeExtraction(&acc, usageExt(32635, 84, 32719))
-	naked := &metaExtraction{Usage: &metaTokenUsage{Present: true, Credit: 1.64}}
+	naked := &MetaExtraction{Usage: &MetaTokenUsage{Present: true, Credit: 1.64}}
 	metaMergeExtraction(&acc, naked)
 	require.NotNil(t, acc.Usage)
 	assert.Equal(t, 32635, acc.Usage.InputTokens, "naked notification must not regress input")
@@ -839,9 +527,9 @@ func TestMetaMergeExtraction_NakedNotificationDoesNotRegress(t *testing.T) {
 func TestMetaMergeExtraction_CategoryIndependentOfTokenSnapshot(t *testing.T) {
 	// CodeBuddy may deliver usageByCategory on a notification whose token
 	// counters are zero; the category block must still be adopted.
-	var acc metaExtraction
+	var acc MetaExtraction
 	metaMergeExtraction(&acc, usageExt(32635, 84, 32719))
-	catOnly := &metaExtraction{Category: &metaCategoryUsage{Present: true, Categories: map[string]int64{"tools": 24108, "conversation": 5447}}}
+	catOnly := &MetaExtraction{Category: &MetaCategoryUsage{Present: true, Categories: map[string]int64{"tools": 24108, "conversation": 5447}}}
 	metaMergeExtraction(&acc, catOnly)
 	require.NotNil(t, acc.Usage)
 	assert.Equal(t, 32635, acc.Usage.InputTokens, "token snapshot kept")
@@ -850,46 +538,8 @@ func TestMetaMergeExtraction_CategoryIndependentOfTokenSnapshot(t *testing.T) {
 	assert.Equal(t, int64(5447), acc.Category.Categories["conversation"])
 }
 
-func TestExtractClaudeMeta_MultiModelUsageNoStitching(t *testing.T) {
-	// Two per-model entries each with their own cumulative-ish total: without a
-	// top-level aggregate the FIRST informative entry is adopted as the
-	// snapshot — never max-stitched across entries (the old code produced
-	// total == 10x input outliers here).
-	meta := map[string]any{
-		"quota": map[string]any{
-			"model_usage": []any{
-				map[string]any{
-					"model":       "claude-sonnet-4-6",
-					"token_count": map[string]any{"inputTokens": 45575, "outputTokens": 52, "totalTokens": 45627},
-				},
-				map[string]any{
-					"model":       "claude-opus-4-6",
-					"token_count": map[string]any{"inputTokens": 14170, "outputTokens": 246, "totalTokens": 147352},
-				},
-			},
-		},
-	}
-	ext := extractClaudeMeta(meta)
-	require.NotNil(t, ext)
-	require.NotNil(t, ext.Usage)
-	assert.Equal(t, 45575, ext.Usage.InputTokens)
-	assert.Equal(t, 52, ext.Usage.OutputTokens)
-	assert.Equal(t, 45627, ext.Usage.TotalTokens)
-	assert.Equal(t, 45627, ext.Usage.InputTokens+ext.Usage.OutputTokens, "single entry snapshot stays consistent")
-	require.NotNil(t, ext.Trace)
-	assert.Equal(t, "claude-sonnet-4-6", ext.Trace.ResponseModelID)
-}
-
-// ---------------------------------------------------------------------------
-// metaExtraction.traceRequestID — nil-safe accessor used by replay-drop logging
-// ---------------------------------------------------------------------------
-
-// TestMetaExtraction_TraceRequestID_NilReceiver covers the nil guard: the accessor
-// is called on the result of extractMetaUsage, which returns nil when the backend
-// has no adapter for the payload. Logging must not panic in that case, because it
-// runs on the event path for every replayed usage_update.
 func TestMetaExtraction_TraceRequestID_NilReceiver(t *testing.T) {
-	var ext *metaExtraction
+	var ext *MetaExtraction
 	assert.Equal(t, "", ext.traceRequestID(), "a nil extraction must yield an empty id")
 }
 
@@ -897,14 +547,14 @@ func TestMetaExtraction_TraceRequestID_NilReceiver(t *testing.T) {
 // that carries usage but no trace identity (usage_update payloads often omit
 // requestId) must yield "", not dereference the nil Trace.
 func TestMetaExtraction_TraceRequestID_NoTrace(t *testing.T) {
-	ext := &metaExtraction{Usage: &metaTokenUsage{Present: true}}
+	ext := &MetaExtraction{Usage: &MetaTokenUsage{Present: true}}
 	assert.Equal(t, "", ext.traceRequestID(), "usage-only extraction has no request id")
 }
 
 // TestMetaExtraction_TraceRequestID_ReturnsRequestID covers the happy path, so the
 // value that lands in the replay-drop log is actually the trace identity.
 func TestMetaExtraction_TraceRequestID_ReturnsRequestID(t *testing.T) {
-	ext := &metaExtraction{Trace: &metaTrace{RequestID: "req-abc", TraceID: "trace-xyz"}}
+	ext := &MetaExtraction{Trace: &MetaTrace{RequestID: "req-abc", TraceID: "trace-xyz"}}
 	assert.Equal(t, "req-abc", ext.traceRequestID(),
 		"the accessor must return RequestID, not TraceID")
 }
@@ -936,16 +586,7 @@ func TestMetaAccum_CodeBuddySumsPerCallUsage(t *testing.T) {
 		{"msg-5", 38625, 2, 1.94},
 	}
 	for _, c := range calls {
-		ext := extractCodeBuddyMeta(map[string]any{
-			"codebuddy.ai/messageId": c.messageID,
-			"codebuddy.ai/requestId": "req-1",
-			"usage": map[string]any{
-				"prompt_tokens":     c.prompt,
-				"completion_tokens": c.completion,
-				"total_tokens":      c.prompt + c.completion,
-				"credit":            c.credit,
-			},
-		})
+		ext := cbExtraction(c.messageID, "req-1", c.prompt, c.completion, c.credit)
 		require.NotNil(t, ext)
 		conn.mergeMetaExtraction(ext)
 	}
@@ -964,16 +605,8 @@ func TestMetaAccum_CodeBuddySumsPerCallUsage(t *testing.T) {
 // still count.
 func TestMetaAccum_CodeBuddyDedupsByMessageID(t *testing.T) {
 	conn := &ACPConn{}
-	mk := func(msgID string, prompt int) *metaExtraction {
-		return extractCodeBuddyMeta(map[string]any{
-			"codebuddy.ai/messageId": msgID,
-			"codebuddy.ai/requestId": "req-1",
-			"usage": map[string]any{
-				"prompt_tokens":     prompt,
-				"completion_tokens": 10,
-				"total_tokens":      prompt + 10,
-			},
-		})
+	mk := func(msgID string, prompt int) *MetaExtraction {
+		return cbExtraction(msgID, "req-1", prompt, 10, 0)
 	}
 
 	conn.mergeMetaExtraction(mk("msg-1", 1000))
@@ -992,8 +625,8 @@ func TestMetaAccum_CodeBuddyDedupsByMessageID(t *testing.T) {
 // multiply the turn.
 func TestMetaAccum_NonAccumulatingAgentKeepsLatestSnapshot(t *testing.T) {
 	conn := &ACPConn{}
-	conn.mergeMetaExtraction(&metaExtraction{Usage: &metaTokenUsage{InputTokens: 100, Present: true}})
-	conn.mergeMetaExtraction(&metaExtraction{Usage: &metaTokenUsage{InputTokens: 250, Present: true}})
+	conn.mergeMetaExtraction(&MetaExtraction{Usage: &MetaTokenUsage{InputTokens: 100, Present: true}})
+	conn.mergeMetaExtraction(&MetaExtraction{Usage: &MetaTokenUsage{InputTokens: 250, Present: true}})
 
 	acc := conn.getAndClearMetaAccum()
 	require.NotNil(t, acc)
@@ -1006,11 +639,8 @@ func TestMetaAccum_NonAccumulatingAgentKeepsLatestSnapshot(t *testing.T) {
 // turn's calls, or the totals would grow monotonically forever.
 func TestMetaAccum_ResetClearsCallDedup(t *testing.T) {
 	conn := &ACPConn{}
-	mk := func() *metaExtraction {
-		return extractCodeBuddyMeta(map[string]any{
-			"codebuddy.ai/messageId": "msg-1",
-			"usage":                  map[string]any{"prompt_tokens": 1000, "completion_tokens": 1},
-		})
+	mk := func() *MetaExtraction {
+		return cbExtraction("msg-1", "", 1000, 1, 0)
 	}
 	conn.mergeMetaExtraction(mk())
 	require.Equal(t, 1000, conn.getAndClearMetaAccum().Usage.InputTokens)
@@ -1031,25 +661,6 @@ func TestMetaAccum_ResetClearsCallDedup(t *testing.T) {
 // _meta["codebuddy.ai/requestCredits"] and is preferred over the per-call sum
 // because it self-heals: a dropped notification's amount is already folded
 // into the next total.
-func TestExtractCodeBuddyMeta_RequestCredits(t *testing.T) {
-	ext := extractCodeBuddyMeta(map[string]any{
-		"codebuddy.ai/requestCredits": map[string]any{"req-1": 3.85},
-	})
-	require.NotNil(t, ext)
-	assert.Equal(t, map[string]float64{"req-1": 3.85}, ext.RequestCredits)
-	assert.Equal(t, 3.85, ext.creditTotal())
-
-	// Junk entries are dropped rather than counted as zero.
-	ext = extractCodeBuddyMeta(map[string]any{
-		"codebuddy.ai/requestCredits": map[string]any{"": 9.0, "req-2": "nope", "req-3": 1.5},
-	})
-	require.NotNil(t, ext)
-	assert.Equal(t, map[string]float64{"req-3": 1.5}, ext.RequestCredits)
-}
-
-// The cost-only paths (generation tools, team-member turns) carry credit with
-// NO usage block. Before this, costFieldCarriesCredit discarded the amount and
-// the billing vanished entirely.
 func TestMapACPSessionUpdate_CostOnlyCreditIsCaptured(t *testing.T) {
 	ch := make(chan StreamEvent, 10)
 	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
@@ -1143,26 +754,26 @@ func TestMapACPSessionUpdate_CreditIsTurnCumulative(t *testing.T) {
 // requestCredits are cumulative on the agent side, so merge takes the max per
 // requestId. Summing would double-bill every re-report.
 func TestMetaMergeExtraction_RequestCreditsMaxPerRequest(t *testing.T) {
-	var acc metaExtraction
-	metaMergeExtraction(&acc, &metaExtraction{RequestCredits: map[string]float64{"req-1": 3.0}})
-	metaMergeExtraction(&acc, &metaExtraction{RequestCredits: map[string]float64{"req-1": 3.85}})
+	var acc MetaExtraction
+	metaMergeExtraction(&acc, &MetaExtraction{RequestCredits: map[string]float64{"req-1": 3.0}})
+	metaMergeExtraction(&acc, &MetaExtraction{RequestCredits: map[string]float64{"req-1": 3.85}})
 	// An out-of-order (stale) frame must not regress the total.
-	metaMergeExtraction(&acc, &metaExtraction{RequestCredits: map[string]float64{"req-1": 3.2}})
+	metaMergeExtraction(&acc, &MetaExtraction{RequestCredits: map[string]float64{"req-1": 3.2}})
 	assert.Equal(t, map[string]float64{"req-1": 3.85}, acc.RequestCredits)
 
 	// A second request accumulates on top of the first.
-	metaMergeExtraction(&acc, &metaExtraction{RequestCredits: map[string]float64{"req-2": 1.0}})
-	assert.InDelta(t, 4.85, acc.creditTotal(), 1e-9)
+	metaMergeExtraction(&acc, &MetaExtraction{RequestCredits: map[string]float64{"req-2": 1.0}})
+	assert.InDelta(t, 4.85, acc.CreditTotal(), 1e-9)
 }
 
 // The per-request total already includes the per-call credits, so the two must
 // never be added together — the largest single source wins.
 func TestMetaExtraction_CreditTotalNeverSumsSources(t *testing.T) {
-	ext := &metaExtraction{
-		Usage:          &metaTokenUsage{Credit: 1.5},
+	ext := &MetaExtraction{
+		Usage:          &MetaTokenUsage{Credit: 1.5},
 		CostCredit:     2.0,
 		RequestCredits: map[string]float64{"req-1": 3.85},
 	}
-	assert.InDelta(t, 3.85, ext.creditTotal(), 1e-9,
+	assert.InDelta(t, 3.85, ext.CreditTotal(), 1e-9,
 		"requestCredits covers the same billings; it must not be added to them")
 }

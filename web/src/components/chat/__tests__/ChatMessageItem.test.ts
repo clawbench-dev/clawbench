@@ -1,4 +1,9 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+// vue-i18n tries to install its devtools plugin in dev builds; the rejection is
+// unrelated to these assertions and leaks into the NEXT test file in the same
+// worker (vitest then reports a file-level failure with zero failing tests).
+// This suite does not use <i18n-t>, so skipping the full install is safe.
+;(globalThis as { __VUE_I18N_FULL_INSTALL__?: boolean }).__VUE_I18N_FULL_INSTALL__ = false
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { readFileSync } from 'node:fs'
@@ -6,6 +11,10 @@ import { resolve } from 'node:path'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 
 // Mocks for composables and stores used by ChatMessageItem
+vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
+  renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
+}))
+
 vi.mock('@/composables/useDoubleClickCopy', () => ({
   useDoubleClickCopy: () => ({ handleDblClick: vi.fn() }),
 }))
@@ -129,6 +138,14 @@ const i18n = createI18n({
           creditUsed: '本次消耗 {value} 积分',
           costUsed: '本次花费 {value}',
           tokenUsed: '输入 {input} / 输出 {output}',
+          kbRefs: {
+            summary: '参考了知识库 · {count} 段',
+            summaryOne: '参考了知识库 · {count} 段',
+            from: '来自 {name}',
+            untitled: '未命名文档',
+            expand: '查看来源片段',
+            collapse: '收起来源片段',
+          },
         },
         contentBlocks: { cancelled: '已中断' },
         pending: { queuing: '排队中', mergedIntoPrev: '回复已并入上一轮' },
@@ -137,6 +154,17 @@ const i18n = createI18n({
         busy: { forking: '正在分叉会话…', syncing: '正在同步原生会话…', elapsed: '{elapsed}s' },
       },
       common: { remove: '移除', copy: '复制' },
+      kb: {
+        locationPage: '第 {n} 页',
+        locationSlide: '幻灯片 {n}',
+        locationSheetRow: '工作表 {name} 第 {n} 行',
+        locationSheetRows: '工作表 {name} 第 {start}–{end} 行',
+        locationLines: '第 {start}–{end} 行',
+        locationLine: '第 {n} 行',
+        locationParagraphs: '第 {start}–{end} 段',
+        locationParagraph: '第 {n} 段',
+        locationTitle: '标题',
+      },
     },
   },
 })
@@ -253,11 +281,24 @@ describe('ChatMessageItem', () => {
     expect(wrapper.find('.chat-message > .chat-meta-bar').exists()).toBe(true)
   })
 
-  it('does not render meta bar for streaming assistant message', () => {
+  it('renders the meta bar for a streaming assistant message without a status hint', () => {
+    // The bar mounts mid-turn so whatever already exists (duration, the details
+    // entry) is reachable — no "still running" copy sits in the row.
     const wrapper = createWrapper({
       msg: { id: '6', role: 'assistant', content: '...', blocks: [{ type: 'text', text: '...' }], streaming: true },
     })
-    expect(wrapper.find('.chat-meta-bar').exists()).toBe(false)
+    expect(wrapper.find('.chat-meta-bar').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('本轮进行中')
+    expect(wrapper.text()).not.toContain('still running')
+  })
+
+  it('exposes the details button while streaming', () => {
+    const wrapper = createWrapper({
+      msg: { id: '6b', role: 'assistant', content: '...', blocks: [{ type: 'text', text: '...' }], streaming: true },
+    })
+    const actions = wrapper.findAll('.chat-meta-actions button')
+    const labels = actions.map((b) => b.attributes('title') ?? b.attributes('aria-label') ?? '')
+    expect(labels.some((l) => l.includes('详情') || l.includes('Details'))).toBe(true)
   })
 
   it('renders meta bar and summary toggle for summarized assistant message with empty blocks', () => {
@@ -1744,6 +1785,21 @@ describe('ChatMessageItem — quote message button', () => {
     expect(wrapper.emitted('quote-message')![0][0]).toMatchObject({ id: 42, role: 'assistant' })
   })
 
+  it('emits save-to-kb for an assistant reply', async () => {
+    const wrapper = createWrapper({ msg: assistantMsg, index: 0, active: true })
+    const btn = wrapper.find('[data-action="save-to-kb"]')
+    expect(btn.exists()).toBe(true)
+
+    await btn.trigger('click')
+
+    expect(wrapper.emitted('save-to-kb')![0][0]).toMatchObject({ id: 42, role: 'assistant' })
+  })
+
+  it('does not offer save-to-kb on a user message', () => {
+    const wrapper = createWrapper({ msg: userMsg, index: 0, active: true })
+    expect(wrapper.find('[data-action="save-to-kb"]').exists()).toBe(false)
+  })
+
   it('passes the pressed button as the second argument so the bar can anchor to it', async () => {
     // The floating quote bar parks at the top of the page when it has no anchor,
     // which for a message at the bottom of a long transcript is nowhere near the
@@ -1816,5 +1872,94 @@ describe('ChatMessageItem — summary toggle leads the meta action row', () => {
       active: true,
     })
     expect(wrapper.find('.chat-meta-actions .chat-summary-anchor').exists()).toBe(false)
+  })
+})
+
+describe('ChatMessageItem — knowledge-base citations', () => {
+  const withRefs = {
+    id: 77,
+    role: 'assistant',
+    content: 'answer',
+    blocks: [{ type: 'text', text: 'answer' }],
+    metadata: {
+      kbRefs: [
+        {
+          documentId: 7,
+          documentTitle: 'handbook.md',
+          collectionName: '制度',
+          location: 'L1-L3',
+          text: '报销流程：先提交申请。',
+        },
+      ],
+    },
+  }
+
+  it('shows the citation chip INSIDE the bubble and expands to the snippet', async () => {
+    const wrapper = createWrapper({ msg: withRefs, index: 0, active: true })
+
+    const toggle = wrapper.find('[data-action="toggle-kb-refs"]')
+    expect(toggle.exists()).toBe(true)
+    expect(wrapper.find('.msg-card .chat-kb-refs').exists()).toBe(true)
+    expect(toggle.text()).toContain('参考了知识库 · 1 段')
+
+    await toggle.trigger('click')
+    expect(wrapper.find('.chat-kb-ref-title').text()).toBe('handbook.md')
+    expect(wrapper.find('.chat-kb-ref-location').text()).toBe('第 1–3 行')
+    expect(wrapper.find('.chat-kb-ref-text').text()).toBe('报销流程：先提交申请。')
+  })
+
+  it('sits after the file-changes banner inside the same bubble', () => {
+    const wrapper = createWrapper({
+      msg: {
+        ...withRefs,
+        id: 81,
+        blocks: [
+          { type: 'text', text: 'answer' },
+          { type: 'tool_use', id: 't1', name: 'Write', done: true, input: { file_path: '/p/a.md' } },
+        ],
+      },
+      index: 0,
+      active: true,
+    })
+
+    const card = wrapper.find('.msg-card')
+    const order = Array.from(card.element.children).map((el) => el.className)
+    const banner = order.findIndex((c) => c.includes('chat-file-changes-banner'))
+    const refs = order.findIndex((c) => c.includes('chat-kb-refs'))
+    expect(banner).toBeGreaterThanOrEqual(0)
+    expect(refs).toBeGreaterThan(banner)
+  })
+
+  it('renders no chip when the turn had no refs', () => {
+    const wrapper = createWrapper({
+      msg: { id: 78, role: 'assistant', content: 'answer', blocks: [{ type: 'text', text: 'answer' }], metadata: {} },
+      index: 0,
+      active: true,
+    })
+    expect(wrapper.find('[data-action="toggle-kb-refs"]').exists()).toBe(false)
+  })
+
+  it('renders no chip on a user message even if metadata carries refs', () => {
+    const wrapper = createWrapper({
+      msg: { ...withRefs, id: 79, role: 'user' },
+      index: 0,
+      active: true,
+    })
+    expect(wrapper.find('[data-action="toggle-kb-refs"]').exists()).toBe(false)
+  })
+
+  it('drops malformed refs instead of showing an empty source card', () => {
+    const wrapper = createWrapper({
+      msg: {
+        id: 80,
+        role: 'assistant',
+        content: 'answer',
+        blocks: [{ type: 'text', text: 'answer' }],
+        metadata: { kbRefs: [{ documentTitle: 'no text' }, null] },
+      },
+      index: 0,
+      active: true,
+    })
+    expect(wrapper.find('[data-action="toggle-kb-refs"]').exists()).toBe(false)
   })
 })

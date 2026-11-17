@@ -23,10 +23,6 @@ import (
 // rejecting legitimate ones.
 const maxCacheEntryBytes = 4 << 20 // 4 MiB
 
-func init() {
-	model.RegisterModelSource(model.PluginSource("codebuddy", discoverCodebuddyModels))
-}
-
 // codebuddyProductFiles are the product-config filenames CodeBuddy ships.
 // The npm package and native binary both reference several variants; only one
 // is present for a given distribution channel.
@@ -61,6 +57,10 @@ type codebuddyProductModel struct {
 	Name      string   `json:"name"`
 	IsDefault bool     `json:"isDefault"`
 	Tags      []string `json:"tags"`
+	// Credits is the model's billing multiplier as the product config spells it
+	// ("x0.06 credits", empty for the auto router). The CLI's own model picker
+	// shows it, so the picker shows the same number (issue #657).
+	Credits string `json:"credits"`
 }
 
 // codebuddyProduct represents the top-level structure of codebuddy's product JSON.
@@ -290,7 +290,7 @@ func parseProductModels(data []byte) []model.AgentModel {
 		if name == "" {
 			name = m.ID
 		}
-		models = append(models, model.AgentModel{ID: m.ID, Name: name})
+		models = append(models, model.AgentModel{ID: m.ID, Name: name, Credits: strings.TrimSpace(m.Credits)})
 		if m.IsDefault && defaultID == "" {
 			defaultID = m.ID
 		}

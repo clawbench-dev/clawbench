@@ -18,8 +18,10 @@ const catalogFixture = `{
     "id": "anthropic", "name": "Anthropic", "npm": "@ai-sdk/anthropic",
     "api": "https://api.anthropic.com/v1",
     "models": {
-      "claude-a": {"id": "claude-a", "name": "Claude A", "limit": {"context": 200000, "output": 64000}},
-      "claude-b": {"id": "claude-b", "name": "Claude B"}
+      "claude-a": {"id": "claude-a", "name": "Claude A", "limit": {"context": 200000, "output": 64000},
+        "modalities": {"input": ["text", "image", "pdf"], "output": ["text"]}},
+      "claude-b": {"id": "claude-b", "name": "Claude B",
+        "modalities": {"input": ["text"], "output": ["text"]}}
     }
   },
   "deepseek": {
@@ -54,6 +56,40 @@ func TestParseCatalog_ReducesAndFilters(t *testing.T) {
 	}
 	if a.Models[0].Context != 200000 {
 		t.Fatalf("context = %d", a.Models[0].Context)
+	}
+}
+
+// Vision is what lets the built-in agent's read tool hand a picture to the
+// model instead of refusing the file. It comes from models.dev's modalities
+// field and must fail CLOSED: an id the catalog does not know stays text-only,
+// because a picture sent to a blind model is a 400 the user cannot diagnose.
+func TestModelSupportsVision(t *testing.T) {
+	cat, err := parseCatalog([]byte(catalogFixture))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	ReplaceCatalog(cat)
+	t.Cleanup(func() { ReplaceCatalog(nil) })
+
+	cases := []struct {
+		name     string
+		protocol string
+		model    string
+		want     bool
+	}{
+		{"image model", ProviderProtocolAnthropic, "claude-a", true},
+		{"text-only model", ProviderProtocolAnthropic, "claude-b", false},
+		{"unknown model", ProviderProtocolAnthropic, "claude-z", false},
+		{"protocol mismatch", ProviderProtocolOpenAI, "claude-a", false},
+		{"vendor-prefixed id", ProviderProtocolAnthropic, "anthropic/claude-a", true},
+		{"empty id", ProviderProtocolAnthropic, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ModelSupportsVision(tc.protocol, tc.model); got != tc.want {
+				t.Fatalf("ModelSupportsVision(%q, %q) = %v, want %v", tc.protocol, tc.model, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -548,12 +584,18 @@ func TestCatalogStale_PrePriceSnapshotIsRefetched(t *testing.T) {
 		t.Fatal("a fresh, price-bearing snapshot must not be stale")
 	}
 
-	// Same timestamp, but produced by the old parser: no schema marker.
-	legacy := *fresh
-	legacy.PriceSchema = 0
-	ReplaceCatalog(&legacy)
-	if !CatalogStale() {
-		t.Fatal("a snapshot predating price parsing must be refetched once")
+	// Same timestamp, but produced by an older parser. Both the pre-price
+	// marker (0) and the pre-vision marker (1) must force exactly one refetch:
+	// without the second, a snapshot written before modalities were extracted
+	// keeps every model text-only for a full TTL, and the built-in agent
+	// silently refuses images.
+	for _, schema := range []int{0, 1} {
+		legacy := *fresh
+		legacy.PriceSchema = schema
+		ReplaceCatalog(&legacy)
+		if !CatalogStale() {
+			t.Fatalf("a snapshot with extraction schema %d must be refetched once", schema)
+		}
 	}
 }
 

@@ -3,6 +3,8 @@ import { mount } from '@vue/test-utils'
 import { nextTick, ref } from 'vue'
 import CompletionPopover from '@/components/common/CompletionPopover.vue'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
+import { useToast } from '@/composables/useToast'
 import { readWebFile } from '@/testUtils/readWebFile'
 
 // Mock the singleton composable so each test controls state directly.
@@ -78,9 +80,12 @@ describe('CompletionPopover', () => {
         mockState.queue = ref([])
         mockGetAgentBackend.mockReturnValue('')
         _resetPlatformForTest()
+        syncFeatureConfig({})
+        useToast().dismiss()
     })
     afterEach(() => {
         _resetPlatformForTest()
+        syncFeatureConfig({})
     })
 
     function mountPopover() {
@@ -286,6 +291,35 @@ describe('CompletionPopover', () => {
 
         expect(events.captured).toHaveLength(1)
         expect(events.captured[0].detail).toEqual({ projectPath: '/proj-b' })
+        expect(mockState.dismiss).toHaveBeenCalledTimes(1)
+    })
+
+    it('refuses the task jump while 任务 is off (card stays, jump does not happen)', () => {
+        syncFeatureConfig({ tasks: { enabled: false } })
+        mockState.active = ref(makeItem({ kind: 'task', taskId: '7', executionId: 'e9' }))
+        mountPopover()
+
+        const events = captureEvents(['clawbench-open-task'])
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        events.stop()
+
+        expect(events.captured).toHaveLength(0)
+        // The refusal is explained, and the card gets out of the way.
+        expect(useToast().visible.value).toBe(true)
+        expect(mockState.dismiss).toHaveBeenCalledTimes(1)
+    })
+
+    it('refuses the forge jump while Forge is off', () => {
+        syncFeatureConfig({ forge: { enabled: false } })
+        mockState.active = ref(makeItem({ kind: 'forge', groupKey: 'forge:acme/web', projectPath: '/proj-b' }))
+        mountPopover()
+
+        const events = captureEvents(['clawbench-open-forge'])
+        document.querySelector('.completion-notify')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        events.stop()
+
+        expect(events.captured).toHaveLength(0)
+        expect(useToast().visible.value).toBe(true)
         expect(mockState.dismiss).toHaveBeenCalledTimes(1)
     })
 

@@ -80,14 +80,20 @@ let stopRequested = false
 // stopped still fires `onstop`, and an upload may already be in flight, so
 // every completion path checks this before writing anything back.
 let cancelled = false
-// Keeps the "已写入「XX」" pill on screen briefly after the field path finishes.
-let fieldDoneTimer: ReturnType<typeof setTimeout> | null = null
 // A finished capsule transcript that was set aside because the user started
 // dictating into a field. It goes back to the capsule when that run ends —
 // a pending draft is never thrown away by an unrelated recording.
 let heldDraft = ''
 // PCM capture for the streaming engine (band filter + worklet + voice gate).
 let pcm: PcmStreamer | null = null
+// Frames the capture produced while the streaming socket was still connecting.
+let pendingPcm: ArrayBuffer[] = []
+/**
+ * Ceiling for that backlog. The handshake normally takes tens of milliseconds,
+ * so a handful of frames; the limit only exists so a socket that never opens
+ * cannot grow the buffer without bound (100 frames ≈ 10 s of audio).
+ */
+const PCM_BACKLOG_LIMIT = 100
 // PCM capture for the whole-file engines that cannot read WebM: frames are
 // collected and encoded as WAV when the user stops.
 let wavStreamer: PcmStreamer | null = null
@@ -202,6 +208,18 @@ export function useVoiceInput() {
 
   /** The tuning currently in effect (read by free-dialog mode as well). */
   const currentTuning = () => tuning
+
+  /**
+   * Where the status pill should sit, in viewport coordinates.
+   *
+   * A host that knows its caret (CodeMirror) reports that line; a plain field
+   * is anchored by its box. Null once the target is released — the overlay
+   * falls back to the element it already holds.
+   */
+  function targetRect(): DOMRect | null {
+    if (!target) return null
+    return target.host.rect?.() ?? target.el.getBoundingClientRect()
+  }
 
   /**
    * The streaming WebSocket only carries raw 16 kHz PCM. The server picks the
@@ -325,9 +343,10 @@ export function useVoiceInput() {
       return
     }
 
-    // Released while the microphone was still starting (a quick tap): start
-    // nothing, or the recorder would run forever with no one holding the key.
-    if (stopRequested) {
+    // Released or cancelled while the microphone was still starting (a quick
+    // tap, or a slide-off during the wait): start nothing, or the recorder
+    // would run forever with no one holding the key.
+    if (stopRequested || cancelled) {
       stopRequested = false
       stopMediaStream()
       return
@@ -342,7 +361,6 @@ export function useVoiceInput() {
     targetEl.value = t?.el ?? null
     heldDraft = t && draftPending.value ? inputText.value : ''
     draftPending.value = false
-    if (fieldDoneTimer) { clearTimeout(fieldDoneTimer); fieldDoneTimer = null }
     voicePrefix = prefix
     if (!t) inputText.value = prefix
 
@@ -453,30 +471,19 @@ export function useVoiceInput() {
   /**
    * Wraps up whichever destination this recording used.
    *
-   * Field path: the text is already in the field, so the only thing left is to
-   * keep `targetEl` around long enough for the "已写入" pill, then let it go.
+   * Field path: the text is already in the field, so there is nothing left to
+   * do — and nothing to announce either. A "已写入" badge that lingers for a
+   * second after the words have visibly landed says only what the user can
+   * already see, so the target is released immediately.
    * Buffer path: hand the transcript to the capsule and keep it there — a
    * finished dictation must never evaporate because nothing was focused.
    */
   function completeTarget() {
     if (mode.value === 'field') {
-      // Nothing recognised (silent clip, engine error): there is no "已写入"
-      // to announce. Clearing the target now also hides the pill immediately.
-      const wrote = !!target?.applied
       target = null
-      if (fieldDoneTimer) clearTimeout(fieldDoneTimer)
-      if (!wrote) {
-        targetEl.value = null
-        mode.value = 'idle'
-        restoreHeldDraft()
-        return
-      }
-      fieldDoneTimer = setTimeout(() => {
-        fieldDoneTimer = null
-        targetEl.value = null
-        if (mode.value === 'field') mode.value = 'idle'
-        restoreHeldDraft()
-      }, 1600)
+      targetEl.value = null
+      mode.value = 'idle'
+      restoreHeldDraft()
       return
     }
     mode.value = 'buffer'
@@ -539,14 +546,31 @@ export function useVoiceInput() {
       stream: mediaStream,
       tuning,
       onFrame: (frame) => {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send(frame)
+        const sock = ws
+        if (!sock) return
+        // Capture starts before the socket finishes its handshake (see
+        // startStreaming): whatever the graph produces in the meantime is held
+        // here and sent the moment `start` has gone out. Dropping those frames
+        // is what makes a short utterance arrive as nothing.
+        if (sock.readyState === WebSocket.OPEN) { sock.send(frame); return }
+        if (sock.readyState === WebSocket.CONNECTING && pendingPcm.length < PCM_BACKLOG_LIMIT) {
+          pendingPcm.push(frame)
+        }
       },
     })
     pcm = streamer
     await streamer.start()
   }
 
+  /** Sends the frames captured while the socket was still connecting. */
+  function flushPendingPcm(sock: WebSocket): void {
+    const held = pendingPcm
+    pendingPcm = []
+    for (const frame of held) sock.send(frame)
+  }
+
   function stopPcmCapture(): void {
+    pendingPcm = []
     pcm?.stop()
     pcm = null
   }
@@ -554,6 +578,7 @@ export function useVoiceInput() {
   function startStreaming() {
     state.value = 'recording'
     isRecording.value = true
+    pendingPcm = []
     const sock = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
     ws = sock
     // Every callback ignores a socket that is no longer the active one: stop()
@@ -591,9 +616,8 @@ export function useVoiceInput() {
     sock.onopen = () => {
       if (ws !== sock) return
       if (stopRequested) {
-        // The button was released while the socket was still connecting: never
-        // start capturing, and drop the socket so the engine has nothing to
-        // transcribe.
+        // The button was released while the socket was still connecting: drop
+        // the socket so the engine has nothing to transcribe.
         finalize()
         return
       }
@@ -604,12 +628,16 @@ export function useVoiceInput() {
         bits: 16,
         context: voicePrefix,
       }))
-      startPcmCapture().catch((e) => {
-        appLog.e('VoiceInput', 'pcm capture failed', e)
-        fail(i18n.global.t('chat.voice.micUnavailable'))
-        cancel()
-      })
+      flushPendingPcm(sock)
     }
+    // The graph is built NOW rather than on `onopen`: it takes longer to produce
+    // its first frame than the handshake takes, and running them one after the
+    // other threw away the first ~150 ms of speech — most of a short utterance.
+    startPcmCapture().catch((e) => {
+      appLog.e('VoiceInput', 'pcm capture failed', e)
+      fail(i18n.global.t('chat.voice.micUnavailable'))
+      cancel()
+    })
     sock.onerror = () => {
       if (ws !== sock) return
       fail(i18n.global.t('chat.voice.connectFailed'))
@@ -650,20 +678,6 @@ export function useVoiceInput() {
     completeTarget()
   }
 
-  /**
-   * How long the capture keeps running after the user lets go.
-   *
-   * The microphone pipeline sits between the air and `onFrame`: the device's own
-   * buffer, echo cancellation / noise suppression, the resampler into the
-   * worklet, the worklet's partial 100 ms frame and the message queue. Tearing
-   * the graph down on pointer-up throws all of that away, so the recogniser
-   * hears the last syllable cut short — reported as "the last couple of
-   * characters are never recognized". The state flips to `transcribing` first,
-   * so this reads as the normal wait for the final text rather than as extra
-   * recording.
-   */
-  const RELEASE_TAIL_MS = 300
-
   async function stop() {
     stopRequested = true
     if (ws) {
@@ -672,7 +686,18 @@ export function useVoiceInput() {
       // open for the release tail below.
       state.value = 'transcribing'
       isRecording.value = false
-      await new Promise((resolve) => window.setTimeout(resolve, RELEASE_TAIL_MS))
+      // Hand over what the gate and the worklet are still holding, then let the
+      // microphone pipeline drain. The microphone chain (device buffer, echo
+      // cancellation, resampler, worklet) delays the audio, so tearing the graph
+      // down on release cuts the last syllable — and 150 ms of a missing ending
+      // already turns a two-character utterance into nothing. The wait is
+      // measured from the last speech frame, not from the release, so it covers
+      // however long this device's pipeline is.
+      if (pcm) {
+        pcm.flush()
+        const wait = pcm.tailWaitMs()
+        if (wait > 0) await new Promise((resolve) => window.setTimeout(resolve, wait))
+      }
       // A cancel (or a finalize triggered by the engine) may have torn this
       // recording down while the tail was running.
       if (ws !== sock) return
@@ -681,8 +706,8 @@ export function useVoiceInput() {
       if (sock.readyState === WebSocket.OPEN) {
         sock.send(JSON.stringify({ type: 'end' }))
       } else if (sock.readyState === WebSocket.CONNECTING) {
-        // Nothing was captured yet; abort the handshake instead of waiting for
-        // it to open and then starting capture on a released button.
+        // The handshake never finished, so nothing was sent; abort it instead
+        // of letting it open on a released button.
         sock.close()
       }
       stopMediaStream()
@@ -733,7 +758,6 @@ export function useVoiceInput() {
       removeVoiceText(target)
       target = null
     }
-    if (fieldDoneTimer) { clearTimeout(fieldDoneTimer); fieldDoneTimer = null }
     targetEl.value = null
     draftPending.value = false
     mode.value = 'idle'
@@ -747,11 +771,12 @@ export function useVoiceInput() {
 
   /**
    * A field can disappear mid-recording (the chat box is re-keyed when the
-   * composer is rebuilt). Writing into a detached node would swallow the
-   * transcript, so the text moves to the capsule instead of being lost.
+   * composer is rebuilt, an editor is unmounted). Writing into a detached
+   * surface would swallow the transcript, so the text moves to the capsule
+   * instead of being lost.
    */
   function dropDeadTarget(): void {
-    if (!target || target.el.isConnected) return
+    if (!target || target.host.alive()) return
     const carried = target.applied
     target = null
     targetEl.value = null
@@ -819,5 +844,6 @@ export function useVoiceInput() {
     setInputText,
     shortcutKey,
     currentTuning,
+    targetRect,
   }
 }

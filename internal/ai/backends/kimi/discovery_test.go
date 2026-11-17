@@ -10,10 +10,10 @@ import (
 )
 
 func TestKimiCatalog_Structure(t *testing.T) {
-	require.NotEmpty(t, model.KimiCatalog, "should have a default catalog")
+	require.NotEmpty(t, KimiCatalog, "should have a default catalog")
 
 	defaultCount := 0
-	for _, m := range model.KimiCatalog {
+	for _, m := range KimiCatalog {
 		assert.NotEmpty(t, m.ID, "model ID should not be empty")
 		assert.NotEmpty(t, m.Name, "model Name should not be empty")
 		if m.Default {
@@ -25,7 +25,7 @@ func TestKimiCatalog_Structure(t *testing.T) {
 
 func TestKimiCatalog_ContainsKnownModels(t *testing.T) {
 	ids := make(map[string]bool)
-	for _, m := range model.KimiCatalog {
+	for _, m := range KimiCatalog {
 		ids[m.ID] = true
 	}
 	assert.True(t, ids["kimi-k3"], "should contain Kimi K3")
@@ -37,7 +37,7 @@ func TestKimiCatalog_ContainsKnownModels(t *testing.T) {
 
 func TestKimiCatalog_K3IsDefault(t *testing.T) {
 	found := false
-	for _, m := range model.KimiCatalog {
+	for _, m := range KimiCatalog {
 		if m.ID == "kimi-k3" && m.Default {
 			found = true
 		}
@@ -63,5 +63,5 @@ func TestKimiSource_DoesNotMutateCatalog(t *testing.T) {
 		return // CLI absent in this environment
 	}
 	models[0] = model.AgentModel{ID: "mutated"}
-	assert.NotEqual(t, "mutated", model.KimiCatalog[0].ID, "catalog must not be mutated by a caller")
+	assert.NotEqual(t, "mutated", KimiCatalog[0].ID, "catalog must not be mutated by a caller")
 }

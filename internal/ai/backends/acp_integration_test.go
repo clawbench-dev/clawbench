@@ -5,9 +5,7 @@ import (
 	"testing"
 
 	"clawbench/internal/ai"
-	_ "clawbench/internal/ai/backends/kimi"
-	_ "clawbench/internal/ai/backends/mimo"
-	_ "clawbench/internal/ai/backends/opencode"
+	_ "clawbench/internal/ai/backends/all"
 
 	acp "github.com/coder/acp-go-sdk"
 )

@@ -24,17 +24,21 @@ test.describe('Terminal multi-tab', () => {
     await projectApiFetch('/api/terminal/close', { method: 'POST' }).catch(() => {})
   })
 
-  test('should show terminal panel with one default tab', async ({ page }) => {
+  test('should show the empty state on first open, then create a tab on demand', async ({ page }) => {
     await terminal.switchToTerminal()
     await terminal.expectPanelVisible()
+    // Opening the terminal must not start a shell the user did not ask for:
+    // a project with no saved tabs lands on the empty state.
+    await terminal.expectTabCount(0)
+    await expect(page.locator('.terminal-panel .empty-state')).toBeVisible({ timeout: 5000 })
+
+    await terminal.ensureTabExists()
     await terminal.expectTabCount(1)
   })
 
-  test('should connect the default tab on open', async ({ page }) => {
-    await terminal.switchToTerminal()
+  test('should connect the first tab after it is created', async ({ page }) => {
+    await terminal.ensureTerminalConnected(0, 15000)
     await terminal.expectPanelVisible()
-    // Wait for the status dot to show connected (green)
-    await terminal.waitForTabConnected(0, 15000)
   })
 
   test('should create a new tab when "+" button is clicked', async ({ page }) => {

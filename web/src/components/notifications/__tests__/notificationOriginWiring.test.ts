@@ -40,6 +40,13 @@ function readWebFile(relPath: string): string {
 }
 
 const panelRaw = readWebFile('src/components/notifications/NotificationsPanelContent.vue')
+/** Plugin sources: deep-link handlers live there now (see usePluginDeeplinks). */
+const PLUGIN_SOURCES = Object.entries(
+  import.meta.glob('../../../plugins/*/plugin.ts', { eager: true, query: '?raw', import: 'default' }) as Record<
+    string,
+    string
+  >,
+).map(([path, src]) => ({ path, src: stripComments(src) }))
 const appRaw = readWebFile('src/App.vue')
 const coordinatorRaw = readWebFile('src/composables/useNavigationCoordinator.ts')
 
@@ -93,12 +100,13 @@ describe('notification navigation origin wiring', () => {
     // The helper is the single place that arms the origin.
     expect(app).toMatch(/function recordNotificationOrigin\(/)
     expect(app).toMatch(/beginExternalJump\('notifications', surfaceLabel\('notifications'\)/)
-    // Called from each handler: session / task / forge / usage-meter. The
+    // Called from each shell handler: session / task / usage-meter (forge, mail
+    // and meeting moved into their plugins and record through `ctx`). The
     // usage-meter handler is the one that used to be missed — it dispatches to
     // the settings page on narrow screens, so without it Back could only pop
     // the settings nav stack and then exited the app.
     const calls = app.match(/recordNotificationOrigin\(detail\)/g) ?? []
-    expect(calls.length, 'handleOpenSession / handleOpenTask / handleOpenForge must each record the origin').toBeGreaterThanOrEqual(3)
+    expect(calls.length, 'handleOpenSession / handleOpenTask must each record the origin').toBeGreaterThanOrEqual(2)
     expect(app).toMatch(/function handleOpenUsageMeter\(e\?: Event\)/)
     expect(app).toMatch(/handleOpenUsageMeter[\s\S]{0,400}recordNotificationOrigin\(/)
   })
@@ -109,7 +117,9 @@ describe('notification navigation origin wiring', () => {
     expect(app).toMatch(/const crossProject = [^\n]+\n\s*if \(!crossProject\) recordNotificationOrigin\(detail\)/)
     // The forge handler has no `crossProject` local — it gates on its own
     // (inverted) project check, with the recording on the same-project branch.
-    expect(app).toMatch(/if \(!projectPath \|\| projectPath === store\.state\.projectRoot\) \{[^}]*recordNotificationOrigin\(detail\)/)
+    // It lives in the plugin now, so the assertion follows it there.
+    const forgePlugin = PLUGIN_SOURCES.find((p) => p.path.includes('/forge/'))?.src ?? ''
+    expect(forgePlugin).toMatch(/if \(!projectPath \|\| projectPath === ctx\.currentProject\(\)\) \{[^}]*recordNotificationOrigin\(detail\)/)
   })
 
   it('records the usage-meter origin only on the narrow path', () => {
@@ -140,14 +150,25 @@ describe('notification navigation origin wiring', () => {
     expect(dispatched.length, 'the panel must dispatch at least one jump').toBeGreaterThan(0)
 
     for (const event of dispatched) {
-      const handler = app.match(new RegExp(`addEventListener\\('${event}', (handle\\w+)\\)`))
-      expect(handler, `App.vue must listen for ${event}`).not.toBeNull()
-
-      const handlerName = handler![1]
-      const at = app.indexOf(`function ${handlerName}`)
-      expect(at, `${handlerName} must be defined`).toBeGreaterThan(-1)
-      const body = app.slice(at, at + 1200)
-      expect(body, `${handlerName} must arm the log as its return target`).toContain('recordNotificationOrigin(')
+      // Two legitimate owners: a shell handler in App.vue (session / task /
+      // usage meter), or a plugin's declared deep link (forge / meeting / mail).
+      const shell = app.match(new RegExp(`addEventListener\\('${event}', (handle\\w+)\\)`))
+      if (shell) {
+        const handlerName = shell[1]
+        const at = app.indexOf(`function ${handlerName}`)
+        expect(at, `${handlerName} must be defined`).toBeGreaterThan(-1)
+        const body = app.slice(at, at + 1200)
+        expect(body, `${handlerName} must arm the log as its return target`).toContain(
+          'recordNotificationOrigin(',
+        )
+        continue
+      }
+      const plugin = PLUGIN_SOURCES.find((p) => p.src.includes(`event: '${event}'`))
+      expect(plugin, `${event} must be handled by App.vue or a plugin's deeplinks`).toBeDefined()
+      expect(
+        plugin!.src,
+        `${plugin!.path} must arm the log as its return target`,
+      ).toContain('recordNotificationOrigin(')
     }
   })
 

@@ -51,13 +51,13 @@ func TestExtractSummary(t *testing.T) {
 			want: "rm -rf /tmp/cache",
 		},
 		{
-			name:     "PermissionApproval file_path basename",
+			name:     "PermissionApproval file_path keeps the last two segments",
 			toolName: "PermissionApproval",
 			input: map[string]any{
 				"toolName":  "Edit",
 				"toolInput": `{"file_path":"/home/user/project/main.go"}`,
 			},
-			want: "main.go",
+			want: "project/main.go",
 		},
 		{
 			name:     "PermissionApproval falls back to toolName",
@@ -86,10 +86,10 @@ func TestExtractSummary(t *testing.T) {
 			want: "Read the config file",
 		},
 		{
-			name:     "file_path with basename",
+			name:     "file_path keeps the last two segments",
 			toolName: "Read",
 			input:    map[string]any{"file_path": "/home/user/project/main.go"},
-			want:     "main.go",
+			want:     "project/main.go",
 		},
 		{
 			name:     "file_path simple filename",
@@ -186,10 +186,10 @@ func TestExtractSummary(t *testing.T) {
 			want:     "ls",
 		},
 		{
-			name:     "path with basename",
+			name:     "path keeps the last two segments",
 			toolName: "LS",
 			input:    map[string]any{"path": "/home/user/project/src"},
-			want:     "src",
+			want:     "project/src",
 		},
 		{
 			name:     "src_path and dst_path",
@@ -198,7 +198,7 @@ func TestExtractSummary(t *testing.T) {
 				"src_path": "/src/old.go",
 				"dst_path": "/src/new.go",
 			},
-			want: "old.go → new.go",
+			want: "src/old.go → src/new.go",
 		},
 		{
 			name:     "only src_path without dst_path falls through",
@@ -308,7 +308,7 @@ func TestExtractSummary(t *testing.T) {
 				"file_path": "/src/main.go",
 				"command":   "cat main.go",
 			},
-			want: "main.go",
+			want: "src/main.go",
 		},
 		{
 			name:     "truncation at 200 chars",
@@ -562,7 +562,7 @@ func TestExtractToolCallMeta(t *testing.T) {
 			},
 			want: ToolCallMeta{
 				ToolID:      "toolu_01",
-				Summary:     "main.go",
+				Summary:     "src/main.go",
 				DisplayName: "",
 				FilePath:    "/src/main.go",
 			},
@@ -774,9 +774,9 @@ func TestSummaryPriorityFields(t *testing.T) {
 			want:  "do something",
 		},
 		{
-			name:  "file_path field uses basename",
+			name:  "file_path field keeps the last two segments",
 			input: map[string]any{"file_path": "/home/user/project/main.go"},
-			want:  "main.go",
+			want:  "project/main.go",
 		},
 		{
 			name:  "command field",
@@ -804,9 +804,9 @@ func TestSummaryPriorityFields(t *testing.T) {
 			want:  "commit",
 		},
 		{
-			name:  "path field uses basename",
+			name:  "path field keeps the last two segments",
 			input: map[string]any{"path": "/home/user/project/src"},
-			want:  "src",
+			want:  "project/src",
 		},
 		{
 			name:  "description over file_path",
@@ -816,17 +816,17 @@ func TestSummaryPriorityFields(t *testing.T) {
 		{
 			name:  "file_path over command",
 			input: map[string]any{"file_path": "/src/main.go", "command": "cat main.go"},
-			want:  "main.go",
+			want:  "src/main.go",
 		},
 		{
 			name:  "empty string field is skipped",
 			input: map[string]any{"description": "", "file_path": "/src/main.go"},
-			want:  "main.go",
+			want:  "src/main.go",
 		},
 		{
 			name:  "non-string field value is skipped",
 			input: map[string]any{"description": float64(42), "file_path": "/src/main.go"},
-			want:  "main.go",
+			want:  "src/main.go",
 		},
 	}
 

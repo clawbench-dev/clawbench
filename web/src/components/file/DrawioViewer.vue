@@ -22,19 +22,19 @@
           <p v-if="phase === 'failed' && errorText" class="drawio-error">{{ errorText }}</p>
 
           <button
-            v-if="phase !== 'installing' && !uploading && !readonly"
+            v-if="phase !== 'installing' && !uploading && (!readonly || allowInstall)"
             class="drawio-action"
             @click="startInstall"
           >
             {{ phase === 'failed' ? t('file.viewer.drawioRetry') : t('file.viewer.drawioInstall') }}
           </button>
-          <p v-else-if="phase !== 'installing' && !uploading && readonly" class="drawio-gate-desc">
+          <p v-else-if="phase !== 'installing' && !uploading && readonly && !allowInstall" class="drawio-gate-desc">
             {{ t('file.viewer.drawioReadonlyMissing') }}
           </p>
 
           <!-- Offline path: the server may have no route to github.com at all,
                so the archive can also be handed over from this machine. -->
-          <div v-if="!readonly" class="drawio-upload">
+          <div v-if="!readonly || allowInstall" class="drawio-upload">
             <span class="drawio-upload-hint">{{ t('file.viewer.drawioUploadHint') }}</span>
             <button
               class="drawio-upload-btn"
@@ -98,8 +98,13 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
 const props = defineProps({
   file: Object,
-  /** Preview-only (the public share page): no editing state, no save flow. */
+  /** Preview-only (the public share page / the quick preview card): no
+   *  editing state, no save flow. */
   readonly: { type: Boolean, default: false },
+  /** Read-only but still allowed to install the editor. The in-app quick
+   *  preview is exactly this: it cannot edit, but it is not a public page and
+   *  may legitimately trigger the one-time server-side install. */
+  allowInstall: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['requestClose'])
@@ -323,7 +328,18 @@ function onMessage(e) {
   switch (msg.event) {
     case 'init':
       iframeReady = true
+      if (props.readonly) neutralizeLeftGutter()
       sendLoad()
+      break
+    case 'load':
+      // draw.io's reply to our `load` (proto=json only). It reports whether the
+      // diagram has a page to fit; the read-only preview answers with a fit so
+      // the reader opens on the whole drawing instead of the file's own zoom.
+      // The editor ignores it: the author's zoom is the author's business.
+      if (props.readonly) {
+        lastPageVisible = msg.pageVisible !== false
+        requestFit()
+      }
       break
     case 'autosave':
       // draw.io pushes the current XML as the user edits. Keeping the latest
@@ -371,6 +387,79 @@ function sendLoad() {
   // switch) from discarding edits made before the first autosave landed.
   const xml = latestXml || props.file?.content || ''
   postToFrame({ action: 'load', xml, autosave: props.readonly ? 0 : 1 })
+}
+
+/** Breathing room (px) the content fit leaves on every side. */
+const FIT_BORDER = 16
+
+/**
+ * Undo draw.io's 10px left pull on its canvas, inside the read-only frame.
+ *
+ * In chromeless mode draw.io lays its diagram container out as
+ * `margin-left: -10px` (and 10px wider) to push the scrollbar gutter out of
+ * sight. That is fine when it owns the window, but inside an iframe it simply
+ * shifts everything 10px left: a fitted sheet lands flush against the frame's
+ * left edge with its border cut off, while the right edge keeps a visible
+ * margin. Zeroing the margin costs nothing here — with the page view on there is
+ * no scrollbar to hide (measured: no gutter appears either way).
+ *
+ * The stylesheet is injected into the frame's own document (same origin, the
+ * sandbox keeps `allow-same-origin`), because the rule lives inside draw.io and
+ * cannot be reached from this component's scoped styles. Read-only only: the
+ * editor is left exactly as draw.io ships it.
+ */
+function neutralizeLeftGutter() {
+  const doc = frameRef.value?.contentDocument
+  if (!doc) return
+  if (doc.querySelector('style[data-cb-drawio-gutter]')) return
+  const style = doc.createElement('style')
+  style.setAttribute('data-cb-drawio-gutter', '')
+  style.textContent = '.geDiagramContainer{margin-left:0!important}'
+  ;(doc.head || doc.documentElement).appendChild(style)
+}
+
+/**
+ * Whether the diagram has a page (sheet) to fit, as reported by draw.io's last
+ * `load` reply. `null` until that reply arrives.
+ */
+let lastPageVisible = null
+
+/**
+ * Fit the shared diagram into the frame (read-only preview only).
+ *
+ * draw.io's own "Fit Page" (the View menu's fit-to-page, reachable from the
+ * embed protocol through `invokeAction`) is the right primitive here: it sizes
+ * the SHEET — the page the diagram sits on — to the frame, so the reader sees
+ * the whole drawing with its margins instead of a fragment. It is also
+ * deterministic; the `fit` action's translate is corrected relative to the view
+ * it replaces, and the same diagram landed at four different offsets depending
+ * on the previous zoom (measured).
+ *
+ * Files with the page view turned off have no sheet: `fitPage` would switch the
+ * page on instead of fitting, so those fall back to the `fit` action, which
+ * sizes the CONTENT and is capped at 100% so a small diagram is not blown up.
+ *
+ * The editor is deliberately untouched: there the author's zoom is deliberate.
+ */
+function requestFit() {
+  if (!props.readonly || !iframeReady) return
+  if (lastPageVisible === false) {
+    postToFrame({ action: 'fit', border: FIT_BORDER, maxScale: 1 })
+    return
+  }
+  postToFrame({ action: 'invokeAction', actionName: 'fitPage' })
+}
+
+/**
+ * The share page's "fit the whole diagram" action.
+ *
+ * The canvas zooms freely and draw.io's own fit control lives in its menu, which
+ * this read-only embed hides — so without this the only way back to the whole
+ * picture is a browser reload.
+ */
+function fitToScreen() {
+  if (!props.readonly) return
+  requestFit()
 }
 
 function setDirty(v) {
@@ -482,7 +571,7 @@ watch(
   (content, old) => {
     if (content == null || content === old) return
     if (iframeReady) {
-      postToFrame({ action: 'load', xml: content, autosave: 1 })
+      postToFrame({ action: 'load', xml: content, autosave: props.readonly ? 0 : 1 })
       setDirty(false)
     }
   }
@@ -531,7 +620,7 @@ async function requestExit() {
   return handleExit()
 }
 
-defineExpose({ requestExit, requestExport, isDirty: () => dirty })
+defineExpose({ requestExit, requestExport, isDirty: () => dirty, fitToScreen })
 </script>
 
 <style scoped>

@@ -3,12 +3,12 @@ package qodercn
 import (
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/ai/backends/qoder"
 	"clawbench/internal/model"
 )
 
 func init() {
-	ai.RegisterBackend("qodercn", newQoderCNBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "qodercn",
 		Spec: model.BackendSpec{
@@ -52,6 +52,18 @@ func init() {
 			NativeSkillsDirs:      []string{".qoder-cn/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
 		},
+		CLI: &backends.CLIPlugin{NewBackend: newQoderCNBackend},
+		// Same protocol family as qoder (and claude): shared parsers.
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       claude.ParseACPToolCall,
+			ParseToolCallUpdate: claude.ParseACPToolCallUpdate,
+			ExtractMeta:         claude.ExtractMeta,
+		},
+		ModelSource: model.PluginSource("qodercn", func() ([]model.AgentModel, string) {
+			return qoder.DiscoverModelsIn("qodercn", QoderCNConfigRoot)
+		}),
+		// Deliberately empty: same as qoder — login-based, no provider vars.
+		ProviderEnv: &model.ProviderEnvSpec{},
 	})
 }
 

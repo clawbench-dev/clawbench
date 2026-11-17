@@ -89,6 +89,14 @@ export interface FileContentResponse {
   truncated?: boolean
   size: number
   /**
+   * Backend content classification (`openapi` / `excalidraw` / `drawio`).
+   * Present on whole-file responses and, for OpenAPI detection, on line
+   * windows too (the version key sits at the top of the document).
+   */
+  subtype?: string
+  /** YAML specs converted to JSON by the backend, for the OpenAPI renderer. */
+  specJson?: string
+  /**
    * Line-window metadata, present only when the request carried lineStart/
    * lineEnd. `totalLines` is the file's full line count; `windowStart`/
    * `windowEnd` bound `content` (1-based inclusive, `windowEnd < windowStart`

@@ -3,8 +3,8 @@
     <!-- Header: mirrors TaskListPage's .list-header (breadcrumb + icon buttons). -->
     <ActionBar class="list-header" mode="menu" size="header">
       <div class="notif-breadcrumb">
-        <Inbox class="crumb-icon" :size="14" />
-        <span>{{ t('notifications.title') }}</span>
+        <Inbox :size="14" class="panel-header-icon" />
+        <span>{{ t('nav.notifications') }}</span>
       </div>
       <RefreshButton
         :size="16"
@@ -189,7 +189,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Inbox, Folder, Unlink, Trash2, AlertCircle,
-  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Video, Hand,
+  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Hand,
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -198,10 +198,12 @@ import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { useNotifications, ALL_PROJECTS } from '@/composables/useNotifications'
 import { useToast } from '@/composables/useToast'
+import { useFeatureFlags, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app'
 import { formatClockTime, formatDayLabel, formatFullTimestamp, startOfLocalDay } from '@/utils/format'
 import { normalizeSlashes, toProjectRelative } from '@/utils/path'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 import type { NotificationItem, NotificationKind, NotificationRange } from '@/utils/notificationsApi'
 
 const props = defineProps<{ active: boolean }>()
@@ -209,6 +211,10 @@ const props = defineProps<{ active: boolean }>()
 const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
+// 任务 / Forge master switches (功能编排). Rows stay readable — the log is a
+// record of what happened — but their jump targets are gone with the tabs, so
+// the press must explain instead of dispatching a dead deep link.
+const { tasksEnabled, forgeEnabled } = useFeatureFlags()
 
 const {
   items, total, hasMore, loading, loadingMore, error,
@@ -348,7 +354,7 @@ function kindIcon(n: NotificationItem) {
     case 'task': return Clock
     case 'forge': return GitMerge
     case 'usage': return Gauge
-    case 'meeting': return Video
+    case 'meeting': return MEETING_ICON
     default: return Bot
   }
 }
@@ -378,7 +384,7 @@ function eventIcon(n: NotificationItem) {
     if (s === 'control_request') return Hand
     if (s === 'minutes_failed' || s === 'transcript_failed' || s === 'revised_failed') return X
     if (s === 'minutes_ready' || s === 'transcript_ready' || s === 'revised_ready') return Check
-    return Video
+    return MEETING_ICON
   }
   if (s === 'failed' || s === 'cancelled') return X
   if (s === 'permission_pending') return ShieldAlert
@@ -496,6 +502,14 @@ function fallbackTitle(n: NotificationItem): string {
  * the user on a page Back cannot leave (see the wiring test's per-kind guard).
  */
 async function onOpen(n: NotificationItem) {
+  // A task/forge row whose feature was turned off has no destination any more:
+  // the tab is gone and the deep link would land nowhere. Say why, and where to
+  // turn it back on. Checked before the cross-project confirm — asking "switch
+  // project?" for a jump that will not happen is worse than the plain refusal.
+  if ((n.kind === 'task' && !tasksEnabled.value) || (n.kind === 'forge' && !forgeEnabled.value)) {
+    notifyFeatureDisabled()
+    return
+  }
   if (n.sourceMissing) {
     toast.show(t('notifications.sourceDeletedHint'), { icon: 'warning', type: 'info' })
     return
@@ -610,7 +624,7 @@ function forgeTargetFromItemKey(key: string) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--panel-page-bg);
 }
 
 /* Header — unified with the task/forge panel headers. */
@@ -636,7 +650,6 @@ function forgeTargetFromItemKey(key: string) {
   white-space: nowrap;
   overflow: hidden;
 }
-.crumb-icon { color: var(--accent-color); flex-shrink: 0; }
 /* Header buttons take their size, radius, colour and hover from the shared
    ActionBar rules (size="header"); only what is genuinely theirs lives here. */
 .header-btn {

@@ -33,8 +33,8 @@ func TestGrokPlugin_NewBackend(t *testing.T) {
 		t.Error("expected BuildArgsFn/NewParserFn/FilterLineFn to be set")
 	}
 	parser := clib.NewParserFn()
-	if _, ok := parser.(*ai.GrokStreamParser); !ok {
-		t.Errorf("expected *ai.GrokStreamParser, got %T", parser)
+	if _, ok := parser.(*GrokStreamParser); !ok {
+		t.Errorf("expected *GrokStreamParser, got %T", parser)
 	}
 }
 

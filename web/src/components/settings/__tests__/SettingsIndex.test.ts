@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import SettingsIndex from '@/components/settings/SettingsIndex.vue'
+import { categoryItems, subPagePanelMap } from '@/components/settings/settingsFieldMap'
 import { MEETING_ICON } from '@/utils/meetingIcon'
 
 const i18n = createI18n({
@@ -9,22 +10,51 @@ const i18n = createI18n({
   locale: 'zh',
   messages: {
     zh: {
+      // Dock features take their label from the plugin manifest's key, not
+      // from `settings.categories.*` — the index, the manager and the panel
+      // header must all say the same thing.
+      nav: {
+        fileManager: '文件管理',
+        fileView: '文件浏览',
+        tasks: '任务',
+        notifications: '通知中心',
+        meeting: '视频会议',
+        share: '分享中心',
+        mail: '邮件',
+        knowledgeBase: '知识库',
+        portForward: '端口映射',
+        stats: '数据统计',
+        forgeGithub: 'GitHub 集成',
+      },
+      git: { history: { projectHistory: '项目历史' } },
+      terminal: { title: '终端' },
       settings: {
         categories: {
           appearance: '外观',
           project: '项目',
-          files: '文件',
+          dockPlugins: '功能编排',
+          files: '文件管理',
+          fileView: '文件浏览',
+          gitHistory: 'Git 历史',
+          stats: '统计',
           identity: '身份',
           chat: '聊天',
+          sessions: '会话管理',
           agents: 'Agent偏好',
+          tasks: '任务',
           terminal: '终端',
           tts: 'TTS语音',
           stt: '语音识别',
           meeting: '会议',
-          rag: '会话搜索',
+          rag: '会话索引',
+          embedding: '文本嵌入',
+          kb: '知识库',
           portForward: '端口映射',
-          notification: '消息通知',
-          usageMeter: '用量',
+          mail: '邮件',
+          share: '分享中心',
+          notification: '消息推送',
+          notifications: '通知中心',
+          usageMeter: '用量监控',
           security: '安全',
           debug: '调试',
           about: '关于',
@@ -32,9 +62,9 @@ const i18n = createI18n({
         groups: {
           projectAppearance: '项目与外观',
           aiChat: 'AI 与对话',
-          connectivity: '连接与集成',
-          notifySecurity: '通知与安全',
-          systemAbout: '系统与关于',
+          dockModules: '功能模块',
+          modelCapability: '模型能力',
+          system: '系统',
         },
       },
     },
@@ -44,7 +74,16 @@ const i18n = createI18n({
 // Stub lucide-vue-next icons
 const globalStubs = {
   'lucide-chevron-right': true,
+  'lucide-messages-square': true,
+  'lucide-history': true,
+  'lucide-list-todo': true,
+  'lucide-chart-column': true,
+  'lucide-share-2': true,
   'lucide-palette': true,
+  'lucide-layout-grid': true,
+  'lucide-eye': true,
+  'lucide-book-open': true,
+  'lucide-inbox': true,
   'lucide-folder-tree': true,
   'lucide-user-round': true,
   'lucide-message-square': true,
@@ -53,6 +92,7 @@ const globalStubs = {
   'lucide-volume2': true,
   'lucide-mic': true,
   'lucide-brain': true,
+  'lucide-scan-text': true,
   'lucide-arrow-left-right': true,
   'lucide-bell': true,
   'lucide-shield': true,
@@ -67,11 +107,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 22 category rows', () => {
+  it('renders 32 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(22)
+    expect(rows.length).toBe(32)
   })
 
   it('renders category labels', () => {
@@ -80,11 +120,21 @@ describe('SettingsIndex', () => {
     const labels = wrapper.findAll('.settings-index__label').map(el => el.text())
     expect(labels).toContain('项目')
     expect(labels).toContain('外观')
-    expect(labels).toContain('文件')
+    expect(labels).toContain('文件管理')
+    expect(labels).toContain('文件浏览')
+    expect(labels).toContain('项目历史')
+    expect(labels).toContain('数据统计')
     expect(labels).toContain('身份')
     expect(labels).toContain('聊天')
+    expect(labels).toContain('会话管理')
+    expect(labels).toContain('任务')
+    expect(labels).toContain('会话索引')
+    expect(labels).toContain('文本嵌入')
+    expect(labels).toContain('邮件')
+    expect(labels).toContain('分享中心')
     expect(labels).toContain('端口映射')
-    expect(labels).toContain('用量')
+    expect(labels).toContain('消息推送')
+    expect(labels).toContain('用量监控')
     expect(labels).toContain('安全')
     expect(labels).toContain('调试')
     expect(labels).toContain('关于')
@@ -97,7 +147,9 @@ describe('SettingsIndex', () => {
     expect(cards.length).toBe(5)
 
     const titles = wrapper.findAll('.settings-card__header').map(el => el.text())
-    expect(titles).toEqual(['项目与外观', 'AI 与对话', '连接与集成', '通知与安全', '系统与关于'])
+    expect(titles).toEqual([
+      '项目与外观', 'AI 与对话', '功能模块', '模型能力', '系统',
+    ])
   })
 
   it('distributes every category into exactly one group', () => {
@@ -106,16 +158,14 @@ describe('SettingsIndex', () => {
     const perCard = wrapper.findAll('.settings-card').map(card =>
       card.findAll('.settings-index__row').length,
     )
-    // 通知与安全 holds three rows: 推送通知, 用量, 安全. The usage meter sits
-    // beside push notifications rather than inside that category.
-    // AI 与对话 gained 身份 (8 → 9): the user's nickname and self-description
-    // are agent context, not chat behavior, so they lead the group.
-    // AI 摘要 was removed (9 → 8) once the model is picked where it is
-    // referenced; 会议 (10) brings the meeting defaults next to STT.
-    // 连接与集成 gained 邮箱账号 (3 → 4): a mailbox is a connection this
-    // machine holds, alongside port forwarding and the forge integration.
-    expect(perCard).toEqual([3, 10, 4, 3, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(22)
+    // 项目与外观 (2): 项目, 外观.
+    // AI 与对话 (7): 身份, 聊天, 会话管理, 会话索引, 智能体, 技能, MCP.
+    // 功能模块 (16): 功能编排 + one page per dock plugin in DOCK order, then
+    //   消息推送 and 用量监控 (features with a page but no dock entry).
+    // 模型能力 (4): 模型提供商, 文本嵌入, 语音朗读, 语音识别.
+    // 系统 (3): 调试, 安全, 关于.
+    expect(perCard).toEqual([2, 7, 16, 4, 3])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(32)
   })
 
   // The dock tab, the meeting list header and the quote chip all draw
@@ -150,11 +200,18 @@ describe('SettingsIndex', () => {
     const wrapper = mountIndex()
 
     const expectedIds = [
-      'project', 'appearance', 'files',
-      'identity', 'chat', 'agents', 'providers', 'skills', 'mcp', 'rag', 'tts', 'stt', 'meeting',
-      'terminal', 'portForward', 'mail', 'forgeIntegration',
-      'notification', 'usageMeter', 'security',
-      'debug', 'about',
+      // 项目与外观
+      'project', 'appearance',
+      // AI 与对话
+      'identity', 'chat', 'sessions', 'rag', 'agents', 'skills', 'mcp',
+      // 功能模块
+      'dockPlugins', 'files', 'fileView', 'gitHistory', 'forgeIntegration', 'tasks',
+      'terminal', 'stats', 'mail', 'kb', 'meeting', 'share', 'portForward',
+      'notifications', 'notification', 'usageMeter',
+      // 模型能力
+      'providers', 'embedding', 'tts', 'stt',
+      // 系统
+      'debug', 'security', 'about',
     ]
 
     const rows = wrapper.findAll('.settings-index__row')
@@ -171,25 +228,23 @@ describe('SettingsIndex', () => {
 // a category without its translation therefore ships a literal
 // "settings.categories.mcp" into the UI, which is exactly what happened.
 //
-// This guard reads the REAL locale files and the component SOURCE rather than
-// the hand-written message subset above: that subset is precisely what made the
-// bug invisible (it silently lacks skills / mcp / rag / forgeIntegration).
+// This guard reads the REAL locale files and the RENDERED rows rather than the
+// hand-written message subset above: that subset is precisely what made the bug
+// invisible (it silently lacks skills / mcp / rag / forgeIntegration). Reading
+// the DOM (not the component source) also covers the rows the 功能模块 group
+// DERIVES from the plugin registry — a source-text scrape cannot see those.
 describe('SettingsIndex category i18n coverage', () => {
   const localeFiles = import.meta.glob('../../../i18n/locales/*.ts', { eager: true }) as Record<
     string,
     Record<string, unknown>
   >
-  const componentSource = Object.entries(
-    import.meta.glob('@/components/settings/SettingsIndex.vue', {
-      eager: true,
-      query: '?raw',
-      import: 'default',
-    }) as Record<string, string>,
-  )[0]?.[1]
 
-  /** categoryIdsFromSource extracts the ids declared in groupDefs. */
-  function categoryIdsFromSource(src: string): string[] {
-    return [...src.matchAll(/\{ id: '([^']+)', icon:/g)].map((m) => m[1])
+  /** Every category id the index actually renders, in order. */
+  function renderedCategoryIds(): string[] {
+    return mountIndex()
+      .findAll('.settings-index__row')
+      .map((row) => row.attributes('data-category') ?? '')
+      .filter((id) => id !== '')
   }
 
   function categoriesOf(mod: Record<string, unknown>): Record<string, unknown> {
@@ -202,12 +257,24 @@ describe('SettingsIndex category i18n coverage', () => {
   }
 
   it('declares category ids', () => {
-    expect(componentSource).toBeTruthy()
-    expect(categoryIdsFromSource(componentSource as string).length).toBeGreaterThan(10)
+    expect(renderedCategoryIds().length).toBeGreaterThan(10)
+  })
+
+  // A category defined in the field map but missing from the index is
+  // unreachable: its rows exist, its i18n exists, and no user can navigate to
+  // it. The reverse (an index row with no category) renders an empty page.
+  it('lists every field-map category exactly once, and nothing else', () => {
+    const ids = renderedCategoryIds()
+    // Sub-page routes ('tts:tts_engine') have their own category entry for the
+    // panel they render, but they are reached from a parent page, not the index.
+    const subPageIds = new Set(Object.keys(subPagePanelMap).map(id => id.split(':')[1]))
+    const declared = Object.keys(categoryItems).filter(id => !subPageIds.has(id))
+    expect([...ids].sort()).toEqual([...declared].sort())
+    expect(new Set(ids).size).toBe(ids.length)
   })
 
   it('every declared category id has a non-empty label in every locale', () => {
-    const ids = categoryIdsFromSource(componentSource as string)
+    const ids = renderedCategoryIds()
     const locales = Object.entries(localeFiles)
     expect(locales.length).toBeGreaterThanOrEqual(2)
 

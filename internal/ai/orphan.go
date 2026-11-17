@@ -41,7 +41,8 @@ var orphanCmdlinePatterns = [][2]string{
 // /proc/<pid>/cmdline for known ACP agent patterns (e.g., "--acp") as a
 // fallback.
 // Processes whose parent is still alive are skipped — they are actively
-// managed, not orphans.
+// managed, not orphans. "Parent alive" means the current PPid (which may be a
+// subreaper such as `systemd --user`, not necessarily PID 1) still exists.
 // On macOS/Windows: no-op (orphaned processes exit when stdin pipe closes).
 func CleanupOrphans() {
 	// A ClawBench server is never an orphan child. If this process inherited
@@ -102,8 +103,11 @@ func parseDirEntryAsPID(entry os.DirEntry) (int, bool) {
 // parent process is dead — a living parent means the subprocess is still
 // actively managed (e.g., by a running clawbench server or a test process).
 //
-// When a parent dies, its children are re-parented to PID 1 (init/systemd).
-// So PPid=1 is a reliable indicator that the original parent is gone.
+// When a parent dies, its children are re-parented to the nearest subreaper —
+// not necessarily PID 1 (that is `systemd --user` on a desktop session, init in
+// a container, or anything holding PR_SET_CHILD_SUBREAPER). Adoption by a live
+// subreaper is indistinguishable from active management by PPid alone, so the
+// parent is probed as a process rather than compared to 1.
 //
 // Returns (isOrphan, parentAlive). parentAlive is true only when the process
 // matched orphan markers but was skipped because its parent is still alive.
@@ -162,8 +166,17 @@ func isOrphanProcess(entryName string) (isOrphan, parentAlive bool) {
 
 // isParentAlive checks whether the parent of the given process is still alive.
 // Returns true if the parent is alive (meaning the child is actively managed).
-// Returns false if the parent is dead (the child has been re-parented to PID 1,
-// or the parent PID no longer exists).
+// Returns false if the parent is dead (the child has been re-parented, or the
+// parent PID no longer exists).
+//
+// This deliberately uses the CURRENT PPid, not "was re-parented to PID 1". A
+// killed process is reaped by its current parent, so the reaper being alive is
+// exactly what keeps a true orphan from lingering as a zombie. Note this cannot
+// tell "maintained by the live parent" from "abandoned but adopted by a
+// subreaper" (systemd --user / container init / PR_SET_CHILD_SUBREAPER): both
+// have a living PPid. Orphan tests must therefore abandon the process by
+// killing its parent rather than letting the parent exit, otherwise the child
+// is adopted by the subreaper and correctly skipped.
 func isParentAlive(pid int) bool {
 	ppid, _, err := readProcStatus(pid)
 	if err != nil {
@@ -174,14 +187,17 @@ func isParentAlive(pid int) bool {
 		return false
 	}
 	// Check if the parent process still exists
-	proc, err := os.FindProcess(ppid)
+	return processAlive(ppid)
+}
+
+// processAlive reports whether the given PID currently exists.
+// On Unix, os.FindProcess always succeeds, so the real check is signal 0.
+func processAlive(pid int) bool {
+	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return false
 	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		return false // parent is dead
-	}
-	return true
+	return proc.Signal(syscall.Signal(0)) == nil
 }
 
 // killOrphan kills an orphan process and returns 1 if successful, 0 otherwise.

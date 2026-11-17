@@ -1,6 +1,8 @@
 package ai
 
 import (
+	"strings"
+
 	acp "github.com/coder/acp-go-sdk"
 
 	"clawbench/internal/model"
@@ -319,8 +321,9 @@ func buildModelListStateFromSelect(sel *acp.SessionConfigOptionSelect) *ModelLis
 	if sel.Options.Ungrouped != nil {
 		for _, v := range *sel.Options.Ungrouped {
 			state.Models = append(state.Models, model.AgentModel{
-				ID:   string(v.Value),
-				Name: v.Name,
+				ID:      string(v.Value),
+				Name:    v.Name,
+				Credits: creditsFromOptionMeta(v.Meta),
 			})
 		}
 	}
@@ -328,8 +331,9 @@ func buildModelListStateFromSelect(sel *acp.SessionConfigOptionSelect) *ModelLis
 		for _, g := range *sel.Options.Grouped {
 			for _, v := range g.Options {
 				state.Models = append(state.Models, model.AgentModel{
-					ID:   string(v.Value),
-					Name: v.Name,
+					ID:      string(v.Value),
+					Name:    v.Name,
+					Credits: creditsFromOptionMeta(v.Meta),
 				})
 			}
 		}
@@ -340,6 +344,24 @@ func buildModelListStateFromSelect(sel *acp.SessionConfigOptionSelect) *ModelLis
 	}
 
 	return state
+}
+
+// creditsFromOptionMeta reads a model's billing multiplier out of an ACP
+// config-option value's extension bag.
+//
+// CodeBuddy reports the list twice — as a `model` config option and as the
+// legacy `models` extension — and only the extension carries `_meta.credits`.
+// This covers agents that put it on the config option as well; the
+// extension-only case is filled in by ACPConn.mergeCachedModelCredits.
+func creditsFromOptionMeta(meta map[string]any) string {
+	if meta == nil {
+		return ""
+	}
+	s, ok := meta["credits"].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
 }
 
 // buildSelectStateFromACPSelect builds a SelectState from an ACP SessionConfigOptionSelect

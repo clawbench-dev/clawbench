@@ -24,6 +24,8 @@ tags:
     description: 系统资源与统计
   - name: Config
     description: 服务端配置读写与自检
+  - name: Features
+    description: 功能注册表（开关与可用性）
   - name: Theme
     description: 壁纸与外观
   - name: Projects
@@ -151,6 +153,60 @@ paths:
       responses:
         "200":
           description: 认证状态
+
+  # ── 功能注册表 ─────────────────────────────────────────────────────────────
+  /api/features:
+    get:
+      tags: [Features]
+      summary: 功能开关状态
+      description: |
+        返回服务端已注册的全部功能及其状态。这是"功能是否开启"的**唯一权威**：
+        客户端不再各自去 `/api/config` 里按形状掏 `forge.enabled` 之类的键，也不
+        维护一份默认值镜像。
+
+        每条记录四个判断维度：
+
+        - `enabled`：服务端功能开关（配置）。关闭即服务端真停（worker / 轮询 /
+          接口拒绝），该前缀下的接口返回 `409`（终端是 `503`）。
+        - `available`：**运行时**可用性（能力），与 `enabled` 正交。终端在
+          不支持 PTY 的平台上是 `enabled=true` + `available=false` —— 界面应
+          灰显并说明原因，而不是隐藏。
+        - `reason`：`""` / `disabled` / `capability`。`disabled` 优先：一个被
+          关掉的功能哪怕宿主也跑不了，对用户来说仍是"被关掉了"。
+        - `defaultOn`：该功能在未写入配置时的默认状态，供客户端在请求尚未落地
+          时做首屏判断（缺省当开）。
+
+        目前注册的功能：`forge`、`kb`、`mail`、`share`、`tasks`、`terminal`
+        （服务端开关），以及 `live`、`notifications`、`stats`（纯偏好型，恒为
+        `enabled=true`，注册是为了让客户端知道"这个功能存在且可用"）。
+      operationId: featuresList
+      responses:
+        "200":
+          description: 功能状态列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [features]
+                properties:
+                  features:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, enabled, available, reason, defaultOn]
+                      properties:
+                        id:
+                          type: string
+                          description: 稳定功能标识（= 前端页签 id）
+                        enabled:
+                          type: boolean
+                        available:
+                          type: boolean
+                        reason:
+                          type: string
+                          enum: ["", disabled, capability]
+                        defaultOn:
+                          type: boolean
 
   /api/config/password:
     post:
@@ -674,59 +730,61 @@ paths:
       summary: 读取服务端配置
       description: |
         返回完整配置（密码等敏感字段被剥离）。`appearance` 只含服务端持有的共享壁纸
-        资源（图库清单与 Bing 缓存）；来源 / 总开关 / 选中项是每台设备各自的浏览器
-        偏好，不在配置中。
+        资源；来源 / 总开关 / 选中项是每台设备的浏览器偏好，不在配置中。
 
-        `port_forward` 段包含 `enabled`、`port`、`transport`（`host_key` 与
-        `allowed_ports` 不下发）。`enabled` **恒为 `true`**：端口映射功能本身总是
-        可用，具体走哪条线由 `transport` 决定。
+        `port_forward` 段只有 `enabled` / `port` / `transport`（`host_key` 与
+        `allowed_ports` 不下发），`enabled` **恒为 `true`**。
 
-        `transport` 是**服务端开关**，取 `ssh` 或 `h2`（默认 `h2`）：
-        `ssh` 时服务端监听 SSH 端口（`port`）并让 `/api/tunnel/*` 返回 503；
-        `h2` 时服务端**完全不监听** SSH 端口，转发走主 HTTP 端口的
-        `/api/tunnel/*`。已废弃的 `both` 仍被接受（老客户端会发），归一为 `h2`。
-        客户端通过 `/api/ssh/info` 的 `transport` 字段跟随该值，不再各自持有偏好。
+        `transport` 是**服务端开关**，取 `ssh` 或 `h2`（默认 `h2`）：`ssh` 时监听
+        SSH 端口并让 `/api/tunnel/*` 返回 503；`h2` 时**完全不监听** SSH 端口。
+        已废弃的 `both` 仍被接受，归一为 `h2`。
 
-        `forge.enabled` 是 GitHub/GitLab 集成的总开关（默认 `true`）。关闭后服务端
-        停止轮询、不再产生 forge 事件与通知，**并清空所有项目的仓库绑定**（见
-        `PATCH` 段）。这是服务端开关而非每设备偏好：轮询与凭据都在服务端，同一服务器
-        的所有客户端必须一致。
+        `forge.enabled` 是 GitHub/GitLab 集成的总开关（默认 `true`）：关闭后停止轮询、
+        不再产生事件与通知，**并清空所有项目的仓库绑定**（见 `PATCH` 段）。它是服务端
+        开关而非每设备偏好。
 
-        `mail.enabled` 是内置邮件客户端的总开关（默认 `true`）：关闭后服务端停止后台
-        收信与邮件触发任务，前端隐藏邮件页签；已配置的邮箱保留，重新打开即恢复。
+        `mail.enabled` 是内置邮件客户端的总开关（默认 `true`）：关闭后停止后台收信与
+        邮件触发任务、隐藏邮件页签；邮箱账号保留。
 
-        `user` 是用户本人的一级身份配置：`user.nickname` 是智能体称呼你的名字（留空则
-        回退静态字面量 `User`；群聊路由与会议显示名共用，不能含引号 / 尖括号 / 逗号 /
-        控制字符，且不得与智能体同名）；`user.profile` 是你的自述，注入每个智能体的系统
-        提示词（上限 4000 字符）。
+        `tasks.enabled` 是定时任务的总开关（默认 `true`）：关闭后停止 cron 调度、取消
+        运行中的执行并丢弃排队的事件任务，手动运行与增删改一律 `409` `TasksDisabled`；
+        配置与历史保留，重新打开**不补跑**。同级子键见 `PATCH` 段。
 
-        `chat.group_max_speeches` 是群聊中智能体相互发言的次数上限（默认 `100`），
-        含义为「轮到用户发言前，智能体之间最多发言多少次」；主持人模式与自由模式
-        语义一致，只计**成员**发言（主持人的路由/汇总回合不计）。达到上限即停止
-        AI 讨论并写一条系统消息。`PATCH` 时须为正整数。
+        `share.enabled` 是分享链接的总开关（默认 `true`）：关闭即**撤销**所有已发出的
+        文件 / 会话 / 会议链接（行被删除、会议记录的公开标记清零），旧链接 404、新建返回
+        `409` `ShareDisabled`，重新打开**不会**恢复。同级子键见 `PATCH` 段。
 
-        `chat.recent_project_cards_max_count` 是会话列表底部「其他项目」卡片的
-        数量上限（默认 `10`）。卡片优先给有活跃会话的项目，其次是最近活跃过的
-        项目；上限在排除当前项目之后生效。`PATCH` 时须 ≥ 1。
+        `git_history.page_size` 是 Git 历史页每次加载的提交数（默认 `30`）。
 
-        `chat.recent_project_cards_window_hours` 决定「最近活跃」是多久之内
-        （默认 `24` 小时）：项目在这么多小时内用过、但当前没有活跃会话，就会以
-        收起的卡片出现。`PATCH` 时须 ≥ 1。
+        `user` 是用户本人的身份配置：`user.nickname` 是智能体称呼你的名字（留空回退
+        `User`；不能含引号 / 尖括号 / 逗号 / 控制字符，且不得与智能体同名）；
+        `user.profile` 是你的自述，注入系统提示词（上限 4000 字符）。
 
-        `meeting` 段是会议 AI 纪要的全局默认值：`auto_minutes`（会议结束后由主持人
-        客户端自动生成纪要，默认 `true`）、`proofread`（生成前先校对转写，默认
-        `true`）、`language`（`""` 跟随转写 / `zh` / `en`）、`file_excerpts`
-        （是否把会议中打开的文件内容摘录发给纪要模型，默认 `true`）、
-        `minutes_max_tokens`（最终纪要输出上限，默认 `3000`，范围 `1000`–`8000`）。
-        它**不含模型字段**：纪要复用 `ai_summary`，改一次模型会同时影响语音摘要、
-        推荐回复、自动命名等所有摘要功能。
-        `mcp.servers` 是全局 MCP 服务列表，供所有 ACP 传输的智能体使用（CLI
-        传输没有该参数，读各自的配置文件，因此不受影响）。`env` / `headers`
-        **明文返回**，与 `stt` / `rag` / `tts` 的 `api_key` 一致。
+        `chat.group_max_speeches` 是群聊中智能体相互发言的次数上限（默认 `100`，含
+        主持人模式，主持人自身的路由 / 汇总回合不计）。`chat.recent_project_cards_max_count`
+        （默认 `10`）与 `chat.recent_project_cards_window_hours`（默认 `24`）控制会话
+        列表底部「其他项目」卡片，`PATCH` 时均须 ≥ 1。
+
+        `meeting` 段是会议 AI 纪要的全局默认值：`auto_minutes`（默认 `true`）、
+        `proofread`（默认 `true`）、`language`（`""` / `zh` / `en`）、`file_excerpts`
+        （默认 `true`）、`minutes_max_tokens`（默认 `3000`，范围 `1000`–`8000`）。
+        它**不含模型字段**：纪要复用 `ai_summary`，与其共享一次改动。
+
+        `mcp.servers` 是全局 MCP 服务列表，供所有 ACP 传输的智能体使用（CLI 传输读
+        各自配置文件，不受影响）。`env` / `headers` **明文返回**，与 `stt` / `rag` /
+        `tts` 的 `api_key` 一致。
 
         每个智能体能用到哪些由它自己的 `mcpServers` 策略决定（见
         `PATCH /api/agents`），并按该智能体在 ACP `initialize` 中广告的
         `mcpCapabilities` 过滤：stdio 是协议强制项，http / sse 未广告则不发。
+      # 同 agentsList 的理由：斜杠命令（/cb-mcp）读这个端点是为了先拿到 `mcp.servers`
+      # 再整体写回，其余字段（壁纸、端口转发、TTS、用户称谓、群聊、会议…）它一个字都
+      # 用不上。渲染整段会让 /cb-mcp 的体积预算超限。上面那段仍是读 API 文档的人要看的
+      # 配置契约，因此只在提示词侧覆盖，不删原文。完整的键清单与 PATCH 语义见
+      # `PATCH /api/config` 的 note。
+      x-prompt-note: |
+        返回完整配置。改 MCP 前只用 `mcp.servers`（全局列表：`name` / `transport` /
+        `command` / `args` / `env` / `url` / `headers`）；`env` / `headers` 明文返回。
       operationId: getConfig
       responses:
         "200":
@@ -735,30 +793,40 @@ paths:
       tags: [Config]
       summary: 局部更新配置
       description: |
-        仅白名单内的键可写；类型不符直接 400（避免写入后 `yaml.Unmarshal` 失败）。
-        壁纸的共享资源（`appearance.local.items` / `appearance.bing.file`）不在白名单，
-        须经专用端点写入；每设备的壁纸选择（来源 / 开关 / 选中项）存在浏览器
-        localStorage，PATCH 会被白名单拒绝。
+        仅白名单内的键可写；类型不符直接 400。壁纸的共享资源
+        （`appearance.local.items` / `appearance.bing.file`）不在白名单，须经专用
+        端点写入；每设备的壁纸选择存在浏览器 localStorage。
 
-        `forge.enabled` 是**破坏性**开关：置为 `false` 时，在配置写入成功后清空
-        `project_forges` 全表（所有项目的仓库绑定），并把**原本有绑定**的项目标记为
-        「已解绑」，以免下一次 GET 按 git remote 自动绑回。从未绑定过的项目不会被标记。
-        重新置为 `true` **不会**恢复这些绑定（要重新关联需显式绑定一次）。
+        `forge.enabled` 是**破坏性**开关：置为 `false` 时在配置写入成功后清空
+        `project_forges` 全表，并把**原本有绑定**的项目标记为「已解绑」，以免下一次
+        GET 按 git remote 自动绑回；从未绑定过的项目不会被标记。重新置为 `true`
+        **不会**恢复这些绑定。
 
-        清空失败**不返回 500**：配置已是权威事实，返回 500 会让客户端把
-        `forge.enabled` 回滚成 `true`，界面显示「已启用」而服务端实际已停用。改为
-        `200` + `warnings` 里的一条说明；残留绑定本身无害（轮询器先判开关）。
+        清空失败**不返回 500**：配置已是权威事实，返回 500 会让客户端把开关回滚成
+        `true`，界面显示「已启用」而服务端实际已停用。改为 `200` + `warnings` 里一条
+        说明；残留绑定本身无害（轮询器先判开关）。
 
-        `mail.enabled` 只停后台收信与邮件触发任务并隐藏邮件页签，**不删除邮箱账号**，
-        因此关闭时无需确认、随时可恢复；热更新，不需要重启。
+        `mail.enabled` 只停后台收信与邮件触发任务、隐藏邮件页签，**不删除邮箱账号**；
+        热更新，无需重启。
 
-        `port_forward.enabled` 仍为白名单键，但**值被忽略**：任何值都返回 200，
-        存储值恒为 `true`（功能恒可用，走哪条线由 `transport` 决定）。
+        `tasks.enabled` 与 `share.enabled` 是**破坏性**开关，都在配置写入成功后执行：
+        `tasks.enabled=false` 停止 cron、取消运行中的执行、丢弃排队的事件任务，重新置为
+        `true` 会重启调度但**不补跑**；`share.enabled=false` 撤销全部文件 / 会话 / 会议
+        链接（删行、清零公开标记），旧链接 404，重新置为 `true` **不会**恢复。两者的清理
+        失败都不返回 500（同 `forge.enabled`），失败原因放进 `warnings`。
 
-        `port_forward.transport` 是真正的服务端开关：`ssh` / `h2` 会落库并在热更新里
-        立即启停 SSH 监听器（不需要重启）；已废弃的 `both` 仍返回 200 但存储为 `h2`。
-        其他值返回 400（`port_forward.transport must be one of: ssh,h2,both`），
-        非字符串返回 400（`port_forward.transport must be a string`）。
+        子键：`tasks.retention_enabled` / `tasks.retention_days`（1–3650）、
+        `tasks.notify_on_success` / `tasks.notify_on_failure`、`tasks.timezone`
+        （IANA 名称或空，非法值 400）；`share.allow_files` / `allow_sessions` /
+        `allow_meetings` / `allow_download`、`share.link_ttl_days`（0–3650，0 = 永久）、
+        `share.show_project_name`；`git_history.page_size`（1–200）。全部热更新。
+
+        `port_forward.enabled` 仍是白名单键但**值被忽略**，存储值恒为 `true`。
+
+        `port_forward.transport` 是真正的服务端开关：`ssh` / `h2` 落库并立即启停 SSH
+        监听器（不需要重启），已废弃的 `both` 仍返回 200 但存储为 `h2`。其他值返回 400
+        （`port_forward.transport must be one of: ssh,h2,both`），非字符串返回 400
+        （`port_forward.transport must be a string`）。
 
         `user.nickname` 非法值返回 400，与智能体同名返回 **409**
         （`msgKey=UserNicknameTaken`）；`user.profile` 超 4000 字符返回 400
@@ -766,33 +834,37 @@ paths:
 
         `meeting.language` 只接受 `""` / `zh` / `en`；`meeting.minutes_max_tokens`
         超出 `1000`–`8000` 返回 400（`msgKey=MeetingMinutesMaxTokensRange`，
-        `detail.field=meeting.minutes_max_tokens`）。`meeting.*` 全部是热更新：
-        生成时读取 `ConfigInstance`，不需要重启。
+        `detail.field=meeting.minutes_max_tokens`）。`meeting.*` 全部热更新。
 
         `tts.engine` 接受 `edge` / `openai` / `alibaba` / `tencent` / `volcano` / `minimax`，
-        其他值返回 400（`tts.engine must be one of: edge,openai,alibaba,tencent,volcano,minimax`）。
-        三家国内厂商的凭据**分节存放**（`tts.alibaba.*` / `tts.tencent.*` /
-        `tts.volcano.*`），编辑一家不会改动另一家的配置；当引擎已经切到该厂商后，
-        缺少必填凭据返回 400（`tts.alibaba.api_key` / `tts.tencent.secret_id` +
-        `secret_key` / `tts.volcano.api_key` / `tts.minimax.api_key`）。`tts.alibaba.base_url`
-        与 `tts.minimax.base_url` 非法返回 400（`tts.alibaba.base_url must be a valid URL`）。
+        其他值返回 400（`tts.engine must be one of: ...`）。各厂商凭据**分节存放**
+        （`tts.alibaba.*` / `tts.tencent.*` / `tts.volcano.*` / `tts.minimax.*`），
+        编辑一家不改动另一家；引擎已切到该厂商后缺必填凭据（`api_key`、腾讯的
+        `secret_id` + `secret_key`）返回 400。`tts.alibaba.base_url`
+        与 `tts.minimax.base_url` 非法返回 400（`... must be a valid URL`）。
 
-        `tts.openai.stream_mode`（OpenAI 兼容 TTS 的请求方式）只接受
-        `auto` / `sse` / `audio`，其他值返回 400
-        （`tts.openai.stream_mode must be one of: auto,sse,audio`）。`auto`
-        按模型名决定（`tts-1` / `tts-1-hd` 走 `audio`，其余走 `sse`），
-        `sse` / `audio` 强制指定。
+        `tts.openai.stream_mode` 只接受 `auto` / `sse` / `audio`，其他值返回 400
+        （`tts.openai.stream_mode must be one of: auto,sse,audio`）。`auto` 按模型名决定
+        （`tts-1` / `tts-1-hd` 走 `audio`，其余走 `sse`），另两个值强制指定。
 
-        `mcp.servers` 是**整体替换**的对象数组（与 `skills.repos` 一致）：
-        数组里没有的条目即被删除。元素校验：
+        `mcp.servers` 是**整体替换**的对象数组（与 `skills.repos` 一致）：数组里没有的
+        条目即被删除。元素校验：
         - `name` 非空、全局唯一，只允许字母 / 数字 / `_` / `-`
         - `transport` ∈ `stdio` / `http` / `sse`
-        - stdio 必须有 `command`，且该命令必须能在 `PATH` 中找到（保存即拒绝——
-          这是最常见的配置错误，也是唯一能在 agent 启动前拦住的）
+        - stdio 必须有 `command`，且该命令必须能在 `PATH` 中找到（保存即拒绝）
         - http / sse 必须有 `http(s)` URL
 
         该键是**热更新**：连接在每一轮开始前比对策略哈希，变了就带着新列表重连，
         因此不会出现在 `changed_cold_fields` 里，也不需要重启。
+      # /cb-mcp 只需要「mcp.servers 是整体替换 + 元素校验 + 热更新」这三件事；上面那段
+      # 覆盖了同一批校验，但也带着壁纸、端口转发、TTS、用户称谓、群聊、会议、分享、
+      # 定时任务的逐键规则——那些是写 API 文档的人要的，不是 MCP 命令要的。渲染整段
+      # 正是 /cb-mcp 超预算的来源。原文保留，提示词侧改用下面这条摘要。
+      x-prompt-note: |
+        `mcp.servers` 是**整体替换**的数组：先 GET、改完再整份写回，没带的条目即被删除。
+        元素 `name`（唯一，字母 / 数字 / `_` / `-`）、`transport` ∈ `stdio` / `http` / `sse`；
+        stdio 必须有 `command` 且在 `PATH` 中，http / sse 必须有 `http(s)` URL，否则 400 并
+        指出出错的 index。全部热更新，无需重启。其余键也在此白名单内，但不属于 MCP 配置。
       operationId: patchConfig
       requestBody:
         required: true
@@ -1481,6 +1553,13 @@ paths:
             （`{type, teamName, isAutoTeam, hasLiveMembers, members}`）。`team_update`
             是纯实时事件（只在团队变化时推送），中途打开或重连的客户端拿不到，团队
             面板就会永远不出现；这里随历史响应补发缓存快照，与 `planState` 同一处理。
+
+            `messages[].metadata.kbRefs`（仅助手消息，未注入知识库时缺席）：本轮
+            拼进 prompt 的知识库片段，供气泡下方的「参考了知识库 · N 段」标记与
+            来源展开使用。每项为 `{documentId, documentTitle, collectionName,
+            location, text}`；`location` 是语言中立标签（`p.12` / `slide 3` /
+            `sheet 报价 · rows 1-50` / `L1-L80` / `¶1-¶6`），由客户端按界面语言
+            格式化。
     post:
       tags: [Chat]
       summary: 发送聊天消息
@@ -1961,6 +2040,13 @@ paths:
       description: |
         新建会话。显式指定 `agentId` 时，若该 agent 已被禁用，返回 `400` +
         `msgKey=AgentDisabled`（禁用只影响新建；已存在会话继续可用）。
+
+        若目标是一个 **ACP 智能体且从未上报过任何能力**（模型 / 思考档位 / 模式 /
+        斜杠命令全空），服务端会在响应返回后**在后台**跑一次与
+        `POST /api/agents/{id}/refresh-models` 相同的探测（临时开会话、采集、删除），
+        完成后广播 `agents_updated`。目的是让新建会话里的模型/模式选择器不是空的。
+        **不阻塞创建**，也**不会**因探测失败而报错（未登录、进程起不来都是常见情况，
+        第一条消息本来就会握手补齐），失败只记日志。
       requestBody:
         required: true
         content:
@@ -4470,6 +4556,11 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           description: token 不存在或不属于当前项目
+        "409":
+          description: |
+            分享功能已关闭时不能发布（`enabled=true`，`msgKey=ShareDisabled`），
+            或会议分享被 `share.allow_meetings=false` 关闭（`msgKey=ShareMeetingsDisabled`）；
+            取消发布始终允许。
         "502":
           description: STT 转写失败（该段留空，不影响共享）
 
@@ -4917,6 +5008,93 @@ paths:
         "404":
           description: token 不存在或不属于当前项目
 
+  /api/live-share/notes/recording:
+    post:
+      tags: [LiveShare]
+      summary: 追加一段屏幕录制
+      description: |
+        发布端在本地把「画面 + 标注」合成后录制，按固定间隔切片上传；服务端按
+        `seq` 顺序追加到同一个 WebM 文件。
+
+        **有序且幂等**：同一 `(token, recordingId, seq)` 重试只返回当前状态，
+        不会把同一段字节写两遍（文件中间多一段就等于整段视频损坏）；`seq` 跳号
+        返回 409，客户端据此停止录制并报错——缺片段的 WebM 无法解码。
+
+        文件名由服务端生成（`recording/<开始毫秒>-<recordingId>.webm`），与录音、
+        关键画面同目录，因此会议记录的「资源」页签会直接列出它。单个切片 ≤16 MiB，
+        单个录制文件 ≤4 GiB。
+      operationId: liveShareNoteRecordingAppend
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+        - name: recordingId
+          in: query
+          required: true
+          schema: { type: string, maxLength: 64, pattern: "^[A-Za-z0-9_-]+$" }
+          description: 客户端生成，一次「开始录制」一个
+        - { name: seq, in: query, required: true, schema: { type: integer, minimum: 0 } }
+        - { name: at, in: query, required: false, schema: { type: integer, format: int64 }, description: 开始录制的 Unix 毫秒，用于文件排序 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: MediaRecorder 切片（第一片带容器头）
+      responses:
+        "200":
+          description: 已追加（或该片已在文件中）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fileName: { type: string, description: 相对会议目录的路径 }
+                  bytes: { type: integer, format: int64 }
+                  nextSeq: { type: integer, description: 下一段期望的序号 }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+        "409":
+          description: seq 跳号或文件已存在（服务端丢了会话/客户端跳片），客户端应停止录制
+        "413":
+          description: 切片超过 16 MiB 或录制文件超过 4 GiB
+
+  /api/live-share/notes/recording/finish:
+    post:
+      tags: [LiveShare]
+      summary: 结束一段屏幕录制
+      description: |
+        关闭服务端为这段录制保留的会话并回报文件状态。**文件在最后一片写入时就
+        已完整**，这个调用只负责停止记忆会话、让前端拿到落盘路径；重复调用（或
+        会议已结束、会话已被清理）返回空 `fileName`，不报错。
+      operationId: liveShareNoteRecordingFinish
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, recordingId]
+              properties:
+                token: { type: string }
+                recordingId: { type: string }
+      responses:
+        "200":
+          description: 会话已关闭
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fileName: { type: string, description: 相对会议目录的路径；空表示会话不存在 }
+                  bytes: { type: integer, format: int64 }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: token 不存在或不属于当前项目
+
   /api/live-share/notes/sessions:
     get:
       tags: [LiveShare]
@@ -5018,6 +5196,35 @@ paths:
           description: token 不存在或不属于当前项目
         "409":
           description: 会议仍在进行，或纪要正在生成
+
+  /api/live-share/notes/sessions/all:
+    delete:
+      tags: [LiveShare]
+      summary: 清空本项目的全部会议记录
+      description: |
+        逐个删除本项目所有会议（记录行、转写、聊天、录音、画面，以及磁盘上的会议目录），
+        **不可恢复**。隐藏行（升级时无法归到时间线上的旧记录）也在清理范围内——列表看不到它们，
+        没有别的入口能删。
+
+        与单条删除不同：仍在发布中的会议、纪要/校对任务仍在运行的会议会被**跳过**而不是整批拒绝，
+        返回值里分别给出删掉几条、跳过几条。一次清空不该被一场正在开的会卡住。
+      operationId: liveShareNotesClearAll
+      responses:
+        "200":
+          description: 已按可删范围清理完毕
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: integer
+                    description: 实际删除的会议数
+                  skipped:
+                    type: integer
+                    description: 被跳过的会议数（仍在进行、或产物任务正在运行）
+        "403":
+          description: 缺少项目上下文
 
   /api/live-share/notes/sessions/share:
     patch:
@@ -5235,6 +5442,10 @@ paths:
       responses:
         "200":
           description: 分享 token
+        "409":
+          description: |
+            分享功能已关闭（`msgKey=ShareDisabled`），或文件分享被
+            `share.allow_files=false` 关闭（`msgKey=ShareFilesDisabled`）。
     get:
       tags: [Share]
       summary: 列出分享
@@ -5330,6 +5541,10 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+        "409":
+          description: |
+            分享功能已关闭（`msgKey=ShareDisabled`），或会话分享被
+            `share.allow_sessions=false` 关闭（`msgKey=ShareSessionsDisabled`）。
     delete:
       tags: [Share]
       summary: 关闭会话分享
@@ -5447,6 +5662,9 @@ paths:
         `{token}/doc/{dirKey}/{rel}`（HTML 文档及其资源，见下）。token 不存在一律 404，
         零信息暴露。
 
+        `{token}/download` 在 `share.allow_download=false` 时返回 **403**
+        （`msgKey=ShareDownloadDisabled`）；预览与 `{token}/local/...` 不受影响。
+
         **目录分享（`{token}/list`）**返回 `{kind, name, path, root, parent, atRoot,
         crumbs, entries}`：`kind` 为 `dir` 时 `entries` 是 `{name, type, size, modified}`
         数组（目录在前，再按名称不区分大小写排序，**不隐藏点文件**），`kind` 为 `file`
@@ -5470,9 +5688,16 @@ paths:
         实际以分享范围校验为准（编码 `/` 或项目外目录一律 404）。其余资源类型走
         `.css/.js/.woff2` 等网页资源 MIME；基础表 `mimeTypes` 仍**不得**含 `.html`。
 
-        会话分享走另外两个子路径：`{token}/meta`（返回 `kind` 为 `file` / `dir` /
-        `session` / `live`，供分享页判断该渲染哪种视图）与 `{token}/session`（返回**实时装配**的
+        会话分享走另外两个子路径：`{token}/meta` 与 `{token}/session`（返回**实时装配**的
         会话 JSON）。两者同样免鉴权、token 不存在一律 404。
+
+        **`{token}/meta`** 返回 `{kind, title?, messageCount?, projectName?, allowDownload, ...}`：
+        `kind` 为 `file` / `dir` / `session` / `live`，供分享页判断该渲染哪种视图（直播的
+        `live` 另有 `notesEnabled` / `video` / `ended` / `startedAt` / `endedAt`）。
+        - `projectName`：来源项目显示名，**仅当 `share.show_project_name` 打开时出现**；
+          关闭后该字段整体省略（文件、会话、会议三种分享一致，直播房间同样过滤）。
+        - `allowDownload`：是否允许下载（`share.allow_download`），文件/目录分享页据此决定
+          是否给出下载按钮；服务端在 `{token}/download` 上同样强制该开关，两者不会不一致。
 
         **直播共享**另有 `{token}/signal`（信令 WebSocket）与 `{token}/notes`
         （AI 听记时间线 + 纪要状态，`?since=` 增量）。
@@ -5579,6 +5804,9 @@ paths:
           description: |
             `{token}/session` 专用：装配并发已达上限且排队超过服务端窗口。
             带 `Retry-After`（秒）。token 无效时仍是 404，不会因为负载变成 503。
+        "403":
+          description: |
+            `{token}/download` 专用：`share.allow_download=false`（`msgKey=ShareDownloadDisabled`）。
         "404":
           $ref: "#/components/responses/Error"
 
@@ -5614,10 +5842,15 @@ paths:
         克隆的 git 仓库、当前项目的 `.agents/skills`）扫描到的 Skill 清单，以及 git 同步状态。
 
         同一名字的 Skill 可能来自多个来源；清单按来源如实列出（`source_kind` 为
-        `own` / `project` / `user` / `git` / `other`），注入系统提示词时再按优先级去重。
+        `own` / `user` / `project` / `git` / `other`），注入系统提示词时再按优先级去重。
+        优先级顺序：`own` > `user` > `project` > `git` > `other`。同名条目里只有一个会生效，
+        其余行带 `shadowed_by` 指向生效那一条的路径。
 
         项目级来源（`project`）按请求项目的 Cookie 限定：只列出**当前项目**的
-        `<projectPath>/.agents/skills`，其他项目的技能不会出现。
+        `<projectPath>/.agents/skills`，其他项目的技能不会出现。项目技能默认**不**自动注入
+        （`project_auto_inject` 为 false），清单仍照常列出。
+
+        `skipped` 列出「有 SKILL.md 但加载失败」的目录，用来回答「装了为什么看不到」。
 
         仓库令牌只写不读：`repos[].has_token` 只表示是否已配置。
       responses:
@@ -5630,6 +5863,19 @@ paths:
                 properties:
                   enabled:
                     type: boolean
+                  project_auto_inject:
+                    type: boolean
+                    description: |
+                      是否把当前项目的 `.agents/skills` 自动注入系统提示。默认 false：项目技能
+                      来自工作目录（可能是刚 clone 的陌生仓库），描述会原文进入每轮提示。清单与
+                      `#技能名` 引用不受该开关影响。
+                  disabled:
+                    type: array
+                    items:
+                      type: string
+                    description: |
+                      不参与自动注入的技能名（已规范化：小写、去掉开头的 `/`）。与 `enabled`
+                      一样只管自动注入，显式 `#技能名` 引用仍然有效。
                   dirs:
                     type: array
                     items:
@@ -5701,6 +5947,25 @@ paths:
                             frontmatter 的 `name` 与其目录名不一致（规范要求一致）。此类技能仍会注入
                             系统提示词（注入表带显式路径），但**不会**出现在斜杠命令菜单中——智能体按
                             目录解析技能，用 frontmatter 名做菜单项会是一个点不动的死项。
+                        shadowed_by:
+                          type: string
+                          description: |
+                            同名技能中实际生效那一条的 SKILL.md 路径。为空表示本行就是生效项。
+                            清单会列出每一份拷贝（用户需要看到装了什么），但只有一条会被注入。
+                  skipped:
+                    type: array
+                    description: |
+                      有 `SKILL.md` 但加载失败的目录。普通目录（没有 SKILL.md）不会出现在这里。
+                    items:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                          description: SKILL.md 的绝对路径（与 `skills[].path` 同口径）
+                        reason:
+                          type: string
+                          enum: [invalid_frontmatter, missing_name, missing_description, unreadable]
+                          description: 稳定代码，由前端本地化，不随服务端语言变化
 
   /api/skills/refresh:
     post:
@@ -6357,6 +6622,10 @@ paths:
             `group_member` 成员行计入）；`taskCount` = 定时任务数；`membershipCount`
             = 活跃群成员关系数（是 `sessionCount` 的子集，单列供 UI 说明其中有群聊）。
 
+            `installCmd` 是该 agent 后端的**内置安装命令**（与 GET /api/backends 的
+            `install_cmd` 同源，同一个服务端实现，两处不会漂移），供设置页的「安装」
+            按钮使用，无需再拉一次 /api/backends。后端没有内置安装器时省略该键。
+
             `backendHasSpec` 是**运行期派生字段**（加载时由 `FindSpecByBackend != nil`
             算出，非持久化列）：`true` 表示该 agent 的 `acp_command` 由自动发现按
             backend 重写，客户端**不应**把它渲染成可编辑输入（PATCH 也会以
@@ -6393,7 +6662,7 @@ paths:
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`acp_command`、`name`、`specialty`、`custom_system_prompt`、
         `avatar`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
-        `mcp_servers`、`provider_id`。
+        `mcp_servers`、`provider_id`、`tool_policy`、`skip_project_context`。
         `avatar` 为原始 SVG 字符串；空串恢复内置图标，非空时校验大小与安全性。
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
         `custom-acp` 可改**：非空同时把 `transport` 切到 `acp-stdio` 并重启其连接；
@@ -6409,6 +6678,21 @@ paths:
         `mcp_servers` 是 MCP 启用策略
         `{"mode":"all"|"none"|"selected","names":["a"]}`：只存策略（定义在
         `mcp.servers`），省略 `mode` 即 `all`，下一轮生效。
+
+        `tool_policy` 是工具授权
+        `{"allow":["fs.read"|"fs.write"|"exec"],"maxRounds":N,"maxToolCalls":N,"bashTimeoutSec":N}`，
+        **只对内置智能体（`backend=builtin`）有意义**：它的工具由 ClawBench 自己实现，
+        未授权的工具根本不会声明给模型。外部 CLI 的工具在其进程内，本字段对它无效。
+        服务端会把授权集按蕴含关系闭包后存储（`exec` ⇒ `fs.write` ⇒ `fs.read`），
+        因为 `exec` 本身就能写文件，允许「禁止写但允许跑命令」会让设置页说谎。
+        `allow` 为空表示不开放任何工具（只能对话）。预算字段 `0` 表示用服务端默认值；
+        `maxRounds`/`maxToolCalls` 为负、或 `bashTimeoutSec` 超出 `0..3600` 返回 `400`。
+
+        `skip_project_context` 为布尔值：`true` 表示**不再**把项目的
+        `AGENTS.md` / `CLAUDE.md` 注入该智能体的系统提示词，`false` 恢复注入
+        （默认）。**只对内置智能体（`backend=builtin`）有意义**：外部 CLI 自己会读
+        这些文件。其余后端上也接受该字段（同 `tool_policy`），以便先配置再切换后端。
+        改动下一轮生效，无需重启。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 返回 `409` +
         `AgentNameTaken`；改成群聊用户称谓返回 `409` + `AgentNameReserved`。
@@ -6613,7 +6897,9 @@ paths:
         "400":
           description: 字段非法（`ProviderInvalid`）
         "409":
-          description: 名称已被占用（`ProviderNameTaken`）
+          description: |
+            名称已被占用（`ProviderNameTaken`），或新协议与已绑定的智能体冲突
+            （`ProviderProtocolConflict`，`detail.Agents` 列出这些智能体）。
 
   /api/providers/presets:
     get:
@@ -6694,10 +6980,18 @@ paths:
       responses:
         "200":
           description: 更新结果
+        "400":
+          description: 字段非法（`ProviderInvalid`，`detail.field` 指出出错字段）
         "404":
           description: 不存在（`ProviderNotFound`）
         "409":
-          description: 名称冲突（`ProviderNameTaken`）或协议与已绑定智能体冲突（`ProviderProtocolConflict`）
+          description: |
+            名称冲突（`ProviderNameTaken`）；协议与已绑定智能体冲突
+            （`ProviderProtocolConflict`，`detail.Agents` 列出这些智能体）；
+            摘要模型正在使用而端点被清空（`ProviderUsedBySummary`）；或把
+            模型清单清空（且没有 `defaultModel`）而仍有改用配置文件的智能体
+            绑定它（`ProviderModelsRequired`，`detail.Agents` 列出这些智能体 —
+            这些后端按清单里的模型 id 解析，清单为空会让它们下一轮直接报错）。
     delete:
       tags: [Providers]
       summary: 删除模型提供商
@@ -6801,7 +7095,60 @@ paths:
       operationId: backendsList
       responses:
         "200":
-          description: 后端列表
+          description: |
+            后端列表，每项含 `id/name/specialty/default_cmd/thinking_effort_levels?/
+            install_cmd?`。`install_cmd` 是后端注册表里内置的安装命令（国内会自动追加
+            npm 镜像源），与 `POST /api/backends/{id}/install` 实际执行的命令**同源**。
+
+  /api/backends/{id}/install:
+    post:
+      tags: [Agents]
+      summary: 一键安装智能体
+      description: |
+        在本机执行该后端的**内置**安装命令（`BackendSpec.InstallCmd`），然后自动重扫
+        一次，使新装的智能体无需再手动点「重新扫描」即出现在列表里。
+
+        **命令只来自服务端注册表，请求体里的任何字段都被忽略**：否则这个已鉴权端点
+        就变成了任意远程执行。
+
+        执行位置是**运行 ClawBench 的机器**——远端服务器或容器里装的是那台机器，
+        不是打开界面的设备。
+
+        命令走用户登录 shell（部分后端是 `curl … | bash` 管道），独立进程组，超时
+        10 分钟；超时或断开请求都不会中止已开始的安装（避免留下半个 npm 包）。
+        同一时刻只允许一个安装（共用全局 npm prefix），并发请求返回 `409`。
+
+        命令需要 `npm`/`npx` 而那台机器上没有（或 Node 低于 20）时，**先自动装一份
+        私有 Node.js LTS**（下载 + 校验 + 解压到 `$CLAWBENCH_HOME/node`，国内优先走
+        npmmirror 镜像、失败换官方源；不需要 sudo），再执行安装命令。这一步的结果
+        以一行说明写进 `output` 开头。
+
+        失败分三类，给三种不同的话：Node 自动安装也没成功（`400
+        NodeRuntimeMissing`，`detail.Tool` 指出缺哪个、`detail.Error` 是自动安装失败
+        的原因）、命令自己失败（`500 AgentInstallFailed`，`detail.Output` 是输出
+        **末尾**一段——失败原因总在最后；命令没有任何输出时用
+        `AgentInstallFailedNoOutput`）、后端没有内置安装命令
+        （`400 InstallCommandUnavailable`）。
+      operationId: backendInstall
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: |
+            `{ ok, backend, command, output, durationMs, refreshed, agents,
+            defaultAgent }`。`refreshed=false` 表示装好了但自动重扫失败，客户端应
+            提示手动重新扫描；`agents`/`defaultAgent` 与 GET /api/agents 同形（按当前
+            项目过滤），供调用方直接渲染。
+        "400":
+          description: |
+            Node 运行时缺失且自动安装失败（`NodeRuntimeMissing`），或该后端无内置
+            安装命令（`InstallCommandUnavailable`）
+        "404":
+          description: 未注册的后端（`BackendNotFound`）
+        "409":
+          description: 已有安装任务在运行（`AgentInstallBusy`）
+        "500":
+          description: 安装命令失败（`AgentInstallFailed` / `AgentInstallFailedNoOutput`）
 
   # ── TTS ───────────────────────────────────────────────────────────────────
   /api/tts/generate:
@@ -7061,6 +7408,61 @@ paths:
         "200":
           description: 结果
 
+  /api/terminal/history:
+    get:
+      tags: [Terminal]
+      summary: 列出终端命令历史
+      description: |
+        返回当前项目与全局范围内记住的命令（同一命令合并成一条，`use_count` 是执行次数），
+        按最后使用时间倒序。全局范围来自各 shell 的 history 文件导入。
+      operationId: terminalHistoryList
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: 按命令内容模糊搜索（`%` 与 `_` 按字面匹配）。
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数，默认 100，上限 500。
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 命令列表
+    delete:
+      tags: [Terminal]
+      summary: 清空终端命令历史
+      operationId: terminalHistoryClear
+      responses:
+        "200":
+          description: 结果
+
+  /api/terminal/history/sync:
+    post:
+      tags: [Terminal]
+      summary: 从本机 shell 的 history 文件导入命令
+      description: |
+        读取 `~/.bash_history`、`~/.zsh_history`、fish 的 history 文件，导入最近若干条。
+        已存在的命令不会重复导入，也不会改变其次数。只读这些文件，不写入。
+      operationId: terminalHistorySync
+      responses:
+        "200":
+          description: 导入结果，`added` 为新增条数
+
+  /api/terminal/history/{id}:
+    delete:
+      tags: [Terminal]
+      summary: 删除一条终端命令历史
+      operationId: terminalHistoryDelete
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 结果
+
   /api/terminal/key-config:
     get:
       tags: [Terminal]
@@ -7220,8 +7622,12 @@ paths:
                 script:
                   type: string
                   description: |
-                    可选门控脚本（仅 cron），AI 调用前执行，工作目录为项目路径。
+                    可选门控脚本（三种触发方式都支持），AI 调用前执行，工作目录为项目路径。
+                    定时任务到点先跑；邮件任务在账号 / 文件夹 / 子串 / 附件条件通过后跑；
+                    事件任务在匹配到订阅的事件后跑。
                     退出码 0 放行并调用 AI；非 0 / 超时关闭门控，跳过本次 AI（不建会话、不发通知）。
+                    触发信息以环境变量传入（`CLAWBENCH_TRIGGER`、`CLAWBENCH_MAIL_SUBJECT`、
+                    `CLAWBENCH_EVENT_TYPE` 等），正文走标准输入。
                     结果记录在执行记录上；提示词可用模板变量：
                     {{code}}、{{stdout}}、{{stderr}}、{{output}}。
                 script_timeout:
@@ -7235,6 +7641,8 @@ paths:
           description: 新任务
         "400":
           description: 字段缺失 / cron 非法 / 脚本超时为负，或目标 agent 已被禁用（`AgentDisabled`）
+        "409":
+          description: 任务功能已关闭（`msgKey=TasksDisabled`）
 
   /api/tasks/{id}:
     get:
@@ -7262,6 +7670,10 @@ paths:
         字段未替换的无意义结果。事件任务需等待匹配的 Forge 事件触发。
         **注意**：子路径不会被父资源兜底。对 `/api/tasks/{id}/executions` 发 PUT
         返回 405，未知子路径（如 `/api/tasks/{id}/bogus`）返回 404，均不会更新任务。
+
+        任务功能关闭（`tasks.enabled=false`）时，`resume`、`trigger` 与完整更新
+        （`action=update` / 缺省）返回 `409` `TasksDisabled`；`read`、`pause`、`cancel`、
+        `stop`、`deleteExecution`、`deleteAllExecutions` 仍可用（查看与清理）。
       operationId: taskUpdate
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -7281,8 +7693,9 @@ paths:
                 script:
                   type: string
                   description: |
-                    可选门控脚本（仅 cron）。`action=update` 时生效。
+                    可选门控脚本（三种触发方式都支持）。`action=update` 时生效。
                     退出码 0 放行 AI，非 0 / 超时跳过 AI；脚本结果可在提示词中以模板变量引用。
+                    触发信息以 `CLAWBENCH_*` 环境变量传入，正文走标准输入。
                     **省略该字段表示保持不变**（与 `name` / `prompt` 等一致的部分更新语义）；
                     传空字符串表示清除脚本。
                 script_timeout:
@@ -7679,6 +8092,602 @@ paths:
           description: |
             首条消息。群聊消息带 `agent_id`（发言人成员行 id），供搜索详情把
             该条归属到具体成员；1:1 会话的消息不含该字段。
+
+  # ── Knowledge base ────────────────────────────────────────────────────────
+  # Multiple collections, each scoped globally or to one project. Files are
+  # copied into {data-dir}/knowledge/<collection id>/ and indexed for keyword
+  # (FTS5) and semantic (sqlite-vec) search. The index is separate from the
+  # chat-history RAG index: chat search never returns knowledge base content.
+  /api/kb/collections:
+    get:
+      tags: [KnowledgeBase]
+      summary: 列出当前可见的知识库
+      description: |
+        返回全局知识库 + 当前项目（由 `clawbench_project` cookie 决定）的知识库。
+        没有选择项目时只返回全局知识库。`doc_count` 是文件数量。
+      operationId: kbCollectionsList
+      responses:
+        "200":
+          description: 知识库列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collections:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/KBCollection"
+    post:
+      tags: [KnowledgeBase]
+      summary: 新建知识库
+      description: |
+        `scope` 为 `global`（任何项目可见）或 `project`（仅当前项目可见，需要
+        已选择项目）。归属创建后不可修改。
+      operationId: kbCollectionCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                description:
+                  type: string
+                scope:
+                  type: string
+                  enum: [global, project]
+                  default: project
+      responses:
+        "201":
+          description: 已创建
+        "400":
+          description: 名称为空、超长或 scope 非法
+        "403":
+          description: scope=project 但没有选择项目
+    patch:
+      tags: [KnowledgeBase]
+      summary: 修改知识库
+      description: 只更新请求体里出现的字段；`auto_inject` 控制该库是否参与聊天的自动检索。
+      operationId: kbCollectionUpdate
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                auto_inject:
+                  type: boolean
+                pinned:
+                  type: boolean
+      responses:
+        "200":
+          description: 修改后的知识库
+        "404":
+          description: 知识库不存在
+    delete:
+      tags: [KnowledgeBase]
+      summary: 删除知识库
+      description: 删除知识库、其中所有文件、索引与磁盘副本。不可恢复。
+      operationId: kbCollectionDelete
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 已删除
+        "404":
+          description: 知识库不存在
+
+  /api/kb/documents:
+    get:
+      tags: [KnowledgeBase]
+      summary: 列出文件或查看文件详情
+      description: |
+        `?collection_id=` 返回该库的文件列表；`?id=` 返回单个文件及其文本片段
+        （含定位信息，如「第 12 页」「工作表 Sheet1 第 1–50 行」）。
+        带 `?chunk_id=` 时返回该片段前后各 5 段，并在 `focus_chunk_id` 里
+        回传目标片段；片段已不存在（例如期间重建过索引）时回落到前 20 段，
+        `focus_chunk_id` 为 0。
+      operationId: kbDocumentsList
+      parameters:
+        - name: collection_id
+          in: query
+          schema:
+            type: integer
+        - name: id
+          in: query
+          schema:
+            type: integer
+        - name: chunk_id
+          in: query
+          description: 只与 `id` 一起使用，用于打开某段附近的上下文
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 文件列表或详情
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    description: 仅在按 collection_id 查询时返回
+                    items:
+                      type: object
+                  document:
+                    type: object
+                    description: 仅在按 id 查询时返回
+                  chunks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/KBChunk"
+                  focus_chunk_id:
+                    type: integer
+                    description: 命中的片段 id；0 表示未指定或该片段已不存在
+        "400":
+          description: 缺少 collection_id 或 id
+    post:
+      tags: [KnowledgeBase]
+      summary: 添加服务器上的文件
+      description: |
+        文件会被复制到数据目录，原文件移动或删除不影响知识库。支持文本类、
+        PDF、`.docx` / `.xlsx` / `.pptx`；旧版 `.doc` / `.xls` / `.ppt`、
+        图片、音视频、压缩包与可执行文件会被拒绝并说明原因。
+        内容相同的文件在同一知识库内不会重复添加。
+      operationId: kbDocumentAdd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection_id, path]
+              properties:
+                collection_id:
+                  type: integer
+                path:
+                  type: string
+                  description: 服务器上的文件路径（相对项目根或绝对路径）。
+      responses:
+        "201":
+          description: 已加入，后台开始解析与建索引
+        "400":
+          description: 不支持的文件类型或没有可提取的文字
+        "409":
+          description: 同一知识库里已有相同内容的文件
+        "413":
+          description: 文件超过大小上限
+    patch:
+      tags: [KnowledgeBase]
+      summary: 修改文件的标签
+      description: |
+        `tags` 是逗号分隔的自由文本；传空字符串即清空。只改标签，不触发重建索引。
+      operationId: kbDocumentUpdate
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags]
+              properties:
+                tags:
+                  type: string
+      responses:
+        "200":
+          description: 修改后的文件
+        "404":
+          description: 文件不存在
+
+    delete:
+      tags: [KnowledgeBase]
+      summary: 删除文件
+      operationId: kbDocumentDelete
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 已删除
+
+  /api/kb/documents/upload:
+    post:
+      tags: [KnowledgeBase]
+      summary: 上传文件到知识库
+      description: multipart 表单，字段 `file` 与 `collection_id`（也可用查询参数传 `collection_id`）。
+      operationId: kbDocumentUpload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, collection_id]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                collection_id:
+                  type: integer
+      responses:
+        "201":
+          description: 已上传，后台开始解析与建索引
+        "400":
+          description: 不支持的文件类型或表单不完整
+        "413":
+          description: 文件超过大小上限
+
+  /api/kb/documents/import:
+    post:
+      tags: [KnowledgeBase]
+      summary: 把整个文件夹加入知识库
+      description: |
+        递归遍历该文件夹，把其中**受支持**的文件逐个加入知识库（图片、音视频、
+        压缩包、旧版 Office、超大文件会被跳过并计入 `skipped`）。隐藏文件与
+        隐藏目录、依赖/构建目录（`.git`、`node_modules`、`dist` 等）不参与导入；
+        符号链接一律跳过。单次最多导入 500 个文件，超出时 `truncated` 为 true。
+        单个文件失败不影响其余文件。
+        `dry_run: true` 只做遍历与校验，返回「将会加入/跳过/重复/失败」的数量，
+        不复制任何文件；面板用它在大目录导入前先给用户看数字。
+      operationId: kbDocumentImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection_id, path]
+              properties:
+                collection_id:
+                  type: integer
+                path:
+                  type: string
+                  description: 文件夹路径（相对项目根或绝对路径）。
+                dry_run:
+                  type: boolean
+                  description: 只预览，不写入
+      responses:
+        "200":
+          description: |
+            导入结果：`added`（新增）、`duplicates`（已存在）、`skipped`
+            （不支持或过大）、`failed`（读写/入库失败）、`truncated`（超过单次上限）。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added:
+                    type: integer
+                  duplicates:
+                    type: integer
+                  skipped:
+                    type: integer
+                  failed:
+                    type: integer
+                  truncated:
+                    type: boolean
+        "400":
+          description: 路径不是文件夹，或请求体不完整
+        "403":
+          description: 该知识库不属于当前项目
+
+  /api/kb/documents/reindex:
+    post:
+      tags: [KnowledgeBase]
+      summary: 重建单个文件的索引
+      description: 清空该文件的片段并重新解析、分块、建索引。立即返回 202。
+      operationId: kbDocumentReindex
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "202":
+          description: 已排队
+        "404":
+          description: 文件不存在
+
+  /api/kb/documents/url:
+    post:
+      tags: [KnowledgeBase]
+      summary: 从网页链接添加文档
+      description: |
+        抓取 http(s) 页面并像上传文件一样解析、切段、建索引。最多 20MB；
+        非 2xx、网络错误或页面过大返回 502。只保存响应正文，不把链接记成
+        「原文件」，因此不适用「用原文件更新」。
+      operationId: kbDocumentFromURL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [collection_id, url]
+              properties:
+                collection_id:
+                  type: integer
+                url:
+                  type: string
+                  description: http 或 https 地址
+      responses:
+        "201":
+          description: 已加入，后台开始解析与建索引
+        "400":
+          description: 地址不是 http(s)
+        "403":
+          description: 该知识库不属于当前项目
+        "502":
+          description: 抓取失败（网络、非 2xx 或页面过大）
+
+  /api/kb/documents/usage:
+    get:
+      tags: [KnowledgeBase]
+      summary: 文件被聊天引用的次数
+      description: 统计每个文件被自动检索带进聊天的次数与最近一次时间。
+      operationId: kbDocumentUsage
+      parameters:
+        - name: collection_id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 引用统计
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  usage:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        document_id: { type: integer }
+                        count: { type: integer }
+                        last_used: { type: string, format: date-time }
+
+  /api/kb/documents/move:
+    post:
+      tags: [KnowledgeBase]
+      summary: 把文件移到另一个知识库
+      description: |
+        移动磁盘副本并把文档重新排队建索引（片段里带着旧库/项目的元数据，
+        不能原地保留）。目标库已有相同内容的文件时返回 409。
+      operationId: kbDocumentMove
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, collection_id]
+              properties:
+                id:
+                  type: integer
+                collection_id:
+                  type: integer
+                  description: 目标知识库
+      responses:
+        "200":
+          description: 已移动，后台开始重建索引
+        "400":
+          description: 参数不完整
+        "403":
+          description: 源库或目标库不属于当前项目
+        "409":
+          description: 目标库已有相同内容的文件
+
+  /api/kb/documents/refresh:
+    post:
+      tags: [KnowledgeBase]
+      summary: 用原文件更新
+      description: |
+        重新读取原文件并覆盖知识库里的副本。内容没变时只返回 `changed=false`，
+        不重建索引；内容变了才替换副本并重新排队。原文件已不存在时返回 409，
+        知识库里的副本仍然可用。
+      operationId: kbDocumentRefresh
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 已处理
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changed:
+                    type: boolean
+                    description: 内容是否变化（变化才会重建索引）
+        "404":
+          description: 文件不存在
+        "409":
+          description: 原文件已经不在了
+
+  /api/kb/documents/progress:
+    get:
+      tags: [KnowledgeBase]
+      summary: 轮询文件索引状态
+      description: |
+        只返回会随索引变化的字段，供面板合并到已有列表。轮询整表会让每一行
+        都重新渲染，这个接口的目的是让只有状态变了的那几行更新。
+      operationId: kbDocumentProgress
+      parameters:
+        - name: collection_id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 文件状态列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        status:
+                          type: string
+                          enum: [pending, extracting, ready, failed]
+                        error: { type: string }
+                        warning: { type: string }
+                        chunk_count: { type: integer }
+                        fts_ready: { type: boolean }
+                        vector_ready: { type: boolean }
+        "400":
+          description: 缺少 collection_id
+        "403":
+          description: 该知识库不属于当前项目
+
+  /api/kb/search:
+    post:
+      tags: [KnowledgeBase]
+      summary: 搜索知识库
+      description: |
+        默认混合检索：关键词（BM25）与语义（向量）结果用 RRF 融合。嵌入服务
+        不可用时自动退化为关键词检索，不报错。`collection_ids` 为空时搜索当前
+        项目可见的全部知识库（全局 + 本项目），不会跨项目。返回的每个片段带
+        `location`（页码/工作表/幻灯片/行号）与 `match_positions`（字符偏移，
+        用于高亮）。
+      operationId: kbSearch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [q]
+              properties:
+                q:
+                  type: string
+                collection_ids:
+                  type: array
+                  items:
+                    type: integer
+                limit:
+                  type: integer
+                  default: 10
+                  maximum: 100
+                mode:
+                  type: string
+                  enum: [hybrid, fts, vector]
+      responses:
+        "200":
+          description: 搜索结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/KBSearchHit"
+                  total:
+                    type: integer
+                  mode:
+                    type: string
+                    enum: [hybrid, vector, fts]
+                  vector_degraded:
+                    type: boolean
+                    description: 语义这一路没跑成（嵌入服务不可用 / 索引重建中 / 向量宽度不符）；此时 mode 回落为 fts，vector_error 说明原因
+                  vector_error:
+                    type: string
+
+  /api/kb/reindex:
+    post:
+      tags: [KnowledgeBase]
+      summary: 重建知识库索引
+      description: |
+        `{"collection_id": 3}` 重建一个库；`{"kind": "vector"}` 只丢弃并重建
+        语义索引（换嵌入模型后用）；空对象重建当前可见的全部知识库。
+        有队列时立即返回 202。当前项目没有可见知识库时返回 200 与
+        `queued:false`、`detail:"no_collections"`，不会退化成“重建全部”。
+      operationId: kbReindex
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                collection_id:
+                  type: integer
+                kind:
+                  type: string
+                  enum: [vector]
+      responses:
+        "200":
+          description: 没有可重建的知识库（queued=false）
+        "202":
+          description: 已排队
+
+  /api/kb/status:
+    get:
+      tags: [KnowledgeBase]
+      summary: 知识库索引状态
+      description: |
+        `available` 表示知识库已启用；`vector_enabled` 表示配置了嵌入服务；
+        `stats` 含库数、文件数（就绪/失败/排队）、片段数、已嵌入片段数与
+        磁盘副本占用。
+        `scope=project` 只统计当前项目可见的知识库（全局库 + 本项目库），
+        与左侧知识库面板列出的集合一致；不传则返回整个安装的总量。
+      operationId: kbStatus
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          description: 传 `project` 时按当前项目过滤统计；缺省为全安装口径。
+          schema:
+            type: string
+            enum: [project]
+      responses:
+        "200":
+          description: 状态快照
 
   # ── Upgrade ───────────────────────────────────────────────────────────────
   /api/upgrade/check:
@@ -9467,6 +10476,79 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    KBCollection:
+      type: object
+      description: |
+        一个知识库。`scope` 为 `global`（任何项目可见）或 `project`（仅创建它的
+        项目可见）；`auto_inject` 控制它是否参与聊天时的自动片段检索。
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: string }
+        scope: { type: string, enum: [global, project] }
+        project_path: { type: string, description: 项目级知识库所属项目；全局库为空 }
+        auto_inject: { type: boolean }
+        pinned:
+          type: boolean
+          description: 置顶；在同归属分组内排在最前
+        doc_count: { type: integer }
+        failed_count:
+          type: integer
+          description: 解析失败的文件数，用于在库列表上提示需要处理
+        pending_count:
+          type: integer
+          description: 排队中或正在解析的文件数
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    KBChunk:
+      type: object
+      description: |
+        文档被切出的一个可检索片段。`location` 是语言中立的定位标签，
+        面板按界面语言格式化；`chunk_index` 从 0 开始，用于在详情里定位。
+      properties:
+        id: { type: integer }
+        document_id: { type: integer }
+        collection_id: { type: integer }
+        project_id: { type: integer }
+        chunk_index: { type: integer }
+        chunk_text: { type: string }
+        location: { type: string }
+        token_count: { type: integer }
+        has_embedding: { type: boolean }
+        embedding_dim: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    KBSearchHit:
+      type: object
+      description: |
+        一个命中片段。`score` 是融合后的排序分；`vector_score` 与 `fts_score`
+        分别来自语义/关键词通道，可用于判断命中来源。`location` 是原文位置
+        （页码 / 工作表 / 幻灯片 / 行号），`match_positions` 是片段内的字符偏移。
+      properties:
+        chunk_id: { type: integer }
+        document_id: { type: integer }
+        document_title: { type: string }
+        collection_id: { type: integer }
+        collection_name: { type: string }
+        location:
+          type: string
+          description: |
+            语言中立的定位标签：`p.12`（页）、`slide 3`（幻灯片）、
+            `sheet 报价 · rows 1-50`（工作表行区间）、`L1-L80`（行）、
+            `¶1-¶6`（段）。面板按当前界面语言格式化展示。
+        chunk_text: { type: string }
+        score: { type: number }
+        vector_score: { type: number }
+        fts_score: { type: number }
+        match_positions:
+          type: array
+          items:
+            type: object
+            properties:
+              start: { type: integer }
+              end: { type: integer }
+
     TLSStatus:
       type: object
       description: |
@@ -9960,41 +11042,43 @@ components:
           description: 仅 `kind=quote`：围栏代码块的语言标识（如 `go`、`issue`）。
         sourceKind:
           type: string
-          enum: [file, url, message, selection, terminal, meeting]
+          enum: [file, url, message, selection, terminal, meeting, mail]
           description: |
             仅 `kind=quote`：引用来源。`file` 本地文件、`url` 外部链接、`message` 聊天消息、
             `selection` 无来源地址的自由选区、`terminal` 终端选区（与 `selection` 同形，
-            分开是为了能标成「终端」而非泛化的「选中内容」）、`meeting` 会议（听记/纪要/转写，
-            定位键为 `meetingToken`）。
+            分开是为了能标成「终端」而非泛化的「选中内容」）、`meeting` 会议（听记/纪要/转写）、
+            `mail` 邮件。
             该字段会随 `files` 持久化：`selection`/`terminal` 与 `message` 都没有 path 与 url，
             不存下来刷新后就无法区分，抽屉会把终端引用误标为「聊天消息」。
             缺省（旧数据）由前端按 url/path 推断。
-        commitSha:
-          type: string
-          description: 仅 `kind=quote`：来源 commit（git 历史 / CI 流水线引用），用于跳转回该 commit。
-        taskId:
-          type: integer
-          description: 仅 `kind=quote`：来源计划任务 id，用于跳转回该任务；任务名在 `path` 中。
-        sessionId:
-          type: string
-          description: 仅 `kind=quote`：来源会话 id，用于跳转回该会话；会话名在 `path` 中。
-        messageId:
-          type: integer
-          description: 仅 `kind=quote`：来源消息的 DB id，用于跳转后滚动定位到该条消息。
-        executionId:
-          type: string
+        locators:
+          type: object
+          additionalProperties:
+            type: string
           description: |
-            仅 `kind=quote`：来源任务执行 id（任务执行详情页引用），用于跳转回该次运行。
-        meetingToken:
-          type: string
-          description: |
-            仅 `kind=quote`：来源会议 token，用于跳转回该会议；会议名在 `path` 中。
-            仅在会议仍存活时可用（会议是内存态，结束即失效）。
+            仅 `kind=quote`：**来源定位键**，一个开放的键值袋。
 
-            上列 `commitSha` / `taskId` / `sessionId` / `messageId` / `executionId` /
-            `meetingToken` 均为**来源定位键**：
-            客户端据此跳回源头，AI 提示词也会带上它们（形如 `[Quote 1/1] 名称 (task: 12)`），
-            以便 AI 定位源头。它们随 `files` 持久化——引用正文里不含这些信息，不存就无法再跳转。
+            客户端据此跳回源头，AI 提示词也会带上它们（形如
+            `[Quote 1/1] 名称 (task: 12, dir: .clawbench/notes/x)`），以便 AI 定位源头。
+            它们随 `files` 持久化——引用正文里不含这些信息，不存就无法再跳转。
+
+            已知键（值一律为字符串）：
+
+            | 键 | 含义 | 跳转到 |
+            |---|---|---|
+            | `commit` | git 提交 / CI 运行 | Git 历史对应提交 |
+            | `task` | 定时任务 id | 任务详情 |
+            | `execution` | 一次任务执行 id | 任务执行详情 |
+            | `session` | 会话 id | 该会话（配合 `message` 可滚到具体消息） |
+            | `message` | 消息的 DB id | 会话内该条消息 |
+            | `meeting` | 会议 token | 会议详情 |
+            | `mail` | 本地邮件 id | 邮件阅读器 |
+            | `dir` | 项目相对目录（会议的产物目录） | **不跳转**，只给 AI：让它自己打开转写/纪要/录音 |
+
+            **刻意是开放的**：加一种引用来源不需要改后端任何代码，塞一个新键即可，
+            后端会原样透传并在提示词里渲染（未知键排在已知键之后，按字典序，保证同一引用
+            每次渲染的文本完全一致）。值一律用字符串，`task: "12"` 而不是 `12`——
+            提示词是文本，数字和字符串在渲染上没有区别，统一成字符串省掉一层类型转换。
 
     GalleryItem:
       type: object

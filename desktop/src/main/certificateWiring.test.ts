@@ -62,6 +62,15 @@ describe('certificate handler is registered', () => {
     expect(src).toMatch(/cancelId:\s*1/)
     expect(src).toMatch(/response === 0/)
   })
+
+  it('asks once per origin, not once per failed socket', () => {
+    // One navigation raises the main frame plus every socket it opens; each
+    // event is paused until answered, so prompting per event stacks identical
+    // dialogs. The prompt must go through the single-flight gate.
+    const src = readRepoFile(CERT)
+    expect(src).toContain('new SingleFlightPrompts()')
+    expect(src).toContain('.run(originOf(url), () => promptTrustCertificate(')
+  })
 })
 
 describe('certificate trust is remembered by fingerprint', () => {

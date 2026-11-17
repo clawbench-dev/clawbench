@@ -36,6 +36,19 @@ class ClawbenchPcm extends AudioWorkletProcessor {
     this.pos = 0
     this.out = []
     this.frameSize = Math.round(target / 10)
+    // The first frame goes out as soon as there is any audio at all. Holding it
+    // back until a full 100 ms has accumulated puts that much dead air in front
+    // of every recording, and the first syllable is exactly what a two-character
+    // utterance cannot spare.
+    this.firstSize = Math.round(target / 50)
+    this.first = true
+    this.port.onmessage = (e) => { if (e.data === 'flush') this.flush() }
+  }
+  flush() {
+    if (!this.out.length) return
+    const pcm = Int16Array.from(this.out)
+    this.out = []
+    this.port.postMessage(pcm.buffer, [pcm.buffer])
   }
   process(inputs) {
     const input = inputs[0]
@@ -53,10 +66,9 @@ class ClawbenchPcm extends AudioWorkletProcessor {
         this.pos -= this.ratio
       }
     }
-    if (this.out.length >= this.frameSize) {
-      const pcm = Int16Array.from(this.out)
-      this.out = []
-      this.port.postMessage(pcm.buffer, [pcm.buffer])
+    if (this.out.length >= (this.first ? this.firstSize : this.frameSize)) {
+      this.first = false
+      this.flush()
     }
     return true
   }
@@ -97,6 +109,25 @@ const HANGOVER_FALLBACK_MS = 600
  * 300 ms, enough to cover the attack of a word.
  */
 const PREROLL_FRAMES = 3
+
+/**
+ * Extra audio to keep flowing after the gate would have closed on its own.
+ *
+ * The gate holds itself open for `hangoverMs` after the last speech frame
+ * precisely because a word trailing off is quieter than a word's middle. Tearing
+ * the graph down before that window expires throws away half of the audio the
+ * gate deliberately kept, which is the "the last characters are never
+ * recognised" report: the engine needs the whole syllable, and 150 ms of a
+ * missing ending turns a two-character utterance into nothing at all.
+ *
+ * Measured from the last frame the gate classified as speech, so it does not
+ * depend on how long the device pipeline is — that frame already carries the
+ * latency.
+ */
+const TAIL_MARGIN_MS = 150
+
+/** Upper bound, so an engine configured with a huge window cannot stall the release. */
+const TAIL_DRAIN_MAX_MS = 2500
 
 /**
  * Encode 16 kHz mono 16-bit PCM frames as a RIFF/WAVE blob.
@@ -180,6 +211,10 @@ export class PcmStreamer {
   private gateOpenUntil = 0
   /** Frames withheld while the gate was shut, oldest first — see PREROLL_FRAMES. */
   private preroll: ArrayBuffer[] = []
+  /** When the last frame that counted as speech reached us (epoch ms). */
+  private lastVoiceAt = 0
+  /** Gate hangover in force for this graph (see the tuning). */
+  private hangoverMs = HANGOVER_FALLBACK_MS
 
   constructor(private readonly opts: PcmStreamerOptions) {}
 
@@ -207,6 +242,7 @@ export class PcmStreamer {
     this.lastSentAt = Date.now()
     this.gateOpenUntil = 0
     this.preroll = []
+    this.lastVoiceAt = 0
     const source = ctx.createMediaStreamSource(this.opts.stream)
     let tail: AudioNode = source
     if (this.opts.tuning.bandFilter) {
@@ -231,24 +267,29 @@ export class PcmStreamer {
     const threshold = rmsThreshold(this.opts.tuning)
     const gate = this.opts.tuning.voiceGate
     const hangoverMs = this.opts.tuning.hangoverMs || HANGOVER_FALLBACK_MS
+    this.hangoverMs = hangoverMs
     node.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
       if (this.stopped) return
       const buf = e.data
       if (buf.byteLength < 2) {
         // "Cannot tell" must never mean "discard".
         this.lastSentAt = Date.now()
+        this.lastVoiceAt = this.lastSentAt
         this.opts.onFrame(buf)
         return
       }
       const rms = rmsFromInt16(new Int16Array(buf))
       this.opts.onLevel?.(rms)
       const now = Date.now()
+      // Without a gate every frame is audio, so the drain clock follows them all.
+      if (!gate) this.lastVoiceAt = now
       if (gate && rms >= threshold) {
         // Speech (re)starts: hand over the frames that led into it, then this
         // one, and hold the gate open so the tail is not clipped either.
         for (const pending of this.preroll) this.opts.onFrame(pending)
         this.preroll = []
         this.gateOpenUntil = now + hangoverMs
+        this.lastVoiceAt = now
       } else if (gate && now <= this.gateOpenUntil) {
         // Inside the hangover window: keep sending, this is the end of a word.
       } else if (gate && now - this.lastSentAt < KEEPALIVE_MS) {
@@ -282,6 +323,38 @@ export class PcmStreamer {
     this.preroll = []
     this.gateOpenUntil = 0
     this.lastSentAt = Date.now()
+    this.lastVoiceAt = 0
+  }
+
+  /**
+   * Hands over everything still held back, and asks the worklet to emit the
+   * frame it has not filled yet.
+   *
+   * Call this when the take ends, BEFORE waiting out `tailWaitMs()`. The gate
+   * withholds frames it judges to be silence, but a word trailing off below the
+   * threshold is exactly the case where the user's last characters live in that
+   * withheld buffer — and the worklet's partial frame is the last slice of all.
+   * Both are real audio that simply has not been sent yet.
+   */
+  flush(): void {
+    const held = this.preroll
+    this.preroll = []
+    for (const frame of held) this.opts.onFrame(frame)
+    this.node?.port.postMessage('flush')
+  }
+
+  /**
+   * How much longer audio must keep flowing before the graph can be torn down.
+   *
+   * Counted from the last frame the gate heard as speech, through the gate's own
+   * hangover (it is still forwarding what it considers the end of the word) plus
+   * TAIL_MARGIN_MS for the frame that is in flight. A user who paused before
+   * letting go needs no wait at all.
+   */
+  tailWaitMs(): number {
+    if (!this.lastVoiceAt) return 0
+    const deadline = this.lastVoiceAt + this.hangoverMs + TAIL_MARGIN_MS
+    return Math.max(0, Math.min(TAIL_DRAIN_MAX_MS, deadline - Date.now()))
   }
 
   /** Tears the graph down. Safe to call more than once, and before `start()`. */

@@ -114,6 +114,12 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_SERVER_URL = "server_url";
     private static final String KEY_SSH_PASSWORD = "ssh_password";
     private static final String KEY_SERVER_LIST = "server_list";
+    /**
+     * Server origins whose self-signed certificate the user accepted, so the
+     * confirmation dialog appears once per address instead of once per connect.
+     * See {@link CertificateTrust}.
+     */
+    private static final String KEY_TRUSTED_CERT_ORIGINS = "trusted_cert_origins";
     private static final String KEY_THEME = "theme_base";
     private static final String KEY_THEME_BG = "theme_bg";
     private static final String KEY_THEME_TEXT = "theme_text";
@@ -1746,18 +1752,19 @@ public class MainActivity extends AppCompatActivity {
                 handleAuthResponse(result.statusCode, url, password, result.cookies, standardClient);
             } catch (javax.net.ssl.SSLException e) {
                 // SSL error (self-signed cert, hostname mismatch, etc.)
+                //
+                // If this address was confirmed before, retry silently. Asking
+                // again on every connect is exactly what the per-address memory
+                // exists to stop; only an address we have never seen prompts.
+                if (isCertificateTrustedFor(url)) {
+                    AppLog.i(TAG, "SSL error for a previously trusted server — retrying without a prompt", e);
+                    markCertificateTrusted();
+                    retryLoginWithTrustingClient(url, password);
+                    return;
+                }
                 // Show native confirmation dialog on UI thread, then retry with trusting client
                 AppLog.w(TAG, "SSL error during pre-auth, showing confirmation dialog", e);
-                runOnUiThread(() -> showSslConfirmationDialog(() -> {
-                    try {
-                        OkHttpClient trustClient = buildTrustingOkHttpClient();
-                        AuthResult result = performLoginRequestWithClient(trustClient, url, password);
-                        handleAuthResponse(result.statusCode, url, password, result.cookies, trustClient);
-                    } catch (Exception retryEx) {
-                        AppLog.w(TAG, "SSL retry failed", retryEx);
-                        runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(retryEx)));
-                    }
-                }));
+                runOnUiThread(() -> showSslConfirmationDialog(url, () -> retryLoginWithTrustingClient(url, password)));
             } catch (Exception e) {
                 // Network error (DNS failure, connection refused, timeout, etc.)
                 // Go back to login page — never fallback to webView.loadUrl()
@@ -1772,8 +1779,11 @@ public class MainActivity extends AppCompatActivity {
      * Show SSL confirmation dialog. If the user trusts the certificate, runs the provided action
      * on a background thread. This is used by both the pre-authentication path and the
      * connectivity-check path to handle self-signed certificates at the OkHttp level.
+     *
+     * <p>Confirmation is remembered per server address, so the same server never
+     * asks twice (see {@link CertificateTrust}).
      */
-    private void showSslConfirmationDialog(Runnable onTrustAction) {
+    private void showSslConfirmationDialog(String url, Runnable onTrustAction) {
         new AlertDialog.Builder(this)
                 .setTitle(userLangString(R.string.conn_ssl_title))
                 .setMessage(userLangString(R.string.conn_ssl_message))
@@ -1782,6 +1792,7 @@ public class MainActivity extends AppCompatActivity {
                     // This allows onReceivedSslError to auto-accept when the WebView
                     // loads the same URL (since WebView doesn't share OkHttp's trust store).
                     sslCertTrustedByUser = true;
+                    rememberCertificateTrust(url);
                     new Thread(onTrustAction).start();
                 })
                 .setNegativeButton(userLangString(R.string.conn_ssl_negative), (dialog, which) -> {
@@ -1789,6 +1800,37 @@ public class MainActivity extends AppCompatActivity {
                 })
                 .setCancelable(false)
                 .show();
+    }
+
+    /** Retry the pre-auth request with the trusting client, after a certificate was accepted. */
+    private void retryLoginWithTrustingClient(String url, String password) {
+        try {
+            OkHttpClient trustClient = buildTrustingOkHttpClient();
+            AuthResult result = performLoginRequestWithClient(trustClient, url, password);
+            handleAuthResponse(result.statusCode, url, password, result.cookies, trustClient);
+        } catch (Exception retryEx) {
+            AppLog.w(TAG, "SSL retry failed", retryEx);
+            runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(retryEx)));
+        }
+    }
+
+    /** Mark the WebView's SSL handler to accept the certificate for this connection. */
+    private void markCertificateTrusted() {
+        runOnUiThread(() -> sslCertTrustedByUser = true);
+    }
+
+    /** Whether the user already accepted a certificate for this server address. */
+    private boolean isCertificateTrustedFor(String url) {
+        return CertificateTrust.isTrusted(
+                prefs.getStringSet(KEY_TRUSTED_CERT_ORIGINS, null), url);
+    }
+
+    /** Remember this server address, so a later connect does not ask again. */
+    private void rememberCertificateTrust(String url) {
+        Set<String> next = CertificateTrust.withTrusted(
+                prefs.getStringSet(KEY_TRUSTED_CERT_ORIGINS, null), url);
+        prefs.edit().putStringSet(KEY_TRUSTED_CERT_ORIGINS, next).apply();
+        AppLog.i(TAG, "Remembered the accepted certificate for " + CertificateTrust.originOf(url));
     }
 
     /**
@@ -2351,31 +2393,42 @@ public class MainActivity extends AppCompatActivity {
                     startConnectionTimeout();
                 }));
             } catch (javax.net.ssl.SSLException e) {
+                // Same rule as the login path: an address confirmed before is
+                // trusted silently, an unknown one asks.
+                if (isCertificateTrustedFor(url)) {
+                    AppLog.i(TAG, "SSL error during health check for a previously trusted server — retrying without a prompt", e);
+                    markCertificateTrusted();
+                    retryHealthCheckWithTrustingClient(url);
+                    return;
+                }
                 AppLog.w(TAG, "SSL error during health check, showing confirmation dialog", e);
-                runOnUiThread(() -> showSslConfirmationDialog(() -> {
-                    try {
-                        OkHttpClient trustClient = buildTrustingOkHttpClient();
-                        HealthCheckResult result = performHealthCheck(url, trustClient);
-                        if (result.error != null) {
-                            runOnUiThread(() -> showLoginPage(result.error));
-                            return;
-                        }
-                        final String retryServerVersion = result.serverVersion;
-                        final int retryServerProtocol = result.serverProtocol;
-                        runOnUiThread(() -> gateVersionMismatchAndProceed(url, retryServerVersion, retryServerProtocol, () -> {
-                            webView.loadUrl(url);
-                            startConnectionTimeout();
-                        }));
-                    } catch (Exception retryEx) {
-                        AppLog.w(TAG, "SSL health check retry failed", retryEx);
-                        runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(retryEx)));
-                    }
-                }));
+                runOnUiThread(() -> showSslConfirmationDialog(url, () -> retryHealthCheckWithTrustingClient(url)));
             } catch (Exception e) {
                 AppLog.w(TAG, "Health check failed", e);
                 runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(e)));
             }
         }).start();
+    }
+
+    /** Retry the connectivity check with the trusting client, after a certificate was accepted. */
+    private void retryHealthCheckWithTrustingClient(String url) {
+        try {
+            OkHttpClient trustClient = buildTrustingOkHttpClient();
+            HealthCheckResult result = performHealthCheck(url, trustClient);
+            if (result.error != null) {
+                runOnUiThread(() -> showLoginPage(result.error));
+                return;
+            }
+            final String retryServerVersion = result.serverVersion;
+            final int retryServerProtocol = result.serverProtocol;
+            runOnUiThread(() -> gateVersionMismatchAndProceed(url, retryServerVersion, retryServerProtocol, () -> {
+                webView.loadUrl(url);
+                startConnectionTimeout();
+            }));
+        } catch (Exception retryEx) {
+            AppLog.w(TAG, "SSL health check retry failed", retryEx);
+            runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(retryEx)));
+        }
     }
 
     /**
@@ -2433,8 +2486,11 @@ public class MainActivity extends AppCompatActivity {
     /**
      * Perform the HTTP POST /login request with a pre-built OkHttpClient.
      * Shared by performLoginRequest (standard client) and the SSL retry path (trusting client).
+     *
+     * <p>Package-private so the SSL-retry branch can be exercised without a real
+     * network call, like {@link #performLoginRequest}.
      */
-    private AuthResult performLoginRequestWithClient(OkHttpClient client, String url, String password) throws Exception {
+    AuthResult performLoginRequestWithClient(OkHttpClient client, String url, String password) throws Exception {
         org.json.JSONObject json = new org.json.JSONObject();
         json.put("password", password);
         RequestBody body = RequestBody.create(json.toString(),
@@ -3597,8 +3653,10 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
             // Auto-accept SSL errors if the user already confirmed the certificate
-            // at the OkHttp level during pre-authentication.
-            if (sslCertTrustedByUser) {
+            // at the OkHttp level during pre-authentication. The persisted check
+            // covers the case where the WebView loads before (or without) that
+            // pre-authentication, e.g. a reload in a later session.
+            if (sslCertTrustedByUser || isCertificateTrustedFor(url)) {
                 AppLog.i(TAG, "Auto-accepting SSL error: user already confirmed certificate");
                 handler.proceed();
                 return;
@@ -5472,6 +5530,12 @@ public class MainActivity extends AppCompatActivity {
             }
             SharedPreferences.Editor editor = prefs.edit()
                     .putString(KEY_SERVER_LIST, newList.toString());
+            // Forget the certificate we accepted for this address too: if the
+            // user adds it back it may well be a different machine behind the
+            // same address, and that has to be confirmed again.
+            Set<String> trusted = CertificateTrust.withoutTrusted(
+                    prefs.getStringSet(KEY_TRUSTED_CERT_ORIGINS, null), url);
+            editor.putStringSet(KEY_TRUSTED_CERT_ORIGINS, trusted);
             if (url.equals(prefs.getString(KEY_SERVER_URL, ""))) {
                 editor.putString(KEY_SERVER_URL, "");
                 editor.putString(KEY_SSH_PASSWORD, "");

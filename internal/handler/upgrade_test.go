@@ -719,3 +719,60 @@ func TestServeUpgradeCheck_DevBuildBehindRegistry(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, true, resp["has_upgrade"])
 }
+
+// --- Managed by the desktop shell ---
+
+// A managed server must refuse to self-upgrade, even though every other guard
+// passes. The desktop app ships this binary; replacing it from inside would
+// fight the app's own updater and relaunch a process the shell does not own.
+func TestServeUpgradeStart_RefusedWhenManaged(t *testing.T) {
+	orig := model.ManagedByEmbedder
+	model.ManagedByEmbedder = true
+	defer func() { model.ManagedByEmbedder = orig }()
+
+	origInProgress := upgradeIsInProgress
+	origPerform := upgradePerformUpgrade
+	defer func() {
+		upgradeIsInProgress = origInProgress
+		upgradePerformUpgrade = origPerform
+	}()
+	upgradeIsInProgress = func() bool { return false }
+	upgradeCalled := false
+	upgradePerformUpgrade = func(string) { upgradeCalled = true }
+
+	req := newRequest(t, http.MethodPost, "/api/upgrade/start", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeStart, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.False(t, upgradeCalled, "a managed server must never start an upgrade")
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "ManagedByEmbedder", resp["msgKey"])
+}
+
+// The check response carries the marker the UI uses to hide the in-app upgrade
+// entry. The client must not have to infer "am I embedded" from anything else.
+func TestServeUpgradeCheck_ReportsManaged(t *testing.T) {
+	origFetch := upgradeCheckForUpgradeInfo
+	defer func() { upgradeCheckForUpgradeInfo = origFetch }()
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "v1.0.0", LatestVersion: "v1.1.0"}, nil
+	}
+
+	orig := model.ManagedByEmbedder
+	defer func() { model.ManagedByEmbedder = orig }()
+
+	for _, managed := range []bool{false, true} {
+		model.ManagedByEmbedder = managed
+		req := newRequest(t, http.MethodGet, "/api/upgrade/check", nil)
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeUpgradeCheck, req)
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, managed, resp["managed"], "managed marker must echo model.ManagedByEmbedder")
+	}
+}

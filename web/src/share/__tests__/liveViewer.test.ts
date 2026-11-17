@@ -316,7 +316,7 @@ describe('control bus', () => {
     expect(lastPC().channels[0].sentJSON()).toEqual([])
   })
 
-  it('asks for the missed transcript once its channel opens', () => {
+  it('asks for the missed transcript and ink once its channel opens', () => {
     const viewer = new LiveViewer({
       token: 'tok123',
       callbacks: {},
@@ -330,7 +330,7 @@ describe('control bus', () => {
     // any earlier would have the publisher's answer race a half-open channel.
     expect(dc.sentJSON()).toEqual([])
     dc.onopen?.()
-    expect(dc.sentJSON()).toEqual([{ t: 'chat-history-req' }])
+    expect(dc.sentJSON()).toEqual([{ t: 'chat-history-req' }, { t: 'ink-sync-req' }])
   })
 })
 
@@ -1417,15 +1417,16 @@ describe('LiveViewer relay mode', () => {
     expect(lastWS().sentJSON().some((m) => m.type === 'offer')).toBe(false)
   })
 
-  it('asks for the transcript as soon as the room is up', async () => {
+  it('asks for the transcript and ink as soon as the room is up', async () => {
     const { viewer } = setupRelay()
 
     await joinRelay(viewer)
 
-    // Peer-to-peer sends this from the data channel's `open`; a relayed room
-    // has no such event, so it must be sent here or late joiners see an empty
-    // chat panel forever.
+    // Peer-to-peer sends these from the data channel's `open`; a relayed room
+    // has no such event, so they must be sent here or late joiners see an empty
+    // chat panel and a blank picture forever.
     expect(relayMock.sendRelayData).toHaveBeenCalledWith(room, { t: 'chat-history-req' })
+    expect(relayMock.sendRelayData).toHaveBeenCalledWith(room, { t: 'ink-sync-req' })
   })
 
   it('reaches playing when the host picture arrives, and merges its audio', async () => {

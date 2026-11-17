@@ -465,6 +465,16 @@ jobs:
           generate_release_notes: false
           files: pkg-windows/clawbench-windows-amd64-${{ env.RELEASE_TAG }}.zip
 
+      - name: Upload server for the desktop build
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-server
+          # The only copy of the server built with the frontend embedded — which
+          # is exactly what the desktop app ships and starts. The desktop job
+          # consumes it instead of rebuilding (desktop/scripts/build-server.mjs
+          # reuses it when present).
+          path: clawbench.exe
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-package
@@ -1020,7 +1030,11 @@ jobs:
     # Gate on lint + tests like every other build job. Without this the
     # desktop packages were the only ones that could reach npm while the
     # rest of the release was still failing its checks.
-    needs: [test, client-guard]
+    #
+    # build-windows is here for the embedded server: the desktop app ships the
+    # SAME binary the standalone package does (frontend embedded once, version
+    # stamped once), rather than a second go build that could drift.
+    needs: [test, client-guard, build-windows]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -1067,6 +1081,15 @@ jobs:
         with:
           go-version: '1.25'
 
+      - name: Download the embedded server
+        # NOT conditional on NEEDS_BUILD: the fused package must exist for every
+        # release, including one that reuses the previous desktop shell. The
+        # shell is reused; the server is always this release's build.
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-server
+          path: clawbench-server/
+
       - name: Set desktop version from tag
         if: env.NEEDS_BUILD == 'true'
         # desktop/package.json keeps a placeholder version (0.1.0) in the repo.
@@ -1082,6 +1105,11 @@ jobs:
 
       - name: Build desktop (Windows)
         if: env.NEEDS_BUILD == 'true'
+        # prebuild runs scripts/build-server.mjs, which COPIES the downloaded
+        # artifact (clawbench-server/clawbench.exe) into assets/server/ for
+        # electron-builder. It never rebuilds: that copy carries the embedded
+        # frontend and the release's version stamp, both produced exactly once
+        # by build-windows.
         run: |
           cd desktop
           npm ci
@@ -1093,6 +1121,21 @@ jobs:
         # first, and without the sidecar that install could never verify a
         # payload and would re-download ~150MB on every upgrade.
         run: node desktop/scripts/shell-fingerprint.mjs desktop/release/win-unpacked
+
+      - name: Strip the server for the thin package (Windows)
+        if: env.NEEDS_BUILD == 'true'
+        # The thin package connects to a server elsewhere. Keeping the 150MB
+        # binary here would silently turn every Windows desktop install into the
+        # embedded one, and the payload staged below is `resources/` only — it
+        # must not carry a server either (see extraFiles in electron-builder.yml).
+        # The fused package is assembled from this zip plus the server artifact
+        # below, so both variants are produced on every release — including the
+        # ones where the desktop shell itself is reused from a previous tag.
+        shell: pwsh
+        run: |
+          $dir = "$PWD/desktop/release/win-unpacked/server"
+          if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+          if (Test-Path $dir) { throw "failed to strip $dir from the thin package" }
 
       - name: Zip desktop (Windows)
         if: env.NEEDS_BUILD == 'true'
@@ -1109,6 +1152,29 @@ jobs:
         # sidecar is NOT dot-prefixed (see shell-fingerprint.mjs).
         shell: pwsh
         run: Compress-Archive -Path desktop/release/win-unpacked/* -DestinationPath "desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip"
+
+      - name: Assemble fused desktop (Windows)
+        # Thin zip + the server at the app root = the "all-in-one" package. Doing
+        # it from the zip (rather than the unpacked dir) is what lets a release
+        # that REUSED the previous shell still ship a fused package: the shell is
+        # byte-identical to the thin one, only `server/` differs.
+        #
+        # .NET's ZipFile, not Compress-Archive: the latter's `*` glob skips
+        # hidden entries, and `resources/` contains dotfiles (cpu-features'
+        # .eslintrc.js) that must survive the round trip.
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $thin = "$PWD/desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip"
+          $fusedDir = "$PWD/desktop/release/fused-unpacked"
+          $out = "$PWD/desktop/release/clawbench-desktop-windows-x64-local-$env:RELEASE_TAG.zip"
+          if (Test-Path $fusedDir) { Remove-Item -Recurse -Force $fusedDir }
+          if (Test-Path $out) { Remove-Item -Force $out }
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($thin, $fusedDir)
+          New-Item -ItemType Directory -Force -Path "$fusedDir/server" | Out-Null
+          Copy-Item "$PWD/clawbench-server/clawbench.exe" "$fusedDir/server/clawbench.exe"
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($fusedDir, $out)
+          Remove-Item -Recurse -Force $fusedDir
 
       - name: Build desktop payload (Windows)
         if: env.NEEDS_BUILD == 'true'
@@ -1173,10 +1239,31 @@ jobs:
             Write-Host "full package OK: $($names.Count) entries"
           } finally { $zip.Dispose() }
 
+      - name: Verify fused package (Windows)
+        # Runs on BOTH paths: the fused package is assembled unconditionally, so
+        # a release that reused the shell still has one to check.
+        #
+        # The fused package is the one feature that is invisible until launch:
+        # without the binary the app opens to an error dialog every time. Assert
+        # the server is at the archive root (extraFiles), not under resources/
+        # (where a payload install would delete it).
+        shell: pwsh
+        run: |
+          $zip = [System.IO.Compression.ZipFile]::OpenRead("$PWD/desktop/release/clawbench-desktop-windows-x64-local-$env:RELEASE_TAG.zip")
+          try {
+            $names = $zip.Entries | ForEach-Object { $_.FullName }
+            if ($names -notcontains 'server/clawbench.exe') { throw 'fused package is missing server/clawbench.exe' }
+            if ($names -contains 'resources/server/clawbench.exe') { throw 'fused package put the server under resources/, where a payload would remove it' }
+            if ($names -notcontains 'shell-fingerprint.txt') { throw 'fused package is missing shell-fingerprint.txt' }
+            Write-Host "fused package OK: $($names.Count) entries"
+          } finally { $zip.Dispose() }
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: desktop/release/clawbench-desktop-windows-x64-${{ env.RELEASE_TAG }}.zip
+          files: |
+            desktop/release/clawbench-desktop-windows-x64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-windows-x64-local-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         if: env.NEEDS_BUILD == 'true'
@@ -1769,6 +1856,41 @@ jobs:
 
           NOTES="${NOTES}---\n\n**完整变更日志**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}\n"
 
-          # Write notes to file and update release
           printf '%b\n' "$NOTES" > /tmp/release-notes.md
+
+          # 安装脚本的 sha256 写进 Release 说明：落地页不提供校验值（脚本由
+          # workflow 从同一个 checkout 复制过去，页面自己算既不权威也容易与用户
+          # 下载到的字节不一致），发布方给出的这份才是唯一可信来源。
+          # 这个步骤没有 working-directory，路径就是仓库根。
+          # 两个空格是关键：`sha256sum -c` 只认 `<hash>  <file>` 这种格式，
+          # 写成 `sha256(x) = <hash>` 用户还得自己拼。
+          {
+            echo ''
+            echo '## 🔐 一键安装脚本校验值'
+            echo ''
+            echo '普通校验（通过后再执行）：'
+            echo ''
+            echo '```bash'
+            echo 'curl -fsSL https://clawbench.pages.dev/install.sh -o install.sh'
+            echo 'sha256sum -c <<\EOF'
+            echo "$(sha256sum scripts/install.sh | sed 's#scripts/##')"
+            echo 'EOF'
+            echo 'bash install.sh'
+            echo '```'
+            echo ''
+            echo 'Windows（先存成 install.ps1）：以下哈希应一致'
+            echo ''
+            echo '```'
+            echo "$(sha256sum scripts/install.ps1 | sed 's#scripts/##')"
+            echo '```'
+            echo ''
+            echo '```powershell'
+            echo '(Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLower()'
+            echo '```'
+            echo ''
+            echo '注意：脚本默认安装**最新版**，两次运行装到的版本可能不同；需要可复现'
+            echo '请传 `CLAWBENCH_VERSION`（Windows 用 `$env:CLAWBENCH_VERSION`）。'
+            echo ''
+          } >> /tmp/release-notes.md
+
           gh release edit "$TAG" --notes-file /tmp/release-notes.md

@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/platform"
 
 	"github.com/stretchr/testify/assert"
@@ -238,4 +240,36 @@ func TestPerformUpgrade_SelfPathUnresolved(t *testing.T) {
 	require.Equal(t, UpgradePhaseFailed, s.Phase)
 	assert.Equal(t, UpgradeErrSelfPathUnresolved, s.ErrorCode)
 	assert.Contains(t, s.Error, "restart ClawBench")
+}
+
+// A managed server (started by the desktop app) must not upgrade itself: the
+// app ships this binary and its own updater replaces it. The handler refuses the
+// request; this guards an internal caller slipping past that check.
+//
+// The assertion is a WAIT, not a snapshot. PerformUpgrade starts the flow in a
+// goroutine, so the phase it sets ("checking") lands microseconds later — a
+// same-tick comparison would pass whether or not the guard fired, and did, which
+// is how the first version of this test was green against a broken guard.
+func TestPerformUpgrade_ManagedStartsNothing(t *testing.T) {
+	h := &shortCircuitHarness{targetVersion: "0.99.0"}
+	h.setup(t, "0.99.0")
+	// Non-zero phase: "checking" is then a value the unguarded path would have
+	// to overwrite, so its absence is evidence rather than a coincidence.
+	SetUpgradeState(UpgradePhaseIdle, 0, "idle")
+
+	orig := model.ManagedByEmbedder
+	model.ManagedByEmbedder = true
+	t.Cleanup(func() { model.ManagedByEmbedder = orig })
+
+	PerformUpgrade("")
+
+	// Give the goroutine window its chance to start. Waiting matters: without
+	// it the guard could be missing and the observation would still be in time.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		assert.Equal(t, UpgradePhaseIdle, GetUpgradeState().Phase,
+			"a managed PerformUpgrade must not start the upgrade flow")
+		time.Sleep(10 * time.Millisecond)
+	}
+	assert.Equal(t, 0, h.restartCalls)
 }

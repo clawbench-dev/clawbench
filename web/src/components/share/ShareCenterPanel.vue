@@ -5,8 +5,8 @@
          main way to find a link again ("which conversations did I share?"). -->
     <div class="share-header">
       <div class="share-breadcrumb">
-        <Share2 :size="14" class="crumb-icon" />
-        <span>{{ t('shareCenter.title') }}</span>
+        <Share2 :size="14" class="panel-header-icon" />
+        <span>{{ t('nav.share') }}</span>
         <span v-if="items.length > 0" class="share-count">{{ t('shareCenter.count', { count: items.length }) }}</span>
       </div>
       <ActionBar class="share-header-actions" mode="menu" align="end" size="header">
@@ -85,7 +85,7 @@
               <Folder v-if="item.kind === 'dir'" :size="15" />
               <FileText v-else-if="item.kind === 'file'" :size="15" />
               <MessageSquareShare v-else-if="item.kind === 'session'" :size="15" />
-              <Video v-else :size="15" />
+              <component :is="MEETING_ICON" v-else :size="15" />
             </span>
             <span class="share-row-text">
               <span class="share-row-name-line">
@@ -154,12 +154,32 @@
                 <Folder v-if="item.kind === 'dir'" :size="14" />
                 <FileText v-else-if="item.kind === 'file'" :size="14" />
                 <MessageSquareShare v-else-if="item.kind === 'session'" :size="14" />
-                <Video v-else :size="14" />
+                <component :is="MEETING_ICON" v-else :size="14" />
                 <span class="action-label">{{ t(sourceLabelKey(item)) }}</span>
               </button>
               <button class="fbtn" type="button" data-action="open-page" @click="openLink">
                 <ExternalLink :size="14" />
                 <span class="action-label">{{ t('shareCenter.openPage') }}</span>
+              </button>
+              <!-- The page link and the file itself are two different URLs, and
+                   "I want to download it directly" is a different intent from
+                   "open the preview". File shares only: a folder has no single
+                   file and a conversation/meeting has nothing to download.
+
+                   Also hidden when 设置 → 分享中心 → 允许下载 is off: the direct
+                   endpoint answers 403 in that state, so copying the address
+                   would hand out a link that cannot work. The share PAGE stays
+                   openable — the switch governs the bytes, not the preview. -->
+              <button
+                v-if="item.kind === 'file' && !item.sourceGone && allowDownload"
+                class="fbtn"
+                type="button"
+                data-action="copy-direct"
+                :title="t('shareCenter.copyDirectLink')"
+                @click="copyDirectLink(item)"
+              >
+                <Download :size="14" />
+                <span class="action-label">{{ t('shareCenter.copyDirectLink') }}</span>
               </button>
               <button
                 class="fbtn"
@@ -201,6 +221,7 @@ import { useI18n } from 'vue-i18n'
 import {
   AlertTriangle,
   ChevronDown,
+  Download,
   ExternalLink,
   FileText,
   Folder,
@@ -209,7 +230,6 @@ import {
   MessageSquareShare,
   Share2,
   Trash2,
-  Video,
 } from 'lucide-vue-next'
 import ActionBar from '@/components/common/ActionBar.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
@@ -219,12 +239,16 @@ import ShareAddressList from '@/components/common/ShareAddressList.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { useShareCenter, type ShareItem } from '@/composables/useShareCenter'
+import { useFeatureFlags } from '@/composables/useFeatureFlags'
 import { onShareChanged } from '@/composables/useShareEvents'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
 import type { ShareLink } from '@/composables/useShareLinks'
+import { directDownloadUrl } from '@/composables/useShareLinks'
 import { openExternalUrl } from '@/utils/externalLink'
+import { copyText } from '@/utils/clipboard'
 import { formatRelativeTime } from '@/utils/format'
 import { appLog } from '@/utils/appLog'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 import { serverConfig } from '@/composables/useSettingsConfig'
 import { useMailCompose } from '@/composables/useMailCompose'
 import { builtInMailAvailable, openSystemMail, shareCapability, shareLink } from '@/utils/shareActions'
@@ -238,6 +262,10 @@ const dialog = useDialog()
 const toast = useToast()
 const mail = useMailCompose()
 const center = useShareCenter()
+
+// 设置 → 分享中心 → 允许下载. Off means the direct endpoint refuses (403), so
+// the "copy direct link" action is hidden; the share page itself still opens.
+const { shareAllowDownload: allowDownload } = useFeatureFlags()
 
 const { items, loading, errors } = center
 
@@ -427,6 +455,21 @@ async function shareTo(item: ShareItem): Promise<void> {
 }
 
 /**
+ * Copy the file's DIRECT download URL, not the share page.
+ *
+ * Built from the row's primary address, so it lands on the same host as the
+ * page link the user can actually open. The server endpoint takes the token
+ * alone; no cookie is needed.
+ */
+function copyDirectLink(item: ShareItem): void {
+  const url = directDownloadUrl(primaryUrl(), item.token)
+  if (!url) return
+  copyText(url, () => {
+    toast.show(t('shareCenter.directCopied'), { icon: 'link', type: 'success', duration: 1800 })
+  })
+}
+
+/**
  * Send the link by email.
  *
  * The built-in client wins when it is available: it keeps the user inside the
@@ -550,10 +593,6 @@ watch(
   white-space: nowrap;
 }
 
-.crumb-icon {
-  color: var(--text-secondary);
-  flex-shrink: 0;
-}
 
 .share-count {
   font-size: var(--font-size-xs);
@@ -680,7 +719,10 @@ watch(
 .share-row {
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
   border-radius: var(--radius-md);
-  background: var(--bg-primary);
+  /* The card step above the page surface, like every other panel's cards
+     (notifications, knowledge base, tasks). Painting it with the page colour
+     made the cards disappear into the background. */
+  background: var(--bg-secondary);
   overflow: hidden;
   transition: border-color var(--duration-fast);
 }

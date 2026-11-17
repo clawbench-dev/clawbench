@@ -17,6 +17,13 @@ type AgentModel struct {
 	// weekly, so a stored copy would freeze last month's number. Nil means no
 	// trustworthy price — the picker then shows no tag at all.
 	Price *ModelPrice `json:"price,omitempty"`
+	// Credits is the agent's own billing multiplier for this model, verbatim as
+	// the agent reports it (CodeBuddy: "x0.06 credits"; issue #657). Unlike
+	// Price it is agent-owned metadata, not a catalog derivation, so it IS
+	// persisted with the model list and replaced on every discovery/refresh.
+	// Empty means the agent does not publish one — the picker then shows the
+	// price tag instead (or nothing).
+	Credits string `json:"credits,omitempty"`
 }
 
 // Agent represents an AI agent with its own system prompt, backend, and models.
@@ -89,6 +96,16 @@ type Agent struct {
 	// or a custom ACP agent) can have its command edited; a spec-backed one
 	// cannot, because the edit would silently revert.
 	BackendHasSpec bool `json:"backendHasSpec"`
+
+	// BuiltinBackend reports whether this agent's tools are implemented by
+	// ClawBench itself (the built-in agent) rather than by an external CLI.
+	//
+	// The settings UI uses it to hide fields that would do nothing for such an
+	// agent — the CLI command, the install command, the MCP section, the
+	// skills section — and to show the tool-grant editor instead. Echoing the
+	// flag (rather than letting the client match on the backend id) keeps one
+	// definition of "built-in" on the server.
+	BuiltinBackend bool `json:"builtinBackend"`
 
 	// CLIModels is the pure CLI-discovered list, without any ACP merge. It is
 	// populated only in API responses, so a client can show the CLI view when the
@@ -181,6 +198,22 @@ type Agent struct {
 	// server requires confirm_config_write.
 	ProviderConfigBackend bool `json:"providerConfigBackend,omitempty"`
 
+	// ProviderConfigDirBackend is true when the backend gets a private config
+	// DIRECTORY per agent instead of a shared file. It needs its own consent
+	// text: nothing outside ClawBench's data dir is modified, and there is no
+	// backup to speak of.
+	ProviderConfigDirBackend bool `json:"providerConfigDirBackend,omitempty"`
+
+	// ProviderConfigSecretInFile is true when that private file has to hold the
+	// API key in clear text (no ${ENV} reference syntax). The consent dialog
+	// says so instead of implying the key stays out of the file.
+	ProviderConfigSecretInFile bool `json:"providerConfigSecretInFile,omitempty"`
+
+	// ProviderConfigPath is the file (or, for a shared-file backend, the list of
+	// files) a binding would write, shown in the consent dialog. Computed at
+	// load time so the client never has to reconstruct a path it does not own.
+	ProviderConfigPath string `json:"providerConfigPath,omitempty"`
+
 	// MCPServers is this agent's MCP enablement policy — which of the global
 	// servers (config.yaml `mcp.servers`) it may use.
 	//
@@ -192,6 +225,25 @@ type Agent struct {
 	// global list makes that a no-op, so the default is safe and adding a
 	// server does not require ticking every agent.
 	MCPServers MCPServerPolicy `json:"mcpServers"`
+
+	// ToolPolicy is the tool grant for backends whose tools ClawBench itself
+	// implements (the built-in agent). It is ignored by every external backend:
+	// their tools live inside the CLI, so the only way to restrict them is a
+	// flag that backend understands, not a field here.
+	//
+	// Zero value grants nothing (see ToolPolicy) — an agent whose policy was
+	// never set can chat but cannot read, write or execute.
+	ToolPolicy ToolPolicy `json:"toolPolicy"`
+
+	// SkipProjectContext turns off injection of the project's context files
+	// (AGENTS.md / CLAUDE.md) into this agent's system prompt.
+	//
+	// Only the built-in backend honors it — external backends read those files
+	// themselves, and the flag that silences them is theirs, not ours.
+	//
+	// Zero value means "inject", i.e. the pi-compatible default: a row written
+	// before this column existed must not lose its project rules.
+	SkipProjectContext bool `json:"skipProjectContext"`
 }
 
 // DefaultModelID returns the default model ID for this agent.
@@ -305,7 +357,7 @@ func (a *Agent) providerAcceptsPin(p *Provider, pref string) bool {
 	if containsString(p.Models, ProviderBareModelID(a.Backend, p.Protocol, pref)) {
 		return true
 	}
-	spec, ok := providerEnvTable[a.Backend]
+	spec, ok := providerEnvSpec(a.Backend)
 	return ok && spec.InlineConfigEnv != "" && providerEnvSupportsProtocol(spec, p.Protocol)
 }
 
@@ -386,10 +438,20 @@ func (a *Agent) SetThinkingEffortForModel(modelID, level string) {
 	a.ThinkingEffortByModel = next
 }
 
-// EffectiveModeID returns the mode ID for new ACP sessions.
-// Priority: PreferredMode (user preference) > empty (agent's default from session/new).
+// EffectiveModeID returns the mode ID for new sessions.
+//
+// For an ACP agent it is the user's preferred mode or empty, which lets the
+// agent report its own default at session/new. The built-in agent has no agent
+// to ask, so an unset preference falls back to the mode its tool grant
+// expresses — otherwise every new session would start with no mode selected.
 func (a *Agent) EffectiveModeID() string {
-	return a.PreferredMode
+	if a.PreferredMode != "" {
+		return a.PreferredMode
+	}
+	if a.BuiltinBackend {
+		return a.ToolPolicy.Normalized().DefaultMode()
+	}
+	return ""
 }
 
 // SupportsACP returns true if the agent has ACP capability (has an acp_command configured),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitPath, baseName, dirName, toRelativePath, joinPath, isWindowsAbsolutePath, normalizeSlashes, isAbsolutePath, toProjectRelative, normalizeForCompare, sameFilePath } from '@/utils/path.ts'
+import { splitPath, baseName, tailPath, dirName, toRelativePath, joinPath, isWindowsAbsolutePath, normalizeSlashes, isAbsolutePath, toProjectRelative, normalizeForCompare, sameFilePath } from '@/utils/path.ts'
 
 describe('splitPath', () => {
   it('splits on forward slashes', () => {
@@ -372,5 +372,23 @@ describe('sameFilePath', () => {
     // Both outside the root: remain absolute and compare equal.
     expect(sameFilePath('/etc/hosts', '/etc/hosts', root)).toBe(true)
     expect(sameFilePath('/etc/hosts', '/var/hosts', root)).toBe(false)
+  })
+})
+
+describe('tailPath', () => {
+  it('keeps the last two segments so same-named files differ', () => {
+    expect(tailPath('/p/internal/agentcore/run.go')).toBe('agentcore/run.go')
+    expect(tailPath('/p/internal/model/run.go')).toBe('model/run.go')
+  })
+
+  it('returns short paths unchanged', () => {
+    expect(tailPath('config.yaml')).toBe('config.yaml')
+    expect(tailPath('/src/main.go')).toBe('src/main.go')
+  })
+
+  it('handles backslashes, repeated and trailing separators', () => {
+    expect(tailPath('C:\\repo\\web\\src\\a.ts')).toBe('src/a.ts')
+    expect(tailPath('/a//b/')).toBe('a/b')
+    expect(tailPath('')).toBe('')
   })
 })

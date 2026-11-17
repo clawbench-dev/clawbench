@@ -421,3 +421,21 @@ func TestInterruptedExecutionIDs_WithoutDB(t *testing.T) {
 
 	assert.Nil(t, interruptedExecutionIDs())
 }
+
+// The tasks master switch gates restart resume too. A run cut short by a
+// restart must not be replayed while scheduled tasks are off — and the marker
+// is cleared so switching them on later cannot resurrect that older run.
+func TestStartTaskRestartResume_SkippedWhileTasksDisabled(t *testing.T) {
+	backend := newResumeBackend()
+	_, _, _, execID := seedInterruptedExecution(t, backend, "active")
+
+	origTasks := model.TasksEnabled
+	model.TasksEnabled = false
+	t.Cleanup(func() { model.TasksEnabled = origTasks })
+
+	assert.Nil(t, StartTaskRestartResume(), "nothing may be scheduled while tasks are disabled")
+
+	_, flag := executionRow(t, execID)
+	assert.Zero(t, flag, "the restart marker must be cleared so a later enable does not replay it")
+	assert.Empty(t, backend.lastPrompt(), "no turn may run while tasks are disabled")
+}

@@ -10,9 +10,9 @@ import (
 )
 
 func TestCopilotCatalog_Structure(t *testing.T) {
-	require.NotEmpty(t, model.CopilotCatalog, "should have a default catalog")
+	require.NotEmpty(t, CopilotCatalog, "should have a default catalog")
 
-	for _, m := range model.CopilotCatalog {
+	for _, m := range CopilotCatalog {
 		assert.NotEmpty(t, m.ID, "model ID should not be empty")
 		assert.NotEmpty(t, m.Name, "model Name should not be empty")
 	}
@@ -20,7 +20,7 @@ func TestCopilotCatalog_Structure(t *testing.T) {
 
 func TestCopilotCatalog_ContainsKnownModels(t *testing.T) {
 	ids := make(map[string]bool)
-	for _, m := range model.CopilotCatalog {
+	for _, m := range CopilotCatalog {
 		ids[m.ID] = true
 	}
 	assert.True(t, ids["gpt-4.1"], "should contain GPT-4.1")
@@ -44,7 +44,7 @@ func TestCopilotSource_YieldsNothingWithoutCLI(t *testing.T) {
 	models, detail := src.Discover()
 	assert.Empty(t, detail)
 	if models != nil {
-		assert.Equal(t, len(model.CopilotCatalog), len(models))
+		assert.Equal(t, len(CopilotCatalog), len(models))
 		assert.True(t, models[0].Default)
 	}
 }

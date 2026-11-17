@@ -1,13 +1,15 @@
 package antigravity
 
 import (
+	"time"
+
 	"clawbench/internal/ai/backends"
 	"clawbench/internal/model"
 )
 
 func init() {
-	// Antigravity (agy) is ACP-only: no ai.RegisterBackend (CLI factory) is
-	// registered, so chat always uses the ACP stdio transport.
+	// Antigravity (agy) is ACP-only: no CLI factory is set (CLI == nil), so
+	// chat always uses the ACP stdio transport.
 	//
 	// The ACP server is the one built into the CLI itself (`agy acp`), NOT the
 	// third-party npm adapter `agy-acp`. Measured on agy 1.5.2: the native
@@ -43,6 +45,24 @@ func init() {
 			// "sign in with its CLI" text instead of the command to run.
 			LoginCmd:  "agy acp --login",
 			SortOrder: 14,
+		},
+		ModelSource: model.NewCLISource("antigravity", model.CLIOptions{
+			Command: "agy",
+			Args:    []string{"models"},
+			Parse:   parseAgyModels,
+			// agy 未登录时会联网重试 ~16s 才输出错误（实测 16.0/16.5/16.0s），
+			// 而结果永远是 Fallback 里的 AntigravityCatalog。默认 10s 会在每次
+			// 启动白等 10s，这里收紧到 5s：登录用户的一次真实拉取足够，
+			// 未登录用户少等一半。
+			Timeout:  5 * time.Second,
+			Fallback: AntigravityCatalog,
+		}),
+		ProviderEnv: &model.ProviderEnvSpec{
+			Gemini:  model.ProtoEnv("GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY", ""),
+			KeyOnly: "GEMINI_API_KEY",
+			// The private protocol is the account key with the endpoint fields
+			// hidden: it always talks to Google's own service.
+			OwnServiceEnv: "GEMINI_API_KEY",
 		},
 	})
 }

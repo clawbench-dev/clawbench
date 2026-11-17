@@ -57,7 +57,15 @@ func setupRegistry(t *testing.T) (ownDir, otherDir string, reg *Registry) {
 	// Enabled=false (the field's default is applied by ApplyDefaults, which
 	// tests do not run).
 	model.ConfigInstance = model.Config{
-		Skills: model.SkillsConfig{Enabled: true, Dirs: []string{filepath.Join(root, "user")}},
+		Skills: model.SkillsConfig{
+			Enabled: true,
+			// Project injection is off by default (a working tree may be an
+			// unread repository). The project-scoped tests below opt in
+			// explicitly; the default itself is pinned by
+			// TestInjectedForProject_DefaultOff.
+			ProjectAutoInject: true,
+			Dirs:              []string{filepath.Join(root, "user")},
+		},
 	}
 
 	ownDir = filepath.Join(root, "own")
@@ -563,13 +571,48 @@ func TestInjectedForProject_ScansProjectDir(t *testing.T) {
 	}
 }
 
-// TestInjectedForProject_BeatsGlobalButLosesToOwnNative pins the priority
-// placement: project outranks user/git/other, but the agent's own native dir
-// still wins.
-func TestInjectedForProject_BeatsGlobalButLosesToOwnNative(t *testing.T) {
+// TestInjectedForProject_DefaultOff pins the default: project skills are NOT
+// injected unless the user opts in.
+//
+// A project skill comes from the working tree, which may be a freshly cloned
+// repository; its description is copied verbatim into the system prompt on
+// every turn. The listing and "#name" resolution must keep working — only the
+// automatic table is off.
+func TestInjectedForProject_DefaultOff(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+	model.ConfigInstance.Skills.ProjectAutoInject = false
+	reg.ScanAll()
+
+	project := t.TempDir()
+	writeSkill(t, projectSkillsDir(project), "proj-skill", "---\nname: proj-skill\ndescription: p\n---\n")
+
+	for _, s := range reg.InjectedForProject("me", project) {
+		assert.NotEqual(t, "proj-skill", s.Name, "project skills must not be injected by default")
+	}
+
+	listed := false
+	for _, s := range reg.AllForProject(project) {
+		if s.Name == "proj-skill" {
+			listed = true
+		}
+	}
+	assert.True(t, listed, "the listing must still include project skills")
+
+	_, ok := reg.ResolveForProject("proj-skill", project)
+	assert.True(t, ok, "an explicit #name reference must still resolve")
+}
+
+// TestInjectedForProject_LosesToUserDirButBeatsNative pins the priority
+// placement: the agent's own native dir wins, then the user's own directory,
+// and the project copy only beats another agent's native dir.
+//
+// A project directory is working-tree content (possibly a repository the user
+// never read), so it deliberately does NOT outrank a skill the user configured
+// themselves.
+func TestInjectedForProject_LosesToUserDirButBeatsNative(t *testing.T) {
 	ownDir, otherDir, reg := setupRegistry(t)
-	// A user dir (priority below project) and the agent's own native dir
-	// (priority above project).
+	// The agent's own native dir (highest) and a user dir (below own, above
+	// project).
 	userDir := filepath.Join(model.DataDir, "user")
 	require.NoError(t, os.MkdirAll(userDir, 0o755))
 	model.ConfigInstance.Skills.Dirs = []string{userDir}
@@ -579,8 +622,9 @@ func TestInjectedForProject_BeatsGlobalButLosesToOwnNative(t *testing.T) {
 	writeSkill(t, otherDir, "other-skill", "---\nname: other-skill\ndescription: other\n---\n")
 
 	project := t.TempDir()
-	// Same names as the global sources: the project copy must win for user- and
-	// other-sourced names, but NOT for the agent's own native name.
+	// Same names as the global sources: the project copy must LOSE to the user
+	// dir and to the agent's own native dir, and only win over another agent's
+	// native dir.
 	writeSkill(t, projectSkillsDir(project), "user-skill", "---\nname: user-skill\ndescription: project\n---\n")
 	writeSkill(t, projectSkillsDir(project), "other-skill", "---\nname: other-skill\ndescription: project\n---\n")
 	writeSkill(t, projectSkillsDir(project), "own-skill", "---\nname: own-skill\ndescription: project\n---\n")
@@ -592,8 +636,8 @@ func TestInjectedForProject_BeatsGlobalButLosesToOwnNative(t *testing.T) {
 	}
 
 	require.Contains(t, byName, "user-skill")
-	assert.Equal(t, "project", byName["user-skill"].Description, "project must beat a user dir")
-	assert.Equal(t, SourceProject, byName["user-skill"].Source.Kind)
+	assert.Equal(t, "user", byName["user-skill"].Description, "a user dir must beat the project copy")
+	assert.Equal(t, SourceUserDir, byName["user-skill"].Source.Kind)
 
 	require.Contains(t, byName, "other-skill")
 	assert.Equal(t, "project", byName["other-skill"].Description, "project must beat another agent's native dir")
@@ -629,10 +673,11 @@ func TestInjectedForProject_AlwaysInjectedForAutoLoadBackend(t *testing.T) {
 	assert.False(t, names["own-skill"], "the agent's own native skill must still be skipped for an auto-loading backend")
 }
 
-// TestInjectedForProject_CachesScan pins that the project scan is cached: a
-// skill deleted from disk after the first lookup is still returned, because the
-// result is memoized until the next ScanAll/Invalidate.
-func TestInjectedForProject_CachesScan(t *testing.T) {
+// TestInjectedForProject_RefreshesWhenDirChanges pins that the project scan is
+// stamp-validated rather than cached forever: a skill added or removed while
+// the session is open appears (or disappears) on the next lookup, without the
+// user clicking "rescan".
+func TestInjectedForProject_RefreshesWhenDirChanges(t *testing.T) {
 	_, _, reg := setupRegistry(t)
 	reg.ScanAll()
 
@@ -642,14 +687,18 @@ func TestInjectedForProject_CachesScan(t *testing.T) {
 	first := reg.InjectedForProject("me", project)
 	require.Len(t, first, 1)
 
-	// Remove the skill from disk; the cached result must still be returned.
-	require.NoError(t, os.RemoveAll(projectSkillsDir(project)))
-	second := reg.InjectedForProject("me", project)
-	assert.Equal(t, first, second, "the project scan must be cached between lookups")
+	// Unchanged directory: the same table is returned (no rescan needed).
+	assert.Equal(t, first, reg.InjectedForProject("me", project))
 
-	// A global rescan drops the cache, so the removed skill disappears.
-	reg.ScanAll()
+	// Remove it: the next lookup must NOT return the stale entry.
+	require.NoError(t, os.RemoveAll(projectSkillsDir(project)))
 	assert.Empty(t, reg.InjectedForProject("me", project))
+
+	// Add a different one: it must appear immediately.
+	writeSkill(t, projectSkillsDir(project), "later", "---\nname: later\ndescription: l\n---\n")
+	got := reg.InjectedForProject("me", project)
+	require.Len(t, got, 1)
+	assert.Equal(t, "later", got[0].Name)
 }
 
 // TestAllForProject pins the listing view: project skills are included only for
@@ -780,20 +829,28 @@ func TestResolveForProject_HighestPriorityWins(t *testing.T) {
 	assert.Equal(t, "user", s.Description)
 	assert.Equal(t, SourceUserDir, s.Source.Kind)
 
-	// A project skill outranks both.
+	// A user dir also outranks a project skill: the working tree may be an
+	// unread repository, so it must not shadow what the user configured.
 	project := t.TempDir()
 	writeSkill(t, projectSkillsDir(project), "dup", "---\nname: dup\ndescription: project\n---\n")
 	reg.ScanAll()
 	s, ok = reg.ResolveForProject("dup", project)
 	require.True(t, ok)
-	assert.Equal(t, "project", s.Description)
+	assert.Equal(t, "user", s.Description)
+	assert.Equal(t, SourceUserDir, s.Source.Kind)
+
+	// And a project skill still resolves when it is the only copy.
+	writeSkill(t, projectSkillsDir(project), "only-proj", "---\nname: only-proj\ndescription: project\n---\n")
+	reg.ScanAll()
+	s, ok = reg.ResolveForProject("only-proj", project)
+	require.True(t, ok)
 	assert.Equal(t, SourceProject, s.Source.Kind)
 }
 
-// TestResolveForProject_IgnoresDisabledSwitch is the regression guard for the
+// TestResolveForProject_IgnoresMasterSwitch is the regression guard for the
 // deliberate asymmetry: the master switch gates AUTOMATIC injection, but an
 // explicit "#name" reference must still resolve when it is off.
-func TestResolveForProject_IgnoresDisabledSwitch(t *testing.T) {
+func TestResolveForProject_IgnoresMasterSwitch(t *testing.T) {
 	_, _, reg := setupRegistry(t)
 	userDir := filepath.Join(model.DataDir, "user")
 	require.NoError(t, os.MkdirAll(userDir, 0o755))
@@ -811,4 +868,102 @@ func TestResolveForProject_IgnoresDisabledSwitch(t *testing.T) {
 	s, ok := reg.ResolveForProject("manual-only", "")
 	require.True(t, ok, "an explicit reference must resolve even when the switch is off")
 	assert.Equal(t, "manual-only", s.Name)
+}
+
+// TestInjectedFor_DisabledSkillIsNotInjected pins the per-skill opt-out: a name
+// in skills.disabled is dropped from the automatic table (from every source),
+// while an explicit "#name" reference still resolves it — the same asymmetry
+// the master switch has.
+func TestInjectedFor_DisabledSkillIsNotInjected(t *testing.T) {
+	ownDir, _, reg := setupRegistry(t)
+	writeSkill(t, ownDir, "noisy", "---\nname: noisy\ndescription: n\n---\n")
+	writeSkill(t, ownDir, "keep", "---\nname: keep\ndescription: k\n---\n")
+
+	// Stored names are canonicalized on write; reading tolerates a slash/case.
+	model.ConfigInstance.Skills.Disabled = []string{"/Noisy"}
+	reg.ScanAll()
+
+	names := map[string]bool{}
+	for _, s := range reg.InjectedFor("me") {
+		names[s.Name] = true
+	}
+	assert.False(t, names["noisy"], "a disabled skill must not be injected")
+	assert.True(t, names["keep"], "other skills must be unaffected")
+
+	_, ok := reg.ResolveForProject("noisy", "")
+	assert.True(t, ok, "an explicit #name reference must still resolve a disabled skill")
+}
+
+// TestEnsureFresh_PicksUpHandInstalledSkill pins the refresh chain: a skill
+// dropped into a watched root by hand shows up on the next lookup without any
+// explicit rescan, and a removed one disappears.
+func TestEnsureFresh_PicksUpHandInstalledSkill(t *testing.T) {
+	ownDir, _, reg := setupRegistry(t)
+	prev := freshCheckInterval
+	freshCheckInterval = 0
+	t.Cleanup(func() { freshCheckInterval = prev })
+
+	reg.ScanAll()
+	assert.Empty(t, reg.InjectedFor("me"))
+
+	writeSkill(t, ownDir, "late", "---\nname: late\ndescription: d\n---\n")
+	got := reg.InjectedFor("me")
+	require.Len(t, got, 1)
+	assert.Equal(t, "late", got[0].Name)
+
+	require.NoError(t, os.RemoveAll(filepath.Join(ownDir, "late")))
+	assert.Empty(t, reg.InjectedFor("me"), "a removed skill must disappear without a manual rescan")
+}
+
+// TestAllSkipped_ReportsBrokenProjectSkill pins the skip report surfaced by the
+// listing API, including the project scope.
+func TestAllSkipped_ReportsBrokenProjectSkill(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+	reg.ScanAll()
+
+	project := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(projectSkillsDir(project), "broken"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectSkillsDir(project), "broken", skillFileName),
+		[]byte("---\nname: broken\n---\n"), 0o644))
+
+	skipped := reg.AllSkipped(project)
+	require.Len(t, skipped, 1)
+	assert.Equal(t, SkipMissingDescription, skipped[0].Reason)
+	assert.Contains(t, skipped[0].Path, "broken")
+}
+
+// TestEffectivePathsFrom_MarksShadowed pins the helper the settings page uses
+// to mark which of two same-named skills actually wins.
+func TestEffectivePathsFrom_MarksShadowed(t *testing.T) {
+	skills := []Skill{
+		{Name: "dup", Path: "/git/dup/SKILL.md", Source: Source{Kind: SourceGit, Dir: "/git"}},
+		{Name: "dup", Path: "/user/dup/SKILL.md", Source: Source{Kind: SourceUserDir, Dir: "/user"}},
+		{Name: "solo", Path: "/user/solo/SKILL.md", Source: Source{Kind: SourceUserDir, Dir: "/user"}},
+	}
+	got := EffectivePathsFrom(skills)
+	assert.Equal(t, "/user/dup/SKILL.md", got["dup"], "the user dir must win over a git repo")
+	assert.Equal(t, "/user/solo/SKILL.md", got["solo"])
+	assert.Len(t, got, 2)
+}
+
+// TestAllSkipped_ScopesToTheRequestedProject pins that one project's broken
+// skills never appear in another project's view (projectSkipped holds an entry
+// per scanned project).
+func TestAllSkipped_ScopesToTheRequestedProject(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+	reg.ScanAll()
+
+	projA := t.TempDir()
+	projB := t.TempDir()
+	for _, p := range []string{projA, projB} {
+		dir := filepath.Join(projectSkillsDir(p), "broken")
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, skillFileName),
+			[]byte("---\nname: broken\n---\n"), 0o644))
+	}
+
+	a := reg.AllSkipped(projA)
+	require.Len(t, a, 1)
+	assert.Contains(t, a[0].Path, projA)
+	assert.NotContains(t, a[0].Path, projB)
 }

@@ -31,26 +31,19 @@ func setupTestBackends() {
 	}
 	for _, id := range stubs {
 		backendType := id // capture for closure
-		switch backendType {
-		case "vecli":
-			backendFactories[backendType] = &BackendFactoryEntry{
-				NewBackendFn: func() AIBackend { return NewVeCLIBackend() },
-			}
-		case "codex":
-			backendFactories[backendType] = &BackendFactoryEntry{
-				NewBackendFn: func() AIBackend { return &CodexBackend{} },
-			}
-		default:
-			backendFactories[backendType] = &BackendFactoryEntry{
-				NewBackendFn: func() AIBackend {
-					return &CLIBackend{
-						BackendName: backendType,
-						Cmd:         backendType,
-						BuildArgsFn: func(req ChatRequest) []string { return nil },
-						NewParserFn: func() LineParser { return &StreamParser{} },
-					}
-				},
-			}
+		// A stub CLIBackend is enough: this test is about factory dispatch, not
+		// about any particular backend's transport. vecli/codex used to be
+		// special-cased here only because their implementations lived in this
+		// package; they now live in their own sub-packages.
+		backendFactories[backendType] = &BackendFactoryEntry{
+			NewBackendFn: func() AIBackend {
+				return &CLIBackend{
+					BackendName: backendType,
+					Cmd:         backendType,
+					BuildArgsFn: func(req ChatRequest) []string { return nil },
+					NewParserFn: func() LineParser { return &testLineParser{} },
+				}
+			},
 		}
 	}
 }
@@ -101,8 +94,8 @@ func TestNewBackend_Vecli(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
 	assert.Equal(t, "vecli", backend.Name())
-	_, ok := backend.(*VeCLIBackend)
-	assert.True(t, ok, "vecli should be a VeCLIBackend")
+	_, ok := backend.(*CLIBackend)
+	assert.True(t, ok, "vecli should resolve through its factory")
 }
 
 func TestNewBackend_Pi(t *testing.T) {
@@ -151,8 +144,8 @@ func TestNewBackend_Codex(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
 	assert.Equal(t, "codex", backend.Name())
-	_, ok := backend.(*CodexBackend)
-	assert.True(t, ok, "codex should be a CodexBackend")
+	_, ok := backend.(*CLIBackend)
+	assert.True(t, ok, "codex should resolve through its factory")
 }
 
 func TestNewBackend_Unsupported(t *testing.T) {

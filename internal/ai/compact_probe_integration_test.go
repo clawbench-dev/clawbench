@@ -397,7 +397,9 @@ func TestCompactSignalProbe_ACP(t *testing.T) {
 // stdout is not tee'd by CLIBackend. That is enough to answer the question the
 // probe exists for: "does ClawBench notice when THIS agent compacts?".
 func TestCompactSignalProbe_CLI(t *testing.T) {
-	registerCompactProbeExtraCLI()
+	// No extra registration: grok comes from its own plugin (imported through
+	// backends/all by backend_plugins_test.go), so the probe exercises the real
+	// argv builder and parser rather than a copy of them.
 	all := append(append([]cliTestConfig{}, cliBackends...), compactProbeExtraCLI...)
 	for _, cfg := range all {
 		cfg := cfg
@@ -522,39 +524,4 @@ var compactProbeExtraCLI = []cliTestConfig{
 		Timeout:        90 * time.Second,
 		CollectTimeout: 120 * time.Second,
 	},
-}
-
-// registerCompactProbeExtraCLI registers the probe-only backends in this
-// process. Guarded because RegisterBackend panics on a duplicate id.
-func registerCompactProbeExtraCLI() {
-	if lookupBackendFactory("grok") != nil {
-		return
-	}
-	RegisterBackend("grok", func() AIBackend {
-		return &CLIBackend{
-			BackendName: "grok",
-			Cmd:         "grok",
-			BuildArgsFn: func(req ChatRequest) []string {
-				args := []string{
-					"-p", req.Prompt,
-					"--output-format", "streaming-json",
-					"--yolo",
-				}
-				if req.SessionID != "" && req.Resume {
-					args = append(args, "--resume", req.SessionID)
-				}
-				if req.WorkDir != "" {
-					args = append(args, "--cwd", req.WorkDir)
-				}
-				return args
-			},
-			NewParserFn: func() LineParser { return &GrokStreamParser{} },
-			FilterLineFn: func(line string) (string, bool) {
-				if line == "" || !strings.HasPrefix(line, "{") {
-					return "", false
-				}
-				return line, true
-			},
-		}
-	})
 }

@@ -10,7 +10,7 @@
         <!-- The root crumb carries the section glyph, like the task breadcrumb's
              root does — so the header still reads as "the settings panel" once
              the plain title has been replaced by the trail. -->
-        <Settings v-if="i === 0" :size="14" class="crumb-icon" />
+        <Settings v-if="i === 0" :size="14" class="panel-header-icon" />
         <span>{{ crumb.label }}</span>
       </span>
     </template>
@@ -69,11 +69,6 @@ const { t } = useI18n()
   cursor: pointer;
   color: var(--text-secondary, #495057);
   transition: background var(--duration-base), color var(--duration-base);
-}
-
-/* The root glyph holds its size in the scrolling flex row. */
-.crumb-icon {
-  flex-shrink: 0;
 }
 
 @media (hover: hover) {

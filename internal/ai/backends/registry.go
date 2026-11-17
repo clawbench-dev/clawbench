@@ -14,16 +14,42 @@ var (
 	pluginsMu sync.RWMutex
 )
 
-// Register adds a backend plugin to the global registry.
+// Register adds a backend plugin to the global registry and forwards its
+// capabilities to the registries that consume them.
 // Typically called in a sub-package's init() function.
 // Duplicate registration panics (programming error).
+//
+// Forwarding here (rather than in each sub-package) is what makes one init()
+// enough for a new backend. The alternative — every backend calling
+// ai.RegisterBackend + model.RegisterModelSource + ListSessionsFromDiskRegister
+// itself — meant a backend could be half registered, and that the set of calls
+// drifted between backends.
 func Register(p *BackendPlugin) {
 	pluginsMu.Lock()
-	defer pluginsMu.Unlock()
 	if _, exists := plugins[p.ID]; exists {
+		pluginsMu.Unlock()
 		panic(fmt.Sprintf("backend plugin already registered: %s", p.ID))
 	}
 	plugins[p.ID] = p
+	pluginsMu.Unlock()
+
+	// CLI factory (nil for ACP-only backends).
+	if p.CLI != nil && p.CLI.NewBackend != nil {
+		ai.RegisterBackend(p.ID, p.CLI.NewBackend)
+	}
+
+	if p.ModelSource != nil {
+		model.RegisterModelSource(p.ModelSource)
+	}
+	if p.ListSessions != nil {
+		ai.ListSessionsFromDiskRegister(p.ID, p.ListSessions)
+	}
+	if p.Spec.MCPUnsupported {
+		model.RegisterMCPUnsupported(p.ID)
+	}
+	if p.ProviderEnv != nil {
+		model.RegisterProviderEnvSpec(p.ID, *p.ProviderEnv)
+	}
 }
 
 // Lookup returns the backend plugin for the given ID, or nil if not found.
@@ -65,10 +91,36 @@ func AllSpecsSorted() []model.BackendSpec {
 }
 
 // ResetForTest clears the registry. For testing only.
-func ResetForTest() {
+//
+// It returns a restore function that reinstates the plugin snapshot taken
+// BEFORE the clear, so callers must use it and defer the restore:
+//
+//	restore := backends.ResetForTest()
+//	defer restore()
+//
+// The snapshot is the real one registered by the backend init()s, which is what
+// clears the ordering hazard: this package's tests used to wipe the global
+// registry and never put it back, so every other test in the same binary only
+// passed while Go ran the files in registry_test.go's order. Under -shuffle
+// (or a future rename) dozens of unrelated assertions failed for a reason that
+// had nothing to do with the code under test.
+//
+// The restore is pointer-copy based — plugins are not mutated by ResetForTest —
+// so nested helper registrations still see the same plugin values.
+func ResetForTest() func() {
 	pluginsMu.Lock()
-	defer pluginsMu.Unlock()
+	snapshot := make(map[string]*BackendPlugin, len(plugins))
+	for id, p := range plugins {
+		snapshot[id] = p
+	}
 	plugins = make(map[string]*BackendPlugin)
+	pluginsMu.Unlock()
+
+	return func() {
+		pluginsMu.Lock()
+		defer pluginsMu.Unlock()
+		plugins = snapshot
+	}
 }
 
 // LookupACPRemaps returns the ACP input remapping map for the given backend.
@@ -138,6 +190,27 @@ func LookupACPModesMirrorThoughtLevel(backendID string) bool {
 		return p.ACP.ModesMirrorThoughtLevel
 	}
 	return false
+}
+
+// LookupACPBehavior returns the backend's ACP event-mapping hooks, or nil when
+// it declares none (the generic implementation applies).
+func LookupACPBehavior(backendID string) *ai.ACPBehavior {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok {
+		return p.Behavior
+	}
+	return nil
+}
+
+// LookupPluginCommands returns the backend's extra-command scanner, or nil.
+func LookupPluginCommands(backendID string) func() []ai.AvailableCommandInfo {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok {
+		return p.PluginCommands
+	}
+	return nil
 }
 
 // LookupMidTurnInjector returns the backend's mid-turn injection policy, or nil

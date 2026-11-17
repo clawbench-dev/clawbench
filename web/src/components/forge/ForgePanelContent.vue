@@ -45,6 +45,7 @@
       <ForgePipelineDetail
         v-if="detailOpen && activeTab === 'pipeline'"
         :run-id="pipelineDetailId"
+        :header-icon="forgeHeaderIcon"
         @back="closeDetail"
         @quote="onPipelineQuote"
         @open-pr="onOpenLinkedPr"
@@ -54,6 +55,7 @@
         v-else-if="detailOpen"
         :type="items.type.value"
         :number="detailNumber"
+        :header-icon="forgeHeaderIcon"
         @back="closeDetail"
         @quote="onQuote"
         @open-pipeline="onOpenItemPipeline"
@@ -75,7 +77,7 @@
              sits outside its ActionBar. -->
         <div class="forge-header">
           <span class="forge-header-title">
-            <Github :size="14" />
+            <component :is="forgeHeaderIcon" :size="14" class="panel-header-icon" />
             <button
               v-if="items.binding.value"
               ref="repoBadgeRef"
@@ -86,7 +88,7 @@
               <span class="forge-repo-name">{{ items.binding.value.slug }}</span>
               <ChevronDown :size="12" />
             </button>
-            <span v-else>{{ t('nav.forge') }}</span>
+            <span v-else>{{ t(forgeTabTitleKey(forgePlatform)) }}</span>
           </span>
           <ActionBar class="forge-header-actions" mode="menu" align="end" size="header">
             <button
@@ -426,7 +428,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Github, Rss, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
+  Github, Gitlab, Rss, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
   ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Unlink, CheckCheck,
   ExternalLink,
 } from 'lucide-vue-next'
@@ -441,6 +443,7 @@ import ForgeDetail from '@/components/forge/ForgeDetail.vue'
 import ForgePipelineDetail from '@/components/forge/ForgePipelineDetail.vue'
 import ForgeOverviewList from '@/components/forge/ForgeOverviewList.vue'
 import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
+import { useForgeBinding, forgeDockIconKind, forgeTabTitleKey } from '@/composables/useForgeBinding'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, markForgeRead, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
 import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
@@ -467,6 +470,12 @@ const { t } = useI18n()
 const { isWideScreen } = useWideScreenLayout()
 const items = useForgeItems(() => props.projectPath)
 const pipelines = useForgePipelines(() => props.projectPath)
+// Same platform-aware brand as the dock tab: GitHub by default, GitLab only
+// when the project is actually bound to one.
+const { platform: forgePlatform } = useForgeBinding()
+const forgeHeaderIcon = computed(() =>
+  forgeDockIconKind(forgePlatform.value) === 'gitlab' ? Gitlab : Github,
+)
 // The same count the dock badge shows, so the "mark all read" button reflects
 // the badge rather than a separately-tracked number that could disagree.
 const { forgeUnreadCount } = useForgeUnread()
@@ -997,7 +1006,8 @@ function formatTime(iso: string): string {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background: var(--bg-primary);
+  /* Shared page surface for every left-panel tab (see --panel-page-bg). */
+  background: var(--panel-page-bg);
 }
 
 /* ── Panel header — matches every other list page header ── */
@@ -1239,7 +1249,9 @@ function formatTime(iso: string): string {
   padding: calc(9 * var(--dp)) var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  background: var(--bg-primary);
+  /* Card step above the page surface: the row is one tappable object, not a
+     piece of the page. */
+  background: var(--bg-secondary);
   color: var(--text-primary);
   cursor: pointer;
   transition: border-color var(--duration-base) ease, background var(--duration-base) ease;
@@ -1248,14 +1260,16 @@ function formatTime(iso: string): string {
 @media (hover: hover) {
   .forge-remote-row:hover:not(:disabled) {
     border-color: var(--accent-color);
-    background: var(--bg-secondary);
+    /* The row already sits on the card step, so the hover has to move past it
+       (mixed from the text colour, which works in every theme). */
+    background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
   }
   .forge-remote-row:hover:not(:disabled) .forge-remote-chevron {
     color: var(--accent-color);
   }
 }
 .forge-remote-row:active:not(:disabled) {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
 }
 .forge-remote-row:disabled {
   opacity: var(--opacity-muted);

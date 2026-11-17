@@ -471,9 +471,13 @@
    下后写的这条赢。`border: 0` 是必须的——全局规则给的是四边边框，只写
    border-bottom 的话左右两条会漏进来。
 
-   网格线只画「右边 + 下边」，第一列补左边、表头补上边：每格四边各画一条的
-   话，相邻两格在 separate 下不会合并，交界处就是 2px（手机上特别明显）。
-   这样拼出来仍然是完整的格子网格，但每条线只有一个像素。
+   网格线只画「右边 + 下边」，第一列补左边：每格四边各画一条的话，相邻两格
+   在 separate 下不会合并，交界处就是 2px（手机上特别明显）。这样拼出来仍然
+   是完整的格子网格，但每条线只有一个像素。
+
+   上边线不归网格管：网格上方永远有表头栏（简单表是 .dt-head，数据表还多一条
+   .dt-bar），它们自己用 border-bottom 画了分界线。两边都画就是 2px，所以网格
+   的顶边一律留空（见下面 thead th 的两条规则）。
    ========================================================================== */
 
 /* 选择器带 `.dt` 不是多余的：`.markdown-body table`（0,1,1）比裸 `.dt-grid`
@@ -504,14 +508,11 @@
     background: var(--bg-primary);
 }
 
-/* 左边与上边只补一次，避免和相邻格子的右边/下边叠成 2px。 */
+/* 左边只补一次，避免和相邻格子的右边叠成 2px。上边由表头栏的 border-bottom
+   提供（.dt-head / .dt-bar），这里不再画。 */
 .dt .dt-grid th:first-child,
 .dt .dt-grid td:first-child {
     border-left: 1px solid var(--border-color);
-}
-
-.dt .dt-grid thead th {
-    border-top: 1px solid var(--border-color);
 }
 
 .dt.is-data .dt-grid th {
@@ -678,6 +679,12 @@
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
     cursor: default;
+}
+
+/* 表头的顶边交给上方表头栏（.dt-head 的 border-bottom），这里归零 ——
+   留着就是两条 1px 并排，比别处的分割线粗一倍。 */
+.dt:not(.is-data) .dt-grid thead th {
+    border-top: 0;
 }
 
 /* 简单表的换行开关。聊天里外层 `.table-block-wrapper th/td` 的规则带

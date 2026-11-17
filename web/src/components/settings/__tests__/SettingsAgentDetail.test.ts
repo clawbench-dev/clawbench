@@ -18,7 +18,7 @@ vi.mock('@/utils/api', async (importOriginal) => {
   }
 })
 
-const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDuplicateAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded } = vi.hoisted(() => ({
+const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDuplicateAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded, mockGetServerValue } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockPatchAgentField: vi.fn().mockResolvedValue(undefined),
@@ -30,6 +30,7 @@ const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDe
   // Plain hoisted holder; the mock factory below turns it into a real ref so
   // the component's computed tracks it (see the vi.mock body).
   mockAgentsLoaded: { value: true },
+  mockGetServerValue: vi.fn(),
 }))
 
 vi.mock('vue-i18n', async (importOriginal) => {
@@ -135,6 +136,9 @@ vi.mock('@/composables/useAgents', async () => {
       deleteAgent: mockDeleteAgent,
       duplicateAgent: mockDuplicateAgent,
       defaultAgentId: mockDefaultAgentId,
+      // The mode picker asks the acpStates cache; the mock reports no modes so
+      // the row is simply absent (the tests that need it can override).
+      getAgentAvailableModes: () => [],
     }),
     populateACPStateFromCache: mockPopulateACPStateFromCache,
   }
@@ -146,7 +150,7 @@ vi.mock('@/composables/useSettingsConfig', () => ({
   // through the composable. Keep the mock total: a partial mock makes the
   // component's setup throw, which fails EVERY test in this file.
   useSettingsConfig: () => ({
-    getServerValue: () => [],
+    getServerValue: mockGetServerValue,
     patchAgentField: mockPatchAgentField,
   }),
 }))
@@ -666,6 +670,49 @@ describe('SettingsAgentDetail', () => {
     })
   })
 
+  // ─── One-click install ───────────────────────────────────────────────
+  // The same dialog the welcome panel uses, opened from the agent's own page
+  // (the "reinstall / upgrade" path for an agent that is already detected).
+  describe('install button', () => {
+    it('is hidden when the backend ships no installer', () => {
+      const wrapper = mountDetail({ installCmd: '' })
+      expect(wrapper.find('[data-action="agent-install"]').exists()).toBe(false)
+    })
+
+    it('opens the install dialog with the backend id and its command', async () => {
+      const wrapper = mountDetail({ installCmd: 'npm install -g @anthropic-ai/claude-code' })
+      const btn = wrapper.find('[data-action="agent-install"]')
+      expect(btn.exists()).toBe(true)
+
+      // Nothing rendered before the click: mounting the dialog eagerly would run
+      // its back-handler registration on every agent page.
+      expect(wrapper.findComponent({ name: 'AgentInstallDialog' }).exists()).toBe(false)
+
+      await btn.trigger('click')
+
+      const dialog = wrapper.findComponent({ name: 'AgentInstallDialog' })
+      expect(dialog.exists()).toBe(true)
+      // Keyed by BACKEND, not agent id: the server installs per backend, and a
+      // duplicated agent shares its backend's package.
+      expect(dialog.props('backendId')).toBe('claude')
+      expect(dialog.props('installCmd')).toBe('npm install -g @anthropic-ai/claude-code')
+    })
+
+    it('re-reads the agent list after a successful install', async () => {
+      // The server already rescanned; this page's own model list and capability
+      // snapshot changed underneath it and must be re-fetched.
+      const wrapper = mountDetail({ installCmd: 'npm install -g x' })
+      await wrapper.find('[data-action="agent-install"]').trigger('click')
+      mockLoadAgents.mockClear()
+
+      await wrapper.findComponent({ name: 'AgentInstallDialog' }).vm.$emit('installed', {
+        ok: true, backend: 'claude', command: 'x', output: '', durationMs: 1, refreshed: true,
+      })
+
+      expect(mockLoadAgents).toHaveBeenCalledWith(true)
+    })
+  })
+
   // ─── Usage counts (Information section) ──────────────────────────────
   describe('usage counts', () => {
     // SettingsItem is stubbed, so the TASK count rides on the stub's model-value
@@ -1174,6 +1221,61 @@ describe('SettingsAgentDetail', () => {
     await flushPromises()
   }
 
+  // The two config-write paths are not the same promise to the user: the shared
+  // file path edits THEIR file (and backs it up), while the per-agent directory
+  // path stays inside ClawBench's data dir but may store the key in clear text.
+  // One shared sentence would misdescribe one of them.
+  it('asks for consent with the per-agent wording for a config-dir backend', async () => {
+    mockDialogConfirm.mockResolvedValueOnce(true)
+    const wrapper = mountDetail({
+      providerProtocols: ['openai'],
+      providerConfigDirBackend: true,
+      providerConfigSecretInFile: true,
+      providerConfigPath: '/data/clawbench/providers/agents/test-agent/config.toml',
+    })
+
+    await bindProvider(wrapper, 5)
+
+    expect(mockDialogConfirm).toHaveBeenCalledWith(
+      expect.stringContaining('agentProviderConsentDir'),
+      expect.objectContaining({ dangerous: true }),
+    )
+    expect(mockApiPatch).toHaveBeenCalledWith(
+      '/api/agents',
+      expect.objectContaining({ provider_id: 5, confirm_config_write: true }),
+    )
+  })
+
+  it('uses the shared-file wording for a config-file backend', async () => {
+    mockDialogConfirm.mockResolvedValueOnce(true)
+    const wrapper = mountDetail({
+      providerProtocols: ['openai'],
+      providerConfigBackend: true,
+      providerConfigPath: '/home/u/.codex/config.toml',
+    })
+
+    await bindProvider(wrapper, 5)
+
+    expect(mockDialogConfirm).toHaveBeenCalledWith(
+      expect.stringContaining('agentProviderConsent'),
+      expect.objectContaining({ dangerous: true }),
+    )
+  })
+
+  // An env-driven backend writes nothing, so there is nothing to consent to.
+  it('binds without a dialog when no file is written', async () => {
+    const wrapper = mountDetail({ providerProtocols: ['openai'] })
+    await bindProvider(wrapper, 5)
+
+    expect(mockDialogConfirm).not.toHaveBeenCalled()
+    expect(mockApiPatch).toHaveBeenCalledWith(
+      '/api/agents',
+      expect.objectContaining({ provider_id: 5 }),
+    )
+    const payload = mockApiPatch.mock.calls.at(-1)![1] as Record<string, unknown>
+    expect(payload).not.toHaveProperty('confirm_config_write')
+  })
+
   it('surfaces the backend reason when binding a provider is refused', async () => {
     // The server answers this path with the actionable part — which agents
     // conflict on the protocol, why the provider is invalid, or that the
@@ -1223,5 +1325,61 @@ describe('SettingsAgentDetail', () => {
     await bindProvider(wrapper, 6)
 
     expect(mockToastShow).toHaveBeenCalledWith('Save failed', expect.objectContaining({ type: 'error' }))
+  })
+
+  // ─── Credential-only provider (CodeBuddy account token) ─────────────
+
+  /** The provider row's rendered options. */
+  function providerOptionsOf(wrapper: ReturnType<typeof mountDetail>) {
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'settings.items.agentProvider')
+    expect(item).toBeDefined()
+    return item!.props('options') as { label: string; value: unknown }[]
+  }
+
+  const tokenProvider = { id: 7, name: 'CodeBuddy Token', protocol: 'private', baseUrl: '', hasKey: true }
+  const endpointProvider = { id: 8, name: 'GW', protocol: 'anthropic', baseUrl: 'https://gw', hasKey: true }
+
+  it('offers a private-protocol provider to a backend that lists it', async () => {
+    mockApiGet.mockResolvedValue({ providers: [tokenProvider, endpointProvider] })
+    const wrapper = mountDetail({
+      backend: 'codebuddy',
+      providerProtocols: ['openai', 'private'],
+    })
+    await flushPromises()
+
+    const values = providerOptionsOf(wrapper).map((o) => o.value)
+    expect(values).toContain(7)
+    // The endpoint provider is anthropic-protocol and this backend speaks openai.
+    expect(values).not.toContain(8)
+  })
+
+  it('hides a private-protocol provider from a backend that does not list it', async () => {
+    mockApiGet.mockResolvedValue({ providers: [tokenProvider] })
+    const wrapper = mountDetail({ backend: 'claude', providerProtocols: ['openai'] })
+    await flushPromises()
+
+    expect(providerOptionsOf(wrapper).map((o) => o.value)).not.toContain(7)
+  })
+
+  it('binds a credential-only provider without asking about a config file', async () => {
+    mockApiGet.mockResolvedValue({ providers: [tokenProvider] })
+    const wrapper = mountDetail({
+      backend: 'codebuddy',
+      providerProtocols: ['openai', 'private'],
+      providerConfigDirBackend: true,
+      providerConfigPath: '/data/providers/agents/test-agent/models.json',
+    })
+    await flushPromises()
+
+    await bindProvider(wrapper, 7)
+
+    expect(mockDialogConfirm).not.toHaveBeenCalled()
+    expect(mockApiPatch).toHaveBeenCalledWith(
+      '/api/agents',
+      expect.objectContaining({ id: 'test-agent', provider_id: 7 }),
+    )
+    const payload = mockApiPatch.mock.calls.at(-1)![1] as Record<string, unknown>
+    expect(payload).not.toHaveProperty('confirm_config_write')
   })
 })

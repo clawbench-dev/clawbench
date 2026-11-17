@@ -258,6 +258,21 @@ func ServeLiveNotesShare(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	// Publishing a record while sharing is off would create a link the server
+	// has just promised to revoke. Un-publishing stays allowed: it is the
+	// cleanup direction and is idempotent with the switch's own revocation.
+	//
+	// This check cannot move to the router's feature gate: the endpoint lives
+	// under /api/live-share/, not /api/share/, and the rule is conditional on
+	// the body (only "publish" is refused).
+	if body.Enabled && !shareFeatureEnabled() {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ShareDisabled")
+		return
+	}
+	if body.Enabled && !model.FeaturePolicy.ShareAllowMeetings {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ShareMeetingsDisabled")
+		return
+	}
 	if err := service.SetMeetingShareEnabled(projectID, token, body.Enabled); err != nil {
 		if errors.Is(err, service.ErrMeetingNotFound) {
 			http.NotFound(w, r)
@@ -535,6 +550,65 @@ func serveLiveNotesDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ServeLiveNotesClear handles DELETE /api/live-share/notes/sessions/all
+// (authenticated, project-scoped): remove every meeting record of this project,
+// folders included.
+//
+// The same two refusals the single delete makes apply per meeting, but they are
+// SKIPPED rather than aborting the whole call: one meeting that is still live,
+// or whose minutes are being generated, must not block the user from clearing
+// the other ninety-nine. The response reports how many went and how many were
+// left behind, so the panel can say "3 skipped" instead of silently keeping
+// rows the user just asked to delete.
+//
+// Hidden rows are included (see service.ListMeetingTokens): the list view never
+// shows them, so nothing else can ever clean them up.
+func ServeLiveNotesClear(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodDelete) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	tokens, err := service.ListMeetingTokens(projectID)
+	if err != nil {
+		slog.Error("live notes: clear list failed", "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	deleted, skipped := 0, 0
+	for _, token := range tokens {
+		if liveRegistry.Get(token) != nil {
+			skipped++
+			continue
+		}
+		active, jobErr := service.ArtifactJobActive(token, time.Now().UnixMilli())
+		if jobErr != nil {
+			// A lookup failure is about this one row; the rest of the list is
+			// still deletable, and refusing everything would be worse than
+			// leaving one meeting behind.
+			slog.Warn("live notes: clear job lookup failed", "token", token, "err", jobErr)
+			skipped++
+			continue
+		}
+		if active {
+			skipped++
+			continue
+		}
+		if delErr := service.DeleteMeetingRecord(projectPath, projectID, token); delErr != nil {
+			if errors.Is(delErr, service.ErrMeetingNotFound) {
+				continue
+			}
+			slog.Warn("live notes: clear delete failed", "token", token, "err", delErr)
+			skipped++
+			continue
+		}
+		deleted++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted, "skipped": skipped})
 }
 
 // ServeLiveShareNoteShot is the one path with two verbs: POST uploads a frame,
@@ -1837,6 +1911,10 @@ func (c *artifactChain) buildMinutes(ctx context.Context) error {
 		service.LiveNotesMinutesOptions{
 			Language:  model.ConfigInstance.Meeting.Language,
 			MaxTokens: model.ConfigInstance.Meeting.MinutesMaxTokens,
+			// The project root is what makes agent mode worth running: without
+			// it the agent can only see the text it was handed, which is what
+			// the summary path already does.
+			WorkDir: c.projectPath,
 		},
 		progress,
 	)

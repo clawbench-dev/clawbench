@@ -370,6 +370,50 @@ describe('AttachmentPicker', () => {
     expect(wrapper.text()).not.toContain('Shares')
   })
 
+  it('kb variant keeps the picker and uploads but drops the chat history tab', () => {
+    const wrapper = mountDrawer({ variant: 'kb' })
+    expect(wrapper.findAll('.ad-tab').map(t => t.text())).toEqual(['Files', 'Uploads'])
+    expect(wrapper.find('.file-picker-stub').exists()).toBe(true)
+    // A folder is a valid pick: the knowledge base imports its whole subtree.
+    expect(wrapper.findComponent({ name: 'FilePicker' }).props('allowDir')).toBe(true)
+  })
+
+  it('kb variant offers only the upload entry on mobile', () => {
+    // A knowledge base rejects images, so the camera and photo entries could
+    // only produce an error. They must not be offered at all.
+    mockIsMobileOSUA = true
+    const wrapper = mountDrawer({ variant: 'kb' })
+    const entries = wrapper.findAll('.ad-source-btn')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].text()).toContain('Upload file')
+  })
+
+  it('selectionOnly hands the selection to the host and stays open', async () => {
+    // The knowledge base applies the list itself (and can be rejected), so OK
+    // must not touch the composer or close the sheet.
+    const wrapper = mountDrawer({ selectionOnly: true, confirmLabel: 'Add documents' })
+    await wrapper.find('.fp-stub-file').trigger('click')
+    const ok = wrapper.find('[data-action="attach-ok"]')
+    expect(ok.text()).toBe('Add documents')
+    await ok.trigger('click')
+
+    expect(wrapper.emitted('confirm')![0]).toEqual([[{ path: 'src/foo.ts', isDir: false }]])
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(wrapper.emitted('close')).toBeFalsy()
+  })
+
+  it('selectionOnly keeps OK disabled until something is selected', async () => {
+    const wrapper = mountDrawer({ selectionOnly: true })
+    expect(wrapper.find('[data-action="attach-ok"]').attributes('disabled')).toBeDefined()
+    await wrapper.find('.fp-stub-file').trigger('click')
+    expect(wrapper.find('[data-action="attach-ok"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('busy keeps OK disabled while the host is applying the selection', () => {
+    const wrapper = mountDrawer({ selectionOnly: true, busy: true, attachedFiles: [{ path: 'a.md' }] })
+    expect(wrapper.find('[data-action="attach-ok"]').attributes('disabled')).toBeDefined()
+  })
+
   it('picking in the file picker only marks it selected (no emit)', async () => {
     const wrapper = mountDrawer({ attachedFiles: [] })
     await wrapper.find('.fp-stub-file').trigger('click')

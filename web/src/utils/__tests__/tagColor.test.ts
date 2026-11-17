@@ -98,7 +98,10 @@ describe('tagColor', () => {
       // If a new hex-accented category is added to ContentBlocks.vue, the tag
       // palette should pick it up rather than silently diverging.
       const { light } = toolCallPaletteFromComponent()
-      expect(TAG_PALETTE.length).toBe(Object.keys(light).length)
+      // `thinking` is not a tool category — a folded run borrows the purple
+      // while its thinking chip streams, and no tag maps to it.
+      const toolCategories = Object.keys(light).filter((c) => c !== 'thinking')
+      expect(TAG_PALETTE.length).toBe(toolCategories.length)
     })
   })
 

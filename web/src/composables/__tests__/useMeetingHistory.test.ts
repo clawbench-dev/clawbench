@@ -68,7 +68,7 @@ describe('useMeetingHistory.buildQuote', () => {
     const quote = await useMeetingHistory().buildQuote({ token: 't1', title: '周会', startedAt: 0 })
 
     expect(quote?.text).toBe('REVISED')
-    expect(quote?.meetingToken).toBe('t1')
+    expect(quote?.locators?.meeting).toBe('t1')
     expect(quote?.language).toBe('meeting')
   })
 
@@ -85,7 +85,7 @@ describe('useMeetingHistory.buildQuote', () => {
       dirPath: '/proj/.clawbench/notes/2026-11-05-1430',
     })
 
-    expect(quote?.sourceDir).toBe('.clawbench/notes/2026-11-05-1430')
+    expect(quote?.locators?.dir).toBe('.clawbench/notes/2026-11-05-1430')
   })
 })
 
@@ -241,6 +241,36 @@ describe('useMeetingHistory.importFile', () => {
     const pending = useMeetingHistory().importFile(file())
     FakeXHR.instances[0].onerror?.()
     await expect(pending).resolves.toEqual({ ok: false, reason: 'network' })
+  })
+})
+
+describe('useMeetingHistory.clearAll', () => {
+  it('deletes every record and re-reads the list the server kept', async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') {
+        return { ok: true, status: 200, json: async () => ({ deleted: 3, skipped: 1 }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ sessions: [{ token: 'still-live' }] }) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const history = useMeetingHistory()
+    const res = await history.clearAll()
+
+    expect(res).toEqual({ ok: true, deleted: 3, skipped: 1 })
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/live-share/notes/sessions/all')
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('DELETE')
+    // A local wipe would hide the meetings the server deliberately kept.
+    expect(history.sessions.value.map((s) => s.token)).toEqual(['still-live'])
+  })
+
+  it('reports a failure without touching the list', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })))
+    const history = useMeetingHistory()
+    history.sessions.value = [{ token: 'a' } as never]
+
+    await expect(history.clearAll()).resolves.toEqual({ ok: false, deleted: 0, skipped: 0 })
+    expect(history.sessions.value.map((s) => s.token)).toEqual(['a'])
   })
 })
 

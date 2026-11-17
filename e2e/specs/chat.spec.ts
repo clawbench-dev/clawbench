@@ -161,8 +161,13 @@ test.describe('Chat', () => {
     // and the collapse animation has finished
     await expect(chat.sendButton).toBeVisible({ timeout: 10000 })
 
+    // Thinking and the tool call share one folded run (compact tool calls are
+    // ON by default), so open it before inspecting the chip.
+    const reply = chat.getLastAssistantMessage()
+    await chat.expandToolRun(reply)
+
     // The thinking block should exist and be collapsed (header-only chip)
-    const thinkingBlock = chat.getLastAssistantMessage().locator('.chat-thinking')
+    const thinkingBlock = reply.locator('.chat-thinking')
     await expect(thinkingBlock).toBeVisible({ timeout: 5000 })
     // Collapsed state means the thinking-collapsed class is applied
     await expect(thinkingBlock).toHaveClass(/thinking-collapsed/)
@@ -188,6 +193,8 @@ test.describe('Chat', () => {
     await expect(reply).not.toHaveAttribute('data-streaming', 'true')
     await expect(reply).toHaveAttribute('data-msg-key', /^db-/)
     const key = await reply.getAttribute('data-msg-key')
+    // The chip lives inside the folded run, so unfold it first.
+    await chat.expandToolRun(reply)
     const thinkingBlock = page.locator(`.chat-message.assistant[data-msg-key=${JSON.stringify(key)}]`)
       .locator('.chat-thinking')
     await expect(thinkingBlock).toHaveClass(/thinking-collapsed/, { timeout: 5000 })
@@ -214,6 +221,8 @@ test.describe('Chat', () => {
     await expect(chat.sendButton).toBeVisible({ timeout: 10000 })
 
     const reply = chat.getLastAssistantMessage()
+    // The chip lives inside the folded run, so unfold it first.
+    await chat.expandToolRun(reply)
     // Exactly one thinking block: the real one. The blank chunk must not open a
     // second chip.
     await expect(reply.locator('.chat-thinking')).toHaveCount(1)

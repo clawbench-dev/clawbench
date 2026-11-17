@@ -56,38 +56,42 @@ var skipScanDirs = map[string]bool{
 }
 
 // ScanDir scans dir for skill directories containing SKILL.md, tagging each
-// result with src.
-//
-// The search is recursive up to maxScanDepth, because a skill is defined by
-// having a SKILL.md — not by sitting at a particular depth. A non-root
-// directory that is itself a skill is not descended into (its subdirectories
-// hold the skill's own scripts/references, never nested skills).
-//
-// The scan root is also tested as a skill, because a repository whose root is
-// a single skill is a supported layout (`npx skills add owner/repo`). It is
-// still descended into as well: the root doubles as the container, so treating
-// it as a skill must not hide the skills below it.
+// result with src. It is ScanDirReport without the skip report.
 //
 // Returns nil when dir does not exist or contains no valid skill.
 //
 // Not goroutine-safe with respect to concurrent writes to the same dir, but
 // safe to call from multiple goroutines reading distinct dirs.
 func ScanDir(dir string, src Source) []Skill {
+	skills, _ := ScanDirReport(dir, src)
+	return skills
+}
+
+// ScanDirReport is ScanDir plus the list of directories that contained a
+// SKILL.md but could not be loaded.
+//
+// The skip report only covers "looks like a skill but is broken". A directory
+// with no SKILL.md is an ordinary folder on the way to one, not a failure, and
+// is not reported — otherwise every repository root would produce noise.
+func ScanDirReport(dir string, src Source) ([]Skill, []Skipped) {
 	if dir == "" {
-		return nil
+		return nil, nil
 	}
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		slog.Debug("skill scan: directory does not exist", "path", dir, "source", src.Key())
-		return nil
+		return nil, nil
 	}
 
 	var skills []Skill
-	if s, ok := readSkill(dir, src, true); ok {
+	var skipped []Skipped
+	if s, ok, reason := readSkillReport(dir, src, true); ok {
 		skills = append(skills, s)
+	} else if reason != "" {
+		skipped = append(skipped, Skipped{Path: filepath.Join(dir, skillFileName), Reason: reason})
 	}
-	scanTree(dir, src, 0, &skills)
-	if len(skills) == 0 {
-		return nil
+	scanTree(dir, src, 0, &skills, &skipped)
+	if len(skills) == 0 && len(skipped) == 0 {
+		return nil, nil
 	}
 
 	// Sort by name for deterministic output.
@@ -97,9 +101,11 @@ func ScanDir(dir string, src Source) []Skill {
 		}
 		return skills[i].Path < skills[j].Path
 	})
+	sort.Slice(skipped, func(i, j int) bool { return skipped[i].Path < skipped[j].Path })
 
-	slog.Debug("skill scan: found skills", "path", dir, "count", len(skills), "source", src.Key())
-	return skills
+	slog.Debug("skill scan: found skills", "path", dir, "count", len(skills),
+		"skipped", len(skipped), "source", src.Key())
+	return skills, skipped
 }
 
 // scanTree walks one directory level, appending any skill it finds and
@@ -107,7 +113,7 @@ func ScanDir(dir string, src Source) []Skill {
 //
 // depth counts levels below the original scan root: the root itself is depth 0,
 // so its direct subdirectories are depth 1.
-func scanTree(dir string, src Source, depth int, out *[]Skill) {
+func scanTree(dir string, src Source, depth int, out *[]Skill, skipped *[]Skipped) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		slog.Debug("skill scan: cannot read directory", "path", dir, "error", err)
@@ -115,26 +121,48 @@ func scanTree(dir string, src Source, depth int, out *[]Skill) {
 	}
 
 	for _, entry := range entries {
-		// entry.IsDir() is false for symlinks, so a symlinked directory is
-		// skipped — the walk never follows links out of the tree.
-		if !entry.IsDir() {
-			continue
-		}
 		name := entry.Name()
 		if skipScanDirs[name] || strings.HasPrefix(name, ".") {
 			continue
 		}
 
 		child := filepath.Join(dir, name)
-		if s, ok := readSkill(child, src, false); ok {
+
+		// A symlinked directory is followed ONLY when it is itself a skill
+		// (it directly contains SKILL.md). That is the real-world install
+		// pattern (`ln -s ~/dev/myskill ~/.claude/skills/myskill`), and it
+		// cannot loop: a link is never descended into, so the walk stays inside
+		// the tree it started from.
+		if entry.Type()&os.ModeSymlink != 0 {
+			if info, statErr := os.Stat(child); statErr == nil && info.IsDir() {
+				if s, ok, reason := readSkillReport(child, src, false); ok {
+					*out = append(*out, s)
+				} else if reason != "" {
+					*skipped = append(*skipped, Skipped{Path: filepath.Join(child, skillFileName), Reason: reason})
+				}
+			}
+			continue
+		}
+
+		if !entry.IsDir() {
+			continue
+		}
+
+		if s, ok, reason := readSkillReport(child, src, false); ok {
 			*out = append(*out, s)
 			// A skill's subdirectories belong to that skill (scripts,
 			// references, assets) — do not look for skills inside it.
 			continue
+		} else if reason != "" {
+			// The directory has a SKILL.md that failed to parse: it IS a skill
+			// directory, just a broken one. Report it and do not descend, for
+			// the same reason as above.
+			*skipped = append(*skipped, Skipped{Path: filepath.Join(child, skillFileName), Reason: reason})
+			continue
 		}
 
 		if depth+1 < maxScanDepth {
-			scanTree(child, src, depth+1, out)
+			scanTree(child, src, depth+1, out, skipped)
 		} else {
 			slog.Debug("skill scan: depth limit reached, not descending further",
 				"path", child, "max_depth", maxScanDepth)
@@ -142,31 +170,32 @@ func scanTree(dir string, src Source, depth int, out *[]Skill) {
 	}
 }
 
-// readSkill reports whether dir is a skill directory (it contains a readable,
-// valid SKILL.md) and returns the parsed entry.
+// readSkillReport reports whether dir is a skill directory (it contains a
+// readable, valid SKILL.md) and, when it does not, why a skill-shaped directory
+// could not be loaded ("" when the directory simply has no SKILL.md).
 //
 // isScanRoot must be true when dir is the scan root itself. The root is allowed
 // to be a skill (the single-skill-repository layout), but the name-matches-
 // directory rule cannot apply to it: the root's directory name is a temp dir or
 // a slug, not a skill name, so requiring a match would reject every such
 // repository.
-func readSkill(dir string, src Source, isScanRoot bool) (Skill, bool) {
+func readSkillReport(dir string, src Source, isScanRoot bool) (Skill, bool, string) {
 	skillFile := filepath.Join(dir, skillFileName)
 	info, err := os.Stat(skillFile)
 	if err != nil || info.IsDir() {
-		return Skill{}, false
+		return Skill{}, false, ""
 	}
 
 	data, err := os.ReadFile(skillFile)
 	if err != nil {
 		slog.Debug("skill scan: cannot read skill file", "path", skillFile, "error", err)
-		return Skill{}, false
+		return Skill{}, false, SkipUnreadable
 	}
 
-	name, description, ok := ParseFrontmatter(data)
-	if !ok {
-		slog.Debug("skill scan: no valid frontmatter in skill file", "path", skillFile)
-		return Skill{}, false
+	name, description, reason := ParseFrontmatterReport(data)
+	if reason != "" {
+		slog.Debug("skill scan: unusable skill file", "path", skillFile, "reason", reason)
+		return Skill{}, false, reason
 	}
 
 	// The spec requires name == parent directory name. A mismatch is not fatal
@@ -186,7 +215,7 @@ func readSkill(dir string, src Source, isScanRoot bool) (Skill, bool) {
 		Path:         skillFile,
 		Source:       src,
 		NameMismatch: mismatch,
-	}, true
+	}, true, ""
 }
 
 // ParseFrontmatter parses YAML frontmatter from a SKILL.md file.
@@ -204,37 +233,44 @@ func readSkill(dir string, src Source, isScanRoot bool) (Skill, bool) {
 // Only the name and description keys are extracted; description is
 // normalized to a single line with inner whitespace collapsed.
 func ParseFrontmatter(data []byte) (string, string, bool) {
+	name, description, reason := ParseFrontmatterReport(data)
+	return name, description, reason == ""
+}
+
+// ParseFrontmatterReport is ParseFrontmatter plus the reason a file was
+// rejected (one of the Skip* constants, "" on success).
+func ParseFrontmatterReport(data []byte) (name, description, reason string) {
 	content := string(data)
 
 	// Opening --- must be at the start of the file (line 1, column 1).
 	if !strings.HasPrefix(content, "---") {
-		return "", "", false
+		return "", "", SkipInvalidFrontmatter
 	}
 	afterOpen := content[3:]
 
 	// Find closing --- (must be on its own line)
 	closeIdx := strings.Index(afterOpen, "\n---")
 	if closeIdx < 0 {
-		return "", "", false
+		return "", "", SkipInvalidFrontmatter
 	}
 	frontmatter := afterOpen[:closeIdx]
 
 	var fm map[string]any
 	if err := yaml.Unmarshal([]byte(frontmatter), &fm); err != nil {
 		slog.Debug("skill scan: invalid YAML frontmatter", "error", err)
-		return "", "", false
+		return "", "", SkipInvalidFrontmatter
 	}
 
 	name, ok := frontmatterString(fm, "name")
 	if !ok || name == "" {
-		return "", "", false
+		return "", "", SkipMissingName
 	}
-	description, ok := frontmatterString(fm, "description")
+	description, ok = frontmatterString(fm, "description")
 	if !ok || description == "" {
-		return "", "", false
+		return "", "", SkipMissingDescription
 	}
 
-	return name, description, true
+	return name, description, ""
 }
 
 // frontmatterString extracts a string value from parsed frontmatter.
@@ -261,6 +297,16 @@ func collapseWhitespace(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// maxInjectedDescription bounds how much of a skill's description is copied
+// into the system prompt.
+//
+// The table is rebuilt on every turn, and a description is arbitrary text from
+// a directory the user may never have read (a cloned repository). Without a cap
+// one verbose or hostile SKILL.md can occupy the whole context window; the
+// listing API still returns the full text, and an agent that needs the detail
+// reads SKILL.md itself.
+const maxInjectedDescription = 200
+
 // BuildSystemPromptSection renders skills as a markdown section for injection
 // into an agent's system prompt. Returns "" when there are no skills.
 //
@@ -283,13 +329,26 @@ func BuildSystemPromptSection(skills []Skill) string {
 		b.WriteString("| ")
 		b.WriteString(escapeTableCell(s.Name))
 		b.WriteString(" | ")
-		b.WriteString(escapeTableCell(s.Description))
+		b.WriteString(escapeTableCell(truncateRunes(s.Description, maxInjectedDescription)))
 		b.WriteString(" | ")
 		b.WriteString(escapeTableCell(s.Path))
 		b.WriteString(" |\n")
 	}
 
 	return b.String()
+}
+
+// truncateRunes cuts s to at most limit runes, appending an ellipsis when it
+// was shortened. Rune-based so a CJK description is never split mid-character.
+func truncateRunes(s string, limit int) string {
+	if limit <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "…"
 }
 
 // escapeTableCell escapes a value for use inside a markdown table cell:

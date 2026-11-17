@@ -21,12 +21,12 @@ func (wireStubInjector) Inject(context.Context, ai.RawRPCTransport, ai.MidTurnIn
 }
 
 // TestInit_WiresMidTurnCapabilityReporter verifies the init hook in acp_wire.go
-// wires model.BackendSupportsMidTurnFn to the registry lookup. This is the
+// wires model.LookupBackendCapabilitiesFn to the registry lookup. This is the
 // bridge that lets the queued-bubble action label ("insert into the current
 // reply" vs "interrupt and send") be decided in internal/model without that
 // package importing the backend registry.
 //
-// The wiring is load-bearing and silent when broken: a nil function makes
+// The wiring is load-bearing and silent when broken: a nil lookup makes
 // model.BackendSupportsMidTurn report false for every backend, which degrades
 // the label for CodeBuddy without any error.
 //
@@ -34,8 +34,8 @@ func (wireStubInjector) Inject(context.Context, ai.RawRPCTransport, ai.MidTurnIn
 // is package-global and shared with the external test package's init
 // registrations, so ResetForTest must NOT be called here.
 func TestInit_WiresMidTurnCapabilityReporter(t *testing.T) {
-	require.NotNil(t, model.BackendSupportsMidTurnFn,
-		"init must wire the mid-turn capability reporter")
+	require.NotNil(t, model.LookupBackendCapabilitiesFn,
+		"init must wire the capability lookup")
 
 	const withInject = "wire-test-with-inject"
 	const withoutInject = "wire-test-without-inject"
@@ -53,14 +53,14 @@ func TestInit_WiresMidTurnCapabilityReporter(t *testing.T) {
 	assert.False(t, model.BackendSupportsMidTurn("wire-test-nonexistent"))
 }
 
-// TestInit_WiresMidTurnSplitsReplyReporter verifies the init hook wires
-// model.BackendMidTurnSplitsReplyFn to the registry lookup. This bit decides
-// whether an injected user bubble gets the merge-only hint: CodeBuddy splits
-// the reply (no hint), claude/codex merge (hint). A nil function silently
-// degrades every backend to "merge-only" — the wrong hint on CodeBuddy.
+// TestInit_WiresMidTurnSplitsReplyReporter verifies the init hook wires the
+// capability lookup that carries MidTurnSplitsReply. This bit decides whether
+// an injected user bubble gets the merge-only hint: CodeBuddy splits the reply
+// (no hint), claude/codex merge (hint). A nil lookup silently degrades every
+// backend to "merge-only" — the wrong hint on CodeBuddy.
 func TestInit_WiresMidTurnSplitsReplyReporter(t *testing.T) {
-	require.NotNil(t, model.BackendMidTurnSplitsReplyFn,
-		"init must wire the mid-turn splits-reply reporter")
+	require.NotNil(t, model.LookupBackendCapabilitiesFn,
+		"init must wire the capability lookup")
 
 	const splits = "wire-test-splits"
 	const merges = "wire-test-merges"
@@ -90,8 +90,8 @@ func TestInit_WiresBackendSpecLoader(t *testing.T) {
 }
 
 // TestInit_WiresCLICapabilityReporter verifies the CLI reporter bridge: model
-// asks internal/ai whether a backend has a CLI implementation.
+// asks the capability snapshot whether a backend has a CLI implementation.
 func TestInit_WiresCLICapabilityReporter(t *testing.T) {
-	require.NotNil(t, model.BackendSupportsCLIFn, "init must wire the CLI capability reporter")
+	require.NotNil(t, model.LookupBackendCapabilitiesFn, "init must wire the capability lookup")
 	assert.False(t, model.BackendSupportsCLI("no-such-backend"))
 }

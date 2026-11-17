@@ -271,7 +271,11 @@ func TestProtocolSupportsAuthMode(t *testing.T) {
 		{ProviderProtocolAnthropic, ProviderAuthAPIKey, true},
 		{ProviderProtocolOpenAI, ProviderAuthAuto, true},
 		{ProviderProtocolOpenAI, ProviderAuthAPIKey, true},
-		{ProviderProtocolOpenAI, ProviderAuthBearer, false},
+		// openai + bearer became possible once CodeBuddy moved to the OpenAI
+		// protocol: it reads CODEBUDDY_AUTH_TOKEN as a bearer token
+		// (cleanBearerToken) on its /chat/completions path. This used to be
+		// false only because no OpenAI-protocol backend declared an AuthToken.
+		{ProviderProtocolOpenAI, ProviderAuthBearer, true},
 		{ProviderProtocolGemini, ProviderAuthAuto, true},
 		{ProviderProtocolGemini, ProviderAuthBearer, false},
 	}
@@ -308,8 +312,8 @@ func TestProviderEnvVersion_ChangesWithWireAPI(t *testing.T) {
 // backend registry in sync, so it must list every entry exactly once, sorted.
 func TestProviderEnvBackends_SortedAndComplete(t *testing.T) {
 	backends := ProviderEnvBackends()
-	if len(backends) != len(providerEnvTable) {
-		t.Fatalf("backends = %d, table = %d", len(backends), len(providerEnvTable))
+	if len(backends) != len(providerEnvSpecs()) {
+		t.Fatalf("backends = %d, registry = %d", len(backends), len(providerEnvSpecs()))
 	}
 	if !sort.StringsAreSorted(backends) {
 		t.Fatalf("backends must be sorted: %v", backends)
@@ -386,18 +390,21 @@ func TestProviderEnvForAgent(t *testing.T) {
 		ID: 5, Name: "GW", Protocol: ProviderProtocolAnthropic,
 		BaseURL: "https://gw.example", APIKey: "sk-5", AuthMode: ProviderAuthAuto,
 	}})
+	// zcode is a plain environment-variable backend: claude used to stand in
+	// here, but it now receives its provider through a private config directory,
+	// which this package cannot exercise (the writer lives in service).
 	ReplaceAgents(
 		map[string]*Agent{
-			"bound":   {ID: "bound", Backend: "claude", ProviderID: &pid},
-			"unbound": {ID: "unbound", Backend: "claude"},
+			"bound":   {ID: "bound", Backend: "zcode", ProviderID: &pid},
+			"unbound": {ID: "unbound", Backend: "zcode"},
 		},
 		[]*Agent{
-			{ID: "bound", Backend: "claude", ProviderID: &pid},
-			{ID: "unbound", Backend: "claude"},
+			{ID: "bound", Backend: "zcode", ProviderID: &pid},
+			{ID: "unbound", Backend: "zcode"},
 		},
 	)
 
-	env, err := ProviderEnvForAgent("bound", "claude")
+	env, err := ProviderEnvForAgent("bound", "zcode")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -406,7 +413,7 @@ func TestProviderEnvForAgent(t *testing.T) {
 		t.Fatalf("env = %v", env)
 	}
 
-	env, err = ProviderEnvForAgent("unbound", "claude")
+	env, err = ProviderEnvForAgent("unbound", "zcode")
 	if err != nil || env != nil {
 		t.Fatalf("an unbound agent must be a no-op, got %v / %v", env, err)
 	}

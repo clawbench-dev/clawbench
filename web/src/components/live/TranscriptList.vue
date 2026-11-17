@@ -20,7 +20,7 @@
       <!-- A file event has no speaker: an avatar with the character 文 would
            read as a participant. The glyph says "this is not a person". -->
       <FileText v-if="b.kind === 'file'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
-      <MonitorUp v-else-if="b.kind === 'screen'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
+      <component :is="MEETING_ICON" v-else-if="b.kind === 'screen'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
       <ImageIcon v-else-if="b.kind === 'shot'" class="transcript__avatar transcript__file-icon" :size="16" aria-hidden="true" />
       <!-- A continuation is the same person still talking, split off only to
            give a monologue paragraph breaks. Repeating the avatar and the name
@@ -91,11 +91,12 @@
  * here so the token is declared where it is read.
  */
 import { onMounted, ref, watch } from 'vue'
-import { FileText, ImageIcon, MonitorUp, Trash2 } from 'lucide-vue-next'
+import { FileText, ImageIcon, Trash2 } from 'lucide-vue-next'
 import i18n from '@/i18n'
 import { shotLabel, shotRefName } from '@/utils/meetingShots'
 import { annotateMediaBlocks } from '@/utils/mediaBlockFactory'
 import { escapeHtml } from '@/utils/html.ts'
+import { MEETING_ICON } from '@/utils/meetingIcon'
 import { annotatePlainText } from '@/composables/usePlainTextAnnotation.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useMarkdownDocumentInteractions } from '@/composables/useMarkdownDocumentInteractions.ts'

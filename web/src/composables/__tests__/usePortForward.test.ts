@@ -171,6 +171,33 @@ describe('usePortForward', () => {
 
             expect(sshInfo.value).toBeNull()
         })
+
+        it('reports whether the answer arrived, so a failed load is not "SSH off"', async () => {
+            // sshInfo===null means both "not loaded" and "request failed" unless
+            // the composable says which — and the dock's gate treats them
+            // differently (a failed load must not hide the proxy tab forever).
+            mockApiGet.mockRejectedValue(new Error('Network error'))
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { loadSSHInfo, sshInfo, sshInfoResolved } = usePortForward()
+            expect(sshInfoResolved.value).toBe(false)
+
+            await loadSSHInfo()
+
+            expect(sshInfo.value).toBeNull()
+            expect(sshInfoResolved.value, 'the request finished, even if it failed').toBe(true)
+        })
+
+        it('leaves sshInfoResolved true after a successful fetch', async () => {
+            mockApiGet.mockResolvedValue({ enabled: false, port: 20001 })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { loadSSHInfo, sshInfoResolved } = usePortForward()
+
+            await loadSSHInfo()
+
+            expect(sshInfoResolved.value).toBe(true)
+        })
     })
 
     describe('loadPorts', () => {

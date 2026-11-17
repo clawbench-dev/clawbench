@@ -181,6 +181,33 @@ export async function buildShareLinks(path: string): Promise<ShareLink[]> {
 }
 
 /**
+ * Direct-download URL for a shared FILE, derived from its share page link.
+ *
+ * `/share/{token}` is a page; `/api/share/{token}/download` is the file itself.
+ * The origin has to come from the page link rather than `location`: the share
+ * dialogs offer every address the server is reachable on, and the user copies
+ * the one that works on their network — the direct link must point at the same
+ * host.
+ *
+ * Only file shares have one: a folder has no single file (its per-file form is
+ * `/download?path=<absolute path>`), and a conversation/meeting has nothing
+ * downloadable.
+ */
+export function directDownloadUrl(pageUrl: string, token: string): string {
+  if (!pageUrl || !token) return ''
+  let origin: string
+  try {
+    origin = new URL(pageUrl).origin
+  } catch {
+    return ''
+  }
+  // `file:` and other non-http origins serialise as the literal "null"; they
+  // cannot carry a server API path.
+  if (!origin || origin === 'null') return ''
+  return `${origin}/api/share/${encodeURIComponent(token)}/download`
+}
+
+/**
  * Reactive wrapper for dialogs: `primary` is what the copy button uses, `all`
  * is everything (including the primary) for the expandable list.
  */

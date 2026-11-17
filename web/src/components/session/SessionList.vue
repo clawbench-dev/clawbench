@@ -255,8 +255,12 @@
              "Share link" item): highlighted, with a trailing check, when this
              conversation already has a live public link. The label itself stays
              plain — the check is the same "this option is on" language the file
-             menu uses for word wrap / line numbers. -->
+             menu uses for word wrap / line numbers.
+             Gone entirely when the 分享 master switch is off: turning it off
+             revokes every conversation link server-side, so the entry could
+             only open a dialog that cannot publish. -->
         <div
+          v-if="shareAllowed"
           class="context-menu-item"
           :class="{ active: isSessionShared(contextMenu.sessionId) }"
           @click.stop="openShareDialogFromMenu(contextMenu.sessionId)"
@@ -314,8 +318,8 @@ import { useToast } from '@/composables/useToast'
 import { useSessionIdentity, reconcileRunningSessions, renameSessionById } from '@/composables/useSessionIdentity.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { hasQuoteDragData, readQuoteDragData } from '@/utils/quoteDrag'
+import { hydrateDraggedQuote } from '@/utils/quoteHydrate'
 import { dispatchToTarget, mintPendingQuoteId, requestTarget } from '@/composables/useConversationTarget'
-import { useMeetingHistory } from '@/composables/useMeetingHistory'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { apiPatch, apiPut } from '@/utils/api.ts'
@@ -324,6 +328,7 @@ import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
 import { rowStatus, statusLabelKey } from '@/utils/sessionRowStatus'
 import OtherProjectCards from '@/components/session/OtherProjectCards.vue'
 import { toFixedCSS, getZoomedViewport, localConfig } from '@/composables/useSettingsConfig'
+import { useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
 import { buildRenameGenerateOptions } from '@/utils/sessionRename'
@@ -362,9 +367,14 @@ const DRAG_FALLBACK_TOLERANCE = 12
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName, getAgentAvatar, getAgentModel } = useAgents()
-const { isSessionShared, setSharedSessionIds } = useSessionShare()
+const { isSessionShared, setSharedSessionIds, resetSessionShareState } = useSessionShare()
 const dialog = useDialog()
 const toast = useToast()
+// 分享 switches (功能编排). Off revokes every conversation link, so the
+// "已分享" badges must go too — a stale check would advertise a link that 404s.
+// Gated per KIND: only conversation links are created from this menu, so a
+// per-kind switch for files/meetings must not remove it.
+const shareAllowed = useShareKindAllowed('sessions')
 const { runningSessionsVersion } = useSessionIdentity()
 const { groups: crossGroups } = useCrossProjectSessions()
 
@@ -401,7 +411,6 @@ watch(
 // and Sortable reacts only to drags it started — a quote payload passes through
 // untouched. The handlers below return early for anything that is not a quote,
 // so reordering is unaffected.
-const meetingHistory = useMeetingHistory()
 /** Row currently under a quote drag, for the drop highlight. '' when none. */
 const quoteDropSessionId = ref('')
 
@@ -424,11 +433,23 @@ function onRowQuoteDrop(e, sessionId) {
   // Sortable listens on the container; a drop it did not start must not reach
   // it, or the list would try to reorder around a foreign payload.
   e.stopPropagation()
-  if (payload.meetingToken) {
-    void deliverMeetingQuote(payload.meetingToken, sessionId)
-    return
-  }
-  deliverQuoteToSession(payload, sessionId)
+  void deliverDraggedQuote(payload, sessionId)
+}
+
+/**
+ * Stage a DRAGGED quote into one session's draft, fetching its content first
+ * when its source needs that.
+ *
+ * Which sources need a fetch is NOT decided here: the hydrator registry owns it
+ * (utils/quoteHydrate.ts). This used to be a second hand-written `if` chain that
+ * only knew about meetings, so a mail row dragged onto a session row silently
+ * did nothing — while the same drag onto the chat column worked. Both drop sites
+ * now share one implementation.
+ */
+async function deliverDraggedQuote(payload, sessionId) {
+  const resolved = await hydrateDraggedQuote(payload)
+  if (!resolved) return
+  deliverQuoteToSession(resolved, sessionId)
 }
 
 /**
@@ -450,19 +471,6 @@ function deliverQuoteToSession(payload, sessionId) {
     (ok) => { if (!ok) requestTarget(request) },
     () => requestTarget(request),
   )
-}
-
-/**
- * A meeting drag carries only its token (dragstart cannot await), so the
- * minutes have to be fetched before there is a card to stage — the same reason
- * the chat column's drop path fetches it.
- */
-async function deliverMeetingQuote(token, sessionId) {
-  const record = await meetingHistory.get(token)
-  if (!record) return
-  const quote = await meetingHistory.buildQuote(record)
-  if (!quote) return
-  deliverQuoteToSession(quote, sessionId)
 }
 
 // The drag-bound array. It holds only TOP-LEVEL rows: a session that heads a
@@ -1005,6 +1013,7 @@ const shareDialog = reactive({ open: false, sessionId: '' })
 
 function openShareDialogFromMenu(sessionId) {
   closeContextMenu()
+  if (!shareAllowed.value) { notifyFeatureDisabled(); return }
   shareDialog.sessionId = sessionId
   shareDialog.open = true
 }
@@ -1120,6 +1129,12 @@ watch(() => store.state.sessionListVersion, async () => {
  * failures are silent because a missing badge must never block the list.
  */
 async function refreshSessionShares() {
+  // With 分享 off there are no live links to badge: skip the request and make
+  // sure nothing cached from before the switch survives on the rows.
+  if (!shareAllowed.value) {
+    resetSessionShareState()
+    return
+  }
   try {
     const resp = await fetch('/api/share/session/list')
     if (!resp.ok) return
@@ -1129,6 +1144,15 @@ async function refreshSessionShares() {
     appLog.w('SessionList', 'refresh session shares failed:', err)
   }
 }
+
+// Flipping 分享 off in settings must clear the badges already on screen, not
+// only stop seeding new ones.
+watch(shareAllowed, (enabled, wasEnabled) => {
+  if (!enabled) resetSessionShareState()
+  // Re-seed only on a real off → on transition: the config landing at startup
+  // also flips this computed, and that must not add a second list request.
+  else if (wasEnabled === false) void refreshSessionShares()
+})
 
 defineExpose({ loadSessions, addSessionLocally, reload })
 

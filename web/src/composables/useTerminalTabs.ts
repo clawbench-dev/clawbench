@@ -1,5 +1,6 @@
 import { ref, reactive, computed, markRaw, type Ref } from 'vue'
 import { useTerminalSession, type TerminalErrorMessages } from './useTerminalSession'
+import { useTerminalCommandLine, type CommandLineTracker } from './useTerminalCommandLine'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -20,6 +21,9 @@ export interface TerminalTab {
   xterm: TerminalType | null
   fitAddon: FitAddon | null
   container: HTMLElement | null
+  /** Reconstructs the line being typed, so a submitted command can be recorded.
+   *  Per-tab because each shell has its own input buffer. */
+  commandLine: CommandLineTracker
 }
 
 let tabCounter = 0
@@ -57,15 +61,27 @@ export function useTerminalTabs(
     toast?: (msg: string, opts?: Record<string, unknown>) => void
     /** Transform keyboard input through modifier key processing (Ctrl/Alt/Shift combos) */
     processInput?: (data: string) => string
+    /** Whether submitted commands should be reported for the history panel.
+     *  The tracker keeps running regardless: feeding it is what keeps the
+     *  line state consistent, only the report is gated. */
+    shouldRecordHistory?: () => boolean
+    /**
+     * Returns a reason id when this line is destructive enough to confirm
+     * before running, or null. Called at submit time, on the exact line the
+     * shell is about to receive.
+     */
+    detectDanger?: (line: string) => string | null
+    /** Invoked instead of executing a line `detectDanger` flagged. */
+    onDangerousCommand?: (tabId: string, command: string, reason: string) => void
     /**
      * Tabs to rebuild instead of starting a fresh one (see
      * utils/terminalProjectTabs). Each entry reattaches to the backend session
      * it names — the shell kept running while the user was in another project.
      *
-     * `null`/omitted means "this project has no snapshot": start with one blank
-     * tab, as always. An EMPTY `tabs` array is different and deliberate: the
-     * user had closed every tab, so nothing is created and the panel shows its
-     * empty state.
+     * `null`/omitted means "this project has no snapshot" and an EMPTY `tabs`
+     * array means "the user had closed every tab". Both start with NO tabs, so
+     * the panel shows its empty state: opening the terminal never spawns a
+     * shell the user did not ask for.
      */
     restore?: SavedTerminalTabs | null
   },
@@ -145,6 +161,9 @@ export function useTerminalTabs(
       xterm: markRaw(term),
       fitAddon: markRaw(fit),
       container: null,
+      // markRaw: this is a plain closure object, nothing in it is reactive, and
+      // proxying it would only add overhead on every keystroke.
+      commandLine: markRaw(useTerminalCommandLine()),
     })
 
     opts.onTermCreated?.(term)
@@ -227,7 +246,24 @@ export function useTerminalTabs(
     // Handle terminal input — transform through modifier key processing
     term.onData((data) => {
       const transformed = opts.processInput ? opts.processInput(data) : data
-      if (transformed) session.sendInput(transformed)
+      if (!transformed) return
+      // The submitted command goes BEFORE the newline reaches the PTY: the
+      // backend checks that the foreground process is still the shell, and once
+      // the shell starts the command it no longer is.
+      const submitted = tab.commandLine.feed(transformed)
+      if (submitted) {
+        // Destructive commands are held back: the newline never reaches the PTY,
+        // so the line stays on the shell's input line while the user decides.
+        // The tracker is restored to the same line for the same reason.
+        const danger = opts.detectDanger?.(submitted) ?? null
+        if (danger) {
+          tab.commandLine.setLine(submitted)
+          opts.onDangerousCommand?.(id, submitted, danger)
+          return
+        }
+        if (opts.shouldRecordHistory?.() !== false) session.sendCommand(submitted)
+      }
+      session.sendInput(transformed)
     })
 
     // Send resize to backend
@@ -450,7 +486,8 @@ export function useTerminalTabs(
   }
 
   // Initialize from the project's snapshot when there is one (a project switch
-  // brings its tabs back), otherwise with one blank tab.
+  // brings its tabs back). No snapshot means no tabs — the panel shows its
+  // empty state instead of starting a shell nobody asked for.
   if (opts.restore) {
     for (const saved of opts.restore.tabs) {
       createTab(saved.cwd, { sessionId: saved.sessionId, title: saved.title })
@@ -459,8 +496,36 @@ export function useTerminalTabs(
       const idx = Math.min(Math.max(opts.restore.activeIndex, 0), tabs.value.length - 1)
       activeTabId.value = tabs.value[idx].id
     }
-  } else {
-    createTab()
+  }
+
+  /**
+   * Put a command on the tab's input line WITHOUT running it, and remember it
+   * as the tracked line so pressing Enter submits it normally (which is what
+   * records it in history).
+   *
+   * Used when the user taps a remembered command: the context it was written in
+   * may be gone, so executing it straight away would be a trap.
+   */
+  function insertCommandLine(id: string, command: string) {
+    const tab = tabs.value.find((t) => t.id === id)
+    if (!tab) return
+    tab.commandLine.setLine(command)
+    tab.session.sendInput(command)
+  }
+
+  /**
+   * Send a command to the tab and execute it immediately.
+   *
+   * Reports the command to the backend explicitly: this path bypasses
+   * `onData`, so without it the history panel would miss every quick command
+   * the user ran.
+   */
+  function runCommandLine(id: string, command: string) {
+    const tab = tabs.value.find((t) => t.id === id)
+    if (!tab) return
+    tab.commandLine.reset()
+    tab.session.sendCommand(command)
+    tab.session.sendInput(command + '\r')
   }
 
   return {
@@ -483,5 +548,7 @@ export function useTerminalTabs(
     updateFontFamily,
     updateTheme,
     getTab,
+    insertCommandLine,
+    runCommandLine,
   }
 }

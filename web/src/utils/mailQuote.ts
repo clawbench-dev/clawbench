@@ -45,6 +45,6 @@ export function buildMailQuote(detail: MailMessageDetail, noSubject: string): Qu
     language: 'mail',
     sourceKind: 'mail',
     text,
-    mailId: detail.id,
+    locators: { mail: String(detail.id) },
   })
 }

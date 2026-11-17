@@ -260,6 +260,14 @@ type LaunchConfig struct {
 	// every attachment — the URL of a quoted issue/PR and ordinary files alike.
 	Files []model.FileEntry
 
+	// MessageID is the chat_history row of Message, already materialized when
+	// this launch was prepared. The self-hosted backend replays its history from
+	// chat_history, so it needs this row to know where the reply begins —
+	// otherwise the question being answered is replayed as context too and the
+	// model reads it twice. 0 means "not known": such a turn still runs, it just
+	// falls back to the newest row (see LastChatMessageID).
+	MessageID int64
+
 	// RunCtx is the execution context returned by TryClaimSessionRun. It must be
 	// passed through so the execution is both the one the claim created and the
 	// one a cancel reaches. Nil falls back to a registry lookup (see
@@ -540,6 +548,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 			AgentID:     ResolveAgentID(cfg.SessionID, cfg.AgentID),
 			Message:     cfg.Message,
 			Files:       cfg.Files,
+			MessageID:   matMsgID,
 			RunCtx:      runCtx,
 		})
 		return true, matMsgID, nil
@@ -802,7 +811,24 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 
 	agentID := ResolveAgentID(cfg.SessionID, cfg.AgentID)
 
-	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files))
+	var opts []ChatRequestOption
+	if !ai.IsACPSlashCommand(cfg.Message) {
+		opts = append(opts, WithKBInjection())
+	}
+	// Bound the replayed history just before this turn's own user row. Launchers
+	// that materialized the row pass its id; the rest (restart resume, reaper)
+	// only know that the newest row IS that message, so the fallback reads it
+	// back. Either way the built-in backend must not replay the question it is
+	// answering — the direct-send path has always done this, and every path that
+	// skipped it sent the same question twice.
+	msgID := cfg.MessageID
+	if msgID <= 0 {
+		msgID = LastChatMessageID(cfg.SessionID)
+	}
+	if msgID > 0 {
+		opts = append(opts, WithCurrentMessageID(msgID))
+	}
+	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files), opts...)
 
 	// The one AI-turn implementation — shared with the /api/ai/chat handler and
 	// the scheduler so a fix can no longer land in only one copy.

@@ -494,14 +494,14 @@ describe('landing page', () => {
       dom.window.close()
     })
 
-    it('keeps the packages behind the third deploy tab', () => {
-      // Downloads live inside 部署 → 安装包, after npm and Docker: the tab
+    it('keeps the packages behind the fourth deploy tab', () => {
+      // Downloads live inside 部署 → 安装包, after 一键 / npm / Docker: the tab
       // order is the install-path order, and the panel starts hidden so the
-      // first thing a visitor sees is still the one-line npm command.
+      // first thing a visitor sees is the one-line installer.
       const dom = boot('zh-CN')
       const doc = dom.window.document
       const labels = Array.from(doc.querySelectorAll('.tabs .tab')).map((t) => t.getAttribute('data-tab'))
-      expect(labels).toEqual(['npm', 'docker', 'binary'])
+      expect(labels).toEqual(['script', 'npm', 'docker', 'binary'])
 
       const panel = doc.querySelector('.dl-panel[data-panel="binary"]') as HTMLElement
       expect(panel.hidden).toBe(true)
@@ -511,6 +511,85 @@ describe('landing page', () => {
       // 安装包页签只留服务端产物，客户端在第二步
       expect(panel.querySelectorAll('a[data-asset]').length).toBe(6)
       dom.window.close()
+    })
+
+    it('opens on the one-line installer, with one command per OS', () => {
+      // 一键脚本是第一页签，也是首屏默认面板：新用户最省事的那条路不该藏在
+      // 第二个页签后面。两个系统各一块代码、各自复制，粘错平台的概率就低了。
+      const dom = boot('zh-CN')
+      const doc = dom.window.document
+      expect((doc.querySelector('.tab.is-active') as HTMLElement).dataset.tab).toBe('script')
+
+      const panel = doc.querySelector('[data-panel="script"]') as HTMLElement
+      expect(panel.hidden).toBe(false)
+      const copies = Array.from(panel.querySelectorAll('.copy-btn')).map((b) => b.getAttribute('data-copy'))
+      expect(copies).toEqual([
+        'curl -fsSL https://clawbench.example/install.sh | bash',
+        'irm https://clawbench.example/install.ps1 | iex',
+      ])
+      dom.window.close()
+    })
+
+    it('says the installer tracks latest and prints the installed version', () => {
+      // 脚本装 latest，两次跑的结果可以不同。页面必须如实说出来并给出固定版本的
+      // 办法，否则「一键安装」会被当成可复现的安装方式，而这正是它做不到的。
+      // 两个语言都要有这段（英文缺 key 会静默显示中文，见文件头的说明）。
+      for (const lang of ['zh-CN', 'en-US']) {
+        const dom = boot(lang)
+        const doc = dom.window.document
+        const note = doc.querySelector('[data-i18n-html="dep.script.note"]') as HTMLElement
+        expect(note, lang).toBeTruthy()
+        expect((note.parentElement as HTMLElement).hidden, lang).toBe(false)
+        expect(note.querySelector('code')?.textContent, lang).toContain('CLAWBENCH_VERSION')
+        expect(note.querySelector('a')?.getAttribute('href'), lang).toMatch(/\/releases$/)
+        expect(note.textContent || '', lang).toMatch(/最新版|latest/)
+        dom.window.close()
+      }
+    })
+
+    it('points the installer commands at the host that served the page', () => {
+      // 两个域名各托管一份脚本副本（Cloudflare Pages + GitHub Pages）。写死
+      // Cloudflare 地址时，从 GitHub Pages 访问的人拿到的命令指向另一个
+      // 域名——副本更新不同步就会装出不同版本，而且没有任何迹象。
+      // 命令按 location.host 生成后，用户拿到的是「他正在看的这份」。
+      const cases = [
+        'https://clawbench.pages.dev/',
+        'https://clawbench-dev.github.io/clawbench/',
+        'http://localhost:8080/',
+      ]
+      for (const url of cases) {
+        const dom = new JSDOM(html, { url, runScripts: 'outside-only' })
+        const { window } = dom
+        window.matchMedia = ((query: string) => ({
+          matches: false,
+          media: query,
+          addEventListener() {},
+          removeEventListener() {},
+          addListener() {},
+          removeListener() {},
+          dispatchEvent: () => false,
+        })) as unknown as typeof window.matchMedia
+        window.requestAnimationFrame = ((cb: FrameRequestCallback) =>
+          setTimeout(() => cb(0), 16)) as unknown as typeof window.requestAnimationFrame
+        window.cancelAnimationFrame = ((id: number) => clearTimeout(id)) as unknown as typeof window.cancelAnimationFrame
+        window.eval(script)
+
+        const host = new URL(url).host
+        const doc = window.document
+        const codes = Array.from(
+          doc.querySelectorAll('[data-panel="script"] .copy-btn'),
+        ).map((b) => b.getAttribute('data-copy') || '')
+
+        expect(codes.length, url).toBe(2)
+        expect(codes[0], url).toMatch(new RegExp(`^curl -fsSL https?://${host}/install\\.sh \\| bash$`))
+        expect(codes[1], url).toMatch(new RegExp(`^irm https?://${host}/install\\.ps1 \\| iex$`))
+        // 可见的代码块与复制按钮必须是同一条命令（否则看到的和复制的对不上）
+        const visible = Array.from(doc.querySelectorAll('[data-panel="script"] pre code')).map(
+          (el) => (el.textContent || '').trim(),
+        )
+        expect(visible, url).toEqual(codes)
+        window.close()
+      }
     })
 
     it('walks from the server step to the client step', () => {
@@ -539,12 +618,20 @@ describe('landing page', () => {
       ;(doc.getElementById('langToggle') as HTMLElement).click()
 
       const tabs = Array.from(doc.querySelectorAll('.tabs .tab'))
-      expect(tabs.length).toBe(3)
+      expect(tabs.length).toBe(4)
       for (const tab of tabs) expect(tab.querySelector('svg use')).toBeTruthy()
       expect(
-        tabs[2].querySelector('[data-i18n]')?.getAttribute('data-i18n'),
+        tabs[3].querySelector('[data-i18n]')?.getAttribute('data-i18n'),
       ).toBe('dep.tab.binary')
       dom.window.close()
+    })
+
+    it('keeps tab labels on one line on narrow screens', () => {
+      // 四个页签在 390px 的手机上放不下。没有 flex:none / nowrap 时，flex 会把
+      // 按钮压到 min-content，「一键」直接折成竖排的「一 / 键」——jsdom 没有
+      // 布局，只有源码守卫能拦住这一类。
+      expect(css).toMatch(/\.tab\s*\{[^}]*flex:\s*none/)
+      expect(css).toMatch(/\.tab\s*\{[^}]*white-space:\s*nowrap/)
     })
 
     it('runs the server through npx, with a comment on every command', () => {

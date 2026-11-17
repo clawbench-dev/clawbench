@@ -16,9 +16,17 @@ func setupProvidersDB(t *testing.T) {
 	t.Helper()
 	db, err := service.InitInMemoryDB()
 	require.NoError(t, err)
+	// Sandbox the data dir too. Provider bindings to a config-directory backend
+	// WRITE files under {DataDir}/providers/agents/, so a test that leaves
+	// DataDir at its default scribbles into the source tree (it did: a stray
+	// internal/service/providers/agents/... appeared after a test run) and can
+	// collide with a real installation's data.
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
 	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
+		model.DataDir = origDataDir
 		_ = db.Close()
 		model.ReplaceProviders(nil)
 	})
@@ -310,10 +318,65 @@ func TestProviderModelsPersistAndNormalize(t *testing.T) {
 	assert.Equal(t, "m3", updated.DefaultModel)
 }
 
+// Emptying a provider's model list breaks every agent bound to it through a
+// config-directory backend: the file no longer declares any model, so the CLI
+// cannot resolve an id. The bind-time check cannot catch this because the
+// binding already exists — the edit itself has to be refused.
+func TestProviderUpdate_RefusesEmptyingModelsWhileConfigDirAgentBound(t *testing.T) {
+	setupProvidersDB(t)
+
+	created, err := service.CreateProvider(model.Provider{
+		Name: "WithModels", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://api.deepseek.com/v1", APIKey: "k", Models: []string{"m1"},
+	})
+	require.NoError(t, err)
+
+	agent := &model.Agent{ID: "pi-agent", Name: "Pi Agent", Backend: "pi", ProviderID: &created.ID}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	// An env-driven agent does not care about the list, so it must not block.
+	// zcode is env-driven: nothing on disk declares its models, so it must not
+	// block. (claude used to stand in here, but it now writes a config directory
+	// too.)
+	envProvider, err := service.CreateProvider(model.Provider{
+		Name: "ZcodeP", Protocol: model.ProviderProtocolAnthropic,
+		BaseURL: "https://x/anthropic", APIKey: "k", Models: []string{"m1"},
+	})
+	require.NoError(t, err)
+	envAgent := &model.Agent{ID: "zcode-agent", Name: "Zcode Agent", Backend: "zcode", ProviderID: &envProvider.ID}
+	model.ReplaceAgents(
+		map[string]*model.Agent{agent.ID: agent, envAgent.ID: envAgent},
+		[]*model.Agent{agent, envAgent},
+	)
+
+	empty := []string{}
+	_, err = service.UpdateProvider(created.ID, service.ProviderPatch{Models: &empty})
+	require.Error(t, err)
+	var conflict *service.ProviderModelsConflictError
+	require.ErrorAs(t, err, &conflict)
+	assert.Contains(t, conflict.AgentNames, "Pi Agent")
+	assert.NotContains(t, conflict.AgentNames, "Zcode Agent",
+		"only config-directory agents depend on the declared list")
+
+	// The row is untouched by the refused update.
+	stored, err := service.GetProvider(created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"m1"}, stored.Models)
+
+	// The env-driven provider CAN be emptied: nothing on disk declares its models.
+	_, err = service.UpdateProvider(envProvider.ID, service.ProviderPatch{Models: &empty})
+	require.NoError(t, err)
+}
+
 // An auth mode no backend can express is a dead row: it saved fine, the test
 // button went green, and every turn then failed with "does not support Bearer
 // auth". Rejecting it at write time is the only place the user can still see
 // which field is wrong.
+//
+// Only gemini+bearer remains dead. openai+bearer used to be listed here too, but
+// that was true only while no OpenAI-protocol backend declared an AuthToken:
+// CodeBuddy reads CODEBUDDY_AUTH_TOKEN as a bearer token on its /chat/completions
+// path, so the combination is real now.
 func TestProviderRejectsDeadAuthMode(t *testing.T) {
 	setupProvidersDB(t)
 
@@ -322,7 +385,6 @@ func TestProviderRejectsDeadAuthMode(t *testing.T) {
 		protocol string
 		auth     string
 	}{
-		{name: "openai+bearer", protocol: model.ProviderProtocolOpenAI, auth: model.ProviderAuthBearer},
 		{name: "gemini+bearer", protocol: model.ProviderProtocolGemini, auth: model.ProviderAuthBearer},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -351,13 +413,23 @@ func TestProviderRejectsDeadAuthMode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.ProviderAuthAPIKey, openaiKey.AuthMode)
 
-	// Editing into a dead combination is refused the same way.
-	bearer := model.ProviderAuthBearer
-	_, err = service.UpdateProvider(openaiKey.ID, service.ProviderPatch{AuthMode: &bearer})
+	// openai + bearer is accepted now (CodeBuddy reads a bearer token), so the
+	// "editing into a dead combination" case uses gemini instead.
+	openaiBearer := model.ProviderAuthBearer
+	updated, err := service.UpdateProvider(openaiKey.ID, service.ProviderPatch{AuthMode: &openaiBearer})
+	require.NoError(t, err, "openai + bearer is reachable through CodeBuddy")
+	assert.Equal(t, model.ProviderAuthBearer, updated.AuthMode)
+
+	gemini, err := service.CreateProvider(model.Provider{
+		Name: "GeminiKey", Protocol: model.ProviderProtocolGemini, BaseURL: "https://gw.example", APIKey: "k",
+		AuthMode: model.ProviderAuthAPIKey,
+	})
+	require.NoError(t, err)
+	_, err = service.UpdateProvider(gemini.ID, service.ProviderPatch{AuthMode: &openaiBearer})
 	assert.ErrorIs(t, err, service.ErrProviderInvalid)
 
 	// ...and the row is untouched by the rejected update.
-	stored, err := service.GetProvider(openaiKey.ID)
+	stored, err := service.GetProvider(gemini.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.ProviderAuthAPIKey, stored.AuthMode)
 }
@@ -375,7 +447,7 @@ func TestProviderValidationErrorNamesField(t *testing.T) {
 	}{
 		{
 			name:  "dead auth mode",
-			p:     model.Provider{Name: "A", Protocol: model.ProviderProtocolOpenAI, AuthMode: model.ProviderAuthBearer},
+			p:     model.Provider{Name: "A", Protocol: model.ProviderProtocolGemini, AuthMode: model.ProviderAuthBearer},
 			field: "authMode",
 		},
 		{

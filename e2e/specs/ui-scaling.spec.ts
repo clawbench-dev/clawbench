@@ -162,6 +162,8 @@ test.describe('Terminal follows the UI scale', () => {
     const terminal = new TerminalPage(page)
     await terminal.switchToTerminal()
     await terminal.expectPanelVisible()
+    // Opening the panel no longer creates a tab on the user's behalf.
+    await terminal.ensureTabExists()
     await terminal.waitForTabConnected(0, 15000)
 
     /** Row height of the active xterm — a direct proxy for `fontSize`. */

@@ -40,7 +40,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	// The client resolves that link before this point (acp_opencode_children.go)
 	// and stamps it into the meta; frames it could not attribute are dropped
 	// here so they never render as top-level main-timeline content (issue #639).
-	if isOpenCodeChildSessionUpdate(update) &&
+	if isChildSessionUpdate(backendID, update) &&
 		metaString(acpUpdateMeta(update)[metaKeyClawBenchParentToolCallID]) == "" {
 		return
 	}
@@ -220,8 +220,8 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// An Agent spawn frame for a team member is the only place the member
 		// name and the tool-call id co-occur; record the join so this member's
 		// later content frames can be grouped under this Agent card.
-		if backendID == "codebuddy" {
-			noteCodeBuddyMemberSpawn(conn, tc.Meta, toolCallIDOf(tc.ToolCallId))
+		if b := acpBehavior(backendID); b != nil && b.OnToolCall != nil {
+			b.OnToolCall(conn, tc)
 		}
 		// When the agent transitions from thinking to tool use, emit
 		// thinking_done so the frontend can stop the thinking spinner. Scoped to
@@ -302,8 +302,8 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// task-tool results (all other updates no-op). Runs on the notification
 		// goroutine, so it may only touch state guarded by a leaf lock:
 		// SetCachedPlanState uses stateMu, never c.mu (see ACPConn.stateMu).
-		if backendID == "codebuddy" && conn != nil && isCodeBuddyBackend(conn.agent) {
-			bridgeCodeBuddyPlanFromToolUpdate(ch, conn, *tcu)
+		if b := acpBehavior(backendID); b != nil && b.OnToolCallUpdate != nil {
+			b.OnToolCallUpdate(conn, ch, *tcu)
 		}
 
 		// OpenCode exposes its checklist through the `todowrite` tool rather
@@ -311,9 +311,6 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// plan_update so the frontend PlanPanel renders the checklist. Placed
 		// before the debouncer for the same reason as the CodeBuddy bridge
 		// (the debouncer's terminal path breaks out of the switch).
-		if isOpenCodePlanBackend(backendID) {
-			bridgeOpenCodePlanFromToolUpdate(ch, conn, *tcu)
-		}
 
 		// Debounce non-terminal ToolCallUpdate events to reduce WS traffic.
 		// ACP agents emit ToolCallUpdate deltas every ~30ms during tool input
@@ -408,7 +405,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		if conn != nil {
 			agentID := conn.AgentID()
 			if agentID != "" {
-				if isCodeBuddyBackend(conn.agent) {
+				if hasPluginCommands(conn.agent) {
 					existing := GetAgentCapabilityRegistry().GetCommands(agentID)
 					infos = MergeCommands(infos, existing)
 				}
@@ -554,8 +551,8 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// _meta. A plain session_info_update (title/updatedAt) carries no
 		// teamUpdate key and is a no-op here, so non-team sessions are
 		// unaffected.
-		if backendID == "codebuddy" {
-			bridgeCodeBuddyTeamUpdate(ch, conn, update.SessionInfoUpdate.Meta)
+		if b := acpBehavior(backendID); b != nil && b.OnSessionInfoUpdate != nil {
+			b.OnSessionInfoUpdate(conn, ch, update.SessionInfoUpdate.Meta)
 		}
 		slog.Debug("acp: session info update")
 
@@ -609,7 +606,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		ext := extractMetaUsage(backendID, update.UsageUpdate.Meta)
 		if reusedCostAsCredit {
 			if ext == nil {
-				ext = &metaExtraction{}
+				ext = &MetaExtraction{}
 			}
 			if update.UsageUpdate.Cost.Amount > ext.CostCredit {
 				ext.CostCredit = update.UsageUpdate.Cost.Amount

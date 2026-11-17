@@ -12,6 +12,8 @@ import { setLayoutScopeMode } from '@/utils/panelState'
 import { setDefaultBlockWrap } from '@/utils/blockWrapPref'
 import { applyServerLimits } from '@/stores/app.ts'
 import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
+import { refreshServerFeatures, syncFeatureConfig } from '@/composables/useFeatureFlags'
+import { useTerminalStatus } from '@/composables/useTerminalStatus'
 
 const LOCAL_PREFIX = SETTINGS_KEY_PREFIX
 
@@ -41,6 +43,25 @@ function ensureFloatingEnabledListener() {
     if (typeof enabled !== 'boolean') return
     if (localConfig.floatingStatusWindow === enabled) return
     setLocalConfig('floatingStatusWindow', enabled)
+  }) as EventListener)
+}
+
+/**
+ * Listen for the close behaviour being remembered in the native dialog.
+ *
+ * The dialog's "remember my choice" writes the native store directly, so the
+ * settings row would otherwise keep showing the previous option until a reload.
+ * Registered once, like the floating-window listener above.
+ */
+let closeActionListenerReady = false
+function ensureCloseActionListener() {
+  if (closeActionListenerReady) return
+  closeActionListenerReady = true
+  window.addEventListener('clawbench-close-action-changed', ((e: CustomEvent) => {
+    const action = e.detail
+    if (typeof action !== 'string') return
+    if (localConfig.closeAction === action) return
+    setLocalConfig('closeAction', action)
   }) as EventListener)
 }
 
@@ -206,6 +227,23 @@ const legacyKeys: Record<string, {
     sideEffect(value: boolean) {
       try {
         getNative()?.setFloatingWindowEnabled?.(!!value)
+      } catch { /* not in app mode */ }
+    },
+  },
+  /**
+   * What the desktop shell's close button does ('ask' | 'tray' | 'exit').
+   *
+   * Mirrored into the native store rather than kept as a web preference: the
+   * dialog that asks belongs to the main process, and it must agree with this
+   * row. The read-back in `syncCloseActionToNative` covers the other direction
+   * (a choice remembered in the dialog).
+   */
+  closeAction: {
+    key: '',
+    format: 'raw',
+    sideEffect(value: string) {
+      try {
+        getNative()?.setCloseAction?.(value)
       } catch { /* not in app mode */ }
     },
   },
@@ -423,6 +461,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // keeps the pre-existing behaviour.
   layoutMemory: 'global',
   messageDisplayMode: 'mixed',
+  // Fold a run of tool calls into one "ran N operations" row (设置 → 聊天 → 消息).
+  // On by default: a long turn otherwise becomes a wall of full-width pills.
+  // Per device: it is purely how this screen draws a transcript.
+  compactToolCalls: true,
   // Where the OTHER projects' sessions go in the session list:
   //   'strip' — the default: cards under the project's own rows, one scroll.
   //   'tabs'  — a two-slot bar at the bottom switches between this project and
@@ -463,6 +505,9 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // when they are sitting at it.
   desktopNotification: true,
   floatingStatusWindow: false,
+  // What the close button does. 'ask' on a fresh install, matching the shell's
+  // own default — the native store is the authority once it has answered.
+  closeAction: 'ask',
   liveUpdate: true,
   fontMono: 'default',
   fontUi: 'default',
@@ -528,6 +573,20 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   liveCameraFps: '24',
   liveCameraBitrate: '2.5',
   liveAutoDowngrade: true,
+  // ── Git history (设置 → Git 历史) ──
+  // The list used to start with merges shown, absolute dates and the graph on
+  // every time, because nothing persisted the three toggles. Defaults keep that
+  // behaviour for anyone who never opens the page.
+  gitHistoryHideMerges: false,
+  gitHistoryShowGraph: true,
+  gitHistoryTimeFormat: 'relative',
+  // ── Statistics (设置 → 统计) ──
+  // 'usage' / '24h' are what the panel opened on before it had settings.
+  statsDefaultTab: 'usage',
+  statsDefaultRange: '24h',
+  statsRememberLast: false,
+  // ── Tasks (设置 → 任务) ──
+  tasksDefaultFilter: 'all',
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -598,6 +657,49 @@ const serverDefaults: Record<string, unknown> = {
   // Mail master switch defaults ON, mirroring ApplyDefaults so the dock does not
   // flash the tab away before /api/config arrives.
   'mail.enabled': true,
+  // Task scheduler / share-center master switches (功能编排). Same reasoning:
+  // ON by default so nothing flickers off before the config lands, and so a
+  // config written before these keys existed keeps the feature enabled.
+  'tasks.enabled': true,
+  'share.enabled': true,
+  'kb.enabled': true,
+  // Knowledge-base index tuning. Mirrors model.ApplyDefaults — the rows used to
+  // have no UI at all, so these are the first values anyone sees. Auto-inject is
+  // opt-in (default off), so a fresh install never prepends snippets silently.
+  'kb.auto_inject': false,
+  'kb.inject_top_n': 4,
+  'kb.inject_max_chars': 2000,
+  'kb.inject_min_similarity': 0.35,
+  'kb.max_file_mb': 50,
+  'kb.max_text_mb': 20,
+  'kb.poll_interval': '2s',
+  'kb.embed_batch_size': 16,
+  // Task scheduler rules (设置 → 任务). Retention is opt-in, like the upload and
+  // archive retention rows; both notifications default ON so a failure is not
+  // silent.
+  'tasks.retention_enabled': false,
+  'tasks.retention_days': 30,
+  'tasks.notify_on_success': true,
+  'tasks.notify_on_failure': true,
+  'tasks.timezone': '',
+  // Share-center rules (设置 → 分享中心). All three content types are shareable
+  // by default (that is what the feature has always done), downloads allowed,
+  // links never expire until the user sets a lifetime.
+  'share.allow_files': true,
+  'share.allow_sessions': true,
+  'share.allow_meetings': true,
+  'share.allow_download': true,
+  'share.link_ttl_days': 0,
+  'share.show_project_name': true,
+  // Git history page size — the `git log -N` argument, hardcoded to 30 before
+  // this page existed.
+  'git_history.page_size': 30,
+  // Sync tuning, same reason as above: without these the rows render 0 until
+  // the config lands — and for body_prefetch 0 means "do not prefetch", so the
+  // panel would briefly show a value the server is not using.
+  'mail.sync_interval_minutes': 3,
+  'mail.sync_window': 100,
+  'mail.body_prefetch': 10,
   'forge.notify.opened': true,
   'forge.notify.closed': true,
   'forge.notify.merged': true,
@@ -728,6 +830,8 @@ const serverDefaults: Record<string, unknown> = {
   'meeting.language': '',
   'meeting.file_excerpts': true,
   'meeting.minutes_max_tokens': 0,
+  'meeting.agent_minutes': false,
+  'meeting.agent_minutes_max_rounds': 0,
   'port_forward.allowed_ports': '1024-65535',
   // Mirrors the server default (h2) so the transport row shows a value before
   // /api/config lands instead of a blank select.
@@ -797,6 +901,14 @@ export async function patchAgentField(
   // "all"), so mirroring the raw payload could leave the UI showing a mode the
   // server did not store. Re-fetch to stay authoritative.
   if (field === 'mcp_servers') {
+    await loadAgents(true)
+    return
+  }
+  // tool_policy: same reason, and stronger — the server closes the capability
+  // set over its implications (exec implies write implies read). Mirroring the
+  // raw payload would leave the UI showing "exec only" while the agent can also
+  // write, which is exactly the lie this editor exists to avoid.
+  if (field === 'tool_policy') {
     await loadAgents(true)
     return
   }
@@ -923,6 +1035,7 @@ export function useSettingsConfig() {
   // The tray can turn the feature off behind the page's back — listen before
   // anything else so the settings row converges from the first render.
   ensureFloatingEnabledListener()
+  ensureCloseActionListener()
 
   /** Sync push_mode from server config to Android native push state. */
   function syncPushModeToNative() {
@@ -967,10 +1080,41 @@ export function useSettingsConfig() {
     } catch { /* not in app mode */ }
   }
 
+  /**
+   * Reconcile the close behaviour with the native host.
+   *
+   * The host is the source of truth: the dialog can remember a choice, and this
+   * row only ever writes. Adopting the host's value (rather than pushing ours)
+   * is what stops a stale localStorage value from silently undoing a remembered
+   * "minimize to tray" on the next load.
+   *
+   * Hosts without the accessor (Android, browser) are left alone — the row is
+   * not rendered there at all.
+   */
+  function syncCloseActionToNative() {
+    try {
+      const actual = getNative()?.getCloseAction?.()
+      if (typeof actual !== 'string') return
+      if (actual === localConfig.closeAction) return
+      setLocalConfig('closeAction', actual)
+    } catch { /* not in app mode */ }
+  }
+
   async function loadConfig() {
     try {
       const data = await apiGet<Record<string, unknown>>('/api/config')
       serverConfig.value = data
+      // Feed the 功能编排 switches to their single reader. This is the one place
+      // the config lands, so it is also the one place they are refreshed — see
+      // useFeatureFlags for why that module does not read serverConfig itself.
+      syncFeatureConfig(data)
+      // The six master switches answer from the server's plugin registry, not
+      // from this snapshot (see useFeatureFlags). Refreshing it here — the one
+      // place the config lands, including after every PATCH — is what makes a
+      // flipped switch reach the entries without a reload. Not awaited: a slow
+      // /api/features must not delay the settings page, and the flags read as
+      // ON until it lands.
+      void refreshServerFeatures()
       // Mirror hot-reloadable limits into the global store so client-side
       // pre-checks (session-limit guard, upload size/count) and the session
       // header reflect a settings change immediately instead of only after a
@@ -996,6 +1140,8 @@ export function useSettingsConfig() {
     syncFloatingWindowToNative()
     // Sync Live Updates chip preference to Android native
     syncLiveUpdateToNative()
+    // Adopt the close behaviour the shell actually has stored
+    syncCloseActionToNative()
   }
 
   async function patchConfig(changes: Record<string, unknown>): Promise<{ needsRestart: boolean; changedColdFields: string[]; warnings: string[] }> {
@@ -1004,6 +1150,14 @@ export function useSettingsConfig() {
     // are masked server-side and must be re-fetched rather than using the
     // plaintext value the user just submitted).
     await loadConfig()
+    // A feature switch can start or stop a server-side runtime (turning
+    // terminal.enabled off tears the PTY manager down). The entries that gate
+    // on the RUNTIME — the terminal dock tab and the file manager's
+    // "open in terminal" menu item — read `terminalRuntimeEnabled`, not the
+    // switch, so they would keep the pre-PATCH answer until a page reload.
+    // Re-probe after every write; `loadConfig` refreshes the switch axis
+    // (`/api/features`) and cannot answer this one.
+    void useTerminalStatus().loadTerminalStatus()
     return {
       needsRestart: result.needs_restart ?? false,
       changedColdFields: result.changed_cold_fields ?? [],

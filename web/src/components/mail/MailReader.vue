@@ -1,6 +1,7 @@
 <template>
   <div class="mail-reader">
     <div class="mail-reader__head">
+      <Mail :size="14" class="panel-header-icon" />
       <button class="mail-icon-btn" :title="t('mail.reader.back')" @click="emit('back')">
         <ArrowLeft />
       </button>
@@ -60,6 +61,9 @@
 
     <div class="mail-reader__meta">
       <div class="mail-reader__from">
+        <!-- Same sender colour as the list row, so the message the user just
+             clicked keeps its identity instead of turning grey on open. -->
+        <span class="mail-reader__avatar" :style="{ '--mail-hue': senderHue }" aria-hidden="true">{{ senderInitial }}</span>
         <span class="mail-reader__name">{{ detail ? mailSenderLabel(detail) : '' }}</span>
         <span class="mail-reader__addr">{{ detail?.fromAddr }}</span>
       </div>
@@ -109,7 +113,11 @@
           :href="`/api/mail/messages/${a.messageId}/attachments/${a.id}`"
           :download="a.filename"
         >
-          <Paperclip class="mail-attachment__icon" />
+          <component
+            :is="attachmentIcon(a)"
+            class="mail-attachment__icon"
+            :class="`is-${mailAttachmentKind(a.filename, a.contentType)}`"
+          />
           <span class="mail-attachment__name">{{ a.filename }}</span>
           <span class="mail-attachment__size">{{ formatMailSize(a.size) }}</span>
         </a>
@@ -133,9 +141,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Forward, Mail, MailOpen, MessageSquare, MessageSquarePlus, Paperclip, Reply, ReplyAll, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
+import { mailAttachmentKind, mailHue, mailInitial } from '@/utils/mailColors'
+import { ArrowLeft, Forward, FileArchive, FileImage, FileSpreadsheet, FileText, Mail, MailOpen, MessageSquare, MessageSquarePlus, Paperclip, Reply, ReplyAll, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
 import EmptyState from '@/components/common/EmptyState.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { apiGet, apiPost } from '@/utils/api'
@@ -188,6 +197,29 @@ const imagesAllowed = computed(
 )
 
 const attachments = computed(() => (detail.value?.attachments ?? []).filter((a: MailAttachment) => !a.inline))
+const senderHue = computed(() => mailHue(detail.value?.fromAddr || detail.value?.fromName || ''))
+const senderInitial = computed(() => mailInitial(detail.value?.fromName ?? '', detail.value?.fromAddr ?? ''))
+
+/**
+ * One glyph per attachment type.
+ *
+ * A paperclip for everything made a six-file mail look like six copies of the
+ * same thing; the type is what the user is actually looking for ("where is the
+ * PDF"). `other` keeps the neutral paperclip so an unknown file is not
+ * mislabelled as a document.
+ */
+const ATTACHMENT_ICON: Record<string, Component> = {
+  image: FileImage,
+  pdf: FileText,
+  archive: FileArchive,
+  sheet: FileSpreadsheet,
+  doc: FileText,
+  other: Paperclip,
+}
+
+function attachmentIcon(a: MailAttachment): Component {
+  return ATTACHMENT_ICON[mailAttachmentKind(a.filename, a.contentType)] ?? Paperclip
+}
 
 // ── Action-row labels ─────────────────────────────────────────
 // Same rule as the chat action bar (shared composable): labels are always in the
@@ -342,7 +374,11 @@ async function remove(): Promise<void> {
   display: flex;
   align-items: center;
   gap: var(--space-2, 4px);
-  padding: var(--space-2, 4px) var(--space-3, 6px);
+  /* Same row geometry as the list toolbar it was opened from: the shared
+     panel-header rule owns height / surface / divider (both layouts), and the
+     vertical padding is gone so it cannot grow the row. */
+  height: var(--header-height);
+  padding: 0 var(--space-3, 6px);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
@@ -393,9 +429,24 @@ async function remove(): Promise<void> {
 }
 .mail-reader__from {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2, 4px);
   min-width: 0;
+}
+.mail-reader__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: calc(22 * var(--dp));
+  height: calc(22 * var(--dp));
+  margin-right: calc(2 * var(--dp));
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--mail-hue, var(--accent-color)) 18%, transparent);
+  color: var(--mail-hue, var(--accent-color));
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
 }
 .mail-reader__name {
   font-size: var(--font-size-sm, 12px);
@@ -504,6 +555,14 @@ async function remove(): Promise<void> {
   color: var(--text-hint);
   flex: none;
 }
+/* Type colours come from the theme's status tokens, so they follow all 36
+   themes. Hues are spread on purpose: image / archive / sheet / doc must not
+   all land in the same warm corner of the palette. */
+.mail-attachment__icon.is-image { color: var(--color-purple); }
+.mail-attachment__icon.is-pdf { color: var(--color-red); }
+.mail-attachment__icon.is-archive { color: var(--color-orange); }
+.mail-attachment__icon.is-sheet { color: var(--color-green); }
+.mail-attachment__icon.is-doc { color: var(--color-info); }
 .mail-attachment__name {
   flex: 1;
   min-width: 0;

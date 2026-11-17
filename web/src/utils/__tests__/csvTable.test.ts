@@ -5,6 +5,7 @@ import {
   detectDelimiter,
   detectNumericColumns,
   filterAndSortRows,
+  isIndexColumn,
   isNumericTable,
   parseDelimited,
   parseNumericCell,
@@ -266,11 +267,33 @@ describe('isNumericTable', () => {
     )).toBe(true)
   })
 
-  it('ignores the first column when looking for that numeric column', () => {
+  it('编号列不算数据列：只有序号是数字的表格按普通表显示', () => {
     expect(isNumericTable(
       ['序号', '名称', '说明'],
       [['1', '网关', '正常'], ['2', '鉴权', '正常']],
     )).toBe(false)
+  })
+
+  it('列名不带「序号」、内容就是 1..N 的也算编号列', () => {
+    // 真实回归：AI 写的「步 / 优先级 / 做什么 / 手感变化」八步清单曾被判成数据表
+    expect(isNumericTable(
+      ['步', '优先级', '做什么'],
+      [['1', 'P0', '项目技能默认不自动注入'], ['2', 'P0', '用户目录提到项目之前'], ['3', 'P1', '描述截到 200 字']],
+    )).toBe(false)
+  })
+
+  it('编号列之外还有真数字列时仍然是数据表', () => {
+    expect(isNumericTable(
+      ['序号', '名称', '数量'],
+      [['1', '网关', '12'], ['2', '鉴权', '8']],
+    )).toBe(true)
+  })
+
+  it('does not treat the first column as a label just because of its position', () => {
+    expect(isNumericTable(
+      ['年份', '说明'],
+      [['2024', '上线'], ['2025', '扩容']],
+    )).toBe(true)
   })
 
   it('rejects a table where no column is purely numeric', () => {
@@ -290,5 +313,29 @@ describe('isNumericTable', () => {
 
   it('still rejects a table with one text cell', () => {
     expect(isNumericTable(['name', 'value'], [['a', '3450,75'], ['b', '暂无']])).toBe(false)
+  })
+})
+
+describe('isIndexColumn', () => {
+  it('recognises an index header even when the values are not 1..N', () => {
+    expect(isIndexColumn('序号', ['1', '2', '3'])).toBe(true)
+    expect(isIndexColumn('编号', ['A-01', 'A-02'])).toBe(true)
+    expect(isIndexColumn('ID', ['1001', '1002'])).toBe(true)
+    expect(isIndexColumn('No.', ['1', '2'])).toBe(true)
+    expect(isIndexColumn('#', ['1', '2'])).toBe(true)
+  })
+
+  it('recognises a 1..N column without any header', () => {
+    expect(isIndexColumn('', ['1', '2', '3', '4'])).toBe(true)
+    expect(isIndexColumn('行', ['1', '2', '3'])).toBe(true)
+  })
+
+  it('leaves real measures alone', () => {
+    expect(isIndexColumn('数量', ['3', '5', '8'])).toBe(false)
+    expect(isIndexColumn('', ['10', '20', '30'])).toBe(false)
+    // 只有两行不算：短表里 1、2 更可能是巧合
+    expect(isIndexColumn('', ['1', '2'])).toBe(false)
+    // 断号的序列不算编号
+    expect(isIndexColumn('', ['1', '2', '4'])).toBe(false)
   })
 })

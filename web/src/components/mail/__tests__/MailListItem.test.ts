@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import en from '@/i18n/locales/en'
 import MailListItem from '../MailListItem.vue'
 import type { MailMessage } from '@/utils/mailTypes'
+import { MAIL_HUES } from '@/utils/mailColors'
 import { readQuoteDragData } from '@/utils/quoteDrag'
 
 // Quoting from the row fetches the full body (the list only has a snippet), so
@@ -107,8 +108,52 @@ describe('MailListItem time', () => {
 
     const payload = readQuoteDragData(dt as unknown as DataTransfer)
     expect(payload, 'the row must write a quote payload').toBeTruthy()
-    expect(payload).toMatchObject({ mailId: 1, language: 'mail', sourceKind: 'mail', text: '' })
+    expect(payload).toMatchObject({ locators: { mail: '1' }, language: 'mail', sourceKind: 'mail', text: '' })
     expect(payload!.filePath).toBe('周报 · 老板')
+  })
+})
+
+describe('MailListItem sender colour', () => {
+  it('shows a per-sender hue and the sender initial', () => {
+    const wrapper = mountRow(Math.floor(Date.now() / 1000))
+
+    const avatar = wrapper.find('.mail-row__avatar')
+    expect(avatar.exists(), 'the row must open with a coloured sender avatar').toBe(true)
+    expect(avatar.text()).toBe('老')
+    // The hue travels through the `--mail-hue` custom property, not a class:
+    // a fixed class would pick ONE theme colour per row forever, while the
+    // variable carries any of the theme's own status tokens.
+    const style = avatar.attributes('style') || ''
+    expect(style).toContain('--mail-hue')
+    // …and it must be one of the theme's own tokens, never a literal colour.
+    expect(MAIL_HUES.some((hue) => style.includes(hue))).toBe(true)
+  })
+
+  it('keeps the same hue for the same address, whatever the display name', () => {
+    const now = Math.floor(Date.now() / 1000)
+    const renamed = message(now)
+    renamed.fromName = 'NPM 团队'
+    const b = mount(MailListItem, { props: { msg: renamed }, global: { plugins: [i18n] } })
+
+    // Only the address drives the hue, so a display-name change must not
+    // repaint the sender.
+    const styleA = mountRow(now).find('.mail-row__avatar').attributes('style') || ''
+    const styleB = b.find('.mail-row__avatar').attributes('style') || ''
+    expect(styleB).toBe(styleA)
+  })
+
+  // jsdom has no layout, so this pins the INTENT in the stylesheet: the wash
+  // must mix the accent (theme-driven), and the avatar must consume the row's
+  // `--mail-hue` variable with a fallback.
+  it('declares the wash from the accent and the avatar from --mail-hue', () => {
+    const src = readFileSync(join(__dirname, '..', 'MailListItem.vue'), 'utf8')
+    const rule = (selector: string) =>
+      new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(src)?.[1] ?? ''
+
+    expect(rule('.mail-row.is-unread')).toContain('color-mix(in srgb, var(--accent-color)')
+    const avatar = rule('.mail-row__avatar')
+    expect(avatar).toContain('var(--mail-hue, var(--accent-color))')
+    expect(avatar).toContain('border-radius: var(--radius-full)')
   })
 })
 
@@ -136,12 +181,12 @@ describe('MailListItem quote action', () => {
     expect(mockApiGet).toHaveBeenCalledWith('/api/mail/messages/1')
     expect(mockOpenComposer).toHaveBeenCalledTimes(1)
     const ctx = mockOpenComposer.mock.calls[0][0] as {
-      quote?: { language?: string; text?: string; mailId?: number }
+      quote?: { language?: string; text?: string; locators?: Record<string, string> }
       label?: string
     }
     expect(ctx.quote?.language).toBe('mail')
     expect(ctx.quote?.text).toBe('本周进展全文')
-    expect(ctx.quote?.mailId).toBe(1)
+    expect(ctx.quote?.locators?.mail).toBe('1')
     expect(ctx.label).toBe('周报 · 老板')
     // `@click.stop`: quoting must not also open the mail.
     expect(wrapper.emitted('open')).toBeFalsy()

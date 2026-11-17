@@ -156,6 +156,15 @@ func TestTerminalWebSocketCwdRejectsAbsoluteOutsideRoots(t *testing.T) {
 
 // ---------- TerminalStatus ----------
 
+// A disabled terminal has no Manager at all: the feature being off means the
+// plugin never calls Start, so there is nothing to ask.
+//
+// The two capability fields must still report the REAL platform answers. The
+// settings switch greys itself out on platform_supported === false, so
+// hard-coding false here made "switched off" indistinguishable from "this OS
+// cannot run a terminal": turning the terminal off left the switch "enabled but
+// unsupported" and the dock tab gone until a page reload. Only `enabled` is
+// false — that is the one fact a missing manager actually proves.
 func TestTerminalStatus_NilManager(t *testing.T) {
 	origMgr := GetTerminalManager()
 	t.Cleanup(func() { SetTerminalManager(origMgr) })
@@ -168,9 +177,9 @@ func TestTerminalStatus_NilManager(t *testing.T) {
 	var result map[string]any
 	decodeRespJSON(t, w.Body, &result)
 	assert.Equal(t, false, result["enabled"])
-	assert.Equal(t, false, result["platform_supported"])
-	// No manager means no probe — the frontend must not offer live-cwd drops.
-	assert.Equal(t, false, result["cwd_probe_supported"])
+	assert.Equal(t, terminal.PlatformSupported(), result["platform_supported"],
+		"platform capability must come from the platform, not from 'no manager'")
+	assert.Equal(t, terminal.CwdProbeSupported(), result["cwd_probe_supported"])
 }
 
 func TestTerminalStatus_AllSessions(t *testing.T) {
@@ -562,4 +571,150 @@ func TestGetTerminalManager_ConcurrentAccess(t *testing.T) {
 	// Verify we can still get a valid manager after concurrent access
 	result := GetTerminalManager()
 	assert.NotNil(t, result)
+}
+
+// ---------- ServeTerminalHistory ----------
+
+func TestServeTerminalHistory_ListEmpty(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/terminal/history", nil)
+	w := callHandler(ServeTerminalHistory, req)
+	assertOK(t, w)
+
+	var items []service.TerminalCommand
+	decodeRespJSON(t, w.Body, &items)
+	assert.NotNil(t, items, "should return empty array, not nil")
+	assert.Empty(t, items)
+}
+
+func TestServeTerminalHistory_ListAfterRecord(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_, err := service.RecordTerminalCommand("git status", "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/terminal/history", nil)
+	w := callHandler(ServeTerminalHistory, req)
+	assertOK(t, w)
+
+	var items []service.TerminalCommand
+	decodeRespJSON(t, w.Body, &items)
+	require.Len(t, items, 1)
+	assert.Equal(t, "git status", items[0].Command)
+	assert.Equal(t, 1, items[0].UseCount)
+}
+
+func TestServeTerminalHistory_SearchQuery(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_, err := service.RecordTerminalCommand("git status", "")
+	require.NoError(t, err)
+	_, err = service.RecordTerminalCommand("ls -la", "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/terminal/history?q=git", nil)
+	w := callHandler(ServeTerminalHistory, req)
+	assertOK(t, w)
+
+	var items []service.TerminalCommand
+	decodeRespJSON(t, w.Body, &items)
+	require.Len(t, items, 1)
+	assert.Equal(t, "git status", items[0].Command)
+}
+
+func TestServeTerminalHistory_Clear(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_, err := service.RecordTerminalCommand("git status", "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodDelete, "/api/terminal/history", nil)
+	w := callHandler(ServeTerminalHistory, req)
+	assertOK(t, w)
+
+	items, err := service.ListTerminalCommands("", "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, items)
+}
+
+func TestServeTerminalHistory_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPut, "/api/terminal/history", nil)
+	w := callHandler(ServeTerminalHistory, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeTerminalHistoryByID_Delete(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_, err := service.RecordTerminalCommand("git status", "")
+	require.NoError(t, err)
+	items, err := service.ListTerminalCommands("", "", 10)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+
+	req := newRequest(t, http.MethodDelete, fmt.Sprintf("/api/terminal/history/%d", items[0].ID), nil)
+	w := callHandler(ServeTerminalHistoryByID, req)
+	assertOK(t, w)
+
+	items, err = service.ListTerminalCommands("", "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, items)
+}
+
+func TestServeTerminalHistoryByID_InvalidID(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodDelete, "/api/terminal/history/not-a-number", nil)
+	w := callHandler(ServeTerminalHistoryByID, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeTerminalHistoryByID_Sync(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Point every history source at files we control rather than whatever this
+	// machine's real shell history happens to contain. ShellHistoryFiles honors
+	// $HISTFILE on every platform and visits HOME's files as well, so both are
+	// redirected: $HISTFILE alone would still import the real ~/.bash_history,
+	// and $HOME alone imports nothing on Windows (os.UserHomeDir reads
+	// USERPROFILE there).
+	home := t.TempDir()
+	historyFile := filepath.Join(home, "synced-history")
+	require.NoError(t, os.WriteFile(historyFile, []byte("git status\nls -la\n"), 0o600))
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("HISTFILE", historyFile)
+
+	req := newRequest(t, http.MethodPost, "/api/terminal/history/sync", nil)
+	w := callHandler(ServeTerminalHistoryByID, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	decodeRespJSON(t, w.Body, &result)
+	assert.Equal(t, float64(2), result["added"], "both lines of the controlled history file must be imported")
+
+	items, err := service.ListTerminalCommands("", "", 10)
+	require.NoError(t, err)
+	assert.Len(t, items, 2)
+}
+
+func TestServeTerminalHistoryByID_SyncRejectsGet(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/terminal/history/sync", nil)
+	w := callHandler(ServeTerminalHistoryByID, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }

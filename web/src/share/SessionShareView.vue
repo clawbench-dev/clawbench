@@ -7,6 +7,10 @@
     <div class="share-topbar">
       <img class="share-logo" src="/logo-64.png" alt="ClawBench" />
       <h1 class="session-share-title" :title="title">{{ title }}</h1>
+      <!-- Source project, when the share rules allow naming it (see ShareView). -->
+      <span v-if="projectName" class="share-project-chip" :title="projectName" data-role="share-project">
+        {{ t('share.fromProject', { name: projectName }) }}
+      </span>
       <div class="share-top-actions">
         <!-- Conversation TOC toggle. Hidden until the snapshot lands, since
              the entries are derived from the messages. -->
@@ -276,6 +280,16 @@ import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'SessionShareView'
+
+const props = withDefaults(defineProps<{
+  /** Source project name to show in the topbar, '' when the server hides it. */
+  projectName?: string
+}>(), {
+  projectName: '',
+})
+// Fixed for the page's lifetime: it comes from the meta response, which is
+// fetched before this view mounts.
+const { projectName } = props
 
 const { t } = useI18n()
 

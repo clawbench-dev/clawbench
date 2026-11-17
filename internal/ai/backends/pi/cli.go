@@ -32,7 +32,6 @@ var PiACPInputRemaps = map[string]string{
 }
 
 func init() {
-	ai.RegisterBackend("pi", newPiBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "pi",
 		Spec: model.BackendSpec{
@@ -62,9 +61,38 @@ func init() {
 			// backends' declarations, and Pi does NOT read .agents/skills.
 			NativeSkillsDirs:      []string{".pi/agent/skills"},
 			AutoLoadsNativeSkills: true,
+			// Measured 2026-10-19: session/new accepts `mcpServers`, returns no
+			// error, and the tool never appears.
+			MCPUnsupported: true,
 		},
 		ACP: &backends.ACPPlugin{
 			InputRemaps: PiACPInputRemaps,
+		},
+		CLI: &backends.CLIPlugin{NewBackend: newPiBackend},
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       parsePiACPToolCall,
+			ParseToolCallUpdate: parsePiACPToolCallUpdate,
+		},
+		ModelSource: model.NewCLISource("pi", model.CLIOptions{
+			Command:       "pi",
+			Args:          []string{"--list-models"},
+			CombineStderr: true,
+			Parse:         model.ParseTabular,
+		}),
+		ProviderEnv: &model.ProviderEnvSpec{
+			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+			OpenAI:    model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
+			// models.json holds a providers table, and a model is addressed as
+			// "<provider>/<model>" (verified: declaring provider "probe" with
+			// model "deepseek-chat" makes "probe/deepseek-chat" selectable and
+			// runnable). apiKey accepts "$ENV", so the secret never has to be
+			// written out.
+			ConfigDirEnv:            "PI_CODING_AGENT_DIR",
+			ConfigDirFile:           "models.json",
+			ConfigDirProtocols:      []string{model.ProviderProtocolOpenAI, model.ProviderProtocolAnthropic},
+			ConfigDirProviderID:     "clawbench",
+			ConfigDirAddressPrefix:  true,
+			ConfigDirDeclaresModels: true,
 		},
 	})
 }
@@ -76,7 +104,7 @@ func newPiBackend() ai.AIBackend {
 		Cmd:         "pi",
 		BuildArgsFn: buildPiStreamArgs,
 		NewParserFn: func() ai.LineParser {
-			return &ai.PiStreamParser{InputRemaps: PiInputRemaps}
+			return &PiStreamParser{InputRemaps: PiInputRemaps}
 		},
 		FilterLineFn: nil,
 		PreStartFn:   nil,

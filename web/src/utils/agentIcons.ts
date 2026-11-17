@@ -46,6 +46,16 @@ interface AgentSvgData {
     needsBg?: boolean
     /** CSS class name for monochrome icons that need theme-aware color */
     monoCssClass?: string
+    /**
+     * URL of a raster image (PNG) to render instead of inline SVG. Set for
+     * backends whose mark only exists as a bitmap — the built-in agent uses the
+     * ClawBench product logo, which has no SVG source in the repo.
+     *
+     * Rendered through the same <img> branch as a user avatar: the image is
+     * sandboxed (no scripts, no external loads) and sidesteps the scoped-CSS
+     * red line that v-html would hit.
+     */
+    imageUrl?: string
 }
 
 const agentSvgMap: Record<string, AgentSvgData> = {
@@ -95,8 +105,24 @@ const agentSvgMap: Record<string, AgentSvgData> = {
         viewBox: '0 0 24 24',
     },
 
-    // User-defined ACP agents (issue #557) all share the `custom-acp` backend
-    // id, so no single brand mark can stand for them — and without an entry
+    // The built-in agent IS ClawBench itself — its tools are ours, not a
+    // vendor's. So it wears the product logo rather than an invented glyph: an
+    // agent whose mark is a made-up terminal prompt reads as "some other
+    // agent", while the crab reads as "this is ClawBench doing it".
+    //
+    // A raster image, not inline SVG: the repo has no SVG source for the mark
+    // (only assets/logo-*.png). imageUrl routes it through the same sandboxed
+    // <img> branch a user avatar uses.
+    //
+    // No monoCssClass: the logo has its own colours and must not be recoloured
+    // by the theme (that would paint the crab flat and unrecognizable).
+    builtin: {
+        svg: '',
+        viewBox: '0 0 64 64',
+        imageUrl: '/logo-64.png',
+    },
+
+    // User-defined ACP agents (issue #557) all share the `custom-acp` backend    // id, so no single brand mark can stand for them — and without an entry
     // here every one of them fell back to an initial letter, which reads as a
     // broken/missing icon rather than "your own agent". This is a generic
     // terminal prompt (`>_`): what these agents actually are is a spawn command

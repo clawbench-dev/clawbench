@@ -14,7 +14,8 @@
 
 ## 一、现状（作为对照）
 
-`internal/model/provider_env.go` 的 `providerEnvTable` 是唯一事实来源，按「后端 × 协议」给出环境变量名。
+`internal/model/provider_env.go` 的注册表是唯一事实来源，按「后端 × 协议」给出环境变量名
+（数据现在写在各后端的 `BackendPlugin.ProviderEnv` 里，注册表只负责汇总与查询）。
 三处 spawn 点（CLI / codex 流 / ACP）在 `os.Environ()` 之后追加，重复键后者生效 —— 也就是说：
 
 - 一个进程只能被指向**一个**端点；
@@ -256,3 +257,84 @@ python3 -c "import json,os;print(list(json.load(open(os.path.expanduser('~/.open
 - **dsh / vecli / antigravity**：没有足够证据，文中已标「未确认」，不应据此做实现假设。
 - **codex 的按模型 `model_provider`（`[models.X]`）** 只有本机配置样例，未单独验证生效。
 - commandcode 的并发结论沿用 `docs/dev/commandcode_acp_probe_results.md`，本次未复跑。
+
+---
+
+## 八、第二轮实测（2026-11-15）：走 ACP 通道逐条验证
+
+上一轮结论多为「读文件推断」，本轮把候选后端**真的拉起 ACP 进程、发 `session/prompt`、等回复**，
+探针脚本：`initialize` → `session/new` → `session/prompt`（正文「reply exactly XXX」），看返回文本。
+环境：本机装了 opencode 2.2.7 / kimi 1.46.0 / codebuddy 2.183.0 / pi-acp 0.0.34 / zcode-acp-server 0.85.3 / grok 1.0.46。
+**codex / claude 本机仍无二进制**，未复跑。
+
+### 8.1 能跑通的四家（端到端 `PROBE-OK`）
+
+| 后端 | 隔离方式（实测生效） | 注入内容 | 密钥 |
+|---|---|---|---|
+| **kimi** | `KIMI_SHARE_DIR=<dir>`（`share.py:get_share_dir`） | `config.toml` 的 `models` + `providers` 两张表 | **只能明文**（`${ENV}` 不被展开，实测报 401） |
+| **codebuddy** | `CODEBUDDY_CONFIG_DIR=<dir>` | `models.json`，逐模型 `url` + `apiKey` | 支持 **`${ENV}` 引用**（实测通过） |
+| **pi** | `PI_CODING_AGENT_DIR=<dir>` | `models.json` 的 `providers` 表 | 支持 `$ENV` |
+| **opencode** | 见 8.3（`OPENCODE_CONFIG_CONTENT` 内容注入） | 配置内容里的 `provider` 表 | 支持 `{env:VAR}` |
+
+关键细节：
+
+- **kimi 隔离目录需要一并提供登录态**：`KIMI_SHARE_DIR` 换掉整棵 `~/.kimi`，`credentials` / `device_id` 也要在目录里，
+  否则 `session/new` 直接 `-32000 Authentication required`。ACPLoadSession 的 `set_model` 在隔离目录下正常工作。
+- **kimi 的 `KIMI_*` 变量只在 provider `type = "kimi"` 时才生效**（`llm.py:augment_provider_with_env_vars` 的
+  `match provider.type`）：`type = "openai_legacy"` 时读的是 `OPENAI_BASE_URL` / `OPENAI_API_KEY`（实测可用），
+  而 `type = "anthropic"` 时**完全不读任何环境变量**——实测把 `ANTHROPIC_BASE_URL` 指向死地址、`ANTHROPIC_API_KEY`
+  指向真密钥，请求仍发往配置文件里的 `base_url`、用的是配置文件里的 `api_key`（401 报的正是配置里那个假 key）。
+  也就是说「kimi 走 Anthropic 协议」这条现有能力，靠的是它自己的 `[providers.*]` 配置，**我们的 `ANTHROPIC_*`
+  注入对它是无效的**（`provider_env.go` 里 kimi 的 Anthropic 那行需要复核）。
+
+  这条推论很重要：**kimi 1.46 的 `Config` 模型里根本没有 `[model]` / `[provider]` 这两段**（只有 `default_model` /
+  `models` / `providers` 三张表）。本机 `~/.kimi/config.toml` 正是老的 `[model] name=` + `[provider] name/api_key/base_url`
+  写法，`load_config()` 读出来是 `default_model='' models=[] providers=[]` —— **等于完全没读到**。
+  也就是说 kimi 目前能跑，靠的正是我们注入的 `KIMI_*` 环境变量（走 `type="kimi"` 的兜底分支）。
+- **codebuddy 的模型级 `url` 优先级高于 `CODEBUDDY_BASE_URL`**（`resolveModelBaseURL` 里 `modelConfigUrl` 先返回）：
+  实测同一份 models.json，带 `url` 的模型打到 DeepSeek、不带 `url` 的模型打到 `CODEBUDDY_BASE_URL` 指定的死地址。
+  这正是「环境变量只能指向一个端点」的根因——**逐模型的 url 才是它真正的多提供商通道**。
+- **codebuddy 的 ACP 模型列表不含 models.json 里的自定义模型**（`session/new` 的 `configOptions[model].options` 恒为
+  11 个内置模型），但 `session/set_config_option(model)` / `session/set_model` **接受**自定义 id，回合确实走了该端点。
+  与我们 ACP 切模型走的是同一条路径，所以 ClawBench 侧不需要额外协议支持。
+
+### 8.2 能配但端到端没跑通
+
+- **zcode**：`ZCODE_HOME` 能换数据树，`config.json` 的 `provider.<id>` 也读到了（`session/new` 报出
+  `probe\deepseek-chat`），但 `session/prompt` 无输出、后端进程随即退出。stderr 给的是
+  `ZCODE_HOME does not end in '.zcode'`（换到 `/x/.zcode` 后仍有 `backend: reader exited`）。
+  结论：**结构上能配，链路未打通**，按「未验证」处理。
+- **grok**：`GROK_HOME` 能换配置目录（`grok models` 立刻列出我写的 `probe-model`，`grok inspect` 也显示
+  `User: /tmp/gh/config.toml`），`[model.X]` 的字段名是 **`api_base_url`**（不是 `base_url`）。
+  但 ACP 的 `session/new` 前面还有一串 `_x.ai/session/setup` 握手（auth / folder_trust / plugin_registry / mcp_merge…），
+  本次探针没走完，未验证到回合。
+
+### 8.3 opencode 的一个陷阱：默认连后台常驻服务
+
+opencode 2.x 默认把请求交给一个**常驻后台服务**（`opencode service status` 可见端口）。这个服务是**早先某个进程**
+启动的，`OPENCODE_CONFIG_CONTENT` 在它启动时就固定了，所以：
+
+```bash
+# 失败：模型不在后台服务那份配置里
+OPENCODE_CONFIG_CONTENT='{"provider":{"probe":{…}}}' opencode run --model probe/x "hi"
+# → Error: Model unavailable: probe/x
+
+# 成功：同一份环境变量，加 --standalone 起私有服务
+OPENCODE_CONFIG_CONTENT='{"provider":{"probe":{…}}}' opencode --standalone run --model probe/x "hi"
+# → PROBE-OK
+```
+
+**`opencode acp` 不受影响**：它自己就是前台进程，实测注入的 provider 出现在 `session/new` 的模型列表里，且回合成功。
+ClawBench 用的正是 `opencode acp`，所以这条现状没有 bug，但它解释了「手工用环境变量试 opencode 会以为不生效」。
+
+另外 `OPENCODE_CONFIG_DIR` / `OPENCODE_CONFIG` / `XDG_CONFIG_HOME` 在 2.2.7 上**都没能换掉配置目录**
+（`opencode debug config` 始终报 `~/.config/opencode/opencode.json`），所以 opencode 只能走「配置内容」通道，不能走隔离目录。
+
+### 8.4 对实施顺序的修正
+
+- **第一档里 codebuddy 的性价比被低估了**：它既能隔离目录（不碰用户 `~/.codebuddy`）、密钥又能用 `${ENV}` 不落盘、
+  还天然是**逐模型**端点。它比 kimi 干净得多（kimi 要明文密钥 + 复制登录态）。
+- **kimi 的成本被低估了**：密钥只能明文写进配置文件，且隔离目录要连带复制 `credentials`/`device_id`。
+- **zcode / grok 先别做**：隔离机制已确认，但回合没跑通，做了也无法验证。
+- **opencode 维持现状即可**：`OPENCODE_CONFIG_CONTENT` 在 ACP 下工作正常，已经支持多提供商（注入的 provider 与
+  用户自有的 `codebuddy` 等并列出现在模型列表里），不需要改成写文件。

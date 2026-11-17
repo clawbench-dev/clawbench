@@ -811,3 +811,21 @@ func idsOf(models []model.AgentModel) []string {
 	}
 	return out
 }
+
+// TestParseProductModels_CarriesCredits guards issue #657: the picker shows the
+// same multiplier the CodeBuddy CLI does. The value is the product config's own
+// `credits` string, verbatim — the auto router has none, and that must stay
+// empty rather than becoming "0".
+func TestParseProductModels_CarriesCredits(t *testing.T) {
+	data := productJSONWithTags(t,
+		codebuddyProductModel{ID: "auto", Name: "Auto", IsDefault: true},
+		codebuddyProductModel{ID: "deepseek-v4-flash", Name: "Deepseek-V4-Flash", Credits: " x0.06 credits "},
+		codebuddyProductModel{ID: "glm-5.3", Name: "GLM-5.3", Credits: "x1.00 credits"},
+	)
+
+	models := parseProductModels(data)
+	require.Len(t, models, 3)
+	assert.Empty(t, models[0].Credits, "the auto router publishes no multiplier")
+	assert.Equal(t, "x0.06 credits", models[1].Credits, "surrounding whitespace is trimmed, the text is kept")
+	assert.Equal(t, "x1.00 credits", models[2].Credits)
+}

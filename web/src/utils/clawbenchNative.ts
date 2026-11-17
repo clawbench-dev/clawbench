@@ -470,6 +470,17 @@ export interface ClawBenchNative {
   windowClose?(): void
   /** Current maximize state, for the button's initial glyph. */
   isWindowMaximized?(): Promise<boolean>
+  /**
+   * Optional (Electron on Windows/Linux): what the close button does.
+   *
+   * `'ask'` shows the native dialog every time, `'tray'` hides the window behind
+   * the tray icon, `'exit'` quits. Read synchronously so the settings row can
+   * render the current option during mount; the host pushes the authoritative
+   * value back over the `clawbench-close-action-changed` CustomEvent when the
+   * choice was remembered in the dialog.
+   */
+  getCloseAction?(): string
+  setCloseAction?(action: string): void
 }
 
 /** Navigation target for a native notification click. */

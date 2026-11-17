@@ -3,8 +3,11 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // ProtocolEnv names the environment variables one backend reads for a given
@@ -44,8 +47,59 @@ type ProviderEnvSpec struct {
 	// can express (e.g. codex understands OpenAI wire APIs only).
 	ConfigProtocols []string
 
-	// InlineConfigEnv names an environment variable that takes config CONTENT
-	// (not a path). It exists for backends that validate a model id against
+	// ConfigDirEnv names the environment variable that relocates this backend's
+	// whole config directory (kimi's KIMI_SHARE_DIR, pi's PI_CODING_AGENT_DIR,
+	// codebuddy's CODEBUDDY_CONFIG_DIR).
+	//
+	// A relocatable directory is strictly better than editing the user's own
+	// file (ConfigOnly): each agent gets a private copy, so two agents of the
+	// same backend can point at different providers, and nothing outside
+	// ClawBench's data directory is ever modified.
+	ConfigDirEnv string
+	// ConfigDirFile is the file (relative to that directory) ClawBench owns.
+	// Every other entry in the directory is symlinked back to the user's own
+	// config dir, so their login state, skills and history stay visible.
+	ConfigDirFile string
+	// ConfigDirDeclaresModels marks backends whose config file has to LIST the
+	// models: the CLI resolves an id against that declaration, so a provider
+	// block with no models is invisible.
+	//
+	// Deliberately a per-backend flag rather than implied by ConfigDirFile:
+	// claude's settings.json carries only an endpoint and a credential, and the
+	// model is chosen per session, so requiring a list there would refuse a
+	// provider that works fine.
+	ConfigDirDeclaresModels bool
+	// ConfigDirProtocols lists the protocols this backend's config file can
+	// express. Empty means "same as ConfigProtocols".
+	ConfigDirProtocols []string
+	// ConfigDirProviderID is the provider key ClawBench registers inside the
+	// file. Backends that address a model as "<provider>/<model>" (pi) also use
+	// it as the picker prefix; see ConfigDirAddressPrefix.
+	ConfigDirProviderID string
+	// ConfigDirAddressPrefix marks backends that resolve a model id as
+	// "<providerID>/<model>" instead of taking the bare id. The picker must
+	// hand out the prefixed form, exactly like opencode's InlineConfigProviderIDs.
+	ConfigDirAddressPrefix bool
+	// ConfigDirSecretInFile marks backends whose config file has no
+	// environment-variable reference syntax, so the API key must be written to
+	// disk in clear text. The file is 0600 inside ClawBench's data directory,
+	// which is where the key already lives in the database.
+	ConfigDirSecretInFile bool
+
+	// OwnServiceEnv names the variable a config-directory backend reads
+	// when a provider carries NO endpoint. Such a provider means the backend's
+	// own official service (a CodeBuddy account token, say): the config file
+	// cannot express it because it needs a URL per model, so the config-directory
+	// writer is skipped and the credential goes in through the environment.
+	//
+	// Empty means the backend has no such mode and a provider without an endpoint
+	// keeps going down its normal path.
+	OwnServiceEnv string
+	// OwnServiceExtra is injected verbatim alongside OwnServiceEnv, for
+	// the fixed switches that mode needs (CodeBuddy's cloudhosted deployment).
+	OwnServiceExtra map[string]string
+
+	// InlineConfigEnv names an environment variable that takes config CONTENT	// (not a path). It exists for backends that validate a model id against
 	// their own provider catalog before sending anything: the endpoint
 	// variables above redirect where requests go, but they do not ADD models to
 	// that catalog, so a provider model outside it is rejected (opencode:
@@ -63,123 +117,83 @@ type ProviderEnvSpec struct {
 	// addressable only as "openai/openai/…". With our own id the prefix is
 	// unambiguous: "<our id>/<curated id verbatim>".
 	InlineConfigProviderIDs map[string]string
+
+	// InProcess marks a backend that calls the provider endpoint from THIS
+	// process (the built-in agent) instead of handing credentials to a spawned
+	// CLI.
+	//
+	// It changes one thing: an auth mode is never wrong, because no credential
+	// variable has to exist. Every other check still applies — the protocol
+	// list is what makes the agent bindable in the first place.
+	InProcess bool
 }
 
-// providerEnvTable is the single place that knows which environment variables
-// each backend honors. Every registered backend must have an entry (the
-// coverage test in internal/ai/backends enforces both directions), and an entry
-// with no protocols and no KeyOnly means "this backend cannot take a provider".
+// providerEnvRegistry is the single place that knows which environment
+// variables each backend honors. Entries are registered by the backend plugins
+// (BackendPlugin.ProviderEnv) at init; model cannot import them, so the data
+// travels through RegisterProviderEnvSpec.
+//
+// Every registered backend must have an entry (the coverage test in
+// internal/ai/backends enforces both directions), and an entry with no
+// protocols and no KeyOnly means "this backend cannot take a provider".
 //
 // Evidence for each row is recorded in docs/spec/features/model-providers.md;
-// do not add a guess here — an unverified variable silently does nothing, which
-// is exactly the failure mode this table exists to avoid.
-// protoEnv builds one protocol row. Using a constructor keeps the table free
-// of field assignments that credential scanners mistake for secrets (the
-// strings are environment variable NAMES, never keys).
-func protoEnv(baseURL, apiKey, authToken string) *ProtocolEnv {
+// do not add a guess — an unverified variable silently does nothing, which is
+// exactly the failure mode this registry exists to avoid.
+var (
+	providerEnvMu       sync.RWMutex
+	providerEnvRegistry = map[string]ProviderEnvSpec{
+		// User-defined ACP agents all share one backend id and cannot take a
+		// provider override: the endpoint belongs to whatever the agent's own
+		// CLI is configured with. No plugin owns this id (custom agents are
+		// created at runtime), so its entry stays here.
+		"custom-acp": {},
+	}
+)
+
+// RegisterProviderEnvSpec records how a backend receives a provider. Called by
+// the backend registry for every plugin that declares ProviderEnv.
+func RegisterProviderEnvSpec(backendID string, spec ProviderEnvSpec) {
+	providerEnvMu.Lock()
+	defer providerEnvMu.Unlock()
+	providerEnvRegistry[backendID] = spec
+}
+
+// providerEnvSpec returns the registered spec for a backend.
+func providerEnvSpec(backendID string) (ProviderEnvSpec, bool) {
+	providerEnvMu.RLock()
+	defer providerEnvMu.RUnlock()
+	spec, ok := providerEnvRegistry[backendID]
+	return spec, ok
+}
+
+// providerEnvSpecs returns a snapshot of every registered spec, for the few
+// callers that need to iterate (protocol-wide checks, coverage tests).
+func providerEnvSpecs() []ProviderEnvSpec {
+	providerEnvMu.RLock()
+	defer providerEnvMu.RUnlock()
+	out := make([]ProviderEnvSpec, 0, len(providerEnvRegistry))
+	for _, spec := range providerEnvRegistry {
+		out = append(out, spec)
+	}
+	return out
+}
+
+// ProtoEnv builds one protocol row. Exported because each backend's plugin
+// declares its own row, and using a constructor keeps the declarations free of
+// field assignments that credential scanners mistake for secrets (the strings
+// are environment variable NAMES, never keys).
+func ProtoEnv(baseURL, apiKey, authToken string) *ProtocolEnv {
 	return &ProtocolEnv{BaseURL: baseURL, APIKey: apiKey, AuthToken: authToken}
 }
 
-var providerEnvTable = map[string]ProviderEnvSpec{
-	"antigravity": {
-		Gemini:  protoEnv("GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY", ""),
-		KeyOnly: "GEMINI_API_KEY",
-	},
-	"claude": {
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-	},
-	"codebuddy": {
-		Anthropic: protoEnv("CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN"),
-	},
-	// codex reads its provider from ~/.codex/config.toml. The managed block
-	// references this variable for env_key, so the secret never lands on disk.
-	"codex": {
-		ConfigOnly:      true,
-		ConfigProtocols: []string{ProviderProtocolOpenAI},
-		KeyOnly:         "CLAWBENCH_PROVIDER_API_KEY",
-	},
-	// commandcode: BYOK needs providers.json + config.json (see the ACP probe
-	// notes). Writing those files is not implemented, so only the credential is
-	// passed through — full BYOK still requires the CLI's own configuration.
-	"commandcode": {
-		KeyOnly: "COMMAND_CODE_API_KEY",
-	},
-	"cursor": {
-		KeyOnly: "CURSOR_API_KEY",
-	},
-	"deepseek": {
-		OpenAI: protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-	"dsh": {
-		OpenAI: protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-	"grok": {
-		OpenAI: protoEnv("GROK_XAI_API_BASE_URL", "XAI_API_KEY", ""),
-	},
-	"hermes": {
-		OpenAI: protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-	"kimi": {
-		// kimi-cli's own provider is OpenAI-compatible and reads KIMI_*; its
-		// Anthropic path goes through the standard ANTHROPIC_* variables.
-		OpenAI:    protoEnv("KIMI_BASE_URL", "KIMI_API_KEY", ""),
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-	},
-	"mimo": {
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-		OpenAI:    protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-	"opencode": {
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-		OpenAI:    protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-		// opencode resolves a model id against its own provider catalog before
-		// it sends anything, and a provider redirect does not extend that
-		// catalog: OPENAI_BASE_URL/OPENAI_API_KEY alone leave "glm-…"
-		// unresolvable ("model not found"), which is issue #651. Declaring the
-		// provider's models through the config content is the only lever that
-		// makes them resolvable. Content (not a file path) so nothing is
-		// written to the user's home.
-		//
-		// The ids are ours, not opencode's built-in ones: it addresses a
-		// declared model as "<provider>/<key>", so reusing "openai" would turn a
-		// curated id that already says "openai/gpt-4o" into "openai/openai/…"
-		// (verified against 2.2.6). With a dedicated id the rule is simply
-		// "<our id>/<curated id verbatim>".
-		InlineConfigEnv: "OPENCODE_CONFIG_CONTENT",
-		InlineConfigProviderIDs: map[string]string{
-			ProviderProtocolOpenAI:    "clawbench-openai",
-			ProviderProtocolAnthropic: "clawbench-anthropic",
-		},
-	},
-	"pi": {
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-		OpenAI:    protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-	"zcode": {
-		Anthropic: protoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-		OpenAI:    protoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
-	},
-
-	// Deliberately empty: no verified override exists.
-	//
-	//   copilot   GitHub sign-in only
-	//   openclaw  the provider belongs to the Gateway process, not the ACP bridge
-	//   qoder     login-based; the CLI binary contains no provider variables
-	//   qodercn   same as qoder
-	//   vecli     no evidence available
-	"copilot":    {},
-	"openclaw":   {},
-	"qoder":      {},
-	"qodercn":    {},
-	"vecli":      {},
-	"custom-acp": {},
-}
-
 // ProviderEnvBackends lists every backend that has a provider-env entry. Used
-// by the coverage test to keep the table and the backend registry in sync.
+// by the coverage test to keep the registry and the backend registry in sync.
 func ProviderEnvBackends() []string {
-	out := make([]string, 0, len(providerEnvTable))
-	for id := range providerEnvTable {
+	providerEnvMu.RLock()
+	defer providerEnvMu.RUnlock()
+	out := make([]string, 0, len(providerEnvRegistry))
+	for id := range providerEnvRegistry {
 		out = append(out, id)
 	}
 	sort.Strings(out)
@@ -190,14 +204,14 @@ func ProviderEnvBackends() []string {
 // with no protocols still counts: it records the deliberate "cannot take a
 // provider" decision instead of leaving the backend unclassified.
 func HasProviderEnvEntry(backendID string) bool {
-	_, ok := providerEnvTable[backendID]
+	_, ok := providerEnvSpec(backendID)
 	return ok
 }
 
 // ProviderEnvSupported reports whether the backend can receive a provider with
 // this protocol (an empty protocol asks "any protocol at all").
 func ProviderEnvSupported(backendID, protocol string) bool {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok {
 		return false
 	}
@@ -216,7 +230,7 @@ func ProviderEnvSupported(backendID, protocol string) bool {
 // it has no endpoint slot at all, so a provider bound to it must carry no
 // base_url (see BuildProviderEnv).
 func BackendIsKeyOnly(backendID string) bool {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	return ok && spec.KeyOnly != "" && !spec.ConfigOnly
 }
 
@@ -232,7 +246,7 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 	if p == nil {
 		return false
 	}
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok {
 		return false
 	}
@@ -240,6 +254,41 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 		return true
 	}
 	return spec.KeyOnly != "" && !spec.ConfigOnly && p.BaseURL == ""
+}
+
+// ProviderConfigDirModelsError explains why backendID cannot take this provider
+// row, or returns nil when it can.
+//
+// A config-directory backend's file has to DECLARE the models: the CLI resolves
+// an id against that declaration, so a provider block with no models is
+// invisible and every turn fails at spawn. The write path already refuses such a
+// row (applyProviderConfigDir), but that refusal lands at bind time as a bare
+// 500 "InternalError" — the user gets no idea that the provider is simply
+// missing its model list. Checking here names the actual problem while the user
+// is still on the form that can fix it.
+//
+// The predicate mirrors providerModelIDs exactly: the curated list, falling back
+// to the default model. Anything the writer accepts must pass here, or a
+// provider that writes fine would be rejected by the binding.
+func ProviderConfigDirModelsError(backendID string, p *Provider) error {
+	if p == nil || !ProviderConfigDirDeclaresModels(backendID) {
+		return nil
+	}
+	// A credential-only provider never reaches the config file, so its model
+	// list is not required (and would be meaningless: the backend's own service
+	// publishes the models).
+	if ProviderOwnServiceMode(backendID, p) {
+		return nil
+	}
+	for _, id := range p.Models {
+		if strings.TrimSpace(id) != "" {
+			return nil
+		}
+	}
+	if strings.TrimSpace(p.DefaultModel) != "" {
+		return nil
+	}
+	return fmt.Errorf("backend %q needs the provider to declare at least one model", backendID)
 }
 
 // ProviderAuthModeError explains why backendID cannot express the provider's
@@ -251,16 +300,22 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 // mode as the cause. Key-only and config-file backends take the credential (or
 // the config file) and never read an auth mode, so no mode can be wrong there.
 func ProviderAuthModeError(backendID, protocol, authMode string) error {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok {
 		return fmt.Errorf("backend %q does not support model providers", backendID)
 	}
 	pe := protocolEnvFor(spec, protocol)
 	if pe == nil {
-		if spec.ConfigOnly || spec.KeyOnly != "" {
+		if spec.ConfigOnly || spec.KeyOnly != "" || spec.supportsConfigDirProtocol(protocol) {
 			return nil
 		}
 		return fmt.Errorf("backend %q does not support the %s protocol", backendID, protocol)
+	}
+	// An in-process backend reads the credential from the database and calls
+	// the endpoint itself: there is no variable to match an auth mode against,
+	// and every mode it can express is one the HTTP client can send.
+	if spec.InProcess {
+		return nil
 	}
 	if authModeFits(pe, authMode) {
 		return nil
@@ -283,7 +338,7 @@ func ProviderAuthModeError(backendID, protocol, authMode string) error {
 // Config-file and key-only backends are skipped because they ignore the auth
 // mode — they neither prove nor disprove that the pair works.
 func ProtocolSupportsAuthMode(protocol, authMode string) bool {
-	for _, spec := range providerEnvTable {
+	for _, spec := range providerEnvSpecs() {
 		pe := protocolEnvFor(spec, protocol)
 		if pe != nil && authModeFits(pe, authMode) {
 			return true
@@ -315,7 +370,17 @@ func (s ProviderEnvSpec) any() bool {
 // Config-file protocols are checked first: a ConfigOnly backend has no
 // ProtocolEnv entry, but its file format still expresses a protocol.
 func (s ProviderEnvSpec) supportsProtocol(protocol string) bool {
+	// The private protocol is not a wire protocol: only backends that declare
+	// their own official service (OwnServiceEnv) can take it.
+	if protocol == ProviderProtocolPrivate {
+		return s.OwnServiceEnv != ""
+	}
 	for _, p := range s.ConfigProtocols {
+		if p == protocol {
+			return true
+		}
+	}
+	for _, p := range s.configDirProtocols() {
 		if p == protocol {
 			return true
 		}
@@ -331,18 +396,154 @@ func (s ProviderEnvSpec) supportsProtocol(protocol string) bool {
 	return false
 }
 
+// configDirProtocols is ConfigDirProtocols with its documented default applied.
+func (s ProviderEnvSpec) configDirProtocols() []string {
+	if s.ConfigDirEnv == "" || s.ConfigDirFile == "" {
+		return nil
+	}
+	if len(s.ConfigDirProtocols) > 0 {
+		return s.ConfigDirProtocols
+	}
+	return s.ConfigProtocols
+}
+
+// supportsConfigDirProtocol reports whether the backend's config-dir file format
+// can express the protocol.
+func (s ProviderEnvSpec) supportsConfigDirProtocol(protocol string) bool {
+	for _, p := range s.configDirProtocols() {
+		if p == protocol {
+			return true
+		}
+	}
+	return false
+}
+
 // ProviderUsesConfigFile reports whether the backend receives its endpoint
 // through a config file rather than environment variables. Those bindings need
 // an explicit user confirmation because they modify files outside ClawBench.
 func ProviderUsesConfigFile(backendID string) bool {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	return ok && spec.ConfigOnly
+}
+
+// ProviderUsesConfigDir reports whether the backend can be given a private
+// config DIRECTORY per agent.
+//
+// This is the stronger form of ProviderUsesConfigFile: instead of editing the
+// user's own file (a single global one, so two agents cannot disagree), the
+// whole directory is relocated into ClawBench's data dir, so every agent owns
+// its own copy and the user's file is never touched.
+func ProviderUsesConfigDir(backendID string) bool {
+	spec, ok := providerEnvSpec(backendID)
+	return ok && spec.ConfigDirEnv != "" && spec.ConfigDirFile != ""
+}
+
+// ProviderOwnServiceMode reports whether this provider means the backend's own
+// official service: the private protocol, for a backend that declares
+// OwnServiceEnv. That mode bypasses the config-directory writer (whose file
+// format needs an endpoint per model) and injects the credential, plus the
+// backend's fixed switches, through the environment.
+//
+// A provider with a real protocol is never own-service, even on such a backend:
+// it is a normal custom-endpoint binding and keeps going through the config file.
+func ProviderOwnServiceMode(backendID string, p *Provider) bool {
+	if p == nil || p.Protocol != ProviderProtocolPrivate {
+		return false
+	}
+	spec, ok := providerEnvSpec(backendID)
+	return ok && spec.OwnServiceEnv != ""
+}
+
+// ProviderNeedsConfigWrite reports whether binding a provider to this backend
+// modifies a file on disk. Callers use it to ask for consent and to know
+// whether a binding needs the reconcile pass.
+func ProviderNeedsConfigWrite(backendID string) bool {
+	return ProviderUsesConfigFile(backendID) || ProviderUsesConfigDir(backendID)
+}
+
+// ProviderConfigDirEnv returns the variable that relocates the backend's config
+// directory, or "" when the backend has no such switch.
+func ProviderConfigDirEnv(backendID string) string {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok {
+		return ""
+	}
+	return spec.ConfigDirEnv
+}
+
+// ProviderConfigDirFile returns the file ClawBench owns inside that directory.
+func ProviderConfigDirFile(backendID string) string {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok {
+		return ""
+	}
+	return spec.ConfigDirFile
+}
+
+// ProviderConfigSecretInFile reports whether the backend's config file forces
+// the API key to be written in clear text (no ${ENV} reference syntax).
+func ProviderConfigSecretInFile(backendID string) bool {
+	spec, ok := providerEnvSpec(backendID)
+	return ok && spec.ConfigDirSecretInFile
+}
+
+// ProviderConfigDirDeclaresModels reports whether the backend's config file has
+// to list the models it serves. See ConfigDirDeclaresModels.
+func ProviderConfigDirDeclaresModels(backendID string) bool {
+	spec, ok := providerEnvSpec(backendID)
+	return ok && ProviderUsesConfigDir(backendID) && spec.ConfigDirDeclaresModels
+}
+
+// ProviderConfigProviderID returns the provider key ClawBench registers inside
+// a config-directory backend's file.
+func ProviderConfigProviderID(backendID string) string {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok || spec.ConfigDirProviderID == "" {
+		return "clawbench"
+	}
+	return spec.ConfigDirProviderID
+}
+
+// ProviderConfigDisplayPath is the path shown in the consent dialog: the
+// per-agent file for a config-directory backend, or the shared file list for a
+// config-file backend.
+//
+// Computed here rather than in the handler because the model already owns the
+// directory layout decision; the client must not have to rebuild it.
+func ProviderConfigDisplayPath(backendID, agentID string) string {
+	if ProviderUsesConfigDir(backendID) {
+		return filepath.Join(DataDir, "providers", "agents", agentID, ProviderConfigDirFile(backendID))
+	}
+	if ProviderUsesConfigFile(backendID) {
+		paths := ProviderConfigPaths(backendID)
+		return strings.Join(paths, ", ")
+	}
+	return ""
+}
+
+// ProviderConfigPaths lists the files a config-file backend needs ClawBench to
+// modify. An empty list means the backend needs no file consent.
+//
+// Kept in the model layer so both the handler and the display path agree on the
+// layout.
+func ProviderConfigPaths(backendID string) []string {
+	if !ProviderUsesConfigFile(backendID) {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+	if backendID == "codex" {
+		return []string{filepath.Join(home, ".codex", "config.toml")}
+	}
+	return nil
 }
 
 // SupportedProtocols lists the protocols a backend can be pointed at. An empty
 // list means the backend cannot take a provider (only a bare key at most).
 func SupportedProtocols(backendID string) []string {
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok {
 		return nil
 	}
@@ -357,7 +558,78 @@ func SupportedProtocols(backendID string) []string {
 		out = append(out, ProviderProtocolGemini)
 	}
 	out = append(out, spec.ConfigProtocols...)
-	sort.Strings(out)
+	// Config-directory backends express protocols through their file even when
+	// they have no environment-variable slot for them (kimi's anthropic type).
+	// Without this the picker hides a protocol the backend can actually run.
+	out = append(out, spec.configDirProtocols()...)
+	// The private protocol belongs to backends with their own official service
+	// (CodeBuddy's account token); other backends must not offer it.
+	if spec.OwnServiceEnv != "" {
+		out = append(out, ProviderProtocolPrivate)
+	}
+	return dedupeSorted(out)
+}
+
+// ProviderMethods lists the delivery channels this backend declares, in a
+// stable order: env, config-dir, config-file, inline-config, own-service,
+// in-process.
+//
+// This is the taxonomy a reader used to have to reconstruct by noticing which
+// ProviderEnvSpec fields were non-empty. An entry means "a bound provider can
+// reach the spawned process this way"; a backend may declare several.
+//
+// An empty result means no provider can reach it (openclaw: the provider
+// belongs to its Gateway; qoder/copilot/vecli: no channel exists).
+func ProviderMethods(backendID string) []string {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok {
+		return nil
+	}
+	var out []string
+	if spec.Anthropic.anyVar() || spec.OpenAI.anyVar() || spec.Gemini.anyVar() {
+		out = append(out, ProviderMethodEnv)
+	}
+	if spec.ConfigDirEnv != "" && spec.ConfigDirFile != "" {
+		out = append(out, ProviderMethodConfigDir)
+	}
+	if spec.ConfigOnly {
+		out = append(out, ProviderMethodConfigFile)
+	}
+	if spec.InlineConfigEnv != "" {
+		out = append(out, ProviderMethodInlineConfig)
+	}
+	if spec.OwnServiceEnv != "" {
+		out = append(out, ProviderMethodOwnService)
+	}
+	if spec.InProcess {
+		out = append(out, ProviderMethodInProcess)
+	}
+	return out
+}
+
+// anyVar reports whether this protocol row names at least one variable. A row
+// with no variable names is not an env channel: the built-in agent declares
+// both protocols that way because it calls the endpoint itself.
+func (pe *ProtocolEnv) anyVar() bool {
+	return pe != nil && (pe.BaseURL != "" || pe.APIKey != "" || pe.AuthToken != "")
+}
+
+// dedupeSorted sorts and removes duplicates, so a protocol declared by both an
+// env slot and the config-dir file is listed once.
+func dedupeSorted(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	sort.Strings(in)
+	out := in[:0]
+	var last string
+	for i, v := range in {
+		if i > 0 && v == last {
+			continue
+		}
+		last = v
+		out = append(out, v)
+	}
 	return out
 }
 
@@ -377,12 +649,33 @@ func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]stri
 	if p == nil {
 		return nil, nil
 	}
-	spec, ok := providerEnvTable[backendID]
+	spec, ok := providerEnvSpec(backendID)
 	if !ok {
 		return nil, fmt.Errorf("backend %q does not support model providers", backendID)
 	}
+	// An in-process backend (the built-in agent) reads the credential from the
+	// database and calls the endpoint itself. There is no spawned process to
+	// hand variables to, so the environment is empty by construction — NOT a
+	// silently-dropped binding: the caller passes the provider object straight
+	// to the HTTP client.
+	if spec.InProcess {
+		return nil, nil
+	}
 	if p.APIKey == "" {
 		return nil, fmt.Errorf("provider %q has no API key", p.Name)
+	}
+	// A provider with no endpoint on a backend that has an official service
+	// (CodeBuddy's account token): inject the credential plus the fixed switches
+	// and skip every protocol/config-file path. The protocol is irrelevant here —
+	// the request goes to the backend's own endpoint.
+	if ProviderOwnServiceMode(backendID, p) {
+		env := make([]string, 0, 1+len(spec.OwnServiceExtra))
+		env = append(env, spec.OwnServiceEnv+"="+p.APIKey)
+		for name, value := range spec.OwnServiceExtra {
+			env = append(env, name+"="+value)
+		}
+		sort.Strings(env)
+		return env, nil
 	}
 	if spec.ConfigOnly || (spec.KeyOnly != "" && p.BaseURL == "" && protocolEnvFor(spec, p.Protocol) == nil) {
 		return keyOnlyEnv(backendID, spec, p)
@@ -586,8 +879,20 @@ func keyEnvVar(backendID string, pe *ProtocolEnv, p *Provider) (string, error) {
 // returns the id unchanged — the caller's own validation already rejected those
 // combinations.
 func ProviderModelIDFor(backendID, protocol, id string) string {
-	spec, ok := providerEnvTable[backendID]
-	if !ok || spec.InlineConfigProviderIDs == nil {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok {
+		return id
+	}
+	// Config-dir backends that address models as "<provider>/<model>" (pi) use
+	// their own registered provider key as the prefix.
+	if spec.ConfigDirAddressPrefix && id != "" {
+		providerID := ProviderConfigProviderID(backendID)
+		if strings.HasPrefix(id, providerID+"/") {
+			return id
+		}
+		return providerID + "/" + id
+	}
+	if spec.InlineConfigProviderIDs == nil {
 		return id
 	}
 	providerID, ok := spec.InlineConfigProviderIDs[protocol]
@@ -604,8 +909,14 @@ func ProviderModelIDFor(backendID, protocol, id string) string {
 // "<provider>/" namespace so a wire-form id can be compared with the provider's
 // stored list.
 func ProviderBareModelID(backendID, protocol, id string) string {
-	spec, ok := providerEnvTable[backendID]
-	if !ok || spec.InlineConfigProviderIDs == nil {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok {
+		return id
+	}
+	if spec.ConfigDirAddressPrefix {
+		return strings.TrimPrefix(id, ProviderConfigProviderID(backendID)+"/")
+	}
+	if spec.InlineConfigProviderIDs == nil {
 		return id
 	}
 	providerID, ok := spec.InlineConfigProviderIDs[protocol]
@@ -694,6 +1005,27 @@ func (a *Agent) MergeProviderModels(resolved []AgentModel) []AgentModel {
 	return merged
 }
 
+// ProviderSecretEnvName is the variable a config file references when the
+// backend supports environment references, so the key never has to be written
+// to disk. It is also the variable the spawn site sets.
+//
+// Same name codex's managed block uses (its env_key): one variable for every
+// config-file backend keeps the spawn log readable and means a backend switch
+// does not silently orphan the reference.
+func ProviderSecretEnvName() string {
+	return "CLAWBENCH_PROVIDER_API_KEY"
+}
+
+// ConfigDirEnvForAgent is the seam that lets model.BuildProviderEnv hand a
+// config-directory backend its private directory without importing service
+// (which would be a cycle: service imports model).
+//
+// It is set by service.init to applyProviderConfigDir. A nil value means no
+// writer is registered (tests that do not exercise this path, or a backend
+// whose config-dir support is compiled out), in which case the binding fails
+// loudly rather than silently falling back to the user's own config.
+var ConfigDirEnvForAgent func(backend, agentID string, p *Provider) ([]string, error)
+
 // ProviderEnvForAgent resolves the agent's provider and renders its environment
 // in one step, which is what every spawn site needs.
 //
@@ -711,7 +1043,35 @@ func ProviderEnvForAgent(agentID, backendID string) ([]string, error) {
 	if agent := GetAgent(agentID); agent != nil {
 		pinned = agent.providerDeclarablePin()
 	}
-	return BuildProviderEnv(backendID, p, pinned)
+	return BuildProviderEnvForAgent(agentID, backendID, p, pinned)
+}
+
+// BuildProviderEnvForAgent is BuildProviderEnv plus the config-directory
+// branch, which needs the agent id (the directory is per agent).
+//
+// Keeping the agent id out of BuildProviderEnv itself is deliberate: that
+// function is also called by the provider connectivity test, which has no agent
+// and must not write any file.
+func BuildProviderEnvForAgent(agentID, backendID string, p *Provider, pinnedModel string) ([]string, error) {
+	if p == nil {
+		return nil, nil
+	}
+	if ProviderUsesConfigDir(backendID) && !ProviderOwnServiceMode(backendID, p) {
+		if ConfigDirEnvForAgent == nil {
+			return nil, fmt.Errorf("backend %q needs a config file but no writer is registered", backendID)
+		}
+		env, err := ConfigDirEnvForAgent(backendID, agentID, p)
+		if err != nil {
+			return nil, err
+		}
+		// Backends that can reference an environment variable for the secret
+		// still need it in the environment; the ones that cannot ignore it.
+		if !ProviderConfigSecretInFile(backendID) {
+			env = append(env, ProviderSecretEnvName()+"="+p.APIKey)
+		}
+		return env, nil
+	}
+	return BuildProviderEnv(backendID, p, pinnedModel)
 }
 
 // RedactProviderEnv hides credential values so a spawn log can name the

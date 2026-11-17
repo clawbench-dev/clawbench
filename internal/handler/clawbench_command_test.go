@@ -998,3 +998,37 @@ func TestProcessClawbenchCommand_MCPDocumentsBackendLimits(t *testing.T) {
 	assert.Contains(t, result, "sse", "the sse transport restriction must be stated")
 	assert.Contains(t, result, "cli", "CLI transport is unaffected and must be stated")
 }
+
+func TestProcessClawbenchCommand_KBSearchInjects(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-kbsearch 报销流程", "/project", "session-123")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "knowledge base")
+	assert.Contains(t, result, "POST /api/kb/search")
+	assert.Contains(t, result, "GET /api/kb/collections")
+	assert.Contains(t, result, "GET /api/kb/documents")
+	assert.Contains(t, result, "clawbench_project=/project")
+	// Read-only: the command must not offer the mutating endpoints.
+	assert.NotContains(t, result, "DELETE /api/kb")
+	assert.NotContains(t, result, "/cb-kbsearch 报销流程")
+}
+
+func TestIsClawbenchCommand_KBSearch(t *testing.T) {
+	assert.True(t, IsClawbenchCommand("/cb-kbsearch"))
+	assert.True(t, IsClawbenchCommand("/cb-kbsearch 报销"))
+	assert.False(t, IsClawbenchCommand("/cb-kbsearchx 报销"))
+}
+
+func TestClawbenchCommandPrecheck_KBSearchRequiresAvailability(t *testing.T) {
+	// The KB is not initialized in this test process.
+	req := newRequest(t, http.MethodPost, "/api/ai/chat", nil)
+	w := callHandler(func(w http.ResponseWriter, r *http.Request) {
+		if !clawbenchCommandPrecheck(w, r, "/cb-kbsearch 报销") {
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}, req)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+}

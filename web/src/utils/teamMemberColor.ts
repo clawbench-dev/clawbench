@@ -13,6 +13,7 @@ const MEMBER_COLOR_TOKENS: Record<string, string> = {
   orange: 'var(--color-orange, #f97316)',
   purple: 'var(--color-purple, #a855f7)',
   pink: '#ec4899',
+  magenta: '#d946ef',
   cyan: '#06b6d4',
 }
 

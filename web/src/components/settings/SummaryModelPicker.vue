@@ -428,8 +428,9 @@ function close() {
   text-align: left;
   cursor: pointer;
 }
+/* Inside a --bg-secondary card, so the hover must move past the card step. */
 .summary-row:hover {
-  background: var(--bg-secondary);
+  background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
 }
 .summary-row--active {
   background: color-mix(in srgb, var(--accent-color) 8%, transparent);

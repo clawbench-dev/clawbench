@@ -222,7 +222,7 @@ Rules:
 // 16384 covers the worst case this pipeline can be handed: inputs are capped at
 // MaxSummarizeRunes (10000 runes), reasoning costs roughly 1.2 tokens per input
 // rune (measured), and the answer itself is a few hundred tokens.
-const summarizeBudgetCeiling = 16384
+const summarizeBudgetCeiling = model.MaxOutputTokenBudget
 
 // summarizePassBudget returns the max_tokens to request for one summarization
 // pass of modelID (auto: the model's own limit, capped at the ceiling).
@@ -244,14 +244,13 @@ func summarizePassBudget(modelID string) int {
 // seen) gets the ceiling, which is only an upper bound — a model that does not
 // need it simply stops earlier.
 func OutputBudgetForModel(modelID string, requested int) int {
-	budget := requested
-	if budget <= 0 {
-		budget = summarizeBudgetCeiling
+	if requested <= 0 {
+		return model.OutputTokenBudget(modelID)
 	}
-	if limit := model.CatalogOutputLimitForModel(modelID); limit > 0 && limit < budget {
-		budget = limit
+	if limit := model.CatalogOutputLimitForModel(modelID); limit > 0 && limit < requested {
+		return limit
 	}
-	return budget
+	return requested
 }
 
 // MaxSummarizeRunes is the maximum number of runes for summarization input.

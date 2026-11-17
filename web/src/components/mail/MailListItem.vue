@@ -15,6 +15,11 @@
       :aria-current="active ? 'true' : undefined"
       @click="emit('open', msg.id)"
     >
+      <!-- One coloured initial per sender. The row used to be all grey; a
+           per-sender hue is the cheapest way to make a list of thirty mails
+           scannable without inventing colours (it reuses the theme's own
+           status tokens, so all 36 themes and both lightnesses work). -->
+      <span class="mail-row__avatar" :style="{ '--mail-hue': senderHue }" aria-hidden="true">{{ senderInitial }}</span>
       <span class="mail-row__main">
         <!-- Sender + time share the first line: the sender identifies the
              message, the time orders it, and both are what you scan before
@@ -72,6 +77,7 @@ import {
   type MailMessageDetail,
 } from '@/utils/mailTypes'
 import { mailQuoteLabel, buildMailQuote } from '@/utils/mailQuote'
+import { mailHue, mailInitial } from '@/utils/mailColors'
 import { mailDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { apiGet } from '@/utils/api'
@@ -129,6 +135,8 @@ async function quoteToChat(): Promise<void> {
 const dayLabel = computed(() => mailDayLabel(props.msg.sentAt))
 const clockTime = computed(() => mailClockTime(props.msg.sentAt))
 const fullTimestamp = computed(() => mailFullTimestamp(props.msg.sentAt))
+const senderHue = computed(() => mailHue(props.msg.fromAddr || props.msg.fromName))
+const senderInitial = computed(() => mailInitial(props.msg.fromName, props.msg.fromAddr))
 </script>
 
 <style scoped>
@@ -155,6 +163,8 @@ const fullTimestamp = computed(() => mailFullTimestamp(props.msg.sentAt))
    chrome so the row still reads as one flat list line. */
 .mail-row__open {
   display: flex;
+  align-items: flex-start;
+  gap: calc(9 * var(--dp));
   flex: 1;
   min-width: 0;
   padding: calc(9 * var(--dp)) 0 calc(10 * var(--dp)) calc(10 * var(--dp));
@@ -165,6 +175,26 @@ const fullTimestamp = computed(() => mailFullTimestamp(props.msg.sentAt))
   text-align: left;
   cursor: pointer;
 }
+/* Sender initial. Top-aligned with the sender line (not centred on the whole
+   row): the eye scans sender → subject → snippet, and a vertically centred
+   circle floats between those lines instead of belonging to the first one. */
+.mail-row__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: calc(26 * var(--dp));
+  height: calc(26 * var(--dp));
+  margin-top: calc(1 * var(--dp));
+  border-radius: var(--radius-full);
+  /* `--mail-hue` is set per row from mailColors.ts; the fallback keeps the row
+     readable if the binding is ever lost. */
+  background: color-mix(in srgb, var(--mail-hue, var(--accent-color)) 18%, transparent);
+  color: var(--mail-hue, var(--accent-color));
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
 .mail-row:last-child {
   border-bottom: none;
 }
@@ -174,12 +204,22 @@ const fullTimestamp = computed(() => mailFullTimestamp(props.msg.sentAt))
 /* Unread is an accent edge, not a dot in its own column: the dot pushed the
    text 15px right while the right edge stayed at 10px, which made every row
    look shifted and off-centre. Drawn with `inset` box-shadow so it costs no
-   layout width and the text sits at the same 10px on both sides. */
+   layout width and the text sits at the same 10px on both sides.
+   A faint accent wash joins the edge so unread rows separate from read ones
+   even where the 2dp bar is outside the reading focus (long lists). */
 .mail-row.is-unread {
   box-shadow: inset calc(2 * var(--dp)) 0 0 var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 6%, transparent);
 }
-/* Open in the reading pane: a tint, no bar (the bar means unread). */
-.mail-row.is-active {
+/* Declared after the plain hover so hovering an unread row still brightens
+   instead of falling back to the neutral `--bg-hover` grey. */
+.mail-row.is-unread:hover {
+  background: color-mix(in srgb, var(--accent-color) 11%, transparent);
+}
+/* Open in the reading pane: a tint, no bar (the bar means unread). Last, so a
+   row that is both unread and open shows the stronger "open" tint. */
+.mail-row.is-active,
+.mail-row.is-active:hover {
   background: color-mix(in srgb, var(--accent-color) 14%, transparent);
 }
 

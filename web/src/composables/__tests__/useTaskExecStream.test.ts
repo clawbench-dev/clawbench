@@ -347,6 +347,24 @@ describe('useTaskExecStream', () => {
       vi.useRealTimers()
     })
 
+    it('keeps a long-running tool running — silence is not a verdict', () => {
+      // Same rule as the chat stream: a build that emits nothing for minutes
+      // must not be closed as 已中断 and then flip to success.
+      vi.useFakeTimers()
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('tool_use', { name: 'Bash', id: 'bash_1', done: false })
+
+      vi.advanceTimersByTime(60000)
+
+      const toolBlock = stream.streamingMsg.value!.blocks.find((b: any) => b.id === 'bash_1')
+      expect(toolBlock!.done).toBe(false)
+
+      stream.stopPreview()
+      vi.useRealTimers()
+    })
+
     it('updates input on an existing tool_use block when a later event carries it', () => {
       const { stream } = createStream()
       stream.startPreview()

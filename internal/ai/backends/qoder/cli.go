@@ -3,11 +3,11 @@ package qoder
 import (
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/model"
 )
 
 func init() {
-	ai.RegisterBackend("qoder", newQoderBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "qoder",
 		Spec: model.BackendSpec{
@@ -29,6 +29,18 @@ func init() {
 			// login) — see backends/qodercn.
 			LoginCmd: "qodercli login",
 		},
+		CLI: &backends.CLIPlugin{NewBackend: newQoderBackend},
+		// Qoder is a Claude Code fork: same ACP tool/meta wire shapes, so the
+		// parsers are imported rather than copied.
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       claude.ParseACPToolCall,
+			ParseToolCallUpdate: claude.ParseACPToolCallUpdate,
+			ExtractMeta:         claude.ExtractMeta,
+		},
+		ModelSource: model.PluginSource("qoder", discoverQoderModels),
+		// Deliberately empty: login-based, and the CLI binary contains no
+		// provider variables.
+		ProviderEnv: &model.ProviderEnvSpec{},
 	})
 }
 

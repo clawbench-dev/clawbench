@@ -468,6 +468,19 @@ func (s *Session) Cwd() string {
 	return fallback
 }
 
+// IsForegroundShell reports whether the process currently reading from the PTY
+// is a shell. Used to decide whether a submitted line was typed at a prompt
+// (worth remembering) or consumed by vim/less/ssh (not worth remembering).
+//
+// The probe is an ioctl plus a file read, so it is done OUTSIDE the lock, like
+// Cwd.
+func (s *Session) IsForegroundShell() bool {
+	s.mu.Lock()
+	ptmx := s.ptmx
+	s.mu.Unlock()
+	return ForegroundIsShell(ptmx)
+}
+
 // HasClient reports whether the session currently has an active WebSocket client.
 func (s *Session) HasClient() bool {
 	s.mu.Lock()

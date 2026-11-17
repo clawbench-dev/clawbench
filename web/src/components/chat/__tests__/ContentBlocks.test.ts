@@ -5,6 +5,7 @@ import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
 import { apiGet } from '@/utils/api'
 import { store } from '@/stores/app.ts'
+import { localConfig } from '@/composables/useSettingsConfig'
 import { updateAskSubmitState, handleToolAction, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
 
 // ── Mocks ──
@@ -175,6 +176,13 @@ const i18n = createI18n({
         subagentSteps: '{count} steps',
         subagentExpand: 'Expand sub-agent output',
         subagentCollapse: 'Collapse sub-agent output',
+        toolGroupSteps: 'Completed {count} step | Completed {count} steps',
+        toolGroupStepIndex: 'Step {count}',
+        toolGroupRunning: 'Running {name} (step {count})',
+        toolGroupFailed: '{count} failed',
+        toolGroupInterrupted: '{count} interrupted',
+        toolGroupCollapse: 'Collapse',
+        toolGroupExpand: 'Expand tool calls',
         // Needed by the error_source chip: getErrorSourceLabel looks up
         // `chat.contentBlocks.errorSources.<source>` and returns '' when the key
         // is missing (mirrors the real t()).
@@ -242,6 +250,13 @@ function mountBlocks(props: Record<string, unknown> = {}) {
   mountedWrappers.push(wrapper)
   return wrapper
 }
+
+// The compact tool-call mode is ON by default, but most tests in this file were
+// written against the individual pills. Opt out globally; the compact suite
+// below turns it back on for its own cases.
+beforeEach(() => {
+  ;(localConfig as any).compactToolCalls = false
+})
 
 afterEach(() => {
   for (const wrapper of mountedWrappers.splice(0)) {
@@ -417,6 +432,17 @@ describe('ContentBlocks', () => {
         blocks: [{ type: 'tool_use', name: 'Read', done: true, status: 'error' }],
       })
       expect(wrapper.find('.tool-error-icon').exists()).toBe(true)
+    })
+
+    // A tool that was still running when the turn ended is settled but never
+    // succeeded: it must not wear the green check the transcript used to paint.
+    it('shows the interrupted mark (not the check) for a tool without a result', () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'tool_use', name: 'Bash', done: true, status: 'interrupted' }],
+      })
+      expect(wrapper.find('.tool-interrupted-icon').exists()).toBe(true)
+      expect(wrapper.find('.tool-check').exists()).toBe(false)
+      expect(wrapper.find('.tool-error-icon').exists()).toBe(false)
     })
 
     it('emits show-tool-detail on tool click for non-auto-expand tools', async () => {
@@ -1135,6 +1161,25 @@ describe('ContentBlocks', () => {
       expect(wrapper.html()).toContain('Summary text')
     })
 
+    // 默认「混合」模式下除最后一条回复外都显示摘要，而摘要正文和原文是同一份
+    // markdown HTML。摘要必须走 RichTextBlock，否则里面的表格停在旧表头、
+    // 没有「简单表 / 数据表」切换（用户 2026-11-17 报告）。
+    it('renders tables in the summary body through the shared DataTable', () => {
+      const tableHtml = '<div class="table-block-wrapper word-wrap">'
+        + '<div class="table-block-header"><span class="table-block-label">Table</span></div>'
+        + '<div class="table-wrap"><table><thead><tr><th>region</th><th>q1</th></tr></thead>'
+        + '<tbody><tr><td>East</td><td>10</td></tr><tr><td>West</td><td>5</td></tr></tbody></table></div></div>'
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'Summary with table',
+        showingSummary: true,
+        renderTextBlock: () => tableHtml,
+      })
+      expect(wrapper.find('.dt').exists()).toBe(true)
+      expect(wrapper.find('.mode-switch').exists()).toBe(true)
+      expect(wrapper.find('.dt-grid tbody tr').exists()).toBe(true)
+    })
+
     it('renders restart warning banner from summaryCards.warnings (summary view)', async () => {
       const wrapper = mountBlocks({
         blocks: [],
@@ -1265,6 +1310,51 @@ describe('ContentBlocks', () => {
       await card!.trigger('click')
       const detail = wrapper.emitted('show-tool-detail')!.at(-1)![0] as any
       expect(detail.duration_ms).toBe(4321)
+    })
+
+    // `ti` indexes summaryCards.tools, NOT the message's blocks. Passing it as
+    // blockIdx made the drawer's live-block watcher read whatever block sat at
+    // that position in the message and copy ITS done/status/duration onto this
+    // card — a summary pill then showed "still executing" because an unrelated,
+    // unfinished tool happened to share the index.
+    it('shows the tool summary on a summary-view pill', async () => {
+      // The original-view pill carries the step's own line ("Read file ·
+      // utils/path.ts"); the summary view rebuilt the same pill without it, so
+      // every row read as a bare tool name.
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        toolCallSummary: (b: any) => b?.summary || '',
+        summaryCards: {
+          tools: [{ name: 'Read', id: 'tool-sum', done: true, status: 'success', summary: 'utils/path.ts' }],
+          taskIDs: [],
+          askQuestions: [],
+        },
+      })
+      const card = wrapper.findAll('.chat-tool-call').find((c) => c.text().includes('Read'))
+      expect(card).toBeTruthy()
+      expect(card!.find('.tool-summary').text()).toBe('utils/path.ts')
+    })
+
+    it('does not hand a block index to the drawer for a summary tool card', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'tool_use', name: 'Bash', id: 'tool-live', done: false }],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: {
+          tools: [{ name: 'Read', id: 'tool-sum', done: true, status: 'success' }],
+          taskIDs: [],
+          askQuestions: [],
+        },
+      })
+      const card = wrapper.findAll('.chat-tool-call').find((c) => c.text().includes('Read'))
+      expect(card, 'a clickable Read pill must render in the summary view').toBeTruthy()
+      await card!.trigger('click')
+
+      const detail = wrapper.emitted('show-tool-detail')!.at(-1)![0] as any
+      expect(detail.tool_id).toBe('tool-sum')
+      expect(detail.blockIdx).toBeUndefined()
     })
 
     it('hides PermissionApproval cards in summary view (actionable-only, no dead buttons)', () => {
@@ -2688,6 +2778,52 @@ describe('ContentBlocks — member presentation is identical before and after an
     expect(pill.attributes('style')).toContain('--subagent-accent')
   })
 
+  it('paints the member card pill with the member colour, not the agent pink', () => {
+    // The pill body (tint, border, icon, title, spinner) is painted from
+    // --tool-accent, which the category rule pins to the agent pink. A team
+    // member's card must carry its roster colour in BOTH properties:
+    // --subagent-accent for the open pill's left border / group rail,
+    // --tool-accent for the pill itself.
+    const wrapper = mountBlocks({ blocks: memberBlocks() })
+    const style = wrapper.find('.chat-tool-call-group').attributes('style') || ''
+    const toolAccent = /--tool-accent:\s*([^;]+)/.exec(style)?.[1]?.trim()
+    expect(toolAccent).toBeTruthy()
+    expect(toolAccent).toContain('--color-green')
+  })
+
+  it('paints the member fallback header pill with the member colour too', () => {
+    // The fallback header is the same pill as the Agent card, just synthetic,
+    // so it must not be the only one left pink.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'alpha one', member_name: 'alpha', member_color: 'blue' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, member_name: 'alpha', member_color: 'blue' },
+      ],
+    })
+    const style = wrapper.find('.member-group .chat-tool-call').attributes('style') || ''
+    const toolAccent = /--tool-accent:\s*([^;]+)/.exec(style)?.[1]?.trim()
+    expect(toolAccent).toBeTruthy()
+    expect(toolAccent).toContain('--color-info')
+  })
+
+  it('keeps the member\'s own tool pills on their category accent', () => {
+    // A member's Read/Bash blocks carry member_color as well. Only the
+    // Agent/Task card stands in for the member; tinting every tool it ran would
+    // erase the category colour the pill language is built on.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_a', done: true, input: {}, member_name: 'android-reviewer', member_color: 'green' },
+        { type: 'tool_use', name: 'Bash', id: 't1', parent_tool_call_id: 'call_a', done: true, input: {}, member_name: 'android-reviewer', member_color: 'green' },
+      ],
+      expandedTools: { 'subagent-call_a': true },
+    })
+    const body = wrapper.find('.subagent-group')
+    expect(body.exists()).toBe(true)
+    const bashPill = body.findAll('.chat-tool-call').at(-1)
+    expect(bashPill!.attributes('style') || '').not.toContain('--tool-accent')
+    expect(bashPill!.attributes('data-category')).toBe('bash')
+  })
+
   it('renders both paths with the SAME accent and the SAME glyph', () => {
     // The whole point: a member must look the same whether its Agent card is
     // still resolvable (pre-interruption) or gone (post-interruption). Compare
@@ -2748,6 +2884,9 @@ describe('ContentBlocks — member presentation is identical before and after an
     })
     const pill = wrapper.find('.chat-tool-call-group')
     expect(pill.attributes('style') || '').not.toContain('--subagent-accent')
+    // …and keeps the agent pink: the member accent must not leak onto a
+    // sub-agent nobody attributed.
+    expect(pill.attributes('style') || '').not.toContain('--tool-accent')
     expect(pill.find('svg.lucide-users').exists()).toBe(false)
   })
 })
@@ -3966,5 +4105,507 @@ describe('done thinking blocks auto-load their text', () => {
     await flushPromises(); await nextTick()
 
     expect(fetchMock, 'a finished, fully-collapsed history must not bulk-load').not.toHaveBeenCalled()
+  })
+})
+
+// ── Compact tool calls (设置 → 聊天 → 消息 → 收起工具调用) ──
+//
+// The fold is a rendering concern only: every folded block must still be the
+// SAME block (same index) once the row is opened, because the tool-detail
+// drawer and the expand keys are derived from that index.
+describe('compact tool calls', () => {
+  const tool = (name: string, id: string, extra: Record<string, unknown> = {}) => ({
+    type: 'tool_use', name, id, done: true, status: 'success', summary: name, ...extra,
+  })
+  const thinking = (id: string) => ({ type: 'thinking', think_id: id, done: true })
+
+  beforeEach(() => { (localConfig as any).compactToolCalls = true })
+  afterEach(() => { (localConfig as any).compactToolCalls = false })
+
+  it('leaves every pill visible when the option is off', async () => {
+    (localConfig as any).compactToolCalls = false
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2'), tool('Grep', 't3')] })
+    await nextTick()
+    expect(wrapper.findAll('[data-tool-group]')).toHaveLength(0)
+    expect(wrapper.findAll('.chat-tool-call')).toHaveLength(3)
+  })
+
+  it('replaces a run of tool calls with one counted row', async () => {
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2'), tool('Grep', 't3')] })
+    await nextTick()
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.exists()).toBe(true)
+    expect(row.attributes('data-tool-count')).toBe('3')
+    // A settled run reports its steps the way a sub-agent row does: "3 steps".
+    expect(row.find('.tool-name').text()).toBe('Completed 3 steps')
+    expect(row.find('.chat-tool-group-strip').attributes('aria-label')).toContain('Completed 3 steps')
+    // The individual pills are gone — the row IS the run.
+    expect(wrapper.findAll('.chat-tool-call')).toHaveLength(1)
+  })
+
+  it('keeps the last step\'s summary on the settled row', async () => {
+    // A folded run must still say WHAT it did: counts alone ("3 calls") tell the
+    // reader nothing about the command / file the agent actually touched. The
+    // most recent step is the one the row was showing while it ran.
+    const wrapper = mountBlocks({
+      toolCallSummary: (b: any) => b?.summary || '',
+      blocks: [
+        tool('Read', 't1', { summary: 'run.go' }),
+        tool('Bash', 't2', { summary: 'rebuild the frontend' }),
+      ],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.find('.tool-name').text()).toBe('Completed 2 steps')
+    expect(strip.find('.tool-summary').text()).toBe('Bash · rebuild the frontend')
+  })
+
+  it('drops the summary again once the run is unfolded', async () => {
+    // The body lists every step, so a repeated one-liner up here would just be
+    // duplicated information.
+    const wrapper = mountBlocks({
+      toolCallSummary: (b: any) => b?.summary || '',
+      blocks: [tool('Read', 't1', { summary: 'run.go' }), tool('Bash', 't2', { summary: 'npm test' })],
+    })
+    await nextTick()
+    expect(wrapper.find('.chat-tool-group-strip .tool-summary').exists()).toBe(true)
+    await wrapper.find('.chat-tool-group-strip').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.chat-tool-group-strip .tool-summary').exists()).toBe(false)
+  })
+
+  it('shows no step summary while only a thought is running', async () => {
+    // The row IS the thinking chip in that moment, and a chip has no summary —
+    // the previous step's line would read as the thought's own.
+    const wrapper = mountBlocks({
+      streaming: true,
+      toolCallSummary: (b: any) => b?.summary || '',
+      blocks: [
+        tool('Bash', 't1', { summary: 'npm test' }),
+        { type: 'thinking', think_id: 'th1', done: false },
+      ],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.find('.tool-name').text()).toBe('Deep Thinking')
+    expect(strip.find('.tool-summary').exists()).toBe(false)
+  })
+
+  it('spans thinking chips inside the run and counts them', async () => {
+    const wrapper = mountBlocks({
+      blocks: [thinking('th1'), tool('Read', 't1'), thinking('th2'), tool('Bash', 't2')],
+    })
+    await nextTick()
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.attributes('data-tool-count')).toBe('2')
+    expect(row.attributes('data-thinking-count')).toBe('2')
+    expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
+    // Counts only — the row is a summary, not a log line. Thinking chips ride
+    // along in the run but are not steps, so they are not counted.
+    expect(row.find('.tool-name').text()).toBe('Completed 2 steps')
+    expect(row.text()).not.toContain('thought')
+  })
+
+  it('folds a live thinking chip into the run instead of splitting it out', async () => {
+    // The chip used to stay visible while streaming, which split one stretch of
+    // work into chip / pill / chip.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [thinking('th1'), tool('Read', 't1')],
+    })
+    await nextTick()
+    expect(wrapper.findAll('.chat-thinking')).toHaveLength(0)
+    expect(wrapper.find('[data-tool-group] .tool-name').text()).toBe('Completed 1 step')
+  })
+
+  it('becomes the deep-thinking chip itself while only a thinking block runs', async () => {
+    // Nothing but the thinking block is live: the row must read as that chip
+    // (brain + label + ring), not as a summary. A count line would describe
+    // work that has not happened yet.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [tool('Read', 't1'), { type: 'thinking', think_id: 'th1', done: false }],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.attributes('data-category')).toBe('thinking')
+    expect(strip.find('.tool-spinner').exists()).toBe(true)
+    // Same label and glyph as the standalone chip, no counts.
+    expect(strip.find('.tool-name').text()).toBe('Deep Thinking')
+    expect(strip.text()).not.toContain('step')
+    expect(strip.text()).not.toContain('thought')
+    expect(strip.element.querySelector(':scope > .lucide-brain'), 'leading icon is the brain').not.toBeNull()
+    expect(strip.element.querySelector('.lucide-layers'), 'not the generic stack glyph').toBeNull()
+    // Still unfoldable while it thinks, so the chevron stays.
+    expect(strip.find('.tool-group-chevron').exists()).toBe(true)
+  })
+
+  it('rolls ONE label through the state switches instead of snapping', async () => {
+    // The label goes Bash → 深度思考 → counts as a run moves on. Each switch is
+    // a text change on the same RollingText, which holds the old line for its
+    // settle delay and then rolls. Per-state branches would swap the node out
+    // and the new text would appear instantly — no roll at all.
+    vi.useFakeTimers()
+    try {
+      const wrapper = mountBlocks({
+        streaming: true,
+        toolCallSummary: (b: any) => (b?.name === 'Bash' ? 'npm test' : ''),
+        blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
+      })
+      await nextTick()
+      expect(wrapper.find('.tool-name').text()).toBe('Bash')
+
+      // Bash finished, a thought is now the live step: the same node is still
+      // showing the old line, which is what "it will roll" looks like.
+      await wrapper.setProps({
+        blocks: [tool('Read', 't1'), tool('Bash', 't2'), { type: 'thinking', think_id: 'th1', done: false }],
+      })
+      await nextTick()
+      expect(wrapper.find('.tool-name').text()).toBe('Bash')
+
+      vi.advanceTimersByTime(200)
+      await nextTick()
+      expect(wrapper.find('.tool-name').text()).toContain('Deep Thinking')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('freezes the header to counts while unfolded, even mid-run', async () => {
+    // The unfolded body already shows which step is running, so the header
+    // becomes a summary of the whole run and stops following the live step —
+    // otherwise the label rolls under the reader's eyes while they read.
+    vi.useFakeTimers()
+    try {
+      const wrapper = mountBlocks({
+        streaming: true,
+        toolCallSummary: (b: any) => (b?.name === 'Bash' ? 'npm test' : ''),
+        blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
+      })
+      await nextTick()
+      const strip = wrapper.find('.chat-tool-group-strip')
+      expect(strip.find('.tool-name').text()).toBe('Bash')
+      expect(strip.attributes('data-category')).toBe('bash')
+
+      await strip.trigger('click')
+      vi.advanceTimersByTime(200)
+      await nextTick()
+      expect(strip.find('.tool-name').text()).toBe('Completed 2 steps')
+      // No live-step detail, no live-step colour, no live-step name: the header
+      // is a summary now, and its glyph is the generic stack one.
+      expect(strip.find('.tool-summary').exists()).toBe(false)
+      expect(strip.attributes('data-category')).toBeUndefined()
+      expect(strip.element.querySelector(':scope > .lucide-layers')).not.toBeNull()
+
+      // Folding it back makes it a live pill again.
+      await strip.trigger('click')
+      vi.advanceTimersByTime(200)
+      await nextTick()
+      expect(strip.find('.tool-name').text()).toBe('Bash')
+      expect(strip.attributes('data-category')).toBe('bash')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('wears the generic stack glyph once the run settles', async () => {
+    // A finished run mixes categories (file / bash / search), so no single
+    // tool's icon (and not the brain) can stand for it — the stack glyph says
+    // "a run of steps" and the label says how many.
+    const wrapper = mountBlocks({
+      blocks: [tool('Read', 't1'), thinking('th1')],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.attributes('data-category')).toBeUndefined()
+    expect(strip.element.querySelector(':scope > .lucide-layers')).not.toBeNull()
+    expect(strip.element.querySelector(':scope > .lucide-brain')).toBeNull()
+    expect(strip.find('.tool-name').text()).toBe('Completed 1 step')
+  })
+
+  it('unfolds the run in place, keeping every block reachable', async () => {
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2'), tool('Grep', 't3')] })
+    await nextTick()
+    await wrapper.find('.chat-tool-group-strip').trigger('click')
+    await nextTick()
+    // The summary row stays (it is the collapse affordance) and the three
+    // original pills come back — inside the run's container, so the rail is one
+    // border rather than a segment per row.
+    const group = wrapper.find('[data-tool-group]')
+    expect(group.exists()).toBe(true)
+    expect(group.classes()).toContain('is-open')
+    expect(wrapper.findAll('.chat-tool-call')).toHaveLength(4)
+    const body = wrapper.find('.chat-run-body')
+    expect(body.exists()).toBe(true)
+    expect(body.findAll('.chat-tool-call')).toHaveLength(3)
+    expect(wrapper.text()).toContain('Read')
+    expect(wrapper.text()).toContain('Bash')
+    expect(wrapper.text()).toContain('Grep')
+  })
+
+  it('keeps the root index when a tool inside an unfolded run is opened', async () => {
+    // The run renders through a nested ContentBlocks instance, so `bi` there is
+    // an index into the slice, not into the message. The detail drawer is keyed
+    // by the ROOT index — getting this wrong opens the wrong tool.
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2'), tool('Grep', 't3')] })
+    await nextTick()
+    await wrapper.find('.chat-tool-group-strip').trigger('click')
+    await nextTick()
+    const pills = wrapper.find('.chat-run-body').findAll('.chat-tool-call')
+    expect(pills).toHaveLength(3)
+    await pills[1].trigger('click')
+    const events = wrapper.emitted('show-tool-detail')
+    expect(events).toBeTruthy()
+    expect((events!.at(-1)![0] as any).blockIdx).toBe(1)
+  })
+
+  it('offers a collapse affordance at the bottom of an unfolded run', async () => {
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2')] })
+    await nextTick()
+    await wrapper.find('.chat-tool-group-strip').trigger('click')
+    await nextTick()
+    const footer = wrapper.find('.chat-run-footer')
+    expect(footer.exists()).toBe(true)
+    await footer.trigger('click')
+    await nextTick()
+    // Closed again: the affordance goes away and the wrapper is shut. The
+    // members stay mounted — that is what the fold animation closes over.
+    expect(wrapper.find('.chat-run-footer').exists()).toBe(false)
+    expect(wrapper.find('.chat-run-body-open').exists()).toBe(false)
+  })
+
+  it('folds the body open and shut instead of snapping it away', async () => {
+    // The body used to be behind a `v-if`: it appeared and vanished within one
+    // frame, so neither direction had any motion. It now sits in a grid wrapper
+    // that animates 0fr↔1fr (same trick as the sub-agent body), and it is
+    // mounted on first open so the closing frame has something to fold.
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2')] })
+    await nextTick()
+    expect(wrapper.find('.chat-run-body-wrapper').exists(), 'wrapper is always present').toBe(true)
+    expect(wrapper.find('.chat-run-body .content-blocks-nested').exists(), 'nothing mounted before the first open').toBe(false)
+    await wrapper.find('.chat-tool-group-strip').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.chat-run-body-wrapper').classes()).toContain('chat-run-body-open')
+    expect(wrapper.find('.chat-run-body .content-blocks-nested').exists()).toBe(true)
+  })
+
+  it('shows the failure count instead of hiding it', async () => {
+    const wrapper = mountBlocks({
+      blocks: [tool('Read', 't1'), tool('Bash', 't2', { status: 'error' })],
+    })
+    await nextTick()
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.attributes('data-tool-failed')).toBe('1')
+    // Glyph · number on the right — no "1 failed" sentence, and no second red
+    // status icon next to it.
+    const verdict = row.find('.tool-group-verdict')
+    expect(verdict.classes()).toContain('tool-group-failed')
+    expect(verdict.find('.verdict-n').text()).toBe('1')
+    expect(verdict.find('.tool-error-icon').exists()).toBe(true)
+    expect(row.text()).not.toContain('failed')
+    // The right-hand verdict replaces the plain check mark.
+    expect(row.find('.tool-check').exists()).toBe(false)
+  })
+
+  it('looks exactly like the running tool\'s own pill while that tool works', async () => {
+    // A run is a summary of work; while a step is actually executing there is
+    // nothing to summarise yet, so the row drops the counts and becomes that
+    // step's pill (glyph + name + summary + ring). The chevron and the click
+    // differ: it unfolds the run instead of opening the tool detail.
+    const wrapper = mountBlocks({
+      streaming: true,
+      toolCallSummary: (b: any) => (b?.name === 'Bash' ? 'npm test' : ''),
+      blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
+    })
+    await nextTick()
+    const row = wrapper.find('[data-tool-group]')
+    const strip = row.find('.chat-tool-group-strip')
+    expect(row.find('.tool-spinner').exists()).toBe(true)
+    expect(strip.find('.tool-name').text()).toBe('Bash')
+    expect(strip.find('.tool-summary').text()).toBe('npm test')
+    // No counts while a step runs — only where it is ("Step 2", tested above).
+    expect(row.text()).not.toContain('steps')
+    expect(row.text()).not.toContain('thoughts')
+    // …but the chevron stays: the row is unfoldable while it works, and the
+    // affordance must not flicker in and out as steps start and finish.
+    expect(row.find('.tool-group-chevron').exists()).toBe(true)
+    // And it wears the running tool's accent, not the muted container look.
+    expect(strip.attributes('data-category')).toBe('bash')
+  })
+
+  it('puts the running ring in the right-hand tail and keeps a real tool icon on the left', async () => {
+    // The ring used to be the row's FIRST child: it replaced the leading icon
+    // and left the right edge empty, so the row's left edge moved whenever a
+    // tool started or finished. It belongs in the tail with every other status
+    // verdict; the leading slot shows the tool that is actually running.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    const tail = strip.find('.chat-tool-group-tail')
+
+    expect(tail.find('.tool-spinner').exists(), 'ring is pinned to the right edge').toBe(true)
+    expect(strip.element.children[0].classList.contains('tool-icon'), 'leading slot keeps an icon').toBe(true)
+    expect(strip.element.children[0].querySelector('.tool-spinner')).toBeNull()
+  })
+
+  it('says which step is running, left of the ring', async () => {
+    // A run is a sequence, and the header is the only place that says how far
+    // along it is without unfolding. The counter sits immediately before the
+    // ring, so "Step 2 · spinner" reads as one status.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [
+        tool('Read', 't1'),
+        tool('Bash', 't2', { done: false, status: '' }),
+        tool('Grep', 't3'),
+      ],
+    })
+    await nextTick()
+    const tail = wrapper.find('.chat-tool-group-tail')
+    expect(tail.find('.tool-group-step').text()).toBe('Step 2')
+    const children = Array.from(tail.element.children) as HTMLElement[]
+    const stepAt = children.findIndex((el) => el.classList.contains('tool-group-step'))
+    const ringAt = children.findIndex((el) => el.classList.contains('tool-spinner'))
+    expect(stepAt).toBeGreaterThanOrEqual(0)
+    expect(ringAt).toBe(stepAt + 1)
+  })
+
+  it('keeps the failure count visible while the run is still going', async () => {
+    // The spinner branch used to come FIRST in one v-if/v-else chain, so a run
+    // with an already-failed step showed neither the number nor its tooltip
+    // while it streamed — the one moment the user is watching it. Both facts
+    // are true at once (2 failures so far, step 3 spinning), so both show.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [
+        tool('Read', 't1', { status: 'error' }),
+        tool('Bash', 't2', { done: false, status: '' }),
+        tool('Grep', 't3'),
+      ],
+    })
+    await nextTick()
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.attributes('data-tool-failed')).toBe('1')
+    const verdict = row.find('.tool-group-verdict')
+    expect(verdict.exists()).toBe(true)
+    expect(verdict.classes()).toContain('tool-group-failed')
+    expect(verdict.find('.verdict-n').text()).toBe('1')
+    expect(verdict.attributes('title')).toBe('1 failed')
+    // …and the ring is still there, next to it.
+    expect(row.find('.tool-spinner').exists()).toBe(true)
+  })
+
+  it('keeps the interruption count visible while the run is still going', async () => {
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [
+        tool('Read', 't1', { status: 'interrupted' }),
+        tool('Bash', 't2', { done: false, status: '' }),
+      ],
+    })
+    await nextTick()
+    const row = wrapper.find('[data-tool-group]')
+    expect(row.find('.tool-group-interrupted .verdict-n').text()).toBe('1')
+    expect(row.find('.tool-spinner').exists()).toBe(true)
+  })
+
+  it('never announces a live run as completed', async () => {
+    // The row is the unfold control, so its aria-label IS what a screen reader
+    // hears. It used to read "Completed 2 steps" while the visible text said
+    // "Step 2" — telling the user the run had finished mid-stream.
+    const wrapper = mountBlocks({
+      streaming: true,
+      blocks: [tool('Read', 't1'), tool('Bash', 't2', { done: false, status: '' })],
+    })
+    await nextTick()
+    const label = wrapper.find('.chat-tool-group-strip').attributes('aria-label') || ''
+    expect(label).not.toContain('Completed')
+    expect(label).toContain('Running Bash (step 2)')
+    // The failure count is a fact, not a verdict: it stays in the spoken label.
+    await wrapper.setProps({ blocks: [tool('Read', 't1', { status: 'error' }), tool('Bash', 't2', { done: false, status: '' })] })
+    await nextTick()
+    const live = wrapper.find('.chat-tool-group-strip').attributes('aria-label') || ''
+    expect(live).not.toContain('Completed')
+    expect(live).toContain('1 failed')
+  })
+
+  it('is a real button: focusable, with aria-expanded following the body', async () => {
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2')] })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.attributes('role')).toBe('button')
+    expect(strip.attributes('tabindex')).toBe('0')
+    expect(strip.attributes('aria-expanded')).toBe('false')
+    // The spoken label says what pressing it does, and (settled) what it holds.
+    expect(strip.attributes('aria-label')).toContain('Completed 2 steps')
+    expect(strip.attributes('aria-label')).toContain('Expand tool calls')
+    await strip.trigger('click')
+    await nextTick()
+    expect(wrapper.find('.chat-tool-group-strip').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('.chat-tool-group-strip').attributes('aria-label')).toContain('Collapse')
+  })
+
+  it('unfolds from the keyboard with Enter and Space', async () => {
+    // "收起工具调用" is the default, so a run of 20 steps arrives folded. Without
+    // a keydown handler the only way in was the mouse (the bottom collapse
+    // button is mounted on first open, so a keyboard user never reached it).
+    const wrapper = mountBlocks({ blocks: [tool('Read', 't1'), tool('Bash', 't2')] })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+
+    await strip.trigger('keydown', { key: 'Enter' })
+    await nextTick()
+    expect(strip.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.findAll('.chat-run-body .chat-tool-call')).toHaveLength(2)
+
+    await strip.trigger('keydown', { key: ' ' })
+    await nextTick()
+    expect(strip.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('gives the pure-thinking run a brain, not the stack glyph', async () => {
+    // A run of thinking chips only has no steps: its label is "Deep Thinking",
+    // so the stack glyph ("a run of steps") contradicted it.
+    const wrapper = mountBlocks({
+      blocks: [thinking('th1'), thinking('th2')],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.find('.tool-name').text()).toBe('Deep Thinking')
+    // Brain is stubbed by this suite (Layers is not, so its absence is real).
+    // `getToolIcon` resolves to WrenchIcon for an unknown name, which the mock
+    // points at the same stub — so check the resolved component the row picked
+    // instead of a glyph class.
+    const icon = strip.element.children[0] as HTMLElement
+    expect(icon.classList.contains('lucide-layers')).toBe(false)
+    expect(icon.classList.contains('tool-icon')).toBe(true)
+  })
+
+  it('keeps the collapsed row\'s summary that buildToolCallGroups computed', async () => {
+    // The detail is folded into the group (one reverse scan per rebuild) instead
+    // of being recomputed by the row on every streamed frame.
+    const wrapper = mountBlocks({
+      toolCallSummary: (b: any) => b?.summary || '',
+      blocks: [tool('Read', 't1', { summary: 'run.go' }), tool('Bash', 't2', { summary: 'npm test' })],
+    })
+    await nextTick()
+    expect(wrapper.find('.chat-tool-group-strip .tool-summary').text()).toBe('Bash · npm test')
+  })
+
+  it('never folds an interactive card or an Agent card with a sub-agent group', async () => {
+    const ask = {
+      type: 'tool_use', name: 'AskUserQuestion', id: 'ask1', done: true,
+      input: { questions: [{ question: 'Pick one', options: [{ label: 'A' }] }] },
+    }
+    const wrapper = mountBlocks({
+      blocks: [tool('Read', 't1'), tool('Bash', 't2'), ask],
+    })
+    await nextTick()
+    // The two plain tools fold; the ask card renders on its own.
+    expect(wrapper.find('[data-tool-group]').attributes('data-tool-count')).toBe('2')
+    expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
   })
 })

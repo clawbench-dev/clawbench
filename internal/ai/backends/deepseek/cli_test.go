@@ -34,7 +34,7 @@ func TestDeepSeekPlugin_NewBackendIsCLIBackend(t *testing.T) {
 
 	// Verify parser is a DeepSeekStreamParser
 	parser := clib.NewParserFn()
-	if _, ok := parser.(*ai.DeepSeekStreamParser); !ok {
+	if _, ok := parser.(*DeepSeekStreamParser); !ok {
 		t.Errorf("expected *DeepSeekStreamParser, got %T", parser)
 	}
 

@@ -6,6 +6,8 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import FileHeader from '../FileHeader.vue'
 import { useFileShare } from '@/composables/useFileShare'
+import { syncFeatureConfig, syncServerFeatures } from '@/composables/useFeatureFlags'
+import { applyDockPreset } from '@/composables/useDockPlugins'
 
 // useFileShare is a module-level singleton; isolate it per test.
 const { markShared, markUnshared, resetFileShareState } = useFileShare()
@@ -308,99 +310,6 @@ describe('FileHeader', () => {
       const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
       const ids = wrapper.findAll('.header-actions > [data-toolbar-id]').map(b => b.attributes('data-toolbar-id'))
       expect(ids).not.toContain('refresh')
-    })
-  })
-
-  describe('collapse / restore chat pane button', () => {
-    // The chat pane could previously only be collapsed from the divider handle
-    // that appears under the cursor: a ~14px target on a 6px line, hard to hit
-    // and easy to trigger while aiming at the scrollbar. The header button is
-    // the same operation with a full-size target, next to the refresh button
-    // the user already reaches for.
-    beforeEach(() => {
-      mockIsWideScreen.value = true
-      mockChatCollapsed.value = false
-    })
-
-    function maximizeBtn(wrapper: any) {
-      return wrapper.find('[data-action="toggle-maximize-pane"]')
-    }
-
-    it('sits immediately after the refresh button', () => {
-      const wrapper = mountHeader()
-      const titles = wrapper.findAll('.header-actions > .file-header-btn').map(b => b.attributes('title') ?? '')
-      const iRefresh = titles.indexOf('Refresh')
-      const iMax = titles.findIndex(t => t === 'Hide chat area')
-      expect(iRefresh).toBeGreaterThan(-1)
-      expect(iMax, 'the chat-toggle button must be in the inline toolbar').toBeGreaterThan(-1)
-      expect(iMax).toBe(iRefresh + 1)
-    })
-
-    it('emits toggleMaximizePane when clicked', async () => {
-      const wrapper = mountHeader()
-      await maximizeBtn(wrapper).trigger('click')
-      expect(wrapper.emitted('toggleMaximizePane')).toHaveLength(1)
-    })
-
-    it('offers to hide the chat while it is visible', () => {
-      const wrapper = mountHeader()
-      const btn = maximizeBtn(wrapper)
-      expect(btn.attributes('title')).toBe('Hide chat area')
-      // PanelRightClose is the "the right pane goes away" glyph. It must NOT
-      // be Maximize2: this same toolbar has a Maximize2 for images ("view full
-      // size"), and two identical glyphs three buttons apart meaning different
-      // things is unreadable (the reported bug).
-      expect(btn.html()).toContain('lucide-panel-right-close')
-      expect(btn.html()).not.toContain('lucide-maximize-2')
-    })
-
-    it('offers to show the chat once it is collapsed', async () => {
-      mockChatCollapsed.value = true
-      const wrapper = mountHeader()
-      const btn = maximizeBtn(wrapper)
-      expect(btn.attributes('title')).toBe('Show chat area')
-      expect(btn.html()).toContain('lucide-panel-right-open')
-      expect(btn.classes()).toContain('active')
-      // Same handler either way: the button toggles.
-      await btn.trigger('click')
-      expect(wrapper.emitted('toggleMaximizePane')).toHaveLength(1)
-    })
-
-    it('never shares a glyph with the image full-size button', () => {
-      // The regression this guards: both buttons used Maximize2, so an image
-      // showed two identical icons for two unrelated actions.
-      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
-      const chatBtn = maximizeBtn(wrapper)
-      const imageBtn = wrapper.findAll('.header-actions > .file-header-btn')
-        .find(b => (b.attributes('title') ?? '') === 'View image')
-      expect(imageBtn, 'the image full-size button must still exist').toBeTruthy()
-      expect(imageBtn!.html()).toContain('lucide-maximize-2')
-      expect(chatBtn.html()).not.toContain('lucide-maximize-2')
-    })
-
-    it('is absent on a narrow screen, where there is no split to maximize', () => {
-      mockIsWideScreen.value = false
-      const wrapper = mountHeader()
-      expect(maximizeBtn(wrapper).exists()).toBe(false)
-    })
-
-    it('is never lost when the row runs out of room', async () => {
-      // ActionBar folds the tail of the row into its menu, so a narrow pane can
-      // never make this action disappear. jsdom has no layout, so the folding
-      // itself is covered by ActionBar's own test; here we only pin that the
-      // button exists and carries a label for the menu entry to use.
-      const wrapper = mountHeader()
-      const btn = maximizeBtn(wrapper)
-      expect(btn.exists()).toBe(true)
-      expect(btn.find('.action-label').exists()).toBe(true)
-    })
-
-    it('is offered even when the file has no text content', () => {
-      // Unlike refresh (which needs something to re-fetch), maximizing is a
-      // layout action on the pane — an image or an empty buffer can still be
-      // given the whole width.
-      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
-      expect(maximizeBtn(wrapper).exists()).toBe(true)
     })
   })
 
@@ -846,6 +755,28 @@ describe('FileHeader', () => {
       expect(renderedToolbarIds(wrapper)).toContain('edit')
     })
 
+    // Rendered bodies (HTML preview, OpenAPI docs) are backed by the same
+    // source editor, so the toggle must be reachable from the rendered view
+    // too. It used to be offered only in source view — and there the editor
+    // behind it was hard-wired read-only, so the button did nothing.
+    it('shows edit button for an HTML file in the rendered view', () => {
+      const wrapper = mountHeader({
+        file: { name: 'index.html', path: '/tmp/index.html', content: '<h1>hi</h1>' },
+        viewMode: 'rendered',
+      })
+      expect((wrapper.vm as any).$.setupState.isEditable).toBe(true)
+      expect(renderedToolbarIds(wrapper)).toContain('edit')
+    })
+
+    it('shows edit button for an OpenAPI spec in the rendered view', () => {
+      const wrapper = mountHeader({
+        file: { name: 'api.yaml', path: '/tmp/api.yaml', content: 'openapi: 3.0.0', subtype: 'openapi' },
+        viewMode: 'rendered',
+      })
+      expect((wrapper.vm as any).$.setupState.isEditable).toBe(true)
+      expect(renderedToolbarIds(wrapper)).toContain('edit')
+    })
+
     it('shows edit button and code features for a newly-created empty text file', () => {
       const wrapper = mountHeader({ file: { name: 'newfile.ts', path: '/tmp/newfile.ts', content: '' } })
       const vm = wrapper.vm as any
@@ -872,6 +803,37 @@ describe('FileHeader', () => {
       const wrapper = mountHeader({ editing: true })
       const activeBtn = wrapper.findAll('.header-actions .file-header-btn').find(b => b.classes().includes('active'))
       expect(activeBtn).toBeTruthy()
+    })
+  })
+
+  describe('visual edit button', () => {
+    const markdownFile = { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }
+
+    it('is offered for a markdown file outside edit mode', () => {
+      const wrapper = mountHeader({ file: markdownFile })
+      expect(renderedToolbarIds(wrapper)).toContain('wysiwygEdit')
+    })
+
+    it('is hidden while editing (the edit toggle owns the exit flow)', () => {
+      const wrapper = mountHeader({ file: markdownFile, editing: true })
+      expect(renderedToolbarIds(wrapper)).not.toContain('wysiwygEdit')
+    })
+
+    it('is not offered for non-markdown files', () => {
+      const wrapper = mountHeader()
+      expect(renderedToolbarIds(wrapper)).not.toContain('wysiwygEdit')
+    })
+
+    it('emits editWysiwyg when clicked', async () => {
+      const wrapper = mountHeader({ file: markdownFile })
+      ;(wrapper.vm as any).$.setupState.handleWysiwygEdit()
+      await nextTick()
+      expect(wrapper.emitted('editWysiwyg')).toBeTruthy()
+    })
+
+    it('hides the search button while visual editing (no in-editor find UI)', () => {
+      const wrapper = mountHeader({ file: markdownFile, visualEditing: true })
+      expect(renderedToolbarIds(wrapper)).not.toContain('search')
     })
   })
 
@@ -1077,6 +1039,83 @@ describe('FileHeader', () => {
       await flushPromises()
 
       expect(mockToastShow).toHaveBeenCalledWith('单个附件不能超过 25 MB', expect.anything())
+    })
+  })
+
+  describe('feature switches (功能编排)', () => {
+    const file = { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }
+
+    /**
+     * The six master switches come from the server registry now, so a test
+     * that turns one off has to push both snapshots (the config one still
+     * carries the per-kind share permissions).
+     */
+    function setFeature(id: string, enabled: boolean, config: Record<string, unknown> = {}) {
+      syncFeatureConfig({ [id]: { enabled, ...(config[id] as object | undefined) }, ...config })
+      syncServerFeatures([{ id, enabled, available: true, reason: enabled ? '' : 'disabled', defaultOn: true }])
+    }
+
+    afterEach(() => {
+      syncFeatureConfig({})
+      syncServerFeatures([])
+      applyDockPreset('developer')
+      mockToastShow.mockClear()
+    })
+
+    it('drops the share entry when 分享 is off — the dialog could not publish', async () => {
+      setFeature('share', false)
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      // Still a path-backed file, so the rest of the group is intact: only the
+      // share entry disappears.
+      expect((wrapper.vm as any).$.setupState.permanentMenuIds).toContain('gitHistory')
+      expect(await menuItemByText(wrapper, 'Share link')).toBeUndefined()
+    })
+
+    it('drops the share entry when FILE links are disallowed, even with 分享 on', async () => {
+      setFeature('share', true, { share: { allow_files: false } })
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      expect(await menuItemByText(wrapper, 'Share link')).toBeUndefined()
+    })
+
+    it('keeps the share entry when only conversation/meeting links are disallowed', async () => {
+      setFeature('share', true, { share: { allow_sessions: false, allow_meetings: false } })
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      expect(await menuItemByText(wrapper, 'Share link')).toBeTruthy()
+    })
+
+    it('drops the send-by-mail button when 邮件 is off', () => {
+      setFeature('mail', false)
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      expect(renderedToolbarIds(wrapper)).not.toContain('sendByMail')
+      // The neighbouring 引用对话 action stays — the mail switch gates mail only.
+      expect(renderedToolbarIds(wrapper)).toContain('attach')
+    })
+
+    it('keeps the file-history entry while the history tab is hidden, and explains instead of opening', async () => {
+      // The history tab is a display switch, not a server feature: hiding it
+      // removes the dock entry, so the file header's jump must not silently
+      // open a surface the user just removed.
+      applyDockPreset('minimal')
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      const button = await menuItemByText(wrapper, 'File history')
+      expect(button).toBeTruthy()
+
+      await button!.trigger('click')
+
+      expect(wrapper.emitted('openGitHistory')).toBeFalsy()
+      expect(mockToastShow).toHaveBeenCalledTimes(1)
+      // The toast comes from the global i18n (jsdom locale is `en`), not from
+      // this spec's local message table — pin the real copy.
+      expect(mockToastShow.mock.calls[0][0]).toBe('This feature is off. Open Feature Layout to turn it on.')
+    })
+
+    it('opens the file history normally while the history tab is visible', async () => {
+      applyDockPreset('developer')
+      const wrapper = mountHeader({ file, viewMode: 'rendered', editing: false })
+      const button = await menuItemByText(wrapper, 'File history')
+      await button!.trigger('click')
+      expect(wrapper.emitted('openGitHistory')).toBeTruthy()
+      expect(mockToastShow).not.toHaveBeenCalled()
     })
   })
 

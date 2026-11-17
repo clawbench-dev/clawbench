@@ -12,10 +12,26 @@ export interface ReconnectOptions {
   getFatalError?: () => boolean | null // return non-null = fatal, null = safe to reconnect
 }
 
+export interface ResetOptions {
+  /**
+   * Temporary base delay for the retry ladder that starts here. Omitted = fall
+   * back to `options.baseDelay`.
+   *
+   * Exists for foreground resume: the user is looking at the screen, so a
+   * disconnect discovered on return must not sit out the normal 2s/4s/8s ladder
+   * before the first redial. It is deliberately an override on reset() rather
+   * than a second scheduling path — the ladder itself stays the one algorithm,
+   * and the next successful connect (which calls reset() with no arguments)
+   * restores the normal cadence.
+   */
+  baseDelay?: number
+}
+
 export function useReconnect(options: ReconnectOptions) {
   let reconnectAttempts = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let disabled = false
+  let baseDelayOverride: number | null = null
 
   // Reactive reconnecting state — true when a reconnect is scheduled or in-progress
   const reconnecting = ref(false)
@@ -23,17 +39,19 @@ export function useReconnect(options: ReconnectOptions) {
   function scheduleReconnect() {
     reconnecting.value = true
     const cappedDelay = options.maxDelay ?? 15000
-    const delay = Math.min((options.baseDelay ?? 2000) * Math.pow(2, reconnectAttempts), cappedDelay)
+    const base = baseDelayOverride ?? options.baseDelay ?? 2000
+    const delay = Math.min(base * Math.pow(2, reconnectAttempts), cappedDelay)
     reconnectTimer = setTimeout(() => {
       reconnectAttempts++
       options.onReconnect()
     }, delay)
   }
 
-  function reset() {
+  function reset(overrides?: ResetOptions) {
     reconnectAttempts = 0
     disabled = false
     reconnecting.value = false
+    baseDelayOverride = overrides?.baseDelay ?? null
     if (reconnectTimer) clearTimeout(reconnectTimer)
     reconnectTimer = null
   }

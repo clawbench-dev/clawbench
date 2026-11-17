@@ -91,6 +91,9 @@ describe('wallpaper-active single-surface transparency', () => {
       /background:\s*color-mix\(in srgb,\s*var\(--bg-secondary\)\s*var\(--panel-alpha\),\s*transparent\);/,
     )
     expect(tabs).toContain('html.wallpaper-active .stats-tab-bar')
+    // The terminal's empty-state header takes the tab bar's place when there is
+    // no session, so it must carry the same tint.
+    expect(tabs).toContain('html.wallpaper-active .terminal-empty-header')
     expect(tabs).toContain('html.wallpaper-active .forge-tabs')
 
     // The comment body is opaque bg-primary by default; inside a translucent

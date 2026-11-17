@@ -17,6 +17,22 @@ import (
 // that can no longer suppress anything.
 const debounceSweepThreshold = 1024
 
+// GlobalForgeTaskTrigger is the process-wide trigger, set during startup.
+//
+// It exists so the tasks master switch can discard queued events when it is
+// turned off. Without that, an event that arrived while a task was busy would
+// sit in the queue and fire as soon as the switch came back — the "补跑" the
+// design explicitly forbids.
+var GlobalForgeTaskTrigger *ForgeTaskTrigger
+
+// DiscardQueuedForgeEvents drops every queued forge event. No-op when forge is
+// disabled (no trigger was constructed).
+func DiscardQueuedForgeEvents() {
+	if GlobalForgeTaskTrigger != nil {
+		GlobalForgeTaskTrigger.DiscardQueued()
+	}
+}
+
 // ForgeTaskTrigger matches freshly derived forge events against event-triggered
 // tasks and fires them.
 //
@@ -60,6 +76,25 @@ type ForgeTaskTrigger struct {
 	retryBackoff time.Duration
 	// now is injectable for tests.
 	now func() time.Time
+}
+
+// DiscardQueued empties every per-task queue. Drain loops already running keep
+// their in-flight event but will find nothing left to do and exit; firing is
+// suppressed separately by the scheduler's disabled gate.
+func (t *ForgeTaskTrigger) DiscardQueued() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	dropped := 0
+	for id, q := range t.queues {
+		dropped += len(q)
+		delete(t.queues, id)
+	}
+	if dropped > 0 {
+		slog.Info("forge event queues discarded", slog.Int("dropped", dropped))
+	}
 }
 
 // ForgeQueuedEvent is one pending event awaiting its task's turn to run.

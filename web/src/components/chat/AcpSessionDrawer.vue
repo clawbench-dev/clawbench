@@ -1,7 +1,12 @@
 <template>
   <BottomSheet :open="open" auto :title="drawerTitle" @close="$emit('close')">
     <template #header>
-      <AgentIcon :backend="backendId" :name="backendDisplayName" :avatar="agentAvatar" size="md" class="bs-header-icon" />
+      <!-- Wrapped, not classed: .bs-header-icon carries 4dp padding for lucide
+           glyphs; applying it to AgentIcon's root would shrink its own sized
+           box instead of adding breathing room. -->
+      <span class="bs-header-icon">
+        <AgentIcon :backend="backendId" :name="backendDisplayName" :avatar="agentAvatar" size="md" />
+      </span>
       <span class="bs-header-title">{{ drawerTitle }}</span>
     </template>
     <div class="acp-session-search-row">

@@ -137,3 +137,10 @@ func TestMergeRanges(t *testing.T) {
 		})
 	}
 }
+
+func TestTextMatchPositionsExported(t *testing.T) {
+	positions := TextMatchPositions("quick", "The quick brown fox")
+	if len(positions) == 0 {
+		t.Fatal("exported wrapper returned no positions")
+	}
+}

@@ -152,8 +152,19 @@ export interface ItemSpec {
    * actually configured — the backend silently skips when it is not.
    */
   showSummaryModelStatus?: boolean
-  /** Progress bar for info-type items: { value, max }. Bar hidden when value >= max. */
-  progress?: { value: number; max: number }
+  /** Progress bar for info-type items: { value, max }. `active: false` shows the
+   *  bar without the moving stripes (backlog that cannot progress right now,
+   *  e.g. the embedder is unreachable). */
+  progress?: { value: number; max: number; active?: boolean }
+  /**
+   * Render this row as a read-only feature status (已启用 / 已停用) with a
+   * 「去功能编排」 link, instead of a control. The value is the server enable
+   * key (e.g. `forge.enabled`) — the switch itself lives in the Dock feature
+   * manager, because one toggle there has to control BOTH the tab and the
+   * background feature. A second switch here would be a second source of truth
+   * for the same flag.
+   */
+  statusFeature?: string
 }
 
 // ── Group panel config types ─────────────────────────────
@@ -194,6 +205,10 @@ export type CategoryEntry =
  * Each entry is either a flat instant-save item or a group panel with batch save.
  */
 export const categoryItems: Record<string, CategoryEntry[]> = {
+  // Custom page (DockPluginSetting.vue): presets + visibility + order. The
+  // empty entry keeps the "every SettingsIndex category exists here" contract
+  // without pretending it is a flat item list.
+  dockPlugins: [],
   // The human user's identity. A first-class category rather than a row under
   // 群聊: the nickname is also the meeting display name, and the profile is
   // injected into every agent's system prompt — neither is group-chat-specific.
@@ -281,24 +296,31 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.wallpaperPanelOpacity', key: 'panelOpacity', type: 'slider', source: 'local', min: 0, max: 1, step: 0.01, defaultValue: 0.7, displayFormat: 'percent', sectionHeader: 'settings.items.wallpaperSection' }},
   ],
   agents: [],
+  // 聊天 owns what a turn looks like and how it behaves: reading aloud, the
+  // transcript, the context window, recommended replies and group discussion.
+  // The session LIST and the session lifecycle moved to `sessions` — they are
+  // about sessions as objects, not about the conversation itself, and mixing
+  // the two made one page answer two unrelated questions.
   chat: [
     { type: 'item', spec: { labelKey: 'settings.items.autoSpeech', descriptionKey: 'settings.items.autoSpeechDesc', key: 'autoSpeech', type: 'switch', source: 'local', sectionHeader: 'settings.items.chatInteractionSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.preventScreenLock', descriptionKey: 'settings.items.preventScreenLockDesc', key: 'preventScreenLock', type: 'switch', source: 'local', sectionHeader: 'settings.items.chatInteractionSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.swipeSession', descriptionKey: 'settings.items.swipeSessionDesc', key: 'swipeSession', type: 'switch', source: 'local', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.messageDisplayMode', descriptionKey: 'settings.items.messageDisplayModeDesc', key: 'messageDisplayMode', type: 'select', source: 'local', sectionHeader: 'settings.items.chatMessageSection', options: [
       { labelKey: 'settings.items.messageDisplayModeMixed', value: 'mixed' },
       { labelKey: 'settings.items.messageDisplayModeSummary', value: 'summary' },
       { labelKey: 'settings.items.messageDisplayModeOriginal', value: 'original' },
     ]}},
+    // Fold a run of tool calls into one "ran N operations" row. On by default:
+    // a long turn otherwise becomes a wall of full-width pills. The per-tool
+    // detail is one click away (the row unfolds in place).
+    { type: 'item', spec: { labelKey: 'settings.items.compactToolCalls', descriptionKey: 'settings.items.compactToolCallsDesc', key: 'compactToolCalls', type: 'switch', source: 'local', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatInitialMessages', descriptionKey: 'settings.items.chatInitialMessagesDesc', key: 'chat.initial_messages', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
-    // Session list order. Off by default: ordering by activity reshuffles the
-    // sidebar while the user reads it, which was disruptive enough to be made
-    // opt-in. Manual drag order still wins in both modes.
-    { type: 'item', spec: { labelKey: 'settings.items.sessionSortRecent', descriptionKey: 'settings.items.sessionSortRecentDesc', key: 'chat.session_sort_recent', type: 'switch', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.chatSystemPromptInterval', descriptionKey: 'settings.items.chatSystemPromptIntervalDesc', key: 'chat.system_prompt_interval', type: 'number', source: 'server' } },
-    { type: 'item', spec: { labelKey: 'settings.items.chatForkContextBudget', descriptionKey: 'settings.items.chatForkContextBudgetDesc', key: 'chat.fork_context_budget', type: 'number', source: 'server', min: 1000 } },
+    // Its own card: how often the system prompt is re-injected and how much
+    // history a fork/branch may carry are the two knobs that decide what the
+    // model actually sees, which is a different subject from how the transcript
+    // is drawn.
+    { type: 'item', spec: { labelKey: 'settings.items.chatSystemPromptInterval', descriptionKey: 'settings.items.chatSystemPromptIntervalDesc', key: 'chat.system_prompt_interval', type: 'number', source: 'server', sectionHeader: 'settings.items.chatContextSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.chatForkContextBudget', descriptionKey: 'settings.items.chatForkContextBudgetDesc', key: 'chat.fork_context_budget', type: 'number', source: 'server', min: 1000, sectionHeader: 'settings.items.chatContextSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatRecommendEnabled', descriptionKey: 'settings.items.chatRecommendEnabledDesc', key: 'chat.recommend_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.recommendSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatRecommendContextMessages', descriptionKey: 'settings.items.chatRecommendContextMessagesDesc', key: 'chat.recommend_context_messages', type: 'number', source: 'server', min: 0, max: 20, disableUnless: { key: 'chat.recommend_enabled', value: true }, sectionHeader: 'settings.items.recommendSectionHeader' } },
     // The AI-summary jump belongs to the 推荐回复 card. It must stay contiguous
@@ -306,15 +328,27 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // sectionHeader, so any row with a different header inserted here splits
     // this row into a second, one-row 推荐回复 card.
     { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDesc', key: 'summaryModel', type: 'summaryModel', source: 'local', disableUnless: { key: 'chat.recommend_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.recommendSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueEnabled', descriptionKey: 'settings.items.chatAutoContinueEnabledDesc', key: 'chat.auto_continue_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoContinueSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueMaxRetries', descriptionKey: 'settings.items.chatAutoContinueMaxRetriesDesc', key: 'chat.auto_continue_max_retries', type: 'number', source: 'server', min: -1, disableUnless: { key: 'chat.auto_continue_enabled', value: true }, sectionHeader: 'settings.items.autoContinueSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.chatRestartResumeWindow', descriptionKey: 'settings.items.chatRestartResumeWindowDesc', key: 'chat.restart_resume_window_minutes', type: 'number', source: 'server', min: 0, disableUnless: { key: 'chat.auto_continue_enabled', value: true }, sectionHeader: 'settings.items.autoContinueSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.chatAutoRenameEnabled', descriptionKey: 'settings.items.chatAutoRenameEnabledDesc', key: 'chat.auto_rename_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoRenameSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDesc', key: 'summaryModel', type: 'summaryModel', source: 'local', disableUnless: { key: 'chat.auto_rename_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.autoRenameSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true }, sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
+    // Group chat: the cap on how many times the agents may speak to each other
+    // before the floor returns to the user. A global server setting (same value
+    // on every device). The user nickname now lives in the 身份 category — it
+    // is not group-chat-specific.
+    { type: 'item', spec: { labelKey: 'settings.items.groupMaxSpeeches', descriptionKey: 'settings.items.groupMaxSpeechesDesc', key: 'chat.group_max_speeches', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.groupChatSectionHeader' } },
+  ],
+  // 会话管理: the session list and the session lifecycle. Split out of 聊天 so
+  // that "how many sessions, how they are ordered, when they are cleaned up"
+  // is not interleaved with "how a message is drawn".
+  sessions: [
+    // ── 会话列表 ──
+    { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server', sectionHeader: 'settings.items.sessionListSection' } },
+    // Session list order. Off by default: ordering by activity reshuffles the
+    // sidebar while the user reads it, which was disruptive enough to be made
+    // opt-in. Manual drag order still wins in both modes.
+    { type: 'item', spec: { labelKey: 'settings.items.sessionSortRecent', descriptionKey: 'settings.items.sessionSortRecentDesc', key: 'chat.session_sort_recent', type: 'switch', source: 'server', sectionHeader: 'settings.items.sessionListSection' } },
+    // How the list is navigated on touch screens. Local: a desktop user who
+    // swipes with a trackpad and a phone user may want different answers.
+    { type: 'item', spec: { labelKey: 'settings.items.swipeSession', descriptionKey: 'settings.items.swipeSessionDesc', key: 'swipeSession', type: 'switch', source: 'local', sectionHeader: 'settings.items.sessionListSection' } },
     // 「其他项目卡片」自成一组：这两个值是同一件事的两个维度（几张卡、多久内算活跃），
-    // 放在「消息与历史」里会跟会话条数、分页混在一起。渲染器按 sectionHeader 的
+    // 放在「会话列表」里会跟会话条数、排序混在一起。渲染器按 sectionHeader 的
     // **连续段**分组，所以这两行必须紧挨着，中间不能插别的 header。
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsMaxCount', descriptionKey: 'settings.items.recentProjectCardsMaxCountDesc', key: 'chat.recent_project_cards_max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.recentProjectCardsSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectCardsWindowHours', descriptionKey: 'settings.items.recentProjectCardsWindowHoursDesc', key: 'chat.recent_project_cards_window_hours', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.recentProjectCardsSectionHeader' } },
@@ -326,11 +360,49 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.sessionOtherProjectModeStrip', value: 'strip' },
       { labelKey: 'settings.items.sessionOtherProjectModeTabs', value: 'tabs' },
     ]}},
-    // Group chat: the cap on how many times the agents may speak to each other
-    // before the floor returns to the user. A global server setting (same value
-    // on every device). The user nickname now lives in the 身份 category — it
-    // is not group-chat-specific.
-    { type: 'item', spec: { labelKey: 'settings.items.groupMaxSpeeches', descriptionKey: 'settings.items.groupMaxSpeechesDesc', key: 'chat.group_max_speeches', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.groupChatSectionHeader' } },
+    // ── 会话生命周期 ──
+    { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueEnabled', descriptionKey: 'settings.items.chatAutoContinueEnabledDesc', key: 'chat.auto_continue_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoContinueSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueMaxRetries', descriptionKey: 'settings.items.chatAutoContinueMaxRetriesDesc', key: 'chat.auto_continue_max_retries', type: 'number', source: 'server', min: -1, disableUnless: { key: 'chat.auto_continue_enabled', value: true }, sectionHeader: 'settings.items.autoContinueSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.chatRestartResumeWindow', descriptionKey: 'settings.items.chatRestartResumeWindowDesc', key: 'chat.restart_resume_window_minutes', type: 'number', source: 'server', min: 0, disableUnless: { key: 'chat.auto_continue_enabled', value: true }, sectionHeader: 'settings.items.autoContinueSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.chatAutoRenameEnabled', descriptionKey: 'settings.items.chatAutoRenameEnabledDesc', key: 'chat.auto_rename_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoRenameSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDesc', key: 'summaryModel', type: 'summaryModel', source: 'local', disableUnless: { key: 'chat.auto_rename_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.autoRenameSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true }, sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
+    // ── 会话搜索与索引 ──
+    // These four shape how sessions are indexed and how many hits a search
+    // returns — session-retrieval behaviour, which is why they sit here rather
+    // than on the RAG page. The embedding service they call is configured on
+    // the RAG page and shared with the knowledge base.
+    { type: 'item', spec: { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server', sectionHeader: 'settings.items.sessionSearchSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server', sectionHeader: 'settings.items.sessionSearchSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true }, sectionHeader: 'settings.items.sessionSearchSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.ragBatchSize', descriptionKey: 'settings.items.ragBatchSizeDesc', key: 'rag.batch_size', type: 'number', source: 'server', sectionHeader: 'settings.items.sessionSearchSection' } },
+  ],
+  // Task scheduler. The master switch (`tasks.enabled`) is a Dock feature switch
+  // and lives in the feature manager — turning it off stops the scheduler and
+  // cancels running/queued runs, so this page only reports its state. Everything
+  // below shapes HOW the scheduler behaves once it is on.
+  tasks: [
+    { type: 'item', spec: { labelKey: 'settings.items.featureStatusTasks', descriptionKey: 'settings.items.tasksStatusDesc', key: 'tasksStatus', type: 'info', source: 'server', statusFeature: 'tasks.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
+    // ── 执行记录 ──
+    // Same switch-plus-days shape as the upload and archive retention rows: 0
+    // days would otherwise be indistinguishable from "off".
+    { type: 'item', spec: { labelKey: 'settings.items.tasksRetentionEnabled', descriptionKey: 'settings.items.tasksRetentionEnabledDesc', key: 'tasks.retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.tasksRetentionSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.tasksRetentionDays', descriptionKey: 'settings.items.tasksRetentionDaysDesc', key: 'tasks.retention_days', type: 'number', source: 'server', min: 1, max: 3650, disableUnless: { key: 'tasks.retention_enabled', value: true }, sectionHeader: 'settings.items.tasksRetentionSection' } },
+    // ── 通知 ──
+    { type: 'item', spec: { labelKey: 'settings.items.tasksNotifySuccess', descriptionKey: 'settings.items.tasksNotifySuccessDesc', key: 'tasks.notify_on_success', type: 'switch', source: 'server', sectionHeader: 'settings.items.tasksNotifySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.tasksNotifyFailure', descriptionKey: 'settings.items.tasksNotifyFailureDesc', key: 'tasks.notify_on_failure', type: 'switch', source: 'server', sectionHeader: 'settings.items.tasksNotifySection' } },
+    // ── 调度 ──
+    // Free text (an IANA name such as Asia/Shanghai). A select would have to
+    // ship a timezone table and would still be incomplete.
+    { type: 'item', spec: { labelKey: 'settings.items.tasksTimezone', descriptionKey: 'settings.items.tasksTimezoneDesc', key: 'tasks.timezone', type: 'text', source: 'server', sectionHeader: 'settings.items.tasksScheduleSection' } },
+    // Local: which filter the task list opens with. A per-device view
+    // preference, like the stats panel's default tab.
+    { type: 'item', spec: { labelKey: 'settings.items.tasksDefaultFilter', descriptionKey: 'settings.items.tasksDefaultFilterDesc', key: 'tasksDefaultFilter', type: 'select', source: 'local', sectionHeader: 'settings.items.tasksScheduleSection', options: [
+      { labelKey: 'settings.items.tasksFilterAll', value: 'all' },
+      { labelKey: 'settings.items.tasksFilterEnabled', value: 'enabled' },
+      { labelKey: 'settings.items.tasksFilterPaused', value: 'paused' },
+    ]}},
   ],
   project: [
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectsMaxCount', descriptionKey: 'settings.items.recentProjectsMaxCountDesc', key: 'recent_projects.max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.projectSectionHeader' } },
@@ -342,10 +414,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   files: [
     { type: 'item', spec: { labelKey: 'settings.items.fileSearchDisplayLimit', descriptionKey: 'settings.items.fileSearchDisplayLimitDesc', key: 'file_search.display_limit', type: 'number', source: 'server', min: 10, max: 500, sectionHeader: 'settings.items.searchSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.showHidden', descriptionKey: 'settings.items.showHiddenDesc', key: 'showHidden', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.recentFilesCount', descriptionKey: 'settings.items.recentFilesCountDesc', key: 'recentFilesCount', type: 'number', source: 'local', min: 1, max: 50, sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.wordWrap', descriptionKey: 'settings.items.wordWrapDesc', key: 'wordWrap', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.lineNumbers', descriptionKey: 'settings.items.lineNumbersDesc', key: 'lineNumbers', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.stickyScroll', descriptionKey: 'settings.items.stickyScrollDesc', key: 'stickyScroll', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.fileView', descriptionKey: 'settings.items.fileViewDesc', key: 'fileView', type: 'select', source: 'local', sectionHeader: 'settings.items.fileDisplaySection', options: [
       { labelKey: 'settings.items.fileViewList', value: 'list' },
       { labelKey: 'settings.items.fileViewGrid', value: 'grid' },
@@ -361,18 +429,58 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.sortDirAsc', value: 'asc' },
       { labelKey: 'settings.items.sortDirDesc', value: 'desc' },
     ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.markdownCodeLinkPreview', descriptionKey: 'settings.items.markdownCodeLinkPreviewDesc', key: 'markdownCodeLinkPreview', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.filePreviewMode', descriptionKey: 'settings.items.filePreviewModeDesc', key: 'filePreviewMode', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    // draw.io editor is downloaded on first use rather than shipped. The URL
-    // only matters where github.com and the public proxies are unreachable —
-    // an air-gapped deployment points it at its own mirror.
-    { type: 'item', spec: { labelKey: 'settings.items.drawioDownloadUrl', descriptionKey: 'settings.items.drawioDownloadUrlDesc', key: 'drawio.download_url', type: 'text', source: 'server', sectionHeader: 'settings.items.drawioSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxSize', descriptionKey: 'settings.items.uploadMaxSizeDesc', key: 'upload.max_size_mb', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxFiles', descriptionKey: 'settings.items.uploadMaxFilesDesc', key: 'upload.max_files', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     // Retention deletes files, so it is a switch plus a day count rather than a
     // single number: 0 days would otherwise be indistinguishable from "off".
     { type: 'item', spec: { labelKey: 'settings.items.uploadRetentionEnabled', descriptionKey: 'settings.items.uploadRetentionEnabledDesc', key: 'upload.retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadRetentionDays', descriptionKey: 'settings.items.uploadRetentionDaysDesc', key: 'upload.retention_days', type: 'number', source: 'server', min: 1, disableUnless: { key: 'upload.retention_enabled', value: true }, sectionHeader: 'settings.items.uploadSection' } },
+  ],
+  // File preview is its own tab, so it gets its own settings page rather than
+  // sharing the file manager's. The file manager keeps list/grid, sorting,
+  // hidden files and upload; preview keeps the reading surface.
+  fileView: [
+    { type: 'item', spec: { labelKey: 'settings.items.recentFilesCount', descriptionKey: 'settings.items.recentFilesCountDesc', key: 'recentFilesCount', type: 'number', source: 'local', min: 1, max: 50, sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.wordWrap', descriptionKey: 'settings.items.wordWrapDesc', key: 'wordWrap', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.lineNumbers', descriptionKey: 'settings.items.lineNumbersDesc', key: 'lineNumbers', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.stickyScroll', descriptionKey: 'settings.items.stickyScrollDesc', key: 'stickyScroll', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.markdownCodeLinkPreview', descriptionKey: 'settings.items.markdownCodeLinkPreviewDesc', key: 'markdownCodeLinkPreview', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.filePreviewMode', descriptionKey: 'settings.items.filePreviewModeDesc', key: 'filePreviewMode', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    // draw.io editor is downloaded on first use rather than shipped. The URL
+    // only matters where github.com and the public proxies are unreachable —
+    // an air-gapped deployment points it at its own mirror.
+    { type: 'item', spec: { labelKey: 'settings.items.drawioDownloadUrl', descriptionKey: 'settings.items.drawioDownloadUrlDesc', key: 'drawio.download_url', type: 'text', source: 'server', sectionHeader: 'settings.items.drawioSection' } },
+  ],
+  // Git history (the 历史 dock tab). Before this page the list length was a
+  // hardcoded 30 in the server, the time column was a fixed "relative under a
+  // week, absolute after" mix, and merges/the graph could not be turned off.
+  gitHistory: [
+    // Server-side: the page size is the `git log -30` argument, so it has to be
+    // part of the request. Local settings cannot change what the server reads.
+    { type: 'item', spec: { labelKey: 'settings.items.gitHistoryPageSize', descriptionKey: 'settings.items.gitHistoryPageSizeDesc', key: 'git_history.page_size', type: 'number', source: 'server', min: 10, max: 200, sectionHeader: 'settings.items.gitHistoryListSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.gitHistoryHideMerges', descriptionKey: 'settings.items.gitHistoryHideMergesDesc', key: 'gitHistoryHideMerges', type: 'switch', source: 'local', sectionHeader: 'settings.items.gitHistoryListSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.gitHistoryShowGraph', descriptionKey: 'settings.items.gitHistoryShowGraphDesc', key: 'gitHistoryShowGraph', type: 'switch', source: 'local', sectionHeader: 'settings.items.gitHistoryListSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.gitHistoryTimeFormat', descriptionKey: 'settings.items.gitHistoryTimeFormatDesc', key: 'gitHistoryTimeFormat', type: 'select', source: 'local', sectionHeader: 'settings.items.gitHistoryTimeSection', options: [
+      { labelKey: 'settings.items.gitHistoryTimeRelative', value: 'relative' },
+      { labelKey: 'settings.items.gitHistoryTimeAbsolute', value: 'absolute' },
+    ]}},
+  ],
+  // Statistics panel defaults. All local: they only seed what the panel opens
+  // with, and the same person may want a different default on a phone.
+  stats: [
+    { type: 'item', spec: { labelKey: 'settings.items.statsDefaultTab', descriptionKey: 'settings.items.statsDefaultTabDesc', key: 'statsDefaultTab', type: 'select', source: 'local', sectionHeader: 'settings.items.statsDefaultsSection', options: [
+      { labelKey: 'settings.items.statsTabUsage', value: 'usage' },
+      { labelKey: 'settings.items.statsTabCloc', value: 'cloc' },
+      { labelKey: 'settings.items.statsTabGit', value: 'git' },
+    ]}},
+    { type: 'item', spec: { labelKey: 'settings.items.statsDefaultRange', descriptionKey: 'settings.items.statsDefaultRangeDesc', key: 'statsDefaultRange', type: 'select', source: 'local', sectionHeader: 'settings.items.statsDefaultsSection', options: [
+      { labelKey: 'settings.items.statsRange24h', value: '24h' },
+      { labelKey: 'settings.items.statsRange7d', value: '7d' },
+      { labelKey: 'settings.items.statsRange30d', value: '30d' },
+    ]}},
+    // Off by default: the panel resets to the two defaults above, which is what
+    // every existing user is used to.
+    { type: 'item', spec: { labelKey: 'settings.items.statsRememberLast', descriptionKey: 'settings.items.statsRememberLastDesc', key: 'statsRememberLast', type: 'switch', source: 'local', sectionHeader: 'settings.items.statsDefaultsSection' } },
   ],
   debug: [
     // Opt-in: agent processes inherit what the user's shell startup files
@@ -417,20 +525,36 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
   ],
   mail: [
-    // Master switch, on its own card ahead of the accounts — same shape and
-    // reasoning as `forge.enabled`: it decides whether the rest of the page
-    // applies at all, so folding it into the accounts card would read as one
-    // more credential field.
+    // Master switch status, on its own card ahead of the accounts — same shape
+    // and reasoning as `forge.enabled`.
+    //
+    // The switch itself is in the Dock feature manager, not here: one toggle
+    // there has to control both the tab and the background feature, and two
+    // switches for one flag drift apart. This row reports the state and links
+    // to the manager.
     //
     // Server-side, not per-device: turning mail off stops the background IMAP
     // sync and the email-triggered tasks on the server, so every client of one
-    // server must agree. Accounts are kept, not deleted — turning it back on
-    // resumes where it left off, which is why no confirmation dialog is needed.
-    { type: 'item', spec: { labelKey: 'settings.items.mailEnabled', descriptionKey: 'settings.items.mailEnabledDesc', key: 'mail.enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.mailEnabledSection' } },
+    // server must agree. Accounts are kept, not deleted.
+    { type: 'item', spec: { labelKey: 'settings.items.featureStatusMail', descriptionKey: 'settings.items.mailEnabledDesc', key: 'mailStatus', type: 'info', source: 'server', statusFeature: 'mail.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
     // Mailbox accounts (IMAP + SMTP). The card body is MailSetting, so this
     // placeholder only opens the section and must also be listed in
     // PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mailAccountsSection', descriptionKey: 'settings.items.mailAccountsDesc', key: 'mailAccounts', type: 'info', source: 'server', sectionHeader: 'settings.items.mailAccountsSection' } },
+    // How often the server polls, how deep it caches and how much it downloads
+    // up front. All three are server-side because they describe what the
+    // SERVER does to the mailbox and to its own disk — a per-device value
+    // would mean one client's server polling on another device's behalf.
+    //
+    // Deliberately NOT exposed: the flag re-read window, the per-account sync
+    // timeout, the startup delay, the page size and the 25MB attachment cap.
+    // Those are internal safety numbers — a user cannot make a better choice
+    // than the default, and each one would be a knob nobody can explain.
+    { type: 'item', spec: { labelKey: 'settings.items.mailSyncInterval', descriptionKey: 'settings.items.mailSyncIntervalDesc', key: 'mail.sync_interval_minutes', type: 'number', source: 'server', min: 1, max: 120, sectionHeader: 'settings.items.mailSyncSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.mailSyncWindow', descriptionKey: 'settings.items.mailSyncWindowDesc', key: 'mail.sync_window', type: 'number', source: 'server', min: 20, max: 500, sectionHeader: 'settings.items.mailSyncSection' } },
+    // 0 is a real value here (do not prefetch), so the row must not treat an
+    // empty input as 0 by accident — `min: 0` documents the floor.
+    { type: 'item', spec: { labelKey: 'settings.items.mailBodyPrefetch', descriptionKey: 'settings.items.mailBodyPrefetchDesc', key: 'mail.body_prefetch', type: 'number', source: 'server', min: 0, max: 50, sectionHeader: 'settings.items.mailSyncSection' } },
     // How a message body is drawn. Local, not server: it changes nothing about
     // what the server fetches or stores, only whether this screen lets the
     // mail's own <img> tags hit the network. The default is ON, so the row is
@@ -445,19 +569,39 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // opens the section and must be listed in PLACEHOLDER_ITEMS.
     { type: 'item', spec: { labelKey: 'settings.items.providerSection', descriptionKey: 'settings.items.providerDesc', key: 'providersCard', type: 'info', source: 'server', sectionHeader: 'settings.items.providerSection' } },
   ],
+  // Share center. The global switch (`share.enabled`) is a Dock feature switch:
+  // turning it off revokes every link already handed out, which is far more
+  // than a display preference, so it belongs in the feature manager. This page
+  // holds the finer sharing RULES.
+  share: [
+    { type: 'item', spec: { labelKey: 'settings.items.featureStatusShare', descriptionKey: 'settings.items.shareStatusDesc', key: 'shareStatus', type: 'info', source: 'server', statusFeature: 'share.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
+    // ── 分享范围 ──
+    { type: 'item', spec: { labelKey: 'settings.items.shareAllowFiles', descriptionKey: 'settings.items.shareAllowFilesDesc', key: 'share.allow_files', type: 'switch', source: 'server', sectionHeader: 'settings.items.shareScopeSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.shareAllowSessions', descriptionKey: 'settings.items.shareAllowSessionsDesc', key: 'share.allow_sessions', type: 'switch', source: 'server', sectionHeader: 'settings.items.shareScopeSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.shareAllowMeetings', descriptionKey: 'settings.items.shareAllowMeetingsDesc', key: 'share.allow_meetings', type: 'switch', source: 'server', sectionHeader: 'settings.items.shareScopeSection' } },
+    // Download only applies to file shares — session and meeting shares are
+    // read-only pages with no download action — so it is disabled while file
+    // sharing is off instead of being hidden (a hidden row looks deleted).
+    { type: 'item', spec: { labelKey: 'settings.items.shareAllowDownload', descriptionKey: 'settings.items.shareAllowDownloadDesc', key: 'share.allow_download', type: 'switch', source: 'server', disableUnless: { key: 'share.allow_files', value: true }, sectionHeader: 'settings.items.shareScopeSection' } },
+    // ── 链接与展示 ──
+    // 0 = never expires. Existing links keep the expiry they were created with;
+    // changing this does not shorten links already out there.
+    { type: 'item', spec: { labelKey: 'settings.items.shareLinkTtlDays', descriptionKey: 'settings.items.shareLinkTtlDaysDesc', key: 'share.link_ttl_days', type: 'number', source: 'server', min: 0, max: 3650, sectionHeader: 'settings.items.shareLinkSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.shareShowProjectName', descriptionKey: 'settings.items.shareShowProjectNameDesc', key: 'share.show_project_name', type: 'switch', source: 'server', sectionHeader: 'settings.items.shareLinkSection' } },
+  ],
   forgeIntegration: [
     // The master switch gets its OWN card, ahead of everything else: it decides
-    // whether the rest of this page applies at all, so burying it inside the
-    // credentials card made it read as one more credential field (issue #590).
+    // whether the rest of this page applies at all (issue #590).
+    //
+    // The switch itself now lives in the Dock feature manager. Turning it OFF is
+    // destructive — the server clears every project's repository binding and
+    // re-enabling does NOT bring them back — so the confirmation belongs to the
+    // manager, where the switch is. This page reports the state and links there.
     //
     // Server-side, not per-device: "stop talking to GitHub" is about the
     // credentials and the outbound polling, which live on the server, so every
     // client of one server must agree.
-    //
-    // Turning it OFF is destructive — it clears every project's repository
-    // binding — so SettingsCategory asks for confirmation first. The description
-    // says so; do not soften it into a mere "hide the entry" toggle.
-    { type: 'item', spec: { labelKey: 'settings.items.forgeEnabled', descriptionKey: 'settings.items.forgeEnabledDesc', key: 'forge.enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeEnabledSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.featureStatusForge', descriptionKey: 'settings.items.forgeEnabledDesc', key: 'forgeStatus', type: 'info', source: 'server', statusFeature: 'forge.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
     // Credentials row is a dedicated component (tokens are write-only; the
     // server never returns them, so a plain text field cannot round-trip).
     { type: 'item', spec: { labelKey: 'settings.items.forgeCredentials', descriptionKey: 'settings.items.forgeCredentialsDesc', key: 'forgeCredentials', type: 'info', source: 'server', sectionHeader: 'settings.items.forgeSection' } },
@@ -496,6 +640,16 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // left the desktop feature with no way to be switched on at all, and the
     // tray's "turn off" then had no way back.
     { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
+    // What the frameless shell's close button does. Desktop-only for the same
+    // reason as `trustedCerts` below: the dialog, the tray icon and the
+    // `getCloseAction`/`setCloseAction` bridge exist only in the Electron shell.
+    // macOS is excluded at runtime (`windowChrome.ts` gives it a native frame
+    // and its red button already means "close the window, keep the app").
+    { type: 'item', spec: { labelKey: 'settings.items.closeAction', descriptionKey: 'settings.items.closeActionDesc', key: 'closeAction', type: 'select', source: 'local', appOnly: true, hideInAndroidApp: true, sectionHeader: 'settings.items.desktopSystemSection', options: [
+      { labelKey: 'settings.items.closeActionAsk', value: 'ask' },
+      { labelKey: 'settings.items.closeActionTray', value: 'tray' },
+      { labelKey: 'settings.items.closeActionExit', value: 'exit' },
+    ] } },
     { type: 'item', spec: { labelKey: 'settings.items.liveUpdate', descriptionKey: 'settings.items.liveUpdateDesc', key: 'liveUpdate', type: 'switch', source: 'local', androidOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
     { type: 'panel', config: {
       panelId: 'push',
@@ -636,23 +790,26 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   // ── Panel-only categories (formerly drill-down) ────────────
 
   terminal: [
+    // The master switch is a Dock feature switch — it also decides whether the
+    // tab can exist, and turning it off closes every open PTY — so it lives in
+    // the feature manager. This page reports the state and links there; the
+    // fields below only describe how an ENABLED terminal behaves.
+    { type: 'item', spec: { labelKey: 'settings.items.featureStatusTerminal', descriptionKey: 'settings.items.terminalStatusDesc', key: 'terminalStatus', type: 'info', source: 'server', statusFeature: 'terminal.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
     { type: 'panel', config: {
       panelId: 'terminal',
-      enableKey: 'terminal.enabled',
-      enableLabelKey: 'settings.items.terminalEnabled',
       commonFields: [
         { labelKey: 'settings.items.terminalTheme', descriptionKey: 'settings.items.terminalThemeDesc', key: 'terminalTheme', type: 'select', source: 'local', defaultValue: 'auto' },
         { labelKey: 'settings.items.terminalFontSize', descriptionKey: 'settings.items.terminalFontSizeDesc', key: 'terminalFontSize', type: 'slider', source: 'local', min: 10, max: 24, step: 1, defaultValue: 12 },
         { labelKey: 'settings.items.terminalCopyOnSelect', descriptionKey: 'settings.items.terminalCopyOnSelectDesc', key: 'terminalCopyOnSelect', type: 'switch', source: 'local' },
+        // Recording is on by default; this is the escape hatch for anyone who
+        // does not want their shell commands stored at all. It gates capture
+        // and the import from the shell history files — already-recorded rows
+        // stay until cleared from the history panel.
+        { labelKey: 'settings.items.terminalHistoryEnabled', descriptionKey: 'settings.items.terminalHistoryEnabledDesc', key: 'terminalHistoryEnabled', type: 'switch', source: 'local', defaultValue: true },
         { labelKey: 'settings.items.terminalIdleTimeout', descriptionKey: 'settings.items.terminalIdleTimeoutDesc', key: 'terminal.idle_timeout', type: 'text', source: 'server' },
         { labelKey: 'settings.items.terminalMaxSessions', descriptionKey: 'settings.items.terminalMaxSessionsDesc', key: 'terminal.max_sessions', type: 'number', source: 'server' },
         { labelKey: 'settings.items.terminalBufferLines', descriptionKey: 'settings.items.terminalBufferLinesDesc', key: 'terminal.buffer_lines', type: 'number', source: 'server' },
       ],
-      afterSave(changedKeys) {
-        if (changedKeys.includes('terminal.enabled')) {
-          import('@/composables/useTerminalStatus').then(m => m.useTerminalStatus().loadTerminalStatus()).catch(() => {})
-        }
-      },
     }},
   ],
   tts: [
@@ -889,6 +1046,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     ]} },
     { type: 'item', spec: { labelKey: 'settings.items.meetingFileExcerpts', descriptionKey: 'settings.items.meetingFileExcerptsDesc', key: 'meeting.file_excerpts', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.meetingMinutesMaxTokens', descriptionKey: 'settings.items.meetingMinutesMaxTokensDesc', key: 'meeting.minutes_max_tokens', type: 'number', source: 'server', min: 0, max: 8000, step: 500, sectionHeader: 'settings.items.meetingSummarySection' } },
+    // Agent mode: same inputs, same prompts, but the model call is made by the
+    // built-in agent, which can READ project files to check how a term is
+    // actually spelled. Placed after the summary-model rows because it replaces
+    // them for this task — reading it before them would suggest it is additive.
+    { type: 'item', spec: { labelKey: 'settings.items.meetingAgentMinutes', descriptionKey: 'settings.items.meetingAgentMinutesDesc', key: 'meeting.agent_minutes', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingAgentMinutesMaxRounds', descriptionKey: 'settings.items.meetingAgentMinutesMaxRoundsDesc', key: 'meeting.agent_minutes_max_rounds', type: 'number', source: 'server', min: 0, max: 100, step: 1, sectionHeader: 'settings.items.meetingSummarySection' } },
     // New-meeting defaults. These are local (per device) because they seed the
     // create form; the room-level value is still chosen per meeting and can be
     // changed in the stage's 会议管理 tab.
@@ -944,35 +1107,84 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // is a test-then-store action, neither of which the generic row can do.
     { type: 'item', spec: { labelKey: 'settings.items.meetingRelaySection', key: 'meetingRelay', type: 'info', source: 'server', sectionHeader: 'settings.items.meetingRelaySection' } },
   ],
-  rag: [
+  // 文本嵌入: the shared embedding service, its own page.
+  //
+  // Deliberately NOT a block inside 会话索引. The knowledge base calls the same
+  // endpoint, and a shared service buried inside one consumer's page reads as
+  // that consumer's private setting — which is exactly how the old
+  // 「向量嵌入（知识库共用）」section was being read. One page owns the
+  // endpoint, model, key and chunking; both consumers point here.
+  embedding: [
     { type: 'panel', config: {
-      panelId: 'rag',
+      panelId: 'embedding',
       commonFields: [
-        // ── Status indicators (top of panel) ──
-        { labelKey: 'settings.items.ragSearchMode', descriptionKey: 'settings.items.ragSearchModeDesc', key: 'rag.status.mode', type: 'info', source: 'server', sectionHeader: 'settings.items.ragStatusSectionHeader' },
-        { labelKey: 'settings.items.ragIndexProgress', descriptionKey: 'settings.items.ragIndexProgressDesc', key: 'rag.status.index_progress', type: 'info', source: 'server' },
-        { labelKey: 'settings.items.ragFtsSize', descriptionKey: 'settings.items.ragFtsSizeDesc', key: 'rag.status.fts_size', type: 'info', source: 'server' },
-        { labelKey: 'settings.items.ragEmbedProgress', descriptionKey: 'settings.items.ragEmbedProgressDesc', key: 'rag.status.embed_progress', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
-        { labelKey: 'settings.items.ragVecSize', descriptionKey: 'settings.items.ragVecSizeDesc', key: 'rag.status.vec_size', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
-        // ── Indexing & chunking (shared by FTS and vector) ──
-        { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server', sectionHeader: 'settings.items.ragIndexSectionHeader' },
-        { labelKey: 'settings.items.ragChunkOverlap', descriptionKey: 'settings.items.ragChunkOverlapDesc', key: 'rag.chunk_overlap', type: 'number', source: 'server' },
-        { labelKey: 'settings.items.ragBatchSize', descriptionKey: 'settings.items.ragBatchSizeDesc', key: 'rag.batch_size', type: 'number', source: 'server' },
-        { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
-        { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
-        // ── Vector embedding (entire section disabled unless vector_enabled) ──
-        { labelKey: 'settings.items.ragEnabled', key: 'rag.vector_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.ragVectorSectionHeader' },
+        // ── Service ──
+        { labelKey: 'settings.items.embeddingEnabled', descriptionKey: 'settings.items.embeddingEnabledDesc', key: 'rag.vector_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.embeddingServiceSection' },
+        { labelKey: 'settings.items.ragEmbedderStatus', descriptionKey: 'settings.items.ragEmbedderStatusDesc', key: 'rag.status.embedder_healthy', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
         { labelKey: 'settings.items.ragBaseUrl', descriptionKey: 'settings.items.ragBaseUrlDesc', key: 'rag.base_url', type: 'text', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
         { labelKey: 'settings.items.ragModel', descriptionKey: 'settings.items.ragModelDesc', key: 'rag.model', type: 'text', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
         { labelKey: 'settings.items.ragApiKey', descriptionKey: 'settings.items.ragApiKeyDesc', key: 'rag.api_key', type: 'password', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
-        { labelKey: 'settings.items.ragEmbedderStatus', descriptionKey: 'settings.items.ragEmbedderStatusDesc', key: 'rag.status.embedder_healthy', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
-        { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
+        // ── Chunking ──
+        // Chunk size and overlap decide what gets embedded, and the knowledge
+        // base chunks with the same numbers, so they belong with the service
+        // rather than with either consumer.
+        { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true }, sectionHeader: 'settings.items.embeddingChunkSection' },
+        { labelKey: 'settings.items.ragChunkOverlap', descriptionKey: 'settings.items.ragChunkOverlapDesc', key: 'rag.chunk_overlap', type: 'number', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
       ],
       requiredFields: ['rag.base_url'],
       hasConnectivityTest: (v) => !!v['rag.base_url'] && !!v['rag.vector_enabled'],
       getTestCategories: (values) => [{ category: 'rag', values }],
     }},
   ],
+  // 会话索引: what the CHAT index is doing right now.
+  //
+  // Only chat counters live here. The knowledge base has its own queue, its own
+  // failures and its own progress (shown on the 知识库 page and in its panel),
+  // and the embedding endpoint is configured on 文本嵌入. Keeping the three
+  // apart is what stops this page from reading as "the whole RAG status".
+  rag: [
+    { type: 'panel', config: {
+      panelId: 'rag',
+      commonFields: [
+        { labelKey: 'settings.items.ragSearchMode', descriptionKey: 'settings.items.ragSearchModeDesc', key: 'rag.status.mode', type: 'info', source: 'server', sectionHeader: 'settings.items.ragStatusSectionHeader' },
+        { labelKey: 'settings.items.ragIndexProgress', descriptionKey: 'settings.items.ragIndexProgressDesc', key: 'rag.status.index_progress', type: 'info', source: 'server' },
+        { labelKey: 'settings.items.ragFtsSize', descriptionKey: 'settings.items.ragFtsSizeDesc', key: 'rag.status.fts_size', type: 'info', source: 'server' },
+        { labelKey: 'settings.items.ragEmbedProgress', descriptionKey: 'settings.items.ragEmbedProgressDesc', key: 'rag.status.embed_progress', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
+        { labelKey: 'settings.items.ragVecSize', descriptionKey: 'settings.items.ragVecSizeDesc', key: 'rag.status.vec_size', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
+      ],
+    }},
+  ],
+  // Knowledge base. `kb.enabled` is deliberately NOT here: it is a Dock feature
+  // switch (it stops the indexer and closes the database), so it lives in the
+  // feature manager and this page only reports its state. Everything else that
+  // is `kb.*` belongs here — those rows used to have no UI at all.
+  kb: [
+    // Master switch status. `kb.enabled` is a Dock feature switch (it stops the
+    // indexer and closes the database), so the switch itself lives in the
+    // manager — but every module page reports its state and links there, and
+    // the knowledge base is no exception.
+    { type: 'item', spec: { labelKey: 'settings.items.featureStatusKb', descriptionKey: 'settings.items.kbEnabledDesc', key: 'kbEnabledStatus', type: 'info', source: 'server', statusFeature: 'kb.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
+    // Status card (KbSetting.vue): collection/document counters plus the
+    // reindex action. The placeholder only opens the card — the body is a
+    // dedicated component, so it must also be listed in PLACEHOLDER_ITEMS.
+    { type: 'item', spec: { labelKey: 'settings.items.kbStatusSection', key: 'kbStatus', type: 'info', source: 'server', sectionHeader: 'settings.items.kbStatusSection' } },
+    // ── 自动注入 ──
+    // What the agent receives from the knowledge base on every turn.
+    { type: 'item', spec: { labelKey: 'settings.items.kbAutoInject', descriptionKey: 'settings.items.kbAutoInjectDesc', key: 'kb.auto_inject', type: 'switch', source: 'server', sectionHeader: 'settings.items.kbInjectSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.kbInjectTopN', descriptionKey: 'settings.items.kbInjectTopNDesc', key: 'kb.inject_top_n', type: 'number', source: 'server', min: 1, max: 20, disableUnless: { key: 'kb.auto_inject', value: true }, sectionHeader: 'settings.items.kbInjectSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.kbInjectMaxChars', descriptionKey: 'settings.items.kbInjectMaxCharsDesc', key: 'kb.inject_max_chars', type: 'number', source: 'server', min: 200, disableUnless: { key: 'kb.auto_inject', value: true }, sectionHeader: 'settings.items.kbInjectSection' } },
+    // 0–1 slider, shown as a percentage. Vector hits below it are dropped; FTS
+    // hits are not thresholded (a matched term is a match by definition).
+    { type: 'item', spec: { labelKey: 'settings.items.kbInjectMinSimilarity', descriptionKey: 'settings.items.kbInjectMinSimilarityDesc', key: 'kb.inject_min_similarity', type: 'slider', source: 'server', min: 0, max: 1, step: 0.05, displayFormat: 'percent', disableUnless: { key: 'kb.auto_inject', value: true }, sectionHeader: 'settings.items.kbInjectSection' } },
+    // ── 索引与限额 ──
+    { type: 'item', spec: { labelKey: 'settings.items.kbMaxFileMb', descriptionKey: 'settings.items.kbMaxFileMbDesc', key: 'kb.max_file_mb', type: 'number', source: 'server', min: 1, max: 1024, sectionHeader: 'settings.items.kbIndexSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.kbMaxTextMb', descriptionKey: 'settings.items.kbMaxTextMbDesc', key: 'kb.max_text_mb', type: 'number', source: 'server', min: 1, max: 512, sectionHeader: 'settings.items.kbIndexSection' } },
+    // Free text on purpose: it is a Go duration ("2s", "500ms"). A number row
+    // would have to pick a unit, and the server accepts either.
+    { type: 'item', spec: { labelKey: 'settings.items.kbPollInterval', descriptionKey: 'settings.items.kbPollIntervalDesc', key: 'kb.poll_interval', type: 'text', source: 'server', sectionHeader: 'settings.items.kbIndexSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.kbEmbedBatchSize', descriptionKey: 'settings.items.kbEmbedBatchSizeDesc', key: 'kb.embed_batch_size', type: 'number', source: 'server', min: 1, max: 128, sectionHeader: 'settings.items.kbIndexSection' } },
+  ],
+  notifications: [],
   portForward: [
     { type: 'panel', config: {
       panelId: 'portForward',
@@ -1055,6 +1267,13 @@ export function getServerFieldToLabelKey(): Record<string, string> {
       }
     }
   }
+  // Switches that moved to the Dock feature manager are no longer settings rows,
+  // but they are still server config keys: if one ever lands in a restart
+  // dialog's changed_cold_fields, the dialog must name it instead of printing
+  // the raw dot-path.
+  map['terminal.enabled'] = 'settings.items.terminalEnabled'
+  map['mail.enabled'] = 'settings.items.mailEnabled'
+  map['forge.enabled'] = 'settings.items.forgeEnabled'
   return map
 }
 

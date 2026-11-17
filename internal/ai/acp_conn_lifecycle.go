@@ -52,7 +52,7 @@ func advertiseTerminalCapability(agent *model.Agent) bool {
 	if advertiseTerminalOverride != nil {
 		return *advertiseTerminalOverride
 	}
-	if agent != nil && isCodeBuddyBackend(agent) {
+	if spec := specForAgent(agent); spec != nil && spec.HideTerminalCapability {
 		// CodeBuddy's background-task registry (TaskOutput/TaskStop) is not
 		// compatible with host-managed terminals: its tools query an internal
 		// registry that never sees host-created "term-N" tasks, so every
@@ -125,7 +125,7 @@ func advertiseReadTextFileCapability(agent *model.Agent) bool {
 	if advertiseReadTextFileOverride != nil {
 		return *advertiseReadTextFileOverride
 	}
-	if agent != nil && isCodeBuddyBackend(agent) {
+	if spec := specForAgent(agent); spec != nil && spec.HideReadTextFileCapability {
 		return false
 	}
 	return true
@@ -1242,8 +1242,9 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	// because CodeBuddy's PluginManager hasn't finished loading yet. Scanning the
 	// plugin cache directory pre-populates the registry so EmitCommandsUpdate can
 	// include plugin commands from the start.
-	if isCodeBuddyBackend(c.agent) {
-		if pluginCmds := ScanCodeBuddyPluginCommands(); len(pluginCmds) > 0 {
+	if scanBackend := LookupPluginCommandsFn; scanBackend != nil {
+		scan := scanBackend(c.agent.Backend)
+		if pluginCmds := scanOrNil(scan); len(pluginCmds) > 0 {
 			agentID := c.agent.ID
 			existing := GetAgentCapabilityRegistry().GetCommands(agentID)
 			merged := MergeCommands(existing, pluginCmds)

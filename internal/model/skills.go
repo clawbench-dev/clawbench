@@ -63,6 +63,25 @@ type SkillsConfig struct {
 	// but an explicit "#skill" reference is unaffected — it is a direct user
 	// instruction, not automatic injection.
 	Enabled bool `yaml:"enabled"`
+	// ProjectAutoInject controls whether the session project's
+	// <projectPath>/.agents/skills entries are injected into the system prompt
+	// automatically.
+	//
+	// Default false. A project skill comes from the working directory, which may
+	// be a freshly cloned repository the user has never read, and its
+	// frontmatter description is copied verbatim into the system prompt on every
+	// turn — a permanent channel into the model's instructions. The listing
+	// (GET /api/skills) still shows these skills, and an explicit "#name"
+	// reference still resolves them; only the automatic table is off.
+	ProjectAutoInject bool `yaml:"project_auto_inject"`
+	// Disabled lists skill names (canonical form: lowercased, no leading "/")
+	// that must NOT be injected automatically.
+	//
+	// It is a per-skill version of Enabled: the master switch is all-or-nothing,
+	// and a user with thirty skills needs to silence one noisy row without
+	// losing the rest. Like Enabled, this governs AUTOMATIC injection only — an
+	// explicit "#name" reference is a direct user instruction and keeps working.
+	Disabled []string `yaml:"disabled"`
 	// Dirs are the user's own skill directories, scanned in order. Each is an
 	// absolute path; a skill found in more than one is deduplicated by name
 	// (all of them share SourceUserDir priority, so the first in this list
@@ -116,6 +135,34 @@ func (c *Config) ResolveSkillsDirs() []string {
 	for _, d := range c.Skills.Dirs {
 		if d != "" {
 			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// CanonicalSkillName normalizes a skill name for cross-source identity
+// comparison: lowercased with a single leading "/" stripped.
+//
+// Producers disagree on the slash prefix (CodeBuddy's ACP strips it, a
+// frontmatter name may carry it), so comparing raw names would let one skill
+// win twice. This is the ONE implementation: internal/skill and the settings
+// handler both call it, so a name written by the UI always matches the one the
+// registry compares.
+func CanonicalSkillName(name string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(name), "/"))
+}
+
+// DisabledSkillSet returns the canonical names excluded from automatic
+// injection. The map is rebuilt per call (the list is tiny); callers hold no
+// config lock by convention, matching how Skills.Enabled is read elsewhere.
+func (c *Config) DisabledSkillSet() map[string]bool {
+	if len(c.Skills.Disabled) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(c.Skills.Disabled))
+	for _, name := range c.Skills.Disabled {
+		if key := CanonicalSkillName(name); key != "" {
+			out[key] = true
 		}
 	}
 	return out

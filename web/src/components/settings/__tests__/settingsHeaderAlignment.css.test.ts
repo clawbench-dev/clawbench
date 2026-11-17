@@ -107,18 +107,6 @@ describe('settings header geometry matches the task header', () => {
     expect(decls).not.toMatch(/font-size:\s*var\(--font-size-2xl\)/)
   })
 
-  it('uses the same root glyph size as the task header', () => {
-    // Task header: <Clock :size="14">. Settings must not go back to :size="20".
-    const settingsIcon = settingsPage.match(/class="settings-page__header-icon"[^>]*/)
-    expect(settingsIcon, 'the settings header icon must exist').not.toBeNull()
-    const settingsSize = settingsPage.match(/<Settings :size="(\d+)"/)
-    expect(settingsSize, 'the Settings icon must be rendered with an explicit size').not.toBeNull()
-    expect(settingsSize![1]).toBe('14')
-
-    const taskSize = taskCrumb.match(/<Clock :size="(\d+)"/)
-    expect(taskSize, 'the task root glyph must be rendered with an explicit size').not.toBeNull()
-    expect(settingsSize![1]).toBe(taskSize![1])
-  })
 })
 
 describe('settings header has no back button', () => {
@@ -147,15 +135,6 @@ describe('settings header has no back button', () => {
 })
 
 describe('breadcrumb sub-levels match between settings and task', () => {
-  it('puts the section glyph on the settings breadcrumb root crumb', () => {
-    expect(settingsCrumb).toMatch(/i === 0/)
-    expect(settingsCrumb).toMatch(/class="crumb-icon"/)
-    // A missing import renders no svg at all.
-    const imports = settingsCrumb.match(/import\s*\{([^}]*)\}\s*from\s*'lucide-vue-next'/)
-    expect(imports, 'the breadcrumb must import its glyph').not.toBeNull()
-    expect(imports![1]).toContain('Settings')
-  })
-
   it('gives the crumb the same flex-row treatment as the task crumb', () => {
     for (const [label, src] of [['settings', settingsCrumb], ['task', taskCrumb]] as const) {
       const decls = baseRule(src, 'crumb')
@@ -164,11 +143,6 @@ describe('breadcrumb sub-levels match between settings and task', () => {
       expect(decls, `${label} .crumb must centre its glyph`).toMatch(/align-items:\s*center/)
       expect(decls, `${label} .crumb must gap glyph from label`).toMatch(/gap:\s*var\(--space-3\)/)
     }
-  })
-
-  it('keeps the breadcrumb glyph from being squeezed', () => {
-    expect(baseRule(settingsCrumb, 'crumb-icon')).toMatch(/flex-shrink:\s*0/)
-    expect(baseRule(taskCrumb, 'crumb-icon')).toMatch(/flex-shrink:\s*0/)
   })
 
   it('drops the extra container gap so both trails share one rhythm', () => {

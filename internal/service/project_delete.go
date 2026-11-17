@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"clawbench/internal/kb"
 	"clawbench/internal/rag"
 	"clawbench/internal/store"
 )
@@ -34,6 +35,10 @@ var projectScopedDeleteTables = []string{
 	tableSessionTags,
 	"scheduled_tasks",
 	tableTerminalQuickCommands,
+	// Command history is scoped per project too (global rows have project_id
+	// NULL and are deliberately untouched). Without this the rows survive the
+	// project forever: project_id no longer resolves, so nothing can list them.
+	"terminal_command_history",
 	// Meeting records and everything hanging off them. Without these the rows
 	// become unreachable orphans: project_id no longer resolves after the
 	// project is gone, so nothing can list or delete them again.
@@ -120,6 +125,9 @@ func DeleteProjectData(id int64) error {
 		slog.Warn("failed to purge RAG data for deleted project",
 			slog.Int64("project_id", id), slog.String("path", path), slog.String("err", err.Error()))
 	}
+	// Knowledge base collections scoped to this project, plus their stored
+	// copies. Best-effort for the same reason as RAG: the rows are already gone.
+	kb.DeleteProjectData(id)
 	if rs := rag.StoreForCleanup(); rs != nil {
 		rs.InvalidateProjectPathCache(path)
 	}

@@ -23,6 +23,11 @@ const (
 	KindTLS     Kind = "tls"
 	KindTimeout Kind = "timeout"
 	KindServer  Kind = "server"
+	// KindClientID means the server refused the command until the client
+	// declares itself (RFC 2971). 163/126 do this at SELECT time with
+	// "NO SELECT Unsafe Login", which looks like a server fault but is a
+	// client-identity requirement.
+	KindClientID Kind = "client_id"
 	// KindUnsupported means the request is well-formed but the server cannot
 	// carry it: the protocol has no way to express it. Sending to a non-ASCII
 	// address on a server without SMTPUTF8 is the case that matters.
@@ -71,13 +76,20 @@ func classify(op string, err error) error {
 	}
 	var imapErr *imap.Error
 	if errors.As(err, &imapErr) {
-		if looksLikeAuth(string(imapErr.Code) + " " + imapErr.Text) {
+		reply := string(imapErr.Code) + " " + imapErr.Text
+		if looksLikeAuth(reply) {
 			return &Error{Kind: KindAuth, Op: op, Err: err}
+		}
+		if looksLikeClientID(reply) {
+			return &Error{Kind: KindClientID, Op: op, Err: err}
 		}
 		return &Error{Kind: KindServer, Op: op, Err: err}
 	}
 	if looksLikeAuth(err.Error()) {
 		return &Error{Kind: KindAuth, Op: op, Err: err}
+	}
+	if looksLikeClientID(err.Error()) {
+		return &Error{Kind: KindClientID, Op: op, Err: err}
 	}
 	if isConnectFailure(err) {
 		return &Error{Kind: KindConnect, Op: op, Err: err}
@@ -149,6 +161,13 @@ func looksLikeAuth(s string) bool {
 		}
 	}
 	return false
+}
+
+// looksLikeClientID spots the rejection 163/126 send when the client has not
+// introduced itself. The wording is theirs, not the protocol's, which is why
+// it is matched by text.
+func looksLikeClientID(s string) bool {
+	return strings.Contains(strings.ToLower(s), "unsafe login")
 }
 
 // ErrClosed is returned when a command is attempted on a closed client.

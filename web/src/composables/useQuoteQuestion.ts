@@ -408,15 +408,12 @@ function deriveQuoteData(sel: Selection, container: HTMLElement): QuoteData | nu
       endLine: 0,
       sourceKind: source.url ? 'url' : 'file',
       ...(source.url ? { url: source.url } : {}),
-      ...(source.commitSha ? { commitSha: source.commitSha } : {}),
-      ...(source.taskId !== undefined ? { taskId: source.taskId } : {}),
-      ...(source.sessionId ? { sessionId: source.sessionId } : {}),
-      ...(source.messageId !== undefined ? { messageId: source.messageId } : {}),
-      ...(source.executionId ? { executionId: source.executionId } : {}),
-      // The meeting token was READ from the region but never copied out, so a
-      // quote made by selecting minutes/transcript text had no way back to its
-      // meeting: the card said "会议" and the jump button did nothing.
-      ...(source.meetingToken ? { meetingToken: source.meetingToken } : {}),
+      // The whole bag, copied as-is. `getQuoteSource` collects every
+      // `data-quote-*` attribute, so a region that declares a NEW locator needs
+      // no change here — and, crucially, nothing can be silently forgotten on
+      // the way out (the meeting token used to be read from the region but not
+      // copied, so selecting minutes produced a card with no way back).
+      ...(Object.keys(source.locators).length ? { locators: source.locators } : {}),
     }
   }
 

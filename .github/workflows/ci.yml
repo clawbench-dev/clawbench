@@ -104,6 +104,16 @@ jobs:
           cp -r .clawbench-web internal/frontend/dist
         shell: bash
 
+      - name: Compile integration tests
+        # The integration suites sit behind `//go:build integration`, so the
+        # step below never compiles them. That is exactly how a refactor can
+        # move a symbol out of internal/ai and leave three integration files
+        # referencing it while every PR stays green (it happened: moving the
+        # per-backend parsers into backends/<id>/ broke integration_test.go,
+        # compact_probe_integration_test.go and the team-description probe).
+        # `go vet` type-checks test files too, so this is a compile-only guard.
+        run: go vet -tags integration ./...
+
       - name: Go test
         # `-timeout` is per TEST BINARY (one per package), and the default is
         # 10 minutes. `internal/service` already runs 271–464 s on the Windows
@@ -617,23 +627,26 @@ jobs:
         # Only this job's browser: installing all three would make each of the
         # three parallel jobs pay for the other two.
         #
-        # `--with-deps` runs apt-get, and Ubuntu's archive/security mirrors
-        # intermittently answer with DNS failures, 404s and 500s. A single bad
-        # response aborts the shard BEFORE any test runs, so the whole E2E
-        # matrix reads red for something no commit caused (observed on PR #674:
-        # three attempts, three different upstream failures). Let apt retry the
-        # individual requests, and retry the whole install a few times — the
-        # second attempt starts from a fresh `apt-get update`.
+        # The retry and the unsupported-image skip live in the script, because
+        # they are policy (and therefore tested) rather than YAML: apt mirrors
+        # intermittently answer with DNS failures/404s/500s, and `ubuntu-latest`
+        # moved to a release this Playwright does not install on. See
+        # scripts/playwright-install.sh and its test.
+        id: browser
         run: |
-          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-ci-retries >/dev/null
-          for attempt in 1 2 3; do
-            if npx playwright install --with-deps ${{ matrix.browser }}; then
-              exit 0
-            fi
-            echo "::warning::playwright install failed (attempt ${attempt}/3); retrying"
-            sleep 20
-          done
-          exit 1
+          set +e
+          ./scripts/playwright-install.sh ${{ matrix.browser }}
+          code=$?
+          set -e
+          if [ "$code" -eq 78 ]; then
+            # The runner image cannot install this browser at all. Skipping is
+            # the honest outcome; running the specs would report a missing
+            # executable as dozens of test failures.
+            echo "installed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ "$code" -eq 0 ] && echo "installed=true" >> "$GITHUB_OUTPUT"
+          exit "$code"
 
       - name: Build Excalidraw vendor bundle
         # Same reason as the go:embed steps above: the root `npm run build` does
@@ -669,6 +682,7 @@ jobs:
         run: go build -o acp-mock ./cmd/acp-mock
 
       - name: Run E2E tests
+        if: steps.browser.outputs.installed == 'true'
         # `--shard=i/n` partitions whole test FILES, not individual cases. That
         # matters here: 32 specs use `test.describe.serial` and break if their
         # cases run on different machines. Verified for 2/3/4 shards — no serial

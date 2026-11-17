@@ -15,14 +15,24 @@ import { join } from 'node:path'
  * Read state is per item now: opening a row marks that row read, and an explicit
  * "mark all read" button clears the rest. Nothing should clear on tab switch.
  *
- * This asserts on the source because App.vue is a single large component with no
+ * These assert on the source because App.vue is a single large component with no
  * mount-level test.
+ *
+ * The "does it still reload?" question moved when the reload moved: the task
+ * list stopped being loaded from a `loadTasks()` call inside App.vue's
+ * `switchTab` and became the tasks plugin's `onEnter`. The old assertion looked
+ * for the literal text `loadTasks()` in `switchTab` and therefore failed on
+ * correct code — it was pinning the shape of the refactor, not the behaviour.
+ * It now follows the call: `switchTab` and the wide layout's `sideEffects` must
+ * reach the plugin lifecycle, and the tasks plugin must reload from it.
  */
 
-const APP_VUE = readFileSync(
-  join(__dirname, '..', '..', 'App.vue'),
-  'utf8',
-)
+function repoFile(...parts: string[]): string {
+  return readFileSync(join(__dirname, '..', '..', ...parts), 'utf8')
+}
+
+const APP_VUE = repoFile('App.vue')
+const TASKS_PLUGIN = repoFile('plugins', 'tasks', 'plugin.ts')
 
 /**
  * Strip comments so an assertion cannot be satisfied by prose.
@@ -69,20 +79,31 @@ describe('unread badges are not cleared by tab switches', () => {
     expect(functionBody(code, 'switchTab')).not.toContain('markForgeRead')
   })
 
-  it('still reloads the task list when the tasks tab is opened', () => {
-    // Removing the zeroing must not remove the reload — the badge has to be
-    // refreshed from the server. Asserted on the COMMENT-STRIPPED body so the
-    // check cannot be satisfied by a comment that merely mentions the call.
+  it('still runs the plugin lifecycle when the tasks tab is opened', () => {
+    // Removing the zeroing must not remove the reload. The reload is the tasks
+    // plugin's `onEnter` now, reached through the shared lifecycle — so what is
+    // asserted here is that switchTab still drives it (and without zeroing).
     const body = functionBody(code, 'switchTab')
-    expect(body).toContain('loadTasks()')
+    expect(body).toContain('dockLifecycle.enter(tab)')
+    expect(body).not.toMatch(/taskUnreadCount\s*=\s*0/)
   })
 
-  it('the tasks side-effect callback reloads without zeroing', () => {
-    // The wide-screen path has its own callback; it must reload too.
+  it('the wide-screen side-effect callback drives the same lifecycle', () => {
+    // The wide-screen path has its own callback; it must reach the same
+    // lifecycle (two call sites, one implementation).
     const start = code.indexOf('sideEffects:')
     expect(start).toBeGreaterThan(-1)
     const body = code.slice(start, start + 400)
-    expect(body).toContain('loadTasks()')
+    expect(body).toContain('dockLifecycle.enter(tab)')
     expect(body).not.toMatch(/taskUnreadCount\s*=\s*0/)
+  })
+
+  it('the tasks plugin still reloads the list when entered', () => {
+    // The other end of the chain: entering the tab has to actually reload, or
+    // the badge would stop refreshing from the server.
+    const plugin = stripComments(TASKS_PLUGIN)
+    const start = plugin.indexOf('onEnter:')
+    expect(start).toBeGreaterThan(-1)
+    expect(plugin.slice(start, start + 200)).toContain('loadTasks()')
   })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, reactive } from 'vue'
 
 // Mock i18n modules before importing the composable
 vi.mock('@/i18n', () => ({
@@ -81,7 +81,13 @@ describe('useToolDetailDrawer', () => {
       fetchSpy.mockRestore()
     })
 
-    it('syncs done=false from API response during streaming', async () => {
+    it('keeps a running tool running when the API agrees', async () => {
+      // Opened on a live, unfinished block: the drawer must stay in its running
+      // state (done only ever moves forward, so the API's false is a no-op here
+      // rather than the thing that decides it).
+      drawer.handleShowToolDetail({ name: 'Bash', input: { cmd: 'sleep 60' }, output: 'ok', tool_id: 'tool1', msgId: 1, blockIdx: 0, done: false })
+      expect(drawer.toolDetailData.value.done).toBe(false)
+
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(JSON.stringify({ input: { cmd: 'ls' }, output: '', done: false, status: 'running' }), { status: 200 })
       )
@@ -94,15 +100,71 @@ describe('useToolDetailDrawer', () => {
       fetchSpy.mockRestore()
     })
 
-    it('syncs empty string status from API response', async () => {
-      drawer.toolDetailData.value.status = 'running'
+    // The API record can be older than the block the drawer opened on (a
+    // cancelled turn keeps an empty status in chat_tool_calls for ever). An
+    // empty status is "no verdict", not a correction — applying it verbatim
+    // erased "interrupted"/"error" and fell back to the green check.
+    it('does not let a stale empty status erase the verdict', async () => {
+      drawer.handleShowToolDetail({ name: 'Bash', input: { cmd: 'sleep 60' }, output: 'ok', tool_id: 'tool1', msgId: 1, blockIdx: 0, done: true })
+      drawer.toolDetailData.value.status = 'interrupted'
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(JSON.stringify({ input: { cmd: 'ls' }, output: 'ok', done: true, status: '' }), { status: 200 })
       )
 
       await drawer.fetchToolCallDetail('tool1', 1, { name: 'Bash' })
 
-      expect(drawer.toolDetailData.value.status).toBe('')
+      expect(drawer.toolDetailData.value.status).toBe('interrupted')
+
+      fetchSpy.mockRestore()
+    })
+
+    // A settled row whose tool never reported a result (cancelled turn, crashed
+    // agent, steer split) keeps done=false in chat_tool_calls for ever, while the
+    // transcript renders that block as done (parseAssistantContent: a turn that
+    // is over cannot still be running). The drawer must agree with the
+    // transcript — it used to take the record's false verbatim and spin forever,
+    // which is the "详情还在执行，收起状态下却是已完成" report.
+    it('keeps a finished tool done when a stale API response says done=false', async () => {
+      drawer.handleShowToolDetail({ name: 'Bash', input: { cmd: 'sleep 60' }, output: 'ok', tool_id: 'tool1', msgId: 1, blockIdx: 0, done: true })
+      expect(drawer.toolDetailData.value.done).toBe(true)
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ input: { cmd: 'sleep 60' }, output: '', done: false }), { status: 200 })
+      )
+      await drawer.fetchToolCallDetail('tool1', 1, { name: 'Bash' })
+
+      expect(drawer.toolDetailData.value.done).toBe(true)
+
+      fetchSpy.mockRestore()
+    })
+  })
+
+  describe('done is monotonic against the live block', () => {
+    it('does not let a response produced before the tool finished undo it', async () => {
+      // The live block is reactive: the tool finishes while the detail fetch is
+      // still in flight (the fetch was started when the row still said
+      // done=false). Its response must not walk the drawer back to a spinner.
+      const live = reactive({ name: 'Bash', done: false, status: '', duration_ms: 0 })
+      const d = useToolDetailDrawer({ chatRender: createMockChatRender(), findLiveBlock: () => live })
+
+      let resolveFetch!: (v: Response) => void
+      const pending = new Promise<Response>((r) => { resolveFetch = r })
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockReturnValueOnce(pending as Promise<Response>)
+
+      // output missing → handleShowToolDetail starts the fetch itself
+      d.handleShowToolDetail({ name: 'Bash', input: { cmd: 'sleep 60' }, output: '', tool_id: 'tool1', msgId: 1, blockIdx: 0, done: false })
+      expect(d.toolDetailData.value.done).toBe(false)
+
+      live.done = true
+      await nextTick()
+      expect(d.toolDetailData.value.done).toBe(true)
+
+      resolveFetch(new Response(JSON.stringify({ input: { cmd: 'sleep 60' }, output: '', done: false }), { status: 200 }))
+      await pending
+      await new Promise((r) => setTimeout(r, 0))
+      await nextTick()
+
+      expect(d.toolDetailData.value.done).toBe(true)
 
       fetchSpy.mockRestore()
     })
@@ -223,6 +285,16 @@ describe('useToolDetailDrawer', () => {
       drawer.handleShowToolDetail({ name: 'Bash', input: { cmd: 'ls' }, output: 'ok', msgId: 42, blockIdx: 3 })
 
       expect(drawer.activeToolOverlay.value).toEqual({ msgId: '42', blockIdx: 3 })
+    })
+
+    // A card without a block index (summary cards pass none — their index is
+    // into summaryCards.tools) must not inherit the previous tool's
+    // coordinates, or the live-block watcher copies that tool's state here.
+    it('clears activeToolOverlay when the block has no index', () => {
+      drawer.handleShowToolDetail({ name: 'Bash', input: { cmd: 'ls' }, output: 'ok', msgId: 42, blockIdx: 3 })
+      drawer.handleShowToolDetail({ name: 'Read', input: { path: 'a.ts' }, output: 'ok', tool_id: 'tool-sum', msgId: 42 })
+
+      expect(drawer.activeToolOverlay.value).toBeNull()
     })
 
     it('sets DeepThink display name override when no display_name', () => {

@@ -22,6 +22,7 @@ import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { isShareMode } from '@/share/shareMode'
 import { getSessionId } from '@/composables/useSessionIdentity.ts'
 import { teamMemberColorVar } from './teamMemberColor.ts'
+import { localizedToolName } from './toolNames.ts'
 import { COPY_ICON_SVG, copyWithFlash } from '@/utils/copyButton.ts'
 import { getAskState, patchAskState } from '@/utils/askQuestionState.ts'
 import { annotateToolHtml } from '@/utils/annotateToolHtml.ts'
@@ -71,6 +72,23 @@ function num(val: unknown): number | undefined {
 }
 
 /**
+ * Read the file path out of a tool input object, accepting both field names.
+ *
+ * Two conventions exist in the wild and both reach this renderer:
+ *   - `file_path` — Claude / CodeBuddy / most ACP agents, and the shape every
+ *     renderer here was originally written against;
+ *   - `path` — the built-in agent's own tools (read/write/edit/glob/grep).
+ *
+ * Reading only `file_path` made every built-in-agent call render a header with
+ * no path at all, and made the Read preview look up a language for an empty
+ * string, so the whole detail view came up blank even though the data was
+ * present. Accepting both keeps one renderer for both shapes.
+ */
+function inputPath(input: ToolInput): string {
+  return str(input.file_path) || str(input.path)
+}
+
+/**
  * Coerce a 1-based line number from tool input: accepts numbers and numeric
  * strings (some CLIs serialize JSON numbers as strings). Returns undefined for
  * non-numeric, fractional, negative, or zero values — matching the codebase's
@@ -108,7 +126,7 @@ function toolContentHeaderHtml(contentSelector: string): string {
  * Includes content header with copy + wrap toggle.
  */
 function renderEditDiff(input: ToolInput): string {
-  const filePath = str(input.file_path)
+  const filePath = inputPath(input)
   const oldStr = str(input.old_string)
   const newStr = str(input.new_string)
   const replaceAll = input.replace_all
@@ -218,7 +236,7 @@ function renderBashTerminal(input: ToolInput): string {
  * button so clicking jumps to that location (annotation-style path:80-100).
  */
 function filePathHeader(input: ToolInput, extraBadge = '', lineStart?: number, lineEnd?: number): string {
-  const filePath = str(input.file_path)
+  const filePath = inputPath(input)
   const projectRoot = store.state.projectRoot || ''
   const homeDir = store.state.homeDir || ''
   const resolvedPath = resolveFilePath(filePath, projectRoot, homeDir)
@@ -240,10 +258,18 @@ function filePathHeader(input: ToolInput, extraBadge = '', lineStart?: number, l
  * Shows clickable file path + syntax-highlighted content preview.
  * Includes content header with copy + wrap toggle when content is present.
  */
-function renderReadPreview(input: ToolInput): string {
-  const filePath = str(input.file_path)
+function renderReadPreview(input: ToolInput, ctx?: ToolBlockCtx): string {
+  const filePath = inputPath(input)
   const lang = detectLang(filePath)
-  const content = str(input.content)
+  // Content comes from one of two places depending on the backend's contract:
+  //   - `input.content` — Claude/CodeBuddy put the file body in the tool input
+  //     (the read result IS the input);
+  //   - `ctx.output` — the built-in agent returns the body as the tool's
+  //     OUTPUT, with only the path in the input.
+  //
+  // Reading only the first left every built-in-agent read showing an empty
+  // preview: the header said the right file, and the body was blank.
+  const content = str(input.content) || str(ctx?.output)
   const hasContent = !!content
 
   const offset = lineNum(input.offset)
@@ -281,7 +307,7 @@ function renderReadPreview(input: ToolInput): string {
  * Includes content header with copy + wrap toggle.
  */
 function renderWritePreview(input: ToolInput): string {
-  const filePath = str(input.file_path)
+  const filePath = inputPath(input)
   const lang = detectLang(filePath)
 
   let html = '<div class="file-write-view tool-content-wrap word-wrap">'
@@ -573,18 +599,35 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
   // handle on that pending request.
   const elicitationId = str(input.elicitationId)
   const elicitationAttr = elicitationId ? ` data-elicitation-id="${escapeHtml(elicitationId)}"` : ''
-  // Once answered (block done) the request no longer exists: render the card as
-  // a record instead of an answerable one, otherwise a reload would show live
-  // buttons whose POST can only fail.
-  const readOnly = !!elicitationId && !!blockCtx?.done
+  // The pending request disappears in three ways: the user answered (success),
+  // nobody answered within the 30-minute backstop (error), or the turn ended
+  // first (interrupted). Only the answered one is a finished record; the other
+  // two mean "未作答", and the card must stay clickable so a late answer can
+  // still be submitted — as an ordinary chat message, since the RPC is gone
+  // (see submitAskView).
+  const elicitationDone = !!elicitationId && !!blockCtx?.done
+  const answered = elicitationDone && blockCtx?.status === 'success'
+  // Still blocking the agent: Submit must travel back as the RPC result.
+  const live = !!elicitationId && !elicitationDone
+  const liveAttr = live ? ' data-elicitation-live="1"' : ''
+  const readOnly = answered
   const readOnlyAttr = readOnly ? ' data-readonly="1"' : ''
+  // The note box has to have somewhere to go: on an elicitation it becomes the
+  // single question's "other" value (`customKey`) or the answer of a free-text
+  // question. On a multi-question form, or a single multiple-choice question
+  // without an "other" field, the agent would reject it — so it is not offered
+  // (see askViewReady and submitElicitation for the same rule).
+  const onlyQuestion = questions.length === 1 ? questions[0] : null
+  const noteDeliverable = !!onlyQuestion
+    && (!!str(onlyQuestion.customKey) || !Array.isArray(onlyQuestion.options) || onlyQuestion.options.length === 0)
+  const showSupplementaryNote = !(live && !noteDeliverable)
 
   // `tabindex="-1"` makes the card programmatically focusable (not tab-reachable,
   // so it does not add a stop to keyboard navigation). This is what lets the
   // Ctrl/Cmd+Enter shortcut work after a MOUSE selection: the options are
   // <div>s, so clicking one leaves focus on <body>, and a keydown fired there
   // never reaches the card container the shortcut is bound to. See focusAskView.
-  let html = `<div class="ask-question-view"${askKeyAttr}${elicitationAttr}${readOnlyAttr} tabindex="-1">`
+  let html = `<div class="ask-question-view"${askKeyAttr}${elicitationAttr}${liveAttr}${readOnlyAttr} tabindex="-1">`
 
   for (let qi = 0; qi < questions.length; qi++) {
     const q = questions[qi]
@@ -649,16 +692,20 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
   // A read-only elicitation card (already answered) shows the questions as a
   // record: no note field and no buttons, since the pending request is gone.
   if (!readOnly) {
-    html += '<div class="ask-question-supplementary">'
-    html += `<label class="ask-supplementary-label">${escapeHtml(gt('tool.askUser.supplementary'))}</label>`
-    // A textarea (not an input) so the note can run to several lines — a long
-    // answer is unreadable in a single-line field. `rows="1"` + the auto-grow in
-    // fitAskSupplementaryInput give the one-line look until the text wraps;
-    // Enter inserts a newline (submission stays on the button), which is the
-    // expectation a multiline box sets up. The class name is kept because every
-    // read/write site (value, disabled) treats both elements identically.
-    html += `<textarea class="ask-supplementary-input" rows="1" placeholder="${escapeHtml(gt('tool.askUser.supplementaryPlaceholder'))}"></textarea>`
-    html += '</div>'
+    // Only offered when the note can actually be delivered (see
+    // showSupplementaryNote above).
+    if (showSupplementaryNote) {
+      html += '<div class="ask-question-supplementary">'
+      html += `<label class="ask-supplementary-label">${escapeHtml(gt('tool.askUser.supplementary'))}</label>`
+      // A textarea (not an input) so the note can run to several lines — a long
+      // answer is unreadable in a single-line field. `rows="1"` + the auto-grow in
+      // fitAskSupplementaryInput give the one-line look until the text wraps;
+      // Enter inserts a newline (submission stays on the button), which is the
+      // expectation a multiline box sets up. The class name is kept because every
+      // read/write site (value, disabled) treats both elements identically.
+      html += `<textarea class="ask-supplementary-input" rows="1" placeholder="${escapeHtml(gt('tool.askUser.supplementaryPlaceholder'))}"></textarea>`
+      html += '</div>'
+    }
 
     html += '<div class="ask-question-actions">'
     // The chord hint sits in the empty space to the LEFT of the buttons (the row
@@ -671,8 +718,9 @@ function renderAskUserQuestion(input: ToolInput, blockCtx?: ToolBlockCtx): strin
     // "Recommend" asks the AI for a suggestion by sending a chat message. That
     // is meaningless while the agent is blocked on this very request (the
     // message would queue behind the turn it is supposed to unblock), so a live
-    // elicitation card offers only Submit.
-    if (!elicitationId) {
+    // elicitation card offers only Submit. Once the request is gone (timed out /
+    // turn ended) a chat message is exactly what Submit does anyway.
+    if (!live) {
       html += `<button class="ask-question-recommend">${gt('tool.askUser.recommend')}</button>`
     }
     html += `<button class="ask-question-submit" disabled>${gt('tool.askUser.submit')}</button>`
@@ -1060,7 +1108,7 @@ function renderPermissionApproval(input: ToolInput, blockCtx?: ToolBlockCtx): st
   // lives on the surrounding card header strip, not here — this body focuses
   // on WHICH tool and WHAT it wants to do.
   if (toolName) {
-    html += `<div class="permission-tool-name">${escapeHtml(toolName)}</div>`
+    html += `<div class="permission-tool-name">${escapeHtml(localizedToolName(toolName))}</div>`
   }
 
   // Requested action details. Each label sits on its own line above the content
@@ -2136,13 +2184,20 @@ async function respondPermission(sessionId: string, toolCallId: string, optionId
 /**
  * Call the elicitation respond API — the answer to a blocking ACP
  * `elicitation/create` (see submitElicitation).
+ *
+ * Three outcomes, because they need different recovery:
+ *   ok    — the agent got the answer;
+ *   gone  — the server no longer has the request (404: timed out, or the turn
+ *           ended first), so the card must switch to the chat-message exit;
+ *   error — transient (network / 5xx); the card stays live so a retry can
+ *           still deliver the answer over the RPC.
  */
 async function respondElicitation(
   sessionId: string,
   elicitationId: string,
   content: Record<string, unknown>,
-): Promise<boolean> {
-  if (isShareMode()) return false
+): Promise<'ok' | 'gone' | 'error'> {
+  if (isShareMode()) return 'error'
 
   try {
     const resp = await fetch('/api/ai/elicitation/respond', {
@@ -2150,10 +2205,11 @@ async function respondElicitation(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, elicitationId, content }),
     })
-    return resp.ok
+    if (resp.ok) return 'ok'
+    return resp.status === 404 ? 'gone' : 'error'
   } catch (e) {
     appLog.e(TAG, 'elicitation respond failed:', e)
-    return false
+    return 'error'
   }
 }
 
@@ -2427,6 +2483,14 @@ export function revertAskSubmission(key: string): void {
  * A card with no questions (a malformed/empty card renders no actions row at
  * all) counts as answered, matching the historical button state; `submitAskView`
  * still refuses to send when there is no answer and no note.
+ *
+ * The note is only a substitute answer when it has somewhere to go. A native
+ * card sends it as a chat message, so anything works; an ACP elicitation can
+ * carry it only as the question's "other" property (`customKey`) or as the
+ * answer of a free-text question. Sending it as the value of a multiple-choice
+ * field is rejected by the agent ("Invalid option for form field: …"), and on a
+ * multi-question form it is dropped, so the form goes out half-filled and the
+ * agent asks the same questions again.
  */
 function askViewReady(view: Element): boolean {
   const items = view.querySelectorAll('.ask-question-item')
@@ -2439,7 +2503,12 @@ function askViewReady(view: Element): boolean {
   }
   if (allAnswered) return true
   const supplementaryInput = askSupplementaryField(view)
-  return !!supplementaryInput?.value?.trim()
+  if (!supplementaryInput?.value?.trim()) return false
+  const elicitationId = (view as HTMLElement).dataset?.elicitationId || ''
+  if (!elicitationId) return true
+  if (items.length !== 1) return false
+  const el = items[0] as HTMLElement
+  return !!el.dataset.customKey || el.querySelectorAll('.ask-question-option').length === 0
 }
 
 export function updateAskSubmitState(view: Element) {
@@ -2643,8 +2712,16 @@ function commitAskSubmission(view: Element): string {
  * the form has exactly one question that carries one (OpenCode always adds such
  * a companion field). With several questions one shared box cannot be attributed
  * to a question, so it is ignored rather than guessed at.
+ *
+ * When the server says the request is gone, the same answer is re-submitted
+ * through the ordinary chat-message exit (`emit`) — the card must never become
+ * a dead end just because it still looked live.
  */
-function submitElicitation(view: Element, elicitationId: string): boolean {
+function submitElicitation(
+  view: Element,
+  elicitationId: string,
+  emit: (type: string, payload?: unknown, detail?: unknown) => void,
+): boolean {
   const content: Record<string, unknown> = {}
   const items = view.querySelectorAll('.ask-question-item')
   for (const item of items) {
@@ -2667,7 +2744,15 @@ function submitElicitation(view: Element, elicitationId: string): boolean {
     // A free-text question (a schema property with no options) has no companion
     // field — the note IS its answer. Without this the card would show an
     // enabled Submit that silently sends nothing.
-    else if (fieldKey && content[fieldKey] === undefined) content[fieldKey] = note
+    //
+    // A multiple-choice question is the opposite case: the note is NOT one of
+    // its options, and the agent rejects it outright ("Invalid option for form
+    // field: …"). Never let it stand in for a choice the user did not make —
+    // `askViewReady` already keeps Submit locked, this is the wire-payload
+    // guard for the same rule.
+    else if (fieldKey && content[fieldKey] === undefined && !el.querySelector('.ask-question-option')) {
+      content[fieldKey] = note
+    }
   }
 
   if (Object.keys(content).length === 0) return false
@@ -2680,13 +2765,20 @@ function submitElicitation(view: Element, elicitationId: string): boolean {
   const toolDetail = view.closest('.tool-detail') as HTMLElement | null
   const sessionId = toolDetail?.dataset?.sessionId || getCurrentSessionId()
 
-  void respondElicitation(sessionId, elicitationId, content).then(ok => {
-    if (ok) return
-    // The request is gone (turn already ended, or a stale card restored from
-    // history). Undo the terminal look so the user sees that nothing was sent
-    // instead of a card that silently claims to be answered.
+  void respondElicitation(sessionId, elicitationId, content).then(result => {
+    if (result === 'ok') return
+    // Undo the terminal look first, so the card never silently claims to be
+    // answered when nothing was delivered.
     if (cardKey) revertAskSubmission(cardKey)
     else makeAskViewAnswerable(view)
+    if (result !== 'gone') return
+    // The request no longer exists but the card still looked live (a block
+    // restored from history whose tool_result never arrived). The agent can
+    // still get the answer as an ordinary chat message: drop the live flag and
+    // take that exit. `submitAskView` re-collects the selection from the DOM,
+    // so nothing is lost by the round trip through the server.
+    delete (view as HTMLElement).dataset.elicitationLive
+    submitAskView(view, emit)
   })
 
   return true
@@ -2714,11 +2806,15 @@ function submitAskView(view: Element, emit: (type: string, payload?: unknown, de
   if (view.classList.contains('ask-submitted')) return true
   if (!askViewReady(view)) return false
 
-  // A live elicitation is a BLOCKED agent, not a finished turn: its answer has
+  // A LIVE elicitation is a BLOCKED agent, not a finished turn: its answer has
   // to travel back as the RPC result, not as a chat message (which would queue
-  // behind the very turn it is meant to unblock).
-  const elicitationId = (view as HTMLElement).dataset?.elicitationId || ''
-  if (elicitationId) return submitElicitation(view, elicitationId)
+  // behind the very turn it is meant to unblock). An elicitation whose request
+  // is already gone (nobody answered it in time, or the turn ended) falls
+  // through to the ordinary chat-message path below — that is the only way a
+  // late answer can still reach the agent.
+  const viewEl = view as HTMLElement
+  const elicitationId = viewEl.dataset?.elicitationId || ''
+  if (elicitationId && viewEl.dataset?.elicitationLive === '1') return submitElicitation(view, elicitationId, emit)
 
   const answers: string[] = []
   const items = view.querySelectorAll('.ask-question-item')

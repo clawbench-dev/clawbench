@@ -162,7 +162,7 @@ vi.mock('@/composables/usePortForward', async () => {
   return {
     usePortForward: () => ({
       tunnelStatus, tunnelChecking, tunnelMessage, checkTunnelHealth,
-      sshInfo, transportAllowsH2, loadSSHInfo, ports,
+      sshInfo, sshInfoResolved: { value: true }, transportAllowsH2, loadSSHInfo, ports,
       probingTunnel, probeTunnelLink, transportAnnotation,
     }),
   }

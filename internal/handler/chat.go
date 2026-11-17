@@ -80,6 +80,10 @@ func resolveOrCreateProjectSession(w http.ResponseWriter, r *http.Request, proje
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
 		return "", "", false
 	}
+	// Same first-session auto probe as POST /api/ai/sessions: a project whose
+	// only session was just created implicitly would otherwise show empty
+	// pickers too.
+	maybeAutoProbeAgentState(model.GetAgent(agentID), projectPath)
 	return createdID, agentBackend, true
 }
 
@@ -742,8 +746,18 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 
-		// Build the first chat request
-		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments)
+		// Build the first chat request. Knowledge base snippets are injected
+		// only here (not on the retry/confirm requests below), so a recovered
+		// turn does not carry the same retrieved context twice.
+		var firstOpts []service.ChatRequestOption
+		if !ai.IsACPSlashCommand(req.Message) {
+			firstOpts = append(firstOpts, service.WithKBInjection())
+		}
+		// The current message is already persisted (msgID above), so the
+		// self-hosted backend's replayed history must stop just before it —
+		// otherwise the prompt reaches the model twice.
+		firstOpts = append(firstOpts, service.WithCurrentMessageID(msgID))
+		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments, firstOpts...)
 
 		// Execute first message
 		result := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir)
@@ -753,9 +767,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			SessionID:   sessionID,
 			ProjectPath: projectPath,
 			BackendName: backendName,
-			ExecuteRunWithMessage: func(_ int64, row service.QueuedRow) service.DrainResult {
+			ExecuteRunWithMessage: func(msgID int64, row service.QueuedRow) service.DrainResult {
 				qMsg := row.ToModel()
-				nextChatReq, buildErr := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
+				nextChatReq, buildErr := buildChatRequestFromQueue(qMsg, msgID, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
 				if buildErr != nil {
 					return service.DrainResult{Err: buildErr.Error()}
 				}
@@ -778,7 +792,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				SessionID:   sessionID,
 				ProjectPath: projectPath,
 				RunTurn: func(prompt string) service.DrainResult {
-					retryChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false)
+					// The continue prompt is persisted by the turn runner, which
+					// makes it the newest row — bound the replayed history there
+					// so the built-in backend does not see it twice.
+					retryOpts := []service.ChatRequestOption{service.WithCurrentMessageID(service.LastChatMessageID(sessionID))}
+					retryChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false, retryOpts...)
 					retryResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, retryChatReq, fileDir)
 					return service.DrainResult{
 						CancelReason:   retryResult.cancelReason,
@@ -799,7 +817,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				ProjectPath: projectPath,
 				BackendName: backendName,
 				RunTurn: func(prompt string) service.DrainResult {
-					confirmReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false)
+					// Same bound as auto-continue: the confirmation prompt is
+					// persisted by the runner before the request is built.
+					confirmOpts := []service.ChatRequestOption{service.WithCurrentMessageID(service.LastChatMessageID(sessionID))}
+					confirmReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false, confirmOpts...)
 					confirmResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, confirmReq, fileDir)
 					return service.DrainResult{
 						CancelReason: confirmResult.cancelReason,
@@ -849,6 +870,16 @@ type sessionState struct {
 	ReplayPending bool
 }
 
+// isBuiltinAgent reports whether an agent runs on the in-process backend.
+//
+// Its transport is "cli" for the same reason a real CLI's is — there is no ACP
+// connection — but that is not a reason to hide the options this build defines
+// itself.
+func isBuiltinAgent(agentID string) bool {
+	a := model.GetAgent(agentID)
+	return a != nil && a.BuiltinBackend
+}
+
 // sessionStateSnapshot resolves a session's cached ACP state, falling back to
 // the agent-level registry and then to the persisted context_state.
 //
@@ -858,7 +889,14 @@ type sessionState struct {
 // other would keep showing a stale mode.
 func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) sessionState {
 	var st sessionState
-	if sessionID == "" || sessionTransport == "cli" {
+	if sessionID == "" {
+		return st
+	}
+	// An explicit "cli" transport means there is no ACP connection to ask. The
+	// built-in agent is the exception: its transport is "cli" by construction
+	// (it runs in-process), yet its mode and thinking options are static and
+	// must still reach the drawer.
+	if sessionTransport == "cli" && !isBuiltinAgent(sessionAgentID) {
 		return st
 	}
 	// A session row can carry an EMPTY transport (a group member row never had
@@ -948,7 +986,10 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 	// seeded before the mode was persisted). Treating that as "already known"
 	// skipped the fallback and left the chip blank until the next send, even
 	// though context_state held the choice.
-	if st.Mode == nil || modeStateHasNoSelection(st.Mode) || st.Effort == nil || st.Usage == nil {
+	// The built-in agent always consults context_state: its registry answer
+	// carries a derived default selection, which would otherwise look like a
+	// real per-session choice and mask the one the user persisted.
+	if st.Mode == nil || modeStateHasNoSelection(st.Mode) || st.Effort == nil || st.Usage == nil || isBuiltinAgent(sessionAgentID) {
 		if ctxState := service.GetContextState(sessionID); ctxState != nil {
 			// The per-session record wins over the agent-level registry for the
 			// parts it covers. The registry is keyed by AGENT and shared by every
@@ -960,7 +1001,20 @@ func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) se
 			// already have, so it only replaces an ABSENT mode — otherwise the
 			// fallback could turn a populated list into an empty selection.
 			if ctxState.Mode != nil && (ctxState.Mode.CurrentModeID != "" || st.Mode == nil) {
-				st.Mode = ctxState.Mode
+				merged := *ctxState.Mode
+				// The persisted patch carries only the selection. Keep the
+				// option list resolved above when it has none: the built-in
+				// agent's modes never arrive as ACP events, so replacing the
+				// list with the stored (empty) one would leave the drawer with
+				// a selection and nothing to select from.
+				if len(merged.AvailableModes) == 0 {
+					if prev, ok := st.Mode.(*ai.ModeState); ok && prev != nil {
+						for _, m := range prev.AvailableModes {
+							merged.AvailableModes = append(merged.AvailableModes, service.ModeDef{ID: m.ID, Name: m.Name})
+						}
+					}
+				}
+				st.Mode = &merged
 			}
 			// Restore the effort when the user picked it — OR when nothing else
 			// describes this session. The userPicked guard exists so an agent's
@@ -1062,8 +1116,8 @@ func executeStreamRun(
 // Kept as a thin wrapper (rather than updating the ~30 call sites and tests that
 // use it) so the unification lands as one behavioral change: the handler no
 // longer has its own copy to drift from the queue/push path.
-func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
-	return service.BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir, hasAttachments)
+func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool, opts ...service.ChatRequestOption) ai.ChatRequest {
+	return service.BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir, hasAttachments, opts...)
 }
 
 // buildForkContext delegates to the service layer's single implementation.
@@ -1084,7 +1138,13 @@ func buildForkContext(sessionID string) string {
 // buildChatRequestFromQueue constructs an ai.ChatRequest from a queued message.
 // It returns an error only when a ClawBench built-in command's endpoint
 // reference cannot be rendered from the embedded spec.
-func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath, backendName, agentID, fileDir string) (ai.ChatRequest, error) {
+//
+// msgID is the chat_history row the drain just materialized for this message.
+// It must reach the request: the built-in backend replays history from that
+// table, and without the bound the question being answered is replayed as
+// context and reaches the model twice. A queued message is the one case where
+// the frontend cannot supply the id — it did not exist until the claim.
+func buildChatRequestFromQueue(qMsg model.QueuedMessage, msgID int64, sessionID, projectPath, backendName, agentID, fileDir string) (ai.ChatRequest, error) {
 	prompt := qMsg.Text
 	var filePaths, dirPaths []string
 	if len(qMsg.FilePaths) > 0 {
@@ -1140,7 +1200,12 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	// model and transport a direct send would. Passing them here as well would
 	// duplicate that lookup and invite the two paths to drift again.
 	hasAttachments := len(qMsg.FilePaths) > 0 || len(qMsg.Files) > 0
-	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, "", "", "", "", fileDir, hasAttachments), nil
+	var opts []service.ChatRequestOption
+	if !ai.IsACPSlashCommand(qMsg.Text) {
+		opts = append(opts, service.WithKBInjection())
+	}
+	opts = append(opts, service.WithCurrentMessageID(msgID))
+	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, "", "", "", "", fileDir, hasAttachments, opts...), nil
 }
 
 // CancelChat handles POST to cancel an ongoing AI stream for a session.
@@ -1374,32 +1439,24 @@ func validatedURLEntry(w http.ResponseWriter, r *http.Request, fEntry model.File
 // url and no path, exactly like a quote taken from a chat message, so without
 // the persisted kind the two are indistinguishable after a reload.
 //
-// The source locators (CommitSHA/TaskID/SessionID/MessageID/ExecutionID/
-// MeetingToken/MailID/SourceDir) are carried through for the same reason one
-// step stronger: they are the ONLY route back to the origin, so dropping one
-// makes the quote silently unjumpable with no error anywhere.
+// The source locators are carried through for the same reason one step
+// stronger: they are the ONLY route back to the origin, so dropping one makes
+// the quote silently unjumpable with no error anywhere.
+//
+// They now live in one open `Locators` bag, which is copied whole — so a NEW
+// locator needs no change here at all. This function used to rebuild the entry
+// field by field, and that copy is exactly how `mailId` and `sourceDir` got
+// silently dropped when they were introduced (the entry still rendered and
+// still sent; only the jump target was gone). Anything the client sends now
+// survives by default, and only the fields this endpoint deliberately OWNS
+// (Kind) are overwritten.
 //
 // Shared by every endpoint that accepts file entries (chat and queue) so the
 // two cannot drift apart.
 func validatedQuoteEntry(fEntry model.FileEntry) model.FileEntry {
-	return model.FileEntry{
-		Path:         fEntry.Path,
-		Kind:         "quote",
-		ID:           fEntry.ID,
-		Text:         fEntry.Text,
-		Note:         fEntry.Note,
-		Language:     fEntry.Language,
-		URL:          fEntry.URL,
-		SourceKind:   fEntry.SourceKind,
-		CommitSHA:    fEntry.CommitSHA,
-		TaskID:       fEntry.TaskID,
-		SessionID:    fEntry.SessionID,
-		MessageID:    fEntry.MessageID,
-		ExecutionID:  fEntry.ExecutionID,
-		MeetingToken: fEntry.MeetingToken,
-		MailID:       fEntry.MailID,
-		SourceDir:    fEntry.SourceDir,
-		StartLine:    fEntry.StartLine,
-		EndLine:      fEntry.EndLine,
-	}
+	// Whole-struct copy: adding a field to model.FileEntry must not require
+	// remembering to add it here too.
+	out := fEntry
+	out.Kind = "quote"
+	return out
 }

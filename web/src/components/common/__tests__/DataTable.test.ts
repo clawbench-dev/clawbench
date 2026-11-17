@@ -93,11 +93,27 @@ describe('DataTable', () => {
     wrapper.unmount()
   })
 
+  it('步骤表的「步」列是编号，不把整张表抬成数据表', () => {
+    // 真实回归：AI 写的「步 / 优先级 / 做什么 / 手感变化」清单被判成数据表，
+    // 顶上多出搜索框与每列漏斗，用户第一反应是「这怎么也被识别成数据表了」。
+    const wrapper = mountTable(
+      ['步', '优先级', '做什么', '手感变化'],
+      [
+        ['1', 'P0', '项目技能默认不自动注入', '不再往系统提示塞内容'],
+        ['2', 'P0', '用户目录提到项目之前', '#deploy 命中你自己写的那个'],
+        ['3', 'P1', '注入表描述截到 200 字', '防止超长描述挤爆上下文'],
+      ],
+    )
+    expect(wrapper.find('.dt').classes()).not.toContain('is-data')
+    expect(wrapper.find('.dt-bar').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('lets a text table switch to data mode too (toolbar, no totals)', async () => {
     const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
     expect(wrapper.find('.dt-bar').exists()).toBe(false)
 
-    await wrapper.findAll('.dt-seg button')[1].trigger('click')
+    await wrapper.find('.mode-switch').trigger('click')
     expect(wrapper.find('.dt-bar').exists()).toBe(true)
     expect(wrapper.findAll('.dt-funnel')).toHaveLength(2)
     // 没有数字列，不画合计行
@@ -131,13 +147,16 @@ describe('DataTable', () => {
 
   it('switches between plain and data mode from the toolbar', async () => {
     const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS)
-    const [plain, data] = wrapper.findAll('.dt-seg button')
+    const modeSwitch = wrapper.find('.mode-switch')
+    expect(modeSwitch.attributes('aria-checked')).toBe('true')
 
-    await plain.trigger('click')
+    await modeSwitch.trigger('click')
     expect(wrapper.find('.dt').classes()).not.toContain('is-data')
+    expect(modeSwitch.attributes('aria-checked')).toBe('false')
 
-    await data.trigger('click')
+    await modeSwitch.trigger('click')
     expect(wrapper.find('.dt').classes()).toContain('is-data')
+    expect(modeSwitch.attributes('aria-checked')).toBe('true')
     wrapper.unmount()
   })
 
@@ -242,9 +261,9 @@ describe('DataTable', () => {
     wrapper.unmount()
   })
 
-  it('freezes a column from its menu', async () => {
+  it('freezes a column only when asked to (no default freeze)', async () => {
     const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS)
-    expect(wrapper.findAll('.dt-grid thead th')[0].classes()).toContain('is-frozen')
+    expect(wrapper.findAll('.dt-grid thead th')[0].classes()).not.toContain('is-frozen')
 
     await wrapper.findAll('.dt-funnel')[1].trigger('click')
     await menuItem(wrapper, 'Freeze this column').trigger('click')
@@ -263,6 +282,30 @@ describe('DataTable', () => {
     await menuItem(wrapper, 'Hide data bars').trigger('click')
     // q2 仍然有条，q1 关了
     expect(wrapper.findAll('.dt-cell-bar')).toHaveLength(4)
+    wrapper.unmount()
+  })
+
+  it('skips data bars on a 序号 first column unless the user asks for them', async () => {
+    const wrapper = mountTable(
+      ['序号', 'q1', 'q2'],
+      [['1', '10', '20'], ['2', '5', '7'], ['3', '3', '9']],
+    )
+    // 只有 q1 / q2 画条：3 行 × 2 列
+    expect(wrapper.findAll('.dt-cell-bar')).toHaveLength(6)
+
+    // 编号列的菜单里是「显示数据条」——默认关着，但可以手动打开
+    await wrapper.findAll('.dt-funnel')[0].trigger('click')
+    await menuItem(wrapper, 'Show data bars').trigger('click')
+    expect(wrapper.findAll('.dt-cell-bar')).toHaveLength(9)
+    wrapper.unmount()
+  })
+
+  it('skips data bars when the first column is a 1..N sequence without a header', () => {
+    const wrapper = mountTable(
+      ['', 'q1'],
+      [['1', '10'], ['2', '20'], ['3', '30']],
+    )
+    expect(wrapper.findAll('.dt-cell-bar')).toHaveLength(3)
     wrapper.unmount()
   })
 
@@ -308,6 +351,28 @@ describe('DataTable', () => {
     expect(wrapper.findAll('.dt-grid thead th')[1].classes()).toContain('is-numeric')
     // 3450,75 + 12,5 = 3463.25
     expect(wrapper.find('.dt-grid tfoot').text()).toContain('3,463.25')
+    wrapper.unmount()
+  })
+
+  it('不把第一列当标题列：数字照样右对齐、参与合计', () => {
+    const wrapper = mountTable(
+      ['q1', 'q2', 'region'],
+      [['10', '20', 'East'], ['5', '7', 'West']],
+    )
+    expect(wrapper.find('.dt').classes()).toContain('is-data')
+    expect(wrapper.findAll('.dt-grid thead th')[0].classes()).toContain('is-numeric')
+
+    const foot = wrapper.findAll('.dt-grid tfoot td')
+    expect(foot[0].text()).toBe('15')
+    expect(foot[1].text()).toBe('27')
+    // 「合计」字样落在第一个文字列，不占掉数字列的合计值
+    expect(foot[2].text()).toBe('Total')
+    wrapper.unmount()
+  })
+
+  it('整表都是数字时合计行只显示合计值，没有「合计」字样占列', () => {
+    const wrapper = mountTable(['q1', 'q2'], [['10', '20'], ['5', '7']])
+    expect(wrapper.findAll('.dt-grid tfoot td').map(cell => cell.text())).toEqual(['15', '27'])
     wrapper.unmount()
   })
 

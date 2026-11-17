@@ -127,6 +127,119 @@ func TestMergeLoginShellEnv(t *testing.T) {
 	}
 }
 
+// seedShellEnvCache 把一次抓取结果直接塞进缓存，跳过真正执行用户 shell 的步骤。
+func seedShellEnvCache(env []string) {
+	shellEnvMu.Lock()
+	defer shellEnvMu.Unlock()
+	shellEnvCache = env
+	shellEnvAt = time.Now()
+	shellEnvReady = true
+}
+
+// TestLoginShellPathDirs 覆盖一键安装那条链路：Node.js 装在 ~/.local/share/clawbench，
+// PATH 写在 .bashrc 里，而服务端自己的 PATH 里没有它。
+func TestLoginShellPathDirs(t *testing.T) {
+	t.Cleanup(resetLoginShellEnvCache)
+	if IsWindows() {
+		t.Skip("shell startup capture is POSIX-only")
+	}
+
+	seedShellEnvCache([]string{"AK=x", "PATH=/from/bashrc:/usr/bin::/from/bashrc"})
+
+	got := LoginShellPathDirs()
+	want := []string{"/from/bashrc", "/usr/bin"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestLoginShellPathDirs_NoPath(t *testing.T) {
+	t.Cleanup(resetLoginShellEnvCache)
+	if IsWindows() {
+		t.Skip("shell startup capture is POSIX-only")
+	}
+
+	seedShellEnvCache([]string{"AK=x"})
+
+	if got := LoginShellPathDirs(); got != nil {
+		t.Fatalf("got %q, want nil", got)
+	}
+}
+
+func TestInheritUserPath(t *testing.T) {
+	t.Cleanup(resetLoginShellEnvCache)
+	if IsWindows() {
+		t.Skip("shell startup capture is POSIX-only")
+	}
+
+	seedShellEnvCache([]string{"PATH=/from/bashrc:/usr/bin"})
+	t.Setenv("PATH", "/usr/bin:/server/bin")
+
+	InheritUserPath()
+	want := "/usr/bin:/server/bin:/from/bashrc"
+	if got := os.Getenv("PATH"); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+
+	// 幂等：再调一次不能重复追加
+	InheritUserPath()
+	if got := os.Getenv("PATH"); got != want {
+		t.Fatalf("second call changed PATH: %q", got)
+	}
+}
+
+// 用户 shell 里的目录全都已经在服务端 PATH 上时，PATH 必须原样保留：
+// 追加一个已在的目录会让 PATH 每启动一次就长一截。
+func TestInheritUserPath_AllDirsAlreadyPresent(t *testing.T) {
+	t.Cleanup(resetLoginShellEnvCache)
+	if IsWindows() {
+		t.Skip("shell startup capture is POSIX-only")
+	}
+
+	seedShellEnvCache([]string{"PATH=/usr/bin:/server/bin"})
+	t.Setenv("PATH", "/usr/bin:/server/bin")
+
+	InheritUserPath()
+	if got := os.Getenv("PATH"); got != "/usr/bin:/server/bin" {
+		t.Fatalf("PATH = %q, want it untouched", got)
+	}
+}
+
+// 服务端 PATH 为空时直接写入用户 shell 的目录，不能留下开头的分隔符
+// （POSIX 上 ":" 开头等于把当前目录放进 PATH）。
+func TestInheritUserPath_FromEmptyPath(t *testing.T) {
+	t.Cleanup(resetLoginShellEnvCache)
+	if IsWindows() {
+		t.Skip("shell startup capture is POSIX-only")
+	}
+
+	seedShellEnvCache([]string{"PATH=/from/bashrc:/usr/bin"})
+	t.Setenv("PATH", "")
+
+	InheritUserPath()
+	want := "/from/bashrc" + string(os.PathListSeparator) + "/usr/bin"
+	if got := os.Getenv("PATH"); got != want {
+		t.Fatalf("PATH = %q, want %q", got, want)
+	}
+}
+
+func TestInheritUserPath_KeepsPathWhenShellIsUnreadable(t *testing.T) {
+	t.Cleanup(resetLoginShellEnvCache)
+	if IsWindows() {
+		t.Skip("shell startup capture is POSIX-only")
+	}
+
+	// 读不到用户 shell（超时、没有启动文件）时不能动 PATH，
+	// 否则等于凭一个空结果把服务端的查找路径改掉。
+	seedShellEnvCache(nil)
+	t.Setenv("PATH", "/usr/bin")
+
+	InheritUserPath()
+	if got := os.Getenv("PATH"); got != "/usr/bin" {
+		t.Fatalf("got %q, want /usr/bin", got)
+	}
+}
+
 // TestLoginShellEnvReadsBashrc is the regression test for issue #619: the
 // credentials live in ~/.bashrc, and bash does NOT read that file when invoked
 // as a login shell.

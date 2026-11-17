@@ -50,21 +50,23 @@ describe('notifications tab reads as a log, not an alert channel', () => {
 
   it('uses an Inbox icon for the dock tab', () => {
     // The lucide component carries no stable `name` (it is a functional
-    // wrapper), so pin the import binding in the icon module instead — that is
-    // the actual source of truth for which glyph a tab gets.
-    const meta = readWebFile('src/composables/dockTabMeta.ts')
+    // wrapper), so pin the import binding in the plugin manifest instead — that
+    // is the actual source of truth for which glyph a tab gets.
+    const meta = readWebFile('src/plugins/notifications/plugin.ts')
     const icons = meta.match(/import\s*\{([\s\S]*?)\}\s*from\s*'lucide-vue-next'/)
-    expect(icons, 'dockTabMeta must import its icons').not.toBeNull()
+    expect(icons, 'the notifications plugin must import its icon').not.toBeNull()
     expect(icons![1]).toMatch(/\bInbox\b/)
     expect(icons![1], 'the bell import must be gone').not.toMatch(/\bBell\b/)
-    expect(meta).toMatch(/notifications:\s*Inbox\b/)
-    expect(meta, 'the notifications tab must not map to Bell').not.toMatch(/notifications:\s*Bell\b/)
+    expect(meta).toMatch(/icon:\s*Inbox\b/)
+    expect(meta, 'the notifications tab must not map to Bell').not.toMatch(/icon:\s*Bell\b/)
   })
 
-  it('uses the same Inbox glyph in the panel header and empty state', () => {
-    // A bell in the header would re-introduce the alert reading the tab just
-    // dropped; the empty state should be an empty inbox, not a muted bell.
-    expect(panel).toMatch(/<Inbox class="crumb-icon"/)
+  it('uses the Inbox glyph in the panel header and the empty state', () => {
+    // Each panel header owns its section glyph (the shared head no longer
+    // draws one), and the empty state still shows an empty inbox, not a muted
+    // bell.
+    expect(panel).toMatch(/<Inbox[^>]*class="panel-header-icon"/)
+    expect(panel).toMatch(/:icon="Inbox"/)
     expect(panel).not.toMatch(/<Bell\b/)
     expect(panel).not.toMatch(/<BellOff\b/)
     // And the imports must not carry the unused bell glyphs either.

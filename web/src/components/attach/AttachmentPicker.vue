@@ -6,7 +6,7 @@
     <template #header>
       <div class="ad-header">
         <Paperclip :size="16" class="bs-header-icon" />
-        <span class="bs-header-title">{{ t('chat.attach.drawerTitle') }}</span>
+        <span class="bs-header-title">{{ title ?? t('chat.attach.drawerTitle') }}</span>
         <!-- Desktop only: the original header button. Kept for browsers and
              Electron, where the photo/camera entries have nothing to offer. -->
         <button
@@ -32,14 +32,19 @@
          file list. Each button gets its own hidden input so the system picker
          opens in the right mode — file picker, photo library, or camera. -->
     <div v-if="isMobileLayout" class="ad-source-bar">
-      <button type="button" class="ad-source-btn" @click.stop="handleCameraClick">
-        <Camera :size="16" />
-        <span class="ad-source-label">{{ t('chat.attach.takePhoto') }}</span>
-      </button>
-      <button type="button" class="ad-source-btn" @click.stop="handlePhotoClick">
-        <ImageIcon :size="16" />
-        <span class="ad-source-label">{{ t('chat.attach.pickImage') }}</span>
-      </button>
+      <!-- A knowledge base only ingests text-like documents, so the photo
+           library and the camera can only produce files it will reject. Hide
+           them instead of offering an entry that always ends in an error. -->
+      <template v-if="variant !== 'kb'">
+        <button type="button" class="ad-source-btn" @click.stop="handleCameraClick">
+          <Camera :size="16" />
+          <span class="ad-source-label">{{ t('chat.attach.takePhoto') }}</span>
+        </button>
+        <button type="button" class="ad-source-btn" @click.stop="handlePhotoClick">
+          <ImageIcon :size="16" />
+          <span class="ad-source-label">{{ t('chat.attach.pickImage') }}</span>
+        </button>
+      </template>
       <button type="button" class="ad-source-btn" @click.stop="handleUploadClick">
         <Upload :size="16" />
         <span class="ad-source-label ad-upload-label">{{ t('chat.attach.uploadFile') }}</span>
@@ -66,6 +71,7 @@
       :start-dir="currentDir"
       :current-file="currentFile"
       :selected="draft"
+      :allow-dir="allowDir"
       @update:selected="draft = $event"
     />
 
@@ -210,7 +216,13 @@
         </div>
         <div class="ad-footer-actions">
           <button type="button" class="fbtn" data-action="attach-cancel" @click="handleCancel">{{ t('common.cancel') }}</button>
-          <button type="button" class="fbtn fbtn-primary" data-action="attach-ok" @click="handleConfirm">{{ t('common.confirm') }}</button>
+          <button
+            type="button"
+            class="fbtn fbtn-primary"
+            data-action="attach-ok"
+            :disabled="busy || (selectionOnly && draft.length === 0)"
+            @click="handleConfirm"
+          >{{ confirmLabel ?? t('common.confirm') }}</button>
         </div>
       </div>
     </template>
@@ -269,13 +281,38 @@ const props = withDefaults(defineProps<{
    * means nothing in a mail composer. Both variants keep the file picker and
    * the uploads tab (progress + recent uploads), so a mail attachment can be a
    * project file or a fresh upload.
+   *
+   * `kb` is the knowledge-base "add documents" flow: same picker, uploads and
+   * folder selection (a whole folder is imported recursively), but no
+   * camera/photo entries — a knowledge base only ingests text-like files.
    */
-  variant?: 'chat' | 'mail'
+  variant?: 'chat' | 'mail' | 'kb'
+  /** Sheet title; defaults to the attachment wording. */
+  title?: string | null
+  /** OK button label; defaults to the shared "confirm". */
+  confirmLabel?: string | null
+  /**
+   * OK hands the selection to the host through `confirm` instead of applying it
+   * to the chat composer, and does NOT close the sheet — the host owns the
+   * outcome (a knowledge-base add can be rejected, and the user must be able to
+   * fix the selection without starting over).
+   */
+  selectionOnly?: boolean
+  /** Host is working on a confirmed selection: keep OK disabled. */
+  busy?: boolean
+  /** Whether the embedded picker may attach folders. A folder means "import
+   *  its whole subtree" for the knowledge base. */
+  allowDir?: boolean
 }>(), {
   currentFile: null,
   currentDir: null,
   attachedFiles: () => [],
   variant: 'chat',
+  title: null,
+  confirmLabel: null,
+  selectionOnly: false,
+  busy: false,
+  allowDir: true,
 })
 
 const emit = defineEmits<{
@@ -283,6 +320,8 @@ const emit = defineEmits<{
   'add-attached': [path: string, isDir?: boolean]
   'remove-attached': [entry: FileEntry]
   'file-open': [entry: FileEntry | string]
+  /** selectionOnly: the user pressed OK; the host applies the list. */
+  confirm: [entries: FileEntry[]]
 }>()
 
 const { t } = useI18n()
@@ -660,6 +699,15 @@ function composerHas(path: string) {
  * not the same thing.
  */
 function handleConfirm() {
+  // Host-owned selection (knowledge base): hand over the list and stay open.
+  // The host closes on success, or leaves the sheet up so a rejected file can
+  // be removed and retried without re-picking everything.
+  if (props.selectionOnly) {
+    const entries = draft.value.map(e => ({ ...e }))
+    batchCommitted = []
+    emit('confirm', entries)
+    return
+  }
   const before = new Set(attachSnapshot.value.map(e => e.path))
   const now = new Set(draft.value.map(e => e.path))
   for (const entry of draft.value) {
@@ -817,7 +865,11 @@ watch(() => props.open, async (v) => {
     batchCommitted = []
     loading.value = true
     try {
-      await Promise.all([fetchRecentShares(), fetchRecentUploads()])
+      // The shares tab only exists in the chat variant; fetching it elsewhere
+      // is a request whose result can never be shown.
+      const loads = [fetchRecentUploads()]
+      if (props.variant === 'chat') loads.push(fetchRecentShares())
+      await Promise.all(loads)
     } finally {
       loading.value = false
     }

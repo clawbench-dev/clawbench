@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS session_shares (
 	token TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,
 	message_ids TEXT NOT NULL DEFAULT '[]',
+	expires_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_session_shares_session ON session_shares(session_id);
@@ -67,6 +68,7 @@ func migrateSessionSharesToIDOnly() error {
 		token TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
 		message_ids TEXT NOT NULL DEFAULT '[]',
+		expires_at DATETIME,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`); err != nil {
 		return fmt.Errorf("create session_shares_new: %w", err)
@@ -131,8 +133,8 @@ func UpsertSessionShare(sessionID string, messageIDs []int64) (token string, cre
 		return "", false, fmt.Errorf("delete stale session share: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO session_shares (token, session_id, message_ids) VALUES (?, ?, ?)",
-		token, sessionID, string(encoded),
+		"INSERT INTO session_shares (token, session_id, message_ids, expires_at) VALUES (?, ?, ?, ?)",
+		token, sessionID, string(encoded), shareLinkExpiry(),
 	); err != nil {
 		return "", false, fmt.Errorf("insert session share: %w", err)
 	}
@@ -161,7 +163,8 @@ func GetSessionShareByToken(token string) (SessionShare, bool, error) {
 		        cs.title, cs.backend, cs.archived
 		   FROM session_shares sh
 		   JOIN chat_sessions cs ON cs.id = sh.session_id
-		  WHERE sh.token = ?`,
+		  WHERE sh.token = ?
+		    AND (sh.expires_at IS NULL OR sh.expires_at > datetime('now'))`,
 		token,
 	).Scan(&s.Token, &s.SessionID, &rawIDs, &s.CreatedAt, &s.Title, &s.Backend, &archived)
 	if err != nil {
@@ -205,7 +208,10 @@ func GetSessionShareBySession(sessionID string) (token string, ok bool, err erro
 	if sessionID == "" {
 		return "", false, nil
 	}
-	row := store.ReadDB().QueryRow("SELECT token FROM session_shares WHERE session_id = ?", sessionID)
+	row := store.ReadDB().QueryRow(
+		"SELECT token FROM session_shares WHERE session_id = ? AND (expires_at IS NULL OR expires_at > datetime('now'))",
+		sessionID,
+	)
 	if err := row.Scan(&token); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", false, nil
@@ -307,6 +313,7 @@ func ListSessionShares(projectPath string) ([]SessionShare, error) {
 		   FROM session_shares sh
 		   JOIN chat_sessions cs ON cs.id = sh.session_id
 		  WHERE cs.project_id = ?
+		    AND (sh.expires_at IS NULL OR sh.expires_at > datetime('now'))
 		  ORDER BY sh.rowid DESC`,
 		projectID,
 	)

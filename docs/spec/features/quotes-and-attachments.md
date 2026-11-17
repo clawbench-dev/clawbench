@@ -22,22 +22,43 @@
 
 `quote` 的载荷在 `text`（被引用内容）+ `note`（用户的批注）+ 一组定位字段。**标签不是路径**——把它当路径解析会 404 整条消息，这是历史上踩过的坑。
 
-### 1.2 定位字段
+### 1.2 定位键（`locators`）
 
-定位字段是「跳回去」和「让 AI 找到来源」的唯一线索，因为它们无法从被引用的文本里反推：
+定位键是「跳回去」和「让 AI 找到来源」的唯一线索，因为它们无法从被引用的文本里反推。
 
-| 字段 | 来源 | 跳转到 |
+**它是一个开放的键值袋 `locators: Record<string, string>`，不是一堆平铺字段。** 平铺的写法下，加一种来源要改约 14 处（Go 结构体、Go 分类器、Go 渲染器、Go 校验器、前端镜像、四个 TS 转换器、类型判定、跳转分支……），每一处都是「漏了就静默丢弃」——`mailId` 和 `sourceDir` 就是这么丢的：卡片照常显示、消息照常发出，只有跳转按钮消失了。
+
+| 键 | 来源 | 跳转到 |
 |---|---|---|
-| `commitSha` | Git 提交 / CI 运行 | Git 历史对应提交 |
-| `taskId` + `executionId` | 定时任务 / 一次执行 | 任务详情（可带执行） |
-| `meetingToken` | 会议记录 | 会议详情 |
-| `mailId` | 邮件 | 邮件阅读器 |
-| `sessionId` + `messageId` | 聊天消息 | 会话并滚到该消息 |
-| `url` | 议题 / PR / CI | 外部浏览器 |
-| `filePath` + 行号 | 文件 / 代码片段 | 文件预览 |
-| `sourceDir` | 会议（产物目录） | 不跳转，**给 AI 用**：项目相对路径，让它自己去读转写/纪要/录音 |
+| `commit` | Git 提交 / CI 运行 | Git 历史对应提交 |
+| `task` | 定时任务 | 任务详情 |
+| `execution` | 一次任务执行 | 任务执行详情 |
+| `session` | 聊天会话 | 该会话 |
+| `message` | 聊天消息 | 会话内该条消息 |
+| `meeting` | 会议记录 | 会议详情 |
+| `mail` | 邮件 | 邮件阅读器 |
+| `dir` | 会议（产物目录） | 不跳转，**给 AI 用**：项目相对路径，让它自己去读转写/纪要/录音 |
 
-**加一个定位字段要同时改 8 处**，见 §7 的清单。漏任何一处，症状都是「卡片正常、跳转静默无反应」。
+`url` 和 `filePath`（+ 行号）不在袋里，它们本来就是 `FileEntry` 的顶层字段，跳转时排在定位键之后。
+
+**值一律是字符串**（`task: "12"`）：提示词是文本，数字与字符串在渲染上没有区别，统一成字符串省掉一层转换。
+
+**加一种新来源不需要改后端任何代码**：客户端往袋里塞一个新键，后端原样透传、原样渲染进提示词（未知键排在已知键之后、按字典序，保证同一引用每次渲染的文本完全一致）。只有当你希望它能**跳转**时，才需要在 `utils/quoteJump.ts` 注册一个跳转器（见 §7）。
+
+---
+
+### 1.2.1 三张表，各管一件事
+
+改这套东西时最容易踩的坑是「以为改了类型就够了」。实际有四张表，各自独立：
+
+| 表 | 位置 | 管什么 | 加来源时要动吗 |
+|---|---|---|---|
+| 定位键袋 | `locators`（前后端同形） | 存什么 | 否，塞键即可 |
+| 类型识别 | `resolveQuoteType`（`utils/quoteItem.ts`） | 卡片上的图标/标签 | 是（新类型时） |
+| 跳转 | `utils/quoteJump.ts` 的注册表 | 点「跳转来源」去哪 | 是（要能跳时） |
+| 拖拽补内容 | `utils/quoteHydrate.ts` 的注册表 | 落点要不要先请求内容 | 是（内容不在载荷里时） |
+
+后两张都是**注册表**，不是 `if` 链。它们以前各是一条手写的 `if` 链，其中拖拽补内容那条还被抄了两份（聊天列 + 会话行），只有一份写在文档里——于是「拖到聊天列能用、拖到会话行没反应」这种缺陷反复出现。
 
 ### 1.3 前端的三份表示
 
@@ -153,8 +174,8 @@
 - **所有拖拽源都按宽屏门控**（`:draggable="isWideScreen"`）。窄屏下列表栏和聊天栏互斥显示，拖拽源和落点永远不同屏，允许拖拽只会得到「能拖但没反应」。
 - 消息气泡本身**不能**设 `draggable`——那会让文字选不中，而选中文字正是片段引用的入口。拖的是引用按钮。
 - 拖拽产物**没有批注**（拖拽本身已经表达「放进聊天」，再弹输入框是多余步骤）。
-- **只带身份的载荷**（会议记录、邮件）在 `dragstart` 里无法内联内容（不能 await），由落点处理器补一次请求再落卡片；这类载荷必须同时在 `App.vue` 的 `onChatColDrop` 里有分支，否则拖了等于没拖。
-- **正在进行的会议是个例外**：它还没有产物可拉，所以转写文本在 `dragstart` 时就被塞进载荷（`text` 非空），落点直接落卡片、不再请求。
+- **只带身份的载荷**（会议记录、邮件）在 `dragstart` 里无法内联内容（不能 await），由落点补一次请求再落卡片。**补内容的逻辑在 `utils/quoteHydrate.ts` 的注册表里，两个落点都调它**（`hydrateDraggedQuote`）——以前这里是两条手写 `if` 链，只有 App.vue 那条写在文档里，于是邮件拖到会话行上静默无反应。加一种需要补内容的来源，只需在 `utils/quoteHydrators.ts` 注册一次。
+- **正在进行的会议是个例外**：它还没有产物可拉，所以转写文本在 `dragstart` 时就被塞进载荷（`text` 非空），补内容那一层看到 `text` 非空就直接放行、不再请求。
 - 拖拽预览图是共享的（`buildAttachDragImage`），`dragend` 必须调 `cleanupDragGhost()`。
 
 ### 3.4 附件拖拽的构造器
@@ -223,7 +244,7 @@ startAttachDrag(e, '/proj/a.md', {
 - 每条引用是 `[Quote i/n] 标签 (定位键)` 一行，**必须单行**——会话标题生成靠「剥首行」的规则，多一行会被当成用户说的话。
 - 有批注才有 `[Note]`。
 - **有内容才有围栏**：整文件 / 整议题引用不带内容（`text` 为空），只给标签和地址，让 AI 自己去读；渲染空围栏会把「引用这个文件」曲解成「这是它的空内容」。
-- 定位键是 `commit:` / `task:` / `session:` / `message:` / `execution:` / `meeting:` / `mail:` / `dir:`。新增定位字段必须在这里也加一条，否则 AI 拿不到机器可读的句柄。
+- 定位键是 `commit:` / `task:` / `session:` / `message:` / `execution:` / `meeting:` / `mail:` / `dir:`，外加客户端塞进来的任意新键。**新键不需要改这里**：渲染器遍历整袋，未知键排在已知键之后、按字典序（顺序必须稳定，否则同一引用两次渲染的文本不同，提示词测试与会话标题推导都会变成随机失败）。
 - `dir:` 是唯一不用于跳转的定位键：它给 AI 一个**项目相对**目录（会议引用就是 `.clawbench/notes/<场次>`），让它可以打开转写、纪要、录音这些没有内联进提示词的材料。用相对路径是因为智能体的工作目录就是项目根，绝对路径对它没有意义。
 - **引用不计入「有附件」**（`HasAttachmentEntries` 跳过 quote）：媒体处理规则不该因为一条引用被注入。
 - **会话自动命名也读引用**（`service.userMessageTitleText`）：引用文本 + 标签跟着用户原话一起进标题模型。一句「修了」+ 引用的消息，主题全在引用里；只喂正文会让模型起出「简短对话片段」这类空标题。本地标题（不调模型的那层）仍只用正文，正文非空时不会退到引用。
@@ -234,42 +255,67 @@ startAttachDrag(e, '/proj/a.md', {
 
 ## 7. 新增一个引用来源：检查清单
 
-假设要给「XXX 面板」加「引用到对话」。按顺序做完这些，缺一条就会出现特定的坏味道。
+假设要给「XXX 面板」加「引用到对话」。这套体系的设计目标就是**让这个清单尽量短**——只有你真要那项能力时才需要动对应的地方。
 
-### 7.1 采集端
+### 7.1 采集端（每次都要）
 
 1. 构造载荷，优先复用 `quoteItemFromTarget` / `buildMessageQuote` / `*DragPayload`；不要手拼。
 2. `language` 给一个类型标记（如 `'mail'`），`sourceKind` 给来源类别；二者至少一个能让 `resolveQuoteType` 认出它。
 3. 入口走 `quoteQuestion.openComposer({ quote, label })`（要批注）或 `requestTarget(..., { deliverTo: 'active' })`（一键）。
 4. 拖拽源记得 `:draggable="isWideScreen"` + `@dragend="cleanupDragGhost()"`。
+5. 要能跳回源头，就往 `locators` 里塞一个键——**前后端都不用改**。
 
-### 7.2 新增定位字段时（以 `mailId` 为例，共 8 处）
+### 7.2 加定位键：零改动（除非要跳转）
 
-| # | 位置 | 作用 |
+往 `locators` 里塞一个键，例如 `locators: { deploy: 'd-42' }`：
+
+| 环节 | 需要改吗 | 为什么 |
 |---|---|---|
-| 1 | `internal/model/chat.go` `FileEntry` | 加字段 + JSON tag |
-| 2 | `internal/handler/chat.go` `validatedQuoteEntry` | 逐字段重建时**必须抄进去**（漏了就是静默丢弃） |
-| 3 | `internal/model/attachment_prompt.go` `QuotePrompt` + `ClassifyAttachments` | 分类时带上 |
-| 4 | 同文件 `quoteSourceKeys` | 渲染成 `mail: 77` |
-| 5 | `web/src/utils/fileAttachmentUtils.ts` `FileEntry` | 前端镜像 |
-| 6 | `web/src/utils/quoteItem.ts` `QuoteItem` / `StagedQuoteLike` / `fromStagedQuote` / `fromFileEntry` / `toFileEntry` | 三处转换都要带 |
-| 7 | 同文件 `resolveQuoteType` + `canJumpToSource` | 类型识别 + 是否显示跳转按钮 |
-| 8 | `ChatPanelContent.vue` `jumpToQuoteSource` | 实际跳转分支 |
+| `internal/model/chat.go` | 否 | `Locators map[string]string`，开放袋 |
+| `internal/handler/chat.go` `validatedQuoteEntry` | 否 | 整结构体拷贝，只覆盖 `Kind` |
+| `internal/model/attachment_prompt.go` | 否 | 分类与渲染都遍历袋子；未知键排在已知键之后、按字典序 |
+| `web/src/utils/fileAttachmentUtils.ts` | 否 | 袋子整体复制 |
+| `web/src/utils/quoteItem.ts` 的转换函数 | 否 | 同上 |
+| **跳转** | **是** | 在 `utils/quoteJump.ts` 注册一个跳转器 |
+| **拖拽补内容** | **是**（内容不在载荷里时） | 在 `utils/quoteHydrators.ts` 注册一个补内容器 |
+| **类型图标/标签** | **是**（新类型时） | `quoteSourceMeta.ts` + `QuoteDisplayType` + i18n `quoteBar.typeXxx` |
 
-另外：`quoteSourceMeta.ts` 加图标与文案（新类型时）、`QuoteDisplayType` 加成员、i18n 加 `quoteBar.typeXxx`。
+注意「渲染顺序」：已知键按 `locatorKeyOrder` 的固定顺序（commit → task → session → message → execution → meeting → mail → dir），未知键排在后面按字典序。**顺序必须稳定**——同一引用渲染两次必须得到逐字节相同的文本，否则提示词测试和会话标题推导都会变成随机失败。
 
-### 7.3 跳转
+### 7.3 注册跳转（`utils/quoteJump.ts`）
 
-- 跨面板的跳转用 window 事件（`clawbench-open-task` / `clawbench-open-meeting` / `clawbench-open-mail` / `navigate-to-commit`），**App 负责切页签、面板负责切视图**，两边各听同一个事件。
-- 目标记录可能是跨项目的（会议 / 任务），App 要先切项目再重发事件。
-- 全局数据（邮件）不需要切项目。
+```ts
+register('deploy', '部署详情', (q, ctx) => {
+  ctx.dispatch('clawbench-open-deploy', { id: locatorOf(q, 'deploy') })
+  return true   // true = 已处理，链条停止
+})
+```
 
-### 7.4 测试（至少四条）
+- 顺序即优先级，**最具体的在前**（`commit` 排在文件之前：选了某个提交里的 hunk，用户指的是那个提交）。
+- 返回 `true` 表示「我处理了（即使我拒绝了——比如功能被关掉）」，链条不会继续往下掉到「把标签当路径打开」。
+- `canJumpQuoteToSource`（按钮显示与否）与 `jumpToQuoteSource`（去哪）**读的是同一张表**，所以「按钮出现但点了没反应」不再可表达。以前这是两条独立的 `if` 链，靠一个比对两份文件文本的测试维持同步。
+- 跨面板跳转用 window 事件（`clawbench-open-task` / `-meeting` / `-mail` / `navigate-to-commit`），**App 负责切页签、面板负责切视图**。目标记录可能跨项目（会议 / 任务），App 要先切项目再重发事件；全局数据（邮件）不需要切项目。
+
+### 7.4 注册拖拽补内容（`utils/quoteHydrators.ts`）
+
+```ts
+registerQuoteHydrator('deploy', async (id, payload) => {
+  if (payload.text) return payload        // 内容已经在载荷里了
+  const detail = await fetchDeploy(id)
+  return detail ? buildDeployQuote(detail) : null   // null = 这次没内容可引用
+})
+```
+
+**两个落点（聊天列 / 会话行）都调 `hydrateDraggedQuote`，不要再在落点里写 `if`。** 这一处曾经是两份手写分支，只有一份写在文档里，于是「拖到聊天列能用、拖到会话行没反应」反复出现。
+
+### 7.5 测试（至少五条）
 
 1. `utils/__tests__/quoteItem.test.ts` —— 载荷往返（`toFileEntry` → `fromFileEntry`）与类型识别。
-2. `internal/handler/chat_test.go` —— 用**裸 map** 发请求，断言定位字段穿透 decode → validate → persist（用结构体会只证明结构体有字段，证明不了线上 JSON 名对得上）。
-3. `internal/model/attachment_prompt_test.go` —— 断言提示词里有 `(mail: 77)` 这样的定位键。
-4. `components/chat/__tests__/quoteJumpWiring.test.ts` —— `canJumpToSource` 接受的每个定位字段，`jumpToQuoteSource` 都必须有分支（否则按钮出现但点了没反应）。
+2. `internal/handler/chat_test.go` —— 用**裸 map** 发请求，断言定位键穿透 decode → validate → persist（用结构体会只证明结构体有字段，证明不了线上 JSON 名对得上）。断言里带一个**本版本不认识的键**，钉住「开放袋」这件事。
+3. `internal/model/attachment_prompt_test.go` —— 断言提示词里有 `(mail: 77)` 这样的定位键，且未知键也能渲染、顺序稳定。
+4. `components/chat/__tests__/quoteJumpWiring.test.ts` —— **行为测试**：驱动真实的跳转注册表，用假 context 断言每种定位键产生的副作用；同时断言「按钮显示」与「真能跳」对同一批输入一致。
+5. `utils/__tests__/fileEntryParity.test.ts` —— 从 Go 的 `FileEntry` 结构体**读出字段清单**，逐个断言 `normalizeFileEntry` 保留（不需要人工维护，加字段自动生效）。
+6. `utils/__tests__/quoteHydrate.test.ts` —— 补内容注册表的契约：无注册者原样返回、`null` 丢拖拽、多个定位键只跑第一个、空值不算命中。
 
 ---
 

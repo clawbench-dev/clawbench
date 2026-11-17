@@ -84,6 +84,11 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	if _, err = db.Exec(service.LiveNotesDDL); err != nil {
 		t.Fatalf("failed to create live notes tables: %v", err)
 	}
+	// Terminal command history — same reasoning: project-scoped rows are purged
+	// with the project, so the table must exist for project-delete tests too.
+	if _, err = db.Exec(service.TerminalHistoryDDL); err != nil {
+		t.Fatalf("failed to create terminal command history table: %v", err)
+	}
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -349,6 +354,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			name TEXT NOT NULL,
 			root TEXT NOT NULL DEFAULT '',
 			project_id INTEGER NOT NULL DEFAULT 0,
+			expires_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS project_forges (
@@ -378,6 +384,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			token TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
 			message_ids TEXT NOT NULL DEFAULT '[]',
+			expires_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		-- DeleteProjectData cleans this table by group_id; without it here the

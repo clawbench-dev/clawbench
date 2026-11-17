@@ -727,3 +727,101 @@ func writeSkillMD(t *testing.T, dir, name string) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"),
 		[]byte("---\nname: "+name+"\ndescription: d\n---\n"), 0o644))
 }
+
+// TestServeSkills_ReportsShadowedAndSkipped pins the two explainability fields:
+// when two skills share a name the listing marks the losing row, and a
+// skill-shaped directory that failed to parse is reported instead of vanishing.
+func TestServeSkills_ReportsShadowedAndSkipped(t *testing.T) {
+	setupSkillsEnv(t)
+
+	userDir := filepath.Join(model.DataDir, "user")
+	// Same name as the native "demo": the user dir wins (own > user > other),
+	// so the native row must be marked as shadowed.
+	writeSkillMD(t, filepath.Join(userDir, "demo"), "demo")
+	// A directory with a SKILL.md that cannot be loaded.
+	require.NoError(t, os.MkdirAll(filepath.Join(userDir, "broken"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(userDir, "broken", "SKILL.md"),
+		[]byte("---\nname: broken\n---\n"), 0o644))
+
+	skill.ResetForTest()
+	skill.Global().ScanAll()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkills, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp skillsListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	byPath := map[string]skillInfoJSON{}
+	for _, s := range resp.Skills {
+		byPath[s.Path] = s
+	}
+	userPath := filepath.Join(userDir, "demo", "SKILL.md")
+	require.Contains(t, byPath, userPath)
+	assert.Empty(t, byPath[userPath].ShadowedBy, "the winning row must not be marked")
+
+	var shadowed *skillInfoJSON
+	for _, s := range resp.Skills {
+		if s.Name == "demo" && s.Path != userPath {
+			row := s
+			shadowed = &row
+		}
+	}
+	require.NotNil(t, shadowed, "both copies must be listed")
+	assert.Equal(t, userPath, shadowed.ShadowedBy)
+
+	require.Len(t, resp.Skipped, 1)
+	assert.Equal(t, skill.SkipMissingDescription, resp.Skipped[0].Reason)
+	assert.Contains(t, resp.Skipped[0].Path, "broken")
+}
+
+// TestServeConfig_Patch_SkillsDisabled pins the per-skill opt-out write path:
+// names are canonicalized (lowercased, leading slash stripped) and deduped, so
+// the stored list matches what the registry compares at injection time.
+func TestServeConfig_Patch_SkillsDisabled(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	isolateSkillGlobals(t)
+
+	model.ConfigInstance = model.Config{}
+	model.DataDir = t.TempDir()
+	// The PATCH triggers a rescan; isolate the home directory so it does not
+	// walk the developer's own ~/.codebuddy/skills.
+	setSkillTestHome(t, t.TempDir())
+
+	body := `{"skills":{"project_auto_inject":true,"disabled":["/Noisy","noisy"," keep "]}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	assert.True(t, model.ConfigInstance.Skills.ProjectAutoInject)
+	assert.Equal(t, []string{"noisy", "keep"}, model.ConfigInstance.Skills.Disabled)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp["needs_restart"].(bool), "both switches are hot-reloadable")
+}
+
+// TestServeConfig_Patch_SkillsRejectsEmptyDisabled pins the validation: an
+// empty name can never match a skill, so accepting it would silently store a
+// no-op entry.
+func TestServeConfig_Patch_SkillsRejectsEmptyDisabled(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	isolateSkillGlobals(t)
+
+	model.ConfigInstance = model.Config{}
+	model.DataDir = t.TempDir()
+	setSkillTestHome(t, t.TempDir())
+
+	body := `{"skills":{"disabled":["  "]}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

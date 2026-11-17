@@ -421,6 +421,123 @@ describe('useCodeLinkPreview', () => {
     expect(url).toContain('lineEnd=')
   })
 
+  it('fetches a CSV whole and classifies it as a rendered table', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: 'name,count\nalpha,1\nbeta,2',
+      name: 'data.csv',
+      path: 'data.csv',
+      supported: true,
+      size: 28,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'data.csv' })
+    await vi.runAllTicks()
+
+    // The table parser needs every row, so this is one of the whole-file
+    // preview kinds (a line window would silently drop rows).
+    const url = mockApiGet.mock.calls[0][0] as string
+    expect(url).not.toContain('lineStart=')
+    expect(preview.previewKind.value).toBe('table')
+    expect(preview.isTableView.value).toBe(true)
+    expect(preview.canRenderDocument.value).toBe(true)
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+    expect(preview.isFillView.value).toBe(true)
+  })
+
+  it('renders an office document from the raw URL without a content fetch', async () => {
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'reports/q3.docx' })
+    await vi.runAllTicks()
+
+    // The bytes are a binary container only the office renderer can read;
+    // /api/file would answer isBinary and land on the placeholder.
+    expect(mockApiGet).not.toHaveBeenCalled()
+    expect(preview.status.value).toBe('ready')
+    expect(preview.previewKind.value).toBe('office')
+    expect(preview.isOfficeView.value).toBe(true)
+    expect(preview.canRenderDocument.value).toBe(false)
+  })
+
+  it('fetches an Excalidraw scene whole for the editor', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '{"type":"excalidraw","elements":[]}',
+      name: 'scene.excalidraw',
+      path: 'scene.excalidraw',
+      supported: true,
+      size: 33,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'scene.excalidraw' })
+    await vi.runAllTicks()
+
+    const url = mockApiGet.mock.calls[0][0] as string
+    expect(url).not.toContain('lineStart=')
+    expect(preview.previewKind.value).toBe('excalidraw')
+    expect(preview.isExcalidrawView.value).toBe(true)
+    expect(preview.isFillView.value).toBe(true)
+  })
+
+  it('fetches a draw.io diagram whole for the editor', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '<mxfile><diagram id="a" /></mxfile>',
+      name: 'flow.drawio',
+      path: 'flow.drawio',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'flow.drawio' })
+    await vi.runAllTicks()
+
+    expect(mockApiGet.mock.calls[0][0]).not.toContain('lineStart=')
+    expect(preview.previewKind.value).toBe('drawio')
+    expect(preview.isDrawioView.value).toBe(true)
+    expect(preview.isFillView.value).toBe(true)
+  })
+
+  it('upgrades a window-identified OpenAPI spec to the whole document', async () => {
+    // First response: the opening line window carries the backend's subtype.
+    mockApiGet
+      .mockResolvedValueOnce({
+        content: 'openapi: 3.0.0\ninfo:\n  title: Test',
+        name: 'api.yaml',
+        path: 'api.yaml',
+        supported: true,
+        size: 100,
+        totalLines: 20,
+        windowStart: 1,
+        windowEnd: 20,
+        subtype: 'openapi',
+      })
+      // Second response: the whole document, with YAML converted for ReDoc.
+      .mockResolvedValueOnce({
+        content: 'openapi: 3.0.0\ninfo:\n  title: Test',
+        name: 'api.yaml',
+        path: 'api.yaml',
+        supported: true,
+        size: 100,
+        subtype: 'openapi',
+        specJson: '{"openapi":"3.0.0"}',
+      })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'api.yaml' })
+    await vi.runAllTicks()
+    await flushPromises()
+
+    expect(mockApiGet).toHaveBeenCalledTimes(2)
+    // The spec renderer cannot parse a truncated document, so the upgrade
+    // request drops the line window.
+    expect(mockApiGet.mock.calls[1][0]).not.toContain('lineStart=')
+    expect(preview.previewKind.value).toBe('openapi')
+    expect(preview.isOpenapiView.value).toBe(true)
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+    expect(preview.fileContent.value?.specJson).toBe('{"openapi":"3.0.0"}')
+  })
+
   it('resets renderMode to source when the preview closes', async () => {
     mockApiGet.mockResolvedValueOnce({
       content: '# Title',

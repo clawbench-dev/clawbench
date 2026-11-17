@@ -179,6 +179,9 @@ ProviderUnsupported: Agent {{.Backend}} does not support the {{.Protocol}} proto
 ProviderProtocolConflict: "These agents do not support this protocol: {{.Agents}}"
 ProviderConfigConflict: Agent(s) {{.Agents}} are bound to another provider; this backend shares one global config file and can only bind one
 ProviderConfigConsentRequired: "This agent needs a config file change to apply the provider: {{.Files}}. Confirm and retry"
+ProviderModelsRequired: "Agent(s) {{.Agents}} use a backend that must declare at least one model; the model list cannot be emptied"
+CodeBuddyTokenUnsupported: Only CodeBuddy agents support using their own API key
+CodeBuddyTokenProviderConflict: A model provider and the CodeBuddy own API key cannot be used together; clear one of them first
 InvalidSHA: Invalid commit SHA format
 InvalidBranchName: Invalid branch name
 UnknownBranch: This branch no longer exists
@@ -187,6 +190,12 @@ ModelDiscoveryFailed: Model discovery returned no results
 ModelSwitchFailed: Could not switch model
 ModelSwitchFailedDetail: "Could not switch model: {{.Detail}}"
 CLINotFound: CLI tool not found, please install it first
+BackendNotFound: No such agent backend
+InstallCommandUnavailable: This agent has no built-in install command; install it manually following the official docs
+NodeRuntimeMissing: "{{.Tool}} was not found, and installing Node.js automatically failed: {{.Error}}. Check the server's network and try again; you can also install Node.js 20+ manually, or use the one-line installer: https://clawbench.pages.dev/install.sh"
+AgentInstallBusy: Another install is already running; wait for it to finish
+AgentInstallFailed: "Install failed: {{.Output}}"
+AgentInstallFailedNoOutput: Install failed — the command printed nothing (non-zero exit status)
 CustomURLOpenAIFormat: Custom URL for OpenAI format should end with /chat/completions
 CustomURLAnthropicFormat: Custom URL for Anthropic format should end with /v1/messages
 CustomURLInvalid: Invalid URL format
@@ -304,6 +313,7 @@ SearchQueryRequired: Search query is required
 UserGuideNotAvailable: User guide is not available on this instance
 InvalidRegex: 'Invalid regular expression: {{.Error}}'
 UpgradeInProgress: Upgrade already in progress
+ManagedByEmbedder: This server was started by the desktop app and is updated together with it. Use the desktop app's update flow.
 AlreadyLatestVersion: Already on the latest version
 RAGNotAvailable: RAG is not available
 RAGResetInProgress: An index rebuild is already running
@@ -334,6 +344,11 @@ GroupCruiseSatisfied: "Auto-cruise: task confirmed complete after {{.Rounds}} me
 CruiseConfirming: "Auto-cruise: checking whether the task is complete"
 CruiseSatisfied: "Auto-cruise: task confirmed complete after {{.Rounds}} rounds"
 CruiseMaxRounds: "Auto-cruise: reached the confirmation-round limit"
+# Built-in agent system row when one turn uses up its step budget. Written in
+# the active locale and persisted, same class as the cruise rows above.
+BuiltinMaxRoundsNotice: "This turn reached its limit of {{.Rounds}} model rounds, so the agent wrapped up early. Reply \"continue\" to keep going."
+BuiltinMaxToolCallsNotice: "This turn reached its limit of {{.ToolCalls}} tool calls, so the agent wrapped up early. Reply \"continue\" to keep going."
+BuiltinTruncatedNotice: "This reply hit the model's output limit, so it may be incomplete. Reply \"continue\" to have it carry on."
 # Group-timeline system rows. These are WRITTEN (not rendered) in the active
 # locale: the text is persisted to chat_history and ALSO injected into every
 # member's context as "[系统] <text>" (group_inject.go), so it must be a
@@ -412,6 +427,14 @@ ForgeEventLabelEvent: Event
 ForgeEventLabelAuthor: Author
 ForgeEventViewDetail: View details
 ForgeDisabled: the GitHub/GitLab integration is disabled
+MailDisabled: the mail client is disabled
+KbDisabled: the knowledge base is disabled
+TasksDisabled: scheduled tasks are disabled
+ShareDisabled: sharing is disabled
+ShareFilesDisabled: file sharing is disabled
+ShareSessionsDisabled: conversation sharing is disabled
+ShareMeetingsDisabled: meeting sharing is disabled
+ShareDownloadDisabled: downloads are disabled for shared files
 PortForwardUnavailable: port forwarding is not available
 TunnelTransportDisabled: the server uses the SSH tunnel, so the HTTP/2 tunnel is disabled
 TunnelTargetUnreachable: tunnel target is unreachable
@@ -506,6 +529,7 @@ MailConnectFailed: Cannot reach the mail server — check the host and port
 MailTLSFailed: The mail server certificate could not be verified
 MailTimeout: The mail server did not respond in time
 MailServerError: The mail server returned an error
+MailClientIDRequired: This mail server requires the client to identify itself before it allows mail (common on 163 / 126) — update to the latest version and try again
 MailNoRecipients: Add at least one recipient
 MailAttachmentTooLarge: An attachment cannot exceed {{.MaxMB}} MB
 MailUnsupportedAddress: The part of the address before @ contains non-ASCII characters and this mail server cannot carry that, so the message cannot be sent
@@ -526,3 +550,32 @@ MailQuoteFrom: From
 MailQuoteDate: Date
 MailQuoteSubject: Subject
 MailAccountInvalid: Fill in a valid email address and both server hosts
+KBUnavailable: The knowledge base is not enabled
+KBNotFound: This knowledge base item does not exist or was deleted
+KBDuplicate: This file is already in the selected knowledge base
+KBFileTooLarge: The file is too large to add
+KBUnsupportedFile: This file type is not supported
+KBNotDirectory: The selected path is not a folder
+KBSourceMissing: The original file is gone, so it cannot be refreshed (the stored copy is still searchable)
+KBInvalidURL: Enter an http or https address
+KBPrivateAddress: This address is on a private network (loopback, LAN or metadata service) and cannot be added
+KBFetchFailed: Could not open the page (network error, refused, or too large)
+KBNameRequired: A knowledge base name is required and must be at most 100 characters
+KBReasonLegacyDoc: Legacy Word format (.doc) is not supported; save it as .docx and add it again
+KBReasonLegacyXls: Legacy Excel format (.xls) is not supported; save it as .xlsx and add it again
+KBReasonLegacyPpt: Legacy PowerPoint format (.ppt) is not supported; save it as .pptx and add it again
+KBReasonImage: Text inside images cannot be read directly (OCR is required); convert it to text first
+KBReasonSVG: Text inside SVG cannot be extracted reliably; convert it to text first
+KBReasonAudioVideo: Audio and video need transcription first; the knowledge base does not support them
+KBReasonArchive: Extract the archive and add its files one by one
+KBReasonExecutable: Executable files cannot be knowledge base content
+KBReasonBinary: This file looks like binary data and has no indexable text
+KBReasonFont: Font files cannot be knowledge base content
+KBReasonPDFEncrypted: Could not open the PDF (the file may be damaged or encrypted)
+KBReasonPDFMalformed: This PDF is damaged and could not be parsed
+KBReasonPDFNoText: This PDF has no extractable text (it may be a scanned document)
+KBReasonNoText: This file has no extractable text
+KBReasonFileTooLarge: "The file is too large ({{.MaxMB}} MB); the limit is {{.LimitMB}} MB"
+KBReasonNotRegular: Only files can be added, not directories
+KBReasonUnknownFormat: Could not parse this file (it may be damaged or encrypted)
+KBReasonPrivateAddress: This address is on a private network (loopback, LAN or metadata service) and cannot be added

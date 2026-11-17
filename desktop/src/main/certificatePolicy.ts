@@ -113,3 +113,37 @@ export function decideCertificateAction(
   if (!isMainFrame) return 'ignore'
   return 'prompt'
 }
+
+/**
+ * Collapse concurrent prompts for the same key into a single dialog.
+ *
+ * One navigation raises several `certificate-error` events at once — the main
+ * frame plus every socket the page opens before the first answer arrives — and
+ * Chromium pauses each of them until the handler calls back. Answering them
+ * independently stacks two or three identical dialogs on top of each other, and
+ * the user has to click "trust" once per dialog for what is one decision. The
+ * first caller's dialog is shown; the rest wait for its answer and are released
+ * with the same verdict.
+ *
+ * A key of '' (an unparseable URL) is never collapsed: there is nothing to key
+ * on, and the caller already treats those as a single-shot decision.
+ */
+export class SingleFlightPrompts {
+  private readonly pending = new Map<string, Promise<boolean>>()
+
+  run(key: string, start: () => Promise<boolean>): Promise<boolean> {
+    if (!key) return start()
+    const existing = this.pending.get(key)
+    if (existing) return existing
+
+    const started = start()
+    this.pending.set(key, started)
+    const clear = (): void => {
+      // Only drop the entry this call created: a newer prompt may already have
+      // replaced it (the promise settles asynchronously).
+      if (this.pending.get(key) === started) this.pending.delete(key)
+    }
+    started.then(clear, clear)
+    return started
+  }
+}

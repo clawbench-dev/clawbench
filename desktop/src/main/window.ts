@@ -18,6 +18,9 @@ import {
 } from './versionGate'
 import { nextZoomFactor, type ZoomAction } from './zoom'
 import { shouldUseFramelessWindow } from './windowChrome'
+import { cancelPendingQuit, handleCloseRequest, isAppQuitting, noteOsShutdown } from './closeFlow'
+import { isEmbeddedServerActive } from './localServer'
+import { embeddedServerLabels } from './labels'
 import { boundsToPersist, resolveStartupBounds, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, type WindowBounds } from './windowGeometry'
 import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
 
@@ -58,6 +61,13 @@ export function cancelSplash(): void {
  * current one.
  */
 export function checkVersionGateFor(url: string): void {
+  // The embedded server is part of this package and updates with it, so its
+  // version can never be a mismatch this gate could fix — and walking the
+  // middle of a download here would only offer to replace the app under itself.
+  if (isEmbeddedServerActive()) {
+    setActiveGate(null)
+    return
+  }
   const gen = beginNavigation()
   void checkVersionGate(url, gen)
     .then((info) => {
@@ -139,6 +149,35 @@ function loginPagePath(): string {
 }
 
 /**
+ * Show the server-selection login page, or explain why there is nothing to show.
+ *
+ * In the normal build there is always something to pick, so this is the login
+ * page plus the connection error it must display. In the embedded build the
+ * server lives in this package: if it is unreachable there is no other server
+ * to choose, and the login form would be a dead end for a problem it cannot
+ * fix. That case gets a dialog naming the address instead — the overlay may
+ * already be gone, so a page change alone would look like a plain failure.
+ */
+async function serveLoginOrExplain(reason: string): Promise<void> {
+  if (isEmbeddedServerActive()) {
+    const labels = embeddedServerLabels(resolveNativeLanguage())
+    const url = getStore().get('serverUrl')
+    dialog.showErrorBox(
+      labels.stoppedTitle,
+      labels.stoppedMessage.replace('{url}', url) + (reason ? `\n\n${reason}` : ''),
+    )
+    return
+  }
+  try {
+    await mainWindow?.loadFile(loginPagePath())
+    const wc = mainWindow?.webContents
+    if (wc) void wc.executeJavaScript(buildConnectErrorScript(reason), true)
+  } catch {
+    /* login page itself failed to load; nothing to report to */
+  }
+}
+
+/**
  * Claim the app-level shortcuts (page zoom, hard reload, DevTools) on this window.
  *
  * Uses `before-input-event` rather than `globalShortcut`: a global shortcut is
@@ -217,7 +256,16 @@ function registerUnloadGuard(win: BrowserWindow): void {
       message: labels.message,
       detail: labels.detail,
     })
-    if (choice === 0) event.preventDefault()
+    if (choice === 0) {
+      // For `will-prevent-unload`, `preventDefault` means "ignore the
+      // renderer's veto and unload anyway" — i.e. the user chose to leave.
+      event.preventDefault()
+      return
+    }
+    // The window refused to close, which also aborts whatever quit started this
+    // close. Clearing the flag is what makes the NEXT close ask again instead of
+    // quitting outright — the very decision the user just declined.
+    cancelPendingQuit()
   })
 }
 
@@ -319,7 +367,13 @@ export function toggleMaximizeMainWindow(): void {
   else mainWindow.maximize()
 }
 
-/** Close the main window (frameless header control). */
+/**
+ * Close the main window (frameless header control).
+ *
+ * Goes through the window's own `close` event rather than acting directly, so
+ * this button, Alt+F4 and the taskbar's "close" all take the same route into
+ * `closeFlow.ts`.
+ */
 export function closeMainWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close()
 }
@@ -327,6 +381,36 @@ export function closeMainWindow(): void {
 /** Whether the main window is currently maximized (frameless header control). */
 export function isMainWindowMaximized(): boolean {
   return !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized()
+}
+
+/**
+ * Route every close of the main window through the close-behaviour flow.
+ *
+ * The header's close button only reaches the main process over IPC, but Alt+F4,
+ * the taskbar's "close" and the window manager's X all fire the window's own
+ * `close` event — intercepting here is what makes them behave identically
+ * instead of some quitting and some asking.
+ *
+ * The event is prevented up front: the flow decides (quit / hide to tray /
+ * ask), and `app.quit()` re-enters this handler with `isAppQuitting()` true, at
+ * which point it steps aside. macOS is left alone — it keeps the native frame,
+ * its red button already means "close the window, keep the app" and the dock
+ * icon is the way back, so there is nothing to ask.
+ */
+function registerCloseInterception(win: BrowserWindow): void {
+  if (process.platform === 'darwin') return
+  // Windows shuts down by closing every window. That is not a user close: the
+  // dialog would appear on a machine that is already going away, and preventing
+  // the close can hold the shutdown up.
+  win.on('query-session-end', () => noteOsShutdown())
+  win.on('close', (event) => {
+    if (isAppQuitting()) return
+    event.preventDefault()
+    // A flow that throws (a dialog that cannot open, a tray that cannot be
+    // created) leaves the window open, which is the safe outcome — it must not
+    // become an unhandled rejection either.
+    void handleCloseRequest(win).catch(() => { /* window stays open */ })
+  })
 }
 
 /**
@@ -440,6 +524,7 @@ export function createMainWindow(): BrowserWindow {
   registerContextMenu(mainWindow.webContents)
   registerKeyboardShortcuts(mainWindow.webContents)
   registerUnloadGuard(mainWindow)
+  registerCloseInterception(mainWindow)
   registerWindowStateReporting(mainWindow)
   // After the window's own wiring, before anything can show it: a listener that
   // missed the first `show` would think the window is still hidden.
@@ -456,14 +541,7 @@ export function createMainWindow(): BrowserWindow {
       // Both paths land on the login page. A timeout also reports why, through
       // the same onConnectError hook the did-fail-load fallback uses — without
       // it the user would be returned to the login page with no explanation.
-      void mainWindow?.loadFile(loginPagePath())
-        .then(() => {
-          if (reason !== 'timeout') return
-          const wc = mainWindow?.webContents
-          if (!wc) return
-          void wc.executeJavaScript(buildConnectErrorScript('Connection timed out'), true)
-        })
-        .catch(() => { /* login page itself failed to load; nothing to report to */ })
+      void serveLoginOrExplain(reason)
     },
   })
 
@@ -503,18 +581,9 @@ export function createMainWindow(): BrowserWindow {
     // login page the user is about to see.
     abortVersionGate()
     // Server page failed to load (unreachable) — fall back to the server-selection
-    // login page so the user can pick another server instead of a blank page.
-    // loadFile resolves once the page is ready, so the failure can then be
-    // handed to the page's onConnectError() — the same hook Android calls.
-    // Without it the fallback was silent: the user got the login page back
-    // with no indication of why the connection failed.
-    void mainWindow?.loadFile(loginPagePath())
-      .then(() => {
-        const wc = mainWindow?.webContents
-        if (!wc) return
-        void wc.executeJavaScript(buildConnectErrorScript(errorDesc || ''), true)
-      })
-      .catch(() => { /* login page itself failed to load; nothing to report to */ })
+    // login page so the user can pick another server instead of a blank page,
+    // handing it the reason the same way Android does.
+    void serveLoginOrExplain(errorDesc || '')
   })
   setTimeout(showWindow, 2000)
 

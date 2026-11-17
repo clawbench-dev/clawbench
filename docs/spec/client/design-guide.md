@@ -50,6 +50,8 @@
 
 组件里 `import '@/assets/x.css'` 或 `@import`，**不加 scoped**，所以同样是全局作用域。放的是**成组的基础设施样式**：`modal-card.css`、`modal-footer-btn.css`（`.fbtn`）、`meeting-form.css`（会议表单原语：分组标题 / 输入框 / 提示行 / 勾选行，创建页与会中会议管理共用）、`refresh-spin.css`、`search-bar.css`、`theme-picker.css`、`resize-divider.css`、`code-link-preview.css` 等。
 
+**`dock.css`**（Dock 按钮 `.dock-btn` / 角标 `.dock-badge*` / 溢出菜单行 `.dock-overflow-*`）也在这里，而不是留在 App.vue 的 scoped 块里：Dock 按钮已经抽成 `components/dock/DockTabButton.vue`，scoped 规则**只能到子组件的根元素**，图标与角标在它内部会静默丢样式。状态类（`has-unread` / `has-running` / `just-completed`）由按钮按插件自己声明的 `appearance` 谓词挂上，样式仍留在本文件。
+
 判断标准：这套样式是**一个原语**（按钮语言、弹窗外壳、刷新动效），且被多个组件用 → 放这里。
 
 ### 第三层：SFC `<style scoped>` — 组件私有
@@ -397,7 +399,7 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **颜色五个状态**：平时 `--text-secondary` + 透明底；悬停 `--text-primary` + 12% 文字色底；按下 14% 主题色底（**不缩放**，全仓没有按下缩放动画）；选中（开关亮起）主题色文字 + 14% 主题色底；危险操作用 `is-danger`（`--color-red`，12% 悬停 / 14% 按下）。主题色不能当正文颜色（15 个主题低于 4.5 对比度，最差 1.92），所以只有图标和「这一个主操作」能用。
 - **条自身底色跟随所在面板**（`transparent`），不要铺 `--bg-secondary`：页头和页脚都是被一条发丝线分开的操作区，不是第二种底色。
 - **按钮之间的间距也由 ActionBar 给**（默认 8dp，写在组件里、宿主 CSS 覆盖不了）。宿主不要自己写 `gap`：有一条曾经是 0，按钮底色一亮两个按钮就粘成一个。终端键盘是唯一例外，传 `:gap="0"`。
-- **一行工具条的高度是一个 token**：`--toolbar-row-height`（32dp）+ `--toolbar-btn-size`（26dp）。凡是和 ActionBar 占同一个位置的手写工具条（文件管理器多选、代码预览的 meta 行）都必须用它们——文件管理器那条以前按内容撑高，一进多选就比浏览工具条矮 8px，整条工具栏跳一下。
+- **一行工具条的高度是一个 token**：`--toolbar-row-height`（32dp）+ `--toolbar-btn-size`（26dp）。内容区里和 ActionBar 占同一个位置的手写工具条（代码预览的 meta 行、目录预览 meta 行、邮件阅读页的操作行）必须用 `--toolbar-row-height`，按钮用 `--toolbar-btn-size`（文件管理器多选工具条的按钮同理）。**页头行不是内容工具条**：文件管理器顶栏、邮件栏、统计 / 终端页签条、各下钻页的 header 都是 `--header-height`（36dp），由 `css/components.css` 里 `.col-left .tab-panel :is(...)` 那条共享规则在**两种布局**下统一给高度、纵向内边距 0、底色与发丝线——组件自己再写一个 28/32/34dp 的高度就会在窄屏（没有宽屏 chrome 规则时）和下钻页之间跳变。
 - `size="custom"` 是给「不是工具条」的行留的（聊天输入区、终端键盘），它们保留自己的几何和配色；其中聊天那条按下态照抄上面那套数值。
 - **条里只放图标按钮**（外加标题/面包屑/计数这类不可点的固定文字项）。文字控件（上下文切换器：仓库徽标、账号/文件夹下拉、分支选择器）放在条**外面**、和条同一行。它们宽度由内容决定，塞进条里有两个后果：被「按钮 = 26/28 方块」的规则压成一个方块（集成面板的仓库名一度只剩一个字母），以及「折叠几个按钮」取决于这段文字今天有多长。既有先例：Git 提交历史的分支选择器、集成面板的仓库徽标、邮件栏的两个选择器，都是「外层一行 = 标题/选择器 + 内层 ActionBar」。
 
@@ -498,9 +500,11 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **⚠️ `.modal-body` / `.bs-body` 没有内边距，调用方必须自己加**：外壳的 body 刻意留白为零，好让调用方渲染通栏列表、页签条或必须贴边的分隔线。除此之外**每个**调用方都要自己补内边距（惯例 `var(--space-6) var(--space-7)`，即 12/16dp），否则内容会贴着卡片左右边缘、紧贴标题下沿，看起来就是布局坏了——列统计面板第一版正是这么翻车的。窄屏抽屉与宽屏卡片**两种形态都没有**，不要以为只有一种要补。
 - **宽度只有两档，都写在 token 里、不给调用方留口子**：`css/variables.css` 定义 `--modal-width-narrow`（520）与 `--modal-width-wide`（960），`ModalDialog` / `BottomSheet` 各有一个 `size="narrow" | "wide"`（默认 `narrow`），渲染成修饰类 `.modal-dialog--narrow/--wide`、`.bs-panel--narrow/--wide`，`modal-card.css` 把修饰类映射到这两个 token。调用方**选档位，不选数字**：没有 `maxWidth` prop，也**不允许**在组件里覆盖 `--modal-max-width`（`assets/__tests__/modalWidth.css.test.ts` 全仓扫描拒绝）。历史包袱两笔：曾经每处调用传 380/420/480/520/560/720 六种值再统一乘一个 1.3 的魔法系数；后来又变成「弹窗 900 + 抽屉 624 + 四个抽屉在非 scoped 样式块里各自覆盖 900/960」——同一屏两种规则，`.tool-detail-sheet` / `.session-search-sheet` / `.team-member-sheet` / `.content-search-sheet` 这些覆盖已全部删除，改传 `size="wide"`。
   - **选档判据是「多出来的宽度会不会变成信息」**：会（diff 行更少折行、代码/终端不折、消息原文更少截断、表格列更松、网格多一列）→ `wide`；不会（表单字段、开关列表、确认框、单列设置项）→ `narrow`，否则只是把一行字拉成一页宽。当前 `wide` 的是：消息推荐（含其下钻页）、工具详情、文件变更/diff、Git 历史、代码预览、文件内搜索、内容搜索、会话搜索、群成员详情、/btw 旁路回答、引用详情、快捷键表、消息元数据、表格行、头像选择、主题选择、终端按键配置。
-  - **自绘外壳的弹窗也得在同一把尺子上**：`DialogOverlay`（通用确认/输入）、`UpgradeDialog`、`UpgradePromptOverlay`、`SettingsRestartDialog`、`AgentInstallDialog`、`WelcomeOverlay` 不用共享组件，但它们的 `max-width` 一律写 `var(--modal-width-narrow)`——否则同一屏又出现 320/380/420 三种宽度。
+  - **自绘外壳的弹窗也得在同一把尺子上**：`DialogOverlay`（通用确认/输入）、`UpgradeDialog`、`UpgradePromptOverlay`、`SettingsRestartDialog`、`AgentInstallDialog` 不用共享组件，但它们的 `max-width` 一律写 `var(--modal-width-narrow)`——否则同一屏又出现 320/380/420 三种宽度。
+  - **`WelcomeOverlay` 是唯一例外**：它是首启的智能体选择网格（桌面端三列卡片），不是表单弹窗，宽度用 `var(--welcome-panel-width)`（1120dp，仍是 `min(..., 100%)` 受视口约束）。把它塞进 narrow 会把三列压成一条窄列表，塞进 wide 又比演示的卡片尺寸小一档。这条例外由 `modalWidth.css.test.ts` 单独钉住；模态宽度阶梯仍然只有两档。
   - **窄屏（手机）不受影响**：`.modal-dialog` 是 `width: 100%`，overlay 左右各有 `--space-8`(20px) 内边距，任何 ≥ 视口宽度的 `max-width` 都不会生效。
 - **共享外壳的关闭按钮与返回**：两个外壳各有一个右上角圆形关闭按钮 `.modal-close-btn`（lucide `X`、28px，与下钻返回键 `.fd-back-btn` 同尺寸；底色沿用 `.window-controls` 的 `--text-primary` 混入 `--bg-secondary` 配方，静止 16% / hover 24% / active 32%，跨 36 主题最差对比 1.110，hover 用 `@media (hover:hover)` 门控避免触屏残留）。**它必须绝对定位**——header 的右侧动作簇（如 `.bs-header-actions`）自带 `margin-left:auto`，把它作为 flex 子项会被挤走；因此 header 预留对应右内边距（窄屏 BottomSheet 用 `.bs-header-has-close` 修饰类，因 TabPanel 复用 `.bs-header` 却无关闭按钮）。**header 点击不再关闭**（避免误触），backdrop 点击与 Escape 保留。**ModalDialog 会注册返回处理器**（优先级 `PRIORITY_OVERLAY+1`，高于所有 BottomSheet 抽屉），因此 Android 返回键与左右边缘内划都能关闭弹窗——此前它没注册，弹窗对返回无响应。
+- **标题图标方块自带 4dp 内边距**（`.bs-header-icon` / `.modal-header-icon`，24dp 方块）：这两个类大多数时候**直接挂在 lucide `<svg>` 上**，CSS 的宽高会盖过 svg 的 width 属性——没有内边距时 16dp 的图形会被拉满整个 24dp 方块，看起来比旁边所有图标胖一圈。内边距把 svg 的可视区收回 16dp。**例外**：`AgentIcon` / `FileIcon` 这类自己定尺寸的组件不要直接挂（内边距会挤小它们自己的盒子），要包一层 `<span class="bs-header-icon">`（AcpSessionDrawer / FileDiffsDrawer / FileDetailsDrawer / CodeLinkPreview 是先例）。守卫：`assets/__tests__/modalHeaderIcon.css.test.ts`。
 - **跨面板弹层不要用 `useTabDrawer` 的单 tab 绑定**（`effectiveOpen = currentTab===tabId && open`）——窄屏下会把可从多面板触发的弹层在其它 tab 静默吞掉。正解是直绑共享 `open` + 切 tab 时显式关闭。
 
 ### 块级横屏查看（表格 / 代码块）
@@ -512,6 +516,15 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 - **导航点击要「回到原块上重放」**：克隆里的 `a[href]`、文件路径、commit、外链按钮点下去应当触发容器原有的处理（打开预览、跳文件、确认外链），而不是在克隆里空转。做法是按**索引路径**映射回原树的对应节点再 `click()`；克隆与源结构 1:1（不增删元素）是这条映射成立的前提。源块在浮层打开期间被流式重渲染替换时，索引路径会失效，此时退回按**身份属性**（`data-file-path` / `data-commit-sha` / `data-worktree-path` / `data-url` / `href`）找活着的同源节点。
 - **换行开关只改克隆，关闭时回写**：浮层里切换行若只作用于克隆，关掉就白切了；若直接改源块，浮层里那份又不同步。因此关闭时把克隆的 wrap 状态同步回源块及其按钮。**表格用 `word-wrap` / `no-wrap` 一对类，代码块只有 `word-wrap`**——给代码块补 `no-wrap` 会得到一个没有任何规则消费的死类。
 - **只在「触屏 + 竖屏」才旋转 90°**：判据是 `pointer: coarse` 且高 > 宽。桌面窗口恰好很窄时不能转——侧躺的表格在桌面是干扰而不是帮助（那个尺寸下按钮本来也隐藏）。
+
+### 表格的滚动容器（`DataTable` 的 `.dt-scroll`）
+
+聊天里的表格自带滚动容器，它有两个「手机上手滑不动」的坑，两条都要守：
+
+- **纵向不拦，横向才拦**：`overscroll-behavior: contain` 是**整条轴**的——只要这个盒子是滚动容器（表格比气泡宽就够了，纵向根本不需要滚），竖滑就再也不会链给聊天区，手指落在表格上屏幕一动不动。只写 `overscroll-behavior-x: contain`（横向仍要拦：表格滑到头不能把滑动甩给挂着切换会话手势的聊天区）。
+- **触屏不设高度上限**：`maxHeight` 有值就是嵌套纵向滚动——手指在表格上滑，滚的是那个 420px 窗口，屏幕不动；滑到头还有上一条拦着。`@media (pointer: coarse)` 里把 `max-height` 整条关掉，表格跟着消息一起长，滚动交给消息本身；专心读长表走「横屏查看」（浮层里由浮层自己滚）。上限因此走 `--dt-scroll-max-h` 自定义属性而不是内联 `max-height`——内联样式会赢过任何选择器，媒体查询永远压不掉它。
+
+守卫：`components/common/__tests__/dataTableTouchScroll.css.test.ts`。
 
 ### 图标
 
@@ -769,9 +782,11 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 ### 加一个 dock tab
 
-- [ ] `dockTabs.ts`（union + `DOCK_TABS`，**保持零 import**）
-- [ ] `dockTabMeta.ts` 加图标
-- [ ] 深链接：模块级 pending ref + `watch([pending, active])`
+- [ ] `web/src/plugins/<id>/plugin.ts`（清单 + 运行时资源；**不能** import 自己的面板）
+- [ ] `dockTabs.ts` 的 `DOCK_TAB_ORDER` 加一行 id（**保持零 import**；顺序是产品决策，手写）
+- [ ] 按钮外观要新状态 → 加 `appearance` 谓词，样式写 `assets/dock.css`，**不要**在 App.vue 里给具体插件加分支
+- [ ] 深链接：在 `plugin.ts` 的 `deeplinks` 里声明，用 `ctx` 的导航原语（`switchTab` / `hotSwitchProject` / `tabBlocked`），不要在 App.vue 写 handler
+- [ ] 完整字段与验证清单见 [`docs/plugin-dev/README.md`](../../plugin-dev/README.md)
 
 ### 加一个面板 / 面板里的新视图
 
@@ -824,6 +839,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/live/__tests__/meetingFooterButtons.test.ts` | 会议页脚动作条与任务动作条逐声明一致（`padding` / `background` / `border-top` / `flex-shrink`）、页脚里只能用 `.fbtn`（不得回退 `.meeting-btn`）、每个组件自己 import `modal-footer-btn.css` |
 | `components/live/__tests__/meetingFormParity.test.ts` | 创建会议与会中「会议管理」是同一套表单：原语只在 `assets/meeting-form.css` 声明一次（组件不得各写一份）、画面都是 `CaptureSourceGrid`（含「不共享」格子，不得回退屏幕勾选框）、摄像头/麦克风都是 `DeviceChoiceGrid`、分组标题都是 `meeting.create.av`、勾选行都是 `.meeting-check`；会中 tab 页不得给 `.live-panel__body.live-dialog` 设 `max-width`/`width`/`margin`（内容随面板宽度铺满） |
 | `assets/__tests__/modalWidth.css.test.ts` | **宽度只有两档**：`--modal-width-narrow/wide` 各一份且窄 < 宽、`modal-card.css` 只把修饰类映射到 token、全仓组件**不得**自设 `--modal-max-width` 或给弹窗外壳写裸 `max-width` 数字 |
+| `assets/__tests__/modalHeaderIcon.css.test.ts` | 标题图标方块：`.bs-header-icon` / `.modal-header-icon` 都保持 24dp 且**必须带 4dp 内边距**（否则直接挂在 lucide svg 上时 16dp 图形被拉满 24dp 方块）、两处几何声明逐项一致 |
 | `components/common/__tests__/wallpaperSurfaceTransparency.css.test.ts` | 壁纸开启后各表面透明度不叠乘 |
 | `components/common/__tests__/wallpaperBlurCost.css.test.ts` | 壁纸模糊不留 `will-change` |
 | `components/common/__tests__/resizeDivider.css.test.ts` | 拖拽分隔条外观 |

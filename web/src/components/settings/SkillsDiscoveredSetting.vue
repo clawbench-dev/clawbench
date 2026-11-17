@@ -30,7 +30,12 @@
       {{ t('settings.items.skillsNoMatch', { query: searchQuery }) }}
     </div>
 
-    <div v-for="s in filteredSkills" :key="s.path" class="skills-item">
+    <div
+      v-for="s in filteredSkills"
+      :key="s.path"
+      class="skills-item"
+      :class="{ 'is-shadowed': s.shadowed_by }"
+    >
       <div class="skills-item-head">
         <span class="skills-item-name">{{ s.name }}</span>
         <!-- Native skills name their AI backend(s) on their own line below
@@ -48,6 +53,34 @@
           <AlertTriangle :size="12" />
           {{ t('settings.items.skillsNameMismatch') }}
         </span>
+        <!-- Two skills can share a name; the listing shows both, but only the
+             winner is what "#name" resolves to. Without this label the two rows
+             look identical and the user cannot tell which one is live. -->
+        <span
+          v-if="s.shadowed_by"
+          class="skills-item-shadowed"
+          :title="t('settings.items.skillsShadowedDesc', { path: s.shadowed_by })"
+        >
+          {{ t('settings.items.skillsShadowed') }}
+        </span>
+        <!-- Per-skill opt-out from AUTOMATIC injection. An explicit "#name"
+             reference keeps working, hence the wording "自动注入" rather than
+             "启用". The switch geometry comes from the shared
+             .settings-item__switch rules in components.css — only the layout
+             (push to the right) lives here, so its size cannot drift from every
+             other switch in the settings panel. -->
+        <label
+          class="settings-item__switch skills-item-switch"
+          :title="t('settings.items.skillsAutoInjectDesc')"
+        >
+          <input
+            type="checkbox"
+            class="settings-item__switch-input"
+            :checked="isSkillInjected(s.name)"
+            @change="toggleInjected(s.name, ($event.target as HTMLInputElement).checked)"
+          />
+          <span class="settings-item__switch-track"></span>
+        </label>
       </div>
       <!-- One chip per backend, wrapping when the line runs out of width. No
            "agent"/"backend" prefix: the icon already says which tool it is. -->
@@ -72,13 +105,29 @@
         <FolderOpen :size="12" class="skills-item-path__icon" />
       </button>
     </div>
+
+    <!-- Directories that look like a skill (they contain SKILL.md) but failed
+         to load. Collapsed by default: it is a diagnostic, not the main list,
+         but without it a broken skill just silently disappears. -->
+    <div v-if="skipped.length" class="skills-skipped">
+      <button class="skills-skipped__toggle" type="button" @click="showSkipped = !showSkipped">
+        <ChevronRight :size="12" :class="{ 'is-open': showSkipped }" />
+        {{ t('settings.items.skillsSkipped', { count: skipped.length }) }}
+      </button>
+      <ul v-if="showSkipped" class="skills-skipped__list">
+        <li v-for="s in skipped" :key="s.path" class="skills-skipped__item">
+          <span class="skills-skipped__path">{{ s.path }}</span>
+          <span class="skills-skipped__reason">{{ skippedReason(s.reason) }}</span>
+        </li>
+      </ul>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, FolderOpen, RefreshCw } from 'lucide-vue-next'
+import { AlertTriangle, ChevronRight, FolderOpen, RefreshCw } from 'lucide-vue-next'
 import SearchInput from '@/components/common/SearchInput.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -88,6 +137,8 @@ import {
   loadSkills,
   rescanSkills,
   skillSourceLabel,
+  isSkillInjected,
+  setSkillInjected,
   type SkillRow,
 } from '@/composables/useSkillsState'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
@@ -96,9 +147,22 @@ import { revealInFileManager, verifyFilePaths } from '@/composables/useFilePathA
 
 const { t } = useI18n()
 const { getServerValueWithDefault } = useSettingsConfig()
-const { skills, rescanning } = useSkillsState()
+const { skills, skipped, rescanning } = useSkillsState()
 
 const searchQuery = ref('')
+const showSkipped = ref(false)
+
+function toggleInjected(name: string, injected: boolean) {
+  void setSkillInjected(name, injected)
+}
+
+// Stable codes from the server, localized here so the wire format never
+// depends on the server's language. An unknown code falls back to itself.
+function skippedReason(code: string): string {
+  const key = `settings.items.skillsSkipReason_${code}`
+  const text = t(key)
+  return text === key ? code : text
+}
 
 // Case-insensitive substring match on the skill name — the same "narrow the
 // list as you type" behavior as the other search boxes in the app.
@@ -319,5 +383,76 @@ function openPath(p: string) {
 }
 .skills-item-path__icon {
   flex-shrink: 0;
+}
+/* Layout only: the switch's geometry comes from the shared
+   .settings-item__switch rules (components.css). Re-declaring size here would
+   compile to a scoped 0,2,0 selector and silently outrank the shared one. */
+.skills-item-switch {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+/* A shadowed row stays in the list (the user needs to see everything that is
+   installed) but is dimmed: "#name" resolves to a different copy. */
+.skills-item.is-shadowed {
+  opacity: 0.55;
+}
+.skills-item-shadowed {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px dashed var(--border-color);
+  white-space: nowrap;
+}
+/* Diagnostics block: collapsed by default, sits after the main list. */
+.skills-skipped {
+  border-top: 1px solid var(--border-color);
+  padding: var(--space-4) var(--space-7);
+}
+.skills-skipped__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.skills-skipped__toggle:hover {
+  color: var(--text-secondary);
+}
+.skills-skipped__toggle svg {
+  transition: transform var(--duration-fast) ease;
+}
+.skills-skipped__toggle svg.is-open {
+  transform: rotate(90deg);
+}
+.skills-skipped__list {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.skills-skipped__item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  font-size: var(--font-size-xs);
+}
+.skills-skipped__path {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.skills-skipped__reason {
+  flex-shrink: 0;
+  color: var(--color-yellow);
 }
 </style>

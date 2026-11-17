@@ -47,6 +47,9 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 		writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks, "hasUnread": hasUnread})
 
 	case http.MethodPost:
+		// The tasks master switch refuses this route at the router's feature
+		// gate (see RegisterRoutes), so a client that ignores the switch cannot
+		// create a task that will never fire.
 		var req struct {
 			Name       string `json:"name"`
 			CronExpr   string `json:"cron_expr"`
@@ -61,7 +64,7 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocog
 			// An event task always watches its project's bound repository, so
 			// there is no repository parameter.
 			EventTypes string `json:"event_types"`
-			// Script is an optional pre-AI shell script (cron tasks only).
+			// Script is an optional pre-AI shell script (every trigger kind).
 			Script string `json:"script"`
 			// ScriptTimeout bounds Script in seconds; 0 means the default.
 			ScriptTimeout int `json:"script_timeout"`
@@ -291,7 +294,7 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			// repository is always the project's binding, so it is not a
 			// per-task parameter.
 			EventTypes string `json:"event_types"`
-			// Script is an optional pre-AI shell script (cron tasks only).
+			// Script is an optional pre-AI shell script (every trigger kind).
 			// A pointer so "not provided" (leave unchanged) is distinguishable
 			// from "set to empty" (clear) — this endpoint is a partial update,
 			// so an unconditional assignment would let any caller that omits
@@ -332,6 +335,9 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			return
 		}
 		if req.Action == "resume" {
+			if rejectIfTasksDisabled(w, r) {
+				return
+			}
 			if err := service.GlobalScheduler.ResumeTask(taskID); err != nil {
 				model.WriteError(w, model.Internal(err))
 				return
@@ -359,6 +365,12 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			return
 		}
 		if req.Action == "trigger" {
+			// Manual runs are refused while the switch is off, independently of
+			// the scheduler's own gate: the API must say why, not start a run
+			// that silently does nothing.
+			if rejectIfTasksDisabled(w, r) {
+				return
+			}
 			// An event task's prompt is written against the event context the
 			// trigger injects ({{TITLE}}, {{URL}}, ...). A manual run has no
 			// event to inject, so the prompt would execute with its placeholders
@@ -440,7 +452,21 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			return
 		}
 
-		// Full task update — task already fetched and verified above
+		// Full task update — task already fetched and verified above.
+		//
+		// Everything below is the "use the feature" path (edit / re-arm), so it
+		// is refused while the switch is off. The read/cancel/stop/delete-*
+		// actions above stay available: they are how a user inspects or cleans
+		// up after the switch cancelled everything.
+		//
+		// This check cannot move to the router's feature gate: the actions above
+		// arrive as PUT with `action` in the BODY, exactly like this update, so
+		// method+path alone cannot tell "cancel a run" (must pass) from "re-arm
+		// the task" (must be refused). The gate therefore exempts the whole
+		// /api/tasks/ subtree and the decision stays here.
+		if rejectIfTasksDisabled(w, r) {
+			return
+		}
 
 		// Update fields if provided
 		if req.Name != "" {

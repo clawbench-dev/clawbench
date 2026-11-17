@@ -12,58 +12,36 @@ import (
 // ACP tool call routing — dispatches to per-agent parsing functions
 // ---------------------------------------------------------------------------
 
-// parseACPToolCall dispatches ACP ToolCall parsing to the appropriate per-agent
-// function based on the backend identifier (e.g. "claude", "codebuddy").
-// Backends not listed here (e.g., "grok", "copilot", "vecli")
-// fall through to parseGenericACPToolCall.
+// parseACPToolCall dispatches ACP ToolCall parsing to the backend's registered
+// behavior hook, falling back to the legacy in-package mapper.
+//
+// Backends whose frames need no special handling declare nothing and take the
+// generic path; a backend with a private shape implements ParseToolCall in its
+// own sub-package.
 func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
-	switch backend {
-	case "claude", "qoder", "qodercn":
-		return parseClaudeACPToolCall(tc)
-	case "codebuddy":
-		return parseCodeBuddyACPToolCall(tc)
-	case "opencode", "mimo":
-		return parseOpenCodeACPToolCall(tc)
-	case "kimi":
-		return parseKimiACPToolCall(tc)
-	case "codex":
-		return parseCodexACPToolCall(tc)
-	case "pi":
-		// pi-acp forwards Pi's native tool arguments, including the nested
-		// edits[] array, so it needs the tool-aware Pi normalizer rather than
-		// the flat generic remap.
-		return parsePiACPToolCall(tc)
-	case "openclaw":
-		// openclaw's per-tool path field ("path" for read/write/edit but also
-		// for ls) and nested edits[] make the flat remap table unusable.
-		return parseOpenClawACPToolCall(tc)
-	default:
-		return parseGenericACPToolCall(tc, backend)
+	if b := acpBehavior(backend); b != nil && b.ParseToolCall != nil {
+		return b.ParseToolCall(tc)
 	}
+	return parseACPToolCallLegacy(backend, tc)
 }
 
-// parseACPToolCallUpdate dispatches ACP ToolCallUpdate parsing to the appropriate
-// per-agent function based on the backend identifier.
-// Backends not listed here fall through to parseGenericACPToolCallUpdate.
+// parseACPToolCallUpdate dispatches ACP ToolCallUpdate parsing to the
+// backend's registered behavior hook, falling back to the legacy mapper.
 func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *ToolCall {
-	switch backend {
-	case "claude", "qoder", "qodercn":
-		return parseClaudeACPToolCallUpdate(tcu)
-	case "codebuddy":
-		return parseCodeBuddyACPToolCallUpdate(tcu)
-	case "opencode", "mimo":
-		return parseOpenCodeACPToolCallUpdate(tcu)
-	case "kimi":
-		return parseKimiACPToolCallUpdate(tcu)
-	case "codex":
-		return parseCodexACPToolCallUpdate(tcu)
-	case "pi":
-		return parsePiACPToolCallUpdate(tcu)
-	case "openclaw":
-		return parseOpenClawACPToolCallUpdate(tcu)
-	default:
-		return parseGenericACPToolCallUpdate(tcu, backend)
+	if b := acpBehavior(backend); b != nil && b.ParseToolCallUpdate != nil {
+		return b.ParseToolCallUpdate(tcu)
 	}
+	return parseACPToolCallUpdateLegacy(backend, tcu)
+}
+
+// TODO(phase3): delete once every backend registers ParseToolCall.
+func parseACPToolCallLegacy(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
+	return parseGenericACPToolCall(tc, backend)
+}
+
+// TODO(phase3): delete once every backend registers ParseToolCallUpdate.
+func parseACPToolCallUpdateLegacy(backend string, tcu acp.SessionToolCallUpdate) *ToolCall {
+	return parseGenericACPToolCallUpdate(tcu, backend)
 }
 
 // ---------------------------------------------------------------------------

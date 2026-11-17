@@ -107,7 +107,9 @@
 
 1. **DOMPurify** 清洗：去脚本、事件属性，并禁掉 `<form>/<input>/<button>/<iframe>` 等能伪装成应用控件或自行加载内容的标签。
 2. **`<iframe sandbox>`**：`allow-same-origin allow-popups allow-popups-to-escape-sandbox`，**没有 `allow-scripts`**——即使清洗漏了，脚本也跑不起来。`allow-same-origin` 只为了让父页面能改写链接，不解除脚本限制。
-3. **文档内 CSP**：`default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:`。**远程图片默认不放行**（追踪像素），用户点「显示图片」才把 `https: http:` 加进 `img-src`。
+3. **文档内 CSP**：`default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:`。**远程图片默认放行**（`img-src` 直接含 `https: http:`，排版与真实邮件一致）；在意追踪像素 / 阅读回执的用户可以在本机设置里关掉，关掉后 CSP 回到只允许 `self` + `data:`，顶部出现「外部图片已拦截」，单封点「显示图片」才把 `https: http:` 加进 `img-src`（单封放行不解除全局拦截）。
+
+> **开关是本机设置（`mailLoadRemoteImages`，默认开）**，只影响这台设备怎么画邮件，不动服务端收信。默认放行是有意的：图片被一律拦掉时邮件排版几乎全废，而多数用户并不知道「显示图片」这个按钮存在；把风险写进设置描述（发件人可得知已打开、看到 IP），需要隐私的人自己关。
 
 `cid:` 内嵌图在服务端就重写成 `/api/mail/messages/{id}/attachments/{aid}`，浏览器永远看不到解析不了的 cid URL。
 
@@ -142,6 +144,8 @@
 - 同一封邮件对同一个任务只触发一次（`mail_task_triggers` 去重表），与重复同步、重启无关。
 - 单次收信每个任务最多触发 5 次，避免一次收到上百封时启动上百个 AI 回合。
 - 触发时把邮件上下文前置到 prompt（账号、文件夹、发件人、收件人、主题、时间、正文摘要），也支持 `{{mailSubject}}` 等占位符。
+- **门控脚本**：子串条件都通过、去重占位完成之后，任务还可以再跑一段脚本（任务表单「执行前检查」）。脚本能读到 `CLAWBENCH_MAIL_*`（账号、文件夹、发件人、收件人、主题、时间、是否带附件、本地邮件 id），正文走标准输入；退出码非 0 或超时就跳过这次，不建会话、不发通知。配置了脚本时即使没填「正文包含」也会拉取正文——脚本需要它，拉不到就跳过这封、下次同步重试。
+- 跳过只记一条 `skipped` 执行记录，任务保持 `active`（邮件任务没有 cron 计划，不参与次数结算）。
 
 实现见 `internal/service/mail_task_trigger.go`，配置界面在任务表单的「触发方式 → 邮件」。
 

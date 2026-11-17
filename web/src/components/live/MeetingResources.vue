@@ -34,7 +34,7 @@
            paint the accent orange, which everywhere else means "running". The
            edge stripe is absolutely positioned so it costs no layout shift. -->
       <div
-        v-if="shareToken && shareLinks.length > 0"
+        v-if="shareToken && shareLinks.length > 0 && shareFeatureOn"
         class="res-share-card"
         :data-state="shareEnabled ? 'shared' : 'private'"
         data-role="meeting-link"
@@ -123,6 +123,7 @@
           <Folder v-if="group.key === 'folder'" :size="11" />
           <AudioLines v-else-if="group.key === 'audio'" :size="11" />
           <ImageIcon v-else-if="group.key === 'shots'" :size="11" />
+          <Clapperboard v-else-if="group.key === 'recording'" :size="11" />
           <Link2 v-else :size="11" />
           {{ group.title }}
           <span class="res-group__count">{{ group.items.length }}</span>
@@ -219,6 +220,7 @@ import { useI18n } from 'vue-i18n'
 import {
   AudioLines,
   Captions,
+  Clapperboard,
   Copy,
   ExternalLink,
   FileText,
@@ -253,6 +255,7 @@ import { buildPathThumbUrl } from '@/utils/fileIcon'
 import { isThumbableExt } from '@/utils/fileManager'
 import { mediaVersionFor } from '@/composables/useMediaWatch'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
+import { useShareKindAllowed } from '@/composables/useFeatureFlags'
 
 const props = defineProps<{
   groups: MeetingResourceGroup[]
@@ -291,6 +294,14 @@ const { openFilePath } = useFilePathAnnotation()
 const { groups, loading, error, total } = toRefs(props)
 const reload = () => emit('reload')
 const shareLinks = computed(() => props.links ?? [])
+
+/**
+ * Whether meeting links may be published right now (功能编排 → 分享, and its
+ * per-kind 会议 permission) — NOT the meeting's own publish flag
+ * (`props.shareEnabled`). When either is off the server refuses the publish, so
+ * the card would offer an action that can only fail — hide it instead.
+ */
+const shareFeatureOn = useShareKindAllowed('meetings')
 
 /**
  * What a visitor to the shared link can read. Four tabs, in the order the share

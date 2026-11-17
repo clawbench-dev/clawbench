@@ -90,6 +90,22 @@ export class ChatPage {
   }
 
   /**
+   * Open a folded run (compact tool calls are ON by default) so its member rows
+   * — individual tool pills and thinking chips — are actually rendered. Any
+   * assertion on a member row must call this first; the run's own row only
+   * reports counts.
+   */
+  async expandToolRun(message: Locator = this.getLastAssistantMessage()): Promise<Locator> {
+    const run = message.locator('[data-tool-group]').first()
+    await expect(run).toBeVisible({ timeout: 5000 })
+    if (!(await run.evaluate((el) => el.classList.contains('is-open')))) {
+      await run.locator('.chat-tool-group-strip').click()
+    }
+    await expect(run.locator('.chat-run-body')).toBeVisible({ timeout: 5000 })
+    return run
+  }
+
+  /**
    * Wait until the backend has no running turn and the frontend's queue is
    * empty.
    *

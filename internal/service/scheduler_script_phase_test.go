@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -630,9 +632,10 @@ func TestRenderScriptPrompt(t *testing.T) {
 		"a stream that ended exactly at the cap was not cut and must not be marked")
 }
 
-// TestExecuteTask_EventTask_IgnoresScript asserts the guard: an event task
-// never runs a script even if one is stored.
-func TestExecuteTask_EventTask_IgnoresScript(t *testing.T) {
+// TestExecuteTask_EventTask_ScriptGateCloses asserts that a forge event task
+// now runs its gating script: a non-zero exit must skip the run, record it as
+// skipped, and leave the task active for the next event.
+func TestExecuteTask_EventTask_ScriptGateCloses(t *testing.T) {
 	skipOnWindows(t)
 	setupSchedulerScriptDB(t)
 
@@ -653,22 +656,118 @@ func TestExecuteTask_EventTask_IgnoresScript(t *testing.T) {
 		RepeatMode:  "unlimited",
 		TriggerMode: "event",
 		EventTypes:  "issue.opened",
-		// A script is stored but must be ignored for event tasks. It exits
-		// non-zero, so if it ever ran it would close the gate and write a
-		// `skipped` row — the assertion below is then meaningful.
-		Script: "exit 1",
-		Status: "active",
+		Script:      "exit 1",
+		Status:      "active",
 	}
 	require.NoError(t, s.AddTask(task))
 
-	// The event task goes straight to the AI phase, which fails because the
-	// backend does not exist. The point is that no `skipped` row is written.
-	s.executeTask(task, task.ProjectPath, "auto", nil, nil)
+	ec := EventContext{EventType: "opened", Repo: "acme/widgets", ItemType: "issue", ItemNumber: 7, Title: "boom"}
+	s.executeTask(task, task.ProjectPath, "event", &ec, nil)
 
-	var skipped int
+	var status, sessionID string
 	require.NoError(t, store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM task_executions WHERE task_id = ? AND status = 'skipped'", task.ID).Scan(&skipped))
-	assert.Zero(t, skipped, "an event task must not run the script")
+		"SELECT status, session_id FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1",
+		task.ID).Scan(&status, &sessionID))
+	assert.Equal(t, "skipped", status, "a closed gate must record a skipped run for an event task")
+	assert.Empty(t, sessionID)
+
+	after, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "active", after.Status, "a gate-closed event run must not pause the task")
+	assert.Equal(t, 1, after.RunCount)
+}
+
+// TestExecuteTask_EmailTask_ScriptGateCloses_StaysActive covers the bookkeeping
+// path an email task used to fall into: with an empty cron_expr, the cron
+// branch of advanceTaskAfterRun failed to parse and paused the task. An email
+// run (gated or not) must simply record the run and stay active.
+func TestExecuteTask_EmailTask_ScriptGateCloses_StaysActive(t *testing.T) {
+	skipOnWindows(t)
+	setupSchedulerScriptDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"script-agent": {ID: "script-agent", Name: "Script Agent", Backend: "nonexistent-backend-xyz"},
+	}
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	s := NewScheduler()
+	t.Cleanup(s.Stop)
+
+	projectPath := t.TempDir()
+	// Inserted directly: AddTask validates the mailbox account, which this
+	// schema does not carry and the gate path never needs.
+	res, err := store.WriteExec(`INSERT INTO scheduled_tasks
+		(project_id, name, cron_expr, agent_id, prompt, script, trigger_mode, session_id, status)
+		VALUES (0, 'Mail Task', '', 'script-agent', 'handle mail', 'exit 1', 'email', '', 'active')`)
+	require.NoError(t, err)
+	id, err := res.LastInsertId()
+	require.NoError(t, err)
+
+	task, err := GetTaskByID(id)
+	require.NoError(t, err)
+	task.ProjectPath = projectPath
+
+	mc := MailEventContext{Subject: "周报", From: "boss@corp.com", Body: "正文", MessageID: 11}
+	s.executeTask(task, projectPath, "email", nil, &mc)
+
+	var status string
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT status FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1", id).Scan(&status))
+	assert.Equal(t, "skipped", status)
+
+	after, err := GetTaskByID(id)
+	require.NoError(t, err)
+	assert.Equal(t, "active", after.Status,
+		"an email task must stay active after a run: it has no cron schedule to settle")
+	assert.Equal(t, 1, after.RunCount)
+}
+
+// TestExecuteTask_ScriptReadsTriggerContext asserts the contract of the script
+// input channel: the trigger's fields are environment variables and the body
+// arrives on stdin.
+func TestExecuteTask_ScriptReadsTriggerContext(t *testing.T) {
+	skipOnWindows(t)
+	setupSchedulerScriptDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"script-agent": {ID: "script-agent", Name: "Script Agent", Backend: "nonexistent-backend-xyz"},
+	}
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	s := NewScheduler()
+	t.Cleanup(s.Stop)
+
+	projectPath := t.TempDir()
+	// Write the environment and stdin to a file, then close the gate so the run
+	// never reaches an AI backend.
+	script := `{ echo "trigger=$CLAWBENCH_TRIGGER"; echo "subject=$CLAWBENCH_MAIL_SUBJECT"; ` +
+		`echo "attach=$CLAWBENCH_MAIL_HAS_ATTACHMENT"; echo "body=$(cat)"; } > seen.txt; exit 1`
+
+	res, err := store.WriteExec(`INSERT INTO scheduled_tasks
+		(project_id, name, cron_expr, agent_id, prompt, script, trigger_mode, session_id, status)
+		VALUES (0, 'Mail Task', '', 'script-agent', 'handle mail', ?, 'email', '', 'active')`, script)
+	require.NoError(t, err)
+	id, err := res.LastInsertId()
+	require.NoError(t, err)
+	task, err := GetTaskByID(id)
+	require.NoError(t, err)
+	task.ProjectPath = projectPath
+
+	mc := MailEventContext{
+		Subject: "发票通知", From: "boss@corp.com", Body: "请查收附件",
+		MessageID: 3, HasAttachments: true,
+	}
+	s.executeTask(task, projectPath, "email", nil, &mc)
+
+	seen, err := os.ReadFile(filepath.Join(projectPath, "seen.txt"))
+	require.NoError(t, err, "the script must have run in the project directory")
+	out := string(seen)
+	assert.Contains(t, out, "trigger=email")
+	assert.Contains(t, out, "subject=发票通知")
+	assert.Contains(t, out, "attach=1")
+	assert.Contains(t, out, "body=请查收附件", "the mail body must arrive on stdin")
 }
 
 // TestExecuteTask_ScriptPhase_CancelDoesNotConsumeRun guards the cancel

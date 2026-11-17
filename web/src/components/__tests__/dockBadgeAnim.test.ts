@@ -162,7 +162,10 @@ describe('dock badge change animation', () => {
 // jsdom has no CSS engine, so this is a source-contract check.
 // ────────────────────────────────────────────────────────────
 describe('dock count badge keeps the pill radius over the dot base', () => {
-  const appVue = readFileSync(join(__dirname, '..', '..', 'App.vue'), 'utf8')
+  // The rule moved to the dock stylesheet when the rail became plugin-driven;
+  // App.vue still owns the templates, so the two halves are read separately.
+  const appVue = readFileSync(join(__dirname, '..', '..', 'assets', 'dock.css'), 'utf8')
+  const appTemplate = readFileSync(join(__dirname, '..', '..', 'App.vue'), 'utf8')
 
   /** Declarations of the first `.dock-badge-count {` rule. */
   function badgeCountDecls(): string {
@@ -181,7 +184,7 @@ describe('dock count badge keeps the pill radius over the dot base', () => {
     // The geometry (min-width, padding, font-size, line-height, centering) is
     // owned by .count-badge now; dropping the class would leave the badge with
     // no size at all.
-    const tags = appVue.match(/class="dock-badge dock-badge-count[^"]*"/g) ?? []
+    const tags = appTemplate.match(/class="dock-badge dock-badge-count[^"]*"/g) ?? []
     expect(tags.length).toBeGreaterThan(0)
     for (const tag of tags) {
       expect(tag).toContain('count-badge')

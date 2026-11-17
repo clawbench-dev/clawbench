@@ -15,6 +15,13 @@ const (
 	ProviderProtocolAnthropic = "anthropic"
 	ProviderProtocolOpenAI    = "openai"
 	ProviderProtocolGemini    = "gemini"
+	// ProviderProtocolPrivate is not a wire protocol at all: it marks a
+	// credential for the backend's OWN service (CodeBuddy's account token). There
+	// is no endpoint to send to and no request shape to choose — the backend
+	// knows both — so the form hides every parameter that only matters for a
+	// third-party endpoint, and the env builder injects the backend's own
+	// variable plus its fixed switches.
+	ProviderProtocolPrivate = "private"
 )
 
 // Provider auth modes. "auto" lets the protocol decide (x-api-key for
@@ -94,7 +101,7 @@ func (p Provider) Normalized() Provider {
 // ValidProtocol reports whether protocol is one this build understands.
 func ValidProtocol(protocol string) bool {
 	switch protocol {
-	case ProviderProtocolAnthropic, ProviderProtocolOpenAI, ProviderProtocolGemini:
+	case ProviderProtocolAnthropic, ProviderProtocolOpenAI, ProviderProtocolGemini, ProviderProtocolPrivate:
 		return true
 	}
 	return false
@@ -215,7 +222,7 @@ func ProviderEnvVersion(agentID string) string {
 		return ""
 	}
 	declared := ""
-	if spec, ok := providerEnvTable[backendOf(agentID)]; ok && spec.InlineConfigEnv != "" {
+	if spec, ok := providerEnvSpec(backendOf(agentID)); ok && spec.InlineConfigEnv != "" {
 		declared = strings.Join(p.Models, ",")
 		if agent := GetAgent(agentID); agent != nil {
 			declared += "\x00" + agent.PreferredModel

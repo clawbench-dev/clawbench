@@ -34,34 +34,27 @@ export interface FileEntry {
    */
   sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal' | 'meeting' | 'mail'
   /**
-   * Quote-only source locators. Each is a MACHINE-readable key that both the
-   * jump handler and the AI prompt use to find the origin; the human-readable
-   * name goes in `path` (which is already documented as a label, not a path).
+   * Quote-only source locators: MACHINE-readable keys that both the jump handler
+   * and the AI prompt use to find the origin. The human-readable name goes in
+   * `path` (which is documented as a label, not a path).
    *
-   * They are persisted rather than re-derived because the quoted text carries
-   * no trace of them: after a reload nothing else identifies which commit,
-   * task or message a sent quote came from.
+   * An OPEN key/value bag rather than one field per source. One field per source
+   * meant every new source touched ~14 places (Go struct, Go classifier, Go
+   * renderer, Go validator, this mirror, four TS converters, the type resolver,
+   * the jump handler, …), and each one was a silent-drop hazard: `mailId` and
+   * `sourceDir` shipped without a copy line in the normalizer, so their jump
+   * targets were gone after a single render.
+   *
+   * Keys are the same vocabulary the prompt renders, so `locators.task === '12'`
+   * on the wire is `task: 12` in the prompt. Known keys are listed in
+   * `QUOTE_LOCATOR_KEYS` for autocomplete; unknown keys are carried through
+   * untouched, which is what makes a new source need no change here at all.
+   *
+   * Persisted rather than re-derived because the quoted text carries no trace of
+   * them: after a reload nothing else identifies which commit, task or message a
+   * sent quote came from.
    */
-  /** Commit SHA a git-history or CI-pipeline quote came from. */
-  commitSha?: string
-  /** Scheduled task id a task quote came from. */
-  taskId?: number
-  /** Chat session id a message/session quote came from. */
-  sessionId?: string
-  /** DB chat-message id the quote was taken from (for scroll-to-message). */
-  messageId?: number
-  /** Task execution id, when the quote came from one run's detail view. */
-  executionId?: string
-  /** Meeting token, when the quote came from a meeting record. */
-  meetingToken?: string
-  /** Local mail message id, when the quote came from an email. */
-  mailId?: number
-  /**
-   * Project-relative folder holding the quote's source material, when that is
-   * a directory rather than one file (a meeting's notes folder). `path` stays
-   * the label, so this is the only thing the AI can actually open.
-   */
-  sourceDir?: string
+  locators?: Record<string, string>
 }
 
 /** Whether an entry is a quoted snippet rather than a file or URL. */
@@ -116,15 +109,12 @@ export function normalizeFileEntry(f: string | FileEntry): FileEntry {
     // (this runs on every render and dedupe pass) silently degrades a terminal
     // quote to a "chat message" label after a reload.
     ...(f.sourceKind ? { sourceKind: f.sourceKind } : {}),
-    // Source locators. Same hazard as above, one step worse: these are the ONLY
-    // way back to the commit/task/message, so dropping one here silently makes
-    // the quote unjumpable with no visible symptom until the user clicks.
-    ...(f.commitSha ? { commitSha: f.commitSha } : {}),
-    ...(f.taskId ? { taskId: f.taskId } : {}),
-    ...(f.sessionId ? { sessionId: f.sessionId } : {}),
-    ...(f.messageId ? { messageId: f.messageId } : {}),
-    ...(f.executionId ? { executionId: f.executionId } : {}),
-    ...(f.meetingToken ? { meetingToken: f.meetingToken } : {}),
+    // Source locators, copied WHOLE. This used to enumerate each locator by
+    // name, which is exactly how `mailId` and `sourceDir` were silently lost
+    // when they were introduced — the card still rendered and still sent, and
+    // only the jump target was gone. Copying the bag means a new locator key
+    // survives without anyone remembering to add a line here.
+    ...(f.locators ? { locators: { ...f.locators } } : {}),
   }
 }
 

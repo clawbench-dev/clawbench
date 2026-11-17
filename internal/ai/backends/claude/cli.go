@@ -10,7 +10,6 @@ import (
 )
 
 func init() {
-	ai.RegisterBackend("claude", newClaudeBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "claude",
 		Spec: model.BackendSpec{
@@ -31,7 +30,42 @@ func init() {
 		// Claude can inject a message into the running turn via the ACP
 		// steering extension (_session/steering). It emits no echo boundary, so
 		// the injection MERGES into the running reply (no split).
-		MidTurn: &midTurnInjector{},
+		CLI: &backends.CLIPlugin{NewBackend: newClaudeBackend},
+		// This is the definition of the Claude-family ACP hook set. qoder /
+		// qodercn are Claude Code forks and re-export these same function
+		// values rather than copying the parsers; codex shares ExtractMeta too.
+		// Every hook Claude's bridge protocol needs must be listed here — a hook
+		// missing from this struct silently degrades to the generic fallback for
+		// claude AND every fork that re-exports it (which is exactly how
+		// ExtractMeta was lost once), so keep the set complete and let
+		// TestClaudeFamilyBehaviorsAreShared catch a fork that stops sharing.
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       ParseACPToolCall,
+			ParseToolCallUpdate: ParseACPToolCallUpdate,
+			ExtractMeta:         ExtractMeta,
+		},
+		ModelSource: model.PluginSource("claude", discoverClaudeModels),
+		MidTurn:     &midTurnInjector{},
+		ProviderEnv: &model.ProviderEnvSpec{
+			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+			// CLAUDE_CONFIG_DIR relocates the whole ~/.claude tree, and the ACP
+			// adapter (claude-agent-acp) merges settings.json's `env` block into
+			// the session. Verified end-to-end: with a private directory holding
+			// ONLY settings.json (no login state at all), a turn against a
+			// third-party Anthropic-compatible endpoint returned its reply.
+			//
+			// This is the ONE backend where the config file is not merely an
+			// alternative to the environment variables: ANTHROPIC_BASE_URL alone
+			// created the session but the turn never produced a reply (the
+			// adapter reads its endpoint from the merged settings, not from the
+			// raw environment). So without this the Anthropic-protocol binding
+			// was effectively unusable for claude.
+			ConfigDirEnv:          "CLAUDE_CONFIG_DIR",
+			ConfigDirFile:         "settings.json",
+			ConfigDirProtocols:    []string{model.ProviderProtocolAnthropic},
+			ConfigDirProviderID:   "clawbench",
+			ConfigDirSecretInFile: true,
+		},
 	})
 }
 
@@ -41,7 +75,7 @@ func newClaudeBackend() ai.AIBackend {
 		BackendName:  "claude",
 		Cmd:          "claude",
 		BuildArgsFn:  buildClaudeStreamArgs,
-		NewParserFn:  func() ai.LineParser { return &ai.StreamParser{} },
+		NewParserFn:  NewStreamParser,
 		FilterLineFn: nil, // skip empty lines only (default)
 		PreStartFn: func(cmd *exec.Cmd, req ai.ChatRequest) {
 			// Claude CLI in --print mode with stdout piped (non-TTY) requires prompt

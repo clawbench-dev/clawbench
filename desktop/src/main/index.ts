@@ -7,9 +7,11 @@ import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { registerCertificateHandler } from './certificate'
 import { handOffToPointedVersion } from './install'
-import { flushFloatingBounds, hasFloatingTray, initFloating, openMainWindow } from './floating'
-import { recordError, flushOnShutdown } from './clientLog'
+import { flushFloatingBounds, hasAppTray, initFloating, openMainWindow } from './floating'
+import { record, recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
+import { embeddedServerLabels, resolveNativeLanguage } from './labels'
+import { setEmbeddedServerActive, startEmbeddedServer, stopEmbeddedServer } from './localServer'
 
 /**
  * One process per machine, before anything else runs.
@@ -72,7 +74,36 @@ process.on('unhandledRejection', (reason) => {
 initStore()
 applySecureContextSwitch()
 
-app.whenReady().then(() => {
+/**
+ * Bring up the server this build ships with. A no-op in the normal build, where
+ * the server lives on another machine and the login page asks for its address.
+ *
+ * `setEmbeddedServerActive` runs only after the server answered: everything
+ * that consults it (the skipped login page, the skipped version gate) must not
+ * assume success while startup can still fail and fall back to the login page.
+ */
+async function startEmbeddedServerIfPresent(): Promise<void> {
+  try {
+    const url = await startEmbeddedServer()
+    setEmbeddedServerActive(true)
+    record('I', 'LocalServer', `ready at ${url}`)
+  } catch (err) {
+    recordError('LocalServer', err)
+    // First run of an embedded build with a broken payload: show the normal
+    // login page so the app is still usable against another machine's server,
+    // rather than dying on a splash that never lifts.
+    const { dialog } = await import('electron')
+    const labels = embeddedServerLabels(resolveNativeLanguage())
+    await dialog.showMessageBox({
+      type: 'error',
+      title: labels.startFailedTitle,
+      message: labels.startFailedMessage,
+      detail: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+app.whenReady().then(async () => {
   // Self-upgrade handoff. `downloadAndInstall` unpacks the new version and
   // writes the `current` pointer, but a running process cannot replace its own
   // executable — so the switch happens HERE, on the next start: if the pointer
@@ -120,6 +151,10 @@ app.whenReady().then(() => {
   // bridge.ts), where the server URL is known. It used to run here on a 3s timer
   // as an OS dialog; that path is gone so the blocking overlay is the only
   // prompt.
+  // Before the first window: the window's cold start reads `serverUrl` from the
+  // store, so the embedded server has to be running (and its cookie planted)
+  // by then. Failures are non-fatal — see the helper.
+  await startEmbeddedServerIfPresent()
   createMainWindow()
   // The floating status capsule and its tray icon, when the user left the
   // feature switched on. After the main window so a capsule click during
@@ -156,11 +191,12 @@ app.whenReady().then(() => {
 
 // A tray icon means the app is still reachable with no window on screen, so it
 // keeps running until Quit is chosen from the tray — the usual Windows pattern
-// for a background app. Without a tray there is nothing to click, so closing
-// every window still quits.
+// for a background app. The icon comes either from the floating capsule or from
+// "minimize to tray", so both cases are covered by the same question. Without a
+// tray there is nothing to click, so closing every window still quits.
 app.on('window-all-closed', () => {
   if (process.platform === 'darwin') return
-  if (hasFloatingTray()) return
+  if (hasAppTray()) return
   app.quit()
 })
 
@@ -170,6 +206,11 @@ app.on('window-all-closed', () => {
 // because the entries most likely still buffered are the ones around whatever
 // caused the quit.
 app.on('before-quit', () => {
+  // Closing the server's stdin is its quit signal; the call also arms a kill
+  // for the case where it does not drain in time. Must be here rather than in
+  // `will-quit`: a tray icon keeps this process alive after the window closes,
+  // and the server should live exactly as long as the app does.
+  stopEmbeddedServer()
   flushFloatingBounds()
   // The input helper is a child process; leaving it behind would keep a process
   // that can drive the desktop alive after the app is gone.

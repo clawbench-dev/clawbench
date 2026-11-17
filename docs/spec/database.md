@@ -5,7 +5,7 @@ RAG：同一数据库文件，独立连接池
 
 > 项目身份统一为整数 `project_id`（`projects` 表），所有项目作用域表存 id 而非路径——改名/移动目录只需一条 UPDATE。`project_id=0` 是保留哨兵（全局标签、无法归属的分享），故不声明外键。
 >
-> 本文档按**全新安装**跑完 `service.InitDB()` 后的实际 schema 描述（`sqlite_master` + `pragma_table_info` 实测），共 **53 张表**（含迁移台账 `schema_migrations`）。RAG 的三张表由 `internal/rag` 独立连接池创建，单列于文末。
+> 本文档按**全新安装**跑完 `service.InitDB()` 后的实际 schema 描述（`sqlite_master` + `pragma_table_info` 实测），共 **53 张表**（含迁移台账 `schema_migrations`）。RAG 的三张表与知识库的五张表由各自的连接池创建，单列于文末。
 >
 > 升级路径上的列由 `database.go` 的 `ALTER TABLE ... ADD COLUMN` 补齐（102 条），最终形状与本文件一致；但 `CREATE TABLE IF NOT EXISTS` 对已存在的表是空操作，**所以老库不会自动获得新列，只能靠 ALTER**。改 schema 时必须两条路一起改。
 
@@ -817,6 +817,19 @@ IM 机器人推送的暂存队列（**不是**通知中心的数据源，两者�
 
 部分唯一索引：`idx_quick_commands_auto_execute UNIQUE(COALESCE(project_id, 0), auto_execute) WHERE auto_execute = 1` —— 每个作用域至多一条自动执行命令。
 
+### terminal_command_history（终端命令历史）
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| command | TEXT | NOT NULL | — | 命令行 |
+| project_id | INTEGER | | `NULL` | 项目作用域（NULL=全局，来自 shell history 文件导入） |
+| use_count | INTEGER | NOT NULL | `1` | 执行次数 |
+| last_used_at | DATETIME | NOT NULL | CURRENT_TIMESTAMP | 最后使用时间（列表排序依据） |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
+
+部分唯一索引：`idx_terminal_history_command UNIQUE(COALESCE(project_id, 0), command)` —— 同一作用域内同一命令只有一行，重复执行只累加 `use_count`，不做流水账。另有 `idx_terminal_history_recent(last_used_at DESC)` 支撑列表查询。行数上限 2000 条 / 90 天，超限按 `last_used_at` 淘汰。
+
 ### terminal_key_config（终端按键配置）
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
@@ -1042,6 +1055,90 @@ CREATE VIRTUAL TABLE rag_vec USING vec0(
 ```
 
 维度在首次向量写入时才确定（`ensureVecTable()`），因此**惰性创建**：全新库没有这张表，直到第一条 embedding 落库。`sqlite-vec` 不可用时整张表缺席，检索回退到 BLOB 路径。
+
+## 知识库表（`internal/kb`，独立连接池）
+
+同一数据库文件，由 `internal/kb/store.go` 创建。与会话 RAG 完全分开：聊天搜索永远不会返回这些行。
+
+### kb_collections（知识库）
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| name | TEXT | NOT NULL | — | 名称 |
+| description | TEXT | NOT NULL | `''` | 说明 |
+| scope | TEXT | NOT NULL, CHECK(scope IN ('global','project')) | — | 归属级别 |
+| project_id | INTEGER | NOT NULL | `0` | 项目级归属；全局库为 0 |
+| auto_inject | INTEGER | NOT NULL | `1` | 是否参与聊天自动检索 |
+| created_at | DATETIME | NOT NULL | — | |
+| updated_at | DATETIME | NOT NULL | — | |
+
+### kb_documents（知识库文件）
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| collection_id | INTEGER | NOT NULL | — | 所属知识库 |
+| title | TEXT | NOT NULL | — | 展示名（原文件名） |
+| source_path | TEXT | NOT NULL | `''` | 原路径，仅展示 |
+| stored_path | TEXT | NOT NULL | `''` | 数据目录内的副本路径 |
+| ext | TEXT | NOT NULL | `''` | 小写扩展名（含点） |
+| size_bytes | INTEGER | NOT NULL | `0` | 副本大小 |
+| content_hash | TEXT | NOT NULL | `''` | SHA-256，用于库内去重 |
+| status | TEXT | NOT NULL | `'pending'` | pending / extracting / ready / failed |
+| error | TEXT | NOT NULL | `''` | 失败原因 |
+| warning | TEXT | NOT NULL | `''` | 截断等非致命提示 |
+| chunk_count | INTEGER | NOT NULL | `0` | 片段数 |
+| fts_ready | INTEGER | NOT NULL | `0` | 关键词索引就绪 |
+| vector_ready | INTEGER | NOT NULL | `0` | 全部片段已嵌入 |
+| created_at / updated_at | DATETIME | NOT NULL | — | |
+
+唯一索引 `(collection_id, content_hash)`：同一知识库内不允许同内容文件重复添加。
+
+### kb_chunks（知识库片段）
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| document_id | INTEGER | NOT NULL | — | 所属文件 |
+| collection_id | INTEGER | NOT NULL | — | 冗余，用于检索过滤 |
+| project_id | INTEGER | NOT NULL | `0` | 冗余，0＝全局 |
+| chunk_index | INTEGER | NOT NULL | `0` | 文件内序号 |
+| chunk_text | TEXT | NOT NULL | — | 原文片段 |
+| chunk_text_segmented | TEXT | NOT NULL | — | 分词文本（FTS 索引源） |
+| location | TEXT | NOT NULL | `''` | 语言中立定位标签（p.12 / slide 3 / sheet … / L1-L80 / ¶1-¶6） |
+| token_count | INTEGER | NOT NULL | `0` | 估算 token 数 |
+| embedding | BLOB | | — | float64 向量（检索走 `kb_vec`） |
+| has_embedding | INTEGER | NOT NULL | `0` | 是否已嵌入 |
+| embedding_dim | INTEGER | NOT NULL | `0` | 向量维度 |
+| created_at | DATETIME | NOT NULL | — | |
+
+唯一索引 `(document_id, chunk_index)`，使重试批次幂等。
+
+### kb_chunks_fts（FTS5 虚表）
+
+```sql
+CREATE VIRTUAL TABLE kb_chunks_fts USING fts5(
+    chunk_text_segmented,
+    content='kb_chunks',
+    content_rowid='id',
+    tokenize='unicode61'
+)
+```
+
+外部内容模式。删除必须使用 FTS5 的 `'delete'` 命令并带上旧值（`INSERT INTO kb_chunks_fts(kb_chunks_fts, rowid, chunk_text_segmented) SELECT 'delete', ...`），直接 `DELETE` 或先改内容表再更新会损坏索引。
+
+### kb_vec（sqlite-vec 虚表）
+
+```sql
+CREATE VIRTUAL TABLE kb_vec USING vec0(
+    embedding float[<dim>] distance_metric=cosine,
+    collection_id INTEGER,
+    project_id INTEGER
+)
+```
+
+同样惰性创建。检索时 `collection_id IN (...)` 的过滤下推到 KNN 扫描内部，避免先取全局 top-k 再过滤导致漏召回。嵌入维度变化（换模型）时整表重建并把所有片段标记为未嵌入。
 
 ## ER 关系图
 
@@ -1484,6 +1581,15 @@ erDiagram
         INTEGER project_id
         DATETIME created_at
         DATETIME updated_at
+    }
+
+    terminal_command_history {
+        INTEGER id PK
+        TEXT command
+        INTEGER project_id
+        INTEGER use_count
+        DATETIME last_used_at
+        DATETIME created_at
     }
 
     terminal_key_config {

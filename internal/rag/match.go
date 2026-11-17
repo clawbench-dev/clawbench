@@ -6,6 +6,12 @@ import (
 	"unicode/utf8"
 )
 
+// TextMatchPositions is the exported form used by other indexes (the knowledge
+// base) that need the same highlight semantics as chat search.
+func TextMatchPositions(queryText, chunkText string) []MatchRange {
+	return textMatchPositions(queryText, chunkText)
+}
+
 // textMatchPositions finds occurrences of query terms in text and returns
 // character-level (rune offset) match positions. Uses segmentation for CJK support.
 // Falls back to whole-query matching if no segmented terms match.

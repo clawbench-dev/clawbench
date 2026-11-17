@@ -46,6 +46,20 @@ type BackendSpec struct {
 	// JSON-RPC blob.
 	LoginCmd  string
 	SortOrder int // display/registration order for deterministic BackendRegistry ordering
+	// HideTerminalCapability suppresses the ACP Terminal capability for agents
+	// whose own background-task registry cannot see host-created terminals
+	// (CodeBuddy: every TaskOutput would answer "Background task not found").
+	HideTerminalCapability bool
+	// HideReadTextFileCapability suppresses fs.readTextFile. Declaring it makes
+	// some agents replace their native file reader with the host's (CodeBuddy),
+	// which is a downgrade — the agent's own reader is the one its prompts and
+	// truncation rules were written for.
+	HideReadTextFileCapability bool
+	// CommandsReEmitDelay is how long after NewSession the agent's plugin/skill
+	// commands may still be loading, so the host should re-emit the command list
+	// once more when this elapses. Zero means "commands are complete at
+	// NewSession" (every backend except CodeBuddy).
+	CommandsReEmitDelay time.Duration
 	// NativeSkillsDirs are this backend's own skill directories, relative to
 	// the user's home (e.g. ".codebuddy/skills"). A backend can have several:
 	// most read only their own dot-directory, but several also read the
@@ -65,6 +79,31 @@ type BackendSpec struct {
 	// binary/package for "SKILL.md" or "available_skills", and confirm the
 	// transport ClawBench uses (CLI vs ACP) shares that code path.
 	AutoLoadsNativeSkills bool
+
+	// Builtin marks a backend whose tools are implemented by ClawBench itself
+	// rather than by an external CLI. Such a backend has no install command, no
+	// login, no external command line, no MCP injection and no skill injection
+	// — the UI must hide all of those instead of offering fields that do
+	// nothing, and the settings page must not present the tool grant as if it
+	// applied to a CLI that would ignore it.
+	//
+	// Appended (not inserted) so adding it does not re-align every field above
+	// (a cosmetic churn that hides the real change in review).
+	Builtin bool
+	// MCPUnsupported marks a backend the probe measured as accepting the
+	// `mcpServers` field and then ignoring it completely.
+	//
+	// Measured 2026-10-19 (docs/dev/acp_mcp_probe_results.md): session/new
+	// succeeds, no error, and the tool never appears — two turns each, so this
+	// is not a slow-start artifact. Filtering here (rather than only graying the
+	// UI) matters because the default policy is `all`: without this flag every
+	// user would hit the silently-ineffective case by default, which is exactly
+	// what the UI is supposed to prevent.
+	//
+	// This used to be a central map in model/mcp.go. It is a fact about ONE
+	// backend, so it belongs in that backend's Spec: the map made every new
+	// backend edit a file in another package.
+	MCPUnsupported bool
 }
 
 // LoadBackendSpecs is set by the backends package at init time to provide
@@ -72,53 +111,10 @@ type BackendSpec struct {
 // injection to avoid import cycles (model cannot import backends).
 var LoadBackendSpecs func() []BackendSpec
 
-// BackendSupportsCLIFn is set by the backends package at init time to report
-// whether a backend has a CLI implementation (a registered CLI backend factory).
-// Uses function-variable injection to avoid import cycles (model cannot import ai).
-var BackendSupportsCLIFn func(backendID string) bool
-
-// BackendSupportsCLI reports whether the given backend has a CLI implementation.
-// Falls back to false when the function variable is not wired (e.g. isolated tests).
-func BackendSupportsCLI(backendID string) bool {
-	if BackendSupportsCLIFn == nil {
-		return false
-	}
-	return BackendSupportsCLIFn(backendID)
-}
-
-// BackendSupportsMidTurnFn is set by the backends package at init time to report
-// whether a backend can inject a message into an ALREADY RUNNING turn (rather
-// than queueing it for the next one). Uses function-variable injection to avoid
-// an import cycle (model cannot import ai).
-var BackendSupportsMidTurnFn func(backendID string) bool
-
-// BackendSupportsMidTurn reports whether the given backend can join a running
-// turn. Falls back to false when the function variable is not wired (isolated
-// tests, or a build without the backends package) — callers then use the
-// "interrupt and send" affordance instead.
-func BackendSupportsMidTurn(backendID string) bool {
-	if BackendSupportsMidTurnFn == nil {
-		return false
-	}
-	return BackendSupportsMidTurnFn(backendID)
-}
-
-// BackendMidTurnSplitsReplyFn is set by the backends package at init time to
-// report whether a backend's mid-turn injection SPLITS the running assistant
-// reply into two rather than merely merging into it. Uses function-variable
-// injection to avoid an import cycle (model cannot import ai).
-var BackendMidTurnSplitsReplyFn func(backendID string) bool
-
-// BackendMidTurnSplitsReply reports whether an injected message splits the
-// running reply. Falls back to false (merge-only) when not wired or unknown —
-// the conservative default, since a merge-only injection is the case that needs
-// the "回复已并入上一轮" hint.
-func BackendMidTurnSplitsReply(backendID string) bool {
-	if BackendMidTurnSplitsReplyFn == nil {
-		return false
-	}
-	return BackendMidTurnSplitsReplyFn(backendID)
-}
+// The per-capability lookups (CLI, mid-turn, splits-reply) used to live here as
+// three separate function variables. They are now one snapshot — see
+// LookupBackendCapabilities in backend_capabilities.go — so a caller asks once
+// instead of knowing which field to inspect.
 
 // CustomACPBackend is the backend ID carried by user-defined ACP agents
 // (issue #557). It deliberately appears in NO registry entry:
@@ -222,8 +218,16 @@ func FindSpecByBackend(backend string) *BackendSpec {
 	return nil
 }
 
-// FindBackendSpecByDefaultCmd returns the BackendSpec whose DefaultCmd matches, or nil.
+// FindBackendSpecByDefaultCmd resolves a backend by the command it is detected
+// with.
+//
+// An empty command resolves to nothing. Without that guard, any backend with no
+// CLI command (NoCLI ones such as builtin) matches "" and a caller probing an
+// empty command would be handed an unrelated backend.
 func FindBackendSpecByDefaultCmd(cmd string) *BackendSpec {
+	if cmd == "" {
+		return nil
+	}
 	registry := GetBackendRegistry()
 	for i := range registry {
 		if registry[i].DefaultCmd == cmd {
@@ -242,4 +246,25 @@ func CanDiscoverModels(spec BackendSpec) bool {
 // Prefer HasModelSource for a single backend.
 func BackendsWithModelDiscovery() []string {
 	return RegisteredModelSources()
+}
+
+// SetBackendRegistryForTest installs a synthetic backend registry and returns a
+// restore function. Tests that assert spec-driven behavior need it because the
+// real registry is populated from the backend plugin packages, which most unit
+// tests do not import (that would be an import cycle).
+//
+// The snapshot is taken through GetBackendRegistry(), not read off
+// BackendRegistry: the real registry is populated lazily by a sync.Once, so a
+// direct read before the first caller sees nil. Restoring that nil would put
+// the process into a state it can never leave — the Once is already spent, so
+// nothing would ever populate BackendRegistry again, and every later test in
+// the binary (and the production code path it exercises) would see an empty
+// backend registry.
+func SetBackendRegistryForTest(specs []BackendSpec) func() {
+	old := GetBackendRegistry()
+	snapshot := make([]BackendSpec, len(old))
+	copy(snapshot, old)
+
+	BackendRegistry = specs
+	return func() { BackendRegistry = snapshot }
 }

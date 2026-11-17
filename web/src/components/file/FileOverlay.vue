@@ -41,7 +41,6 @@
             @set-as-background="(path) => emit('setAsBackground', path)"
             @quote-in-chat="(path) => emit('quoteInChat', path)"
             @open-search="emit('openSearch')"
-            @toggle-maximize-pane="emit('toggleMaximizePane')"
             @jump="(line, anchorId) => emit('jump', line, anchorId)"
             @jump-page="emit('jumpPage', $event)"
           />
@@ -133,7 +132,6 @@ const emit = defineEmits([
   'captureScroll',
   'quoteInChat',
   'openSearch',
-  'toggleMaximizePane',
 ])
 
 const contentRef = ref(null)
@@ -217,7 +215,8 @@ function handleContentClick(event) {
   inset: 0;
   display: flex;
   flex-direction: row;
-  background: var(--bg-primary);
+  /* Page surface shared with every left-panel tab (`--panel-page-bg`). */
+  background: var(--panel-page-bg);
   overflow: hidden;
   /* No z-index here. FileOverlay is the only child of its tab panel, so it
      needs no stacking level inside the panel; an explicit z-index would

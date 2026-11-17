@@ -7,7 +7,7 @@ import (
 
 func init() {
 	// Command Code (Langbase) is ACP-only via its built-in `acp` subcommand:
-	// no ai.RegisterBackend (CLI factory) is registered, so chat always uses the
+	// no CLI factory is set (CLI == nil), so chat always uses the
 	// ACP stdio transport.
 	//
 	// Verified against command-code 1.84.0 (probe:
@@ -78,6 +78,17 @@ func init() {
 			// catalogModels()}), so a self-hosted provider's models never appear
 			// and cannot be selected here. A BYOK setup must pin the model in
 			// ~/.commandcode/config.json instead (model + modelProvider).
+		},
+		ProviderEnv: &model.ProviderEnvSpec{
+			// BYOK needs providers.json + config.json (see the ACP probe notes).
+			// Writing those files is not implemented, so only the credential is
+			// passed through — full BYOK still requires the CLI's own
+			// configuration.
+			KeyOnly: "COMMAND_CODE_API_KEY",
+			// The private protocol hides the endpoint-shaped fields: Command Code's
+			// credential always goes to its own service, and full BYOK still needs
+			// its config files (see above).
+			OwnServiceEnv: "COMMAND_CODE_API_KEY",
 		},
 	})
 }

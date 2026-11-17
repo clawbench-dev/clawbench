@@ -148,8 +148,8 @@ func TestPiBackendDefinition(t *testing.T) {
 	// newParser should return a *PiStreamParser
 	parser := cli.NewParserFn()
 	assert.NotNil(t, parser)
-	_, ok = parser.(*ai.PiStreamParser)
-	assert.True(t, ok, "expected *ai.PiStreamParser, got %T", parser)
+	_, ok = parser.(*PiStreamParser)
+	assert.True(t, ok, "expected *PiStreamParser, got %T", parser)
 
 	// filterLine and preStart should be nil
 	assert.Nil(t, cli.FilterLineFn)

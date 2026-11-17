@@ -20,6 +20,7 @@
  */
 import { app } from 'electron'
 import { getStore } from './store'
+import type { CloseDialogLabels } from './closePolicy'
 
 /** A resolved native language. Only the two locales the shell ships. */
 export type NativeLanguage = 'zh' | 'en'
@@ -166,6 +167,79 @@ export function unloadGuardLabels(locale: string): UnloadGuardLabels {
     detail: 'Viewers are told the meeting has ended, and the last recording segment and this meeting’s minutes are lost.',
     leave: 'End meeting and leave',
     stay: 'Stay in meeting',
+  }
+}
+
+/** Labels for the built-in server surfaces (name in the server list, failures). */
+export interface EmbeddedServerLabels {
+  /** Display name of the embedded server in the server switcher. */
+  name: string
+  startFailedTitle: string
+  startFailedMessage: string
+  /** `{url}` is the address the app tried to open. */
+  stoppedMessage: string
+  stoppedTitle: string
+}
+
+/**
+ * Labels for the "all-in-one" desktop build's own server.
+ *
+ * These render outside the web page (a native dialog and the native server
+ * switcher), so they cannot come from vue-i18n — same rule as the other tables
+ * here. The name is also stored on the server entry on first run, which is why
+ * it lives here rather than in the caller.
+ */
+export function embeddedServerLabels(locale: string): EmbeddedServerLabels {
+  if (normalizeNativeLanguage(locale) === 'zh') {
+    return {
+      name: '本机',
+      startFailedTitle: '本机服务启动失败',
+      startFailedMessage: 'ClawBench 自带的本机服务没能启动。',
+      stoppedTitle: '本机服务已停止',
+      stoppedMessage: '本机服务（{url}）没有响应。',
+    }
+  }
+  return {
+    name: 'This device',
+    startFailedTitle: 'Built-in server failed to start',
+    startFailedMessage: 'The ClawBench server bundled with this app could not be started.',
+    stoppedTitle: 'Built-in server stopped',
+    stoppedMessage: 'The built-in server at {url} stopped responding.',
+  }
+}
+
+/**
+ * Labels for the "what should closing do?" dialog in `closeFlow.ts`.
+ *
+ * Wording follows the usual Windows pattern (minimise to tray / quit / cancel):
+ * the tray path is named as "minimise to tray" because that is what the user
+ * sees happen — the window disappears from the screen and the icon stays in the
+ * notification area.
+ */
+export function closeDialogLabels(locale: string): CloseDialogLabels {
+  if (normalizeNativeLanguage(locale) === 'zh') {
+    return {
+      title: '关闭 ClawBench',
+      message: '关闭窗口后要怎么做？',
+      detail: '「最小化到托盘」会让 ClawBench 继续在后台运行，正在执行的任务不会中断；之后可以从任务栏右下角的托盘图标重新打开。',
+      tray: '最小化到托盘',
+      exit: '退出程序',
+      cancel: '取消',
+      remember: '记住我的选择（可在设置中修改）',
+      trayUnavailable: '无法创建托盘图标，窗口已保持打开。',
+      ok: '知道了',
+    }
+  }
+  return {
+    title: 'Close ClawBench',
+    message: 'What should closing the window do?',
+    detail: '“Minimize to tray” keeps ClawBench running in the background, so nothing that is still running is interrupted. Reopen it from the tray icon at the bottom-right of the taskbar.',
+    tray: 'Minimize to tray',
+    exit: 'Quit the app',
+    cancel: 'Cancel',
+    remember: 'Remember my choice (change it in Settings)',
+    trayUnavailable: 'Could not create a tray icon, so the window was left open.',
+    ok: 'OK',
   }
 }
 

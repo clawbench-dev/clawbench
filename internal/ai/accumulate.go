@@ -387,6 +387,45 @@ func MarkAllThinkingDone(blocks []model.ContentBlock) []model.ContentBlock {
 	return blocks
 }
 
+// ToolStatusInterrupted marks a tool call that was still running when the turn
+// ended (cancelled by the user, agent crash, steer split). It is neither a
+// success nor an agent-reported error: nothing failed, the turn just stopped
+// waiting for it. The frontend mirrors this exact string — keep them in step.
+const ToolStatusInterrupted = "interrupted"
+
+// CloseUnfinishedTools flags every tool_use block that never received a result
+// as done with status ToolStatusInterrupted. Call it on a terminal path, next
+// to MarkAllThinkingDone and for the same reason: a turn that is over can never
+// deliver the tool_result of a call that was still in flight.
+//
+// Leaving those blocks open persists done=false into BOTH the content row and
+// chat_tool_calls, and the two views then disagree for the rest of the row's
+// life — the transcript renders a settled row as done (parseAssistantContent:
+// "we cannot know it finished"), while the tool detail drawer reads
+// chat_tool_calls and spins forever on a turn that already ended. That is the
+// "detail still executing, collapsed shows completed" report.
+//
+// The status is what keeps the fix honest: the tool did NOT succeed, so nothing
+// may paint a green check for it. "interrupted" is a third verdict the list, the
+// detail drawer and the share page all render the same way.
+//
+// PermissionApproval is deliberately NOT closed: its card reads "approved" from
+// done, and a cancelled turn never approved anything. The frontend's own
+// cleanup paths (forceCleanupStreamingState, the stream_split reducer) make the
+// same exception, so the two sides agree.
+func CloseUnfinishedTools(blocks []model.ContentBlock) {
+	for i := range blocks {
+		b := &blocks[i]
+		if b.Type != "tool_use" || b.Done || b.Name == "PermissionApproval" {
+			continue
+		}
+		b.Done = true
+		if b.Status == "" {
+			b.Status = ToolStatusInterrupted
+		}
+	}
+}
+
 // MergeConsecutiveThinkingBlocks merges adjacent thinking blocks, including
 // across tool_use boundaries. ACP agents interleave AgentThoughtChunk and
 // ToolCall events, causing many small thinking fragments separated by

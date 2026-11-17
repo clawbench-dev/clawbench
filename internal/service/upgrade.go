@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/version"
 	"clawbench/internal/ws"
@@ -475,6 +476,15 @@ func rewriteTarballURL(tarball, base string) string {
 // matches the metadata actually being installed. Compared by exact value; the
 // value is a sorted list of issue codes, not user-facing text.
 func PerformUpgrade(acknowledgedIssues string) {
+	// The embedder ships and owns this binary (see model.ManagedByEmbedder):
+	// replacing it from inside would fight the desktop updater and relaunch a
+	// process the shell does not own. The HTTP handlers refuse the request
+	// first; this is the backstop for any internal caller.
+	if model.ManagedByEmbedder {
+		slog.Warn("upgrade refused: server is managed by an embedder")
+		return
+	}
+
 	// Cancellation only. The download owns its own time limits
 	// (upgradeDownloadIdleTimeout / upgradeDownloadBudget): a single window over
 	// the whole flow would be the wrong shape for a transfer, and the other

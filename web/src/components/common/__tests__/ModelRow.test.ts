@@ -170,3 +170,56 @@ describe('ModelRow', () => {
     expect(wrapper.find('.model-row__labels .model-row__price').exists()).toBe(false)
   })
 })
+
+describe('ModelRow — billing multiplier (issue #657)', () => {
+  it('renders the compact multiplier when the agent publishes one', () => {
+    const wrapper = mountRow({
+      name: 'Deepseek-V4-Flash',
+      modelId: 'deepseek-v4-flash',
+      credits: 'x0.06 credits',
+    })
+    const tag = wrapper.find('.model-row__credits')
+    expect(tag.exists()).toBe(true)
+    expect(tag.text()).toBe('x0.06')
+  })
+
+  it('prefers the multiplier over the USD price', () => {
+    // The two numbers measure different things and the row only has room for
+    // one; the multiplier is the number the user can compare with the agent's
+    // own client.
+    const wrapper = mountRow({
+      name: 'GLM-5.3',
+      modelId: 'glm-5.3',
+      credits: 'x0.4 credits',
+      price: { input: 1.4, output: 4.4 },
+    })
+    expect(wrapper.find('.model-row__credits').text()).toBe('x0.4')
+    expect(wrapper.find('.model-row__price').exists()).toBe(false)
+  })
+
+  it('falls back to the price when the agent publishes no multiplier', () => {
+    const wrapper = mountRow({
+      name: 'GLM-5.2',
+      modelId: 'glm-5.2',
+      credits: '',
+      price: { input: 1.4, output: 4.4 },
+    })
+    expect(wrapper.find('.model-row__credits').exists()).toBe(false)
+    expect(wrapper.find('.model-row__price').text()).toBe('$1.4 / $4.4')
+  })
+
+  it('renders no tag at all when there is neither', () => {
+    const wrapper = mountRow({ name: 'Unknown', modelId: 'unknown' })
+    expect(wrapper.find('.model-row__credits').exists()).toBe(false)
+    expect(wrapper.find('.model-row__price').exists()).toBe(false)
+  })
+
+  it('keeps the tag outside the label column so it cannot squeeze the name', () => {
+    const wrapper = mountRow({
+      name: 'Deepseek-V4-Flash',
+      modelId: 'deepseek-v4-flash',
+      credits: 'x0.06 credits',
+    })
+    expect(wrapper.find('.model-row__labels .model-row__credits').exists()).toBe(false)
+  })
+})

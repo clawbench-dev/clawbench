@@ -8,8 +8,8 @@
       :class="{ current: isList, clickable: !isList }"
       @click="!isList && navigate('list')"
     >
-      <Clock :size="14" class="crumb-icon" />
-      <span>{{ t('task.title') }}</span>
+      <Clock :size="14" class="panel-header-icon" />
+      <span>{{ t('nav.tasks') }}</span>
     </span>
 
     <template v-if="taskName">
@@ -99,12 +99,6 @@ function navigate(target) {
   white-space: nowrap;
   cursor: default;
   transition: background var(--duration-base), color var(--duration-base);
-}
-
-/* Leading glyph on the root crumb. Holds its size so a long task name in the
-   next crumb cannot squeeze it (the crumbs share one scrolling flex row). */
-.crumb-icon {
-  flex-shrink: 0;
 }
 
 /* ── Clickable crumb ── */

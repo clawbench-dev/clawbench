@@ -13,7 +13,7 @@ vi.mock('@/utils/appLog', () => ({
 // Mock agentIcons to provide predictable SVG data
 vi.mock('@/utils/agentIcons', () => ({
   getAgentSvg: (id: string) => {
-    const map: Record<string, { svg: string; viewBox: string; needsBg?: boolean; monoCssClass?: string }> = {
+    const map: Record<string, { svg: string; viewBox: string; needsBg?: boolean; monoCssClass?: string; imageUrl?: string }> = {
       codebuddy: {
         svg: '<defs><radialGradient id="ai-cb-g"><stop stop-color="#2EA99D"/></radialGradient></defs><path fill="url(#ai-cb-g)" d="M0 0h24v24H0z"/>',
         viewBox: '0 0 24 24',
@@ -42,6 +42,12 @@ vi.mock('@/utils/agentIcons', () => ({
         svg: '<path fill="#333" d="M0 0h24v24H0z"/>',
         viewBox: '0 0 24 24',
         needsBg: true,
+      },
+      // A mark that only exists as a bitmap (the built-in agent's product logo).
+      rasterBackend: {
+        svg: '',
+        viewBox: '0 0 64 64',
+        imageUrl: '/logo-64.png',
       },
     }
     return map[id] ?? null
@@ -82,6 +88,32 @@ describe('AgentIcon', () => {
     it('uses name initial when name is provided for unknown backend', () => {
       const wrapper = mountIcon({ backend: 'unknown', name: 'MyAgent' })
       expect(wrapper.text()).toBe('M')
+    })
+  })
+
+  describe('raster-backed backend mark', () => {
+    it('renders an <img> with the image URL when the backend declares one', () => {
+      const wrapper = mountIcon({ backend: 'rasterBackend' })
+      const img = wrapper.find('img.agent-icon-img')
+      expect(img.exists()).toBe(true)
+      expect(img.attributes('src')).toBe('/logo-64.png')
+      // No inline SVG and no letter fallback — the image IS the mark.
+      expect(wrapper.find('svg').exists()).toBe(false)
+      expect(wrapper.find('.agent-icon-initial').exists()).toBe(false)
+    })
+
+    it('a user avatar still outranks the raster mark', () => {
+      const wrapper = mountIcon({
+        backend: 'rasterBackend',
+        avatar: '<svg viewBox="0 0 2 2"><rect width="2" height="2" fill="#123"/></svg>',
+      })
+      // The avatar is a data URI, not the backend's image URL.
+      expect(wrapper.find('img.agent-icon-img').attributes('src')).toContain('data:image/svg+xml')
+    })
+
+    it('applies the size class to the raster image', () => {
+      const wrapper = mountIcon({ backend: 'rasterBackend', size: 'xl' })
+      expect(wrapper.find('img.agent-icon-img').classes()).toContain('agent-icon--xl')
     })
   })
 

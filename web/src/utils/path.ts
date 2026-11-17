@@ -51,6 +51,21 @@ export function baseName(path: string): string {
 }
 
 /**
+ * Keep the last two segments of a path — the form tool summaries use.
+ *
+ * Tool summaries are one line: a bare basename makes every Read/Edit of the same
+ * file name look identical ("run.go" ×6 in one run), while a full absolute path
+ * eats the whole pill. Two segments ("agentcore/run.go") disambiguate the common
+ * case at a glance. Mirrors tailPath() in internal/ai/tool_meta.go — the two
+ * summaries (server-extracted and frontend-computed) must stay identical.
+ */
+export function tailPath(path: string): string {
+    const segments = splitPath(path).filter((s) => s !== '')
+    if (segments.length === 0) return path
+    return segments.slice(-2).join('/')
+}
+
+/**
  * True for a Windows UNC share path — `\\server\share` or `//server/share`.
  *
  * Both spellings occur: the backend returns `filepath.ToSlash` output

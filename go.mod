@@ -9,6 +9,8 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
+	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
+	github.com/emersion/go-smtp v0.25.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-ego/gse v1.0.2
 	github.com/go-git/go-git/v5 v5.19.2
@@ -19,6 +21,7 @@ require (
 	github.com/hhatto/gocloc v0.7.0
 	github.com/jhillyerd/enmime v1.3.0
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.9
+	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/odvcencio/gotreesitter v0.20.0
 	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.2-beta.1
@@ -42,8 +45,6 @@ require (
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
-	github.com/emersion/go-smtp v0.25.0 // indirect
 	github.com/go-enry/go-enry/v2 v2.8.0 // indirect
 	github.com/go-enry/go-oniguruma v1.2.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect

@@ -32,7 +32,14 @@ const tunnelMock = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
-  app: { getVersion: () => '1.2.3', getLocale: () => 'en', getPath: () => '/tmp/clawbench-test' },
+  app: {
+    getVersion: () => '1.2.3',
+    getLocale: () => 'en',
+    getPath: () => '/tmp/clawbench-test',
+    // The close flow registers its `before-quit` listener at module scope, and
+    // `registerBridge` reaches it through `window.ts`.
+    on: () => undefined,
+  },
   ipcMain: {
     handle: (channel: string, fn: (...args: unknown[]) => unknown) => { handlers.set(channel, fn) },
     on: (channel: string, fn: (...args: unknown[]) => void) => { onHandlers.set(channel, fn) },

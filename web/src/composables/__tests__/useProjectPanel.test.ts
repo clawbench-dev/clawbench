@@ -151,45 +151,49 @@ describe('resolvePanelTab', () => {
     }
   })
 
-  it('falls back when the remembered panel is forge and the entry is hidden', () => {
+  /** Availability with one tab blocked on one axis. */
+  function blocked(axis: 'hidden' | 'featureDisabled' | 'unavailable', id: string) {
+    return {
+      hidden: new Set(axis === 'hidden' ? [id] : []),
+      featureDisabled: new Set(axis === 'featureDisabled' ? [id] : []),
+      unavailable: new Set(axis === 'unavailable' ? [id] : []),
+    }
+  }
+
+  it('falls back when the remembered panel has no dock entry', () => {
     // Issue #590: hiding the integration removes the dock entry, so restoring a
     // project that was last on forge would land the user on a panel with no
     // entry pointing at it (and no way back except another dock button). The
     // registry check alone cannot see this — forge is still a valid tab id.
-    expect(resolvePanelTab('forge', true, false, true)).toBe('browse')
-    expect(resolvePanelTab('forge', false, false, true)).toBe('chat')
+    expect(resolvePanelTab('forge', true, false, blocked('hidden', 'forge'))).toBe('browse')
+    expect(resolvePanelTab('forge', false, false, blocked('hidden', 'forge'))).toBe('chat')
   })
 
-  it('the hidden-forge rule touches nothing else', () => {
-    // Guards against over-reach: the new rule must only special-case forge. An
-    // open file still restores the viewer, and the layout defaults are
-    // unchanged — a mutation that widened the condition would break this.
-    expect(resolvePanelTab('view', true, true, true)).toBe('view')
-    expect(resolvePanelTab('tasks', true, false, true)).toBe('tasks')
-    expect(resolvePanelTab('settings', false, false, true)).toBe('settings')
-    expect(resolvePanelTab(null, true, false, true)).toBe('browse')
+  it('treats all three axes the same way', () => {
+    // The rule is generic on purpose: a third gated plugin must not change this
+    // signature. Hidden / switched off / unavailable all mean "no entry".
+    for (const axis of ['hidden', 'featureDisabled', 'unavailable'] as const) {
+      expect(resolvePanelTab('mail', true, false, blocked(axis, 'mail'))).toBe('browse')
+      expect(resolvePanelTab('mail', false, false, blocked(axis, 'mail'))).toBe('chat')
+    }
   })
 
-  it('keeps forge when the entry is visible', () => {
-    // The flag must default to "visible" for every caller that does not pass it
-    // (older call sites, tests): forge is a legitimate landing tab.
+  it('the blocked rule touches nothing else', () => {
+    // Guards against over-reach: an open file still restores the viewer, other
+    // tabs are untouched, and the layout defaults are unchanged.
+    const only = blocked('hidden', 'forge')
+    expect(resolvePanelTab('view', true, true, only)).toBe('view')
+    expect(resolvePanelTab('tasks', true, false, only)).toBe('tasks')
+    expect(resolvePanelTab('settings', false, false, only)).toBe('settings')
+    expect(resolvePanelTab(null, true, false, only)).toBe('browse')
+    // A different tab being blocked does not affect this one.
+    expect(resolvePanelTab('forge', true, false, blocked('hidden', 'mail'))).toBe('forge')
+  })
+
+  it('keeps a tab when no availability is passed', () => {
+    // The parameter is optional for callers that only need the layout rules.
     expect(resolvePanelTab('forge', true, false)).toBe('forge')
-    expect(resolvePanelTab('forge', false, false)).toBe('forge')
-    expect(resolvePanelTab('forge', true, false, false)).toBe('forge')
+    expect(resolvePanelTab('mail', false, false)).toBe('mail')
   })
 
-  it('falls back when the remembered panel is mail and the feature is off', () => {
-    // Same shape as the hidden-forge rule: with the mail feature switched off
-    // there is no dock entry, so restoring a project last left on mail must not
-    // land there.
-    expect(resolvePanelTab('mail', true, false, false, true)).toBe('browse')
-    expect(resolvePanelTab('mail', false, false, false, true)).toBe('chat')
-    // Independent of the forge flag, and defaults to visible when not passed.
-    expect(resolvePanelTab('mail', true, false, true, true)).toBe('browse')
-    expect(resolvePanelTab('mail', true, false, false, false)).toBe('mail')
-    expect(resolvePanelTab('mail', true, false)).toBe('mail')
-    // The new rule must not swallow the other tabs.
-    expect(resolvePanelTab('tasks', true, false, false, true)).toBe('tasks')
-    expect(resolvePanelTab('forge', true, false, false, true)).toBe('forge')
-  })
 })

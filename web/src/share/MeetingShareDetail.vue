@@ -10,6 +10,12 @@
       <h1 class="share-file-name share-meeting__title" data-role="record-title">
         {{ record?.title || title || t('meeting.list.untitled') }}
       </h1>
+      <!-- Source project, when the share rules allow naming it. This page IS a
+           published share page (unlike a room someone is still attending), so
+           it carries the same provenance chip as the file and session shares. -->
+      <span v-if="projectName" class="share-project-chip" :title="projectName" data-role="share-project">
+        {{ t('share.fromProject', { name: projectName }) }}
+      </span>
       <span class="share-spacer" />
       <ShareFitButton />
       <ShareThemeButton />
@@ -198,7 +204,11 @@ import {
   type ShareMeetingRecord,
 } from './liveNotesClient'
 
-withDefaults(defineProps<{ title?: string }>(), { title: '' })
+withDefaults(defineProps<{
+  title?: string
+  /** Source project name, '' when the server hides it (`share.show_project_name`). */
+  projectName?: string
+}>(), { title: '', projectName: '' })
 
 const { t, locale } = useI18n()
 const toast = useToast()

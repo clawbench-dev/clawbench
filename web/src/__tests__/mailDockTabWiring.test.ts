@@ -3,57 +3,71 @@ import { readWebFile } from '@/testUtils/readWebFile'
 
 /**
  * The mail feature's master switch is a server setting that hides the dock
- * entry. App.vue has no component test (its only tests read it as source text),
- * so the WIRING is pinned here: the pure filter in dockTabs.ts is covered by
- * unit tests, but nothing there can see whether App.vue actually passes the flag
- * through. Dropping an argument would leave a settings switch that silently
- * does nothing — the same gap the forge visibility test exists for.
+ * entry, and its unread poller is a background resource. Both used to be wired
+ * in App.vue; they live in `plugins/mail/plugin.ts` now. These assertions pin
+ * the wiring so a future refactor cannot silently leave the switch or the
+ * poller disconnected.
  */
-describe('mail dock tab visibility wiring', () => {
+describe('mail dock runtime', () => {
+  const mail = readWebFile('src/plugins/mail/plugin.ts')
+
+  it('declares the server feature switch and leaves the value to the registry', () => {
+    // The manifest names the switch; the value comes from /api/features (the
+    // plugin registry), so there is no second config read here.
+    expect(mail).toContain("feature: 'mail.enabled'")
+    expect(mail, 'the per-device key must not drive this').not.toContain('localConfig')
+    expect(mail, 'availability is the capability axis').not.toContain('available:')
+  })
+
+  it('feeds the unread badge from the mail composable', () => {
+    expect(mail).toContain('total')
+    expect(mail).toContain('badge:')
+  })
+
+  it('declares the unread poller as a background resource with a cleanup', () => {
+    expect(mail).toContain('startMailUnreadPolling()')
+    expect(mail).toContain('return stopMailUnreadPolling')
+    expect(mail).toContain('startBackground:')
+  })
+})
+
+describe('App.vue consumes the mail runtime', () => {
   const app = readWebFile('src/App.vue')
 
-  it('reads the switch from the SERVER config, not a per-device preference', () => {
-    // Turning mail off stops the background IMAP sync on the server, so the
-    // dock must agree on every client. A local copy would let one device keep
-    // showing an entry the server has disabled.
-    const start = app.indexOf('const isMailTabHidden')
-    expect(start, 'isMailTabHidden not found in App.vue').toBeGreaterThan(-1)
-    const body = app.slice(start, start + 260)
-    expect(body).toContain('.enabled === false')
-    expect(body).toContain('serverConfig.value')
-    expect(body, 'the per-device key must not drive this').not.toContain('localConfig')
+  it('filters the dock by the shared runtime availability set', () => {
+    const start = app.indexOf('const visibleDockTabs = computed')
+    expect(start, 'visibleDockTabs computed not found in App.vue').toBeGreaterThan(-1)
+    const body = app.slice(start, start + 500)
+    expect(body).toContain('unavailable: unavailableDockTabs.value')
+    expect(body).toContain('featureDisabled: featureDisabledDockTabs.value')
+    expect(body).not.toContain('mailHidden:')
   })
 
-  it('passes the flag into the one render-list builder both docks use', () => {
-    const start = app.indexOf('const overflowTabs = computed')
-    expect(start, 'overflowTabs computed not found in App.vue').toBeGreaterThan(-1)
-    const body = app.slice(start, start + app.slice(start).indexOf('\n)'))
-    expect(body).toContain('mailHidden: isMailTabHidden.value')
+  it('leaves the tab when the feature becomes unavailable', () => {
+    expect(app).toContain('watch(unavailableDockTabs')
+    expect(app).toContain('shouldLeaveUnavailableDockTab(current)')
   })
 
-  it('leaves the tab and stops the unread poller when the switch is turned off', () => {
-    // Without the switch-away the panel stays mounted with no dock entry
-    // pointing at it; without the stop the badge poller keeps hitting
-    // /api/mail/unread for a feature the user disabled.
-    const start = app.indexOf('watch(isMailTabHidden')
-    expect(start, 'watch(isMailTabHidden) not found in App.vue').toBeGreaterThan(-1)
-    const body = app.slice(start, start + app.slice(start).indexOf('\n})'))
-    expect(body).toContain('stopMailUnreadPolling()')
-    expect(body).toMatch(/if \(hidden && panelIsActive\('mail'\)\)/)
-    expect(body).toContain('startMailUnreadPolling()')
-  })
-
-  it('refuses programmatic navigation into a disabled mail panel', () => {
-    expect(app).toContain("if (tab === 'mail' && mailTabBlocked()) return")
+  it('refuses programmatic navigation into an unavailable plugin', () => {
+    const start = app.indexOf('function switchTab(')
+    expect(start, 'switchTab not found in App.vue').toBeGreaterThan(-1)
+    const body = app.slice(start, start + 1200)
+    expect(body).toContain('isDockTabId(tab) && !isDockPluginAvailable(tab)')
   })
 
   it('does not restore a disabled mail panel on cold start / project switch', () => {
-    // `resolvePanelTab` only knows the dock registry, and mail is still a valid
-    // id — so the restore path must pass the switch through, or a project last
-    // visited on mail lands the user on a panel whose entry is gone.
     const start = app.indexOf('function applyProjectPanel')
     expect(start).toBeGreaterThan(-1)
-    const body = app.slice(start, start + app.slice(start).indexOf('\n}'))
-    expect(body).toContain('isMailTabHidden.value')
+    const body = app.slice(start, start + 800)
+    // Generic now: any blocked tab (hidden / switched off / unavailable) falls
+    // back to the layout default instead of a per-plugin boolean.
+    expect(body).toContain('dockAvailability.value')
+    expect(body).toContain('resolvePanelTab(')
+  })
+
+  it('leaves the poller to the lifecycle, not to App.vue', () => {
+    expect(app).toContain('useDockLifecycle()')
+    expect(app).not.toContain('startMailUnreadPolling()')
+    expect(app).not.toContain('stopMailUnreadPolling()')
   })
 })

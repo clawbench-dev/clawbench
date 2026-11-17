@@ -43,6 +43,7 @@ vi.mock('@/utils/materialIcons', () => ({
 }))
 
 import MeetingResources from '../MeetingResources.vue'
+import { syncFeatureConfig, syncServerFeatures } from '@/composables/useFeatureFlags'
 import type { MeetingResourceGroup } from '@/composables/useMeetingResources'
 
 const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: enMessages } })
@@ -108,6 +109,8 @@ beforeEach(() => {
   startAttachDrag.mockReset()
   cleanupDragGhost.mockReset()
   confirmDialog.mockReset()
+  syncFeatureConfig({})
+  syncServerFeatures([])
 })
 
 describe('MeetingResources', () => {
@@ -156,6 +159,37 @@ describe('MeetingResources', () => {
     expect(block.find('[data-role="meeting-share-badge"]').text()).toBe(
       enMessages.meeting.detail.shareBadgePublic,
     )
+  })
+
+  it('hides the whole link card when 分享 is off', () => {
+    // The server revokes every link when the switch goes off, so a publish
+    // button here could only fail — and a "private" badge would be a claim
+    // about a feature that no longer exists.
+    // The share MASTER switch is a server feature (registry), the per-kind
+    // permissions are config sub-options — push both, as loadConfig does.
+    syncServerFeatures([{ id: 'share', enabled: false, available: true, reason: 'disabled', defaultOn: true }])
+    syncFeatureConfig({ share: { enabled: false } })
+    const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
+
+    expect(wrapper.find('[data-role="meeting-link"]').exists()).toBe(false)
+    // The rest of the resources page is untouched.
+    expect(wrapper.text()).toContain(enMessages.meeting.resources.title)
+  })
+
+  it('hides the link card when MEETING links are disallowed, even with 分享 on', () => {
+    syncServerFeatures([{ id: 'share', enabled: true, available: true, reason: '', defaultOn: true }])
+    syncFeatureConfig({ share: { enabled: true, allow_meetings: false } })
+    const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
+
+    expect(wrapper.find('[data-role="meeting-link"]').exists()).toBe(false)
+  })
+
+  it('keeps the link card when only file/conversation links are disallowed', () => {
+    syncServerFeatures([{ id: 'share', enabled: true, available: true, reason: '', defaultOn: true }])
+    syncFeatureConfig({ share: { enabled: true, allow_files: false, allow_sessions: false } })
+    const wrapper = mountResources({ shareToken: 'tok-9', links: LINKS })
+
+    expect(wrapper.find('[data-role="meeting-link"]').exists()).toBe(true)
   })
 
   it('lists what a visitor can read, in the share page order', () => {

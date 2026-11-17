@@ -226,6 +226,93 @@ describe('DrawioViewer bridge', () => {
   })
 })
 
+describe('DrawioViewer read-only fit', () => {
+  async function mountPreview() {
+    apiGetMock.mockResolvedValue(statusOf({ installed: true, state: 'ready', basePath: '/vendor/drawio/v1/' }))
+    mockContentWindow()
+    const wrapper = mount(DrawioViewer, { props: { file, readonly: true } })
+    await nextTick()
+    await nextTick()
+    sendFromIframe({ event: 'init' })
+    await nextTick()
+    return wrapper
+  }
+
+  /** draw.io's reply to `load` (proto=json). */
+  const LOAD_REPLY = {
+    event: 'load',
+    scale: 0.5,
+    pageVisible: true,
+    page: { x: 0, y: 0, width: 584.5, height: 413.5 },
+    modelBounds: { x: 40, y: 20, width: 455.5, height: 192 },
+    containerSize: { width: 412, height: 795 },
+  }
+
+  function lastMessage() {
+    return JSON.parse(postMessage.mock.calls.at(-1)[0])
+  }
+
+  it('leaves the file zoom alone when loading, then asks draw.io to fit the page', async () => {
+    // Fitting inside `load` runs before the graph has laid itself out, and the
+    // `fit` action's translate is corrected relative to the view it replaces —
+    // the same diagram landed at four different offsets depending on the
+    // previous zoom (measured). `fitPage` sizes the sheet deterministically.
+    const wrapper = await mountPreview()
+    expect(lastMessage()).toMatchObject({ action: 'load', autosave: 0 })
+    expect(lastMessage().fit).toBeUndefined()
+
+    sendFromIframe(LOAD_REPLY)
+    await nextTick()
+
+    expect(lastMessage()).toEqual({ action: 'invokeAction', actionName: 'fitPage' })
+    wrapper.unmount()
+  })
+
+  it('fits the content instead when the diagram has no page view', async () => {
+    // `fitPage` would switch the page ON instead of fitting, which would change
+    // the drawing on screen.
+    const wrapper = await mountPreview()
+    sendFromIframe({ ...LOAD_REPLY, pageVisible: false })
+    await nextTick()
+    expect(lastMessage()).toEqual({ action: 'fit', border: 16, maxScale: 1 })
+    wrapper.unmount()
+  })
+
+  it('re-fits without reloading the diagram when the reader asks', async () => {
+    const wrapper = await mountPreview()
+    sendFromIframe(LOAD_REPLY)
+    await nextTick()
+    const before = postMessage.mock.calls.length
+
+    wrapper.vm.fitToScreen()
+    await nextTick()
+
+    expect(postMessage.mock.calls.length).toBe(before + 1)
+    expect(lastMessage()).toEqual({ action: 'invokeAction', actionName: 'fitPage' })
+    wrapper.unmount()
+  })
+
+  it('never touches the editor view', async () => {
+    // In the editor the author's zoom is deliberate, and draw.io has no undo
+    // for a view change.
+    apiGetMock.mockResolvedValue(statusOf({ installed: true, state: 'ready', basePath: '/vendor/drawio/v1/' }))
+    mockContentWindow()
+    const wrapper = mount(DrawioViewer, { props: { file } })
+    await nextTick()
+    await nextTick()
+    sendFromIframe({ event: 'init' })
+    await nextTick()
+    const before = postMessage.mock.calls.length
+
+    sendFromIframe(LOAD_REPLY)
+    wrapper.vm.fitToScreen()
+    await nextTick()
+
+    expect(postMessage.mock.calls.length).toBe(before)
+    wrapper.unmount()
+  })
+})
+
 describe('DrawioViewer offline upload', () => {
   class FakeXHR {
     static instances: FakeXHR[] = []

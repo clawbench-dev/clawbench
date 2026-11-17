@@ -12,26 +12,55 @@ import (
 	"sync"
 
 	"clawbench/internal/mail"
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
 
 const (
-	// mailInitialSyncLimit is how many of the newest messages a folder caches.
+	// mailDefaultSyncWindow is the fallback for the configured sync window. It
+	// is how many of the newest messages a folder caches when nothing is set.
 	// Pulling an entire 50k-message archive on first connect would take minutes
 	// and fill the database with mail nobody is going to read; older pages are
 	// fetched on demand when the user scrolls back.
-	mailInitialSyncLimit = 100
+	mailDefaultSyncWindow = 100
 	// mailFlagRefreshWindow is how many cached messages get their flags
 	// re-read on every sync, so read/star changes made on the phone show up.
+	// Deliberately not configurable: it is an internal consistency window, and
+	// making it smaller would silently drop flag changes on older mail.
 	mailFlagRefreshWindow = 200
-	// mailBodyPrefetch is how many of the newest messages have their body
-	// decoded during sync. This is what gives the list its preview lines and
-	// makes the first click instant.
-	mailBodyPrefetch = 10
+	// mailDefaultBodyPrefetch is the fallback prefetch count.
+	mailDefaultBodyPrefetch = 10
 	// mailPrefetchMaxSize skips prefetching huge messages (usually a big
 	// attachment); they are parsed when opened instead.
 	mailPrefetchMaxSize = 300 * 1024
 )
+
+// mailSyncWindow is how many of the newest messages each folder caches.
+//
+// Read per sync rather than captured at startup so a settings change applies to
+// the next pass without restarting the worker. A non-positive value can only
+// come from an uninitialised config (validation rejects it), so it falls back
+// to the default instead of caching nothing.
+func mailSyncWindow() int {
+	if n := model.ConfigInstance.Mail.SyncWindow; n > 0 {
+		return n
+	}
+	return mailDefaultSyncWindow
+}
+
+// mailBodyPrefetchCount is how many of the newest messages get their body
+// decoded during a sync.
+//
+// 0 is a real choice ("do not prefetch", for metered connections), so unlike
+// the window this does NOT fall back on zero — the default is written into the
+// config by ApplyDefaults.
+func mailBodyPrefetchCount() int {
+	n := model.ConfigInstance.Mail.BodyPrefetch
+	if n < 0 {
+		return 0
+	}
+	return n
+}
 
 // mailDialer / mailSender are variables so tests can inject fakes.
 var (
@@ -185,7 +214,7 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 		}
 	}
 
-	headers, err := client.FetchNewest(ctx, f.Path, mailInitialSyncLimit)
+	headers, err := client.FetchNewest(ctx, f.Path, mailSyncWindow())
 	if err != nil {
 		return 0, err
 	}
@@ -220,7 +249,7 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 		return len(inserted), err
 	}
 
-	prefetchMailBodies(ctx, client, folderID, f.Path, mailBodyPrefetch)
+	prefetchMailBodies(ctx, client, folderID, f.Path, mailBodyPrefetchCount())
 	dispatchMailTriggers(accountID, f.Path, inserted, firstSync)
 	return len(inserted), nil
 }

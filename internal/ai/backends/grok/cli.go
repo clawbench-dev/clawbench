@@ -6,12 +6,6 @@ import (
 	"clawbench/internal/ai"
 )
 
-// init registers the Grok streaming-json CLI backend as a fallback transport.
-// ACP (grok agent stdio) is preferred; when unavailable, chat falls back here.
-func init() {
-	ai.RegisterBackend("grok", newGrokBackend)
-}
-
 // newGrokBackend returns a CLIBackend for Grok headless streaming-json mode.
 func newGrokBackend() ai.AIBackend {
 	return &ai.CLIBackend{
@@ -19,7 +13,7 @@ func newGrokBackend() ai.AIBackend {
 		Cmd:         "grok",
 		BuildArgsFn: buildGrokStreamArgs,
 		NewParserFn: func() ai.LineParser {
-			return &ai.GrokStreamParser{}
+			return &GrokStreamParser{}
 		},
 		FilterLineFn: func(line string) (string, bool) {
 			if line == "" || !strings.HasPrefix(line, "{") {

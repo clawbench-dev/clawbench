@@ -1,17 +1,16 @@
 /**
- * The fallback download button must not wear the browser's button chrome.
+ * The fallback download control is a LINK carrying the direct download URL.
  *
- * `.share-download-btn` was an `<a href download>` until the download grew an
- * in-product progress bar, when it became a `<button>` (the progress bar needs
- * a click handler, not a navigation). A `<button>` brings its own UA styling:
- * a 2px OUTSET border framing the accent fill, and `font: 13.33px Arial` for
- * the label. The rule kept `text-decoration: none` from its `<a>` days but
- * never reset the border, so every un-previewable share showed an orange chip
- * inside a grey bevel — and the label in a different typeface from the page.
+ * It has to be an `<a href>` rather than a `<button>`: the href IS the file, so
+ * the browser's own right-click menu offers "copy link address" / "save link
+ * as". The click handler still drives the in-product progress bar, which is why
+ * the control cannot simply navigate.
  *
- * jsdom applies no stylesheets, so a rendered assertion cannot see this; the
- * rule is read from the source instead, the same way the other CSS guards in
- * this directory work.
+ * Because it is an `<a>`, the UA chrome (`border` / `font`) no longer applies —
+ * but the accent chip is painted by this rule, and `text-decoration: none` is
+ * load-bearing again (a bare link would underline its label). jsdom applies no
+ * stylesheets, so these are read from the source, the same way the other CSS
+ * guards in this directory work.
  */
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -37,18 +36,19 @@ function declarations(css: string, selector: string): Record<string, string> {
 const source = readFileSync(join(ROOT, VIEW), 'utf8')
 const style = source.slice(source.indexOf('<style'))
 
-describe('share fallback download button', () => {
-  it('renders as a <button> driven by the progress-bar download', () => {
-    expect(source).toContain('class="share-download-btn" type="button" @click="handleDownload"')
+describe('share fallback download control', () => {
+  it('renders as a link carrying the direct download URL', () => {
+    expect(source).toContain('class="share-download-btn" :href="downloadUrl" @click.prevent="handleDownload"')
   })
 
-  it('resets the UA button border', () => {
+  it('does not underline the label like a bare link', () => {
     const decls = declarations(style, '.share-download-btn')
-    expect(decls.border).toBe('none')
+    expect(decls['text-decoration']).toBe('none')
   })
 
-  it('uses the page typeface rather than the UA button font', () => {
+  it('paints the accent chip itself instead of relying on UA styling', () => {
     const decls = declarations(style, '.share-download-btn')
+    expect(decls.background).toBe('var(--accent-color, #0969da)')
     expect(decls['font-family']).toBe('inherit')
   })
 })

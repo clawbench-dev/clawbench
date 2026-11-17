@@ -34,8 +34,14 @@ package handler
 import (
 	"encoding/json"
 	"html"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"clawbench/internal/liveshare"
+	"clawbench/internal/model"
+	"clawbench/internal/service"
+	"clawbench/internal/store"
 )
 
 // shareDiscovery describes what the injected block should say.
@@ -49,6 +55,59 @@ type shareDiscovery struct {
 	Kind string
 	// MessageCount is the conversation's message count (0 for file shares).
 	MessageCount int
+	// ProjectName is the source project's display name. Empty when the owner
+	// switched share.show_project_name off (or the project is unknown).
+	ProjectName string
+	// DownloadAllowed mirrors share.allow_download. The discovery block does
+	// not advertise a download URL that the server would answer with 403.
+	DownloadAllowed bool
+}
+
+// shareProjectName returns the display name of a project for a public share
+// page, or "" when the owner opted out (share.show_project_name).
+func shareProjectName(projectPath string) string {
+	if !model.FeaturePolicy.ShareShowProjectName || projectPath == "" {
+		return ""
+	}
+	name := filepath.Base(filepath.Clean(projectPath))
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return ""
+	}
+	return name
+}
+
+// shareProjectNameForMeeting resolves an archived meeting's project name.
+// Unknown tokens / deleted projects answer "" rather than an error: the source
+// label is decoration on a public page, not part of the share contract.
+func shareProjectNameForMeeting(token string) string {
+	if !model.FeaturePolicy.ShareShowProjectName {
+		return ""
+	}
+	pid, ok, err := service.LiveNoteProjectID(token)
+	if err != nil || !ok {
+		return ""
+	}
+	path, ok, err := store.ProjectPathForID(pid)
+	if err != nil || !ok {
+		return ""
+	}
+	return shareProjectName(path)
+}
+
+// shareProjectNameForLiveRoom resolves a RUNNING live room's project name.
+//
+// The room carries its project key for its own bookkeeping; publishing that key
+// on a public page is the same disclosure as a file/session share's project name
+// and must obey the same policy. Passing it through unfiltered meant a viewer
+// given only a meeting link could read the project's directory name from
+// og:site_name / <noscript> even after the owner switched
+// share.show_project_name off — the switch was simply not consulted on this
+// path.
+func shareProjectNameForLiveRoom(room *liveshare.Room) string {
+	if room == nil {
+		return ""
+	}
+	return shareProjectName(room.ProjectKey())
 }
 
 // validShareToken reports whether a token is safe to interpolate into the
@@ -116,17 +175,7 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 	titleHTML := html.EscapeString(title)
 	titleJSON, _ := json.Marshal(title) // escapes <, >, & to \u003c etc.
 
-	schemaType := "CreativeWork"
-	desc := "A file shared from ClawBench."
-	if d.Kind == shareKindSession {
-		schemaType = "Conversation"
-		desc = "A conversation shared from ClawBench."
-	}
-	if d.Kind == shareKindDir {
-		// A folder share's data URL is a listing, not a document.
-		schemaType = "CollectionPage"
-		desc = "A folder shared from ClawBench."
-	}
+	schemaType, desc := shareSchemaFor(d.Kind)
 
 	var b strings.Builder
 	b.WriteString("\n    <!-- Machine-readable discovery (injected by the server).\n")
@@ -135,6 +184,16 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 	b.WriteString("         token already in the page URL — no second link is needed. -->\n")
 	b.WriteString(`    <link rel="alternate" type="application/json" href="` + dataURL + `" title="` + titleHTML + ` (JSON)">` + "\n")
 	b.WriteString(`    <link rel="alternate" type="application/json" href="` + metaURL + `" title="Share metadata">` + "\n")
+	if d.ProjectName != "" {
+		// Link unfurls (Slack/WeChat/etc.) show this as the source site. It is
+		// the only place the project name reaches a reader without the SPA
+		// rendering it, and it disappears entirely when the owner opts out.
+		b.WriteString(`    <meta property="og:site_name" content="` + html.EscapeString(d.ProjectName) + `">` + "\n")
+	}
+
+	if d.Kind != shareKindSession && d.DownloadAllowed {
+		writeShareFileAccess(&b, d)
+	}
 
 	b.WriteString(`    <script type="application/ld+json">`)
 	b.WriteString(`{"@context":"https://schema.org","@type":"` + schemaType + `","name":` + string(titleJSON))
@@ -151,8 +210,18 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 	// markup.
 	b.WriteString("    <noscript>\n")
 	b.WriteString("      <h1>" + titleHTML + "</h1>\n")
+	if d.ProjectName != "" {
+		b.WriteString("      <p>Source project: " + html.EscapeString(d.ProjectName) + "</p>\n")
+	}
 	b.WriteString("      <p>" + desc + " The full content is available as JSON at\n")
 	b.WriteString(`         <a href="` + dataURL + `">` + dataURL + "</a>.</p>\n")
+	if d.DownloadAllowed && d.Kind == shareKindFile {
+		b.WriteString(`      <p>Download the file itself: <a href="/api/share/` + d.Token + `/download">` +
+			`/api/share/` + d.Token + `/download</a>.</p>` + "\n")
+	} else if d.DownloadAllowed && d.Kind == shareKindDir {
+		b.WriteString("      <p>Download one entry: <code>/api/share/" + d.Token +
+			"/download?path=&lt;absolute path inside the folder&gt;</code>.</p>\n")
+	}
 	b.WriteString("    </noscript>\n")
 
 	// Title: replaces the generic "ClawBench Share" so tabs, bookmarks and link
@@ -175,4 +244,47 @@ func replaceShareTitle(doc, title string) string {
 		return doc
 	}
 	return strings.Replace(doc, placeholder, "<title>"+html.EscapeString(title)+"</title>", 1)
+}
+
+// shareSchemaFor names the JSON-LD type and the description that fits the kind
+// of thing behind the token: a folder is a listing, a conversation is not a
+// document, and only a file has a single downloadable body.
+func shareSchemaFor(kind string) (schemaType, desc string) {
+	switch kind {
+	case shareKindSession:
+		return "Conversation", "A conversation shared from ClawBench."
+	case shareKindDir:
+		return "CollectionPage", "A folder shared from ClawBench."
+	default:
+		return "CreativeWork", "A file shared from ClawBench."
+	}
+}
+
+// writeShareFileAccess advertises where the raw bytes live.
+//
+// A browser that clicks the download button fetches exactly this URL, but
+// nothing in the shell says so — and an agent reading the page has no way to
+// guess a token-scoped API path. Stating it in the source (comment + a link
+// element) is what turns "here is a page" into "here is the file".
+// Conversation shares have no file, so they get none of this; a folder has no
+// single file, so its bare download URL is invalid and only the ?path= form is
+// advertised.
+func writeShareFileAccess(b *strings.Builder, d shareDiscovery) {
+	downloadURL := "/api/share/" + d.Token + "/download"
+	localURL := "/api/share/" + d.Token + "/local"
+	b.WriteString("\n    <!-- Direct file access (same token, no sign-in):\n")
+	b.WriteString("         GET " + downloadURL + "  → the file as a download\n")
+	b.WriteString("         GET " + localURL + "  → the same bytes inline (usable as <img src> / <video src>)\n")
+	if d.Kind == shareKindDir {
+		b.WriteString("         A folder has no single file: append ?path=<absolute path inside the folder>\n")
+		b.WriteString("         to either URL to fetch one entry. List the entries first with\n")
+		b.WriteString("         GET /api/share/" + d.Token + "/list?path=<absolute path>.\n")
+	} else {
+		b.WriteString("         A file the shared document references: append ?path=<absolute path>\n")
+		b.WriteString("         (the path must stay inside the share's scope).\n")
+	}
+	b.WriteString("    -->\n")
+	if d.Kind == shareKindFile {
+		b.WriteString(`    <link rel="alternate" type="application/octet-stream" href="` + downloadURL + `" title="Direct download">` + "\n")
+	}
 }

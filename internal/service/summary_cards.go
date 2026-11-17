@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/askquestion"
 	"clawbench/internal/model"
 )
@@ -65,7 +66,10 @@ func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 					Output: b.Output,
 				})
 			}
-			if b.Done {
+			// A tool the turn stopped waiting for never reported a result, so the
+			// file may not have been touched at all: do not claim a change (the
+			// banner offers a diff for it).
+			if b.Done && b.Status != ai.ToolStatusInterrupted {
 				extractFileChanges(cards, b)
 			}
 		case contentKeyText:

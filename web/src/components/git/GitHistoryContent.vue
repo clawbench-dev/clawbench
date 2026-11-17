@@ -616,12 +616,13 @@ onMounted(async () => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  /* Page root surface, matching .forge-panel / .task-list-page / .proxy-panel-content.
-     The drill-down header (global .drilldown-header) is transparent, so it reads as
-     the top of this surface rather than as a second, contrasting bar — and the row
-     hover tint (--bg-secondary) stays visible against it instead of vanishing into
-     a bg-secondary panel behind. */
-  background: var(--bg-primary, #ffffff);
+  /* Page root surface, shared with every other left-panel tab (see
+     `--panel-page-bg`). The drill-down header (global .drilldown-header) is
+     transparent, so it reads as the top of this surface rather than as a
+     second, contrasting bar — and the row hover tint (--bg-secondary) stays
+     visible against it instead of vanishing into a bg-secondary panel
+     behind. */
+  background: var(--panel-page-bg);
 }
 
 .git-history-loading {

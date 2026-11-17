@@ -260,8 +260,12 @@ describe('one toolbar row height', () => {
     // Regression: the file manager swaps its browse toolbar for the
     // multi-select one in the same slot, and the row used to be sized by its
     // tallest child — opening multi-select shrank the whole toolbar by 8px.
+    //
+    // `.dir-toolbar` is deliberately NOT in this list: it is the page header
+    // row (section glyph + window controls overlay), so it takes
+    // `--header-height` like every other panel header. That is pinned in
+    // src/__tests__/panelWindowControlsCoverage.test.ts.
     const ROWS: Array<[string, string]> = [
-      ['src/components/file/FileManagerContent.vue', 'dir-toolbar'],
       ['src/assets/code-link-preview.css', 'code-preview-meta'],
       ['src/components/file/DirPreviewBody.vue', 'dir-preview-meta'],
       ['src/components/mail/MailReader.vue', 'mail-reader__actions'],

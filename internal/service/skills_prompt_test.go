@@ -87,6 +87,8 @@ func TestAppendSkillsSection(t *testing.T) {
 // for that project and nowhere else.
 func TestAppendSkillsSection_IncludesProjectSkills(t *testing.T) {
 	agentID := setupSkillInjection(t)
+	// Project injection is opt-in (see TestAppendSkillsSection_ProjectSkillsOffByDefault).
+	model.ConfigInstance.Skills.ProjectAutoInject = true
 
 	project := t.TempDir()
 	projSkillDir := filepath.Join(project, ".agents", "skills", "proj-demo")
@@ -99,6 +101,24 @@ func TestAppendSkillsSection_IncludesProjectSkills(t *testing.T) {
 
 	// Without the project path the project skill is absent.
 	assert.NotContains(t, AppendSkillsSection("BASE", agentID, ""), "proj-demo")
+}
+
+// TestAppendSkillsSection_ProjectSkillsOffByDefault pins the opt-in: a project
+// skill's description comes from the working tree (possibly an unread
+// repository), so it must not reach the system prompt until the user enables
+// project injection.
+func TestAppendSkillsSection_ProjectSkillsOffByDefault(t *testing.T) {
+	agentID := setupSkillInjection(t)
+
+	project := t.TempDir()
+	projSkillDir := filepath.Join(project, ".agents", "skills", "proj-demo")
+	require.NoError(t, os.MkdirAll(projSkillDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projSkillDir, "SKILL.md"),
+		[]byte("---\nname: proj-demo\ndescription: project skill\n---\n"), 0o644))
+
+	got := AppendSkillsSection("BASE", agentID, project)
+	assert.NotContains(t, got, "proj-demo", "project skills must not be injected by default")
+	assert.Contains(t, got, "demo-skill", "global skills are unaffected")
 }
 
 func TestAppendSkillsSection_NoSkillsLeavesPromptUnchanged(t *testing.T) {

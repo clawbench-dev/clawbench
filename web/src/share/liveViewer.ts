@@ -666,6 +666,10 @@ export class LiveViewer {
       // Sent on open, not at construction: the reply comes back on this same
       // channel, which is only usable once both ends agree it is open.
       this.sendControl({ t: 'chat-history-req' })
+      // The strokes already on the board are the same problem: they were live
+      // frames sent before this viewer had a channel, so a late joiner would
+      // watch the presenter talk about a picture with no annotation on it.
+      this.sendControl({ t: 'ink-sync-req' })
     }
 
     pc.ontrack = (ev) => {
@@ -775,6 +779,8 @@ export class LiveViewer {
     // is connected, so this is the equivalent moment — without it a viewer that
     // joins late sees an empty chat panel.
     void sendRelayData(room, { t: 'chat-history-req' })
+    // …and for the ink already on the board, for the same reason.
+    void sendRelayData(room, { t: 'ink-sync-req' })
   }
 
   /**

@@ -1,38 +1,14 @@
 <template>
-  <!-- Agent config sub-routes -->
-  <SettingsAgentsIndex
-    v-if="categoryId === 'agents'"
-    @navigate="(id: string) => $emit('navigate', id)"
-  />
-  <SettingsAgentDetail
-    v-else-if="categoryId.startsWith('agents:')"
+  <!-- Category-specific pages (agents, the dock manager, a plugin's own custom
+       settings page, a project's detail route) are looked up in a table in the
+       script below instead of a hand-written if-chain: a plugin contributes its
+       page through `settingsPage` in `plugin.ts`. -->
+  <component
+    :is="specialPage.component"
+    v-if="specialPage"
     :key="categoryId"
-    :agent-id="categoryId.slice(7)"
-    @deleted="$emit('deleted', 'agents')"
-    @back="$emit('back', 'agents')"
-    @navigate-replace="(id: string) => $emit('navigateReplace', id)"
-    @open-sessions="(id: string) => $emit('navigate', `agentSessions:${id}`)"
-  />
-  <!-- "Conversations using this agent" (agentSessions:<id>). A dedicated route
-       rather than a card on the detail page: the list is paged and spans
-       projects, so it needs its own scroll surface. Like project:<id> it has no
-       back button — the breadcrumb crumb is the way back. The prefix is NOT
-       `agents:` on purpose: that prefix is parsed as `agents:<id>` everywhere
-       (slice(7)), so a third segment would be read as part of the agent id. -->
-  <SettingsAgentSessions
-    v-else-if="categoryId.startsWith('agentSessions:')"
-    :key="categoryId"
-    :agent-id="categoryId.slice('agentSessions:'.length)"
-  />
-  <!-- Project detail route (project:<id>): a read-only stats page, not a
-       batch-save panel, so it gets its own component rather than going through
-       subPagePanelMap. It has no back button — the breadcrumb crumb is the way
-       back — and on delete it emits `deleted` so the parent pops the detail
-       entry instead of pushing (see returnToCategory). -->
-  <ProjectDetailSetting
-    v-else-if="categoryId.startsWith('project:')"
-    :project-id="Number(categoryId.slice(8))"
-    @deleted="$emit('deleted', 'project')"
+    v-bind="specialPage.props"
+    v-on="specialPage.on"
   />
   <!-- Sub-page routes (data-driven: any colon-separated ID except agents) -->
   <div v-else-if="subPagePanel" class="settings-category">
@@ -116,14 +92,28 @@
           v-if="card.title === t('settings.items.allProjectsSection')"
           @navigate="(id: string) => $emit('navigate', id)"
         />
+        <!-- Knowledge-base index status + rebuild action. A dedicated card body
+             (counters and a destructive reindex button have no generic row), so
+             the placeholder item only opens the card. -->
+        <KbSetting v-if="card.title === t('settings.items.kbStatusSection')" />
+        <!-- Feature master switches live in the Dock feature manager. These
+             rows report the state and link there; the row itself carries no
+             control (see FeatureStatusRow). -->
         <template
           v-for="item in card.items"
-          :key="item.key + (item.key === 'forge.enabled' ? '-' + configRenderEpoch : '')"
+          :key="item.key"
         >
+          <FeatureStatusRow
+            v-if="item.statusFeature"
+            :enable-key="item.statusFeature"
+            :label="getItemLabel(item)"
+            :description="item.descriptionKey ? t(item.descriptionKey) : ''"
+            @navigate="$emit('navigate', 'dockPlugins')"
+          />
           <!-- The summary model is chosen where it is referenced, not on a
                separate page: this row opens a provider → model picker. -->
           <SettingsItem
-            v-if="item.type === 'summaryModel'"
+            v-else-if="item.type === 'summaryModel'"
             :setting-key="item.key"
             :label="getItemLabel(item)"
             :description="item.descriptionKey ? t(item.descriptionKey) : ''"
@@ -188,10 +178,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, defineAsyncComponent, ref, watch, onMounted, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsGroupPanel from './SettingsGroupPanel.vue'
+import FeatureStatusRow from './FeatureStatusRow.vue'
 import SettingsCard from './SettingsCard.vue'
 import SettingsAboutBrand from './SettingsAboutBrand.vue'
 import WallpaperSetting from './WallpaperSetting.vue'
@@ -213,6 +204,8 @@ import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
 import SettingsAgentSessions from './SettingsAgentSessions.vue'
+import DockPluginSetting from './DockPluginSetting.vue'
+import KbSetting from './KbSetting.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
 import { useSettingsConfig, getEffectiveUIScale, autoFitUIScale } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
@@ -224,11 +217,14 @@ import { getNative } from '@/utils/clawbenchNative'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useDesktopDownload } from '@/composables/useDesktopDownload'
+import { managedByEmbedder as upgradeManagedByEmbedder } from '@/composables/useUpgrade'
 import { downloadByUrl } from '@/utils/download'
 import { openExternalUrl } from '@/utils/externalLink'
 import { PROJECT_FEEDBACK_URL, PROJECT_GITHUB_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
+import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
+import { DOCK_SETTINGS_PAGES } from '@/composables/dockPluginRuntime'
 import { providerNameOf } from '@/utils/providerNames'
 import { THEMES } from '@/utils/themeMeta'
 import type { OptionPreview, SelectOption } from './SettingsItem.vue'
@@ -255,17 +251,31 @@ const emit = defineEmits<{
   restartRequested: []
 }>()
 
+/**
+ * Custom settings pages a plugin contributes, wrapped once at module load.
+ *
+ * `defineAsyncComponent` must not run inside the resolver below: it returns a
+ * NEW component identity on every call, which remounts the page on every render.
+ */
+const PLUGIN_PAGES = new Map<string, Component>()
+for (const page of DOCK_SETTINGS_PAGES) {
+  if (page.kind === 'custom' && page.component) {
+    PLUGIN_PAGES.set(
+      page.categoryId,
+      defineAsyncComponent(buildAsyncComponentOptions({ loader: page.component })),
+    )
+  }
+}
+
+/** One resolved page for the current category, or null for the normal layout. */
+interface SpecialSettingsPage {
+  component: Component
+  props?: Record<string, unknown>
+  on?: Record<string, (...args: never[]) => void>
+}
+
 const { t } = useI18n()
 const toast = useToast()
-// Bumped to force ONE settings row to re-mount after a rejected change. The
-// switch checkbox is uncontrolled (`:checked` + `@change`), so cancelling a
-// destructive toggle has to replace the element — otherwise it stays visually
-// flipped while the model value is still the old one.
-//
-// Scoped to the forge row in the template key: remounting every row of the card
-// would also destroy any in-progress edit state (an open inline editor, a
-// half-typed text field) for a change that was rejected anyway.
-const configRenderEpoch = ref(0)
 const dialog = useDialog()
 const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, setServerValue } = useSettingsConfig()
 const { loadAgents } = useAgents()
@@ -362,6 +372,71 @@ function resolveSummaryModelStatus(item: ItemSpec): 'configured' | 'unconfigured
 
 // ── Sub-page panel (data-driven) ──
 
+/**
+ * Category-specific pages, resolved from the id.
+ *
+ * A table (not a template if-chain): adding a page means adding one entry here
+ * or — for a plugin — declaring `settingsPage` in its `plugin.ts`. The
+ * colon-prefixed routes (`agents:<id>`, `agentSessions:<id>`, `project:<id>`)
+ * stay explicit because they are App-level routes, not plugin contributions.
+ */
+const specialPage = computed<SpecialSettingsPage | null>(() => {
+  const id = props.categoryId
+  if (id === 'agents') {
+    return {
+      component: SettingsAgentsIndex,
+      on: { navigate: ((cid: string) => emit('navigate', cid)) },
+    } as SpecialSettingsPage
+  }
+  if (id.startsWith('agents:')) {
+    return {
+      component: SettingsAgentDetail,
+      props: { agentId: id.slice(7) },
+      on: {
+        deleted: (() => emit('deleted', 'agents')),
+        back: (() => emit('back', 'agents')),
+        // v-on object keys are RUNTIME strings (no compiler normalization like
+        // @navigate-replace), so they must match the child's declared emit names.
+        navigateReplace: ((cid: string) => emit('navigateReplace', cid)),
+        openSessions: ((aid: string) => emit('navigate', `agentSessions:${aid}`)),
+      },
+    } as SpecialSettingsPage
+  }
+  // "Conversations using this agent" (agentSessions:<id>). A dedicated route
+  // rather than a card on the detail page: the list is paged and spans
+  // projects, so it needs its own scroll surface. Like project:<id> it has no
+  // back button — the breadcrumb crumb is the way back. The prefix is NOT
+  // `agents:` on purpose: that prefix is parsed as `agents:<id>` everywhere
+  // (slice(7)), so a third segment would be read as part of the agent id.
+  if (id.startsWith('agentSessions:')) {
+    return {
+      component: SettingsAgentSessions,
+      props: { agentId: id.slice('agentSessions:'.length) },
+    } as SpecialSettingsPage
+  }
+  // The dock manager: a custom page (presets + visibility + order), not a flat
+  // settings list. It emits `navigate` so its "feature settings" links can
+  // drill into the plugin's own settings category.
+  if (id === 'dockPlugins') {
+    return {
+      component: DockPluginSetting,
+      on: { navigate: ((cid: string) => emit('navigate', cid)) },
+    } as SpecialSettingsPage
+  }
+  // Project detail route (project:<id>): a read-only stats page, not a
+  // batch-save panel. No back button — the breadcrumb is the way back — and on
+  // delete it emits `deleted` so the parent pops the entry instead of pushing.
+  if (id.startsWith('project:')) {
+    return {
+      component: ProjectDetailSetting,
+      props: { projectId: Number(id.slice(8)) },
+      on: { deleted: (() => emit('deleted', 'project')) },
+    } as SpecialSettingsPage
+  }
+  const custom = PLUGIN_PAGES.get(id)
+  return custom ? { component: custom } : null
+})
+
 const subPagePanel = computed((): GroupPanelConfig | undefined => {
   if (isSubPageRoute(props.categoryId)) {
     return getSubPagePanel(props.categoryId)
@@ -390,6 +465,16 @@ const renderList = computed(() => {
         if (entry.spec.key === 'downloadAndroidApp' || entry.spec.key === 'downloadDesktopApp') continue
       }
       if (entry.spec.key === 'trustedCerts' && typeof getNative()?.forgetTrustedCerts !== 'function') continue
+      // The close-behaviour row describes the frameless shell's own close
+      // button. Only the Electron host on Windows/Linux has one — macOS keeps a
+      // native frame and its red button already closes the window without
+      // quitting — so the capability is what decides, not a platform flag. This
+      // also keeps the row off Android, Harmony and the plain browser, where the
+      // dialog can never appear.
+      if (entry.spec.key === 'closeAction' && getNative()?.hasCustomWindowControls?.() !== true) continue
+      // The desktop app owns the server it ships: it refuses both, so these rows
+      // would only ever fail. See useUpgrade's managedByEmbedder.
+      if ((entry.spec.key === 'restartServer' || entry.spec.key === 'checkUpgrade') && upgradeManagedByEmbedder.value) continue
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
       if (entry.spec.appOnly && !isNativeApp.value) continue
       if (entry.spec.androidOnly && !isAndroidApp.value) continue
@@ -443,7 +528,8 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert', 'mailAccounts', 'meetingRelay'])
+        //   - kbStatus       → rendered by KbSetting (counters + reindex)
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert', 'mailAccounts', 'meetingRelay', 'kbStatus'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }
@@ -603,31 +689,6 @@ function getItemDisabled(item: ItemSpec): boolean {
 async function handleUpdate(item: ItemSpec, value: unknown) {
   if (item.type === 'password') {
     if (!value) return
-  }
-
-  // Disabling the forge integration is destructive: the server clears every
-  // project's repository binding, and re-enabling does NOT bring them back. A
-  // switch that silently deletes data on the way off needs a confirmation, or
-  // a stray tap costs the user all their bindings.
-  //
-  // Only the OFF transition asks. Turning it back on is not destructive, and
-  // prompting there would train users to click through the dialog.
-  if (item.key === 'forge.enabled' && value === false) {
-    const ok = await dialog.confirm(
-      t('settings.items.forgeDisableConfirm'),
-      {
-        title: t('settings.items.forgeDisableConfirmTitle'),
-        confirmText: t('settings.items.forgeDisableConfirmAction'),
-        dangerous: true,
-      },
-    )
-    if (!ok) {
-      // Re-render the switch in its current (on) position: the checkbox has
-      // already flipped visually, and the model value only changes after the
-      // server round trip, so nothing else would undo the DOM state.
-      configRenderEpoch.value++
-      return
-    }
   }
 
   if (item.source === 'local') {
@@ -790,6 +851,7 @@ function handleDiscard() {
 <style scoped>
 .settings-category {
   padding: var(--space-4);
-  background: var(--bg-secondary);
+  /* Shared page surface (see --panel-page-bg). */
+  background: var(--panel-page-bg);
 }
 </style>

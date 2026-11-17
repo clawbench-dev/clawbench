@@ -56,6 +56,7 @@ function installFetch(opts: {
   root: DirItem[]
   audio?: DirItem[]
   shots?: DirItem[]
+  recording?: DirItem[]
   exists?: Record<string, string>
   /** Held open before responding, so a test can assert mid-flight. */
   gate?: Promise<void>
@@ -68,6 +69,7 @@ function installFetch(opts: {
       if (path === DIR) return jsonResponse({ items: opts.root })
       if (path === `${DIR}/audio`) return jsonResponse({ items: opts.audio ?? [] })
       if (path === `${DIR}/shots`) return jsonResponse({ items: opts.shots ?? [] })
+      if (path === `${DIR}/recording`) return jsonResponse({ items: opts.recording ?? [] })
       return jsonResponse({ items: [] })
     }
     if (url === '/api/file/batch-exists') {
@@ -84,6 +86,11 @@ const ROOT: DirItem[] = [
   { name: 'minutes.md', type: 'file', size: 100 },
   { name: 'transcript-revised.md', type: 'file', size: 300 },
   { name: 'audio', type: 'dir' },
+]
+
+const RECORDING: DirItem[] = [
+  { name: '1700000001000-aa.webm', type: 'file', size: 4_000_000 },
+  { name: '1700000500000-bb.webm', type: 'file', size: 2_000_000 },
 ]
 
 const AUDIO: DirItem[] = [
@@ -110,6 +117,27 @@ beforeEach(() => {
 })
 
 describe('useMeetingResources', () => {
+  it('lists screen recordings as their own group, in recording order', async () => {
+    installFetch({ root: [...ROOT, { name: 'recording', type: 'dir' }], audio: AUDIO, recording: RECORDING })
+    const { api } = setup(record(), '')
+    await flushPromises()
+
+    const group = api.groups.value.find((g) => g.key === 'recording')
+    expect(group?.title).toBe('recording/')
+    expect(group?.items.map((item) => item.name)).toEqual([
+      '1700000001000-aa.webm',
+      '1700000500000-bb.webm',
+    ])
+    // A .webm under recording/ is a video, not one of the audio channels: the
+    // audio badge would call it 「分声道」 and the player would hide the picture.
+    expect(group?.items[0].kind).toBe('video')
+    expect(group?.items[0].badge).toBeUndefined()
+    expect(group?.items[0].displayPath).toBe(`recording/${RECORDING[0].name}`)
+    // The folder itself must not also appear as a stray subdirectory row.
+    const folder = api.groups.value.find((g) => g.key === 'folder')
+    expect(folder?.items.some((item) => item.name === 'recording')).toBe(false)
+  })
+
   it('lists the meeting folder and audio channel files in reading order', async () => {
     installFetch({ root: ROOT, audio: AUDIO })
     const { api } = setup(record(), '')

@@ -252,10 +252,15 @@ describe('FilePicker — navigation and selection', () => {
     expect(apiGet).toHaveBeenCalledTimes(1)
   })
 
-  it('refuses to select a folder when folders are not allowed', async () => {
+  it('offers no folder pick control when folders are not allowed', async () => {
+    // A visible "+" that silently does nothing is worse than no control: the
+    // row still navigates, but there is nothing to attach.
     const wrapper = mountPicker({ allowDir: false })
     await flushPromises()
-    await wrapper.find('[data-action="fp-pick-dir"]').trigger('click')
+    expect(wrapper.find('[data-action="fp-pick-dir"]').exists()).toBe(false)
+    expect(wrapper.find('[data-role="fp-current-dir"]').exists()).toBe(false)
+
+    await wrapper.find('[data-role="fp-dir"][data-path="src"]').trigger('click')
     expect(wrapper.emitted('update:selected')).toBeFalsy()
   })
 

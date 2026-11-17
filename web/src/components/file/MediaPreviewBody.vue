@@ -20,13 +20,18 @@
       @dragend="onImageDragEnd"
     />
 
-    <!-- Video: native controls, contained in the pane -->
+    <!-- Video: native controls, contained in the pane. Opening the preview
+         starts it muted — browsers only auto-start muted media. -->
     <video
       v-else-if="kind === 'video'"
+      ref="videoRef"
       :src="mediaUrl"
       class="code-preview-media-video"
       :class="{ 'local-media-hidden': loadFailed }"
       controls
+      autoplay
+      muted
+      playsinline
       preload="metadata"
       @loadedmetadata="onLoad"
       @error="onError"
@@ -63,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onUnmounted, defineAsyncComponent } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { Music } from 'lucide-vue-next'
 import MediaLoadError from '@/components/media/MediaLoadError.vue'
 import { buildLocalFileUrl } from '@/utils/download.ts'
@@ -117,6 +122,10 @@ const mediaTimestamp = ref(Date.now())
 watch(() => [props.path, props.refreshNonce], () => {
   mediaTimestamp.value = Date.now()
   loadFailed.value = false
+  // The same element is reused for the next clip. A clip the user unmuted
+  // must not stop that one from auto-starting — browsers only auto-start
+  // muted media.
+  if (videoRef.value) videoRef.value.muted = true
 })
 
 // A background rewrite of the SAME path (the AI redrawing this image) bumps the
@@ -132,7 +141,16 @@ watch(() => props.path, (path) => {
   untrackMedia?.()
   untrackMedia = path ? trackMediaPath(path) : null
 }, { immediate: true })
-onUnmounted(() => { untrackMedia?.() })
+onMounted(() => {
+  window.addEventListener('resize', fitVideoToCard)
+  // The card is placed before this mounts, so its bound is readable now —
+  // don't wait for `loadedmetadata` to fit the player.
+  nextTick(fitVideoToCard)
+})
+onUnmounted(() => {
+  window.removeEventListener('resize', fitVideoToCard)
+  untrackMedia?.()
+})
 
 // Raw bytes come from /api/fs/raw/ (correct MIME, inline, no 10 MiB cap),
 // not /api/file — which is JSON and reports raster images as binary.
@@ -144,8 +162,42 @@ const mediaUrl = computed(() => {
 const loadFailed = ref(false)
 const emit = defineEmits<{ (e: 'loaded'): void }>()
 
+const videoRef = ref<HTMLVideoElement | null>(null)
+
+/**
+ * Cap the player at the height its card actually has.
+ *
+ * The floating preview card is content-sized, so the pane only gets a height
+ * once the video has been laid out — `height: 100%` cannot resolve there and
+ * the element keeps its intrinsic height. A clip taller than the card (a
+ * portrait phone video) is then cropped top and bottom by the card's
+ * `overflow: hidden`. The card's own box — its inline height when the user
+ * resized it, otherwise the max-height the placement logic picked — is the
+ * bound, so subtracting the rows above the pane caps the element exactly
+ * there, and `object-fit: contain` letterboxes instead of cropping.
+ *
+ * Only the floating card needs this: the docked pane and the touch sheet give
+ * the pane a definite height, where the stylesheet already fits the player
+ * (there is no `.code-link-preview-floating` ancestor, or its max-height is
+ * `none`, and this returns without touching the element).
+ */
+function fitVideoToCard() {
+  const el = videoRef.value
+  const card = el?.closest('.code-link-preview-floating') as HTMLElement | null
+  const pane = el?.parentElement
+  if (!el || !card || !pane) return
+  const userHeight = parseFloat(card.style.height)
+  const bound = Number.isFinite(userHeight)
+    ? userHeight
+    : parseFloat(getComputedStyle(card).maxHeight)
+  if (!Number.isFinite(bound)) return
+  const chrome = pane.getBoundingClientRect().top - card.getBoundingClientRect().top
+  el.style.maxHeight = `${Math.max(0, Math.round(bound - chrome))}px`
+}
+
 function onLoad() {
   loadFailed.value = false
+  if (props.kind === 'video') fitVideoToCard()
   emit('loaded')
 }
 

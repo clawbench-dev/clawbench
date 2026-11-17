@@ -21,7 +21,7 @@
 |---|---|---|---|
 | 1 | Gateway 必须先运行 | Gateway 停掉时 `openclaw acp` 打印 `ACP bridge failed: connect ECONNREFUSED` 到 stderr 后**直接退出**，客户端只看到 initialize 超时（没有协议级错误可翻译） | `LoginCmd = "openclaw gateway start"`，把超时渲染成可执行指令 |
 | 2 | `session/resume` 只对**本进程**有效 | 硬杀进程后用同一 id 调 `session/resume` → `-32603 "Session <uuid> not found"`；`session/load` 同一 id → 成功且历史完整（模型能答出被杀前埋的暗号） | 新增 `BackendSpec.ACPResumeIsProcessLocal`，恢复直接走 load |
-| 3 | per-session `mcpServers` 被**拒绝** | `session/new` 带 `{name, command, args: [], env: []}` → `-32603 "ACP bridge mode does not support per-session MCP servers"` | 加入 `model.mcpUnsupportedBackends` |
+| 3 | per-session `mcpServers` 被**拒绝** | `session/new` 带 `{name, command, args: [], env: []}` → `-32603 "ACP bridge mode does not support per-session MCP servers"` | `BackendSpec.MCPUnsupported = true`（当时是 `model.mcpUnsupportedBackends`） |
 | 4 | `modes` 与 `thought_level` **是同一组值** | `modes.availableModes` = `[off,minimal,low,medium,high,adaptive]`，`configOptions[thought_level].options` 完全相同；且 `set_config_option(configId="mode")` → `-32603 "ACP bridge mode does not support session config option \"mode\""` | 新增 `ACPPlugin.ModesMirrorThoughtLevel`，抑制 mode 面 |
 
 此外还有一条**渲染层**约束（不阻塞接入，但会画错卡片）：
@@ -88,7 +88,7 @@ ClawBench 的 `toACPMcpServers` 对每个 stdio server 都**总是**输出 `args
 
 > 探针第一版只发 `{name, command, args: [...]}`，测出来"接受"，差点得出"openclaw 不需要 MCP 排除"的相反结论。修法是让探针发 ClawBench 的真实载荷形状，并加一条对照断言钉住"最小载荷仍被接受"——两边都钉住，未来任一侧变化都会失败。
 
-**不要"修复"成裁剪空切片**：那只会把硬失败换成静默无效注入，正是 `mcpUnsupportedBackends` 这个表要防的事。
+**不要"修复"成裁剪空切片**：那只会把硬失败换成静默无效注入，正是 `MCPUnsupported` 这个能力位要防的事。
 
 ## 四、`modes` 与 `thought_level` 是同一组值
 
@@ -205,7 +205,7 @@ thought_level=adaptive                    → -32603 "thinkingLevel \"adaptive\"
 | `internal/ai/openclaw_event_integration_test.go` | 包装帧丢弃 + mode 抑制的事件层测试 |
 | `internal/ai/acp_resume_process_local_test.go` | load-first 恢复路径测试 |
 | `internal/model/discovery.go` | `BackendSpec.ACPResumeIsProcessLocal` |
-| `internal/model/mcp.go` | `openclaw` 加入 `mcpUnsupportedBackends` |
+| `internal/ai/backends/openclaw/register.go` | `openclaw` 的 `Spec` 置 `MCPUnsupported` |
 | `internal/ai/backends/plugin.go` | `ACPPlugin.ToolCallWrapperTitlePrefixes` / `ModesMirrorThoughtLevel` |
 | `internal/ai/backends/registry.go` + `acp_wire.go` | 两个新查询函数 + 函数变量接线 |
 | `internal/ai/acp_events.go` | tool_call 分支丢弃包装帧 |

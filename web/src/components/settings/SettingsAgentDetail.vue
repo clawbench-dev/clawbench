@@ -137,18 +137,38 @@
         </ul>
       </div>
     </div>
+    <!-- Tool grant. Only meaningful for the built-in backend, whose tools are
+         ClawBench's own; an external CLI ships its tools and ignores this. -->
+    <SettingsCard v-if="isBuiltinBackend" :title="t('settings.items.toolPolicySection')">
+      <AgentToolPolicySection :agent="agent ?? null" />
+    </SettingsCard>
+
     <!-- MCP enable policy. A dedicated block rather than a SettingsItem: the
          control is a three-way mode plus a per-server checklist, which the
-         generic row types cannot express. -->
-    <SettingsCard :title="t('settings.items.mcpAgentSection')">
+         generic row types cannot express. Hidden for the built-in agent: it has
+         no MCP client at all, so every option here would be inert. -->
+    <SettingsCard v-if="!isBuiltinBackend" :title="t('settings.items.mcpAgentSection')">
       <AgentMCPSection :agent="agent ?? null" />
     </SettingsCard>
 
-    <!-- Copy / disable / delete on the same row -->
+    <!-- Copy / install / disable / delete on the same row -->
     <div class="settings-agent-detail__actions">
       <button class="fbtn settings-agent-detail__action-btn" @click="startCopy">
         <Copy :size="16" class="settings-agent-detail__action-icon" />
         <span>{{ t('settings.items.agentCopy') }}</span>
+      </button>
+      <!-- One-click install / reinstall. Same command the welcome panel runs
+           (the server owns it), so this is the "reinstall or upgrade" path for
+           an agent that is already detected but broken or out of date. Hidden
+           when the backend ships no installer. -->
+      <button
+        v-if="agent?.installCmd"
+        class="fbtn settings-agent-detail__action-btn"
+        data-action="agent-install"
+        @click="installDialogOpen = true"
+      >
+        <PackagePlus :size="16" class="settings-agent-detail__action-icon" />
+        <span>{{ t('settings.items.agentInstall') }}</span>
       </button>
       <!-- Disable / enable toggle. The default agent cannot be disabled (the
            backend refuses it too), so its button is inert with a tooltip. -->
@@ -179,19 +199,31 @@
       @close="avatarPickerOpen = false"
       @saved="handleAvatarSaved"
     />
+    <!-- Same dialog the welcome panel uses: command, run button, and the
+         installer's own output on failure. -->
+    <AgentInstallDialog
+      v-if="installDialogOpen && agent?.installCmd"
+      :backend-id="agent.backend"
+      :backend-name="agent.name"
+      :install-cmd="agent.installCmd"
+      @close="installDialogOpen = false"
+      @installed="handleInstalled"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { Activity, ArrowLeft, Ban, ChevronRight, Copy, Play, Trash2, UserX, Zap } from 'lucide-vue-next'
+import { Activity, ArrowLeft, Ban, ChevronRight, Copy, PackagePlus, Play, Trash2, UserX, Zap } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import { CUSTOM_OPTION_VALUE } from './settingsFieldMap'
 import AgentMCPSection from './AgentMCPSection.vue'
+import AgentToolPolicySection from './AgentToolPolicySection.vue'
 import SettingsCard from './SettingsCard.vue'
 import CopyAgentDialog from './CopyAgentDialog.vue'
 import AgentAvatarPicker from './AgentAvatarPicker.vue'
+import AgentInstallDialog from '@/components/AgentInstallDialog.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { patchAgentField } from '@/composables/useSettingsConfig'
@@ -229,13 +261,15 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const selfTest = useAgentSelfTest()
-const { loadAgents, getAgent, agentsLoaded, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP } = useAgents()
+const { loadAgents, getAgent, agentsLoaded, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP, getAgentAvailableModes } = useAgents()
 const activeKey = ref<string | null>(null)
 const copying = ref(false)
+
 // Server-side copy failure (e.g. the name is already taken) shown inside the
 // dialog; the dialog stays open so the user can pick another name.
 const copyError = ref('')
 const avatarPickerOpen = ref(false)
+const installDialogOpen = ref(false)
 
 /**
  * Model providers the user configured in Settings → Model Providers. Fetched
@@ -305,6 +339,15 @@ const isCustomAcpAgent = computed(() => agent.value?.backend === 'custom-acp')
  */
 const hasBackendSpec = computed(() => agent.value?.backendHasSpec === true)
 
+/**
+ * Whether this agent's tools are ClawBench's own (the built-in backend).
+ *
+ * The server computes the flag so this page never matches on a backend id: a
+ * built-in agent has no CLI command, no install command and no MCP client, so
+ * every one of those fields would be an inert control that looks editable.
+ */
+const isBuiltinBackend = computed(() => agent.value?.builtinBackend === true)
+
 // Determine if agent supports both ACP and CLI (dual transport)
 const isDualTransport = computed(() => {
   const a = agent.value
@@ -338,12 +381,19 @@ const providerOptions = computed(() => {
   const bound = a?.providerId ?? null
   return providers.value.filter((p) => {
     if (p.id === bound) return true
+    // The private protocol is listed by the backends that support it (CodeBuddy),
+    // so a private-protocol provider shows up here like any other protocol.
     if (allowed.includes(p.protocol)) return true
     // A key-only backend never reads an endpoint, so a provider WITH one would
     // be a binding that fails on the next turn; only bare credentials qualify.
     return keyOnly && !p.baseUrl
   })
 })
+
+/** Only the private protocol has a name that differs from its wire id. */
+function protocolLabel(protocol: string): string {
+  return protocol === 'private' ? t('settings.items.providerProtocolPrivate') : protocol
+}
 
 const items = computed<AgentItem[]>(() => {
   const a = agent.value
@@ -436,11 +486,12 @@ const items = computed<AgentItem[]>(() => {
       description: usingCatalogModels ? t('settings.items.agentCatalogModelsDesc') : undefined,
       note: usingCatalogModels ? t('settings.items.agentCatalogModelsNote') : undefined,
       type: 'select',
-      options: modelChoices.map((m: { name: string; id: string; price?: ModelPrice }) => ({
+      options: modelChoices.map((m: { name: string; id: string; price?: ModelPrice; credits?: string }) => ({
         label: m.name || m.id,
         value: m.id,
         modelName: m.name || m.id,
         modelPrice: m.price,
+        modelCredits: m.credits,
         // CodeBuddy ships models that share a display name (deepseek-v4-pro and
         // deepseek-v4-pro-exclusive are both "Deepseek-V4-Pro"), so the id is
         // the only way to tell them apart in the picker. Some ACP agents carry
@@ -478,8 +529,8 @@ const items = computed<AgentItem[]>(() => {
           // that into this picker the user binds it and only finds out on the
           // next turn ("provider has no API key").
           label: p.hasKey === false
-            ? `${p.name} · ${p.protocol} · ${t('settings.items.providerNoKey')}`
-            : `${p.name} · ${p.protocol}`,
+            ? `${p.name} · ${protocolLabel(p.protocol)} · ${t('settings.items.providerNoKey')}`
+            : `${p.name} · ${protocolLabel(p.protocol)}`,
           value: p.id,
         })),
       ],
@@ -499,6 +550,9 @@ const items = computed<AgentItem[]>(() => {
     result.push({
       key: 'preferred_thinking_effort',
       label: t('settings.items.agentPreferredThinkingEffort'),
+      // The built-in agent's levels are translated by our own client, and a
+      // model that cannot reason rejects the parameter instead of ignoring it.
+      description: a.builtinBackend ? t('settings.items.agentPreferredThinkingEffortDesc') : undefined,
       type: 'select',
       options: a.thinkingEffortLevels.map((l: string) => ({ label: l, value: l })),
       patchField: 'preferred_thinking_effort',
@@ -519,13 +573,18 @@ const items = computed<AgentItem[]>(() => {
     })
   }
 
-  // Preferred Mode (only for ACP agents with available modes)
-  if (a.acpCommand && a.acpAvailableModes && a.acpAvailableModes.length > 0) {
+  // Preferred Mode. ACP agents advertise their modes at session/new; the
+  // built-in agent's modes are fixed by the build. Both arrive through the same
+  // acpStates cache, so the picker is driven by "what the server reported",
+  // not by "does this agent have an acp_command".
+  const availableModes = getAgentAvailableModes(a.id)
+  if (availableModes.length > 0) {
     result.push({
       key: 'preferred_mode',
       label: t('settings.items.agentPreferredMode'),
+      description: a.builtinBackend ? t('settings.items.agentPreferredModeDesc') : undefined,
       type: 'select',
-      options: a.acpAvailableModes.map((m: { name: string; id: string }) => ({ label: m.name || m.id, value: m.id })),
+      options: availableModes.map((m: { name: string; id: string }) => ({ label: m.name || m.id, value: m.id })),
       patchField: 'preferred_mode',
     })
   }
@@ -732,9 +791,26 @@ async function handleUpdate(item: AgentItem, value: unknown) {
   if (item.patchField === 'provider_id') {
     const a = getAgent(props.agentId)
     const providerId = value === '' || value === null || value === undefined ? null : Number(value)
+    // A credential-only provider (no endpoint, e.g. CodeBuddy's own account
+    // token) writes no config file at all: the server injects the credential
+    // through the environment, so the consent prompt would describe a file that
+    // never appears.
+    const selected = providerId === null ? undefined : providers.value.find((p) => p.id === providerId)
+    // The private protocol never writes a config file: the backend injects the
+    // credential through the environment, so the consent prompt would describe a
+    // file that never appears.
+    const writesConfigDir = a?.providerConfigDirBackend && selected?.protocol !== 'private'
     let confirmWrite = false
-    if (providerId !== null && a?.providerConfigBackend) {
-      const ok = await dialog.confirm(t('settings.items.agentProviderConsent'), { dangerous: true })
+    if (providerId !== null && (a?.providerConfigBackend || writesConfigDir)) {
+      // Two different kinds of write, and they must not share one sentence:
+      // the shared-file path edits the user's own file (and backs it up), while
+      // the per-agent directory path stays inside ClawBench's data dir but may
+      // have to store the key in clear text. Saying "your file will be backed
+      // up" there would describe something that never happens.
+      const key = a?.providerConfigDirBackend
+        ? 'settings.items.agentProviderConsentDir'
+        : 'settings.items.agentProviderConsent'
+      const ok = await dialog.confirm(t(key, { files: a?.providerConfigPath ?? '' }), { dangerous: true })
       if (!ok) return
       confirmWrite = true
     }
@@ -786,6 +862,17 @@ async function handleAvatarSaved(svg: string) {
   } catch {
     toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
+}
+
+/**
+ * After a successful install: re-read the agent list.
+ *
+ * The server already ran its own rescan and broadcast `agents_updated`, so this
+ * is only about the page in front of the user — its model list, transport and
+ * capability snapshot may all have changed under it.
+ */
+async function handleInstalled() {
+  await loadAgents(true)
 }
 
 function handleEditToggle(key: string, open: boolean) {
@@ -930,7 +1017,8 @@ async function handleDelete() {
 <style scoped>
 .settings-agent-detail {
   padding: var(--space-4);
-  background: var(--bg-secondary);
+  /* Shared page surface (see --panel-page-bg). */
+  background: var(--panel-page-bg);
   min-height: 100%;
 }
 
@@ -1094,7 +1182,7 @@ async function handleDelete() {
 .settings-agent-detail__selftest-deep {
   margin-top: var(--space-4);
   padding: var(--space-4) var(--space-6);
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border-left: 2px solid #22c55e;
 }
 
@@ -1126,7 +1214,7 @@ async function handleDelete() {
 .settings-agent-detail__selftest-result {
   margin-top: var(--space-4);
   padding: var(--space-4) var(--space-6);
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border-left: 2px solid #22c55e;
 }
 

@@ -5,10 +5,16 @@
            no explanation. The player is HIDDEN rather than removed so a later
            successful load (`loadedmetadata`) revives it. -->
       <MediaLoadError v-if="loadFailed" kind="video" :name="file.name" fill />
+      <!-- Opening a clip starts it muted: browsers only auto-start muted media,
+           and a viewer that opens on a paused first frame reads as broken. -->
       <video
         ref="videoRef"
         :src="mediaUrl"
         controls
+        autoplay
+        muted
+        playsinline
+        preload="metadata"
         class="video-player"
         :class="{ 'local-media-hidden': loadFailed }"
         @loadedmetadata="onLoaded"
@@ -49,6 +55,10 @@ const loadFailed = ref(false)
 
 function onLoaded() {
     loadFailed.value = false
+    // Autoplay only works while the element is muted, and a clip the user
+    // unmuted earlier keeps that state on the SAME element when the next file
+    // is opened — re-mute so switching clips always starts playing.
+    if (videoRef.value) videoRef.value.muted = true
 }
 
 function onError() {
@@ -72,16 +82,21 @@ function onError() {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space-7);
     background: #000;
     overflow: hidden;
 }
 
+/* The player IS the content: it fills the pane and letterboxes the picture, so
+   the video grows with the window instead of sitting at its intrinsic size.
+   Native controls then span the pane's full width. */
 .video-player {
+    width: 100%;
+    height: 100%;
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
-    border-radius: var(--radius-sm);
+    background: #000;
+    display: block;
     outline: none;
 }
 </style>

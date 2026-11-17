@@ -12,8 +12,8 @@
          the refresh control closes the row, the way every other panel header
          does it (git history, forge, file manager). -->
     <div class="meeting-header">
-      <span class="meeting-header__icon"><component :is="MEETING_ICON" :size="14" /></span>
-      <span class="meeting-header__title">{{ t('meeting.list.title') }}</span>
+      <component :is="MEETING_ICON" :size="14" class="panel-header-icon" />
+      <span class="meeting-header__title">{{ t('nav.meeting') }}</span>
       <span class="meeting-header__count count-badge">{{ t('meeting.list.count', { n: sessions.length }) }}</span>
       <span class="meeting-header__spacer" />
       <ActionBar class="meeting-actions" mode="menu" size="bar">
@@ -27,6 +27,21 @@
         >
           <span class="action-label">{{ t('common.refresh') }}</span>
         </RefreshButton>
+        <!-- Clear-all sits beside the refresh it complements: one re-reads the
+             list, the other empties it. Disabled while there is nothing to
+             clear, and while a reload is in flight (the button would race the
+             list it is about to empty). -->
+        <button
+          class="meeting-icon-btn is-danger"
+          type="button"
+          :disabled="sessions.length === 0 || loading || clearing"
+          :title="t('meeting.list.clearAllTip')"
+          data-action="meeting-clear-all"
+          @click="askClearAll"
+        >
+          <Trash2 :size="14" />
+          <span class="action-label">{{ t('meeting.list.clearAll') }}</span>
+        </button>
       </ActionBar>
     </div>
 
@@ -647,6 +662,8 @@ const rows = computed(() =>
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 const anyGenerating = computed(() => sessions.value.some((s) => Boolean(s.generation)))
+/** True while a clear-all request is in flight; keeps the header honest. */
+const clearing = ref(false)
 
 /**
  * Poll the list only while a row is generating, and stop the moment none is.
@@ -694,6 +711,44 @@ async function askDelete(s: MeetingRecord): Promise<void> {
   )
 }
 
+/**
+ * Clear every record of this project.
+ *
+ * One confirmation for the whole list, naming the count: this is the one
+ * destructive action in the panel that cannot be undone and that touches rows
+ * the user is not looking at individually.
+ *
+ * The server skips what cannot go (a live meeting, a running minutes job), so
+ * the toast reports both numbers instead of claiming a full clear — the skipped
+ * rows are still on screen after the reload.
+ */
+async function askClearAll(): Promise<void> {
+  const total = sessions.value.length
+  if (total === 0) return
+  const ok = await dialog.confirm(t('meeting.list.clearAllConfirm', { n: total }), {
+    dangerous: true,
+  })
+  if (!ok) return
+  clearing.value = true
+  try {
+    const res = await history.clearAll()
+    if (!res.ok) {
+      toast.show(t('meeting.list.clearAllFailed'), { type: 'error', icon: 'warning' })
+      return
+    }
+    schedulePoll()
+    if (res.skipped > 0) {
+      toast.show(t('meeting.list.clearAllPartial', { n: res.deleted, skipped: res.skipped }), {
+        type: 'info', icon: 'info', duration: 4000,
+      })
+      return
+    }
+    toast.show(t('meeting.list.clearAllDone', { n: res.deleted }), { type: 'success', icon: 'delete' })
+  } finally {
+    clearing.value = false
+  }
+}
+
 // Switching back to the tab re-reads the list: a meeting that finished while
 // the user was elsewhere must appear without a manual refresh.
 watch(
@@ -721,7 +776,7 @@ onMounted(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: var(--bg-primary, #ffffff);
+  background: var(--panel-page-bg);
 }
 
 .meeting-header {
@@ -734,7 +789,6 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.meeting-header__icon { display: flex; color: var(--text-secondary, #666); }
 .meeting-header__title {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);

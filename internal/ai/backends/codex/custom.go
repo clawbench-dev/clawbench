@@ -3,11 +3,11 @@ package codex
 import (
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/model"
 )
 
 func init() {
-	ai.RegisterBackend("codex", newCodexBackend)
 	backends.Register(&backends.BackendPlugin{
 		ID: "codex",
 		Spec: model.BackendSpec{
@@ -28,7 +28,24 @@ func init() {
 		// Codex can inject a message into the running turn via the ACP steering
 		// extension (_session/steering). It emits no echo boundary, so the
 		// injection MERGES into the running reply (no split).
-		MidTurn: &midTurnInjector{},
+		CLI: &backends.CLIPlugin{NewBackend: newCodexBackend},
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       ParseACPToolCall,
+			ParseToolCallUpdate: ParseACPToolCallUpdate,
+			// codex-acp shares claude's _meta.quota shape (same bridge stack).
+			ExtractMeta: claude.ExtractMeta,
+		},
+		ModelSource:  model.PluginSource("codex", discoverCodexModels),
+		ListSessions: listCodexSessionsFromDisk,
+		MidTurn:      &midTurnInjector{},
+		ProviderEnv: &model.ProviderEnvSpec{
+			// codex reads its provider from ~/.codex/config.toml. The managed
+			// block references this variable for env_key, so the secret never
+			// lands on disk.
+			ConfigOnly:      true,
+			ConfigProtocols: []string{model.ProviderProtocolOpenAI},
+			KeyOnly:         "CLAWBENCH_PROVIDER_API_KEY",
+		},
 	})
 }
 
@@ -36,5 +53,5 @@ func init() {
 // Codex is a custom backend — it directly implements AIBackend,
 // not using the CLIBackend skeleton.
 func newCodexBackend() ai.AIBackend {
-	return &ai.CodexBackend{}
+	return &CodexBackend{}
 }

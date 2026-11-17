@@ -26,15 +26,15 @@
 import { computed } from 'vue'
 import {
   Palette,
-  FolderTree,
+  LayoutGrid,
   FolderGit2,
   MessageSquare,
+  MessagesSquare,
   Bot,
-  SquareTerminal,
   Volume2,
   Mic,
   Brain,
-  ArrowLeftRight,
+  ScanText,
   Bell,
   Shield,
   Bug,
@@ -44,13 +44,11 @@ import {
   Plug,
   Boxes,
   ChevronRight,
-  Github,
   UserRound,
-  Mail,
 } from 'lucide-vue-next'
-import { MEETING_ICON } from '@/utils/meetingIcon'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
+import { DOCK_SETTINGS_PAGES, dockCategoryTitleKey } from '@/composables/dockPluginRuntime'
 
 defineEmits<{
   navigate: [categoryId: string]
@@ -59,12 +57,32 @@ defineEmits<{
 const { t } = useI18n()
 
 /**
- * Category → group layout for the settings home page. Grouping is purely
- * presentational: the category IDs (and their i18n labels) are unchanged, so
- * deep links and the navigation stack keep working.
+ * Rows of the 功能模块 group that do NOT come from a dock plugin.
  *
- * Keep this list in sync with `categoryItems` in settingsFieldMap.ts — every
- * category defined there must appear here exactly once.
+ * The manager is the one page that configures every plugin, and message push /
+ * usage meter are features with a settings page but no dock entry. Everything
+ * between them is derived from the plugin registry (see `DOCK_SETTINGS_PAGES`),
+ * in DOCK order.
+ */
+const DOCK_MODULE_ITEMS = [
+  { id: 'dockPlugins', icon: LayoutGrid },
+  ...DOCK_SETTINGS_PAGES.filter((page) => page.group === 'dockModules').map((page) => ({
+    id: page.categoryId,
+    icon: page.icon,
+  })),
+  { id: 'notification', icon: Bell },
+  { id: 'usageMeter', icon: Gauge },
+]
+
+/**
+ * Category → group layout for the settings home page. Grouping is purely
+ * presentational: the category IDs are unchanged, so deep links and the
+ * navigation stack keep working (only the display labels are translated).
+ *
+ * Every category defined in `categoryItems` (settingsFieldMap.ts) must appear
+ * here exactly once; `SettingsIndex.test.ts` enforces both directions, because a
+ * category with no row is unreachable and a row with no category is a blank
+ * page.
  */
 const groupDefs = [
   {
@@ -72,7 +90,6 @@ const groupDefs = [
     items: [
       { id: 'project', icon: FolderGit2 },
       { id: 'appearance', icon: Palette },
-      { id: 'files', icon: FolderTree },
     ],
   },
   {
@@ -82,47 +99,53 @@ const groupDefs = [
       // agent sees, and they are not specific to chat or group chat.
       { id: 'identity', icon: UserRound },
       { id: 'chat', icon: MessageSquare },
+      // 会话管理 right after 聊天: it is the same subject one level up (sessions
+      // as objects, not the conversation), and separating them made users hunt
+      // for the session-list options in two places.
+      { id: 'sessions', icon: MessagesSquare },
+      // 会话索引 right after 会话管理: it is the index those sessions are
+      // searched through, so it belongs with the sessions rather than with the
+      // model services.
+      { id: 'rag', icon: Brain },
       { id: 'agents', icon: Bot },
-      { id: 'providers', icon: Boxes },
       { id: 'skills', icon: Wand2 },
       { id: 'mcp', icon: Plug },
-      { id: 'rag', icon: Brain },
+    ],
+  },
+  {
+    // 功能模块: everything that configures a left-dock feature lives in one
+    // group. The manager comes first (it is where those switches live), then
+    // one page per plugin in DOCK order — DERIVED from the plugin manifests, so
+    // a new plugin's settings page appears here without touching this file —
+    // then the two pages that configure a feature without owning a dock entry
+    // (message push, usage meter).
+    //
+    // These pages stay listed even when their plugin is hidden or switched
+    // off: the user needs them to configure the feature back on.
+    id: 'dockModules',
+    items: DOCK_MODULE_ITEMS,
+  },
+  {
+    // Model capability is its own top-level group: these pages configure the
+    // models and engines themselves (provider credentials, the shared
+    // embedding service, speech synthesis and recognition), which is a
+    // different question from how the chat behaves.
+    id: 'modelCapability',
+    items: [
+      { id: 'providers', icon: Boxes },
+      // The embedding service sits next to the providers because it IS one:
+      // one endpoint, one model, one key. Both 会话索引 and 知识库 call it, so it
+      // owns its own page instead of living inside either consumer.
+      { id: 'embedding', icon: ScanText },
       { id: 'tts', icon: Volume2 },
       { id: 'stt', icon: Mic },
-      // Meeting defaults sit next to the speech settings they depend on:
-      // transcription (STT) and the shared summary model (providers).
-      // The icon comes from utils/meetingIcon so this row matches the dock
-      // tab instead of drawing a second, unrelated meeting glyph.
-      { id: 'meeting', icon: MEETING_ICON },
     ],
   },
   {
-    id: 'connectivity',
-    items: [
-      { id: 'terminal', icon: SquareTerminal },
-      { id: 'portForward', icon: ArrowLeftRight },
-      // Mailbox accounts sit with the other outbound integrations: they are a
-      // connection this machine holds, not a per-project setting.
-      { id: 'mail', icon: Mail },
-      { id: 'forgeIntegration', icon: Github },
-    ],
-  },
-  {
-    id: 'notifySecurity',
-    items: [
-      { id: 'notification', icon: Bell },
-      // Side by side with 推送通知, not inside it: the usage meter is a
-      // notification feature but its configuration (cycle / metric / budget)
-      // is a separate subject, and nesting it under the push-channel card made
-      // it read as one more push channel.
-      { id: 'usageMeter', icon: Gauge },
-      { id: 'security', icon: Shield },
-    ],
-  },
-  {
-    id: 'systemAbout',
+    id: 'system',
     items: [
       { id: 'debug', icon: Bug },
+      { id: 'security', icon: Shield },
       { id: 'about', icon: Info },
     ],
   },
@@ -134,7 +157,10 @@ const groups = computed(() =>
       ...group,
       items: group.items.map(cat => ({
         ...cat,
-        label: t(`settings.categories.${cat.id}`),
+        // Dock features take their name from the plugin manifest, so the
+        // manager, the dock tab and this row can never disagree. Categories
+        // without a dock plugin keep their own `settings.categories.*` label.
+        label: t(dockCategoryTitleKey(cat.id) ?? `settings.categories.${cat.id}`),
       })),
     }))
     // Dropping the only item of a group would leave an empty titled card.
@@ -145,7 +171,9 @@ const groups = computed(() =>
 <style scoped>
 .settings-index {
   padding: var(--space-4);
-  background: var(--bg-secondary);
+  /* Same page surface as every other left-panel tab; the grouped cards below
+     are the surface step on top of it. */
+  background: var(--panel-page-bg);
   min-height: 100%;
 }
 
@@ -178,13 +206,16 @@ const groups = computed(() =>
 }
 
 @media (hover: hover) {
+  /* The row sits on a --bg-secondary card, so the old bg-secondary hover
+     vanished into it. Mixed from the text colour: correct in every theme,
+     unlike a fixed one-step background jump. */
   .settings-index__row:hover {
-    background: var(--bg-secondary);
+    background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
   }
 }
 
 .settings-index__row:active {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
 }
 
 .settings-index__left {

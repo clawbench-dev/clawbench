@@ -12,7 +12,7 @@ vi.mock('lucide-vue-next', () => {
   const names = [
     'Inbox', 'Folder', 'Unlink', 'Trash2', 'AlertCircle', 'Layers',
     'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'ShieldAlert', 'Gauge',
-    'Video', 'Hand',
+    'MonitorUp', 'Hand',
   ]
   return Object.fromEntries(names.map(n => [n, stub(n)]))
 })
@@ -89,6 +89,7 @@ vi.mock('@/stores/app', () => ({
 
 import NotificationsPanelContent from '@/components/notifications/NotificationsPanelContent.vue'
 import { store } from '@/stores/app'
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
 
 const i18n = createI18n({ legacy: false, locale: 'en', messages: { en, zh } })
 
@@ -128,6 +129,7 @@ describe('NotificationsPanelContent', () => {
     filterRange.value = ''
     filterProject.value = ''
     projectOptions.value = []
+    syncFeatureConfig({})
   })
 
   it('loads (globally) and fetches project options when the tab becomes active', () => {
@@ -249,6 +251,38 @@ describe('NotificationsPanelContent', () => {
     expect(events).toHaveLength(1)
     expect(events[0].detail.target.type).toBe('pipeline')
     expect(events[0].detail.target.runId).toBe(555)
+  })
+
+  it('refuses the task jump while 任务 is off, and explains instead', async () => {
+    syncFeatureConfig({ tasks: { enabled: false } })
+    items.value = [notif({ kind: 'task', taskId: '7', executionId: '99', sessionId: undefined })]
+    const w = mountPanel()
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-task', listener)
+    await w.find('.notif-card').trigger('click')
+    window.removeEventListener('clawbench-open-task', listener)
+
+    // The row stays readable — the log is a record — but its destination is
+    // gone with the tab, so nothing is dispatched and the refusal is explained.
+    expect(events).toHaveLength(0)
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses the forge jump while Forge is off', async () => {
+    syncFeatureConfig({ forge: { enabled: false } })
+    items.value = [notif({ kind: 'forge', forgeItemKey: 'pr/42', sessionId: undefined })]
+    const w = mountPanel()
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-forge', listener)
+    await w.find('.notif-card').trigger('click')
+    window.removeEventListener('clawbench-open-forge', listener)
+
+    expect(events).toHaveLength(0)
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
   })
 
   it('a sourceMissing row does NOT navigate and shows a hint instead', async () => {

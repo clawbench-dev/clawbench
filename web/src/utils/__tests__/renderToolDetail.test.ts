@@ -690,6 +690,41 @@ describe('Bash renderer (deep)', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('Read renderer (deep)', () => {
+  // The built-in agent's tools take `path` (not `file_path`) and return the
+  // file body as the tool's OUTPUT (not as `input.content`). Both differences
+  // used to produce a detail view with the right title and a blank body.
+  describe('built-in agent input shape', () => {
+    it('accepts `path` instead of `file_path`', () => {
+      const html = formatToolInput({ path: 'internal/model/agent.go' }, 'read')
+      expect(html).toContain('agent.go')
+      expect(html).toContain('chat-file-open-btn')
+    })
+
+    it('renders the body from the tool output when input carries no content', () => {
+      const html = formatToolInput(
+        { path: 'a.go' },
+        'read',
+        { done: true, status: 'success', output: '1: package main\n2: func main() {}' },
+      )
+      // Content is syntax-highlighted, so the assertion is on the rendered line
+      // elements plus the words that survive highlighting as plain text.
+      expect(html).toContain('file-preview-line')
+      expect(html).toContain('main')
+      // The content header (copy/wrap) only appears when there IS content.
+      expect(html).toContain('tool-content-wrap')
+    })
+
+    it('still prefers input.content when a backend supplies it there', () => {
+      const html = formatToolInput(
+        { file_path: 'b.go', content: 'package b' },
+        'Read',
+        { output: 'SHOULD-NOT-WIN' },
+      )
+      expect(html).toContain('file-preview-line')
+      expect(html).not.toContain('SHOULD-NOT-WIN')
+    })
+  })
+
   it('appends offset-limit range to path when no content', () => {
     const html = formatToolInput({ file_path: 'test.go', offset: 10, limit: 50 }, 'Read')
     expect(html).toContain('test.go:10-60')
@@ -1691,10 +1726,11 @@ describe('PermissionApproval renderer', () => {
     expect(html).not.toContain('permission-title')
   })
 
-  it('renders tool name when present', () => {
+  it('renders the localized tool name when present', () => {
     const html = formatToolInput({ toolName: 'Bash', options: [] }, 'PermissionApproval')
     expect(html).toContain('permission-tool-name')
-    expect(html).toContain('Bash')
+    expect(html).toContain(i18n.global.t('tool.name.bash'))
+    expect(html).not.toContain('>Bash<')
   })
 
   it('omits tool name when absent', () => {

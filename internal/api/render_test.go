@@ -1,6 +1,8 @@
 package api
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -211,40 +213,93 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// Measured at 5708 when the self-test routes joined; grew to 6733 when
 		// the delete description gained the takeover contract (#606), and to
 		// 6749 when provider_id joined the PATCH field list, then 6986 after
-		// #611 (queued-message edit) and the catalog endpoints landed. The
-		// headroom is deliberate, not drift.
+		// #611 (queued-message edit) and the catalog endpoints landed,
+		// and to 7075 when GET /api/agents gained the membershipCount note.
+		// The headroom is deliberate, not drift.
 		CommandAgent: 7100,
-		// The MCP command renders four operations whose descriptions carry the
-		// full config and agent contracts (mcp.servers validation rules, the
-		// whole-replacement semantics, the per-agent policy shape). Measured at
-		// 9314 after `forge.enabled` joined both config descriptions (GET and
-		// PATCH): that switch is destructive — PATCH clears every project's
-		// repository binding — so its semantics have to be stated here rather
-		// than inferred. The bulk is unavoidable: those descriptions ARE the
-		// contract the AI must follow, and trimming them would push the rules
-		// into the prompt template instead — same bytes, worse locality.
+		// The MCP command renders four operations: GET/PATCH /api/config (the
+		// global server list) and GET/PATCH /api/agents (the per-agent policy).
 		//
-		// Grew to 10301 when the `meeting.*` block joined the shared config
-		// description (auto_minutes / proofread / language / file_excerpts /
-		// minutes_max_tokens, plus their validation rules). Those fields are
-		// irrelevant to an MCP command, but the description is one shared block
-		// for GET and PATCH /api/config — the only way to drop it here would be
-		// to split that description per consumer, which would duplicate the MCP
-		// contract in two places.
+		// The budget was ratcheted UP six times (9314 → 10301 → 10700 → 11600 →
+		// 12200) each time another config block — `forge`, `meeting`, `mail`,
+		// `tasks`, `share` and their sub-keys — joined the two shared config
+		// descriptions. That was the wrong direction: those paragraphs document
+		// the SETTINGS contract for whoever reads the API, and none of them is
+		// actionable by a command whose only job is to edit `mcp.servers`. Every
+		// ratchet simply paid for prose the AI never uses.
 		//
-		// Grew to 10700 when `mail.enabled` joined the same two descriptions:
-		// the mail switch must be told apart from forge's, since it stops the
-		// same background work but deletes nothing (accounts survive), so a
-		// reader cannot infer its semantics from the forge paragraph.
-		CommandMCP: 10900,
+		// The two config operations therefore carry `x-prompt-note` (see
+		// operation.PromptNote): the spec keeps the full description, the prompt
+		// renders the MCP-relevant summary. Measured 3373 after the split,
+		// down from 12736 with the same four endpoints. The budget is now below
+		// the old 12200 so the split cannot silently regress to whole paragraphs:
+		// if the shared descriptions start leaking back in, the failure message
+		// names the operation that grew.
+		CommandMCP: 4000,
+		// Three read-only operations (collections, documents, search). The
+		// writes are deliberately absent: a question must not mutate the
+		// library. Measured at 1070; headroom covers the search contract.
+		CommandKBSearch: 1600,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)
 		require.NoError(t, err)
-		assert.Lessf(t, len(out), budget,
-			"command %q renders %d bytes, over the %d budget — check the operation selection",
-			cmd, len(out), budget)
+		if len(out) < budget {
+			continue
+		}
+		// The failure has to say WHERE the bytes went, not just the total. The
+		// total alone made every previous overrun a manual bisect through the
+		// spec's descriptions; the per-operation sizes are computed from the
+		// same rendered fragment, so the biggest contributor is the first line
+		// of the message.
+		t.Errorf("command %q renders %d bytes, over the %d budget (over by %d) — the operations below are ordered by bytes contributed, largest first:\n%s",
+			cmd, len(out), budget, len(out)-budget, operationSizeBreakdown(t, cmd))
 	}
+}
+
+// operationSizeBreakdown renders each operation of a command on its own and
+// returns a size-ordered report: one line per operation with its byte count and
+// its share of the whole fragment. It reuses writeEndpoint, so the numbers are
+// exactly the bytes that end up in the prompt.
+func operationSizeBreakdown(t *testing.T, cmd Command) string {
+	t.Helper()
+
+	specs := commandOperations[cmd]
+	ids := make([]string, 0, len(specs))
+	required := make(map[string]string, len(specs))
+	for _, s := range specs {
+		ids = append(ids, s.ID)
+		required[s.ID] = s.Tag
+	}
+	eps, err := endpointsForOperations(ids, required)
+	require.NoError(t, err)
+
+	type row struct {
+		label string
+		size  int
+		note  bool // the description was overridden by x-prompt-note
+	}
+	rows := make([]row, 0, len(eps))
+	total := 0
+	for _, ep := range eps {
+		var b strings.Builder
+		writeEndpoint(&b, ep)
+		size := len(strings.TrimRight(b.String(), "\n"))
+		total += size
+		rows = append(rows, row{label: ep.Method + " " + ep.Path, size: size, note: ep.PromptNote})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].size > rows[j].size })
+
+	var b strings.Builder
+	for _, r := range rows {
+		src := "description"
+		if r.note {
+			src = "x-prompt-note"
+		}
+		fmt.Fprintf(&b, "  %6d bytes (%4.1f%%)  %-28s note from %s\n",
+			r.size, 100*float64(r.size)/float64(max(total, 1)), r.label, src)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // TestRenderCommand_FieldsMatchSpec checks that request-body fields are carried
@@ -420,6 +475,62 @@ func TestRenderCommand_PromptNoteKeepsFullDescriptionInSpec(t *testing.T) {
 			"the full response contract must stay in the spec's description")
 	}
 	assert.True(t, found, "agentsList must exist in the spec")
+}
+
+// TestRenderCommand_MCPConfigUsesPromptNote pins the same split for the two
+// /api/config operations the MCP command renders.
+//
+// Their shared descriptions document every settings block (wallpaper, port
+// forwarding, mail, tasks, share, TTS, meetings, …). None of it is actionable
+// for a command whose whole job is to rewrite `mcp.servers`, yet rendering it
+// is what pushed /cb-mcp over its budget six times, each time "fixed" by
+// raising the number. The MCP contract now lives in x-prompt-note; the full
+// description stays for the API reader. Asserted from both sides: the MCP note
+// must reach the prompt, the settings prose must not, and the settings prose
+// must still exist in the spec.
+func TestRenderCommand_MCPConfigUsesPromptNote(t *testing.T) {
+	out, err := RenderCommand(CommandMCP)
+	require.NoError(t, err)
+
+	// The whole-replacement semantics are the one thing getting this wrong
+	// silently deletes servers, so the note must state it.
+	assert.Contains(t, out, "整体替换",
+		"the MCP note must state that mcp.servers is replaced wholesale")
+	assert.Contains(t, out, "明文返回",
+		"the MCP note must state that credentials come back in plaintext")
+
+	// Distinctive sentences from the settings paragraphs the note replaces.
+	// If the override stopped applying, these are what would come back.
+	for _, leaked := range []string{
+		"tasks.retention_enabled",    // task retention sub-keys
+		"share.link_ttl_days",        // share sub-keys
+		"meeting.minutes_max_tokens", // meeting validation
+		"tts.openai.stream_mode",     // TTS stream mode
+		"port_forward.transport",     // tunnel transport switch
+		"recent_project_cards",       // recent-project cards
+	} {
+		assert.NotContainsf(t, out, leaked,
+			"the settings contract (%q) must not be rendered into /cb-mcp", leaked)
+	}
+
+	s, err := load()
+	require.NoError(t, err)
+	for _, id := range []string{"getConfig", "patchConfig"} {
+		var found bool
+		for _, item := range s.Paths {
+			for _, method := range methodOrder {
+				op := item.method(method)
+				if op == nil || op.OperationID != id {
+					continue
+				}
+				found = true
+				assert.NotEmptyf(t, op.PromptNote, "%s must carry x-prompt-note", id)
+				assert.Containsf(t, op.Description, "mcp.servers",
+					"%s must keep the full settings description in the spec", id)
+			}
+		}
+		assert.Truef(t, found, "%s must exist in the spec", id)
+	}
 }
 
 // TestOperationIDs_Resolvable asserts every operationId a command declares

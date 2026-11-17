@@ -4,6 +4,7 @@ import { refreshCurrentFile, wasRecentlySaved } from '@/composables/useFileRefre
 import { appLog } from '@/utils/appLog'
 import { useReconnect } from './useReconnect'
 import { onAppResume, useAppForeground } from './useAppForeground'
+import { useAppMode } from './useAppMode'
 import {
   bumpMediaVersion,
   ensureMediaObserver,
@@ -54,6 +55,7 @@ function wsUrl(path: string): string {
  */
 export function useFileWatch(options: UseFileWatchOptions) {
   const { fileManagerOpen, currentDir, currentFile } = options
+  const { isAppMode, isDesktopApp } = useAppMode()
 
   let ws: WebSocket | null = null
   let connected = false
@@ -265,17 +267,30 @@ export function useFileWatch(options: UseFileWatchOptions) {
   }
 
   /**
-   * On return to the foreground, reconnect immediately when the socket is gone
-   * or has been silent past the stale window.
+   * On return to the foreground, rebuild the socket.
    *
    * Waiting for the periodic stale check costs up to STALE_CHECK_MS plus the
    * rest of the window, and every change made in that gap is lost for good
    * (the server does not replay events). Android WebView freezes the page while
    * paused, so a backgrounded app routinely comes back to a socket the server
-   * has already dropped without the client noticing.
+   * has already dropped without the client noticing — and one that still reads
+   * OPEN, because a half-open TCP connection cannot be told apart locally.
+   *
+   * So on a mobile app resume the socket is rebuilt unconditionally rather than
+   * tested first: there is nothing on it worth preserving (the gap's events are
+   * gone either way, and catchUpAfterReconnect() re-reads what is on screen),
+   * while the health test answered "fine" often enough to leave the panel on
+   * stale content. Browser/Electron hosts are not frozen, so they keep the
+   * cheaper health check.
    */
   function resyncOnResume() {
     if (!shouldWatch()) return
+    const mobileApp = isAppMode.value && !isDesktopApp.value
+    if (mobileApp) {
+      appLog.i('FileWatch', 'resume: rebuilding the watch socket')
+      rebuild()
+      return
+    }
     const socketGone = !ws || ws.readyState !== WebSocket.OPEN
     const silentMs = Date.now() - lastMessageAt
     if (!socketGone && silentMs <= EVENT_STALE_MS) return
@@ -284,6 +299,11 @@ export function useFileWatch(options: UseFileWatchOptions) {
       'FileWatch',
       socketGone ? 'resume: socket gone, reconnecting' : `resume: no message for ${silentMs}ms, reconnecting`,
     )
+    rebuild()
+  }
+
+  /** Tear the socket down (no competing retry) and dial a fresh one. */
+  function rebuild() {
     dropSocket()
     reconnect.reset()
     connect()

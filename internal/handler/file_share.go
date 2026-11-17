@@ -196,6 +196,15 @@ func resolveShareRoot(r *http.Request, absPath string) string {
 }
 
 func serveShareCreate(w http.ResponseWriter, r *http.Request) {
+	// The share master switch is enforced by the router's feature gate (this
+	// route is under /api/share), so a client that ignores the switch cannot
+	// mint a link the server would immediately have to revoke. The per-kind
+	// switches below are NOT part of that gate: they only stop NEW links of one
+	// kind and are checked here.
+	if !model.FeaturePolicy.ShareAllowFiles {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ShareFilesDisabled")
+		return
+	}
 	pathStr, ok := shareRequestPath(w, r)
 	if !ok {
 		return
@@ -524,7 +533,20 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 	// Conversation-share subpaths are resolved BEFORE the file-share lookup:
 	// a session token has no file_shares row, so looking that up first would
 	// 404 every session request before it could reach its own branch.
+	//
+	// This runs before the share-disabled gate because `meta` must still
+	// resolve a RUNNING meeting's token (see serveShareMeta): the switch turns
+	// off sharing links, not the ability to join a meeting already in progress.
 	if serveShareSessionSubpath(w, r, token, rest) {
+		return
+	}
+
+	// Everything below reads a file or session share row. While sharing is off
+	// those rows are revoked, but a row could still exist for a moment (a
+	// creation that raced the switch, or a stale row in an older database), so
+	// the data endpoints enforce the switch too.
+	if !shareFeatureEnabled() {
+		http.NotFound(w, r)
 		return
 	}
 
@@ -573,6 +595,13 @@ func serveShareFileRoute(w http.ResponseWriter, r *http.Request, rest, absPath, 
 		}
 		serveShareFileContent(w, r, target)
 	case rest == "download":
+		// A share can be readable while downloads are switched off: the
+		// preview endpoints still serve the same bytes for rendering, but the
+		// explicit "save this file" capability is what the rule governs.
+		if !model.FeaturePolicy.ShareAllowDownload {
+			writeLocalizedErrorf(w, r, http.StatusForbidden, "ShareDownloadDisabled")
+			return
+		}
 		target, ok := resolveShareScopePath(w, r, absPath, shareRoot)
 		if !ok {
 			return
@@ -1221,17 +1250,21 @@ func ServeSharePage(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
-	// The token in this URL IS the credential, and the page renders
-	// author-supplied content that routinely references third-party assets (an
-	// agent writing `![](https://cdn.example/a.png)` is enough). Under the
-	// browser default the Referer of those subresource requests carries the full
-	// share URL, so merely OPENING a shared conversation would hand the token to
-	// every third-party host it embeds — no reader action required.
+	// While sharing is off, every issued link is dead — including the page
+	// shell. Answering 200 with a "not found" SPA would leave the old URL
+	// looking alive; the switch promises 404.
 	//
-	// no-referrer (not strict-origin-when-cross-origin) because same-site
-	// navigations still send the full URL under the default policy.
+	// A RUNNING meeting is exempt: its token is minted automatically when the
+	// meeting starts and is how viewers join, so the switch (which governs
+	// published share links) must not lock people out of a meeting already in
+	// progress.
+	token := shareTokenFromPagePath(r.URL.Path)
+	if !shareFeatureEnabled() && (token == "" || liveRegistry.Get(token) == nil) {
+		http.NotFound(w, r)
+		return
+	}
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	serveShareHTML(w, r, shareTokenFromPagePath(r.URL.Path))
+	serveShareHTML(w, r, token)
 }
 
 // shareTokenFromPagePath extracts the token from /share/{token}.
@@ -1262,14 +1295,33 @@ func shareDiscoveryFor(token string) (shareDiscovery, bool) {
 	if !validShareToken(token) {
 		return shareDiscovery{}, false
 	}
-	// Conversation first, mirroring serveShareMeta: the two token spaces are
+	// A RUNNING meeting first, mirroring serveShareMeta: its token is minted
+	// automatically and resolves to the live room before any file/session row.
+	// Without this branch a running meeting's share page carried no discovery
+	// block at all, while the endpoint's own meta did.
+	if room := liveRegistry.Get(token); room != nil {
+		return shareDiscovery{
+			Token:           token,
+			Title:           room.Title(),
+			Kind:            shareKindLive,
+			ProjectName:     shareProjectNameForLiveRoom(room),
+			DownloadAllowed: model.FeaturePolicy.ShareAllowDownload,
+		}, true
+	}
+	// Conversation next, mirroring serveShareMeta: the two token spaces are
 	// distinct, so the order only matters for clarity.
 	if s, ok, err := service.GetSessionShareByToken(token); err == nil && ok {
+		projectName := ""
+		if info := service.GetSessionFullInfo(s.SessionID); info != nil {
+			projectName = shareProjectName(info.ProjectPath)
+		}
 		return shareDiscovery{
-			Token:        token,
-			Title:        s.Title,
-			Kind:         shareKindSession,
-			MessageCount: s.MessageCount,
+			Token:           token,
+			Title:           s.Title,
+			Kind:            shareKindSession,
+			MessageCount:    s.MessageCount,
+			ProjectName:     projectName,
+			DownloadAllowed: model.FeaturePolicy.ShareAllowDownload,
 		}, true
 	}
 	if path, name, root, ok, err := service.GetFileShareByToken(token); err == nil && ok {
@@ -1277,7 +1329,11 @@ func shareDiscoveryFor(token string) (shareDiscovery, bool) {
 		if shareIsFolderShare(path, root) {
 			kind = shareKindDir
 		}
-		return shareDiscovery{Token: token, Title: name, Kind: kind}, true
+		projectName := ""
+		if p, found, perr := service.GetFileShareProjectByToken(token); perr == nil && found {
+			projectName = shareProjectName(p)
+		}
+		return shareDiscovery{Token: token, Title: name, Kind: kind, ProjectName: projectName, DownloadAllowed: model.FeaturePolicy.ShareAllowDownload}, true
 	}
 	return shareDiscovery{}, false
 }

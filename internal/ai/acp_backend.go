@@ -186,8 +186,8 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		// an updated AvailableCommandsUpdate with plugin skills. Re-emit commands after
 		// codebuddyPluginLoadDelay so the frontend sees the complete list.
 		var cancelCmdTimer func()
-		if isCodeBuddyBackend(b.agent) {
-			cancelCmdTimer = conn.ScheduleCommandsReEmit(ch, codebuddyPluginLoadDelay)
+		if delay := commandsReEmitDelay(b.agent); delay > 0 {
+			cancelCmdTimer = conn.ScheduleCommandsReEmit(ch, delay)
 		}
 		if cancelCmdTimer != nil {
 			defer cancelCmdTimer()
@@ -582,7 +582,7 @@ func isACPQuotaError(err error) bool {
 	if hs, ok := data["httpStatus"].(float64); ok && int(hs) == 402 {
 		return true
 	}
-	if name, ok := data["errorName"].(string); ok && openCodeLimitTypes[strings.ToLower(name)] {
+	if name, ok := data["errorName"].(string); ok && OpenCodeLimitTypes[strings.ToLower(name)] {
 		return true
 	}
 	haystack := reqErr.Message + " " + fmt.Sprint(reqErr.Data)

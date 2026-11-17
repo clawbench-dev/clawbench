@@ -1,5 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, defineComponent } from 'vue'
 import SettingsAgentsIndex from '@/components/settings/SettingsAgentsIndex.vue'
@@ -31,6 +31,10 @@ const i18n = createI18n({
           agentCreateAcp: 'Add ACP Agent',
           agentCreateAcpSuccess: 'ACP agent added',
           agentCreateAcpFailed: 'Failed to add agent',
+          agentInstallable: 'Available to install',
+          agentInstalled: 'Installed',
+          agentInstallNone: 'All known agents are already installed',
+          agentInstallHint: 'Install commands run on the server',
           agentCreateAcpCommandRequired: 'The ACP command cannot be empty',
           agentCreateAcpInvalidCommand: 'Invalid ACP command',
           agentCreateAcpInvalidName: 'Invalid agent name',
@@ -91,6 +95,7 @@ vi.mock('@/composables/useToast', () => ({
 vi.mock('lucide-vue-next', () => ({
   ChevronRight: { name: 'ChevronRight', template: '<span class="icon-chevron" />' },
   Copy: { name: 'Copy', template: '<span class="icon-copy" />' },
+  GripVertical: { name: 'GripVertical', template: '<span class="icon-grip" />' },
   Plus: { name: 'Plus', template: '<span class="icon-plus" />' },
   RefreshCw: { name: 'RefreshCw', template: '<span class="icon-refresh" />' },
 }))
@@ -110,6 +115,24 @@ vi.mock('@/components/settings/CreateAcpAgentDialog.vue', () => ({
 vi.mock('@/components/settings/CopyAgentDialog.vue', () => ({
   default: { name: 'CopyAgentDialog', template: '<div class="mock-copy-agent-dialog" />' },
 }))
+
+// Mock AgentInstallDialog — the flow under test is the index page's
+// "available → installed" wiring, not the dialog's own command/progress UI.
+vi.mock('@/components/AgentInstallDialog.vue', () => ({
+  default: {
+    name: 'AgentInstallDialog',
+    props: ['backendId', 'backendName', 'installCmd'],
+    emits: ['close', 'installed'],
+    template: '<div class="mock-agent-install-dialog" :data-backend="backendId" />',
+  },
+}))
+
+/** The catalogue the component fetches on mount. */
+const CATALOG = [
+  { id: 'claude', name: 'Claude', specialty: 'Coding', default_cmd: 'claude', install_cmd: 'npm install -g claude' },
+  { id: 'codebuddy', name: 'CodeBuddy', specialty: 'Coding', default_cmd: 'codebuddy', install_cmd: 'npm install -g codebuddy' },
+  { id: 'builtin', name: 'ClawBench Agent', specialty: 'Built-in', default_cmd: '' },
+]
 
 // Mock SettingsItem
 vi.mock('@/components/settings/SettingsItem.vue', () => ({
@@ -133,6 +156,14 @@ describe('SettingsAgentsIndex', () => {
     mockToastShow.mockReset()
     mockAgents.value = []
     mockDefaultAgentId.value = 'agent-1'
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ backends: CATALOG }),
+    })))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('calls loadAgents on mount', () => {
@@ -390,6 +421,22 @@ describe('SettingsAgentsIndex', () => {
     expect(wrapper.findAll('.settings-agents-index__drag-handle')).toHaveLength(1)
   })
 
+  // Style alignment with the other settings pages: rows are transparent rows
+  // INSIDE the shared SettingsCard, not a full-bleed slab of --bg-secondary.
+  // Actions and installed agents live in their own cards so the installable
+  // section can sit above a list that can be dozens of rows long.
+  it('renders actions and agent rows inside shared settings cards', () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
+    ]
+    const wrapper = mountIndex()
+    const cards = wrapper.findAll('.settings-card__body')
+    expect(cards.length).toBeGreaterThan(0)
+    expect(cards[0].find('[data-action="agent-create"]').exists()).toBe(true)
+    expect(cards[0].find('[data-action="agent-rescan"]').exists()).toBe(true)
+    expect(wrapper.find('.settings-card__body .settings-agents-index__row').exists()).toBe(true)
+  })
+
   it('onDragEnd persists the local order via reorderAgents', async () => {
     mockAgents.value = [
       { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
@@ -425,5 +472,84 @@ describe('SettingsAgentsIndex', () => {
     // Rolled back to the server order.
     const ids = (vm.$.setupState.localAgents as any[]).map(a => a.id)
     expect(ids).toEqual(['agent-1', 'agent-2'])
+  })
+})
+
+describe('SettingsAgentsIndex — installable backends', () => {
+  beforeEach(() => {
+    mockAgents.value = []
+    mockLoadAgents.mockReset()
+    mockToastShow.mockReset()
+    mockDefaultAgentId.value = 'agent-1'
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ backends: CATALOG }),
+    })))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('lists catalogue backends that have no agent yet', async () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
+    ]
+    const wrapper = mountIndex()
+    await flushPromises()
+
+    expect(wrapper.find('[data-backend="claude"]').exists()).toBe(true)
+    // Already installed — must not be offered again.
+    expect(wrapper.find('[data-backend="codebuddy"]').exists()).toBe(false)
+    // The built-in backend has no install command.
+    expect(wrapper.find('[data-backend="builtin"]').exists()).toBe(false)
+    expect(wrapper.find('.settings-agents-index__install-hint').text()).toBe('Install commands run on the server')
+    expect(wrapper.text()).toContain('Available to install · 1')
+
+    wrapper.unmount()
+  })
+
+  it('shows an empty state instead of disappearing when nothing is installable', async () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', backend: 'codebuddy', specialty: '', sortOrder: 0 },
+      { id: 'agent-2', name: 'Claude', backend: 'claude', specialty: '', sortOrder: 1 },
+    ]
+    const wrapper = mountIndex()
+    await flushPromises()
+
+    expect(wrapper.find('.settings-agents-index__install-row').exists()).toBe(false)
+    expect(wrapper.find('.settings-agents-index__install-hint').exists()).toBe(false)
+    expect(wrapper.find('.settings-agents-index__install-empty').text()).toBe('All known agents are already installed')
+    expect(wrapper.text()).toContain('Available to install · 0')
+
+    wrapper.unmount()
+  })
+
+  it('opens the install dialog for the chosen backend', async () => {
+    const wrapper = mountIndex()
+    await flushPromises()
+
+    await wrapper.find('[data-backend="claude"] .fbtn').trigger('click')
+
+    const dialog = wrapper.findComponent({ name: 'AgentInstallDialog' })
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.props('backendId')).toBe('claude')
+
+    wrapper.unmount()
+  })
+
+  it('reloads the agent list after a successful install', async () => {
+    const wrapper = mountIndex()
+    await flushPromises()
+
+    await wrapper.find('[data-backend="claude"] .fbtn').trigger('click')
+    mockLoadAgents.mockClear()
+
+    await wrapper.findComponent({ name: 'AgentInstallDialog' }).vm.$emit('installed', { ok: true })
+    await flushPromises()
+
+    expect(mockLoadAgents).toHaveBeenCalledWith(true)
+
+    wrapper.unmount()
   })
 })

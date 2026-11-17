@@ -117,6 +117,15 @@ test.describe.serial('Terminal tabs survive a project switch', () => {
       .poll(() => terminal.isSessionRunning(beforeId), { timeout: 15000 })
       .toBe(true)
 
+    // The switch must not have spawned a shell in the DESTINATION project.
+    // Opening the terminal there has to land on the empty state: B has no saved
+    // tabs, and a tab appearing here would mean the switch mounted A's panel in
+    // B's tree and connected a shell on the user's behalf.
+    await terminal.switchToTerminal()
+    await terminal.expectPanelVisible()
+    await terminal.expectTabCount(0)
+    await expect(page.locator('.terminal-panel .empty-state')).toBeVisible({ timeout: 5000 })
+
     // ── Come back ──
     await switchProjectTo(page, basename(repoRoot))
     await terminal.switchToTerminal()

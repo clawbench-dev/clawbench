@@ -953,6 +953,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			name TEXT NOT NULL,
 			root TEXT NOT NULL DEFAULT '',
 			project_id INTEGER NOT NULL DEFAULT 0,
+			expires_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_file_shares_path ON file_shares(path);
@@ -971,6 +972,23 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// session_shares.go as a constant so tests share one source of truth.
 	if _, err := store.WriteExec(SessionSharesDDL); err != nil {
 		return fmt.Errorf("failed to create session_shares table: %w", err)
+	}
+	// Link expiry (share.link_ttl_days). NULL means "never expires", which is
+	// the right value for every row created before the setting existed.
+	for _, m := range []struct{ table, col, stmt string }{
+		{"file_shares", "expires_at", "ALTER TABLE file_shares ADD COLUMN expires_at DATETIME"},
+		{"session_shares", "expires_at", "ALTER TABLE session_shares ADD COLUMN expires_at DATETIME"},
+	} {
+		var present int
+		_ = store.ReadDB().QueryRow(
+			fmt.Sprintf("SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?", m.table), m.col,
+		).Scan(&present)
+		if present > 0 {
+			continue
+		}
+		if _, err := store.WriteExec(m.stmt); err != nil {
+			return fmt.Errorf("failed to add %s.%s column: %w", m.table, m.col, err)
+		}
 	}
 	// AI 听记 transcripts and generated minutes for live shares. Defined in
 	// live_notes.go so the handler tests can create the same schema.
@@ -1021,6 +1039,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		// reading: those meetings were never explicitly shared by their owner,
 		// and their links only worked because nothing checked.
 		"share_enabled": "ALTER TABLE live_notes ADD COLUMN share_enabled INTEGER NOT NULL DEFAULT 0",
+		// Bounds the publication when share.link_ttl_days is set. NULL on every
+		// existing row: those links were created under "never expire" and must
+		// not be retroactively killed.
+		"share_expires_at": "ALTER TABLE live_notes ADD COLUMN share_expires_at DATETIME",
 	} {
 		var present int
 		_ = store.ReadDB().QueryRow(
@@ -1122,6 +1144,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// source of truth for the schema.
 	if _, err := store.WriteExec(BtwQuestionsDDL); err != nil {
 		return fmt.Errorf("failed to create btw_questions table: %w", err)
+	}
+	// Terminal command history. Defined in terminal_history.go as a constant so
+	// tests share one source of truth for the schema.
+	if _, err := store.WriteExec(TerminalHistoryDDL); err != nil {
+		return fmt.Errorf("failed to create terminal_command_history table: %w", err)
 	}
 	// Notification-center log. Defined in notifications.go as a constant so
 	// tests share one source of truth for the schema.
@@ -2250,6 +2277,36 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasAgentMCPServers == 0 {
 		if _, err := store.WriteExec(`ALTER TABLE agents ADD COLUMN mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}'`); err != nil {
 			return fmt.Errorf("failed to add mcp_servers column to agents: %w", err)
+		}
+	}
+
+	// Migrate: per-agent tool grant. Only the built-in backend reads it; every
+	// external backend's tools live inside its own CLI, where a column here
+	// would do nothing.
+	//
+	// Default is the empty grant (no read, no write, no exec): a fresh agent
+	// can chat but cannot touch anything. The built-in backend is new, so no
+	// existing row needs a backfill — an agent that was never granted tools
+	// must not silently acquire them on upgrade.
+	var hasAgentToolPolicy int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='tool_policy'").Scan(&hasAgentToolPolicy)
+	if hasAgentToolPolicy == 0 {
+		if _, err := store.WriteExec(`ALTER TABLE agents ADD COLUMN tool_policy TEXT NOT NULL DEFAULT '{"allow":[]}'`); err != nil {
+			return fmt.Errorf("failed to add tool_policy column to agents: %w", err)
+		}
+	}
+
+	// Migrate: the built-in agent's "do not read AGENTS.md" switch.
+	//
+	// Default 0 = inject. That is the safe direction: a row written before the
+	// column existed keeps behaving exactly as it did, and turning injection
+	// off has to be a deliberate act — a failed migration must never cost an
+	// agent the rules that govern its project.
+	var hasAgentSkipProjectContext int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='skip_project_context'").Scan(&hasAgentSkipProjectContext)
+	if hasAgentSkipProjectContext == 0 {
+		if _, err := store.WriteExec(`ALTER TABLE agents ADD COLUMN skip_project_context INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("failed to add skip_project_context column to agents: %w", err)
 		}
 	}
 

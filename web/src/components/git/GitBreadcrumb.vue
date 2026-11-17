@@ -1,11 +1,16 @@
 <template>
   <div class="git-breadcrumb" data-horizontal-scroll="true" @wheel="onHorizontalWheel">
-    <!-- Root crumb: 提交列表 or 文件历史 -->
+    <!-- Root crumb: the project history's dock label, or 文件历史 in the file
+         drawer. The glyph is the section's own dock icon, so the drill-down
+         header still reads as the git tab. -->
     <span
       class="git-crumb"
       :class="{ current: currentView === 'commits' }"
       @click="currentView !== 'commits' && $emit('navigate', 'commits')"
-    >{{ mode === 'file' ? t('git.breadcrumb.fileHistory') : t('git.breadcrumb.commitList') }}</span>
+    >
+      <GitBranch :size="14" class="panel-header-icon" />
+      <span>{{ mode === 'file' ? t('git.breadcrumb.fileHistory') : t('git.history.projectHistory') }}</span>
+    </span>
 
     <!-- Manage crumb -->
     <template v-if="currentView === 'manage'">
@@ -34,6 +39,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { GitBranch } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { baseName } from '@/utils/path.ts'
 import { FILE_OPEN_ICON_SVG } from '@/composables/useFilePathAnnotation.ts'
@@ -88,6 +94,9 @@ const commitTarget = computed(() => {
   display: none;
 }
 .git-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
   padding: calc(3 * var(--dp)) var(--space-3);
   border-radius: var(--radius-xs);
   cursor: pointer;

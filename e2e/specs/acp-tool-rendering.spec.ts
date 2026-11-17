@@ -32,8 +32,13 @@ test.describe.serial('ACP Tool Rendering', () => {
     // Send a message and wait for the full ACP reply
     await chat.sendAndAwaitACPReply('read the project files')
 
+    // Compact tool calls are ON by default: the thinking chip and the Read call
+    // share one folded run, so unfold it to inspect the pill itself.
+    const reply = chat.getLastAssistantMessage()
+    await chat.expandToolRun(reply)
+
     // Tool call blocks should appear in the assistant message
-    const toolCalls = page.locator('.chat-tool-call')
+    const toolCalls = reply.locator('.chat-tool-call')
     await expect(toolCalls.first()).toBeVisible({ timeout: 15000 })
 
     // The acp-mock sends a Read tool call — verify the tool name is "Read"
@@ -45,7 +50,7 @@ test.describe.serial('ACP Tool Rendering', () => {
     await expect(toolSummary).toContainText('README.md', { timeout: 5000 })
 
     // ACP kind=Read maps to data-category="file" (via getToolIcon utility)
-    const fileCategoryTool = page.locator('.chat-tool-call[data-category="file"]')
+    const fileCategoryTool = reply.locator('.chat-tool-call[data-category="file"]')
     await expect(fileCategoryTool.first()).toBeVisible({ timeout: 5000 })
   })
 
@@ -53,8 +58,14 @@ test.describe.serial('ACP Tool Rendering', () => {
     // Send a message and wait for the full ACP reply
     await chat.sendAndAwaitACPReply('read the project files')
 
+    // Unfold the run first: its head row is itself a `.chat-tool-call.done`, but
+    // clicking that only collapses the run — the detail drawer lives on the
+    // member pill.
+    const reply = chat.getLastAssistantMessage()
+    const run = await chat.expandToolRun(reply)
+
     // Wait for a completed tool call to be visible and clickable
-    const toolCall = page.locator('.chat-tool-call.done').first()
+    const toolCall = run.locator('.chat-run-body .chat-tool-call.done').first()
     await expect(toolCall).toBeVisible({ timeout: 15000 })
 
     // Click the tool call to open the detail overlay

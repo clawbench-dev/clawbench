@@ -87,10 +87,10 @@ describe('task-tool card strip title', () => {
     })
   })
 
-  it('leaves an ordinary tool pill on its own name', () => {
+  it('gives an ordinary tool pill its localized label', () => {
     withLocale('en', () => {
       const wrapper = mountWithTool({ type: 'tool_use', name: 'Bash', input: { command: 'ls' }, done: true }, 'ls')
-      expect(wrapper.find('.tool-name').text()).toBe('Bash')
+      expect(wrapper.find('.tool-name').text()).toBe('Run command')
       wrapper.unmount()
     })
   })

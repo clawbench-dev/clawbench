@@ -8,6 +8,41 @@ import { appLog } from '@/utils/appLog'
 
 const TAG = 'Agents'
 
+/**
+ * Tool grant for the built-in agent.
+ *
+ * Capabilities are coarser than tool names on purpose: `exec` can write files
+ * (`cat > f`, `sed -i`), so a per-tool allowlist would let the UI claim
+ * "cannot write" while the agent writes through bash. The server closes the
+ * implications on save, so `allow` is always the truth.
+ */
+export interface ToolPolicy {
+  /** Granted capabilities: 'fs.read' | 'fs.write' | 'exec'. Empty = no tools. */
+  allow: string[]
+  /** Model round-trip budget per turn (0 = server default). */
+  maxRounds?: number
+  /** Tool invocation budget per turn (0 = server default). */
+  maxToolCalls?: number
+  /** Per-command timeout in seconds (0 = server default). */
+  bashTimeoutSec?: number
+  /**
+   * Confines the FILE tools to the working directory.
+   *
+   * Stored as the restriction, not the permission, so the absent/`false` value
+   * means "may read outside the project" — which is the default this field
+   * shipped with. The settings switch shows the opposite polarity
+   * ("allow access outside the project", on by default) because that is the
+   * question a user is actually asking.
+   */
+  restrictToWorkDir?: boolean
+}
+
+/** Capability identifiers, mirroring model.CapFSRead / CapFSWrite / CapExec. */
+export const CAP_FS_READ = 'fs.read'
+export const CAP_FS_WRITE = 'fs.write'
+export const CAP_EXEC = 'exec'
+
+
 // ───────────────────────────────────────────────────────────
 // Break circular dependency with useSessionIdentity:
 // useSessionIdentity imports useAgents, so useAgents cannot
@@ -44,9 +79,9 @@ interface AgentRecord {
   backend: string
   command?: string
   specialty?: string
-  models?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>
+  models?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
   /** Pure CLI-discovered list, supplied by the backend for the CLI view. */
-  cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>
+  cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
   preferredModel?: string
   thinkingEffort?: string
   thinkingEffortLevels?: string[]
@@ -72,6 +107,21 @@ interface AgentRecord {
    * the same predicate when it refuses the PATCH.
    */
   backendHasSpec?: boolean
+  /**
+   * Whether this agent's tools are ClawBench's own (the built-in backend) rather
+   * than an external CLI's. The server computes it so the UI never matches on a
+   * backend id: when true, the CLI command, install command, MCP section and
+   * skills section are meaningless and must be hidden, and the tool-grant editor
+   * takes their place.
+   */
+  builtinBackend?: boolean
+  /** Tool grant (built-in backend only). Zero value grants nothing. */
+  toolPolicy?: ToolPolicy
+  /**
+   * Do not inject the project's AGENTS.md / CLAUDE.md into this agent's system
+   * prompt (built-in backend only). Absent / false means "inject".
+   */
+  skipProjectContext?: boolean
   supportsCLI?: boolean
   supportsMidTurn?: boolean
   autoApprove?: boolean
@@ -95,6 +145,11 @@ interface AgentRecord {
   providerKeyOnly?: boolean
   /** True when the provider is applied by editing the CLI's config file (needs consent). */
   providerConfigBackend?: boolean
+  /** True when the backend gets a private config DIRECTORY per agent instead of
+   *  one shared file (needs its own consent wording). */
+  providerConfigDirBackend?: boolean
+  /** File (or file list) a binding would write, shown in the consent dialog. */
+  providerConfigPath?: string
   /**
    * Catalogue models shown while the backend has not reported its own list
    * (ACP before the first session). Configuration only — the turn keeps letting
@@ -111,6 +166,12 @@ interface AgentRecord {
   sessionCount?: number
   taskCount?: number
   membershipCount?: number
+  /**
+   * The backend's built-in install command (same string GET /api/backends
+   * reports), or empty when the backend has none. Drives the settings page's
+   * one-click install, so both surfaces run the exact same command.
+   */
+  installCmd?: string
 }
 
 const agents = ref<AgentRecord[]>([])
@@ -142,9 +203,9 @@ interface AcpState {
   thinkingEffortState?: { availableLevels?: Array<{ id: string; name: string }>; currentId?: string }
   commands?: Array<{ name: string; description: string; inputHint?: string }>
   modelListState?: {
-    models?: Array<{ id: string; name: string; price?: ModelPrice }>
-    resolvedModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>
-    cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>
+    models?: Array<{ id: string; name: string; price?: ModelPrice; credits?: string }>
+    resolvedModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
+    cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
     currentModelId?: string
   }
   planState?: { entries?: Array<Record<string, unknown>> }
@@ -333,7 +394,7 @@ function getDefaultModelId(agentId: string): string {
 }
 
 /** Get the models list for an agent. */
-function getAgentModels(agentId: string): { id: string; name: string; default: boolean; price?: ModelPrice }[] {
+function getAgentModels(agentId: string): { id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }[] {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.models || []
 }
@@ -483,6 +544,23 @@ function getEffectiveModeId(agentId: string): string {
     return agent?.preferredMode || ''
 }
 
+/**
+ * The mode options the server reported for an agent.
+ *
+ * Read from the same acpStates cache the chat drawer uses, so a built-in agent
+ * (whose modes are fixed by the build) and an ACP agent (which advertises them
+ * at session/new) reach the settings picker the same way.
+ */
+function getAgentAvailableModes(agentId: string): Array<{ id: string; name: string }> {
+    const state = acpStatesCache[agentId] as AcpState | undefined
+    return state?.modeState?.availableModes || []
+}
+
+/** Whether an agent runs on the in-process backend. */
+function isBuiltinAgent(agentId: string): boolean {
+    return agents.value.find(a => a.id === agentId)?.builtinBackend === true
+}
+
 /** Check if an agent has a preferred mode configured. */
 function hasPreferredMode(agentId: string): boolean {
     return getEffectiveModeId(agentId) !== ''
@@ -538,7 +616,7 @@ async function setDefaultAgent(agentId: string): Promise<void> {
  * Falls back to the raw ACP list when the backend could not resolve it (no CLI
  * list available at emit time) — better to show the ACP list alone than nothing.
  */
-export function updateACPModelList(agentId: string, models: Array<{ id: string; name: string; price?: ModelPrice }>, currentModelId?: string): void {
+export function updateACPModelList(agentId: string, models: Array<{ id: string; name: string; price?: ModelPrice; credits?: string }>, currentModelId?: string): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
     if (models.length === 0) return
@@ -564,8 +642,8 @@ export function updateACPModelList(agentId: string, models: Array<{ id: string; 
  */
 export function applyResolvedModelList(
     agentId: string,
-    resolved: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>,
-    cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice }>,
+    resolved: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>,
+    cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>,
 ): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
@@ -949,6 +1027,8 @@ export function useAgents() {
         getEffectiveThinkingEffortForModel,
         setThinkingEffortForModelLocal,
         getEffectiveModeId,
+        getAgentAvailableModes,
+        isBuiltinAgent,
         hasPreferredMode,
         updateAgentField,
         setDefaultAgent,

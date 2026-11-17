@@ -3871,7 +3871,9 @@ func TestMigrateToolCallsFromContent_ExtractsToolCalls(t *testing.T) {
 	assert.Equal(t, "package main\nfunc main() {}", output)
 	assert.Equal(t, "success", status)
 	assert.Equal(t, 1, doneInt, "done should be true")
-	assert.Equal(t, "main.go", summary, "summary should be extracted from file_path")
+	// The summary keeps the last two path segments (85c49e09f), so two files with
+	// the same basename in different directories stay distinguishable.
+	assert.Equal(t, "src/main.go", summary, "summary should be extracted from file_path")
 
 	// Verify content was rewritten to slim format (no input/output in tool_use)
 	var newContent string
@@ -3891,7 +3893,7 @@ func TestMigrateToolCallsFromContent_ExtractsToolCalls(t *testing.T) {
 	assert.Nil(t, toolBlock["input"], "slim format should not have input")
 	_, hasOutput := toolBlock["output"]
 	assert.False(t, hasOutput, "slim format should not have output")
-	assert.Equal(t, "main.go", toolBlock["summary"])
+	assert.Equal(t, "src/main.go", toolBlock["summary"])
 	assert.Equal(t, "/src/main.go", toolBlock["file_path"])
 }
 
@@ -3932,7 +3934,9 @@ func TestMigrateToolCallsFromContent_MultipleToolUseBlocks(t *testing.T) {
 	// Verify Read tool has file_path in summary
 	var readSummary string
 	store.UnsafeDBForTest().QueryRow("SELECT summary FROM chat_tool_calls WHERE tool_id = 'toolu_10' AND message_id = ?", msgID).Scan(&readSummary)
-	assert.Equal(t, "a.go", readSummary)
+	// Same two-segment rule: a root-level file keeps its leading slash, which is
+	// what distinguishes it from a same-named file nested one level down.
+	assert.Equal(t, "/a.go", readSummary)
 
 	// Verify Bash tool has command in summary
 	var bashSummary string

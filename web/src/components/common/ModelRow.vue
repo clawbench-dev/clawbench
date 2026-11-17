@@ -5,10 +5,14 @@
       <span class="model-row__name">{{ name }}</span>
       <span v-if="showId" class="model-row__id">{{ displayId }}</span>
     </span>
-    <!-- Price tag (issue #643). Sits after the labels so it never pushes the
-         name off its ellipsis budget; the "~" marks a price that did not come
-         from the model's own vendor. -->
-    <span v-if="priceLabel" class="model-row__price" :title="priceTitle">{{ priceLabel }}</span>
+    <!-- Cost tag: the agent's own billing multiplier when it publishes one
+         (issue #657), otherwise the catalog's USD price (issue #643). The two
+         measure different things, so only one is shown — a narrow row cannot
+         carry both, and the multiplier is the number the user can compare
+         against the agent's own client. Sits after the labels so it never
+         pushes the name off its ellipsis budget. -->
+    <span v-if="creditsLabel" class="model-row__credits" :title="creditsTitle">{{ creditsLabel }}</span>
+    <span v-else-if="priceLabel" class="model-row__price" :title="priceTitle">{{ priceLabel }}</span>
     <slot />
   </div>
 </template>
@@ -18,6 +22,7 @@ import { computed } from 'vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { getModelProvider } from '@/utils/providerIcons'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
+import { formatCreditsLabel } from '@/utils/modelCredits'
 import { useI18n } from 'vue-i18n'
 import type { ModelPrice } from '@/utils/modelPrice'
 
@@ -42,11 +47,14 @@ const props = withDefaults(defineProps<{
   iconSize?: number
   /** Per-million-token list price, when the catalog knows one. */
   price?: ModelPrice | null
+  /** The agent's own billing multiplier, verbatim ("x0.06 credits"). */
+  credits?: string | null
 }>(), {
   modelId: '',
   active: false,
   iconSize: 16,
   price: null,
+  credits: '',
 })
 
 const { t } = useI18n()
@@ -97,6 +105,15 @@ const priceLabel = computed(() => {
 const priceTitle = computed(() =>
   t(props.price?.approx ? 'chat.sessionSetting.priceApproxHint' : 'chat.sessionSetting.priceHint'),
 )
+
+/**
+ * Compact multiplier tag, e.g. "x0.06" — the same form the agent's own client
+ * shows, so the two can be compared at a glance (issue #657). Empty when the
+ * agent publishes no multiplier, which is the case for every backend except
+ * CodeBuddy today.
+ */
+const creditsLabel = computed(() => formatCreditsLabel(props.credits))
+const creditsTitle = computed(() => t('chat.sessionSetting.creditsHint'))
 </script>
 
 <style scoped>
@@ -146,7 +163,8 @@ const priceTitle = computed(() =>
 
 /* Price tag. Never shrinks and never wraps: the name above it already
    ellipsizes, so this is the one element that must stay legible. */
-.model-row__price {
+.model-row__price,
+.model-row__credits {
   flex: none;
   font-size: var(--font-size-2xs);
   font-variant-numeric: tabular-nums;

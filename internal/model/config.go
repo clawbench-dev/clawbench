@@ -36,6 +36,15 @@ func ParseSHA256Hash(password string) string {
 // carries no context-window sizes.
 const DefaultForkContextBudget = 100000
 
+// Upper bounds for the tasks / share / git-history settings. They exist so a
+// hand-edited config.yaml cannot ask for an unbounded retention window or a
+// page size that would make one git log call read the whole repository.
+const (
+	MaxTaskRetentionDays  = 3650
+	MaxShareLinkTTLDays   = 3650
+	MaxGitHistoryPageSize = 200
+)
+
 // PushModeDisabled is the push_mode value that turns every outbound
 // notification channel off. The notification-center row is unaffected: it is
 // an in-app log, not a push.
@@ -147,7 +156,6 @@ type Config struct {
 	Chat struct {
 		InitialMessages          int  `yaml:"initial_messages"`           // Number of messages to load initially (default: 20)
 		PageSize                 int  `yaml:"page_size"`                  // Number of messages per lazy-load batch (default: 20)
-		SessionPageSize          int  `yaml:"session_page_size"`          // Number of sessions per page in session list (default: 10)
 		SystemPromptInterval     int  `yaml:"system_prompt_interval"`     // Re-inject system prompt every N assistant turns (0=never, default: 0)
 		RecommendEnabled         bool `yaml:"recommend_enabled"`          // 推荐回复: generate a next-step recommendation after each assistant reply (default: false)
 		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 推荐回复参考的最近消息条数（用户+助手） (default: 10)
@@ -237,14 +245,18 @@ type Config struct {
 	Meeting     MeetingConfig     `yaml:"meeting"`      // AI 听记 / meeting minutes defaults and output limits
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
+	KB          KBConfig          `yaml:"kb"`           // Knowledge base (collections, file indexing, auto-inject)
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
 	DingTalk    DingTalkConfig    `yaml:"dingtalk"`     // DingTalk enterprise bot push notifications
 	Feishu      FeishuConfig      `yaml:"feishu"`       // Feishu (飞书) enterprise bot push notifications
 	WeChat      WeChatConfig      `yaml:"wechat"`       // Personal WeChat (iLink Bot) push credentials, obtained by QR scan
 	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "wechat", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
+	GitHistory  GitHistoryConfig  `yaml:"git_history"`  // Git history page tuning
 	Forge       ForgeConfig       `yaml:"forge"`        // GitHub / GitLab integration (read-only issue & PR browsing)
 	Mail        MailConfig        `yaml:"mail"`         // Built-in mail client master switch
+	Tasks       TasksConfig       `yaml:"tasks"`        // Scheduled-task master switch
+	Share       ShareConfig       `yaml:"share"`        // Share-link master switch
 	Skills      SkillsConfig      `yaml:"skills"`       // Cross-agent skill discovery (native dirs + custom dirs + git repos)
 	UsageMeter  UsageMeterConfig  `yaml:"usage_meter"`  // Periodic usage budget + over-plan notification
 	Drawio      DrawioConfig      `yaml:"drawio"`       // On-demand draw.io editor (downloaded, not embedded)
@@ -406,12 +418,106 @@ type ForgeNotifyConfig struct {
 	Pipeline  bool `yaml:"pipeline"`
 }
 
-// MailConfig is the master switch for the built-in mail client.
+// TasksConfig is the scheduled-task master switch.
 //
-// It is a SERVER-side switch, like Forge.Enabled: the thing being turned off is
-// the background IMAP polling and the email-triggered tasks that ride on it, and
-// those live on the server. A per-device flag would leave one client's server
-// syncing after another device had "disabled" mail.
+// Server-side like Forge.Enabled and Mail.Enabled, for the same reason: what is
+// being turned off is the cron scheduler and the running executions, which live
+// on the server. A per-device flag would leave one client's tasks firing after
+// another device had "disabled" them.
+//
+// Off means: no cron firing, no event/mail-triggered run, no manual run, and
+// every running execution is cancelled. Existing tasks, their configuration and
+// their execution history are kept — turning the switch back on resumes the
+// schedules from that moment and deliberately does NOT replay runs missed while
+// it was off.
+type TasksConfig struct {
+	// Enabled defaults to TRUE via ApplyDefaults' presence check: scheduled
+	// tasks are an existing feature, so an install that never wrote the key must
+	// keep them.
+	Enabled bool `yaml:"enabled"`
+
+	// RetentionEnabled turns the automatic purge of old execution rows on.
+	// Default OFF: deleting history is irreversible, so it is an explicit
+	// opt-in (the same reasoning as upload.retention_enabled).
+	RetentionEnabled bool `yaml:"retention_enabled"`
+	// RetentionDays is how old an execution row must be to be purged. Defaults
+	// to 30 even while disabled so flipping the switch has an immediate effect.
+	RetentionDays int `yaml:"retention_days"`
+
+	// NotifyOnSuccess / NotifyOnFailure gate the notification-center row and
+	// the push/IM delivery for finished runs. Both default ON; the in-app task
+	// history (task_executions) is never affected.
+	NotifyOnSuccess bool `yaml:"notify_on_success"`
+	NotifyOnFailure bool `yaml:"notify_on_failure"`
+
+	// Timezone is the IANA zone cron expressions are interpreted in. Empty
+	// means the server's local zone. Invalid values are rejected by PATCH and
+	// ignored (with a warning) on load.
+	Timezone string `yaml:"timezone"`
+}
+
+// ShareConfig is the share-link master switch.
+//
+// Server-side because the links themselves are server-issued capability URLs:
+// turning sharing off has to revoke them everywhere, which one browser cannot
+// do for another.
+//
+// Off means: every file/session share row is deleted and every meeting record's
+// public flag is cleared (old links 404 immediately), and creating a new share
+// is refused. Turning the switch back on does NOT restore revoked links — they
+// must be created again, which is the only honest reading of "revoke".
+type ShareConfig struct {
+	// Enabled defaults to TRUE via ApplyDefaults' presence check: sharing is an
+	// existing feature, so an install that never wrote the key must keep it.
+	Enabled bool `yaml:"enabled"`
+
+	// AllowFiles / AllowSessions / AllowMeetings are per-kind creation rules.
+	// They default ON and only gate NEW links; existing links are governed by
+	// Enabled and the expiry below.
+	AllowFiles    bool `yaml:"allow_files"`
+	AllowSessions bool `yaml:"allow_sessions"`
+	AllowMeetings bool `yaml:"allow_meetings"`
+
+	// AllowDownload gates the raw download endpoint of a file/folder share.
+	// Preview (the JSON content endpoint) is unaffected.
+	AllowDownload bool `yaml:"allow_download"`
+
+	// LinkTTLDays is how long a newly created link stays valid. 0 means
+	// permanent. Stored per link at creation time, so changing it never
+	// retroactively expires (or extends) links that already exist.
+	LinkTTLDays int `yaml:"link_ttl_days"`
+
+	// ShowProjectName includes the source project's name in the public share
+	// page (link previews and the injected discovery block).
+	ShowProjectName bool `yaml:"show_project_name"`
+}
+
+// FeaturePolicyConfig mirrors the sub-switches of the tasks and share features
+// that default to true. See FeaturePolicy.
+type FeaturePolicyConfig struct {
+	TasksNotifyOnSuccess bool
+	TasksNotifyOnFailure bool
+	ShareAllowFiles      bool
+	ShareAllowSessions   bool
+	ShareAllowMeetings   bool
+	ShareAllowDownload   bool
+	ShareShowProjectName bool
+}
+
+// GitHistoryConfig holds the Git history page's server-side tuning.
+type GitHistoryConfig struct {
+	// PageSize is how many commits one history request returns. Defaults to 30
+	// (the value that used to be hard-coded in the handler).
+	PageSize int `yaml:"page_size"`
+}
+
+// MailConfig holds the built-in mail client's server-side settings: the master
+// switch plus the sync tuning the background worker obeys.
+//
+// Everything here is SERVER-side, like Forge.Enabled: the thing being turned off
+// or slowed down is the background IMAP polling and the email-triggered tasks
+// that ride on it, and those live on the server. A per-device flag would leave
+// one client's server syncing after another device had "disabled" mail.
 //
 // Off means: no background sync, no email-triggered task firing, no dock entry
 // and no unread polling. It does NOT delete the configured accounts — turning
@@ -420,6 +526,34 @@ type MailConfig struct {
 	// Enabled defaults to TRUE via ApplyDefaults' presence check: mail is an
 	// existing feature, so an install that never wrote the key must keep it.
 	Enabled bool `yaml:"enabled"`
+
+	// SyncIntervalMinutes is how often the background worker polls every
+	// enabled account. Server-side because the polling is: a per-device value
+	// would mean one client's server hammering IMAP on another device's behalf.
+	//
+	// 3 by default. There is deliberately no "0 = never sync" value — that is
+	// what Enabled is for, and two ways to stop syncing would leave users
+	// guessing which one is in effect.
+	SyncIntervalMinutes int `yaml:"sync_interval_minutes"`
+
+	// SyncWindow is how many of the newest messages each folder keeps cached.
+	// This is the number the user actually feels: it decides how far back the
+	// list can be read without another IMAP round trip, and how much mail the
+	// local database holds per folder.
+	//
+	// 100 by default; older pages are still fetched on demand when the user
+	// scrolls past the window.
+	SyncWindow int `yaml:"sync_window"`
+
+	// BodyPrefetch is how many of the newest messages have their body decoded
+	// during a sync. It is what gives the list its preview lines and makes the
+	// first click instant, at the cost of downloading those bodies before they
+	// are opened.
+	//
+	// 0 means "do not prefetch at all" — bodies are then fetched only when the
+	// message is opened, which is the traffic-saving choice for a metered
+	// connection.
+	BodyPrefetch int `yaml:"body_prefetch"`
 }
 
 // AppearanceConfig holds the custom-wallpaper *resources* the server owns.
@@ -715,6 +849,21 @@ type MeetingConfig struct {
 	// manual cap (still clamped to that limit, since asking for more than a
 	// model supports is an API error). It is a cap rather than a target.
 	MinutesMaxTokens int `yaml:"minutes_max_tokens"`
+	// AgentMinutes runs the minutes and the proofreading on the built-in agent
+	// instead of the shared summary model.
+	//
+	// The difference is not the model — it is the TOOLS. The summary path can
+	// only see the text it is handed; the built-in agent can open files in the
+	// project, read the previous meeting's minutes, and look up how a term is
+	// actually spelled in the code. That is what makes a meeting about
+	// "the config loader" produce minutes that name the real file.
+	//
+	// Off by default: it needs the built-in agent to have a provider bound, and
+	// it costs tool calls on top of the model calls.
+	AgentMinutes bool `yaml:"agent_minutes"`
+	// AgentMinutesMaxRounds bounds the agent's model round-trips per artifact.
+	// 0 uses the built-in default (model.DefaultMaxRounds).
+	AgentMinutesMaxRounds int `yaml:"agent_minutes_max_rounds"`
 }
 
 // RAGConfig holds configuration for the RAG history memory system.
@@ -733,6 +882,35 @@ type RAGConfig struct {
 	SearchLimit    int    `yaml:"search_limit"`     // Default search result limit (default: 100)
 	SearchPoolSize int    `yaml:"search_pool_size"` // Candidates per search source before RRF fusion (default: 20)
 	RetentionDays  int    `yaml:"retention_days"`   // Archived data retention days (0=keep forever, default: 90)
+}
+
+// KBConfig holds configuration for the knowledge base.
+//
+// Embedding is not configured here: the knowledge base reuses rag.{base_url,
+// model, api_key}, so there is exactly one embedding endpoint to maintain and
+// one place to change the model. Chunk size/overlap are also shared with RAG.
+type KBConfig struct {
+	Enabled bool `yaml:"enabled"` // Master switch (default: true)
+	// AutoInject prepends retrieved snippets to each user turn. Per-collection
+	// toggles refine this; this is the global switch. Opt-in: default false.
+	AutoInject bool `yaml:"auto_inject"` // default: false
+	// InjectTopN caps how many chunks are prepended per turn.
+	InjectTopN int `yaml:"inject_top_n"` // default: 4
+	// InjectMaxChars caps the total characters of injected snippets.
+	InjectMaxChars int `yaml:"inject_max_chars"` // default: 2000
+	// InjectMinSimilarity drops vector-only hits below this cosine similarity.
+	// FTS hits are not thresholded (a term matched by definition).
+	InjectMinSimilarity float64 `yaml:"inject_min_similarity"` // default: 0.35
+	// MaxFileMB caps the size of a file added to a collection.
+	MaxFileMB int `yaml:"max_file_mb"` // default: 50
+	// MaxTextMB caps the extracted text kept per document (longer text is
+	// truncated and the document carries a warning).
+	MaxTextMB int `yaml:"max_text_mb"` // default: 20
+	// PollInterval is the indexer's fallback tick; adds and rebuilds also wake
+	// it immediately.
+	PollInterval string `yaml:"poll_interval"` // default: "2s"
+	// EmbedBatchSize is how many chunks are sent to the embedding API per call.
+	EmbedBatchSize int `yaml:"embed_batch_size"` // default: 16
 }
 
 // OpenAITTSConfig holds configuration for the OpenAI-compatible TTS engine.
@@ -829,8 +1007,41 @@ var (
 	// delete the auto-password file and stop printing the password in the banner.
 	PasswordIsAutoGenerated bool
 	ServerPort              int // Server listen port — set once at startup before HTTP listeners start, read-only afterwards. Do NOT modify after server starts; cookie names must be stable.
-	SessionCookie           = "clawbench_session"
-	DefaultAgentID          string // Default agent for new sessions, set from config or first agent
+	// ManagedByEmbedder is true when another program owns this process: the
+	// desktop shell starts the server as a child, holds its stdin and quits it
+	// by closing that pipe. Self-upgrade and restart are refused in this mode,
+	// because either one replaces or relaunches the binary that ships inside
+	// the shell's own install directory — the shell would then be talking to a
+	// server it can no longer stop. Auth is unaffected: the random password on
+	// disk stays the credential, and LAN clients keep logging in with it.
+	ManagedByEmbedder bool
+	SessionCookie     = "clawbench_session"
+	DefaultAgentID    string // Default agent for new sessions, set from config or first agent
+	// TasksEnabled / ShareEnabled mirror the two server-side master switches
+	// (tasks.enabled / share.enabled). They are package globals rather than
+	// direct ConfigInstance reads for the same reason as ChatAutoRenameEnabled:
+	// hot-reload handlers and tests can reset ConfigInstance without silently
+	// turning a feature off, and the zero value of ConfigInstance is not a
+	// meaningful "off" for either switch.
+	//
+	// Default true so a process that never ran ApplyDefaults (tests) behaves
+	// like a default install.
+	TasksEnabled = true
+	ShareEnabled = true
+	// FeaturePolicy holds the default-ON sub-switches of the two features
+	// above (task notifications, per-kind share creation, download, project
+	// name). They are mirrored here for the same reason as the master
+	// switches: handlers and background workers must not read a zero-valued
+	// ConfigInstance and silently conclude "everything is off".
+	FeaturePolicy = FeaturePolicyConfig{
+		TasksNotifyOnSuccess: true,
+		TasksNotifyOnFailure: true,
+		ShareAllowFiles:      true,
+		ShareAllowSessions:   true,
+		ShareAllowMeetings:   true,
+		ShareAllowDownload:   true,
+		ShareShowProjectName: true,
+	}
 	// Language is the resolved UI language ("zh" / "en"), read by background
 	// goroutines that must localize without an HTTP request in scope.
 	Language string
@@ -842,7 +1053,6 @@ var (
 	// Chat UI config (set from config, with defaults)
 	ChatInitialMessages      int  // Default: 20
 	ChatPageSize             int  // Default: 20
-	ChatSessionPageSize      int  // Default: 10
 	ChatSystemPromptInterval int  // Re-inject system prompt every N assistant turns (0=never, default: 0)
 	ChatRecommendEnabled     bool // 推荐回复: generate next-step recommendation after each assistant reply (default: false)
 	// ChatForkContextBudget bounds the history text re-injected on fork/rewind

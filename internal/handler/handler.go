@@ -17,6 +17,7 @@ import (
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/plugins"
 	"clawbench/internal/proxy"
 	"clawbench/internal/service"
 	"clawbench/internal/store"
@@ -540,8 +541,21 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// register records an auth-protected route. Authentication is the default,
 	// mirroring the OpenAPI spec (every /api/ operation requires the session
 	// cookie unless it explicitly declares `security: []`).
+	//
+	// The feature gate is applied HERE, from the registry, instead of by each
+	// handler: a route whose prefix belongs to a registered plugin is refused
+	// while that plugin's master switch is off (409, or the plugin's own status
+	// — terminal answers 503). Adding an endpoint under an existing prefix
+	// therefore needs no new check anywhere; the mail client's send endpoint was
+	// reachable while "mail disabled" precisely because this was per-handler.
 	register := func(pattern string, handler http.HandlerFunc) {
-		registerRoute(mux, pattern, middleware.Auth(handler))
+		h := handler
+		if p := plugins.ForRoute(pattern); p != nil {
+			h = plugins.Gate(p, h, func(w http.ResponseWriter, r *http.Request, status int, msgKey string) {
+				writeLocalizedErrorf(w, r, status, msgKey)
+			})
+		}
+		registerRoute(mux, pattern, middleware.Auth(h))
 		routeTable = append(routeTable, Route{Pattern: pattern, Authenticated: true})
 	}
 
@@ -563,6 +577,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// version is already inferable from the publicly downloadable APK.
 	registerPublic("/api/health", ServeHealth)
 	registerPublic("/api/me", ServeAuthCheck)
+	// Feature registry: which features exist, whether each is switched on, and
+	// whether this server can run it at all. Authenticated like /api/config —
+	// the answers are server configuration, not public capabilities.
+	register("/api/features", ServeFeatures)
 	register("/api/system/resources", ServeSystemResources)
 	register("/api/ws/delivery-stats", ServeWSDeliveryStats)
 	register("/api/roots", ServeRoots)
@@ -732,6 +750,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// uploads one, DELETE removes one, GET (below) lists them.
 	register("/api/live-share/notes/shot", ServeLiveShareNoteShot)
 	register("/api/live-share/notes/shots", ServeLiveNotesShots)
+	// Screen recording (picture + annotations + the meeting's audio mix). The
+	// publisher appends ordered chunks while the switch is on; finish closes the
+	// session. The file lives beside the other artifacts, so the record's
+	// resource tab lists it with no extra table.
+	register("/api/live-share/notes/recording", ServeLiveShareNoteRecording)
+	register("/api/live-share/notes/recording/finish", ServeLiveShareNoteRecordingFinish)
 	// Meeting records: GET lists the project's meetings (the database row is the
 	// record, permanent), DELETE removes one with its folder.
 	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)
@@ -739,6 +763,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// default: the token is minted automatically for viewers to join, which is
 	// not the same as publishing the archived record.
 	register("/api/live-share/notes/sessions/share", ServeLiveNotesShare)
+	// Clear every record of this project in one call. Its own path (not a query
+	// flag on the single delete) because the two answer differently: one either
+	// deletes or refuses, the other deletes what it can and reports the rest.
+	register("/api/live-share/notes/sessions/all", ServeLiveNotesClear)
 	register("/api/live-share/notes/sessions/artifact", ServeLiveNotesArtifact)
 	register("/api/live-share/notes/sessions/chat", ServeLiveNotesChat)
 	// Import an existing recording or video as a meeting: the file is decoded to
@@ -799,6 +827,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Authoritative model catalog (models.dev snapshot): status + refresh.
 	register("/api/catalog", ServeCatalog)
 	register("/api/backends", ServeBackends)
+	// One-click install: runs a backend's built-in install command on this
+	// machine, then rescans so the agent appears without a manual rescan.
+	register("/api/backends/", ServeBackendInstall)
 	register("/api/tts/generate", TTSGenerate)
 	register("/api/tts/preview", TTSPreview)
 	register("/api/tts/stream/", TTSStream)
@@ -818,6 +849,23 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/rebuild/status", ServeRAGRebuildStatus)
 	register("/api/rag/session-search", ServeRAGSessionSearch)
 	register("/api/rag/session-first-message", ServeRAGSessionFirstMessage)
+
+	// Knowledge base: multiple collections scoped globally or per project,
+	// files copied into the data directory and indexed for keyword + semantic
+	// search. Separate tables from the chat index above.
+	register("/api/kb/collections", ServeKBCollections)
+	register("/api/kb/documents", ServeKBDocuments)
+	register("/api/kb/documents/upload", ServeKBDocumentUpload)
+	register("/api/kb/documents/import", ServeKBDocumentImport)
+	register("/api/kb/documents/url", ServeKBDocumentURL)
+	register("/api/kb/documents/move", ServeKBDocumentMove)
+	register("/api/kb/documents/usage", ServeKBDocumentUsage)
+	register("/api/kb/documents/reindex", ServeKBDocumentReindex)
+	register("/api/kb/documents/refresh", ServeKBDocumentRefresh)
+	register("/api/kb/documents/progress", ServeKBDocumentProgress)
+	register("/api/kb/search", ServeKBSearch)
+	register("/api/kb/reindex", ServeKBReindex)
+	register("/api/kb/status", ServeKBStatus)
 
 	// Client log collection — auth-protected.
 	// This is an append-only write primitive into a file on the server, so an
@@ -900,6 +948,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/terminal/close", TerminalClose)
 	register("/api/terminal/quick-commands", ServeQuickCommands)
 	register("/api/terminal/quick-commands/", ServeQuickCommandByID)
+	register("/api/terminal/history", ServeTerminalHistory)
+	register("/api/terminal/history/", ServeTerminalHistoryByID)
 	register("/api/terminal/key-config", ServeKeyConfig)
 
 	// Global event WebSocket (replaces polling for session/task status)
@@ -917,6 +967,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	// Built-in mail client: accounts, cached folders/messages, send, drafts.
 	// Data is global (a mailbox belongs to the person, not to a project).
+	// The whole prefix is gated by the mail plugin's master switch (see
+	// register above) — /api/mail/send used to stay reachable while mail was
+	// off, because the switch only stopped the background sync.
 	register("/api/mail/presets", ServeMailPresets)
 	register("/api/mail/accounts", ServeMailAccounts)
 	register("/api/mail/accounts/", ServeMailAccountSubRoutes)

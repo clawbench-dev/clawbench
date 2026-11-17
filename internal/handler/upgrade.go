@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/version"
 )
@@ -27,6 +28,22 @@ var (
 	upgradeReadSkippedVersion  = service.ReadSkippedUpgradeVersion
 	upgradeWriteSkippedVersion = service.WriteSkippedUpgradeVersion
 )
+
+// managedRefusal answers 403 and reports whether the request was refused.
+//
+// The embedder (the desktop shell) ships the binary and decides when it runs, so
+// self-replacing it or relaunching it from inside the app would leave the shell
+// talking to a process it can no longer stop — and the next app update would
+// silently revert the swap anyway. The client hides these entry points based on
+// the same marker in GET /api/upgrade/check; this check is what makes hiding
+// optional rather than the only protection.
+func managedRefusal(w http.ResponseWriter, r *http.Request) bool {
+	if !model.ManagedByEmbedder {
+		return false
+	}
+	writeLocalizedErrorf(w, r, http.StatusForbidden, "ManagedByEmbedder")
+	return true
+}
 
 // ServeUpgradeCheck handles GET /api/upgrade/check
 // Returns current version, latest version, and whether an upgrade is available.
@@ -86,6 +103,10 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		// left untouched: a skipped version can still be installed from the
 		// settings dialog, so only the startup prompt consults this field.
 		"skipped_version": upgradeReadSkippedVersion(),
+		// managed is true when the desktop app started this server. The UI hides
+		// the in-app upgrade entry then; the server's own binary is part of the
+		// app package and is replaced by the desktop updater.
+		"managed": model.ManagedByEmbedder,
 	})
 }
 
@@ -139,6 +160,9 @@ func ServeUpgradeSkip(w http.ResponseWriter, r *http.Request) {
 // metadata.
 func ServeUpgradeStart(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if managedRefusal(w, r) {
 		return
 	}
 

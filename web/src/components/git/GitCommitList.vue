@@ -273,7 +273,7 @@
                from parent links, so removing the merge rows would leave a graph that
                silently contradicts the list next to it. -->
           <GitGraph
-            v-if="!isSearching && !hideMerges && mode !== 'file'"
+            v-if="!isSearching && !hideMerges && mode !== 'file' && showGraph"
             class="commit-list-graph"
             :commits="filteredCommits"
             :row-height="graphRowHeight"
@@ -365,6 +365,7 @@ import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useToast } from '@/composables/useToast'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { useUiScale } from '@/composables/useUiScale'
+import { localConfig } from '@/composables/useSettingsConfig'
 const { t } = useI18n()
 const toast = useToast()
 
@@ -682,8 +683,24 @@ const isSearching = computed(() => commitSearch.value.trim().length > 0)
  * files per parent), which in a branch-merge workflow means one row can carry a
  * hundred files and bury the actual work. This is display-only: pagination and
  * the `hasMore` flag still count every commit git returned.
+ *
+ * Seeded from 设置 → Git 历史 → 默认隐藏合并提交. The toolbar toggle above is a
+ * temporary override for the current view; the setting is what the list opens
+ * with, so flipping it in settings re-seeds an already-mounted list.
  */
-const hideMerges = ref(false)
+const hideMerges = ref(localConfig.gitHistoryHideMerges === true)
+watch(() => localConfig.gitHistoryHideMerges, (v) => {
+  hideMerges.value = v === true
+})
+
+/**
+ * Whether the commit graph is drawn at all (设置 → Git 历史 → 显示提交图).
+ *
+ * Distinct from `graphCollapsed`, which keeps a narrow node column for
+ * touch-swipe users: this one removes the graph entirely, for the narrow
+ * screens the setting exists for.
+ */
+const showGraph = computed(() => localConfig.gitHistoryShowGraph !== false)
 
 /** A commit with two or more parents. `parents` is absent on older hosts. */
 function isMergeCommit(c) {
@@ -756,10 +773,19 @@ const countText = computed(() => {
 
 const countTitle = computed(() => `${countText.value}${t('git.commitList.countUnit')}${props.countLabel}`)
 
+/**
+ * The commit's timestamp, in the format 设置 → Git 历史 asks for.
+ *
+ * `relative` always reads "3 小时前"; `absolute` always prints the date. The
+ * old fixed rule (relative under a week, absolute after) is gone: it made the
+ * column read as two different things depending on how old a commit happened to
+ * be, and neither of the two settings could be honoured.
+ */
 function formatDate(dateStr) {
   if (!dateStr) return ''
-  const diffDays = (Date.now() - new Date(dateStr).getTime()) / 86400000
-  return diffDays < 7 ? formatRelativeTime(dateStr) : formatDateTime(dateStr)
+  return localConfig.gitHistoryTimeFormat === 'absolute'
+    ? formatDateTime(dateStr)
+    : formatRelativeTime(dateStr)
 }
 
 function refTagClass(ref) {

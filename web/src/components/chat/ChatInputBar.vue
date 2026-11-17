@@ -41,7 +41,7 @@
         <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
         <span class="action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
       </button>
-      <button class="chat-action-btn" :class="{ disabled: !currentSessionId }"
+      <button v-if="shareAllowed" data-action="share-session" class="chat-action-btn" :class="{ disabled: !currentSessionId }"
         @click="handleShare"
         :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
         <MessageSquareShare :size="14" />
@@ -402,6 +402,7 @@ import { useFileUpload } from '@/composables/useFileUpload'
 import { useVoiceInput } from '@/composables/useVoiceInput'
 import { useChatRecommendation } from '@/composables/useChatRecommendation'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { ensureSkillsLoaded, skillMenuRows } from '@/composables/useSkillsState'
 import { useChatContext } from '@/composables/useChatContext'
 import { setChatDraft, getChatDraft, hasChatDraft, deleteChatDraft } from '@/utils/chatDraftStore.ts'
@@ -417,7 +418,7 @@ import ActionBar from '@/components/common/ActionBar.vue'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, cruise, toggleCruise, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
-const { supportsACP, hasPreferredMode, getAgentAvatar } = useAgents()
+const { supportsACP, hasPreferredMode, getAgentAvatar, isBuiltinAgent } = useAgents()
 const toast = useToast()
 const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
 
@@ -425,6 +426,9 @@ const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
 // Used for mode chips — these are ACP features
 // that apply regardless of the current session's transport mode.
 const isACP = computed(() => supportsACP(props.currentAgentId || ''))
+// The built-in agent defines its own modes even though it never speaks ACP, so
+// the mode chip must not be gated on ACP alone.
+const isBuiltin = computed(() => isBuiltinAgent(props.currentAgentId || ''))
 
 // isACPTransport: true when the current session is using ACP transport.
 // Slash commands are only available in ACP transport mode — even if the
@@ -473,7 +477,7 @@ const freeDialogTitle = computed(() => {
   }
 })
 
-const showModeInfo = computed(() => isACP.value && (availableModes.value.length > 0 || hasPreferredMode(props.currentAgentId || '')))
+const showModeInfo = computed(() => (isACP.value || isBuiltin.value) && (availableModes.value.length > 0 || hasPreferredMode(props.currentAgentId || '')))
 
 function onModeClick() {
   if (modeMouseLongFired) {
@@ -601,6 +605,11 @@ let placeholderTimer = null
 // is available, so its hint is shown only there. Keyboard users get the
 // ArrowUp/ArrowDown hint instead — the two gestures are mutually exclusive.
 const { isTouchPrimary } = usePlatformDetect()
+// 分享 switches (功能编排). Off revokes every public conversation link and
+// refuses new ones, so the share entry disappears rather than opening a dialog
+// that cannot publish. Gated per KIND: turning off file or meeting links leaves
+// conversation sharing alone.
+const shareAllowed = useShareKindAllowed('sessions')
 
 // The candidate hints cycle when the textarea is empty, unfocused, and not in queue/upload mode.
 // The plain "type a message" hint is omitted — it's implied by the empty input box.
@@ -1060,6 +1069,7 @@ function onUsagePopupUpdate(v) {
 const clawbenchCommands = computed(() => {
   return [
     { key: '/cb-chatsearch', label: '/cb-chatsearch', description: t('chat.clawbenchCommand.chatsearchDesc') },
+    { key: '/cb-kbsearch', label: '/cb-kbsearch', description: t('chat.clawbenchCommand.kbsearchDesc') },
     { key: '/cb-task', label: '/cb-task', description: t('chat.clawbenchCommand.taskDesc') },
     { key: '/cb-usage', label: '/cb-usage', description: t('chat.clawbenchCommand.usageDesc') },
     { key: '/cb-user-guide', label: '/cb-user-guide', description: t('chat.clawbenchCommand.userGuideDesc') },
@@ -1989,6 +1999,9 @@ async function handleArchive() {
  *  session id, so switching sessions while it is open cannot retarget it. */
 function handleShare() {
   if (!props.currentSessionId) return
+  // Keyboard shortcut / stale render can still reach this after the switch was
+  // flipped in settings.
+  if (!shareAllowed.value) { notifyFeatureDisabled(); return }
   emit('share-session')
 }
 

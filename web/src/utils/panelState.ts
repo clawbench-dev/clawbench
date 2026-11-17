@@ -83,10 +83,16 @@ export type PanelId =
   | 'fmPreviewRatio'
   | 'fmPreviewOpen'
   | 'mailSplitRatio'
+  | 'kbSplitRatio'
   | 'gitBranchCollapsed'
   | 'gitWorktreeCollapsed'
   | 'gitManageTab'
   | 'leftTab'
+  | 'dockHidden'
+  | 'dockOrder'
+  | 'dockPreset'
+  | 'statsTab'
+  | 'statsRange'
 
 /** Physical key prefix. Every panel-state key starts with this. */
 export const PANEL_KEY_PREFIX = 'clawbench-panel.'
@@ -111,11 +117,36 @@ export const DEFAULT_FM_PREVIEW_RATIO = 0.6
  * row of subjects, the detail pane renders the mail body.
  */
 export const DEFAULT_MAIL_SPLIT_RATIO = 0.42
+/** Share of the knowledge-base panel taken by the collection list when it is
+ *  wide enough for list + detail side by side. */
+export const DEFAULT_KB_SPLIT_RATIO = 0.4
 export const DEFAULT_GIT_MANAGE_TAB = 'branches'
+
+/**
+ * The plugin-manager preset in force. `custom` means the user changed
+ * visibility/order by hand; plugins should treat it as the neutral default.
+ * Kept as a plain string here so panelState stays a leaf (the DockTabId union
+ * lives in composables/dockTabs.ts).
+ */
+export const DEFAULT_DOCK_PRESET = 'developer'
 
 export interface SessionSidebarState {
   open: boolean
   width: number
+}
+
+/**
+ * The stats panels' remembered window (设置 → 统计 → 记住上次选择).
+ *
+ * `custom` carries its two dates: restoring the key alone would give the panel
+ * a custom window with no bounds, which `rangeToISO` resolves to "now → now" —
+ * an empty range that looks like a bug. Storing the pair keeps a custom window
+ * restorable like any preset.
+ */
+export interface StatsRangeState {
+  rangeKey: string
+  customStart?: string
+  customEnd?: string
 }
 
 // ── Runtime scope ───────────────────────────────────────────────────────────
@@ -255,6 +286,30 @@ function stringCodec(def: string | null): Pick<PanelEntry<string | null>, 'parse
 }
 
 /**
+ * String-array codec for the dock plugin manager (hidden ids / user order).
+ * Always hands back a fresh array: the default is a module constant, and
+ * returning it directly would let a caller's mutation leak into every later
+ * default read (same reason as sessionSidebarCodec).
+ */
+function stringArrayCodec(def: string[]): Pick<PanelEntry<string[]>, 'parse' | 'serialize'> {
+  const copy = (v: string[]): string[] => [...v]
+  return {
+    parse: (raw) => {
+      if (raw === null || raw === '') return copy(def)
+      try {
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed)
+          ? parsed.filter((v): v is string => typeof v === 'string')
+          : copy(def)
+      } catch {
+        return copy(def)
+      }
+    },
+    serialize: (v) => JSON.stringify(v),
+  }
+}
+
+/**
  * Tri-state boolean: '1' / '0' / absent. Needed where "the user never chose"
  * must stay distinguishable from "the user chose false", because the component
  * has its own default that a stored false would wrongly override.
@@ -297,6 +352,32 @@ function sessionSidebarCodec(def: SessionSidebarState): Pick<PanelEntry<SessionS
 const DEFAULT_SESSION_SIDEBAR: SessionSidebarState = {
   open: true,
   width: DEFAULT_SESSION_SIDEBAR_WIDTH,
+}
+
+/**
+ * JSON codec for the stats window. `null` is "nothing remembered", which is
+ * distinct from a remembered value — the caller then falls back to the
+ * configured default (设置 → 统计 → 默认时间范围).
+ */
+function statsRangeCodec(
+  def: StatsRangeState | null,
+): Pick<PanelEntry<StatsRangeState | null>, 'parse' | 'serialize'> {
+  return {
+    parse: (raw) => {
+      if (raw === null || raw === '') return def
+      try {
+        const parsed = JSON.parse(raw)
+        if (!parsed || typeof parsed !== 'object' || typeof parsed.rangeKey !== 'string') return def
+        const out: StatsRangeState = { rangeKey: parsed.rangeKey }
+        if (typeof parsed.customStart === 'string') out.customStart = parsed.customStart
+        if (typeof parsed.customEnd === 'string') out.customEnd = parsed.customEnd
+        return out
+      } catch {
+        return def
+      }
+    },
+    serialize: (v) => (v === null ? '' : JSON.stringify(v)),
+  }
 }
 
 // ── Registry ────────────────────────────────────────────────────────────────
@@ -344,6 +425,12 @@ const entries: PanelEntry<unknown>[] = [
     id: 'mailSplitRatio', key: 'mail-split-ratio', scope: 'global', default: DEFAULT_MAIL_SPLIT_RATIO,
     ...numberCodec(DEFAULT_MAIL_SPLIT_RATIO),
   },
+  // Knowledge base: collection list vs. the opened collection's detail. The
+  // drill-down layout never reads it.
+  {
+    id: 'kbSplitRatio', key: 'kb-split-ratio', scope: 'global', default: DEFAULT_KB_SPLIT_RATIO,
+    ...numberCodec(DEFAULT_KB_SPLIT_RATIO),
+  },
   // Whether the docked preview pane is expanded. Distinct from
   // `fmPreviewRatio` (how the split is divided) and from the `filePreviewMode`
   // setting (whether single-click previews at all): the pane's own close button
@@ -370,6 +457,38 @@ const entries: PanelEntry<unknown>[] = [
   {
     id: 'gitManageTab', key: 'git-manage-tab', scope: 'global', default: DEFAULT_GIT_MANAGE_TAB,
     ...stringCodec(DEFAULT_GIT_MANAGE_TAB),
+  },
+  // Dock plugin manager. These three are GLOBAL and deliberately do not follow
+  // the layout-memory switch: the plugin profile is a device-level preference
+  // that plugins read to adapt their own UI, so it must not silently change
+  // when the user switches projects.
+  {
+    id: 'dockHidden', key: 'dock-hidden', scope: 'global', followsLayoutMemory: false, default: [],
+    ...stringArrayCodec([]),
+  },
+  {
+    id: 'dockOrder', key: 'dock-order', scope: 'global', followsLayoutMemory: false, default: [],
+    ...stringArrayCodec([]),
+  },
+  {
+    id: 'dockPreset', key: 'dock-preset', scope: 'global', followsLayoutMemory: false, default: DEFAULT_DOCK_PRESET,
+    ...stringCodec(DEFAULT_DOCK_PRESET),
+  },
+  // Stats panel: the tab and the time window the user last chose, written only
+  // while 设置 → 统计 → 记住上次选择 is ON (the reader/writer in useUsageStats
+  // and StatsTabHost own that check — the registry cannot see the setting).
+  //
+  // Pinned to global and outside the layout-memory switch for the same reason as
+  // the dock profile: this is a device-level view preference, and "remember
+  // layout per project" must not make every project open on a different stats
+  // tab. Default null = "nothing remembered yet".
+  {
+    id: 'statsTab', key: 'stats-tab', scope: 'global', followsLayoutMemory: false, default: null,
+    ...stringCodec(null),
+  },
+  {
+    id: 'statsRange', key: 'stats-range', scope: 'global', followsLayoutMemory: false, default: null,
+    ...statsRangeCodec(null),
   },
   // The left-column tab is the ONE entry pinned to the project: which panel you
   // were on is a property of the project, not of the device (issue #474). Its

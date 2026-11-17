@@ -150,7 +150,8 @@ const i18n = createI18n({
   messages: {
     zh: {
       file: {
-        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目' },
+        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', pasteIntoDir: '粘贴到「{name}」', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目' },
+        pasteBar: { count: '{n} 个项目', pasteTo: '粘贴到「{name}」', moveTo: '移动到「{name}」', paste: '粘贴', move: '移动', cancel: '取消复制', cancelCut: '取消剪切', currentDir: '当前目录' },
         uploadHere: '上传到此处',
         sortDefault: '排序',
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
@@ -852,6 +853,75 @@ describe('FileManagerContent — doPaste', () => {
     expect(wrapper.vm.clipboard.entries.length).toBe(0)
 
     vi.unstubAllGlobals()
+  })
+
+  // A listing that fills the pane leaves no blank background to right-click, so
+  // the paste row gets opened on some file. It must land in that file's FOLDER —
+  // that is what makes "paste into the directory I am looking at" reachable at
+  // all when the list is full.
+  it("pastes into the anchored file's folder, not into the file", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent({ currentDir: 'src' })
+    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'a.txt', path: 'elsewhere/a.txt' }]
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'b.txt', path: 'src/b.txt' }
+    await nextTick()
+
+    await wrapper.vm.doPaste()
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/file/copy', expect.objectContaining({
+      body: JSON.stringify({ path: 'elsewhere/a.txt', dest: 'src/a.txt' }),
+    }))
+
+    vi.unstubAllGlobals()
+  })
+
+  it('pastes into the browsed directory when nothing is anchored (toolbar / Ctrl+V)', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent({ currentDir: 'docs' })
+    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'a.txt', path: 'src/a.txt' }]
+    // A leftover anchor from the last right-click must not decide the target.
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'b.txt', path: 'src/b.txt' }
+    await nextTick()
+
+    await wrapper.vm.doPaste(null)
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/file/copy', expect.objectContaining({
+      body: JSON.stringify({ path: 'src/a.txt', dest: 'docs/a.txt' }),
+    }))
+
+    vi.unstubAllGlobals()
+  })
+
+  it('names the destination directory in the paste row', async () => {
+    const wrapper = mountContent({ currentDir: 'src' })
+
+    // Empty background: the current directory is obvious, keep the short label.
+    wrapper.vm.ctxMenu.entry = null
+    await nextTick()
+    expect(wrapper.vm.pasteMenuLabel).toBe('粘贴')
+
+    // A folder row pastes into that folder.
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'lib', path: 'src/lib' }
+    await nextTick()
+    expect(wrapper.vm.pasteMenuLabel).toBe('粘贴到「lib」')
+
+    // A file row pastes into the file's folder — say so, or the row reads as
+    // "paste over this file".
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'b.txt', path: 'src/b.txt' }
+    await nextTick()
+    expect(wrapper.vm.pasteMenuLabel).toBe('粘贴到「src」')
+  })
+
+  it('keeps the short label at the project root (no directory name to show)', async () => {
+    const wrapper = mountContent({ currentDir: '' })
+
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'a.txt', path: 'a.txt' }
+    await nextTick()
+    expect(wrapper.vm.pasteMenuLabel).toBe('粘贴')
   })
 })
 

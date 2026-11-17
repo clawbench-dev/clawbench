@@ -2,8 +2,9 @@
  * Pure functions extracted from useChatRender composable.
  * These have no Vue reactivity dependencies and can be tested in isolation.
  */
-import { baseName } from '@/utils/path.ts'
+import { tailPath } from '@/utils/path.ts'
 import { extractPlainText } from '@/utils/userMsgIndexUtils'
+import { TOOL_STATUS_INTERRUPTED } from '@/utils/toolStatus'
 
 /** Options for parseAssistantContent. */
 export interface ParseAssistantContentOptions {
@@ -38,14 +39,27 @@ export function parseAssistantContent(content: string, opts?: ParseAssistantCont
         if (b.type === 'tool_use') {
           if (!b.name) b.name = ''
           // Historical rows may not carry `done` at all (it was not persisted
-          // before Done-field support), so an absent/false value there means
-          // "we cannot know it finished" and the row is rendered as settled.
+          // before Done-field support), so an ABSENT value there means "we
+          // cannot know it finished" and the row is rendered as settled.
           //
           // A LIVE row is the opposite: `done: false` is a real, current fact —
           // the tool is still running. Forcing it to true made a running
           // sub-agent's Agent pill show its green check while the sub-agent was
           // still producing output (and the same for any long tool).
-          if (!liveStreaming && (b.done === undefined || b.done === false)) b.done = true
+          //
+          // A SETTLED row that still says `done: false` is a third case: the
+          // turn ended while that tool was in flight (user cancel, agent crash,
+          // steer split), so the result will never arrive. It is settled — no
+          // spinner — but it is NOT a success, so it is stamped "interrupted"
+          // and every view draws it that way instead of a green check.
+          if (!liveStreaming) {
+            if (b.done === false) {
+              b.done = true
+              if (!b.status) b.status = TOOL_STATUS_INTERRUPTED
+            } else if (b.done === undefined) {
+              b.done = true
+            }
+          }
           if (!b.output && b.input && b.input.output) {
             b.output = b.input.output
             delete b.input.output
@@ -120,6 +134,8 @@ export function parseAssistantContent(content: string, opts?: ParseAssistantCont
 /**
  * Generate a human-readable summary for a tool call block.
  * Uses a priority chain: description > file_path > command > pattern > query > url > skill > prompt > path > src_path+dst_path > firstVal
+ * File paths keep their last two segments (mirroring Go ExtractSummary) so
+ * same-named files stay distinguishable in a one-line pill.
  * Shows full content — no artificial truncation.
  */
 export function toolCallSummary(block: { input?: Record<string, unknown>; name?: string; summary?: string }): string {
@@ -145,7 +161,7 @@ export function toolCallSummary(block: { input?: Record<string, unknown>; name?:
       try {
         const parsed = JSON.parse(raw)
         if (parsed && typeof parsed.command === 'string' && parsed.command) return parsed.command
-        if (parsed && (typeof parsed.file_path === 'string' && parsed.file_path)) return parsed.file_path
+        if (parsed && (typeof parsed.file_path === 'string' && parsed.file_path)) return tailPath(parsed.file_path)
       } catch { /* non-JSON — fall through */ }
     }
     if (typeof block.input.toolName === 'string' && block.input.toolName) return block.input.toolName
@@ -169,15 +185,15 @@ export function toolCallSummary(block: { input?: Record<string, unknown>; name?:
   }
   if (block.input.description) return block.input.description as string
   const obj = block.input
-  if (obj.file_path) return baseName(obj.file_path as string)
+  if (obj.file_path) return tailPath(obj.file_path as string)
   if (obj.command) return obj.command as string
   if (obj.pattern) return obj.pattern as string
   if (obj.query) return obj.query as string
   if (obj.url) return obj.url as string
   if (obj.skill) return obj.skill as string
   if (obj.prompt && name === 'agent') return obj.prompt as string
-  if (obj.path) return baseName(obj.path as string)
-  if (obj.src_path && obj.dst_path) return `${baseName(obj.src_path as string)} → ${baseName(obj.dst_path as string)}`
+  if (obj.path) return tailPath(obj.path as string)
+  if (obj.src_path && obj.dst_path) return `${tailPath(obj.src_path as string)} → ${tailPath(obj.dst_path as string)}`
   // Deterministic fallback: pick the first string value by lexicographic key order
   // (Object.keys is already lexicographic for string keys), mirroring the sorted
   // fallback in Go ExtractSummary.

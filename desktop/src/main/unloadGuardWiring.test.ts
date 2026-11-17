@@ -35,6 +35,10 @@ describe('desktop unload guard', () => {
     const src = windowSrc()
     // Esc / closing the dialog must keep the meeting: cancelId is the stay button.
     expect(src).toMatch(/cancelId:\s*1/)
-    expect(src).toMatch(/if \(choice === 0\) event\.preventDefault\(\)/)
+    expect(src).toMatch(/if \(choice === 0\) \{/)
+    expect(src).toMatch(/event\.preventDefault\(\)/)
+    // Staying also aborts the quit this close started; otherwise the next close
+    // would skip the question and quit outright.
+    expect(src).toContain('cancelPendingQuit()')
   })
 })

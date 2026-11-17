@@ -11,10 +11,6 @@ import (
 	"clawbench/internal/platform"
 )
 
-func init() {
-	model.RegisterModelSource(model.PluginSource("vecli", discoverVeCLIModels))
-}
-
 // vecliModelIDRe matches id: "xxx" in MODEL_REGISTRY entries.
 var vecliModelIDRe = regexp.MustCompile(`id:\s*"([^"]+)"`)
 

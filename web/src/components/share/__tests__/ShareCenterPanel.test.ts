@@ -1,7 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
 
 /**
  * Behaviour of the share centre: which rows appear, what the row says about its
@@ -34,7 +35,12 @@ vi.mock('@/utils/clipboard', () => ({ copyText: (t: string, ok?: () => void) => 
 vi.mock('@/utils/externalLink', () => ({ openExternalUrl: (u: string) => h.openExternalUrl(u) }))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
 vi.mock('@/composables/useFilePathAnnotation', () => ({ openFilePath: h.openFilePath }))
-vi.mock('@/composables/useShareLinks', () => ({ buildShareLinks: h.buildShareLinks }))
+// Only the network call is stubbed: `directDownloadUrl` is pure and is the
+// thing under test in the direct-link case below.
+vi.mock('@/composables/useShareLinks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/composables/useShareLinks')>()),
+  buildShareLinks: h.buildShareLinks,
+}))
 vi.mock('@/composables/useMailCompose', () => ({ useMailCompose: () => ({ compose: h.compose }) }))
 vi.mock('@/utils/shareActions', () => ({
   shareCapability: h.capability,
@@ -84,6 +90,8 @@ const i18n = createI18n({
         openMeeting: 'Open meeting',
         copy: 'Copy link',
         copied: 'Link copied',
+        copyDirectLink: 'Copy direct link',
+        directCopied: 'Direct link copied — opens the file',
         shareTo: 'Share to another app',
         copyInstead: 'Copy instead',
         mail: 'Send by email',
@@ -169,6 +177,7 @@ async function openRow(name: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  syncFeatureConfig({})
   // Listeners live in module state, so one test's mounted panel would otherwise
   // still be subscribed during the next one.
   _resetShareChangedForTest()
@@ -291,13 +300,14 @@ describe('ShareCenterPanel — actions', () => {
     })
   }
 
-  it('offers copy exactly once, in the address field', async () => {
+  it('offers the PAGE copy exactly once, in the address field', async () => {
     stubAll()
     const wrapper = await openRow('report.md')
 
     // The action bar used to carry its own "copy" button, two lines under the
     // address field's own copy button — the same action twice, which read as
-    // two different things. Only the field keeps it.
+    // two different things. Only the field keeps it (the direct-link action
+    // below is a different URL, not a second copy of this one).
     const labels = wrapper.findAll('.share-actions .fbtn').map((b) => b.text())
     expect(labels.filter((l) => l.includes('Copy link'))).toHaveLength(0)
 
@@ -307,6 +317,57 @@ describe('ShareCenterPanel — actions', () => {
     expect(addrCopy.exists(), 'the address field must keep its copy button').toBe(true)
     await addrCopy.trigger('click')
     expect(h.copyText).toHaveBeenCalledWith('http://10.0.0.5:20000/share/f1')
+  })
+
+  it('copies the DIRECT download URL, not the share page URL', async () => {
+    stubAll()
+    const wrapper = await openRow('report.md')
+
+    await wrapper.find('[data-action="copy-direct"]').trigger('click')
+
+    // Same host as the page link the user picked, but the endpoint that serves
+    // the bytes: opening it downloads the file instead of rendering a preview.
+    expect(h.copyText).toHaveBeenCalledWith('http://10.0.0.5:20000/api/share/f1/download')
+    expect(h.toastShow).toHaveBeenCalledWith('Direct link copied — opens the file', expect.anything())
+  })
+
+  it('hides the direct-download action when 允许下载 is off', async () => {
+    // The direct endpoint answers 403 in that state, so copying the address
+    // would hand out a link that cannot work. The page link stays: the switch
+    // governs the bytes, not the preview.
+    syncFeatureConfig({ share: { enabled: true, allow_download: false } })
+    try {
+      stubAll()
+      const wrapper = await openRow('report.md')
+
+      expect(wrapper.find('[data-action="copy-direct"]').exists()).toBe(false)
+      expect(wrapper.find('[data-action="open-page"]').exists()).toBe(true)
+    } finally {
+      syncFeatureConfig({})
+    }
+  })
+
+  it('offers the direct link only for a file that still exists', async () => {
+    // A folder has no single file to download, and a deleted file's link is
+    // dead — offering "copy direct link" there would hand out a 404.
+    stubFetch({
+      '/api/share/list': () => ({
+        body: {
+          shares: [
+            { token: 'd1', name: 'docs', path: 'docs', createdAt: '2026-10-20T00:00:00Z', exists: true, isDir: true },
+            { token: 'f2', name: 'old.txt', path: 'old.txt', createdAt: '2026-10-01T00:00:00Z', exists: false, isDir: false },
+          ],
+        },
+      }),
+      '/api/share/session/list': () => ({ body: { shares: [] } }),
+      '/api/live-share/notes/sessions': () => ({ body: { sessions: [] } }),
+    })
+
+    const folder = await openRow('docs')
+    expect(folder.find('[data-action="copy-direct"]').exists()).toBe(false)
+
+    const deleted = await openRow('old.txt')
+    expect(deleted.find('[data-action="copy-direct"]').exists()).toBe(false)
   })
 
   it('hands the link to the share sheet when the host has one', async () => {

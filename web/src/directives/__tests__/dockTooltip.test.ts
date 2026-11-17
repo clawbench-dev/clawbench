@@ -231,17 +231,23 @@ describe('DockTipDirective', () => {
 describe('wide dock tooltip wiring', () => {
   const app = readWebFile('src/App.vue')
   const main = readWebFile('src/main.ts')
+  const button = readWebFile('src/components/dock/DockTabButton.vue')
 
-  it('labels both wide-dock button loops with the shared lookup', () => {
-    const labels = app.match(/v-dock-tip="dockTabTitle\(tab\)"/g) ?? []
-    expect(labels.length).toBe(2)
+  it('labels the wide-dock button with the shared lookup', () => {
+    // The wide dock is ONE ordered list now (the fixed head is gone), and every
+    // entry renders through DockTabButton — which owns the chip.
+    const wideDock = app.slice(app.indexOf('class="wide-dock"'), app.indexOf('class="content-area"'))
+    expect(wideDock).toContain('v-for="tab in visibleDockTabs"')
+    expect(wideDock).toContain('<DockTabButton')
+    expect(button).toContain('v-dock-tip="variant === \'wide\' ? title : \'\'"')
     // Accessible name has to survive dropping the native title attribute.
-    expect((app.match(/:aria-label="dockTabTitle\(tab\)"/g) ?? []).length).toBe(2)
+    expect(button).toContain(':aria-label="title"')
   })
 
   it('does not keep a native title on the wide dock (it would double up)', () => {
-    const wideDock = app.slice(app.indexOf('class="wide-dock"'), app.indexOf('class="content-area"'))
-    expect(wideDock).not.toContain(':title=')
+    // The chip and the OS tooltip must never both appear: the wide variant
+    // passes no `title`, the inline one passes no chip.
+    expect(button).toContain(":title=\"variant === 'wide' ? undefined : title\"")
   })
 
   it('registers the directive and loads its global stylesheet', () => {

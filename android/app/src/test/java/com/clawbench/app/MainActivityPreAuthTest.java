@@ -24,6 +24,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 
 import okhttp3.OkHttpClient;
 
@@ -261,6 +262,31 @@ public class MainActivityPreAuthTest {
 
         // SSL errors now show confirmation dialog, not WebView fallback to server URL
         verify(mockWebView, never()).loadUrl(TEST_URL);
+        // Nothing is remembered for this address yet, so the connection stays
+        // untrusted until the user answers the dialog.
+        assertEquals(Boolean.FALSE, getField(activity, "sslCertTrustedByUser"));
+    }
+
+    @Test
+    public void authenticateAndNavigate_onSslExceptionForATrustedAddress_retriesWithoutPrompt() throws Exception {
+        // The address was confirmed on an earlier connect. Reconnecting must not
+        // ask again — that is the whole point of remembering it.
+        when(mockPrefs.getStringSet(eq("trusted_cert_origins"), any()))
+                .thenReturn(Collections.singleton("http://192.168.1.100:20000"));
+        doThrow(new javax.net.ssl.SSLException("Self-signed certificate"))
+                .when(activity).performLoginRequest(anyString(), anyString());
+        doReturn(new MainActivity.AuthResult(200, Collections.emptyList()))
+                .when(activity).performLoginRequestWithClient(any(OkHttpClient.class), anyString(), anyString());
+
+        invokeAuthenticateAndNavigate(TEST_URL, "testpass");
+
+        Thread.sleep(500);
+
+        // The retry went through the trusting client and navigated: no dialog was
+        // involved (the test has no user to tap it), and the WebView is allowed
+        // to accept the certificate.
+        verify(mockWebView).loadUrl(TEST_URL);
+        assertEquals(Boolean.TRUE, getField(activity, "sslCertTrustedByUser"));
     }
 
     // =====================================================

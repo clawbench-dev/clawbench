@@ -307,6 +307,7 @@ import { useSessionSearch, fetchSessionFirstMessage, type SessionSearchResult, t
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+import { highlightTermsInElement, termsFromRunePositions } from '@/utils/searchHighlight'
 import { highlightTextByPositions } from '@/utils/searchUtils'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { escapeHtml } from '@/utils/html.ts'
@@ -679,71 +680,9 @@ function applyHighlights() {
       }
     })
     if (!chunk.match_positions || chunk.match_positions.length === 0) continue
-    // Convert rune-based positions to UTF-16 indices before extracting terms
-    const text = chunk.chunk_text
-    const runes = [...text]
-    const runeToIndex: number[] = []
-    let idx = 0
-    for (let i = 0; i < runes.length; i++) {
-      runeToIndex.push(idx)
-      idx += runes[i].length
-    }
-    runeToIndex.push(idx)
-    const terms = [...new Set(
-      chunk.match_positions
-        .map(p => text.slice(
-          runeToIndex[Math.min(p.start, runes.length)],
-          runeToIndex[Math.min(p.end, runes.length)]
-        ))
-        .filter(t => t.length > 0)
-    )]
+    const terms = termsFromRunePositions(chunk.chunk_text, chunk.match_positions)
     if (terms.length === 0) continue
     highlightTermsInElement(el, terms)
-  }
-}
-
-function highlightTermsInElement(el: HTMLElement, terms: string[]) {
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null)
-  const textNodes: Text[] = []
-  while (walker.nextNode()) textNodes.push(walker.currentNode as Text)
-
-  for (const node of textNodes) {
-    const content = node.textContent || ''
-    const lowerContent = content.toLowerCase()
-    const ranges: { start: number; end: number }[] = []
-
-    for (const term of terms) {
-      const lowerTerm = term.toLowerCase()
-      let idx = lowerContent.indexOf(lowerTerm)
-      while (idx !== -1) {
-        ranges.push({ start: idx, end: idx + term.length })
-        idx = lowerContent.indexOf(lowerTerm, idx + 1)
-      }
-    }
-    if (ranges.length === 0) continue
-
-    ranges.sort((a, b) => a.start - b.start)
-
-    const parent = node.parentNode
-    if (!parent) continue
-    let lastIdx = 0
-    const frag = document.createDocumentFragment()
-
-    for (const r of ranges) {
-      if (r.start < lastIdx) continue
-      if (r.start > lastIdx) {
-        frag.appendChild(document.createTextNode(content.slice(lastIdx, r.start)))
-      }
-      const mark = document.createElement('mark')
-      mark.className = 'search-hl'
-      mark.textContent = content.slice(r.start, r.end)
-      frag.appendChild(mark)
-      lastIdx = r.end
-    }
-    if (lastIdx < content.length) {
-      frag.appendChild(document.createTextNode(content.slice(lastIdx)))
-    }
-    parent.replaceChild(frag, node)
   }
 }
 

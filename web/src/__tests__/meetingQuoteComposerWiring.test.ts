@@ -26,8 +26,17 @@ describe('meeting quote composer wiring', () => {
   it('binds the meeting panel to the composer handler', () => {
     // Binding the drag handler here is the whole defect: it stages immediately
     // and switches tabs, so the button skips the composer entirely.
-    expect(app).toContain('@quote="handleMeetingQuoteButton"')
-    expect(app).not.toContain('@quote="handleMeetingQuote"')
+    //
+    // The panel receives this as a plugin-specific host capability
+    // (`extras.meeting.quote`) rather than a template `@quote` listener — the
+    // dock-plugin refactor moved every panel's events onto the host object, and
+    // the per-plugin capabilities now live in their own group. Asserting the old
+    // `@quote=` attribute made this test pass on stale text for as long as the
+    // binding happened to exist elsewhere in the file.
+    expect(app).toMatch(/quote:\s*\([^)]*\)\s*=>\s*\{?\s*void handleMeetingQuoteButton\(/)
+    expect(app).not.toMatch(/quote:\s*\([^)]*\)\s*=>\s*\{?\s*void handleMeetingQuote\(/)
+    // …and the live plugin is what routes the panel's emit to it.
+    expect(readWebFile('src/plugins/live/plugin.ts')).toContain('quote: extras.meeting.quote')
   })
 
   it('opens the shared composer instead of staging the card', () => {
@@ -47,13 +56,29 @@ describe('meeting quote composer wiring', () => {
   it('keeps the drag path staging directly', () => {
     // Dropping a row on the chat already means "put this in the conversation",
     // so the composer detour stays out of that path.
-    const body = functionBody('handleMeetingQuote')
-    expect(body).toContain('stageQuoteInChat(quote)')
-    expect(body).not.toContain('openComposer')
+    //
+    // The drop now goes through the hydrator registry (utils/quoteHydrate.ts)
+    // rather than a hand-written `if (quote.meetingToken)` chain here — that
+    // chain was duplicated in SessionList.vue and only one copy was documented,
+    // so a mail row dragged onto a session row silently did nothing.
+    const drop = functionBody('stageDraggedQuote')
+    expect(drop).toContain('hydrateDraggedQuote(quote)')
+    expect(drop).toContain('stageQuoteInChat(resolved)')
+    expect(drop).not.toContain('openComposer')
+
     // And the helper really stages: it must reach addStagedQuote rather than
     // routing back into the composer under a different name.
     const stage = functionBody('stageQuoteInChat')
     expect(stage).toContain('addStagedQuote(quote)')
     expect(stage).not.toContain('openComposer')
+  })
+
+  it('registers the meeting hydrator outside App.vue, so both drop targets share it', () => {
+    // The meeting fetch (record artifacts, else the live transcript) lives in
+    // the registry module. App.vue only imports it for its side effect.
+    const hydrators = readWebFile('src/utils/quoteHydrators.ts')
+    expect(hydrators).toContain("registerQuoteHydrator('meeting'")
+    expect(hydrators).toContain('buildLiveMeetingQuote(')
+    expect(app).toContain("import './utils/quoteHydrators'")
   })
 })

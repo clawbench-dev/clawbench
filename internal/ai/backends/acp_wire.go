@@ -28,6 +28,14 @@ func init() {
 	// without importing the backends package.
 	ai.LookupACPModelSwitchMethodFn = LookupACPModelSwitchMethod
 
+	// Wire up the ACP behavior hooks so the event loop can ask a backend for
+	// its own tool/meta mapping without importing this package.
+	ai.LookupACPBehaviorFn = LookupACPBehavior
+
+	// Wire up the extra-command scanner so the connection lifecycle can pre-scan
+	// a backend's own plugin directory without knowing which backend it is.
+	ai.LookupPluginCommandsFn = LookupPluginCommands
+
 	// Wire up the mid-turn injection policy lookup so core flow can ask a
 	// backend whether a mid-turn message can join the running turn (e.g.
 	// CodeBuddy's session/steer) without importing the backends package.
@@ -37,21 +45,9 @@ func init() {
 	// BackendRegistry dynamically from backend plugins.
 	model.LoadBackendSpecs = AllSpecsSorted
 
-	// Wire up the CLI capability reporter so model can tell whether a backend
-	// has a CLI implementation (grok and other ACP-only backends return false).
-	model.BackendSupportsCLIFn = ai.BackendSupportsCLI
-
-	// Wire up the mid-turn capability reporter so model can tell whether a
-	// backend can inject a message into the running turn (CodeBuddy's
-	// session/steer). Drives the queued-bubble action label: "insert into the
-	// current reply" when true, "interrupt and send" when false.
-	model.BackendSupportsMidTurnFn = func(backendID string) bool {
-		return LookupMidTurnInjector(backendID) != nil
-	}
-
-	// Wire up the "does an injection split the reply?" reporter so core flow can
-	// decide whether an injected user message needs the merge-only hint
-	// ("回复已并入上一轮") on its bubble. CodeBuddy splits (true); claude/codex
-	// merge (false) because their steering emits no correlation echo.
-	model.BackendMidTurnSplitsReplyFn = LookupMidTurnSplitsReply
+	// Wire up the capability snapshot so model can answer "what can this
+	// backend do" in one call. It replaced three per-capability function
+	// variables (CLI, mid-turn, splits-reply); model's BackendSupportsCLI /
+	// BackendSupportsMidTurn / BackendMidTurnSplitsReply now read this one.
+	model.LookupBackendCapabilitiesFn = Capabilities
 }

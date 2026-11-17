@@ -407,10 +407,10 @@ describe('useTaskForm', () => {
       expect(form.form.value.scriptTimeout).toBe('')
     })
 
-    it('clears the script when the task is switched to event mode', async () => {
-      // An event task's prompt is driven by the injected event context, so the
-      // script is not applicable — sending a stale one would persist a script
-      // the backend ignores.
+    it('keeps the script when the task is switched to event mode', async () => {
+      // The gate is no longer cron-only: an event task runs it after the
+      // subscription matches, so the form must submit what the user configured
+      // instead of silently clearing it.
       const { form } = createForm({ mode: 'create' })
       form.form.value.name = 'Event task'
       form.form.value.agentId = 'agent-1'
@@ -424,14 +424,14 @@ describe('useTaskForm', () => {
       await form.submit()
 
       expect(mockApiPost).toHaveBeenCalledWith('/api/tasks', expect.objectContaining({
-        script: '',
-        script_timeout: 0,
+        script: 'leftover script',
+        script_timeout: 60,
       }))
     })
 
-    it('does not validate the timeout in event mode (the field is hidden)', async () => {
-      // The script section only renders for cron tasks, so an invalid leftover
-      // timeout must not block an event task's save with an unreachable error.
+    it('validates the timeout in every trigger mode', async () => {
+      // The timeout field is visible for event tasks too, so an invalid value
+      // must block the save instead of being unreachable.
       const { form } = createForm({ mode: 'create' })
       form.form.value.name = 'Event task'
       form.form.value.agentId = 'agent-1'
@@ -443,8 +443,8 @@ describe('useTaskForm', () => {
       mockApiPost.mockResolvedValue({ task: { id: 'task-14' } })
       await form.submit()
 
-      expect(form.errors.value.scriptTimeout).toBeFalsy()
-      expect(mockApiPost).toHaveBeenCalled()
+      expect(form.errors.value.scriptTimeout).toBeTruthy()
+      expect(mockApiPost).not.toHaveBeenCalled()
     })
   })
 })

@@ -70,3 +70,35 @@ describe('terminal tabs survive a project switch and a reload', () => {
     expect(hook).not.toContain('disposeAll()')
   })
 })
+
+/**
+ * A project switch must not mount the PREVIOUS project's panel in the new tree.
+ *
+ * `leftTab` is module-level and survives the keyed subtree replacement, while
+ * the destination's remembered tab is only applied in Phase 6 (after the
+ * background loads). Without pre-setting it before the key change, the new tree
+ * first renders the old project's panel — and a terminal panel mounted that way
+ * restores its tabs and CONNECTS them, i.e. it starts shells in the project the
+ * user is switching to.
+ */
+describe('project switch lands on the destination panel from the first render', () => {
+  const app = readFileSync(resolve(__dirname, '../../../App.vue'), 'utf8')
+  const switchFn = app.slice(
+    app.indexOf('async function hotSwitchProject'),
+    app.indexOf('// ── Phase 5'),
+  )
+
+  it('sets leftTab before the tree key changes', () => {
+    const leftSet = switchFn.indexOf('leftTab.value = nextLeft')
+    const keyChange = switchFn.indexOf('projectKey.value = newProjectPath')
+
+    expect(leftSet).toBeGreaterThan(-1)
+    expect(keyChange).toBeGreaterThan(-1)
+    expect(leftSet).toBeLessThan(keyChange)
+  })
+
+  it('resolves it from the destination project record', () => {
+    expect(switchFn).toContain('loadProjectPanel(resolvedProjectPath)')
+    expect(switchFn).toContain('resolvePanelTab(')
+  })
+})

@@ -1,11 +1,14 @@
 <template>
   <div ref="rootRef" class="dt" :class="{ 'is-data': isData, 'is-fill': fill, 'no-wrap': !wrap }">
-    <!-- 表头栏：标题本身就是「简单表 / 数据表」的切换器 -->
+    <!-- 表头栏：左边是「简单表 ⇄ 数据表」开关 -->
     <div class="dt-head">
-      <div class="dt-seg" role="group" :aria-label="t('dataTable.mode')">
-        <button type="button" :class="{ 'is-on': !isData }" @click="setMode('normal')">{{ t('dataTable.normal') }}</button>
-        <button type="button" :class="{ 'is-on': isData }" @click="setMode('data')">{{ t('dataTable.data') }}</button>
-      </div>
+      <ModeSwitch
+        :model-value="isData"
+        :left-label="t('dataTable.normal')"
+        :right-label="t('dataTable.data')"
+        :aria-label="t('dataTable.mode')"
+        @update:model-value="setMode($event ? 'data' : 'normal')"
+      />
       <span class="dt-head-spacer" />
       <div class="dt-actions">
         <button
@@ -148,7 +151,7 @@
               :class="{ 'is-numeric': isNumCol(col), 'is-frozen': frozen === col }"
               :style="frozenStyle(col)"
             >
-              <template v-if="col === visibleColumns[0]">{{ t('dataTable.total') }}</template>
+              <template v-if="col === totalLabelColumn">{{ t('dataTable.total') }}</template>
               <template v-else>{{ footerValue(col) }}</template>
             </td>
           </tr>
@@ -330,6 +333,7 @@ import {
   computeColumnStats,
   detectNumericColumns,
   filterAndSortRows,
+  isIndexColumn,
   isNumericTable,
   parseNumericCell,
   type SortDirection,
@@ -339,6 +343,7 @@ import { copyText } from '@/utils/clipboard'
 import { getDefaultBlockWrap } from '@/utils/blockWrapRead'
 import { maximizeIconSvg } from '@/utils/blockHeaderIcons'
 import { useToast } from '@/composables/useToast'
+import ModeSwitch from '@/components/common/ModeSwitch.vue'
 
 const props = defineProps<{
   headers: string[]
@@ -363,7 +368,7 @@ const columnFilters = ref<string[]>([])
 const sort = ref<SortState | null>(null)
 const page = ref(1)
 const hidden = ref<Set<number>>(new Set())
-const frozen = ref<number | null>(0)
+const frozen = ref<number | null>(null)
 const barsOff = ref<Set<number>>(new Set())
 const valueFilters = ref<Map<number, Set<string>>>(new Map())
 
@@ -381,6 +386,19 @@ const frozenLeft = ref(0)
 
 const pageSize = computed(() => props.pageSize ?? 0)
 
+/**
+ * 第一列是编号（序号 / 编号 / ID，或内容就是 1、2、3…）时默认不画数据条：
+ * 行号的长短没有含义。列菜单里仍然可以手动打开。
+ *
+ * 写成函数而不是 computed：下面那个复位 watcher 是 immediate 的，会在
+ * computed 声明之前求值（TDZ）。
+ */
+function defaultBarsOff(): Set<number> {
+  if (props.headers.length === 0) return new Set()
+  const first = props.rows.map(row => row[0] ?? '')
+  return isIndexColumn(props.headers[0] ?? '', first) ? new Set([0]) : new Set()
+}
+
 /** 内容变了（换文件 / 换消息里的表）就把视图状态全部复位，否则会拿旧筛选条件去筛新表。 */
 watch(
   () => [props.headers, props.rows],
@@ -392,8 +410,8 @@ watch(
     sort.value = null
     page.value = 1
     hidden.value = new Set()
-    frozen.value = 0
-    barsOff.value = new Set()
+    frozen.value = null
+    barsOff.value = defaultBarsOff()
     valueFilters.value = new Map()
     closePop()
     void nextTick(measureFrozen)
@@ -465,13 +483,17 @@ const emptyText = computed(() =>
   props.rows.length === 0 ? t('dataTable.empty') : t('dataTable.noMatches'),
 )
 
+/**
+ * 高度上限走自定义属性而不是内联 `max-height`：内联样式会赢过任何选择器，
+ * 触屏上那条「不要嵌套纵向滚动」的媒体查询就永远压不掉它。
+ */
 const scrollStyle = computed(() => {
   if (props.fill) return undefined
-  return { maxHeight: props.maxHeight ?? '420px' }
+  return { '--dt-scroll-max-h': props.maxHeight ?? '420px' }
 })
 
 function isNumCol(col: number): boolean {
-  return isData.value && col > 0 && Boolean(numeric.value[col])
+  return isData.value && Boolean(numeric.value[col])
 }
 
 function headerLabel(col: number): string {
@@ -736,6 +758,11 @@ const hasNumericColumn = computed(() =>
   visibleColumns.value.some(col => isNumCol(col)),
 )
 
+/** 「合计」两个字放在第一个文字列；整表都是数字时不占列，合计值照常显示。 */
+const totalLabelColumn = computed<number | null>(() =>
+  visibleColumns.value.find(col => !isNumCol(col)) ?? null,
+)
+
 /** 合计行是否真的渲染。CSS 要据此决定最后一行还画不画下边线（否则叠成 2px）。 */
 const showFooter = computed(() => isData.value && pageRows.value.length > 0 && hasNumericColumn.value)
 
@@ -914,7 +941,12 @@ defineExpose({ focusSearch, closeSearch })
   gap: var(--space-3);
   flex-shrink: 0;
   padding: var(--space-3) var(--space-4);
+  /* 同上：工具条的下边就是网格的顶边，不能省。
+     左右两条竖线跟网格的边对齐：网格从表头开始才有左右边框，工具条不画
+     的话竖线就从中间断掉了。 */
   border-bottom: 1px solid var(--border-color);
+  border-left: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
   background: var(--bg-primary);
 }
 
@@ -928,45 +960,16 @@ defineExpose({ focusSearch, closeSearch })
   min-height: calc(24 * var(--dp));
   padding: 0 var(--space-3);
   background: var(--code-bg);
+  /* 这条线同时是网格的顶边：网格自己不再画 border-top，去掉它表格就没有上边框。
+     左右同工具条：整条表头栏也在网格的左右边框之内，不画就断一截。 */
   border-bottom: 1px solid var(--border-color);
+  border-left: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
   user-select: none;
 }
 
 .dt-head-spacer {
   flex: 1 1 auto;
-}
-
-/* 尺寸跟原来的「表格」标题一致：小字号、无边框、无大背景。 */
-.dt-seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-  padding: 1px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-}
-
-.dt-seg button {
-  padding: 0 calc(4 * var(--dp));
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-muted);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  line-height: 1.6;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.dt-seg button:hover {
-  color: var(--text-secondary);
-}
-
-.dt-seg button.is-on {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
 }
 
 .dt-actions {
@@ -1009,7 +1012,6 @@ defineExpose({ focusSearch, closeSearch })
   opacity: 0.6;
 }
 
-.dt-seg button:focus-visible,
 .dt-tool:focus-visible,
 .dt-page-btn:focus-visible {
   outline: 2px solid var(--accent-color);
@@ -1124,8 +1126,22 @@ defineExpose({ focusSearch, closeSearch })
 .dt-scroll {
   flex: 1;
   min-height: 0;
+  max-height: var(--dt-scroll-max-h, none);
   overflow: auto;
-  overscroll-behavior: contain;
+  /* 只拦横向。`overscroll-behavior: contain` 是整条轴的：只要这个盒子是
+     滚动容器（表格比气泡宽就够了），竖滑就再也不会链给外层 —— 手指落在
+     表格上，屏幕一动不动。横向仍要拦，否则表格滑到头会把滑动甩给聊天区
+     （那里挂着切换会话的手势）。 */
+  overscroll-behavior-x: contain;
+}
+
+/* 触屏上没有「嵌套纵向滚动」这回事：手指落在表格上竖滑，屏幕必须跟着走。
+   所以触屏不给高度上限，表格跟着消息一起长，滚动交给消息本身。要专心读
+   长表用表头栏的「横屏查看」——浮层里由浮层自己滚（见 code-block-header.css）。 */
+@media (pointer: coarse) {
+  .dt-scroll {
+    max-height: none;
+  }
 }
 
 .is-data .dt-arrow {

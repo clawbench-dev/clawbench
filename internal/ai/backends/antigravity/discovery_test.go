@@ -96,11 +96,11 @@ func TestAntigravityCatalog_FirstIsDefault(t *testing.T) {
 	src := model.NewCLISource("antigravity-test", model.CLIOptions{
 		Command:  "definitely-not-a-real-cli-xyz",
 		Parse:    parseAgyModels,
-		Fallback: model.AntigravityCatalog,
+		Fallback: AntigravityCatalog,
 	})
 
 	models, _ := src.Discover()
-	require.Len(t, models, len(model.AntigravityCatalog))
+	require.Len(t, models, len(AntigravityCatalog))
 	assert.True(t, models[0].Default)
 	assert.Equal(t, "gemini-3-pro", models[0].ID)
 	assert.False(t, models[1].Default)
@@ -148,7 +148,7 @@ func TestAntigravitySource_SucceedsWithMockBinary(t *testing.T) {
 		Command:  "agy",
 		Args:     []string{"models"},
 		Parse:    parseAgyModels,
-		Fallback: model.AntigravityCatalog,
+		Fallback: AntigravityCatalog,
 	})
 
 	models, _ := src.Discover()

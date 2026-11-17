@@ -210,6 +210,35 @@ describe('parseAssistantContent', () => {
       expect(parseAssistantContent(content).blocks[0].done).toBe(true)
       expect(parseAssistantContent(content, { liveStreaming: false }).blocks[0].done).toBe(true)
     })
+
+    // A settled row that still says done=false is NOT the same as an old row
+    // with no `done` field at all: the backend knew the tool never finished
+    // (turn cancelled / agent crashed / reply split). It is settled — no
+    // spinner — but it must not wear a success check either.
+    it('marks a settled-but-unfinished tool as interrupted', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Bash', id: 'call_sleep', input: { command: 'sleep 60' }, done: false, status: '' }],
+      })
+      const block = parseAssistantContent(content).blocks[0]
+      expect(block.done).toBe(true)
+      expect(block.status).toBe('interrupted')
+    })
+
+    it('keeps a verdict the row already carries', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Bash', id: 'call_sleep', input: {}, done: false, status: 'error' }],
+      })
+      expect(parseAssistantContent(content).blocks[0].status).toBe('error')
+    })
+
+    it('does not invent a verdict for old rows that simply lack `done`', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Read', id: 'old', input: {} }],
+      })
+      const block = parseAssistantContent(content).blocks[0]
+      expect(block.done).toBe(true)
+      expect(block.status).toBeUndefined()
+    })
   })
 
   it('migrates input.output to output field (Codex backward compat)', () => {
@@ -460,10 +489,17 @@ describe('toolCallSummary', () => {
     })).toBe('Fix bug')
   })
 
-  it('shows baseName for file_path', () => {
+  it('keeps the last two segments of file_path', () => {
     expect(toolCallSummary({
       input: { file_path: '/home/user/main.go' },
-    })).toBe('main.go')
+    })).toBe('user/main.go')
+  })
+
+  it('disambiguates same-named files by their parent directory', () => {
+    expect(toolCallSummary({ name: 'Edit', input: { file_path: '/p/internal/agentcore/run.go' } }))
+      .toBe('agentcore/run.go')
+    expect(toolCallSummary({ name: 'Edit', input: { file_path: '/p/internal/model/run.go' } }))
+      .toBe('model/run.go')
   })
 
   it('shows full command without truncation', () => {
@@ -491,15 +527,16 @@ describe('toolCallSummary', () => {
     expect(toolCallSummary({ name: 'Agent', input: { prompt: 'Research this' } })).toBe('Research this')
   })
 
-  it('shows baseName for path', () => {
-    expect(toolCallSummary({ input: { path: '/home/user/src' } })).toBe('src')
+  it('keeps the last two segments of path', () => {
+    expect(toolCallSummary({ input: { path: '/home/user/src' } })).toBe('user/src')
   })
 
-  it('shows src → dst for move', () => {
+  it('shows src → dst for move, with parent dirs when they differ', () => {
     expect(toolCallSummary({
       input: { src_path: '/old/file.go', dst_path: '/new/file.go' },
-    })).toBe('file.go → file.go')
+    })).toBe('old/file.go → new/file.go')
   })
+
 
   it('uses first string value as fallback', () => {
     expect(toolCallSummary({ input: { custom: 'hello' } })).toBe('hello')
@@ -532,7 +569,7 @@ describe('toolCallSummary', () => {
         toolInput: JSON.stringify({ file_path: '/home/user/project/main.go' }),
         options: [],
       },
-    })).toBe('/home/user/project/main.go')
+    })).toBe('project/main.go')
   })
 
   it('PermissionApproval falls back to the requesting tool name', () => {

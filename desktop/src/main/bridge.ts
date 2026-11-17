@@ -33,6 +33,7 @@ import { applyZoomFactor } from './zoom'
 import { classifyUrl } from './urlPolicy'
 import { shouldUseFramelessWindow } from './windowChrome'
 import { registerFloatingIpc, updateFloatingColors } from './floating'
+import { getCloseAction, setCloseAction } from './closeFlow'
 import { registerAnnotateIpc } from './annotateOverlay'
 
 export function registerBridge(): void {
@@ -303,6 +304,12 @@ export function registerBridge(): void {
   ipcMain.on('native:window-toggle-maximize', () => toggleMaximizeMainWindow())
   ipcMain.on('native:window-close', () => closeMainWindow())
   ipcMain.handle('native:window-is-maximized', () => isMainWindowMaximized())
+  // What the close button does. Answered synchronously because the settings row
+  // renders its current option during mount; the write is fire-and-forget and
+  // the main process echoes the normalized value back over
+  // `clawbench-close-action-changed` when it actually changed.
+  ipcMain.on('native:get-close-action', (e) => { e.returnValue = getCloseAction() })
+  ipcMain.on('native:set-close-action', (_e, action: unknown) => { setCloseAction(action) })
   ipcMain.on('native:open-session', (_e, id: string) => dispatchOpenSession(id))
   // The renderer signals that its notification-click listeners are registered.
   // Until then a clicked notification is stashed rather than sent into a page

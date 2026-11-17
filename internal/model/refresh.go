@@ -58,6 +58,12 @@ type RefreshOptions struct {
 	// detection. Used by callers that want agent presence refreshed without
 	// paying for every backend probe.
 	SkipDiscovery bool
+	// DiscoveryBackends narrows step 3 to these backends. Nil means "every
+	// registered source". A caller that caused exactly one backend to become
+	// available (the install endpoint) uses this so the refresh triggers a
+	// single CLI probe instead of forking all ~20 vendor CLIs (~18s serial,
+	// while holding whatever lock the caller needs).
+	DiscoveryBackends []string
 }
 
 // RefreshResult reports what a refresh changed. Callers log it; tests assert on it.
@@ -112,7 +118,13 @@ func RefreshAgents(db dbutil.Writer, opts RefreshOptions) (*RefreshResult, error
 
 	// Step 3: model discovery, persisted for auto-managed agents.
 	if !opts.SkipDiscovery {
-		discovered, updated := discoverAndPersistModels(db)
+		var targets []string
+		if opts.DiscoveryBackends != nil {
+			targets = opts.DiscoveryBackends
+		} else {
+			targets = RegisteredModelSources()
+		}
+		discovered, updated := discoverAndPersistModels(db, targets)
 		result.DiscoveredModels = discovered
 		result.ModelRefreshedBackends = updated
 	}
@@ -342,8 +354,10 @@ const maxConcurrentProbes = 4
 // The empty-and-flag-0 case must be included: step 1 inserts agents with an empty
 // list and no flag, so excluding it would leave every freshly installed backend
 // with an empty model picker until a manual refresh.
-func discoverAndPersistModels(db dbutil.Writer) (map[string][]AgentModel, []string) {
-	backends := RegisteredModelSources()
+//
+// backends is the explicit probe target list (see RefreshOptions.DiscoveryBackends);
+// a nil list means "every registered source".
+func discoverAndPersistModels(db dbutil.Writer, backends []string) (map[string][]AgentModel, []string) {
 	type probeResult struct {
 		backend string
 		models  []AgentModel
@@ -419,7 +433,7 @@ func StartModelDiscoveryAsync(db dbutil.Writer, withAgentsLock func(func()), onC
 			}
 		}()
 
-		discovered, updated := discoverAndPersistModels(db)
+		discovered, updated := discoverAndPersistModels(db, RegisteredModelSources())
 		slog.Info("async model discovery complete",
 			"backends", len(discovered), "rows_updated", len(updated))
 
@@ -498,20 +512,37 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	if err != nil {
 		return err
 	}
+	// A newly discovered agent starts with NO tools. The built-in backend's
+	// tools are ours, so granting them by default would hand every fresh agent
+	// the ability to write files before the user has seen a single switch.
+	toolPolicyJSON, err := EncodeToolPolicy(agent.ToolPolicy)
+	if err != nil {
+		return err
+	}
 
 	_, err = db.Exec(`INSERT INTO agents (id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, provider_id, thinking_effort_by_model,
-		mcp_servers)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		mcp_servers, tool_policy, skip_project_context)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
 		transport, agent.AcpCommand, autoApprove, disabled, agent.ProviderID, string(effortByModelJSON),
-		string(mcpServersJSON))
+		string(mcpServersJSON), toolPolicyJSON, skipProjectContextArg(agent.SkipProjectContext))
 	return err
+}
+
+// skipProjectContextArg binds the skip_project_context column as SQLite wants
+// it (0/1). The service package has the same helper; this one exists because
+// model cannot import service.
+func skipProjectContextArg(skip bool) int {
+	if skip {
+		return 1
+	}
+	return 0
 }
 
 // yamlAgent represents an agent definition in config/agents/*.yaml.
@@ -636,6 +667,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 		if spec := FindSpecByBackend(agent.Backend); spec != nil {
 			agent.CanRefreshModels = HasModelSource(agent.Backend)
 			agent.BackendHasSpec = true
+			agent.BuiltinBackend = spec.Builtin
 			if len(agent.ThinkingEffortLevels) == 0 && len(spec.ThinkingEffortLevels) > 0 {
 				agent.ThinkingEffortLevels = spec.ThinkingEffortLevels
 			}
@@ -645,6 +677,9 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 		agent.ProviderProtocols = SupportedProtocols(agent.Backend)
 		agent.ProviderKeyOnly = BackendIsKeyOnly(agent.Backend)
 		agent.ProviderConfigBackend = ProviderUsesConfigFile(agent.Backend)
+		agent.ProviderConfigDirBackend = ProviderUsesConfigDir(agent.Backend)
+		agent.ProviderConfigSecretInFile = ProviderConfigSecretInFile(agent.Backend)
+		agent.ProviderConfigPath = ProviderConfigDisplayPath(agent.Backend, agent.ID)
 		agent.RuntimeSystemPrompt = ComposeSystemPrompt(agent.CustomSystemPrompt)
 		newAgentsMap[agent.ID] = agent
 	}
@@ -687,7 +722,8 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, project_id,
-		provider_id, thinking_effort_by_model, mcp_servers
+		provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
+		skip_project_context
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -708,8 +744,8 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 // scanAgentRow reads one agent row, including the JSON-encoded columns.
 func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 	agent := &Agent{}
-	var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string
-	var autoDetected, autoApprove, disabled int
+	var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON, toolPolicyJSON string
+	var autoDetected, autoApprove, disabled, skipProjectContext int
 	var projectID, providerID sql.NullInt64
 
 	if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
@@ -717,13 +753,14 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 		&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 		&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
 		&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
-		&providerID, &effortByModelJSON, &mcpServersJSON); err != nil {
+		&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON, &skipProjectContext); err != nil {
 		return nil, err
 	}
 
 	agent.ModelsAutoDetected = autoDetected == 1
 	agent.AutoApprove = autoApprove == 1
 	agent.Disabled = disabled == 1
+	agent.SkipProjectContext = skipProjectContext == 1
 	if projectID.Valid {
 		id := projectID.Int64
 		agent.ProjectID = &id
@@ -734,6 +771,7 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 	}
 
 	decodeAgentColumns(agent, modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON)
+	agent.ToolPolicy = DecodeToolPolicy(toolPolicyJSON)
 	return agent, nil
 }
 

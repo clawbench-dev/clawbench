@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"clawbench/internal/ai"
@@ -82,9 +83,13 @@ func TestAgentSelfTest_CliTransportOnAcpOnlyBackendFails(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	agent := &model.Agent{
-		ID:                  "selftest-cli-acponly",
-		Name:                "CLI on ACP-only",
-		Backend:             "grok", // registered spec, no CLI factory
+		ID:   "selftest-cli-acponly",
+		Name: "CLI on ACP-only",
+		// cursor is ACP-only: it registers a spec but no CLI factory. (grok used
+		// to stand in here, but it gained a streaming-json CLI fallback, so the
+		// premise "no CLI implementation" no longer held — the test passed only
+		// because this binary did not register the plugins at all.)
+		Backend:             "cursor",
 		Transport:           "cli",
 		RuntimeSystemPrompt: "prompt",
 	}
@@ -386,7 +391,7 @@ func TestServeAgentSelfTestDeep_RefusesOnStaticFailure(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/agents/deep-broken/self-test-deep", nil)
 	withAuthCookie(req, model.SessionToken)
-	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: projectDir})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(projectDir)})
 	w := callHandler(ServeAgentSelfTestDeep, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
@@ -423,7 +428,7 @@ func TestServeAgentSelfTestDeep_Guards(t *testing.T) {
 	projectDir := t.TempDir()
 
 	withProject := func(req *http.Request) *http.Request {
-		req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: projectDir})
+		req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(projectDir)})
 		return req
 	}
 

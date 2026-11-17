@@ -15,6 +15,7 @@ const i18n = createI18n({
           workingTree: 'WT',
           openFile: 'Open',
         },
+        history: { projectHistory: 'Project history' },
         manage: { title: 'Manage' },
       },
     },
@@ -34,9 +35,9 @@ describe('GitBreadcrumb — mount', () => {
     expect(wrapper.find('.git-breadcrumb').exists()).toBe(true)
   })
 
-  it('renders commit-list label in project mode', () => {
+  it('renders the project-history dock label in project mode', () => {
     const wrapper = mountCrumb({ mode: 'project', currentView: 'commits' })
-    expect(wrapper.text()).toContain('Commits')
+    expect(wrapper.text()).toContain('Project history')
   })
 
   it('renders file-history label in file mode', () => {

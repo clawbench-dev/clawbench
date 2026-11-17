@@ -30,6 +30,11 @@ import {
   LongPressPlugin,
   SplitView,
 } from './fileManagerContent.setup'
+// Imported AFTER the setup module on purpose: the setup registers the
+// `useToast` mock, and useFeatureFlags captures `useToast` when it loads. A
+// static import listed above it would capture the real singleton instead and
+// the toast assertions below would miss the call.
+import { syncFeatureConfig } from '@/composables/useFeatureFlags'
 
 describe('FileManagerContent — context menu', () => {
   it('opens context menu on right-click', async () => {
@@ -1976,6 +1981,47 @@ describe('FileManagerContent — context menu actions', () => {
     cancelTarget()
   })
 
+  it('doAttachToChat attaches the whole multi-selection, not just the row under the cursor', async () => {
+    // Every other context-menu action treats the multi-selection as its
+    // operand (delete delegates to the batch flow). Attaching used to take only
+    // `ctxMenu.entry`, so a right-click on one of several picked files dropped
+    // the rest without any feedback.
+    cancelTarget()
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    wrapper.vm.multiSelectState.selected.add('src')
+    wrapper.vm.multiSelectState.selected.add('readme.md')
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+    await wrapper.vm.doAttachToChat()
+
+    const attachments = usePendingTarget().pending.value?.attachments ?? []
+    expect(attachments).toHaveLength(3)
+    expect(new Set(attachments.map(a => a.path))).toEqual(new Set(['test.ts', 'src', 'readme.md']))
+    // The directory in the selection keeps its type: the chat strip and the
+    // backend both branch on isDir.
+    expect(attachments.find(a => a.path === 'src')?.isDir).toBe(true)
+    expect(attachments.find(a => a.path === 'test.ts')?.isDir).toBe(false)
+    cancelTarget()
+  })
+
+  it('doAttachToChat with an active but empty multi-selection falls back to the single entry', async () => {
+    // Mirrors doDelete: multi-select mode alone does not mean "batch" — with
+    // nothing picked there is only the right-clicked row to act on.
+    cancelTarget()
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+    await wrapper.vm.doAttachToChat()
+
+    expect(usePendingTarget().pending.value?.attachments).toEqual([{ path: 'src', isDir: true }])
+    cancelTarget()
+  })
+
   it('doArchiveDir archives a directory via context menu', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       const res = { ok: true, status: 200, blob: async () => new Blob(['zip']) }
@@ -2900,5 +2946,92 @@ describe('FileManagerContent — send by mail', () => {
       expect.stringContaining('邮箱'),
       expect.objectContaining({ type: 'error' }),
     )
+  })
+})
+
+// ── Feature switches (功能编排) ──
+//
+// Turning 分享 / 邮件 off stops the server work behind them and revokes what they
+// handed out, so the menu entries that start those flows must disappear. The
+// entries are also guarded in their handlers: a context menu opened before the
+// switch flipped is still on screen when the config lands.
+describe('FileManagerContent — feature switches', () => {
+  afterEach(() => {
+    syncFeatureConfig({})
+  })
+
+  function openEntryMenu(wrapper: ReturnType<typeof mountContent>) {
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+  }
+
+  it('drops the share-link entry when 分享 is off', async () => {
+    syncFeatureConfig({ share: { enabled: false } })
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))).toBeUndefined()
+    // The system share entry is not the share center: it stays.
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('用邮件发送'))).toBeTruthy()
+  })
+
+  it('drops the share-link entry when FILE links are disallowed, even with the master on', async () => {
+    // Per-kind permission: the 分享 tab stays, but this kind of link may not be
+    // created — the server refuses it, so the entry must go too.
+    syncFeatureConfig({ share: { enabled: true, allow_files: false } })
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))).toBeUndefined()
+  })
+
+  it('keeps the share-link entry when only another kind is disallowed', async () => {
+    syncFeatureConfig({ share: { enabled: true, allow_sessions: false, allow_meetings: false } })
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))).toBeTruthy()
+  })
+
+  it('drops the send-by-mail entry when 邮件 is off', async () => {
+    syncFeatureConfig({ mail: { enabled: false } })
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('用邮件发送'))).toBeUndefined()
+    expect(wrapper.findAll('.context-menu-item').find(el => el.text().includes('分享链接'))).toBeTruthy()
+  })
+
+  it('refuses doShareLink and explains when the menu predates the switch', async () => {
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+    syncFeatureConfig({ share: { enabled: false } })
+    await nextTick()
+
+    expect((wrapper.vm as any).shareAllowed).toBe(false)
+    wrapper.vm.doShareLink()
+    await nextTick()
+
+    // The refusal is the contract here; the wording is pinned by
+    // useFeatureFlags.test.ts and the file-header spec.
+    expect(wrapper.vm.shareDialogOpen).toBe(false)
+    expect(wrapper.vm.shareTarget).toBe(null)
+  })
+
+  it('refuses doSendByMail when the menu predates the switch', async () => {
+    const wrapper = mountContent()
+    openEntryMenu(wrapper)
+    await nextTick()
+    syncFeatureConfig({ mail: { enabled: false } })
+    await nextTick()
+
+    await wrapper.vm.doSendByMail()
+
+    expect(mocks.mockSendPathsByMail).not.toHaveBeenCalled()
   })
 })

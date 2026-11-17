@@ -183,6 +183,7 @@ export function mailErrorMessage(err: unknown, t: (key: string) => string): stri
     MailTLSFailed: 'mail.err.tls',
     MailTimeout: 'mail.err.timeout',
     MailServerError: 'mail.err.server',
+    MailClientIDRequired: 'mail.err.clientId',
     MailSyncBusy: 'mail.err.busy',
     MailNoRecipients: 'mail.err.noRecipients',
     MailUnsupportedAddress: 'mail.err.unsupported',

@@ -42,10 +42,12 @@ type ScheduledTask struct {
 	MailHasAttachment bool `json:"mailHasAttachment,omitempty"`
 	// Script is an optional gating shell script run BEFORE the AI call. Exit
 	// code 0 opens the gate and the AI turn runs; any other outcome (non-zero,
-	// timeout) closes it and the run is skipped without a session. Its result
-	// is recorded on the execution and its output is available to the prompt
-	// through the {{code}} / {{stdout}} / {{stderr}} / {{output}} template
-	// variables. Only meaningful for cron tasks.
+	// timeout) closes it and the run is skipped without a session. It applies
+	// to every trigger kind (cron / email / forge event); the trigger's own
+	// fields are exposed to the script as CLAWBENCH_* environment variables and
+	// the free-text body on stdin. Its result is recorded on the execution and
+	// its output is available to the prompt through the {{code}} / {{stdout}} /
+	// {{stderr}} / {{output}} template variables.
 	Script string `json:"script,omitempty"`
 	// ScriptTimeout bounds Script in seconds; 0 means DefaultScriptTimeout.
 	ScriptTimeout     int                    `json:"scriptTimeout,omitempty"`

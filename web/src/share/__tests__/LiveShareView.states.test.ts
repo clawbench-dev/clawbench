@@ -57,6 +57,7 @@ const i18n = createI18n({
   messages: {
     zh: {
       share: {
+        fromProject: 'From {name}',
         live: {
           title: '直播',
           micToggle: '麦克风',
@@ -133,8 +134,8 @@ afterEach(() => {
   Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined })
 })
 
-function mountView() {
-  const w = mount(LiveShareView, { global: { plugins: [i18n] } })
+function mountView(props: Record<string, unknown> = {}) {
+  const w = mount(LiveShareView, { props, global: { plugins: [i18n] } })
   passJoinGate(w)
   return w
 }
@@ -193,6 +194,28 @@ describe('LiveShareView overlay states', () => {
     expect(w.find('.share-meeting').exists()).toBe(true)
     expect(w.text()).toContain('Release review')
     w.unmount()
+  })
+
+  // The record page is a published share page, so it names its source project
+  // when the server allows it. The live room is not: a chip there would sit next
+  // to participant controls where provenance means nothing.
+  it('forwards the source project to the record view only', async () => {
+    const ended = mount(LiveShareView, {
+      props: { meta: { ended: true, title: 'Release review', projectName: 'clawbench' } },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+    expect(ended.find('.share-meeting').exists()).toBe(true)
+    const chip = ended.find('[data-role="share-project"]')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toContain('clawbench')
+    ended.unmount()
+
+    const live = mountView({ meta: { ended: false, title: 'Release review', projectName: 'clawbench' } })
+    await flushPromises()
+    expect(live.find('.share-meeting').exists()).toBe(false)
+    expect(live.find('[data-role="share-project"]').exists()).toBe(false)
+    live.unmount()
   })
 
   it('keeps the overlay when the viewer was removed from the room', async () => {

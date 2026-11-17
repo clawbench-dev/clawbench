@@ -79,6 +79,7 @@
         :streaming="msg.streaming"
         :startedAt="msg.createdAt"
         :cancelled="msg.cancelled"
+        :stopped="msg.stopped"
         :summary="msg.summary"
         :summaryCards="msg.summaryCards"
         :showingSummary="showSummary"
@@ -112,6 +113,13 @@
       <span>{{ t('chat.fileChanges.title') }}</span>
       <span class="chat-file-changes-count count-badge count-badge--md">{{ fileChanges.created.length + fileChanges.modified.length }}</span>
     </button>
+
+    <!-- Knowledge-base citations for THIS reply. The chip states how many
+         passages were prepended to the prompt; expanding it shows the exact
+         snippets. Sits INSIDE the bubble and right after the file-changes
+         banner: both are "what this turn touched", so they read as one block at
+         the bottom of the reply instead of floating on the panel background. -->
+    <ChatKBRefs v-if="msg.role === 'assistant' && kbRefs.length > 0" :refs="kbRefs" />
 
     <!-- Injected-into-running-reply marker (user bubbles only). A mid-turn
          injection that MERGED into the running reply (claude/codex: no split
@@ -244,6 +252,19 @@
         >
           <MessageSquare :size="14" />
         </button>
+        <!-- Turn a reply into knowledge. Assistant-only: a user question is
+             rarely worth keeping, and the button is meaningless without a
+             settled answer. -->
+        <button
+          v-if="msg.role === 'assistant' && kbEnabled && !readOnly && !msg.streaming && quotableText"
+          class="chat-action-btn"
+          data-action="save-to-kb"
+          :title="t('chat.message.saveToKB')"
+          :aria-label="t('chat.message.saveToKB')"
+          @click="$emit('save-to-kb', msg)"
+        >
+          <BookOpen :size="14" />
+        </button>
         <template v-if="msg.role === 'assistant'">
           <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isPlayingAudio(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
             <!-- Generating states carry NO text: the two phases are told apart by
@@ -297,7 +318,7 @@
             <Rewind :size="14" />
           </button>
         </template>
-        <button v-if="canUseLocalActions && !msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
+        <button v-if="canUseLocalActions" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
         </button>
       </div>
@@ -336,14 +357,16 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight, Check, Coins, ArrowUp, ArrowDown } from 'lucide-vue-next'
+import { Sparkles, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquare, ChevronDown, Lock, User, Crown, Megaphone, CornerDownRight, Check, Coins, ArrowUp, ArrowDown, BookOpen } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { formatCompactCount, formatCompactCredit, formatTailCost } from '@/utils/usageFormat.ts'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay.ts'
+import { parseKBRefs } from '@/utils/kbRefs.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
 import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME, resolveMentionDisplayName, stripGoalSatisfiedTag } from '@/utils/groupRouting.ts'
+import { useFeatureFlag } from '@/composables/useFeatureFlags'
 import { quotableMessageText, buildMessageQuote } from '@/utils/quoteItem.ts'
 import { startQuoteDrag } from '@/utils/quoteDrag'
 import { cleanupDragGhost } from '@/utils/attachDrag'
@@ -354,6 +377,7 @@ import { localConfig } from '@/composables/useSettingsConfig'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import ContentBlocks from './ContentBlocks.vue'
+import ChatKBRefs from './ChatKBRefs.vue'
 import FileAttachmentList from './FileAttachmentList.vue'
 import FileChangesDrawer from './FileChangesDrawer.vue'
 import FileDiffsDrawer from './FileDiffsDrawer.vue'
@@ -436,7 +460,9 @@ const props = defineProps({
   userNickname: { type: String, default: GROUP_USER_TARGET_NAME },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message', 'open-agent-config'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message', 'save-to-kb', 'open-agent-config'])
+
+const kbEnabled = useFeatureFlag('kb.enabled')
 
 // Speaker for this message (null for user messages and headerless hosts).
 // Group: the member row id on the message resolves through `resolveSpeaker`.
@@ -638,6 +664,13 @@ const copyableUserText = computed(() => {
 })
 
 /**
+ * Knowledge-base passages this reply was grounded in. The backend stores them
+ * in the message metadata, so the citation marker survives a reload. Parsing
+ * (and dropping malformed entries) lives in utils/kbRefs.ts.
+ */
+const kbRefs = computed(() => parseKBRefs(props.msg?.metadata?.kbRefs))
+
+/**
  * This turn's consumption, rendered inside the bubble.
  *
  * Three parts, independent of each other:
@@ -703,7 +736,9 @@ const usageTailTooltip = computed(() => {
 // user messages show it as soon as there is a timestamp or copyable text.
 const showMetaBar = computed(() => {
   if (props.msg?.role === 'assistant') {
-    return !props.msg.streaming && !!(speakableText.value || props.msg.blocks?.length || props.msg.summary)
+    // Shown while streaming too: whatever information already exists (model,
+    // duration so far, the detail entry) is worth showing.
+    return !!(props.msg.streaming || speakableText.value || props.msg.blocks?.length || props.msg.summary)
   }
   if (props.msg?.role !== 'user' || props.msg.streaming) return false
   return !!(relativeTime.value || copyableUserText.value)

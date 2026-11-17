@@ -122,6 +122,11 @@
       <div v-if="needsRestartHint" class="group-panel__restart-hint">
         {{ t('settings.panel.needsRestartHint') }}
       </div>
+      <!-- 会话索引 has no embedding settings any more. Say where they went,
+           otherwise "向量化进度" looks like a switch that vanished. -->
+      <div v-if="isRagPanel" class="group-panel__note">
+        {{ t('settings.items.ragEmbedderHint') }}
+      </div>
       <div v-if="isRagPanel" class="group-panel__rag-actions">
         <button
           class="fbtn fbtn-danger refresh-spin"
@@ -372,8 +377,9 @@ onMounted(() => {
   initSnapshot()
   phoneVoiceDraft.value = settingsLocalConfig.systemSpeech === true
   registerGuard(`panel-${props.config.panelId}`, () => !panelDirty.value && !hasFailedSave.value)
-  // Fetch RAG status on mount so progress counts are visible immediately
-  if (props.config.panelId === 'rag') {
+  // Fetch RAG status on mount so progress counts are visible immediately. The
+  // embedding page needs it too: its only status row is the embedder health.
+  if (props.config.panelId === 'rag' || props.config.panelId === 'embedding') {
     refreshRagStatus()
   }
   // The port-forward panel needs the server's resolved SSH port in two places:
@@ -441,9 +447,17 @@ const effectiveEngine = computed<unknown>(() =>
   phoneVoiceActive.value ? 'system' : localValues['tts.engine'],
 )
 
-/** dependsOn resolver that sees the effective engine, not the server one. */
+/** dependsOn resolver that sees the effective engine, not the server one.
+ *
+ * Keys outside this panel's own fields (e.g. the RAG status rows depending on
+ * `rag.vector_enabled`, which now lives on the 文本嵌入 page) are not in
+ * `localValues`; fall back to the saved server value so a cross-panel condition
+ * still resolves. Without the fallback those rows read as "dependency unmet"
+ * and stay permanently disabled. */
 function dependencyValue(key: string): unknown {
-  return key === 'tts.engine' ? effectiveEngine.value : localValues[key]
+  if (key === 'tts.engine') return effectiveEngine.value
+  if (key in localValues) return localValues[key]
+  return getServerValueWithDefault(key)
 }
 
 const entryDisplayLabel = computed(() => {
@@ -595,13 +609,18 @@ function getRagStatusValue(key: string): unknown {
   }
 }
 
-function resolveProgress(field: ItemSpec): { value: number; max: number } | undefined {
+function resolveProgress(field: ItemSpec): { value: number; max: number; active?: boolean } | undefined {
   const s = ragStatus.value
   switch (field.key) {
     case 'rag.status.index_progress':
       return s.total_messages > 0 ? { value: s.indexed_messages, max: s.total_messages } : undefined
     case 'rag.status.embed_progress':
-      return s.total_messages > 0 ? { value: s.embedded_messages, max: s.total_messages } : undefined
+      // The stripes mean "work is moving". An unreachable embedder leaves the
+      // same backlog forever, so a running animation would claim progress that
+      // is not happening.
+      return s.total_messages > 0
+        ? { value: s.embedded_messages, max: s.total_messages, active: s.embedder_healthy }
+        : undefined
     default:
       return field.progress
   }
@@ -1211,11 +1230,11 @@ watch(localValues, () => {
   background: var(--border-color);
 }
 
-/* Compact iOS-style card container */
+/* Compact card container — the surface step above the shared page surface */
 .group-panel__card {
   border-radius: var(--radius-md);
   overflow: hidden;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   margin-bottom: var(--space-4);
 }
 .group-panel__card :deep(.settings-item) {
@@ -1403,6 +1422,15 @@ watch(localValues, () => {
   color: var(--text-muted);
   text-align: center;
   margin-bottom: var(--space-3);
+}
+
+/* Quiet note above an action row (e.g. where the embedding settings moved). */
+.group-panel__note {
+  padding: 0 var(--space-7);
+  margin-bottom: var(--space-4);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 /* Tunnel status row. Sits inside the card, aligned with the SettingsItem rows'

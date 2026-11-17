@@ -403,6 +403,11 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
 			return
 		}
+		// A brand-new session for an agent that has never reported its
+		// capabilities starts the background probe, so the model/mode/thinking
+		// pickers are not empty until the first message. Fire-and-forget: the
+		// response below must not wait for a process to start.
+		maybeAutoProbeAgentState(model.GetAgent(resolvedAgentID), projectPath)
 		setSessionID(w, r, sessionID)
 		// Return session count for UI indicator, plus the persisted
 		// auto-approve flag (initialized from the agent's configured default) so

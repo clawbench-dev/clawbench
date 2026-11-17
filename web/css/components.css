@@ -306,6 +306,15 @@
     gap: var(--space-4);
 }
 
+/* The section glyph and the back button read as one left-hand group; the
+   header's own space-between layout keeps the actions at the far right. */
+.forge-detail-leading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    min-width: 0;
+}
+
 .forge-back {
     display: flex;
     align-items: center;
@@ -1781,4 +1790,145 @@
 .ab-measuring,
 .ab-measuring * {
     transition: none !important;
+}
+
+/* ==========================================================================
+   One page surface for every left panel
+
+   A tab's page background used to depend on whether its root painted one:
+   panels that did used `--bg-primary`, panels that left the root transparent
+   fell through to `.tab-panel`'s `--bg-secondary`. Switching tabs therefore
+   changed the page colour by one step (white ↔ off-white in light themes,
+   clearly different in dark ones). Both paths now read `--panel-page-bg`, so
+   every tab page is the same surface.
+
+   Scoped to `.col-left`: the chat pane also renders a `.tab-panel` and keeps
+   its own `--bg-secondary` surface — it is a pane, not a tab.
+   ========================================================================== */
+.col-left .tab-panel {
+    background: var(--panel-page-bg);
+}
+
+/* ==========================================================================
+   One header row for every left panel
+
+   The two window controls (App.vue's .panel-head) are overlaid on the panel's
+   OWN header row, so there is a single row rather than a title bar stacked on
+   a toolbar. Each header reserves the right end with padding so the controls
+   never cover its content, and an ActionBar inside it folds against the
+   reduced width on its own.
+
+   The section icon is NOT part of the shared overlay: every header owns its
+   leading glyph (`.panel-header-icon`) in its own template, because the right
+   glyph differs per section (and drill-down pages may deliberately have none).
+   The horizontal inset comes from one token (`--panel-header-pad-x`) applied
+   below, so the glyph sits inside the header's content flow rather than in a
+   reserved gutter.
+
+   This list is every header row a panel can show, drill-down pages included —
+   a missing one lets its right-side buttons slide under the controls.
+   ========================================================================== */
+/* Horizontal inset and header surface in BOTH layouts. The narrow
+   single-column layout has no `.col-left--chrome`, so the wide-screen rule
+   below cannot own these: without the inset, tab bars that start with
+   `padding: 0` (terminal, stats) put their content flush against the panel
+   edge; without the background, each panel's own header rule decided the
+   colour (`--bg-primary`, or nothing at all over the page surface), so the
+   same page's header changed colour between narrow and wide. One surface
+   everywhere: the wide-screen value. */
+.col-left .tab-panel :is(
+    .dir-toolbar,
+    .file-header-bar,
+    .view-empty-header,
+    .settings-page__header,
+    .share-header,
+    .kb-header,
+    .forge-header,
+    .list-header,
+    .detail-header,
+    .form-header,
+    .exec-detail-header,
+    .drilldown-header,
+    .proxy-header,
+    .meeting-header,
+    .live-panel__header,
+    .mail-bar,
+    .mail-reader__head,
+    .mail-compose__head,
+    .stats-tab-bar,
+    .terminal-tab-bar,
+    .terminal-empty-header
+) {
+    /* ONE row height for every panel header, in BOTH layouts. This used to be
+       declared by the wide-screen chrome rule only, so narrow screens fell back
+       to each panel's own value (file toolbar 32, stats / mail tab bar 34,
+       terminal tab bar 28, mail reader / composer ~28): opening a drill-down
+       page visibly changed the header height, and the mail reader was shorter
+       than the list toolbar it was opened from. */
+    height: var(--header-height);
+    /* The row owns its height, so vertical padding would be added on top of it
+       (the mail wrapper rendered 26 + 2 × 4 = 34dp that way). */
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: var(--panel-header-pad-x);
+    padding-right: var(--panel-header-pad-x);
+    /* Same surface as the wide-screen chrome rule below. Panels that painted
+       `--bg-primary` (kb, forge, tasks, proxy, settings, share) or nothing
+       (mail, meeting, file toolbar) used to read as a different bar on narrow
+       screens; the header is one surface in both layouts. */
+    background: var(--bg-secondary);
+    /* Same divider too — terminal / stats painted their own mix of the text
+       colour, which was overridden on wide screens anyway. */
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+/* Wide-screen chrome: the two window controls are overlaid on whatever header
+   the current view draws. They sit flush against the panel edge (they are
+   window chrome, not header content), so the only thing left to do here is the
+   reservation — exactly their width plus the gap before them. Height, surface
+   and divider are owned by the shared rule above, so narrow and wide cannot
+   drift apart. */
+.col-left--chrome .tab-panel :is(
+    .dir-toolbar,
+    .file-header-bar,
+    .view-empty-header,
+    .settings-page__header,
+    .share-header,
+    .kb-header,
+    .forge-header,
+    /* The issue/PR + pipeline drill-down: it draws its OWN icon buttons at the
+       right (quote, open in browser), so it must reserve the controls' width
+       like every other header row. Without this the buttons rendered UNDER the
+       translucent cluster — the minimise glyph showed through as a stray dash
+       next to the chat bubble, and the cluster's tint covered the quote
+       button's right half. */
+    .forge-detail-header,
+    .list-header,
+    .detail-header,
+    .form-header,
+    .exec-detail-header,
+    .drilldown-header,
+    .proxy-header,
+    .meeting-header,
+    .live-panel__header,
+    .mail-bar,
+    .mail-reader__head,
+    .mail-compose__head,
+    .stats-tab-bar,
+    .terminal-tab-bar,
+    .terminal-empty-header
+) {
+    /* Two 26px control cells (flush with the edge) + the gap before them. */
+    padding-right: calc(52 * var(--dp) + var(--space-2));
+}
+
+/* Section glyph rendered by each panel header itself. Geometry is shared so
+   the icon lands on the same optical line whichever header draws it; colour
+   stays muted like the old shared overlay so the header's title remains the
+   primary content. */
+.panel-header-icon {
+    flex: 0 0 auto;
+    align-self: center;
+    color: var(--text-muted);
 }

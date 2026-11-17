@@ -138,6 +138,7 @@ const i18n = createI18n({
         invalidTitle: 'Cannot view this share',
         notFound: 'Not found',
         sharedConversation: 'Shared conversation',
+        fromProject: 'From {name}',
         messageCount: '{count} messages',
         totalDuration: 'Total {duration}',
         skippedMessages: '{count} messages skipped',
@@ -244,8 +245,9 @@ afterEach(() => {
   for (const w of mounted.splice(0)) w.unmount()
 })
 
-async function mountView(opts: { attach?: boolean } = {}) {
+async function mountView(opts: { attach?: boolean; props?: Record<string, unknown> } = {}) {
   const wrapper = mount(SessionShareView, {
+    props: opts.props ?? {},
     global: { plugins: [i18n] },
     attachTo: opts.attach ? document.body : undefined,
   })
@@ -1293,4 +1295,21 @@ describe('SessionShareView', () => {
     })
   })
 
+})
+
+// A conversation share also names its source project when the server allows it
+// (`share.show_project_name`). The value arrives through ShareRoot's meta
+// response, so it is a prop here — the snapshot itself never carries it.
+describe('SessionShareView — source project', () => {
+  it('shows the project chip when a name is supplied', async () => {
+    const wrapper = await mountView({ props: { projectName: 'clawbench' } })
+    const chip = wrapper.find('[data-role="share-project"]')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toContain('From clawbench')
+  })
+
+  it('renders no chip without a name', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.find('[data-role="share-project"]').exists()).toBe(false)
+  })
 })

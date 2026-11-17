@@ -103,7 +103,10 @@ const LABEL_RULES: Array<[file: string, cls: string]> = [
   ['SettingsGroupPanel.vue', 'group-panel__entry-label'],
   ['SettingsGroupPanel.vue', 'group-panel__option-label'],
   ['SettingsAgentsIndex.vue', 'settings-agents-index__name'],
-  ['SettingsAgentsIndex.vue', 'settings-agents-index__rescan-label'],
+  // The rescan row was merged into the shared action row (3af308d93); its label
+  // class is now `__action-label`. The intent of this guard is unchanged: that
+  // row's label must stay on the shared body size.
+  ['SettingsAgentsIndex.vue', 'settings-agents-index__action-label'],
   ['WallpaperSetting.vue', 'settings-item__label'],
 ]
 

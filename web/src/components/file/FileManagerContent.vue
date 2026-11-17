@@ -5,6 +5,7 @@
       <!-- Top toolbar. Shows the browse toolbar, or the multi-select toolbar
            while multi-select is active (the resident search bar sits below). -->
       <div ref="dirToolbarRef" class="dir-toolbar">
+        <FolderOpen :size="14" class="panel-header-icon" />
         <!-- Multi-select toolbar — replaces the browse toolbar while
              multi-select is active, reusing the exact top-toolbar chrome so the
              header never changes height. -->
@@ -418,12 +419,45 @@
       </template>
     </SplitView>
 
+    <!-- Clipboard footer. A copy/cut has to stay visible while the user walks to
+         the target folder, and the toolbar could not carry that: the button only
+         existed when the clipboard was non-empty (so it appeared and vanished),
+         and in a narrow panel it could fold into the "more" menu. This bar is
+         the standing "you have N things in hand, drop them here" state — plus
+         the X that abandons the copy, which otherwise needs another copy to
+         clear. Hidden in search results: they come from many directories, so
+         "here" would be a lie. -->
+    <Transition name="paste-bar">
+      <div
+        v-if="clipboard.entries.length && !searchHasQuery"
+        class="paste-bar"
+        data-role="paste-bar"
+      >
+        <component :is="clipboard.isCut ? Scissors : ClipboardPaste" :size="15" class="paste-bar-icon" />
+        <div class="paste-bar-text">
+          <span class="paste-bar-summary">{{ clipboardSummary }}</span>
+          <span class="paste-bar-dest">{{ pasteBarDest }}</span>
+        </div>
+        <button class="fbtn fbtn-primary paste-bar-go" data-action="paste" @click="doPaste(null)">
+          {{ clipboard.isCut ? t('file.pasteBar.move') : t('file.pasteBar.paste') }}
+        </button>
+        <button
+          class="paste-bar-close"
+          data-action="paste-cancel"
+          :title="clipboard.isCut ? t('file.pasteBar.cancelCut') : t('file.pasteBar.cancel')"
+          @click="cancelClipboard"
+        >
+          <X :size="15" />
+        </button>
+      </div>
+    </Transition>
+
     <!-- Context menu -->
     <Teleport to="body">
       <div v-if="ctxMenu.visible" class="context-menu visible" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @click.stop @contextmenu.prevent.stop>
         <!-- Group 1: Clipboard operations -->
         <template v-if="ctxMenu.entry">
-          <div class="context-menu-item" @click.stop="doCopy">
+          <div class="context-menu-item" data-menu-item="copy" @click.stop="doCopy">
             <Copy :size="14" />
             {{ t('file.context.copy') }}
           </div>
@@ -436,9 +470,9 @@
             {{ t('file.context.copyPath') }}
           </div>
         </template>
-        <div class="context-menu-item" :class="{ disabled: !clipboard.entries.length }" @click.stop="clipboard.entries.length && doPaste()">
+        <div class="context-menu-item" :class="{ disabled: !clipboard.entries.length }" data-menu-item="paste" @click.stop="clipboard.entries.length && doPaste()">
           <ClipboardPaste :size="14" />
-          {{ t('file.context.paste') }}
+          <span class="ctx-paste-label">{{ pasteMenuLabel }}</span>
         </div>
         <!-- New file/folder when no entry selected (empty area) — only in
              directory browsing; the search results view has no "current directory" -->
@@ -464,14 +498,14 @@
             <Download :size="14" />
             {{ t('common.download') }}
           </div>
-          <div class="context-menu-item" data-menu-item="share-link" @click.stop="doShareLink">
+          <div v-if="shareAllowed" class="context-menu-item" data-menu-item="share-link" @click.stop="doShareLink">
             <ScreenShare :size="14" />
             {{ t('file.context.shareLink') }}
           </div>
           <!-- One entry for both files and folders: a folder is packed into a
                single zip server-side, so "send by mail" means the same thing
                either way. -->
-          <div class="context-menu-item" data-menu-item="send-mail" @click.stop="doSendByMail">
+          <div v-if="mailEnabled" class="context-menu-item" data-menu-item="send-mail" @click.stop="doSendByMail">
             <Mail :size="14" />
             {{ t('file.context.sendByMail') }}
           </div>
@@ -490,6 +524,10 @@
           <div class="context-menu-item" @click.stop="doAttachToChat">
             <Paperclip :size="14" />
             {{ t('chat.actions.attachToChat') }}
+          </div>
+          <div class="context-menu-item" v-if="kbEnabled" data-menu-item="add-kb" @click.stop="doAddToKB">
+            <BookOpen :size="14" />
+            {{ t('file.context.addToKB') }}
           </div>
           <div class="context-menu-item danger" @click.stop="doDelete">
             <Trash2 :size="14" />
@@ -534,6 +572,14 @@
       :is-dir="!!shareTarget?.isDir"
       @close="shareDialogOpen = false"
     />
+    <!-- "Add to knowledge base" from the file manager: the destination is a
+         collection, not a chat session, so it gets its own picker. -->
+    <KBCollectionPickerDialog
+      :open="kbPickerOpen"
+      :initial-name="kbPickerInitialName"
+      @close="kbPickerOpen = false"
+      @confirm="onKBPicked"
+    />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
     <DropOverlay :visible="isDragOver" :label="t('file.dropToUpload')" />
@@ -555,7 +601,10 @@ import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@
 import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail, BookOpen } from 'lucide-vue-next'
+import KBCollectionPickerDialog from '@/components/kb/KBCollectionPickerDialog.vue'
+import { kbAddByPath, kbImportDirectory, kbPreviewDirectory } from '@/composables/useKnowledgeBase'
+import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -567,6 +616,7 @@ import { navToFileInManager, openFilePath } from '@/composables/useFilePathAnnot
 import { localConfig, setLocalConfig, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
+import { useFeatureFlags, useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
@@ -836,6 +886,12 @@ const shareDialogOpen = ref(false)
 const shareTarget = ref(null)
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
+// Master switches from 功能编排. Off removes the entry outright: both actions
+// are server calls that would be refused, and a permanently-failing button is
+// worse than no button. The share entry is gated per KIND (file links), so
+// turning off conversation or meeting links leaves it alone.
+const { mailEnabled, kbEnabled } = useFeatureFlags()
+const shareAllowed = useShareKindAllowed('files')
 const { isWideScreen } = useWideScreenLayout()
 
 const activeTab = inject('activeTab', ref(''))
@@ -1932,6 +1988,47 @@ function getDestDir(entry) {
     return idx > 0 ? entry.path.slice(0, idx) : ''
 }
 
+/**
+ * Name shown in the paste row: the directory the clipboard will land in.
+ *
+ * The row is anchored on whatever was right-clicked, but it never acts on that
+ * item — a file's own menu pastes into the file's folder. Saying "paste" alone
+ * there reads as "paste over this file", which is why a listing with no blank
+ * background felt like it had nowhere to paste. Naming the destination removes
+ * the guess; it also covers search results, where the target is the hit's own
+ * folder rather than the directory being browsed.
+ */
+const pasteMenuLabel = computed(() => {
+    const entry = ctxMenu.entry
+    if (!entry) return t('file.context.paste')
+    if (entry.type === 'dir') return t('file.context.pasteIntoDir', { name: entry.name })
+    const parent = getDestDir(entry).replace(/\/+$/, '')
+    const name = parent.split('/').pop()
+    return name ? t('file.context.pasteIntoDir', { name }) : t('file.context.paste')
+})
+
+/** What the clipboard footer says is in hand: one name, or how many. */
+const clipboardSummary = computed(() => {
+    const entries = clipboard.entries
+    if (entries.length === 1) return entries[0].name
+    return t('file.pasteBar.count', { n: entries.length })
+})
+
+/** The footer's second line: where its button will drop the clipboard. */
+const pasteBarDest = computed(() => {
+    const dir = currentDirPath().replace(/\/+$/, '')
+    const name = dir.split('/').pop() || t('file.pasteBar.currentDir')
+    return clipboard.isCut
+        ? t('file.pasteBar.moveTo', { name })
+        : t('file.pasteBar.pasteTo', { name })
+})
+
+/** Abandon the copy/cut — the footer's close button. */
+function cancelClipboard() {
+    clipboard.entries = []
+    clipboard.isCut = false
+}
+
 async function doCopy() {
     clipboard.entries = [ctxMenu.entry]
     clipboard.isCut = false
@@ -1975,11 +2072,17 @@ async function doCut() {
     if (toast) toast.show(t('file.toast.cutDone'), { icon: 'cut', type: 'success', duration: 1500 })
 }
 
-async function doPaste() {
+/**
+ * Paste the clipboard into a directory.
+ *
+ * `target` is the entry the action was anchored on — a directory row means that
+ * directory, a file row means its folder. Callers with no anchor (the toolbar
+ * button, Ctrl+V) pass `null`, which means the directory being browsed.
+ */
+async function doPaste(target = ctxMenu.entry) {
     if (!clipboard.entries.length) return
-    const entry = ctxMenu.entry
     closeCtxMenu()
-    const destDir = getDestDir(entry)
+    const destDir = getDestDir(target)
     const allOk = await transferEntries(clipboard.entries, destDir, clipboard.isCut)
     // Only clear clipboard on successful cut-paste; on failure keep entries so user can retry
     if (clipboard.isCut && allOk) {
@@ -2494,6 +2597,9 @@ function doDownload() {
 }
 
 function doShareLink() {
+    // The menu was opened before the switch flipped (config reloads under an
+    // open context menu), so the entry can still be pressed.
+    if (!shareAllowed.value) { closeCtxMenu(); notifyFeatureDisabled(); return }
     const entry = ctxMenu.entry
     closeCtxMenu()
     if (!entry?.path) return
@@ -2518,6 +2624,7 @@ function doShareLink() {
  * sent yet — the user still picks the recipient.
  */
 async function doSendByMail() {
+    if (!mailEnabled.value) { closeCtxMenu(); notifyFeatureDisabled(); return }
     const entry = ctxMenu.entry
     if (!entry) return
     const path = enterPathOf(entry)
@@ -2627,8 +2734,14 @@ function doBatchArchive() {
 }
 
 function doAttachToChat() {
-    const path = ctxMenu.entry.path
-    const isDir = ctxMenu.entry.type === 'dir'
+    // A multi-selection is the operand of every other context-menu action
+    // (delete delegates to the batch flow), so attaching must cover the whole
+    // selection — taking only the row under the cursor silently dropped every
+    // other file the user had picked.
+    const selected = multiSelect.active ? [...multiSelect.selected] : []
+    const entries = selected.length
+        ? selected.map(p => ({ path: p, isDir: metaForPath(p).type === 'dir' }))
+        : [{ path: ctxMenu.entry.path, isDir: ctxMenu.entry.type === 'dir' }]
     closeCtxMenu()
     // Add-only: there is no per-file "attached" indicator any more (the target
     // session can be any session, so no single icon could represent it), hence
@@ -2637,7 +2750,7 @@ function doAttachToChat() {
     //
     // The destination is always the user's choice (the picker), so nothing is
     // attached locally — confirmTarget attaches for the session they pick.
-    requestAttachmentTarget({ path, isDir })
+    requestAttachmentTarget(entries)
 
     // Fly-to-chat particle animation
     const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')
@@ -2649,6 +2762,94 @@ function doAttachToChat() {
                 to: { x: animTo.left + animTo.width / 2, y: animTo.top + animTo.height / 2 },
             }
         }))
+    }
+}
+
+// ── Add to knowledge base ──
+// The file manager is the natural place to put a document into a library: the
+// file is already there. The destination is a collection, so the picker is the
+// knowledge base's own, not the chat's target picker.
+const kbPickerOpen = ref(false)
+const kbPickerInitialName = ref('')
+const kbTargets = ref([])
+
+function doAddToKB() {
+    const selected = multiSelect.active ? [...multiSelect.selected] : []
+    const entries = selected.length
+        ? selected.map(p => ({ path: p, isDir: metaForPath(p).type === 'dir' }))
+        : [{ path: ctxMenu.entry.path, isDir: ctxMenu.entry.type === 'dir' }]
+    closeCtxMenu()
+    kbTargets.value = entries
+    kbPickerInitialName.value = entries.length === 1 ? baseName(entries[0].path).replace(/\.[^.]+$/, '') : ''
+    kbPickerOpen.value = true
+}
+
+async function onKBPicked(collection) {
+    kbPickerOpen.value = false
+    const entries = kbTargets.value
+    kbTargets.value = []
+    if (!entries.length) return
+
+    const dirs = entries.filter(e => e.isDir)
+    const files = entries.filter(e => !e.isDir)
+    const totals = { added: 0, duplicates: 0, skipped: 0, failed: 0 }
+
+    if (dirs.length) {
+        // Folders are previewed first, exactly like in the knowledge base
+        // panel: a big import should not start without its numbers.
+        const preview = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false }
+        for (const dir of dirs) {
+            try {
+                const p = await kbPreviewDirectory(collection.id, dir.path)
+                preview.added += p.added
+                preview.duplicates += p.duplicates
+                preview.skipped += p.skipped
+                preview.failed += p.failed
+                preview.truncated = preview.truncated || p.truncated
+            } catch {
+                // The import below will surface the error with a real message.
+                preview.failed++
+            }
+        }
+        const ok = await dialog.confirm(t('kb.importPreviewMessage', preview), {
+            title: t('kb.importPreviewTitle'),
+            confirmText: t('kb.importContinue'),
+        })
+        if (!ok) return
+    }
+
+    for (const file of files) {
+        try {
+            await kbAddByPath(collection.id, file.path)
+            totals.added++
+        } catch {
+            totals.failed++
+        }
+    }
+    for (const dir of dirs) {
+        try {
+            const res = await kbImportDirectory(collection.id, dir.path)
+            totals.added += res.added
+            totals.duplicates += res.duplicates
+            totals.skipped += res.skipped
+            totals.failed += res.failed
+        } catch {
+            totals.failed++
+        }
+    }
+
+    if (totals.added > 0) startKBIndexWatch()
+    if (totals.added === 0 && totals.failed === 0) {
+        if (toast) toast.show(t('kb.dirImportEmpty'), { icon: 'warning', type: 'error', duration: 3000 })
+        return
+    }
+    if (toast) {
+        toast.show(
+            totals.failed > 0 || totals.skipped > 0 || totals.duplicates > 0
+                ? t('kb.dirImportSummary', totals)
+                : t('kb.added'),
+            { icon: 'success', type: totals.failed > 0 ? 'error' : 'success', duration: 3200 },
+        )
     }
 }
 
@@ -2717,15 +2918,11 @@ async function handleKeydown(e) {
         return
     }
 
-    // Ctrl+V — paste
+    // Ctrl+V — paste into the directory being browsed
     if (isCtrl && e.key === 'v') {
         if (clipboard.entries.length) {
             e.preventDefault()
-            // Paste into current directory
-            const fakeEntry = { type: 'dir', name: '', path: props.currentDir }
-            const savedEntry = ctxMenu.entry
-            ctxMenu.entry = fakeEntry
-            doPaste().then(() => { ctxMenu.entry = savedEntry })
+            doPaste(null)
         }
         return
     }
@@ -3056,12 +3253,20 @@ function scrollSelectedIntoView(path) {
     align-items: center;
     min-width: 0;
     background: transparent;
-    /* Height comes from the shared token, not from the tallest child: the browse
-       toolbar and the multi-select toolbar swap in this slot, and a row sized by
-       its content shrank by 8px the moment multi-select opened. */
-    height: var(--toolbar-row-height);
+    /* Panel-header row height (same token as every other page, enforced by the
+       shared rule in components.css), not `--toolbar-row-height`: this slot IS
+       the page header, and the browse / multi-select toolbars swap inside it.
+       The row must not size to its content either — it shrank by 8px the
+       moment multi-select opened. */
+    height: var(--header-height);
     padding: 0 var(--space-4);
     /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
+}
+
+/* The row has no gap of its own (its two toolbars are full-width flex items),
+   so the section glyph carries its own spacing. */
+.dir-toolbar > .panel-header-icon {
+    margin-right: var(--space-3);
 }
 
 .dir-toolbar-btns {
@@ -3491,6 +3696,106 @@ function scrollSelectedIntoView(path) {
     /* Same gap as the shared footer rows (`.bs-footer`), so a pair of pills
        here is spaced like a pair of pills anywhere else. */
     gap: var(--space-4);
+}
+
+/* The paste row names the directory it will land in, and directory names have
+   no length limit — truncate rather than letting one long folder stretch the
+   menu across the window. */
+.ctx-paste-label {
+    min-width: 0;
+    max-width: calc(220 * var(--dp));
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* ── Clipboard footer ──
+   A status strip, not a dialog footer: two lines of text (what is in hand /
+   where it goes) plus the action and the dismiss. The pills are shorter than
+   the shared 30dp dialog pill so the bar reads as part of the panel edge. */
+.paste-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-shrink: 0;
+    padding: var(--space-3) var(--space-5);
+    border-top: 1px solid var(--border-color, #e5e5e5);
+    background: var(--bg-secondary, #fafafa);
+}
+
+.paste-bar-icon {
+    flex-shrink: 0;
+    color: var(--accent-color, #0066cc);
+}
+
+.paste-bar-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    line-height: 1.35;
+}
+
+.paste-bar-summary {
+    font-size: var(--font-size-md);
+    color: var(--text-primary);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.paste-bar-dest {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted, #999);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.paste-bar-go {
+    height: calc(26 * var(--dp));
+    padding: 0 var(--space-5);
+    border-radius: calc(13 * var(--dp));
+}
+
+.paste-bar-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: calc(26 * var(--dp));
+    height: calc(26 * var(--dp));
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted, #999);
+    cursor: pointer;
+    transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.paste-bar-close:hover {
+    background: var(--bg-tertiary, #f1f3f5);
+    color: var(--text-primary);
+}
+
+/* Slides out from under the list: the bar lives at the panel's bottom edge, so
+   fading it in place would look like a paint glitch. */
+.paste-bar-enter-active,
+.paste-bar-leave-active {
+    transition: opacity var(--duration-fast) ease, transform var(--duration-fast) ease;
+}
+
+.paste-bar-enter-from,
+.paste-bar-leave-to {
+    opacity: 0;
+    transform: translateY(100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .paste-bar-enter-active,
+    .paste-bar-leave-active {
+        transition: none;
+    }
 }
 
 /* Truncate hint */

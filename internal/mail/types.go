@@ -174,6 +174,10 @@ type SendRequest struct {
 // can be tested against an in-memory implementation.
 type Client interface {
 	ListFolders(ctx context.Context) ([]Folder, error)
+	// OpenFolder selects a mailbox for reading. It is the first command a sync
+	// runs, and some providers refuse it until the client has identified
+	// itself, so the connection probe has to try it too.
+	OpenFolder(ctx context.Context, folder string) error
 	Status(ctx context.Context, folder string) (Status, error)
 	// FetchHeaders returns metadata for the given UIDs (missing UIDs are
 	// silently skipped — the server is allowed to have expunged them).

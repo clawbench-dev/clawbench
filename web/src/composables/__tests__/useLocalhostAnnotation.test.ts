@@ -21,6 +21,9 @@ vi.mock('@/composables/useAppMode', () => ({
 vi.mock('@/composables/usePortForward', () => ({
   usePortForward: () => ({
     sshInfo: mockSshInfo,
+    // The SSH answer DID arrive in these fixtures (the composable reports it
+    // separately so a failed request is not read as "SSH is off").
+    sshInfoResolved: { value: true },
     transportAllowsH2: mockTransportAllowsH2,
     ensurePortRegistered: mockEnsurePortRegistered,
     openPort: mockOpenPort,

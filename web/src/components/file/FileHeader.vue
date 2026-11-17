@@ -1,5 +1,6 @@
 <template>
   <div class="file-header-bar">
+    <FileText :size="14" class="panel-header-icon" />
     <!-- Navigation cluster at the top-left: view back/forward plus in-file jump
          history. Same control set on every layout, touch included — there is no
          separate floating bar for narrow screens. -->
@@ -42,36 +43,9 @@
         <span class="action-label">{{ t('nav.refresh') }}</span>
       </RefreshButton>
 
-      <!-- Collapse / restore the chat pane (wide screen only).
-           The pre-existing affordance is the collapse handle that appears on
-           the split divider under the cursor — a ~14px target on a 6px-wide
-           line, which is both hard to hit and easy to trigger by accident while
-           aiming at the scrollbar. This button is a full-size target in the
-           place the user is already looking, and does the same thing, so the
-           divider handle stays as the discoverable one.
-
-           ICON: PanelRightClose / PanelRightOpen, NOT Maximize2/Minimize2.
-           This toolbar already has a Maximize2 for images ("view full size"),
-           and the two sat three buttons apart wearing the same glyph for
-           completely different actions. Maximize2 also means "open external
-           link", "enlarge a shared screen" and "maximize the OS window"
-           elsewhere in the app — a fifth meaning is unreadable. These two
-           glyphs say what actually happens: the RIGHT pane (chat) closes or
-           opens. -->
-      <button
-        v-if="isWideScreen"
-        class="file-header-btn"
-        data-toolbar-id="maximize"
-        data-action="toggle-maximize-pane"
-        :class="{ active: chatCollapsed }"
-        @click.stop="emit('toggleMaximizePane')"
-        :title="chatCollapsed ? t('nav.showChat') : t('nav.hideChat')"
-        :aria-label="chatCollapsed ? t('nav.showChat') : t('nav.hideChat')"
-      >
-        <PanelRightOpen v-if="chatCollapsed" :size="14" />
-        <PanelRightClose v-else :size="14" />
-        <span class="action-label">{{ chatCollapsed ? t('actionLabels.showChat') : t('actionLabels.hideChat') }}</span>
-      </button>
+      <!-- Collapse / restore the chat pane used to live here. It is now the
+           panel title bar's maximize button, which does the same thing for
+           every tab instead of only the file viewer. -->
 
       <!-- TOC button (only for file types that support TOC) -->
       <button v-if="hasToc" data-toolbar-id="toc" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
@@ -80,7 +54,7 @@
       </button>
 
       <!-- Search button (only for file types that support search) -->
-      <button v-if="hasSearch" data-toolbar-id="search" class="file-header-btn" :class="{ active: searchOpen }" @click.stop="handleToggleSearch" :title="t('file.header.search')">
+      <button v-if="hasSearch && !visualEditing" data-toolbar-id="search" class="file-header-btn" :class="{ active: searchOpen }" @click.stop="handleToggleSearch" :title="t('file.header.search')">
         <Search :size="14" />
         <span class="action-label">{{ t('file.header.search') }}</span>
       </button>
@@ -105,7 +79,7 @@
            in the More menu — it is an action on the open file, the same class
            of thing as 引用对话 next to it; ActionBar folds it away on its own
            when the header runs out of room. -->
-      <button v-if="!isUntitled && !editing" data-toolbar-id="sendByMail" class="file-header-btn" @click.stop="handleSendByMail" :title="t('file.header.sendByMail')" :aria-label="t('file.header.sendByMail')">
+      <button v-if="!isUntitled && !editing && mailEnabled" data-toolbar-id="sendByMail" class="file-header-btn" @click.stop="handleSendByMail" :title="t('file.header.sendByMail')" :aria-label="t('file.header.sendByMail')">
         <Mail :size="14" />
         <span class="action-label">{{ t('file.header.sendByMail') }}</span>
       </button>
@@ -130,6 +104,15 @@
       <button v-if="isEditable" data-toolbar-id="edit" class="file-header-btn" :class="{ active: editing }" @click.stop="handleToggleEdit" :title="editing ? t('file.header.finishEditing') : t('file.header.edit')">
         <Pencil :size="14" />
         <span class="action-label">{{ editing ? t('file.header.finishEditing') : t('file.header.edit') }}</span>
+      </button>
+
+      <!-- Visual (WYSIWYG) markdown editing — the second editing mode. Only
+           offered while not editing: once inside, the existing edit toggle owns
+           the exit flow, and switching editors mid-session would have to carry
+           unsaved text between two different document models. -->
+      <button v-if="canWysiwygEdit" data-toolbar-id="wysiwygEdit" class="file-header-btn" @click.stop="handleWysiwygEdit" :title="t('file.header.wysiwygEdit')">
+        <PenLine :size="14" />
+        <span class="action-label">{{ t('file.header.wysiwygEdit') }}</span>
       </button>
 
       <!-- Word wrap / line numbers / sticky scroll moved to the More menu
@@ -158,7 +141,7 @@
           <GitBranch :size="14" />
           {{ t('file.header.fileHistory') }}
         </button>
-        <button v-if="permanentMenuIds.includes('shareLink')" class="ab-menu-item" :class="{ active: isShared }" @click="$emit('shareLink')">
+        <button v-if="permanentMenuIds.includes('shareLink') && shareAllowed" class="ab-menu-item" :class="{ active: isShared }" @click="$emit('shareLink')">
           <ScreenShare :size="14" />
           {{ t('file.header.shareLink') }}
           <span v-if="isShared" class="wrap-check">✓</span>
@@ -222,7 +205,7 @@ import ActionBar from '@/components/common/ActionBar.vue'
 import ExternalBadge from '@/components/file/ExternalBadge.vue'
 import { isAbsolutePath } from '@/utils/path.ts'
 import { useI18n } from 'vue-i18n'
-import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, PanelRightClose, PanelRightOpen, Mail } from 'lucide-vue-next'
+import { List, Search, Download, Trash2, GitBranch, TextWrap, Hash, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, PenLine, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2, Mail, FileText } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -234,6 +217,8 @@ import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { useFileShare } from '@/composables/useFileShare'
 import { useToast } from '@/composables/useToast'
 import { sendPathsByMail } from '@/utils/mailAttach'
+import { useFeatureFlags, useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
+import { isDockTabHidden } from '@/composables/useDockPlugins'
 
 const props = defineProps({
     file: Object,
@@ -247,20 +232,29 @@ const props = defineProps({
     editing: Boolean,
     /** Wide-screen header back button: view-back target exists. */
     canNavigateBack: Boolean,
+    /** Visual (WYSIWYG) markdown editing: the in-editor search UI does not
+     *  exist there, so the button would be dead. Ctrl+F still works through
+     *  the browser's own find (App lets contenteditable keep the key). */
+    visualEditing: Boolean,
     /** Wide-screen header back button: in-file jump history has a previous entry. */
     canGoBackFile: Boolean,
     canGoForwardFile: Boolean,
     backLabel: String,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'exportDrawio', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat', 'toggleMaximizePane'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'exportDrawio', 'fitWidth', 'toggleEdit', 'editWysiwyg', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
-// `chatCollapsed` decides whether the maximize button reads as maximize or
-// restore, so it has to be reactive here — the pane can also be collapsed from
-// the divider handle or the settings drawer while this header is mounted.
-const { isWideScreen, chatCollapsed } = getWideScreenState()
+const { isWideScreen } = getWideScreenState()
 const { refreshFileShare, isFileShared } = useFileShare()
+// Master switches from 功能编排 — see useFeatureFlags. The share and mail
+// entries disappear entirely when off: both open a flow that can only fail
+// server-side. The share entry is gated per KIND (file links). The file-history
+// entry follows the history TAB instead: it is a display switch, so the entry
+// stays visible but explains itself when pressed.
+const { mailEnabled } = useFeatureFlags()
+const shareAllowed = useShareKindAllowed('files')
+const historyTabHidden = computed(() => isDockTabHidden('history'))
 
 /** The open file lives outside the project root (chat annotations may name any
  *  path the server exposes; the viewer opens them like any other file). */
@@ -344,8 +338,12 @@ const isWallpaperSource = computed(() => {
   const ext = props.file.name.split('.').pop()?.toLowerCase() ?? ''
   return wallpaperExts.includes(ext)
 })
-// Editable: text/source files in raw view (excludes media).
-// Markdown is always editable (even in rendered view) so users can edit the source.
+// Editable: any file with text content (media is excluded above). Every
+// rendered body — markdown, the HTML preview, the OpenAPI docs, the CSV table —
+// has a source editor behind it, so the edit toggle is offered from either
+// view; entering it swaps the preview for that editor and leaving returns to
+// the preview. Offering it only in the source view used to strand the
+// templated types: the toggle existed but the editor behind it was read-only.
 //
 // An Untitled buffer is excluded: it is always in edit mode, so an "edit" toggle
 // would only offer to drop it back to a read-only view of a file that does not
@@ -353,14 +351,23 @@ const isWallpaperSource = computed(() => {
 const isEditable = computed(() => {
     if (isUntitled.value) return false
     if (!hasTextContent.value || isMediaFile.value) return false
-    if (isMarkdown.value) return true
-    // The table view is read-only by nature, but the file is still text: the
-    // edit button opens it in the source editor (same as markdown's preview).
-    if (isTableFile.value) return true
-    // Other templated types (HTML/OpenAPI) are only editable in source view
-    return !isMarkdownRendered.value
+    return true
 })
 const hasToc = computed(() => fileSupportsToc(props.file, effectiveViewMode.value))
+
+// Visual markdown editing: only for a real markdown file with loaded text, and
+// only while not already editing (the edit toggle owns the exit flow then).
+const canWysiwygEdit = computed(
+  () =>
+    isMarkdown.value &&
+    !isUntitled.value &&
+    !props.editing &&
+    hasTextContent.value &&
+    !isMediaFile.value &&
+    // A truncated buffer holds only the first slice of the file; saving from
+    // the visual editor would write that slice back as the whole file.
+    !props.file?.truncated,
+)
 
 // Search button for any file with searchable text. For the rendered markdown
 // preview it opens the SearchDrawer bottom sheet; for CodeMirror-rendered
@@ -418,6 +425,10 @@ function handleToggleView() {
 
 function handleToggleEdit() {
     emit('toggleEdit')
+}
+
+function handleWysiwygEdit() {
+    emit('editWysiwyg')
 }
 
 function handleToggleWordWrap() {
@@ -498,7 +509,16 @@ function handleDelete() {
     emit('delete', props.file?.path)
 }
 
+/**
+ * Open the file's commit history.
+ *
+ * The history tab is only a display switch, so hiding it must not silently
+ * remove this entry (the drawer still exists) — but pressing it would open a
+ * surface the user just chose to remove from the dock. Explain instead, and
+ * point at the place that turns it back on.
+ */
 function handleGitHistory() {
+    if (historyTabHidden.value) { notifyFeatureDisabled(); return }
     emit('openGitHistory')
 }
 

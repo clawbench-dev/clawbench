@@ -1584,6 +1584,26 @@ main {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--bg-raise);
+  /* 四个页签在窄屏上可能放不下：允许横向滑动，别把圆角胶囊撑出屏幕 */
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* 窄屏放不下四个带图标的页签：图标只是装饰，去掉后文字版刚好排得下，
+   比让用户横向滑一个被切掉一半的胶囊好 */
+@media (max-width: 480px) {
+  .tab {
+    padding: 7px 12px;
+  }
+
+  .tab svg {
+    display: none;
+  }
 }
 
 .tab {
@@ -1596,6 +1616,9 @@ main {
   font-size: 13px;
   font-weight: 500;
   transition: color 0.25s, background 0.25s;
+  /* 挤的时候宁可整条页签栏横向滑，也别把按钮里的文字折成竖排 */
+  flex: none;
+  white-space: nowrap;
 }
 
 .tab svg {
@@ -1615,6 +1638,12 @@ main {
 
 .code-panels {
   position: relative;
+}
+
+/* 一键脚本页签里是两块代码（Linux/macOS 和 Windows），各自带复制按钮 */
+.code-stack {
+  display: grid;
+  gap: 10px;
 }
 
 .code-panel {

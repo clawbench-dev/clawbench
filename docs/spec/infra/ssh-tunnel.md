@@ -329,13 +329,13 @@ sequenceDiagram
 
 ### 端口守卫与注册表门控
 
-- **注册表恒创建**：`ProxyRegistry`（`service.ProxyService`）是**两种传输共用**的白名单 / 保留端口 / `SetReverseBound` 面。`cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry` 现为 `return true`——原先的 `Enabled || transport != "ssh"` 比较已删除（`transport` 恒为 `both`，比较恒真，留着只是伪装成可配置）。**不再存在「不创建注册表」的配置**；否则隧道请求会拿到 nil 注册表和 503。创建注册表对 SSH 无副作用：只起一个 5s 健康检查 goroutine 并从 DB 恢复端口行，**不绑任何端口**（监听是 SSH server 的职责，而它无条件常开）。
+- **注册表恒创建**：`ProxyRegistry`（`service.ProxyService`）是**两种传输共用**的白名单 / 保留端口 / `SetReverseBound` 面。`cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry` 现为 `return true`——原先的 `Enabled || transport != "ssh"` 比较已删除：注册表是两种线共用的面，只要进程在跑就必须存在，与当前选哪条线无关。**不再存在「不创建注册表」的配置**；否则隧道请求会拿到 nil 注册表和 503。创建注册表对 SSH 无副作用：只起一个 5s 健康检查 goroutine 并从 DB 恢复端口行，**不绑任何端口**（监听是 SSH server 的职责，而它无条件常开）。
 - **保留端口**：`reservedPortsFor` 恒保护主 HTTP 端口；SSH 端口仅在 SSH 启用时加入（`sshPort == 0` 表示「无 SSH 端口需保护」，**不**展开为 `mainPort+1`——h2 守卫的 `SSHPort` 字段已硬拒 `mainPort+1`）。
 
 ### h2 设计要点
 
 - **单端口是 h2 传输的核心收益**：SSH 要额外放行 `mainPort+1`，h2 复用 20000，用户只需一条防火墙规则
-- **h2 不取代 SSH**：SSH 保留为可选项，也用于 h2 被中间设备阻断的场景。两个原生客户端都让用户显式二选一——Electron 的传输偏好持久化到 store（默认 HTTP/2），Android 用本地布尔开关（默认 HTTP/2），**均无失败自动回退**（选 h2 而 h2 不可用就报错，不会偷偷改走 SSH）。
+- **h2 不取代 SSH**：SSH 保留为可选项，也用于 h2 被中间设备阻断的场景。**线路由服务端 `port_forward.transport` 统一决定**，三个原生客户端（Electron / Android / 鸿蒙）每次建连前读 `/api/ssh/info` 的 `transport` 并跟随，本地存的偏好退化为「读不到服务端时的兜底」；**均无失败自动回退**（服务端选 h2 而 h2 不可用就报错，不会偷偷改走 SSH）。
 - **`-R` 的认领机制是 h2 协议限制的必然结果**，不是设计偏好：服务端不能发起流，只能让客户端主动认领
 - **半关闭差异必须告知使用者**：依赖「target 先 FIN 后仍能持续写入」的协议在 h2 下会在 5s 后丢字节；这类场景应改用 SSH 传输
 

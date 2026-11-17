@@ -8,7 +8,7 @@
            and it runs through the same unsaved-changes guard. -->
       <SettingsBreadcrumb v-if="navStack.length > 0" :crumbs="breadcrumbs" @navigate="handleCrumbNavigate" />
       <template v-else>
-        <Settings :size="14" class="settings-page__header-icon" />
+        <Settings :size="14" class="panel-header-icon" />
         <span class="settings-page__title">{{ t('nav.settings') }}</span>
         <span v-if="serverVersion" class="settings-page__version">{{ serverVersion }}</span>
       </template>
@@ -55,6 +55,7 @@ import { useAgents } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { isSubPageRoute, getSubPageTitleKey } from './settingsFieldMap'
+import { dockCategoryTitleKey } from '@/composables/dockPluginRuntime'
 
 const props = defineProps<{
   active?: boolean
@@ -170,7 +171,7 @@ function labelForCategory(cat: string): string {
   if (cat.startsWith('project:')) {
     return t('settings.items.projectDetailTitle')
   }
-  return t(`settings.categories.${cat}`)
+  return t(dockCategoryTitleKey(cat) ?? `settings.categories.${cat}`)
 }
 
 /**
@@ -291,10 +292,6 @@ watch(() => props.active, (val) => {
   text-overflow: ellipsis;
 }
 
-.settings-page__header-icon {
-  flex-shrink: 0;
-  color: var(--text-secondary);
-}
 
 .settings-page__version {
   margin-left: auto;

@@ -175,82 +175,9 @@ func TestIsCLICompactionMessage(t *testing.T) {
 // TestStreamParser_ReportsCompactionOnce pins the latch: the CLI repeats the
 // compaction flag on every item emitted while compacting, but the service layer
 // must be told about the compaction a single time.
-func TestStreamParser_ReportsCompactionOnce(t *testing.T) {
-	p := &StreamParser{}
-	ch := make(chan StreamEvent, 32)
-
-	p.ParseLine(`{"type":"system","subtype":"compact_boundary"}`, ch)
-	p.ParseLine(`{"type":"system","subtype":"compact_boundary"}`, ch)
-	p.ParseLine(`{"type":"message","_meta":{"codebuddy.ai/isCompactInternal":true}}`, ch)
-
-	detected := 0
-	for {
-		select {
-		case ev := <-ch:
-			if ev.Type == "compact_detected" {
-				detected++
-			}
-		default:
-			assert.Equal(t, 1, detected, "a compaction must be reported exactly once per parser")
-			return
-		}
-	}
-}
 
 // TestStreamParser_NoCompactionWithoutSignal guards the negative direction: a
 // normal turn must not flag the session as compacted.
-func TestStreamParser_NoCompactionWithoutSignal(t *testing.T) {
-	p := &StreamParser{}
-	ch := make(chan StreamEvent, 32)
-	p.ParseLine(`{"type":"assistant","subtype":"text","text":"hello"}`, ch)
-	p.ParseLine(`{"type":"system","subtype":"init"}`, ch)
-	p.ParseLine(`{"type":"system","subtype":"status"}`, ch)
-
-	for {
-		select {
-		case ev := <-ch:
-			assert.NotEqual(t, "compact_detected", ev.Type)
-		default:
-			return
-		}
-	}
-}
-
-func TestGrokStreamParser_ReportsCompaction(t *testing.T) {
-	p := &GrokStreamParser{}
-	ch := make(chan StreamEvent, 16)
-	p.ParseLine(`{"type":"auto_compact_completed"}`, ch)
-	p.ParseLine(`{"type":"auto_compact_completed"}`, ch)
-
-	detected := 0
-	for {
-		select {
-		case ev := <-ch:
-			if ev.Type == "compact_detected" {
-				detected++
-			}
-		default:
-			assert.Equal(t, 1, detected, "grok compaction must be reported exactly once")
-			return
-		}
-	}
-}
-
-func TestGrokStreamParser_IgnoresFailedCompaction(t *testing.T) {
-	p := &GrokStreamParser{}
-	ch := make(chan StreamEvent, 16)
-	p.ParseLine(`{"type":"auto_compact_started"}`, ch)
-	p.ParseLine(`{"type":"auto_compact_failed"}`, ch)
-
-	for {
-		select {
-		case ev := <-ch:
-			assert.NotEqual(t, "compact_detected", ev.Type)
-		default:
-			return
-		}
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Compaction reported as a TOOL CALL (claude-agent-acp / codex-acp)

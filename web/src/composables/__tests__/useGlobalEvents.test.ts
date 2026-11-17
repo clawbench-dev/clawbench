@@ -152,6 +152,18 @@ function nextId(): string {
     return `evt_test_${++idCounter}`
 }
 
+// Mirrors of the module's internal timings (useGlobalEvents.ts). Kept in sync
+// by the assertions themselves: a timing change that breaks the intent of
+// these tests should fail them, not silently pass.
+const CHECK = 5000
+const HANDSHAKE_TIMEOUT = 15000
+const MESSAGE_STALE = 60000
+const RECONNECT_BASE_DELAY = 2000
+// Resume pacing (useGlobalEvents.ts RESUME_* constants).
+const RESUME_CHECK = 1000
+const RESUME_HANDSHAKE_TIMEOUT = 6000
+const RESUME_BASE_DELAY = 500
+
 describe('useGlobalEvents', () => {
     let originalWebSocket: typeof WebSocket
     let events: ReturnType<typeof useGlobalEvents>
@@ -177,6 +189,11 @@ describe('useGlobalEvents', () => {
         events.destroy()
         events2?.destroy()
         globalThis.WebSocket = originalWebSocket
+        // Every heartbeat/watchdog case installs fake timers and only restored
+        // them on its last line — an assertion failure mid-test left the whole
+        // rest of the file running on a frozen clock. Restoring here makes that
+        // impossible regardless of where a case dies.
+        vi.useRealTimers()
         // Several cases below redefine `document.visibilityState` to 'hidden'
         // and the DOM offers no way to reset it. Without this every later case
         // sees a permanently hidden document, which silently disables every
@@ -248,14 +265,13 @@ describe('useGlobalEvents', () => {
     })
 
     describe('heartbeat', () => {
-        const CHECK = 15000
-        const STALE = 90000
-        const EVENT_STALE = 60000
+        const CHECK = 5000
+        const STALE = 60000
 
-        it('reconnects when no ping received within the stale window', () => {
+        it('reconnects when no message arrives within the stale window', () => {
             vi.useFakeTimers()
             const ws = connectAndGetWs()
-            // Advance past the stale window with no ping delivered.
+            // Advance past the stale window with nothing delivered.
             vi.advanceTimersByTime(STALE + CHECK)
             // Should have force-disconnected and scheduled a reconnect.
             expect(ws.readyState).toBe(MockWebSocket.CLOSED)
@@ -277,35 +293,24 @@ describe('useGlobalEvents', () => {
         it('resets staleness on each message (a single delayed message does not trip it)', () => {
             vi.useFakeTimers()
             const ws = connectAndGetWs()
-            // Advance near the event-stale threshold then deliver a ping — the timer restarts.
-            vi.advanceTimersByTime(EVENT_STALE - 1000)
+            // Advance near the stale threshold then deliver a ping — the timer restarts.
+            vi.advanceTimersByTime(STALE - 1000)
             ws.receive({ type: 'ping' })
             // Advancing past the original threshold must NOT disconnect now.
             vi.advanceTimersByTime(2000)
             expect(ws.readyState).toBe(MockWebSocket.OPEN)
             // But without further messages it eventually reconnects.
-            vi.advanceTimersByTime(EVENT_STALE + CHECK)
+            vi.advanceTimersByTime(MESSAGE_STALE + CHECK)
             expect(ws.readyState).toBe(MockWebSocket.CLOSED)
             vi.useRealTimers()
         })
 
-        it('reconnects when the socket is silently dead (no ping OR event) before the 90s ping window', () => {
+        it('treats real events as liveness — pings are not required', () => {
+            // The server pings every 30s, but an active session pushes events far
+            // more often. Both refresh the same timestamp, so a busy connection
+            // never looks stale just because a ping was missed.
             vi.useFakeTimers()
             const ws = connectAndGetWs()
-            // No messages at all. The event-stale window (60s) must trigger a
-            // reconnect BEFORE the ping-only window (90s) — closing the
-            // "socket alive but events silently dropped" stale-state gap.
-            // 60s + one 15s check interval puts us past EVENT_STALE but under STALE.
-            vi.advanceTimersByTime(EVENT_STALE + CHECK)
-            expect(ws.readyState).toBe(MockWebSocket.CLOSED)
-            vi.useRealTimers()
-        })
-
-        it('does not disconnect when real events keep arriving within the event-stale window', () => {
-            vi.useFakeTimers()
-            const ws = connectAndGetWs()
-            // Deliver real events every 15s (below the 60s event-stale window) —
-            // even without pings the connection is treated as alive.
             for (let i = 0; i < 5; i++) {
                 vi.advanceTimersByTime(CHECK)
                 ws.receive({ type: 'event', id: nextId(), event: 'session_update', data: { status: 'running' } })
@@ -793,6 +798,227 @@ describe('useGlobalEvents', () => {
         })
     })
 
+    // A WebSocket can sit in CONNECTING forever: the handshake was started while
+    // the app was being backgrounded (or the radio was still re-attaching), the
+    // OS froze the page, and the network stack dropped it without firing either
+    // onopen or onclose. Nothing else recovers from that state — the liveness
+    // tick used to only inspect OPEN sockets and onclose never runs — so the
+    // client stayed on "连接断开，正在重连…" until the app was force-quit and
+    // relaunched. Reported exactly as "back from background, never reconnects,
+    // only a restart fixes it".
+    describe('stuck handshake (CONNECTING forever)', () => {
+        it('abandons a handshake that neither opens nor closes, then retries', () => {
+            vi.useFakeTimers()
+            events.init()
+            const stuck = getLatestWs()
+            expect(stuck.readyState).toBe(MockWebSocket.CONNECTING)
+
+            // Nothing happens before the handshake bound elapses.
+            vi.advanceTimersByTime(HANDSHAKE_TIMEOUT - CHECK)
+            expect(stuck.readyState).toBe(MockWebSocket.CONNECTING)
+            expect(mockWsInstances).toHaveLength(1)
+
+            // Past it, the stuck socket is dropped and a retry is scheduled.
+            // (+ one extra tick: the bound is exclusive, so the tick that lands
+            // exactly on it must not act.)
+            vi.advanceTimersByTime(CHECK * 2)
+            expect(stuck.readyState).toBe(MockWebSocket.CLOSED)
+
+            // ...and the retry actually dials a new socket.
+            vi.advanceTimersByTime(RECONNECT_BASE_DELAY)
+            expect(mockWsInstances.length).toBeGreaterThan(1)
+            expect(events.wsStatus.value).toBe('reconnecting')
+
+            vi.useRealTimers()
+        })
+
+        it('leaves a handshake that opens in time alone', () => {
+            vi.useFakeTimers()
+            events.init()
+            const ws = getLatestWs()
+            vi.advanceTimersByTime(HANDSHAKE_TIMEOUT - CHECK)
+            ws.simulateOpen()
+
+            // The bound must not fire for a connection that opened.
+            vi.advanceTimersByTime(HANDSHAKE_TIMEOUT * 2)
+            expect(ws.readyState).toBe(MockWebSocket.OPEN)
+            expect(mockWsInstances).toHaveLength(1)
+            expect(events.wsStatus.value).toBe('connected')
+
+            vi.useRealTimers()
+        })
+
+        it('does not schedule a competing retry when the socket closed on its own', () => {
+            // onclose owns the retry in this case. If the liveness tick also
+            // fired it would dial a second, competing connection for the same
+            // client_id (which the server resolves by closing one of them).
+            vi.useFakeTimers()
+            events.init()
+            const ws = getLatestWs()
+            ws.close()
+            const afterClose = mockWsInstances.length
+
+            // The retry from onclose runs at baseDelay; the abandoned socket's
+            // own handshake bound would have expired at HANDSHAKE_TIMEOUT.
+            // Reaching that deadline must not have added a THIRD socket.
+            vi.advanceTimersByTime(HANDSHAKE_TIMEOUT)
+            expect(mockWsInstances.length).toBe(afterClose + 1)
+
+            vi.useRealTimers()
+        })
+
+        it('restarts a stuck handshake immediately on resume instead of waiting for the next tick', () => {
+            // The socket was dialled before the app went to the background and
+            // is still CONNECTING on return. The timers were frozen while the
+            // app was hidden (Android suspends the WebView), so the periodic
+            // tick never ran during that time — advancing the wall clock WITHOUT
+            // running timers is exactly that situation.
+            vi.useFakeTimers()
+            appModeState.value = true
+            events.init()
+            const zombie = getLatestWs()
+            expect(zombie.readyState).toBe(MockWebSocket.CONNECTING)
+
+            vi.setSystemTime(Date.now() + HANDSHAKE_TIMEOUT * 10)
+            expect(zombie.readyState).toBe(MockWebSocket.CONNECTING) // no tick ran
+
+            fireAppResume()
+
+            const fresh = getLatestWs()
+            expect(fresh).not.toBe(zombie)
+            expect(zombie.readyState).toBe(MockWebSocket.CLOSED)
+            expect(fresh.readyState).toBe(MockWebSocket.CONNECTING)
+
+            fresh.simulateOpen()
+            expect(events.wsStatus.value).toBe('connected')
+
+            vi.useRealTimers()
+        })
+
+        it('does not rebuild twice for one physical resume (double signal)', () => {
+            // Android can deliver BOTH the native resume hook and a
+            // visibilitychange for one resume, and those are two separate
+            // listener chains (useAppForeground's dedupe does not cover this
+            // pair). Rebuilding on the second call would close the socket the
+            // first one just dialled, and repeated pairs could keep the
+            // handshake from ever completing.
+            vi.useFakeTimers()
+            appModeState.value = true
+            events.init()
+            const first = getLatestWs()
+
+            fireAppResume()
+            const rebuilt = getLatestWs()
+            expect(rebuilt).not.toBe(first)
+
+            // Second signal of the same resume, immediately after.
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'visible', writable: true, configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+
+            expect(getLatestWs()).toBe(rebuilt)
+            expect(rebuilt.readyState).toBe(MockWebSocket.CONNECTING)
+
+            vi.useRealTimers()
+        })
+
+        it('rebuilds the socket on a mobile resume even when it still looks healthy', () => {
+            // The reported symptom: back from background, the app sat on
+            // "连接断开，正在重连…" for a long time. On a frozen Android page the
+            // socket usually reads OPEN while being dead at the far end, so any
+            // "does it look usable?" test answered yes and cost a full silence
+            // window before anything happened. The app path must rebuild
+            // unconditionally — nothing on that socket is worth preserving.
+            appModeState.value = true
+            events.init()
+            const ws = connectAndGetWs()
+            expect(events.wsStatus.value).toBe('connected')
+
+            fireAppResume()
+
+            const rebuilt = getLatestWs()
+            expect(rebuilt).not.toBe(ws)
+            expect(ws.readyState).toBe(MockWebSocket.CLOSED)
+
+            rebuilt.simulateOpen()
+            expect(events.wsStatus.value).toBe('connected')
+        })
+
+        it('redials quickly when the resume rebuild keeps failing', () => {
+            // The user is looking at the screen, so the retry ladder restarts at
+            // a much shorter base delay than the normal 2s. A failed resume dial
+            // must not leave the overlay up for seconds at a time.
+            vi.useFakeTimers()
+            appModeState.value = true
+            events.init()
+
+            fireAppResume()
+            const first = getLatestWs()
+            expect(first.readyState).toBe(MockWebSocket.CONNECTING)
+
+            first.onclose?.(new CloseEvent('close'))
+            vi.advanceTimersByTime(RESUME_BASE_DELAY)
+            expect(mockWsInstances.length).toBeGreaterThan(2)
+
+            vi.useRealTimers()
+        })
+
+        it('uses a short handshake bound for the resume dial', () => {
+            // A handshake started right after a resume is the one most likely to
+            // hang (the radio is still re-attaching). Waiting the normal 15s for
+            // it is the delay being complained about.
+            vi.useFakeTimers()
+            appModeState.value = true
+            events.init()
+
+            fireAppResume()
+            const dialled = getLatestWs()
+            expect(dialled.readyState).toBe(MockWebSocket.CONNECTING)
+
+            vi.advanceTimersByTime(RESUME_HANDSHAKE_TIMEOUT + RESUME_CHECK)
+            expect(dialled.readyState).toBe(MockWebSocket.CLOSED)
+
+            vi.useRealTimers()
+        })
+
+        it('goes back to the normal cadence once the rebuilt socket opens', () => {
+            // The tighter pacing is only for the resume window; a later
+            // mid-session blip must use the ordinary handshake bound.
+            vi.useFakeTimers()
+            appModeState.value = true
+            events.init()
+
+            fireAppResume()
+            getLatestWs().simulateOpen()
+
+            events.connect()
+            const normal = getLatestWs()
+            vi.advanceTimersByTime(RESUME_HANDSHAKE_TIMEOUT + RESUME_CHECK * 2)
+            expect(normal.readyState).toBe(MockWebSocket.CONNECTING)
+
+            vi.useRealTimers()
+        })
+
+        it('replaces a socket that is OPEN but silent past the stale window on resume', () => {
+            // The half-open case: the client kept the socket across the freeze
+            // while the server already dropped it. Timers were frozen too, so
+            // only the resume path can notice — move the clock without ticking.
+            vi.useFakeTimers()
+            events.init()
+            const ws = connectAndGetWs()
+
+            vi.setSystemTime(Date.now() + MESSAGE_STALE * 2)
+            expect(ws.readyState).toBe(MockWebSocket.OPEN)
+
+            fireAppResume()
+
+            expect(getLatestWs()).not.toBe(ws)
+
+            vi.useRealTimers()
+        })
+    })
+
     describe('wsStatus computed', () => {
         it('returns "connected" when connected', () => {
             events.init()
@@ -993,7 +1219,7 @@ describe('useGlobalEvents', () => {
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
         })
 
-        it('shows browser notification for permission_pending with tool name', () => {
+        it('shows browser notification for permission_pending with the localized tool name', () => {
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
 
@@ -1006,9 +1232,11 @@ describe('useGlobalEvents', () => {
             })
 
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            // i18n is mocked to echo the key, so this proves the body went
+            // through the name table instead of rendering the raw wire name.
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
                 'chat.push.actionRequired',
-                expect.objectContaining({ body: 'Bash' })
+                expect.objectContaining({ body: 'tool.name.bash' })
             )
         })
 

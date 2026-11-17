@@ -6,6 +6,7 @@
          icon-button box, and their length would decide how many buttons fold.
          Same split as the git history toolbar's branch picker. -->
     <div v-if="!searchOpen" class="mail-bar__top">
+      <Mail :size="14" class="panel-header-icon" />
       <!-- Two pickers, deliberately not drawn as two equal boxes. The account
            is switched rarely, so it collapses to a small avatar; the folder is
            where the user is, so it gets the name, its unread count and the
@@ -20,7 +21,7 @@
         >
           <template #trigger>
             <span class="mail-acct">
-              <span class="mail-acct__avatar">{{ currentAccountInitial }}</span>
+              <span class="mail-acct__avatar" :style="{ '--mail-hue': mailHue(currentAccountEmail) }">{{ currentAccountInitial }}</span>
               <ChevronDown v-if="accounts.length > 1" class="mail-acct__caret" />
             </span>
           </template>
@@ -36,7 +37,7 @@
                 :title="a.email"
                 @click="chooseAccount(a.id)"
               >
-                <span class="mail-acct__avatar mail-acct__avatar--sm">{{ accountInitial(a) }}</span>
+                <span class="mail-acct__avatar mail-acct__avatar--sm" :style="{ '--mail-hue': mailHue(a.email) }">{{ accountInitial(a) }}</span>
                 <span class="mail-menu__who">
                   <span class="mail-menu__name">{{ a.email }}</span>
                   <span v-if="a.name && a.name !== a.email" class="mail-menu__meta">{{ a.name }}</span>
@@ -60,7 +61,7 @@
         >
           <template #trigger>
             <span class="mail-loc">
-              <component :is="currentFolderIcon" class="mail-loc__icon" />
+              <component :is="currentFolderIcon" class="mail-loc__icon" :class="folderTint(currentFolder)" />
               <span class="mail-loc__name">{{ currentFolderName }}</span>
               <span v-if="currentUnread > 0" class="mail-loc__count">{{ unreadLabel(currentUnread) }}</span>
               <ChevronDown class="mail-loc__caret" />
@@ -78,7 +79,7 @@
                 :title="folderLabel(f)"
                 @click="emit('select-folder', f.id)"
               >
-                <component :is="folderIcon(f)" class="mail-menu__fic" />
+                <component :is="folderIcon(f)" class="mail-menu__fic" :class="folderTint(f)" />
                 <span class="mail-menu__name">{{ folderLabel(f) }}</span>
                 <span v-if="f.unread > 0" class="mail-menu__count">{{ unreadLabel(f.unread) }}</span>
                 <Check v-if="f.id === folderId" class="mail-menu__check" />
@@ -135,6 +136,7 @@
          hidden filter is a lie (the list would stay filtered with nothing on
          screen saying why). Same rule as the git history search. -->
     <div v-else class="mail-bar__search-row" @keydown.esc="closeSearch">
+      <Mail :size="14" class="panel-header-icon" />
       <SearchInput
         ref="searchRef"
         class="mail-bar__search"
@@ -175,6 +177,7 @@ import {
   FileText,
   Folder,
   Inbox,
+  Mail,
   MailCheck,
   MailX,
   PenLine,
@@ -185,6 +188,7 @@ import {
 } from 'lucide-vue-next'
 import MenuSelect from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import { mailHue } from '@/utils/mailColors'
 import type { MailAccount, MailFolder } from '@/utils/mailTypes'
 
 const props = defineProps<{
@@ -276,6 +280,18 @@ function folderIcon(f: MailFolder): Component {
   return FOLDER_ICON[f.specialUse] ?? Folder
 }
 
+/**
+ * Semantic colour for a folder icon.
+ *
+ * The icon is what makes a mailbox scannable ("where is the bin"), and colour
+ * does that job before the label is read. Only the six well-known folders get a
+ * hue; a custom folder stays neutral so the special ones keep their meaning
+ * instead of everything being colourful.
+ */
+function folderTint(f: MailFolder | null): string {
+  return f && f.specialUse ? `is-${f.specialUse}` : 'is-plain'
+}
+
 const currentFolder = computed(() => props.folders.find((f) => f.id === props.folderId) ?? null)
 const currentFolderName = computed(() =>
   currentFolder.value ? folderLabel(currentFolder.value) : t('mail.bar.folder'),
@@ -344,16 +360,23 @@ function onSearchInput(value: string): void {
 .mail-bar {
   display: flex;
   flex-direction: column;
-  padding: var(--space-2, 4px) var(--space-3, 6px);
+  /* One row, same geometry as the reader / composer heads. The shared
+     panel-header rule also pins height and strips vertical padding, so the
+     wrapper cannot be taller than the row it contains (it used to be
+     26 + 2 × 4 = 34dp on narrow screens). */
+  height: var(--header-height);
+  padding: 0 var(--space-3, 6px);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 /* Both states are one row of the same height, so swapping the toolbar for the
-   search field does not move the list below. */
+   search field does not move the list below. The row fills the wrapper's
+   header height. */
 .mail-bar__top,
 .mail-bar__search-row {
   display: flex;
   align-items: center;
+  flex: 1 1 auto;
   min-height: calc(26 * var(--dp));
   gap: var(--space-4);
 }
@@ -382,8 +405,13 @@ function onSearchInput(value: string): void {
   width: calc(22 * var(--dp));
   height: calc(22 * var(--dp));
   border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--accent-color) 16%, transparent);
-  color: var(--accent-color);
+  /* Outlined, not filled: the address may start with a digit ("942980741@…"),
+     and a filled circle around a digit is exactly what the unread badges look
+     like — the account chip must not read as one. A 1px ring in the same hue
+     says "identity" instead. */
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--mail-hue, var(--accent-color)) 45%, transparent);
+  color: var(--mail-hue, var(--accent-color));
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   line-height: 1;
@@ -428,6 +456,14 @@ function onSearchInput(value: string): void {
   color: var(--text-secondary);
   flex: none;
 }
+/* Well-known folders carry a hue; custom ones stay neutral so the six special
+   folders keep meaning something. Tokens only — every theme supplies them. */
+.mail-loc__icon.is-inbox { color: var(--color-info); }
+.mail-loc__icon.is-sent { color: var(--color-green); }
+.mail-loc__icon.is-drafts { color: var(--color-yellow); }
+.mail-loc__icon.is-trash { color: var(--color-red); }
+.mail-loc__icon.is-junk { color: var(--color-orange); }
+.mail-loc__icon.is-archive { color: var(--color-purple); }
 .mail-loc__name {
   min-width: 0;
   overflow: hidden;
@@ -532,9 +568,15 @@ function onSearchInput(value: string): void {
   color: var(--text-secondary);
   flex: none;
 }
-.mail-menu__row.is-current .mail-menu__fic {
-  color: var(--accent-color);
-}
+/* Same semantic hues as the trigger. Deliberately NOT overridden by
+   `.is-current`: the selected row's icon keeps its colour and only its name
+   turns accent, so the menu stays a colour map of the mailbox. */
+.mail-menu__fic.is-inbox { color: var(--color-info); }
+.mail-menu__fic.is-sent { color: var(--color-green); }
+.mail-menu__fic.is-drafts { color: var(--color-yellow); }
+.mail-menu__fic.is-trash { color: var(--color-red); }
+.mail-menu__fic.is-junk { color: var(--color-orange); }
+.mail-menu__fic.is-archive { color: var(--color-purple); }
 .mail-menu__name {
   min-width: 0;
   overflow: hidden;

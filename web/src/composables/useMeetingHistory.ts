@@ -525,6 +525,28 @@ export function useMeetingHistory() {
   }
 
   /**
+   * Delete every meeting of this project.
+   *
+   * The server skips what it cannot delete right now (a meeting still being
+   * published, one whose minutes are generating) and reports the counts, so the
+   * caller can say "N deleted, M kept" instead of pretending the whole list
+   * went. The local list is reloaded rather than emptied, because those skipped
+   * rows are still there.
+   */
+  async function clearAll(): Promise<{ ok: boolean; deleted: number; skipped: number }> {
+    try {
+      const resp = await fetch('/api/live-share/notes/sessions/all', { method: 'DELETE' })
+      if (!resp.ok) return { ok: false, deleted: 0, skipped: 0 }
+      const data = (await resp.json()) as { deleted?: number; skipped?: number }
+      await load()
+      return { ok: true, deleted: data.deleted ?? 0, skipped: data.skipped ?? 0 }
+    } catch (e) {
+      appLog.w(TAG, 'clear all failed', e)
+      return { ok: false, deleted: 0, skipped: 0 }
+    }
+  }
+
+  /**
    * Build the quote payload for a meeting, fetching its content first.
    *
    * The drag itself carries only the identity: `dragstart` must write the
@@ -555,8 +577,10 @@ export function useMeetingHistory() {
       startLine: 0,
       endLine: 0,
       sourceKind: 'meeting',
-      meetingToken: token,
-      ...(sourceDir ? { sourceDir } : {}),
+      locators: {
+        meeting: token,
+        ...(sourceDir ? { dir: sourceDir } : {}),
+      },
     }
   }
 
@@ -576,6 +600,7 @@ export function useMeetingHistory() {
     cancelRegeneration,
     importFile,
     remove,
+    clearAll,
     rename,
     buildQuote,
   }

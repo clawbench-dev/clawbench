@@ -20,6 +20,8 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-message/charset"
 	"github.com/jhillyerd/enmime"
+
+	"clawbench/internal/version"
 )
 
 const (
@@ -31,6 +33,15 @@ const (
 	// second full timeout.
 	probeTimeout = 5 * time.Second
 )
+
+// clientID is what the client declares to servers that ask (RFC 2971). The
+// version matters: 163 uses the declaration to decide whether a client is
+// "safe", and an empty one is not accepted.
+var clientID = imap.IDData{
+	Name:    "ClawBench",
+	Version: version.Get(),
+	Vendor:  "ClawBench",
+}
 
 // imapClient wraps imapclient.Client with a deadline-aware connection.
 //
@@ -108,6 +119,15 @@ func (m *imapClient) connect(ctx context.Context) error {
 	if err := c.Login(m.acc.Username, m.acc.Password).Wait(); err != nil {
 		_ = c.Close()
 		return classify("login", err)
+	}
+	// 163/126 answer every SELECT with "NO SELECT Unsafe Login" until the
+	// client has introduced itself (RFC 2971), which makes the mailbox look
+	// connected but unable to receive anything. The ID extension is optional,
+	// so ask only servers that advertise it and ignore a refusal: a server
+	// that does not implement ID answers BAD and nothing is lost.
+	_ = conn.SetDeadline(time.Now().Add(opTimeout))
+	if caps := c.Caps(); caps.Has(imap.CapID) {
+		_, _ = c.ID(&clientID).Wait()
 	}
 	m.c = c
 	m.conn = conn
@@ -285,6 +305,14 @@ func (m *imapClient) uidValidityViaExamine(ctx context.Context, folder string) u
 	m.uidNext = uint32(data.UIDNext)
 	m.numMessages = data.NumMessages
 	return data.UIDValidity
+}
+
+// OpenFolder opens a mailbox for reading. The connection probe uses it to
+// prove the server actually lets us in: LOGIN and LIST succeed on providers
+// that then refuse SELECT.
+func (m *imapClient) OpenFolder(ctx context.Context, folder string) error {
+	_, err := m.selectFolder(ctx, folder)
+	return err
 }
 
 func (m *imapClient) selectFolder(ctx context.Context, folder string) (*imap.SelectData, error) {

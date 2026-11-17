@@ -110,6 +110,8 @@ CREATE TABLE IF NOT EXISTS agents (
 	project_id INTEGER DEFAULT NULL,  -- NULL = global; value = project-only (see model.Agent.ProjectID)
 	provider_id INTEGER DEFAULT NULL,  -- NULL = use the CLI's own config; value = row in providers
 	mcp_servers TEXT NOT NULL DEFAULT '{"mode":"all","names":[]}',  -- per-agent MCP policy (see model.MCPServerPolicy)
+	tool_policy TEXT NOT NULL DEFAULT '{"allow":[]}',  -- tool grant for the built-in backend (see model.ToolPolicy); empty = no tools
+	skip_project_context INTEGER NOT NULL DEFAULT 0,  -- 1 = do not inject AGENTS.md/CLAUDE.md (built-in backend only)
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -126,7 +128,8 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve, disabled, project_id,
-			provider_id, thinking_effort_by_model, mcp_servers
+			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
+			skip_project_context
 		FROM agents ORDER BY id
 	`)
 	if err != nil {
@@ -137,8 +140,8 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 	var agents []*model.Agent
 	for rows.Next() {
 		a := &model.Agent{}
-		var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string
-		var modelsAutoDetected, autoApprove, disabled int
+		var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON, toolPolicyJSON string
+		var modelsAutoDetected, autoApprove, disabled, skipProjectContext int
 		var projectID, providerID sql.NullInt64
 
 		err := rows.Scan(
@@ -148,7 +151,8 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.CustomSystemPrompt, &a.Avatar, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
 			&a.Transport, &a.AcpCommand, &autoApprove, &disabled, &projectID,
-			&providerID, &effortByModelJSON, &mcpServersJSON,
+			&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON,
+			&skipProjectContext,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
@@ -157,6 +161,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		a.ModelsAutoDetected = modelsAutoDetected == 1
 		a.AutoApprove = autoApprove == 1
 		a.Disabled = disabled == 1
+		a.SkipProjectContext = skipProjectContext == 1
 		if projectID.Valid {
 			id := projectID.Int64
 			a.ProjectID = &id
@@ -175,6 +180,8 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 				a.MCPServers = policy
 			}
 		}
+		// Unreadable tool policy degrades to "no tools", never to "all tools".
+		a.ToolPolicy = model.DecodeToolPolicy(toolPolicyJSON)
 
 		agents = append(agents, a)
 	}
@@ -232,8 +239,9 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve, disabled, project_id,
-			provider_id, thinking_effort_by_model)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
+			skip_project_context)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -256,6 +264,9 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			project_id = excluded.project_id,
 			provider_id = excluded.provider_id,
 			thinking_effort_by_model = excluded.thinking_effort_by_model,
+			mcp_servers = excluded.mcp_servers,
+			tool_policy = excluded.tool_policy,
+			skip_project_context = excluded.skip_project_context,
 			updated_at = CURRENT_TIMESTAMP
 	`, agentInsertArgs(agent, cols)...)
 	if err != nil {
@@ -264,12 +275,14 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 	return nil
 }
 
-// agentJSONColumns holds the three JSON-encoded agent columns as the exact
-// strings to bind.
+// agentJSONColumns holds the JSON-encoded agent columns as the exact strings to
+// bind.
 type agentJSONColumns struct {
 	models        string
 	levels        string
 	effortByModel string
+	mcpServers    string
+	toolPolicy    string
 }
 
 // encodeAgentJSONColumns marshals the JSON-backed agent columns and normalizes
@@ -297,10 +310,27 @@ func encodeAgentJSONColumns(agent *model.Agent) (agentJSONColumns, error) {
 	if string(effortByModelJSON) == jsonNull {
 		effortByModelJSON = []byte("{}")
 	}
+
+	// MCP and tool policies are normalized before encoding so the row never
+	// stores a shape the reader would have to repair. Both are encoded here
+	// (rather than at the call site) because SaveAgent previously omitted
+	// mcp_servers from its INSERT entirely — a field that is easy to add and
+	// silently dropped is exactly the bug this struct exists to prevent.
+	mcpServers, err := encodeMCPPolicy(agent.MCPServers)
+	if err != nil {
+		return agentJSONColumns{}, err
+	}
+	toolPolicy, err := model.EncodeToolPolicy(agent.ToolPolicy)
+	if err != nil {
+		return agentJSONColumns{}, err
+	}
+
 	return agentJSONColumns{
 		models:        string(modelsJSON),
 		levels:        string(levelsJSON),
 		effortByModel: string(effortByModelJSON),
+		mcpServers:    mcpServers,
+		toolPolicy:    toolPolicy,
 	}, nil
 }
 
@@ -314,6 +344,7 @@ func agentInsertArgs(agent *model.Agent, cols agentJSONColumns) []any {
 		agent.SortOrder,
 		agentTransportForSave(agent), agent.AcpCommand, boolToInt(agent.AutoApprove), boolToInt(agent.Disabled),
 		nullableIDArg(agent.ProjectID), nullableIDArg(agent.ProviderID), cols.effortByModel,
+		cols.mcpServers, cols.toolPolicy, boolToInt(agent.SkipProjectContext),
 	}
 }
 
@@ -522,6 +553,12 @@ type AgentPatch struct {
 	// MCPServers replaces the agent's MCP enablement policy. Stored as JSON;
 	// only the policy (mode + names), never the server definitions.
 	MCPServers *model.MCPServerPolicy
+	// ToolPolicy replaces the agent's tool grant (built-in backend only).
+	ToolPolicy *model.ToolPolicy
+	// SkipProjectContext turns AGENTS.md / CLAUDE.md injection off (or back on)
+	// for this agent. Built-in backend only — external backends read those
+	// files themselves.
+	SkipProjectContext *bool
 	// ProjectID scopes the agent to that project when non-nil.
 	ProjectID *int64
 	// ClearProjectID sets project_id to NULL (global). A *int64 alone cannot
@@ -610,12 +647,25 @@ func buildAgentSetClauses(id string, patch AgentPatch) ([]string, []any, error) 
 	if patch.Disabled != nil {
 		addSet("disabled", boolToInt(*patch.Disabled))
 	}
+	if patch.SkipProjectContext != nil {
+		addSet("skip_project_context", boolToInt(*patch.SkipProjectContext))
+	}
 	if patch.MCPServers != nil {
 		encoded, err := encodeMCPPolicy(*patch.MCPServers)
 		if err != nil {
 			return nil, nil, err
 		}
 		addSet("mcp_servers", encoded)
+	}
+	if patch.ToolPolicy != nil {
+		if err := model.ValidateToolPolicy(*patch.ToolPolicy); err != nil {
+			return nil, nil, err
+		}
+		encoded, err := model.EncodeToolPolicy(*patch.ToolPolicy)
+		if err != nil {
+			return nil, nil, err
+		}
+		addSet("tool_policy", encoded)
 	}
 	setClauses, args = applyProjectScopeSet(patch, setClauses, args)
 	setClauses, args = applyProviderSet(patch, setClauses, args)

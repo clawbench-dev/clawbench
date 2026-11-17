@@ -67,6 +67,8 @@ vi.mock('@/utils/download.ts', async (importOriginal) => ({
 // defineAsyncComponent (a delay timer would leak in the test env), so instead
 // of module-mocking them they are stubbed per-mount via VTU's `stubs` option —
 // VTU replaces the async wrapper type before its loader ever runs.
+/** Records "fit the whole diagram" calls made from the share topbar. */
+const drawioFitCalls: boolean[] = []
 const asyncComponentStubs = {
   CodeMirrorViewer: {
     name: 'CodeMirrorViewer',
@@ -82,11 +84,18 @@ const asyncComponentStubs = {
     props: { file: Object, readonly: { type: Boolean, default: false } },
     template: '<div class="excalidrawviewer-stub" :data-readonly="String(readonly)" />',
   },
-  // draw.io editor host. Also mounted read-only on the share page.
+  // draw.io editor host. Also mounted read-only on the share page. Records the
+  // "fit the whole diagram" calls the topbar button makes (the real component
+  // exposes it as `fitToScreen`).
   DrawioViewer: {
     name: 'DrawioViewer',
     props: { file: Object, readonly: { type: Boolean, default: false } },
     template: '<div class="drawioviewer-stub" :data-readonly="String(readonly)" />',
+    methods: {
+      fitToScreen() {
+        drawioFitCalls.push(true)
+      },
+    },
   },
 }
 
@@ -102,12 +111,16 @@ const i18n = createI18n({
         loading: 'Loading...',
         download: 'Download original',
         toggleToc: 'Toggle table of contents',
+        fitDiagram: 'Fit diagram to screen',
         toc: 'Contents',
         invalidTitle: 'Cannot view this share',
         invalidUrl: 'Invalid link format',
         notFound: 'Not found',
         noPreview: 'No preview',
         tooLarge: 'Too large to preview',
+        noPreviewNoDownload: 'No preview, and downloads are off',
+        tooLargeNoDownload: 'Too large to preview, and downloads are off',
+        fromProject: 'From {name}',
         renderedView: 'Rendered preview',
         sourceView: 'View source',
         back: 'Back',
@@ -126,6 +139,7 @@ const mountedWrappers: Array<{ unmount: () => void }> = []
 beforeEach(() => {
   window.history.replaceState({}, '', '/share/tokShareTest')
   setShareToken(null)
+  drawioFitCalls.length = 0
   globalThis.fetch = vi.fn().mockResolvedValue({
     ok: true,
     json: async () => ({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nworld' }),
@@ -141,7 +155,8 @@ afterEach(() => {
 
 async function mountShare(
   file: Record<string, unknown>,
-  fetchImpl?: (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>
+  fetchImpl?: (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>,
+  props: Record<string, unknown> = {},
 ) {
   ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string | URL | Request) => {
     if (fetchImpl) return fetchImpl(String(url))
@@ -151,6 +166,7 @@ async function mountShare(
     }
   })
   const wrapper = mount(ShareView, {
+    props,
     global: { plugins: [i18n], stubs: asyncComponentStubs },
   })
   mountedWrappers.push(wrapper)
@@ -658,12 +674,17 @@ describe('ShareView — in-place navigation to referenced files', () => {
     await flushPromises()
 
     mockDownloadUrlWithProgress.mockClear()
-    await wrapper.find('button.share-btn--download').trigger('click')
+    // A link, so the URL is copyable from the browser's context menu.
+    const link = wrapper.find('a.share-btn--download')
+    await link.trigger('click')
 
     expect(mockDownloadUrlWithProgress).toHaveBeenCalledTimes(1)
     const [url] = mockDownloadUrlWithProgress.mock.calls[0]
     expect(url).toContain('/download?path=')
     expect(decodeURIComponent(url)).toContain(LINKED.path)
+    // The href must be the same URL the click downloads, or "copy link
+    // address" would hand out something else.
+    expect(String(link.attributes('href'))).toBe(String(url))
   })
 
   it('ignores a share-open-file event for the file already on screen', async () => {
@@ -772,6 +793,35 @@ describe('ShareView — image blocks + narrow TOC drawer', () => {
 // The backend answers 200 + tooLarge (empty content) for files past its inline
 // cap instead of rejecting the link — every file is shareable at any size.
 // The SPA must degrade to the download card, not report a broken link.
+describe('ShareView — draw.io fit button', () => {
+  it('asks the canvas to re-fit when the topbar action is pressed', async () => {
+    // A shared diagram is read-only and the canvas zooms freely; on a phone the
+    // topbar button is the only way back to the whole picture (draw.io's own
+    // fit control is hover-only, so it never appears on touch).
+    const wrapper = await mountShare({
+      name: 'flow.drawio',
+      path: '/repo/flow.drawio',
+      content: '<mxfile/>',
+      subtype: 'drawio',
+    })
+    expect(wrapper.find('.drawioviewer-stub').exists()).toBe(true)
+
+    const fit = wrapper.find('[data-action="share-fit-diagram"]')
+    expect(fit.exists()).toBe(true)
+    expect(fit.attributes('title')).toBe('Fit diagram to screen')
+
+    await fit.trigger('click')
+    expect(drawioFitCalls.length).toBe(1)
+  })
+
+  it('does not offer the fit action for files without a diagram', async () => {
+    const wrapper = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
+    expect(wrapper.find('[data-action="share-fit-diagram"]').exists()).toBe(false)
+    await mountShare({ name: 'pic.png', path: '/repo/pic.png', content: '' })
+    expect(wrapper.find('[data-action="share-fit-diagram"]').exists()).toBe(false)
+  })
+})
+
 describe('ShareView — over-cap files fall back to download', () => {
   it('shows the download card with the too-large notice, not an invalid-link error', async () => {
     const wrapper = await mountShare({
@@ -790,11 +840,15 @@ describe('ShareView — over-cap files fall back to download', () => {
     const unsupported = wrapper.find('.share-unsupported')
     expect(unsupported.exists()).toBe(true)
     expect(unsupported.text()).toContain('Too large to preview')
-    // A button, not an anchor: the download must route through the progress
-    // helper rather than the browser's native download mechanism.
-    const btn = unsupported.find('button.share-download-btn')
-    expect(btn.exists()).toBe(true)
-    expect(unsupported.find('a.share-download-btn').exists()).toBe(false)
+    // A link carrying the direct URL (so right-click → "copy link address"
+    // works), but the click is still routed through the progress helper rather
+    // than the browser's native download mechanism.
+    const link = unsupported.find('a.share-download-btn')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toContain('/download')
+    mockDownloadUrlWithProgress.mockClear()
+    await link.trigger('click')
+    expect(mockDownloadUrlWithProgress).toHaveBeenCalledTimes(1)
   })
 
   it('does not render an empty markdown preview for an over-cap markdown file', async () => {
@@ -1004,5 +1058,52 @@ describe('ShareView — preview parity with the in-app file viewer', () => {
     for (const flag of fileFlagsIn(appSource)) {
       expect(Object.keys(PREVIEW_FLAGS), `register file.${flag} in PREVIEW_FLAGS and support it in ShareView.vue`).toContain(flag)
     }
+  })
+})
+
+
+// ── Share rules from the server (share.allow_download / show_project_name) ──
+// The share SPA reads both from /api/share/{token}/meta. The download endpoint
+// answers 403 when the rule forbids it, so the page must not offer a button
+// that can only fail; and "download it to view" copy would be a lie.
+describe('ShareView — share rules', () => {
+  const md = { name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' }
+  const tooLarge = { name: 'huge.bin', path: '/repo/huge.bin', content: '', tooLarge: true }
+
+  it('offers the download link by default', async () => {
+    const wrapper = await mountShare(md)
+    expect(wrapper.find('.share-btn--download').exists()).toBe(true)
+  })
+
+  it('hides the topbar download link when downloads are off', async () => {
+    const wrapper = await mountShare(md, undefined, { allowDownload: false })
+    expect(wrapper.find('.share-btn--download').exists()).toBe(false)
+    // The rest of the topbar is untouched.
+    expect(wrapper.find('.share-logo').exists()).toBe(true)
+  })
+
+  it('hides the fallback download button and drops the "download it" copy', async () => {
+    const wrapper = await mountShare(tooLarge, undefined, { allowDownload: false })
+    const unsupported = wrapper.find('.share-unsupported')
+    expect(unsupported.exists()).toBe(true)
+    expect(unsupported.find('a.share-download-btn').exists()).toBe(false)
+    expect(unsupported.text()).toContain('downloads are off')
+  })
+
+  it('keeps the fallback download button when downloads are allowed', async () => {
+    const wrapper = await mountShare(tooLarge)
+    expect(wrapper.find('.share-unsupported a.share-download-btn').exists()).toBe(true)
+  })
+
+  it('names the source project when the server provides it', async () => {
+    const wrapper = await mountShare(md, undefined, { projectName: 'clawbench' })
+    const chip = wrapper.find('[data-role="share-project"]')
+    expect(chip.exists()).toBe(true)
+    expect(chip.text()).toContain('From clawbench')
+  })
+
+  it('renders no project chip when the server hides the name', async () => {
+    const wrapper = await mountShare(md)
+    expect(wrapper.find('[data-role="share-project"]').exists()).toBe(false)
   })
 })

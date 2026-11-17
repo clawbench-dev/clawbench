@@ -14,13 +14,13 @@
           <i></i><i></i><i></i><i></i><i></i>
         </span>
         <LoadingIndicator v-else-if="voiceState === 'transcribing'" size="sm" inline />
-        <Check v-else :size="13" />
         <!-- While recording: just the timer. Where the text is going is already
              on screen (it is being written into the field under this pill), so
-             naming the field was pure noise. -->
+             naming the field was pure noise. Once the words have landed the
+             pill is gone — a "已写入" badge would only repeat what the field
+             already shows. -->
         <span v-if="voiceState === 'recording'" class="voice-pill-hint">{{ elapsedText }}</span>
         <span v-else-if="voiceState === 'transcribing'" class="voice-pill-text">{{ t('chat.voice.transcribing') }}</span>
-        <span v-else class="voice-pill-text">{{ t('chat.voice.written') }}</span>
       </div>
     </Transition>
 
@@ -104,7 +104,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Mic, X } from 'lucide-vue-next'
+import { Mic, X } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useVoiceInput } from '@/composables/useVoiceInput'
@@ -130,6 +130,7 @@ const {
   cancel,
   discardDraft: discardVoiceDraft,
   shortcutKey,
+  targetRect,
 } = useVoiceInput()
 
 /* ── elapsed timer (only while recording) ─────────────────────────── */
@@ -160,7 +161,10 @@ watch(voiceState, (s) => {
 const pillEl = ref<HTMLElement | null>(null)
 const pillPos = ref({ top: 0, left: 0 })
 
-const pillVisible = computed(() => !!targetEl.value && (voiceMode.value === 'field' || voiceState.value !== 'idle'))
+// Only while a take is actually running (recording / transcribing). The pill
+// used to linger with a "已写入" badge afterwards; that is gone, so an idle
+// state with a target left over never shows anything.
+const pillVisible = computed(() => !!targetEl.value && voiceState.value !== 'idle')
 const pillStyle = computed(() => ({ top: `${pillPos.value.top}px`, left: `${pillPos.value.left}px` }))
 
 /**
@@ -174,12 +178,18 @@ function placePill() {
   // Always just above the field itself — for the chat composer that means it
   // floats over the toolbar row, which is fine: it is the closest spot to the
   // line being written, and the pill never takes clicks.
-  const r = el.getBoundingClientRect()
+  //
+  // Editors that know where the caret is (CodeMirror) report that line instead
+  // of their whole box: a file editor fills the screen, and its top edge is
+  // nowhere near the text being written.
+  const r = targetRect() ?? el.getBoundingClientRect()
   const width = pillEl.value?.offsetWidth || 120
   const height = pillEl.value?.offsetHeight || 34
   const gap = 6
   let top = r.top - height - gap
-  if (top < 8) top = r.bottom + gap
+  // No room above (or the anchor is taller than the viewport): sit below it,
+  // but never past the bottom edge — an off-screen status badge is no badge.
+  if (top < 8) top = Math.min(r.bottom + gap, window.innerHeight - height - 8)
   const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8))
   pillPos.value = { top, left }
 }
@@ -287,15 +297,26 @@ function placeFab() {
   fabPos.value = { top, right: 12 }
 }
 
+/**
+ * Focus can land on a node *inside* a writable surface — CodeMirror focuses a
+ * contenteditable `.cm-content`, not the editor box. Resolving the target once
+ * here keeps the mic anchored to the editor and stops the per-scroll
+ * positioning pass from rebuilding a target (which reads the whole document).
+ */
+function focusAnchor(el: HTMLElement): HTMLElement {
+  return createVoiceTarget(el)?.el ?? el
+}
+
 function onFocusIn(e: FocusEvent) {
-  focusEl.value = e.target as HTMLElement
+  focusEl.value = focusAnchor(e.target as HTMLElement)
   placeFab()
 }
 function onFocusOut() {
   // activeElement is already the next element by the time this fires, but give
   // the browser a tick for the case where focus lands on a freshly mounted node.
   window.setTimeout(() => {
-    focusEl.value = (document.activeElement as HTMLElement | null) ?? null
+    const next = (document.activeElement as HTMLElement | null) ?? null
+    focusEl.value = next ? focusAnchor(next) : null
     placeFab()
   }, 0)
 }
@@ -342,7 +363,12 @@ function cleanupFabPointer() {
 
 function onFabUp() {
   cleanupFabPointer()
-  if (voiceState.value === 'recording') void stop()
+  // Release ALWAYS ends the take, not just when the state already says
+  // 'recording'. The microphone takes a moment to open, and a press released
+  // inside that window used to leave a take that started after the finger was
+  // gone — recording forever, with nothing left on screen to stop it. stop()
+  // records the release, and begin() aborts as soon as the microphone arrives.
+  void stop()
 }
 function onFabCancel() {
   cleanupFabPointer()

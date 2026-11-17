@@ -8,6 +8,12 @@
         <span v-if="toolDone && toolDuration > 0" class="tool-detail-duration">{{ formatDuration(toolDuration) }}</span>
         <LoadingIndicator v-if="!toolDone" size="sm" inline />
         <XCircle v-else-if="toolStatus === 'error'" :size="14" color="#ef4444" class="tool-detail-status" />
+        <!-- Closed without a result: the turn ended (or the tool went silent)
+             while it was running. Not a success, not an error. -->
+        <span v-else-if="toolStatus === 'interrupted'" class="tool-detail-interrupted">
+          {{ $t('chat.contentBlocks.toolInterrupted') }}
+          <CircleSlash :size="14" color="#f59e0b" />
+        </span>
         <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-detail-status" />
       </div>
     </template>
@@ -18,6 +24,9 @@
         <div class="tool-output-header">
           <span class="tool-output-label">output</span>
           <span v-if="toolStatus === 'error'" class="tool-output-status tool-output-error">error</span>
+          <!-- Partial output from a tool the turn stopped waiting for is not an
+               "ok" result either. -->
+          <span v-else-if="toolStatus === 'interrupted'" class="tool-output-status tool-output-interrupted">{{ $t('chat.contentBlocks.toolInterrupted') }}</span>
           <span v-else class="tool-output-status tool-output-success">ok</span>
           <span class="tool-output-header-actions">
             <button class="tool-content-copy-btn" data-action="copy" data-content-selector=".tool-output-body" type="button" :title="$t('common.copy')" :aria-label="$t('common.copy')" v-html="COPY_ICON_SVG" />
@@ -40,11 +49,11 @@
 
 <script setup>
 import { computed, ref, onMounted, onUpdated, nextTick, inject } from 'vue'
-import { CheckCircle2, XCircle } from 'lucide-vue-next'
+import { CheckCircle2, CircleSlash, XCircle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
-import { getToolIcon, isAgentFamilyToolName, toolDisplayName } from '@/utils/icons'
+import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { formatDuration } from '@/utils/format.ts'
 import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICON_SVG, updateAskSubmitState, restoreAskStatesInContainer, handleAskSupplementaryInput, handleAskSubmitShortcut } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
@@ -75,11 +84,9 @@ const displayName = computed(() => {
     const raw = props.toolSubagentType
     return raw.charAt(0).toUpperCase() + raw.slice(1)
   }
-  // OpenCode 2.x stores the delegation tool as "subagent"; show the Agent
-  // label instead of the raw wire name when no sub-agent type is available.
-  if (isAgentFamilyToolName(props.toolName)) return 'Agent'
-  // Same title the card strip shows, so opening a task tool's drawer does not
-  // fall back to the bare wire name ("TaskOutput").
+  // OpenCode 2.x stores the delegation tool as "subagent"; show the localized
+  // Agent label instead of the raw wire name when no sub-agent type is available.
+  // (toolDisplayName applies the same agent-family rule as the card strip.)
   return toolDisplayName(props.toolName)
 })
 
@@ -232,6 +239,20 @@ onUpdated(restoreAskStates)
   margin-left: auto;
 }
 
+/* Interrupted is a verdict of its own, so it gets the text label the other two
+   verdicts only carry as an icon: nothing failed, and the reader would otherwise
+   read a bare amber glyph as a warning. */
+.tool-detail-interrupted {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+  flex-shrink: 0;
+  color: #f59e0b;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+}
+
 .tool-detail-duration {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
@@ -287,18 +308,18 @@ onUpdated(restoreAskStates)
   margin-left: auto;
 }
 
+/* "output" names the block below — it is a SECTION LABEL, not a result. It used
+   to wear the exact same green pill as the ok/error chip beside it, so the row
+   read as two equal statuses and the label looked like a second "success"
+   badge. Give it the typographic label tier (muted, uppercase, letter-spaced,
+   no pill) and leave the pill to the status chip, which is the only thing in
+   this row that carries a verdict. */
 .tool-detail-body .tool-output-label {
   font-size: var(--font-size-2xs);
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-xs);
-  background: rgba(34, 197, 94, 0.12);
-  color: #16a34a;
+  color: var(--text-muted);
   font-weight: var(--font-weight-semibold);
-}
-
-:root[data-theme-base="dark"] .tool-detail-body .tool-output-label {
-  background: rgba(74, 222, 128, 0.15);
-  color: #4ade80;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .tool-detail-body .tool-output-status {
@@ -326,6 +347,16 @@ onUpdated(restoreAskStates)
 :root[data-theme-base="dark"] .tool-detail-body .tool-output-error {
   background: rgba(248, 113, 113, 0.15);
   color: #fca5a5;
+}
+
+.tool-detail-body .tool-output-interrupted {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+:root[data-theme-base="dark"] .tool-detail-body .tool-output-interrupted {
+  background: rgba(251, 191, 36, 0.16);
+  color: #fbbf24;
 }
 
 .tool-detail-body .tool-output-body {

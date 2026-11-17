@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -646,6 +645,63 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		return
 	}
 
+	// system_message: a backend-emitted timeline note. Today the only producer
+	// is the built-in agent announcing that a turn used up its step budget.
+	// It is persisted and announced exactly like the compaction notice, and the
+	// raw event is swallowed: the generic forward path would send it without a
+	// database row, so a reload would lose it.
+	if event.Type == eventTypeSystemMessage {
+		if event.SystemMessage != nil && event.SystemMessage.Content != "" {
+			if id, err := AddSystemMessage(e.cfg.ProjectPath, e.timelineSID(), event.SystemMessage.Content); err != nil {
+				slog.Warn("system message: persist failed", "err", err, "sid", e.cfg.SessionID)
+			} else {
+				ws.EmitToSession(e.timelineSID(), ai.StreamEvent{
+					Type:          eventTypeSystemMessage,
+					SystemMessage: &ai.SystemMessageData{MessageID: id, Content: event.SystemMessage.Content},
+				})
+			}
+		}
+		return
+	}
+
+	// compacted: the built-in backend just folded older turns into a summary.
+	// Persist the summary WITH its boundary so the next turn replays only what
+	// came after it; without the boundary the same history would be compacted
+	// again on every turn.
+	//
+	// The event is forwarded (unlike compact_detected) because the user must see
+	// it: "it forgot what I said" and "it summarized what I said" look identical
+	// from the outside, and only one of them is a problem.
+	if event.Type == "compacted" {
+		if event.Summary != "" {
+			// The boundary is what the ENGINE folded, not "everything finalized
+			// so far" — see builtinSummaryFromCompaction. Without it, the same
+			// history is compacted again on every turn; with the wrong one, the
+			// turns the engine deliberately kept are silently dropped next turn.
+			SetBuiltinSummary(e.cfg.SessionID,
+				builtinSummaryFromCompaction(event, e.cfg.ChatRequest.History))
+		}
+		// Forward as a system_message so it lands in the transcript as a
+		// timeline note. The "compacted" type is an internal signal: the
+		// frontend has no renderer for it, and an unhandled type would be
+		// dropped (the notice would silently never appear).
+		notice := ""
+		if event.SystemMessage != nil {
+			notice = event.SystemMessage.Content
+		}
+		if notice != "" {
+			if id, err := AddSystemMessage(e.cfg.ProjectPath, e.timelineSID(), notice); err != nil {
+				slog.Warn("compaction notice: persist failed", "err", err, "sid", e.cfg.SessionID)
+			} else {
+				ws.EmitToSession(e.timelineSID(), ai.StreamEvent{
+					Type:          eventTypeSystemMessage,
+					SystemMessage: &ai.SystemMessageData{MessageID: id, Content: notice},
+				})
+			}
+		}
+		return
+	}
+
 	// Inject per-tool duration into completion events before forwarding,
 	// so WS clients and AccumulateBlock both see it.
 	if event.Type == eventTypeToolUse || event.Type == eventTypeToolResult {
@@ -729,9 +785,18 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	e.forwardEvent(event)
 
 	// metadata capture
+	//
+	// Accumulated rather than replaced. A backend may report accounting
+	// incrementally, and replacing kept only whatever arrived last; the token
+	// counters therefore SUM (each frame reports one model round) while every
+	// other field is filled in only when still empty. The terminal frame below
+	// merges on top of this.
 	if event.Type == contentKeyMetadata && event.Meta != nil {
 		e.mu.Lock()
-		e.responseMetadata = event.Meta
+		if e.responseMetadata == nil {
+			e.responseMetadata = &ai.Metadata{}
+		}
+		e.addMetadataUsage(e.responseMetadata, event.Meta)
 		e.mu.Unlock()
 		if event.Meta.SessionID != "" {
 			e.captureExternalSessionID(event.Meta.SessionID)
@@ -834,6 +899,20 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 			}
 			if event.Type == eventTypeDone || event.Type == eventTypeError {
 				e.receivedTerminal = true
+				// The terminal event carries the run's own accounting: the stop
+				// reason and the TOTALS across every round. Nothing else reports
+				// those — the per-round metadata events each carry one round, so
+				// ignoring this Meta recorded only the LAST round's token counts
+				// and left stop_reason empty in the ledger, which is why a turn
+				// that hit its budget looked identical to one that answered.
+				if event.Meta != nil {
+					e.mu.Lock()
+					if e.responseMetadata == nil {
+						e.responseMetadata = &ai.Metadata{}
+					}
+					ai.MergeMetadata(e.responseMetadata, event.Meta)
+					e.mu.Unlock()
+				}
 				// For "error" events, AccumulateBlock handles them.
 				// We process the error event but still finalize.
 				if event.Type == eventTypeError {
@@ -895,15 +974,15 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 
 // postProcessBlocks applies finalize post-processing on blocks:
 // clawbench-ask-question conversion, rejected-tool removal, thinking-block merging,
-// and terminal thinking completion.
+// terminal thinking completion, and terminal tool completion.
 // Shared by buildResult and Finalize to prevent divergence.
-// NOTE: persistAskToolCalls must be called separately after Finalize
+// NOTE: persistToolCalls must be called separately after Finalize
 // uses postProcessBlocks, to avoid double-persisting from buildResult.
 //
 // Every caller is a TERMINAL path (buildResult on done/error/ctx.Done, Finalize,
 // and the steer split's "before" half), which is what makes MarkAllThinkingDone
-// correct here: no thinking block can still be running once the turn is over.
-// It is deliberately not applied on the streaming flush path, where done=false
+// and CloseUnfinishedTools correct here: nothing can still be running once the
+// turn is over. Neither is applied on the streaming flush path, where done=false
 // is a real, current fact.
 func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model.ContentBlock {
 	// Ask-question detection (interactive mode only)
@@ -920,32 +999,43 @@ func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model
 	// survives: a turn ending on reasoning never receives thinking_done, so its
 	// last block would otherwise persist as done=false and render as a spinner.
 	blocks = ai.MarkAllThinkingDone(blocks)
+	// Same for tools: a cancelled turn / crashed agent / steer split never
+	// delivers the tool_result of a call that was still in flight, and an open
+	// block here makes the transcript (which renders a settled row as done) and
+	// the detail drawer (which reads chat_tool_calls) disagree forever.
+	ai.CloseUnfinishedTools(blocks)
 
 	return blocks
 }
 
-// persistAskToolCalls writes converted AskUserQuestion tool blocks to
-// the chat_tool_calls table. These blocks were created by
-// ConvertAskQuestionBlocks and missed the normal upsertToolCallToDB
-// path during the event loop. Must be called after every postProcessBlocks
-// call that writes blocks to the DB (currently Finalize).
-func (e *SessionExecutor) persistAskToolCalls(blocks []model.ContentBlock) {
+// persistToolCalls writes every tool block of the finalized row to
+// chat_tool_calls. Must be called after every postProcessBlocks call that
+// writes blocks to the DB (Finalize and the steer split's "before" half).
+//
+// It re-writes blocks the streaming flush already wrote on purpose: that flush
+// ran while the tools were still RUNNING, so a tool that never finished kept
+// done=false in the table even though the row is now settled — and the detail
+// drawer, the only reader of that table, would spin forever on it. The same
+// pass persists the blocks that only exist after conversion
+// (ConvertAskQuestionBlocks mints ask-* blocks the event loop never saw).
+func (e *SessionExecutor) persistToolCalls(blocks []model.ContentBlock) {
 	if e.cfg.StreamingMessageID <= 0 || e.timelineSID() == "" {
 		return
 	}
 	for i := range blocks {
 		b := &blocks[i]
-		if b.Type == "tool_use" && strings.HasPrefix(b.ID, "ask-") && b.Name == "AskUserQuestion" {
-			inputJSON, _ := json.Marshal(b.Input)
-			if err := UpsertToolCall(
-				e.cfg.StreamingMessageID, e.timelineSID(),
-				b.ID, b.Name, inputJSON,
-				b.Output, b.Status, b.Summary, b.Done, b.DurationMs,
-			); err != nil {
-				slog.Warn("upsert converted AskUserQuestion tool call failed",
-					slog.String("toolID", b.ID),
-					slog.String("err", err.Error()))
-			}
+		if b.Type != "tool_use" || b.ID == "" {
+			continue
+		}
+		inputJSON, _ := json.Marshal(b.Input)
+		if err := UpsertToolCall(
+			e.cfg.StreamingMessageID, e.timelineSID(),
+			b.ID, b.Name, inputJSON,
+			b.Output, b.Status, b.Summary, b.Done, b.DurationMs,
+		); err != nil {
+			slog.Warn("upsert terminal tool call failed",
+				slog.String("toolID", b.ID),
+				slog.String("err", err.Error()))
 		}
 	}
 }
@@ -1005,6 +1095,21 @@ func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time
 		Metadata:         e.responseMetadata,
 		WallMs:           wallMs,
 	}
+}
+
+// addMetadataUsage folds one incremental metadata frame into the turn's
+// accounting.
+//
+// Token counters SUM: a backend that reports each model round separately (the
+// in-process agent does) would otherwise leave only the last round's numbers.
+// Every other field is filled in only when still empty — that is what
+// MergeMetadata is for — so a later frame can add usage without erasing the
+// model, transport or stop reason an earlier one already set. The caller holds
+// e.mu.
+func (e *SessionExecutor) addMetadataUsage(dst, src *ai.Metadata) {
+	dst.InputTokens += src.InputTokens
+	dst.OutputTokens += src.OutputTokens
+	ai.MergeMetadata(dst, src)
 }
 
 // captureExternalSessionID persists the external session ID if not already set.
@@ -1412,10 +1517,11 @@ func (e *SessionExecutor) resetForSplitLocked(newMessageID int64) {
 func (e *SessionExecutor) buildSplitContentLocked() string {
 	blocks := e.postProcessBlocks(e.blocks)
 	// Mirror Finalize: ConvertAskQuestionBlocks creates ask-* tool blocks that
-	// the normal upsert path never saw, so persist them against the "before"
-	// row. Without this the completed half would render the question as plain
-	// text after a reload.
-	e.persistAskToolCalls(blocks)
+	// the normal upsert path never saw, and CloseUnfinishedTools closed the tools
+	// this half will never see a result for — persist the whole set against the
+	// "before" row, or the completed half renders a question as plain text after
+	// a reload and its unfinished tools keep spinning in the detail drawer.
+	e.persistToolCalls(blocks)
 	content, _ := e.buildContentJSON(blocks, RunResult{Blocks: blocks}, e.responseMetadata)
 	return persistThinkingToDB(content, e.cfg.StreamingMessageID, e.timelineSID())
 }
@@ -1728,10 +1834,9 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent) {
 			}
 			e.mu.Lock()
 			if e.responseMetadata == nil {
-				e.responseMetadata = event.Meta
-			} else {
-				ai.MergeMetadata(e.responseMetadata, event.Meta)
+				e.responseMetadata = &ai.Metadata{}
 			}
+			e.addMetadataUsage(e.responseMetadata, event.Meta)
 			e.mu.Unlock()
 			if event.Meta.SessionID != "" {
 				e.captureExternalSessionID(event.Meta.SessionID)
@@ -1765,6 +1870,11 @@ func (e *SessionExecutor) drainAndPersistCancelledMetadata(eventCh <-chan ai.Str
 	e.mu.Unlock()
 	if meta == nil || msgID <= 0 {
 		return
+	}
+	// This path never reaches Finalize, so the citation refs must be stamped
+	// here too; otherwise an abandoned turn loses the sources it consulted.
+	if len(e.cfg.ChatRequest.KBRefs) > 0 {
+		meta.KBRefs = e.cfg.ChatRequest.KBRefs
 	}
 	// buildResult never ran on this path, so nothing has stamped the runtime.
 	// Without it a cancelled turn — which can have run for minutes — records
@@ -1828,12 +1938,19 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	donePost := ft.phase("post_process")
 	blocks = e.postProcessBlocks(blocks)
 
-	// Persist converted AskUserQuestion tool calls to DB.
-	// Only done here (in Finalize), not in buildResult, to avoid
-	// duplicate records from the two postProcessBlocks calls.
-	e.persistAskToolCalls(blocks)
+	// Persist the terminal tool-call rows (see persistToolCalls): converted ask
+	// blocks, plus every tool the streaming flush wrote while it was still
+	// running. Only done here (in Finalize), not in buildResult, to avoid
+	// duplicate writes from the two postProcessBlocks calls.
+	e.persistToolCalls(blocks)
 
 	e.injectSessionMetadata(responseMetadata)
+	// The knowledge base passages were retrieved while building the request,
+	// before the turn ran. Copy them onto the message metadata so the citation
+	// marker survives a reload (the WS metadata event carries this same value).
+	if responseMetadata != nil && len(e.cfg.ChatRequest.KBRefs) > 0 {
+		responseMetadata.KBRefs = e.cfg.ChatRequest.KBRefs
+	}
 	donePost()
 
 	// Rewrite a cumulative cost into this turn's delta BEFORE the content JSON is

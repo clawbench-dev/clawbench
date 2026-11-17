@@ -195,7 +195,7 @@ func voiceTurnHandleSay(ctx context.Context, conn *websocket.Conn,
 		SessionID:   sessionID,
 		AgentID:     info.AgentID,
 		ChatReq: service.BuildChatRequest(text, sessionID, projectPath, info.Backend,
-			info.AgentID, "", "", "", "", "", false),
+			info.AgentID, "", "", "", "", "", false, service.WithKBInjection()),
 		// 不传工作目录时后端会继承服务器进程的 CWD,AI 读写的是服务器目录;
 		// CLI 后端还会因为 cwd 不对找不到原会话。
 		FileDir:         service.ResolveFileDir(projectPath),

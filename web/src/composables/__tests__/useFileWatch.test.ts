@@ -56,6 +56,34 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+// Host axes. Default: browser (not app mode), so the resume path takes its
+// health-check branch. The mobile-app cases flip this to assert the
+// unconditional rebuild.
+const appModeState = vi.hoisted(() => ({ app: false, desktop: false }))
+vi.mock('@/composables/useAppMode', () => ({
+  useAppMode: () => ({
+    isAppMode: { get value() { return appModeState.app } },
+    isDesktopApp: { get value() { return appModeState.desktop } },
+  }),
+}))
+
+// Capture resume listeners instead of driving them through the real
+// useAppForeground. Its 1s dedupe is module-level state keyed on a timestamp,
+// which fake timers make leak between cases (a case that advances the clock
+// 61s leaves the next case's resume suppressed) — an order-dependent flake in
+// the middle of the assertions below. The dedupe has its own test file.
+const resumeListeners: Array<() => void> = []
+vi.mock('@/composables/useAppForeground', () => ({
+  useAppForeground: () => ({ appInForeground: { value: true } }),
+  onAppResume: (cb: () => void) => {
+    resumeListeners.push(cb)
+    return () => {
+      const i = resumeListeners.indexOf(cb)
+      if (i !== -1) resumeListeners.splice(i, 1)
+    }
+  },
+}))
+
 import { useFileWatch } from '@/composables/useFileWatch'
 
 let mockWsInstances: MockWebSocket[] = []
@@ -116,6 +144,19 @@ function latestWs(): MockWebSocket {
 /** Parse the sent frames, skipping any non-JSON noise. */
 function sentFrames(ws: MockWebSocket): Record<string, unknown>[] {
   return ws.sentMessages.map((m) => JSON.parse(m))
+}
+
+/**
+ * Fire the resume signal, bypassing useAppForeground's module-level 1s dedupe.
+ *
+ * That dedupe keys off a shared `lastResumeAt` timestamp, which fake timers make
+ * leak between cases (one case advances the clock 61s, the next starts back at
+ * real time and its resume is silently swallowed) — the classic
+ * order-dependent flake. Capturing the listeners directly keeps each case
+ * independent, and the dedupe itself is covered in useAppForeground's own test.
+ */
+function fireResume() {
+  for (const cb of [...resumeListeners]) cb()
 }
 
 interface Harness {
@@ -611,9 +652,7 @@ describe('useFileWatch', () => {
     // periodic stale check would not act for another 15s.
     first.readyState = MockWebSocket.CLOSED
 
-    // Skip the resume dedupe window (module-level, shared across tests).
-    vi.advanceTimersByTime(5000)
-    ;(window as unknown as { __clawbenchAppResume?: () => void }).__clawbenchAppResume?.()
+    fireResume()
 
     // Reconnected synchronously — no timer advance.
     expect(mockWsInstances).toHaveLength(2)
@@ -625,8 +664,7 @@ describe('useFileWatch', () => {
     const ws = latestWs()
     connectAndHandshake(ws)
 
-    vi.advanceTimersByTime(5000)
-    ;(window as unknown as { __clawbenchAppResume?: () => void }).__clawbenchAppResume?.()
+    fireResume()
 
     expect(mockWsInstances).toHaveLength(1)
     expect(ws.readyState).toBe(MockWebSocket.OPEN)
@@ -641,9 +679,45 @@ describe('useFileWatch', () => {
     // Half-open socket: still OPEN locally, no traffic for longer than the
     // stale window. A resume must not wait for the 15s check tick.
     vi.advanceTimersByTime(61000)
-    ;(window as unknown as { __clawbenchAppResume?: () => void }).__clawbenchAppResume?.()
+    fireResume()
 
     expect(mockWsInstances).toHaveLength(2)
     wrapper.unmount()
+  })
+
+  it('rebuilds unconditionally on a mobile app resume, even for a healthy-looking socket', () => {
+    // A frozen Android page comes back to a socket that reads OPEN while the
+    // server has long dropped it. Testing it first therefore says "fine" and
+    // the panel keeps showing stale content until the 15s tick — or longer.
+    appModeState.app = true
+    const { wrapper } = setupWatch({ dir: 'src', file: 'src/a.ts' })
+    const ws = latestWs()
+    connectAndHandshake(ws)
+    expect(ws.readyState).toBe(MockWebSocket.OPEN)
+
+    fireResume()
+
+    expect(mockWsInstances).toHaveLength(2)
+    expect(ws.readyState).toBe(MockWebSocket.CLOSED)
+    wrapper.unmount()
+    appModeState.app = false
+  })
+
+  it('does NOT rebuild unconditionally in the Electron shell', () => {
+    // Desktop reports isNativeApp() too, but its window is merely minimized and
+    // the socket genuinely survives — rebuilding would churn on every focus.
+    appModeState.app = true
+    appModeState.desktop = true
+    const { wrapper } = setupWatch({ dir: 'src', file: 'src/a.ts' })
+    const ws = latestWs()
+    connectAndHandshake(ws)
+
+    fireResume()
+
+    expect(mockWsInstances).toHaveLength(1)
+    expect(ws.readyState).toBe(MockWebSocket.OPEN)
+    wrapper.unmount()
+    appModeState.app = false
+    appModeState.desktop = false
   })
 })

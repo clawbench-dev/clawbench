@@ -1,7 +1,7 @@
 import { ref, watch } from 'vue'
 import { DEFAULT_RATIO, normalizeRatio } from '@/utils/splitRatio'
 import { appLog } from '@/utils/appLog'
-import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
+import { DOCK_TAB_IDS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
 import { DEFAULT_LEFT_COLLAPSED, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 
@@ -53,17 +53,6 @@ export const WIDE_SCREEN_MIN_WIDTH = 960
  * adding a tab without updating it produced a button that did nothing on click.
  */
 export const WIDE_SCREEN_DOCK_TABS: readonly DockTabId[] = DOCK_TAB_IDS
-
-export { WIDE_SCREEN_PRIMARY_TABS }
-
-/**
- * Visible tab order of the wide-screen vertical dock: fixed primary tabs first,
- * then the (already-filtered) secondary tabs. Used for rendering and for the
- * active-indicator position. Deterministic — never depends on runtime geometry.
- */
-export function wideDockTabOrder(overflowTabs: readonly string[]): string[] {
-  return [...WIDE_SCREEN_PRIMARY_TABS, ...overflowTabs]
-}
 
 /**
  * Wide-screen detection: active when the viewport can hold two columns at the
@@ -306,6 +295,28 @@ export function switchLeftTab(tab: string) {
 }
 
 /**
+ * Bring a dock tab into view from anywhere (e.g. a chat citation opening the
+ * knowledge base).
+ *
+ * Unlike `switchLeftTab`, this also covers the narrow-mode case where `leftTab`
+ * already equals the target but `activeTab` is still chat, and it un-hides a
+ * collapsed left column — the caller is a user action that intends to SEE the
+ * panel, not a background restore.
+ */
+export function showDockTab(tab: string) {
+  if (!isDockTabId(tab)) {
+    appLog.w(TAG, `showDockTab ignored unknown tab "${tab}" — is it missing from DOCK_TABS?`)
+    return
+  }
+  if (leftTab.value !== tab) {
+    leftTab.value = tab
+    sideEffects?.(tab)
+  }
+  setActiveTab?.(tab)
+  if (isWideScreen.value) setLeftCollapsed(false)
+}
+
+/**
  * Q1A continuity rule: entering wide-screen mode adopts the current narrow-mode
  * tab as the left column tab when it is a non-chat tab; otherwise keeps the
  * current/default leftTab.
@@ -319,6 +330,31 @@ export function resolveLeftTabOnEnter(currentActiveTab: string, currentLeftTab: 
 export function setSplitRatio(ratio: number) {
   splitRatio.value = normalizeRatio(ratio)
   writePanelState('splitRatio', splitRatio.value)
+}
+
+/**
+ * Show/hide the chat pane. The single implementation behind every entry point
+ * (divider handle, right-edge rail, the panel's maximize button), so the
+ * mutual-exclusion guard cannot diverge between them.
+ */
+export function toggleChatPane() {
+  const hiding = !chatCollapsed.value
+  setChatCollapsed(hiding)
+  if (hiding) setActivePane(PANE_LEFT)
+}
+
+/**
+ * Minimize the left panel: hide it, the same way a window minimizes to the
+ * dock. The dock tab stays where it was, so clicking it brings the panel back.
+ *
+ * Restores the chat first: `setLeftCollapsed` refuses to hide the only visible
+ * pane, so minimizing from the maximized state would otherwise be a silent
+ * no-op.
+ */
+export function minimizeLeftPanel() {
+  setChatCollapsed(false)
+  setLeftCollapsed(true)
+  setActivePane(PANE_RIGHT)
 }
 
 export function resetWideScreenState() {

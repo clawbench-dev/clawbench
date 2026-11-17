@@ -2,7 +2,7 @@
   <!-- The meeting is over: the token now addresses the permanent RECORD, so
        the page opens the minutes / transcript / proofread / chat instead of a
        gate that would dial a room which no longer exists. -->
-  <MeetingShareDetail v-if="recordView" :title="title || metaTitle" />
+  <MeetingShareDetail v-if="recordView" :title="title || metaTitle" :project-name="projectName" />
   <!-- The nickname gate runs BEFORE any connection: an empty name must not take
        an audience slot. It also carries the meeting title the server already
        resolved from the share link. -->
@@ -570,10 +570,21 @@ const TAG = 'LiveShareView'
  * the record is still loading, so the header never shows a blank name.
  */
 const props = withDefaults(
-  defineProps<{ meta?: { ended?: boolean; title?: string } | null }>(),
+  defineProps<{
+    meta?: { ended?: boolean; title?: string; projectName?: string } | null
+  }>(),
   { meta: null },
 )
 const metaTitle = computed(() => props.meta?.title ?? '')
+/**
+ * Source project, forwarded to the RECORD view only.
+ *
+ * A finished meeting is a published page and carries the same provenance chip
+ * as a file or session share. A room someone is still attending does not: that
+ * is a meeting interface, not a share page body, and the label would sit next
+ * to participant controls where it means nothing.
+ */
+const projectName = computed(() => props.meta?.projectName ?? '')
 /**
  * The meeting is over and this page shows its record.
  *

@@ -236,18 +236,34 @@ function sameQuote(a: QuoteData, b: QuoteData): boolean {
   // name and number across repositories. Comparing only the label would collapse
   // them into a single card and silently drop one.
   //
-  // messageId was the first field to need this (quoting the same sentence out of
-  // two different chat messages produces two genuinely different quotes), so the
-  // rule is simply "same label AND same locators".
+  // The bag is compared WHOLE (every key, not a hand-picked list), so a locator
+  // added later is part of the identity automatically — the same reason the bag
+  // exists. Enumerating keys here is how `mailId` and `meetingToken` were
+  // missed: two emails with the same subject and sender collapsed into one card
+  // and the second annotation overwrote the first.
   return a.filePath === b.filePath
     && a.startLine === b.startLine
     && a.endLine === b.endLine
     && a.text === b.text
-    && (a.messageId ?? 0) === (b.messageId ?? 0)
-    && (a.taskId ?? 0) === (b.taskId ?? 0)
-    && (a.commitSha ?? '') === (b.commitSha ?? '')
-    && (a.executionId ?? '') === (b.executionId ?? '')
     && (a.url ?? '') === (b.url ?? '')
+    && sameLocators(a.locators, b.locators)
+}
+
+/** Whether two locator bags describe the same source (missing key == empty). */
+function sameLocators(a: QuoteData['locators'], b: QuoteData['locators']): boolean {
+  // Empty values are dropped first: `{task: ''}` and `{}` mean the same thing
+  // (no task locator), and a producer that writes an empty string instead of
+  // omitting the key must not read as a different quote.
+  const clean = (bag: QuoteData['locators']): Array<[string, string]> =>
+    Object.entries(bag ?? {}).filter(([, v]) => v !== '')
+  const ka = clean(a)
+  const kb = clean(b)
+  if (ka.length !== kb.length) return false
+  const map = new Map(kb)
+  for (const [key, value] of ka) {
+    if (map.get(key) !== value) return false
+  }
+  return true
 }
 
 /**

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, resolveQuoteType, buildMessageQuote, quotableMessageText, type QuoteItem } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, resolveQuoteType, isForgeQuote, buildMessageQuote, quotableMessageText, locatorOf, type QuoteItem } from '@/utils/quoteItem.ts'
+import { canJumpQuoteToSource } from '@/utils/quoteJump'
 
 describe('fromStagedQuote', () => {
   it('maps a file quote and infers sourceKind=file', () => {
@@ -27,11 +28,11 @@ describe('fromStagedQuote', () => {
   it('infers sourceKind=message when there is neither path nor url', () => {
     // A quote taken from a chat message has no file and no address.
     const got = fromStagedQuote({
-      id: 'q3', text: 'chat text', filePath: '', language: '', startLine: 0, endLine: 0, messageId: 42,
+      id: 'q3', text: 'chat text', filePath: '', language: '', startLine: 0, endLine: 0, locators: { message: '42' },
     })
 
     expect(got.sourceKind).toBe('message')
-    expect(got.messageId).toBe(42)
+    expect(locatorOf(got, 'message')).toBe('42')
   })
 
   it('honours an explicit sourceKind over inference', () => {
@@ -160,23 +161,19 @@ describe('toFileEntry', () => {
     const item: QuoteItem = {
       id: 'q11', text: '构建失败', note: '', filePath: '每日构建 (#12)', language: '',
       startLine: 0, endLine: 0, sourceKind: 'file',
-      commitSha: 'a1b2c3d4e5', taskId: 12, sessionId: 'sess-abc',
-      messageId: 42, executionId: 'exec-7',
+      locators: {
+        commit: 'a1b2c3d4e5', task: '12', session: 'sess-abc',
+        message: '42', execution: 'exec-7',
+      },
     }
 
     const entry = toFileEntry(item)
-    expect(entry.commitSha).toBe('a1b2c3d4e5')
-    expect(entry.taskId).toBe(12)
-    expect(entry.sessionId).toBe('sess-abc')
-    expect(entry.messageId).toBe(42)
-    expect(entry.executionId).toBe('exec-7')
+    expect(entry.locators).toEqual({
+      commit: 'a1b2c3d4e5', task: '12', session: 'sess-abc',
+      message: '42', execution: 'exec-7',
+    })
 
-    const back = fromFileEntry(entry)
-    expect(back.commitSha).toBe('a1b2c3d4e5')
-    expect(back.taskId).toBe(12)
-    expect(back.sessionId).toBe('sess-abc')
-    expect(back.messageId).toBe(42)
-    expect(back.executionId).toBe('exec-7')
+    expect(fromFileEntry(entry).locators).toEqual(entry.locators)
   })
 
   it('omits absent locators rather than writing undefined keys', () => {
@@ -186,11 +183,7 @@ describe('toFileEntry', () => {
     }
     const entry = toFileEntry(item)
 
-    expect('commitSha' in entry).toBe(false)
-    expect('taskId' in entry).toBe(false)
-    expect('sessionId' in entry).toBe(false)
-    expect('messageId' in entry).toBe(false)
-    expect('executionId' in entry).toBe(false)
+    expect('locators' in entry).toBe(false)
   })
 })
 
@@ -231,54 +224,54 @@ describe('quoteLineRange', () => {
 describe('canJumpToSource', () => {
   it('allows a file quote', () => {
     const q: QuoteItem = { id: '1', text: '', note: '', filePath: 'src/a.go', language: '', startLine: 1, endLine: 1, sourceKind: 'file' }
-    expect(canJumpToSource(q)).toBe(true)
+    expect(canJumpQuoteToSource(q)).toBe(true)
   })
 
   it('allows a forge quote with an address', () => {
     const q: QuoteItem = { id: '1', text: '', note: '', filePath: 'acme#7', language: '', startLine: 0, endLine: 0, url: 'https://e.com', sourceKind: 'url' }
-    expect(canJumpToSource(q)).toBe(true)
+    expect(canJumpQuoteToSource(q)).toBe(true)
   })
 
   it('refuses a chat-message quote — there is nothing to open', () => {
     const q: QuoteItem = { id: '1', text: 'chat', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'message' }
-    expect(canJumpToSource(q)).toBe(false)
+    expect(canJumpQuoteToSource(q)).toBe(false)
   })
 
   // A terminal selection has no file and no address, so there is nothing to
   // open. The drawer must not offer a button that does nothing.
   it('refuses a free-form selection quote', () => {
     const q: QuoteItem = { id: '1', text: 'npm run build', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'selection' }
-    expect(canJumpToSource(q)).toBe(false)
+    expect(canJumpQuoteToSource(q)).toBe(false)
   })
 
   it('refuses a forge quote with no address', () => {
     const q: QuoteItem = { id: '1', text: '', note: '', filePath: 'acme#7', language: '', startLine: 0, endLine: 0, sourceKind: 'url' }
-    expect(canJumpToSource(q)).toBe(false)
+    expect(canJumpQuoteToSource(q)).toBe(false)
   })
 
   // Each locator alone is enough to offer the jump — jumpToQuoteSource has a
   // branch for it, so hiding the button here would strand a quote that could in
   // fact be opened.
   it('allows a commit quote', () => {
-    const q: QuoteItem = { id: '1', text: '', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'file', commitSha: 'abc123' }
-    expect(canJumpToSource(q)).toBe(true)
+    const q: QuoteItem = { id: '1', text: '', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'file', locators: { commit: 'abc123' } }
+    expect(canJumpQuoteToSource(q)).toBe(true)
   })
 
   it('allows a task quote', () => {
-    const q: QuoteItem = { id: '1', text: '', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'selection', taskId: 12 }
-    expect(canJumpToSource(q)).toBe(true)
+    const q: QuoteItem = { id: '1', text: '', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'selection', locators: { task: '12' } }
+    expect(canJumpQuoteToSource(q)).toBe(true)
   })
 
   // A chat quote is only jumpable when it carries a session id; without one
   // there is no session to reopen, so the button stays hidden.
   it('allows a chat quote that carries a session id', () => {
-    const q: QuoteItem = { id: '1', text: 'chat', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'message', sessionId: 'sess-abc', messageId: 42 }
-    expect(canJumpToSource(q)).toBe(true)
+    const q: QuoteItem = { id: '1', text: 'chat', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'message', locators: { session: 'sess-abc', message: '42' } }
+    expect(canJumpQuoteToSource(q)).toBe(true)
   })
 
   it('still refuses a chat quote with no session id', () => {
     const q: QuoteItem = { id: '1', text: 'chat', note: '', filePath: '', language: '', startLine: 0, endLine: 0, sourceKind: 'message' }
-    expect(canJumpToSource(q)).toBe(false)
+    expect(canJumpQuoteToSource(q)).toBe(false)
   })
 })
 
@@ -289,7 +282,7 @@ describe('materializeQuotes', () => {
     // that used to rely on the quotes being baked into the message text.
     const got = materializeQuotes([
       { id: 'q1', text: 'x := 1', filePath: 'src/a.go', language: 'go', startLine: 10, endLine: 20, note: 'why?' },
-      { id: 'q2', text: 'chat text', filePath: '', language: '', startLine: 0, endLine: 0, messageId: 42 },
+      { id: 'q2', text: 'chat text', filePath: '', language: '', startLine: 0, endLine: 0, locators: { message: '42' } },
     ])
 
     expect(got).toHaveLength(2)
@@ -373,26 +366,26 @@ describe('mail quotes', () => {
     // the only route back to the email — dropping it makes the jump a no-op.
     const entry = toFileEntry(fromStagedQuote({
       id: 'q1', text: '正文', filePath: '周报 · 张三', language: 'mail',
-      startLine: 0, endLine: 0, sourceKind: 'mail', mailId: 77,
+      startLine: 0, endLine: 0, sourceKind: 'mail', locators: { mail: '77' },
     }))
 
-    expect(entry).toMatchObject({ kind: 'quote', mailId: 77, sourceKind: 'mail' })
-    expect(fromFileEntry(entry).mailId).toBe(77)
+    expect(entry).toMatchObject({ kind: 'quote', locators: { mail: '77' }, sourceKind: 'mail' })
+    expect(locatorOf(fromFileEntry(entry), 'mail')).toBe('77')
   })
 
   it('is typed as mail and is jumpable', () => {
     const q: QuoteItem = {
       id: 'q1', text: '正文', note: '', filePath: '周报 · 张三', language: 'mail',
-      startLine: 0, endLine: 0, sourceKind: 'mail', mailId: 77,
+      startLine: 0, endLine: 0, sourceKind: 'mail', locators: { mail: '77' },
     }
     expect(resolveQuoteType(q)).toBe('mail')
-    expect(canJumpToSource(q)).toBe(true)
+    expect(canJumpQuoteToSource(q)).toBe(true)
   })
 
   it('is typed as mail from the locator alone (a legacy row with no marker)', () => {
     const q: QuoteItem = {
       id: 'q1', text: '', note: '', filePath: '周报 · 张三', language: '',
-      startLine: 0, endLine: 0, sourceKind: 'file', mailId: 77,
+      startLine: 0, endLine: 0, sourceKind: 'file', locators: { mail: '77' },
     }
     expect(resolveQuoteType(q)).toBe('mail')
   })
@@ -404,12 +397,12 @@ describe('quotes with a source folder', () => {
     // instead of only reading the lines pasted into the prompt.
     const entry = toFileEntry(fromStagedQuote({
       id: 'q1', text: '决议', filePath: '会议 · 周会', language: 'meeting',
-      startLine: 0, endLine: 0, sourceKind: 'meeting', meetingToken: 'tok-9',
-      sourceDir: '.clawbench/notes/m1',
+      startLine: 0, endLine: 0, sourceKind: 'meeting',
+      locators: { meeting: 'tok-9', dir: '.clawbench/notes/m1' },
     }))
 
-    expect(entry).toMatchObject({ kind: 'quote', sourceDir: '.clawbench/notes/m1' })
-    expect(fromFileEntry(entry).sourceDir).toBe('.clawbench/notes/m1')
+    expect(entry).toMatchObject({ kind: 'quote', locators: { dir: '.clawbench/notes/m1' } })
+    expect(locatorOf(fromFileEntry(entry), 'dir')).toBe('.clawbench/notes/m1')
   })
 })
 
@@ -442,21 +435,21 @@ describe('resolveQuoteType', () => {
   // Most-specific-first: a git-diff quote has BOTH a path and a commit, and the
   // user who selected a hunk means the commit.
   it('prefers the commit over the file path', () => {
-    expect(resolveQuoteType(q({ commitSha: 'abc123', filePath: 'src/a.go', sourceKind: 'file' }))).toBe('diff')
+    expect(resolveQuoteType(q({ locators: { commit: 'abc123' }, filePath: 'src/a.go', sourceKind: 'file' }))).toBe('diff')
   })
 
   // A CI run carries its address AND the commit it built; a git diff only has
   // the commit. That is the only thing separating them.
   it('calls a commit with an address a pipeline run', () => {
-    expect(resolveQuoteType(q({ commitSha: 'abc123', url: 'https://ci/run/1', sourceKind: 'url' }))).toBe('pipeline')
+    expect(resolveQuoteType(q({ locators: { commit: 'abc123' }, url: 'https://ci/run/1', sourceKind: 'url' }))).toBe('pipeline')
   })
 
   it('prefers the execution over the task', () => {
-    expect(resolveQuoteType(q({ executionId: 'exec-1', taskId: 12 }))).toBe('exec')
+    expect(resolveQuoteType(q({ locators: { execution: 'exec-1', task: '12' } }))).toBe('exec')
   })
 
   it('resolves a task quote', () => {
-    expect(resolveQuoteType(q({ taskId: 12, filePath: '每日构建 (#12)' }))).toBe('task')
+    expect(resolveQuoteType(q({ locators: { task: '12' }, filePath: '每日构建 (#12)' }))).toBe('task')
   })
 
   it('falls back to a generic link for a bare url', () => {
@@ -471,7 +464,7 @@ describe('resolveQuoteType', () => {
   })
 
   it('resolves a chat message quote', () => {
-    expect(resolveQuoteType(q({ sourceKind: 'message', sessionId: 's1' }))).toBe('chat')
+    expect(resolveQuoteType(q({ sourceKind: 'message', locators: { session: 's1' } }))).toBe('chat')
   })
 
   it('resolves a file quote', () => {
@@ -493,8 +486,8 @@ describe('buildMessageQuote', () => {
     const q = buildMessageQuote('the reply', { id: 'sess-abc', title: '每日构建' }, 42)
 
     expect(q.filePath).toBe('每日构建')
-    expect(q.sessionId).toBe('sess-abc')
-    expect(q.messageId).toBe(42)
+    expect(locatorOf(q, 'session')).toBe('sess-abc')
+    expect(locatorOf(q, 'message')).toBe('42')
     expect(q.sourceKind).toBe('message')
   })
 
@@ -512,7 +505,7 @@ describe('buildMessageQuote', () => {
     const q = buildMessageQuote('x', { id: 'sess-abc', title: '' })
 
     expect(q.filePath).toBe('sess-abc')
-    expect(q.sessionId).toBe('sess-abc')
+    expect(locatorOf(q, 'session')).toBe('sess-abc')
   })
 
   it('trims a whitespace-only title into the id fallback', () => {
@@ -531,13 +524,13 @@ describe('buildMessageQuote', () => {
   ])('omits an unusable message id (%s)', (_label, messageId) => {
     const q = buildMessageQuote('x', { id: 's', title: 't' }, messageId as number | undefined)
 
-    expect('messageId' in q).toBe(false)
+    expect(locatorOf(q, 'message')).toBe('')
   })
 
   it('omits the session id when there is none, rather than writing an empty string', () => {
     const q = buildMessageQuote('x', {})
 
-    expect('sessionId' in q).toBe(false)
+    expect(locatorOf(q, 'session')).toBe('')
     expect(q.filePath).toBe('')
   })
 
@@ -601,5 +594,34 @@ describe('quotableMessageText (private notes must not be quoted)', () => {
     const t = quotableMessageText('assistant', blocks, '', '', false)
     expect(t).toContain('clawbench-mention')
     expect(t).not.toContain('clawbench-goal-satisfied')
+  })
+})
+
+// 关闭 Forge 后，聊天里的引用卡片不能再打开外部链接——但只有「指向 Forge 集成」的
+// 那几类要拦，普通外链（粘贴的地址、评论锚点）不属于集成，仍可打开。
+describe('isForgeQuote', () => {
+  function q(over: Partial<QuoteItem> = {}): QuoteItem {
+    return {
+      id: 'q1', text: 'x', note: '', filePath: '', language: '',
+      startLine: 0, endLine: 0, sourceKind: 'url', ...over,
+    }
+  }
+
+  it.each([
+    ['issue', { language: 'issue', url: 'https://github.com/acme/w/issues/7' }],
+    ['pr', { language: 'pr', url: 'https://github.com/acme/w/pull/9' }],
+    ['pipeline', { language: 'pipeline', url: 'https://ci/run/1', locators: { commit: 'abc123' } }],
+  ])('treats a %s reference as a forge quote', (_label, over) => {
+    expect(isForgeQuote(q(over))).toBe(true)
+  })
+
+  it('does not treat a plain external link as a forge quote', () => {
+    expect(isForgeQuote(q({ url: 'https://example.com/x' }))).toBe(false)
+  })
+
+  it('does not treat a file / task / meeting quote as a forge quote', () => {
+    expect(isForgeQuote(q({ filePath: 'src/a.go', sourceKind: 'file' }))).toBe(false)
+    expect(isForgeQuote(q({ locators: { task: '3' } }))).toBe(false)
+    expect(isForgeQuote(q({ locators: { meeting: 'tok' } }))).toBe(false)
   })
 })

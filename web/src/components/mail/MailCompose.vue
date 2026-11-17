@@ -1,6 +1,7 @@
 <template>
   <div class="mail-compose">
     <div class="mail-compose__head">
+      <Mail :size="14" class="panel-header-icon" />
       <button class="mail-icon-btn" type="button" :title="t('mail.compose.back')" @click="close">
         <ArrowLeft />
       </button>
@@ -94,7 +95,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowLeft, Paperclip, X } from 'lucide-vue-next'
+import { ArrowLeft, Mail, Paperclip, X } from 'lucide-vue-next'
 import { apiPatch, apiPost } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { baseName } from '@/utils/path'
@@ -311,7 +312,11 @@ function close(): void {
   display: flex;
   align-items: center;
   gap: var(--space-2, 4px);
-  padding: var(--space-2, 4px) var(--space-3, 6px);
+  /* Same row geometry as the list toolbar (see MailReader): the shared
+     panel-header rule owns height / surface / divider in both layouts, and the
+     vertical padding is gone so it cannot grow the row. */
+  height: var(--header-height);
+  padding: 0 var(--space-3, 6px);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
 }

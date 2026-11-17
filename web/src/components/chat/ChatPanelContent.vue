@@ -39,6 +39,7 @@
       @show-metadata="showMetadata"
       @file-tag-click="handleFileTagClick"
       @quote-message="handleQuoteMessage"
+      @save-to-kb="handleSaveToKB"
       @load-more="handleLoadMore"
       @task-card-click="(taskId) => $emit('task-card-click', taskId)"
       @send-message="handleToolSendMessage"
@@ -50,6 +51,13 @@
       @fork-from-message="handleForkFromMessage"
       @rewind-from-message="handleRewindFromMessage"
       @open-agent-config="(agentId) => $emit('open-agent-config', agentId)"
+    />
+
+    <KBCollectionPickerDialog
+      :open="kbPickerOpen"
+      :initial-name="kbNote?.title || ''"
+      @close="kbPickerOpen = false"
+      @confirm="onKBNotePicked"
     />
 
     <!-- Session swipe indicator — floats above the message area -->
@@ -354,6 +362,10 @@ import { queuedMessages, setActiveQueueSession, addQueued, clearQueue, getQueue,
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
+import KBCollectionPickerDialog from '@/components/kb/KBCollectionPickerDialog.vue'
+import { kbUploadText } from '@/composables/useKnowledgeBase'
+import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
+import { useFeatureFlags, useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { stopGroupMember } from '@/composables/useGroupChat'
 import { collectStopTargets } from '@/utils/chatStopTargets'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
@@ -366,6 +378,7 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin, useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
+import { jumpToQuoteSource as jumpToQuoteSourceImpl } from '@/utils/quoteJump'
 import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRouting.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
@@ -564,6 +577,17 @@ const forkingMessageId = ref(null)
 const sessionShareOpen = ref(false)
 const sessionShareId = ref('')
 const toast = useToast()
+
+// ── Save a reply to the knowledge base ──
+const kbPickerOpen = ref(false)
+const kbNote = ref(null)
+// 任务 / 分享 master switches. A quoted task and a finished conversation stay
+// readable history; only the jump / publish entries they gate are refused while
+// the feature is off.
+const { tasksEnabled, forgeEnabled } = useFeatureFlags()
+// Conversation links only: the per-kind share switches for files/meetings must
+// not block sharing a session.
+const sessionShareAllowed = useShareKindAllowed('sessions')
 const acpSyncing = ref(false)
 const acpSession = useAcpSession({ currentAgentId: identity.currentAgentId })
 
@@ -750,6 +774,49 @@ function handleQuoteMessage(msg, anchorEl) {
     }, { anchorEl })
 }
 
+function handleSaveToKB(msg) {
+    if (!msg) return
+    // Same text as "quote this message": the speakable reply, without tool or
+    // thinking noise. A note made from a reply the user cannot read would be
+    // worse than no button.
+    const text = quotableMessageText(msg.role, msg.blocks, msg.content, msg.summary, isGroupSession.value)
+    if (!text) return
+    kbNote.value = { text, title: kbNoteTitle(text) }
+    kbPickerOpen.value = true
+}
+
+/** A stable, filesystem-safe title from the reply's first meaningful line. */
+function kbNoteTitle(text) {
+    const first = text.split('\n').map((line) => line.trim()).find(Boolean) ?? ''
+    const cleaned = first
+        .replace(/^#+\s*/, '')
+        .replace(/[\\/:*?"<>|]/g, ' ')
+        .trim()
+        .slice(0, 60)
+    return cleaned || t('chat.message.kbNoteTitle')
+}
+
+async function onKBNotePicked(collection) {
+    kbPickerOpen.value = false
+    const note = kbNote.value
+    kbNote.value = null
+    if (!note) return
+    try {
+        await kbUploadText(collection.id, `${note.title}.md`, note.text)
+        startKBIndexWatch()
+        toast.show(t('chat.message.kbNoteSaved', { name: collection.name }), {
+            type: 'success',
+            duration: 2600,
+        })
+    } catch (e) {
+        toast.show(e instanceof Error ? e.message : String(e), {
+            icon: 'warning',
+            type: 'error',
+            duration: 4000,
+        })
+    }
+}
+
 /** Remove an attached reference entry (from AttachmentTags cards or AttachDrawer
  *  whole-file toggles). Ranged references remove only their own range. */
 function handleRemoveAttachedEntry(entry) {
@@ -882,82 +949,44 @@ async function saveQuoteNote(note) {
 /**
  * Jump from the drawer to the quote's source.
  *
- * Order matters: the most specific locator wins, because a quote can carry more
- * than one. A git-diff quote, for instance, has both a file path and a commit —
- * and the user who selected a hunk in a commit view means "that commit", not
- * "that file at its current state". Each branch therefore jumps to the
- * narrowest thing the quote can identify, and only falls through when that
- * locator is absent.
+ * The DECISION lives in `utils/quoteJump.ts` — a registry of one jumper per
+ * locator, ordered most-specific-first. This component only supplies the
+ * navigation primitives (open a file, open a URL, switch session, fire a
+ * cross-panel event), because those are the things it actually owns.
  *
- * All four cross-panel jumps reuse the EXISTING navigation channels rather than
- * inventing new ones: `navigate-to-commit` and `clawbench-open-task` are already
- * handled by App.vue, and the session jump goes through the same session-open
- * event the notification taps use.
+ * It used to be a seven-branch `if` chain HERE, kept aligned with the drawer's
+ * `canJumpToSource` by a test that compared the two files as text. One registry
+ * now answers both "is there somewhere to go" and "where", so a button that
+ * appears and does nothing is no longer expressible.
+ *
+ * The primitives reuse EXISTING navigation channels rather than inventing new
+ * ones: `navigate-to-commit` and `clawbench-open-task` are already handled by
+ * App.vue, and the session jump goes through the same session-open event the
+ * notification taps use.
  */
 async function jumpToQuoteSource(q) {
     if (!q) return
-
-    // 1. Commit: open the git history at that commit (not the file, which is
-    //    what the path alone would open).
-    if (q.commitSha) {
-        window.dispatchEvent(new CustomEvent('navigate-to-commit', { detail: { sha: q.commitSha } }))
-        return
-    }
-
-    // 2. Task: open the scheduled task's detail view.
-    if (q.taskId) {
-        window.dispatchEvent(new CustomEvent('clawbench-open-task', {
-            detail: { taskId: q.taskId, executionId: q.executionId },
-        }))
-        return
-    }
-
-    // 3. Meeting: switch to the 会议 tab and open that record. The panel owns
-    //    the view state, so the request travels as an event rather than a prop.
-    if (q.meetingToken) {
-        window.dispatchEvent(new CustomEvent('clawbench-open-meeting', {
-            detail: { token: q.meetingToken },
-        }))
-        return
-    }
-
-    // 4. Mail: switch to the 邮件 tab and open that message. The panel owns
-    //    the list/reader state, so the request travels as an event, like the
-    //    meeting jump above. Mail is global, so no project switch is involved.
-    if (q.mailId) {
-        window.dispatchEvent(new CustomEvent('clawbench-open-mail', {
-            detail: { messageId: q.mailId },
-        }))
-        return
-    }
-
-    // 5. Session + message: switch to the session and scroll to the message.
-    //    The request is parked in module state because the session may still
-    //    have to load (and may be a different project) — see useMessageNavigation.
-    if (q.sessionId) {
-        if (q.messageId) setPendingMessageNavigation(q.sessionId, q.messageId)
-        window.dispatchEvent(new CustomEvent('clawbench-open-session', {
-            detail: { sessionId: q.sessionId },
-        }))
-        return
-    }
-
-    // 6. External address (a forge issue/PR, a CI run, a comment anchor).
-    if (q.url) {
-        openExternalUrl(q.url)
-        return
-    }
-
-    // A meeting or mail quote whose locator did not survive (an old message)
-    // has no addressable source: opening the label as a path would 404 and
-    // look like a broken file.
-    if (q.language === 'meeting' && !q.meetingToken) return
-    if (q.language === 'mail' && !q.mailId) return
-
-    // 7. A file: open it at its line range.
-    if (!q.filePath) return
-    const relPath = relativizeProjectPath(q.filePath, store.state.projectRoot)
-    await openFilePath(relPath, q.startLine, q.endLine, 'chat')
+    await jumpToQuoteSourceImpl(q, {
+        openFile: async (path, startLine, endLine) => {
+            const relPath = relativizeProjectPath(path, store.state.projectRoot)
+            await openFilePath(relPath, startLine, endLine, 'chat')
+        },
+        openUrl: (url) => openExternalUrl(url),
+        forgeEnabled: () => forgeEnabled.value,
+        tasksEnabled: () => tasksEnabled.value,
+        notifyDisabled: () => notifyFeatureDisabled(),
+        openSession: (sessionId, messageId) => {
+            // Parked in module state because the session may still have to load,
+            // and may belong to another project.
+            if (messageId) setPendingMessageNavigation(sessionId, messageId)
+            window.dispatchEvent(new CustomEvent('clawbench-open-session', {
+                detail: { sessionId },
+            }))
+        },
+        dispatch: (event, detail) => {
+            window.dispatchEvent(new CustomEvent(event, { detail }))
+        },
+    })
 }
 
 const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
@@ -1880,6 +1909,7 @@ const railPendingActive = computed(() =>
  * sessions while it is open (the dialog loads its data on open, not per render).
  */
 function handleOpenSessionShare() {
+  if (!sessionShareAllowed.value) { notifyFeatureDisabled(); return }
   const sid = identity.currentSessionId.value
   if (!sid) return
   sessionShareId.value = sid

@@ -652,6 +652,16 @@ body.code-preview-resizing * {
   height: 100%;
 }
 
+/* The touch sheet is auto-height, so a fill body (table / office / diagram /
+   OpenAPI docs) has no box to fill and would collapse to the iframe/table's
+   content height. A DEFINITE height is required (not min-height): the diagram
+   iframe's `height: 100%` and OfficePreview's root both resolve against their
+   parent's height, and a percentage against an auto height is just auto. The
+   sheet's own max-height still caps it. */
+.code-preview-sheet-body.is-fill-view {
+  height: min(70vh, calc(560 * var(--dp)));
+}
+
 /* Sheet header (BottomSheet #header slot) — mirrors the standard drawer
    header layout used by TocDrawer / FileDetailsDrawer: icon + file name +
    draggable parent-path marquee. The marquee takes the flexible width and
@@ -775,7 +785,11 @@ body.code-preview-resizing * {
   display: block;
 }
 
-/* Video keeps its aspect ratio and stretches to the available box. */
+/* Video keeps its aspect ratio and stretches to the available box.
+   `height: 100%` only resolves where the pane has a definite height (docked
+   pane, touch sheet). In the content-sized floating card it falls back to the
+   clip's intrinsic height, so MediaPreviewBody caps the element at the card's
+   own bound — a portrait clip then letterboxes instead of being cropped. */
 .code-preview-media-video {
   max-width: 100%;
   max-height: 100%;
@@ -859,6 +873,17 @@ body.code-preview-resizing * {
    and a grey backdrop, neither of which suits a white document. */
 .code-link-preview-floating.is-page-content {
   max-height: min(88vh, calc(100vh - 24px));
+}
+
+/* A body that owns its box (data table / office document / diagram / OpenAPI
+   docs). Unlike HTML, these bodies have no intrinsic height to measure: their
+   inner scrollers (DataTable's `.dt-scroll`, OfficePreview's
+   `.office-preview-body`) only overflow when the flex chain above them resolves
+   to a definite height. Without this the card sizes to the content, the card's
+   own max-height clips the tail, and there is no scrollbar to reach it. */
+.code-link-preview-floating.is-fill-view {
+  height: min(88vh, calc(560 * var(--dp)));
+  max-height: min(88vh, calc(100vh - calc(24 * var(--dp))));
 }
 
 /* The media pane sits directly under the header/meta rows; give it a floor so

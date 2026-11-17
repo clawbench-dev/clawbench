@@ -1,13 +1,14 @@
 package openclaw
 
 import (
+	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 	"clawbench/internal/model"
 )
 
 func init() {
 	// OpenClaw (openclaw) is ACP-only via its built-in `acp` subcommand: no
-	// ai.RegisterBackend (CLI factory) is registered, so chat always uses the
+	// CLI factory is set (CLI == nil), so chat always uses the
 	// ACP stdio transport.
 	//
 	// Verified against openclaw 2026.10.6 (probe:
@@ -24,8 +25,8 @@ func init() {
 	//     the client only sees an initialize timeout — there is no protocol-level
 	//     error to translate. `openclaw gateway start` is the fix, which is what
 	//     LoginCmd names below.
-	//  2. Per-session mcpServers are REFUSED (session/new fails), so openclaw is
-	//     in model.mcpUnsupportedBackends. Its MCP must be configured on the
+	//  2. Per-session mcpServers are REFUSED (session/new fails), so this spec
+	//     sets MCPUnsupported. Its MCP must be configured on the
 	//     Gateway/agent instead.
 	//  3. session/resume only resolves ids created by the CURRENT bridge process;
 	//     after a restart the same id must be recovered with session/load, which
@@ -80,6 +81,20 @@ func init() {
 			// "adaptive" and "ultra" even though both are advertised). A static
 			// list would surface levels the current model rejects. The frontend
 			// picks the option up at runtime, same posture as cursor/hermes.
+			//
+			// MCPUnsupported: openclaw's `acp` subcommand is a bridge, not an
+			// agent: it explicitly refuses per-session MCP servers ("ACP bridge
+			// mode does not support per-session MCP servers. Configure MCP on the
+			// OpenClaw gateway or agent instead."). Unlike the silently-ignoring
+			// backends, session/new FAILS here, so every turn would error out if
+			// we injected anything.
+			//
+			// The rejection is payload-dependent (measured 2026-10-24): an entry
+			// with only {name, command} is accepted and ignored, while {name,
+			// command, args: [], env: []} — exactly what toACPMcpServers emits —
+			// is refused. Do not "fix" this by trimming empty slices; that would
+			// trade a hard failure for a silently useless injection.
+			MCPUnsupported: true,
 		},
 		ACP: &backends.ACPPlugin{
 			ToolTitlePrefixes: OpenClawACPTitlePrefixes,
@@ -97,5 +112,12 @@ func init() {
 			// session/set_model answers -32601 Method not found). Models are
 			// configured on the Gateway. Do not add a raw-RPC switch here.
 		},
+		Behavior: &ai.ACPBehavior{
+			ParseToolCall:       parseOpenClawACPToolCall,
+			ParseToolCallUpdate: parseOpenClawACPToolCallUpdate,
+		},
+		// Deliberately empty: the provider belongs to the Gateway process, not
+		// the ACP bridge, so no override variable exists here.
+		ProviderEnv: &model.ProviderEnvSpec{},
 	})
 }

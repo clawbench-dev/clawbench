@@ -54,28 +54,30 @@ describe('normalizeFileEntry', () => {
   // Same silent-loss hazard as sourceKind above, one step worse: these are the
   // only route back to the origin, so dropping one here makes the quote
   // unjumpable with no visible symptom.
-  it('preserves every source locator through normalization', () => {
+  //
+  // The bag is copied WHOLE, so the property that matters is that an ARBITRARY
+  // key survives — including one this build has never heard of. Enumerating
+  // today's eight names would let the next source regress exactly the way
+  // `mailId`/`sourceDir` did.
+  it('preserves the whole locator bag through normalization', () => {
     const normalized = normalizeFileEntry({
       path: '每日构建 (#12)', kind: 'quote', id: 'q1', text: '构建失败',
-      commitSha: 'a1b2c3d', taskId: 12, sessionId: 'sess-abc',
-      messageId: 42, executionId: 'exec-7',
+      locators: {
+        commit: 'a1b2c3d', task: '12', session: 'sess-abc',
+        message: '42', execution: 'exec-7', deploy: 'd-42',
+      },
     })
 
-    expect(normalized.commitSha).toBe('a1b2c3d')
-    expect(normalized.taskId).toBe(12)
-    expect(normalized.sessionId).toBe('sess-abc')
-    expect(normalized.messageId).toBe(42)
-    expect(normalized.executionId).toBe('exec-7')
+    expect(normalized.locators).toEqual({
+      commit: 'a1b2c3d', task: '12', session: 'sess-abc',
+      message: '42', execution: 'exec-7', deploy: 'd-42',
+    })
   })
 
-  it('omits absent locators rather than writing undefined', () => {
+  it('omits an absent locator bag rather than writing an empty object', () => {
     const normalized = normalizeFileEntry({ path: '/a.ts' })
 
-    expect('commitSha' in normalized).toBe(false)
-    expect('taskId' in normalized).toBe(false)
-    expect('sessionId' in normalized).toBe(false)
-    expect('messageId' in normalized).toBe(false)
-    expect('executionId' in normalized).toBe(false)
+    expect('locators' in normalized).toBe(false)
   })
 })
 

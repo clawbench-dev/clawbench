@@ -1796,7 +1796,7 @@ Which approach?
 	executor := NewSessionExecutor(ctx, cfg)
 	result := executor.RunWithChannel(ch)
 
-	// Finalize: this is where persistAskToolCalls runs, assigning the
+	// Finalize: this is where persistToolCalls runs, assigning the
 	// definitive IDs that get written to chat_tool_calls.
 	finalized := executor.Finalize(result, nil)
 	msgID := finalized.MsgID
@@ -1840,6 +1840,110 @@ Which approach?
 	if !ok || len(questions) == 0 {
 		t.Errorf("expected questions array in tool call input, got %v", toolInput)
 	}
+}
+
+// A cancelled turn leaves its in-flight tool without a tool_result. The
+// streaming flush already wrote that tool's chat_tool_calls row with done=false,
+// and the transcript renders the settled block as done (a turn that is over
+// cannot still be running). If Finalize does not close the row too, the two
+// views disagree for the rest of the row's life: the collapsed pill shows a
+// check while the detail drawer spins forever.
+func TestSessionExecutor_Finalize_ClosesUnfinishedToolCall(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamingMsgID := GetStreamingMessageID(sid)
+	require.NotZero(t, streamingMsgID, "expected a streaming message row from setup")
+
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamingMsgID,
+	}
+	events := []ai.StreamEvent{
+		// The tool starts and never reports back: the user cancels the turn while
+		// `sleep 60` is running.
+		{Type: "tool_use", Tool: &ai.ToolCall{
+			Name:  "Bash",
+			ID:    "toolu_running",
+			Input: `{"command":"sleep 60"}`,
+			Done:  false,
+		}},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	// The streaming flush wrote this row while the tool was still running, and
+	// the final flush only re-writes tools queued since the last window — so
+	// without an explicit terminal pass the row keeps done=false for ever.
+	require.NoError(t, UpsertToolCall(
+		streamingMsgID, sid, "toolu_running", "Bash",
+		json.RawMessage(`{"command":"sleep 60"}`), "", "", "", false, 0,
+	))
+
+	SetCancelReason(sid, cancelReasonUser)
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+	finalized := executor.Finalize(result, nil)
+	require.NotZero(t, finalized.MsgID, "expected a finalized message id")
+
+	rec, err := GetToolCall("toolu_running", finalized.MsgID)
+	require.NoError(t, err)
+	require.NotNil(t, rec, "the in-flight tool must still have its chat_tool_calls row")
+	require.True(t, rec.Done, "a terminal path must not leave a tool running in chat_tool_calls")
+	require.Equal(t, ai.ToolStatusInterrupted, rec.Status,
+		"an unfinished tool is neither a success nor an error — it was interrupted")
+}
+
+// The row above can also be written by an EARLIER flush (a Bash that ran for a
+// minute was flushed seconds after it started). That row is not in the final
+// flush's pending set, so only the terminal pass can correct it.
+func TestSessionExecutor_PersistToolCalls_ClosesRowWrittenWhileRunning(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamingMsgID := GetStreamingMessageID(sid)
+	require.NotZero(t, streamingMsgID)
+
+	// The mid-stream flush: the tool is still running.
+	require.NoError(t, UpsertToolCall(
+		streamingMsgID, sid, "toolu_slow", "Bash",
+		json.RawMessage(`{"command":"sleep 60"}`), "", "", "", false, 0,
+	))
+
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		StreamingMessageID: streamingMsgID,
+	})
+	// A terminal path has already closed the block by now (postProcessBlocks).
+	executor.persistToolCalls([]model.ContentBlock{
+		{Type: "tool_use", ID: "toolu_slow", Name: "Bash", Input: map[string]any{"command": "sleep 60"}, Done: true},
+	})
+
+	rec, err := GetToolCall("toolu_slow", streamingMsgID)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	require.True(t, rec.Done, "the terminal pass must re-write rows the mid-stream flush left open")
 }
 
 func TestSessionExecutor_BuildResult_AskUserQuestionContentJSONIncludesInput(t *testing.T) {
@@ -3402,4 +3506,65 @@ func TestSessionExecutor_SteerBoundary_CancelledTurnDoesNotReanchor(t *testing.T
 	if got != anchor {
 		t.Fatalf("a cancelled split turn must not re-anchor last_read_at: got %q, want %q", got, anchor)
 	}
+}
+
+// The knowledge base passages are retrieved while BUILDING the request, before
+// the turn runs. The executor must stamp them onto the assistant message
+// metadata so the citation marker survives a reload (the live WS metadata event
+// carries the same object).
+func TestSessionExecutor_Finalize_PersistsKBRefs(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"kb-ref-agent": {ID: "kb-ref-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "kb-ref-agent")
+	refs := []ai.KBRef{{
+		DocumentID:     7,
+		DocumentTitle:  "handbook.md",
+		CollectionName: "制度",
+		Location:       "L1-L3",
+		Text:           "报销流程：先提交申请，再等财务审批。",
+	}}
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "kb-ref-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "报销流程是什么", KBRefs: refs},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	finalized := executor.Finalize(RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "先提交申请。"}},
+		Metadata:         &ai.Metadata{},
+	}, nil)
+
+	require.Len(t, finalized.Metadata.KBRefs, 1)
+	require.Equal(t, "handbook.md", finalized.Metadata.KBRefs[0].DocumentTitle)
+	require.NotZero(t, finalized.MsgID)
+
+	// The persisted content carries the same refs under camelCase JSON keys the
+	// frontend reads.
+	var content string
+	require.NoError(t, store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content))
+	var parsed struct {
+		Metadata struct {
+			KBRefs []struct {
+				DocumentID     int64  `json:"documentId"`
+				DocumentTitle  string `json:"documentTitle"`
+				CollectionName string `json:"collectionName"`
+				Location       string `json:"location"`
+				Text           string `json:"text"`
+			} `json:"kbRefs"`
+		} `json:"metadata"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(content), &parsed))
+	require.Len(t, parsed.Metadata.KBRefs, 1)
+	require.Equal(t, int64(7), parsed.Metadata.KBRefs[0].DocumentID)
+	require.Equal(t, "制度", parsed.Metadata.KBRefs[0].CollectionName)
+	require.Equal(t, "L1-L3", parsed.Metadata.KBRefs[0].Location)
 }

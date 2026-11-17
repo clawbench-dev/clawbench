@@ -296,20 +296,30 @@ func TestChatMessageUnmarshalNoFiles(t *testing.T) {
 	}
 }
 
-// TestFileEntryUnmarshalMeetingToken pins the wire name of the meeting locator.
+// TestFileEntryUnmarshalLocators pins the wire shape of quote source locators.
 //
-// Regression: the client has sent `meetingToken` on quote entries since meeting
-// records became quotable, but FileEntry had no such field, so the decoder
-// silently dropped it on every inbound request — the quote reloaded from the DB
-// with no jump target and the AI never learned which meeting it came from.
-func TestFileEntryUnmarshalMeetingToken(t *testing.T) {
-	raw := `{"path":"会议纪要","kind":"quote","id":"q1","text":"决议：合并","language":"meeting","meetingToken":"tok-9"}`
+// Regression history: these used to be one flat field per source
+// (`meetingToken`, `mailId`, …), and the client has always sent them. A missing
+// field or a missing json tag dropped them at the decode boundary — the quote
+// reloaded with no jump target and the AI never learned which meeting it came
+// from.
+//
+// They are now one open bag, so the thing worth pinning is that an arbitrary
+// key survives BOTH directions. The bag is what makes a new source need zero
+// backend changes; if this test could only round-trip a fixed list of keys, the
+// bag would be pointless.
+func TestFileEntryUnmarshalLocators(t *testing.T) {
+	raw := `{"path":"会议纪要","kind":"quote","id":"q1","text":"决议：合并","language":"meeting",
+		"locators":{"meeting":"tok-9","dir":".clawbench/notes/2026-11-05-1430","future":"whatever"}}`
 	var f FileEntry
 	if err := json.Unmarshal([]byte(raw), &f); err != nil {
 		t.Fatalf("unmarshal quote entry: %v", err)
 	}
-	if f.MeetingToken != "tok-9" {
-		t.Fatalf("MeetingToken = %q, want %q (the wire name is meetingToken)", f.MeetingToken, "tok-9")
+	if got := f.Locators["meeting"]; got != "tok-9" {
+		t.Fatalf(`Locators["meeting"] = %q, want %q`, got, "tok-9")
+	}
+	if got := f.Locators["future"]; got != "whatever" {
+		t.Fatalf(`Locators["future"] = %q — an unknown key must survive, or new sources need backend changes`, got)
 	}
 
 	// It must survive re-encoding too: the entry is persisted as JSON in
@@ -319,7 +329,7 @@ func TestFileEntryUnmarshalMeetingToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if !strings.Contains(string(out), `"meetingToken":"tok-9"`) {
+	if !strings.Contains(string(out), `"meeting":"tok-9"`) {
 		t.Fatalf("re-encoded entry lost the meeting locator: %s", out)
 	}
 }

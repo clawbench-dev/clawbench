@@ -355,15 +355,19 @@ export function filterAndSortRows(rows: string[][], filter: RowFilter): string[]
 /**
  * Is this table a "data table"?
  *
- * 产品定的规则：第一列通常是标签，不参与；**其余列里只要有一列是纯数字**
- * （非空的格子全是数字，空格子算缺失），整张表就默认按数据表展示。
+ * 产品定的规则：**任意一列是纯数字**（非空的格子全是数字，空格子算缺失），
+ * 整张表就默认按数据表展示。第一列不特殊对待——年份、金额、数量都可能落在
+ * 第一列，按内容判断而不是按位置。
  *
- * 之前是「除第一列外每一格都必须是数字」，太严：一张「名称 / 数量 / 备注」
- * 的表只要备注里有一个字，就整表退化成简单表，数量列明明能排序、能合计。
+ * 唯一例外是**编号列**：1、2、3… 数到 N 的那一列（「步」「序号」「#」）是
+ * 行号，不是可以被排序/求和的量。把它算成数据列，AI 写的步骤表、清单表
+ * 全会被抬成数据表——聊天的表格十有八九带这么一列。判据复用
+ * `isIndexColumn`（与「不给编号列画数据条」同一条）。
  */
 export function isNumericTable(headers: string[], rows: string[][]): boolean {
     if (headers.length < 2 || rows.length < 1) return false
-    for (let c = 1; c < headers.length; c++) {
+    for (let c = 0; c < headers.length; c++) {
+        if (isIndexColumn(headers[c] ?? '', rows.map(row => row[c] ?? ''))) continue
         let seen = 0
         let allNumeric = true
         for (const row of rows) {
@@ -400,6 +404,32 @@ export function detectNumericColumns(rows: string[][], columnCount: number): boo
         result[c] = seen > 0 && numeric / seen >= 0.8
     }
     return result
+}
+
+/** 表头一眼就是行号的写法。 */
+const INDEX_HEADER_RE = /^(?:序号|编号|行号|索引|id|no\.?|#|index)$/i
+
+/**
+ * 这一列是不是「编号列」——只是行号，不代表大小。
+ *
+ * 两条判据：表头写着序号 / 编号 / ID / No. / # / index；或者整列内容就是
+ * 1、2、3… 一直数到 N（至少 3 行）。编号列不画数据条：给 1、2、3 画长短条
+ * 只会让人以为这个数字有业务含义。
+ */
+export function isIndexColumn(header: string, values: string[]): boolean {
+    if (INDEX_HEADER_RE.test(header.trim())) return true
+
+    let expected = 1
+    let seen = 0
+    for (const raw of values) {
+        const text = (raw ?? '').trim()
+        if (text === '') continue
+        const n = parseNumericCell(text)
+        if (n === null || !Number.isInteger(n) || n !== expected) return false
+        expected += 1
+        seen += 1
+    }
+    return seen >= 3
 }
 
 /** What the column menu shows about one column. */

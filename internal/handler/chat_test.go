@@ -1499,14 +1499,26 @@ func TestAIChat_QuoteAttachment_KeepsSourceKind(t *testing.T) {
 	assert.Empty(t, got.Path, "a selection quote has no path")
 }
 
-// TestAIChat_QuoteAttachment_KeepsSourceLocators verifies every source locator
-// survives validation and persistence.
+// TestAIChat_QuoteAttachment_KeepsLocators verifies the WHOLE locator bag
+// survives decode → validate → persist, including a key this build has never
+// heard of.
 //
-// Same field-by-field rebuild hazard as the URL and SourceKind regressions
-// above, one step worse: these are the ONLY route back to the origin. The
-// quoted text carries no trace of them, so dropping one makes the quote
-// silently unjumpable — no error, the jump button simply does nothing.
-func TestAIChat_QuoteAttachment_KeepsSourceLocators(t *testing.T) {
+// Regression history: these locators used to be one flat field per source
+// (`commitSha`, `meetingToken`, `mailId`, `sourceDir`, …). validatedQuoteEntry
+// rebuilt the entry field by field, so adding a source meant remembering to add
+// a copy line there — and `mailId`/`sourceDir` were in fact shipped without one.
+// The quote still rendered and still sent; only the jump target was gone, so
+// clicking "跳转来源" silently did nothing and the AI never learned where the
+// snippet came from.
+//
+// The bag is now copied whole, so the property worth pinning is that ARBITRARY
+// keys survive. A test that only round-tripped today's eight names would let the
+// next source regress in exactly the same way.
+//
+// The body is a raw map (not a model.FileEntry) on purpose: marshaling the
+// struct would only prove the struct has the field, not that the wire name the
+// client actually sends reaches it.
+func TestAIChat_QuoteAttachment_KeepsLocators(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -1519,11 +1531,24 @@ func TestAIChat_QuoteAttachment_KeepsSourceLocators(t *testing.T) {
 	}()
 
 	body := map[string]any{
-		"message": "这个构建为什么失败",
-		"files": []model.FileEntry{{
-			Path: "每日构建 (#12)", Kind: "quote", ID: "quote-loc-1",
-			Text: "构建失败了", CommitSHA: "a1b2c3d4e5", TaskID: 12,
-			SessionID: "sess-abc", MessageID: 42, ExecutionID: "exec-7",
+		"message": "看看这场会的原始材料",
+		"files": []map[string]any{{
+			"path": "会议 · 产品评审会", "kind": "quote", "id": "quote-loc-1",
+			"text": "决议：本季度聚焦稳定性", "language": "meeting",
+			"sourceKind": "meeting",
+			"locators": map[string]string{
+				"meeting":   "tok-9",
+				"dir":       ".clawbench/notes/2026-11-05-1430",
+				"commit":    "a1b2c3d4e5",
+				"task":      "12",
+				"session":   "sess-abc",
+				"message":   "42",
+				"execution": "exec-7",
+				"mail":      "77",
+				// A source this build knows nothing about. It must still reach
+				// the DB and the AI — that is the point of an open bag.
+				"deploy": "d-42",
+			},
 		}},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
@@ -1543,159 +1568,17 @@ func TestAIChat_QuoteAttachment_KeepsSourceLocators(t *testing.T) {
 	require.Len(t, queue[0].Files, 1)
 
 	got := queue[0].Files[0]
-	assert.Equal(t, "a1b2c3d4e5", got.CommitSHA, "commit locator must survive, or the quote cannot reach its commit")
-	assert.Equal(t, int64(12), got.TaskID, "task locator must survive, or the quote cannot reach its task")
-	assert.Equal(t, "sess-abc", got.SessionID, "session locator must survive, or the quote cannot reopen its session")
-	assert.Equal(t, int64(42), got.MessageID, "message locator must survive, or the quote cannot scroll to its message")
-	assert.Equal(t, "exec-7", got.ExecutionID, "execution locator must survive, or the quote cannot reach its run")
-}
-
-// TestAIChat_QuoteAttachment_KeepsMeetingToken verifies a meeting quote keeps
-// the token that identifies its meeting, through decode → validate → persist.
-//
-// Regression (MAJOR): the client has put `meetingToken` in the wire payload for
-// meeting quotes all along, but model.FileEntry had no such field, so the JSON
-// decoder dropped it at the boundary and validatedQuoteEntry (which rebuilds
-// the entry field by field) had nothing to copy. The quote survived the reload
-// with its "meeting" label intact — only the jump target was gone, so clicking
-// "跳转来源" silently did nothing and the AI never learned which meeting the
-// snippet came from.
-//
-// The body is a raw map (not a model.FileEntry) on purpose: marshaling the
-// struct would only prove the struct has the field, not that the wire name the
-// client actually sends reaches it.
-func TestAIChat_QuoteAttachment_KeepsMeetingToken(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-meeting", "", "", "default", "chat")
-	assert.NoError(t, err)
-	service.TrySetSessionRunning(sessionID)
-	defer func() {
-		service.SetSessionRunning(sessionID, false)
-		service.ClearQueuedMessages(sessionID)
-	}()
-
-	body := map[string]any{
-		"message": "这段怎么理解",
-		"files": []map[string]any{{
-			"path": "产品评审会 · 纪要", "kind": "quote", "id": "quote-meeting-1",
-			"text": "决议：本季度聚焦稳定性", "language": "meeting",
-			"sourceKind": "meeting", "meetingToken": "tok-9",
-		}},
+	assert.Equal(t, "quote", got.Kind, "validation must still stamp the kind")
+	want := map[string]string{
+		"meeting": "tok-9", "dir": ".clawbench/notes/2026-11-05-1430",
+		"commit": "a1b2c3d4e5", "task": "12", "session": "sess-abc",
+		"message": "42", "execution": "exec-7", "mail": "77",
+		"deploy": "d-42",
 	}
-	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(AIChat, req)
-	assertOK(t, w)
-
-	// Queued (session running), so assert on the queued row's Files.
-	queue, err := service.GetQueuedMessages(sessionID)
-	assert.NoError(t, err)
-	require.Len(t, queue, 1)
-	require.Len(t, queue[0].Files, 1)
-
-	got := queue[0].Files[0]
-	assert.Equal(t, "quote", got.Kind)
-	assert.Equal(t, "tok-9", got.MeetingToken,
-		"the meeting locator must survive, or the reloaded quote cannot jump back to its meeting")
+	assert.Equal(t, want, got.Locators,
+		"every locator must survive, or the reloaded quote cannot jump back to its source")
 }
 
-// TestAIChat_QuoteAttachment_KeepsMailID verifies a mail quote keeps the id of
-// the email it came from, through decode → validate → persist.
-//
-// Same failure shape as the meeting-token regression above: the client sends
-// `mailId`, but a field missing from model.FileEntry is dropped by the JSON
-// decoder, and validatedQuoteEntry (which rebuilds the entry field by field)
-// then has nothing to copy. The quote still renders — only its jump target is
-// gone, so clicking "跳转来源" silently does nothing.
-//
-// The body is a raw map on purpose: marshaling model.FileEntry would only prove
-// the struct has the field, not that the wire name the client sends reaches it.
-func TestAIChat_QuoteAttachment_KeepsMailID(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-mail", "", "", "default", "chat")
-	assert.NoError(t, err)
-	service.TrySetSessionRunning(sessionID)
-	defer func() {
-		service.SetSessionRunning(sessionID, false)
-		service.ClearQueuedMessages(sessionID)
-	}()
-
-	body := map[string]any{
-		"message": "帮我总结这封邮件",
-		"files": []map[string]any{{
-			"path": "季度复盘 · 张三 <zhang@example.com>", "kind": "quote", "id": "quote-mail-1",
-			"text": "本季度收入同比增长 12%", "language": "mail",
-			"sourceKind": "mail", "mailId": 77,
-		}},
-	}
-	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(AIChat, req)
-	assertOK(t, w)
-
-	queue, err := service.GetQueuedMessages(sessionID)
-	assert.NoError(t, err)
-	require.Len(t, queue, 1)
-	require.Len(t, queue[0].Files, 1)
-
-	got := queue[0].Files[0]
-	assert.Equal(t, "quote", got.Kind)
-	assert.Equal(t, int64(77), got.MailID,
-		"the mail locator must survive, or the reloaded quote cannot jump back to its email")
-}
-
-// TestAIChat_QuoteAttachment_KeepsSourceDir verifies the folder a quote came
-// from survives decode → validate → persist.
-//
-// Same failure shape as the locators above: validatedQuoteEntry rebuilds the
-// entry field by field, so a field it does not copy is silently dropped and the
-// AI never learns where the rest of the material is.
-func TestAIChat_QuoteAttachment_KeepsSourceDir(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "quote-dir", "", "", "default", "chat")
-	assert.NoError(t, err)
-	service.TrySetSessionRunning(sessionID)
-	defer func() {
-		service.SetSessionRunning(sessionID, false)
-		service.ClearQueuedMessages(sessionID)
-	}()
-
-	body := map[string]any{
-		"message": "看看这场会的原始材料",
-		"files": []map[string]any{{
-			"path": "会议 · 产品评审会", "kind": "quote", "id": "quote-dir-1",
-			"text": "决议：本季度聚焦稳定性", "language": "meeting",
-			"sourceKind": "meeting", "meetingToken": "tok-9",
-			"sourceDir": ".clawbench/notes/2026-11-05-1430",
-		}},
-	}
-	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(AIChat, req)
-	assertOK(t, w)
-
-	queue, err := service.GetQueuedMessages(sessionID)
-	assert.NoError(t, err)
-	require.Len(t, queue, 1)
-	require.Len(t, queue[0].Files, 1)
-
-	got := queue[0].Files[0]
-	assert.Equal(t, "quote", got.Kind)
-	assert.Equal(t, ".clawbench/notes/2026-11-05-1430", got.SourceDir,
-		"the folder must survive, or the AI cannot open the rest of the material")
-}
-
-// TestAIChat_QuoteAttachment_EmptyPathAndTextOnly verifies a chat-message quote
-// (no path, message may even be empty) is accepted: files alone satisfy the
 // "message or files required" guard, and an empty Path never reaches
 // filesystem validation.
 func TestAIChat_QuoteAttachment_EmptyPathAndTextOnly(t *testing.T) {
@@ -1972,7 +1855,7 @@ func TestBuildChatRequestFromQueue_URLAttachment_ReferencedLink(t *testing.T) {
 		},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 
 	assert.Contains(t, req.Prompt, "[Referenced external link: https://github.com/acme/widgets/issues/451]",
@@ -2002,7 +1885,7 @@ func TestBuildChatRequestFromQueue_URLAndFile_BothPrefixed(t *testing.T) {
 		},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 
 	assert.Contains(t, req.Prompt, "/src/main.go:3-9", "the file keeps its line-aware label")
@@ -3408,7 +3291,7 @@ func TestBuildChatRequestFromQueue_UsesSessionModel(t *testing.T) {
 
 	// buildChatRequestFromQueue should use the session model
 	qMsg := model.QueuedMessage{Text: "next message", CreatedAt: time.Now().Format(time.RFC3339)}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", req.Model,
 		"queued message should use session-persisted model, not agent default")
@@ -3440,7 +3323,7 @@ func TestBuildChatRequest_DirectAndQueuePathsAgree(t *testing.T) {
 	direct := buildChatRequest(text, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
 
 	qMsg := model.QueuedMessage{Text: text, CreatedAt: time.Now().Format(time.RFC3339)}
-	queued, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	queued, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 
 	assert.Equal(t, direct.Model, queued.Model, "model must not depend on the send path")
@@ -3467,7 +3350,7 @@ func TestBuildChatRequestFromQueue_HasAttachments_WithFiles(t *testing.T) {
 		Files:     []model.FileEntry{{Path: "/some/path/file.go"}},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 	assert.True(t, req.HasAttachments)
 	assert.Contains(t, req.SystemPrompt, "Media File Handling")
@@ -3485,7 +3368,7 @@ func TestBuildChatRequestFromQueue_HasAttachments_NoFiles(t *testing.T) {
 		Text:      "just text",
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 	assert.False(t, req.HasAttachments)
 	assert.NotContains(t, req.SystemPrompt, "Media File Handling")
@@ -4720,7 +4603,7 @@ func TestBuildChatRequestFromQueue_LineNumbers(t *testing.T) {
 		},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, 0, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	require.NoError(t, err)
 	assert.Contains(t, req.Prompt, "/src/foo.ts:10-20", "prompt should include line range for foo.ts")
 	assert.Contains(t, req.Prompt, "/src/bar.go:5", "prompt should include single line for bar.go")
@@ -5197,4 +5080,95 @@ func TestSessionStateSnapshot_FallsBackWhenCachedModeHasNoSelection(t *testing.T
 	require.True(t, ok, "the snapshot must fall back to the persisted mode, got %T", st.Mode)
 	assert.Equal(t, "bypassPermissions", mode.CurrentModeID,
 		"a cached list with no selection must not hide the persisted choice")
+}
+
+// TestSessionStateSnapshot_BuiltinOptionsSurviveCLITransport pins the exception
+// to the "cli means no ACP state" rule: the built-in agent runs in-process, so
+// its transport is always cli, yet its mode/thinking options are defined by this
+// build and must reach the drawer. Without the exception the two tabs render
+// "not available" for the one backend whose options we fully control.
+func TestSessionStateSnapshot_BuiltinOptionsSurviveCLITransport(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const agentID = "builtin-snapshot"
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	model.Agents[agentID] = &model.Agent{
+		ID:             agentID,
+		Backend:        "builtin",
+		BuiltinBackend: true,
+		// A read-only grant: the derived default mode must be read, not full.
+		ToolPolicy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	}
+	defer delete(model.Agents, agentID)
+
+	sessionID, err := service.CreateSession(env.ProjectDir, agentID, "builtin snapshot", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	st := sessionStateSnapshot(sessionID, agentID, "cli")
+
+	mode, ok := st.Mode.(*ai.ModeState)
+	require.True(t, ok, "the built-in agent must report modes even on cli, got %T", st.Mode)
+	require.Len(t, mode.AvailableModes, 3)
+	assert.Equal(t, model.ModeRead, mode.CurrentModeID, "the default must follow the read-only grant")
+
+	effort, ok := st.Effort.(*ai.ThinkingEffortState)
+	require.True(t, ok, "the built-in agent must report thinking levels on cli, got %T", st.Effort)
+	require.Len(t, effort.AvailableLevels, 4)
+
+	// A persisted selection must not wipe the option list. The stored patch
+	// only carries currentModeId (no ACP event ever supplied availableModes for
+	// this backend), so the resolved list has to survive the DB fallback.
+	persistContextStateModeChange(sessionID, model.ModeWrite)
+	st = sessionStateSnapshot(sessionID, agentID, "cli")
+	persisted, ok := st.Mode.(*service.ModeStatePersist)
+	require.True(t, ok, "the DB fallback answers with the persisted shape, got %T", st.Mode)
+	assert.Equal(t, model.ModeWrite, persisted.CurrentModeID)
+	assert.Len(t, persisted.AvailableModes, 3, "the persisted selection must keep the static option list")
+}
+
+// TestBuildChatRequestFromQueue_BindsMaterializedMessage pins the queue drain's
+// message-id binding.
+//
+// The drain has just materialized the user row, so the built-in backend must be
+// told to stop replaying history there. It is the one path where the frontend
+// cannot supply the id (the row did not exist when the message was queued), and
+// leaving it out is invisible on external CLIs — they resume their own
+// transcript — while the built-in backend hands the model the same question
+// twice in one prompt.
+func TestBuildChatRequestFromQueue_BindsMaterializedMessage(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const agentID = "builtin-queue-bind"
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	model.Agents[agentID] = &model.Agent{ID: agentID, Backend: "builtin", BuiltinBackend: true}
+	defer delete(model.Agents, agentID)
+
+	sessionID, err := service.CreateSession(env.ProjectDir, agentID, "queue bind", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	// An earlier exchange, then the row the drain materialized for this message.
+	for _, role := range []string{"user", "assistant"} {
+		_, err := service.AddChatMessage(env.ProjectDir, "builtin", sessionID, role,
+			`{"blocks":[{"type":"text","text":"earlier turn"}]}`, nil, false, "")
+		require.NoError(t, err)
+	}
+	msgID, err := service.AddChatMessage(env.ProjectDir, "builtin", sessionID, "user",
+		`{"blocks":[{"type":"text","text":"queued question"}]}`, nil, false, "")
+	require.NoError(t, err)
+
+	req, err := buildChatRequestFromQueue(model.QueuedMessage{Text: "queued question"}, msgID,
+		sessionID, env.ProjectDir, "builtin", agentID, "")
+	require.NoError(t, err)
+
+	require.NotEmpty(t, req.History, "the earlier exchange must be replayed, or the check is vacuous")
+	for _, h := range req.History {
+		assert.NotEqual(t, "queued question", h.Text,
+			"the queued message's own row must be excluded from the replayed history")
+	}
 }
