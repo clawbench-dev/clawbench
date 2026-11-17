@@ -525,14 +525,24 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, provider_id, thinking_effort_by_model,
-		mcp_servers, tool_policy)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		mcp_servers, tool_policy, skip_project_context)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
 		transport, agent.AcpCommand, autoApprove, disabled, agent.ProviderID, string(effortByModelJSON),
-		string(mcpServersJSON), toolPolicyJSON)
+		string(mcpServersJSON), toolPolicyJSON, skipProjectContextArg(agent.SkipProjectContext))
 	return err
+}
+
+// skipProjectContextArg binds the skip_project_context column as SQLite wants
+// it (0/1). The service package has the same helper; this one exists because
+// model cannot import service.
+func skipProjectContextArg(skip bool) int {
+	if skip {
+		return 1
+	}
+	return 0
 }
 
 // yamlAgent represents an agent definition in config/agents/*.yaml.
@@ -712,7 +722,8 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, project_id,
-		provider_id, thinking_effort_by_model, mcp_servers, tool_policy
+		provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
+		skip_project_context
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -734,7 +745,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 	agent := &Agent{}
 	var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON, toolPolicyJSON string
-	var autoDetected, autoApprove, disabled int
+	var autoDetected, autoApprove, disabled, skipProjectContext int
 	var projectID, providerID sql.NullInt64
 
 	if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
@@ -742,13 +753,14 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 		&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 		&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
 		&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
-		&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON); err != nil {
+		&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON, &skipProjectContext); err != nil {
 		return nil, err
 	}
 
 	agent.ModelsAutoDetected = autoDetected == 1
 	agent.AutoApprove = autoApprove == 1
 	agent.Disabled = disabled == 1
+	agent.SkipProjectContext = skipProjectContext == 1
 	if projectID.Valid {
 		id := projectID.Int64
 		agent.ProjectID = &id

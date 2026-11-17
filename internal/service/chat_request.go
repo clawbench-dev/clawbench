@@ -119,6 +119,21 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 
 	systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, thinkingEffortModel, effectiveMode, isACP)
 
+	// The project's own AGENTS.md / CLAUDE.md. ONLY the built-in agent needs
+	// this: every external backend discovers context files itself (pi even gets
+	// --no-context-files because ClawBench injects its own rules instead), while
+	// the built-in agent has no process and therefore no discovery of its own.
+	//
+	// Placed in BuildChatRequest rather than resolveAgentConfig because the
+	// working directory decides WHICH files apply: a session started in a
+	// subdirectory must also see the rules of the directories above it.
+	//
+	// The agent's own switch is read here, not at load time, so flipping it
+	// takes effect on the next turn without a restart.
+	if isBuiltinBackend(backendName) && !agentSkipsProjectContext(agentID) {
+		systemPrompt = AppendProjectContextSection(systemPrompt, projectPath, fileDir)
+	}
+
 	// Resolve effective session ID for CLI.
 	// All backends store their CLI-identifiable session ID in external_session_id:
 	//   - codebuddy/claude/qoder: ClawBench UUID (same as session id)

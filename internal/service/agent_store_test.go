@@ -309,7 +309,10 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		// Per-agent tool grant (JSON) for the built-in backend. Only that
 		// backend reads it; an external CLI's tools live in its own process.
 		"tool_policy": true,
-		"created_at":  true, "updated_at": true,
+		// Per-agent opt-out of project context files (AGENTS.md / CLAUDE.md).
+		// Built-in backend only: an external CLI discovers those itself.
+		"skip_project_context": true,
+		"created_at":           true, "updated_at": true,
 	}
 
 	rows, err := db.Query("SELECT name FROM pragma_table_info('agents')")
@@ -1382,4 +1385,59 @@ func TestSaveAgent_DoesNotPersistModelPrice(t *testing.T) {
 	require.Len(t, agents, 1)
 	require.Len(t, agents[0].Models, 1)
 	assert.Nil(t, agents[0].Models[0].Price, "a loaded model carries no stale price")
+}
+
+// TestSaveAgent_SkipProjectContextRoundTrip pins the new column through BOTH
+// persistence paths. SaveAgent's INSERT once omitted mcp_servers entirely —
+// a field that is added but never written is the exact failure this pair
+// guards against, and it is invisible without a round-trip.
+func TestSaveAgent_SkipProjectContextRoundTrip(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	on := &model.Agent{ID: "b1", Name: "B1", Backend: "builtin", SkipProjectContext: true}
+	off := &model.Agent{ID: "b2", Name: "B2", Backend: "builtin"}
+	require.NoError(t, service.SaveAgent(db, on))
+	require.NoError(t, service.SaveAgent(db, off))
+
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	byID := map[string]*model.Agent{}
+	for _, a := range agents {
+		byID[a.ID] = a
+	}
+	assert.True(t, byID["b1"].SkipProjectContext)
+	assert.False(t, byID["b2"].SkipProjectContext, "an absent value must read as inject")
+
+	// The model-package loader is a separate SQL path; a column missing there
+	// is silently dropped on the next reload.
+	var skipForB1 int
+	require.NoError(t, db.QueryRow(`SELECT skip_project_context FROM agents WHERE id='b1'`).Scan(&skipForB1))
+	assert.Equal(t, 1, skipForB1)
+}
+
+// TestPatchAgentFields_SkipProjectContext pins the partial-update path and
+// that omitting the field leaves it alone (nil pointer = untouched).
+func TestPatchAgentFields_SkipProjectContext(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "b1", Name: "B1", Backend: "builtin"}))
+
+	skip := true
+	require.NoError(t, service.PatchAgentFields("b1", service.AgentPatch{SkipProjectContext: &skip}))
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.True(t, agents[0].SkipProjectContext)
+
+	// A patch that does not mention the field must not reset it.
+	name := "Renamed"
+	require.NoError(t, service.PatchAgentFields("b1", service.AgentPatch{Name: &name}))
+	agents, err = service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	assert.True(t, agents[0].SkipProjectContext, "an unrelated patch must not clear the switch")
+
+	keep := false
+	require.NoError(t, service.PatchAgentFields("b1", service.AgentPatch{SkipProjectContext: &keep}))
+	agents, err = service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	assert.False(t, agents[0].SkipProjectContext)
 }

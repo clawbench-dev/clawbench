@@ -4636,6 +4636,8 @@ export default {
       toolPolicyOutside: '允许访问项目目录之外的文件',
       toolPolicyOutsideDesc: '开启后，读文件、写文件、搜索工具可以使用项目目录以外的路径，比如系统临时目录或另一个仓库。关闭则只能在本项目内操作。',
       toolPolicyOutsideExecNote: '这个开关只管文件工具。已开放的「执行命令」本来就能访问整块磁盘，不受它限制。',
+      projectContextRead: '读取项目的规则文件（AGENTS.md）',
+      projectContextReadDesc: '开启后，每轮都会把项目里的 AGENTS.md / CLAUDE.md 读进提示词，它会按你项目写的规矩干活。换成别的智能体时，这些文件是对方自己读的。',
       toolPolicyMaxRounds: '每轮最多往返次数',
       toolPolicyMaxRoundsDesc: '一次提问最多让模型思考并调用工具几轮。改代码这类任务通常需要几十轮；留空使用默认（100 轮）。',
       toolPolicyMaxToolCalls: '每轮最多工具调用',

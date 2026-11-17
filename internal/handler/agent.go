@@ -1269,6 +1269,20 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		ap.Disabled = &disabled
 	}
 
+	// Project context injection (AGENTS.md / CLAUDE.md). Built-in backend only:
+	// an external backend reads those files itself, and its own flag silences
+	// them, so the switch has no meaning there. Accepted for any backend anyway
+	// (same reasoning as tool_policy above) so configuring before switching
+	// backend does not lose the choice.
+	if v, exists := patch["skip_project_context"]; exists {
+		skip, ok := v.(bool)
+		if !ok {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		ap.SkipProjectContext = &skip
+	}
+
 	// MCP enablement policy. The payload is the policy object itself:
 	//   {"mode":"all"|"none"|"selected","names":["a","b"]}
 	// Only the policy is stored; the server definitions live in config.yaml.

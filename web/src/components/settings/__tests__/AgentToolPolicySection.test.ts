@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import AgentToolPolicySection from '@/components/settings/AgentToolPolicySection.vue'
 
 const patchAgentField = vi.fn()
@@ -71,10 +71,16 @@ describe('AgentToolPolicySection', () => {
 
     it('renders every capability unchecked for an empty policy', () => {
         const wrapper = mountSection({ allow: [] })
-        const boxes = wrapper.findAll('input[type="checkbox"]')
-        expect(boxes).toHaveLength(3)
-        for (const box of boxes) {
-            expect((box.element as HTMLInputElement).checked).toBe(false)
+        // Scoped to the capability rows: counting every checkbox on the card
+        // would break the moment an unrelated switch (project context) is
+        // added, which says nothing about the grant being tested here.
+        const caps = [
+            'settings.items.toolPolicyRead',
+            'settings.items.toolPolicyWrite',
+            'settings.items.toolPolicyExec',
+        ]
+        for (const key of caps) {
+            expect((checkboxFor(wrapper, key).element as HTMLInputElement).checked).toBe(false)
         }
         // The "no tools" note must be visible: an agent with no grant can only chat.
         expect(wrapper.text()).toContain('settings.items.toolPolicyNoTools')
@@ -255,5 +261,53 @@ describe('AgentToolPolicySection', () => {
     it('explains that the switch does not cover command execution', () => {
         const wrapper = mountSection({ allow: ['exec'] })
         expect(wrapper.text()).toContain('settings.items.toolPolicyOutsideExecNote')
+    })
+})
+
+describe('project context switch', () => {
+    beforeEach(() => patchAgentField.mockReset())
+
+    function contextSwitch(wrapper: ReturnType<typeof mount>) {
+        return checkboxFor(wrapper, 'settings.items.projectContextRead')
+    }
+
+    it('is checked by default (absent means inject)', () => {
+        const wrapper = mountSection({ allow: [] })
+        expect((contextSwitch(wrapper).element as HTMLInputElement).checked).toBe(true)
+    })
+
+    it('reflects skipProjectContext = true as unchecked', () => {
+        const wrapper = mount(AgentToolPolicySection, {
+            props: { agent: { id: 'builtin', toolPolicy: { allow: [] }, skipProjectContext: true } },
+        })
+        expect((contextSwitch(wrapper).element as HTMLInputElement).checked).toBe(false)
+    })
+
+    it('unticking stores skip_project_context = true (the permission is negated)', async () => {
+        const wrapper = mountSection({ allow: [] })
+        const box = contextSwitch(wrapper)
+        ;(box.element as HTMLInputElement).checked = false
+        await box.trigger('change')
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'skip_project_context', true)
+    })
+
+    it('ticking stores skip_project_context = false', async () => {
+        const wrapper = mount(AgentToolPolicySection, {
+            props: { agent: { id: 'builtin', toolPolicy: { allow: [] }, skipProjectContext: true } },
+        })
+        const box = contextSwitch(wrapper)
+        ;(box.element as HTMLInputElement).checked = true
+        await box.trigger('change')
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'skip_project_context', false)
+    })
+
+    it('shows the error when the save fails', async () => {
+        patchAgentField.mockRejectedValueOnce(new Error('boom'))
+        const wrapper = mountSection({ allow: [] })
+        const box = contextSwitch(wrapper)
+        ;(box.element as HTMLInputElement).checked = false
+        await box.trigger('change')
+        await flushPromises()
+        expect(wrapper.find('.agent-tools__error').text()).toContain('boom')
     })
 })

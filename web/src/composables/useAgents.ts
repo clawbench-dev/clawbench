@@ -117,6 +117,11 @@ interface AgentRecord {
   builtinBackend?: boolean
   /** Tool grant (built-in backend only). Zero value grants nothing. */
   toolPolicy?: ToolPolicy
+  /**
+   * Do not inject the project's AGENTS.md / CLAUDE.md into this agent's system
+   * prompt (built-in backend only). Absent / false means "inject".
+   */
+  skipProjectContext?: boolean
   supportsCLI?: boolean
   supportsMidTurn?: boolean
   autoApprove?: boolean

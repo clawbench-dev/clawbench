@@ -4640,6 +4640,8 @@ export default {
       toolPolicyOutside: 'Allow access to files outside the project',
       toolPolicyOutsideDesc: 'When on, the read, write and search tools may use paths outside the project directory, such as a system temp folder or another repository. When off, they stay inside this project.',
       toolPolicyOutsideExecNote: 'This switch covers the file tools only. Running commands is already granted and can reach the whole disk either way.',
+      projectContextRead: 'Read the project\'s rule files (AGENTS.md)',
+      projectContextReadDesc: 'When on, the project\'s AGENTS.md / CLAUDE.md is read into the prompt on every turn, so this agent follows the rules your project wrote. Other agents read those files themselves.',
       toolPolicyMaxRounds: 'Model rounds per turn',
       toolPolicyMaxRoundsDesc: 'How many model round-trips one turn may use. Repository work often needs dozens; leave empty for the default (100).',
       toolPolicyMaxToolCalls: 'Tool calls per turn',

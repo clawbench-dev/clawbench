@@ -234,6 +234,16 @@ type Agent struct {
 	// Zero value grants nothing (see ToolPolicy) — an agent whose policy was
 	// never set can chat but cannot read, write or execute.
 	ToolPolicy ToolPolicy `json:"toolPolicy"`
+
+	// SkipProjectContext turns off injection of the project's context files
+	// (AGENTS.md / CLAUDE.md) into this agent's system prompt.
+	//
+	// Only the built-in backend honors it — external backends read those files
+	// themselves, and the flag that silences them is theirs, not ours.
+	//
+	// Zero value means "inject", i.e. the pi-compatible default: a row written
+	// before this column existed must not lose its project rules.
+	SkipProjectContext bool `json:"skipProjectContext"`
 }
 
 // DefaultModelID returns the default model ID for this agent.

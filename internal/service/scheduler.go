@@ -206,7 +206,8 @@ func (s *Scheduler) SetTimezone(zone string) error {
 		// did nothing until the next tick.
 		if next := p.schedule.Next(time.Now()); !next.IsZero() {
 			_, _ = store.WriteExec(
-				"UPDATE scheduled_tasks SET next_run_at = ? WHERE id = ?", next, task.ID)
+				"UPDATE scheduled_tasks SET next_run_at = ? WHERE id = ?", next, task.ID,
+			)
 		}
 	}
 	slog.Info("scheduler timezone updated", slog.String("timezone", zone),
@@ -1398,6 +1399,11 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Replace {{PROJECT_PATH}} per-request with the actual project path for this task
 	if projectPath != "" {
 		systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)
+	}
+	// The project's own AGENTS.md / CLAUDE.md, same as a chat turn. A task runs
+	// with WorkDir = projectPath, so the chain is exactly the project's own.
+	if isBuiltinBackend(agent.Backend) && !agent.SkipProjectContext {
+		systemPrompt = AppendProjectContextSection(systemPrompt, projectPath, projectPath)
 	}
 	// The human user's identity (nickname + self-description), same as a chat
 	// turn: a scheduled task should know who it is working for.

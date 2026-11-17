@@ -99,6 +99,24 @@
       </label>
     </div>
 
+    <!-- Project context files. Stated as the permission ("read AGENTS.md")
+         and stored as its negation, because the question a user asks is
+         "will this agent follow my project's rules". -->
+    <div class="agent-tools__scope">
+      <label class="agent-tools__row">
+        <input
+          type="checkbox"
+          :checked="!props.agent?.skipProjectContext"
+          :disabled="saving"
+          @change="saveProjectContext(($event.target as HTMLInputElement).checked)"
+        />
+        <span class="agent-tools__body">
+          <span class="agent-tools__name">{{ t('settings.items.projectContextRead') }}</span>
+          <span class="agent-tools__desc">{{ t('settings.items.projectContextReadDesc') }}</span>
+        </span>
+      </label>
+    </div>
+
     <div v-if="error" class="agent-tools__error">
       <AlertCircle :size="13" />
       <span>{{ error }}</span>
@@ -119,6 +137,7 @@ import { appLog } from '@/utils/appLog'
 interface AgentLike {
   id: string
   toolPolicy?: ToolPolicy
+  skipProjectContext?: boolean
 }
 
 const props = defineProps<{ agent: AgentLike | null }>()
@@ -284,6 +303,27 @@ async function saveOutsideAccess(allow: boolean) {
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
     appLog.w('AgentToolPolicySection', 'save outside access failed', error.value)
+  } finally {
+    saving.value = false
+  }
+}
+
+/**
+ * Persist the project-context switch.
+ *
+ * The checkbox is the permission ("read AGENTS.md"), the stored column is the
+ * restriction, so the value is negated — same split as the outside-access
+ * switch above.
+ */
+async function saveProjectContext(read: boolean) {
+  if (!props.agent || saving.value) return
+  saving.value = true
+  error.value = ''
+  try {
+    await patchAgentField(props.agent.id, 'skip_project_context', !read)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    appLog.w('AgentToolPolicySection', 'save project context failed', error.value)
   } finally {
     saving.value = false
   }

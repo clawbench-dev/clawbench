@@ -6575,7 +6575,7 @@ paths:
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`acp_command`、`name`、`specialty`、`custom_system_prompt`、
         `avatar`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
-        `mcp_servers`、`provider_id`、`tool_policy`。
+        `mcp_servers`、`provider_id`、`tool_policy`、`skip_project_context`。
         `avatar` 为原始 SVG 字符串；空串恢复内置图标，非空时校验大小与安全性。
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
         `custom-acp` 可改**：非空同时把 `transport` 切到 `acp-stdio` 并重启其连接；
@@ -6600,6 +6600,12 @@ paths:
         因为 `exec` 本身就能写文件，允许「禁止写但允许跑命令」会让设置页说谎。
         `allow` 为空表示不开放任何工具（只能对话）。预算字段 `0` 表示用服务端默认值；
         `maxRounds`/`maxToolCalls` 为负、或 `bashTimeoutSec` 超出 `0..3600` 返回 `400`。
+
+        `skip_project_context` 为布尔值：`true` 表示**不再**把项目的
+        `AGENTS.md` / `CLAUDE.md` 注入该智能体的系统提示词，`false` 恢复注入
+        （默认）。**只对内置智能体（`backend=builtin`）有意义**：外部 CLI 自己会读
+        这些文件。其余后端上也接受该字段（同 `tool_policy`），以便先配置再切换后端。
+        改动下一轮生效，无需重启。
 
         `name` 全局唯一（决策 #50）：改名撞上其它 agent 返回 `409` +
         `AgentNameTaken`；改成群聊用户称谓返回 `409` + `AgentNameReserved`。

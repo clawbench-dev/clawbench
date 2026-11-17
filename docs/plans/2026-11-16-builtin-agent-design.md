@@ -78,6 +78,25 @@ preamble（agent 自己的指令，不包裹，排最前）
 
 **能力缺失要明说**：`You cannot write or modify files or run shell commands`。工具**不存在**在模型看来是「我忘了」，不说明它会花几轮去找一个永远不会出现的写文件工具。
 
+## 项目上下文文件（AGENTS.md / CLAUDE.md）
+
+外部后端自己会读 `AGENTS.md`，内置智能体没有任何进程，也就没有任何自己的发现机制——所以项目规则必须由 ClawBench 注入，否则同一份 `AGENTS.md`，别的智能体遵守、内置智能体看不见。
+
+注入只对 `backend=builtin` 生效（`isBuiltinBackend` 门控），位置在 `service/project_context_prompt.go`，两个 system prompt 生产者都要调（`chat_request.go` 的聊天/队列/push，`scheduler.go` 的定时任务）。
+
+形状与 pi 的 `loadProjectContextFiles` 对齐，但只走到项目根为止：
+
+- **每个目录一个文件**，优先级 `AGENTS.override.md` > `AGENTS.md` > `AGENTS.MD` > `CLAUDE.md` > `CLAUDE.MD`。同目录不叠加——override 存在就是为了取代。大写拼写不是装饰：Linux 上 `AGENTS.MD` 是另一个文件，只提交了大写名的仓库会静默丢规则。
+- **逐层向上堆叠**，从项目根到工作目录，外层在前、最具体在后。这样 monorepo 里 `apps/web/AGENTS.md` 能叠加在根的规则之上。
+- **上界是项目根**：工作目录不在项目内（或为空）时回退到项目根，绝不从无关目录向上走——那会把别的项目的规则注入进来。
+- **单文件 32 KiB 上限**，超出截断并留标记。比推荐用的 4 KiB 宽得多：这里的文字是项目规则，截掉半条规则（「…除了 internal/」）比多花 token 更糟。
+- 空文件、读失败、非普通文件一律跳过，不让一个坏文件拖垮其余规则。
+
+- **链接工作树去重**（对齐 pi 的 `findShadowedContextFile`）：工作树通常开在主仓库里面（`.worktrees/<name>`），向上走会**两次**拿到主仓库的 `AGENTS.md`，而工作树那份往往是它自己的相对软链。两者同属一个逻辑仓库范围，只保留工作树自己的那份。判据是「目录真实路径 + 文件名」，**不能解析文件本身**——软链会解析回主仓库的路径，两份都会被丢掉，结果是 0 份（写测试时实际踩到了）。
+- **开关**：`agents.skip_project_context`（默认 0 = 注入），设置页勾选框写的是「读取项目的规则文件（AGENTS.md）」，每轮实时读取，改完下一轮生效。**按智能体**而不是全局：外部后端自己读这些文件，全局关掉对它们毫无作用。
+
+pi 还读 `~/.pi/agent/AGENTS.md`（全局用户级文件），**没有**跟进：ClawBench 的用户级自定义提示词已经在 `custom_system_prompt` 里，再叠加一份全局文件会出现两个权威来源。
+
 ## 权限模型
 
 ### 能力位，不是工具白名单

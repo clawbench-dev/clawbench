@@ -2296,6 +2296,20 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: the built-in agent's "do not read AGENTS.md" switch.
+	//
+	// Default 0 = inject. That is the safe direction: a row written before the
+	// column existed keeps behaving exactly as it did, and turning injection
+	// off has to be a deliberate act — a failed migration must never cost an
+	// agent the rules that govern its project.
+	var hasAgentSkipProjectContext int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='skip_project_context'").Scan(&hasAgentSkipProjectContext)
+	if hasAgentSkipProjectContext == 0 {
+		if _, err := store.WriteExec(`ALTER TABLE agents ADD COLUMN skip_project_context INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("failed to add skip_project_context column to agents: %w", err)
+		}
+	}
+
 	// Migrate: ensure the project scope column on the quick-send /
 	// quick-command tables (project-scoped / 仅本项目 items). NULL means global;
 	// a value scopes the item to that project only.
