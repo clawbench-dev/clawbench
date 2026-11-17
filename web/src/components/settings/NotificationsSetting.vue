@@ -49,7 +49,11 @@ async function clear(): Promise<void> {
 <style scoped>
 .notifications-setting {
   padding: var(--space-4);
-  background: var(--bg-secondary);
+  /* Shared page surface, same as the standard `.settings-category` wrapper this
+     custom plugin page replaces. Using --bg-secondary here painted the whole
+     page as one big card-coloured slab, so the card inside had no contrast and
+     the tab looked darker than every other settings tab. */
+  background: var(--panel-page-bg);
   min-height: 100%;
 }
 
