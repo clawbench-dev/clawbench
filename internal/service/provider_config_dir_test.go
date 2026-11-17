@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -79,9 +80,13 @@ func TestApplyProviderConfigDir_KimiQuotesDottedModelIDs(t *testing.T) {
 	require.NoError(t, service.ApplyProviderConfigDirToAgent("kimi", "agent-2", p))
 
 	path := filepath.Join(service.ProviderConfigDir("agent-2"), "config.toml")
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "a file holding a key must not be group/world readable")
+	if runtime.GOOS != "windows" {
+		// Windows has no POSIX permission bits: os.WriteFile with 0600 still
+		// reports 0666, so this assertion only holds where the bits mean it.
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "a file holding a key must not be group/world readable")
+	}
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -401,7 +406,8 @@ func TestReconcileProviderConfigDirs_ContinuesAfterOneFailure(t *testing.T) {
 	}
 	model.ReplaceAgents(
 		map[string]*model.Agent{"aaa-bad": agents[0], "mmm-good": agents[1], "zzz-unbound": agents[2]},
-		agents)
+		agents,
+	)
 
 	err := service.ReconcileProviderConfigDirs()
 	require.Error(t, err, "the failing agent must be reported")

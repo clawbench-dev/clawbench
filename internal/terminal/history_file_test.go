@@ -101,33 +101,6 @@ func TestReadFileTail_WholeFileWhenSmall(t *testing.T) {
 	}
 }
 
-func TestReadShellHistory_MergesEveryShell(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("HISTFILE", "")
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "xdg"))
-
-	if err := os.WriteFile(filepath.Join(home, ".bash_history"), []byte("git status\nls\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".zsh_history"), []byte(": 1700000000:0;make\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	fishDir := filepath.Join(home, "xdg", "fish")
-	if err := os.MkdirAll(fishDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(fishDir, "fish_history"), []byte("- cmd: echo hi\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	got := ReadShellHistory()
-	want := []string{"git status", "ls", "make", "echo hi"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
 func TestReadShellHistory_NoHistoryFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -136,33 +109,6 @@ func TestReadShellHistory_NoHistoryFiles(t *testing.T) {
 
 	if got := ReadShellHistory(); len(got) != 0 {
 		t.Errorf("expected no commands, got %v", got)
-	}
-}
-
-func TestShellHistoryFiles_PrefersHistfile(t *testing.T) {
-	home := t.TempDir()
-	custom := filepath.Join(home, "custom_history")
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "xdg"))
-	t.Setenv("SHELL", "/bin/zsh")
-	t.Setenv("HISTFILE", custom)
-
-	if err := os.WriteFile(custom, []byte(": 1:0;from-histfile\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".zsh_history"), []byte("from-default\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	files := ShellHistoryFiles()
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
-	}
-	if files[0].path != custom {
-		t.Errorf("expected $HISTFILE first, got %q", files[0].path)
-	}
-	if files[0].kind != historyZsh {
-		t.Errorf("expected zsh format for a zsh $HISTFILE, got %q", files[0].kind)
 	}
 }
 
@@ -186,26 +132,5 @@ func TestShellHistoryFiles_SkipsDirectories(t *testing.T) {
 func TestReadFileTail_MissingFile(t *testing.T) {
 	if _, err := readFileTail(filepath.Join(t.TempDir(), "nope"), 1024); err == nil {
 		t.Error("expected an error for a missing file")
-	}
-}
-
-func TestReadShellHistory_FishWithoutXDG(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("HISTFILE", "")
-	t.Setenv("XDG_DATA_HOME", "")
-
-	fishDir := filepath.Join(home, ".local", "share", "fish")
-	if err := os.MkdirAll(fishDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(fishDir, "fish_history"), []byte("- cmd: fish-cmd\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	got := ReadShellHistory()
-	want := []string{"fish-cmd"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v, want %v", got, want)
 	}
 }

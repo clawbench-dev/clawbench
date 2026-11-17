@@ -208,7 +208,12 @@ func TestProjectContextSection_DirectPath(t *testing.T) {
 	root := t.TempDir()
 	src := writeContextFile(t, root, "AGENTS.md", fmt.Sprintf("path is %s", filepath.ToSlash(root)))
 	got := buildProjectContextSection(root, "")
-	assert.Contains(t, got, filepath.ToSlash(src))
+	// The tag carries the path as the LOADER saw it, i.e. resolved: on Windows a
+	// temp dir is a short-name path (RUNNER~1), on macOS /var is a link to
+	// /private/var, so the raw t.TempDir() spelling is not what appears.
+	resolved, err := filepath.EvalSymlinks(src)
+	require.NoError(t, err)
+	assert.Contains(t, got, filepath.ToSlash(resolved))
 }
 
 // TestAppendProjectContextSection_UppercaseSpelling pins the .MD variants.
