@@ -121,8 +121,11 @@ func TestUnpackTarGzArchive_RejectsTraversal(t *testing.T) {
 }
 
 func TestUnpackTarGzArchive_RejectsAbsoluteSymlink(t *testing.T) {
+	// Build the target with filepath.Join so it is absolute on Windows too (a bare
+	// "/etc/passwd" has no volume name there and is therefore not absolute).
+	outside := filepath.Join(filepath.Dir(t.TempDir()), "passwd")
 	archive := buildTarGz(t, map[string]tarEntry{
-		"node/bin/node": {symlink: "/etc/passwd"},
+		"node/bin/node": {symlink: outside},
 	})
 	err := unpackNodeArchive(writeTemp(t, "node.tar.gz", archive), t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "absolute target") {

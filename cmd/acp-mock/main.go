@@ -147,6 +147,13 @@ const acpMockLongReplyMarker = "[mock:long-reply]"
 // chip holding nothing. The turn must end with exactly ONE thinking block.
 const acpMockBlankThinkingMarker = "[mock:blank-thinking]"
 
+// acpMockAskMarker makes that turn end on a native AskUserQuestion tool call:
+// a line of prose first, then the card, then the turn ends WITHOUT a result —
+// exactly what a real agent does, because the answer travels back as a chat
+// message rather than as the call's result. Used to reproduce the reported
+// "the reply above the question card is rendered twice after answering".
+const acpMockAskMarker = "[mock:ask]"
+
 // slowReplyDelayMs reports the per-turn reply delay requested by the prompt.
 func slowReplyDelayMs(prompt string) (int, bool) {
 	i := strings.Index(prompt, acpMockSlowReplyPrefix)
@@ -690,6 +697,48 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 		if err := pause(ctx, 30*time.Millisecond); err != nil {
 			return err
 		}
+	}
+
+	// 4d. End the turn on a native AskUserQuestion card: prose, then the card,
+	// then NO result for the call (the user's answer arrives as a chat message,
+	// so the tool never completes). Mirrors the shape the bug report describes:
+	// text above the card, and the agent waiting for the answer.
+	if strings.Contains(userText, acpMockAskMarker) {
+		if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
+			SessionId: acp.SessionId(sid),
+			Update:    acp.UpdateAgentMessageText("I looked at the request. Before I start, one thing to settle."),
+		}); err != nil {
+			return err
+		}
+		if err := pause(ctx, 80*time.Millisecond); err != nil {
+			return err
+		}
+		askCallID := acp.ToolCallId(fmt.Sprintf("call_ask_%d", turn))
+		if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
+			SessionId: acp.SessionId(sid),
+			Update: acp.StartToolCall(
+				askCallID,
+				"AskUserQuestion",
+				acp.WithStartKind(acp.ToolKindOther),
+				acp.WithStartStatus(acp.ToolCallStatusPending),
+				acp.WithStartRawInput(map[string]any{
+					"questions": []map[string]any{
+						{
+							"header":   "Goal",
+							"question": "What should I do with this?",
+							"options": []map[string]any{
+								{"label": "Write it up", "description": "Produce a written report"},
+								{"label": "Just explain", "description": "Answer in chat only"},
+							},
+						},
+					},
+				}),
+			),
+		}); err != nil {
+			return err
+		}
+		// The turn ends here: no tool result, no further text.
+		return nil
 	}
 
 	// 5. Send the main response text word-by-word

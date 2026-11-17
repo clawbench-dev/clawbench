@@ -683,13 +683,19 @@ func TestServeTerminalHistoryByID_Sync(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Point HOME at a temp dir so the sync reads a file we control rather than
-	// whatever this machine's real shell history happens to contain.
+	// Point every history source at files we control rather than whatever this
+	// machine's real shell history happens to contain. ShellHistoryFiles honors
+	// $HISTFILE on every platform and visits HOME's files as well, so both are
+	// redirected: $HISTFILE alone would still import the real ~/.bash_history,
+	// and $HOME alone imports nothing on Windows (os.UserHomeDir reads
+	// USERPROFILE there).
 	home := t.TempDir()
+	historyFile := filepath.Join(home, "synced-history")
+	require.NoError(t, os.WriteFile(historyFile, []byte("git status\nls -la\n"), 0o600))
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "xdg"))
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_history"),
-		[]byte("git status\nls -la\n"), 0o600))
+	t.Setenv("HISTFILE", historyFile)
 
 	req := newRequest(t, http.MethodPost, "/api/terminal/history/sync", nil)
 	w := callHandler(ServeTerminalHistoryByID, req)
@@ -697,7 +703,7 @@ func TestServeTerminalHistoryByID_Sync(t *testing.T) {
 
 	var result map[string]any
 	decodeRespJSON(t, w.Body, &result)
-	assert.Equal(t, float64(2), result["added"])
+	assert.Equal(t, float64(2), result["added"], "both lines of the controlled history file must be imported")
 
 	items, err := service.ListTerminalCommands("", "", 10)
 	require.NoError(t, err)

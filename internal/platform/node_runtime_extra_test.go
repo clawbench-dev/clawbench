@@ -4,16 +4,15 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bytes"
-	"compress/gzip"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
-	"time"
 )
 
 // ── release-naming and version helpers ──────────────────────────────────────
@@ -193,6 +192,53 @@ func TestManagedNodeInstalled_IgnoresDirectories(t *testing.T) {
 
 // ── download / verify / unpack ──────────────────────────────────────────────
 
+// buildReleaseArchives builds a minimal Node.js release for the current platform
+// in the format that platform actually ships (tar.gz on POSIX, zip on Windows):
+// unpackNodeArchive must accept whatever the download produced. `nodeDir` is the
+// version/os/arch directory the archive is unpacked from; the caller derives the
+// expected top directory from the release file name so the two can differ (an
+// archive that unpacks to some other directory must be refused).
+func buildReleaseArchives(t *testing.T, nodeDir, nodeBody string) []byte {
+	t.Helper()
+	prefix := nodeDir + "/"
+	entries := map[string]tarEntry{
+		prefix + "bin/" + nodeExecutableName(): {body: nodeBody, mode: 0o755},
+		prefix + "LICENSE":                     {body: "license", mode: 0o644},
+	}
+	if !IsWindows() {
+		return buildTarGz(t, entries)
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+		header.SetMode(os.FileMode(entries[name].mode))
+		w, err := zw.CreateHeader(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(entries[name].body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// releaseArchiveName is the file downloadNodeRelease asks for on this platform,
+// derived from the same helpers the production code uses (the extension differs
+// between the POSIX tarball and the Windows zip).
+func releaseArchiveName(osName, arch string) string {
+	return fmt.Sprintf("node-%s-%s-%s%s", "v22.11.0", osName, arch, nodeArchiveExt())
+}
+
 // TestDownloadNodeRelease_ChecksumMismatchLeavesNothingBehind: a corrupted
 // download must fail before anything replaces (or creates) the install
 // directory, and the staging directory must be gone afterwards — otherwise every
@@ -204,13 +250,14 @@ func TestDownloadNodeRelease_ChecksumMismatchLeavesNothingBehind(t *testing.T) {
 	if err != nil {
 		t.Skipf("no release naming for this platform: %v", err)
 	}
-	archive := buildNodeTarGz(t, "node-v22.11.0-"+osName+"-"+arch)
+	file := releaseArchiveName(osName, arch)
+	archive := buildReleaseArchives(t, strings.TrimSuffix(file, nodeArchiveExt()), "node")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "SHASUMS256.txt"):
-			_, _ = w.Write([]byte(strings.Repeat("0", 64) + "  node-v22.11.0-" + osName + "-" + arch + ".tar.gz\n"))
-		case strings.HasSuffix(r.URL.Path, ".tar.gz"):
+		switch r.URL.Path {
+		case "/v22.11.0/SHASUMS256.txt":
+			_, _ = w.Write([]byte(strings.Repeat("0", 64) + "  " + file + "\n"))
+		case "/v22.11.0/" + file:
 			_, _ = w.Write(archive)
 		default:
 			http.NotFound(w, r)
@@ -245,11 +292,12 @@ func TestDownloadNodeRelease_RejectsArchiveWithoutTheTopDirectory(t *testing.T) 
 	if err != nil {
 		t.Skipf("no release naming for this platform: %v", err)
 	}
-	// Same bytes as the expected name, but nested under a different top dir.
-	archive := buildNodeTarGz(t, "something-else")
+	file := releaseArchiveName(osName, arch)
+	// Same bytes as a release, but nested under a different top dir.
+	archive := buildReleaseArchives(t, "something-else", "node")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, ".tar.gz") {
+		if r.URL.Path == "/v22.11.0/"+file {
 			_, _ = w.Write(archive)
 			return
 		}
@@ -280,9 +328,10 @@ func TestDownloadNodeRelease_ReplacesAPreviousCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	archive := buildNodeTarGz(t, "node-v22.11.0-"+osName+"-"+arch)
+	file := releaseArchiveName(osName, arch)
+	archive := buildReleaseArchives(t, strings.TrimSuffix(file, nodeArchiveExt()), "node")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, ".tar.gz") {
+		if r.URL.Path == "/v22.11.0/"+file {
 			_, _ = w.Write(archive)
 			return
 		}
@@ -296,7 +345,7 @@ func TestDownloadNodeRelease_ReplacesAPreviousCopy(t *testing.T) {
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatal("the previous Node.js must be replaced, not merged")
 	}
-	if _, err := os.Stat(filepath.Join(ManagedNodeDir(), "bin", "node")); err != nil {
+	if _, err := os.Stat(filepath.Join(ManagedNodeDir(), "bin", nodeExecutableName())); err != nil {
 		t.Fatalf("the new runtime is missing: %v", err)
 	}
 }
@@ -400,12 +449,22 @@ func TestEnsureNodeRuntime_ReportsUnsupportedPlatform(t *testing.T) {
 // TestExtractTarEntry_RejectsEscapingPaths pins the entries the tar extractor must
 // refuse: an absolute name, a ".." name and an absolute symlink target. The
 // archive comes from a mirror, so its entry names are untrusted input.
+//
+// The escape fixtures are chosen to be hostile on every platform. ".." and
+// "../.." traverse everywhere, and the absolute name is built with
+// filepath.Join from an existing absolute directory so it carries a drive letter
+// on Windows (a lone "/etc/passwd" is not absolute there — no volume name — and
+// the "escape" would silently become a path inside the destination).
 func TestExtractTarEntry_RejectsEscapingPaths(t *testing.T) {
 	dest := t.TempDir()
+	outside := filepath.Join(filepath.Dir(dest), "outside.txt")
+	if !filepath.IsAbs(outside) {
+		t.Fatalf("fixture %q must be absolute on %s", outside, runtime.GOOS)
+	}
 	for _, header := range []*tar.Header{
-		{Name: "/etc/passwd", Typeflag: tar.TypeReg, Mode: 0o644},
+		{Name: outside, Typeflag: tar.TypeReg, Mode: 0o644},
 		{Name: "../escape", Typeflag: tar.TypeReg, Mode: 0o644},
-		{Name: "bin/link", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"},
+		{Name: "bin/link", Typeflag: tar.TypeSymlink, Linkname: outside},
 		{Name: "bin/up", Typeflag: tar.TypeSymlink, Linkname: "../../outside"},
 		{Name: "bin/hard", Typeflag: tar.TypeLink, Linkname: "../../etc/passwd"},
 	} {
@@ -422,8 +481,32 @@ func TestExtractTarEntry_RejectsEscapingPaths(t *testing.T) {
 	}
 }
 
-// TestExtractZipEntry_RejectsEscapingPaths is the zip half of the same rule.
+// TestExtractTarEntry_RejectsRootRelativeNames is the one fixture that only
+// exists on POSIX: "/etc/passwd" is the archiver-style name for "a file at the
+// filesystem root", and only on POSIX does it resolve to a path outside the
+// destination. On Windows the leading slash does not make a path absolute (no
+// volume), so there is nothing for the extractor to refuse — the same attack is
+// covered above with a genuinely absolute Windows path.
+func TestExtractTarEntry_RejectsRootRelativeNames(t *testing.T) {
+	if IsWindows() {
+		t.Skip(`"/etc/passwd" is not absolute on Windows (no volume name)`)
+	}
+	if err := extractTarEntry(bytes.NewReader(nil),
+		&tar.Header{Name: "/etc/passwd", Typeflag: tar.TypeReg, Mode: 0o644}, t.TempDir()); err == nil {
+		t.Fatal(`the entry "/etc/passwd" must be refused`)
+	}
+}
+
+// TestExtractZipEntry_RejectsEscapingPaths is the zip half of the same rule. As
+// above, the absolute fixture comes from filepath.Join so it is absolute (drive
+// letter included) on Windows too.
 func TestExtractZipEntry_RejectsEscapingPaths(t *testing.T) {
+	dest := t.TempDir()
+	abs := filepath.Join(filepath.Dir(dest), "abs", "escape.txt")
+	if !filepath.IsAbs(abs) {
+		t.Fatalf("fixture %q must be absolute on %s", abs, runtime.GOOS)
+	}
+
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	w, err := zw.Create("../../escape.txt")
@@ -433,7 +516,7 @@ func TestExtractZipEntry_RejectsEscapingPaths(t *testing.T) {
 	if _, err := w.Write([]byte("pwned")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := zw.Create("/abs/escape.txt"); err != nil {
+	if _, err := zw.Create(filepath.ToSlash(abs)); err != nil {
 		t.Fatal(err)
 	}
 	if err := zw.Close(); err != nil {
@@ -443,7 +526,6 @@ func TestExtractZipEntry_RejectsEscapingPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dest := t.TempDir()
 	for _, entry := range reader.File {
 		if err := extractZipEntry(entry, dest); err == nil {
 			t.Errorf("entry %q must be refused", entry.Name)
@@ -533,38 +615,14 @@ func TestSafeArchivePath(t *testing.T) {
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-// buildNodeTarGz builds a minimal release archive with the given top directory.
+// buildNodeTarGz builds a minimal tarball with the given top directory. It is
+// always a tar: it feeds the tar extractor directly, regardless of the host OS.
 func buildNodeTarGz(t *testing.T, top string) []byte {
 	t.Helper()
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	entries := []struct {
-		name string
-		body string
-		mode int64
-	}{
-		{top + "/bin/node", "#!/bin/sh\necho v22.11.0\n", 0o755},
-		{top + "/LICENSE", "license", 0o644},
-	}
-	for _, e := range entries {
-		if err := tw.WriteHeader(&tar.Header{
-			Name: e.name, Typeflag: tar.TypeReg, Mode: e.mode, Size: int64(len(e.body)),
-			ModTime: time.Unix(0, 0),
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write([]byte(e.body)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
+	return buildTarGz(t, map[string]tarEntry{
+		top + "/bin/node": {body: "#!/bin/sh\necho v22.11.0\n", mode: 0o755},
+		top + "/LICENSE":  {body: "license", mode: 0o644},
+	})
 }
 
 // ── mirror ordering, staged install, archive replacement ───────────────────

@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -132,18 +133,23 @@ func TestProviderModelIDFor_PiUsesProviderPrefix(t *testing.T) {
 // file (so the user can find it), not the backend name.
 func TestProviderConfigDisplayPath(t *testing.T) {
 	origDataDir := model.DataDir
-	model.DataDir = "/data/clawbench"
+	// The data dir is a platform path, so the expectation is built with the same
+	// filepath helper the production code uses: a hard-coded "/data/clawbench/..."
+	// reads correctly on POSIX and is wrong on Windows, where the same Join yields
+	// backslashes.
+	model.DataDir = filepath.Join(string(filepath.Separator), "data", "clawbench")
 	t.Cleanup(func() { model.DataDir = origDataDir })
 
+	agentDir := filepath.Join(model.DataDir, "providers", "agents", "agent-1")
 	assert.Equal(t,
-		"/data/clawbench/providers/agents/agent-1/config.toml",
+		filepath.Join(agentDir, "config.toml"),
 		model.ProviderConfigDisplayPath("kimi", "agent-1"))
 	assert.Equal(t,
-		"/data/clawbench/providers/agents/agent-1/models.json",
+		filepath.Join(agentDir, "models.json"),
 		model.ProviderConfigDisplayPath("codebuddy", "agent-1"))
 
 	assert.Equal(t,
-		"/data/clawbench/providers/agents/agent-1/settings.json",
+		filepath.Join(agentDir, "settings.json"),
 		model.ProviderConfigDisplayPath("claude", "agent-1"))
 
 	// An env-driven backend writes nothing, so there is nothing to show.
