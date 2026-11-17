@@ -176,4 +176,29 @@ test.describe('Rendered previews open an editable source view', () => {
     await expect(page.locator('.file-overlay .openapi-iframe')).toHaveCount(0, { timeout: 10000 })
     await expectSourceEditable(page)
   })
+
+  // The close and back buttons route through the shared "leave edit first"
+  // guard: it asks the editor to exit and then WAITS for edit mode to end. With
+  // the exit event unbound (the old wiring) edit mode never ended, the guard
+  // gave up after its 5s budget and cancelled the action — both buttons looked
+  // completely dead while an OpenAPI file was in edit mode.
+  test('closes the viewer from an OpenAPI edit session', async ({ page }) => {
+    await openInTestDir(page, fm, nav, '__e2e_preview_edit.yaml')
+    await clickViewToggle(page)
+    await clickEdit(page)
+    await expectSourceEditable(page)
+
+    await page.locator('.file-overlay .overlay-close-btn').click()
+    await expect(page.locator('.file-overlay')).toHaveCount(0, { timeout: 5000 })
+  })
+
+  test('navigates back out of an OpenAPI edit session', async ({ page }) => {
+    await openInTestDir(page, fm, nav, '__e2e_preview_edit.yaml')
+    await clickViewToggle(page)
+    await clickEdit(page)
+    await expectSourceEditable(page)
+
+    await page.locator('.file-overlay .file-header-back-btn').click()
+    await expect(page.locator('.file-overlay')).toHaveCount(0, { timeout: 5000 })
+  })
 })

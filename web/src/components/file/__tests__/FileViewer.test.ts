@@ -456,6 +456,24 @@ describe('FileViewer', () => {
 
       expect(wrapper.findComponent({ name: 'CodeMirrorViewer' }).props('editable')).toBe(true)
     })
+
+    // The header's close/back buttons leave edit mode first and only then act.
+    // That guard asks the editor to exit and WAITS for edit mode to end; with
+    // `exitEdit` unbound the wait timed out and the action was cancelled, so
+    // both buttons looked dead for as long as the file was in edit mode.
+    it('leaves edit mode when the source editor asks to exit', async () => {
+      for (const file of [htmlFile, openapiFile]) {
+        const wrapper = mountViewer({ file, markdownViewMode: 'raw' })
+        setupState(wrapper).handleToggleEdit()
+        await nextTick()
+        expect(setupState(wrapper).editing).toBe(true)
+
+        wrapper.findComponent({ name: 'CodeMirrorViewer' }).vm.$emit('exitEdit')
+        await nextTick()
+
+        expect(setupState(wrapper).editing).toBe(false)
+      }
+    })
   })
 
   it('shows PdfPreview for PDF files', () => {
