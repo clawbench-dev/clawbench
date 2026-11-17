@@ -71,6 +71,21 @@ func (m *Manager) SetCommandRecorder(fn func(projectPath, command string)) {
 	m.mu.Unlock()
 }
 
+// HasCommandRecorder reports whether a command sink is installed.
+//
+// Exported because the injection point is the handler package (see
+// handler.SetTerminalManager): a second manager creation site there that forgot
+// to install the sink would make /api/terminal/history silently stay empty, and
+// only a check from that side can observe it.
+func (m *Manager) HasCommandRecorder() bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.recordCommand != nil
+}
+
 // Close shuts down the manager and all active sessions.
 func (m *Manager) Close() {
 	m.mu.Lock()
