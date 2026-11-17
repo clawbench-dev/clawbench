@@ -219,10 +219,6 @@
           <span v-if="showDuration" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
           <span v-if="relativeTime" class="chat-meta-time" :class="{ 'chat-meta-sep': showDuration }">{{ relativeTime }}</span>
         </span>
-        <!-- Still-running hint. The same bar now mounts during streaming, where
-             the figures above are simply not reported yet; this line says so
-             instead of leaving a bare, apparently-final row. -->
-        <span v-if="msg.streaming" class="chat-meta-running">{{ t('chat.message.turnInProgress') }}</span>
       </span>
       <div class="chat-meta-actions">
         <!-- Summary/original toggle — deliberately FIRST in the row. It is the
@@ -741,8 +737,7 @@ const usageTailTooltip = computed(() => {
 const showMetaBar = computed(() => {
   if (props.msg?.role === 'assistant') {
     // Shown while streaming too: whatever information already exists (model,
-    // duration so far, the detail entry) is worth showing, and the row carries
-    // an explicit "still running" hint so a partial row never reads as final.
+    // duration so far, the detail entry) is worth showing.
     return !!(props.msg.streaming || speakableText.value || props.msg.blocks?.length || props.msg.summary)
   }
   if (props.msg?.role !== 'user' || props.msg.streaming) return false
@@ -1192,14 +1187,6 @@ const copyPayload = quotableText
 }
 
 .chat-meta-time {
-    white-space: nowrap;
-}
-
-/* "Still running" hint in the meta bar. Muted and slightly dim so it reads as a
-   status note about the row, not as another figure inside it. */
-.chat-meta-running {
-    color: var(--text-tertiary, rgba(0, 0, 0, 0.45));
-    font-style: italic;
     white-space: nowrap;
 }
 

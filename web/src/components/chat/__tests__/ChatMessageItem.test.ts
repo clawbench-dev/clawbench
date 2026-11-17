@@ -281,15 +281,15 @@ describe('ChatMessageItem', () => {
     expect(wrapper.find('.chat-message > .chat-meta-bar').exists()).toBe(true)
   })
 
-  it('renders meta bar for a streaming assistant message with a still-running hint', () => {
-    // The bar now mounts mid-turn so whatever already exists (model, duration,
-    // the details entry) is reachable; the hint keeps the partial row from
-    // reading as a finished one.
+  it('renders the meta bar for a streaming assistant message without a status hint', () => {
+    // The bar mounts mid-turn so whatever already exists (duration, the details
+    // entry) is reachable — no "still running" copy sits in the row.
     const wrapper = createWrapper({
       msg: { id: '6', role: 'assistant', content: '...', blocks: [{ type: 'text', text: '...' }], streaming: true },
     })
     expect(wrapper.find('.chat-meta-bar').exists()).toBe(true)
-    expect(wrapper.find('.chat-meta-running').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('本轮进行中')
+    expect(wrapper.text()).not.toContain('still running')
   })
 
   it('exposes the details button while streaming', () => {
@@ -299,14 +299,6 @@ describe('ChatMessageItem', () => {
     const actions = wrapper.findAll('.chat-meta-actions button')
     const labels = actions.map((b) => b.attributes('title') ?? b.attributes('aria-label') ?? '')
     expect(labels.some((l) => l.includes('详情') || l.includes('Details'))).toBe(true)
-  })
-
-  it('renders no still-running hint once the reply settled', () => {
-    const wrapper = createWrapper({
-      msg: { id: '6c', role: 'assistant', content: 'done', blocks: [{ type: 'text', text: 'done' }], streaming: false },
-    })
-    expect(wrapper.find('.chat-meta-bar').exists()).toBe(true)
-    expect(wrapper.find('.chat-meta-running').exists()).toBe(false)
   })
 
   it('renders meta bar and summary toggle for summarized assistant message with empty blocks', () => {
