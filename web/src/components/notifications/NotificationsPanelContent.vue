@@ -4,7 +4,7 @@
     <ActionBar class="list-header" mode="menu" size="header">
       <div class="notif-breadcrumb">
         <Inbox :size="14" class="panel-header-icon" />
-        <span>{{ t('notifications.title') }}</span>
+        <span>{{ t('nav.notifications') }}</span>
       </div>
       <RefreshButton
         :size="16"

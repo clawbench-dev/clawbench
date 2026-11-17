@@ -55,6 +55,7 @@ import { useAgents } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { isSubPageRoute, getSubPageTitleKey } from './settingsFieldMap'
+import { dockCategoryTitleKey } from '@/composables/dockPluginRuntime'
 
 const props = defineProps<{
   active?: boolean
@@ -170,7 +171,7 @@ function labelForCategory(cat: string): string {
   if (cat.startsWith('project:')) {
     return t('settings.items.projectDetailTitle')
   }
-  return t(`settings.categories.${cat}`)
+  return t(dockCategoryTitleKey(cat) ?? `settings.categories.${cat}`)
 }
 
 /**

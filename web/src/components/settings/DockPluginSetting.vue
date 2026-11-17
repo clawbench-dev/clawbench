@@ -58,7 +58,7 @@
                    separate line underneath, so the two never interleave. -->
               <div class="plugin-row__title-line">
                 <component :is="iconFor(plugin.id)" :size="16" class="plugin-row__icon" />
-                <span class="plugin-row__name">{{ t(plugin.titleKey) }}</span>
+                <span class="plugin-row__name">{{ t(dockTabTitleKey(plugin.id) ?? plugin.titleKey) }}</span>
                 <span class="plugin-chip">{{ t(`settings.dockPlugins.groups.${plugin.group}`) }}</span>
               </div>
               <div class="plugin-row__desc">{{ t(plugin.descriptionKey) }}</div>
@@ -130,7 +130,7 @@ import {
 } from 'lucide-vue-next'
 import { VueDraggable } from 'vue-draggable-plus'
 import SettingsCard from './SettingsCard.vue'
-import { DOCK_TAB_BY_ID, dockTabWithIcon, dockUnavailableReasonKey, isDockPluginAvailable } from '@/composables/dockPluginRuntime'
+import { DOCK_TAB_BY_ID, dockTabTitleKey, dockTabWithIcon, dockUnavailableReasonKey, isDockPluginAvailable } from '@/composables/dockPluginRuntime'
 import type { DockTabDescriptor, DockTabId, DockFeature } from '@/composables/dockTabs'
 import {
   APPLICABLE_DOCK_PRESETS,

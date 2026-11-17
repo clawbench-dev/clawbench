@@ -10,6 +10,24 @@ const i18n = createI18n({
   locale: 'zh',
   messages: {
     zh: {
+      // Dock features take their label from the plugin manifest's key, not
+      // from `settings.categories.*` — the index, the manager and the panel
+      // header must all say the same thing.
+      nav: {
+        fileManager: '文件管理',
+        fileView: '文件浏览',
+        tasks: '任务',
+        notifications: '通知中心',
+        meeting: '视频会议',
+        share: '分享中心',
+        mail: '邮件',
+        knowledgeBase: '知识库',
+        portForward: '端口映射',
+        stats: '数据统计',
+        forgeGithub: 'GitHub 集成',
+      },
+      git: { history: { projectHistory: '项目历史' } },
+      terminal: { title: '终端' },
       settings: {
         categories: {
           appearance: '外观',
@@ -104,8 +122,8 @@ describe('SettingsIndex', () => {
     expect(labels).toContain('外观')
     expect(labels).toContain('文件管理')
     expect(labels).toContain('文件浏览')
-    expect(labels).toContain('Git 历史')
-    expect(labels).toContain('统计')
+    expect(labels).toContain('项目历史')
+    expect(labels).toContain('数据统计')
     expect(labels).toContain('身份')
     expect(labels).toContain('聊天')
     expect(labels).toContain('会话管理')

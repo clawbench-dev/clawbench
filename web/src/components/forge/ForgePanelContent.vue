@@ -88,7 +88,7 @@
               <span class="forge-repo-name">{{ items.binding.value.slug }}</span>
               <ChevronDown :size="12" />
             </button>
-            <span v-else>{{ t('nav.forge') }}</span>
+            <span v-else>{{ t(forgeTabTitleKey(forgePlatform)) }}</span>
           </span>
           <ActionBar class="forge-header-actions" mode="menu" align="end" size="header">
             <button
@@ -443,7 +443,7 @@ import ForgeDetail from '@/components/forge/ForgeDetail.vue'
 import ForgePipelineDetail from '@/components/forge/ForgePipelineDetail.vue'
 import ForgeOverviewList from '@/components/forge/ForgeOverviewList.vue'
 import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
-import { useForgeBinding, forgeDockIconKind } from '@/composables/useForgeBinding'
+import { useForgeBinding, forgeDockIconKind, forgeTabTitleKey } from '@/composables/useForgeBinding'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, markForgeRead, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
 import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'

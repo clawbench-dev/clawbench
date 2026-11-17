@@ -157,6 +157,14 @@ export interface DockPluginRuntime {
   dynamicIcon?: () => Component
   /** Dynamic title; falls back to the manifest's titleKey when absent. */
   title?: () => string
+  /**
+   * Dynamic i18n KEY for the label, for a plugin whose name depends on state
+   * (Forge names the bound service). Every surface that shows the feature's
+   * name — dock, settings manager, settings page, panel header — resolves it
+   * through `dockTabTitleKey`, so they cannot drift to different keys.
+   * Falls back to the manifest's titleKey when absent.
+   */
+  dynamicTitleKey?: () => string
   /** Current badge; null/absent means no badge. */
   badge?: () => DockBadge | null
   /** The panel this plugin renders in the left dock. */

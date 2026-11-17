@@ -9,7 +9,7 @@
       @click="!isList && navigate('list')"
     >
       <Clock :size="14" class="panel-header-icon" />
-      <span>{{ t('task.title') }}</span>
+      <span>{{ t('nav.tasks') }}</span>
     </span>
 
     <template v-if="taskName">

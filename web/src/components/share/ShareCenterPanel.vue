@@ -6,7 +6,7 @@
     <div class="share-header">
       <div class="share-breadcrumb">
         <Share2 :size="14" class="panel-header-icon" />
-        <span>{{ t('shareCenter.title') }}</span>
+        <span>{{ t('nav.share') }}</span>
         <span v-if="items.length > 0" class="share-count">{{ t('shareCenter.count', { count: items.length }) }}</span>
       </div>
       <ActionBar class="share-header-actions" mode="menu" align="end" size="header">

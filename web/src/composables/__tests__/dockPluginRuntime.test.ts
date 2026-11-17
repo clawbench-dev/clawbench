@@ -94,6 +94,9 @@ vi.mock('@/i18n', () => ({
 }))
 
 import {
+  DOCK_TABS,
+  dockCategoryTitleKey,
+  dockTabTitleKey,
   isDockPluginAvailable,
   resolveDockBadge,
   resolveDockTitle,
@@ -200,5 +203,26 @@ describe('dock plugin runtime', () => {
     expect(mocks.loadFiles).toHaveBeenCalledWith('/tmp', false, 0, true)
     expect(mocks.loadSessions).toHaveBeenCalledTimes(1)
     expect(mocks.loadTasks).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('feature title keys', () => {
+  it('gives every settings page the same key as its dock entry', () => {
+    // The manager, the settings index and the panel header all name the same
+    // feature; a second key per surface is how they drift apart.
+    for (const tab of DOCK_TABS) {
+      if (!tab.settingsCategory) continue
+      expect(dockCategoryTitleKey(tab.settingsCategory), tab.id).toBe(dockTabTitleKey(tab.id))
+    }
+  })
+
+  it('leaves categories without a dock plugin on their own label', () => {
+    expect(dockCategoryTitleKey('appearance')).toBeUndefined()
+  })
+
+  it('resolves forge through the bound-platform key', () => {
+    expect(dockTabTitleKey('forge')).toBe('nav.forgeGithub')
+    mocks.platform.value = 'gitlab'
+    expect(dockTabTitleKey('forge')).toBe('nav.forgeGitlab')
   })
 })

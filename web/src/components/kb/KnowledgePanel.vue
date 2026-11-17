@@ -11,7 +11,7 @@
     <div class="kb-header">
       <div class="kb-title-line">
         <BookOpen :size="14" class="panel-header-icon" />
-        <span class="kb-title">{{ t('kb.title') }}</span>
+        <span class="kb-title">{{ t('nav.knowledgeBase') }}</span>
         <span v-if="collections.length" class="kb-count">{{ t('kb.count', { count: collections.length }) }}</span>
       </div>
       <ActionBar class="kb-header-actions" mode="menu" align="end" size="header">

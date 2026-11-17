@@ -13,7 +13,7 @@
          does it (git history, forge, file manager). -->
     <div class="meeting-header">
       <component :is="MEETING_ICON" :size="14" class="panel-header-icon" />
-      <span class="meeting-header__title">{{ t('meeting.list.title') }}</span>
+      <span class="meeting-header__title">{{ t('nav.meeting') }}</span>
       <span class="meeting-header__count count-badge">{{ t('meeting.list.count', { n: sessions.length }) }}</span>
       <span class="meeting-header__spacer" />
       <ActionBar class="meeting-actions" mode="menu" size="bar">

@@ -48,7 +48,7 @@ import {
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
-import { DOCK_SETTINGS_PAGES } from '@/composables/dockPluginRuntime'
+import { DOCK_SETTINGS_PAGES, dockCategoryTitleKey } from '@/composables/dockPluginRuntime'
 
 defineEmits<{
   navigate: [categoryId: string]
@@ -157,7 +157,10 @@ const groups = computed(() =>
       ...group,
       items: group.items.map(cat => ({
         ...cat,
-        label: t(`settings.categories.${cat.id}`),
+        // Dock features take their name from the plugin manifest, so the
+        // manager, the dock tab and this row can never disagree. Categories
+        // without a dock plugin keep their own `settings.categories.*` label.
+        label: t(dockCategoryTitleKey(cat.id) ?? `settings.categories.${cat.id}`),
       })),
     }))
     // Dropping the only item of a group would leave an empty titled card.

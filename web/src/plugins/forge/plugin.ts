@@ -49,6 +49,11 @@ interface OpenForgeDetail {
 export default {
   id: 'forge',
   titleKey: 'nav.forge',
+  // Same key the dock label uses. `nav.forge` stays the platform-neutral
+  // fallback (and the manifest guard requires a static key), but every
+  // surface that names the feature asks for the key through the runtime, so
+  // the settings page and the panel header say the same service the dock does.
+  dynamicTitleKey: () => forgeTabTitleKey(platform.value),
   descriptionKey: 'settings.dockPlugins.desc.forge',
   group: 'project',
   closable: true,

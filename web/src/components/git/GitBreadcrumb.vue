@@ -1,14 +1,15 @@
 <template>
   <div class="git-breadcrumb" data-horizontal-scroll="true" @wheel="onHorizontalWheel">
-    <!-- Root crumb: 提交列表 or 文件历史. The glyph is the section's own dock
-         icon, so the drill-down header still reads as the git tab. -->
+    <!-- Root crumb: the project history's dock label, or 文件历史 in the file
+         drawer. The glyph is the section's own dock icon, so the drill-down
+         header still reads as the git tab. -->
     <span
       class="git-crumb"
       :class="{ current: currentView === 'commits' }"
       @click="currentView !== 'commits' && $emit('navigate', 'commits')"
     >
       <GitBranch :size="14" class="panel-header-icon" />
-      <span>{{ mode === 'file' ? t('git.breadcrumb.fileHistory') : t('git.breadcrumb.commitList') }}</span>
+      <span>{{ mode === 'file' ? t('git.breadcrumb.fileHistory') : t('git.history.projectHistory') }}</span>
     </span>
 
     <!-- Manage crumb -->

@@ -154,7 +154,7 @@ describe('MeetingList header', () => {
     // The second bar was the bug: the tab title and the list title stacked.
     expect(w.find('.meeting-toolbar').exists()).toBe(false)
     const header = w.find('.meeting-header')
-    expect(header.find('.meeting-header__title').text()).toBe(enMessages.meeting.list.title)
+    expect(header.find('.meeting-header__title').text()).toBe(enMessages.nav.meeting)
     expect(header.find('.meeting-header__count').text()).toBe('2 total')
     expect(header.find('[data-action="meeting-refresh"]').exists()).toBe(true)
   })

@@ -195,9 +195,37 @@ export function dockTabIcon(id: string): Component | undefined {
   return resolveDockPlugin(id)?.icon
 }
 
-/** Manifest title key. `chat` included (see dockTabIcon). */
+/** Manifest title key, or the plugin's state-dependent key (Forge). */
 export function dockTabTitleKey(id: string): string | undefined {
-  return resolveDockPlugin(id)?.titleKey
+  const plugin = resolveDockPlugin(id)
+  return plugin?.dynamicTitleKey?.() ?? plugin?.titleKey
+}
+
+/**
+ * Settings category id → the dock plugin that owns that page.
+ *
+ * The manifests already declare the pairing (`settingsCategory`), so this map
+ * is derived rather than hand-written: a plugin that adds or renames its
+ * settings page cannot leave the settings index behind.
+ */
+const SETTINGS_CATEGORY_OWNER: ReadonlyMap<string, DockTabId> = new Map(
+  assembled
+    .filter((tab) => tab.settingsCategory)
+    .map((tab) => [tab.settingsCategory as string, tab.id]),
+)
+
+/**
+ * The ONE i18n key for a feature's name, given its settings category.
+ *
+ * Settings pages used to carry their own `settings.categories.*` wording, so
+ * the same feature read differently in the manager ("项目历史"), the settings
+ * index ("Git 历史") and the panel header ("提交列表"). Returning the dock
+ * plugin's key makes every surface say exactly the same thing; `undefined`
+ * means "not a dock feature", and callers fall back to their own key.
+ */
+export function dockCategoryTitleKey(categoryId: string): string | undefined {
+  const id = SETTINGS_CATEGORY_OWNER.get(categoryId)
+  return id ? dockTabTitleKey(id) : undefined
 }
 
 /** Button appearance states, declared by the plugin (never by the host). */
