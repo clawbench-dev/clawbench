@@ -150,7 +150,7 @@ const enabled = computed(() => !!getServerValueWithDefault(props.enableKey))
 
 .feature-status__manage:hover {
   color: var(--text-primary);
-  border-color: var(--border-color-strong, var(--border-color));
+  border-color: var(--border-color);
 }
 
 .feature-status__desc {
