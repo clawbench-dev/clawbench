@@ -67,6 +67,10 @@ function runWith(fakeNpx: string): RunResult {
         // Keep the retry loop short: the script sleeps between attempts, and a
         // test must not take 40 seconds to prove a policy.
         PWINSTALL_TEST_NO_SLEEP: '1',
+        // The script writes an apt config only on the runner (it needs sudo
+        // there); a CI test env sets GITHUB_ACTIONS=1, which would make this
+        // local run try exactly that.
+        GITHUB_ACTIONS: '',
       },
       encoding: 'utf8',
       timeout: 30_000,
