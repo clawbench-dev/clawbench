@@ -52,6 +52,44 @@ describe('collectStopTargets', () => {
     expect(targets.map((t) => t.id)).toEqual(['m-1'])
   })
 
+  // A disabled member is not scheduled, so it must never appear in "N 人正在发言"
+  // even if its reply was still streaming when it got disabled (issue #683).
+  it('excludes disabled members', () => {
+    const targets = collectStopTargets([
+      { role: 'assistant', streaming: true, agentId: 'm-1' },
+      { role: 'assistant', streaming: true, agentId: 'm-2' },
+    ], base({ roster: [
+      { id: 'm-1', name: '小北' },
+      { id: 'm-2', name: '阿岚', disabled: true },
+    ] }))
+    expect(targets.map((t) => t.id)).toEqual(['m-1'])
+  })
+
+  it('excludes a disabled member whose reply started before it was disabled', () => {
+    // Disabling happens mid-turn: the bubble is still streaming, the roster
+    // already says disabled. The count/list must follow the roster.
+    const targets = collectStopTargets(
+      [{ role: 'assistant', streaming: true, agentId: 'm-2', createdAt: '2026-11-09T10:00:00Z' }],
+      base({ roster: [
+        { id: 'm-1', name: '小北' },
+        { id: 'm-2', name: '阿岚', disabled: true },
+      ] }),
+    )
+    expect(targets).toEqual([])
+  })
+
+  it('keeps speakers whose roster row is missing or not disabled', () => {
+    const targets = collectStopTargets([
+      { role: 'assistant', streaming: true, agentId: 'm-1' }, // disabled: false
+      { role: 'assistant', streaming: true, agentId: 'm-2' }, // no disabled field
+      { role: 'assistant', streaming: true, agentId: 'm-9' }, // not in the roster
+    ], base({ roster: [
+      { id: 'm-1', name: '小北', disabled: false },
+      { id: 'm-2', name: '阿岚' },
+    ] }))
+    expect(targets.map((t) => t.id)).toEqual(['m-1', 'm-2', 'm-9'])
+  })
+
   it('prefers the roster name, then the resolver, then the fallback', () => {
     const targets = collectStopTargets([
       { role: 'assistant', streaming: true, agentId: 'm-1' }, // in roster

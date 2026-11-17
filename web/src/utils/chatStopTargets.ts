@@ -10,6 +10,9 @@
  * host is the only one speaking the list stays empty, which makes the stop
  * button keep its whole-turn cancel (two clicks) instead of offering a
  * single-row menu that behaves differently from what its label promises.
+ *
+ * DISABLED members are excluded too: they are not scheduled at all, so the
+ * list must not count (or offer to stop) someone the group will never hear.
  */
 
 /** One member who is speaking right now, as the stop menu needs it. */
@@ -36,8 +39,10 @@ export interface CollectStopTargetsOptions {
   isGroupSession: boolean
   /** The group's host member row id (empty for a free-mode group). */
   hostMemberId?: string
-  /** The group roster — authoritative for display names. */
-  roster?: Array<{ id: string; name?: string; backend?: string; avatar?: string }>
+  /** The group roster — authoritative for display names, and for `disabled`:
+   *  a disabled member is never scheduled, so a reply of its still marked
+   *  streaming (it was disabled mid-turn) must not stay in the stop list. */
+  roster?: Array<{ id: string; name?: string; backend?: string; avatar?: string; disabled?: boolean }>
   /** Speaker resolver (member row id → identity); may be null. */
   resolveSpeaker?: ((id: string) => { name?: string; backend?: string; avatar?: string } | null) | null
   /** Name to show when neither the roster nor the resolver knows the member. */
@@ -56,6 +61,7 @@ export function collectStopTargets(
   return (messages || [])
     .filter((m) => m.role === 'assistant' && m.streaming === true && !!m.agentId)
     .filter((m) => !hostId || String(m.agentId) !== hostId)
+    .filter((m) => !roster.get(String(m.agentId))?.disabled)
     .map((m) => {
       const id = String(m.agentId)
       const member = roster.get(id)
