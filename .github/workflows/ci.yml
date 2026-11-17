@@ -627,23 +627,12 @@ jobs:
         # Only this job's browser: installing all three would make each of the
         # three parallel jobs pay for the other two.
         #
-        # `--with-deps` runs apt-get, and Ubuntu's archive/security mirrors
-        # intermittently answer with DNS failures, 404s and 500s. A single bad
-        # response aborts the shard BEFORE any test runs, so the whole E2E
-        # matrix reads red for something no commit caused (observed on PR #674:
-        # three attempts, three different upstream failures). Let apt retry the
-        # individual requests, and retry the whole install a few times — the
-        # second attempt starts from a fresh `apt-get update`.
-        run: |
-          echo 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-ci-retries >/dev/null
-          for attempt in 1 2 3; do
-            if npx playwright install --with-deps ${{ matrix.browser }}; then
-              exit 0
-            fi
-            echo "::warning::playwright install failed (attempt ${attempt}/3); retrying"
-            sleep 20
-          done
-          exit 1
+        # The retry and the unsupported-image skip live in the script, because
+        # they are policy (and therefore tested) rather than YAML: apt mirrors
+        # intermittently answer with DNS failures/404s/500s, and `ubuntu-latest`
+        # moved to a release this Playwright does not install on. See
+        # scripts/playwright-install.sh and its test.
+        run: ./scripts/playwright-install.sh ${{ matrix.browser }}
 
       - name: Build Excalidraw vendor bundle
         # Same reason as the go:embed steps above: the root `npm run build` does
