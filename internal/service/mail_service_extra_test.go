@@ -28,6 +28,11 @@ func TestTestMailAccount(t *testing.T) {
 	if !f.closed {
 		t.Fatal("the probe must close its connection")
 	}
+	// Listing folders is not enough: 163/126 answer LIST and then refuse
+	// SELECT, so the probe has to open one too — the inbox.
+	if len(f.opened) != 1 || f.opened[0] != "INBOX" {
+		t.Fatalf("expected the probe to open INBOX, got %v", f.opened)
+	}
 
 	// A server that refuses the folder listing is exactly what "test" exists
 	// to surface — the TCP connection alone proves nothing.
@@ -36,6 +41,42 @@ func TestTestMailAccount(t *testing.T) {
 	installFakeDialer(t, f2)
 	if err := TestMailAccount(context.Background(), acc.ID); err == nil {
 		t.Fatal("expected a folder-listing failure to be reported")
+	}
+
+	// Same for a folder that cannot be opened: the account would sync nothing.
+	f3 := newFakeClient()
+	seedFolder(f3, "INBOX", mail.SpecialUseInbox)
+	f3.failOn = "open"
+	installFakeDialer(t, f3)
+	if err := TestMailAccount(context.Background(), acc.ID); err == nil {
+		t.Fatal("expected a refused SELECT to be reported")
+	}
+}
+
+// probeFolder has to work on servers that do not send SPECIAL-USE and on
+// servers whose inbox is not spelled "INBOX".
+func TestProbeFolder(t *testing.T) {
+	inbox := mail.Folder{Path: "INBOX", SpecialUse: mail.SpecialUseInbox, Selectable: true}
+	sent := mail.Folder{Path: "Sent", Selectable: true}
+	weird := mail.Folder{Path: "inbox", Selectable: true}
+	container := mail.Folder{Path: "Archive"}
+
+	cases := []struct {
+		name    string
+		folders []mail.Folder
+		want    string
+	}{
+		{"special-use wins", []mail.Folder{sent, inbox}, "INBOX"},
+		{"name fallback", []mail.Folder{sent, weird}, "inbox"},
+		{"first selectable", []mail.Folder{container, sent}, "Sent"},
+		{"nothing to open", nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := probeFolder(tc.folders); got != tc.want {
+				t.Fatalf("probeFolder = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

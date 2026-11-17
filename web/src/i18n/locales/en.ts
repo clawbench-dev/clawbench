@@ -262,6 +262,7 @@ export default {
       tls: 'The mail server certificate could not be verified.',
       timeout: 'The mail server did not respond in time.',
       server: 'The mail server returned an error.',
+      clientId: 'This mailbox requires the client to identify itself before it allows mail (common on 163 / 126). Update ClawBench to the latest version and try again.',
       busy: 'This mailbox is already syncing. Try again in a moment.',
       noRecipients: 'Add at least one recipient.',
       // The literal `@` must be escaped: vue-i18n parses a bare `@` as a
@@ -1367,6 +1368,7 @@ export default {
       creditUsed: 'Credits used this turn: {value}',
       costUsed: 'Cost this turn: {value}',
       tokenUsed: 'Input {input} / Output {output}',
+      turnInProgress: 'This turn is still running — details are partial',
       kbRefs: {
         summary: 'Referenced {count} knowledge base passages',
         summaryOne: 'Referenced {count} knowledge base passage',

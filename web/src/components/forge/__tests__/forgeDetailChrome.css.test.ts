@@ -281,6 +281,45 @@ describe('forge drill-down chrome is declared globally', () => {
 })
 
 /**
+ * Regression guard: the forge drill-down header must reserve the panel window
+ * controls' width on wide screens.
+ *
+ * In the wide layout App.vue overlays the left panel's two window controls
+ * (52dp, flush with the panel's right edge, tinted with 8% of the text colour)
+ * on whatever header the current view draws — drill-down pages included. Every
+ * header therefore reserves that width with `padding-right`, because the
+ * cluster is chrome and sits ON the header row.
+ *
+ * `.forge-detail-header` was missing from that list, so the issue/PR (and
+ * pipeline) drill-down's own quote / open-in-browser buttons rendered UNDER the
+ * cluster: the minimise glyph — a single horizontal line — showed through next
+ * to the chat bubble, and the cluster's translucent tint cut the quote
+ * button's background in half, so the two buttons read as one overlapping blob.
+ *
+ * This is a source guard because jsdom neither lays out nor applies the global
+ * stylesheets; the geometry itself is covered by the probe that found it.
+ */
+describe('forge drill-down header reserves the panel window controls', () => {
+  const components = read('css/components.css')
+
+  /** The wide-screen chrome rule: selector list + body. */
+  const rule = components.match(
+    /\.col-left--chrome \.tab-panel :is\(([\s\S]*?)\)\s*\{([\s\S]*?)\}/,
+  )
+
+  it('is listed in the wide-screen reservation rule', () => {
+    expect(rule, 'the wide-screen chrome reservation rule must exist').not.toBeNull()
+    expect(rule![1]).toContain('.forge-detail-header')
+  })
+
+  it('reserves the two control cells plus the gap before them', () => {
+    // The value mixes a `--dp` term with a spacing token, so normalizeDp()
+    // leaves it untouched and the assertion reads the source verbatim.
+    expect(rule![2]).toContain('padding-right: calc(52 * var(--dp) + var(--space-2))')
+  })
+})
+
+/**
  * Regression guard: the drill-down skeleton must sit on the body's inset.
  *
  * `.forge-loading--skeleton` zeroes its horizontal padding (the list views want

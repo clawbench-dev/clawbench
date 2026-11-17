@@ -74,8 +74,10 @@ type fakeMailClient struct {
 	deleted  []string
 	flagOps  []string
 	appended []string
-	closed   bool
-	failOn   string
+	// opened records the mailboxes the connection probe selected, in order.
+	opened []string
+	closed bool
+	failOn string
 	// appendGate, when set, holds Append until the test closes it.
 	appendGate chan struct{}
 	// failStatus makes Status fail for specific folders, simulating one broken
@@ -103,6 +105,14 @@ func (f *fakeMailClient) ListFolders(context.Context) ([]mail.Folder, error) {
 		return nil, err
 	}
 	return f.folders, nil
+}
+
+func (f *fakeMailClient) OpenFolder(_ context.Context, folder string) error {
+	if err := f.err("open"); err != nil {
+		return err
+	}
+	f.opened = append(f.opened, folder)
+	return nil
 }
 
 func (f *fakeMailClient) Status(_ context.Context, folder string) (mail.Status, error) {

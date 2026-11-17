@@ -16,6 +16,7 @@ describe('mailErrorMessage', () => {
     it('translates a known server classification', () => {
         expect(mailErrorMessage({ msgKey: 'MailAuthFailed' }, t)).toBe('t:mail.err.auth')
         expect(mailErrorMessage({ msgKey: 'MailSyncBusy' }, t)).toBe('t:mail.err.busy')
+        expect(mailErrorMessage({ msgKey: 'MailClientIDRequired' }, t)).toBe('t:mail.err.clientId')
     })
 
     it('falls back to the server message for an unknown key', () => {

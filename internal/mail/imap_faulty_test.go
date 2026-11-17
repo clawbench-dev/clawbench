@@ -47,6 +47,9 @@ type faultyIMAP struct {
 	failCommands map[string]bool
 	// appended collects the mailboxes an APPEND targeted, in order.
 	appended []string
+	// unsafeLoginOnSelect makes SELECT answer the way 163/126 do when the
+	// client has not introduced itself.
+	unsafeLoginOnSelect bool
 
 	mu            sync.Mutex
 	fetches       []string // fetch option lists, in order
@@ -54,6 +57,11 @@ type faultyIMAP struct {
 	blankExpunges int
 	copies        []string
 	connections   int
+	// commands is every command the client sent, normalized and in order.
+	// Order is the point: ID has to precede SELECT.
+	commands []string
+	// idLines is the raw ID command lines, in order.
+	idLines []string
 }
 
 func startFaultyIMAP(t *testing.T, srv *faultyIMAP) (*faultyIMAP, Account) {
@@ -126,6 +134,9 @@ func (s *faultyIMAP) handle(conn net.Conn) {
 			cmd = "UID " + strings.ToUpper(fields[2])
 			fields = append(fields[:2], fields[2:]...)
 		}
+		s.mu.Lock()
+		s.commands = append(s.commands, cmd)
+		s.mu.Unlock()
 		if cmd == "APPEND" {
 			// The literal has to be consumed before anything else: leaving it
 			// in the socket would make the next command line unreadable.
@@ -140,6 +151,11 @@ func (s *faultyIMAP) handle(conn net.Conn) {
 		switch cmd {
 		case "CAPABILITY":
 			fmt.Fprintf(w, "* CAPABILITY %s\r\n%s OK CAPABILITY completed\r\n", strings.Join(s.caps, " "), tag)
+		case "ID":
+			s.mu.Lock()
+			s.idLines = append(s.idLines, line)
+			s.mu.Unlock()
+			fmt.Fprintf(w, "%s OK ID completed\r\n", tag)
 		case "LOGIN":
 			fmt.Fprintf(w, "%s OK LOGIN completed\r\n", tag)
 		case "NOOP":
@@ -153,6 +169,10 @@ func (s *faultyIMAP) handle(conn net.Conn) {
 		case "STATUS":
 			s.writeStatus(w, tag, fields)
 		case "SELECT", "EXAMINE":
+			if s.unsafeLoginOnSelect {
+				fmt.Fprintf(w, "%s NO [CANNOT] Unsafe Login. Please contact kefu@188.com for help\r\n", tag)
+				break
+			}
 			s.writeSelect(w, tag)
 		case "FETCH", "UID FETCH":
 			s.mu.Lock()
@@ -237,6 +257,20 @@ func (s *faultyIMAP) appendedMailboxes() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.appended...)
+}
+
+// sentCommands returns the commands the client sent, in order.
+func (s *faultyIMAP) sentCommands() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.commands...)
+}
+
+// clientIDs returns the raw ID command lines the client sent.
+func (s *faultyIMAP) clientIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.idLines...)
 }
 
 func (s *faultyIMAP) writeStatus(w *bufio.Writer, tag string, fields []string) {

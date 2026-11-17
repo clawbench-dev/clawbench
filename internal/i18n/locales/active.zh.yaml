@@ -518,6 +518,7 @@ MailConnectFailed: 连不上邮件服务器，请检查服务器地址和端口
 MailTLSFailed: 邮件服务器证书校验失败
 MailTimeout: 邮件服务器响应超时
 MailServerError: 邮件服务器返回错误
+MailClientIDRequired: 这个邮箱服务器要求客户端先声明身份才允许收信（网易 163 / 126 常见），请升级到最新版本后重试
 MailNoRecipients: 请至少填一个收件人
 MailAttachmentTooLarge: 单个附件不能超过 {{.MaxMB}} MB
 MailUnsupportedAddress: 邮箱地址里 @ 前面那部分含中文等非 ASCII 字符，当前邮件服务器不支持这种地址，这封邮件发不出去

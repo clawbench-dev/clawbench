@@ -528,6 +528,7 @@ MailConnectFailed: Cannot reach the mail server — check the host and port
 MailTLSFailed: The mail server certificate could not be verified
 MailTimeout: The mail server did not respond in time
 MailServerError: The mail server returned an error
+MailClientIDRequired: This mail server requires the client to identify itself before it allows mail (common on 163 / 126) — update to the latest version and try again
 MailNoRecipients: Add at least one recipient
 MailAttachmentTooLarge: An attachment cannot exceed {{.MaxMB}} MB
 MailUnsupportedAddress: The part of the address before @ contains non-ASCII characters and this mail server cannot carry that, so the message cannot be sent

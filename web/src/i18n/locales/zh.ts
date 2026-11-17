@@ -261,6 +261,7 @@ export default {
       tls: '邮件服务器证书校验失败。',
       timeout: '邮件服务器响应超时。',
       server: '邮件服务器返回错误。',
+      clientId: '这个邮箱要求客户端先声明身份才允许收信（网易 163 / 126 常见）。请把 ClawBench 升级到最新版本再试。',
       busy: '这个邮箱正在同步中，请稍后再试。',
       noRecipients: '请至少填一个收件人。',
       // 字面 `@` 必须转义：vue-i18n 会把裸 `@` 当成链接消息引用，整个语言包编译失败。
@@ -1369,6 +1370,7 @@ export default {
       creditUsed: '本次消耗 {value} 积分',
       costUsed: '本次花费 {value}',
       tokenUsed: '输入 {input} / 输出 {output}',
+      turnInProgress: '本轮进行中，详情尚不完整',
       kbRefs: {
         summary: '参考了知识库 · {count} 段',
         summaryOne: '参考了知识库 · {count} 段',

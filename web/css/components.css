@@ -1897,6 +1897,13 @@
     .share-header,
     .kb-header,
     .forge-header,
+    /* The issue/PR + pipeline drill-down: it draws its OWN icon buttons at the
+       right (quote, open in browser), so it must reserve the controls' width
+       like every other header row. Without this the buttons rendered UNDER the
+       translucent cluster — the minimise glyph showed through as a stray dash
+       next to the chat bubble, and the cluster's tint covered the quote
+       button's right half. */
+    .forge-detail-header,
     .list-header,
     .detail-header,
     .form-header,
