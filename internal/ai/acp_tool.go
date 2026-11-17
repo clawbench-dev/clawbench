@@ -36,18 +36,12 @@ func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *Tool
 
 // TODO(phase3): delete once every backend registers ParseToolCall.
 func parseACPToolCallLegacy(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
-	switch backend {
-	default:
-		return parseGenericACPToolCall(tc, backend)
-	}
+	return parseGenericACPToolCall(tc, backend)
 }
 
 // TODO(phase3): delete once every backend registers ParseToolCallUpdate.
 func parseACPToolCallUpdateLegacy(backend string, tcu acp.SessionToolCallUpdate) *ToolCall {
-	switch backend {
-	default:
-		return parseGenericACPToolCallUpdate(tcu, backend)
-	}
+	return parseGenericACPToolCallUpdate(tcu, backend)
 }
 
 // ---------------------------------------------------------------------------

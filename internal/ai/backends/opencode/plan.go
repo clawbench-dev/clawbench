@@ -45,13 +45,6 @@ import (
 // Without this bridge the frontend PlanPanel ("执行计划" checklist) stays empty
 // for OpenCode sessions even while the agent maintains a todo list.
 
-// isOpenCodePlanBackend reports whether the ACP backend surfaces its checklist
-// through the `todowrite` tool rather than a native ACP plan notification.
-// mimo is an OpenCode fork with the same tool surface.
-func isOpenCodePlanBackend(backendID string) bool {
-	return backendID == "opencode" || backendID == "mimo"
-}
-
 // opencodeTodoStatusToPlan maps an OpenCode todo status to the PlanEntry status
 // vocabulary the frontend PlanPanel renders. OpenCode already uses the same
 // three values; anything else (or missing) falls back to pending.

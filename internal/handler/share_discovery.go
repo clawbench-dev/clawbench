@@ -175,17 +175,7 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 	titleHTML := html.EscapeString(title)
 	titleJSON, _ := json.Marshal(title) // escapes <, >, & to \u003c etc.
 
-	schemaType := "CreativeWork"
-	desc := "A file shared from ClawBench."
-	if d.Kind == shareKindSession {
-		schemaType = "Conversation"
-		desc = "A conversation shared from ClawBench."
-	}
-	if d.Kind == shareKindDir {
-		// A folder share's data URL is a listing, not a document.
-		schemaType = "CollectionPage"
-		desc = "A folder shared from ClawBench."
-	}
+	schemaType, desc := shareSchemaFor(d.Kind)
 
 	var b strings.Builder
 	b.WriteString("\n    <!-- Machine-readable discovery (injected by the server).\n")
@@ -201,31 +191,8 @@ func buildShareDiscoveryBlock(d shareDiscovery) string {
 		b.WriteString(`    <meta property="og:site_name" content="` + html.EscapeString(d.ProjectName) + `">` + "\n")
 	}
 
-	// Direct file access. A browser that clicks the download button fetches
-	// exactly this URL, but nothing in the shell says so — and an agent reading
-	// the page has no way to guess a token-scoped API path. Stating it in the
-	// source (comment + a link element) is what turns "here is a page" into
-	// "here is the file". Conversation shares have no file, so they get none of
-	// this; a folder has no single file, so its bare download URL is invalid and
-	// only the ?path= form is advertised.
 	if d.Kind != shareKindSession && d.DownloadAllowed {
-		downloadURL := "/api/share/" + d.Token + "/download"
-		localURL := "/api/share/" + d.Token + "/local"
-		b.WriteString("\n    <!-- Direct file access (same token, no sign-in):\n")
-		b.WriteString("         GET " + downloadURL + "  → the file as a download\n")
-		b.WriteString("         GET " + localURL + "  → the same bytes inline (usable as <img src> / <video src>)\n")
-		if d.Kind == shareKindDir {
-			b.WriteString("         A folder has no single file: append ?path=<absolute path inside the folder>\n")
-			b.WriteString("         to either URL to fetch one entry. List the entries first with\n")
-			b.WriteString("         GET /api/share/" + d.Token + "/list?path=<absolute path>.\n")
-		} else {
-			b.WriteString("         A file the shared document references: append ?path=<absolute path>\n")
-			b.WriteString("         (the path must stay inside the share's scope).\n")
-		}
-		b.WriteString("    -->\n")
-		if d.Kind == shareKindFile {
-			b.WriteString(`    <link rel="alternate" type="application/octet-stream" href="` + downloadURL + `" title="Direct download">` + "\n")
-		}
+		writeShareFileAccess(&b, d)
 	}
 
 	b.WriteString(`    <script type="application/ld+json">`)
@@ -277,4 +244,47 @@ func replaceShareTitle(doc, title string) string {
 		return doc
 	}
 	return strings.Replace(doc, placeholder, "<title>"+html.EscapeString(title)+"</title>", 1)
+}
+
+// shareSchemaFor names the JSON-LD type and the description that fits the kind
+// of thing behind the token: a folder is a listing, a conversation is not a
+// document, and only a file has a single downloadable body.
+func shareSchemaFor(kind string) (schemaType, desc string) {
+	switch kind {
+	case shareKindSession:
+		return "Conversation", "A conversation shared from ClawBench."
+	case shareKindDir:
+		return "CollectionPage", "A folder shared from ClawBench."
+	default:
+		return "CreativeWork", "A file shared from ClawBench."
+	}
+}
+
+// writeShareFileAccess advertises where the raw bytes live.
+//
+// A browser that clicks the download button fetches exactly this URL, but
+// nothing in the shell says so — and an agent reading the page has no way to
+// guess a token-scoped API path. Stating it in the source (comment + a link
+// element) is what turns "here is a page" into "here is the file".
+// Conversation shares have no file, so they get none of this; a folder has no
+// single file, so its bare download URL is invalid and only the ?path= form is
+// advertised.
+func writeShareFileAccess(b *strings.Builder, d shareDiscovery) {
+	downloadURL := "/api/share/" + d.Token + "/download"
+	localURL := "/api/share/" + d.Token + "/local"
+	b.WriteString("\n    <!-- Direct file access (same token, no sign-in):\n")
+	b.WriteString("         GET " + downloadURL + "  → the file as a download\n")
+	b.WriteString("         GET " + localURL + "  → the same bytes inline (usable as <img src> / <video src>)\n")
+	if d.Kind == shareKindDir {
+		b.WriteString("         A folder has no single file: append ?path=<absolute path inside the folder>\n")
+		b.WriteString("         to either URL to fetch one entry. List the entries first with\n")
+		b.WriteString("         GET /api/share/" + d.Token + "/list?path=<absolute path>.\n")
+	} else {
+		b.WriteString("         A file the shared document references: append ?path=<absolute path>\n")
+		b.WriteString("         (the path must stay inside the share's scope).\n")
+	}
+	b.WriteString("    -->\n")
+	if d.Kind == shareKindFile {
+		b.WriteString(`    <link rel="alternate" type="application/octet-stream" href="` + downloadURL + `" title="Direct download">` + "\n")
+	}
 }

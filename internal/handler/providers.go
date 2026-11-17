@@ -165,7 +165,7 @@ func ServeProviderSubRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	// /api/providers/{id}/models — the model catalog a provider exposes.
 	if idPart, sub, found := strings.Cut(path, "/"); found {
-		if sub != "models" {
+		if sub != jsonKeyModels {
 			writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
 			return
 		}

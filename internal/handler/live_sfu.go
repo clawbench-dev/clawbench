@@ -100,7 +100,7 @@ func ServeLiveSFUConfig(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if errors.Is(err, service.ErrLiveSFUInvalid) {
-				writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest", map[string]any{"Reason": err.Error()})
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest", map[string]any{jsonKeyReason: err.Error()})
 				return
 			}
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")

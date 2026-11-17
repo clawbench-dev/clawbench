@@ -33,25 +33,6 @@ func DiscardQueuedForgeEvents() {
 	}
 }
 
-// DiscardQueued empties every per-task queue. Drain loops already running keep
-// their in-flight event but will find nothing left to do and exit; firing is
-// suppressed separately by the scheduler's disabled gate.
-func (t *ForgeTaskTrigger) DiscardQueued() {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	dropped := 0
-	for id, q := range t.queues {
-		dropped += len(q)
-		delete(t.queues, id)
-	}
-	if dropped > 0 {
-		slog.Info("forge event queues discarded", slog.Int("dropped", dropped))
-	}
-}
-
 // ForgeTaskTrigger matches freshly derived forge events against event-triggered
 // tasks and fires them.
 //
@@ -95,6 +76,25 @@ type ForgeTaskTrigger struct {
 	retryBackoff time.Duration
 	// now is injectable for tests.
 	now func() time.Time
+}
+
+// DiscardQueued empties every per-task queue. Drain loops already running keep
+// their in-flight event but will find nothing left to do and exit; firing is
+// suppressed separately by the scheduler's disabled gate.
+func (t *ForgeTaskTrigger) DiscardQueued() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	dropped := 0
+	for id, q := range t.queues {
+		dropped += len(q)
+		delete(t.queues, id)
+	}
+	if dropped > 0 {
+		slog.Info("forge event queues discarded", slog.Int("dropped", dropped))
+	}
 }
 
 // ForgeQueuedEvent is one pending event awaiting its task's turn to run.
