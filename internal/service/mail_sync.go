@@ -377,7 +377,16 @@ func FetchOlderMailMessages(ctx context.Context, folderID int64) ([]MailMessage,
 	}
 	defer func() { _ = client.Close() }()
 
-	headers, err := client.FetchBefore(ctx, folder.Path, oldest.UID, 50)
+	// A server that does not report UIDNEXT (163) leaves the folder's UIDNext
+	// at zero, so the density estimate behind the window has nothing to divide
+	// by. The newest UID already cached is a valid lower bound for the next
+	// one, and on a mailbox with sparse UIDs that is the difference between one
+	// round trip and six.
+	nextUIDHint := folder.UIDNext
+	if nextUIDHint <= 1 && folder.LastSeenUID > 0 {
+		nextUIDHint = folder.LastSeenUID + 1
+	}
+	headers, err := client.FetchBefore(ctx, folder.Path, oldest.UID, 50, nextUIDHint)
 	if err != nil {
 		return nil, err
 	}

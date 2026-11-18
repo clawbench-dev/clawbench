@@ -87,7 +87,7 @@ func TestIMAPFetchAndMutateOps(t *testing.T) {
 		t.Fatalf("unexpected header result: %+v", byUID)
 	}
 
-	before, err := c.FetchBefore(ctx, "INBOX", newest[1].UID, 10)
+	before, err := c.FetchBefore(ctx, "INBOX", newest[1].UID, 10, 0)
 	if err != nil {
 		t.Fatalf("fetch before: %v", err)
 	}

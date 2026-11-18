@@ -83,6 +83,17 @@ type fakeMailClient struct {
 	// failStatus makes Status fail for specific folders, simulating one broken
 	// mailbox among healthy ones.
 	failStatus map[string]bool
+	// beforeCalls records each FetchBefore call, so a test can check what the
+	// service told the protocol layer about the folder.
+	beforeCalls []beforeCall
+}
+
+// beforeCall is one FetchBefore invocation.
+type beforeCall struct {
+	folder      string
+	beforeUID   uint32
+	n           int
+	nextUIDHint uint32
 }
 
 func newFakeClient() *fakeMailClient {
@@ -149,7 +160,8 @@ func (f *fakeMailClient) FetchNewest(_ context.Context, folder string, n int) ([
 	return out, f.err("fetch")
 }
 
-func (f *fakeMailClient) FetchBefore(_ context.Context, folder string, beforeUID uint32, n int) ([]mail.MessageHeader, error) {
+func (f *fakeMailClient) FetchBefore(_ context.Context, folder string, beforeUID uint32, n int, nextUIDHint uint32) ([]mail.MessageHeader, error) {
+	f.beforeCalls = append(f.beforeCalls, beforeCall{folder: folder, beforeUID: beforeUID, n: n, nextUIDHint: nextUIDHint})
 	var out []mail.MessageHeader
 	for _, h := range f.headers[folder] {
 		if h.UID < beforeUID {

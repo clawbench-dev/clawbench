@@ -190,7 +190,7 @@ func TestIMAPOpsOnClosedClientFail(t *testing.T) {
 	if _, err := c.FetchHeaders(ctx, "INBOX", []uint32{1}); err == nil {
 		t.Error("FetchHeaders on a closed client should fail")
 	}
-	if _, err := c.FetchBefore(ctx, "INBOX", 10, 5); err == nil {
+	if _, err := c.FetchBefore(ctx, "INBOX", 10, 5, 0); err == nil {
 		t.Error("FetchBefore on a closed client should fail")
 	}
 	if _, err := c.FetchRaw(ctx, "INBOX", 1); err == nil {
