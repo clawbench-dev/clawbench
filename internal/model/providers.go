@@ -275,8 +275,11 @@ func ProviderEnvVersion(agentID string) string {
 	// Deployment is part of the fingerprint because it becomes an environment
 	// variable (which edition of the backend's own service to talk to): editing
 	// only the edition must respawn a live connection, not wait for a restart.
+	// Backend is here for the same reason: it selects which own service the
+	// credential belongs to, so rebinding it must not leave a live process
+	// holding the previous service's credentials.
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.WireAPI, p.Deployment, declared,
+		p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.WireAPI, p.Backend, p.Deployment, declared,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:8])
 }

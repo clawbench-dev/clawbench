@@ -308,6 +308,28 @@ func TestProviderEnvVersion_ChangesWithWireAPI(t *testing.T) {
 	}
 }
 
+// Backend says which own service the credential belongs to: rebinding it swaps
+// the credentials a live process uses, so it must respawn the connection.
+func TestProviderEnvVersion_ChangesWithBackend(t *testing.T) {
+	agentID := "provider-version-backend-agent"
+	pid := int64(2)
+	ReplaceAgents(map[string]*Agent{agentID: {ID: agentID, Backend: "codebuddy", ProviderID: &pid}}, []*Agent{{ID: agentID, Backend: "codebuddy", ProviderID: &pid}})
+	ReplaceProviders([]*Provider{{ID: 2, Name: "B", Protocol: ProviderProtocolOpenAI, BaseURL: "https://b", APIKey: "k", AuthMode: ProviderAuthAuto, Backend: "codebuddy"}})
+	t.Cleanup(func() {
+		ReplaceProviders(nil)
+		ReplaceAgents(nil, nil)
+	})
+
+	before := ProviderEnvVersion(agentID)
+	if before == "" {
+		t.Fatal("expected a fingerprint")
+	}
+	ReplaceProviders([]*Provider{{ID: 2, Name: "B", Protocol: ProviderProtocolOpenAI, BaseURL: "https://b", APIKey: "k", AuthMode: ProviderAuthAuto, Backend: "cursor"}})
+	if ProviderEnvVersion(agentID) == before {
+		t.Fatal("changing backend must change the fingerprint")
+	}
+}
+
 // ProviderEnvBackends feeds the coverage test that keeps the env table and the
 // backend registry in sync, so it must list every entry exactly once, sorted.
 func TestProviderEnvBackends_SortedAndComplete(t *testing.T) {
