@@ -117,4 +117,25 @@ describe('SessionMoveDialog', () => {
     await w.find('.search-pill input').setValue('zzz')
     expect(w.findAll('.sm-item')).toHaveLength(0)
   })
+
+  it('sends exactly one move while the first one is in flight', async () => {
+    // A second tap during the round trip would send a second PATCH, which can
+    // only fail (the row is already gone) and would report "移动失败" for a move
+    // that actually worked.
+    let release: (value: unknown) => void = () => {}
+    mockPatch.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+
+    const w = await mountDialog()
+    const item = w.find('.sm-item')
+    await item.trigger('click')
+    await item.trigger('click')
+    await item.trigger('click')
+
+    expect(mockPatch).toHaveBeenCalledTimes(1)
+    expect(item.attributes('disabled')).toBeDefined()
+
+    release({ ok: true })
+    await flushPromises()
+    expect(w.emitted('moved')).toHaveLength(1)
+  })
 })
