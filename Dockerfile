@@ -31,9 +31,11 @@ FROM ubuntu:24.04
 # - ca-certificates: HTTPS (LLM provider APIs, Edge TTS WebSocket)
 # - curl, bash: general utilities + qoder install script
 # - git: version control (agents may clone repos, users need vc in projects)
-# Node.js/npm come from the official Node image above (see the ARG). The image
-# is consulted only for Node 22+ features; ClawBench's own minimum is 20
-# (internal/platform node_runtime.go), so a Node below 22 is not a startup error.
+# Node.js/npm come from the official Node image above (see the ARG). The 22+
+# requirement comes from the ACP adapters' and agent packages' own engine
+# fields; ClawBench's internal minimum is lower (nodeMinMajor in
+# internal/platform/node_runtime.go), so a Node below 22 here is not a startup
+# error — it only makes those global installs warn or misbehave.
 # Edge TTS is compiled into the Go binary (github.com/lib-x/edgetts) — no Python needed.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
