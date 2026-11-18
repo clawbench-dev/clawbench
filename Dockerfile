@@ -17,13 +17,20 @@
 # graceful shutdown exits 0, so it never triggers. Prefer `docker pull` +
 # recreate over an in-place upgrade.
 
+# Node.js 22: copied from the official image instead of the distro package.
+# Ubuntu 24.04's `nodejs` is v18.19.1 with npm 9, below the `>=22` most ACP
+# adapters (and packages such as openai@7) now declare — installing them inside
+# the container only emitted EBADENGINE warnings.
+ARG NODE_VERSION=22
+FROM node:${NODE_VERSION}-bookworm-slim AS node
+
 FROM ubuntu:24.04
 
 # Install runtime dependencies:
 # - ca-certificates: HTTPS (LLM provider APIs, Edge TTS WebSocket)
 # - curl, bash: general utilities + qoder install script
 # - git: version control (agents may clone repos, users need vc in projects)
-# - nodejs, npm: 11 of 12 AI agents install via `npm install -g`
+# Node.js/npm come from the official Node image below (see the ARG above).
 # Edge TTS is compiled into the Go binary (github.com/lib-x/edgetts) — no Python needed.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -31,9 +38,15 @@ RUN apt-get update && \
         curl \
         bash \
         git \
-        nodejs \
-        npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Ship the official Node binary + npm (same glibc base: bookworm and Ubuntu 24.04
+# are both Debian-family, so the binary links cleanly).
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx && \
+    node --version && npm --version
 
 WORKDIR /app
 
