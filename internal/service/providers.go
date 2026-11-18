@@ -524,6 +524,10 @@ func (e *ProviderFieldError) Error() string {
 // caller (writeProviderError, tests).
 func (e *ProviderFieldError) Unwrap() error { return ErrProviderInvalid }
 
+// fieldBackend is the API field name of a provider's backend, used in the
+// field errors below (and by the client to highlight the control).
+const fieldBackend = "backend"
+
 func validateProviderFields(p model.Provider) error {
 	if p.Name == "" {
 		return &ProviderFieldError{Field: "name", Reason: "name is required"}
@@ -534,41 +538,16 @@ func validateProviderFields(p model.Provider) error {
 	if !model.ValidAuthMode(p.AuthMode) {
 		return &ProviderFieldError{Field: "authMode", Reason: fmt.Sprintf("unknown auth mode %q", p.AuthMode)}
 	}
-	// The auth mode decides which variable the CLI reads, so a mode no backend
-	// can express for this protocol is a dead row: it saved fine and then
-	// failed every turn. The bind-time check (handler) still guards rows that
-	// predate this rule.
-	//
 	// The private protocol has no endpoint and no header of its own: the backend
 	// injects its fixed credential variable, so the auth mode is meaningless
 	// there and must not be validated against a protocol table that does not
 	// contain it.
 	if p.Protocol == model.ProviderProtocolPrivate {
-		// Four backends share this protocol, so the row must say which one it
-		// belongs to: without that, a Cursor key binds to a CodeBuddy agent and
-		// only fails on the first turn.
-		if p.Backend == "" {
-			return &ProviderFieldError{Field: "backend", Reason: "an own-service credential must name its backend"}
-		}
-		if !model.ProviderSupportsOwnService(p.Backend) {
-			return &ProviderFieldError{Field: "backend", Reason: fmt.Sprintf("backend %q has no own service", p.Backend)}
-		}
-		if p.Deployment != "" && !model.ProviderSupportsDeployment(p.Backend) {
-			return &ProviderFieldError{Field: "deployment", Reason: fmt.Sprintf("backend %q has no selectable edition", p.Backend)}
-		}
-		// An enterprise edition of the backend's own service lives at an
-		// address the customer defines, so it MUST carry one. Every other
-		// edition must not: nothing would read it, and the row would look
-		// configured while the request still went to the default host.
-		if model.DeploymentNeedsEndpoint(p.Deployment) {
-			if strings.TrimSpace(p.BaseURL) == "" {
-				return &ProviderFieldError{Field: "baseUrl", Reason: "this deployment needs a service address"}
-			}
-		} else if strings.TrimSpace(p.BaseURL) != "" {
-			return &ProviderFieldError{Field: "baseUrl", Reason: "this deployment takes no endpoint"}
+		if err := validatePrivateProvider(p); err != nil {
+			return err
 		}
 	} else if p.Backend != "" {
-		return &ProviderFieldError{Field: "backend", Reason: "only the private protocol belongs to a backend"}
+		return &ProviderFieldError{Field: fieldBackend, Reason: "only the private protocol belongs to a backend"}
 	} else if !model.ProtocolSupportsAuthMode(p.Protocol, p.AuthMode) {
 		return &ProviderFieldError{
 			Field:  "authMode",
@@ -586,6 +565,40 @@ func validateProviderFields(p model.Provider) error {
 	// nothing.
 	if p.Deployment != "" && p.Protocol != model.ProviderProtocolPrivate {
 		return &ProviderFieldError{Field: "deployment", Reason: "only the private protocol selects a deployment"}
+	}
+	return nil
+}
+
+// validatePrivateProvider checks the fields that only an own-service credential
+// has: which backend it belongs to, its edition, and whether that edition needs
+// a customer-defined address.
+//
+// The auth mode decides which variable the CLI reads, so a mode no backend can
+// express for this protocol is a dead row: it saved fine and then failed every
+// turn. The bind-time check (handler) still guards rows that predate this rule.
+func validatePrivateProvider(p model.Provider) error {
+	// Four backends share this protocol, so the row must say which one it
+	// belongs to: without that, a Cursor key binds to a CodeBuddy agent and
+	// only fails on the first turn.
+	if p.Backend == "" {
+		return &ProviderFieldError{Field: fieldBackend, Reason: "an own-service credential must name its backend"}
+	}
+	if !model.ProviderSupportsOwnService(p.Backend) {
+		return &ProviderFieldError{Field: fieldBackend, Reason: fmt.Sprintf("backend %q has no own service", p.Backend)}
+	}
+	if p.Deployment != "" && !model.ProviderSupportsDeployment(p.Backend) {
+		return &ProviderFieldError{Field: "deployment", Reason: fmt.Sprintf("backend %q has no selectable edition", p.Backend)}
+	}
+	// An enterprise edition of the backend's own service lives at an address
+	// the customer defines, so it MUST carry one. Every other edition must not:
+	// nothing would read it, and the row would look configured while the
+	// request still went to the default host.
+	if model.DeploymentNeedsEndpoint(p.Deployment) {
+		if strings.TrimSpace(p.BaseURL) == "" {
+			return &ProviderFieldError{Field: "baseUrl", Reason: "this deployment needs a service address"}
+		}
+	} else if strings.TrimSpace(p.BaseURL) != "" {
+		return &ProviderFieldError{Field: "baseUrl", Reason: "this deployment takes no endpoint"}
 	}
 	return nil
 }

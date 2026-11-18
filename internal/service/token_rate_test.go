@@ -14,7 +14,7 @@ import (
 // The generation-span accounting is what makes the reported speed honest:
 // tool execution and waiting time must never end up in the denominator.
 // Synthetic timestamps keep this test deterministic — a sleep-based version
-// would assert machine load, not behaviour.
+// would assert machine load, not behavior.
 func TestSessionExecutor_TrackGenerationSpan(t *testing.T) {
 	e := &SessionExecutor{}
 	t0 := time.Unix(1_700_000_000, 0)

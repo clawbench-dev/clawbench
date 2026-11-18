@@ -385,12 +385,13 @@ func (m *imapClient) FetchNewest(ctx context.Context, folder string, n int) ([]M
 // mailbox order, so the last n of them are the newest n messages; "*" as the
 // end keeps the range correct if mail arrived between SELECT and FETCH.
 func (m *imapClient) fetchNewestBySeq(ctx context.Context, folder string, n int) ([]MessageHeader, error) {
-	if m.numMessages == 0 {
+	if m.numMessages == 0 || n <= 0 {
 		return nil, nil
 	}
+	window := uint32(n) //nolint:gosec // G115: a positive fetch window, far below the uint32 range
 	lo := uint32(1)
-	if uint64(n) < uint64(m.numMessages) {
-		lo = m.numMessages - uint32(n) + 1
+	if window < m.numMessages {
+		lo = m.numMessages - window + 1
 	}
 	var set imap.SeqSet
 	set.AddRange(lo, 0) // 0 is "*": the current last message

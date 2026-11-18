@@ -381,6 +381,43 @@ func MarkMissingSources(rows []Notification) {
 // complexity budget; the split is also the honest shape, since "repair legacy
 // targets" and "probe presence" are two independent passes.
 func markMissingSubjects(rows []Notification) {
+	present := probeNotificationSubjects(rows)
+	for i := range rows {
+		if present.missing(&rows[i]) {
+			rows[i].SourceMissing = true
+		}
+	}
+}
+
+// subjectPresence is the set of subject ids that still exist, one map per
+// probed kind.
+type subjectPresence struct {
+	sessions map[string]bool
+	tasks    map[string]bool
+	meetings map[string]bool
+	mail     map[int64]bool
+}
+
+// missing reports whether n points at a subject that is gone. Forge (and any
+// future kind) is never probed: its item lives in an external system this log
+// cannot query.
+func (p subjectPresence) missing(n *Notification) bool {
+	switch n.Kind {
+	case NotificationKindSession:
+		return n.SessionID != "" && !p.sessions[n.SessionID]
+	case NotificationKindTask:
+		return n.TaskID != "" && !p.tasks[n.TaskID]
+	case NotificationKindMeeting:
+		return n.MeetingToken != "" && !p.meetings[n.MeetingToken]
+	case NotificationKindMail:
+		return n.MailMessageID > 0 && !p.mail[n.MailMessageID]
+	}
+	return false
+}
+
+// probeNotificationSubjects runs ONE presence query per subject table for the
+// whole page.
+func probeNotificationSubjects(rows []Notification) subjectPresence {
 	// Only collect the ids the probe will actually consult, so a task row's
 	// session id is never even queried.
 	sessionIDs := distinctNonEmpty(rows, func(n Notification) string {
@@ -408,37 +445,16 @@ func markMissingSubjects(rows []Notification) {
 		return n.MailMessageID
 	})
 
-	presentSessions := existingIDs("chat_sessions", "id", sessionIDs)
-	presentTasks := existingIDs("scheduled_tasks", "id", taskIDs)
-	// A meeting's record row (live_notes) is created when the publisher
-	// attaches and deleted with the record, so it is the meeting's presence
-	// probe. The in-memory room is irrelevant here: the log outlives it.
-	presentMeetings := existingIDs("live_notes", "token", meetingIDs)
-	// A mail row points at the cached message, which disappears when the
-	// message is deleted upstream or the whole account is removed.
-	presentMail := existingInt64IDs("mail_messages", "id", mailIDs)
-
-	for i := range rows {
-		n := &rows[i]
-		switch n.Kind {
-		case NotificationKindSession:
-			if n.SessionID != "" && !presentSessions[n.SessionID] {
-				n.SourceMissing = true
-			}
-		case NotificationKindTask:
-			if n.TaskID != "" && !presentTasks[n.TaskID] {
-				n.SourceMissing = true
-			}
-		case NotificationKindMeeting:
-			if n.MeetingToken != "" && !presentMeetings[n.MeetingToken] {
-				n.SourceMissing = true
-			}
-		case NotificationKindMail:
-			if n.MailMessageID > 0 && !presentMail[n.MailMessageID] {
-				n.SourceMissing = true
-			}
-		}
-		// Forge (and any future kind): never probed.
+	return subjectPresence{
+		sessions: existingIDs("chat_sessions", "id", sessionIDs),
+		tasks:    existingIDs("scheduled_tasks", "id", taskIDs),
+		// A meeting's record row (live_notes) is created when the publisher
+		// attaches and deleted with the record, so it is the meeting's presence
+		// probe. The in-memory room is irrelevant here: the log outlives it.
+		meetings: existingIDs("live_notes", "token", meetingIDs),
+		// A mail row points at the cached message, which disappears when the
+		// message is deleted upstream or the whole account is removed.
+		mail: existingInt64IDs("mail_messages", "id", mailIDs),
 	}
 }
 

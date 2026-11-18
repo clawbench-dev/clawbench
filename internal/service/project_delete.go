@@ -70,9 +70,9 @@ var projectTokenScopedDeleteTables = []string{
 var sessionLinkedDeleteTables = []string{
 	"chat_history",
 	"chat_metadata",
-	"chat_recommendations",
-	"queued_messages",
-	"btw_questions",
+	tableChatRecommendations,
+	tableQueuedMessages,
+	tableBtwQuestions,
 }
 
 // DeleteProjectData permanently removes a project and every row scoped to it.

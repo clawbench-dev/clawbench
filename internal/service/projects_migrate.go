@@ -52,6 +52,9 @@ const (
 	tableRecentProjects        = "recent_projects"
 	tableProjectForges         = "project_forges"
 	tableSessionTags           = "session_tags"
+	tableQueuedMessages        = "queued_messages"
+	tableChatRecommendations   = "chat_recommendations"
+	tableBtwQuestions          = "btw_questions"
 )
 
 // legacyPathTables are the tables whose project_path column converts in place:
@@ -67,10 +70,10 @@ var legacyPathTables = []struct {
 }{
 	{"chat_history", false},
 	{"scheduled_tasks", false},
-	{"queued_messages", false},
+	{tableQueuedMessages, false},
 	{"chat_metadata", false},
-	{"chat_recommendations", false},
-	{"btw_questions", false},
+	{tableChatRecommendations, false},
+	{tableBtwQuestions, false},
 	{"project_forges", false},
 	{tableTerminalQuickCommands, true},
 	{tableChatQuickSend, true},

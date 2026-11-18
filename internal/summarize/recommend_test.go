@@ -81,8 +81,8 @@ func TestAskAboutContext_UnsupportedBackend(t *testing.T) {
 	}
 }
 
-// A caller's own cap is a floor, not a ceiling: it may be raised to cover the
-// model's reasoning, but never replaced by a smaller default.
+// A caller's own cap is kept as given: it is neither replaced by a smaller
+// default nor raised to the model's budget (see the below-budget case).
 func TestAskAboutContext_OpenAIUsesGivenMaxTokens(t *testing.T) {
 	var received openaiChatRequest
 	sentinel := OutputBudgetForModel("", 0) + 1
@@ -114,6 +114,27 @@ func TestAskAboutContext_OpenAIUsesGivenMaxTokens(t *testing.T) {
 	if received.Messages[2].Content != "why?" {
 		t.Fatalf("question not sent as the rolling tail: %+v", received.Messages)
 	}
+}
+
+// A cap BELOW the model's budget must survive: /btw asks for 8192 and a
+// user-configured minutes cap may be 1500, and the reasoning-model fix used to
+// raise every request to the model's full budget — silently ignoring both, and
+// turning a deliberately bounded request into a long one.
+func TestAskAboutContext_ExplicitCapBelowModelBudgetIsKept(t *testing.T) {
+	var received openaiChatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"side answer"}}]}`))
+	}))
+	defer srv.Close()
+
+	s := NewOpenAI(srv.URL, "key", "gpt-4o-mini")
+	require.Greater(t, OutputBudgetForModel("gpt-4o-mini", 0), 1500,
+		"the test needs a model budget above the cap it asserts")
+	_, err := AskAboutContext(context.Background(), s, "sys", "ctx", "why?", 1500)
+	require.NoError(t, err)
+	assert.Equal(t, 1500, received.MaxTokens)
 }
 
 // TestAskAboutContext_ZeroMaxTokensFallsBack guards that callers which do not

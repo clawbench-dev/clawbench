@@ -32,10 +32,9 @@ var (
 // Group chats move as a whole (group row + every member row); single chats move
 // on their own.
 //
-// An "existing" project is one already registered in the projects table: the
-// caller picks from a list of them, so an unknown path is a stale/mistyped
-// request, not a request to create a project. Refusing here also keeps a typo
-// from silently filing the conversation under a directory that is not there.
+// The target is resolved by resolveMoveTarget and the "is anything still
+// writing?" guards live in ensureSessionIdle, so this function is the order in
+// which they run.
 //
 // The row changes live in service.MoveSessionToProject (including clearing the
 // native session id so the next turn re-creates the agent session under the new
@@ -45,55 +44,12 @@ var (
 // so leaving them alive would keep the agent working in the project the user
 // just moved the conversation away from.
 func moveSessionToProject(sessionID, projectPath string) error {
-	canon := store.NormalizeProjectPath(projectPath)
-	if canon == "" {
-		return errMoveTargetInvalid
-	}
-	targetID, registered, err := store.ProjectIDByPath(canon)
+	canon, targetID, err := resolveMoveTarget(projectPath)
 	if err != nil {
 		return err
 	}
-	if !registered || targetID == 0 {
-		return errMoveTargetInvalid
-	}
-	// Registered is not the same as usable: the picker hides projects whose
-	// directory is gone, but the directory can vanish between the list request
-	// and this one. Filing the conversation under a missing directory would give
-	// the next turn a working directory that does not exist.
-	if info, statErr := os.Stat(canon); statErr != nil || !info.IsDir() {
-		return errMoveTargetInvalid
-	}
-	// A conversation that is producing (or has a message row still mid-stream,
-	// e.g. its finalize came in a concurrent request) writes its next rows
-	// under the project id it captured at the start of the turn. Moving it now
-	// would split ONE reply across two projects, and its agent process is bound
-	// to the old working directory anyway.
-	if service.IsSessionRunning(sessionID) {
-		return errMoveSessionRunning
-	}
-	// A group turn is registered under the GROUP id, but its members have their
-	// own connections and may be compacting between turns; a compaction writes
-	// member state, so it is just as unsafe to move across an in-flight one.
-	if service.IsGroupSession(sessionID) {
-		if service.GroupHasCompactingMember(sessionID) {
-			return errMoveSessionRunning
-		}
-		members, listErr := service.ListGroupMembers(sessionID)
-		if listErr != nil {
-			return listErr
-		}
-		for _, m := range members {
-			if service.IsSessionRunning(m.ID) {
-				return errMoveSessionRunning
-			}
-		}
-	}
-	streaming, err := service.SessionHasStreamingMessage(sessionID)
-	if err != nil {
-		return err
-	}
-	if streaming {
-		return errMoveTruncatedStream
+	if idleErr := ensureSessionIdle(sessionID); idleErr != nil {
+		return idleErr
 	}
 	moved, err := service.MoveSessionToProject(sessionID, canon, targetID)
 	if err != nil {
@@ -111,6 +67,72 @@ func moveSessionToProject(sessionID, projectPath string) error {
 		closeGroupMemberConns(sessionID)
 	} else {
 		go ai.GetACPConnManager().CloseConn(sessionID)
+	}
+	return nil
+}
+
+// resolveMoveTarget turns the requested path into a registered project that is
+// still usable on disk.
+//
+// An "existing" project is one already registered in the projects table: the
+// caller picks from a list of them, so an unknown path is a stale/mistyped
+// request, not a request to create a project. The directory itself is checked
+// too: the picker hides projects whose directory is gone, but it can vanish
+// between the list request and this one, and filing the conversation under a
+// missing directory would give the next turn a working directory that does not
+// exist.
+func resolveMoveTarget(projectPath string) (string, int64, error) {
+	canon := store.NormalizeProjectPath(projectPath)
+	if canon == "" {
+		return "", 0, errMoveTargetInvalid
+	}
+	targetID, registered, err := store.ProjectIDByPath(canon)
+	if err != nil {
+		return "", 0, err
+	}
+	if !registered || targetID == 0 {
+		return "", 0, errMoveTargetInvalid
+	}
+	if info, statErr := os.Stat(canon); statErr != nil || !info.IsDir() {
+		return "", 0, errMoveTargetInvalid
+	}
+	return canon, targetID, nil
+}
+
+// ensureSessionIdle refuses a move while anything is still writing for the
+// conversation.
+//
+// A conversation that is producing (or has a message row still mid-stream, e.g.
+// its finalize came in a concurrent request) writes its next rows under the
+// project id it captured at the start of the turn, so moving it now would split
+// ONE reply across two projects. A group turn is registered under the GROUP id,
+// but its members have their own connections and may be compacting between
+// turns; a compaction writes member state, so it is just as unsafe to move
+// across an in-flight one.
+func ensureSessionIdle(sessionID string) error {
+	if service.IsSessionRunning(sessionID) {
+		return errMoveSessionRunning
+	}
+	if service.IsGroupSession(sessionID) {
+		if service.GroupHasCompactingMember(sessionID) {
+			return errMoveSessionRunning
+		}
+		members, err := service.ListGroupMembers(sessionID)
+		if err != nil {
+			return err
+		}
+		for _, m := range members {
+			if service.IsSessionRunning(m.ID) {
+				return errMoveSessionRunning
+			}
+		}
+	}
+	streaming, err := service.SessionHasStreamingMessage(sessionID)
+	if err != nil {
+		return err
+	}
+	if streaming {
+		return errMoveTruncatedStream
 	}
 	return nil
 }
