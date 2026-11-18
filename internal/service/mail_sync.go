@@ -208,7 +208,8 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 	}
 	// A changed UIDVALIDITY means every cached UID now points at a different
 	// message. There is no way to reconcile that incrementally.
-	if cached.UIDValidity != 0 && st.UIDValidity != 0 && cached.UIDValidity != st.UIDValidity {
+	reset := cached.UIDValidity != 0 && st.UIDValidity != 0 && cached.UIDValidity != st.UIDValidity
+	if reset {
 		if cerr := ClearMailFolderMessages(folderID); cerr != nil {
 			return 0, cerr
 		}
@@ -228,7 +229,7 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 		}
 		msgs = append(msgs, headerToRow(accountID, folderID, h))
 	}
-	firstSync := cached.LastSeenUID == 0
+	firstSync := cached.LastSeenUID == 0 || reset
 	inserted, err := UpsertMailMessages(msgs)
 	if err != nil {
 		return 0, err
@@ -255,8 +256,9 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 	// first connect are history, not "new mail". Deliberately keyed on
 	// UIDVALIDITY rather than LastSeenUID: a folder that was synced while
 	// EMPTY keeps LastSeenUID at 0, so the UID-based test would treat the first
-	// message it ever receives as history and never announce it.
-	notifyNewInboxMail(accountID, f, inserted, cached.UIDValidity == 0)
+	// message it ever receives as history and never announce it. A UIDVALIDITY
+	// reset re-fetches the whole window for the same reason: history, not new.
+	notifyNewInboxMail(accountID, f, inserted, cached.UIDValidity == 0 || reset)
 	return len(inserted), nil
 }
 

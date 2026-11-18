@@ -37,6 +37,22 @@ func mailNotifications(t *testing.T) []Notification {
 	return rows
 }
 
+// waitForFires polls until the email-trigger hook has recorded `want` fires.
+// FireMailTaskTriggers evaluates in a goroutine, so a sync that correctly
+// fires would otherwise pass a "nothing fired" test by racing ahead of it.
+// With want == 0 it waits a short settling window instead.
+func waitForFires(t *testing.T, fired *[]firedMail, want int) {
+	t.Helper()
+	if want == 0 {
+		time.Sleep(50 * time.Millisecond)
+		return
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(*fired) < want && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // TestSyncMailAccount_NotifiesOnlyNewUnseenInboxMail covers the whole gate:
 // the first sync is history, a read-elsewhere message is not news, and a
 // non-inbox folder is not "new mail".
@@ -127,6 +143,79 @@ func TestSyncMailAccount_NotifiesFirstMailInAnInitiallyEmptyInbox(t *testing.T) 
 	rows := mailNotifications(t)
 	if len(rows) != 1 || rows[0].Title != "第一封邮件" {
 		t.Fatalf("the first message in a previously empty inbox must notify, got %+v", rows)
+	}
+}
+
+// TestSyncMailAccount_UIDValidityResetDoesNotNotify covers a server that
+// rebuilt the mailbox: UIDVALIDITY changes, the cache is cleared and the newest
+// window is fetched again. Those re-fetched messages are history just like the
+// first sync — they must not raise a "N new messages" alert (and a push) nor
+// fire one email task per pre-existing message.
+func TestSyncMailAccount_UIDValidityResetDoesNotNotify(t *testing.T) {
+	setupMailTriggerDB(t)
+	acc := newTestAccount(t)
+	insertEmailTask(t, acc.ID, "", "", "", false)
+	fired := captureMailFires(t)
+
+	f := newFakeClient()
+	seedFolder(f, "INBOX", mail.SpecialUseInbox)
+	seedMessages(f, 1, time.Now().Add(-time.Hour))
+	installFakeDialer(t, f)
+
+	// First pass: history, so neither a notification nor a trigger.
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	if rows := mailNotifications(t); len(rows) != 0 {
+		t.Fatalf("first sync must not notify, got %d rows", len(rows))
+	}
+
+	// The server rebuilt the mailbox: new UIDVALIDITY, one unseen message
+	// reusing UID 1.
+	f.headers["INBOX"] = nil
+	seedMessages(f, 1, time.Now())
+	f.status["INBOX"] = mail.Status{Messages: 1, Unseen: 1, UIDNext: 2, UIDValidity: 2}
+
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("resync: %v", err)
+	}
+
+	if rows := mailNotifications(t); len(rows) != 0 {
+		t.Fatalf("a UIDVALIDITY reset re-fetches history, got %d notification rows: %+v", len(rows), rows)
+	}
+	// FireMailTaskTriggers evaluates in a goroutine, so wait until it has
+	// settled before asserting nothing reached the trigger hook.
+	waitForFires(t, fired, 0)
+	if n := len(*fired); n != 0 {
+		t.Fatalf("a UIDVALIDITY reset must not fire email tasks, got %d", n)
+	}
+
+	// The cache itself is still rebuilt from the new UIDVALIDITY window.
+	folder, err := GetMailFolderByPath(acc.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.UIDValidity != 2 {
+		t.Fatalf("folder UIDVALIDITY = %d, want the new 2", folder.UIDValidity)
+	}
+	msgs, err := ListMailMessages(MailMessageFilter{FolderID: folder.ID, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || msgs[0].UID != 1 {
+		t.Fatalf("cache not rebuilt from the new window: %+v", msgs)
+	}
+
+	// Positive control: a genuinely new message on top of the rebuilt window
+	// must still reach the trigger hook, so the "nothing fired" assertion above
+	// is not just observing a hook that nothing ever reaches.
+	appendInboxHeader(f, "INBOX", 2, "真正的新邮件", false, time.Now().Add(time.Minute))
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("third sync: %v", err)
+	}
+	waitForFires(t, fired, 1)
+	if n := len(*fired); n != 1 {
+		t.Fatalf("a genuinely new message must fire the email task once, got %d", n)
 	}
 }
 
