@@ -3378,6 +3378,7 @@ export default {
       recommend: 'Recommend',
       recommended: 'Recommended',
       recommendAsk: 'Which one do you recommend?',
+      expired: 'This question has expired (the agent has moved on) — your selection was not sent',
       recommendationFill: 'Fill',
       recommendationFilled: 'Filled',
       recommendationExpand: 'Expand',

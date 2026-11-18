@@ -3374,6 +3374,7 @@ export default {
       recommend: '推荐',
       recommended: '已推荐',
       recommendAsk: '你推荐选哪个？',
+      expired: '这个问题已失效（智能体已继续），你的选择没有发送',
       recommendationFill: '填入',
       recommendationFilled: '已填入',
       recommendationExpand: '展开',

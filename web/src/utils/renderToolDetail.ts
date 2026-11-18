@@ -25,6 +25,7 @@ import { teamMemberColorVar } from './teamMemberColor.ts'
 import { localizedToolName } from './toolNames.ts'
 import { COPY_ICON_SVG, copyWithFlash } from '@/utils/copyButton.ts'
 import { getAskState, patchAskState } from '@/utils/askQuestionState.ts'
+import { useToast } from '@/composables/useToast'
 import { annotateToolHtml } from '@/utils/annotateToolHtml.ts'
 import { ANNOTATION_SKIP_ATTR } from '@/utils/annotationScope.ts'
 
@@ -2713,14 +2714,14 @@ function commitAskSubmission(view: Element): string {
  * a companion field). With several questions one shared box cannot be attributed
  * to a question, so it is ignored rather than guessed at.
  *
- * When the server says the request is gone, the same answer is re-submitted
- * through the ordinary chat-message exit (`emit`) — the card must never become
- * a dead end just because it still looked live.
+ * When the server says the request is gone, the answer is NOT re-submitted as
+ * a chat message: the turn that asked is usually still running, so the message
+ * would land in the queue and later arrive as a user message nobody composed.
+ * The card goes back to its answerable look and the user is told why.
  */
 function submitElicitation(
   view: Element,
   elicitationId: string,
-  emit: (type: string, payload?: unknown, detail?: unknown) => void,
 ): boolean {
   const content: Record<string, unknown> = {}
   const items = view.querySelectorAll('.ask-question-item')
@@ -2772,13 +2773,15 @@ function submitElicitation(
     if (cardKey) revertAskSubmission(cardKey)
     else makeAskViewAnswerable(view)
     if (result !== 'gone') return
-    // The request no longer exists but the card still looked live (a block
-    // restored from history whose tool_result never arrived). The agent can
-    // still get the answer as an ordinary chat message: drop the live flag and
-    // take that exit. `submitAskView` re-collects the selection from the DOM,
-    // so nothing is lost by the round trip through the server.
-    delete (view as HTMLElement).dataset.elicitationLive
-    submitAskView(view, emit)
+    // The request no longer exists, but the card still looked live: the agent
+    // cancelled its own question (OpenCode times it out) or it was answered on
+    // another client, and the agent has already moved on. Deliberately NOT
+    // re-submitted as a chat message: the turn that asked is normally still
+    // running, so the message would queue behind it and be delivered later as a
+    // user message the user never wrote — the "extra queued message" reported
+    // on OpenCode's blocking question. The selection stays on the reverted card;
+    // the user decides whether to say it again themselves.
+    useToast().show(gt('tool.askUser.expired'), { icon: 'warning', type: 'info' })
   })
 
   return true
@@ -2808,13 +2811,14 @@ function submitAskView(view: Element, emit: (type: string, payload?: unknown, de
 
   // A LIVE elicitation is a BLOCKED agent, not a finished turn: its answer has
   // to travel back as the RPC result, not as a chat message (which would queue
-  // behind the very turn it is meant to unblock). An elicitation whose request
-  // is already gone (nobody answered it in time, or the turn ended) falls
-  // through to the ordinary chat-message path below — that is the only way a
-  // late answer can still reach the agent.
+  // behind the very turn it is meant to unblock). An elicitation that ALREADY
+  // rendered as finished (the block carries done, so the request is known to be
+  // gone) falls through to the ordinary chat-message path below — that is the
+  // only way a late answer can still reach the agent. A card that rendered as
+  // live never reaches this branch: its 404 is handled inside submitElicitation.
   const viewEl = view as HTMLElement
   const elicitationId = viewEl.dataset?.elicitationId || ''
-  if (elicitationId && viewEl.dataset?.elicitationLive === '1') return submitElicitation(view, elicitationId, emit)
+  if (elicitationId && viewEl.dataset?.elicitationLive === '1') return submitElicitation(view, elicitationId)
 
   const answers: string[] = []
   const items = view.querySelectorAll('.ask-question-item')
