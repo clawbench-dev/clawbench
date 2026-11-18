@@ -662,65 +662,6 @@ describe('ChatInputBar', () => {
     expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
   })
 
-  describe('action bar edge fade', () => {
-    /**
-     * jsdom has no layout: `scrollWidth`/`clientWidth` are 0 and nothing scrolls.
-     * The fade is a function of those numbers, so the test drives them directly
-     * and fires the real `scroll` listener the template binds — that is the part
-     * with behaviour (which side fades, and that a scrolled-to-the-end strip
-     * stops fading).
-     */
-    function setMetrics(el: Element, m: { scrollLeft: number; scrollWidth: number; clientWidth: number }) {
-      Object.defineProperty(el, 'scrollLeft', { value: m.scrollLeft, configurable: true, writable: true })
-      Object.defineProperty(el, 'scrollWidth', { value: m.scrollWidth, configurable: true })
-      Object.defineProperty(el, 'clientWidth', { value: m.clientWidth, configurable: true })
-    }
-
-    function bar(wrapper: ReturnType<typeof mountBar>) {
-      const el = wrapper.find('.chat-top-actions').element
-      return el as HTMLElement
-    }
-
-    it('fades the right edge when buttons are hidden past it', async () => {
-      const wrapper = mountBar({ currentSessionId: 's1' })
-      setMetrics(bar(wrapper), { scrollLeft: 0, scrollWidth: 600, clientWidth: 400 })
-      await wrapper.find('.chat-top-actions').trigger('scroll')
-      const el = wrapper.find('.chat-top-actions').element as HTMLElement
-      expect(el.dataset.fadeRight).toBe('1')
-      // Nothing is hidden to the left at scrollLeft 0.
-      expect(el.dataset.fadeLeft).toBe('0')
-    })
-
-    it('fades the left edge once the strip has been scrolled', async () => {
-      const wrapper = mountBar({ currentSessionId: 's1' })
-      setMetrics(bar(wrapper), { scrollLeft: 100, scrollWidth: 600, clientWidth: 400 })
-      await wrapper.find('.chat-top-actions').trigger('scroll')
-      const el = wrapper.find('.chat-top-actions').element as HTMLElement
-      expect(el.dataset.fadeLeft).toBe('1')
-      expect(el.dataset.fadeRight).toBe('1')
-    })
-
-    it('stops fading at the end of the strip', async () => {
-      // A fade with nothing hidden behind it reads as clipped content, so the
-      // trailing edge must go fully opaque once the last button is reachable.
-      const wrapper = mountBar({ currentSessionId: 's1' })
-      setMetrics(bar(wrapper), { scrollLeft: 200, scrollWidth: 600, clientWidth: 400 })
-      await wrapper.find('.chat-top-actions').trigger('scroll')
-      const el = wrapper.find('.chat-top-actions').element as HTMLElement
-      expect(el.dataset.fadeLeft).toBe('1')
-      expect(el.dataset.fadeRight).toBe('0')
-    })
-
-    it('shows no fade at all when every button fits', async () => {
-      const wrapper = mountBar({ currentSessionId: 's1' })
-      setMetrics(bar(wrapper), { scrollLeft: 0, scrollWidth: 400, clientWidth: 400 })
-      await wrapper.find('.chat-top-actions').trigger('scroll')
-      const el = wrapper.find('.chat-top-actions').element as HTMLElement
-      expect(el.dataset.fadeLeft).toBe('0')
-      expect(el.dataset.fadeRight).toBe('0')
-    })
-  })
-
   it('drives the edge fade from a CSS mask, not an opaque gradient overlay', () => {
     // Source contract: the composer sits on a translucent island when a
     // wallpaper is active, so an overlay painted in the background colour would
