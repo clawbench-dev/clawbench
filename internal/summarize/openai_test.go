@@ -260,7 +260,8 @@ func TestOpenAIDoRecommendPass_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "推荐的操作。", result)
 	assert.Equal(t, "gpt-4o-mini", received.Model)
-	assert.Equal(t, 1024, received.MaxTokens)
+	assert.GreaterOrEqual(t, received.MaxTokens, recommendMaxTokens)
+	assert.Equal(t, "none", received.ReasoningEffort)
 	assert.Len(t, received.Messages, 3)
 	assert.Equal(t, "system", received.Messages[0].Role)
 	assert.Equal(t, "stable prefix", received.Messages[1].Content)
@@ -302,7 +303,7 @@ func TestOpenAIDoAskPass_NonPositiveMaxTokensUsesDefault(t *testing.T) {
 	out, err := s.DoAskPass(context.Background(), "sys", "stable", "rolling", 0)
 	assert.NoError(t, err)
 	assert.Equal(t, "ok", out)
-	assert.Equal(t, 1024, received.MaxTokens)
+	assert.GreaterOrEqual(t, received.MaxTokens, recommendMaxTokens)
 }
 
 func TestOpenAIDoRecommendPass_ErrorStatus(t *testing.T) {

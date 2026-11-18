@@ -81,8 +81,11 @@ func TestAskAboutContext_UnsupportedBackend(t *testing.T) {
 	}
 }
 
+// A caller's own cap is a floor, not a ceiling: it may be raised to cover the
+// model's reasoning, but never replaced by a smaller default.
 func TestAskAboutContext_OpenAIUsesGivenMaxTokens(t *testing.T) {
 	var received openaiChatRequest
+	sentinel := OutputBudgetForModel("", 0) + 1
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&received)
 		w.Header().Set("Content-Type", "application/json")
@@ -91,15 +94,15 @@ func TestAskAboutContext_OpenAIUsesGivenMaxTokens(t *testing.T) {
 	defer srv.Close()
 
 	s := NewOpenAI(srv.URL, "key", "gpt-4o-mini")
-	out, err := AskAboutContext(context.Background(), s, "sys", "compressed history", "why?", 8192)
+	out, err := AskAboutContext(context.Background(), s, "sys", "compressed history", "why?", sentinel)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out != "side answer" {
 		t.Fatalf("unexpected output: %q", out)
 	}
-	if received.MaxTokens != 8192 {
-		t.Fatalf("expected max_tokens 8192, got %d", received.MaxTokens)
+	if received.MaxTokens != sentinel {
+		t.Fatalf("expected the caller's max_tokens %d to be kept, got %d", sentinel, received.MaxTokens)
 	}
 	// system + stable context + question
 	if len(received.Messages) != 3 {
@@ -129,8 +132,9 @@ func TestAskAboutContext_ZeroMaxTokensFallsBack(t *testing.T) {
 	if _, err := AskAboutContext(context.Background(), s, "sys", "", "q", 0); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if received.MaxTokens != recommendMaxTokens {
-		t.Fatalf("expected fallback to %d, got %d", recommendMaxTokens, received.MaxTokens)
+	// Not 0: OpenAI-compatible endpoints reject max_tokens=0.
+	if received.MaxTokens < recommendMaxTokens {
+		t.Fatalf("expected at least %d, got %d", recommendMaxTokens, received.MaxTokens)
 	}
 }
 
@@ -150,8 +154,12 @@ func TestDoRecommendPass_KeepsRecommendTokens(t *testing.T) {
 	if _, err := s.DoRecommendPass(context.Background(), "sys", "", "rolling"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if received.MaxTokens != 1024 {
-		t.Fatalf("expected recommend max_tokens 1024, got %d", received.MaxTokens)
+	// The recommendation pass must never go back to a thinking-sized budget.
+	if received.MaxTokens < recommendMaxTokens {
+		t.Fatalf("expected at least %d, got %d", recommendMaxTokens, received.MaxTokens)
+	}
+	if received.ReasoningEffort != reasoningEffortNone {
+		t.Fatalf("expected reasoning_effort %q, got %q", reasoningEffortNone, received.ReasoningEffort)
 	}
 }
 

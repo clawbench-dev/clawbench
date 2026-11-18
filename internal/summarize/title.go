@@ -67,6 +67,9 @@ func GenerateSessionTitle(ctx context.Context, s Summarizer, userMessages []stri
 	if err != nil {
 		return "", err
 	}
+	if err := RejectEnvelope("session title", out); err != nil {
+		return "", err
+	}
 	title := sanitizeSessionTitle(out)
 	if title == "" {
 		return "", fmt.Errorf("summarizer returned an empty title")
@@ -128,6 +131,9 @@ func GenerateMeetingTitle(ctx context.Context, s Summarizer, minutes string) (st
 	payload += "\n\n" + meetingTitleTrailer
 	out, err := pp.DoRecommendPass(ctx, meetingTitlePrompt, "", payload)
 	if err != nil {
+		return "", err
+	}
+	if err := RejectEnvelope("meeting title", out); err != nil {
 		return "", err
 	}
 	title := sanitizeSessionTitle(out)

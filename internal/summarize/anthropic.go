@@ -81,7 +81,19 @@ type anthropicRecommendRequest struct {
 	Messages    []anthropicRecommendMessage `json:"messages"`
 	MaxTokens   int                         `json:"max_tokens"`
 	Temperature float64                     `json:"temperature"`
+	// Thinking is off for this pass: a reasoning model spends max_tokens on
+	// thinking first and answers with nothing. See reasoningBudget.
+	Thinking *anthropicThinking `json:"thinking,omitempty"`
 }
+
+type anthropicThinking struct {
+	Type string `json:"type"` // "disabled"
+}
+
+// anthropicRecommendTemperature is 0.3 unless thinking is disabled: Anthropic
+// rejects temperature other than 1 whenever the thinking block is present, even
+// a disabled one.
+const anthropicRecommendTemperature = 1
 
 type anthropicRecommendMessage struct {
 	Role    string                  `json:"role"`
@@ -116,9 +128,7 @@ func (s *AnthropicSummarizer) DoAskPass(ctx context.Context, systemPrompt, stabl
 // max_tokens. A caller that needs lossless output turns that into an error
 // instead of keeping the first half.
 func (s *AnthropicSummarizer) DoAskPassDetailed(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, bool, error) {
-	if maxTokens <= 0 {
-		maxTokens = recommendMaxTokens
-	}
+	maxTokens, _ = reasoningBudget(s.Model, maxTokens)
 	content := make([]anthropicContentBlock, 0, 2)
 	if len([]rune(stable)) >= minCacheableRunes {
 		content = append(content, anthropicContentBlock{
@@ -138,7 +148,8 @@ func (s *AnthropicSummarizer) DoAskPassDetailed(ctx context.Context, systemPromp
 			{Role: roleUser, Content: content},
 		},
 		MaxTokens:   maxTokens,
-		Temperature: 0.3,
+		Temperature: anthropicRecommendTemperature,
+		Thinking:    &anthropicThinking{Type: "disabled"},
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

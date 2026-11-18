@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewAnthropic_Defaults(t *testing.T) {
@@ -282,10 +283,11 @@ func TestAnthropicAskAboutContext_SetsMaxTokens(t *testing.T) {
 	defer server.Close()
 
 	s := NewAnthropic(server.URL, "key", "claude-3-5-haiku-latest")
-	out, err := AskAboutContext(context.Background(), s, "sys", "history", "why?", 8192)
+	sentinel := OutputBudgetForModel("", 0) + 1
+	out, err := AskAboutContext(context.Background(), s, "sys", "history", "why?", sentinel)
 	assert.NoError(t, err)
 	assert.Equal(t, "旁路回答。", out)
-	assert.Equal(t, 8192, received.MaxTokens)
+	assert.Equal(t, sentinel, received.MaxTokens)
 	assert.Len(t, received.Messages, 1)
 	assert.Len(t, received.Messages[0].Content, 2)
 	assert.Equal(t, "history", received.Messages[0].Content[0].Text)
@@ -400,7 +402,12 @@ func TestAnthropicDoAskPass_NonPositiveMaxTokensUsesDefault(t *testing.T) {
 	out, err := s.DoAskPass(context.Background(), "sys", "stable", "rolling", 0)
 	assert.NoError(t, err)
 	assert.Equal(t, "ok", out)
-	assert.Equal(t, recommendMaxTokens, received.MaxTokens)
+	assert.GreaterOrEqual(t, received.MaxTokens, recommendMaxTokens)
+	// Thinking must be off, or a reasoning model spends the budget on it and
+	// answers with nothing.
+	require.NotNil(t, received.Thinking)
+	assert.Equal(t, "disabled", received.Thinking.Type)
+	assert.Equal(t, float64(anthropicRecommendTemperature), received.Temperature)
 }
 
 // Anthropic spells the same condition stop_reason=max_tokens.
