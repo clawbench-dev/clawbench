@@ -32,11 +32,6 @@ type recommendPassProvider interface {
 	DoRecommendPass(ctx context.Context, systemPrompt, stable, rolling string) (string, error)
 }
 
-// recommendMaxTokens is the output cap shared by the recommendation and title
-// passes. They produce one short suggestion, so a small cap keeps latency and
-// cost down. AskAboutContext (the /btw path) deliberately overrides it.
-const recommendMaxTokens = 1024
-
 // askPassProvider is implemented by LLM summarizers that can answer a one-shot
 // question with an explicit output cap. It is the same request channel as
 // recommendPassProvider (system + stable prefix + rolling tail, so the stable
@@ -67,6 +62,12 @@ func isTruncated(reason string) bool {
 	return reason == finishReasonLength || reason == finishReasonMaxTokens
 }
 
+// recommendMaxTokens is the output cap shared by the recommendation and title
+// passes. They produce one short suggestion, so a small cap keeps latency and
+// cost down. AskAboutContext (the /btw path) deliberately overrides it, and
+// DoRecommendPass asks for the model's own budget instead.
+const recommendMaxTokens = 1024
+
 // reasoningEffortNone turns thinking off ("none" is a documented value of
 // reasoning_effort; providers that do not know it ignore the field).
 const reasoningEffortNone = "none"
@@ -87,10 +88,11 @@ const reasoningEffortNone = "none"
 // reasoning anyway if a provider rejects "none" and falls back to its default.
 func reasoningBudget(modelID string, requested int) (maxTokens int, effort string) {
 	if requested <= 0 {
-		requested = recommendMaxTokens
-	}
-	if budget := OutputBudgetForModel(modelID, 0); budget > requested {
-		requested = budget
+		// Auto: the model's own output budget. A caller that passed a positive
+		// value (a user setting, or /btw's own cap) keeps it: raising it would
+		// silently ignore the cap, and a truncated minutes document is exactly
+		// what such a caller asked to be told about.
+		requested = OutputBudgetForModel(modelID, 0)
 	}
 	return requested, reasoningEffortNone
 }
