@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { _resetMailOpenForTest, takePendingMailOpen } from '@/composables/useMailOpen'
 
 /**
  * Behaviour test for the parts of the plugin manifests that only run on an
@@ -42,6 +43,12 @@ function ctx() {
   return { switchTab, tabBlocked, recordNotificationOrigin, hotSwitchProject: vi.fn(), currentProject: () => '' }
 }
 
+// The parked open-mail id is module state: leaving one behind would make the
+// next case's assertions depend on test order.
+afterEach(() => {
+  _resetMailOpenForTest()
+})
+
 describe('mail dock plugin', () => {
   it('feeds its badge from the unread counter, live', async () => {
     const plugin = await mailPlugin()
@@ -63,6 +70,9 @@ describe('mail dock plugin', () => {
     // no-op for a quote jump (no fromNotificationCenter flag), which is exactly
     // why the handler forwards the raw detail rather than deciding itself.
     expect(recordNotificationOrigin).toHaveBeenCalledWith({ messageId: 12 })
+    // The panel is lazily mounted: on a cold jump this handler is the only
+    // listener, so the id has to be parked for the mount that follows.
+    expect(takePendingMailOpen()).toBe(12)
   })
 
   it('ignores an open-mail event with no message id, and says so', async () => {

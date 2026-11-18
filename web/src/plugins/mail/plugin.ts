@@ -2,6 +2,7 @@ import { Mail } from 'lucide-vue-next'
 import { appLog } from '@/utils/appLog'
 import { useMailUnread, startMailUnreadPolling, stopMailUnreadPolling } from '@/composables/useMailUnread'
 import type { DockPlugin } from '@/composables/dockPluginTypes'
+import { parkPendingMailOpen } from '@/composables/useMailOpen'
 
 const TAG = 'MailDeepLink'
 
@@ -56,6 +57,10 @@ export default {
         // jump carries no `fromNotificationCenter` flag, so this is a no-op for
         // that path (see recordNotificationOrigin in App.vue).
         ctx.recordNotificationOrigin(detail)
+        // The panel is lazily mounted, so on a cold jump there is no listener
+        // yet and the id would be dropped — park it for the mount that is about
+        // to happen (a mounted panel handles the event itself, see useMailOpen).
+        parkPendingMailOpen(detail.messageId)
         ctx.switchTab('mail')
       },
     },

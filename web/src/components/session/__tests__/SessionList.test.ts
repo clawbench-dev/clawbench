@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, nextTick } from 'vue'
 import SessionList from '@/components/session/SessionList.vue'
+import SessionMoveDialog from '@/components/session/SessionMoveDialog.vue'
 import { RunningSweepDirective } from '@/directives/runningSweep'
 import { LongPressDirective } from '@/directives/longPress'
 import { readWebFile } from '@/testUtils/readWebFile'
@@ -3029,4 +3030,63 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
   })
+// Moving a conversation to another project (issue #685). The refresh order is
+// what these guard: the open conversation's move also switches projects, and
+// that switch reloads the list with the NEW project's cookie. Bumping the
+// version first would start a second, older-cookie load that can land after the
+// fresh one and put the moved row back.
+describe('SessionList move-to-project refresh', () => {
+  async function mountWithRows() {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessions: [sessionsFixture().s1, sessionsFixture().s2], hasMore: false }),
+    })
+    const wrapper = await mountList()
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+    return wrapper
+  }
+
+  async function openMoveDialog(wrapper: any, sessionId: string) {
+    const btn = wrapper.find(`[data-session-id="${sessionId}"] .session-more-btn`)
+    expect(btn.exists(), `row ${sessionId} should have a ⋮ button`).toBe(true)
+    await btn.trigger('click')
+    await nextTick()
+    // The menu is teleported to body, so it is not inside the wrapper.
+    const menus = document.body.querySelectorAll('.context-menu.visible')
+    const menu = menus[menus.length - 1]
+    const item = menu?.querySelector('[data-menu-item="move-project"]') as HTMLElement | null
+    expect(item, 'the menu should offer "移动到工作区"').toBeTruthy()
+    item!.click()
+    await flushPromises()
+  }
+
+  it('leaves the reload to the project switch when the OPEN conversation moves', async () => {
+    const wrapper = await mountWithRows()
+    const before = mockStore.state.sessionListVersion
+    await openMoveDialog(wrapper, 's1')
+
+    wrapper.findComponent(SessionMoveDialog).vm.$emit('moved', '/proj/target')
+    await nextTick()
+
+    expect(mockStore.state.sessionListVersion).toBe(before)
+    const select = wrapper.emitted('select')?.[0]
+    expect(select?.[0]).toBe('s1')
+    expect(select?.[2]).toBe('/proj/target')
+    wrapper.unmount()
+  })
+
+  it('reloads the list in place when another conversation moves', async () => {
+    const wrapper = await mountWithRows()
+    const before = mockStore.state.sessionListVersion
+    await openMoveDialog(wrapper, 's2')
+
+    wrapper.findComponent(SessionMoveDialog).vm.$emit('moved', '/proj/target')
+    await nextTick()
+
+    expect(mockStore.state.sessionListVersion).toBe(before + 1)
+    expect(wrapper.emitted('select')).toBeFalsy()
+    wrapper.unmount()
+  })
+})
 })

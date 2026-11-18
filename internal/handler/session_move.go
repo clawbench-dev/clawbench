@@ -15,13 +15,18 @@ import (
 // Errors of a re-bind request (issue #685), mapped to distinct statuses so the
 // client can say what went wrong instead of a generic failure.
 var (
-	// errMoveTargetInvalid: the path is not an EXISTING registered project.
+	// errMoveTargetInvalid: the path is not an EXISTING registered project, or
+	// that project is not reachable from this server's configured root paths.
 	errMoveTargetInvalid = errors.New("move target is not an existing project")
 	// errMoveNotAllowed: a task execution or a hidden group-member row (which
 	// only moves together with its group) cannot be a move target.
 	errMoveNotAllowed = errors.New("this session cannot be moved")
-	// errMoveSessionRunning: the conversation is producing right now.
+	// errMoveSessionRunning: the single conversation is producing right now.
 	errMoveSessionRunning = errors.New("session is running")
+	// errMoveGroupRunning: the GROUP is producing — the turn itself, a member's
+	// connection, or a member compacting. Kept apart from errMoveSessionRunning
+	// so the client is told "the group is working", not "this session is".
+	errMoveGroupRunning = errors.New("group is running")
 	// errMoveTruncatedStream: a reply is still being written, so its message
 	// rows are mid-stream and their project attribution would be split.
 	errMoveTruncatedStream = errors.New("session has an unfinished message")
@@ -81,6 +86,12 @@ func moveSessionToProject(sessionID, projectPath string) error {
 // between the list request and this one, and filing the conversation under a
 // missing directory would give the next turn a working directory that does not
 // exist.
+//
+// The path must also live under a configured root path. The projects table is
+// GLOBAL, so on a server with several roots (or a database shared between
+// machines) it can hold a project this process cannot reach: moving into it
+// would leave every following request for that conversation failing with
+// AccessDenied, i.e. a conversation that can never be opened again.
 func resolveMoveTarget(projectPath string) (string, int64, error) {
 	canon := store.NormalizeProjectPath(projectPath)
 	if canon == "" {
@@ -94,6 +105,9 @@ func resolveMoveTarget(projectPath string) (string, int64, error) {
 		return "", 0, errMoveTargetInvalid
 	}
 	if info, statErr := os.Stat(canon); statErr != nil || !info.IsDir() {
+		return "", 0, errMoveTargetInvalid
+	}
+	if !isPathUnderAnyRoot(canon) {
 		return "", 0, errMoveTargetInvalid
 	}
 	return canon, targetID, nil
@@ -110,12 +124,19 @@ func resolveMoveTarget(projectPath string) (string, int64, error) {
 // turns; a compaction writes member state, so it is just as unsafe to move
 // across an in-flight one.
 func ensureSessionIdle(sessionID string) error {
-	if service.IsSessionRunning(sessionID) {
-		return errMoveSessionRunning
+	isGroup := service.IsGroupSession(sessionID)
+	// A group turn is registered under the group id, so this one check covers
+	// it; only the running kind (group vs single) differs in the error.
+	runningErr := errMoveSessionRunning
+	if isGroup {
+		runningErr = errMoveGroupRunning
 	}
-	if service.IsGroupSession(sessionID) {
+	if service.IsSessionRunning(sessionID) {
+		return runningErr
+	}
+	if isGroup {
 		if service.GroupHasCompactingMember(sessionID) {
-			return errMoveSessionRunning
+			return runningErr
 		}
 		members, err := service.ListGroupMembers(sessionID)
 		if err != nil {
@@ -123,7 +144,7 @@ func ensureSessionIdle(sessionID string) error {
 		}
 		for _, m := range members {
 			if service.IsSessionRunning(m.ID) {
-				return errMoveSessionRunning
+				return runningErr
 			}
 		}
 	}
@@ -141,6 +162,7 @@ func ensureSessionIdle(sessionID string) error {
 // is a genuine write failure.
 func writeSessionMoveError(w http.ResponseWriter, r *http.Request, err error) {
 	var unavailable *service.MoveUnavailableMembersError
+	var agentUnavailable *service.MoveAgentUnavailableError
 	switch {
 	case errors.Is(err, errMoveTargetInvalid):
 		writeLocalizedErrorf(w, r, http.StatusUnprocessableEntity, "MoveTargetInvalid")
@@ -154,8 +176,14 @@ func writeSessionMoveError(w http.ResponseWriter, r *http.Request, err error) {
 				// response message above is already localized for this request).
 				"members": unavailable.Names,
 			})
-	case errors.Is(err, errMoveSessionRunning), errors.Is(err, errMoveTruncatedStream):
+	case errors.Is(err, errMoveGroupRunning):
 		writeLocalizedErrorf(w, r, http.StatusConflict, "GroupRunning")
+	case errors.Is(err, errMoveSessionRunning), errors.Is(err, errMoveTruncatedStream):
+		// A single conversation: its own turn, or a reply still being written.
+		writeLocalizedErrorf(w, r, http.StatusConflict, "SessionRunning")
+	case errors.As(err, &agentUnavailable):
+		writeLocalizedErrorf(w, r, http.StatusUnprocessableEntity, "MoveAgentUnavailable",
+			map[string]any{"Agent": agentUnavailable.Name})
 	default:
 		slog.Error("move session to project failed", slog.String("error", err.Error()))
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")

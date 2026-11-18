@@ -37,6 +37,7 @@
             type="button"
             class="sm-item"
             :data-project-path="p.path"
+            :disabled="moving"
             @click="pick(p.path)"
           >
             <Folder :size="16" class="sm-item-icon" />
@@ -84,6 +85,12 @@ const targets = ref([])
 const loading = ref(false)
 const errorMsg = ref('')
 const query = ref('')
+/**
+ * A PATCH is in flight. The list is clickable for the whole round trip, so a
+ * second tap would send a second move: the first one succeeds, the second
+ * answers 409/404 and the dialog reports "移动失败" for a move that worked.
+ */
+const moving = ref(false)
 
 /** Trailing slashes dropped, so two spellings of one directory compare equal. */
 function normPath(p) {
@@ -127,7 +134,8 @@ async function load() {
 }
 
 async function pick(path) {
-  if (!props.sessionId) return
+  if (!props.sessionId || moving.value) return
+  moving.value = true
   errorMsg.value = ''
   try {
     await apiPatch(
@@ -152,6 +160,8 @@ async function pick(path) {
       appLog.e('SessionMoveDialog', 'failed to move session', err)
       errorMsg.value = t('sessionMove.moveFailed')
     }
+  } finally {
+    moving.value = false
   }
 }
 
@@ -307,6 +317,14 @@ watch(() => props.open, (open) => {
 .sm-item:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: calc(-2 * var(--dp));
+}
+
+/* A move is in flight: the rows stop responding rather than queueing a second
+   PATCH that could only fail. */
+.sm-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+  pointer-events: none;
 }
 
 .sm-item-icon {

@@ -1053,6 +1053,14 @@ function openMoveDialogFromMenu(sessionId) {
 // The conversation now belongs to another project, so it must vanish from this
 // project's list. Bumping sessionListVersion re-runs the list load, which is
 // the same path every other mutation uses.
+//
+// The OPEN conversation is the exception: moving it also switches projects
+// (every request from here carries the project cookie, so leaving it open in
+// the OLD project would 403 on the next message), and that switch reloads the
+// list itself — with the NEW project's cookie. Bumping here as well would start
+// a second, older-cookie load that can resolve after the fresh one and put the
+// moved row back; the row is gone either way once the switch lands, so the
+// refresh is left to the switch.
 function handleSessionMoved(targetPath) {
   const movedId = moveDialog.sessionId
   toast.show(t('sessionMove.success', { name: baseName(targetPath) }), {
@@ -1060,14 +1068,11 @@ function handleSessionMoved(targetPath) {
     type: 'success',
     duration: 2000,
   })
-  store.state.sessionListVersion++
-  // Following the conversation when it was the OPEN one: every request from
-  // here carries the project cookie, so leaving it open in the OLD project
-  // would 403 on the next message. handleSessionSelect switches projects and
-  // reopens it once the new project's identity is ready.
   if (movedId && movedId === props.currentSessionId) {
     emit('select', movedId, undefined, targetPath)
+    return
   }
+  store.state.sessionListVersion++
 }
 
 // Conversation share dialog. Only the session id is needed: the dialog loads
