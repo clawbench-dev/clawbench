@@ -116,6 +116,9 @@ const i18n = createI18n({
           remaining: 'Remaining',
           inputTokens: 'Input',
           outputTokens: 'Output',
+          tokenRate: 'Output speed',
+          tokenRateHint: 'Latest reply generated for {seconds}s',
+          tokenRateHintNoDuration: 'Latest reply speed',
           contextCost: 'Cost',
           compact: 'Compact context',
         },
@@ -2219,6 +2222,46 @@ describe('ChatInputBar', () => {
     mockContextOutputTokens.value = 0
     mockContextCacheMissTokens.value = 0
     mockContextCredit.value = 0
+  })
+
+  it('shows the latest reply\'s output speed in the usage popup', async () => {
+    mockContextSize.value = 200000
+    mockContextUsed.value = 29495
+    mockContextOutputTokens.value = 500
+
+    const wrapper = mountBar({
+      messages: [
+        { id: 1, role: 'assistant', metadata: { outputTokens: 500, tokensPerSecond: 42.46, genMs: 11800 } },
+      ],
+    })
+    await wrapper.find('.session-info-usage').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('Output speed')
+    expect(wrapper.text()).toContain('42.5 tok/s')
+
+    // Reset for other tests.
+    mockContextOutputTokens.value = 0
+  })
+
+  it('hides the output speed when the backend could not measure it', async () => {
+    // A non-streaming backend leaves no window, so the row must not claim a
+    // number (and must not fall back to an older message's speed).
+    mockContextSize.value = 200000
+    mockContextUsed.value = 29495
+    mockContextOutputTokens.value = 500
+
+    const wrapper = mountBar({
+      messages: [
+        { id: 1, role: 'assistant', metadata: { outputTokens: 500, tokensPerSecond: 30, genMs: 9000 } },
+        { id: 2, role: 'assistant', metadata: { outputTokens: 500 } },
+      ],
+    })
+    await wrapper.find('.session-info-usage').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).not.toContain('Output speed')
+    mockContextOutputTokens.value = 0
   })
 
   it('renders cache read and cache hit as separate rows (same value, distinct labels)', async () => {

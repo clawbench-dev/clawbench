@@ -393,6 +393,7 @@ func TestServeSessionSettings_MemberRowCarriesAllThreeTabs(t *testing.T) {
 		"mode":           `{"currentModeId":"plan","availableModes":[{"id":"default","name":"Always Ask"},{"id":"plan","name":"Plan"}]}`,
 		"thinkingEffort": `{"currentId":"xhigh","availableLevels":[{"id":"low","name":"Low"},{"id":"xhigh","name":"XHigh"}]}`,
 		"usage":          `{"used":64269,"size":1000000}`,
+		"tokenRate":      `{"tokensPerSecond":33.3,"genMs":3000}`,
 	})
 
 	req = newRequest(t, http.MethodGet, "/api/ai/session/settings?session_id="+created.HostMemberID, nil)
@@ -417,6 +418,10 @@ func TestServeSessionSettings_MemberRowCarriesAllThreeTabs(t *testing.T) {
 			Used int `json:"used"`
 			Size int `json:"size"`
 		} `json:"usageState"`
+		TokenRate *struct {
+			TokensPerSecond float64 `json:"tokensPerSecond"`
+			GenMs           int     `json:"genMs"`
+		} `json:"tokenRate"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 
@@ -435,6 +440,12 @@ func TestServeSessionSettings_MemberRowCarriesAllThreeTabs(t *testing.T) {
 	require.NotNil(t, got.UsageState, "usageState must come from the member row")
 	assert.Equal(t, 64269, got.UsageState.Used)
 	assert.Equal(t, 1000000, got.UsageState.Size)
+
+	// (4) Usage tab: the member's own output speed. A member row has no
+	// chat_history, so this field is the ONLY source for its usage drawer.
+	require.NotNil(t, got.TokenRate, "tokenRate must come from the member row")
+	assert.InDelta(t, 33.3, got.TokenRate.TokensPerSecond, 0.001)
+	assert.Equal(t, 3000, got.TokenRate.GenMs)
 }
 
 // TestServeSessionSettings_EmptyTransportDoesNotHideACPState pins the resolver's

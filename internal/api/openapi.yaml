@@ -2238,6 +2238,26 @@ paths:
                     type: object
                     nullable: true
                     description: 该会话**自己**的上下文用量；`null` 表示从未上报
+                  tokenRate:
+                    type: object
+                    nullable: true
+                    description: |
+                      该会话**最近一轮**回复的输出速率（服务端实测）。
+
+                      `tokensPerSecond` = 本轮输出 token 数 ÷ 模型真正在吐字的时长；
+                      工具执行、等待网络等不产字的时间**不计入**分母（因此长任务里
+                      数字仍反映模型本身快慢，而不是任务耗时）。未测到（后端非流式、
+                      回复过短）时为 `null`，客户端据此隐藏该行而不是显示 0。
+
+                      单聊弹窗直接从最后一条助手消息的 metadata 读取同一个值；群成员行
+                      没有自己的 `chat_history`，所以只能从这个字段取。
+                    properties:
+                      tokensPerSecond:
+                        type: number
+                        description: 每秒输出 token 数
+                      genMs:
+                        type: integer
+                        description: 参与计算的吐字时长（毫秒），供 UI 说明口径
                   commands:
                     type: array
                     items: {type: object}

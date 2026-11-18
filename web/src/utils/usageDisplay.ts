@@ -35,6 +35,71 @@ export interface UsageSnapshot {
   usageByCategory?: Record<string, number>
 }
 
+/**
+ * TokenRateStat is the measured output speed of ONE turn.
+ *
+ * Source: the backend's message metadata (`tokensPerSecond` + `genMs`) or a
+ * session's `tokenRate` object (the settings endpoint, used for group members).
+ *
+ * The denominator is NOT wall time: it is the time the model actually spent
+ * emitting text/thinking. A turn that ran a long build therefore still reports
+ * the model's own speed instead of the build's.
+ */
+export interface TokenRateStat {
+  tokensPerSecond: number
+  genMs?: number
+}
+
+/**
+ * Coerces a wire value into a usable TokenRateStat, or null.
+ *
+ * Partial/older payloads are common (a field missing, a zero from `omitempty`,
+ * a numeric string from JSON), so every read is validated here rather than in
+ * each component. A zero rate means "not measured", never "0 tok/s".
+ */
+export function normalizeTokenRate(raw: unknown): TokenRateStat | null {
+  if (!raw || typeof raw !== 'object') return null
+  const rec = raw as Record<string, unknown>
+  const rate = Number(rec.tokensPerSecond)
+  if (!Number.isFinite(rate) || rate <= 0) return null
+  const genMs = Number(rec.genMs)
+  return {
+    tokensPerSecond: rate,
+    genMs: Number.isFinite(genMs) && genMs > 0 ? genMs : undefined,
+  }
+}
+
+/**
+ * The latest COMPLETED assistant turn's measured speed.
+ *
+ * The newest completed turn decides: if its backend could not measure (a CLI
+ * that emits one finished text blob), the row is hidden rather than showing an
+ * older turn's number under a "latest reply" label. A turn still streaming is
+ * skipped so the previous completed reply stays visible while the next one is
+ * being written.
+ */
+export function latestTokenRate(messages: readonly unknown[] | null | undefined): TokenRateStat | null {
+  if (!Array.isArray(messages)) return null
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i] as { role?: unknown; metadata?: unknown; streaming?: unknown } | null | undefined
+    if (!msg || msg.role !== 'assistant' || msg.streaming) continue
+    return normalizeTokenRate(msg.metadata)
+  }
+  return null
+}
+
+/**
+ * Display form of a rate: one decimal below 100 (the range where the digit
+ * matters), a whole grouped number above it. Empty when unmeasured — callers
+ * use that to hide the row instead of rendering "0 tok/s".
+ */
+export function formatTokenRate(stat: TokenRateStat | null | undefined): string {
+  const rate = stat?.tokensPerSecond ?? 0
+  if (!Number.isFinite(rate) || rate <= 0) return ''
+  const value = rate >= 100 ? Math.round(rate).toLocaleString('en-US') : rate.toFixed(1)
+  return `${value} tok/s`
+}
+
 /** Percent of the context window in use, rounded. 0 when no window is known. */
 export function usagePct(usage: Pick<UsageSnapshot, 'used' | 'size'> | null | undefined): number {
   if (!usage || usage.size <= 0) return 0

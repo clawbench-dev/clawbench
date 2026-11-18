@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   cacheHitRate,
+  formatTokenRate,
   formatUsageCost,
   hasTokenDetail,
+  latestTokenRate,
+  normalizeTokenRate,
   usageCategoryRows,
   usageColor,
   usagePct,
@@ -143,5 +146,94 @@ describe('usageCategoryRows', () => {
   it('is empty without a breakdown', () => {
     expect(usageCategoryRows({}, t)).toEqual([])
     expect(usageCategoryRows(null, t)).toEqual([])
+  })
+})
+
+describe('normalizeTokenRate', () => {
+  it('accepts the backend shape and keeps the measured window', () => {
+    expect(normalizeTokenRate({ tokensPerSecond: 42.5, genMs: 3200 })).toEqual({
+      tokensPerSecond: 42.5,
+      genMs: 3200,
+    })
+  })
+
+  it('treats a missing/zero rate as "not measured"', () => {
+    // omitempty means an unmeasured turn arrives as an absent field, but a
+    // literal 0 must not render "0 tok/s" either.
+    expect(normalizeTokenRate({ tokensPerSecond: 0, genMs: 3000 })).toBeNull()
+    expect(normalizeTokenRate({})).toBeNull()
+    expect(normalizeTokenRate(null)).toBeNull()
+    expect(normalizeTokenRate('12')).toBeNull()
+  })
+
+  it('drops a useless window but keeps the rate', () => {
+    expect(normalizeTokenRate({ tokensPerSecond: 20, genMs: 0 })).toEqual({
+      tokensPerSecond: 20,
+      genMs: undefined,
+    })
+  })
+
+  it('coerces numeric strings from JSON-ish payloads', () => {
+    expect(normalizeTokenRate({ tokensPerSecond: '31.5', genMs: '2000' })).toEqual({
+      tokensPerSecond: 31.5,
+      genMs: 2000,
+    })
+  })
+})
+
+describe('latestTokenRate', () => {
+  const assistant = (metadata: unknown, extra: Record<string, unknown> = {}) => ({ role: 'assistant', metadata, ...extra })
+
+  it('returns the newest completed assistant turn\'s measurement', () => {
+    expect(latestTokenRate([
+      assistant({ tokensPerSecond: 10 }),
+      { role: 'user' },
+      assistant({ tokensPerSecond: 55.5, genMs: 4000 }),
+    ])).toEqual({ tokensPerSecond: 55.5, genMs: 4000 })
+  })
+
+  it('skips a turn that is still streaming', () => {
+    // While the next reply is being written the panel should keep describing
+    // the last FINISHED one, not blank out.
+    expect(latestTokenRate([
+      assistant({ tokensPerSecond: 30 }),
+      assistant({}, { streaming: true }),
+    ])).toEqual({ tokensPerSecond: 30 })
+  })
+
+  it('does not fall back to an older turn when the newest completed one is unmeasured', () => {
+    // The row is labelled "latest reply"; an older number would be a lie.
+    expect(latestTokenRate([
+      assistant({ tokensPerSecond: 30 }),
+      assistant({}),
+    ])).toBeNull()
+  })
+
+  it('ignores user messages carrying a metadata object', () => {
+    expect(latestTokenRate([
+      assistant({ tokensPerSecond: 12 }),
+      { role: 'user', metadata: { tokensPerSecond: 999 } },
+    ])).toEqual({ tokensPerSecond: 12 })
+  })
+
+  it('is null without messages', () => {
+    expect(latestTokenRate(undefined)).toBeNull()
+    expect(latestTokenRate([])).toBeNull()
+  })
+})
+
+describe('formatTokenRate', () => {
+  it('keeps one decimal in the range where it matters', () => {
+    expect(formatTokenRate({ tokensPerSecond: 23.44 })).toBe('23.4 tok/s')
+    expect(formatTokenRate({ tokensPerSecond: 7 })).toBe('7.0 tok/s')
+  })
+
+  it('drops the decimal above 100 (false precision, harder to read)', () => {
+    expect(formatTokenRate({ tokensPerSecond: 1234.56 })).toBe('1,235 tok/s')
+  })
+
+  it('is empty when unmeasured, so callers hide the row', () => {
+    expect(formatTokenRate(null)).toBe('')
+    expect(formatTokenRate({ tokensPerSecond: 0 })).toBe('')
   })
 })

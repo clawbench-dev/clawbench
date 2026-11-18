@@ -308,6 +308,12 @@ type SessionExecutor struct {
 	// toolStarts tracks the start time of each tool call (by tool ID) so the
 	// wall-clock duration can be computed when the tool completes.
 	toolStarts map[string]time.Time
+	// genMs accumulates the time the model actually spent emitting output.
+	// genSpanStart is the start of the CURRENT streaming burst, or the zero
+	// time when the model is not talking (waiting on a tool result, or the
+	// turn is over). Only the event-loop goroutine touches both fields.
+	genMs        int64
+	genSpanStart time.Time
 	// lastFlush is the last time flushStreamingMessage wrote to the DB.
 	// Used to rate-limit streaming persistence (flushInterval) so a burst of
 	// incremental events (e.g. ACP thinking deltas) does not saturate the
@@ -560,6 +566,11 @@ func WaitSessionStreamDrained(sessionID string, timeout time.Duration) {
 //
 //nolint:gocyclo,gocognit // one branch per event type (content_reset, tool, metadata, context-state, flush gate); the dispatch is inherently a flat switch and splitting it would scatter the ordering invariants documented inline
 func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
+	// Measure "the model was talking" before any type-specific handling: the
+	// accounting must see the raw event stream, not what is forwarded (deltas
+	// are coalesced on the way out, never here).
+	e.trackGenerationSpan(event, time.Now())
+
 	// No flush-before-dispatch here on purpose. Every client-visible emission in
 	// this executor goes through forwardEvent → coalescer.add, and the coalescer
 	// itself flushes any buffered delta before emitting a non-delta event. That
@@ -586,6 +597,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		e.pendingContextPatches = make(map[string]string)
 		e.lastWrittenContent = ""
 		e.thinkingFlushed = make(map[string]*thinkingFlushState)
+		e.resetGenerationSpans()
 		e.mu.Unlock()
 		// Reset the streaming message in DB to empty so stale partial content
 		// doesn't persist if the retry Prompt fails or the server crashes.
@@ -1042,6 +1054,11 @@ func (e *SessionExecutor) persistToolCalls(blocks []model.ContentBlock) {
 
 // buildResult constructs the final RunResult from the executor's accumulated state.
 func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time) RunResult {
+	// The turn is over: whatever burst is still open ends NOW (the last delta
+	// can arrive many seconds after the model stopped talking if the producer
+	// flushes late). Idempotent with the tool-event path.
+	e.closeGenerationSpan(time.Now())
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	wallMs := int(time.Since(wallStart).Milliseconds())
@@ -1054,6 +1071,9 @@ func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time
 		e.responseMetadata = &ai.Metadata{}
 	}
 	e.responseMetadata.WallMs = wallMs
+	// GenMs is the denominator for output speed; Finalize turns it into
+	// TokensPerSecond once late usage frames have been drained.
+	e.responseMetadata.GenMs = int(e.genMs)
 	if extID := GetExternalSessionID(e.cfg.SessionID); extID != "" {
 		e.responseMetadata.SessionID = extID
 	}
@@ -1126,6 +1146,51 @@ func (e *SessionExecutor) captureExternalSessionID(externalID string) {
 				slog.String("err", err.Error()))
 		}
 	}
+}
+
+// trackGenerationSpan records whether the model is currently producing output.
+//
+// A span opens on the first content/thinking delta and closes when the model
+// hands control back to a tool (or the turn ends). Several spans add up: one
+// agentic turn that talks, calls a tool, then talks again reports only the
+// talking. The alternative denominator (wall time) charges tool execution to
+// the model and makes a fast model look slow.
+//
+// `now` is passed in rather than read here so tests can feed synthetic times.
+// Only the event-loop goroutine calls this.
+func (e *SessionExecutor) trackGenerationSpan(event ai.StreamEvent, now time.Time) {
+	switch event.Type {
+	case contentKeyContent, blockTypeThinking:
+		if event.Content == "" {
+			return
+		}
+		if e.genSpanStart.IsZero() {
+			e.genSpanStart = now
+		}
+	case eventTypeToolUse, eventTypeToolResult:
+		e.closeGenerationSpan(now)
+	}
+}
+
+// closeGenerationSpan ends the open burst, if any, and adds it to genMs.
+// Idempotent: the tool path, buildResult and the abandoned-turn path all call
+// it.
+func (e *SessionExecutor) closeGenerationSpan(now time.Time) {
+	if e.genSpanStart.IsZero() {
+		return
+	}
+	if d := now.Sub(e.genSpanStart); d > 0 {
+		e.genMs += d.Milliseconds()
+	}
+	e.genSpanStart = time.Time{}
+}
+
+// resetGenerationSpans drops everything measured so far. Used when the text
+// being discarded is not the text the user will see: a failed prompt about to
+// be retried (content_reset) and the "before" half of a mid-turn split.
+func (e *SessionExecutor) resetGenerationSpans() {
+	e.genMs = 0
+	e.genSpanStart = time.Time{}
 }
 
 // trackToolDuration records tool start times and injects the computed wall-clock
@@ -1508,6 +1573,10 @@ func (e *SessionExecutor) resetForSplitLocked(newMessageID int64) {
 	// "before" half's thinking was already flushed above, so the "after" half
 	// starts its own cursors.
 	e.thinkingFlushed = make(map[string]*thinkingFlushState)
+	// The "before" half is a separate message with no metadata of its own; the
+	// generation time measured so far belongs to it, not to the half that is
+	// about to start streaming.
+	e.resetGenerationSpans()
 }
 
 // buildSplitContentLocked renders the accumulated blocks as the content JSON for
@@ -1882,6 +1951,15 @@ func (e *SessionExecutor) drainAndPersistCancelledMetadata(eventCh <-chan ai.Str
 	if meta.WallMs == 0 && wallStart > 0 {
 		meta.WallMs = int(time.Now().UnixMilli() - wallStart)
 	}
+	// Same generation accounting as the normal Finalize path: this turn never
+	// reaches buildResult in every case, so close the span here and derive the
+	// speed for the message + the session row.
+	e.closeGenerationSpan(time.Now())
+	meta.GenMs = int(e.genMs)
+	if rate, ok := ai.DeriveTokensPerSecond(meta.OutputTokens, meta.GenMs); ok {
+		meta.TokensPerSecond = rate
+	}
+	PersistSessionTokenRate(e.cfg.SessionID, meta)
 	if err := SaveMetadata(msgID, meta); err != nil {
 		slog.Warn("failed to save cancelled turn metadata",
 			slog.Int64("msg_id", msgID), slog.String("err", err.Error()))
@@ -1952,6 +2030,24 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 		responseMetadata.KBRefs = e.cfg.ChatRequest.KBRefs
 	}
 	donePost()
+
+	// Output speed for this turn. GenMs was measured by the event loop (only
+	// the time the model spent streaming, never tool execution); deriving the
+	// rate here — after the drain — means late usage frames are included.
+	//
+	// The result rides in TWO places on purpose:
+	//   - message metadata → the single-chat popup reads it from the message it
+	//     already has (live via the WS metadata event, and after a reload from
+	//     the persisted content JSON);
+	//   - chat_sessions.context_state of THIS row → a group member row has no
+	//     chat_history of its own (its speech lives on the group timeline), so
+	//     the settings drawer can only learn its speed from the member row.
+	if responseMetadata != nil {
+		if rate, ok := ai.DeriveTokensPerSecond(responseMetadata.OutputTokens, responseMetadata.GenMs); ok {
+			responseMetadata.TokensPerSecond = rate
+		}
+		PersistSessionTokenRate(e.cfg.SessionID, responseMetadata)
+	}
 
 	// Rewrite a cumulative cost into this turn's delta BEFORE the content JSON is
 	// built, so the message-detail modal and the ledger agree. ACP reports the

@@ -22,6 +22,9 @@ const i18n = createI18n({
           tokenDetail: 'Token detail',
           inputTokens: 'Input',
           outputTokens: 'Output',
+          tokenRate: 'Output speed',
+          tokenRateHint: 'Latest reply generated for {seconds}s',
+          tokenRateHintNoDuration: 'Latest reply speed',
           totalTokens: 'Total',
           cachedReadTokens: 'Cache read',
           cacheHitTokens: 'Cache hit',
@@ -103,6 +106,34 @@ describe('ContextUsageDetail', () => {
     expect(w.text()).toContain('Breakdown')
     expect(w.text()).toContain('Tools')
     expect(w.text()).toContain('22,701')
+  })
+
+  it('shows the token rate row only when the backend measured it', () => {
+    const measured = mountDetail({
+      usage: { used: 1000, size: 200000, outputTokens: 500 },
+      tokenRate: { tokensPerSecond: 42.46, genMs: 11800 },
+    })
+    expect(measured.text()).toContain('Output speed')
+    expect(measured.text()).toContain('42.5 tok/s')
+    // The tooltip explains the denominator, so the number cannot be mistaken
+    // for a wall-clock throughput that includes tool execution.
+    const value = measured.findAll('.usage-popup-value').find(v => v.text().includes('tok/s'))
+    expect(value?.attributes('title')).toBe('Latest reply generated for 11.8s')
+
+    // Not measured (or no output at all): the row must not render "0 tok/s".
+    expect(mountDetail({
+      usage: { used: 1000, size: 200000, outputTokens: 500 },
+      tokenRate: null,
+    }).text()).not.toContain('Output speed')
+  })
+
+  it('explains the measurement without a window when only a rate is known', () => {
+    const w = mountDetail({
+      usage: { used: 1, size: 100, outputTokens: 100 },
+      tokenRate: { tokensPerSecond: 20 },
+    })
+    const value = w.findAll('.usage-popup-value').find(v => v.text().includes('tok/s'))
+    expect(value?.attributes('title')).toBe('Latest reply speed')
   })
 
   it('shows the compact action only when asked (single chat), never for a member', () => {

@@ -241,6 +241,7 @@
         :open="settingsDrawer.effectiveOpen.value"
         :agent-id="currentAgentId"
         :initial-tab="settingsDrawerInitialTab"
+        :token-rate="latestRate"
         @close="settingsDrawer.close()"
         @switch-model="handleSwitchModel"
         @switch-thinking-effort="handleSwitchThinkingEffort"
@@ -291,7 +292,7 @@
           </div>
           <!-- Shared with the settings drawer's usage tab so both surfaces
                render identical rows, colours and thresholds. -->
-          <ContextUsageDetail :usage="usageSnapshot" show-compact @compact="handleCompact(); usageDrawer.close()" />
+          <ContextUsageDetail :usage="usageSnapshot" :token-rate="latestRate" show-compact @compact="handleCompact(); usageDrawer.close()" />
         </div>
       </PopupMenu>
     </div>
@@ -379,7 +380,7 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import AttachmentPicker from '@/components/attach/AttachmentPicker.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
-import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
+import { usagePct as usagePctOf, usageColor as usageColorOf, latestTokenRate } from '@/utils/usageDisplay'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
 import ChatStopMenu from '@/components/chat/ChatStopMenu.vue'
 import MentionCard from '@/components/chat/MentionCard.vue'
@@ -590,6 +591,11 @@ const usageSnapshot = computed(() => ({
 }))
 const usagePct = computed(() => usagePctOf(usageSnapshot.value))
 const usageColor = computed(() => usageColorOf(usagePct.value))
+// Output speed of the latest completed reply, read from the message metadata the
+// backend wrote (per-message `tokensPerSecond` / `genMs`). The usage snapshot
+// itself is session-cumulative, so it cannot carry a per-turn speed; the drawer
+// opened from this bar receives the same value by prop.
+const latestRate = computed(() => latestTokenRate(props.messages))
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore

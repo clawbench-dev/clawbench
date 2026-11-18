@@ -127,8 +127,13 @@ func ServeSessionSettings(w http.ResponseWriter, r *http.Request) {
 		"configOptions":       st.ConfigOptions,
 		"modelListState":      st.ModelList,
 		"usageState":          st.Usage,
-		jsonCommands:          st.Commands,
-		"isGroupMember":       service.IsGroupMemberSession(sessionID),
+		// Latest turn's output speed. A group member row has no chat_history of
+		// its own, so this row-level copy is the only way the member's usage
+		// drawer can show the same speed the single-chat popup reads from its
+		// last message.
+		"tokenRate":     service.GetSessionTokenRate(sessionID),
+		jsonCommands:    st.Commands,
+		"isGroupMember": service.IsGroupMemberSession(sessionID),
 	})
 }
 

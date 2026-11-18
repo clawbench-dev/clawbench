@@ -1283,6 +1283,14 @@ describe('SessionDrawer', () => {
       expect((detail.props('usage') as { used: number }).used).toBe(50000)
     })
 
+    it('passes the host-supplied latest reply speed to the shared panel', async () => {
+      const wrapper = mountDrawer({ tokenRate: { tokensPerSecond: 21.25, genMs: 4000 } })
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await nextTick()
+      const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
+      expect(detail.props('tokenRate')).toEqual({ tokensPerSecond: 21.25, genMs: 4000 })
+    })
+
     it('gives the panel body its own padding (the shared component has none)', async () => {
       // ContextUsageDetail carries no outer padding: its single-chat host
       // (.usage-popup) supplies it. Mounted bare in this drawer the rows would
@@ -1393,6 +1401,7 @@ describe('SessionDrawer', () => {
       modeState: { currentModeId: 'ask', availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'plan', name: 'Plan' }] },
       thinkingEffortState: { currentId: 'low', availableLevels: [{ id: 'low', name: 'Low' }] },
       usageState: { used: 9000, size: 100000 },
+      tokenRate: { tokensPerSecond: 33.3, genMs: 3000 },
       isGroupMember: true,
     }
 
@@ -1426,6 +1435,20 @@ describe('SessionDrawer', () => {
       const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
       expect(detail.exists()).toBe(true)
       expect((detail.props('usage') as { used: number }).used).toBe(9000)
+    })
+
+    it('shows the member\'s own output speed, taken from its row', async () => {
+      // A member row has no chat_history of its own (its speech lands on the
+      // group timeline), so the settings payload is the only way this drawer
+      // can show the speed the single-chat popup reads from a message. It must
+      // also ignore the host's prop, which describes the CURRENT session.
+      const wrapper = mountTargeted({ tokenRate: { tokensPerSecond: 999, genMs: 1000 } })
+      await nextTick()
+      await nextTick()
+      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await nextTick()
+      const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
+      expect(detail.props('tokenRate')).toEqual({ tokensPerSecond: 33.3, genMs: 3000 })
     })
 
     it('writes settings through the targeted endpoint, not the current session', async () => {
