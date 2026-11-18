@@ -251,6 +251,18 @@
           <Tags :size="14" />
           {{ t('common.setTags') }}
         </div>
+        <!-- Re-bind the conversation to another existing project, history kept
+             (issue #685). A group moves as a whole (timeline + all member rows);
+             task executions belong to their task and do not get this entry. -->
+        <div
+          v-if="canMoveFromMenu"
+          class="context-menu-item"
+          data-menu-item="move-project"
+          @click.stop="openMoveDialogFromMenu(contextMenu.sessionId)"
+        >
+          <FolderInput :size="14" />
+          {{ t('sessionMove.title') }}
+        </div>
         <!-- Doubles as the share-state indicator (mirrors the file header's
              "Share link" item): highlighted, with a trailing check, when this
              conversation already has a live public link. The label itself stays
@@ -283,6 +295,13 @@
       <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" />
     </Teleport>
 
+    <SessionMoveDialog
+      :open="moveDialog.open"
+      :session-id="moveDialog.sessionId"
+      :current-path="moveDialog.currentPath"
+      @close="moveDialog.open = false"
+      @moved="handleSessionMoved"
+    />
     <SessionTagDialog
       :open="tagDialog.open"
       :session-id="tagDialog.sessionId"
@@ -301,9 +320,10 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert } from 'lucide-vue-next'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users, Crown, AtSign, ShieldAlert, FolderInput } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
+import SessionMoveDialog from '@/components/session/SessionMoveDialog.vue'
 import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
 import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -322,6 +342,7 @@ import { hydrateDraggedQuote } from '@/utils/quoteHydrate'
 import { dispatchToTarget, mintPendingQuoteId, requestTarget } from '@/composables/useConversationTarget'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
+import { baseName } from '@/utils/path.ts'
 import { apiPatch, apiPut } from '@/utils/api.ts'
 import { coalescedJson } from '@/utils/inflightGet.ts'
 import { buildSessionForkTree } from '@/utils/sessionForkTree.ts'
@@ -1005,6 +1026,48 @@ function openTagDialogFromMenu(sessionId) {
   tagDialog.sessionId = sessionId
   tagDialog.initialTags = (session.tags || []).map(tag => tag.name)
   tagDialog.open = true
+}
+
+// Move-to-project dialog (issue #685). Both a single conversation and a whole
+// group can move; task executions cannot, so the menu entry is hidden for
+// anything else rather than opening a dialog that can only fail.
+const moveDialog = reactive({ open: false, sessionId: '', currentPath: '' })
+
+const canMoveFromMenu = computed(() => {
+  const s = findSession(contextMenu.sessionId)
+  const type = s?.sessionType || 'chat'
+  return type === 'chat' || type === 'group'
+})
+
+function openMoveDialogFromMenu(sessionId) {
+  closeContextMenu()
+  const session = findSession(sessionId)
+  if (!session) return
+  moveDialog.sessionId = sessionId
+  // The row already carries its project path; the dialog uses it to leave the
+  // current project out of the target list.
+  moveDialog.currentPath = session.projectPath || store.state.projectRoot || ''
+  moveDialog.open = true
+}
+
+// The conversation now belongs to another project, so it must vanish from this
+// project's list. Bumping sessionListVersion re-runs the list load, which is
+// the same path every other mutation uses.
+function handleSessionMoved(targetPath) {
+  const movedId = moveDialog.sessionId
+  toast.show(t('sessionMove.success', { name: baseName(targetPath) }), {
+    icon: 'folder',
+    type: 'success',
+    duration: 2000,
+  })
+  store.state.sessionListVersion++
+  // Following the conversation when it was the OPEN one: every request from
+  // here carries the project cookie, so leaving it open in the OLD project
+  // would 403 on the next message. handleSessionSelect switches projects and
+  // reopens it once the new project's identity is ready.
+  if (movedId && movedId === props.currentSessionId) {
+    emit('select', movedId, undefined, targetPath)
+  }
 }
 
 // Conversation share dialog. Only the session id is needed: the dialog loads

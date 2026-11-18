@@ -428,8 +428,10 @@ describe('SessionList', () => {
     const shareItem = Array.from(menu.querySelectorAll('.context-menu-item'))
       .find(i => (i.textContent || '').includes('sessionShare.'))
     expect(shareItem).toBeUndefined()
-    // The menu still carries the other five actions.
-    expect(menu.querySelectorAll('.context-menu-item').length).toBe(5)
+    // The menu still carries the other actions (pin / rename / tags / move /
+    // archive / remove). The move entry rides on the row's sessionType — this
+    // fixture omits it, so the row counts as a single conversation (issue #685).
+    expect(menu.querySelectorAll('.context-menu-item').length).toBe(6)
 
     syncFeatureConfig({})
     wrapper.unmount()
@@ -2386,6 +2388,94 @@ describe('SessionList', () => {
     })
   })
 
+  describe('move to another project (issue #685)', () => {
+    it('offers the move entry for a single conversation and opens the picker', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await openRowMenu(wrapper, 's1')
+      const menus = document.body.querySelectorAll('.context-menu.visible')
+      const menu = menus[menus.length - 1]
+      const moveItem = Array.from(menu.querySelectorAll('.context-menu-item'))
+        .find(i => (i.textContent || '').includes('sessionMove.title'))
+      expect(moveItem).toBeTruthy()
+
+      ;(moveItem as HTMLElement).click()
+      await flushPromises()
+      // The picker owns its own fetch; the row already supplied the current
+      // project path so the dialog can leave it out of the target list.
+      expect(wrapper.vm.moveDialog.open).toBe(true)
+      expect(wrapper.vm.moveDialog.sessionId).toBe('s1')
+      expect(wrapper.vm.moveDialog.currentPath).toBe('/proj/current')
+      wrapper.unmount()
+    })
+
+    it('offers the move entry for a group chat', async () => {
+      const group = { ...sessionsFixture().s1, id: 'g1', sessionType: 'group' }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [group], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await openRowMenu(wrapper, 'g1')
+      const menus = document.body.querySelectorAll('.context-menu.visible')
+      const menu = menus[menus.length - 1]
+      const moveItem = Array.from(menu.querySelectorAll('.context-menu-item'))
+        .find(i => (i.textContent || '').includes('sessionMove.title'))
+      expect(moveItem).toBeTruthy()
+      wrapper.unmount()
+    })
+
+    it('hides the move entry for a task execution', async () => {
+      const scheduled = { ...sessionsFixture().s1, id: 't1', sessionType: 'scheduled' }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [scheduled], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      await openRowMenu(wrapper, 't1')
+      const menus = document.body.querySelectorAll('.context-menu.visible')
+      const menu = menus[menus.length - 1]
+      const moveItem = Array.from(menu.querySelectorAll('.context-menu-item'))
+        .find(i => (i.textContent || '').includes('sessionMove.title'))
+      expect(moveItem).toBeUndefined()
+      wrapper.unmount()
+    })
+
+    it('follows the conversation to the target project when it is the open one', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      wrapper.vm.moveDialog.sessionId = 's1'
+      wrapper.vm.handleSessionMoved('/w/target')
+      await flushPromises()
+
+      // Staying in the old project would make every request from the still-open
+      // chat carry the wrong project cookie (403), so the list hands the move
+      // up to App, which switches projects and reopens the session.
+      expect(wrapper.emitted('select')?.[0]).toEqual(['s1', undefined, '/w/target'])
+      wrapper.unmount()
+    })
+
+    it('does not switch projects when a different conversation was moved', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      wrapper.vm.moveDialog.sessionId = 's2'
+      wrapper.vm.handleSessionMoved('/w/target')
+      await flushPromises()
+
+      expect(wrapper.emitted('select')).toBeFalsy()
+      wrapper.unmount()
+    })
+  })
+
   describe('shared context menu control', () => {
     it('renders the shared .context-menu markup (not the old bespoke classes)', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
@@ -2399,8 +2489,8 @@ describe('SessionList', () => {
       const menu = menus[menus.length - 1]
       expect(menu).toBeTruthy()
       // Reuses the file manager's item class + icon-left layout.
-      // pin / rename / set-tags / share / archive / force-delete
-      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(6)
+      // pin / rename / set-tags / move / share / archive / force-delete
+      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(7)
       expect(document.body.querySelector('.session-context-menu')).toBeNull()
       wrapper.unmount()
     })

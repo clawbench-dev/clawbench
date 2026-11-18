@@ -68,6 +68,19 @@ func DeleteProjectData(projectID int64) error {
 	return err
 }
 
+// ReattributeSessionProject moves every indexed chunk of one session to another
+// project id (issue #685: a conversation re-bound to another project must not
+// stay in the old project's search results). Best-effort wrapper: no store
+// means RAG is disabled.
+func ReattributeSessionProject(sessionID string, projectID int64) error {
+	rs := StoreForCleanup()
+	if rs == nil {
+		return nil
+	}
+	_, err := rs.ReattributeSessionProject(sessionID, projectID)
+	return err
+}
+
 // SetEmbedderHealthy updates the cached embedder health state.
 func SetEmbedderHealthy(healthy bool) {
 	embedderHealthyFlag.Store(healthy)

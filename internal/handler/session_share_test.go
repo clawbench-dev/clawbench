@@ -485,9 +485,11 @@ func listSessionSharesViaAPI(t *testing.T, env *testEnv) []sessionShareListItem 
 	return resp.Shares
 }
 
-// moveSessionToProject repoints a seeded session (and its messages) at another
-// project, so a share can be created "as" that project.
-func moveSessionToProject(t *testing.T, env *testEnv, sessionID, projectPath string) {
+// repointSessionForShareTest repoints a seeded session (and its messages) at
+// another project, so a share can be created "as" that project. (Renamed from
+// moveSessionToProject: that name now belongs to the production re-bind
+// helper, issue #685.)
+func repointSessionForShareTest(t *testing.T, env *testEnv, sessionID, projectPath string) {
 	t.Helper()
 	// Repoint the session (and its messages) at the project id for projectPath,
 	// registering that project if the fixture has not seen it yet.
@@ -549,7 +551,7 @@ func TestSessionShareList_IsProjectScoped(t *testing.T) {
 
 	otherProject := t.TempDir()
 	sessionID, ids := seedShareSession(t, env, "sess-other")
-	moveSessionToProject(t, env, sessionID, otherProject)
+	repointSessionForShareTest(t, env, sessionID, otherProject)
 	createSessionShareForProject(t, otherProject, sessionID, ids)
 
 	// Listing from env.ProjectDir must not see it.
@@ -621,7 +623,7 @@ func TestSessionShareList_RevokeAllIsProjectScoped(t *testing.T) {
 	// One share in another project, which clear-all must NOT touch.
 	otherProject := t.TempDir()
 	s3, ids3 := seedShareSession(t, env, "sess-c")
-	moveSessionToProject(t, env, s3, otherProject)
+	repointSessionForShareTest(t, env, s3, otherProject)
 	createSessionShareForProject(t, otherProject, s3, ids3)
 
 	req := newRequest(t, http.MethodDelete, "/api/share/session/list", map[string]any{"all": true})
@@ -644,7 +646,7 @@ func TestSessionShareList_RevokeUnknownOrForeignTokenIs404(t *testing.T) {
 
 	otherProject := t.TempDir()
 	sessionID, ids := seedShareSession(t, env, "sess-foreign")
-	moveSessionToProject(t, env, sessionID, otherProject)
+	repointSessionForShareTest(t, env, sessionID, otherProject)
 	foreignToken := createSessionShareForProject(t, otherProject, sessionID, ids)
 
 	cases := map[string]string{

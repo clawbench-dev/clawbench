@@ -1806,6 +1806,21 @@ export default {
     saveFailed: '标签保存失败，你的修改还在，可重试。',
     deleteFailed: '标签删除失败，请重试。',
   },
+  // 会话移动（issue #685）：把会话重新绑定到另一个已存在的工作区，历史保留。
+  sessionMove: {
+    title: '移动到工作区',
+    currentLabel: '当前工作区',
+    loadFailed: '工作区列表加载失败，请重试。',
+    empty: '没有其他可用工作区',
+    noMatch: '没有匹配的工作区',
+    searchPlaceholder: '搜索工作区',
+    targetInvalid: '目标工作区不存在，请刷新列表后重试。',
+    notAllowed: '只有会话和群聊可以移动工作区，任务会话不行。',
+    running: '会话正在生成回复，请等这一轮结束后再移动。',
+    membersUnavailable: '这些成员在新工作区不可用：{members}。请先把对应智能体设为「所有工作区可用」，或把它们移出群聊后再试。',
+    moveFailed: '移动失败，请重试。',
+    success: '已移动到「{name}」',
+  },
   sessionSearch: {
     title: '会话搜索',
     placeholder: '搜索会话名称或对话内容...',

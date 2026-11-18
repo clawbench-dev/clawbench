@@ -715,7 +715,12 @@ func resolveUpdateTargetSession(w http.ResponseWriter, r *http.Request, bodySess
 
 // sessionUpdateRequest is the PATCH /api/ai/session body.
 type sessionUpdateRequest struct {
-	SessionID      string `json:"sessionId"` // explicit target; overrides query/cookie
+	// SessionID is the request body's explicit target; it overrides the query
+	// parameter and the session cookie.
+	SessionID string `json:"sessionId"`
+	// ProjectPath re-binds the conversation to another EXISTING project
+	// (issue #685). The history stays; see moveSessionToProject.
+	ProjectPath    string `json:"projectPath"`
 	ModeID         string `json:"modeId"`
 	ThinkingEffort string `json:"thinkingEffort"`
 	ModelID        string `json:"modelId"`
@@ -751,6 +756,17 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	sessionID, ok := resolveUpdateTargetSession(w, r, req.SessionID)
 	if !ok {
 		return
+	}
+	// Re-bind first (issue #685). The remaining fields below resolve the
+	// session AGAIN on their own (model / effort / extra options look the agent
+	// up by session, tags are filed under the session's project), so applying
+	// the move before them makes those writes land in the new project instead
+	// of leaving a half-moved session behind.
+	if req.ProjectPath != "" {
+		if err := moveSessionToProject(sessionID, req.ProjectPath); err != nil {
+			writeSessionMoveError(w, r, err)
+			return
+		}
 	}
 	// Non-model fields first, so a model rejection still leaves them applied
 	// (a 422 then means "everything else saved, the model was refused"). Running

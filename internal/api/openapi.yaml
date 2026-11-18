@@ -2321,7 +2321,31 @@ paths:
     patch:
       tags: [Sessions]
       summary: 即时持久化会话设置
-      description: 模式 / 思考深度 / 模型 / 传输方式的变更即时写库，无需发消息。会话由 `session_id` 查询参数（或会话 Cookie）决定。
+      description: |
+        模式 / 思考深度 / 模型 / 传输方式的变更即时写库，无需发消息。会话由 `session_id` 查询参数（或会话 Cookie）决定。
+
+        **移动到另一个工作区**（`projectPath`，issue #685）：把已有会话重新绑定到
+        另一个**已注册且目录仍存在**的项目，历史保留。会话行、它的消息行（历史
+        查询同时按 project_id 和 session_id 过滤，只改会话会让历史读不出来）与
+        用量账本的归属一起改到新项目；`sort_order` 重置为新项目列表的顶部。
+        标签**不跟过去**：标签属于某个项目，旧项目的标签在新项目里没有定义（项目内
+        标签会被摘掉；全局标签与项目无关，保留）。
+        前端落点是会话行 ⋮ 菜单里的「移动到工作区」。
+
+        **单聊**（`session_type='chat'`）整条搬走。**群聊**（`session_type='group'`）
+        连同全部成员行一起搬（含禁用与已移除的成员——时间线里的历史发言人指向它们）。
+        群内成员若使用「仅旧工作区可见」的智能体，整次移动会被拒绝并以
+        `MoveMembersUnavailable` 返回成员名单（`detail.members`），因为新工作区的
+        智能体选择器看不到它们。任务执行（`scheduled`）属于产生它的任务，不能移动。
+
+        **原生（CLI/ACP）会话不沿用**：它的转录按工作目录存放，换目录后无法续用。
+        本端点会清掉 `external_session_id`，并把历史变成下一轮注入的上下文——单聊
+        走已有的 fork 背景机制（有长度预算，首轮成功后清除），群聊把每个成员的
+        `seen_cursor` 归零（等同成员中途加入已有群，下一次发言带上完整时间线）。
+
+        服务端同时关闭缓存的智能体进程，下一轮以新工作目录重新拉起。
+
+        移动会**先于**同一请求里的其它字段执行，后者的写入因而落在新项目下。
       operationId: sessionUpdate
       parameters:
         - name: session_id
@@ -2335,6 +2359,11 @@ paths:
             schema:
               type: object
               properties:
+                projectPath:
+                  type: string
+                  description: |
+                    把会话重新绑定到这个**已注册且目录仍存在**的项目路径（issue #685），
+                    历史保留。与其它字段可同时出现；移动先执行。
                 modeId:
                   type: string
                 thinkingEffort:
@@ -2444,8 +2473,17 @@ paths:
                               type: string
                             name:
                               type: string
+        "409":
+          description: |
+            请求带 `projectPath` 但该会话正在生成回复（或还有消息在流式写入，或群内有
+            成员正在压缩上下文，`SessionRunning`）。此刻移动会把同一条回复拆到两个项目下。
         "422":
           description: |
+            `projectPath` 不是已注册的项目、其目录已不存在（`MoveTargetInvalid`）；该会话
+            是任务执行或群成员行、不能单独移动（`MoveNotAllowed`）；或群内成员在新工作区
+            不可用（`MoveMembersUnavailable`，`detail.members` 为成员显示名数组）。
+            这些请求不会写库。
+
             `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为
             `{error, code, msgKey: "ModelSwitchFailed"|"ModelSwitchFailedDetail",
             detail: {Detail}}`，其中 `Detail` 是 agent 给出的具体原因。**不会写库**

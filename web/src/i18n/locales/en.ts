@@ -1798,6 +1798,21 @@ export default {
     saveFailed: "Couldn't save tags. Your changes are still here — try again.",
     deleteFailed: "Couldn't delete the tag. Please try again.",
   },
+  // Moving a conversation to another project (issue #685).
+  sessionMove: {
+    title: 'Move to project',
+    currentLabel: 'Current project',
+    loadFailed: "Couldn't load the project list. Please try again.",
+    empty: 'No other projects available',
+    noMatch: 'No matching projects',
+    searchPlaceholder: 'Search projects',
+    targetInvalid: 'That project no longer exists. Refresh the list and try again.',
+    notAllowed: 'Only conversations and group chats can move; task sessions cannot.',
+    running: "This conversation is replying. Wait for it to finish, then move it.",
+    membersUnavailable: 'These members are unavailable in the target project: {members}. Make their agents available in all projects, or remove them from the group, then try again.',
+    moveFailed: "Couldn't move the conversation. Please try again.",
+    success: 'Moved to "{name}"',
+  },
   sessionSearch: {
     title: 'Session Search',
     placeholder: 'Search session names or messages...',
