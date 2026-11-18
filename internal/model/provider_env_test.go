@@ -740,3 +740,30 @@ func TestBuildProviderEnv_OpenCodeDeclaresWireAdapter(t *testing.T) {
 		})
 	}
 }
+
+// The two capability predicates decide whether the UI offers an own-service
+// credential and whether it offers an edition picker. They must be driven by
+// the registered spec, not by the backend id's shape.
+func TestProviderCapabilityPredicates(t *testing.T) {
+	RegisterProviderEnvSpec("fake-capability", ProviderEnvSpec{OwnServiceEnv: "FAKE_OWN_SERVICE_TOKEN"})
+	RegisterProviderEnvSpec("fake-capability-edition", ProviderEnvSpec{
+		OwnServiceEnv:        "FAKE_OWN_SERVICE_TOKEN",
+		OwnServiceEditionEnv: "FAKE_EDITION",
+	})
+
+	if !ProviderSupportsOwnService("fake-capability") {
+		t.Error("a spec with OwnServiceEnv must support the own service")
+	}
+	if ProviderSupportsDeployment("fake-capability") {
+		t.Error("a spec without an edition variable must not offer editions")
+	}
+	if !ProviderSupportsDeployment("fake-capability-edition") {
+		t.Error("a spec with OwnServiceEditionEnv must offer editions")
+	}
+	if ProviderSupportsOwnService("no-such-backend") {
+		t.Error("an unknown backend supports nothing")
+	}
+	if ProviderSupportsDeployment("no-such-backend") {
+		t.Error("an unknown backend offers no editions")
+	}
+}

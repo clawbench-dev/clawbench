@@ -253,3 +253,43 @@ func TestProviderEnvVersion_ChangesWithDeclaredModels(t *testing.T) {
 		t.Fatal("pinning a custom model must change the fingerprint")
 	}
 }
+
+func TestValidDeployment(t *testing.T) {
+	cases := []struct {
+		deployment string
+		want       bool
+	}{
+		{"", true}, // no edition selected
+		{ProviderDeploymentInternal, true},
+		{ProviderDeploymentIOA, true},
+		{ProviderDeploymentCloudhosted, true},
+		{ProviderDeploymentSelfhosted, true},
+		{"enterprise", false},
+		{"Cloudhosted", false}, // callers normalize before validating
+	}
+	for _, tc := range cases {
+		if got := ValidDeployment(tc.deployment); got != tc.want {
+			t.Errorf("ValidDeployment(%q) = %v, want %v", tc.deployment, got, tc.want)
+		}
+	}
+}
+
+func TestDeploymentNeedsEndpoint(t *testing.T) {
+	cases := []struct {
+		deployment string
+		want       bool
+	}{
+		// A customer-defined address is the whole point of these two editions.
+		{ProviderDeploymentCloudhosted, true},
+		{ProviderDeploymentSelfhosted, true},
+		// The internal / iOA editions have a fixed host.
+		{ProviderDeploymentInternal, false},
+		{ProviderDeploymentIOA, false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := DeploymentNeedsEndpoint(tc.deployment); got != tc.want {
+			t.Errorf("DeploymentNeedsEndpoint(%q) = %v, want %v", tc.deployment, got, tc.want)
+		}
+	}
+}

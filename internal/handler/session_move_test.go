@@ -2,7 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -257,4 +259,35 @@ func TestServeAISessionUpdate_MoveRefusesWhileMessageStreaming(t *testing.T) {
 		"SELECT project_id FROM chat_history WHERE session_id = ?", sessionID,
 	).Scan(&msgProjectID))
 	assert.Equal(t, oldProjectID, msgProjectID)
+}
+
+// An empty path is not "the current project": it is a client that sent
+// nothing usable, and must be refused before any lookup.
+func TestServeAISessionUpdate_MoveRejectsEmptyPath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "stays", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sessionID, map[string]any{
+		"projectPath": "   ",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusUnprocessableEntity)
+
+	assert.Equal(t, store.NormalizeProjectPath(env.ProjectDir), store.NormalizeProjectPath(service.GetSessionProjectPath(sessionID)))
+}
+
+// Anything that is not one of the three known move errors is a genuine write
+// failure and must not be dressed up as a 422 the client would "fix" by
+// picking another project.
+func TestWriteSessionMoveError_UnexpectedIsInternal(t *testing.T) {
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", nil)
+	w := httptest.NewRecorder()
+
+	writeSessionMoveError(w, req, errors.New("disk on fire"))
+
+	assertStatus(t, w, http.StatusInternalServerError)
 }

@@ -366,3 +366,83 @@ func TestMoveSessionToProject_RemovedMemberDoesNotBlockMove(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, moved)
 }
+
+// A conversation with no messages has nothing to hand over as fork context, so
+// the move takes the plain update path — and must still clear the native
+// session id, which points at the old directory.
+func TestMoveSessionToProject_EmptyConversationTakesPlainPath(t *testing.T) {
+	_, dstPath, srcID, dstID := setupMoveTest(t)
+
+	_, err := store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, sort_order, external_session_id)
+		 VALUES ('s-empty', ?, 'claude', 't', 0, 'native-old-cwd')`,
+		srcID,
+	)
+	require.NoError(t, err)
+
+	moved, err := MoveSessionToProject("s-empty", dstPath, dstID)
+	require.NoError(t, err)
+	assert.True(t, moved)
+
+	var projectID int64
+	var externalID string
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT project_id, external_session_id FROM chat_sessions WHERE id = 's-empty'",
+	).Scan(&projectID, &externalID))
+	assert.Equal(t, dstID, projectID)
+	assert.Empty(t, externalID, "the native session belonged to the old directory")
+	assert.Empty(t, GetForkContext("s-empty"), "there is no history to inject")
+}
+
+// A failure inside the transaction must roll the whole move back: a session
+// that moved while its rows stayed behind renders as an empty conversation.
+func TestMoveSessionToProject_RollsBackWhenRowsCannotMove(t *testing.T) {
+	_, dstPath, srcID, dstID := setupMoveTest(t)
+
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s-broken', ?, 'claude', 't')", srcID)
+	require.NoError(t, err)
+	_, err = store.WriteExec(
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, 'user', 'hi', 's-broken', 'claude')", srcID)
+	require.NoError(t, err)
+	_, err = store.WriteExec("DROP TABLE chat_metadata")
+	require.NoError(t, err)
+
+	moved, err := MoveSessionToProject("s-broken", dstPath, dstID)
+	require.Error(t, err)
+	assert.False(t, moved)
+
+	var projectID int64
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT project_id FROM chat_sessions WHERE id = 's-broken'").Scan(&projectID))
+	assert.Equal(t, srcID, projectID, "the session row must not move when its history cannot")
+}
+
+// The tag-link cleanup is the last step of the transaction; failing there must
+// roll the move back too.
+func TestMoveSessionToProject_RollsBackWhenTagLinksCannotBeCleared(t *testing.T) {
+	_, dstPath, srcID, dstID := setupMoveTest(t)
+
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s-tags', ?, 'claude', 't')", srcID)
+	require.NoError(t, err)
+	_, err = store.WriteExec(
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, 'user', 'hi', 's-tags', 'claude')", srcID)
+	require.NoError(t, err)
+	_, err = store.WriteExec("DROP TABLE session_tag_links")
+	require.NoError(t, err)
+
+	moved, err := MoveSessionToProject("s-tags", dstPath, dstID)
+	require.Error(t, err)
+	assert.False(t, moved)
+
+	var projectID int64
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT project_id FROM chat_sessions WHERE id = 's-tags'").Scan(&projectID))
+	assert.Equal(t, srcID, projectID)
+}
+
+func TestMoveUnavailableMembersError_Message(t *testing.T) {
+	err := &MoveUnavailableMembersError{Names: []string{"planner", "reviewer"}}
+	assert.Equal(t, "group members unavailable in target project: planner, reviewer", err.Error())
+}

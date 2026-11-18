@@ -185,3 +185,76 @@ func TestRenderMailNotification_BatchesSeveralMessages(t *testing.T) {
 		t.Errorf("body = %q, want the newest subject and sender", body)
 	}
 }
+
+// The newest message is the one the click opens, so a tie on SentAt (a batch
+// delivered in the same second) must fall back to the higher row id instead of
+// whatever order the sync happened to return.
+func TestNotifyNewInboxMail_NewestTieBreaksOnID(t *testing.T) {
+	setupMailDB(t)
+	origEnabled, origNotify := model.ConfigInstance.Mail.Enabled, model.ConfigInstance.Mail.Notify
+	model.ConfigInstance.Mail.Enabled, model.ConfigInstance.Mail.Notify = true, true
+	t.Cleanup(func() {
+		model.ConfigInstance.Mail.Enabled, model.ConfigInstance.Mail.Notify = origEnabled, origNotify
+	})
+
+	notifyNewInboxMail(1, mail.Folder{Path: "INBOX", SpecialUse: mail.SpecialUseInbox}, []MailMessage{
+		{ID: 5, Subject: "较早", FromName: "", FromAddr: "a@example.com", SentAt: 100},
+		{ID: 7, Subject: "较新", FromName: "", FromAddr: "b@example.com", SentAt: 100},
+	}, false)
+
+	rows := mailNotifications(t)
+	if len(rows) != 1 {
+		t.Fatalf("expected one notification, got %d", len(rows))
+	}
+	if rows[0].MailMessageID != 7 {
+		t.Fatalf("notification must point at the newest message (id 7), got %d", rows[0].MailMessageID)
+	}
+}
+
+// A batch where every message was read elsewhere is not news: nothing may be
+// stored, and no title/body is rendered for it.
+func TestNotifyNewInboxMail_AllSeenIsNotNews(t *testing.T) {
+	setupMailDB(t)
+	origEnabled, origNotify := model.ConfigInstance.Mail.Enabled, model.ConfigInstance.Mail.Notify
+	model.ConfigInstance.Mail.Enabled, model.ConfigInstance.Mail.Notify = true, true
+	t.Cleanup(func() {
+		model.ConfigInstance.Mail.Enabled, model.ConfigInstance.Mail.Notify = origEnabled, origNotify
+	})
+
+	notifyNewInboxMail(1, mail.Folder{Path: "INBOX"}, []MailMessage{
+		{ID: 3, Subject: "已在手机上读过", Seen: true},
+	}, false)
+
+	if rows := mailNotifications(t); len(rows) != 0 {
+		t.Fatalf("a read-elsewhere message must not notify, got %+v", rows)
+	}
+}
+
+// The sender line falls back to the address when the display name is missing,
+// and to a localized placeholder when the message carries neither.
+func TestRenderMailNotification_SenderFallbacks(t *testing.T) {
+	title, body := renderMailNotification([]MailMessage{
+		{ID: 1, Subject: "主题", FromName: "", FromAddr: "only@example.com"},
+	})
+	if !strings.Contains(title, "主题") {
+		t.Errorf("title = %q, want the subject", title)
+	}
+	if !strings.Contains(body, "only@example.com") {
+		t.Errorf("body = %q, want the address when the name is empty", body)
+	}
+
+	title, body = renderMailNotification([]MailMessage{{ID: 2}})
+	if title != mailNotifyT("MailNotifyNoSubject") {
+		t.Errorf("title = %q, want the no-subject placeholder", title)
+	}
+	if !strings.Contains(body, mailNotifyT("MailNotifyUnknownSender")) {
+		t.Errorf("body = %q, want the unknown-sender placeholder", body)
+	}
+
+	// A batch names the newest subject in the body, so the placeholder is used
+	// there too.
+	_, body = renderMailNotification([]MailMessage{{ID: 3}, {ID: 2}})
+	if !strings.Contains(body, mailNotifyT("MailNotifyNoSubject")) {
+		t.Errorf("batch body = %q, want the no-subject placeholder", body)
+	}
+}

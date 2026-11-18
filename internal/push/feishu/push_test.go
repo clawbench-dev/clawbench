@@ -663,3 +663,52 @@ func TestPushUsageMeterEvent_NoSubscribers(t *testing.T) {
 		t.Error("expected false with no subscribers")
 	}
 }
+
+// PushMailEvent is the mail notification entry point: it must refuse to send
+// without a started manager or without a title/content, and delegate to the
+// same subscriber fan-out as the other events once those gates pass.
+func TestPushMailEvent_Guards(t *testing.T) {
+	SetManager(nil)
+	if PushMailEvent("Title", "Body") {
+		t.Error("expected false when not started")
+	}
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "a", AppSecret: "s"})
+	mgr.started = true
+	origMgr := GetManager()
+	SetManager(mgr)
+	defer SetManager(origMgr)
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{}}
+
+	if PushMailEvent("", "Body") {
+		t.Error("expected false for an empty title")
+	}
+	if PushMailEvent("Title", "") {
+		t.Error("expected false for an empty content")
+	}
+}
+
+func TestPushMailEvent_NoSubscribers(t *testing.T) {
+	defer setupPushMode("feishu")()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{}}
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	mgr := NewManager(&model.FeishuConfig{AppID: "a", AppSecret: "s"})
+	mgr.started = true
+	origMgr := GetManager()
+	SetManager(mgr)
+	defer SetManager(origMgr)
+
+	if PushMailEvent("Title", "Body") {
+		t.Error("expected false with no subscribers")
+	}
+}

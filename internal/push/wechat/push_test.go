@@ -158,3 +158,23 @@ func TestJoinTitleBody(t *testing.T) {
 	assert.Contains(t, got, "https://github.com/o/r/pull/42")
 	assert.Contains(t, got, "查看详情")
 }
+
+// PushMailEvent is the mail notification entry point: it must refuse to send
+// without a started manager or without a title/content, and delegate to the
+// same subscriber fan-out as the other events once those gates pass.
+func TestPushMailEvent_Guards(t *testing.T) {
+	defer setupPushMode("wechat")()
+	SetManager(nil)
+	assert.False(t, PushMailEvent("Title", "Body"), "not started")
+
+	startedManager(t)
+	assert.False(t, PushMailEvent("", "Body"), "empty title")
+	assert.False(t, PushMailEvent("Title", ""), "empty content")
+}
+
+func TestPushMailEvent_NoSubscribers(t *testing.T) {
+	defer setupPushMode("wechat")()
+	startedManager(t)
+
+	assert.False(t, PushMailEvent("Title", "Body"), "nobody is subscribed")
+}
