@@ -16,7 +16,7 @@
 |---|---|
 | `id` | 自增主键 |
 | `name` | 显示名，`COLLATE NOCASE` 唯一 |
-| `protocol` | `anthropic` / `openai` / `gemini` |
+| `protocol` | `anthropic` / `openai` / `gemini` / `private`（见「私有协议」） |
 | `base_url` | 端点；空表示只注入密钥 |
 | `api_key` | 凭据，默认**不回显**（列表与写回执只返回 `hasKey`）；只有显式 `GET /api/providers/{id}?reveal=1` 才返回明文，供设置页「查看密钥」使用 |
 | `auth_mode` | `auto` / `x-api-key` / `bearer` |
@@ -231,7 +231,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
   - 底部「测试连接」用**当前未保存的草稿值**验证端点，所以可以先测再存。
   - 创建成功后不关弹窗，直接转入模型视图并提示「已创建」——省掉「关掉 → 找到行 → 再编辑 → 再开弹窗」这一圈。
 - 智能体详情 → 偏好设置 → **模型提供商**：仅列出该后端支持的协议；配置文件后端选中后弹确认框。
-  私有协议只对 CodeBuddy 列出，且不会弹配置文件确认（见上）。
+  私有协议只对声明了自有服务的后端（CodeBuddy / Cursor / Command Code / Antigravity）列出，且不会弹配置文件确认（见上）。
 - 预设来自 `internal/model/provider_presets.json`（由 `scripts/gen-provider-presets.mjs` 从 models.dev 生成），只预填名称/协议/端点。
 
 ## 已知限制
