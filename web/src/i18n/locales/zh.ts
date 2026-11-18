@@ -4560,6 +4560,7 @@ export default {
       providerProtocolPrivate: '私有协议',
       providerTabGeneral: '通用',
       accountLabel: '{name} 账号',
+      accountAdd: '添加账号',
       accountKeyOnlyHint: '{name} 的账号只需要密钥，连接地址由它自己决定。',
       accountNameCodeBuddy: 'CodeBuddy',
       accountNameCursor: 'Cursor',

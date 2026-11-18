@@ -4564,6 +4564,7 @@ export default {
       providerProtocolPrivate: 'Private protocol',
       providerTabGeneral: 'General',
       accountLabel: '{name} account',
+      accountAdd: 'Add account',
       accountKeyOnlyHint: 'A {name} account only needs its key; the address is fixed by the tool itself.',
       accountNameCodeBuddy: 'CodeBuddy',
       accountNameCursor: 'Cursor',

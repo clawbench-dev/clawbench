@@ -86,7 +86,7 @@
         @click="save"
       >
         <Loader2 v-if="saving" :size="13" class="oa-spin" />
-        {{ target ? t('settings.items.providerSave') : t('settings.items.providerAdd') }}
+        {{ target ? t('settings.items.providerSave') : t('settings.items.accountAdd') }}
       </button>
     </div>
   </div>
