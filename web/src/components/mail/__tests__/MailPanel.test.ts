@@ -7,6 +7,7 @@ import en from '@/i18n/locales/en'
 import SplitView from '@/components/common/SplitView.vue'
 import type { MailAccount, MailFolder, MailReplyContext } from '@/utils/mailTypes'
 import { composeMail, _resetMailComposeForTest } from '@/composables/useMailCompose'
+import { _resetMailOpenForTest, parkPendingMailOpen, takePendingMailOpen } from '@/composables/useMailOpen'
 import MailPanel from '../MailPanel.vue'
 
 // Every case mounts its own panel. Unmounting them is not just hygiene here:
@@ -126,6 +127,7 @@ function mountPanel() {
 // would make the next mount open a composer nobody asked for.
 afterEach(() => {
   _resetMailComposeForTest()
+  _resetMailOpenForTest()
 })
 
 async function openCompose(wrapper: ReturnType<typeof mountPanel>) {
@@ -148,6 +150,23 @@ describe('MailPanel quote jump', () => {
     const reader = wrapper.find('.reader-stub')
     expect(reader.exists(), 'the jump must land on the reader').toBe(true)
     expect(reader.attributes('data-msg')).toBe('42')
+    wrapper.unmount()
+  })
+
+  it('opens the message parked before the panel existed', async () => {
+    // The tab is created lazily, so the first jump arrives with no listener.
+    // The deeplink handler parks the id instead, and the mount must consume it.
+    mocks.accounts.value = [{ id: 1, lastSyncAt: 123 } as MailAccount]
+    parkPendingMailOpen(77)
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const reader = wrapper.find('.reader-stub')
+    expect(reader.exists(), 'a parked jump must land on the reader too').toBe(true)
+    expect(reader.attributes('data-msg')).toBe('77')
+    // Consumed exactly once: a later mount must not reopen it.
+    expect(takePendingMailOpen()).toBeNull()
     wrapper.unmount()
   })
 })
