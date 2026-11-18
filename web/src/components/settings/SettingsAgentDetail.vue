@@ -280,6 +280,8 @@ interface ProviderOption {
   id: number
   name: string
   protocol: string
+  /** Backend whose own service a private-protocol row belongs to. */
+  backend?: string
   /** Empty for a key-only provider, which only injects the credential. */
   baseUrl: string
   /** False when no secret is stored. The binding is still allowed (a user may
@@ -390,9 +392,19 @@ const providerOptions = computed(() => {
   })
 })
 
-/** Only the private protocol has a name that differs from its wire id. */
-function protocolLabel(protocol: string): string {
-  return protocol === 'private' ? t('settings.items.providerProtocolPrivate') : protocol
+const ACCOUNT_BACKEND_LABELS: Record<string, string> = {
+  codebuddy: 'settings.items.accountNameCodeBuddy',
+  cursor: 'settings.items.accountNameCursor',
+  commandcode: 'settings.items.accountNameCommandCode',
+  antigravity: 'settings.items.accountNameAntigravity',
+}
+
+/** An own-service credential is named after the backend it belongs to; the
+ *  three wire protocols are already their own names. */
+function protocolLabel(p: ProviderOption): string {
+  if (p.protocol !== 'private') return p.protocol
+  const key = p.backend ? ACCOUNT_BACKEND_LABELS[p.backend] : ''
+  return key ? t('settings.items.accountLabel', { name: t(key) }) : t('settings.items.providerProtocolPrivate')
 }
 
 const items = computed<AgentItem[]>(() => {
@@ -529,8 +541,8 @@ const items = computed<AgentItem[]>(() => {
           // that into this picker the user binds it and only finds out on the
           // next turn ("provider has no API key").
           label: p.hasKey === false
-            ? `${p.name} · ${protocolLabel(p.protocol)} · ${t('settings.items.providerNoKey')}`
-            : `${p.name} · ${protocolLabel(p.protocol)}`,
+            ? `${p.name} · ${protocolLabel(p)} · ${t('settings.items.providerNoKey')}`
+            : `${p.name} · ${protocolLabel(p)}`,
           value: p.id,
         })),
       ],

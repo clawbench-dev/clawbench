@@ -16,6 +16,9 @@ ForkContextInjectedChat: 「{{.Title}}」的历史消息已作为背景注入当
 ForkContextInjectedGroup: 「{{.Title}}」的历史消息已作为背景注入本群，每位成员首次发言时都会收到
 GroupNotRewindable: 群聊不支持回溯
 GroupRunning: 群聊正在执行本轮讨论，请等结束后再试
+MoveTargetInvalid: 目标工作区不存在或不可用，请刷新列表后重试
+MoveNotAllowed: 该会话不能移动到其他工作区（任务会话或群成员行）
+MoveMembersUnavailable: '这些成员在新工作区不可用：{{.Members}}。请先把对应智能体设为「所有工作区可用」，或把它们移出群聊后再试'
 GroupMemberCompacting: 该成员正在压缩上下文
 GroupMemberNotFound: 该群中没有这个成员
 CompactNeedsACP: 该成员未使用 ACP 传输，没有压缩命令
@@ -211,6 +214,12 @@ PushTaskStarted: 任务已启动
 PushSessionCompleted: 会话已完成
 PushSessionCancelled: 会话已取消
 PushActionRequired: 操作需批准
+# 新邮件通知。标题/正文由服务端在收信时渲染（后台 goroutine 没有 HTTP
+# 请求上下文），通知中心和 IM 推送共用同一份文案。
+MailNotifyNoSubject: 无主题
+MailNotifyUnknownSender: 未知发件人
+MailNotifyManyTitle: 收到 {{.Count}} 封新邮件
+MailNotifyLatest: 最新：{{.Subject}} · {{.Sender}}
 # IM 推送（钉钉 / 飞书）——机器人写进用户聊天里的文案。推送后端跑在各自
 # goroutine 里、没有 HTTP 请求上下文，故与 AutoContinue 一样走
 # LocalizerForLocale(model.Language) 本地化。钉钉渲染 sampleMarkdown、飞书渲染

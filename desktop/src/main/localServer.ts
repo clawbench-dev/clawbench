@@ -3,9 +3,8 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { getStore } from './store'
-import { getPasswordFor, savePasswordFor } from './secrets'
+import { getEmbeddedPassword, getRowPasswordFor, saveEmbeddedPassword } from './secrets'
 import { record, recordError } from './clientLog'
-import { embeddedServerLabels, resolveNativeLanguage } from './labels'
 import { portsInUse } from './portProbe'
 import {
   EMBEDDED_DEFAULT_PORT,
@@ -19,7 +18,9 @@ import {
   embeddedServerUrl,
   isClawBenchHealth,
   reservedPortsForEmbedded,
+  sameServerUrl,
   sessionCookieName,
+  shouldAdoptEmbeddedServer,
 } from './localServerPolicy'
 
 /**
@@ -56,11 +57,14 @@ let embeddedActive = false
 /**
  * Whether this session runs against the embedded server.
  *
- * Set by index.ts after the server answered, and read by the window/navigation
- * code to skip the login page and the desktop version gate. Kept separate from
- * `child` on purpose: a failed start leaves no child but must NOT look like
- * "embedded mode, no server URL" to the rest of the app — it falls back to the
- * ordinary login page.
+ * Set by index.ts after the server answered, and read by the failure path (a
+ * dead built-in server gets its own explanation) and the login page (running /
+ * not running). Kept separate from `child` on purpose: a failed start leaves no
+ * child but must NOT look like "embedded mode, no server URL" to the rest of the
+ * app — it falls back to the ordinary login page.
+ *
+ * NOT the way to ask "is this URL ours" — see {@link isEmbeddedServerUrl}: a
+ * fused build keeps this server running while the user is on another machine.
  */
 export function isEmbeddedServerActive(): boolean {
   return embeddedActive && !!child && !stopping
@@ -75,12 +79,57 @@ export function getEmbeddedServerUrl(): string {
   return serverUrl
 }
 
+/**
+ * Whether `url` is the server this build ships with.
+ *
+ * Deliberately a question about the ADDRESS, not about {@link
+ * isEmbeddedServerActive}: a fused build keeps its own server running while the
+ * user is connected to another machine, and "we run a local server" must not
+ * make that other server look like ours (the version gate, the failure dialog
+ * and the login page all key off this).
+ */
+export function isEmbeddedServerUrl(url: string): boolean {
+  if (!url) return false
+  if (serverUrl && sameServerUrl(url, serverUrl)) return true
+  const stored = getStore().get('embeddedServerUrl')
+  return !!stored && sameServerUrl(url, stored)
+}
+
+export interface EmbeddedServerInfo {
+  /** Address the login page should select. */
+  url: string
+  /** Saved credential ('' when none yet — a first start has not happened). */
+  password: string
+  running: boolean
+}
+
+/**
+ * What the login page needs to render the built-in server's row, or null when
+ * this build never started one (a normal "thin" desktop build).
+ */
+export function getEmbeddedServerInfo(): EmbeddedServerInfo | null {
+  const url = serverUrl || getStore().get('embeddedServerUrl')
+  if (!url) return null
+  return { url, password: embeddedServerPassword(), running: isEmbeddedServerActive() }
+}
+
 /** Path of the server binary shipped with this app. */
 export function embeddedServerBinaryPath(): string {
   // The app root, not `resources/`: electron-builder's `extraFiles` puts the
   // server next to the executable precisely so a payload update (which replaces
   // `resources/`) can never remove it.
   return path.join(path.dirname(process.execPath), EMBEDDED_SERVER_DIR, EMBEDDED_SERVER_EXE)
+}
+
+/**
+ * Whether this install carries its own server (a fused/all-in-one package).
+ *
+ * Separate from {@link getEmbeddedServerInfo}: a server that never started still
+ * makes this a fused install, and the difference matters to the upgrade path —
+ * replacing it with a thin package would delete the only server it has.
+ */
+export function hasEmbeddedServerBinary(): boolean {
+  return fs.existsSync(embeddedServerBinaryPath())
 }
 
 /**
@@ -114,12 +163,12 @@ function readTextQuietly(file: string): string {
  * user can change the password in the web UI, which deletes that file and stores
  * a hash in config.yaml — from then on the only credential is the one the user
  * chose, and it has to be the one the desktop login uses too. That is why this
- * falls back to the saved credential for the embedded URL.
+ * falls back to the credential the app saved for its own server.
  */
-function embeddedServerPassword(port: number): string {
+function embeddedServerPassword(): string {
   const fromFile = readTextQuietly(path.join(embeddedDataDir(), 'auto-password'))
   if (fromFile) return fromFile
-  return getPasswordFor(embeddedServerUrl(port))
+  return getEmbeddedPassword()
 }
 
 /** Probe /api/health once. Returns the parsed body, or null. */
@@ -226,19 +275,33 @@ async function waitForHealth(port: number): Promise<void> {
 }
 
 /**
- * Name our own server in the server list on first run.
+ * Move the server row older builds wrote for the built-in server into its own
+ * store slot.
  *
- * A bare `http://127.0.0.1:20000` label is meaningless in the switcher when the
- * machine also reaches other servers, and "本机" is what the user will look for.
- * Only applied once (the entry is created here), so a user rename survives.
+ * Before the built-in server had a slot of its own it lived in `servers` like a
+ * normal entry, which made it editable and deletable in the login page and — the
+ * visible bug — let its own address reserve its own port, so every launch walked
+ * to the next port and left the previous row behind as a dead entry.
+ *
+ * Only the address the previous run recorded is retired: a user's own saved
+ * `http://127.0.0.1:20000` (a standalone install, a dev server) is a different
+ * server and must survive.
  */
-function nameEmbeddedEntry(): void {
+function adoptLegacyEmbeddedEntry(): void {
   const store = getStore()
+  const legacyPort = Number(store.get(EMBEDDED_PORT_KEY)) || 0
+  if (!legacyPort) return
+  const legacyUrl = embeddedServerUrl(legacyPort)
   const servers = store.get('servers')
-  const entry = servers.find((s) => s.url === serverUrl)
-  if (!entry || entry.name) return
-  entry.name = embeddedServerLabels(resolveNativeLanguage()).name
-  store.set('servers', servers)
+  const entry = servers.find((s) => sameServerUrl(s.url, legacyUrl))
+  if (entry) {
+    // Carry the credential over before the row disappears: the login page and
+    // the SSH tunnel read it from the new slot from now on.
+    const password = getRowPasswordFor(legacyUrl)
+    if (password) saveEmbeddedPassword(password)
+    store.set('servers', servers.filter((s) => s !== entry))
+  }
+  if (!store.get('embeddedServerUrl')) store.set('embeddedServerUrl', legacyUrl)
 }
 
 /**
@@ -252,7 +315,7 @@ function nameEmbeddedEntry(): void {
  * has one; it answers Set-Cookie, and on success also re-writes it (7 days).
  */
 async function plantSessionCookie(port: number, ses: Session): Promise<void> {
-  const password = embeddedServerPassword(port)
+  const password = embeddedServerPassword()
   if (!password) {
     throw new Error(`the embedded server on port ${port} has no readable password`)
   }
@@ -287,8 +350,8 @@ async function plantSessionCookie(port: number, ses: Session): Promise<void> {
     throw new Error('the session cookie could not be stored')
   }
   // Keep the credential for the next start (and for the SSH tunnel, which reads
-  // the same per-server slot). After a password change this refreshes it.
-  savePasswordFor(url, password)
+  // the same slot). After a password change this refreshes it.
+  saveEmbeddedPassword(password)
 }
 
 /**
@@ -303,8 +366,22 @@ export async function startEmbeddedServer(): Promise<string> {
   }
 
   fs.mkdirSync(embeddedDataDir(), { recursive: true })
-  const preferred = Number(getStore().get(EMBEDDED_PORT_KEY)) || EMBEDDED_DEFAULT_PORT
-  const reserved = reservedPortsForEmbedded(getStore().get('servers').map((s) => s.url))
+  // Before anything reads the server list: retire the row older builds kept for
+  // this server. It is what reserved its own port and pushed the app one port
+  // further on every launch.
+  adoptLegacyEmbeddedEntry()
+
+  const store = getStore()
+  const previousActive = store.get('serverUrl')
+  // Read BEFORE the new address is written: this is the address the last run
+  // used, which is what "the user chose the built-in server" must compare to.
+  const previousEmbedded = store.get('embeddedServerUrl')
+  const preferred = Number(store.get(EMBEDDED_PORT_KEY)) || EMBEDDED_DEFAULT_PORT
+  // Only the user's own rows can collide with ours. The built-in server's own
+  // address is never in this list (adoptLegacyEmbeddedEntry removed it), so its
+  // preferred port stays usable — browser storage is keyed by origin, and a
+  // moving port looks like a fresh install.
+  const reserved = reservedPortsForEmbedded(store.get('servers').map((s) => s.url))
 
   // A server this app left behind holds the data directory lock, so it must go
   // before the port walk — a different port would not help, the new server
@@ -341,6 +418,7 @@ export async function startEmbeddedServer(): Promise<string> {
       // It went away on its own: the app has nothing to talk to, and silently
       // reloading would loop. Surface it the way a failed connect is surfaced.
       serverUrl = ''
+      embeddedActive = false
     }
   })
   spawned.stderr?.on('data', (b: Buffer) => {
@@ -359,13 +437,13 @@ export async function startEmbeddedServer(): Promise<string> {
   await plantSessionCookie(port, session.defaultSession)
 
   getStore().set(EMBEDDED_PORT_KEY, port)
-  // Same URL the renderer will use; written before the window exists so the
-  // existing cold-start path (window.ts reads serverUrl) just works.
-  getStore().set('serverUrl', serverUrl)
-  const servers = getStore().get('servers')
-  if (!servers.some((s) => s.url === serverUrl)) {
-    getStore().set('servers', [{ url: serverUrl }, ...servers])
-    nameEmbeddedEntry()
+  getStore().set('embeddedServerUrl', serverUrl)
+  // Adopt the built-in server only when it is what this launch should open:
+  // nothing chosen yet, or the user was on it last time. A user who picked
+  // another machine keeps that choice — otherwise "connect to my server" would
+  // silently revert on every restart.
+  if (shouldAdoptEmbeddedServer(previousActive, previousEmbedded)) {
+    getStore().set('serverUrl', serverUrl)
   }
   return serverUrl
 }

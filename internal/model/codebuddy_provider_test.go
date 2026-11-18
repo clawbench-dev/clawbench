@@ -31,9 +31,9 @@ func TestProviderOwnServiceMode(t *testing.T) {
 	if ProviderOwnServiceMode("codebuddy", &normal) {
 		t.Fatal("a normal protocol is a custom-endpoint binding, not own-service")
 	}
-	// The protocol is authoritative even if a hand-edited row also carries a
-	// URL: validation rejects that state, and ignoring the URL here keeps the
-	// runtime from silently falling back to a config file.
+	// The protocol is authoritative even if the row also carries an address:
+	// only the enterprise editions may do that (validation rejects the others),
+	// and the runtime must not fall back to the config file when they do.
 	withURL := *p
 	withURL.BaseURL = "https://ignored.example"
 	if !ProviderOwnServiceMode("codebuddy", &withURL) {
@@ -129,6 +129,15 @@ func TestProviderEnvVersion_OwnService(t *testing.T) {
 	if again := ProviderEnvVersion(agent.ID); again == first {
 		t.Fatal("rotating the token must change the fingerprint")
 	}
+
+	// The edition becomes an environment variable too, so switching it has to
+	// respawn rather than wait for a restart.
+	editioned := *p
+	editioned.Deployment = ProviderDeploymentInternal
+	ReplaceProviders([]*Provider{&editioned})
+	if again := ProviderEnvVersion(agent.ID); again == first {
+		t.Fatal("changing the deployment must change the fingerprint")
+	}
 }
 
 // SupportedProtocols is what the agent settings picker filters on: the private
@@ -139,5 +148,81 @@ func TestSupportedProtocols_PrivateOnlyForOwnService(t *testing.T) {
 	}
 	if containsString(SupportedProtocols("claude"), ProviderProtocolPrivate) {
 		t.Fatal("claude must not advertise the private protocol")
+	}
+}
+
+// An enterprise edition is selected through the deployment switch, which
+// overrides the hosted default in OwnServiceExtra. Without this the CLI would
+// still assume the hosted service and reject an enterprise token.
+func TestBuildProviderEnv_OwnServiceDeployment(t *testing.T) {
+	p := ownServiceProvider()
+	p.Deployment = ProviderDeploymentSelfhosted
+	p.BaseURL = "https://cb.example.com"
+
+	env, err := BuildProviderEnv("codebuddy", p, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(env, ",")
+	if !strings.Contains(joined, "CODEBUDDY_INTERNET_ENVIRONMENT=selfhosted") {
+		t.Fatalf("env = %v, want the self-hosted switch", env)
+	}
+	// The address is not an environment variable: it must not leak into the
+	// env block (the spawn path passes it as --settings instead).
+	if strings.Contains(joined, "cb.example.com") {
+		t.Fatalf("env = %v, must not carry the service address", env)
+	}
+
+	// Empty deployment keeps the documented default.
+	env, err = BuildProviderEnv("codebuddy", ownServiceProvider(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(strings.Join(env, ","), "CODEBUDDY_INTERNET_ENVIRONMENT=cloudhosted") {
+		t.Fatalf("env = %v, want the hosted default", env)
+	}
+}
+
+// An own-service provider with an address is only usable where the backend can
+// hand that address to its CLI. A backend that cannot must refuse the row
+// rather than silently sending every request to its default host.
+func TestProviderEnvSupportedProvider_OwnServiceAddress(t *testing.T) {
+	t.Cleanup(func() {
+		providerEnvMu.Lock()
+		delete(providerEnvRegistry, "fake-own-service")
+		providerEnvMu.Unlock()
+	})
+	RegisterProviderEnvSpec("fake-own-service", ProviderEnvSpec{
+		OwnServiceEnv: "FAKE_TOKEN",
+	})
+
+	p := ownServiceProvider()
+	p.BaseURL = "https://cb.example.com"
+	if ProviderEnvSupportedProvider("fake-own-service", p) {
+		t.Fatal("a backend without an address slot must reject a private provider carrying one")
+	}
+	if _, err := BuildProviderEnv("fake-own-service", p, ""); err == nil {
+		t.Fatal("BuildProviderEnv must refuse the address instead of dropping it")
+	}
+	// Without an address the same backend accepts the credential.
+	bare := ownServiceProvider()
+	if !ProviderEnvSupportedProvider("fake-own-service", bare) {
+		t.Fatal("a bare credential must still bind")
+	}
+}
+
+// Four backends share the private protocol, so a credential belongs to exactly
+// one of them. Binding a Cursor key to a CodeBuddy agent would be accepted by
+// the protocol check and then fail on the first turn.
+func TestProviderEnvSupportedProvider_OwnServiceOwner(t *testing.T) {
+	p := &Provider{ID: 1, Name: "Cursor key", Protocol: ProviderProtocolPrivate, APIKey: "k", Backend: "cursor"}
+	if ProviderEnvSupportedProvider("codebuddy", p) {
+		t.Fatal("a cursor credential must not bind to codebuddy")
+	}
+	if !ProviderEnvSupportedProvider("cursor", p) {
+		t.Fatal("it must bind to its own backend")
+	}
+	if _, err := BuildProviderEnv("codebuddy", p, ""); err == nil {
+		t.Fatal("the env builder must refuse a foreign credential instead of injecting it")
 	}
 }

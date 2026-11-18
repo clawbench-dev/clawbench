@@ -49,11 +49,18 @@ type openaiChatRequest struct {
 	Messages    []openaiChatMessage `json:"messages"`
 	Temperature float64             `json:"temperature"`
 	MaxTokens   int                 `json:"max_tokens"`
+	// ReasoningEffort turns a reasoning model's thinking down. Only the
+	// recommendation/title passes set it (see disableReasoning): they ask for one
+	// short line, so a reasoning model spends the whole max_tokens thinking and
+	// finishes with no content at all.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type openaiChatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// Reasoning is read-only: some reasoning models return their thinking here.
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // DoRecommendPass performs the recommendation call using an OpenAI-compatible
@@ -62,11 +69,11 @@ type openaiChatMessage struct {
 // tail, so providers with automatic prefix caching (OpenAI, DeepSeek, etc.) can
 // reuse the stable prefix across turns without reprocessing the whole window.
 func (s *OpenAISummarizer) DoRecommendPass(ctx context.Context, systemPrompt, stable, rolling string) (string, error) {
-	return s.DoAskPass(ctx, systemPrompt, stable, rolling, recommendMaxTokens)
+	return s.DoAskPass(ctx, systemPrompt, stable, rolling, 0)
 }
 
 // DoAskPass performs a one-shot question call with an explicit output cap. It is
-// the shared implementation behind DoRecommendPass (maxTokens = recommendMaxTokens)
+// the shared implementation behind DoRecommendPass (maxTokens = 0: the model's own budget)
 // and AskAboutContext (the /btw path, which passes a larger cap).
 func (s *OpenAISummarizer) DoAskPass(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, error) {
 	text, _, err := s.DoAskPassDetailed(ctx, systemPrompt, stable, rolling, maxTokens)
@@ -77,9 +84,7 @@ func (s *OpenAISummarizer) DoAskPass(ctx context.Context, systemPrompt, stable, 
 // max_tokens. A caller that needs lossless output turns that into an error
 // instead of keeping the first half.
 func (s *OpenAISummarizer) DoAskPassDetailed(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, bool, error) {
-	if maxTokens <= 0 {
-		maxTokens = recommendMaxTokens
-	}
+	maxTokens, effort := reasoningBudget(s.Model, maxTokens)
 	messages := make([]openaiChatMessage, 0, 3)
 	messages = append(messages, openaiChatMessage{Role: "system", Content: systemPrompt})
 	if stable != "" {
@@ -88,10 +93,11 @@ func (s *OpenAISummarizer) DoAskPassDetailed(ctx context.Context, systemPrompt, 
 	messages = append(messages, openaiChatMessage{Role: roleUser, Content: rolling})
 
 	reqBody := openaiChatRequest{
-		Model:       s.Model,
-		Messages:    messages,
-		Temperature: 0.3,
-		MaxTokens:   maxTokens,
+		Model:           s.Model,
+		Messages:        messages,
+		Temperature:     0.3,
+		MaxTokens:       maxTokens,
+		ReasoningEffort: effort,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -126,11 +132,12 @@ func (s *OpenAISummarizer) DoAskPassDetailed(ctx context.Context, systemPrompt, 
 		return "", false, fmt.Errorf("openai returned no choices")
 	}
 
-	result := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	choice := chatResp.Choices[0]
+	result := strings.TrimSpace(choice.Message.Content)
 	if result == "" {
-		return "", false, fmt.Errorf("openai returned empty recommendation output")
+		return "", false, fmt.Errorf("openai returned empty recommendation output%s", reasoningOnlyHint(choice.FinishReason, choice.Message.Reasoning))
 	}
-	return result, isTruncated(chatResp.Choices[0].FinishReason), nil
+	return result, isTruncated(choice.FinishReason), nil
 }
 
 // openaiChatResponse is the response body for OpenAI Chat Completions API.
@@ -195,9 +202,10 @@ func (s *OpenAISummarizer) DoSummarizePass(ctx context.Context, text, systemProm
 		return "", fmt.Errorf("openai (pass %d) returned no choices", pass)
 	}
 
-	result := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	choice := chatResp.Choices[0]
+	result := strings.TrimSpace(choice.Message.Content)
 	if result == "" {
-		return "", fmt.Errorf("openai (pass %d) returned empty output", pass)
+		return "", fmt.Errorf("openai (pass %d) returned empty output%s", pass, reasoningOnlyHint(choice.FinishReason, choice.Message.Reasoning))
 	}
 
 	slog.Info(

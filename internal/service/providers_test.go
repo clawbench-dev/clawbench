@@ -787,3 +787,84 @@ func TestProviderWrites_TranslateUniqueConstraintRace(t *testing.T) {
 	_, err = service.UpdateProvider(1, service.ProviderPatch{Name: &name})
 	assert.ErrorIs(t, err, service.ErrProviderNameTaken, "a lost update race is a name conflict, not a 500")
 }
+
+// The own-service editions are a property of the private protocol: an edition
+// only means something there, and the two enterprise editions live at an
+// address the customer defines, so the two fields constrain each other.
+func TestProviderDeploymentRules(t *testing.T) {
+	setupProvidersDB(t)
+
+	// Enterprise edition with its address: the one combination that must save.
+	enterprise, err := service.CreateProvider(model.Provider{
+		Name: "Enterprise", Protocol: model.ProviderProtocolPrivate, APIKey: "k",
+		Backend: "codebuddy", Deployment: model.ProviderDeploymentSelfhosted, BaseURL: "https://cb.example.com",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, model.ProviderDeploymentSelfhosted, enterprise.Deployment)
+	assert.Equal(t, "https://cb.example.com", enterprise.BaseURL)
+
+	// The hosted account keeps working with no edition and no address, which is
+	// what every row written before the column existed looks like.
+	hosted, err := service.CreateProvider(model.Provider{
+		Name: "Hosted", Protocol: model.ProviderProtocolPrivate, APIKey: "k", Backend: "codebuddy",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, hosted.Deployment)
+	assert.Empty(t, hosted.BaseURL)
+
+	cases := []struct {
+		name  string
+		p     model.Provider
+		field string
+	}{
+		{
+			name:  "enterprise edition without an address",
+			p:     model.Provider{Name: "NoAddr", Protocol: model.ProviderProtocolPrivate, Backend: "codebuddy", Deployment: model.ProviderDeploymentCloudhosted},
+			field: "baseUrl",
+		},
+		{
+			name:  "address without an enterprise edition",
+			p:     model.Provider{Name: "StrayAddr", Protocol: model.ProviderProtocolPrivate, Backend: "codebuddy", BaseURL: "https://x.example"},
+			field: "baseUrl",
+		},
+		{
+			name:  "edition on a third-party protocol",
+			p:     model.Provider{Name: "WrongProto", Protocol: model.ProviderProtocolOpenAI, Deployment: model.ProviderDeploymentInternal},
+			field: "deployment",
+		},
+		{
+			name:  "credential without an owner backend",
+			p:     model.Provider{Name: "NoOwner", Protocol: model.ProviderProtocolPrivate},
+			field: "backend",
+		},
+		{
+			name:  "owner without an own service",
+			p:     model.Provider{Name: "WrongOwner", Protocol: model.ProviderProtocolPrivate, Backend: "claude"},
+			field: "backend",
+		},
+		{
+			name:  "edition on a backend that has none",
+			p:     model.Provider{Name: "CursorEdition", Protocol: model.ProviderProtocolPrivate, Backend: "cursor", Deployment: model.ProviderDeploymentIOA},
+			field: "deployment",
+		},
+		{
+			name:  "backend on a third-party protocol",
+			p:     model.Provider{Name: "MixedOwner", Protocol: model.ProviderProtocolOpenAI, Backend: "codebuddy"},
+			field: "backend",
+		},
+		{
+			name:  "unknown edition",
+			p:     model.Provider{Name: "Bogus", Protocol: model.ProviderProtocolPrivate, Backend: "codebuddy", Deployment: "bogus"},
+			field: "deployment",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := service.CreateProvider(tc.p)
+			require.ErrorIs(t, err, service.ErrProviderInvalid)
+			var fieldErr *service.ProviderFieldError
+			require.ErrorAs(t, err, &fieldErr)
+			assert.Equal(t, tc.field, fieldErr.Field)
+		})
+	}
+}

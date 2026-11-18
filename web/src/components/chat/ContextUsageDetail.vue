@@ -31,6 +31,14 @@
       <span class="usage-popup-label">{{ t('chat.sessionInfo.outputTokens') }}</span>
       <span class="usage-popup-value">{{ n('outputTokens').toLocaleString() }}</span>
     </div>
+    <!-- Output speed of the latest completed turn. The backend measures only
+         the time the model spent emitting text (tool execution excluded), so
+         this is the model's speed rather than the task's. Hidden when the turn
+         had no measurable window (e.g. a CLI that prints one finished blob). -->
+    <div v-if="rateText" class="usage-popup-row">
+      <span class="usage-popup-label">{{ t('chat.sessionInfo.tokenRate') }}</span>
+      <span class="usage-popup-value" :title="rateHint">{{ rateText }}</span>
+    </div>
     <div v-if="n('totalTokens') > 0" class="usage-popup-row">
       <span class="usage-popup-label">{{ t('chat.sessionInfo.totalTokens') }}</span>
       <span class="usage-popup-value">{{ n('totalTokens').toLocaleString() }}</span>
@@ -105,7 +113,9 @@ import {
   cacheHitRate,
   hasTokenDetail,
   formatUsageCost,
+  formatTokenRate,
   usageCategoryRows,
+  type TokenRateStat,
   type UsageSnapshot,
 } from '@/utils/usageDisplay'
 
@@ -121,6 +131,16 @@ import {
 const props = defineProps<{
   /** Undefined = the producer never reported usage (e.g. a CLI-transport member). */
   usage?: UsageSnapshot | null
+  /**
+   * Output speed of the latest completed reply, measured by the backend. Null /
+   * undefined = not measurable (non-streaming backend, very short reply) — the
+   * row is hidden rather than showing a fabricated number.
+   *
+   * Single chat reads it from the last assistant message's metadata; the
+   * settings drawer (the only surface available for a group member, whose row
+   * has no chat_history) reads it from GET /api/ai/session/settings.
+   */
+  tokenRate?: TokenRateStat | null
   /** Show the "compact context" action. Single chat only. */
   showCompact?: boolean
   /**
@@ -143,6 +163,14 @@ const hitRate = computed(() => cacheHitRate(props.usage))
 const showTokenDetail = computed(() => hasTokenDetail(props.usage))
 const costDisplay = computed(() => formatUsageCost(props.usage?.cost ?? 0, props.usage?.currency))
 const categoryRows = computed(() => usageCategoryRows(props.usage, t))
+const rateText = computed(() => formatTokenRate(props.tokenRate))
+const rateHint = computed(() => {
+  const stat = props.tokenRate
+  if (!stat || !rateText.value) return ''
+  return stat.genMs && stat.genMs > 0
+    ? t('chat.sessionInfo.tokenRateHint', { seconds: (stat.genMs / 1000).toFixed(1) })
+    : t('chat.sessionInfo.tokenRateHintNoDuration')
+})
 
 /** Numeric accessor that keeps the template free of `?? 0` repetition. */
 function n(key: keyof UsageSnapshot): number {

@@ -138,6 +138,27 @@ type MeetingEventData struct {
 	ProjectPath string `json:"project_path,omitempty"`
 }
 
+// MailEventData is the data payload for "mail_event" events: new inbox mail
+// arrived during a sync pass.
+//
+// Like MeetingEventData and the usage-meter payload it carries the FINISHED
+// wording (Title + Body): the producer is a background sync goroutine with no
+// request in scope, so it localizes once in the configured UI language and every
+// client renders the same text. That also keeps the notification-center row
+// (which stores Body) and the OS notification from drifting.
+//
+// MailMessageID is the cached mail_messages row the click opens. The panel
+// fetches it by id, so the message does not have to be on the folder's loaded
+// page. Count is the number of new messages this pass batched into one event
+// (1 for the common case).
+type MailEventData struct {
+	Title         string `json:"title"`
+	Body          string `json:"body"`
+	MailMessageID int64  `json:"mail_message_id"`
+	AccountID     int64  `json:"account_id,omitempty"`
+	Count         int    `json:"count,omitempty"`
+}
+
 // ChatRecommendationData is the data payload for "chat_recommendation" events.
 type ChatRecommendationData struct {
 	SessionID      string `json:"session_id"`

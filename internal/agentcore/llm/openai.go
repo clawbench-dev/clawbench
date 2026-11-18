@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"clawbench/internal/endpointurl"
 )
 
 // openAIClient speaks the OpenAI chat-completions wire format, which nearly
@@ -108,9 +110,18 @@ const (
 // oaCallTypeFunction is the only tool type this API accepts.
 const oaCallTypeFunction = "function"
 
-// oaToolFunc is the request-side shape of a declared tool: the same three
-// fields as ToolSpec, nested one level deeper, so the conversion is a cast.
-type oaToolFunc ToolSpec
+// oaToolFunc is the request-side shape of a declared tool.
+//
+// It is an explicit struct rather than a cast of ToolSpec because ToolSpec
+// carries no JSON tags (it is an internal type): casting emitted
+// `{"Name":…,"Description":…,"Parameters":…}`. Strict gateways (DeepSeek among
+// them) reject that with `tools[0].function: missing field name`, so the keys
+// must be spelled out here.
+type oaToolFunc struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
 
 // oaDelta is one choice's incremental content.
 type oaDelta struct {
@@ -532,87 +543,13 @@ func resolveTemperature(req Request) float64 {
 
 // resolveEndpoint completes a configured base URL with a default path.
 //
-// The accepted shapes are the ones the settings page allows:
-//
-//   - a bare host ("https://api.openai.com") gets the full path appended;
-//   - a base ending in a version segment ("…/v1", "…/api/v1") is a partial
-//     base and gets the remainder of the path appended;
-//   - anything else is the user's explicit endpoint and is used verbatim.
-//
-// The last rule is what makes this safe: a provider-specific path such as
-// MiniMax's "/v1/text/chatcompletion_v2" must not have another
-// "/v1/chat/completions" glued onto it, which is a 404 the user cannot diagnose.
+// It delegates to endpointurl.Resolve so the agent's model client agrees with
+// the connectivity test and the summarizers about which URL a base resolves to.
+// The local copy used to disagree: it treated a namespace base such as
+// MiniMax's "/anthropic" as a complete endpoint and posted to it verbatim,
+// which 404'd every turn even though "test connection" passed.
 func resolveEndpoint(baseURL, defaultPath string) string {
-	u := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if u == "" {
-		return ""
-	}
-	if strings.HasSuffix(u, defaultPath) {
-		return u
-	}
-	// Split the path off the authority so a host containing a dot is not
-	// mistaken for a path segment.
-	_, rest, hasScheme := strings.Cut(u, "://")
-	if !hasScheme {
-		rest = u
-	}
-	slash := strings.Index(rest, "/")
-	if slash < 0 {
-		// Bare host, no path at all.
-		return u + defaultPath
-	}
-	path := rest[slash:]
-	if isVersionPath(path) {
-		return u + strings.TrimPrefix(defaultPath, pathPrefixForVersion(defaultPath))
-	}
-	return u
-}
-
-// isVersionPath reports whether path is nothing but version segments, e.g.
-// "/v1", "/api/v1", "/v1beta".
-func isVersionPath(path string) bool {
-	segments := strings.Split(strings.Trim(path, "/"), "/")
-	if len(segments) == 0 {
-		return false
-	}
-	for _, s := range segments {
-		if !isVersionSegment(s) {
-			return false
-		}
-	}
-	return true
-}
-
-// isVersionSegment matches "v1", "v2", "v1beta", "api" — the pieces a base URL
-// uses before the endpoint name. Only these are treated as "the base is a
-// partial prefix"; anything else means the user gave a full endpoint.
-func isVersionSegment(s string) bool {
-	if s == "api" {
-		return true
-	}
-	if len(s) < 2 || s[0] != 'v' {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		c := s[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'z') {
-			return false
-		}
-	}
-	return true
-}
-
-// pathPrefixForVersion returns the part of defaultPath the base already
-// contains, so only the remainder is appended.
-//
-// defaultPath is always "/v1/<name>", so the prefix is "/v1" whenever the base
-// ends in a version; a base ending in "/api/v1" still only needs "/<name>"
-// appended, and the caller's base already carries "/api".
-func pathPrefixForVersion(defaultPath string) string {
-	if i := strings.Index(defaultPath[1:], "/"); i >= 0 {
-		return defaultPath[:i+1]
-	}
-	return defaultPath
+	return endpointurl.Resolve(baseURL, defaultPath)
 }
 
 // authHeaderIsAPIKey reports whether the configured auth mode wants x-api-key.

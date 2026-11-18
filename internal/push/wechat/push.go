@@ -143,6 +143,19 @@ func PushUsageMeterEvent(title, content string) bool {
 	return sendToAllSubscribers(joinTitleBody(title, content))
 }
 
+// PushMailEvent sends a WeChat notification for newly arrived inbox mail. Like
+// PushForgeEvent, the wording is owned by the service layer; this function only
+// owns the transport and the push-mode gate.
+func PushMailEvent(title, content string) bool {
+	if !IsStarted() || db == nil {
+		return false
+	}
+	if title == "" || content == "" {
+		return false
+	}
+	return sendToAllSubscribers(joinTitleBody(title, content))
+}
+
 // joinTitleBody composes a plain-text message from a service-provided title and
 // body. WeChat has no card header to carry the title separately.
 func joinTitleBody(title, content string) string {

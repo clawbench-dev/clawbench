@@ -116,4 +116,14 @@ public class EventNotificationIdsTest {
         assertEquals(EventNotificationIds.BASE, EventNotificationIds.forMeeting(""));
         assertEquals(EventNotificationIds.BASE, EventNotificationIds.forMeeting(null));
     }
+
+    @Test
+    public void mailIdsUseTheirOwnBand() {
+        int mail = EventNotificationIds.forMail(42);
+        assertTrue(mail >= EventNotificationIds.BASE + 3 * EventNotificationIds.BAND);
+        assertTrue(mail < EventNotificationIds.BASE + 4 * EventNotificationIds.BAND);
+        assertEquals(mail, EventNotificationIds.forMail(42));
+        assertNotEquals(EventNotificationIds.forSession(""), EventNotificationIds.forMail(42));
+        assertEquals(EventNotificationIds.BASE, EventNotificationIds.forMail(0));
+    }
 }

@@ -101,6 +101,22 @@ test('meeting and usage navigation plus plain text are bounded and malformed eve
   }
 });
 
+test('mail events notify, advance the cursor, and open the cached message', () => {
+  const mail = event('mail_event', '', 'evt_1_9',
+    { title: '新邮件', body: 'Bob · 本周数据', mail_message_id: 77 });
+  const nav = model.navigationForEvent(mail);
+  assert.deepEqual(nav, { mailMessageId: 77 });
+  assert.equal(model.navigationEventName(nav), 'clawbench-open-mail');
+  assert.equal(model.notificationSubject(nav), 'mail:77');
+  assert.equal(model.notificationText(mail, 'zh').title, '新邮件');
+  assert.equal(model.nativeEventDecision(mail, { cursor: 'evt_100_7', recentIds: [] }, false).notify, true);
+  assert.equal(model.advancesNativeCursor(mail), true);
+  assert.equal(model.isAllowedNotificationLaunch({ origin: 'https://one.example', navigation: nav },
+    ['https://one.example']), true);
+  assert.equal(model.isAllowedNotificationLaunch({ origin: 'https://one.example',
+    navigation: { mailMessageId: 0 } }, ['https://one.example']), false);
+});
+
 test('forge live events notify without advancing a non-persisted cursor or alerting on replay', () => {
   const state = { cursor: 'evt_100_7', recentIds: [] };
   for (const change of ['opened', 'closed', 'merged', 'reopened', 'commented', 'pipeline_done']) {

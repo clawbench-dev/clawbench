@@ -715,7 +715,12 @@ func resolveUpdateTargetSession(w http.ResponseWriter, r *http.Request, bodySess
 
 // sessionUpdateRequest is the PATCH /api/ai/session body.
 type sessionUpdateRequest struct {
-	SessionID      string `json:"sessionId"` // explicit target; overrides query/cookie
+	// SessionID is the request body's explicit target; it overrides the query
+	// parameter and the session cookie.
+	SessionID string `json:"sessionId"`
+	// ProjectPath re-binds the conversation to another EXISTING project
+	// (issue #685). The history stays; see moveSessionToProject.
+	ProjectPath    string `json:"projectPath"`
 	ModeID         string `json:"modeId"`
 	ThinkingEffort string `json:"thinkingEffort"`
 	ModelID        string `json:"modelId"`
@@ -752,6 +757,17 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Re-bind first (issue #685). The remaining fields below resolve the
+	// session AGAIN on their own (model / effort / extra options look the agent
+	// up by session, tags are filed under the session's project), so applying
+	// the move before them makes those writes land in the new project instead
+	// of leaving a half-moved session behind.
+	if req.ProjectPath != "" {
+		if err := moveSessionToProject(sessionID, req.ProjectPath); err != nil {
+			writeSessionMoveError(w, r, err)
+			return
+		}
+	}
 	// Non-model fields first, so a model rejection still leaves them applied
 	// (a 422 then means "everything else saved, the model was refused"). Running
 	// the model earlier would silently drop transport/autoApprove/title/pinned.
@@ -760,35 +776,15 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Then the model, and only THEN the effort pick that belongs to it.
-	//
-	// The registry's level list is per model, so a pick must be validated and
-	// pushed only once the agent is actually on the model it was made for.
-	// Applying the pick before the switch (the previous order) validated against
-	// the OLD model's list — clearing legitimate picks and keeping ones that
-	// could never run — and pushed the new level at the old model.
-	modelSwitchDeferred := false
-	effectiveEffort := ""
-	if req.ModelID != "" {
-		deferred, err := applyAndPersistSessionModel(r.Context(), sessionID, req.ModelID)
-		if err != nil {
-			writeModelSwitchError(w, r, err)
-			return
-		}
-		modelSwitchDeferred = deferred
+	// Then the model, and only THEN the effort pick that belongs to it (see
+	// applySessionSelection for why the order matters).
+	selection, ok := applySessionSelection(w, r, sessionID, &req)
+	if !ok {
+		return
 	}
-
-	// Validate against the live list only when the agent is really on the target
-	// model. A deferred switch leaves the registry describing the previous one.
-	effortAccepted, effortRemembered := applySessionConfigSelections(
-		sessionID, req.ModeID, req.ThinkingEffort, req.ModelID, !modelSwitchDeferred,
-	)
-	if req.ModelID != "" && req.ThinkingEffort == "" {
-		// No explicit pick: report what the new model will actually run instead
-		// of leaving the old level on the chip.
-		effectiveEffort = switchSessionEffortToModel(sessionID, req.ModelID, modelSwitchDeferred)
-	}
-	applyExtraConfigOptions(sessionID, req.ConfigOptions)
+	modelSwitchDeferred := selection.modelSwitchDeferred
+	effectiveEffort := selection.effectiveEffort
+	effortAccepted, effortRemembered := selection.effortAccepted, selection.effortRemembered
 
 	resp := map[string]interface{}{"ok": true, "modelSwitchDeferred": modelSwitchDeferred}
 	attachConfigOptionsAfterModelSwitch(resp, sessionID, req.ModelID)
@@ -820,6 +816,48 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		resp["thinkingEffortNotRemembered"] = true
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// sessionSelectionResult reports what the model/effort part of a session update
+// did, so the response can describe it without re-deriving anything.
+type sessionSelectionResult struct {
+	modelSwitchDeferred bool
+	effectiveEffort     string
+	effortAccepted      bool
+	effortRemembered    bool
+}
+
+// applySessionSelection applies the model and then the effort pick that belongs
+// to it. ok=false means the response was already written.
+//
+// The order matters: the registry's level list is per model, so a pick must be
+// validated and pushed only once the agent is actually on the model it was made
+// for. Applying the pick before the switch (the previous order) validated
+// against the OLD model's list — clearing legitimate picks and keeping ones that
+// could never run — and pushed the new level at the old model.
+func applySessionSelection(w http.ResponseWriter, r *http.Request, sessionID string, req *sessionUpdateRequest) (sessionSelectionResult, bool) {
+	var result sessionSelectionResult
+	if req.ModelID != "" {
+		deferred, err := applyAndPersistSessionModel(r.Context(), sessionID, req.ModelID)
+		if err != nil {
+			writeModelSwitchError(w, r, err)
+			return result, false
+		}
+		result.modelSwitchDeferred = deferred
+	}
+
+	// Validate against the live list only when the agent is really on the target
+	// model. A deferred switch leaves the registry describing the previous one.
+	result.effortAccepted, result.effortRemembered = applySessionConfigSelections(
+		sessionID, req.ModeID, req.ThinkingEffort, req.ModelID, !result.modelSwitchDeferred,
+	)
+	if req.ModelID != "" && req.ThinkingEffort == "" {
+		// No explicit pick: report what the new model will actually run instead
+		// of leaving the old level on the chip.
+		result.effectiveEffort = switchSessionEffortToModel(sessionID, req.ModelID, result.modelSwitchDeferred)
+	}
+	applyExtraConfigOptions(sessionID, req.ConfigOptions)
+	return result, true
 }
 
 // thinkingEffortStateAfterModelSwitch returns the thinking levels of the model

@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS providers (
 	models TEXT NOT NULL DEFAULT '[]',
 	default_model TEXT NOT NULL DEFAULT '',
 	wire_api TEXT NOT NULL DEFAULT 'responses',
+	deployment TEXT NOT NULL DEFAULT '',
+	backend TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -70,6 +72,8 @@ type ProviderPatch struct {
 	Models       *[]string
 	DefaultModel *string
 	WireAPI      *string
+	Deployment   *string
+	Backend      *string
 }
 
 // LoadProvidersIntoMemory loads every provider row into the in-memory snapshot
@@ -85,7 +89,7 @@ func LoadProvidersIntoMemory() error {
 
 func listProvidersFromDB(db dbutil.Reader) ([]*model.Provider, error) {
 	rows, err := db.Query(`SELECT id, name, protocol, base_url, api_key, auth_mode, preset_id,
-		models, default_model, wire_api, created_at, updated_at FROM providers`)
+		models, default_model, wire_api, deployment, backend, created_at, updated_at FROM providers`)
 	if err != nil {
 		return nil, fmt.Errorf("query providers: %w", err)
 	}
@@ -97,7 +101,7 @@ func listProvidersFromDB(db dbutil.Reader) ([]*model.Provider, error) {
 		var createdAt, updatedAt sql.NullString
 		var modelsJSON string
 		if err := rows.Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID,
-			&modelsJSON, &p.DefaultModel, &p.WireAPI, &createdAt, &updatedAt); err != nil {
+			&modelsJSON, &p.DefaultModel, &p.WireAPI, &p.Deployment, &p.Backend, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
 		p.Models = decodeModelIDs(modelsJSON)
@@ -119,9 +123,9 @@ func GetProvider(id int64) (*model.Provider, error) {
 	var createdAt, updatedAt sql.NullString
 	var modelsJSON string
 	err := store.ReadDB().QueryRow(`SELECT id, name, protocol, base_url, api_key, auth_mode, preset_id,
-		models, default_model, wire_api, created_at, updated_at FROM providers WHERE id = ?`, id).
+		models, default_model, wire_api, deployment, backend, created_at, updated_at FROM providers WHERE id = ?`, id).
 		Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID,
-			&modelsJSON, &p.DefaultModel, &p.WireAPI, &createdAt, &updatedAt)
+			&modelsJSON, &p.DefaultModel, &p.WireAPI, &p.Deployment, &p.Backend, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrProviderNotFound
 	}
@@ -145,9 +149,9 @@ func CreateProvider(p model.Provider) (*model.Provider, error) {
 		return nil, ErrProviderNameTaken
 	}
 
-	res, err := store.WriteExec(`INSERT INTO providers (name, protocol, base_url, api_key, auth_mode, preset_id, models, default_model, wire_api)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.PresetID,
-		encodeModelIDs(p.Models), p.DefaultModel, p.WireAPI)
+	res, err := store.WriteExec(`INSERT INTO providers (name, protocol, base_url, api_key, auth_mode, preset_id, models, default_model, wire_api, deployment, backend)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.PresetID,
+		encodeModelIDs(p.Models), p.DefaultModel, p.WireAPI, p.Deployment, p.Backend)
 	if err != nil {
 		if isUniqueConstraint(err) {
 			return nil, ErrProviderNameTaken
@@ -197,9 +201,9 @@ func UpdateProvider(id int64, patch ProviderPatch) (*model.Provider, error) {
 
 	if _, werr := store.WriteExec(`UPDATE providers SET name = ?, protocol = ?, base_url = ?,
 		api_key = ?, auth_mode = ?, preset_id = ?, models = ?, default_model = ?, wire_api = ?,
-		updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		deployment = ?, backend = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		next.Name, next.Protocol, next.BaseURL, next.APIKey, next.AuthMode, next.PresetID,
-		encodeModelIDs(next.Models), next.DefaultModel, next.WireAPI, id); werr != nil {
+		encodeModelIDs(next.Models), next.DefaultModel, next.WireAPI, next.Deployment, next.Backend, id); werr != nil {
 		if isUniqueConstraint(werr) {
 			return nil, ErrProviderNameTaken
 		}
@@ -349,6 +353,12 @@ func applyProviderPatch(current model.Provider, patch ProviderPatch) model.Provi
 	}
 	if patch.WireAPI != nil {
 		next.WireAPI = *patch.WireAPI
+	}
+	if patch.Deployment != nil {
+		next.Deployment = *patch.Deployment
+	}
+	if patch.Backend != nil {
+		next.Backend = *patch.Backend
 	}
 	if patch.ClearAPIKey {
 		next.APIKey = ""
@@ -514,6 +524,10 @@ func (e *ProviderFieldError) Error() string {
 // caller (writeProviderError, tests).
 func (e *ProviderFieldError) Unwrap() error { return ErrProviderInvalid }
 
+// fieldBackend is the API field name of a provider's backend, used in the
+// field errors below (and by the client to highlight the control).
+const fieldBackend = "backend"
+
 func validateProviderFields(p model.Provider) error {
 	if p.Name == "" {
 		return &ProviderFieldError{Field: "name", Reason: "name is required"}
@@ -524,19 +538,16 @@ func validateProviderFields(p model.Provider) error {
 	if !model.ValidAuthMode(p.AuthMode) {
 		return &ProviderFieldError{Field: "authMode", Reason: fmt.Sprintf("unknown auth mode %q", p.AuthMode)}
 	}
-	// The auth mode decides which variable the CLI reads, so a mode no backend
-	// can express for this protocol is a dead row: it saved fine and then
-	// failed every turn. The bind-time check (handler) still guards rows that
-	// predate this rule.
-	//
 	// The private protocol has no endpoint and no header of its own: the backend
 	// injects its fixed credential variable, so the auth mode is meaningless
 	// there and must not be validated against a protocol table that does not
 	// contain it.
 	if p.Protocol == model.ProviderProtocolPrivate {
-		if strings.TrimSpace(p.BaseURL) != "" {
-			return &ProviderFieldError{Field: "baseUrl", Reason: "the private protocol takes no endpoint"}
+		if err := validatePrivateProvider(p); err != nil {
+			return err
 		}
+	} else if p.Backend != "" {
+		return &ProviderFieldError{Field: fieldBackend, Reason: "only the private protocol belongs to a backend"}
 	} else if !model.ProtocolSupportsAuthMode(p.Protocol, p.AuthMode) {
 		return &ProviderFieldError{
 			Field:  "authMode",
@@ -545,6 +556,49 @@ func validateProviderFields(p model.Provider) error {
 	}
 	if !model.ValidWireAPI(p.WireAPI) {
 		return &ProviderFieldError{Field: "wireApi", Reason: fmt.Sprintf("unknown wire api %q", p.WireAPI)}
+	}
+	if !model.ValidDeployment(p.Deployment) {
+		return &ProviderFieldError{Field: "deployment", Reason: fmt.Sprintf("unknown deployment %q", p.Deployment)}
+	}
+	// An edition only means something for the backend's own service; on a
+	// third-party endpoint it would sit there looking configured and change
+	// nothing.
+	if p.Deployment != "" && p.Protocol != model.ProviderProtocolPrivate {
+		return &ProviderFieldError{Field: "deployment", Reason: "only the private protocol selects a deployment"}
+	}
+	return nil
+}
+
+// validatePrivateProvider checks the fields that only an own-service credential
+// has: which backend it belongs to, its edition, and whether that edition needs
+// a customer-defined address.
+//
+// The auth mode decides which variable the CLI reads, so a mode no backend can
+// express for this protocol is a dead row: it saved fine and then failed every
+// turn. The bind-time check (handler) still guards rows that predate this rule.
+func validatePrivateProvider(p model.Provider) error {
+	// Four backends share this protocol, so the row must say which one it
+	// belongs to: without that, a Cursor key binds to a CodeBuddy agent and
+	// only fails on the first turn.
+	if p.Backend == "" {
+		return &ProviderFieldError{Field: fieldBackend, Reason: "an own-service credential must name its backend"}
+	}
+	if !model.ProviderSupportsOwnService(p.Backend) {
+		return &ProviderFieldError{Field: fieldBackend, Reason: fmt.Sprintf("backend %q has no own service", p.Backend)}
+	}
+	if p.Deployment != "" && !model.ProviderSupportsDeployment(p.Backend) {
+		return &ProviderFieldError{Field: "deployment", Reason: fmt.Sprintf("backend %q has no selectable edition", p.Backend)}
+	}
+	// An enterprise edition of the backend's own service lives at an address
+	// the customer defines, so it MUST carry one. Every other edition must not:
+	// nothing would read it, and the row would look configured while the
+	// request still went to the default host.
+	if model.DeploymentNeedsEndpoint(p.Deployment) {
+		if strings.TrimSpace(p.BaseURL) == "" {
+			return &ProviderFieldError{Field: "baseUrl", Reason: "this deployment needs a service address"}
+		}
+	} else if strings.TrimSpace(p.BaseURL) != "" {
+		return &ProviderFieldError{Field: "baseUrl", Reason: "this deployment takes no endpoint"}
 	}
 	return nil
 }

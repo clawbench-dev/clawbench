@@ -1,5 +1,5 @@
 import { app, Menu, session } from 'electron'
-import { initStore } from './store'
+import { getStore, initStore } from './store'
 import { applySecureContextSwitch } from './secureContext'
 import { installDisplayMediaHandler, registerCaptureHandlers } from './capture'
 import { stopRemoteControlHelper } from './remoteControl'
@@ -11,7 +11,7 @@ import { flushFloatingBounds, hasAppTray, initFloating, openMainWindow } from '.
 import { record, recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
 import { embeddedServerLabels, resolveNativeLanguage } from './labels'
-import { setEmbeddedServerActive, startEmbeddedServer, stopEmbeddedServer } from './localServer'
+import { setEmbeddedServerActive, startEmbeddedServer, stopEmbeddedServer, isEmbeddedServerUrl } from './localServer'
 
 /**
  * One process per machine, before anything else runs.
@@ -89,6 +89,13 @@ async function startEmbeddedServerIfPresent(): Promise<void> {
     record('I', 'LocalServer', `ready at ${url}`)
   } catch (err) {
     recordError('LocalServer', err)
+    // The app was pointed at that server: stop pointing at it, or the window
+    // would navigate to a dead address and raise a SECOND error dialog on top of
+    // the one below. The login page still lists it as "not running" and a click
+    // retries the start.
+    if (isEmbeddedServerUrl(getStore().get('serverUrl'))) {
+      getStore().set('serverUrl', '')
+    }
     // First run of an embedded build with a broken payload: show the normal
     // login page so the app is still usable against another machine's server,
     // rather than dying on a splash that never lifts.

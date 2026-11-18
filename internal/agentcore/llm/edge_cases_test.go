@@ -815,40 +815,16 @@ func TestResolveEndpoint_EdgeShapes(t *testing.T) {
 		{"   ", "/v1/messages", ""},
 		{"api.example.com", "/v1/messages", "api.example.com/v1/messages"},
 		{"https://api.example.com/v1beta", "/v1/messages", "https://api.example.com/v1beta/messages"},
-		// "v1x" IS a version segment by the letter rule; "chat" is not.
-		{"https://x.example.com/chat", "/v1/messages", "https://x.example.com/chat"},
+		// A versionless path is a namespace the API is mounted under, not a
+		// complete endpoint, so the protocol path is appended to it.
+		{"https://x.example.com/chat", "/v1/messages", "https://x.example.com/chat/v1/messages"},
+		// A versioned path was typed deliberately and is kept verbatim.
 		{"https://x.example.com/v1/chat", "/v1/messages", "https://x.example.com/v1/chat"},
 	}
 	for _, tc := range cases {
 		if got := resolveEndpoint(tc.base, tc.path); got != tc.want {
 			t.Errorf("resolveEndpoint(%q, %q) = %q, want %q", tc.base, tc.path, got, tc.want)
 		}
-	}
-}
-
-// TestIsVersionPath pins the segments accepted as a partial base.
-func TestIsVersionPath(t *testing.T) {
-	yes := []string{"/v1", "/api/v1", "/v1beta", "/v2/", "/api"}
-	no := []string{"/v1/chat", "/chat", "/v1x?"}
-	for _, p := range yes {
-		if !isVersionPath(p) {
-			t.Errorf("%q must be a version path", p)
-		}
-	}
-	for _, p := range no {
-		if isVersionPath(p) {
-			t.Errorf("%q must not be a version path", p)
-		}
-	}
-}
-
-// TestPathPrefixForVersion pins the remainder-appending rule.
-func TestPathPrefixForVersion(t *testing.T) {
-	if got := pathPrefixForVersion("/v1/chat/completions"); got != "/v1" {
-		t.Fatalf("got %q, want /v1", got)
-	}
-	if got := pathPrefixForVersion("/v1"); got != "/v1" {
-		t.Fatalf("got %q, want /v1", got)
 	}
 }
 

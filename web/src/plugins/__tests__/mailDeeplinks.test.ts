@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 const switchTab = vi.fn()
 const tabBlocked = vi.fn(() => false)
+const recordNotificationOrigin = vi.fn()
 const warn = vi.fn()
 const startPolling = vi.fn()
 const stopPolling = vi.fn()
@@ -38,7 +39,7 @@ async function mailPlugin() {
 }
 
 function ctx() {
-  return { switchTab, tabBlocked }
+  return { switchTab, tabBlocked, recordNotificationOrigin, hotSwitchProject: vi.fn(), currentProject: () => '' }
 }
 
 describe('mail dock plugin', () => {
@@ -58,6 +59,10 @@ describe('mail dock plugin', () => {
     expect(jump).toBeTruthy()
     jump!.handler({ messageId: 12 }, ctx())
     expect(switchTab).toHaveBeenCalledWith('mail')
+    // The jump must arm the notification center as Back's target. It is a
+    // no-op for a quote jump (no fromNotificationCenter flag), which is exactly
+    // why the handler forwards the raw detail rather than deciding itself.
+    expect(recordNotificationOrigin).toHaveBeenCalledWith({ messageId: 12 })
   })
 
   it('ignores an open-mail event with no message id, and says so', async () => {

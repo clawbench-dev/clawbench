@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/model"
 )
 
 func TestCodebuddyPlugin_Registered(t *testing.T) {
@@ -99,4 +100,36 @@ func TestCodebuddyPlugin_DiscoverModelsFunc(t *testing.T) {
 	// In CI/test environment, codebuddy CLI may not be installed, so nil is ok.
 	// We just verify the function doesn't panic.
 	_ = models
+}
+
+// An enterprise edition of CodeBuddy's own service carries its address in the
+// provider row, not in an environment variable, so the CLI path must pass it as
+// --settings exactly like the ACP path does.
+func TestBuildCodebuddyStreamArgs_OwnServiceSettings(t *testing.T) {
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 9, Name: "CB", Protocol: model.ProviderProtocolPrivate, APIKey: "ck-1",
+		Deployment: model.ProviderDeploymentSelfhosted, BaseURL: "https://cb.example.com",
+	}})
+	providerID := int64(9)
+	agent := &model.Agent{ID: "cb", Name: "cb", Backend: "codebuddy", ProviderID: &providerID}
+	model.ReplaceAgents(map[string]*model.Agent{"cb": agent}, []*model.Agent{agent})
+	t.Cleanup(func() {
+		model.ReplaceProviders(nil)
+		model.ReplaceAgents(nil, nil)
+	})
+
+	args := buildCodebuddyStreamArgs(ai.ChatRequest{AgentID: "cb"})
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--settings") {
+		t.Fatalf("args = %v, want a --settings override", args)
+	}
+	if !strings.Contains(joined, `{"enterpriseEndpoint":"https://cb.example.com"}`) {
+		t.Fatalf("args = %v, want the own-service address in the payload", args)
+	}
+
+	// A plain (non-own-service) request must not grow a --settings argument.
+	args = buildCodebuddyStreamArgs(ai.ChatRequest{})
+	if strings.Contains(strings.Join(args, " "), "--settings") {
+		t.Fatalf("args = %v, want no --settings without an own-service provider", args)
+	}
 }

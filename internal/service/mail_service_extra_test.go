@@ -227,6 +227,49 @@ func TestFetchOlderMailMessages(t *testing.T) {
 	}
 }
 
+// The load-older path opens a fresh connection, and a server that omits
+// UIDNEXT leaves the folder's uid_next at zero. Without the highest cached UID
+// as the estimate the window starts at the n*3 minimum, which on a sparse
+// mailbox needs six widening round trips and can still come up empty.
+func TestFetchOlderMailMessagesPassesUIDNextHint(t *testing.T) {
+	setupMailDB(t)
+	acc := newTestAccount(t)
+	f := newFakeClient()
+	seedFolder(f, "INBOX", mail.SpecialUseInbox)
+	seedMessages(f, 5, time.Now().Add(-5*time.Hour))
+	// What 163 reports: a message count, no UIDNEXT.
+	f.status["INBOX"] = mail.Status{Messages: 5, Unseen: 0, UIDValidity: 7}
+	installFakeDialer(t, f)
+	if _, err := SyncMailAccount(context.Background(), acc.ID); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	folder, err := GetMailFolderByPath(acc.ID, "INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.UIDNext != 0 || folder.LastSeenUID != 5 {
+		t.Fatalf("fixture should have stored uid_next=0 / last_seen=5, got %d / %d",
+			folder.UIDNext, folder.LastSeenUID)
+	}
+	row, err := oldestCachedMessage(folder.ID)
+	if err != nil || row == nil {
+		t.Fatalf("oldest: %v", err)
+	}
+	if err := DeleteMailMessageRow(row.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := FetchOlderMailMessages(context.Background(), folder.ID); err != nil {
+		t.Fatalf("fetch older: %v", err)
+	}
+	if len(f.beforeCalls) != 1 {
+		t.Fatalf("expected one FetchBefore call, got %d", len(f.beforeCalls))
+	}
+	if got := f.beforeCalls[0].nextUIDHint; got != 6 {
+		t.Fatalf("nextUIDHint = %d, want 6 (last cached UID + 1)", got)
+	}
+}
+
 func TestFetchOlderMailMessagesEmptyCache(t *testing.T) {
 	setupMailDB(t)
 	acc := newTestAccount(t)

@@ -157,3 +157,33 @@ func TestProviderEnvHelperProcess(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+// The enterprise editions' service address is not an environment variable: it
+// has to reach the CLI as a --settings override. Only an own-service provider
+// that carries an address produces one.
+func TestOwnServiceSettingsArg(t *testing.T) {
+	setupProviderAgent(t, "cb", "codebuddy", &model.Provider{
+		ID: 1, Name: "CB", Protocol: model.ProviderProtocolPrivate, APIKey: "ck-1",
+		Deployment: model.ProviderDeploymentSelfhosted, BaseURL: "https://cb.example.com",
+	})
+	if got := OwnServiceSettingsArg("cb"); got != `{"enterpriseEndpoint":"https://cb.example.com"}` {
+		t.Fatalf("payload = %q", got)
+	}
+
+	// The hosted account has no address, so there is nothing to pass.
+	setupProviderAgent(t, "cb2", "codebuddy", &model.Provider{
+		ID: 2, Name: "CB2", Protocol: model.ProviderProtocolPrivate, APIKey: "ck-2",
+	})
+	if got := OwnServiceSettingsArg("cb2"); got != "" {
+		t.Fatalf("a hosted account must produce no override, got %q", got)
+	}
+
+	// A third-party endpoint goes through CODEBUDDY_BASE_URL instead.
+	setupProviderAgent(t, "cb3", "codebuddy", &model.Provider{
+		ID: 3, Name: "GW", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://gw.example", APIKey: "k", AuthMode: model.ProviderAuthAuto,
+	})
+	if got := OwnServiceSettingsArg("cb3"); got != "" {
+		t.Fatalf("a custom gateway must not be treated as an own-service address, got %q", got)
+	}
+}

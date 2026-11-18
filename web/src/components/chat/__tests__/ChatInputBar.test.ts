@@ -116,6 +116,9 @@ const i18n = createI18n({
           remaining: 'Remaining',
           inputTokens: 'Input',
           outputTokens: 'Output',
+          tokenRate: 'Output speed',
+          tokenRateHint: 'Latest reply generated for {seconds}s',
+          tokenRateHintNoDuration: 'Latest reply speed',
           contextCost: 'Cost',
           compact: 'Compact context',
         },
@@ -411,6 +414,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 
 // Mock useAgents — return enough functions to avoid TypeError
 const mockSupportsACP = vi.fn().mockReturnValue(false)
+const mockIsBuiltin = vi.fn().mockReturnValue(false)
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: { value: [] },
@@ -434,7 +438,7 @@ vi.mock('@/composables/useAgents', () => ({
     canRefreshModels: () => false,
     hasPreferredMode: () => false,
     supportsACP: mockSupportsACP,
-    isBuiltinAgent: () => false,
+    isBuiltinAgent: () => mockIsBuiltin(),
     getAgentTransport: () => 'cli',
     invalidateACPStateCache: vi.fn(),
     updateACPModelList: vi.fn(),
@@ -656,65 +660,6 @@ describe('ChatInputBar', () => {
   it('renders the attach button', () => {
     const wrapper = mountBar()
     expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
-  })
-
-  describe('action bar edge fade', () => {
-    /**
-     * jsdom has no layout: `scrollWidth`/`clientWidth` are 0 and nothing scrolls.
-     * The fade is a function of those numbers, so the test drives them directly
-     * and fires the real `scroll` listener the template binds — that is the part
-     * with behaviour (which side fades, and that a scrolled-to-the-end strip
-     * stops fading).
-     */
-    function setMetrics(el: Element, m: { scrollLeft: number; scrollWidth: number; clientWidth: number }) {
-      Object.defineProperty(el, 'scrollLeft', { value: m.scrollLeft, configurable: true, writable: true })
-      Object.defineProperty(el, 'scrollWidth', { value: m.scrollWidth, configurable: true })
-      Object.defineProperty(el, 'clientWidth', { value: m.clientWidth, configurable: true })
-    }
-
-    function bar(wrapper: ReturnType<typeof mountBar>) {
-      const el = wrapper.find('.chat-top-actions').element
-      return el as HTMLElement
-    }
-
-    it('fades the right edge when buttons are hidden past it', async () => {
-      const wrapper = mountBar({ currentSessionId: 's1' })
-      setMetrics(bar(wrapper), { scrollLeft: 0, scrollWidth: 600, clientWidth: 400 })
-      await wrapper.find('.chat-top-actions').trigger('scroll')
-      const el = wrapper.find('.chat-top-actions').element as HTMLElement
-      expect(el.dataset.fadeRight).toBe('1')
-      // Nothing is hidden to the left at scrollLeft 0.
-      expect(el.dataset.fadeLeft).toBe('0')
-    })
-
-    it('fades the left edge once the strip has been scrolled', async () => {
-      const wrapper = mountBar({ currentSessionId: 's1' })
-      setMetrics(bar(wrapper), { scrollLeft: 100, scrollWidth: 600, clientWidth: 400 })
-      await wrapper.find('.chat-top-actions').trigger('scroll')
-      const el = wrapper.find('.chat-top-actions').element as HTMLElement
-      expect(el.dataset.fadeLeft).toBe('1')
-      expect(el.dataset.fadeRight).toBe('1')
-    })
-
-    it('stops fading at the end of the strip', async () => {
-      // A fade with nothing hidden behind it reads as clipped content, so the
-      // trailing edge must go fully opaque once the last button is reachable.
-      const wrapper = mountBar({ currentSessionId: 's1' })
-      setMetrics(bar(wrapper), { scrollLeft: 200, scrollWidth: 600, clientWidth: 400 })
-      await wrapper.find('.chat-top-actions').trigger('scroll')
-      const el = wrapper.find('.chat-top-actions').element as HTMLElement
-      expect(el.dataset.fadeLeft).toBe('1')
-      expect(el.dataset.fadeRight).toBe('0')
-    })
-
-    it('shows no fade at all when every button fits', async () => {
-      const wrapper = mountBar({ currentSessionId: 's1' })
-      setMetrics(bar(wrapper), { scrollLeft: 0, scrollWidth: 400, clientWidth: 400 })
-      await wrapper.find('.chat-top-actions').trigger('scroll')
-      const el = wrapper.find('.chat-top-actions').element as HTMLElement
-      expect(el.dataset.fadeLeft).toBe('0')
-      expect(el.dataset.fadeRight).toBe('0')
-    })
   })
 
   it('drives the edge fade from a CSS mask, not an opaque gradient overlay', () => {
@@ -2219,6 +2164,46 @@ describe('ChatInputBar', () => {
     mockContextOutputTokens.value = 0
     mockContextCacheMissTokens.value = 0
     mockContextCredit.value = 0
+  })
+
+  it('shows the latest reply\'s output speed in the usage popup', async () => {
+    mockContextSize.value = 200000
+    mockContextUsed.value = 29495
+    mockContextOutputTokens.value = 500
+
+    const wrapper = mountBar({
+      messages: [
+        { id: 1, role: 'assistant', metadata: { outputTokens: 500, tokensPerSecond: 42.46, genMs: 11800 } },
+      ],
+    })
+    await wrapper.find('.session-info-usage').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('Output speed')
+    expect(wrapper.text()).toContain('42.5 tok/s')
+
+    // Reset for other tests.
+    mockContextOutputTokens.value = 0
+  })
+
+  it('hides the output speed when the backend could not measure it', async () => {
+    // A non-streaming backend leaves no window, so the row must not claim a
+    // number (and must not fall back to an older message's speed).
+    mockContextSize.value = 200000
+    mockContextUsed.value = 29495
+    mockContextOutputTokens.value = 500
+
+    const wrapper = mountBar({
+      messages: [
+        { id: 1, role: 'assistant', metadata: { outputTokens: 500, tokensPerSecond: 30, genMs: 9000 } },
+        { id: 2, role: 'assistant', metadata: { outputTokens: 500 } },
+      ],
+    })
+    await wrapper.find('.session-info-usage').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).not.toContain('Output speed')
+    mockContextOutputTokens.value = 0
   })
 
   it('renders cache read and cache hit as separate rows (same value, distinct labels)', async () => {
@@ -3998,6 +3983,7 @@ describe('ChatInputBar', () => {
       mockContextSize.value = 0
       mockAvailableCommands.value = []
       mockSessionTransport.value = ''
+      mockIsBuiltin.mockReturnValue(false)
     })
 
     it('shows compact button when usage >= 75% and /compact command available in ACP transport', async () => {
@@ -4078,6 +4064,18 @@ describe('ChatInputBar', () => {
       await compactBtn.trigger('click')
       expect(wrapper.emitted('send')).toBeTruthy()
       expect(wrapper.emitted('send')![0]).toEqual(['/compact'])
+    })
+
+    // The built-in agent compacts inside the engine; "/compact" is an ACP slash
+    // command, so offering it here would send that text to the model as prose.
+    it('hides the compact action for the built-in agent', async () => {
+      mockContextUsed.value = 80000
+      mockContextSize.value = 100000
+      mockIsBuiltin.mockReturnValue(true)
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.find('.session-info-usage').trigger('click')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.usage-popup-compact-btn').exists()).toBe(false)
     })
   })
 

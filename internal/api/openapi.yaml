@@ -746,6 +746,10 @@ paths:
         `mail.enabled` 是内置邮件客户端的总开关（默认 `true`）：关闭后停止后台收信与
         邮件触发任务、隐藏邮件页签；邮箱账号保留。
 
+        `mail.notify`（默认 `true`）控制新邮件提醒：新邮件到达时写一条通知中心记录，
+        并发出系统通知 / 按 `push_mode` 推送到 IM 机器人。关闭只静音提醒——后台收信、
+        未读角标与邮件页签照常工作。
+
         `tasks.enabled` 是定时任务的总开关（默认 `true`）：关闭后停止 cron 调度、取消
         运行中的执行并丢弃排队的事件任务，手动运行与增删改一律 `409` `TasksDisabled`；
         配置与历史保留，重新打开**不补跑**。同级子键见 `PATCH` 段。
@@ -808,6 +812,9 @@ paths:
 
         `mail.enabled` 只停后台收信与邮件触发任务、隐藏邮件页签，**不删除邮箱账号**；
         热更新，无需重启。
+
+        `mail.notify` 只控制新邮件提醒（通知中心 + 系统/IM 推送），不影响收信与
+        未读角标；同样热更新。
 
         `tasks.enabled` 与 `share.enabled` 是**破坏性**开关，都在配置写入成功后执行：
         `tasks.enabled=false` 停止 cron、取消运行中的执行、丢弃排队的事件任务，重新置为
@@ -2231,6 +2238,26 @@ paths:
                     type: object
                     nullable: true
                     description: 该会话**自己**的上下文用量；`null` 表示从未上报
+                  tokenRate:
+                    type: object
+                    nullable: true
+                    description: |
+                      该会话**最近一轮**回复的输出速率（服务端实测）。
+
+                      `tokensPerSecond` = 本轮输出 token 数 ÷ 模型真正在吐字的时长；
+                      工具执行、等待网络等不产字的时间**不计入**分母（因此长任务里
+                      数字仍反映模型本身快慢，而不是任务耗时）。未测到（后端非流式、
+                      回复过短）时为 `null`，客户端据此隐藏该行而不是显示 0。
+
+                      单聊弹窗直接从最后一条助手消息的 metadata 读取同一个值；群成员行
+                      没有自己的 `chat_history`，所以只能从这个字段取。
+                    properties:
+                      tokensPerSecond:
+                        type: number
+                        description: 每秒输出 token 数
+                      genMs:
+                        type: integer
+                        description: 参与计算的吐字时长（毫秒），供 UI 说明口径
                   commands:
                     type: array
                     items: {type: object}
@@ -2321,7 +2348,31 @@ paths:
     patch:
       tags: [Sessions]
       summary: 即时持久化会话设置
-      description: 模式 / 思考深度 / 模型 / 传输方式的变更即时写库，无需发消息。会话由 `session_id` 查询参数（或会话 Cookie）决定。
+      description: |
+        模式 / 思考深度 / 模型 / 传输方式的变更即时写库，无需发消息。会话由 `session_id` 查询参数（或会话 Cookie）决定。
+
+        **移动到另一个工作区**（`projectPath`，issue #685）：把已有会话重新绑定到
+        另一个**已注册且目录仍存在**的项目，历史保留。会话行、它的消息行（历史
+        查询同时按 project_id 和 session_id 过滤，只改会话会让历史读不出来）与
+        用量账本的归属一起改到新项目；`sort_order` 重置为新项目列表的顶部。
+        标签**不跟过去**：标签属于某个项目，旧项目的标签在新项目里没有定义（项目内
+        标签会被摘掉；全局标签与项目无关，保留）。
+        前端落点是会话行 ⋮ 菜单里的「移动到工作区」。
+
+        **单聊**（`session_type='chat'`）整条搬走。**群聊**（`session_type='group'`）
+        连同全部成员行一起搬（含禁用与已移除的成员——时间线里的历史发言人指向它们）。
+        群内成员若使用「仅旧工作区可见」的智能体，整次移动会被拒绝并以
+        `MoveMembersUnavailable` 返回成员名单（`detail.members`），因为新工作区的
+        智能体选择器看不到它们。任务执行（`scheduled`）属于产生它的任务，不能移动。
+
+        **原生（CLI/ACP）会话不沿用**：它的转录按工作目录存放，换目录后无法续用。
+        本端点会清掉 `external_session_id`，并把历史变成下一轮注入的上下文——单聊
+        走已有的 fork 背景机制（有长度预算，首轮成功后清除），群聊把每个成员的
+        `seen_cursor` 归零（等同成员中途加入已有群，下一次发言带上完整时间线）。
+
+        服务端同时关闭缓存的智能体进程，下一轮以新工作目录重新拉起。
+
+        移动会**先于**同一请求里的其它字段执行，后者的写入因而落在新项目下。
       operationId: sessionUpdate
       parameters:
         - name: session_id
@@ -2335,6 +2386,11 @@ paths:
             schema:
               type: object
               properties:
+                projectPath:
+                  type: string
+                  description: |
+                    把会话重新绑定到这个**已注册且目录仍存在**的项目路径（issue #685），
+                    历史保留。与其它字段可同时出现；移动先执行。
                 modeId:
                   type: string
                 thinkingEffort:
@@ -2444,8 +2500,17 @@ paths:
                               type: string
                             name:
                               type: string
+        "409":
+          description: |
+            请求带 `projectPath` 但该会话正在生成回复（或还有消息在流式写入，或群内有
+            成员正在压缩上下文，`SessionRunning`）。此刻移动会把同一条回复拆到两个项目下。
         "422":
           description: |
+            `projectPath` 不是已注册的项目、其目录已不存在（`MoveTargetInvalid`）；该会话
+            是任务执行或群成员行、不能单独移动（`MoveNotAllowed`）；或群内成员在新工作区
+            不可用（`MoveMembersUnavailable`，`detail.members` 为成员显示名数组）。
+            这些请求不会写库。
+
             `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为
             `{error, code, msgKey: "ModelSwitchFailed"|"ModelSwitchFailedDetail",
             detail: {Detail}}`，其中 `Detail` 是 agent 给出的具体原因。**不会写库**
@@ -3101,15 +3166,16 @@ paths:
       description: |
         通知中心是一张**只追加的事件日志**：记录会话（completed/cancelled/
         permission_pending）、任务（running/completed/failed/cancelled）、仓库
-        （forge 六种）、用量提醒（over/full）与会议事件（远程控制请求、成员加入、
-        成员共享屏幕、纪要生成成功/失败）事件。**没有已读/未读概念**，也没有角标——
-        它回答「发生过什么」，不回答「有什么待处理」（后者由 chat/tasks/forge 三个
-        既有角标负责）。
+        （forge 六种）、用量提醒（over/full）、会议事件（远程控制请求、成员加入、
+        成员共享屏幕、纪要生成成功/失败）与新邮件（received）事件。**没有已读/未读
+        概念**，也没有角标——它回答「发生过什么」，不回答「有什么待处理」（后者由
+        chat/tasks/forge 三个既有角标负责）。
 
         筛选参数均可选，缺省即不过滤——**默认范围是全局（所有项目）**，`project`
         是收窄项而非隐含默认。`project` 传**项目路径**（与其它项目作用域端点一致）；
         未知项目返回空列表而非错误。每行带 `sourceMissing`：其指向的会话/任务/会议
-        记录已不存在时为 true（forge 行永不标记，因为条目在上游、本地无删除语义）。
+        记录/邮件已不存在时为 true（forge 行永不标记，因为条目在上游、本地无删除
+        语义）。
 
         分页用 keyset：把上一页最后一行的 `created_at`/`id` 回传为
         `before_at`/`before_id`。不要用 offset——日志持续追加，offset 会在翻页时
@@ -3126,7 +3192,7 @@ paths:
           description: 事件类别
           schema:
             type: string
-            enum: [session, task, forge, usage, meeting]
+            enum: [session, task, forge, usage, meeting, mail]
         - name: range
           in: query
           description: 时间范围；未知或为空表示不限
@@ -3165,7 +3231,7 @@ paths:
                           type: integer
                         kind:
                           type: string
-                          enum: [session, task, forge, usage, meeting]
+                          enum: [session, task, forge, usage, meeting, mail]
                         eventType:
                           type: string
                         title:
@@ -3187,13 +3253,16 @@ paths:
                         meetingToken:
                           type: string
                           description: kind=meeting 行的会议标识（分享 token）；点击用它打开该会议记录
+                        mailMessageId:
+                          type: integer
+                          description: kind=mail 行的邮件 id（mail_messages.id）；点击用它打开该封邮件
                         agentId:
                           type: string
                         createdAt:
                           type: string
                         sourceMissing:
                           type: boolean
-                          description: 源（会话/任务）已删除时为 true；点击不应跳转
+                          description: 源（会话/任务/会议记录/邮件）已删除时为 true；点击不应跳转
                   total:
                     type: integer
                     description: 当前筛选下的总条数（忽略分页）

@@ -10,7 +10,24 @@
       :aria-label="t('tableBlock.landscape')"
     >
       <div class="block-landscape-panel">
+        <!-- DataTable: live component, not a clone — the mode switch, sorting,
+             search and filters must keep working while fullscreen. -->
+        <div v-if="state.kind === 'table' && state.table" class="block-landscape-live">
+          <DataTable
+            :headers="state.table.headers"
+            :rows="state.table.rows"
+            :initial-mode="state.table.mode"
+            :initial-wrap="state.table.wrap"
+            :page-size="state.table.pageSize"
+            fill
+            expanded
+            @collapse="close"
+            @update:mode="onLiveMode"
+            @update:wrap="onLiveWrap"
+          />
+        </div>
         <div
+          v-else
           ref="bodyEl"
           class="block-landscape-scroll markdown-body"
           @mousedown="onTableMouseDown"
@@ -38,6 +55,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import DataTable from '@/components/common/DataTable.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
@@ -110,8 +128,11 @@ function renderedWrapper(): HTMLElement | null {
  */
 function syncWrapStateToSource(): void {
   const current = state.value
+  // Live DataTable: the overlay instance and the source share the wrap ref
+  // through `handle.setWrap`, so there is no cloned class to copy back.
+  if (!current || current.kind !== 'clone') return
   const rendered = renderedWrapper()
-  if (!current || !rendered) return
+  if (!rendered) return
 
   const wrapped = rendered.classList.contains('word-wrap')
   const isCode = current.source.classList.contains('code-block-wrapper')
@@ -125,6 +146,15 @@ function syncWrapStateToSource(): void {
   const label = gt(wrapped ? `${ns}.wrapOn` : `${ns}.wrapOff`)
   btn.setAttribute('title', label)
   btn.setAttribute('aria-label', label)
+}
+
+/** Choices made in the live fullscreen table are carried back to the source. */
+function onLiveMode(next: 'normal' | 'data'): void {
+  state.value?.handle?.setMode(next)
+}
+
+function onLiveWrap(next: boolean): void {
+  state.value?.handle?.setWrap(next)
 }
 
 function close(): void {

@@ -57,6 +57,49 @@ func rawMail(subject, from, body string) []byte {
 	))
 }
 
+// The sequence-number fallback has to work against a real server, not just the
+// scripted one: this pins the wire form (address by sequence number, read the
+// UID out of the response) and that go-imap parses it like a UID fetch.
+func TestFetchNewestSequenceFallbackAgainstRealServer(t *testing.T) {
+	acc, stop := startTestIMAP(t)
+	defer stop()
+	ctx := context.Background()
+
+	c, err := DialIMAP(ctx, acc)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	for i := range 4 {
+		if err := c.Append(ctx, "INBOX", rawMail(fmt.Sprintf("主题 %d", i), "alice@example.com", "body"), false); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+
+	m := c.(*imapClient)
+	// The real server always reports UIDNEXT. Select once so the message count
+	// is known, then drop the value the way 163 does.
+	if _, err := m.selectFolder(ctx, "INBOX"); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	m.uidNext = 0
+
+	headers, err := m.FetchNewest(ctx, "INBOX", 2)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(headers) != 2 {
+		t.Fatalf("expected the newest two messages, got %d", len(headers))
+	}
+	if headers[0].UID == 0 || headers[0].UID >= headers[1].UID {
+		t.Fatalf("expected two ascending UIDs, got %d then %d", headers[0].UID, headers[1].UID)
+	}
+	if m.uidNextHint != headers[1].UID+1 {
+		t.Fatalf("uidNextHint = %d, want %d", m.uidNextHint, headers[1].UID+1)
+	}
+}
+
 func TestIMAPEndToEnd(t *testing.T) {
 	acc, stop := startTestIMAP(t)
 	defer stop()

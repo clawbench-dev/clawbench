@@ -31,6 +31,12 @@ type faultyIMAP struct {
 	uidValidity           uint32
 	uidNext               uint32
 	omitStatusUIDValidity bool
+	// omitSelectUIDNext drops UIDNEXT from the SELECT response, the way 163
+	// does. RFC 3501 makes the item optional, so the client cannot assume it.
+	omitSelectUIDNext bool
+	// empty leaves the mailbox with no messages at all (startFaultyIMAP
+	// otherwise fills in a default one).
+	empty bool
 	// malformedBodyStructure makes every BODYSTRUCTURE item unparsable, which
 	// is what a non-compliant provider does to go-imap.
 	malformedBodyStructure bool
@@ -70,13 +76,13 @@ func startFaultyIMAP(t *testing.T, srv *faultyIMAP) (*faultyIMAP, Account) {
 	if len(srv.caps) == 0 {
 		srv.caps = []string{"IMAP4rev1"}
 	}
-	if len(srv.uids) == 0 {
+	if len(srv.uids) == 0 && !srv.empty {
 		srv.uids = []uint32{101, 102, 103}
 	}
 	if srv.uidValidity == 0 {
 		srv.uidValidity = 42
 	}
-	if srv.uidNext == 0 {
+	if srv.uidNext == 0 && len(srv.uids) > 0 {
 		srv.uidNext = srv.uids[len(srv.uids)-1] + 1
 	}
 
@@ -181,7 +187,7 @@ func (s *faultyIMAP) handle(conn net.Conn) {
 			if drop {
 				return
 			}
-			s.writeFetch(w, tag, fields)
+			s.writeFetch(w, tag, cmd, fields)
 		case "UID SEARCH":
 			s.writeSearch(w, tag)
 		case "UID STORE":
@@ -289,29 +295,42 @@ func (s *faultyIMAP) writeStatus(w *bufio.Writer, tag string, fields []string) {
 func (s *faultyIMAP) writeSelect(w *bufio.Writer, tag string) {
 	fmt.Fprintf(w, "* %d EXISTS\r\n* 0 RECENT\r\n", len(s.uids))
 	fmt.Fprintf(w, "* OK [UIDVALIDITY %d] UIDs valid\r\n", s.uidValidity)
-	fmt.Fprintf(w, "* OK [UIDNEXT %d] predicted next UID\r\n", s.uidNext)
+	if !s.omitSelectUIDNext {
+		fmt.Fprintf(w, "* OK [UIDNEXT %d] predicted next UID\r\n", s.uidNext)
+	}
 	fmt.Fprintf(w, "%s OK [READ-WRITE] SELECT completed\r\n", tag)
 }
 
-func (s *faultyIMAP) writeFetch(w *bufio.Writer, tag string, fields []string) {
-	// fields: TAG UID FETCH <set> (<items>)
+// writeFetch answers both `UID FETCH <uids>` and `FETCH <sequence numbers>`.
+func (s *faultyIMAP) writeFetch(w *bufio.Writer, tag, cmd string, fields []string) {
+	// fields: TAG [UID] FETCH <set> (<items>)
+	setIdx := 2
+	if cmd == "UID FETCH" {
+		setIdx = 3
+	}
 	opts := ""
-	if len(fields) >= 3 {
-		opts = strings.Join(fields[2:], " ")
+	if len(fields) > setIdx+1 {
+		opts = strings.Join(fields[setIdx+1:], " ")
 	}
 	s.mu.Lock()
 	s.fetches = append(s.fetches, opts)
 	s.mu.Unlock()
 
 	var set string
-	if len(fields) >= 4 {
-		set = fields[3]
+	if len(fields) > setIdx {
+		set = fields[setIdx]
 	}
 	wantStructure := strings.Contains(strings.ToUpper(opts), "BODYSTRUCTURE")
 	seq := 0
 	for _, uid := range s.uids {
 		seq++
-		if !uidSetMatches(set, uid) {
+		// The set is a UID set or a sequence-number set, but both are just
+		// ranges of numbers; only which one is compared changes.
+		num := uid
+		if cmd == "FETCH" {
+			num = uint32(seq)
+		}
+		if !uidSetMatches(set, num) {
 			continue
 		}
 		header := fmt.Sprintf("From: sender%d@example.com\r\nSubject: subject %d\r\nMessage-ID: <m%d@example.com>\r\n\r\n", uid, uid, uid)
@@ -333,8 +352,10 @@ func (s *faultyIMAP) writeFetch(w *bufio.Writer, tag string, fields []string) {
 	fmt.Fprintf(w, "%s OK FETCH completed\r\n", tag)
 }
 
-// uidSetMatches understands the "a:b", "a" and comma-separated forms the client
-// can send, which is all the tests need.
+// uidSetMatches understands the "a:b", "a", "a:*" and comma-separated forms the
+// client can send, which is all the tests need. It is used for both UID sets
+// and sequence-number sets: the syntax is the same, only the compared value
+// differs.
 func uidSetMatches(set string, uid uint32) bool {
 	if set == "" {
 		return true
@@ -347,11 +368,17 @@ func uidSetMatches(set string, uid uint32) bool {
 		}
 		stop := start
 		if isRange {
-			v, rerr := strconv.ParseUint(strings.TrimSpace(hi), 10, 32)
-			if rerr != nil {
-				continue
+			// "*" is the last message, which for a match test is "everything
+			// from here on".
+			if strings.TrimSpace(hi) == "*" {
+				stop = uint64(^uint32(0))
+			} else {
+				v, rerr := strconv.ParseUint(strings.TrimSpace(hi), 10, 32)
+				if rerr != nil {
+					continue
+				}
+				stop = v
 			}
-			stop = v
 		}
 		if uint64(uid) >= start && uint64(uid) <= stop {
 			return true
@@ -693,6 +720,141 @@ func TestFetchNewestFindsMessagesWithSparseUIDs(t *testing.T) {
 	}
 }
 
+// UIDNEXT is optional in RFC 3501 and 163 leaves it out of SELECT and STATUS
+// entirely. Reading the zero as "the mailbox is empty" made the folder report
+// its message count (STATUS) while caching no rows at all, with no error
+// anywhere — the list and the reader stayed empty forever.
+func TestFetchNewestFallsBackToSequenceNumbersWhenUIDNEXTMissing(t *testing.T) {
+	srv, acc := startFaultyIMAP(t, &faultyIMAP{
+		uids:              []uint32{11, 12, 13, 14, 15},
+		omitSelectUIDNext: true,
+	})
+	ctx := context.Background()
+
+	c, err := DialIMAP(ctx, acc)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	headers, err := c.FetchNewest(ctx, "INBOX", 2)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(headers) != 2 || headers[0].UID != 14 || headers[1].UID != 15 {
+		t.Fatalf("expected the newest two messages (14, 15), got %+v", headers)
+	}
+	// Without UIDNEXT the window has to be addressed by sequence number; the
+	// UID comes back with each FETCH response, so nothing downstream changes.
+	for _, cmd := range srv.sentCommands() {
+		if cmd == "UID FETCH" {
+			t.Fatalf("UIDNEXT is unknown, the window must not be addressed by UID: %v", srv.sentCommands())
+		}
+	}
+	// The highest UID seen becomes the lower bound used to size later windows.
+	if hint := c.(*imapClient).uidNextHint; hint != 16 {
+		t.Fatalf("uidNextHint = %d, want 16", hint)
+	}
+}
+
+// The fallback must also cover a mailbox smaller than the requested window:
+// "the last 100 messages" of a 3-message mailbox is all three.
+//
+// A connection that dies inside the fallback has to surface as an error, not as
+// "no mail": an empty result is what the old code mistook for a valid answer.
+func TestFetchNewestSequenceFallbackSurfacesFetchErrors(t *testing.T) {
+	_, acc := startFaultyIMAP(t, &faultyIMAP{omitSelectUIDNext: true, dropOnFetch: true})
+	ctx := context.Background()
+
+	c, err := DialIMAP(ctx, acc)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	if _, err := c.FetchNewest(ctx, "INBOX", 10); err == nil {
+		t.Fatal("a dropped connection should surface as an error")
+	}
+}
+
+func TestFetchNewestSequenceFallbackCoversSmallMailbox(t *testing.T) {
+	_, acc := startFaultyIMAP(t, &faultyIMAP{
+		uids:              []uint32{51, 52, 53},
+		omitSelectUIDNext: true,
+	})
+	ctx := context.Background()
+
+	c, err := DialIMAP(ctx, acc)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	headers, err := c.FetchNewest(ctx, "INBOX", 10)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(headers) != 3 {
+		t.Fatalf("expected all three messages, got %d (%+v)", len(headers), headers)
+	}
+	if headers[0].UID != 51 || headers[2].UID != 53 {
+		t.Fatalf("unexpected messages: %+v", headers)
+	}
+}
+
+// An empty mailbox without UIDNEXT is the one case where "nothing" is the
+// right answer, and it must not cost a FETCH.
+func TestFetchNewestWithoutUIDNEXTOnEmptyMailbox(t *testing.T) {
+	srv, acc := startFaultyIMAP(t, &faultyIMAP{empty: true, omitSelectUIDNext: true})
+	ctx := context.Background()
+
+	c, err := DialIMAP(ctx, acc)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	headers, err := c.FetchNewest(ctx, "INBOX", 10)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if len(headers) != 0 {
+		t.Fatalf("expected no headers, got %+v", headers)
+	}
+	if opts := srv.fetchOptions(); len(opts) != 0 {
+		t.Fatalf("an empty mailbox must not be fetched: %v", opts)
+	}
+}
+
+// Scrolling back on a server without UIDNEXT: the caller knows the highest UID
+// it has cached, which is a valid lower bound for UIDNEXT. Without it the
+// window starts at the n*3 minimum and has to be widened six times before it
+// reaches sparse mail — and on a long enough gap it never does.
+func TestFetchBeforeUsesUIDNextHintForSparseUIDs(t *testing.T) {
+	srv, acc := startFaultyIMAP(t, &faultyIMAP{
+		uids:              []uint32{1, 2000000, 4000000},
+		omitSelectUIDNext: true,
+	})
+	ctx := context.Background()
+
+	c, err := DialIMAP(ctx, acc)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	headers, err := c.FetchBefore(ctx, "INBOX", 4000000, 1, 4000001)
+	if err != nil {
+		t.Fatalf("fetch before: %v", err)
+	}
+	if len(headers) != 1 || headers[0].UID != 2000000 {
+		t.Fatalf("expected UID 2000000, got %+v", headers)
+	}
+	if opts := srv.fetchOptions(); len(opts) != 1 {
+		t.Fatalf("the hint should make one fetch enough, got %d: %v", len(opts), opts)
+	}
+}
+
 // uidWindow is what makes pagination work on mailboxes whose UIDs are sparse.
 func TestUIDWindowScalesWithUIDDensity(t *testing.T) {
 	dense := &imapClient{uidNext: 101, numMessages: 100}
@@ -705,6 +867,13 @@ func TestUIDWindowScalesWithUIDDensity(t *testing.T) {
 	sparse := &imapClient{uidNext: 2054349183, numMessages: 500}
 	if got := sparse.uidWindow(50, 2054349183); got < 50*4000000 {
 		t.Fatalf("sparse mailbox window = %d, want at least %d", got, 50*4000000)
+	}
+
+	// Servers that omit UIDNEXT still get a density estimate from the highest
+	// UID seen, instead of falling back to the n*3 minimum.
+	omitted := &imapClient{uidNextHint: 2054349184, numMessages: 500}
+	if got := omitted.uidWindow(50, 2054349183); got < 50*4000000 {
+		t.Fatalf("window from the UID hint = %d, want at least %d", got, 50*4000000)
 	}
 
 	// The window can never reach past the first message.

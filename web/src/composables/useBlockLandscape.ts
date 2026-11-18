@@ -1,5 +1,10 @@
 import { shallowRef } from 'vue'
 import { gt } from '@/composables/useLocale'
+import {
+  getBlockLandscapeTable,
+  type BlockLandscapeTable,
+  type BlockLandscapeTableHandle,
+} from '@/composables/dataTableLandscape'
 
 /**
  * Full-screen ("landscape") viewer state for Markdown blocks — tables AND code
@@ -13,9 +18,27 @@ import { gt } from '@/composables/useLocale'
  * root renders it, the same way `useDialog()` exposes a module-level store.
  */
 
+/**
+ * What the overlay is showing.
+ *
+ * `clone` is the original approach: the wrapper is serialized and injected with
+ * `v-html`, which keeps working while the source message re-renders (streaming).
+ * A DataTable cannot be cloned usefully though — a clone has no Vue instance,
+ * so every control in it (mode switch, sort, search, column menu, pager) would
+ * be an inert picture. Those go through the registry in
+ * `dataTableLandscape.ts` and are rendered as a LIVE `<DataTable>` inside the
+ * overlay instead.
+ */
+export type BlockLandscapeKind = 'clone' | 'table'
+
 export interface BlockLandscapeState {
-  /** Serialized clone of the whole `.table-block-wrapper` / `.code-block-wrapper`. */
+  kind: BlockLandscapeKind
+  /** Serialized clone of the whole `.table-block-wrapper` / `.code-block-wrapper`. Empty for `table`. */
   html: string
+  /** Snapshot for `table`; absent for `clone`. */
+  table?: BlockLandscapeTable
+  /** Back-channel for `table`; absent for `clone`. */
+  handle?: BlockLandscapeTableHandle
   /** Element that opened the overlay; focus returns here when it closes. */
   trigger: HTMLElement | null
   /**
@@ -37,16 +60,29 @@ export const blockLandscapeState = state
 const CLOSE_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>'
 
 /**
- * Open the overlay for a `.table-block-wrapper` or a `.code-block-wrapper`.
+ * Open the overlay for a `.table-block-wrapper`, a `.code-block-wrapper` or a
+ * registered `.dt` (DataTable root).
  *
- * The WHOLE wrapper is cloned — header included — so copy, the copy-format
- * menu and the wrap toggle keep working untouched inside the overlay. The one
+ * Raw-HTML blocks are CLONED — header included — so copy, the copy-format menu
+ * and the wrap toggle keep working untouched inside the overlay. The one
  * control that must change is the landscape button itself: inside the overlay
  * it becomes the close button (same slot, same styling, different action).
+ *
+ * DataTables take the `table` path instead: the component is re-rendered from a
+ * snapshot so its mode switch and toolbar stay alive (see the registry above).
  *
  * @returns false when the wrapper holds no renderable block (nothing opened).
  */
 export function openBlockLandscape(wrapper: Element, trigger: HTMLElement | null = null): boolean {
+  // A DataTable is rendered live, not cloned: a clone loses the Vue instance
+  // and with it every control in the header/toolbar (mode switch, sort,
+  // search, filters, pager). The snapshot keeps the mode the table was in.
+  const handle = getBlockLandscapeTable(wrapper)
+  if (handle) {
+    state.value = { kind: 'table', html: '', table: handle.snapshot(), handle, trigger, source: wrapper }
+    return true
+  }
+
   if (!wrapper.querySelector('table, pre')) return false
 
   const isCode = wrapper.classList.contains('code-block-wrapper')
@@ -63,7 +99,7 @@ export function openBlockLandscape(wrapper: Element, trigger: HTMLElement | null
   // No elements are added or removed: the clone keeps a 1:1 element structure
   // with the source, which is what lets a navigation click be replayed by index
   // path (see BlockLandscape.vue).
-  state.value = { html: clone.outerHTML, trigger, source: wrapper }
+  state.value = { kind: 'clone', html: clone.outerHTML, trigger, source: wrapper }
   return true
 }
 

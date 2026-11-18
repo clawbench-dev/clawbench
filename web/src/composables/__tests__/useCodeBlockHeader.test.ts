@@ -1048,6 +1048,25 @@ describe('handleTableBlockClick — landscape view', () => {
     wrapper.remove()
   })
 
+  it('leaves a DataTable-owned landscape button to the component', () => {
+    // DataTable 的按钮自己在 Vue 里打开「活组件」浮层。委托处理器如果再走一遍，
+    // 会把活浮层换成死克隆（全屏里开关点不动）。
+    const wrapper = document.createElement('div')
+    wrapper.className = 'table-block-wrapper is-data-table'
+    wrapper.innerHTML = `
+      <div class="dt is-data">
+        <div class="dt-head"><button class="table-block-landscape-btn" data-action="landscape"></button></div>
+      </div>`
+    document.body.appendChild(wrapper)
+    const btn = wrapper.querySelector<HTMLElement>('.table-block-landscape-btn')!
+    const event = click(btn)
+
+    expect(handleTableBlockClick(event)).toBe(false)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(blockLandscapeState.value).toBeNull()
+    wrapper.remove()
+  })
+
   it('does nothing when the block has no table', () => {
     const wrapper = document.createElement('div')
     wrapper.className = 'table-block-wrapper'

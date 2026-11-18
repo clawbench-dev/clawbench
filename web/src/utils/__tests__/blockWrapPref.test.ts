@@ -111,6 +111,21 @@ describe('setDefaultBlockWrap', () => {
     expect(btn.getAttribute('title')).toBe('codeBlock.wrapOff')
   })
 
+  it('leaves a DataTable wrapper in the hands of the component', () => {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'table-block-wrapper is-data-table'
+    wrapper.innerHTML = '<div class="dt"><div class="dt-scroll"></div></div>'
+    document.body.appendChild(wrapper)
+
+    setDefaultBlockWrap(false)
+
+    // DataTable watches the same preference and owns its own no-wrap class.
+    // Writing one onto the wrapper used to override the component's classes via
+    // `!important` — the table said "wrap" while rendering flat.
+    expect(wrapper.classList.contains('no-wrap')).toBe(false)
+    expect(wrapper.classList.contains('word-wrap')).toBe(false)
+  })
+
   it('ignores wrappers that are neither tables nor code blocks', () => {
     const other = document.createElement('div')
     other.className = 'diff-block-wrapper word-wrap'

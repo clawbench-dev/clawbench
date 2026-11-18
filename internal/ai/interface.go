@@ -126,7 +126,17 @@ type Metadata struct {
 	OutputTokens int     `json:"outputTokens,omitempty"`
 	DurationMs   int     `json:"durationMs,omitempty"` // CLI self-reported duration
 	WallMs       int     `json:"wallMs,omitempty"`     // Backend wall-clock duration (time from ExecuteStream start to finalization)
-	CostUSD      float64 `json:"costUsd,omitempty"`
+	// GenMs is how long the backend actually spent STREAMING the model's output
+	// (content/thinking deltas), with tool execution and other waiting removed.
+	// WallMs answers "how long did the turn take"; this answers "how long was
+	// the model talking", which is the only sound denominator for output speed.
+	GenMs int `json:"genMs,omitempty"`
+	// TokensPerSecond is OutputTokens/GenMs, filled in once the turn is final.
+	// Empty (0) when the backend never streamed (a CLI that emits one text
+	// blob) or the measured window is too short to be meaningful — a fabricated
+	// speed would be worse than no row at all.
+	TokensPerSecond float64 `json:"tokensPerSecond,omitempty"`
+	CostUSD         float64 `json:"costUsd,omitempty"`
 	// CostCumulative marks CostUSD as the session's CUMULATIVE cost rather than
 	// this turn's cost. ACP's usage_update.cost is defined as "Total cumulative
 	// cost for session", so every ACP-sourced cost sets this. The executor

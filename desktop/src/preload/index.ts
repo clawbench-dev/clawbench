@@ -14,7 +14,7 @@ const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(chann
 // preload cannot require() local files ("module not found"). Importing it
 // would throw at preload load time and take down the ENTIRE ClawBenchNative
 // bridge, not just notifications. `notification.test.ts` guards the copy.
-const NAV_CHANNELS = ['clawbench-open-session', 'clawbench-open-task', 'clawbench-open-forge', 'clawbench-open-usage-meter', 'clawbench-open-meeting']
+const NAV_CHANNELS = ['clawbench-open-session', 'clawbench-open-task', 'clawbench-open-forge', 'clawbench-open-usage-meter', 'clawbench-open-meeting', 'clawbench-open-mail']
 
 for (const channel of NAV_CHANNELS) {
   ipcRenderer.on(channel, (_e, detail: unknown) => {
@@ -164,6 +164,12 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // async reads
   getAppVersion: () => invoke('native:get-app-version'),
   getServerList: () => invoke('native:get-server-list'),
+  /**
+   * The server this build ships with (desktop "all-in-one" builds), or the
+   * JSON string "null" in a build without one. Kept out of getServerList():
+   * that list is the user's own rows, which they can rename and delete.
+   */
+  getEmbeddedServer: () => invoke('native:get-embedded-server'),
   getSavedServerConfig: () => invoke('native:get-saved-server-config'),
   getServerUrl: () => invoke('native:get-server-url'),
   getPassword: () => invoke('native:get-password'),

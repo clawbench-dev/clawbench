@@ -697,6 +697,32 @@ func TestServeConfig_Patch_MailEnabledRoundTrip(t *testing.T) {
 		"GET must echo the switch, otherwise the UI resets it on reload")
 }
 
+// TestServeConfig_Patch_MailNotifyRoundTrip covers the new-mail notification
+// switch: it must land in ConfigInstance and be reported as hot (the sync
+// worker reads it at the next pass, so a restart prompt would be wrong).
+func TestServeConfig_Patch_MailNotifyRoundTrip(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{Mail: model.MailConfig{Enabled: true, Notify: true}}
+
+	body := `{"mail":{"notify":false}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, model.ConfigInstance.Mail.Notify,
+		"mail.notify must be applied to ConfigInstance")
+
+	var patchResp struct {
+		NeedsRestart bool `json:"needs_restart"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &patchResp))
+	assert.False(t, patchResp.NeedsRestart, "mail.notify is read live; it must not ask for a restart")
+}
+
 // TestServeConfig_Patch_MailSyncTuningRoundTrip covers the three sync knobs.
 //
 // They are server-side numbers the worker re-reads every pass, so a value that

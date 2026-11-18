@@ -35,6 +35,7 @@ export interface NativeEventData {
   body?: string;
   token?: string;
   message_id?: number;
+  mail_message_id?: number;
   event_type?: string;
   event?: NativeForgeEvent;
   item?: NativeForgeItem;
@@ -64,6 +65,7 @@ export interface NativeNavigation {
   token?: string;
   usageMeter?: boolean;
   forge?: boolean;
+  mailMessageId?: number;
   forgeTarget?: NativeForgeTarget;
 }
 
@@ -132,7 +134,8 @@ export function advancesNativeCursor(event: NativeEvent): boolean {
   if (kind === 'task_update') {
     return status === 'completed' || status === 'failed' || status === 'cancelled';
   }
-  return kind === 'usage_meter_update' || (kind === 'chat_stream' && event.data?.event_type === 'user_message');
+  return kind === 'usage_meter_update' || kind === 'mail_event' ||
+    (kind === 'chat_stream' && event.data?.event_type === 'user_message');
 }
 
 export function nativeEventDecision(event: NativeEvent, state: EventState,
@@ -146,7 +149,7 @@ export function nativeEventDecision(event: NativeEvent, state: EventState,
   const notifiable = (kind === 'session_update' &&
     (status === 'completed' || status === 'cancelled' || approval)) ||
     (kind === 'task_update' && ['running', 'completed', 'failed', 'cancelled'].includes(status || '')) ||
-    kind === 'usage_meter_update' || kind === 'live_event' ||
+    kind === 'usage_meter_update' || kind === 'live_event' || kind === 'mail_event' ||
     (kind === 'forge_event' && ['opened', 'closed', 'merged', 'reopened', 'commented', 'pipeline_done']
       .includes(event.data?.event?.event_type || ''));
   return {
@@ -227,6 +230,12 @@ export function navigationForEvent(event: NativeEvent): NativeNavigation | undef
   } else if (event.event === 'live_event' && typeof data.token === 'string' &&
     /^[a-zA-Z0-9_-]{1,160}$/.test(data.token)) {
     navigation.token = data.token;
+  } else if (event.event === 'mail_event') {
+    const mailMessageId = data.mail_message_id;
+    if (!Number.isSafeInteger(mailMessageId) || (mailMessageId || 0) <= 0) {
+      return undefined;
+    }
+    navigation.mailMessageId = mailMessageId;
   } else if (event.event === 'forge_event') {
     const target = forgeTargetForEvent(data);
     if (!target) {
@@ -277,6 +286,9 @@ export function navigationEventName(navigation: NativeNavigation): string {
   if (navigation.forge) {
     return 'clawbench-open-forge';
   }
+  if (navigation.mailMessageId) {
+    return 'clawbench-open-mail';
+  }
   return navigation.token ? 'clawbench-open-meeting' : 'clawbench-open-usage-meter';
 }
 
@@ -289,6 +301,9 @@ export function notificationSubject(navigation: NativeNavigation): string {
   }
   if (navigation.forge && navigation.forgeTarget) {
     return 'forge:' + (navigation.projectPath || '') + ':' + navigation.forgeTarget.itemKey;
+  }
+  if (navigation.mailMessageId) {
+    return 'mail:' + navigation.mailMessageId;
   }
   return navigation.token ? 'meeting:' + navigation.token : 'usage-meter';
 }
@@ -380,11 +395,12 @@ export function isAllowedNotificationLaunch(launch: NotificationLaunch, origins:
   const nav = launch.navigation;
   const kind = nav.taskId ? 'task_update' : nav.sessionId ? 'session_update' :
     nav.token ? 'live_event' : nav.forge === true ? 'forge_event' :
-      nav.usageMeter === true ? 'usage_meter_update' : '';
+      nav.mailMessageId ? 'mail_event' : nav.usageMeter === true ? 'usage_meter_update' : '';
   const checked = navigationForEvent({
     type: 'event', event: kind, data: {
       task_id: nav.taskId, execution_id: nav.executionId, session_id: nav.sessionId,
       project_path: nav.projectPath, message_id: nav.messageId, token: nav.token,
+      mail_message_id: nav.mailMessageId,
       event: nav.forgeTarget ? {
         item_type: nav.forgeTarget.type, number: nav.forgeTarget.number,
         run_id: nav.forgeTarget.runId, project_path: nav.forgeTarget.projectPath
@@ -395,5 +411,6 @@ export function isAllowedNotificationLaunch(launch: NotificationLaunch, origins:
     checked.taskId === nav.taskId && checked.executionId === nav.executionId &&
     checked.sessionId === nav.sessionId && checked.projectPath === nav.projectPath &&
     checked.messageId === nav.messageId && checked.token === nav.token && checked.usageMeter === nav.usageMeter &&
+    checked.mailMessageId === nav.mailMessageId &&
     checked.forge === nav.forge && sameForgeTarget(checked.forgeTarget, nav.forgeTarget);
 }

@@ -189,7 +189,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Inbox, Folder, Unlink, Trash2, AlertCircle,
-  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Hand,
+  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Hand, Mail,
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -214,7 +214,7 @@ const dialog = useDialog()
 // 任务 / Forge master switches (功能编排). Rows stay readable — the log is a
 // record of what happened — but their jump targets are gone with the tabs, so
 // the press must explain instead of dispatching a dead deep link.
-const { tasksEnabled, forgeEnabled } = useFeatureFlags()
+const { tasksEnabled, forgeEnabled, mailEnabled } = useFeatureFlags()
 
 const {
   items, total, hasMore, loading, loadingMore, error,
@@ -293,6 +293,7 @@ const kindOptions = computed<MenuSelectOption[]>(() => [
   { value: 'forge', label: t('notifications.kind.forge') },
   { value: 'usage', label: t('notifications.kind.usage') },
   { value: 'meeting', label: t('notifications.kind.meeting') },
+  { value: 'mail', label: t('notifications.kind.mail') },
 ])
 
 const rangeOptions = computed<MenuSelectOption[]>(() => [
@@ -355,6 +356,7 @@ function kindIcon(n: NotificationItem) {
     case 'forge': return GitMerge
     case 'usage': return Gauge
     case 'meeting': return MEETING_ICON
+    case 'mail': return Mail
     default: return Bot
   }
 }
@@ -363,6 +365,7 @@ function kindIcon(n: NotificationItem) {
 function eventTone(n: NotificationItem): string {
   const s = n.eventType
   if (n.kind === 'usage') return s === 'full' ? 'danger' : 'warning'
+  if (n.kind === 'mail') return 'info'
   if (n.kind === 'meeting') {
     // A remote-control request is the one meeting event that needs an answer,
     // so it reads like permission_pending rather than like a completion.
@@ -380,6 +383,7 @@ function eventTone(n: NotificationItem): string {
 function eventIcon(n: NotificationItem) {
   const s = n.eventType
   if (n.kind === 'usage') return Gauge
+  if (n.kind === 'mail') return Mail
   if (n.kind === 'meeting') {
     if (s === 'control_request') return Hand
     if (s === 'minutes_failed' || s === 'transcript_failed' || s === 'revised_failed') return X
@@ -416,6 +420,7 @@ function eventLabel(n: NotificationItem): string {
     transcript_failed: 'notifications.event.transcriptFailed',
     revised_ready: 'notifications.event.revisedReady',
     revised_failed: 'notifications.event.revisedFailed',
+    received: 'notifications.event.mailReceived',
   }
   const key = map[n.eventType]
   // Fall back to the raw event type rather than an empty chip: an unknown event
@@ -479,6 +484,7 @@ function fallbackTitle(n: NotificationItem): string {
   if (n.kind === 'task') return t('notifications.kind.task')
   if (n.kind === 'usage') return t('notifications.kind.usage')
   if (n.kind === 'meeting') return t('notifications.kind.meeting')
+  if (n.kind === 'mail') return t('notifications.kind.mail')
   return t('notifications.kind.session')
 }
 
@@ -506,7 +512,9 @@ async function onOpen(n: NotificationItem) {
   // the tab is gone and the deep link would land nowhere. Say why, and where to
   // turn it back on. Checked before the cross-project confirm — asking "switch
   // project?" for a jump that will not happen is worse than the plain refusal.
-  if ((n.kind === 'task' && !tasksEnabled.value) || (n.kind === 'forge' && !forgeEnabled.value)) {
+  if ((n.kind === 'task' && !tasksEnabled.value)
+    || (n.kind === 'forge' && !forgeEnabled.value)
+    || (n.kind === 'mail' && !mailEnabled.value)) {
     notifyFeatureDisabled()
     return
   }
@@ -575,6 +583,14 @@ async function onOpen(n: NotificationItem) {
           token: n.meetingToken,
           projectPath: n.projectPath,
         })
+      }
+      return
+    case 'mail':
+      // Mail is global (a mailbox belongs to the person, not a project), so
+      // there is no project switch here — the tab opens and the panel's reader
+      // fetches the message by id.
+      if (n.mailMessageId) {
+        jumpTo('clawbench-open-mail', { messageId: n.mailMessageId })
       }
       return
     default: {

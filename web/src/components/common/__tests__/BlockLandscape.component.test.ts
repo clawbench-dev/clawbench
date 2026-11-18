@@ -33,6 +33,7 @@ vi.mock('@/composables/usePlatformDetect.ts', () => ({
 
 import BlockLandscape from '@/components/common/BlockLandscape.vue'
 import { closeBlockLandscape, openBlockLandscape, blockLandscapeState } from '@/composables/useBlockLandscape.ts'
+import { registerBlockLandscapeTable } from '@/composables/dataTableLandscape.ts'
 
 function buildSourceBlock(body = '<tbody><tr data-row-idx="0"><td>only cell</td></tr></tbody>'): HTMLElement {
   const wrapper = document.createElement('div')
@@ -141,6 +142,45 @@ describe('BlockLandscape', () => {
     expect(document.body.style.overflow).toBe('hidden')
     expect(document.activeElement).toBe(overlay.querySelector('[data-action="landscape-close"]'))
 
+  })
+
+  it('renders a registered DataTable as a live component, so its controls keep working', async () => {
+    const root = document.createElement('div')
+    root.className = 'dt'
+    root.innerHTML = '<table class="dt-grid"><tr><td>snapshot</td></tr></table>'
+    document.body.appendChild(root)
+    const setMode = vi.fn()
+    registerBlockLandscapeTable(root, {
+      snapshot: () => ({
+        headers: ['name', 'city'],
+        rows: [['ann', 'paris']],
+        mode: 'normal',
+        wrap: true,
+        pageSize: 0,
+      }),
+      setMode,
+      setWrap: vi.fn(),
+    })
+
+    await mountOverlay()
+    openBlockLandscape(root)
+    await flushPromises()
+
+    const overlay = overlayEl()
+    // A clone would only carry the DOM; this is a real component instance.
+    expect(overlay.querySelector('.block-landscape-live .dt')).not.toBeNull()
+    expect(overlay.textContent).toContain('paris')
+    expect(overlay.querySelector('.mode-switch')).not.toBeNull()
+
+    overlay.querySelector<HTMLElement>('.mode-switch')!.click()
+    await flushPromises()
+    expect(overlay.querySelector('.dt')!.classList.contains('is-data')).toBe(true)
+    // The choice is carried back to the table behind the overlay.
+    expect(setMode).toHaveBeenCalledWith('data')
+
+    overlay.querySelector<HTMLElement>('[data-action="landscape-close"]')!.click()
+    await flushPromises()
+    expect(blockLandscapeState.value).toBeNull()
   })
 
   it('reuses the copy control: copying inside the overlay reads the cloned table', async () => {

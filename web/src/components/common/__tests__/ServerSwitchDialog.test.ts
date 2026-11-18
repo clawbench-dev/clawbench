@@ -20,6 +20,9 @@ const i18n = createI18n({
         loadFailed: 'Failed to load the server list',
         switchFailed: 'Failed to switch server',
         saveFailed: 'Failed to save the server password',
+        thisDevice: 'This device',
+        running: 'Running',
+        stopped: 'Not running',
       },
     },
   },
@@ -138,5 +141,67 @@ describe('ServerSwitchDialog', () => {
 
     expect(wrapper.emitted('logout')).toBeTruthy()
     wrapper.unmount()
+  })
+
+  describe('built-in server', () => {
+    const builtInUrl = 'http://127.0.0.1:20000'
+
+    it('lists it above the saved servers and connects in one click', async () => {
+      const native = installNative({
+        getEmbeddedServer: () => JSON.stringify({
+          url: builtInUrl,
+          password: 'built-in-pass',
+          running: true,
+        }),
+      })
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const rows = document.body.querySelectorAll('.server-switch__row')
+      expect(rows).toHaveLength(3)
+      expect(rows[0].textContent).toContain('This device')
+      expect(rows[0].textContent).toContain('Running')
+
+      ;(rows[0] as HTMLButtonElement).click()
+      await flushPromises()
+
+      expect(native.connectToServer).toHaveBeenCalledWith(builtInUrl, 'built-in-pass')
+      wrapper.unmount()
+    })
+
+    it('connects without a password prompt so a stopped server can be started', async () => {
+      // The shell starts it on demand and supplies the credential; asking the
+      // user for a password they have never seen would be a dead end.
+      const native = installNative({
+        getEmbeddedServer: () => JSON.stringify({
+          url: builtInUrl,
+          password: '',
+          running: false,
+        }),
+      })
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const rows = document.body.querySelectorAll('.server-switch__row')
+      expect(rows[0].textContent).toContain('Not running')
+
+      ;(rows[0] as HTMLButtonElement).click()
+      await flushPromises()
+
+      expect(document.body.querySelector('.server-switch__password-input')).toBeNull()
+      expect(native.connectToServer).toHaveBeenCalledWith(builtInUrl, '')
+      wrapper.unmount()
+    })
+
+    it('stays hidden in a shell that has no built-in server', async () => {
+      installNative({ getEmbeddedServer: () => 'null' })
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const rows = document.body.querySelectorAll('.server-switch__row')
+      expect(rows).toHaveLength(2)
+      expect(document.body.querySelector('.server-switch__status')).toBeNull()
+      wrapper.unmount()
+    })
   })
 })

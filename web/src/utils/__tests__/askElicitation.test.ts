@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { formatToolInput, handleToolAction } from '@/utils/renderToolDetail.ts'
+import { useToast } from '@/composables/useToast'
+import { gt } from '@/composables/useLocale'
 import '@/i18n'
 
 // A live ACP elicitation reuses the AskUserQuestion card but must answer through
@@ -53,6 +55,9 @@ describe('elicitation ask card', () => {
   })
   afterEach(() => {
     document.body.innerHTML = ''
+    // The expired-question toast is a module singleton with a 4s timer; clear
+    // it or it leaks into the next test (and keeps vitest's worker alive).
+    useToast().dismiss()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
@@ -263,8 +268,8 @@ describe('elicitation ask card', () => {
     expect(body.content).toEqual({ q0: 'a', q1: 'b' })
   })
 
-  it('reverts the card when the request is gone (stale card after reload)', async () => {
-    ;(fetch as any).mockResolvedValue({ ok: false })
+  it('reverts the card when the respond call fails', async () => {
+    ;(fetch as any).mockResolvedValue({ ok: false, status: 500 })
     const { view, emit } = mount(singleQuestionInput)
     const option = view.querySelector('.ask-question-option') as HTMLElement
     const submit = view.querySelector('.ask-question-submit') as HTMLElement
@@ -319,11 +324,15 @@ describe('elicitation ask card', () => {
     expect(view.querySelector('.ask-question-recommend')).not.toBeNull()
   })
 
-  it('falls back to a chat message when the server no longer has the request', async () => {
-    // A restored block can still look live (its tool_result never arrived).
-    // A 404 means the request is gone for good: deliver the answer as a
-    // message instead of leaving a card whose POST can only fail.
+  it('never turns a gone request into a chat message (no extra queued message)', async () => {
+    // The card can still look live when the request is already gone: OpenCode
+    // cancels its own question (it has a timeout of its own) or the question was
+    // answered on another client. The answer can no longer reach that request,
+    // and sending it as a chat message queued it behind the still-running turn —
+    // the user then got a queued message they never composed. The card goes back
+    // to answerable, keeps the selection, and the user is told why.
     ;(fetch as any).mockResolvedValue({ ok: false, status: 404 })
+    const toast = useToast()
     const { view, emit } = mount(singleQuestionInput)
     const option = view.querySelector('.ask-question-option') as HTMLElement
     const submit = view.querySelector('.ask-question-submit') as HTMLElement
@@ -332,7 +341,10 @@ describe('elicitation ask card', () => {
     click(submit, emit)
     await new Promise(r => setTimeout(r, 0))
 
-    expect(emit).toHaveBeenCalledWith('send-message', '- Docker')
-    expect(view.classList.contains('ask-submitted')).toBe(true)
+    expect(emit).not.toHaveBeenCalled()
+    expect(view.classList.contains('ask-submitted')).toBe(false)
+    expect(option.classList.contains('selected')).toBe(true)
+    expect(toast.visible.value).toBe(true)
+    expect(toast.message.value).toBe(gt('tool.askUser.expired'))
   })
 })

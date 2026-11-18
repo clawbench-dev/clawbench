@@ -1,5 +1,6 @@
 import { safeStorage } from 'electron'
 import { getStore } from './store'
+import { sameServerUrl } from './localServerPolicy'
 import type { ServerEntry } from './types'
 
 function warnNoEncryption(): void {
@@ -42,6 +43,45 @@ function findEntry(url: string): ServerEntry | undefined {
 }
 
 /**
+ * The password stored on a saved server ROW.
+ *
+ * Separate from {@link getPasswordFor} so the built-in server's own slot never
+ * shadows a row: the startup migration reads a legacy row's credential while
+ * the slot already exists.
+ */
+export function getRowPasswordFor(url: string): string {
+  if (!url) return ''
+  const entry = findEntry(url)
+  if (entry) {
+    if (entry.passwordEncrypted) return decrypt(entry.passwordEncrypted)
+    // Pre-migration plaintext on this very entry.
+    if (entry.password) return entry.password
+  }
+  // Pre-migration data also lived in a single global slot that belonged to
+  // whatever server was active at the time. Only that server may claim it.
+  if (getStore().get('serverUrl') === url) {
+    return decrypt(getStore().get('sshPasswordEncrypted'))
+  }
+  return ''
+}
+
+/**
+ * The built-in server's credential.
+ *
+ * It lives in its own store slot because that server is not a saved row: the
+ * app starts and stops it, and the login page must not offer to edit or delete
+ * it. Callers still reach it through {@link getPasswordFor} with its URL.
+ */
+export function getEmbeddedPassword(): string {
+  return decrypt(getStore().get('embeddedServerPasswordEncrypted'))
+}
+
+/** Save (or clear) the built-in server's credential. */
+export function saveEmbeddedPassword(password: string): void {
+  getStore().set('embeddedServerPasswordEncrypted', password ? encrypt(password) : null)
+}
+
+/**
  * Save (or clear) the password for one server URL.
  *
  * Passwords live on the server entry they belong to. A single global slot made
@@ -60,6 +100,14 @@ export function savePasswordFor(url: string, password: string): void {
     // slot so the credential is not silently dropped; migration picks it up
     // once a server URL exists.
     store.set('sshPasswordEncrypted', password ? encrypt(password) : null)
+    return
+  }
+
+  // The built-in server has its own slot and never becomes a saved row: writing
+  // one here is what made the app's own address look like a user entry (and
+  // made "delete server" able to remove a server it then re-created).
+  if (sameServerUrl(url, store.get('embeddedServerUrl'))) {
+    saveEmbeddedPassword(password)
     return
   }
 
@@ -86,18 +134,10 @@ export function savePasswordFor(url: string, password: string): void {
 /** Read the password stored for one server URL. Empty when none is stored. */
 export function getPasswordFor(url: string): string {
   if (!url) return ''
-  const entry = findEntry(url)
-  if (entry) {
-    if (entry.passwordEncrypted) return decrypt(entry.passwordEncrypted)
-    // Pre-migration plaintext on this very entry.
-    if (entry.password) return entry.password
-  }
-  // Pre-migration data also lived in a single global slot that belonged to
-  // whatever server was active at the time. Only that server may claim it.
-  if (getStore().get('serverUrl') === url) {
-    return decrypt(getStore().get('sshPasswordEncrypted'))
-  }
-  return ''
+  // The built-in server's credential has its own slot; a caller asking for its
+  // URL (startup auto-login, the SSH tunnel, the login page) must get that one.
+  if (sameServerUrl(url, getStore().get('embeddedServerUrl'))) return getEmbeddedPassword()
+  return getRowPasswordFor(url)
 }
 
 /** Save the password of the currently active server. */
@@ -113,6 +153,10 @@ export function getPassword(): string {
 /** Forget the password for one server URL (used when the server is deleted). */
 export function removePasswordFor(url: string): void {
   const store = getStore()
+  if (sameServerUrl(url, store.get('embeddedServerUrl'))) {
+    saveEmbeddedPassword('')
+    return
+  }
   const servers = store.get('servers')
   const entry = servers.find((s) => s.url === url)
   if (entry) {

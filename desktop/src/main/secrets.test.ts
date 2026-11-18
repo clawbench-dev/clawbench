@@ -52,6 +52,8 @@ function resetStore(overrides: Record<string, unknown> = {}): void {
   Object.assign(storeData, {
     servers: [],
     serverUrl: '',
+    embeddedServerUrl: '',
+    embeddedServerPasswordEncrypted: null,
     sshPasswordEncrypted: null,
     ...overrides,
   })
@@ -149,8 +151,61 @@ describe('secrets: per-server password storage', () => {
   })
 })
 
-describe('secrets: legacy migration', () => {
+/**
+ * The built-in ("all-in-one") server has a credential but no saved-server row.
+ * Storing it as a row is what made the app's own address editable, deletable
+ * and — worst — reservable against its own port.
+ */
+const EMBEDDED_URL = 'http://127.0.0.1:20000'
+
+describe('secrets: built-in server credential', () => {
   beforeEach(() => {
+    cryptoState.available = true
+    resetStore({ embeddedServerUrl: EMBEDDED_URL })
+    initStore()
+  })
+
+  it('saves its password in its own slot, not as a server row', () => {
+    savePasswordFor(EMBEDDED_URL, 'built-in-pw')
+
+    expect(getPasswordFor(EMBEDDED_URL)).toBe('built-in-pw')
+    expect(entries()).toEqual([])
+    expect(storeData.embeddedServerPasswordEncrypted).toBe(
+      Buffer.from('enc:built-in-pw', 'utf8').toString('base64'),
+    )
+  })
+
+  it('keeps the built-in credential independent of the saved rows', () => {
+    savePasswordFor(EMBEDDED_URL, 'built-in-pw')
+    savePasswordFor(URL_A, 'password-a')
+
+    expect(getPasswordFor(EMBEDDED_URL)).toBe('built-in-pw')
+    expect(getPasswordFor(URL_A)).toBe('password-a')
+    // Clearing the user's server must not touch the app's own credential.
+    removePasswordFor(URL_A)
+    expect(getPasswordFor(EMBEDDED_URL)).toBe('built-in-pw')
+  })
+
+  it('follows the recorded address when the port changes', () => {
+    savePasswordFor(EMBEDDED_URL, 'built-in-pw')
+    storeData.embeddedServerUrl = 'http://127.0.0.1:20001'
+
+    expect(getPasswordFor('http://127.0.0.1:20001')).toBe('built-in-pw')
+    // The old address is no longer the built-in server; it must not resolve to
+    // that credential (a standalone server on that port is a different one).
+    expect(getPasswordFor(EMBEDDED_URL)).toBe('')
+  })
+
+  it('serves the active-server helpers while connected to it', () => {
+    storeData.serverUrl = EMBEDDED_URL
+    savePassword('built-in-pw')
+
+    expect(getPassword()).toBe('built-in-pw')
+    expect(entries()).toEqual([])
+  })
+})
+
+describe('secrets: legacy migration', () => {  beforeEach(() => {
     cryptoState.available = true
     resetStore()
     initStore()

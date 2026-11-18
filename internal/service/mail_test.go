@@ -29,6 +29,9 @@ func setupMailDB(t *testing.T) {
 	if _, err := db.Exec(MailTaskTriggerDDL); err != nil {
 		t.Fatalf("mail trigger ddl: %v", err)
 	}
+	if _, err := db.Exec(NotificationsDDL); err != nil {
+		t.Fatalf("notifications ddl: %v", err)
+	}
 	cleanup := store.SetDBForTest(db, db)
 	prevDataDir := model.DataDir
 	model.DataDir = t.TempDir()
@@ -40,6 +43,7 @@ func setupMailDB(t *testing.T) {
 	// silently switch the prefetch tests off instead of testing them.
 	prevConfig := model.ConfigInstance
 	model.ConfigInstance.Mail.Enabled = true
+	model.ConfigInstance.Mail.Notify = true
 	model.ConfigInstance.Mail.SyncWindow = mailDefaultSyncWindow
 	model.ConfigInstance.Mail.BodyPrefetch = mailDefaultBodyPrefetch
 	t.Cleanup(func() {
@@ -83,6 +87,17 @@ type fakeMailClient struct {
 	// failStatus makes Status fail for specific folders, simulating one broken
 	// mailbox among healthy ones.
 	failStatus map[string]bool
+	// beforeCalls records each FetchBefore call, so a test can check what the
+	// service told the protocol layer about the folder.
+	beforeCalls []beforeCall
+}
+
+// beforeCall is one FetchBefore invocation.
+type beforeCall struct {
+	folder      string
+	beforeUID   uint32
+	n           int
+	nextUIDHint uint32
 }
 
 func newFakeClient() *fakeMailClient {
@@ -149,7 +164,8 @@ func (f *fakeMailClient) FetchNewest(_ context.Context, folder string, n int) ([
 	return out, f.err("fetch")
 }
 
-func (f *fakeMailClient) FetchBefore(_ context.Context, folder string, beforeUID uint32, n int) ([]mail.MessageHeader, error) {
+func (f *fakeMailClient) FetchBefore(_ context.Context, folder string, beforeUID uint32, n int, nextUIDHint uint32) ([]mail.MessageHeader, error) {
+	f.beforeCalls = append(f.beforeCalls, beforeCall{folder: folder, beforeUID: beforeUID, n: n, nextUIDHint: nextUIDHint})
 	var out []mail.MessageHeader
 	for _, h := range f.headers[folder] {
 		if h.UID < beforeUID {

@@ -176,7 +176,7 @@ flowchart TB
 
 - `POST /api/group/create` — 建群（`hostAgentId?` + `memberAgentIds[]`，同一事务创建群与全部成员；`hostAgentId` 缺省即自由模式，须过会话上限门）
 - `GET /api/group/members?groupId=` — 列成员（含 `isHost`、`mode`、`parallelDefault`、`cruise`、`avatar`、`agentName`、`model`、`usage`）。`usage` 与该成员自己的上下文同形（同 `/api/ai/chat` 的 `usageState`），**`null` 表示从未上报**，不是 0%
-- `GET/PATCH /api/ai/session/settings` — 按 session 读写设置（模型 / 思考深度 / 模式 / 传输 / 自动批准 / 巡航 + 上下文用量）。**成员行也能用**：成员行没有自己的 `chat_history`，历史端点描述不了它，而设置抽屉必须能在成员上打开。群回合进行中或该成员正在压缩时写入返回 409
+- `GET/PATCH /api/ai/session/settings` — 按 session 读写设置（模型 / 思考深度 / 模式 / 传输 / 自动批准 / 巡航 + 上下文用量 + 最近一轮输出速率 `tokenRate`）。**成员行也能用**：成员行没有自己的 `chat_history`，历史端点描述不了它，而设置抽屉必须能在成员上打开。群回合进行中或该成员正在压缩时写入返回 409
 - `POST /api/group/member-compact` — 压缩**一个成员**自己的上下文（`{groupId, memberId}`，`memberId` 是成员行 id）。不走 `/api/ai/chat`，不在群时间线产生输出；返回压缩后的 `usage`
 - `POST /api/group/members` — 批量加成员（整批过成员数上限）
 - `POST /api/group/member-avatars` — 批量写回成员头像（`{groupId, avatars:[{memberId, avatar}]}`；每个 SVG 过 `avatarSVGLooksSafe` 安全门）

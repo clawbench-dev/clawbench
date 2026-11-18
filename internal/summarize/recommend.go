@@ -32,11 +32,6 @@ type recommendPassProvider interface {
 	DoRecommendPass(ctx context.Context, systemPrompt, stable, rolling string) (string, error)
 }
 
-// recommendMaxTokens is the output cap shared by the recommendation and title
-// passes. They produce one short suggestion, so a small cap keeps latency and
-// cost down. AskAboutContext (the /btw path) deliberately overrides it.
-const recommendMaxTokens = 1024
-
 // askPassProvider is implemented by LLM summarizers that can answer a one-shot
 // question with an explicit output cap. It is the same request channel as
 // recommendPassProvider (system + stable prefix + rolling tail, so the stable
@@ -65,6 +60,50 @@ const (
 // that do not report one must keep the old behavior.
 func isTruncated(reason string) bool {
 	return reason == finishReasonLength || reason == finishReasonMaxTokens
+}
+
+// recommendMaxTokens is the output cap shared by the recommendation and title
+// passes. They produce one short suggestion, so a small cap keeps latency and
+// cost down. AskAboutContext (the /btw path) deliberately overrides it, and
+// DoRecommendPass asks for the model's own budget instead.
+const recommendMaxTokens = 1024
+
+// reasoningEffortNone turns thinking off ("none" is a documented value of
+// reasoning_effort; providers that do not know it ignore the field).
+const reasoningEffortNone = "none"
+
+// reasoningBudget returns the max_tokens and reasoning_effort for one
+// recommendation/title pass.
+//
+// A reasoning model spends max_tokens on thinking FIRST: at the old flat 1024
+// it thought until the budget ran out, finished with finish_reason=length and
+// an empty content, and the recommendation/auto-title guards then saw nothing
+// to say. What the user reported was the NEXT failure in that chain — some
+// gateways (OpenRouter-style) answer such an empty completion by sending the
+// whole chat.completion JSON as the content on their second attempt — so the
+// session name and the next-step suggestion became that JSON.
+//
+// Two independent guards, because either alone can be defeated: the effort
+// keeps the model from reasoning instead of answering, and the budget covers
+// reasoning anyway if a provider rejects "none" and falls back to its default.
+func reasoningBudget(modelID string, requested int) (maxTokens int, effort string) {
+	if requested <= 0 {
+		// Auto: the model's own output budget. A caller that passed a positive
+		// value (a user setting, or /btw's own cap) keeps it: raising it would
+		// silently ignore the cap, and a truncated minutes document is exactly
+		// what such a caller asked to be told about.
+		requested = OutputBudgetForModel(modelID, 0)
+	}
+	return requested, reasoningEffortNone
+}
+
+// reasoningOnlyHint adds the reason to an empty-output error when the model
+// spent its whole budget thinking.
+func reasoningOnlyHint(finishReason, reasoning string) string {
+	if reasoning == "" {
+		return ""
+	}
+	return fmt.Sprintf(": the model used the whole output budget for reasoning (finish_reason=%q, %d chars of reasoning, none of it is a title or suggestion)", finishReason, len(reasoning))
 }
 
 // askPassDetailProvider is implemented by backends that can also report
@@ -169,7 +208,14 @@ func RecommendNextStep(ctx context.Context, s Summarizer, conversation, quickCom
 	stable := buildStableContext(quickCommands, projectContext)
 	rolling := buildRollingContext(conversation, conclusion)
 	prompt := recommendNextStepPrompt + "\n\nOutput in " + languageName(language) + "."
-	return pp.DoRecommendPass(ctx, prompt, stable, rolling)
+	out, err := pp.DoRecommendPass(ctx, prompt, stable, rolling)
+	if err != nil {
+		return "", err
+	}
+	if err := RejectEnvelope("next-step recommendation", out); err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 // buildStableContext assembles the cacheable prefix: project context files and

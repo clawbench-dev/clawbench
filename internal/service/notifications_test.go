@@ -418,3 +418,23 @@ func TestNotificationTimestamp_FixedWidthSubSecond(t *testing.T) {
 	assert.Less(t, a, b)
 	assert.Len(t, a, len("2006-01-02T15:04:05.000Z"))
 }
+
+// A probe that cannot run (here: the mail table is not part of the fixture)
+// must treat every id as present — marking a whole page deleted would disable
+// its navigation for a transient DB problem.
+func TestMarkMissingSources_MailProbeFailureFailsOpen(t *testing.T) {
+	cleanup := notificationsTestDB(t)
+	defer cleanup()
+
+	rows := []Notification{{ID: 1, Kind: NotificationKindMail, MailMessageID: 42}}
+	MarkMissingSources(rows)
+	assert.False(t, rows[0].SourceMissing)
+}
+
+func TestExistingIDs_ProbeFailureFailsOpen(t *testing.T) {
+	cleanup := notificationsTestDB(t)
+	defer cleanup()
+
+	present := existingIDs("no_such_table", "id", []string{"a", "b"})
+	assert.Equal(t, map[string]bool{"a": true, "b": true}, present)
+}

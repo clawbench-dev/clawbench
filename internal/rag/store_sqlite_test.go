@@ -1994,3 +1994,64 @@ func TestSQLiteStore_DeleteChunksByProjectID_ZeroIsNoop(t *testing.T) {
 	count, _ := store.ChunkCount()
 	assert.Equal(t, 1, count, "a zero id must not delete anything")
 }
+
+// ---------- ReattributeSessionProject ----------
+
+func TestSQLiteStore_ReattributeSessionProject_MovesOnlyThatSession(t *testing.T) {
+	s := setupSQLiteStoreWithDim(t)
+
+	require.NoError(t, s.InsertChunks([]Chunk{
+		makeProjectChunk("sess-a", 1, "/proj/alpha", "alpha one"),
+		makeProjectChunk("sess-a", 2, "/proj/alpha", "alpha two"),
+		makeProjectChunk("sess-b", 3, "/proj/alpha", "sibling stays"),
+	}))
+	alphaID, ok, err := s.projectIDForPath("/proj/alpha")
+	require.NoError(t, err)
+	require.True(t, ok)
+	betaID, ok, err := s.projectIDForPath("/proj/beta")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	moved, err := s.ReattributeSessionProject("sess-a", betaID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), moved, "every chunk of the moved session is repointed")
+
+	// The moved conversation's chunks now belong to the target project, the
+	// other session in the source project is untouched.
+	var movedCount, siblingCount int
+	require.NoError(t, s.db.QueryRow(
+		"SELECT COUNT(*) FROM rag_chunks WHERE session_id = 'sess-a' AND project_id = ?", betaID).Scan(&movedCount))
+	require.NoError(t, s.db.QueryRow(
+		"SELECT COUNT(*) FROM rag_chunks WHERE session_id = 'sess-b' AND project_id = ?", alphaID).Scan(&siblingCount))
+	assert.Equal(t, 2, movedCount)
+	assert.Equal(t, 1, siblingCount)
+
+	// Vector metadata duplicates the column, so it must follow in the same
+	// transaction (otherwise vector search keeps the old attribution).
+	if s.vecTableExists() {
+		var vecMoved, vecSibling int
+		require.NoError(t, s.db.QueryRow(
+			"SELECT COUNT(*) FROM rag_vec WHERE project_id = ? AND session_id = 'sess-a'", betaID).Scan(&vecMoved))
+		require.NoError(t, s.db.QueryRow(
+			"SELECT COUNT(*) FROM rag_vec WHERE project_id = ? AND session_id = 'sess-b'", alphaID).Scan(&vecSibling))
+		assert.Equal(t, 2, vecMoved)
+		assert.Equal(t, 1, vecSibling)
+	}
+
+	// FTS indexes content, not the project, so both sessions stay findable.
+	hits, err := s.SearchFTS("alpha", 5, "", "", "", "", "", "", "")
+	require.NoError(t, err)
+	assert.Len(t, hits, 2)
+}
+
+func TestSQLiteStore_ReattributeSessionProject_ZeroProjectIsNoop(t *testing.T) {
+	s := setupSQLiteStore(t)
+	require.NoError(t, s.InsertChunks([]Chunk{makeTestChunk("sess-a", 1, 0, "keep me")}))
+	before, _ := s.ChunkCount()
+
+	moved, err := s.ReattributeSessionProject("sess-a", 0)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), moved)
+	after, _ := s.ChunkCount()
+	assert.Equal(t, before, after)
+}

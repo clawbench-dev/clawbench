@@ -3090,8 +3090,12 @@ public class MainActivity extends AppCompatActivity {
         if (pendingNavigation != null && webView != null) {
             AppLog.i(TAG, "MainActivity: onResume - re-dispatching pendingNavigation=" + pendingNavigation.toString());
             final String jsArg = pendingNavigation.toString();
-            // Choose event name based on navigation type: meeting vs task vs session.
-            String eventName = pendingNavigation.has("token") ? "clawbench-open-meeting"
+            // Choose event name based on navigation type: mail vs meeting vs
+            // usage vs task vs session. `mail` is an explicit marker because a
+            // session notification also carries `messageId`.
+            String eventName = pendingNavigation.has("mail") ? "clawbench-open-mail"
+                    : pendingNavigation.has("token") ? "clawbench-open-meeting"
+                    : pendingNavigation.has("usageMeter") ? "clawbench-open-usage-meter"
                     : pendingNavigation.has("taskId") ? "clawbench-open-task" : "clawbench-open-session";
             AppLog.i(TAG, "MainActivity: onResume - dispatching " + eventName);
             webView.evaluateJavascript(
@@ -3367,6 +3371,7 @@ public class MainActivity extends AppCompatActivity {
         // Determine navigation type: meeting / task / session notification
         boolean isTaskNotification = taskId != null || "task_update".equals(eventType);
         boolean isUsageMeterNotification = "usage_meter".equals(eventType);
+        boolean isMailNotification = "mail".equals(eventType);
         String meetingToken = intent.getStringExtra("meeting_token");
         boolean isMeetingNotification = "meeting".equals(eventType)
                 && meetingToken != null && !meetingToken.isEmpty();
@@ -3399,8 +3404,38 @@ public class MainActivity extends AppCompatActivity {
             intent.removeExtra("event_type");
             intent.removeExtra("project_path");
             AppLog.i(TAG, "MainActivity: cleared intent extras to prevent re-dispatch");
-        } else if (isUsageMeterNotification) {
-            // The usage meter is global: there is no session or task to open.
+        } else if (isMailNotification) {
+            // New-mail notification: open the Mail tab and that message. Mail is
+            // global (no session/task/project), and the reader fetches by id, so
+            // the id is the whole navigation payload.
+            long mailMessageId = intent.getLongExtra("mail_message_id", 0);
+            AppLog.i(TAG, "MainActivity: handleNotificationIntent - mail notification, messageId=" + mailMessageId);
+            try {
+                org.json.JSONObject detail = new org.json.JSONObject();
+                if (mailMessageId > 0) {
+                    detail.put("mail", true);
+                    detail.put("messageId", mailMessageId);
+                    detail.put("mailMessageId", mailMessageId);
+                }
+                pendingNavigation = detail;
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('clawbench-open-mail', { detail: " + detail.toString() + " }))",
+                        result -> {
+                            AppLog.i(TAG, "MainActivity: clawbench-open-mail evaluateJavascript result=" + result);
+                            pendingNavigation = null;
+                        }
+                    );
+                } else {
+                    AppLog.w(TAG, "MainActivity: webView is null, cannot dispatch mail event (pendingNavigation stored for cold-start)");
+                }
+            } catch (Exception e) {
+                AppLog.w(TAG, "MainActivity: failed to dispatch mail event from notification", e);
+            }
+            intent.removeExtra("mail_message_id");
+            intent.removeExtra("event_type");
+            AppLog.i(TAG, "MainActivity: cleared intent extras to prevent re-dispatch");
+        } else if (isUsageMeterNotification) {            // The usage meter is global: there is no session or task to open.
             // Dispatch a dedicated event; the frontend opens the usage popover
             // (wide screen) or the settings entry (narrow screen). Without this
             // branch the intent falls through to the final `else` and the tap

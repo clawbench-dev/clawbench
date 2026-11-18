@@ -193,6 +193,19 @@ describe('showTerminalNotification', () => {
     expect((h.sent[0].nav as NotificationNav).projectPath).toBe('/p')
   })
 
+  it('routes a mail notification click to clawbench-open-mail', () => {
+    // Same trap as forge/usage/meeting: a mail notification carries only a
+    // cached message id, so without the discriminator the click would be
+    // dropped on the session channel.
+    markRendererReady()
+    showTerminalNotification('季度报告', 'Bob · 本周数据', { mailMessageId: 77 })
+    clickLatest()
+
+    expect(h.sent).toHaveLength(1)
+    expect(h.sent[0].channel).toBe('clawbench-open-mail')
+    expect((h.sent[0].nav as NotificationNav).mailMessageId).toBe(77)
+  })
+
   it('carries the forge item target through to the renderer', () => {
     // The click must deep-link to the ITEM, not just raise the tab. The target
     // is opaque data to the main process — it is forwarded verbatim.

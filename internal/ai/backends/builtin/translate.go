@@ -182,6 +182,26 @@ func (t *translator) doneEvents(ev agentcore.Event) []ai.StreamEvent {
 			SystemMessage: &ai.SystemMessageData{Content: notice},
 		})
 	}
+	// Context usage for the bottom bar's panel. The engine reports the size of
+	// the conversation it just finished and the model's window; the frontend's
+	// usage chip keys on size > 0, so without this a built-in agent had no
+	// context panel at all (ACP agents report their own).
+	//
+	// It goes BEFORE the done event: the turn's terminal frame is what makes the
+	// UI finalize the reply, and a usage frame arriving after it would land on a
+	// turn the client already closed.
+	if ev.WindowTokens > 0 {
+		out = append(out, ai.StreamEvent{
+			Type: "usage_update",
+			Usage: &ai.UsageState{
+				Used:         ev.ContextTokens,
+				Size:         ev.WindowTokens,
+				InputTokens:  ev.TotalUsage.InputTokens,
+				OutputTokens: ev.TotalUsage.OutputTokens,
+				TotalTokens:  ev.TotalUsage.InputTokens + ev.TotalUsage.OutputTokens,
+			},
+		})
+	}
 	return append(out, ai.StreamEvent{Type: "done", Meta: &ai.Metadata{
 		Transport:    "builtin",
 		StopReason:   ev.StopReason,

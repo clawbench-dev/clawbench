@@ -185,7 +185,11 @@ type Client interface {
 	// FetchNewest returns the newest n messages of a folder, oldest first.
 	FetchNewest(ctx context.Context, folder string, n int) ([]MessageHeader, error)
 	// FetchBefore returns up to n messages older than the given UID.
-	FetchBefore(ctx context.Context, folder string, beforeUID uint32, n int) ([]MessageHeader, error)
+	//
+	// nextUIDHint is the caller's best lower bound for the folder's UIDNEXT,
+	// used only by servers that do not report it (see FetchNewest). Pass 0
+	// when nothing is known.
+	FetchBefore(ctx context.Context, folder string, beforeUID uint32, n int, nextUIDHint uint32) ([]MessageHeader, error)
 	// FetchRaw returns the complete RFC 5322 message.
 	FetchRaw(ctx context.Context, folder string, uid uint32) ([]byte, error)
 	// FetchRawBatch returns several complete messages in one round trip.

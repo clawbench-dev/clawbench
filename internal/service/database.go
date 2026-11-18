@@ -246,6 +246,39 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 				return fmt.Errorf("failed to add providers.wire_api: %w", err)
 			}
 		}
+		// providers.deployment: the edition of the backend's own service an
+		// own-service provider talks to. Empty means the default edition, which
+		// is exactly what every existing row was doing before the column.
+		var hasDeployment int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name='deployment'").Scan(&hasDeployment)
+		if hasDeployment == 0 {
+			if _, err := store.WriteExec("ALTER TABLE providers ADD COLUMN deployment TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add providers.deployment: %w", err)
+			}
+		}
+		// providers.backend: which backend an own-service (private) row belongs
+		// to. Four backends share that protocol, so without it a Cursor key
+		// could be bound to a CodeBuddy agent.
+		var hasBackend int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name='backend'").Scan(&hasBackend)
+		if hasBackend == 0 {
+			if _, err := store.WriteExec("ALTER TABLE providers ADD COLUMN backend TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add providers.backend: %w", err)
+			}
+			// Existing rows can only be attributed when the agents bound to them
+			// agree on one backend; otherwise they stay unassigned and the user
+			// picks the owner the next time the account is saved.
+			var agentsExists int
+			_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agents'").Scan(&agentsExists)
+			if agentsExists > 0 {
+				if _, err := store.WriteExec(`UPDATE providers SET backend = COALESCE((
+					SELECT MIN(a.backend) FROM agents a WHERE a.provider_id = providers.id
+					HAVING COUNT(DISTINCT a.backend) = 1
+				), '') WHERE protocol = 'private'`); err != nil {
+					return fmt.Errorf("failed to backfill providers.backend: %w", err)
+				}
+			}
+		}
 	}
 
 	// Pre-migration: make sure file_shares carries project_id before createTables
@@ -1167,6 +1200,19 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			"ALTER TABLE notifications ADD COLUMN meeting_token TEXT NOT NULL DEFAULT ''",
 		); err != nil {
 			return fmt.Errorf("failed to add notifications.meeting_token: %w", err)
+		}
+	}
+	// notifications.mail_message_id: the subject of a kind=mail row. Same
+	// CREATE-TABLE-no-op reason as meeting_token above.
+	var hasMailMessageID int
+	_ = store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('notifications') WHERE name='mail_message_id'",
+	).Scan(&hasMailMessageID)
+	if hasMailMessageID == 0 {
+		if _, err := store.WriteExec(
+			"ALTER TABLE notifications ADD COLUMN mail_message_id INTEGER NOT NULL DEFAULT 0",
+		); err != nil {
+			return fmt.Errorf("failed to add notifications.mail_message_id: %w", err)
 		}
 	}
 	// Model providers (endpoint + credential shared by agents). Defined in

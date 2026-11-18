@@ -34,11 +34,13 @@
         <button
           class="table-block-landscape-btn"
           type="button"
-          :title="t('tableBlock.landscape')"
-          :aria-label="t('tableBlock.landscape')"
-          @click="openLandscape"
+          :data-action="expanded ? 'landscape-close' : 'landscape'"
+          :title="expanded ? t('tableBlock.landscapeClose') : t('tableBlock.landscape')"
+          :aria-label="expanded ? t('tableBlock.landscapeClose') : t('tableBlock.landscape')"
+          @click="onLandscapeClick"
         >
-          <span class="dt-icon" v-html="maximizeIconSvg(12)" />
+          <X v-if="expanded" :size="12" />
+          <span v-else class="dt-icon" v-html="maximizeIconSvg(12)" />
         </button>
       </div>
     </div>
@@ -340,12 +342,13 @@ import {
   type SortState,
 } from '@/utils/csvTable'
 import { copyText } from '@/utils/clipboard'
-import { getDefaultBlockWrap } from '@/utils/blockWrapRead'
+import { blockWrapVersion, getDefaultBlockWrap } from '@/utils/blockWrapRead'
 import { maximizeIconSvg } from '@/utils/blockHeaderIcons'
 import { useToast } from '@/composables/useToast'
+import { registerBlockLandscapeTable, unregisterBlockLandscapeTable } from '@/composables/dataTableLandscape'
 import ModeSwitch from '@/components/common/ModeSwitch.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   headers: string[]
   rows: string[][]
   /** auto = 按内容判定（默认）；normal / data = 强制 */
@@ -356,6 +359,23 @@ const props = defineProps<{
   maxHeight?: string
   /** 撑满父容器（文件预览用） */
   fill?: boolean
+  /**
+   * 初始换行状态；不传则跟随全局「默认自动换行」偏好。
+   *
+   * 默认值必须显式写成 `undefined`：Boolean prop 缺席时 Vue 会把它强制成
+   * `false`，那样全屏浮层之外的表格就再也不会跟随全局偏好了。
+   */
+  initialWrap?: boolean
+  /** 正在全屏浮层里渲染：最大化按钮换成关闭按钮，点击交给宿主收起浮层。 */
+  expanded?: boolean
+}>(), {
+  initialWrap: undefined,
+})
+
+const emit = defineEmits<{
+  (e: 'collapse'): void
+  (e: 'update:mode', value: 'normal' | 'data'): void
+  (e: 'update:wrap', value: boolean): void
 }>()
 
 const { t } = useI18n()
@@ -378,11 +398,21 @@ const popEl = ref<HTMLElement | null>(null)
 let popAnchor: HTMLElement | null = null
 
 const rootRef = ref<HTMLElement | null>(null)
-const wrap = ref(getDefaultBlockWrap())
+const wrap = ref(props.initialWrap ?? getDefaultBlockWrap())
 const searchRef = ref<HTMLInputElement | null>(null)
 const scrollRef = ref<HTMLElement | null>(null)
 const tableRef = ref<HTMLElement | null>(null)
 const frozenLeft = ref(0)
+
+// The wrap preference is shared with raw markdown tables / code blocks. Their
+// classes are re-applied by `applyBlockWrapToRenderedBlocks`, but this table is
+// Vue-driven: it has to follow the same preference itself, otherwise the global
+// setting and the per-table toggle become two sources of truth (a table whose
+// toggle says "wrap" could still render flat).
+watch(blockWrapVersion, () => { wrap.value = getDefaultBlockWrap() })
+
+// A wrap toggled in the fullscreen copy is carried back to this instance.
+watch(wrap, value => emit('update:wrap', value))
 
 const pageSize = computed(() => props.pageSize ?? 0)
 
@@ -619,6 +649,22 @@ watch([frozen, visibleColumns, pageRows, filterRowOpen, sort], () => {
 }, { deep: true })
 
 onMounted(() => {
+  // Lets the fullscreen overlay re-render this table as a live component
+  // instead of a dead HTML clone (see composables/dataTableLandscape.ts).
+  if (rootRef.value) {
+    registerBlockLandscapeTable(rootRef.value, {
+      snapshot: () => ({
+        headers: props.headers,
+        rows: props.rows,
+        mode: isData.value ? 'data' : 'normal',
+        wrap: wrap.value,
+        pageSize: pageSize.value,
+      }),
+      setMode: next => { mode.value = next },
+      setWrap: next => { wrap.value = next },
+    })
+  }
+
   if (typeof ResizeObserver === 'undefined' || !tableRef.value) return
   observer = new ResizeObserver(() => measureFrozen())
   observer.observe(tableRef.value)
@@ -626,6 +672,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (rootRef.value) unregisterBlockLandscapeTable(rootRef.value)
   observer?.disconnect()
   observer = null
   document.removeEventListener('mousedown', onDocMouseDown, true)
@@ -637,6 +684,7 @@ onBeforeUnmount(() => {
 function setMode(next: 'normal' | 'data'): void {
   mode.value = next
   closePop()
+  emit('update:mode', next)
 }
 
 function toggleColumn(col: number, visible: boolean): void {
@@ -773,6 +821,15 @@ async function openLandscape(event: MouseEvent): Promise<void> {
   // vue-i18n 一部分导出的组件测试在加载阶段就炸。
   const { openBlockLandscape } = await import('@/composables/useBlockLandscape')
   openBlockLandscape(root, event.currentTarget as HTMLElement)
+}
+
+/** In the fullscreen overlay the same slot is the close button. */
+function onLandscapeClick(event: MouseEvent): void {
+  if (props.expanded) {
+    emit('collapse')
+    return
+  }
+  void openLandscape(event)
 }
 
 function openCopyMenu(event: MouseEvent): void {

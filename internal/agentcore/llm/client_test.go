@@ -552,6 +552,11 @@ func TestResolveEndpoint(t *testing.T) {
 		{"https://api.openai.com/v1/chat/completions", "/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
 		{"https://gw.example.com/api/v1", "/v1/chat/completions", "https://gw.example.com/api/v1/chat/completions"},
 		{"https://api.anthropic.com", "/v1/messages", "https://api.anthropic.com/v1/messages"},
+		// A provider base mounted under a versionless namespace is a base, not
+		// an endpoint. MiniMax publishes "/anthropic" and serves
+		// "/anthropic/v1/messages"; posting to the namespace 404'd every turn
+		// of a builtin-agent session.
+		{"https://api.minimax.cn/anthropic", "/v1/messages", "https://api.minimax.cn/anthropic/v1/messages"},
 		// A provider-specific endpoint is used verbatim: appending would 404.
 		{"https://api.minimax.cn/v1/text/chatcompletion_v2", "/v1/chat/completions", "https://api.minimax.cn/v1/text/chatcompletion_v2"},
 	}
@@ -559,6 +564,79 @@ func TestResolveEndpoint(t *testing.T) {
 		if got := resolveEndpoint(tc.base, tc.path); got != tc.want {
 			t.Errorf("resolveEndpoint(%q, %q) = %q, want %q", tc.base, tc.path, got, tc.want)
 		}
+	}
+}
+
+// TestNew_CompletesNamespaceBaseURL pins the URL each client actually posts to.
+// The table above covers the resolver in isolation; this is the consumer that
+// regressed: a MiniMax provider ("/anthropic") passed "test connection" and
+// then every builtin-agent turn 404'd.
+func TestNew_CompletesNamespaceBaseURL(t *testing.T) {
+	a, err := New(Config{Protocol: ProtocolAnthropic, BaseURL: "https://api.minimax.cn/anthropic", APIKey: "k", Model: "MiniMax-M3.1-Flash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := a.(*anthropicClient).url; got != "https://api.minimax.cn/anthropic/v1/messages" {
+		t.Fatalf("anthropic client posts to %q", got)
+	}
+
+	o, err := New(Config{Protocol: ProtocolOpenAI, BaseURL: "https://gateway.example.com/openai", APIKey: "k", Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := o.(*openAIClient).url; got != "https://gateway.example.com/openai/v1/chat/completions" {
+		t.Fatalf("openai client posts to %q", got)
+	}
+}
+
+// TestOpenAI_ToolDeclarationsUseWireKeys pins the JSON keys of a declared tool.
+//
+// The request-side tool shape used to be a cast of the internal ToolSpec, which
+// carries no JSON tags: the body went out as
+// {"Name":…,"Description":…,"Parameters":…}. Strict gateways reject it with
+// "tools[0].function: missing field name" — a 422 the user cannot fix from the
+// UI, which is exactly what DeepSeek returned for a builtin-agent turn.
+func TestOpenAI_ToolDeclarationsUseWireKeys(t *testing.T) {
+	c, err := New(Config{Protocol: ProtocolOpenAI, BaseURL: "http://127.0.0.1:1", Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := c.(*openAIClient).buildBody(Request{
+		Messages: []Message{TextMessage(RoleUser, "hi")},
+		Tools: []ToolSpec{{
+			Name:        "read",
+			Description: "read a file",
+			Parameters:  map[string]any{"type": "object"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parsed struct {
+		Tools []struct {
+			Function map[string]any `json:"function"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Tools) != 1 {
+		t.Fatalf("want one tool, got %d", len(parsed.Tools))
+	}
+	fn := parsed.Tools[0].Function
+	for _, key := range []string{"name", "description", "parameters"} {
+		if _, ok := fn[key]; !ok {
+			t.Fatalf("tool function is missing the %q key: %v", key, fn)
+		}
+	}
+	for _, wrong := range []string{"Name", "Description", "Parameters"} {
+		if _, ok := fn[wrong]; ok {
+			t.Fatalf("tool function must not carry the Go field name %q: %v", wrong, fn)
+		}
+	}
+	if fn["name"] != "read" {
+		t.Fatalf("name = %v", fn["name"])
 	}
 }
 

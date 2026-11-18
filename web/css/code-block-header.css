@@ -241,13 +241,25 @@
 
 /* 表格本体（含 .is-data-table 的覆盖）的样式统一在 css/table.css。 */
 
-/* 横屏浮层里的数据表：克隆出来的 DOM 没有 Vue 响应，工具条只会是摆设，
-   直接藏掉；滚动高度交还给浮层自己。 */
-.block-landscape .dt-bar {
-    display: none;
+/* 横屏浮层里的数据表是「活」组件（见 BlockLandscape.vue / dataTableLandscape.ts）：
+   表头栏的简单表⇄数据表开关、搜索、排序、筛选、分页都还能用，所以工具条
+   不再藏起来。它自己撑满面板，滚动交给 .dt-scroll。 */
+.block-landscape-live {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+
+.block-landscape-live .dt {
+    flex: 1;
+    min-height: 0;
 }
 
 .block-landscape .dt-scroll {
+    /* 高度由 flex 分配（`.dt` 撑满面板）。这里不能写 height: 100%：表头栏和
+       工具条也占高度，再给滚动区 100% 会让它整体超出面板，最后几十像素永远
+       滚不到。 */
     max-height: none !important;
-    height: 100%;
 }

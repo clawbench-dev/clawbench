@@ -4344,7 +4344,7 @@ onMounted(async () => {
             const nav = await getNative()?.getPendingNavigation?.()
             if (nav) {
               const parsed = JSON.parse(nav)
-              const { sessionId, taskId, executionId, projectPath, forge, messageId } = parsed
+              const { sessionId, taskId, executionId, projectPath, forge, messageId, mail, mailMessageId } = parsed
               // Same resolver as the live-click handler: the native shell names
               // this field `forgeTarget`, and routing both entry points through
               // one function is what keeps them from drifting apart.
@@ -4368,6 +4368,17 @@ onMounted(async () => {
                     .finally(() => switchTab('forge'))
                 } else {
                   switchTab('forge')
+                }
+              } else if (mail || mailMessageId) {
+                // New-mail notification navigation. Mail is global, so there is
+                // no project to switch first. `messageId` is the Android cold-
+                // start alias; desktop's nav carries `mailMessageId`.
+                pollCleared = true
+                const id = mailMessageId ?? messageId
+                if (id) {
+                  window.dispatchEvent(new CustomEvent('clawbench-open-mail', {
+                    detail: { messageId: id },
+                  }))
                 }
               } else if (taskId) {
                 // Task notification navigation

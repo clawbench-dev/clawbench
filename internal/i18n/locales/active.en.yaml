@@ -16,6 +16,9 @@ ForkContextInjectedChat: The history of "{{.Title}}" was injected into this sess
 ForkContextInjectedGroup: The history of "{{.Title}}" was injected into this group as background; each member receives it on their first turn
 GroupNotRewindable: A group chat cannot be rewound
 GroupRunning: The group is working on a turn — try again when it finishes
+MoveTargetInvalid: That project does not exist or is unavailable. Refresh the list and try again.
+MoveNotAllowed: This session cannot be moved (task sessions and group-member rows are not move targets).
+MoveMembersUnavailable: 'These members are unavailable in the target project: {{.Members}}. Make their agents available in all projects, or remove them from the group, then try again.'
 GroupMemberCompacting: This member is already compacting its context
 GroupMemberNotFound: Member not found in this group
 CompactNeedsACP: This member does not use ACP transport, so it has no compact command
@@ -209,6 +212,13 @@ PushTaskStarted: Task started
 PushSessionCompleted: Session completed
 PushSessionCancelled: Session cancelled
 PushActionRequired: Action requires approval
+# New-mail notification. Title/body are rendered by the server at sync time
+# (the producer is a background goroutine with no request scope), and the
+# notification center and IM push share the same wording.
+MailNotifyNoSubject: (No subject)
+MailNotifyUnknownSender: Unknown sender
+MailNotifyManyTitle: '{{.Count}} new emails'
+MailNotifyLatest: 'Latest: {{.Subject}} · {{.Sender}}'
 # IM push (DingTalk / Feishu) — the strings the bot writes into the user's chat.
 # The push backends run on their own goroutines with no HTTP request in scope,
 # so they localize via LocalizerForLocale(model.Language), exactly like

@@ -19,7 +19,7 @@ import {
 import { nextZoomFactor, type ZoomAction } from './zoom'
 import { shouldUseFramelessWindow } from './windowChrome'
 import { cancelPendingQuit, handleCloseRequest, isAppQuitting, noteOsShutdown } from './closeFlow'
-import { isEmbeddedServerActive } from './localServer'
+import { isEmbeddedServerActive, isEmbeddedServerUrl } from './localServer'
 import { embeddedServerLabels } from './labels'
 import { boundsToPersist, resolveStartupBounds, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, type WindowBounds } from './windowGeometry'
 import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
@@ -61,10 +61,14 @@ export function cancelSplash(): void {
  * current one.
  */
 export function checkVersionGateFor(url: string): void {
-  // The embedded server is part of this package and updates with it, so its
+  // The built-in server is part of this package and updates with it, so its
   // version can never be a mismatch this gate could fix — and walking the
   // middle of a download here would only offer to replace the app under itself.
-  if (isEmbeddedServerActive()) {
+  //
+  // Keyed on the ADDRESS, not on "we run a built-in server": a fused build
+  // keeps its own server running while the user is connected to another
+  // machine, and that machine's version must still be checked.
+  if (isEmbeddedServerUrl(url)) {
     setActiveGate(null)
     return
   }
@@ -152,21 +156,21 @@ function loginPagePath(): string {
  * Show the server-selection login page, or explain why there is nothing to show.
  *
  * In the normal build there is always something to pick, so this is the login
- * page plus the connection error it must display. In the embedded build the
- * server lives in this package: if it is unreachable there is no other server
- * to choose, and the login form would be a dead end for a problem it cannot
- * fix. That case gets a dialog naming the address instead — the overlay may
- * already be gone, so a page change alone would look like a plain failure.
+ * page plus the connection error it must display. In the fused build, a failure
+ * against the built-in server gets a dialog naming that address first (the
+ * overlay may already be gone, so a page change alone would look like a plain
+ * failure) — and then the login page anyway, so the user can still reach
+ * another machine. A failure against a REMOTE server while the built-in one
+ * happens to be running must not be described as "the built-in server stopped".
  */
 async function serveLoginOrExplain(reason: string): Promise<void> {
-  if (isEmbeddedServerActive()) {
+  const target = getStore().get('serverUrl')
+  if (target && isEmbeddedServerUrl(target) && !isEmbeddedServerActive()) {
     const labels = embeddedServerLabels(resolveNativeLanguage())
-    const url = getStore().get('serverUrl')
     dialog.showErrorBox(
       labels.stoppedTitle,
-      labels.stoppedMessage.replace('{url}', url) + (reason ? `\n\n${reason}` : ''),
+      labels.stoppedMessage.replace('{url}', target) + (reason ? `\n\n${reason}` : ''),
     )
-    return
   }
   try {
     await mainWindow?.loadFile(loginPagePath())

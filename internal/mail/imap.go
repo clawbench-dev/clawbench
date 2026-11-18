@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net"
 	"net/mail"
@@ -58,6 +59,12 @@ type imapClient struct {
 	closed      bool
 	uidNext     uint32
 	numMessages uint32
+	// uidNextHint is a lower bound for UIDNEXT learned from the highest UID
+	// actually seen. 163 answers SELECT and STATUS without UIDNEXT at all
+	// (RFC 3501 makes the item optional), so without this the density
+	// estimate behind the fetch window has nothing to divide by. It is only
+	// ever a fallback for sizing a window, never the server's own value.
+	uidNextHint uint32
 
 	// degraded holds the folders whose full FETCH died on a malformed
 	// response. Later fetches for them skip BODYSTRUCTURE, the only item in
@@ -136,6 +143,7 @@ func (m *imapClient) connect(ctx context.Context) error {
 	m.closed = false
 	m.uidNext = 0
 	m.numMessages = 0
+	m.uidNextHint = 0
 	return nil
 }
 
@@ -333,6 +341,9 @@ func (m *imapClient) selectFolder(ctx context.Context, folder string) (*imap.Sel
 	m.readOnly = false
 	m.uidNext = uint32(data.UIDNext)
 	m.numMessages = data.NumMessages
+	// The hint is about one mailbox's UID space; a different folder has a
+	// different UID sequence.
+	m.uidNextHint = 0
 	return data, nil
 }
 
@@ -353,18 +364,74 @@ func (m *imapClient) FetchNewest(ctx context.Context, folder string, n int) ([]M
 	// Address the window by UID, not by sequence number: a UID is stable, so
 	// a retry after a reconnect cannot land on a different message. UIDNEXT
 	// comes from the SELECT response and is cached by selectFolder.
-	if m.uidNext <= 1 {
-		return nil, nil
+	//
+	// UIDNEXT is optional in RFC 3501 and 163 simply leaves it out of both
+	// SELECT and STATUS. Treating the missing value as "the mailbox is empty"
+	// is what made a folder report 1036 messages while caching none: the count
+	// comes from STATUS and the rows from this fetch. Fall back to sequence
+	// numbers in that case — every FETCH response carries the UID again, so
+	// the rest of the sync stays UID-based.
+	if m.uidNext > 1 {
+		return m.fetchBefore(ctx, folder, m.uidNext, n)
 	}
-	return m.fetchBefore(ctx, folder, m.uidNext, n)
+	slog.Debug("mail: server reported no UIDNEXT, fetching the newest messages by sequence number",
+		"folder", folder, "messages", m.numMessages)
+	return m.fetchNewestBySeq(ctx, folder, n)
 }
 
-func (m *imapClient) FetchBefore(ctx context.Context, folder string, beforeUID uint32, n int) ([]MessageHeader, error) {
+// fetchNewestBySeq returns the newest n messages addressed by sequence number.
+//
+// Used only when the server does not report UIDNEXT. Sequence numbers follow
+// mailbox order, so the last n of them are the newest n messages; "*" as the
+// end keeps the range correct if mail arrived between SELECT and FETCH.
+func (m *imapClient) fetchNewestBySeq(ctx context.Context, folder string, n int) ([]MessageHeader, error) {
+	if m.numMessages == 0 || n <= 0 {
+		return nil, nil
+	}
+	window := uint32(n) //nolint:gosec // G115: a positive fetch window, far below the uint32 range
+	lo := uint32(1)
+	if window < m.numMessages {
+		lo = m.numMessages - window + 1
+	}
+	var set imap.SeqSet
+	set.AddRange(lo, 0) // 0 is "*": the current last message
+	headers, err := m.fetchHeadersBySet(ctx, folder, set)
+	if err != nil {
+		return nil, err
+	}
+	m.noteUIDSeen(headers)
+	if len(headers) > n {
+		headers = headers[len(headers)-n:]
+	}
+	return headers, nil
+}
+
+// noteUIDSeen raises uidNextHint to just past the highest UID in headers.
+//
+// The highest UID that exists is a lower bound for UIDNEXT, so dividing by it
+// understates the UID density: the window ends up too small rather than too
+// large, and fetchBefore widens it when it comes up short.
+func (m *imapClient) noteUIDSeen(headers []MessageHeader) {
+	for _, h := range headers {
+		if h.UID >= m.uidNextHint {
+			m.uidNextHint = h.UID + 1
+		}
+	}
+}
+
+func (m *imapClient) FetchBefore(ctx context.Context, folder string, beforeUID uint32, n int, nextUIDHint uint32) ([]MessageHeader, error) {
 	if n <= 0 || beforeUID <= 1 {
 		return nil, nil
 	}
+	// A caller that has mail cached knows a lower bound for UIDNEXT even when
+	// the server does not report one, which is the difference between one
+	// round trip and six on a mailbox with sparse UIDs. Applied after the
+	// selection because selecting a different mailbox resets the hint.
 	if _, err := m.selectFolder(ctx, folder); err != nil {
 		return nil, err
+	}
+	if nextUIDHint > m.uidNextHint {
+		m.uidNextHint = nextUIDHint
 	}
 	return m.fetchBefore(ctx, folder, beforeUID, n)
 }
@@ -422,9 +489,15 @@ func (m *imapClient) uidWindow(n int, beforeUID uint32) uint32 {
 	window := size * 3
 	// UIDNEXT divided by the message count is the average UID span one message
 	// occupies. Doubling it leaves room for the messages that were deleted
-	// without shrinking UIDNEXT.
-	if m.uidNext > 1 && m.numMessages > 0 {
-		if avg := uint64(m.uidNext) / uint64(m.numMessages); avg > 1 {
+	// without shrinking UIDNEXT. Servers that do not report UIDNEXT fall back
+	// to the highest UID seen, which understates the density (safe: a window
+	// that is too small only costs another round trip).
+	next := m.uidNext
+	if next <= 1 {
+		next = m.uidNextHint
+	}
+	if next > 1 && m.numMessages > 0 {
+		if avg := uint64(next) / uint64(m.numMessages); avg > 1 {
 			window = size * avg * 2
 		}
 	}
@@ -462,7 +535,7 @@ func headerSectionItem() *imap.FetchItemBodySection {
 	}
 }
 
-func (m *imapClient) fetchHeadersBySet(ctx context.Context, folder string, set imap.UIDSet) ([]MessageHeader, error) {
+func (m *imapClient) fetchHeadersBySet(ctx context.Context, folder string, set imap.NumSet) ([]MessageHeader, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -550,7 +623,7 @@ func (m *imapClient) classifyFetchError(err error) error {
 	return &decodeError{m.fail("fetch headers", err)}
 }
 
-func (m *imapClient) fetchHeadersOnce(ctx context.Context, folder string, set imap.UIDSet, withStructure bool) ([]MessageHeader, error) {
+func (m *imapClient) fetchHeadersOnce(ctx context.Context, folder string, set imap.NumSet, withStructure bool) ([]MessageHeader, error) {
 	if _, err := m.selectFolder(ctx, folder); err != nil {
 		return nil, err
 	}

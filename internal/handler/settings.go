@@ -232,6 +232,7 @@ var hotReloadFields = map[string]bool{
 	// Mail — the worker re-reads these on every poll/pass, so a change
 	// applies without a restart.
 	"mail.enabled":               true,
+	"mail.notify":                true,
 	"mail.sync_interval_minutes": true,
 	"mail.sync_window":           true,
 	"mail.body_prefetch":         true,
@@ -794,6 +795,7 @@ type configForgeNotify struct {
 // /api/mail/accounts, and disabling mail deliberately does not touch them.
 type configMail struct {
 	Enabled             bool `json:"enabled"`
+	Notify              bool `json:"notify"`
 	SyncIntervalMinutes int  `json:"sync_interval_minutes"`
 	SyncWindow          int  `json:"sync_window"`
 	BodyPrefetch        int  `json:"body_prefetch"`
@@ -1282,6 +1284,7 @@ var PatchableConfigPaths = map[string]bool{
 	"forge.notify.pipeline":                  true,
 	"forge.pause_event_tasks":                true,
 	"mail.enabled":                           true,
+	"mail.notify":                            true,
 	"mail.sync_interval_minutes":             true,
 	"mail.sync_window":                       true,
 	"mail.body_prefetch":                     true,
@@ -1614,6 +1617,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Forge:      buildConfigForge(cfg),
 		Mail: configMail{
 			Enabled:             cfg.Mail.Enabled,
+			Notify:              cfg.Mail.Notify,
 			SyncIntervalMinutes: cfg.Mail.SyncIntervalMinutes,
 			SyncWindow:          cfg.Mail.SyncWindow,
 			BodyPrefetch:        cfg.Mail.BodyPrefetch,
@@ -3547,6 +3551,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if mailMap, ok := patch["mail"].(map[string]any); ok {
 		if v, ok := mailMap["enabled"].(bool); ok {
 			cfg.Mail.Enabled = v
+		}
+		if v, ok := mailMap["notify"].(bool); ok {
+			cfg.Mail.Notify = v
 		}
 		if v, ok := mailMap["sync_interval_minutes"].(float64); ok {
 			cfg.Mail.SyncIntervalMinutes = int(v)

@@ -16,12 +16,28 @@ const (
 	ProviderProtocolOpenAI    = "openai"
 	ProviderProtocolGemini    = "gemini"
 	// ProviderProtocolPrivate is not a wire protocol at all: it marks a
-	// credential for the backend's OWN service (CodeBuddy's account token). There
-	// is no endpoint to send to and no request shape to choose — the backend
-	// knows both — so the form hides every parameter that only matters for a
-	// third-party endpoint, and the env builder injects the backend's own
-	// variable plus its fixed switches.
+	// credential for the backend's OWN service (CodeBuddy's account token).
+	// There is no request shape to choose — the backend knows it — so the form
+	// hides every parameter that only matters for a third-party endpoint, and
+	// the env builder injects the backend's own variable plus its switches.
+	//
+	// BaseURL is normally empty here. Backends whose own service address is
+	// enterprise-defined (CodeBuddy's dedicated/self-hosted editions) declare
+	// OwnServiceEndpoint and read it as that address.
 	ProviderProtocolPrivate = "private"
+)
+
+// Provider deployments: which edition of the backend's own service an
+// own-service (private-protocol) provider talks to.
+//
+// Empty means "the backend's default edition", which for CodeBuddy is its
+// hosted service — that is what every row written before this field existed
+// gets, so old rows keep working unchanged.
+const (
+	ProviderDeploymentInternal    = "internal"
+	ProviderDeploymentIOA         = "ioa"
+	ProviderDeploymentCloudhosted = "cloudhosted"
+	ProviderDeploymentSelfhosted  = "selfhosted"
 )
 
 // Provider auth modes. "auto" lets the protocol decide (x-api-key for
@@ -66,6 +82,15 @@ type Provider struct {
 	// self-hosted ones) 404s on /responses, so binding it while the block said
 	// "responses" made every codex turn fail with no visible reason.
 	WireAPI string `json:"wireApi,omitempty"`
+	// Deployment selects the edition of the backend's own service this
+	// own-service provider talks to ("" = the backend's default edition).
+	// Only meaningful for the private protocol; see ProviderDeployment*.
+	Deployment string `json:"deployment,omitempty"`
+	// Backend names the backend whose own service this credential belongs to.
+	// Required for the private protocol and meaningless everywhere else: four
+	// backends share that protocol, and without this a Cursor key could be
+	// bound to a CodeBuddy agent — accepted at bind time, failing every turn.
+	Backend string `json:"backend,omitempty"`
 
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
@@ -95,7 +120,26 @@ func (p Provider) Normalized() Provider {
 	if p.WireAPI == "" {
 		p.WireAPI = ProviderWireResponses
 	}
+	p.Deployment = strings.ToLower(strings.TrimSpace(p.Deployment))
+	p.Backend = strings.ToLower(strings.TrimSpace(p.Backend))
 	return p
+}
+
+// ValidDeployment reports whether deployment names an edition this build
+// understands. Empty is valid: it means the backend's default edition.
+func ValidDeployment(deployment string) bool {
+	switch deployment {
+	case "", ProviderDeploymentInternal, ProviderDeploymentIOA,
+		ProviderDeploymentCloudhosted, ProviderDeploymentSelfhosted:
+		return true
+	}
+	return false
+}
+
+// DeploymentNeedsEndpoint reports whether this edition's service address is
+// enterprise-defined, so a provider for it must carry one.
+func DeploymentNeedsEndpoint(deployment string) bool {
+	return deployment == ProviderDeploymentCloudhosted || deployment == ProviderDeploymentSelfhosted
 }
 
 // ValidProtocol reports whether protocol is one this build understands.
@@ -228,8 +272,11 @@ func ProviderEnvVersion(agentID string) string {
 			declared += "\x00" + agent.PreferredModel
 		}
 	}
+	// Deployment is part of the fingerprint because it becomes an environment
+	// variable (which edition of the backend's own service to talk to): editing
+	// only the edition must respawn a live connection, not wait for a restart.
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.WireAPI, declared,
+		p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.WireAPI, p.Deployment, declared,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:8])
 }

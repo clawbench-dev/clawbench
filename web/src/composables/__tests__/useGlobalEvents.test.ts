@@ -2360,4 +2360,56 @@ describe('useGlobalEvents', () => {
         })
     })
 
+    // ── Mail events (mail_event) ───────────────────────────────────────────
+    describe('mail events', () => {
+        const mailEvent = {
+            title: '季度报告',
+            body: 'Bob · 本周数据',
+            mail_message_id: 77,
+            account_id: 2,
+            count: 1,
+        }
+
+        it('shows an OS notification that opens the message', () => {
+            const ws = connectAndGetWs()
+
+            ws.receive({ type: 'event', id: nextId(), event: 'mail_event', data: mailEvent })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            const [title, opts] = mockShowBrowserNotification.mock.calls[0] as [
+                string,
+                { body?: string; nav?: { mailMessageId?: number }; onClick?: () => void },
+            ]
+            expect(title).toBe('季度报告')
+            expect(opts.body).toBe('Bob · 本周数据')
+            // Mail has no session/task id, so the native shell needs its own
+            // discriminator or the click is silently dropped.
+            expect(opts.nav?.mailMessageId).toBe(77)
+
+            const events: CustomEvent[] = []
+            const listener = (e: Event) => events.push(e as CustomEvent)
+            window.addEventListener('clawbench-open-mail', listener)
+            opts.onClick?.()
+            window.removeEventListener('clawbench-open-mail', listener)
+            expect(events[0].detail.messageId).toBe(77)
+        })
+
+        it('does not notify for a replayed mail event', () => {
+            const ws = connectAndGetWs()
+
+            ws.receive({ type: 'event', id: nextId(), event: 'mail_event', data: mailEvent, replayed: true })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+
+        it('ignores a payload without a title or message id', () => {
+            const ws = connectAndGetWs()
+
+            ws.receive({ type: 'event', id: nextId(), event: 'mail_event', data: { title: 'x' } })
+            ws.receive({ type: 'event', id: nextId(), event: 'mail_event', data: { mail_message_id: 1 } })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+    })
+
 })

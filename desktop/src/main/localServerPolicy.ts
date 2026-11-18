@@ -44,10 +44,12 @@ export const EMBEDDED_EXIT_GRACE_MS = 15_000
 /**
  * Ports an embedded server must never be started on.
  *
- * - Every saved REMOTE server: an embedded server bound to the same port would
+ * - Every saved server row: an embedded server bound to the same port would
  *   collide with the remote one whenever that machine is also local — and worse,
  *   the app's saved URL for it would then silently resolve to the embedded
- *   server (a different data set behind the same address).
+ *   server (a different data set behind the same address). The built-in
+ *   server's OWN address is never in this list (it is not a saved row), which is
+ *   what keeps its port stable across launches.
  * - The hub's SFTP/frp SSH port pair is out of scope: those are server-side and
  *   the embedded server owns its own.
  */
@@ -85,9 +87,9 @@ export interface ChooseEmbeddedPortInput {
  * on a different port looks like a fresh install. Only when it is taken or
  * reserved does the walk start, from the default upwards.
  *
- * A reserved port is skipped even when it is free: saving the embedded URL into
- * the server list under a port a remote server also uses would make the two
- * indistinguishable on the next launch.
+ * A reserved port is skipped even when it is free: binding a port one of the
+ * user's own saved servers uses would make the two indistinguishable on the next
+ * launch.
  */
 export function chooseEmbeddedPort(input: ChooseEmbeddedPortInput): number {
   const blocked = new Set([...input.inUse, ...input.reserved])
@@ -147,6 +149,49 @@ export function embeddedServerArgs(input: EmbeddedArgsInput): string[] {
     '--exit-on-stdin-close',
     '--managed',
   ]
+}
+
+/**
+ * Normalize a server URL for identity comparisons.
+ *
+ * A server row is identified by its origin: that is what the login page writes,
+ * what the cookie jar keys on, and what makes two entries "the same server".
+ * A trailing slash (or a host in another case) must not make the built-in
+ * server look like a different machine.
+ */
+export function normalizeServerUrl(url: string): string {
+  try {
+    const u = new URL(url)
+    return `${u.protocol}//${u.host}`
+  } catch {
+    return (url || '').trim().replace(/\/+$/, '')
+  }
+}
+
+/** Whether two URLs name the same server (see {@link normalizeServerUrl}). */
+export function sameServerUrl(a: string, b: string): boolean {
+  if (!a || !b) return false
+  return normalizeServerUrl(a) === normalizeServerUrl(b)
+}
+
+/**
+ * Whether this launch should point the app at the embedded server.
+ *
+ * `previousActive` is the server the last run ended on (the persisted
+ * `serverUrl`); `previousEmbedded` is the built-in address that run knew.
+ *
+ * A user who deliberately connected to another machine keeps that choice across
+ * restarts — being dragged back to "This device" on every launch is exactly the
+ * bug this encodes against. The built-in server is adopted only when nothing
+ * has been chosen yet, or when it WAS the choice (which also carries the app
+ * across a port change: the address it remembers is the previous run's).
+ */
+export function shouldAdoptEmbeddedServer(
+  previousActive: string,
+  previousEmbedded: string,
+): boolean {
+  if (!previousActive) return true
+  return sameServerUrl(previousActive, previousEmbedded)
 }
 
 /** True for urls that point at this machine (the embedded server). */

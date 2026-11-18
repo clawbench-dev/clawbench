@@ -16,7 +16,7 @@
 |---|---|
 | `id` | 自增主键 |
 | `name` | 显示名，`COLLATE NOCASE` 唯一 |
-| `protocol` | `anthropic` / `openai` / `gemini` |
+| `protocol` | `anthropic` / `openai` / `gemini` / `private`（见「私有协议」） |
 | `base_url` | 端点；空表示只注入密钥 |
 | `api_key` | 凭据，默认**不回显**（列表与写回执只返回 `hasKey`）；只有显式 `GET /api/providers/{id}?reveal=1` 才返回明文，供设置页「查看密钥」使用 |
 | `auth_mode` | `auto` / `x-api-key` / `bearer` |
@@ -36,7 +36,7 @@
 | 后端 | 方式 | 变量 |
 |---|---|---|
 | claude | **配置目录**（+ anthropic 环境变量兜底） | `settings.json` 的 `env` 段 + `CLAUDE_CONFIG_DIR` |
-| codebuddy | **配置目录**（+ 私有协议） | `models.json`（逐模型 `url`）+ `CODEBUDDY_CONFIG_DIR`；环境变量 `CODEBUDDY_*` 仍作为兜底；私有协议走 `CODEBUDDY_API_KEY` + cloudhosted |
+| codebuddy | **配置目录**（+ 私有协议） | `models.json`（逐模型 `url`）+ `CODEBUDDY_CONFIG_DIR`；环境变量 `CODEBUDDY_*` 仍作为兜底；私有协议走 `CODEBUDDY_API_KEY` + `CODEBUDDY_INTERNET_ENVIRONMENT`（按 provider 的 `deployment` 选版本，企业版地址经 `--settings` 传入） |
 | opencode / mimo / pi / zcode | anthropic、openai | `ANTHROPIC_*` / `OPENAI_*` |
 | kimi | **配置目录**（+ OpenAI 环境变量） | `config.toml` + `KIMI_SHARE_DIR`；`KIMI_BASE_URL` / `KIMI_API_KEY` 仅 `type="kimi"` 时生效 |
 | pi | **配置目录** | `models.json` + `PI_CODING_AGENT_DIR` |
@@ -212,7 +212,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 
 | 后端 | 注入 | 说明 |
 |---|---|---|
-| codebuddy | `CODEBUDDY_API_KEY` + `CODEBUDDY_INTERNET_ENVIRONMENT=cloudhosted` | 还要**跳过配置目录写入**（它的 `models.json` 要求每个模型自带 URL，装不下这种模式） |
+| codebuddy | `CODEBUDDY_API_KEY` + `CODEBUDDY_INTERNET_ENVIRONMENT` | 还要**跳过配置目录写入**（它的 `models.json` 要求每个模型自带 URL，装不下这种模式）。版本由 provider 的 `deployment` 决定（空=cloudhosted）；专享版/私有化的企业域名存在 `base_url`，spawn 时以 `--settings '{"enterpriseEndpoint":…}'` 交给 CLI（环境变量没有这一项） |
 | cursor | `CURSOR_API_KEY` | 本来就没有自定义端点 |
 | commandcode | `COMMAND_CODE_API_KEY` | 完整 BYOK 仍需它自己的配置文件，私有协议只负责凭据 |
 | antigravity | `GEMINI_API_KEY` | 走 Google 自己的服务 |
@@ -231,7 +231,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
   - 底部「测试连接」用**当前未保存的草稿值**验证端点，所以可以先测再存。
   - 创建成功后不关弹窗，直接转入模型视图并提示「已创建」——省掉「关掉 → 找到行 → 再编辑 → 再开弹窗」这一圈。
 - 智能体详情 → 偏好设置 → **模型提供商**：仅列出该后端支持的协议；配置文件后端选中后弹确认框。
-  私有协议只对 CodeBuddy 列出，且不会弹配置文件确认（见上）。
+  私有协议只对声明了自有服务的后端（CodeBuddy / Cursor / Command Code / Antigravity）列出，且不会弹配置文件确认（见上）。
 - 预设来自 `internal/model/provider_presets.json`（由 `scripts/gen-provider-presets.mjs` 从 models.dev 生成），只预填名称/协议/端点。
 
 ## 已知限制

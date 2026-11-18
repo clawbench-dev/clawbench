@@ -306,7 +306,7 @@
          flush against the sheet edges. -->
     <div v-if="activeTab === 'usage'" class="model-tab-content usage-tab-content">
       <p v-if="!hasUsage" class="tab-empty-hint">{{ t('chat.sessionSetting.noUsage') }}</p>
-      <ContextUsageDetail v-else :usage="usageSnapshot" :show-compact="canCompactHere" :compacting="compacting" @compact="onCompact" />
+      <ContextUsageDetail v-else :usage="usageSnapshot" :token-rate="effectiveTokenRate" :show-compact="canCompactHere" :compacting="compacting" @compact="onCompact" />
       <p v-if="compactError" class="usage-error">{{ compactError }}</p>
     </div>
 
@@ -330,6 +330,7 @@ import ModelRow from '@/components/common/ModelRow.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
 import { apiGet, apiPatch, apiPost } from '@/utils/api'
+import { normalizeTokenRate } from '@/utils/usageDisplay'
 import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { appLog } from '@/utils/appLog'
@@ -359,6 +360,15 @@ const props = defineProps({
    * claiming to describe the member.
    */
   targetSessionId: { type: String, default: '' },
+  /**
+   * Output speed of the latest completed reply for the CURRENT session.
+   *
+   * The host that owns the message list (ChatInputBar) is the only place that
+   * can read per-message metadata, and this drawer does not receive messages.
+   * Target mode ignores it in favour of the measurement the settings endpoint
+   * returns for THAT row (a group member has no messages of its own to read).
+   */
+  tokenRate: { type: Object, default: null },
 })
 
 const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport', 'switch-config-option', 'changed'])
@@ -384,6 +394,8 @@ const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, 
 const isTargeted = computed(() => !!props.targetSessionId)
 const target = ref(null) // GET /api/ai/session/settings payload
 const targetUsage = ref(null)
+// The targeted row's latest measured output speed (member row context_state).
+const targetTokenRate = ref(null)
 const compacting = ref(false)
 const compactError = ref('')
 // The target session the in-flight compaction belongs to ('' when idle).
@@ -400,6 +412,10 @@ const effectiveEfforts = computed(() => isTargeted.value ? (target.value?.thinki
 // Agent-declared options (codex "fast-mode"). Same two-source rule as the rest:
 // a group member's drawer must describe THAT member, not the current chat.
 const effectiveConfigOptions = computed(() => isTargeted.value ? (target.value?.configOptions || []) : identity.configOptions.value)
+// Output speed shown in the usage tab. Target mode must use the target row's
+// measurement (the host's prop describes the CURRENT session and would be
+// another member's number). normalizeTokenRate guards both shapes identically.
+const effectiveTokenRate = computed(() => isTargeted.value ? targetTokenRate.value : normalizeTokenRate(props.tokenRate))
 
 // The tab only exists while options are advertised. If they disappear under the
 // open drawer (model switch drops them), fall back to the model tab instead of
@@ -425,15 +441,20 @@ async function loadTarget() {
   if (!props.targetSessionId) {
     target.value = null
     targetUsage.value = null
+    targetTokenRate.value = null
     return
   }
   try {
     const data = await apiGet(`/api/ai/session/settings?session_id=${encodeURIComponent(props.targetSessionId)}`)
     target.value = data
     targetUsage.value = data?.usageState || null
+    // A group member row has no chat_history of its own, so this field is the
+    // only source of its speed; the drawer renders it in the shared panel.
+    targetTokenRate.value = normalizeTokenRate(data?.tokenRate)
   } catch (err) {
     target.value = null
     targetUsage.value = null
+    targetTokenRate.value = null
     appLog.w('SessionDrawer', 'load target session settings failed', err)
   }
 }
@@ -484,7 +505,10 @@ const hasWindow = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
 // button only produced an error after the click.
 const canCompactHere = computed(() => {
   if (!hasWindow.value) return false
-  if (!isTargeted.value) return true
+  // Single chat: a built-in agent has no slash-command channel either. Its
+  // context is compacted by the engine itself, so "/compact" would arrive at
+  // the model as a prose message.
+  if (!isTargeted.value) return !isBuiltinAgent(props.agentId || '')
   if (!target.value?.isGroupMember) return false
   const transport = target.value?.transport || ''
   // Empty transport means "the member row does not override the agent's", and

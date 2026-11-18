@@ -10,6 +10,22 @@ export interface ServerListSchema {
   servers: ServerEntry[]
   serverUrl: string
   /**
+   * Address of the server this build ships with (the "all-in-one" desktop
+   * build), or '' when there is none.
+   *
+   * Kept OUT of `servers` on purpose: that list is the user's own rows — they
+   * can rename and delete them — while this one is started and stopped by the
+   * app. Listing it alongside them is what let "delete" remove a server the
+   * app then re-created on the next launch, and what made its own address
+   * reserve its own port.
+   */
+  embeddedServerUrl: string
+  /**
+   * safeStorage-encrypted password of the server above. Same treatment as the
+   * per-row `passwordEncrypted`: it never leaves the main process.
+   */
+  embeddedServerPasswordEncrypted: string | null
+  /**
    * Legacy single-slot password (pre per-server storage). Read-only: migrated
    * into the matching `servers[].passwordEncrypted` at startup and then
    * cleared. Kept in the schema so an existing install's value is not dropped
@@ -108,6 +124,8 @@ export interface ServerListSchema {
 const defaults: ServerListSchema = {
   servers: [],
   serverUrl: '',
+  embeddedServerUrl: '',
+  embeddedServerPasswordEncrypted: null,
   sshPasswordEncrypted: null,
   nativePushEnabled: true,
   theme: DEFAULT_THEME_ID,

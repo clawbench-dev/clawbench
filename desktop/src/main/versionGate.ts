@@ -9,6 +9,7 @@ import {
 } from './install'
 import { recordError } from './clientLog'
 import { trustedFingerprintFor } from './certificateTrust'
+import { hasEmbeddedServerBinary } from './localServer'
 import { compareVersions, shouldGateClient } from '../shared/version'
 import { CLIENT_PROTOCOL } from '../shared/protocol'
 import { resolveNativeLanguage, versionGateLabels } from './labels'
@@ -191,6 +192,22 @@ export async function installServerVersion(
   parent: BrowserWindow | null,
 ): Promise<boolean> {
   const parentArg = parent ?? undefined
+
+  // A fused ("all-in-one") client carries a server next to its executable, and
+  // every downloadable package is the THIN one: installing it would replace the
+  // client and leave the next launch without `server/`, i.e. without the server
+  // it is built around. The gate can still report the mismatch; the update is a
+  // new fused installer, not this path.
+  if (hasEmbeddedServerBinary()) {
+    const labels = versionGateLabels(resolveNativeLanguage())
+    await dialog.showMessageBox(parentArg as BrowserWindow, {
+      type: 'info',
+      buttons: [labels.ok],
+      title: labels.fusedUpdateTitle,
+      message: labels.fusedUpdateMessage,
+    })
+    return false
+  }
 
   // Prefer the small payload archive: it carries only our app code (~3MB) and
   // reuses the installed Electron runtime, instead of re-downloading ~150MB.

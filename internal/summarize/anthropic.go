@@ -81,7 +81,19 @@ type anthropicRecommendRequest struct {
 	Messages    []anthropicRecommendMessage `json:"messages"`
 	MaxTokens   int                         `json:"max_tokens"`
 	Temperature float64                     `json:"temperature"`
+	// Thinking is off for this pass: a reasoning model spends max_tokens on
+	// thinking first and answers with nothing. See reasoningBudget.
+	Thinking *anthropicThinking `json:"thinking,omitempty"`
 }
+
+type anthropicThinking struct {
+	Type string `json:"type"` // "disabled"
+}
+
+// anthropicRecommendTemperature is 0.3 unless thinking is disabled: Anthropic
+// rejects temperature other than 1 whenever the thinking block is present, even
+// a disabled one.
+const anthropicRecommendTemperature = 1
 
 type anthropicRecommendMessage struct {
 	Role    string                  `json:"role"`
@@ -100,11 +112,11 @@ const minCacheableRunes = 1024
 // turns; the rolling conversation tail follows uncached. Returns an error if the
 // recommendation request or response fails.
 func (s *AnthropicSummarizer) DoRecommendPass(ctx context.Context, systemPrompt, stable, rolling string) (string, error) {
-	return s.DoAskPass(ctx, systemPrompt, stable, rolling, recommendMaxTokens)
+	return s.DoAskPass(ctx, systemPrompt, stable, rolling, 0)
 }
 
 // DoAskPass performs a one-shot question call with an explicit output cap. It is
-// the shared implementation behind DoRecommendPass (maxTokens = recommendMaxTokens)
+// the shared implementation behind DoRecommendPass (maxTokens = 0: the model's own budget)
 // and AskAboutContext (the /btw path, which passes a larger cap). Anthropic's
 // max_tokens is a required field, so an explicit value is always sent.
 func (s *AnthropicSummarizer) DoAskPass(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, error) {
@@ -116,9 +128,7 @@ func (s *AnthropicSummarizer) DoAskPass(ctx context.Context, systemPrompt, stabl
 // max_tokens. A caller that needs lossless output turns that into an error
 // instead of keeping the first half.
 func (s *AnthropicSummarizer) DoAskPassDetailed(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, bool, error) {
-	if maxTokens <= 0 {
-		maxTokens = recommendMaxTokens
-	}
+	maxTokens, _ = reasoningBudget(s.Model, maxTokens)
 	content := make([]anthropicContentBlock, 0, 2)
 	if len([]rune(stable)) >= minCacheableRunes {
 		content = append(content, anthropicContentBlock{
@@ -138,7 +148,8 @@ func (s *AnthropicSummarizer) DoAskPassDetailed(ctx context.Context, systemPromp
 			{Role: roleUser, Content: content},
 		},
 		MaxTokens:   maxTokens,
-		Temperature: 0.3,
+		Temperature: anthropicRecommendTemperature,
+		Thinking:    &anthropicThinking{Type: "disabled"},
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

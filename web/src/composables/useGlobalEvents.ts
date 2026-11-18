@@ -74,6 +74,12 @@ export interface ServerEvent {
         token?: string
         viewer_id?: string
         viewer_name?: string
+        // mail_event body (ws.MailEventData): new inbox mail arrived.
+        // `title`/`body` are rendered server-side like the usage/meeting
+        // shapes above; mail_message_id is the cached row the click opens.
+        // `count` (unread total) reuses the field declared above.
+        mail_message_id?: number
+        account_id?: number
     }
 }
 
@@ -961,6 +967,19 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
         onClick = () => {
             window.dispatchEvent(new CustomEvent('clawbench-open-usage-meter'))
         }
+    } else if (event === 'mail_event') {
+        // New inbox mail. Same server-rendered wording as usage_meter: the
+        // sync pass owns the subject/sender and localizes once, so there is
+        // nothing to translate here.
+        title = String(data.title || '')
+        alert_ = String(data.body || '')
+        const mailMessageId = data.mail_message_id
+        if (!title || !mailMessageId) return
+        onClick = () => {
+            window.dispatchEvent(new CustomEvent('clawbench-open-mail', {
+                detail: { messageId: mailMessageId },
+            }))
+        }
     } else {
         return
     }
@@ -986,6 +1005,8 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data'], 
                 // so the native shell needs its own discriminator or the click
                 // is silently dropped.
                 usageMeter: event === 'usage_meter_update',
+                // Mail notifications carry only a cached mail_messages id.
+                mailMessageId: event === 'mail_event' ? data.mail_message_id : undefined,
                 // The item to open, so the desktop shell's click deep-links
                 // instead of only raising the tab. Spread (not referenced) so
                 // the object crosses the IPC boundary as plain data.

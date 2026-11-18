@@ -7,7 +7,9 @@ import {
   isClawBenchHealth,
   isLocalServerUrl,
   reservedPortsForEmbedded,
+  sameServerUrl,
   sessionCookieName,
+  shouldAdoptEmbeddedServer,
 } from './localServerPolicy'
 
 describe('chooseEmbeddedPort', () => {
@@ -95,5 +97,40 @@ describe('isLocalServerUrl / embeddedServerUrl', () => {
     expect(isLocalServerUrl('https://192.168.1.5:20000')).toBe(false)
     expect(isLocalServerUrl('file:///tmp/login.html')).toBe(false)
     expect(isLocalServerUrl('garbage')).toBe(false)
+  })
+})
+
+describe('sameServerUrl', () => {
+  it('identifies a server by its origin', () => {
+    expect(sameServerUrl('http://127.0.0.1:20000', 'HTTP://127.0.0.1:20000/')).toBe(true)
+    expect(sameServerUrl('https://nas.local:8443/', 'https://nas.local:8443')).toBe(true)
+  })
+
+  it('does not confuse a different port, scheme or host', () => {
+    expect(sameServerUrl('http://127.0.0.1:20000', 'http://127.0.0.1:20001')).toBe(false)
+    expect(sameServerUrl('http://nas.local:20000', 'https://nas.local:20000')).toBe(false)
+    // The built-in server keeps its own port while an unrelated one is saved.
+    expect(sameServerUrl('http://127.0.0.1:20000', 'http://192.168.1.5:20000')).toBe(false)
+    expect(sameServerUrl('', 'http://127.0.0.1:20000')).toBe(false)
+  })
+})
+
+describe('shouldAdoptEmbeddedServer', () => {
+  it('opens the built-in server when nothing has been chosen yet', () => {
+    expect(shouldAdoptEmbeddedServer('', '')).toBe(true)
+    expect(shouldAdoptEmbeddedServer('', 'http://127.0.0.1:20000')).toBe(true)
+  })
+
+  it('keeps a server the user chose, across restarts', () => {
+    // The bug this pins: every launch used to rewrite serverUrl to the built-in
+    // address, so "connect to my own machine" silently reverted on restart.
+    expect(shouldAdoptEmbeddedServer('https://nas.local:20000', 'http://127.0.0.1:20000')).toBe(false)
+  })
+
+  it('follows the built-in server across a port change', () => {
+    // Same server, new port (the preferred one was taken this time): the app
+    // must reopen the new address rather than a dead one.
+    expect(shouldAdoptEmbeddedServer('http://127.0.0.1:20000', 'http://127.0.0.1:20000')).toBe(true)
+    expect(shouldAdoptEmbeddedServer('http://127.0.0.1:20000/', 'http://127.0.0.1:20000')).toBe(true)
   })
 })

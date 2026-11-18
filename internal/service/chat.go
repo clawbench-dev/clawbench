@@ -2688,6 +2688,22 @@ type ContextState struct {
 	Mode           *ModeStatePersist      `json:"mode,omitempty"`
 	ThinkingEffort *ThinkingEffortPersist `json:"thinkingEffort,omitempty"`
 	Usage          *UsageStatePersist     `json:"usage,omitempty"`
+	// TokenRate is the model's output speed on the session's MOST RECENT turn.
+	// Kept outside Usage because it is turn-scoped, not a context-window fact:
+	// merging it into the usage snapshot would make a reconnecting client read
+	// an old turn's speed as part of the current window.
+	TokenRate *TokenRateStat `json:"tokenRate,omitempty"`
+}
+
+// TokenRateStat is the measured output speed of one turn.
+//
+// GenMs is shipped alongside the rate so the UI can explain what the number
+// was measured over ("latest reply actually generated for 4.2s"). Both fields
+// come from the executor's generation-span accounting; nothing here is
+// estimated from wall time.
+type TokenRateStat struct {
+	TokensPerSecond float64 `json:"tokensPerSecond"`
+	GenMs           int     `json:"genMs,omitempty"`
 }
 
 // ModeStatePersist is the DB-persisted form of ai.ModeState.
@@ -2885,6 +2901,55 @@ func PatchContextStateMerge(sessionID string, patches map[string]string) {
 	if _, err := store.WriteExec(query, args...); err != nil {
 		slog.Warn("patchContextStateMerge: write failed", "err", err, "sid", sessionID)
 	}
+}
+
+// tokenRateContextKey is the context_state field carrying the latest turn's
+// output speed (TokenRateStat). Top-level, deliberately NOT under "usage": the
+// value is turn-scoped, and mixing it into the usage snapshot would make it
+// look like part of the context window.
+const tokenRateContextKey = "tokenRate"
+
+// PersistSessionTokenRate records the latest turn's output speed on the session
+// row. It ALWAYS writes: a turn with no measurable speed clears the previous
+// value, because the UI presents this as "the latest reply's speed" and a
+// leftover number from an older reply would be a lie.
+func PersistSessionTokenRate(sessionID string, meta *ai.Metadata) {
+	if sessionID == "" {
+		return
+	}
+	payload := "null"
+	if meta != nil && meta.TokensPerSecond > 0 {
+		if b, err := json.Marshal(TokenRateStat{TokensPerSecond: meta.TokensPerSecond, GenMs: meta.GenMs}); err == nil {
+			payload = string(b)
+		}
+	}
+	PatchContextStateMerge(sessionID, map[string]string{tokenRateContextKey: payload})
+}
+
+// GetSessionTokenRate returns the latest measured output speed for a session,
+// or nil when the latest turn had none.
+//
+// Deliberately not filtered by archived=0: the settings drawer still describes
+// an archived / removed group member, and refusing to answer would silently
+// drop the row there. The query tolerates an empty context_state column (a
+// brand-new session) by substituting '{}'.
+func GetSessionTokenRate(sessionID string) *TokenRateStat {
+	if sessionID == "" {
+		return nil
+	}
+	var raw string
+	err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(json_extract(CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END, '$."+tokenRateContextKey+"'), '') FROM chat_sessions WHERE id = ?",
+		sessionID,
+	).Scan(&raw)
+	if err != nil || raw == "" || raw == "null" {
+		return nil
+	}
+	var stat TokenRateStat
+	if err := json.Unmarshal([]byte(raw), &stat); err != nil || stat.TokensPerSecond <= 0 {
+		return nil
+	}
+	return &stat
 }
 
 // forkContextKey is the context_state field carrying the background text a

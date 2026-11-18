@@ -2116,6 +2116,56 @@ func (s *Store) DeleteChunksByProjectID(projectID int64) (int64, error) {
 	return affected, nil
 }
 
+// ReattributeSessionProject repoints every indexed chunk of one session at
+// another project id, used when a conversation is re-bound to another project
+// (issue #685).
+//
+// Search filters chunks by project id, so leaving them behind would surface the
+// moved conversation in the OLD project's results and hide it from the new
+// one's. FTS stores no project id of its own (it is an external-content table
+// over rag_chunks), but rag_vec duplicates the metadata column and must be
+// updated in the same transaction.
+func (s *Store) ReattributeSessionProject(sessionID string, projectID int64) (int64, error) {
+	if sessionID == "" || projectID == 0 {
+		return 0, nil
+	}
+
+	hasVecTable := s.vecTableExists()
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin reattribute transaction: %w", err)
+	}
+
+	if hasVecTable {
+		if _, err = tx.Exec(
+			"UPDATE rag_vec SET project_id = ? WHERE rowid IN (SELECT id FROM rag_chunks WHERE session_id = ?)",
+			projectID, sessionID,
+		); err != nil {
+			_ = tx.Rollback()
+			return 0, fmt.Errorf("reattribute vec entries: %w", err)
+		}
+	}
+
+	result, err := tx.Exec(
+		"UPDATE rag_chunks SET project_id = ? WHERE session_id = ?",
+		projectID, sessionID,
+	)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("reattribute chunks: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit reattribute: %w", err)
+	}
+	return affected, nil
+}
+
 // DeleteChunksBySessionAfterMessage deletes all chunks belonging to the given
 // session whose message_id is strictly greater than anchorID. Used by the
 // rewind/truncate path so orphan chunks never surface as stale search hits

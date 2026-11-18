@@ -4,110 +4,153 @@
        one edit here instead of one edit per agent. Creating and editing happen
        in ProviderFormDialog — this page only ever shows what is configured. -->
   <div class="provider-setting">
-    <!-- The description and the primary action share one row: "add" used to sit
-         alone on its own line under a four-line paragraph, which cost a whole
-         screenful before the first provider. -->
-    <div class="provider-head">
-      <p class="provider-hint">{{ description || t('settings.items.providerDesc') }}</p>
-      <button class="fbtn fbtn-primary provider-add" data-action="provider-add" @click="openCreate">
-        <Plus :size="14" />
-        {{ t('settings.items.providerAdd') }}
-      </button>
-    </div>
-
-    <div v-if="providers.length === 0" class="provider-empty">
-      {{ t('settings.items.providerEmpty') }}
-    </div>
-
-    <div v-else class="provider-list">
-      <!-- The whole row opens the editor. The two things you do *to* a provider
-           without opening it (test, delete) are compact icon buttons on the
-           right; three full-width pills per card read as a toolbar and pushed
-           the information they belong to out of view. -->
-      <div
-        v-for="p in providers"
-        :key="p.id"
-        class="provider-row"
-        :data-provider-id="p.id"
-        data-action="provider-edit"
-        @click="openEdit(p)"
-      >
-        <ProviderIcon tile :provider-id="iconIdFor(p)" :name="p.name" :size="34" />
-        <div class="provider-row-body">
-          <div class="provider-row-head">
-            <!-- The name is the keyboard-reachable "open" affordance: the row
-                 itself is a convenience tap target, but a focusable wrapper
-                 around the two action buttons would be an interactive element
-                 inside an interactive element. -->
-            <button type="button" class="provider-name" @click.stop="openEdit(p)">{{ p.name }}</button>
-            <span class="provider-key-badge" :class="p.hasKey ? 'provider-key-badge--ok' : 'provider-key-badge--missing'">
-              {{ p.hasKey ? t('settings.items.providerKeySet') : t('settings.items.providerNoKey') }}
-            </span>
-          </div>
-          <div class="provider-meta">{{ metaLine(p) }}</div>
-          <div class="provider-summary">{{ p.baseUrl || t('settings.items.providerNoBaseUrl') }}</div>
-          <div class="provider-detail">{{ detailLine(p) }}</div>
-          <div
-            v-if="testResults[p.id]"
-            class="provider-test-result"
-            :class="testResults[p.id].ok ? 'provider-test-result--ok' : 'provider-test-result--fail'"
-          >
-            <component :is="testResults[p.id].ok ? CheckCircle2 : AlertCircle" :size="13" />
-            <span>{{ testResults[p.id].message }}</span>
-          </div>
-        </div>
-        <div class="provider-row-actions">
-          <button
-            v-if="p.protocol !== 'private'"
-            type="button"
-            class="provider-icon-btn"
-            data-action="provider-test"
-            :disabled="testingId !== null"
-            :title="t('settings.items.providerTestHint')"
-            :aria-label="t('settings.items.providerTest')"
-            @click.stop="testProvider(p)"
-          >
-            <component :is="testingId === p.id ? Loader2 : PlugZap" :size="16" :class="{ 'provider-spin': testingId === p.id }" />
-          </button>
-          <button
-            type="button"
-            class="provider-icon-btn provider-icon-btn--danger"
-            data-action="provider-remove"
-            :title="t('settings.items.providerRemove')"
-            :aria-label="t('settings.items.providerRemove')"
-            @click.stop="removeProvider(p)"
-          >
-            <Trash2 :size="16" />
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Catalogue state is bookkeeping, not a setting: it moved below the list
-         so it stops competing with the providers themselves. -->
-    <div class="provider-catalog">
-      <span class="provider-catalog-text">
-        {{ catalogFetchedAt
-          ? t('settings.items.providerCatalogUpdated', { date: catalogDate, count: catalogCount })
-          : t('settings.items.providerCatalogMissing') }}
-        <span v-if="catalogStale" class="provider-catalog-stale">{{ t('settings.items.providerCatalogStale') }}</span>
-      </span>
+    <!-- Two audiences, one page: ordinary endpoints share the generic list and
+         form, while an own-service account (CodeBuddy / Cursor / Command Code /
+         Antigravity) needs a field the generic form cannot express — which
+         backend it belongs to, plus CodeBuddy's service edition and the address
+         its enterprise editions live at. One tab per backend keeps every panel
+         specific without teaching the generic form about any of them. -->
+    <div class="provider-tabs" role="tablist">
       <button
         type="button"
-        class="provider-catalog-refresh"
-        :disabled="refreshingCatalog"
-        :title="t('settings.items.providerCatalogRefresh')"
-        :aria-label="t('settings.items.providerCatalogRefresh')"
-        @click="refreshCatalog"
+        class="provider-tab"
+        :class="{ 'provider-tab--on': tab === 'general' }"
+        role="tab"
+        :aria-selected="tab === 'general'"
+        data-tab="general"
+        @click="tab = 'general'"
       >
-        <component :is="refreshingCatalog ? Loader2 : RefreshCw" :size="13" :class="{ 'provider-spin': refreshingCatalog }" />
+        {{ t('settings.items.providerTabGeneral') }}
+      </button>
+      <button
+        v-for="b in ACCOUNT_BACKENDS"
+        :key="b"
+        type="button"
+        class="provider-tab"
+        :class="{ 'provider-tab--on': tab === b }"
+        role="tab"
+        :aria-selected="tab === b"
+        :data-tab="b"
+        @click="tab = b"
+      >
+        {{ t(ACCOUNT_BACKEND_LABELS[b]) }}
       </button>
     </div>
 
-    <div v-if="error" class="provider-error">
-      <AlertCircle :size="13" />
-      <span>{{ error }}</span>
-    </div>
+    <template v-if="tab === 'general'">
+      <!-- The description and the primary action share one row: "add" used to sit
+           alone on its own line under a four-line paragraph, which cost a whole
+           screenful before the first provider. -->
+      <div class="provider-head">
+        <p class="provider-hint">{{ description || t('settings.items.providerDesc') }}</p>
+        <button class="fbtn fbtn-primary provider-add" data-action="provider-add" @click="openCreate">
+          <Plus :size="14" />
+          {{ t('settings.items.providerAdd') }}
+        </button>
+      </div>
+
+      <div v-if="providers.length === 0" class="provider-empty">
+        {{ t('settings.items.providerEmpty') }}
+      </div>
+
+      <div v-else class="provider-list">
+        <!-- The whole row opens the editor. The two things you do *to* a provider
+             without opening it (test, delete) are compact icon buttons on the
+             right; three full-width pills per card read as a toolbar and pushed
+             the information they belong to out of view. -->
+        <div
+          v-for="p in providers"
+          :key="p.id"
+          class="provider-row"
+          :data-provider-id="p.id"
+          data-action="provider-edit"
+          @click="openEdit(p)"
+        >
+          <ProviderIcon tile :provider-id="iconIdFor(p)" :name="p.name" :size="34" />
+          <div class="provider-row-body">
+            <div class="provider-row-head">
+              <!-- The name is the keyboard-reachable "open" affordance: the row
+                   itself is a convenience tap target, but a focusable wrapper
+                   around the two action buttons would be an interactive element
+                   inside an interactive element. -->
+              <button type="button" class="provider-name" @click.stop="openEdit(p)">{{ p.name }}</button>
+              <span class="provider-key-badge" :class="p.hasKey ? 'provider-key-badge--ok' : 'provider-key-badge--missing'">
+                {{ p.hasKey ? t('settings.items.providerKeySet') : t('settings.items.providerNoKey') }}
+              </span>
+            </div>
+            <div class="provider-meta">{{ metaLine(p) }}</div>
+            <div class="provider-summary">{{ p.baseUrl || t('settings.items.providerNoBaseUrl') }}</div>
+            <div class="provider-detail">{{ detailLine(p) }}</div>
+            <div
+              v-if="testResults[p.id]"
+              class="provider-test-result"
+              :class="testResults[p.id].ok ? 'provider-test-result--ok' : 'provider-test-result--fail'"
+            >
+              <component :is="testResults[p.id].ok ? CheckCircle2 : AlertCircle" :size="13" />
+              <span>{{ testResults[p.id].message }}</span>
+            </div>
+          </div>
+          <div class="provider-row-actions">
+            <button
+              v-if="p.protocol !== 'private'"
+              type="button"
+              class="provider-icon-btn"
+              data-action="provider-test"
+              :disabled="testingId !== null"
+              :title="t('settings.items.providerTestHint')"
+              :aria-label="t('settings.items.providerTest')"
+              @click.stop="testProvider(p)"
+            >
+              <component :is="testingId === p.id ? Loader2 : PlugZap" :size="16" :class="{ 'provider-spin': testingId === p.id }" />
+            </button>
+            <button
+              type="button"
+              class="provider-icon-btn provider-icon-btn--danger"
+              data-action="provider-remove"
+              :title="t('settings.items.providerRemove')"
+              :aria-label="t('settings.items.providerRemove')"
+              @click.stop="removeProvider(p)"
+            >
+              <Trash2 :size="16" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Catalogue state is bookkeeping, not a setting: it moved below the list
+           so it stops competing with the providers themselves. -->
+      <div class="provider-catalog">
+        <span class="provider-catalog-text">
+          {{ catalogFetchedAt
+            ? t('settings.items.providerCatalogUpdated', { date: catalogDate, count: catalogCount })
+            : t('settings.items.providerCatalogMissing') }}
+          <span v-if="catalogStale" class="provider-catalog-stale">{{ t('settings.items.providerCatalogStale') }}</span>
+        </span>
+        <button
+          type="button"
+          class="provider-catalog-refresh"
+          :disabled="refreshingCatalog"
+          :title="t('settings.items.providerCatalogRefresh')"
+          :aria-label="t('settings.items.providerCatalogRefresh')"
+          @click="refreshCatalog"
+        >
+          <component :is="refreshingCatalog ? Loader2 : RefreshCw" :size="13" :class="{ 'provider-spin': refreshingCatalog }" />
+        </button>
+      </div>
+
+      <div v-if="error" class="provider-error">
+        <AlertCircle :size="13" />
+        <span>{{ error }}</span>
+      </div>
+    </template>
+
+    <OwnServiceAccountForm
+      v-else
+      :backend="tab"
+      :providers="providers"
+      :selected-id="accountId"
+      @saved="onAccountSaved"
+    />
 
     <ProviderFormDialog
       :open="formOpen"
@@ -131,6 +174,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from '@/utils/api'
 import { useDialog } from '@/composables/useDialog'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ProviderFormDialog, { type ProviderFormValue, type ProviderRow } from './ProviderFormDialog.vue'
+import OwnServiceAccountForm from './OwnServiceAccountForm.vue'
 import type { PresetOption } from './ProviderPresetPicker.vue'
 import { rememberProviderNames } from '@/utils/providerNames'
 import { appLog } from '@/utils/appLog'
@@ -141,6 +185,26 @@ const { t } = useI18n()
 const { confirm } = useDialog()
 
 const providers = ref<ProviderRow[]>([])
+/** Backends whose credential is for their OWN service: the generic form cannot
+ *  say which one a row belongs to, so each gets its own panel. */
+const ACCOUNT_BACKENDS = ['codebuddy', 'cursor', 'commandcode', 'antigravity'] as const
+type AccountBackend = (typeof ACCOUNT_BACKENDS)[number]
+const ACCOUNT_BACKEND_LABELS: Record<AccountBackend, string> = {
+  codebuddy: 'settings.items.accountNameCodeBuddy',
+  cursor: 'settings.items.accountNameCursor',
+  commandcode: 'settings.items.accountNameCommandCode',
+  antigravity: 'settings.items.accountNameAntigravity',
+}
+
+function isAccountBackend(value: string): value is AccountBackend {
+  return (ACCOUNT_BACKENDS as readonly string[]).includes(value)
+}
+
+/** Which half of the page is showing. Own-service rows belong to a backend
+ *  panel: the generic form would drop their backend and (CodeBuddy's) edition. */
+const tab = ref<'general' | AccountBackend>('general')
+/** Row an account panel should open (set when a private row is clicked). */
+const accountId = ref<number | null>(null)
 const presets = ref<PresetOption[]>([])
 const saving = ref(false)
 /** List-level failures (load / delete / catalogue). Form failures live in
@@ -204,15 +268,18 @@ function authLabel(mode: string): string {
 function metaLine(p: ProviderRow): string {
   // The private protocol has no auth mode of its own: the backend injects its
   // fixed credential variable, so showing "auto" there would be noise.
-  const parts = [protocolLabel(p.protocol)]
+  const parts = [protocolLabel(p)]
   if (p.protocol !== 'private') parts.push(authLabel(p.authMode))
   if (p.agentCount > 0) parts.push(t('settings.items.providerUsedBy', { count: p.agentCount }))
   return parts.join(' · ')
 }
 
-/** Only the private protocol has a name that differs from its wire id. */
-function protocolLabel(protocol: string): string {
-  return protocol === 'private' ? t('settings.items.providerProtocolPrivate') : protocol
+/** An own-service credential is named after the backend it belongs to; the
+ *  three wire protocols are already their own names. */
+function protocolLabel(p: ProviderRow): string {
+  if (p.protocol !== 'private') return p.protocol
+  const key = p.backend ? ACCOUNT_BACKEND_LABELS[p.backend as AccountBackend] : ''
+  return key ? t('settings.items.accountLabel', { name: t(key) }) : t('settings.items.providerProtocolPrivate')
 }
 
 /** One muted line under the endpoint: what this provider offers and who uses
@@ -238,10 +305,24 @@ function openCreate() {
 }
 
 function openEdit(p: ProviderRow) {
+  // An own-service row carries fields the generic form does not know about, and
+  // its save would clear them. Hand it to the panel that owns them. A row with
+  // no backend predates the split; the panel it lands in adopts it on save.
+  if (p.protocol === 'private') {
+    accountId.value = p.id
+    tab.value = isAccountBackend(p.backend ?? '') ? (p.backend as AccountBackend) : 'codebuddy'
+    return
+  }
   editingProvider.value = p
   justCreated.value = false
   formError.value = ''
   formOpen.value = true
+}
+
+/** Keep the just-saved account selected, then refresh the shared list. */
+function onAccountSaved(id: number) {
+  accountId.value = id
+  void loadProviders()
 }
 
 function closeForm() {
@@ -403,6 +484,39 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+.provider-tabs {
+  display: flex;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-color);
+  /* Five tabs do not fit a phone; scrolling beats wrapping into two rows. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.provider-tabs::-webkit-scrollbar {
+  display: none;
+}
+.provider-tab {
+  flex: none;
+}
+.provider-tab {
+  padding: calc(4 * var(--dp)) var(--space-4);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-md);
+  font-family: inherit;
+  cursor: pointer;
+}
+.provider-tab:hover {
+  color: var(--text-primary);
+}
+.provider-tab--on {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
 }
 .provider-head {
   display: flex;

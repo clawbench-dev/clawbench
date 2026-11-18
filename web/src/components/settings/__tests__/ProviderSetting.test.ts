@@ -34,6 +34,28 @@ const i18n = createI18n({
       settings: {
         items: {
           providerDesc: '模型提供商',
+          providerTabGeneral: '通用',
+          accountLabel: '{name} 账号',
+          accountKeyOnlyHint: '{name} 只需要密钥',
+          accountNameCodeBuddy: 'CodeBuddy',
+          accountNameCursor: 'Cursor',
+          accountNameCommandCode: 'Command Code',
+          accountNameAntigravity: 'Antigravity',
+          providerKeyHide: '隐藏密钥',
+          providerKeyReveal: '查看密钥',
+          codebuddyFormHint: 'CodeBuddy 账号说明',
+          codebuddyProtocolType: '协议类型',
+          codebuddyDeploymentHint: '版本说明',
+          codebuddyDeploymentPublic: '公有云账号',
+          codebuddyDeploymentInternal: '中国版',
+          codebuddyDeploymentIOA: 'iOA 版',
+          codebuddyDeploymentDedicated: '专享版（企业域名）',
+          codebuddyDeploymentSelfHosted: '私有化部署（企业域名）',
+          codebuddyDomain: '企业域名',
+          codebuddyDomainPlaceholder: 'https://your-company.example.com',
+          codebuddyDomainHint: '域名说明',
+          codebuddyKeyKeep: '已保存，留空表示不修改',
+          codebuddySaved: '已保存',
           providerEmpty: '还没有配置模型提供商',
           providerName: '名称',
           providerNamePlaceholder: '例如 MiniMax',
@@ -140,6 +162,97 @@ describe('ProviderSetting', () => {
     mockPost.mockResolvedValue({})
     mockPut.mockResolvedValue({})
     mockDelete.mockResolvedValue(undefined)
+  })
+
+  it('keeps the saved CodeBuddy account selected and confirms the save', async () => {
+    const created = {
+      id: 12, name: '公司 CodeBuddy', protocol: 'private', baseUrl: 'https://cb.example.com',
+      deployment: 'selfhosted', authMode: 'auto', hasKey: true, agentCount: 0,
+    }
+    let list = [] as unknown[]
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/api/providers') return Promise.resolve({ providers: list })
+      if (url === '/api/providers/presets') return Promise.resolve({ presets: [] })
+      if (url === '/api/catalog') return Promise.resolve({})
+      return Promise.resolve({})
+    })
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/api/providers') { list = [created]; return Promise.resolve(created) }
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(ProviderSetting, {
+      global: {
+        plugins: [i18n],
+        stubs: {
+          ModalDialog: {
+            props: ['open', 'title'],
+            template: '<div v-if="open" class="mock-dialog"><slot /></div>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-tab="codebuddy"]').trigger('click')
+    await wrapper.find('[data-role="account-name"]').setValue('公司 CodeBuddy')
+    await wrapper.find('[data-role="account-deployment"]').setValue('selfhosted')
+    await wrapper.find('[data-role="account-domain"]').setValue('https://cb.example.com')
+    await wrapper.find('[data-role="account-key"]').setValue('ck-1')
+    await wrapper.find('[data-action="account-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mockPost).toHaveBeenCalledWith('/api/providers', expect.objectContaining({ protocol: 'private', deployment: 'selfhosted' }))
+    // The form must keep showing the row it just created (not fall back to a
+    // blank "add" form) and say so.
+    expect(wrapper.find<HTMLInputElement>('[data-role="account-name"]').element.value).toBe('公司 CodeBuddy')
+    expect(wrapper.find('[data-role="account-saved"]').exists()).toBe(true)
+  })
+
+  it('routes an own-service row to its backend tab instead of the generic dialog', async () => {
+    const wrapper = mountSetting([
+      { id: 9, name: 'CodeBuddy', protocol: 'private', backend: 'codebuddy', baseUrl: '', authMode: 'auto', hasKey: true, agentCount: 1 },
+    ])
+    await flushPromises()
+
+    await wrapper.find('.provider-row[data-provider-id="9"]').trigger('click')
+
+    // The generic form cannot express the owner backend (or the edition and
+    // enterprise address), and its save would clear them — so this row belongs
+    // to the panel of the backend it names.
+    expect(wrapper.find('[data-tab="codebuddy"]').classes()).toContain('provider-tab--on')
+    expect(wrapper.find('.mock-dialog').exists()).toBe(false)
+    expect(wrapper.find('[data-role="account-name"]').exists()).toBe(true)
+  })
+
+  it('routes each account to its own backend tab', async () => {
+    const wrapper = mountSetting([
+      { id: 9, name: 'Cursor key', protocol: 'private', backend: 'cursor', baseUrl: '', authMode: 'auto', hasKey: true, agentCount: 1 },
+    ])
+    await flushPromises()
+
+    await wrapper.find('.provider-row[data-provider-id="9"]').trigger('click')
+
+    expect(wrapper.find('[data-tab="cursor"]').classes()).toContain('provider-tab--on')
+    // Cursor has nothing beyond the key, so no edition control appears.
+    expect(wrapper.find('[data-role="account-deployment"]').exists()).toBe(false)
+  })
+
+  it('keeps the general list reachable through its own tab', async () => {
+    const wrapper = mountSetting([])
+    await flushPromises()
+
+    expect(wrapper.find('[data-tab="general"]').classes()).toContain('provider-tab--on')
+    // One tab per own-service backend, so every account type has a home.
+    for (const backend of ['codebuddy', 'cursor', 'commandcode', 'antigravity']) {
+      expect(wrapper.find(`[data-tab="${backend}"]`).exists()).toBe(true)
+    }
+
+    await wrapper.find('[data-tab="cursor"]').trigger('click')
+    expect(wrapper.find('.provider-add').exists()).toBe(false)
+
+    await wrapper.find('[data-tab="general"]').trigger('click')
+    expect(wrapper.find('.provider-add').exists()).toBe(true)
   })
 
   it('renders the empty hint and the key state of each row', async () => {

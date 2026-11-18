@@ -657,6 +657,7 @@ const serverDefaults: Record<string, unknown> = {
   // Mail master switch defaults ON, mirroring ApplyDefaults so the dock does not
   // flash the tab away before /api/config arrives.
   'mail.enabled': true,
+  'mail.notify': true,
   // Task scheduler / share-center master switches (功能编排). Same reasoning:
   // ON by default so nothing flickers off before the config lands, and so a
   // config written before these keys existed keeps the feature enabled.

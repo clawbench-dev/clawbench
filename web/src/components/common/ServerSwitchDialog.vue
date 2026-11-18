@@ -10,10 +10,10 @@
       <p class="server-switch__lead">{{ t('serverSwitch.lead') }}</p>
 
       <div v-if="loading" class="server-switch__hint">{{ t('common.loading') }}</div>
-      <div v-else-if="servers.length === 0" class="server-switch__hint">{{ t('serverSwitch.empty') }}</div>
+      <div v-else-if="rows.length === 0" class="server-switch__hint">{{ t('serverSwitch.empty') }}</div>
       <div v-else class="server-switch__list">
         <button
-          v-for="srv in servers"
+          v-for="srv in rows"
           :key="srv.url"
           type="button"
           class="server-switch__row"
@@ -32,6 +32,13 @@
           </span>
           <span v-if="srv.url === currentUrl" class="server-switch__current">
             {{ t('serverSwitch.current') }}
+          </span>
+          <span
+            v-else-if="srv.embedded"
+            class="server-switch__status"
+            :class="{ 'is-stopped': !srv.running }"
+          >
+            {{ srv.running ? t('serverSwitch.running') : t('serverSwitch.stopped') }}
           </span>
           <ChevronRight v-else :size="15" class="server-switch__chevron" />
         </button>
@@ -91,6 +98,38 @@ defineEmits<{
 const { t } = useI18n()
 const { servers, load, save, getLabel } = useServerList()
 
+/**
+ * The server this build ships with (desktop "all-in-one" builds), or null.
+ *
+ * It is not a saved server: the shell starts and stops it, and it cannot be
+ * renamed or deleted. Kept in its own row above the user's list so "go back to
+ * this machine" does not require leaving the app for the login page.
+ */
+interface EmbeddedServer {
+  url: string
+  password: string
+  running: boolean
+}
+
+type ServerRow = ServerEntry & { embedded?: boolean; running?: boolean }
+
+const embedded = ref<EmbeddedServer | null>(null)
+
+const rows = computed<ServerRow[]>(() => {
+  const list: ServerRow[] = []
+  if (embedded.value) {
+    list.push({
+      url: embedded.value.url,
+      password: embedded.value.password,
+      name: t('serverSwitch.thisDevice'),
+      embedded: true,
+      running: embedded.value.running,
+    })
+  }
+  list.push(...servers.value)
+  return list
+})
+
 const loading = ref(false)
 const switching = ref(false)
 const error = ref('')
@@ -100,15 +139,30 @@ const passwordRef = ref<HTMLInputElement | null>(null)
 const currentUrl = window.location.origin
 
 const pendingLabel = computed(() => {
-  const entry = servers.value.find(s => s.url === pendingUrl.value)
+  const entry = rows.value.find(s => s.url === pendingUrl.value)
   return entry ? getLabel(entry) : pendingUrl.value
 })
+
+async function loadEmbedded() {
+  const native = getNative()
+  if (!native?.getEmbeddedServer) return null
+  try {
+    const json = await native.getEmbeddedServer()
+    const info = JSON.parse(json)
+    if (!info || typeof info.url !== 'string' || !info.url) return null
+    return { url: info.url, password: info.password || '', running: info.running === true }
+  } catch (err) {
+    appLog.w('ServerSwitchDialog', 'Failed to read the built-in server', err)
+    return null
+  }
+}
 
 async function refresh() {
   loading.value = true
   error.value = ''
   try {
     await load()
+    embedded.value = await loadEmbedded()
   } catch (err) {
     appLog.w('ServerSwitchDialog', 'Failed to load server list', err)
     error.value = t('serverSwitch.loadFailed')
@@ -125,11 +179,13 @@ watch(() => props.open, (open) => {
   void refresh()
 }, { immediate: true })
 
-function selectServer(srv: ServerEntry) {
+function selectServer(srv: ServerRow) {
   if (switching.value || srv.url === currentUrl) return
   error.value = ''
-  if (srv.password) {
-    void connect(srv.url, srv.password)
+  // The built-in server is started by the shell on demand, and its credential
+  // is filled in there; an empty saved password is not a question for the user.
+  if (srv.password || srv.embedded) {
+    void connect(srv.url, srv.password || '')
     return
   }
   pendingUrl.value = srv.url
@@ -157,7 +213,7 @@ async function connect(url: string, pwd: string) {
 async function confirmPassword() {
   const url = pendingUrl.value
   if (!url || !password.value) return
-  const entry = servers.value.find(s => s.url === url)
+  const entry = rows.value.find(s => s.url === url)
   try {
     await save(url, password.value, entry?.name)
   } catch (err) {
@@ -294,6 +350,20 @@ async function confirmPassword() {
   color: var(--accent-color);
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
+}
+
+/* The built-in server's state, where a saved row shows its chevron: it looks
+   the same whether it is up or down, so the answer has to be stated. */
+.server-switch__status {
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  color: var(--accent-color);
+  white-space: nowrap;
+}
+
+.server-switch__status.is-stopped {
+  color: var(--text-secondary);
+  opacity: 0.8;
 }
 
 .server-switch__chevron {

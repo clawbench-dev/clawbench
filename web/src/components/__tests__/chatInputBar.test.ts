@@ -674,13 +674,16 @@ describe('ChatInputBar — action bar labels', () => {
     expect(directButtons.every(el => el.classList.contains('chat-action-btn'))).toBe(true)
   })
 
-  it('runs in scroll mode, so no button is ever folded into a menu', async () => {
-    // The chat bar scrolls (drag + edge fades) instead of collapsing: every
-    // action must stay reachable in the strip.
+  it('runs in menu mode, so buttons that do not fit fold into the "more" menu', async () => {
+    // The chat bar folds instead of scrolling: a button that does not fit is
+    // hidden and offered in the "more" menu, so nothing is reachable only by a
+    // sideways swipe the user cannot discover. The "more" button itself only
+    // exists once something is actually folded (jsdom reports no width, so at
+    // mount time everything is assumed to fit) — what this pins is the mode.
     const wrapper = mountInputBar({}, { deep: true })
     await nextTick()
-    expect(actionBar(wrapper).classes()).toContain('ab--scroll')
-    expect(actionBar(wrapper).find('[data-ab-more]').exists()).toBe(false)
+    expect(actionBar(wrapper).classes()).toContain('ab')
+    expect(actionBar(wrapper).classes()).not.toContain('ab--scroll')
     expect(wrapper.findAll('.chat-action-btn').length).toBeGreaterThan(5)
   })
 })

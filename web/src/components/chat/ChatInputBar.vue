@@ -1,7 +1,7 @@
 <template>
   <div class="chat-input-wrapper" ref="rootRef">
     <!-- Top action bar (above input box) -->
-    <ActionBar class="chat-top-actions" ref="actionBarRef" mode="scroll">
+    <ActionBar class="chat-top-actions" ref="actionBarRef" mode="menu">
       <button class="chat-action-btn" data-action="session"
         :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
         @click="$emit('open-session-tab', 'sessions')"
@@ -28,27 +28,8 @@
         <MessagesSquare :size="14" />
         <span class="action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
       </button>
-      <button
-        v-if="isACPTransport && !isGroupSession"
-        class="chat-action-btn acp-sync-btn"
-        :class="{ disabled: acpSyncDisabled }"
-        :disabled="acpSyncDisabled"
-        @click="!acpSyncDisabled && $emit('sync-acp-session')"
-        :title="acpSyncTitle"
-        :aria-label="t('chat.actions.acpSync')"
-      >
-        <LoadingIndicator v-if="props.acpSyncing" size="sm" inline />
-        <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
-        <span class="action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
-      </button>
-      <button v-if="shareAllowed" data-action="share-session" class="chat-action-btn" :class="{ disabled: !currentSessionId }"
-        @click="handleShare"
-        :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
-        <MessageSquareShare :size="14" />
-        <span class="action-label">{{ t('chat.actions.wideLabels.share') }}</span>
-      </button>
-      <!-- Archive sits LAST: it is the destructive/terminal action on the
-           session, so it is separated from the navigation buttons. -->
+      <!-- Archive is the destructive/terminal action on the session, so it is
+           separated from the navigation buttons that precede it. -->
       <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
         @click="handleArchive"
         :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
@@ -83,6 +64,28 @@
       <RefreshButton v-if="currentSessionId" data-action="refresh-session" class="chat-action-btn" :loading="refreshingSession" :title="t('chat.actions.reloadSession')" @click="$emit('refresh-session')">
         <span class="action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
       </RefreshButton>
+      <!-- Share and ACP sync are the two least-used actions here, so they sit at
+           the tail: in menu mode these are the first to drop into the overflow
+           menu when the row runs out of width. -->
+      <button v-if="shareAllowed" data-action="share-session" class="chat-action-btn" :class="{ disabled: !currentSessionId }"
+        @click="handleShare"
+        :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
+        <MessageSquareShare :size="14" />
+        <span class="action-label">{{ t('chat.actions.wideLabels.share') }}</span>
+      </button>
+      <button
+        v-if="isACPTransport && !isGroupSession"
+        class="chat-action-btn acp-sync-btn"
+        :class="{ disabled: acpSyncDisabled }"
+        :disabled="acpSyncDisabled"
+        @click="!acpSyncDisabled && $emit('sync-acp-session')"
+        :title="acpSyncTitle"
+        :aria-label="t('chat.actions.acpSync')"
+      >
+        <LoadingIndicator v-if="props.acpSyncing" size="sm" inline />
+        <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
+        <span class="action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
+      </button>
     </ActionBar>
     <!-- Free-dialog status strip: what the microphone is hearing right now.
          Without it the mode is a black box — the transcript was collected but
@@ -241,6 +244,7 @@
         :open="settingsDrawer.effectiveOpen.value"
         :agent-id="currentAgentId"
         :initial-tab="settingsDrawerInitialTab"
+        :token-rate="latestRate"
         @close="settingsDrawer.close()"
         @switch-model="handleSwitchModel"
         @switch-thinking-effort="handleSwitchThinkingEffort"
@@ -290,8 +294,11 @@
             <span>{{ t('chat.sessionInfo.contextUsage') }}</span>
           </div>
           <!-- Shared with the settings drawer's usage tab so both surfaces
-               render identical rows, colours and thresholds. -->
-          <ContextUsageDetail :usage="usageSnapshot" show-compact @compact="handleCompact(); usageDrawer.close()" />
+               render identical rows, colours and thresholds.
+               No compaction for the built-in agent: its "compact" is an
+               in-process operation triggered by the engine, not the ACP slash
+               command, so sending "/compact" would reach the model as prose. -->
+          <ContextUsageDetail :usage="usageSnapshot" :token-rate="latestRate" :show-compact="!isBuiltin" @compact="handleCompact(); usageDrawer.close()" />
         </div>
       </PopupMenu>
     </div>
@@ -379,7 +386,7 @@ import RefreshButton from '@/components/common/RefreshButton.vue'
 import AttachmentPicker from '@/components/attach/AttachmentPicker.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import ContextUsageDetail from '@/components/chat/ContextUsageDetail.vue'
-import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
+import { usagePct as usagePctOf, usageColor as usageColorOf, latestTokenRate } from '@/utils/usageDisplay'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
 import ChatStopMenu from '@/components/chat/ChatStopMenu.vue'
 import MentionCard from '@/components/chat/MentionCard.vue'
@@ -590,6 +597,11 @@ const usageSnapshot = computed(() => ({
 }))
 const usagePct = computed(() => usagePctOf(usageSnapshot.value))
 const usageColor = computed(() => usageColorOf(usagePct.value))
+// Output speed of the latest completed reply, read from the message metadata the
+// backend wrote (per-message `tokensPerSecond` / `genMs`). The usage snapshot
+// itself is session-cumulative, so it cannot carry a per-turn speed; the drawer
+// opened from this bar receives the same value by prop.
+const latestRate = computed(() => latestTokenRate(props.messages))
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
@@ -2638,9 +2650,9 @@ defineExpose({
 }
 
 /* Top action bar (above input box, compact) */
-/* The strip is ActionBar (scroll mode): it owns the scroller, the hidden
-   scrollbar, the grab cursor, the edge masks and the label decision. Only the
-   composer-specific chrome stays here. */
+/* The strip is ActionBar (menu mode): it owns the layout, the "more" button and
+   the label decision — buttons that do not fit are folded into that menu. Only
+   the composer-specific chrome stays here. */
 .chat-top-actions {
   padding: var(--space-1) var(--space-2) var(--space-3);
 }

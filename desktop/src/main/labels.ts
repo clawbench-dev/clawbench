@@ -61,6 +61,12 @@ export interface VersionGateLabels {
   payloadInstallFailed: string
   /** Prefix for the full-package failure inside the install-failure detail. */
   fullDownloadFailed: string
+  /**
+   * Shown instead of installing when this client ships its own server: replacing
+   * it with the thin package would remove the server it carries.
+   */
+  fusedUpdateTitle: string
+  fusedUpdateMessage: string
 }
 
 /**
@@ -82,6 +88,8 @@ export function versionGateLabels(locale: string): VersionGateLabels {
       restartFailedMessage: '无法启动该版本，请手动重启应用。',
       payloadInstallFailed: '增量包（npm）安装失败：',
       fullDownloadFailed: '全量包下载失败：',
+      fusedUpdateTitle: '请安装新版安装包',
+      fusedUpdateMessage: '当前客户端自带服务端，不能只替换客户端。请下载新版的一体安装包重新安装，客户端和服务端会一起更新。',
     }
   }
   return {
@@ -97,6 +105,8 @@ export function versionGateLabels(locale: string): VersionGateLabels {
     restartFailedMessage: 'Could not launch this version. Please restart the app manually.',
     payloadInstallFailed: 'Payload (npm) install failed:',
     fullDownloadFailed: 'Full package download failed:',
+    fusedUpdateTitle: 'Install the new package',
+    fusedUpdateMessage: 'This client ships with its own server, so the client alone cannot be replaced. Download the new all-in-one package and reinstall: client and server then update together.',
   }
 }
 

@@ -1,4 +1,3 @@
-import { ref } from 'vue'
 import { gt } from '@/composables/useLocale'
 
 /**
@@ -19,19 +18,13 @@ import { gt } from '@/composables/useLocale'
 
 import {
   BLOCK_WRAP_STORAGE_KEY,
+  blockWrapVersion,
   getDefaultBlockWrap,
   setBlockWrapCache,
   _resetBlockWrapCache,
 } from './blockWrapRead'
 
-export { BLOCK_WRAP_STORAGE_KEY, getDefaultBlockWrap }
-
-/**
- * Bumped on every change. Rendered markdown is cached by
- * `ContentBlocks.getBlockHtml`; the cache key has to include this or a cached
- * block would come back with the previous default's wrapper classes.
- */
-export const blockWrapVersion = ref(0)
+export { BLOCK_WRAP_STORAGE_KEY, blockWrapVersion, getDefaultBlockWrap }
 
 /**
  * Re-apply a wrap mode to every block already in the document, buttons
@@ -48,6 +41,12 @@ export function applyBlockWrapToRenderedBlocks(wrap: boolean): void {
 
   const tableLabel = gt(wrap ? 'tableBlock.wrapOn' : 'tableBlock.wrapOff')
   for (const wrapper of Array.from(document.querySelectorAll<HTMLElement>('.table-block-wrapper'))) {
+    // DataTable wrappers are driven by the component itself (it watches
+    // `blockWrapVersion`). Writing `no-wrap` here would create a SECOND source
+    // of truth: the wrapper's `!important` rules beat the component's classes,
+    // so a table whose own toggle says "wrap" would still render flat — and the
+    // per-block toggle would appear dead until the next global change.
+    if (wrapper.querySelector('.dt')) continue
     wrapper.classList.toggle('word-wrap', wrap)
     wrapper.classList.toggle('no-wrap', !wrap)
     const btn = wrapper.querySelector<HTMLElement>('.table-block-wrap-btn')

@@ -91,6 +91,7 @@ describe('notification navigation origin wiring', () => {
       'clawbench-open-forge',
       'clawbench-open-usage-meter',
       'clawbench-open-meeting',
+      'clawbench-open-mail',
     ]) {
       expect(panel, `${event} must be dispatched through jumpTo`).toContain(`jumpTo('${event}'`)
     }

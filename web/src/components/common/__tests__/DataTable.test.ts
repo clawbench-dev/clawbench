@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { nextTick } from 'vue'
 import en from '@/i18n/locales/en'
 import DataTable from '../DataTable.vue'
+import { getBlockLandscapeTable } from '@/composables/dataTableLandscape'
+import { _resetBlockWrapCache, blockWrapVersion, setBlockWrapCache } from '@/utils/blockWrapRead'
 
 const { mockCopyText, mockToastShow } = vi.hoisted(() => ({
   mockCopyText: vi.fn(),
@@ -14,6 +16,10 @@ vi.mock('@/utils/clipboard', () => ({ copyText: mockCopyText }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: mockToastShow }) }))
 
 const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+
+afterEach(() => {
+  _resetBlockWrapCache()
+})
 
 const NUMERIC_HEADERS = ['region', 'q1', 'q2']
 const NUMERIC_ROWS = [
@@ -379,6 +385,77 @@ describe('DataTable', () => {
   it('falls back to a positional label for an empty header', () => {
     const wrapper = mountTable(['name', ''], [['ann', '1'], ['bob', '2']])
     expect(wrapper.findAll('.dt-grid thead th')[1].text()).toContain('Column 2')
+    wrapper.unmount()
+  })
+
+  // ── 全屏浮层（活组件）与全局换行偏好 ────────────────────────────────
+
+  it('registers a live handle for the fullscreen overlay and drops it on unmount', () => {
+    const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
+    const handle = getBlockLandscapeTable(wrapper.element)
+    expect(handle).not.toBeNull()
+    expect(handle!.snapshot()).toEqual({
+      headers: TEXT_HEADERS,
+      rows: TEXT_ROWS,
+      mode: 'normal',
+      wrap: true,
+      pageSize: 0,
+    })
+
+    wrapper.unmount()
+    expect(getBlockLandscapeTable(wrapper.element)).toBeNull()
+  })
+
+  it('snapshots the mode the table is actually showing', async () => {
+    const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
+    await wrapper.find('.mode-switch').trigger('click')
+
+    expect(wrapper.find('.dt').classes()).toContain('is-data')
+    expect(getBlockLandscapeTable(wrapper.element)!.snapshot().mode).toBe('data')
+    wrapper.unmount()
+  })
+
+  it('reports mode changes so the fullscreen copy can mirror them', async () => {
+    const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
+    await wrapper.find('.mode-switch').trigger('click')
+    expect(wrapper.emitted('update:mode')).toEqual([['data']])
+    wrapper.unmount()
+  })
+
+  it('reports the simple-table wrap toggle', async () => {
+    const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
+    const btn = wrapper.find('.dt-wrap-btn')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    expect(wrapper.emitted('update:wrap')).toEqual([[false]])
+    wrapper.unmount()
+  })
+
+  it('turns the maximize button into a close button when expanded', async () => {
+    const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS, { expanded: true })
+    const btn = wrapper.find('.table-block-landscape-btn')
+    expect(btn.attributes('data-action')).toBe('landscape-close')
+    expect(btn.attributes('title')).toBe('Close fullscreen view')
+
+    await btn.trigger('click')
+    expect(wrapper.emitted('collapse')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('follows the global wrap preference while mounted', async () => {
+    setBlockWrapCache(true)
+    const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
+    expect(wrapper.find('.dt').classes()).not.toContain('no-wrap')
+
+    setBlockWrapCache(false)
+    blockWrapVersion.value += 1
+    await nextTick()
+    expect(wrapper.find('.dt').classes()).toContain('no-wrap')
+
+    setBlockWrapCache(true)
+    blockWrapVersion.value += 1
+    await nextTick()
+    expect(wrapper.find('.dt').classes()).not.toContain('no-wrap')
     wrapper.unmount()
   })
 })
