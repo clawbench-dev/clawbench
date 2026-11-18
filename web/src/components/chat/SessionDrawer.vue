@@ -505,7 +505,10 @@ const hasWindow = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
 // button only produced an error after the click.
 const canCompactHere = computed(() => {
   if (!hasWindow.value) return false
-  if (!isTargeted.value) return true
+  // Single chat: a built-in agent has no slash-command channel either. Its
+  // context is compacted by the engine itself, so "/compact" would arrive at
+  // the model as a prose message.
+  if (!isTargeted.value) return !isBuiltinAgent(props.agentId || '')
   if (!target.value?.isGroupMember) return false
   const transport = target.value?.transport || ''
   // Empty transport means "the member row does not override the agent's", and

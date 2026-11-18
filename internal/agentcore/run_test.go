@@ -127,6 +127,53 @@ func TestRun_AnswersWithoutTools(t *testing.T) {
 	}
 }
 
+// TestRun_DoneReportsContextUsage pins the terminal numbers the chat UI's
+// context panel reads: used = the conversation's estimated size, window = the
+// model's catalog window. The estimate must track the transcript, not be a
+// constant — the panel's bar is what the user sees fill up.
+func TestRun_DoneReportsContextUsage(t *testing.T) {
+	run := func(reply string) Event {
+		t.Helper()
+		client := &scriptedClient{rounds: []func(llm.Request) []llm.Event{textRound(reply)}}
+		terminal, _ := collect(t, Run(context.Background(), Spec{
+			Client: client, Prompt: "hi", WorkDir: t.TempDir(),
+			ContextWindow: 100000,
+		}))
+		if terminal.Kind != EventDone {
+			t.Fatalf("expected done, got %v (%v)", terminal.Kind, terminal.Err)
+		}
+		return terminal
+	}
+
+	short := run("hello")
+	if short.WindowTokens != 100000 {
+		t.Fatalf("the window must come from the spec, got %d", short.WindowTokens)
+	}
+	if short.ContextTokens <= 0 {
+		t.Fatalf("a known window must report used tokens, got %d", short.ContextTokens)
+	}
+
+	long := run(strings.Repeat("word ", 2000))
+	if long.ContextTokens <= short.ContextTokens {
+		t.Fatalf("a longer transcript must estimate larger: short=%d long=%d",
+			short.ContextTokens, long.ContextTokens)
+	}
+}
+
+// TestRun_UnknownWindowReportsNoContextUsage pins the deliberate zero: a 0/0
+// pair would render as an empty bar at 0%, which reads as "nothing used"
+// rather than "not measurable".
+func TestRun_UnknownWindowReportsNoContextUsage(t *testing.T) {
+	client := &scriptedClient{rounds: []func(llm.Request) []llm.Event{textRound("hello")}}
+	terminal, _ := collect(t, Run(context.Background(), Spec{
+		Client: client, Prompt: "hi", WorkDir: t.TempDir(),
+	}))
+	if terminal.ContextTokens != 0 || terminal.WindowTokens != 0 {
+		t.Fatalf("an unknown window must report no usage, got %d/%d",
+			terminal.ContextTokens, terminal.WindowTokens)
+	}
+}
+
 // TestRun_ToolCallFeedsResultBack pins the loop: a tool result must reach the
 // model as a tool message, otherwise it re-calls the same tool forever.
 func TestRun_ToolCallFeedsResultBack(t *testing.T) {

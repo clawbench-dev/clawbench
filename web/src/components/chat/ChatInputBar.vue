@@ -291,8 +291,11 @@
             <span>{{ t('chat.sessionInfo.contextUsage') }}</span>
           </div>
           <!-- Shared with the settings drawer's usage tab so both surfaces
-               render identical rows, colours and thresholds. -->
-          <ContextUsageDetail :usage="usageSnapshot" :token-rate="latestRate" show-compact @compact="handleCompact(); usageDrawer.close()" />
+               render identical rows, colours and thresholds.
+               No compaction for the built-in agent: its "compact" is an
+               in-process operation triggered by the engine, not the ACP slash
+               command, so sending "/compact" would reach the model as prose. -->
+          <ContextUsageDetail :usage="usageSnapshot" :token-rate="latestRate" :show-compact="!isBuiltin" @compact="handleCompact(); usageDrawer.close()" />
         </div>
       </PopupMenu>
     </div>

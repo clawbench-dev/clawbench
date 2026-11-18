@@ -145,9 +145,15 @@ type Event struct {
 	CompactedThroughMessageID int64
 	// SummaryTokens and WindowTokens are set on EventCompacted: the estimated
 	// size after compaction and the model's window, so the UI can say how full
-	// the context is.
+	// the context is. WindowTokens is also set on EventDone (see ContextTokens).
 	SummaryTokens int
 	WindowTokens  int
+	// ContextTokens is set on EventDone: the estimated size of the conversation
+	// that will be replayed on the next turn (system prompt + summary + history
+	// + this turn). It is the same estimate compaction uses, so the usage panel
+	// and the compaction threshold agree on what "used" means. Zero when the
+	// window is unknown — without a window there is no percentage to show.
+	ContextTokens int
 
 	// StopReason is set on EventDone: why the run ended (see the Stop*
 	// constants). "complete" is the normal case.
@@ -291,6 +297,11 @@ type runner struct {
 	rounds    int
 	toolCalls int
 	usage     llm.Usage
+	// system is the prompt built for this run, kept so the terminal event can
+	// report how much of the window the conversation occupies. Compaction uses
+	// the same string, so the number the UI shows is the number that triggers
+	// compaction.
+	system string
 	// summary is the most recent compaction summary, reported on EventDone so
 	// the caller can persist it across the turn boundary.
 	summary string
@@ -375,6 +386,7 @@ func (r *runner) run(ctx context.Context) {
 	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, r.spec.Prompt))
 
 	system := buildSystemPrompt(r.spec.SystemPrompt, r.spec.WorkDir, r.toolList, r.spec.Policy)
+	r.system = system
 
 	env := tools.Env{
 		Root:              r.spec.WorkDir,
@@ -1241,15 +1253,25 @@ func (r *runner) finishWithClosing(ctx context.Context, reason, system string) {
 
 // finish sends the terminal success event with the run's totals.
 func (r *runner) finish(reason string, limit int) {
+	// Only a known window can be a percentage. Reporting used tokens against
+	// size 0 would render an empty bar at 0% instead of "no data", so both
+	// fields stay zero when the catalog has no window for this model.
+	used, window := 0, 0
+	if r.spec.ContextWindow > 0 {
+		used = compaction.ConversationTokens(r.system, r.messages)
+		window = r.spec.ContextWindow
+	}
 	r.emit(Event{
-		Kind:       EventDone,
-		StopReason: reason,
-		Limit:      limit,
-		Truncated:  r.lastTruncated,
-		Rounds:     r.rounds,
-		ToolCalls:  r.toolCalls,
-		TotalUsage: r.usage,
-		Summary:    r.summary,
+		Kind:          EventDone,
+		StopReason:    reason,
+		Limit:         limit,
+		Truncated:     r.lastTruncated,
+		Rounds:        r.rounds,
+		ToolCalls:     r.toolCalls,
+		TotalUsage:    r.usage,
+		Summary:       r.summary,
+		ContextTokens: used,
+		WindowTokens:  window,
 	})
 }
 

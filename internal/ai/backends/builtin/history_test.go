@@ -61,6 +61,56 @@ func TestTranslate_UsageDoesNotBecomeAMetadataFrame(t *testing.T) {
 	}
 }
 
+// TestTranslate_DoneReportsContextUsage pins the terminal usage frame the
+// bottom bar's context panel reads.
+//
+// A built-in agent has no agent-side usage reporting, so without this frame the
+// frontend's usage chip never appeared (it keys on size > 0). It must arrive
+// BEFORE done: the terminal frame is what closes the turn on the client.
+func TestTranslate_DoneReportsContextUsage(t *testing.T) {
+	tr := &translator{}
+	out := tr.translate(agentcore.Event{
+		Kind:          agentcore.EventDone,
+		StopReason:    agentcore.StopComplete,
+		TotalUsage:    llm.Usage{InputTokens: 1200, OutputTokens: 300},
+		ContextTokens: 4200,
+		WindowTokens:  128000,
+	})
+	if len(out) != 2 {
+		t.Fatalf("expected usage_update + done, got %+v", out)
+	}
+	if out[0].Type != "usage_update" || out[1].Type != "done" {
+		t.Fatalf("usage must precede the terminal frame, got %q then %q", out[0].Type, out[1].Type)
+	}
+	u := out[0].Usage
+	if u == nil {
+		t.Fatal("the usage frame must carry a usage block")
+	}
+	if u.Used != 4200 || u.Size != 128000 {
+		t.Fatalf("used/size must be the engine's report, got %d/%d", u.Used, u.Size)
+	}
+	if u.InputTokens != 1200 || u.OutputTokens != 300 || u.TotalTokens != 1500 {
+		t.Fatalf("the token detail must carry the turn totals, got %+v", u)
+	}
+}
+
+// TestTranslate_DoneWithoutWindowOmitsUsage pins the other side: no known
+// window means no percentage, and a 0/0 frame would render as an empty bar at
+// 0% rather than "no data".
+func TestTranslate_DoneWithoutWindowOmitsUsage(t *testing.T) {
+	tr := &translator{}
+	out := tr.translate(agentcore.Event{
+		Kind:       agentcore.EventDone,
+		StopReason: agentcore.StopComplete,
+		TotalUsage: llm.Usage{InputTokens: 100, OutputTokens: 20},
+	})
+	for _, ev := range out {
+		if ev.Type == "usage_update" {
+			t.Fatalf("an unknown window must not produce a usage frame, got %+v", ev)
+		}
+	}
+}
+
 // TestTranslate_DoneCarriesTheTurnTotal pins the other half: the terminal frame
 // is where the accounting comes from, and it carries the SUM across rounds.
 func TestTranslate_DoneCarriesTheTurnTotal(t *testing.T) {

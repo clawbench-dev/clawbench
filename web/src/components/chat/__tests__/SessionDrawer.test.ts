@@ -1342,6 +1342,28 @@ describe('SessionDrawer', () => {
         mockIdentity.contextCredit.value = 0
       }
     })
+
+    // A built-in agent has no slash-command channel: its compaction happens
+    // inside the engine, so offering "/compact" would send prose to the model.
+    it('does not offer compaction for the built-in agent', async () => {
+      mockAgents.agents.value.push({
+        ...mockAgents.agents.value[0],
+        id: 'tmp-builtin',
+        builtinBackend: true,
+        transport: 'cli',
+        acpCommand: '',
+      })
+      try {
+        const wrapper = mountDrawer({ agentId: 'tmp-builtin' })
+        await wrapper.findAll('.model-tab')[4].trigger('click')
+        await nextTick()
+        const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
+        expect(detail.exists()).toBe(true)
+        expect(detail.props('showCompact')).toBe(false)
+      } finally {
+        mockAgents.agents.value = mockAgents.agents.value.filter(a => a.id !== 'tmp-builtin')
+      }
+    })
   })
 
   // ── Auto-cruise toggle in the mode tab ──

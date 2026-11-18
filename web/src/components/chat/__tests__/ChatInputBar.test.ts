@@ -414,6 +414,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 
 // Mock useAgents — return enough functions to avoid TypeError
 const mockSupportsACP = vi.fn().mockReturnValue(false)
+const mockIsBuiltin = vi.fn().mockReturnValue(false)
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: { value: [] },
@@ -437,7 +438,7 @@ vi.mock('@/composables/useAgents', () => ({
     canRefreshModels: () => false,
     hasPreferredMode: () => false,
     supportsACP: mockSupportsACP,
-    isBuiltinAgent: () => false,
+    isBuiltinAgent: () => mockIsBuiltin(),
     getAgentTransport: () => 'cli',
     invalidateACPStateCache: vi.fn(),
     updateACPModelList: vi.fn(),
@@ -4041,6 +4042,7 @@ describe('ChatInputBar', () => {
       mockContextSize.value = 0
       mockAvailableCommands.value = []
       mockSessionTransport.value = ''
+      mockIsBuiltin.mockReturnValue(false)
     })
 
     it('shows compact button when usage >= 75% and /compact command available in ACP transport', async () => {
@@ -4121,6 +4123,18 @@ describe('ChatInputBar', () => {
       await compactBtn.trigger('click')
       expect(wrapper.emitted('send')).toBeTruthy()
       expect(wrapper.emitted('send')![0]).toEqual(['/compact'])
+    })
+
+    // The built-in agent compacts inside the engine; "/compact" is an ACP slash
+    // command, so offering it here would send that text to the model as prose.
+    it('hides the compact action for the built-in agent', async () => {
+      mockContextUsed.value = 80000
+      mockContextSize.value = 100000
+      mockIsBuiltin.mockReturnValue(true)
+      const wrapper = mountBar({ currentModelName: 'gpt-4' })
+      await wrapper.find('.session-info-usage').trigger('click')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.usage-popup-compact-btn').exists()).toBe(false)
     })
   })
 
