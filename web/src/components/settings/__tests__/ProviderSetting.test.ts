@@ -160,6 +160,51 @@ describe('ProviderSetting', () => {
     mockDelete.mockResolvedValue(undefined)
   })
 
+  it('keeps the saved CodeBuddy account selected and confirms the save', async () => {
+    const created = {
+      id: 12, name: '公司 CodeBuddy', protocol: 'private', baseUrl: 'https://cb.example.com',
+      deployment: 'selfhosted', authMode: 'auto', hasKey: true, agentCount: 0,
+    }
+    let list = [] as unknown[]
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/api/providers') return Promise.resolve({ providers: list })
+      if (url === '/api/providers/presets') return Promise.resolve({ presets: [] })
+      if (url === '/api/catalog') return Promise.resolve({})
+      return Promise.resolve({})
+    })
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/api/providers') { list = [created]; return Promise.resolve(created) }
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(ProviderSetting, {
+      global: {
+        plugins: [i18n],
+        stubs: {
+          ModalDialog: {
+            props: ['open', 'title'],
+            template: '<div v-if="open" class="mock-dialog"><slot /></div>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-tab="codebuddy"]').trigger('click')
+    await wrapper.find('[data-role="cb-name"]').setValue('公司 CodeBuddy')
+    await wrapper.find('[data-role="cb-deployment"]').setValue('selfhosted')
+    await wrapper.find('[data-role="cb-domain"]').setValue('https://cb.example.com')
+    await wrapper.find('[data-role="cb-key"]').setValue('ck-1')
+    await wrapper.find('[data-action="cb-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mockPost).toHaveBeenCalledWith('/api/providers', expect.objectContaining({ protocol: 'private', deployment: 'selfhosted' }))
+    // The form must keep showing the row it just created (not fall back to a
+    // blank "add" form) and say so.
+    expect(wrapper.find<HTMLInputElement>('[data-role="cb-name"]').element.value).toBe('公司 CodeBuddy')
+    expect(wrapper.find('[data-role="cb-saved"]').exists()).toBe(true)
+  })
+
   it('routes a private-protocol row to the CodeBuddy tab instead of the generic dialog', async () => {
     const wrapper = mountSetting([
       { id: 9, name: 'CodeBuddy', protocol: 'private', baseUrl: '', authMode: 'auto', hasKey: true, agentCount: 1 },
