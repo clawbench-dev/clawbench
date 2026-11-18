@@ -34,6 +34,24 @@ const i18n = createI18n({
       settings: {
         items: {
           providerDesc: '模型提供商',
+          providerTabGeneral: '通用',
+          providerTabCodeBuddy: 'CodeBuddy 账号',
+          providerKeyHide: '隐藏密钥',
+          providerKeyReveal: '查看密钥',
+          codebuddyFormHint: 'CodeBuddy 账号说明',
+          codebuddyProtocolType: '协议类型',
+          codebuddyDeploymentHint: '版本说明',
+          codebuddyDeploymentPublic: '公有云账号',
+          codebuddyDeploymentInternal: '中国版',
+          codebuddyDeploymentIOA: 'iOA 版',
+          codebuddyDeploymentDedicated: '专享版（企业域名）',
+          codebuddyDeploymentSelfHosted: '私有化部署（企业域名）',
+          codebuddyDomain: '企业域名',
+          codebuddyDomainPlaceholder: 'https://your-company.example.com',
+          codebuddyDomainHint: '域名说明',
+          codebuddyNamePlaceholder: '例如：公司 CodeBuddy',
+          codebuddyKeyKeep: '已保存，留空表示不修改',
+          codebuddySaved: '已保存',
           providerEmpty: '还没有配置模型提供商',
           providerName: '名称',
           providerNamePlaceholder: '例如 MiniMax',
@@ -140,6 +158,33 @@ describe('ProviderSetting', () => {
     mockPost.mockResolvedValue({})
     mockPut.mockResolvedValue({})
     mockDelete.mockResolvedValue(undefined)
+  })
+
+  it('routes a private-protocol row to the CodeBuddy tab instead of the generic dialog', async () => {
+    const wrapper = mountSetting([
+      { id: 9, name: 'CodeBuddy', protocol: 'private', baseUrl: '', authMode: 'auto', hasKey: true, agentCount: 1 },
+    ])
+    await flushPromises()
+
+    await wrapper.find('.provider-row[data-provider-id="9"]').trigger('click')
+
+    // The generic form cannot express the edition or the enterprise address,
+    // and its save would clear them — so this row belongs to the other tab.
+    expect(wrapper.find('[data-tab="codebuddy"]').classes()).toContain('provider-tab--on')
+    expect(wrapper.find('.mock-dialog').exists()).toBe(false)
+    expect(wrapper.find('[data-role="cb-name"]').exists()).toBe(true)
+  })
+
+  it('keeps the general list reachable through its own tab', async () => {
+    const wrapper = mountSetting([])
+    await flushPromises()
+
+    expect(wrapper.find('[data-tab="general"]').classes()).toContain('provider-tab--on')
+    await wrapper.find('[data-tab="codebuddy"]').trigger('click')
+    expect(wrapper.find('.provider-add').exists()).toBe(false)
+
+    await wrapper.find('[data-tab="general"]').trigger('click')
+    expect(wrapper.find('.provider-add').exists()).toBe(true)
   })
 
   it('renders the empty hint and the key state of each row', async () => {

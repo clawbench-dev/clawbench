@@ -102,12 +102,18 @@ func init() {
 			// file (which needs a URL per model) is skipped and the credential
 			// plus the deployment switch are injected through the environment.
 			OwnServiceEnv: "CODEBUDDY_API_KEY",
+			// The public CodeBuddy account lives in the cloudhosted
+			// deployment; without this the CLI assumes an internal one and
+			// rejects the token. A provider may pick another edition (see
+			// Provider.Deployment) — the env builder overrides this entry.
+			OwnServiceEditionEnv: "CODEBUDDY_INTERNET_ENVIRONMENT",
 			OwnServiceExtra: map[string]string{
-				// The public CodeBuddy account lives in the cloudhosted
-				// deployment; without this the CLI assumes an internal one and
-				// rejects the token.
 				"CODEBUDDY_INTERNET_ENVIRONMENT": "cloudhosted",
 			},
+			// The dedicated and self-hosted editions live at a customer-defined
+			// address. There is no environment variable for it: the spawn path
+			// passes it as `--settings '{"enterpriseEndpoint":…}'`.
+			OwnServiceEndpoint: true,
 		},
 	})
 }
@@ -136,5 +142,11 @@ func newCodebuddyBackend() ai.AIBackend {
 
 // buildCodebuddyStreamArgs constructs the CLI arguments for Codebuddy streaming.
 func buildCodebuddyStreamArgs(req ai.ChatRequest) []string {
-	return ai.BuildBaseStreamArgs(req, nil)
+	args := ai.BuildBaseStreamArgs(req, nil)
+	// Same own-service address as the ACP path (see ai.OwnServiceSettingsArg):
+	// the environment has no variable for it.
+	if payload := ai.OwnServiceSettingsArg(req.AgentID); payload != "" {
+		args = append(args, "--settings", payload)
+	}
+	return args
 }

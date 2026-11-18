@@ -246,6 +246,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 				return fmt.Errorf("failed to add providers.wire_api: %w", err)
 			}
 		}
+		// providers.deployment: the edition of the backend's own service an
+		// own-service provider talks to. Empty means the default edition, which
+		// is exactly what every existing row was doing before the column.
+		var hasDeployment int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('providers') WHERE name='deployment'").Scan(&hasDeployment)
+		if hasDeployment == 0 {
+			if _, err := store.WriteExec("ALTER TABLE providers ADD COLUMN deployment TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add providers.deployment: %w", err)
+			}
+		}
 	}
 
 	// Pre-migration: make sure file_shares carries project_id before createTables

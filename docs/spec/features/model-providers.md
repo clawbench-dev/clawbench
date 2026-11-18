@@ -36,7 +36,7 @@
 | 后端 | 方式 | 变量 |
 |---|---|---|
 | claude | **配置目录**（+ anthropic 环境变量兜底） | `settings.json` 的 `env` 段 + `CLAUDE_CONFIG_DIR` |
-| codebuddy | **配置目录**（+ 私有协议） | `models.json`（逐模型 `url`）+ `CODEBUDDY_CONFIG_DIR`；环境变量 `CODEBUDDY_*` 仍作为兜底；私有协议走 `CODEBUDDY_API_KEY` + cloudhosted |
+| codebuddy | **配置目录**（+ 私有协议） | `models.json`（逐模型 `url`）+ `CODEBUDDY_CONFIG_DIR`；环境变量 `CODEBUDDY_*` 仍作为兜底；私有协议走 `CODEBUDDY_API_KEY` + `CODEBUDDY_INTERNET_ENVIRONMENT`（按 provider 的 `deployment` 选版本，企业版地址经 `--settings` 传入） |
 | opencode / mimo / pi / zcode | anthropic、openai | `ANTHROPIC_*` / `OPENAI_*` |
 | kimi | **配置目录**（+ OpenAI 环境变量） | `config.toml` + `KIMI_SHARE_DIR`；`KIMI_BASE_URL` / `KIMI_API_KEY` 仅 `type="kimi"` 时生效 |
 | pi | **配置目录** | `models.json` + `PI_CODING_AGENT_DIR` |
@@ -212,7 +212,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 
 | 后端 | 注入 | 说明 |
 |---|---|---|
-| codebuddy | `CODEBUDDY_API_KEY` + `CODEBUDDY_INTERNET_ENVIRONMENT=cloudhosted` | 还要**跳过配置目录写入**（它的 `models.json` 要求每个模型自带 URL，装不下这种模式） |
+| codebuddy | `CODEBUDDY_API_KEY` + `CODEBUDDY_INTERNET_ENVIRONMENT` | 还要**跳过配置目录写入**（它的 `models.json` 要求每个模型自带 URL，装不下这种模式）。版本由 provider 的 `deployment` 决定（空=cloudhosted）；专享版/私有化的企业域名存在 `base_url`，spawn 时以 `--settings '{"enterpriseEndpoint":…}'` 交给 CLI（环境变量没有这一项） |
 | cursor | `CURSOR_API_KEY` | 本来就没有自定义端点 |
 | commandcode | `COMMAND_CODE_API_KEY` | 完整 BYOK 仍需它自己的配置文件，私有协议只负责凭据 |
 | antigravity | `GEMINI_API_KEY` | 走 Google 自己的服务 |

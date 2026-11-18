@@ -1162,6 +1162,18 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 		}
 	}
 
+	// An own-service provider may point the CLI at a customer-defined address
+	// (CodeBuddy's dedicated / self-hosted editions). The environment has no
+	// variable for it, and writing settings.json would fight the user's own
+	// file, so it rides along as the documented per-process override.
+	if cmdParts[0] == "codebuddy" {
+		if payload := OwnServiceSettingsArg(c.agent.ID); payload != "" {
+			cmdArgs = append(cmdArgs, "--settings", payload)
+			slog.Info("acp conn: pointing codebuddy at an own-service endpoint",
+				slog.String("clawbench_sid", c.clawbenchSID))
+		}
+	}
+
 	cmd := exec.CommandContext(context.Background(), cmdName, cmdArgs...)
 	cmd.Dir = c.cwd // project working directory for this ACP session
 	slog.Info("acp conn: spawnLocked setting cmd.Dir",

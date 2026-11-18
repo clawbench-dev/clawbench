@@ -5094,3 +5094,44 @@ func TestSchema_UpgradeHalfConvertedProjectPath(t *testing.T) {
 	).Scan(&gotID))
 	assert.Equal(t, 7, gotID, "an existing project_id must be preserved, not overwritten")
 }
+
+// TestSchema_ProviderDeploymentColumnMigration covers the providers.deployment
+// column: a database created before it existed must gain it, and the rows that
+// predate it must read as "the backend's default edition" — which is exactly
+// what they were doing.
+func TestSchema_ProviderDeploymentColumnMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+
+	require.NoError(t, InitDB())
+	store.Close()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE providers DROP COLUMN deployment")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO providers (name, protocol, api_key) VALUES ('Legacy', 'private', 'k')")
+	require.NoError(t, err)
+	raw.Close()
+
+	require.NoError(t, InitDB())
+	defer store.Close()
+
+	assert.Contains(t, getTableColumns(t, store.UnsafeDBForTest(), "providers"), "deployment")
+
+	providers, err := ListProviders()
+	require.NoError(t, err)
+	require.Len(t, providers, 1)
+	assert.Empty(t, providers[0].Deployment, "a legacy row means the default edition")
+	assert.Equal(t, "private", providers[0].Protocol)
+
+	// Running InitDB again must be a no-op (the ALTER is guarded by a check).
+	require.NoError(t, InitDB())
+}

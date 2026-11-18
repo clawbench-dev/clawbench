@@ -1714,3 +1714,40 @@ func TestAgents_ProviderModelsKeepForeignNamespace(t *testing.T) {
 	assert.Equal(t, "clawbench-openai/openai/gpt-4o", body.Agents[0].ProviderModels[0].ID,
 		"an id the endpoint namespaces itself must not be re-prefixed")
 }
+
+// The CodeBuddy account form writes an edition and (for the enterprise ones) an
+// address. Both have to survive the HTTP layer: the settings list and the spawn
+// path read them back from the row.
+func TestProvidersAPI_OwnServiceEditionRoundTrip(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	rec := doProviderRequest(t, ServeProviders, http.MethodPost, "/api/providers", map[string]any{
+		"name": "Company CodeBuddy", "protocol": "private", "apiKey": "ck-1",
+		"deployment": "selfhosted", "baseUrl": "https://cb.example.com",
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"deployment":"selfhosted"`)
+	assert.Contains(t, rec.Body.String(), `"baseUrl":"https://cb.example.com"`)
+
+	var created providerResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+
+	// Switching back to a fixed-host edition must clear the address, or the
+	// row would keep pointing at a host nothing reads.
+	rec = doProviderRequest(t, ServeProviderSubRoutes, http.MethodPut,
+		fmt.Sprintf("/api/providers/%d", created.ID), map[string]any{
+			"deployment": "internal", "baseUrl": "",
+		})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var updated providerResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updated))
+	assert.Equal(t, "internal", updated.Deployment)
+	assert.Empty(t, updated.BaseURL)
+
+	// An enterprise edition without its address is refused with the field name
+	// the form can point at.
+	rec = doProviderRequest(t, ServeProviderSubRoutes, http.MethodPut,
+		fmt.Sprintf("/api/providers/%d", created.ID), map[string]any{"deployment": "cloudhosted"})
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"field":"baseUrl"`)
+}

@@ -97,7 +97,17 @@ type ProviderEnvSpec struct {
 	OwnServiceEnv string
 	// OwnServiceExtra is injected verbatim alongside OwnServiceEnv, for
 	// the fixed switches that mode needs (CodeBuddy's cloudhosted deployment).
+	// OwnServiceEditionEnv, when set, overrides the matching entry.
 	OwnServiceExtra map[string]string
+	// OwnServiceEditionEnv names the variable that selects WHICH edition of the
+	// backend's own service to talk to. A provider's Deployment overrides the
+	// default in OwnServiceExtra; empty Deployment keeps the default.
+	OwnServiceEditionEnv string
+	// OwnServiceEndpoint marks backends whose own service address is defined by
+	// the customer (CodeBuddy's dedicated / self-hosted editions). Only then may
+	// a private provider carry a BaseURL — the address is handed to the CLI by
+	// the spawn path, since the environment has no variable for it.
+	OwnServiceEndpoint bool
 
 	// InlineConfigEnv names an environment variable that takes config CONTENT	// (not a path). It exists for backends that validate a model id against
 	// their own provider catalog before sending anything: the endpoint
@@ -248,6 +258,12 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 	}
 	spec, ok := providerEnvSpec(backendID)
 	if !ok {
+		return false
+	}
+	// An own-service provider carrying an address only makes sense where the
+	// backend can actually use one. Everywhere else the address would be
+	// dropped and the request would still go to the default host.
+	if p.Protocol == ProviderProtocolPrivate && p.BaseURL != "" && !spec.OwnServiceEndpoint {
 		return false
 	}
 	if spec.supportsProtocol(p.Protocol) {
@@ -665,17 +681,11 @@ func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]stri
 		return nil, fmt.Errorf("provider %q has no API key", p.Name)
 	}
 	// A provider with no endpoint on a backend that has an official service
-	// (CodeBuddy's account token): inject the credential plus the fixed switches
-	// and skip every protocol/config-file path. The protocol is irrelevant here —
+	// (CodeBuddy's account token): inject the credential plus the switches and
+	// skip every protocol/config-file path. The protocol is irrelevant here —
 	// the request goes to the backend's own endpoint.
 	if ProviderOwnServiceMode(backendID, p) {
-		env := make([]string, 0, 1+len(spec.OwnServiceExtra))
-		env = append(env, spec.OwnServiceEnv+"="+p.APIKey)
-		for name, value := range spec.OwnServiceExtra {
-			env = append(env, name+"="+value)
-		}
-		sort.Strings(env)
-		return env, nil
+		return ownServiceEnv(backendID, spec, p)
 	}
 	if spec.ConfigOnly || (spec.KeyOnly != "" && p.BaseURL == "" && protocolEnvFor(spec, p.Protocol) == nil) {
 		return keyOnlyEnv(backendID, spec, p)
@@ -699,6 +709,34 @@ func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]stri
 	}
 	sort.Strings(env)
 	return withInlineConfig(spec, p, pinnedModel, env), nil
+}
+
+// ownServiceEnv renders the environment for an own-service provider: the
+// backend's credential variable plus its switches, with the provider's chosen
+// edition overriding the backend's default.
+//
+// The service address (the enterprise editions' domain) is deliberately NOT
+// part of this: no backend declares an environment variable for it, so the
+// spawn path hands it to the CLI. A backend that cannot do that refuses the row
+// here rather than silently dropping the address.
+func ownServiceEnv(backendID string, spec ProviderEnvSpec, p *Provider) ([]string, error) {
+	if p.BaseURL != "" && !spec.OwnServiceEndpoint {
+		return nil, fmt.Errorf("backend %q cannot point its own service at %q", backendID, p.BaseURL)
+	}
+	switches := make(map[string]string, len(spec.OwnServiceExtra)+1)
+	for name, value := range spec.OwnServiceExtra {
+		switches[name] = value
+	}
+	if spec.OwnServiceEditionEnv != "" && p.Deployment != "" {
+		switches[spec.OwnServiceEditionEnv] = p.Deployment
+	}
+	env := make([]string, 0, 1+len(switches))
+	env = append(env, spec.OwnServiceEnv+"="+p.APIKey)
+	for name, value := range switches {
+		env = append(env, name+"="+value)
+	}
+	sort.Strings(env)
+	return env, nil
 }
 
 // withInlineConfig appends the backend's inline config-content variable when the

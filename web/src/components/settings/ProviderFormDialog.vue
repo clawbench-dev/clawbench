@@ -334,6 +334,8 @@ export interface ProviderRow {
   authMode: string
   /** OpenAI wire protocol codex should speak: 'responses' | 'chat'. */
   wireApi?: string
+  /** Own-service edition (private protocol only); '' = the default one. */
+  deployment?: string
   presetId?: string
   models?: string[]
   defaultModel?: string

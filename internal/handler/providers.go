@@ -42,6 +42,7 @@ type providerResponse struct {
 	Models       []string `json:"models"`
 	DefaultModel string   `json:"defaultModel,omitempty"`
 	WireAPI      string   `json:"wireApi"`
+	Deployment   string   `json:"deployment,omitempty"`
 	HasKey       bool     `json:"hasKey"`
 	AgentCount   int      `json:"agentCount"`
 	Agents       []string `json:"agents,omitempty"`
@@ -68,6 +69,7 @@ func toProviderResponse(p *model.Provider, usage map[int64]int, agents []string)
 		Models:       append([]string{}, p.Models...),
 		DefaultModel: p.DefaultModel,
 		WireAPI:      p.WireAPI,
+		Deployment:   p.Deployment,
 		HasKey:       p.APIKey != "",
 		AgentCount:   usage[p.ID],
 		Agents:       agents,
@@ -123,6 +125,7 @@ type providerCreateRequest struct {
 	Models       []string `json:"models"`
 	DefaultModel string   `json:"defaultModel"`
 	WireAPI      string   `json:"wireApi"`
+	Deployment   string   `json:"deployment"`
 }
 
 func serveProviderCreate(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +143,7 @@ func serveProviderCreate(w http.ResponseWriter, r *http.Request) {
 		Models:       req.Models,
 		DefaultModel: req.DefaultModel,
 		WireAPI:      req.WireAPI,
+		Deployment:   req.Deployment,
 	})
 	if err != nil {
 		writeProviderError(w, r, err)
@@ -222,6 +226,7 @@ type providerUpdateRequest struct {
 	Models       *[]string `json:"models"`
 	DefaultModel *string   `json:"defaultModel"`
 	WireAPI      *string   `json:"wireApi"`
+	Deployment   *string   `json:"deployment"`
 	ClearAPIKey  bool      `json:"clearApiKey"`
 }
 
@@ -240,6 +245,7 @@ func serveProviderUpdate(w http.ResponseWriter, r *http.Request, id int64) {
 		Models:       req.Models,
 		DefaultModel: req.DefaultModel,
 		WireAPI:      req.WireAPI,
+		Deployment:   req.Deployment,
 		ClearAPIKey:  req.ClearAPIKey,
 	})
 	if err != nil {
