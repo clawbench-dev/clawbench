@@ -16,9 +16,11 @@ ForkContextInjectedChat: The history of "{{.Title}}" was injected into this sess
 ForkContextInjectedGroup: The history of "{{.Title}}" was injected into this group as background; each member receives it on their first turn
 GroupNotRewindable: A group chat cannot be rewound
 GroupRunning: The group is working on a turn — try again when it finishes
+SessionRunning: This conversation is still generating a reply — try again when it finishes
 MoveTargetInvalid: That project does not exist or is unavailable. Refresh the list and try again.
 MoveNotAllowed: This session cannot be moved (task sessions and group-member rows are not move targets).
 MoveMembersUnavailable: 'These members are unavailable in the target project: {{.Members}}. Make their agents available in all projects, or remove them from the group, then try again.'
+MoveAgentUnavailable: 'The agent this conversation uses ("{{.Agent}}") is unavailable in the target project. Make it available in all projects, or switch the conversation to another agent, then try again.'
 GroupMemberCompacting: This member is already compacting its context
 GroupMemberNotFound: Member not found in this group
 CompactNeedsACP: This member does not use ACP transport, so it has no compact command

@@ -2502,14 +2502,21 @@ paths:
                               type: string
         "409":
           description: |
-            请求带 `projectPath` 但该会话正在生成回复（或还有消息在流式写入，或群内有
-            成员正在压缩上下文，`SessionRunning`）。此刻移动会把同一条回复拆到两个项目下。
+            请求带 `projectPath` 但此刻不能移动，响应 `msgKey` 区分两种情况：
+            - `GroupRunning`：群聊正在执行本轮讨论（群回合运行中、群内成员正在压缩上下文，
+              或某个成员的对话正在运行）。
+            - `SessionRunning`：单聊正在生成回复，或还有消息在流式写入（半截消息）。
+            此刻移动会把同一条回复拆到两个项目下。
         "422":
           description: |
-            `projectPath` 不是已注册的项目、其目录已不存在（`MoveTargetInvalid`）；该会话
-            是任务执行或群成员行、不能单独移动（`MoveNotAllowed`）；或群内成员在新工作区
-            不可用（`MoveMembersUnavailable`，`detail.members` 为成员显示名数组）。
-            这些请求不会写库。
+            `projectPath` 不是已注册的项目、其目录已不存在或不在本服务的根路径内
+            （`MoveTargetInvalid`）；该会话是任务执行或群成员行、不能单独移动
+            （`MoveNotAllowed`）；群内成员在新工作区不可用（`MoveMembersUnavailable`，
+            `detail.members` 为成员显示名数组）；或单聊使用的智能体在新工作区不可用
+            （`MoveAgentUnavailable`，`detail.Agent` 为智能体名称）。以上移动错误都不会写库。
+
+            唯一例外是移动本身已经成功的情况：请求带 `projectPath` 时移动先落库，随后
+            `modelId` 被拒返回下面的错误时也不会回滚 —— 此时会话已在新工作区。
 
             `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为
             `{error, code, msgKey: "ModelSwitchFailed"|"ModelSwitchFailedDetail",

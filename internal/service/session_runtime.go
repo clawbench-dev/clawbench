@@ -476,10 +476,6 @@ func collapseToSingleLine(s string) string {
 // "Running" is derived from the runner registry, so a true result guarantees a
 // live cancel func exists for the session. That invariant is what lets
 // CancelSession work without a force-clear fallback.
-func IsSessionRunning(sessionID string) bool {
-	return isRunnerRegistered(sessionID)
-}
-
 // GetRunningSessionIDs returns all currently running session IDs in a single call.
 // This avoids N separate mutex acquisitions when checking running state for multiple sessions.
 func GetRunningSessionIDs() []string {

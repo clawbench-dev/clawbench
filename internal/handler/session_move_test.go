@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -257,4 +258,154 @@ func TestServeAISessionUpdate_MoveRefusesWhileMessageStreaming(t *testing.T) {
 		"SELECT project_id FROM chat_history WHERE session_id = ?", sessionID,
 	).Scan(&msgProjectID))
 	assert.Equal(t, oldProjectID, msgProjectID)
+}
+
+func TestServeAISessionUpdate_MoveRejectsRegisteredProjectOutsideRootPaths(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Registered and on disk, but NOT under a configured root path — what a
+	// shared database / multi-root server can hold. Moving there would make
+	// every later request for the conversation fail with AccessDenied.
+	target := moveTargetProject(t, env)
+	origRoots := model.RootPaths
+	model.RootPaths = []string{env.WatchDir + "-elsewhere"}
+	t.Cleanup(func() { model.RootPaths = origRoots })
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "rootless", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sessionID, map[string]any{
+		"projectPath": target,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusUnprocessableEntity)
+	assertErrorMsgKey(t, w, "MoveTargetInvalid")
+
+	assert.Equal(t, store.NormalizeProjectPath(env.ProjectDir), store.NormalizeProjectPath(service.GetSessionProjectPath(sessionID)))
+}
+
+func TestServeAISessionUpdate_MoveRunningChatReportsSessionRunning(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	target := moveTargetProject(t, env)
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "busy", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	stubSessionRunning(t, sessionID)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sessionID, map[string]any{
+		"projectPath": target,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusConflict)
+	// A single conversation, not a group: the client must not be told the
+	// "group is discussing" (that key was previously returned for both).
+	assertErrorMsgKey(t, w, "SessionRunning")
+}
+
+func TestServeAISessionUpdate_MoveStreamingChatReportsSessionRunning(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	target := moveTargetProject(t, env)
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "half", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	oldProjectID, err := store.ProjectIDForPath(env.ProjectDir)
+	require.NoError(t, err)
+	_, err = env.DB().Exec(
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'partial', ?, 'claude', 1)",
+		oldProjectID, sessionID,
+	)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sessionID, map[string]any{
+		"projectPath": target,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusConflict)
+	assertErrorMsgKey(t, w, "SessionRunning")
+}
+
+func TestServeAISessionUpdate_MoveRunningGroupReportsGroupRunning(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	target := moveTargetProject(t, env)
+	groupID, _, err := service.CreateGroupWithMembers(env.ProjectDir, "busy group", "claude", []service.GroupMemberSpec{
+		{AgentID: "claude", Backend: "claude", DisplayName: "Alice"},
+	})
+	require.NoError(t, err)
+	stubSessionRunning(t, groupID)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+groupID, map[string]any{
+		"projectPath": target,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusConflict)
+	assertErrorMsgKey(t, w, "GroupRunning")
+}
+
+func TestServeAISessionUpdate_MoveRefusesProjectScopedChatAgent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	target := moveTargetProject(t, env)
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "scoped agent", "claude", "claude", "default", "chat")
+	require.NoError(t, err)
+	origList := model.AgentList
+	scoped := &model.Agent{ID: "claude-agent", Name: "Claude Scoped"}
+	orig := model.Agents["claude"]
+	model.Agents["claude"] = scoped
+	model.AgentList = []*model.Agent{scoped}
+	t.Cleanup(func() {
+		if orig != nil {
+			model.Agents["claude"] = orig
+		}
+		model.AgentList = origList
+	})
+	srcProjectID, err := store.ProjectIDForPath(env.ProjectDir)
+	require.NoError(t, err)
+	scoped.ProjectID = &srcProjectID
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sessionID, map[string]any{
+		"projectPath": target,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusUnprocessableEntity)
+	assertErrorMsgKey(t, w, "MoveAgentUnavailable")
+	var resp struct {
+		Detail map[string]any `json:"detail"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "Claude Scoped", resp.Detail["Agent"])
+
+	assert.Equal(t, store.NormalizeProjectPath(env.ProjectDir), store.NormalizeProjectPath(service.GetSessionProjectPath(sessionID)))
+}
+
+// stubSessionRunning forces IsSessionRunning to report true for one session
+// until the test ends, so the "is anything still writing?" guards can be
+// exercised without spawning a real turn.
+func stubSessionRunning(t *testing.T, sessionID string) {
+	t.Helper()
+	orig := service.IsSessionRunning
+	service.IsSessionRunning = func(id string) bool {
+		return id == sessionID || orig(id)
+	}
+	t.Cleanup(func() { service.IsSessionRunning = orig })
+}
+
+// assertErrorMsgKey decodes the response envelope and checks its msgKey.
+func assertErrorMsgKey(t *testing.T, w *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	var resp struct {
+		MsgKey string `json:"msgKey"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "body: %s", w.Body.String())
+	assert.Equal(t, want, resp.MsgKey)
 }

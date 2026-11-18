@@ -26,6 +26,19 @@ func (e *MoveUnavailableMembersError) Error() string {
 	return "group members unavailable in target project: " + strings.Join(e.Names, ", ")
 }
 
+// MoveAgentUnavailableError reports a single conversation whose agent is
+// project-scoped to the source project (or no longer exists in the target).
+// The move is refused: the next turn would be rejected with
+// AgentNotInProject, leaving a conversation that can never speak again.
+type MoveAgentUnavailableError struct {
+	// Name is the agent's display name (id as a fallback).
+	Name string
+}
+
+func (e *MoveAgentUnavailableError) Error() string {
+	return "agent unavailable in target project: " + e.Name
+}
+
 // MoveSessionToProject re-binds a conversation to another project (issue #685)
 // without touching its history. It reports false when the session may not move
 // (a group member row, or a task execution); re-binding to the project it is
@@ -101,8 +114,39 @@ func MoveSessionToProject(sessionID, targetProjectPath string, targetProjectID i
 	return moveChatToProject(sessionID, targetProjectID, sortOrder)
 }
 
+// chatAgentUnavailable reports the agent a single conversation uses when that
+// agent cannot be used in the target project (empty otherwise), following the
+// same rule as unavailableMembers: a global agent is usable everywhere, a
+// project-scoped one only in its own project, and an agent that no longer
+// exists does not block the move (the next turn falls back to the default).
+func chatAgentUnavailable(sessionID string, targetProjectID int64) (string, error) {
+	var agentID string
+	if err := store.ReadDB().QueryRow(
+		"SELECT COALESCE(agent_id, '') FROM chat_sessions WHERE id = ?", sessionID,
+	).Scan(&agentID); err != nil {
+		return "", fmt.Errorf("load session agent for move: %w", err)
+	}
+	agent := model.GetAgent(agentID)
+	if agent == nil || agent.ProjectID == nil || *agent.ProjectID == targetProjectID {
+		return "", nil
+	}
+	if agent.Name != "" {
+		return agent.Name, nil
+	}
+	return agent.ID, nil
+}
+
 // moveChatToProject moves one single-agent conversation.
 func moveChatToProject(sessionID string, targetProjectID int64, sortOrder int) (bool, error) {
+	// Refuse BEFORE anything is written: a project-scoped agent would be
+	// invisible in the target project, so the conversation could never send
+	// another message there.
+	if name, err := chatAgentUnavailable(sessionID, targetProjectID); err != nil {
+		return false, err
+	} else if name != "" {
+		return false, &MoveAgentUnavailableError{Name: name}
+	}
+
 	// Render the history BEFORE the transaction: it reads the messages this
 	// move is about to re-attribute, and the value is a plain string copy.
 	forkContext := BuildForkContext(sessionID)
@@ -350,6 +394,11 @@ func nextSortOrderInProject(projectID int64) (int, error) {
 	}
 	return int(minOrder.Int64) - 1, nil
 }
+
+// IsSessionRunning reports whether a runner is registered for the session. A
+// seam (var) so handler tests can exercise the move guards without spawning a
+// real turn.
+var IsSessionRunning = isRunnerRegistered
 
 // SessionHasStreamingMessage reports whether the conversation has a message row
 // still being written. Moving such a session would re-file a half-written reply

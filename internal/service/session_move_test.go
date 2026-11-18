@@ -366,3 +366,77 @@ func TestMoveSessionToProject_RemovedMemberDoesNotBlockMove(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, moved)
 }
+
+// chatProjectID reads a session row's owning project id.
+func chatProjectID(t *testing.T, sessionID string) int64 {
+	t.Helper()
+	var projectID int64
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT project_id FROM chat_sessions WHERE id = ?", sessionID).Scan(&projectID))
+	return projectID
+}
+
+func TestMoveSessionToProject_RefusesChatWithProjectScopedAgent(t *testing.T) {
+	_, dstPath, srcID, dstID := setupMoveTest(t)
+	setMoveTestAgents(t, map[string]*model.Agent{
+		"scoped": {ID: "scoped", Name: "Scoped Agent", ProjectID: &srcID},
+	})
+	_, err := store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, external_session_id)
+		 VALUES ('s1', ?, 'claude', 'scoped', 'scoped', 'native-old-cwd')`, srcID)
+	require.NoError(t, err)
+	_, err = store.WriteExec(
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, 'user', 'hi', 's1', 'claude')",
+		srcID)
+	require.NoError(t, err)
+
+	moved, err := MoveSessionToProject("s1", dstPath, dstID)
+	require.Error(t, err)
+	assert.False(t, moved)
+	var unavailable *MoveAgentUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	assert.Equal(t, "Scoped Agent", unavailable.Name)
+
+	// Nothing moved: neither the session nor its history, and its native
+	// session id is untouched (the next turn must still resume it).
+	assert.Equal(t, srcID, chatProjectID(t, "s1"))
+	var historyProject int64
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT project_id FROM chat_history WHERE session_id = 's1'").Scan(&historyProject))
+	assert.Equal(t, srcID, historyProject)
+	var external string
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT external_session_id FROM chat_sessions WHERE id = 's1'").Scan(&external))
+	assert.Equal(t, "native-old-cwd", external)
+}
+
+func TestMoveSessionToProject_MovesChatWithGlobalAgent(t *testing.T) {
+	_, dstPath, srcID, dstID := setupMoveTest(t)
+	setMoveTestAgents(t, map[string]*model.Agent{"global-a": {ID: "global-a", Name: "Global"}})
+	_, err := store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id)
+		 VALUES ('s1', ?, 'claude', 'global', 'global-a')`, srcID)
+	require.NoError(t, err)
+
+	moved, err := MoveSessionToProject("s1", dstPath, dstID)
+	require.NoError(t, err)
+	assert.True(t, moved)
+	assert.Equal(t, dstID, chatProjectID(t, "s1"))
+}
+
+// An agent that no longer exists must not block the move: the next turn falls
+// back to the default agent, exactly like every other session whose agent was
+// deleted.
+func TestMoveSessionToProject_DeletedChatAgentDoesNotBlockMove(t *testing.T) {
+	_, dstPath, srcID, dstID := setupMoveTest(t)
+	setMoveTestAgents(t, map[string]*model.Agent{})
+	_, err := store.WriteExec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id)
+		 VALUES ('s1', ?, 'claude', 'orphan', 'deleted-agent')`, srcID)
+	require.NoError(t, err)
+
+	moved, err := MoveSessionToProject("s1", dstPath, dstID)
+	require.NoError(t, err)
+	assert.True(t, moved)
+	assert.Equal(t, dstID, chatProjectID(t, "s1"))
+}
