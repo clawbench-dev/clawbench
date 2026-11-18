@@ -77,9 +77,9 @@ export interface ServerEvent {
         // mail_event body (ws.MailEventData): new inbox mail arrived.
         // `title`/`body` are rendered server-side like the usage/meeting
         // shapes above; mail_message_id is the cached row the click opens.
+        // `count` (unread total) reuses the field declared above.
         mail_message_id?: number
         account_id?: number
-        count?: number
     }
 }
 
