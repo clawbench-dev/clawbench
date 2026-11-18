@@ -202,10 +202,21 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 | GET/PUT/DELETE | `/api/providers/{id}` | 详情 / 更新（`apiKey` 空=不变，`clearApiKey`）/ 删除（被引用 409） |
 | PATCH | `/api/agents` | 新增 `provider_id`（null 清除） |
 
-## 私有协议（自有 Token）
+## 自有服务账号（私有协议）
 
 提供商表单的协议除了 anthropic / openai / gemini，还有一个 **私有协议**（`private`）。它不是线上协议，
 而是「这份凭据属于该后端自己的官方服务」：没有端点可填、没有认证方式可选、也不需要列模型。
+
+设置页把它做成了**每个后端一个独立页签**（通用 / CodeBuddy / Cursor / Command Code / Antigravity），
+通用表单不再提供私有协议——一份只写着密钥的行说不清自己属于谁，而归属错了只会在跑起来时爆炸。
+每个面板只显示该后端真正需要的字段（只有 CodeBuddy 有服务版本与企业域名），列表里点某一行直接跳到
+它所属的那个面板。为此 `providers` 记了 `backend` 与 `deployment` 两列：
+
+- **`backend`**：这行凭据属于哪个后端。绑定智能体时必须与智能体的后端一致（判据是「该后端是否声明了自有服务」），
+  环境注入再兜一层。迁移时按绑定它的智能体回填，判断不出来的留空、下次保存时再选。
+- **`deployment`**：只在支持多版本的后端上出现，空值即默认版本（老行不受影响）。它进环境指纹，改版本会重连而不必重启进程。
+
+这样做的原因是**归属错误在运行期极难诊断**——Cursor 的密钥绑到 CodeBuddy 智能体上，只表现为启动后鉴权失败。
 
 每个支持它的后端在 `ProviderEnv` 里声明 `OwnServiceEnv`（要注入的变量）和可选的 `OwnServiceExtra`
 （固定开关）：
@@ -218,7 +229,8 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 | antigravity | `GEMINI_API_KEY` | 走 Google 自己的服务 |
 
 `SupportedProtocols` 只对声明了 `OwnServiceEnv` 的后端列出 `private`；其他后端的智能体看不到、也绑不上。
-绑定时都不会弹「要写配置文件」的确认框。
+绑定时都不会弹「要写配置文件」的确认框。表单不再自己决定端点长相：企业版地址属于该后端的部署形态，
+由它自己的面板收集。
 
 一个私有协议的提供商可以绑给同一后端的多个智能体，换 key 只改一处——和其他智能体的「自有 key」完全同一套机制。
 表单在选中私有协议后会隐藏端点、认证方式、模型和「测试连接」，提交时强制 `base_url=''`、`auth_mode=auto`。
