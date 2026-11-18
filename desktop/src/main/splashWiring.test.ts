@@ -51,8 +51,8 @@ describe('bridge handles both splash channels', () => {
     const connect = src.match(/native:connect-to-server[\s\S]*?\n  \}\)/)
     expect(connect, 'connect-to-server handler not found').not.toBeNull()
     const body = connect![0]
-    const showAt = body.indexOf('showSplashFor(url)')
-    const loadAt = body.indexOf('w.loadURL(url)')
+    const showAt = body.indexOf('showSplashFor(target)')
+    const loadAt = body.indexOf('w.loadURL(target)')
     expect(showAt, 'connect handler must call showSplashFor').toBeGreaterThan(-1)
     expect(loadAt, 'connect handler must still navigate').toBeGreaterThan(-1)
     expect(showAt, 'overlay must be raised before the navigation').toBeLessThan(loadAt)
@@ -305,7 +305,7 @@ describe('version gate is wired end to end', () => {
     const bridgeSrc = readRepoFile('desktop/src/main/bridge.ts')
     const connect = bridgeSrc.match(/native:connect-to-server[\s\S]*?\n  \}\)/)
     expect(connect, 'connect-to-server handler not found').not.toBeNull()
-    expect(connect![0], 'connect must check the version').toContain('checkVersionGateFor(url)')
+    expect(connect![0], 'connect must check the version').toContain('checkVersionGateFor(target)')
   })
 
   it('registers both gate IPC channels', () => {

@@ -783,6 +783,9 @@ export default {
     loadFailed: 'Failed to load the server list',
     switchFailed: 'Failed to switch server',
     saveFailed: 'Failed to save the server password',
+    thisDevice: 'This device',
+    running: 'Running',
+    stopped: 'Not running',
   },
   welcome: {
     selectFile: 'Select a file to start',
@@ -4834,7 +4837,7 @@ export default {
       logCapture: 'Debug Log Capture',
       logCaptureDesc: 'Capture client debug logs for troubleshooting',
       reconfigureServer: 'Reconfigure Server',
-      reconfigureServerDesc: 'Reconfigure the server address for Android connection',
+      reconfigureServerDesc: 'Choose or add the server address to connect to',
       aboutBrandSlogan: 'An AI Workbench, United Across Devices',
       aboutServerVersion: 'Server Version',
       aboutServerVersionDesc: 'Current running server version number',

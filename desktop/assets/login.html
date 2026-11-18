@@ -24,6 +24,10 @@
       delete_server_title: 'Delete Server',
       delete_server_msg: 'Delete this server?',
       saved_servers: 'Saved Servers',
+      this_device_section: 'Built-in Server',
+      this_device_name: 'This device',
+      server_running: 'Running',
+      server_stopped: 'Not running',
       authenticating: 'Authenticating...',
       saving: 'Saving...',
       name_label: 'Name (optional)',
@@ -71,6 +75,10 @@
       delete_server_title: '删除服务器',
       delete_server_msg: '删除此服务器？',
       saved_servers: '已保存服务器',
+      this_device_section: '本机服务',
+      this_device_name: '本机',
+      server_running: '运行中',
+      server_stopped: '未运行',
       authenticating: '认证中...',
       saving: '保存中...',
       name_label: '名称（选填）',
@@ -1037,6 +1045,20 @@
     font-weight: 500;
   }
 
+  /* The built-in server has no row actions — the app starts and stops it, so
+     there is nothing to rename or remove. Its right-hand side says whether it
+     is up instead. */
+  .server-item-status {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .server-item-status.is-running {
+    color: var(--accent-color);
+  }
+
   /* Row actions: edit + delete, kept in one group so the info block can
      stretch without pushing the icons apart. */
   .server-item-actions {
@@ -1635,11 +1657,19 @@
 
     <!-- Form -->
     <div class="form-card">
+      <!-- The server this build ships with, in a section of its own: it is not
+           a saved server (nothing to edit or delete), it is started and stopped
+           by the app. Hidden entirely in a thin build. -->
+      <div id="embeddedSection" style="display:none;">
+        <div class="server-list-header" data-i18n="this_device_section">本机服务</div>
+        <div id="embeddedContainer" class="server-list"></div>
+      </div>
+
       <!-- Saved server list (shown when servers exist) -->
       <div id="serverListSection" style="display:none;">
+        <hr class="server-list-divider" id="serverListDivider">
         <div class="server-list-header" id="serverListHeader" data-i18n="saved_servers">已保存服务器</div>
         <div id="serverListContainer" class="server-list"></div>
-        <hr class="server-list-divider" id="serverListDivider">
       </div>
 
       <!-- Login form for existing / current server -->
@@ -1738,6 +1768,16 @@
 <script>
   var connecting = false;
   var savedServers = [];
+  /**
+   * The server this build ships with, or null, as `{ url, password, running }`.
+   *
+   * Deliberately NOT in savedServers: the app starts and stops it, so the page
+   * must not offer to rename or delete it — and its own address must never be
+   * treated as a user entry (that is what made it reserve its own port).
+   */
+  var embeddedServer = null;
+  /** The server the app is connected to right now, or '' when none. */
+  var currentServerUrl = '';
 
   // SVG icons
   var SVG_SERVER = '<svg class="server-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>';
@@ -1923,8 +1963,11 @@
       var passwordEl = document.getElementById('password');
       var passwordVisible = document.getElementById('passwordGroup').style.display !== 'none';
       var password = passwordVisible ? passwordEl.value : (connectForm.getAttribute('data-saved-password') || '');
+      var isEmbedded = connectForm.getAttribute('data-embedded') === '1';
 
-      if (!password) {
+      // A stopped built-in server is started by the connect itself, and the app
+      // supplies its credential — so an empty field there is not an error.
+      if (!password && !isEmbedded) {
         showError('errorMsg', t('enter_password'));
         passwordEl.focus();
         return;
@@ -1936,13 +1979,15 @@
 
       setConnecting(true);
       try {
-        // Update saved password in case it was changed.
+        // Update saved password in case it was changed. Not for the built-in
+        // server: it has its own slot, which the app maintains (and an empty
+        // field here must not erase the credential it just planted).
         // Both calls go through ipcRenderer.invoke, so failures surface as
         // Promise rejections rather than throws. The main error path is the
         // native onConnectError() callback (the window navigates on success),
         // but a rejection here must still reset the button or the form would
         // stay stuck on "authenticating" if native never calls back.
-        ClawBenchNative.saveServer(url, password);
+        if (!isEmbedded) ClawBenchNative.saveServer(url, password);
         Promise.resolve(ClawBenchNative.connectToServer(url, password)).catch(function(err) {
           showError('errorMsg', t('connection_failed') + (err && err.message ? err.message : ''));
           setConnecting(false);
@@ -2042,52 +2087,98 @@
   });
 
   function loadServerList() {
-    // getServerList() goes through ipcRenderer.invoke and returns a Promise.
-    // Reading it synchronously gave JSON.parse() a Promise, which threw and left
-    // savedServers empty — so a returning user never saw their saved servers and
-    // was always dropped into the "add server" form.
-    Promise.resolve(ClawBenchNative.getServerList()).then(function(json) {
+    // Every read goes through ipcRenderer.invoke and returns a Promise. Reading
+    // one synchronously gave JSON.parse() a Promise, which threw and left the
+    // list empty — so a returning user never saw their saved servers.
+    var listPromise = Promise.resolve(ClawBenchNative.getServerList()).then(function(json) {
       try {
-        savedServers = JSON.parse(json);
-        if (!Array.isArray(savedServers)) savedServers = [];
+        var arr = JSON.parse(json);
+        return Array.isArray(arr) ? arr : [];
       } catch(e) {
-        savedServers = [];
+        return [];
       }
-      renderServerList();
-    }).catch(function() {
-      savedServers = [];
+    }).catch(function() { return []; });
+
+    // The built-in server is a separate slot (see main/store.ts), so it needs
+    // its own read. A thin build answers "null" and the section stays hidden.
+    var embeddedPromise = Promise.resolve(null);
+    try {
+      if (ClawBenchNative.getEmbeddedServer) {
+        embeddedPromise = Promise.resolve(ClawBenchNative.getEmbeddedServer()).then(function(json) {
+          try {
+            var info = JSON.parse(json);
+            return info && typeof info.url === 'string' && info.url ? info : null;
+          } catch(e) {
+            return null;
+          }
+        }).catch(function() { return null; });
+      }
+    } catch(e) {}
+
+    // What the app is connected to right now: the default selection. Returning
+    // from "reconfigure server" while on another machine must NOT preselect the
+    // built-in server, or one stray click switches back to it.
+    var currentPromise = Promise.resolve('');
+    try {
+      if (ClawBenchNative.getServerUrl) {
+        currentPromise = Promise.resolve(ClawBenchNative.getServerUrl()).catch(function() { return ''; });
+      }
+    } catch(e) {}
+
+    Promise.all([listPromise, embeddedPromise, currentPromise]).then(function(results) {
+      savedServers = results[0];
+      embeddedServer = results[1];
+      currentServerUrl = results[2] || '';
       renderServerList();
     });
   }
 
-  function renderServerList() {
-    var container = document.getElementById('serverListContainer');
-    var section = document.getElementById('serverListSection');
-    var connectForm = document.getElementById('connectForm');
-    var addBtn = document.getElementById('addServerBtn');
-
-    if (savedServers.length === 0) {
-      // No saved servers — show the add form directly
-      section.style.display = 'none';
-      connectForm.style.display = 'none';
-      addBtn.style.display = 'none';
-      showAddForm();
-      return;
+  /** Same server? The origin identifies a row, so a trailing slash must not split it. */
+  function sameServerUrl(a, b) {
+    if (!a || !b) return false;
+    function norm(u) {
+      try {
+        var x = new URL(u);
+        return x.protocol + '//' + x.host;
+      } catch(e) {
+        return (u || '').replace(/\/+$/, '');
+      }
     }
+    return norm(a) === norm(b);
+  }
 
-    // Build server list HTML — default to first server in list
-    var html = '';
-    savedServers.forEach(function(srv, idx) {
-      var isActive = (idx === 0);
-      html += '<div class="server-item' + (isActive ? ' active' : '') + '" data-url="' + escHtml(srv.url) + '" onclick="selectServer(\'' + escJs(srv.url) + '\')">';
-      html += '  <div class="server-item-info">';
-      html += '    <span class="server-indicator"></span>';
-      html += '    ' + SVG_SERVER;
-      // A named server shows its name; an unnamed one falls back to the
-      // address. The full address always stays in the title tooltip, so a
-      // named row is still identifiable (and copying it is possible).
-      html += '    <span class="server-item-url" title="' + escHtml(srv.url) + '">' + escHtml(normalizeServerName(srv.name) || formatHost(srv.url)) + '</span>';
-      html += '  </div>';
+  /**
+   * The row for a URL. Saved rows win: if the user deliberately saved the same
+   * address as the built-in server (a standalone install on this machine), that
+   * is the row they meant.
+   */
+  function findServer(url) {
+    var saved = savedServers.filter(function(s) { return sameServerUrl(s.url, url); })[0];
+    if (saved) return saved;
+    if (embeddedServer && sameServerUrl(embeddedServer.url, url)) return embeddedServer;
+    return null;
+  }
+
+  /**
+   * One row of either list. The built-in server gets a status label where a
+   * saved row gets edit/delete: the app starts and stops it, so those actions
+   * would either do nothing or create a second, fake entry.
+   */
+  function serverRowHtml(srv, isEmbedded) {
+    var html = '<div class="server-item" data-url="' + escHtml(srv.url) + '" onclick="selectServer(\'' + escJs(srv.url) + '\')">';
+    html += '  <div class="server-item-info">';
+    html += '    <span class="server-indicator"></span>';
+    html += '    ' + SVG_SERVER;
+    // A named server shows its name; an unnamed one falls back to the address.
+    // The full address always stays in the title tooltip, so a named row is
+    // still identifiable (and copying it is possible).
+    var label = isEmbedded ? t('this_device_name') : (normalizeServerName(srv.name) || formatHost(srv.url));
+    html += '    <span class="server-item-url" title="' + escHtml(srv.url) + '">' + escHtml(label) + '</span>';
+    html += '  </div>';
+    if (isEmbedded) {
+      html += '  <span class="server-item-status' + (srv.running ? ' is-running' : '') + '">' +
+        t(srv.running ? 'server_running' : 'server_stopped') + '</span>';
+    } else {
       html += '  <div class="server-item-actions">';
       html += '    <button class="server-edit-btn" onclick="event.stopPropagation(); editServer(\'' + escJs(srv.url) + '\')" title="' + t('edit_server') + '">';
       html += '      ' + SVG_PENCIL;
@@ -2096,54 +2187,75 @@
       html += '      ' + SVG_X;
       html += '    </button>';
       html += '  </div>';
-      html += '</div>';
-    });
+    }
+    html += '</div>';
+    return html;
+  }
 
+  function renderServerList() {
+    var container = document.getElementById('serverListContainer');
+    var section = document.getElementById('serverListSection');
+    var divider = document.getElementById('serverListDivider');
+    var embedSection = document.getElementById('embeddedSection');
+    var embedContainer = document.getElementById('embeddedContainer');
+    var connectForm = document.getElementById('connectForm');
+    var addBtn = document.getElementById('addServerBtn');
+
+    var hasEmbedded = !!embeddedServer;
+    var hasSaved = savedServers.length > 0;
+
+    if (!hasEmbedded && !hasSaved) {
+      // Nothing saved and no built-in server — show the add form directly.
+      embedSection.style.display = 'none';
+      section.style.display = 'none';
+      connectForm.style.display = 'none';
+      addBtn.style.display = 'none';
+      showAddForm();
+      return;
+    }
+
+    var embedHtml = '';
+    if (hasEmbedded) embedHtml = serverRowHtml(embeddedServer, true);
+    embedContainer.innerHTML = embedHtml;
+    embedSection.style.display = hasEmbedded ? 'block' : 'none';
+
+    var html = '';
+    savedServers.forEach(function(srv) { html += serverRowHtml(srv, false); });
     container.innerHTML = html;
-    section.style.display = 'block';
+    section.style.display = hasSaved ? 'block' : 'none';
+    // The divider separates the two sections; with only one of them it would be
+    // a line hanging under the last row.
+    divider.style.display = (hasSaved && hasEmbedded) ? 'block' : 'none';
 
-    // Show connect form and add button
     connectForm.style.display = 'block';
     addBtn.style.display = 'flex';
 
-    // Select first server by default
-    var selected = savedServers[0];
-
-    connectForm.setAttribute('data-url', selected.url);
-    connectForm.setAttribute('data-saved-password', selected.password || '');
-    // Hide password field if saved password exists; show if no password saved
-    var passwordGroup = document.getElementById('passwordGroup');
-    var passwordEl = document.getElementById('password');
-    if (selected.password) {
-      passwordGroup.style.display = 'none';
-      passwordEl.value = '';
-    } else {
-      passwordGroup.style.display = 'block';
-      passwordEl.value = '';
-      passwordEl.focus();
-    }
+    // Default to the server this app is connected to; otherwise the built-in
+    // one (the common case for a fused build), otherwise the first saved row.
+    var selected = currentServerUrl ? findServer(currentServerUrl) : null;
+    if (!selected) selected = hasEmbedded ? embeddedServer : savedServers[0];
+    applySelection(selected);
   }
 
-  function selectServer(url) {
-    var srv = savedServers.find(function(s) { return s.url === url; });
+  function applySelection(srv) {
     if (!srv) return;
+    var isEmbedded = (srv === embeddedServer);
 
-    // Update active state visually
     var items = document.querySelectorAll('.server-item');
     items.forEach(function(el) {
-      if (el.getAttribute('data-url') === url) {
+      if (sameServerUrl(el.getAttribute('data-url'), srv.url)) {
         el.classList.add('active');
       } else {
         el.classList.remove('active');
       }
     });
 
-    // Update connect form
     var connectForm = document.getElementById('connectForm');
     var passwordGroup = document.getElementById('passwordGroup');
     var passwordEl = document.getElementById('password');
-    connectForm.setAttribute('data-url', url);
+    connectForm.setAttribute('data-url', srv.url);
     connectForm.setAttribute('data-saved-password', srv.password || '');
+    connectForm.setAttribute('data-embedded', isEmbedded ? '1' : '');
     hideError('errorMsg');
     if (srv.password) {
       passwordGroup.style.display = 'none';
@@ -2151,8 +2263,16 @@
     } else {
       passwordGroup.style.display = 'block';
       passwordEl.value = '';
-      passwordEl.focus();
+      // A stopped built-in server has no saved password yet because it has not
+      // started once; asking the user for one would be a dead end. Connecting
+      // starts it and the app supplies the credential itself.
+      if (!(isEmbedded && srv.running === false)) passwordEl.focus();
     }
+  }
+
+  function selectServer(url) {
+    var srv = findServer(url);
+    if (srv) applySelection(srv);
   }
 
   function customConfirm(message, opts) {
@@ -2216,12 +2336,16 @@
     var form = document.getElementById('addServerForm');
     // Empty data-edit-url is what marks this as an add, not an edit.
     form.setAttribute('data-edit-url', '');
+    // And the connect form no longer points at anything: a stale "embedded"
+    // marker here would let the next submit skip its password check.
+    document.getElementById('connectForm').setAttribute('data-embedded', '');
     document.getElementById('addFormTitle').style.display = 'none';
     document.getElementById('addName').value = '';
     document.getElementById('addAddress').value = '';
     document.getElementById('addPassword').value = '';
     document.getElementById('addBtnText').textContent = t('add');
 
+    document.getElementById('embeddedSection').style.display = 'none';
     document.getElementById('serverListSection').style.display = 'none';
     document.getElementById('connectForm').style.display = 'none';
     document.getElementById('addServerBtn').style.display = 'none';
@@ -2248,6 +2372,7 @@
     document.getElementById('addPassword').value = srv.password || '';
     document.getElementById('addBtnText').textContent = t('save');
 
+    document.getElementById('embeddedSection').style.display = 'none';
     document.getElementById('serverListSection').style.display = 'none';
     document.getElementById('connectForm').style.display = 'none';
     document.getElementById('addServerBtn').style.display = 'none';

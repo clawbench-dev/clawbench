@@ -253,6 +253,17 @@ export interface ClawBenchNative {
    */
   probeMicrophone?(): Promise<string>
   getServerList(): Promise<string>
+  /**
+   * The server this build ships with (desktop "all-in-one" builds only).
+   *
+   * JSON `{ url, password, running }`, or the string `"null"` when this build
+   * has no built-in server. Deliberately separate from {@link getServerList}:
+   * that list is the user's own rows (renamable, deletable), while this server
+   * is started and stopped by the shell.
+   *
+   * Optional: the Android and HarmonyOS shells have no such server.
+   */
+  getEmbeddedServer?(): Promise<string>
   getSavedServerConfig(): Promise<string>
   getServerUrl(): Promise<string>
   getPassword(): Promise<string>

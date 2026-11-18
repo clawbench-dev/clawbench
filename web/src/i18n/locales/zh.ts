@@ -786,6 +786,9 @@ export default {
     loadFailed: '加载服务器列表失败',
     switchFailed: '切换服务端失败',
     saveFailed: '保存服务器密码失败',
+    thisDevice: '本机',
+    running: '运行中',
+    stopped: '未运行',
   },
   welcome: {
     selectFile: '选择文件开始对话',
@@ -4830,7 +4833,7 @@ export default {
       logCapture: '调试日志捕获',
       logCaptureDesc: '捕获客户端调试日志用于问题排查',
       reconfigureServer: '重配服务器',
-      reconfigureServerDesc: '重新配置 Android 连接的服务器地址',
+      reconfigureServerDesc: '选择或添加要连接的服务器地址',
       aboutBrandSlogan: '多端一体的 AI 工作台',
       aboutServerVersion: '服务端版本',
       aboutServerVersionDesc: '当前运行的服务端版本号',

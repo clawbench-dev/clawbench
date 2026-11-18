@@ -158,6 +158,30 @@ describe('bridge: tunnel transport IPC', () => {
   })
 })
 
+describe('bridge: built-in server IPC', () => {
+  beforeEach(() => {
+    handlers.clear()
+    onHandlers.clear()
+    vi.clearAllMocks()
+    registerBridge()
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('registers the channel the login page and the switcher read', () => {
+    // The preload invokes `native:get-embedded-server`; a rename on either side
+    // would surface only at runtime ("No handler registered") and leave the
+    // built-in server unreachable from both pickers.
+    expect(handlers.has('native:get-embedded-server')).toBe(true)
+  })
+
+  it('answers "null" in a build without a built-in server', () => {
+    expect(invoke('native:get-embedded-server')).toBe('null')
+  })
+})
+
 describe('bridge: native notification IPC', () => {
   beforeEach(() => {
     handlers.clear()

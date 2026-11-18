@@ -55,9 +55,12 @@ Windows 桌面安装包里自带一份服务端，启动客户端就等于启动
 
 - **组成**：`desktop/assets/server/clawbench.exe` 由 `desktop/scripts/build-server.mjs` 在打包前生成（发布流水线里是直接取 `build-windows` job 产出的 `windows-server` artifact，那份已经内嵌了前端）。electron-builder 通过 Windows 的 `extraFiles` 把它放到 `<安装目录>/server/`——**故意不放进 `resources/`**：桌面端的增量更新只替换 `resources/`，服务端在它外面才不会被一次更新顺手删掉。
 - **两个安装包**：发布产物里 `clawbench-desktop-windows-x64-<tag>.zip` 是原来的瘦客户端（连别的机器），`clawbench-desktop-windows-x64-local-<tag>.zip` 才是带服务端的融合版。融合版由发布 job 用"瘦包 + 本次的 `clawbench.exe`"现场组装，所以即使客户端壳复用了上一版，每个 release 也一定有对应的融合包。
-- **启动顺序**（`desktop/src/main/localServer.ts`）：选端口（上次用过的优先，被占就往上找；被别的已保存服务器占用的端口跳过）→ 拉起服务端 → 轮询 `/api/health` 直到它自报 `app=clawbench` → 用 `{userData}/server/auto-password` 里的密码走 `POST /login` 拿 cookie 并写入 Electron 的 cookie jar → 写 `serverUrl` → 再建窗口。用户看不到登录页，也看不到版本不一致的拦截（`checkVersionGateFor` 在本机模式下直接返回）。
+- **启动顺序**（`desktop/src/main/localServer.ts`）：选端口（上次用过的优先，被占就往上找；被别的已保存服务器占用的端口跳过）→ 拉起服务端 → 轮询 `/api/health` 直到它自报 `app=clawbench` → 用 `{userData}/server/auto-password` 里的密码走 `POST /login` 拿 cookie 并写入 Electron 的 cookie jar → **按需**写 `serverUrl` → 再建窗口。刚装好时用户看不到登录页（cookie 已种好）；此后「打开哪台」取决于上次的选择。
+- **内嵌服务端不是普通服务器条目**：它的地址与密码分别存在 `embeddedServerUrl` / `embeddedServerPasswordEncrypted`，**不在 `servers` 列表里**（旧版本曾把它当普通条目，删除后下次启动又自动补回、改名会造出假条目、改密码完全无效）。原生登录页把它单列成「本机服务」一块，右侧只显示运行状态、没有铅笔和 ×；网页端的「切换服务端」也把它单列一行。`native:get-embedded-server` 提供 `{url, password, running}`，`getServerList` 不包含它。
+- **登录目标记忆**：只有「还没选过服务器」或「上次连的就是内嵌服务端」时才把 `serverUrl` 写成它（`shouldAdoptEmbeddedServer`）。用户主动连了别的机器，重启后仍然是那台——此前每次启动都无条件覆盖，等于强制拉回本机。内嵌服务端自己也因此**端口稳定**：它不再出现在 `servers` 里，所以不会把自己上次的地址当成「要避开的端口」而每次往后挪一位（挪端口等于换 origin，主题、壁纸、面板布局看起来会被重置）。
+- **本机模式的判定按地址、不按「有没有在跑」**：内嵌服务端连外部服务器时仍在后台运行，所以版本拦截（`checkVersionGateFor(url)`）与失败提示都以「当前打开的是不是内嵌地址」为准。连外部服务器会正常做版本检查；只有目标是内嵌地址且它已停止时才弹「本机服务已停止」，弹完仍然回到登录页，用户可以选别的机器或点本机重试（`connectToServer` 会重新拉起它）。
 - **退出**：客户端关闭服务端的 stdin。服务端在 `--exit-on-stdin-close` 下把这个"管道断了"当成优雅退出指令（Windows 上没法给子进程发可捕获的信号），所以客户端正常退出、崩溃、被强杀都会让服务端跟着走，不留孤儿。15 秒没退完就强杀。
-- **受管模式**：服务端带 `--managed` 启动，`/api/upgrade/start` 与 `/api/config/restart` 一律 403，`/api/upgrade/check` 返回 `managed: true`，网页端据此隐藏「检查更新」和「重启服务端」。原因：这两条路会把安装包里的二进制换掉或重新拉起，客户端就不再管得住那个进程；桌面端自己的更新走客户端的更新器。
+- **受管模式**：服务端带 `--managed` 启动，`/api/upgrade/start` 与 `/api/config/restart` 一律 403，`/api/upgrade/check` 返回 `managed: true`，网页端据此隐藏「检查更新」和「重启服务端」。原因：这两条路会把安装包里的二进制换掉或重新拉起，客户端就不再管得住那个进程；桌面端自己的更新走客户端的更新器。**版本拦截里的「下载」也一样拒绝**（`installServerVersion` 检测到安装目录带服务端就只弹说明）：所有下载源都是瘦包，装进融合版会把 `server/` 弄丢；融合版的更新路径是重装新版一体安装包。
 - **数据目录**：`{userData}/server`，和手动安装的 `~/.clawbench` 分开，避免两边抢实例锁。
 - **网络**：默认 `--host 0.0.0.0`，同一局域网的手机/同事可以照旧访问（首次可能有防火墙提示）；登录仍然用那个随机密码，网页端可以改。只有客户端自己免登录。
 - **崩溃残留**：服务端启动时会在数据目录写 `server.pid`（优雅退出时删掉）。上次如果是崩溃/强杀，文件会留下；新一次启动先读它，确认这个 PID 还活着且进程名是 `clawbench` 才发信号（Windows 用 `taskkill`，其他平台先 SIGTERM），再拉起新的。不按进程名批量杀，避免误伤用户自己另装的实例。

@@ -164,6 +164,12 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // async reads
   getAppVersion: () => invoke('native:get-app-version'),
   getServerList: () => invoke('native:get-server-list'),
+  /**
+   * The server this build ships with (desktop "all-in-one" builds), or the
+   * JSON string "null" in a build without one. Kept out of getServerList():
+   * that list is the user's own rows, which they can rename and delete.
+   */
+  getEmbeddedServer: () => invoke('native:get-embedded-server'),
   getSavedServerConfig: () => invoke('native:get-saved-server-config'),
   getServerUrl: () => invoke('native:get-server-url'),
   getPassword: () => invoke('native:get-password'),

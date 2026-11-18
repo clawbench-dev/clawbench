@@ -11,6 +11,9 @@ import {
   getPassword, savePassword, savePasswordFor, getPasswordFor, removePasswordFor,
   migratePasswords, getServersForRenderer, saveServerName,
 } from './secrets'
+import { getEmbeddedServerInfo, isEmbeddedServerUrl, setEmbeddedServerActive, startEmbeddedServer } from './localServer'
+import { embeddedServerLabels, resolveNativeLanguage } from './labels'
+import { sameServerUrl } from './localServerPolicy'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel,
   getTransportPreference, getActiveTransport, initTransportPreference, persistTransportPreference } from './tunnel'
@@ -68,6 +71,10 @@ export function registerBridge(): void {
   // Passwords are resolved per server so the login page can prefill the right
   // one; the persisted entries keep only ciphertext (never sent to the renderer).
   ipcMain.handle('native:get-server-list', () => JSON.stringify(getServersForRenderer()))
+  // The built-in server is NOT part of that list (see ServerListSchema), so the
+  // login page and the in-app switcher ask for it separately. `"null"` in a
+  // thin build, where there is no such server.
+  ipcMain.handle('native:get-embedded-server', () => JSON.stringify(getEmbeddedServerInfo()))
   ipcMain.handle('native:get-saved-server-config', () => {
     const u = getStore().get('serverUrl')
     if (!u) return '{}'
@@ -87,9 +94,13 @@ export function registerBridge(): void {
   // silently dropping the name.
   ipcMain.handle('native:save-server-named', (_e, url: string, password: string, name: string) => {
     savePasswordFor(url, password)
-    saveServerName(url, name)
+    // The built-in server has no user-editable row: a name would create one.
+    if (!isEmbeddedServerUrl(url)) saveServerName(url, name)
   })
   ipcMain.handle('native:remove-server', (_e, url: string) => {
+    // The built-in server is not the user's to remove: it is part of the
+    // package, and dropping the row here would only make the app re-create it.
+    if (isEmbeddedServerUrl(url)) return
     getStore().set('servers', getStore().get('servers').filter(s => s.url !== url))
     // Drop the credential with the entry, or re-adding the same URL would
     // silently inherit a password the user believed was deleted.
@@ -101,21 +112,41 @@ export function registerBridge(): void {
     }
   })
   ipcMain.handle('native:set-ssh-password', (_e, p: string) => savePassword(p))
-  ipcMain.handle('native:connect-to-server', (_e, url: string, password: string) => {
-    getStore().set('serverUrl', url)
+  ipcMain.handle('native:connect-to-server', async (_e, url: string, password: string) => {
+    // Coming back to the built-in server after it stopped: start it here rather
+    // than answering with a dead row. The port may have moved since the row was
+    // rendered, so the URL IT reports is the one to open.
+    let target = url
+    if (isEmbeddedServerUrl(url) && !getEmbeddedServerInfo()?.running) {
+      try {
+        target = await startEmbeddedServer()
+        setEmbeddedServerActive(true)
+      } catch (err) {
+        recordError('LocalServer', err)
+        throw new Error(embeddedServerLabels(resolveNativeLanguage()).startFailedMessage)
+      }
+    }
+    getStore().set('serverUrl', target)
     // NOTE: the accepted certificate is deliberately NOT cleared here. It is
     // remembered per origin and bound to its fingerprint (see certificate.ts),
     // so reconnecting to the same server does not re-ask; a changed certificate
     // still does. Settings → Security has the explicit "forget" action.
-    // Always mirror the password into this URL's slot. An empty value must
-    // CLEAR it: the login page calls this when switching to a cookie-only
-    // server, and keeping the previous server's password would let the tunnel
-    // and startup auto-login authenticate with the wrong credential.
-    savePasswordFor(url, password)
-    // Ensure the connected server is in the saved list so the login page shows it.
-    const servers = getStore().get('servers')
-    if (!servers.some(s => s.url === url)) {
-      getStore().set('servers', [{ url }, ...servers])
+    //
+    // An empty value must CLEAR the slot for a user server: the login page calls
+    // this when switching to a cookie-only server, and keeping the previous
+    // server's password would let the tunnel and startup auto-login
+    // authenticate with the wrong credential. The built-in server is the
+    // exception — the login page may hand it an empty password precisely
+    // because the app just started it and planted the real one.
+    if (password || !isEmbeddedServerUrl(target)) savePasswordFor(target, password)
+    // Ensure the connected server is in the saved list so the login page shows
+    // it — the built-in server excluded: it has its own row and its own store
+    // slot.
+    if (!isEmbeddedServerUrl(target)) {
+      const servers = getStore().get('servers')
+      if (!servers.some(s => sameServerUrl(s.url, target))) {
+        getStore().set('servers', [{ url: target }, ...servers])
+      }
     }
     // Chromium reads the secure-context switch once, at startup, so a server
     // this process did not start with is still an insecure origin: capture
@@ -123,8 +154,8 @@ export function registerBridge(): void {
     // which surfaces as "meetings cannot start" with no way to fix it from the
     // UI. The URL is persisted above, so restarting now lands on this server
     // and the next process promotes it — at most once per server.
-    if (needsSecureContextRelaunch(url)) {
-      record('I', 'SecureContext', `relaunching for ${url}`)
+    if (needsSecureContextRelaunch(target)) {
+      record('I', 'SecureContext', `relaunching for ${target}`)
       app.relaunch()
       app.exit(0)
       return
@@ -135,12 +166,12 @@ export function registerBridge(): void {
       // torn down by loadURL, and the server page renders nothing until its own
       // initialization resolves, so without this the window is blank for the
       // whole connect + boot period. Mirrors Android's connectToServer().
-      showSplashFor(url)
-      w.loadURL(url)
+      showSplashFor(target)
+      w.loadURL(target)
       // Check the desktop/server version consistency for this connection. On a
       // mismatch the gate replaces the loading overlay; every connect is checked
       // (the skip is not remembered), matching Android.
-      checkVersionGateFor(url)
+      checkVersionGateFor(target)
     } else { createMainWindow() }
   })
 
@@ -156,14 +187,22 @@ export function registerBridge(): void {
     if (previous === url) return
     getStore().set('serverUrl', url)
 
-    const servers = getStore().get('servers')
-    const idx = servers.findIndex(s => s.url === previous)
-    if (idx >= 0) {
-      const next = servers.slice()
-      next[idx] = { ...next[idx], url }
-      getStore().set('servers', next)
-    } else if (!servers.some(s => s.url === url)) {
-      getStore().set('servers', [{ url }, ...servers])
+    // The built-in server has no row to rewrite; only its recorded address
+    // moves (a self-signed certificate turning the listener into HTTPS).
+    if (isEmbeddedServerUrl(previous)) {
+      if (sameServerUrl(getStore().get('embeddedServerUrl'), previous)) {
+        getStore().set('embeddedServerUrl', url)
+      }
+    } else {
+      const servers = getStore().get('servers')
+      const idx = servers.findIndex(s => s.url === previous)
+      if (idx >= 0) {
+        const next = servers.slice()
+        next[idx] = { ...next[idx], url }
+        getStore().set('servers', next)
+      } else if (!isEmbeddedServerUrl(url) && !servers.some(s => sameServerUrl(s.url, url))) {
+        getStore().set('servers', [{ url }, ...servers])
+      }
     }
 
     const w = getMainWindow()
