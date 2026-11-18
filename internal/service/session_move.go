@@ -395,11 +395,6 @@ func nextSortOrderInProject(projectID int64) (int, error) {
 	return int(minOrder.Int64) - 1, nil
 }
 
-// IsSessionRunning reports whether a runner is registered for the session. A
-// seam (var) so handler tests can exercise the move guards without spawning a
-// real turn.
-var IsSessionRunning = isRunnerRegistered
-
 // SessionHasStreamingMessage reports whether the conversation has a message row
 // still being written. Moving such a session would re-file a half-written reply
 // from the old project, since the writing turn captured the project id at its
