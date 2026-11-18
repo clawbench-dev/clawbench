@@ -446,3 +446,57 @@ func TestMoveUnavailableMembersError_Message(t *testing.T) {
 	err := &MoveUnavailableMembersError{Names: []string{"planner", "reviewer"}}
 	assert.Equal(t, "group members unavailable in target project: planner, reviewer", err.Error())
 }
+
+// A write failure on the session row itself must surface as an error, not a
+// half-moved conversation. A trigger is the cheapest way to force it.
+func TestMoveSessionToProject_FailsWhenSessionRowCannotBeUpdated(t *testing.T) {
+	_, dstPath, srcID, dstID := setupMoveTest(t)
+
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s-locked', ?, 'claude', 't')", srcID)
+	require.NoError(t, err)
+	_, err = store.WriteExec(
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, 'user', 'hi', 's-locked', 'claude')", srcID)
+	require.NoError(t, err)
+	_, err = store.WriteExec(`CREATE TRIGGER block_session_move BEFORE UPDATE ON chat_sessions
+		BEGIN SELECT RAISE(ABORT, 'blocked'); END`)
+	require.NoError(t, err)
+
+	moved, err := MoveSessionToProject("s-locked", dstPath, dstID)
+	require.Error(t, err)
+	assert.False(t, moved)
+}
+
+// The history rows are re-filed inside the same transaction; a failure there
+// must abort the move rather than leave the session without its messages.
+func TestMoveSessionToProject_FailsWhenHistoryCannotBeUpdated(t *testing.T) {
+	_, dstPath, srcID, dstID := setupMoveTest(t)
+
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s-hist', ?, 'claude', 't')", srcID)
+	require.NoError(t, err)
+	_, err = store.WriteExec(
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, 'user', 'hi', 's-hist', 'claude')", srcID)
+	require.NoError(t, err)
+	_, err = store.WriteExec(`CREATE TRIGGER block_history_move BEFORE UPDATE ON chat_history
+		BEGIN SELECT RAISE(ABORT, 'blocked'); END`)
+	require.NoError(t, err)
+
+	moved, err := MoveSessionToProject("s-hist", dstPath, dstID)
+	require.Error(t, err)
+	assert.False(t, moved)
+
+	var projectID int64
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT project_id FROM chat_sessions WHERE id = 's-hist'").Scan(&projectID))
+	assert.Equal(t, srcID, projectID, "the session must not move without its history")
+}
+
+// Moving a session that does not exist is an error, not a silent success.
+func TestMoveSessionToProject_UnknownSession(t *testing.T) {
+	_, dstPath, _, dstID := setupMoveTest(t)
+
+	moved, err := MoveSessionToProject("no-such-session", dstPath, dstID)
+	require.Error(t, err)
+	assert.False(t, moved)
+}
