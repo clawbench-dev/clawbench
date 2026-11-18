@@ -78,13 +78,55 @@ func TestRecommendNextStep_RejectsEnvelopePayload(t *testing.T) {
 // A reasoning model that could still not answer (effort rejected, budget spent
 // thinking) must fail visibly with the reason instead of an empty result.
 func TestOpenAIDoAskPass_ReasoningOnlyReplyNamesTheCause(t *testing.T) {
-	srv := newJSONServer(t, `{"choices":[{"finish_reason":"length","message":{"content":"","reasoning":"lots of thinking"}}]}`)
-	s := NewOpenAI(srv, "key", "m")
+	// DeepSeek / GLM / Qwen / Gemini's compatible layer report the thinking in
+	// "reasoning_content"; OpenRouter uses "reasoning". Both must be attributed.
+	cases := map[string]string{
+		"reasoning_content": `{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"lots of thinking"}}]}`,
+		"reasoning":         `{"choices":[{"finish_reason":"length","message":{"content":"","reasoning":"lots of thinking"}}]}`,
+	}
+	for key, body := range cases {
+		t.Run(key, func(t *testing.T) {
+			srv := newJSONServer(t, body)
+			s := NewOpenAI(srv, "key", "m")
+
+			_, err := s.DoRecommendPass(context.Background(), "sys", "", "rolling")
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "whole output budget for reasoning")
+			assert.Contains(t, err.Error(), "finish_reason=\"length\"")
+		})
+	}
+}
+
+// The reasoning fields are response-only: they must never be sent back in the
+// request body (some gateways reject unknown input fields).
+func TestOpenAIRequest_OmitsReasoningFields(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		msgs, _ := body["messages"].([]any)
+		got = msgs[0].(map[string]any)
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	s := NewOpenAI(srv.URL, "key", "m")
+	_, _ = s.DoRecommendPass(context.Background(), "sys", "", "rolling")
+	assert.NotContains(t, got, "reasoning")
+	assert.NotContains(t, got, "reasoning_content")
+}
+
+// Anthropic reports a spent budget as thinking blocks plus stop_reason; an
+// empty reply must say which, not just "empty output".
+func TestAnthropicDoAskPass_ReasoningOnlyReplyNamesTheCause(t *testing.T) {
+	srv := newJSONServer(t, `{"stop_reason":"max_tokens","content":[{"type":"thinking","thinking":"lots of thinking"},{"type":"text","text":""}]}`)
+	s := NewAnthropic(srv, "key", "m")
 
 	_, err := s.DoRecommendPass(context.Background(), "sys", "", "rolling")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "whole output budget for reasoning")
-	assert.Contains(t, err.Error(), "finish_reason=\"length\"")
+	assert.Contains(t, err.Error(), "finish_reason=\"max_tokens\"")
+	assert.Contains(t, err.Error(), "16 chars of reasoning")
 }
 
 func TestReasoningBudget(t *testing.T) {

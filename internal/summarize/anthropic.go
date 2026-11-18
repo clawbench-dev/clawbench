@@ -64,6 +64,7 @@ type anthropicResponse struct {
 type anthropicContentBlock struct {
 	Type         string                 `json:"type"`
 	Text         string                 `json:"text,omitempty"`
+	Thinking     string                 `json:"thinking,omitempty"`
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
@@ -183,15 +184,19 @@ func (s *AnthropicSummarizer) DoAskPassDetailed(ctx context.Context, systemPromp
 		return "", false, fmt.Errorf("anthropic response decode: %w", err)
 	}
 
-	var resultBuilder strings.Builder
+	var resultBuilder, thinkingBuilder strings.Builder
 	for _, block := range chatResp.Content {
-		if block.Type == blockTypeText {
+		switch block.Type {
+		case blockTypeText:
 			resultBuilder.WriteString(block.Text)
+		case blockTypeThinking:
+			thinkingBuilder.WriteString(block.Thinking)
 		}
 	}
 	result := strings.TrimSpace(resultBuilder.String())
 	if result == "" {
-		return "", false, fmt.Errorf("anthropic returned empty recommendation output")
+		return "", false, fmt.Errorf("anthropic returned empty recommendation output%s",
+			reasoningOnlyHint(chatResp.StopReason, thinkingBuilder.String()))
 	}
 	return result, isTruncated(chatResp.StopReason), nil
 }
@@ -246,15 +251,19 @@ func (s *AnthropicSummarizer) DoSummarizePass(ctx context.Context, text, systemP
 	}
 
 	// Extract text from content blocks
-	var resultBuilder strings.Builder
+	var resultBuilder, thinkingBuilder strings.Builder
 	for _, block := range chatResp.Content {
-		if block.Type == blockTypeText {
+		switch block.Type {
+		case blockTypeText:
 			resultBuilder.WriteString(block.Text)
+		case blockTypeThinking:
+			thinkingBuilder.WriteString(block.Thinking)
 		}
 	}
 	result := strings.TrimSpace(resultBuilder.String())
 	if result == "" {
-		return "", fmt.Errorf("anthropic (pass %d) returned empty output", pass)
+		return "", fmt.Errorf("anthropic (pass %d) returned empty output%s",
+			pass, reasoningOnlyHint(chatResp.StopReason, thinkingBuilder.String()))
 	}
 
 	slog.Info(
