@@ -175,23 +175,6 @@ describe('ProviderFormDialog', () => {
     expect(created.text()).toContain('已连接的会话需重启')
   })
 
-  it('hides endpoint, auth and models for the private protocol and submits no endpoint', async () => {
-    const wrapper = mountDialog({ provider: existing })
-    await protocolBtn(wrapper, 'private').trigger('click')
-
-    // A credential for the backend's own service has no endpoint, no header
-    // choice and no model list: showing those controls invites values that can
-    // never be used.
-    expect(wrapper.find('[data-role="base-url"]').exists()).toBe(false)
-    expect(wrapper.find('[data-role="auth-mode"]').exists()).toBe(false)
-    expect(wrapper.find('[data-section="models"]').exists()).toBe(false)
-    expect(wrapper.find('[data-role="private-hint"]').exists()).toBe(true)
-
-    await save(wrapper).trigger('click')
-    const emitted = wrapper.emitted('submit')?.[0]?.[0] as Record<string, unknown>
-    expect(emitted).toMatchObject({ protocol: 'private', baseUrl: '', authMode: 'auto' })
-  })
-
   it('only offers the auth modes the chosen protocol can express', async () => {    const wrapper = mountDialog()
     const authSelect = () => wrapper.find('[data-role="auth-mode"]')
     const optionValues = () =>

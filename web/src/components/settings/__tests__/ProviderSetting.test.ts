@@ -35,7 +35,12 @@ const i18n = createI18n({
         items: {
           providerDesc: '模型提供商',
           providerTabGeneral: '通用',
-          providerTabCodeBuddy: 'CodeBuddy 账号',
+          accountLabel: '{name} 账号',
+          accountKeyOnlyHint: '{name} 只需要密钥',
+          accountNameCodeBuddy: 'CodeBuddy',
+          accountNameCursor: 'Cursor',
+          accountNameCommandCode: 'Command Code',
+          accountNameAntigravity: 'Antigravity',
           providerKeyHide: '隐藏密钥',
           providerKeyReveal: '查看密钥',
           codebuddyFormHint: 'CodeBuddy 账号说明',
@@ -49,7 +54,6 @@ const i18n = createI18n({
           codebuddyDomain: '企业域名',
           codebuddyDomainPlaceholder: 'https://your-company.example.com',
           codebuddyDomainHint: '域名说明',
-          codebuddyNamePlaceholder: '例如：公司 CodeBuddy',
           codebuddyKeyKeep: '已保存，留空表示不修改',
           codebuddySaved: '已保存',
           providerEmpty: '还没有配置模型提供商',
@@ -191,33 +195,47 @@ describe('ProviderSetting', () => {
     await flushPromises()
 
     await wrapper.find('[data-tab="codebuddy"]').trigger('click')
-    await wrapper.find('[data-role="cb-name"]').setValue('公司 CodeBuddy')
-    await wrapper.find('[data-role="cb-deployment"]').setValue('selfhosted')
-    await wrapper.find('[data-role="cb-domain"]').setValue('https://cb.example.com')
-    await wrapper.find('[data-role="cb-key"]').setValue('ck-1')
-    await wrapper.find('[data-action="cb-save"]').trigger('click')
+    await wrapper.find('[data-role="account-name"]').setValue('公司 CodeBuddy')
+    await wrapper.find('[data-role="account-deployment"]').setValue('selfhosted')
+    await wrapper.find('[data-role="account-domain"]').setValue('https://cb.example.com')
+    await wrapper.find('[data-role="account-key"]').setValue('ck-1')
+    await wrapper.find('[data-action="account-save"]').trigger('click')
     await flushPromises()
 
     expect(mockPost).toHaveBeenCalledWith('/api/providers', expect.objectContaining({ protocol: 'private', deployment: 'selfhosted' }))
     // The form must keep showing the row it just created (not fall back to a
     // blank "add" form) and say so.
-    expect(wrapper.find<HTMLInputElement>('[data-role="cb-name"]').element.value).toBe('公司 CodeBuddy')
-    expect(wrapper.find('[data-role="cb-saved"]').exists()).toBe(true)
+    expect(wrapper.find<HTMLInputElement>('[data-role="account-name"]').element.value).toBe('公司 CodeBuddy')
+    expect(wrapper.find('[data-role="account-saved"]').exists()).toBe(true)
   })
 
-  it('routes a private-protocol row to the CodeBuddy tab instead of the generic dialog', async () => {
+  it('routes an own-service row to its backend tab instead of the generic dialog', async () => {
     const wrapper = mountSetting([
-      { id: 9, name: 'CodeBuddy', protocol: 'private', baseUrl: '', authMode: 'auto', hasKey: true, agentCount: 1 },
+      { id: 9, name: 'CodeBuddy', protocol: 'private', backend: 'codebuddy', baseUrl: '', authMode: 'auto', hasKey: true, agentCount: 1 },
     ])
     await flushPromises()
 
     await wrapper.find('.provider-row[data-provider-id="9"]').trigger('click')
 
-    // The generic form cannot express the edition or the enterprise address,
-    // and its save would clear them — so this row belongs to the other tab.
+    // The generic form cannot express the owner backend (or the edition and
+    // enterprise address), and its save would clear them — so this row belongs
+    // to the panel of the backend it names.
     expect(wrapper.find('[data-tab="codebuddy"]').classes()).toContain('provider-tab--on')
     expect(wrapper.find('.mock-dialog').exists()).toBe(false)
-    expect(wrapper.find('[data-role="cb-name"]').exists()).toBe(true)
+    expect(wrapper.find('[data-role="account-name"]').exists()).toBe(true)
+  })
+
+  it('routes each account to its own backend tab', async () => {
+    const wrapper = mountSetting([
+      { id: 9, name: 'Cursor key', protocol: 'private', backend: 'cursor', baseUrl: '', authMode: 'auto', hasKey: true, agentCount: 1 },
+    ])
+    await flushPromises()
+
+    await wrapper.find('.provider-row[data-provider-id="9"]').trigger('click')
+
+    expect(wrapper.find('[data-tab="cursor"]').classes()).toContain('provider-tab--on')
+    // Cursor has nothing beyond the key, so no edition control appears.
+    expect(wrapper.find('[data-role="account-deployment"]').exists()).toBe(false)
   })
 
   it('keeps the general list reachable through its own tab', async () => {
@@ -225,7 +243,12 @@ describe('ProviderSetting', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-tab="general"]').classes()).toContain('provider-tab--on')
-    await wrapper.find('[data-tab="codebuddy"]').trigger('click')
+    // One tab per own-service backend, so every account type has a home.
+    for (const backend of ['codebuddy', 'cursor', 'commandcode', 'antigravity']) {
+      expect(wrapper.find(`[data-tab="${backend}"]`).exists()).toBe(true)
+    }
+
+    await wrapper.find('[data-tab="cursor"]').trigger('click')
     expect(wrapper.find('.provider-add').exists()).toBe(false)
 
     await wrapper.find('[data-tab="general"]').trigger('click')

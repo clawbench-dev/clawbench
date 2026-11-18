@@ -5,10 +5,11 @@
        in ProviderFormDialog — this page only ever shows what is configured. -->
   <div class="provider-setting">
     <!-- Two audiences, one page: ordinary endpoints share the generic list and
-         form, while CodeBuddy's own account needs a field the generic form
-         cannot express (which edition of its service, and the address the
-         enterprise editions live at). A tab keeps both one click apart without
-         teaching the generic form about one backend. -->
+         form, while an own-service account (CodeBuddy / Cursor / Command Code /
+         Antigravity) needs a field the generic form cannot express — which
+         backend it belongs to, plus CodeBuddy's service edition and the address
+         its enterprise editions live at. One tab per backend keeps every panel
+         specific without teaching the generic form about any of them. -->
     <div class="provider-tabs" role="tablist">
       <button
         type="button"
@@ -22,15 +23,17 @@
         {{ t('settings.items.providerTabGeneral') }}
       </button>
       <button
+        v-for="b in ACCOUNT_BACKENDS"
+        :key="b"
         type="button"
         class="provider-tab"
-        :class="{ 'provider-tab--on': tab === 'codebuddy' }"
+        :class="{ 'provider-tab--on': tab === b }"
         role="tab"
-        :aria-selected="tab === 'codebuddy'"
-        data-tab="codebuddy"
-        @click="tab = 'codebuddy'"
+        :aria-selected="tab === b"
+        :data-tab="b"
+        @click="tab = b"
       >
-        {{ t('settings.items.providerTabCodeBuddy') }}
+        {{ t(ACCOUNT_BACKEND_LABELS[b]) }}
       </button>
     </div>
 
@@ -141,11 +144,12 @@
       </div>
     </template>
 
-    <CodeBuddyProviderForm
+    <OwnServiceAccountForm
       v-else
+      :backend="tab"
       :providers="providers"
-      :selected-id="codebuddyId"
-      @saved="onCodeBuddySaved"
+      :selected-id="accountId"
+      @saved="onAccountSaved"
     />
 
     <ProviderFormDialog
@@ -170,7 +174,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from '@/utils/api'
 import { useDialog } from '@/composables/useDialog'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ProviderFormDialog, { type ProviderFormValue, type ProviderRow } from './ProviderFormDialog.vue'
-import CodeBuddyProviderForm from './CodeBuddyProviderForm.vue'
+import OwnServiceAccountForm from './OwnServiceAccountForm.vue'
 import type { PresetOption } from './ProviderPresetPicker.vue'
 import { rememberProviderNames } from '@/utils/providerNames'
 import { appLog } from '@/utils/appLog'
@@ -181,11 +185,26 @@ const { t } = useI18n()
 const { confirm } = useDialog()
 
 const providers = ref<ProviderRow[]>([])
-/** Which half of the page is showing. Private-protocol rows belong to the
- *  CodeBuddy tab: the generic form would drop the deployment and the address. */
-const tab = ref<'general' | 'codebuddy'>('general')
-/** Row the CodeBuddy tab should open (set when a private row is clicked). */
-const codebuddyId = ref<number | null>(null)
+/** Backends whose credential is for their OWN service: the generic form cannot
+ *  say which one a row belongs to, so each gets its own panel. */
+const ACCOUNT_BACKENDS = ['codebuddy', 'cursor', 'commandcode', 'antigravity'] as const
+type AccountBackend = (typeof ACCOUNT_BACKENDS)[number]
+const ACCOUNT_BACKEND_LABELS: Record<AccountBackend, string> = {
+  codebuddy: 'settings.items.accountNameCodeBuddy',
+  cursor: 'settings.items.accountNameCursor',
+  commandcode: 'settings.items.accountNameCommandCode',
+  antigravity: 'settings.items.accountNameAntigravity',
+}
+
+function isAccountBackend(value: string): value is AccountBackend {
+  return (ACCOUNT_BACKENDS as readonly string[]).includes(value)
+}
+
+/** Which half of the page is showing. Own-service rows belong to a backend
+ *  panel: the generic form would drop their backend and (CodeBuddy's) edition. */
+const tab = ref<'general' | AccountBackend>('general')
+/** Row an account panel should open (set when a private row is clicked). */
+const accountId = ref<number | null>(null)
 const presets = ref<PresetOption[]>([])
 const saving = ref(false)
 /** List-level failures (load / delete / catalogue). Form failures live in
@@ -249,15 +268,18 @@ function authLabel(mode: string): string {
 function metaLine(p: ProviderRow): string {
   // The private protocol has no auth mode of its own: the backend injects its
   // fixed credential variable, so showing "auto" there would be noise.
-  const parts = [protocolLabel(p.protocol)]
+  const parts = [protocolLabel(p)]
   if (p.protocol !== 'private') parts.push(authLabel(p.authMode))
   if (p.agentCount > 0) parts.push(t('settings.items.providerUsedBy', { count: p.agentCount }))
   return parts.join(' · ')
 }
 
-/** Only the private protocol has a name that differs from its wire id. */
-function protocolLabel(protocol: string): string {
-  return protocol === 'private' ? t('settings.items.providerProtocolPrivate') : protocol
+/** An own-service credential is named after the backend it belongs to; the
+ *  three wire protocols are already their own names. */
+function protocolLabel(p: ProviderRow): string {
+  if (p.protocol !== 'private') return p.protocol
+  const key = p.backend ? ACCOUNT_BACKEND_LABELS[p.backend as AccountBackend] : ''
+  return key ? t('settings.items.accountLabel', { name: t(key) }) : t('settings.items.providerProtocolPrivate')
 }
 
 /** One muted line under the endpoint: what this provider offers and who uses
@@ -284,10 +306,11 @@ function openCreate() {
 
 function openEdit(p: ProviderRow) {
   // An own-service row carries fields the generic form does not know about, and
-  // its save would clear them. Hand it to the screen that owns them.
+  // its save would clear them. Hand it to the panel that owns them. A row with
+  // no backend predates the split; the panel it lands in adopts it on save.
   if (p.protocol === 'private') {
-    codebuddyId.value = p.id
-    tab.value = 'codebuddy'
+    accountId.value = p.id
+    tab.value = isAccountBackend(p.backend ?? '') ? (p.backend as AccountBackend) : 'codebuddy'
     return
   }
   editingProvider.value = p
@@ -297,8 +320,8 @@ function openEdit(p: ProviderRow) {
 }
 
 /** Keep the just-saved account selected, then refresh the shared list. */
-function onCodeBuddySaved(id: number) {
-  codebuddyId.value = id
+function onAccountSaved(id: number) {
+  accountId.value = id
   void loadProviders()
 }
 
@@ -467,6 +490,15 @@ onMounted(() => {
   gap: var(--space-2);
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--border-color);
+  /* Five tabs do not fit a phone; scrolling beats wrapping into two rows. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.provider-tabs::-webkit-scrollbar {
+  display: none;
+}
+.provider-tab {
+  flex: none;
 }
 .provider-tab {
   padding: calc(4 * var(--dp)) var(--space-4);

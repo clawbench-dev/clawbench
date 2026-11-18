@@ -83,16 +83,9 @@
               {{ protocolLabel(p) }}
             </button>
           </div>
-          <!-- The private protocol is a credential for the backend's OWN
-               service: there is no endpoint to point at, no header choice to
-               make and no model list to curate. Showing those controls would
-               invite values that can never be used. -->
-          <span v-if="draft.protocol === 'private'" class="provider-hint" data-role="private-hint">
-            {{ t('settings.items.providerPrivateHint') }}
-          </span>
         </div>
 
-        <label v-if="draft.protocol !== 'private'" class="provider-field">
+        <label class="provider-field">
           <span class="provider-label">{{ t('settings.items.providerBaseUrl') }}</span>
           <input
             v-model="draft.baseUrl"
@@ -106,7 +99,7 @@
           <span class="provider-hint">{{ t('settings.items.providerBaseUrlHint') }}</span>
         </label>
 
-        <div v-if="draft.protocol !== 'private'" class="provider-field">
+        <div class="provider-field">
           <span class="provider-label">{{ t('settings.items.providerAuthLabel') }}</span>
           <select v-model="draft.authMode" class="provider-input provider-select" data-role="auth-mode">
             <option v-for="m in authModeOptions" :key="m.value" :value="m.value" :disabled="m.disabled">{{ m.label }}</option>
@@ -208,7 +201,7 @@
       <!-- The curated model set. Agents bound to this provider inherit it, so
            this is the only place a model can be "known to work". The full
            editor is its own view; the form only summarizes it. -->
-      <section v-if="provider && draft.protocol !== 'private'" class="provider-section" data-section="models">
+      <section v-if="provider" class="provider-section" data-section="models">
         <div class="provider-section-head">
           <h3 class="provider-section-title">{{ t('settings.items.providerModelsLabel') }}</h3>
           <button type="button" class="provider-link" data-action="provider-models-open" @click="view = 'models'">
@@ -273,7 +266,7 @@
              could only test what was already saved, so a wrong key was found
              after saving it. Draft values ride along with the probe. -->
         <button
-          v-if="provider && draft.protocol !== 'private'"
+          v-if="provider"
           type="button"
           class="fbtn provider-test-conn"
           data-action="provider-test-conn"
@@ -336,6 +329,8 @@ export interface ProviderRow {
   wireApi?: string
   /** Own-service edition (private protocol only); '' = the default one. */
   deployment?: string
+  /** Backend whose own service a private-protocol row belongs to. */
+  backend?: string
   presetId?: string
   models?: string[]
   defaultModel?: string
@@ -381,7 +376,10 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const PROTOCOLS = ['anthropic', 'openai', 'gemini', 'private'] as const
+// Own-service credentials (CodeBuddy / Cursor / Command Code / Antigravity) are
+// NOT created here: this form cannot say which backend a row belongs to. They
+// have their own panels on the provider page.
+const PROTOCOLS = ['anthropic', 'openai', 'gemini'] as const
 
 /** Which of the three bodies is showing. One ModalDialog, no nesting. */
 const view = ref<'form' | 'preset' | 'models'>('form')
@@ -647,21 +645,13 @@ watch(() => props.open, (open) => {
   }
 }, { immediate: true })
 
-/** Human label for a protocol value. Only the private one differs from its wire
- *  id; the three real protocols are already their own names. */
+/** The three protocols are already their own names. */
 function protocolLabel(p: string): string {
-  return p === 'private' ? t('settings.items.providerProtocolPrivate') : p
+  return p
 }
 
-/** Switch protocol. Choosing the private one drops the endpoint and auth mode:
- *  they are hidden from that point on, and a stale hidden value must not be
- *  submitted as if the user had chosen it. */
 function selectProtocol(p: string) {
   draft.protocol = p
-  if (p === 'private') {
-    draft.baseUrl = ''
-    draft.authMode = 'auto'
-  }
 }
 
 function onPresetSelect(preset: PresetOption | null) {
@@ -690,25 +680,20 @@ function removeModel(id: string) {
 
 function submit() {
   if (!canSave.value || props.saving) return
-  const privateProtocol = draft.protocol === 'private'
   emit('submit', {
     name: draft.name.trim(),
     protocol: draft.protocol,
-    // The private protocol has no endpoint and no header choice; the controls
-    // are hidden, so force the stored values rather than trusting stale state.
-    // Its model list is hidden too: keeping a list curated for the previous
-    // endpoint would leak those ids into the agent's picker.
-    baseUrl: privateProtocol ? '' : draft.baseUrl.trim(),
+    baseUrl: draft.baseUrl.trim(),
     apiKey: draft.apiKey,
-    authMode: privateProtocol ? 'auto' : draft.authMode,
+    authMode: draft.authMode,
     wireApi: draft.wireApi,
     presetId: draft.presetId,
     // The two are mutually exclusive on the server (clear wins). Only ask for
     // a clear when there is no replacement key to send, whatever the checkbox
     // ended up showing (e.g. the key was revealed by the eye afterwards).
     clearApiKey: clearKey.value && draft.apiKey === '',
-    models: privateProtocol ? [] : [...draft.models],
-    defaultModel: privateProtocol ? '' : draft.defaultModel,
+    models: [...draft.models],
+    defaultModel: draft.defaultModel,
   })
 }
 
