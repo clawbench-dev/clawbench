@@ -210,3 +210,19 @@ func TestProviderEnvSupportedProvider_OwnServiceAddress(t *testing.T) {
 		t.Fatal("a bare credential must still bind")
 	}
 }
+
+// Four backends share the private protocol, so a credential belongs to exactly
+// one of them. Binding a Cursor key to a CodeBuddy agent would be accepted by
+// the protocol check and then fail on the first turn.
+func TestProviderEnvSupportedProvider_OwnServiceOwner(t *testing.T) {
+	p := &Provider{ID: 1, Name: "Cursor key", Protocol: ProviderProtocolPrivate, APIKey: "k", Backend: "cursor"}
+	if ProviderEnvSupportedProvider("codebuddy", p) {
+		t.Fatal("a cursor credential must not bind to codebuddy")
+	}
+	if !ProviderEnvSupportedProvider("cursor", p) {
+		t.Fatal("it must bind to its own backend")
+	}
+	if _, err := BuildProviderEnv("codebuddy", p, ""); err == nil {
+		t.Fatal("the env builder must refuse a foreign credential instead of injecting it")
+	}
+}

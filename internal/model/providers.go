@@ -86,6 +86,11 @@ type Provider struct {
 	// own-service provider talks to ("" = the backend's default edition).
 	// Only meaningful for the private protocol; see ProviderDeployment*.
 	Deployment string `json:"deployment,omitempty"`
+	// Backend names the backend whose own service this credential belongs to.
+	// Required for the private protocol and meaningless everywhere else: four
+	// backends share that protocol, and without this a Cursor key could be
+	// bound to a CodeBuddy agent — accepted at bind time, failing every turn.
+	Backend string `json:"backend,omitempty"`
 
 	CreatedAt string `json:"createdAt,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
@@ -116,6 +121,7 @@ func (p Provider) Normalized() Provider {
 		p.WireAPI = ProviderWireResponses
 	}
 	p.Deployment = strings.ToLower(strings.TrimSpace(p.Deployment))
+	p.Backend = strings.ToLower(strings.TrimSpace(p.Backend))
 	return p
 }
 

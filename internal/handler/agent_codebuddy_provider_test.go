@@ -18,7 +18,7 @@ func TestAgentPatch_CodeBuddyCredentialOnlyProvider(t *testing.T) {
 	setupProvidersHandlerTest(t)
 
 	provider, err := service.CreateProvider(model.Provider{
-		Name: "CodeBuddy Token", Protocol: model.ProviderProtocolPrivate, APIKey: "ck-secret",
+		Name: "CodeBuddy Token", Protocol: model.ProviderProtocolPrivate, APIKey: "ck-secret", Backend: "codebuddy",
 	})
 	require.NoError(t, err)
 	agent := &model.Agent{ID: "cb", Name: "CodeBuddy", Backend: "codebuddy"}

@@ -260,6 +260,12 @@ func ProviderEnvSupportedProvider(backendID string, p *Provider) bool {
 	if !ok {
 		return false
 	}
+	// An own-service credential belongs to exactly one backend. Binding it
+	// elsewhere would look fine and fail on the first turn (a rejected token),
+	// so it is refused here.
+	if p.Protocol == ProviderProtocolPrivate && p.Backend != "" && p.Backend != backendID {
+		return false
+	}
 	// An own-service provider carrying an address only makes sense where the
 	// backend can actually use one. Everywhere else the address would be
 	// dropped and the request would still go to the default host.
@@ -452,6 +458,21 @@ func ProviderUsesConfigFile(backendID string) bool {
 func ProviderUsesConfigDir(backendID string) bool {
 	spec, ok := providerEnvSpec(backendID)
 	return ok && spec.ConfigDirEnv != "" && spec.ConfigDirFile != ""
+}
+
+// ProviderSupportsOwnService reports whether backendID declares an own service,
+// i.e. whether a private-protocol provider may name it as its owner.
+func ProviderSupportsOwnService(backendID string) bool {
+	spec, ok := providerEnvSpec(backendID)
+	return ok && spec.OwnServiceEnv != ""
+}
+
+// ProviderSupportsDeployment reports whether backendID's own service has more
+// than one edition to choose from (CodeBuddy's China / iOA / dedicated /
+// self-hosted variants).
+func ProviderSupportsDeployment(backendID string) bool {
+	spec, ok := providerEnvSpec(backendID)
+	return ok && spec.OwnServiceEditionEnv != ""
 }
 
 // ProviderOwnServiceMode reports whether this provider means the backend's own
@@ -720,6 +741,9 @@ func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]stri
 // spawn path hands it to the CLI. A backend that cannot do that refuses the row
 // here rather than silently dropping the address.
 func ownServiceEnv(backendID string, spec ProviderEnvSpec, p *Provider) ([]string, error) {
+	if p.Backend != "" && p.Backend != backendID {
+		return nil, fmt.Errorf("provider %q belongs to backend %q, not %q", p.Name, p.Backend, backendID)
+	}
 	if p.BaseURL != "" && !spec.OwnServiceEndpoint {
 		return nil, fmt.Errorf("backend %q cannot point its own service at %q", backendID, p.BaseURL)
 	}

@@ -1720,9 +1720,15 @@ func TestAgents_ProviderModelsKeepForeignNamespace(t *testing.T) {
 // path read them back from the row.
 func TestProvidersAPI_OwnServiceEditionRoundTrip(t *testing.T) {
 	setupProvidersHandlerTest(t)
+	// The shared AI-summary binding lives in the in-memory config and another
+	// test in this package leaves it pointing at a provider id; a row that is
+	// the summary model cannot change protocol or lose its endpoint (409).
+	prevSummary := model.ConfigInstance.AISummary.ProviderID
+	model.ConfigInstance.AISummary.ProviderID = nil
+	t.Cleanup(func() { model.ConfigInstance.AISummary.ProviderID = prevSummary })
 
 	rec := doProviderRequest(t, ServeProviders, http.MethodPost, "/api/providers", map[string]any{
-		"name": "Company CodeBuddy", "protocol": "private", "apiKey": "ck-1",
+		"name": "Company CodeBuddy", "protocol": "private", "apiKey": "ck-1", "backend": "codebuddy",
 		"deployment": "selfhosted", "baseUrl": "https://cb.example.com",
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())

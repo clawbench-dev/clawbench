@@ -5135,3 +5135,50 @@ func TestSchema_ProviderDeploymentColumnMigration(t *testing.T) {
 	// Running InitDB again must be a no-op (the ALTER is guarded by a check).
 	require.NoError(t, InitDB())
 }
+
+// TestSchema_ProviderBackendBackfill covers the providers.backend column and
+// its data migration: a private row's owner is inferable when the agents bound
+// to it agree on one backend. Without the backfill every existing Cursor /
+// Command Code key would stop binding after the upgrade.
+func TestSchema_ProviderBackendBackfill(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+
+	require.NoError(t, InitDB())
+	store.Close()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE providers DROP COLUMN backend")
+	require.NoError(t, err)
+	res, err := raw.Exec("INSERT INTO providers (name, protocol, api_key) VALUES ('Cursor key', 'private', 'k')")
+	require.NoError(t, err)
+	pid, err := res.LastInsertId()
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO agents (id, name, backend, provider_id) VALUES ('a1', 'Cursor', 'cursor', ?)", pid)
+	require.NoError(t, err)
+	// A row nobody binds stays unassigned.
+	_, err = raw.Exec("INSERT INTO providers (name, protocol, api_key) VALUES ('Orphan', 'private', 'k')")
+	require.NoError(t, err)
+	raw.Close()
+
+	require.NoError(t, InitDB())
+	defer store.Close()
+
+	providers, err := ListProviders()
+	require.NoError(t, err)
+	byName := map[string]*model.Provider{}
+	for _, p := range providers {
+		byName[p.Name] = p
+	}
+	require.Contains(t, byName, "Cursor key")
+	assert.Equal(t, "cursor", byName["Cursor key"].Backend, "the bound agent names the owner")
+	assert.Empty(t, byName["Orphan"].Backend, "an unbound row stays unassigned")
+}

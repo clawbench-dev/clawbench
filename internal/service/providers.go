@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS providers (
 	default_model TEXT NOT NULL DEFAULT '',
 	wire_api TEXT NOT NULL DEFAULT 'responses',
 	deployment TEXT NOT NULL DEFAULT '',
+	backend TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -72,6 +73,7 @@ type ProviderPatch struct {
 	DefaultModel *string
 	WireAPI      *string
 	Deployment   *string
+	Backend      *string
 }
 
 // LoadProvidersIntoMemory loads every provider row into the in-memory snapshot
@@ -87,7 +89,7 @@ func LoadProvidersIntoMemory() error {
 
 func listProvidersFromDB(db dbutil.Reader) ([]*model.Provider, error) {
 	rows, err := db.Query(`SELECT id, name, protocol, base_url, api_key, auth_mode, preset_id,
-		models, default_model, wire_api, deployment, created_at, updated_at FROM providers`)
+		models, default_model, wire_api, deployment, backend, created_at, updated_at FROM providers`)
 	if err != nil {
 		return nil, fmt.Errorf("query providers: %w", err)
 	}
@@ -99,7 +101,7 @@ func listProvidersFromDB(db dbutil.Reader) ([]*model.Provider, error) {
 		var createdAt, updatedAt sql.NullString
 		var modelsJSON string
 		if err := rows.Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID,
-			&modelsJSON, &p.DefaultModel, &p.WireAPI, &p.Deployment, &createdAt, &updatedAt); err != nil {
+			&modelsJSON, &p.DefaultModel, &p.WireAPI, &p.Deployment, &p.Backend, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
 		p.Models = decodeModelIDs(modelsJSON)
@@ -121,9 +123,9 @@ func GetProvider(id int64) (*model.Provider, error) {
 	var createdAt, updatedAt sql.NullString
 	var modelsJSON string
 	err := store.ReadDB().QueryRow(`SELECT id, name, protocol, base_url, api_key, auth_mode, preset_id,
-		models, default_model, wire_api, deployment, created_at, updated_at FROM providers WHERE id = ?`, id).
+		models, default_model, wire_api, deployment, backend, created_at, updated_at FROM providers WHERE id = ?`, id).
 		Scan(&p.ID, &p.Name, &p.Protocol, &p.BaseURL, &p.APIKey, &p.AuthMode, &p.PresetID,
-			&modelsJSON, &p.DefaultModel, &p.WireAPI, &p.Deployment, &createdAt, &updatedAt)
+			&modelsJSON, &p.DefaultModel, &p.WireAPI, &p.Deployment, &p.Backend, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrProviderNotFound
 	}
@@ -147,9 +149,9 @@ func CreateProvider(p model.Provider) (*model.Provider, error) {
 		return nil, ErrProviderNameTaken
 	}
 
-	res, err := store.WriteExec(`INSERT INTO providers (name, protocol, base_url, api_key, auth_mode, preset_id, models, default_model, wire_api, deployment)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.PresetID,
-		encodeModelIDs(p.Models), p.DefaultModel, p.WireAPI, p.Deployment)
+	res, err := store.WriteExec(`INSERT INTO providers (name, protocol, base_url, api_key, auth_mode, preset_id, models, default_model, wire_api, deployment, backend)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Name, p.Protocol, p.BaseURL, p.APIKey, p.AuthMode, p.PresetID,
+		encodeModelIDs(p.Models), p.DefaultModel, p.WireAPI, p.Deployment, p.Backend)
 	if err != nil {
 		if isUniqueConstraint(err) {
 			return nil, ErrProviderNameTaken
@@ -199,9 +201,9 @@ func UpdateProvider(id int64, patch ProviderPatch) (*model.Provider, error) {
 
 	if _, werr := store.WriteExec(`UPDATE providers SET name = ?, protocol = ?, base_url = ?,
 		api_key = ?, auth_mode = ?, preset_id = ?, models = ?, default_model = ?, wire_api = ?,
-		deployment = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		deployment = ?, backend = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		next.Name, next.Protocol, next.BaseURL, next.APIKey, next.AuthMode, next.PresetID,
-		encodeModelIDs(next.Models), next.DefaultModel, next.WireAPI, next.Deployment, id); werr != nil {
+		encodeModelIDs(next.Models), next.DefaultModel, next.WireAPI, next.Deployment, next.Backend, id); werr != nil {
 		if isUniqueConstraint(werr) {
 			return nil, ErrProviderNameTaken
 		}
@@ -354,6 +356,9 @@ func applyProviderPatch(current model.Provider, patch ProviderPatch) model.Provi
 	}
 	if patch.Deployment != nil {
 		next.Deployment = *patch.Deployment
+	}
+	if patch.Backend != nil {
+		next.Backend = *patch.Backend
 	}
 	if patch.ClearAPIKey {
 		next.APIKey = ""
@@ -539,6 +544,18 @@ func validateProviderFields(p model.Provider) error {
 	// there and must not be validated against a protocol table that does not
 	// contain it.
 	if p.Protocol == model.ProviderProtocolPrivate {
+		// Four backends share this protocol, so the row must say which one it
+		// belongs to: without that, a Cursor key binds to a CodeBuddy agent and
+		// only fails on the first turn.
+		if p.Backend == "" {
+			return &ProviderFieldError{Field: "backend", Reason: "an own-service credential must name its backend"}
+		}
+		if !model.ProviderSupportsOwnService(p.Backend) {
+			return &ProviderFieldError{Field: "backend", Reason: fmt.Sprintf("backend %q has no own service", p.Backend)}
+		}
+		if p.Deployment != "" && !model.ProviderSupportsDeployment(p.Backend) {
+			return &ProviderFieldError{Field: "deployment", Reason: fmt.Sprintf("backend %q has no selectable edition", p.Backend)}
+		}
 		// An enterprise edition of the backend's own service lives at an
 		// address the customer defines, so it MUST carry one. Every other
 		// edition must not: nothing would read it, and the row would look
@@ -550,6 +567,8 @@ func validateProviderFields(p model.Provider) error {
 		} else if strings.TrimSpace(p.BaseURL) != "" {
 			return &ProviderFieldError{Field: "baseUrl", Reason: "this deployment takes no endpoint"}
 		}
+	} else if p.Backend != "" {
+		return &ProviderFieldError{Field: "backend", Reason: "only the private protocol belongs to a backend"}
 	} else if !model.ProtocolSupportsAuthMode(p.Protocol, p.AuthMode) {
 		return &ProviderFieldError{
 			Field:  "authMode",
