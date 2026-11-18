@@ -234,12 +234,8 @@ func (c *openAIClient) buildBody(req Request) ([]byte, error) {
 	}
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, oaTool{
-			Type: oaCallTypeFunction,
-			Function: oaToolFunc{
-				Name:        t.Name,
-				Description: t.Description,
-				Parameters:  t.Parameters,
-			},
+			Type:     oaCallTypeFunction,
+			Function: oaToolFunc(t),
 		})
 	}
 	return json.Marshal(body)

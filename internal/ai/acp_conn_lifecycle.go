@@ -732,45 +732,15 @@ func (c *ACPConn) openCodeRecoveryCwd(ctx context.Context, requested, acpSID str
 
 	var cursor *string
 	scanned := 0
-	for page := 0; page < openCodeSessionCwdPageLimit; page++ {
-		var (
-			sessions []acp.SessionInfo
-			next     *string
-			err      error
-		)
-		if c.listSessionsFn != nil {
-			sessions, next, err = c.listSessionsFn(lookupCtx, cursor)
-		} else {
-			var resp acp.ListSessionsResponse
-			resp, err = c.conn.ListSessions(lookupCtx, acp.ListSessionsRequest{Cursor: cursor})
-			if err == nil {
-				sessions, next = resp.Sessions, resp.NextCursor
-			}
-		}
+	for range openCodeSessionCwdPageLimit {
+		sessions, next, err := c.listOpenCodeSessions(lookupCtx, cursor)
 		if err != nil {
 			slog.Warn("acp conn: opencode session/list failed, resuming with the requested cwd",
 				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
 			return requested
 		}
 		scanned += len(sessions)
-		for _, sess := range sessions {
-			if sess.SessionId != acp.SessionId(acpSID) {
-				continue
-			}
-			found := strings.TrimSpace(sess.Cwd)
-			if found == "" || filepath.Clean(found) == filepath.Clean(requested) {
-				return requested
-			}
-			info, statErr := os.Stat(found)
-			if statErr != nil || !info.IsDir() {
-				slog.Warn("acp conn: opencode reports a session directory that is not usable, resuming with the requested cwd",
-					"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
-					"reported_cwd", found, "requested_cwd", requested, "error", statErr)
-				return requested
-			}
-			slog.Info("acp conn: opencode reports the session lives in another directory, resuming there",
-				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
-				"reported_cwd", found, "requested_cwd", requested)
+		if found, ok := c.reportedOpenCodeCwd(sessions, requested, acpSID); ok {
 			return found
 		}
 		if next == nil || *next == "" {
@@ -782,6 +752,46 @@ func (c *ACPConn) openCodeRecoveryCwd(ctx context.Context, requested, acpSID str
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
 		"requested_cwd", requested, "sessions_scanned", scanned)
 	return requested
+}
+
+// listOpenCodeSessions fetches one page of opencode's session list, through the
+// injected lister in tests or the live ACP connection otherwise.
+func (c *ACPConn) listOpenCodeSessions(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error) {
+	if c.listSessionsFn != nil {
+		return c.listSessionsFn(ctx, cursor)
+	}
+	resp, err := c.conn.ListSessions(ctx, acp.ListSessionsRequest{Cursor: cursor})
+	if err != nil {
+		return nil, nil, err
+	}
+	return resp.Sessions, resp.NextCursor, nil
+}
+
+// reportedOpenCodeCwd looks for acpSID among one page of sessions. ok reports
+// whether the session was found at all; the returned cwd is the one to resume
+// with (requested when opencode's answer is empty, unchanged or unusable).
+func (c *ACPConn) reportedOpenCodeCwd(sessions []acp.SessionInfo, requested, acpSID string) (string, bool) {
+	for _, sess := range sessions {
+		if sess.SessionId != acp.SessionId(acpSID) {
+			continue
+		}
+		found := strings.TrimSpace(sess.Cwd)
+		if found == "" || filepath.Clean(found) == filepath.Clean(requested) {
+			return requested, true
+		}
+		info, statErr := os.Stat(found)
+		if statErr != nil || !info.IsDir() {
+			slog.Warn("acp conn: opencode reports a session directory that is not usable, resuming with the requested cwd",
+				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
+				"reported_cwd", found, "requested_cwd", requested, "error", statErr)
+			return requested, true
+		}
+		slog.Info("acp conn: opencode reports the session lives in another directory, resuming there",
+			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
+			"reported_cwd", found, "requested_cwd", requested)
+		return found, true
+	}
+	return "", false
 }
 
 // cachedConfigSnapshot holds previously-set config values to re-apply after respawn.

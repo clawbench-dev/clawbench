@@ -197,10 +197,10 @@ func collapseWhitespace(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// mailNotifyClip truncates to max runes with an ellipsis, on a rune boundary.
-func mailNotifyClip(s string, max int) string {
-	if max <= 0 || utf8.RuneCountInString(s) <= max {
+// mailNotifyClip truncates to limit runes with an ellipsis, on a rune boundary.
+func mailNotifyClip(s string, limit int) string {
+	if limit <= 0 || utf8.RuneCountInString(s) <= limit {
 		return s
 	}
-	return string([]rune(s)[:max]) + "…"
+	return string([]rune(s)[:limit]) + "…"
 }

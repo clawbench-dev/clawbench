@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -109,7 +110,7 @@ func moveChatToProject(sessionID string, targetProjectID int64, sortOrder int) (
 	if err := moveInTransaction(func(tx *sql.Tx) error {
 		stateExpr := `CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END`
 		if forkContext == "" {
-			if _, err := tx.Exec(
+			if _, err := tx.ExecContext(context.Background(),
 				"UPDATE chat_sessions SET project_id = ?, sort_order = ?, external_session_id = '' WHERE id = ?",
 				targetProjectID, sortOrder, sessionID,
 			); err != nil {
@@ -120,7 +121,7 @@ func moveChatToProject(sessionID string, targetProjectID int64, sortOrder int) (
 			if err != nil {
 				return fmt.Errorf("encode moved session history: %w", err)
 			}
-			if _, err := tx.Exec(
+			if _, err := tx.ExecContext(context.Background(),
 				`UPDATE chat_sessions
 				    SET project_id = ?, sort_order = ?, external_session_id = '',
 				        context_state = json_set(`+stateExpr+`, '$.fork_context', json(?))
@@ -158,7 +159,7 @@ func moveGroupToProject(groupID string, targetProjectID int64, sortOrder int) (b
 		// A pending fork background is dropped too: after the move every member
 		// re-reads the real timeline (cursors reset below), so keeping the old
 		// fork text would inject the same history twice.
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(context.Background(),
 			`UPDATE chat_sessions
 			    SET project_id = ?, sort_order = ?, external_session_id = '',
 			        context_state = json_remove(
@@ -174,7 +175,7 @@ func moveGroupToProject(groupID string, targetProjectID int64, sortOrder int) (b
 		// their next speech receives the full timeline just like a member who
 		// joined an existing group. Disabled members reset too: enabling them
 		// later must not start them with no memory of the group.
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(context.Background(),
 			`UPDATE chat_sessions
 			    SET project_id = ?, external_session_id = '',
 			        context_state = CASE
@@ -237,7 +238,7 @@ func moveInTransaction(fn func(tx *sql.Tx) error) error {
 		return err
 	}
 	defer store.WriteUnlock()
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if err := fn(tx); err != nil {
 		return err
@@ -252,7 +253,7 @@ func moveSessionRowsTx(tx *sql.Tx, sessionIDs []string, targetProjectID int64) e
 		// EVERY row, including a still-streaming one: the caller refuses to move a
 		// running session, but a reply finalized in a concurrent request just
 		// before must not be stranded under the old project.
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(context.Background(),
 			"UPDATE chat_history SET project_id = ? WHERE session_id = ?",
 			targetProjectID, sessionID,
 		); err != nil {
@@ -263,7 +264,7 @@ func moveSessionRowsTx(tx *sql.Tx, sessionIDs []string, targetProjectID int64) e
 		// here: the ledger row also carries a per-message wall-clock created_at the
 		// migration code considers; rewriting through the same subquery keeps the
 		// two consistent. Rows without a surviving message keep 0 (unattributable).
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(context.Background(),
 			`UPDATE chat_metadata
 			    SET project_id = COALESCE((SELECT h.project_id FROM chat_history h WHERE h.id = chat_metadata.message_id), 0)
 			  WHERE message_id IN (SELECT id FROM chat_history WHERE session_id = ?)`,
@@ -276,8 +277,8 @@ func moveSessionRowsTx(tx *sql.Tx, sessionIDs []string, targetProjectID int64) e
 		// behind would strand that message under the old project (invisible in the
 		// moved conversation). /btw records render their stored project path, and
 		// recommendations are written with the project that produced them.
-		for _, table := range []string{"queued_messages", "btw_questions", "chat_recommendations"} {
-			if _, err := tx.Exec(
+		for _, table := range []string{tableQueuedMessages, tableBtwQuestions, tableChatRecommendations} {
+			if _, err := tx.ExecContext(context.Background(),
 				"UPDATE "+table+" SET project_id = ? WHERE session_id = ?",
 				targetProjectID, sessionID,
 			); err != nil {
@@ -295,7 +296,7 @@ func moveSessionRowsTx(tx *sql.Tx, sessionIDs []string, targetProjectID int64) e
 // with a label the new project cannot list or filter by. Global tags are
 // project-independent and stay attached.
 func clearProjectTagLinks(tx *sql.Tx, sessionID string) error {
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(context.Background(),
 		`DELETE FROM session_tag_links
 		  WHERE session_id = ?
 		    AND tag_id IN (SELECT id FROM session_tags WHERE scope <> 'global')`,
@@ -341,13 +342,13 @@ func sessionTypeAndProject(sessionID string) (string, int64, error) {
 // nextSortOrderInProject returns the position a moved conversation takes in
 // the target project: above every existing row (drag order is ascending).
 func nextSortOrderInProject(projectID int64) (int, error) {
-	var min sql.NullInt64
+	var minOrder sql.NullInt64
 	if err := store.ReadDB().QueryRow(
 		"SELECT MIN(sort_order) FROM chat_sessions WHERE project_id = ?", projectID,
-	).Scan(&min); err != nil {
+	).Scan(&minOrder); err != nil {
 		return 0, fmt.Errorf("load target sort order: %w", err)
 	}
-	return int(min.Int64) - 1, nil
+	return int(minOrder.Int64) - 1, nil
 }
 
 // SessionHasStreamingMessage reports whether the conversation has a message row
