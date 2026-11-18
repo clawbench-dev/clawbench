@@ -3,40 +3,51 @@
     <div class="session-move-dialog">
       <!-- The current project stays visible: the list below only offers the
            OTHER projects, and without this line it is not obvious which one the
-           conversation is leaving. -->
+           conversation is leaving. It reads as a small card rather than a bare
+           label so the eye separates "where it is" from "where it can go". -->
       <div class="sm-current">
-        <span class="sm-current-label">{{ t('sessionMove.currentLabel') }}</span>
-        <span class="sm-current-path" :title="currentPath">{{ currentName }}</span>
+        <Folder :size="16" class="sm-current-icon" />
+        <div class="sm-current-main">
+          <span class="sm-current-label">{{ t('sessionMove.currentLabel') }}</span>
+          <span class="sm-current-name" :title="currentPath">{{ currentName }}</span>
+        </div>
       </div>
 
       <div v-if="errorMsg" class="sm-error">{{ errorMsg }}</div>
 
-      <div class="sm-search-row">
-        <input
-          v-model="query"
-          class="sm-input"
-          type="text"
-          :placeholder="t('sessionMove.searchPlaceholder')"
-          :aria-label="t('sessionMove.searchPlaceholder')"
-        />
-      </div>
-      <PanelSkeleton v-if="loading" class="sm-skeleton" variant="text" :rows="3" :label="t('common.loading')" />
+      <SearchInput v-model="query" :placeholder="t('sessionMove.searchPlaceholder')" />
+
+      <div class="sm-target-label">{{ t('sessionMove.chooseTarget') }}</div>
+
+      <PanelSkeleton
+        v-if="loading"
+        class="sm-skeleton"
+        variant="list"
+        :rows="4"
+        :meta="false"
+        :label="t('common.loading')"
+      />
       <div v-else-if="visibleTargets.length === 0" class="sm-empty">
-        {{ targets.length === 0 ? t('sessionMove.empty') : t('sessionMove.noMatch') }}
+        <FolderSearch :size="22" class="sm-empty-icon" />
+        <span>{{ targets.length === 0 ? t('sessionMove.empty') : t('sessionMove.noMatch') }}</span>
       </div>
-      <div v-else class="sm-list">
-        <button
-          v-for="p in visibleTargets"
-          :key="p.path"
-          type="button"
-          class="sm-item"
-          :data-project-path="p.path"
-          @click="pick(p.path)"
-        >
-          <span class="sm-item-name">{{ baseName(p.path) }}</span>
-          <span class="sm-item-path" :title="p.path">{{ p.path }}</span>
-        </button>
-      </div>
+      <ul v-else class="sm-list">
+        <li v-for="p in visibleTargets" :key="p.path" class="sm-row">
+          <button
+            type="button"
+            class="sm-item"
+            :data-project-path="p.path"
+            @click="pick(p.path)"
+          >
+            <Folder :size="16" class="sm-item-icon" />
+            <span class="sm-item-main">
+              <span class="sm-item-name">{{ baseName(p.path) }}</span>
+              <span class="sm-item-path" :title="p.path">{{ p.path }}</span>
+            </span>
+            <ChevronRight :size="16" class="sm-item-arrow" />
+          </button>
+        </li>
+      </ul>
     </div>
 
     <template #footer>
@@ -48,8 +59,10 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ChevronRight, Folder, FolderSearch } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import { apiGet, apiPatch } from '@/utils/api.ts'
 import { normalizeSlashes } from '@/utils/path.ts'
 import { appLog } from '@/utils/appLog'
@@ -164,111 +177,180 @@ watch(() => props.open, (open) => {
 </script>
 
 <style scoped>
+/* ModalDialog's .modal-body has no padding of its own (see modal-card.css),
+   so the dialog owns its inset like every other dialog root. */
 .session-move-dialog {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-7);
 }
 
+/* "Where it is" — a restrained info card, not a section header: it must be
+   readable at a glance without competing with the target list below. */
 .sm-current {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+}
+
+.sm-current-icon {
+  flex-shrink: 0;
+  color: var(--accent-color);
+}
+
+.sm-current-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
 }
 
 .sm-current-label {
-  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
 }
 
-.sm-current-path {
-  color: var(--text-primary);
+.sm-current-name {
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Same error row as the other dialogs (see SessionTagDialog `.st-error`). */
 .sm-error {
   font-size: var(--font-size-md);
-  color: var(--danger-color, #e74c3c);
+  color: #e74c3c;
   padding: var(--space-4) var(--space-6);
   background: rgba(231, 76, 60, 0.1);
   border-radius: var(--radius-sm);
 }
 
-.sm-search-row {
-  display: flex;
+/* Section label for the list, matching the tag dialog's labels. */
+.sm-target-label {
+  margin-top: var(--space-1);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
 }
 
-/* Native inputs carry no styling of their own (the global reset zeroes
-   padding), so the border and hit area must be spelled out. */
-.sm-input {
-  flex: 1;
-  min-width: 0;
-  height: calc(32 * var(--dp));
-  padding: 0 var(--space-5);
-  border: 1px solid var(--border-color, #dee2e6);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
-}
-
-.sm-input:focus {
-  outline: none;
-  border-color: var(--accent-color, #0066cc);
-}
-
-.sm-input::placeholder {
-  color: var(--text-muted);
+.sm-skeleton {
+  --panel-skeleton-inset: calc(10 * var(--dp));
+  padding: var(--space-1) 0;
 }
 
 .sm-empty {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-  padding: var(--space-3) 0;
-}
-
-.sm-list {
   display: flex;
   flex-direction: column;
-  max-height: 45vh;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6);
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.sm-empty-icon {
+  color: var(--text-muted);
+  opacity: var(--opacity-soft);
+}
+
+/* The target list is one bounded card so the dialog keeps a stable height and
+   the rows read as one group rather than a loose column of labels. */
+.sm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(calc(360 * var(--dp)), 46vh);
   overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+}
+
+.sm-row + .sm-row {
+  border-top: 1px solid var(--border-color);
 }
 
 .sm-item {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: center;
+  gap: var(--space-4);
   width: 100%;
-  padding: var(--space-4) var(--space-5);
+  min-height: calc(44 * var(--dp));
+  padding: var(--space-3) var(--space-5);
   border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
+  background: none;
+  color: var(--text-primary);
   text-align: left;
   cursor: pointer;
+  transition: background var(--duration-base);
 }
 
-.sm-item:hover,
+@media (hover: hover) {
+  .sm-item:hover {
+    background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  }
+}
+
+.sm-item:active {
+  background: var(--bg-active);
+}
+
 .sm-item:focus-visible {
-  background: var(--bg-secondary, #f1f3f5);
-  outline: none;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: calc(-2 * var(--dp));
+}
+
+.sm-item-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.sm-item-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
 }
 
 .sm-item-name {
   font-size: var(--font-size-md);
   color: var(--text-primary);
-}
-
-.sm-item-path {
-  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sm-item-path {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Trailing affordance: this row IS the action (there is no confirm step), so a
+   chevron is the hint that clicking leaves the dialog. */
+.sm-item-arrow {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: var(--opacity-soft);
+  transition: opacity var(--duration-base), color var(--duration-base);
+}
+
+@media (hover: hover) {
+  .sm-item:hover .sm-item-arrow {
+    opacity: 1;
+    color: var(--accent-color);
+  }
 }
 </style>

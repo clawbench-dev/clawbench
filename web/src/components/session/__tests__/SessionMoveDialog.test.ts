@@ -112,9 +112,9 @@ describe('SessionMoveDialog', () => {
 
   it('filters by name or path', async () => {
     const w = await mountDialog()
-    await w.find('.sm-input').setValue('targ')
+    await w.find('.search-pill input').setValue('targ')
     expect(w.findAll('.sm-item')).toHaveLength(1)
-    await w.find('.sm-input').setValue('zzz')
+    await w.find('.search-pill input').setValue('zzz')
     expect(w.findAll('.sm-item')).toHaveLength(0)
   })
 })

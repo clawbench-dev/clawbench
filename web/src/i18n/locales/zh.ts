@@ -1810,6 +1810,7 @@ export default {
   sessionMove: {
     title: '移动到工作区',
     currentLabel: '当前工作区',
+    chooseTarget: '移动到',
     loadFailed: '工作区列表加载失败，请重试。',
     empty: '没有其他可用工作区',
     noMatch: '没有匹配的工作区',

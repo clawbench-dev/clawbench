@@ -1802,6 +1802,7 @@ export default {
   sessionMove: {
     title: 'Move to project',
     currentLabel: 'Current project',
+    chooseTarget: 'Move to',
     loadFailed: "Couldn't load the project list. Please try again.",
     empty: 'No other projects available',
     noMatch: 'No matching projects',
