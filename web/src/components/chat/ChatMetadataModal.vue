@@ -81,6 +81,7 @@ import { copyText } from '@/utils/clipboard'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
+import { formatTokenRate, normalizeTokenRate } from '@/utils/usageDisplay'
 
 const { t } = useI18n()
 
@@ -216,6 +217,18 @@ const sections = computed(() => {
   }
   if (d.durationMs) {
     runtime.push({ key: 'duration', label: t('chat.metadata.duration'), value: formatDuration(d.durationMs) })
+  }
+  // Output speed measured by the backend for THIS turn. It sits next to the
+  // durations because it explains them: the denominator is the model's actual
+  // generation window, not the wall clock or the CLI's self-reported duration.
+  const rate = normalizeTokenRate(d)
+  if (rate) {
+    runtime.push({
+      key: 'tokenRate',
+      label: t('chat.metadata.tokenRate'),
+      value: formatTokenRate(rate),
+      hint: rate.genMs ? t('chat.metadata.tokenRateHint', { seconds: (rate.genMs / 1000).toFixed(1) }) : '',
+    })
   }
   if (d.costUsd) {
     runtime.push({ key: 'cost', label: t('chat.metadata.cost'), value: `$${d.costUsd.toFixed(2)}` })

@@ -53,6 +53,8 @@ const messages = {
         sessionId: 'Session ID:',
         model: 'Model:',
         wallDuration: 'Wall duration:',
+        tokenRate: 'Output speed:',
+        tokenRateHint: 'Generated for {seconds}s (tool runs excluded)',
         ftsIndexed: 'FTS Index:',
         vecIndexed: 'Vector Index:',
         indexedYes: 'Yes',
@@ -214,6 +216,22 @@ describe('ChatMetadataModal', () => {
     expect(tiles[0].text()).toContain('Input tokens:')
     expect(tiles[0].text()).toContain('31,224')
     expect(tiles[2].text()).toContain('31,227')
+  })
+
+  it('shows the turn\'s output speed in the runtime section', () => {
+    const wrapper = mountModal({ data: { outputTokens: 500, wallMs: 20000, tokensPerSecond: 42.46, genMs: 11800 } })
+    const runtime = wrapper.findAll('.md-section').find(s => s.text().includes('Runtime'))!
+    expect(runtime.text()).toContain('Output speed:')
+    expect(runtime.text()).toContain('42.5 tok/s')
+    // The hint explains the denominator, so the figure is not read as
+    // "500 tokens / 20s of task time".
+    expect(runtime.text()).toContain('Generated for 11.8s')
+  })
+
+  it('omits the output speed row when the backend could not measure it', () => {
+    // A non-streaming backend reports no window; a 0 rate must not render.
+    const wrapper = mountModal({ data: { outputTokens: 500, wallMs: 20000, tokensPerSecond: 0 } })
+    expect(wrapper.text()).not.toContain('Output speed:')
   })
 
   it('surfaces the error above every section', () => {

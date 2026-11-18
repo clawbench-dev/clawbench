@@ -1692,6 +1692,8 @@ export default {
       thoughtTokens: 'Thought tokens:',
       duration: 'Duration (CLI):',
       wallDuration: 'Wall duration:',
+      tokenRate: 'Output speed:',
+      tokenRateHint: 'Generated for {seconds}s (tool runs and waiting excluded)',
       cost: 'Cost:',
       requestId: 'Request ID:',
       traceId: 'Trace ID:',

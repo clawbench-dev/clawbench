@@ -1700,6 +1700,8 @@ export default {
       thoughtTokens: '思考Token:',
       duration: '耗时(CLI):',
       wallDuration: '实际耗时:',
+      tokenRate: '输出速率:',
+      tokenRateHint: '实际输出 {seconds} 秒（不含工具执行与等待）',
       cost: '成本:',
       requestId: '请求ID:',
       traceId: '追踪ID:',
