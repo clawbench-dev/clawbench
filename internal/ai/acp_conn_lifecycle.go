@@ -620,6 +620,12 @@ func (c *ACPConn) recoveryFailure(rpc, acpSID string, timeout time.Duration, cau
 //     AND the persisted id, so the caller may continue on a fresh session;
 //   - any other refusal is reported as unrecoverable and keeps the mapping.
 func (c *ACPConn) recoverExistingSession(ctx context.Context, cwd, acpSID string, prevConfig cachedConfigSnapshot) error {
+	// opencode's session can be moved into another directory (a git worktree)
+	// from inside the conversation, while ACP still expects every resume to
+	// carry the session's own directory. Ask it where the session actually
+	// lives before re-attaching; see openCodeRecoveryCwd.
+	cwd = c.openCodeRecoveryCwd(ctx, cwd, acpSID)
+
 	// An agent whose session/resume is process-local answers a cross-process
 	// resume with a BUSINESS error, not -32601, so the fallback below would
 	// never fire and every restart would strand the conversation. Go straight to
@@ -682,6 +688,100 @@ func (c *ACPConn) recoverExistingSession(ctx context.Context, cwd, acpSID string
 	}
 
 	return c.recoveryFailure("ResumeSession", acpSID, resumeSessionTimeout, err)
+}
+
+// openCodeSessionCwdPageLimit bounds how many session/list pages recovery scans
+// for the target session id. opencode returns 100 sessions per page in
+// most-recently-updated order, so the session being recovered is normally on
+// the first page; the cap only keeps a missing id from delaying recovery
+// indefinitely.
+const openCodeSessionCwdPageLimit = 20
+
+// openCodeRecoveryCwd returns the working directory opencode itself reports for
+// acpSID, falling back to requested when it cannot be determined.
+//
+// ACP requires every resume/load to carry the session's working directory, and
+// opencode validates that value against the directory stored on the session
+// (packages/cli/src/acp/service.ts, getSession → SessionDirectoryMismatchError,
+// "does not belong to cwd"). It does not otherwise use the value: the session
+// is re-attached at its own stored directory.
+//
+// The problem is that opencode can move a session between directories from
+// inside the conversation (its session_move tool, typically into a git
+// worktree), and the ACP layer neither notifies the client nor exposes a
+// single-session lookup. ClawBench always resumes a project at its root, so
+// after such a move the next server restart sends the old directory and the
+// conversation becomes unrecoverable. session/list is the one ACP method that
+// exposes the stored directory (there is no session/get), so recovery asks for
+// it before re-attaching.
+//
+// Only opencode gets this treatment: the other ACP backends do not relocate an
+// existing session on their own, so the extra RPC and behavior change would
+// buy nothing there. Any failure is non-fatal — recovery proceeds with the
+// requested cwd exactly as before.
+func (c *ACPConn) openCodeRecoveryCwd(ctx context.Context, requested, acpSID string) string {
+	if acpSID == "" || c.agent == nil || c.agent.Backend != "opencode" {
+		return requested
+	}
+	if c.conn == nil && c.listSessionsFn == nil {
+		return requested
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	var cursor *string
+	scanned := 0
+	for page := 0; page < openCodeSessionCwdPageLimit; page++ {
+		var (
+			sessions []acp.SessionInfo
+			next     *string
+			err      error
+		)
+		if c.listSessionsFn != nil {
+			sessions, next, err = c.listSessionsFn(lookupCtx, cursor)
+		} else {
+			var resp acp.ListSessionsResponse
+			resp, err = c.conn.ListSessions(lookupCtx, acp.ListSessionsRequest{Cursor: cursor})
+			if err == nil {
+				sessions, next = resp.Sessions, resp.NextCursor
+			}
+		}
+		if err != nil {
+			slog.Warn("acp conn: opencode session/list failed, resuming with the requested cwd",
+				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
+			return requested
+		}
+		scanned += len(sessions)
+		for _, sess := range sessions {
+			if sess.SessionId != acp.SessionId(acpSID) {
+				continue
+			}
+			found := strings.TrimSpace(sess.Cwd)
+			if found == "" || filepath.Clean(found) == filepath.Clean(requested) {
+				return requested
+			}
+			info, statErr := os.Stat(found)
+			if statErr != nil || !info.IsDir() {
+				slog.Warn("acp conn: opencode reports a session directory that is not usable, resuming with the requested cwd",
+					"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
+					"reported_cwd", found, "requested_cwd", requested, "error", statErr)
+				return requested
+			}
+			slog.Info("acp conn: opencode reports the session lives in another directory, resuming there",
+				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
+				"reported_cwd", found, "requested_cwd", requested)
+			return found
+		}
+		if next == nil || *next == "" {
+			break
+		}
+		cursor = next
+	}
+	slog.Debug("acp conn: opencode session/list did not contain the session, resuming with the requested cwd",
+		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
+		"requested_cwd", requested, "sessions_scanned", scanned)
+	return requested
 }
 
 // cachedConfigSnapshot holds previously-set config values to re-apply after respawn.
