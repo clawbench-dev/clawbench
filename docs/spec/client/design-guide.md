@@ -513,8 +513,9 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 
 - **状态在模块里，不在组件里**：块头按钮是**以 HTML 字符串注入**的，点击靠各容器的**事件委托**统一处理（聊天列表、文件预览、任务详情、任务概览、议题详情、/btw 抽屉、分享页等）——点击处根本没有 Vue 实例可挂 state。因此照 `useDialog()` 的路子：`useBlockLandscape.ts` 持有模块级 `shallowRef`，每个 app 根各挂一个 `<BlockLandscape />` 渲染它。
 - **克隆整块，而不是重建**：全屏里要保留复制、复制格式菜单、换行、表格行展开等全部行为，重建一份必然漂移。克隆后只改一个控件——横屏按钮原地变成关闭按钮（同槽位、同样式、不同动作）。
+- **唯一的例外是 `DataTable`：它必须是活组件，不能克隆**。克隆出来的是静态 HTML，没有 Vue 实例，于是表头栏的「简单表 ⇄ 数据表」开关、搜索、排序、列菜单、分页全部变成摆设（这正是「全屏后切不了数据表」的成因）。因此 `DataTable` 挂载时把自己登记进 `composables/dataTableLandscape.ts` 的 `WeakMap`（按根元素键控），`openBlockLandscape` 命中它就渲染一个 **live** `<DataTable>`（快照：表头 / 行 / 当前模式 / 换行 / 页大小）。全屏里的模式与换行改动经 `update:mode` / `update:wrap` 回写到浮层后面那块表。因为组件是活的，浮层里**不再隐藏 `.dt-bar`**，滚动高度也交回 flex 分配（不能在 `.dt-scroll` 上写 `height:100%`，表头栏与工具条也占高度，写死会让最后几十像素永远滚不到）。
 - **导航点击要「回到原块上重放」**：克隆里的 `a[href]`、文件路径、commit、外链按钮点下去应当触发容器原有的处理（打开预览、跳文件、确认外链），而不是在克隆里空转。做法是按**索引路径**映射回原树的对应节点再 `click()`；克隆与源结构 1:1（不增删元素）是这条映射成立的前提。源块在浮层打开期间被流式重渲染替换时，索引路径会失效，此时退回按**身份属性**（`data-file-path` / `data-commit-sha` / `data-worktree-path` / `data-url` / `href`）找活着的同源节点。
-- **换行开关只改克隆，关闭时回写**：浮层里切换行若只作用于克隆，关掉就白切了；若直接改源块，浮层里那份又不同步。因此关闭时把克隆的 wrap 状态同步回源块及其按钮。**表格用 `word-wrap` / `no-wrap` 一对类，代码块只有 `word-wrap`**——给代码块补 `no-wrap` 会得到一个没有任何规则消费的死类。
+- **换行开关只改克隆，关闭时回写**：浮层里切换行若只作用于克隆，关掉就白切了；若直接改源块，浮层里那份又不同步。因此关闭时把克隆的 wrap 状态同步回源块及其按钮。**表格用 `word-wrap` / `no-wrap` 一对类，代码块只有 `word-wrap`**——给代码块补 `no-wrap` 会得到一个没有任何规则消费的死类。活 `DataTable` 不走这条回写：它打开时带着源表的换行状态下发，浮层里的改动当次经 `update:wrap` 回写。
 - **只在「触屏 + 竖屏」才旋转 90°**：判据是 `pointer: coarse` 且高 > 宽。桌面窗口恰好很窄时不能转——侧躺的表格在桌面是干扰而不是帮助（那个尺寸下按钮本来也隐藏）。
 
 ### 表格的滚动容器（`DataTable` 的 `.dt-scroll`）
@@ -833,6 +834,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `__tests__/fontDrivenScaling.test.ts` | 根字号是唯一缩放入口（`--dp` 唯一声明、html 不得用 `--font-size-*`）、全仓无 `zoom`、Electron 不再走 `setZoomFactor`、token 都走 `--dp`、发丝线不被缩放、lucide 属性选择器齐备、宽屏断点用有效宽度且监听缩放事件、**全仓 `<style>`（含 `src/assets/*.css`）无裸 `font-size: Npx` / `letter-spacing: Npx`**、`designToCss` 唯一实现且被各阈值比较点消费 |
 | `components/common/__tests__/countBadge.css.test.ts` | 角标几何全局唯一、scoped 未重加圆角 |
 | `components/common/__tests__/dataTableBorders.css.test.ts` | 表格边框只在 `css/table.css` 声明（其余四文件不得再写 `border-collapse` / `--table-border`）；简单表 `collapse` + 1px 网格、数据表每条边只画一次（右+下，首列补左、表头补上）、合计行不叠线、冻结列不额外叠分隔线 |
+| `components/common/__tests__/dataTableWrap.css.test.ts` | 数据表正文在 320dp 处**折行**而不是省略号截断（`.dt-cell` 不得有 `text-overflow` / `overflow: hidden`）、数字列保持单行、表头同样可折行、聊天气泡的 `nowrap` 只对数据表 `th` 生效 |
 | `components/common/__tests__/wrapCheck.css.test.ts` | 菜单「该项当前是开的」勾选 `.wrap-check` 全局唯一、两个菜单共用同一 class |
 | `components/chat/__tests__/quickSendMenuStickyTitle.css.test.ts` | 快捷发送 / 快捷指令弹层标题 `.quick-send-title` 在 `components.css` 全局声明（sticky + 不透明 `--bg-secondary` + `z-index`），两个宿主不得各自重声明，且两个菜单的 `:max-height` 一致且 ≥400 |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |

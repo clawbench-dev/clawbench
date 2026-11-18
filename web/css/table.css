@@ -237,10 +237,14 @@
     margin: 0 !important;
 }
 
-.table-block-wrapper.is-data-table .dt.is-data th,
-.table-block-wrapper.is-data-table .dt.is-data td {
+.table-block-wrapper.is-data-table .dt.is-data th {
     white-space: nowrap !important;
     word-break: normal !important;
+}
+
+/* 正文格允许折行：长说明要能看全（数字列由 .dt-cell 自己的规则保持单行）。 */
+.table-block-wrapper.is-data-table .dt.is-data td {
+    white-space: normal !important;
 }
 
 /* ─── 滚动容器（普通表 / 文件预览） ─── */
@@ -539,8 +543,9 @@
 .dt-th-label {
     display: inline-block;
     max-width: calc(200 * var(--dp));
-    overflow: hidden;
-    text-overflow: ellipsis;
+    /* 列名过长同样要能看全：折行而不是省略号。 */
+    white-space: normal;
+    overflow-wrap: anywhere;
     vertical-align: bottom;
 }
 
@@ -580,9 +585,17 @@
     z-index: 1;
     display: block;
     max-width: calc(320 * var(--dp));
-    overflow: hidden;
-    text-overflow: ellipsis;
+    /* 内容越长越要能看全：超过 320dp 折行，而不是用省略号截掉。
+       数字列在下面单独改回单行（对齐才有意义）。 */
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+/* 数字列保持单行：折行会毁掉按位对齐，而且数字没有「读不完」的问题。 */
+.dt.is-data .is-numeric .dt-cell {
+    max-width: none;
     white-space: nowrap;
+    overflow-wrap: normal;
 }
 
 /* 普通表保持 markdown 表格的老样子：允许换行、宽度跟内容走。
@@ -594,6 +607,7 @@
     text-overflow: clip;
     white-space: inherit;
     word-break: inherit;
+    overflow-wrap: normal;
 }
 
 .dt-cell-bar {

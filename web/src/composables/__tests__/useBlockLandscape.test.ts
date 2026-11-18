@@ -5,6 +5,10 @@ import {
   shouldRotateBlockLandscape,
   blockLandscapeState,
 } from '@/composables/useBlockLandscape.ts'
+import {
+  registerBlockLandscapeTable,
+  unregisterBlockLandscapeTable,
+} from '@/composables/dataTableLandscape.ts'
 
 vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
@@ -147,6 +151,51 @@ describe('openBlockLandscape — code blocks', () => {
     document.body.appendChild(wrapper)
     expect(openBlockLandscape(wrapper)).toBe(false)
     expect(blockLandscapeState.value).toBeNull()
+  })
+})
+
+describe('openBlockLandscape — DataTable', () => {
+  function buildTableRoot(): HTMLElement {
+    const root = document.createElement('div')
+    root.className = 'dt is-data'
+    root.innerHTML = '<div class="dt-scroll"><table class="dt-grid"><tr><td>42</td></tr></table></div>'
+    document.body.appendChild(root)
+    return root
+  }
+
+  it('opens the live table from its registered handle instead of cloning it', () => {
+    const root = buildTableRoot()
+    const handle = {
+      snapshot: () => ({
+        headers: ['name', 'score'],
+        rows: [['ann', '42']],
+        mode: 'data' as const,
+        wrap: true,
+        pageSize: 0,
+      }),
+      setMode: vi.fn(),
+      setWrap: vi.fn(),
+    }
+    registerBlockLandscapeTable(root, handle)
+
+    expect(openBlockLandscape(root)).toBe(true)
+    const state = blockLandscapeState.value!
+    expect(state.kind).toBe('table')
+    expect(state.html).toBe('')
+    expect(state.table).toEqual({ headers: ['name', 'score'], rows: [['ann', '42']], mode: 'data', wrap: true, pageSize: 0 })
+    expect(state.handle).toBe(handle)
+    expect(state.source).toBe(root)
+
+    unregisterBlockLandscapeTable(root)
+  })
+
+  it('falls back to the clone when the element is not a registered table', () => {
+    const root = buildTableRoot()
+    // Not registered: a DataTable that unmounted (or a raw table) still gets a
+    // readable snapshot rather than a dead fullscreen button.
+    expect(openBlockLandscape(root)).toBe(true)
+    expect(blockLandscapeState.value!.kind).toBe('clone')
+    expect(blockLandscapeState.value!.html).toContain('42')
   })
 })
 

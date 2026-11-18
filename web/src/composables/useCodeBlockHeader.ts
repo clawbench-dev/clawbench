@@ -494,6 +494,11 @@ export function handleTableBlockClick(event: MouseEvent): boolean {
     const btn = target.closest<HTMLElement>('.table-block-copy-btn, .table-block-wrap-btn, .table-block-landscape-btn, .table-block-copy-menu-item')
     if (!btn) return false
 
+    // DataTable 的按钮由组件自己的 Vue 事件处理（全屏是活组件，见
+    // dataTableLandscape.ts）。委托处理器若再处理一次，会在同一次点击里把刚打开
+    // 的活浮层替换成一份死克隆 —— 全屏里「简单表 ⇄ 数据表」点了没反应正是这么来的。
+    if (btn.closest('.dt')) return false
+
     event.preventDefault()
     event.stopPropagation()
 

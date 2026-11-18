@@ -6,6 +6,19 @@
  * mock 时（forge 详情等）会直接炸在模块加载阶段。
  */
 
+import { ref } from 'vue'
+
+/**
+ * Bumped on every change. Rendered markdown is cached by
+ * `ContentBlocks.getBlockHtml`; the cache key has to include this or a cached
+ * block would come back with the previous default's wrapper classes.
+ *
+ * Lives here (not in `blockWrapPref`) so components that only need to FOLLOW
+ * the preference — DataTable — can import it without pulling the i18n singleton
+ * that `blockWrapPref` needs for its button labels.
+ */
+export const blockWrapVersion = ref(0)
+
 /**
  * Same key `setLocalConfig('tableWrap', …)` writes (LOCAL_PREFIX + key). The
  * key keeps its original name so preferences saved before code blocks shared
