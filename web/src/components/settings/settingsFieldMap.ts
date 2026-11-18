@@ -541,6 +541,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // placeholder only opens the section and must also be listed in
     // PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mailAccountsSection', descriptionKey: 'settings.items.mailAccountsDesc', key: 'mailAccounts', type: 'info', source: 'server', sectionHeader: 'settings.items.mailAccountsSection' } },
+    // New-mail notifications. A server switch, not a per-device preference:
+    // the sync runs on the server and the same event feeds the notification
+    // center, the OS notification and the IM push. Turning it off silences the
+    // ALERT only — syncing, the unread badge and the mail panel keep working.
+    { type: 'item', spec: { labelKey: 'settings.items.mailNotify', descriptionKey: 'settings.items.mailNotifyDesc', key: 'mail.notify', type: 'switch', source: 'server', sectionHeader: 'settings.items.mailNotifySection' } },
     // How often the server polls, how deep it caches and how much it downloads
     // up front. All three are server-side because they describe what the
     // SERVER does to the mailbox and to its own disk — a per-device value

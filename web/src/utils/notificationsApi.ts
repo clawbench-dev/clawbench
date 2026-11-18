@@ -10,7 +10,7 @@ const TAG = 'NotificationsApi'
 
 export const NOTIFICATIONS_TIMEOUT_MS = 20_000
 
-export type NotificationKind = 'session' | 'task' | 'forge' | 'usage' | 'meeting'
+export type NotificationKind = 'session' | 'task' | 'forge' | 'usage' | 'meeting' | 'mail'
 
 /** One row of the notification log. */
 export interface NotificationItem {
@@ -31,6 +31,12 @@ export interface NotificationItem {
      * the row opens that meeting's record, so this is its navigation key.
      */
     meetingToken?: string
+    /**
+     * The cached mail message a kind='mail' row announced. Clicking opens that
+     * message in the Mail tab; the reader fetches by id, so it need not be on
+     * the folder's loaded page.
+     */
+    mailMessageId?: number
     agentId?: string
     createdAt: string
     /**

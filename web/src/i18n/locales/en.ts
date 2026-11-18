@@ -1976,6 +1976,7 @@ export default {
       forge: 'Repo',
       usage: 'Usage',
       meeting: 'Meeting',
+      mail: 'Mail',
     },
     range: {
       today: 'Today',
@@ -2029,6 +2030,7 @@ export default {
       transcriptFailed: 'Transcript failed',
       revisedReady: 'Proofread transcript ready',
       revisedFailed: 'Proofread transcript failed',
+      mailReceived: 'New mail',
     },
   },
   task: {
@@ -3544,6 +3546,9 @@ export default {
       mailEnabledDesc: 'Off stops background fetching and email-triggered tasks, and hides the Mail tab. Configured mailboxes are kept — turning it back on resumes them. The switch is in Feature Layout.',
       mailAccountsSection: 'Mailboxes',
       mailAccountsDesc: 'IMAP / SMTP accounts. The Mail tab and email-triggered tasks use the mailboxes configured here.',
+      mailNotifySection: 'New-mail alerts',
+      mailNotify: 'Notify me about new mail',
+      mailNotifyDesc: 'When new mail arrives, add a row to the notification center and send an OS notification / an IM push (per your push settings). Off only silences the alert — background syncing, the unread badge and the Mail tab keep working.',
       mailAdd: 'Add mailbox',
       mailEdit: 'Edit',
       mailDelete: 'Delete',

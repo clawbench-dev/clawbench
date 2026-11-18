@@ -214,6 +214,12 @@ PushTaskStarted: 任务已启动
 PushSessionCompleted: 会话已完成
 PushSessionCancelled: 会话已取消
 PushActionRequired: 操作需批准
+# 新邮件通知。标题/正文由服务端在收信时渲染（后台 goroutine 没有 HTTP
+# 请求上下文），通知中心和 IM 推送共用同一份文案。
+MailNotifyNoSubject: 无主题
+MailNotifyUnknownSender: 未知发件人
+MailNotifyManyTitle: 收到 {{.Count}} 封新邮件
+MailNotifyLatest: 最新：{{.Subject}} · {{.Sender}}
 # IM 推送（钉钉 / 飞书）——机器人写进用户聊天里的文案。推送后端跑在各自
 # goroutine 里、没有 HTTP 请求上下文，故与 AutoContinue 一样走
 # LocalizerForLocale(model.Language) 本地化。钉钉渲染 sampleMarkdown、飞书渲染

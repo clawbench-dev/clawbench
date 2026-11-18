@@ -527,6 +527,13 @@ type MailConfig struct {
 	// existing feature, so an install that never wrote the key must keep it.
 	Enabled bool `yaml:"enabled"`
 
+	// Notify controls the "new mail" notification (notification center + OS/IM
+	// push). Defaults to TRUE for the same bool zero-value reason as Enabled,
+	// and it is deliberately separate from Enabled: turning the mailbox off
+	// stops syncing entirely, while this only silences the alert — new mail is
+	// still fetched and the unread badge still counts it.
+	Notify bool `yaml:"notify"`
+
 	// SyncIntervalMinutes is how often the background worker polls every
 	// enabled account. Server-side because the polling is: a per-device value
 	// would mean one client's server hammering IMAP on another device's behalf.

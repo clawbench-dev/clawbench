@@ -251,6 +251,12 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 
 	prefetchMailBodies(ctx, client, folderID, f.Path, mailBodyPrefetchCount())
 	dispatchMailTriggers(accountID, f.Path, inserted, firstSync)
+	// Same firstSync guard as the triggers: the newest 100 messages cached on
+	// first connect are history, not "new mail". Deliberately keyed on
+	// UIDVALIDITY rather than LastSeenUID: a folder that was synced while
+	// EMPTY keeps LastSeenUID at 0, so the UID-based test would treat the first
+	// message it ever receives as history and never announce it.
+	notifyNewInboxMail(accountID, f, inserted, cached.UIDValidity == 0)
 	return len(inserted), nil
 }
 

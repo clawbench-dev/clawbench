@@ -212,6 +212,13 @@ PushTaskStarted: Task started
 PushSessionCompleted: Session completed
 PushSessionCancelled: Session cancelled
 PushActionRequired: Action requires approval
+# New-mail notification. Title/body are rendered by the server at sync time
+# (the producer is a background goroutine with no request scope), and the
+# notification center and IM push share the same wording.
+MailNotifyNoSubject: (No subject)
+MailNotifyUnknownSender: Unknown sender
+MailNotifyManyTitle: '{{.Count}} new emails'
+MailNotifyLatest: 'Latest: {{.Subject}} · {{.Sender}}'
 # IM push (DingTalk / Feishu) — the strings the bot writes into the user's chat.
 # The push backends run on their own goroutines with no HTTP request in scope,
 # so they localize via LocalizerForLocale(model.Language), exactly like

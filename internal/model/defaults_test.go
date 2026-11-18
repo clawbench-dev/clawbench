@@ -1875,8 +1875,28 @@ func TestApplyDefaults_MailEnabledPresence(t *testing.T) {
 	}
 }
 
-// TestApplyDefaults_MailSyncTuning covers the three mail sync knobs.
+// TestApplyDefaults_MailNotifyPresence covers the new-mail notification switch.
 //
+// Same bool zero-value trap as the master switch: an install that never wrote
+// the key must keep notifications on. An explicit false is a deliberate mute
+// and must survive ApplyDefaults.
+func TestApplyDefaults_MailNotifyPresence(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if !cfg.Mail.Notify {
+		t.Error("Mail.Notify should default to true when absent from config")
+	}
+
+	cfg = Config{}
+	ApplyDefaults(&cfg, map[string]bool{"mail.notify": true})
+	if cfg.Mail.Notify {
+		t.Error("Mail.Notify must stay false when explicitly set")
+	}
+}
+
+// TestApplyDefaults_MailSyncTuning covers the three mail sync knobs.//
 // The subtle one is body_prefetch: 0 is a real choice ("do not prefetch"), so
 // the presence map must distinguish "user wrote 0" from "key absent" — an
 // absent key silently turning prefetching off would look like a broken

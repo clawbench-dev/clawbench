@@ -746,6 +746,10 @@ paths:
         `mail.enabled` 是内置邮件客户端的总开关（默认 `true`）：关闭后停止后台收信与
         邮件触发任务、隐藏邮件页签；邮箱账号保留。
 
+        `mail.notify`（默认 `true`）控制新邮件提醒：新邮件到达时写一条通知中心记录，
+        并发出系统通知 / 按 `push_mode` 推送到 IM 机器人。关闭只静音提醒——后台收信、
+        未读角标与邮件页签照常工作。
+
         `tasks.enabled` 是定时任务的总开关（默认 `true`）：关闭后停止 cron 调度、取消
         运行中的执行并丢弃排队的事件任务，手动运行与增删改一律 `409` `TasksDisabled`；
         配置与历史保留，重新打开**不补跑**。同级子键见 `PATCH` 段。
@@ -808,6 +812,9 @@ paths:
 
         `mail.enabled` 只停后台收信与邮件触发任务、隐藏邮件页签，**不删除邮箱账号**；
         热更新，无需重启。
+
+        `mail.notify` 只控制新邮件提醒（通知中心 + 系统/IM 推送），不影响收信与
+        未读角标；同样热更新。
 
         `tasks.enabled` 与 `share.enabled` 是**破坏性**开关，都在配置写入成功后执行：
         `tasks.enabled=false` 停止 cron、取消运行中的执行、丢弃排队的事件任务，重新置为
@@ -3139,15 +3146,16 @@ paths:
       description: |
         通知中心是一张**只追加的事件日志**：记录会话（completed/cancelled/
         permission_pending）、任务（running/completed/failed/cancelled）、仓库
-        （forge 六种）、用量提醒（over/full）与会议事件（远程控制请求、成员加入、
-        成员共享屏幕、纪要生成成功/失败）事件。**没有已读/未读概念**，也没有角标——
-        它回答「发生过什么」，不回答「有什么待处理」（后者由 chat/tasks/forge 三个
-        既有角标负责）。
+        （forge 六种）、用量提醒（over/full）、会议事件（远程控制请求、成员加入、
+        成员共享屏幕、纪要生成成功/失败）与新邮件（received）事件。**没有已读/未读
+        概念**，也没有角标——它回答「发生过什么」，不回答「有什么待处理」（后者由
+        chat/tasks/forge 三个既有角标负责）。
 
         筛选参数均可选，缺省即不过滤——**默认范围是全局（所有项目）**，`project`
         是收窄项而非隐含默认。`project` 传**项目路径**（与其它项目作用域端点一致）；
         未知项目返回空列表而非错误。每行带 `sourceMissing`：其指向的会话/任务/会议
-        记录已不存在时为 true（forge 行永不标记，因为条目在上游、本地无删除语义）。
+        记录/邮件已不存在时为 true（forge 行永不标记，因为条目在上游、本地无删除
+        语义）。
 
         分页用 keyset：把上一页最后一行的 `created_at`/`id` 回传为
         `before_at`/`before_id`。不要用 offset——日志持续追加，offset 会在翻页时
@@ -3164,7 +3172,7 @@ paths:
           description: 事件类别
           schema:
             type: string
-            enum: [session, task, forge, usage, meeting]
+            enum: [session, task, forge, usage, meeting, mail]
         - name: range
           in: query
           description: 时间范围；未知或为空表示不限
@@ -3203,7 +3211,7 @@ paths:
                           type: integer
                         kind:
                           type: string
-                          enum: [session, task, forge, usage, meeting]
+                          enum: [session, task, forge, usage, meeting, mail]
                         eventType:
                           type: string
                         title:
@@ -3225,13 +3233,16 @@ paths:
                         meetingToken:
                           type: string
                           description: kind=meeting 行的会议标识（分享 token）；点击用它打开该会议记录
+                        mailMessageId:
+                          type: integer
+                          description: kind=mail 行的邮件 id（mail_messages.id）；点击用它打开该封邮件
                         agentId:
                           type: string
                         createdAt:
                           type: string
                         sourceMissing:
                           type: boolean
-                          description: 源（会话/任务）已删除时为 true；点击不应跳转
+                          description: 源（会话/任务/会议记录/邮件）已删除时为 true；点击不应跳转
                   total:
                     type: integer
                     description: 当前筛选下的总条数（忽略分页）

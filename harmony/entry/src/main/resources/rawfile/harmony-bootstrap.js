@@ -91,7 +91,7 @@
   const queue = new Map();
   const nativeEvents = new Set(['clawbench-download-progress', 'clawbench-native-notification-status',
     'clawbench-open-session', 'clawbench-open-task', 'clawbench-open-forge',
-    'clawbench-open-usage-meter', 'clawbench-open-meeting', 'clawbench-native-error',
+    'clawbench-open-usage-meter', 'clawbench-open-meeting', 'clawbench-open-mail', 'clawbench-native-error',
     'clawbench-selection-action', 'clawbench-volume-key', 'clawbench-share-imported',
     'clawbench-port-rebound']);
   function invoke(method, ...args) {

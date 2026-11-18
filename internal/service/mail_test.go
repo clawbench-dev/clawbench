@@ -29,6 +29,9 @@ func setupMailDB(t *testing.T) {
 	if _, err := db.Exec(MailTaskTriggerDDL); err != nil {
 		t.Fatalf("mail trigger ddl: %v", err)
 	}
+	if _, err := db.Exec(NotificationsDDL); err != nil {
+		t.Fatalf("notifications ddl: %v", err)
+	}
 	cleanup := store.SetDBForTest(db, db)
 	prevDataDir := model.DataDir
 	model.DataDir = t.TempDir()
@@ -40,6 +43,7 @@ func setupMailDB(t *testing.T) {
 	// silently switch the prefetch tests off instead of testing them.
 	prevConfig := model.ConfigInstance
 	model.ConfigInstance.Mail.Enabled = true
+	model.ConfigInstance.Mail.Notify = true
 	model.ConfigInstance.Mail.SyncWindow = mailDefaultSyncWindow
 	model.ConfigInstance.Mail.BodyPrefetch = mailDefaultBodyPrefetch
 	t.Cleanup(func() {

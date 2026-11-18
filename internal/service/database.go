@@ -1169,6 +1169,19 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			return fmt.Errorf("failed to add notifications.meeting_token: %w", err)
 		}
 	}
+	// notifications.mail_message_id: the subject of a kind=mail row. Same
+	// CREATE-TABLE-no-op reason as meeting_token above.
+	var hasMailMessageID int
+	_ = store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('notifications') WHERE name='mail_message_id'",
+	).Scan(&hasMailMessageID)
+	if hasMailMessageID == 0 {
+		if _, err := store.WriteExec(
+			"ALTER TABLE notifications ADD COLUMN mail_message_id INTEGER NOT NULL DEFAULT 0",
+		); err != nil {
+			return fmt.Errorf("failed to add notifications.mail_message_id: %w", err)
+		}
+	}
 	// Model providers (endpoint + credential shared by agents). Defined in
 	// providers.go as a constant so tests share one source of truth.
 	if _, err := store.WriteExec(ProvidersDDL); err != nil {

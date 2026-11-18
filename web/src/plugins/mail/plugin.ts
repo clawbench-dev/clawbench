@@ -52,6 +52,10 @@ export default {
           return
         }
         if (ctx.tabBlocked('mail')) return
+        // A notification-center row must arm the log as Back's target; a quote
+        // jump carries no `fromNotificationCenter` flag, so this is a no-op for
+        // that path (see recordNotificationOrigin in App.vue).
+        ctx.recordNotificationOrigin(detail)
         ctx.switchTab('mail')
       },
     },

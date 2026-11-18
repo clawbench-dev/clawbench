@@ -243,6 +243,17 @@ public class NativeNotificationPolicyTest {
                 "usage_meter_update", "over", false, false));
     }
 
+    @Test
+    public void mailEventNotifiesAndAdvancesCursor() {
+        // Mail carries no status and IS persisted server-side, so it must both
+        // notify and move the cursor (unlike live_event, which is not stored).
+        assertTrue(NativeNotificationPolicy.isNotifiableEvent("mail_event", ""));
+        assertTrue(NativeNotificationPolicy.advancesCursor("mail_event", ""));
+        assertFalse("a replayed mail event is caught-up history",
+                NativeNotificationPolicy.shouldNotifyLive("mail_event", "", true, false));
+        assertTrue(NativeNotificationPolicy.shouldNotifyLive("mail_event", "", false, false));
+    }
+
     /**
      * A meeting event (remote-control request, someone joining, a member
      * sharing, the minutes finishing) notifies but must NEVER advance the

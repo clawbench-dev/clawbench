@@ -51,6 +51,8 @@ function channelFor(nav: NotificationNav): NavChannel {
   // Meetings are identified by their share token, not by a session: without
   // this the click would fall through to the session channel and be dropped.
   if (nav.meetingToken) return 'clawbench-open-meeting'
+  // Mail is identified by a cached mail_messages id — again no session/task.
+  if (nav.mailMessageId) return 'clawbench-open-mail'
   if (nav.taskId) return 'clawbench-open-task'
   return 'clawbench-open-session'
 }

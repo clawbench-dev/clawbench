@@ -77,6 +77,11 @@ public final class NativeNotificationPolicy {
         if ("live_event".equals(eventType)) {
             return true;
         }
+        // New inbox mail. Carries no status: the server only emits it when
+        // unseen mail actually arrived.
+        if ("mail_event".equals(eventType)) {
+            return true;
+        }
         return false;
     }
 
@@ -125,6 +130,12 @@ public final class NativeNotificationPolicy {
         // trap documented above. The durable copy is the notification center.
         if ("live_event".equals(eventType)) {
             return false;
+        }
+        // mail_event IS persisted (service.IsNotifiableEvent returns true for
+        // it unconditionally), so it must move the cursor exactly like the
+        // usage-meter crossing above.
+        if ("mail_event".equals(eventType)) {
+            return true;
         }
         return false;
     }

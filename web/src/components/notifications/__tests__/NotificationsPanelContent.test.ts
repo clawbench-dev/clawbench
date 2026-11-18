@@ -12,7 +12,7 @@ vi.mock('lucide-vue-next', () => {
   const names = [
     'Inbox', 'Folder', 'Unlink', 'Trash2', 'AlertCircle', 'Layers',
     'Bot', 'Clock', 'GitMerge', 'Check', 'X', 'ShieldAlert', 'Gauge',
-    'MonitorUp', 'Hand',
+    'MonitorUp', 'Hand', 'Mail',
   ]
   return Object.fromEntries(names.map(n => [n, stub(n)]))
 })
@@ -270,8 +270,56 @@ describe('NotificationsPanelContent', () => {
     expect(mockToastShow).toHaveBeenCalledTimes(1)
   })
 
-  it('refuses the forge jump while Forge is off', async () => {
-    syncFeatureConfig({ forge: { enabled: false } })
+  it('clicking a mail row dispatches clawbench-open-mail with the message id', async () => {
+    items.value = [notif({
+      kind: 'mail',
+      eventType: 'received',
+      title: '季度报告',
+      body: 'Bob · 本周数据',
+      sessionId: undefined,
+      projectPath: '',
+      mailMessageId: 77,
+    })]
+    const w = mountPanel()
+    // The chip is the localized label, not the raw wire event type.
+    expect(w.text()).toContain('New mail')
+    expect(w.text()).not.toContain('received')
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-mail', listener)
+    await w.find('.notif-card').trigger('click')
+    window.removeEventListener('clawbench-open-mail', listener)
+
+    expect(events).toHaveLength(1)
+    expect(events[0].detail.messageId).toBe(77)
+    expect(events[0].detail.fromNotificationCenter).toBe(true)
+    // Mail is global: no project, so no cross-project confirmation.
+    expect(mockConfirm).not.toHaveBeenCalled()
+  })
+
+  it('refuses the mail jump while mail is off', async () => {
+    syncFeatureConfig({ mail: { enabled: false } })
+    items.value = [notif({
+      kind: 'mail',
+      eventType: 'received',
+      sessionId: undefined,
+      projectPath: '',
+      mailMessageId: 77,
+    })]
+    const w = mountPanel()
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-mail', listener)
+    await w.find('.notif-card').trigger('click')
+    window.removeEventListener('clawbench-open-mail', listener)
+
+    expect(events).toHaveLength(0)
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses the forge jump while Forge is off', async () => {    syncFeatureConfig({ forge: { enabled: false } })
     items.value = [notif({ kind: 'forge', forgeItemKey: 'pr/42', sessionId: undefined })]
     const w = mountPanel()
 

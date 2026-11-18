@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 	forge_item_key TEXT NOT NULL DEFAULT '',
 	agent_id       TEXT NOT NULL DEFAULT '',
 	meeting_token  TEXT NOT NULL DEFAULT '',
+	mail_message_id INTEGER NOT NULL DEFAULT 0,
 	created_at     TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_event ON notifications(event_id);
@@ -69,6 +70,11 @@ const (
 	// meeting is identified by its share token (live_notes.token), which is
 	// what the click opens.
 	NotificationKindMeeting = "meeting"
+	// NotificationKindMail is newly arrived inbox mail. Its subject is the
+	// cached mail_messages row, so the click opens that message in the mail
+	// panel. Unlike forge/meeting it carries no project: a mailbox belongs to
+	// the person, not to a repository.
+	NotificationKindMail = "mail"
 )
 
 // notificationRetentionDays / notificationMaxRows are the two retention caps.
@@ -109,27 +115,31 @@ type Notification struct {
 	// MeetingToken identifies a kind=meeting row's meeting. The live_notes row
 	// is the subject: deleting the record is what makes the row stale.
 	MeetingToken string `json:"meetingToken,omitempty"`
-	CreatedAt    string `json:"createdAt"`
-	// SourceMissing is set by the API layer when the session/task this
-	// notification points at no longer exists. Forge items are never marked
-	// (they live upstream, with no local delete semantics).
+	// MailMessageID identifies a kind=mail row's message (mail_messages.id).
+	// Deleting the account or its cached messages is what makes the row stale.
+	MailMessageID int64  `json:"mailMessageId,omitempty"`
+	CreatedAt     string `json:"createdAt"`
+	// SourceMissing is set by the API layer when the session/task/meeting/mail
+	// this notification points at no longer exists. Forge items are never
+	// marked (they live upstream, with no local delete semantics).
 	SourceMissing bool `json:"sourceMissing,omitempty"`
 }
 
 // NotificationRecord is a row to append to the log.
 type NotificationRecord struct {
-	EventID      string
-	Kind         string
-	EventType    string
-	Title        string
-	Body         string
-	ProjectID    int64
-	SessionID    string
-	TaskID       string
-	ExecutionID  string
-	ForgeItemKey string
-	AgentID      string
-	MeetingToken string
+	EventID       string
+	Kind          string
+	EventType     string
+	Title         string
+	Body          string
+	ProjectID     int64
+	SessionID     string
+	TaskID        string
+	ExecutionID   string
+	ForgeItemKey  string
+	AgentID       string
+	MeetingToken  string
+	MailMessageID int64
 }
 
 // StoreNotification appends one notification to the log.
@@ -157,11 +167,12 @@ func StoreNotification(rec NotificationRecord) {
 	}
 	_, err := store.WriteExec(
 		`INSERT OR IGNORE INTO notifications
-			(event_id, kind, event_type, title, body, project_id, session_id, task_id, execution_id, forge_item_key, agent_id, meeting_token, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(event_id, kind, event_type, title, body, project_id, session_id, task_id, execution_id, forge_item_key, agent_id, meeting_token, mail_message_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.EventID, rec.Kind, rec.EventType, rec.Title, rec.Body,
 		rec.ProjectID, rec.SessionID, rec.TaskID, rec.ExecutionID,
-		rec.ForgeItemKey, rec.AgentID, rec.MeetingToken, notificationTimestamp(time.Now()),
+		rec.ForgeItemKey, rec.AgentID, rec.MeetingToken, rec.MailMessageID,
+		notificationTimestamp(time.Now()),
 	)
 	if err != nil {
 		slog.Warn("notifications: store failed", "error", err, "kind", rec.Kind)
@@ -209,7 +220,7 @@ func ListNotifications(f NotificationFilter) ([]Notification, error) {
 
 	query := `SELECT n.id, n.kind, n.event_type, n.title, n.body, n.project_id,
 			COALESCE(p.path, ''), n.session_id, n.task_id, n.execution_id,
-			n.forge_item_key, n.agent_id, n.meeting_token, n.created_at
+			n.forge_item_key, n.agent_id, n.meeting_token, n.mail_message_id, n.created_at
 		FROM notifications n
 		LEFT JOIN projects p ON p.id = n.project_id
 		WHERE 1 = 1`
@@ -246,7 +257,7 @@ func ListNotifications(f NotificationFilter) ([]Notification, error) {
 		if err := rows.Scan(
 			&n.ID, &n.Kind, &n.EventType, &n.Title, &n.Body, &n.ProjectID,
 			&n.ProjectPath, &n.SessionID, &n.TaskID, &n.ExecutionID,
-			&n.ForgeItemKey, &n.AgentID, &n.MeetingToken, &n.CreatedAt,
+			&n.ForgeItemKey, &n.AgentID, &n.MeetingToken, &n.MailMessageID, &n.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -390,6 +401,12 @@ func markMissingSubjects(rows []Notification) {
 		}
 		return n.MeetingToken
 	})
+	mailIDs := distinctNonEmptyInt64(rows, func(n Notification) int64 {
+		if n.Kind != NotificationKindMail {
+			return 0
+		}
+		return n.MailMessageID
+	})
 
 	presentSessions := existingIDs("chat_sessions", "id", sessionIDs)
 	presentTasks := existingIDs("scheduled_tasks", "id", taskIDs)
@@ -397,6 +414,9 @@ func markMissingSubjects(rows []Notification) {
 	// attaches and deleted with the record, so it is the meeting's presence
 	// probe. The in-memory room is irrelevant here: the log outlives it.
 	presentMeetings := existingIDs("live_notes", "token", meetingIDs)
+	// A mail row points at the cached message, which disappears when the
+	// message is deleted upstream or the whole account is removed.
+	presentMail := existingInt64IDs("mail_messages", "id", mailIDs)
 
 	for i := range rows {
 		n := &rows[i]
@@ -411,6 +431,10 @@ func markMissingSubjects(rows []Notification) {
 			}
 		case NotificationKindMeeting:
 			if n.MeetingToken != "" && !presentMeetings[n.MeetingToken] {
+				n.SourceMissing = true
+			}
+		case NotificationKindMail:
+			if n.MailMessageID > 0 && !presentMail[n.MailMessageID] {
 				n.SourceMissing = true
 			}
 		}
@@ -493,6 +517,61 @@ func distinctNonEmpty(rows []Notification, get func(Notification) string) []stri
 		out = append(out, v)
 	}
 	return out
+}
+
+// distinctNonEmptyInt64 is the int64 variant of distinctNonEmpty, used by the
+// mail probe (mail_messages.id is an integer, unlike the string id-spaces).
+func distinctNonEmptyInt64(rows []Notification, get func(Notification) int64) []int64 {
+	seen := map[int64]bool{}
+	out := []int64{}
+	for _, n := range rows {
+		v := get(n)
+		if v <= 0 || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}
+
+// existingInt64IDs returns the subset of ids present in table.column. The
+// table/column literals are supplied by this file, never user input.
+func existingInt64IDs(table, column string, ids []int64) map[int64]bool {
+	present := map[int64]bool{}
+	if len(ids) == 0 || !store.ReadDBReady() {
+		return present
+	}
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := store.ReadDB().Query(
+		"SELECT "+column+" FROM "+table+" WHERE "+column+" IN ("+sqlPlaceholders(len(ids))+")",
+		args...,
+	)
+	if err != nil {
+		// Fail open, matching existingIDs: a probe failure must not mark every
+		// mail row deleted and disable its navigation.
+		slog.Warn("notifications: source probe failed", "table", table, "error", err)
+		for _, id := range ids {
+			present[id] = true
+		}
+		return present
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			slog.Warn("notifications: source probe scan failed", "table", table, "error", err)
+			continue
+		}
+		present[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("notifications: source probe iteration failed", "table", table, "error", err)
+	}
+	return present
 }
 
 // existingIDs returns the subset of ids present in table.column. Both names are

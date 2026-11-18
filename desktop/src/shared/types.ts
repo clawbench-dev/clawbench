@@ -35,6 +35,12 @@ export interface NotificationNav {
    */
   meetingToken?: string
   /**
+   * The cached mail message a new-mail notification should open. Like forge and
+   * usage it carries no session/task id, so without this discriminator the
+   * click falls through to the session channel and is dropped.
+   */
+  mailMessageId?: number
+  /**
    * The forge item the click should open, so the destination is that item's
    * detail rather than just the forge tab.
    *
@@ -67,6 +73,7 @@ export const NAV_CHANNELS = [
   'clawbench-open-forge',
   'clawbench-open-usage-meter',
   'clawbench-open-meeting',
+  'clawbench-open-mail',
 ] as const
 
 export type NavChannel = (typeof NAV_CHANNELS)[number]

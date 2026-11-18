@@ -70,6 +70,20 @@ public final class EventNotificationIds {
     }
 
     /**
+     * Notification id for a new-mail event, keyed by the cached message id.
+     *
+     * Its own band: mail carries neither a session nor a task id, so
+     * {@link #forEvent} would collapse every message onto {@link #BASE}.
+     */
+    public static int forMail(long messageId) {
+        if (messageId <= 0) {
+            return BASE;
+        }
+        String key = "mail:" + messageId;
+        return BASE + 3 * BAND + Math.abs(key.hashCode() % BAND);
+    }
+
+    /**
      * Notification id for an event, preferring the task id when present (matching
      * the post path's branch order: a task event carries both a task_id and a
      * session_id, and must resolve to the task band).

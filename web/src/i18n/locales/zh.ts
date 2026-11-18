@@ -1983,6 +1983,7 @@ export default {
       forge: '仓库',
       usage: '用量',
       meeting: '会议',
+      mail: '邮件',
     },
     range: {
       today: '今天',
@@ -2034,6 +2035,7 @@ export default {
       transcriptFailed: '转写生成失败',
       revisedReady: '校对稿已生成',
       revisedFailed: '校对稿生成失败',
+      mailReceived: '新邮件',
     },
   },
   task: {
@@ -3539,6 +3541,9 @@ export default {
       mailEnabledDesc: '关闭后不再后台收信、不触发邮件任务，邮件页签也会隐藏。已配置的邮箱会保留，重新打开即可继续使用。开关在「功能编排」里。',
       mailAccountsSection: '邮箱账号',
       mailAccountsDesc: '配置 IMAP / SMTP 账号。邮件页签、邮件触发的任务都用这里的账号。',
+      mailNotifySection: '新邮件提醒',
+      mailNotify: '收到新邮件时通知我',
+      mailNotifyDesc: '新邮件到达时，在通知中心记一条，并发出系统通知、按推送设置发给 IM 机器人。关掉只是不提醒，后台收信、未读角标和邮件页签都照常。',
       mailAdd: '添加邮箱',
       mailEdit: '编辑',
       mailDelete: '删除',

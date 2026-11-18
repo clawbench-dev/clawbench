@@ -528,6 +528,12 @@ export interface NotificationNav {
    */
   meetingToken?: string
   /**
+   * The cached mail message a mail-event notification should open. Like forge
+   * and usage it carries no session/task id, so the native shell needs this
+   * discriminator to route the click to the Mail tab's reader.
+   */
+  mailMessageId?: number
+  /**
    * The forge item to open, so the click deep-links to the item rather than
    * only raising the tab. Carries the opaque read key because a pipeline's
    * number is always 0 (its identity is the run id).

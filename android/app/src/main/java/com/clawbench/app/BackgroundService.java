@@ -3945,6 +3945,17 @@ public class BackgroundService extends Service {
                     return;
                 }
 
+            } else if ("mail_event".equals(eventType)) {
+                // New inbox mail. Same server-rendered wording as the meeting
+                // and usage events: the sync pass knows the subject/sender and
+                // localizes once, so nothing is rebuilt here.
+                title = data.optString("title", "");
+                alert = data.optString("body", "");
+                if (title.isEmpty()) {
+                    AppLog.i(TAG, "NativeWS: mail_event without title, skipping");
+                    return;
+                }
+
             } else {
                 AppLog.i(TAG, "NativeWS: postEventNotification - unhandled eventType=" + eventType + ", skipping");
                 return;
@@ -3971,6 +3982,12 @@ public class BackgroundService extends Service {
                 intent.putExtra("event_type", "meeting");
                 String meetingToken = data.optString("token", "");
                 if (!meetingToken.isEmpty()) intent.putExtra("meeting_token", meetingToken);
+            } else if ("mail_event".equals(eventType)) {
+                // Mail is identified by the cached message id; the web app's
+                // Mail panel opens the reader straight from it.
+                intent.putExtra("event_type", "mail");
+                long mailMessageId = data.optLong("mail_message_id", 0);
+                if (mailMessageId > 0) intent.putExtra("mail_message_id", mailMessageId);
             } else {
                 intent.putExtra("event_type", "permission_pending".equals(status) ? "permission_pending" : "session_update");
                 if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);
@@ -3992,7 +4009,9 @@ public class BackgroundService extends Service {
             // keeps two meetings from replacing each other in the shade.
             int notifId = "live_event".equals(eventType)
                     ? EventNotificationIds.forMeeting(data.optString("token", ""))
-                    : EventNotificationIds.forEvent(taskId, sessionId);
+                    : "mail_event".equals(eventType)
+                        ? EventNotificationIds.forMail(data.optLong("mail_message_id", 0))
+                        : EventNotificationIds.forEvent(taskId, sessionId);
 
             Notification notification = new NotificationCompat.Builder(this, EVENTS_CHANNEL_ID)
                     .setContentTitle(title)
@@ -4364,6 +4383,13 @@ public class BackgroundService extends Service {
                 if (title.isEmpty()) {
                     return;
                 }
+            } else if ("mail_event".equals(eventType)) {
+                // Same server-rendered wording as usage_meter.
+                title = data.optString("title", "");
+                alert = data.optString("body", "");
+                if (title.isEmpty()) {
+                    return;
+                }
             } else {
                 return;
             }
@@ -4382,6 +4408,10 @@ public class BackgroundService extends Service {
                 // frontend opens the usage popover (wide) or the settings entry
                 // (narrow) for this event_type.
                 intent.putExtra("event_type", "usage_meter");
+            } else if ("mail_event".equals(eventType)) {
+                intent.putExtra("event_type", "mail");
+                long mailMessageId = data.optLong("mail_message_id", 0);
+                if (mailMessageId > 0) intent.putExtra("mail_message_id", mailMessageId);
             } else {
                 intent.putExtra("event_type", "permission_pending".equals(status) ? "permission_pending" : "session_update");
                 if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);
@@ -4393,7 +4423,9 @@ public class BackgroundService extends Service {
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             );
 
-            int notifId = EventNotificationIds.forEvent(taskId, sessionId);
+            int notifId = "mail_event".equals(eventType)
+                    ? EventNotificationIds.forMail(data.optLong("mail_message_id", 0))
+                    : EventNotificationIds.forEvent(taskId, sessionId);
 
             Notification notification = new NotificationCompat.Builder(context, EVENTS_CHANNEL_ID)
                     .setContentTitle(title)

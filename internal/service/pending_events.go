@@ -68,6 +68,12 @@ func IsNotifiableEvent(event string, data any) bool {
 	if event == UsageMeterEventType {
 		return true
 	}
+	// A mail event carries no status to inspect either: the sync pass only
+	// emits it when unseen mail actually arrived, and every occurrence is
+	// notifiable.
+	if event == MailEventType {
+		return true
+	}
 	// A user message carries no status but is always notifiable: it is what an
 	// offline client must replay to show what was asked.
 	if isUserMessageEvent(data) {

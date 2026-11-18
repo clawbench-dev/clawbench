@@ -734,6 +734,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if !presence["mail.enabled"] {
 		cfg.Mail.Enabled = true
 	}
+	// New-mail notifications default to ON. Same trap: a bool zero value would
+	// silently mute every install that never wrote the key, which reads as a
+	// broken notification feature rather than a default.
+	if !presence["mail.notify"] {
+		cfg.Mail.Notify = true
+	}
 	// Sync tuning. Presence is checked the same way, but here it matters for a
 	// different reason: 0 is a MEANINGFUL value for body_prefetch ("do not
 	// prefetch"), so an absent key must not be read as "user chose 0".

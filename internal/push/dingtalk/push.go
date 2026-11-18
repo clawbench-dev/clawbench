@@ -229,3 +229,16 @@ func PushUsageMeterEvent(title, markdown string) bool {
 	}
 	return sendToAllSubscribers(title, markdown)
 }
+
+// PushMailEvent sends a DingTalk notification for newly arrived inbox mail.
+// Like PushForgeEvent, the wording is owned by the service layer; this function
+// only owns the transport and the push-mode gate.
+func PushMailEvent(title, markdown string) bool {
+	if !IsStarted() || db == nil {
+		return false
+	}
+	if title == "" || markdown == "" {
+		return false
+	}
+	return sendToAllSubscribers(title, markdown)
+}
