@@ -131,6 +131,69 @@ export function decideClientBuild(input) {
 export const BRIDGE_CONTRACT_PATH = 'web/src/utils/clawbenchNative.ts'
 
 /**
+ * The desktop shell's own implementation of that same bridge. Its object has no
+ * declared interface to compare, so the members are read off
+ * `contextBridge.exposeInMainWorld('ClawBenchNative', { ... })` instead. Rule:
+ * removing a member or making one mandatory fails, adding one does not — the
+ * exact counterpart of `bridgeBreakingChanges` for the TypeScript declaration.
+ */
+export const DESKTOP_BRIDGE_IMPLEMENTATION_PATH = 'desktop/src/preload/index.ts'
+
+/**
+ * Read the member list of the preload bridge object.
+ *
+ * The object is the literal handed to
+ * `contextBridge.exposeInMainWorld('ClawBenchNative', { ... })`. Members are
+ * found line-based — key at the conventional two-space indent, arrow or method
+ * shorthand — the same rule `bridgeMembers` uses for the interface. Brace
+ * matching is deliberately NOT used: the bodies contain strings and comments
+ * with stray braces (a truncated `'}` in a message is enough), and one mismatch
+ * would silently hide every member after it.
+ *
+ * @returns Map<memberName, {optional: boolean}> — empty when the object cannot
+ * be found (callers must treat that as "unknown", not "compatible").
+ */
+export function preloadBridgeMembers(source) {
+  const members = new Map()
+  if (typeof source !== 'string') return members
+  const marker = "exposeInMainWorld('ClawBenchNative', {"
+  const open = source.indexOf(marker)
+  if (open === -1) return members
+  // The literal closes with the first `})` at column 0. A member's own body
+  // never sits at column 0, so this cannot cut the object short.
+  const close = source.indexOf('\n})', open)
+  if (close === -1) return members
+  const body = source.slice(open, close)
+  // `[ \t]{1,2}` rather than `\s{2}`: `\s` also matches newlines, so a line
+  // starting with a single space (or a member at column 0) would sneak in.
+  const member = /^[ \t]{1,2}(?:readonly )?([A-Za-z_$][\w$]*)(\??)\s*[:(]/gm
+  for (const m of body.matchAll(member)) {
+    members.set(m[1], { optional: m[2] === '?' })
+  }
+  return members
+}
+
+/**
+ * @returns string[] human-readable reasons; empty means purely additive.
+ */
+export function preloadBridgeBreakingChanges(prevSource, nextSource) {
+  const before = preloadBridgeMembers(prevSource)
+  const after = preloadBridgeMembers(nextSource)
+  // An unreadable object is not evidence of compatibility. Fail closed.
+  if (before.size === 0 || after.size === 0) {
+    return ['the desktop preload bridge could not be read at one of the two releases']
+  }
+
+  const reasons = []
+  for (const [name] of before) {
+    if (!after.has(name)) reasons.push(`preload: ${name} was removed`)
+  }
+  // The preload object cannot express optionality (a missing key is just
+  // absent), so "became mandatory" has no analogue here.
+  return reasons
+}
+
+/**
  * Read the member list of `interface ClawBenchNative`.
  *
  * Line-based on purpose: the interface is declared at column 0, closes with a
@@ -279,16 +342,20 @@ function main() {
   const contractChanged = prevTag ? changedPaths(prevTag, tag, CONTRACT_PATHS) : []
 
   // Split the changed contract files into "a stale shell can still live with
-  // this" and "it cannot". Only the bridge interface gets the additive check;
-  // the rest stay all-or-nothing.
-  const bridgeReasons = contractChanged.includes(BRIDGE_CONTRACT_PATH)
-    ? bridgeBreakingChanges(
-        fileAt(prevTag, BRIDGE_CONTRACT_PATH),
-        fileAt(tag, BRIDGE_CONTRACT_PATH),
-      )
-    : []
+  // this" and "it cannot". The two bridge files — the page's interface and the
+  // desktop shell's implementation of it — only break on removals; the rest stay
+  // all-or-nothing.
+  const bridgeResult = (path, compare) =>
+    contractChanged.includes(path) ? compare(fileAt(prevTag, path), fileAt(tag, path)) : []
+  const bridgeReasons = bridgeResult(BRIDGE_CONTRACT_PATH, bridgeBreakingChanges)
+  const preloadReasons = bridgeResult(
+    DESKTOP_BRIDGE_IMPLEMENTATION_PATH,
+    preloadBridgeBreakingChanges,
+  )
   const breakingContractPaths = contractChanged.filter(
-    (p) => p !== BRIDGE_CONTRACT_PATH || bridgeReasons.length > 0,
+    (p) =>
+      (p !== BRIDGE_CONTRACT_PATH || bridgeReasons.length > 0) &&
+      (p !== DESKTOP_BRIDGE_IMPLEMENTATION_PATH || preloadReasons.length > 0),
   )
 
   const protocolBumped = prevProtocol !== null && prevProtocol !== currentProtocol
@@ -310,6 +377,7 @@ function main() {
         'Breaking contract files:',
         ...breakingContractPaths.map((p) => `  - ${p}`),
         ...(bridgeReasons.length > 0 ? bridgeReasons.map((r) => `    · ${r}`) : []),
+        ...(preloadReasons.length > 0 ? preloadReasons.map((r) => `    · ${r}`) : []),
         '',
         `The previous release was protocol ${prevProtocol}, this one is ${currentProtocol}.`,
         `Bump ${PROTOCOL_FILE} (to ${currentProtocol + 1}) if the change breaks an existing`,
