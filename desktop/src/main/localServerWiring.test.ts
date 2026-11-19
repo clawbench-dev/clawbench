@@ -110,6 +110,46 @@ describe('the built-in server is not a saved row', () => {
   })
 })
 
+describe('a failed start does not poison every later attempt', () => {
+  it('stops the server a previous attempt left running, and clears the stopping flag', () => {
+    // Retrying from the login page used to spawn a SECOND server while the first
+    // one still held the data-directory lock: the new one waited out the 30s lock
+    // window and failed too, so "cannot connect" stuck until the app was killed.
+    const src = readRepoFile(LOCAL_SERVER)
+    const fn = src.match(/export async function startEmbeddedServer\(\)[\s\S]*?\n\}/)
+    expect(fn, 'startEmbeddedServer not found').not.toBeNull()
+    expect(fn![0]).toContain('if (child) stopEmbeddedServer()')
+    expect(fn![0]).toContain('stopping = false')
+  })
+
+  it('stops the spawned server when the start fails', () => {
+    // Same leak from the other side: a timeout left the child running, and the
+    // child is exactly what holds the lock.
+    const src = readRepoFile(LOCAL_SERVER)
+    const fn = src.match(/export async function startEmbeddedServer\(\)[\s\S]*?\n\}/)
+    expect(fn, 'startEmbeddedServer not found').not.toBeNull()
+    expect(fn![0]).toContain('await waitForHealth(port)')
+    expect(fn![0]).toMatch(/catch \(err\) \{[\s\S]*?stopEmbeddedServer\(\)[\s\S]*?throw err/)
+  })
+})
+
+describe('the server outlives an aborted quit', () => {
+  it('stops it on will-quit, never on before-quit', () => {
+    // `before-quit` runs even when the quit is then aborted (the renderer vetoes
+    // the unload while a meeting is publishing and the user stays). Stopping the
+    // server there left a live app with a dead backend — "cannot connect", and a
+    // relaunch only revealed the same window because of the single-instance
+    // lock.
+    const src = readRepoFile('desktop/src/main/index.ts')
+    const willQuit = src.match(/app\.on\('will-quit',[\s\S]*?\n\}\)/)
+    expect(willQuit, 'will-quit handler not found').not.toBeNull()
+    expect(willQuit![0]).toContain('stopEmbeddedServer()')
+
+    const beforeQuit = src.match(/app\.on\('before-quit',[\s\S]*?\n\}\)/)
+    if (beforeQuit) expect(beforeQuit[0]).not.toContain('stopEmbeddedServer()')
+  })
+})
+
 describe('built-in detection keys on the address', () => {
   it('does not gate the version check on "a built-in server is running"', () => {
     const src = readRepoFile(WINDOW)

@@ -219,15 +219,23 @@ app.on('window-all-closed', () => {
 })
 
 // Last chance to ship buffered shell logs before the process goes away.
-// `before-quit` is async-unfriendly (Electron does not await handlers), so the
+// `will-quit` is async-unfriendly (Electron does not await handlers), so the
 // flush races the exit; the renderer relay has the same property. Worth doing
 // because the entries most likely still buffered are the ones around whatever
 // caused the quit.
-app.on('before-quit', () => {
+//
+// `will-quit`, NOT `before-quit`: a quit can still be ABORTED after
+// `before-quit` — the renderer vetoes the unload while a meeting is publishing,
+// and the user chooses to stay (see registerUnloadGuard / cancelPendingQuit).
+// Stopping the server there killed the backend of an app that then kept running,
+// leaving "cannot connect" until the whole process was killed; relaunching did
+// not help, because the single-instance lock just revealed the same broken
+// window. `will-quit` only fires when the app is really terminating. Paths that
+// skip both hooks (`app.exit`) still close the server's stdin when the process
+// dies, so the server never outlives the app.
+app.on('will-quit', () => {
   // Closing the server's stdin is its quit signal; the call also arms a kill
-  // for the case where it does not drain in time. Must be here rather than in
-  // `will-quit`: a tray icon keeps this process alive after the window closes,
-  // and the server should live exactly as long as the app does.
+  // for the case where it does not drain in time.
   stopEmbeddedServer()
   flushFloatingBounds()
   // The input helper is a child process; leaving it behind would keep a process
