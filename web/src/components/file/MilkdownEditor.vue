@@ -1,6 +1,6 @@
 <template>
   <div class="md-editor">
-    <div ref="hostRef" class="md-editor-host markdown-body"></div>
+    <div ref="hostRef" class="md-editor-host markdown-body" :data-file-path="file?.path || ''"></div>
 
     <div class="code-editor-actions">
       <span class="code-editor-status">
@@ -53,6 +53,7 @@ import { resolveMarkdownImageSrc } from '@/utils/markdownImageSrc.ts'
 import { createMathPlugins } from './milkdownMath.ts'
 import { createCodeBlockView, createHighlightPlugin } from './milkdownCodeBlock.ts'
 import { createHtmlBlockView } from './milkdownHtmlBlock.ts'
+import { createHeadingAnchorPlugin } from './milkdownHeadingAnchors.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { appLog } from '@/utils/appLog.ts'
 
@@ -158,6 +159,7 @@ const htmlBlockView = createHtmlBlockView({
 })
 const codeBlockView = createCodeBlockView()
 const highlightPlugin = createHighlightPlugin()
+const headingAnchorPlugin = createHeadingAnchorPlugin()
 
 function emitSave() {
     const value = getValue()
@@ -220,7 +222,7 @@ onMounted(async () => {
                     dirty.value = markdown !== baseline.value
                 })
                 // ProseMirror plugins (not Milkdown plugins) go through this ctx.
-                ctx.update(prosePluginsCtx, (plugins) => [...plugins, highlightPlugin])
+                ctx.update(prosePluginsCtx, (plugins) => [...plugins, highlightPlugin, headingAnchorPlugin])
             })
             .use(commonmark)
             .use(gfm)

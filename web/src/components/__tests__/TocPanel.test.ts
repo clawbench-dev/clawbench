@@ -719,3 +719,75 @@ function readSource(relPath: string): string {
   }
   throw new Error(relPath + ' not found from cwd: ' + process.cwd())
 }
+
+// ── Visual (WYSIWYG) editor outline ──
+// The panel is mounted by hosts that do not know the edit mode, so it detects
+// the visual editor from the DOM: a `[data-file-path]` container holding a
+// `.ProseMirror` surface. The outline then comes from the live headings, not
+// the saved markdown text.
+describe('TocPanel — visual editor outline', () => {
+  function mountVisualPanel() {
+    document.body.innerHTML = `
+      <div data-file-path="/notes.md"><div class="ProseMirror">
+        <h1 id="intro">Intro</h1><h2 id="detail">Detail</h2>
+      </div></div>`
+    return mountPanel({
+      // Saved text is deliberately different: a stale outline here means the
+      // panel kept reading the file instead of the editor DOM.
+      file: { name: 'notes.md', content: '# 旧标题\n## 旧小节', path: '/notes.md' },
+    })
+  }
+
+  it('lists the live headings from the editor instead of the saved text', async () => {
+    const wrapper = mountVisualPanel()
+    await nextTick()
+
+    expect(wrapper.findAll('.toc-item').map((i) => i.text())).toEqual(['Intro', 'Detail'])
+    wrapper.unmount()
+  })
+
+  it('jumps inside the editor instead of emitting a line jump', async () => {
+    const wrapper = mountVisualPanel()
+    await nextTick()
+
+    const h1 = document.getElementById('intro') as HTMLElement
+    const scrollIntoView = vi.fn()
+    h1.scrollIntoView = scrollIntoView
+
+    await wrapper.findAll('.toc-item')[0].trigger('click')
+
+    expect(scrollIntoView).toHaveBeenCalled()
+    expect(wrapper.emitted('jump')).toBeFalsy()
+    wrapper.unmount()
+  })
+
+  it('follows edits: a heading added in the editor appears in the list', async () => {
+    const wrapper = mountVisualPanel()
+    await nextTick()
+
+    const h3 = document.createElement('h3')
+    h3.id = 'later'
+    h3.textContent = 'Later'
+    document.querySelector('.ProseMirror')!.appendChild(h3)
+
+    // The DOM watch is debounced (50ms).
+    await new Promise((r) => setTimeout(r, 80))
+    await nextTick()
+
+    expect(wrapper.findAll('.toc-item').map((i) => i.text())).toEqual(['Intro', 'Detail', 'Later'])
+    wrapper.unmount()
+  })
+
+  it('falls back to the source outline when the editor goes away', async () => {
+    const wrapper = mountVisualPanel()
+    await nextTick()
+    expect(wrapper.findAll('.toc-item').map((i) => i.text())).toEqual(['Intro', 'Detail'])
+
+    document.querySelector('[data-file-path="/notes.md"]')!.remove()
+    await new Promise((r) => setTimeout(r, 80))
+    await nextTick()
+
+    expect(wrapper.findAll('.toc-item').map((i) => i.text())).toEqual(['旧标题', '旧小节'])
+    wrapper.unmount()
+  })
+})
