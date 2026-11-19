@@ -221,6 +221,10 @@ const i18n = createI18n({
       settings: {
         needsRestart: '需重启',
         categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', portForward: '端口映射', push: '推送', terminal: '终端', rag: 'RAG', project: '项目', files: '文件', about: '关于', android: 'Android', security: '安全', basic: '其他' },
+        // Only the interpolation key: the banner's title is asserted as a raw
+        // key below (this fixture carries no copy), but the query itself must
+        // render, so its wrapper has to resolve.
+        search: { filteredQuery: '「{query}」' },
         items: {
           defaultAgent: '默认智能体',
           autoSpeech: '自动语音',
@@ -1447,7 +1451,7 @@ describe('SettingsCategory', () => {
       const wrapper = mountCategory('about')
       const vm = wrapper.vm as any
       vm.$.setupState.handleClick({ key: 'downloadAndroidApp' })
-      expect(mockDownloadByUrl).toHaveBeenCalledExactlyOnceWith('/api/apk', 'clawbench-android.apk')
+      expect(mockDownloadByUrl).toHaveBeenCalledExactlyOnceWith('/api/apk', 'clawbench-android.apk', { viaNativeApp: true })
     })
 
     // The "download desktop app" row must only appear when there is actually
@@ -1806,5 +1810,71 @@ describe('server warnings surfaced to the user', () => {
     await flushPromises()
 
     expect(mockToastShow).not.toHaveBeenCalled()
+  })
+})
+
+// ─── Settings search filter (issue #691) ──────────
+//
+// A search hit opens the category with `searchKeys`, and the page must render
+// ONLY those rows — banner included — so the landing matches what the index
+// promised. Run against the `mail` category because it mixes flat rows with
+// placeholder cards (邮箱账号 → MailSetting).
+describe('SettingsCategory search filter', () => {
+  function mountFiltered(categoryId: string, searchKeys: string[], searchQuery: string) {
+    return mount(SettingsCategory, {
+      props: { categoryId, searchKeys, searchQuery },
+      global: {
+        plugins: [i18n],
+        stubs: {
+          SettingsGroupPanel: true,
+          IosInstallDrawer: true,
+          UpgradeDialog: true,
+          BottomSheet: true,
+          ProviderIcon: true,
+          PasswordChangeDialog: true,
+          ProjectsSetting: true,
+          ProjectDetailSetting: true,
+          MailSetting: true,
+        },
+      },
+    })
+  }
+
+  const itemKeys = (wrapper: ReturnType<typeof mountFiltered>) =>
+    wrapper.findAllComponents({ name: 'SettingsItem' }).map(i => i.props('settingKey'))
+
+  it('renders only the hit row and the banner', () => {
+    const wrapper = mountFiltered('mail', ['mail.sync_interval_minutes'], '每多少分钟')
+
+    // This suite's i18n only carries the keys the page uses, so the banner
+    // renders raw keys; the copy itself is covered by the i18n parity test.
+    const banner = wrapper.find('.settings-search-filter')
+    expect(banner.exists()).toBe(true)
+    expect(banner.text()).toContain('settings.search.filteredTitle')
+    expect(banner.text()).toContain('每多少分钟')
+    expect(itemKeys(wrapper)).toEqual(['mail.sync_interval_minutes'])
+    // The whole-page control is wired through to the parent.
+    expect(wrapper.find('.settings-search-filter__clear').exists()).toBe(true)
+  })
+
+  it('shows the whole page when there is no filter', () => {
+    const wrapper = mountCategory('mail')
+    expect(itemKeys(wrapper).length).toBeGreaterThan(3)
+    expect(wrapper.find('.settings-search-filter').exists()).toBe(false)
+  })
+
+  it('emits clearSearch when the banner button is pressed', async () => {
+    const wrapper = mountFiltered('mail', ['mail.notify'], '通知')
+    await wrapper.find('.settings-search-filter__clear').trigger('click')
+    expect(wrapper.emitted('clearSearch')).toBeTruthy()
+  })
+
+  it('drops the placeholder-only 邮箱账号 card while filtering', () => {
+    const wrapper = mountFiltered('mail', ['mail.sync_interval_minutes'], '每多少分钟')
+    const titles = wrapper.findAll('.settings-card__header').map(h => h.text())
+    // 邮箱账号 renders MailSetting (a dedicated body, no settings row) and must
+    // not survive as a card of unrelated content. 功能状态 is placeholder-driven
+    // too, and 邮件阅读 / 新邮件提醒 lose their only row.
+    expect(titles).toEqual(['settings.items.mailSyncSection'])
   })
 })

@@ -19,6 +19,7 @@ var (
 	startServerBinary = startDetachedServer
 	serverAlive       = processAlive
 	upgradeWait       = time.Sleep
+	cpuCompatible     = platform.CheckBinaryCPUCompatibility
 )
 
 // RunUpgradeReplaceCommand handles the "clawbench upgrade-replace" subcommand.
@@ -119,11 +120,45 @@ func performReplacement(newBinPath, targetPath, tmpDir string, serverArgs []stri
 	slog.Info("upgrade-replace: waiting for port to be released...")
 	upgradeWait(2 * time.Second)
 
+	// A binary whose CPU baseline this host does not meet (GOAMD64=v3 on a
+	// v2-only machine) dies with SIGILL the moment it is executed. Swapping it
+	// in and starting it would turn a working service into an installation
+	// that cannot boot at all — the user could not even retry from the UI.
+	// Keep the old version running and report the upgrade as failed instead.
+	if swapped {
+		if need, ok := cpuCompatible(targetPath); !ok {
+			// Checked after the swap so it inspects the *new* binary; restore
+			// the previous one so a restart on the old version still works.
+			slog.Error("upgrade-replace: new binary requires a newer CPU, keeping the previous version",
+				"target", targetPath, "required", need.String())
+			if err := replaceBinary(targetPath+".bak", targetPath); err != nil {
+				// The restore itself failed, so targetPath is the new binary,
+				// which cannot run here. The service is already stopped at this
+				// point: leaving it down with no explanation is worse than one
+				// attempt at starting what is on disk, since that at least
+				// surfaces the SIGILL in the server log instead of silence.
+				slog.Error("upgrade-replace: failed to restore the previous binary; attempting to start the new one anyway",
+					"error", err, "target", targetPath)
+				// Not a completed upgrade: report failure even though this
+				// starts what ended up on disk.
+				return startAfterUpgrade(targetPath, serverArgs, false)
+			}
+			return 1
+		}
+	}
+
 	// Bring the service back. This runs on every path — successful swap, failed
 	// swap, or a download that never made it — because targetPath always holds
 	// a runnable binary (the new version, or the previous one if the swap did
 	// not happen). Skipping it is what turned a failed upgrade into a service
 	// that never came back.
+	return startAfterUpgrade(targetPath, serverArgs, swapped)
+}
+
+// startAfterUpgrade launches target, waits for it to settle, and maps the
+// outcome onto the helper's exit code. swapped=false means the service is back
+// but on the previous version, which is a failed upgrade, not a successful one.
+func startAfterUpgrade(targetPath string, serverArgs []string, swapped bool) int {
 	slog.Info("upgrade-replace: starting binary", "target", targetPath, "args", serverArgs)
 	pid, startErr := startServerBinary(targetPath, serverArgs)
 	if startErr != nil {

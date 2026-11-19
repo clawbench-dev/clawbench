@@ -102,6 +102,7 @@ export default {
   },
   dataTable: {
     mode: 'Table mode',
+    modeSwitch: 'Switch table mode',
     normal: 'Simple',
     data: 'Data table',
     search: 'Search this table…',
@@ -353,6 +354,7 @@ export default {
     created: 'Knowledge base created',
     dirImportDone: 'Added {added} files; indexing in the background',
     dirImportSummary: '{added} added, {skipped} skipped, {duplicates} already there, {failed} failed',
+    skippedReasonHint: '{count} skipped because the format is not supported: {reason}',
     dirImportTruncated: 'Too many files — only the first 500 were imported',
     dirImportEmpty: 'There are no files this knowledge base can take in that folder',
     dirImportAllDuplicates: 'Every file in that folder is already in this collection',
@@ -481,6 +483,12 @@ export default {
       legacy_doc: 'Legacy .doc is not supported — save it as .docx first',
       legacy_xls: 'Legacy .xls is not supported — save it as .xlsx first',
       legacy_ppt: 'Legacy .ppt is not supported — save it as .pptx first',
+      wps_doc: 'WPS Writer documents (.wps) are not supported — save as .docx first',
+      wps_sheet: 'WPS Spreadsheets (.et) are not supported — save as .xlsx first',
+      wps_slides: 'WPS Presentations (.dps) are not supported — save as .pptx first',
+      pages: 'Pages documents (.pages) are not supported — export as .docx first',
+      numbers: 'Numbers spreadsheets (.numbers) are not supported — export as .xlsx first',
+      keynote: 'Keynote presentations (.key) are not supported — export as .pptx first',
       image: 'No extractable text in this image',
       svg: 'No extractable text in this SVG',
       audio_video: 'Audio and video are not supported',
@@ -765,6 +773,7 @@ export default {
     addServer: 'Add another server',
     serverNamePlaceholder: 'Name (optional)',
     duplicateServerName: 'That name is already used',
+    invalidServerAddress: 'Enter a valid address. For example https://192.168.1.100:20000, or for IPv6 the full form with scheme, brackets and port: http://[240e:390:1234:5678::123]:20000',
     serverUrlPlaceholder: 'Enter server URL',
     serverPasswordPlaceholder: 'Enter password',
     addServerSubmit: 'Add & Login',
@@ -2760,6 +2769,21 @@ export default {
       exact: 'Exact match',
       noResults: 'No files found',
       noResultsDesc: 'Try a different keyword or widen the search scope.',
+      // No-results empty state: the title names the query, the description states
+      // exactly which scope was searched (this directory / and below / whole
+      // project), and the actions below widen it in one tap. "No files found"
+      // alone leaves the user unable to tell which direction to widen.
+      noResultsTitle: 'No results for "{q}"',
+      noResultsHere: 'Searched only in "{dir}" — no matching files.',
+      noResultsDeep: 'Searched "{dir}" and every subfolder — no matching files.',
+      // Project root has no name to quote; say the scope plainly instead of
+      // rendering Searched only in "".
+      noResultsHereRoot: 'Searched only in this folder — no matching files.',
+      noResultsDeepRoot: 'Searched this folder and every subfolder — no matching files.',
+      noResultsProject: 'Searched the whole project — no matching files.',
+      widenRecursive: 'Search subfolders',
+      widenGlobal: 'Search whole project',
+      clearSearch: 'Clear search',
       searching: 'Searching...',
       resultCount: '{count} files found',
       resultCountPlus: '{limit}+ files found',
@@ -3471,6 +3495,15 @@ export default {
       security: 'Security',
       debug: 'Debug',
       about: 'About',
+    },
+    // Search box on the settings home page (issue #691).
+    search: {
+      placeholder: 'Search settings, in English or Chinese',
+      noResults: 'No settings matched "{query}"',
+      filteredTitle: 'Showing matching settings only',
+      filteredQuery: '"{query}"',
+      showAll: 'Show all',
+      forcedHint: 'Not active under the current conditions',
     },
     groups: {
       projectAppearance: 'Project & Appearance',
@@ -5351,6 +5384,9 @@ export default {
     dockerHintBody: 'The in-place upgrade still works, but rebuilding the container from the unchanged image will revert it. Prefer updating the image instead:',
     dockerHintRestart: 'The container must use --restart always or --restart unless-stopped, otherwise the service will not come back after an in-place upgrade. Do not use --restart on-failure: the server exits with code 0, so it would never restart.',
     verificationWarningTitle: 'This upgrade could not be fully verified',
+    fusedNote: 'This client ships with its own server, so the upgrade installs the whole all-in-one package: client and server update together, never one without the other.',
+    fusedInstalling: 'Downloading and installing the all-in-one package…',
+    fusedInstallFailed: 'Could not download or install the all-in-one package. Your current version is unaffected.',
     verificationWarningHint: 'The text above explains which checks could not be completed. An internal mirror or proxy may simply not provide signatures or hashes, which is normal — but a tampered response looks the same, and the two cannot be told apart here. You will be asked to confirm once more before the upgrade starts.',
     verificationConfirmTitle: 'This upgrade could not be fully verified',
     verificationConfirmProceed: 'Upgrade anyway',

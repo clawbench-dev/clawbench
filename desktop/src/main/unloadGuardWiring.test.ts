@@ -41,4 +41,27 @@ describe('desktop unload guard', () => {
     // would skip the question and quit outright.
     expect(src).toContain('cancelPendingQuit()')
   })
+
+  it('brings the window back before asking, so the prompt cannot be invisible', () => {
+    const src = windowSrc()
+    const handler = src.slice(src.indexOf("on('will-prevent-unload'"))
+    const revealAt = handler.indexOf('revealForPrompt(win)')
+    const askAt = handler.indexOf('dialog.showMessageBoxSync')
+    // A modal dialog owned by a hidden/minimized window is one nobody can
+    // answer, and the handler is synchronous: the main process would stay
+    // blocked and the tray's "Quit" would look dead. Restore first.
+    expect(revealAt).toBeGreaterThan(-1)
+    expect(askAt).toBeGreaterThan(-1)
+    expect(revealAt).toBeLessThan(askAt)
+    expect(src).toMatch(/if \(win\.isMinimized\(\)\) win\.restore\(\)/)
+    expect(src).toMatch(/if \(!win\.isVisible\(\)\) win\.show\(\)/)
+  })
+
+  it('leaves a trace in desktop.log for both answers', () => {
+    const src = windowSrc()
+    const handler = src.slice(src.indexOf("on('will-prevent-unload'"))
+    expect(handler).toContain("record('W', 'Unload'")
+    expect(handler).toContain("record('I', 'Unload', 'user chose to leave")
+    expect(handler).toContain("record('I', 'Unload', 'user chose to stay")
+  })
 })

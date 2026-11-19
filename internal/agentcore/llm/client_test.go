@@ -220,6 +220,68 @@ func TestOpenAI_ToolResultWithImageBecomesTrailingUserMessage(t *testing.T) {
 	}
 }
 
+// TestOpenAI_ParallelToolResultsStayContiguous pins the ordering that a round
+// of parallel calls with images depends on: every tool message must follow the
+// assistant turn back-to-back, with the images in one user message after them.
+// A user message wedged between two results is what a gateway rejects with
+// "tool calls and tool results do not match".
+func TestOpenAI_ParallelToolResultsStayContiguous(t *testing.T) {
+	var gotBody oaRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{
+		Protocol: ProtocolOpenAI, BaseURL: srv.URL, Model: "m", SupportsVision: true,
+	})
+	ch, err := c.Stream(context.Background(), Request{
+		Messages: []Message{
+			TextMessage(RoleUser, "look at both"),
+			{Role: RoleAssistant, Parts: []Part{
+				{ToolCall: &ToolCall{ID: "c1", Name: "read", Arguments: "{}"}},
+				{ToolCall: &ToolCall{ID: "c2", Name: "read", Arguments: "{}"}},
+			}},
+			{Role: RoleTool, Parts: []Part{
+				{ToolResult: &ToolResult{CallID: "c1", Parts: []Part{
+					{Text: "first"},
+					{Image: &Image{MediaType: "image/png", Data: []byte{1}}},
+				}}},
+				{ToolResult: &ToolResult{CallID: "c2", Parts: []Part{
+					{Text: "second"},
+					{Image: &Image{MediaType: "image/png", Data: []byte{2}}},
+				}}},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch)
+
+	roles := make([]string, 0, len(gotBody.Messages))
+	var toolIDs []string
+	for _, m := range gotBody.Messages {
+		roles = append(roles, m.Role)
+		if m.Role == "tool" {
+			toolIDs = append(toolIDs, m.ToolCallID)
+		}
+	} // assistant, then the two results with nothing between them, then images.
+	wantRoles := []string{"user", "assistant", "tool", "tool", "user"}
+	if strings.Join(roles, ",") != strings.Join(wantRoles, ",") {
+		t.Fatalf("tool results must stay contiguous: roles = %v, want %v", roles, wantRoles)
+	}
+	if strings.Join(toolIDs, ",") != "c1,c2" {
+		t.Fatalf("tool messages must keep call order, got %v", toolIDs)
+	}
+	if parts, ok := gotBody.Messages[len(gotBody.Messages)-1].Content.([]any); !ok || len(parts) != 3 {
+		t.Fatalf("both images must ride the one trailing user message, got %T %v", gotBody.Messages[len(gotBody.Messages)-1].Content, parts)
+	}
+}
+
 // TestOpenAI_RefusesImageWithoutVisionSupport pins the fail-fast behavior: an
 // opaque 400 from the endpoint is worse than a clear local error.
 func TestOpenAI_RefusesImageWithoutVisionSupport(t *testing.T) {

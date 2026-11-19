@@ -114,43 +114,54 @@
   }
   .repo svg { width: 17px; height: 17px; color: rgba(254,128,25,0.46); flex-shrink: 0; }
 
-  /* ══ 设备舞台 ═════════════════════════════════════════ */
+  /* ══ 设备舞台：直接复用落地页（web/landing）的 stage 布局 ══════════════
+     显示器 + 手机，手机压在显示器右下角并向下探出一截。
+     几何全部按落地页 640px 宽的 stage 原样搬过来，再整体放大 1.52 倍。 */
 
-  .showcase {
-    position: absolute; left: 566px; top: 74px; width: 1160px; height: 830px;
-    z-index: 10; perspective: 2400px; perspective-origin: 44% 44%;
+  .stage-wrap {
+    position: absolute; left: 600px; top: 100px; z-index: 10;
+    width: 640px; height: 0;
+    transform: scale(1.52);
+    transform-origin: 0 0;
   }
 
-  /* 接触阴影 */
-  .contact {
-    position: absolute; pointer-events: none; z-index: 1; border-radius: 50%;
-    background: radial-gradient(ellipse at center, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.44) 44%, transparent 74%);
+  .stage {
+    position: relative; width: 640px;
+    /* 底部留白必须 ≥ 手机 bottom 的绝对值，否则探出的那一截会被裁掉。 */
+    padding: 20px 0 64px;
   }
-  .contact-pc { left: 250px; top: 820px; width: 460px; height: 46px; filter: blur(20px); opacity: 0.9; }
-  .contact-ph { left: 806px; top: 812px; width: 240px; height: 58px; filter: blur(24px); }
 
-  .device {
-    position: absolute;
-    background: linear-gradient(157deg, #2e2822 0%, #191510 32%, #0e0c0a 70%, #080706 100%);
+  .stage-glow {
+    position: absolute; inset: 4% -6% 10%; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 46%, rgba(254,128,25,0.17), transparent 66%);
+    filter: blur(38px);
+  }
+
+  .device-desktop { position: relative; z-index: 1; margin: 0; }
+
+  .device-frame {
+    position: relative; padding: 7px; border-radius: 11px;
+    background: linear-gradient(158deg, #322a21 0%, #1a1611 34%, #0d0b09 100%);
+    /* 外描边一律用 inset：0 0 0 1px 按矩形画边，圆角外会露出直角小块 */
     box-shadow:
-      0 0 0 1px rgba(255,255,255,0.075),
-      inset 0 1.5px 0 rgba(255,255,255,0.13),
-      inset 0 -1px 0 rgba(0,0,0,0.7),
-      inset -1px 0 0 rgba(254,128,25,0.13),
-      0 30px 58px -16px rgba(0,0,0,0.95),
-      0 68px 130px -38px rgba(0,0,0,0.88),
-      0 0 100px -26px rgba(254,128,25,0.13);
-    transform-style: preserve-3d;
+      inset 0 0 0 1px rgba(255,255,255,0.1),
+      inset 0 1px 0 rgba(255,255,255,0.14),
+      0 24px 50px -18px rgba(0,0,0,0.95),
+      0 0 70px -24px rgba(254,128,25,0.3);
   }
 
-  .screen {
-    position: relative; overflow: hidden; background: #000;
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.05);
+  .device-screen {
+    position: relative; overflow: hidden; border-radius: 5px; background: #0b0907;
+    /* 与截图实际比例一致（1920×1040），否则 cover 会切掉标题栏/状态栏 */
+    aspect-ratio: 1920 / 1040;
   }
-  .screen img { width: 100%; height: 100%; object-fit: cover; display: block; filter: brightness(1.1) contrast(1.04) saturate(1.04); }
+  .device-screen img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-  .glass {
-    position: absolute; inset: 0; pointer-events: none; z-index: 4;
+  /* 屏幕反光：一条左上角边缘高光 + 一条暖色斜带 */
+  .device-screen::after,
+  .phone-screen::after {
+    content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none;
+    border-radius: inherit;
     background:
       linear-gradient(114deg,
         rgba(255,255,255,0.07) 0%,
@@ -161,97 +172,70 @@
       linear-gradient(120deg, transparent 0%, rgba(254,128,25,0.045) 48%, transparent 64%);
   }
 
-  /* ── PC 显示器（主角） ─────────────────────────────── */
-  .pc {
-    left: 18px; top: 176px; z-index: 4;
-    padding: 15px 15px 0 15px; border-radius: 15px;
-    transform: rotateY(-6deg) rotateX(2.5deg);
-    transform-origin: 50% 60%;
+  .device-chin {
+    display: flex; align-items: center; justify-content: center; gap: 6px; height: 20px;
+    color: rgba(163,148,128,0.42);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8px; letter-spacing: 0.28em; text-transform: uppercase;
   }
-  .pc .screen { width: 884px; height: 470px; border-radius: 4px; }
-  .pc .chin {
-    height: 34px; display: flex; align-items: center; justify-content: center;
-    gap: 7px; border-radius: 0 0 4px 4px;
-  }
-  .pc .chin .dot {
-    width: 5px; height: 5px; border-radius: 50%; background: rgba(254,128,25,0.55);
-    box-shadow: 0 0 8px rgba(254,128,25,0.7);
-  }
-  .pc .chin .txt {
-    font-size: 10px; font-weight: 600; letter-spacing: 3.4px;
-    color: rgba(163,148,128,0.34); text-transform: uppercase;
+  .chin-dot {
+    width: 4px; height: 4px; border-radius: 50%;
+    background: rgba(254,128,25,0.6);
+    box-shadow: 0 0 7px rgba(254,128,25,0.8);
   }
 
-  /* 支架：T 形结构，上宽下窄，明显可见 */
-  .pc-neck {
-    position: absolute; left: 429px; top: 664px; width: 92px; height: 142px; z-index: 3;
-    background:
-      linear-gradient(100deg,
-        rgba(255,255,255,0.14) 0%,
-        rgba(255,255,255,0.05) 14%,
-        transparent 34%,
-        transparent 68%,
-        rgba(0,0,0,0.55) 100%),
-      linear-gradient(180deg, #5a4e42 0%, #40372e 22%, #2a231c 62%, #14100c 100%);
-    clip-path: polygon(0% 0%, 100% 0%, 79% 100%, 21% 100%);
-    box-shadow:
-      0 0 0 1px rgba(255,255,255,0.10),
-      0 10px 24px rgba(0,0,0,0.75);
+  .device-stand {
+    position: relative; display: flex; flex-direction: column; align-items: center;
+    margin-top: -1px;
   }
-  /* 支架与机身的连接托板 */
-  .pc-neck-plate {
-    position: absolute; left: 398px; top: 672px; width: 154px; height: 18px; z-index: 4;
-    border-radius: 3px;
-    background: linear-gradient(180deg, #6a5c4e 0%, #453a30 46%, #221c16 100%);
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,0.30),
-      0 6px 14px rgba(0,0,0,0.8);
+  .stand-neck {
+    width: 54px; height: 34px;
+    background: linear-gradient(100deg, #57493c 0%, #3a3128 26%, #241e18 68%, #100d0a 100%);
+    clip-path: polygon(0% 0%, 100% 0%, 78% 100%, 22% 100%);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.07);
   }
-  /* 底座：大椭圆，金属亮边 */
-  .pc-base {
-    position: absolute; left: 292px; top: 792px; width: 366px; height: 34px; z-index: 3;
-    border-radius: 50%;
-    background:
-      linear-gradient(180deg, rgba(255,255,255,0.20) 0%, rgba(255,255,255,0.06) 10%, transparent 26%),
-      linear-gradient(180deg, #6b5c4c 0%, #4a3f33 26%, #2a231c 60%, #100d0a 100%);
+  .stand-base {
+    width: 158px; height: 11px; margin-top: -1px; border-radius: 50%;
+    background: linear-gradient(180deg, #4d4237 0%, #2b241c 48%, #100d0a 100%);
     box-shadow:
-      0 0 0 1px rgba(255,255,255,0.13),
-      inset 0 2px 1px rgba(255,255,255,0.26),
-      inset 0 -3px 5px rgba(0,0,0,0.9),
-      0 16px 34px rgba(0,0,0,0.95),
-      0 0 60px rgba(254,128,25,0.12);
-  }
-  /* 底座下方的柔和落影 */
-  .pc-base-shadow {
-    position: absolute; left: 310px; top: 806px; width: 330px; height: 30px; z-index: 2;
-    border-radius: 50%;
-    background: radial-gradient(ellipse at center, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.4) 46%, transparent 76%);
-    filter: blur(12px);
+      inset 0 0 0 1px rgba(255,255,255,0.09),
+      0 10px 22px -6px rgba(0,0,0,0.9);
   }
 
-  /* ── 平板（后景右上） ─────────────────────────────── */
-  .tablet {
-    left: 610px; top: -46px; z-index: 2;
-    padding: 12px; border-radius: 21px;
-    transform: rotateY(-16deg) rotateX(6deg) rotateZ(-1deg);
-    transform-origin: 20% 60%;
-    opacity: 0.97;
+  /* 手机压在显示器右下角，下半截探出机身下沿——完全落在屏幕内会像贴图 */
+  .device-phone {
+    position: absolute; right: -10px; bottom: -8px; z-index: 3;
+    width: 25%; max-width: 128px; margin: 0;
+    filter:
+      drop-shadow(0 6px 10px rgba(0,0,0,0.6))
+      drop-shadow(-10px 22px 30px rgba(0,0,0,0.7));
   }
-  .tablet .screen { width: 500px; height: 333px; border-radius: 7px; }
 
-  /* ── 手机（前景右下） ─────────────────────────────── */
-  .phone {
-    left: 812px; top: 322px; z-index: 6;
-    padding: 10px; border-radius: 32px;
-    transform: rotateY(-12deg) rotateX(4deg) rotateZ(1.2deg);
-    transform-origin: 50% 58%;
+  .phone-shell {
+    position: relative; padding: 4px; border-radius: 20px; overflow: hidden;
+    background: linear-gradient(158deg, #352c23 0%, #1b1611 40%, #0b0908 100%);
+    box-shadow:
+      inset 0 0 0 1px rgba(255,255,255,0.1),
+      inset 0 1px 0 rgba(255,255,255,0.14),
+      0 18px 40px -12px rgba(0,0,0,0.95),
+      0 0 46px -14px rgba(254,128,25,0.34);
   }
-  .phone .screen { width: 230px; height: 500px; border-radius: 24px; }
-  .phone .island {
-    position: absolute; top: 9px; left: 50%; transform: translateX(-50%);
-    width: 68px; height: 19px; border-radius: 10px;
-    background: #040302; z-index: 5;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.055);
+
+  .phone-island {
+    position: absolute; top: 7px; left: 50%; z-index: 4;
+    width: 34%; height: 9px; transform: translateX(-50%);
+    border-radius: 999px; background: #040302;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+  }
+
+  .phone-screen {
+    position: relative; overflow: hidden; border-radius: 16px; background: #0b0907;
+    /* 必须与截图实际比例一致（900×1980），否则底部 dock 栏会被裁掉 */
+    aspect-ratio: 900 / 1980;
+  }
+  .phone-screen img {
+    display: block; width: 100%; height: 100%;
+    object-fit: cover; object-position: top center;
   }
 
   /* ══ 底栏 ═════════════════════════════════════════════ */
@@ -299,37 +283,29 @@
     </div>
   </div>
 
-  <!-- 设备 -->
-  <div class="showcase">
-    <div class="contact contact-pc"></div>
-    <div class="contact contact-ph"></div>
+  <!-- 设备：复用落地页布局（显示器 + 手机） -->
+  <div class="stage-wrap">
+    <div class="stage">
+      <div class="stage-glow"></div>
 
-    <div class="device tablet">
-      <div class="screen">
-        <img src="product_hero_assets/tablet_screenshot.jpg" alt="ClawBench tablet">
-        <div class="glass"></div>
-      </div>
-    </div>
+      <figure class="device-desktop">
+        <div class="device-frame">
+          <div class="device-screen">
+            <img src="product_hero_assets/desktop_landing.webp" alt="ClawBench 桌面端">
+          </div>
+          <div class="device-chin"><span class="chin-dot"></span>ClawBench</div>
+        </div>
+        <div class="device-stand"><span class="stand-neck"></span><span class="stand-base"></span></div>
+      </figure>
 
-    <div class="pc-base-shadow"></div>
-    <div class="pc-base"></div>
-    <div class="pc-neck"></div>
-    <div class="pc-neck-plate"></div>
-
-    <div class="device pc">
-      <div class="screen">
-        <img src="pc-desktop.png" alt="ClawBench desktop">
-        <div class="glass"></div>
-      </div>
-      <div class="chin"><span class="dot"></span><span class="txt">ClawBench</span></div>
-    </div>
-
-    <div class="device phone">
-      <div class="screen">
-        <div class="island"></div>
-        <img src="product_hero_assets/phone_screenshot.jpg" alt="ClawBench mobile">
-        <div class="glass"></div>
-      </div>
+      <figure class="device-phone">
+        <div class="phone-shell">
+          <span class="phone-island"></span>
+          <div class="phone-screen">
+            <img src="product_hero_assets/phone_landing.webp" alt="ClawBench 手机端">
+          </div>
+        </div>
+      </figure>
     </div>
   </div>
 

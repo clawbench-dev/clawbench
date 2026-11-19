@@ -100,6 +100,13 @@
       'One file with the frontend built in — unzip and run <code>./clawbench</code>. The Android build is the arm64 variant for Termux.',
     'dl.foot':
       'Need an older version or the changelog? <a href="https://github.com/clawbench-dev/clawbench/releases" target="_blank" rel="noopener">Browse all releases</a>.',
+    'dl.allinone': 'All-in-one',
+    'dl.allinoneNote': 'Ships the server inside the client — install it and you are done, no separate deployment.',
+    'dl.allinoneWinOnly': 'The all-in-one build is currently Windows only.',
+    'dl.splitNote': 'Client only — it connects to a server you install separately (the server package in step 1, or another machine).',
+    'dl.recommended': 'Recommended',
+    'dl.switchToSplit': 'On another system? Switch to separate client and server',
+    'dl.more': 'Other platforms (macOS / Linux / Android)',
 
     'feat.kicker': 'Features',
     'feat.title': 'Not a chat box.<br>A whole workflow.',
@@ -149,9 +156,33 @@
       '36 named themes, system-following switch and a circular reveal transition; local gallery, daily Bing and animated wallpapers.',
 
     'dep.kicker': 'Deploy',
-    'dep.title': 'Server first,<br>then clients.',
+    'dep.title': 'Pick a setup,<br>follow the steps.',
     'dep.lede':
-      'Two steps: start the server, then connect from desktop, phone or a browser.',
+      'Choose all-in-one or split first — only the matching steps are shown.',
+    'mode.t': 'How do you want to install it?',
+    'mode.kicker': 'Choose first',
+    'mode.d': 'Both setups are the same product; the difference is whether the server runs separately.',
+    'mode.aria': 'Installation type',
+    'mode.allinone.t': 'All-in-one',
+    'mode.allinone.tag': 'Recommended',
+    'mode.allinone.d':
+      'The server ships inside the client: install it, open it, done. Best for office and everyday use — no command line, no second machine.',
+    'mode.allinone.fit': 'Windows only · one installer does everything',
+    'mode.allinone.s1': 'Install the client',
+    'mode.split.s1': 'Start the server',
+    'mode.split.s2': 'Connect a client',
+    'mode.done': 'Done',
+    'mode.bridge.allinone':
+      'Based on your choice there is just <strong>one step</strong> below — install it and you have the whole thing.',
+    'mode.bridge.split':
+      '<strong>Two steps</strong> below: start the server on one machine, then connect a client from wherever you are.',
+    'step.from.split': 'Split · step 1 of 2',
+    'step.from.split2': 'Split · step 2 of 2',
+    'step.from.allinone': 'All-in-one · the only step',
+    'mode.split.t': 'Client and server separately',
+    'mode.split.d':
+      'The server runs on one machine; desktop, phone and browser connect from elsewhere. Best for development and tinkering — long jobs keep running on the server while you pick them up from anywhere.',
+    'mode.split.fit': 'Windows / macOS / Linux / Android · works across devices',
     'dep.tab.script': 'One-line',
     'dep.tab.binary': 'Binary',
     'dep.copy': 'Copy',
@@ -160,8 +191,11 @@
     'step.server.d': 'Pick any one way. The first run prints a random password to the console.',
     'step.server.note': 'The console prints the address and a random password once it is up — you need them in the next step.',
     'step.next': 'Next: connect a client',
+    'step.back': '← Pick a different setup',
     'step.client.t': 'Connect a client',
     'step.client.d': 'Install the desktop or Android client, then enter the address and password from the previous step.',
+    'step.allinone.t': 'Install the client',
+    'step.allinone.d': 'Download the all-in-one package — it opens ready to use, the server is already inside.',
     'step.client.note': 'No client needed — open the same address in any browser (<code>http://your-server-ip:20000</code>) and you get the same interface.',
     'code.npm.mirror': '# Mirror first if you are in mainland China — much faster',
     'code.npm.cmt': '# No global install — runs the latest version',
@@ -250,6 +284,8 @@
   var nodes = Array.prototype.slice.call(document.querySelectorAll('[data-i18n]'));
   var htmlNodes = Array.prototype.slice.call(document.querySelectorAll('[data-i18n-html]'));
   var labelNodes = Array.prototype.slice.call(document.querySelectorAll('[data-i18n-label]'));
+  var kickerNodes = Array.prototype.slice.call(document.querySelectorAll('[data-kicker-i18n]'));
+  kickerNodes.forEach(function (n) { n.dataset.kickerZh = n.getAttribute('data-kicker') || ''; });
   var titleEl = document.title;
   var metaDesc = document.querySelector('meta[name="description"]');
   var ogTitle = document.querySelector('meta[property="og:title"]');
@@ -257,6 +293,33 @@
 
   // 记录中文原文，切回中文时直接还原，不必再维护一份中文表。
   nodes.forEach(function (n) { n.dataset.zh = n.textContent; });
+
+  // 向导在运行时把标题/描述换成另一组 key（一体化跳过「装服务端」），
+  // 新 key 的中文原文得先登记，否则切回中文会留下一句英文。这里只登记
+  // 当前 DOM 里没有的 key，之后由 apply() 按语种填。
+  var SPARE_KEYS = {
+    'step.allinone.t': '装客户端',
+    'step.allinone.d': '下载一体包，装完打开就能用——服务端已经在里面了。',
+    // 承接条和步骤归属标签跟着方案换 key，换过去的那组中文原文不在 HTML 里
+    'mode.bridge.split':
+      '下面<strong>两步</strong>：先在一台机器上把服务端跑起来，再从任意设备连上客户端。',
+    'mode.bridge.allinone':
+      '按上面的选择，下面只有 <strong>1 步</strong>：装好就是完整的一套。',
+    'step.from.split2': '分开装 · 第 2 步，共 2 步',
+    'step.from.allinone': '一体化 · 唯一一步'
+  };
+  var spareZh = {};
+  (function () {
+    var known = {};
+    // htmlNodes 也得算：承接条这类带 <strong> 的元素走的是 data-i18n-html，
+    // 漏掉它们就会把自己在 HTML 里的中文原文当成「不存在」，于是每次切回
+    // 中文都被这里手抄的那份覆盖——两边内容一旦不同步，页面就静默显示旧文案。
+    nodes.forEach(function (n) { known[n.dataset.i18n] = true; });
+    htmlNodes.forEach(function (n) { known[n.dataset.i18nHtml] = true; });
+    Object.keys(SPARE_KEYS).forEach(function (key) {
+      if (!known[key]) spareZh[key] = SPARE_KEYS[key];
+    });
+  })();
   htmlNodes.forEach(function (n) { n.dataset.zh = n.innerHTML; });
   labelNodes.forEach(function (n) { n.dataset.zh = n.getAttribute('aria-label') || ''; });
 
@@ -282,12 +345,16 @@
     nodes.forEach(function (n) {
       var key = n.dataset.i18n;
       var val = isEn ? dict[key] : n.dataset.zh;
+      if (!isEn && spareZh[key] != null) val = spareZh[key];
       if (val != null) n.textContent = val;
     });
 
     htmlNodes.forEach(function (n) {
       var key = n.dataset.i18nHtml;
       var val = isEn ? dict[key] : n.dataset.zh;
+      // 换 key 后的中文原文不在 DOM 快照里（那个元素原本写的是另一句），
+      // 只能从 spareZh 取——和上面的文本节点分支同一套规则。
+      if (!isEn && spareZh[key] != null) val = spareZh[key];
       if (val != null) n.innerHTML = val;
     });
 
@@ -295,6 +362,14 @@
       var key = n.dataset.i18nLabel;
       var val = isEn ? dict[key] : n.dataset.zh;
       if (val != null) n.setAttribute('aria-label', val);
+    });
+
+    // 「先选」这类引导小标签是 CSS 的 content: attr(data-kicker) 画出来的，
+    // 文字不在文本节点里，得单独改属性。
+    kickerNodes.forEach(function (n) {
+      var key = n.dataset.kickerI18n;
+      var val = isEn ? dict[key] : n.dataset.kickerZh;
+      if (val != null) n.setAttribute('data-kicker', val);
     });
 
     // 架构图是中英两份独立 SVG，不能靠替换文字
@@ -322,10 +397,15 @@
     document.querySelectorAll('[data-copy-zh]').forEach(function (b) {
       b.dataset.copy = isEn ? b.dataset.copyEn : b.dataset.copyZh;
     });
+
+    window.__clawbenchApplyLang = lang;
   }
 
   function setLang(lang, persist) {
     apply(lang);
+    // 下载芯片在中文页走国内镜像、英文页走 github 直连，切语言要重算。
+    // 定义在下方，用存在性判断避免顺序耦合。
+    if (window.__clawbenchRenderReleaseLinks) window.__clawbenchRenderReleaseLinks();
     if (persist) {
       try { localStorage.setItem(STORAGE_KEY, lang); } catch (e) { /* 隐私模式下不可写 */ }
     }
@@ -378,16 +458,210 @@
      资产名里带版本号（clawbench-desktop-linux-x64-v0.99.1.zip），所以
      没有 /releases/latest/download/<name> 这种稳定地址——只能先问一次
      最新 tag 再拼。HTML 里的 href 已经写成 Releases 页：取不到（离线、
-     被限流、API 改版）就原样保留，下载永远可用，只是多点一次。 */
+     被限流、API 改版）就原样保留，下载永远可用，只是多点一次。
+
+     中文页的芯片直接指向国内镜像：github.com 的 release 在国内常常只有
+     几 KB/s。前缀与后端 desktop_upgrade.go / drawio.go 的 githubReleaseMirrors
+     是同一组，按实测速度排序（gh-proxy.com ≈ 3.9MB/s，ghfast.top ≈ 1.2MB/s；
+     ghproxy.net 虽通但只有 33KB/s，已从三处一并剔除）。
+     镜像站是社区服务、随时可能挂，所以只有一面：挂到根路径下的 /releases
+     页同样是镜像，退路不会变成 github 直连。 */
+  var MIRROR = 'https://gh-proxy.com/';
+  var RELEASES = 'https://github.com/clawbench-dev/clawbench/releases';
   var releaseLinks = Array.prototype.slice.call(document.querySelectorAll('a[data-asset]'));
+
+  function assetUrl(tag, a) {
+    var ext = a.getAttribute('data-ext') || 'zip';
+    return RELEASES + '/download/' + encodeURIComponent(tag) + '/' +
+      a.getAttribute('data-asset') + '-' + tag + '.' + ext;
+  }
 
   function applyReleaseTag(tag) {
     if (!tag) return;
+    currentTag = tag;
+    renderReleaseLinks();
+  }
+
+  /* 版本号回来之前（以及取不到时）芯片停在 Releases 页。中文页这期间也
+     走镜像，否则国内用户在那几秒里点到的仍是 github 直连。
+     语言切换后要重算一次，否则切到英文页的芯片还带着镜像前缀。 */
+  var currentTag = null;
+
+  function wantsMirror() {
+    return document.documentElement.dataset.locale !== 'en';
+  }
+
+  function renderReleaseLinks() {
+    var mirror = wantsMirror();
     releaseLinks.forEach(function (a) {
-      var ext = a.getAttribute('data-ext') || 'zip';
-      a.href = 'https://github.com/clawbench-dev/clawbench/releases/download/' +
-        encodeURIComponent(tag) + '/' + a.getAttribute('data-asset') + '-' + tag + '.' + ext;
+      var target = currentTag ? assetUrl(currentTag, a) : RELEASES + '/latest';
+      a.href = mirror && a.hasAttribute('data-mirror') ? MIRROR + target : target;
     });
+  }
+  renderReleaseLinks();
+  window.__clawbenchRenderReleaseLinks = renderReleaseLinks;
+
+  /* ── 部署向导：「其他平台」折叠 + 安装方式切换 + 当前平台高亮 ──────
+     英文页也要折叠（收起只是少占地方，与语种无关），所以这段不做
+     zh-only 判断。高亮只是加一层描边，不隐藏别的卡——按 UA 猜错系统
+     的代价不能是「看不到自己该下的包」。
+
+     向导的默认值按访客系统给：Windows 访客默认看到一体化（他要的东西
+     就在这个包里），其他系统默认看到分开装（一体化只发 Windows 版，
+     给他默认选一个点下去没得下的方案等于第一步就撞墙）。选定后用户
+     可以改，改完记住——同一次访问里刷新页面不该又跳回去。 */
+  var dlMore = document.getElementById('dlMore');
+  var dlMoreBody = document.getElementById('dlMoreBody');
+  if (dlMore && dlMoreBody) {
+    dlMore.addEventListener('click', function () {
+      var open = dlMore.getAttribute('aria-expanded') === 'true';
+      dlMore.setAttribute('aria-expanded', open ? 'false' : 'true');
+      dlMoreBody.hidden = open;
+    });
+  }
+
+  function guessOS() {
+    var ua = (navigator.userAgent || '').toLowerCase();
+    var plat = (navigator.platform || '').toLowerCase();
+    if (/android/.test(ua)) return 'android';
+    if (/iphone|ipad|ipod/.test(ua)) return 'android';
+    if (/win/.test(plat) || /windows/.test(ua)) return 'win';
+    if (/mac/.test(plat) || /mac os x/.test(ua)) return 'mac';
+    if (/linux|x11/.test(plat) || /linux/.test(ua)) return 'linux';
+    return '';
+  }
+
+  /* 服务端面板里的卡片同理：它也有 Windows / macOS / Linux / Android 四张，
+     同一个人在两处面对的是同一台机器。 */
+  var os = guessOS();
+  if (os) {
+    document.querySelectorAll('.dl-card[data-os]').forEach(function (card) {
+      card.classList.toggle('is-current', card.getAttribute('data-os') === os);
+    });
+  }
+
+  var stepServer = document.getElementById('step-server');
+  var stepClient = document.getElementById('step-client');
+  var modeCards = Array.prototype.slice.call(document.querySelectorAll('.mode-card'));
+  var splitPanel = document.querySelector('[data-mode-panel="split"]');
+  var allinonePanel = document.querySelector('[data-mode-panel="allinone"]');
+  // 面板不止一个：客户端的下载网格、以及只对分开装成立的说明文字。
+  // 逐个按 currentMode 的归属显隐，新增一条提示不用再改这里。
+  var modePanels = Array.prototype.slice.call(document.querySelectorAll('[data-mode-panel]'));
+  var stepBack = document.getElementById('stepBack');
+  var stepNext = document.getElementById('stepNext');
+  var modeBridge = document.getElementById('modeBridge');
+  var stepClientFrom = document.getElementById('stepClientFrom');
+  var mode = '';
+
+  /* 一体化只有 Windows 包。非 Windows 访客选了它，卡要留着（他能看到
+     有这么个东西、也能改主意），但下载芯片灰掉并写明原因——藏起来会
+     让他以为一体化不存在。 */
+  function markAllinoneAvailability() {
+    if (!allinonePanel) return;
+    var blocked = os && os !== 'win';
+    allinonePanel.classList.toggle('is-unavailable', !!blocked);
+    allinonePanel.querySelectorAll('.dl-card-warn, .dl-card-altswap').forEach(function (el) {
+      el.hidden = !blocked;
+    });
+    allinonePanel.querySelectorAll('a[data-asset]').forEach(function (a) {
+      if (blocked) {
+        a.setAttribute('aria-disabled', 'true');
+        a.setAttribute('tabindex', '-1');
+      } else {
+        a.removeAttribute('aria-disabled');
+        a.removeAttribute('tabindex');
+      }
+    });
+  }
+
+  function applyMode(next, scroll) {
+    mode = next;
+    var chosen = next === 'allinone' || next === 'split';
+    modeCards.forEach(function (card) {
+      card.setAttribute('aria-checked', String(card.dataset.mode === next));
+    });
+
+    var split = next === 'split';
+    // 一体化不分服务端/客户端，所以第二步直接是「下载」：跳过装服务端
+    // 那一步，序号也跟着变，否则同一页上会出现两个「2」。
+    if (stepServer) stepServer.hidden = !split;
+    if (stepClient) stepClient.hidden = !chosen;
+    if (stepClient && split) {
+      var no = stepClient.querySelector('.step-no');
+      if (no) no.textContent = '2';
+    } else if (stepClient) {
+      var no1 = stepClient.querySelector('.step-no');
+      if (no1) no1.textContent = '1';
+    }
+    if (stepClient && chosen) {
+      var title = stepClient.querySelector('.step-title');
+      var desc = stepClient.querySelector('.step-desc');
+      // 一体化没有服务端那一步，标题换成「装客户端」，否则用户以为还缺一步
+      var tKey = split ? 'step.client.t' : 'step.allinone.t';
+      var dKey = split ? 'step.client.d' : 'step.allinone.d';
+      if (title.getAttribute('data-i18n') !== tKey) title.setAttribute('data-i18n', tKey);
+      if (desc.getAttribute('data-i18n') !== dKey) desc.setAttribute('data-i18n', dKey);
+    }
+    // 只对分开装成立的说明：「用浏览器打开同一地址」在一体化下不成立
+    // （服务端就在本机），留着会让人以为要去连另一台机器。
+    modePanels.forEach(function (el) {
+      el.hidden = el.getAttribute('data-mode-panel') !== next;
+    });
+    if (stepNext) stepNext.hidden = !split;
+    if (stepBack) stepBack.hidden = !chosen;
+    // 承接条和步骤归属标签都跟着方案换：选了哪个、接下来几步、现在是第几步，
+    // 这三件事要在选项和步骤之间彼此对得上，而不是靠用户记住自己点过什么。
+    if (modeBridge) {
+      modeBridge.hidden = !chosen;
+      var bridgeText = document.getElementById('modeBridgeText');
+      var bKey = split ? 'mode.bridge.split' : 'mode.bridge.allinone';
+      if (bridgeText && bridgeText.getAttribute('data-i18n-html') !== bKey) {
+        bridgeText.setAttribute('data-i18n-html', bKey);
+      }
+    }
+    if (stepClientFrom) {
+      var fromKey = split ? 'step.from.split2' : 'step.from.allinone';
+      if (stepClientFrom.getAttribute('data-i18n') !== fromKey) {
+        stepClientFrom.setAttribute('data-i18n', fromKey);
+      }
+    }
+    // 重译必须在上面所有 data-i18n / data-i18n-html 都改成新键之后再做。
+    // 放在改键之前，新键会拿不到值，页面上停在上一个方案的文案。
+    if (chosen && window.__clawbenchApplyLang) apply(window.__clawbenchApplyLang);
+    markAllinoneAvailability();
+
+    if (scroll) {
+      // 选完直接把人带到结果上，不用自己去滚。目标是该方案的「第一个」步骤：
+      // 分开装要从装服务端看起，一体化直接就是装客户端。滚到 stepClient 会把
+      // 分开装的人直接送到第 2 步，跳过第 1 步，等于跳过了真正的起点。
+      var firstStep = split ? stepServer : stepClient;
+      if (firstStep && firstStep.scrollIntoView) {
+        firstStep.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }
+
+  if (modeCards.length && stepClient) {
+    modeCards.forEach(function (card) {
+      card.addEventListener('click', function () { applyMode(card.dataset.mode, true); });
+    });
+    if (stepBack) {
+      stepBack.addEventListener('click', function () {
+        applyMode('', false);
+        var first = document.getElementById('step-mode');
+        if (first && first.scrollIntoView) first.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+    allinonePanel &&
+      allinonePanel.querySelectorAll('[data-switch-to]').forEach(function (btn) {
+        btn.addEventListener('click', function () { applyMode(btn.dataset.switchTo, false); });
+      });
+
+    // 默认先不选：让人看到两个选项，再自己点。但首次进入直接按系统
+    // 需要的那条选中——「先看到选项」和「少点一次」可以同时满足：
+    // 选中态本身就是两个选项并排呈现。
+    applyMode(os && os !== 'win' ? 'split' : 'allinone', false);
   }
 
   if (releaseLinks.length && typeof fetch === 'function') {

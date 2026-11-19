@@ -170,10 +170,11 @@ class TunnelPlatform implements TunnelDriver {
       if (!isCurrent()) {
         throw new Error('Tunnel server changed');
       }
-      const trusted = this.trusted.find((host) => host.origin === origin && host.port === info.port);
+      const port = info.port;
+      const trusted = this.trusted.find((host) => host.origin === origin && host.port === port);
       return {
         method: 'connect', transport, origin, cookie, password, username: 'clawbench',
-        sshPort: info.port, hostKey: trusted?.fingerprint || ''
+        sshPort: port, hostKey: trusted?.fingerprint || ''
       };
     } finally {
       this.requests = this.requests.filter((item) => item !== request);

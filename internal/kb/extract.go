@@ -65,6 +65,12 @@ const (
 	ReasonLegacyDoc     = "legacy_doc"
 	ReasonLegacyXls     = "legacy_xls"
 	ReasonLegacyPpt     = "legacy_ppt"
+	ReasonWPSDoc        = "wps_doc"
+	ReasonWPSSheet      = "wps_sheet"
+	ReasonWPSSlides     = "wps_slides"
+	ReasonPages         = "pages"
+	ReasonNumbers       = "numbers"
+	ReasonKeynote       = "keynote"
 	ReasonImage         = "image"
 	ReasonSVG           = "svg"
 	ReasonAudioVideo    = "audio_video"
@@ -128,36 +134,42 @@ var textExtensions = map[string]bool{
 // unsupportedExtensions maps a format with no extractable text (or a legacy
 // binary Office format we deliberately do not parse) to its reason code.
 var unsupportedExtensions = map[string]string{
-	".doc":   ReasonLegacyDoc,
-	".xls":   ReasonLegacyXls,
-	".ppt":   ReasonLegacyPpt,
-	".png":   ReasonImage,
-	".jpg":   ReasonImage,
-	".jpeg":  ReasonImage,
-	".gif":   ReasonImage,
-	".bmp":   ReasonImage,
-	".webp":  ReasonImage,
-	".svg":   ReasonSVG,
-	".mp3":   ReasonAudioVideo,
-	".wav":   ReasonAudioVideo,
-	".m4a":   ReasonAudioVideo,
-	".mp4":   ReasonAudioVideo,
-	".mov":   ReasonAudioVideo,
-	".mkv":   ReasonAudioVideo,
-	".zip":   ReasonArchive,
-	".rar":   ReasonArchive,
-	".7z":    ReasonArchive,
-	".tar":   ReasonArchive,
-	".gz":    ReasonArchive,
-	".exe":   ReasonExecutable,
-	".dll":   ReasonExecutable,
-	".so":    ReasonExecutable,
-	".dylib": ReasonExecutable,
-	".bin":   ReasonBinary,
-	".ttf":   ReasonFont,
-	".otf":   ReasonFont,
-	".woff":  ReasonFont,
-	".woff2": ReasonFont,
+	".doc":     ReasonLegacyDoc,
+	".xls":     ReasonLegacyXls,
+	".ppt":     ReasonLegacyPpt,
+	".wps":     ReasonWPSDoc,
+	".et":      ReasonWPSSheet,
+	".dps":     ReasonWPSSlides,
+	".pages":   ReasonPages,
+	".numbers": ReasonNumbers,
+	".key":     ReasonKeynote,
+	".png":     ReasonImage,
+	".jpg":     ReasonImage,
+	".jpeg":    ReasonImage,
+	".gif":     ReasonImage,
+	".bmp":     ReasonImage,
+	".webp":    ReasonImage,
+	".svg":     ReasonSVG,
+	".mp3":     ReasonAudioVideo,
+	".wav":     ReasonAudioVideo,
+	".m4a":     ReasonAudioVideo,
+	".mp4":     ReasonAudioVideo,
+	".mov":     ReasonAudioVideo,
+	".mkv":     ReasonAudioVideo,
+	".zip":     ReasonArchive,
+	".rar":     ReasonArchive,
+	".7z":      ReasonArchive,
+	".tar":     ReasonArchive,
+	".gz":      ReasonArchive,
+	".exe":     ReasonExecutable,
+	".dll":     ReasonExecutable,
+	".so":      ReasonExecutable,
+	".dylib":   ReasonExecutable,
+	".bin":     ReasonBinary,
+	".ttf":     ReasonFont,
+	".otf":     ReasonFont,
+	".woff":    ReasonFont,
+	".woff2":   ReasonFont,
 }
 
 // ValidateFile performs the cheap up-front checks so an obviously unusable
@@ -195,13 +207,35 @@ func ValidateFile(path, ext string, size, maxFileBytes int64) error {
 }
 
 func isOfficeExt(ext string) bool {
-	return ext == ".docx" || ext == ".xlsx" || ext == ".pptx"
+	return officeBaseExt(ext) != ext || ext == extDOCX || ext == extXLSX || ext == extPPTX
 }
 
-// extPDF is the one document extension that is neither plain text nor an
-// office container: it has its own extractor, so it needs its own predicate at
-// every place that asks "can this be indexed".
-const extPDF = ".pdf"
+// officeBaseExt maps the OOXML variants (macro-enabled, template, slideshow)
+// onto the extractor that reads them. They are the same zip + XML container;
+// only the extension and the optional macros differ, and macros live in parts
+// the extractor never reads. Treating them as unsupported would make users
+// convert a file that already is the modern format.
+func officeBaseExt(ext string) string {
+	switch ext {
+	case ".docm", ".dotx", ".dotm":
+		return extDOCX
+	case ".xlsm", ".xltx", ".xltm":
+		return extXLSX
+	case ".pptm", ".potx", ".potm", ".ppsx", ".ppsm":
+		return extPPTX
+	}
+	return ext
+}
+
+// Document extensions that need their own predicate at every place that asks
+// "can this be indexed": PDF has a dedicated extractor, and the three OOXML
+// base formats double as the fallback names in isOfficeExt.
+const (
+	extPDF  = ".pdf"
+	extDOCX = ".docx"
+	extXLSX = ".xlsx"
+	extPPTX = ".pptx"
+)
 
 // ExtractFile turns a file into text blocks. maxTextBytes caps the retained
 // text; longer output is truncated and the returned warning code says so.
@@ -210,12 +244,12 @@ func ExtractFile(path, ext string, maxTextBytes int64) ([]Block, string, error) 
 	var blocks []Block
 	var err error
 	var warning string
-	switch ext {
-	case ".pdf":
+	switch officeBaseExt(ext) {
+	case extPDF:
 		blocks, err = extractPDF(path)
-	case ".docx":
+	case extDOCX:
 		blocks, err = extractDocx(path)
-	case ".xlsx":
+	case extXLSX:
 		blocks, err = extractXlsx(path)
 		if errors.Is(err, ErrOfficeBudgetSpent) {
 			// A workbook that decompressed more than the budget is not a parse
@@ -223,7 +257,7 @@ func ExtractFile(path, ext string, maxTextBytes int64) ([]Block, string, error) 
 			// truncated, so the document stays searchable.
 			err, warning = nil, WarningTruncated
 		}
-	case ".pptx":
+	case extPPTX:
 		blocks, err = extractPptx(path)
 		if errors.Is(err, ErrOfficeBudgetSpent) {
 			err, warning = nil, WarningTruncated

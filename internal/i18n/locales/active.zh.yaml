@@ -220,8 +220,10 @@ PushActionRequired: 操作需批准
 # 请求上下文），通知中心和 IM 推送共用同一份文案。
 MailNotifyNoSubject: 无主题
 MailNotifyUnknownSender: 未知发件人
+MailNotifyTitle: 收到新邮件
 MailNotifyManyTitle: 收到 {{.Count}} 封新邮件
-MailNotifyLatest: 最新：{{.Subject}} · {{.Sender}}
+MailNotifyFrom: '发件人：{{.Sender}}'
+MailNotifyMoreItems: '- …另有 {{.Count}} 封'
 # IM 推送（钉钉 / 飞书）——机器人写进用户聊天里的文案。推送后端跑在各自
 # goroutine 里、没有 HTTP 请求上下文，故与 AutoContinue 一样走
 # LocalizerForLocale(model.Language) 本地化。钉钉渲染 sampleMarkdown、飞书渲染
@@ -565,6 +567,12 @@ KBNameRequired: 知识库名称不能为空，且不超过 100 个字
 KBReasonLegacyDoc: 旧版 Word 格式（.doc）不支持，请另存为 .docx 后重新添加
 KBReasonLegacyXls: 旧版 Excel 格式（.xls）不支持，请另存为 .xlsx 后重新添加
 KBReasonLegacyPpt: 旧版 PowerPoint 格式（.ppt）不支持，请另存为 .pptx 后重新添加
+KBReasonWPSDoc: WPS 文字文档（.wps）不支持，请另存为 .docx 后重新添加
+KBReasonWPSSheet: WPS 表格（.et）不支持，请另存为 .xlsx 后重新添加
+KBReasonWPSSlides: WPS 演示（.dps）不支持，请另存为 .pptx 后重新添加
+KBReasonPages: Pages 文档（.pages）不支持，请导出为 .docx 后重新添加
+KBReasonNumbers: Numbers 表格（.numbers）不支持，请导出为 .xlsx 后重新添加
+KBReasonKeynote: Keynote 演示（.key）不支持，请导出为 .pptx 后重新添加
 KBReasonImage: 图片里的文字无法直接读取（需要 OCR），请先转成文本
 KBReasonSVG: SVG 里的文字无法稳定提取，请先转成文本
 KBReasonAudioVideo: 音视频需要先转写为文字，知识库暂不支持

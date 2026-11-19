@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"clawbench/internal/platform"
 )
 
 // ---------- startsWithServerFlag tests ----------
@@ -248,12 +250,18 @@ func (h *replacementHarness) install(t *testing.T) {
 	origStart := startServerBinary
 	origAlive := serverAlive
 	origWait := upgradeWait
+	origCPU := cpuCompatible
 	t.Cleanup(func() {
 		replaceBinary = origReplace
 		startServerBinary = origStart
 		serverAlive = origAlive
 		upgradeWait = origWait
+		cpuCompatible = origCPU
 	})
+
+	// The real check reads the target file; the fixtures here are plain text,
+	// so stub it as compatible unless a test says otherwise.
+	cpuCompatible = func(string) (platform.CPUMinISA, bool) { return platform.CPUMinISA{}, true }
 
 	startServerBinary = func(path string, _ []string) (int, error) {
 		h.started = append(h.started, path)
@@ -494,5 +502,125 @@ func TestPerformReplacement_CleansTempDirOnSuccess(t *testing.T) {
 	}
 	if _, err := os.Stat(tmpDir); !os.IsNotExist(err) {
 		t.Errorf("temp dir should be removed, stat err = %v", err)
+	}
+}
+
+// ---------- CPU baseline tests (issue #693) ----------
+//
+// A linux-amd64 binary built for GOAMD64=v3 dies with SIGILL on a v2-only CPU.
+// The replacement helper must refuse it BEFORE launching it, so the install
+// stays on a version that runs.
+
+// TestPerformReplacement_CPUTooNew_KeepsPreviousBinary is the regression test
+// for issue #693: after the swap, the new binary needs a newer CPU than the
+// host has. It must not be started, and the previous binary must be put back.
+func TestPerformReplacement_CPUTooNew_KeepsPreviousBinary(t *testing.T) {
+	dir := t.TempDir()
+	newBin := filepath.Join(dir, "clawbench-new")
+	target := filepath.Join(dir, "clawbench")
+	if err := os.WriteFile(newBin, []byte("new-binary"), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	// The running install always has a .bak: the upgrade makes one before
+	// launching the replacement helper.
+	if err := os.WriteFile(target+".bak", []byte("previous-binary"), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	h := &replacementHarness{alive: true}
+	h.install(t)
+	cpuCompatible = func(string) (platform.CPUMinISA, bool) {
+		return platform.CPUMinISA{Level: "x86-64-v3", Missing: []string{"avx2"}}, false
+	}
+
+	code := performReplacement(newBin, target, "", nil)
+	if code != 1 {
+		t.Errorf("expected exit code 1 so the upgrade is not reported as complete, got %d", code)
+	}
+	if len(h.started) != 0 {
+		t.Errorf("a binary the CPU cannot run must not be started, started = %v", h.started)
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("target must exist after refusing the upgrade: %v", err)
+	}
+	if string(got) != "previous-binary" {
+		t.Errorf("target content = %q, want the previous binary restored", got)
+	}
+}
+
+// TestPerformReplacement_CPUCheckRunsOnSwappedBinary pins that the check sees
+// the binary that actually ends up installed, not the staged download.
+func TestPerformReplacement_CPUCheckRunsOnSwappedBinary(t *testing.T) {
+	dir := t.TempDir()
+	newBin := filepath.Join(dir, "clawbench-new")
+	target := filepath.Join(dir, "clawbench")
+	if err := os.WriteFile(newBin, []byte("new-binary"), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	h := &replacementHarness{alive: true}
+	h.install(t)
+	// Record the file CONTENTS at check time: after the swap, targetPath and
+	// newBinPath can be the same path argument, so only the bytes prove which
+	// file was inspected.
+	var checked []string
+	cpuCompatible = func(path string) (platform.CPUMinISA, bool) {
+		if data, err := os.ReadFile(path); err == nil {
+			checked = append(checked, string(data))
+		} else {
+			checked = append(checked, "<unreadable>")
+		}
+		return platform.CPUMinISA{}, true
+	}
+
+	if code := performReplacement(newBin, target, "", nil); code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if len(checked) != 1 || checked[0] != "new-binary" {
+		t.Errorf("checked = %v, want exactly the swapped-in binary", checked)
+	}
+}
+
+// TestPerformReplacement_CPUTooNew_RestoreFails_StillAttemptsStart pins the
+// last-resort branch: the new binary is CPU-incompatible AND the previous one
+// could not be restored. The service is already stopped, so leaving nothing
+// running would be silent downtime; one attempt at starting whatever is on disk
+// at least puts the real failure in the log.
+func TestPerformReplacement_CPUTooNew_RestoreFails_StillAttemptsStart(t *testing.T) {
+	dir := t.TempDir()
+	newBin := filepath.Join(dir, "clawbench-new")
+	target := filepath.Join(dir, "clawbench")
+	if err := os.WriteFile(newBin, []byte("new-binary"), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	h := &replacementHarness{alive: false}
+	h.install(t)
+	cpuCompatible = func(string) (platform.CPUMinISA, bool) {
+		return platform.CPUMinISA{Level: "x86-64-v3"}, false
+	}
+	replaceBinary = func(src, dst string) error {
+		if src == target+".bak" {
+			return errors.New("disk full")
+		}
+		return os.Rename(src, dst)
+	}
+
+	if code := performReplacement(newBin, target, "", nil); code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+	if len(h.started) != 1 || h.started[0] != target {
+		t.Errorf("the on-disk binary must still be attempted, started = %v", h.started)
 	}
 }

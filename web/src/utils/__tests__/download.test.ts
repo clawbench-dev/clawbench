@@ -588,43 +588,104 @@ describe('postForBlobWithProgress', () => {
 })
 
 describe('downloadByUrl', () => {
+  beforeEach(() => {
+    installFakeXhr()
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('does nothing for empty URL', () => {
     downloadByUrl('')
+    expect(FakeXhr.instances).toHaveLength(0)
   })
 
-  it('creates anchor element with correct href for web mode', () => {
-    const appendChildSpy = vi.spyOn(document.body, 'appendChild')
+  // Regression: the "download Android app" entries used a bare anchor click, so
+  // the web/desktop build showed no progress at all for a large APK (#698).
+  it('streams the URL through the progress bar in web mode', () => {
+    const saved: Blob[] = []
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((obj: Blob | MediaSource) => {
+      saved.push(obj as Blob)
+      return 'blob:test'
+    })
+    const { downloadVisible, downloadFileName, downloadReceived } = useDownloadProgress()
     downloadByUrl('/api/apk', 'clawbench-android.apk')
 
-    expect(appendChildSpy).toHaveBeenCalled()
-    const anchor = appendChildSpy.mock.calls[0][0] as HTMLAnchorElement
-    expect(anchor.href).toContain('/api/apk')
-    expect(anchor.download).toBe('clawbench-android.apk')
+    expect(FakeXhr.instances).toHaveLength(1)
+    const xhr = FakeXhr.instances[0]
+    expect(xhr.url).toBe('/api/apk')
+    expect(downloadVisible.value).toBe(true)
+    expect(downloadFileName.value).toBe('clawbench-android.apk')
 
+    xhr.onprogress?.({ loaded: 512, total: 1024, lengthComputable: true })
+    expect(downloadReceived.value).toBe(512)
+
+    // The transfer must finish through the same path as every other download:
+    // a complete body saved under the APK name, bar hidden afterwards.
+    const body = new Blob([new Uint8Array(1024)])
+    xhr.response = body
+    xhr.onload?.()
+    expect(saved).toHaveLength(1)
+    expect(saved[0]).toBe(body)
+    expect(downloadVisible.value).toBe(false)
+  })
+
+  it('falls back to the browser download when the bar is already taken', () => {
+    const appendChildSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((el) => el)
+    downloadFileByPath('first.bin')
+
+    downloadByUrl('/api/apk', 'clawbench-android.apk')
+
+    // Only the first download used XHR; the APK went through the anchor.
+    expect(FakeXhr.instances).toHaveLength(1)
+    expect(appendChildSpy).toHaveBeenCalledTimes(1)
+    const anchor = appendChildSpy.mock.calls[0][0] as HTMLAnchorElement
+    expect(anchor.download).toBe('clawbench-android.apk')
     appendChildSpy.mockRestore()
     anchor.remove()
   })
 
   it('uses last URL segment as default fileName', () => {
-    const appendChildSpy = vi.spyOn(document.body, 'appendChild')
+    const { downloadFileName } = useDownloadProgress()
     downloadByUrl('/api/apk')
 
-    const anchor = appendChildSpy.mock.calls[0][0] as HTMLAnchorElement
-    expect(anchor.download).toBe('apk')
-
-    appendChildSpy.mockRestore()
-    anchor.remove()
+    expect(downloadFileName.value).toBe('apk')
   })
 
-  it('calls ClawBenchNative.downloadUrl in app mode', () => {
+  it('calls ClawBenchNative.downloadUrl when the host does not need forcing', () => {
     const mockDownloadUrl = vi.fn()
     ;(window as any).ClawBenchNative = { downloadUrl: mockDownloadUrl }
 
     downloadByUrl('/api/apk', 'clawbench-android.apk')
     expect(mockDownloadUrl).toHaveBeenCalledWith('/api/apk', 'clawbench-android.apk')
+    expect(FakeXhr.instances).toHaveLength(0)
+  })
+
+  // The Android login page is served over http://, so a relative URL would be
+  // streamed by the WebView (no installer hand-off) if only `downloadUrl`
+  // decided the branch. The APK entries pass viaNativeApp to force it.
+  it('hands a relative URL to the native bridge when viaNativeApp is set', () => {
+    const mockDownloadUrl = vi.fn()
+    ;(window as any).ClawBenchNative = { downloadUrl: mockDownloadUrl }
+
+    downloadByUrl('/api/apk', 'clawbench-android.apk', { viaNativeApp: true })
+    expect(mockDownloadUrl).toHaveBeenCalledWith('/api/apk', 'clawbench-android.apk')
+    expect(FakeXhr.instances).toHaveLength(0)
+  })
+
+  it('streams with progress when viaNativeApp is set without a native host', () => {
+    const { downloadVisible, downloadFileName } = useDownloadProgress()
+
+    downloadByUrl('/api/apk', 'clawbench-android.apk', { viaNativeApp: true })
+
+    // viaNativeApp only forces the native branch when a host exists; the
+    // browser build must keep the progress bar (the anchor only saves the
+    // bytes once they have arrived).
+    expect(FakeXhr.instances).toHaveLength(1)
+    expect(downloadVisible.value).toBe(true)
+    expect(downloadFileName.value).toBe('clawbench-android.apk')
   })
 })

@@ -199,6 +199,10 @@ describe('stacking-order tokens (variables.css)', () => {
     expect(token('--z-preview-tooltip')).toBe('1300')
     expect(token('--z-header-overlay')).toBe('2000')
     expect(token('--z-quote-bar')).toBe('2400')
+    // The quote destination sheet covers the bar it was opened from (the bar
+    // stays on screen behind it in "发送到" mode), so it owns its own tier
+    // instead of riding the fullscreen sheet's 1200.
+    expect(token('--z-session-picker')).toBe('2420')
     expect(token('--z-context-menu-backdrop')).toBe('2499')
     expect(token('--z-context-menu')).toBe('2500')
     expect(token('--z-modal')).toBe('3000')
@@ -217,6 +221,17 @@ describe('stacking-order tokens (variables.css)', () => {
     expect(parseInt(token('--z-popover'))).toBe(
       parseInt(token('--z-popover-backdrop')) + 1,
     )
+  })
+
+  it('keeps the destination sheet above the quote bar but under menus', () => {
+    // The sheet is opened FROM the quote bar ("发送到"), which stays visible
+    // behind it — a tier at or below the bar would hide the sheet's own scrim
+    // under the bar it is supposed to cover.
+    const picker = parseInt(token('--z-session-picker'))
+    expect(picker).toBeGreaterThan(parseInt(token('--z-quote-bar')))
+    // Still a dialog: menus (context menu, popovers) and modal dialogs must be
+    // able to open on top of it.
+    expect(picker).toBeLessThan(parseInt(token('--z-context-menu-backdrop')))
   })
 
   it('reserves a band above the overlay for stacked BottomSheets', () => {

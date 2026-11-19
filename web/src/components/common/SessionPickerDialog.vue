@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto :title="t('quoteBar.chooseSession')" @close="handleClose">
+  <BottomSheet :open="open" auto fullscreen class="session-picker-overlay" :title="t('quoteBar.chooseSession')" @close="handleClose">
     <template #header>
       <MessageSquare :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('quoteBar.chooseSession') }}</span>
@@ -273,6 +273,14 @@ function handleClose() {
 </script>
 
 <style scoped>
+/* The quote composer and this sheet both teleport to body.
+   `.bs-overlay-fullscreen` is part of the selector on purpose: BottomSheet
+   already sets the tier with that same two-class selector, so a plain
+   `.bs-overlay.session-picker-overlay` would only win by stylesheet order. */
+:global(.bs-overlay.bs-overlay-fullscreen.session-picker-overlay) {
+  z-index: calc(var(--z-session-picker) + var(--bs-open-order, 0));
+}
+
 .session-picker-list {
   display: flex;
   flex-direction: column;

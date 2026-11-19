@@ -363,3 +363,44 @@ func TestEventsHandler_UnknownMessageTypeIsIgnored(t *testing.T) {
 		return count == 1
 	}, 2*time.Second, 20*time.Millisecond, "connection should survive an unknown message type")
 }
+
+// TestEventsHandler_AnswersClientPing verifies the client-initiated liveness
+// probe. The frontend sends {"type":"ping"} on returning to the foreground and
+// keeps the socket only if a pong comes back: a frozen Android page comes back
+// with a socket that still reads OPEN while the far end is gone, and a round
+// trip is the only way to tell the two apart. Without this reply every resume
+// would time out and rebuild — the churn the probe exists to avoid.
+func TestEventsHandler_AnswersClientPing(t *testing.T) {
+	mgr := newTestManager()
+	origMgr := defaultManager
+	defaultManager = mgr
+	defer func() { defaultManager = origMgr }()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/ai/events/ws", EventsHandler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, resp, err := websocket.Dial(ctx, "ws"+server.URL[4:]+"/api/ai/events/ws?client_id=probe-test", nil)
+	require.NoError(t, err, "WebSocket connection should succeed")
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte(`{"type":"ping"}`)))
+
+	readCtx, readCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer readCancel()
+	_, data, err := conn.Read(readCtx)
+	require.NoError(t, err, "server must answer a client ping")
+
+	var msg ServerMessage
+	require.NoError(t, json.Unmarshal(data, &msg))
+	assert.Equal(t, "pong", msg.Type)
+
+	mgr.DisconnectClient("probe-test")
+}

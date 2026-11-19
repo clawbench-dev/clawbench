@@ -121,6 +121,63 @@ describe('VoiceOverlay', () => {
     expect(el.selectionStart).toBe(4)
   })
 
+  // The gesture that started a take cannot be released into a window that has
+  // gone away: the keyup goes to the other app. Losing the window therefore ends
+  // the take on its own — including while the microphone is still opening, the
+  // window where the old `state === 'recording'` guard did nothing and the take
+  // started *after* the release had been dropped.
+  it('drops a take whose release lands while the microphone is still opening', async () => {
+    let openMic: ((stream: unknown) => void) | null = null
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: () => new Promise((resolve) => { openMic = resolve }) },
+    })
+    mountOverlay()
+    const el = field('帮我')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9' }))
+    // Focus leaves before the microphone arrives; the keyup is gone for good.
+    window.dispatchEvent(new Event('blur'))
+    const track = { stop: vi.fn() }
+    openMic!({ getTracks: () => [track] })
+
+    // The microphone is released instead of recording to nobody.
+    await vi.waitFor(() => expect(track.stop).toHaveBeenCalled())
+    expect(useVoiceInput().state.value).toBe('idle')
+    expect(el.value).toBe('帮我')
+  })
+
+  it('ends the take when the window loses focus while recording', async () => {
+    mountOverlay()
+    const el = field('帮我')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9' }))
+    await vi.waitFor(() => expect(useVoiceInput().state.value).toBe('recording'))
+    // No keyup: it would have gone to whatever window took the focus.
+    window.dispatchEvent(new Event('blur'))
+
+    await vi.waitFor(() => expect(el.value).toBe('帮我听写'))
+    expect(useVoiceInput().state.value).toBe('idle')
+  })
+
+  // A WebView does not always blur the window when the app goes to the
+  // background (Android), so the microphone must also be released on hide.
+  it('ends the take when the page is hidden', async () => {
+    mountOverlay()
+    const el = field('帮我')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9' }))
+    await vi.waitFor(() => expect(useVoiceInput().state.value).toBe('recording'))
+
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+    try {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.waitFor(() => expect(useVoiceInput().state.value).toBe('idle'))
+      expect(el.value).toBe('帮我听写')
+    } finally {
+      delete (document as unknown as Record<string, unknown>).hidden
+    }
+  })
+
   it('does not start when the caret is in a password field (falls back to the capsule)', async () => {
     mountOverlay()
     const pwd = document.createElement('input')

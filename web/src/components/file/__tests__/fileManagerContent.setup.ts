@@ -95,6 +95,32 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
 }))
 
+// "Add to knowledge base" calls these; keep the real module for everything else
+// (types and kbCreateCollection used by the picker).
+const { mockKbAddByPath, mockKbImportDirectory, mockKbPreviewDirectory } = vi.hoisted(() => ({
+  mockKbAddByPath: vi.fn(),
+  mockKbImportDirectory: vi.fn(),
+  mockKbPreviewDirectory: vi.fn(),
+}))
+vi.mock('@/composables/useKnowledgeBase', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useKnowledgeBase')>()
+  return {
+    ...actual,
+    kbAddByPath: mockKbAddByPath,
+    kbImportDirectory: mockKbImportDirectory,
+    kbPreviewDirectory: mockKbPreviewDirectory,
+  }
+})
+
+// Adding to the knowledge base starts a status poller. Left real, it would
+// fetch /api/kb/status and arm a 3s interval inside a jsdom test.
+const { mockStartKBIndexWatch } = vi.hoisted(() => ({ mockStartKBIndexWatch: vi.fn() }))
+vi.mock('@/composables/useKBIndexStatus', () => ({
+  startKBIndexWatch: mockStartKBIndexWatch,
+  stopKBIndexWatch: vi.fn(),
+  useKBIndexStatus: () => ({ pending: { value: 0 }, failed: { value: 0 } }),
+}))
+
 const mockIsAppMode = ref(false)
 // Mutable so a test can flip the desktop-shell flag: the shortcut gate must
 // distinguish "Android WebView" from "Electron desktop shell", and BOTH report
@@ -485,8 +511,19 @@ export const i18n = createI18n({
         multiSelect: { allCopied: '已复制', allCut: '已剪切', confirmDelete: '确认删除', enter: '多选', exit: '退出', tapToSelect: '点击选择', selectedCount: '已选 {n} 项', selectAll: '全选', deselectAll: '取消全选', archive: '归档', share: '分享' },
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}', mailNotConfigured: '还没有配置邮箱账号', mailSendFailed: '准备邮件附件失败' },
-        search: { placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', noResultsDesc: '换个关键词', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
+        search: { placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', noResultsDesc: '换个关键词', noResultsTitle: '没有找到“{q}”', noResultsHere: '只在当前目录「{dir}」里搜过了', noResultsDeep: '在「{dir}」及子目录里搜过了', noResultsProject: '在整个项目里搜过了', noResultsHereRoot: '只在当前目录里搜过了', noResultsDeepRoot: '在当前目录及子目录里搜过了', widenRecursive: '搜索子目录', widenGlobal: '在整个项目中搜索', clearSearch: '清空搜索', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
         nav: { parentDir: '返回上一级', fsRoot: '文件系统根目录', projectRoot: '项目根目录' },
+      },
+      kb: {
+        added: '已加入',
+        addPartial: '{first}（另有 {count} 个文件没加进去）',
+        dirImportSummary: '加入 {added} 个，跳过 {skipped} 个，重复 {duplicates} 个，失败 {failed} 个',
+        dirImportEmpty: '这个文件夹里没有可加入的文件',
+        importPreviewTitle: '导入文件夹',
+        importPreviewMessage: '将加入 {added} 个文件，跳过 {skipped} 个，重复 {duplicates} 个，失败 {failed} 个。继续导入？',
+        importContinue: '继续导入',
+        skippedReasonHint: '有 {count} 个文件因格式不支持被跳过：{reason}',
+        reason: { legacy_doc: '旧版 .doc 不支持，请另存为 .docx 再添加' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -569,6 +606,10 @@ beforeEach(() => {
   mockHasAttachedFile.mockReset()
   mockHasAttachedFile.mockReturnValue(false)
   mockToastShow.mockReset()
+  mockKbAddByPath.mockReset()
+  mockKbImportDirectory.mockReset()
+  mockKbPreviewDirectory.mockReset()
+  mockStartKBIndexWatch.mockReset()
   mockSearchStart.mockReset()
   mockSearchCancel.mockReset()
   mockSearchReset.mockReset()
@@ -717,4 +758,8 @@ export const mocks = {
   mockRemoveAttachedFileByPath,
   mockToggleAttachedFile,
   mockSendPathsByMail,
+  mockKbAddByPath,
+  mockKbImportDirectory,
+  mockKbPreviewDirectory,
+  mockStartKBIndexWatch,
 }

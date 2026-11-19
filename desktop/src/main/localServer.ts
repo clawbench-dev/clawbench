@@ -263,14 +263,24 @@ async function reapPreviousServer(pid: number): Promise<boolean> {
 async function waitForHealth(port: number): Promise<void> {
   const deadline = Date.now() + EMBEDDED_STARTUP_TIMEOUT_MS
   let lastBody: unknown = null
+  let exitCode: number | null = null
   while (Date.now() < deadline) {
-    if (child && child.exitCode !== null) break
+    if (child && child.exitCode !== null) {
+      exitCode = child.exitCode
+      break
+    }
     lastBody = await probeHealth(port)
     if (isClawBenchHealth(lastBody)) return
     await wait(EMBEDDED_HEALTH_INTERVAL_MS)
   }
   if (lastBody && !isClawBenchHealth(lastBody)) {
     throw new Error(`port ${port} answered, but it is not ClawBench`)
+  }
+  if (exitCode !== null) {
+    // The server gave up on its own (port conflict, data-directory lock, a bad
+    // config). Reporting a timeout here hid that reason and made every such
+    // failure look identical — say what actually happened instead.
+    throw new Error(`the embedded server exited before it became ready (code ${exitCode})`)
   }
   throw new Error(`the embedded server did not become ready within ${Math.round(EMBEDDED_STARTUP_TIMEOUT_MS / 1000)}s`)
 }
@@ -366,6 +376,18 @@ export async function startEmbeddedServer(): Promise<string> {
     throw new Error(`the server binary is missing from this build: ${binary}`)
   }
 
+  // A server spawned by an EARLIER attempt in this process must not be left
+  // running: it holds the data-directory lock (and possibly the port), so
+  // spawning another one would only wait out the 30s lock window and fail. This
+  // is the login page's retry path after a failed start — without this, every
+  // retry added another server and none of them could work.
+  if (child) stopEmbeddedServer()
+  // `stopEmbeddedServer` sets this and never clears it; a fresh start is a fresh
+  // lifecycle. Leaving it true makes isEmbeddedServerActive() report "not
+  // running" for the rest of the session, which sends the login page down the
+  // retry path above on every click.
+  stopping = false
+
   fs.mkdirSync(embeddedDataDir(), { recursive: true })
   // Before anything reads the server list: retire the row older builds kept for
   // this server. It is what reserved its own port and pushed the app one port
@@ -434,8 +456,17 @@ export async function startEmbeddedServer(): Promise<string> {
   })
   spawned.once('error', (err) => recordError('LocalServer', err))
 
-  await waitForHealth(port)
-  await plantSessionCookie(port, session.defaultSession)
+  try {
+    await waitForHealth(port)
+    await plantSessionCookie(port, session.defaultSession)
+  } catch (err) {
+    // Never leave the spawned server running after a failed start. It holds the
+    // data-directory lock, so the next attempt (the login page's retry, or a
+    // relaunch while this process lives on) would spawn a second server that can
+    // only time out — the failure would stick until the whole app was killed.
+    stopEmbeddedServer()
+    throw err
+  }
 
   getStore().set(EMBEDDED_PORT_KEY, port)
   getStore().set('embeddedServerUrl', serverUrl)
@@ -453,7 +484,7 @@ export async function startEmbeddedServer(): Promise<string> {
  * Stop the embedded server: close its stdin (its quit signal), wait for a
  * graceful drain, then kill whatever is left.
  *
- * Synchronous where it can be, because it runs from `before-quit`, which
+ * Synchronous where it can be, because it runs from `will-quit`, which
  * Electron does not await. The kill timer is `unref`d so a shutdown that already
  * finished does not keep the process alive for the full grace period.
  */

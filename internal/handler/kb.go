@@ -131,6 +131,18 @@ func kbReasonKey(reason string) string { //nolint:gocyclo // flat reason-code lo
 		return "KBReasonLegacyXls"
 	case kb.ReasonLegacyPpt:
 		return "KBReasonLegacyPpt"
+	case kb.ReasonWPSDoc:
+		return "KBReasonWPSDoc"
+	case kb.ReasonWPSSheet:
+		return "KBReasonWPSSheet"
+	case kb.ReasonWPSSlides:
+		return "KBReasonWPSSlides"
+	case kb.ReasonPages:
+		return "KBReasonPages"
+	case kb.ReasonNumbers:
+		return "KBReasonNumbers"
+	case kb.ReasonKeynote:
+		return "KBReasonKeynote"
 	case kb.ReasonImage:
 		return "KBReasonImage"
 	case kb.ReasonSVG:

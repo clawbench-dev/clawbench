@@ -56,6 +56,7 @@ const i18n = createI18n({
         addServerSubmit: 'Connect',
         verifying: 'Verifying...',
         duplicateServerName: 'Duplicate name',
+        invalidServerAddress: 'Enter a valid address',
         wrongPassword: 'Wrong password',
       },
     },
@@ -78,8 +79,8 @@ async function submitAddServer(
   url: string,
 ) {
   await wrapper.find('.add-server-btn').trigger('click')
-  await wrapper.find('input[type="text"]').setValue(name)
-  await wrapper.find('input[type="url"]').setValue(url)
+  await wrapper.find('input[type="text"]:not(.server-url-input)').setValue(name)
+  await wrapper.find('.server-url-input').setValue(url)
   await wrapper.find('form').trigger('submit')
   await flushPromises()
 }
@@ -127,7 +128,7 @@ describe('LoginView — add server (ISS-268)', () => {
 
     // Guard must return null for a free name and let the flow continue.
     expect(fetch).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('https://new.example.com/login')
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('https://new.example.com:20000/login')
 
     // The server (with its name) is persisted under the normalized URL.
     const stored = JSON.parse(localStorage.getItem('clawbench-servers')!) as Array<{
@@ -135,7 +136,77 @@ describe('LoginView — add server (ISS-268)', () => {
       name?: string
     }>
     expect(stored).toContainEqual(
-      expect.objectContaining({ url: 'https://new.example.com', name: 'Lab' }),
+      expect.objectContaining({ url: 'https://new.example.com:20000', name: 'Lab' }),
     )
+  })
+
+  // Issue #696: the address field used to be type="url", and a scheme-less IPv6
+  // literal was glued into "https://240e:…" — not a URL, so it could never be
+  // saved. IPv6 has no letters to key on, so a plain text field per the
+  // manual's `http://[IPv6]:port` example is the only thing worth asserting.
+  it('uses a plain text address field so an IPv6 literal is not rejected', async () => {
+    const wrapper = mountLogin()
+    await wrapper.find('.add-server-btn').trigger('click')
+    const url = wrapper.find('.server-url-input')
+    expect(url.exists()).toBe(true)
+    expect(url.attributes('type')).toBe('text')
+    // Typing hints stay: no autocorrect/autocapitalise mangling of an address.
+    expect(url.attributes('inputmode')).toBe('url')
+    expect(url.attributes('autocapitalize')).toBe('none')
+  })
+
+  it('saves a bracketed IPv6 URL exactly as the manual documents it', async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 401 } as Response)
+    const wrapper = mountLogin()
+    await flushPromises()
+
+    await submitAddServer(wrapper, 'V6', 'http://[240e:390:1234:5678::123]:20000')
+
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('http://[240e:390:1234:5678::123]:20000/login')
+    const stored = JSON.parse(localStorage.getItem('clawbench-servers')!) as Array<{ url: string }>
+    expect(stored).toContainEqual(
+      expect.objectContaining({ url: 'http://[240e:390:1234:5678::123]:20000' }),
+    )
+  })
+
+  // A bare literal has nowhere to attach a port, so it is never completed by
+  // guessing — the user is told to write the full form instead.
+  it('rejects a bare IPv6 literal and saves nothing', async () => {
+    const wrapper = mountLogin()
+    await flushPromises()
+
+    await submitAddServer(wrapper, 'V6', '240e:390:1234:5678::123')
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(localStorage.getItem('clawbench-servers')).toBeNull()
+    expect(wrapper.find('.error').text()).toContain('Enter a valid address')
+  })
+
+  // The other two halves of the same rule: no port, and no scheme.
+  for (const address of [
+    'http://[240e:390:1234:5678::123]',
+    '[240e:390:1234:5678::123]:20000',
+  ]) {
+    it(`rejects an incomplete IPv6 address: ${address}`, async () => {
+      const wrapper = mountLogin()
+      await flushPromises()
+
+      await submitAddServer(wrapper, 'V6', address)
+
+      expect(fetch).not.toHaveBeenCalled()
+      expect(localStorage.getItem('clawbench-servers')).toBeNull()
+      expect(wrapper.find('.error').text()).toContain('Enter a valid address')
+    })
+  }
+
+  it('shows an error and does not save an unusable address', async () => {
+    const wrapper = mountLogin()
+    await flushPromises()
+
+    await submitAddServer(wrapper, 'Bad', 'http://[240e::123:20000')
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(localStorage.getItem('clawbench-servers')).toBeNull()
+    expect(wrapper.find('.error').text()).toContain('Enter a valid address')
   })
 })

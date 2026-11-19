@@ -1176,7 +1176,7 @@ describe('ContentBlocks', () => {
         renderTextBlock: () => tableHtml,
       })
       expect(wrapper.find('.dt').exists()).toBe(true)
-      expect(wrapper.find('.mode-switch').exists()).toBe(true)
+      expect(wrapper.find('.dt-mode-btn').exists()).toBe(true)
       expect(wrapper.find('.dt-grid tbody tr').exists()).toBe(true)
     })
 

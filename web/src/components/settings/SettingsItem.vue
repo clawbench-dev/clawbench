@@ -1,6 +1,6 @@
 <template>
   <div v-if="type === 'header'" class="settings-item__header">{{ label }}</div>
-  <div v-else class="settings-item" :data-settings-key="settingKey" :class="{ 'settings-item--disabled': disabled, 'settings-item--no-divider': noDivider, 'settings-item--warn': summaryModelStatus === 'unconfigured' }" @click="handleClick">
+  <div v-else class="settings-item" :data-settings-key="settingKey" :class="{ 'settings-item--disabled': disabled || searchForced, 'settings-item--no-divider': noDivider, 'settings-item--warn': summaryModelStatus === 'unconfigured', 'settings-item--search-forced': searchForced }" @click="handleClick">
     <div class="settings-item__left">
       <div class="settings-item__text">
         <span class="settings-item__label">{{ label }}</span>
@@ -429,9 +429,17 @@ interface Props {
    * set it. The parent resolves the status; this component owns its display.
    */
   summaryModelStatus?: 'configured' | 'unconfigured'
+  /**
+   * This row is visible only because a settings search reached it, i.e. its
+   * own `dependsOn` condition is not met (the DingTalk credentials while the
+   * push mode is 飞书). It is shown read-only: editing a value the rest of the
+   * panel says does not apply would be a setting with no effect.
+   */
+  searchForced?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  searchForced: false,
   modelValue: undefined,
   options: undefined,
   optionPreviews: undefined,
@@ -843,6 +851,19 @@ function confirmEdit() {
 .settings-item--disabled {
   opacity: var(--opacity-muted);
   pointer-events: none;
+}
+
+/* Reached by a settings search but hidden by its own condition: dim it the
+   same way as a disabled row, so the row reads as "shown for this search" and
+   not as the normal state of the panel. */
+.settings-item--search-forced {
+  opacity: var(--opacity-muted);
+}
+
+.settings-item__forced-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .settings-item__left {

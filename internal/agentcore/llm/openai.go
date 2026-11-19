@@ -247,9 +247,10 @@ func (c *openAIClient) buildBody(req Request) ([]byte, error) {
 //
 //   - A tool result with images cannot be expressed: role="tool" content is a
 //     STRING in the spec, and the array form is a non-standard extension that
-//     most gateways reject. So the text goes in the tool message and each image
-//     is appended as a following user message. That is a workaround, but it is
-//     the only shape every OpenAI-compatible endpoint accepts.
+//     most gateways reject. So the text goes in the tool message and the images
+//     are appended to one user message after the round's last tool message.
+//     That is a workaround, but it is the only shape every OpenAI-compatible
+//     endpoint accepts.
 //   - Tool calls ride the assistant message, so consecutive assistant parts
 //     must be merged into ONE message. Emitting one message per part would
 //     break the call/result pairing providers validate.
@@ -291,23 +292,30 @@ func (c *openAIClient) buildMessages(req Request) ([]oaMessage, error) {
 			out = append(out, msg)
 
 		case RoleTool:
+			// Every tool message of this round must come before any other
+			// role: providers pair them with the assistant turn's calls by
+			// position, and a message wedged between two results reads as
+			// "tool calls and tool results do not match". So the images are
+			// collected first and sent once, after the last result.
+			var images []Image
 			for _, p := range m.Parts {
 				if p.ToolResult == nil {
 					continue
 				}
-				text, images := splitToolResultParts(p.ToolResult.Parts)
+				text, resultImages := splitToolResultParts(p.ToolResult.Parts)
 				out = append(out, oaMessage{
 					Role:       "tool",
 					ToolCallID: p.ToolResult.CallID,
 					Content:    text,
 				})
-				// Images ride a trailing user message (see the doc comment).
-				if len(images) > 0 {
-					out = append(out, oaMessage{
-						Role:    "user",
-						Content: imageParts(images, "The images from the previous tool output:"),
-					})
-				}
+				images = append(images, resultImages...)
+			}
+			// Images ride a trailing user message (see the doc comment).
+			if len(images) > 0 {
+				out = append(out, oaMessage{
+					Role:    "user",
+					Content: imageParts(images, "The images from the previous tool output:"),
+				})
 			}
 
 		default: // system / user

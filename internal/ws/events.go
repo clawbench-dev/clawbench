@@ -209,6 +209,19 @@ func readClientMessages(mgr *Manager, conn *websocket.Conn, writeMu *sync.Mutex,
 		switch msg.Type {
 		case "pong":
 			// Connection alive
+		case "ping":
+			// Client-initiated liveness probe. The client sends this when it
+			// returns to the foreground: a frozen Android page comes back with a
+			// socket that still reads OPEN while the far end dropped it long
+			// ago, and only a round trip can tell a quiet connection from a dead
+			// one. Answering immediately lets the client keep a live socket
+			// instead of tearing it down on every resume. The write goes through
+			// writeMu so it cannot interleave with the async writer.
+			pong, _ := json.Marshal(ServerMessage{Type: "pong"})
+			if err := writeMessage(writeMu, conn, pong); err != nil {
+				slog.Debug("ws: probe reply failed", "error", err, "client_id", clientID)
+				return
+			}
 		case "subscribe":
 			handleSubscribe(mgr, conn, writeMu, clientID, msg.SessionID)
 		case "unsubscribe":

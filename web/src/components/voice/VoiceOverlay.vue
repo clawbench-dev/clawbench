@@ -175,9 +175,7 @@ const pillStyle = computed(() => ({ top: `${pillPos.value.top}px`, left: `${pill
 function placePill() {
   const el = targetEl.value
   if (!el || !el.isConnected) return
-  // Always just above the field itself — for the chat composer that means it
-  // floats over the toolbar row, which is fine: it is the closest spot to the
-  // line being written, and the pill never takes clicks.
+  // Keep the timer and stop button next to the line being dictated.
   //
   // Editors that know where the caret is (CodeMirror) report that line instead
   // of their whole box: a file editor fills the screen, and its top edge is
@@ -407,9 +405,28 @@ function onKeyUp(e: KeyboardEvent) {
   void stop()
 }
 
+/**
+ * Losing the window ends the take, whatever the state says.
+ *
+ * The gesture that started it (a held key, a held finger) cannot be released
+ * into a window that no longer has focus: its keyup/pointerup goes to the other
+ * app, or never arrives. Guarding on `recording` left the gap where the
+ * microphone is still opening — the release was dropped, the take started
+ * afterwards, and nothing was left on screen to end it. Calling stop() when
+ * nothing is running is harmless: it only records the release for a begin()
+ * that is still waiting for the microphone, and the next begin() clears it.
+ */
 function onWindowBlur() {
-  // keyup never arrives when focus leaves while the key is held.
-  if (voiceState.value === 'recording') void stop()
+  void stop()
+}
+
+/**
+ * Same for a WebView that does not blur the window when the app goes to the
+ * background (Android is the one that bites): a take must not keep the
+ * microphone open in an app nobody is looking at.
+ */
+function onVisibilityChange() {
+  if (document.hidden) void stop()
 }
 
 /* ── positioning plumbing ─────────────────────────────────────────── */
@@ -434,7 +451,7 @@ watch(pillVisible, (on) => {
     clearInterval(followTimer)
     followTimer = null
   }
-})
+}, { flush: 'post' })
 watch([capsuleVisible, capsuleDone], () => { placeCapsule() })
 watch(fabVisible, (on) => { if (on) placeFab() })
 
@@ -474,6 +491,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeyDown, true)
   window.addEventListener('keyup', onKeyUp, true)
   window.addEventListener('blur', onWindowBlur)
+  document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('resize', reposition)
   window.addEventListener('scroll', reposition, true)
   document.addEventListener('focusin', onFocusIn, true)
@@ -489,6 +507,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown, true)
   window.removeEventListener('keyup', onKeyUp, true)
   window.removeEventListener('blur', onWindowBlur)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('resize', reposition)
   window.removeEventListener('scroll', reposition, true)
   document.removeEventListener('focusin', onFocusIn, true)

@@ -140,6 +140,53 @@ func desktopPayloadURLs(osArch, tag string) []string {
 	return desktopPayloadNpmURLs(osArch, tag)
 }
 
+// desktopFusedAssetBase maps GOOS/GOARCH to the basename of the all-in-one
+// ("fused") package: the same app as desktopAssetBase, plus the ClawBench
+// server binary at the archive root (see extraFiles in electron-builder.yml).
+//
+// Only Windows publishes one. The package is assembled in release.yml from the
+// thin zip of the SAME release, so it exists even when the desktop shell itself
+// was reused from a previous tag — the server is what changes then.
+var desktopFusedAssetBase = map[string]string{
+	platformWindowsAMD64: "clawbench-desktop-windows-x64-local",
+}
+
+// desktopFusedAssetName builds the published filename of the all-in-one
+// package, e.g. "clawbench-desktop-windows-x64-local-v0.99.1.zip".
+//
+// Keep in sync with the "Assemble fused desktop (Windows)" step in release.yml.
+func desktopFusedAssetName(osArch, tag string) string {
+	base, ok := desktopFusedAssetBase[osArch]
+	if !ok {
+		return ""
+	}
+	return base + "-" + tag + ".zip"
+}
+
+// FusedDesktopDownloads returns the candidate download URLs of the all-in-one
+// package for a release tag, keyed by the client's platform key (the same keys
+// as DesktopLatestResult.Downloads).
+//
+// This is what a fused install upgrades with: it must never be handed the thin
+// package (that would delete the only server it has) nor the payload (that
+// replaces resources/ and leaves the bundled server stale). An empty tag or a
+// platform with no fused package yields an empty map, which callers read as
+// "nothing to offer" rather than building a URL that 404s.
+func FusedDesktopDownloads(tag string) map[string][]string {
+	out := map[string][]string{}
+	if tag == "" {
+		return out
+	}
+	for osArch := range desktopFusedAssetBase {
+		asset := desktopFusedAssetName(osArch, tag)
+		if asset == "" {
+			continue
+		}
+		out[desktopDownloadKey[osArch]] = releaseAssetURLs(tag, asset)
+	}
+	return out
+}
+
 // desktopDownloadKey is the response key for each platform. It matches the
 // keys the web client derives from the user agent (detectPlatformKey).
 var desktopDownloadKey = map[string]string{

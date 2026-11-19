@@ -680,6 +680,12 @@ export function useVoiceInput() {
 
   async function stop() {
     stopRequested = true
+    // One take, one hand-over. A release and the overlay's stop button both
+    // call this for the same recording (the mouse leaves the send button on
+    // its way to the pill, so the release fires first and the tap second), and
+    // a second pass would flush the same audio again and send a second `end`
+    // to a socket the server has already answered.
+    if (state.value === 'transcribing') return
     if (ws) {
       const sock = ws
       // Stop the capture indicator immediately; the microphone itself stays

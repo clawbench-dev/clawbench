@@ -61,7 +61,10 @@ public class LiveUpdateManager {
 
     /** Notification channel for the live update card. */
     public static final String CHANNEL_ID = "clawbench_live_update";
-    /** Single notification id — one chip summarizing the whole workspace. */
+    /** Single notification id — one chip summarizing the whole workspace.
+     *  Reserved for this manager alone (the background service uses 2, screen
+     *  sharing 0x5C01): the promoted path posts under this id with no tag, and
+     *  tearing the chip down cancels that combination outright. */
     public static final int NOTIFICATION_ID = 100;
 
     /** How long a burst of event-driven refreshes is merged into one notify(). */
@@ -96,10 +99,11 @@ public class LiveUpdateManager {
     /** Last time an overview was requested from an event (throttle anchor). */
     private volatile long lastOverviewRequestMs;
     /**
-     * Monotonically increasing notification tag. Some ROMs (ColorOS fluid
-     * cloud) cache the chip text of a promoted ongoing notification per
-     * notification key and do not refresh the title on same-key updates;
-     * rotating the tag forces a fresh key so the chip always rebuilds.
+     * Monotonically increasing tag for the pre-Android 16 fallback posting
+     * path. Some pre-16 OEM chips (ColorOS fluid cloud) cache the chip text
+     * per notification key and do not refresh the title on same-key updates,
+     * so that path rotates the tag. The promoted path (API 36+) uses a stable
+     * key instead — see notifyInternal.
      */
     private int currentTag;
     /** Whether a refresh is already scheduled within the throttle window. */
@@ -417,38 +421,58 @@ public class LiveUpdateManager {
         }
 
         Notification notification = builder.build();
-        // Only claim FLAG_PROMOTED_ONGOING on API 36+; canPostPromotedNotifications
-        // tells us whether the system will actually promote it.
-        boolean promoted = canPostPromoted(appContext);
         AppLog.d(TAG, "posting live update: chip=\"" + chip + "\" summary=\"" + summary
-                + "\" promoted=" + promoted + " (sdk=" + Build.VERSION.SDK_INT + ")");
-        // Rotate the tag: some ROMs (ColorOS fluid cloud) do not refresh the
-        // chip title of a promoted ongoing notification on same-key updates.
-        // A fresh tag makes it a brand-new notification key, forcing a rebuild.
-        // The previous tag's notification is cancelled first so the notification
-        // drawer never accumulates stale entries — at most one chip exists.
+                + " promoted=" + canPostPromoted(appContext) + " (sdk=" + Build.VERSION.SDK_INT + ")");
+
+        postChip(notification, Build.VERSION.SDK_INT);
+    }
+
+    /**
+     * Post the chip under the key its OS generation expects.
+     *
+     * Split from {@link #notifyInternal} so both branches are reachable from a
+     * unit test: Robolectric's offline SDK cache tops out below 36, so a test
+     * cannot drive the promoted branch through {@link Build.VERSION#SDK_INT}.
+     */
+    void postChip(Notification notification, int sdkInt) {
+        if (sdkInt >= 36) {
+            // Keep the chip's user-visible identity stable. OriginOS (vivo
+            // 原子岛) ties status-bar / lock-screen / notification-center chips
+            // to the notification key; posting a fresh tag on every refresh
+            // makes each refresh look like a brand-new notification there, so
+            // no chip ever shows up (issue #694). A stable key (tag=null) lets
+            // the system update the existing entry in place — and because the
+            // update is in place, other ROMs (ColorOS fluid cloud) can no
+            // longer serve a stale cached chip title either.
+            notificationManager.notify(NOTIFICATION_ID, notification);
+            return;
+        }
+        // Pre-Android 16 fallback (promotion unavailable): keep the historical
+        // tag rotation. Some pre-16 OEM chips (ColorOS fluid cloud) cache the
+        // chip text per notification key and do not refresh it on same-key
+        // updates, so a fresh tag forces a rebuild. Cancel the previous tag
+        // first (before the new one is posted) so the drawer never accumulates
+        // stale entries and never holds two chips at once.
+        String previous = currentTag > 0 ? "live-" + currentTag : null;
         String tag = "live-" + (++currentTag);
-        if (currentTag > 1) {
-            notificationManager.cancel("live-" + (currentTag - 1), NOTIFICATION_ID);
+        if (previous != null) {
+            notificationManager.cancel(previous, NOTIFICATION_ID);
         }
         notificationManager.notify(tag, NOTIFICATION_ID, notification);
     }
 
     /**
-     * Cancel the currently visible chip. Because the tag rotates, the
-     * previous and current tags are both cancelled so no stale chip can
-     * linger. Main thread only (called from doRefresh / destroy on the
-     * main looper).
+     * Cancel the currently visible chip — the stable promoted key plus the
+     * most recent pre-16 fallback tag. Main thread only (called from
+     * doRefresh / destroy on the main looper).
      */
     private void cancelChip() {
         if (notificationManager == null) {
             return;
         }
+        notificationManager.cancel(NOTIFICATION_ID);
         if (currentTag > 0) {
             notificationManager.cancel("live-" + currentTag, NOTIFICATION_ID);
-        }
-        if (currentTag > 1) {
-            notificationManager.cancel("live-" + (currentTag - 1), NOTIFICATION_ID);
         }
     }
 

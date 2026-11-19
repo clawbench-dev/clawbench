@@ -183,7 +183,7 @@
           @touchend="onTextareaTouchEnd"
           @touchcancel="onTextareaTouchCancel"
           ></textarea>
-        <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" :title="!hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
+        <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" @pointercancel="onSendPointerUp" :title="!hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
           <!-- Empty input: green lightning (quick-menu shortcut) -->
           <Zap v-if="!hasInputContent" :size="15" />
           <!-- Queue mode: inbox with down arrow (enqueue) -->
@@ -986,7 +986,7 @@ watch(inputText, (text) => {
 
 // ── Voice input (ASR) ───────────────────────────────
 const voiceInput = useVoiceInput()
-const { toggleAt: toggleVoiceAt } = voiceInput
+const { startAt: startVoiceAt, stop: stopVoice } = voiceInput
 
 const VOICE_LONG_PRESS_MS = 500
 let voicePressTimer = null
@@ -1019,7 +1019,7 @@ function onSendPointerDown() {
       voiceJustRecorded = !hasInputContent.value
       // Long-press starts dictation into this textarea at the caret; whatever
       // is already typed around it is left alone.
-      void toggleVoiceAt(textareaRef.value)
+      void startVoiceAt(textareaRef.value)
     }
   }, VOICE_LONG_PRESS_MS)
 }
@@ -1029,7 +1029,7 @@ function onSendPointerUp() {
   if (voicePressTimer) { clearTimeout(voicePressTimer); voicePressTimer = null }
   if (voiceLongPressActive) {
     voiceLongPressActive = false
-    void toggleVoiceAt(textareaRef.value)
+    void stopVoice()
   }
 }
 

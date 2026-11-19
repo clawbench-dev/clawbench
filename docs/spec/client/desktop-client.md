@@ -126,6 +126,12 @@ flowchart TD
 
 失败一律静默降级为全量下载，因此**载荷包名不一致不会报错**，只会让每次升级又下 150MB——这正是需要跨语言断言（`release.yml` ↔ Go 载荷基名）的原因。macOS 不发布载荷：替换已签名 `.app` 内的 `resources/` 会破坏代码签名封条，Apple Silicon 拒绝运行无效签名。载荷**只经 npm registry 分发**（`desktopPayloadURLs` 直接调 `desktopPayloadNpmURLs`，不含 GitHub 候选）：早期载荷 zip 曾与全量包并列挂在 Release 资产里，但那会让人误以为这个小 zip 可以直接安装（它缺 Electron 运行时），故移出；npm 顺带给了国内镜像加速。
 
+### 一体包的升级：只装整包
+
+融合版（Windows 一体包，客户端自带 `server/`）的升级单位是**整个一体安装包**，不走上面两条路：瘦包会把 `server/` 弄丢，载荷包只换 `resources/` 会把自带服务端留在旧版本。服务端在 `/api/upgrade/check` 里用 `fused_downloads` 下发该版本一体包的地址（与 Release 资产命名同一处生成，客户端不自己拼），网页端的「检查更新」在 `managed` 时改为调用桌面桥 `installFusedUpdate`，由壳下载整包、侧装、翻转指针，再询问是否重启。
+
+侧装目录按**发布 tag** 命名，而壳复用上一版发布时包内 app 报的是旧版本号——启动交接因此保留指针（见 `handOffToPointedVersion` 的同文件分支），否则下一次冷启动会退回原安装目录，静默回滚整次升级。这个能力随服务端发布：已经装在旧版一体包里的用户需要手动装一次新版，之后才能用应用内升级。
+
 **失败弹框必须同时展示两条错误**：载荷（npm）路径**优先尝试**、失败才回落到全量包，但载荷失败此前只写 console——于是弹框只剩 GitHub 全量包的错误，满屏 `github.com` 地址让人误以为"客户端根本没走 npm 镜像"，而事实是走了并失败了。因此 `formatInstallFailure` 把载荷与全量两条错误各带来源标签一并展示。这是"静默降级"在**诊断信息**上必须付出的代价：降级本身该静默，但降级的原因不能。
 
 **写盘与克隆必须关掉 Electron 的 asar 拦截**：Electron 的 fs shim 把**任何末段以 `.asar` 结尾的路径**当作归档，解析到归档内部而不是磁盘上。而安装器的整个工作就是生产与复制这个名字的文件（解压含 `resources/app.asar` 的包、再克隆整个壳），不关拦截则升级在任何平台都走不完——实测 Electron 44.4.3 下 `writeFileSync`/`openSync`/`copyFileSync` 直接抛 `Invalid package`，`existsSync` 对合法归档返回 false，`statSync` 抛错。故同步写盘与克隆都包在 `process.noAsar = true` 的临时作用域里（**结束后恢复原值**而非置 false——调用方可能本来就用 `--no-asar` 启动），且**只覆盖同步调用**：跨 `await` 持有时，运行中的应用会读不了自己的归档。目录级操作（`rmSync`/`renameSync`）不受影响，清理与最终换指针无需包。

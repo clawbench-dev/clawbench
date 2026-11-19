@@ -6,6 +6,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 import { normalizeCloseAction } from './closePolicy'
+import { isAppQuitting } from './closeFlow'
 import { getCookieHeaderForUrl, record, recordError } from './clientLog'
 import { floatingCapsuleLabels, resolveNativeLanguage } from './labels'
 import { createMainWindow, getMainWindow, onMainWindowCreated } from './window'
@@ -721,6 +722,17 @@ function mainWindowOutOfSight(): boolean {
  * is a deliberate action, not something to undo behind the user's back.
  */
 function syncCapsuleToMainWindow(): void {
+  // Never resurrect the capsule while the app is quitting.
+  //
+  // The main window's `closed` event fires INSIDE `app.quit()`'s window-closing
+  // pass, and at that moment the window is gone — so `mainWindowOutOfSight()`
+  // is true and the capsule would be created again. Electron only closes the
+  // windows it enumerated when the quit started, so that new window survives
+  // the pass: the app never reaches `will-quit` and stays alive with a tray
+  // icon and a capsule that cannot be dismissed. Every later `app.quit()`
+  // (including the tray's Quit) is then a no-op because a quit is already in
+  // progress — it looks exactly like "退出没反应".
+  if (isAppQuitting()) return
   if (!isEnabled()) return
   if (mainWindowOutOfSight()) showCapsule()
   else hideCapsule()

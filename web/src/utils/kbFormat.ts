@@ -72,6 +72,12 @@ const KB_ERROR_REASONS = new Set([
   'legacy_doc',
   'legacy_xls',
   'legacy_ppt',
+  'wps_doc',
+  'wps_sheet',
+  'wps_slides',
+  'pages',
+  'numbers',
+  'keynote',
   'image',
   'svg',
   'audio_video',
@@ -80,6 +86,7 @@ const KB_ERROR_REASONS = new Set([
   'binary',
   'font',
   'pdf_encrypted',
+  'pdf_malformed',
   'pdf_no_text',
   'no_text',
   'file_too_large',
@@ -98,4 +105,26 @@ export function documentErrorText(error: string | undefined, t: TFn): string {
   if (!error) return ''
   const reason = errorReason(error)
   return reason ? t(`kb.reason.${reason}`) : error
+}
+
+/**
+ * One sentence explaining why a folder import skipped files. The server counts
+ * them by reason; the dominant one is the one worth naming (a folder of legacy
+ * .doc should say "save as .docx", not just "3 skipped"). Unknown codes are
+ * ignored so a future reason cannot leak an i18n key to the user.
+ */
+export function skipReasonHint(
+  reasons: Record<string, number> | undefined,
+  t: TFn,
+): string {
+  if (!reasons) return ''
+  let best = ''
+  let bestCount = 0
+  for (const [code, count] of Object.entries(reasons)) {
+    if (count > bestCount && KB_ERROR_REASONS.has(code)) {
+      best = code
+      bestCount = count
+    }
+  }
+  return best ? t('kb.skippedReasonHint', { count: bestCount, reason: t(`kb.reason.${best}`) }) : ''
 }

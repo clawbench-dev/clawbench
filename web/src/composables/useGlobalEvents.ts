@@ -122,6 +122,7 @@ export interface ForgeItemIdentity {
 // Client message types
 type ClientMessage =
     | { type: 'pong' }
+    | { type: 'ping' }
     | { type: 'subscribe'; session_id: string }
     | { type: 'unsubscribe'; session_id: string }
     | { type: 'cancel'; session_id: string }
@@ -170,17 +171,20 @@ const HANDSHAKE_TIMEOUT_MS = 15000
 // ── Foreground resume (Android / HarmonyOS) ─────────────────────────────────
 // Coming back from the background is a different regime from a mid-session
 // blip: the OS froze the page, the radio re-attaches, and the socket we left
-// behind is usually already dead at the far end even though it still reads
-// OPEN. Waiting for evidence (a 60s silence, a failed write, a 15s handshake
-// bound) is what made "back from background" feel like "stuck on 正在重连".
-// The resume path therefore rebuilds the connection unconditionally and
-// redials on a much tighter ladder — the user is looking at the screen.
+// behind may already be dead at the far end while it still reads OPEN. Passive
+// evidence (a 60s silence, a failed write, a 15s handshake bound) is what made
+// "back from background" feel like "stuck on 正在重连".
 //
-// The dialed-on-resume socket also gets a shorter handshake bound and a 1s
-// liveness tick, because a handshake that hangs right after a resume is the
-// common mobile case (network stack still re-attaching) and waiting the normal
-// 15s for it is exactly the delay being complained about. Both are restored to
-// the normal values as soon as the socket opens.
+// The previous answer was to rebuild unconditionally on every mobile resume.
+// That repaired the dead-socket case, but it also tore down a perfectly live
+// connection on every single resume — so the app flashed "连接断开" (and, on a
+// slow re-attach, sat on the reconnect overlay) even when nothing was wrong.
+//
+// The socket is now ASKED instead of guessed: one `ping`, one `pong`, 1.5s
+// (PROBE_TIMEOUT_MS below). A live socket is kept untouched; a dead one is
+// dropped immediately — faster than any passive bound, and with no overlay for
+// the common case. Dials made on resume still get the tighter ladder, because
+// when the probe does fail the user is looking at the screen.
 const RESUME_HANDSHAKE_TIMEOUT_MS = 6000
 const RESUME_CHECK_INTERVAL_MS = 1000
 const RESUME_RECONNECT_BASE_DELAY_MS = 500
@@ -191,17 +195,20 @@ let lastMessageAt = 0
 // per-dial (a resume dial uses a tighter one), so it lives next to it.
 let connectStartedAt = 0
 let handshakeTimeoutMs = HANDSHAKE_TIMEOUT_MS
-// True from a resume dial until that dial settles (opens or is dropped). Lets a
-// second resume signal for the SAME physical resume leave the in-flight dial
-// alone, while still rebuilding a socket that predates the resume (including a
-// handshake stuck in CONNECTING since before the app was backgrounded — the
-// case that must be killed, not preserved).
-let resumeDialPending = false
 // True from the first resume dial until a socket actually opens. Keeps the
 // tighter resume pacing across the redials that follow a failed resume dial
 // (connect() is re-entered with no arguments from the retry ladder), and is
 // cleared in onopen so a later mid-session blip goes back to the normal pace.
 let resumePacing = false
+
+// How long a foreground probe waits for its pong. Generous enough for a slow
+// mobile round trip, short enough that a dead socket is replaced before the
+// 5s overlay would even appear.
+const PROBE_TIMEOUT_MS = 1500
+// The probe in flight, if any. One at a time: Android reports a single physical
+// resume through two listener chains, and stacking probes would only stack
+// timers — the first verdict is the answer for that resume.
+let pendingProbe: { timer: ReturnType<typeof setTimeout>; onDead: () => void } | null = null
 
 // Client ID — identifies this browser/device across sessions.
 // Stored in localStorage so the server can track multiple tabs/devices independently.
@@ -421,6 +428,11 @@ async function fetchPendingEvents() {
 }
 
 function connect(opts?: { resumed?: boolean }) {
+    // A retry scheduled a moment ago must not fire while this dial's handshake
+    // is still in flight — it would tear down the connection it was meant to
+    // establish. reset() is not usable here (it would zero the attempt count
+    // and turn a failing ladder into a tight loop).
+    reconnect.cancelPending()
     disconnect()
 
     // Resume pacing: a shorter handshake bound and a 1s liveness tick, for the
@@ -430,7 +442,6 @@ function connect(opts?: { resumed?: boolean }) {
     // about). Cleared the moment a socket opens, so the normal cadence resumes.
     const resumed = opts?.resumed === true || resumePacing
     resumePacing = resumed
-    resumeDialPending = resumed
     handshakeTimeoutMs = resumed ? RESUME_HANDSHAKE_TIMEOUT_MS : HANDSHAKE_TIMEOUT_MS
     const checkInterval = resumed ? RESUME_CHECK_INTERVAL_MS : HEARTBEAT_CHECK_INTERVAL_MS
 
@@ -453,10 +464,12 @@ function connect(opts?: { resumed?: boolean }) {
         hasConnectedOnce.value = true
         lastMessageAt = Date.now()
         // Back to the normal cadence: the resume-specific pacing was only for
-        // the dials above.
+        // the dials above. The tick interval is restored too — it was started
+        // with the resume value at dial time, and leaving it at 1s would keep a
+        // 1Hz timer running for the rest of the session.
         resumePacing = false
-        resumeDialPending = false
         handshakeTimeoutMs = HANDSHAKE_TIMEOUT_MS
+        startHeartbeat(HEARTBEAT_CHECK_INTERVAL_MS)
         reconnect.reset()
 
         // Fetch missed events that occurred while offline
@@ -477,6 +490,14 @@ function connect(opts?: { resumed?: boolean }) {
 
             if (msg.type === 'ping') {
                 send({ type: 'pong' })
+                return
+            }
+
+            if (msg.type === 'pong') {
+                // Answer to the foreground probe (see probeAlive). The frame
+                // carries nothing else; a pong is proof the socket is alive in
+                // both directions, which is all the resume path needs.
+                finishProbe()
                 return
             }
 
@@ -658,23 +679,70 @@ function connect(opts?: { resumed?: boolean }) {
  * refreshed the same timestamp the silence check reads, so it could never fire
  * first. One redundant detector is cheap to write and expensive to reason
  * about later.
+ *
+ * ── `verifyOpen` ────────────────────────────────────────────────────────────
+ * The resume path passes it: an OPEN socket that passes the passive checks is
+ * reported as `'probe'` instead of `null`, meaning "looks fine, but ask it
+ * before believing it". Both the silence window and the server's 30s ping are
+ * far too slow for a resume — the user is looking at the screen — and a frozen
+ * page's socket is routinely dead at the far end while reading OPEN. The
+ * round trip is the only answer that arrives in time. This is a verdict, not a
+ * second policy: the two clocks above still decide everything else.
  */
-type SocketFailure = 'absent' | 'handshake-timeout' | 'silent' | null
+type SocketFailure = 'absent' | 'handshake-timeout' | 'silent' | 'probe' | null
 
-function socketFailure(now: number): SocketFailure {
+// Overloads so the tick's call site cannot see 'probe': it never asks for it,
+// and `recycle()` has no meaning for it.
+function socketFailure(now: number): Exclude<SocketFailure, 'probe'>
+function socketFailure(now: number, verifyOpen: true): SocketFailure
+function socketFailure(now: number, verifyOpen = false): SocketFailure {
     if (!ws) return 'absent'
     if (ws.readyState === WebSocket.CONNECTING) {
         return now - connectStartedAt > handshakeTimeoutMs ? 'handshake-timeout' : null
     }
     if (ws.readyState === WebSocket.OPEN) {
-        return now - lastMessageAt > MESSAGE_STALE_MS ? 'silent' : null
+        if (now - lastMessageAt > MESSAGE_STALE_MS) return 'silent'
+        return verifyOpen ? 'probe' : null
     }
     // CLOSING / CLOSED: the close handler owns the retry.
     return 'absent'
 }
 
+/**
+ * Ask the socket whether it is alive. `onDead` runs when no pong arrives within
+ * PROBE_TIMEOUT_MS; a live socket calls back with nothing to do.
+ *
+ * The ping goes through `send()`, which drops it unless the socket is OPEN — so
+ * this never inspects socket state itself (see the classifier above). Only one
+ * probe is tracked at a time: the two signals Android emits for one resume must
+ * share one verdict, not stack timers.
+ */
+function probeAlive(onDead: () => void) {
+    if (pendingProbe) return
+    const timer = setTimeout(() => {
+        if (!pendingProbe) return
+        pendingProbe = null
+        onDead()
+    }, PROBE_TIMEOUT_MS)
+    pendingProbe = { timer, onDead }
+    send({ type: 'ping' })
+}
+
+/** The pong arrived: the socket is alive, cancel the verdict timer. */
+function finishProbe() {
+    if (!pendingProbe) return
+    clearTimeout(pendingProbe.timer)
+    pendingProbe = null
+}
+
+function clearProbe() {
+    if (!pendingProbe) return
+    clearTimeout(pendingProbe.timer)
+    pendingProbe = null
+}
+
 /** Drop the current socket and schedule one retry, whatever killed it. */
-function recycle(failure: Exclude<SocketFailure, null>) {
+function recycle(failure: Exclude<SocketFailure, null | 'probe'>) {
     appLog.w('GlobalEvents', `connection ${failure} — reconnecting`)
     // disconnect() detaches onclose, so the abandoned socket cannot schedule a
     // competing reconnect; the explicit schedule below owns the retry.
@@ -686,7 +754,7 @@ function recycle(failure: Exclude<SocketFailure, null>) {
 
 function disconnect() {
     stopHeartbeat()
-    resumeDialPending = false
+    clearProbe()
     if (ws) {
         ws.onclose = null // prevent reconnect
         ws.close()
@@ -1069,38 +1137,30 @@ export function useGlobalEvents() {
     // they force-quit and relaunch the app, which re-runs init() -> connect().
     // Both sources therefore funnel into resyncForeground().
     //
-    // ── Why the mobile path rebuilds unconditionally ────────────────────────
+    // ── Why the mobile path asks instead of rebuilding ──────────────────────
     // On Android/HarmonyOS the OS freezes the page while paused. The socket we
-    // come back to is usually already dead at the far end while still reading
-    // OPEN, and the handshake we start right after the resume is the one most
-    // likely to hang (the radio is still re-attaching). Asking "does this look
-    // usable?" therefore answered "yes" often enough to matter, and every
-    // "yes" cost a full silence window (60s) before anything happened — which
-    // is exactly the reported "back from background, stuck on 正在重连 for a
-    // long time". There is nothing worth preserving across that freeze (the
-    // events raised while hidden are lost either way and the resync pulls them
-    // back), so the app path tears the socket down and dials a fresh one
-    // immediately, on a tighter retry ladder.
+    // come back to may be dead at the far end while still reading OPEN — but it
+    // very often is not, and the previous "rebuild unconditionally on mobile"
+    // answer tore down a live connection on every single resume. That is what
+    // the user sees as "从后台切回前台就断连": `disconnect()` flips
+    // connected=false before the new handshake even starts, so the header dot
+    // and the resources panel report a disconnection that never happened, and
+    // on a slow re-attach the reconnect overlay follows. A restart "fixed" it
+    // only because a fresh page load suppresses the overlay until its first
+    // connect.
     //
-    // The browser/Electron path keeps the health check: those hosts never
-    // freeze the page, the socket genuinely survives, and tearing it down on
-    // every tab switch would drop live stream events and re-run the whole
-    // state sync for nothing.
+    // So: probe. A live socket answers within a round trip and is kept
+    // untouched; a dead one is dropped after PROBE_TIMEOUT_MS — still much
+    // faster than the 60s silence window or the server's 30s ping, both of
+    // which are far too slow to stare at. The browser/Electron path asks the
+    // same question for the same reason (their sockets survive a tab switch,
+    // and rebuilding them would drop live stream events for nothing).
     //
-    // The rebuild is skipped while a dial made by this same resume is still in
-    // flight: ONE physical resume can reach this function twice (the document
-    // visibilitychange handler below is a separate listener chain from
-    // onAppResume, so useAppForeground's dedupe does not collapse this pair),
-    // and the second call would close the socket the first one just dialled.
-    //
-    // The guard is "that dial is still pending", NOT a bare time window: the
-    // socket is torn down whenever the app goes to the background, so a quick
-    // background→foreground round trip inside any such window must still
-    // rebuild. A time-only guard would skip it and leave the client with no
-    // socket at all (the heartbeat that would have noticed was stopped by the
-    // teardown). It is also not "is the socket young" — a handshake that was
-    // already stuck in CONNECTING before the app was frozen is exactly what has
-    // to be killed, not preserved.
+    // `clawbench-foreground` is dispatched on EVERY foreground entry,
+    // including one where the socket was kept: other composables re-sync their
+    // own state from it (the overlay timer, the chat session reopen), and
+    // skipping it was how a double resume signal used to leave the overlay
+    // counting down against a socket that was never going to change.
     function resyncForeground() {
         const now = Date.now()
         const mobileApp = isAppMode.value && !isDesktopApp.value
@@ -1108,27 +1168,18 @@ export function useGlobalEvents() {
         // and any stale attempt count left by backgrounded reconnect attempts
         // the OS killed. Must run on every foreground entry.
         reconnect.reset(mobileApp ? { baseDelay: RESUME_RECONNECT_BASE_DELAY_MS } : undefined)
-        if (mobileApp) {
-            // A dial made by this same resume is still in flight: leave it
-            // alone (see resumeDialPending). Anything else — no socket (the
-            // background branch tore it down), or a socket that predates the
-            // resume and may well be half-open or stuck in CONNECTING — is
-            // rebuilt.
-            if (resumeDialPending) return
-            appLog.i('GlobalEvents', 'resume: rebuilding the event socket')
-            connect({ resumed: true })
-        } else {
-            // One question, the same one the liveness tick asks: is this socket
-            // usable? A healthy connection is left untouched — tearing it down
-            // would drop live stream events and re-run the whole state sync for
-            // nothing. Anything else is replaced immediately rather than waiting
-            // up to a full tick, because on resume the user is looking at the
-            // screen.
-            const failure = socketFailure(now)
-            if (failure) {
-                appLog.w('GlobalEvents', `resume: ${failure} — reconnecting`)
-                connect()
-            }
+
+        // One question, the same one the liveness tick asks — plus, when the
+        // passive signals all say "fine", one round trip to prove it.
+        const failure = socketFailure(now, true)
+        if (failure === 'probe') {
+            probeAlive(() => {
+                appLog.w('GlobalEvents', 'resume: probe timed out — reconnecting')
+                connect({ resumed: mobileApp })
+            })
+        } else if (failure) {
+            appLog.w('GlobalEvents', `resume: ${failure} — reconnecting`)
+            connect({ resumed: mobileApp })
         }
         // Emit a custom event that other composables can listen to
         window.dispatchEvent(new CustomEvent('clawbench-foreground'))
@@ -1189,8 +1240,8 @@ export function useGlobalEvents() {
         // The resume pacing is per-connection state; a re-init must not inherit
         // it from whatever the previous instance was doing.
         resumePacing = false
-        resumeDialPending = false
         handshakeTimeoutMs = HANDSHAKE_TIMEOUT_MS
+        clearProbe()
         hasConnectedOnce.value = false
         initialized = false
     }

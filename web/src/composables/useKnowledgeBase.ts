@@ -123,6 +123,8 @@ export interface KBDirImportResult {
   skipped: number
   failed: number
   truncated: boolean
+  /** Skipped files grouped by extraction reason (`legacy_doc`, `image`, …). */
+  skip_reasons?: Record<string, number>
 }
 
 export interface KBStats {

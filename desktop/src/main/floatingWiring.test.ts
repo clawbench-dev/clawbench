@@ -108,6 +108,25 @@ describe('the capsule follows the main window, not the feature flag', () => {
     expect(win, 'window.ts must notify on every creation').toContain('notifyMainWindowCreated(mainWindow)')
   })
 
+  it('a quit never re-creates the capsule', () => {
+    // `closed` fires inside `app.quit()`'s closing pass, when the window is
+    // already gone — so the sync would read "backgrounded" and build a new
+    // capsule. Electron does not close windows created during that pass, so the
+    // app never reaches `will-quit`: tray and capsule stay on screen and every
+    // later Quit (tray included) is a no-op because the quit is already in
+    // progress.
+    const src = readRepoFile(FLOATING)
+    const sync = src.match(/function syncCapsuleToMainWindow\(\): void \{([\s\S]*?)\n\}/)
+    expect(sync, 'syncCapsuleToMainWindow not found').not.toBeNull()
+    expect(sync![1], 'must bail out while the app is quitting').toContain('isAppQuitting()')
+    expect(src, 'the quit flag must come from closeFlow').toContain("import { isAppQuitting } from './closeFlow'")
+    // The guard has to come BEFORE anything that can create a window.
+    expect(
+      sync![1].indexOf('isAppQuitting()'),
+      'the quit check must run before showCapsule()',
+    ).toBeLessThan(sync![1].indexOf('showCapsule()'))
+  })
+
   it('turning the feature on does not put the capsule on screen', () => {
     // The switch is flipped from the settings row, i.e. with the window in
     // front. Showing the capsule there is the exact behaviour being fixed.

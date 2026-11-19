@@ -198,7 +198,13 @@ describe('the empty-state shape is declared once', () => {
         const at = body.indexOf('#action')
         if (at === -1) continue
         for (const b of body.slice(at).matchAll(/<button\b[^>]*>/g)) {
-          if (!/class="[^"]*\bfbtn\b/.test(b[0])) {
+          // `fs-empty-clear` is the one sanctioned text-link action (the file
+          // search's "clear search"): it is the way OUT of the empty state,
+          // not another action, and as a third pill it competed with the two
+          // widening buttons and wrapped onto its own line. It is styled as an
+          // underlined link, not a pill, so the drift this guard targets does
+          // not apply. Anything else must use the shared `.fbtn`.
+          if (!/class="[^"]*\b(fbtn|fs-empty-clear)\b/.test(b[0])) {
             offenders.push(`${f}: ${b[0].replace(/\s+/g, ' ').slice(0, 90)}`)
           }
         }

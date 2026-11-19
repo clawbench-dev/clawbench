@@ -157,7 +157,7 @@ README 顶部头图：`README.md` 用 `product_hero.png`，`README.en.md` 用 `p
 
 ### 版式
 
-左侧品牌区 + 右侧三端设备舞台（PC 显示器居中、平板在左、手机在右），底部一条安装命令与一行关键词。背景**不是图片**，是 CSS 光环境（`.key-light` 主光 + `.beam` 顶部漫射 + `.floor` 地面反光 + `.vignette` 暗角 + `.grain` 颗粒），因此没有背景素材可换。
+左侧品牌区 + 右侧设备舞台（**一台显示器 + 一台手机**：手机压在显示器右下角并向下探出一截），底部一条安装命令与一行关键词。设备舞台的几何**直接复用落地页 `web/landing` 的 `.stage` 布局**（640px 宽的显示器 + 绝对定位的手机），在 hero 里整体 `scale(1.52)` 放大；改版式先去 `web/landing/css` 看 `.stage` 一节，别在 hero 里另起一套。背景**不是图片**，是 CSS 光环境（`.key-light` 主光 + `.beam` 顶部漫射 + `.floor` 地面反光 + `.vignette` 暗角 + `.grain` 颗粒），因此没有背景素材可换。
 
 ### 素材
 
@@ -165,12 +165,11 @@ README 顶部头图：`README.md` 用 `product_hero.png`，`README.en.md` 用 `p
 |------|------|
 | `docs/screenshots/product_hero.html` / `product_hero.en.html` | 中 / 英纯 HTML/CSS 源（可编辑） |
 | `docs/screenshots/product_hero.png` / `product_hero.en.png` | 中 / 英导出图（1920×1080，2x DPR） |
-| `docs/screenshots/pc-desktop.png` | 显示器屏幕内容（即上文流程产物，推荐 1080p 桌面三栏画面） |
-| `docs/screenshots/product_hero_assets/phone_screenshot.jpg` | 手机端截图 |
-| `docs/screenshots/product_hero_assets/tablet_screenshot.jpg` | 平板端截图 |
+| `docs/screenshots/product_hero_assets/desktop_landing.webp` | 显示器屏幕内容（直接拷自落地页 `web/landing/img/desktop.webp`，1920×1040） |
+| `docs/screenshots/product_hero_assets/phone_landing.webp` | 手机屏幕内容（拷自落地页 `web/landing/img/phone.webp`，900×1980） |
 | `docs/screenshots/product_hero_assets/logo.png` | ClawBench Logo |
 
-设备截图素材为纵向长图，经 `object-fit: cover` 裁入设备框。`product_hero_assets/bg_tech.jpg` 是旧版背景，现已不被任何 HTML 引用。
+两张屏幕素材必须与设备框的实际比例一致（1920/1040、900/1980），改素材时同步改 `.device-screen` / `.phone-screen` 的 `aspect-ratio`，否则 `object-fit: cover` 会切掉标题栏或底部 dock 栏。`product_hero_assets/bg_tech.jpg` 是更早版式的背景，现已不被任何 HTML 引用。
 
 ### 在线预览
 
@@ -180,7 +179,8 @@ README 顶部头图：`README.md` 用 `product_hero.png`，`README.en.md` 用 `p
 
 编辑 `product_hero.html`：
 
-- **设备尺寸**：`.pc .screen` / `.tablet .screen` / `.phone .screen` 的 `width` / `height`（改尺寸要同步调 `.showcase` 内的绝对定位与 `.contact-*` 接触阴影，否则设备会飘或阴影脱开）
+- **设备舞台大小/位置**：`.stage-wrap` 的 `left` / `top` 与 `transform: scale()`（缩放的是整块 640px 的落地页舞台，不要单独改某一台设备的尺寸）
+- **手机大小**：`.device-phone` 的 `width`（占舞台宽度百分比）/ `max-width`，位置由 `right` / `bottom` 控制
 - **品牌信息**：左上角 `.brand` 区域
 - **底部命令**：`.install .cmd`
 - **关键词行**：`.keywords`（后端数量、卖点短句）
@@ -189,7 +189,9 @@ README 顶部头图：`README.md` 用 `product_hero.png`，`README.en.md` 用 `p
 
 ### 重新导出
 
-改完用 `python3 -m http.server 8899 --directory docs/screenshots` 起静态服务，再：
+改完跑 `node scripts/render-hero.mjs`：一次导出中英两张（2x 截图后缩到 1920×1080，临时 `@2x.png` 自动删除）。
+
+也可以手动导出：用 `python3 -m http.server 8899 --directory docs/screenshots` 起静态服务，再：
 
 ```bash
 cd docs
@@ -214,6 +216,6 @@ const { chromium } = require('playwright');
 
 ### 已踩坑
 
-在旧的 brand/tablet/phone/features/footer 画布里「插入」一台显示器，会和前景设备互相遮挡、支架被盖。**当前版已整体重排**（去掉右侧功能卡片列与 `bg_tech.jpg` 背景，改成左侧品牌 + 右侧三端舞台 + 底部命令/关键词），新增设备请沿用这个舞台结构，别在旧布局上硬叠。
+更早的版式是三端透视舞台（平板 + 斜置显示器 + 斜置手机，`perspective` + 绝对定位 + 接触阴影），后来整体换成落地页布局（2026-11-19）：显示器和手机都没有 3D 旋转，几何以 `web/landing` 的 `.stage` 为准。**别回退到透视版**，也别在落地页布局上给单台设备加旋转——落地页那边改了布局，hero 的 `.stage-wrap` 一节的 CSS 要跟着同步。
 
-设备是绝对定位 + `perspective` 叠出来的，改任何一台的尺寸或位置都要连带改 `.contact-pc` / `.contact-ph` 两处接触阴影和 `.pc-base*` / `.pc-neck*` 支架，否则会出现设备悬空或阴影脱离。
+屏幕反光（`.device-screen::after` / `.phone-screen::after`）和「外描边用 inset 不用 0 0 0 1px」的规则都沿自落地页 CSS，手机壳圆角 20px、屏幕 16px，`.phone-shell` 必须 `overflow: hidden` 裁掉内层弧线外的尖角。

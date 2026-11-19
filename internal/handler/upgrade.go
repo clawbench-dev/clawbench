@@ -27,6 +27,10 @@ var (
 	upgradeIsDocker            = service.IsDocker
 	upgradeReadSkippedVersion  = service.ReadSkippedUpgradeVersion
 	upgradeWriteSkippedVersion = service.WriteSkippedUpgradeVersion
+	// The all-in-one package is the only thing a fused install may upgrade
+	// with; see FusedDesktopDownloads for why the thin package and the payload
+	// are not options there.
+	upgradeFusedDownloads = service.FusedDesktopDownloads
 )
 
 // managedRefusal answers 403 and reports whether the request was refused.
@@ -78,6 +82,19 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 	installDir, installErr := upgradeCheckInstallDirWrit()
 	installWritable := installErr == nil || installDir == ""
 
+	// fused_downloads is present only when the desktop app started this server.
+	// Such an install carries its own server, so it cannot upgrade by replacing
+	// the binary (that is refused below) — it upgrades by installing the whole
+	// all-in-one package for the new release. The URLs are built here, from the
+	// same tag the registry just reported, so the client never has to know the
+	// release-asset naming rules. Empty means the platform publishes no fused
+	// package (or this is not a fused install), which the UI reads as "no
+	// in-app upgrade".
+	fusedDownloads := map[string][]string{}
+	if model.ManagedByEmbedder {
+		fusedDownloads = upgradeFusedDownloads(version.ReleaseTag(latestVer))
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"current_version":  currentVer,
 		"latest_version":   latestVer,
@@ -104,9 +121,11 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		// settings dialog, so only the startup prompt consults this field.
 		"skipped_version": upgradeReadSkippedVersion(),
 		// managed is true when the desktop app started this server. The UI hides
-		// the in-app upgrade entry then; the server's own binary is part of the
-		// app package and is replaced by the desktop updater.
-		"managed": model.ManagedByEmbedder,
+		// the server-restart entry then, because the server's own binary is part
+		// of the app package and is replaced by the desktop updater. The upgrade
+		// entry stays: it installs the all-in-one package (see fused_downloads).
+		"managed":         model.ManagedByEmbedder,
+		"fused_downloads": fusedDownloads,
 	})
 }
 

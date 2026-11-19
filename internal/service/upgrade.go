@@ -136,6 +136,10 @@ func SetUpgradeIsSupervised(f func() bool) {
 	upgradeIsSupervised = f
 }
 
+// checkBinaryCPUCompatibility is the pre-swap CPU baseline probe. Overridden in
+// tests.
+var checkBinaryCPUCompatibility = platform.CheckBinaryCPUCompatibility
+
 // upgradeIsContainer reports whether the process runs inside a container.
 // Overridden in tests.
 var upgradeIsContainer = platform.IsContainer
@@ -649,6 +653,19 @@ func performUpgrade(ctx context.Context, acknowledgedIssues string) { //nolint:g
 	if downloadErr := downloadAndExtract(ctx, info.TarballURL, digest, newBinPath); downloadErr != nil {
 		_ = os.RemoveAll(tmpDir)
 		SetUpgradeError(fmt.Sprintf("Download/extract failed: %v", downloadErr))
+		broadcastUpgradeUpdate()
+		return
+	}
+
+	// 2b. Preflight the CPU baseline: an amd64 binary built for GOAMD64=v3 dies
+	// with SIGILL at exec on a v2-only CPU, so replacing the binary and
+	// restarting would leave a service that cannot boot — not even to retry the
+	// upgrade from the UI. Fail here, while the old version is still running.
+	// The helper and supervised paths check again after the swap, so a
+	// misjudged check at this point cannot turn into a working service either way.
+	if need, ok := checkBinaryCPUCompatibility(newBinPath); !ok {
+		_ = os.RemoveAll(tmpDir)
+		SetUpgradeError(fmt.Sprintf("CPU incompatible: the new version requires %s; keeping the current version", need.String()))
 		broadcastUpgradeUpdate()
 		return
 	}
@@ -1225,6 +1242,20 @@ func performSupervisedUpgrade(newBinPath, currentBin string) error {
 	setStateAndBroadcast(UpgradePhaseReplacing, 90, "Replacing binary...")
 	if err := platform.ReplaceBinary(newBinPath, currentBin); err != nil {
 		return fmt.Errorf("failed to replace binary: %w", err)
+	}
+	// Same guard as the subprocess path: a binary built for a newer CPU dies
+	// with SIGILL at exec, and the supervisor would restart it into the same
+	// crash loop forever. Put the previous binary back (it was copied to .bak
+	// earlier in the upgrade) and restart on it instead.
+	if need, ok := checkBinaryCPUCompatibility(currentBin); !ok {
+		slog.Error("upgrade: new binary requires a newer CPU, restoring the previous version",
+			"path", currentBin, "required", need.String())
+		if err := platform.ReplaceBinary(currentBin+".bak", currentBin); err != nil {
+			// Without the restore the supervisor restarts a binary that cannot
+			// run. Surfacing the error lets the user reinstall manually.
+			return fmt.Errorf("cpu incompatible: the new version requires %s and could not be rolled back: %w", need.String(), err)
+		}
+		return fmt.Errorf("cpu incompatible: the new version requires %s; the previous version was restored", need.String())
 	}
 	setStateAndBroadcast(UpgradePhaseRestarting, 95, "Restarting...")
 	slog.Info("upgrade: triggering supervised shutdown for restart")

@@ -63,6 +63,23 @@ export function useReconnect(options: ReconnectOptions) {
     reconnectTimer = null
   }
 
+  /**
+   * Drop a pending retry without touching the attempt counter or the disabled
+   * flag.
+   *
+   * Called when a socket is dialled from somewhere other than the retry ladder
+   * (foreground resume, an explicit connect). Without it, a retry scheduled a
+   * moment earlier keeps its timer and fires while the new handshake is still
+   * in flight — tearing down the connection it was meant to establish and
+   * costing another full handshake. reset() cannot be used for this: it also
+   * zeroes the attempt count, which would turn a failing ladder into a tight
+   * loop.
+   */
+  function cancelPending() {
+    if (reconnectTimer) clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+
   function shouldReconnect(): boolean {
     if (disabled) return false
     const fatalError = options.getFatalError?.()
@@ -75,6 +92,7 @@ export function useReconnect(options: ReconnectOptions) {
     scheduleReconnect,
     reset,
     disable,
+    cancelPending,
     shouldReconnect,
     getAttempts: () => reconnectAttempts,
   }

@@ -23,8 +23,8 @@
         @click="toggleSide"
         :title="side === 'left' ? t('toc.dockRight') : t('toc.dockLeft')"
       >
-        <PanelRight v-if="side === 'left'" :size="12" />
-        <PanelLeft v-else :size="12" />
+        <ArrowRightToLine v-if="side === 'left'" :size="12" />
+        <ArrowLeftToLine v-else :size="12" />
       </button>
       <button class="toc-dock-close" @click="emit('close')" :title="t('common.close')">
         <X :size="12" />
@@ -45,7 +45,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, PanelLeft, PanelRight, X } from 'lucide-vue-next'
+import { ArrowLeftToLine, ArrowRightToLine, List, X } from 'lucide-vue-next'
 import TocPanel from '@/components/TocPanel.vue'
 import { useTocDockPreference } from '@/composables/useTocDockPreference'
 

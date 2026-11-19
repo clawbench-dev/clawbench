@@ -1189,10 +1189,10 @@ export function selectStartupVersion(
   // differently: the pointer holds the server's `v0.99.1` (git describe) while
   // `app.getVersion()` reports `0.99.1` (CI strips the prefix from
   // desktop/package.json). A raw comparison reported "different", which sent
-  // this into handOffToPointedVersion's self-reference guard — and that guard
-  // DELETES the pointer, so the upgrade silently reverted on the second cold
-  // start. The returned value stays the RAW `pointed`, because versionDir()
-  // must resolve the directory the pointer actually names.
+  // this into handOffToPointedVersion's self-reference branch, so the upgrade
+  // silently reverted on the second cold start. The returned value stays the
+  // RAW `pointed`, because versionDir() must resolve the directory the pointer
+  // actually names.
   if (normalizeVersion(pointed) === normalizeVersion(running)) return ''
   return pointed
 }
@@ -1206,8 +1206,10 @@ export function selectStartupVersion(
  *   - the pointed version's directory or executable is missing (a deleted or
  *     half-written upgrade) → clear the pointer and continue with THIS version,
  *     so a broken upgrade can never leave the user unable to start the app
- *   - the pointed binary is this very file (e.g. someone unpacked a release on
- *     top of the version store) → continue rather than re-exec forever
+ *   - the pointed binary is this very file (already running the pointed
+ *     install) → continue rather than re-exec forever, and KEEP the pointer:
+ *     a fused upgrade can legitimately install a package whose app reports an
+ *     older version than its directory is named after
  *
  * Returns true when a handoff was started (the caller should not continue
  * initialising; this process is about to exit).
@@ -1223,9 +1225,20 @@ export function handOffToPointedVersion(runningVersion: string): boolean {
   } catch {
     sameFile = false
   }
-  if (!fs.existsSync(bin) || sameFile) {
-    // Broken or self-referential pointer: drop it and run what we have.
+  if (!fs.existsSync(bin)) {
+    // Broken pointer (a deleted or half-written upgrade): drop it and run what
+    // we have, so a broken upgrade can never leave the user unable to start.
     try { fs.rmSync(pointerPath(), { force: true }) } catch { /* best effort */ }
+    return false
+  }
+  if (sameFile) {
+    // Already running the pointed install. This is the normal state after a
+    // fused upgrade whose package REUSED the previous desktop shell: the
+    // directory is named after the release tag while the app inside reports the
+    // reused build's version, so the pointer and `app.getVersion()` legitimately
+    // differ. Deleting the pointer here would send the next cold start back to
+    // the original install directory — a silent revert of the upgrade (and of
+    // the server binary that came with it).
     return false
   }
 

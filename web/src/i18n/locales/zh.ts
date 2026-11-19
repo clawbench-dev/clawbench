@@ -101,6 +101,7 @@ export default {
   },
   dataTable: {
     mode: '表格模式',
+    modeSwitch: '切换表格模式',
     normal: '简单表',
     data: '数据表',
     search: '搜索这张表…',
@@ -351,6 +352,7 @@ export default {
     created: '知识库已创建',
     dirImportDone: '已加入 {added} 个文件，正在后台建索引',
     dirImportSummary: '加入 {added} 个，跳过 {skipped} 个，重复 {duplicates} 个，失败 {failed} 个',
+    skippedReasonHint: '有 {count} 个文件因格式不支持被跳过：{reason}',
     dirImportTruncated: '文件太多，本次只导入了前 500 个',
     dirImportEmpty: '这个文件夹里没有可加入的文件',
     dirImportAllDuplicates: '这些文件都已经在知识库里了',
@@ -479,6 +481,12 @@ export default {
       legacy_doc: '旧版 .doc 不支持，请另存为 .docx 再添加',
       legacy_xls: '旧版 .xls 不支持，请另存为 .xlsx 再添加',
       legacy_ppt: '旧版 .ppt 不支持，请另存为 .pptx 再添加',
+      wps_doc: 'WPS 文字文档（.wps）不支持，请另存为 .docx 再添加',
+      wps_sheet: 'WPS 表格（.et）不支持，请另存为 .xlsx 再添加',
+      wps_slides: 'WPS 演示（.dps）不支持，请另存为 .pptx 再添加',
+      pages: 'Pages 文档（.pages）不支持，请导出为 .docx 再添加',
+      numbers: 'Numbers 表格（.numbers）不支持，请导出为 .xlsx 再添加',
+      keynote: 'Keynote 演示（.key）不支持，请导出为 .pptx 再添加',
       image: '图片里没有可提取的文字',
       svg: 'SVG 里没有可提取的文字',
       audio_video: '音视频不支持，无法转写',
@@ -768,6 +776,7 @@ export default {
     addServer: '添加其他服务端',
     serverNamePlaceholder: '名称（选填）',
     duplicateServerName: '该名称已被使用',
+    invalidServerAddress: '地址格式不正确。普通地址如 https://192.168.1.100:20000；IPv6 需写全协议、方括号和端口，如 http://[240e:390:1234:5678::123]:20000',
     serverUrlPlaceholder: '输入服务端地址',
     serverPasswordPlaceholder: '输入密码',
     addServerSubmit: '添加并登录',
@@ -2761,6 +2770,20 @@ export default {
       exact: '精确匹配',
       noResults: '未找到文件',
       noResultsDesc: '换个关键词，或调整搜索范围再试。',
+      // 搜索无结果时的空状态：标题点出「什么词、没找到」，描述说清究竟搜了
+      // 哪个范围（当前目录 / 及子目录 / 整个项目），下方是按一下就能放宽的
+      // 快捷按钮。只说「未找到文件」，用户不知道能往哪儿放宽。
+      noResultsTitle: '没有找到“{q}”',
+      noResultsHere: '只在当前目录「{dir}」里搜过了，没有匹配的文件。',
+      noResultsDeep: '在「{dir}」及它的所有子目录里搜过了，没有匹配的文件。',
+      // 项目根目录没有目录名可填：直接说范围，不把「在当前目录」塞进「」里
+      // （那样会读成「只在当前目录「在当前目录」里搜过了」）。
+      noResultsHereRoot: '只在当前目录里搜过了，没有匹配的文件。',
+      noResultsDeepRoot: '在当前目录及它的所有子目录里搜过了，没有匹配的文件。',
+      noResultsProject: '在整个项目里搜过了，没有匹配的文件。',
+      widenRecursive: '搜索子目录',
+      widenGlobal: '在整个项目中搜索',
+      clearSearch: '清空搜索',
       searching: '搜索中...',
       resultCount: '找到 {count} 个文件',
       resultCountPlus: '找到 {limit}+ 个文件',
@@ -3466,6 +3489,15 @@ export default {
       security: '安全',
       debug: '调试',
       about: '关于',
+    },
+    // 设置首页的搜索框（issue #691）：搜到具体设置项，点结果跳到对应页面并只留下命中行。
+    search: {
+      placeholder: '搜索设置项，中英文都可以',
+      noResults: '没有找到与「{query}」相关的设置',
+      filteredTitle: '只显示匹配的设置',
+      filteredQuery: '「{query}」',
+      showAll: '显示全部',
+      forcedHint: '当前条件下不生效',
     },
     groups: {
       projectAppearance: '项目与外观',
@@ -5347,6 +5379,9 @@ export default {
     dockerHintBody: '就地升级仍然可用，但用未更新的镜像重建容器会回退到旧版本。建议改用镜像更新：',
     dockerHintRestart: '容器必须使用 --restart always 或 --restart unless-stopped，否则就地升级后服务不会自动恢复。请勿使用 --restart on-failure：服务以退出码 0 结束，该策略不会触发重启。',
     verificationWarningTitle: '本次升级未能完全验证',
+    fusedNote: '当前客户端自带服务端，升级会下载并安装整个一体安装包：客户端和服务端一起更新，不会只替换其中一半。',
+    fusedInstalling: '正在下载并安装一体安装包…',
+    fusedInstallFailed: '一体安装包下载或安装失败，当前版本不受影响。',
     verificationWarningHint: '上面的内容说明了哪些校验无法完成。内网镜像或代理可能本就不提供签名与哈希，这属正常；但同样的现象也可能来自被篡改的响应，两者无法区分。开始升级前会再向你确认一次。',
     verificationConfirmTitle: '本次升级未能完全验证',
     verificationConfirmProceed: '仍然继续',

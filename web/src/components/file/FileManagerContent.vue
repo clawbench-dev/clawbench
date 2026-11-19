@@ -178,7 +178,9 @@
          with the list content -->
     <div class="file-list-area">
     <!-- Search result count header (fixed above the scrollable list/grid) -->
-    <div v-if="searchHasQuery && !(search.state.searching && search.state.results.length === 0)" class="fs-results-count">
+    <!-- Hidden at zero: the empty state below already says nothing matched,
+         and 「找到 0 个文件」 on top of it was a second, redundant headline. -->
+    <div v-if="searchHasQuery && search.state.total > 0 && !(search.state.searching && search.state.results.length === 0)" class="fs-results-count">
       {{ search.state.truncated ? t('file.search.resultCountPlus', { limit: search.getDisplayLimit() }) : t('file.search.resultCount', { count: search.state.total }) }}
     </div>
     <!-- File list -->
@@ -198,10 +200,32 @@
         <EmptyState
           v-else-if="search.state.results.length === 0 && !search.state.searching"
           :icon="FileX"
-          :title="t('file.search.noResults')"
-          :desc="t('file.search.noResultsDesc')"
+          :title="noResultsTitle"
+          :desc="noResultsDesc"
           data-role="file-search-empty"
-        />
+        >
+          <template #action>
+            <div class="fs-empty-actions">
+              <button
+                v-for="option in widerSearches"
+                :key="option.key"
+                class="fbtn fbtn-primary"
+                :data-action="`widen-${option.key}`"
+                @click="option.run()"
+              >
+                <component :is="option.icon" :size="14" />
+                <span>{{ option.label }}</span>
+              </button>
+              <!-- Clearing is the way OUT, not another widening: as a third
+                   pill it competed with the two real actions and (on a phone)
+                   wrapped onto a line of its own, which read as a stray
+                   button. A muted text button keeps the two actions a pair. -->
+              <button class="fs-empty-clear" data-action="widen-reset" @click="exitSearch">
+                {{ t('file.search.clearSearch') }}
+              </button>
+            </div>
+          </template>
+        </EmptyState>
       </template>
       <!-- First load of a directory: preview the row shape instead of covering
            an empty panel with a spinner. A refresh that already has rows on
@@ -293,10 +317,32 @@
         <EmptyState
           v-else-if="search.state.results.length === 0 && !search.state.searching"
           :icon="FileX"
-          :title="t('file.search.noResults')"
-          :desc="t('file.search.noResultsDesc')"
+          :title="noResultsTitle"
+          :desc="noResultsDesc"
           data-role="file-search-empty"
-        />
+        >
+          <template #action>
+            <div class="fs-empty-actions">
+              <button
+                v-for="option in widerSearches"
+                :key="option.key"
+                class="fbtn fbtn-primary"
+                :data-action="`widen-${option.key}`"
+                @click="option.run()"
+              >
+                <component :is="option.icon" :size="14" />
+                <span>{{ option.label }}</span>
+              </button>
+              <!-- Clearing is the way OUT, not another widening: as a third
+                   pill it competed with the two real actions and (on a phone)
+                   wrapped onto a line of its own, which read as a stray
+                   button. A muted text button keeps the two actions a pair. -->
+              <button class="fs-empty-clear" data-action="widen-reset" @click="exitSearch">
+                {{ t('file.search.clearSearch') }}
+              </button>
+            </div>
+          </template>
+        </EmptyState>
       </template>
       <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('common.loading')" />
       <EmptyState
@@ -598,10 +644,11 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@/utils/path'
+import { skipReasonHint } from '@/utils/kbFormat'
 import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail, BookOpen } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail, BookOpen, Globe } from 'lucide-vue-next'
 import KBCollectionPickerDialog from '@/components/kb/KBCollectionPickerDialog.vue'
 import { kbAddByPath, kbImportDirectory, kbPreviewDirectory } from '@/composables/useKnowledgeBase'
 import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
@@ -1338,6 +1385,63 @@ const isRecursiveEffective = computed(() => search.effectiveRecursive.value)
  * so the extra path row would be redundant there.
  */
 const showResultPath = computed(() => searchHasQuery.value && isRecursiveEffective.value)
+
+/**
+ * Copy for the no-results state, stating the search that just came back empty.
+ *
+ * "No files found" on its own is true and useless: the user cannot tell whether
+ * the app looked at one folder or the whole project, so they cannot tell which
+ * way to widen. The description names the effective scope (directory / this
+ * directory and below / the whole project) and the scope line below offers the
+ * wider searches that are still available as one-tap actions.
+ *
+ * The copy names the search root explicitly (`baseName` from utils/path) even
+ * though the browsed directory is already in the header breadcrumb: the search
+ * may be rooted anywhere by the time the results arrive.
+ */
+const noResultsTitle = computed(() => t('file.search.noResultsTitle', { q: search.state.query.trim() }))
+
+const noResultsDesc = computed(() => {
+    if (isGlobalScope.value) return t('file.search.noResultsProject')
+    // At the project root `currentDir` is empty, so there is no folder name to
+    // quote: filling the placeholder with a generic word produced
+    // 「只在当前目录「在当前目录」里搜过了」. Those two scopes get their own copy.
+    const dir = baseName(props.currentDir)
+    if (isRecursiveEffective.value) {
+        return dir ? t('file.search.noResultsDeep', { dir }) : t('file.search.noResultsDeepRoot')
+    }
+    return dir ? t('file.search.noResultsHere', { dir }) : t('file.search.noResultsHereRoot')
+})
+
+/**
+ * The wider searches the empty state can offer, narrowest first. Each one is
+ * rendered as a button; the ones that are already in effect are omitted, so
+ * "no results" never shows a shortcut to the state the user is already in.
+ *
+ * Order is deliberate: "this directory and below" is one step wider than a flat
+ * current-directory search, the whole project is the last resort. Inside a
+ * global search there is nothing beyond the project, so the list is empty and
+ * the state offers only the "clear search" affordance.
+ */
+const widerSearches = computed(() => {
+    const out = []
+    if (isGlobalScope.value) return out
+    if (!isRecursiveEffective.value) {
+        out.push({
+            key: 'deep',
+            icon: FolderSearch,
+            label: t('file.search.widenRecursive', { dir: baseName(props.currentDir) || t('file.search.wordCurrent') }),
+            run: () => { search.state.recursive = true; refreshSearchResults() },
+        })
+    }
+    out.push({
+        key: 'global',
+        icon: Globe,
+        label: t('file.search.widenGlobal'),
+        run: () => { search.state.scope = 'global'; refreshSearchResults() },
+    })
+    return out
+})
 
 // Search-options description used as the search box placeholder (no separate
 // prompt prefix). Word order and spacing follow the active locale, matching
@@ -2793,11 +2897,20 @@ async function onKBPicked(collection) {
     const dirs = entries.filter(e => e.isDir)
     const files = entries.filter(e => !e.isDir)
     const totals = { added: 0, duplicates: 0, skipped: 0, failed: 0 }
+    const failed = []
+    const skipReasons = {}
+    const kbT = (key, named) => t(key, named ?? {})
+    const mergeInto = (target, src) => {
+        for (const [code, count] of Object.entries(src || {})) {
+            target[code] = (target[code] || 0) + count
+        }
+    }
+    const mergeSkipReasons = (src) => mergeInto(skipReasons, src)
 
     if (dirs.length) {
         // Folders are previewed first, exactly like in the knowledge base
         // panel: a big import should not start without its numbers.
-        const preview = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false }
+        const preview = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false, skip_reasons: {} }
         for (const dir of dirs) {
             try {
                 const p = await kbPreviewDirectory(collection.id, dir.path)
@@ -2806,12 +2919,15 @@ async function onKBPicked(collection) {
                 preview.skipped += p.skipped
                 preview.failed += p.failed
                 preview.truncated = preview.truncated || p.truncated
+                mergeInto(preview.skip_reasons, p.skip_reasons)
             } catch {
                 // The import below will surface the error with a real message.
                 preview.failed++
             }
         }
-        const ok = await dialog.confirm(t('kb.importPreviewMessage', preview), {
+        const hint = skipReasonHint(preview.skip_reasons, kbT)
+        const message = [t('kb.importPreviewMessage', preview), hint].filter(Boolean).join('\n\n')
+        const ok = await dialog.confirm(message, {
             title: t('kb.importPreviewTitle'),
             confirmText: t('kb.importContinue'),
         })
@@ -2822,8 +2938,11 @@ async function onKBPicked(collection) {
         try {
             await kbAddByPath(collection.id, file.path)
             totals.added++
-        } catch {
+        } catch (e) {
             totals.failed++
+            // Keep the server's reason: "1 failed" hides that a legacy .doc
+            // only needs saving as .docx.
+            failed.push(`${baseName(file.path)}: ${e instanceof Error ? e.message : String(e)}`)
         }
     }
     for (const dir of dirs) {
@@ -2833,23 +2952,52 @@ async function onKBPicked(collection) {
             totals.duplicates += res.duplicates
             totals.skipped += res.skipped
             totals.failed += res.failed
-        } catch {
+            mergeSkipReasons(res.skip_reasons)
+        } catch (e) {
             totals.failed++
+            failed.push(`${baseName(dir.path)}: ${e instanceof Error ? e.message : String(e)}`)
         }
     }
 
     if (totals.added > 0) startKBIndexWatch()
-    if (totals.added === 0 && totals.failed === 0) {
-        if (toast) toast.show(t('kb.dirImportEmpty'), { icon: 'warning', type: 'error', duration: 3000 })
-        return
-    }
     if (toast) {
-        toast.show(
-            totals.failed > 0 || totals.skipped > 0 || totals.duplicates > 0
-                ? t('kb.dirImportSummary', totals)
-                : t('kb.added'),
-            { icon: 'success', type: totals.failed > 0 ? 'error' : 'success', duration: 3200 },
-        )
+        const failureText = failed.length === 0
+            ? ''
+            : failed.length === 1
+                ? failed[0]
+                : t('kb.addPartial', { first: failed[0], count: failed.length - 1 })
+        // Only failures: the server's reason is the whole story ("1 failed"
+        // would hide that a legacy .doc just needs saving as .docx).
+        if (failureText && totals.added === 0 && totals.skipped === 0 && totals.duplicates === 0) {
+            toast.show(failureText, { icon: 'warning', type: 'error', duration: 4000 })
+            return
+        }
+        if (totals.added === 0 && totals.failed === 0) {
+            const hint = skipReasonHint(skipReasons, kbT)
+            toast.show(hint || t('kb.dirImportEmpty'), { icon: 'warning', type: 'error', duration: 3000 })
+            return
+        }
+        // One toast: show() replaces the visible message, so a second call
+        // would silently drop the summary. A single successful file needs no
+        // counts; a folder or a mixed batch does.
+        const parts = []
+        if (dirs.length > 0 || totals.added > 0) {
+            parts.push(
+                totals.failed > 0 || totals.skipped > 0 || totals.duplicates > 0
+                    ? t('kb.dirImportSummary', totals)
+                    : t('kb.added'),
+            )
+        }
+        if (failureText) parts.push(failureText)
+        if (totals.skipped > 0) {
+            const hint = skipReasonHint(skipReasons, kbT)
+            if (hint) parts.push(hint)
+        }
+        toast.show(parts.join('\n\n'), {
+            icon: totals.failed > 0 || totals.skipped > 0 ? 'warning' : 'success',
+            type: totals.failed > 0 ? 'error' : 'success',
+            duration: 3200,
+        })
     }
 }
 
@@ -3692,10 +3840,33 @@ function scrollSelectedIntoView(path) {
 .fs-empty-actions {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     justify-content: center;
     /* Same gap as the shared footer rows (`.bs-footer`), so a pair of pills
        here is spaced like a pair of pills anywhere else. */
     gap: var(--space-4);
+}
+
+/* Escape hatch in the search empty state: clearing the query is not one of the
+   widening actions, so it stays a text button instead of a third pill. Muted
+   and underlined, it reads as "or get out of here" rather than as another
+   equally-weighted choice. */
+.fs-empty-clear {
+    /* Its own line, always: on a phone the two pills plus a third item filled
+       the row edge to edge, and an inline link read as a leftover. */
+    flex-basis: 100%;
+    padding: var(--space-2) var(--space-3);
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-decoration: underline;
+    text-underline-offset: calc(2 * var(--dp));
+    cursor: pointer;
+}
+
+.fs-empty-clear:hover {
+    color: var(--text-secondary);
 }
 
 /* The paste row names the directory it will land in, and directory names have

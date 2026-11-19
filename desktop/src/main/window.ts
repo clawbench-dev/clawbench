@@ -21,6 +21,7 @@ import { shouldUseFramelessWindow } from './windowChrome'
 import { cancelPendingQuit, handleCloseRequest, isAppQuitting, noteOsShutdown } from './closeFlow'
 import { isEmbeddedServerActive, isEmbeddedServerUrl } from './localServer'
 import { embeddedServerLabels } from './labels'
+import { record } from './clientLog'
 import { boundsToPersist, resolveStartupBounds, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, type WindowBounds } from './windowGeometry'
 import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
 
@@ -235,6 +236,29 @@ function registerKeyboardShortcuts(webContents: Electron.WebContents): void {
 }
 
 /**
+ * Make sure a prompt owned by this window can actually be seen.
+ *
+ * `will-prevent-unload` is also reached from the tray's "Quit", and by then the
+ * window is usually hidden or minimized — that is the state the tray exists for.
+ * A modal dialog owned by an invisible window is a dialog nobody can answer, and
+ * because the handler below is synchronous the main process would stay blocked
+ * for the rest of the app's life: the close button and the tray's "Quit" both
+ * look dead (the tray menu still opens, since it is drawn by the OS, but the
+ * click is queued behind the blocked JS and never runs). Bringing the window
+ * back first turns that deadlock into an ordinary question.
+ */
+function revealForPrompt(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  try {
+    if (win.isMinimized()) win.restore()
+    if (!win.isVisible()) win.show()
+    win.focus()
+  } catch {
+    /* the window is going away; the dialog below is still worth asking */
+  }
+}
+
+/**
  * Turn a prevented unload into a real question.
  *
  * The renderer cancels `beforeunload` while a meeting is publishing, because the
@@ -248,6 +272,8 @@ function registerKeyboardShortcuts(webContents: Electron.WebContents): void {
  */
 function registerUnloadGuard(win: BrowserWindow): void {
   win.webContents.on('will-prevent-unload', (event) => {
+    record('W', 'Unload', 'the page vetoed the unload — asking whether to leave')
+    revealForPrompt(win)
     const labels = unloadGuardLabels(resolveNativeLanguage())
     const choice = dialog.showMessageBoxSync(win, {
       type: 'warning',
@@ -261,11 +287,13 @@ function registerUnloadGuard(win: BrowserWindow): void {
       detail: labels.detail,
     })
     if (choice === 0) {
+      record('I', 'Unload', 'user chose to leave — the unload proceeds')
       // For `will-prevent-unload`, `preventDefault` means "ignore the
       // renderer's veto and unload anyway" — i.e. the user chose to leave.
       event.preventDefault()
       return
     }
+    record('I', 'Unload', 'user chose to stay — the quit is cancelled')
     // The window refused to close, which also aborts whatever quit started this
     // close. Clearing the flag is what makes the NEXT close ask again instead of
     // quitting outright — the very decision the user just declined.

@@ -107,31 +107,96 @@ watch(activeId, () => {
     })
 })
 
-watch([() => props.file, () => props.file?.content, () => props.pdfOutline], ([file, content, pdfOut], _, onCleanup) => {
-    let cancelled = false
-    onCleanup(() => { cancelled = true })
+// ── Outline sources ──
+// The panel is mounted by several hosts (inline dock, bottom drawer) that do
+// not know which editing mode the viewer is in, so the visual editor is
+// detected from the DOM: its host carries `data-file-path` and contains a
+// `.ProseMirror` surface, exactly like the rendered preview carries its own
+// container. When it is on screen, the live editor DOM — not the saved
+// markdown — is the outline source.
 
-    // PDF outline
-    if (file && pdfOut && pdfOut.length > 0) {
-        isPdfOutline.value = true
-        isCode.value = false
-        toc.value = pdfOut
-        activeId.value = toc.value[0]?.id || ''
-        searchQuery.value = ''
-        filteredToc.value = toc.value
-        loading.value = false
-        return
+/** The live ProseMirror surface of THIS file, when the visual editor owns the view. */
+function visualEditorRoot() {
+    const filePath = props.file?.path
+    if (!filePath) return null
+    for (const c of document.querySelectorAll(`[data-file-path="${escAttr(filePath)}"]`)) {
+        if (!(c instanceof HTMLElement)) continue
+        const pm = c.querySelector('.ProseMirror')
+        if (pm instanceof HTMLElement) return pm
     }
-    isPdfOutline.value = false
+    return null
+}
 
-    // Text-based TOC
-    if (!content) {
+/** Whether the outline currently comes from the visual editor's DOM. */
+let visualMode = false
+/** Heading signature of the last visual rebuild — skips no-op re-renders. */
+let visualSignature = null
+/** Sequence number that invalidates in-flight source extractions. */
+let sourceTocSeq = 0
+
+function filterItems(items) {
+    const query = searchQuery.value.toLowerCase().trim()
+    return query ? items.filter(item => item.text.toLowerCase().includes(query)) : items
+}
+
+/**
+ * Outline straight from the visual editor's DOM. Rendered headings are read
+ * (instead of the saved text) so the list tracks unsaved edits, and the ids
+ * come from the editor's own anchor decorations, so a click always finds its
+ * target. Returns false when the visual editor is not on screen.
+ */
+function applyVisualToc() {
+    const root = visualEditorRoot()
+    if (!root) return false
+    const items = []
+    root.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(el => {
+        if (!el.id) return
+        items.push({ level: Number(el.tagName.charAt(1)), text: (el.textContent || '').trim(), id: el.id, line: 0 })
+    })
+    // A fresh entry (not just a re-render) always re-reads the outline, and
+    // invalidates any source extraction still in flight — it would otherwise
+    // land after this and overwrite the live outline with stale text.
+    if (!visualMode) {
+        visualSignature = null
+        sourceTocSeq++
+    }
+    visualMode = true
+    isPdfOutline.value = false
+    isCode.value = false
+    loading.value = false
+    // Typing mutates the editor DOM on every keystroke. Only rebuild when the
+    // outline actually changed — re-assigning `toc` re-renders the list, whose
+    // own mutation record would otherwise schedule another rebuild forever.
+    const signature = items.map(item => `${item.level}\u0000${item.id}\u0000${item.text}`).join('\u0001')
+    if (signature !== visualSignature) {
+        visualSignature = signature
+        toc.value = items
+        if (!items.some(item => item.id === activeId.value)) activeId.value = items[0]?.id || ''
+        filteredToc.value = filterItems(items)
+    }
+    return true
+}
+
+/** The visual editor left the view: go back to the source-text outline. */
+function leaveVisualToc() {
+    visualMode = false
+    visualSignature = null
+    const file = props.file
+    if (file && typeof file.content === 'string' && file.content !== '') {
+        loadSourceToc(file, file.content)
+    } else {
         toc.value = []
         filteredToc.value = []
         isCode.value = false
         loading.value = false
-        return
     }
+}
+
+/** Source-text outline: markdown headings, or code symbols from the backend. */
+function loadSourceToc(file, content) {
+    const seq = ++sourceTocSeq
+    const cancelled = () => seq !== sourceTocSeq
+
     const lang = getFileType(file.name)?.lang || 'plaintext'
     isCode.value = lang !== 'markdown'
 
@@ -143,7 +208,7 @@ watch([() => props.file, () => props.file?.content, () => props.pdfOutline], ([f
     if (file?.path && !editorDirty) {
         loading.value = true
         fetchCodeSymbols(file.path).then(result => {
-            if (cancelled) return
+            if (cancelled()) return
             if (result && result.symbols.length > 0) {
                 // Convert backend symbols to TocItem format
                 // Deduplicate heading IDs to match markedConfig.ts logic
@@ -187,25 +252,54 @@ watch([() => props.file, () => props.file?.content, () => props.pdfOutline], ([f
                 toc.value = extractToc(content, lang)
             }
             activeId.value = toc.value[0]?.id || ''
-            searchQuery.value = ''
-            filteredToc.value = toc.value
+            filteredToc.value = filterItems(toc.value)
             loading.value = false
         }).catch(() => {
-            if (cancelled) return
+            if (cancelled()) return
             // Fallback to regex-based extraction on error
             toc.value = extractToc(content, lang)
             activeId.value = toc.value[0]?.id || ''
-            searchQuery.value = ''
-            filteredToc.value = toc.value
+            filteredToc.value = filterItems(toc.value)
             loading.value = false
         })
     } else {
         loading.value = false
         toc.value = extractToc(content, lang)
         activeId.value = toc.value[0]?.id || ''
+        filteredToc.value = filterItems(toc.value)
+    }
+}
+
+watch([() => props.file, () => props.file?.content, () => props.pdfOutline], ([file, content, pdfOut]) => {
+    // PDF outline
+    if (file && pdfOut && pdfOut.length > 0) {
+        isPdfOutline.value = true
+        isCode.value = false
+        toc.value = pdfOut
+        activeId.value = toc.value[0]?.id || ''
         searchQuery.value = ''
         filteredToc.value = toc.value
+        loading.value = false
+        return
     }
+    isPdfOutline.value = false
+
+    // The visual editor owns the view: its live DOM is the outline.
+    if (applyVisualToc()) return
+    // Not the visual editor: any outline sourced from it is stale.
+    visualMode = false
+    visualSignature = null
+
+    // Text-based TOC
+    if (!content) {
+        toc.value = []
+        filteredToc.value = []
+        isCode.value = false
+        loading.value = false
+        return
+    }
+    searchQuery.value = ''
+    loadSourceToc(file, content)
 }, { immediate: true })
 
 watch(searchQuery, () => handleSearch())
@@ -232,14 +326,7 @@ function scrollActiveIntoView(index) {
 watch(filteredToc, () => listNav.reset())
 
 function handleSearch() {
-    const query = searchQuery.value.toLowerCase().trim()
-    if (!query) {
-        filteredToc.value = toc.value
-        return
-    }
-    filteredToc.value = toc.value.filter(item =>
-        item.text.toLowerCase().includes(query)
-    )
+    filteredToc.value = filterItems(toc.value)
 }
 
 function clearSearch() {
@@ -416,8 +503,14 @@ function setupObserver() {
                     }
                 }
             }, { rootMargin: '-60px 0px -70% 0px' })
+            // Scope to THIS file's container when it exposes one (the markdown
+            // preview and the visual editor both do): a duplicate slug in a
+            // stacked container would otherwise be observed by mistake.
+            const container = fileContainer()
             toc.value.forEach(item => {
-                const el = document.getElementById(item.id)
+                const el = container
+                    ? container.querySelector(`#${escId(item.id)}`)
+                    : document.getElementById(item.id)
                 if (el) observer.observe(el)
             })
         }
@@ -453,12 +546,16 @@ function onEditorViewportLine(e) {
     if (match) activeId.value = match.id
 }
 
-// ── Markdown preview DOM-rebuild tracking ──
+// ── Rendered-content DOM-rebuild tracking ──
 // When the user toggles between rendered preview and source/code view,
 // MarkdownPreview is unmounted and re-mounted, rebuilding the heading DOM. The
 // IntersectionObserver holds references to the OLD (detached) elements, so it
 // silently stops following scroll. A body-level MutationObserver re-runs
-// setupObserver() when the .markdown-body tree is replaced.
+// setupObserver() when the tree is replaced.
+//
+// The visual editor needs the same watch for its outline: it mounts
+// asynchronously, re-renders while the user types, and unmounts on exit — each
+// of those is a DOM mutation this observer sees.
 let domObserver = null
 let domObserverTimer = 0
 function ensureDomObserver() {
@@ -470,9 +567,14 @@ function ensureDomObserver() {
         if (domObserverTimer) return
         domObserverTimer = setTimeout(() => {
             domObserverTimer = 0
-            // Only non-CodeMirror content (markdown rendered preview) uses
-            // heading-DOM observation.
-            if (!props.codeView && !isPdfOutline.value) setupObserver()
+            // The visual editor went away (exit / switch to source): its
+            // outline is no longer authoritative, re-derive from the text.
+            if (visualMode && !visualEditorRoot()) leaveVisualToc()
+            // Only non-CodeMirror content uses heading-DOM observation.
+            if (!props.codeView && !isPdfOutline.value) {
+                applyVisualToc()
+                setupObserver()
+            }
         }, 50)
     })
     domObserver.observe(document.body, { childList: true, subtree: true })

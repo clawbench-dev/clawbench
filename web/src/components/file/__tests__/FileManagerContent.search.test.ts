@@ -270,6 +270,111 @@ describe('FileManagerContent — resident search', () => {
     expect(wrapper.find('.file-meta').exists()).toBe(true)
   })
 
+  describe('no-results empty state', () => {
+    /** Mount with a query that produced nothing, and hand back the empty block. */
+    async function mountEmpty(props = {}, state = {}) {
+      Object.assign(mocks.searchState, { query: 'main', results: [], searching: false }, state)
+      const wrapper = mountContent(props)
+      await nextTick()
+      return wrapper
+    }
+
+    it('names the query and states the scope it searched', async () => {
+      const wrapper = await mountEmpty({ currentDir: 'src/components' })
+      const empty = wrapper.find('[data-role="file-search-empty"]')
+      expect(empty.exists()).toBe(true)
+      // "No files found" alone never says which folder was searched, so the user
+      // cannot tell which direction to widen.
+      expect(empty.text()).toContain('没有找到“main”')
+      expect(empty.text()).toContain('「components」')
+    })
+
+    it('states the scope without a folder name at the project root', async () => {
+      // At the root `currentDir` is empty. Filling the placeholder with a
+      // generic word produced 「只在当前目录「在当前目录」里搜过了」, which is what
+      // this guards: the scope is said once, with no empty or duplicated quote.
+      const wrapper = await mountEmpty({ currentDir: '' })
+      const text = wrapper.find('[data-role="file-search-empty"]').text()
+      expect(text).toContain('只在当前目录里搜过了')
+      expect(text).not.toContain('「')
+      expect(text).not.toContain('当前目录「在当前目录」')
+    })
+
+    it('says the whole project was searched under global scope', async () => {
+      const wrapper = await mountEmpty({ currentDir: 'src' }, { scope: 'global' })
+      const empty = wrapper.find('[data-role="file-search-empty"]')
+      expect(empty.text()).toContain('在整个项目里搜过了')
+    })
+
+    it('says subfolders were included under recursive scope', async () => {
+      const wrapper = await mountEmpty({ currentDir: 'src' }, { recursive: true })
+      const empty = wrapper.find('[data-role="file-search-empty"]')
+      expect(empty.text()).toContain('及子目录')
+    })
+
+    it('offers recursive and project-wide search from a flat current-directory search', async () => {
+      const wrapper = await mountEmpty({ currentDir: 'src' })
+      const actions = wrapper.findAll('[data-role="file-search-empty"] [data-action]')
+      expect(actions.map(a => a.attributes('data-action'))).toEqual(['widen-deep', 'widen-global', 'widen-reset'])
+    })
+
+    it('does not offer recursive search when it is already on', async () => {
+      const wrapper = await mountEmpty({ currentDir: 'src' }, { recursive: true })
+      const actions = wrapper.findAll('[data-role="file-search-empty"] [data-action]')
+      // A shortcut to the state already in effect would be a no-op button.
+      expect(actions.map(a => a.attributes('data-action'))).toEqual(['widen-global', 'widen-reset'])
+    })
+
+    it('offers no widening once the whole project has been searched', async () => {
+      const wrapper = await mountEmpty({ currentDir: 'src' }, { scope: 'global' })
+      const actions = wrapper.findAll('[data-role="file-search-empty"] [data-action]')
+      // Nothing is wider than the project — only the way back out.
+      expect(actions.map(a => a.attributes('data-action'))).toEqual(['widen-reset'])
+    })
+
+    it('widening re-runs the search with the wider scope', async () => {
+      const wrapper = await mountEmpty({ currentDir: 'src' })
+      const before = mocks.mockSearchStart.mock.calls.length
+      await wrapper.find('[data-role="file-search-empty"] [data-action="widen-global"]').trigger('click')
+      expect(mocks.searchState.scope).toBe('global')
+      expect(mocks.mockSearchStart.mock.calls.length).toBe(before + 1)
+    })
+
+    it('recursive widening turns recursion on and keeps the scope', async () => {
+      const wrapper = await mountEmpty({ currentDir: 'src' })
+      await wrapper.find('[data-role="file-search-empty"] [data-action="widen-deep"]').trigger('click')
+      expect(mocks.searchState.recursive).toBe(true)
+      expect(mocks.searchState.scope).toBe('current')
+    })
+
+    it('renders clearing as a text button, not a third pill', async () => {
+      // Three equally-weighted pills read as three choices; clearing is the way
+      // out, so it must not look like a third widening.
+      const wrapper = await mountEmpty({ currentDir: 'src' })
+      const clear = wrapper.find('[data-role="file-search-empty"] [data-action="widen-reset"]')
+      expect(clear.classes()).toContain('fs-empty-clear')
+      expect(clear.classes()).not.toContain('fbtn')
+      for (const widen of wrapper.findAll('[data-role="file-search-empty"] [data-action^="widen-"]')) {
+        if (widen.attributes('data-action') === 'widen-reset') continue
+        expect(widen.classes()).toContain('fbtn')
+      }
+    })
+
+    it('hides the result count when nothing matched', async () => {
+      // 「找到 0 个文件」 above an empty state that already says so was a second
+      // headline for the same fact.
+      const wrapper = await mountEmpty({ currentDir: 'src' }, { total: 0 })
+      expect(wrapper.find('.fs-results-count').exists()).toBe(false)
+    })
+
+    it('clearing drops the query and the result layer', async () => {
+      const wrapper = await mountEmpty({ currentDir: 'src' })
+      await wrapper.find('[data-role="file-search-empty"] [data-action="widen-reset"]').trigger('click')
+      expect(wrapper.vm.searchActive).toBe(false)
+      expect(mocks.searchState.query).toBe('')
+    })
+  })
+
   it('double-clicking a file result emits selectFile and keeps the query', async () => {
     mocks.mockIsTouchPrimary.value = false
     mocks.searchState.query = 'main'

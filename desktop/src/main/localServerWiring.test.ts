@@ -110,6 +110,46 @@ describe('the built-in server is not a saved row', () => {
   })
 })
 
+describe('a failed start does not poison every later attempt', () => {
+  it('stops the server a previous attempt left running, and clears the stopping flag', () => {
+    // Retrying from the login page used to spawn a SECOND server while the first
+    // one still held the data-directory lock: the new one waited out the 30s lock
+    // window and failed too, so "cannot connect" stuck until the app was killed.
+    const src = readRepoFile(LOCAL_SERVER)
+    const fn = src.match(/export async function startEmbeddedServer\(\)[\s\S]*?\n\}/)
+    expect(fn, 'startEmbeddedServer not found').not.toBeNull()
+    expect(fn![0]).toContain('if (child) stopEmbeddedServer()')
+    expect(fn![0]).toContain('stopping = false')
+  })
+
+  it('stops the spawned server when the start fails', () => {
+    // Same leak from the other side: a timeout left the child running, and the
+    // child is exactly what holds the lock.
+    const src = readRepoFile(LOCAL_SERVER)
+    const fn = src.match(/export async function startEmbeddedServer\(\)[\s\S]*?\n\}/)
+    expect(fn, 'startEmbeddedServer not found').not.toBeNull()
+    expect(fn![0]).toContain('await waitForHealth(port)')
+    expect(fn![0]).toMatch(/catch \(err\) \{[\s\S]*?stopEmbeddedServer\(\)[\s\S]*?throw err/)
+  })
+})
+
+describe('the server outlives an aborted quit', () => {
+  it('stops it on will-quit, never on before-quit', () => {
+    // `before-quit` runs even when the quit is then aborted (the renderer vetoes
+    // the unload while a meeting is publishing and the user stays). Stopping the
+    // server there left a live app with a dead backend — "cannot connect", and a
+    // relaunch only revealed the same window because of the single-instance
+    // lock.
+    const src = readRepoFile('desktop/src/main/index.ts')
+    const willQuit = src.match(/app\.on\('will-quit',[\s\S]*?\n\}\)/)
+    expect(willQuit, 'will-quit handler not found').not.toBeNull()
+    expect(willQuit![0]).toContain('stopEmbeddedServer()')
+
+    const beforeQuit = src.match(/app\.on\('before-quit',[\s\S]*?\n\}\)/)
+    if (beforeQuit) expect(beforeQuit[0]).not.toContain('stopEmbeddedServer()')
+  })
+})
+
 describe('built-in detection keys on the address', () => {
   it('does not gate the version check on "a built-in server is running"', () => {
     const src = readRepoFile(WINDOW)
@@ -155,12 +195,27 @@ describe('a thin client does not start a server it does not ship', () => {
 
   it('still starts the bundled server when the build ships one', () => {
     // The other direction of the same guard: a fused install must keep starting
-    // its server, and a real failure there must still be reported.
+    // its server, and a real failure there must still be reported. Asserted by
+    // position, not mere presence — `if (hasEmbeddedServerBinary()) return`
+    // would pass a plain `toContain` while turning every fused install into a
+    // thin one, and a `startEmbeddedServer()` buried in dead code would too.
     const src = readRepoFile('desktop/src/main/index.ts')
     const fn = src.match(/async function startEmbeddedServerIfPresent\(\)[\s\S]*?\n\}/)
     expect(fn, 'startEmbeddedServerIfPresent not found').not.toBeNull()
-    expect(fn![0]).toContain('await startEmbeddedServer()')
-    expect(fn![0]).toContain('showMessageBox')
+    const body = fn![0]
+
+    // Bails out when the binary is MISSING, never when it is present.
+    expect(body).toMatch(/if \(!hasEmbeddedServerBinary\(\)\) return/)
+    expect(body).not.toMatch(/if \(hasEmbeddedServerBinary\(\)\) return/)
+
+    // The start still runs, inside the try whose catch reports the failure.
+    const tryAt = body.indexOf('try {')
+    const startAt = body.indexOf('await startEmbeddedServer()')
+    const catchAt = body.indexOf('catch (err)')
+    expect(tryAt).toBeGreaterThan(-1)
+    expect(startAt).toBeGreaterThan(tryAt)
+    expect(catchAt).toBeGreaterThan(startAt)
+    expect(body.slice(catchAt)).toContain('showMessageBox')
   })
 })
 

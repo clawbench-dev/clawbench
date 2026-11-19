@@ -687,6 +687,7 @@ import {
   documentErrorText,
   formatLocation,
   formatSize,
+  skipReasonHint,
   statusKind,
   statusLabel,
   type TFn,
@@ -1492,12 +1493,25 @@ async function submitAdd(entries: FileEntry[]): Promise<void> {
   // Files and folders are counted together so one confirmation reads as one
   // outcome, whichever mix the user picked.
   const totals = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false }
+  const skipReasons: Record<string, number> = {}
+  const mergeSkipReasons = (src?: Record<string, number>): void => {
+    for (const [code, count] of Object.entries(src || {})) {
+      skipReasons[code] = (skipReasons[code] || 0) + count
+    }
+  }
   try {
     // Preview folders before pulling them in: a 500-file import is not
     // something to start without knowing what will be skipped. A failed
     // preview is advisory only — the real import reports its own errors.
     if (dirs.length > 0) {
-      const preview = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false }
+      const preview: {
+        added: number
+        duplicates: number
+        skipped: number
+        failed: number
+        truncated: boolean
+        skip_reasons: Record<string, number>
+      } = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false, skip_reasons: {} }
       let previewed = false
       for (const dir of dirs) {
         try {
@@ -1507,24 +1521,28 @@ async function submitAdd(entries: FileEntry[]): Promise<void> {
           preview.skipped += p.skipped
           preview.failed += p.failed
           preview.truncated = preview.truncated || p.truncated
+          for (const [code, count] of Object.entries(p.skip_reasons || {})) {
+            preview.skip_reasons[code] = (preview.skip_reasons[code] || 0) + count
+          }
           previewed = true
         } catch {
           // The import below will surface the same error with a real message.
         }
       }
       if (previewed) {
+        const hint = skipReasonHint(preview.skip_reasons, tf)
         if (preview.added === 0) {
           closeAdd()
           toast.show(
-            preview.duplicates > 0 ? t('kb.dirImportAllDuplicates') : t('kb.dirImportEmpty'),
+            hint || (preview.duplicates > 0 ? t('kb.dirImportAllDuplicates') : t('kb.dirImportEmpty')),
             { icon: 'warning', type: 'error', duration: 3200 },
           )
           return
         }
-        const message = preview.truncated
-          ? `${t('kb.importPreviewMessage', preview)}\n\n${t('kb.importPreviewTruncated')}`
-          : t('kb.importPreviewMessage', preview)
-        const ok = await dialog.confirm(message, {
+        const parts = [t('kb.importPreviewMessage', preview)]
+        if (preview.truncated) parts.push(t('kb.importPreviewTruncated'))
+        if (hint) parts.push(hint)
+        const ok = await dialog.confirm(parts.join('\n\n'), {
           title: t('kb.importPreviewTitle'),
           confirmText: t('kb.importContinue'),
         })
@@ -1551,6 +1569,7 @@ async function submitAdd(entries: FileEntry[]): Promise<void> {
         totals.skipped += res.skipped
         totals.failed += res.failed
         totals.truncated = totals.truncated || res.truncated
+        mergeSkipReasons(res.skip_reasons)
       } catch (e) {
         totals.failed++
         failed.push(`${baseName(dir.path)}: ${e instanceof Error ? e.message : String(e)}`)
@@ -1571,10 +1590,16 @@ async function submitAdd(entries: FileEntry[]): Promise<void> {
       toast.show(t('kb.dirImportEmpty'), { icon: 'warning', type: 'error', duration: 3200 })
       return
     }
-    toast.show(
-      messy ? t('kb.dirImportSummary', totals) : t('kb.dirImportDone', totals),
-      { type: totals.added > 0 && totals.failed === 0 ? 'success' : 'error', duration: 4000 },
-    )
+    // "3 skipped" does not tell the user a legacy .doc only needs saving as
+    // .docx; name the dominant reason. Fold it into the same toast because
+    // show() replaces the visible message.
+    const hint = skipReasonHint(skipReasons, tf)
+    const parts = [messy ? t('kb.dirImportSummary', totals) : t('kb.dirImportDone', totals)]
+    if (hint) parts.push(hint)
+    toast.show(parts.join('\n\n'), {
+      type: totals.added > 0 && totals.failed === 0 ? 'success' : 'error',
+      duration: 4000,
+    })
     if (totals.truncated) {
       toast.show(t('kb.dirImportTruncated'), { icon: 'warning', type: 'error', duration: 4000 })
     }

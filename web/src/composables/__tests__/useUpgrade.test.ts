@@ -82,6 +82,7 @@ vi.mock('@/utils/clawbenchNative', () => ({
   getNative: (...args: any[]) => mockGetNative(...args),
 }))
 
+
 vi.mock('@/utils/version', () => ({
   compareVersions: (a: string, b: string) => {
     // Simple mock: strip v prefix and compare
@@ -585,22 +586,93 @@ describe('useUpgrade', () => {
   // ── managed by the desktop app ──
 
   describe('managedByEmbedder', () => {
-    it('is set from the check response, so later checks are skipped locally', async () => {
+    it('offers the all-in-one package instead of the server-only upgrade', async () => {
       mockApiGet.mockResolvedValue({
         current_version: 'v1.0.0',
         latest_version: 'v1.1.0',
         has_upgrade: true,
         managed: true,
+        fused_downloads: { 'win32-x64': ['https://example.test/fused.zip'] },
       })
+      mockGetNative.mockReturnValue({ installFusedUpdate: vi.fn() })
       const upgrade = useUpgrade()
       await upgrade.checkUpgrade()
-      expect(managedByEmbedder.value).toBe(true)
 
-      // The server refuses /api/upgrade/start under the app, so the prompt must
-      // not even ask again.
-      mockApiGet.mockClear()
-      expect(await upgrade.checkForUpgradePrompt()).toBeNull()
-      expect(mockApiGet).not.toHaveBeenCalled()
+      expect(managedByEmbedder.value).toBe(true)
+      expect(upgrade.hasUpgrade.value).toBe(true)
+      expect(upgrade.fusedDownloads.value).toEqual({ 'win32-x64': ['https://example.test/fused.zip'] })
+      // The prompt still appears; the upgrade it starts is the package install.
+      expect(await upgrade.checkForUpgradePrompt()).toBe('v1.1.0')
+    })
+
+    it('offers nothing when the release has no package for this platform', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        managed: true,
+        fused_downloads: {},
+      })
+      mockGetNative.mockReturnValue({ installFusedUpdate: vi.fn() })
+      const upgrade = useUpgrade()
+      await upgrade.checkUpgrade()
+
+      expect(upgrade.hasUpgrade.value).toBe(false)
+    })
+
+    it('offers nothing on a desktop build without the package-install bridge', async () => {
+      // The feature ships with the SERVER, so a fused install on an older shell
+      // can receive the response but cannot act on it.
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        managed: true,
+        fused_downloads: { 'win32-x64': ['https://example.test/fused.zip'] },
+      })
+      mockGetNative.mockReturnValue({})
+      const upgrade = useUpgrade()
+      await upgrade.checkUpgrade()
+
+      expect(upgrade.hasUpgrade.value).toBe(false)
+    })
+
+    it('starts the package install through the shell, never /api/upgrade/start', async () => {
+      // A managed server refuses /api/upgrade/start (403): it must never even
+      // be attempted for a fused install.
+      const installFusedUpdate = vi.fn(async () => ({ ok: true, error: '' }))
+      mockGetNative.mockReturnValue({ installFusedUpdate })
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        managed: true,
+        fused_downloads: { 'win32-x64': ['https://example.test/fused.zip'] },
+      })
+      const upgrade = useUpgrade()
+      await upgrade.startUpgrade()
+
+      expect(installFusedUpdate).toHaveBeenCalledWith('v1.1.0', { 'win32-x64': ['https://example.test/fused.zip'] })
+      expect(mockApiPost).not.toHaveBeenCalled()
+      expect(upgrade.installingFused.value).toBe(false)
+    })
+
+    it('surfaces a package-install failure on the dialog', async () => {
+      mockGetNative.mockReturnValue({
+        installFusedUpdate: vi.fn(async () => ({ ok: false, error: 'mirror unreachable' })),
+      })
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        managed: true,
+        fused_downloads: { 'win32-x64': ['https://example.test/fused.zip'] },
+      })
+      const upgrade = useUpgrade()
+      await upgrade.startUpgrade()
+
+      expect(upgrade.state.phase).toBe('failed')
+      expect(upgrade.state.error).toBe('mirror unreachable')
     })
 
     it('stays false on a server that updates itself', async () => {

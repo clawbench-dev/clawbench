@@ -70,6 +70,29 @@ describe('MilkdownEditor', () => {
         wrapper.unmount()
     })
 
+    it('stamps heading anchor ids so the TOC can jump to them', async () => {
+        const wrapper = mountEditor('# 标题\n\n## 小节\n\n## 小节\n\n### !!!\n')
+        await waitForEditor(wrapper)
+
+        const ids = wrapper
+            .findAll('.ProseMirror h1, .ProseMirror h2, .ProseMirror h3')
+            .map((el) => el.attributes('id'))
+        // Same slug + `-2` dedupe as the rendered preview; a heading whose text
+        // slugifies to nothing still gets a usable anchor.
+        expect(ids).toEqual(['标题', '小节', '小节-2', 'heading-1'])
+
+        wrapper.unmount()
+    })
+
+    it('exposes its file path on the host so the TOC can scope to this file', async () => {
+        const wrapper = mountEditor('# Title\n', { path: '/docs/notes.md' })
+        await waitForEditor(wrapper)
+
+        expect(wrapper.find('.md-editor-host').attributes('data-file-path')).toBe('/docs/notes.md')
+
+        wrapper.unmount()
+    })
+
     it('starts clean and serializes the document back to markdown', async () => {
         const source = '# Title\n\nSome **bold** text.\n'
         const wrapper = mountEditor(source)

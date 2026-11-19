@@ -47,6 +47,11 @@ var allowedCJKFiles = map[string]string{
 	// user's language; the instruction text itself is authored in Chinese and
 	// is not rendered to any user.
 	"internal/service/group_prompt.go": "group-chat AI system prompts (host/member/free)",
+	// The CPU-baseline reason names the missing CPU flags. It is deliberately
+	// untranslated: the upgrade error it is embedded in has an English prefix
+	// and only appears when the downloaded binary cannot run on this machine at
+	// all, so the flags are the actionable part.
+	"internal/platform/upgrade_cpu.go": "CPU-baseline diagnostic: missing CPU flag names, embedded in an English upgrade error",
 	"internal/service/group_inject.go": "AI context-injection framing ([系统]/主持人… lines)",
 	// Fork background rendering: the group timeline is replayed to the model as
 	// prose. Its literals are AI-facing — the speaker fallback label for an

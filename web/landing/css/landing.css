@@ -1175,6 +1175,495 @@ main {
   letter-spacing: 0.02em;
 }
 
+/* 卡片备注用来讲清两张 Windows 卡的区别：同名同壳，不写清楚就只能靠
+   用户猜哪个自带服务端。 */
+.dl-card-note {
+  margin: 0;
+  color: var(--fg-faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── 客户端下载（第二步）────────────────────────────────────
+   分开装时那一栏是瘦客户端，一体化时是一体包，各自单列铺满。 */
+#step-client > .dl-grid {
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.dl-card-hero {
+  position: relative;
+  gap: 10px;
+  padding: 18px;
+  border-color: var(--line-strong);
+}
+
+.dl-card-hero .dl-name {
+  font-size: 15px;
+}
+
+.dl-card-hero .dl-chip {
+  height: 36px;
+  padding: 0 18px;
+  font-size: 13px;
+}
+
+/* 推荐方案：一体包是「不想折腾服务端」的默认答案，用主色描边和底色
+   让它排在视线里第一个被读到——它靠右，眼睛先扫到左边再落下。 */
+.dl-card-accent {
+  border-color: rgba(254, 128, 25, 0.45);
+  background: linear-gradient(
+    180deg,
+    rgba(254, 128, 25, 0.07),
+    rgba(254, 128, 25, 0.02)
+  );
+}
+
+.dl-card-accent:hover {
+  border-color: rgba(254, 128, 25, 0.6);
+  background: linear-gradient(
+    180deg,
+    rgba(254, 128, 25, 0.1),
+    rgba(254, 128, 25, 0.03)
+  );
+}
+
+.dl-card-accent .dl-chip {
+  border-color: rgba(254, 128, 25, 0.45);
+  background: rgba(254, 128, 25, 0.1);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.dl-badge {
+  position: absolute;
+  top: -9px;
+  right: 14px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1a1206;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* 「其他平台」折叠区：默认收起，只露一行按钮 */
+.dl-more {
+  margin-top: 12px;
+}
+
+.dl-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.25s, color 0.25s, background 0.25s;
+}
+
+.dl-more-btn:hover {
+  border-color: rgba(254, 128, 25, 0.45);
+  background: var(--bg-card);
+  color: var(--fg);
+}
+
+.dl-more-caret {
+  transition: transform 0.25s;
+}
+
+.dl-more-btn[aria-expanded='true'] .dl-more-caret {
+  transform: rotate(180deg);
+}
+
+.dl-more > .dl-grid {
+  margin-top: 10px;
+}
+
+/* 当前平台的卡：访客不必在自己用不上的系统里挑。只加一层描边强调，
+   不隐藏其他平台——折叠区本来就已经按需展开了。 */
+.dl-card[data-os].is-current {
+  border-color: rgba(254, 128, 25, 0.28);
+}
+
+/* ── 安装方式选择（向导第一步）──────────────────────────────── */
+.mode-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.mode-card {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--fg);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.25s, background 0.25s;
+}
+
+/* 大图标：卡片左侧一块，右侧文字整体占满剩余宽度。
+   用 flex 而非绝对定位，窄屏时它会把文字往下挤而不是压住。 */
+/* 图标要一眼看见，所以给它实底色 + 描边 + 光晕，而不是一圈同色系的
+   细边。此前用最暗的灰配暗底，未选中的卡上图标几乎等于隐形。 */
+.mode-graphic {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.05));
+  color: var(--fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition: color 0.25s, border-color 0.25s, background 0.25s, box-shadow 0.25s;
+}
+
+.mode-graphic svg {
+  width: 46px;
+  height: 46px;
+}
+
+.mode-card:hover .mode-graphic,
+.mode-card[aria-checked='true'] .mode-graphic {
+  border-color: rgba(254, 128, 25, 0.55);
+  background: linear-gradient(160deg, rgba(254, 128, 25, 0.3), rgba(254, 128, 25, 0.1));
+  color: var(--accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 6px 20px rgba(254, 128, 25, 0.18);
+}
+
+/* 分开装：两个独立图标块上下排，中间一条连线。
+   刻意不做成「一个块里画两样东西」——那样读起来永远是一个整体，
+   而这两种装法的重点恰恰是「两台机器分开放、靠网络连起来」。 */
+.mode-stack {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  width: 72px;
+}
+
+/* 两块方块的配色与一体化那块完全同源（中性底、选中转橙），
+   否则两张卡在「都没选中」时一边白一边蓝，像两种不同的东西。 */
+.mode-ico {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.05));
+  color: var(--fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition: color 0.25s, border-color 0.25s, background 0.25s, box-shadow 0.25s;
+}
+
+.mode-ico svg {
+  width: 42px;
+  height: 42px;
+}
+
+/* 两块之间那道竖线：虚线，表示「分开的两台机器，靠连接串起来」。
+   颜色跟随外层文字色（与方块里的图形一致），选中时一起转橙。 */
+.mode-link {
+  width: 0;
+  height: 22px;
+  border-left: 1.5px dashed currentColor;
+  opacity: 0.5;
+  transition: border-color 0.25s, opacity 0.25s;
+}
+
+.mode-card:hover .mode-ico,
+.mode-card[aria-checked='true'] .mode-ico {
+  border-color: rgba(254, 128, 25, 0.55);
+  background: linear-gradient(160deg, rgba(254, 128, 25, 0.3), rgba(254, 128, 25, 0.1));
+  color: var(--accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 6px 20px rgba(254, 128, 25, 0.18);
+}
+
+.mode-card[aria-checked='true'] .mode-stack {
+  color: var(--accent);
+}
+
+.mode-card:hover .mode-link,
+.mode-card[aria-checked='true'] .mode-link {
+  opacity: 0.75;
+}
+
+.mode-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mode-card:hover {
+  border-color: rgba(254, 128, 25, 0.28);
+  background: var(--bg-card-hover);
+}
+
+/* 选中态：和「推荐」用的是同一套主色，用户看到的第一张卡就是它 */
+.mode-card[aria-checked='true'] {
+  border-color: rgba(254, 128, 25, 0.5);
+  background: linear-gradient(
+    180deg,
+    rgba(254, 128, 25, 0.07),
+    rgba(254, 128, 25, 0.02)
+  );
+}
+
+.mode-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 单选圈：手绘一个，避免原生 input 在各浏览器的外观差异 */
+.mode-radio {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  transition: border-color 0.25s, box-shadow 0.25s;
+}
+
+.mode-card[aria-checked='true'] .mode-radio {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--bg-card), inset 0 0 0 9px var(--accent);
+}
+
+.mode-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.mode-tag {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1a1206;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.mode-desc {
+  color: var(--fg-muted);
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+/* 选项卡上的步骤预告：直接把「选它之后会走几步」画在卡里，用户不用
+   往下滚就知道这张卡会给他什么。箭头由相邻兄弟的 ::before 画，不在
+   HTML 里塞字符——读屏软件不该念出箭头。 */
+.mode-flow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  counter-reset: modeflow;
+}
+
+.mode-flow-step,
+.mode-flow-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mode-flow-step::before {
+  content: counter(modeflow);
+  counter-increment: modeflow;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: rgba(254, 128, 25, 0.14);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.mode-flow-step + .mode-flow-step::after,
+.mode-flow-step + .mode-flow-end::after {
+  content: none;
+}
+
+.mode-flow-end {
+  border-style: dashed;
+  border-color: var(--line);
+  color: var(--fg-faint);
+}
+
+.mode-flow-end::before {
+  content: '✓';
+  color: #98c379;
+  font-size: 11px;
+}
+
+/* 箭头：夹在两个胶囊之间 */
+.mode-flow-step:not(:last-child) {
+  position: relative;
+  margin-right: 14px;
+}
+
+.mode-flow-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  right: -11px;
+  top: 50%;
+  width: 8px;
+  height: 1px;
+  background: var(--line-strong);
+  transform: translateY(-50%);
+}
+
+.mode-fit {
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+
+/* 承接条：选中方案后贴在选项下方，把「你选的」和「下面的步骤」缝在一起 */
+.mode-bridge {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 14px;
+  padding: 11px 14px;
+  border: 1px solid rgba(254, 128, 25, 0.28);
+  border-radius: var(--radius);
+  background: rgba(254, 128, 25, 0.06);
+  color: var(--fg-dim);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.mode-bridge strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mode-bridge-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(254, 128, 25, 0.16);
+  color: var(--accent);
+}
+
+/* 每个步骤标题上的归属标签：说明它属于哪条路线、共几步，让「选了 A
+   才出现这一步」这件事写在步骤自己身上 */
+.step-from {
+  display: inline-block;
+  margin-bottom: 7px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--bg-raise);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
+/* 一体化只选了 Windows：非 Windows 访客看到的是一张写清原因的灰卡，
+   而不是一个点不动的按钮，也不是空白 */
+.dl-card.is-unavailable {
+  border-color: var(--line);
+  background: transparent;
+}
+
+.dl-card.is-unavailable .dl-chip {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.dl-card.is-unavailable .dl-icon,
+.dl-card.is-unavailable .dl-name {
+  color: var(--fg-faint);
+}
+
+.dl-card-warn {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--fg-dim);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.dl-card-altswap {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.dl-grid-single {
+  grid-template-columns: 1fr;
+}
+
+.step-back {
+  margin-top: 24px;
+  padding: 8px 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.25s, color 0.25s, background 0.25s;
+}
+
+.step-back:hover {
+  border-color: rgba(254, 128, 25, 0.45);
+  background: var(--bg-card);
+  color: var(--fg);
+}
+
 .dl-foot {
   margin-top: 26px;
   color: var(--fg-muted);
@@ -1604,6 +2093,12 @@ main {
   .tab svg {
     display: none;
   }
+
+  /* 安装方式两张卡靠「并列」表达是同一层级的选项；手机撑不下两栏时
+     退回上下排，一体化仍在前面，推荐标签也还在。 */
+  .mode-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .tab {
@@ -1734,7 +2229,7 @@ main {
   color: #b8bb26;
 }
 
-/* ── 部署向导：两步，序号圆点 + 竖线 ───────────────────────── */
+/* ── 部署向导：序号圆点 + 竖线 ─────────────────────────────── */
 .step {
   position: relative;
   padding-left: 46px;
@@ -1774,6 +2269,38 @@ main {
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 600;
+}
+
+/* 选装法这一步不是「第 1 步」，它是提问，不是动手做的步骤。所以不占
+   序号圆点、不缩进、也不连进下面的步骤线——否则它和真正的「1 装客户端」
+   长得一模一样，编号还会撞车（两个「1」）。改成问题式的引导标签。 */
+.step-choice {
+  padding-left: 0;
+  margin-bottom: 44px;
+}
+
+.step-choice::before {
+  display: none;
+}
+
+.step-choice .step-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.step-choice .step-title::before {
+  content: attr(data-kicker);
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .step-title {
@@ -2118,6 +2645,51 @@ main {
 
   .step .dl-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* 安装方式的两张卡是并列选项，宽屏才并排 */
+  .mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* 半宽卡里「装服务端 → 连客户端」两个胶囊会顶到边，收一点内边距 */
+  .mode-flow {
+    gap: 5px;
+  }
+
+  /* 并排后每张卡只剩半宽，图标让一点位给标题 */
+  .mode-graphic {
+    width: 60px;
+    height: 60px;
+    border-radius: 15px;
+  }
+
+  .mode-graphic svg {
+    width: 38px;
+    height: 38px;
+  }
+
+  /* 分开装的两块必须跟着一起缩，否则会比一体化那块大一圈 */
+  .mode-ico {
+    width: 60px;
+    height: 60px;
+    border-radius: 15px;
+  }
+
+  .mode-ico svg {
+    width: 38px;
+    height: 38px;
+  }
+
+  .mode-flow-step,
+  .mode-flow-end {
+    padding: 3px 8px;
+    font-size: 11.5px;
+  }
+
+  /* 「其他平台」是三张卡，两栏会剩一张独占半行，改三栏排一行 */
+  .dl-more > .dl-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .feat-grid {

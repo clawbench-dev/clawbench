@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/platform"
 )
 
 // --- performSupervisedUpgrade ---
@@ -130,4 +132,41 @@ func TestResolveReplaceInPlace_ProbeOverrideCannotDefeatContainer(t *testing.T) 
 
 	got := resolveReplaceInPlace(upgradeIsContainer(), upgradeIsSupervised())
 	assert.True(t, got, "container must force in-place even when the probe says false")
+}
+
+// TestPerformSupervisedUpgrade_CPUTooNew_RollsBack is the issue #693 regression
+// test for supervised (systemd) deployments: after replacing the binary, the
+// new one needs a CPU newer than this host. Shutting down would let the
+// supervisor restart into a SIGILL crash loop, so the previous binary must be
+// restored and the failure reported.
+func TestPerformSupervisedUpgrade_CPUTooNew_RollsBack(t *testing.T) {
+	dir := t.TempDir()
+	newPath := filepath.Join(dir, "clawbench-new")
+	target := filepath.Join(dir, "clawbench")
+	require.NoError(t, os.WriteFile(newPath, []byte("new-binary"), 0o600))
+	require.NoError(t, os.WriteFile(target, []byte("old-binary"), 0o600))
+	// The upgrade always writes a .bak before replacing.
+	require.NoError(t, os.WriteFile(target+".bak", []byte("previous-binary"), 0o600))
+
+	origCheck := checkBinaryCPUCompatibility
+	checkBinaryCPUCompatibility = func(string) (platform.CPUMinISA, bool) {
+		return platform.CPUMinISA{Level: "x86-64-v3", Missing: []string{"avx2"}}, false
+	}
+	defer func() { checkBinaryCPUCompatibility = origCheck }()
+
+	shutdownCalled := false
+	origShutdown := upgradeShutdownFunc
+	upgradeShutdownFunc = func() { shutdownCalled = true }
+	defer func() { upgradeShutdownFunc = origShutdown }()
+
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	err := performSupervisedUpgrade(newPath, target)
+	require.Error(t, err, "an incompatible CPU must be reported, not treated as a completed upgrade")
+	assert.False(t, shutdownCalled, "must not shut down into a crash loop")
+
+	data, readErr := os.ReadFile(target)
+	require.NoError(t, readErr)
+	assert.Equal(t, "previous-binary", string(data), "the previous binary must be restored")
 }

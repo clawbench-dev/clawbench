@@ -506,6 +506,36 @@ describe('useVoiceInput', () => {
     v.cancel()
   })
 
+  // One take has one hand-over. The overlay's stop button and the release that
+  // precedes it both call stop() (the mouse leaves the send button on the way to
+  // the pill), and a second pass used to flush the audio again and send a second
+  // `end` to a socket the server had already answered.
+  it('sends a single end when stop() is called twice for one take', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+
+    await v.stop()
+    expect(v.state.value).toBe('transcribing')
+    const callsAfterFirst = env.getWS()!.send.mock.calls.length
+
+    // The second call must be a no-op: same socket, nothing left to hand over.
+    await v.stop()
+    expect(env.getWS()!.send.mock.calls.length).toBe(callsAfterFirst)
+
+    const ends = env.getWS()!.send.mock.calls
+      .map((c) => c[0])
+      .filter((payload) => payload === JSON.stringify({ type: 'end' }))
+    expect(ends).toHaveLength(1)
+    v.cancel()
+  })
+
   // The graph used to be built only after the socket opened, so the handshake
   // sat in front of the microphone: the first ~150 ms of speech — most of a
   // two-character utterance — was never captured at all.
