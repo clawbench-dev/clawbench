@@ -92,7 +92,11 @@ describe('installFusedUpdate', () => {
     expect(res.ok).toBe(false)
     expect(res.error).toContain('mirror unreachable')
     expect(restartInto).not.toHaveBeenCalled()
-    const calls = vi.mocked(dialog.showMessageBox).mock.calls
+    // The call is (parent, options); the tuple type of the mocked overload only
+    // lists one element, so read the options through a cast.
+    const calls = vi.mocked(dialog.showMessageBox).mock.calls as unknown as Array<
+      [unknown, { detail?: string }]
+    >
     expect(String(calls[calls.length - 1][1]?.detail)).toContain('mirror unreachable')
   })
 })
