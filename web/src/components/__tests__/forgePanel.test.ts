@@ -1697,6 +1697,39 @@ describe('ForgePanelContent non-official host warning', () => {
     wrapper.unmount()
   })
 
+  it('does not carry a cancelled platform picker into the next binding', async () => {
+    // The picker outranks the remote's own inference, so a stale "gitea" from a
+    // cancelled dialog would bind a github.com remote as Gitea.
+    mockFetchRemotes.mockResolvedValue({
+      remotes: [
+        { name: 'origin', url: 'https://github.com/acme/widgets.git', platform: 'github', host: 'github.com', scheme: 'https', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' },
+      ],
+    })
+    const wrapper = await openDialog()
+
+    const select = document.body.querySelector('.forge-select') as HTMLSelectElement
+    select.value = 'gitea'
+    select.dispatchEvent(new Event('change'))
+    await nextTick()
+
+    ;(document.body.querySelector('.modal-close-btn') as HTMLElement).click()
+    await flushPromises()
+
+    const reopen = wrapper.findAll('.forge-state .empty-state__action button')[0]
+    await reopen.trigger('click')
+    await flushPromises()
+
+    const row = document.body.querySelector('.forge-remote-row') as HTMLElement
+    row.click()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(mockSetBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: 'github', host: 'github.com' }),
+    )
+
+    wrapper.unmount()
+  })
+
   it('sends the picked platform with a manual URL', async () => {
     mockFetchRemotes.mockResolvedValue({ remotes: [] })
     const wrapper = await openDialog()

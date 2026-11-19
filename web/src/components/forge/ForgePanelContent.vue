@@ -876,6 +876,11 @@ function pipelineErrorTitle(code: string): string {
 async function openBindDialog() {
   bindDialogOpen.value = true
   bindError.value = ''
+  // A cancelled dialog must not leak its platform/url into the next binding:
+  // `bindFromRemote` prefers manualPlatform over the remote's own suggestion,
+  // so a stale "gitea" would bind a github.com remote as Gitea.
+  manualPlatform.value = ''
+  manualUrl.value = ''
   try {
     const res = await fetchForgeRemotes()
     remotes.value = res.remotes ?? []
