@@ -727,7 +727,7 @@ type configMeeting struct {
 	// which can read project files to check how a term is actually spelled.
 	AgentMinutes bool `json:"agent_minutes"`
 	// AgentMinutesMaxRounds bounds the agent's round-trips per artifact.
-	// 0 uses the built-in default.
+	// 0 means unlimited.
 	AgentMinutesMaxRounds int `json:"agent_minutes_max_rounds"`
 }
 

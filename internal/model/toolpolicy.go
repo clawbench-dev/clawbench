@@ -80,9 +80,9 @@ func BuiltinModes() []ToolMode {
 type ToolPolicy struct {
 	// Allow lists the granted capabilities (see CapFSRead/CapFSWrite/CapExec).
 	Allow []string `json:"allow"`
-	// MaxRounds bounds model round-trips per turn (0 = DefaultMaxRounds).
+	// MaxRounds bounds model round-trips per turn (0 = unlimited).
 	MaxRounds int `json:"maxRounds,omitempty"`
-	// MaxToolCalls bounds tool invocations per turn (0 = DefaultMaxToolCalls).
+	// MaxToolCalls bounds tool invocations per turn (0 = unlimited).
 	MaxToolCalls int `json:"maxToolCalls,omitempty"`
 	// BashTimeoutSec bounds one shell command (0 = DefaultBashTimeoutSec).
 	BashTimeoutSec int `json:"bashTimeoutSec,omitempty"`
@@ -166,17 +166,16 @@ func (p ToolPolicy) DefaultMode() string {
 }
 
 // DefaultToolPolicyBudgets are the limits applied when a policy leaves a
-// budget at zero. A built-in agent runs a model loop with no user watching the
-// intermediate steps, so an unbounded loop is never the safe default.
+// budget at zero.
 //
-// The numbers are sized for real repository work, not for a demo. A "find the
-// settings panel and add an option" task measured 24+ model rounds and 40+
-// tool calls before the first edit — the old 24/60 pair cut such a turn off
-// mid-exploration, and the agent then ended with no answer at all. Both are
-// per-turn and configurable per agent (settings → tool permissions).
+// The round and tool-call budgets are UNLIMITED by default: a turn runs until
+// the model stops calling tools or the user presses stop. That is how the
+// mainstream coding agents behave (Claude Code, Codex, Cursor all keep going
+// until the task is done), and any fixed number is a guess that eventually cuts
+// a real task off mid-way — 24/60 did exactly that, then 100/300 did it again.
+// A user who wants a ceiling sets one per agent (settings → tool permissions);
+// zero keeps meaning "no ceiling".
 const (
-	DefaultMaxRounds      = 100
-	DefaultMaxToolCalls   = 300
 	DefaultBashTimeoutSec = 120
 	// MaxBashTimeoutSec caps the per-command timeout a policy may request.
 	MaxBashTimeoutSec = 3600
@@ -255,19 +254,18 @@ func (p ToolPolicy) Has(c string) bool {
 }
 
 // Rounds returns the effective round budget.
+//
+// Zero means unlimited: the caller must treat a non-positive result as "no
+// ceiling" rather than comparing against it directly.
 func (p ToolPolicy) Rounds() int {
-	if p.MaxRounds > 0 {
-		return p.MaxRounds
-	}
-	return DefaultMaxRounds
+	return p.MaxRounds
 }
 
 // ToolCalls returns the effective tool-call budget.
+//
+// Zero means unlimited, same as Rounds.
 func (p ToolPolicy) ToolCalls() int {
-	if p.MaxToolCalls > 0 {
-		return p.MaxToolCalls
-	}
-	return DefaultMaxToolCalls
+	return p.MaxToolCalls
 }
 
 // CommandTimeout returns the effective per-command timeout.

@@ -66,7 +66,7 @@
     <!-- Per-turn budgets. A real repository task routinely needs dozens of
          rounds, so these are settings rather than constants: too small and the
          agent stops mid-task, too large and one turn can run for a long time.
-         Empty / 0 means "use the server default", which is what the
+         Empty / 0 means "no ceiling", which is the default and what the
          placeholders show. -->
     <div class="agent-tools__budgets">
       <label class="agent-tools__budget">
@@ -77,7 +77,7 @@
           step="1"
           inputmode="numeric"
           :value="props.agent?.toolPolicy?.maxRounds || ''"
-          :placeholder="String(DEFAULT_MAX_ROUNDS)"
+          :placeholder="t('settings.items.toolPolicyUnlimited')"
           :disabled="saving"
           @change="saveBudget('maxRounds', $event)"
         />
@@ -91,7 +91,7 @@
           step="1"
           inputmode="numeric"
           :value="props.agent?.toolPolicy?.maxToolCalls || ''"
-          :placeholder="String(DEFAULT_MAX_TOOL_CALLS)"
+          :placeholder="t('settings.items.toolPolicyUnlimited')"
           :disabled="saving"
           @change="saveBudget('maxToolCalls', $event)"
         />
@@ -146,16 +146,6 @@ const { patchAgentField } = useSettingsConfig()
 
 const error = ref('')
 const saving = ref(false)
-
-/**
- * Mirrors model.DefaultMaxRounds / DefaultMaxToolCalls.
- *
- * Shown as the placeholder (not written into the field) so an untouched agent
- * keeps "unset" semantics and picks up a future default change instead of
- * being pinned to today's number.
- */
-const DEFAULT_MAX_ROUNDS = 100
-const DEFAULT_MAX_TOOL_CALLS = 300
 
 /**
  * The granted set, normalized the same way the server does it.
@@ -225,7 +215,7 @@ async function save(nextAllow: string[]) {
 /**
  * Persist one budget field.
  *
- * 0 / empty is stored as 0, which the server reads as "use the default". The
+ * 0 / empty is stored as 0, which the server reads as "no ceiling". The
  * field is reset to what is actually stored when the entry is not a positive
  * number, so the UI never shows a budget the agent is not running with.
  *
@@ -242,7 +232,7 @@ async function saveBudget(field: 'maxRounds' | 'maxToolCalls', event: Event) {
   }
   const raw = input.value.trim()
   const parsed = Number.parseInt(raw, 10)
-  // Empty means "use the default"; anything else must be a positive integer.
+  // Empty means "no ceiling"; anything else must be a positive integer.
   // A negative or non-numeric entry is rejected outright rather than silently
   // rewritten to 0, which would look like the user had cleared the field.
   if (raw !== '' && (!Number.isFinite(parsed) || parsed <= 0)) {

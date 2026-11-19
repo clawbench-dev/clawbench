@@ -74,13 +74,13 @@ func TestToolPolicy_NormalizedClosesImplications(t *testing.T) {
 	}
 }
 
-// TestToolPolicy_BudgetDefaults pins that an unset budget is bounded, not
-// infinite: an agent loop with no round limit can spin until the user notices
-// the bill.
+// TestToolPolicy_BudgetDefaults pins that an unset round / tool-call budget
+// means UNLIMITED (zero), not a hidden number: the turn runs until the model
+// stops or the user cancels. Only the per-command timeout keeps a default.
 func TestToolPolicy_BudgetDefaults(t *testing.T) {
 	var p ToolPolicy
-	assert.Equal(t, DefaultMaxRounds, p.Rounds())
-	assert.Equal(t, DefaultMaxToolCalls, p.ToolCalls())
+	assert.Equal(t, 0, p.Rounds())
+	assert.Equal(t, 0, p.ToolCalls())
 	assert.Equal(t, DefaultBashTimeoutSec, p.CommandTimeout())
 
 	p = ToolPolicy{MaxRounds: 3, MaxToolCalls: 5, BashTimeoutSec: 9}

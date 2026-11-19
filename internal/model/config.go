@@ -869,7 +869,7 @@ type MeetingConfig struct {
 	// it costs tool calls on top of the model calls.
 	AgentMinutes bool `yaml:"agent_minutes"`
 	// AgentMinutesMaxRounds bounds the agent's model round-trips per artifact.
-	// 0 uses the built-in default (model.DefaultMaxRounds).
+	// 0 means unlimited (the run is still bounded by its own timeout).
 	AgentMinutesMaxRounds int `yaml:"agent_minutes_max_rounds"`
 }
 

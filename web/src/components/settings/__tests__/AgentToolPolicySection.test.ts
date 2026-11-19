@@ -159,15 +159,15 @@ describe('AgentToolPolicySection', () => {
         })
     })
 
-    it('shows the stored budgets and the defaults as placeholders', () => {
+    it('shows the stored budgets and "unlimited" as the placeholder', () => {
         const wrapper = mountSection({ allow: [], maxRounds: 40 })
         const [rounds, calls] = budgetInputs(wrapper)
 
         expect((rounds.element as HTMLInputElement).value).toBe('40')
-        // Unset means "server default": the placeholder states it without
-        // pinning the agent to today's number.
+        // Unset means "no ceiling": the placeholder says so instead of naming
+        // a number the agent would then be pinned to.
         expect((calls.element as HTMLInputElement).value).toBe('')
-        expect((calls.element as HTMLInputElement).placeholder).toBe('300')
+        expect((calls.element as HTMLInputElement).placeholder).toBe('settings.items.toolPolicyUnlimited')
     })
 
     it('saves a changed round budget with the whole policy', async () => {

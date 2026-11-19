@@ -103,10 +103,9 @@ func TestAgentMinutesPolicy_HonoursRoundBudget(t *testing.T) {
 	if got := agentMinutesPolicy(7).MaxRounds; got != 7 {
 		t.Fatalf("expected the configured budget, got %d", got)
 	}
-	// 0 means "use the built-in default", which the policy expresses by leaving
-	// MaxRounds zero and letting ToolPolicy.Rounds() supply it.
-	if got := agentMinutesPolicy(0).Rounds(); got != model.DefaultMaxRounds {
-		t.Fatalf("expected the default budget, got %d", got)
+	// 0 means unlimited; the policy expresses it by leaving MaxRounds zero.
+	if got := agentMinutesPolicy(0).Rounds(); got != 0 {
+		t.Fatalf("expected no round ceiling, got %d", got)
 	}
 }
 

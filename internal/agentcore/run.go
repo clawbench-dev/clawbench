@@ -405,7 +405,7 @@ func (r *runner) run(ctx context.Context) {
 			r.finishCancelled()
 			return
 		}
-		if r.rounds >= r.spec.Policy.Rounds() {
+		if limit := r.spec.Policy.Rounds(); limit > 0 && r.rounds >= limit {
 			r.finishWithClosing(runCtx, StopMaxRounds, system)
 			return
 		}
@@ -453,7 +453,7 @@ func (r *runner) run(ctx context.Context) {
 		// from dying at round 3 of a task that would have finished at round 5.
 		r.compactIfNeeded(runCtx, system)
 
-		if r.toolCalls >= r.spec.Policy.ToolCalls() {
+		if limit := r.spec.Policy.ToolCalls(); limit > 0 && r.toolCalls >= limit {
 			// The budget is spent. Do one last model round WITHOUT tools so the
 			// model has a chance to summarize what it found instead of the turn
 			// ending with a bare tool result the user never sees.
@@ -1107,7 +1107,7 @@ func (r *runner) executeTools(env tools.Env, calls []llm.ToolCall) []*llm.ToolRe
 
 // executeTool runs one call and reports it to the UI before and after.
 func (r *runner) executeTool(env tools.Env, c llm.ToolCall) *llm.ToolResult {
-	if r.toolCalls >= r.spec.Policy.ToolCalls() {
+	if limit := r.spec.Policy.ToolCalls(); limit > 0 && r.toolCalls >= limit {
 		return &llm.ToolResult{
 			CallID:  c.ID,
 			IsError: true,

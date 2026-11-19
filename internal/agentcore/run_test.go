@@ -349,6 +349,35 @@ func TestRun_RoundBudgetStops(t *testing.T) {
 	}
 }
 
+// TestRun_NoBudgetMeansNoCeiling pins the default: a policy that sets neither
+// budget runs until the model stops on its own. The old builds substituted a
+// fixed number here (24, then 100), which cut long tasks off mid-way; this test
+// runs past the last of those numbers so a default cannot quietly come back.
+func TestRun_NoBudgetMeansNoCeiling(t *testing.T) {
+	const rounds = 120 // more than the old 100-round default
+	script := make([]func(llm.Request) []llm.Event, 0, rounds+1)
+	for i := 0; i < rounds; i++ {
+		script = append(script, toolRound("c", "glob", `{"pattern":"*.go"}`))
+	}
+	script = append(script, textRound("done"))
+	client := &scriptedClient{rounds: script}
+
+	terminal, _ := collect(t, Run(context.Background(), Spec{
+		Client: client, Prompt: "loop", WorkDir: t.TempDir(),
+		Policy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	}))
+
+	if terminal.Kind != EventDone || terminal.StopReason != StopComplete {
+		t.Fatalf("an unset budget must run to completion, got %v/%q", terminal.Kind, terminal.StopReason)
+	}
+	if got := client.roundCount(); got != rounds+1 {
+		t.Fatalf("expected %d calls (no ceiling), got %d", rounds+1, got)
+	}
+	if terminal.Rounds != rounds+1 {
+		t.Fatalf("expected all %d rounds to be counted, got %d", rounds+1, terminal.Rounds)
+	}
+}
+
 // TestRun_ToolArgsArriveBeforeTheToolRuns pins that the chat card can name what
 // is running: the arguments are announced as soon as they are complete, BEFORE
 // the tool executes. Only announcing them on the result (or not at all) left a
