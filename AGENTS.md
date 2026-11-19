@@ -118,7 +118,7 @@ Windows 桌面安装包里自带一份服务端，启动客户端就等于启动
 | `internal/system/` | 系统资源监控：CPU / 内存 / 磁盘 / 网络实时采集与推送 |
 | `internal/cli/` | AI Agent 自助命令：仅剩 upgrade-replace（自升级内部机制）；task/rag 业务子命令已移除，改由 `/cb-*` 内置斜杠命令直调 HTTP API |
 | `internal/middleware/` | 鉴权、请求日志、panic 恢复、请求 ID |
-| `internal/platform/` | 跨平台路径解析、Shell 检测、二进制替换原语（`ReplaceBinary`，升级路径共用） |
+| `internal/platform/` | 跨平台路径解析、Shell 检测、二进制替换原语（`ReplaceBinary`，升级路径共用）；`source/` 是**服务端所有下载「从哪下」的唯一策略源**（纯函数：只读环境变量与用户级 `~/.npmrc`，不发网络请求、不跑命令）：npm 包（CLI、智能体安装器）、GitHub Release 资产（桌面包与融合包）、Node.js 二进制共用同一套候选列表，npm 源顺序用户优先，GitHub 资产候选按地区排序且直连 github.com 恒在末尾 |
 
 ### 前端（Vue 3 + TypeScript）
 
