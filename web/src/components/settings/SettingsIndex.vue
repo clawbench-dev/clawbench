@@ -24,8 +24,20 @@
           @click="openHit(hit)"
         >
           <div class="settings-index__hit-text">
-            <span class="settings-index__label">{{ hit.kind === 'category' ? hit.categoryLabel : hit.label }}</span>
-            <span v-if="hit.kind === 'item' && hit.description" class="settings-index__hit-desc">{{ hit.description }}</span>
+            <!-- The typed words are marked in both lines: a hit often matches
+                 the description rather than the label, and the user needs to
+                 see WHY a row is in the list. -->
+            <SettingsHighlight
+              class="settings-index__label"
+              :text="hit.kind === 'category' ? hit.categoryLabel : hit.label"
+              :query="query"
+            />
+            <SettingsHighlight
+              v-if="hit.kind === 'item' && hit.description"
+              class="settings-index__hit-desc"
+              :text="hit.description"
+              :query="query"
+            />
           </div>
           <ChevronRight class="settings-index__arrow" :size="18" />
         </div>
@@ -84,6 +96,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
+import SettingsHighlight from './SettingsHighlight.vue'
 import { searchSettings, groupHitsByCategory, type SettingsHit } from './settingsSearch'
 import { DOCK_SETTINGS_PAGES, dockCategoryTitleKey } from '@/composables/dockPluginRuntime'
 

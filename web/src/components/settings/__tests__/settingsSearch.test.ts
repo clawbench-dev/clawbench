@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import i18n from '@/i18n'
 import { categoryItems } from '@/components/settings/settingsFieldMap'
-import { searchSettings, settingsHits, groupHitsByCategory } from '@/components/settings/settingsSearch'
+import { highlightParts, searchSettings, settingsHits, groupHitsByCategory } from '@/components/settings/settingsSearch'
 
 /**
  * The search index behind the settings home page's box (issue #691).
@@ -96,5 +96,46 @@ describe('settings search index', () => {
     i18n.global.locale.value = 'en'
     expect(settingsHits()).not.toBe(zhHits)
     expect(settingsHits()[0].categoryLabel).not.toBe(zhHits[0].categoryLabel)
+  })
+})
+
+// ── Highlighting (issue #691: 命中结果高亮展示) ──
+describe('highlightParts', () => {
+  const hitText = (parts: ReturnType<typeof highlightParts>) => parts.filter(p => p.hit).map(p => p.text)
+
+  it('marks the typed word and leaves the rest alone', () => {
+    // 「收信」is not contiguous in 每多少分钟收一次信 (收一次信), so this uses a
+    // sentence where it appears twice, as the mail interval description does.
+    const parts = highlightParts('收信越频繁，收信越费流量', '收信')
+    expect(hitText(parts)).toEqual(['收信', '收信'])
+    expect(parts.map(p => p.text).join('')).toBe('收信越频繁，收信越费流量')
+  })
+
+  it('matches case-insensitively but keeps the original casing', () => {
+    expect(hitText(highlightParts('IMAP 收信', 'imap'))).toEqual(['IMAP'])
+  })
+
+  it('marks every occurrence and every query word', () => {
+    const parts = highlightParts('邮件与邮件通知', '邮件 通知')
+    expect(hitText(parts)).toEqual(['邮件', '邮件', '通知'])
+  })
+
+  it('marks nothing when the text does not contain the query', () => {
+    expect(hitText(highlightParts('主题', '邮件'))).toEqual([])
+  })
+
+  it('returns the text untouched for an empty query or empty text', () => {
+    expect(highlightParts('主题', '  ')).toEqual([{ text: '主题', hit: false }])
+    expect(highlightParts('', '主题')).toEqual([{ text: '', hit: false }])
+  })
+
+  it('never splits a word: the earliest match wins, longest on a tie', () => {
+    // '邮件' starts before '件通', so it is taken whole; the remaining '通知'
+    // holds no second word. The other order would have split 邮件 in half.
+    expect(hitText(highlightParts('邮件通知', '件通 邮件'))).toEqual(['邮件'])
+  })
+
+  it('does not loop forever on adjacent matches', () => {
+    expect(hitText(highlightParts('aaa', 'a')).length).toBe(3)
   })
 })

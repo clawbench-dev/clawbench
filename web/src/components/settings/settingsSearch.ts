@@ -255,3 +255,45 @@ export function panelSearchKeys(
   }
   return keys
 }
+
+/** One slice of a result's text, flagged when it is part of the query. */
+export interface HighlightPart {
+  text: string
+  hit: boolean
+}
+
+/**
+ * Split `text` into plain and matched slices, so the result list can mark the
+ * words the user typed (issue #691: 命中结果高亮展示).
+ *
+ * Matching mirrors the index: case-insensitive, every query word counts, and
+ * overlapping words resolve to the earliest match (the longer one on a tie) so
+ * a word is never cut in half.
+ */
+export function highlightParts(text: string, query: string): HighlightPart[] {
+  const words = [...new Set(query.trim().toLowerCase().split(/\s+/).filter(Boolean))]
+  if (!text || words.length === 0) return [{ text, hit: false }]
+  const lower = text.toLowerCase()
+  const parts: HighlightPart[] = []
+  let i = 0
+  while (i < text.length) {
+    let at = -1
+    let len = 0
+    for (const word of words) {
+      const found = lower.indexOf(word, i)
+      if (found === -1) continue
+      if (at === -1 || found < at || (found === at && word.length > len)) {
+        at = found
+        len = word.length
+      }
+    }
+    if (at === -1) {
+      parts.push({ text: text.slice(i), hit: false })
+      break
+    }
+    if (at > i) parts.push({ text: text.slice(i, at), hit: false })
+    parts.push({ text: text.slice(at, at + len), hit: true })
+    i = at + len
+  }
+  return parts
+}

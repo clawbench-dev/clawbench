@@ -413,3 +413,46 @@ describe('SettingsIndex search', () => {
     expect(wrapper.findAll('.settings-index__row').length).toBe(32)
   })
 })
+
+// ── Highlighting (issue #691: 命中结果高亮展示) ──
+describe('SettingsIndex search highlight', () => {
+  beforeEach(async () => {
+    const appI18n = (await import('@/i18n')).default
+    appI18n.global.locale.value = 'zh'
+  })
+
+  it('marks the typed words in the label and the description', async () => {
+    const wrapper = mountIndex()
+    await wrapper.find('.search-input-stub').setValue('收信')
+
+    const marks = wrapper.findAll('.settings-highlight__mark').map(m => m.text())
+    expect(marks.length).toBeGreaterThan(0)
+    expect(marks.every(m => m === '收信')).toBe(true)
+
+    // The interval row's label is 每多少分钟收一次信 (no contiguous 收信), so its
+    // mark must come from the description — the reason it is in the list.
+    const row = wrapper.find('[data-settings-hit="mail.sync_interval_minutes"]')
+    expect(row.exists()).toBe(true)
+    expect(row.find('.settings-highlight__mark').exists()).toBe(true)
+  })
+
+  it('marks nothing when the query does not appear in the text', async () => {
+    const wrapper = mountIndex()
+    await wrapper.find('.search-input-stub').setValue('邮件')
+
+    // 邮件功能 (the category row) is marked; a row matched only through its
+    // panel title must not paint an empty <mark>.
+    for (const mark of wrapper.findAll('.settings-highlight__mark')) {
+      expect(mark.text().trim()).not.toBe('')
+    }
+  })
+
+  it('leaves the text intact around the marks', async () => {
+    const wrapper = mountIndex()
+    await wrapper.find('.search-input-stub').setValue('收信')
+
+    const row = wrapper.find('[data-settings-hit="mail.sync_interval_minutes"]')
+    const label = row.find('.settings-index__label').text()
+    expect(label).toBe('每多少分钟收一次信')
+  })
+})
