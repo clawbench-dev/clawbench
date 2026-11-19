@@ -90,12 +90,18 @@ export function forgeDockIconKind(currentPlatform: string): ForgeBrand {
 /**
  * forgeTabTitleKey is the i18n key for the forge dock tab's label.
  *
- * The tab is named after the integration the project actually uses ("GitHub
- * integration" / "GitLab integration" / "Gitea / Forgejo integration") instead of
- * a platform-neutral "issues & PRs" phrase, so the dock entry says which service
- * it opens. Unbound (or unknown) defaults to GitHub, matching
- * `forgeDockIconKind` — the tab exists before a repository is bound and must not
- * render an empty label.
+ * The feature has ONE name: 代码托管集成 (software forge integration). The key
+ * still varies by the bound platform, but every platform key resolves to that
+ * same feature name — the brand names live in the description
+ * (`settings.items.forgePlatformsDesc`), not in the title.
+ *
+ * Why per-platform keys instead of one: the dock entry, its settings page and
+ * the panel header all read the title through this function
+ * (`dockCategoryTitleKey`), so they cannot disagree; returning a single key
+ * would make the platform switch mid-session a no-op and invite the next
+ * contributor to reintroduce per-brand labels in one place only. Unbound (or
+ * unknown) defaults to GitHub, matching `forgeDockIconKind` — the tab exists
+ * before a repository is bound and must not render an empty label.
  */
 export function forgeTabTitleKey(
     currentPlatform: string,

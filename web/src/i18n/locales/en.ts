@@ -280,13 +280,15 @@ export default {
     fileView: 'File Preview',
     history: 'History',
     forge: 'Issues & PRs',
-    // Dock tab label names the integration the project actually uses, so the
-    // overflow menu says which service it opens. Brand names stay untranslated.
-    forgeGithub: 'GitHub Integration',
-    forgeGitlab: 'GitLab Integration',
-    // Gitea and Forgejo share one API and one adapter; the label names both so
-    // the user recognises their own service.
-    forgeGitea: 'Gitea / Forgejo Integration',
+    // The feature has ONE name on every platform ("Software Forge"), mirroring
+    // the Chinese 代码托管集成. The keys still vary by platform because
+    // `forgeTabTitleKey` dispatches on it, but they all resolve to the same
+    // label; the brand names users search for live in the description
+    // (`settings.items.forgePlatformsDesc`), not in the title.
+    forgeGithub: 'Software Forge',
+    forgeGitlab: 'Software Forge',
+    // Gitea and Forgejo share one API and one adapter, so one key covers both.
+    forgeGitea: 'Software Forge',
     tasks: 'Tasks',
     notifications: 'Notification Center',
     meeting: 'Video Meetings',
@@ -2187,7 +2189,7 @@ export default {
       eventRepoUnboundWarn: 'This project has no repository bound, so the event task will never fire. Bind one in the Forge panel first.',
       eventContext: 'Event context (auto-injected, read-only)',
       eventContextHint: 'These variables are replaced with real values at trigger time and injected before your prompt.',
-      eventContextHeader: 'Forge event',
+      eventContextHeader: 'Software Forge event',
       // Separator between a variable label and its value in the injected block.
       // Must match the backend's EventContextSeparator so the preview reads
       // exactly like the prompt the AI receives.
@@ -3495,7 +3497,7 @@ export default {
       mail: 'Mail',
       share: 'Share Center',
 
-      forgeIntegration: 'GitHub / GitLab / Gitea Integration',
+      forgeIntegration: 'Software Forge',
       skills: 'Skills',
       mcp: 'MCP Servers',
       providers: 'Model Providers',
@@ -3547,14 +3549,14 @@ export default {
       switchConfirmTitle: 'Turn this feature off?',
       switchConfirmOk: 'Turn off',
       consequences: {
-        forge: 'Forge: stops polling and clears every project’s repository binding. Turning it back on requires binding again.',
+        forge: 'Software Forge: stops polling and clears every project’s repository binding. Turning it back on requires binding again.',
         terminal: 'Terminal: disconnects every open terminal session.',
         tasks: 'Tasks: cancels running and queued tasks. They are not re-run when you turn it back on.',
         share: 'Sharing: revokes every issued link. Old links return 404.',
       },
       presets: {
         developer: { name: 'Developer', desc: 'Everything on, in the default order. Best for development and debugging.' },
-        standard: { name: 'Standard', desc: 'Turns Forge and terminal off and hides port mapping; mail, knowledge base, tasks and sharing stay on.' },
+        standard: { name: 'Standard', desc: 'Turns Software Forge and terminal off and hides port mapping; mail, knowledge base, tasks and sharing stay on.' },
         minimal: { name: 'Minimal', desc: 'Keeps only files, file preview and settings; every other feature is turned off.' },
         custom: { name: 'Custom', desc: 'You changed visibility, order or a switch by hand.' },
       },
@@ -3568,7 +3570,7 @@ export default {
         browse: 'Browse and organize project files.',
         view: 'Preview the file you have open.',
         history: 'Read the project Git history.',
-        forge: 'GitHub / GitLab issues, merge requests and pipelines.',
+        forge: 'Issues, merge requests and pipelines from GitHub, GitLab and Gitea / Forgejo.',
         tasks: 'Scheduled and event-triggered automation tasks.',
         terminal: 'Open an interactive terminal on the server.',
         stats: 'Token, credit and wall-clock usage.',
@@ -3584,7 +3586,7 @@ export default {
       // the feature (as opposed to the user switching it off).
       unavailable: {
         generic: 'Not supported on this host.',
-        forge: 'Forge integration is not enabled on the server.',
+        forge: 'Software Forge is not enabled on the server.',
         mail: 'Mail is not enabled on the server.',
         terminal: 'This machine cannot run a terminal (needs Linux / macOS, or the server is not ready).',
         proxy: 'Port mapping is unavailable here (neither SSH nor the stream tunnel can carry it).',
@@ -4180,7 +4182,7 @@ export default {
       featureStatusDisabled: 'Disabled',
       featureStatusGoManage: 'Manage in Feature Layout',
       featureStatusMail: 'Mail',
-      featureStatusForge: 'GitHub/GitLab integration',
+      featureStatusForge: 'Software Forge',
       featureStatusTerminal: 'Terminal',
       featureStatusKb: 'Knowledge base',
       kbEnabledDesc: 'The switch is in Feature Layout. Turning it off stops the indexer and closes the knowledge base; indexed data is kept.',
@@ -4578,9 +4580,12 @@ export default {
       tunnelStatusNoPorts: 'No forwarded ports yet — you can test the link first',
       forgeEnabledSection: 'Enable',
       forgeSection: 'Credentials',
-      forgeEnabled: 'Enable GitHub/GitLab integration',
+      // Shown under the page title: the feature name is platform-neutral now,
+      // so this is the ONE place that says which services it covers.
+      forgePlatformsDesc: 'Supports GitHub, GitLab (self-hosted included) and Gitea / Forgejo.',
+      forgeEnabled: 'Enable Software Forge',
       forgeEnabledDesc: 'Turning this off stops syncing and unlinks every project from its repository. Re-enabling does not restore those links. The switch is in Feature Layout.',
-      forgeDisableConfirmTitle: 'Turn off GitHub/GitLab integration',
+      forgeDisableConfirmTitle: 'Turn off Software Forge',
       forgeDisableConfirm: 'Turning this off stops syncing and unlinks every project from its repository. Those links are not kept, and re-enabling will not restore them. Turn it off?',
       forgeDisableConfirmAction: 'Turn off',
       mcpSection: 'MCP Servers',

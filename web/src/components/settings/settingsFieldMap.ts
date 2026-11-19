@@ -606,7 +606,13 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // Server-side, not per-device: "stop talking to GitHub" is about the
     // credentials and the outbound polling, which live on the server, so every
     // client of one server must agree.
-    { type: 'item', spec: { labelKey: 'settings.items.featureStatusForge', descriptionKey: 'settings.items.forgeEnabledDesc', key: 'forgeStatus', type: 'info', source: 'server', statusFeature: 'forge.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
+    // Title carries one line under it: the feature is called 代码托管集成
+    // everywhere now, so this is what tells the user WHICH services that means
+    // (GitHub / GitLab / Gitea). Without it the renamed entry reads as "some
+    // generic integration" and the user looking for GitHub loses the trail.
+    // A description on the status row (not a separate header row) because the
+    // status row is already the page's first element.
+    { type: 'item', spec: { labelKey: 'settings.items.featureStatusForge', descriptionKey: 'settings.items.forgePlatformsDesc', key: 'forgeStatus', type: 'info', source: 'server', statusFeature: 'forge.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
     // Credentials row is a dedicated component (tokens are write-only; the
     // server never returns them, so a plain text field cannot round-trip).
     { type: 'item', spec: { labelKey: 'settings.items.forgeCredentials', descriptionKey: 'settings.items.forgeCredentialsDesc', key: 'forgeCredentials', type: 'info', source: 'server', sectionHeader: 'settings.items.forgeSection' } },

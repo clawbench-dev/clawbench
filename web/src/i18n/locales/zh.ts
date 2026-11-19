@@ -278,13 +278,15 @@ export default {
     fileView: '文件浏览',
     history: '历史',
     forge: '议题与合并请求',
-    // Dock tab label names the integration the project actually uses, so the
-    // overflow menu says which service it opens. Brand names stay untranslated.
-    forgeGithub: 'GitHub 集成',
-    forgeGitlab: 'GitLab 集成',
-    // Gitea and Forgejo share one API and one adapter; the label names both so
-    // the user recognises their own service.
-    forgeGitea: 'Gitea / Forgejo 集成',
+    // Dock tab label is the platform-neutral feature name (统一口径：功能叫
+    // 「代码托管集成」，平台名只出现在说明文字里). The three platform keys stay
+    // so the label keeps its single source (`forgeTabTitleKey`); they no longer
+    // name a brand, because the dock can change platform mid-session and the
+    // entry must not be called something else than its settings page.
+    forgeGithub: '代码托管集成',
+    forgeGitlab: '代码托管集成',
+    // Gitea / Forgejo are handled by the same label for the same reason.
+    forgeGitea: '代码托管集成',
     tasks: '任务',
     notifications: '通知中心',
     meeting: '视频会议',
@@ -584,7 +586,7 @@ export default {
       noProjectBody: '选择一个项目后即可查看它对应的仓库议题和合并请求。',
       chooseProject: '选择项目',
       noBindingHeader: '未绑定仓库',
-      noBindingBody: '未能自动绑定 GitHub / GitLab / Gitea 仓库。可在此手动指定；绑定后也可从顶栏更换仓库。',
+      noBindingBody: '没能自动认出这个项目的仓库（GitHub、GitLab 或 Gitea）。可在此手动指定；绑定后也可从顶栏更换仓库。',
       bindRepo: '绑定仓库',
     },
     bind: {
@@ -2189,10 +2191,10 @@ export default {
       // Shown in the task form when the project has no repository binding.
       // Saving is allowed, but the task can never fire, so say so plainly.
       eventRepoUnbound: '本项目未绑定仓库',
-      eventRepoUnboundWarn: '本项目尚未绑定仓库，事件任务不会触发。请先在 Forge 面板绑定仓库。',
+      eventRepoUnboundWarn: '本项目尚未绑定仓库，事件任务不会触发。请先在「代码托管集成」里绑定仓库。',
       eventContext: '事件上下文（自动注入，不可编辑）',
       eventContextHint: '触发时这些变量会替换为实际值，固定注入在提示词之前。',
-      eventContextHeader: 'Forge 事件',
+      eventContextHeader: '代码托管事件',
       // 变量标签与取值之间的分隔符，须与后端 EventContextSeparator 一致，
       // 预览才能与 AI 实际收到的提示词逐字相同。
       eventContextSeparator: '：',
@@ -3489,7 +3491,10 @@ export default {
       mail: '邮件',
       share: '分享中心',
 
-      forgeIntegration: 'GitHub / GitLab / Gitea 集成',
+      // 统一口径：功能名是「代码托管集成」，具体平台（GitHub / GitLab / Gitea）
+      // 不进标题，只在说明文字里出现。设置首页的分类名由 dock 页签名派生
+      // （`dockCategoryTitleKey`），这个键留给没有 dock 插件的兜底路径。
+      forgeIntegration: '代码托管集成',
       skills: '技能',
       mcp: 'MCP 服务',
       providers: '模型提供商',
@@ -3541,14 +3546,14 @@ export default {
       switchConfirmTitle: '关闭这个功能？',
       switchConfirmOk: '关闭',
       consequences: {
-        forge: 'Forge：停止轮询并清空所有项目的仓库绑定，重新开启后需要重新绑定。',
+        forge: '代码托管集成：停止轮询并清空所有项目的仓库绑定，重新开启后需要重新绑定。',
         terminal: '终端：断开所有已打开的终端会话。',
         tasks: '任务：取消正在运行和排队中的任务，恢复后不会补跑。',
         share: '分享：撤销所有已经发出的链接，旧链接会直接 404。',
       },
       presets: {
         developer: { name: '开发', desc: '全部开启，按默认顺序排列。适合开发和调试。' },
-        standard: { name: '标准', desc: '关闭 Forge 和终端，隐藏端口映射；邮件、知识库、任务、分享保持开启。' },
+        standard: { name: '标准', desc: '关闭代码托管集成和终端，隐藏端口映射；邮件、知识库、任务、分享保持开启。' },
         minimal: { name: '极简', desc: '只保留文件管理、文件浏览和设置，其余功能全部关闭。' },
         custom: { name: '自定义', desc: '你手动调整过显示、顺序或开关。' },
       },
@@ -3562,7 +3567,7 @@ export default {
         browse: '浏览和整理项目文件。',
         view: '预览当前打开的文件。',
         history: '查看项目的 Git 提交历史。',
-        forge: '查看 GitHub / GitLab 的议题、合并请求和流水线。',
+        forge: '查看 GitHub、GitLab、Gitea 的议题、合并请求和流水线（代码托管集成）。',
         tasks: '定时任务和事件触发的自动化任务。',
         terminal: '在服务器上打开交互式终端。',
         stats: '查看 token、积分和耗时统计。',
@@ -3578,7 +3583,7 @@ export default {
       // the feature (as opposed to the user switching it off).
       unavailable: {
         generic: '当前环境不支持。',
-        forge: '服务端没有启用 Forge 集成。',
+        forge: '服务端没有启用代码托管集成。',
         mail: '服务端没有启用邮件功能。',
         terminal: '这台机器无法运行终端（需要 Linux / macOS，或服务端未就绪）。',
         proxy: '当前环境无法建立端口映射（SSH 与流隧道都不可用）。',
@@ -3706,7 +3711,7 @@ export default {
       shareShowProjectName: '分享页显示来源项目名',
       shareShowProjectNameDesc: '关闭后，分享页不显示内容来自哪个项目，只显示内容本身。',
       notificationsLogSection: '通知中心',
-      notificationsLogDesc: '通知中心是一份只追加的事件日志：没有已读状态，也没有角标。它记录会话完成、任务事件、Forge 变化、用量提醒和会议事件。',
+      notificationsLogDesc: '通知中心是一份只追加的事件日志：没有已读状态，也没有角标。它记录会话完成、任务事件、代码托管变化、用量提醒和会议事件。',
       notificationsRetention: '服务端最多保留 500 条、30 天，超过上限会自动清理旧记录。',
       notificationsClear: '清空通知',
       notificationsClearing: '正在清空…',
@@ -4175,7 +4180,7 @@ export default {
       featureStatusDisabled: '已停用',
       featureStatusGoManage: '去功能编排',
       featureStatusMail: '邮件功能',
-      featureStatusForge: 'GitHub/GitLab 集成',
+      featureStatusForge: '代码托管集成',
       featureStatusTerminal: '终端',
       featureStatusKb: '知识库',
       kbEnabledDesc: '开关在「功能编排」里。关闭后会停止索引器并关闭知识库，已索引的数据保留。',
@@ -4573,9 +4578,13 @@ export default {
       tunnelStatusNoPorts: '暂无转发端口，可先测试链路是否可用',
       forgeEnabledSection: '启用',
       forgeSection: '凭据',
-      forgeEnabled: '启用 GitHub/GitLab 集成',
+      forgeEnabled: '启用代码托管集成',
+      // Shown under the page title. The feature name is platform-neutral now
+      // (代码托管集成), so this is the ONLY place that says which services it
+      // means — without it a user looking for GitHub cannot find this page.
+      forgePlatformsDesc: '支持 GitHub、GitLab（自建实例也可以）和 Gitea / Forgejo。',
       forgeEnabledDesc: '关闭后会停止同步，并解除所有项目已关联的仓库。重新启用不会自动恢复这些关联。开关在「功能编排」里。',
-      forgeDisableConfirmTitle: '关闭 GitHub/GitLab 集成',
+      forgeDisableConfirmTitle: '关闭代码托管集成',
       forgeDisableConfirm: '关闭后将停止同步，并解除所有项目已关联的仓库。这些关联不会被保留，重新启用时也不会自动恢复。确定关闭吗？',
       forgeDisableConfirmAction: '关闭集成',
       mcpSection: 'MCP 服务',

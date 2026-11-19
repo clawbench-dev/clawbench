@@ -39,6 +39,7 @@ func registeredPluginsForTest(t *testing.T) []*plugins.Plugin {
 var nonPatchableByDesign = map[string]string{
 	"forge.credentials":       "凭据由 /api/forge/credentials 单独写入（只写不回显），不走 PATCH",
 	"forge.schemes":           "与凭据同源：在写入该 host 的凭据时记录",
+	"forge.platforms":         "与凭据同源：在绑定仓库或写入该 host 的凭据时记录（setForgePlatformHint）",
 	"terminal.max_line_bytes": "内部防爆上限，不暴露给设置页",
 	"terminal.max_buffer_mb":  "内部内存上限，不暴露给设置页",
 }

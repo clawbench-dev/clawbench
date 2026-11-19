@@ -45,7 +45,7 @@ tags:
   - name: Share
     description: 文件分享链接
   - name: Forge
-    description: GitHub / GitLab 集成
+    description: 代码托管集成（software forge：GitHub、GitLab、Gitea）
   - name: Agents
     description: AI Agent 与后端
   - name: TTS
@@ -746,7 +746,7 @@ paths:
         SSH 端口并让 `/api/tunnel/*` 返回 503；`h2` 时**完全不监听** SSH 端口。
         已废弃的 `both` 仍被接受，归一为 `h2`。
 
-        `forge.enabled` 是 GitHub/GitLab 集成的总开关（默认 `true`）：关闭后停止轮询、
+        `forge.enabled` 是代码托管集成（GitHub / GitLab / Gitea）的总开关（默认 `true`）：关闭后停止轮询、
         不再产生事件与通知，**并清空所有项目的仓库绑定**（见 `PATCH` 段）。它是服务端
         开关而非每设备偏好。
 
