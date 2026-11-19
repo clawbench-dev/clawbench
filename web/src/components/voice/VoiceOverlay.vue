@@ -6,9 +6,8 @@
         v-if="pillVisible"
         ref="pillEl"
         class="voice-pill"
-        :class="{ 'voice-pill-recording': voiceState === 'recording' }"
         :style="pillStyle"
-        @click.stop
+        role="status"
       >
         <span v-if="voiceState === 'recording'" class="voice-dot" aria-hidden="true"></span>
         <span v-if="voiceState === 'recording'" class="voice-wave" aria-hidden="true">
@@ -21,11 +20,7 @@
              pill is gone — a "已写入" badge would only repeat what the field
              already shows. -->
         <span v-if="voiceState === 'recording'" class="voice-pill-hint">{{ elapsedText }}</span>
-        <span v-else-if="voiceState === 'transcribing'" class="voice-pill-text" role="status">{{ t('chat.voice.transcribing') }}</span>
-        <button v-if="voiceState === 'recording'" type="button" class="voice-stop-btn"
-          :aria-label="t('chat.voice.stopRecording')" :title="t('chat.voice.stopRecording')" @click.stop="stopFromOverlay">
-          <Square :size="12" fill="currentColor" />
-        </button>
+        <span v-else-if="voiceState === 'transcribing'" class="voice-pill-text">{{ t('chat.voice.transcribing') }}</span>
       </div>
     </Transition>
 
@@ -57,11 +52,7 @@
           </div>
         </div>
 
-        <button v-if="voiceState === 'recording'" type="button" class="voice-stop-btn"
-          :aria-label="t('chat.voice.stopRecording')" :title="t('chat.voice.stopRecording')" @click.stop="stopFromOverlay">
-          <Square :size="12" fill="currentColor" />
-        </button>
-        <div v-else-if="capsuleDone" class="voice-capsule-actions">
+        <div v-if="capsuleDone" class="voice-capsule-actions">
           <CopyButton :text="voiceText" class="voice-cap-icon-btn" />
           <button class="voice-cap-btn primary" @click="draftToChat">{{ t('chat.voice.toChat') }}</button>
           <button class="voice-cap-x" :title="t('chat.voice.discard')" @click="discardDraft">
@@ -113,7 +104,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Mic, Square, X } from 'lucide-vue-next'
+import { Mic, X } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useVoiceInput } from '@/composables/useVoiceInput'
@@ -141,11 +132,6 @@ const {
   shortcutKey,
   targetRect,
 } = useVoiceInput()
-
-function stopFromOverlay() {
-  cleanupFabPointer()
-  if (voiceState.value === 'recording') void stop()
-}
 
 /* ── elapsed timer (only while recording) ─────────────────────────── */
 const elapsed = ref(0)
@@ -419,9 +405,28 @@ function onKeyUp(e: KeyboardEvent) {
   void stop()
 }
 
+/**
+ * Losing the window ends the take, whatever the state says.
+ *
+ * The gesture that started it (a held key, a held finger) cannot be released
+ * into a window that no longer has focus: its keyup/pointerup goes to the other
+ * app, or never arrives. Guarding on `recording` left the gap where the
+ * microphone is still opening — the release was dropped, the take started
+ * afterwards, and nothing was left on screen to end it. Calling stop() when
+ * nothing is running is harmless: it only records the release for a begin()
+ * that is still waiting for the microphone, and the next begin() clears it.
+ */
 function onWindowBlur() {
-  // keyup never arrives when focus leaves while the key is held.
-  if (voiceState.value === 'recording') void stop()
+  void stop()
+}
+
+/**
+ * Same for a WebView that does not blur the window when the app goes to the
+ * background (Android is the one that bites): a take must not keep the
+ * microphone open in an app nobody is looking at.
+ */
+function onVisibilityChange() {
+  if (document.hidden) void stop()
 }
 
 /* ── positioning plumbing ─────────────────────────────────────────── */
@@ -466,7 +471,6 @@ function onWindowTouchStart(e: TouchEvent) {
   // Belt and braces for WebViews that move the caret on the touch itself
   // rather than on the compatibility mouse events.
   if (el?.closest?.('.voice-fab')) e.preventDefault()
-  if (el?.closest?.('.voice-fab, .voice-pill-recording, .voice-capsule')) e.stopPropagation()
 }
 
 function onWindowPointerDown(e: PointerEvent) {
@@ -478,8 +482,7 @@ function onWindowPointerDown(e: PointerEvent) {
     onFabDown()
     return
   }
-  if (el.closest('.voice-stop-btn')) e.preventDefault()
-  if (el.closest('.voice-pill-recording, .voice-capsule')) e.stopPropagation()
+  if (el.closest('.voice-capsule')) e.stopPropagation()
 }
 
 onMounted(() => {
@@ -488,6 +491,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeyDown, true)
   window.addEventListener('keyup', onKeyUp, true)
   window.addEventListener('blur', onWindowBlur)
+  document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('resize', reposition)
   window.addEventListener('scroll', reposition, true)
   document.addEventListener('focusin', onFocusIn, true)
@@ -503,6 +507,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown, true)
   window.removeEventListener('keyup', onKeyUp, true)
   window.removeEventListener('blur', onWindowBlur)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('resize', reposition)
   window.removeEventListener('scroll', reposition, true)
   document.removeEventListener('focusin', onFocusIn, true)
@@ -558,30 +563,6 @@ watch(voiceMode, () => { reposition() })
   pointer-events: none;
   white-space: nowrap;
 }
-.voice-pill-recording {
-  height: calc(44 * var(--dp));
-  padding-inline-end: 0;
-  pointer-events: auto;
-}
-/* The fallback brake, not an invitation. A take normally ends by releasing the
-   key/finger; this button is only reachable once that gesture was lost, so it
-   stays quiet: a small muted glyph on a transparent box, with the 44dp hit
-   area kept for the finger. It must not compete with the timer it sits next to. */
-.voice-stop-btn {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: calc(44 * var(--dp));
-  height: calc(44 * var(--dp));
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--text-hint);
-  touch-action: manipulation;
-}
-.voice-stop-btn:hover,
-.voice-stop-btn:active { background: var(--bg-hover); color: var(--text-secondary); }
 .voice-pill-text {
   overflow: hidden;
   text-overflow: ellipsis;

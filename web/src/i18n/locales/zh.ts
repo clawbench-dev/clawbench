@@ -1418,7 +1418,6 @@ export default {
     },
     voice: {
       recording: '录音中',
-      stopRecording: '停止录音',
       transcribing: '识别中',
       insecureContext: '语音输入需要 HTTPS 或 localhost 环境（当前页面不是安全上下文，无法访问麦克风）',
       unavailableTitle: '语音输入不可用',
