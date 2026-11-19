@@ -2761,6 +2761,16 @@ export default {
       exact: '精确匹配',
       noResults: '未找到文件',
       noResultsDesc: '换个关键词，或调整搜索范围再试。',
+      // 搜索无结果时的空状态：标题点出「什么词、没找到」，描述说清究竟搜了
+      // 哪个范围（当前目录 / 及子目录 / 整个项目），下方是按一下就能放宽的
+      // 快捷按钮。只说「未找到文件」，用户不知道能往哪儿放宽。
+      noResultsTitle: '没有找到“{q}”',
+      noResultsHere: '只在当前目录「{dir}」里搜过了，没有匹配的文件。',
+      noResultsDeep: '在「{dir}」及它的所有子目录里搜过了，没有匹配的文件。',
+      noResultsProject: '在整个项目里搜过了，没有匹配的文件。',
+      widenRecursive: '搜索子目录',
+      widenGlobal: '在整个项目中搜索',
+      clearSearch: '清空搜索',
       searching: '搜索中...',
       resultCount: '找到 {count} 个文件',
       resultCountPlus: '找到 {limit}+ 个文件',

@@ -2760,6 +2760,17 @@ export default {
       exact: 'Exact match',
       noResults: 'No files found',
       noResultsDesc: 'Try a different keyword or widen the search scope.',
+      // No-results empty state: the title names the query, the description states
+      // exactly which scope was searched (this directory / and below / whole
+      // project), and the actions below widen it in one tap. "No files found"
+      // alone leaves the user unable to tell which direction to widen.
+      noResultsTitle: 'No results for "{q}"',
+      noResultsHere: 'Searched only in "{dir}" — no matching files.',
+      noResultsDeep: 'Searched "{dir}" and every subfolder — no matching files.',
+      noResultsProject: 'Searched the whole project — no matching files.',
+      widenRecursive: 'Search subfolders',
+      widenGlobal: 'Search whole project',
+      clearSearch: 'Clear search',
       searching: 'Searching...',
       resultCount: '{count} files found',
       resultCountPlus: '{limit}+ files found',

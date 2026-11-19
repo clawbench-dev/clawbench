@@ -198,10 +198,29 @@
         <EmptyState
           v-else-if="search.state.results.length === 0 && !search.state.searching"
           :icon="FileX"
-          :title="t('file.search.noResults')"
-          :desc="t('file.search.noResultsDesc')"
+          :title="noResultsTitle"
+          :desc="noResultsDesc"
           data-role="file-search-empty"
-        />
+        >
+          <template #action>
+            <div class="fs-empty-actions">
+              <button
+                v-for="option in widerSearches"
+                :key="option.key"
+                class="fbtn fbtn-primary"
+                :data-action="`widen-${option.key}`"
+                @click="option.run()"
+              >
+                <component :is="option.icon" :size="14" />
+                <span>{{ option.label }}</span>
+              </button>
+              <button class="fbtn" data-action="widen-reset" @click="exitSearch">
+                <X :size="14" />
+                <span>{{ t('file.search.clearSearch') }}</span>
+              </button>
+            </div>
+          </template>
+        </EmptyState>
       </template>
       <!-- First load of a directory: preview the row shape instead of covering
            an empty panel with a spinner. A refresh that already has rows on
@@ -293,10 +312,29 @@
         <EmptyState
           v-else-if="search.state.results.length === 0 && !search.state.searching"
           :icon="FileX"
-          :title="t('file.search.noResults')"
-          :desc="t('file.search.noResultsDesc')"
+          :title="noResultsTitle"
+          :desc="noResultsDesc"
           data-role="file-search-empty"
-        />
+        >
+          <template #action>
+            <div class="fs-empty-actions">
+              <button
+                v-for="option in widerSearches"
+                :key="option.key"
+                class="fbtn fbtn-primary"
+                :data-action="`widen-${option.key}`"
+                @click="option.run()"
+              >
+                <component :is="option.icon" :size="14" />
+                <span>{{ option.label }}</span>
+              </button>
+              <button class="fbtn" data-action="widen-reset" @click="exitSearch">
+                <X :size="14" />
+                <span>{{ t('file.search.clearSearch') }}</span>
+              </button>
+            </div>
+          </template>
+        </EmptyState>
       </template>
       <PanelSkeleton v-else-if="dirLoading && displayEntries.length === 0" class="file-grid-skeleton" variant="grid" :rows="12" :label="t('common.loading')" />
       <EmptyState
@@ -601,7 +639,7 @@ import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@
 import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail, BookOpen } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail, BookOpen, Globe } from 'lucide-vue-next'
 import KBCollectionPickerDialog from '@/components/kb/KBCollectionPickerDialog.vue'
 import { kbAddByPath, kbImportDirectory, kbPreviewDirectory } from '@/composables/useKnowledgeBase'
 import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
@@ -1338,6 +1376,59 @@ const isRecursiveEffective = computed(() => search.effectiveRecursive.value)
  * so the extra path row would be redundant there.
  */
 const showResultPath = computed(() => searchHasQuery.value && isRecursiveEffective.value)
+
+/**
+ * Copy for the no-results state, stating the search that just came back empty.
+ *
+ * "No files found" on its own is true and useless: the user cannot tell whether
+ * the app looked at one folder or the whole project, so they cannot tell which
+ * way to widen. The description names the effective scope (directory / this
+ * directory and below / the whole project) and the scope line below offers the
+ * wider searches that are still available as one-tap actions.
+ *
+ * The copy names the search root explicitly (`baseName` from utils/path) even
+ * though the browsed directory is already in the header breadcrumb: the search
+ * may be rooted anywhere by the time the results arrive.
+ */
+const noResultsTitle = computed(() => t('file.search.noResultsTitle', { q: search.state.query.trim() }))
+
+const noResultsDesc = computed(() => {
+    if (isGlobalScope.value) return t('file.search.noResultsProject')
+    const dir = baseName(props.currentDir) || t('file.search.wordCurrent')
+    return isRecursiveEffective.value
+        ? t('file.search.noResultsDeep', { dir })
+        : t('file.search.noResultsHere', { dir })
+})
+
+/**
+ * The wider searches the empty state can offer, narrowest first. Each one is
+ * rendered as a button; the ones that are already in effect are omitted, so
+ * "no results" never shows a shortcut to the state the user is already in.
+ *
+ * Order is deliberate: "this directory and below" is one step wider than a flat
+ * current-directory search, the whole project is the last resort. Inside a
+ * global search there is nothing beyond the project, so the list is empty and
+ * the state offers only the "clear search" affordance.
+ */
+const widerSearches = computed(() => {
+    const out = []
+    if (isGlobalScope.value) return out
+    if (!isRecursiveEffective.value) {
+        out.push({
+            key: 'deep',
+            icon: FolderSearch,
+            label: t('file.search.widenRecursive', { dir: baseName(props.currentDir) || t('file.search.wordCurrent') }),
+            run: () => { search.state.recursive = true; refreshSearchResults() },
+        })
+    }
+    out.push({
+        key: 'global',
+        icon: Globe,
+        label: t('file.search.widenGlobal'),
+        run: () => { search.state.scope = 'global'; refreshSearchResults() },
+    })
+    return out
+})
 
 // Search-options description used as the search box placeholder (no separate
 // prompt prefix). Word order and spacing follow the active locale, matching
