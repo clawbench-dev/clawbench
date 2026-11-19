@@ -24,7 +24,7 @@
         <span v-else-if="voiceState === 'transcribing'" class="voice-pill-text" role="status">{{ t('chat.voice.transcribing') }}</span>
         <button v-if="voiceState === 'recording'" type="button" class="voice-stop-btn"
           :aria-label="t('chat.voice.stopRecording')" :title="t('chat.voice.stopRecording')" @click.stop="stopFromOverlay">
-          <Square :size="14" fill="currentColor" />
+          <Square :size="12" fill="currentColor" />
         </button>
       </div>
     </Transition>
@@ -59,7 +59,7 @@
 
         <button v-if="voiceState === 'recording'" type="button" class="voice-stop-btn"
           :aria-label="t('chat.voice.stopRecording')" :title="t('chat.voice.stopRecording')" @click.stop="stopFromOverlay">
-          <Square :size="14" fill="currentColor" />
+          <Square :size="12" fill="currentColor" />
         </button>
         <div v-else-if="capsuleDone" class="voice-capsule-actions">
           <CopyButton :text="voiceText" class="voice-cap-icon-btn" />
@@ -563,6 +563,10 @@ watch(voiceMode, () => { reposition() })
   padding-inline-end: 0;
   pointer-events: auto;
 }
+/* The fallback brake, not an invitation. A take normally ends by releasing the
+   key/finger; this button is only reachable once that gesture was lost, so it
+   stays quiet: a small muted glyph on a transparent box, with the 44dp hit
+   area kept for the finger. It must not compete with the timer it sits next to. */
 .voice-stop-btn {
   display: grid;
   place-items: center;
@@ -573,11 +577,11 @@ watch(voiceMode, () => { reposition() })
   border: 0;
   border-radius: var(--radius-full);
   background: transparent;
-  color: var(--color-red, #e5484d);
+  color: var(--text-hint);
   touch-action: manipulation;
 }
 .voice-stop-btn:hover,
-.voice-stop-btn:active { background: var(--bg-hover); }
+.voice-stop-btn:active { background: var(--bg-hover); color: var(--text-secondary); }
 .voice-pill-text {
   overflow: hidden;
   text-overflow: ellipsis;
