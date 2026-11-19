@@ -43,6 +43,16 @@ export interface SplashController {
    * Returns whether the overlay was shown. Never clobbers an active version gate.
    */
   show(url: string): boolean
+  /**
+   * Show the overlay without a navigation yet.
+   *
+   * Used while the embedded server is still starting: the window exists (so
+   * the user sees the ring immediately) but the page it will open is not
+   * known until startup settles. Same body as `show()` minus the URL check.
+   */
+  showLoading(): boolean
+  /** Whether the overlay is currently on screen. */
+  isVisible(): boolean
   /** Hide the overlay. Idempotent, and safe after the window is gone. */
   dismiss(): void
   /** Stop loading, hide the overlay and hand control back to the caller. */
@@ -78,6 +88,16 @@ export interface SplashOptions {
    * navigates back to the login page (and, for a timeout, reports the error).
    */
   onAbort: (reason: 'cancel' | 'timeout') => void
+  /**
+   * Whether window navigation events must be ignored for now.
+   *
+   * While the embedded server is still starting, the window shows a LOCAL
+   * login page behind the overlay. That page's `did-finish-load` would
+   * otherwise advance the stage to "initializing" and arm the boot fail-safe,
+   * which would hide the ring after 15s even though the server has not started
+   * yet. The caller reports "held" until startup settles.
+   */
+  isHeld?: () => boolean
 }
 
 /** Absolute path to the login page, which doubles as the overlay's content. */
@@ -346,14 +366,21 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
   // ── Window navigation drives the stage display ────────────────────────────
   // Only advance while the overlay is up: these events also fire for the login
   // page's own load, which has nothing to report.
+  //
+  // `isHeld` suppresses them entirely while startup is still pending: the
+  // window is showing the local login page as a placeholder, and its
+  // `did-finish-load` would advance the stage and arm the boot fail-safe
+  // against a server that has not started yet.
+  const held = () => opts.isHeld?.() === true
   const onStageEvent = (event: string) => {
-    if (!visible) return
+    if (!visible || held()) return
     const stage = stageForEvent(event)
     if (stage) setStage(stage)
   }
   win.webContents.on('did-start-loading', () => onStageEvent('did-start-loading'))
   win.webContents.on('dom-ready', () => onStageEvent('dom-ready'))
   win.webContents.on('did-finish-load', () => {
+    if (held()) return
     onStageEvent('did-finish-load')
     if (!visible) return
     // The page loaded, so the CONNECTION succeeded: the connection deadline has
@@ -370,45 +397,72 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
   win.on('maximize', onResize)
   win.on('unmaximize', onResize)
 
+  /**
+   * Raise the overlay, whatever the navigation is (or is not yet).
+   *
+   * Split from `show()` so the embedded-startup path can put the ring on
+   * screen before the server's address is known; `show()` keeps its "remote
+   * navigation only" rule on top.
+   *
+   * `armTimeout` is false for the pre-navigation show: the connection deadline
+   * measures the PAGE load, and spending it on the server's own startup would
+   * leave a slow first launch with too little of it. It is armed when the real
+   * navigation starts (`show(url)`).
+   */
+  function showInternal(armTimeout: boolean): boolean {
+    if (!isAlive()) return false
+    // Never clobber the blocking version gate with a loading overlay.
+    if (mode === 'gate') return false
+    if (visible) {
+      if (armTimeout) armConnectionTimeout()
+      return true
+    }
+
+    // Drop any fade-out still pending from a previous dismiss, or it would
+    // fire mid-way through this show and hide the overlay again.
+    cancelTimers()
+    mode = 'splash'
+    dismissRequested = false
+    visible = true
+    syncBounds()
+    view.setVisible(true)
+    // The page is reused across connects, so clear the fade class the previous
+    // dismissal left behind — otherwise this show renders fully transparent.
+    if (pageReady) {
+      void view.webContents
+        .executeJavaScript('window.__splashReset && window.__splashReset()')
+        .catch(() => { /* overlay went away mid-call */ })
+      // And follow the CURRENT theme/language: the reused document's <head>
+      // ran only once, so without this it keeps whatever it first loaded with.
+      refreshNativeState()
+    }
+    if (!pageReady) {
+      // First use: load the overlay content. Subsequent shows reuse the
+      // already-loaded document. setStage() below queues the stage, which the
+      // did-finish-load handler replays once the page can take commands.
+      void view.webContents
+        .loadFile(loginPagePath(), { query: { splash: '1' } })
+        .catch((err) => record('E', TAG, `overlay failed to load: ${String(err)}`))
+    }
+    setStage('connecting')
+    if (armTimeout) armConnectionTimeout()
+    return true
+  }
+
   return {
     show(url: string): boolean {
-      if (!isAlive()) return false
       // A local file (the first-run login page) has nothing to wait for, so an
       // overlay would be a one-frame flash of the logo.
       if (!shouldShowSplash(url)) return false
-      // Never clobber the blocking version gate with a loading overlay.
-      if (mode === 'gate') return false
-      if (visible) return true
+      return showInternal(true)
+    },
 
-      // Drop any fade-out still pending from a previous dismiss, or it would
-      // fire mid-way through this show and hide the overlay again.
-      cancelTimers()
-      mode = 'splash'
-      dismissRequested = false
-      visible = true
-      syncBounds()
-      view.setVisible(true)
-      // The page is reused across connects, so clear the fade class the previous
-      // dismissal left behind — otherwise this show renders fully transparent.
-      if (pageReady) {
-        void view.webContents
-          .executeJavaScript('window.__splashReset && window.__splashReset()')
-          .catch(() => { /* overlay went away mid-call */ })
-        // And follow the CURRENT theme/language: the reused document's <head>
-        // ran only once, so without this it keeps whatever it first loaded with.
-        refreshNativeState()
-      }
-      if (!pageReady) {
-        // First use: load the overlay content. Subsequent shows reuse the
-        // already-loaded document. setStage() below queues the stage, which the
-        // did-finish-load handler replays once the page can take commands.
-        void view.webContents
-          .loadFile(loginPagePath(), { query: { splash: '1' } })
-          .catch((err) => record('E', TAG, `overlay failed to load: ${String(err)}`))
-      }
-      setStage('connecting')
-      armConnectionTimeout()
-      return true
+    showLoading(): boolean {
+      return showInternal(false)
+    },
+
+    isVisible(): boolean {
+      return visible && isAlive()
     },
 
     dismiss,

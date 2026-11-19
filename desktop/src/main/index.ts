@@ -11,6 +11,7 @@ import { flushFloatingBounds, hasAppTray, initFloating, openMainWindow } from '.
 import { record, recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
 import { embeddedServerLabels, resolveNativeLanguage } from './labels'
+import { settleStartupGate } from './startupGate'
 import {
   hasEmbeddedServerBinary,
   isEmbeddedServerUrl,
@@ -169,15 +170,22 @@ app.whenReady().then(async () => {
   // bridge.ts), where the server URL is known. It used to run here on a 3s timer
   // as an OS dialog; that path is gone so the blocking overlay is the only
   // prompt.
-  // Before the first window: the window's cold start reads `serverUrl` from the
-  // store, so the embedded server has to be running (and its cookie planted)
-  // by then. Failures are non-fatal — see the helper.
-  await startEmbeddedServerIfPresent()
+  // Only the built-in server needs waiting for. A thin client has none, and a
+  // fused build whose saved target is another machine will open that machine
+  // anyway — holding the window on the ring for a local server it is not going
+  // to open would just delay a user who deliberately chose a remote one.
+  const savedTarget = getStore().get('serverUrl')
+  if (!hasEmbeddedServerBinary() || (savedTarget && !isEmbeddedServerUrl(savedTarget))) {
+    settleStartupGate()
+  }
+
+  // Start the embedded server and raise the window together. The window shows
+  // the loading ring immediately (see the startup gate in window.ts) and
+  // navigates only after the server is ready and its cookie is planted —
+  // awaiting the start first left the user with no window at all on a slow
+  // first launch, which is what made a second click create one early.
+  const serverStart = startEmbeddedServerIfPresent()
   createMainWindow()
-  // The floating status capsule and its tray icon, when the user left the
-  // feature switched on. After the main window so a capsule click during
-  // startup already has something to reveal.
-  initFloating()
 
   // Grant microphone/camera ('media') and screen capture ('display-capture') so
   // voice input and live screen sharing work in the desktop shell. These are two
@@ -200,6 +208,16 @@ app.whenReady().then(async () => {
   installDisplayMediaHandler()
   // Source listing / declaration / throttling IPC.
   registerCaptureHandlers(() => getMainWindow()?.webContents ?? null)
+
+  // Permissions are in place, so the page can safely open the server the shell
+  // actually started (and not the address a previous run left behind).
+  await serverStart
+  settleStartupGate()
+
+  // The floating status capsule and its tray icon, when the user left the
+  // feature switched on. After the main window so a capsule click during
+  // startup already has something to reveal.
+  initFloating()
 
   // Asked for the MAIN window, not for a window count: the floating capsule and
   // its tray are windows too, so "no windows" would never be true while they are

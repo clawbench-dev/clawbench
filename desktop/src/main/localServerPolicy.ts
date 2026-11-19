@@ -224,6 +224,8 @@ export function isLocalServerUrl(url: string): boolean {
 export interface HealthBody {
   app?: string
   version?: string
+  /** PID of the answering server. Absent on builds that predate the field. */
+  pid?: number
 }
 
 /**
@@ -233,6 +235,28 @@ export interface HealthBody {
  */
 export function isClawBenchHealth(body: unknown): body is HealthBody & { app: 'clawbench' } {
   return !!body && typeof body === 'object' && (body as HealthBody).app === 'clawbench'
+}
+
+/**
+ * Whether the health answer came from the server THIS process spawned.
+ *
+ * The identity check above is not enough on a machine where an older ClawBench
+ * instance is still listening on the preferred port (a server left behind by a
+ * crashed run, or a standalone install the user started by hand). That instance
+ * answers `/api/health` first, so the shell would treat "some ClawBench server
+ * is up" as "our server is ready", plant a cookie against it and point the
+ * window at its address. When it then exits, the page is pinned to a port the
+ * new server may not use — and the WebSocket reconnect loop can never succeed;
+ * only logging out and back in (which reads the new address from the store)
+ * recovers.
+ *
+ * `pid` is additive: a build that predates it omits the field, and we accept
+ * that rather than refusing to start every older embedded server.
+ */
+export function isHealthFromChild(body: unknown, childPid: number | undefined): boolean {
+  if (!isClawBenchHealth(body)) return false
+  if (typeof body.pid !== 'number') return true
+  return childPid !== undefined && body.pid === childPid
 }
 
 /**

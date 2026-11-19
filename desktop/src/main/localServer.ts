@@ -17,6 +17,7 @@ import {
   embeddedServerBinaryPath as embeddedServerBinaryPathFor,
   embeddedServerUrl,
   isClawBenchHealth,
+  isHealthFromChild,
   reservedPortsForEmbedded,
   sameServerUrl,
   sessionCookieName,
@@ -270,17 +271,26 @@ async function waitForHealth(port: number): Promise<void> {
       break
     }
     lastBody = await probeHealth(port)
-    if (isClawBenchHealth(lastBody)) return
+    // "A ClawBench server answered" is not enough: an older instance on the
+    // same port answers first and then exits, leaving the window pinned to an
+    // address the new server may not use. Only OUR child counts as ready.
+    if (isHealthFromChild(lastBody, child?.pid)) return
     await wait(EMBEDDED_HEALTH_INTERVAL_MS)
-  }
-  if (lastBody && !isClawBenchHealth(lastBody)) {
-    throw new Error(`port ${port} answered, but it is not ClawBench`)
   }
   if (exitCode !== null) {
     // The server gave up on its own (port conflict, data-directory lock, a bad
     // config). Reporting a timeout here hid that reason and made every such
     // failure look identical — say what actually happened instead.
     throw new Error(`the embedded server exited before it became ready (code ${exitCode})`)
+  }
+  if (lastBody && isClawBenchHealth(lastBody) && !isHealthFromChild(lastBody, child?.pid)) {
+    // Someone else's ClawBench server holds the port. Naming it is the only way
+    // to tell this apart from a slow start.
+    const pid = (lastBody as { pid?: number }).pid
+    throw new Error(`port ${port} is answering as ClawBench from another process${pid ? ` (pid ${pid})` : ''}, not the one this app started`)
+  }
+  if (lastBody && !isClawBenchHealth(lastBody)) {
+    throw new Error(`port ${port} answered, but it is not ClawBench`)
   }
   throw new Error(`the embedded server did not become ready within ${Math.round(EMBEDDED_STARTUP_TIMEOUT_MS / 1000)}s`)
 }
@@ -337,6 +347,10 @@ async function plantSessionCookie(port: number, ses: Session): Promise<void> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password }),
+    // The health probe above already proved the server is up, so a login that
+    // never answers is a bug, not a slow start. Without a bound it would leave
+    // the window on the loading ring forever.
+    signal: AbortSignal.timeout(10_000),
   })
   if (!res.ok) {
     throw new Error(res.status === 401 ? 'the embedded server rejected its own password' : `login failed: HTTP ${res.status}`)

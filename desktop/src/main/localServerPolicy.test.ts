@@ -7,6 +7,7 @@ import {
   embeddedServerBinaryPath,
   embeddedServerUrl,
   isClawBenchHealth,
+  isHealthFromChild,
   isLocalServerUrl,
   reservedPortsForEmbedded,
   sameServerUrl,
@@ -82,6 +83,30 @@ describe('isClawBenchHealth', () => {
     expect(isClawBenchHealth({})).toBe(false)
     expect(isClawBenchHealth('clawbench')).toBe(false)
     expect(isClawBenchHealth(null)).toBe(false)
+  })
+})
+
+describe('isHealthFromChild', () => {
+  it('accepts the pid this process spawned', () => {
+    expect(isHealthFromChild({ app: 'clawbench', pid: 4321 }, 4321)).toBe(true)
+  })
+
+  it('rejects another ClawBench instance on the same port', () => {
+    // This is the bug: an older server still listening answers first, so the
+    // shell believes its own server is ready and points the window at an
+    // address that is about to disappear.
+    expect(isHealthFromChild({ app: 'clawbench', pid: 1111 }, 4321)).toBe(false)
+  })
+
+  it('rejects a non-ClawBench answer even when the pid matches', () => {
+    expect(isHealthFromChild({ app: 'other', pid: 4321 }, 4321)).toBe(false)
+    expect(isHealthFromChild(null, 4321)).toBe(false)
+  })
+
+  it('accepts an older server that does not report a pid', () => {
+    // Additive field: refusing these would make every older embedded binary
+    // impossible to start.
+    expect(isHealthFromChild({ app: 'clawbench', version: 'v1' }, 4321)).toBe(true)
   })
 })
 

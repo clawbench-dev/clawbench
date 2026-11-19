@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,4 +31,7 @@ func TestServeHealth(t *testing.T) {
 	// client.
 	assert.Equal(t, version.ClientProtocol, resp.Protocol)
 	assert.Greater(t, resp.Protocol, 0)
+	// The desktop shell compares this with the child it spawned. A missing or
+	// wrong value would make it accept a stale server on the same port.
+	assert.Equal(t, os.Getpid(), resp.PID)
 }
