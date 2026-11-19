@@ -1810,4 +1810,99 @@ describe('useFileUpload', () => {
       expect(captured[0].get('relpath')).toBe('proj/src')
     })
   })
+
+  describe('uploadFilesToCollection (desktop drop into a knowledge base)', () => {
+    it('uploads each file to the collection endpoint and reports the counts', async () => {
+      const urls: string[] = []
+      xhrSendHandler = (xhr) => {
+        urls.push(xhr.open.mock.calls[0][1])
+        xhr.status = 201
+        xhr.responseText = JSON.stringify({ id: 1, title: 'a.md' })
+        if (xhr.onload) xhr.onload()
+      }
+
+      const upload = useFileUpload()
+      const res = await upload.uploadFilesToCollection(
+        [makeFile('a.md'), makeFile('b.md')],
+        7,
+      )
+
+      expect(urls).toEqual([
+        '/api/kb/documents/upload?collection_id=7',
+        '/api/kb/documents/upload?collection_id=7',
+      ])
+      expect(res).toEqual({ added: 2, failed: 0, errors: [], cancelled: false })
+      // The bar is torn down by this batch (no summary toast — the panel words
+      // the outcome itself).
+      expect(upload.dirUploading.value).toBe(false)
+      expect(upload.dirUploadDone.value).toBe(2)
+      expect(upload.dirUploadProgress.value).toBe(0)
+      expect(mockToastShow).not.toHaveBeenCalled()
+    })
+
+    it('does not retry a file the server rejects, and keeps the rest of the batch', async () => {
+      let sends = 0
+      xhrSendHandler = (xhr) => {
+        sends += 1
+        if (sends === 1) {
+          xhr.status = 400
+          xhr.responseText = JSON.stringify({ error: 'already in the collection' })
+        } else {
+          xhr.status = 201
+          xhr.responseText = JSON.stringify({ id: 2 })
+        }
+        if (xhr.onload) xhr.onload()
+      }
+
+      const res = await useFileUpload().uploadFilesToCollection(
+        [makeFile('dup.md'), makeFile('ok.md')],
+        3,
+      )
+
+      expect(sends).toBe(2)
+      expect(res.added).toBe(1)
+      expect(res.failed).toBe(1)
+      expect(res.errors).toEqual(['dup.md: already in the collection'])
+    })
+
+    it('rejects an oversized file before sending it', async () => {
+      let sends = 0
+      xhrSendHandler = (xhr) => {
+        sends += 1
+        xhr.status = 201
+        xhr.responseText = JSON.stringify({ id: 1 })
+        if (xhr.onload) xhr.onload()
+      }
+
+      const res = await useFileUpload().uploadFilesToCollection(
+        [makeFile('huge.pdf', 3 * 1024 * 1024)],
+        1,
+      )
+
+      expect(sends).toBe(0)
+      expect(res.added).toBe(0)
+      expect(res.failed).toBe(1)
+      expect(res.errors[0]).toContain('huge.pdf')
+    })
+
+    it('stops the batch when the progress bar is cancelled', async () => {
+      let pendingXhr: any = null
+      xhrSendHandler = (xhr) => { pendingXhr = xhr }
+
+      const upload = useFileUpload()
+      const pending = upload.uploadFilesToCollection(
+        [makeFile('a.md'), makeFile('b.md')],
+        9,
+      )
+      await vi.waitFor(() => expect(pendingXhr).not.toBeNull())
+
+      upload.cancelDirUpload()
+      const res = await pending
+
+      expect(res.cancelled).toBe(true)
+      expect(res.added).toBe(0)
+      expect(res.failed).toBe(0)
+      expect(upload.dirUploading.value).toBe(false)
+    })
+  })
 })

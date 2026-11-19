@@ -1,6 +1,6 @@
-# Forge 集成（GitHub / GitLab）
+# Forge 集成（GitHub / GitLab / Gitea）
 
-Forge 集成把远端仓库的 Issue 与 PR/MR 引入 ClawBench：项目内可直接浏览列表与详情（正文 + 评论/时间线），后台持续感知仓库变化并推送通知，还能把仓库事件变成"事件触发 AI 任务"——新 issue、被合并的 MR、新评论都可以自动唤起一个预定义的 AI 任务去分析、总结或跟进。这套能力让 AI 从"我主动问它"扩展到"仓库有事它自己动"。
+Forge 集成把远端仓库的 Issue 与 PR/MR 引入 ClawBench（GitHub、GitLab，以及 Gitea 及其社区分叉 Forgejo）：项目内可直接浏览列表与详情（正文 + 评论/时间线），后台持续感知仓库变化并推送通知，还能把仓库事件变成"事件触发 AI 任务"——新 issue、被合并的 MR、新评论都可以自动唤起一个预定义的 AI 任务去分析、总结或跟进。这套能力让 AI 从"我主动问它"扩展到"仓库有事它自己动"。
 
 **读写边界**：ClawBench 自身的 forge API 调用是**只读**的（`Provider` 接口不含任何写方法，后端不评论、不 review、不改状态）。但事件触发的 AI 任务不受此约束——AI 可借助本地 CLI / `gh` / `glab` 等工具操作远端，因此"只读"描述的是 ClawBench 的 API 表面，不是自动任务的权限边界。
 
@@ -114,7 +114,8 @@ sequenceDiagram
 
 ### 设计要点
 
-- **Provider 抽象隔离平台差异**：`internal/forge/` 定义统一的 `Provider` 接口与模型（`Item`/`Comment`/`Change`），GitHub 走 `google/go-github`，GitLab 用自建轻量 REST v4 client——刻意避开官方 SDK 的重依赖树（protovalidate/protobuf/cel-go/graphql-go/keyring）。平台差异（GitHub 只有 `owner/repo` 两段、GitLab 允许多级 group；GitLab `merged`/`locked` 归一为 closed；GitHub issues 端点混入 PR 需剔除）在 adapter 内消化，上层只见统一模型
+- **Provider 抽象隔离平台差异**：`internal/forge/` 定义统一的 `Provider` 接口与模型（`Item`/`Comment`/`Change`），GitHub 走 `google/go-github`，GitLab 用自建轻量 REST v4 client——刻意避开官方 SDK 的重依赖树（protovalidate/protobuf/cel-go/graphql-go/keyring）；Gitea/Forgejo 同样是自建轻量 client（`/api/v1`，两者 API 相同，因此是**一个**平台值、一个适配器，界面上合并成一个「Gitea / Forgejo」选项）。平台差异（GitHub 与 Gitea 只有 `owner/repo` 两段、GitLab 允许多级 group；GitLab `merged`/`locked` 归一为 closed；GitHub issues 端点混入 PR 需剔除；Gitea 的 issue 载荷用 `pull_request.merged_at` 表示合并）在 adapter 内消化，上层只见统一模型
+- **平台不是靠域名猜的**：`forge.PlatformForHost` 只是兜底（github.com → GitHub，其余 → GitLab），因为 Gitea 永远自建、名字上跟自建 GitLab 一模一样，GitHub 企业版也一样。用户选定的平台记在配置里（`forge.platforms`，按 host）和绑定行上，解析顺序是「显式指定 → 主机记录 → 项目绑定 → 域名兜底」。**绑定即教学**：显式绑定一个与域名推断不同的平台时，顺手把平台记到该主机上，令牌校验、身份探测（防自触发）与 remote 列表随后都用同一个答案——否则会出现「绑定按 GitHub 访问、校验令牌却按 GitLab 探 `/api/v4`」这种自相矛盾
 - **变化靠本地快照 diff，而非平台事件 API**：GitHub `issues?since` 只表明"变了"而不表明"变成了什么事件"，GitLab events API 粒度只到天。因此以水位线增量拉取 + `forge_items` 快照对比推导事件，把"发生了什么"的判断权握在自己手里。水位线**必须整批（所有页）拉完才推进**，边界用严格 `>` 加 1s 重叠窗口，并对事件做 `dedupe_key` 去重——不依赖时间戳唯一性
 - **水位线按 item 类型分离（issue / PR 各一个游标）**：两个类型来自**时间过滤能力不同**的端点，共用一个游标会被慢的一方拖偏。GitHub 的 issue 列表支持 `since`，而 PR 列表**完全不支持**（go-github 的 `PullRequestListOptions` 没有该字段，API 也不认未知参数），因此 PR 侧只能全量翻页——实测第 1 页（100 条）耗时 41–70s、响应 2.2MB，共 4 页，且客户端超时 30s，于是大部分趟数走不完、游标不前进、下一 tick 从 page 1 重走，配额被反复烧光；偶尔走完时，PR 阶段看到的较新时间戳会把**共享游标**推过 issue 阶段尚未取到的 issue，那些 issue 从此永远落在窗口之外（真实案例：一条 15:13 创建的 issue 被 15:14 的 PR 推没了，`forge_events` 里连行都没有）。分离后 `issue_watermark` 与 `pr_watermark` 互不推进，构造上不可能再发生
 - **窗口化的 PR 查询改走 issues 端点**：既然 PR 列表无法表达时间下界，带 `since` 的 PR 查询就改用 `issues` 端点（它同时返回 PR——PR 就是带 `pull_request` 链接的 issue，且该链接携带 `merged_at`）。实测 1.2s / 92KB，对比 PR 列表的 41s / 2.2MB。**不带窗口**的查询仍走 PR 列表，因为只有它返回 `head.ref`（CI 查询所需的 `SourceBranch`）；CI 查询本身走 `GetItem`（单 PR 1–3s），两条路互不影响
@@ -189,4 +190,5 @@ per-host 令牌桶 + 全局并发上限，避免多 repo 同时打满限额；�
 - **只读 API 表面**：ClawBench 不代劳远端写操作（不评论、不 review、不改状态），写操作由事件任务里的 AI 借助外部工具完成
 - **轮询配额上限**：单实例可轮询的 repo 数受平台限额约束（GitHub 约 38 个），无自适应降频配置。CI 轮询额外占配额，因此只在确有任务订阅 `pipeline_done` 时才发起
 - **服务端不做 host 闸门**：自建实例（含内网、回环、IP 地址）一律可绑定，风险提示只在绑定弹窗前端显示。这是刻意的取舍——服务端硬拦截会让内网自建 GitLab 完全无法使用。代价是云部署下元数据端点可被诱导访问；日后若要收紧，应只加回「元数据 + 链路本地」窄拦截，不要恢复整套守卫
+- **Gitea 的三个能力缺口**：①**没有「某条 PR 的流水线」反查**（运行记录不带 PR 关联，也没有按分支查开放 PR 的过滤），所以流水线详情里不显示关联 PR；反方向的「这条 PR 的流水线」用 `branch` 过滤实现，正常工作。②运行与作业没有 stage、没有失败原因字段，界面上这两列留空而不是编造。③**合并 / 关闭两个筛选靠本地过滤**：Gitea 只有 open/closed，没有 merged 状态，`q=is:merged` 也匹配不到任何东西（已对真实实例验证），所以「已合并」= 拉 closed 后只留带合并时间的，「已关闭」反之。一次请求最多翻 5 页去找够数，命中很少的仓库（比如合并率极高）这两个页签可能只显示少量结果甚至为空——这是本地过滤的固有代价，不是查询失败
 - **PR 侧的流水线按需加载**：GitLab 的合并请求流水线端点返回精简结构（无耗时、无触发者、旧实例上也无时间戳），缺失字段直接不渲染，而不是补零或逐条再发请求补全

@@ -67,27 +67,53 @@ export function setForgeBindingState(next: { platform?: string; host?: string; o
 }
 
 /**
+ * The brand mark a dock tab can show.
+ *
+ * Gitea and Forgejo share one brand here because they share one API and one
+ * adapter; the label names both so the user recognises their service.
+ */
+export type ForgeBrand = 'github' | 'gitlab' | 'gitea'
+
+/**
  * forgeDockIconKind decides which brand icon the forge dock tab shows.
  *
  * GitHub is the default — including before any repository is bound, since the
- * tab exists regardless of binding. Only an actually-bound GitLab repository
- * switches it to the GitLab mark.
+ * tab exists regardless of binding. Only an actually-bound GitLab or Gitea
+ * repository switches it.
  */
-export function forgeDockIconKind(currentPlatform: string): 'github' | 'gitlab' {
-    return currentPlatform === 'gitlab' ? 'gitlab' : 'github'
+export function forgeDockIconKind(currentPlatform: string): ForgeBrand {
+    if (currentPlatform === 'gitlab') return 'gitlab'
+    if (currentPlatform === 'gitea' || currentPlatform === 'forgejo') return 'gitea'
+    return 'github'
 }
 
 /**
  * forgeTabTitleKey is the i18n key for the forge dock tab's label.
  *
- * The tab is named after the integration the project actually uses ("GitHub
- * integration" / "GitLab integration") instead of a platform-neutral
- * "issues & PRs" phrase, so the dock entry says which service it opens.
- * Unbound (or unknown) defaults to GitHub, matching `forgeDockIconKind` — the
- * tab exists before a repository is bound and must not render an empty label.
+ * The feature has ONE name: 代码托管集成 (software forge integration). The key
+ * still varies by the bound platform, but every platform key resolves to that
+ * same feature name — the brand names live in the description
+ * (`settings.items.forgePlatformsDesc`), not in the title.
+ *
+ * Why per-platform keys instead of one: the dock entry, its settings page and
+ * the panel header all read the title through this function
+ * (`dockCategoryTitleKey`), so they cannot disagree; returning a single key
+ * would make the platform switch mid-session a no-op and invite the next
+ * contributor to reintroduce per-brand labels in one place only. Unbound (or
+ * unknown) defaults to GitHub, matching `forgeDockIconKind` — the tab exists
+ * before a repository is bound and must not render an empty label.
  */
-export function forgeTabTitleKey(currentPlatform: string): 'nav.forgeGithub' | 'nav.forgeGitlab' {
-    return forgeDockIconKind(currentPlatform) === 'gitlab' ? 'nav.forgeGitlab' : 'nav.forgeGithub'
+export function forgeTabTitleKey(
+    currentPlatform: string,
+): 'nav.forgeGithub' | 'nav.forgeGitlab' | 'nav.forgeGitea' {
+    switch (forgeDockIconKind(currentPlatform)) {
+        case 'gitlab':
+            return 'nav.forgeGitlab'
+        case 'gitea':
+            return 'nav.forgeGitea'
+        default:
+            return 'nav.forgeGithub'
+    }
 }
 
 /**

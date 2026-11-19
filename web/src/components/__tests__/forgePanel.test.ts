@@ -220,6 +220,9 @@ function makeI18n() {
           bind: {
             title: 'Bind repository',
             fromRemote: 'Pick a local remote',
+            platform: 'Platform',
+            platformAuto: 'Detect',
+            platformGitea: 'Gitea / Forgejo',
             manual: 'Enter a repository URL',
             urlPlaceholder: 'https://...',
             submit: 'Bind',
@@ -1660,6 +1663,94 @@ describe('ForgePanelContent non-official host warning', () => {
 
     expect(mockSetBinding).toHaveBeenCalledWith(
       expect.objectContaining({ host: 'git.internal.corp', scheme: 'http' }),
+    )
+
+    wrapper.unmount()
+  })
+
+  it('lets the platform picker override the remote inference', async () => {
+    // A self-hosted host cannot say what it runs, so the server suggests
+    // "GitLab" for anything that is not github.com. The user is the one who
+    // knows it is Gitea, and their choice must reach the server — otherwise the
+    // binding is created for the wrong API and every request 404s.
+    mockFetchRemotes.mockResolvedValue({
+      remotes: [
+        { name: 'origin', url: 'https://git.internal.corp/acme/widgets.git', platform: 'gitlab', host: 'git.internal.corp', scheme: 'https', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' },
+      ],
+    })
+    const wrapper = await openDialog()
+
+    const select = document.body.querySelector('.forge-select') as HTMLSelectElement
+    expect(select, 'the platform picker must be rendered').not.toBeNull()
+    select.value = 'gitea'
+    select.dispatchEvent(new Event('change'))
+    await nextTick()
+
+    const row = document.body.querySelector('.forge-remote-row') as HTMLElement
+    row.click()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(mockSetBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: 'gitea', host: 'git.internal.corp' }),
+    )
+
+    wrapper.unmount()
+  })
+
+  it('does not carry a cancelled platform picker into the next binding', async () => {
+    // The picker outranks the remote's own inference, so a stale "gitea" from a
+    // cancelled dialog would bind a github.com remote as Gitea.
+    mockFetchRemotes.mockResolvedValue({
+      remotes: [
+        { name: 'origin', url: 'https://github.com/acme/widgets.git', platform: 'github', host: 'github.com', scheme: 'https', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' },
+      ],
+    })
+    const wrapper = await openDialog()
+
+    const select = document.body.querySelector('.forge-select') as HTMLSelectElement
+    select.value = 'gitea'
+    select.dispatchEvent(new Event('change'))
+    await nextTick()
+
+    ;(document.body.querySelector('.modal-close-btn') as HTMLElement).click()
+    await flushPromises()
+
+    const reopen = wrapper.findAll('.forge-state .empty-state__action button')[0]
+    await reopen.trigger('click')
+    await flushPromises()
+
+    const row = document.body.querySelector('.forge-remote-row') as HTMLElement
+    row.click()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(mockSetBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: 'github', host: 'github.com' }),
+    )
+
+    wrapper.unmount()
+  })
+
+  it('sends the picked platform with a manual URL', async () => {
+    mockFetchRemotes.mockResolvedValue({ remotes: [] })
+    const wrapper = await openDialog()
+
+    const select = document.body.querySelector('.forge-select') as HTMLSelectElement
+    select.value = 'gitea'
+    select.dispatchEvent(new Event('change'))
+    await nextTick()
+
+    const input = document.body.querySelector('.forge-input') as HTMLInputElement
+    input.value = 'https://git.internal.corp/acme/widgets.git'
+    input.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    const submit = Array.from(document.body.querySelectorAll('button'))
+      .find(b => b.textContent?.trim() === 'Bind') as HTMLElement
+    submit.click()
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(mockSetBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'https://git.internal.corp/acme/widgets.git', platform: 'gitea' }),
     )
 
     wrapper.unmount()

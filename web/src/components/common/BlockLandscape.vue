@@ -11,15 +11,24 @@
     >
       <div class="block-landscape-panel">
         <!-- DataTable: live component, not a clone — the mode switch, sorting,
-             search and filters must keep working while fullscreen. -->
-        <div v-if="state.kind === 'table' && state.table" class="block-landscape-live">
+             search and filters must keep working while fullscreen. No `fill`:
+             the overlay sizes it by content and centers it, capping it at the
+             panel height so a tall table fills the screen and scrolls itself
+             (see `.block-landscape-live` in css/code-block-header.css). -->
+        <!-- Clicking the blank space around the table closes, same as the clone
+             path below. `self` keeps clicks on the table itself (and on its
+             empty rows area) from closing the overlay. -->
+        <div
+          v-if="state.kind === 'table' && state.table"
+          class="block-landscape-live"
+          @click.self="close"
+        >
           <DataTable
             :headers="state.table.headers"
             :rows="state.table.rows"
             :initial-mode="state.table.mode"
             :initial-wrap="state.table.wrap"
             :page-size="state.table.pageSize"
-            fill
             expanded
             @collapse="close"
             @update:mode="onLiveMode"

@@ -135,7 +135,6 @@ describe('SettingsGroupPanel search filter', () => {
 
   it('renders only the rows of the selected mode without a filter', () => {
     const wrapper = mountPanel(pushPanel())
-    console.log('HTML', wrapper.html())
     expect(rowKeys(wrapper)).toEqual(['feishu.app_id'])
     expect(wrapper.find('[data-settings-key="push_mode"]').exists()).toBe(true)
   })

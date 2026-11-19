@@ -300,10 +300,18 @@ describe('annotateTableBlockHeaders', () => {
     }
   })
 
-  it('keeps the fullscreen button visible on every host (no pointer gating)', () => {
-    // 以前按钮只在触屏/窄屏出现，桌面端整块 CSS 隐藏；现在两端都要能点。
-    expect(tableHeaderCss).not.toMatch(/landscape-btn[^{]*\{[^}]*display:\s*none/)
-    expect(tableHeaderCss).not.toMatch(/@media[^\n]*pointer: coarse[\s\S]{0,400}landscape-btn/)
+  it('shows the fullscreen button on touch / narrow hosts only, but never hides the close slot', () => {
+    // 桌面（鼠标 + 宽窗口）整块本来就看得清，这个按钮只是占表头位置；触屏和
+    // 窄窗口才显示。浮层里同一位置是关闭按钮，必须无视显隐规则。
+    expect(tableHeaderCss).toMatch(
+      /\.table-block-landscape-btn,\s*\.code-block-landscape-btn\s*\{[^}]*display:\s*none/,
+    )
+    expect(tableHeaderCss).toMatch(
+      /@media \(pointer: coarse\), \(max-width: 900px\) \{\s*\.table-block-landscape-btn,\s*\.code-block-landscape-btn\s*\{[^}]*display:\s*inline-flex/,
+    )
+    expect(tableHeaderCss).toMatch(
+      /\.block-landscape \.table-block-landscape-btn,\s*\.block-landscape \.code-block-landscape-btn\s*\{[^}]*display:\s*inline-flex/,
+    )
   })
 
   it('builds a copy dropdown menu with Markdown/HTML/TSV items', () => {

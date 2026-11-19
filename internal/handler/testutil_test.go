@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -21,6 +22,7 @@ import (
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
+	"clawbench/internal/platform/source"
 	"clawbench/internal/service"
 
 	_ "modernc.org/sqlite"
@@ -59,6 +61,16 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	origAgents := model.Agents
 	origAgentList := model.AgentList
 	origDefaultAgentID := model.DefaultAgentID
+	origProbe := probeNpmPackage
+	origSources := installSourceCandidates
+
+	// Deterministic install-source selection: the test machine's ~/.npmrc must
+	// not decide what an install command looks like. Tests that exercise
+	// selection override these with withInstallSources/stubNpmProbe.
+	installSourceCandidates = func() []source.Candidate {
+		return []source.Candidate{{Name: "region-mirror", Base: source.NpmMirrorBase}}
+	}
+	probeNpmPackage = func(context.Context, string, string) error { return nil }
 
 	// Set test globals
 	model.SessionToken = ""
@@ -477,6 +489,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		model.Agents = origAgents
 		model.AgentList = origAgentList
 		model.DefaultAgentID = origDefaultAgentID
+		probeNpmPackage = origProbe
+		installSourceCandidates = origSources
 		store.SetDBForTest(env.OrigDB, env.OrigDB)
 		_ = db.Close()
 	}

@@ -15,7 +15,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +25,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/platform/source"
 	"clawbench/internal/version"
 	"clawbench/internal/ws"
 )
@@ -33,15 +33,15 @@ import (
 // osWindows is used for runtime.GOOS comparison to avoid goconst duplication.
 const osWindows = "windows"
 
-// sha1Name is the digest algorithm name shared by npm's SRI prefix and its
-// legacy hex-encoded dist.shasum.
-const sha1Name = "sha1"
-
-// URL schemes recognized by isValidRegistryURL.
+// URL schemes used by service-level URL validation.
 const (
 	schemeHTTP  = "http"
 	schemeHTTPS = "https"
 )
+
+// sha1Name is the digest algorithm name shared by npm's SRI prefix and its
+// legacy hex-encoded dist.shasum.
+const sha1Name = "sha1"
 
 // upgradeHTTPClient is the HTTP client used for upgrade requests.
 // Overridden in tests to point at httptest.NewServer.
@@ -80,23 +80,23 @@ func newUpgradeHTTPClient() *http.Client {
 // These bound network waits, and the whole check has to fit inside the
 // frontend's default request timeout (web/src/utils/api.ts API_TIMEOUT_MS =
 // 10s): the browser aborts there and throws away a check the server would have
-// completed. Budgeting per query instead would stack — two candidates at 10s
-// each is already twice what the client waits.
+// completed. Budgeting per query instead would stack — three candidates at 10s
+// each is already three times what the client waits.
 //
-// The two budgets here plus upgradeSignatureKeysBudget add up to
-// upgradeCheckBudget, so the worst case (the default registry times out, the
-// fallback mirror answers, its signature is then verified) lands exactly on the
-// overall cap rather than past it.
+// The per-candidate budget plus upgradeSignatureKeysBudget must fit inside
+// upgradeCheckBudget for all three candidates (user, region, other public
+// registry), so the worst case lands under the overall cap rather than past it.
 const (
 	// upgradeCheckBudget bounds the whole check, across every candidate. It is
 	// the backstop that keeps the sum of the per-request budgets under the
 	// client's timeout.
-	upgradeCheckBudget = 8 * time.Second
+	upgradeCheckBudget = 9 * time.Second
 
 	// upgradeRegistryAttemptBudget bounds one candidate's metadata query.
 	// Independent per candidate: a hanging default registry must not eat the
-	// fallback mirror's window.
-	upgradeRegistryAttemptBudget = 3 * time.Second
+	// fallback mirror's window. It is 2s rather than 3s because the candidate
+	// list grew from two entries to three; a metadata response is small.
+	upgradeRegistryAttemptBudget = 2 * time.Second
 )
 
 // upgradeShutdownFunc is called to gracefully shut down the server during upgrade.
@@ -215,88 +215,6 @@ func getPlatformPkg() (string, error) {
 	return pkg, nil
 }
 
-// getRegistryBase returns the npm registry base URL based on China detection.
-func getRegistryBase() string {
-	if platform.IsChinaMainland() {
-		return "https://registry.npmmirror.com"
-	}
-	return "https://registry.npmjs.org"
-}
-
-// getUserRegistryBase returns the user's configured npm mirror base URL, or ""
-// if none is configured. It checks, in order: the NPM_CONFIG_REGISTRY env var,
-// the npm_config_registry env var, then the registry= line in the user-level
-// ~/.npmrc. The result is trimmed and validated as an http(s) URL.
-func getUserRegistryBase() string {
-	candidates := []string{
-		os.Getenv("NPM_CONFIG_REGISTRY"),
-		os.Getenv("npm_config_registry"),
-		parseNpmRcRegistry(),
-	}
-	for _, c := range candidates {
-		if c = strings.TrimSpace(c); c == "" {
-			continue
-		}
-		// Reject non-http(s) values (e.g. "default" or a registry scope key),
-		// and values with no host (e.g. "http://" or "http:"), which would
-		// otherwise produce a malformed request URL later.
-		if !isValidRegistryURL(c) {
-			continue
-		}
-		return strings.TrimRight(c, "/")
-	}
-	return ""
-}
-
-// isValidRegistryURL reports whether v is an http(s) URL with a usable host.
-func isValidRegistryURL(v string) bool {
-	u, err := url.Parse(strings.TrimSpace(v))
-	if err != nil || u.Host == "" {
-		return false
-	}
-	switch u.Scheme {
-	case schemeHTTP, schemeHTTPS:
-		return true
-	default:
-		return false
-	}
-}
-
-// parseNpmRcRegistry reads the user-level .npmrc and returns the value of the
-// registry= line, or "" if absent/unreadable. Path resolution uses
-// platform.UserHomeDir so it works on Windows, macOS and Linux.
-func parseNpmRcRegistry() string {
-	path := filepath.Join(platform.UserHomeDir(), ".npmrc")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
-			continue
-		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		if strings.TrimSpace(key) == "registry" {
-			return strings.TrimSpace(val)
-		}
-	}
-	return ""
-}
-
-// registryCandidates returns the ordered list of registry bases to try: the
-// default base first, followed by the user's configured mirror (if any).
-func registryCandidates() []string {
-	bases := []string{getRegistryBase()}
-	if m := getUserRegistryBase(); m != "" {
-		bases = append(bases, m)
-	}
-	return bases
-}
-
 // CheckForUpgrade queries the npm registry for the latest version.
 // Returns (currentVersion, latestVersion, error).
 func CheckForUpgrade() (string, string, error) {
@@ -316,8 +234,10 @@ func CheckForUpgradeInfo() (*UpgradeInfo, error) {
 }
 
 // fetchUpgradeInfo queries the npm registry for upgrade info, trying the
-// default registry base first and falling back to the user's configured mirror
-// if the default cannot be reached.
+// user-configured source first, then the region-preferred mirror, then the
+// other public registry. A candidate that cannot answer (including a private
+// registry that rejects the server's unauthenticated request) is skipped so a
+// single bad source cannot block the upgrade.
 func fetchUpgradeInfo() (*UpgradeInfo, error) {
 	currentVer := version.Get()
 	pkg, err := getPlatformPkg()
@@ -329,13 +249,14 @@ func fetchUpgradeInfo() (*UpgradeInfo, error) {
 	defer cancel()
 
 	var errs []error
-	for _, registryBase := range registryCandidates() {
-		info, err := fetchUpgradeInfoFromBase(ctx, registryBase, pkg, currentVer)
+	for _, candidate := range source.Npm() {
+		info, err := fetchUpgradeInfoFromBase(ctx, candidate.Base, pkg, currentVer)
 		if err == nil {
 			return info, nil
 		}
-		errs = append(errs, fmt.Errorf("%s: %w", registryBase, err))
-		slog.Warn("upgrade: registry query failed, trying next candidate", "base", registryBase, "error", err)
+		errs = append(errs, fmt.Errorf("%s (%s): %w", candidate.Base, candidate.Name, err))
+		slog.Warn("upgrade: registry query failed, trying next candidate",
+			"base", candidate.Base, "source", candidate.Name, "error", err)
 	}
 
 	return nil, fmt.Errorf("all registry sources failed: %w", errors.Join(errs...))
@@ -377,9 +298,9 @@ func fetchUpgradeInfoFromBase(parent context.Context, registryBase, pkg, current
 
 	// Some mirrors (e.g. Nexus) return a malformed dist.tarball that keeps the
 	// dist-tag in the package-name segment ("@scope/pkg@latest/-/..."); strip it
-	// before pointing the tarball at the base used for the query.
+	// before deciding where the tarball actually lives.
 	tarballURL = normalizeTarballURL(tarballURL)
-	tarballURL = rewriteTarballURL(tarballURL, registryBase)
+	tarballURL = rewriteTarballURL(tarballURL)
 
 	hasUpgrade := version.CompareVersions(currentVer, npmResp.Version) < 0 || version.IsDevBuild(currentVer)
 
@@ -462,13 +383,18 @@ func normalizeTarballURL(tarball string) string {
 	return tarball
 }
 
-// rewriteTarballURL points the tarball at the same registry base used for the query.
-func rewriteTarballURL(tarball, base string) string {
-	const npmjs = "https://registry.npmjs.org"
-	if base != npmjs && len(tarball) > len(npmjs) && tarball[:len(npmjs)] == npmjs {
-		return base + tarball[len(npmjs):]
+// rewriteTarballURL points a tarball served by the public npm registry at the
+// region's public mirror, so the download is fast in mainland China.
+//
+// It deliberately never rewrites to the registry base that answered the
+// metadata query: that base may be a user's private registry which proxies
+// metadata but not tarballs. A tarball already served by the private registry
+// is left untouched.
+func rewriteTarballURL(tarball string) string {
+	if !strings.HasPrefix(tarball, source.NpmJsBase+"/") || !source.Region() {
+		return tarball
 	}
-	return tarball
+	return source.NpmMirrorBase + strings.TrimPrefix(tarball, source.NpmJsBase)
 }
 
 // PerformUpgrade executes the full upgrade flow in a background goroutine.

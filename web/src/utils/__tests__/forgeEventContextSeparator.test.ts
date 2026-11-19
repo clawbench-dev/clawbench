@@ -32,7 +32,10 @@ describe('eventContextTemplateText separator', () => {
     const { default: i18n } = await import('@/i18n')
     i18n.global.locale.value = 'en'
     const out = render('en')
-    expect(out).toContain('## Forge event')
+    // Assert against the locale source, not a literal: the backend renders the
+    // same block from internal/i18n/locales/active.en.yaml and the two must stay
+    // identical, so renaming the feature must not need a test edit here.
+    expect(out).toContain(`## ${en.task.form.eventContextHeader}`)
     expect(out).toContain(': {{EVENT_TYPE}}')
     expect(out).not.toContain('：')
   })
@@ -41,7 +44,11 @@ describe('eventContextTemplateText separator', () => {
     const { default: i18n } = await import('@/i18n')
     i18n.global.locale.value = 'zh'
     const out = render('zh')
-    expect(out).toContain('## Forge 事件')
+    // Assert against the locale source, not a literal: the backend renders the
+    // same block from internal/i18n/locales/active.zh.yaml and the two must stay
+    // byte-identical. A literal here silently passed while the Go side still
+    // said "Forge 事件" — this is the drift the file's header warns about.
+    expect(out).toContain(`## ${zh.task.form.eventContextHeader}`)
     expect(out).toContain('：{{EVENT_TYPE}}')
   })
 })

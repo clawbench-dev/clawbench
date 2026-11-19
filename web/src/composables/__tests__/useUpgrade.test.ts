@@ -652,7 +652,7 @@ describe('useUpgrade', () => {
       const upgrade = useUpgrade()
       await upgrade.startUpgrade()
 
-      expect(installFusedUpdate).toHaveBeenCalledWith('v1.1.0', { 'win32-x64': ['https://example.test/fused.zip'] })
+      expect(installFusedUpdate).toHaveBeenCalledWith('v1.1.0', { 'win32-x64': ['https://example.test/fused.zip'] }, {})
       expect(mockApiPost).not.toHaveBeenCalled()
       expect(upgrade.installingFused.value).toBe(false)
     })

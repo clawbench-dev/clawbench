@@ -362,12 +362,13 @@ const i18n = createI18n({
           reconfigureServer: '重新配置服务器',
           forgeEnabledSection: '启用',
           forgeSection: '凭据',
-          forgeEnabled: '启用 GitHub/GitLab 集成',
+          forgeEnabled: '启用代码托管集成',
           featureStatusSection: '功能状态',
           featureStatusEnabled: '已启用',
           featureStatusDisabled: '已停用',
           featureStatusGoManage: '去功能编排',
-          featureStatusForge: 'GitHub/GitLab 集成',
+          featureStatusForge: '代码托管集成',
+          forgePlatformsDesc: '支持 GitHub、GitLab（自建实例也可以）和 Gitea / Forgejo。',
           featureStatusMail: '邮件功能',
           featureStatusTerminal: '终端',
           featureStatusTasks: '任务调度',
@@ -378,7 +379,7 @@ const i18n = createI18n({
           tasksStatusDesc: '开关在「功能编排」里。',
           shareStatusDesc: '开关在「功能编排」里。',
           forgeEnabledDesc: '关闭后会停止同步，并解除所有项目已关联的仓库。',
-          forgeDisableConfirmTitle: '关闭 GitHub/GitLab 集成',
+          forgeDisableConfirmTitle: '关闭代码托管集成',
           forgeDisableConfirm: '关闭后将解除所有项目已关联的仓库。',
           forgeDisableConfirmAction: '关闭集成',
           forgeCredentials: '访问令牌',
@@ -1729,7 +1730,7 @@ describe('feature status rows', () => {
 
     // The page no longer renders a switch for it — that is the whole point.
     const labels = wrapper.findAllComponents({ name: 'SettingsItem' }).map(i => i.props().label)
-    expect(labels).not.toContain('启用 GitHub/GitLab 集成')
+    expect(labels).not.toContain('启用代码托管集成')
   })
 
   it('reports a disabled feature as 已停用', () => {

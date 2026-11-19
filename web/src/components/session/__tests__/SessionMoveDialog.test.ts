@@ -12,8 +12,11 @@ vi.mock('vue-i18n', async (importOriginal) => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string, params?: Record<string, unknown>) =>
-        params && 'members' in params ? `${key}[${params.members}]` : key,
+      t: (key: string, params?: Record<string, unknown>) => {
+        if (params && 'members' in params) return `${key}[${params.members}]`
+        if (params && 'agent' in params) return `${key}[${params.agent}]`
+        return key
+      },
     }),
   }
 })
@@ -108,6 +111,20 @@ describe('SessionMoveDialog', () => {
     expect(w.find('.sm-error').text()).toContain('sessionMove.membersUnavailable')
     expect(w.find('.sm-error').text()).toContain('Alice')
     expect(w.find('.sm-error').text()).toContain('Bob')
+  })
+
+  it('names the single agent that is unavailable in the target project', async () => {
+    mockPatch.mockRejectedValueOnce(Object.assign(new Error('agent'), {
+      msgKey: 'MoveAgentUnavailable',
+      detail: { Agent: 'Local Helper' },
+    }))
+    const w = await mountDialog()
+    await w.find('.sm-item').trigger('click')
+    await flushPromises()
+
+    // A retry can never succeed, so the message has to say what to change —
+    // not fall through to the generic "move failed, try again".
+    expect(w.find('.sm-error').text()).toBe('sessionMove.agentUnavailable[Local Helper]')
   })
 
   it('filters by name or path', async () => {

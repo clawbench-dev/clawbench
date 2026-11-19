@@ -25,7 +25,7 @@ const i18n = createI18n({
         knowledgeBase: '知识库',
         portForward: '端口映射',
         stats: '数据统计',
-        forgeGithub: 'GitHub 集成',
+        forgeGithub: '代码托管集成',
       },
       git: { history: { projectHistory: '项目历史' } },
       terminal: { title: '终端' },

@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"clawbench/internal/forge"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/plugins"
@@ -727,7 +728,7 @@ type configMeeting struct {
 	// which can read project files to check how a term is actually spelled.
 	AgentMinutes bool `json:"agent_minutes"`
 	// AgentMinutesMaxRounds bounds the agent's round-trips per artifact.
-	// 0 uses the built-in default.
+	// 0 means unlimited.
 	AgentMinutesMaxRounds int `json:"agent_minutes_max_rounds"`
 }
 
@@ -772,6 +773,12 @@ type configForge struct {
 	// authenticated — and the settings UI displays it so an http-only instance
 	// is distinguishable from an https one.
 	CredentialSchemes map[string]string `json:"credential_schemes"`
+	// CredentialPlatforms maps each host with a token to the platform requests
+	// to it will speak. RESOLVED (recorded hint first, then the host-name
+	// inference) rather than the raw hints, because the inferred value is what
+	// the server will actually do and the UI needs it to explain why a
+	// self-hosted Gitea host is being treated as GitLab until it is named.
+	CredentialPlatforms map[string]string `json:"credential_platforms"`
 	// InsecureTLS allows skipping TLS verification for self-hosted instances.
 	InsecureTLS bool `json:"insecure_tls"`
 	// PauseEventTasks is the global kill-switch for event-triggered AI tasks.
@@ -1010,12 +1017,25 @@ func buildConfigForge(cfg model.Config) configForge {
 		}
 	}
 
+	// Platforms are resolved rather than reported as hints: the UI shows what
+	// each host will be treated as, and an unset hint resolves to the host-name
+	// inference (github.com → GitHub, everything else → GitLab).
+	platforms := make(map[string]string, len(hosts))
+	for _, host := range hosts {
+		p := forge.PlatformForHost(host)
+		if hinted, ok := forge.ParsePlatform(cfg.Forge.Platforms[host]); ok {
+			p = hinted
+		}
+		platforms[host] = string(p)
+	}
+
 	return configForge{
-		Enabled:           cfg.Forge.Enabled,
-		CredentialHosts:   hosts,
-		CredentialSchemes: schemes,
-		InsecureTLS:       cfg.Forge.InsecureTLS,
-		PauseEventTasks:   cfg.Forge.PauseEventTasks,
+		Enabled:             cfg.Forge.Enabled,
+		CredentialHosts:     hosts,
+		CredentialSchemes:   schemes,
+		CredentialPlatforms: platforms,
+		InsecureTLS:         cfg.Forge.InsecureTLS,
+		PauseEventTasks:     cfg.Forge.PauseEventTasks,
 		Notify: configForgeNotify{
 			Opened:    cfg.Forge.Notify.Opened,
 			Closed:    cfg.Forge.Notify.Closed,

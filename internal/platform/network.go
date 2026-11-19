@@ -200,9 +200,6 @@ var probeIPApiWithClient = func(client *http.Client) bool {
 	return code == "CN"
 }
 
-// NpmMirrorRegistry is the China npm mirror URL.
-const NpmMirrorRegistry = "https://registry.npmmirror.com"
-
 // InterfaceKind classifies a local address so the UI can label it. The point is
 // NOT to hide addresses: a user with a Docker bridge or a VPN needs to see every
 // candidate to understand why a colleague cannot open the link. Labeling lets

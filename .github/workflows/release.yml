@@ -808,10 +808,8 @@ jobs:
         run: |
           if ./scripts/lib/reuse-client-artifact.sh desktop \
                clawbench-desktop-linux-x64 \
-               "@xulongzhe/clawbench-desktop-linux-x64-payload" \
                "$SOURCE_TAG" \
-               "desktop/release/clawbench-desktop-linux-x64-${RELEASE_TAG}.zip" \
-               "desktop/release/linux-unpacked-payload"; then
+               "desktop/release/clawbench-desktop-linux-x64-${RELEASE_TAG}.zip"; then
             echo "reusing the desktop build from $SOURCE_TAG (client protocol unchanged)"
           else
             echo "::warning::could not reuse the desktop build from $SOURCE_TAG; rebuilding instead"
@@ -851,19 +849,6 @@ jobs:
           npm ci
           npm run build
 
-      - name: Write shell fingerprint (Linux)
-        if: env.NEEDS_BUILD == 'true'
-        # Records the shell's IDENTITY (electron-builder.yml + icon sources)
-        # into the build, so a later payload install can verify it is being
-        # applied over a shell of the same identity. The value must be written
-        # BEFORE zipping, since it ships inside the full package.
-        #
-        # Hashing the built binary instead would be wrong: electron-builder
-        # writes the app version into the Windows executable, and the version
-        # is rewritten from the tag on every release, so the fingerprint would
-        # change every time and no payload would ever match.
-        run: node desktop/scripts/shell-fingerprint.mjs desktop/release/linux-unpacked
-
       - name: Zip desktop (Linux)
         if: env.NEEDS_BUILD == 'true'
         # Archive the CONTENTS of the unpacked directory, not the directory
@@ -877,43 +862,15 @@ jobs:
           cd desktop/release/linux-unpacked
           zip -r "../clawbench-desktop-linux-x64-${RELEASE_TAG}.zip" .
 
-      - name: Build desktop payload (Linux)
-        if: env.NEEDS_BUILD == 'true'
-        # The payload is the same app WITHOUT the Electron runtime (~3MB vs
-        # ~150MB), for the incremental-upgrade path. It is NOT attached to the
-        # GitHub Release: the ~150MB full package is what a Release download is
-        # for, and offering the ~3MB payload beside it misleads anyone browsing
-        # the assets into thinking that small zip is a usable install. The
-        # payload is distributed only through npm (see publish-npm-desktop),
-        # which is also the path the client prefers in mainland China.
-        #
-        # Read desktop/scripts/stage-payload.mjs. The directory it stages is
-        # uploaded as an artifact below, which is what the npm job consumes.
-        run: |
-          cd desktop
-          node scripts/stage-payload.mjs release/linux-unpacked
-
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
           files: desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
-        if: env.NEEDS_BUILD == 'true'
         with:
-          name: desktop-linux-package
-          path: desktop/release/linux-unpacked/
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-linux-payload
-          path: desktop/release/linux-unpacked-payload/
-          # upload-artifact v4 skips dotfiles/dot-directories by default, and
-          # the payload contains six (cpu-features' .eslintrc.js / .clang-format
-          # / .dockerignore / .grenrc.yml, ssh2's .eslintrc.js / .eslintignore).
-          # Without this the published npm package is silently incomplete: it
-          # installs fine and only fails at runtime. Same reason as web-dist.
-          include-hidden-files: true
+          name: desktop-linux-zip
+          path: desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
 
   build-desktop-linux-arm64:
     name: Build Desktop Linux arm64
@@ -944,10 +901,8 @@ jobs:
         run: |
           if ./scripts/lib/reuse-client-artifact.sh desktop \
                clawbench-desktop-linux-arm64 \
-               "@xulongzhe/clawbench-desktop-linux-arm64-payload" \
                "$SOURCE_TAG" \
-               "desktop/release/clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip" \
-               "desktop/release/linux-arm64-unpacked-payload"; then
+               "desktop/release/clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip"; then
             echo "reusing the desktop build from $SOURCE_TAG (client protocol unchanged)"
           else
             echo "::warning::could not reuse the desktop build from $SOURCE_TAG; rebuilding instead"
@@ -987,11 +942,6 @@ jobs:
           npm ci
           npm run build -- --arm64
 
-      - name: Write shell fingerprint (Linux arm64)
-        if: env.NEEDS_BUILD == 'true'
-        # See the x64 job — must run before the zip, since it ships inside it.
-        run: node desktop/scripts/shell-fingerprint.mjs desktop/release/linux-arm64-unpacked
-
       - name: Zip desktop (Linux arm64)
         if: env.NEEDS_BUILD == 'true'
         # Contents, not the directory — see the x64 step above.
@@ -999,31 +949,15 @@ jobs:
           cd desktop/release/linux-arm64-unpacked
           zip -r "../clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip" .
 
-      - name: Build desktop payload (Linux arm64)
-        if: env.NEEDS_BUILD == 'true'
-        # Staged for the npm publish job only — not attached to the Release.
-        # See the x64 payload step for the rationale.
-        run: |
-          cd desktop
-          node scripts/stage-payload.mjs release/linux-arm64-unpacked
-
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
           files: desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
-        if: env.NEEDS_BUILD == 'true'
         with:
-          name: desktop-linux-arm64-package
-          path: desktop/release/linux-arm64-unpacked/
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-linux-arm64-payload
-          path: desktop/release/linux-arm64-unpacked-payload/
-          # See the x64 job: dotfiles are skipped by default.
-          include-hidden-files: true
+          name: desktop-linux-arm64-zip
+          path: desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
 
   build-desktop-windows:
     name: Build Desktop Windows
@@ -1058,10 +992,8 @@ jobs:
         run: |
           if ./scripts/lib/reuse-client-artifact.sh desktop \
                clawbench-desktop-windows-x64 \
-               "@xulongzhe/clawbench-desktop-windows-x64-payload" \
                "$SOURCE_TAG" \
-               "desktop/release/clawbench-desktop-windows-x64-${RELEASE_TAG}.zip" \
-               "desktop/release/win-unpacked-payload"; then
+               "desktop/release/clawbench-desktop-windows-x64-${RELEASE_TAG}.zip"; then
             echo "reusing the desktop build from $SOURCE_TAG (client protocol unchanged)"
           else
             echo "::warning::could not reuse the desktop build from $SOURCE_TAG; rebuilding instead"
@@ -1115,22 +1047,14 @@ jobs:
           npm ci
           npm run build
 
-      - name: Write shell fingerprint (Windows)
-        if: env.NEEDS_BUILD == 'true'
-        # See the Linux job. Windows needs it too: it installs the full package
-        # first, and without the sidecar that install could never verify a
-        # payload and would re-download ~150MB on every upgrade.
-        run: node desktop/scripts/shell-fingerprint.mjs desktop/release/win-unpacked
-
       - name: Strip the server for the thin package (Windows)
         if: env.NEEDS_BUILD == 'true'
         # The thin package connects to a server elsewhere. Keeping the 150MB
         # binary here would silently turn every Windows desktop install into the
-        # embedded one, and the payload staged below is `resources/` only — it
-        # must not carry a server either (see extraFiles in electron-builder.yml).
-        # The fused package is assembled from this zip plus the server artifact
-        # below, so both variants are produced on every release — including the
-        # ones where the desktop shell itself is reused from a previous tag.
+        # embedded one. The fused package is assembled from this zip plus the
+        # server artifact below, so both variants are produced on every release
+        # — including the ones where the desktop shell itself is reused from a
+        # previous tag.
         shell: pwsh
         run: |
           $dir = "$PWD/desktop/release/win-unpacked/server"
@@ -1147,9 +1071,6 @@ jobs:
         #
         # Unlike `zip -r`, this is not an equivalent-command swap: it changes
         # what the archive looks like, which is exactly the point.
-        #
-        # NOTE: `*` also skips hidden items, which is why the fingerprint
-        # sidecar is NOT dot-prefixed (see shell-fingerprint.mjs).
         shell: pwsh
         run: Compress-Archive -Path desktop/release/win-unpacked/* -DestinationPath "desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip"
 
@@ -1176,65 +1097,16 @@ jobs:
           [System.IO.Compression.ZipFile]::CreateFromDirectory($fusedDir, $out)
           Remove-Item -Recurse -Force $fusedDir
 
-      - name: Build desktop payload (Windows)
-        if: env.NEEDS_BUILD == 'true'
-        # `node` (not Copy-Item) because resources/ contains dotfiles — notably
-        # cpu-features' .eslintrc.js and .clang-format — and PowerShell's `*`
-        # glob silently SKIPS hidden items. That would ship an incomplete
-        # payload on Windows only, and the failure would surface at runtime
-        # rather than here.
-        #
-        # The payload dir is a SIBLING of win-unpacked, so the `-Path
-        # win-unpacked/*` archive above cannot pick it up.
-        #
-        # Staged for the npm publish job only — not attached to the Release.
-        # See the Linux x64 payload step for the rationale.
-        shell: pwsh
-        run: |
-          cd desktop
-          node scripts/stage-payload.mjs release/win-unpacked
-
-      - name: Verify payload directory (Windows)
-        if: env.NEEDS_BUILD == 'true'
-        # The payload is no longer zipped here, so this asserts the staged
-        # directory that the npm job packs. A partial payload installs cleanly
-        # then fails at runtime, and the entries it depends on include a dotfile
-        # (the case a PowerShell glob would have dropped) and the native
-        # modules, so check them explicitly.
-        shell: pwsh
-        run: |
-          $dir = "$PWD/desktop/release/win-unpacked-payload"
-          $required = @(
-            'payload.json',
-            'resources/app.asar',
-            'resources/login.html',
-            'resources/floating.html',
-            'resources/logo.png',
-            'resources/app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node',
-            'resources/app.asar.unpacked/node_modules/cpu-features/build/Release/cpufeatures.node',
-            'resources/app.asar.unpacked/node_modules/cpu-features/.eslintrc.js'
-          )
-          foreach ($r in $required) {
-            if (-not (Test-Path (Join-Path $dir $r))) { throw "payload is missing $r" }
-          }
-          # The manifest must carry a shell fingerprint, or every client
-          # refuses the payload and silently falls back to the full download.
-          $json = Get-Content (Join-Path $dir 'payload.json') -Raw | ConvertFrom-Json
-          if (-not $json.shell) { throw 'payload.json has no shell fingerprint' }
-          Write-Host "payload OK: shell $($json.shell)"
-
       - name: Verify full package (Windows)
         if: env.NEEDS_BUILD == 'true'
-        # The fingerprint sidecar must be IN the full package: an install
-        # without it can never verify a payload, so every upgrade would fall
-        # back to the full download. A `*` glob skipping it is the realistic
-        # failure, hence asserting it explicitly.
+        # A `*` glob that silently drops the executable is the realistic
+        # failure mode here, so assert it explicitly.
         shell: pwsh
         run: |
           $zip = [System.IO.Compression.ZipFile]::OpenRead("$PWD/desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip")
           try {
             $names = $zip.Entries | ForEach-Object { $_.FullName }
-            if ($names -notcontains 'shell-fingerprint.txt') { throw 'full package is missing shell-fingerprint.txt' }
+            if ($names -notcontains 'clawbench-desktop.exe') { throw 'full package is missing the desktop executable' }
             if ($names -match 'payload') { throw 'full package contains payload artifacts' }
             Write-Host "full package OK: $($names.Count) entries"
           } finally { $zip.Dispose() }
@@ -1245,16 +1117,14 @@ jobs:
         #
         # The fused package is the one feature that is invisible until launch:
         # without the binary the app opens to an error dialog every time. Assert
-        # the server is at the archive root (extraFiles), not under resources/
-        # (where a payload install would delete it).
+        # the server is at the archive root (extraFiles), not under resources/.
         shell: pwsh
         run: |
           $zip = [System.IO.Compression.ZipFile]::OpenRead("$PWD/desktop/release/clawbench-desktop-windows-x64-local-$env:RELEASE_TAG.zip")
           try {
             $names = $zip.Entries | ForEach-Object { $_.FullName }
             if ($names -notcontains 'server/clawbench.exe') { throw 'fused package is missing server/clawbench.exe' }
-            if ($names -contains 'resources/server/clawbench.exe') { throw 'fused package put the server under resources/, where a payload would remove it' }
-            if ($names -notcontains 'shell-fingerprint.txt') { throw 'fused package is missing shell-fingerprint.txt' }
+            if ($names -contains 'resources/server/clawbench.exe') { throw 'fused package put the server under resources/' }
             Write-Host "fused package OK: $($names.Count) entries"
           } finally { $zip.Dispose() }
 
@@ -1266,17 +1136,11 @@ jobs:
             desktop/release/clawbench-desktop-windows-x64-local-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
-        if: env.NEEDS_BUILD == 'true'
         with:
-          name: desktop-windows-package
-          path: desktop/release/win-unpacked/
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-windows-payload
-          path: desktop/release/win-unpacked-payload/
-          # See the Linux job: dotfiles are skipped by default.
-          include-hidden-files: true
+          name: desktop-windows-zip
+          path: |
+            desktop/release/clawbench-desktop-windows-x64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-windows-x64-local-${{ env.RELEASE_TAG }}.zip
 
   build-desktop-macos:
     name: Build Desktop macOS
@@ -1305,20 +1169,14 @@ jobs:
           SOURCE_TAG: ${{ needs.client-guard.outputs.desktop_source }}
         shell: bash
         run: |
-          # macOS has no payload (replacing app.asar inside a signed .app
-          # breaks the signature seal), so only the full packages are fetched.
           if ./scripts/lib/reuse-client-artifact.sh desktop \
                clawbench-desktop-darwin-arm64 \
-               "@xulongzhe/clawbench-desktop-darwin-arm64-payload" \
                "$SOURCE_TAG" \
-               "desktop/release/clawbench-desktop-darwin-arm64-${RELEASE_TAG}.zip" \
-               "-" && \
+               "desktop/release/clawbench-desktop-darwin-arm64-${RELEASE_TAG}.zip" && \
              ./scripts/lib/reuse-client-artifact.sh desktop \
                clawbench-desktop-darwin-x64 \
-               "@xulongzhe/clawbench-desktop-darwin-x64-payload" \
                "$SOURCE_TAG" \
-               "desktop/release/clawbench-desktop-darwin-x64-${RELEASE_TAG}.zip" \
-               "-"; then
+               "desktop/release/clawbench-desktop-darwin-x64-${RELEASE_TAG}.zip"; then
             echo "reusing the desktop build from $SOURCE_TAG (client protocol unchanged)"
           else
             echo "::warning::could not reuse the desktop build from $SOURCE_TAG; rebuilding instead"
@@ -1385,14 +1243,9 @@ jobs:
 
       - name: Zip desktop (macOS)
         if: env.NEEDS_BUILD == 'true'
-        # No shell-fingerprint sidecar here, unlike the Linux/Windows jobs: it
-        # is only ever read when INSTALLING a payload, and macOS never does
-        # (replacing app.asar inside a signed .app breaks the signature seal),
-        # so the server publishes no macOS payload either.
-        #
-        # DELIBERATELY still wraps the payload in `mac-arm64/` / `mac/` — do
-        # NOT flatten this like the Windows/Linux steps. The wrapper is what
-        # makes the archive distinguishable from one whose top level is
+        # DELIBERATELY still wraps the app in `mac-arm64/` / `mac/` — do NOT
+        # flatten this like the Windows/Linux steps. The wrapper is what makes
+        # the archive distinguishable from one whose top level is
         # `ClawBench.app/`.
         #
         # Why that matters: install.ts's extractZip strips the single
@@ -1417,10 +1270,43 @@ jobs:
             desktop/release/clawbench-desktop-darwin-x64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
-        if: env.NEEDS_BUILD == 'true'
         with:
-          name: desktop-macos-package
-          path: desktop/release/mac*/
+          name: desktop-macos-zip
+          path: |
+            desktop/release/clawbench-desktop-darwin-arm64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-darwin-x64-${{ env.RELEASE_TAG }}.zip
+
+  desktop-checksums:
+    name: Desktop checksums
+    # Collect the zips every desktop job uploaded, hash them, and attach one
+    # SHA256SUMS to the release. The server reads that manifest and hands the
+    # hashes to the client, which verifies each download.
+    #
+    # Each desktop job uploads its zip as a `desktop-*-zip` artifact precisely
+    # so this job can see it: `action-gh-release` uploads straight to the
+    # release and leaves no local artifact to hash. The reuse path uploads the
+    # zip too, so a release that reused a shell still gets a checksum.
+    needs: [build-desktop-linux, build-desktop-linux-arm64, build-desktop-windows, build-desktop-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*-zip
+          path: desktop-zips
+          merge-multiple: true
+
+      - name: Build SHA256SUMS
+        run: |
+          cd desktop-zips
+          sha256sum *.zip | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload manifest to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" desktop-zips/SHA256SUMS --clobber
 
   publish-npm:
     name: Publish to npm
@@ -1595,145 +1481,6 @@ jobs:
         # carrying 0.121.0 anyway — a red job for a release that shipped.
         run: ./scripts/npm-publish-idempotent.sh ./npm/main --access public
 
-  # Publishes the desktop incremental-upgrade payloads to npm. This is the ONLY
-  # channel the payload ships through: the ~150MB full package is what a GitHub
-  # Release asset is for, and offering the ~3MB payload beside it misleads
-  # anyone browsing the assets into thinking that small zip is a usable install.
-  # npm also gives the client a fast path in mainland China (npmmirror), where
-  # the client already prefers the npm tarball over github.com.
-  publish-npm-desktop:
-    name: Publish desktop payloads to npm
-    needs: [build-desktop-linux, build-desktop-linux-arm64, build-desktop-windows]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # OIDC token for npm trusted publishing — see the note in publish-npm.
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          # No `registry-url`: see the note in publish-npm. It would write an
-          # .npmrc `_authToken=${NODE_AUTH_TOKEN}` placeholder, which npm counts
-          # as a configured token and which therefore disables OIDC.
-
-      - name: Extract version from tag
-        id: version
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
-          # npm versions are semver and must not carry the tag's "v" prefix.
-          VERSION="${VERSION#v}"
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Download Linux x64 payload
-        uses: actions/download-artifact@v4
-        with:
-          name: desktop-linux-payload
-          path: npm/desktop-payloads/linux-x64/
-
-      - name: Download Linux arm64 payload
-        uses: actions/download-artifact@v4
-        with:
-          name: desktop-linux-arm64-payload
-          path: npm/desktop-payloads/linux-arm64/
-
-      - name: Download Windows payload
-        uses: actions/download-artifact@v4
-        with:
-          name: desktop-windows-payload
-          path: npm/desktop-payloads/win32-x64/
-
-      - name: Verify payloads are complete
-        # The published package must be installable AND complete. A payload
-        # missing files installs cleanly and only breaks at runtime, which is
-        # exactly the failure the hidden-file trap produces — so assert the
-        # files the client requires, including one dotfile.
-        run: |
-          for KEY in linux-x64 linux-arm64 win32-x64; do
-            DIR="npm/desktop-payloads/$KEY"
-            for f in \
-              payload.json \
-              resources/app.asar \
-              resources/login.html \
-              resources/floating.html \
-              resources/logo.png \
-              resources/app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node \
-              resources/app.asar.unpacked/node_modules/cpu-features/build/Release/cpufeatures.node \
-              resources/app.asar.unpacked/node_modules/cpu-features/.eslintrc.js
-            do
-              if [ ! -f "$DIR/$f" ]; then
-                echo "::error::$KEY payload is missing $f (upload-artifact drops dotfiles unless include-hidden-files is set)"
-                exit 1
-              fi
-            done
-            # The manifest must carry the shell fingerprint, or every client
-            # refuses the payload and silently re-downloads the full package.
-            if ! grep -q '"shell"' "$DIR/payload.json"; then
-              echo "::error::$KEY payload.json has no shell fingerprint"
-              exit 1
-            fi
-          done
-          echo "all payloads complete"
-
-      - name: Set payload package versions
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          for KEY in linux-x64 linux-arm64 win32-x64; do
-            node -e "const fs=require('fs');const p='npm/desktop-payloads/$KEY/package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
-          done
-
-      - name: Verify npm pack would publish the whole payload
-        # npm applies packlist defaults that DROP files (`.gitignore`, `*.orig`,
-        # `.npmrc`, …). Today nothing in resources/ matches them, but that is a
-        # property of the current tree, not of this pipeline — and a dropped
-        # file installs cleanly and only fails at runtime. Compare what npm
-        # would pack against what is on disk, so a future payload file that npm
-        # silently excludes fails here instead of in the field.
-        run: |
-          for KEY in linux-x64 linux-arm64 win32-x64; do
-            DIR="npm/desktop-payloads/$KEY"
-            node -e "
-              const {execFileSync} = require('child_process');
-              const fs = require('fs'), path = require('path');
-              const dir = '$DIR';
-              const packed = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json', dir], {encoding:'utf8'}))[0].files.map(f => f.path).sort();
-              const walk = (root, base = root, out = []) => {
-                for (const e of fs.readdirSync(root, {withFileTypes:true})) {
-                  const p = path.join(root, e.name);
-                  if (e.isDirectory()) walk(p, base, out);
-                  else if (e.isFile() && path.relative(base, p) !== 'package.json') out.push(path.relative(base, p));
-                }
-                return out;
-              };
-              const onDisk = walk(dir).sort();
-              const missing = onDisk.filter(f => !packed.includes(f));
-              if (missing.length) {
-                console.error('::error::npm would omit files from ' + dir + ': ' + missing.slice(0,5).join(', '));
-                process.exit(1);
-              }
-              console.log(dir + ': npm packs all ' + onDisk.length + ' files');
-            "
-          done
-
-      - name: Configure npm registry for publishing
-        # Auth is OIDC trusted publishing — see the longer note in publish-npm
-        # for why no token may be configured, and why this rewrites the project
-        # .npmrc instead of appending to $NPM_CONFIG_USERCONFIG.
-        run: |
-          printf 'registry=https://registry.npmjs.org/\n' > .npmrc
-
-      - name: Publish payload packages
-        run: |
-          for KEY in linux-x64 linux-arm64 win32-x64; do
-            # Idempotent: a re-run of a partially-failed release must not try
-            # to republish an immutable version, and a concurrent run of the
-            # same tag must not turn into a red job. See the script header.
-            ./scripts/npm-publish-idempotent.sh "./npm/desktop-payloads/$KEY" --access public
-          done
-
   sync-npmmirror:
     name: Sync npmmirror
     # 国内用户默认走 npmmirror，而镜像并不总是自己跟上：v0.132.0 发布后，
@@ -1744,7 +1491,7 @@ jobs:
     # 所以发布完要主动催一次同步，并等到「元数据 + tarball 都可用」才算完。
     # 单独成 job：失败只让流水线变红，已经发出去的包不受影响，重跑这一个
     # job 就能补齐（脚本本身幂等）。
-    needs: [publish-npm, publish-npm-desktop]
+    needs: [publish-npm]
     runs-on: ubuntu-latest
     # 脚本内部有统一的等待窗口（默认 10 分钟），加上每个包一次 tarball 探测，
     # 这里再兜一层防止卡死。
@@ -1769,10 +1516,7 @@ jobs:
             @xulongzhe/clawbench-android-arm64 \
             @xulongzhe/clawbench-darwin-x64 \
             @xulongzhe/clawbench-darwin-arm64 \
-            @xulongzhe/clawbench-win32-x64 \
-            @xulongzhe/clawbench-desktop-linux-x64-payload \
-            @xulongzhe/clawbench-desktop-linux-arm64-payload \
-            @xulongzhe/clawbench-desktop-windows-x64-payload
+            @xulongzhe/clawbench-win32-x64
 
   release-notes:
     name: Generate Release Notes

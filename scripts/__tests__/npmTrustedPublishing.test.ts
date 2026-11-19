@@ -104,7 +104,7 @@ function parseJobs(src: string): Job[] {
 const JOBS = parseJobs(readFileSync(RELEASE_YML, 'utf8'))
 
 /** The two jobs that run `npm publish`. */
-const PUBLISH_JOB_KEYS = ['publish-npm', 'publish-npm-desktop']
+const PUBLISH_JOB_KEYS = ['publish-npm']
 
 describe('release.yml — npm publishing uses OIDC trusted publishing', () => {
   it('parses the workflow into jobs', () => {
@@ -187,7 +187,7 @@ describe('release.yml — npm publishing uses OIDC trusted publishing', () => {
 /**
  * Every publishable package.json.
  *
- * Two shapes coexist under npm/: `main/` and the payload/`platforms` groups
+ * Two shapes coexist under npm/: `main/` and the `platforms/` groups
  * (`<group>/<name>/`). Check each entry for a manifest before descending, so
  * a leaf package is not skipped just because it has no sub-packages.
  */
@@ -213,9 +213,9 @@ const manifests = findManifests()
 
 describe('npm package manifests declare the publishing repository', () => {
   it('finds every published package', () => {
-    // 7 server packages + 3 desktop payloads. A count that silently dropped
-    // would make the per-file assertions below vacuous.
-    expect(manifests.length).toBe(10)
+    // 7 server packages (main + six platform packages). A count that silently
+    // dropped one would make the per-file assertions below vacuous.
+    expect(manifests.length).toBe(7)
   })
 
   it.each(manifests)('%s has repository.url matching the trusted publisher', (path) => {

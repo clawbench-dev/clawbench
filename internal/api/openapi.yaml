@@ -45,7 +45,7 @@ tags:
   - name: Share
     description: 文件分享链接
   - name: Forge
-    description: GitHub / GitLab 集成
+    description: 代码托管集成（software forge：GitHub、GitLab、Gitea）
   - name: Agents
     description: AI Agent 与后端
   - name: TTS
@@ -142,6 +142,13 @@ paths:
                       而不是比较版本字符串——版本号每次发布都变，协议号只在
                       壳与服务的契约发生破坏性变化时才 +1。老客户端不读该字段
                       时仍按版本比较，行为不变。
+                  pid:
+                    type: integer
+                    description: |
+                      应答进程的 PID。桌面融合版用它确认「端口上应答的是自己
+                      刚拉起的服务端」，而不是上一次运行遗留的实例——后者答完
+                      就退出，会让窗口停在即将失效的地址上。老服务端不带该字段
+                      时客户端退回只看 `app`。
 
   /api/me:
     get:
@@ -739,7 +746,7 @@ paths:
         SSH 端口并让 `/api/tunnel/*` 返回 503；`h2` 时**完全不监听** SSH 端口。
         已废弃的 `both` 仍被接受，归一为 `h2`。
 
-        `forge.enabled` 是 GitHub/GitLab 集成的总开关（默认 `true`）：关闭后停止轮询、
+        `forge.enabled` 是代码托管集成（GitHub / GitLab / Gitea）的总开关（默认 `true`）：关闭后停止轮询、
         不再产生事件与通知，**并清空所有项目的仓库绑定**（见 `PATCH` 段）。它是服务端
         开关而非每设备偏好。
 
@@ -9484,16 +9491,9 @@ paths:
         每个平台给出**候选 URL 列表**：国内优先走 GitHub 代理镜像，直连
         github.com 始终作为最后兜底。镜像为社区服务，不保证可用，故逐个降级。
 
-        `payloads` 是**增量升级**用的载荷包：只含应用自身的 `resources/`
-        （约 3MB），不含 Electron 运行时（约 150MB）。客户端把它安装到从
-        当前运行版本克隆出的目录上，从而复用运行时。**仅覆盖可安全替换
-        `app.asar` 的平台**（linux-x64 / linux-arm64 / win32-x64）；macOS
-        因替换会破坏 `.app` 的代码签名封条而不提供该键。键**缺席**（而非空
-        数组）即表示该平台只能走全量下载。
-
-        载荷**只经 npm 分发**（不随 GitHub Release 发布——在 Release 资产里
-        放一个 3MB 的 zip 会让人误以为它可直接安装）。因此每个平台的候选
-        列表只有 npm tarball 一项。
+        `checksums` 是资产文件名到 SHA256 的映射，来自同一 Release 的
+        `SHA256SUMS`。客户端按下载 URL 的最后一段查表，校验下载内容；
+        dev 构建或服务端拉不到清单时该字段缺席，客户端跳过校验。
 
         `protocol` 是客户端兼容协议号：桌面端用它判断是否需要升级，而不是
         比较版本字符串。`clientVersion` 是这些下载地址实际指向的构建版本——
@@ -9538,18 +9538,14 @@ paths:
                       type: array
                       items:
                         type: string
-                  payloads:
+                  checksums:
                     type: object
                     description: |
-                      平台键（仅 linux-x64 / linux-arm64 / win32-x64）到
-                      **载荷包候选 URL 数组**。载荷包只含应用代码，客户端
-                      据此跳过 Electron 运行时的重复下载。**只经 npm 分发**，
-                      故候选只有 npm tarball 一项。macOS 与未知平台
-                      **没有该键**——键缺席即表示只能全量下载。
+                      资产文件名到 SHA256 的映射，来自 Release 的 SHA256SUMS。
+                      客户端按下载 URL 的文件名查表；缺席表示服务端未能取得
+                      清单（dev 构建或 GitHub 不可达），客户端跳过校验。
                     additionalProperties:
-                      type: array
-                      items:
-                        type: string
+                      type: string
         "502":
           description: 生成下载信息失败
 

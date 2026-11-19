@@ -57,6 +57,8 @@
       class="chat-file-attachment attachment-ref"
       :class="{ 'attachment-image-only': showsThumb(fileEntry) }"
       @click="onFileCardClick(fileEntry)"
+      @mouseenter="onPreviewEnter(fileEntry, $event)"
+      @mouseleave="hidePreview"
       :title="cardTitle(fileEntry)">
       <img v-if="showsThumb(fileEntry)"
         class="attachment-thumb-img"
@@ -70,11 +72,25 @@
       </span>
       <button v-if="!readonly" class="attachment-close-btn" @click.stop="$emit('remove', fileEntry)" :title="t('common.remove')">×</button>
     </span>
+
+    <!-- Hover preview of an image card (composer only, desktop pointers only).
+         Teleported: the strip scrolls horizontally, so a popup drawn inside it
+         would be clipped by `overflow-x: auto`. Purely visual — it takes no
+         pointer events, so it can never keep itself open. -->
+    <Teleport to="body">
+      <div v-if="preview.visible"
+        ref="previewEl"
+        class="attachment-hover-preview"
+        :style="previewStyle"
+        aria-hidden="true">
+        <img :src="preview.src" alt="" @load="placePreview" @error="hidePreview" />
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
@@ -106,11 +122,20 @@ const props = withDefaults(defineProps<{
    * affordance, and leaves the card otherwise identical.
    */
   clickable?: boolean
+  /**
+   * Show a small image preview above a card while the pointer rests on it.
+   *
+   * Opted into by the composer only. The display-only strips (queued row,
+   * picker footer) leave it off: there the card is a summary, not a place the
+   * user is about to send from. Desktop pointers only — see `hoverCapable`.
+   */
+  previewOnHover?: boolean
 }>(), {
   files: () => [],
   pendingFiles: () => [],
   readonly: false,
   clickable: true,
+  previewOnHover: false,
 })
 
 const emit = defineEmits<{
@@ -239,8 +264,97 @@ function showsThumb(entry: FileEntry): boolean {
   return isImageFile(entry.path) && isThumbableExt(entry.path) && !thumbErrors.value.has(entry.path)
 }
 
+// ── Hover preview ───────────────────────────────────────────────────────────
+/**
+ * A glance at the image behind a card, shown while the pointer rests on it.
+ *
+ * Deliberately not the shared Lightbox: that is a full-screen viewer with
+ * zoom/navigation/download, while this only answers "which picture is this?".
+ * It takes no pointer events and closes the moment the pointer leaves, so it
+ * can never become a surface the user has to dismiss.
+ *
+ * Composer-only (`previewOnHover`) and desktop-pointer-only (`hoverCapable`).
+ */
+const PREVIEW_THUMB_WIDTH = 800 // 2× the widest CSS box, for hi-DPI screens
+const PREVIEW_DELAY = 120
+const PREVIEW_GAP = 8
+
+const previewEl = ref<HTMLElement | null>(null)
+const preview = ref<{ visible: boolean; src: string }>({ visible: false, src: '' })
+const previewStyle = ref<Record<string, string>>({})
+
+/** Card geometry captured on entry; placement re-runs once the image measures. */
+let anchorX = 0
+let anchorTop = 0
+let previewTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Desktop pointer only. `(hover: hover)` alone is not enough — touch devices
+ * report it as well, and the popup would then flash on every tap.
+ */
+const hoverCapable = typeof window !== 'undefined'
+  && typeof window.matchMedia === 'function'
+  && window.matchMedia('(hover: hover) and (pointer: fine)').matches
+
+function clearPreviewTimer() {
+  if (previewTimer) { clearTimeout(previewTimer); previewTimer = null }
+}
+
+/**
+ * Place the popup above the card, centred on it and clamped to the viewport.
+ * Runs after render, so the clamp uses the measured width of the image that
+ * just loaded rather than an assumed maximum.
+ */
+function placePreview() {
+  const el = previewEl.value
+  if (!el) return
+  const half = el.offsetWidth / 2
+  const minLeft = half + PREVIEW_GAP
+  const maxLeft = Math.max(minLeft, window.innerWidth - half - PREVIEW_GAP)
+  previewStyle.value = {
+    left: `${Math.round(Math.min(Math.max(anchorX, minLeft), maxLeft))}px`,
+    bottom: `${Math.round(window.innerHeight - anchorTop + PREVIEW_GAP)}px`,
+  }
+}
+
+function onPreviewEnter(entry: FileEntry, event: MouseEvent) {
+  if (!props.previewOnHover || !hoverCapable || !showsThumb(entry)) return
+  const card = event.currentTarget as HTMLElement | null
+  if (!card) return
+  clearPreviewTimer()
+  const rect = card.getBoundingClientRect()
+  anchorX = rect.left + rect.width / 2
+  anchorTop = rect.top
+  // The local blob is the picture the user just picked — use it before the
+  // server thumbnail round-trip (same hand-off as the card's own tile).
+  const src = localPreviews.value.get(entry.path) ?? buildPathThumbUrl(entry.path, PREVIEW_THUMB_WIDTH)
+  previewTimer = setTimeout(() => {
+    previewTimer = null
+    preview.value = { visible: true, src }
+    // Any scroll (the strip itself or the page) moves the card out from under
+    // the popup; closing is cheaper and calmer than chasing it.
+    document.addEventListener('scroll', hidePreview, true)
+    void nextTick(placePreview)
+  }, PREVIEW_DELAY)
+}
+
+/** Close immediately: pointer leave, scroll, removal, unmount. */
+function hidePreview() {
+  clearPreviewTimer()
+  document.removeEventListener('scroll', hidePreview, true)
+  if (!preview.value.visible) return
+  preview.value = { visible: false, src: '' }
+  previewStyle.value = {}
+}
+
+onBeforeUnmount(() => {
+  clearPreviewTimer()
+  document.removeEventListener('scroll', hidePreview, true)
+})
+
 // Clear thumb errors when files list empties
 watch(() => props.files, (files) => {
+  hidePreview()
   if (files.length === 0 && thumbErrors.value.size > 0) {
     thumbErrors.value = new Set()
   }
@@ -444,5 +558,33 @@ watch(() => props.files, (files) => {
 .attachment-url-inert {
   color: var(--text-muted, #8b8b8b);
   cursor: default;
+}
+
+/* Hover preview (desktop only, opted in by the composer). Rendered in <body>
+   via Teleport: the strip scrolls horizontally, so anything drawn inside it
+   would be clipped at the edges. No pointer events — the pointer must keep
+   belonging to the card, otherwise the popup would hold itself open. */
+.attachment-hover-preview {
+  position: fixed;
+  z-index: var(--z-popover, 9999);
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  max-width: min(calc(320 * var(--dp)), calc(100vw - calc(16 * var(--dp))));
+  padding: calc(3 * var(--dp));
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 calc(4 * var(--dp)) calc(16 * var(--dp)) rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.attachment-hover-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: min(calc(240 * var(--dp)), 45vh);
+  width: auto;
+  height: auto;
+  border-radius: calc(var(--radius-md) - calc(2 * var(--dp)));
 }
 </style>

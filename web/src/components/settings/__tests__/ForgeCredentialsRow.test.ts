@@ -31,6 +31,8 @@ const i18n = createI18n({
           forgeTokenVerify: 'Verify',
           forgeHostPlaceholder: 'Host',
           forgeTokenPlaceholder: 'Token',
+          forgePlatformAuto: 'Platform: auto-detect',
+          forgePlatformGitea: 'Gitea / Forgejo',
           forgeVerifyOk: 'Valid — identity: {identity}',
           forgeVerifyOkScheme: 'Valid — identity: {identity} ({scheme})',
           forgeVerifyAuth: 'Rejected',
@@ -45,10 +47,16 @@ const i18n = createI18n({
 })
 
 /** Config response the component reads on mount. */
-function configResponse(hosts: string[], schemes: Record<string, string> = {}) {
+function configResponse(
+  hosts: string[],
+  schemes: Record<string, string> = {},
+  platforms: Record<string, string> = {},
+) {
   return {
     ok: true,
-    json: async () => ({ forge: { credential_hosts: hosts, credential_schemes: schemes } }),
+    json: async () => ({
+      forge: { credential_hosts: hosts, credential_schemes: schemes, credential_platforms: platforms },
+    }),
   } as unknown as Response
 }
 
@@ -99,7 +107,7 @@ describe('ForgeCredentialsRow', () => {
     await saveBtn!.trigger('click')
     await flushPromises()
 
-    expect(setForgeToken).toHaveBeenCalledWith('http://gitlab.internal', 'glpat-x')
+    expect(setForgeToken).toHaveBeenCalledWith('http://gitlab.internal', 'glpat-x', undefined)
   })
 
   it('reports the scheme used when verification succeeds', async () => {
@@ -173,5 +181,89 @@ describe('ForgeCredentialsRow', () => {
     await flushPromises()
 
     expect(setForgeToken).not.toHaveBeenCalled()
+  })
+})
+
+describe('ForgeCredentialsRow platform', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('fetch', vi.fn(async () => configResponse([])))
+  })
+
+  it('shows the resolved platform for a configured host', async () => {
+    // The chip is how a user notices that a self-hosted host is being treated as
+    // GitLab: the name alone cannot say what a Gitea instance is.
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      configResponse(['git.acme.internal'], {}, { 'git.acme.internal': 'gitea' }),
+    ))
+    const wrapper = mountRow()
+    await flushPromises()
+
+    expect(wrapper.find('.forge-cred-platform').text()).toBe('Gitea / Forgejo')
+  })
+
+  it('omits the platform chip for hosts whose name already says it', async () => {
+    // github.com / gitlab.com are self-describing; a chip on every row would be
+    // noise that trains the user to ignore it.
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      configResponse(['github.com'], {}, { 'github.com': 'github' }),
+    ))
+    const wrapper = mountRow()
+    await flushPromises()
+
+    expect(wrapper.find('.forge-cred-platform').exists()).toBe(false)
+  })
+
+  it('sends the chosen platform when saving', async () => {
+    const wrapper = mountRow()
+    await flushPromises()
+
+    const inputs = wrapper.findAll('.forge-cred-input')
+    await inputs[0].setValue('git.acme.internal')
+    await inputs[1].setValue('tok')
+    await wrapper.find('.forge-cred-select').setValue('gitea')
+
+    const saveBtn = wrapper.findAll('button').find(b => b.text() === 'Save')
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    expect(setForgeToken).toHaveBeenCalledWith('git.acme.internal', 'tok', 'gitea')
+  })
+
+  it('omits the platform on "auto" so the server keeps its inference', async () => {
+    const wrapper = mountRow()
+    await flushPromises()
+
+    const inputs = wrapper.findAll('.forge-cred-input')
+    await inputs[0].setValue('gitlab.internal')
+    await inputs[1].setValue('tok')
+
+    const saveBtn = wrapper.findAll('button').find(b => b.text() === 'Save')
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    // An explicit value here would override the server's own fallback with a
+    // guess the user never made.
+    expect(setForgeToken).toHaveBeenCalledWith('gitlab.internal', 'tok', undefined)
+  })
+
+  it('verifies with the chosen platform', async () => {
+    const wrapper = mountRow()
+    await flushPromises()
+
+    const inputs = wrapper.findAll('.forge-cred-input')
+    await inputs[0].setValue('git.acme.internal')
+    await inputs[1].setValue('tok')
+    await wrapper.find('.forge-cred-select').setValue('gitea')
+
+    const verifyBtn = wrapper.findAll('button').find(b => b.text() === 'Verify')
+    await verifyBtn!.trigger('click')
+    await flushPromises()
+
+    expect(verifyForgeToken).toHaveBeenCalledWith({
+      host: 'git.acme.internal',
+      token: 'tok',
+      platform: 'gitea',
+    })
   })
 })

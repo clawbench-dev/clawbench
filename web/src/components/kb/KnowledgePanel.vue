@@ -25,6 +25,20 @@
       </ActionBar>
     </div>
 
+    <!-- Dropped files are uploaded into the selected library, so they need the
+         same byte-based bar and cancel handle a file-manager folder upload has.
+         The batch state is the shared one in useFileUpload; dock tabs are
+         mutually exclusive, so the file manager cannot be showing it too. -->
+    <UploadProgressBar
+      class="kb-upload-bar"
+      :visible="dirUploading"
+      :progress="dirUploadProgress"
+      :done="dirUploadDone"
+      :total="dirUploadTotal"
+      :speed="dirUploadSpeed"
+      @cancel="cancelDirUpload"
+    />
+
     <div v-if="!available" class="kb-empty kb-empty--blocked">
       <Database :size="28" class="kb-empty-icon" />
       <span>{{ t('kb.loadFailed') }}</span>
@@ -633,6 +647,10 @@
       @close="closeAdd"
       @confirm="submitAdd"
     />
+
+    <!-- Desktop drop: files and folders from the OS go straight into the
+         selected library. Same full-bleed overlay the file manager uses. -->
+    <DropOverlay :visible="osDragActive" :label="osDropLabel" />
   </div>
 </template>
 
@@ -667,6 +685,8 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
+import DropOverlay from '@/components/common/DropOverlay.vue'
+import UploadProgressBar from '@/components/common/UploadProgressBar.vue'
 import AttachmentPicker from '@/components/attach/AttachmentPicker.vue'
 import KBDocumentDrawer from '@/components/kb/KBDocumentDrawer.vue'
 import { useDialog } from '@/composables/useDialog'
@@ -697,6 +717,8 @@ import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
 import { kbAddFromURL, kbUploadText } from '@/composables/useKnowledgeBase'
 import { consumeKBPendingOpen, kbPendingOpen, requestStageKBQuote } from '@/utils/kbNavigation'
 import { attachDragTargets, hasAttachDragData, readAttachDragData } from '@/utils/attachDrag'
+import { expandDataTransfer, hasOSFileDrop, type ExpandResult } from '@/utils/dropFolder'
+import { useFileUpload } from '@/composables/useFileUpload'
 import { DEFAULT_KB_SPLIT_RATIO, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { highlightTermsInElement, termsFromRunePositions } from '@/utils/searchHighlight'
@@ -710,6 +732,15 @@ const uiScale = useUiScale()
 const dialog = useDialog()
 const toast = useToast()
 const kb = useKnowledgeBase()
+const {
+  dirUploading,
+  dirUploadProgress,
+  dirUploadSpeed,
+  dirUploadTotal,
+  dirUploadDone,
+  cancelDirUpload,
+  uploadFilesToCollection,
+} = useFileUpload()
 
 const {
   collections,
@@ -917,38 +948,116 @@ watch([docFilter, docType, docSort, docTagQuery], () => {
   docRenderLimit.value = DOC_PAGE
 })
 
-// ── Drag files/folders in from the file manager ──
-// The payload is the same internal attach drag the chat column accepts; a drop
-// here means "put these into the selected library", so the existing add flow
-// (preview included) does the work.
+// ── Drag files/folders into the panel ──
+// Two sources, two paths:
+//  - an internal attach drag (a row dragged out of the file manager) names
+//    server paths, so the existing add flow (preview included) does the work;
+//  - a desktop drop carries OS files/folders, which must be uploaded first —
+//    the file manager's drop pipeline, reused here, expands folders and
+//    streams every file into the selected library.
 const dragActive = ref(false)
 let dragDepth = 0
 
+// Desktop drop state is separate: both overlays can be armed by the same
+// dragenter/dragleave sequence, and one counter cannot unwind both.
+const osDragActive = ref(false)
+let osDragDepth = 0
+
+const osDropLabel = computed(() =>
+  selected.value ? t('kb.dropToAdd') : t('kb.dropSelectCollection'),
+)
+
 function onDragEnter(e: DragEvent): void {
-  if (!hasAttachDragData(e.dataTransfer)) return
-  dragDepth++
-  dragActive.value = true
+  if (hasAttachDragData(e.dataTransfer)) {
+    dragDepth++
+    dragActive.value = true
+    return
+  }
+  if (!hasOSFileDrop(e.dataTransfer)) return
+  osDragDepth++
+  osDragActive.value = true
 }
 
 function onDragOver(e: DragEvent): void {
-  if (hasAttachDragData(e.dataTransfer)) e.preventDefault()
+  if (hasAttachDragData(e.dataTransfer) || hasOSFileDrop(e.dataTransfer)) e.preventDefault()
 }
 
 function onDragLeave(): void {
   dragDepth = Math.max(0, dragDepth - 1)
   if (dragDepth === 0) dragActive.value = false
+  osDragDepth = Math.max(0, osDragDepth - 1)
+  if (osDragDepth === 0) osDragActive.value = false
 }
 
 function onDrop(e: DragEvent): void {
   dragDepth = 0
   dragActive.value = false
+  osDragDepth = 0
+  osDragActive.value = false
+
   const data = readAttachDragData(e.dataTransfer)
-  if (!data) return
-  if (!selected.value) {
+  if (data) {
+    if (!selected.value) {
+      toast.show(t('kb.dropSelectCollection'), { icon: 'warning', type: 'error', duration: 2600 })
+      return
+    }
+    void submitAdd(attachDragTargets(data))
+    return
+  }
+
+  if (!hasOSFileDrop(e.dataTransfer) || !e.dataTransfer) return
+  // Snapshot the drop synchronously: the DataTransfer is cleared as soon as
+  // this handler yields, so the expansion must start here, not after an await.
+  const expanding = expandDataTransfer(e.dataTransfer)
+  void addDroppedFiles(expanding)
+}
+
+/**
+ * Add the files of a desktop drop to the selected library.
+ *
+ * Folders arrive as a flat list of files (see `expandDataTransfer`); the
+ * library has no folder structure, so relative paths are dropped and only the
+ * base names are kept. Each file is uploaded through the KB endpoint, which
+ * copies it into the library — no staging copy is left in the project.
+ */
+async function addDroppedFiles(expanding: Promise<ExpandResult>): Promise<void> {
+  const col = selected.value
+  if (!col) {
     toast.show(t('kb.dropSelectCollection'), { icon: 'warning', type: 'error', duration: 2600 })
     return
   }
-  void submitAdd(attachDragTargets(data))
+  // A blocked library (server unreachable, feature off) cannot take files; the
+  // panel already says so, so a drop is a no-op rather than an error.
+  if (!available.value || adding.value) return
+
+  const { files } = await expanding
+  if (files.length === 0) {
+    toast.show(t('kb.dirImportEmpty'), { icon: 'warning', type: 'error', duration: 2600 })
+    return
+  }
+
+  adding.value = true
+  try {
+    const res = await uploadFilesToCollection(files.map((f) => f.file), col.id)
+    if (res.cancelled || (res.added === 0 && res.failed === 0)) return
+    if (res.added > 0) {
+      await loadDocuments(col.id, true)
+      startKBIndexWatch()
+    }
+    if (res.failed === 0) {
+      toast.show(t('kb.dirImportDone', { added: res.added }), { type: 'success', duration: 2400 })
+      return
+    }
+    // Same wording as the picker's add: one rejected file names its reason,
+    // several fold into "first + N more" so the list cannot flood the toast.
+    const first = res.errors[0] || t('kb.unsupported')
+    toast.show(
+      res.failed === 1 ? first : t('kb.addPartial', { first, count: res.failed - 1 }),
+      { icon: 'warning', type: 'error', duration: 4000 },
+    )
+  } finally {
+    adding.value = false
+  }
 }
 
 watch(selectedId, () => {
@@ -1742,11 +1851,18 @@ defineExpose({
 <style scoped>
 /* ── Panel shell ── */
 .kb-panel {
+  position: relative; /* anchors DropOverlay's inset: 0 */
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
   background: var(--panel-page-bg);
+}
+
+/* The shared bar is an inline flow child (file manager / terminal use it the
+   same way); give it the panel's gutters so it does not touch the edges. */
+.kb-upload-bar {
+  margin: var(--space-3) var(--space-4) 0;
 }
 
 .kb-panel.is-drop-target {

@@ -306,7 +306,7 @@ describe('useVoiceInput', () => {
     el.remove()
   })
 
-  it('writes a late transcript into the field even if the box was cleared by a send', async () => {
+  it('drops a late transcript when the composer consumed the text (message sent)', async () => {
     const track = { stop: vi.fn() }
     const stream = { getTracks: () => [track] }
     vi.stubGlobal('navigator', {
@@ -333,14 +333,68 @@ describe('useVoiceInput', () => {
 
     await v.startAt(el)
     v.stop()
-    // The message went out → the composer is empty.
+    // The message went out: the composer cleared and released the take. The
+    // transcript arriving afterwards is the same sentence the user just sent —
+    // writing it back makes the sent message look like it returned as a draft.
     el.value = ''
+    v.consumeTarget(el)
     resolveFetch({ ok: true, json: async () => ({ text: '听写' }) })
 
     await vi.waitFor(() => expect(v.state.value).toBe('idle'))
-    expect(el.value).toBe('听写')
-    expect(el.value).not.toContain('请看一下这个改动')
+    expect(el.value).toBe('')
     el.remove()
+  })
+
+  it('a streaming final after the send does not resurrect the message', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    const el = makeField('')
+
+    await v.startAt(el)
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '请看一下这个改动' }) })
+    expect(el.value).toBe('请看一下这个改动')
+
+    // Released, then sent before the engine's final arrived.
+    v.stop()
+    el.value = ''
+    v.consumeTarget(el)
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'done', final: '请看一下这个改动' }) })
+
+    expect(el.value).toBe('')
+    expect(v.state.value).toBe('idle')
+    el.remove()
+  })
+
+  it('leaves a dictation in another field alone when the composer is consumed', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    const editor = makeField('')
+    const composer = makeField('')
+
+    await v.startAt(editor)
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.getWS()!.send).toHaveBeenCalled())
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '继续' }) })
+
+    // A chat message went out while the editor was the dictation target.
+    v.consumeTarget(composer)
+    env.getWS()!.onmessage!({ data: JSON.stringify({ type: 'partial', text: '继续写' }) })
+    expect(editor.value).toBe('继续写')
+    expect(composer.value).toBe('')
+
+    v.cancel()
+    editor.remove()
+    composer.remove()
   })
 
   it('re-anchors streaming partials after the field was cleared (no resurrected prefix)', async () => {

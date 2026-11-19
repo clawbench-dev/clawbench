@@ -59,7 +59,7 @@ sequenceDiagram
 - **桌面窗口**：主窗口默认 1280×800，连接配置的服务器地址；首次启动或服务器不可达时展示内置登录页供选择服务器，避免出现空白窗口
 - **无边框窗口与自绘窗口控制（Windows / Linux）**：这两个平台去掉原生标题栏，改在 AppHeader 最右侧画最小化 / 最大化-还原 / 关闭三个按钮；**macOS 保留原生帧**，其左上角交通灯不动，Android / 浏览器不显示。平台判定只有一份（`desktop/src/main/windowChrome.ts`，纯模块、无 electron import、可单测），经同步 IPC 回答渲染层"是否自绘控制"——渲染层**不得按 UA 自行推断**（sandboxed preload 拿不到 UA，且第二份平台表会静默漂移）。未知平台一律回退原生帧：无边框却没有可用控制簇的窗口无法关闭或移动，是最坏结果。窗口是否最大化以**窗口本身为权威**，中间按钮只做 toggle 而非自行维护状态（`maximize`/`unmaximize` 事件回推给渲染层），避免两侧状态分歧
 - **关闭按钮的三种行为**：点右上角关闭（或 Alt+F4 / 任务栏「关闭」/ 窗口 X）时不再直接退出，而是按持久化的 `closeAction` 走 `ask`（每次询问）/ `tray`（隐藏到托盘，程序继续在后台跑）/ `exit`（退出）。对话框带「记住我的选择」，勾选后写入 Electron store，设置 → 通知 →「桌面与系统 → 关闭主窗口时」可随时改回。**拦截必须挂在窗口自己的 `close` 事件上**：只有关闭按钮走 IPC，Alt+F4 与任务栏那条路径根本不经过 IPC，只接 IPC 会一半询问一半退出。**托盘图标的生命周期与胶囊功能解耦**（`trayWanted()` = 胶囊开关或 `closeAction==='tray'`）：选「最小化到托盘」却没有图标等于把应用藏起来且再也打不开，所以隐藏窗口前先确保图标存在，建不出来就弹提示并保持窗口打开；反过来关掉胶囊功能也不能无条件销毁图标。`app.quit()`（托盘退出、自升级、`window-all-closed`）经 `before-quit` 置位后一律放行，否则「退出」会被自己拦成对话框；**会议守卫挡下卸载时要清掉这个位**，不然用户选择「留在会议中」之后的下一次关闭会跳过询问直接退出。决策部分是纯模块 `closePolicy.ts`（可单测），胶水在 `closeFlow.ts`；**macOS 不参与**（保留原生帧，红灯本来就只关窗口不退出）
-- **登录/启动加载屏**：窗口创建后先展示一个原生加载屏（对齐 Android 的 splash），覆盖在页面之上，等页面加载成功（`did-finish-load`）后再淡出——用户看到的不是一片空白或半成品页面。**页面加载成功必须取消连接超时**，否则一次成功的加载也会被上一轮的超时计时器误判；**复用同一个浮层页面时必须清除上一次的淡出类**，否则第二次连接时浮层整层透明、看起来像没显示。**登录页的装饰背景层必须排在所有交互浮层之前**：无边框窗口的 `<body>` 是 `-webkit-app-region: drag`，装饰层继承 drag，而 Chromium 取 DOM 顺序**最后**覆盖该点的元素——装饰层若排在 splash / 版本 gate 之后会吃掉整屏点击（按钮全部无响应，但 `elementsFromPoint` 仍报告命中的是按钮），详见 [design-guide 红线 3](design-guide.md)。**加载页必须每次显示都重读原生主题/语言**：其 `<head>` 脚本只执行一次，否则主题会冻结在首次加载值（实测同一时刻 web 页是 gruvbox-dark 而加载页仍是 github-dark）
+- **登录/启动加载屏**：窗口创建后先展示一个原生加载屏（对齐 Android 的 splash），覆盖在页面之上，等页面加载成功（`did-finish-load`）后再淡出——用户看到的不是一片空白或半成品页面。**页面加载成功必须取消连接超时**，否则一次成功的加载也会被上一轮的超时计时器误判；**复用同一个浮层页面时必须清除上一次的淡出类**，否则第二次连接时浮层整层透明、看起来像没显示。**登录页的装饰背景层必须排在所有交互浮层之前**：无边框窗口的 `<body>` 是 `-webkit-app-region: drag`，装饰层继承 drag，而 Chromium 取 DOM 顺序**最后**覆盖该点的元素——装饰层若排在 splash / 版本 gate 之后会吃掉整屏点击（按钮全部无响应，但 `elementsFromPoint` 仍报告命中的是按钮），详见 [design-guide 红线 3](design-guide.md)。**加载页必须每次显示都重读原生主题/语言**：其 `<head>` 脚本只执行一次，否则主题会冻结在首次加载值（实测同一时刻 web 页是 gruvbox-dark 而加载页仍是 github-dark）。**融合版必须先等服务端就绪再导航**：窗口在启动时就创建并显示加载环（`startupGate.ts`），但 `loadURL` 要等 `startEmbeddedServerIfPresent()` 结束；健康探针还要核对 `/api/health` 的 `pid`，确认应答的是本进程刚拉起的服务端，而不是上一轮遗留的实例。旧实例答完就退出，页面会停在它即将失效的端口/会话上，WebSocket 永远重连不上——只有重新登录（导航到壳刚写入的新地址）才能恢复。**
 - **自签名证书可「信任并继续」**：连接使用自签名证书的自建服务器时，Chromium 默认拒绝、桌面端此前直接弹回登录页只显示一行错误——用户无法连接。现改为在主进程 `app.on('certificate-error')` 弹出**原生对话框**（信任并继续 / 取消连接），确认后放行并**按 origin 记住该证书的指纹**（electron-store `trustedCertificates`，重启后仍有效；Android 侧按地址记在 prefs 里，见 [android-integration.md](android-integration.md)）：指纹一致直接放行，**证书换了（重装/轮换/中间人）会重新弹窗**，因此「记住」不会退化成「以后不校验这台机器」；设置 → 安全 →「已信任的证书」可一键清除。**同一次连接只弹一个框**：一次导航会同时触发主框架与页面刚打开的几个 socket 的 `certificate-error`，每个事件都被暂停等待答复，逐个弹窗会把同一个问题问两三遍——弹窗经 `SingleFlightPrompts`（纯模块、可单测）按 origin 合并，后来的请求共享第一个框的结论。localhost 隧道（证书必然不匹配）自动信任；**信任覆盖该 origin 的全部请求**——证书校验按 socket 进行，WebSocket 与每个新连接的 `fetch` 都会各自触发 `certificate-error`（`isMainFrame=false`），只放行主框架导航会出现「界面能打开、随后大部分接口失败」；第三方子资源失败仍不提示（交给 Chromium 默认拒绝，绝不弹阻塞对话框）。决策逻辑是纯模块 `certificatePolicy.ts`（可单测），electron 胶水在 `certificate.ts`
 - **原生上下文菜单**：Electron 原生右键菜单覆盖可编辑输入框（剪切/复制/粘贴）、文本选择（复制）、链接（复制链接）、图片（复制图片）。剪切/复制/粘贴使用 Electron role 由操作系统自动本地化，仅复制链接/复制图片两个自定义项按当前应用语言提供文案
 - **外部链接默认浏览器打开**：白名单协议（`http`/`https`/`mailto`/`tel`）中，指向服务器 Origin 之外的链接交给系统默认浏览器打开；同服务器 Origin 的链接在窗口内导航；白名单之外的协议一律阻止
@@ -88,7 +88,7 @@ flowchart TD
     C -->|否| E{语义化版本比较，有更新?}
     E -->|否| F[结束]
     E -->|是| G[按候选 URL 列表依次降级下载 zip]
-    G --> H[SRI 校验 → 解压 → 剥顶层目录 / 拒绝路径穿越 / 恢复可执行位]
+    G --> H[SHA256 校验 → 解压 → 剥顶层目录 / 拒绝路径穿越 / 恢复可执行位]
     H --> I[侧装到 app-version/]
     I --> J[翻转 current 指针]
     J --> K[显式 spawn 新二进制重启]
@@ -108,48 +108,30 @@ flowchart TD
 
 重启**必须显式 spawn 新二进制**：`app.relaunch()` 重启的是当前进程，即旧版本。版本比较用语义化而非 `current !== latest` 字符串不等——后者会把降级也报成"有更新"。安装全程需显式确认，不静默重启打断用户。
 
-**升级元数据请求不再关闭 TLS 校验**：连自签名服务器时，早期为了跑通升级直接 `rejectUnauthorized: false`，等于在升级链路上给任何中间人开了门。现在按用户已接受的证书指纹固定——与「信任并继续」共用同一份记录，同时认 sha256/base64 与冒号 hex 两种拼写；没有指纹时才回落正常校验。载荷包另外接入 npm 的 `dist.integrity`，下载候选强制 https（回环地址除外）。指纹不匹配、TLS 失败、网络失败分类落日志，不再完全静默——升级失败最难查的正是「什么都没发生」。
-
-### 增量升级：只下载载荷包
-
-桌面端全量包约 150MB，其中 Electron 运行时占 ~98%，应用自身只有 `resources/` 目录（~3.8MB）。因此除全量包外每个平台还发布一个**载荷包**，客户端把它安装到从当前运行版本克隆出的目录上，从而复用已装的运行时。安装前按 Electron **主版本**与**壳指纹**双重校验，任一不符即回退全量下载——载荷永远无法更新被烧进可执行文件的壳身份（`appId` / 产品名 / 可执行名 / 图标），也无法跨越运行时 ABI 主版本。
-
-```mermaid
-flowchart TD
-    A[有更新] --> B{该平台有载荷资产?}
-    B -->|macOS 无| F[全量下载]
-    B -->|有| C[取载荷包<br/>npm tarball，唯一来源]
-    C --> D{Electron 主版本 + 壳指纹匹配?}
-    D -->|否| F
-    D -->|是| E[克隆当前版本目录 → 覆盖 resources/ → 翻转指针]
-```
-
-失败一律静默降级为全量下载，因此**载荷包名不一致不会报错**，只会让每次升级又下 150MB——这正是需要跨语言断言（`release.yml` ↔ Go 载荷基名）的原因。macOS 不发布载荷：替换已签名 `.app` 内的 `resources/` 会破坏代码签名封条，Apple Silicon 拒绝运行无效签名。载荷**只经 npm registry 分发**（`desktopPayloadURLs` 直接调 `desktopPayloadNpmURLs`，不含 GitHub 候选）：早期载荷 zip 曾与全量包并列挂在 Release 资产里，但那会让人误以为这个小 zip 可以直接安装（它缺 Electron 运行时），故移出；npm 顺带给了国内镜像加速。
+**升级元数据请求不再关闭 TLS 校验**：连自签名服务器时，早期为了跑通升级直接 `rejectUnauthorized: false`，等于在升级链路上给任何中间人开了门。现在按用户已接受的证书指纹固定——与「信任并继续」共用同一份记录，同时认 sha256/base64 与冒号 hex 两种拼写；没有指纹时才回落正常校验。全量包按 Release 的 `SHA256SUMS` 校验，下载候选强制 https（回环地址除外）。指纹不匹配、TLS 失败、网络失败分类落日志，不再完全静默——升级失败最难查的正是「什么都没发生」。
 
 ### 一体包的升级：只装整包
 
-融合版（Windows 一体包，客户端自带 `server/`）的升级单位是**整个一体安装包**，不走上面两条路：瘦包会把 `server/` 弄丢，载荷包只换 `resources/` 会把自带服务端留在旧版本。服务端在 `/api/upgrade/check` 里用 `fused_downloads` 下发该版本一体包的地址（与 Release 资产命名同一处生成，客户端不自己拼），网页端的「检查更新」在 `managed` 时改为调用桌面桥 `installFusedUpdate`，由壳下载整包、侧装、翻转指针，再询问是否重启。
+融合版（Windows 一体包，客户端自带 `server/`）的升级单位是**整个一体安装包**：瘦包会把 `server/` 弄丢，只有整包能同时更新客户端和自带服务端。服务端在 `/api/upgrade/check` 里用 `fused_downloads` 下发该版本一体包的地址（与 Release 资产命名同一处生成，客户端不自己拼），网页端的「检查更新」在 `managed` 时改为调用桌面桥 `installFusedUpdate`，由壳下载整包、侧装、翻转指针，再询问是否重启。
 
 侧装目录按**发布 tag** 命名，而壳复用上一版发布时包内 app 报的是旧版本号——启动交接因此保留指针（见 `handOffToPointedVersion` 的同文件分支），否则下一次冷启动会退回原安装目录，静默回滚整次升级。这个能力随服务端发布：已经装在旧版一体包里的用户需要手动装一次新版，之后才能用应用内升级。
-
-**失败弹框必须同时展示两条错误**：载荷（npm）路径**优先尝试**、失败才回落到全量包，但载荷失败此前只写 console——于是弹框只剩 GitHub 全量包的错误，满屏 `github.com` 地址让人误以为"客户端根本没走 npm 镜像"，而事实是走了并失败了。因此 `formatInstallFailure` 把载荷与全量两条错误各带来源标签一并展示。这是"静默降级"在**诊断信息**上必须付出的代价：降级本身该静默，但降级的原因不能。
 
 **写盘与克隆必须关掉 Electron 的 asar 拦截**：Electron 的 fs shim 把**任何末段以 `.asar` 结尾的路径**当作归档，解析到归档内部而不是磁盘上。而安装器的整个工作就是生产与复制这个名字的文件（解压含 `resources/app.asar` 的包、再克隆整个壳），不关拦截则升级在任何平台都走不完——实测 Electron 44.4.3 下 `writeFileSync`/`openSync`/`copyFileSync` 直接抛 `Invalid package`，`existsSync` 对合法归档返回 false，`statSync` 抛错。故同步写盘与克隆都包在 `process.noAsar = true` 的临时作用域里（**结束后恢复原值**而非置 false——调用方可能本来就用 `--no-asar` 启动），且**只覆盖同步调用**：跨 `await` 持有时，运行中的应用会读不了自己的归档。目录级操作（`rmSync`/`renameSync`）不受影响，清理与最终换指针无需包。
 
 ### 分发以 GitHub Release 为唯一渠道
 
-`/api/desktop/latest` **不查询任何外部服务**（不查 npm、不查 GitHub API），直接返回服务端自身版本 + Release 资产地址。桌面端与服务端同版本发布，服务端即权威。
+`/api/desktop/latest` **不查 npm**，直接返回服务端自身版本 + Release 资产地址；只为校验清单直连 GitHub 取一次 `SHA256SUMS`（失败不阻塞）。桌面端与服务端同版本发布，服务端即权威。
 
 **兼容性判据是协议号，不是版本号**。桌面端与 Android 一样，用 `desktop/src/shared/protocol.ts` 的 `CLIENT_PROTOCOL` 对比服务端返回的 `protocol`：相等即放行（版本号差多少都不管），不等才抬版本遮罩；任一侧缺失则退回 `shouldGate` 的版本比较，行为与之前一致。这样一次没有改动客户端的发布可以**直接复用上一个 Release 的桌面包**（见 [versioning.md](../infra/versioning.md) 的「客户端产物复用」），不会让所有人白下 150MB。响应里的 `clientVersion` 是下载地址**实际指向的构建版本**——复用发布时它是旧版本，安装目录按它命名；用服务端版本命名会让 `app.getVersion()` 与指针版本不一致，启动交接随即删掉指针并静默回退升级。
 
 
 改为 Release 优先的直接原因是体积：Electron 44 的运行时让桌面端 tarball 达到 ~120MiB，超过 npm 的 100MiB 文档上限，而裁剪 locale/LICENSES 只能省约 4.7MiB（实测），瘦身不可行。原先 npm registry 是**唯一**渠道，一旦超限不发 npm，自升级与官网下载入口会双双静默失效。
 
-桌面端**全量包因此不再发布到 npm**（`npm/desktop-main/` 已移除）；服务端的 `publish-npm` 只发 CLI `@xulongzhe/clawbench`，与桌面端无关。但 `publish-npm-desktop` 仍然存在——它只发**载荷包**（`clawbench-desktop-<plat>-payload`，约 3MB，远低于 npm 上限），这也是载荷的唯一分发渠道。
+桌面端**全量包因此不再发布到 npm**（`npm/desktop-main/` 已移除）；服务端的 `publish-npm` 只发 CLI `@xulongzhe/clawbench`，与桌面端无关。桌面端没有第二个 npm 渠道。
 
 每个平台返回**候选 URL 列表**：国内镜像优先、直连 github.com 始终兜底，客户端与前端都按序取首个可用项——一个镜像失效不致命。`tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时 `downloads` 为空、前端隐藏下载入口——这是正常状态，不是错误。
 
-**npm 镜像源由客户端兜底，不由服务端读取**。服务端拼载荷 URL 时只用 `getRegistryBase()`（按服务端自身区域二选一：npmmirror / npmjs.org），**刻意不读服务端的 `~/.npmrc` / `NPM_CONFIG_REGISTRY`**——那些配置属于服务器这台机器，通常指向客户端不可达的私有源，写进响应等于给每个客户端一个死候选。反过来，服务端在海外而用户在境内的情形，响应里的 `registry.npmjs.org` 会很慢甚至不通，所以客户端在服务端候选全部失败后，再用**本机**的 `NPM_CONFIG_REGISTRY` / `npm_config_registry` / `~/.npmrc` 的 `registry=` 重写同一条 tarball path 重试（`install.ts` 的 `mirrorFallbackUrls`）。三条约束：只对 npm tarball 生效（path 含 `/-/` 且以 `.tgz` 结尾），GitHub Release zip 及其前缀镜像绝不改写到 registry 上；改写结果与已有候选相同时去重（服务端与客户端都在国内时两者本就相同，否则会把同一个死 tarball 下两遍）；全量包不参与此重试，它只有 GitHub 候选。CLI 自升级读的是**本机** npmrc（`internal/service/upgrade.go` 的 `registryCandidates`），两条链路的取值位置因此相反，这不是不一致。
+每个资产还带一个 SHA256：发布时生成 `SHA256SUMS`，服务端从 GitHub **直连**取到后随 `checksums` 一起下发；客户端按下载 URL 的文件名查表，不匹配就换下一个候选。清单拿不到（旧服务端、dev 构建、GitHub 不可达）时跳过校验并记日志，不阻塞升级。
 
 ### 设计要点
 

@@ -57,10 +57,6 @@ export interface VersionGateLabels {
   versionReadyDetail: string
   restartFailedTitle: string
   restartFailedMessage: string
-  /** Prefix for the payload (npm) failure inside the install-failure detail. */
-  payloadInstallFailed: string
-  /** Prefix for the full-package failure inside the install-failure detail. */
-  fullDownloadFailed: string
   /**
    * Shown instead of installing when this client ships its own server: replacing
    * it with the thin package would remove the server it carries.
@@ -88,8 +84,6 @@ export function versionGateLabels(locale: string): VersionGateLabels {
       versionReadyDetail: '重启后生效。选择“稍后”也可在下次启动时自动使用该版本。',
       restartFailedTitle: '重启失败',
       restartFailedMessage: '无法启动该版本，请手动重启应用。',
-      payloadInstallFailed: '增量包（npm）安装失败：',
-      fullDownloadFailed: '全量包下载失败：',
       fusedUpdateTitle: '请安装新版安装包',
       fusedUpdateMessage: '当前客户端自带服务端，不能只替换客户端。请下载新版的一体安装包重新安装，客户端和服务端会一起更新。',
       fusedPackageMissing: '这个版本没有对应的一体安装包，无法在应用内升级。',
@@ -106,8 +100,6 @@ export function versionGateLabels(locale: string): VersionGateLabels {
     versionReadyDetail: 'It takes effect after a restart. Choosing “Later” also picks it up automatically on the next launch.',
     restartFailedTitle: 'Restart Failed',
     restartFailedMessage: 'Could not launch this version. Please restart the app manually.',
-    payloadInstallFailed: 'Payload (npm) install failed:',
-    fullDownloadFailed: 'Full package download failed:',
     fusedUpdateTitle: 'Install the new package',
     fusedUpdateMessage: 'This client ships with its own server, so the client alone cannot be replaced. Download the new all-in-one package and reinstall: client and server then update together.',
     fusedPackageMissing: 'This release has no all-in-one package for your platform, so it cannot be installed from inside the app.',

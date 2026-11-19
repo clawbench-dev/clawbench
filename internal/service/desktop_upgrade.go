@@ -1,11 +1,7 @@
 package service
 
 import (
-	"fmt"
-	"net/url"
-	"strings"
-
-	"clawbench/internal/platform"
+	"clawbench/internal/platform/source"
 	"clawbench/internal/version"
 )
 
@@ -13,9 +9,7 @@ import (
 // assets produced by release.yml's build-desktop-* jobs.
 const desktopReleaseRepo = "clawbench-dev/clawbench"
 
-// Platform keys (GOOS/GOARCH) shared by the maps below. Named constants because
-// each appears in both the full-package and payload maps, which pushes the
-// repeated literals past the goconst threshold.
+// Platform keys (GOOS/GOARCH) shared by the maps below.
 const (
 	platformLinuxAMD64   = "linux/amd64"
 	platformLinuxARM64   = "linux/arm64"
@@ -35,26 +29,6 @@ var desktopAssetBase = map[string]string{
 	platformWindowsAMD64: "clawbench-desktop-windows-x64",
 }
 
-// desktopPayloadAssetBase maps GOOS/GOARCH to the basename of the payload-only
-// archive: the same app minus the Electron runtime (just `resources/`, ~3MB
-// against ~150MB). The client installs it over a clone of the shell it is
-// already running, so the runtime is never re-downloaded.
-//
-// This is NOT a GitHub release asset name. The payload ships only through npm
-// (see desktopPayloadNpmPkg); the map survives because it is the single place
-// deciding which platforms have a payload at all, and the npm package name is
-// derived from the basename so the two cannot drift.
-//
-// macOS is deliberately ABSENT. Replacing resources/app.asar inside a signed
-// .app breaks the code-signature seal, and Apple Silicon refuses to run with an
-// invalid signature; the client therefore stays on the full package there. The
-// key being absent (rather than an empty list) is what tells it so.
-var desktopPayloadAssetBase = map[string]string{
-	platformLinuxAMD64:   "clawbench-desktop-linux-x64-payload",
-	platformLinuxARM64:   "clawbench-desktop-linux-arm64-payload",
-	platformWindowsAMD64: "clawbench-desktop-windows-x64-payload",
-}
-
 // desktopAssetName builds the published asset filename for a platform, e.g.
 // "clawbench-desktop-linux-x64-v0.99.1.zip".
 //
@@ -63,81 +37,12 @@ var desktopPayloadAssetBase = map[string]string{
 // there is no stable ".../latest/download/<name>" form for these assets, which
 // is why the download URLs are always built from the tag the server reports
 // rather than from a constant.
-//
-// Only the FULL package is a release asset. The payload has no counterpart
-// here: it is published to npm instead (see desktopPayloadNpmURLs).
 func desktopAssetName(osArch, tag string) string {
 	base, ok := desktopAssetBase[osArch]
 	if !ok {
 		return ""
 	}
 	return base + "-" + tag + ".zip"
-}
-
-// desktopNpmScope is the npm scope the published packages live under. Keep in
-// sync with the package names in npm/platforms/ and npm/desktop-payloads/.
-const desktopNpmScope = "@xulongzhe/"
-
-// desktopPayloadNpmPkg returns the npm package name carrying the payload
-// archive for a platform, or "" when the platform has no payload (macOS).
-//
-// Derived from the payload basename rather than kept as a second map, so the
-// two cannot drift: the npm package for linux-x64 is exactly the payload
-// basename plus the scope.
-func desktopPayloadNpmPkg(osArch string) string {
-	base, ok := desktopPayloadAssetBase[osArch]
-	if !ok {
-		return ""
-	}
-	return desktopNpmScope + base
-}
-
-// desktopPayloadNpmURLs returns candidate npm tarball URLs for the payload.
-//
-// The URL is constructed from the tag rather than discovered from the registry:
-// the server already knows the exact version it is publishing, so a metadata
-// query would add a network round trip (and a failure mode) to a public
-// endpoint that is otherwise self-contained.
-//
-// Two npm naming rules are easy to get wrong and are pinned by tests:
-//
-//   - the tarball FILENAME drops the scope: the package @xulongzhe/x lives at
-//     <base>/@xulongzhe/x/-/x-<version>.tgz;
-//   - the VERSION has no "v" prefix, because npm versions are semver and a
-//     release tag is not.
-//
-// Only the region-aware base is used — deliberately NOT registryCandidates(),
-// which also carries the server's own ~/.npmrc / NPM_CONFIG_REGISTRY mirror.
-// These URLs are handed to the desktop CLIENT, a different machine, where a
-// server-side private registry is usually unreachable; including it would put
-// a dead candidate in every response.
-func desktopPayloadNpmURLs(osArch, tag string) []string {
-	pkg := desktopPayloadNpmPkg(osArch)
-	version := strings.TrimPrefix(tag, "v")
-	if pkg == "" || version == "" {
-		return nil
-	}
-	// Scope stripped for the filename: "@xulongzhe/foo" -> "foo".
-	name := pkg[strings.LastIndex(pkg, "/")+1:]
-
-	return []string{
-		fmt.Sprintf("%s/%s/-/%s-%s.tgz",
-			strings.TrimRight(getRegistryBase(), "/"), pkg, name, version),
-	}
-}
-
-// desktopPayloadURLs returns every candidate URL for a platform's payload.
-//
-// npm is the ONLY source. The payload used to be attached to the GitHub Release
-// as well, but that put a ~3MB zip next to the ~150MB full package and misled
-// anyone browsing the release assets into thinking the small one was a usable
-// install. It now ships through npm alone, which also happens to be the faster
-// path in mainland China.
-//
-// An empty list means the platform has no payload (macOS), which the client
-// reads as "download the full package".
-func desktopPayloadURLs(osArch, tag string) []string {
-	return desktopPayloadNpmURLs(osArch, tag)
 }
 
 // desktopFusedAssetBase maps GOOS/GOARCH to the basename of the all-in-one
@@ -168,8 +73,7 @@ func desktopFusedAssetName(osArch, tag string) string {
 // as DesktopLatestResult.Downloads).
 //
 // This is what a fused install upgrades with: it must never be handed the thin
-// package (that would delete the only server it has) nor the payload (that
-// replaces resources/ and leaves the bundled server stale). An empty tag or a
+// package (that would delete the only server it has). An empty tag or a
 // platform with no fused package yields an empty map, which callers read as
 // "nothing to offer" rather than building a URL that 404s.
 func FusedDesktopDownloads(tag string) map[string][]string {
@@ -197,25 +101,6 @@ var desktopDownloadKey = map[string]string{
 	platformWindowsAMD64: "win32-x64",
 }
 
-// githubReleaseMirrors are prefix proxies that forward to github.com. They are
-// tried before the direct URL for users in mainland China, where release
-// downloads from github.com are frequently slow or unreachable.
-//
-// These are community-run services with no uptime guarantee, so they are only
-// candidates: the client walks the list in order, and the direct github.com URL
-// is always included as the final fallback.
-//
-// Measured 2026-11-11 against the real desktop asset (125MB zip), 5MB range:
-// gh-proxy.com 3.9 MB/s, ghfast.top 1.2 MB/s, github.com direct 6 KB/s.
-// ghproxy.net was REMOVED — it answered HTTP 206 but trickled at 33-38 KB/s,
-// which is 55 minutes for one desktop package. A mirror that is slow-but-alive
-// is worse than one that is down: the client only falls through when a
-// candidate FAILS, so it would sit there instead of trying the next source.
-var githubReleaseMirrors = []string{
-	"https://gh-proxy.com/",
-	"https://ghfast.top/",
-}
-
 // DesktopLatestResult is the response of GET /api/desktop/latest.
 type DesktopLatestResult struct {
 	Version string `json:"version"`
@@ -240,39 +125,29 @@ type DesktopLatestResult struct {
 	// client tries them in order, so one dead mirror degrades the download
 	// rather than breaking it.
 	Downloads map[string][]string `json:"downloads"`
-	// Payloads maps a platform key to candidate URLs for the payload-only
-	// archive (the app without the Electron runtime). Published to npm only —
-	// it is not a GitHub release asset. A key is ABSENT when the platform has
-	// no payload — macOS, for code-signing reasons — which the client reads as
-	// "download the full package". Never an empty list.
-	Payloads map[string][]string `json:"payloads"`
+	// Checksums maps an asset filename to its SHA256, from the release's
+	// SHA256SUMS. Absent on dev builds and on servers that cannot reach the
+	// manifest; the client then skips verification.
+	Checksums map[string]string `json:"checksums,omitempty"`
 }
 
 // releaseAssetURLs returns the candidate download URLs for one release asset,
 // ordered by what is likely to work from the server's region. The direct
 // github.com URL is always present, last for China and first elsewhere.
 func releaseAssetURLs(tag, asset string) []string {
-	direct := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s",
-		desktopReleaseRepo, url.PathEscape(tag), url.PathEscape(asset))
-
-	mirrors := make([]string, 0, len(githubReleaseMirrors))
-	for _, m := range githubReleaseMirrors {
-		mirrors = append(mirrors, m+direct)
-	}
-	if platform.IsChinaMainland() {
-		return append(mirrors, direct)
-	}
-	return append([]string{direct}, mirrors...)
+	return source.ReleaseURLs(desktopReleaseRepo, tag, asset)
 }
 
 // FetchDesktopLatest builds the desktop download info for the running server
 // version.
 //
-// It deliberately does NOT query an external registry. The desktop client ships
-// in lockstep with the server — the server is what tells the client which
-// version to run — so the server's own version IS the latest desktop version.
-// That removes the dependency on npm, whose size limits were the only reason
-// these packages were difficult to publish, and on any third-party API.
+// It deliberately does NOT query an npm registry. The desktop client ships in
+// lockstep with the server — the server is what tells the client which version
+// to run — so the server's own version IS the latest desktop version.
+//
+// It DOES fetch the release's SHA256SUMS from GitHub (best-effort, cached per
+// tag) so the client can verify the archive. A failed fetch yields no checksums
+// and does not block the response; the client then downloads over https only.
 func FetchDesktopLatest() (*DesktopLatestResult, error) {
 	v := version.Get()
 	tag := version.ReleaseTag(v)
@@ -282,7 +157,6 @@ func FetchDesktopLatest() (*DesktopLatestResult, error) {
 		ClientVersion: version.GetClientBuildVersion(),
 		Protocol:      version.ClientProtocol,
 		Downloads:     map[string][]string{},
-		Payloads:      map[string][]string{},
 	}
 	if tag == "" {
 		// Dev or untagged build: no release exists, so offer nothing rather
@@ -293,14 +167,6 @@ func FetchDesktopLatest() (*DesktopLatestResult, error) {
 		asset := desktopAssetName(osArch, tag)
 		res.Downloads[desktopDownloadKey[osArch]] = releaseAssetURLs(tag, asset)
 	}
-	// Payloads cover fewer platforms than the full package (see
-	// desktopPayloadAssetBase), so iterate that map rather than Downloads'.
-	//
-	// Payloads come from npm alone (see desktopPayloadURLs); Downloads (the
-	// ~150MB full package) stays GitHub-only, because the mirror is unreliable
-	// at that size.
-	for osArch := range desktopPayloadAssetBase {
-		res.Payloads[desktopDownloadKey[osArch]] = desktopPayloadURLs(osArch, tag)
-	}
+	res.Checksums = desktopPackageChecksums(tag)
 	return res, nil
 }

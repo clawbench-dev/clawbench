@@ -19,6 +19,58 @@ func stubInstallRun(t *testing.T, fn func(ctx context.Context, command string) (
 	t.Cleanup(func() { agentInstallRun = prev })
 }
 
+// stubProbeRun replaces the probe runner for one test.
+func stubProbeRun(t *testing.T, fn func(ctx context.Context, command string) (string, error)) {
+	t.Helper()
+	prev := SetAgentProbeRunForTest(fn)
+	t.Cleanup(prev)
+}
+
+func TestProbeNpmPackage_Success(t *testing.T) {
+	var got string
+	stubProbeRun(t, func(_ context.Context, command string) (string, error) {
+		got = command
+		return "1.2.3\n", nil
+	})
+
+	err := ProbeNpmPackage(context.Background(), "@scope/pkg", "https://registry.example.com/npm")
+	require.NoError(t, err)
+	assert.Equal(t, "npm view @scope/pkg version --registry=https://registry.example.com/npm", got)
+}
+
+func TestProbeNpmPackage_AuthFailureIsTyped(t *testing.T) {
+	stubProbeRun(t, func(context.Context, string) (string, error) {
+		return "npm ERR! code E401\nnpm ERR! 401 Unauthorized", errors.New("exit status 1")
+	})
+
+	err := ProbeNpmPackage(context.Background(), "pkg", "https://registry.example.com")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNpmAuthRequired), "auth failure must be distinguishable from 404/network")
+}
+
+func TestProbeNpmPackage_NotFoundIsNotAuth(t *testing.T) {
+	stubProbeRun(t, func(context.Context, string) (string, error) {
+		return "npm ERR! code E404\nnpm ERR! 404 Not Found", errors.New("exit status 1")
+	})
+
+	err := ProbeNpmPackage(context.Background(), "pkg", "https://registry.example.com")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrNpmAuthRequired))
+}
+
+func TestProbeNpmPackage_RejectsUnsafeInputsWithoutRunning(t *testing.T) {
+	called := false
+	stubProbeRun(t, func(context.Context, string) (string, error) {
+		called = true
+		return "", nil
+	})
+
+	require.Error(t, ProbeNpmPackage(context.Background(), "pkg; rm -rf /", "https://registry.example.com"))
+	require.Error(t, ProbeNpmPackage(context.Background(), "pkg", "https://registry.example.com; rm -rf /"))
+	require.Error(t, ProbeNpmPackage(context.Background(), "./local-package", "https://registry.example.com"))
+	assert.False(t, called, "unsafe input must not reach a shell")
+}
+
 func stubInstallLookPath(t *testing.T, fn func(string) (string, error)) {
 	t.Helper()
 	prev := agentInstallLookPath

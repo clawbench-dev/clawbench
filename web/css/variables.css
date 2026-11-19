@@ -1058,7 +1058,9 @@
     --bg-hover: rgba(0,0,0,0.05);
     --bg-active: rgba(0,0,0,0.09);
     --text-primary: #657b83;
-    --text-secondary: #586e75;
+    /* Secondary text must clear WCAG AA (4.5:1) on --bg-secondary: the theme’s
+       own secondary #586e75 measured 4.39. */
+    --text-secondary: #4d6160;
     --text-muted: #93a1a1;
     --text-hint: #a8b4b4;
     --border-color: #d6ccb6;
@@ -1766,7 +1768,7 @@
     --bg-hover: rgba(0,0,0,0.04);
     --bg-active: rgba(0,0,0,0.08);
     --text-primary: #5c6a72;
-    --text-secondary: #6f7b80;
+    --text-secondary: #5c6a72;
     --text-muted: #939f91;
     --text-hint: #a8b3a4;
     --border-color: #d8cdb1;
@@ -1825,7 +1827,7 @@
     --bg-hover: rgba(0,0,0,0.04);
     --bg-active: rgba(0,0,0,0.08);
     --text-primary: #5c6166;
-    --text-secondary: #777c81;
+    --text-secondary: #5c6166;
     --text-muted: #a0a5aa;
     --text-hint: #b8bdc2;
     --border-color: #e3e3e3;

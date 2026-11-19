@@ -386,7 +386,7 @@ GroupFreeTitle: 群聊
 # （web/src/utils/forgeEventContextVars.ts）完全一致，两者不会再漂移——此前
 # 后端自带一套中文字面量、前端却渲染 i18n 键，导致英文用户看到的预览与实际
 # 注入的提示词不一致。
-EventContextHeader: Forge 事件
+EventContextHeader: 代码托管事件
 EventContextYes: 是
 EventContextNo: 否
 EventContextSeparator: '：'
@@ -433,7 +433,7 @@ ForgeEventLabelRepo: 仓库
 ForgeEventLabelEvent: 事件
 ForgeEventLabelAuthor: 作者
 ForgeEventViewDetail: 查看详情
-ForgeDisabled: GitHub/GitLab 集成已关闭
+ForgeDisabled: 代码托管集成已关闭
 MailDisabled: 邮件功能已关闭
 KbDisabled: 知识库功能已关闭
 TasksDisabled: 任务功能已关闭

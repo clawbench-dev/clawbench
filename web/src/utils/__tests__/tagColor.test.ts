@@ -14,7 +14,9 @@ function toolCallPaletteFromComponent() {
   const src = readWebFile('src/components/chat/ContentBlocks.vue')
   const light: Record<string, string> = {}
   const dark: Record<string, string> = {}
-  const re = /\.chat-tool-call\[data-category="([a-z]+)"\]\s*\{\s*--tool-accent:\s*([^;]+);\s*\}/g
+  // `--tool-accent` need not be the only declaration in the rule: the ink
+  // token (`--tool-ink-keep`) follows it on the same line.
+  const re = /\.chat-tool-call\[data-category="([a-z]+)"\]\s*\{[^}]*--tool-accent:\s*([^;]+);[^}]*\}/g
 
   // Walk line by line: the dark rules reuse the same selector, so matching the
   // whole file with one regex would let a dark value overwrite its light twin.

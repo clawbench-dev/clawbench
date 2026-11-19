@@ -153,7 +153,7 @@
           @remove="$emit('remove-quote', quote.id)"
         />
         <!-- Attached file reference cards (shared component, includes pending uploads with local Blob preview) -->
-        <AttachmentTags :files="attachedFiles" :pending-files="visiblePendingFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
+        <AttachmentTags :files="attachedFiles" :pending-files="visiblePendingFiles" preview-on-hover @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
       </div>
       <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">
@@ -2230,11 +2230,12 @@ function handleWindowPaste(e) {
 }
 
 function clearInput() {
+  // A message just left the composer. End any dictation still writing into this
+  // textarea first: the next partial would re-anchor onto the empty box and
+  // splice the sent text back in, so the message the user just sent reappears
+  // as a draft.
+  voiceInput.consumeTarget(textareaRef.value)
   inputText.value = ''
-  // An in-flight dictation writes into this textarea by caret index. Clearing
-  // the value is enough: the next partial notices the field no longer holds
-  // what it wrote and re-anchors to the (now empty) box, so the transcript
-  // lands alone instead of resurrecting the sent message.
   // Also clear the draft cache for current session so it doesn't linger
   if (props.currentSessionId) {
     deleteChatDraft(props.currentSessionId)

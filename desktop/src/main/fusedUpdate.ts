@@ -14,14 +14,8 @@ export interface FusedUpdateResult {
 /**
  * Install the all-in-one ("fused") package for `version`.
  *
- * A fused install carries its own server next to the executable, so it cannot
- * be upgraded by the two paths every other install uses:
- *
- *   - the THIN package would replace the client and leave the next launch
- *     without `server/`, i.e. without the server the app is built around;
- *   - the payload archive is `resources/` only, so it would replace the app
- *     and leave the bundled server at the old version.
- *
+ * A fused install carries its own server next to the executable, so the THIN
+ * package would replace the client and leave the next launch without `server/`.
  * The all-in-one package is the only unit that updates both halves together,
  * which is why the server hands out its URLs (fused_downloads in
  * /api/upgrade/check) instead of the client reconstructing asset names.
@@ -38,6 +32,7 @@ export interface FusedUpdateResult {
 export async function installFusedUpdate(
   version: string,
   downloads: Record<string, string[]>,
+  checksums: Record<string, string>,
   parent: BrowserWindow | null,
 ): Promise<FusedUpdateResult> {
   const labels = versionGateLabels(resolveNativeLanguage())
@@ -63,7 +58,7 @@ export async function installFusedUpdate(
   }
 
   try {
-    await downloadAndInstall(urls, version, '')
+    await downloadAndInstall(urls, version, checksums)
   } catch (err) {
     recordError('FusedUpdate', err)
     await dialog.showMessageBox(parentArg as BrowserWindow, {

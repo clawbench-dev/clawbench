@@ -924,6 +924,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 func normalizeForgeCredentialKeys(cfg *Config) {
 	cfg.Forge.Credentials = normalizeForgeHostKeys(cfg.Forge.Credentials, "credential")
 	cfg.Forge.Schemes = normalizeForgeHostKeys(cfg.Forge.Schemes, "scheme")
+	cfg.Forge.Platforms = normalizeForgeHostKeys(cfg.Forge.Platforms, "platform")
 }
 
 // normalizeForgeHostKeys rebuilds a host-keyed map with canonical keys,

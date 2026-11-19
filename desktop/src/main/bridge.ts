@@ -230,8 +230,10 @@ export function registerBridge(): void {
   // package URLs (they are built server-side, next to the release-asset names),
   // and this side downloads and installs the whole package. Invoke rather than
   // send so the caller can keep a spinner up for the whole download.
-  ipcMain.handle('native:install-fused-update', (_e, version: string, downloads: Record<string, string[]>) =>
-    installFusedUpdate(version, downloads, getMainWindow()),
+  ipcMain.handle(
+    'native:install-fused-update',
+    (_e, version: string, downloads: Record<string, string[]>, checksums: Record<string, string>) =>
+      installFusedUpdate(version, downloads, checksums, getMainWindow()),
   )
 
   ipcMain.handle('native:get-forwarded-ports', () => JSON.stringify(getForwardedPorts()))

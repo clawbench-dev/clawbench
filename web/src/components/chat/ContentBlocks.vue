@@ -202,15 +202,21 @@
                  side instead of in one v-if/v-else chain.
                  A failure or an interruption carries its own count instead of a
                  sentence ("2 次失败"): the glyph already says what happened, so
-                 the number is all that is missing. -->
+                 the number is all that is missing.
+                 The "×N" suffix only appears for N ≥ 2. With exactly one the
+                 glyph IS the whole message, and "✕×1" read as two marks for one
+                 fact — the small × after the glyph looked like a second,
+                 differently-shaped cross. -->
             <span
               v-if="group.failedCount > 0"
               class="tool-group-verdict tool-group-failed"
               :title="t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount })"
             >
               <XCircle :size="14" color="#ef4444" class="tool-error-icon" />
-              <span class="verdict-x">×</span>
-              <span class="verdict-n">{{ group.failedCount }}</span>
+              <template v-if="group.failedCount > 1">
+                <span class="verdict-x">×</span>
+                <span class="verdict-n">{{ group.failedCount }}</span>
+              </template>
             </span>
             <span
               v-else-if="(group.interruptedCount || 0) > 0"
@@ -218,8 +224,10 @@
               :title="t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount })"
             >
               <CircleSlash :size="14" color="#f59e0b" class="tool-warn" />
-              <span class="verdict-x">×</span>
-              <span class="verdict-n">{{ group.interruptedCount }}</span>
+              <template v-if="(group.interruptedCount || 0) > 1">
+                <span class="verdict-x">×</span>
+                <span class="verdict-n">{{ group.interruptedCount }}</span>
+              </template>
             </span>
             <!-- Running: the ring sits in the same right-hand slot as every
                  other verdict, so the row's left and right edges stay put as it
@@ -3462,6 +3470,20 @@ onUnmounted(() => {
 /* Tool calls display */
 .chat-tool-call {
   --tool-accent: var(--text-muted);
+  /* Ink for the tool NAME. The raw accent is a categorical hue, not body ink:
+     on the light themes bash measured ≈2.5:1 and task/interrupt ≈2.1:1 against
+     the row's own tint, and the saturated child read as a stronger layer than
+     the neutral parent it sits in. A flat --text-secondary fixed the contrast
+     but threw the category colour away, so the ink is the category hue mixed
+     toward black — same hue, darkened just enough to clear WCAG AA (4.5:1) on
+     the row's 6% tint and its 12% hover tint. Each category keeps its own
+     ratio (a yellow needs more than a purple); the values are the measured
+     minimum over all 37 themes, see
+     __tests__/toolNameContrast.css.test.ts. Dark themes mix toward white
+     instead, in the non-scoped block below. */
+  --tool-ink-anchor: #000;
+  --tool-ink-keep: 51%;
+  --tool-ink: color-mix(in srgb, var(--tool-accent) var(--tool-ink-keep), var(--tool-ink-anchor));
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
@@ -3478,19 +3500,21 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.chat-tool-call[data-category="file"]     { --tool-accent: var(--accent-color); }
-.chat-tool-call[data-category="bash"]     { --tool-accent: #10b981; }
-.chat-tool-call[data-category="search"]   { --tool-accent: #8b5cf6; }
-.chat-tool-call[data-category="task"]     { --tool-accent: #f59e0b; }
-.chat-tool-call[data-category="plan"]     { --tool-accent: var(--accent-color); }
-.chat-tool-call[data-category="agent"]    { --tool-accent: #ec4899; }
-.chat-tool-call[data-category="skill"]    { --tool-accent: #06b6d4; }
-.chat-tool-call[data-category="ask"]      { --tool-accent: #f97316; }
-.chat-tool-call[data-category="permission"] { --tool-accent: #eab308; }
+.chat-tool-call[data-category="file"]     { --tool-accent: var(--accent-color); --tool-ink-keep: 57%; }
+.chat-tool-call[data-category="bash"]     { --tool-accent: #10b981; --tool-ink-keep: 57%; }
+.chat-tool-call[data-category="search"]   { --tool-accent: #8b5cf6; --tool-ink-keep: 74%; }
+.chat-tool-call[data-category="task"]     { --tool-accent: #f59e0b; --tool-ink-keep: 53%; }
+.chat-tool-call[data-category="plan"]     { --tool-accent: var(--accent-color); --tool-ink-keep: 57%; }
+.chat-tool-call[data-category="agent"]    { --tool-accent: #ec4899; --tool-ink-keep: 67%; }
+.chat-tool-call[data-category="skill"]    { --tool-accent: #06b6d4; --tool-ink-keep: 56%; }
+.chat-tool-call[data-category="ask"]      { --tool-accent: #f97316; --tool-ink-keep: 60%; }
+.chat-tool-call[data-category="permission"] { --tool-accent: #eab308; --tool-ink-keep: 51%; }
 /* Not a tool category: a folded run wears it while its thinking chip streams,
    so the row takes the deep-thinking chip's own purple. */
-.chat-tool-call[data-category="thinking"] { --tool-accent: #8b5cf6; }
-.chat-tool-call[data-category="fallback"] { --tool-accent: var(--text-muted); }
+.chat-tool-call[data-category="thinking"] { --tool-accent: #8b5cf6; --tool-ink-keep: 74%; }
+/* No real category: --text-muted is already a quiet grey and mixing it darker
+   would only produce a muddy one. Plain secondary text is the honest choice. */
+.chat-tool-call[data-category="fallback"] { --tool-accent: var(--text-muted); --tool-ink: var(--text-secondary); }
 
 @media (hover: hover) {
   .chat-tool-call:hover {
@@ -3505,7 +3529,10 @@ onUnmounted(() => {
 
 .chat-tool-call .tool-name {
   font-weight: var(--font-weight-semibold);
-  color: var(--tool-accent);
+  /* Category hue, darkened to a readable ink — see --tool-ink above. The icon
+     keeps the raw accent and the row keeps its 6% tint / 15% outline, so the
+     category reads in colour and in shape. */
+  color: var(--tool-ink);
   font-size: var(--font-size-xs);
 }
 
@@ -3567,8 +3594,10 @@ onUnmounted(() => {
   transition: color var(--duration-slow) ease;
 }
 
+/* Same ink as the standalone pill (it carries the same --tool-accent), so a
+   running strip and the pill it stands in for read identically. */
 .chat-tool-group-strip[data-category] .tool-name {
-  color: var(--tool-accent);
+  color: var(--tool-ink);
 }
 
 /* The ring is painted by the global .li-spinner and tinted by --li-color, which
@@ -3994,7 +4023,29 @@ onUnmounted(() => {
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="task"]   { --tool-accent: #fbbf24; }
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="agent"]  { --tool-accent: #f472b6; }
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="skill"]  { --tool-accent: #22d3ee; }
+/* Dark themes: the accent is already light, so the ink mixes toward WHITE.
+   87% is the measured floor over every dark theme and every category; file /
+   plan ride the user's accent, which can be much dimmer (solarized-dark,
+   monokai), so they keep more white. */
+:root[data-theme-base="dark"] .content-blocks .chat-tool-call {
+  --tool-ink-anchor: #fff;
+  --tool-ink-keep: 87%;
+}
+:root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="file"],
+:root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="plan"] {
+  --tool-ink-keep: 64%;
+}
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="thinking"] { --tool-accent: #a78bfa; }
+
+/* Light themes only: the summary beside the title was painted with
+   --text-hint, which measures 1.7–2.6:1 on the pill's own 6% tint — present but
+   barely legible. Secondary text dimmed 15% toward the surface keeps the
+   "quieter than the title" step while landing around 4:1 on most light themes
+   (the grey-tinted ones stay a little softer, like the rest of their palette).
+   Dark themes keep the hint grey: on their surfaces it already reads fine. */
+:root[data-theme-base="light"] .content-blocks .chat-tool-call .tool-summary {
+  color: color-mix(in srgb, var(--text-secondary) 85%, var(--bg-secondary));
+}
 
 /* Tool output section — the header (label + ok/error chip) and its styles live
    in ToolDetailDrawer: the inline card renders tool INPUT only (clicking it

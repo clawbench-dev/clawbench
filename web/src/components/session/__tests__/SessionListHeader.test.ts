@@ -202,3 +202,18 @@ describe('SessionListHeader — slot buttons', () => {
     expect(wrapper.findAll('.header-action-btn .action-label').length).toBe(4)
   })
 })
+
+describe('SessionListHeader — action row cannot ratchet the sidebar width', () => {
+  it('caps the action row at the header, so a narrowed sidebar folds the labels', () => {
+    // jsdom does not lay out or load SFC <style>, so the two facts that make the
+    // fold reversible are asserted against the source:
+    //   1. the row's `min-width: min-content` floor must not outgrow the header
+    //      (`max-width: 100%`), or the bar reports the labelled width for ever;
+    //   2. ActionBar clamps the room to its parent (see ActionBar.test.ts).
+    const src = readWebFile('src/components/session/SessionListHeader.vue')
+    const rule = src.match(/\.session-header-actions\s*\{([^}]*)\}/)
+    expect(rule, '.session-header-actions rule must exist').not.toBeNull()
+    expect(rule![1]).toMatch(/min-width:\s*min-content/)
+    expect(rule![1]).toMatch(/max-width:\s*100%/)
+  })
+})

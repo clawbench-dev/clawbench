@@ -136,6 +136,81 @@ describe('splash timers follow Android semantics', () => {
   })
 })
 
+describe('the main window waits for the embedded server before navigating', () => {
+  it('creates the window before awaiting the server, so the ring is visible', () => {
+    // The old order awaited the whole server start first: on a slow first
+    // launch there was no window at all, and a second click created one early
+    // through `second-instance` — which then loaded the previous run's address.
+    const src = readRepoFile('desktop/src/main/index.ts')
+    const startAt = src.indexOf('const serverStart = startEmbeddedServerIfPresent()')
+    const createAt = src.indexOf('createMainWindow()', startAt)
+    const awaitAt = src.indexOf('await serverStart', startAt)
+    expect(startAt, 'server start call not found').toBeGreaterThan(-1)
+    expect(createAt, 'createMainWindow must follow the start call').toBeGreaterThan(startAt)
+    expect(awaitAt, 'the start must still be awaited').toBeGreaterThan(createAt)
+    expect(src.slice(awaitAt), 'the gate must be settled after the await').toContain('settleStartupGate()')
+  })
+
+  it('settles the gate when there is no built-in server to wait for', () => {
+    // A thin client has no server to wait for, and a fused build pointed at
+    // another machine will open that machine — gating either would delay the
+    // window for a local server it is not going to open.
+    const src = readRepoFile('desktop/src/main/index.ts')
+    const guard = src.match(/if \(!hasEmbeddedServerBinary\(\) \|\| \(savedTarget && !isEmbeddedServerUrl\(savedTarget\)\)\) \{\s*settleStartupGate\(\)/)
+    expect(guard, 'the no-wait guard is missing').not.toBeNull()
+    expect(src.indexOf(guard![0])).toBeLessThan(src.indexOf('const serverStart ='))
+  })
+
+  it('shows the loading ring over the placeholder and navigates only when settled', () => {
+    const src = readRepoFile('desktop/src/main/window.ts')
+    const block = src.match(/const serverUrl = getStore\(\)\.get\('serverUrl'\)[\s\S]*?\n  \}(?=\n\n)/)
+    expect(block, 'cold-start branch not found').not.toBeNull()
+    const body = block![0]
+    const gatedAt = body.indexOf('if (!isStartupSettled())')
+    expect(gatedAt, 'the gated branch must come first').toBeGreaterThan(-1)
+    expect(body.slice(gatedAt), 'must raise the ring').toContain('splash?.showLoading()')
+    expect(body.slice(gatedAt), 'must wait for startup').toContain('whenStartupSettled()')
+    expect(body.slice(gatedAt), 'must navigate through the settle path').toContain('enterConfiguredServer()')
+    // The final address is read in enterConfiguredServer(), not here.
+    const enter = src.match(/function enterConfiguredServer\(\): void \{[\s\S]*?\n\}/)
+    expect(enter, 'enterConfiguredServer not found').not.toBeNull()
+    expect(enter![0]).toContain("getStore().get('serverUrl')")
+    expect(enter![0]).toContain('mainWindow.loadURL(url)')
+    // A cancel (or the connection deadline) hides the ring; a late settle must
+    // not then navigate over the login page the user is looking at.
+    expect(enter![0], 'a cancelled startup must not navigate').toContain('splash?.isVisible()')
+  })
+
+  it('ignores the placeholder page load while startup is held', () => {
+    // The placeholder is the local login page; its did-finish-load would
+    // advance the stage and arm the 15s fail-safe against a server that has
+    // not started yet.
+    const src = readRepoFile('desktop/src/main/splash.ts')
+    expect(src).toContain('isHeld?: () => boolean')
+    const handler = src.match(/win\.webContents\.on\('did-finish-load'[\s\S]*?\n  \}\)/)
+    expect(handler, 'did-finish-load handler not found').not.toBeNull()
+    expect(handler![0], 'held loads must be ignored').toContain('if (held()) return')
+  })
+})
+
+describe('the built-in server is only "ready" when it is OUR child', () => {
+  it('compares the health pid before declaring the server up', () => {
+    const src = readRepoFile('desktop/src/main/localServer.ts')
+    const fn = src.match(/async function waitForHealth\(port: number\): Promise<void> \{[\s\S]*?\n\}/)
+    expect(fn, 'waitForHealth not found').not.toBeNull()
+    expect(fn![0]).toContain('isHealthFromChild(lastBody, child?.pid)')
+    // A plain isClawBenchHealth() would accept an older instance that is about
+    // to exit; that is the bug the pid comparison exists for.
+    expect(fn![0], 'the ready check must not be identity-only').not.toMatch(/if \(isClawBenchHealth\(lastBody\)\) return/)
+  })
+
+  it('names the other instance instead of reporting a generic timeout', () => {
+    const src = readRepoFile('desktop/src/main/localServer.ts')
+    const fn = src.match(/async function waitForHealth\(port: number\): Promise<void> \{[\s\S]*?\n\}/)
+    expect(fn![0]).toContain('is answering as ClawBench from another process')
+  })
+})
+
 describe('login page supports splash mode', () => {
   it('detects the ?splash=1 query flag', () => {
     const src = readRepoFile(LOGIN)
@@ -272,8 +347,11 @@ describe('splash controller supports the version gate', () => {
 
   it('never lets the loading splash clobber the gate', () => {
     const src = readRepoFile('desktop/src/main/splash.ts')
-    const show = src.match(/show\(url: string\): boolean \{[\s\S]*?\n    \},/)
-    expect(show, 'show() not found').not.toBeNull()
+    // show() and showLoading() both funnel into showInternal(), so the gate
+    // guard lives there; checking only show() would let the embedded-startup
+    // path paint over a version gate.
+    const show = src.match(/function showInternal\(armTimeout: boolean\): boolean \{[\s\S]*?\n  \}/)
+    expect(show, 'showInternal() not found').not.toBeNull()
     expect(show![0], 'show must refuse to cover the gate').toMatch(/if \(mode === 'gate'\) return false/)
   })
 

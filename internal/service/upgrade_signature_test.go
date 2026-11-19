@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"clawbench/internal/platform"
+	"clawbench/internal/platform/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,7 +91,7 @@ func signedRegistryResponse(t *testing.T, keys *testSigningKeys, pkg, version, i
 
 	resp := npmRegistryResponse{}
 	resp.Version = version
-	resp.Dist.Tarball = npmjsRegistryBase + "/" + pkg + "/-/" + version + ".tgz"
+	resp.Dist.Tarball = source.NpmJsBase + "/" + pkg + "/-/" + version + ".tgz"
 	resp.Dist.Integrity = integrity
 	resp.Dist.Signatures = []npmSignature{keys.sign(t, pkg, version, integrity)}
 	return resp
@@ -113,10 +114,10 @@ func TestIsOfficialRegistry(t *testing.T) {
 		base string
 		want bool
 	}{
-		{npmjsRegistryBase, true},
-		{npmMirrorRegistryBase, true},
-		{npmjsRegistryBase + "/", true}, // trailing slash tolerated
-		{"  " + npmjsRegistryBase + "  ", true},
+		{source.NpmJsBase, true},
+		{source.NpmMirrorBase, true},
+		{source.NpmJsBase + "/", true}, // trailing slash tolerated
+		{"  " + source.NpmJsBase + "  ", true},
 		{"https://registry.npmjs.org.evil.example", false},
 		{"https://my-nexus.internal/npm", false},
 		{"http://localhost:4873", false},
@@ -149,7 +150,7 @@ func TestVerifyRegistrySignature_ValidSignature(t *testing.T) {
 
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
-		[]npmSignature{sig}, npmjsRegistryBase)
+		[]npmSignature{sig}, source.NpmJsBase)
 	assert.Empty(t, warning, "a verified signature must produce no warning")
 }
 
@@ -164,7 +165,7 @@ func TestVerifyRegistrySignature_WrongKeyWarns(t *testing.T) {
 	// The attacker signs correctly but with a key npm does not publish.
 	forged := attacker.sign(t, "pkg", "1.2.3", "sha512-abc")
 	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
-		[]npmSignature{forged}, npmjsRegistryBase)
+		[]npmSignature{forged}, source.NpmJsBase)
 	assert.Contains(t, warning, "not among npm's published keys")
 }
 
@@ -181,7 +182,7 @@ func TestVerifyRegistrySignature_TamperedIntegrityWarns(t *testing.T) {
 	honestSig := keys.sign(t, "pkg", "1.2.3", "sha512-honest")
 	// ...but the response now advertises a different one.
 	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-tampered",
-		[]npmSignature{honestSig}, npmjsRegistryBase)
+		[]npmSignature{honestSig}, source.NpmJsBase)
 	require.NotEmpty(t, warning, "an unverifiable signature must always warn")
 	assert.Contains(t, warning, "did not verify")
 	assert.Contains(t, warning, "repackages")
@@ -194,7 +195,7 @@ func TestVerifyRegistrySignature_TamperedVersionWarns(t *testing.T) {
 
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 	warning := sigWarning(context.Background(), "pkg", "9.9.9", "sha512-abc",
-		[]npmSignature{sig}, npmjsRegistryBase)
+		[]npmSignature{sig}, source.NpmJsBase)
 	assert.NotEmpty(t, warning)
 }
 
@@ -205,7 +206,7 @@ func TestVerifyRegistrySignature_TamperedPackageNameWarns(t *testing.T) {
 
 	sig := keys.sign(t, "real-pkg", "1.2.3", "sha512-abc")
 	warning := sigWarning(context.Background(), "evil-pkg", "1.2.3", "sha512-abc",
-		[]npmSignature{sig}, npmjsRegistryBase)
+		[]npmSignature{sig}, source.NpmJsBase)
 	assert.NotEmpty(t, warning)
 }
 
@@ -215,7 +216,7 @@ func TestVerifyRegistrySignature_MalformedSignatureWarns(t *testing.T) {
 	defer restore()
 
 	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
-		[]npmSignature{{KeyID: keys.keyID, Sig: "!!!not-base64!!!"}}, npmjsRegistryBase)
+		[]npmSignature{{KeyID: keys.keyID, Sig: "!!!not-base64!!!"}}, source.NpmJsBase)
 	assert.NotEmpty(t, warning)
 }
 
@@ -225,7 +226,7 @@ func TestVerifyRegistrySignature_MalformedSignatureWarns(t *testing.T) {
 // signature is anomalous. It still does not abort — the upgrade proceeds with
 // the integrity check — but the warning says so plainly.
 func TestVerifyRegistrySignature_OfficialRegistryWithoutSignatureWarns(t *testing.T) {
-	for _, base := range []string{npmjsRegistryBase, npmMirrorRegistryBase} {
+	for _, base := range []string{source.NpmJsBase, source.NpmMirrorBase} {
 		t.Run(base, func(t *testing.T) {
 			warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc", nil, base)
 			assert.Contains(t, warning, "no signature")
@@ -257,7 +258,7 @@ func TestVerifyRegistrySignature_CustomMirrorWithBadSignatureWarns(t *testing.T)
 }
 
 func TestVerifyRegistrySignature_OfficialRegistryNoIntegrityWarns(t *testing.T) {
-	warning := sigWarning(context.Background(), "pkg", "1.2.3", "", nil, npmjsRegistryBase)
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "", nil, source.NpmJsBase)
 	assert.Contains(t, warning, "neither a signature nor an integrity hash")
 }
 
@@ -268,7 +269,7 @@ func TestVerifyRegistrySignature_SignatureWithoutIntegrityWarns(t *testing.T) {
 
 	// Without integrity the signed payload cannot be reconstructed.
 	warning := sigWarning(context.Background(), "pkg", "1.2.3", "",
-		[]npmSignature{keys.sign(t, "pkg", "1.2.3", "")}, npmjsRegistryBase)
+		[]npmSignature{keys.sign(t, "pkg", "1.2.3", "")}, source.NpmJsBase)
 	assert.Contains(t, warning, "no integrity hash")
 }
 
@@ -284,7 +285,7 @@ func TestVerifyRegistrySignature_KeysEndpointUnreachableWarns(t *testing.T) {
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 
 	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
-		[]npmSignature{sig}, npmjsRegistryBase)
+		[]npmSignature{sig}, source.NpmJsBase)
 	assert.Contains(t, warning, "could not be verified")
 	// The wording must state the consequence (unauthenticated) rather than
 	// promising an integrity check that may not happen.
@@ -307,7 +308,7 @@ func TestVerifyRegistrySignature_FingerprintStableAcrossRegistries(t *testing.T)
 
 	// The official registry and a private mirror both report "no signature",
 	// but render different messages.
-	official := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil, npmjsRegistryBase)
+	official := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil, source.NpmJsBase)
 	mirror := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil, "https://nexus.corp/npm")
 
 	require.NotEmpty(t, official)
@@ -323,7 +324,7 @@ func TestVerifyRegistrySignature_FingerprintStableAcrossRegistries(t *testing.T)
 	// The keys-unreachable path embeds no base at all, and must be its own code.
 	upgradeHTTPClient = &http.Client{Transport: errorTransport{err: errors.New("connection refused")}}
 	unreachable := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
-		[]npmSignature{sig}, npmjsRegistryBase)
+		[]npmSignature{sig}, source.NpmJsBase)
 	assert.Equal(t, VerifyIssueSignatureKeysUnreachable, verificationFingerprint(unreachable))
 	assert.NotEqual(t, verificationFingerprint(official), verificationFingerprint(unreachable),
 		"distinct problems must not collide")
@@ -357,7 +358,7 @@ func TestVerifyRegistrySignature_KeysWarningIsStableAcrossFailureModes(t *testin
 			upgradeHTTPClient = &http.Client{Transport: errorTransport{err: mode.err}}
 
 			warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
-				[]npmSignature{sig}, npmjsRegistryBase)
+				[]npmSignature{sig}, source.NpmJsBase)
 			require.NotEmpty(t, warning)
 			// The transport detail must not leak into the compared text.
 			assert.NotContains(t, warning, "connection refused")
@@ -382,7 +383,7 @@ func TestVerifyRegistrySignature_EmptyKeyListWarns(t *testing.T) {
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 
 	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
-		[]npmSignature{sig}, npmjsRegistryBase)
+		[]npmSignature{sig}, source.NpmJsBase)
 	assert.Contains(t, warning, "could not be verified")
 }
 
@@ -394,7 +395,7 @@ func TestVerifyRegistrySignature_KeysEndpointInvalidJSONWarns(t *testing.T) {
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 
 	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
-		[]npmSignature{sig}, npmjsRegistryBase)
+		[]npmSignature{sig}, source.NpmJsBase)
 	assert.Contains(t, warning, "could not be verified")
 }
 
@@ -408,7 +409,7 @@ func TestVerifyRegistrySignature_UnknownKeyIDWarns(t *testing.T) {
 
 	forged := attacker.sign(t, "pkg", "1.2.3", "sha512-abc")
 	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
-		[]npmSignature{forged}, npmjsRegistryBase)
+		[]npmSignature{forged}, source.NpmJsBase)
 	assert.Contains(t, warning, "not among npm's published keys")
 }
 
@@ -426,7 +427,7 @@ func TestVerifyRegistrySignature_AcceptsAnyValidSignature(t *testing.T) {
 		stale.sign(t, "pkg", "1.2.3", "sha512-abc"),   // key not published
 		trusted.sign(t, "pkg", "1.2.3", "sha512-abc"), // valid
 	}
-	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc", sigs, npmjsRegistryBase)
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc", sigs, source.NpmJsBase)
 	assert.Empty(t, warning, "one valid signature is enough")
 }
 
@@ -439,7 +440,7 @@ func TestVerifyRegistrySignature_AllSignaturesInvalidWarns(t *testing.T) {
 		trusted.sign(t, "pkg", "1.2.3", "sha512-one"),
 		trusted.sign(t, "pkg", "1.2.3", "sha512-two"),
 	}
-	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-actual", sigs, npmjsRegistryBase)
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-actual", sigs, source.NpmJsBase)
 	assert.Contains(t, warning, "did not verify")
 }
 
@@ -539,7 +540,7 @@ func TestFetchUpgradeInfo_VerifiesSignature(t *testing.T) {
 		keysJSON:    keys.keysJSON(t),
 	}}
 
-	info, err := fetchUpgradeInfoFromBase(context.Background(), npmjsRegistryBase, pkg, "0.1.0")
+	info, err := fetchUpgradeInfoFromBase(context.Background(), source.NpmJsBase, pkg, "0.1.0")
 	require.NoError(t, err)
 	assert.Equal(t, "99.0.0", info.LatestVersion)
 }
@@ -558,7 +559,7 @@ func TestFetchUpgradeInfo_TamperedMetadataWarns(t *testing.T) {
 	// Signature covers a different integrity than the response advertises.
 	tampered := npmRegistryResponse{}
 	tampered.Version = "99.0.0"
-	tampered.Dist.Tarball = npmjsRegistryBase + "/x/-/x-99.0.0.tgz"
+	tampered.Dist.Tarball = source.NpmJsBase + "/x/-/x-99.0.0.tgz"
 	tampered.Dist.Integrity = wellFormedIntegrity
 	tampered.Dist.Signatures = []npmSignature{keys.sign(t, pkg, "99.0.0", "sha512-something-else")}
 
@@ -573,7 +574,7 @@ func TestFetchUpgradeInfo_TamperedMetadataWarns(t *testing.T) {
 		keysJSON:    keys.keysJSON(t),
 	}}
 
-	info, err := fetchUpgradeInfoFromBase(context.Background(), npmjsRegistryBase, pkg, "0.1.0")
+	info, err := fetchUpgradeInfoFromBase(context.Background(), source.NpmJsBase, pkg, "0.1.0")
 	require.NoError(t, err, "signature failures must not abort the upgrade")
 	require.NotEmpty(t, info.VerificationWarning, "the tampering must be surfaced")
 	assert.Contains(t, info.VerificationWarning, "did not verify")
@@ -600,7 +601,7 @@ func TestFetchUpgradeInfo_VerifiedReleaseHasNoWarning(t *testing.T) {
 		keysJSON:    keys.keysJSON(t),
 	}}
 
-	info, err := fetchUpgradeInfoFromBase(context.Background(), npmjsRegistryBase, pkg, "0.1.0")
+	info, err := fetchUpgradeInfoFromBase(context.Background(), source.NpmJsBase, pkg, "0.1.0")
 	require.NoError(t, err)
 	assert.Empty(t, info.VerificationWarning)
 }
@@ -659,7 +660,7 @@ func TestFetchUpgradeInfo_ReportsBothReasons(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
-		resp.Dist.Tarball = npmjsRegistryBase + "/x/-/x-99.0.0.tgz"
+		resp.Dist.Tarball = source.NpmJsBase + "/x/-/x-99.0.0.tgz"
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
@@ -667,7 +668,7 @@ func TestFetchUpgradeInfo_ReportsBothReasons(t *testing.T) {
 
 	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
 
-	info, err := fetchUpgradeInfoFromBase(context.Background(), npmjsRegistryBase, pkg, "0.1.0")
+	info, err := fetchUpgradeInfoFromBase(context.Background(), source.NpmJsBase, pkg, "0.1.0")
 	require.NoError(t, err)
 
 	// Both reasons appear: the signature check's complaint and the digest

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"clawbench/internal/forge"
+	"clawbench/internal/forge/gitea"
 	"clawbench/internal/forge/github"
 	"clawbench/internal/forge/gitlab"
 	"clawbench/internal/model"
@@ -56,6 +57,13 @@ func newForgeProvider(pf *service.ProjectForge) (forge.Provider, error) {
 		}, pf.Owner, pf.Repo)
 	case forge.PlatformGitLab:
 		return gitlab.New(gitlab.Config{
+			Token:      token,
+			Host:       pf.Host,
+			Scheme:     scheme,
+			HTTPClient: httpClient,
+		}, pf.Owner, pf.Repo)
+	case forge.PlatformGitea:
+		return gitea.New(gitea.Config{
 			Token:      token,
 			Host:       pf.Host,
 			Scheme:     scheme,

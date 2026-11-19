@@ -20,6 +20,7 @@ import { nextZoomFactor, type ZoomAction } from './zoom'
 import { shouldUseFramelessWindow } from './windowChrome'
 import { cancelPendingQuit, handleCloseRequest, isAppQuitting, noteOsShutdown } from './closeFlow'
 import { isEmbeddedServerActive, isEmbeddedServerUrl } from './localServer'
+import { isStartupSettled, whenStartupSettled } from './startupGate'
 import { embeddedServerLabels } from './labels'
 import { record } from './clientLog'
 import { boundsToPersist, resolveStartupBounds, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, type WindowBounds } from './windowGeometry'
@@ -523,6 +524,40 @@ function registerWindowGeometryPersistence(win: BrowserWindow): void {
   })
 }
 
+/**
+ * Navigate the main window to the server configured after startup settled.
+ *
+ * The window may already exist (created early by a second launch, a
+ * notification click, or the startup path itself so the loading ring is up
+ * immediately). At that point `serverUrl` can still name the PREVIOUS run's
+ * address, so the navigation is deferred until `index.ts` has finished starting
+ * the embedded server. Reading it here, once, is what keeps the page on the
+ * port the new server actually uses — a page pinned to the old address can
+ * never reconnect its WebSocket, which is the failure this fixes.
+ *
+ * No server at all means startup failed (the failure dialog has already
+ * explained it) or this is a first run: the local login page is already behind
+ * the overlay, so drop the overlay and leave the user there.
+ */
+function enterConfiguredServer(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  // The user cancelled (or the connection deadline fired) while the server was
+  // starting: the login page is already on screen and must not be replaced by
+  // a late navigation.
+  if (!splash?.isVisible()) return
+  const url = getStore().get('serverUrl')
+  if (!url) {
+    dismissSplash()
+    return
+  }
+  // Keep the ring across the navigation and start the connection deadline
+  // HERE, not when the window was created: the deadline measures the page
+  // load, and the embedded server's own startup has already been waited out.
+  showSplashFor(url)
+  mainWindow.loadURL(url)
+  checkVersionGateFor(url)
+}
+
 export function createMainWindow(): BrowserWindow {
   // Idempotent: every caller means "make sure there is a window", and two of
   // them can now race — the startup path and a `second-instance` reveal that
@@ -575,10 +610,21 @@ export function createMainWindow(): BrowserWindow {
       // it the user would be returned to the login page with no explanation.
       void serveLoginOrExplain(reason)
     },
+    // While the embedded server is starting, the window shows the local login
+    // page behind the overlay. Its load events must not advance the ring or
+    // arm the boot fail-safe against a page that is only a placeholder.
+    isHeld: () => !isStartupSettled(),
   })
 
   const serverUrl = getStore().get('serverUrl')
-  if (serverUrl) {
+  if (!isStartupSettled()) {
+    // Startup is still bringing the embedded server up. Show the ring NOW and
+    // navigate only once the server is ready: `serverUrl` may still name the
+    // previous run's port, and a page pinned there can never reconnect.
+    splash?.showLoading()
+    mainWindow.loadFile(loginPagePath())
+    void whenStartupSettled().then(() => enterConfiguredServer())
+  } else if (serverUrl) {
     // Cold start with a saved server: same gap as connecting from the login
     // page, so the overlay covers it here too.
     // No certificate reset here: an accepted certificate is remembered per

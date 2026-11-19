@@ -20,6 +20,8 @@ const i18n = createI18n({
         loadFailed: 'Failed to load the server list',
         switchFailed: 'Failed to switch server',
         saveFailed: 'Failed to save the server password',
+        thisDeviceSection: 'Built-in server',
+        savedServers: 'Saved servers',
         thisDevice: 'This device',
         running: 'Running',
         stopped: 'Not running',
@@ -166,6 +168,36 @@ describe('ServerSwitchDialog', () => {
       await flushPromises()
 
       expect(native.connectToServer).toHaveBeenCalledWith(builtInUrl, 'built-in-pass')
+      wrapper.unmount()
+    })
+
+    it('gives it a section of its own, apart from the saved list', async () => {
+      installNative({
+        getEmbeddedServer: () => JSON.stringify({
+          url: builtInUrl,
+          password: 'built-in-pass',
+          running: true,
+        }),
+      })
+      const wrapper = mountDialog()
+      await flushPromises()
+
+      const sections = document.body.querySelectorAll('.server-switch__section')
+      expect(sections).toHaveLength(2)
+
+      const builtInSection = document.body.querySelector('.server-switch__section--embedded')!
+      expect(builtInSection.textContent).toContain('Built-in server')
+      const builtInRows = builtInSection.querySelectorAll('.server-switch__row')
+      expect(builtInRows).toHaveLength(1)
+      expect(builtInRows[0].classList.contains('server-switch__row--embedded')).toBe(true)
+
+      // The saved rows stay in the ordinary list; the built-in one is not there.
+      const savedList = document.body.querySelector('.server-switch__list')!
+      expect(savedList.querySelectorAll('.server-switch__row')).toHaveLength(2)
+      expect(savedList.textContent).not.toContain('This device')
+      expect(document.body.querySelector('.server-switch__section-title')).toBeTruthy()
+      expect(document.body.querySelector('.server-switch__divider')).toBeTruthy()
+
       wrapper.unmount()
     })
 

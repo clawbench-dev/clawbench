@@ -278,10 +278,15 @@ export default {
     fileView: '文件浏览',
     history: '历史',
     forge: '议题与合并请求',
-    // Dock tab label names the integration the project actually uses, so the
-    // overflow menu says which service it opens. Brand names stay untranslated.
-    forgeGithub: 'GitHub 集成',
-    forgeGitlab: 'GitLab 集成',
+    // Dock tab label is the platform-neutral feature name (统一口径：功能叫
+    // 「代码托管集成」，平台名只出现在说明文字里). The three platform keys stay
+    // so the label keeps its single source (`forgeTabTitleKey`); they no longer
+    // name a brand, because the dock can change platform mid-session and the
+    // entry must not be called something else than its settings page.
+    forgeGithub: '代码托管集成',
+    forgeGitlab: '代码托管集成',
+    // Gitea / Forgejo are handled by the same label for the same reason.
+    forgeGitea: '代码托管集成',
     tasks: '任务',
     notifications: '通知中心',
     meeting: '视频会议',
@@ -425,6 +430,7 @@ export default {
     select: '选择',
     pasteTitle: '粘贴文本',
     dropSelectCollection: '先选一个知识库，再拖文件进来',
+    dropToAdd: '松开加入知识库',
     urlTitle: '从链接添加',
     urlPrompt: '粘贴网页地址（http 或 https）：',
     urlConfirm: '抓取并加入',
@@ -580,7 +586,7 @@ export default {
       noProjectBody: '选择一个项目后即可查看它对应的仓库议题和合并请求。',
       chooseProject: '选择项目',
       noBindingHeader: '未绑定仓库',
-      noBindingBody: '未能自动绑定 GitHub / GitLab 仓库。可在此手动指定；绑定后也可从顶栏更换仓库。',
+      noBindingBody: '没能自动认出这个项目的仓库（GitHub、GitLab 或 Gitea）。可在此手动指定；绑定后也可从顶栏更换仓库。',
       bindRepo: '绑定仓库',
     },
     bind: {
@@ -589,7 +595,10 @@ export default {
       manual: '手动填写仓库地址',
       urlPlaceholder: 'https://github.com/owner/repo.git',
       submit: '绑定',
-      nonOfficialHost: '非官方主机：绑定后会向该主机发送访问令牌。确认这是你自己的 GitLab / GitHub 实例。',
+      nonOfficialHost: '非官方主机：绑定后会向该主机发送访问令牌。确认这是你自己的 GitLab / GitHub / Gitea 实例。',
+      platform: '平台（自建实例需要选择）',
+      platformAuto: '自动识别（按地址）',
+      platformGitea: 'Gitea / Forgejo',
       change: '更换仓库',
       openRepo: '打开仓库',
       unbind: '解绑',
@@ -787,7 +796,7 @@ export default {
   },
   serverSwitch: {
     title: '切换服务端',
-    lead: '选择一个已保存的服务器，立即切换。',
+    lead: '选择要连接的服务端，立即切换。',
     empty: '暂无已保存的服务器',
     current: '当前',
     connect: '连接',
@@ -795,6 +804,8 @@ export default {
     loadFailed: '加载服务器列表失败',
     switchFailed: '切换服务端失败',
     saveFailed: '保存服务器密码失败',
+    thisDeviceSection: '本机服务',
+    savedServers: '已保存服务器',
     thisDevice: '本机',
     running: '运行中',
     stopped: '未运行',
@@ -1833,6 +1844,7 @@ export default {
     notAllowed: '只有会话和群聊可以移动工作区，任务会话不行。',
     running: '会话正在生成回复，请等这一轮结束后再移动。',
     membersUnavailable: '这些成员在新工作区不可用：{members}。请先把对应智能体设为「所有工作区可用」，或把它们移出群聊后再试。',
+    agentUnavailable: '该会话使用的智能体「{agent}」在新工作区不可用。请先把它设为「所有工作区可用」，或给会话换一个智能体后再试。',
     moveFailed: '移动失败，请重试。',
     success: '已移动到「{name}」',
   },
@@ -2179,10 +2191,10 @@ export default {
       // Shown in the task form when the project has no repository binding.
       // Saving is allowed, but the task can never fire, so say so plainly.
       eventRepoUnbound: '本项目未绑定仓库',
-      eventRepoUnboundWarn: '本项目尚未绑定仓库，事件任务不会触发。请先在 Forge 面板绑定仓库。',
+      eventRepoUnboundWarn: '本项目尚未绑定仓库，事件任务不会触发。请先在「代码托管集成」里绑定仓库。',
       eventContext: '事件上下文（自动注入，不可编辑）',
       eventContextHint: '触发时这些变量会替换为实际值，固定注入在提示词之前。',
-      eventContextHeader: 'Forge 事件',
+      eventContextHeader: '代码托管事件',
       // 变量标签与取值之间的分隔符，须与后端 EventContextSeparator 一致，
       // 预览才能与 AI 实际收到的提示词逐字相同。
       eventContextSeparator: '：',
@@ -3479,7 +3491,10 @@ export default {
       mail: '邮件',
       share: '分享中心',
 
-      forgeIntegration: 'GitHub/GitLab 集成',
+      // 统一口径：功能名是「代码托管集成」，具体平台（GitHub / GitLab / Gitea）
+      // 不进标题，只在说明文字里出现。设置首页的分类名由 dock 页签名派生
+      // （`dockCategoryTitleKey`），这个键留给没有 dock 插件的兜底路径。
+      forgeIntegration: '代码托管集成',
       skills: '技能',
       mcp: 'MCP 服务',
       providers: '模型提供商',
@@ -3531,14 +3546,14 @@ export default {
       switchConfirmTitle: '关闭这个功能？',
       switchConfirmOk: '关闭',
       consequences: {
-        forge: 'Forge：停止轮询并清空所有项目的仓库绑定，重新开启后需要重新绑定。',
+        forge: '代码托管集成：停止轮询并清空所有项目的仓库绑定，重新开启后需要重新绑定。',
         terminal: '终端：断开所有已打开的终端会话。',
         tasks: '任务：取消正在运行和排队中的任务，恢复后不会补跑。',
         share: '分享：撤销所有已经发出的链接，旧链接会直接 404。',
       },
       presets: {
         developer: { name: '开发', desc: '全部开启，按默认顺序排列。适合开发和调试。' },
-        standard: { name: '标准', desc: '关闭 Forge 和终端，隐藏端口映射；邮件、知识库、任务、分享保持开启。' },
+        standard: { name: '标准', desc: '关闭代码托管集成和终端，隐藏端口映射；邮件、知识库、任务、分享保持开启。' },
         minimal: { name: '极简', desc: '只保留文件管理、文件浏览和设置，其余功能全部关闭。' },
         custom: { name: '自定义', desc: '你手动调整过显示、顺序或开关。' },
       },
@@ -3552,7 +3567,7 @@ export default {
         browse: '浏览和整理项目文件。',
         view: '预览当前打开的文件。',
         history: '查看项目的 Git 提交历史。',
-        forge: '查看 GitHub / GitLab 的议题、合并请求和流水线。',
+        forge: '查看 GitHub、GitLab、Gitea 的议题、合并请求和流水线（代码托管集成）。',
         tasks: '定时任务和事件触发的自动化任务。',
         terminal: '在服务器上打开交互式终端。',
         stats: '查看 token、积分和耗时统计。',
@@ -3568,7 +3583,7 @@ export default {
       // the feature (as opposed to the user switching it off).
       unavailable: {
         generic: '当前环境不支持。',
-        forge: '服务端没有启用 Forge 集成。',
+        forge: '服务端没有启用代码托管集成。',
         mail: '服务端没有启用邮件功能。',
         terminal: '这台机器无法运行终端（需要 Linux / macOS，或服务端未就绪）。',
         proxy: '当前环境无法建立端口映射（SSH 与流隧道都不可用）。',
@@ -3696,7 +3711,7 @@ export default {
       shareShowProjectName: '分享页显示来源项目名',
       shareShowProjectNameDesc: '关闭后，分享页不显示内容来自哪个项目，只显示内容本身。',
       notificationsLogSection: '通知中心',
-      notificationsLogDesc: '通知中心是一份只追加的事件日志：没有已读状态，也没有角标。它记录会话完成、任务事件、Forge 变化、用量提醒和会议事件。',
+      notificationsLogDesc: '通知中心是一份只追加的事件日志：没有已读状态，也没有角标。它记录会话完成、任务事件、代码托管变化、用量提醒和会议事件。',
       notificationsRetention: '服务端最多保留 500 条、30 天，超过上限会自动清理旧记录。',
       notificationsClear: '清空通知',
       notificationsClearing: '正在清空…',
@@ -4165,7 +4180,7 @@ export default {
       featureStatusDisabled: '已停用',
       featureStatusGoManage: '去功能编排',
       featureStatusMail: '邮件功能',
-      featureStatusForge: 'GitHub/GitLab 集成',
+      featureStatusForge: '代码托管集成',
       featureStatusTerminal: '终端',
       featureStatusKb: '知识库',
       kbEnabledDesc: '开关在「功能编排」里。关闭后会停止索引器并关闭知识库，已索引的数据保留。',
@@ -4301,7 +4316,7 @@ export default {
       meetingAgentMinutes: '用内置智能体生成纪要',
       meetingAgentMinutesDesc: '打开后，纪要和校对改由 ClawBench Agent 来做——它能自己翻项目文件核对专有名词，而不是只用拼好的那段文本。转写稿、分块、语言、提示词都不变，只有调模型那一层换了。需要该智能体已绑定模型提供商，否则自动退回摘要模型。',
       meetingAgentMinutesMaxRounds: '智能体往返上限',
-      meetingAgentMinutesMaxRoundsDesc: '每份产物最多调用模型几轮（含工具调用）。0 = 用内置默认值。设太小会让智能体来不及翻文件就交答案。',
+      meetingAgentMinutesMaxRoundsDesc: '每份产物最多调用模型几轮（含工具调用）。0 = 不限制，一直干到交出结果或单次 5 分钟超时。设太小会让智能体来不及翻文件就交答案。',
       meetingMinutesMaxTokensDesc: '单位 tokens。0 = 自动，按摘要模型声明的输出上限来给（推荐）；填数字则手动指定：1500 偏简洁、3000 标准、6000 偏详细，调得过低会导致纪要超出上限而生成失败',
       meetingDefaultsSection: '新会议默认值',
       meetingDefaultNotes: '默认开启听记',
@@ -4563,9 +4578,13 @@ export default {
       tunnelStatusNoPorts: '暂无转发端口，可先测试链路是否可用',
       forgeEnabledSection: '启用',
       forgeSection: '凭据',
-      forgeEnabled: '启用 GitHub/GitLab 集成',
+      forgeEnabled: '启用代码托管集成',
+      // Shown under the page title. The feature name is platform-neutral now
+      // (代码托管集成), so this is the ONLY place that says which services it
+      // means — without it a user looking for GitHub cannot find this page.
+      forgePlatformsDesc: '支持 GitHub、GitLab（自建实例也可以）和 Gitea / Forgejo。',
       forgeEnabledDesc: '关闭后会停止同步，并解除所有项目已关联的仓库。重新启用不会自动恢复这些关联。开关在「功能编排」里。',
-      forgeDisableConfirmTitle: '关闭 GitHub/GitLab 集成',
+      forgeDisableConfirmTitle: '关闭代码托管集成',
       forgeDisableConfirm: '关闭后将停止同步，并解除所有项目已关联的仓库。这些关联不会被保留，重新启用时也不会自动恢复。确定关闭吗？',
       forgeDisableConfirmAction: '关闭集成',
       mcpSection: 'MCP 服务',
@@ -4722,9 +4741,10 @@ export default {
       projectContextRead: '读取项目的规则文件（AGENTS.md）',
       projectContextReadDesc: '开启后，每轮都会把项目里的 AGENTS.md / CLAUDE.md 读进提示词，它会按你项目写的规矩干活。换成别的智能体时，这些文件是对方自己读的。',
       toolPolicyMaxRounds: '每轮最多往返次数',
-      toolPolicyMaxRoundsDesc: '一次提问最多让模型思考并调用工具几轮。改代码这类任务通常需要几十轮；留空使用默认（100 轮）。',
+      toolPolicyMaxRoundsDesc: '一次提问最多让模型思考并调用工具几轮。留空 = 不限制，一直干到任务做完或你点停止。',
       toolPolicyMaxToolCalls: '每轮最多工具调用',
-      toolPolicyMaxToolCallsDesc: '一次提问最多执行多少次工具调用。留空使用默认（300 次）。',
+      toolPolicyMaxToolCallsDesc: '一次提问最多执行多少次工具调用。留空 = 不限制。',
+      toolPolicyUnlimited: '不限',
       mcpAgentAll: '全部启用',
       mcpAgentNone: '全部禁用',
       mcpAgentSelected: '只选这几个',
@@ -4776,8 +4796,10 @@ export default {
       skillsSourceGit: '仓库 {name}',
       skillsSourceOther: '智能体 {agent}',
       forgeCredentials: '访问令牌',
-      forgeCredentialsDesc: '为每个 GitHub / GitLab 主机配置访问令牌。令牌仅写入、不会回显；建议使用只读权限（GitHub 细粒度只读 / GitLab read_api）。自建实例可写完整地址（http:// 或 https://）以指定协议，省略则默认 https。',
+      forgeCredentialsDesc: '为每个 GitHub / GitLab / Gitea 主机配置访问令牌。令牌仅写入、不会回显；建议使用只读权限（GitHub 细粒度只读 / GitLab read_api / Gitea 只读）。自建实例可写完整地址（http:// 或 https://）以指定协议，省略则默认 https；自建 Gitea / Forgejo 请在平台里明确选择，否则会按 GitLab 对待。',
       forgeHostPlaceholder: '主机或地址，如 github.com 或 http://gitlab.internal',
+      forgePlatformAuto: '平台：自动识别',
+      forgePlatformGitea: 'Gitea / Forgejo',
       forgeTokenPlaceholder: '访问令牌',
       forgeTokenSet: '已设置',
       forgeTokenClear: '清除',
@@ -5308,6 +5330,8 @@ export default {
     manualInstallHint: '安装命令：',
     installRunsOnServer: '安装在运行 ClawBench 的机器上；如果服务端在远端服务器或容器里，装的是那台机器，不是当前设备。',
     installNodeAuto: '如果那台机器上没有 Node.js，会先自动装一份（国内优先走 npmmirror 镜像）。',
+    installSourceAuto: '安装时会自动挑选可用的下载源；你自己配过 npm 源就优先用它。',
+    installActualCommand: '实际执行：',
     installNow: '开始安装',
     installing: '正在安装…',
     installSuccess: '安装成功，已自动识别该智能体。',

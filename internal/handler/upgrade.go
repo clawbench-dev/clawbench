@@ -31,6 +31,7 @@ var (
 	// with; see FusedDesktopDownloads for why the thin package and the payload
 	// are not options there.
 	upgradeFusedDownloads = service.FusedDesktopDownloads
+	upgradeFusedChecksums = service.FusedDesktopChecksums
 )
 
 // managedRefusal answers 403 and reports whether the request was refused.
@@ -91,8 +92,11 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 	// package (or this is not a fused install), which the UI reads as "no
 	// in-app upgrade".
 	fusedDownloads := map[string][]string{}
+	var fusedChecksums map[string]string
 	if model.ManagedByEmbedder {
-		fusedDownloads = upgradeFusedDownloads(version.ReleaseTag(latestVer))
+		tag := version.ReleaseTag(latestVer)
+		fusedDownloads = upgradeFusedDownloads(tag)
+		fusedChecksums = upgradeFusedChecksums(tag)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -126,6 +130,7 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		// entry stays: it installs the all-in-one package (see fused_downloads).
 		"managed":         model.ManagedByEmbedder,
 		"fused_downloads": fusedDownloads,
+		"fused_checksums": fusedChecksums,
 	})
 }
 

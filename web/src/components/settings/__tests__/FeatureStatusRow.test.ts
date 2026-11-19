@@ -40,7 +40,7 @@ const i18n = createI18n({
 
 function mountRow(props: Record<string, unknown> = {}) {
   return mount(FeatureStatusRow, {
-    props: { enableKey: 'forge.enabled', label: 'GitHub/GitLab 集成', ...props },
+    props: { enableKey: 'forge.enabled', label: '代码托管集成', ...props },
     global: {
       plugins: [i18n],
       stubs: {

@@ -4,10 +4,13 @@ import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
 
 /**
- * The forge dock tab is labelled after the integration the project actually
- * uses ("GitHub integration" / "GitLab integration") instead of a
- * platform-neutral "issues & PRs" phrase, so the overflow menu says which
- * service it opens.
+ * The forge dock tab is labelled after the feature, not after a service: every
+ * platform key resolves to 代码托管集成 (software forge integration), and the
+ * brand names (GitHub / GitLab / Gitea) live in the description text only.
+ *
+ * The tab still asks for the platform-specific KEY, so the label keeps a single
+ * source (`dockCategoryTitleKey`) and a future per-brand label cannot appear in
+ * one surface without the others.
  *
  * The runtime lives in `plugins/forge/plugin.ts` now. App.vue has no component
  * test (its only tests read it as source text), so the WIRING is pinned here:
@@ -17,7 +20,7 @@ import zh from '@/i18n/locales/zh'
 describe('forge dock runtime', () => {
   const forge = readWebFile('src/plugins/forge/plugin.ts')
 
-  it('names the tab after the bound service', () => {
+  it('names the tab through the shared title key', () => {
     expect(forge).toContain('forgeTabTitleKey(platform.value)')
     expect(forge).toContain('title:')
   })
@@ -143,15 +146,26 @@ describe('App.vue consumes the forge runtime', () => {
 })
 
 describe('forge dock tab locale values', () => {
-  it('names the integration in both locales', () => {
-    expect(zh.nav.forgeGithub).toBe('GitHub 集成')
-    expect(zh.nav.forgeGitlab).toBe('GitLab 集成')
-    expect(en.nav.forgeGithub).toBe('GitHub Integration')
-    expect(en.nav.forgeGitlab).toBe('GitLab Integration')
+  it('uses the single zh feature name for every platform key', () => {
+    // 统一口径：功能叫「代码托管集成」，平台名只在说明文字里出现。
+    expect(zh.nav.forgeGithub).toBe('代码托管集成')
+    expect(zh.nav.forgeGitlab).toBe('代码托管集成')
+    expect(zh.nav.forgeGitea).toBe('代码托管集成')
+    // 设置首页的分类名派生自这个页签标题，所以它也必须一致。
+    expect(zh.settings.categories.forgeIntegration).toBe('代码托管集成')
   })
 
-  it('keeps the two brand labels distinct', () => {
-    expect(zh.nav.forgeGithub).not.toBe(zh.nav.forgeGitlab)
-    expect(en.nav.forgeGithub).not.toBe(en.nav.forgeGitlab)
+  it('still tells the user which services that name covers', () => {
+    // 改名后唯一点名平台的地方：没有它，想找 GitHub 的用户找不到入口。
+    const desc = zh.settings.items.forgePlatformsDesc
+    expect(desc).toContain('GitHub')
+    expect(desc).toContain('GitLab')
+  })
+
+  it('keeps an English title for every platform key', () => {
+    // 英文文案本轮不动（用户只要求统一中文口径），这里只钉住它没有变空。
+    expect(en.nav.forgeGithub).toBeTruthy()
+    expect(en.nav.forgeGitlab).toBeTruthy()
+    expect(en.nav.forgeGitea).toBeTruthy()
   })
 })

@@ -357,6 +357,21 @@
          bare v-if would leave the dialog permanently unrendered. -->
     <ModalDialog :open="bindDialogOpen" :title="t('forge.bind.title')" @close="bindDialogOpen = false">
       <div class="forge-bind-form">
+        <!-- Which service the host runs. It sits above both bind paths because
+             it is a property of the host, not of one row: a self-hosted
+             Gitea/Forgejo (and GitHub Enterprise) address is indistinguishable
+             from a self-hosted GitLab, so leaving this on "auto" would bind it
+             as GitLab whichever way the user got here. -->
+        <div class="forge-bind-section">
+          <div class="forge-bind-label">{{ t('forge.bind.platform') }}</div>
+          <select v-model="manualPlatform" class="forge-select">
+            <option value="">{{ t('forge.bind.platformAuto') }}</option>
+            <option value="github">GitHub</option>
+            <option value="gitlab">GitLab</option>
+            <option value="gitea">{{ t('forge.bind.platformGitea') }}</option>
+          </select>
+        </div>
+
         <div v-if="remotes.length" class="forge-bind-section">
           <div class="forge-bind-label">{{ t('forge.bind.fromRemote') }}</div>
           <div class="forge-bind-remotes">
@@ -428,7 +443,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Github, Gitlab, Rss, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
+  Github, Rss, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
   ChevronRight, ChevronDown, AlertCircle, AlertTriangle, Unlink, CheckCheck,
   ExternalLink,
 } from 'lucide-vue-next'
@@ -444,6 +459,7 @@ import ForgePipelineDetail from '@/components/forge/ForgePipelineDetail.vue'
 import ForgeOverviewList from '@/components/forge/ForgeOverviewList.vue'
 import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
 import { useForgeBinding, forgeDockIconKind, forgeTabTitleKey } from '@/composables/useForgeBinding'
+import { forgeBrandIcon } from '@/components/forge/forgeBrandIcon'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, markForgeRead, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
 import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
@@ -470,12 +486,10 @@ const { t } = useI18n()
 const { isWideScreen } = useWideScreenLayout()
 const items = useForgeItems(() => props.projectPath)
 const pipelines = useForgePipelines(() => props.projectPath)
-// Same platform-aware brand as the dock tab: GitHub by default, GitLab only
-// when the project is actually bound to one.
+// Same platform-aware brand as the dock tab: GitHub by default, GitLab or
+// Gitea only when the project is actually bound to one.
 const { platform: forgePlatform } = useForgeBinding()
-const forgeHeaderIcon = computed(() =>
-  forgeDockIconKind(forgePlatform.value) === 'gitlab' ? Gitlab : Github,
-)
+const forgeHeaderIcon = computed(() => forgeBrandIcon(forgeDockIconKind(forgePlatform.value)))
 // The same count the dock badge shows, so the "mark all read" button reflects
 // the badge rather than a separately-tracked number that could disagree.
 const { forgeUnreadCount } = useForgeUnread()
@@ -540,6 +554,15 @@ const pipelineDetailId = ref(0)
 const bindDialogOpen = ref(false)
 const remotes = ref<ForgeRemote[]>([])
 const manualUrl = ref('')
+/**
+ * The platform the typed URL points at, or '' to let the server infer it.
+ *
+ * Empty is the right default: github.com and gitlab.com are named by their host,
+ * and the inference covers self-hosted GitLab too. It exists for the hosts the
+ * inference cannot know — Gitea/Forgejo (always self-hosted) and GitHub
+ * Enterprise — which would otherwise be bound as GitLab.
+ */
+const manualPlatform = ref('')
 const bindError = ref('')
 
 /**
@@ -853,6 +876,11 @@ function pipelineErrorTitle(code: string): string {
 async function openBindDialog() {
   bindDialogOpen.value = true
   bindError.value = ''
+  // A cancelled dialog must not leak its platform/url into the next binding:
+  // `bindFromRemote` prefers manualPlatform over the remote's own suggestion,
+  // so a stale "gitea" would bind a github.com remote as Gitea.
+  manualPlatform.value = ''
+  manualUrl.value = ''
   try {
     const res = await fetchForgeRemotes()
     remotes.value = res.remotes ?? []
@@ -885,8 +913,12 @@ async function bindFromRemote(r: ForgeRemote) {
   // The remote's own scheme is forwarded so the binding persists how the
   // instance is actually reached. It is absent for an ssh remote, which is not
   // the same as https — the server resolves that from the credential hint.
+  //
+  // The platform picker wins over the remote's suggestion: for a self-hosted
+  // host the suggestion is only an inference ("not github.com, so GitLab"), and
+  // the user is the one who knows it is Gitea.
   await submitBinding({
-    platform: r.platform,
+    platform: manualPlatform.value || r.platform,
     host: r.host,
     scheme: r.scheme,
     owner: r.owner,
@@ -895,7 +927,9 @@ async function bindFromRemote(r: ForgeRemote) {
 }
 
 async function bindFromUrl() {
-  await submitBinding({ url: manualUrl.value })
+  // Omitted when "auto": the server then infers the platform from the host, and
+  // an explicit value would override that with a guess.
+  await submitBinding({ url: manualUrl.value, platform: manualPlatform.value || undefined })
 }
 
 async function submitBinding(input: {
@@ -911,6 +945,7 @@ async function submitBinding(input: {
     await setForgeBinding(input)
     bindDialogOpen.value = false
     manualUrl.value = ''
+    manualPlatform.value = ''
     // The binding just changed server-side, so bypass the cache.
     await refresh(true)
   } catch (err) {
@@ -1333,7 +1368,11 @@ function formatTime(iso: string): string {
   background: var(--border-color);
   margin: calc(-2 * var(--dp)) 0;
 }
-.forge-input {
+/* The URL field and the platform picker share one box so the dialog reads as a
+   single form. The picker keeps the native arrow: it is a choice, not free
+   text. */
+.forge-input,
+.forge-select {
   width: 100%;
   box-sizing: border-box;
   padding: calc(9 * var(--dp)) var(--space-6);
@@ -1346,10 +1385,15 @@ function formatTime(iso: string): string {
 .forge-input::placeholder {
   color: var(--text-muted);
 }
-.forge-input:focus {
+.forge-input:focus,
+.forge-select:focus {
   outline: none;
   border-color: var(--accent-color);
   box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
+}
+.forge-select {
+  font-family: inherit;
+  cursor: pointer;
 }
 .forge-bind-error {
   display: flex;

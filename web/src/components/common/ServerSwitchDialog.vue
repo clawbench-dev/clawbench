@@ -11,37 +11,72 @@
 
       <div v-if="loading" class="server-switch__hint">{{ t('common.loading') }}</div>
       <div v-else-if="rows.length === 0" class="server-switch__hint">{{ t('serverSwitch.empty') }}</div>
-      <div v-else class="server-switch__list">
-        <button
-          v-for="srv in rows"
-          :key="srv.url"
-          type="button"
-          class="server-switch__row"
-          :class="{ 'is-current': srv.url === currentUrl, 'is-pending': srv.url === pendingUrl }"
-          :aria-current="srv.url === currentUrl ? 'true' : undefined"
-          :title="srv.url"
-          :disabled="switching"
-          @click="selectServer(srv)"
-        >
-          <span class="server-switch__icon">
-            <Server :size="16" />
-          </span>
-          <span class="server-switch__body">
-            <span class="server-switch__name">{{ getLabel(srv) }}</span>
-            <span v-if="srv.name" class="server-switch__url">{{ srv.url }}</span>
-          </span>
-          <span v-if="srv.url === currentUrl" class="server-switch__current">
-            {{ t('serverSwitch.current') }}
-          </span>
-          <span
-            v-else-if="srv.embedded"
-            class="server-switch__status"
-            :class="{ 'is-stopped': !srv.running }"
+      <div v-else class="server-switch__sections">
+        <!-- The server this build ships with gets its own section, exactly as on
+             the login page: it is not a saved server (the shell starts and stops
+             it, and it cannot be renamed or deleted), so it must not read as one
+             more row of the same list. -->
+        <section v-if="embeddedRow" class="server-switch__section server-switch__section--embedded">
+          <div class="server-switch__section-title">{{ t('serverSwitch.thisDeviceSection') }}</div>
+          <button
+            type="button"
+            class="server-switch__row server-switch__row--embedded"
+            :class="{ 'is-current': embeddedRow.url === currentUrl, 'is-pending': embeddedRow.url === pendingUrl }"
+            :aria-current="embeddedRow.url === currentUrl ? 'true' : undefined"
+            :title="embeddedRow.url"
+            :disabled="switching"
+            @click="selectServer(embeddedRow)"
           >
-            {{ srv.running ? t('serverSwitch.running') : t('serverSwitch.stopped') }}
-          </span>
-          <ChevronRight v-else :size="15" class="server-switch__chevron" />
-        </button>
+            <span class="server-switch__icon">
+              <MonitorSmartphone :size="16" />
+            </span>
+            <span class="server-switch__body">
+              <span class="server-switch__name">{{ t('serverSwitch.thisDevice') }}</span>
+              <span class="server-switch__url">{{ embeddedRow.url }}</span>
+            </span>
+            <span v-if="embeddedRow.url === currentUrl" class="server-switch__current">
+              {{ t('serverSwitch.current') }}
+            </span>
+            <span
+              v-else
+              class="server-switch__status"
+              :class="{ 'is-stopped': !embeddedRow.running }"
+            >
+              <span class="server-switch__dot" aria-hidden="true" />
+              {{ embeddedRow.running ? t('serverSwitch.running') : t('serverSwitch.stopped') }}
+            </span>
+          </button>
+        </section>
+
+        <section v-if="savedRows.length" class="server-switch__section">
+          <hr v-if="embeddedRow" class="server-switch__divider" />
+          <div class="server-switch__section-title">{{ t('serverSwitch.savedServers') }}</div>
+          <div class="server-switch__list">
+            <button
+              v-for="srv in savedRows"
+              :key="srv.url"
+              type="button"
+              class="server-switch__row"
+              :class="{ 'is-current': srv.url === currentUrl, 'is-pending': srv.url === pendingUrl }"
+              :aria-current="srv.url === currentUrl ? 'true' : undefined"
+              :title="srv.url"
+              :disabled="switching"
+              @click="selectServer(srv)"
+            >
+              <span class="server-switch__icon">
+                <Server :size="16" />
+              </span>
+              <span class="server-switch__body">
+                <span class="server-switch__name">{{ getLabel(srv) }}</span>
+                <span v-if="srv.name" class="server-switch__url">{{ srv.url }}</span>
+              </span>
+              <span v-if="srv.url === currentUrl" class="server-switch__current">
+                {{ t('serverSwitch.current') }}
+              </span>
+              <ChevronRight v-else :size="15" class="server-switch__chevron" />
+            </button>
+          </div>
+        </section>
       </div>
 
       <form v-if="pendingUrl" class="server-switch__password" @submit.prevent="confirmPassword">
@@ -80,7 +115,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronRight, LogOut, Server } from 'lucide-vue-next'
+import { ChevronRight, LogOut, MonitorSmartphone, Server } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useServerList, type ServerEntry } from '@/composables/useServerList'
 import { getNative } from '@/utils/clawbenchNative'
@@ -102,8 +137,9 @@ const { servers, load, save, getLabel } = useServerList()
  * The server this build ships with (desktop "all-in-one" builds), or null.
  *
  * It is not a saved server: the shell starts and stops it, and it cannot be
- * renamed or deleted. Kept in its own row above the user's list so "go back to
- * this machine" does not require leaving the app for the login page.
+ * renamed or deleted. Kept in a section of its own above the user's list so
+ * "go back to this machine" does not require leaving the app for the login
+ * page, without it reading as one more saved entry.
  */
 interface EmbeddedServer {
   url: string
@@ -115,18 +151,23 @@ type ServerRow = ServerEntry & { embedded?: boolean; running?: boolean }
 
 const embedded = ref<EmbeddedServer | null>(null)
 
+const embeddedRow = computed<ServerRow | null>(() => {
+  if (!embedded.value) return null
+  return {
+    url: embedded.value.url,
+    password: embedded.value.password,
+    name: t('serverSwitch.thisDevice'),
+    embedded: true,
+    running: embedded.value.running,
+  }
+})
+
+const savedRows = computed<ServerRow[]>(() => servers.value)
+
 const rows = computed<ServerRow[]>(() => {
   const list: ServerRow[] = []
-  if (embedded.value) {
-    list.push({
-      url: embedded.value.url,
-      password: embedded.value.password,
-      name: t('serverSwitch.thisDevice'),
-      embedded: true,
-      running: embedded.value.running,
-    })
-  }
-  list.push(...servers.value)
+  if (embeddedRow.value) list.push(embeddedRow.value)
+  list.push(...savedRows.value)
   return list
 })
 
@@ -250,6 +291,34 @@ async function confirmPassword() {
   text-align: center;
 }
 
+.server-switch__sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.server-switch__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.server-switch__section-title {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.02em;
+}
+
+.server-switch__divider {
+  width: 100%;
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--border-color);
+}
+
 .server-switch__list {
   display: flex;
   flex-direction: column;
@@ -275,6 +344,13 @@ async function confirmPassword() {
     border-color var(--duration-base) ease,
     box-shadow var(--duration-base) ease,
     transform var(--duration-base) ease;
+}
+
+/* The built-in server reads as a different kind of thing from the saved rows:
+   it is owned by the app, not entered by the user. */
+.server-switch__row--embedded {
+  border-color: color-mix(in srgb, var(--accent-color) 30%, var(--border-color));
+  background: color-mix(in srgb, var(--accent-color) 6%, var(--bg-tertiary));
 }
 
 .server-switch__row.is-current {
@@ -355,10 +431,20 @@ async function confirmPassword() {
 /* The built-in server's state, where a saved row shows its chevron: it looks
    the same whether it is up or down, so the answer has to be stated. */
 .server-switch__status {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5 * var(--dp));
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
   color: var(--accent-color);
   white-space: nowrap;
+}
+
+.server-switch__dot {
+  width: calc(6 * var(--dp));
+  height: calc(6 * var(--dp));
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .server-switch__status.is-stopped {

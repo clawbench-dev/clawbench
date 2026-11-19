@@ -11,11 +11,7 @@
 #
 # Usage:
 #   reuse-client-artifact.sh apk <source_tag> <dest_apk>
-#   reuse-client-artifact.sh desktop <asset_base> <npm_pkg> <source_tag> \
-#                                    <dest_zip> <payload_dir|-> 
-#
-# `<payload_dir>` is "-" for platforms without a payload (macOS). The payload is
-# fetched from npm, where it is published under the SOURCE release's version.
+#   reuse-client-artifact.sh desktop <asset_base> <source_tag> <dest_zip>
 #
 # Exits non-zero on any failure so the caller can fall back to building.
 set -euo pipefail
@@ -52,8 +48,8 @@ case "$cmd" in
     ;;
 
   desktop)
-    [ $# -eq 5 ] || die "usage: desktop <asset_base> <npm_pkg> <source_tag> <dest_zip> <payload_dir|->"
-    asset_base="$1"; npm_pkg="$2"; source_tag="$3"; dest_zip="$4"; payload_dir="$5"
+    [ $# -eq 3 ] || die "usage: desktop <asset_base> <source_tag> <dest_zip>"
+    asset_base="$1"; source_tag="$2"; dest_zip="$3"
     need gh
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
@@ -69,28 +65,6 @@ case "$cmd" in
     cp "$src" "$dest_zip"
     echo "reused desktop package from $source_tag -> $dest_zip"
 
-    if [ "$payload_dir" != "-" ]; then
-      need npm
-      need tar
-      # The payload is published to npm only (never a release asset), under the
-      # SOURCE release's version. npm versions are semver: no leading "v".
-      version="${source_tag#v}"
-      npm pack "${npm_pkg}@${version}" --pack-destination "$tmp" >/dev/null \
-        || die "no npm payload ${npm_pkg}@${version}"
-
-      tgz=$(find "$tmp" -name '*.tgz' -type f | head -1)
-      [ -n "$tgz" ] || die "npm pack produced no tarball"
-
-      mkdir -p "$tmp/unpack"
-      tar -xzf "$tgz" -C "$tmp/unpack"
-      # npm pack wraps every entry in a single `package/` directory.
-      [ -d "$tmp/unpack/package" ] || die "unexpected npm tarball layout"
-      [ -f "$tmp/unpack/package/payload.json" ] || die "payload tarball has no payload.json"
-
-      mkdir -p "$payload_dir"
-      cp -a "$tmp/unpack/package/." "$payload_dir/"
-      echo "reused desktop payload from ${npm_pkg}@${version} -> $payload_dir"
-    fi
     ;;
 
   *)

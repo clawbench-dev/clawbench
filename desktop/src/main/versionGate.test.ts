@@ -9,10 +9,7 @@ vi.mock('electron', () => ({
 vi.mock('./install', () => ({
   httpGetBuffer: vi.fn(),
   downloadAndInstall: vi.fn(),
-  installPayload: vi.fn(),
-  fetchNpmIntegrity: vi.fn(async () => ''),
   restartInto: vi.fn(),
-  appRoot: () => '/tmp/app',
 }))
 vi.mock('./clientLog', () => ({ recordError: vi.fn() }))
 // `labels.ts` reads the persisted language through the store; the gate tests
@@ -29,13 +26,12 @@ vi.mock('./updater', () => ({
   fetchDesktopLatest: vi.fn(async () => null),
 }))
 
-import { evaluateGate, beginNavigation, checkVersionGate, installServerVersion, formatInstallFailure } from './versionGate'
+import { evaluateGate, beginNavigation, checkVersionGate, installServerVersion } from './versionGate'
 import type { VersionGateInfo } from './versionGate'
 import type { DesktopLatest } from './updater'
 import { fetchDesktopLatest } from './updater'
-import { versionGateLabels } from './labels'
 import { dialog } from 'electron'
-import { downloadAndInstall, installPayload, fetchNpmIntegrity } from './install'
+import { downloadAndInstall } from './install'
 
 const latest = (over: Partial<DesktopLatest> = {}): DesktopLatest => ({
   version: 'v1.1.0',
@@ -45,7 +41,7 @@ const latest = (over: Partial<DesktopLatest> = {}): DesktopLatest => ({
   protocol: 0,
   tag: 'v1.1.0',
   urls: ['https://example/full.zip'],
-  payloadUrls: [],
+  checksums: {},
   ...over,
 })
 
@@ -81,10 +77,10 @@ describe('evaluateGate', () => {
     expect(evaluateGate('1.0.0', latest({ version: 'dev' }), true)).toBeNull()
   })
 
-  it('carries the download URLs through for the install action', () => {
-    const info = evaluateGate('1.0.0', latest({ payloadUrls: ['https://example/payload.tgz'] }), true)
+  it('carries the download URLs and checksums through for the install action', () => {
+    const info = evaluateGate('1.0.0', latest({ checksums: { 'full.zip': 'a'.repeat(64) } }), true)
     expect(info!.urls).toEqual(['https://example/full.zip'])
-    expect(info!.payloadUrls).toEqual(['https://example/payload.tgz'])
+    expect(info!.checksums).toEqual({ 'full.zip': 'a'.repeat(64) })
   })
 
   it('does not gate when the protocols agree, even though the versions differ', () => {
@@ -171,15 +167,11 @@ const gateInfo = (over: Partial<VersionGateInfo> = {}): VersionGateInfo => ({
   installVersion: '1.1.0',
   direction: 'older',
   urls: ['https://example/full.zip'],
-  payloadUrls: [],
+  checksums: {},
   ...over,
 })
 
-describe('installServerVersion failure reporting', () => {
-  // showMessageBox is overloaded (with/without a parent window); the mock is
-  // typed against the 1-arg overload, so read the options object out of the raw
-  // call args. At runtime the parent is passed explicitly (as `undefined` when
-  // there is none), so the options object is the LAST argument.
+describe('installServerVersion', () => {
   const dialogDetail = (): string => {
     const args = vi.mocked(dialog.showMessageBox).mock.calls[0] as unknown as unknown[]
     const opts = args[args.length - 1] as { detail?: string }
@@ -189,101 +181,30 @@ describe('installServerVersion failure reporting', () => {
   beforeEach(() => {
     vi.mocked(dialog.showMessageBox).mockReset()
     vi.mocked(downloadAndInstall).mockReset()
-    vi.mocked(installPayload).mockReset()
   })
   afterEach(() => vi.restoreAllMocks())
 
-  it('reports the payload (npm) error too when the full download also fails', async () => {
-    // The regression: the payload path failed silently (only console.error), so
-    // the dialog showed only the github.com full-package error — making a
-    // missing/failing npm mirror look like the client never tried npm at all.
-    vi.mocked(installPayload).mockRejectedValue(new Error('payload 404: npm mirror unreachable'))
-    vi.mocked(downloadAndInstall).mockRejectedValue(
-      new Error('all download sources failed:\nhttps://gh-proxy.com/...: read ECONNRESET'),
-    )
-
-    const ok = await installServerVersion(
-      gateInfo({ payloadUrls: ['https://example/payload.tgz'] }),
-      null,
-    )
-    expect(ok).toBe(false)
-
-    expect(dialogDetail()).toContain('read ECONNRESET') // the full-download error
-    expect(dialogDetail()).toContain('npm mirror unreachable') // AND the payload error
-  })
-
-  it('still reports the full-package error when there is no payload path', async () => {
-    vi.mocked(downloadAndInstall).mockRejectedValue(new Error('all download sources failed'))
-
-    const ok = await installServerVersion(gateInfo({ payloadUrls: [] }), null)
-    expect(ok).toBe(false)
-
-    expect(dialogDetail()).toContain('all download sources failed')
-    expect(installPayload).not.toHaveBeenCalled()
-  })
-})
-
-describe('installServerVersion integrity', () => {
-  beforeEach(() => {
-    vi.mocked(dialog.showMessageBox).mockReset()
-    vi.mocked(installPayload).mockReset()
-    vi.mocked(downloadAndInstall).mockReset()
-    vi.mocked(fetchNpmIntegrity).mockReset()
+  it('passes the checksum map to the full-package installer', async () => {
+    vi.mocked(downloadAndInstall).mockResolvedValue('/tmp/app-1.1.0')
     // "Later" on the restart prompt, so nothing tries to launch a process.
     vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 1, checkboxChecked: false })
-  })
 
-  it('checks the payload against the checksum the registry publishes', async () => {
-    if (process.platform === 'darwin') return // macOS has no payload path
-    vi.mocked(fetchNpmIntegrity).mockResolvedValue('sha512-abc')
-    vi.mocked(installPayload).mockResolvedValue('/tmp/app-1.1.0')
-
-    const payloadUrl = 'https://registry.example/p/-/p-1.1.0.tgz'
-    const ok = await installServerVersion(gateInfo({ payloadUrls: [payloadUrl] }), null)
+    const checksums = { 'full.zip': 'a'.repeat(64) }
+    const ok = await installServerVersion(gateInfo({ checksums }), null)
 
     expect(ok).toBe(true)
-    // The payload is the app itself; an unverified archive is an unverified
-    // application.
-    expect(installPayload).toHaveBeenCalledWith([payloadUrl], '1.1.0', '/tmp/app', undefined, 'sha512-abc')
-  })
-
-  it('installs a reused build under its own version, not the server version', async () => {
-    if (process.platform === 'darwin') return // macOS has no payload path
-    vi.mocked(fetchNpmIntegrity).mockResolvedValue('sha512-abc')
-    vi.mocked(installPayload).mockResolvedValue('/tmp/app-0.129.0')
-
-    const payloadUrl = 'https://registry.example/p/-/p-0.130.0.tgz'
-    const ok = await installServerVersion(
-      gateInfo({
-        serverVersion: '0.130.0',
-        installVersion: '0.129.0',
-        payloadUrls: [payloadUrl],
-      }),
-      null,
+    expect(downloadAndInstall).toHaveBeenCalledWith(
+      ['https://example/full.zip'],
+      '1.1.0',
+      checksums,
     )
-
-    expect(ok).toBe(true)
-    // The npm package carries the release's version...
-    expect(fetchNpmIntegrity).toHaveBeenCalledWith([payloadUrl], '0.130.0')
-    // ...but the app inside is the reused one, so the install directory follows
-    // the app's own version. Otherwise the startup handoff sees a pointer whose
-    // version disagrees with app.getVersion() and deletes it.
-    expect(installPayload).toHaveBeenCalledWith([payloadUrl], '0.129.0', '/tmp/app', undefined, 'sha512-abc')
-  })
-})
-
-describe('formatInstallFailure', () => {
-  it('shows only the full-download error when the payload path was not attempted', () => {
-    expect(formatInstallFailure(new Error('boom'), null)).toBe('boom')
   })
 
-  it('labels both attempts so the user can tell npm from github', () => {
-    const s = formatInstallFailure(new Error('github ECONNRESET'), new Error('npm 404'))
-    expect(s).toContain('npm 404')
-    expect(s).toContain('github ECONNRESET')
-    // The two labels must be distinguishable — that was the whole point of
-    // showing both errors instead of only the full-package one.
-    expect(s).toContain(versionGateLabels('en').payloadInstallFailed)
-    expect(s).toContain(versionGateLabels('en').fullDownloadFailed)
+  it('reports the download failure and keeps the gate up', async () => {
+    vi.mocked(downloadAndInstall).mockRejectedValue(new Error('all download sources failed'))
+
+    const ok = await installServerVersion(gateInfo(), null)
+    expect(ok).toBe(false)
+    expect(dialogDetail()).toContain('all download sources failed')
   })
 })

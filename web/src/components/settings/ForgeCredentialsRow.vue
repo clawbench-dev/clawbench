@@ -7,6 +7,14 @@
     <div v-for="host in hosts" :key="host" class="forge-cred-host">
       <div class="forge-cred-host-head">
         <span class="forge-cred-host-name">{{ host }}</span>
+        <!-- What the server will talk to for this host, shown only where the
+             name cannot say: a self-hosted Gitea/Forgejo instance is
+             indistinguishable from a self-hosted GitLab, so seeing "GitLab" here
+             is how the user notices they never named the platform. github.com
+             and gitlab.com name themselves, so a chip there would be noise. -->
+        <span v-if="platforms[host] && !isOfficialForgeHost(host)" class="forge-cred-platform">{{
+          platformLabel(platforms[host])
+        }}</span>
         <!-- The scheme the host is reached with. Shown because an http-only
              internal instance looks identical to an https one otherwise, and a
              wrong scheme surfaces as an opaque connection error. -->
@@ -41,6 +49,15 @@
         class="forge-cred-input"
         :placeholder="t('settings.items.forgeHostPlaceholder')"
       />
+      <!-- Which service the host runs. "Auto" infers it from the name, which is
+           right for github.com / gitlab.com and for self-hosted GitLab, and
+           wrong for Gitea/Forgejo (always self-hosted). -->
+      <select v-model="newPlatform" class="forge-cred-select">
+        <option value="">{{ t('settings.items.forgePlatformAuto') }}</option>
+        <option value="github">GitHub</option>
+        <option value="gitlab">GitLab</option>
+        <option value="gitea">{{ t('settings.items.forgePlatformGitea') }}</option>
+      </select>
       <input
         v-model="newToken"
         class="forge-cred-input"
@@ -86,6 +103,7 @@ import { Check, AlertCircle, ShieldCheck } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { setForgeToken, deleteForgeToken, verifyForgeToken, ForgeApiError } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
+import { isOfficialForgeHost } from '@/utils/forgeHost'
 
 defineProps<{ description?: string }>()
 
@@ -102,7 +120,16 @@ const hosts = ref<string[]>([])
  * never has to guess.
  */
 const schemes = ref<Record<string, string>>({})
+/**
+ * Resolved platform per host, from the config response.
+ *
+ * Resolved (not the raw hint) because that is what requests will actually speak,
+ * which is what the user needs to see: an unset hint on a self-hosted host means
+ * "treated as GitLab", and the chip is the only place that is visible.
+ */
+const platforms = ref<Record<string, string>>({})
 const newHost = ref('')
+const newPlatform = ref('')
 const newToken = ref('')
 const saving = ref(false)
 const error = ref('')
@@ -116,6 +143,20 @@ const results = ref<Record<string, VerifyResult>>({})
 interface VerifyResult {
   ok: boolean
   text: string
+}
+
+/** Display name for a platform value, falling back to the raw value. */
+function platformLabel(platform: string): string {
+  switch (platform) {
+    case 'github':
+      return 'GitHub'
+    case 'gitlab':
+      return 'GitLab'
+    case 'gitea':
+      return t('settings.items.forgePlatformGitea')
+    default:
+      return platform
+  }
 }
 
 /** Render a verify response as a human-readable outcome. */
@@ -158,6 +199,9 @@ async function verifyDraft() {
       // so a URL pasted from a browser works and also records the scheme.
       host: newHost.value.trim(),
       token: newToken.value,
+      // Omitted for "auto": the server then infers from the host name, and an
+      // explicit value would override that with a guess.
+      platform: newPlatform.value || undefined,
     })
     draftResult.value = toResult(res)
   } catch (err) {
@@ -190,6 +234,8 @@ async function loadHosts() {
     hosts.value = Array.isArray(list) ? list : []
     const schemeMap = cfg?.forge?.credential_schemes
     schemes.value = schemeMap && typeof schemeMap === 'object' ? schemeMap : {}
+    const platformMap = cfg?.forge?.credential_platforms
+    platforms.value = platformMap && typeof platformMap === 'object' ? platformMap : {}
   } catch (err) {
     appLog.w(TAG, 'load hosts failed', err)
   }
@@ -201,8 +247,9 @@ async function saveToken() {
   try {
     // Sent as typed: the server normalizes the host and records the scheme a URL
     // names, so "http://gitlab.internal" configures an http instance in one step.
-    await setForgeToken(newHost.value.trim(), newToken.value)
+    await setForgeToken(newHost.value.trim(), newToken.value, newPlatform.value || undefined)
     newHost.value = ''
+    newPlatform.value = ''
     newToken.value = ''
     draftResult.value = null
     await loadHosts()
@@ -265,8 +312,9 @@ onMounted(loadHosts)
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The API scheme this host is reached with. Muted rather than accented: it is
-   reference information, not a status. */
+/* The platform chip and the API scheme chip. Muted rather than accented: both
+   are reference information, not a status. */
+.forge-cred-platform,
 .forge-cred-scheme {
   flex-shrink: 0;
   font-family: var(--font-mono);
@@ -322,9 +370,11 @@ onMounted(loadHosts)
   flex-wrap: wrap;
   align-items: center;
 }
-.forge-cred-input {
-  flex: 1;
-  min-width: calc(130 * var(--dp));
+/* Text fields and the platform picker share one box so the row reads as a
+   single form. The picker keeps the native arrow: it is a choice, not free
+   text. */
+.forge-cred-input,
+.forge-cred-select {
   box-sizing: border-box;
   height: calc(30 * var(--dp));
   padding: 0 var(--space-6);
@@ -334,7 +384,19 @@ onMounted(loadHosts)
   color: var(--text-primary);
   font-size: var(--font-size-md);
 }
-.forge-cred-input:focus {
+.forge-cred-input {
+  flex: 1;
+  min-width: calc(130 * var(--dp));
+}
+/* Narrower than the text fields because its longest option ("Gitea / Forgejo")
+   is short. */
+.forge-cred-select {
+  flex: 0 1 auto;
+  font-family: inherit;
+  cursor: pointer;
+}
+.forge-cred-input:focus,
+.forge-cred-select:focus {
   outline: none;
   border-color: var(--accent-color);
   box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);

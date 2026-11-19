@@ -69,7 +69,11 @@ const css = readWebFile('css/variables.css')
 /** All `--name: value;` declarations inside a block body. */
 function declarations(body: string): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const m of body.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim()
+  // Strip comments first: a comment that quotes a token (e.g. "the theme's own
+  // secondary --text-secondary: #586e75 measured 4.39") otherwise matches as a
+  // declaration and overwrites the real value.
+  const stripped = body.replace(/\/\*[\s\S]*?\*\//g, '')
+  for (const m of stripped.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim()
   return out
 }
 

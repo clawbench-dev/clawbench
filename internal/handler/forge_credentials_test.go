@@ -12,6 +12,7 @@ import (
 
 	"clawbench/internal/forge"
 	"clawbench/internal/model"
+	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -719,4 +720,207 @@ func TestServeForgeVerifyToken_NetworkErrorDistinctFromAuth(t *testing.T) {
 	assert.Equal(t, false, resp["ok"])
 	assert.Equal(t, string(forge.ErrKindNetwork), resp["code"],
 		"an unreachable host must not be reported as an auth failure")
+}
+
+// TestServeForgeCredentials_PlatformHintStored covers the only way to tell a
+// self-hosted Gitea/Forgejo host from a self-hosted GitLab: the user names it.
+// The hint must be canonicalized (forgejo → gitea) so one adapter speaks both.
+func TestServeForgeCredentials_PlatformHintStored(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+	model.ConfigInstance = model.Config{}
+
+	req := newRequest(t, http.MethodPost, "/api/forge/credentials",
+		map[string]any{"host": "git.acme.internal", "token": "tok", "platform": "forgejo"})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeCredentials, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	assert.Equal(t, "tok", model.ConfigInstance.ForgeToken("git.acme.internal"))
+	assert.Equal(t, "gitea", model.ConfigInstance.ForgePlatform("git.acme.internal"))
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "gitea", resp["platform"], "the response reports the platform in use")
+}
+
+// TestServeForgeCredentials_PlatformKeptWhenOmitted pins the same rule as the
+// scheme: re-saving a token without restating the platform must not reset it,
+// or a Gitea host would silently become GitLab again.
+func TestServeForgeCredentials_PlatformKeptWhenOmitted(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+	model.ConfigInstance = model.Config{}
+
+	req := newRequest(t, http.MethodPost, "/api/forge/credentials",
+		map[string]any{"host": "git.acme.internal", "token": "tok1", "platform": "gitea"})
+	withAuthCookie(req, model.SessionToken)
+	require.Equal(t, http.StatusOK, callHandler(ServeForgeCredentials, req).Code)
+
+	req = newRequest(t, http.MethodPost, "/api/forge/credentials",
+		map[string]any{"host": "git.acme.internal", "token": "tok2"})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeCredentials, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	assert.Equal(t, "tok2", model.ConfigInstance.ForgeToken("git.acme.internal"))
+	assert.Equal(t, "gitea", model.ConfigInstance.ForgePlatform("git.acme.internal"),
+		"a bare re-save says nothing about the platform, so the hint must survive")
+}
+
+// TestServeForgeCredentials_InvalidPlatformRejected guards the failure mode that
+// would be silent: storing a value no resolver understands looks saved and then
+// does nothing.
+func TestServeForgeCredentials_InvalidPlatformRejected(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+	model.ConfigInstance = model.Config{}
+
+	req := newRequest(t, http.MethodPost, "/api/forge/credentials",
+		map[string]any{"host": "git.acme.internal", "token": "tok", "platform": "bitbucket"})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeCredentials, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Empty(t, model.ConfigInstance.ForgeToken("git.acme.internal"), "nothing may be stored")
+	assert.Empty(t, model.ConfigInstance.ForgePlatform("git.acme.internal"))
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, codeForgeInvalidPlatform, resp[jsonCode])
+}
+
+// TestServeConfig_ForgePlatformsExposed covers the settings UI's data source.
+// Platforms are reported RESOLVED, so a host that will be spoken to as GitLab
+// says so even when nobody recorded a hint.
+func TestServeConfig_ForgePlatformsExposed(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.SetForgeToken("github.com", "ghp-x")
+	cfg.SetForgeToken("gitlab.internal", "glpat-x")
+	cfg.SetForgeToken("git.acme.internal", "gitea-x")
+	cfg.SetForgePlatform("git.acme.internal", "gitea")
+	// A hint with no credential is not actionable, so it must not be reported.
+	cfg.SetForgePlatform("orphan.internal", "gitea")
+	model.ConfigInstance = cfg
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	forgeSection, ok := resp["forge"].(map[string]any)
+	require.True(t, ok)
+	platforms, ok := forgeSection["credential_platforms"].(map[string]any)
+	require.True(t, ok, "config must expose credential_platforms")
+
+	assert.Equal(t, "github", platforms["github.com"])
+	assert.Equal(t, "gitlab", platforms["gitlab.internal"], "unset hint falls back to the inference")
+	assert.Equal(t, "gitea", platforms["git.acme.internal"])
+	_, orphan := platforms["orphan.internal"]
+	assert.False(t, orphan, "a hint with no credential must not be reported")
+}
+
+// TestServeForgeVerifyToken_UsesStoredPlatformHint is the regression guard for
+// the whole point of the hint: a Gitea host must be probed at /api/v1, not with
+// the GitLab client at /api/v4. The server here answers ONLY the Gitea path, so
+// reaching it at all proves the hint decided the client.
+func TestServeForgeVerifyToken_UsesStoredPlatformHint(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/user", r.URL.Path, "a Gitea host must not be probed as GitLab")
+		assert.Equal(t, "token tok", r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{"login":"gitea-user","full_name":"Gitea User"}`))
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "https://")
+
+	cfg := model.Config{Forge: model.ForgeConfig{InsecureTLS: true}}
+	cfg.SetForgeToken(host, "tok")
+	cfg.SetForgeScheme(host, "https")
+	cfg.SetForgePlatform(host, "gitea")
+	model.ConfigInstance = cfg
+
+	req := newRequest(t, http.MethodPost, "/api/forge/verify-token",
+		map[string]any{"host": host})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeVerifyToken, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["ok"], w.Body.String())
+	assert.Equal(t, "gitea-user", resp["identity"])
+	assert.Equal(t, "gitea", resp["platform"])
+}
+
+// TestServeForgeVerifyToken_InvalidPlatformRejected keeps a typo from silently
+// verifying against the wrong API.
+func TestServeForgeVerifyToken_InvalidPlatformRejected(t *testing.T) {
+	_, teardown := setupPersistTestEnv(t)
+	defer teardown()
+	model.ConfigInstance = model.Config{}
+
+	req := newRequest(t, http.MethodPost, "/api/forge/verify-token",
+		map[string]any{"host": "git.acme.internal", "token": "tok", "platform": "bitbucket"})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeVerifyToken, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, false, resp["ok"])
+	assert.Equal(t, codeForgeInvalidPlatform, resp[jsonCode])
+}
+
+// TestServeForgeVerifyToken_UsesBindingPlatform is the fix for the long-standing
+// disagreement: a binding recorded platform=github on a self-hosted host (GitHub
+// Enterprise) used to be verified with the GitLab client, because verification
+// classified the host from its NAME while browsing classified it from the
+// binding. The host here answers only on /api/v3/user, so reaching it at all
+// proves the binding decided the platform.
+func TestServeForgeVerifyToken_UsesBindingPlatform(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	// Self-signed test certificate, the same opt-in a self-hosted user enables.
+	model.ConfigInstance.Forge.InsecureTLS = true
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v3/user", r.URL.Path,
+			"an Enterprise host must be probed as GitHub, not as GitLab")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"login":"octocat","name":"The Octocat"}`))
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "https://")
+
+	// Bound the way an existing install would be: platform recorded on the
+	// binding, no config hint anywhere.
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: env.ProjectDir,
+		Platform:    "github",
+		Host:        host,
+		Owner:       "acme",
+		Repo:        "widgets",
+		Source:      "manual",
+	}))
+	model.ConfigInstance.Forge.Credentials = map[string]string{host: "tok"}
+	model.ConfigInstance.Forge.Schemes = map[string]string{host: "https"}
+
+	req := newRequest(t, http.MethodPost, "/api/forge/verify-token", map[string]any{"host": host})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeVerifyToken, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["ok"], w.Body.String())
+	assert.Equal(t, "octocat", resp["identity"])
+	assert.Equal(t, "github", resp["platform"])
 }

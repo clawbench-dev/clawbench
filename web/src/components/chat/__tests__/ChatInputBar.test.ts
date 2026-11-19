@@ -477,6 +477,7 @@ const mockVoiceStop = vi.fn()
 const mockVoiceState = ref('idle')
 const mockVoiceTargetEl = ref<HTMLElement | null>(null)
 const mockVoiceCancel = vi.fn()
+const mockVoiceConsumeTarget = vi.fn()
 vi.mock('@/composables/useVoiceInput', () => ({
   useVoiceInput: () => ({
     state: mockVoiceState,
@@ -493,6 +494,7 @@ vi.mock('@/composables/useVoiceInput', () => ({
     startGlobal: vi.fn(),
     stop: mockVoiceStop,
     cancel: mockVoiceCancel,
+    consumeTarget: mockVoiceConsumeTarget,
     reset: vi.fn(),
     appendText: vi.fn(),
     discardDraft: vi.fn(),
@@ -4160,6 +4162,7 @@ describe('ChatInputBar', () => {
     beforeEach(() => {
       mockVoiceStartAt.mockReset()
       mockVoiceStop.mockReset()
+      mockVoiceConsumeTarget.mockReset()
       mockVoiceTargetEl.value = null
       mockVoiceState.value = 'idle'
     })
@@ -4235,6 +4238,19 @@ describe('ChatInputBar', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.voice-rec-btn').exists()).toBe(false)
       expect(wrapper.find('.chat-attach-btn').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    // Regression: sending while a dictation was still writing into the composer
+    // left the take running. Its next partial re-anchored onto the cleared box,
+    // so the message the user had just sent reappeared as a draft.
+    it('ends the dictation when the composer clears after a send', async () => {
+      const wrapper = mountBar()
+      wrapper.vm.inputText = '请看一下这个改动'
+      await wrapper.vm.$nextTick()
+      wrapper.vm.clearInput()
+      expect(mockVoiceConsumeTarget).toHaveBeenCalledWith(composerTextarea(wrapper))
+      expect(wrapper.vm.inputText).toBe('')
       wrapper.unmount()
     })
 

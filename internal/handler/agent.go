@@ -24,16 +24,29 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
-	"clawbench/internal/platform"
+	"clawbench/internal/platform/source"
 	"clawbench/internal/service"
 )
 
-// IsChinaMainland exports the China detection result for use by other packages.
-func IsChinaMainland() bool {
-	return platform.IsChinaMainland()
-}
+// installSourceCandidates is a variable so handler tests can pin the source
+// list without depending on the test machine's ~/.npmrc.
+var installSourceCandidates = source.Npm
 
-const npmMirrorRegistry = "https://registry.npmmirror.com"
+// installCmdWithSource appends --registry only when the chosen source is not
+// npm's default, so an official-registry install stays the bare command.
+//
+// This is only used by resolveInstallCmd (the actual install). The command the
+// UI displays is the backend's own InstallCmd, with no source in it: the source
+// is not known until the probe runs, and showing the first candidate would be a
+// guess that is wrong whenever that candidate is down. The dialog says the
+// source is picked at install time and shows the command that actually ran
+// afterwards (see AgentInstallDialog.vue).
+func installCmdWithSource(installCmd, base string) string {
+	if base == source.NpmJsBase {
+		return installCmd
+	}
+	return installCmd + " --registry=" + base
+}
 
 // agentIDRe validates agent IDs: alphanumeric, hyphens, underscores, dots only.
 var agentIDRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
@@ -50,18 +63,6 @@ func isValidAgentID(id string) bool {
 		return false
 	}
 	return agentIDRe.MatchString(id)
-}
-
-// prepareInstallCmd modifies an install command for display:
-// Adds China npm mirror registry if in mainland China.
-func prepareInstallCmd(installCmd string) string {
-	if !strings.HasPrefix(installCmd, "npm install") {
-		return installCmd
-	}
-	if platform.IsChinaMainland() && !strings.Contains(installCmd, "--registry") {
-		return installCmd + " --registry=" + npmMirrorRegistry
-	}
-	return installCmd
 }
 
 // ServeAgentSubRoutes handles /api/agents/* sub-routes (e.g. /api/agents/{id}/refresh-models).
@@ -460,19 +461,22 @@ func applyModelPrices(agents []*model.Agent, states map[string]*acpState) {
 	}
 }
 
-// backendInstallCmd returns the backend's built-in install command, prepared
-// for display (China mirror appended), or "" when it has none.
+// backendInstallCmd returns the backend's built-in install command as-is, or ""
+// when it has none.
+//
+// Deliberately no source: the registry is chosen by probing at install time
+// (resolveInstallCmd), so a command shown now cannot name it. Appending the
+// first candidate would be wrong whenever that candidate is unreachable.
 //
 // One implementation for both surfaces that show it: GET /api/backends (the
 // welcome panel's per-backend row) and GET /api/agents (an agent's settings
-// page). Two copies would let the welcome panel show a mirror-rewritten command
-// while the settings page offered the bare one.
+// page), so the two cannot disagree.
 func backendInstallCmd(backend string) string {
 	spec := model.FindSpecByBackend(backend)
 	if spec == nil {
 		return ""
 	}
-	return prepareInstallCmd(spec.InstallCmd)
+	return spec.InstallCmd
 }
 
 func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
@@ -2561,7 +2565,7 @@ func ServeBackends(w http.ResponseWriter, r *http.Request) {
 			Specialty:            spec.Specialty,
 			DefaultCmd:           spec.DefaultCmd,
 			ThinkingEffortLevels: spec.ThinkingEffortLevels,
-			InstallCmd:           prepareInstallCmd(spec.InstallCmd),
+			InstallCmd:           spec.InstallCmd,
 		})
 	}
 

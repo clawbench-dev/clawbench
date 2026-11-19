@@ -47,12 +47,11 @@ export interface DesktopLatest {
   /** Candidate download URLs for the FULL package, best-first (mirror first in China, github.com last). */
   urls: string[]
   /**
-   * Candidate URLs for the small payload-only archive, best-first. Empty when
-   * the server publishes none for this platform — macOS has no payload, and a
-   * server older than this feature reports no `payloads` field at all. An empty
-   * list means "download the full package", not an error.
+   * SHA256 by asset filename, from the release's SHA256SUMS. Empty when the
+   * server could not fetch the manifest (old server, dev build, or GitHub
+   * unreachable); the installer then skips content verification.
    */
-  payloadUrls: string[]
+  checksums: Record<string, string>
 }
 
 interface DesktopLatestResponse {
@@ -61,7 +60,7 @@ interface DesktopLatestResponse {
   protocol?: number
   tag?: string
   downloads?: Record<string, string[]>
-  payloads?: Record<string, string[]>
+  checksums?: Record<string, string>
 }
 
 /**
@@ -159,9 +158,8 @@ export async function fetchDesktopLatest(
   // there is nothing to install even if the version string differs.
   if (!version || urls.length === 0) return null
 
-  // Absent for platforms the server publishes no payload for (macOS), and for
-  // servers predating the feature — both mean "use the full package".
-  const payloadUrls = info.payloads?.[key] ?? []
+  // Absent on old servers and dev builds; the installer then skips verification.
+  const checksums = info.checksums ?? {}
 
   // Both fields are absent on servers predating the protocol guard. 0 makes the
   // gate fall back to comparing versions, which is exactly the old behaviour;
@@ -169,5 +167,5 @@ export async function fetchDesktopLatest(
   const protocol = typeof info.protocol === 'number' ? info.protocol : 0
   const clientVersion = info.clientVersion || version
 
-  return { version, clientVersion, protocol, tag: info.tag || '', urls, payloadUrls }
+  return { version, clientVersion, protocol, tag: info.tag || '', urls, checksums }
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"clawbench/internal/forge"
@@ -1138,4 +1139,171 @@ func TestServeForgeBinding_AutoBindFailureAnswers500(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.NotContains(t, w.Body.String(), `"binding":null`)
+}
+
+// TestServeForgeBinding_ExplicitGiteaPlatform covers binding a repository the
+// host name cannot classify. Two things must happen: the binding records the
+// named platform, and the host learns it — token verification reads that hint,
+// so without it a Gitea binding would still be probed with the GitLab client.
+func TestServeForgeBinding_ExplicitGiteaPlatform(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"url":      "https://git.acme.internal/team/widgets.git",
+		"platform": "gitea",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	binding := resp["binding"].(map[string]any)
+	assert.Equal(t, "gitea", binding["platform"])
+	assert.Equal(t, "team/widgets", binding["slug"])
+
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "gitea", pf.Platform)
+	assert.Equal(t, "gitea", model.ConfigInstance.ForgePlatform("git.acme.internal"),
+		"binding must teach the host what it runs")
+}
+
+// TestServeForgeBinding_UrlWithoutPlatformKeepsInference pins the compatibility
+// side: an unnamed platform still resolves from the host, so existing
+// self-hosted GitLab bindings are unaffected.
+func TestServeForgeBinding_UrlWithoutPlatformKeepsInference(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"url": "https://git.acme.internal/team/widgets.git",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "gitlab", resp["binding"].(map[string]any)["platform"])
+	assert.Empty(t, model.ConfigInstance.ForgePlatform("git.acme.internal"),
+		"nothing was named, so no hint may be invented")
+}
+
+func TestServeForgeBinding_InvalidPlatformRejected(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"url":      "https://git.acme.internal/team/widgets.git",
+		"platform": "bitbucket",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, codeForgeInvalidPlatform, resp[jsonCode])
+}
+
+// TestServeForgeBinding_FlatNamespaceRejectsNestedPath keeps the explicit-fields
+// path as strict as the URL path: Gitea has no subgroups, so "team/sub" would
+// bind a repository that cannot exist.
+func TestServeForgeBinding_FlatNamespaceRejectsNestedPath(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
+		"platform": "gitea",
+		"host":     "git.acme.internal",
+		"owner":    "team/sub",
+		"repo":     "widgets",
+	})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+// TestServeForgeRemotes_AppliesStoredPlatformHint pins that the remote picker
+// offers the right platform: binding a Gitea remote as GitLab is the exact
+// mistake the hint exists to prevent.
+func TestServeForgeRemotes_AppliesStoredPlatformHint(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	runGitInDir(t, env.ProjectDir, "init")
+	runGitInDir(t, env.ProjectDir, "remote", "add", "origin", "https://git.acme.internal/team/widgets.git")
+	model.ConfigInstance.Forge.Platforms = map[string]string{"git.acme.internal": "gitea"}
+
+	req := newRequest(t, http.MethodGet, "/api/forge/remotes", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeRemotes, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp struct {
+		Remotes []map[string]any `json:"remotes"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Remotes, 1)
+	assert.Equal(t, "gitea", resp.Remotes[0]["platform"])
+}
+
+// TestServeForgeItems_EndToEndAgainstMockGitea is the wiring guard for the whole
+// Gitea chain: binding → provider factory → adapter → normalized view. Unlike
+// the GitHub mock above, the Gitea adapter builds its base URL from host+scheme,
+// so a TLS test server can stand in for the instance directly.
+func TestServeForgeItems_EndToEndAgainstMockGitea(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	model.ConfigInstance.Forge.InsecureTLS = true
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/repos/acme/widgets/issues", r.URL.Path)
+		assert.Equal(t, "issues", r.URL.Query().Get("type"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"number":12,"title":"from gitea","state":"open",
+			"user":{"login":"alice"},"comments":1,
+			"html_url":"https://gitea.example.com/acme/widgets/issues/12",
+			"updated_at":"2026-09-10T00:00:00Z"}]`))
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "https://")
+
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: env.ProjectDir,
+		Platform:    "gitea",
+		Host:        host,
+		Scheme:      "https",
+		Owner:       "acme",
+		Repo:        "widgets",
+		Source:      "manual",
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/items?type=issue", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeItems, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp struct {
+		Items   []map[string]any `json:"items"`
+		Binding map[string]any   `json:"binding"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, float64(12), resp.Items[0]["number"])
+	assert.Equal(t, "from gitea", resp.Items[0]["title"])
+	assert.Equal(t, "open", resp.Items[0]["state"])
+	assert.Equal(t, "gitea", resp.Binding["platform"])
 }

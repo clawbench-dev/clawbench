@@ -52,17 +52,6 @@
       />
       <ConnectionOverlay />
 
-      <!-- Download progress. Floats just under the app header and is taken out
-           of flow, so a download never pushes the layout around. -->
-      <DownloadProgressBar
-        :visible="downloadVisible"
-        :file-name="downloadFileName"
-        :received="downloadReceived"
-        :total="downloadTotal"
-        :speed="downloadSpeed"
-        @cancel="cancelDownload"
-      />
-
       <main class="main-content" :class="{ 'wide-screen': isWideScreen }">
         <!-- Wide-screen vertical dock (non-chat tabs only) -->
         <div v-show="isWideScreen" class="wide-dock">
@@ -566,6 +555,20 @@
         </div>
       </Transition>
     </Teleport>
+
+    <!-- Download progress. Floats just under the app header and is taken out
+         of flow, so a download never pushes the layout around. Sits at the
+         root (not inside .app-container) because the login page downloads the
+         APK before the user is signed in — inside the authenticated branch the
+         bar never mounted there and the click looked dead (#698). -->
+    <DownloadProgressBar
+      :visible="downloadVisible"
+      :file-name="downloadFileName"
+      :received="downloadReceived"
+      :total="downloadTotal"
+      :speed="downloadSpeed"
+      @cancel="cancelDownload"
+    />
 
     <ToastNotification :toast="toast" />
     <VoiceOverlay />

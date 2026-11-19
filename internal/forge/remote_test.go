@@ -252,3 +252,65 @@ func TestParseRemoteURL_NonForgeRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePlatform(t *testing.T) {
+	tests := []struct {
+		raw    string
+		want   Platform
+		wantOK bool
+	}{
+		{"github", PlatformGitHub, true},
+		{"GitHub", PlatformGitHub, true},
+		{"  gitlab ", PlatformGitLab, true},
+		{"gitea", PlatformGitea, true},
+		// Forgejo is a Gitea fork with the same API; users name both, and both
+		// must resolve to the one platform the adapter speaks.
+		{"forgejo", PlatformGitea, true},
+		{"Forgejo", PlatformGitea, true},
+		{"", "", false},
+		{"bitbucket", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.raw, func(t *testing.T) {
+			got, ok := ParsePlatform(tc.raw)
+			assert.Equal(t, tc.wantOK, ok)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestHasFlatNamespace(t *testing.T) {
+	assert.True(t, HasFlatNamespace(PlatformGitHub))
+	assert.True(t, HasFlatNamespace(PlatformGitea))
+	assert.False(t, HasFlatNamespace(PlatformGitLab), "GitLab has multi-level groups")
+}
+
+// TestParseRemoteURLAs_ExplicitPlatform covers the only way a Gitea repository
+// can be bound: every Gitea instance is self-hosted, so the host name says
+// nothing and the fallback would call it GitLab.
+func TestParseRemoteURLAs_ExplicitPlatform(t *testing.T) {
+	r, err := ParseRemoteURLAs("https://git.acme.internal/team/widgets.git", PlatformGitea)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformGitea, r.Platform)
+	assert.Equal(t, "git.acme.internal", r.Host)
+	assert.Equal(t, "team", r.Owner)
+	assert.Equal(t, "widgets", r.Repo)
+
+	// The same URL without a named platform keeps the historical inference, so
+	// existing self-hosted GitLab bindings are unaffected.
+	plain, err := ParseRemoteURL("https://git.acme.internal/team/widgets.git")
+	require.NoError(t, err)
+	assert.Equal(t, PlatformGitLab, plain.Platform)
+
+	// An explicit platform also corrects a GitHub Enterprise host, which the
+	// inference would otherwise call GitLab.
+	ghe, err := ParseRemoteURLAs("https://github.acme.internal/acme/widgets.git", PlatformGitHub)
+	require.NoError(t, err)
+	assert.Equal(t, PlatformGitHub, ghe.Platform)
+
+	// A flat-namespace platform cannot have a nested namespace: that shape is a
+	// web URL or a typo, and accepting it would bind a repository that does not
+	// exist.
+	_, err = ParseRemoteURLAs("https://git.acme.internal/team/sub/widgets.git", PlatformGitea)
+	assert.ErrorIs(t, err, ErrInvalidRemote)
+}

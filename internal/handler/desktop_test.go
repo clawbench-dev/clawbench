@@ -24,7 +24,7 @@ func TestServeDesktopLatest(t *testing.T) {
 			Protocol:      3,
 			Tag:           "v0.98.0",
 			Downloads:     map[string][]string{"win32-x64": {"https://github.com/o/r/releases/download/v0.98.0/x.zip"}},
-			Payloads:      map[string][]string{"win32-x64": {"https://github.com/o/r/releases/download/v0.98.0/p.zip"}},
+			Checksums:     map[string]string{"x.zip": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
 		}, nil
 	}
 
@@ -33,8 +33,9 @@ func TestServeDesktopLatest(t *testing.T) {
 	ServeDesktopLatest(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
+	rawBody := rec.Body.Bytes()
 	var body service.DesktopLatestResult
-	require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
+	require.NoError(t, json.Unmarshal(rawBody, &body))
 	assert.Equal(t, "v0.98.0", body.Version)
 	assert.Equal(t, "v0.98.0", body.Tag)
 	// The desktop gate compares `protocol`, and the installer keys its directory
@@ -45,13 +46,14 @@ func TestServeDesktopLatest(t *testing.T) {
 	assert.Equal(t, "v0.97.0", body.ClientVersion)
 	require.Len(t, body.Downloads["win32-x64"], 1)
 	assert.Equal(t, "https://github.com/o/r/releases/download/v0.98.0/x.zip", body.Downloads["win32-x64"][0])
-	// The payload list must survive the JSON round-trip; the desktop client
-	// reads it to decide whether it can skip the full download.
-	require.Len(t, body.Payloads["win32-x64"], 1)
-	assert.Equal(t, "https://github.com/o/r/releases/download/v0.98.0/p.zip", body.Payloads["win32-x64"][0])
-	// macOS has no payload, so the key must be absent rather than an empty list.
-	_, hasDarwin := body.Payloads["darwin-arm64"]
-	assert.False(t, hasDarwin, "macOS must have no payload key")
+	// The checksum map must survive the JSON round-trip; the desktop client
+	// looks it up by asset filename.
+	assert.Equal(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", body.Checksums["x.zip"])
+	// The removed payload field must not reappear in the response.
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rawBody, &raw))
+	_, hasPayloads := raw["payloads"]
+	assert.False(t, hasPayloads, "payloads must not be in the response")
 }
 
 // A dev server has no matching release, so it must answer 200 with an empty
@@ -66,7 +68,6 @@ func TestServeDesktopLatest_DevBuildReturnsEmptyDownloads(t *testing.T) {
 			Version:   "dev",
 			Tag:       "",
 			Downloads: map[string][]string{},
-			Payloads:  map[string][]string{},
 		}, nil
 	}
 
@@ -79,7 +80,7 @@ func TestServeDesktopLatest_DevBuildReturnsEmptyDownloads(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
 	assert.Equal(t, "dev", body.Version)
 	assert.Empty(t, body.Downloads)
-	assert.Empty(t, body.Payloads)
+	assert.Empty(t, body.Checksums)
 }
 
 func TestServeDesktopLatest_FetchError(t *testing.T) {

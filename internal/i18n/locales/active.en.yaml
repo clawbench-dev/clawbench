@@ -392,7 +392,7 @@ GroupFreeTitle: Group chat
 # drift — the backend previously held its own Chinese literals while the
 # frontend rendered i18n keys, so an English user's preview and the actually
 # injected prompt disagreed.
-EventContextHeader: Forge event
+EventContextHeader: Software Forge event
 EventContextYes: 'yes'
 EventContextNo: 'no'
 EventContextSeparator: ': '
@@ -440,7 +440,7 @@ ForgeEventLabelRepo: Repo
 ForgeEventLabelEvent: Event
 ForgeEventLabelAuthor: Author
 ForgeEventViewDetail: View details
-ForgeDisabled: the GitHub/GitLab integration is disabled
+ForgeDisabled: the Software Forge integration is disabled
 MailDisabled: the mail client is disabled
 KbDisabled: the knowledge base is disabled
 TasksDisabled: scheduled tasks are disabled

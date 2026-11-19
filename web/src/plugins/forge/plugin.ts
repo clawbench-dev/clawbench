@@ -1,4 +1,4 @@
-import { Github, Gitlab } from 'lucide-vue-next'
+import { Github } from 'lucide-vue-next'
 import i18n from '@/i18n'
 import { appLog } from '@/utils/appLog'
 import {
@@ -8,6 +8,7 @@ import {
   type ForgeTarget,
 } from '@/composables/useForgeNavigation'
 import { forgeDockIconKind, forgeTabTitleKey, useForgeBinding } from '@/composables/useForgeBinding'
+import { forgeBrandIcon } from '@/components/forge/forgeBrandIcon'
 import { useForgeUnread } from '@/composables/useForgeUnread'
 import type { DockPlugin } from '@/composables/dockPluginTypes'
 
@@ -39,12 +40,12 @@ interface OpenForgeDetail {
  * names and draws the integration the project is actually bound to.
  *
  * Its manifest `titleKey` is the platform-NEUTRAL label ("issues & change
- * requests"). The dock does not use it: `title()` resolves
- * `forgeTabTitleKey(platform)` so the tab names the bound service ("GitHub
- * integration" / "GitLab integration"). It stays in the manifest because the
- * registry requires a title for every tab (and the guard test checks each one
- * resolves in both locales), and because the forge panel header uses it as its
- * own fallback when no repository is bound.
+ * requests"), used only as the last fallback when no repository is bound. The
+ * dock does not use it: `title()` resolves `forgeTabTitleKey(platform)`, whose
+ * every platform key now reads 代码托管集成 — the feature has ONE name, and the
+ * brand names (GitHub / GitLab / Gitea) moved into the description text. The
+ * glyph still follows the platform, so the entry keeps showing which service
+ * the project is bound to.
  */
 export default {
   id: 'forge',
@@ -65,7 +66,7 @@ export default {
     icon: Github,
     kind: 'flat',
   },
-  dynamicIcon: () => (forgeDockIconKind(platform.value) === 'gitlab' ? Gitlab : Github),
+  dynamicIcon: () => forgeBrandIcon(forgeDockIconKind(platform.value)),
   title: () => i18n.global.t(forgeTabTitleKey(platform.value)),
   badge: () => ({ count: forgeUnreadCount.value }),
   // No `available()`: the feature axis (switched off / on) belongs to the

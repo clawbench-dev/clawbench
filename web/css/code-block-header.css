@@ -162,10 +162,24 @@
    scoped rules never match it. See design-guide 红线 1.
    ========================================================================== */
 
-/* ─── Toolbar button: 全平台可见 ───
-   以前只在触屏/窄屏出现（桌面觉得“块本来就看得清”），但桌面也需要把表格/
-   代码块放到整屏看，尤其是宽表；显隐不再按指针类型分。按钮几何在
-   code-block-header.css（代码块）与 table.css（表格）里，默认就是 inline-flex。 */
+/* ─── Toolbar button: 触屏 / 窄屏 ───
+   桌面（鼠标 + 宽窗口）整块本来就看得清，这个按钮只占表头位置，所以默认
+   藏起来；触屏和窄窗口才显示。按钮几何在 code-block-header.css（代码块）
+   与 table.css（表格）里。
+
+   浮层里这个位置是「关闭」按钮，必须无视上面的显隐规则 —— 否则在桌面上
+   把窗口拉宽（或从窄窗口打开后放大）就没有可见的关闭入口了。 */
+.table-block-landscape-btn,
+.code-block-landscape-btn {
+    display: none;
+}
+
+@media (pointer: coarse), (max-width: 900px) {
+    .table-block-landscape-btn,
+    .code-block-landscape-btn {
+        display: inline-flex;
+    }
+}
 
 /* ─── Overlay ───
    `--z-sheet`, NOT `--z-lightbox`: the row viewer opened from inside must paint
@@ -173,7 +187,15 @@
    header (1100) and the file overlay (1000).
 
    `dvh` (with a `vh` fallback) rather than `vh`: the mobile address bar
-   collapsing changes the usable height, and a `vh`-sized layer is clipped. */
+   collapsing changes the usable height, and a `vh`-sized layer is clipped.
+
+   `-webkit-app-region: no-drag` is load-bearing on the desktop shell: the app
+   header underneath is a window drag handle, and Chromium resolves draggable
+   regions from layout (not z-index) — so the top strip of this full-screen
+   overlay was a dead zone: the table header sits exactly there, and every
+   button in it swallowed the click as a window drag (no hover, no click).
+   The overlay is teleported to the end of <body>, so its `no-drag` is the last
+   word for that area. */
 .block-landscape {
     position: fixed;
     top: 0;
@@ -182,9 +204,17 @@
     height: 100vh;
     height: 100dvh;
     z-index: var(--z-sheet);
-    background: var(--bg-primary);
+    /* 半透明遮罩：底下的页面还看得见一点，但被压暗到不抢注意力。表格/代码块
+       自己的底色是不透明的，正文对比度不受影响。 */
+    background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
+    -webkit-app-region: no-drag;
     overflow: hidden;
     overscroll-behavior: contain;
+}
+
+.block-landscape .table-block-landscape-btn,
+.block-landscape .code-block-landscape-btn {
+    display: inline-flex;
 }
 
 /* The rotating unit. The header turns with the table, which is what puts it at
@@ -213,13 +243,21 @@
 
 /* Carries `.markdown-body` so the table keeps its normal borders/padding, and
    overrides the column cap + the hidden horizontal overflow that container
-   imposes. */
+   imposes.
+
+   Flex column + `margin: auto` on the block (below) is what centers a short
+   table in the middle of the screen while a tall one still starts at the top
+   and scrolls: auto margins absorb the free space, and collapse to 0 once the
+   content is taller than the viewport (the classic scroll-safe centering —
+   `justify-content: center` would push the first rows out of reach). */
 .block-landscape-scroll.markdown-body {
+    display: flex;
+    flex-direction: column;
     width: 100%;
     height: 100%;
     max-width: none;
     margin: 0;
-    padding: var(--space-5);
+    padding: var(--space-4);
     overflow: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
@@ -230,7 +268,8 @@
    the overlay's business. */
 .block-landscape-scroll > .table-block-wrapper,
 .block-landscape-scroll > .code-block-wrapper {
-    margin: 0 auto;
+    flex: 0 0 auto;
+    margin: auto;
 }
 
 /* The paperclip attaches the markdown FILE to chat. The clone has no file
@@ -243,18 +282,27 @@
 
 /* 横屏浮层里的数据表是「活」组件（见 BlockLandscape.vue / dataTableLandscape.ts）：
    表头栏的简单表⇄数据表开关、搜索、排序、筛选、分页都还能用，所以工具条
-   不再藏起来。它自己撑满面板，滚动交给 .dt-scroll。 */
+   不再藏起来。滚动交给 .dt-scroll。
+
+   尺寸：表格矮的时候按内容高度、垂直居中；高过面板时被 `max-height`
+   卡住，网格自己滚 —— 「小的居中、大的占满」。 */
 .block-landscape-live {
     display: flex;
     flex-direction: column;
     width: 100%;
     height: 100%;
     min-height: 0;
+    padding: var(--space-4);
+    box-sizing: border-box;
 }
 
 .block-landscape-live .dt {
-    flex: 1;
+    flex: 0 1 auto;
     min-height: 0;
+    max-height: 100%;
+    margin: auto 0;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
 }
 
 .block-landscape .dt-scroll {

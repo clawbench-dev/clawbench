@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,80 @@ import (
 // fieldCommand is the JSON key for the install command echoed back to the
 // caller. Several install/terminal payloads use it, so it is named once.
 const fieldCommand = "command"
+
+// probeNpmPackage is a variable so tests can drive source selection without a
+// real npm.
+var probeNpmPackage = service.ProbeNpmPackage
+
+// resolveInstallCmd picks the npm source for one install and returns the
+// command to run. It is the only place that probes a registry; the commands
+// reported by GET /api/agents and GET /api/backends are the bare registry
+// command and never touch the network.
+//
+// The candidate order is source.Npm(): user-configured first, then the region
+// mirror, then the other public registry. A source that answers wins. A 401/403
+// stops the walk and uses that source — the user configured it, and silently
+// bypassing a private registry would be wrong. Only 404/network failures move
+// on.
+func resolveInstallCmd(ctx context.Context, installCmd string) string {
+	if !isNpmInstallCommand(installCmd) {
+		return installCmd
+	}
+	candidates := installSourceCandidates()
+	if len(candidates) == 0 {
+		return installCmd
+	}
+	pkg := npmInstallPackage(installCmd)
+	if pkg == "" {
+		// A local path, tarball, git URL or range spec: no metadata probe, but
+		// still point npm at the first source so a public package in a range
+		// spec uses the same mirror as everything else.
+		return installCmdWithSource(installCmd, candidates[0].Base)
+	}
+	for _, candidate := range candidates {
+		err := probeNpmPackage(ctx, pkg, candidate.Base)
+		if err == nil {
+			return installCmdWithSource(installCmd, candidate.Base)
+		}
+		if errors.Is(err, service.ErrNpmAuthRequired) {
+			slog.Warn("agent install: source requires authentication; using it",
+				"source", candidate.Name, "base", candidate.Base)
+			return installCmdWithSource(installCmd, candidate.Base)
+		}
+		slog.Warn("agent install: source probe failed, trying next",
+			"source", candidate.Name, "base", candidate.Base, "error", err)
+	}
+	// Nothing answered. Use the first candidate so npm reports the real error
+	// instead of the probe masking it.
+	return installCmdWithSource(installCmd, candidates[0].Base)
+}
+
+// isNpmInstallCommand reports whether this is an `npm install` command with no
+// explicit registry. Only that shape is rewritten.
+func isNpmInstallCommand(installCmd string) bool {
+	return strings.HasPrefix(installCmd, "npm install") && !strings.Contains(installCmd, "--registry")
+}
+
+// npmInstallPackage extracts the single registry package spec from an
+// `npm install` command, or "" when the spec is not probeable (local path,
+// tarball, git URL, version range). The caller still installs it, just without
+// a metadata probe.
+func npmInstallPackage(installCmd string) string {
+	fields := strings.Fields(installCmd)
+	if len(fields) < 3 || fields[0] != "npm" || fields[1] != "install" {
+		return ""
+	}
+	for _, field := range fields[2:] {
+		if strings.HasPrefix(field, "-") {
+			continue
+		}
+		if !service.IsSafeNpmProbeSpec(field) {
+			return ""
+		}
+		return field
+	}
+	return ""
+}
 
 // ServeBackendInstall handles POST /api/backends/{id}/install — runs a
 // backend's built-in install command on this machine.
@@ -58,9 +133,9 @@ func ServeBackendInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Same China-mirror rewrite the welcome panel shows, so what the user
-	// copied by hand and what this button runs are the same command.
-	command := prepareInstallCmd(spec.InstallCmd)
+	// Probe the candidate sources once, then run the install with the selected
+	// one. Listing the backend never probes.
+	command := resolveInstallCmd(r.Context(), spec.InstallCmd)
 
 	res, err := service.InstallAgent(spec.ID, command)
 	if err != nil {

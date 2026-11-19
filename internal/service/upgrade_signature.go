@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"clawbench/internal/platform/source"
 )
 
 // The npm registry signs every published version with an ECDSA P-256 key whose
@@ -28,12 +30,6 @@ import (
 // package identity and version to the integrity hash, and any change to either
 // invalidates it.
 const (
-	// npmjsRegistryBase is the public npm registry.
-	npmjsRegistryBase = "https://registry.npmjs.org"
-	// npmMirrorRegistryBase is the npmmirror CDN, which mirrors npmjs metadata
-	// (including its signatures) but does not serve the keys endpoint.
-	npmMirrorRegistryBase = "https://registry.npmmirror.com"
-
 	// npmKeysPath is the endpoint publishing npm's signing public keys. It is
 	// always fetched from npmjs, never from the mirror that served the package
 	// metadata: the anchor must be independent of the source under suspicion.
@@ -68,7 +64,7 @@ type npmKeysResponse struct {
 // suspicious as one missing from npmjs itself.
 func isOfficialRegistry(base string) bool {
 	base = strings.TrimRight(strings.TrimSpace(base), "/")
-	return base == npmjsRegistryBase || base == npmMirrorRegistryBase
+	return base == source.NpmJsBase || base == source.NpmMirrorBase
 }
 
 // Verification issue codes.
@@ -318,7 +314,7 @@ func fetchNpmSigningKeys(parent context.Context) ([]npmSigningKey, error) {
 	ctx, cancel := context.WithTimeout(parent, upgradeSignatureKeysBudget)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, npmjsRegistryBase+npmKeysPath, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source.NpmJsBase+npmKeysPath, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create keys request: %w", err)
 	}

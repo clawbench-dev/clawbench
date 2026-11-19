@@ -57,161 +57,11 @@ func TestGetPlatformPkg_UnsupportedPlatform(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported platform")
 }
 
-// --- getRegistryBase ---
-
-func TestGetRegistryBase_China(t *testing.T) {
-	orig := platform.ChinaMirrorChecked.Load()
-	defer platform.ChinaMirrorChecked.Store(orig)
-
-	platform.ChinaMirrorChecked.Store(1) // China
-	base := getRegistryBase()
-	assert.Equal(t, "https://registry.npmmirror.com", base)
-}
-
-func TestGetRegistryBase_NonChina(t *testing.T) {
-	orig := platform.ChinaMirrorChecked.Load()
-	defer platform.ChinaMirrorChecked.Store(orig)
-
-	platform.ChinaMirrorChecked.Store(2) // non-China
-	base := getRegistryBase()
-	assert.Equal(t, "https://registry.npmjs.org", base)
-}
-
-// --- getUserRegistryBase / parseNpmRcRegistry ---
-
-func TestGetUserRegistryBase_EnvVar(t *testing.T) {
-	orig := os.Getenv("NPM_CONFIG_REGISTRY")
-	defer os.Setenv("NPM_CONFIG_REGISTRY", orig)
-	os.Setenv("NPM_CONFIG_REGISTRY", "https://registry.example.com")
-
-	got := getUserRegistryBase()
-	assert.Equal(t, "https://registry.example.com", got)
-}
-
-func TestGetUserRegistryBase_EnvVarLowercase(t *testing.T) {
-	origUpper, hasUpper := os.LookupEnv("NPM_CONFIG_REGISTRY")
-	os.Unsetenv("NPM_CONFIG_REGISTRY")
-	defer func() {
-		if hasUpper {
-			os.Setenv("NPM_CONFIG_REGISTRY", origUpper)
-		} else {
-			os.Unsetenv("NPM_CONFIG_REGISTRY")
-		}
-	}()
-
-	orig := os.Getenv("npm_config_registry")
-	defer os.Setenv("npm_config_registry", orig)
-	os.Setenv("npm_config_registry", "https://registry.example.com/")
-
-	// Trailing slash should be trimmed.
-	got := getUserRegistryBase()
-	assert.Equal(t, "https://registry.example.com", got)
-}
-
-func TestGetUserRegistryBase_EnvVarPriorityOverNpmrc(t *testing.T) {
-	orig := os.Getenv("NPM_CONFIG_REGISTRY")
-	defer os.Setenv("NPM_CONFIG_REGISTRY", orig)
-	os.Setenv("NPM_CONFIG_REGISTRY", "https://env.example.com")
-
-	// A valid .npmrc registry exists but env var should win.
-	withTempHome(t)
-	writeNpmRc(t, "registry=https://npmrc.example.com\n")
-
-	assert.Equal(t, "https://env.example.com", getUserRegistryBase())
-}
-
-func TestGetUserRegistryBase_InvalidEnvVarIgnored(t *testing.T) {
-	setNpmRegistryEnv(t, "default")
-
-	// Should fall through to .npmrc, not return the invalid value.
-	withTempHome(t)
-	writeNpmRc(t, "registry=https://npmrc.example.com\n")
-
-	assert.Equal(t, "https://npmrc.example.com", getUserRegistryBase())
-}
-
-func TestGetUserRegistryBase_FromNpmRc(t *testing.T) {
-	clearNpmEnv(t)
-	withTempHome(t)
-	writeNpmRc(t, "registry=https://registry.npmmirror.com\n")
-
-	got := getUserRegistryBase()
-	assert.Equal(t, "https://registry.npmmirror.com", got)
-}
-
-func TestGetUserRegistryBase_NoNpmrc(t *testing.T) {
-	clearNpmEnv(t)
-	withTempHome(t)
-
-	assert.Equal(t, "", getUserRegistryBase())
-}
-
-func TestGetUserRegistryBase_CommentedNpmrc(t *testing.T) {
-	clearNpmEnv(t)
-	withTempHome(t)
-	writeNpmRc(t, "# registry=https://ignored.example.com\n")
-
-	assert.Equal(t, "", getUserRegistryBase())
-}
-
-func TestGetUserRegistryBase_DegenerateValuesIgnored(t *testing.T) {
-	origLower, hasLower := os.LookupEnv("npm_config_registry")
-	os.Unsetenv("npm_config_registry")
-	defer func() {
-		if hasLower {
-			os.Setenv("npm_config_registry", origLower)
-		} else {
-			os.Unsetenv("npm_config_registry")
-		}
-	}()
-	for _, v := range []string{"http://", "https://", "http:", "default", "ftp://x"} {
-		orig := os.Getenv("NPM_CONFIG_REGISTRY")
-		os.Setenv("NPM_CONFIG_REGISTRY", v)
-		withTempHome(t)
-		// No valid .npmrc either.
-		got := getUserRegistryBase()
-		os.Setenv("NPM_CONFIG_REGISTRY", orig)
-		assert.Equal(t, "", got, "value %q should be rejected", v)
-	}
-}
-
-func TestGetUserRegistryBase_NoSchemeIgnored(t *testing.T) {
-	setNpmRegistryEnv(t, "registry.example.com")
-	withTempHome(t)
-
-	assert.Equal(t, "", getUserRegistryBase())
-}
-
-// --- registryCandidates ---
-
-func TestRegistryCandidates_NoUserMirror(t *testing.T) {
-	orig := platform.ChinaMirrorChecked.Load()
-	defer platform.ChinaMirrorChecked.Store(orig)
-	platform.ChinaMirrorChecked.Store(2)
-
-	// Ensure no user mirror.
-	setNpmRegistryEnv(t, "")
-	withTempHome(t)
-
-	assert.Equal(t, []string{"https://registry.npmjs.org"}, registryCandidates())
-}
-
-func TestRegistryCandidates_WithUserMirror(t *testing.T) {
-	orig := platform.ChinaMirrorChecked.Load()
-	defer platform.ChinaMirrorChecked.Store(orig)
-	platform.ChinaMirrorChecked.Store(2)
-
-	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
-	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
-	os.Setenv("NPM_CONFIG_REGISTRY", "https://mirror.example.com")
-
-	assert.Equal(t, []string{"https://registry.npmjs.org", "https://mirror.example.com"}, registryCandidates())
-}
-
 // --- fetchUpgradeInfo fallback ---
 
-func TestFetchUpgradeInfo_FallsBackToUserMirror(t *testing.T) {
-	// Default registry returns 500; user mirror returns a valid response.
+func TestFetchUpgradeInfo_FallsBackToRegionMirror(t *testing.T) {
+	// The region-preferred registry returns 500; the other public registry
+	// returns a valid response. No user source is configured.
 	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -229,8 +79,7 @@ func TestFetchUpgradeInfo_FallsBackToUserMirror(t *testing.T) {
 
 	origClient := upgradeHTTPClient
 	defer func() { upgradeHTTPClient = origClient }()
-	// Default candidate resolves to the default base (npmjs) -> rewrite to
-	// failServer; the user mirror base (mirrorServer) -> rewrite to mirrorServer.
+	// npmjs -> failServer; npmmirror -> mirrorServer.
 	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
 		defaultBase: failServer.URL,
 		mirrorBase:  mirrorServer.URL,
@@ -238,11 +87,10 @@ func TestFetchUpgradeInfo_FallsBackToUserMirror(t *testing.T) {
 
 	orig := platform.ChinaMirrorChecked.Load()
 	defer platform.ChinaMirrorChecked.Store(orig)
-	platform.ChinaMirrorChecked.Store(2) // default = registry.npmjs.org
+	platform.ChinaMirrorChecked.Store(2) // non-China: npmjs first, npmmirror second
 
-	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
-	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
-	os.Setenv("NPM_CONFIG_REGISTRY", mirrorServer.URL)
+	clearNpmEnv(t)
+	withTempHome(t)
 
 	info, err := fetchUpgradeInfo()
 	require.NoError(t, err)
@@ -267,9 +115,8 @@ func TestFetchUpgradeInfo_AllSourcesFail(t *testing.T) {
 	defer platform.ChinaMirrorChecked.Store(orig)
 	platform.ChinaMirrorChecked.Store(2)
 
-	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
-	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
-	os.Setenv("NPM_CONFIG_REGISTRY", failServer.URL)
+	clearNpmEnv(t)
+	withTempHome(t)
 
 	_, err := fetchUpgradeInfo()
 	assert.Error(t, err)
@@ -280,7 +127,7 @@ func TestFetchUpgradeInfo_AllSourcesFail(t *testing.T) {
 // whole check. The check is user-facing: the frontend aborts at its 10s default
 // timeout, so a check that spends 10s per candidate gets discarded even when
 // the fallback would have answered.
-func TestFetchUpgradeInfo_StuckCandidateCostsOneAttemptBudget(t *testing.T) {
+func TestFetchUpgradeInfo_StuckUserSourceCostsOneAttemptBudget(t *testing.T) {
 	resp := npmRegistryResponse{}
 	resp.Version = "99.0.0"
 	resp.Dist.Tarball = "https://mirror.example.com/pkg/-/pkg-99.0.0.tgz"
@@ -289,15 +136,18 @@ func TestFetchUpgradeInfo_StuckCandidateCostsOneAttemptBudget(t *testing.T) {
 
 	origClient := upgradeHTTPClient
 	defer func() { upgradeHTTPClient = origClient }()
-	upgradeHTTPClient = &http.Client{Transport: &stuckDefaultTransport{mirrorBody: body}}
+	upgradeHTTPClient = &http.Client{Transport: &stuckUserTransport{
+		userHost:   "slow.example.com",
+		mirrorBody: body,
+	}}
 
 	orig := platform.ChinaMirrorChecked.Load()
 	defer platform.ChinaMirrorChecked.Store(orig)
-	platform.ChinaMirrorChecked.Store(2) // default = registry.npmjs.org
+	platform.ChinaMirrorChecked.Store(2) // non-China: user -> npmjs -> npmmirror
 
-	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
-	defer os.Setenv("NPM_CONFIG_REGISTRY", origEnv)
-	os.Setenv("NPM_CONFIG_REGISTRY", "https://mirror.example.com")
+	clearNpmEnv(t)
+	withTempHome(t)
+	t.Setenv("NPM_CONFIG_REGISTRY", "https://slow.example.com")
 
 	start := time.Now()
 	info, err := fetchUpgradeInfo()
@@ -305,21 +155,21 @@ func TestFetchUpgradeInfo_StuckCandidateCostsOneAttemptBudget(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "99.0.0", info.LatestVersion)
-	// The stuck candidate burns upgradeRegistryAttemptBudget; the mirror then
-	// answers immediately. Anything near the old per-query 10s means the
-	// candidate budgets are shared again.
+	// The stuck user source burns upgradeRegistryAttemptBudget; the region
+	// registry then answers immediately.
 	assert.Less(t, elapsed, upgradeRegistryAttemptBudget+2*time.Second,
 		"a stuck candidate must not consume the whole check")
 }
 
-// stuckDefaultTransport hangs on the official registry hosts until the request
-// context is cancelled, and answers every other host with mirrorBody.
-type stuckDefaultTransport struct {
+// stuckUserTransport hangs on the user registry host until the request context
+// is cancelled, and answers every other host with mirrorBody.
+type stuckUserTransport struct {
+	userHost   string
 	mirrorBody []byte
 }
 
-func (t *stuckDefaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Host == "registry.npmjs.org" || req.URL.Host == "registry.npmmirror.com" {
+func (t *stuckUserTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Host == t.userHost {
 		<-req.Context().Done()
 		return nil, req.Context().Err()
 	}
@@ -339,10 +189,10 @@ func TestUpgradeCheckBudgetsFitClientTimeout(t *testing.T) {
 	const clientTimeout = 10 * time.Second
 
 	assert.Less(t, upgradeCheckBudget, clientTimeout)
-	// Worst case: the default candidate times out, the fallback mirror answers,
-	// and its signature is then verified. registryCandidates returns at most the
-	// default base plus the user's mirror.
-	worstCase := 2*upgradeRegistryAttemptBudget + upgradeSignatureKeysBudget
+	// Worst case: all three candidates time out, then the signature keys are
+	// fetched. source.Npm returns at most user + region + the other public
+	// registry.
+	worstCase := 3*upgradeRegistryAttemptBudget + upgradeSignatureKeysBudget
 	assert.LessOrEqual(t, worstCase, upgradeCheckBudget)
 }
 
@@ -372,9 +222,9 @@ func (t *failoverTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	}
 
 	target := t.defaultBase
-	// Requests to a user mirror host route to mirrorBase; the default registry
-	// host (npmjs) routes to defaultBase.
-	if req.URL.Host != "registry.npmjs.org" && req.URL.Host != "registry.npmmirror.com" {
+	// npmjs routes to defaultBase; npmmirror and any user-configured mirror
+	// route to mirrorBase.
+	if req.URL.Host != "registry.npmjs.org" {
 		target = t.mirrorBase
 		if t.mirrorHit != nil {
 			*t.mirrorHit = true
@@ -405,7 +255,7 @@ func (t *failoverTransport) keysResponse(req *http.Request) (*http.Response, err
 }
 
 // withTempHome redirects the process HOME (and USERPROFILE on Windows) to a
-// fresh temp dir so parseNpmRcRegistry reads a controlled .npmrc.
+// fresh temp dir so source.UserNpmRegistry reads a controlled .npmrc.
 func withTempHome(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -415,35 +265,6 @@ func withTempHome(t *testing.T) {
 	origUp := os.Getenv("USERPROFILE")
 	os.Setenv("USERPROFILE", dir)
 	t.Cleanup(func() { os.Setenv("USERPROFILE", origUp) })
-}
-
-// setNpmRegistryEnv sets the upper-case NPM_CONFIG_REGISTRY to value and
-// clears the lower-case npm_config_registry for the duration of the test.
-//
-// Both spellings are consulted by getUserRegistryBase (upper-case first), so
-// a test that only sets the upper-case one is still reading the ambient
-// lower-case value. npm exports that variable in every shell that ever ran
-// `npm install`, so these tests used to fail or pass depending on how the
-// suite happened to be launched — a result that had nothing to do with the
-// code under test.
-func setNpmRegistryEnv(t *testing.T, value string) {
-	t.Helper()
-	origUpper, hasUpper := os.LookupEnv("NPM_CONFIG_REGISTRY")
-	origLower, hasLower := os.LookupEnv("npm_config_registry")
-	os.Setenv("NPM_CONFIG_REGISTRY", value)
-	os.Unsetenv("npm_config_registry")
-	t.Cleanup(func() {
-		if hasUpper {
-			os.Setenv("NPM_CONFIG_REGISTRY", origUpper)
-		} else {
-			os.Unsetenv("NPM_CONFIG_REGISTRY")
-		}
-		if hasLower {
-			os.Setenv("npm_config_registry", origLower)
-		} else {
-			os.Unsetenv("npm_config_registry")
-		}
-	})
 }
 
 func clearNpmEnv(t *testing.T) {
@@ -467,17 +288,6 @@ func clearNpmEnv(t *testing.T) {
 			os.Unsetenv("npm_config_registry")
 		}
 	})
-}
-
-func writeNpmRc(t *testing.T, content string) {
-	t.Helper()
-	home := os.Getenv("HOME")
-	if home == "" {
-		home = os.Getenv("USERPROFILE")
-	}
-	if err := os.WriteFile(filepath.Join(home, ".npmrc"), []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to write .npmrc: %v", err)
-	}
 }
 
 // --- resolveExpectedDigest ---
@@ -1011,14 +821,13 @@ func TestFetchUpgradeInfo_Success(t *testing.T) {
 
 	upgradeHTTPClient = ts.Client()
 
-	// Override getRegistryBase by setting non-China
+	// Pin non-China so the test is independent of the machine's region.
 	origChina := platform.ChinaMirrorChecked.Load()
 	defer platform.ChinaMirrorChecked.Store(origChina)
 	platform.ChinaMirrorChecked.Store(2)
 
 	// We need to redirect requests to our test server.
-	// Since getRegistryBase returns a fixed URL, we use the test server's URL
-	// by making the HTTP client transport rewrite.
+	// The test server URL is injected directly into fetchUpgradeInfoFromBase.
 	info, err := fetchUpgradeInfoWithBase(ts.URL)
 	require.NoError(t, err)
 	assert.Equal(t, "99.0.0", info.LatestVersion)
@@ -2468,18 +2277,22 @@ func TestPerformUpgrade_InstallDirNotWritable(t *testing.T) {
 }
 
 func TestRewriteTarballURL(t *testing.T) {
-	// Tarball not from npmjs → returned unchanged (fall-through branch).
+	// Tarball not from npmjs → returned unchanged.
 	assert.Equal(t,
 		"https://other.example.com/x.tgz",
-		rewriteTarballURL("https://other.example.com/x.tgz", "https://registry.npmmirror.com"))
-	// base == npmjs → returned unchanged.
+		rewriteTarballURL("https://other.example.com/x.tgz"))
+
+	// Abroad: npmjs is already the fast public registry, leave it alone.
+	withChina(t, false)
 	assert.Equal(t,
 		"https://registry.npmjs.org/x.tgz",
-		rewriteTarballURL("https://registry.npmjs.org/x.tgz", "https://registry.npmjs.org"))
-	// npmjs tarball + non-npmjs base → rewritten to base (rewrite branch).
+		rewriteTarballURL("https://registry.npmjs.org/x.tgz"))
+
+	// China: npmjs tarball → npmmirror, so the download is fast.
+	withChina(t, true)
 	assert.Equal(t,
 		"https://registry.npmmirror.com/x.tgz",
-		rewriteTarballURL("https://registry.npmjs.org/x.tgz", "https://registry.npmmirror.com"))
+		rewriteTarballURL("https://registry.npmjs.org/x.tgz"))
 }
 
 // TestNormalizeTarballURL covers both the malformed mirror URLs that triggered
