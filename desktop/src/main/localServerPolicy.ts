@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 /**
  * Pure decisions for the embedded ("all-in-one") desktop build.
  *
@@ -14,6 +16,17 @@ export const EMBEDDED_SERVER_DIR = 'server'
 
 /** Windows executable name inside {@link EMBEDDED_SERVER_DIR}. */
 export const EMBEDDED_SERVER_EXE = 'clawbench.exe'
+
+/**
+ * Where the embedded server binary lives for a given app executable.
+ *
+ * electron-builder's `extraFiles` puts it at `<install root>/server/` — NOT under
+ * `resources/`, which a desktop payload update replaces wholesale. Kept here as
+ * a pure function so the path can be asserted without Electron.
+ */
+export function embeddedServerBinaryPath(execPath: string): string {
+  return path.join(path.dirname(execPath), EMBEDDED_SERVER_DIR, EMBEDDED_SERVER_EXE)
+}
 
 /**
  * Default port. Matches the standalone server's default so an embedded install

@@ -132,6 +132,38 @@ describe('built-in detection keys on the address', () => {
   })
 })
 
+describe('a thin client does not start a server it does not ship', () => {
+  it('returns before starting when the bundled binary is absent', () => {
+    // The thin package (every download except the `-local-` one) has no
+    // `server/clawbench.exe`. Without this guard the startup path called
+    // startEmbeddedServer() anyway, whose first line throws "the server binary
+    // is missing from this build" — so every launch of a thin client opened the
+    // "ClawBench 自带的本机服务没能启动" error dialog before the window existed.
+    const src = readRepoFile('desktop/src/main/index.ts')
+    expect(src).toMatch(/import \{[^}]*hasEmbeddedServerBinary[^}]*\} from '\.\/localServer'/)
+
+    const fn = src.match(/async function startEmbeddedServerIfPresent\(\)[\s\S]*?\n\}/)
+    expect(fn, 'startEmbeddedServerIfPresent not found').not.toBeNull()
+    const body = fn![0]
+    const guardAt = body.indexOf('hasEmbeddedServerBinary()')
+    const startAt = body.indexOf('startEmbeddedServer()')
+    expect(guardAt, 'the guard must be the first thing the function does').toBeGreaterThan(-1)
+    expect(guardAt).toBeLessThan(startAt)
+    // Early return, not a fall-through into the failure dialog.
+    expect(body.slice(guardAt, startAt)).toContain('return')
+  })
+
+  it('still starts the bundled server when the build ships one', () => {
+    // The other direction of the same guard: a fused install must keep starting
+    // its server, and a real failure there must still be reported.
+    const src = readRepoFile('desktop/src/main/index.ts')
+    const fn = src.match(/async function startEmbeddedServerIfPresent\(\)[\s\S]*?\n\}/)
+    expect(fn, 'startEmbeddedServerIfPresent not found').not.toBeNull()
+    expect(fn![0]).toContain('await startEmbeddedServer()')
+    expect(fn![0]).toContain('showMessageBox')
+  })
+})
+
 describe('the version gate cannot replace a fused install', () => {
   it('refuses the thin package when this client carries its own server', () => {
     // Every downloadable package is the thin one; installing it would drop

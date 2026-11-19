@@ -10,11 +10,11 @@ import {
   EMBEDDED_DEFAULT_PORT,
   EMBEDDED_EXIT_GRACE_MS,
   EMBEDDED_HEALTH_INTERVAL_MS,
-  EMBEDDED_SERVER_DIR,
   EMBEDDED_SERVER_EXE,
   EMBEDDED_STARTUP_TIMEOUT_MS,
   chooseEmbeddedPort,
   embeddedServerArgs,
+  embeddedServerBinaryPath as embeddedServerBinaryPathFor,
   embeddedServerUrl,
   isClawBenchHealth,
   reservedPortsForEmbedded,
@@ -117,8 +117,9 @@ export function getEmbeddedServerInfo(): EmbeddedServerInfo | null {
 export function embeddedServerBinaryPath(): string {
   // The app root, not `resources/`: electron-builder's `extraFiles` puts the
   // server next to the executable precisely so a payload update (which replaces
-  // `resources/`) can never remove it.
-  return path.join(path.dirname(process.execPath), EMBEDDED_SERVER_DIR, EMBEDDED_SERVER_EXE)
+  // `resources/`) can never remove it. Path arithmetic lives in the policy
+  // module so it can be tested without Electron.
+  return embeddedServerBinaryPathFor(process.execPath)
 }
 
 /**

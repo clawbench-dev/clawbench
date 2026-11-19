@@ -11,7 +11,13 @@ import { flushFloatingBounds, hasAppTray, initFloating, openMainWindow } from '.
 import { record, recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
 import { embeddedServerLabels, resolveNativeLanguage } from './labels'
-import { setEmbeddedServerActive, startEmbeddedServer, stopEmbeddedServer, isEmbeddedServerUrl } from './localServer'
+import {
+  hasEmbeddedServerBinary,
+  isEmbeddedServerUrl,
+  setEmbeddedServerActive,
+  startEmbeddedServer,
+  stopEmbeddedServer,
+} from './localServer'
 
 /**
  * One process per machine, before anything else runs.
@@ -83,6 +89,11 @@ applySecureContextSwitch()
  * assume success while startup can still fail and fall back to the login page.
  */
 async function startEmbeddedServerIfPresent(): Promise<void> {
+  // A thin client ships no `server/clawbench.exe`. Without this check the start
+  // attempt below throws "the server binary is missing from this build" and the
+  // catch shows the "built-in server failed to start" dialog — on EVERY launch,
+  // even though a thin client never had a server to start.
+  if (!hasEmbeddedServerBinary()) return
   try {
     const url = await startEmbeddedServer()
     setEmbeddedServerActive(true)
