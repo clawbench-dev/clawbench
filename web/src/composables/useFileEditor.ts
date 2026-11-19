@@ -19,6 +19,13 @@ import { ref } from 'vue'
  */
 
 const _editing = ref(false)
+/**
+ * Which editor the current edit session uses: 'source' (CodeMirror), 'wysiwyg'
+ * (visual markdown), or '' when not editing. The TOC dock needs it because its
+ * source-editor outline is the saved file (stale while typing) while the visual
+ * editor owns a live outline — only the latter may show the dock.
+ */
+const _editingMode = ref<'' | 'source' | 'wysiwyg'>('')
 let _exitEditHandler: (() => void | Promise<void>) | null = null
 let _dirtyGetter: (() => boolean) | null = null
 let _leaveGuard: (() => boolean | Promise<boolean>) | null = null
@@ -26,6 +33,7 @@ let _leaveGuard: (() => boolean | Promise<boolean>) | null = null
 /** @internal Reset all state — for tests only */
 export function _resetForTesting() {
     _editing.value = false
+    _editingMode.value = ''
     _exitEditHandler = null
     _dirtyGetter = null
     _leaveGuard = null
@@ -38,6 +46,11 @@ export function useFileEditor() {
 
     function isEditing(): boolean {
         return _editing.value
+    }
+
+    /** Record which editor the current session uses ('' when not editing). */
+    function setEditingMode(mode: '' | 'source' | 'wysiwyg') {
+        _editingMode.value = mode
     }
 
     /**
@@ -99,5 +112,5 @@ export function useFileEditor() {
         return (await _leaveGuard()) === true
     }
 
-    return { editing: _editing, setEditing, isEditing, registerExitEditHandler, exitEdit, registerDirtyGetter, isEditorDirty, registerLeaveGuard, confirmLeave }
+    return { editing: _editing, editingMode: _editingMode, setEditing, setEditingMode, isEditing, registerExitEditHandler, exitEdit, registerDirtyGetter, isEditorDirty, registerLeaveGuard, confirmLeave }
 }

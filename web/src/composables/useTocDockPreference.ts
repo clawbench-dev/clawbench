@@ -13,7 +13,16 @@ export type TocDockSide = 'left' | 'right'
 const TAG = 'TocDockPref'
 
 const { isWideScreen } = getWideScreenState()
-const { editing } = useFileEditor()
+const { editing, editingMode } = useFileEditor()
+
+/**
+ * Whether the dock must stay hidden because the current edit session cannot
+ * feed it a trustworthy outline. The source editor's outline is the saved file
+ * (it goes stale as soon as the user types), so the dock stays out of the way
+ * there. The visual editor's outline is read live from its DOM, so it keeps the
+ * dock available.
+ */
+const hiddenForEdit = computed(() => editing.value && editingMode.value !== 'wysiwyg')
 
 /**
  * PC-wide-screen TOC dock preference. The dock is the inline right-side TOC
@@ -23,8 +32,10 @@ const { editing } = useFileEditor()
  * - Open/close state is remembered globally (localStorage) across reloads.
  * - Width (draggable) is remembered globally, clamped to [200, 400].
  * - Side (left/right) is remembered globally (localStorage).
- * - While the file editor is active the dock is hidden (it is a read-navigation
- *   tool); exiting edit mode restores the previous open state.
+ * - While the **source** editor is active the dock is hidden (its outline is
+ *   the saved file, which goes stale as soon as the user types); exiting that
+ *   edit session restores the previous open state. The visual (WYSIWYG) editor
+ *   keeps the dock available — its outline is read live from the editor DOM.
  * - effectiveOpen is only ever true on wide screens; on narrow screens the
  *   TOC keeps using the bottom drawer and this module is inert.
  */
@@ -35,20 +46,26 @@ const tocDockSide = ref<TocDockSide>(TOC_DOCK_DEFAULT_SIDE)
 
 /** Pre-edit open state, restored on exit. In-memory only (not persisted). */
 let wasOpenBeforeEdit = false
+/** Whether this edit session is the one that force-hid the dock. */
+let hiddenForThisEdit = false
 let initialized = false
 let stopEpochWatch: (() => void) | null = null
 
-// Editing hides the dock; restore the pre-edit state on exit.
+// The source editor hides the dock; the visual editor does not. Restore the
+// pre-edit state only when this session actually hid it — a dock opened during
+// visual editing must not be closed on exit.
 // Registered exactly once at module load — re-registering per init() would
 // accumulate duplicate watchers that share `wasOpenBeforeEdit` and overwrite
 // each other.
-watch(editing, (isEditing) => {
-    if (isEditing) {
+watch([editing, editingMode], ([isEditing, mode]) => {
+    if (isEditing && mode !== 'wysiwyg') {
         wasOpenBeforeEdit = tocDockOpen.value
         tocDockOpen.value = false
-    } else {
+        hiddenForThisEdit = true
+    } else if (!isEditing && hiddenForThisEdit) {
         tocDockOpen.value = wasOpenBeforeEdit
         wasOpenBeforeEdit = false
+        hiddenForThisEdit = false
     }
 })
 
@@ -91,10 +108,10 @@ export function useTocDockPreference() {
     init()
 
     function toggle() {
-        // Editing hard-hides the dock (read-navigation tool): accept no toggle
-        // while editing, otherwise the open state and its persistence get
-        // corrupted by a click that the UI can't even reflect.
-        if (editing.value) return
+        // The source editor has no live outline to offer: accept no toggle
+        // there, otherwise the open state and its persistence get corrupted by
+        // a click that the UI cannot even reflect.
+        if (hiddenForEdit.value) return
         tocDockOpen.value = !tocDockOpen.value
         persistOpen()
     }
@@ -119,7 +136,7 @@ export function useTocDockPreference() {
         }
     }
 
-    const effectiveOpen = computed(() => isWideScreen.value && tocDockOpen.value && !editing.value)
+    const effectiveOpen = computed(() => isWideScreen.value && tocDockOpen.value && !hiddenForEdit.value)
 
     return { tocDockOpen, tocDockWidth, tocDockSide, effectiveOpen, toggle, close, setWidth, toggleSide }
 }
@@ -133,4 +150,5 @@ export function _resetForTest() {
     tocDockWidth.value = TOC_DOCK_DEFAULT_WIDTH
     tocDockSide.value = TOC_DOCK_DEFAULT_SIDE
     wasOpenBeforeEdit = false
+    hiddenForThisEdit = false
 }

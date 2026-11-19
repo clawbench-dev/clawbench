@@ -171,6 +171,36 @@ describe('useTocDockPreference', () => {
         expect(pref.effectiveOpen.value).toBe(false)
     })
 
+    it('keeps the dock available during visual (WYSIWYG) editing', async () => {
+        const pref = useTocDockPreference()
+        const { setEditing, setEditingMode } = useFileEditor()
+        setEditing(true)
+        setEditingMode('wysiwyg')
+        await nextTick()
+
+        // The visual editor reads its outline live from the editor DOM, so the
+        // button must actually open the dock here (this was a silent no-op).
+        pref.toggle()
+        expect(pref.tocDockOpen.value).toBe(true)
+        expect(pref.effectiveOpen.value).toBe(true)
+    })
+
+    it('keeps a dock opened during visual editing open after the session ends', async () => {
+        const pref = useTocDockPreference()
+        const { setEditing, setEditingMode } = useFileEditor()
+        setEditing(true)
+        setEditingMode('wysiwyg')
+        await nextTick()
+
+        pref.toggle()
+        expect(pref.effectiveOpen.value).toBe(true)
+
+        setEditing(false)
+        setEditingMode('')
+        await nextTick()
+        expect(pref.effectiveOpen.value).toBe(true)
+    })
+
     it('effectiveOpen is always false on narrow screens regardless of toggle', () => {
         _setWideScreenForTest(false)
         const pref = useTocDockPreference()

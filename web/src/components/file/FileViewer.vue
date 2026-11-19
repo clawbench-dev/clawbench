@@ -609,6 +609,14 @@ const mdPreviewRef = ref(null)
 const markdownEditMode = ref('source')
 const mdEditorRef = ref(null)
 
+// Keep the shared edit-mode flag in step with the editor actually on screen.
+// The TOC dock reads it: its source-editor outline is the saved file (stale
+// while typing), while the visual editor owns a live outline and may keep the
+// dock visible.
+watch([editing, markdownEditMode], ([isEditing, mode]) => {
+    fileEditor.setEditingMode(isEditing ? (isMarkdown.value && mode === 'wysiwyg' ? 'wysiwyg' : 'source') : '')
+}, { immediate: true })
+
 /** The editor that currently owns the markdown text, if any. */
 function activeTextEditor() {
     if (isMarkdown.value && markdownEditMode.value === 'wysiwyg') return mdEditorRef.value
