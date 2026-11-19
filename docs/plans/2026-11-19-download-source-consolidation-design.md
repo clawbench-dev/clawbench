@@ -188,12 +188,12 @@ func (c Candidate) URL(path string) string
 
 拆成两个函数：
 
-- `displayInstallCmd(cmd)`：只用于列表/详情展示，不探测。**只对 `npm install` 开头的命令**追加 `--registry`；`npm i`、`npx`、`curl | bash` 原样返回。按 `source.Npm()` 的第一个候选追加；如果第一个是 npmjs 官方源，就不追加（npm 默认就是它）。
-- `resolveInstallCmd(ctx, cmd)`：只在真正安装时调用。按 `source.Npm()` 逐个探测，返回实际要执行的命令。
+- 展示（列表/详情）：直接返回后端注册表里的 `InstallCmd`，不探测、也不追加源。**2026-11-19 修订**：最初按 `source.Npm()` 的第一个候选追加 `--registry`，但那个源只是猜测，它挂掉时展示和实际就会不一致；改成展示不带源，由安装弹窗说明“安装时自动选源”，并在装完后显示实际执行的命令。
+- `resolveInstallCmd(ctx, cmd)`：只在真正安装时调用。按 `source.Npm()` 逐个探测，返回实际要执行的命令（只有 `npm install` 开头且没有 `--registry` 的才改写）。
 
 这里的 `source.Npm()` 读的是**服务端机器**的配置，因为安装命令就在这台机器上执行。这和桌面升级（读客户端机器的 npmrc）刻意相反，参见 `docs/spec/client/desktop-client.md:152`。不要把两者“统一”成同一个视角。
 
-列表里显示的命令和最终执行的命令在极少数情况下可能不同（探测时用户源挂了，落到地区镜像）。安装结果里带 `Command` 字段，UI 展示结果时以它为准。
+展示的命令和最终执行的命令在源上可能不同（探测时用户源挂了，落到地区镜像），所以展示不带源。安装结果里带 `Command` 字段，安装弹窗在它和展示命令不同时把它显示出来（`AgentInstallDialog.vue`）。
 
 ### 4.2 探测规则
 
@@ -557,7 +557,7 @@ npm 不是选项：文档已记录，历史上 110MB 的桌面 tarball 在 npmmi
 
 1. **源策略包**：新增 `internal/platform/source` + 测试；把常量、顺序、URL 校验集中进去。**先按 gh-proxy 实现**；对象存储只预留一个候选位置，不阻塞这一步。
 2. **服务端迁移**：`upgrade.go`、`upgrade_signature.go`、`desktop_upgrade.go`、`node_runtime.go` 改用 `source`；删重复常量。
-3. **智能体安装**：拆 `displayInstallCmd` / `resolveInstallCmd`；接 `source.Npm()`；补探测和 401/404 分支测试。
+3. **智能体安装**：展示与执行分开（展示不带源，执行时探源）；接 `source.Npm()`；补探测和 401/404 分支测试。
 4. **桌面删载荷**：按 §5.2 从 Go → Electron → CI → npm → 文档逐层删；每层跑对应测试。
 5. **SHA256**：CI 生成 `SHA256SUMS`；服务端拉取/缓存/下发；客户端校验；融合版接 `fused_checksums`。
 6. **兼容回归**：按 §7 的矩阵手工/单测各走一遍。

@@ -9,13 +9,20 @@
 
         <!-- Command row: always visible. It is the fallback when an automatic
              install cannot work (no permission to the global npm prefix, an
-             air-gapped network, a container the user cannot install into), and
-             it is also what the server actually runs — same source. -->
+             air-gapped network, a container the user cannot install into).
+             The string carries no source on purpose: the registry is picked by
+             the server's probe when the install runs, so naming one here would
+             be a guess. The note below says so, and the outcome shows the
+             command that actually ran. -->
         <div class="install-hint">{{ t('welcomeInfo.manualInstallHint') }}</div>
         <div class="install-cmd-row">
           <code class="install-cmd">{{ installCmd }}</code>
           <CopyButton :text="installCmd" class="btn-copy" :duration="2000" />
         </div>
+
+        <!-- Only npm installs go through the source probe; a shell installer has
+             no source, so the note would be wrong for it. -->
+        <div v-if="autoSelectsSource" class="install-note">{{ t('welcomeInfo.installSourceAuto') }}</div>
 
         <!-- Where it runs. A remote server or a container installs there, not on
              the device showing this dialog, and saying so up front avoids a
@@ -43,6 +50,12 @@
           <div class="install-status-title">
             {{ result.refreshed ? t('welcomeInfo.installSuccess') : t('welcomeInfo.installSuccessNeedsRescan') }}
           </div>
+          <!-- Shown only when the source made the executed command differ from
+               the one above: that is the case the user could not otherwise see. -->
+          <div v-if="actualCommand" class="install-cmd-row install-cmd-row--actual">
+            <span class="install-actual-label">{{ t('welcomeInfo.installActualCommand') }}</span>
+            <code class="install-cmd">{{ actualCommand }}</code>
+          </div>
           <pre v-if="result.output" class="install-output">{{ result.output }}</pre>
         </div>
 
@@ -64,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PackagePlus } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
@@ -91,6 +104,20 @@ const overlayRef = ref<HTMLDivElement | null>(null)
 let unregisterBack: (() => void) | null = null
 
 const { installing, error, result, run } = useAgentInstall()
+
+// `npm install …` is the only shape the server rewrites with a source. A short
+// `npm i`, an `npx` or a `curl | bash` install picks no source, so the note
+// about automatic selection would be misleading there.
+const autoSelectsSource = computed(
+  () => props.installCmd.startsWith('npm install') && !props.installCmd.includes('--registry'),
+)
+
+// The executed command, shown only when it differs from the one displayed —
+// i.e. when a probe chose a different source than the user would assume.
+const actualCommand = computed(() => {
+  const ran = result.value?.command ?? ''
+  return ran && ran !== props.installCmd ? ran : ''
+})
 
 // Escape (PC) closes the dialog, mirroring the Android back handler.
 function handleEscape() {
@@ -227,6 +254,18 @@ onBeforeUnmount(() => {
   color: var(--text-muted, #888);
   margin-bottom: var(--space-5);
   line-height: var(--line-height-normal);
+}
+
+.install-cmd-row--actual {
+  align-items: flex-start;
+}
+
+.install-actual-label {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary, #555);
+  line-height: var(--line-height-normal);
+  padding-top: 1px;
 }
 
 .install-status {

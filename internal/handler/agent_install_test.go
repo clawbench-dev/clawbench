@@ -88,7 +88,7 @@ func TestServeBackendInstall_IgnoresClientSuppliedCommand(t *testing.T) {
 
 	spec := model.FindSpecByBackend("claude")
 	require.NotNil(t, spec)
-	assert.Equal(t, displayInstallCmd(spec.InstallCmd), ranCommand)
+	assert.Equal(t, spec.InstallCmd+" --registry="+source.NpmMirrorBase, ranCommand)
 	assert.NotContains(t, ranCommand, "rm -rf")
 }
 
@@ -264,7 +264,7 @@ func TestServeAgentsGet_CarriesBackendInstallCmd(t *testing.T) {
 		found = true
 		spec := model.FindSpecByBackend("claude")
 		require.NotNil(t, spec)
-		assert.Equal(t, displayInstallCmd(spec.InstallCmd), a.InstallCmd)
+		assert.Equal(t, spec.InstallCmd, a.InstallCmd)
 	}
 	assert.True(t, found, "the claude agent must be in the fixture")
 }

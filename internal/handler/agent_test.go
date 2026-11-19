@@ -288,51 +288,27 @@ func TestAgentPatch_PreferredModel_ACPReportedModel(t *testing.T) {
 	assert.Equal(t, "claude-opus-4-5", preferredModel)
 }
 
-// ── install command preparation tests ──
+// ── install command display ──
 
-func TestDisplayInstallCmd_NpmInstallWithChinaMirror(t *testing.T) {
-	withInstallSources(t, []source.Candidate{{Name: "region-mirror", Base: source.NpmMirrorBase}})
-
-	result := displayInstallCmd("npm install -g @anthropic-ai/claude-code")
-	assert.Contains(t, result, "--registry="+source.NpmMirrorBase)
-}
-
-func TestDisplayInstallCmd_NpmInstallWithoutChina(t *testing.T) {
-	withInstallSources(t, []source.Candidate{{Name: "official", Base: source.NpmJsBase}})
-
-	result := displayInstallCmd("npm install -g @anthropic-ai/claude-code")
-	assert.NotContains(t, result, "--registry=")
-}
-
-func TestDisplayInstallCmd_UserSourceWins(t *testing.T) {
-	const private = "https://npm.corp.example/repository/npm"
+// The displayed command must not name a source. The registry is chosen by the
+// probe at install time, so a source baked into the string would be a guess —
+// and wrong whenever that source is down. The install dialog tells the user the
+// source is picked at install time and shows the command that actually ran.
+func TestBackendInstallCmd_DoesNotNameASource(t *testing.T) {
 	withInstallSources(t, []source.Candidate{
-		{Name: "user", Base: private},
+		{Name: "user", Base: "https://npm.corp.example"},
 		{Name: "region-mirror", Base: source.NpmMirrorBase},
 	})
 
-	result := displayInstallCmd("npm install -g @anthropic-ai/claude-code")
-	assert.Contains(t, result, "--registry="+private)
+	spec := model.FindSpecByBackend("claude")
+	require.NotNil(t, spec)
+	got := backendInstallCmd("claude")
+	assert.Equal(t, spec.InstallCmd, got)
+	assert.NotContains(t, got, "--registry")
 }
 
-func TestDisplayInstallCmd_NonNpmCommand(t *testing.T) {
-	result := displayInstallCmd("curl -fsSL https://get.qoder.dev | bash")
-	assert.Equal(t, "curl -fsSL https://get.qoder.dev | bash", result)
-}
-
-func TestDisplayInstallCmd_ShortNpmFormIsUntouched(t *testing.T) {
-	// Only `npm install` is rewritten; `npm i` is left alone so a future backend
-	// using the short form does not silently get a different command than the
-	// one documented for it.
-	withInstallSources(t, []source.Candidate{{Name: "region-mirror", Base: source.NpmMirrorBase}})
-	assert.Equal(t, "npm i -g foo", displayInstallCmd("npm i -g foo"))
-}
-
-func TestDisplayInstallCmd_AlreadyHasRegistry(t *testing.T) {
-	withInstallSources(t, []source.Candidate{{Name: "region-mirror", Base: source.NpmMirrorBase}})
-
-	result := displayInstallCmd("npm install -g --registry=https://my.local npm-pkg")
-	assert.NotContains(t, result, source.NpmMirrorBase)
+func TestBackendInstallCmd_UnknownBackendIsEmpty(t *testing.T) {
+	assert.Empty(t, backendInstallCmd("no-such-backend"))
 }
 
 func TestResolveInstallCmd_FirstWorkingSourceWins(t *testing.T) {

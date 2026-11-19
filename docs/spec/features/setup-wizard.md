@@ -78,6 +78,7 @@ sequenceDiagram
 ### 一键安装（`POST /api/backends/{id}/install`）
 
 - **命令只能来自服务端注册表**。请求体被完全忽略——否则这个已鉴权端点就是任意远程执行。这也是设置页与欢迎面板永远跑同一条命令的原因（都读 `BackendSpec.InstallCmd`）。
+- **源在安装时才定**。展示的命令是 `BackendSpec.InstallCmd` 原文，不带 `--registry`：源要靠探测才知道，写死在展示里就是猜。真正安装时按 `source.Npm()` 逐个 `npm view <包名> version --registry=<源>` 探测（每个 3 秒），第一个答应的源胜出并追加 `--registry`；401/403 停在该源不绕过，404/网络失败换下一个，全部失败用第一个源让 npm 报真实错误。对话框对 `npm install` 开头的命令提示"安装时自动选源"，装完在结果里显示实际执行的命令（与展示不同时）。`npm i`、`npx`、`curl | bash` 不改写。
 - **执行位置是运行 ClawBench 的机器**。远端服务器或容器里装的是那台机器，不是打开界面的设备；对话框里明写了这一点，避免「提示装好了但我电脑上没有」。
 - **走用户登录 shell**：部分后端是 `curl -fsSL … | bash` 管道，直接 exec 只能覆盖 `npm install -g` 那一半。独立进程组 + `WaitDelay`，取消时整组回收（同 `RunTaskScript` 的处理）。
 - **缺 Node 就顺手装上**：命令首 token 是 `npm`/`npx` 时先 `LookPath`；没有（或系统 Node 低于 20）就下载一份私有 Node.js LTS 再执行，而不是让用户自己解决。放在 `$CLAWBENCH_HOME/node`（与一键安装脚本同一目录，`~/.local/share/clawbench` 或 `%LOCALAPPDATA%\clawbench`），解压后放到本进程 PATH 最前面，后续 agent 进程和 rescan 都能用；服务启动时也会补一次（桌面图标/systemd 启动的进程看不到 rc 文件里的 PATH）。不需要 sudo，也不调用系统包管理器。下载源按 `platform.IsChinaMainland()` 选：国内先 npmmirror（`registry.npmmirror.com/-/binary/node`），失败换官方 `nodejs.org/dist`，反向同理；版本从 `index.json` 取最新 LTS，`SHASUMS256.txt` 拿得到就校验。装不上才返回 `400 NodeRuntimeMissing`，`detail.Tool` 指出缺哪个、`detail.Error` 说明自动安装为何失败。`curl | bash` 类命令不做这项检查。

@@ -32,28 +32,15 @@ import (
 // list without depending on the test machine's ~/.npmrc.
 var installSourceCandidates = source.Npm
 
-// displayInstallCmd prepares an install command for display. It never probes a
-// registry: the welcome panel and the agent settings page must render without
-// waiting on the network.
-//
-// Only `npm install …` is rewritten. `npm i`, `npx` and `curl | bash` are left
-// untouched: the first two are not the registry commands this feature targets,
-// and a shell installer has no generic source flag. A command that already
-// carries --registry is also left alone.
-func displayInstallCmd(installCmd string) string {
-	if !strings.HasPrefix(installCmd, "npm install") || strings.Contains(installCmd, "--registry") {
-		return installCmd
-	}
-	candidates := installSourceCandidates()
-	if len(candidates) == 0 || candidates[0].Base == source.NpmJsBase {
-		return installCmd
-	}
-	return installCmdWithSource(installCmd, candidates[0].Base)
-}
-
 // installCmdWithSource appends --registry only when the chosen source is not
-// npm's default. This keeps the displayed command and the executed command
-// identical when the answer is the official registry.
+// npm's default, so an official-registry install stays the bare command.
+//
+// This is only used by resolveInstallCmd (the actual install). The command the
+// UI displays is the backend's own InstallCmd, with no source in it: the source
+// is not known until the probe runs, and showing the first candidate would be a
+// guess that is wrong whenever that candidate is down. The dialog says the
+// source is picked at install time and shows the command that actually ran
+// afterwards (see AgentInstallDialog.vue).
 func installCmdWithSource(installCmd, base string) string {
 	if base == source.NpmJsBase {
 		return installCmd
@@ -474,19 +461,22 @@ func applyModelPrices(agents []*model.Agent, states map[string]*acpState) {
 	}
 }
 
-// backendInstallCmd returns the backend's built-in install command, prepared
-// for display (China mirror appended), or "" when it has none.
+// backendInstallCmd returns the backend's built-in install command as-is, or ""
+// when it has none.
+//
+// Deliberately no source: the registry is chosen by probing at install time
+// (resolveInstallCmd), so a command shown now cannot name it. Appending the
+// first candidate would be wrong whenever that candidate is unreachable.
 //
 // One implementation for both surfaces that show it: GET /api/backends (the
 // welcome panel's per-backend row) and GET /api/agents (an agent's settings
-// page). Two copies would let the welcome panel show a mirror-rewritten command
-// while the settings page offered the bare one.
+// page), so the two cannot disagree.
 func backendInstallCmd(backend string) string {
 	spec := model.FindSpecByBackend(backend)
 	if spec == nil {
 		return ""
 	}
-	return displayInstallCmd(spec.InstallCmd)
+	return spec.InstallCmd
 }
 
 func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
@@ -2575,7 +2565,7 @@ func ServeBackends(w http.ResponseWriter, r *http.Request) {
 			Specialty:            spec.Specialty,
 			DefaultCmd:           spec.DefaultCmd,
 			ThinkingEffortLevels: spec.ThinkingEffortLevels,
-			InstallCmd:           displayInstallCmd(spec.InstallCmd),
+			InstallCmd:           spec.InstallCmd,
 		})
 	}
 

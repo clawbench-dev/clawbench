@@ -10,7 +10,12 @@ const TAG = 'AgentInstall'
  * The command is NOT sent from here: the server looks it up in its own backend
  * registry (`POST /api/backends/{id}/install`). That keeps an authenticated
  * endpoint from becoming "run this string on the server", and it also means the
- * command shown in the dialog and the command actually run can never diverge.
+ * base command cannot diverge from the one the dialog shows.
+ *
+ * The npm source is the one part that is not known up front: the server probes
+ * the candidates when the install runs and appends `--registry=…` to the winner,
+ * so the executed string can differ from the displayed one. The response's
+ * `command` carries what actually ran, and the dialog shows it when it differs.
  *
  * Installs run on the machine serving ClawBench, which for a remote server or a
  * container is NOT the device looking at the UI.

@@ -23,8 +23,9 @@ const fieldCommand = "command"
 var probeNpmPackage = service.ProbeNpmPackage
 
 // resolveInstallCmd picks the npm source for one install and returns the
-// command to run. It is the only place that probes a registry; listing agents
-// uses displayInstallCmd, which never touches the network.
+// command to run. It is the only place that probes a registry; the commands
+// reported by GET /api/agents and GET /api/backends are the bare registry
+// command and never touch the network.
 //
 // The candidate order is source.Npm(): user-configured first, then the region
 // mirror, then the other public registry. A source that answers wins. A 401/403
@@ -133,7 +134,7 @@ func ServeBackendInstall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Probe the candidate sources once, then run the install with the selected
-	// one. Listing the backend (displayInstallCmd) never probes.
+	// one. Listing the backend never probes.
 	command := resolveInstallCmd(r.Context(), spec.InstallCmd)
 
 	res, err := service.InstallAgent(spec.ID, command)

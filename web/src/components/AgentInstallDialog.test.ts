@@ -59,6 +59,8 @@ const i18n = createI18n({
         install: '安装',
         manualInstallHint: '安装命令：',
         installRunsOnServer: '安装在运行 ClawBench 的机器上',
+        installSourceAuto: '安装时会自动挑选可用的下载源',
+        installActualCommand: '实际执行：',
         installNow: '开始安装',
         installing: '正在安装…',
         installSuccess: '安装成功',
@@ -70,12 +72,17 @@ const i18n = createI18n({
   },
 })
 
+/** Text of every note under the dialog, in render order. */
+function noteTexts(): string[] {
+  return Array.from(document.querySelectorAll('.install-note')).map((n) => n.textContent ?? '')
+}
+
 function mountDialog() {
   return mount(AgentInstallDialog, {
     props: {
       backendId: 'claude',
       backendName: 'Claude Code',
-      installCmd: 'npm i -g @anthropic/claude',
+      installCmd: 'npm install -g @anthropic-ai/claude-code',
     },
     global: { plugins: [i18n] },
     attachTo: document.body,
@@ -87,7 +94,7 @@ beforeEach(() => {
   mockInstallBackend.mockResolvedValue({
     ok: true,
     backend: 'claude',
-    command: 'npm i -g @anthropic/claude',
+    command: 'npm install -g @anthropic-ai/claude-code',
     output: 'added 1 package',
     durationMs: 1200,
     refreshed: true,
@@ -113,7 +120,7 @@ describe('AgentInstallDialog', () => {
     it('renders the install command', () => {
       mountDialog()
       const cmd = document.querySelector('.install-cmd')
-      expect(cmd?.textContent).toContain('npm i -g @anthropic/claude')
+      expect(cmd?.textContent).toContain('npm install -g @anthropic-ai/claude-code')
     })
 
     it('renders the manual install hint', () => {
@@ -126,8 +133,24 @@ describe('AgentInstallDialog', () => {
       // A remote server or container installs THERE. Saying so up front is what
       // prevents "it says installed but my laptop has nothing".
       mountDialog()
-      const note = document.querySelector('.install-note')
-      expect(note?.textContent).toContain('运行 ClawBench 的机器')
+      expect(noteTexts().some((text) => text.includes('运行 ClawBench 的机器'))).toBe(true)
+    })
+
+    it('says the source is picked at install time for an npm install', () => {
+      // The displayed command carries no source, so without this line the user
+      // reads "npm install …" as "it will use npmjs".
+      mountDialog()
+      expect(noteTexts().some((text) => text.includes('自动挑选'))).toBe(true)
+    })
+
+    it('does not promise automatic source selection for a shell installer', () => {
+      // `curl | bash` has no source to pick; the note would be a lie.
+      mount(AgentInstallDialog, {
+        props: { backendId: 'x', backendName: 'X', installCmd: 'curl -fsSL https://get.qoder.dev | bash' },
+        global: { plugins: [i18n] },
+        attachTo: document.body,
+      })
+      expect(noteTexts().some((text) => text.includes('自动挑选'))).toBe(false)
     })
 
     it('renders close button', () => {
@@ -182,6 +205,34 @@ describe('AgentInstallDialog', () => {
       // The run button is replaced by the outcome: pressing install twice would
       // only hit the server's busy refusal.
       expect(document.querySelector('.install-run-btn')).toBeNull()
+    })
+
+    it('shows the command that actually ran when a source was added', async () => {
+      // The source is chosen by the server's probe, so this is the only place
+      // the user can see which one won.
+      mockInstallBackend.mockResolvedValue({
+        ok: true,
+        backend: 'claude',
+        command: 'npm install -g @anthropic-ai/claude-code --registry=https://registry.npmmirror.com',
+        output: '',
+        durationMs: 10,
+        refreshed: true,
+      })
+      mountDialog()
+      ;(document.querySelector('.install-run-btn') as HTMLElement).click()
+      await flushPromises()
+
+      const actual = document.querySelector('.install-cmd-row--actual')
+      expect(actual).toBeTruthy()
+      expect(actual?.textContent).toContain('--registry=https://registry.npmmirror.com')
+    })
+
+    it('does not repeat the command when the source made no difference', async () => {
+      mountDialog()
+      ;(document.querySelector('.install-run-btn') as HTMLElement).click()
+      await flushPromises()
+
+      expect(document.querySelector('.install-cmd-row--actual')).toBeNull()
     })
 
     it('asks for a rescan when the server could not refresh', async () => {
@@ -290,7 +341,7 @@ describe('AgentInstallDialog', () => {
       copyBtn.click()
       await flushPromises()
 
-      expect(writeText).toHaveBeenCalledWith('npm i -g @anthropic/claude')
+      expect(writeText).toHaveBeenCalledWith('npm install -g @anthropic-ai/claude-code')
     })
   })
 
