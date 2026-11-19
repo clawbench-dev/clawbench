@@ -3501,6 +3501,7 @@ export default {
       placeholder: 'Search settings, in English or Chinese',
       noResults: 'No settings matched "{query}"',
       filteredTitle: 'Showing matching settings only',
+      filteredQuery: '"{query}"',
       showAll: 'Show all',
       forcedHint: 'Not active under the current conditions',
     },

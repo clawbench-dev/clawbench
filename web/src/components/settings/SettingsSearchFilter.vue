@@ -5,7 +5,7 @@
   <div class="settings-search-filter">
     <div class="settings-search-filter__text">
       <span class="settings-search-filter__title">{{ t('settings.search.filteredTitle') }}</span>
-      <span class="settings-search-filter__query">「{{ query }}」</span>
+      <span class="settings-search-filter__query">{{ t('settings.search.filteredQuery', { query }) }}</span>
     </div>
     <button type="button" class="settings-search-filter__clear" @click="$emit('clear')">
       <X :size="12" />

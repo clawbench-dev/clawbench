@@ -221,6 +221,10 @@ const i18n = createI18n({
       settings: {
         needsRestart: '需重启',
         categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', portForward: '端口映射', push: '推送', terminal: '终端', rag: 'RAG', project: '项目', files: '文件', about: '关于', android: 'Android', security: '安全', basic: '其他' },
+        // Only the interpolation key: the banner's title is asserted as a raw
+        // key below (this fixture carries no copy), but the query itself must
+        // render, so its wrapper has to resolve.
+        search: { filteredQuery: '「{query}」' },
         items: {
           defaultAgent: '默认智能体',
           autoSpeech: '自动语音',

@@ -3495,6 +3495,7 @@ export default {
       placeholder: '搜索设置项，中英文都可以',
       noResults: '没有找到与「{query}」相关的设置',
       filteredTitle: '只显示匹配的设置',
+      filteredQuery: '「{query}」',
       showAll: '显示全部',
       forcedHint: '当前条件下不生效',
     },
