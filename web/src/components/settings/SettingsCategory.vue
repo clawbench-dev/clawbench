@@ -543,7 +543,10 @@ const renderList = computed(() => {
       if (entry.spec.key === 'closeAction' && getNative()?.hasCustomWindowControls?.() !== true) continue
       // The desktop app owns the server it ships: it refuses both, so these rows
       // would only ever fail. See useUpgrade's managedByEmbedder.
-      if ((entry.spec.key === 'restartServer' || entry.spec.key === 'checkUpgrade') && upgradeManagedByEmbedder.value) continue
+      // Only the server RESTART is meaningless under an embedder. "Check for
+      // updates" stays: a fused install upgrades as a whole package (the
+      // desktop shell downloads and installs it).
+      if (entry.spec.key === 'restartServer' && upgradeManagedByEmbedder.value) continue
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
       if (entry.spec.appOnly && !isNativeApp.value) continue
       if (entry.spec.androidOnly && !isAndroidApp.value) continue

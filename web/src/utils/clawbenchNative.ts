@@ -190,6 +190,23 @@ export interface ClawBenchNative {
    * (desktop only; absent on Android, whose splash cancels natively).
    */
   cancelSplash?(): void
+  /**
+   * Install the all-in-one ("fused") desktop package for `version`.
+   *
+   * Desktop only, and only meaningful when the server reports it is managed by
+   * its embedder (see useUpgrade's managedByEmbedder): such an install carries
+   * its own server, so the only upgrade that keeps the two halves together is
+   * the whole package. `downloads` is the platform-keyed URL map the server
+   * returned in /api/upgrade/check; the shell picks its own platform and
+   * reports the outcome after its own dialogs.
+   *
+   * Optional: older desktop builds have no such channel, and Android never
+   * does. Absent ⇒ the caller must not offer the upgrade.
+   */
+  installFusedUpdate?(
+    version: string,
+    downloads: Record<string, string[]>,
+  ): Promise<{ ok: boolean; error: string }>
   /** Stop the host background service when no ports are enabled (Android; no-op on desktop). */
   stopBackgroundService(): void
   /** Forward hardware volume keys to the terminal (Android; no-op on desktop). */

@@ -222,6 +222,24 @@ describe('desktop asset names match the Go download URLs', () => {
   })
 })
 
+describe('all-in-one (fused) package name matches the Go download URLs', () => {
+  it('release.yml assembles the basename the server builds', () => {
+    // A fused install upgrades by downloading this exact asset; a drift here
+    // makes every in-app upgrade 404 while the URL still looks well-formed.
+    const src = readFileSync(repoPath('.github/workflows/release.yml'), 'utf8')
+    expect(src).toContain('clawbench-desktop-windows-x64-local-$env:RELEASE_TAG.zip')
+
+    const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
+    expect(go).toContain('clawbench-desktop-windows-x64-local')
+    // Windows-only on purpose: release.yml assembles no other platform's fused
+    // package, so advertising one would hand the client a dead URL.
+    const block = /desktopFusedAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
+    expect(block).toContain('platformWindowsAMD64')
+    expect(block).not.toContain('platformLinux')
+    expect(block).not.toContain('platformDarwin')
+  })
+})
+
 /**
  * Payload archives (the incremental-upgrade path) are the same app without the
  * Electron runtime. They are staged by the desktop jobs, published to npm, and

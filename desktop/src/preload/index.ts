@@ -151,6 +151,11 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // proceeds on the current version, "download" installs the server's version.
   versionContinue: () => { ipcRenderer.send('native:version-continue') },
   versionDownload: () => { ipcRenderer.send('native:version-download') },
+  // Fused ("all-in-one") install only: downloads and installs the whole
+  // package for `version`, then asks about restarting. `downloads` is the
+  // platform-keyed map the server returned in /api/upgrade/check.
+  installFusedUpdate: (version: string, downloads: Record<string, string[]>) =>
+    ipcRenderer.invoke('native:install-fused-update', version, downloads) as Promise<{ ok: boolean; error: string }>,
   stopBackgroundService: () => { /* desktop has no Android foreground service */ },
   setVolumeKeyMode: () => { /* desktop has no hardware volume keys */ },
   setTerminalSessionCount: () => { /* desktop has no status-bar terminal badge */ },

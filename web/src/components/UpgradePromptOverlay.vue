@@ -14,7 +14,13 @@
         <a v-if="releaseNotesUrl" class="up-release-link" :href="releaseNotesUrl" target="_blank" rel="noopener noreferrer">
           {{ t('upgrade.releaseNotes', { version: latestVersion }) }}
         </a>
-        <div class="up-footer">
+        <!-- A fused install downloads the whole package through the desktop
+             shell, which can take a while; keep the prompt up with a spinner
+             instead of closing it into an apparently idle app. -->
+        <div v-if="installingFused" class="up-installing">
+          <LoadingIndicator size="md" :label="t('upgrade.fusedInstalling')" />
+        </div>
+        <div v-else class="up-footer">
           <button class="up-upgrade" @click="upgradeNow">{{ t('upgrade.upgradeNow') }}</button>
           <button class="up-skip" @click="skipVersion">{{ t('upgrade.skipVersion') }}</button>
           <button class="up-later" @click="dismiss">{{ t('upgrade.remindLater') }}</button>
@@ -29,9 +35,10 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useUpgrade } from '@/composables/useUpgrade'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
 const { t } = useI18n()
-const { skipVersion: doSkip, startUpgrade, releaseNotesUrl, isDocker } = useUpgrade()
+const { skipVersion: doSkip, startUpgrade, releaseNotesUrl, isDocker, installingFused } = useUpgrade()
 
 const visible = ref(false)
 const latestVersion = ref('')
@@ -47,10 +54,12 @@ function show(latest: string, current: string) {
 }
 
 async function upgradeNow() {
-  visible.value = false
   // startUpgrade may open a confirmation dialog for an unverified release
   // before it does anything, so await it rather than firing and forgetting.
+  // A fused install keeps the prompt up (with a spinner) until the desktop
+  // shell finishes, then closes.
   await startUpgrade()
+  if (!installingFused.value) visible.value = false
 }
 
 function skipVersion() {
@@ -179,6 +188,11 @@ watch(visible, (v) => {
    A fixed column is language- and viewport-independent, which is the property
    that actually matters here. `flex-wrap` is kept so an unusually long locale
    wraps its own row instead of overflowing the panel. */
+/* Same slot as the footer, while the desktop shell installs a fused package. */
+.up-installing {
+  padding: var(--space-5) var(--space-7) calc(14 * var(--dp));
+}
+
 .up-footer {
   padding: var(--space-4) var(--space-7) calc(14 * var(--dp));
   display: flex;

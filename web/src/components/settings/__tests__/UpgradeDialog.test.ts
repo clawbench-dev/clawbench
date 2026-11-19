@@ -43,6 +43,9 @@ const i18n = createI18n({
         unverifiedNotConfirmedTitle: '升级已取消：未能确认校验风险',
         unverifiedNotConfirmedBody: '本次升级无法完全校验，而 registry 当前报告的情况与确认时不一致。',
         unverifiedNotConfirmedHint: '请重试：界面会重新检查并让你确认最新的情况。',
+        fusedNote: '当前客户端自带服务端，升级会下载并安装整个一体安装包。',
+        fusedInstalling: '正在下载并安装一体安装包…',
+        fusedInstallFailed: '一体安装包下载或安装失败。',
       },
     },
   },
@@ -71,6 +74,8 @@ const mockInstallWritable = ref(true)
 const mockInstallDir = ref('')
 const mockIsDocker = ref(false)
 const mockVerificationWarning = ref('')
+const mockManagedByEmbedder = ref(false)
+const mockInstallingFused = ref(false)
 
 const mockCheckUpgrade = vi.fn()
 const mockStartUpgrade = vi.fn()
@@ -99,6 +104,8 @@ vi.mock('@/composables/useUpgrade', async (importOriginal) => {
       installDir: mockInstallDir,
       isDocker: mockIsDocker,
       verificationWarning: mockVerificationWarning,
+      managedByEmbedder: mockManagedByEmbedder,
+      installingFused: mockInstallingFused,
     }),
   }
 })
@@ -162,6 +169,8 @@ beforeEach(() => {
   mockInstallDir.value = ''
   mockIsDocker.value = false
   mockVerificationWarning.value = ''
+  mockManagedByEmbedder.value = false
+  mockInstallingFused.value = false
 })
 
 describe('UpgradeDialog', () => {
@@ -506,6 +515,41 @@ describe('UpgradeDialog', () => {
     })
   })
 
+  describe('fused install', () => {
+    it('explains that the whole package is installed', async () => {
+      mockManagedByEmbedder.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-fused-note')).toBeTruthy()
+      expect(document.body.textContent).toContain('一体安装包')
+    })
+
+    it('hides server-only warnings: no install-directory or signature advice', async () => {
+      // A package install does not touch the server binary in place and does
+      // not come from npm, so both notices would be misleading.
+      mockManagedByEmbedder.value = true
+      mockInstallWritable.value = false
+      mockInstallDir.value = '/usr/local/bin'
+      mockVerificationWarning.value = 'signature missing'
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn')).toBeFalsy()
+      expect($('.ug-warn-verification')).toBeFalsy()
+    })
+
+    it('shows an indeterminate spinner while the shell installs, with no start button', async () => {
+      mockManagedByEmbedder.value = true
+      mockInstallingFused.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect(document.body.textContent).toContain('正在下载并安装一体安装包')
+      expect($('.ug-start')).toBeFalsy()
+    })
+  })
+
   describe('docker advisory hint', () => {
     it('shows the advisory when running in Docker', async () => {
       mockIsDocker.value = true
@@ -591,6 +635,8 @@ describe('UpgradeDialog', () => {
 
     it('does not show the warning for a verified release', async () => {
       mockVerificationWarning.value = ''
+  mockManagedByEmbedder.value = false
+  mockInstallingFused.value = false
       const wrapper = mountDialog()
       ;(wrapper!.vm as any).show()
       await nextTick()

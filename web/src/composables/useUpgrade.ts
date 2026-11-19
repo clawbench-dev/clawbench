@@ -124,6 +124,21 @@ const checking = ref(false)
 const hasUpgrade = ref(false)
 const showProgressDialog = ref(false)
 
+/**
+ * All-in-one package URLs for the latest release, keyed by platform. Only
+ * populated for a fused install (a server managed by its desktop embedder),
+ * where the only valid upgrade unit is the whole package — see
+ * `installFusedUpdate`.
+ */
+const fusedDownloads = ref<Record<string, string[]>>({})
+
+/**
+ * True while the desktop shell is downloading/installing the all-in-one
+ * package. The shell shows its own dialogs; this only keeps the web UI from
+ * offering the button again or closing mid-install.
+ */
+const installingFused = ref(false)
+
 // Install-directory writability, reported by /api/upgrade/check. Kept outside
 // `state` because upgrade_update WS events (which overwrite state wholesale)
 // do not carry these fields.
@@ -308,12 +323,6 @@ export function useUpgrade() {
    * unknown, so no upgrade may start.
    */
   async function checkUpgrade(): Promise<boolean> {
-    if (managedByEmbedder.value) {
-      // Nothing to ask: the server cannot upgrade itself under the app, and the
-      // marker was set by an earlier successful check in this session.
-      hasUpgrade.value = false
-      return false
-    }
     checking.value = true
     try {
       const data = await apiGet<{
@@ -327,21 +336,43 @@ export function useUpgrade() {
         verification_issues?: string
         skipped_version?: string
         managed?: boolean
+        fused_downloads?: Record<string, string[]>
       }>('/api/upgrade/check')
       // Absent on older servers — false (this server owns its own binary).
       managedByEmbedder.value = data.managed === true
-      // A managed server cannot upgrade itself, so there is nothing to offer —
-      // even though the registry still has a newer release. Without this the
-      // startup prompt would offer an install that the server answers with 403.
-      if (managedByEmbedder.value) {
-        hasUpgrade.value = false
-        return true
-      }
       state.current_version = data.current_version
       state.latest_version = data.latest_version
-      hasUpgrade.value = data.has_upgrade
       // Absent on older servers — default to empty (nothing skipped).
       skippedVersion.value = data.skipped_version ?? ''
+
+      if (managedByEmbedder.value) {
+        // A fused install: the server cannot replace its own binary under the
+        // app, so the upgrade is the WHOLE all-in-one package, installed by the
+        // desktop shell. The server builds those URLs for the release it just
+        // found (fused_downloads); if this platform publishes none, or the
+        // shell predates the bridge, there is nothing to offer.
+        fusedDownloads.value = data.fused_downloads ?? {}
+        // The map only carries platforms that PUBLISH an all-in-one package
+        // (Windows today), so a non-empty map means one exists for some
+        // platform. Which key applies is the shell's call — it knows its own
+        // OS/arch and reports "no package for this platform" if the map lacks
+        // it. Requiring the bridge too keeps an older shell (which has no way
+        // to install a package) from being offered an upgrade it cannot do.
+        hasUpgrade.value =
+          data.has_upgrade &&
+          Object.keys(fusedDownloads.value).length > 0 &&
+          !!getNative()?.installFusedUpdate
+        // Server-only concerns (install-directory writability, npm signature,
+        // container advice) do not apply to a package install.
+        installWritable.value = true
+        installDir.value = ''
+        isDocker.value = false
+        verificationWarning.value = ''
+        verificationIssues.value = ''
+        return true
+      }
+
+      hasUpgrade.value = data.has_upgrade
       // Absent on older servers — default to writable so the UI is unchanged.
       installWritable.value = data.install_writable !== false
       installDir.value = data.install_dir ?? ''
@@ -406,6 +437,11 @@ export function useUpgrade() {
       return
     }
 
+    if (managedByEmbedder.value) {
+      await startFusedUpgrade()
+      return
+    }
+
     if (!(await confirmUnverifiedUpgrade())) return
 
     showProgressDialog.value = true
@@ -422,6 +458,42 @@ export function useUpgrade() {
       })
     } catch (e) {
       appLog.e(TAG, 'Start failed', e)
+    }
+  }
+
+  /**
+   * Install the all-in-one package through the desktop shell.
+   *
+   * The shell downloads the package, installs it side by side and asks about
+   * restarting; its dialogs are the user-visible outcome, so this only keeps
+   * the button state honest and surfaces a failure the shell could not show.
+   */
+  async function startFusedUpgrade(): Promise<void> {
+    const native = getNative()
+    if (!native?.installFusedUpdate) {
+      hasUpgrade.value = false
+      return
+    }
+    installingFused.value = true
+    state.phase = ''
+    state.error = ''
+    state.error_code = ''
+    try {
+      const res = await native.installFusedUpdate(state.latest_version, fusedDownloads.value)
+      if (res?.ok) {
+        // The package is installed; the shell has already asked about the
+        // restart (and may be restarting right now).
+        hasUpgrade.value = false
+      } else {
+        state.phase = 'failed'
+        state.error = res?.error || gt('upgrade.fusedInstallFailed')
+      }
+    } catch (e) {
+      appLog.w(TAG, 'Fused package install failed', e)
+      state.phase = 'failed'
+      state.error = String((e as Error)?.message || e)
+    } finally {
+      installingFused.value = false
     }
   }
 
@@ -544,6 +616,8 @@ export function useUpgrade() {
     checking,
     hasUpgrade,
     managedByEmbedder,
+    fusedDownloads,
+    installingFused,
     releaseNotesUrl,
     showProgressDialog,
     installWritable,

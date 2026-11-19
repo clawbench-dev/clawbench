@@ -22,6 +22,12 @@
           <LoadingIndicator size="md" :label="t('upgrade.checking')" />
         </div>
 
+        <!-- Fused install: client and server ship as one package, so the
+             upgrade is that whole package rather than a server binary swap. -->
+        <p v-if="managedByEmbedder && hasUpgrade && !isInProgress && !isCompleted && !isFailed" class="ug-fused-note">
+          {{ t('upgrade.fusedNote') }}
+        </p>
+
         <!-- Version info (before upgrade, after check) -->
         <div v-if="!checking && !isInProgress && !isCompleted && !isFailed && hasUpgrade" class="ug-versions">
           <span class="ug-ver-current">{{ state.current_version }}</span>
@@ -73,8 +79,14 @@
           <p class="ug-hint-warn">{{ t('upgrade.dockerHintRestart') }}</p>
         </div>
 
+        <!-- Fused package install: the desktop shell owns the download and its
+             own dialogs, so this is an indeterminate wait. -->
+        <div v-if="installingFused" class="ug-progress-area">
+          <LoadingIndicator size="md" :label="t('upgrade.fusedInstalling')" />
+        </div>
+
         <!-- Progress area -->
-        <div v-if="isInProgress || isRestarting" class="ug-progress-area">
+        <div v-else-if="isInProgress || isRestarting" class="ug-progress-area">
           <template v-if="state.phase === 'downloading'">
             <div class="ug-progress-bar">
               <div class="ug-progress-fill" :style="{ width: state.progress + '%' }" />
@@ -123,7 +135,7 @@
 
         <!-- Actions -->
         <div class="ug-footer">
-          <button v-if="hasUpgrade && !isInProgress && !isCompleted" class="fbtn fbtn-primary ug-start" @click="startUpgrade">
+          <button v-if="hasUpgrade && !isInProgress && !isCompleted && !installingFused" class="fbtn fbtn-primary ug-start" @click="startUpgrade">
             {{ isFailed ? t('upgrade.retry') : t('upgrade.start') }}
           </button>
           <button v-if="canClose" class="fbtn ug-cancel" @click="close">
@@ -152,6 +164,7 @@ const { t } = useI18n()
 const {
   state, checking, hasUpgrade, isInProgress, isRestarting, isCompleted, isFailed,
   installWritable, installDir, isDocker, verificationWarning, checkUpgrade, startUpgrade, releaseNotesUrl,
+  managedByEmbedder, installingFused,
 } = useUpgrade()
 
 /**
@@ -162,6 +175,7 @@ const {
  */
 const showWritableWarning = computed(() =>
   hasUpgrade.value &&
+  !managedByEmbedder.value &&
   !checking.value &&
   !installWritable.value &&
   !isInProgress.value &&
@@ -175,7 +189,7 @@ const showWritableWarning = computed(() =>
  * writability and Docker notices this stays visible during the upgrade too, so
  * the user can still see, while the download runs, that it was not verified.
  */
-const showVerificationWarning = computed(() => verificationWarning.value !== '')
+const showVerificationWarning = computed(() => !managedByEmbedder.value && verificationWarning.value !== '')
 
 /**
  * Docker advisory — same visibility window as the writability warning: only
@@ -183,6 +197,7 @@ const showVerificationWarning = computed(() => verificationWarning.value !== '')
  */
 const showDockerHint = computed(() =>
   hasUpgrade.value &&
+  !managedByEmbedder.value &&
   !checking.value &&
   isDocker.value &&
   !isInProgress.value &&
@@ -199,6 +214,7 @@ function show() {
 }
 
 const canClose = computed(() => {
+  if (installingFused.value) return false
   if (isCompleted.value || isFailed.value) return true
   if (!isInProgress.value) return true
   return false
@@ -386,6 +402,16 @@ watch(visible, (v) => {
 }
 
 /* Pre-flight install-directory warning (amber, non-fatal) */
+/* Fused install: an explanation, not a warning — the package install is the
+   normal and only upgrade path for a client that carries its own server. */
+.ug-fused-note {
+  margin: 0 var(--space-7) var(--space-5);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  color: var(--text-secondary);
+  text-align: left;
+}
+
 .ug-warn {
   margin: 0 var(--space-7) var(--space-6);
   padding: var(--space-5) var(--space-6);

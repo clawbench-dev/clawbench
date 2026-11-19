@@ -1010,10 +1010,22 @@ describe('handOffToPointedVersion', () => {
     expect(readCurrentVersion()).toBe('')
   })
 
-  it('does not re-exec when the pointed binary IS the running process', () => {
-    // Happens when someone unpacks a release on top of the version store: the
-    // pointer would name the file we are already running, and spawning it
-    // would loop. Compare against process.execPath, which the guard realpaths.
+  it('does not re-exec when the pointed binary IS the running process, and keeps the pointer', () => {
+    // The pointer naming the file we are already running means this process is
+    // the pointed install. Two ways to get here:
+    //
+    //   - someone unpacked a release on top of the version store (the old
+    //     reason for dropping the pointer);
+    //   - a FUSED upgrade installed an all-in-one package whose shell was
+    //     reused from a previous release: the directory is named after the
+    //     release tag, while the app inside reports the older build's version,
+    //     so `selectStartupVersion` sees two different versions for the same
+    //     install.
+    //
+    // Dropping the pointer in the second case sends the next cold start back
+    // to the original install directory — a silent revert of the upgrade, and
+    // of the server binary that came with it. Keeping it is harmless in the
+    // first case (it just points at where we already are).
     const bin = installVersion('1.2.3')
     writePointer('1.2.3')
     const execSpy = vi.spyOn(process, 'execPath', 'get').mockReturnValue(bin)
@@ -1021,8 +1033,7 @@ describe('handOffToPointedVersion', () => {
     try {
       expect(handOffToPointedVersion('1.0.0')).toBe(false)
       expect(spawnMock).not.toHaveBeenCalled()
-      // The pointer is dropped so the next start is a normal one.
-      expect(readCurrentVersion()).toBe('')
+      expect(readCurrentVersion()).toBe('1.2.3')
     } finally {
       execSpy.mockRestore()
     }

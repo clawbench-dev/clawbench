@@ -67,6 +67,8 @@ export interface VersionGateLabels {
    */
   fusedUpdateTitle: string
   fusedUpdateMessage: string
+  /** Shown when a release has no all-in-one package for this platform. */
+  fusedPackageMissing: string
 }
 
 /**
@@ -90,6 +92,7 @@ export function versionGateLabels(locale: string): VersionGateLabels {
       fullDownloadFailed: '全量包下载失败：',
       fusedUpdateTitle: '请安装新版安装包',
       fusedUpdateMessage: '当前客户端自带服务端，不能只替换客户端。请下载新版的一体安装包重新安装，客户端和服务端会一起更新。',
+      fusedPackageMissing: '这个版本没有对应的一体安装包，无法在应用内升级。',
     }
   }
   return {
@@ -107,6 +110,7 @@ export function versionGateLabels(locale: string): VersionGateLabels {
     fullDownloadFailed: 'Full package download failed:',
     fusedUpdateTitle: 'Install the new package',
     fusedUpdateMessage: 'This client ships with its own server, so the client alone cannot be replaced. Download the new all-in-one package and reinstall: client and server then update together.',
+    fusedPackageMissing: 'This release has no all-in-one package for your platform, so it cannot be installed from inside the app.',
   }
 }
 
