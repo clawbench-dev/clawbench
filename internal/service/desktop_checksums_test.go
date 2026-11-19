@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -111,4 +112,66 @@ func TestDesktopChecksums_Non200IsCachedAsMissing(t *testing.T) {
 
 func TestDesktopChecksums_EmptyTagDoesNotFetch(t *testing.T) {
 	assert.Nil(t, desktopChecksums(""))
+}
+
+// isolateDesktopChecksums points the manifest fetch at a test server and gives
+// the test its own empty cache, restoring both on cleanup.
+func isolateDesktopChecksums(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	useRealChecksumFetch(t)
+	srv := httptest.NewServer(handler)
+	origURL, origClient := desktopChecksumsURL, desktopChecksumsHTTPClient
+	desktopChecksumsMu.Lock()
+	origCache := desktopChecksumsByTag
+	desktopChecksumsByTag = map[string]map[string]string{}
+	desktopChecksumsMu.Unlock()
+	t.Cleanup(func() {
+		srv.Close()
+		desktopChecksumsURL, desktopChecksumsHTTPClient = origURL, origClient
+		desktopChecksumsMu.Lock()
+		desktopChecksumsByTag = origCache
+		desktopChecksumsMu.Unlock()
+	})
+	desktopChecksumsURL = func(tag string) string { return srv.URL + "/" + tag }
+	desktopChecksumsHTTPClient = srv.Client()
+	return srv
+}
+
+func TestDesktopChecksums_ManifestWithoutUsableLinesIsMissing(t *testing.T) {
+	isolateDesktopChecksums(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("garbage\nnot-a-hash  file.zip\n"))
+	})
+	assert.Nil(t, desktopChecksums("v2.0.0"))
+}
+
+func TestDesktopChecksums_UnreachableIsMissing(t *testing.T) {
+	// The URL is well formed but nothing is listening: the network-error
+	// branch rather than a bad status.
+	srv := isolateDesktopChecksums(t, http.NotFound)
+	srv.Close()
+	assert.Nil(t, desktopChecksums("v2.0.1"))
+}
+
+func TestDesktopChecksums_InvalidURLIsMissing(t *testing.T) {
+	isolateDesktopChecksums(t, http.NotFound)
+	desktopChecksumsURL = func(string) string { return "://not-a-url" }
+	assert.Nil(t, desktopChecksums("v2.0.2"))
+}
+
+func TestDesktopPackageChecksums_NoMatchingAssetsIsNil(t *testing.T) {
+	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	isolateDesktopChecksums(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(hash + "  unrelated.zip\n"))
+	})
+	assert.Nil(t, desktopPackageChecksums("v2.0.3"))
+	assert.Nil(t, FusedDesktopChecksums("v2.0.3"))
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+
+func TestParseSHA256SUMS_ReaderError(t *testing.T) {
+	_, err := parseSHA256SUMS(failingReader{})
+	require.Error(t, err)
 }

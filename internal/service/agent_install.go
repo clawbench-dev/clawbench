@@ -328,21 +328,24 @@ func IsSafeNpmProbeSpec(s string) bool {
 		return false
 	}
 	for _, c := range s {
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
-			continue
-		}
-		switch c {
-		case '@', '.', '_', '-', '/':
-			continue
-		default:
+		if !isNpmSpecChar(c) {
 			return false
 		}
 	}
 	return true
 }
 
+// isNpmSpecChar reports whether c is allowed in a package spec passed to npm:
+// letters, digits, and the separators used by scoped names and versions.
+func isNpmSpecChar(c rune) bool {
+	if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+		return true
+	}
+	return c == '@' || c == '.' || c == '_' || c == '-' || c == '/'
+}
+
 // isSafeProbeBase rejects anything that could be interpreted by a shell. The
-// source package already normalizes registries; this is defence in depth before
+// source package already normalizes registries; this is defense in depth before
 // the value is concatenated into a command.
 func isSafeProbeBase(s string) bool {
 	if strings.ContainsAny(s, " \t\r\n\"'`$&|;<>()\\") {

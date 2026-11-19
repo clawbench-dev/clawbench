@@ -356,7 +356,7 @@ func TestRun_RoundBudgetStops(t *testing.T) {
 func TestRun_NoBudgetMeansNoCeiling(t *testing.T) {
 	const rounds = 120 // more than the old 100-round default
 	script := make([]func(llm.Request) []llm.Event, 0, rounds+1)
-	for i := 0; i < rounds; i++ {
+	for range rounds {
 		script = append(script, toolRound("c", "glob", `{"pattern":"*.go"}`))
 	}
 	script = append(script, textRound("done"))

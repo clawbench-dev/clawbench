@@ -355,6 +355,20 @@ const emptyRoundNudge = "Your previous reply contained no message to the user an
 	"Continue the user's task now: either take the next step with a tool call, " +
 	"or, if the task is already finished, state the result in your reply."
 
+// roundsExhausted reports whether the per-turn round budget has been spent. A
+// budget of zero means unlimited.
+func (r *runner) roundsExhausted() bool {
+	limit := r.spec.Policy.Rounds()
+	return limit > 0 && r.rounds >= limit
+}
+
+// toolCallsExhausted reports whether the per-turn tool-call budget has been
+// spent. A budget of zero means unlimited.
+func (r *runner) toolCallsExhausted() bool {
+	limit := r.spec.Policy.ToolCalls()
+	return limit > 0 && r.toolCalls >= limit
+}
+
 func (r *runner) run(ctx context.Context) {
 	if r.spec.Client == nil {
 		r.fail(fmt.Errorf("no model endpoint is configured for this agent"))
@@ -405,7 +419,7 @@ func (r *runner) run(ctx context.Context) {
 			r.finishCancelled()
 			return
 		}
-		if limit := r.spec.Policy.Rounds(); limit > 0 && r.rounds >= limit {
+		if r.roundsExhausted() {
 			r.finishWithClosing(runCtx, StopMaxRounds, system)
 			return
 		}
@@ -453,7 +467,7 @@ func (r *runner) run(ctx context.Context) {
 		// from dying at round 3 of a task that would have finished at round 5.
 		r.compactIfNeeded(runCtx, system)
 
-		if limit := r.spec.Policy.ToolCalls(); limit > 0 && r.toolCalls >= limit {
+		if r.toolCallsExhausted() {
 			// The budget is spent. Do one last model round WITHOUT tools so the
 			// model has a chance to summarize what it found instead of the turn
 			// ending with a bare tool result the user never sees.
@@ -1107,7 +1121,7 @@ func (r *runner) executeTools(env tools.Env, calls []llm.ToolCall) []*llm.ToolRe
 
 // executeTool runs one call and reports it to the UI before and after.
 func (r *runner) executeTool(env tools.Env, c llm.ToolCall) *llm.ToolResult {
-	if limit := r.spec.Policy.ToolCalls(); limit > 0 && r.toolCalls >= limit {
+	if r.toolCallsExhausted() {
 		return &llm.ToolResult{
 			CallID:  c.ID,
 			IsError: true,

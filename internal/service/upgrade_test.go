@@ -267,35 +267,6 @@ func withTempHome(t *testing.T) {
 	t.Cleanup(func() { os.Setenv("USERPROFILE", origUp) })
 }
 
-// setNpmRegistryEnv sets the upper-case NPM_CONFIG_REGISTRY to value and
-// clears the lower-case npm_config_registry for the duration of the test.
-//
-// Both spellings are consulted by source.UserNpmRegistry (upper-case first), so
-// a test that only sets the upper-case one is still reading the ambient
-// lower-case value. npm exports that variable in every shell that ever ran
-// `npm install`, so these tests used to fail or pass depending on how the
-// suite happened to be launched — a result that had nothing to do with the
-// code under test.
-func setNpmRegistryEnv(t *testing.T, value string) {
-	t.Helper()
-	origUpper, hasUpper := os.LookupEnv("NPM_CONFIG_REGISTRY")
-	origLower, hasLower := os.LookupEnv("npm_config_registry")
-	os.Setenv("NPM_CONFIG_REGISTRY", value)
-	os.Unsetenv("npm_config_registry")
-	t.Cleanup(func() {
-		if hasUpper {
-			os.Setenv("NPM_CONFIG_REGISTRY", origUpper)
-		} else {
-			os.Unsetenv("NPM_CONFIG_REGISTRY")
-		}
-		if hasLower {
-			os.Setenv("npm_config_registry", origLower)
-		} else {
-			os.Unsetenv("npm_config_registry")
-		}
-	})
-}
-
 func clearNpmEnv(t *testing.T) {
 	t.Helper()
 	origNpmUpper, hasNpmUpper := os.LookupEnv("NPM_CONFIG_REGISTRY")
@@ -317,17 +288,6 @@ func clearNpmEnv(t *testing.T) {
 			os.Unsetenv("npm_config_registry")
 		}
 	})
-}
-
-func writeNpmRc(t *testing.T, content string) {
-	t.Helper()
-	home := os.Getenv("HOME")
-	if home == "" {
-		home = os.Getenv("USERPROFILE")
-	}
-	if err := os.WriteFile(filepath.Join(home, ".npmrc"), []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to write .npmrc: %v", err)
-	}
 }
 
 // --- resolveExpectedDigest ---

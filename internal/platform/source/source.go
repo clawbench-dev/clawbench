@@ -130,7 +130,7 @@ func normalizeRegistryBase(raw string) string {
 	if err != nil || u.Host == "" || u.User != nil {
 		return ""
 	}
-	if u.Scheme != "https" && !(u.Scheme == "http" && isLoopbackHost(u.Hostname())) {
+	if u.Scheme != "https" && (u.Scheme != "http" || !isLoopbackHost(u.Hostname())) {
 		return ""
 	}
 	base := u.Scheme + "://" + u.Host + strings.TrimRight(u.Path, "/")

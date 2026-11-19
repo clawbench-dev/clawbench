@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { expandDataTransfer, type DropFile, type ExpandResult } from '@/utils/dropFolder.ts'
+import { expandDataTransfer, hasOSFileDrop, type DropFile, type ExpandResult } from '@/utils/dropFolder.ts'
 
 // ── Fake FileSystemEntry helpers (jsdom has no webkitGetAsEntry) ──
 
@@ -325,5 +325,39 @@ describe('expandDataTransfer (entry failure degrades to dataTransfer.files)', ()
     const result = await expandDataTransfer(dataTransferWith([{ getEntry: () => empty }]))
     expect(result.files).toHaveLength(0)
     expect(result.emptyDirs).toEqual(['empty'])
+  })
+})
+
+describe('hasOSFileDrop', () => {
+  it('is true when the payload carries OS files', () => {
+    // A desktop drop (file OR folder) always lists "Files"; a folder's entry is
+    // a directory, so the caller must expand rather than read .files.
+    const dt = { types: ['Files'] } as unknown as DataTransfer
+    expect(hasOSFileDrop(dt)).toBe(true)
+  })
+
+  it('is false for an in-app attach drag, which keeps Files out of the payload', () => {
+    const dt = { types: ['application/x-clawbench-attachment'] } as unknown as DataTransfer
+    expect(hasOSFileDrop(dt)).toBe(false)
+  })
+
+  it('is false when there is no dataTransfer', () => {
+    expect(hasOSFileDrop(null)).toBe(false)
+    expect(hasOSFileDrop(undefined)).toBe(false)
+  })
+
+  it('is false when types is missing', () => {
+    expect(hasOSFileDrop({} as unknown as DataTransfer)).toBe(false)
+  })
+
+  it('is false when reading types throws', () => {
+    // Some synthetic drag events expose a types getter that throws; a drag
+    // handler must not blow up because of it.
+    const dt = Object.defineProperty({}, 'types', {
+      get() {
+        throw new Error('denied')
+      },
+    }) as unknown as DataTransfer
+    expect(hasOSFileDrop(dt)).toBe(false)
   })
 })
