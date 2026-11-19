@@ -138,9 +138,27 @@ func TestImportFiles_CountsSkippedFailedAndDuplicates(t *testing.T) {
 	require.Equal(t, 0, res.Added)
 }
 
+// TestImportFiles_RecordsSkipReasons: a skipped file's count alone does not
+// tell the user why. The reason breakdown is what lets the panel say "legacy
+// .doc — save it as .docx" instead of a bare "1 skipped".
+func TestImportFiles_RecordsSkipReasons(t *testing.T) {
+	col := newCollectionForImport(t)
+	dir := t.TempDir()
+	doc := filepath.Join(dir, "old.doc")
+	require.NoError(t, os.WriteFile(doc, []byte{0xD0, 0xCF, 0x11, 0xE0}, 0o644))
+	img := filepath.Join(dir, "photo.png")
+	require.NoError(t, os.WriteFile(img, []byte("\x89PNG"), 0o644))
+
+	// dryRun: ValidateFile still classifies both, nothing is copied.
+	res, err := importFiles(context.Background(), col.ID, []string{doc, img}, true)
+	require.NoError(t, err)
+	require.Equal(t, 2, res.Skipped)
+	require.Equal(t, 1, res.SkipReasons[ReasonLegacyDoc])
+	require.Equal(t, 1, res.SkipReasons[ReasonImage])
+}
+
 func TestImportDirectory_RequiresEnabledStore(t *testing.T) {
 	oldDir := model.DataDir
-	model.DataDir = t.TempDir()
 	t.Cleanup(func() {
 		Shutdown()
 		model.DataDir = oldDir

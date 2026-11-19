@@ -644,6 +644,7 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@/utils/path'
+import { skipReasonHint } from '@/utils/kbFormat'
 import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
@@ -2896,11 +2897,20 @@ async function onKBPicked(collection) {
     const dirs = entries.filter(e => e.isDir)
     const files = entries.filter(e => !e.isDir)
     const totals = { added: 0, duplicates: 0, skipped: 0, failed: 0 }
+    const failed = []
+    const skipReasons = {}
+    const kbT = (key, named) => t(key, named ?? {})
+    const mergeInto = (target, src) => {
+        for (const [code, count] of Object.entries(src || {})) {
+            target[code] = (target[code] || 0) + count
+        }
+    }
+    const mergeSkipReasons = (src) => mergeInto(skipReasons, src)
 
     if (dirs.length) {
         // Folders are previewed first, exactly like in the knowledge base
         // panel: a big import should not start without its numbers.
-        const preview = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false }
+        const preview = { added: 0, duplicates: 0, skipped: 0, failed: 0, truncated: false, skip_reasons: {} }
         for (const dir of dirs) {
             try {
                 const p = await kbPreviewDirectory(collection.id, dir.path)
@@ -2909,12 +2919,15 @@ async function onKBPicked(collection) {
                 preview.skipped += p.skipped
                 preview.failed += p.failed
                 preview.truncated = preview.truncated || p.truncated
+                mergeInto(preview.skip_reasons, p.skip_reasons)
             } catch {
                 // The import below will surface the error with a real message.
                 preview.failed++
             }
         }
-        const ok = await dialog.confirm(t('kb.importPreviewMessage', preview), {
+        const hint = skipReasonHint(preview.skip_reasons, kbT)
+        const message = [t('kb.importPreviewMessage', preview), hint].filter(Boolean).join('\n\n')
+        const ok = await dialog.confirm(message, {
             title: t('kb.importPreviewTitle'),
             confirmText: t('kb.importContinue'),
         })
@@ -2925,8 +2938,11 @@ async function onKBPicked(collection) {
         try {
             await kbAddByPath(collection.id, file.path)
             totals.added++
-        } catch {
+        } catch (e) {
             totals.failed++
+            // Keep the server's reason: "1 failed" hides that a legacy .doc
+            // only needs saving as .docx.
+            failed.push(`${baseName(file.path)}: ${e instanceof Error ? e.message : String(e)}`)
         }
     }
     for (const dir of dirs) {
@@ -2936,23 +2952,52 @@ async function onKBPicked(collection) {
             totals.duplicates += res.duplicates
             totals.skipped += res.skipped
             totals.failed += res.failed
-        } catch {
+            mergeSkipReasons(res.skip_reasons)
+        } catch (e) {
             totals.failed++
+            failed.push(`${baseName(dir.path)}: ${e instanceof Error ? e.message : String(e)}`)
         }
     }
 
     if (totals.added > 0) startKBIndexWatch()
-    if (totals.added === 0 && totals.failed === 0) {
-        if (toast) toast.show(t('kb.dirImportEmpty'), { icon: 'warning', type: 'error', duration: 3000 })
-        return
-    }
     if (toast) {
-        toast.show(
-            totals.failed > 0 || totals.skipped > 0 || totals.duplicates > 0
-                ? t('kb.dirImportSummary', totals)
-                : t('kb.added'),
-            { icon: 'success', type: totals.failed > 0 ? 'error' : 'success', duration: 3200 },
-        )
+        const failureText = failed.length === 0
+            ? ''
+            : failed.length === 1
+                ? failed[0]
+                : t('kb.addPartial', { first: failed[0], count: failed.length - 1 })
+        // Only failures: the server's reason is the whole story ("1 failed"
+        // would hide that a legacy .doc just needs saving as .docx).
+        if (failureText && totals.added === 0 && totals.skipped === 0 && totals.duplicates === 0) {
+            toast.show(failureText, { icon: 'warning', type: 'error', duration: 4000 })
+            return
+        }
+        if (totals.added === 0 && totals.failed === 0) {
+            const hint = skipReasonHint(skipReasons, kbT)
+            toast.show(hint || t('kb.dirImportEmpty'), { icon: 'warning', type: 'error', duration: 3000 })
+            return
+        }
+        // One toast: show() replaces the visible message, so a second call
+        // would silently drop the summary. A single successful file needs no
+        // counts; a folder or a mixed batch does.
+        const parts = []
+        if (dirs.length > 0 || totals.added > 0) {
+            parts.push(
+                totals.failed > 0 || totals.skipped > 0 || totals.duplicates > 0
+                    ? t('kb.dirImportSummary', totals)
+                    : t('kb.added'),
+            )
+        }
+        if (failureText) parts.push(failureText)
+        if (totals.skipped > 0) {
+            const hint = skipReasonHint(skipReasons, kbT)
+            if (hint) parts.push(hint)
+        }
+        toast.show(parts.join('\n\n'), {
+            icon: totals.failed > 0 || totals.skipped > 0 ? 'warning' : 'success',
+            type: totals.failed > 0 ? 'error' : 'success',
+            duration: 3200,
+        })
     }
 }
 

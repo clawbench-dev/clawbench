@@ -353,6 +353,7 @@ export default {
     created: 'Knowledge base created',
     dirImportDone: 'Added {added} files; indexing in the background',
     dirImportSummary: '{added} added, {skipped} skipped, {duplicates} already there, {failed} failed',
+    skippedReasonHint: '{count} skipped because the format is not supported: {reason}',
     dirImportTruncated: 'Too many files — only the first 500 were imported',
     dirImportEmpty: 'There are no files this knowledge base can take in that folder',
     dirImportAllDuplicates: 'Every file in that folder is already in this collection',

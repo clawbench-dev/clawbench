@@ -29,6 +29,33 @@ type DirImportResult struct {
 	Skipped    int  `json:"skipped"`
 	Failed     int  `json:"failed"`
 	Truncated  bool `json:"truncated"`
+	// SkipReasons counts skipped files by extraction reason code (`legacy_doc`,
+	// `image`, …). A bare "3 skipped" leaves the user guessing why, especially
+	// for a legacy .doc that only needs saving as .docx; the panel turns the
+	// dominant reason into a sentence.
+	SkipReasons map[string]int `json:"skip_reasons,omitempty"`
+}
+
+// skip records one unsupported file. reason may be empty when the rejection
+// carries no stable code; the count still matters, the breakdown does not.
+func (r *DirImportResult) skip(reason string) {
+	r.Skipped++
+	if reason == "" {
+		return
+	}
+	if r.SkipReasons == nil {
+		r.SkipReasons = map[string]int{}
+	}
+	r.SkipReasons[reason]++
+}
+
+// fileErrorReason extracts the stable reason code from a typed kb.FileError.
+func fileErrorReason(err error) string {
+	var fileErr *FileError
+	if errors.As(err, &fileErr) {
+		return fileErr.Reason
+	}
+	return ""
 }
 
 // dirImportSkip lists directory names that never hold knowledge the user means
@@ -171,7 +198,7 @@ func importFiles(ctx context.Context, collectionID int64, files []string, dryRun
 		ext := strings.ToLower(filepath.Ext(path))
 		if vErr := ValidateFile(path, ext, fi.Size(), maxFileBytes()); vErr != nil {
 			if errors.Is(vErr, ErrUnsupportedFile) || errors.Is(vErr, ErrFileTooLarge) {
-				res.Skipped++
+				res.skip(fileErrorReason(vErr))
 			} else {
 				res.Failed++
 			}
@@ -204,7 +231,7 @@ func importFiles(ctx context.Context, collectionID int64, files []string, dryRun
 			case errors.Is(addErr, ErrUnsupportedFile),
 				errors.Is(addErr, ErrFileTooLarge),
 				errors.Is(addErr, ErrNoText):
-				res.Skipped++
+				res.skip(fileErrorReason(addErr))
 			default:
 				res.Failed++
 			}

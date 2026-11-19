@@ -351,6 +351,7 @@ export default {
     created: '知识库已创建',
     dirImportDone: '已加入 {added} 个文件，正在后台建索引',
     dirImportSummary: '加入 {added} 个，跳过 {skipped} 个，重复 {duplicates} 个，失败 {failed} 个',
+    skippedReasonHint: '有 {count} 个文件因格式不支持被跳过：{reason}',
     dirImportTruncated: '文件太多，本次只导入了前 500 个',
     dirImportEmpty: '这个文件夹里没有可加入的文件',
     dirImportAllDuplicates: '这些文件都已经在知识库里了',

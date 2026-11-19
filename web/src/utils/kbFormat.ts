@@ -99,3 +99,25 @@ export function documentErrorText(error: string | undefined, t: TFn): string {
   const reason = errorReason(error)
   return reason ? t(`kb.reason.${reason}`) : error
 }
+
+/**
+ * One sentence explaining why a folder import skipped files. The server counts
+ * them by reason; the dominant one is the one worth naming (a folder of legacy
+ * .doc should say "save as .docx", not just "3 skipped"). Unknown codes are
+ * ignored so a future reason cannot leak an i18n key to the user.
+ */
+export function skipReasonHint(
+  reasons: Record<string, number> | undefined,
+  t: TFn,
+): string {
+  if (!reasons) return ''
+  let best = ''
+  let bestCount = 0
+  for (const [code, count] of Object.entries(reasons)) {
+    if (count > bestCount && KB_ERROR_REASONS.has(code)) {
+      best = code
+      bestCount = count
+    }
+  }
+  return best ? t('kb.skippedReasonHint', { count: bestCount, reason: t(`kb.reason.${best}`) }) : ''
+}

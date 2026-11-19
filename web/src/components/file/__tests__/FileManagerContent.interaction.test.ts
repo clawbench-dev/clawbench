@@ -3035,3 +3035,49 @@ describe('FileManagerContent — feature switches', () => {
     expect(mocks.mockSendPathsByMail).not.toHaveBeenCalled()
   })
 })
+
+describe('FileManagerContent — add to knowledge base', () => {
+  it('surfaces the server reason when a file is rejected', async () => {
+    const wrapper = mountContent()
+    mocks.mockKbAddByPath.mockRejectedValueOnce(new Error('旧版 .doc 不支持，请另存为 .docx 再添加'))
+    wrapper.vm.kbTargets = [{ path: 'docs/old.doc', isDir: false }]
+
+    await wrapper.vm.onKBPicked({ id: 7, name: '资料' })
+
+    expect(mocks.mockKbAddByPath).toHaveBeenCalledWith(7, 'docs/old.doc')
+    // A bare "1 failed" was the bug: it never said the file only needed
+    // converting to .docx.
+    expect(mocks.mockToastShow).toHaveBeenCalledWith(
+      'old.doc: 旧版 .doc 不支持，请另存为 .docx 再添加',
+      expect.objectContaining({ type: 'error' }),
+    )
+    wrapper.unmount()
+  })
+
+  it('names the reason behind skipped folder files', async () => {
+    const wrapper = mountContent()
+    const result = {
+      added: 1,
+      duplicates: 0,
+      skipped: 1,
+      failed: 0,
+      truncated: false,
+      skip_reasons: { legacy_doc: 1 },
+    }
+    mocks.mockKbPreviewDirectory.mockResolvedValueOnce(result)
+    mocks.mockKbImportDirectory.mockResolvedValueOnce(result)
+    wrapper.vm.kbTargets = [{ path: 'docs', isDir: true }]
+
+    await wrapper.vm.onKBPicked({ id: 7, name: '资料' })
+
+    expect(mocks.mockDialogConfirm).toHaveBeenCalledWith(
+      expect.stringContaining('有 1 个文件因格式不支持被跳过：旧版 .doc 不支持，请另存为 .docx 再添加'),
+      expect.anything(),
+    )
+    expect(mocks.mockToastShow).toHaveBeenCalledWith(
+      '加入 1 个，跳过 1 个，重复 0 个，失败 0 个\n\n有 1 个文件因格式不支持被跳过：旧版 .doc 不支持，请另存为 .docx 再添加',
+      expect.objectContaining({ type: 'success' }),
+    )
+    wrapper.unmount()
+  })
+})

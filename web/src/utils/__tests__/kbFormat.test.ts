@@ -4,6 +4,7 @@ import {
   errorReason,
   formatLocation,
   formatSize,
+  skipReasonHint,
   statusKind,
   statusLabel,
   type TFn,
@@ -108,5 +109,19 @@ describe('documentErrorText', () => {
     expect(documentErrorText('pdf_no_text: x', t)).toBe('kb.reason.pdf_no_text')
     expect(documentErrorText('disk read failed', t)).toBe('disk read failed')
     expect(documentErrorText('', t)).toBe('')
+  })
+})
+
+describe('skipReasonHint', () => {
+  it('names the dominant known reason', () => {
+    expect(skipReasonHint({ legacy_doc: 2, image: 1 }, t)).toBe(
+      'kb.skippedReasonHint{"count":2,"reason":"kb.reason.legacy_doc"}',
+    )
+  })
+
+  it('ignores unknown codes and empty input', () => {
+    expect(skipReasonHint({ future_reason: 5 }, t)).toBe('')
+    expect(skipReasonHint({}, t)).toBe('')
+    expect(skipReasonHint(undefined, t)).toBe('')
   })
 })
