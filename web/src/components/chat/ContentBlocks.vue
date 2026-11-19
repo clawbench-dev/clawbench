@@ -202,15 +202,21 @@
                  side instead of in one v-if/v-else chain.
                  A failure or an interruption carries its own count instead of a
                  sentence ("2 次失败"): the glyph already says what happened, so
-                 the number is all that is missing. -->
+                 the number is all that is missing.
+                 The "×N" suffix only appears for N ≥ 2. With exactly one the
+                 glyph IS the whole message, and "✕×1" read as two marks for one
+                 fact — the small × after the glyph looked like a second,
+                 differently-shaped cross. -->
             <span
               v-if="group.failedCount > 0"
               class="tool-group-verdict tool-group-failed"
               :title="t('chat.contentBlocks.toolGroupFailed', { count: group.failedCount })"
             >
               <XCircle :size="14" color="#ef4444" class="tool-error-icon" />
-              <span class="verdict-x">×</span>
-              <span class="verdict-n">{{ group.failedCount }}</span>
+              <template v-if="group.failedCount > 1">
+                <span class="verdict-x">×</span>
+                <span class="verdict-n">{{ group.failedCount }}</span>
+              </template>
             </span>
             <span
               v-else-if="(group.interruptedCount || 0) > 0"
@@ -218,8 +224,10 @@
               :title="t('chat.contentBlocks.toolGroupInterrupted', { count: group.interruptedCount })"
             >
               <CircleSlash :size="14" color="#f59e0b" class="tool-warn" />
-              <span class="verdict-x">×</span>
-              <span class="verdict-n">{{ group.interruptedCount }}</span>
+              <template v-if="(group.interruptedCount || 0) > 1">
+                <span class="verdict-x">×</span>
+                <span class="verdict-n">{{ group.interruptedCount }}</span>
+              </template>
             </span>
             <!-- Running: the ring sits in the same right-hand slot as every
                  other verdict, so the row's left and right edges stay put as it

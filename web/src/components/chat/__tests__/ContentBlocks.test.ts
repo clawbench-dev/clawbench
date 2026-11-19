@@ -4389,22 +4389,40 @@ describe('compact tool calls', () => {
     expect(wrapper.find('.chat-run-body .content-blocks-nested').exists()).toBe(true)
   })
 
-  it('shows the failure count instead of hiding it', async () => {
+  it('shows the failure glyph alone when exactly one step failed', async () => {
+    // "✕ ×1" was two marks for one fact, and the little × read as a second,
+    // differently-shaped cross behind the glyph. One failure = the glyph.
     const wrapper = mountBlocks({
       blocks: [tool('Read', 't1'), tool('Bash', 't2', { status: 'error' })],
     })
     await nextTick()
     const row = wrapper.find('[data-tool-group]')
     expect(row.attributes('data-tool-failed')).toBe('1')
-    // Glyph · number on the right — no "1 failed" sentence, and no second red
-    // status icon next to it.
+    // Glyph on the right — no "1 failed" sentence, no second red status icon,
+    // and no "×1" either.
     const verdict = row.find('.tool-group-verdict')
     expect(verdict.classes()).toContain('tool-group-failed')
-    expect(verdict.find('.verdict-n').text()).toBe('1')
     expect(verdict.find('.tool-error-icon').exists()).toBe(true)
+    expect(verdict.find('.verdict-x').exists()).toBe(false)
+    expect(verdict.find('.verdict-n').exists()).toBe(false)
+    // The count still reaches the tooltip and the spoken label.
+    expect(verdict.attributes('title')).toBe('1 failed')
     expect(row.text()).not.toContain('failed')
     // The right-hand verdict replaces the plain check mark.
     expect(row.find('.tool-check').exists()).toBe(false)
+  })
+
+  it('shows the count once more than one step failed', async () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        tool('Read', 't1', { status: 'error' }),
+        tool('Bash', 't2', { status: 'error' }),
+      ],
+    })
+    await nextTick()
+    const verdict = wrapper.find('.tool-group-verdict')
+    expect(verdict.find('.verdict-x').text()).toBe('×')
+    expect(verdict.find('.verdict-n').text()).toBe('2')
   })
 
   it('looks exactly like the running tool\'s own pill while that tool works', async () => {
@@ -4492,13 +4510,14 @@ describe('compact tool calls', () => {
     const verdict = row.find('.tool-group-verdict')
     expect(verdict.exists()).toBe(true)
     expect(verdict.classes()).toContain('tool-group-failed')
-    expect(verdict.find('.verdict-n').text()).toBe('1')
+    expect(verdict.find('.verdict-x').exists()).toBe(false)
+    expect(verdict.find('.verdict-n').exists()).toBe(false)
     expect(verdict.attributes('title')).toBe('1 failed')
     // …and the ring is still there, next to it.
     expect(row.find('.tool-spinner').exists()).toBe(true)
   })
 
-  it('keeps the interruption count visible while the run is still going', async () => {
+  it('keeps the interruption glyph visible while the run is still going', async () => {
     const wrapper = mountBlocks({
       streaming: true,
       blocks: [
@@ -4508,7 +4527,9 @@ describe('compact tool calls', () => {
     })
     await nextTick()
     const row = wrapper.find('[data-tool-group]')
-    expect(row.find('.tool-group-interrupted .verdict-n').text()).toBe('1')
+    expect(row.find('.tool-group-interrupted .tool-warn').exists()).toBe(true)
+    // Same rule as failures: a single interruption is the glyph alone.
+    expect(row.find('.tool-group-interrupted .verdict-n').exists()).toBe(false)
     expect(row.find('.tool-spinner').exists()).toBe(true)
   })
 
