@@ -182,11 +182,14 @@ const BUILD_CASES: Array<[string, string | null]> = [
   // IPv6 (issue #696): what the manual documents for public IPv6 access.
   ['http://[240e:390:1234:5678::123]:20000', 'http://[240e:390:1234:5678::123]:20000'],
   ['HTTPS://[::1]:8443/chat', 'https://[::1]:8443'],
+  ['https://[::ffff:192.168.0.1]:20000', 'https://[::ffff:192.168.0.1]:20000'],
   // Half-written IPv6 is refused, never completed by guessing:
   ['240e:390:1234:5678::123', null], // no brackets, so no way to add a port
   ['[240e:390:1234:5678::123]:20000', null], // no scheme
   ['http://[240e:390:1234:5678::123]', null], // no port
   ['http://240e:390:1234:5678::123:20000', null], // no brackets
+  // Port 0 is not a usable port.
+  ['https://[::1]:0', null],
   // A syntax error in the literal is still rejected.
   ['http://[240e::123:20000', null],
   // A port written without brackets on a literal is refused, not guessed at.
@@ -696,6 +699,8 @@ describe('IPv6 acceptance agrees between the web form and the clients', () => {
     'http://[240e::123:20000',
     '2001:db8::1:20000',
     '[host]:8080',
+    'https://[::1]:0',
+    'https://[::ffff:192.168.0.1]:20000',
   ]
 
   for (const [label, rel] of [

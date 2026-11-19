@@ -276,8 +276,9 @@ async function handleAddServer() {
     return
   }
 
-  // Normalize URL. Scheme-less input keeps https; an IPv6 literal gets its
-  // brackets so the result is a URL the native layer can actually load.
+  // Normalize URL. Nothing is guessed for IPv6: it must be written as
+  // scheme://[address]:port, and anything shorter is rejected with a hint
+  // rather than saved as an address the native layer cannot load.
   const url = normalizeServerUrl(newServerUrl.value)
   if (!url) {
     error.value = t('login.invalidServerAddress')

@@ -21,6 +21,8 @@ describe('normalizeServerUrl', () => {
     // IPv6: the form the manual documents.
     ['http://[240e:390:1234:5678::123]:20000', 'http://[240e:390:1234:5678::123]:20000'],
     ['https://[::1]:8443/', 'https://[::1]:8443'],
+    // An embedded IPv4 tail is a literal like any other.
+    ['https://[::ffff:192.168.0.1]:20000', 'https://[::ffff:c0a8:1]:20000'],
     // Whitespace from a paste.
     ['  http://[::1]:20000  ', 'http://[::1]:20000'],
   ]
@@ -45,6 +47,9 @@ describe('normalizeServerUrl', () => {
     '[240e:390:1234:5678::123]:20000', // no scheme
     'http://[240e:390:1234:5678::123]', // no port
     'http://240e:390:1234:5678::123:20000', // no brackets
+    // `new URL()` accepts :0, but the clients refuse it — the web form must too.
+    'https://[::1]:0',
+    'https://host:0',
   ]
   for (const input of REJECTED) {
     it(`rejects ${JSON.stringify(input)}`, () => {

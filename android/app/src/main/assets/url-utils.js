@@ -11,8 +11,9 @@
  *
  * IPv6 literals are bracketed on the way out (`[240e:390::1]`): that is the only
  * spelling a URL can carry, and the one the manual documents for IPv6 access.
- * Input may omit the brackets, but then there is nowhere to attach a port —
- * a bare literal is the host, nothing else.
+ * Input may omit the brackets, but then there is nowhere to attach a port, so
+ * the result has port === null and buildServerUrl() refuses it — splitting an
+ * address apart is this function's job, deciding whether it is COMPLETE is not.
  *
  * Returns { protocol: 'http'|'https'|null, host: string, port: string|null },
  * or null when the input is not a server address we understand. Callers must

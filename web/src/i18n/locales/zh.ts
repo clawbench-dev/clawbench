@@ -768,7 +768,7 @@ export default {
     addServer: '添加其他服务端',
     serverNamePlaceholder: '名称（选填）',
     duplicateServerName: '该名称已被使用',
-    invalidServerAddress: '地址格式不正确，例如 https://192.168.1.100:20000 或 http://[240e:390:1234:5678::123]:20000',
+    invalidServerAddress: '地址格式不正确。普通地址如 https://192.168.1.100:20000；IPv6 需写全协议、方括号和端口，如 http://[240e:390:1234:5678::123]:20000',
     serverUrlPlaceholder: '输入服务端地址',
     serverPasswordPlaceholder: '输入密码',
     addServerSubmit: '添加并登录',

@@ -79,6 +79,10 @@ export function normalizeServerUrl(text: string): string {
     if (!/^[A-Za-z0-9._-]+$/.test(host) || /^[0-9]+$/.test(host)) return ''
   }
 
+  // Same port range as the clients' isValidPort: `new URL()` accepts :0 and
+  // would let the web form save an address the clients then refuse.
+  if (Number(port) < 1 || Number(port) > 65535) return ''
+
   // `new URL()` is the validity check: it rejects malformed IPv6 literals and
   // empty hosts. Its `origin` is what gets saved (scheme lowercased, IPv6
   // normalised), and is exactly the shape the clients' parser accepts.
