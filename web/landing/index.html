@@ -372,7 +372,7 @@
         <p class="lede" data-i18n="desk.lede">
           文件树、文档、对话、终端可以同屏并排，分栏比例随手拖。窗口最小化后通知照常送达——因为事件走的是 WebSocket，而不是页面里的 Notification。
         </p>
-        <a class="link-arrow" href="#step-client">
+        <a class="link-arrow" href="#step-mode">
           <span data-i18n="desk.link">下载桌面客户端</span>
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
         </a>
@@ -502,15 +502,91 @@
   <section class="section" id="deploy">
     <div class="section-head reveal">
       <p class="kicker" data-i18n="dep.kicker">部署</p>
-      <h2 data-i18n-html="dep.title">先服务端，<br>再客户端。</h2>
+      <h2 data-i18n-html="dep.title">选一种装法，<br>剩下的跟着走。</h2>
       <p class="lede" data-i18n="dep.lede">
-        两步：先把服务端跑起来，再用桌面、手机或浏览器连上去。
+        先选一体化还是分开装，下面只显示对应的步骤。
       </p>
     </div>
 
     <div class="deploy-wrap reveal">
-      <div class="step" id="step-server">
+      <!-- 向导第一步：安装方式。选完才显示第二步，避免一上来就把两条
+           路的所有内容平铺在页面上。 -->
+      <div class="step step-choice" id="step-mode">
+        <h3 class="step-title" data-kicker="先选" data-kicker-i18n="mode.kicker" data-i18n="mode.t">怎么装？</h3>
+        <p class="step-desc" data-i18n="mode.d">两种装法功能完全一样，区别在于你要不要单独跑一个服务端。</p>
+
+        <div class="mode-grid" role="radiogroup" data-i18n-label="mode.aria">
+          <button class="mode-card mode-card-accent" type="button" role="radio" aria-checked="true" data-mode="allinone">
+            <span class="mode-graphic mode-graphic-allinone" aria-hidden="true">
+              <svg viewBox="0 0 48 48" width="42" height="42" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="7" y="8" width="34" height="24" rx="3"/>
+                <path d="M17 40h14M24 32v8"/>
+              </svg>
+            </span>
+            <span class="mode-body">
+              <span class="mode-head">
+                <span class="mode-radio" aria-hidden="true"></span>
+                <span class="mode-name" data-i18n="mode.allinone.t">一体化安装</span>
+                <span class="mode-tag" data-i18n="mode.allinone.tag">推荐</span>
+              </span>
+              <span class="mode-desc" data-i18n="mode.allinone.d">
+                客户端自带服务端，装完打开就能用。适合办公、日常使用——不想碰命令行，也不想多开一台机器。
+              </span>
+              <span class="mode-flow" aria-hidden="true">
+                <span class="mode-flow-step" data-i18n="mode.allinone.s1">装客户端</span>
+                <span class="mode-flow-end" data-i18n="mode.done">完成</span>
+              </span>
+              <span class="mode-fit" data-i18n="mode.allinone.fit">仅 Windows · 一个安装包搞定</span>
+            </span>
+          </button>
+
+          <button class="mode-card" type="button" role="radio" aria-checked="false" data-mode="split">
+            <span class="mode-stack mode-stack-split" aria-hidden="true">
+              <span class="mode-ico">
+                <svg viewBox="0 0 48 48" width="42" height="42" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="7" y="8" width="34" height="24" rx="3"/>
+                  <path d="M17 40h14M24 32v8"/>
+                </svg>
+              </span>
+              <span class="mode-link"></span>
+              <span class="mode-ico">
+                <svg viewBox="0 0 48 48" width="42" height="42" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="10" y="6" width="28" height="36" rx="3"/>
+                  <path d="M17 16h14M17 24h14M17 32h8"/>
+                </svg>
+              </span>
+            </span>
+            <span class="mode-body">
+              <span class="mode-head">
+                <span class="mode-radio" aria-hidden="true"></span>
+                <span class="mode-name" data-i18n="mode.split.t">客户端与服务端分开装</span>
+              </span>
+              <span class="mode-desc" data-i18n="mode.split.d">
+                服务端跑在一台机器上，桌面、手机、浏览器从别的设备连过去。适合开发、极客——长任务放服务器上跑，人在外面也能接着用。
+              </span>
+              <span class="mode-flow" aria-hidden="true">
+                <span class="mode-flow-step" data-i18n="mode.split.s1">装服务端</span>
+                <span class="mode-flow-step" data-i18n="mode.split.s2">连客户端</span>
+              </span>
+              <span class="mode-fit" data-i18n="mode.split.fit">Windows / macOS / Linux / Android · 可跨设备</span>
+            </span>
+          </button>
+        </div>
+
+        <!-- 选中后紧贴在选项下方的一句承接：把「你选的这个」和「下面出现
+             的步骤」直接连起来，不用靠用户自己意会。 -->
+        <p class="mode-bridge" id="modeBridge" hidden>
+          <span class="mode-bridge-icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v9M4.5 8.5 8 12l3.5-3.5"/></svg>
+          </span>
+          <span data-i18n-html="mode.bridge.allinone" id="modeBridgeText">按上面的选择，下面只有 <strong>1 步</strong>：装好就是完整的一套。</span>
+        </p>
+      </div>
+
+      <!-- 第二步：分开装时先装服务端。一体化方案不显示这一步。 -->
+      <div class="step" id="step-server" hidden>
         <span class="step-no">1</span>
+        <p class="step-from" data-i18n="step.from.split">分开装 · 第 1 步，共 2 步</p>
         <h3 class="step-title" data-i18n="step.server.t">装服务端</h3>
         <p class="step-desc" data-i18n="step.server.d">任选一种，跑起来就行。首次启动会生成随机密码并打印到控制台。</p>
 
@@ -587,46 +663,46 @@ docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data gh
               单文件、自带前端，解压后运行 <code>./clawbench</code> 即可。Android 那一份是在 Termux 里跑的 arm64 版本。
             </p>
             <div class="dl-grid">
-              <div class="dl-card">
+              <div class="dl-card" data-os="win">
                 <div class="dl-card-head">
                   <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-win"/></svg>
                   <span class="dl-name">Windows</span>
                   <span class="dl-meta">.zip</span>
                 </div>
                 <div class="dl-links">
-                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-windows-amd64">x64</a>
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-windows-amd64" data-mirror="1">x64</a>
                 </div>
               </div>
-              <div class="dl-card">
+              <div class="dl-card" data-os="mac">
                 <div class="dl-card-head">
                   <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-mac"/></svg>
                   <span class="dl-name">macOS</span>
                   <span class="dl-meta">.zip</span>
                 </div>
                 <div class="dl-links">
-                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-darwin-arm64">Apple Silicon</a>
-                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-darwin-amd64">Intel</a>
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-darwin-arm64" data-mirror="1">Apple Silicon</a>
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-darwin-amd64" data-mirror="1">Intel</a>
                 </div>
               </div>
-              <div class="dl-card">
+              <div class="dl-card" data-os="linux">
                 <div class="dl-card-head">
                   <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-linux"/></svg>
                   <span class="dl-name">Linux</span>
                   <span class="dl-meta">.zip</span>
                 </div>
                 <div class="dl-links">
-                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-linux-amd64">x64</a>
-                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-linux-arm64">ARM64</a>
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-linux-amd64" data-mirror="1">x64</a>
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-linux-arm64" data-mirror="1">ARM64</a>
                 </div>
               </div>
-              <div class="dl-card">
+              <div class="dl-card" data-os="android">
                 <div class="dl-card-head">
                   <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-android"/></svg>
                   <span class="dl-name">Android · Termux</span>
                   <span class="dl-meta">.zip</span>
                 </div>
                 <div class="dl-links">
-                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-android-arm64">arm64</a>
+                  <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-android-arm64" data-mirror="1">arm64</a>
                 </div>
               </div>
             </div>
@@ -635,63 +711,100 @@ docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data gh
 
         <p class="step-note" data-i18n-html="step.server.note">启动后终端会打印访问地址和随机密码，记下来——下一步要用。</p>
 
-        <a class="step-next" href="#step-client">
+        <a class="step-next" href="#step-client" id="stepNext">
           <span data-i18n="step.next">下一步：连上客户端</span>
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M4 9l4 4 4-4"/></svg>
         </a>
       </div>
 
-      <div class="step" id="step-client">
+      <div class="step" id="step-client" hidden>
         <span class="step-no">2</span>
+        <p class="step-from" id="stepClientFrom" data-i18n="step.from.split2">分开装 · 第 2 步，共 2 步</p>
         <h3 class="step-title" data-i18n="step.client.t">连客户端</h3>
         <p class="step-desc" data-i18n="step.client.d">桌面端或手机装上客户端，打开后填上一步的地址和密码。</p>
 
-        <div class="dl-grid">
-          <div class="dl-card">
+        <!-- 分开装时的客户端：只有瘦客户端（它要去连别人） -->
+        <div class="dl-grid" data-mode-panel="split">
+          <div class="dl-card dl-card-hero" data-os="win">
             <div class="dl-card-head">
               <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-win"/></svg>
               <span class="dl-name">Windows</span>
               <span class="dl-meta">.zip</span>
             </div>
             <div class="dl-links">
-              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-windows-x64">x64</a>
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-windows-x64" data-mirror="1">x64</a>
             </div>
+            <p class="dl-card-note" data-i18n="dl.splitNote">客户端只负责连接，服务端要另外装（上一步的安装包，或另一台机器）。</p>
           </div>
-          <div class="dl-card">
+        </div>
+
+        <!-- 一体化方案：只有一个入口，一体包。非 Windows 访客看到的是
+             一张说明「仅 Windows」的灰卡，而不是空白。 -->
+        <div class="dl-grid dl-grid-single" data-mode-panel="allinone">
+          <div class="dl-card dl-card-hero dl-card-accent" data-os="win">
             <div class="dl-card-head">
-              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-mac"/></svg>
-              <span class="dl-name">macOS</span>
+              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-win"/></svg>
+              <span class="dl-name">Windows · <span data-i18n="dl.allinone">一体包</span></span>
               <span class="dl-meta">.zip</span>
             </div>
             <div class="dl-links">
-              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-arm64">Apple Silicon</a>
-              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-x64">Intel</a>
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-windows-x64-local" data-mirror="1">x64</a>
             </div>
+            <p class="dl-card-note" data-i18n="dl.allinoneNote">客户端自带服务端，装完就能用，不用另外部署。</p>
+            <p class="dl-card-warn" data-i18n="dl.allinoneWinOnly" hidden>一体化安装目前只提供 Windows 版。</p>
+            <button class="dl-card-altswap" type="button" data-switch-to="split" data-i18n="dl.switchToSplit" hidden>
+              用别的系统？改成客户端与服务端分开装
+            </button>
           </div>
-          <div class="dl-card">
-            <div class="dl-card-head">
-              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-linux"/></svg>
-              <span class="dl-name">Linux</span>
-              <span class="dl-meta">.zip</span>
+        </div>
+
+        <!-- 两种装法都要的其他平台客户端 -->
+        <div class="dl-more">
+          <button class="dl-more-btn" type="button" id="dlMore" aria-expanded="false" aria-controls="dlMoreBody">
+            <span data-i18n="dl.more">其他平台（macOS / Linux / Android）</span>
+            <svg class="dl-more-caret" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+          </button>
+          <div class="dl-grid" id="dlMoreBody" hidden>
+            <div class="dl-card" data-os="mac">
+              <div class="dl-card-head">
+                <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-mac"/></svg>
+                <span class="dl-name">macOS</span>
+                <span class="dl-meta">.zip</span>
+              </div>
+              <div class="dl-links">
+                <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-arm64" data-mirror="1">Apple Silicon</a>
+                <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-x64" data-mirror="1">Intel</a>
+              </div>
             </div>
-            <div class="dl-links">
-              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-x64">x64</a>
-              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-arm64">ARM64</a>
+            <div class="dl-card" data-os="linux">
+              <div class="dl-card-head">
+                <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-linux"/></svg>
+                <span class="dl-name">Linux</span>
+                <span class="dl-meta">.zip</span>
+              </div>
+              <div class="dl-links">
+                <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-x64" data-mirror="1">x64</a>
+                <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-arm64" data-mirror="1">ARM64</a>
+              </div>
             </div>
-          </div>
-          <div class="dl-card">
-            <div class="dl-card-head">
-              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-android"/></svg>
-              <span class="dl-name">Android</span>
-              <span class="dl-meta">.apk</span>
-            </div>
-            <div class="dl-links">
-              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-android" data-ext="apk">arm64</a>
+            <div class="dl-card" data-os="android">
+              <div class="dl-card-head">
+                <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-android"/></svg>
+                <span class="dl-name">Android</span>
+                <span class="dl-meta">.apk</span>
+              </div>
+              <div class="dl-links">
+                <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-android" data-ext="apk" data-mirror="1">arm64</a>
+              </div>
             </div>
           </div>
         </div>
 
-        <p class="step-note" data-i18n-html="step.client.note">不想装客户端？用任意浏览器打开同一个地址（<code>http://服务器IP:20000</code>），界面和客户端完全一致。</p>
+        <!-- 这条只对分开装成立：一体化方案里服务端就在本机，
+             不存在「用浏览器连另一台服务器」这回事。 -->
+        <p class="step-note" data-i18n-html="step.client.note" data-mode-panel="split">不想装客户端？用任意浏览器打开同一个地址（<code>http://服务器IP:20000</code>），界面和客户端完全一致。</p>
+
+        <button class="step-back" type="button" id="stepBack" data-i18n="step.back">← 换一种安装方式</button>
 
         <p class="dl-foot" data-i18n-html="dl.foot">
           需要旧版本或想看变更记录？<a href="https://github.com/clawbench-dev/clawbench/releases" target="_blank" rel="noopener">查看全部发布</a>。

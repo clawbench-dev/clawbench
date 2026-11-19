@@ -83,7 +83,7 @@ function jpegSize(buf: Buffer): { width: number; height: number } {
 }
 
 /** Boots the page with the script executed, at the given navigator language. */
-function boot(language: string, fetchImpl?: unknown): JSDOM {
+function boot(language: string, fetchImpl?: unknown, userAgent?: string, plat?: string): JSDOM {
   const dom = new JSDOM(html, {
     url: 'https://clawbench.example/',
     runScripts: 'outside-only',
@@ -132,6 +132,20 @@ function boot(language: string, fetchImpl?: unknown): JSDOM {
     value: language,
     configurable: true,
   })
+
+  // 平台高亮按 UA 猜，脚本在 eval 时就要读到正确的值，所以必须在这之前设好。
+  if (userAgent) {
+    Object.defineProperty(window.navigator, 'platform', { value: plat, configurable: true })
+    Object.defineProperty(window.navigator, 'userAgent', { value: userAgent, configurable: true })
+  }
+
+  // 页面靠 scrollIntoView 把用户带到结果上。jsdom 没有这个方法，若不打桩，
+  // 「滚到哪一步」这件事在测试里完全不可见——改错了也照样绿。
+  const scrolledTo: string[] = []
+  ;(window as unknown as { __scrolledTo: string[] }).__scrolledTo = scrolledTo
+  window.Element.prototype.scrollIntoView = function (this: Element) {
+    scrolledTo.push(this.id || this.className)
+  }
 
   window.eval(script)
   return dom
@@ -478,7 +492,7 @@ describe('landing page', () => {
         ),
       }))
 
-      expect(layout.length).toBe(8)
+      expect(layout.length).toBe(9)
       expect(layout.map((c) => `${c.platform}: ${c.arches.join('+')}`)).toEqual([
         // 服务端（第一步的安装包页签）
         'Windows: x64',
@@ -487,6 +501,7 @@ describe('landing page', () => {
         'Android · Termux: arm64',
         // 客户端（第二步）
         'Windows: x64',
+        'Windows · 一体包: x64',
         'macOS: Apple Silicon+Intel',
         'Linux: x64+ARM64',
         'Android: arm64',
@@ -592,21 +607,253 @@ describe('landing page', () => {
       }
     })
 
-    it('walks from the server step to the client step', () => {
-      // Both steps are expanded (nothing is hidden behind a click), and the
-      // first one ends with a link that lands on the second.
+    it('asks for the install shape before showing any download', () => {
+      // 向导的第一步是「怎么装」，不是下载：一上来就把两条路的所有内容
+      // 平铺在页面上，用户得先读一遍才知道哪些与自己有关。
       const dom = boot('zh-CN')
       const doc = dom.window.document
       const steps = Array.from(doc.querySelectorAll('#deploy .step'))
 
-      expect(steps.map((s) => s.id)).toEqual(['step-server', 'step-client'])
-      expect(steps.map((s) => s.querySelector('.step-no')?.textContent)).toEqual(['1', '2'])
-      expect((steps[0] as HTMLElement).hidden).toBe(false)
-      expect((steps[1] as HTMLElement).hidden).toBe(false)
+      expect(steps.map((s) => s.id)).toEqual(['step-mode', 'step-server', 'step-client'])
+      // 选装法那一步是提问，不是动手的步骤，所以不带序号——否则会和
+      // 「1 装客户端」撞号，两个「1」并排，看着像重复了一整步。
+      expect(steps[0].querySelector('.step-no')).toBeNull()
+      expect(steps[0].querySelector('.step-title')?.getAttribute('data-kicker')).toBeTruthy()
+      expect(steps.slice(1).map((s) => s.querySelector('.step-no')?.textContent)).toEqual(['1', '2'])
 
-      const next = steps[0].querySelector('.step-next')!
+      // 第一步永远可见，后面两步的显隐由所选方案决定
+      expect((steps[0] as HTMLElement).hidden).toBe(false)
+
+      const modes = Array.from(doc.querySelectorAll('.mode-card'))
+      expect(modes.map((m) => m.getAttribute('data-mode'))).toEqual(['allinone', 'split'])
+      for (const m of modes) {
+        expect(m.getAttribute('role')).toBe('radio')
+        expect(m.querySelector('.mode-name')?.textContent?.trim()).toBeTruthy()
+        expect(m.querySelector('.mode-desc')?.textContent?.trim()).toBeTruthy()
+        // 两张卡都要有大图标：一体化是一整块，分开装是上下两块
+        // （用连线串起来，因为重点就是「两台机器分开放」）。
+        // 不带图标的方案卡读起来只是两段文字。
+        expect(m.querySelector('.mode-graphic svg, .mode-stack svg')).toBeTruthy()
+      }
+      // 一体化是推荐的默认路线
+      expect(modes[0].querySelector('.mode-tag')).toBeTruthy()
+      // 分开装必须是「两个独立图标块 + 中间连线」，不是一个块里画两样
+      // 东西——后者读起来像一个整体，表达不出「分开放」的意思
+      const stack = modes[1].querySelector('.mode-stack')
+      expect(stack?.querySelectorAll('.mode-ico')).toHaveLength(2)
+      expect(stack?.querySelector('.mode-link')).toBeTruthy()
+      // 引导标签要跟语种走：中文「先选」，英文有自己的说法
+      const kicker = steps[0].querySelector('.step-title')!
+      expect(kicker.getAttribute('data-kicker')).toBe('先选')
+      const domEn = boot('en-US', undefined, 'Windows NT 10.0')
+      expect(
+        domEn.window.document.querySelector('#step-mode .step-title')?.getAttribute('data-kicker')
+      ).toBe('Choose first')
+      domEn.window.close()
+      dom.window.close()
+    })
+
+    it('defaults a Windows visitor to all-in-one and everyone else to split', () => {
+      // 一体化只发 Windows 版。给 macOS / Linux 访客默认选一个点下去没得
+      // 下的方案，等于第一步就撞墙；反过来 Windows 访客要的就是那个包。
+      const win = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
+      const winDoc = win.window.document
+      expect(
+        winDoc.querySelector('.mode-card[data-mode="allinone"]')!.getAttribute('aria-checked'),
+      ).toBe('true')
+      expect((winDoc.getElementById('step-server') as HTMLElement).hidden).toBe(true)
+      // 一体化不分服务端/客户端，第二步直接下载，序号从 1 开始
+      expect((winDoc.getElementById('step-client') as HTMLElement).hidden).toBe(false)
+      expect(winDoc.querySelector('#step-client .step-no')!.textContent).toBe('1')
+      win.window.close()
+
+      const mac = boot('zh-CN', undefined, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel')
+      const macDoc = mac.window.document
+      expect(macDoc.querySelector('.mode-card[data-mode="split"]')!.getAttribute('aria-checked')).toBe(
+        'true',
+      )
+      expect((macDoc.getElementById('step-server') as HTMLElement).hidden).toBe(false)
+      expect(macDoc.querySelector('#step-client .step-no')!.textContent).toBe('2')
+      mac.window.close()
+    })
+
+    it('only offers the all-in-one package, and greys it out off Windows', () => {
+      // 选了一体化就只有一体包一个入口：瘦客户端在这里是错的选择。
+      const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
+      const doc = dom.window.document
+      const panel = doc.querySelector('[data-mode-panel="allinone"]')!
+      expect((panel as HTMLElement).hidden).toBe(false)
+      expect((doc.querySelector('[data-mode-panel="split"]') as HTMLElement).hidden).toBe(true)
+      expect(Array.from(panel.querySelectorAll('a[data-asset]')).map((a) => a.getAttribute('data-asset'))).toEqual(
+        ['clawbench-desktop-windows-x64-local'],
+      )
+      expect(panel.classList.contains('is-unavailable')).toBe(false)
+      expect((panel.querySelector('.dl-card-warn') as HTMLElement).hidden).toBe(true)
+      dom.window.close()
+
+      // 非 Windows 访客选了它：卡还在（他能看到有这东西、也能改主意），
+      // 但芯片灰掉并写明原因，而不是一个点下去 404 的按钮
+      const mac = boot('zh-CN', undefined, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel')
+      const macDoc = mac.window.document
+      ;(macDoc.querySelector('.mode-card[data-mode="allinone"]') as HTMLElement).click()
+      const macPanel = macDoc.querySelector('[data-mode-panel="allinone"]')!
+      expect(macPanel.classList.contains('is-unavailable')).toBe(true)
+      expect((macPanel.querySelector('.dl-card-warn') as HTMLElement).hidden).toBe(false)
+      const chip = macPanel.querySelector('a[data-asset]')!
+      expect(chip.getAttribute('aria-disabled')).toBe('true')
+      // 灰掉的卡必须给一条出路，否则用户卡在死路上
+      expect((macPanel.querySelector('.dl-card-altswap') as HTMLElement).hidden).toBe(false)
+      mac.window.close()
+    })
+
+    it('shows the "use a browser instead" note only in the split shape', () => {
+      // 一体化方案里服务端就在用户自己机器上，不存在「浏览器连另一台服务器」。
+      // 这条提示若留在一体化下，会让人以为还得去连别的机器。
+      const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
+      const doc = dom.window.document
+      const note = doc.querySelector('.step-note[data-mode-panel="split"]') as HTMLElement
+      expect(note).toBeTruthy()
+      expect(note.textContent).toContain('服务器IP')
+
+      // Windows 默认是一体化：这条必须收起来
+      expect(note.hidden).toBe(true)
+      // 切到分开装：出现，并且和客户端下载卡一起在第 2 步里
+      ;(doc.querySelector('.mode-card[data-mode="split"]') as HTMLElement).click()
+      expect(note.hidden).toBe(false)
+      // 切回一体化：再次收起，而不是一直挂在页面上
+      ;(doc.querySelector('.mode-card[data-mode="allinone"]') as HTMLElement).click()
+      expect(note.hidden).toBe(true)
+      dom.window.close()
+    })
+
+    it('switches back and forth between the two shapes', () => {
+      // 选错方案不该靠刷新页面来纠正：换回第一步的按钮要真的能换。
+      const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
+      const doc = dom.window.document
+      const back = doc.getElementById('stepBack') as HTMLElement
+
+      back.click()
+      expect((doc.getElementById('step-client') as HTMLElement).hidden).toBe(true)
+      expect((doc.getElementById('step-server') as HTMLElement).hidden).toBe(true)
+      expect(back.hidden).toBe(true)
+
+      ;(doc.querySelector('.mode-card[data-mode="split"]') as HTMLElement).click()
+      expect((doc.getElementById('step-server') as HTMLElement).hidden).toBe(false)
+      expect((doc.getElementById('step-client') as HTMLElement).hidden).toBe(false)
+      expect((doc.querySelector('[data-mode-panel="split"]') as HTMLElement).hidden).toBe(false)
+      expect(back.hidden).toBe(false)
+      // 分开装是两步，第一步末尾的「下一步」指向第二步
+      const next = doc.getElementById('stepNext') as HTMLElement
+      expect(next.hidden).toBe(false)
       expect(next.getAttribute('href')).toBe('#step-client')
-      expect(doc.getElementById('step-client')).toBeTruthy()
+
+      // 一体化里那张灰卡上的「换一种装法」也要能直接切过去
+      ;(doc.querySelector('.mode-card[data-mode="allinone"]') as HTMLElement).click()
+      expect(next.hidden).toBe(true)
+      dom.window.close()
+    })
+
+    it('ties each choice to the steps it produces', () => {
+      // 选项和它下面的步骤必须能对上号：用户点了一张卡，得看得出「接下来
+      // 是几步、现在是第几步」。靠这两处新标记建立联系——选项卡里的步骤
+      // 预告，和承接条/步骤上的归属标签。
+      const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
+      const doc = dom.window.document
+      const flow = (m: string) =>
+        Array.from(doc.querySelectorAll(`.mode-card[data-mode="${m}"] .mode-flow-step`)).map(
+          (el) => (el.textContent || '').trim(),
+        )
+
+      // 每张卡自己就写清会走几步，不用点开才知道
+      expect(flow('allinone')).toEqual(['装客户端'])
+      expect(flow('split')).toEqual(['装服务端', '连客户端'])
+
+      // 承接条一开始就跟着默认方案显示，是「选项 → 步骤」的缝合处
+      const bridge = doc.getElementById('modeBridge') as HTMLElement
+      expect(bridge.hidden).toBe(false)
+      const bridgeKey = () =>
+        doc.getElementById('modeBridgeText')!.getAttribute('data-i18n-html')
+      expect(bridgeKey()).toBe('mode.bridge.allinone')
+
+      ;(doc.querySelector('.mode-card[data-mode="split"]') as HTMLElement).click()
+      expect(bridgeKey()).toBe('mode.bridge.split')
+      expect(doc.getElementById('stepClientFrom')!.getAttribute('data-i18n')).toBe(
+        'step.from.split2',
+      )
+      expect(doc.querySelector('#step-server .step-from')!.textContent?.trim()).toBe(
+        '分开装 · 第 1 步，共 2 步',
+      )
+
+      // 退回选择前，承接条要收起来，不能对着空页面说「下面有两步」
+      ;(doc.getElementById('stepBack') as HTMLElement).click()
+      expect(bridge.hidden).toBe(true)
+      dom.window.close()
+    })
+
+    it('lands on the first step of the shape you picked', () => {
+      // 点「分开装」却直接落到第 2 步，等于跳过了真正的起点：用户看不到
+      // 服务端怎么装，还以为自己少做了一步。点的方案不同，落脚点也不同。
+      const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
+      const doc = dom.window.document
+      const scrolled = () => (dom.window as unknown as { __scrolledTo: string[] }).__scrolledTo
+
+      scrolled().length = 0
+      ;(doc.querySelector('.mode-card[data-mode="split"]') as HTMLElement).click()
+      expect(scrolled()).toContain('step-server')
+      expect(scrolled()).not.toContain('step-client')
+
+      // 一体化没有服务端那一步，落到装客户端就是它的起点
+      scrolled().length = 0
+      ;(doc.querySelector('.mode-card[data-mode="allinone"]') as HTMLElement).click()
+      expect(scrolled()).toContain('step-client')
+
+      // 回流到选择区时不应该顺手把人带到某个步骤上
+      scrolled().length = 0
+      ;(doc.getElementById('stepBack') as HTMLElement).click()
+      expect(scrolled()).not.toContain('step-server')
+      expect(scrolled()).not.toContain('step-client')
+      dom.window.close()
+    })
+
+    it('keeps the bridge wording in the right language', () => {
+      const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
+      const doc = dom.window.document
+      const text = () => doc.getElementById('modeBridgeText')!.textContent || ''
+
+      // 承接条里带 <strong>，所以必须走 data-i18n-html；用 data-i18n 会把
+      // 标签当文字，页面上直接出现「<strong>」三个字。
+      expect(text()).toContain('1 步')
+      expect(doc.getElementById('modeBridgeText')!.querySelector('strong')).toBeTruthy()
+
+      ;(doc.getElementById('langToggle') as HTMLElement).click()
+      expect(text()).toContain('one step')
+      expect(doc.getElementById('modeBridgeText')!.querySelector('strong')).toBeTruthy()
+
+      ;(doc.querySelector('.mode-card[data-mode="split"]') as HTMLElement).click()
+      expect(text()).toContain('Two steps')
+
+      // 切回中文：承接条的文案要跟着方案还原，不能停在上一个方案的英文
+      ;(doc.getElementById('langToggle') as HTMLElement).click()
+      expect(text()).toContain('两步')
+      dom.window.close()
+    })
+
+    it('relabels the second step for each shape, in both languages', () => {
+      // 一体化没有服务端那一步，第二步的标题必须跟着换成「装客户端」，
+      // 否则用户会以为还缺一步没做。切语种后仍要正确。
+      const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
+      const doc = dom.window.document
+      const title = () => doc.querySelector('#step-client .step-title')?.textContent?.trim()
+
+      expect(title()).toBe('装客户端')
+      ;(doc.getElementById('langToggle') as HTMLElement).click()
+      expect(title()).toBe('Install the client')
+      expect(doc.querySelector('#step-client .step-desc')?.textContent?.trim()).toBeTruthy()
+
+      // 切回分开装、再切回中文：标题要还原成「连客户端」，不能留英文
+      ;(doc.getElementById('langToggle') as HTMLElement).click()
+      ;(doc.querySelector('.mode-card[data-mode="split"]') as HTMLElement).click()
+      expect(title()).toBe('连客户端')
       dom.window.close()
     })
 
@@ -673,7 +920,7 @@ describe('landing page', () => {
     it('offers exactly the artifacts release.yml publishes', () => {
       const dom = new JSDOM(html)
       const assets = cards(dom.window.document)
-      expect(assets.length).toBe(12)
+      expect(assets.length).toBe(13)
       expect(new Set(assets.map((a) => a.base)).size).toBe(assets.length)
 
       for (const { base, ext } of assets) {
@@ -688,11 +935,62 @@ describe('landing page', () => {
     })
 
     it('points at the Releases page until the version is known', () => {
-      const dom = boot('zh-CN')
-      const hrefs = cards(dom.window.document).map((a) => a.href)
-      expect(hrefs).toEqual(
-        Array(hrefs.length).fill('https://github.com/clawbench-dev/clawbench/releases/latest'),
+      // 中文页的退路也走镜像：国内直连 github 常常几 KB/s，退路不该比
+      // 正路还慢。英文页没有国内网络问题，用官方地址。
+      const mirror = 'https://gh-proxy.com/'
+      const raw = 'https://github.com/clawbench-dev/clawbench/releases/latest'
+
+      const zh = boot('zh-CN')
+      const zhHrefs = cards(zh.window.document).map((a) => a.href)
+      expect(zhHrefs).toEqual(Array(zhHrefs.length).fill(mirror + raw))
+      zh.window.close()
+
+      const en = boot('en-US')
+      const enHrefs = cards(en.window.document).map((a) => a.href)
+      expect(enHrefs).toEqual(Array(enHrefs.length).fill(raw))
+      en.window.close()
+    })
+
+    it('sends Chinese visitors to the mainland mirror, English ones straight to GitHub', async () => {
+      // 镜像只在中文页生效：后端 desktop_upgrade.go 的 githubReleaseMirrors
+      // 是给国内用户准备的，英文访客没有必要多经一手社区代理。
+      const mirror = 'https://gh-proxy.com/'
+      const tag = 'v9.9.9'
+      const rawPrefix = `https://github.com/clawbench-dev/clawbench/releases/download/${tag}/`
+
+      const zh = boot('zh-CN', () =>
+        Promise.resolve({ ok: true, json: () => Promise.resolve({ tag_name: tag }) }),
       )
+      await new Promise((r) => setTimeout(r, 0))
+      const zhHrefs = cards(zh.window.document).map((a) => a.href)
+      expect(zhHrefs.length).toBe(13)
+      // 每一枚芯片都走镜像，不能有漏网的直连
+      expect(zhHrefs.filter((h) => !h.startsWith(mirror + rawPrefix))).toEqual([])
+      expect(zhHrefs).toContain(`${mirror}${rawPrefix}clawbench-desktop-windows-x64-local-${tag}.zip`)
+      zh.window.close()
+
+      const en = boot('en-US', () =>
+        Promise.resolve({ ok: true, json: () => Promise.resolve({ tag_name: tag }) }),
+      )
+      await new Promise((r) => setTimeout(r, 0))
+      const enHrefs = cards(en.window.document).map((a) => a.href)
+      expect(enHrefs.filter((h) => !h.startsWith(rawPrefix))).toEqual([])
+      en.window.close()
+    })
+
+    it('drops the mirror prefix when the visitor switches to English', async () => {
+      // 语种可随时切换：切到英文页后芯片若还挂着镜像前缀，就等于把
+      // 「仅中文页可见」的假设写成了死代码。
+      const dom = boot('zh-CN', () =>
+        Promise.resolve({ ok: true, json: () => Promise.resolve({ tag_name: 'v9.9.9' }) }),
+      )
+      await new Promise((r) => setTimeout(r, 0))
+      const toggle = dom.window.document.getElementById('langToggle') as HTMLElement
+      toggle.click()
+
+      const hrefs = cards(dom.window.document).map((a) => a.href)
+      expect(hrefs.filter((h) => h.includes('gh-proxy.com'))).toEqual([])
+      expect(hrefs.filter((h) => !h.startsWith('https://github.com/'))).toEqual([])
       dom.window.close()
     })
 
@@ -703,11 +1001,85 @@ describe('landing page', () => {
       await new Promise((r) => setTimeout(r, 0))
 
       const hrefs = cards(dom.window.document).map((a) => a.href)
-      const prefix = 'https://github.com/clawbench-dev/clawbench/releases/download/v9.9.9/'
+      // 中文页的直链前面带镜像前缀，资产路径本身仍指向同一份文件。
+      const prefix =
+        'https://gh-proxy.com/https://github.com/clawbench-dev/clawbench/releases/download/v9.9.9/'
       expect(hrefs).toContain(`${prefix}clawbench-desktop-linux-x64-v9.9.9.zip`)
       expect(hrefs).toContain(`${prefix}clawbench-android-v9.9.9.apk`)
       expect(hrefs.filter((h) => !h.startsWith(prefix))).toEqual([])
       dom.window.close()
+    })
+
+    it('tucks the other platforms away and keeps every package reachable', () => {
+      // 除 Windows 外的客户端收进「其他平台」，需要时再展开。
+      const dom = boot('zh-CN')
+      const doc = dom.window.document
+
+      const more = doc.getElementById('dlMoreBody') as HTMLElement
+      expect(more.hidden).toBe(true)
+      expect(
+        Array.from(more.querySelectorAll('.dl-name')).map((n) => (n.textContent || '').trim()),
+      ).toEqual(['macOS', 'Linux', 'Android'])
+      dom.window.close()
+    })
+
+    it('expands the other platforms on click and keeps every package reachable', () => {
+      // 折叠不能折叠掉可达性：13 个包必须在 DOM 里，展开后逐个可见可点。
+      const dom = boot('zh-CN')
+      const doc = dom.window.document
+      const btn = doc.getElementById('dlMore') as HTMLElement
+      const body = doc.getElementById('dlMoreBody') as HTMLElement
+
+      expect(btn.getAttribute('aria-expanded')).toBe('false')
+      btn.click()
+      expect(body.hidden).toBe(false)
+      expect(btn.getAttribute('aria-expanded')).toBe('true')
+      btn.click()
+      expect(body.hidden).toBe(true)
+      expect(btn.getAttribute('aria-expanded')).toBe('false')
+
+      // 折叠与否，芯片总数不变
+      expect(doc.querySelectorAll('a[data-asset]').length).toBe(13)
+      dom.window.close()
+    })
+
+    it('labels the collapsed group for both languages', () => {
+      // 折叠按钮是纯文字按钮，缺英文译文会静默显示中文（见文件头说明）。
+      for (const [lang, expectText] of [
+        ['zh-CN', '其他平台'],
+        ['en-US', 'Other platforms'],
+      ]) {
+        const dom = boot(lang)
+        const text = dom.window.document.getElementById('dlMore')?.textContent || ''
+        expect(text, lang).toContain(expectText)
+        dom.window.close()
+      }
+    })
+
+    it('highlights the visitor’s own platform without hiding the others', () => {
+      // 按 UA 猜系统只用来加强调，绝不能用来隐藏——猜错了代价是看不到自己
+      // 该下的包。Windows 访客：两张 Windows 方案卡被标出，macOS 卡仍在
+      // 文档里且没被标。
+      const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
+      const doc = dom.window.document
+
+      const current = Array.from(doc.querySelectorAll('.dl-card.is-current'))
+      expect(current.length).toBeGreaterThan(0)
+      expect(current.every((c) => c.getAttribute('data-os') === 'win')).toBe(true)
+      // 服务端面板里的 Windows 卡同样被标出
+      expect(current.some((c) => c.closest('[data-panel="binary"]'))).toBe(true)
+
+      const mac = doc.querySelector('.dl-card[data-os="mac"]')!
+      expect(mac.classList.contains('is-current')).toBe(false)
+      expect(mac.querySelector('a[data-asset]')).toBeTruthy()
+      dom.window.close()
+
+      // macOS 访客拿到的是 macOS 高亮，Windows 反而没被标
+      const macDom = boot('zh-CN', undefined, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel')
+      const macCurrent = Array.from(macDom.window.document.querySelectorAll('.dl-card.is-current'))
+      expect(macCurrent.length).toBeGreaterThan(0)
+      expect(macCurrent.every((c) => c.getAttribute('data-os') === 'mac')).toBe(true)
+      macDom.window.close()
     })
 
     it('keeps the Releases page when the lookup fails', async () => {
