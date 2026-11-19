@@ -1254,37 +1254,33 @@ describe('FileHeader — project-external badge', () => {
 })
 
 describe('FileHeader — overlay close button', () => {
-  // jsdom does not apply SFC <style>, so both geometry facts are asserted
-  // against the source. They are deliberately separate: a filled block with a
-  // square corner reads as a UI slab rather than a button, and an un-nudged
-  // block sits 0.5px above the bar's true middle (the bar's 1px bottom border
-  // is inside its border-box, so flex centring happens in a 35px content box).
-  // Bare 14px glyphs hide that half-pixel; a 26px red block does not.
+  // jsdom does not apply SFC <style>, so the shape is asserted against the
+  // source. The button closes the DOCUMENT, not the window: a filled red 26px
+  // slab at rest was the app's only such block and read as window chrome (and,
+  // on wide screens, sat inside the caption area next to the real window
+  // controls). It is now an ordinary header-size square, red only on hover.
   const src = readFileSync(resolve(__dirname, '../../../components/file/FileHeader.vue'), 'utf8')
 
-  it('uses the smallest radius token rather than square corners', () => {
+  it('no longer paints a filled red block', () => {
     const rule = src.match(/\.overlay-close-btn\s*\{([^}]*)\}/)
     expect(rule, '.overlay-close-btn rule must exist').not.toBeNull()
-    expect(rule![1]).toMatch(/border-radius:\s*var\(--radius-xs\)/)
-    expect(rule![1]).not.toMatch(/border-radius:\s*0\b/)
+    expect(rule![1]).not.toMatch(/background:\s*#b91c1c/)
+    expect(src).not.toMatch(/\.overlay-close-btn:hover\s*\{[^}]*#991b1b/)
   })
 
-  it('nudges the block back onto the bar centre', () => {
+  it('matches the header row button box', () => {
     const rule = src.match(/\.overlay-close-btn\s*\{([^}]*)\}/)
     expect(rule, '.overlay-close-btn rule must exist').not.toBeNull()
-    // 0.5px is half of the bar's literal 1px border — not a --dp-derived value,
-    // because the border stays 1px at every UI scale.
-    expect(rule![1]).toMatch(/position:\s*relative/)
-    expect(rule![1]).toMatch(/top:\s*0\.5px/)
+    expect(rule![1]).toMatch(/width:\s*var\(--ab-btn-size\)/)
+    expect(rule![1]).toMatch(/height:\s*var\(--ab-btn-size\)/)
+    expect(rule![1]).toMatch(/border-radius:\s*var\(--radius-sm\)/)
   })
 })
 
-describe('FileHeader — close placement follows the layout', () => {
-  // The close button used to be the same filled red 26px block on BOTH layouts,
-  // sitting inside the caption area next to the shared panel window controls.
-  // On a wide screen the overlay is just another panel, so that block read as
-  // "close the window" — and it broke the OS order, where the destructive
-  // action is the outermost control.
+describe('FileHeader — close placement', () => {
+  // The close used to live in the caption area (inside the window-controls
+  // reservation) on wide screens and as a filled red block on narrow ones. It
+  // is now the same neutral button on both layouts.
   function mountHeader() {
     return mount(FileHeader, {
       props: {
@@ -1303,35 +1299,25 @@ describe('FileHeader — close placement follows the layout', () => {
 
   afterEach(() => { mockIsWideScreen.value = true })
 
-  it('uses a neutral, always-visible button outside the toolbar on wide screens', async () => {
-    mockIsWideScreen.value = true
-    const wrapper = mountHeader()
-    await nextTick()
-    const block = wrapper.find('.overlay-nav .overlay-close-btn')
-    expect(block.exists()).toBe(false)
-    const close = wrapper.find('.overlay-nav [data-toolbar-id="closeOverlay"]')
-    expect(close.exists()).toBe(true)
-    expect(close.classes()).toContain('is-danger')
-    // Outside the ActionBar: a close must never be foldable into "more" — that
-    // would leave the wide-screen document with no always-visible exit.
-    expect(wrapper.find('.header-actions [data-toolbar-id="closeOverlay"]').exists()).toBe(false)
-    await close.trigger('click')
-    expect(wrapper.emitted('overlayClose')).toHaveLength(1)
-    wrapper.unmount()
-  })
-
-  it('keeps the filled caption block on narrow screens, where it is the only exit', async () => {
-    mockIsWideScreen.value = false
-    const wrapper = mountHeader()
-    await nextTick()
-    expect(wrapper.find('[data-toolbar-id="closeOverlay"]').exists()).toBe(false)
-    const block = wrapper.find('.overlay-nav .overlay-close-btn')
-    expect(block.exists()).toBe(true)
-    expect(block.classes()).not.toContain('is-danger')
-    await block.trigger('click')
-    expect(wrapper.emitted('overlayClose')).toHaveLength(1)
-    wrapper.unmount()
-  })
+  for (const wide of [true, false]) {
+    it(`renders the same neutral close outside the toolbar (${wide ? 'wide' : 'narrow'})`, async () => {
+      mockIsWideScreen.value = wide
+      const wrapper = mountHeader()
+      await nextTick()
+      const close = wrapper.find('.overlay-nav [data-toolbar-id="closeOverlay"]')
+      expect(close.exists()).toBe(true)
+      expect(close.classes()).toContain('overlay-close-btn')
+      // Neutral at rest, red on interaction: `is-danger` supplies the colour,
+      // never a filled background.
+      expect(close.classes()).toContain('is-danger')
+      // Outside the ActionBar: a close must never be foldable into "more" —
+      // that would leave the document with no always-visible exit.
+      expect(wrapper.find('.header-actions [data-toolbar-id="closeOverlay"]').exists()).toBe(false)
+      await close.trigger('click')
+      expect(wrapper.emitted('overlayClose')).toHaveLength(1)
+      wrapper.unmount()
+    })
+  }
 })
 
 describe('FileHeader — toolbar labels', () => {
