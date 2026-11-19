@@ -3,6 +3,7 @@ package platform
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -106,6 +107,12 @@ func TestCheckBinaryCPUCompatibility_MissingFile(t *testing.T) {
 // build info. Its GOAMD64 level is whatever this machine can build for, so the
 // verdict must be compatible — this is the end-to-end path the upgrade uses.
 func TestCheckBinaryCPUCompatibility_ThisBinary(t *testing.T) {
+	// The CPU baseline is only consulted for linux/amd64 upgrades. On other
+	// hosts (the macOS arm64 runners in particular) the test binary has no
+	// GOAMD64 setting at all, so there is nothing to read.
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("CPU baseline applies only to linux/amd64 upgrades")
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
