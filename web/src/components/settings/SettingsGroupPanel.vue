@@ -8,7 +8,7 @@
     <!-- Enable toggle row. The port-forward panel has no switch: the feature is
          always available, and its `port_forward.transport` field decides which
          listener the server runs. -->
-    <div v-if="config.enableKey" class="group-panel__enable-row">
+    <div v-if="config.enableKey" class="group-panel__enable-row" :data-settings-key="config.enableKey">
       <div class="group-panel__enable-left">
         <span class="group-panel__enable-label">{{ t(config.enableLabelKey!) }}</span>
       </div>
@@ -33,8 +33,9 @@
          "switching the metric clears the quota" warning was written into i18n
          and then silently dropped. -->
     <div
-      v-if="config.entrySelector"
+      v-if="config.entrySelector && entryRowVisible"
       class="group-panel__entry-row"
+      :data-settings-key="config.entrySelector!.key"
       :class="{ 'group-panel__entry-row--disabled': fieldsDisabled }"
       @click="!fieldsDisabled && entryPicker.open()"
     >
@@ -65,6 +66,7 @@
       <div v-if="entry.type === 'header'" class="group-panel__section-header">{{ entry.label }}</div>
       <SettingsItem
         v-else
+        :setting-key="entry.field.key"
         :label="t(entry.field.labelKey)"
         :description="entry.field.descriptionKey ? t(entry.field.descriptionKey) : ''"
         :type="panelFieldType(entry.field)"
@@ -85,6 +87,7 @@
         :progress="resolveProgress(entry.field)"
         :refreshable="isRagProgressField(entry.field)"
         :refreshing="ragRefreshing"
+        :search-forced="searchForcedKeys?.has(entry.field.key) ?? false"
         :no-divider="isLastInSection(idx)"
         @update:model-value="(v: unknown) => setLocalValue(entry.field.key, v)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
@@ -225,6 +228,7 @@ import { ChevronRight, ListChecks, RotateCcw } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
+import { panelSearchKeys } from './settingsSearch'
 import { probeSystemSpeech, systemSpeechErrorKey } from '@/utils/systemSpeech'
 import { getNative } from '@/utils/clawbenchNative'
 import { buildLocalFileUrl } from '@/utils/download'
@@ -255,6 +259,13 @@ const TAG = 'SettingsPanel'
 const props = defineProps<{
   config: GroupPanelConfig
   showTitle: boolean
+  /**
+   * Settings search landed on this panel (see settingsSearch.ts). Non-empty
+   * means "render only these rows": the matching fields that the live
+   * `dependsOn` rules would hide are forced visible, everything else drops out.
+   * Undefined is the normal, unfiltered panel.
+   */
+  searchKeys?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -512,13 +523,36 @@ interface RenderHeaderEntry {
 
 type RenderEntry = RenderFieldEntry | RenderHeaderEntry
 
+/**
+ * Rows forced in by a settings search: fields the live `dependsOn` rules hide
+ * (the DingTalk credentials while the push mode is 飞书). Null when the panel is
+ * not filtered.
+ */
+const searchForcedKeys = computed<Set<string> | null>(() => {
+  if (!props.searchKeys) return null
+  return panelSearchKeys(props.config, new Set(props.searchKeys), f => isDependsOnMet(f.dependsOn, dependencyValue))
+})
+
+/** The entry selector is a row like any other: a filter that excludes it hides it. */
+const entryRowVisible = computed(() =>
+  !props.searchKeys || (!!props.config.entrySelector && props.searchKeys.includes(props.config.entrySelector.key)),
+)
+
+/** Whether a row survives the current search filter (no filter → everything). */
+function matchesSearch(field: ItemSpec): boolean {
+  if (!props.searchKeys) return true
+  return props.searchKeys!.includes(field.key) || searchForcedKeys.value!.has(field.key)
+}
+
 const renderList = computed((): RenderEntry[] => {
   const cfg = props.config
   const result: RenderEntry[] = []
 
-  // Common fields (filtered by dependsOn)
+  // Common fields (filtered by dependsOn, and by the search filter when the
+  // page was opened from a search hit)
   for (const f of visibleCommonFields.value) {
-    if (!isDependsOnMet(f.dependsOn, dependencyValue)) continue
+    if (!matchesSearch(f)) continue
+    if (!isDependsOnMet(f.dependsOn, dependencyValue) && !searchForcedKeys.value?.has(f.key)) continue
     if (f.sectionHeader) {
       result.push({ type: 'header', key: `header-${f.key}`, label: t(f.sectionHeader) })
     }
@@ -528,9 +562,15 @@ const renderList = computed((): RenderEntry[] => {
   // Option sub-fields: matched against the entry selector's current value
   const subFieldKey = cfg.entrySelector?.key
   const subFieldValue = subFieldKey ? dependencyValue(subFieldKey) : undefined
-  const osf = (cfg.optionSubFields ?? []).find(o => o.when === subFieldValue)
-  if (osf) {
+  // While searching, fields of EVERY option are considered rather than only
+  // the selected one: a hit on the DingTalk credentials must appear even when
+  // the push mode is 飞书. Only the forced-in rows pass `matchesSearch`.
+  const osfs = props.searchKeys
+    ? (cfg.optionSubFields ?? [])
+    : (cfg.optionSubFields ?? []).filter(o => o.when === subFieldValue)
+  for (const osf of osfs) {
     for (const f of osf.fields) {
+      if (!matchesSearch(f)) continue
       if (f.sectionHeader) {
         result.push({ type: 'header', key: `header-${f.key}`, label: t(f.sectionHeader) })
       }

@@ -35,9 +35,16 @@ vi.mock('@/composables/usePanelSnapshot', () => ({
   }),
 }))
 
-const mockGetServerValueWithDefault = vi.fn()
-const mockSetLocalConfig = vi.fn()
-const settingsLocalConfig = reactive<Record<string, unknown>>({ theme: 'auto', locale: 'zh' })
+// `vi.hoisted`: importing SettingsGroupPanel now pulls in settingsSearch, which
+// imports dockPluginRuntime → the proxy plugin → usePortForward →
+// useSettingsConfig at module-evaluation time, i.e. BEFORE these `const`s would
+// be initialised (TDZ). Hoisting builds them up front.
+const { mockGetServerValueWithDefault, mockSetLocalConfig, settingsLocalConfig } = vi.hoisted(() => {
+  // `vi.hoisted` runs before the imports, so Vue cannot be imported here.
+  // This is the same object `reactive()` would build for a plain record.
+  const settingsLocalConfig: Record<string, unknown> = { theme: 'auto', locale: 'zh' }
+  return { mockGetServerValueWithDefault: vi.fn(), mockSetLocalConfig: vi.fn(), settingsLocalConfig }
+})
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({

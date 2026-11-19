@@ -3477,6 +3477,14 @@ export default {
       debug: '调试',
       about: '关于',
     },
+    // 设置首页的搜索框（issue #691）：搜到具体设置项，点结果跳到对应页面并只留下命中行。
+    search: {
+      placeholder: '搜索设置项，中英文都可以',
+      noResults: '没有找到与「{query}」相关的设置',
+      filteredTitle: '只显示匹配的设置',
+      showAll: '显示全部',
+      forcedHint: '当前条件下不生效',
+    },
     groups: {
       projectAppearance: '项目与外观',
       aiChat: 'AI 与对话',

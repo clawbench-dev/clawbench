@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-page">
+  <div ref="pageEl" class="settings-page">
     <header class="settings-page__header">
       <!-- One header shape for both levels, matching the task panel's header:
            the root level shows the section glyph + title, a drilled-down level
@@ -14,10 +14,16 @@
       </template>
     </header>
     <div class="settings-page__body">
-      <SettingsIndex v-if="navStack.length === 0" @navigate="pushNav" />
+      <SettingsIndex v-if="navStack.length === 0" @navigate="pushNav" @open-setting="handleOpenSetting" />
       <SettingsCategory
         v-else
+        :key="currentCategory!"
         :category-id="currentCategory!"
+        :search-keys="searchKeys"
+        :search-empty="searchEmpty"
+        :search-query="searchQuery"
+        @clear-search="clearSearch"
+        @search-empty="searchEmpty = true"
         @navigate="pushNav"
         @back="handleCategoryBack"
         @deleted="handleCategoryDeleted"
@@ -42,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch, onMounted } from 'vue'
+import { computed, nextTick, ref, watch, onMounted } from 'vue'
 import { RefreshCw, Settings } from 'lucide-vue-next'
 import SettingsIndex from './SettingsIndex.vue'
 import SettingsCategory from './SettingsCategory.vue'
@@ -216,6 +222,86 @@ const breadcrumbs = computed<BreadcrumbCrumb[]>(() => {
 
 const serverVersion = computed(() => serverConfig.value?.version ?? '')
 
+// ── Search jump (issue #691) ──
+
+/**
+ * Rows a settings-search hit landed on (`undefined` = the page is not filtered).
+ * The category page renders only these rows; clearing re-renders it in full.
+ *
+ * Lives here rather than in the category page because the hit itself starts at
+ * the index: the user picked a row there, and that intent has to survive the
+ * index being unmounted.
+ */
+const searchKeys = ref<string[] | undefined>(undefined)
+const searchQuery = ref('')
+/**
+ * The filtered page has no matching row: it is a live list (agents, projects),
+ * whose rows are not part of the search index. The page is replaced by an
+ * empty state rather than showing everything under a "filtered" banner.
+ */
+const searchEmpty = ref(false)
+const BODY_SELECTOR = '.settings-page__body'
+
+/**
+ * A settings-search hit was picked: open its category narrowed to that row.
+ *
+ * The filter is applied BEFORE the nav push, so the category mounts already
+ * filtered (`:key` is the category, not the filter) and there is no flash of
+ * the full page. A plain category click clears any filter left from an earlier
+ * search — `pushNav` is still wired straight to the index for that.
+ */
+function handleOpenSetting(categoryId: string, key: string, query: string) {
+  searchKeys.value = [key]
+  searchQuery.value = query
+  searchEmpty.value = false
+  pushNav(categoryId)
+  void scrollToHit(key)
+}
+
+/** Leave the filtered view: the page shows everything again. */
+function clearSearch() {
+  searchKeys.value = undefined
+  searchQuery.value = ''
+  searchEmpty.value = false
+}
+
+/**
+ * Scroll the target row into view inside the page body and flash it.
+ *
+ * The category mounts already filtered, so the row usually exists on the first
+ * frame; the retry covers a panel that re-renders once while its snapshot
+ * loads. Gives up quietly — the page is still filtered, so the row is visible
+ * even without the flash.
+ */
+async function scrollToHit(key: string, attempt = 0): Promise<void> {
+  await nextTick()
+  const body = pageBodyEl()
+  if (!body) return
+  // Scoped attributes are compiled onto the element itself, so the plain
+  // attribute selector matches.
+  const row = body.querySelector<HTMLElement>(`[data-settings-key="${cssEscape(key)}"]`)
+  if (!row) {
+    if (attempt < 20) requestAnimationFrame(() => void scrollToHit(key, attempt + 1))
+    return
+  }
+  // Instant, not smooth: the filtered page is short, and a smooth scroll past
+  // the flash's first frames made the landing look like nothing happened.
+  row.scrollIntoView({ block: 'center' })
+  row.classList.add('settings-search-flash')
+  window.setTimeout(() => row.classList.remove('settings-search-flash'), 1600)
+}
+
+function cssEscape(value: string): string {
+  return typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(value) : value
+}
+
+function pageBodyEl(): HTMLElement | null {
+  return pageEl.value?.querySelector<HTMLElement>(BODY_SELECTOR) ?? null
+}
+
+/** The page root, so the row lookup never escapes into another panel's DOM. */
+const pageEl = ref<HTMLElement | null>(null)
+
 // ── Deep-link into a category from OUTSIDE the settings tab ──
 // (AppHeader logo → 关于, theme picker → "more appearance options", agent
 // drawer → agent detail). The request is stored at module level by the caller.
@@ -260,6 +346,22 @@ watch(() => props.active, (val) => {
 </script>
 
 <style scoped>
+/* The landing row (settings search): a short tint that fades, applied to the
+   row element the child page rendered — hence :deep(), and not scoped to a
+   child's `data-v` attribute. */
+.settings-page__body :deep(.settings-search-flash) {
+  animation: settings-search-flash 1.6s ease-out;
+}
+
+@keyframes settings-search-flash {
+  0%, 30% {
+    background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
 .settings-page {
   display: flex;
   flex-direction: column;

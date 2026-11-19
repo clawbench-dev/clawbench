@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import SettingsIndex from '@/components/settings/SettingsIndex.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import { categoryItems, subPagePanelMap } from '@/components/settings/settingsFieldMap'
 import { MEETING_ICON } from '@/utils/meetingIcon'
 
@@ -59,6 +60,13 @@ const i18n = createI18n({
           debug: '调试',
           about: '关于',
         },
+        search: {
+          placeholder: '搜索设置项，中英文都可以',
+          noResults: '没有找到与「{query}」相关的设置',
+          filteredTitle: '只显示匹配的设置',
+          showAll: '显示全部',
+          forcedHint: '当前条件下不生效',
+        },
         groups: {
           projectAppearance: '项目与外观',
           aiChat: 'AI 与对话',
@@ -102,8 +110,24 @@ const globalStubs = {
 
 function mountIndex() {
   return mount(SettingsIndex, {
-    global: { stubs: globalStubs, plugins: [i18n] },
+    global: {
+      // The real SearchInput pulls `search.*` labels from the app's full locale
+      // tree; this suite only ships the settings subset, so the input is
+      // replaced by a plain box that emits the same v-model updates.
+      stubs: { ...globalStubs, SearchInput: SearchInputStub },
+      plugins: [i18n],
+    },
   })
+}
+
+const SearchInputStub = {
+  name: 'SearchInput',
+  // Mounted as a replacement COMPONENT, so it is not reached through the
+  // attribute fallthrough that `stubs` uses: the class must be on the root.
+  inheritAttrs: false,
+  props: { modelValue: { type: String, default: '' }, placeholder: { type: String, default: '' } },
+  emits: ['update:modelValue', 'enter'],
+  template: '<input class="search-input-stub" :placeholder="placeholder" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" @keydown.enter="$emit(\'enter\')" />',
 }
 
 describe('SettingsIndex', () => {
@@ -288,5 +312,104 @@ describe('SettingsIndex category i18n coverage', () => {
         expect(String(label).trim(), `${file}: settings.categories.${id} must not be empty`).not.toBe('')
       }
     }
+  })
+})
+
+// ── Search (issue #691) ──
+//
+// The index searches the REAL app locale tree (settingsSearch imports `@/i18n`),
+// not the message subset above, so these assertions read the production labels.
+describe('SettingsIndex search', () => {
+  // The search index reads the REAL app i18n instance (`@/i18n`), whose locale
+  // is persisted per machine/test run. Pin it to Chinese so the queries below
+  // ("邮件", "收信间隔") are the ones the user typed.
+  beforeEach(async () => {
+    const appI18n = (await import('@/i18n')).default
+    appI18n.global.locale.value = 'zh'
+  })
+
+  async function typeQuery(wrapper: ReturnType<typeof mountIndex>, text: string) {
+    const input = wrapper.find('.search-input-stub')
+    await input.setValue(text)
+  }
+
+  it('replaces the category list with matching rows', async () => {
+    const wrapper = mountIndex()
+    expect(wrapper.find('.settings-index__hit').exists()).toBe(false)
+
+    await typeQuery(wrapper, '邮件')
+
+    const rows = wrapper.findAll('.settings-index__hit')
+    expect(rows.length).toBeGreaterThan(0)
+    // The unfiltered list is gone, not merely appended to.
+    expect(wrapper.find('[data-category="project"]').exists()).toBe(false)
+    const titles = wrapper.findAll('.settings-card__header').map(el => el.text())
+    expect(titles).toContain('邮件')
+  })
+
+  it('finds a row by the word from its description', async () => {
+    const wrapper = mountIndex()
+
+    // 「追踪像素」 appears only in the mailImages row's description.
+    await typeQuery(wrapper, '追踪像素')
+
+    const labels = wrapper.findAll('.settings-index__hit .settings-index__label').map(el => el.text())
+    expect(labels.some(l => l.includes('图片'))).toBe(true)
+  })
+
+  it('finds a row by an English word in the Chinese UI', async () => {
+    const wrapper = mountIndex()
+
+    await typeQuery(wrapper, 'IMAP')
+
+    const labels = wrapper.findAll('.settings-index__hit .settings-index__label').map(el => el.text())
+    expect(labels.some(l => l.includes('邮箱') || l.includes('收信'))).toBe(true)
+  })
+
+  it('opens a row hit narrowed to that row, with the query', async () => {
+    const wrapper = mountIndex()
+    await typeQuery(wrapper, '每多少分钟')
+
+    const row = wrapper.find('[data-settings-hit="mail.sync_interval_minutes"]')
+    expect(row.exists(), 'the interval row is reachable by its label').toBe(true)
+    await row.trigger('click')
+
+    const opened = wrapper.emitted('openSetting')
+    expect(opened).toBeTruthy()
+    const [categoryId, key, query] = opened![0] as [string, string, string]
+    expect(categoryId).toBe('mail')
+    expect(key).toBe('mail.sync_interval_minutes')
+    expect(query).toBe('每多少分钟')
+  })
+
+  it('opens the page (unfiltered) when the category itself is picked', async () => {
+    const wrapper = mountIndex()
+    await typeQuery(wrapper, '邮件')
+
+    // The category hit is the first row of its card (search ranks it below
+    // real rows, but within 邮件 the category row is the broad answer).
+    const row = wrapper.findAll('.settings-index__hit').find(r => !r.find('.settings-index__hit-desc').exists())!
+    await row.trigger('click')
+
+    expect(wrapper.emitted('openSetting')).toBeFalsy()
+    expect(wrapper.emitted('navigate')).toBeTruthy()
+  })
+
+  it('shows the empty state for a query that matches nothing', async () => {
+    const wrapper = mountIndex()
+
+    await typeQuery(wrapper, 'zzzz-no-such-setting')
+
+    expect(wrapper.findAll('.settings-index__hit').length).toBe(0)
+    expect(wrapper.find('.settings-index__empty').exists()).toBe(true)
+    expect(wrapper.findAll('.settings-card').length).toBe(0)
+  })
+
+  it('clearing the query brings the category list back', async () => {
+    const wrapper = mountIndex()
+    await typeQuery(wrapper, '邮件')
+    await typeQuery(wrapper, '')
+
+    expect(wrapper.findAll('.settings-index__row').length).toBe(32)
   })
 })

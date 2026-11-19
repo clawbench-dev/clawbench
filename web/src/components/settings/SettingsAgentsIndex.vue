@@ -1,5 +1,6 @@
 <template>
   <div class="settings-agents-index">
+    <SettingsSearchFilter v-if="searchActive" :query="searchQuery!" @clear="$emit('clearSearch')" />
     <!-- The actions get their own card: "add something" is a different job
          from managing what is already installed. -->
     <SettingsCard>
@@ -111,11 +112,33 @@ import { useToast } from '@/composables/useToast'
 import CreateAcpAgentDialog from './CreateAcpAgentDialog.vue'
 import AgentInstallDialog from '@/components/AgentInstallDialog.vue'
 import SettingsCard from './SettingsCard.vue'
+import SettingsSearchFilter from './SettingsSearchFilter.vue'
 import '@/assets/modal-footer-btn.css'
+
+const props = defineProps<{
+  /**
+   * Search filter from the settings search (issue #691). This page is a
+   * dedicated component, so whether it has anything to show cannot be derived
+   * from `categoryItems`; it reports "nothing here" through the emit below.
+   */
+  searchKeys?: string[]
+  searchQuery?: string
+}>()
 
 const emit = defineEmits<{
   navigate: [categoryId: string]
+  clearSearch: []
+  /** A search landed on this page but none of its rows match. */
+  searchEmpty: []
 }>()
+const searchActive = computed(() => props.searchKeys !== undefined)
+
+// A search that reached 智能体 only matched the page's name (the agent list is
+// not part of the settings-row index), so there is no row to land on: report it
+// and let the page show its empty state instead of the whole list.
+watch(() => props.searchKeys, (keys) => {
+  if (keys !== undefined) emit('searchEmpty')
+}, { immediate: true })
 
 const { t } = useI18n()
 const toast = useToast()

@@ -44,8 +44,15 @@ vi.mock('@/composables/usePanelSnapshot', () => ({
   }),
 }))
 
-const mockGetServerValueWithDefault = vi.fn()
-const settingsLocalConfig = reactive<Record<string, unknown>>({ theme: 'auto', locale: 'zh' })
+// `vi.hoisted`: SettingsGroupPanel → settingsSearch pulls the dock plugin
+// registry, which calls useSettingsConfig while the modules are still
+// evaluating — before these `const`s would be initialised (TDZ).
+// `vi.hoisted` runs before the imports, so Vue is not available: this is the
+// same plain object `reactive()` would wrap.
+const { mockGetServerValueWithDefault, settingsLocalConfig } = vi.hoisted(() => ({
+  mockGetServerValueWithDefault: vi.fn(),
+  settingsLocalConfig: { theme: 'auto', locale: 'zh' } as Record<string, unknown>,
+}))
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
@@ -103,7 +110,12 @@ vi.mock('@/components/settings/settingsFieldMap', async () => {
 })
 
 // Mock lucide icons + BottomSheet teleport
-vi.mock('lucide-vue-next', () => ({
+// SettingsGroupPanel now imports settingsSearch, which imports the dock plugin
+// registry — an unrelated module graph with its own lucide icons. A
+// hand-written export list breaks on every icon it uses, so real icons are
+// kept and only the ones this suite asserts on are replaced.
+vi.mock('lucide-vue-next', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('lucide-vue-next')>()),
   ChevronRight: { name: 'ChevronRight', template: '<span class="icon-chevron-right" />' },
   ListChecks: { name: 'ListChecks', template: '<span class="icon-list-checks" />' },
   Eye: { name: 'Eye', template: '<span class="icon-eye" />' },

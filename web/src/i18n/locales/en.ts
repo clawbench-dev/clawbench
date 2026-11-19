@@ -3483,6 +3483,14 @@ export default {
       debug: 'Debug',
       about: 'About',
     },
+    // Search box on the settings home page (issue #691).
+    search: {
+      placeholder: 'Search settings, in English or Chinese',
+      noResults: 'No settings matched "{query}"',
+      filteredTitle: 'Showing matching settings only',
+      showAll: 'Show all',
+      forcedHint: 'Not active under the current conditions',
+    },
     groups: {
       projectAppearance: 'Project & Appearance',
       aiChat: 'AI & Chat',

@@ -1,5 +1,6 @@
 <template>
   <div class="projects-setting">
+    <SettingsSearchFilter v-if="searchActive" :query="searchQuery!" @clear="$emit('clearSearch')" />
     <!-- Search box: the registry can hold many projects, so filtering is the
          primary way to find one. -->
     <div class="projects-search">
@@ -45,10 +46,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight, Search } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
+import SettingsSearchFilter from './SettingsSearchFilter.vue'
 import { store } from '@/stores/app'
 import { useToast } from '@/composables/useToast'
 import { appLog } from '@/utils/appLog'
@@ -67,7 +69,26 @@ interface ProjectListItem {
   exists: boolean
 }
 
-const emit = defineEmits<{ navigate: [categoryId: string] }>()
+const props = defineProps<{
+  /**
+   * Search filter from the settings search (issue #691). The project list is
+   * live data, not settings rows, so a search that reached 项目 only matched the
+   * page's name: report it and let the page show its empty state.
+   */
+  searchKeys?: string[]
+  searchQuery?: string
+}>()
+
+const emit = defineEmits<{
+  navigate: [categoryId: string]
+  clearSearch: []
+  searchEmpty: []
+}>()
+const searchActive = computed(() => props.searchKeys !== undefined)
+
+watch(() => props.searchKeys, (keys) => {
+  if (keys !== undefined) emit('searchEmpty')
+}, { immediate: true })
 
 const { t } = useI18n()
 const toast = useToast()

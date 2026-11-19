@@ -12,14 +12,23 @@
   />
   <!-- Sub-page routes (data-driven: any colon-separated ID except agents) -->
   <div v-else-if="subPagePanel" class="settings-category">
+    <SettingsSearchFilter v-if="searchActive" :query="searchQuery!" @clear="$emit('clearSearch')" />
     <SettingsGroupPanel
       :config="subPagePanel"
       :show-title="false"
+      :search-keys="panelSearchKeysFor(subPagePanel.panelId)"
       @restart-needed="(fields) => $emit('restartNeeded', fields)"
     />
   </div>
   <!-- Standard settings category with mixed items + panels -->
   <div v-else class="settings-category">
+    <!-- Opened from a settings search: say which rows are left and how to get
+         the whole page back. -->
+    <SettingsSearchFilter v-if="searchActive" :query="searchQuery!" @clear="$emit('clearSearch')" />
+    <div v-if="searchEmpty" class="settings-category__search-empty">
+      {{ t('settings.search.noResults', { query: searchQuery ?? '' }) }}
+    </div>
+    <template v-if="!searchEmpty">
     <!-- Brand header for the About page: logo + name + slogan, above the
          version/actions cards. -->
     <SettingsAboutBrand v-if="categoryId === 'about'" />
@@ -158,6 +167,7 @@
         v-else
         :config="card.config"
         :show-title="shouldShowPanelTitle(card.config)"
+        :search-keys="panelSearchKeysFor(card.config.panelId)"
         @restart-needed="(fields) => $emit('restartNeeded', fields)"
       />
     </template>
@@ -174,6 +184,7 @@
     <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
     <!-- Upgrade dialog -->
     <UpgradeDialog ref="upgradeDialogRef" />
+    </template>
   </div>
 </template>
 
@@ -207,6 +218,7 @@ import SettingsAgentSessions from './SettingsAgentSessions.vue'
 import DockPluginSetting from './DockPluginSetting.vue'
 import KbSetting from './KbSetting.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
+import SettingsSearchFilter from './SettingsSearchFilter.vue'
 import { useSettingsConfig, getEffectiveUIScale, autoFitUIScale } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
@@ -233,6 +245,16 @@ import { loadCustomFonts } from '@/utils/customFonts'
 
 const props = defineProps<{
   categoryId: string
+  /**
+   * Search filter (issue #691): the keys of the rows a settings-search hit
+   * points at. Undefined renders the whole page; an array narrows it to those
+   * rows (group panels render only the matching fields, see SettingsGroupPanel).
+   */
+  searchKeys?: string[]
+  /** The query behind `searchKeys`, shown in the filter banner. */
+  searchQuery?: string
+  /** The filtered page has no matching row (a live-list page such as 智能体). */
+  searchEmpty?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -249,6 +271,14 @@ const emit = defineEmits<{
   navigateReplace: [categoryId: string]
   restartNeeded: [changedFields: string[]]
   restartRequested: []
+  /** Drop the search filter: the page shows everything again. */
+  clearSearch: []
+  /**
+   * A search landed on this page but no row of it matches (the agent list and
+   * the project list are live data, not settings rows). Only pages whose rows
+   * live in `categoryItems` can report a real match.
+   */
+  searchEmpty: []
 }>()
 
 /**
@@ -385,7 +415,11 @@ const specialPage = computed<SpecialSettingsPage | null>(() => {
   if (id === 'agents') {
     return {
       component: SettingsAgentsIndex,
-      on: { navigate: ((cid: string) => emit('navigate', cid)) },
+      on: {
+        navigate: ((cid: string) => emit('navigate', cid)),
+        clearSearch: (() => emit('clearSearch')),
+        searchEmpty: (() => emit('searchEmpty')),
+      },
     } as SpecialSettingsPage
   }
   if (id.startsWith('agents:')) {
@@ -443,6 +477,41 @@ const subPagePanel = computed((): GroupPanelConfig | undefined => {
   }
   return undefined
 })
+
+// ── Search filter (issue #691) ──
+
+const searchActive = computed(() => props.searchKeys !== undefined)
+/** The own keys of the rows on this page: flat items, panel fields, enable switches. */
+const ownKeys = computed(() => {
+  const keys = new Set<string>()
+  for (const entry of categoryItems[props.categoryId] ?? []) {
+    if (entry.type === 'item') keys.add(entry.spec.key)
+    else for (const k of panelFieldKeys(entry.config)) keys.add(k)
+  }
+  if (subPagePanel.value) for (const k of panelFieldKeys(subPagePanel.value)) keys.add(k)
+  return keys
+})
+
+/** Keys of the matching rows that belong to a panel, or undefined when the
+ *  page is not filtered. Panels with no match are dropped by `cards`. */
+function panelSearchKeysFor(panelId: string): string[] | undefined {
+  if (!props.searchKeys) return undefined
+  const keys = new Set(props.searchKeys)
+  return getCategoryPanels(props.categoryId)
+    .concat(subPagePanel.value ? [subPagePanel.value] : [])
+    .filter(p => p.panelId === panelId)
+    .flatMap(p => panelFieldKeys(p).filter(k => keys.has(k)))
+}
+
+/** Every field key a panel can render, regardless of its live conditions. */
+function panelFieldKeys(cfg: GroupPanelConfig): string[] {
+  const keys: string[] = []
+  if (cfg.enableKey) keys.push(cfg.enableKey)
+  if (cfg.entrySelector) keys.push(cfg.entrySelector.key)
+  for (const f of cfg.commonFields) keys.push(f.key)
+  for (const sub of cfg.optionSubFields ?? []) for (const f of sub.fields) keys.push(f.key)
+  return keys
+}
 
 // ── Render list: mixed items + panels with dependsOn filtering ──
 
@@ -513,6 +582,10 @@ const cards = computed<RenderCard[]>(() => {
   void customFontTick.value
   for (const entry of renderList.value) {
     if (entry.type === 'item') {
+      // A filtered page keeps only the rows the search hit named. The cards
+      // that hold them are created by their section header, so an unmatched
+      // row's card disappears with it.
+      if (searchActive.value && !props.searchKeys!.includes(entry.spec.key)) continue
       if (entry.spec.sectionHeader) {
         const header = t(entry.spec.sectionHeader)
         if (!cur || cur.title !== header) {
@@ -541,6 +614,8 @@ const cards = computed<RenderCard[]>(() => {
       }
     } else {
       flush()
+      // A filtered page keeps only the panels that hold a matching row.
+      if (searchActive.value && !ownKeys.value.has(entry.config.panelId) && panelSearchKeysFor(entry.config.panelId)!.length === 0) continue
       out.push({ type: 'panel', config: entry.config })
     }
   }
@@ -548,6 +623,11 @@ const cards = computed<RenderCard[]>(() => {
   if (otherItems.length > 0) {
     out.push({ type: 'group', title: basicGroupTitle.value, items: otherItems })
   }
+  // While filtering, a card with no rows left is dropped: either its rows were
+  // all filtered out, or its body is a dedicated component (mail accounts, MCP
+  // servers, the TLS panel…) that a search hit cannot point at. Those
+  // components stay reachable by opening the page normally.
+  if (searchActive.value) return out.filter(card => card.type !== 'group' || card.items.length > 0)
   return out
 })
 
@@ -853,5 +933,12 @@ function handleDiscard() {
   padding: var(--space-4);
   /* Shared page surface (see --panel-page-bg). */
   background: var(--panel-page-bg);
+}
+
+.settings-category__search-empty {
+  padding: var(--space-8) var(--space-7);
+  text-align: center;
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
 }
 </style>
