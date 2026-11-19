@@ -36,10 +36,15 @@ const { t } = useI18n()
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  /* Matches the page padding of .settings-category, so the banner lines up
-     with the cards under it. */
-  margin: var(--space-4) var(--space-4) 0;
-  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-6);
+  /* Sits INSIDE .settings-category, which already carries the page padding, so
+     the banner must not add horizontal or top margins of its own: they pushed
+     it 8px in from the cards on both sides and doubled the top gap, while the
+     bottom gap collapsed to zero. Only the gap to the first card is ours, and
+     it matches the space between cards. */
+  margin: 0 0 var(--space-4);
+  /* Same horizontal padding as a settings row (.settings-item), so the banner
+     text and its button line up with the card content under it. */
+  padding: var(--space-3) var(--space-7);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
