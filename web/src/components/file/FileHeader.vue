@@ -189,24 +189,27 @@
     </ActionBar>
 
     <!-- Region 3: Overlay nav (close only, always present, fixed size).
-         One shape on both layouts: a plain header button, neutral at rest and
-         red only on hover (`is-danger`, the shared danger recipe). It closes
-         the DOCUMENT, not the window, so it must not wear the caption's filled
-         red block — on narrow screens that block used to be the only filled red
-         in the app and read as a different kind of control from the icons next
-         to it. It stays outside the ActionBar on purpose: that row folds its
-         tail into "more", and a close that can disappear into a menu is not a
-         way out. Being the header's own last child also puts it outermost, in
-         front of the shared panel window controls, instead of in the caption
-         reservation they own. -->
+         Narrow: the overlay is the whole page and this filled block is its only
+         way out — the red is the signal that it matters.
+         Wide: the overlay is just another panel, so the same slot holds a plain
+         header button — neutral at rest, red only on hover (`is-danger`, the
+         shared danger recipe). It stays outside the ActionBar on purpose: that
+         row folds its tail into "more", and a close that can disappear into a
+         menu is not a way out. Being the header's own last child also puts it
+         outermost, in front of the shared panel window controls, instead of in
+         the caption reservation they own. -->
     <div class="overlay-nav">
       <button
+        v-if="isWideScreen"
         data-toolbar-id="closeOverlay"
-        class="file-header-btn is-danger overlay-close-btn"
+        class="file-header-btn is-danger overlay-close-btn--inline"
         :title="t('common.close')"
         :aria-label="t('common.close')"
         @click.stop="$emit('overlayClose')"
       >
+        <X :size="14" />
+      </button>
+      <button v-else class="file-header-btn overlay-close-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
         <X :size="14" />
       </button>
     </div>
@@ -705,11 +708,41 @@ function handleFileNameDragEnd() {
     align-items: center;
     flex-shrink: 0;
 }
-/* Not an ActionBar button (it sits outside the row), so it states its own box:
-   the same square as the row's buttons (`--ab-btn-size`, 28dp). Colour and the
-   hover tint come from the shared `.is-danger` recipe — red on interaction, not
-   a red slab at rest. */
+/* Deliberately NOT an ActionBar button: it closes the overlay view rather than
+   acting on the file, so it keeps its own filled-red shape and full 26px box
+   (the shared row rules would make it a flat 14px glyph — the row's own
+   `> button` sizing does not reach here because it is outside the bar, but the
+   `.file-header-btn` base is shared, so the size is stated explicitly). */
 .overlay-close-btn {
+    width: calc(26 * var(--dp));
+    height: calc(26 * var(--dp));
+    padding: 0;
+    background: #b91c1c;
+    /* Just a hint of rounding — a larger radius on a filled block reads as a
+       floating chip rather than a corner affordance. */
+    border-radius: var(--radius-xs);
+    color: #fff;
+    /* The bar's 1px bottom border sits inside its border-box, so flex centring
+       happens in a 35px content box and every child lands 0.5px above the bar's
+       real middle. Bare 14px glyphs hide that; a 26px filled block does not — it
+       reads as "sitting high" next to the icons. Nudge the block, not the shared
+       bar geometry (the border is a literal 1px at every UI scale, so this
+       offset does not need --dp). */
+    position: relative;
+    top: 0.5px;
+}
+@media (hover: hover) {
+    .overlay-close-btn:hover {
+        background: #991b1b;
+        color: #fff;
+    }
+}
+/* Wide-screen counterpart: a header-size square like the row's buttons, neutral
+   at rest (colour + hover tint come from the shared `.is-danger` recipe), so it
+   reads as "close this document", not as window chrome. */
+.overlay-close-btn--inline {
+    /* Same box as the row's buttons (`--ab-btn-size`, 28dp) — it sits beside
+       them and must not read as a smaller control. */
     width: var(--ab-btn-size);
     height: var(--ab-btn-size);
     padding: 0;
