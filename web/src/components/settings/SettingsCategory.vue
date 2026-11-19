@@ -860,7 +860,7 @@ function handleClick(item: ItemSpec) {
     handleAddToHomeScreen()
   }
   if (item.key === 'downloadAndroidApp') {
-    downloadByUrl('/api/apk', 'clawbench-android.apk')
+    downloadByUrl('/api/apk', 'clawbench-android.apk', { viaNativeApp: true })
   }
   if (item.key === 'downloadDesktopApp') {
     desktopDownload.downloadDesktop()

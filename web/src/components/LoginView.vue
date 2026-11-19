@@ -334,7 +334,7 @@ async function handlePwaInstall() {
 }
 
 function handleApkDownload() {
-  downloadByUrl('/api/apk', 'clawbench-android.apk')
+  downloadByUrl('/api/apk', 'clawbench-android.apk', { viaNativeApp: true })
 }
 
 onMounted(() => {

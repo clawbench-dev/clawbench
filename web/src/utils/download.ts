@@ -568,25 +568,36 @@ async function postForBlobWithoutProgress(url: string, body: unknown): Promise<P
 }
 
 /**
- * Download a file by its full URL (e.g. /api/apk).
- * - Web: <a> tag click
- * - APP (Android): native.downloadUrl() → DownloadManager
+ * Download a file by its full URL with the same in-product progress bar as
+ * `downloadFileByPath` (used by the "download Android app" entries in the login
+ * page, welcome overlay and settings).
+ *
+ * - Browser: streamed XHR with byte progress. `/api/apk` is served by
+ *   `http.ServeContent`, so it answers Range requests and the size is known.
+ * - APP (Android): still native.downloadUrl() → DownloadManager, whose own
+ *   system notification shows progress; the in-product bar cannot track it
+ *   because the bridge reports nothing back.
+ *
+ * `viaNativeApp` forces that native branch for a relative URL: the Android
+ * login page loads over http:// and the absolute URL would otherwise be
+ * streamed by the WebView (and hit as an origin-relative URL on web) instead
+ * of being handed to the installer.
  */
-export function downloadByUrl(url: string, fileName?: string): void {
+export function downloadByUrl(url: string, fileName?: string, options?: { viaNativeApp?: boolean }): void {
     if (!url) return
+    const name = fileName || url.split('/').pop() || ''
     const native = getNative()
-    if (typeof native !== 'undefined' && native?.downloadUrl) {
-        native.downloadUrl(url, fileName || '')
+    if (options?.viaNativeApp) {
+        // Only a host that actually exposes the method can take this branch.
+        if (typeof native?.downloadUrl === 'function') {
+            native.downloadUrl(url, name)
+            return
+        }
+    } else if (typeof native?.downloadUrl === 'function') {
+        native.downloadUrl(url, name)
         return
     }
-    const a = document.createElement('a')
-    a.href = url
-    a.download = fileName || url.split('/').pop() || ''
-    document.body.appendChild(a)
-    a.click()
-    setTimeout(() => {
-        document.body.removeChild(a)
-    }, 1000)
+    downloadUrlWithProgress(url, name)
 }
 
 /**
