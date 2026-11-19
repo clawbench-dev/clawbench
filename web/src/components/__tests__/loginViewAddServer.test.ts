@@ -169,17 +169,35 @@ describe('LoginView — add server (ISS-268)', () => {
     )
   })
 
-  it('brackets a bare IPv6 literal instead of producing an unloadable URL', async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 401 } as Response)
+  // A bare literal has nowhere to attach a port, so it is never completed by
+  // guessing — the user is told to write the full form instead.
+  it('rejects a bare IPv6 literal and saves nothing', async () => {
     const wrapper = mountLogin()
     await flushPromises()
 
     await submitAddServer(wrapper, 'V6', '240e:390:1234:5678::123')
 
-    expect(vi.mocked(fetch).mock.calls[0][0]).toBe(
-      'https://[240e:390:1234:5678::123]:20000/login',
-    )
+    expect(fetch).not.toHaveBeenCalled()
+    expect(localStorage.getItem('clawbench-servers')).toBeNull()
+    expect(wrapper.find('.error').text()).toContain('Enter a valid address')
   })
+
+  // The other two halves of the same rule: no port, and no scheme.
+  for (const address of [
+    'http://[240e:390:1234:5678::123]',
+    '[240e:390:1234:5678::123]:20000',
+  ]) {
+    it(`rejects an incomplete IPv6 address: ${address}`, async () => {
+      const wrapper = mountLogin()
+      await flushPromises()
+
+      await submitAddServer(wrapper, 'V6', address)
+
+      expect(fetch).not.toHaveBeenCalled()
+      expect(localStorage.getItem('clawbench-servers')).toBeNull()
+      expect(wrapper.find('.error').text()).toContain('Enter a valid address')
+    })
+  }
 
   it('shows an error and does not save an unusable address', async () => {
     const wrapper = mountLogin()

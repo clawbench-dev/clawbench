@@ -4,9 +4,10 @@ import { normalizeServerUrl } from '@/utils/url'
 /**
  * normalizeServerUrl is what the web add-server form saves. It must land on a
  * URL the native connectToServer() and the clients' login page accept, which
- * for IPv6 means a bracketed literal — `new URL()` refuses the bare form
- * (it reads `240e:` as a scheme), so a raw literal used to become a saved
- * address that could never load (issue #696).
+ * for IPv6 means the full `scheme://[literal]:port` — `new URL()` refuses the
+ * bare form (it reads `240e:` as a scheme), and a half-written literal is
+ * exactly the address that could never load (issue #696). Anything short of
+ * the full form is rejected rather than completed by guessing.
  */
 describe('normalizeServerUrl', () => {
   const CASES: Array<[string, string]> = [
@@ -20,9 +21,6 @@ describe('normalizeServerUrl', () => {
     // IPv6: the form the manual documents.
     ['http://[240e:390:1234:5678::123]:20000', 'http://[240e:390:1234:5678::123]:20000'],
     ['https://[::1]:8443/', 'https://[::1]:8443'],
-    // Bare literal: bracketed, https, default port.
-    ['240e:390:1234:5678::123', 'https://[240e:390:1234:5678::123]:20000'],
-    ['[240e:390:1234:5678::123]:20000', 'https://[240e:390:1234:5678::123]:20000'],
     // Whitespace from a paste.
     ['  http://[::1]:20000  ', 'http://[::1]:20000'],
   ]
@@ -42,6 +40,11 @@ describe('normalizeServerUrl', () => {
     'http://[240e::123:20000', // malformed literal
     '[host]:8080',
     '20800:20000', // all-digit host: `new URL` would read it as a compressed IPv4
+    // IPv6 is never completed by guessing: every part must be written out.
+    '240e:390:1234:5678::123', // no brackets, so no way to attach a port
+    '[240e:390:1234:5678::123]:20000', // no scheme
+    'http://[240e:390:1234:5678::123]', // no port
+    'http://240e:390:1234:5678::123:20000', // no brackets
   ]
   for (const input of REJECTED) {
     it(`rejects ${JSON.stringify(input)}`, () => {

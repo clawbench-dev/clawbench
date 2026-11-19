@@ -101,15 +101,12 @@ function isValidPort(port) {
 /**
  * Build the canonical server URL from a single free-text address.
  *
- * Strict on purpose: the login form no longer has a protocol radio or a port
- * field, so the address must carry BOTH explicitly. A bare host or a
- * scheme-less `host:port` returns null and the caller shows "enter a full
- * address" rather than guessing a scheme/port the user never chose.
- *
- * One deliberate exception, for IPv6 (issue #696): a bare literal is bracketed
- * but has nowhere to attach a port (every colon after it belongs to the
- * address), so it is taken as complete on port 20000. Users who want http or
- * another port write the full form: http(s)://[literal]:port.
+ * Strict on purpose: the login form has no protocol radio and no port field, so
+ * the address must carry BOTH explicitly. A bare host, a scheme-less
+ * `host:port`, or an IPv6 address written without its brackets/port returns
+ * null and the caller shows "enter a full address" rather than guessing parts
+ * the user never chose (issue #696: guessing here used to save an address that
+ * could not be loaded).
  *
  * Normalisation the parser already gives us: scheme lowercased, path/query/
  * fragment dropped, surrounding whitespace trimmed, IPv6 literals bracketed.
@@ -119,20 +116,8 @@ function isValidPort(port) {
  */
 function buildServerUrl(text) {
   var parsed = parseServerInput(text);
-  if (!parsed) return null;
-  // Only a bracketed host (an IPv6 literal) may drop the port: it is the one
-  // form whose bare input has nowhere to put one. Everything else must carry
-  // the port explicitly.
-  var defaultPort = parsed.host.charAt(0) === '[' ? '20000' : null;
-  var port = parsed.port;
-  if (!parsed.protocol) {
-    // No scheme, but the rest must be complete as typed: 'host:port' or a
-    // bracketed 'literal:port'. A bare literal alone is accepted too.
-    if (!port && !defaultPort) return null;
-    return 'https://' + parsed.host + ':' + (port || defaultPort);
-  }
-  if (!port && !defaultPort) return null;
-  return parsed.protocol + '://' + parsed.host + ':' + (port || defaultPort);
+  if (!parsed || !parsed.protocol || !parsed.port) return null;
+  return parsed.protocol + '://' + parsed.host + ':' + parsed.port;
 }
 
 /**

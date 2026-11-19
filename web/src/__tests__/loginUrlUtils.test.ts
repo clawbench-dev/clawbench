@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
 import { parse as parseYaml } from 'yaml'
+import { normalizeServerUrl } from '@/utils/url'
 
 const ANDROID_UTILS = 'android/app/src/main/assets/url-utils.js'
 const DESKTOP_UTILS = 'desktop/assets/url-utils.js'
@@ -136,11 +137,10 @@ describe.each([
 
 /**
  * buildServerUrl is the contract behind the single address field: it is the
- * ONLY thing that turns typed text into a saved URL. A hostname must come with
- * its port (the form has no port field, so "reject and tell the user" is the
- * replacement for the old default of 20000). A scheme-less address keeps the
- * web add-server behaviour of assuming https, and an IPv6 literal — which has
- * nowhere to attach a port — gets 20000 (issue #696).
+ * ONLY thing that turns typed text into a saved URL. The address must carry
+ * scheme AND port explicitly (the form has no protocol radio and no port
+ * field), so anything short of that is rejected rather than guessed — including
+ * IPv6 written without brackets or without a port (issue #696).
  */
 type UrlBuilder = (text: string) => string | null
 
@@ -175,15 +175,18 @@ const BUILD_CASES: Array<[string, string | null]> = [
   ['http://', null],
   ['ftp://host:21', null],
   ['https://user:pass@host:8443', null],
-  // Scheme-less host:port keeps the web add-server behaviour (https assumed).
-  ['192.168.1.100:20000', 'https://192.168.1.100:20000'],
-  ['example.com:20000', 'https://example.com:20000'],
+  // Scheme-less is rejected: the scheme is one of the parts that must be
+  // written out.
+  ['192.168.1.100:20000', null],
+  ['example.com:20000', null],
   // IPv6 (issue #696): what the manual documents for public IPv6 access.
   ['http://[240e:390:1234:5678::123]:20000', 'http://[240e:390:1234:5678::123]:20000'],
   ['HTTPS://[::1]:8443/chat', 'https://[::1]:8443'],
-  // Bare literal: no brackets to glue a port to, so port 20000 is assumed.
-  ['240e:390:1234:5678::123', 'https://[240e:390:1234:5678::123]:20000'],
-  ['[240e:390:1234:5678::123]:20000', 'https://[240e:390:1234:5678::123]:20000'],
+  // Half-written IPv6 is refused, never completed by guessing:
+  ['240e:390:1234:5678::123', null], // no brackets, so no way to add a port
+  ['[240e:390:1234:5678::123]:20000', null], // no scheme
+  ['http://[240e:390:1234:5678::123]', null], // no port
+  ['http://240e:390:1234:5678::123:20000', null], // no brackets
   // A syntax error in the literal is still rejected.
   ['http://[240e::123:20000', null],
   // A port written without brackets on a literal is refused, not guessed at.
@@ -642,13 +645,18 @@ describe.each([
     expect(address.value).toBe('192.168.1.100')
   })
 
-  it('brackets a bare IPv6 literal (issue #696)', () => {
-    // Both would otherwise be saved in a form the URL parser rejects.
+  it('leaves an incomplete IPv6 address as typed (issue #696)', () => {
+    // A literal without brackets has nowhere to put a port, so the field is
+    // NOT rewritten into a guessed address — the submit handler reports it.
     blur('240e:390:1234:5678::123')
-    expect(address.value).toBe('https://[240e:390:1234:5678::123]:20000')
-    // A written scheme is kept; the literal just gets its brackets.
-    blur('http://240e:390:1234:5678::123')
-    expect(address.value).toBe('http://[240e:390:1234:5678::123]:20000')
+    expect(address.value).toBe('240e:390:1234:5678::123')
+    blur('http://[240e:390:1234:5678::123]')
+    expect(address.value).toBe('http://[240e:390:1234:5678::123]')
+  })
+
+  it('normalizes a complete IPv6 address (issue #696)', () => {
+    blur('HTTPS://[::1]:8443/chat?x=1')
+    expect(address.value).toBe('https://[::1]:8443')
   })
 
   it('is idempotent across repeated blurs', () => {
@@ -666,4 +674,41 @@ describe.each([
     blur('https://host:8443')
     expect(err.classList.contains('visible')).toBe(false)
   })
+})
+
+/**
+ * Issue #696 is a consistency bug as much as a parsing one: the web add-server
+ * form and the clients' login page both save into the same server list, so an
+ * address one of them accepts must never be one the other would have refused.
+ * The table below is exactly the IPv6 shapes users write, complete and partial.
+ */
+describe('IPv6 acceptance agrees between the web form and the clients', () => {
+  const INPUTS = [
+    'http://[240e:390:1234:5678::123]:20000',
+    'https://[::1]:8443',
+    'https://[::1]:8443/chat?x=1',
+    '  http://[::1]:20000  ',
+    // Partial forms: all rejected by both.
+    '240e:390:1234:5678::123',
+    '[240e:390:1234:5678::123]:20000',
+    'http://[240e:390:1234:5678::123]',
+    'http://240e:390:1234:5678::123:20000',
+    'http://[240e::123:20000',
+    '2001:db8::1:20000',
+    '[host]:8080',
+  ]
+
+  for (const [label, rel] of [
+    ['android', ANDROID_UTILS],
+    ['desktop', DESKTOP_UTILS],
+    ['harmony', HARMONY_UTILS],
+  ] as const) {
+    for (const input of INPUTS) {
+      it(`${label}: ${JSON.stringify(input)}`, () => {
+        const webAccepts = normalizeServerUrl(input) !== ''
+        const clientAccepts = builderFor(rel)(input) !== null
+        expect(clientAccepts, 'web and client must agree on this address').toBe(webAccepts)
+      })
+    }
+  }
 })
