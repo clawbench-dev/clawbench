@@ -15,7 +15,14 @@
              the overlay sizes it by content and centers it, capping it at the
              panel height so a tall table fills the screen and scrolls itself
              (see `.block-landscape-live` in css/code-block-header.css). -->
-        <div v-if="state.kind === 'table' && state.table" class="block-landscape-live">
+        <!-- Clicking the blank space around the table closes, same as the clone
+             path below. `self` keeps clicks on the table itself (and on its
+             empty rows area) from closing the overlay. -->
+        <div
+          v-if="state.kind === 'table' && state.table"
+          class="block-landscape-live"
+          @click.self="close"
+        >
           <DataTable
             :headers="state.table.headers"
             :rows="state.table.rows"

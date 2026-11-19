@@ -186,6 +186,43 @@ describe('BlockLandscape', () => {
     expect(blockLandscapeState.value).toBeNull()
   })
 
+  it('closes on a click in the blank space around the live table, but not on the table', async () => {
+    const root = document.createElement('div')
+    root.className = 'dt'
+    root.innerHTML = '<div class="dt-head"></div><div class="dt-scroll"><table class="dt-grid"></table></div>'
+    document.body.appendChild(root)
+    registerBlockLandscapeTable(root, {
+      snapshot: () => ({ headers: ['a'], rows: [['1']], mode: 'normal', wrap: true, pageSize: 0 }),
+      setMode: vi.fn(),
+      setWrap: vi.fn(),
+    })
+
+    await mountOverlay()
+    openBlockLandscape(root)
+    await flushPromises()
+
+    const live = overlayEl().querySelector<HTMLElement>('.block-landscape-live')!
+
+    // 表格内部（哪怕是一片空行）不关：只有表格外那圈留白才算「点空白」。
+    live.querySelector<HTMLElement>('.dt-scroll')!.click()
+    await flushPromises()
+    expect(blockLandscapeState.value).not.toBeNull()
+
+    live.click()
+    await flushPromises()
+    expect(blockLandscapeState.value).toBeNull()
+  })
+
+  it('still closes on a click in the blank space around a cloned block', async () => {
+    await mountOverlay()
+    openBlockLandscape(buildSourceBlock())
+    await flushPromises()
+
+    overlayEl().querySelector<HTMLElement>('.block-landscape-scroll')!.click()
+    await flushPromises()
+    expect(blockLandscapeState.value).toBeNull()
+  })
+
   it('reuses the copy control: copying inside the overlay reads the cloned table', async () => {
     await mountOverlay()
     openBlockLandscape(buildSourceBlock())
