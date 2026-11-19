@@ -27,3 +27,7 @@ Android 用户还会看到 **下载 APK** 的入口（仅 Android UA）。装 AP
 入口在 **设置 → 关于 → 下载 Android 应用**：
 
 ![下载 Android 应用](screenshots-mobile/m-51-apk-download.png)
+
+点下去后顶部会弹出**应用内下载进度条**，显示文件名、实时速度与百分比，可随时点 × 取消；下完自动开始安装。这条进度只在**浏览器里下载**时出现——如果你已经装了 App、从 App 内点下载，那一步交给系统的下载管理器，进度看系统的下载通知。
+
+![APK 下载进度条](screenshots/apk-download-progress.png)
