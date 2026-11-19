@@ -407,4 +407,50 @@ public class LiveUpdateManagerTest {
         Context context = RuntimeEnvironment.getApplication();
         LiveUpdateManager.openPromotedSettings(context);
     }
+
+    private static android.app.Notification chipNotification(Context context, String title) {
+        return new android.app.Notification.Builder(context, LiveUpdateManager.CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_menu_info_details)
+                .setContentTitle(title)
+                .build();
+    }
+
+    @Test
+    public void postChip_promotedPathUpdatesOneStableKey() {
+        // Robolectric's offline SDK cache tops out below 36, so the promoted
+        // branch is driven directly through the extracted postChip(). Two
+        // refreshes must land on the same key: a rotating tag is exactly what
+        // made OriginOS 原子岛 (issue #694) treat every refresh as new.
+        Context context = RuntimeEnvironment.getApplication();
+        LiveUpdateManager manager = new LiveUpdateManager(context);
+        android.app.NotificationManager nm =
+                (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        nm.createNotificationChannel(new android.app.NotificationChannel(
+                LiveUpdateManager.CHANNEL_ID, "live", android.app.NotificationManager.IMPORTANCE_LOW));
+
+        manager.postChip(chipNotification(context, "first"), 36);
+        manager.postChip(chipNotification(context, "second"), 36);
+
+        assertEquals("API 36+ must update one stable key, not rotate tags",
+                1, org.robolectric.Shadows.shadowOf(nm).getActiveNotifications().length);
+    }
+
+    @Test
+    public void postChip_pre36RotatesTagAndCancelsPrevious() {
+        // The fallback path rotates the tag to defeat OEM chip caching, but must
+        // cancel the previous tag first: otherwise every refresh leaves another
+        // entry in the drawer.
+        Context context = RuntimeEnvironment.getApplication();
+        LiveUpdateManager manager = new LiveUpdateManager(context);
+        android.app.NotificationManager nm =
+                (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        nm.createNotificationChannel(new android.app.NotificationChannel(
+                LiveUpdateManager.CHANNEL_ID, "live", android.app.NotificationManager.IMPORTANCE_LOW));
+
+        manager.postChip(chipNotification(context, "first"), 35);
+        manager.postChip(chipNotification(context, "second"), 35);
+
+        assertEquals("the fallback path must leave exactly one chip",
+                1, org.robolectric.Shadows.shadowOf(nm).getActiveNotifications().length);
+    }
 }

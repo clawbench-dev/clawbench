@@ -424,7 +424,18 @@ public class LiveUpdateManager {
         AppLog.d(TAG, "posting live update: chip=\"" + chip + "\" summary=\"" + summary
                 + " promoted=" + canPostPromoted(appContext) + " (sdk=" + Build.VERSION.SDK_INT + ")");
 
-        if (Build.VERSION.SDK_INT >= 36) {
+        postChip(notification, Build.VERSION.SDK_INT);
+    }
+
+    /**
+     * Post the chip under the key its OS generation expects.
+     *
+     * Split from {@link #notifyInternal} so both branches are reachable from a
+     * unit test: Robolectric's offline SDK cache tops out below 36, so a test
+     * cannot drive the promoted branch through {@link Build.VERSION#SDK_INT}.
+     */
+    void postChip(Notification notification, int sdkInt) {
+        if (sdkInt >= 36) {
             // Keep the chip's user-visible identity stable. OriginOS (vivo
             // 原子岛) ties status-bar / lock-screen / notification-center chips
             // to the notification key; posting a fresh tag on every refresh
