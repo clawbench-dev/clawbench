@@ -63,6 +63,12 @@ function menuItem(wrapper: TableWrapper, label: string) {
   return item
 }
 
+/** 表头那个按钮只显示当前类型，切换要多一步：点开菜单再选一项。 */
+async function pickMode(wrapper: TableWrapper, label: string) {
+  await wrapper.find('.dt-mode-btn').trigger('click')
+  await menuItem(wrapper, label).trigger('click')
+}
+
 describe('DataTable', () => {
   it('renders a numeric table as a data table with totals', () => {
     const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS)
@@ -119,7 +125,7 @@ describe('DataTable', () => {
     const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
     expect(wrapper.find('.dt-bar').exists()).toBe(false)
 
-    await wrapper.find('.mode-switch').trigger('click')
+    await pickMode(wrapper, 'Data table')
     expect(wrapper.find('.dt-bar').exists()).toBe(true)
     expect(wrapper.findAll('.dt-funnel')).toHaveLength(2)
     // 没有数字列，不画合计行
@@ -151,18 +157,29 @@ describe('DataTable', () => {
     wrapper.unmount()
   })
 
-  it('switches between plain and data mode from the toolbar', async () => {
+  it('switches between plain and data mode from the header menu', async () => {
     const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS)
-    const modeSwitch = wrapper.find('.mode-switch')
-    expect(modeSwitch.attributes('aria-checked')).toBe('true')
+    const modeBtn = wrapper.find('.dt-mode-btn')
+    // 按钮上只写当前类型，没有第二个标签和开关轨道。
+    expect(modeBtn.text()).toContain('Data table')
+    expect(modeBtn.find('.dt-mode-caret').exists()).toBe(true)
+    expect(modeBtn.attributes('aria-expanded')).toBe('false')
 
-    await modeSwitch.trigger('click')
-    expect(wrapper.find('.dt').classes()).not.toContain('is-data')
-    expect(modeSwitch.attributes('aria-checked')).toBe('false')
-
-    await modeSwitch.trigger('click')
+    // 点一下只是打开菜单，不会立刻切走。
+    await modeBtn.trigger('click')
     expect(wrapper.find('.dt').classes()).toContain('is-data')
-    expect(modeSwitch.attributes('aria-checked')).toBe('true')
+    expect(modeBtn.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.findAll('.dt-pop-item')).toHaveLength(2)
+    expect(wrapper.find('[data-mode-value="data"]').attributes('aria-checked')).toBe('true')
+
+    await menuItem(wrapper, 'Simple').trigger('click')
+    expect(wrapper.find('.dt').classes()).not.toContain('is-data')
+    expect(wrapper.find('.dt-mode-btn').text()).toContain('Simple')
+    expect(wrapper.find('.dt-pop').exists()).toBe(false)
+
+    await pickMode(wrapper, 'Data table')
+    expect(wrapper.find('.dt').classes()).toContain('is-data')
+    expect(wrapper.find('.dt-mode-btn').text()).toContain('Data table')
     wrapper.unmount()
   })
 
@@ -408,7 +425,7 @@ describe('DataTable', () => {
 
   it('snapshots the mode the table is actually showing', async () => {
     const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
-    await wrapper.find('.mode-switch').trigger('click')
+    await pickMode(wrapper, 'Data table')
 
     expect(wrapper.find('.dt').classes()).toContain('is-data')
     expect(getBlockLandscapeTable(wrapper.element)!.snapshot().mode).toBe('data')
@@ -417,7 +434,7 @@ describe('DataTable', () => {
 
   it('reports mode changes so the fullscreen copy can mirror them', async () => {
     const wrapper = mountTable(TEXT_HEADERS, TEXT_ROWS)
-    await wrapper.find('.mode-switch').trigger('click')
+    await pickMode(wrapper, 'Data table')
     expect(wrapper.emitted('update:mode')).toEqual([['data']])
     wrapper.unmount()
   })

@@ -170,9 +170,12 @@ describe('BlockLandscape', () => {
     // A clone would only carry the DOM; this is a real component instance.
     expect(overlay.querySelector('.block-landscape-live .dt')).not.toBeNull()
     expect(overlay.textContent).toContain('paris')
-    expect(overlay.querySelector('.mode-switch')).not.toBeNull()
+    expect(overlay.querySelector('.dt-mode-btn')).not.toBeNull()
 
-    overlay.querySelector<HTMLElement>('.mode-switch')!.click()
+    overlay.querySelector<HTMLElement>('.dt-mode-btn')!.click()
+    await flushPromises()
+    // 切换菜单 Teleport 到 body，不在 overlay 里面。
+    document.querySelector<HTMLElement>('.dt-pop [data-mode-value="data"]')!.click()
     await flushPromises()
     expect(overlay.querySelector('.dt')!.classList.contains('is-data')).toBe(true)
     // The choice is carried back to the table behind the overlay.

@@ -102,6 +102,7 @@ export default {
   },
   dataTable: {
     mode: 'Table mode',
+    modeSwitch: 'Switch table mode',
     normal: 'Simple',
     data: 'Data table',
     search: 'Search this table…',

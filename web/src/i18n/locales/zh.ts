@@ -101,6 +101,7 @@ export default {
   },
   dataTable: {
     mode: '表格模式',
+    modeSwitch: '切换表格模式',
     normal: '简单表',
     data: '数据表',
     search: '搜索这张表…',
