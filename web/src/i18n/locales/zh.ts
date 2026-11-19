@@ -1842,6 +1842,7 @@ export default {
     notAllowed: '只有会话和群聊可以移动工作区，任务会话不行。',
     running: '会话正在生成回复，请等这一轮结束后再移动。',
     membersUnavailable: '这些成员在新工作区不可用：{members}。请先把对应智能体设为「所有工作区可用」，或把它们移出群聊后再试。',
+    agentUnavailable: '该会话使用的智能体「{agent}」在新工作区不可用。请先把它设为「所有工作区可用」，或给会话换一个智能体后再试。',
     moveFailed: '移动失败，请重试。',
     success: '已移动到「{name}」',
   },

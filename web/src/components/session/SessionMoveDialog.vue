@@ -154,6 +154,8 @@ async function pick(path) {
       errorMsg.value = t('sessionMove.notAllowed')
     } else if (msgKey === 'MoveMembersUnavailable') {
       errorMsg.value = t('sessionMove.membersUnavailable', { members: unavailableMembersText(err) })
+    } else if (msgKey === 'MoveAgentUnavailable') {
+      errorMsg.value = t('sessionMove.agentUnavailable', { agent: unavailableAgentText(err) })
     } else if (msgKey === 'SessionRunning' || msgKey === 'GroupRunning') {
       errorMsg.value = t('sessionMove.running')
     } else {
@@ -175,6 +177,16 @@ function unavailableMembersText(err) {
   const names = Array.isArray(detail?.members) ? detail.members.filter(Boolean) : []
   if (names.length > 0) return names.join(t('common.listSeparator'))
   return typeof detail?.Members === 'string' ? detail.Members : ''
+}
+
+/**
+ * The single agent a conversation uses, when that agent cannot run in the
+ * target project. `detail.Agent` is the server's machine-readable name; the
+ * localized message is only a fallback for older servers.
+ */
+function unavailableAgentText(err) {
+  const detail = err?.detail
+  return typeof detail?.Agent === 'string' ? detail.Agent : ''
 }
 
 function close() {

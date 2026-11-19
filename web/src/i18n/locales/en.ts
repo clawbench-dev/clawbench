@@ -1834,6 +1834,7 @@ export default {
     notAllowed: 'Only conversations and group chats can move; task sessions cannot.',
     running: "This conversation is replying. Wait for it to finish, then move it.",
     membersUnavailable: 'These members are unavailable in the target project: {members}. Make their agents available in all projects, or remove them from the group, then try again.',
+    agentUnavailable: 'The agent this conversation uses ("{agent}") is unavailable in the target project. Make it available in all projects, or switch the conversation to another agent, then try again.',
     moveFailed: "Couldn't move the conversation. Please try again.",
     success: 'Moved to "{name}"',
   },
