@@ -784,7 +784,7 @@ export default {
   },
   serverSwitch: {
     title: 'Switch server',
-    lead: 'Pick a saved server to connect instantly.',
+    lead: 'Pick a server to connect instantly.',
     empty: 'No saved servers',
     current: 'Current',
     connect: 'Connect',
@@ -792,6 +792,8 @@ export default {
     loadFailed: 'Failed to load the server list',
     switchFailed: 'Failed to switch server',
     saveFailed: 'Failed to save the server password',
+    thisDeviceSection: 'Built-in server',
+    savedServers: 'Saved servers',
     thisDevice: 'This device',
     running: 'Running',
     stopped: 'Not running',

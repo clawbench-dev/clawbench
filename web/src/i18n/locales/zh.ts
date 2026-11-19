@@ -787,7 +787,7 @@ export default {
   },
   serverSwitch: {
     title: '切换服务端',
-    lead: '选择一个已保存的服务器，立即切换。',
+    lead: '选择要连接的服务端，立即切换。',
     empty: '暂无已保存的服务器',
     current: '当前',
     connect: '连接',
@@ -795,6 +795,8 @@ export default {
     loadFailed: '加载服务器列表失败',
     switchFailed: '切换服务端失败',
     saveFailed: '保存服务器密码失败',
+    thisDeviceSection: '本机服务',
+    savedServers: '已保存服务器',
     thisDevice: '本机',
     running: '运行中',
     stopped: '未运行',
