@@ -1,12 +1,6 @@
 import { app, dialog, type BrowserWindow } from 'electron'
 import { fetchDesktopLatest, type DesktopLatest } from './updater'
-import {
-  downloadAndInstall,
-  fetchNpmIntegrity,
-  installPayload,
-  restartInto,
-  appRoot,
-} from './install'
+import { downloadAndInstall, restartInto } from './install'
 import { recordError } from './clientLog'
 import { trustedFingerprintFor } from './certificateTrust'
 import { hasEmbeddedServerBinary } from './localServer'
@@ -49,8 +43,8 @@ export interface VersionGateInfo {
   direction: 'older' | 'newer'
   /** Candidate URLs for the full package, best-first. */
   urls: string[]
-  /** Candidate URLs for the payload-only archive, best-first (empty = full download). */
-  payloadUrls: string[]
+  /** SHA256 by asset filename, from the release's SHA256SUMS (may be empty). */
+  checksums: Record<string, string>
 }
 
 /**
@@ -90,7 +84,7 @@ export function evaluateGate(
     // rather than describing a downgrade that is not happening.
     direction: compareVersions(clientVersion, latest.version) <= 0 ? 'older' : 'newer',
     urls: latest.urls,
-    payloadUrls: latest.payloadUrls,
+    checksums: latest.checksums,
   }
 }
 
@@ -154,32 +148,10 @@ export async function checkVersionGate(url: string, gen: number): Promise<Versio
 }
 
 /**
- * Build the `detail` text for the "install failed" dialog.
- *
- * The payload (npm) path is attempted FIRST and falls back to the full package.
- * It used to log its failure to console only, so the dialog showed just the
- * github.com full-package error — which reads as "the client never tried npm",
- * when in fact npm was tried and failed. On a machine where github.com is
- * unreachable (mainland China) that is the whole story, and hiding the npm
- * error sends the reader down the wrong path entirely.
- *
- * When the payload was attempted, BOTH errors are shown, each labelled with the
- * source it came from.
- */
-export function formatInstallFailure(fullErr: unknown, payloadErr: unknown): string {
-  const full = String((fullErr as Error)?.message || fullErr)
-  if (payloadErr == null) return full
-  const labels = versionGateLabels(resolveNativeLanguage())
-  const payload = String((payloadErr as Error)?.message || payloadErr)
-  return `${labels.payloadInstallFailed}\n${payload}\n\n${labels.fullDownloadFailed}\n${full}`
-}
-
-/**
  * Install the server's version (the user chose "download" on the gate).
  *
- * Prefers the small payload archive and falls back to the full package, exactly
- * as the startup upgrade used to. On failure the gate STAYS UP with a native
- * error dialog, so the user is not dropped into an app known to be mismatched.
+ * Always the full package. On failure the gate STAYS UP with a native error
+ * dialog, so the user is not dropped into an app known to be mismatched.
  *
  * A client NEWER than the server installs the server's older build — that is the
  * point (align to the server), and `install.ts` accepts a downgrade.
@@ -209,47 +181,17 @@ export async function installServerVersion(
     return false
   }
 
-  // Prefer the small payload archive: it carries only our app code (~3MB) and
-  // reuses the installed Electron runtime, instead of re-downloading ~150MB.
-  //
-  // macOS is excluded because replacing resources/app.asar inside a signed
-  // .app breaks the code-signature seal (Apple Silicon requires a valid one),
-  // and the server publishes no payload for it either. Any payload failure —
-  // a dead mirror, an ABI mismatch, a malformed archive — falls through to the
-  // full download below rather than failing the upgrade.
-  let installed = false
-  let payloadErr: unknown = null
-  if (process.platform !== 'darwin' && info.payloadUrls.length > 0) {
-    try {
-      // The payload is the app itself (`resources/app.asar`). The registry
-      // publishes a checksum for the tarball, so it is checked before the
-      // archive is unpacked; when the registry cannot answer, the download is
-      // still https-only (see downloadFirstAvailable).
-      const integrity = await fetchNpmIntegrity(info.payloadUrls, info.serverVersion)
-      // installVersion, not serverVersion: the payload of a release that reused
-      // the previous desktop build IS that older app, and the side-by-side
-      // directory must match the version the app reports at startup.
-      await installPayload(info.payloadUrls, info.installVersion, appRoot(), undefined, integrity)
-      installed = true
-    } catch (err) {
-      console.error('[gate] payload install failed, falling back to full download:', err)
-      recordError('Install', err)
-      // Keep it so the failure dialog can show BOTH attempts — otherwise the
-      // user only ever sees the github.com error and concludes npm was skipped.
-      payloadErr = err
-    }
-  }
-
   try {
-    if (!installed) await downloadAndInstall(info.urls, info.installVersion, '')
+    await downloadAndInstall(info.urls, info.installVersion, info.checksums)
   } catch (err) {
+    recordError('Install', err)
     const labels = versionGateLabels(resolveNativeLanguage())
     await dialog.showMessageBox(parentArg as BrowserWindow, {
       type: 'error',
       buttons: [labels.ok],
       title: labels.downloadFailedTitle,
       message: labels.downloadFailedMessage,
-      detail: formatInstallFailure(err, payloadErr),
+      detail: String((err as Error)?.message || err),
     })
     return false
   }

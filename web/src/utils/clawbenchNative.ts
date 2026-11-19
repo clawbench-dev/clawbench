@@ -206,6 +206,7 @@ export interface ClawBenchNative {
   installFusedUpdate?(
     version: string,
     downloads: Record<string, string[]>,
+    checksums: Record<string, string>,
   ): Promise<{ ok: boolean; error: string }>
   /** Stop the host background service when no ports are enabled (Android; no-op on desktop). */
   stopBackgroundService(): void

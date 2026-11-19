@@ -11,6 +11,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/platform/source"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -75,6 +76,9 @@ func TestServeBackendInstall_IgnoresClientSuppliedCommand(t *testing.T) {
 	prevLook := service.SetAgentInstallLookPathForTest(func(string) (string, error) { return "/usr/bin/npm", nil })
 	defer func() { prevRun(); prevLook() }()
 
+	withInstallSources(t, []source.Candidate{{Name: "region-mirror", Base: source.NpmMirrorBase}})
+	stubNpmProbe(t, func(context.Context, string, string) error { return nil })
+
 	req := newRequest(t, http.MethodPost, "/api/backends/claude/install", map[string]any{
 		"command": "rm -rf /",
 	})
@@ -84,7 +88,7 @@ func TestServeBackendInstall_IgnoresClientSuppliedCommand(t *testing.T) {
 
 	spec := model.FindSpecByBackend("claude")
 	require.NotNil(t, spec)
-	assert.Equal(t, prepareInstallCmd(spec.InstallCmd), ranCommand)
+	assert.Equal(t, displayInstallCmd(spec.InstallCmd), ranCommand)
 	assert.NotContains(t, ranCommand, "rm -rf")
 }
 
@@ -236,6 +240,7 @@ func TestServeBackendInstall_SuccessRescansAndReturnsAgents(t *testing.T) {
 // shows, without a second request — and the two must not diverge.
 func TestServeAgentsGet_CarriesBackendInstallCmd(t *testing.T) {
 	defer setupAgentTestEnv(t)()
+	withInstallSources(t, []source.Candidate{{Name: "region-mirror", Base: source.NpmMirrorBase}})
 
 	req := newRequest(t, http.MethodGet, "/api/agents", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -259,7 +264,7 @@ func TestServeAgentsGet_CarriesBackendInstallCmd(t *testing.T) {
 		found = true
 		spec := model.FindSpecByBackend("claude")
 		require.NotNil(t, spec)
-		assert.Equal(t, prepareInstallCmd(spec.InstallCmd), a.InstallCmd)
+		assert.Equal(t, displayInstallCmd(spec.InstallCmd), a.InstallCmd)
 	}
 	assert.True(t, found, "the claude agent must be in the fixture")
 }

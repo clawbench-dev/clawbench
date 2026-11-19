@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -20,12 +22,26 @@ import (
 	_ "clawbench/internal/ai/backends/opencode"
 	_ "clawbench/internal/ai/backends/pi"
 	"clawbench/internal/model"
-	"clawbench/internal/platform"
+	"clawbench/internal/platform/source"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func withInstallSources(t *testing.T, candidates []source.Candidate) {
+	t.Helper()
+	prev := installSourceCandidates
+	installSourceCandidates = func() []source.Candidate { return candidates }
+	t.Cleanup(func() { installSourceCandidates = prev })
+}
+
+func stubNpmProbe(t *testing.T, fn func(context.Context, string, string) error) {
+	t.Helper()
+	prev := probeNpmPackage
+	probeNpmPackage = fn
+	t.Cleanup(func() { probeNpmPackage = prev })
+}
 
 // setupAgentTestEnv creates a temp agents directory with DB records and in-memory agents.
 // Returns a teardown function.
@@ -274,36 +290,132 @@ func TestAgentPatch_PreferredModel_ACPReportedModel(t *testing.T) {
 
 // ── install command preparation tests ──
 
-func TestPrepareInstallCmd_NpmInstallWithChinaMirror(t *testing.T) {
-	orig := platform.ChinaMirrorChecked.Load()
-	defer platform.ChinaMirrorChecked.Store(orig)
-	platform.ChinaMirrorChecked.Store(1)
+func TestDisplayInstallCmd_NpmInstallWithChinaMirror(t *testing.T) {
+	withInstallSources(t, []source.Candidate{{Name: "region-mirror", Base: source.NpmMirrorBase}})
 
-	result := prepareInstallCmd("npm install -g @anthropic-ai/claude-code")
-	assert.Contains(t, result, "--registry="+npmMirrorRegistry)
+	result := displayInstallCmd("npm install -g @anthropic-ai/claude-code")
+	assert.Contains(t, result, "--registry="+source.NpmMirrorBase)
 }
 
-func TestPrepareInstallCmd_NpmInstallWithoutChina(t *testing.T) {
-	orig := platform.ChinaMirrorChecked.Load()
-	defer platform.ChinaMirrorChecked.Store(orig)
-	platform.ChinaMirrorChecked.Store(2)
+func TestDisplayInstallCmd_NpmInstallWithoutChina(t *testing.T) {
+	withInstallSources(t, []source.Candidate{{Name: "official", Base: source.NpmJsBase}})
 
-	result := prepareInstallCmd("npm install -g @anthropic-ai/claude-code")
+	result := displayInstallCmd("npm install -g @anthropic-ai/claude-code")
 	assert.NotContains(t, result, "--registry=")
 }
 
-func TestPrepareInstallCmd_NonNpmCommand(t *testing.T) {
-	result := prepareInstallCmd("curl -fsSL https://get.qoder.dev | bash")
+func TestDisplayInstallCmd_UserSourceWins(t *testing.T) {
+	const private = "https://npm.corp.example/repository/npm"
+	withInstallSources(t, []source.Candidate{
+		{Name: "user", Base: private},
+		{Name: "region-mirror", Base: source.NpmMirrorBase},
+	})
+
+	result := displayInstallCmd("npm install -g @anthropic-ai/claude-code")
+	assert.Contains(t, result, "--registry="+private)
+}
+
+func TestDisplayInstallCmd_NonNpmCommand(t *testing.T) {
+	result := displayInstallCmd("curl -fsSL https://get.qoder.dev | bash")
 	assert.Equal(t, "curl -fsSL https://get.qoder.dev | bash", result)
 }
 
-func TestPrepareInstallCmd_AlreadyHasRegistry(t *testing.T) {
-	orig := platform.ChinaMirrorChecked.Load()
-	defer platform.ChinaMirrorChecked.Store(orig)
-	platform.ChinaMirrorChecked.Store(1)
+func TestDisplayInstallCmd_ShortNpmFormIsUntouched(t *testing.T) {
+	// Only `npm install` is rewritten; `npm i` is left alone so a future backend
+	// using the short form does not silently get a different command than the
+	// one documented for it.
+	withInstallSources(t, []source.Candidate{{Name: "region-mirror", Base: source.NpmMirrorBase}})
+	assert.Equal(t, "npm i -g foo", displayInstallCmd("npm i -g foo"))
+}
 
-	result := prepareInstallCmd("npm install -g --registry=https://my.local npm-pkg")
-	assert.NotContains(t, result, npmMirrorRegistry)
+func TestDisplayInstallCmd_AlreadyHasRegistry(t *testing.T) {
+	withInstallSources(t, []source.Candidate{{Name: "region-mirror", Base: source.NpmMirrorBase}})
+
+	result := displayInstallCmd("npm install -g --registry=https://my.local npm-pkg")
+	assert.NotContains(t, result, source.NpmMirrorBase)
+}
+
+func TestResolveInstallCmd_FirstWorkingSourceWins(t *testing.T) {
+	withInstallSources(t, []source.Candidate{
+		{Name: "user", Base: "https://npm.corp.example"},
+		{Name: "region-mirror", Base: source.NpmMirrorBase},
+	})
+	var probed []string
+	stubNpmProbe(t, func(_ context.Context, _ string, base string) error {
+		probed = append(probed, base)
+		return nil
+	})
+
+	got := resolveInstallCmd(context.Background(), "npm install -g @anthropic-ai/claude-code")
+	assert.Equal(t, "npm install -g @anthropic-ai/claude-code --registry=https://npm.corp.example", got)
+	assert.Equal(t, []string{"https://npm.corp.example"}, probed, "must stop after the first success")
+}
+
+func TestResolveInstallCmd_404FallsThrough(t *testing.T) {
+	withInstallSources(t, []source.Candidate{
+		{Name: "user", Base: "https://npm.corp.example"},
+		{Name: "region-mirror", Base: source.NpmMirrorBase},
+	})
+	stubNpmProbe(t, func(_ context.Context, _ string, base string) error {
+		if base == "https://npm.corp.example" {
+			return errors.New("404 not found")
+		}
+		return nil
+	})
+
+	got := resolveInstallCmd(context.Background(), "npm install -g @anthropic-ai/claude-code")
+	assert.Contains(t, got, "--registry="+source.NpmMirrorBase)
+}
+
+func TestResolveInstallCmd_AuthFailureStopsAndUsesThatSource(t *testing.T) {
+	const private = "https://npm.corp.example"
+	withInstallSources(t, []source.Candidate{
+		{Name: "user", Base: private},
+		{Name: "region-mirror", Base: source.NpmMirrorBase},
+	})
+	var probed []string
+	stubNpmProbe(t, func(_ context.Context, _ string, base string) error {
+		probed = append(probed, base)
+		return service.ErrNpmAuthRequired
+	})
+
+	got := resolveInstallCmd(context.Background(), "npm install -g @anthropic-ai/claude-code")
+	assert.Contains(t, got, "--registry="+private)
+	assert.Equal(t, []string{private}, probed, "auth failure must not fall through to the public mirror")
+}
+
+func TestResolveInstallCmd_AllFailUsesFirst(t *testing.T) {
+	withInstallSources(t, []source.Candidate{
+		{Name: "user", Base: "https://npm.corp.example"},
+		{Name: "region-mirror", Base: source.NpmMirrorBase},
+	})
+	stubNpmProbe(t, func(context.Context, string, string) error { return errors.New("timeout") })
+
+	got := resolveInstallCmd(context.Background(), "npm install -g @anthropic-ai/claude-code")
+	assert.Contains(t, got, "--registry=https://npm.corp.example")
+}
+
+func TestResolveInstallCmd_LocalSpecUsesFirstSourceWithoutProbe(t *testing.T) {
+	withInstallSources(t, []source.Candidate{{Name: "region-mirror", Base: source.NpmMirrorBase}})
+	called := false
+	stubNpmProbe(t, func(context.Context, string, string) error {
+		called = true
+		return nil
+	})
+
+	got := resolveInstallCmd(context.Background(), "npm install -g ./local-package")
+	assert.Contains(t, got, "--registry="+source.NpmMirrorBase)
+	assert.False(t, called, "a local path must not be probed")
+}
+
+func TestResolveInstallCmd_LeavesNonInstallCommandsAlone(t *testing.T) {
+	for _, cmd := range []string{
+		"curl -fsSL https://get.qoder.dev | bash",
+		"npm i -g foo",
+		"npm install -g --registry=https://my.local foo",
+	} {
+		assert.Equal(t, cmd, resolveInstallCmd(context.Background(), cmd), cmd)
+	}
 }
 
 func TestAgentPatch_PreferredThinkingEffort(t *testing.T) {

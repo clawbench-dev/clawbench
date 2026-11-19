@@ -48,7 +48,17 @@ var (
 	// (BackendSpec.InstallCmd is empty); the caller must fall back to manual
 	// instructions.
 	ErrAgentInstallEmptyCommand = errors.New("this backend has no built-in install command")
+	// ErrNpmAuthRequired means a registry rejected the probe with 401/403. The
+	// caller must stop probing and use that source, so the install shows the
+	// real authentication error instead of silently bypassing a private
+	// registry.
+	ErrNpmAuthRequired = errors.New("npm registry requires authentication")
 )
+
+// npmProbeTimeout bounds one `npm view` probe. It is deliberately short: the
+// probe only decides which source to use, and a slow source must not delay the
+// install dialog for long.
+const npmProbeTimeout = 3 * time.Second
 
 // AgentInstallNodeMissingError reports that the command needs npm/npx and it is
 // not on PATH, even after ClawBench tried to install a private Node.js. Named so
@@ -251,6 +261,97 @@ func nodeToolForCommand(command string) string {
 		return fields[0]
 	}
 	return ""
+}
+
+// agentProbeRun runs one probe command. A variable so tests can drive the
+// success/auth/failure branches without a real npm.
+var agentProbeRun = runAgentInstallCommand
+
+// SetAgentProbeRunForTest replaces the probe runner and returns a restore
+// function. Production code must not call this.
+func SetAgentProbeRunForTest(fn func(context.Context, string) (string, error)) func() {
+	prev := agentProbeRun
+	agentProbeRun = fn
+	return func() { agentProbeRun = prev }
+}
+
+// ProbeNpmPackage reports whether a registry has a package, using
+// `npm view <pkg> version --registry=<base>`.
+//
+// It returns ErrNpmAuthRequired when the registry rejects the request with
+// 401/403: the caller must stop probing and use that source, because the user
+// explicitly configured it and silently falling back to a public mirror would
+// bypass that choice. Any other failure (404, timeout, network) means "try the
+// next source".
+func ProbeNpmPackage(ctx context.Context, pkg, registryBase string) error {
+	if !IsSafeNpmProbeSpec(pkg) {
+		return fmt.Errorf("unsupported package spec")
+	}
+	if !isSafeProbeBase(registryBase) {
+		return fmt.Errorf("unsupported registry base")
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, npmProbeTimeout)
+	defer cancel()
+
+	out, err := agentProbeRun(probeCtx, "npm view "+pkg+" version --registry="+registryBase)
+	if err == nil {
+		return nil
+	}
+	if isNpmAuthOutput(out) {
+		return fmt.Errorf("%w: %s", ErrNpmAuthRequired, strings.TrimSpace(out))
+	}
+	return fmt.Errorf("npm view failed: %w: %s", err, strings.TrimSpace(out))
+}
+
+func isNpmAuthOutput(out string) bool {
+	lower := strings.ToLower(out)
+	for _, marker := range []string{"e401", "e403", "401 unauthorized", "403 forbidden", "unauthorized", "forbidden"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSafeNpmProbeSpec accepts a single registry package spec: a name, an optional
+// scope, and an optional exact version. Paths, tarballs, git URLs and range
+// syntax are rejected rather than passed to a shell.
+func IsSafeNpmProbeSpec(s string) bool {
+	if s == "" || len(s) > 200 {
+		return false
+	}
+	if strings.HasPrefix(s, ".") || strings.HasPrefix(s, "/") || strings.HasPrefix(s, "~") {
+		return false
+	}
+	if strings.Contains(s, "://") || strings.Contains(s, "\\") || strings.HasSuffix(s, ".tgz") {
+		return false
+	}
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			continue
+		}
+		switch c {
+		case '@', '.', '_', '-', '/':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeProbeBase rejects anything that could be interpreted by a shell. The
+// source package already normalizes registries; this is defence in depth before
+// the value is concatenated into a command.
+func isSafeProbeBase(s string) bool {
+	if strings.ContainsAny(s, " \t\r\n\"'`$&|;<>()\\") {
+		return false
+	}
+	return strings.HasPrefix(s, "https://") ||
+		strings.HasPrefix(s, "http://localhost") ||
+		strings.HasPrefix(s, "http://127.0.0.1") ||
+		strings.HasPrefix(s, "http://[::1]")
 }
 
 // runAgentInstallCommand executes command through the user's login shell.

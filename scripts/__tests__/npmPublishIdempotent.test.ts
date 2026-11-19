@@ -91,7 +91,7 @@ function parseJobs(src: string): Job[] {
 
 const SRC = stripComments(readFileSync(RELEASE_YML, 'utf8'))
 const JOBS = parseJobs(readFileSync(RELEASE_YML, 'utf8'))
-const PUBLISH_JOB_KEYS = ['publish-npm', 'publish-npm-desktop']
+const PUBLISH_JOB_KEYS = ['publish-npm']
 
 describe('release.yml — one tag runs one release pipeline', () => {
   it('declares a concurrency group keyed on the ref', () => {

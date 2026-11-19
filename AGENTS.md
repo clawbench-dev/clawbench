@@ -53,7 +53,7 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 
 Windows 桌面安装包里自带一份服务端，启动客户端就等于启动服务端，退出客户端就等于退出服务端，中间不需要登录。其他平台（Linux/macOS 桌面、Android、网页）仍然连别的机器上的服务端，不受影响。
 
-- **组成**：`desktop/assets/server/clawbench.exe` 由 `desktop/scripts/build-server.mjs` 在打包前生成（发布流水线里是直接取 `build-windows` job 产出的 `windows-server` artifact，那份已经内嵌了前端）。electron-builder 通过 Windows 的 `extraFiles` 把它放到 `<安装目录>/server/`——**故意不放进 `resources/`**：桌面端的增量更新只替换 `resources/`，服务端在它外面才不会被一次更新顺手删掉。
+- **组成**：`desktop/assets/server/clawbench.exe` 由 `desktop/scripts/build-server.mjs` 在打包前生成（发布流水线里是直接取 `build-windows` job 产出的 `windows-server` artifact，那份已经内嵌了前端）。electron-builder 通过 Windows 的 `extraFiles` 把它放到 `<安装目录>/server/`——**故意不放进 `resources/`**：瘦包的 `resources/` 里没有服务端，融合包才把它放在应用根目录，更新时不会顺手删掉。
 - **两个安装包**：发布产物里 `clawbench-desktop-windows-x64-<tag>.zip` 是原来的瘦客户端（连别的机器），`clawbench-desktop-windows-x64-local-<tag>.zip` 才是带服务端的融合版。融合版由发布 job 用"瘦包 + 本次的 `clawbench.exe`"现场组装，所以即使客户端壳复用了上一版，每个 release 也一定有对应的融合包。
 - **启动顺序**（`desktop/src/main/localServer.ts`）：选端口（上次用过的优先，被占就往上找；被别的已保存服务器占用的端口跳过）→ 拉起服务端 → 轮询 `/api/health` 直到它自报 `app=clawbench` → 用 `{userData}/server/auto-password` 里的密码走 `POST /login` 拿 cookie 并写入 Electron 的 cookie jar → **按需**写 `serverUrl` → 再建窗口。刚装好时用户看不到登录页（cookie 已种好）；此后「打开哪台」取决于上次的选择。
 - **内嵌服务端不是普通服务器条目**：它的地址与密码分别存在 `embeddedServerUrl` / `embeddedServerPasswordEncrypted`，**不在 `servers` 列表里**（旧版本曾把它当普通条目，删除后下次启动又自动补回、改名会造出假条目、改密码完全无效）。原生登录页把它单列成「本机服务」一块，右侧只显示运行状态、没有铅笔和 ×；网页端的「切换服务端」也把它单列一行。`native:get-embedded-server` 提供 `{url, password, running}`，`getServerList` 不包含它。
@@ -182,15 +182,13 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、M
 | `shortcuts.ts` | 应用级快捷键决策表（`before-input-event` 只认领 Ctrl+Shift+R / F12，F5 等一律放行给页面），不 import electron 便于单测 |
 | `updater.ts` | 升级检查：请求**服务端** `/api/desktop/latest`（不查 npm）；语义化版本比较，降级不误报 |
 | `versionGate.ts` / `shared/protocol.ts` | **客户端兼容性门禁比协议号、不比版本字符串**：`internal/version/client_protocol.txt` 是唯一来源（只在壳与服务端的破坏性契约变更时 +1），Go embed 后由 `/api/health` 与 `/api/desktop/latest` 下发 `protocol`；桌面端镜像到 `shared/protocol.ts`（对拍测试防漂移）。`shouldGateClient` 相等即放行，任一侧缺字段退回版本比较（老客户端单向升级路径）。`release.yml` 的 `client-guard` job 据此决定「编还是搬」：`android/`、`desktop/` 都没动就复用上一个 Release 的产物，协议号 +1 或上个 Release 不认识协议号则两端强制重编，契约文件改了但协议号没变直接失败 |
-| `install.ts` | 自升级安装：多候选 URL 依次降级下载 → SRI 校验 → 解压 zip（剥顶层包装目录、拒绝路径穿越、**恢复可执行位**）→ 侧装到 `~/.clawbench-desktop/app-<version>/` → 翻转 `current` 指针。另支持**增量载荷包**：安装到从当前版本克隆出的目录、复用 Electron 运行时，装前按主版本 + 壳指纹门控，不符即静默回退全量下载 |
+| `install.ts` | 自升级安装：多候选 URL 依次降级下载 → SHA256 校验（来自 Release 的 `SHA256SUMS`）→ 解压 zip（剥顶层包装目录、拒绝路径穿越、**恢复可执行位**）→ 侧装到 `~/.clawbench-desktop/app-<version>/` → 翻转 `current` 指针。只装全量包，没有增量载荷 |
 | `secrets.ts` / `store.ts` | safeStorage 加密存密码（**按服务端分别存于各自 entry**，旧全局槽迁移时只归属当时的活动服务端）、electron-store 持久化服务器列表/主题/语言 |
 | `powersave.ts` | 屏幕常亮（powerSaveBlocker） |
 
 **自升级采用"侧装 + 指针"而非原地替换**：运行中的进程无法覆盖自身（Windows 上尤其如此）。`install.ts` 把新版本解压到独立目录并改写 `~/.clawbench-desktop/current`；**应用自己**在 `whenReady` 最前面读该指针决定运行哪个版本（`selectStartupVersion` + `handOffToPointedVersion`）——指针缺失、目标目录不存在或指向自身都清指针并继续用当前版本启动，因此失败可回滚、旧版本保留，被删坏或写坏的升级永远不会让应用打不开。必须由应用自己读：原先读指针的 npm 启动器已随 npm 渠道一并移除，双击 Release 解压出的旧 exe 时若无人读指针，会静默退回旧版。
 
-**全量包以 GitHub Release 为准，载荷包只走 npm**：桌面端与服务端同版本发布，`/api/desktop/latest` 直接返回服务端自身版本 + 资产地址，**不查询任何外部服务**（不查 npm、不查 GitHub API）。每个平台返回**候选 URL 列表**（国内镜像优先、直连 github.com 兜底），客户端与前端都取首个可用项。
-
-增量升级用的**载荷包**（应用自身，约 3MB）**只在 npm 发布**（`publish-npm-desktop`），不再作为 Release 资产——在 Release 资产里放一个 3MB 的 zip 会让人误以为它可直接安装（它缺 Electron 运行时，只能增量套用）。`payloads` 因此每平台只有 npm tarball 一个候选；macOS 无载荷（替换会破坏签名），该键缺席即走全量下载。
+**全量包以 GitHub Release 为准**：桌面端与服务端同版本发布，`/api/desktop/latest` 直接返回服务端自身版本 + 资产地址，**不查 npm**；`SHA256SUMS` 直连 GitHub 取，失败不阻塞。每个平台返回**候选 URL 列表**（国内镜像优先、直连 github.com 兜底），客户端与前端都取首个可用项；`checksums` 给出资产文件名到 SHA256 的映射，客户端下载后校验。
 
 `tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时 `downloads` 为空、客户端隐藏下载入口——不要把它当错误处理。
 
@@ -200,7 +198,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、M
 
 **平台判定拆为三条正交轴，不再有 `isPC`**（`web/src/composables/usePlatformDetect.ts` + `useWideScreenLayout.ts`）：旧的 `isPC` 把三个无关问题 OR 在一起（宿主 OR 输入 OR 视口），每个边界都判错。现在消费方各取所需——**HOST**（`isElectron` / `isAndroidApp` / `isHarmonyApp` / `isWebApp` / `isNativeApp`，来自原生桥）、**INPUT**（`isTouchPrimary`，`(pointer: coarse)` 加 UA 兜底）、**VIEWPORT**（`isWideScreen`，独立模块）。Electron 是有物理键盘鼠标的桌面窗口，宿主轴直接判为 `isElectron`，不再靠"参与 `isPC`"来避免被误判成移动端。**鸿蒙是第四个宿主身份**（`getHostPlatform()==='harmonyos'`），`isAndroidApp` 显式排除它——安卓专属的字体/合成补偿、APK 更新、后台断连策略在鸿蒙上都不成立。`web/src/__tests__/platformAxes.test.ts` 钉住 `isPC` 不得回归、共享谓词不得重声明、iPadOS 陷阱（Macintosh UA + `maxTouchPoints>0`）不得重开。
 
-构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job（linux / linux-arm64 / windows / macos）打包为 zip 挂 GitHub Release（**只挂全量包**）。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 发三个 `@xulongzhe/clawbench-desktop-<plat>-payload` 包（linux-x64 / linux-arm64 / win32-x64；darwin 从不发 npm）；`publish-npm` 只发服务端 CLI `@xulongzhe/clawbench`。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。`win.signAndEditExecutable` **不要**在 electron-builder.yml 里禁用——CI 的 windows job 原生可用 rcedit，禁用会跳过向 exe 写入图标与版本元数据；本地无 wine 交叉编译时才用命令行临时覆盖。
+构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job（linux / linux-arm64 / windows / macos）打包为 zip 挂 GitHub Release（**只挂全量包**）。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm` 只发服务端 CLI `@xulongzhe/clawbench`，桌面端不经过 npm。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。`win.signAndEditExecutable` **不要**在 electron-builder.yml 里禁用——CI 的 windows job 原生可用 rcedit，禁用会跳过向 exe 写入图标与版本元数据；本地无 wine 交叉编译时才用命令行临时覆盖。
 
 ### 鸿蒙端（HarmonyOS，实验性）
 

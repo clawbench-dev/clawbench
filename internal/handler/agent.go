@@ -24,16 +24,42 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
-	"clawbench/internal/platform"
+	"clawbench/internal/platform/source"
 	"clawbench/internal/service"
 )
 
-// IsChinaMainland exports the China detection result for use by other packages.
-func IsChinaMainland() bool {
-	return platform.IsChinaMainland()
+// installSourceCandidates is a variable so handler tests can pin the source
+// list without depending on the test machine's ~/.npmrc.
+var installSourceCandidates = source.Npm
+
+// displayInstallCmd prepares an install command for display. It never probes a
+// registry: the welcome panel and the agent settings page must render without
+// waiting on the network.
+//
+// Only `npm install …` is rewritten. `npm i`, `npx` and `curl | bash` are left
+// untouched: the first two are not the registry commands this feature targets,
+// and a shell installer has no generic source flag. A command that already
+// carries --registry is also left alone.
+func displayInstallCmd(installCmd string) string {
+	if !strings.HasPrefix(installCmd, "npm install") || strings.Contains(installCmd, "--registry") {
+		return installCmd
+	}
+	candidates := installSourceCandidates()
+	if len(candidates) == 0 || candidates[0].Base == source.NpmJsBase {
+		return installCmd
+	}
+	return installCmdWithSource(installCmd, candidates[0].Base)
 }
 
-const npmMirrorRegistry = "https://registry.npmmirror.com"
+// installCmdWithSource appends --registry only when the chosen source is not
+// npm's default. This keeps the displayed command and the executed command
+// identical when the answer is the official registry.
+func installCmdWithSource(installCmd, base string) string {
+	if base == source.NpmJsBase {
+		return installCmd
+	}
+	return installCmd + " --registry=" + base
+}
 
 // agentIDRe validates agent IDs: alphanumeric, hyphens, underscores, dots only.
 var agentIDRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
@@ -50,18 +76,6 @@ func isValidAgentID(id string) bool {
 		return false
 	}
 	return agentIDRe.MatchString(id)
-}
-
-// prepareInstallCmd modifies an install command for display:
-// Adds China npm mirror registry if in mainland China.
-func prepareInstallCmd(installCmd string) string {
-	if !strings.HasPrefix(installCmd, "npm install") {
-		return installCmd
-	}
-	if platform.IsChinaMainland() && !strings.Contains(installCmd, "--registry") {
-		return installCmd + " --registry=" + npmMirrorRegistry
-	}
-	return installCmd
 }
 
 // ServeAgentSubRoutes handles /api/agents/* sub-routes (e.g. /api/agents/{id}/refresh-models).
@@ -472,7 +486,7 @@ func backendInstallCmd(backend string) string {
 	if spec == nil {
 		return ""
 	}
-	return prepareInstallCmd(spec.InstallCmd)
+	return displayInstallCmd(spec.InstallCmd)
 }
 
 func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
@@ -2561,7 +2575,7 @@ func ServeBackends(w http.ResponseWriter, r *http.Request) {
 			Specialty:            spec.Specialty,
 			DefaultCmd:           spec.DefaultCmd,
 			ThinkingEffortLevels: spec.ThinkingEffortLevels,
-			InstallCmd:           prepareInstallCmd(spec.InstallCmd),
+			InstallCmd:           displayInstallCmd(spec.InstallCmd),
 		})
 	}
 

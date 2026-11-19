@@ -37,6 +37,10 @@ func TestMain(m *testing.M) {
 	// No restore: m.Run() is the last statement and os.Exit ends the process, so
 	// a deferred restore would never execute (and gocritic's exitAfterDefer
 	// rightly flags it).
+	// The desktop release API fetches SHA256SUMS from github.com. Unit tests
+	// must not depend on the network; the manifest tests opt back into the real
+	// fetcher with useRealChecksumFetch.
+	desktopChecksumsFetch = func(string) map[string]string { return nil }
 	SetPortDialForTest(func(addr string, timeout time.Duration) bool {
 		// Loopback targets keep their real semantics (a local listener is
 		// genuinely reachable); only the non-localhost dial — the one that

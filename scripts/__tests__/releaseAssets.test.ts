@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 /**
  * Regression guard for release asset filenames.
@@ -40,6 +40,11 @@ function releaseYml(): string {
   return readFileSync(RELEASE_YML, 'utf8')
 }
 
+/** Whether a repo-relative path exists, tolerating either cwd. */
+function repoFileExists(rel: string): boolean {
+  return [process.cwd(), resolve(process.cwd(), '..')].some((base) => existsSync(resolve(base, rel)))
+}
+
 /**
  * Split a workflow into job bodies, keyed by job name.
  *
@@ -65,22 +70,6 @@ function jobs(src: string): Record<string, string> {
   }
   if (name) out[name] = body.join('\n')
   return out
-}
-
-/** Desktop jobs that publish a payload archive. */
-const PAYLOAD_JOBS = ['build-desktop-linux', 'build-desktop-linux-arm64', 'build-desktop-windows']
-
-/**
- * Payload basenames the Go server maps to a platform.
- *
- * These are npm package-name components now, not release asset names — the
- * payload ships through npm only. The map is still the single place deciding
- * which platforms have a payload.
- */
-function payloadBasesInGo(): string[] {
-  const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
-  const block = /desktopPayloadAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
-  return [...block.matchAll(/"([^"]*payload)"/g)].map((m) => m[1]).sort()
 }
 
 /**
@@ -151,8 +140,7 @@ describe('release.yml — every published asset carries the version', () => {
     // target — fail loudly rather than pass vacuously. The floor is the current
     // count (11 release steps, one of which uploads two macOS archives = 12
     // assets); it only needs to rise, never to match exactly, so adding a
-    // platform does not require editing this number. It dropped by three when
-    // the desktop payloads stopped being release assets (they are npm-only).
+    // platform does not require editing this number.
     const targets = releaseUploadTargets(releaseYml())
     expect(targets.length).toBeGreaterThanOrEqual(12)
   })
@@ -241,218 +229,66 @@ describe('all-in-one (fused) package name matches the Go download URLs', () => {
 })
 
 /**
- * Payload archives (the incremental-upgrade path) are the same app without the
- * Electron runtime. They are staged by the desktop jobs, published to npm, and
- * advertised by the Go server.
- *
- * They are deliberately NOT GitHub release assets. Attaching a ~3MB payload zip
- * beside the ~150MB full package misleads anyone browsing the release assets
- * into thinking the small one is a usable install, so the payload is npm-only.
- *
- * That makes this guard the inverse of the full-package one: the failure mode
- * is a payload zip creeping back into a `files:` list, and the cross-language
- * contract that remains is between the Go basenames and the npm manifests.
+ * Desktop payloads are gone. The shell always downloads the full package, so
+ * there is no payload to stage, publish to npm, or advertise from the server.
+ * These guards are deliberately inverse: any of these names reappearing means
+ * the old path is creeping back.
  */
-describe('payloads ship through npm only, never as release assets', () => {
-  it('attaches no payload archive to any GitHub release', () => {
+describe('desktop payloads are removed', () => {
+  it('has no payload assets or packaging commands in the workflow', () => {
+    expect(releaseYml()).not.toContain('-payload')
     for (const target of releaseUploadTargets(releaseYml())) {
-      expect(target, `payload must not be a release asset: ${target}`).not.toContain('-payload')
+      expect(target).not.toContain('-payload')
     }
-  })
-
-  it('zips no payload archive anywhere in the workflow', () => {
-    // The payload dir is staged and uploaded as an artifact for the npm job;
-    // packaging it as a .zip is what the old release path did, and any payload
-    // archive name reappearing in a packaging command means that path returned.
     for (const target of packagingTargets(releaseYml())) {
-      expect(target, `payload must not be packaged for a release: ${target}`).not.toContain('-payload')
+      expect(target).not.toContain('-payload')
     }
   })
 
-  it('publishes a payload for every non-macOS platform, and only those', () => {
-    // Three platforms get a payload; macOS deliberately does not (it would
-    // break the .app code-signature seal).
-    expect(payloadBasesInGo()).toEqual([
-      'clawbench-desktop-linux-arm64-payload',
-      'clawbench-desktop-linux-x64-payload',
-      'clawbench-desktop-windows-x64-payload',
-    ])
-  })
-
-  it('builds the Go payload URLs from the npm derivation, not a release asset', () => {
-    // desktopPayloadURLs is the only thing FetchDesktopLatest calls for
-    // payloads. If it ever gains a releaseAssetURLs call, a payload candidate
-    // would point at a GitHub asset that no longer exists.
-    const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
-    const fn = /func desktopPayloadURLs\([\s\S]*?\n\}/.exec(go)?.[0] ?? ''
-    expect(fn, 'desktopPayloadURLs not found').toContain('desktopPayloadNpmURLs')
-    expect(fn, 'desktopPayloadURLs must not build a GitHub asset URL').not.toContain('releaseAssetURLs')
-  })
-
-  it('excludes macOS from the payload map', () => {
-    // A darwin entry would make the client attempt an install that invalidates
-    // the signature, and the failure would be silent (fallback to full).
-    const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
-    const block = /desktopPayloadAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
-    expect(block).not.toContain('darwin')
+  it('has no payload packages or scripts left in the tree', () => {
+    expect(repoFileExists('npm/desktop-payloads')).toBe(false)
+    expect(repoFileExists('desktop/scripts/stage-payload.mjs')).toBe(false)
+    expect(repoFileExists('desktop/scripts/shell-fingerprint.mjs')).toBe(false)
   })
 })
 
-/**
- * The shell-fingerprint sidecar is what lets a payload install verify that the
- * shell it is reusing has the same identity (icon / appId / productName) it was
- * built against. Those live in the executable, not in `resources/`, so a
- * payload can never update them and nothing at runtime can notice a stale one.
- *
- * Two ordering constraints make this easy to get wrong, and both fail silently:
- *
- *   - the sidecar must be written BEFORE the full package is zipped, or it is
- *     not in the archive and every install lacks it;
- *   - the payload must be built BEFORE the full package is zipped (or its
- *     directory kept outside it), or the ~4MB payload is swept into the full
- *     archive.
- *
- * Both failures degrade to "every upgrade re-downloads ~150MB" rather than to
- * an error, so they are asserted structurally here.
- */
-describe('shell fingerprint is wired into the desktop release jobs', () => {
-  it('writes the fingerprint in every job that publishes a payload', () => {
-    const all = jobs(releaseYml())
-    for (const job of PAYLOAD_JOBS) {
-      expect(all[job], `missing job ${job}`).toContain('shell-fingerprint.mjs')
+describe('desktop SHA256SUMS', () => {
+  it('collects every desktop zip as an artifact for the checksum job', () => {
+    // The checksum job can only hash what the build jobs upload. Each desktop
+    // job uploads a `desktop-*-zip` artifact; a missing one silently drops that
+    // platform from the manifest.
+    const src = releaseYml()
+    for (const name of [
+      'desktop-linux-zip',
+      'desktop-linux-arm64-zip',
+      'desktop-windows-zip',
+      'desktop-macos-zip',
+    ]) {
+      expect(src, `missing artifact ${name}`).toContain(name)
     }
   })
 
-  it('writes the fingerprint before zipping the full package', () => {
-    // Ordering, not just presence: a sidecar written after the zip never
-    // reaches the archive.
-    const all = jobs(releaseYml())
-    for (const job of PAYLOAD_JOBS) {
-      const body = all[job]
-      const fpAt = body.indexOf('shell-fingerprint.mjs')
-      const zipAt = body.search(/Zip desktop|Compress-Archive.*-DestinationPath/)
-      expect(fpAt, `${job}: no fingerprint step`).toBeGreaterThan(-1)
-      expect(zipAt, `${job}: no packaging step`).toBeGreaterThan(-1)
-      expect(fpAt, `${job}: fingerprint must be written before packaging`).toBeLessThan(zipAt)
+  it('hashes the zips and attaches the manifest to the release', () => {
+    const job = jobs(releaseYml())['desktop-checksums']
+    expect(job, 'missing desktop-checksums job').toBeTruthy()
+    expect(job).toContain('sha256sum *.zip')
+    expect(job).toContain('gh release upload')
+    expect(job).toContain('SHA256SUMS')
+    // It must wait for every desktop job, or it hashes a partial set.
+    for (const dep of [
+      'build-desktop-linux',
+      'build-desktop-linux-arm64',
+      'build-desktop-windows',
+      'build-desktop-macos',
+    ]) {
+      expect(job, `desktop-checksums must need ${dep}`).toContain(dep)
     }
   })
 
-  it('keeps the payload directory out of the full package', () => {
-    // The payload dir is a sibling of the unpacked build precisely so the
-    // full-package packaging step cannot sweep it up. If it ever moves back
-    // inside, the full package silently gains a redundant payload copy.
-    const all = jobs(releaseYml())
-    for (const job of PAYLOAD_JOBS) {
-      expect(all[job]).toContain('-payload')
-    }
-    // No packaging command may reference a nested `<unpacked>/payload` path.
-    expect(releaseYml()).not.toMatch(/-Path\s+\S*unpacked\/payload\/\*/)
-    expect(releaseYml()).not.toMatch(/cd\s+\S*unpacked\/payload\b/)
-  })
-
-  it('does not add a payload to macOS', () => {
-    // macOS installs the full package only; a payload there would break the
-    // code-signature seal. It therefore needs no fingerprint either.
-    const all = jobs(releaseYml())
-    expect(all['build-desktop-macos']).not.toContain('stage-payload.mjs')
-  })
-})
-
-/**
- * The payload is published to npm, which is now its ONLY channel — the GitHub
- * Release carries the full package alone. That makes npm the sole distribution
- * contract, spanning the Go URL builder, the npm package manifests, and the CI
- * job that publishes them; a mismatch is silent: the npm candidate 404s, and
- * because the payload falls back to the full package every upgrade quietly
- * re-downloads ~150MB.
- */
-describe('npm payload packages match the Go URL derivation', () => {
-  /** Package names declared by the checked-in payload manifests. */
-  function payloadPackageNames(): string[] {
-    const dir = repoPath('npm/desktop-payloads')
-    return readdirSync(dir)
-      .map((key) => JSON.parse(readFileSync(join(dir, key, 'package.json'), 'utf8')).name as string)
-      .sort()
-  }
-
-  it('declares one package per non-macOS platform', () => {
-    expect(payloadPackageNames()).toEqual([
-      '@xulongzhe/clawbench-desktop-linux-arm64-payload',
-      '@xulongzhe/clawbench-desktop-linux-x64-payload',
-      '@xulongzhe/clawbench-desktop-windows-x64-payload',
-    ])
-  })
-
-  it('derives those names from the payload basenames, as Go does', () => {
-    // Go builds the npm name as scope + payload base (desktopPayloadNpmPkg),
-    // and the tarball URL from it. Pinning the relationship here means adding a
-    // platform cannot leave the npm side behind.
-    const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
-    expect(go).toMatch(/desktopNpmScope\s*\+\s*base/)
-
-    const bases = payloadBasesInGo()
-    const expected = bases.map((b) => `@xulongzhe/${b}`).sort()
-    expect(payloadPackageNames()).toEqual(expected)
-  })
-
-  it('declares the manifest version placeholder, not a real release', () => {
-    // CI rewrites the version from the tag. A checked-in real version would be
-    // published as-is if that rewrite ever stopped running.
-    const dir = repoPath('npm/desktop-payloads')
-    for (const key of readdirSync(dir)) {
-      const pkg = JSON.parse(readFileSync(join(dir, key, 'package.json'), 'utf8'))
-      expect(pkg.version, `${key} version`).toBe('0.1.0')
-      // Lifecycle scripts would run on every consumer's install.
-      expect(pkg.scripts, `${key} must declare no scripts`).toBeUndefined()
-    }
-  })
-
-  it('ships the manifest and the app resources', () => {
-    // `files` is a whitelist: omitting payload.json or resources/ publishes an
-    // empty package whose installs all fail the manifest check.
-    const dir = repoPath('npm/desktop-payloads')
-    for (const key of readdirSync(dir)) {
-      const pkg = JSON.parse(readFileSync(join(dir, key, 'package.json'), 'utf8'))
-      expect(pkg.files, `${key} files`).toContain('payload.json')
-      expect(pkg.files, `${key} files`).toContain('resources/')
-    }
-  })
-
-  it('uploads the payload artifacts with hidden files included', () => {
-    // upload-artifact v4 skips dotfiles by default and the payload contains six.
-    // Without this the npm package is silently incomplete — it installs fine and
-    // only breaks at runtime.
-    const all = jobs(releaseYml())
-    for (const job of PAYLOAD_JOBS) {
-      const body = all[job]
-      const upload = body.slice(body.indexOf('upload-artifact'))
-      expect(upload, `${job}: payload artifact upload must set include-hidden-files`).toContain(
-        'include-hidden-files: true',
-      )
-      expect(upload, `${job}: payload dir must be uploaded`).toContain('-payload')
-    }
-  })
-
-  it('publishes from a job that sets up the registry like publish-npm does', () => {
-    // The repo .npmrc points at npmmirror and project config outranks
-    // NPM_CONFIG_USERCONFIG, so the job must rewrite it to the public registry
-    // before publishing — otherwise it publishes to the mirror with no
-    // credentials. The mechanism is an explicit overwrite (a bare removal would
-    // leave the registry to npm's default and is not what the job does).
-    const all = jobs(releaseYml())
-    const job = all['publish-npm-desktop']
-    expect(job, 'missing publish-npm-desktop job').toBeTruthy()
-    expect(job).toContain('registry=https://registry.npmjs.org/')
-    expect(job).toContain('> .npmrc')
-    expect(job).toContain('NPM_CONFIG_USERCONFIG')
-    // Publishing goes through the shared helper, which is what makes a re-run
-    // (or a concurrent run of the same tag) skip an immutable version instead
-    // of dying with E409. Asserting the helper — rather than the literal
-    // `npm publish` / `npm view` it used to inline — keeps the guard honest
-    // without pinning the implementation detail of where those calls live.
-    expect(job).toContain('npm-publish-idempotent.sh')
-    for (const dep of PAYLOAD_JOBS) {
-      expect(job, `publish-npm-desktop must depend on ${dep}`).toContain(dep)
-    }
+  it('the server fetches the manifest directly from github.com, not a proxy', () => {
+    const go = readFileSync(repoPath('internal/service/desktop_checksums.go'), 'utf8')
+    expect(go).toContain('https://github.com/')
+    expect(go).toContain('SHA256SUMS')
+    expect(go).not.toContain('gh-proxy')
   })
 })

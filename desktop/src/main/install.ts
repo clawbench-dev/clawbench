@@ -2,9 +2,9 @@ import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { inflateRawSync, gunzipSync } from 'node:zlib'
 import { app } from 'electron'
-import { verifyIntegrity } from '../shared/integrity'
 import { normalizeVersion } from '../shared/version'
 import { httpGetBuffer } from './httpGet'
 
@@ -29,14 +29,10 @@ export type { HttpGetOptions } from './httpGet'
  * file write plus a relaunch, and a bad build can be rolled back by rewriting
  * the pointer.
  *
- * Two kinds of archive are installed through that same machinery:
- *
- *   - the FULL release zip (~150MB), which carries its own Electron runtime;
- *   - a PAYLOAD zip (~3MB) containing only `resources/`, installed over a
- *     clone of the already-running shell so the ~279MB runtime is reused
- *     (see installPayload). Linux and Windows take this path; macOS does not,
- *     because replacing `resources/app.asar` inside a signed .app breaks the
- *     code-signature seal and Apple Silicon requires a valid signature.
+ * Every upgrade downloads the FULL release zip (~150MB). It carries its own
+ * Electron runtime, so there is no payload/ABI/shell-fingerprint machinery to
+ * get wrong. The archive is verified against the release's SHA256 before it is
+ * unpacked (see downloadFirstAvailable).
  */
 
 /** Root of the version store: ~/.clawbench-desktop */
@@ -232,8 +228,7 @@ const ZIP_MAGIC_1 = 0x4b
  * Used both to dispatch extraction and, more importantly, to reject a candidate
  * URL whose body is not an archive at all. A mirror can answer with an HTML
  * error or rate-limit page under HTTP 200; accepting that body would waste the
- * candidate and, because the payload path falls back to the ~150MB full
- * download on any failure, turn a retryable miss into an expensive one.
+ * candidate and turn a retryable miss into a failed upgrade.
  */
 export function looksLikeArchive(buf: Buffer): boolean {
   if (buf.length < 4) return false
@@ -275,7 +270,7 @@ const TAR_BLOCK = 512
  * Scope is deliberately narrow — enough for `npm pack` output, no more:
  *
  *   - ustar `name` + `prefix` concatenation (npm splits long paths this way;
- *     verified on a real payload: 121 entries, all regular files, no PAX);
+ *     verified on a real npm tarball: 121 entries, all regular files, no PAX);
  *   - PAX `x` headers, since npm falls back to them for a path that cannot be
  *     split (a 200+ char segment), and GNU `L`/`K` long names;
  *   - regular files and directories; anything else (symlink, device) throws,
@@ -307,8 +302,7 @@ export function extractTarGz(gz: Buffer, destDir: string): void {
     const dataStart = offset + TAR_BLOCK
     const dataEnd = dataStart + size
     // Bounds are checked BEFORE the type is acted on, so a truncated archive
-    // cannot slip through as a partial install: cutting resources/ but keeping
-    // payload.json would otherwise satisfy the manifest check downstream.
+    // cannot slip through as a partial install.
     if (dataEnd > tar.length) {
       throw new Error(`tar: truncated archive (entry ${nameField || '(unnamed)'} runs past the end)`)
     }
@@ -532,23 +526,18 @@ function safeJoin(root: string, rel: string): string | null {
  * for China, direct github.com last). Each is tried in turn so one dead mirror
  * degrades the upgrade rather than failing it.
  *
- * `integrity` is checked when the caller has one. The FULL package has no
- * published checksum, so passing '' here is the normal case — which means the
- * assurance stops at the transport: https (enforced in downloadFirstAvailable)
- * closes the on-path attacker, but a mirror that is itself compromised — the
- * gh-proxy services are community-run — can still serve a different archive and
- * this function cannot tell. The payload path does have a registry checksum
- * (see installPayload); the full package does not.
+ * `checksums` maps an asset filename to its SHA256 (from the release's
+ * SHA256SUMS). A candidate whose bytes do not match is rejected and the walk
+ * moves on. An absent checksum means the server could not provide the manifest
+ * (old server, dev build, or GitHub unreachable); the download still requires
+ * https, but there is no content verification.
  */
 export async function downloadAndInstall(
   urls: string | string[],
   version: string,
-  integrity: string,
+  checksums: Record<string, string> = {},
 ): Promise<string> {
-  const buf = await downloadFirstAvailable(Array.isArray(urls) ? urls : [urls])
-  if (integrity && !verifyIntegrity(buf, integrity)) {
-    throw new Error('integrity verification failed')
-  }
+  const buf = await downloadFirstAvailable(Array.isArray(urls) ? urls : [urls], checksums)
 
   const dest = versionDir(version)
   const staging = `${dest}.staging-${process.pid}`
@@ -568,140 +557,6 @@ export async function downloadAndInstall(
 
   writePointer(version)
   return dest
-}
-
-/**
- * The user's own npm registry mirror, or '' when none is configured.
- *
- * Mirrors the server-side lookup in internal/service/upgrade.go, so both upgrade
- * paths honour the same setting: NPM_CONFIG_REGISTRY / npm_config_registry,
- * then the `registry=` line in the user-level ~/.npmrc.
- *
- * The server deliberately does NOT read this file — its own npmrc belongs to a
- * different machine and is usually a private registry the client cannot reach
- * (see desktopPayloadNpmURLs). Reading it HERE is what makes a user's mirror
- * usable for a download that runs on the user's machine.
- */
-export function localNpmRegistryBase(
-  env: NodeJS.ProcessEnv = process.env,
-  home: string = os.homedir(),
-): string {
-  for (const raw of [env.NPM_CONFIG_REGISTRY, env.npm_config_registry]) {
-    const base = normalizeRegistryBase(raw ?? '')
-    if (base) return base
-  }
-  return normalizeRegistryBase(readNpmrcRegistry(home))
-}
-
-/**
- * Trim/validate a registry value into `<scheme>://<host>[:port][/path]`, or ''.
- *
- * `http:` is refused unless it points at loopback. The registry is where the
- * payload archive (~3MB of `resources/`, i.e. the whole app) is downloaded
- * from, and that download carries no checksum of its own — plaintext transport
- * would let anyone on the path replace the body. `registry=http://…` is a real
- * historical spelling (npmmirror), so this rejects rather than silently
- * downgrades; the caller then keeps the server-provided https candidates.
- *
- * Loopback is exempt because a local proxy is the user's own machine.
- */
-function normalizeRegistryBase(raw: string): string {
-  const value = raw.trim()
-  if (!value) return ''
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return ''
-  }
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackHost(url.hostname))) return ''
-  if (!url.host) return ''
-  // Keep any path prefix (private registries are often served under one) but
-  // drop trailing slashes so joining a tarball path cannot produce a `//`.
-  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`
-}
-
-/** Whether `hostname` names this machine (`URL.hostname` keeps IPv6 brackets). */
-function isLoopbackHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1'
-}
-
-/** Read the `registry=` line from the user-level ~/.npmrc, or ''. */
-function readNpmrcRegistry(home: string): string {
-  let data: string
-  try {
-    data = fs.readFileSync(path.join(home, '.npmrc'), 'utf8')
-  } catch {
-    return ''
-  }
-  for (const rawLine of data.split('\n')) {
-    const line = rawLine.trim()
-    if (!line || line.startsWith('#') || line.startsWith(';')) continue
-    const eq = line.indexOf('=')
-    if (eq < 0) continue
-    if (line.slice(0, eq).trim() !== 'registry') continue
-    return line.slice(eq + 1).trim()
-  }
-  return ''
-}
-
-/**
- * The path+query of an npm registry tarball URL, or '' for anything else.
- *
- * npm tarballs look like `<base>/<pkg>/-/<name>-<version>.tgz`; the `/-/`
- * segment is the marker that separates them from a GitHub release zip (and its
- * prefix mirrors), which must never be re-pointed at an npm registry.
- */
-export function npmTarballPath(url: string): string {
-  let parsed: URL
-  try {
-    parsed = new URL(url)
-  } catch {
-    return ''
-  }
-  if (!parsed.pathname.endsWith('.tgz')) return ''
-  if (!parsed.pathname.includes('/-/')) return ''
-  return `${parsed.pathname}${parsed.search}`
-}
-
-/**
- * Extra candidates obtained by re-pointing the npm tarball URLs at the user's
- * own mirror, appended after the server's list.
- *
- * The server picks its npm base from ITS OWN region (npmmirror in mainland
- * China, npmjs.org elsewhere), which is the wrong answer when the server runs
- * abroad and the client does not: the tarball then comes from npmjs.org, which
- * is slow or unreachable from mainland China. Re-pointing the same path at the
- * client's configured mirror is exactly the "download failed, retry through my
- * mirror" step, and it needs no server change.
- *
- * Candidates identical to one already in the list are dropped — the common case
- * (server and client both in China) would otherwise download the same tarball
- * twice before reporting failure.
- */
-export function mirrorFallbackUrls(urls: string[], registryBase: string): string[] {
-  if (!registryBase) return []
-  const seen = new Set(urls.map(urlKey))
-  const extra: string[] = []
-  for (const url of urls) {
-    const tarballPath = npmTarballPath(url)
-    if (!tarballPath) continue
-    const candidate = `${registryBase}${tarballPath}`
-    const key = urlKey(candidate)
-    if (seen.has(key)) continue
-    seen.add(key)
-    extra.push(candidate)
-  }
-  return extra
-}
-
-/** Normalised comparison key for de-duplicating candidate URLs. */
-function urlKey(url: string): string {
-  try {
-    return new URL(url).toString()
-  } catch {
-    return url
-  }
 }
 
 /**
@@ -719,37 +574,28 @@ function urlKey(url: string): string {
 const ARCHIVE_PROGRESS_GUARD = { idleMs: 20_000, minBytesPerSecond: 30 * 1024 }
 
 /**
- * Try each candidate URL in order, returning the first body that downloads AND
- * looks like an archive.
+ * Try each candidate URL in order, returning the first body that downloads,
+ * looks like an archive, and matches its published SHA256 (when one exists).
  *
  * The archive check matters because a candidate that is not a real archive must
  * not end the walk. A mirror answering a miss or a rate limit can return an
- * HTML page under HTTP 200; accepting it would fail extraction a moment later,
- * and for a payload that failure means falling all the way back to the ~150MB
- * full download instead of simply trying the next candidate. Rejecting the body
- * here keeps the fallback proportional to the problem.
+ * HTML page under HTTP 200; accepting it would fail extraction a moment later.
  *
- * After the server's candidates are exhausted, npm tarballs are retried through
- * the local mirror (see mirrorFallbackUrls). `registryBase` is injectable so
- * tests do not depend on the machine's ~/.npmrc; pass '' to disable the retry.
- * `progressGuard` is injectable for the same reason — pass null to download with
- * no deadline, which is what the tests that predate the guard rely on.
+ * The SHA256 check matters because the mirrors are community-run: a compromised
+ * proxy can serve a different zip. The checksum comes from the server, which
+ * fetches it from github.com directly, so the proxy cannot change both sides.
+ * `progressGuard` is injectable so tests can download with no deadline.
  */
 export async function downloadFirstAvailable(
   urls: string[],
-  registryBase?: string,
+  checksums: Record<string, string> = {},
   progressGuard: { idleMs: number; minBytesPerSecond: number } | null = ARCHIVE_PROGRESS_GUARD,
 ): Promise<Buffer> {
-  const base =
-    registryBase ??
-    (urls.some((url) => npmTarballPath(url)) ? localNpmRegistryBase() : '')
-  const candidates = [...urls, ...mirrorFallbackUrls(urls, base)]
   const errs: string[] = []
-  for (const url of candidates) {
-    // Everything installed here is executable content. A plaintext candidate —
-    // a mirror URL from the server, or a tarball re-pointed at a http registry —
-    // can be rewritten by anyone on the path, and the archive carries no
-    // signature of its own. Loopback is exempt: that is a proxy on this machine.
+  for (const url of urls) {
+    // Everything installed here is executable content. A plaintext candidate
+    // can be rewritten by anyone on the path. Loopback is exempt: that is a
+    // proxy on this machine.
     if (!isSecureDownloadUrl(url)) {
       errs.push(`${url}: refused (not https)`)
       continue
@@ -765,9 +611,34 @@ export async function downloadFirstAvailable(
       errs.push(`${url}: response is not a zip or tar.gz archive`)
       continue
     }
+    const expected = checksums[assetNameFromUrl(url)]
+    if (expected && sha256Hex(buf) !== expected.toLowerCase()) {
+      errs.push(`${url}: sha256 mismatch`)
+      continue
+    }
     return buf
   }
   throw new Error(`all download sources failed:\n${errs.join('\n')}`)
+}
+
+/** The asset filename at the end of a download URL, or '' when unparseable. */
+export function assetNameFromUrl(url: string): string {
+  try {
+    const name = new URL(url).pathname.split('/').pop() ?? ''
+    return decodeURIComponent(name)
+  } catch {
+    return ''
+  }
+}
+
+/** Lowercase hex SHA256 of a buffer. */
+export function sha256Hex(buf: Buffer): string {
+  return createHash('sha256').update(buf).digest('hex')
+}
+
+/** Whether `hostname` names this machine (`URL.hostname` keeps IPv6 brackets). */
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1'
 }
 
 /** Whether a download candidate is transported over TLS (or from loopback). */
@@ -782,362 +653,6 @@ export function isSecureDownloadUrl(url: string): boolean {
   return parsed.protocol === 'http:' && isLoopbackHost(parsed.hostname)
 }
 
-/**
- * The npm packument URL for a tarball URL, or '' for anything else.
- *
- * `<base>/@scope/name/-/name-1.2.3.tgz` → `<base>/@scope/name`. The `/-/`
- * segment is what separates the package metadata path from the file path.
- */
-export function packumentUrl(tarballUrl: string): string {
-  let parsed: URL
-  try {
-    parsed = new URL(tarballUrl)
-  } catch {
-    return ''
-  }
-  const marker = parsed.pathname.indexOf('/-/')
-  if (marker <= 0) return ''
-  return `${parsed.origin}${parsed.pathname.slice(0, marker)}`
-}
-
-/**
- * The registry-published checksum for `version`, or '' when unavailable.
- *
- * The payload is downloaded from a URL the SERVER constructed, so there is no
- * lockfile to consult; the registry's packument is the only place a checksum
- * exists.
- *
- * Best-effort by design: an unreachable registry (or a package it does not
- * know) returns '' and the install proceeds over https — the transport is still
- * protected, and failing the upgrade because a mirror cannot answer a metadata
- * query would be worse than the assurance it adds.
- *
- * Two limits worth knowing before relying on it:
- *   - it only protects against transport substitution, not a poisoned mirror:
- *     the checksum is fetched from the same registry that serves the tarball,
- *     so whoever controls that registry controls both sides;
- *   - it only applies when the registry answers at all.
- */
-export async function fetchNpmIntegrity(
-  tarballUrls: string[],
-  version: string,
-  get: (url: string) => Promise<Buffer> = httpGetBuffer,
-  /** Test seam: the lookup deadline. */
-  timeoutMs: number = NPM_METADATA_TIMEOUT_MS,
-): Promise<string> {
-  const wanted = normalizeVersion(version)
-  if (!wanted) return ''
-  for (const url of tarballUrls) {
-    // Same transport rule as the archive itself: metadata fetched over
-    // plaintext could be rewritten in flight, and this value decides whether
-    // the archive is accepted.
-    if (!isSecureDownloadUrl(url)) continue
-    const doc = packumentUrl(url)
-    if (!doc) continue
-    try {
-      const body = await withTimeout(get(doc), timeoutMs)
-      const meta = JSON.parse(body.toString('utf8')) as {
-        versions?: Record<string, { dist?: { integrity?: string } }>
-      }
-      const integrity = meta.versions?.[wanted]?.dist?.integrity
-      if (typeof integrity === 'string' && integrity) return integrity
-    } catch {
-      // Unreachable, slow, or non-JSON: fall through to the next candidate.
-    }
-  }
-  return ''
-}
-
-/**
- * How long the optional metadata lookup may take before giving up.
- *
- * This runs BEFORE the download, on the upgrade path: a registry that accepts
- * the connection and then never answers would leave the user staring at a
- * dialog with no progress, where the download itself at least reports bytes.
- */
-const NPM_METADATA_TIMEOUT_MS = 10_000
-
-/** Reject after `ms` if `p` has not settled. The abandoned request is harmless. */
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms)
-    // Do not hold the process open for a best-effort lookup.
-    if (typeof timer === 'object' && typeof timer.unref === 'function') timer.unref()
-    p.then(
-      (v) => { clearTimeout(timer); resolve(v) },
-      (e) => { clearTimeout(timer); reject(e) },
-    )
-  })
-}
-
-/** Name of the manifest a payload archive carries at its root. */
-export const PAYLOAD_MANIFEST = 'payload.json'
-
-/**
- * Sidecar at an install's app root recording the shell's identity.
- *
- * Written by CI into the unpacked build (`desktop/scripts/shell-fingerprint.mjs`)
- * and shipped inside the full package, so every full install carries it. The
- * payload archive records the same value in `payload.json`, and an install
- * compares the two.
- *
- * It deliberately sits OUTSIDE `resources/`: that keeps it out of the payload
- * (so it cannot be forged by one) and means cloneTree copies it from the shell
- * during a payload install, propagating the identity forward automatically.
- */
-export const SHELL_FINGERPRINT_FILE = 'shell-fingerprint.txt'
-
-/** The directory the running app's own files live in. */
-export function appRoot(): string {
-  return path.dirname(process.resourcesPath)
-}
-
-/**
- * Read the shell fingerprint an install recorded, or '' when absent.
- *
- * '' is expected for installs created before this file existed; callers must
- * treat that as "cannot verify" and refuse the payload, not as a match.
- */
-export function readShellFingerprint(dir: string): string {
-  try {
-    return fs.readFileSync(path.join(dir, SHELL_FINGERPRINT_FILE), 'utf8').trim()
-  } catch {
-    return ''
-  }
-}
-
-/**
- * Raised when a payload cannot be used against the installed shell — a
- * different Electron ABI, or a payload built for a different app. Callers
- * treat this as "fall back to the full download", not as a hard failure.
- */
-export class PayloadIncompatibleError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'PayloadIncompatibleError'
-  }
-}
-
-/**
- * Major component of an Electron version, or '' when it cannot be parsed.
- *
- * Native modules (`sshcrypto.node`, `cpufeatures.node`) are compiled against
- * Electron's ABI, which only changes on a MAJOR bump. Gating on the major
- * component is therefore what actually decides whether reusing the shell is
- * safe; comparing the full string would reject payloads unnecessarily on
- * patch releases that carry no ABI change.
- */
-export function electronMajor(version: string): string {
-  const m = /^(\d+)/.exec(version.trim())
-  return m ? m[1] : ''
-}
-
-/**
- * Copy `src` into `dst`, skipping every path that already exists under `dst`.
- *
- * The skip rule is the whole trick, and it is what makes payload installs safe:
- * the caller extracts the payload FIRST, so every path the payload provides is
- * already present and is left untouched. What remains — the Electron runtime —
- * is hardlinked from the installed shell, which costs no extra disk and no
- * copy time on the same volume.
- *
- * Skipping on existence rather than on a precomputed path set is deliberate:
- * it needs no separator normalization (zip entries use `/`, `path.relative`
- * yields `\` on Windows) and cannot drift from what the archive actually
- * contained. It also makes the dangerous ordering impossible — cloning first
- * and extracting second would write through a hardlink into the OLD version's
- * files, mutating the install the user is currently running.
- *
- * Runs with asar interception off: `resources/app.asar` must be treated as an
- * ordinary file. The shim does list it as a file, but resolves the path inside
- * the archive for anything that opens it — measured on Electron 44.4.3,
- * `copyFileSync` and `openSync` on the archive throw `Invalid package`, and
- * `existsSync` returns false for a valid one. Cloning is exactly that: opening
- * the archive to duplicate it.
- */
-export function cloneTree(src: string, dst: string): void {
-  withoutAsar(() => cloneTreeImpl(src, dst))
-}
-
-function cloneTreeImpl(src: string, dst: string): void {
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    const from = path.join(src, entry.name)
-    const to = path.join(dst, entry.name)
-
-    if (fs.existsSync(to)) continue // already provided by the payload
-
-    if (entry.isDirectory()) {
-      fs.mkdirSync(to, { recursive: true })
-      cloneTreeImpl(from, to)
-    } else if (entry.isFile()) {
-      linkOrCopy(from, to)
-    } else {
-      // A symlink or device node here would mean the release layout changed.
-      // Skipping it silently would ship an install that is quietly missing
-      // files, so refuse instead.
-      throw new Error(`unsupported entry in shell: ${from}`)
-    }
-  }
-}
-
-/**
- * Materialize `from` at `to`, preferring a hardlink.
- *
- * Hardlinks are the default because they cost no disk and no copy time, and
- * because the clone is only ever read from.
- *
- * Windows is the exception, and it is not an optimization. The RUNNING app has
- * its executable and `.pak` files memory-mapped, and a hardlink shares that
- * same file object: deleting either name then fails with "access denied"
- * (EPERM; the reporter measured it naming `chrome_100_percent.pak`). Deleting
- * is precisely what this installer does to its staging directory and to a
- * previous copy of the same version, so a hardlinked clone makes the payload
- * path impossible to complete on Windows — it fails after a successful
- * extraction, with an error that names a runtime file the user never asked
- * about. A real copy is a distinct file and can be deleted while the original
- * stays mapped.
- *
- * The cost on Windows is a full ~279MB runtime copy per installed version,
- * synchronously on the main process. Accepted: the alternative is a payload
- * upgrade that cannot finish at all. Nothing prunes superseded `app-*`
- * directories, so a Windows user accumulates one per upgrade.
- */
-function linkOrCopy(from: string, to: string): void {
-  if (process.platform !== 'win32') {
-    try {
-      fs.linkSync(from, to)
-      return
-    } catch {
-      // EXDEV (different volume), EPERM (filesystem without hardlinks),
-      // EMLINK (link limit). A real copy always works, so degrade rather
-      // than fail the upgrade. copyFileSync preserves the mode, which the
-      // Linux binary's executable bit depends on.
-    }
-  }
-  fs.copyFileSync(from, to)
-}
-
-/**
- * Install a payload archive over a clone of `shellRoot`, then select it.
- *
- * `shellRoot` is the app root of the version currently running (see appRoot).
- * Its Electron runtime is reused; only `resources/` comes from the archive.
- *
- * The archive is staged exactly like the full install: unpack to a temp
- * directory, verify it, clone the shell around it, then `rm -rf` + rename into
- * place. `rm -rf` before the rename is safe even when `dest` is a previous
- * payload install, because the rename is what makes the switch atomic — a
- * crash at any earlier point leaves only a staging directory, never a
- * half-populated version the pointer could name.
- *
- * Returns the directory now selected.
- */
-export async function installPayload(
-  urls: string | string[],
-  version: string,
-  shellRoot: string,
-  electron: string = process.versions.electron ?? '',
-  integrity = '',
-): Promise<string> {
-  const dest = versionDir(version)
-  // Refuse to install over the version we are running from: the `rm -rf` below
-  // would delete the live binary out from under this process.
-  if (path.resolve(dest) === path.resolve(shellRoot)) {
-    throw new PayloadIncompatibleError(`payload target is the running install: ${dest}`)
-  }
-
-  const buf = await downloadFirstAvailable(Array.isArray(urls) ? urls : [urls])
-  // The payload IS the app (`resources/app.asar`), so a substituted archive is
-  // a substituted application. When the registry publishes a checksum for the
-  // tarball it is verified here, before anything is unpacked.
-  if (integrity && !verifyIntegrity(buf, integrity)) {
-    throw new Error('payload integrity verification failed')
-  }
-
-  const staging = `${dest}.staging-${process.pid}`
-  fs.rmSync(staging, { recursive: true, force: true })
-  fs.mkdirSync(staging, { recursive: true })
-
-  try {
-    extractArchive(buf, staging)
-
-    const manifestPath = path.join(staging, PAYLOAD_MANIFEST)
-    if (!fs.existsSync(manifestPath)) {
-      throw new Error(`payload archive has no ${PAYLOAD_MANIFEST}`)
-    }
-    let manifest: { electron?: string; shell?: string }
-    try {
-      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
-    } catch {
-      throw new Error(`payload ${PAYLOAD_MANIFEST} is not valid JSON`)
-    }
-
-    const built = electronMajor(String(manifest.electron ?? ''))
-    const running = electronMajor(electron)
-    if (!built || !running || built !== running) {
-      throw new PayloadIncompatibleError(
-        `payload targets Electron ${manifest.electron || '?'}, running ${electron || '?'}`,
-      )
-    }
-
-    // The ABI gate above only covers Electron. The shell's IDENTITY — appId,
-    // productName, executableName, the app icon — is baked into the executable
-    // and packaging, so a payload can never update it. Reusing a shell built
-    // with a different identity would silently leave those stale (an unchanged
-    // icon is the visible symptom), with nothing at runtime able to detect it.
-    //
-    // Both sides must be present and equal. An absent side means "cannot
-    // verify" — an install predating the sidecar, or a payload from an older
-    // CI — and is refused rather than assumed compatible.
-    const wanted = String(manifest.shell ?? '')
-    const installed = readShellFingerprint(shellRoot)
-    if (!wanted || !installed) {
-      throw new PayloadIncompatibleError(
-        `shell fingerprint unavailable (payload ${wanted || 'none'}, installed ${installed || 'none'})`,
-      )
-    }
-    if (wanted !== installed) {
-      throw new PayloadIncompatibleError(
-        `payload targets shell ${wanted}, installed ${installed}`,
-      )
-    }
-
-    // The manifest is metadata, not part of the app; leaving it behind would
-    // put a stray file in the install root. The shell fingerprint sidecar, by
-    // contrast, is NOT removed: it is part of the shell and cloneTree brings it
-    // forward from shellRoot, so this install keeps advertising the same
-    // identity and the next payload install can verify against it.
-    fs.rmSync(manifestPath, { force: true })
-
-    // An npm tarball carries a root package.json that a release zip does not,
-    // and the shell root has none (electron-builder keeps it inside app.asar).
-    // Removing it keeps the installed tree identical whichever candidate URL
-    // won, so a mirror-served upgrade and a github-served one cannot diverge —
-    // and cloneTree would otherwise treat it as a payload-provided file.
-    const npmWrapperPkg = path.join(staging, 'package.json')
-    if (fs.existsSync(npmWrapperPkg)) fs.rmSync(npmWrapperPkg, { force: true })
-
-    cloneTree(shellRoot, staging)
-  } catch (err) {
-    fs.rmSync(staging, { recursive: true, force: true })
-    throw err
-  }
-
-  // Replace any prior copy of this version atomically.
-  fs.rmSync(dest, { recursive: true, force: true })
-  fs.renameSync(staging, dest)
-
-  writePointer(version)
-  return dest
-}
-
-/**
- * Path to the executable inside an unpacked version directory.
- *
- * electron-builder's `dir` target puts the binary at the package root on
- * Linux/Windows, and inside the .app bundle on macOS. Both the install path and
- * the startup handoff resolve it through here so they cannot disagree.
- */
 export function executableIn(dir: string): string {
   if (process.platform === 'darwin') {
     return path.join(dir, 'ClawBench.app', 'Contents', 'MacOS', 'clawbench-desktop')

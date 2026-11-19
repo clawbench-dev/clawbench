@@ -190,34 +190,19 @@ env:
 
 `clawbench-android.apk` 的**构建产物名不可改**——Gradle 的 `outputFileName` 与 `go:embed` 路径（`assets/clawbench-android.apk`）都固定在无版本名上。因此发布时是**复制一份带版本副本**（`clawbench-android-${RELEASE_TAG}.apk`）上传，而非重命名构建产物；`/api/apk` 依旧读无版本名。
 
-### 桌面端载荷包（增量升级）
+### 桌面端全量包与 SHA256
 
-桌面端全量包约 150MB，其中 Electron 运行时占 ~98%，**应用自身只有 `resources/` 目录（~3.8MB）**。因此除全量包外，每个平台还发布一个**载荷包**（`clawbench-desktop-<plat>-payload`），客户端把它安装到从当前运行版本克隆出的目录上，从而复用运行时。
+桌面端每次升级都下载全量包（约 150MB），不再发布增量载荷包。发布时生成一个 `SHA256SUMS`，内容是 coreutils 格式的 `<64 位小写 hex>  <文件名>`，按文件名排序，覆盖全量包和 Windows 融合包。
 
-**载荷只走 npm，不进 GitHub Release。** 早期版本把载荷 zip 作为 Release 资产与全量包并列上传，但那会在资产列表里放一个 ~3MB 的 zip——浏览 Release 的人会误以为它可以直接安装（实际只是增量包，缺 Electron 运行时）。现在 Release 资产**只有全量包**；载荷通过 npm 分发（`publish-npm-desktop`），这也顺带给了国内镜像加速。
-
-- **载荷边界 = 整个 `resources/` 目录**。`resources/` 之外的一切都是 Electron 运行时（二进制、`resources.pak`、`icudtl.dat`、`locales/`、各 `.so`/`.dll`），可以复用；`resources/` 之内都是自有资源，必须换新。**注意 `resources/app-update.yml` 只在 Linux 存在、Windows 不存在**，所以不能手挑文件，必须整体复制 `resources/`。
-- **归档必须从 `payload/` 内部进行**，使条目为 `payload.json` + `resources/…`。二者**不共享顶层目录**，因此 `install.ts` 的 `extractZip` 不会剥掉前缀。若条目全在 `resources/` 下，该前缀会被剥掉，`app.asar` 会落到应用根目录而非 `resources/` 内。（这是 npm tarball 的布局要求——载荷 zip 已不再发布，但 `stage-payload.mjs` 仍按同一布局暂存目录。）
-- **`payload.json` 记录 Electron 版本**，客户端按**主版本**比对（原生模块 ABI 只随主版本变）。不匹配则回退全量下载。CI 用 Node 脚本（`desktop/scripts/stage-payload.mjs`）而非 PowerShell 通配复制，因为 `resources/` 内含点文件（`cpu-features` 的 `.eslintrc.js`、`.clang-format`），而 PowerShell 的 `*` 会静默漏掉隐藏项。
-- **`payload.json` 还记录壳指纹（`shell` 字段）**。Electron 版本只覆盖 ABI；壳的**身份**——`appId` / `productName` / `executableName` / 应用图标——被烧进可执行文件与打包配置，**不在 `resources/` 里**，载荷永远无法更新它们，且运行时也看不出图标已陈旧。因此 CI 用 `desktop/scripts/shell-fingerprint.mjs` 把身份输入的哈希（`electron-builder.yml` + `build/icon.*`）写进载荷清单，同时把同一值写成全量包根目录的 `shell-fingerprint.txt` 边车；客户端安装载荷前比对两者，不一致或任一侧缺失即拒绝并回退全量下载。载荷安装会把边车从旧壳克隆过来，因此身份得以延续。
-  - **绝不哈希构建产物**：electron-builder 会把应用版本写进 Windows 可执行文件（`FileVersion`/`ProductVersion`），而 CI 每个 release 都用 tag 重写版本号 → 哈希每版都变 → 载荷永远匹配不上，每次升级都静默退化成全量下载。`electron-builder.yml` 本身不含版本号（已实测），故可安全哈希。
-  - 指纹文件**不能带点前缀**：Windows 全量包用 `Compress-Archive -Path <dir>/*` 打包，PowerShell 的 `*` 会跳过隐藏项，点文件会静默缺失，导致 Windows 永远无法校验载荷。
-  - **载荷目录是解包目录的兄弟而非子目录**（`<unpacked>-payload`）：若在子目录，全量包的打包步骤会把它一并卷进归档，静默多出约 4MB 冗余副本。
-  - macOS 不写该边车：它只装全量包（载荷会破坏签名），永远不读它。
-- **macOS 不发布载荷**。替换已签名 `.app` 内的 `resources/app.asar` 会破坏代码签名封条，Apple Silicon 拒绝运行无效签名，故 macOS 保持全量下载。`desktopPayloadAssetBase` 中 darwin 键**缺席**（而非空数组），客户端据此走全量。
-- **载荷走 npm registry 分发（唯一渠道）**。`/api/desktop/latest` 的 `payloads` 每个平台只有一个候选——npm tarball。URL 由 tag 确定性拼出，不查询 registry 元数据：
-  - 包名 = `@xulongzhe/` + 载荷基名（如 `@xulongzhe/clawbench-desktop-linux-x64-payload`），由 Go 的 `desktopPayloadNpmPkg` 从 `desktopPayloadAssetBase` 派生，不另立一份映射。该 map 现在**只用于决定哪些平台有载荷 + 派生 npm 包名**，不再是 Release 资产名。
-  - **tarball 文件名去掉 scope**：`<base>/@scope/name/-/name-<ver>.tgz`；**版本号不带 `v`**（npm 是语义化版本，tag 不是）。
-  - 只用地区感知的 `getRegistryBase()`（国内 npmmirror、海外 registry.npmjs.org），**不用** `registryCandidates()`——后者还带**服务端**的 `~/.npmrc`/`NPM_CONFIG_REGISTRY`，而该 URL 是给**客户端另一台机器**用的，服务端私有 registry 客户端多半不可达。
-- **全量包不走 npm**。镜像对超大包不可靠：实测历史上 110MB 的桌面 tarball 在 npmmirror 返回 404，而 49MB 的服务端二进制正常返回 200。故 `Downloads` 保持 GitHub 专用。
-- **npm tarball 是 gzip + `package/` 顶层包装**，与 zip 资产不同。客户端 `extractArchive` 按魔数分派（gzip `1f 8b` vs zip `PK`）。实测真实载荷**只需 ustar 的 `name`+`prefix` 拼接**（121 条目全为普通文件、无 PAX 头，最长路径 116 字符由 `prefix` 字段承载），PAX 仅作兜底。`package/` 包装由既有的 `commonTopLevelDir` 剥掉；npm 额外带的根 `package.json` 在安装时删除，使两种来源装出的树逐字节一致。
-- **候选选择内校验魔数**：镜像的限流/错误页可能以 200 返回 HTML；若不校验，该 body 会胜出、解包失败，直接退到 150MB 全量下载，而不是重试。
-- **npm 的 packlist 默认规则会丢文件**（`.gitignore`、`*.orig`、`.npmrc` 等）。今天载荷里没有这类文件（实测 119/119 逐字节保真），但这是当前树的运气而非流水线的保证，故 CI 用 `npm pack --dry-run --json` 与磁盘清单比对，一旦 npm 会漏掉文件即失败。
-- **失败静默性**：客户端把任何载荷问题（镜像 404、ABI 不符、归档损坏）都降级为全量下载，所以载荷包名不一致**不会报错**，只会让每次升级又下 150MB。因此 npm 包名由 `scripts/__tests__/releaseAssets.test.ts` 与 Go 的载荷基名做跨语言比对，并反向守护「载荷 zip 不得再出现在 Release 的 `files:` 或打包命令里」。
+- **每个桌面 job 上传自己的 zip 为 `desktop-*-zip` artifact**，汇总 job 下载后 `sha256sum *.zip | sort -k2 > SHA256SUMS`，再用 `gh release upload --clobber` 挂到 Release。`action-gh-release` 直接上传的文件没有本地副本，所以不能只靠它。
+- **复用桌面构建时也要重算**：复用 job 下载的旧 zip 就在本地，必须在 job 内计算并上传片段；否则该平台在官方清单里缺席。
+- **融合包在拼装后算**，不能复用薄包的哈希。
+- **服务端从 GitHub 直连拉清单**，不经过 gh-proxy：如果 zip 和清单都来自同一个代理，代理可以同时替换两者。拉不到时返回空 map，客户端跳过校验（旧服务端/dev 构建同理）。
+- **客户端按下载 URL 的文件名查表**，不匹配就换下一个候选；没有该文件名时记日志后继续。
 
 #### npm 发布认证：OIDC Trusted Publishing
 
-`publish-npm` 与 `publish-npm-desktop` 都改用 **OIDC Trusted Publishing**，不再用长期 token。
+`publish-npm` 改用 **OIDC Trusted Publishing**，不再用长期 token。
 
 早期用 GitHub Secret `NPM_TOKEN`（npm granular access token），它会**静默过期**（默认 90 天）。一旦过期，每个 publish 步骤都以 **404** 失败——npm 报的是 "resource not found" 而非"token 过期"，于是连续三个 release（v0.110/111/112）没发上 npm 都未被察觉。改用 OIDC 后不再有过期凭据，但有两个反直觉前提，任一缺失都复现同一个 404：
 
@@ -267,17 +252,12 @@ npm 发完不等于镜像有了。npmmirror 平时靠上游事件自动同步，
 - 两侧变量拼写一致（`${RELEASE_TAG}` / `$env:RELEASE_TAG` 对 `${{ env.RELEASE_TAG }}`）
 - APK 例外：无版本 embed 路径仍在，且带版本的复制与上传两半都在
 - Go 侧 `desktopAssetName` 由 base+tag 拼出，且源码里不再有裸 `clawbench-desktop-*.zip` 字面量
-- 载荷**不进 Release**：任何 `action-gh-release` 的 `files:` 都不得含 `-payload`；任何 `zip -r` / `Compress-Archive` 都不得产出 `-payload` 归档（载荷只经 npm 分发，反向守护防止旧的 Release 路径回归）
-- 载荷基名跨语言一致：Go `desktopPayloadAssetBase` 的三项与 `npm/desktop-payloads/*/package.json` 的包名逐项对应（= `@xulongzhe/` + 基名），且 macOS 不得出现在该 map 中（载荷失败会静默降级为全量下载）
-- Go 载荷 URL 派生：`desktopPayloadURLs` 只调 `desktopPayloadNpmURLs`，**不得**调 `releaseAssetURLs`（否则候选指向已不存在的 Release 资产）
-- 壳指纹接线：三个发载荷的 job 都写了 `shell-fingerprint.mjs`，且**在打包全量包之前**（写在 zip 之后则进不了归档）；打包命令不得引用嵌套的 `<unpacked>/payload` 路径；macOS job 不得出现 `stage-payload.mjs`
-- npm 载荷包：三个 `npm/desktop-payloads/*/package.json` 的 `files` 必须含 `payload.json` 与 `resources/`；无 `scripts`；版本为占位 `0.1.0`（由 CI 改写）
-- 载荷 artifact 上传必须带 `include-hidden-files: true`（`upload-artifact@v4` 默认跳过点文件，载荷含 6 个）
-- `publish-npm-desktop` 必须复制 `publish-npm` 的 registry 配置（`> .npmrc` 写 `registry=https://registry.npmjs.org/`，否则会发往 npmmirror）并带 `npm view` 幂等守卫
+- 载荷已删除：`release.yml`、Release 资产、打包命令里都不得再出现 `-payload`；`npm/desktop-payloads`、`stage-payload.mjs`、`shell-fingerprint.mjs` 不存在
+- `SHA256SUMS`：四个桌面 job 都上传 `desktop-*-zip` artifact；`desktop-checksums` job 依赖它们，执行 `sha256sum *.zip` 并 `gh release upload`；服务端从 GitHub 直连取清单，不引用 gh-proxy
 
 npm 发布认证另有独立守护 `scripts/__tests__/npmTrustedPublishing.test.ts`：两个 publish job 都须有 `id-token: write`、都不得出现任何 token 配置（`NODE_AUTH_TOKEN` / `secrets.NPM_TOKEN` / `_authToken`）、都不得设 `registry-url`、都须把 registry 写进项目 `.npmrc` 且不引用 `$NPM_CONFIG_USERCONFIG`；每个可发布 `package.json` 的 `repository.url` 须匹配 trusted publisher 的仓库（否则 provenance 校验拒绝）。该测试**先剥 YAML 注释再断言**——workflow 注释里逐字写明了 `_authToken=${NODE_AUTH_TOKEN}` 这个陷阱，不剥注释守护会栽在自己的文档上。
 
-变异验证 4/4（均实测变红）：改回无版本归档名 / 上传 pattern 去掉 tag / 删掉 APK 版本化复制 / Go 资产名丢 tag。载荷守护另验：把载荷 zip 加回 `files:` → 「不进 Release」断言变红；把载荷 zip 加回打包命令 → 打包断言变红；给 `desktopPayloadURLs` 加回 `releaseAssetURLs` → Go 测试与 TS 派生断言双红；把壳指纹步骤挪到 zip 之后 → 顺序断言变红；去掉 `include-hidden-files` → artifact 断言变红；改 npm 包名 → 与 Go 的 parity 断言变红。指纹模块自身另验：改成哈希构建产物（模拟每版重编译）→ 稳定性测试变红。tar 读取器另验：去掉 `prefix` 拼接 → 长路径测试变红；去掉截断边界检查 → 截断测试变红；不归一化 zip 的 mode → zip 系列测试变红。CI 的 packlist 比对另验：往载荷里放一个 `*.orig` → 比对失败（npm 会静默丢弃它）。
+变异验证：改回无版本归档名 / 上传 pattern 去掉 tag / 删掉 APK 版本化复制 / Go 资产名丢 tag，均应变红。SHA256 守护：删掉某个 `desktop-*-zip` artifact → 汇总 job 断言变红；把服务端的清单地址换成 gh-proxy → 直连断言变红。
 
 ## 历史遗留
 

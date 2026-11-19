@@ -230,7 +230,7 @@ describe('the version gate cannot replace a fused install', () => {
     expect(fn, 'installServerVersion not found').not.toBeNull()
     expect(fn![0]).toContain('hasEmbeddedServerBinary()')
     const guardAt = fn![0].indexOf('hasEmbeddedServerBinary()')
-    const installAt = fn![0].indexOf('installPayload(')
+    const installAt = fn![0].indexOf('downloadAndInstall(')
     expect(guardAt, 'guard must run before any install attempt').toBeLessThan(installAt)
   })
 })

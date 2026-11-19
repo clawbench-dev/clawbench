@@ -132,6 +132,9 @@ const showProgressDialog = ref(false)
  */
 const fusedDownloads = ref<Record<string, string[]>>({})
 
+/** SHA256 by asset filename for the fused package, from the same response. */
+const fusedChecksums = ref<Record<string, string>>({})
+
 /**
  * True while the desktop shell is downloading/installing the all-in-one
  * package. The shell shows its own dialogs; this only keeps the web UI from
@@ -337,6 +340,7 @@ export function useUpgrade() {
         skipped_version?: string
         managed?: boolean
         fused_downloads?: Record<string, string[]>
+        fused_checksums?: Record<string, string>
       }>('/api/upgrade/check')
       // Absent on older servers — false (this server owns its own binary).
       managedByEmbedder.value = data.managed === true
@@ -352,6 +356,7 @@ export function useUpgrade() {
         // found (fused_downloads); if this platform publishes none, or the
         // shell predates the bridge, there is nothing to offer.
         fusedDownloads.value = data.fused_downloads ?? {}
+        fusedChecksums.value = data.fused_checksums ?? {}
         // The map only carries platforms that PUBLISH an all-in-one package
         // (Windows today), so a non-empty map means one exists for some
         // platform. Which key applies is the shell's call — it knows its own
@@ -479,7 +484,11 @@ export function useUpgrade() {
     state.error = ''
     state.error_code = ''
     try {
-      const res = await native.installFusedUpdate(state.latest_version, fusedDownloads.value)
+      const res = await native.installFusedUpdate(
+        state.latest_version,
+        fusedDownloads.value,
+        fusedChecksums.value,
+      )
       if (res?.ok) {
         // The package is installed; the shell has already asked about the
         // restart (and may be restarting right now).
@@ -617,6 +626,7 @@ export function useUpgrade() {
     hasUpgrade,
     managedByEmbedder,
     fusedDownloads,
+    fusedChecksums,
     installingFused,
     releaseNotesUrl,
     showProgressDialog,
