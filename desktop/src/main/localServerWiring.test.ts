@@ -195,12 +195,27 @@ describe('a thin client does not start a server it does not ship', () => {
 
   it('still starts the bundled server when the build ships one', () => {
     // The other direction of the same guard: a fused install must keep starting
-    // its server, and a real failure there must still be reported.
+    // its server, and a real failure there must still be reported. Asserted by
+    // position, not mere presence — `if (hasEmbeddedServerBinary()) return`
+    // would pass a plain `toContain` while turning every fused install into a
+    // thin one, and a `startEmbeddedServer()` buried in dead code would too.
     const src = readRepoFile('desktop/src/main/index.ts')
     const fn = src.match(/async function startEmbeddedServerIfPresent\(\)[\s\S]*?\n\}/)
     expect(fn, 'startEmbeddedServerIfPresent not found').not.toBeNull()
-    expect(fn![0]).toContain('await startEmbeddedServer()')
-    expect(fn![0]).toContain('showMessageBox')
+    const body = fn![0]
+
+    // Bails out when the binary is MISSING, never when it is present.
+    expect(body).toMatch(/if \(!hasEmbeddedServerBinary\(\)\) return/)
+    expect(body).not.toMatch(/if \(hasEmbeddedServerBinary\(\)\) return/)
+
+    // The start still runs, inside the try whose catch reports the failure.
+    const tryAt = body.indexOf('try {')
+    const startAt = body.indexOf('await startEmbeddedServer()')
+    const catchAt = body.indexOf('catch (err)')
+    expect(tryAt).toBeGreaterThan(-1)
+    expect(startAt).toBeGreaterThan(tryAt)
+    expect(catchAt).toBeGreaterThan(startAt)
+    expect(body.slice(catchAt)).toContain('showMessageBox')
   })
 })
 
