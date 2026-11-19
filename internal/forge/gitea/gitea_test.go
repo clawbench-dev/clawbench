@@ -481,3 +481,86 @@ func TestStateParam(t *testing.T) {
 	assert.Equal(t, "closed", stateParam("merged"), "Gitea has no merged state; it is a closed pull")
 	assert.Equal(t, "open", stateParam("nonsense"))
 }
+
+// TestListPullsByMergeState covers the local split: Gitea has no merged state
+// and no `is:merged` qualifier, so "merged" and "closed" must be told apart by
+// the merge timestamp — otherwise the merged tab lists closed-unmerged pulls.
+func TestListPullsByMergeState(t *testing.T) {
+	// Page 1: one merged + one unmerged; page 2: one merged. Asking for two
+	// merged rows must consume both pages.
+	p, done := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "closed", r.URL.Query().Get("state"), "merged/closed both query closed")
+		switch r.URL.Query().Get("page") {
+		case "1":
+			w.Header().Set("X-HasMore", "true")
+			_, _ = w.Write([]byte(`[
+				{"number":1,"state":"closed","pull_request":{"merged_at":"2026-09-01T00:00:00Z"}},
+				{"number":2,"state":"closed","pull_request":{}}
+			]`))
+		case "2":
+			w.Header().Set("X-HasMore", "false")
+			_, _ = w.Write([]byte(`[
+				{"number":3,"state":"closed","pull_request":{"merged_at":"2026-09-02T00:00:00Z"}}
+			]`))
+		default:
+			t.Fatalf("unexpected page %s", r.URL.Query().Get("page"))
+		}
+	})
+	defer done()
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type:    forge.ItemTypeChangeRequest,
+		State:   string(forge.StateMerged),
+		PerPage: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 2)
+	assert.Equal(t, 1, res.Items[0].Number)
+	assert.Equal(t, 3, res.Items[1].Number)
+	assert.False(t, res.HasMore)
+}
+
+func TestListPullsByMergeState_ClosedExcludesMerged(t *testing.T) {
+	p, done := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-HasMore", "false")
+		_, _ = w.Write([]byte(`[
+			{"number":1,"state":"closed","pull_request":{"merged_at":"2026-09-01T00:00:00Z"}},
+			{"number":2,"state":"closed","pull_request":{}}
+		]`))
+	})
+	defer done()
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type:    forge.ItemTypeChangeRequest,
+		State:   string(forge.StateClosed),
+		PerPage: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, 2, res.Items[0].Number, "a merged pull must not appear under the closed filter")
+	assert.False(t, res.HasMore)
+}
+
+// TestListPullsByMergeState_CapsTheWalk keeps a mostly-unmerged history from
+// turning one click into an unbounded scan: after the cap the result still says
+// there is more, so the next scroll continues from there.
+func TestListPullsByMergeState_CapsTheWalk(t *testing.T) {
+	requests := 0
+	p, done := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("X-HasMore", "true")
+		_, _ = w.Write([]byte(`[{"number":1,"state":"closed","pull_request":{}}]`))
+	})
+	defer done()
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type:    forge.ItemTypeChangeRequest,
+		State:   string(forge.StateMerged),
+		PerPage: 5,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, res.Items)
+	assert.Equal(t, maxMergeFilterPages, requests, "the walk must stop at the cap")
+	assert.True(t, res.HasMore, "the caller must be able to continue scrolling")
+	assert.NotZero(t, res.NextPage)
+}

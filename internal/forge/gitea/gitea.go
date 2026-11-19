@@ -155,14 +155,26 @@ func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge
 	if opts.Type != forge.ItemTypeChangeRequest && opts.State == string(forge.StateMerged) {
 		return forge.ListResult{Items: []forge.Item{}}, nil
 	}
+	// Gitea has no merged state AND no `is:merged` search qualifier (verified
+	// against a live instance: `q=is:merged` matches nothing), so the closed /
+	// merged split has to be applied locally. Without this, the "merged" filter
+	// would list closed-but-unmerged pull requests under a merged label.
+	if opts.Type == forge.ItemTypeChangeRequest &&
+		(opts.State == string(forge.StateMerged) || opts.State == string(forge.StateClosed)) {
+		return p.listPullsByMergeState(ctx, opts)
+	}
+	return p.listItemsPage(ctx, opts, opts.State)
+}
 
+// listItemsPage issues ONE list request with an explicit state filter.
+func (p *Provider) listItemsPage(ctx context.Context, opts forge.ListOptions, state string) (forge.ListResult, error) {
 	kind := "issues"
 	if opts.Type == forge.ItemTypeChangeRequest {
 		kind = "pulls"
 	}
 
 	q := url.Values{}
-	q.Set("state", stateParam(opts.State))
+	q.Set("state", stateParam(state))
 	q.Set("type", kind)
 	q.Set("sort", sortParam(opts.Sort, opts.Direction))
 	q.Set("page", strconv.Itoa(pageOrDefault(opts.Page)))
@@ -188,6 +200,50 @@ func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge
 		HasMore:  hasMore(hdr, len(raw), perPageOrDefault(opts.PerPage)),
 		NextPage: nextPage(hdr, len(raw), perPageOrDefault(opts.PerPage), opts.Page),
 	}, nil
+}
+
+// maxMergeFilterPages bounds how many closed pages one "merged"/"closed" request
+// may consume.
+//
+// The filter is local, so a page can come back with fewer matches than the caller
+// asked for — or none at all. Walking a few more pages keeps a page full in the
+// normal case; the cap keeps a repository whose closed pulls are all unmerged
+// (or all merged) from turning one click into a long scan. When the cap is hit
+// the result still reports HasMore, so scrolling continues from there.
+const maxMergeFilterPages = 5
+
+// listPullsByMergeState answers the closed / merged filters by walking closed
+// results and splitting them on the merge timestamp.
+//
+// `opts.Page` is a starting point: the walk may consume several server pages to
+// fill the caller's page, and NextPage reports where to continue.
+func (p *Provider) listPullsByMergeState(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
+	wantMerged := opts.State == string(forge.StateMerged)
+	want := perPageOrDefault(opts.PerPage)
+
+	page := pageOrDefault(opts.Page)
+	out := make([]forge.Item, 0, want)
+	for range maxMergeFilterPages {
+		pageOpts := opts
+		pageOpts.State = string(forge.StateClosed)
+		pageOpts.Page = page
+		res, err := p.listItemsPage(ctx, pageOpts, string(forge.StateClosed))
+		if err != nil {
+			return forge.ListResult{}, err
+		}
+		for _, it := range res.Items {
+			if (it.State == forge.StateMerged) == wantMerged {
+				out = append(out, it)
+			}
+		}
+		if len(out) >= want || !res.HasMore {
+			return forge.ListResult{Items: out, HasMore: res.HasMore, NextPage: res.NextPage}, nil
+		}
+		page = res.NextPage
+	}
+	// The cap stopped the walk before the caller's page was full. Reporting
+	// HasMore keeps the next scroll going from where this one ended.
+	return forge.ListResult{Items: out, HasMore: true, NextPage: page}, nil
 }
 
 // GetItem returns a single issue or pull request.
