@@ -58,9 +58,8 @@ export interface PendingRequest {
   /**
    * The payload, snapshotted at trigger time.
    *
-   * Snapshotting is required, not an optimization: the quote bar is dismissed
-   * before the picker opens (it would otherwise float above the dialog at
-   * --z-quote-bar), and the live staged quotes are the CURRENT session's draft.
+   * The delivery flow dismisses the quote bar before opening the picker,
+   * and the live staged quotes belong to the current session's draft.
    * By the time the user confirms, both are gone — so the payload has to be
    * captured here.
    */

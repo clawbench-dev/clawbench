@@ -121,6 +121,19 @@ describe('VoiceOverlay', () => {
     expect(el.selectionStart).toBe(4)
   })
 
+  it('stops recording from the floating pill and keeps the transcript in the focused field', async () => {
+    mountOverlay()
+    const el = field('帮我')
+    await useVoiceInput().startAt(el)
+    await vi.waitFor(() => {
+      expect(document.querySelector('.voice-pill-recording .voice-stop-btn')).not.toBeNull()
+    })
+    document.querySelector<HTMLButtonElement>('.voice-stop-btn')!.click()
+    await vi.waitFor(() => expect(el.value).toBe('帮我听写'))
+    expect(document.activeElement).toBe(el)
+    expect(useVoiceInput().state.value).toBe('idle')
+  })
+
   it('does not start when the caret is in a password field (falls back to the capsule)', async () => {
     mountOverlay()
     const pwd = document.createElement('input')

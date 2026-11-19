@@ -472,7 +472,8 @@ vi.mock('@/composables/useSkillsState', async (importOriginal) => ({
 // overlay renders the status. All this component does is offer its textarea as
 // a target and show a local "recording" indicator when that textarea IS the
 // target.
-const mockVoiceToggleAt = vi.fn()
+const mockVoiceStartAt = vi.fn()
+const mockVoiceStop = vi.fn()
 const mockVoiceState = ref('idle')
 const mockVoiceTargetEl = ref<HTMLElement | null>(null)
 const mockVoiceCancel = vi.fn()
@@ -486,11 +487,11 @@ vi.mock('@/composables/useVoiceInput', () => ({
     targetEl: mockVoiceTargetEl,
     draftPending: ref(false),
     toggle: vi.fn(),
-    toggleAt: mockVoiceToggleAt,
+    toggleAt: vi.fn(),
     start: vi.fn(),
-    startAt: vi.fn(),
+    startAt: mockVoiceStartAt,
     startGlobal: vi.fn(),
-    stop: vi.fn(),
+    stop: mockVoiceStop,
     cancel: mockVoiceCancel,
     reset: vi.fn(),
     appendText: vi.fn(),
@@ -4157,7 +4158,8 @@ describe('ChatInputBar', () => {
 
   describe('voice input', () => {
     beforeEach(() => {
-      mockVoiceToggleAt.mockReset()
+      mockVoiceStartAt.mockReset()
+      mockVoiceStop.mockReset()
       mockVoiceTargetEl.value = null
       mockVoiceState.value = 'idle'
     })
@@ -4174,9 +4176,10 @@ describe('ChatInputBar', () => {
       // Long-press starts recording into this textarea.
       await sendBtn.trigger('pointerdown')
       vi.advanceTimersByTime(600)
-      expect(mockVoiceToggleAt).toHaveBeenCalledWith(composerTextarea(wrapper))
+      expect(mockVoiceStartAt).toHaveBeenCalledWith(composerTextarea(wrapper))
       // Release + synthetic click must NOT pop the quick-send menu
       await sendBtn.trigger('pointerup')
+      expect(mockVoiceStop).toHaveBeenCalledOnce()
       await sendBtn.trigger('click')
       expect(wrapper.vm.showQuickMenu).toBe(false)
       expect(wrapper.emitted('send')).toBeFalsy()
@@ -4199,17 +4202,15 @@ describe('ChatInputBar', () => {
 
       await sendBtn.trigger('pointerdown')
       vi.advanceTimersByTime(600)
-      expect(mockVoiceToggleAt).toHaveBeenCalledWith(composerTextarea(wrapper))
+      expect(mockVoiceStartAt).toHaveBeenCalledWith(composerTextarea(wrapper))
 
       await sendBtn.trigger('pointerup')
       await sendBtn.trigger('click')
 
       expect(wrapper.emitted('send')?.[0]).toEqual(['请看一下这个改动'])
       // Start then stop: the gesture must not leave the mic recording.
-      expect(mockVoiceToggleAt.mock.calls).toEqual([
-        [composerTextarea(wrapper)],
-        [composerTextarea(wrapper)],
-      ])
+      expect(mockVoiceStartAt).toHaveBeenCalledOnce()
+      expect(mockVoiceStop).toHaveBeenCalledOnce()
 
       wrapper.unmount()
       vi.useRealTimers()

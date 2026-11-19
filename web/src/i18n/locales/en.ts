@@ -1407,6 +1407,7 @@ export default {
     },
     voice: {
       recording: 'Recording',
+      stopRecording: 'Stop recording',
       transcribing: 'Transcribing',
       insecureContext: 'Voice input needs HTTPS or localhost (this page is not a secure context, so the microphone is unreachable)',
       unavailableTitle: 'Voice input unavailable',
