@@ -84,6 +84,9 @@ test.describe('表格全屏与数据表换行', () => {
     expect(cellHeight).toBeGreaterThan(30)
 
     // 打开全屏：这里必须是活组件（克隆的话开关是死的）。
+    // 最大化按钮只在触屏 / 窄窗口出现（桌面宽窗口藏起来），所以先把视口
+    // 收窄到断点以内，模拟「窗口不宽」的情形。
+    await page.setViewportSize({ width: 880, height: 900 })
     await page.locator('.file-overlay .table-block-landscape-btn').click()
     const overlay = page.locator('.block-landscape')
     await expect(overlay).toBeVisible()

@@ -11,7 +11,10 @@
     >
       <div class="block-landscape-panel">
         <!-- DataTable: live component, not a clone — the mode switch, sorting,
-             search and filters must keep working while fullscreen. -->
+             search and filters must keep working while fullscreen. No `fill`:
+             the overlay sizes it by content and centers it, capping it at the
+             panel height so a tall table fills the screen and scrolls itself
+             (see `.block-landscape-live` in css/code-block-header.css). -->
         <div v-if="state.kind === 'table' && state.table" class="block-landscape-live">
           <DataTable
             :headers="state.table.headers"
@@ -19,7 +22,6 @@
             :initial-mode="state.table.mode"
             :initial-wrap="state.table.wrap"
             :page-size="state.table.pageSize"
-            fill
             expanded
             @collapse="close"
             @update:mode="onLiveMode"
