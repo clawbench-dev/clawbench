@@ -1447,7 +1447,7 @@ describe('SettingsCategory', () => {
       const wrapper = mountCategory('about')
       const vm = wrapper.vm as any
       vm.$.setupState.handleClick({ key: 'downloadAndroidApp' })
-      expect(mockDownloadByUrl).toHaveBeenCalledExactlyOnceWith('/api/apk', 'clawbench-android.apk')
+      expect(mockDownloadByUrl).toHaveBeenCalledExactlyOnceWith('/api/apk', 'clawbench-android.apk', { viaNativeApp: true })
     })
 
     // The "download desktop app" row must only appear when there is actually
