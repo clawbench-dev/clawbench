@@ -29,6 +29,14 @@ const (
 	// backends have their own payload limits.
 	mailNotifyTitleRunes = 200
 	mailNotifyBodyRunes  = 400
+
+	// mailNotifyMaxListItems / mailNotifyItemRunes bound the per-message list
+	// in the body. One sync pass can insert a whole folder's worth of mail; the
+	// list stops at this many items and reports the remainder instead.
+	mailNotifyMaxListItems = 5
+	mailNotifyItemRunes    = 80
+	// mailNotifyPreviewRunes is the snippet shown for the newest message only.
+	mailNotifyPreviewRunes = 120
 )
 
 // notifyNewInboxMail records and broadcasts a new-mail notification for the
@@ -150,37 +158,63 @@ func isInboxFolder(f mail.Folder) bool {
 // renderMailNotification localizes the notification text at write time.
 //
 // A stored notification records what the user was told at that moment:
-// switching the UI language later must not rewrite history. The title is data
-// (the subject) when a single message arrived, and a pre-rendered count when a
-// sync pass batched several.
+// switching the UI language later must not rewrite history.
+//
+// The shape deliberately mirrors the task/forge notifications (see
+// renderTaskNotification): a fixed event headline on top, then the specifics.
+// The title used to BE the subject for a single message, which made mail look
+// nothing like a task notice — a mail alert led with "Re: 周报" and never said
+// what had happened. Now the headline always says "new mail", and the subjects
+// move into the body as a Markdown list (the IM backends render the body as
+// Markdown; the notification card and the native alerts take it as text, where
+// "- " bullets still read fine).
 func renderMailNotification(msgs []MailMessage) (title, body string) {
-	newest := msgs[0]
-	sender := strings.TrimSpace(newest.FromName)
-	if sender == "" {
-		sender = strings.TrimSpace(newest.FromAddr)
-	}
-	if sender == "" {
-		sender = mailNotifyT("MailNotifyUnknownSender")
-	}
-	subject := strings.TrimSpace(newest.Subject)
-	if subject == "" {
-		subject = mailNotifyT("MailNotifyNoSubject")
-	}
-
 	if len(msgs) > 1 {
 		title = mailNotifyT("MailNotifyManyTitle", map[string]any{"Count": len(msgs)})
-		body = mailNotifyT("MailNotifyLatest", map[string]any{
-			"Subject": subject,
-			"Sender":  sender,
-		})
-		return mailNotifyClip(title, mailNotifyTitleRunes), mailNotifyClip(body, mailNotifyBodyRunes)
+	} else {
+		title = mailNotifyT("MailNotifyTitle")
 	}
 
-	title = subject
-	body = sender
-	if preview := mailNotifyClip(collapseWhitespace(newest.Snippet), mailNotifyBodyRunes); preview != "" {
-		body = sender + " · " + preview
+	// One list item per message, newest first (the caller sorts, and msgs[0] is
+	// also the message the click opens). Capped so a 50-message sync cannot
+	// produce a wall of text.
+	var b strings.Builder
+	for i, m := range msgs {
+		if i >= mailNotifyMaxListItems {
+			b.WriteString(mailNotifyT("MailNotifyMoreItems", map[string]any{
+				"Count": len(msgs) - mailNotifyMaxListItems,
+			}))
+			b.WriteString("\n")
+			break
+		}
+		subject := strings.TrimSpace(m.Subject)
+		if subject == "" {
+			subject = mailNotifyT("MailNotifyNoSubject")
+		}
+		b.WriteString("- ")
+		b.WriteString(mailNotifyClip(subject, mailNotifyItemRunes))
+		b.WriteString("\n")
 	}
+
+	// The newest message also gets its sender and snippet underneath: that is
+	// the one the click opens, and identity/preview are what tell the user
+	// whether it is worth opening now.
+	newest := msgs[0]
+	if sender := strings.TrimSpace(newest.FromName); sender != "" {
+		b.WriteString("\n")
+		b.WriteString(mailNotifyT("MailNotifyFrom", map[string]any{"Sender": sender}))
+		b.WriteString("\n")
+	} else if addr := strings.TrimSpace(newest.FromAddr); addr != "" {
+		b.WriteString("\n")
+		b.WriteString(mailNotifyT("MailNotifyFrom", map[string]any{"Sender": addr}))
+		b.WriteString("\n")
+	}
+	if preview := collapseWhitespace(newest.Snippet); preview != "" {
+		b.WriteString(mailNotifyClip(preview, mailNotifyPreviewRunes))
+		b.WriteString("\n")
+	}
+
+	body = strings.TrimRight(b.String(), "\n")
 	return mailNotifyClip(title, mailNotifyTitleRunes), mailNotifyClip(body, mailNotifyBodyRunes)
 }
 

@@ -96,8 +96,11 @@ func TestSyncMailAccount_NotifiesOnlyNewUnseenInboxMail(t *testing.T) {
 		t.Fatalf("expected exactly one mail notification, got %d: %+v", len(rows), rows)
 	}
 	n := rows[0]
-	if n.Title != "季度报告" {
-		t.Errorf("title = %q, want the newest subject", n.Title)
+	if want := mailNotifyT("MailNotifyTitle"); n.Title != want {
+		t.Errorf("title = %q, want %q", n.Title, want)
+	}
+	if !strings.Contains(n.Body, "季度报告") {
+		t.Errorf("body = %q, want the subject as a bullet", n.Body)
 	}
 	if n.EventType != MailEventReceived {
 		t.Errorf("eventType = %q, want %q", n.EventType, MailEventReceived)
@@ -141,8 +144,11 @@ func TestSyncMailAccount_NotifiesFirstMailInAnInitiallyEmptyInbox(t *testing.T) 
 	}
 
 	rows := mailNotifications(t)
-	if len(rows) != 1 || rows[0].Title != "第一封邮件" {
+	if len(rows) != 1 || rows[0].Title != mailNotifyT("MailNotifyTitle") {
 		t.Fatalf("the first message in a previously empty inbox must notify, got %+v", rows)
+	}
+	if !strings.Contains(rows[0].Body, "第一封邮件") {
+		t.Errorf("body = %q, want the subject", rows[0].Body)
 	}
 }
 
@@ -258,8 +264,7 @@ func TestSyncMailAccount_MailNotifySwitchSilences(t *testing.T) {
 }
 
 // TestRenderMailNotification_BatchesSeveralMessages guards the wording of a
-// batch: one title with a count, and a body that still names the newest subject
-// and sender rather than dumping every row.
+// batch: a count in the title, and one Markdown bullet per message in the body.
 func TestRenderMailNotification_BatchesSeveralMessages(t *testing.T) {
 	msgs := []MailMessage{
 		{ID: 2, Subject: "最新一封", FromName: "Carol", SentAt: 200},
@@ -270,8 +275,44 @@ func TestRenderMailNotification_BatchesSeveralMessages(t *testing.T) {
 	if title != wantTitle {
 		t.Errorf("title = %q, want %q", title, wantTitle)
 	}
-	if !strings.Contains(body, "最新一封") || !strings.Contains(body, "Carol") {
-		t.Errorf("body = %q, want the newest subject and sender", body)
+	if !strings.Contains(body, "- 最新一封") || !strings.Contains(body, "- 较早一封") {
+		t.Errorf("body = %q, want one bullet per subject", body)
+	}
+	if !strings.Contains(body, mailNotifyT("MailNotifyFrom", map[string]any{"Sender": "Carol"})) {
+		t.Errorf("body = %q, want the newest sender", body)
+	}
+}
+
+// A single message shares the same headline as a batch, so a mail alert reads
+// like the task notices instead of leading with the raw subject.
+func TestRenderMailNotification_SingleUsesFixedTitle(t *testing.T) {
+	title, body := renderMailNotification([]MailMessage{
+		{ID: 1, Subject: "周报", FromName: "Carol", Snippet: "本周进展"},
+	})
+	if want := mailNotifyT("MailNotifyTitle"); title != want {
+		t.Errorf("title = %q, want %q", title, want)
+	}
+	if !strings.Contains(body, "- 周报") {
+		t.Errorf("body = %q, want the subject as a bullet", body)
+	}
+	if !strings.Contains(body, "本周进展") {
+		t.Errorf("body = %q, want the newest snippet", body)
+	}
+}
+
+// A large batch must not produce a wall of text: the list stops and the
+// remainder is reported.
+func TestRenderMailNotification_TruncatesLongList(t *testing.T) {
+	msgs := make([]MailMessage, 0, mailNotifyMaxListItems+3)
+	for i := 0; i < mailNotifyMaxListItems+3; i++ {
+		msgs = append(msgs, MailMessage{ID: int64(100 - i), Subject: "s"})
+	}
+	_, body := renderMailNotification(msgs)
+	if strings.Count(body, "\n- ")+1 != mailNotifyMaxListItems+1 {
+		t.Errorf("body = %q, want %d bullets plus the remainder line", body, mailNotifyMaxListItems)
+	}
+	if !strings.Contains(body, mailNotifyT("MailNotifyMoreItems", map[string]any{"Count": 3})) {
+		t.Errorf("body = %q, want the remainder line", body)
 	}
 }
 
@@ -320,27 +361,27 @@ func TestNotifyNewInboxMail_AllSeenIsNotNews(t *testing.T) {
 }
 
 // The sender line falls back to the address when the display name is missing,
-// and to a localized placeholder when the message carries neither.
+// and is omitted when the message carries neither.
 func TestRenderMailNotification_SenderFallbacks(t *testing.T) {
-	title, body := renderMailNotification([]MailMessage{
+	_, body := renderMailNotification([]MailMessage{
 		{ID: 1, Subject: "主题", FromName: "", FromAddr: "only@example.com"},
 	})
-	if !strings.Contains(title, "主题") {
-		t.Errorf("title = %q, want the subject", title)
+	if !strings.Contains(body, "- 主题") {
+		t.Errorf("body = %q, want the subject as a bullet", body)
 	}
 	if !strings.Contains(body, "only@example.com") {
 		t.Errorf("body = %q, want the address when the name is empty", body)
 	}
 
-	title, body = renderMailNotification([]MailMessage{{ID: 2}})
-	if title != mailNotifyT("MailNotifyNoSubject") {
-		t.Errorf("title = %q, want the no-subject placeholder", title)
+	title, body := renderMailNotification([]MailMessage{{ID: 2}})
+	if want := mailNotifyT("MailNotifyTitle"); title != want {
+		t.Errorf("title = %q, want %q", title, want)
 	}
-	if !strings.Contains(body, mailNotifyT("MailNotifyUnknownSender")) {
-		t.Errorf("body = %q, want the unknown-sender placeholder", body)
+	if !strings.Contains(body, mailNotifyT("MailNotifyNoSubject")) {
+		t.Errorf("body = %q, want the no-subject placeholder", body)
 	}
 
-	// A batch names the newest subject in the body, so the placeholder is used
+	// A batch names every subject in the body, so the placeholder is used
 	// there too.
 	_, body = renderMailNotification([]MailMessage{{ID: 3}, {ID: 2}})
 	if !strings.Contains(body, mailNotifyT("MailNotifyNoSubject")) {

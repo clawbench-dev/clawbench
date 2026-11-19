@@ -220,8 +220,10 @@ PushActionRequired: 操作需批准
 # 请求上下文），通知中心和 IM 推送共用同一份文案。
 MailNotifyNoSubject: 无主题
 MailNotifyUnknownSender: 未知发件人
+MailNotifyTitle: 收到新邮件
 MailNotifyManyTitle: 收到 {{.Count}} 封新邮件
-MailNotifyLatest: 最新：{{.Subject}} · {{.Sender}}
+MailNotifyFrom: '发件人：{{.Sender}}'
+MailNotifyMoreItems: '- …另有 {{.Count}} 封'
 # IM 推送（钉钉 / 飞书）——机器人写进用户聊天里的文案。推送后端跑在各自
 # goroutine 里、没有 HTTP 请求上下文，故与 AutoContinue 一样走
 # LocalizerForLocale(model.Language) 本地化。钉钉渲染 sampleMarkdown、飞书渲染
