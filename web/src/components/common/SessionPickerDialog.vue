@@ -273,8 +273,11 @@ function handleClose() {
 </script>
 
 <style scoped>
-/* The quote composer and this sheet both teleport to body. */
-:global(.bs-overlay.session-picker-overlay) {
+/* The quote composer and this sheet both teleport to body.
+   `.bs-overlay-fullscreen` is part of the selector on purpose: BottomSheet
+   already sets the tier with that same two-class selector, so a plain
+   `.bs-overlay.session-picker-overlay` would only win by stylesheet order. */
+:global(.bs-overlay.bs-overlay-fullscreen.session-picker-overlay) {
   z-index: calc(var(--z-session-picker) + var(--bs-open-order, 0));
 }
 

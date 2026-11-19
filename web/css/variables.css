@@ -259,7 +259,10 @@
     --z-preview-tooltip: 1300;      /* tooltip attached to the preview float */
     --z-header-overlay: 2000;       /* header's own dropdown scrim */
     --z-quote-bar: 2400;            /* quote-reply bar */
-    --z-session-picker: 2420;       /* quote destination sheet, above the composer */
+    /* The destination sheet has to cover the quote bar: the bar stays open
+       behind it while the user picks where the quote goes ("发送到"), and the
+       fullscreen sheet's own tier (--z-sheet) is far below the bar. */
+    --z-session-picker: 2420;
     --z-context-menu-backdrop: 2499;
     --z-context-menu: 2500;
     --z-modal: 3000;                /* install / generic dialog */
