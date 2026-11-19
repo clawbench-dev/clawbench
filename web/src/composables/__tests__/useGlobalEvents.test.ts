@@ -163,6 +163,8 @@ const RECONNECT_BASE_DELAY = 2000
 const RESUME_CHECK = 1000
 const RESUME_HANDSHAKE_TIMEOUT = 6000
 const RESUME_BASE_DELAY = 500
+// Foreground probe: one ping, one pong, this long.
+const PROBE_TIMEOUT = 1500
 
 describe('useGlobalEvents', () => {
     let originalWebSocket: typeof WebSocket
@@ -905,13 +907,18 @@ describe('useGlobalEvents', () => {
             vi.useFakeTimers()
             appModeState.value = true
             events.init()
-            const first = getLatestWs()
+            const stale = connectAndGetWs()
 
+            // First signal: the socket is dead (silent past the stale window),
+            // so it is replaced.
+            vi.setSystemTime(Date.now() + MESSAGE_STALE * 2)
             fireAppResume()
             const rebuilt = getLatestWs()
-            expect(rebuilt).not.toBe(first)
+            expect(rebuilt).not.toBe(stale)
+            expect(rebuilt.readyState).toBe(MockWebSocket.CONNECTING)
 
-            // Second signal of the same resume, immediately after.
+            // Second signal of the same resume, immediately after: the dial is
+            // young, so it is left alone.
             Object.defineProperty(document, 'visibilityState', {
                 value: 'visible', writable: true, configurable: true,
             })
@@ -923,13 +930,13 @@ describe('useGlobalEvents', () => {
             vi.useRealTimers()
         })
 
-        it('rebuilds the socket on a mobile resume even when it still looks healthy', () => {
-            // The reported symptom: back from background, the app sat on
-            // "连接断开，正在重连…" for a long time. On a frozen Android page the
-            // socket usually reads OPEN while being dead at the far end, so any
-            // "does it look usable?" test answered yes and cost a full silence
-            // window before anything happened. The app path must rebuild
-            // unconditionally — nothing on that socket is worth preserving.
+        it('keeps a socket that answers the resume probe', () => {
+            // The reported symptom: back from background, "断连" on every
+            // resume. Rebuilding unconditionally tears down a live socket and
+            // flips connected=false before the new handshake starts — a
+            // disconnection the user sees even when nothing was wrong. A socket
+            // that answers a round trip is alive; keep it.
+            vi.useFakeTimers()
             appModeState.value = true
             events.init()
             const ws = connectAndGetWs()
@@ -937,12 +944,42 @@ describe('useGlobalEvents', () => {
 
             fireAppResume()
 
+            // The probe is on the wire, the socket is untouched.
+            expect(getLatestWs()).toBe(ws)
+            expect(JSON.parse(ws.sentMessages[ws.sentMessages.length - 1])).toEqual({ type: 'ping' })
+
+            ws.receive({ type: 'pong' })
+            vi.advanceTimersByTime(PROBE_TIMEOUT * 2)
+
+            expect(getLatestWs()).toBe(ws)
+            expect(ws.readyState).toBe(MockWebSocket.OPEN)
+            expect(events.wsStatus.value).toBe('connected')
+
+            vi.useRealTimers()
+        })
+
+        it('replaces a socket whose resume probe goes unanswered', () => {
+            // The half-open case: OPEN locally, gone at the far end. The probe
+            // is the only thing that can tell, and it must not cost a silence
+            // window — the user is looking at the screen.
+            vi.useFakeTimers()
+            appModeState.value = true
+            events.init()
+            const ws = connectAndGetWs()
+
+            fireAppResume()
+            expect(getLatestWs()).toBe(ws)
+
+            vi.advanceTimersByTime(PROBE_TIMEOUT + 1)
+
             const rebuilt = getLatestWs()
             expect(rebuilt).not.toBe(ws)
             expect(ws.readyState).toBe(MockWebSocket.CLOSED)
 
             rebuilt.simulateOpen()
             expect(events.wsStatus.value).toBe('connected')
+
+            vi.useRealTimers()
         })
 
         it('redials quickly when the resume rebuild keeps failing', () => {
@@ -952,14 +989,18 @@ describe('useGlobalEvents', () => {
             vi.useFakeTimers()
             appModeState.value = true
             events.init()
+            const stale = connectAndGetWs()
 
+            vi.setSystemTime(Date.now() + MESSAGE_STALE * 2)
             fireAppResume()
             const first = getLatestWs()
+            expect(first).not.toBe(stale)
             expect(first.readyState).toBe(MockWebSocket.CONNECTING)
 
+            const before = mockWsInstances.length
             first.onclose?.(new CloseEvent('close'))
             vi.advanceTimersByTime(RESUME_BASE_DELAY)
-            expect(mockWsInstances.length).toBeGreaterThan(2)
+            expect(mockWsInstances.length).toBe(before + 1)
 
             vi.useRealTimers()
         })
@@ -971,7 +1012,9 @@ describe('useGlobalEvents', () => {
             vi.useFakeTimers()
             appModeState.value = true
             events.init()
+            connectAndGetWs()
 
+            vi.setSystemTime(Date.now() + MESSAGE_STALE * 2)
             fireAppResume()
             const dialled = getLatestWs()
             expect(dialled.readyState).toBe(MockWebSocket.CONNECTING)
@@ -988,7 +1031,9 @@ describe('useGlobalEvents', () => {
             vi.useFakeTimers()
             appModeState.value = true
             events.init()
+            connectAndGetWs()
 
+            vi.setSystemTime(Date.now() + MESSAGE_STALE * 2)
             fireAppResume()
             getLatestWs().simulateOpen()
 

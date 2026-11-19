@@ -70,8 +70,10 @@ describe('WS liveness is decided in exactly one place', () => {
 
   it('the classifier is the single definition of "usable"', () => {
     const code = stripComments(readWebFile(SOURCE))
-    // One definition. A second one would mean two answers to the same question.
-    expect(code.match(/function\s+socketFailure\s*\(/g)).toHaveLength(1)
+    // One *implementation*. Overload signatures (`function socketFailure(...):
+    // ...` with no body) are type declarations, not a second policy — only a
+    // line that opens a body counts.
+    expect(code.match(/function\s+socketFailure\s*\([^)]*\)[^;{]*\{/g)).toHaveLength(1)
     // The two failure modes that need a clock, each with its own constant.
     expect(code).toContain("'handshake-timeout'")
     expect(code).toContain("'silent'")
