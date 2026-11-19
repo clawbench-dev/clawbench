@@ -48,7 +48,7 @@ func ForgeCredentialLogin(platform, host string) string {
 	}
 	forgeIdentityMu.Unlock()
 
-	login := fetchForgeCredentialLogin(host)
+	login := fetchForgeCredentialLogin(platform, host)
 
 	forgeIdentityMu.Lock()
 	forgeIdentityCache[key] = forgeIdentityEntry{login: login, fetchedAt: time.Now()}
@@ -63,7 +63,11 @@ func ForgeCredentialLogin(platform, host string) string {
 // property of the credential and host alone, and constructing a Provider would
 // additionally require a bound owner/repo (which the caller, working from an
 // event's repo reference, deliberately does not supply).
-func fetchForgeCredentialLogin(host string) string {
+//
+// `platform` comes from the repo reference the event was derived for, so the
+// probe speaks the same API the binding does — a Gitea host must not be probed
+// as GitLab just because its name looks like one.
+func fetchForgeCredentialLogin(platform, host string) string {
 	token := model.ConfigInstance.ForgeToken(host)
 	if token == "" {
 		return ""
@@ -73,7 +77,7 @@ func fetchForgeCredentialLogin(host string) string {
 	// No scheme is named here: this probes an already-bound host, so the stored
 	// instance hint is the only thing that can say. Passing "" lets
 	// verifyForgeTokenContext consult it.
-	author, err := verifyForgeTokenContext(ctx, host, token, "")
+	author, err := verifyForgeTokenContext(ctx, host, token, "", platform)
 	if err != nil {
 		return ""
 	}

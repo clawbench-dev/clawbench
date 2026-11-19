@@ -1,4 +1,4 @@
-import { Github, Gitlab } from 'lucide-vue-next'
+import { Github } from 'lucide-vue-next'
 import i18n from '@/i18n'
 import { appLog } from '@/utils/appLog'
 import {
@@ -8,6 +8,7 @@ import {
   type ForgeTarget,
 } from '@/composables/useForgeNavigation'
 import { forgeDockIconKind, forgeTabTitleKey, useForgeBinding } from '@/composables/useForgeBinding'
+import { forgeBrandIcon } from '@/components/forge/forgeBrandIcon'
 import { useForgeUnread } from '@/composables/useForgeUnread'
 import type { DockPlugin } from '@/composables/dockPluginTypes'
 
@@ -65,7 +66,7 @@ export default {
     icon: Github,
     kind: 'flat',
   },
-  dynamicIcon: () => (forgeDockIconKind(platform.value) === 'gitlab' ? Gitlab : Github),
+  dynamicIcon: () => forgeBrandIcon(forgeDockIconKind(platform.value)),
   title: () => i18n.global.t(forgeTabTitleKey(platform.value)),
   badge: () => ({ count: forgeUnreadCount.value }),
   // No `available()`: the feature axis (switched off / on) belongs to the

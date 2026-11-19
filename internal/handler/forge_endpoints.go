@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,6 +30,10 @@ const (
 	// value from tripping it.
 	codeForgeNeedsAuth = "ForgeNoCredential"
 	jsonCode           = "code"
+	// codeForgeInvalidPlatform marks a platform name the server cannot speak to.
+	// It is a 400 rather than a silent fallback: storing an unknown value would
+	// look saved and then be ignored by every resolver.
+	codeForgeInvalidPlatform = "ForgeInvalidPlatform"
 	// errNoRepositoryBound is the message every forge endpoint returns when the
 	// project has no repository binding. Spelled once so the pipeline endpoints
 	// and the item endpoints cannot drift apart.
@@ -37,8 +42,9 @@ const (
 	jsonCount = "count"
 	// jsonSlug and jsonScheme are response keys spelled the same way in several
 	// of the forge views below, so they are named once like the keys above.
-	jsonSlug   = "slug"
-	jsonScheme = "scheme"
+	jsonPlatform = "platform"
+	jsonSlug     = "slug"
+	jsonScheme   = "scheme"
 )
 
 // forgeItemView is the frontend-facing shape of an issue or PR. It flattens the
@@ -197,12 +203,12 @@ func ServeForgeItems(w http.ResponseWriter, r *http.Request) {
 		jsonHasMore: res.HasMore,
 		"nextPage":  res.NextPage,
 		jsonBinding: map[string]any{
-			"platform": pf.Platform,
-			jsonHost:   pf.Host,
-			"owner":    pf.Owner,
-			"repo":     pf.Repo,
-			jsonSlug:   pf.Slug(),
-			"source":   pf.Source,
+			jsonPlatform: pf.Platform,
+			jsonHost:     pf.Host,
+			"owner":      pf.Owner,
+			"repo":       pf.Repo,
+			jsonSlug:     pf.Slug(),
+			"source":     pf.Source,
 		},
 	})
 }
@@ -475,37 +481,18 @@ func serveForgeBindingSet(w http.ResponseWriter, r *http.Request, projectPath st
 		return
 	}
 
-	var remote forge.Remote
-	if req.URL != "" {
-		parsed, err := forge.ParseRemoteURL(req.URL)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: "invalid repository url", jsonCode: "InvalidRemoteURL"})
-			return
-		}
-		remote = parsed
-	} else {
-		if req.Platform == "" || req.Host == "" || req.Owner == "" || req.Repo == "" {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
-			return
-		}
-		// Normalize the same way a credential host is normalized, so the binding
-		// and its token resolve to one scope. A host stored as
-		// "https://gitlab.com" would otherwise never match the credential key and
-		// every request would go out unauthenticated.
-		//
-		// The scheme is taken from the host field when it names one, so a client
-		// may send either "http://h" or {"host":"h","scheme":"http"}; the
-		// explicit field is the fallback for a client that already split them.
-		hostScheme, host := model.SplitForgeHostScheme(req.Host)
-		if hostScheme == "" {
-			hostScheme = forge.NormalizeScheme(req.Scheme)
-		}
-		remote = forge.Remote{
-			Platform: forge.Platform(req.Platform),
-			Host:     host,
-			Scheme:   hostScheme,
-			Owner:    req.Owner,
-			Repo:     req.Repo,
+	remote, named, ok := forgeRemoteFromBindingRequest(w, r, req)
+	if !ok {
+		return
+	}
+
+	// Teach the host what it runs, when the user told us something the host name
+	// cannot say. Token verification reads this hint, so without it a Gitea
+	// binding would still be verified against the GitLab API. Best-effort: a
+	// failed write must not fail the binding itself.
+	if named != "" && named != forge.PlatformForHost(remote.Host) {
+		if err := setForgePlatformHint(remote.Host, string(named)); err != nil {
+			slog.Warn("forge platform hint write failed", slog.String("host", remote.Host), slog.Any("err", err))
 		}
 	}
 
@@ -530,6 +517,66 @@ func serveForgeBindingSet(w http.ResponseWriter, r *http.Request, projectPath st
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{jsonBinding: bindingView(stored)})
+}
+
+// forgeRemoteFromBindingRequest turns a binding request into a parsed remote,
+// answering the request itself on any rejection. It also returns the platform
+// the user NAMED ("" when they left it to the inference), which the caller needs
+// to decide whether the host has something to learn.
+//
+// An explicitly named platform wins over the host-name inference. It is the only
+// way to bind a Gitea/Forgejo repository (always self-hosted) and the way to
+// correct a self-hosted GitHub Enterprise host, which the inference would
+// otherwise call GitLab.
+func forgeRemoteFromBindingRequest(w http.ResponseWriter, r *http.Request, req forgeBindingRequest) (forge.Remote, forge.Platform, bool) {
+	named, ok := forge.ParsePlatform(req.Platform)
+	if req.Platform != "" && !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			strReqError: "unsupported platform",
+			jsonCode:    codeForgeInvalidPlatform,
+		})
+		return forge.Remote{}, "", false
+	}
+
+	if req.URL != "" {
+		parsed, err := forge.ParseRemoteURLAs(req.URL, named)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: "invalid repository url", jsonCode: "InvalidRemoteURL"})
+			return forge.Remote{}, "", false
+		}
+		return parsed, named, true
+	}
+
+	if req.Platform == "" || req.Host == "" || req.Owner == "" || req.Repo == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
+		return forge.Remote{}, "", false
+	}
+	// Normalize the same way a credential host is normalized, so the binding and
+	// its token resolve to one scope. A host stored as "https://gitlab.com"
+	// would otherwise never match the credential key and every request would go
+	// out unauthenticated.
+	//
+	// The scheme is taken from the host field when it names one, so a client may
+	// send either "http://h" or {"host":"h","scheme":"http"}; the explicit field
+	// is the fallback for a client that already split them.
+	hostScheme, host := model.SplitForgeHostScheme(req.Host)
+	if hostScheme == "" {
+		hostScheme = forge.NormalizeScheme(req.Scheme)
+	}
+	// A flat-namespace platform names repositories as exactly owner/repo. The
+	// URL path gets this check inside ParseRemoteURLAs; the explicit fields
+	// bypass it, so it is applied here to keep the two paths equal.
+	if forge.HasFlatNamespace(named) && strings.Contains(req.Owner, "/") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: "invalid repository url", jsonCode: "InvalidRemoteURL"})
+		return forge.Remote{}, "", false
+	}
+	return forge.Remote{
+		Platform: named,
+		Host:     host,
+		Scheme:   hostScheme,
+		Owner:    req.Owner,
+		Repo:     req.Repo,
+	}, named, true
 }
 
 // ServeForgeRemotes lists the project's git remotes, parsed into forge
@@ -557,7 +604,8 @@ func ServeForgeRemotes(w http.ResponseWriter, r *http.Request) {
 			"url":    rem.URL,
 		}
 		if parsed, perr := forge.ParseRemoteURL(rem.URL); perr == nil {
-			entry["platform"] = string(parsed.Platform)
+			applyForgePlatformHint(&parsed)
+			entry[jsonPlatform] = string(parsed.Platform)
 			entry["host"] = parsed.Host
 			// Empty when the remote could not state a scheme (ssh / scp). The
 			// UI shows the resolved value in that case rather than guessing, so
@@ -622,13 +670,13 @@ func ServeForgeTest(w http.ResponseWriter, r *http.Request) {
 // over some scheme, and showing "" would leave the user unable to tell which.
 func bindingView(pf *service.ProjectForge) map[string]any {
 	return map[string]any{
-		"platform": pf.Platform,
-		jsonHost:   pf.Host,
-		jsonScheme: forge.ResolveScheme(pf.Scheme, model.ConfigInstance.ForgeScheme(pf.Host)),
-		"owner":    pf.Owner,
-		"repo":     pf.Repo,
-		jsonSlug:   pf.Slug(),
-		"source":   pf.Source,
+		jsonPlatform: pf.Platform,
+		jsonHost:     pf.Host,
+		jsonScheme:   forge.ResolveScheme(pf.Scheme, model.ConfigInstance.ForgeScheme(pf.Host)),
+		"owner":      pf.Owner,
+		"repo":       pf.Repo,
+		jsonSlug:     pf.Slug(),
+		"source":     pf.Source,
 	}
 }
 
@@ -696,6 +744,20 @@ func isOfficialForgeHost(host string) bool {
 	return host == forge.GitHubHost || host == forge.GitLabHost
 }
 
+// applyForgePlatformHint overrides a parsed remote's inferred platform with the
+// one recorded for its host.
+//
+// Inference calls every non-github.com host GitLab, which is right for
+// self-hosted GitLab and wrong for Gitea/Forgejo and GitHub Enterprise. When the
+// user has told us what that host is (via the credential form or an earlier
+// binding), that answer is used for both the auto-binding suggestion and the
+// remote list, so the UI never offers to bind a Gitea repository as GitLab.
+func applyForgePlatformHint(remote *forge.Remote) {
+	if p, ok := forge.ParsePlatform(model.ConfigInstance.ForgePlatform(remote.Host)); ok {
+		remote.Platform = p
+	}
+}
+
 // suggestForgeBinding derives a candidate binding from the project's git
 // remotes. The result is a suggestion only — the UI presents it for explicit
 // user confirmation (see ServeForgeBinding).
@@ -704,9 +766,10 @@ func suggestForgeBinding(projectPath string) map[string]any {
 	if !ok {
 		return nil
 	}
+	applyForgePlatformHint(&parsed)
 	return map[string]any{
-		"platform": string(parsed.Platform),
-		jsonHost:   parsed.Host,
+		jsonPlatform: string(parsed.Platform),
+		jsonHost:     parsed.Host,
 		// The remote's own scheme, empty when it did not state one. The UI
 		// resolves it for display; it must not be pre-filled with https here,
 		// because confirming the suggestion would then persist that guess as if

@@ -284,6 +284,9 @@ export default {
     // overflow menu says which service it opens. Brand names stay untranslated.
     forgeGithub: 'GitHub Integration',
     forgeGitlab: 'GitLab Integration',
+    // Gitea and Forgejo share one API and one adapter; the label names both so
+    // the user recognises their own service.
+    forgeGitea: 'Gitea / Forgejo Integration',
     tasks: 'Tasks',
     notifications: 'Notification Center',
     meeting: 'Video Meetings',
@@ -589,7 +592,9 @@ export default {
       manual: 'Enter a repository URL',
       urlPlaceholder: 'https://github.com/owner/repo.git',
       submit: 'Bind',
-      nonOfficialHost: 'Non-official host: binding will send your access token to it. Confirm this is your own GitLab / GitHub instance.',
+      nonOfficialHost: 'Non-official host: binding will send your access token to it. Confirm this is your own GitLab / GitHub / Gitea instance.',
+      platformAuto: 'Platform: detect from URL',
+      platformGitea: 'Gitea / Forgejo',
       change: 'Change repository',
       openRepo: 'Open repository',
       unbind: 'Unbind',
@@ -4787,6 +4792,8 @@ export default {
       forgeCredentials: 'Access tokens',
       forgeCredentialsDesc: 'Configure an access token per GitHub / GitLab host. Tokens are write-only and never echoed back; use read-only scopes (GitHub fine-grained read / GitLab read_api). For a self-hosted instance, enter a full URL (http:// or https://) to choose the scheme; a bare host defaults to https.',
       forgeHostPlaceholder: 'Host or URL, e.g. github.com or http://gitlab.internal',
+      forgePlatformAuto: 'Platform: auto-detect',
+      forgePlatformGitea: 'Gitea / Forgejo',
       forgeTokenPlaceholder: 'Access token',
       forgeTokenSet: 'Set',
       forgeTokenClear: 'Clear',

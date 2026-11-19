@@ -237,6 +237,13 @@ describe('forgeDockIconKind', () => {
     expect(forgeDockIconKind('gitlab')).toBe('gitlab')
   })
 
+  it('draws Gitea for a bound Gitea repository, under either spelling', () => {
+    // "forgejo" is the same API and the same adapter; the alias exists so a
+    // stored value written by either name still resolves.
+    expect(forgeDockIconKind('gitea')).toBe('gitea')
+    expect(forgeDockIconKind('forgejo')).toBe('gitea')
+  })
+
   it('treats an unrecognized platform as GitHub rather than blank', () => {
     expect(forgeDockIconKind('bitbucket')).toBe('github')
   })
@@ -251,6 +258,11 @@ describe('forgeTabTitleKey', () => {
     expect(forgeTabTitleKey('github')).toBe('nav.forgeGithub')
   })
 
+  it('names both Gitea and Forgejo for a Gitea repository', () => {
+    expect(forgeTabTitleKey('gitea')).toBe('nav.forgeGitea')
+    expect(forgeTabTitleKey('forgejo')).toBe('nav.forgeGitea')
+  })
+
   it('defaults to GitHub before a repository is bound', () => {
     // The tab is rendered before the binding resolves; an empty label would be
     // worse than naming the default brand.
@@ -258,10 +270,13 @@ describe('forgeTabTitleKey', () => {
   })
 
   it('tracks the icon: the label and the brand mark never disagree', () => {
-    for (const p of ['', 'github', 'gitlab', 'bitbucket']) {
-      expect(forgeTabTitleKey(p)).toBe(
-        forgeDockIconKind(p) === 'gitlab' ? 'nav.forgeGitlab' : 'nav.forgeGithub',
-      )
+    const expected = {
+      github: 'nav.forgeGithub',
+      gitlab: 'nav.forgeGitlab',
+      gitea: 'nav.forgeGitea',
+    } as const
+    for (const p of ['', 'github', 'gitlab', 'gitea', 'forgejo', 'bitbucket']) {
+      expect(forgeTabTitleKey(p)).toBe(expected[forgeDockIconKind(p)])
     }
   })
 })

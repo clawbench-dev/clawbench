@@ -61,6 +61,11 @@ func newForgeProvider(pf *service.ProjectForge) (forge.Provider, error) {
 			Scheme:     scheme,
 			HTTPClient: httpClient,
 		}, pf.Owner, pf.Repo)
+	case forge.PlatformGitea:
+		// Gitea/Forgejo is a distinct API (/api/v1), not a GitLab variant, so it
+		// must fail here rather than fall through to the GitLab client and probe
+		// the wrong endpoints on the user's server.
+		return nil, fmt.Errorf("gitea: this build has no Gitea/Forgejo client yet")
 	default:
 		return nil, fmt.Errorf("unsupported platform %q", pf.Platform)
 	}

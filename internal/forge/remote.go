@@ -1,5 +1,6 @@
 // Package forge provides a unified, read-only abstraction over source-code
-// hosting platforms (GitHub, GitLab) for browsing issues and PR/MR content.
+// hosting platforms (GitHub, GitLab, Gitea/Forgejo) for browsing issues and
+// PR/MR content.
 package forge
 
 import (
@@ -15,13 +16,46 @@ type Platform string
 const (
 	PlatformGitHub Platform = "github"
 	PlatformGitLab Platform = "gitlab"
+	// PlatformGitea covers Gitea and its community fork Forgejo: they share one
+	// API, so they are one platform here and one adapter later. The UI names
+	// both ("Gitea / Forgejo") because that is how users refer to them.
+	PlatformGitea Platform = "gitea"
 )
 
-// Official hosts for each platform.
+// Official hosts for each platform. Gitea has none: every instance is
+// self-hosted, so it can never be inferred from a host and must be named
+// explicitly (see ParsePlatform).
 const (
 	GitHubHost = "github.com"
 	GitLabHost = "gitlab.com"
 )
+
+// ParsePlatform validates a platform named explicitly by a user or a stored
+// hint. "forgejo" is accepted as an alias for Gitea — it is the same API and
+// users type both — and is normalized to PlatformGitea so the rest of the code
+// only ever sees one value.
+func ParsePlatform(raw string) (Platform, bool) {
+	switch Platform(strings.ToLower(strings.TrimSpace(raw))) {
+	case PlatformGitHub:
+		return PlatformGitHub, true
+	case PlatformGitLab:
+		return PlatformGitLab, true
+	case PlatformGitea, "forgejo":
+		return PlatformGitea, true
+	default:
+		return "", false
+	}
+}
+
+// HasFlatNamespace reports whether the platform namespaces repositories as
+// exactly owner/repo, with no nested groups.
+//
+// GitHub and Gitea both do; GitLab does not. It is the rule a parsed remote's
+// path is checked against: a deeper path on a flat-namespace host is a web URL
+// (…/owner/repo/tree/main) or a typo, not a clone URL.
+func HasFlatNamespace(p Platform) bool {
+	return p == PlatformGitHub || p == PlatformGitea
+}
 
 // API schemes. Self-hosted instances are commonly served over plain http on an
 // internal network, so http is a first-class choice rather than an error.
@@ -140,7 +174,22 @@ var (
 // accepted here — including private-network addresses and internal names that
 // do not resolve. The UI warns before binding a non-official host, since
 // binding sends that host the stored credential.
+//
+// A Gitea instance is indistinguishable from a GitLab one by host alone, so it
+// is never inferred: callers that know the platform (the user picked it, or a
+// hint is recorded for the host) must use ParseRemoteURLAs.
 func ParseRemoteURL(raw string) (Remote, error) {
+	return ParseRemoteURLAs(raw, "")
+}
+
+// ParseRemoteURLAs parses a remote and, when platform is non-empty, treats it as
+// authoritative instead of inferring one from the host.
+//
+// This is the only way to bind a Gitea/Forgejo repository: the host says
+// nothing (every instance is self-hosted) and the fallback would call it GitLab.
+// An empty platform keeps the historical host inference, so existing callers
+// behave exactly as before.
+func ParseRemoteURLAs(raw string, platform Platform) (Remote, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return Remote{}, ErrUnsupportedRemote
@@ -162,11 +211,14 @@ func ParseRemoteURL(raw string) (Remote, error) {
 		return Remote{}, err
 	}
 
-	platform := PlatformForHost(host)
+	if platform == "" {
+		platform = PlatformForHost(host)
+	}
 
-	// GitHub namespaces are always a single owner segment. A deeper path means
-	// this is not a GitHub clone URL (e.g. a /tree/main web URL).
-	if platform == PlatformGitHub && len(segments) != 2 {
+	// A flat-namespace host names repositories as exactly owner/repo. A deeper
+	// path means this is not a clone URL (e.g. a /tree/main web URL) or names a
+	// namespace the host cannot have.
+	if HasFlatNamespace(platform) && len(segments) != 2 {
 		return Remote{}, ErrInvalidRemote
 	}
 
@@ -209,6 +261,12 @@ func remotePathSegments(path string) ([]string, error) {
 
 // PlatformForHost maps a host to its forge platform. The port is stripped
 // before comparison so "github.com:443" is still recognized.
+//
+// It is a FALLBACK, not an authority: every host that is not github.com comes
+// back as GitLab, which is what self-hosted GitLab needs and what Gitea (always
+// self-hosted, never inferable) must not get. Callers that can know better — a
+// platform the user named, or a hint recorded for the host — must resolve it
+// themselves and only fall back here.
 //
 // Exported so the credential flow can pick the right verifier for a bare host,
 // where there is no remote URL to parse.

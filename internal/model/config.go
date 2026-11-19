@@ -395,6 +395,18 @@ type ForgeConfig struct {
 	// fallback, so that a later https hint is not silently masked by a default
 	// written here.
 	Schemes map[string]string `yaml:"schemes"`
+	// Platforms maps a host to the platform it runs ("github", "gitlab",
+	// "gitea"), as named by the user when they configured that host.
+	//
+	// It exists because a host cannot always answer the question: a Gitea or
+	// Forgejo instance is self-hosted and looks exactly like a self-hosted
+	// GitLab, and a GitHub Enterprise host looks like one too. The fallback
+	// (forge.PlatformForHost) treats everything but github.com as GitLab, which
+	// is right for the common case and wrong for those two.
+	//
+	// A host with no entry is unknown, not GitLab — the resolver decides the
+	// fallback, mirroring Schemes above.
+	Platforms map[string]string `yaml:"platforms"`
 	// InsecureTLS allows skipping TLS verification for self-hosted instances
 	// with self-signed certificates. Off by default; enabling it logs a warning.
 	InsecureTLS bool `yaml:"insecure_tls"`
@@ -1318,4 +1330,37 @@ func (c *Config) SetForgeScheme(host, scheme string) {
 		c.Forge.Schemes = make(map[string]string)
 	}
 	c.Forge.Schemes[host] = scheme
+}
+
+// ForgePlatform returns the platform recorded for a host, or "" when the host
+// has no hint. The empty result means "unknown", not GitLab: the caller owns the
+// fallback, so a default written here could never be told apart from a real
+// choice.
+func (c *Config) ForgePlatform(host string) string {
+	if c.Forge.Platforms == nil {
+		return ""
+	}
+	return c.Forge.Platforms[NormalizeForgeHost(host)]
+}
+
+// SetForgePlatform records (or clears, when platform is empty) the platform a
+// host runs.
+//
+// The value is stored as given — validation belongs to the caller, which knows
+// the platform vocabulary (model does not import the forge adapters). Clearing
+// is a delete rather than an empty value, so a host can return to the inferred
+// default.
+func (c *Config) SetForgePlatform(host, platform string) {
+	host = NormalizeForgeHost(host)
+	if host == "" {
+		return
+	}
+	if platform == "" {
+		delete(c.Forge.Platforms, host)
+		return
+	}
+	if c.Forge.Platforms == nil {
+		c.Forge.Platforms = make(map[string]string)
+	}
+	c.Forge.Platforms[host] = platform
 }

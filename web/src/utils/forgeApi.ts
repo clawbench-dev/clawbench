@@ -352,8 +352,19 @@ export function testForgeConnection(): Promise<{ ok: boolean; identity?: string;
  * server normalizes it. A URL also records the API scheme for that host, which
  * is how an http-only instance is reached when the git remote cannot say.
  */
-export function setForgeToken(host: string, token: string): Promise<{ host: string; scheme: string; has_token: boolean }> {
-    return forgeFetch('/api/forge/credentials', { method: 'POST', body: { host, token } })
+/**
+ * Save (or replace) the token for a host.
+ *
+ * `platform` names what the host runs. Omit it to keep whatever the host already
+ * records — a bare host cannot be classified on its own, since a self-hosted
+ * Gitea instance and a self-hosted GitLab look identical.
+ */
+export function setForgeToken(
+    host: string,
+    token: string,
+    platform?: string,
+): Promise<{ host: string; scheme: string; platform?: string; has_token: boolean }> {
+    return forgeFetch('/api/forge/credentials', { method: 'POST', body: { host, token, platform } })
 }
 
 export function deleteForgeToken(host: string): Promise<void> {
@@ -367,15 +378,20 @@ export function deleteForgeToken(host: string): Promise<void> {
  * omit it to re-check the stored credential. A failed check never mutates
  * stored credentials.
  *
+ * `platform` names what the host runs when the caller knows better than the host
+ * name does; omitting it uses the host's recorded hint, then the host-name
+ * inference.
+ *
  * Resolves with `ok:false` (rather than rejecting) when the platform rejects
  * the token, so the caller can tell "bad token" (code `auth`) apart from
  * "host unreachable" (code `network`).
  */
-export function verifyForgeToken(input: { host: string; token?: string }): Promise<{
+export function verifyForgeToken(input: { host: string; token?: string; platform?: string }): Promise<{
     ok: boolean
     identity?: string
     name?: string
     scheme?: string
+    platform?: string
     code?: string
     error?: string
 }> {

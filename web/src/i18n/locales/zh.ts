@@ -282,6 +282,9 @@ export default {
     // overflow menu says which service it opens. Brand names stay untranslated.
     forgeGithub: 'GitHub 集成',
     forgeGitlab: 'GitLab 集成',
+    // Gitea and Forgejo share one API and one adapter; the label names both so
+    // the user recognises their own service.
+    forgeGitea: 'Gitea / Forgejo 集成',
     tasks: '任务',
     notifications: '通知中心',
     meeting: '视频会议',
@@ -590,7 +593,9 @@ export default {
       manual: '手动填写仓库地址',
       urlPlaceholder: 'https://github.com/owner/repo.git',
       submit: '绑定',
-      nonOfficialHost: '非官方主机：绑定后会向该主机发送访问令牌。确认这是你自己的 GitLab / GitHub 实例。',
+      nonOfficialHost: '非官方主机：绑定后会向该主机发送访问令牌。确认这是你自己的 GitLab / GitHub / Gitea 实例。',
+      platformAuto: '平台：按地址自动识别',
+      platformGitea: 'Gitea / Forgejo',
       change: '更换仓库',
       openRepo: '打开仓库',
       unbind: '解绑',
@@ -4780,8 +4785,10 @@ export default {
       skillsSourceGit: '仓库 {name}',
       skillsSourceOther: '智能体 {agent}',
       forgeCredentials: '访问令牌',
-      forgeCredentialsDesc: '为每个 GitHub / GitLab 主机配置访问令牌。令牌仅写入、不会回显；建议使用只读权限（GitHub 细粒度只读 / GitLab read_api）。自建实例可写完整地址（http:// 或 https://）以指定协议，省略则默认 https。',
+      forgeCredentialsDesc: '为每个 GitHub / GitLab / Gitea 主机配置访问令牌。令牌仅写入、不会回显；建议使用只读权限（GitHub 细粒度只读 / GitLab read_api / Gitea 只读）。自建实例可写完整地址（http:// 或 https://）以指定协议，省略则默认 https；自建 Gitea / Forgejo 请在平台里明确选择，否则会按 GitLab 对待。',
       forgeHostPlaceholder: '主机或地址，如 github.com 或 http://gitlab.internal',
+      forgePlatformAuto: '平台：自动识别',
+      forgePlatformGitea: 'Gitea / Forgejo',
       forgeTokenPlaceholder: '访问令牌',
       forgeTokenSet: '已设置',
       forgeTokenClear: '清除',

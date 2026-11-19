@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"clawbench/internal/forge"
 	"clawbench/internal/forge/github"
 	"clawbench/internal/forge/gitlab"
 	"clawbench/internal/model"
+	"clawbench/internal/service"
 )
 
 // forgeCredentialsRequest is the body for setting or clearing a forge token.
@@ -21,6 +23,13 @@ type forgeCredentialsRequest struct {
 	Host string `json:"host"`
 	// Token is the credential. An empty token clears the stored credential.
 	Token string `json:"token"`
+	// Platform names the platform this host runs ("github", "gitlab", "gitea";
+	// "forgejo" is accepted as an alias). Optional: omitting it keeps whatever
+	// hint the host already has, which is what re-saving a token without
+	// restating the platform should do. It exists because a self-hosted host
+	// cannot always be classified from its name — a Gitea instance and a
+	// self-hosted GitLab are indistinguishable.
+	Platform string `json:"platform"`
 }
 
 // ServeForgeCredentials sets or clears the token for a forge host.
@@ -44,10 +53,21 @@ func ServeForgeCredentials(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 			return
 		}
+		// Validate before storing: an unrecognized value would be persisted and
+		// then ignored by every resolver, which looks like the choice was saved
+		// and silently did nothing.
+		platform, ok := forge.ParsePlatform(req.Platform)
+		if req.Platform != "" && !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				strReqError: "unsupported platform",
+				jsonCode:    codeForgeInvalidPlatform,
+			})
+			return
+		}
 		// Any host is accepted, including self-hosted instances on private
 		// networks and unresolvable internal names. The UI warns before binding
 		// a non-official host; the server does not gate it.
-		if err := setForgeToken(host, req.Token, scheme); err != nil {
+		if err := setForgeToken(host, req.Token, scheme, string(platform)); err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError", nil)
 			return
 		}
@@ -57,8 +77,9 @@ func ServeForgeCredentials(w http.ResponseWriter, r *http.Request) {
 			// that host will actually use, which is what the caller needs to
 			// display. Reporting the raw hint would show "" for a bare host even
 			// though requests go out over https.
-			jsonScheme:  forge.ResolveScheme("", model.ConfigInstance.ForgeScheme(host)),
-			"has_token": req.Token != "",
+			jsonScheme:   forge.ResolveScheme("", model.ConfigInstance.ForgeScheme(host)),
+			jsonPlatform: string(resolveForgePlatform(host, req.Platform)),
+			"has_token":  req.Token != "",
 		})
 	case http.MethodDelete:
 		host := model.NormalizeForgeHost(r.URL.Query().Get("host"))
@@ -66,7 +87,7 @@ func ServeForgeCredentials(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 			return
 		}
-		if err := setForgeToken(host, "", ""); err != nil {
+		if err := setForgeToken(host, "", "", ""); err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError", nil)
 			return
 		}
@@ -89,7 +110,11 @@ func ServeForgeCredentials(w http.ResponseWriter, r *http.Request) {
 //     overwriting it would silently switch an http-only instance to https.
 //   - token == "": the credential is being cleared, so its hint goes with it.
 //     A scheme for a host with no credential is state the UI cannot act on.
-func setForgeToken(host, token, scheme string) error {
+//
+// `platform` follows the same three rules for the platform hint: empty keeps
+// whatever the host already had (so re-saving a token does not reset it), a
+// value replaces it, and clearing the credential clears it too.
+func setForgeToken(host, token, scheme, platform string) error {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
@@ -129,21 +154,72 @@ func setForgeToken(host, token, scheme string) error {
 		// hint untouched, since a bare host says nothing about the scheme.
 	}
 
+	prevPlatforms := model.ConfigInstance.Forge.Platforms
+	nextPlatforms := make(map[string]string, len(prevPlatforms)+1)
+	for k, v := range prevPlatforms {
+		nextPlatforms[k] = v
+	}
+	switch {
+	case token == "":
+		delete(nextPlatforms, host)
+	case platform != "":
+		nextPlatforms[host] = platform
+	}
+
 	model.ConfigInstance.Forge.Credentials = next
 	model.ConfigInstance.Forge.Schemes = nextSchemes
+	model.ConfigInstance.Forge.Platforms = nextPlatforms
 
-	// Persist both maps: writeConfigYAML patches the YAML map generically, and a
+	// Persist every map: writeConfigYAML patches the YAML map generically, and a
 	// per-host delete must be reflected on disk too. Writing them together keeps
-	// a token and its scheme hint from diverging on disk.
+	// a token and its hints from diverging on disk.
 	patch := map[string]any{
 		"forge": map[string]any{
 			"credentials": next,
 			"schemes":     nextSchemes,
+			"platforms":   nextPlatforms,
 		},
 	}
 	if err := writeConfigYAML(patch); err != nil {
 		model.ConfigInstance = snapshot
 		return fmt.Errorf("persist forge credential: %w", err)
+	}
+	return nil
+}
+
+// setForgePlatformHint records which platform a host runs, without touching its
+// credential or scheme.
+//
+// It exists for the binding path: binding a repository is the moment the user
+// states what the host is ("this is my Gitea"), and token verification reads the
+// same hint later. Keeping one host-level answer means the binding and the
+// credential form can never disagree about what they are talking to.
+//
+// `platform` must already be validated; the caller owns the vocabulary.
+func setForgePlatformHint(host, platform string) error {
+	host = model.NormalizeForgeHost(host)
+	if host == "" || platform == "" {
+		return nil
+	}
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	if model.ConfigInstance.ForgePlatform(host) == platform {
+		return nil
+	}
+	snapshot := model.ConfigInstance
+
+	prev := model.ConfigInstance.Forge.Platforms
+	next := make(map[string]string, len(prev)+1)
+	for k, v := range prev {
+		next[k] = v
+	}
+	next[host] = platform
+	model.ConfigInstance.Forge.Platforms = next
+
+	if err := writeConfigYAML(map[string]any{"forge": map[string]any{"platforms": next}}); err != nil {
+		model.ConfigInstance = snapshot
+		return fmt.Errorf("persist forge platform: %w", err)
 	}
 	return nil
 }
@@ -156,6 +232,10 @@ type forgeVerifyRequest struct {
 	// Host is verified instead — so a user can re-check a saved token without
 	// retyping it.
 	Token string `json:"token"`
+	// Platform names what the host runs, when the caller knows better than the
+	// host name does. Empty falls back to the stored hint for the host, then to
+	// the host-name inference.
+	Platform string `json:"platform"`
 }
 
 // ServeForgeVerifyToken checks that a token authenticates against a forge host.
@@ -187,6 +267,18 @@ func ServeForgeVerifyToken(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", nil)
 		return
 	}
+	// An explicit platform must be one we can actually speak to; silently
+	// falling back would verify the token against the wrong API.
+	if req.Platform != "" {
+		if _, ok := forge.ParsePlatform(req.Platform); !ok {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":        false,
+				strReqError: "unsupported platform",
+				jsonCode:    codeForgeInvalidPlatform,
+			})
+			return
+		}
+	}
 	// An explicit token verifies what the user just typed; an empty one verifies
 	// the stored credential.
 	token := req.Token
@@ -202,7 +294,7 @@ func ServeForgeVerifyToken(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	author, err := verifyForgeToken(r, host, token, scheme)
+	author, err := verifyForgeToken(r, host, token, scheme, req.Platform)
 	if err != nil {
 		code := "ForgeError"
 		var fe *forge.Error
@@ -217,31 +309,34 @@ func ServeForgeVerifyToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":       true,
-		"identity": author.Login,
-		jsonName:   author.Name,
-		jsonHost:   host,
-		jsonScheme: forge.ResolveScheme(scheme, model.ConfigInstance.ForgeScheme(host)),
+		"ok":         true,
+		"identity":   author.Login,
+		jsonName:     author.Name,
+		jsonHost:     host,
+		jsonScheme:   forge.ResolveScheme(scheme, model.ConfigInstance.ForgeScheme(host)),
+		jsonPlatform: string(resolveForgePlatform(host, req.Platform)),
 	})
 }
 
 // verifyForgeToken builds a host-scoped client and probes the platform's user
-// endpoint. The platform is derived from the host the same way bindings are.
+// endpoint.
 //
 // `scheme` is the scheme the caller named in the host field, or "" when it named
-// none; the instance hint fills the gap.
-func verifyForgeToken(r *http.Request, host, token, scheme string) (forge.Author, error) {
-	return verifyForgeTokenContext(forgeContext(r), host, token, scheme)
+// none; the instance hint fills the gap. `platform` is the platform the caller
+// named, or "" to use the host's recorded hint and then the host-name inference.
+func verifyForgeToken(r *http.Request, host, token, scheme, platform string) (forge.Author, error) {
+	return verifyForgeTokenContext(forgeContext(r), host, token, scheme, platform)
 }
 
 // verifyForgeTokenContext is the context-explicit form of verifyForgeToken, so
 // callers without an *http.Request (the identity cache) share one implementation
-// and therefore one credential/TLS/scheme policy.
-func verifyForgeTokenContext(ctx context.Context, host, token, scheme string) (forge.Author, error) {
+// and therefore one credential/TLS/scheme/platform policy.
+func verifyForgeTokenContext(ctx context.Context, host, token, scheme, platform string) (forge.Author, error) {
 	httpClient := forgeHTTPClient()
 	resolved := forge.ResolveScheme(scheme, model.ConfigInstance.ForgeScheme(host))
 
-	if forge.PlatformForHost(host) == forge.PlatformGitHub {
+	switch resolveForgePlatform(host, platform) {
+	case forge.PlatformGitHub:
 		baseURL := ""
 		if host != forge.GitHubHost {
 			baseURL = fmt.Sprintf("%s://%s/api/v3", resolved, host)
@@ -251,6 +346,13 @@ func verifyForgeTokenContext(ctx context.Context, host, token, scheme string) (f
 			BaseURL:    baseURL,
 			HTTPClient: httpClient,
 		})
+	case forge.PlatformGitea:
+		// Gitea speaks its own API (/api/v1), so probing it as GitLab would
+		// report a confusing 404 instead of the real situation.
+		return forge.Author{}, &forge.Error{
+			Kind:    forge.ErrKindUnsupported,
+			Message: "gitea: this build has no Gitea/Forgejo client",
+		}
 	}
 	return gitlab.VerifyToken(ctx, gitlab.Config{
 		Token:      token,
@@ -258,6 +360,52 @@ func verifyForgeTokenContext(ctx context.Context, host, token, scheme string) (f
 		Scheme:     resolved,
 		HTTPClient: httpClient,
 	})
+}
+
+// resolveForgePlatform decides which platform a host is, in precedence order:
+// what the caller named, the hint recorded for that host, the platform a project
+// binding on that host records, then the host-name inference (github.com →
+// GitHub, everything else → GitLab).
+//
+// The hints sit above the inference because a self-hosted Gitea instance is
+// indistinguishable from a self-hosted GitLab by name, and a recorded choice is
+// the only thing that knows the difference. The binding sits below the explicit
+// hint but above the inference so a binding made before the hint existed (or by
+// an older build) still decides how its host is probed — the user's binding says
+// what the host is, and verification must not contradict it.
+func resolveForgePlatform(host, explicit string) forge.Platform {
+	if p, ok := forge.ParsePlatform(explicit); ok {
+		return p
+	}
+	if p, ok := forge.ParsePlatform(model.ConfigInstance.ForgePlatform(host)); ok {
+		return p
+	}
+	if p, ok := forge.ParsePlatform(forgePlatformFromBindings(host)); ok {
+		return p
+	}
+	return forge.PlatformForHost(host)
+}
+
+// forgePlatformFromBindings reports the platform any project's binding records
+// for host, or "" when nothing is bound to it.
+//
+// A platform is a property of the host, not of one project, so any binding that
+// names it answers for all of them. Newest binding wins (ListProjectForges is
+// ordered by updated_at DESC), which is also the one most recently confirmed by
+// the user.
+func forgePlatformFromBindings(host string) string {
+	bindings, err := service.ListProjectForges()
+	if err != nil {
+		// Best-effort: an unreadable table must not block verification, which
+		// can still fall back to the host-name inference.
+		return ""
+	}
+	for _, pf := range bindings {
+		if strings.EqualFold(pf.Host, host) {
+			return pf.Platform
+		}
+	}
+	return ""
 }
 
 // forgeHTTPClient applies the configured TLS policy to a fresh client. Self-

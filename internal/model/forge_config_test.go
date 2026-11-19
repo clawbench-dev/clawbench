@@ -330,3 +330,42 @@ func TestForgeHasToken_DoesNotRevealToken(t *testing.T) {
 	assert.True(t, cfg.ForgeHasToken("github.com"))
 	assert.False(t, cfg.ForgeHasToken("other.com"))
 }
+
+// TestForgePlatform_HintIsSeparateFromToken mirrors the scheme hint: the platform
+// a host runs is host-level state, looked up through the same normalization, and
+// "unset" must stay distinguishable from "GitLab" so the resolver keeps owning
+// the fallback.
+func TestForgePlatform_HintIsSeparateFromToken(t *testing.T) {
+	var cfg Config
+	cfg.SetForgeToken("git.acme.internal", "tok")
+	cfg.SetForgePlatform("git.acme.internal", "gitea")
+
+	assert.Equal(t, "gitea", cfg.ForgePlatform("git.acme.internal"))
+	assert.Equal(t, "gitea", cfg.ForgePlatform("https://git.acme.internal"))
+	assert.Equal(t, "tok", cfg.ForgeToken("git.acme.internal"))
+	assert.Empty(t, cfg.ForgePlatform("other.internal"), "an unset hint is not a platform")
+
+	// Clearing the hint leaves the token alone.
+	cfg.SetForgePlatform("git.acme.internal", "")
+	assert.Empty(t, cfg.ForgePlatform("git.acme.internal"))
+	assert.Equal(t, "tok", cfg.ForgeToken("git.acme.internal"))
+}
+
+func TestSetForgePlatform_EmptyHostIsNoOp(t *testing.T) {
+	var cfg Config
+	cfg.SetForgePlatform("", "gitea")
+	cfg.SetForgePlatform("   ", "gitea")
+	assert.Empty(t, cfg.Forge.Platforms, "an empty host must not create an entry")
+}
+
+// TestApplyDefaults_NormalizesPlatformKeys keeps a hand-edited (or older-build)
+// hint reachable: a row keyed "https://git.acme.internal" could never be found by
+// a lookup, so it would be a setting that is silently ignored forever.
+func TestApplyDefaults_NormalizesPlatformKeys(t *testing.T) {
+	cfg := Config{Forge: ForgeConfig{
+		Credentials: map[string]string{"git.acme.internal": "tok"},
+		Platforms:   map[string]string{"https://git.acme.internal/": "gitea"},
+	}}
+	ApplyDefaults(&cfg, nil)
+	assert.Equal(t, "gitea", cfg.ForgePlatform("git.acme.internal"))
+}

@@ -345,6 +345,7 @@
 | `enabled` | `true` | 总开关（界面在 设置 → 功能编排）。关掉会**真停用**：停止轮询、隐藏页签、并解除全部项目的仓库绑定（重新打开不会自动恢复） |
 | `credentials` | 空 | 按 host 存令牌，比如 `github.com: ghp_xxx`、`git.acme.internal:8443: glpat-xxx` |
 | `schemes` | 空 | 按 host 记它走 http 还是 https，给只有 http 的自建实例用 |
+| `platforms` | 空 | 按 host 记它是什么平台（`github` / `gitlab` / `gitea`）。只在按地址猜不出来时才需要：自建 Gitea / Forgejo、GitHub 企业版。不写就按域名猜（github.com 算 GitHub，其他都算 GitLab） |
 | `insecure_tls` | `false` | 跳过 TLS 校验，自建实例用自签证书时才开 |
 | `notify.opened` / `closed` / `merged` / `reopened` / `commented` / `pipeline` | 全 `true` | 哪几类事件要推送。**不影响未读角标**（角标记的是变化，不是通知） |
 | `pause_event_tasks` | `false` | 临时停掉所有事件触发的任务。事件照常通知，只是不跑任务 |
