@@ -22,6 +22,23 @@ export interface ExpandResult {
   emptyDirs: string[]
 }
 
+/**
+ * Whether a drag carries files from the OS (a desktop drop), as opposed to an
+ * in-app attach drag, which deliberately keeps `Files` out of the payload.
+ *
+ * A desktop folder also arrives as `Files`: the entry itself is a directory, so
+ * the caller must expand it with `expandDataTransfer` rather than read
+ * `dataTransfer.files`.
+ */
+export function hasOSFileDrop(dt: DataTransfer | null | undefined): boolean {
+  if (!dt) return false
+  try {
+    return !!dt.types?.includes?.('Files')
+  } catch {
+    return false
+  }
+}
+
 /** Normalize a slash path: strip leading/trailing slashes and return '' for root. */
 function normRelPath(p: string): string {
   const s = p.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')

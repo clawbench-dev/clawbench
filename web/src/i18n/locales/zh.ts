@@ -425,6 +425,7 @@ export default {
     select: '选择',
     pasteTitle: '粘贴文本',
     dropSelectCollection: '先选一个知识库，再拖文件进来',
+    dropToAdd: '松开加入知识库',
     urlTitle: '从链接添加',
     urlPrompt: '粘贴网页地址（http 或 https）：',
     urlConfirm: '抓取并加入',

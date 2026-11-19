@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   confirm: vi.fn().mockResolvedValue(true),
   prompt: vi.fn(),
   toast: vi.fn(),
+  uploadFilesToCollection: vi.fn(),
 }))
 
 vi.mock('@/utils/api', () => ({
@@ -40,6 +41,23 @@ vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
   renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
 }))
 vi.mock('@/composables/useKBIndexStatus', () => ({ startKBIndexWatch: vi.fn() }))
+// The panel now owns a desktop-drop upload. The real composable talks XHR and
+// holds module-level singletons; here only the contract matters (which files,
+// which library, what the panel does with the outcome).
+vi.mock('@/composables/useFileUpload', async () => {
+  const { ref } = await import('vue')
+  return {
+    useFileUpload: () => ({
+      dirUploading: ref(false),
+      dirUploadProgress: ref(0),
+      dirUploadSpeed: ref(0),
+      dirUploadTotal: ref(0),
+      dirUploadDone: ref(0),
+      cancelDirUpload: vi.fn(),
+      uploadFilesToCollection: h.uploadFilesToCollection,
+    }),
+  }
+})
 
 import KnowledgePanel from '@/components/kb/KnowledgePanel.vue'
 import { store } from '@/stores/app'
@@ -71,6 +89,8 @@ const i18n = createI18n({
         addFile: 'Add file',
         added: 'Added',
         addPartial: '{first} ({count} more failed)',
+        dropSelectCollection: 'Select a knowledge base before dropping files',
+        dropToAdd: 'Drop to add to this knowledge base',
         addToCollection: 'Add to knowledge base',
         dirImportDone: 'Added {added} files',
         dirImportSummary: '{added} added, {skipped} skipped, {duplicates} already there, {failed} failed',
@@ -207,6 +227,8 @@ describe('KnowledgePanel', () => {
     h.prompt.mockReset()
     h.confirm.mockResolvedValue(true)
     h.toast.mockReset()
+    h.uploadFilesToCollection.mockReset()
+    h.uploadFilesToCollection.mockResolvedValue({ added: 0, failed: 0, errors: [], cancelled: false })
     store.state.projectRoot = '/p'
 
     h.apiGet.mockImplementation(async (url: string) => {
@@ -897,6 +919,102 @@ describe('KnowledgePanel', () => {
     } finally {
       vi.useRealTimers()
     }
+    wrapper.unmount()
+  })
+
+  // ── Desktop drop ──
+  // `expandDataTransfer` only reads `items` + `files`, so a plain object is a
+  // faithful stand-in for the browser's DataTransfer here.
+  function fileDrop(files: File[]) {
+    return { types: ['Files'], files, items: [] }
+  }
+
+  it('uploads dropped desktop files into the selected library', async () => {
+    h.uploadFilesToCollection.mockResolvedValue({ added: 2, failed: 0, errors: [], cancelled: false })
+    const wrapper = mountPanel()
+    await flushPromises()
+    const loadsBefore = h.apiGet.mock.calls.filter((c) => c[0] === '/api/kb/documents?collection_id=2').length
+
+    const a = new File(['a'], 'a.md', { type: 'text/markdown' })
+    const b = new File(['b'], 'b.pdf', { type: 'application/pdf' })
+    await wrapper.trigger('drop', { dataTransfer: fileDrop([a, b]) })
+    await flushPromises()
+
+    expect(h.uploadFilesToCollection).toHaveBeenCalledTimes(1)
+    const [files, collectionId] = h.uploadFilesToCollection.mock.calls[0]
+    expect(files).toEqual([a, b])
+    // The project collection is the one the panel selected on mount.
+    expect(collectionId).toBe(2)
+    expect(h.toast).toHaveBeenCalledWith('Added 2 files', expect.objectContaining({ type: 'success' }))
+    // The list must be re-read so the new documents appear (and the index
+    // progress widget is started).
+    const loadsAfter = h.apiGet.mock.calls.filter((c) => c[0] === '/api/kb/documents?collection_id=2').length
+    expect(loadsAfter).toBe(loadsBefore + 1)
+    wrapper.unmount()
+  })
+
+  it('names the rejected files when part of a desktop drop fails', async () => {
+    h.uploadFilesToCollection.mockResolvedValue({
+      added: 1,
+      failed: 1,
+      errors: ['b.exe: unsupported'],
+      cancelled: false,
+    })
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.trigger('drop', { dataTransfer: fileDrop([new File(['x'], 'x.md')]) })
+    await flushPromises()
+
+    expect(h.toast).toHaveBeenCalledWith('b.exe: unsupported', expect.objectContaining({ type: 'error' }))
+    wrapper.unmount()
+  })
+
+  it('asks for a library before accepting a desktop drop', async () => {
+    h.apiGet.mockImplementation(async (url: string) => {
+      if (url === '/api/kb/collections') return { collections: [] }
+      if (url.startsWith('/api/kb/status')) {
+        return { available: true, vector_enabled: false, stats: { collections: 0, documents: 0, ready_docs: 0, failed_docs: 0, pending_docs: 0, chunks: 0, embedded_chunks: 0, stored_bytes: 0 } }
+      }
+      return {}
+    })
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.trigger('drop', { dataTransfer: fileDrop([new File(['x'], 'x.md')]) })
+    await flushPromises()
+
+    expect(h.uploadFilesToCollection).not.toHaveBeenCalled()
+    expect(h.toast).toHaveBeenCalledWith(
+      'Select a knowledge base before dropping files',
+      expect.anything(),
+    )
+    wrapper.unmount()
+  })
+
+  it('shows the desktop drop overlay while files are dragged over', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('.drop-overlay').exists()).toBe(false)
+
+    await wrapper.trigger('dragenter', { dataTransfer: fileDrop([new File(['x'], 'x.md')]) })
+    expect(wrapper.find('.drop-overlay').exists()).toBe(true)
+    expect(wrapper.find('.drop-overlay').text()).toContain('Drop to add to this knowledge base')
+
+    await wrapper.trigger('dragleave')
+    expect(wrapper.find('.drop-overlay').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('stays silent when the desktop drop upload is cancelled', async () => {
+    h.uploadFilesToCollection.mockResolvedValue({ added: 0, failed: 0, errors: [], cancelled: true })
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.trigger('drop', { dataTransfer: fileDrop([new File(['x'], 'x.md')]) })
+    await flushPromises()
+
+    expect(h.toast).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

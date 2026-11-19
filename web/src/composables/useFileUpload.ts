@@ -27,6 +27,15 @@ export interface PendingFile {
   cancelled?: boolean
 }
 
+/** Outcome of dropping files into a knowledge base collection. */
+export interface CollectionUploadResult {
+  added: number
+  failed: number
+  /** One entry per failed file, already prefixed with its name. */
+  errors: string[]
+  cancelled: boolean
+}
+
 const pendingFiles = ref<PendingFile[]>([])
 let uploadGeneration = 0
 
@@ -963,6 +972,191 @@ export function useFileUpload() {
   }
 
   /**
+   * Upload dropped OS files straight into a knowledge base collection.
+   *
+   * A dropped folder arrives as a pile of files (the caller expands it with
+   * `expandDataTransfer`), so this is the same problem as a directory upload:
+   * it reuses that batch's byte-based bar, cancel handle and retry policy.
+   * The difference is the destination — the KB's own multipart endpoint rather
+   * than a project directory. The server copies the stream into the library,
+   * so nothing is staged in the project and the document has no `source_path`
+   * that could later go stale.
+   *
+   * Resolves with what happened per file; the caller owns the summary toast
+   * (the KB panel words it as "added, indexing in the background").
+   */
+  async function uploadFilesToCollection(
+    files: File[],
+    collectionId: number,
+  ): Promise<CollectionUploadResult> {
+    const result: CollectionUploadResult = { added: 0, failed: 0, errors: [], cancelled: false }
+    if (files.length === 0 || collectionId <= 0) return result
+
+    const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
+    dirUploading.value = true
+    dirBatch = { cancelled: false }
+    const batch = dirBatch
+    dirUploadCancelled.value = false
+    activeDirXhr = null
+    dirUploadTotal.value = files.length
+    dirUploadDone.value = 0
+    beginDirProgress(files, maxSizeBytes)
+
+    let done = 0
+    for (const file of files) {
+      if (batch.cancelled) break
+      if (file.size > maxSizeBytes) {
+        result.failed++
+        result.errors.push(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }))
+      } else {
+        const err = await uploadOneToCollection(file, collectionId, maxSizeBytes, batch)
+        // Checked before counting: an aborted transfer resolves null just like
+        // a successful one, and only the batch token tells them apart.
+        if (batch.cancelled) break
+        if (err === null) {
+          result.added++
+        } else {
+          result.failed++
+          result.errors.push(`${file.name}: ${err}`)
+        }
+      }
+      done++
+      dirUploadDone.value = done
+    }
+
+    // A superseded batch must not tear down the newer batch's bar (same guard
+    // as finishDirUpload).
+    if (batch === dirBatch) {
+      result.cancelled = dirUploadCancelled.value
+      dirUploading.value = false
+      dirUploadProgress.value = 0
+      dirUploadSpeedMeter.reset()
+      activeDirXhr = null
+      dirUploadCancelled.value = false
+    }
+    return result
+  }
+
+  /**
+   * Send one file to the KB upload endpoint, with the same retry policy the
+   * project upload uses. Resolves null on success (or cancellation — the caller
+   * reads the batch token) and the failure reason otherwise.
+   */
+  function uploadOneToCollection(
+    file: File,
+    collectionId: number,
+    maxSizeBytes: number,
+    batch: { cancelled: boolean },
+  ): Promise<string | null> {
+    function sendOnce(): Promise<UploadAttempt> {
+      return new Promise((resolve) => {
+        const xhr = new XMLHttpRequest()
+        const formData = new FormData()
+        formData.append('file', file)
+        activeDirXhr = xhr
+        xhr.open('POST', `/api/kb/documents/upload?collection_id=${collectionId}`)
+        xhr.timeout = 300000
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) reportDirProgress(dirUploadLoadedBytes + e.loaded)
+        }
+
+        xhr.onload = () => {
+          if (batch.cancelled) {
+            resolve({ kind: 'cancelled' })
+            return
+          }
+          let data: { id?: number; error?: string }
+          try {
+            data = JSON.parse(xhr.responseText)
+          } catch {
+            // Body sent, answer not ours: a proxy page or a truncated response.
+            // This is the one failure a resend actually fixes.
+            resolve({
+              kind: 'retry',
+              message: gt('upload.parseError'),
+              reason: 'parse-error',
+              detail: {
+                status: xhr.status,
+                readyState: xhr.readyState,
+                body: (xhr.responseText || '').slice(0, 200),
+              },
+            })
+            return
+          }
+          if (xhr.status >= 200 && xhr.status < 300 && !data?.error) {
+            resolve({ kind: 'ok', path: '' })
+          } else {
+            // Unsupported type, duplicate, too large: resending the same bytes
+            // can never change the server's answer.
+            resolve({ kind: 'fatal', message: data?.error || gt('upload.unknownError') })
+          }
+        }
+
+        xhr.onerror = () => {
+          if (batch.cancelled) {
+            resolve({ kind: 'cancelled' })
+            return
+          }
+          if (file.size > maxSizeBytes) {
+            resolve({
+              kind: 'fatal',
+              message: gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }),
+            })
+            return
+          }
+          resolve({
+            kind: 'retry',
+            message: gt('upload.networkError'),
+            reason: 'network-error',
+            detail: { status: xhr.status, readyState: xhr.readyState },
+          })
+        }
+
+        xhr.ontimeout = () => {
+          if (batch.cancelled) {
+            resolve({ kind: 'cancelled' })
+            return
+          }
+          resolve({
+            kind: 'retry',
+            message: gt('upload.timeout'),
+            reason: 'timeout',
+            detail: { status: xhr.status, readyState: xhr.readyState },
+          })
+        }
+
+        xhr.onabort = () => resolve({ kind: 'cancelled' })
+
+        xhr.send(formData)
+      })
+    }
+
+    async function run(): Promise<string | null> {
+      for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+        const result = await sendOnce()
+        if (result.kind === 'ok') return null
+        if (result.kind === 'cancelled') return null
+        if (result.kind === 'fatal') return result.message
+        appLog.w(TAG, 'kb upload attempt failed', {
+          file: file.name, attempt, reason: result.reason, ...(result.detail || {}),
+        })
+        if (attempt === UPLOAD_MAX_ATTEMPTS) return result.message
+        await sleep(UPLOAD_RETRY_DELAYS_MS[Math.min(attempt, UPLOAD_RETRY_DELAYS_MS.length) - 1])
+        if (batch.cancelled) return null
+      }
+      return null
+    }
+
+    return run().then((err) => {
+      // Bank the file's bytes on every settle path so the bar keeps climbing
+      // across files instead of restarting.
+      bankDirProgress(file.size, maxSizeBytes)
+      return err
+    })
+  }
+
+  /**
    * Terminate the whole in-flight chat upload batch and detach whatever it had
    * already finished ("终止 = 全部清空").
    *
@@ -1103,6 +1297,7 @@ export function useFileUpload() {
     handleFolderSelect,
     handleFileDropToDirStructured,
     handleFolderDropExpanded,
+    uploadFilesToCollection,
     downloadDirAsTree,
   }
 }

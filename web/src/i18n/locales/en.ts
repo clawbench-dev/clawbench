@@ -427,6 +427,7 @@ export default {
     select: 'Select',
     pasteTitle: 'Paste text',
     dropSelectCollection: 'Select a knowledge base before dropping files',
+    dropToAdd: 'Drop to add to this knowledge base',
     urlTitle: 'Add from link',
     urlPrompt: 'Paste a web address (http or https):',
     urlConfirm: 'Fetch and add',
