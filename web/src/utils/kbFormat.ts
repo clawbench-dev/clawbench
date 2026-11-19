@@ -80,6 +80,7 @@ const KB_ERROR_REASONS = new Set([
   'binary',
   'font',
   'pdf_encrypted',
+  'pdf_malformed',
   'pdf_no_text',
   'no_text',
   'file_too_large',

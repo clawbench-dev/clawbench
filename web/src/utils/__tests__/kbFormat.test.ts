@@ -110,6 +110,21 @@ describe('documentErrorText', () => {
     expect(documentErrorText('disk read failed', t)).toBe('disk read failed')
     expect(documentErrorText('', t)).toBe('')
   })
+
+  it('covers every reason the extractor can emit', () => {
+    // A missing code here silently degrades to the raw server string (or
+    // "unsupported file"), which is how legacy .doc once looked like a bug.
+    const reasons = [
+      'legacy_doc', 'legacy_xls', 'legacy_ppt',
+      'image', 'svg', 'audio_video', 'archive', 'executable', 'binary', 'font',
+      'pdf_encrypted', 'pdf_malformed', 'pdf_no_text', 'no_text',
+      'file_too_large', 'not_regular_file', 'unknown_format',
+    ]
+    for (const reason of reasons) {
+      expect(errorReason(reason)).toBe(reason)
+      expect(documentErrorText(`${reason}: detail`, t)).toBe(`kb.reason.${reason}`)
+    }
+  })
 })
 
 describe('skipReasonHint', () => {
