@@ -89,9 +89,14 @@
           <div class="input-group" style="margin-top: var(--space-5);">
             <Server :size="18" class="input-icon" />
             <input
-              type="url"
+              type="text"
+              class="server-url-input"
               v-model="newServerUrl"
               :placeholder="t('login.serverUrlPlaceholder')"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+              inputmode="url"
               autocomplete="off"
               :disabled="loading"
             />
@@ -167,6 +172,7 @@ import IosInstallDrawer from './common/IosInstallDrawer.vue'
 import LoadingIndicator from './common/LoadingIndicator.vue'
 import { downloadByUrl } from '@/utils/download'
 import { getNative } from '@/utils/clawbenchNative'
+import { normalizeServerUrl } from '@/utils/url'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
@@ -270,13 +276,15 @@ async function handleAddServer() {
     return
   }
 
-  loading.value = true
-
-  // Normalize URL
-  let url = newServerUrl.value.trim()
-  if (!/^https?:\/\//i.test(url)) {
-    url = 'https://' + url
+  // Normalize URL. Scheme-less input keeps https; an IPv6 literal gets its
+  // brackets so the result is a URL the native layer can actually load.
+  const url = normalizeServerUrl(newServerUrl.value)
+  if (!url) {
+    error.value = t('login.invalidServerAddress')
+    return
   }
+
+  loading.value = true
 
   // Save to native server list first (so it persists even if connection fails later)
   await saveServer(url, newServerPassword.value, newServerName.value)
@@ -613,7 +621,7 @@ onMounted(() => {
 }
 
 input[type="password"],
-input[type="url"] {
+.server-url-input {
     width: 100%;
     padding: calc(13 * var(--dp)) calc(14 * var(--dp)) calc(13 * var(--dp)) calc(42 * var(--dp));
     border: 1.5px solid var(--border-color);

@@ -6,6 +6,7 @@ import { parse as parseYaml } from 'yaml'
 
 const ANDROID_UTILS = 'android/app/src/main/assets/url-utils.js'
 const DESKTOP_UTILS = 'desktop/assets/url-utils.js'
+const HARMONY_UTILS = 'harmony/entry/src/main/resources/rawfile/login/url-utils.js'
 
 /**
  * Locate a repo file from the vitest cwd. Mirrors the idiom in
@@ -48,18 +49,28 @@ interface Parsed {
  * throws too. (A DOM reference inside an unreached branch is not detected —
  * the function is pure by design, so keep it that way.)
  */
-function parserFor(rel: string): (text: string) => Parsed | null {
+function sandboxFor(rel: string): {
+  parseServerInput: (text: string) => Parsed | null
+  buildServerUrl: (text: string) => string | null
+} {
   const sandbox: Record<string, unknown> = {}
   createContext(sandbox)
   runInContext(readRepoFile(rel), sandbox, { filename: rel })
-  const fn = sandbox.parseServerInput
+  return sandbox as unknown as {
+    parseServerInput: (text: string) => Parsed | null
+    buildServerUrl: (text: string) => string | null
+  }
+}
+
+function parserFor(rel: string): (text: string) => Parsed | null {
+  const fn = sandboxFor(rel).parseServerInput
   if (typeof fn !== 'function') throw new Error(`${rel} did not define parseServerInput`)
-  return fn as (text: string) => Parsed | null
+  return fn
 }
 
 /**
- * One table, asserted against both copies. This is what keeps the two
- * url-utils.js files from drifting: a change to either alone fails here.
+ * One table, asserted against all three copies. This is what keeps the
+ * url-utils.js files from drifting: a change to any one alone fails here.
  */
 const CASES: Array<[string, Parsed | null]> = [
   // Behavior table from the design doc.
@@ -83,26 +94,53 @@ const CASES: Array<[string, Parsed | null]> = [
   ['http://', null],
   ['ftp://host', null],
   ['https://user:pass@host:8443', null],
-  ['[::1]:8080', null],
+  // IPv6 literals (issue #696). Bracket-less, `new URL()` reads the groups as
+  // a scheme ("240e:"), so the parser cannot lean on it for this shape.
+  ['[::1]:8080', { protocol: null, host: '[::1]', port: '8080' }],
+  ['[::1]', { protocol: null, host: '[::1]', port: null }],
+  // A bare literal has no port either — every colon belongs to the address.
+  ['240e:390:1234:5678::123', { protocol: null, host: '[240e:390:1234:5678::123]', port: null }],
+  ['2001:db8::5', { protocol: null, host: '[2001:db8::5]', port: null }],
+  [
+    'http://[240e:390:1234:5678::123]:20000',
+    { protocol: 'http', host: '[240e:390:1234:5678::123]', port: '20000' },
+  ],
+  ['https://[::1]:8443/chat?x=1', { protocol: 'https', host: '[::1]', port: '8443' }],
+  // Malformed literals stay rejected.
+  ['[]:8080', null],
+  // ":20000" is five digits — a port written without brackets, not a group.
+  ['2001:db8::1:20000', null],
+  ['[host]:8080', null],
+  ['[::1', null],
 ]
 
 describe.each([
   ['android', ANDROID_UTILS],
   ['desktop', DESKTOP_UTILS],
+  ['harmony', HARMONY_UTILS],
 ])('parseServerInput (%s copy)', (_label, rel) => {
   for (const [input, expected] of CASES) {
     it(`${JSON.stringify(input)} -> ${JSON.stringify(expected)}`, () => {
       expect(parserFor(rel)(input)).toEqual(expected)
+    })
+
+    it(`${JSON.stringify(input)} can be loaded once built`, () => {
+      // Pins the contract the web form relies on: whatever the client accepts
+      // must come out as a URL the platform (and OkHttp) can actually load.
+      const built = sandboxFor(rel).buildServerUrl(input)
+      if (built === null) return
+      expect(() => new URL(built)).not.toThrow()
     })
   }
 })
 
 /**
  * buildServerUrl is the contract behind the single address field: it is the
- * ONLY thing that turns typed text into a saved URL, and it must reject
- * anything that does not carry both a scheme and a port explicitly. The old UI
- * filled those two in with defaults (https / 20000); the form no longer has
- * them, so "reject and tell the user" is the replacement for "guess".
+ * ONLY thing that turns typed text into a saved URL. A hostname must come with
+ * its port (the form has no port field, so "reject and tell the user" is the
+ * replacement for the old default of 20000). A scheme-less address keeps the
+ * web add-server behaviour of assuming https, and an IPv6 literal — which has
+ * nowhere to attach a port — gets 20000 (issue #696).
  */
 type UrlBuilder = (text: string) => string | null
 
@@ -123,13 +161,13 @@ const BUILD_CASES: Array<[string, string | null]> = [
   ['HTTPS://Host:8443', 'https://Host:8443'],
   ['  https://example.com:20000/chat?x=1  ', 'https://example.com:20000'],
   ['https://host:8443/', 'https://host:8443'],
-  // Missing scheme -> rejected (no default scheme any more).
-  ['192.168.1.100:20000', null],
-  ['example.com:20000', null],
-  // Missing port -> rejected (no default port any more).
+  // Missing port -> rejected (no default port for hostnames any more).
   ['https://192.168.1.100', null],
   ['http://example.com', null],
   ['192.168.1.100', null],
+  // Out-of-range port: `new URL()` refuses it, so the client must too.
+  ['https://host:70000', null],
+  ['1.2.3.4:70000', null],
   // Garbage / unsupported forms.
   ['', null],
   ['   ', null],
@@ -137,12 +175,25 @@ const BUILD_CASES: Array<[string, string | null]> = [
   ['http://', null],
   ['ftp://host:21', null],
   ['https://user:pass@host:8443', null],
-  ['[::1]:8080', null],
+  // Scheme-less host:port keeps the web add-server behaviour (https assumed).
+  ['192.168.1.100:20000', 'https://192.168.1.100:20000'],
+  ['example.com:20000', 'https://example.com:20000'],
+  // IPv6 (issue #696): what the manual documents for public IPv6 access.
+  ['http://[240e:390:1234:5678::123]:20000', 'http://[240e:390:1234:5678::123]:20000'],
+  ['HTTPS://[::1]:8443/chat', 'https://[::1]:8443'],
+  // Bare literal: no brackets to glue a port to, so port 20000 is assumed.
+  ['240e:390:1234:5678::123', 'https://[240e:390:1234:5678::123]:20000'],
+  ['[240e:390:1234:5678::123]:20000', 'https://[240e:390:1234:5678::123]:20000'],
+  // A syntax error in the literal is still rejected.
+  ['http://[240e::123:20000', null],
+  // A port written without brackets on a literal is refused, not guessed at.
+  ['2001:db8::1:20000', null],
 ]
 
 describe.each([
   ['android', ANDROID_UTILS],
   ['desktop', DESKTOP_UTILS],
+  ['harmony', HARMONY_UTILS],
 ])('buildServerUrl (%s copy)', (_label, rel) => {
   for (const [input, expected] of BUILD_CASES) {
     it(`${JSON.stringify(input)} -> ${JSON.stringify(expected)}`, () => {
@@ -378,7 +429,9 @@ describe('url-utils.js copies', () => {
   it('are byte-identical', () => {
     const android = readFileSync(resolveRepo(ANDROID_UTILS))
     const desktop = readFileSync(resolveRepo(DESKTOP_UTILS))
+    const harmony = readFileSync(resolveRepo(HARMONY_UTILS))
     expect(android.equals(desktop)).toBe(true)
+    expect(android.equals(harmony)).toBe(true)
   })
 })
 
@@ -585,8 +638,17 @@ describe.each([
   })
 
   it('leaves a scheme-less address untouched (no default scheme is guessed)', () => {
-    blur('192.168.1.100:20000')
-    expect(address.value).toBe('192.168.1.100:20000')
+    blur('192.168.1.100')
+    expect(address.value).toBe('192.168.1.100')
+  })
+
+  it('brackets a bare IPv6 literal (issue #696)', () => {
+    // Both would otherwise be saved in a form the URL parser rejects.
+    blur('240e:390:1234:5678::123')
+    expect(address.value).toBe('https://[240e:390:1234:5678::123]:20000')
+    // A written scheme is kept; the literal just gets its brackets.
+    blur('http://240e:390:1234:5678::123')
+    expect(address.value).toBe('http://[240e:390:1234:5678::123]:20000')
   })
 
   it('is idempotent across repeated blurs', () => {
