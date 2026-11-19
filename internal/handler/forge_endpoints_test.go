@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"clawbench/internal/forge"
@@ -1256,4 +1257,53 @@ func TestServeForgeRemotes_AppliesStoredPlatformHint(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Remotes, 1)
 	assert.Equal(t, "gitea", resp.Remotes[0]["platform"])
+}
+
+// TestServeForgeItems_EndToEndAgainstMockGitea is the wiring guard for the whole
+// Gitea chain: binding → provider factory → adapter → normalized view. Unlike
+// the GitHub mock above, the Gitea adapter builds its base URL from host+scheme,
+// so a TLS test server can stand in for the instance directly.
+func TestServeForgeItems_EndToEndAgainstMockGitea(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	model.ConfigInstance.Forge.InsecureTLS = true
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/repos/acme/widgets/issues", r.URL.Path)
+		assert.Equal(t, "issues", r.URL.Query().Get("type"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"number":12,"title":"from gitea","state":"open",
+			"user":{"login":"alice"},"comments":1,
+			"html_url":"https://gitea.example.com/acme/widgets/issues/12",
+			"updated_at":"2026-09-10T00:00:00Z"}]`))
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "https://")
+
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: env.ProjectDir,
+		Platform:    "gitea",
+		Host:        host,
+		Scheme:      "https",
+		Owner:       "acme",
+		Repo:        "widgets",
+		Source:      "manual",
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/items?type=issue", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeItems, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp struct {
+		Items   []map[string]any `json:"items"`
+		Binding map[string]any   `json:"binding"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, float64(12), resp.Items[0]["number"])
+	assert.Equal(t, "from gitea", resp.Items[0]["title"])
+	assert.Equal(t, "open", resp.Items[0]["state"])
+	assert.Equal(t, "gitea", resp.Binding["platform"])
 }

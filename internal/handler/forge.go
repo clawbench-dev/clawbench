@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"clawbench/internal/forge"
+	"clawbench/internal/forge/gitea"
 	"clawbench/internal/forge/github"
 	"clawbench/internal/forge/gitlab"
 	"clawbench/internal/model"
@@ -62,10 +63,12 @@ func newForgeProvider(pf *service.ProjectForge) (forge.Provider, error) {
 			HTTPClient: httpClient,
 		}, pf.Owner, pf.Repo)
 	case forge.PlatformGitea:
-		// Gitea/Forgejo is a distinct API (/api/v1), not a GitLab variant, so it
-		// must fail here rather than fall through to the GitLab client and probe
-		// the wrong endpoints on the user's server.
-		return nil, fmt.Errorf("gitea: this build has no Gitea/Forgejo client yet")
+		return gitea.New(gitea.Config{
+			Token:      token,
+			Host:       pf.Host,
+			Scheme:     scheme,
+			HTTPClient: httpClient,
+		}, pf.Owner, pf.Repo)
 	default:
 		return nil, fmt.Errorf("unsupported platform %q", pf.Platform)
 	}

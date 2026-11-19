@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"clawbench/internal/forge"
+	"clawbench/internal/forge/gitea"
 	"clawbench/internal/forge/github"
 	"clawbench/internal/forge/gitlab"
 	"clawbench/internal/model"
@@ -347,12 +348,12 @@ func verifyForgeTokenContext(ctx context.Context, host, token, scheme, platform 
 			HTTPClient: httpClient,
 		})
 	case forge.PlatformGitea:
-		// Gitea speaks its own API (/api/v1), so probing it as GitLab would
-		// report a confusing 404 instead of the real situation.
-		return forge.Author{}, &forge.Error{
-			Kind:    forge.ErrKindUnsupported,
-			Message: "gitea: this build has no Gitea/Forgejo client",
-		}
+		return gitea.VerifyToken(ctx, gitea.Config{
+			Token:      token,
+			Host:       host,
+			Scheme:     resolved,
+			HTTPClient: httpClient,
+		})
 	}
 	return gitlab.VerifyToken(ctx, gitlab.Config{
 		Token:      token,

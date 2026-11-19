@@ -584,7 +584,7 @@ export default {
       noProjectBody: '选择一个项目后即可查看它对应的仓库议题和合并请求。',
       chooseProject: '选择项目',
       noBindingHeader: '未绑定仓库',
-      noBindingBody: '未能自动绑定 GitHub / GitLab 仓库。可在此手动指定；绑定后也可从顶栏更换仓库。',
+      noBindingBody: '未能自动绑定 GitHub / GitLab / Gitea 仓库。可在此手动指定；绑定后也可从顶栏更换仓库。',
       bindRepo: '绑定仓库',
     },
     bind: {
@@ -594,7 +594,8 @@ export default {
       urlPlaceholder: 'https://github.com/owner/repo.git',
       submit: '绑定',
       nonOfficialHost: '非官方主机：绑定后会向该主机发送访问令牌。确认这是你自己的 GitLab / GitHub / Gitea 实例。',
-      platformAuto: '平台：按地址自动识别',
+      platform: '平台（自建实例需要选择）',
+      platformAuto: '自动识别（按地址）',
       platformGitea: 'Gitea / Forgejo',
       change: '更换仓库',
       openRepo: '打开仓库',
@@ -3487,7 +3488,7 @@ export default {
       mail: '邮件',
       share: '分享中心',
 
-      forgeIntegration: 'GitHub/GitLab 集成',
+      forgeIntegration: 'GitHub / GitLab / Gitea 集成',
       skills: '技能',
       mcp: 'MCP 服务',
       providers: '模型提供商',

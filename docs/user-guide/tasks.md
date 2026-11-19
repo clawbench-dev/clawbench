@@ -76,7 +76,7 @@
 
 下方显示**监听仓库**（只读，来自项目绑定）。未绑定项目时会显示警告。
 
-**移动端**事件任务绑定 GitHub/GitLab 仓库事件（issue、PR、流水线等）。
+**移动端**事件任务绑定 GitHub / GitLab / Gitea 仓库事件（issue、PR、流水线等）。
 
 ### 事件变量
 
@@ -147,11 +147,11 @@
 
 **移动端**执行详情查看历史执行的输出、耗时、状态。
 
-## Forge 集成（GitHub / GitLab）
+## Forge 集成（GitHub / GitLab / Gitea）
 
-把 GitHub/GitLab 的议题、PR、流水线搬进界面看，并驱动事件任务。
+把 GitHub / GitLab / Gitea 的议题、PR、流水线搬进界面看，并驱动事件任务。
 
-**桌面端**从左侧 Dock 的「GitHub 集成 / GitLab 集成」图标进入 Forge 面板（标签跟随本项目实际绑定的平台，未绑定时显示「GitHub 集成」）。
+**桌面端**从左侧 Dock 的「GitHub / GitLab / Gitea 集成」图标进入 Forge 面板（标签跟随本项目实际绑定的平台，Gitea 显示为「Gitea / Forgejo 集成」；未绑定时显示「GitHub 集成」）。
 
 面板顶部有**仓库徽标**（点击可改绑定 / 打开仓库 / 解绑）、**全部标记已读**、**刷新**。
 

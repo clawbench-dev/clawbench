@@ -338,7 +338,7 @@
 |---|---|---|
 | `display_limit` | `100` | 文件搜索最多显示多少条（10–500） |
 
-### GitHub / GitLab 集成 `forge`
+### GitHub / GitLab / Gitea 集成 `forge`
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
@@ -350,7 +350,7 @@
 | `notify.opened` / `closed` / `merged` / `reopened` / `commented` / `pipeline` | 全 `true` | 哪几类事件要推送。**不影响未读角标**（角标记的是变化，不是通知） |
 | `pause_event_tasks` | `false` | 临时停掉所有事件触发的任务。事件照常通知，只是不跑任务 |
 
-> 界面入口：设置 → GitHub/GitLab 集成。令牌只写不回显，界面只告诉你「已配置」。
+> 界面入口：设置 → GitHub / GitLab / Gitea 集成。令牌只写不回显，界面只告诉你「已配置」。自建 Gitea / Forgejo 要在「平台」里明确选，否则按 GitLab 对待。
 
 ### 邮件 `mail`
 
@@ -585,7 +585,7 @@
 | 端口映射 | SSH 端口、传输方式 | 服务端 + 本机 | [设置 § 端口映射](settings.md#端口映射) |
 | 邮件 | 状态、账号、新邮件提醒、同步与存储 | 服务端 + 数据库 | [设置 § 邮件](settings.md#邮件) |
 | 分享中心 | 分享范围、下载、有效期、来源项目名 | 服务端 | [设置 § 分享中心](settings.md#分享中心) |
-| GitHub/GitLab 集成 | 令牌、通知开关 | 服务端 | [设置 § GitHub/GitLab 集成](settings.md#githubgitlab-集成) |
+| GitHub / GitLab / Gitea 集成 | 令牌、平台、通知开关 | 服务端 | [设置 § GitHub / GitLab / Gitea 集成](settings.md#github--gitlab--gitea-集成) |
 | 消息推送 | 推送通道、系统通知 | 服务端 + 本机 | [设置 § 消息推送](settings.md#消息推送) |
 | 用量监控 | 周期、指标、额度 | 服务端 | [设置 § 用量监控](settings.md#用量监控) |
 | 安全 | HTTPS 证书、修改密码 | 服务端 | [设置 § 安全](settings.md#安全) |

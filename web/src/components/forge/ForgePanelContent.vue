@@ -357,6 +357,21 @@
          bare v-if would leave the dialog permanently unrendered. -->
     <ModalDialog :open="bindDialogOpen" :title="t('forge.bind.title')" @close="bindDialogOpen = false">
       <div class="forge-bind-form">
+        <!-- Which service the host runs. It sits above both bind paths because
+             it is a property of the host, not of one row: a self-hosted
+             Gitea/Forgejo (and GitHub Enterprise) address is indistinguishable
+             from a self-hosted GitLab, so leaving this on "auto" would bind it
+             as GitLab whichever way the user got here. -->
+        <div class="forge-bind-section">
+          <div class="forge-bind-label">{{ t('forge.bind.platform') }}</div>
+          <select v-model="manualPlatform" class="forge-select">
+            <option value="">{{ t('forge.bind.platformAuto') }}</option>
+            <option value="github">GitHub</option>
+            <option value="gitlab">GitLab</option>
+            <option value="gitea">{{ t('forge.bind.platformGitea') }}</option>
+          </select>
+        </div>
+
         <div v-if="remotes.length" class="forge-bind-section">
           <div class="forge-bind-label">{{ t('forge.bind.fromRemote') }}</div>
           <div class="forge-bind-remotes">
@@ -400,16 +415,6 @@
             :placeholder="t('forge.bind.urlPlaceholder')"
             @keyup.enter="manualUrl && bindFromUrl()"
           />
-          <!-- Which service the URL points at. Only needed when the address
-               cannot say: a self-hosted Gitea/Forgejo (and GitHub Enterprise)
-               host is indistinguishable from a self-hosted GitLab, so leaving
-               this on "auto" would bind it as GitLab. -->
-          <select v-model="manualPlatform" class="forge-input forge-select">
-            <option value="">{{ t('forge.bind.platformAuto') }}</option>
-            <option value="github">GitHub</option>
-            <option value="gitlab">GitLab</option>
-            <option value="gitea">{{ t('forge.bind.platformGitea') }}</option>
-          </select>
           <!-- Warn before submit, not after: the server accepts any host, so a
                self-hosted instance would otherwise bind with no indication that
                it will be sent the credential. -->
@@ -903,8 +908,12 @@ async function bindFromRemote(r: ForgeRemote) {
   // The remote's own scheme is forwarded so the binding persists how the
   // instance is actually reached. It is absent for an ssh remote, which is not
   // the same as https — the server resolves that from the credential hint.
+  //
+  // The platform picker wins over the remote's suggestion: for a self-hosted
+  // host the suggestion is only an inference ("not github.com, so GitLab"), and
+  // the user is the one who knows it is Gitea.
   await submitBinding({
-    platform: r.platform,
+    platform: manualPlatform.value || r.platform,
     host: r.host,
     scheme: r.scheme,
     owner: r.owner,
@@ -1354,7 +1363,11 @@ function formatTime(iso: string): string {
   background: var(--border-color);
   margin: calc(-2 * var(--dp)) 0;
 }
-.forge-input {
+/* The URL field and the platform picker share one box so the dialog reads as a
+   single form. The picker keeps the native arrow: it is a choice, not free
+   text. */
+.forge-input,
+.forge-select {
   width: 100%;
   box-sizing: border-box;
   padding: calc(9 * var(--dp)) var(--space-6);
@@ -1367,15 +1380,13 @@ function formatTime(iso: string): string {
 .forge-input::placeholder {
   color: var(--text-muted);
 }
-.forge-input:focus {
+.forge-input:focus,
+.forge-select:focus {
   outline: none;
   border-color: var(--accent-color);
   box-shadow: 0 0 0 calc(2 * var(--dp)) var(--focus-ring);
 }
-/* The platform picker shares the URL field's look so the two read as one form,
-   but keeps the native arrow: it is a choice, not free text. */
 .forge-select {
-  margin-top: var(--space-4);
   font-family: inherit;
   cursor: pointer;
 }

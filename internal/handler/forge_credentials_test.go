@@ -826,30 +826,38 @@ func TestServeConfig_ForgePlatformsExposed(t *testing.T) {
 }
 
 // TestServeForgeVerifyToken_UsesStoredPlatformHint is the regression guard for
-// the whole point of the hint: a Gitea host must not be probed with the GitLab
-// client. The placeholder Gitea branch answers "unsupported" without any network
-// call, so getting that code proves the hint was honored — falling through to
-// GitLab would have produced a network error against a non-existent host.
+// the whole point of the hint: a Gitea host must be probed at /api/v1, not with
+// the GitLab client at /api/v4. The server here answers ONLY the Gitea path, so
+// reaching it at all proves the hint decided the client.
 func TestServeForgeVerifyToken_UsesStoredPlatformHint(t *testing.T) {
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
 
-	cfg := model.Config{}
-	cfg.SetForgeToken("git.acme.invalid", "tok")
-	cfg.SetForgePlatform("git.acme.invalid", "gitea")
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/user", r.URL.Path, "a Gitea host must not be probed as GitLab")
+		assert.Equal(t, "token tok", r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{"login":"gitea-user","full_name":"Gitea User"}`))
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "https://")
+
+	cfg := model.Config{Forge: model.ForgeConfig{InsecureTLS: true}}
+	cfg.SetForgeToken(host, "tok")
+	cfg.SetForgeScheme(host, "https")
+	cfg.SetForgePlatform(host, "gitea")
 	model.ConfigInstance = cfg
 
 	req := newRequest(t, http.MethodPost, "/api/forge/verify-token",
-		map[string]any{"host": "git.acme.invalid"})
+		map[string]any{"host": host})
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeForgeVerifyToken, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, false, resp["ok"])
-	assert.Equal(t, string(forge.ErrKindUnsupported), resp[jsonCode],
-		"the stored hint must pick the platform, not the host-name inference")
+	assert.Equal(t, true, resp["ok"], w.Body.String())
+	assert.Equal(t, "gitea-user", resp["identity"])
+	assert.Equal(t, "gitea", resp["platform"])
 }
 
 // TestServeForgeVerifyToken_InvalidPlatformRejected keeps a typo from silently
