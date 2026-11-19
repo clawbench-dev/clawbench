@@ -74,7 +74,8 @@ test.describe('表格全屏与数据表换行', () => {
     await expect(sourceTable).toBeVisible({ timeout: 20000 })
 
     // 文字表默认是简单表；切到数据表后，长说明必须完整换行（不是 320dp 截断）。
-    await page.locator('.file-overlay .mode-switch').click()
+    await page.locator('.file-overlay .dt-mode-btn').click()
+    await page.locator('.dt-pop [data-mode-value="data"]').click()
     await expect(sourceTable).toHaveClass(/is-data/)
 
     const longCell = page.locator('.file-overlay .dt-grid tbody tr').first().locator('td').nth(1)
@@ -89,7 +90,8 @@ test.describe('表格全屏与数据表换行', () => {
     await expect(overlay.locator('.block-landscape-live .dt')).toBeVisible()
 
     // 点全屏里的开关：切回简单表。
-    await overlay.locator('.mode-switch').click()
+    await overlay.locator('.dt-mode-btn').click()
+    await page.locator('.dt-pop [data-mode-value="normal"]').click()
     await expect(overlay.locator('.block-landscape-live .dt')).not.toHaveClass(/is-data/)
 
     // 关闭浮层后，改动回写到浮层后面那张表。

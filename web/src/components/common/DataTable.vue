@@ -1,14 +1,20 @@
 <template>
   <div ref="rootRef" class="dt" :class="{ 'is-data': isData, 'is-fill': fill, 'no-wrap': !wrap }">
-    <!-- 表头栏：左边是「简单表 ⇄ 数据表」开关 -->
+    <!-- 表头栏：左边只显示当前类型，点开菜单换成另一个 -->
     <div class="dt-head">
-      <ModeSwitch
-        :model-value="isData"
-        :left-label="t('dataTable.normal')"
-        :right-label="t('dataTable.data')"
+      <button
+        class="dt-mode-btn"
+        type="button"
+        :title="t('dataTable.modeSwitch')"
         :aria-label="t('dataTable.mode')"
-        @update:model-value="setMode($event ? 'data' : 'normal')"
-      />
+        aria-haspopup="menu"
+        :aria-expanded="pop?.kind === 'mode'"
+        :data-mode="isData ? 'data' : 'normal'"
+        @click="openModeMenu"
+      >
+        <span class="dt-mode-label">{{ isData ? t('dataTable.data') : t('dataTable.normal') }}</span>
+        <ChevronDown :size="9" class="dt-mode-caret" />
+      </button>
       <span class="dt-head-spacer" />
       <div class="dt-actions">
         <button
@@ -178,6 +184,8 @@
         v-if="pop"
         ref="popEl"
         class="dt-pop"
+        :class="{ 'is-mode': pop.kind === 'mode' }"
+        :role="pop.kind === 'mode' ? 'menu' : undefined"
         :style="{ left: `${pop.x}px`, top: `${pop.y}px` }"
         @mousedown.stop
       >
@@ -287,6 +295,23 @@
           <button class="dt-pop-item" type="button" @click="copyTable('csv')">{{ t('dataTable.copyCsv') }}</button>
         </template>
 
+        <template v-else-if="pop.kind === 'mode'">
+          <button
+            v-for="option in modeOptions"
+            :key="option.value"
+            class="dt-pop-item"
+            type="button"
+            role="menuitemradio"
+            :aria-checked="option.active"
+            :data-mode-value="option.value"
+            @click="setMode(option.value)"
+          >
+            <Check v-if="option.active" :size="13" class="dt-pop-icon is-check" />
+            <span v-else class="dt-pop-icon-gap" aria-hidden="true" />
+            {{ option.label }}
+          </button>
+        </template>
+
         <template v-else-if="pop.kind === 'columns'">
           <div class="dt-pop-head">{{ t('dataTable.columns') }}</div>
           <div class="dt-pop-list">
@@ -316,6 +341,7 @@ import {
   ArrowUp,
   BarChart3,
   BarChartHorizontal,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -346,7 +372,6 @@ import { blockWrapVersion, getDefaultBlockWrap } from '@/utils/blockWrapRead'
 import { maximizeIconSvg } from '@/utils/blockHeaderIcons'
 import { useToast } from '@/composables/useToast'
 import { registerBlockLandscapeTable, unregisterBlockLandscapeTable } from '@/composables/dataTableLandscape'
-import ModeSwitch from '@/components/common/ModeSwitch.vue'
 
 const props = withDefaults(defineProps<{
   headers: string[]
@@ -393,7 +418,9 @@ const barsOff = ref<Set<number>>(new Set())
 const valueFilters = ref<Map<number, Set<string>>>(new Map())
 
 /** 浮层状态要在复位 watcher 之前声明：那个 watcher 是 immediate 的，会先调 closePop。 */
-const pop = ref<{ kind: 'menu' | 'values' | 'stats' | 'columns' | 'copy'; col: number; x: number; y: number } | null>(null)
+type PopKind = 'menu' | 'values' | 'stats' | 'columns' | 'copy' | 'mode'
+
+const pop = ref<{ kind: PopKind; col: number; x: number; y: number } | null>(null)
 const popEl = ref<HTMLElement | null>(null)
 let popAnchor: HTMLElement | null = null
 
@@ -454,6 +481,12 @@ watch(
 const columnCount = computed(() => props.headers.length)
 const detected = computed(() => isNumericTable(props.headers, props.rows))
 const isData = computed(() => (mode.value === 'auto' ? detected.value : mode.value === 'data'))
+
+/** 表头那个按钮点开的菜单：两项并列，当前项打勾。 */
+const modeOptions = computed(() => [
+  { value: 'normal' as const, label: t('dataTable.normal'), active: !isData.value },
+  { value: 'data' as const, label: t('dataTable.data'), active: isData.value },
+])
 const numeric = computed(() => detectNumericColumns(props.rows, columnCount.value))
 const visibleColumns = computed(() =>
   Array.from({ length: columnCount.value }, (_, i) => i).filter(i => !hidden.value.has(i)),
@@ -899,7 +932,7 @@ function placePop(state: { x: number; y: number }): void {
   state.y = top
 }
 
-function openPop(kind: 'menu' | 'values' | 'stats' | 'columns' | 'copy', col: number, anchor: HTMLElement): void {
+function openPop(kind: PopKind, col: number, anchor: HTMLElement): void {
   closePop()
   popAnchor = anchor
   const rect = anchor.getBoundingClientRect()
@@ -932,6 +965,15 @@ function openStats(col: number): void {
 
 function openColumns(event: MouseEvent): void {
   openPop('columns', 0, event.currentTarget as HTMLElement)
+}
+
+function openModeMenu(event: MouseEvent): void {
+  // 再点一次收起：按下时锚点内部不关浮层（见 onDocMouseDown），所以这里自己判。
+  if (pop.value?.kind === 'mode') {
+    closePop()
+    return
+  }
+  openPop('mode', 0, event.currentTarget as HTMLElement)
 }
 
 function onDocMouseDown(event: MouseEvent): void {
@@ -1027,6 +1069,46 @@ defineExpose({ focusSearch, closeSearch })
 
 .dt-head-spacer {
   flex: 1 1 auto;
+}
+
+/* 当前表格类型：只显示一个词 + 小箭头，点开是「简单表 / 数据表」两项。
+   尺寸和右边那排图标按钮一致（20dp 高），看起来是同一排控件。 */
+.dt-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(2 * var(--dp));
+  height: calc(20 * var(--dp));
+  padding: 0 calc(4 * var(--dp));
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--duration-base), color var(--duration-base);
+}
+
+.dt-mode-btn[aria-expanded='true'] {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.dt-mode-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+
+.dt-mode-caret {
+  color: var(--text-muted);
+  transition: transform var(--duration-base), color var(--duration-base);
+}
+
+.dt-mode-btn[aria-expanded='true'] .dt-mode-caret {
+  transform: rotate(180deg);
+  color: var(--text-secondary);
 }
 
 .dt-actions {
@@ -1372,6 +1454,21 @@ defineExpose({ focusSearch, closeSearch })
   color: var(--text-secondary);
 }
 
+.dt-pop-icon.is-check {
+  color: var(--accent-color);
+}
+
+/* 未选中项用一个等宽空位占住图标列，两行文字才对得齐。 */
+.dt-pop-icon-gap {
+  flex-shrink: 0;
+  width: 13px;
+}
+
+/* 模式菜单只有两个词，比列菜单窄一截。 */
+.dt-pop.is-mode {
+  min-width: calc(132 * var(--dp));
+}
+
 .dt-pop-mini {
   margin-left: auto;
   color: var(--text-muted);
@@ -1536,6 +1633,15 @@ defineExpose({ focusSearch, closeSearch })
 }
 
 @media (hover: hover) {
+  .dt-mode-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  .dt-mode-btn:hover .dt-mode-caret {
+    color: var(--text-secondary);
+  }
+
   .dt-tool:hover:not(.is-on) {
     border-color: var(--text-secondary);
     color: var(--text-primary);
