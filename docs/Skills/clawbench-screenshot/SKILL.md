@@ -169,7 +169,7 @@ README 顶部头图：`README.md` 用 `product_hero.png`，`README.en.md` 用 `p
 | `docs/screenshots/product_hero_assets/phone_landing.webp` | 手机屏幕内容（拷自落地页 `web/landing/img/phone.webp`，900×1980） |
 | `docs/screenshots/product_hero_assets/logo.png` | ClawBench Logo |
 
-两张屏幕素材必须与设备框的实际比例一致（1920/1040、900/1980），改素材时同步改 `.device-screen` / `.phone-screen` 的 `aspect-ratio`，否则 `object-fit: cover` 会切掉标题栏或底部 dock 栏。`product_hero_assets/bg_tech.jpg`、`phone_screenshot.jpg`、`tablet_screenshot.jpg` 与 `docs/screenshots/pc-desktop.png` 是旧三端版式的遗留素材，现已不被任何 HTML 引用。
+两张屏幕素材必须与设备框的实际比例一致（1920/1040、900/1980），改素材时同步改 `.device-screen` / `.phone-screen` 的 `aspect-ratio`，否则 `object-fit: cover` 会切掉标题栏或底部 dock 栏。`product_hero_assets/bg_tech.jpg` 是更早版式的背景，现已不被任何 HTML 引用。
 
 ### 在线预览
 
