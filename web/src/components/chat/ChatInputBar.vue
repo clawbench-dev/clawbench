@@ -153,7 +153,7 @@
           @remove="$emit('remove-quote', quote.id)"
         />
         <!-- Attached file reference cards (shared component, includes pending uploads with local Blob preview) -->
-        <AttachmentTags :files="attachedFiles" :pending-files="visiblePendingFiles" @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
+        <AttachmentTags :files="attachedFiles" :pending-files="visiblePendingFiles" preview-on-hover @file-click="$emit('file-tag-click', $event)" @remove="handleRemoveAttached" @remove-pending="removeFile" />
       </div>
       <!-- Input row: attach + clear + textarea + stop + send -->
       <div class="chat-input-row">

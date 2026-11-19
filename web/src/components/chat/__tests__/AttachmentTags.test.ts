@@ -510,3 +510,124 @@ describe('AttachmentTags (clickable: false)', () => {
     expect(hoverRule![1]).toContain(':not(.is-not-clickable)')
   })
 })
+
+/**
+ * Hover preview — a glance at the picture behind a card.
+ *
+ * Desktop pointers only, and only on surfaces that opt in (the composer).
+ * The popup is teleported to <body> because the strip scrolls horizontally and
+ * would otherwise clip it, so assertions read `document`, not the wrapper.
+ */
+describe('AttachmentTags (hover preview)', () => {
+  const HOVER_QUERY = '(hover: hover) and (pointer: fine)'
+  let originalMatchMedia: typeof window.matchMedia
+
+  function stubHover(matches: boolean) {
+    window.matchMedia = vi.fn((query: string) => ({
+      matches: matches && query === HOVER_QUERY,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+  }
+
+  beforeEach(() => {
+    originalMatchMedia = window.matchMedia
+    stubHover(true)
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    window.matchMedia = originalMatchMedia
+    document.querySelectorAll('.attachment-hover-preview').forEach((el) => el.remove())
+  })
+
+  async function hoverCard(wrapper: ReturnType<typeof mount>, selector = '.attachment-ref') {
+    await wrapper.find(selector).trigger('mouseenter')
+    await vi.advanceTimersByTimeAsync(200)
+    await wrapper.vm.$nextTick()
+  }
+
+  it('shows the image above the card and closes it on pointer leave', async () => {
+    const wrapper = mount(AttachmentTags, {
+      props: { previewOnHover: true, files: [{ path: 'shot.png', isDir: false }] },
+      attachTo: document.body,
+    })
+
+    await hoverCard(wrapper)
+    const popup = document.querySelector('.attachment-hover-preview')
+    expect(popup, 'hovering an image card must show the preview').not.toBeNull()
+    // Teleported: the scrolling strip must not be able to clip it.
+    expect(popup!.parentElement).toBe(document.body)
+    expect(popup!.querySelector('img')!.getAttribute('src')).toBe('http://localhost/thumb/shot.png')
+
+    await wrapper.find('.attachment-ref').trigger('mouseleave')
+    expect(document.querySelector('.attachment-hover-preview')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('does nothing when the surface did not opt in', async () => {
+    const wrapper = mount(AttachmentTags, {
+      props: { files: [{ path: 'shot.png', isDir: false }] },
+      attachTo: document.body,
+    })
+    await hoverCard(wrapper)
+    expect(document.querySelector('.attachment-hover-preview')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('only previews images (a text file card has no picture)', async () => {
+    const wrapper = mount(AttachmentTags, {
+      props: { previewOnHover: true, files: [{ path: 'src/main.go', isDir: false }] },
+      attachTo: document.body,
+    })
+    await hoverCard(wrapper)
+    expect(document.querySelector('.attachment-hover-preview')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('never fires on a touch pointer', async () => {
+    stubHover(false)
+    const wrapper = mount(AttachmentTags, {
+      props: { previewOnHover: true, files: [{ path: 'shot.png', isDir: false }] },
+      attachTo: document.body,
+    })
+    await hoverCard(wrapper)
+    expect(document.querySelector('.attachment-hover-preview')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('closes on any scroll instead of chasing the card', async () => {
+    const wrapper = mount(AttachmentTags, {
+      props: { previewOnHover: true, files: [{ path: 'shot.png', isDir: false }] },
+      attachTo: document.body,
+    })
+    await hoverCard(wrapper)
+    expect(document.querySelector('.attachment-hover-preview')).not.toBeNull()
+
+    document.dispatchEvent(new Event('scroll'))
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.attachment-hover-preview')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('closes when the card is removed under the pointer', async () => {
+    // `mouseleave` never fires for an element that is unmounted under the
+    // cursor, so removal has to close the popup itself.
+    const wrapper = mount(AttachmentTags, {
+      props: { previewOnHover: true, files: [{ path: 'shot.png', isDir: false }] },
+      attachTo: document.body,
+    })
+    await hoverCard(wrapper)
+    expect(document.querySelector('.attachment-hover-preview')).not.toBeNull()
+
+    await wrapper.setProps({ files: [] })
+    expect(document.querySelector('.attachment-hover-preview')).toBeNull()
+    wrapper.unmount()
+  })
+})
