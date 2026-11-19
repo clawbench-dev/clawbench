@@ -59,8 +59,20 @@ type openaiChatRequest struct {
 type openaiChatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
-	// Reasoning is read-only: some reasoning models return their thinking here.
-	Reasoning string `json:"reasoning,omitempty"`
+	// Reasoning and ReasoningContent are read-only response fields (omitempty
+	// keeps them out of the request body): reasoning models return their
+	// thinking in "reasoning" (OpenRouter) or "reasoning_content" (DeepSeek,
+	// GLM, Qwen, Gemini's OpenAI-compatible layer).
+	Reasoning        string `json:"reasoning,omitempty"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+}
+
+// thinking returns whichever reasoning field the gateway filled in.
+func (m openaiChatMessage) thinking() string {
+	if m.ReasoningContent != "" {
+		return m.ReasoningContent
+	}
+	return m.Reasoning
 }
 
 // DoRecommendPass performs the recommendation call using an OpenAI-compatible
@@ -135,7 +147,7 @@ func (s *OpenAISummarizer) DoAskPassDetailed(ctx context.Context, systemPrompt, 
 	choice := chatResp.Choices[0]
 	result := strings.TrimSpace(choice.Message.Content)
 	if result == "" {
-		return "", false, fmt.Errorf("openai returned empty recommendation output%s", reasoningOnlyHint(choice.FinishReason, choice.Message.Reasoning))
+		return "", false, fmt.Errorf("openai returned empty recommendation output%s", reasoningOnlyHint(choice.FinishReason, choice.Message.thinking()))
 	}
 	return result, isTruncated(choice.FinishReason), nil
 }
@@ -205,7 +217,7 @@ func (s *OpenAISummarizer) DoSummarizePass(ctx context.Context, text, systemProm
 	choice := chatResp.Choices[0]
 	result := strings.TrimSpace(choice.Message.Content)
 	if result == "" {
-		return "", fmt.Errorf("openai (pass %d) returned empty output%s", pass, reasoningOnlyHint(choice.FinishReason, choice.Message.Reasoning))
+		return "", fmt.Errorf("openai (pass %d) returned empty output%s", pass, reasoningOnlyHint(choice.FinishReason, choice.Message.thinking()))
 	}
 
 	slog.Info(

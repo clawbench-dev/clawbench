@@ -12,6 +12,10 @@ import (
 // blockTypeText is the ContentBlock type identifier for text blocks.
 const blockTypeText = "text"
 
+// blockTypeThinking is the ContentBlock type identifier for extended-thinking
+// (reasoning) blocks returned by the Anthropic Messages API.
+const blockTypeThinking = "thinking"
+
 // taskSummarizePrompt is the system prompt for task execution summarization.
 // It preserves Markdown formatting and condenses the output to ~30% length.
 const taskSummarizePrompt = `你是一个精简总结助手。请对以下 AI 助手的输出进行精简总结，要求：

@@ -208,7 +208,8 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 	}
 	// A changed UIDVALIDITY means every cached UID now points at a different
 	// message. There is no way to reconcile that incrementally.
-	if cached.UIDValidity != 0 && st.UIDValidity != 0 && cached.UIDValidity != st.UIDValidity {
+	reset := cached.UIDValidity != 0 && st.UIDValidity != 0 && cached.UIDValidity != st.UIDValidity
+	if reset {
 		if cerr := ClearMailFolderMessages(folderID); cerr != nil {
 			return 0, cerr
 		}
@@ -218,17 +219,8 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 	if err != nil {
 		return 0, err
 	}
-	msgs := make([]MailMessage, 0, len(headers))
-	for _, h := range headers {
-		if h.Deleted {
-			// Flagged for removal by another client (or by us, on a server
-			// without UIDPLUS where the expunge has to be left to someone
-			// else). Caching it would put it back in the list on every pass.
-			continue
-		}
-		msgs = append(msgs, headerToRow(accountID, folderID, h))
-	}
-	firstSync := cached.LastSeenUID == 0
+	msgs := cacheableRows(accountID, folderID, headers)
+	firstSync := cached.LastSeenUID == 0 || reset
 	inserted, err := UpsertMailMessages(msgs)
 	if err != nil {
 		return 0, err
@@ -238,12 +230,7 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 		slog.Debug("mail: refresh flags failed", "folder", f.Name, "error", err)
 	}
 
-	var lastSeen uint32
-	for _, h := range headers {
-		if h.UID > lastSeen {
-			lastSeen = h.UID
-		}
-	}
+	lastSeen := newestUID(headers)
 	if err := UpdateMailFolderState(folderID, st.UIDValidity, st.UIDNext, lastSeen,
 		int(st.Unseen), int(st.Messages)); err != nil {
 		return len(inserted), err
@@ -255,9 +242,35 @@ func syncMailFolder(ctx context.Context, client mail.Client, accountID, folderID
 	// first connect are history, not "new mail". Deliberately keyed on
 	// UIDVALIDITY rather than LastSeenUID: a folder that was synced while
 	// EMPTY keeps LastSeenUID at 0, so the UID-based test would treat the first
-	// message it ever receives as history and never announce it.
-	notifyNewInboxMail(accountID, f, inserted, cached.UIDValidity == 0)
+	// message it ever receives as history and never announce it. A UIDVALIDITY
+	// reset re-fetches the whole window for the same reason: history, not new.
+	notifyNewInboxMail(accountID, f, inserted, cached.UIDValidity == 0 || reset)
 	return len(inserted), nil
+}
+
+// cacheableRows turns a fetched window into rows, dropping messages another
+// client already flagged for removal (or that we flagged ourselves on a server
+// without UIDPLUS): caching one would put it back in the list on every pass.
+func cacheableRows(accountID, folderID int64, headers []mail.MessageHeader) []MailMessage {
+	msgs := make([]MailMessage, 0, len(headers))
+	for _, h := range headers {
+		if h.Deleted {
+			continue
+		}
+		msgs = append(msgs, headerToRow(accountID, folderID, h))
+	}
+	return msgs
+}
+
+// newestUID is the highest UID in the fetched window, 0 when it is empty.
+func newestUID(headers []mail.MessageHeader) uint32 {
+	var lastSeen uint32
+	for _, h := range headers {
+		if h.UID > lastSeen {
+			lastSeen = h.UID
+		}
+	}
+	return lastSeen
 }
 
 // dispatchMailTriggers hands freshly cached messages to the email-trigger

@@ -131,6 +131,7 @@ import { useUiScale } from '@/composables/useUiScale'
 import { DEFAULT_MAIL_SPLIT_RATIO, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 import { mailErrorMessage, type MailDraftFile, type MailMessage, type MailReplyContext } from '@/utils/mailTypes'
 import { takePendingMailCompose } from '@/composables/useMailCompose'
+import { mailPanelMounted, mailPanelUnmounted, takePendingMailOpen } from '@/composables/useMailOpen'
 
 const props = defineProps<{ active?: boolean }>()
 const emit = defineEmits<{ 'open-settings': [] }>()
@@ -245,6 +246,7 @@ async function loadAll(): Promise<void> {
 }
 
 onMounted(async () => {
+  mailPanelMounted()
   window.addEventListener('clawbench-open-mail', handleOpenMail)
   window.addEventListener('clawbench-compose-mail', handleComposeMail)
   measureWidth()
@@ -264,9 +266,14 @@ onMounted(async () => {
   // one mounted (the tab is lazily created). Consume it once the account list
   // exists, otherwise the composer would open with no account to send from.
   await consumePendingCompose()
+  // Same for a "open this mail" jump: the tab switch that brought us here was
+  // requested before this listener existed, so the id was parked instead.
+  const pendingMessageId = takePendingMailOpen()
+  if (pendingMessageId) openMessage(pendingMessageId)
 })
 
 onBeforeUnmount(() => {
+  mailPanelUnmounted()
   window.removeEventListener('clawbench-open-mail', handleOpenMail)
   window.removeEventListener('clawbench-compose-mail', handleComposeMail)
   widthObserver?.disconnect()
