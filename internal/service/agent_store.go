@@ -105,6 +105,8 @@ CREATE TABLE IF NOT EXISTS agents (
 	acp_config_options TEXT NOT NULL DEFAULT '',
 	acp_mcp_http INTEGER NOT NULL DEFAULT 0,
 	acp_mcp_sse INTEGER NOT NULL DEFAULT 0,
+	acp_delete_session_probed INTEGER NOT NULL DEFAULT 0,  -- 1 = the session/delete probe got an answer (issue #707)
+	acp_delete_session_confirmed INTEGER NOT NULL DEFAULT 0,  -- 1 = session/delete works, even when not advertised
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	disabled INTEGER NOT NULL DEFAULT 0,
 	project_id INTEGER DEFAULT NULL,  -- NULL = global; value = project-only (see model.Agent.ProjectID)

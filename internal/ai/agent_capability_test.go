@@ -764,6 +764,8 @@ func setupCapabilityDB(t *testing.T) *sql.DB {
 		acp_list_sessions BOOLEAN NOT NULL DEFAULT false,
 		acp_mcp_http BOOLEAN NOT NULL DEFAULT false,
 		acp_mcp_sse BOOLEAN NOT NULL DEFAULT false,
+		acp_delete_session_probed BOOLEAN NOT NULL DEFAULT false,
+		acp_delete_session_confirmed BOOLEAN NOT NULL DEFAULT false,
 		updated_at DATETIME
 	)`)
 	require.NoError(t, err)

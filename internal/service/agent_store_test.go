@@ -299,6 +299,10 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"acp_thinking_efforts_by_model": true,
 		"acp_available_models":          true,
 		"acp_config_options":            true, "acp_mcp_http": true, "acp_mcp_sse": true,
+		// session/delete probe result (issue #707): "probed" records that we got
+		// an answer at all, "confirmed" that the method actually works — some
+		// agents implement it without advertising the capability.
+		"acp_delete_session_probed": true, "acp_delete_session_confirmed": true,
 		"auto_approve": true, "disabled": true,
 		"project_id": true,
 		// Model-provider binding (NULL = use the CLI's own configuration).

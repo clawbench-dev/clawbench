@@ -2310,6 +2310,22 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: persist the probe result for session/delete (issue #707). Some
+	// agents (CodeBuddy) implement it without advertising the capability, so the
+	// Initialize advertisement cannot answer it; the probed flag records what one
+	// real request taught us and is what the permanent-delete path gates on.
+	// "probed" is stored separately so a probe that could not reach the agent
+	// never masquerades as "the method is unavailable".
+	for _, col := range []string{"acp_delete_session_probed", "acp_delete_session_confirmed"} {
+		var has int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col).Scan(&has)
+		if has == 0 {
+			if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN " + col + " BOOLEAN NOT NULL DEFAULT false"); err != nil {
+				return fmt.Errorf("failed to add %s column to agents: %w", col, err)
+			}
+		}
+	}
+
 	// Migrate: per-agent MCP policy. Stores only WHICH global servers the agent
 	// may use ({"mode":"all"|"none"|"selected","names":[...]}); the server
 	// definitions live in config.yaml so API keys stay in one place.
