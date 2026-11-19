@@ -116,6 +116,7 @@ describe('documentErrorText', () => {
     // "unsupported file"), which is how legacy .doc once looked like a bug.
     const reasons = [
       'legacy_doc', 'legacy_xls', 'legacy_ppt',
+      'wps_doc', 'wps_sheet', 'wps_slides', 'pages', 'numbers', 'keynote',
       'image', 'svg', 'audio_video', 'archive', 'executable', 'binary', 'font',
       'pdf_encrypted', 'pdf_malformed', 'pdf_no_text', 'no_text',
       'file_too_large', 'not_regular_file', 'unknown_format',

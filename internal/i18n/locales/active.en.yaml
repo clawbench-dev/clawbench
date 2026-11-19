@@ -578,6 +578,12 @@ KBNameRequired: A knowledge base name is required and must be at most 100 charac
 KBReasonLegacyDoc: Legacy Word format (.doc) is not supported; save it as .docx and add it again
 KBReasonLegacyXls: Legacy Excel format (.xls) is not supported; save it as .xlsx and add it again
 KBReasonLegacyPpt: Legacy PowerPoint format (.ppt) is not supported; save it as .pptx and add it again
+KBReasonWPSDoc: WPS Writer documents (.wps) are not supported; save as .docx and add it again
+KBReasonWPSSheet: WPS Spreadsheets (.et) are not supported; save as .xlsx and add it again
+KBReasonWPSSlides: WPS Presentations (.dps) are not supported; save as .pptx and add it again
+KBReasonPages: Pages documents (.pages) are not supported; export as .docx and add it again
+KBReasonNumbers: Numbers spreadsheets (.numbers) are not supported; export as .xlsx and add it again
+KBReasonKeynote: Keynote presentations (.key) are not supported; export as .pptx and add it again
 KBReasonImage: Text inside images cannot be read directly (OCR is required); convert it to text first
 KBReasonSVG: Text inside SVG cannot be extracted reliably; convert it to text first
 KBReasonAudioVideo: Audio and video need transcription first; the knowledge base does not support them

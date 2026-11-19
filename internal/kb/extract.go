@@ -65,6 +65,12 @@ const (
 	ReasonLegacyDoc     = "legacy_doc"
 	ReasonLegacyXls     = "legacy_xls"
 	ReasonLegacyPpt     = "legacy_ppt"
+	ReasonWPSDoc        = "wps_doc"
+	ReasonWPSSheet      = "wps_sheet"
+	ReasonWPSSlides     = "wps_slides"
+	ReasonPages         = "pages"
+	ReasonNumbers       = "numbers"
+	ReasonKeynote       = "keynote"
 	ReasonImage         = "image"
 	ReasonSVG           = "svg"
 	ReasonAudioVideo    = "audio_video"
@@ -128,36 +134,42 @@ var textExtensions = map[string]bool{
 // unsupportedExtensions maps a format with no extractable text (or a legacy
 // binary Office format we deliberately do not parse) to its reason code.
 var unsupportedExtensions = map[string]string{
-	".doc":   ReasonLegacyDoc,
-	".xls":   ReasonLegacyXls,
-	".ppt":   ReasonLegacyPpt,
-	".png":   ReasonImage,
-	".jpg":   ReasonImage,
-	".jpeg":  ReasonImage,
-	".gif":   ReasonImage,
-	".bmp":   ReasonImage,
-	".webp":  ReasonImage,
-	".svg":   ReasonSVG,
-	".mp3":   ReasonAudioVideo,
-	".wav":   ReasonAudioVideo,
-	".m4a":   ReasonAudioVideo,
-	".mp4":   ReasonAudioVideo,
-	".mov":   ReasonAudioVideo,
-	".mkv":   ReasonAudioVideo,
-	".zip":   ReasonArchive,
-	".rar":   ReasonArchive,
-	".7z":    ReasonArchive,
-	".tar":   ReasonArchive,
-	".gz":    ReasonArchive,
-	".exe":   ReasonExecutable,
-	".dll":   ReasonExecutable,
-	".so":    ReasonExecutable,
-	".dylib": ReasonExecutable,
-	".bin":   ReasonBinary,
-	".ttf":   ReasonFont,
-	".otf":   ReasonFont,
-	".woff":  ReasonFont,
-	".woff2": ReasonFont,
+	".doc":     ReasonLegacyDoc,
+	".xls":     ReasonLegacyXls,
+	".ppt":     ReasonLegacyPpt,
+	".wps":     ReasonWPSDoc,
+	".et":      ReasonWPSSheet,
+	".dps":     ReasonWPSSlides,
+	".pages":   ReasonPages,
+	".numbers": ReasonNumbers,
+	".key":     ReasonKeynote,
+	".png":     ReasonImage,
+	".jpg":     ReasonImage,
+	".jpeg":    ReasonImage,
+	".gif":     ReasonImage,
+	".bmp":     ReasonImage,
+	".webp":    ReasonImage,
+	".svg":     ReasonSVG,
+	".mp3":     ReasonAudioVideo,
+	".wav":     ReasonAudioVideo,
+	".m4a":     ReasonAudioVideo,
+	".mp4":     ReasonAudioVideo,
+	".mov":     ReasonAudioVideo,
+	".mkv":     ReasonAudioVideo,
+	".zip":     ReasonArchive,
+	".rar":     ReasonArchive,
+	".7z":      ReasonArchive,
+	".tar":     ReasonArchive,
+	".gz":      ReasonArchive,
+	".exe":     ReasonExecutable,
+	".dll":     ReasonExecutable,
+	".so":      ReasonExecutable,
+	".dylib":   ReasonExecutable,
+	".bin":     ReasonBinary,
+	".ttf":     ReasonFont,
+	".otf":     ReasonFont,
+	".woff":    ReasonFont,
+	".woff2":   ReasonFont,
 }
 
 // ValidateFile performs the cheap up-front checks so an obviously unusable
@@ -195,7 +207,24 @@ func ValidateFile(path, ext string, size, maxFileBytes int64) error {
 }
 
 func isOfficeExt(ext string) bool {
-	return ext == ".docx" || ext == ".xlsx" || ext == ".pptx"
+	return officeBaseExt(ext) != ext || ext == ".docx" || ext == ".xlsx" || ext == ".pptx"
+}
+
+// officeBaseExt maps the OOXML variants (macro-enabled, template, slideshow)
+// onto the extractor that reads them. They are the same zip + XML container;
+// only the extension and the optional macros differ, and macros live in parts
+// the extractor never reads. Treating them as unsupported would make users
+// convert a file that already is the modern format.
+func officeBaseExt(ext string) string {
+	switch ext {
+	case ".docm", ".dotx", ".dotm":
+		return ".docx"
+	case ".xlsm", ".xltx", ".xltm":
+		return ".xlsx"
+	case ".pptm", ".potx", ".potm", ".ppsx", ".ppsm":
+		return ".pptx"
+	}
+	return ext
 }
 
 // extPDF is the one document extension that is neither plain text nor an
@@ -210,7 +239,7 @@ func ExtractFile(path, ext string, maxTextBytes int64) ([]Block, string, error) 
 	var blocks []Block
 	var err error
 	var warning string
-	switch ext {
+	switch officeBaseExt(ext) {
 	case ".pdf":
 		blocks, err = extractPDF(path)
 	case ".docx":

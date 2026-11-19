@@ -187,6 +187,45 @@ func TestValidateFileRejectsKnownUnsupported(t *testing.T) {
 	require.ErrorIs(t, err, ErrFileTooLarge)
 }
 
+// The WPS and iWork native formats cannot be parsed, but each one has a
+// different conversion target. Mapping them to legacy_doc/xls/ppt would tell
+// the user to save a .wps as a ".doc", which is not what they should do.
+func TestValidateFileRejectsOfficeAliasesWithTheirOwnReason(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "alias", []byte("anything"))
+	cases := map[string]string{
+		".wps":     ReasonWPSDoc,
+		".et":      ReasonWPSSheet,
+		".dps":     ReasonWPSSlides,
+		".pages":   ReasonPages,
+		".numbers": ReasonNumbers,
+		".key":     ReasonKeynote,
+	}
+	for ext, want := range cases {
+		err := ValidateFile(path, ext, 8, 1<<20)
+		require.ErrorIs(t, err, ErrUnsupportedFile, ext)
+		var fileErr *FileError
+		require.ErrorAs(t, err, &fileErr, ext)
+		require.Equal(t, want, fileErr.Reason, ext)
+	}
+}
+
+// Macro-enabled and template OOXML files are the same container as .docx; they
+// must be read instead of rejected (macros live in parts the extractor ignores).
+func TestExtractFile_AcceptsOOXMLVariants(t *testing.T) {
+	body := `<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>宏文档正文</w:t></w:r></w:p></w:body></w:document>`
+	for _, ext := range []string{".docm", ".dotx", ".dotm"} {
+		path := writeZip(t, t.TempDir(), "variant"+ext, map[string]string{"word/document.xml": body})
+		blocks, _, err := ExtractFile(path, ext, 1<<20)
+		require.NoError(t, err, ext)
+		require.Len(t, blocks, 1, ext)
+		require.Contains(t, blocks[0].Text, "宏文档正文", ext)
+	}
+	for _, ext := range []string{".xlsm", ".xltx", ".pptm", ".ppsx"} {
+		require.True(t, isOfficeExt(ext), ext)
+	}
+}
+
 func TestValidateFileUnknownExtensionSniffsContent(t *testing.T) {
 	dir := t.TempDir()
 	textPath := writeFile(t, dir, "README", []byte("plain text"))

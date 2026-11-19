@@ -567,6 +567,12 @@ KBNameRequired: 知识库名称不能为空，且不超过 100 个字
 KBReasonLegacyDoc: 旧版 Word 格式（.doc）不支持，请另存为 .docx 后重新添加
 KBReasonLegacyXls: 旧版 Excel 格式（.xls）不支持，请另存为 .xlsx 后重新添加
 KBReasonLegacyPpt: 旧版 PowerPoint 格式（.ppt）不支持，请另存为 .pptx 后重新添加
+KBReasonWPSDoc: WPS 文字文档（.wps）不支持，请另存为 .docx 后重新添加
+KBReasonWPSSheet: WPS 表格（.et）不支持，请另存为 .xlsx 后重新添加
+KBReasonWPSSlides: WPS 演示（.dps）不支持，请另存为 .pptx 后重新添加
+KBReasonPages: Pages 文档（.pages）不支持，请导出为 .docx 后重新添加
+KBReasonNumbers: Numbers 表格（.numbers）不支持，请导出为 .xlsx 后重新添加
+KBReasonKeynote: Keynote 演示（.key）不支持，请导出为 .pptx 后重新添加
 KBReasonImage: 图片里的文字无法直接读取（需要 OCR），请先转成文本
 KBReasonSVG: SVG 里的文字无法稳定提取，请先转成文本
 KBReasonAudioVideo: 音视频需要先转写为文字，知识库暂不支持
