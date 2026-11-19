@@ -6,8 +6,9 @@
         v-if="pillVisible"
         ref="pillEl"
         class="voice-pill"
+        :class="{ 'voice-pill-recording': voiceState === 'recording' }"
         :style="pillStyle"
-        role="status"
+        @click.stop
       >
         <span v-if="voiceState === 'recording'" class="voice-dot" aria-hidden="true"></span>
         <span v-if="voiceState === 'recording'" class="voice-wave" aria-hidden="true">
@@ -20,7 +21,11 @@
              pill is gone — a "已写入" badge would only repeat what the field
              already shows. -->
         <span v-if="voiceState === 'recording'" class="voice-pill-hint">{{ elapsedText }}</span>
-        <span v-else-if="voiceState === 'transcribing'" class="voice-pill-text">{{ t('chat.voice.transcribing') }}</span>
+        <span v-else-if="voiceState === 'transcribing'" class="voice-pill-text" role="status">{{ t('chat.voice.transcribing') }}</span>
+        <button v-if="voiceState === 'recording'" type="button" class="voice-stop-btn"
+          :aria-label="t('chat.voice.stopRecording')" :title="t('chat.voice.stopRecording')" @click.stop="stopFromOverlay">
+          <Square :size="14" fill="currentColor" />
+        </button>
       </div>
     </Transition>
 
@@ -52,7 +57,11 @@
           </div>
         </div>
 
-        <div v-if="capsuleDone" class="voice-capsule-actions">
+        <button v-if="voiceState === 'recording'" type="button" class="voice-stop-btn"
+          :aria-label="t('chat.voice.stopRecording')" :title="t('chat.voice.stopRecording')" @click.stop="stopFromOverlay">
+          <Square :size="14" fill="currentColor" />
+        </button>
+        <div v-else-if="capsuleDone" class="voice-capsule-actions">
           <CopyButton :text="voiceText" class="voice-cap-icon-btn" />
           <button class="voice-cap-btn primary" @click="draftToChat">{{ t('chat.voice.toChat') }}</button>
           <button class="voice-cap-x" :title="t('chat.voice.discard')" @click="discardDraft">
@@ -104,7 +113,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Mic, X } from 'lucide-vue-next'
+import { Mic, Square, X } from 'lucide-vue-next'
 import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useVoiceInput } from '@/composables/useVoiceInput'
@@ -132,6 +141,11 @@ const {
   shortcutKey,
   targetRect,
 } = useVoiceInput()
+
+function stopFromOverlay() {
+  cleanupFabPointer()
+  if (voiceState.value === 'recording') void stop()
+}
 
 /* ── elapsed timer (only while recording) ─────────────────────────── */
 const elapsed = ref(0)
@@ -175,9 +189,7 @@ const pillStyle = computed(() => ({ top: `${pillPos.value.top}px`, left: `${pill
 function placePill() {
   const el = targetEl.value
   if (!el || !el.isConnected) return
-  // Always just above the field itself — for the chat composer that means it
-  // floats over the toolbar row, which is fine: it is the closest spot to the
-  // line being written, and the pill never takes clicks.
+  // Keep the timer and stop button next to the line being dictated.
   //
   // Editors that know where the caret is (CodeMirror) report that line instead
   // of their whole box: a file editor fills the screen, and its top edge is
@@ -434,7 +446,7 @@ watch(pillVisible, (on) => {
     clearInterval(followTimer)
     followTimer = null
   }
-})
+}, { flush: 'post' })
 watch([capsuleVisible, capsuleDone], () => { placeCapsule() })
 watch(fabVisible, (on) => { if (on) placeFab() })
 
@@ -454,6 +466,7 @@ function onWindowTouchStart(e: TouchEvent) {
   // Belt and braces for WebViews that move the caret on the touch itself
   // rather than on the compatibility mouse events.
   if (el?.closest?.('.voice-fab')) e.preventDefault()
+  if (el?.closest?.('.voice-fab, .voice-pill-recording, .voice-capsule')) e.stopPropagation()
 }
 
 function onWindowPointerDown(e: PointerEvent) {
@@ -465,7 +478,8 @@ function onWindowPointerDown(e: PointerEvent) {
     onFabDown()
     return
   }
-  if (el.closest('.voice-capsule')) e.stopPropagation()
+  if (el.closest('.voice-stop-btn')) e.preventDefault()
+  if (el.closest('.voice-pill-recording, .voice-capsule')) e.stopPropagation()
 }
 
 onMounted(() => {
@@ -544,6 +558,26 @@ watch(voiceMode, () => { reposition() })
   pointer-events: none;
   white-space: nowrap;
 }
+.voice-pill-recording {
+  height: calc(44 * var(--dp));
+  padding-inline-end: 0;
+  pointer-events: auto;
+}
+.voice-stop-btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: calc(44 * var(--dp));
+  height: calc(44 * var(--dp));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-red, #e5484d);
+  touch-action: manipulation;
+}
+.voice-stop-btn:hover,
+.voice-stop-btn:active { background: var(--bg-hover); }
 .voice-pill-text {
   overflow: hidden;
   text-overflow: ellipsis;
