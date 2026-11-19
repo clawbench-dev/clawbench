@@ -1,8 +1,10 @@
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   EMBEDDED_DEFAULT_PORT,
   chooseEmbeddedPort,
   embeddedServerArgs,
+  embeddedServerBinaryPath,
   embeddedServerUrl,
   isClawBenchHealth,
   isLocalServerUrl,
@@ -132,5 +134,21 @@ describe('shouldAdoptEmbeddedServer', () => {
     // must reopen the new address rather than a dead one.
     expect(shouldAdoptEmbeddedServer('http://127.0.0.1:20000', 'http://127.0.0.1:20000')).toBe(true)
     expect(shouldAdoptEmbeddedServer('http://127.0.0.1:20000/', 'http://127.0.0.1:20000')).toBe(true)
+  })
+})
+
+describe('embeddedServerBinaryPath', () => {
+  it('puts the server next to the app executable, in server/', () => {
+    // electron-builder's extraFiles places it at <app root>/server/ — NOT under
+    // resources/, which a desktop payload update replaces wholesale. Getting
+    // this wrong makes a fused install look like a thin one (and disables the
+    // version gate's "reinstall the all-in-one package" guard).
+    expect(embeddedServerBinaryPath('/opt/ClawBench/clawbench-desktop')).toBe(
+      path.join('/opt/ClawBench', 'server', 'clawbench.exe'),
+    )
+  })
+
+  it('never looks inside resources/', () => {
+    expect(embeddedServerBinaryPath('/opt/ClawBench/clawbench-desktop')).not.toContain('resources')
   })
 })
