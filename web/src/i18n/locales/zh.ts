@@ -2768,6 +2768,10 @@ export default {
       noResultsTitle: '没有找到“{q}”',
       noResultsHere: '只在当前目录「{dir}」里搜过了，没有匹配的文件。',
       noResultsDeep: '在「{dir}」及它的所有子目录里搜过了，没有匹配的文件。',
+      // 项目根目录没有目录名可填：直接说范围，不把「在当前目录」塞进「」里
+      // （那样会读成「只在当前目录「在当前目录」里搜过了」）。
+      noResultsHereRoot: '只在当前目录里搜过了，没有匹配的文件。',
+      noResultsDeepRoot: '在当前目录及它的所有子目录里搜过了，没有匹配的文件。',
       noResultsProject: '在整个项目里搜过了，没有匹配的文件。',
       widenRecursive: '搜索子目录',
       widenGlobal: '在整个项目中搜索',

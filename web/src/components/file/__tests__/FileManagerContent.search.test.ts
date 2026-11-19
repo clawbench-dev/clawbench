@@ -289,6 +289,17 @@ describe('FileManagerContent — resident search', () => {
       expect(empty.text()).toContain('「components」')
     })
 
+    it('states the scope without a folder name at the project root', async () => {
+      // At the root `currentDir` is empty. Filling the placeholder with a
+      // generic word produced 「只在当前目录「在当前目录」里搜过了」, which is what
+      // this guards: the scope is said once, with no empty or duplicated quote.
+      const wrapper = await mountEmpty({ currentDir: '' })
+      const text = wrapper.find('[data-role="file-search-empty"]').text()
+      expect(text).toContain('只在当前目录里搜过了')
+      expect(text).not.toContain('「')
+      expect(text).not.toContain('当前目录「在当前目录」')
+    })
+
     it('says the whole project was searched under global scope', async () => {
       const wrapper = await mountEmpty({ currentDir: 'src' }, { scope: 'global' })
       const empty = wrapper.find('[data-role="file-search-empty"]')
@@ -334,6 +345,26 @@ describe('FileManagerContent — resident search', () => {
       await wrapper.find('[data-role="file-search-empty"] [data-action="widen-deep"]').trigger('click')
       expect(mocks.searchState.recursive).toBe(true)
       expect(mocks.searchState.scope).toBe('current')
+    })
+
+    it('renders clearing as a text button, not a third pill', async () => {
+      // Three equally-weighted pills read as three choices; clearing is the way
+      // out, so it must not look like a third widening.
+      const wrapper = await mountEmpty({ currentDir: 'src' })
+      const clear = wrapper.find('[data-role="file-search-empty"] [data-action="widen-reset"]')
+      expect(clear.classes()).toContain('fs-empty-clear')
+      expect(clear.classes()).not.toContain('fbtn')
+      for (const widen of wrapper.findAll('[data-role="file-search-empty"] [data-action^="widen-"]')) {
+        if (widen.attributes('data-action') === 'widen-reset') continue
+        expect(widen.classes()).toContain('fbtn')
+      }
+    })
+
+    it('hides the result count when nothing matched', async () => {
+      // 「找到 0 个文件」 above an empty state that already says so was a second
+      // headline for the same fact.
+      const wrapper = await mountEmpty({ currentDir: 'src' }, { total: 0 })
+      expect(wrapper.find('.fs-results-count').exists()).toBe(false)
     })
 
     it('clearing drops the query and the result layer', async () => {

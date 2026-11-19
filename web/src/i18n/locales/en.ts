@@ -2768,6 +2768,10 @@ export default {
       noResultsTitle: 'No results for "{q}"',
       noResultsHere: 'Searched only in "{dir}" — no matching files.',
       noResultsDeep: 'Searched "{dir}" and every subfolder — no matching files.',
+      // Project root has no name to quote; say the scope plainly instead of
+      // rendering Searched only in "".
+      noResultsHereRoot: 'Searched only in this folder — no matching files.',
+      noResultsDeepRoot: 'Searched this folder and every subfolder — no matching files.',
       noResultsProject: 'Searched the whole project — no matching files.',
       widenRecursive: 'Search subfolders',
       widenGlobal: 'Search whole project',

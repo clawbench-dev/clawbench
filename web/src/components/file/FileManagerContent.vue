@@ -178,7 +178,9 @@
          with the list content -->
     <div class="file-list-area">
     <!-- Search result count header (fixed above the scrollable list/grid) -->
-    <div v-if="searchHasQuery && !(search.state.searching && search.state.results.length === 0)" class="fs-results-count">
+    <!-- Hidden at zero: the empty state below already says nothing matched,
+         and 「找到 0 个文件」 on top of it was a second, redundant headline. -->
+    <div v-if="searchHasQuery && search.state.total > 0 && !(search.state.searching && search.state.results.length === 0)" class="fs-results-count">
       {{ search.state.truncated ? t('file.search.resultCountPlus', { limit: search.getDisplayLimit() }) : t('file.search.resultCount', { count: search.state.total }) }}
     </div>
     <!-- File list -->
@@ -214,9 +216,12 @@
                 <component :is="option.icon" :size="14" />
                 <span>{{ option.label }}</span>
               </button>
-              <button class="fbtn" data-action="widen-reset" @click="exitSearch">
-                <X :size="14" />
-                <span>{{ t('file.search.clearSearch') }}</span>
+              <!-- Clearing is the way OUT, not another widening: as a third
+                   pill it competed with the two real actions and (on a phone)
+                   wrapped onto a line of its own, which read as a stray
+                   button. A muted text button keeps the two actions a pair. -->
+              <button class="fs-empty-clear" data-action="widen-reset" @click="exitSearch">
+                {{ t('file.search.clearSearch') }}
               </button>
             </div>
           </template>
@@ -328,9 +333,12 @@
                 <component :is="option.icon" :size="14" />
                 <span>{{ option.label }}</span>
               </button>
-              <button class="fbtn" data-action="widen-reset" @click="exitSearch">
-                <X :size="14" />
-                <span>{{ t('file.search.clearSearch') }}</span>
+              <!-- Clearing is the way OUT, not another widening: as a third
+                   pill it competed with the two real actions and (on a phone)
+                   wrapped onto a line of its own, which read as a stray
+                   button. A muted text button keeps the two actions a pair. -->
+              <button class="fs-empty-clear" data-action="widen-reset" @click="exitSearch">
+                {{ t('file.search.clearSearch') }}
               </button>
             </div>
           </template>
@@ -1394,10 +1402,14 @@ const noResultsTitle = computed(() => t('file.search.noResultsTitle', { q: searc
 
 const noResultsDesc = computed(() => {
     if (isGlobalScope.value) return t('file.search.noResultsProject')
-    const dir = baseName(props.currentDir) || t('file.search.wordCurrent')
-    return isRecursiveEffective.value
-        ? t('file.search.noResultsDeep', { dir })
-        : t('file.search.noResultsHere', { dir })
+    // At the project root `currentDir` is empty, so there is no folder name to
+    // quote: filling the placeholder with a generic word produced
+    // 「只在当前目录「在当前目录」里搜过了」. Those two scopes get their own copy.
+    const dir = baseName(props.currentDir)
+    if (isRecursiveEffective.value) {
+        return dir ? t('file.search.noResultsDeep', { dir }) : t('file.search.noResultsDeepRoot')
+    }
+    return dir ? t('file.search.noResultsHere', { dir }) : t('file.search.noResultsHereRoot')
 })
 
 /**
@@ -3783,10 +3795,33 @@ function scrollSelectedIntoView(path) {
 .fs-empty-actions {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     justify-content: center;
     /* Same gap as the shared footer rows (`.bs-footer`), so a pair of pills
        here is spaced like a pair of pills anywhere else. */
     gap: var(--space-4);
+}
+
+/* Escape hatch in the search empty state: clearing the query is not one of the
+   widening actions, so it stays a text button instead of a third pill. Muted
+   and underlined, it reads as "or get out of here" rather than as another
+   equally-weighted choice. */
+.fs-empty-clear {
+    /* Its own line, always: on a phone the two pills plus a third item filled
+       the row edge to edge, and an inline link read as a leftover. */
+    flex-basis: 100%;
+    padding: var(--space-2) var(--space-3);
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    text-decoration: underline;
+    text-underline-offset: calc(2 * var(--dp));
+    cursor: pointer;
+}
+
+.fs-empty-clear:hover {
+    color: var(--text-secondary);
 }
 
 /* The paste row names the directory it will land in, and directory names have
