@@ -10,6 +10,8 @@ import {
   bridgeMembers,
   contractViolation,
   decideClientBuild,
+  healthBreakingChanges,
+  healthFields,
   parseProtocol,
   preloadBridgeBreakingChanges,
   preloadBridgeMembers,
@@ -243,6 +245,61 @@ describe('bridgeBreakingChanges', () => {
     // Silence here would mean "compatible" for a file we never parsed.
     expect(bridgeBreakingChanges(before, null)).toHaveLength(1)
     expect(bridgeBreakingChanges('not an interface', before)).toHaveLength(1)
+  })
+})
+
+describe('healthBreakingChanges', () => {
+  const health = (...fields: string[]) =>
+    [
+      'package handler',
+      '',
+      'type healthResponse struct {',
+      '\tApp string `json:"app"`',
+      ...fields,
+      '}',
+      '',
+      'func next() int { return 0 }',
+    ].join('\n')
+
+  const before = health('\tVersion string `json:"version"`', '\tProtocol int `json:"protocol"`')
+
+  it('accepts an added field', () => {
+    // The real case (v0.143.0): `pid` was added so the desktop shell can tell
+    // its own server from an older instance on the same port. A stale shell
+    // never reads the field, so shipping it without a protocol bump is safe.
+    const after = health(
+      '\tVersion string `json:"version"`',
+      '\tProtocol int `json:"protocol"`',
+      '\tPID int `json:"pid"`',
+    )
+    expect(healthBreakingChanges(before, after)).toEqual([])
+  })
+
+  it('rejects a removed field', () => {
+    const after = health('\tVersion string `json:"version"`')
+    expect(healthBreakingChanges(before, after)).toEqual(['health: protocol was removed'])
+  })
+
+  it('rejects a renamed field', () => {
+    // Renaming is a removal on the wire, whatever the Go field is called.
+    const after = health(
+      '\tVersion string `json:"version"`',
+      '\tProtocolNumber int `json:"protocolNumber"`',
+    )
+    expect(healthBreakingChanges(before, after)).toEqual(['health: protocol was removed'])
+  })
+
+  it('reads the wire name, not the Go field name', () => {
+    // `PID` is `pid` on the wire; a shell keyed on the Go name would miss it.
+    const fields = healthFields(
+      health('\tVersion string `json:"version"`', '\tProtocol int `json:"protocol"`', '\tPID int `json:"pid"`'),
+    )
+    expect([...fields.keys()]).toEqual(['app', 'version', 'protocol', 'pid'])
+  })
+
+  it('fails closed when either side cannot be read', () => {
+    expect(healthBreakingChanges(before, null)).toHaveLength(1)
+    expect(healthBreakingChanges('package handler', before)).toHaveLength(1)
   })
 })
 

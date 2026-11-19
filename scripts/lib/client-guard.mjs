@@ -32,9 +32,11 @@
  * not move, the release FAILS. That is deliberate — the alternative is shipping
  * an incompatible pair and finding out from users.
  *
- * The one exception is the TypeScript bridge interface, which may GROW: an old
- * shell simply does not implement the new optional members. Removing a member or
- * making one mandatory still fails (see `bridgeBreakingChanges`).
+ * The exception is the TypeScript bridge interface (and the desktop preload
+ * object implementing it) and the `/api/health` response, which may GROW: an
+ * old shell simply does not implement or ask for the new member. Removing a
+ * member or making one mandatory still fails (see `bridgeBreakingChanges` and
+ * `healthBreakingChanges`).
  *
  * Outputs (written to $GITHUB_OUTPUT when present, always printed):
  *   prev_tag, protocol,
@@ -64,6 +66,14 @@ export const CONTRACT_PATHS = [
   'desktop/src/preload',
   'android/app/src/main/java/com/clawbench/app/BrowserJavascriptInterface.java',
 ]
+
+/**
+ * The `/api/health` response. Like the bridge interface it may GROW: both
+ * stale shells decode it field by field and read a missing field as "unknown",
+ * so a new field they never ask for is compatible. Removals still fail (see
+ * `healthBreakingChanges`), so it is no longer all-or-nothing.
+ */
+export const HEALTH_CONTRACT_PATH = 'internal/handler/health.go'
 
 /** Paths whose change forces a rebuild of the respective client. */
 export const ANDROID_PATHS = ['android']
@@ -254,11 +264,68 @@ export function bridgeBreakingChanges(prevSource, nextSource) {
 }
 
 /**
+ * `GET /api/health` is read by two stale shells — the desktop one (to wait for
+ * the server it spawned) and the Android one (to gate on the protocol) — and
+ * both decode it field by field. `healthResponse` is a struct whose fields are
+ * tagged `json:"<camelCase>"`, so a new field leaves the wire untouched.
+ *
+ * A field that is only ever tested against a value the stale shell never asks
+ * for is therefore additive, exactly like an optional bridge member: a missing
+ * `pid` reads as "unknown", never as "wrong". A field removed, renamed, or one
+ * that a stale shell has to understand (e.g. a new required handshake) still
+ * breaks — the rule is "no member of the previous response disappeared".
+ *
+ * Line-based on purpose: the struct closes with a `}` at column 0 and every
+ * field sits at one tab, so comments and nested braces cannot be mistaken for
+ * fields. Go struct field names are not wire names, so compare the JSON tags.
+ *
+ * @returns Map<wireName, {optional: boolean}> — callers must treat an empty map
+ * as "could not be read", not as "compatible".
+ */
+export function healthFields(source) {
+  const fields = new Map()
+  if (typeof source !== 'string') return fields
+  const open = source.indexOf('type healthResponse struct {')
+  if (open === -1) return fields
+  const end = source.indexOf('\n}', open)
+  if (end === -1) return fields
+  const body = source.slice(open, end)
+  const field = /^\t[A-Za-z_$][\w$]*\s+[^\n`]*`json:"([^"]+)"`/gm
+  for (const m of body.matchAll(field)) {
+    // `json:"pid,omitempty"` — only an omitted value is readable as "unknown".
+    const [name, opts = ''] = m[1].split(',')
+    fields.set(name, { optional: opts.split(',').includes('omitempty') })
+  }
+  return fields
+}
+
+/**
+ * @returns string[] human-readable reasons; empty means purely additive.
+ */
+export function healthBreakingChanges(prevSource, nextSource) {
+  const before = healthFields(prevSource)
+  const after = healthFields(nextSource)
+  // An unreadable struct is not evidence of compatibility. Fail closed.
+  if (before.size === 0 || after.size === 0) {
+    return ['the /api/health response could not be read at one of the two releases']
+  }
+
+  const reasons = []
+  for (const [name] of before) {
+    if (!after.has(name)) reasons.push(`health: ${name} was removed`)
+  }
+  // A stale shell only reads the fields it already knows, so a NEW field it
+  // never asks for cannot break it — the same rule as bridgeBreakingChanges.
+  return reasons
+}
+
+/**
  * Whether a contract change forces a protocol bump.
  *
  * `breakingContractPaths` is the subset of changed contract files that a shell
  * built for the previous protocol cannot survive. The caller decides membership:
- * the bridge interface is only breaking when `bridgeBreakingChanges` says so.
+ * the bridge interface is only breaking when `bridgeBreakingChanges` says so,
+ * and `/api/health` only when `healthBreakingChanges` says so.
  *
  * @param {object} input
  * @param {string[]} input.breakingContractPaths
@@ -343,8 +410,8 @@ function main() {
 
   // Split the changed contract files into "a stale shell can still live with
   // this" and "it cannot". The two bridge files — the page's interface and the
-  // desktop shell's implementation of it — only break on removals; the rest stay
-  // all-or-nothing.
+  // desktop shell's implementation of it — and the /api/health response only
+  // break on removals; the rest stay all-or-nothing.
   const bridgeResult = (path, compare) =>
     contractChanged.includes(path) ? compare(fileAt(prevTag, path), fileAt(tag, path)) : []
   const bridgeReasons = bridgeResult(BRIDGE_CONTRACT_PATH, bridgeBreakingChanges)
@@ -352,10 +419,12 @@ function main() {
     DESKTOP_BRIDGE_IMPLEMENTATION_PATH,
     preloadBridgeBreakingChanges,
   )
+  const healthReasons = bridgeResult(HEALTH_CONTRACT_PATH, healthBreakingChanges)
   const breakingContractPaths = contractChanged.filter(
     (p) =>
       (p !== BRIDGE_CONTRACT_PATH || bridgeReasons.length > 0) &&
-      (p !== DESKTOP_BRIDGE_IMPLEMENTATION_PATH || preloadReasons.length > 0),
+      (p !== DESKTOP_BRIDGE_IMPLEMENTATION_PATH || preloadReasons.length > 0) &&
+      (p !== HEALTH_CONTRACT_PATH || healthReasons.length > 0),
   )
 
   const protocolBumped = prevProtocol !== null && prevProtocol !== currentProtocol
@@ -378,6 +447,7 @@ function main() {
         ...breakingContractPaths.map((p) => `  - ${p}`),
         ...(bridgeReasons.length > 0 ? bridgeReasons.map((r) => `    · ${r}`) : []),
         ...(preloadReasons.length > 0 ? preloadReasons.map((r) => `    · ${r}`) : []),
+        ...(healthReasons.length > 0 ? healthReasons.map((r) => `    · ${r}`) : []),
         '',
         `The previous release was protocol ${prevProtocol}, this one is ${currentProtocol}.`,
         `Bump ${PROTOCOL_FILE} (to ${currentProtocol + 1}) if the change breaks an existing`,
