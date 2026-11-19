@@ -19,6 +19,22 @@ vi.mock('@/composables/useConnectionOverlay', () => ({
     useConnectionOverlay: () => ({ mode: mockMode }),
 }))
 
+// The close button is gated on the HOST's answer (frameless desktop only).
+// Pinned here so the two cases below do not depend on the test environment.
+const windowControlsMock = vi.hoisted(() => ({
+    hasControls: false,
+    close: vi.fn(),
+}))
+vi.mock('@/composables/useWindowControls', () => ({
+    useWindowControls: () => ({
+        hasCustomControls: windowControlsMock.hasControls,
+        isMaximized: false,
+        minimize: vi.fn(),
+        toggleMaximize: vi.fn(),
+        close: windowControlsMock.close,
+    }),
+}))
+
 const i18n = createI18n({
     legacy: false,
     locale: 'zh',
@@ -27,6 +43,7 @@ const i18n = createI18n({
             systemResources: { overlayReconnecting: '连接断开，正在重连…' },
             settings: { restartingPleaseWait: '正在重启，请稍候…' },
             login: { switchServer: '切换服务端' },
+            appHeader: { windowClose: '关闭' },
         },
     },
 })
@@ -63,6 +80,8 @@ describe('ConnectionOverlay', () => {
 
     beforeEach(() => {
         mockMode.value = null
+        windowControlsMock.hasControls = false
+        windowControlsMock.close.mockClear()
         // Start from a clean <body>. The component teleports there, and a case
         // that throws still runs afterEach — but a stale node from a case that
         // died before cleanup would otherwise be the FIRST match for `$()`.
@@ -184,5 +203,38 @@ describe('ConnectionOverlay', () => {
         await mountAndWait()
         expect($('.connection-overlay')).not.toBeNull()
         expect($('.connection-overlay__switch')).toBeNull()
+    })
+
+    // The mask covers the header's window controls, so on the frameless desktop
+    // it is the only way to close the client while a reconnect is in flight.
+    it('offers a top-right close button on the frameless desktop and closes through the bridge', async () => {
+        windowControlsMock.hasControls = true
+        mockMode.value = 'reconnect'
+        await mountAndWait()
+
+        const masks = document.body.querySelectorAll('.connection-overlay')
+        expect(masks.length).toBeGreaterThan(0)
+        const btn = masks[masks.length - 1].querySelector('.connection-overlay__close') as HTMLElement | null
+        expect(btn).not.toBeNull()
+        expect(btn?.getAttribute('aria-label')).toBe('关闭')
+
+        await new DOMWrapper(btn!).trigger('click')
+        expect(windowControlsMock.close).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps the close button while the restart mask is up', async () => {
+        windowControlsMock.hasControls = true
+        mockMode.value = 'restart'
+        await mountAndWait()
+        const masks = document.body.querySelectorAll('.connection-overlay')
+        expect(masks[masks.length - 1].querySelector('.connection-overlay__close')).not.toBeNull()
+    })
+
+    it('shows no close button when the host has a native title bar', async () => {
+        windowControlsMock.hasControls = false
+        mockMode.value = 'reconnect'
+        await mountAndWait()
+        const masks = document.body.querySelectorAll('.connection-overlay')
+        expect(masks[masks.length - 1].querySelector('.connection-overlay__close')).toBeNull()
     })
 })

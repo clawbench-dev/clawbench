@@ -5,6 +5,22 @@
            to <body> and paints below this mask (--z-popover), so the mask is
            dismissed instead of trying to out-stack it. -->
       <div v-if="mode && !switchOpen" class="connection-overlay">
+        <!-- Desktop frameless shell only: the mask covers the header, whose
+             right edge carries the window controls, so without this the client
+             cannot be closed while a reconnect is in flight. Same corner, same
+             action and same hover as the header's own close button — it reads
+             as that button, still reachable, not as a second UI. macOS keeps
+             its traffic lights outside the masked area and shows nothing. -->
+        <button
+          v-if="hasCustomControls"
+          type="button"
+          class="connection-overlay__close"
+          :title="t('appHeader.windowClose')"
+          :aria-label="t('appHeader.windowClose')"
+          @click="closeWindow"
+        >
+          <X :size="14" />
+        </button>
         <div class="connection-overlay__content">
           <Server :size="40" class="connection-overlay__icon" />
           <LoadingIndicator class="connection-overlay__spinner" size="lg" inline />
@@ -35,15 +51,19 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ArrowLeftRight, Server } from 'lucide-vue-next'
+import { ArrowLeftRight, Server, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useConnectionOverlay } from '@/composables/useConnectionOverlay'
+import { useWindowControls } from '@/composables/useWindowControls'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ServerSwitchDialog from '@/components/common/ServerSwitchDialog.vue'
 import { getNative } from '@/utils/clawbenchNative'
 
 const { t } = useI18n()
 const { mode } = useConnectionOverlay()
+// Same host-gated answer the header uses, so the button can never appear over
+// a window that still has a native title bar (macOS, web, Android).
+const { hasCustomControls, close: closeWindow } = useWindowControls()
 
 const switchOpen = ref(false)
 
@@ -86,6 +106,33 @@ function handleLogout() {
   border-radius: var(--radius-lg);
   background: var(--bg-primary);
   box-shadow: var(--shadow-md);
+}
+
+/* Same geometry and hover as the header's close cell (34×32dp, red hover), so
+   the muscle memory carries over to the button that replaces it. */
+.connection-overlay__close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: calc(34 * var(--dp));
+  height: calc(32 * var(--dp));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 0 0 0 var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+@media (hover: hover) {
+  .connection-overlay__close:hover {
+    background: var(--color-red, #ef4444);
+    color: #fff;
+  }
 }
 
 .connection-overlay__icon {

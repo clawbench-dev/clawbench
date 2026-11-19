@@ -133,6 +133,18 @@ describe('a failed start does not poison every later attempt', () => {
   })
 })
 
+describe('a thin build never tries to start a server it does not ship', () => {
+  it('returns before starting when the build has no server binary', () => {
+    // The startup helper ran unconditionally, so every launch of a thin install
+    // threw "the server binary is missing from this build" and showed the
+    // start-failed dialog over the login page.
+    const src = readRepoFile('desktop/src/main/index.ts')
+    const fn = src.match(/async function startEmbeddedServerIfPresent\(\)[\s\S]*?\n\}/)
+    expect(fn, 'startEmbeddedServerIfPresent not found').not.toBeNull()
+    expect(fn![0]).toContain('if (!hasEmbeddedServerBinary()) return')
+  })
+})
+
 describe('the server outlives an aborted quit', () => {
   it('stops it on will-quit, never on before-quit', () => {
     // `before-quit` runs even when the quit is then aborted (the renderer vetoes
