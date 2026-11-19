@@ -765,6 +765,7 @@ export default {
     addServer: 'Add another server',
     serverNamePlaceholder: 'Name (optional)',
     duplicateServerName: 'That name is already used',
+    invalidServerAddress: 'Enter a valid address. For example https://192.168.1.100:20000, or for IPv6 the full form with scheme, brackets and port: http://[240e:390:1234:5678::123]:20000',
     serverUrlPlaceholder: 'Enter server URL',
     serverPasswordPlaceholder: 'Enter password',
     addServerSubmit: 'Add & Login',
