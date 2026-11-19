@@ -207,7 +207,7 @@ func ValidateFile(path, ext string, size, maxFileBytes int64) error {
 }
 
 func isOfficeExt(ext string) bool {
-	return officeBaseExt(ext) != ext || ext == ".docx" || ext == ".xlsx" || ext == ".pptx"
+	return officeBaseExt(ext) != ext || ext == extDOCX || ext == extXLSX || ext == extPPTX
 }
 
 // officeBaseExt maps the OOXML variants (macro-enabled, template, slideshow)
@@ -218,19 +218,24 @@ func isOfficeExt(ext string) bool {
 func officeBaseExt(ext string) string {
 	switch ext {
 	case ".docm", ".dotx", ".dotm":
-		return ".docx"
+		return extDOCX
 	case ".xlsm", ".xltx", ".xltm":
-		return ".xlsx"
+		return extXLSX
 	case ".pptm", ".potx", ".potm", ".ppsx", ".ppsm":
-		return ".pptx"
+		return extPPTX
 	}
 	return ext
 }
 
-// extPDF is the one document extension that is neither plain text nor an
-// office container: it has its own extractor, so it needs its own predicate at
-// every place that asks "can this be indexed".
-const extPDF = ".pdf"
+// Document extensions that need their own predicate at every place that asks
+// "can this be indexed": PDF has a dedicated extractor, and the three OOXML
+// base formats double as the fallback names in isOfficeExt.
+const (
+	extPDF  = ".pdf"
+	extDOCX = ".docx"
+	extXLSX = ".xlsx"
+	extPPTX = ".pptx"
+)
 
 // ExtractFile turns a file into text blocks. maxTextBytes caps the retained
 // text; longer output is truncated and the returned warning code says so.
@@ -240,11 +245,11 @@ func ExtractFile(path, ext string, maxTextBytes int64) ([]Block, string, error) 
 	var err error
 	var warning string
 	switch officeBaseExt(ext) {
-	case ".pdf":
+	case extPDF:
 		blocks, err = extractPDF(path)
-	case ".docx":
+	case extDOCX:
 		blocks, err = extractDocx(path)
-	case ".xlsx":
+	case extXLSX:
 		blocks, err = extractXlsx(path)
 		if errors.Is(err, ErrOfficeBudgetSpent) {
 			// A workbook that decompressed more than the budget is not a parse
@@ -252,7 +257,7 @@ func ExtractFile(path, ext string, maxTextBytes int64) ([]Block, string, error) 
 			// truncated, so the document stays searchable.
 			err, warning = nil, WarningTruncated
 		}
-	case ".pptx":
+	case extPPTX:
 		blocks, err = extractPptx(path)
 		if errors.Is(err, ErrOfficeBudgetSpent) {
 			err, warning = nil, WarningTruncated

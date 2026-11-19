@@ -304,7 +304,7 @@ func TestRenderMailNotification_SingleUsesFixedTitle(t *testing.T) {
 // remainder is reported.
 func TestRenderMailNotification_TruncatesLongList(t *testing.T) {
 	msgs := make([]MailMessage, 0, mailNotifyMaxListItems+3)
-	for i := 0; i < mailNotifyMaxListItems+3; i++ {
+	for i := range mailNotifyMaxListItems + 3 {
 		msgs = append(msgs, MailMessage{ID: int64(100 - i), Subject: "s"})
 	}
 	_, body := renderMailNotification(msgs)

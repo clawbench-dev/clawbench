@@ -500,9 +500,9 @@ func urlDocumentName(u *url.URL) string {
 		return r
 	}, name)
 	switch strings.ToLower(filepath.Ext(name)) {
-	case extPDF, ".docx", ".docm", ".dotx", ".dotm",
-		".xlsx", ".xlsm", ".xltx", ".xltm",
-		".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm",
+	case extPDF, extDOCX, ".docm", ".dotx", ".dotm",
+		extXLSX, ".xlsm", ".xltx", ".xltm",
+		extPPTX, ".pptm", ".potx", ".potm", ".ppsx", ".ppsm",
 		".md", ".markdown", ".txt", ".csv", ".html", ".htm":
 		return name
 	default:
