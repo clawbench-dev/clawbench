@@ -3505,7 +3505,15 @@ onUnmounted(() => {
 
 .chat-tool-call .tool-name {
   font-weight: var(--font-weight-semibold);
-  color: var(--tool-accent);
+  /* Text, so it follows the text palette — never the raw category accent. The
+     accents are categorical hues, not body ink: on the light themes bash lands
+     at ~2.5:1 and task/interrupt at ~2.1:1 against --bg-secondary (WCAG AA wants
+     4.5:1), and a saturated child under a neutral parent also reads as "child
+     stronger than parent", the opposite of a container/content hierarchy. The
+     icon keeps --tool-accent and the row keeps its 6% tint / 15% outline, so the
+     category is still encoded. Deepening 36 themes was the alternative and would
+     have flattened the categories apart from each other. */
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
@@ -3567,8 +3575,10 @@ onUnmounted(() => {
   transition: color var(--duration-slow) ease;
 }
 
+/* Same rule as the standalone pill: the category shows in the icon, the tint
+   and the ring, never in the name's text colour (see .tool-name above). */
 .chat-tool-group-strip[data-category] .tool-name {
-  color: var(--tool-accent);
+  color: var(--text-secondary);
 }
 
 /* The ring is painted by the global .li-spinner and tinted by --li-color, which

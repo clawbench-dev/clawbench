@@ -173,6 +173,36 @@ describe('ActionBar — labels', () => {
   })
 })
 
+describe('ActionBar — the bar cannot see past its parent', () => {
+  // The session-list header's ratchet: once the labels were on, the row's
+  // `min-width: min-content` floor grew to the labelled width, so a narrower
+  // parent did not shrink the row — it spilled out and got clipped, while the
+  // row kept reporting the labelled width. Every later measurement agreed the
+  // labels "fit" and they never came back off.
+  it('falls back to icons when the parent is narrower than the bar reports', async () => {
+    const { bar, measure } = mountBar({ sizes: { icon: 90, labelled: 470, available: 500 } })
+    measure()
+    await nextTick()
+    expect(bar.classList.contains('ab--labels')).toBe(true)
+
+    const parent = bar.parentElement as HTMLElement
+    Object.defineProperty(parent, 'clientWidth', { configurable: true, value: 220 })
+    // The bar itself keeps lying about its width, exactly like the real one.
+    measure()
+    await nextTick()
+    expect(bar.classList.contains('ab--labels')).toBe(false)
+  })
+
+  it('ignores a parent that has no layout (jsdom, a hidden pane)', async () => {
+    const { bar, measure } = mountBar({ sizes: { icon: 90, labelled: 200, available: 500 } })
+    const parent = bar.parentElement as HTMLElement
+    Object.defineProperty(parent, 'clientWidth', { configurable: true, value: 0 })
+    measure()
+    await nextTick()
+    expect(bar.classList.contains('ab--labels')).toBe(true)
+  })
+})
+
 describe('ActionBar — folding (menu mode)', () => {
   it('folds the tail into the more button when the icons alone overflow', async () => {
     // 5 buttons × 60 = 300 > 200 available.

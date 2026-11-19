@@ -188,9 +188,28 @@
       </template>
     </ActionBar>
 
-    <!-- Region 3: Overlay nav (close only, always present, fixed size) -->
+    <!-- Region 3: Overlay nav (close only, always present, fixed size).
+         Narrow: the overlay is the whole page and this filled block is its only
+         way out — the red is the signal that it matters.
+         Wide: the overlay is just another panel, so the same slot holds a plain
+         header button — neutral at rest, red only on hover (`is-danger`, the
+         shared danger recipe). It stays outside the ActionBar on purpose: that
+         row folds its tail into "more", and a close that can disappear into a
+         menu is not a way out. Being the header's own last child also puts it
+         outermost, in front of the shared panel window controls, instead of in
+         the caption reservation they own. -->
     <div class="overlay-nav">
-      <button class="file-header-btn overlay-close-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
+      <button
+        v-if="isWideScreen"
+        data-toolbar-id="closeOverlay"
+        class="file-header-btn is-danger overlay-close-btn--inline"
+        :title="t('common.close')"
+        :aria-label="t('common.close')"
+        @click.stop="$emit('overlayClose')"
+      >
+        <X :size="14" />
+      </button>
+      <button v-else class="file-header-btn overlay-close-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
         <X :size="14" />
       </button>
     </div>
@@ -717,6 +736,17 @@ function handleFileNameDragEnd() {
         background: #991b1b;
         color: #fff;
     }
+}
+/* Wide-screen counterpart: a header-size square like the row's buttons, neutral
+   at rest (colour + hover tint come from the shared `.is-danger` recipe), so it
+   reads as "close this document", not as window chrome. */
+.overlay-close-btn--inline {
+    /* Same box as the row's buttons (`--ab-btn-size`, 28dp) — it sits beside
+       them and must not read as a smaller control. */
+    width: var(--ab-btn-size);
+    height: var(--ab-btn-size);
+    padding: 0;
+    border-radius: var(--radius-sm);
 }
 </style>
 

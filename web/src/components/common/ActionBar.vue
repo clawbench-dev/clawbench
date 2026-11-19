@@ -172,6 +172,31 @@ function designPx(value: number): number {
   return (rem / 15) * value
 }
 
+/**
+ * The room the buttons really have, not what the bar reports about itself.
+ *
+ * A row's own `clientWidth` is a ratchet: once its labels are on, its
+ * `min-width: min-content` floor grows to the LABELLED width, so when its
+ * container gets narrower the row keeps reporting the labelled width, overflows
+ * its parent — and every later measurement concludes "the labels still fit", so
+ * they never come back off (measured on the session-list header: 220px sidebar,
+ * bar still reporting 236px, labels stuck on and clipped by the header).
+ *
+ * The parent's content box is the honest ceiling; when the bar was already wider
+ * than it, the bar is what has to be measured down. A parent that is not laid
+ * out yet reports 0 (jsdom, a hidden pane) and is ignored.
+ */
+function usableWidth(el: HTMLElement): number {
+  const own = el.clientWidth
+  const parent = el.parentElement
+  if (!parent) return own
+  const pcs = getComputedStyle(parent)
+  const parentContent =
+    parent.clientWidth - (parseFloat(pcs.paddingLeft) || 0) - (parseFloat(pcs.paddingRight) || 0)
+  if (parentContent <= 0) return own
+  return Math.min(own, parentContent)
+}
+
 /** Everything the slot rendered, in DOM order, minus the bar's own "more". */
 function items(): HTMLElement[] {
   const root = rootRef.value
@@ -212,8 +237,7 @@ function measure(): void {
   // the buttons can use, and counting it lets a labelled row overflow by exactly
   // that much.
   const cs = getComputedStyle(root)
-  const innerWidth =
-    root.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+  const innerWidth = usableWidth(root) - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
   if (innerWidth <= 0) {
     // Not laid out yet (hidden pane, jsdom): keep every button and assume room.
     // Clear the scroll flags too — a hidden bar must not keep advertising
@@ -417,7 +441,8 @@ function schedule(): void {
  * measure() is rAF-batched, so honouring every shrink costs one pass a frame.
  */
 function onResize(): void {
-  const width = rootRef.value?.clientWidth ?? 0
+  const root = rootRef.value
+  const width = root ? usableWidth(root) : 0
   if (lastWidth >= 0 && width >= lastWidth && width - lastWidth < 2) return
   lastWidth = width
   schedule()
@@ -431,7 +456,7 @@ function runItem(item: HiddenItem): void {
 onMounted(() => {
   measure()
   updateFades()
-  lastWidth = rootRef.value?.clientWidth ?? -1
+  lastWidth = rootRef.value ? usableWidth(rootRef.value) : -1
   if (typeof ResizeObserver !== 'undefined' && rootRef.value) {
     observer = new ResizeObserver(onResize)
     observer.observe(rootRef.value)

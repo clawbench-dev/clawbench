@@ -1279,6 +1279,61 @@ describe('FileHeader — overlay close button', () => {
   })
 })
 
+describe('FileHeader — close placement follows the layout', () => {
+  // The close button used to be the same filled red 26px block on BOTH layouts,
+  // sitting inside the caption area next to the shared panel window controls.
+  // On a wide screen the overlay is just another panel, so that block read as
+  // "close the window" — and it broke the OS order, where the destructive
+  // action is the outermost control.
+  function mountHeader() {
+    return mount(FileHeader, {
+      props: {
+        file: { name: 'main.ts', path: '/tmp/main.ts', content: 'const x = 1' },
+        viewMode: 'source',
+        tocOpen: false,
+        searchOpen: false,
+        wordWrap: true,
+        showLineNumbers: true,
+        stickyScroll: true,
+        overlayOpen: false,
+      },
+      global: { plugins: [i18n] },
+    })
+  }
+
+  afterEach(() => { mockIsWideScreen.value = true })
+
+  it('uses a neutral, always-visible button outside the toolbar on wide screens', async () => {
+    mockIsWideScreen.value = true
+    const wrapper = mountHeader()
+    await nextTick()
+    const block = wrapper.find('.overlay-nav .overlay-close-btn')
+    expect(block.exists()).toBe(false)
+    const close = wrapper.find('.overlay-nav [data-toolbar-id="closeOverlay"]')
+    expect(close.exists()).toBe(true)
+    expect(close.classes()).toContain('is-danger')
+    // Outside the ActionBar: a close must never be foldable into "more" — that
+    // would leave the wide-screen document with no always-visible exit.
+    expect(wrapper.find('.header-actions [data-toolbar-id="closeOverlay"]').exists()).toBe(false)
+    await close.trigger('click')
+    expect(wrapper.emitted('overlayClose')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('keeps the filled caption block on narrow screens, where it is the only exit', async () => {
+    mockIsWideScreen.value = false
+    const wrapper = mountHeader()
+    await nextTick()
+    expect(wrapper.find('[data-toolbar-id="closeOverlay"]').exists()).toBe(false)
+    const block = wrapper.find('.overlay-nav .overlay-close-btn')
+    expect(block.exists()).toBe(true)
+    expect(block.classes()).not.toContain('is-danger')
+    await block.trigger('click')
+    expect(wrapper.emitted('overlayClose')).toHaveLength(1)
+    wrapper.unmount()
+  })
+})
+
 describe('FileHeader — toolbar labels', () => {
   it('labels the inline tools and the More button when the row can hold them', async () => {
     // jsdom has no layout: the toolbar measures 0 wide and assumes room. The

@@ -152,10 +152,17 @@ const sessionBarColor = computed(() => {
 }
 /* `min-width: min-content` floors the shrink at the buttons' own width: without
    it the group would keep shrinking and the meter would overlap the buttons on
-   a narrow sidebar. With it the meter slides left instead. */
+   a narrow sidebar. With it the meter slides left instead.
+   `max-width: 100%` caps the floor's effect when the labels are on: min-content
+   then grows past the header, the bar spilled out and was clipped, and its own
+   width kept reporting "the labels fit" — so they never came back off when the
+   sidebar was dragged narrower. Capped, the bar reports the room it really has
+   and ActionBar drops the labels again (it also clamps to the parent itself, as
+   a second line of defence). */
 .session-header-actions {
   flex: 1 1 0;
   min-width: min-content;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
