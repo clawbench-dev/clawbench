@@ -776,6 +776,24 @@ export function useVoiceInput() {
   }
 
   /**
+   * The surface this take writes into has taken the text away — the composer
+   * sent its message and cleared itself.
+   *
+   * The take ends here instead of carrying on into the empty box: the next
+   * partial is the same sentence the user just sent, and `writeVoiceText`
+   * would re-anchor onto the cleared box and splice it back in, so the sent
+   * message looks like it reappeared as a draft. Cancelling also drops the
+   * result of a take that was already handed over, so a late `done` cannot
+   * resurrect it either.
+   *
+   * Scoped to `el`: a dictation running in some other field keeps going.
+   */
+  function consumeTarget(el: Element | null) {
+    if (!target || (el && target.el !== el)) return
+    cancel()
+  }
+
+  /**
    * A field can disappear mid-recording (the chat box is re-keyed when the
    * composer is rebuilt, an editor is unmounted). Writing into a detached
    * surface would swallow the transcript, so the text moves to the capsule
@@ -843,6 +861,7 @@ export function useVoiceInput() {
     startGlobal,
     stop,
     cancel,
+    consumeTarget,
     reset,
     appendText,
     discardDraft,
