@@ -127,8 +127,8 @@ func TestStore_ResetVectorRecreatesImmediately(t *testing.T) {
 // (SQLite rejects a duplicate column), and a missing table must be reported.
 func TestStore_ColumnMigrationIsIdempotent(t *testing.T) {
 	st := newTestStore(t)
-	require.NoError(t, st.addColumnIfMissing("kb_collections", "pinned", "INTEGER NOT NULL DEFAULT 0"))
-	require.NoError(t, st.addColumnIfMissing("kb_collections", "pinned", "INTEGER NOT NULL DEFAULT 0"))
+	require.NoError(t, st.addColumnIfMissing("kb_documents", "tags", "TEXT NOT NULL DEFAULT ''"))
+	require.NoError(t, st.addColumnIfMissing("kb_documents", "tags", "TEXT NOT NULL DEFAULT ''"))
 	require.Error(t, st.addColumnIfMissing("no_such_table", "x", "INTEGER"))
 }
 
@@ -141,7 +141,7 @@ func TestStore_CollectionGuards(t *testing.T) {
 	_, err := st.CreateCollection(Collection{Name: "x", Scope: "invalid"})
 	require.ErrorIs(t, err, ErrInvalidScope)
 
-	require.ErrorIs(t, st.UpdateCollection(9999, nil, nil, nil, nil), ErrCollectionNotFound)
+	require.ErrorIs(t, st.UpdateCollection(9999, nil, nil, nil), ErrCollectionNotFound)
 	require.ErrorIs(t, st.DeleteCollection(9999), ErrCollectionNotFound)
 
 	id, err := st.CreateCollection(Collection{Name: "项目库", Scope: ScopeProject, ProjectID: 7, AutoInject: true})

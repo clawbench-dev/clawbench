@@ -235,8 +235,8 @@ describe('KnowledgePanel', () => {
       if (url === '/api/kb/collections') {
         return {
           collections: [
-            { id: 1, name: 'Policies', description: '', scope: 'global', auto_inject: true, pinned: false, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
-            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, pinned: false, doc_count: 2, failed_count: 1, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 1, name: 'Policies', description: '', scope: 'global', auto_inject: true, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, doc_count: 2, failed_count: 1, pending_count: 0, created_at: '', updated_at: '' },
           ],
         }
       }
@@ -511,8 +511,8 @@ describe('KnowledgePanel', () => {
       if (url === '/api/kb/collections') {
         return {
           collections: [
-            { id: 1, name: 'Policies', description: '', scope: 'global', auto_inject: true, pinned: false, doc_count: 1, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
-            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, pinned: false, doc_count: 2, failed_count: 1, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 1, name: 'Policies', description: '', scope: 'global', auto_inject: true, doc_count: 1, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, doc_count: 2, failed_count: 1, pending_count: 0, created_at: '', updated_at: '' },
           ],
         }
       }
@@ -702,7 +702,7 @@ describe('KnowledgePanel', () => {
       if (url === '/api/kb/collections') {
         return {
           collections: [
-            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, pinned: false, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
           ],
         }
       }
@@ -735,31 +735,13 @@ describe('KnowledgePanel', () => {
     wrapper.unmount()
   })
 
-  it('pins a collection and reflects the new state', async () => {
-    const wrapper = mountPanel()
-    await flushPromises()
-
-    h.apiPatch.mockResolvedValueOnce({
-      id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true,
-      pinned: true, doc_count: 2, failed_count: 1, pending_count: 0, created_at: '', updated_at: '',
-    })
-    const row = wrapper.findAll('.kb-col-row').find((r) => r.find('[data-kb-collection="2"]').exists())!
-    await row.find('[data-action="kb-pin"]').trigger('click')
-    await flushPromises()
-
-    expect(h.apiPatch).toHaveBeenCalledWith('/api/kb/collections?id=2', { pinned: true })
-    const updated = wrapper.findAll('.kb-col-row').find((r) => r.find('[data-kb-collection="2"]').exists())!
-    expect(updated.find('[data-action="kb-unpin"]').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
   it('sorts collections by name', async () => {
     h.apiGet.mockImplementation(async (url: string) => {
       if (url === '/api/kb/collections') {
         return {
           collections: [
-            { id: 1, name: 'Beta', description: '', scope: 'global', auto_inject: true, pinned: false, doc_count: 0, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
-            { id: 2, name: 'Alpha', description: '', scope: 'global', auto_inject: true, pinned: false, doc_count: 0, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 1, name: 'Beta', description: '', scope: 'global', auto_inject: true, doc_count: 0, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 2, name: 'Alpha', description: '', scope: 'global', auto_inject: true, doc_count: 0, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
           ],
         }
       }
@@ -806,7 +788,7 @@ describe('KnowledgePanel', () => {
   it('filters documents by tag', async () => {
     h.apiGet.mockImplementation(async (url: string) => {
       if (url === '/api/kb/collections') {
-        return { collections: [{ id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, pinned: false, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' }] }
+        return { collections: [{ id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' }] }
       }
       if (url.startsWith('/api/kb/documents')) {
         return { documents: [doc(1, { tags: '制度, 报销' }), doc(2, { tags: '产品' })] }
@@ -829,7 +811,7 @@ describe('KnowledgePanel', () => {
   it('offers to re-add a deleted file from its source', async () => {
     h.apiGet.mockImplementation(async (url: string) => {
       if (url === '/api/kb/collections') {
-        return { collections: [{ id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, pinned: false, doc_count: 1, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' }] }
+        return { collections: [{ id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, doc_count: 1, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' }] }
       }
       if (url.startsWith('/api/kb/documents')) {
         return { documents: [doc(1, { source_path: '/p/a.md' })] }

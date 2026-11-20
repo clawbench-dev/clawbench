@@ -417,8 +417,6 @@ export default {
     filterType: '按类型筛选',
     filterCollections: '筛选知识库',
     filterCollectionsEmpty: '没有匹配的知识库',
-    pin: '置顶',
-    unpin: '取消置顶',
     typeAll: '全部类型',
     typeWord: 'Word',
     typeExcel: 'Excel',

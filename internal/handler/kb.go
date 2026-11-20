@@ -274,7 +274,6 @@ func ServeKBCollections(w http.ResponseWriter, r *http.Request) { //nolint:gocog
 			Name        *string `json:"name"`
 			Description *string `json:"description"`
 			AutoInject  *bool   `json:"auto_inject"`
-			Pinned      *bool   `json:"pinned"`
 		}
 		if !decodeJSON(w, r, &body) {
 			return
@@ -287,7 +286,7 @@ func ServeKBCollections(w http.ResponseWriter, r *http.Request) { //nolint:gocog
 			}
 			body.Name = &name
 		}
-		if err := kb.UpdateCollection(id, body.Name, body.Description, body.AutoInject, body.Pinned); err != nil {
+		if err := kb.UpdateCollection(id, body.Name, body.Description, body.AutoInject); err != nil {
 			writeKBError(w, r, err)
 			return
 		}

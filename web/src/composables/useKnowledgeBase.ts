@@ -24,8 +24,6 @@ export interface KBCollection {
   scope: KBScope
   project_path?: string
   auto_inject: boolean
-  /** Pinned libraries sort first within their scope group. */
-  pinned: boolean
   doc_count: number
   /** Documents whose extraction failed; shown on the collection rail. */
   failed_count: number
@@ -432,12 +430,6 @@ export function useKnowledgeBase() {
     if (idx >= 0) collections.value[idx] = updated
   }
 
-  async function setPinned(id: number, value: boolean): Promise<void> {
-    const updated = await apiPatch<KBCollection>(`/api/kb/collections?id=${id}`, { pinned: value })
-    const idx = collections.value.findIndex((c) => c.id === id)
-    if (idx >= 0) collections.value[idx] = updated
-  }
-
   /** Rename a collection / change its description (scope stays immutable). */
   async function updateCollection(
     id: number,
@@ -640,7 +632,6 @@ export function useKnowledgeBase() {
     updateCollection,
     deleteCollection,
     setAutoInject,
-    setPinned,
     addFile,
     importDirectory,
     previewDirectory,

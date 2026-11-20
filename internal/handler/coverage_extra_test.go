@@ -126,7 +126,7 @@ func TestServeKBCollections_ForeignCollectionIsForbidden(t *testing.T) {
 	for _, method := range []string{http.MethodPatch, http.MethodDelete} {
 		var body any
 		if method == http.MethodPatch {
-			body = map[string]any{"pinned": true}
+			body = map[string]any{"auto_inject": false}
 		}
 		req := withProjectCookie(newRequest(t, method,
 			"/api/kb/collections?id="+strconv.FormatInt(foreign.ID, 10), body), env.ProjectDir)
@@ -137,7 +137,7 @@ func TestServeKBCollections_ForeignCollectionIsForbidden(t *testing.T) {
 	still, err := kb.GetCollection(foreign.ID)
 	require.NoError(t, err, "a forbidden rename/delete must leave the row in place")
 	assert.Equal(t, "别人的", still.Name)
-	assert.False(t, still.Pinned)
+	assert.True(t, still.AutoInject)
 }
 
 // An unknown project sees the global collections and nothing else — it must

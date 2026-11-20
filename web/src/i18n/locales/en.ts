@@ -419,8 +419,6 @@ export default {
     filterType: 'Filter by type',
     filterCollections: 'Filter knowledge bases',
     filterCollectionsEmpty: 'No matching knowledge bases',
-    pin: 'Pin',
-    unpin: 'Unpin',
     typeAll: 'All types',
     typeWord: 'Word',
     typeExcel: 'Excel',

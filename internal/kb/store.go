@@ -99,7 +99,6 @@ func (s *Store) initSchema() error {
 			scope       TEXT NOT NULL CHECK(scope IN ('global', 'project')),
 			project_id  INTEGER NOT NULL DEFAULT 0,
 			auto_inject INTEGER NOT NULL DEFAULT 1,
-			pinned      INTEGER NOT NULL DEFAULT 0,
 			created_at  DATETIME NOT NULL,
 			updated_at  DATETIME NOT NULL
 		);
@@ -171,8 +170,9 @@ func (s *Store) initSchema() error {
 	if _, err := s.db.Exec(store.ProjectsDDL); err != nil {
 		return fmt.Errorf("create projects table: %w", err)
 	}
-	// Existing installs predate the pinned column.
-	if err := s.addColumnIfMissing("kb_collections", "pinned", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+	// Existing installs predate the pinned column. Nothing reads it any more,
+	// so it is dropped rather than left behind as a column nobody maintains.
+	if err := s.dropColumnIfExists("kb_collections", "pinned"); err != nil {
 		return err
 	}
 	if err := s.addColumnIfMissing("kb_documents", "tags", "TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -394,6 +394,25 @@ func (s *Store) addColumnIfMissing(table, column, decl string) error {
 	return nil
 }
 
+// dropColumnIfExists removes a column that no longer has a reader. Safe to run
+// on every startup: installs created after the removal never had it.
+func (s *Store) dropColumnIfExists(table, column string) error {
+	var exists int
+	err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column,
+	).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("inspect %s.%s: %w", table, column, err)
+	}
+	if exists == 0 {
+		return nil
+	}
+	if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", table, column)); err != nil {
+		return fmt.Errorf("drop column %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
 // --- Collections ---
 
 func (s *Store) CreateCollection(c Collection) (int64, error) {
@@ -422,7 +441,7 @@ func (s *Store) CreateCollection(c Collection) (int64, error) {
 func (s *Store) ListCollections(projectID int64) ([]Collection, error) {
 	query := `
 		SELECT c.id, c.name, c.description, c.scope, c.project_id,
-		       COALESCE(p.path, ''), c.auto_inject, c.pinned, c.created_at, c.updated_at,
+		       COALESCE(p.path, ''), c.auto_inject, c.created_at, c.updated_at,
 		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id),
 		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id AND d.status = 'failed'),
 		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id AND d.status IN ('pending', 'extracting'))
@@ -434,7 +453,7 @@ func (s *Store) ListCollections(projectID int64) ([]Collection, error) {
 		query += " OR c.project_id = ?"
 		args = append(args, projectID)
 	}
-	query += " ORDER BY CASE WHEN c.project_id = 0 THEN 0 ELSE 1 END, c.pinned DESC, c.created_at ASC, c.id ASC"
+	query += " ORDER BY CASE WHEN c.project_id = 0 THEN 0 ELSE 1 END, c.created_at ASC, c.id ASC"
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -446,14 +465,12 @@ func (s *Store) ListCollections(projectID int64) ([]Collection, error) {
 	for rows.Next() {
 		var c Collection
 		var autoInject int
-		var pinned int
 		if err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.Scope, &c.ProjectID,
-			&c.ProjectPath, &autoInject, &pinned, &c.CreatedAt, &c.UpdatedAt,
+			&c.ProjectPath, &autoInject, &c.CreatedAt, &c.UpdatedAt,
 			&c.DocCount, &c.FailedCount, &c.PendingCount); err != nil {
 			return nil, fmt.Errorf("scan collection: %w", err)
 		}
 		c.AutoInject = autoInject != 0
-		c.Pinned = pinned != 0
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -462,11 +479,10 @@ func (s *Store) ListCollections(projectID int64) ([]Collection, error) {
 func (s *Store) GetCollection(id int64) (*Collection, error) {
 	var c Collection
 	var autoInject int
-	var pinned int
 	err := s.db.QueryRow(
 		`
 		SELECT c.id, c.name, c.description, c.scope, c.project_id,
-		       COALESCE(p.path, ''), c.auto_inject, c.pinned, c.created_at, c.updated_at,
+		       COALESCE(p.path, ''), c.auto_inject, c.created_at, c.updated_at,
 		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id),
 		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id AND d.status = 'failed'),
 		       (SELECT COUNT(*) FROM kb_documents d WHERE d.collection_id = c.id AND d.status IN ('pending', 'extracting'))
@@ -474,7 +490,7 @@ func (s *Store) GetCollection(id int64) (*Collection, error) {
 		LEFT JOIN projects p ON p.id = c.project_id
 		WHERE c.id = ?`, id,
 	).Scan(&c.ID, &c.Name, &c.Description, &c.Scope, &c.ProjectID,
-		&c.ProjectPath, &autoInject, &pinned, &c.CreatedAt, &c.UpdatedAt,
+		&c.ProjectPath, &autoInject, &c.CreatedAt, &c.UpdatedAt,
 		&c.DocCount, &c.FailedCount, &c.PendingCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrCollectionNotFound
@@ -483,12 +499,11 @@ func (s *Store) GetCollection(id int64) (*Collection, error) {
 		return nil, fmt.Errorf("get collection: %w", err)
 	}
 	c.AutoInject = autoInject != 0
-	c.Pinned = pinned != 0
 	return &c, nil
 }
 
 // UpdateCollection applies only the supplied fields.
-func (s *Store) UpdateCollection(id int64, name, description *string, autoInject, pinned *bool) error {
+func (s *Store) UpdateCollection(id int64, name, description *string, autoInject *bool) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	sets := []string{"updated_at = ?"}
@@ -504,10 +519,6 @@ func (s *Store) UpdateCollection(id int64, name, description *string, autoInject
 	if autoInject != nil {
 		sets = append(sets, "auto_inject = ?")
 		args = append(args, boolToInt(*autoInject))
-	}
-	if pinned != nil {
-		sets = append(sets, "pinned = ?")
-		args = append(args, boolToInt(*pinned))
 	}
 	args = append(args, id)
 	res, err := s.db.Exec("UPDATE kb_collections SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)

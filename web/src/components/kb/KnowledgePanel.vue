@@ -156,18 +156,6 @@
                     </span>
                     <ChevronRight v-if="!split" :size="16" class="kb-col-chevron" />
                   </button>
-                  <button
-                    type="button"
-                    class="kb-col-pin"
-                    :class="{ 'is-on': col.pinned }"
-                    :title="col.pinned ? t('kb.unpin') : t('kb.pin')"
-                    :aria-label="col.pinned ? t('kb.unpin') : t('kb.pin')"
-                    :aria-pressed="col.pinned"
-                    :data-action="col.pinned ? 'kb-unpin' : 'kb-pin'"
-                    @click.stop="togglePin(col)"
-                  >
-                    <Pin :size="13" :fill="col.pinned ? 'currentColor' : 'none'" />
-                  </button>
                 </div>
               </div>
             </template>
@@ -670,7 +658,6 @@ import {
   FolderInput,
   ListChecks,
   Pencil,
-  Pin,
   Plus,
   RotateCw,
   Search,
@@ -768,7 +755,6 @@ const {
   updateCollection,
   deleteCollection,
   setAutoInject,
-  setPinned,
   addFile,
   importDirectory,
   previewDirectory,
@@ -1135,10 +1121,8 @@ const filteredCollections = computed(() => {
   const q = collectionQuery.value.trim().toLowerCase()
   let out = q ? collections.value.filter((c) => c.name.toLowerCase().includes(q)) : collections.value
   if (collectionSort.value === 'name') {
-    out = [...out].sort(
-      (a, b) =>
-        (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) ||
-        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
+    out = [...out].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
     )
   }
   return out
@@ -1315,14 +1299,6 @@ async function toggleAutoInject(): Promise<void> {
   if (!selected.value) return
   try {
     await setAutoInject(selected.value.id, !selected.value.auto_inject)
-  } catch (e) {
-    toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
-  }
-}
-
-async function togglePin(col: KBCollection): Promise<void> {
-  try {
-    await setPinned(col.id, !col.pinned)
   } catch (e) {
     toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
   }
@@ -1990,31 +1966,6 @@ defineExpose({
 .kb-col-row .kb-col {
   flex: 1;
   min-width: 0;
-}
-
-.kb-col-pin {
-  flex: none;
-  width: calc(26 * var(--dp));
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.kb-col-pin.is-on {
-  color: var(--accent-color);
-}
-
-@media (hover: hover) {
-  .kb-col-pin {
-    opacity: 0;
-  }
-  .kb-col-row:hover .kb-col-pin,
-  .kb-col-pin.is-on,
-  .kb-col-pin:focus-visible {
-    opacity: 1;
-  }
 }
 
 .kb-col {
