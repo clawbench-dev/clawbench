@@ -311,7 +311,14 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		// replaced, so those turns are not replayed (and not re-summarized).
 		prior := GetBuiltinSummary(sessionID)
 		req.PriorSummary = prior.Text
-		req.History = buildBuiltinHistory(sessionID, reqOpts.currentMessageID, prior)
+		// With a known window the engine compacts, so replay everything and let
+		// the summary decide what leaves the context. Only an unknown window
+		// needs the local token budget as a last-resort guard.
+		budget := builtinHistoryFallbackTokens
+		if model.ModelContextWindow(agentModel) > 0 {
+			budget = 0
+		}
+		req.History = buildBuiltinHistoryWithBudget(sessionID, reqOpts.currentMessageID, prior, budget)
 	}
 
 	// The identity section rides the system prompt; on a resumed turn (which

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/agentcore/compaction"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
 
@@ -67,6 +68,22 @@ func setupTestDBForBuiltinHistory(t *testing.T) {
 			indexed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
+		)`,
+		`CREATE TABLE IF NOT EXISTS chat_tool_calls (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL,
+			session_id TEXT NOT NULL,
+			tool_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			input TEXT NOT NULL DEFAULT '{}',
+			output TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
+			done INTEGER NOT NULL DEFAULT 0,
+			summary TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			parent_tool_id TEXT NOT NULL DEFAULT '',
+			duration_ms INTEGER NOT NULL DEFAULT 0,
+			UNIQUE(tool_id, message_id)
 		)`,
 	}
 	for _, s := range stmts {
@@ -209,8 +226,8 @@ func TestBuildBuiltinHistory_EmptyForNewSession(t *testing.T) {
 func TestBuildBuiltinHistory_AnnouncesTruncation(t *testing.T) {
 	setupTestDBForBuiltinHistory(t)
 
-	// Each turn is ~1000 runes; 60 turns exceed the 40k budget.
-	long := strings.Repeat("x", 1000)
+	// Each turn is ~1000 tokens of Chinese; 60 turns exceed the 40k budget.
+	long := strings.Repeat("测", 1000)
 	turns := make([][2]string, 0, 60)
 	for i := range 60 {
 		role := roleUser
@@ -243,29 +260,93 @@ func TestBuildBuiltinHistory_AnnouncesTruncation(t *testing.T) {
 func TestBuildBuiltinHistory_StaysWithinBudget(t *testing.T) {
 	setupTestDBForBuiltinHistory(t)
 
-	long := strings.Repeat("y", 2000)
+	// Chinese is ~1 token per rune, so this is a real token-sized fixture.
+	long := strings.Repeat("测", 2000)
 	turns := make([][2]string, 0, 50)
 	for range 50 {
 		turns = append(turns, [2]string{roleUser, long})
 	}
 	seedHistory(t, "s3", turns)
 
+	const budget = 5000
+	got := buildBuiltinHistoryWithBudget("s3", 0, builtinSummary{}, budget)
 	total := 0
-	for _, m := range buildBuiltinHistory("s3", 0, builtinSummary{}) {
-		total += len([]rune(m.Text))
+	for _, m := range got {
+		total += compaction.EstimateTokens(m.Text)
 	}
 	// The budget plus the one-message overshoot allowance and the notice.
-	if total > builtinHistoryBudgetChars+2000 {
-		t.Fatalf("history must stay within the budget, got %d runes", total)
+	if total > budget+2000 {
+		t.Fatalf("history must stay within the budget, got %d tokens", total)
+	}
+	if len(got) >= 50 {
+		t.Fatalf("the oldest turns must be dropped, got all %d", len(got))
+	}
+}
+
+// TestBuildBuiltinHistory_KeepsToolEvidence pins the core of the fix: a tool
+// turn is replayed with the calls and their outputs, not as prose.
+func TestBuildBuiltinHistory_KeepsToolEvidence(t *testing.T) {
+	setupTestDBForBuiltinHistory(t)
+
+	content, _ := json.Marshal(map[string]any{
+		"blocks": []map[string]any{
+			{"type": "text", "text": "let me check"},
+			{"type": "tool_use", "name": "read", "id": "c1"},
+		},
+	})
+	msgID, err := AddChatMessage("/tmp/p", "builtin", "s8", roleAssistant, string(content), nil, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertToolCall(msgID, "s8", "c1", "read",
+		json.RawMessage(`{"file_path":"a.go"}`), "package a", "success", "read a.go", true, 12); err != nil {
+		t.Fatal(err)
+	}
+
+	got := buildBuiltinHistory("s8", 0, builtinSummary{})
+	if len(got) != 1 {
+		t.Fatalf("expected one turn, got %d: %+v", len(got), got)
+	}
+	if len(got[0].Tools) != 1 {
+		t.Fatalf("the tool call must ride the turn, got %+v", got[0].Tools)
+	}
+	tool := got[0].Tools[0]
+	if tool.ID != "c1" || tool.Name != "read" || tool.Output != "package a" {
+		t.Fatalf("the call must keep id/name/output, got %+v", tool)
+	}
+}
+
+// TestBuildBuiltinHistory_SkipsUnansweredTools pins the pairing rule: a
+// tool_use with no completed result is dropped, because both wire protocols
+// reject an unanswered call.
+func TestBuildBuiltinHistory_SkipsUnansweredTools(t *testing.T) {
+	setupTestDBForBuiltinHistory(t)
+
+	content, _ := json.Marshal(map[string]any{
+		"blocks": []map[string]any{{"type": "tool_use", "name": "read", "id": "c1"}},
+	})
+	msgID, err := AddChatMessage("/tmp/p", "builtin", "s9", roleAssistant, string(content), nil, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Not done: the turn was cancelled mid-call.
+	if err := UpsertToolCall(msgID, "s9", "c1", "read",
+		json.RawMessage(`{}`), "", "", "", false, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := buildBuiltinHistory("s9", 0, builtinSummary{}); len(got) != 0 {
+		t.Fatalf("an unanswered call must not be replayed, got %+v", got)
 	}
 }
 
 // TestBuildBuiltinHistory_SkipsNonTextTurns pins that a turn with no renderable
-// text does not produce an empty message (which some APIs reject).
+// text and no completed tool call does not produce an empty message (which some
+// APIs reject).
 func TestBuildBuiltinHistory_SkipsNonTextTurns(t *testing.T) {
 	setupTestDBForBuiltinHistory(t)
 
-	// A tool-only assistant turn: blocks with no text.
+	// A tool-only assistant turn with no stored call: nothing to replay.
 	content, _ := json.Marshal(map[string]any{
 		"blocks": []map[string]any{{"type": "tool_use", "name": "read", "id": "c1"}},
 	})
@@ -274,7 +355,7 @@ func TestBuildBuiltinHistory_SkipsNonTextTurns(t *testing.T) {
 	}
 
 	if got := buildBuiltinHistory("s4", 0, builtinSummary{}); len(got) != 0 {
-		t.Fatalf("a tool-only turn must not be replayed as an empty message, got %+v", got)
+		t.Fatalf("a turn with neither text nor a completed call must not be replayed, got %+v", got)
 	}
 }
 

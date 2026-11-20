@@ -56,6 +56,11 @@ type oaRequest struct {
 	// models. Omitted entirely for "auto" so a plain chat model never receives
 	// a parameter it does not know.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	// PromptCacheKey groups requests of one conversation onto the same prompt
+	// cache. It is only sent to OpenAI's own endpoint: other compatible
+	// gateways either cache by prefix automatically (DeepSeek) or reject an
+	// unknown field, and a 400 there would break every turn.
+	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 }
 
 type oaStreamOpts struct {
@@ -140,14 +145,53 @@ type oaStreamChunk struct {
 		Delta        oaDelta `json:"delta"`
 		FinishReason string  `json:"finish_reason"`
 	} `json:"choices"`
-	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-	} `json:"usage"`
+	Usage *oaUsage `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 	} `json:"error"`
+}
+
+// oaUsage is one streamed chunk's token accounting.
+type oaUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	// OpenAI reports the cached part under prompt_tokens_details.cached_tokens.
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	// DeepSeek and several gateways report it at the top level instead.
+	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
+	CachedTokens         int `json:"cached_tokens"`
+}
+
+// openAIPromptCacheKey returns the cache key to send, or "" when the endpoint
+// must not receive the field.
+//
+// Only OpenAI's own endpoint is known to accept prompt_cache_key. Other
+// compatible gateways either cache by prefix automatically (DeepSeek) or reject
+// unknown fields, and a 400 there would break every turn of a working agent.
+func openAIPromptCacheKey(baseURL, sessionID string) string {
+	if sessionID == "" || !strings.Contains(baseURL, "api.openai.com") {
+		return ""
+	}
+	return sessionID
+}
+
+// cachedPromptTokens reads the provider's cache-hit count from whichever field
+// it uses. Zero is "no cache reported", which is also the honest value for a
+// provider that does not cache.
+func cachedPromptTokens(u *oaUsage) int {
+	if u == nil {
+		return 0
+	}
+	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
+		return u.PromptTokensDetails.CachedTokens
+	}
+	if u.PromptCacheHitTokens > 0 {
+		return u.PromptCacheHitTokens
+	}
+	return u.CachedTokens
 }
 
 func (c *openAIClient) Stream(ctx context.Context, req Request) (<-chan Event, error) {
@@ -231,6 +275,9 @@ func (c *openAIClient) buildBody(req Request) ([]byte, error) {
 		Temperature:     temperature,
 		MaxTokens:       req.MaxOutputTokens,
 		ReasoningEffort: effort,
+	}
+	if key := openAIPromptCacheKey(c.cfg.BaseURL, req.SessionID); key != "" {
+		body.PromptCacheKey = key
 	}
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, oaTool{
@@ -437,7 +484,11 @@ func (c *openAIClient) readStream(ctx context.Context, body io.Reader, ch chan<-
 			return
 		}
 		if chunk.Usage != nil {
-			st.usage = &Usage{InputTokens: chunk.Usage.PromptTokens, OutputTokens: chunk.Usage.CompletionTokens}
+			st.usage = &Usage{
+				InputTokens:     chunk.Usage.PromptTokens,
+				OutputTokens:    chunk.Usage.CompletionTokens,
+				CacheReadTokens: cachedPromptTokens(chunk.Usage),
+			}
 		}
 		// A false result means the consumer is gone; the caller stops.
 		if !st.consumeDelta(ctx, ch, chunk) {

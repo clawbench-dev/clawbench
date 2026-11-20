@@ -40,8 +40,11 @@ func (c *anthropicClient) Model() string        { return c.cfg.Model }
 func (c *anthropicClient) SupportsVision() bool { return c.cfg.SupportsVision }
 
 type anRequest struct {
-	Model       string      `json:"model"`
-	System      string      `json:"system,omitempty"`
+	Model string `json:"model"`
+	// System is an array of text blocks (not a bare string) so the last block
+	// can carry a cache breakpoint. A string cannot: this API only caches a
+	// prefix at an explicit marker.
+	System      []anBlock   `json:"system,omitempty"`
 	Messages    []anMessage `json:"messages"`
 	Tools       []anTool    `json:"tools,omitempty"`
 	MaxTokens   int         `json:"max_tokens"`
@@ -110,6 +113,15 @@ type anBlock struct {
 	// thinking
 	Thinking  string `json:"thinking,omitempty"`
 	Signature string `json:"signature,omitempty"`
+	// CacheControl marks the end of a cacheable prefix. Only the request
+	// builder sets it; responses never carry it.
+	CacheControl *anCacheControl `json:"cache_control,omitempty"`
+}
+
+// anCacheControl is the "cache everything up to here" marker. Ephemeral is the
+// only type this API defines (the entry lives ~5 minutes).
+type anCacheControl struct {
+	Type string `json:"type"`
 }
 
 type anImageSource struct {
@@ -119,9 +131,10 @@ type anImageSource struct {
 }
 
 type anTool struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  map[string]any  `json:"input_schema"`
+	CacheControl *anCacheControl `json:"cache_control,omitempty"`
 }
 
 type anStreamEvent struct {
@@ -129,8 +142,10 @@ type anStreamEvent struct {
 	// message_start
 	Message *struct {
 		Usage *struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 		} `json:"usage"`
 	} `json:"message"`
 	// content_block_start
@@ -216,13 +231,23 @@ func (c *anthropicClient) buildBody(req Request) ([]byte, error) {
 	}
 	body := anRequest{
 		Model:    c.cfg.Model,
-		System:   req.System,
 		Messages: msgs,
 		Stream:   true,
 		// max_tokens is REQUIRED by this API; there is no server default.
 		MaxTokens:   maxTokens,
 		Temperature: temperature,
 		Thinking:    thinking,
+	}
+	// Prompt caching is explicit on this protocol: without a breakpoint the
+	// whole prompt is billed as fresh input on every turn. Three breakpoints
+	// cover the stable prefix (system + tools) and the conversation so far; the
+	// API allows at most four.
+	if req.System != "" {
+		body.System = []anBlock{{
+			Type:         anBlockText,
+			Text:         req.System,
+			CacheControl: ephemeralCache,
+		}}
 	}
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, anTool{
@@ -231,8 +256,19 @@ func (c *anthropicClient) buildBody(req Request) ([]byte, error) {
 			InputSchema: t.Parameters,
 		})
 	}
+	if n := len(body.Tools); n > 0 {
+		body.Tools[n-1].CacheControl = ephemeralCache
+	}
+	if n := len(body.Messages); n > 0 {
+		if m := &body.Messages[n-1]; len(m.Content) > 0 {
+			m.Content[len(m.Content)-1].CacheControl = ephemeralCache
+		}
+	}
 	return json.Marshal(body)
 }
+
+// ephemeralCache is the one cache type this API defines.
+var ephemeralCache = &anCacheControl{Type: "ephemeral"}
 
 // resolveMaxTokens applies a default because the Anthropic API rejects a
 // request without one.
@@ -460,6 +496,11 @@ type anStreamState struct {
 	// inputTokens arrives on message_start and is repeated on the usage event,
 	// because the API reports output tokens separately on message_delta.
 	inputTokens int
+	// cacheReadTokens / cacheWriteTokens are the prompt-cache split reported on
+	// message_start. This protocol excludes them from input_tokens, so they are
+	// carried separately rather than folded in.
+	cacheReadTokens  int
+	cacheWriteTokens int
 	// Per-index accumulation of tool_use argument JSON. The API streams
 	// partial_json fragments that must be concatenated.
 	callID   map[int]string
@@ -560,6 +601,8 @@ func (st *anStreamState) handle(ctx context.Context, ch chan<- Event, ev anStrea
 func (st *anStreamState) messageStart(ev anStreamEvent) {
 	if ev.Message != nil && ev.Message.Usage != nil {
 		st.inputTokens = ev.Message.Usage.InputTokens
+		st.cacheReadTokens = ev.Message.Usage.CacheReadInputTokens
+		st.cacheWriteTokens = ev.Message.Usage.CacheCreationInputTokens
 	}
 	st.sawAny = true
 }
@@ -633,8 +676,10 @@ func (st *anStreamState) messageDelta(ctx context.Context, ch chan<- Event, ev a
 	}
 	if ev.Usage != nil {
 		emit(ctx, ch, Event{Kind: KindUsage, Usage: &Usage{
-			InputTokens:  st.inputTokens,
-			OutputTokens: ev.Usage.OutputTokens,
+			InputTokens:      st.inputTokens,
+			OutputTokens:     ev.Usage.OutputTokens,
+			CacheReadTokens:  st.cacheReadTokens,
+			CacheWriteTokens: st.cacheWriteTokens,
 		}})
 	}
 }

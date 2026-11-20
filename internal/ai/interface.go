@@ -57,9 +57,11 @@ type ChatRequest struct {
 
 // HistoryMessage is one prior turn handed to a self-hosted backend.
 //
-// Only text is carried: the built-in agent's own tool calls are already
-// summarized in its replies, and replaying raw tool results would re-send file
-// contents the model has since moved past.
+// Text alone is not enough: an assistant turn that narrates "I ran the tests"
+// with no tool call next to it is indistinguishable from one that really did,
+// and the model then continues the fiction (it has no record of what it
+// actually ran). So the completed tool calls ride along with the turn and the
+// backend replays them as real tool_use / tool_result blocks.
 type HistoryMessage struct {
 	// Role is "user" or "assistant".
 	Role string
@@ -71,6 +73,30 @@ type HistoryMessage struct {
 	// which stored turn the summary stopped at — the engine's own index into the
 	// list is not enough when the two lists are built by different code.
 	ID int64 `json:"id,omitempty"`
+	// Turn is the zero-based position of this turn in the caller's replayable
+	// list. The engine does not read it; the caller uses it to map a compaction
+	// boundary (an index into the EXPANDED message list, where one assistant
+	// turn with tool calls becomes two messages) back to the stored turn it
+	// stands for.
+	Turn int `json:"turn,omitempty"`
+	// Tools are the completed tool calls this assistant turn made, in request
+	// order. A call with no stored result is deliberately absent: both wire
+	// protocols reject an unanswered tool_use.
+	Tools []HistoryToolCall `json:"tools,omitempty"`
+}
+
+// HistoryToolCall is one completed tool call replayed with its turn.
+type HistoryToolCall struct {
+	// ID is the provider-assigned call id, used to pair the result.
+	ID string `json:"id"`
+	// Name is the tool name.
+	Name string `json:"name"`
+	// Input is the raw JSON arguments the model produced.
+	Input string `json:"input,omitempty"`
+	// Output is the result text the tool returned.
+	Output string `json:"output,omitempty"`
+	// IsError marks a failed tool call.
+	IsError bool `json:"isError,omitempty"`
 }
 
 // ShouldInjectSystemPrompt determines whether the system prompt should be injected

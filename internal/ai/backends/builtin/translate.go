@@ -207,6 +207,14 @@ func (t *translator) doneEvents(ev agentcore.Event) []ai.StreamEvent {
 		StopReason:   ev.StopReason,
 		InputTokens:  ev.TotalUsage.InputTokens,
 		OutputTokens: ev.TotalUsage.OutputTokens,
+		TotalTokens:  ev.TotalUsage.InputTokens + ev.TotalUsage.OutputTokens,
+		// The cache split rides the message metadata so the ledger records what
+		// the prompt cache actually saved. Without it every built-in turn looked
+		// like a total miss (all four columns zero) even when the provider
+		// reported a hit.
+		CachedReadTokens:  ev.TotalUsage.CacheReadTokens,
+		CachedWriteTokens: ev.TotalUsage.CacheWriteTokens,
+		CacheHitTokens:    ev.TotalUsage.CacheReadTokens,
 	}})
 }
 

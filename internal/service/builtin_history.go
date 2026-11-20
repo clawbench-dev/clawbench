@@ -3,6 +3,7 @@ package service
 import (
 	"strings"
 
+	"clawbench/internal/agentcore/compaction"
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
@@ -21,7 +22,7 @@ func isBuiltinBackend(backendID string) bool {
 }
 
 // buildBuiltinHistory renders a session's prior turns for a self-hosted
-// backend.
+// backend, using the fallback budget for models whose window is unknown.
 //
 // Every external backend keeps its own transcript and is resumed by session id,
 // so replaying ours would duplicate the conversation. The built-in backend has
@@ -39,15 +40,24 @@ func isBuiltinBackend(backendID string) bool {
 // the rest, and replaying them too would put back exactly the tokens compaction
 // removed — and make the next turn compact again, forever.
 //
-// Only text is carried. Tool calls are omitted on purpose: their results can be
-// large file bodies the model has already moved past, and replaying them would
-// spend the context window on transcripts the reply already summarizes.
-//
-// The budget is bounded by runes so a long session cannot overflow the model's
-// window. Older turns are dropped from the FRONT (the most recent turns are what
-// the next reply depends on), and the cut is announced so the model does not
-// assume the conversation started mid-sentence.
+// Tool calls ride along. Dropping them was the root of the 2026-11-20
+// hallucination: the model saw a transcript of its own claims ("I changed the
+// file", "tests pass") with no tool record to contradict it, so it continued
+// the fiction. Inputs and outputs are truncated per call so one large file read
+// cannot eat the whole budget.
 func buildBuiltinHistory(sessionID string, beforeMessageID int64, summary builtinSummary) []ai.HistoryMessage {
+	return buildBuiltinHistoryWithBudget(sessionID, beforeMessageID, summary, builtinHistoryFallbackTokens)
+}
+
+// buildBuiltinHistoryWithBudget is buildBuiltinHistory with an explicit token
+// budget. Zero means unlimited: the engine compacts when the model's window is
+// known, and the caller should not also drop turns (that is the silent loss this
+// package was written to stop).
+//
+// The budget is a TOKEN estimate, not a character count: "40k runes" means
+// roughly 20k tokens of Chinese and 10k of English, so the same constant gave
+// the model wildly different amounts of history depending on the language.
+func buildBuiltinHistoryWithBudget(sessionID string, beforeMessageID int64, summary builtinSummary, budgetTokens int) []ai.HistoryMessage {
 	if sessionID == "" {
 		return nil
 	}
@@ -56,12 +66,12 @@ func buildBuiltinHistory(sessionID string, beforeMessageID int64, summary builti
 		return nil
 	}
 
-	turns := collectBuiltinTurns(messages, beforeMessageID, summary)
+	turns := collectBuiltinTurns(messages, beforeMessageID, summary, builtinToolCalls(messages))
 	if len(turns) == 0 {
 		return nil
 	}
 
-	start := builtinHistoryStart(turns)
+	start := builtinHistoryStart(turns, budgetTokens)
 	out := make([]ai.HistoryMessage, 0, len(turns)-start)
 	if start > 0 {
 		// Tell the model that earlier turns exist but were omitted, so it does
@@ -73,19 +83,31 @@ func buildBuiltinHistory(sessionID string, beforeMessageID int64, summary builti
 		})
 	}
 	for _, t := range turns[start:] {
-		out = append(out, ai.HistoryMessage{Role: t.role, Text: t.text, ID: t.id})
+		out = append(out, ai.HistoryMessage{
+			Role:  t.role,
+			Text:  t.text,
+			ID:    t.id,
+			Turn:  t.turn,
+			Tools: t.tools,
+		})
 	}
 	return out
 }
 
-// builtinTurn is one replayable turn: its role, its flattened text, and the
-// chat_history row id it came from.
+// builtinTurn is one replayable turn: its role, its flattened text, the
+// completed tool calls it made, and the chat_history row id it came from.
 type builtinTurn struct {
 	role string
 	text string
+	// tools are the completed calls this assistant turn made, in request order.
+	tools []ai.HistoryToolCall
 	// id is the chat_history row id, carried so a compaction can report WHICH
 	// stored turn it folded (see builtinSummaryFromCompaction).
 	id int64
+	// turn is this entry's zero-based position in the replayable list. It maps
+	// the engine's boundary (an index into the EXPANDED message list) back to
+	// the stored turn the summary actually covers.
+	turn int
 }
 
 // collectBuiltinTurns filters a session's stored messages down to the turns the
@@ -97,19 +119,20 @@ type builtinTurn struct {
 // "which list is being counted" is the whole content of this function, so it
 // must be readable at the point of use:
 //
-//   - turns only receives entries that pass every filter below, while keptTurns
-//     also counts the rows the summary position was measured on. On a session
-//     whose stored form contains anything the replay drops, the two diverge —
-//     and the boundary belongs to the count, not to len(turns).
-//   - turns is appended to AFTER the boundary has been consulted, so the number
-//     means "the first N replayed turns are covered", not "the N-th entry is" —
-//     an off-by-one here either re-summarizes one turn or drops it from the
+//   - turns only receives entries the summary has not covered, while keptTurns
+//     also counts the turns it did cover. On a session whose stored form
+//     contains anything the replay drops, the two diverge — and the boundary
+//     belongs to the count, not to len(turns).
+//   - the count advances BEFORE the append, so a turn's Turn field is its
+//     position in the replayable list, not its position among the kept turns.
+//     An off-by-one here either re-summarizes one turn or drops it from the
 //     model's context for good.
 //
-// The two counters advance together at the bottom of the loop (every row the
-// summary has not covered is, by definition, part of the replayed list) and
-// apart inside the covered branch.
-func collectBuiltinTurns(messages []model.ChatMessage, beforeMessageID int64, summary builtinSummary) []builtinTurn {
+// A turn is replayable when it has text OR completed tool calls. The second
+// half is new and matters: an assistant turn that only called tools has no
+// text, and skipping it was what left the model with a prose-only record of its
+// own work.
+func collectBuiltinTurns(messages []model.ChatMessage, beforeMessageID int64, summary builtinSummary, tools map[int64][]ai.HistoryToolCall) []builtinTurn {
 	var turns []builtinTurn
 	keptTurns := 0
 	for _, m := range messages {
@@ -118,6 +141,25 @@ func collectBuiltinTurns(messages []model.ChatMessage, beforeMessageID int64, su
 		if beforeMessageID > 0 && m.ID >= beforeMessageID {
 			continue
 		}
+		role := m.Role
+		if role != roleUser && role != roleAssistant {
+			continue
+		}
+		text := strings.TrimSpace(ExtractPlainText(m.Content))
+		var calls []ai.HistoryToolCall
+		if role == roleAssistant {
+			calls = tools[m.ID]
+		}
+		if text == "" && len(calls) == 0 {
+			continue
+		}
+
+		// The turn's position in the replayable list, counted whether or not the
+		// summary covers it. It is what maps an expanded-message boundary back
+		// to a stored turn.
+		position := keptTurns
+		keptTurns++
+
 		// Exclude everything the stored summary already stands for.
 		//
 		// The boundary is taken by POSITION when the stored summary knows it
@@ -126,43 +168,85 @@ func collectBuiltinTurns(messages []model.ChatMessage, beforeMessageID int64, su
 		// or rewinding the session shifts ids — it would then skip turns the
 		// engine deliberately kept verbatim, and the model loses them while the
 		// summary does not cover them either.
-		//
-		// The position counts REPLAYABLE turns only (zero-based, exactly like the
-		// engine's Spec.History): the boundary the caller stores is "the first N
-		// of these", so both sides must count the same list the same way.
 		if summary.CoversThroughTurn > 0 {
-			if keptTurns < summary.CoversThroughTurn {
-				keptTurns++
+			if position < summary.CoversThroughTurn {
 				continue
 			}
 		} else if summary.UpToMessageID > 0 && m.ID <= summary.UpToMessageID {
 			continue
 		}
-		role := m.Role
-		if role != roleUser && role != roleAssistant {
-			continue
-		}
-		text := strings.TrimSpace(ExtractPlainText(m.Content))
-		if text == "" {
-			continue
-		}
-		keptTurns++
-		turns = append(turns, builtinTurn{role: role, text: text, id: m.ID})
+
+		turns = append(turns, builtinTurn{
+			role:  role,
+			text:  text,
+			tools: calls,
+			id:    m.ID,
+			turn:  position,
+		})
 	}
 	return turns
 }
 
+// builtinToolCalls loads the completed tool calls of every assistant message,
+// keyed by message id and ordered as they were requested.
+//
+// Only rows marked done are included: an unanswered tool_use is rejected by both
+// wire protocols, and a cancelled call has no result to replay. Synthetic blocks
+// (the AskUserQuestion card is built from a text tag after the turn) have no row
+// here, so they are naturally excluded.
+func builtinToolCalls(messages []model.ChatMessage) map[int64][]ai.HistoryToolCall {
+	ids := make([]int64, 0, len(messages))
+	for _, m := range messages {
+		if m.Role == roleAssistant {
+			ids = append(ids, m.ID)
+		}
+	}
+	records, err := GetToolCallsByMessageIDs(ids)
+	if err != nil || len(records) == 0 {
+		return nil
+	}
+	out := make(map[int64][]ai.HistoryToolCall, len(records))
+	for _, r := range records {
+		if !r.Done || strings.TrimSpace(r.Name) == "" {
+			continue
+		}
+		out[r.MessageID] = append(out[r.MessageID], ai.HistoryToolCall{
+			ID:      r.ToolID,
+			Name:    r.Name,
+			Input:   truncateRunes(string(r.Input), builtinToolInputMaxRunes),
+			Output:  truncateRunes(r.Output, builtinToolOutputMaxRunes),
+			IsError: strings.EqualFold(r.Status, "error"),
+		})
+	}
+	return out
+}
+
+// Per-call caps. They keep one large file read or one large write from eating
+// the whole history budget; the model needs to know WHAT happened, not the full
+// body of a file it already worked on.
+const (
+	builtinToolInputMaxRunes  = 1000
+	builtinToolOutputMaxRunes = 2000
+)
+
 // builtinHistoryStart returns the index of the first turn that fits the budget.
 //
-// It walks backwards accumulating runes until the budget is spent: the kept tail
-// is what the next reply depends on. A single oversized message is truncated
-// rather than dropped when it would otherwise leave nothing — it is the turn the
-// user is most likely asking about.
-func builtinHistoryStart(turns []builtinTurn) int {
-	budget := builtinHistoryBudgetChars
+// It walks backwards accumulating TOKENS until the budget is spent: the kept
+// tail is what the next reply depends on. A single oversized message is
+// truncated rather than dropped when it would otherwise leave nothing — it is
+// the turn the user is most likely asking about.
+//
+// budgetTokens <= 0 means unlimited. That is the normal case when the model's
+// window is known: the engine compacts, and a second silent cut here would drop
+// turns the summary never mentioned.
+func builtinHistoryStart(turns []builtinTurn, budgetTokens int) int {
+	if budgetTokens <= 0 {
+		return 0
+	}
+	budget := budgetTokens
 	start := len(turns)
 	for i := len(turns) - 1; i >= 0; i-- {
-		n := len([]rune(turns[i].text))
+		n := builtinTurnTokens(turns[i])
 		if n > budget {
 			if start == len(turns) {
 				turns[i].text = truncateRunes(turns[i].text, budget)
@@ -174,6 +258,15 @@ func builtinHistoryStart(turns []builtinTurn) int {
 		start = i
 	}
 	return start
+}
+
+// builtinTurnTokens estimates one turn's size, tool evidence included.
+func builtinTurnTokens(t builtinTurn) int {
+	n := compaction.EstimateTokens(t.text)
+	for _, c := range t.tools {
+		n += compaction.EstimateTokens(c.Name) + compaction.EstimateTokens(c.Input) + compaction.EstimateTokens(c.Output)
+	}
+	return n
 }
 
 // builtinSummaryFromCompaction turns a compaction event into the boundary to
@@ -193,19 +286,38 @@ func builtinHistoryStart(turns []builtinTurn) int {
 // history and compacts again — one redundant summary call, never lost content.
 func builtinSummaryFromCompaction(event ai.StreamEvent, history []ai.HistoryMessage) builtinSummary {
 	s := builtinSummary{Text: event.Summary}
+
+	// Prefer the stored id: one assistant turn with tool calls expands into two
+	// replayed messages, so the engine's index no longer lines up with this
+	// list (it can legitimately be past the end). The id is duplicated on both
+	// messages, which makes it the stable handle — and the Turn field then says
+	// which STORED turn it was.
+	if id := event.CompactedThroughMessageID; id > 0 {
+		for i := range history {
+			if history[i].ID != id {
+				continue
+			}
+			s.CoversThroughTurn = history[i].Turn + 1
+			s.UpToMessageID = id
+			return s
+		}
+		// The engine named an id this caller cannot explain. Mapping the index
+		// instead would be a guess, and a wrong guess silently drops stored
+		// turns, so write nothing and replay everything next turn.
+		return s
+	}
+
+	// No id: the boundary landed on a synthetic entry (the fork-context header)
+	// or the caller keeps no ids at all. The index is then the only handle.
 	last := event.CompactedThroughHistory
 	if last < 0 || last >= len(history) {
 		return s
 	}
-	s.CoversThroughTurn = last + 1
-	if id := event.CompactedThroughMessageID; id > 0 {
-		s.UpToMessageID = id
-	} else {
-		// The turn's own id is the same fact. An entry without one (the fork
-		// context header) leaves the id unset, which is harmless: the position is
-		// what the next turn uses.
-		s.UpToMessageID = history[last].ID
-	}
+	s.CoversThroughTurn = history[last].Turn + 1
+	// The turn's own id is the same fact. An entry without one (the fork
+	// context header) leaves the id unset, which is harmless: the position is
+	// what the next turn uses.
+	s.UpToMessageID = history[last].ID
 	return s
 }
 
@@ -232,12 +344,18 @@ func lastCoveredMessageID(sessionID string, beforeMessageID int64) int64 {
 	return id
 }
 
-// builtinHistoryBudgetChars bounds the replayed history.
+// builtinHistoryFallbackTokens bounds the replayed history when the model's
+// context window is unknown.
 //
-// 40k runes is roughly 20-30k tokens of Chinese/English prose — comfortably
-// inside every current model's window while leaving room for the system prompt,
-// the tool results of the current turn, and the reply itself.
-const builtinHistoryBudgetChars = 40000
+// It is a TOKEN budget, not a rune count: 40k runes used to mean ~20k tokens of
+// Chinese and ~10k of English, so the same constant gave the model wildly
+// different amounts of history depending on the language. 40k tokens is roughly
+// twice the old Chinese capacity and still comfortably inside a 64k+ window.
+//
+// It is only a safety net. When the window IS known the engine compacts, and
+// the caller passes 0 (unlimited) rather than cutting turns the summary never
+// mentioned.
+const builtinHistoryFallbackTokens = 40000
 
 // builtinHistoryEnabled reports whether the backend needs a replayed history.
 //
