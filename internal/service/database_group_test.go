@@ -183,7 +183,8 @@ func TestRebuildChatHistoryRoleCheck_MigratesLegacyAndPreservesData(t *testing.T
 	// The migrated row is intact.
 	var content string
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&content))
+		"SELECT content FROM chat_history WHERE id = ?", msgID,
+	).Scan(&content))
 	assert.Equal(t, "old reply", content)
 
 	// The child rows must survive: a naive DROP TABLE with FK ON cascades.
@@ -195,12 +196,13 @@ func TestRebuildChatHistoryRoleCheck_MigratesLegacyAndPreservesData(t *testing.T
 
 	// All chat_history indexes are recreated on the renamed table.
 	for _, idx := range []string{
-		"idx_history_session", "idx_history_session_id", "idx_history_unread",
+		"idx_history_session", "idx_history_session_id", "idx_history_session_stream", "idx_history_unread",
 		"idx_history_sess_unread", "idx_history_indexing",
 	} {
 		var n int
 		require.NoError(t, store.UnsafeDBForTest().QueryRow(
-			"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?", idx).Scan(&n))
+			"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?", idx,
+		).Scan(&n))
 		assert.Equal(t, 1, n, "index %s must be recreated after the rebuild", idx)
 	}
 
@@ -232,7 +234,8 @@ func TestRebuildChatHistoryRoleCheck_Idempotent(t *testing.T) {
 
 	var content string
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT content FROM chat_history WHERE id = ?", id).Scan(&content))
+		"SELECT content FROM chat_history WHERE id = ?", id,
+	).Scan(&content))
 	assert.Equal(t, "event", content, "idempotent rerun must not touch rows")
 	assert.Contains(t, chatHistoryRoleSQL(t), "'system'")
 }
@@ -294,7 +297,8 @@ func TestRebuildChatHistoryRoleCheck_QueuedMigrationOrdering(t *testing.T) {
 	// The queued message must have been moved, not lost.
 	var n int
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM queued_messages WHERE queue_id = 'q-1' AND content = 'queued body'").Scan(&n))
+		"SELECT COUNT(*) FROM queued_messages WHERE queue_id = 'q-1' AND content = 'queued body'",
+	).Scan(&n))
 	assert.Equal(t, 1, n, "queued rows must survive the role-check rebuild ordering")
 
 	// The dead columns are gone, and the CHECK is relaxed.
