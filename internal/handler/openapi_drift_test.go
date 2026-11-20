@@ -26,6 +26,7 @@ import (
 // codebase serves parameterised paths.
 func TestOpenAPISpecMatchesRegisteredRoutes(t *testing.T) {
 	mux := http.NewServeMux()
+	registerAllPluginsForTest(t)
 	RegisterRoutes(mux)
 
 	specRoutes, err := api.SpecRoutes()
@@ -124,6 +125,7 @@ func exactCoveredBySpec(pattern string, specRoutes []api.SpecRoute) bool {
 // spec update (or vice versa) fails here.
 func TestOpenAPISpecAuthMatchesRoutes(t *testing.T) {
 	mux := http.NewServeMux()
+	registerAllPluginsForTest(t)
 	RegisterRoutes(mux)
 
 	specRoutes, err := api.SpecRoutes()

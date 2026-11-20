@@ -7,7 +7,6 @@
 package live
 
 import (
-	"clawbench/internal/handler"
 	"clawbench/internal/plugins"
 )
 
@@ -18,6 +17,6 @@ func Register() {
 		DefaultOn: true,
 		// 会议记录与信令。会议"公开纪要"那条开关属于 share，不在这个前缀下。
 		APIPrefixes: []string{"/api/live-share/"},
-		MountRoutes: handler.MountLiveRoutes,
+		MountRoutes: MountLiveRoutes,
 	})
 }

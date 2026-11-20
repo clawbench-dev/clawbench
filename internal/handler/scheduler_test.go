@@ -1,6 +1,7 @@
 package handler
 
 import (
+	plugtasks "clawbench/internal/plugin/tasks"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -52,7 +53,7 @@ func TestServeTaskByID_Executions_ISO8601Cursor(t *testing.T) {
 	// Page 1: get 2 items
 	req1 := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions?limit=2", task.ID), nil)
 	req1 = withProjectCookie(req1, env.ProjectDir)
-	w1 := callHandler(ServeTaskByID, req1)
+	w1 := callHandler(plugtasks.ServeTaskByID, req1)
 	assertOK(t, w1)
 
 	var result1 map[string]any
@@ -79,7 +80,7 @@ func TestServeTaskByID_Executions_ISO8601Cursor(t *testing.T) {
 	req2 := newRequest(t, http.MethodGet,
 		fmt.Sprintf("/api/tasks/%d/executions?limit=2&cursor=%s&cursor_id=%s", task.ID, isoCursor, cursorID), nil)
 	req2 = withProjectCookie(req2, env.ProjectDir)
-	w2 := callHandler(ServeTaskByID, req2)
+	w2 := callHandler(plugtasks.ServeTaskByID, req2)
 	assertOK(t, w2)
 
 	var result2 map[string]any
@@ -128,7 +129,7 @@ func TestServeTaskByID_Executions_UnreadWithoutLastRead(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -177,7 +178,7 @@ func TestServeTaskByID_Executions_ScriptResultExposed(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -225,7 +226,7 @@ func TestServeTaskByID_Executions_NoScriptOmitsField(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -268,7 +269,7 @@ func TestServeTaskByID_Executions_RunningNotUnread(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -312,7 +313,7 @@ func TestServeTaskByID_Executions_ReadAtSuppressesUnread(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -350,7 +351,7 @@ func TestServeTaskByID_Executions_EmptyResult(t *testing.T) {
 	// No executions created
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -387,7 +388,7 @@ func TestServeTaskByID_Executions_WrongProject(t *testing.T) {
 	otherProject := t.TempDir()
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions", task.ID), nil)
 	req = withProjectCookie(req, otherProject)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
 
@@ -410,7 +411,7 @@ func TestContinueConversation_GET_FoundWithSessionID(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions/%d/continue", taskID, execID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 
@@ -433,7 +434,7 @@ func TestContinueConversation_GET_NotFound(t *testing.T) {
 	// Query a non-existent execution ID
 	req := newRequest(t, http.MethodGet, "/api/tasks/1/executions/99999/continue", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusNotFound)
 }
@@ -462,7 +463,7 @@ func TestContinueConversation_POST_ExecutionNotFound(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, fmt.Sprintf("/api/tasks/%d/executions/99999/continue", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusNotFound)
 }
@@ -495,7 +496,7 @@ func TestContinueConversation_POST_StillRunning(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, fmt.Sprintf("/api/tasks/%d/executions/%d/continue", task.ID, execID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -525,7 +526,7 @@ func TestContinueConversation_POST_SessionLimit(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, fmt.Sprintf("/api/tasks/%d/executions/%d/continue", taskID, execID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusConflict)
 }
@@ -544,7 +545,7 @@ func TestContinueConversation_POST_AccessDenied(t *testing.T) {
 	// Use wrong project cookie — task ownership check catches this first
 	req := newRequest(t, http.MethodPost, fmt.Sprintf("/api/tasks/%d/executions/%d/continue", taskID, execID), nil)
 	req = withProjectCookie(req, t.TempDir())
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusForbidden)
 }
@@ -560,12 +561,12 @@ func TestContinueConversation_MethodNotAllowed(t *testing.T) {
 
 	req := newRequest(t, http.MethodDelete, "/api/tasks/1/executions/1/continue", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusMethodNotAllowed)
 }
 
-// ========== ServeTaskByID — deleteExecution (running) ==========
+// ========== plugtasks.ServeTaskByID — deleteExecution (running) ==========
 
 func TestServeTaskByID_DeleteExecution_Running(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -604,12 +605,12 @@ func TestServeTaskByID_DeleteExecution_Running(t *testing.T) {
 		"executionId": fmt.Sprintf("%d", execID),
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusConflict)
 }
 
-// ========== ServeTaskByID — deleteAllExecutions wrong project ==========
+// ========== plugtasks.ServeTaskByID — deleteAllExecutions wrong project ==========
 
 func TestServeTaskByID_DeleteAllExecutions_WrongProject(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -640,12 +641,12 @@ func TestServeTaskByID_DeleteAllExecutions_WrongProject(t *testing.T) {
 		"action": "deleteAllExecutions",
 	})
 	req = withProjectCookie(req, otherProject)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusForbidden)
 }
 
-// ========== ServeTaskByID — read action with executionID ==========
+// ========== plugtasks.ServeTaskByID — read action with executionID ==========
 
 func TestServeTaskByID_ReadWithExecutionID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -680,7 +681,7 @@ func TestServeTaskByID_ReadWithExecutionID(t *testing.T) {
 		"executionId": fmt.Sprintf("%d", execID),
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 }
@@ -714,12 +715,12 @@ func TestServeTaskByID_ReadWithoutExecutionID(t *testing.T) {
 		"action": "read",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 }
 
-// ========== ServeTaskByID — cancel action ==========
+// ========== plugtasks.ServeTaskByID — cancel action ==========
 
 func TestServeTaskByID_Cancel_MissingExecutionID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -749,7 +750,7 @@ func TestServeTaskByID_Cancel_MissingExecutionID(t *testing.T) {
 		"action": "cancel",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -783,12 +784,12 @@ func TestServeTaskByID_Cancel_ExecutionNotFound(t *testing.T) {
 		"executionId": "nonexistent-session-id",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusNotFound)
 }
 
-// ========== ServeTaskByID — stop action ==========
+// ========== plugtasks.ServeTaskByID — stop action ==========
 
 // TestServeTaskByID_Stop_CancelsRunningExecutions guards the task-level stop:
 // the detail page only knows the task's runningCount, not the in-memory
@@ -837,7 +838,7 @@ func TestServeTaskByID_Stop_CancelsRunningExecutions(t *testing.T) {
 		"action": "stop",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 	assert.True(t, cancelledAI, "the AI-phase execution must be cancelled")
@@ -871,12 +872,12 @@ func TestServeTaskByID_Stop_Idempotent(t *testing.T) {
 		"action": "stop",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 }
 
-// ========== ServeTaskByID — invalid task ID ==========
+// ========== plugtasks.ServeTaskByID — invalid task ID ==========
 
 func TestServeTaskByID_InvalidTaskID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -884,12 +885,12 @@ func TestServeTaskByID_InvalidTaskID(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, "/api/tasks/not-a-number", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
-// ========== ServeTaskByID — method not allowed ==========
+// ========== plugtasks.ServeTaskByID — method not allowed ==========
 
 func TestServeTaskByID_MethodNotAllowed(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -897,12 +898,12 @@ func TestServeTaskByID_MethodNotAllowed(t *testing.T) {
 
 	req := newRequest(t, http.MethodPatch, "/api/tasks/1", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusMethodNotAllowed)
 }
 
-// ========== ServeTaskByID — deleteExecution not found ==========
+// ========== plugtasks.ServeTaskByID — deleteExecution not found ==========
 
 func TestServeTaskByID_DeleteExecution_NotFound(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -933,12 +934,12 @@ func TestServeTaskByID_DeleteExecution_NotFound(t *testing.T) {
 		"executionId": "99999",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusNotFound)
 }
 
-// ========== ServeTaskByID — update with MaxRuns ==========
+// ========== plugtasks.ServeTaskByID — update with MaxRuns ==========
 
 func TestServeTaskByID_UpdateWithMaxRuns(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -971,7 +972,7 @@ func TestServeTaskByID_UpdateWithMaxRuns(t *testing.T) {
 		"max_runs": 0,
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 
@@ -1011,13 +1012,13 @@ func TestServeTaskByID_UpdateWithDisabledAgent(t *testing.T) {
 		"agent_id": "disabled",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "This agent is disabled")
 }
 
-// ========== ServeTaskByID — update reactivates completed task ==========
+// ========== plugtasks.ServeTaskByID — update reactivates completed task ==========
 
 func TestServeTaskByID_UpdateReactivatesCompletedTask(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -1053,7 +1054,7 @@ func TestServeTaskByID_UpdateReactivatesCompletedTask(t *testing.T) {
 		"prompt": "Updated prompt",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 
@@ -1063,7 +1064,7 @@ func TestServeTaskByID_UpdateReactivatesCompletedTask(t *testing.T) {
 	assert.Equal(t, "active", returnedTask["status"], "editing a completed task should reactivate it")
 }
 
-// ========== ServeTaskByID — sub-path dispatch isolation ==========
+// ========== plugtasks.ServeTaskByID — sub-path dispatch isolation ==========
 //
 // A request carrying a sub-resource suffix must never fall through to the
 // task-level CRUD switch. Before this was enforced, an unrecognized suffix
@@ -1121,7 +1122,7 @@ func TestServeTaskByID_DeleteOnExecutions_RejectedNotDeletingTask(t *testing.T) 
 	// DELETE on the executions collection is not part of the API surface.
 	req := newRequest(t, http.MethodDelete, fmt.Sprintf("/api/tasks/%d/executions", taskID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusMethodNotAllowed)
 
@@ -1151,7 +1152,7 @@ func TestServeTaskByID_PutOnExecutions_MethodNotAllowed(t *testing.T) {
 		"prompt": "hijacked",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusMethodNotAllowed)
 
@@ -1176,7 +1177,7 @@ func TestServeTaskByID_UnknownSubPath_NotFound(t *testing.T) {
 
 			req := newRequest(t, method, fmt.Sprintf("/api/tasks/%d/bogus", taskID), nil)
 			req = withProjectCookie(req, env.ProjectDir)
-			w := callHandler(ServeTaskByID, req)
+			w := callHandler(plugtasks.ServeTaskByID, req)
 
 			assertStatus(t, w, http.StatusNotFound)
 			requireTaskExists(t, taskID, method+" on an unknown sub-path must not touch the task")
@@ -1198,7 +1199,7 @@ func TestServeTaskByID_ExecutionWithoutContinueSuffix_NotFound(t *testing.T) {
 	// `executions/{id}` alone is not a route — only `executions/{id}/continue` is.
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions/5", taskID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusNotFound)
 }
@@ -1218,7 +1219,7 @@ func TestServeTaskByID_UnknownTrailingSegmentOnContinue_NotFound(t *testing.T) {
 	// into a different sub-resource.
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions/5/resume", taskID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusNotFound)
 }
@@ -1236,7 +1237,7 @@ func TestServeTaskByID_DeleteOnUnknownSubPath_DoesNotDeleteTask(t *testing.T) {
 
 	req := newRequest(t, http.MethodDelete, fmt.Sprintf("/api/tasks/%d/executions/9", taskID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusNotFound)
 	requireTaskExists(t, taskID, "DELETE on a sub-path must never delete the parent task")
@@ -1269,7 +1270,7 @@ func TestServeTasks_PostWithScript(t *testing.T) {
 		"script_timeout": 42,
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -1307,7 +1308,7 @@ func TestServeTaskByID_PutWithScript(t *testing.T) {
 		"script_timeout": 7,
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	persisted, err := service.GetTaskByID(taskID)
@@ -1341,14 +1342,14 @@ func TestServeTaskByID_PutOmittingScriptKeepsIt(t *testing.T) {
 		"action": "update", "script": "echo IMPORTANT", "script_timeout": 60,
 	})
 	seed = withProjectCookie(seed, env.ProjectDir)
-	assertOK(t, callHandler(ServeTaskByID, seed))
+	assertOK(t, callHandler(plugtasks.ServeTaskByID, seed))
 
 	// A prompt-only partial update: `script` and `script_timeout` are absent.
 	partial := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", taskID), map[string]any{
 		"action": "update", "prompt": "new prompt only",
 	})
 	partial = withProjectCookie(partial, env.ProjectDir)
-	assertOK(t, callHandler(ServeTaskByID, partial))
+	assertOK(t, callHandler(plugtasks.ServeTaskByID, partial))
 
 	persisted, err := service.GetTaskByID(taskID)
 	require.NoError(t, err)
@@ -1363,7 +1364,7 @@ func TestServeTaskByID_PutOmittingScriptKeepsIt(t *testing.T) {
 		"action": "update", "script": "",
 	})
 	clearReq = withProjectCookie(clearReq, env.ProjectDir)
-	assertOK(t, callHandler(ServeTaskByID, clearReq))
+	assertOK(t, callHandler(plugtasks.ServeTaskByID, clearReq))
 
 	cleared, err := service.GetTaskByID(taskID)
 	require.NoError(t, err)
@@ -1392,7 +1393,7 @@ func TestServeTaskByID_DetailRunningCount_ScriptPhaseExcluded(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d", taskID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var task map[string]any
@@ -1434,7 +1435,7 @@ func TestServeTasks_PostRejectsNegativeScriptTimeout(t *testing.T) {
 		"script_timeout": -5,
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 	assert.Contains(t, w.Body.String(), "TaskScriptTimeoutInvalid")
@@ -1470,7 +1471,7 @@ func TestServeTasks_PostAcceptsZeroScriptTimeout(t *testing.T) {
 		"script_timeout": 0,
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertOK(t, w)
 }
@@ -1499,7 +1500,7 @@ func TestServeTaskByID_PutRejectsNegativeScriptTimeout(t *testing.T) {
 		"script_timeout": -1,
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 	assert.Contains(t, w.Body.String(), "TaskScriptTimeoutInvalid")

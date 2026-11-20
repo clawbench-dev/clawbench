@@ -175,6 +175,14 @@ type Mount struct {
 	// Public 挂一条**故意不需要登录**的路由。每一条的免鉴权理由都必须写在
 	// 调用处 —— OpenAPI 里对应的操作要有 `security: []`，否则守卫测试会红。
 	Public func(pattern string, handler http.HandlerFunc)
+
+	// Raw 挂一条"需要登录但不要鉴权中间件"的路由：中间件链照常套，鉴权由
+	// handler 自己做。用于那些必须在未登录时给出**重定向**而不是 JSON 401
+	// 的入口（/share-target：浏览器从系统分享面板跳过来，看到一坨 JSON 只会
+	// 以为坏了）。登记为 authenticated=true，与 OpenAPI 的 security 一致。
+	//
+	// nil 时退化为 Public。
+	Raw func(pattern string, handler http.HandlerFunc)
 }
 
 // DisabledKey 返回拒绝请求时使用的 i18n 键。

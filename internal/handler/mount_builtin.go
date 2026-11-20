@@ -31,11 +31,7 @@ func mountBuiltinRoutes(m plugins.Mount) {
 		return
 	}
 
-	// 注册表为空：handler 单测路径。保持与插件包里的声明一一对应。
-	MountForgeRoutes(m)
-	MountKBRoutes(m)
-	MountLiveRoutes(m)
-	MountMailRoutes(m)
-	MountShareRoutes(m)
-	MountTerminalRoutes(m)
+	// 注册表为空：handler 单测路径。只包含仍在本包里的功能——
+	// 已经搬进 internal/plugin/<id> 的（mail 等）不在这里，它们的路由由
+	// cmd/server 的测试（注册表非空）覆盖。
 }

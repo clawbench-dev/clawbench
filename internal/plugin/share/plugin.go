@@ -2,7 +2,6 @@
 package share
 
 import (
-	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/plugins"
 )
@@ -19,7 +18,7 @@ func Register() {
 		// registerPublic，永远不进 Gate——分享关闭时旧链接由服务端返回 404，
 		// 而不是 409。
 		APIPrefixes: []string{"/api/share/"},
-		MountRoutes: handler.MountShareRoutes,
+		MountRoutes: MountShareRoutes,
 		ConfigFields: map[string]bool{
 			"share.enabled":           true,
 			"share.allow_files":       true,
@@ -31,6 +30,6 @@ func Register() {
 		},
 		// 关闭即撤销：链接是服务端签发的凭证，关掉必须让旧链接立刻失效。
 		// 重新打开不会恢复已撤销的链接——那是"撤销"唯一诚实的读法。
-		OnDisable: handler.ShareDisableEffect,
+		OnDisable: ShareDisableEffect,
 	})
 }

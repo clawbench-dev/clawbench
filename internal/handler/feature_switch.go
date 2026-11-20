@@ -1,12 +1,9 @@
 package handler
 
 import (
-	"fmt"
-	"log/slog"
 	"net/http"
 
 	"clawbench/internal/model"
-	"clawbench/internal/service"
 )
 
 // The tasks / share master switches are package globals (model.TasksEnabled /
@@ -49,55 +46,4 @@ func rejectIfTasksDisabled(w http.ResponseWriter, r *http.Request) bool {
 	}
 	writeLocalizedErrorf(w, r, http.StatusConflict, "TasksDisabled")
 	return true
-}
-
-// ForgeDisableEffect clears every project's repository binding when the forge
-// integration is switched off.
-//
-// Bindings are what actually drives polling, so this is what makes "disabled"
-// mean "no outbound requests" rather than just "hidden". The poller also checks
-// the flag each cycle (belt and braces for the window before this runs).
-//
-// It is the forge plugin's OnDisable, wired in cmd/server. The timing — after
-// writeConfigYAML succeeded — is enforced by serveConfigPatch; doing it first
-// and then failing to persist would destroy the user's bindings while the
-// switch stayed on.
-//
-// A failure is reported as a WARNING, not a 500: the config is already
-// persisted, so answering 500 would make the client roll `forge.enabled` back
-// to true while the server is disabled. The stale bindings are harmless (the
-// poller checks the flag first) and the next disable retries the cleanup.
-func ForgeDisableEffect() []string {
-	removed, err := service.ClearAllProjectForges()
-	if err != nil {
-		slog.Error("forge: clear bindings after disable failed", "err", err)
-		return []string{fmt.Sprintf("forge disabled, but clearing repository bindings failed: %v", err)}
-	}
-	if removed > 0 {
-		slog.Info("forge: integration disabled, bindings cleared", "removed", removed)
-	}
-	return nil
-}
-
-// ShareDisableEffect revokes every issued share link when sharing is switched
-// off (file, conversation and meeting links all at once).
-//
-// Links are server-issued capability URLs, so "off" has to mean they stop
-// working everywhere — which one browser cannot do for another. Re-enabling does
-// NOT restore them: that is the only honest reading of "revoke".
-//
-// Same warning semantics as ForgeDisableEffect: the switch already took effect.
-func ShareDisableEffect() []string {
-	res, err := service.RevokeAllShares()
-	if err != nil {
-		slog.Error("share: revoke all links after disable failed", "err", err)
-		return []string{fmt.Sprintf("share disabled, but revoking existing links failed: %v", err)}
-	}
-	slog.Info(
-		"share: master switch off, links revoked",
-		"file", res.FileShares,
-		"session", res.SessionShares,
-		"meeting", res.MeetingShares,
-	)
-	return nil
 }

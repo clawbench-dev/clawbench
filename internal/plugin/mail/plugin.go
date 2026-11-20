@@ -2,7 +2,6 @@
 package mail
 
 import (
-	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/plugins"
 	"clawbench/internal/service"
@@ -17,7 +16,7 @@ func Register() {
 		DefaultOn: true,
 		// 邮箱数据是全局的（属于人，不属于项目），前缀下没有任何项目路由。
 		APIPrefixes: []string{"/api/mail/"},
-		MountRoutes: handler.MountMailRoutes,
+		MountRoutes: MountMailRoutes,
 		ConfigFields: map[string]bool{
 			"mail.enabled":               true,
 			"mail.notify":                true,

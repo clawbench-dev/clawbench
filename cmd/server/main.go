@@ -37,6 +37,7 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	pluginall "clawbench/internal/plugin/all"
+	pluglive "clawbench/internal/plugin/live"
 	"clawbench/internal/plugins"
 	"clawbench/internal/push/common"
 	"clawbench/internal/push/dingtalk"
@@ -1607,7 +1608,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Idle live-share rooms are in-memory and have no other cleanup path: a
 	// publisher that vanished without a clean socket close would otherwise hold
 	// one of the maxLiveRooms slots forever.
-	handler.StartLiveShareReaper()
+	pluglive.StartLiveShareReaper()
 
 	if err := service.InitFileWatcher(); err != nil {
 		slog.Warn(

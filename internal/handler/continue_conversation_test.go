@@ -1,6 +1,7 @@
 package handler
 
 import (
+	plugtasks "clawbench/internal/plugin/tasks"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -65,7 +66,7 @@ func TestContinueConversation_GET_NotContinued(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions/%d/continue", taskID, execID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 
@@ -92,7 +93,7 @@ func TestContinueConversation_GET_AlreadyContinued(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions/%d/continue", taskID, execID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 
@@ -116,7 +117,7 @@ func TestContinueConversation_POST_NormalFlow(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, fmt.Sprintf("/api/tasks/%d/executions/%d/continue", taskID, execID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 
@@ -145,7 +146,7 @@ func TestContinueConversation_POST_AlreadyExists(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, fmt.Sprintf("/api/tasks/%d/executions/%d/continue", taskID, execID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 
@@ -185,7 +186,7 @@ func TestContinueConversation_POST_RunningExecution(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, fmt.Sprintf("/api/tasks/%d/executions/%d/continue", task.ID, execID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 }
@@ -204,7 +205,7 @@ func TestContinueConversation_POST_ProjectMismatch(t *testing.T) {
 	// Use a different project cookie
 	req := newRequest(t, http.MethodPost, fmt.Sprintf("/api/tasks/%d/executions/%d/continue", taskID, execID), nil)
 	req = withProjectCookie(req, t.TempDir()) // wrong project
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	// Should get 403 because the task's project doesn't match
 	assertStatus(t, w, http.StatusForbidden)
@@ -221,7 +222,7 @@ func TestContinueConversation_GET_ExecutionNotFound(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, "/api/tasks/1/executions/99999/continue", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusNotFound)
 }
@@ -232,7 +233,7 @@ func TestContinueConversation_InvalidExecID(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, "/api/tasks/1/executions/abc/continue", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 }

@@ -36,29 +36,14 @@ func mustLoadSTTProbe() []byte {
 	return data
 }
 
-// sttProvider is the global STT provider instance.
-// Access is protected by sttProviderMu for hot-reload safety.
-var (
-	sttProvider   stt.STTProvider = stt.NewVLLMProvider("http://localhost:8000/v1", "openai/whisper-large-v3", "", "zh")
-	sttProviderMu sync.RWMutex
-)
+// 全局 provider 状态已经搬到 internal/stt（会议纪要要用，插件不能 import
+// handler）。这里保留同名函数，是为了不动本包内的调用点。
+func SetSTTProvider(p stt.STTProvider) { stt.SetCurrent(p) }
 
-// SetSTTProvider replaces the global STT provider.
-// Goroutine-safe: concurrent Transcribe calls are protected by RWMutex.
-func SetSTTProvider(p stt.STTProvider) {
-	sttProviderMu.Lock()
-	sttProvider = p
-	sttProviderMu.Unlock()
-}
+func GetSTTProvider() stt.STTProvider { return stt.Current() }
 
-// GetSTTProvider returns the current STT provider.
-// Goroutine-safe for concurrent reads.
-func GetSTTProvider() stt.STTProvider {
-	sttProviderMu.RLock()
-	p := sttProvider
-	sttProviderMu.RUnlock()
-	return p
-}
+// pcmPeakRMS 的实现在 internal/stt（会议纪要也要用）。
+var pcmPeakRMS = stt.PeakRMS
 
 // sttMaxBodyBytes limits the STT request body size (10MB).
 const sttMaxBodyBytes = 10 << 20
@@ -348,7 +333,7 @@ func serveBufferedSTT(ctx context.Context, conn *websocket.Conn, provider stt.ST
 		state.mu.Unlock()
 
 		if len(full) > 0 && heard {
-			text, terr := provider.Transcribe(context.WithoutCancel(ctx), bytes.NewReader(wavFromPCM(full, rate)), cfg.STT.ActiveLanguage())
+			text, terr := provider.Transcribe(context.WithoutCancel(ctx), bytes.NewReader(stt.WAVFromPCM(full, rate)), cfg.STT.ActiveLanguage())
 			if terr == nil {
 				finalText = text
 			}
@@ -416,7 +401,7 @@ func transcribeBufferedChunkIfDue(ctx context.Context, state *sttStreamState, pr
 	// Buffered engines take a file, not a byte stream: headerless samples are
 	// either rejected or decoded as silence. This is the whole reason the
 	// OpenAI-compatible path could not transcribe continuous conversation.
-	text, terr := provider.Transcribe(ctx, bytes.NewReader(wavFromPCM(seg, rate)), language)
+	text, terr := provider.Transcribe(ctx, bytes.NewReader(stt.WAVFromPCM(seg, rate)), language)
 	if terr != nil {
 		// A single failure is not worth ending the conversation — a gateway
 		// hiccup would otherwise close the mode mid-sentence. A streak is: the
@@ -675,27 +660,6 @@ func (r *sttStreamRelay) close() {
 		slog.Int("frames", r.frames),
 		slog.Float64("peak_rms", math.Round(r.peakRMS*10000)/10000),
 	)
-}
-
-// pcmPeakRMS is the loudest 16-bit sample magnitude in one frame, as a 0..1
-// fraction of full scale. Peak rather than average: a frame of speech with
-// pauses would otherwise average down to nothing.
-func pcmPeakRMS(pcm []byte) float64 {
-	if len(pcm) < 2 {
-		return 0
-	}
-	var peak float64
-	for i := 0; i+1 < len(pcm); i += 2 {
-		v := int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8) //nolint:gosec // G115: the two bytes ARE a signed 16-bit sample; the wrap is the conversion
-		f := float64(v) / 32768
-		if f < 0 {
-			f = -f
-		}
-		if f > peak {
-			peak = f
-		}
-	}
-	return peak
 }
 
 // applySTTStreamOptions overlays the start control frame onto the defaults.

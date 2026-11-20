@@ -7,7 +7,6 @@ package forge
 
 import (
 	"clawbench/internal/forgepoll"
-	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/plugins"
 	"clawbench/internal/service"
@@ -25,7 +24,7 @@ func Register() {
 		// 里的关闭分支），所以按方法豁免——POST/DELETE 仍然要被拒。
 		APIPrefixes: []string{"/api/forge/"},
 		GateExempt:  []string{"GET /api/forge/binding"},
-		MountRoutes: handler.MountForgeRoutes,
+		MountRoutes: MountForgeRoutes,
 		// 可修改的配置字段（PATCH /api/config），归属声明；实际校验由
 		// handler.builtinConfigFields 承担，两份的一致性有守卫测试钉住。
 		ConfigFields: map[string]bool{
@@ -39,12 +38,17 @@ func Register() {
 			"forge.notify.commented":  true,
 			"forge.notify.pipeline":   true,
 		},
-		Start: func(model.Config) { forgepoll.Start() },
-		Stop:  service.StopForgePoller,
+		Start: func(model.Config) {
+			forgepoll.Start(forgepoll.Deps{
+				NewProvider:     NewForgeProvider,
+				CredentialLogin: ForgeCredentialLogin,
+			})
+		},
+		Stop: service.StopForgePoller,
 		// 关闭即撤销：绑定是"会对外发请求"的东西，清掉它才让"关闭"等于
 		// "不再和 GitHub/GitLab 说话"，而不只是隐藏入口。轮询器每个周期也会
 		// 自己看开关（这里是第二道防线，覆盖清空提交前的窗口）。
 		// 时机由 handler 保证：writeConfigYAML 成功之后才调用。
-		OnDisable: handler.ForgeDisableEffect,
+		OnDisable: ForgeDisableEffect,
 	})
 }

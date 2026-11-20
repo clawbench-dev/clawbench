@@ -2,14 +2,14 @@ package handler
 
 import (
 	"archive/zip"
-	"fmt"
+	"strings"
+
+	"clawbench/internal/filex"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
-	"unicode/utf8"
 )
 
 // maxArchivePaths limits the number of paths in a single archive request.
@@ -75,7 +75,7 @@ func ServeFileArchive(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	}
 	// Set response headers before writing any data
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", contentDispositionAttachment(zipName))
+	w.Header().Set("Content-Disposition", filex.ContentDispositionAttachment(zipName))
 	w.Header().Set("Cache-Control", "no-store")
 
 	// Stream zip directly to response writer
@@ -143,46 +143,6 @@ func ServeFileArchive(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	}
 }
 
-// sanitizeArchiveName removes or replaces characters that could break
-// the Content-Disposition header (quotes, backslashes, control chars).
-func sanitizeArchiveName(name string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '"' || r == '\\' || r < 0x20 {
-			return '_'
-		}
-		return r
-	}, name)
-}
-
-// contentDispositionAttachment builds a Content-Disposition header value
-// with both filename (ASCII fallback) and filename* (RFC 5987/6267).
-// This ensures CJK and other non-ASCII filenames display correctly
-// across browsers, proxies, and the Android WebView.
-func contentDispositionAttachment(name string) string {
-	safe := sanitizeArchiveName(name)
-	encoded := rfc5987Encode(name)
-	return fmt.Sprintf(`attachment; filename=%q; filename*=UTF-8''%s`, safe, encoded)
-}
-
-// rfc5987Encode percent-encodes a string per RFC 5987.
-// ASCII alphanums and !#$&+-.^_`|~ are left unencoded.
-func rfc5987Encode(name string) string {
-	var encoded strings.Builder
-	encoded.Grow(len(name) * 3)
-	for _, r := range name {
-		if isRFC5987Unreserved(r) {
-			encoded.WriteRune(r)
-		} else {
-			var buf [4]byte
-			n := utf8.EncodeRune(buf[:], r)
-			for i := range n {
-				fmt.Fprintf(&encoded, "%%%02X", buf[i])
-			}
-		}
-	}
-	return encoded.String()
-}
-
 // rfc5987Unreserved is the set of unreserved characters per RFC 5987
 // (ASCII alphanums plus !#$&+-.^_`|~).
 var rfc5987Unreserved = func() map[rune]bool {
@@ -201,11 +161,6 @@ var rfc5987Unreserved = func() map[rune]bool {
 	}
 	return m
 }()
-
-// isRFC5987Unreserved reports whether r is an unreserved character per RFC 5987.
-func isRFC5987Unreserved(r rune) bool {
-	return rfc5987Unreserved[r]
-}
 
 // addFileToZip adds a single file to the zip writer.
 func addFileToZip(zw *zip.Writer, absPath, zipRelPath string, fi os.FileInfo) error {

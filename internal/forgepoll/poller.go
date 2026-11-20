@@ -8,7 +8,6 @@ package forgepoll
 
 import (
 	"clawbench/internal/forge"
-	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/push/feishu"
@@ -42,7 +41,18 @@ func (notifierAdapter) PushForgeEvent(event service.ForgeEvent, item forge.Item)
 // The provider factory is supplied by the handler package (it owns the
 // credential + TLS policy). Read-only, and it only talks to a platform when at
 // least one project is bound to a repository.
-func Start() {
+// Deps 是插件注入的两个能力。
+//
+// 它们住在 internal/plugin/forge（凭据与 TLS 策略属于 forge 功能），而本包
+// 在依赖链上层、被那个插件 import——如果反过来直接引用插件包就成环了。
+type Deps struct {
+	// NewProvider 构造一个仓库平台客户端（凭据 + TLS 策略由插件决定）。
+	NewProvider func(service.ProjectForge) (forge.Provider, error)
+	// CredentialLogin 返回某个 host 上凭据对应的登录名，供事件触发任务使用。
+	CredentialLogin func(platform, host string) string
+}
+
+func Start(d Deps) {
 	limiter := forge.NewLimiter(2, 5, 4)
 	// Broadcast forge events over the existing WS channel, and push to the
 	// active IM robot (dingtalk/feishu) when one is running.
@@ -67,7 +77,7 @@ func Start() {
 		service.GlobalScheduler,
 		func() model.Config { return model.ConfigInstance },
 		func(repo service.ForgeRepoRef) string {
-			return handler.ForgeCredentialLogin(repo.Platform, repo.Host)
+			return d.CredentialLogin(repo.Platform, repo.Host)
 		},
 	)
 	// Exposed so the tasks master switch can discard queued events when it is
@@ -77,6 +87,6 @@ func Start() {
 	// dispatcher because it must record every change regardless of the
 	// per-event IM toggles (a muted event still belongs in the history).
 	recorder := service.NewForgeNotificationRecorder()
-	syncer := service.NewForgeSyncer(handler.NewForgeProvider, service.NewForgeCompositeSink(dispatcher, trigger, recorder))
+	syncer := service.NewForgeSyncer(d.NewProvider, service.NewForgeCompositeSink(dispatcher, trigger, recorder))
 	service.StartForgePoller(syncer, limiter, func() model.Config { return model.ConfigInstance })
 }

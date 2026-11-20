@@ -1,6 +1,7 @@
 package handler
 
 import (
+	plugtasks "clawbench/internal/plugin/tasks"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -47,7 +48,7 @@ func TestServeAgents_PostNotAllowed(t *testing.T) {
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
-// ---------- ServeTasks ----------
+// ---------- plugtasks.ServeTasks ----------
 
 func TestServeTasks_GetEmpty(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -60,7 +61,7 @@ func TestServeTasks_GetEmpty(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, "/api/tasks", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertOK(t, w)
 	var result map[string]any
@@ -91,7 +92,7 @@ func TestServeTasks_Post(t *testing.T) {
 		"prompt":    "Do something",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertOK(t, w)
 	var result map[string]any
@@ -122,7 +123,7 @@ func TestServeTasks_PostDisabledAgentRejected(t *testing.T) {
 		"prompt":    "Do something",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 	var resp map[string]any
@@ -155,7 +156,7 @@ func TestServeTasks_PostEventTask(t *testing.T) {
 		// Deliberately no cron_expr.
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertOK(t, w)
 	var result map[string]any
@@ -193,7 +194,7 @@ func TestServeTasks_PostEventTaskNeedsEventTypes(t *testing.T) {
 		// No event_types.
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	// A bad subscription is a client error, not a server fault.
 	assertStatus(t, w, http.StatusBadRequest)
@@ -224,7 +225,7 @@ func TestServeTasks_PostEventTaskRejectsUnknownEventType(t *testing.T) {
 		"event_types":  "opened,not_a_real_event",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 	assert.Contains(t, w.Body.String(), "TaskEventTypesInvalid")
@@ -244,7 +245,7 @@ func TestServeTasks_PostMissingFields(t *testing.T) {
 		// Missing cron_expr, agent_id, prompt
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
@@ -270,7 +271,7 @@ func TestServeTasks_PostAssistantAgent(t *testing.T) {
 		"prompt":    "Do something",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertOK(t, w)
 	var result map[string]any
@@ -285,7 +286,7 @@ func TestServeTasks_NoProject(t *testing.T) {
 	defer func() { service.GlobalScheduler = nil }()
 
 	req := newRequest(t, http.MethodGet, "/api/tasks", nil)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
 
@@ -300,11 +301,11 @@ func TestServeTasks_MethodNotAllowed(t *testing.T) {
 
 	req := newRequest(t, http.MethodDelete, "/api/tasks", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 	assertStatus(t, w, http.StatusMethodNotAllowed)
 }
 
-// ---------- ServeTaskByID ----------
+// ---------- plugtasks.ServeTaskByID ----------
 
 func TestServeTaskByID_Get(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -334,7 +335,7 @@ func TestServeTaskByID_Get(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertOK(t, w)
 }
@@ -365,7 +366,7 @@ func TestServeTaskByID_Delete(t *testing.T) {
 
 	req := newRequest(t, http.MethodDelete, fmt.Sprintf("/api/tasks/%d", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 }
 
@@ -397,7 +398,7 @@ func TestServeTaskByID_Pause(t *testing.T) {
 		"action": "pause",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 }
 
@@ -430,11 +431,11 @@ func TestServeTaskByID_Resume(t *testing.T) {
 		"action": "resume",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 }
 
-// ---------- ServeTaskByID Trigger (ISS-187) ----------
+// ---------- plugtasks.ServeTaskByID Trigger (ISS-187) ----------
 
 func TestServeTaskByID_Trigger_AlreadyRunning(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -469,7 +470,7 @@ func TestServeTaskByID_Trigger_AlreadyRunning(t *testing.T) {
 		"action": "trigger",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusConflict)
 }
 
@@ -506,7 +507,7 @@ func TestServeTaskByID_Trigger_EventTaskRejected(t *testing.T) {
 		"action": "trigger",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusConflict)
 	assert.Contains(t, w.Body.String(), "TaskEventTriggerUnsupported")
@@ -541,7 +542,7 @@ func TestServeTaskByID_Trigger_TaskNotFound(t *testing.T) {
 		"action": "trigger",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusNotFound)
 }
 
@@ -556,7 +557,7 @@ func TestServeTaskByID_NotFound(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, "/api/tasks/99999", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusNotFound)
 }
 
@@ -566,7 +567,7 @@ func TestServeTaskByID_NoTaskID(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, "/api/tasks/", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
@@ -616,7 +617,7 @@ func TestServeTaskByID_Executions(t *testing.T) {
 	// Get executions
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d", task.ID)+"/executions", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -641,11 +642,11 @@ func TestServeTaskByID_ExecutionsTaskNotFound(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, "/api/tasks/99999/executions", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusNotFound)
 }
 
-// ---------- ServeTaskByID Update ----------
+// ---------- plugtasks.ServeTaskByID Update ----------
 
 func TestServeTaskByID_Update(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -678,7 +679,7 @@ func TestServeTaskByID_Update(t *testing.T) {
 		"prompt":    "Updated prompt",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 }
 
@@ -712,7 +713,7 @@ func TestServeTaskByID_UpdateAssistantAgent(t *testing.T) {
 		"agent_id": "assistant",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 }
 
@@ -730,7 +731,7 @@ func TestServeTaskByID_UpdateTaskNotFound(t *testing.T) {
 		"name":   "Updated",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusNotFound)
 }
 
@@ -765,7 +766,7 @@ func TestServeTaskByID_WrongProject_Get(t *testing.T) {
 	otherProject := t.TempDir()
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d", task.ID), nil)
 	req = withProjectCookie(req, otherProject)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
 
@@ -796,7 +797,7 @@ func TestServeTaskByID_WrongProject_Delete(t *testing.T) {
 	otherProject := t.TempDir()
 	req := newRequest(t, http.MethodDelete, fmt.Sprintf("/api/tasks/%d", task.ID), nil)
 	req = withProjectCookie(req, otherProject)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
 
@@ -829,7 +830,7 @@ func TestServeTaskByID_WrongProject_Pause(t *testing.T) {
 		"action": "pause",
 	})
 	req = withProjectCookie(req, otherProject)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
 
@@ -861,7 +862,7 @@ func TestServeTaskByID_WrongProject_Executions(t *testing.T) {
 	otherProject := t.TempDir()
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d", task.ID)+"/executions", nil)
 	req = withProjectCookie(req, otherProject)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
 
@@ -891,7 +892,7 @@ func TestServeTaskByID_NoProject(t *testing.T) {
 
 	// No project cookie at all → 403
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d", task.ID), nil)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
 
@@ -954,7 +955,7 @@ func TestServeTaskByID_DeleteExecution(t *testing.T) {
 		"executionId": fmt.Sprintf("%d", execID),
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	// Verify execution is deleted
@@ -991,7 +992,7 @@ func TestServeTaskByID_DeleteExecution_MissingExecutionID(t *testing.T) {
 		"action": "deleteExecution",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
@@ -1024,7 +1025,7 @@ func TestServeTaskByID_DeleteExecution_InvalidExecutionID(t *testing.T) {
 		"executionId": "not-a-number",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
@@ -1065,7 +1066,7 @@ func TestServeTaskByID_DeleteExecution_WrongProject(t *testing.T) {
 		"executionId": fmt.Sprintf("%d", execID),
 	})
 	req = withProjectCookie(req, otherProject)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
 
@@ -1110,7 +1111,7 @@ func TestServeTaskByID_DeleteAllExecutions(t *testing.T) {
 		"action": "deleteAllExecutions",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	// Verify all executions deleted
@@ -1157,7 +1158,7 @@ func TestServeTaskByID_Executions_WithLimit(t *testing.T) {
 	// Request with limit=2
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions?limit=2", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -1199,7 +1200,7 @@ func TestServeTaskByID_Executions_LimitNoMore(t *testing.T) {
 	// Request with limit=5 (more than available)
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions?limit=5", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -1243,7 +1244,7 @@ func TestServeTaskByID_Executions_CursorPagination(t *testing.T) {
 	// Page 1: limit=2
 	req1 := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions?limit=2", task.ID), nil)
 	req1 = withProjectCookie(req1, env.ProjectDir)
-	w1 := callHandler(ServeTaskByID, req1)
+	w1 := callHandler(plugtasks.ServeTaskByID, req1)
 	assertOK(t, w1)
 
 	var result1 map[string]any
@@ -1261,7 +1262,7 @@ func TestServeTaskByID_Executions_CursorPagination(t *testing.T) {
 	req2 := newRequest(t, http.MethodGet,
 		fmt.Sprintf("/api/tasks/%d/executions?limit=2&cursor=%s&cursor_id=%s", task.ID, cursor, cursorID), nil)
 	req2 = withProjectCookie(req2, env.ProjectDir)
-	w2 := callHandler(ServeTaskByID, req2)
+	w2 := callHandler(plugtasks.ServeTaskByID, req2)
 	assertOK(t, w2)
 
 	var result2 map[string]any
@@ -1282,7 +1283,7 @@ func TestServeTaskByID_Executions_CursorPagination(t *testing.T) {
 	req3 := newRequest(t, http.MethodGet,
 		fmt.Sprintf("/api/tasks/%d/executions?limit=2&cursor=%s&cursor_id=%s", task.ID, cursor2, cursorID2), nil)
 	req3 = withProjectCookie(req3, env.ProjectDir)
-	w3 := callHandler(ServeTaskByID, req3)
+	w3 := callHandler(plugtasks.ServeTaskByID, req3)
 	assertOK(t, w3)
 
 	var result3 map[string]any
@@ -1326,7 +1327,7 @@ func TestServeTaskByID_Executions_NoLimitBackwardCompat(t *testing.T) {
 	// Request without limit — should return all and no hasMore field
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions", task.ID), nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 	assertOK(t, w)
 
 	var result map[string]any
@@ -1391,7 +1392,7 @@ func TestServeTasks_Get_HasUnreadTrue(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, "/api/tasks", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertOK(t, w)
 	var result map[string]any
@@ -1429,7 +1430,7 @@ func TestServeTasks_Get_HasUnreadFalse(t *testing.T) {
 
 	req := newRequest(t, http.MethodGet, "/api/tasks", nil)
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertOK(t, w)
 	var result map[string]any
@@ -1472,7 +1473,7 @@ func TestServeTaskByID_EventToCronWithoutCronRejected(t *testing.T) {
 		"trigger_mode": "cron",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 	assert.Contains(t, w.Body.String(), "TaskCronRequired")

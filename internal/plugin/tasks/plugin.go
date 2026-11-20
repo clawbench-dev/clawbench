@@ -7,7 +7,6 @@
 package tasks
 
 import (
-	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/plugins"
 )
@@ -22,6 +21,7 @@ func Register() {
 		// 路由表里 "/api/tasks" 与 "/api/tasks/" 是两个 pattern，声明一次即可
 		// 同时覆盖（ForRoute 抹平尾部斜杠后按段边界匹配）。
 		APIPrefixes: []string{"/api/tasks"},
+		MountRoutes: MountTasksRoutes,
 		ConfigFields: map[string]bool{
 			"tasks.enabled":           true,
 			"tasks.retention_enabled": true,
@@ -33,7 +33,7 @@ func Register() {
 		// 双向开关：关闭要取消运行中的执行并丢弃排队事件，打开要重排 cron。
 		// OnDisable 只表达"关"这一个方向，所以任务用 SwitchEffect（两个方向
 		// 都会带着新值回调）。两者互斥，同一个插件只声明其中一个。
-		SwitchEffect: handler.TasksSwitchEffect,
+		SwitchEffect: TasksSwitchEffect,
 		// 任务只有"新建"能被前缀门控——它是唯一靠 method+path 就能识别的操作。
 		//
 		// 其余全部豁免，因为**动作也走 PUT /api/tasks/{id}**，靠 body 里的

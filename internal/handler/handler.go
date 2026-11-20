@@ -1,19 +1,11 @@
 package handler
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"clawbench/internal/frontend"
-	i18npkg "clawbench/internal/i18n"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
@@ -22,7 +14,6 @@ import (
 	"clawbench/internal/service"
 	"clawbench/internal/store"
 	"clawbench/internal/ws"
-	"github.com/nicksnyder/go-i18n/v2/i18n"
 )
 
 // jsonKeyStatus is the JSON key "status" used across handler responses (goconst).
@@ -56,59 +47,6 @@ const (
 	// project root. Emitted by both the WS and the HTTP job responses.
 	jsonAudioPath = "audioPath"
 )
-
-// loc returns the Localizer for the current request.
-func loc(r *http.Request) *i18n.Localizer {
-	return middleware.GetLocalizer(r)
-}
-
-// T is a shorthand for translating a message key in the handler layer.
-func T(r *http.Request, msgKey string, templateData ...map[string]any) string {
-	return i18npkg.T(loc(r), msgKey, templateData...)
-}
-
-// writeLocalizedErrorf writes a localized error response with i18n message key.
-func writeLocalizedErrorf(w http.ResponseWriter, r *http.Request, status int, msgKey string, templateData ...map[string]any) {
-	localizedMsg := T(r, msgKey, templateData...)
-	var detail map[string]any
-	if len(templateData) > 0 {
-		detail = templateData[0]
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(model.ErrorResponse{Error: localizedMsg, Code: status, MsgKey: msgKey, Detail: detail})
-}
-
-// writeLocalizedError writes a localized AppError response.
-func writeLocalizedError(w http.ResponseWriter, r *http.Request, err error) {
-	var appErr *model.AppError
-	if err == nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-		return
-	}
-	if ok := errors.As(err, &appErr); ok {
-		localizedMsg := T(r, appErr.Message)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(appErr.Code)
-		_ = json.NewEncoder(w).Encode(model.ErrorResponse{Error: localizedMsg, Code: appErr.Code, MsgKey: appErr.Message})
-		return
-	}
-	writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-}
-
-// requireProject extracts the project path from cookie and writes error if not set.
-// Returns the project path and true on success, or empty string and false on failure.
-func requireProject(w http.ResponseWriter, r *http.Request) (string, bool) {
-	projectPath := middleware.GetProjectFromCookie(r)
-	if projectPath == "" {
-		slog.Warn("handler: requireProject — project cookie is empty",
-			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path))
-		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
-		return "", false
-	}
-	return projectPath, true
-}
 
 // sessionOwnership describes the outcome of an ownership check.
 type sessionOwnership int
@@ -171,61 +109,6 @@ func requireSessionOwnership(w http.ResponseWriter, r *http.Request, sessionID, 
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 	}
 	return false
-}
-
-// requireMethod checks that the request method is one of the allowed methods.
-// Writes 405 on mismatch. Returns true if allowed.
-func requireMethod(w http.ResponseWriter, r *http.Request, methods ...string) bool {
-	if slices.Contains(methods, r.Method) {
-		return true
-	}
-	writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
-	return false
-}
-
-// writeJSON sets Content-Type and encodes v as JSON with the given status code.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// decodeJSON decodes the request body into v. Writes 400 on failure.
-// Returns true on success.
-func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
-		return false
-	}
-	return true
-}
-
-// decodeOptionalJSON decodes the request body into v, treating an EMPTY body as
-// "no fields supplied" rather than an error. A non-empty but malformed body is
-// still a 400.
-//
-// This is for endpoints where the body carries only optional refinements, so the
-// same route serves "act on everything" and "act on one thing".
-func decodeOptionalJSON(r *http.Request, v any) error {
-	if r.Body == nil {
-		return nil
-	}
-	err := json.NewDecoder(r.Body).Decode(v)
-	if errors.Is(err, io.EOF) {
-		return nil // empty body: keep v's zero values
-	}
-	return err
-}
-
-// validateAndResolvePath validates a relative path and returns the absolute path.
-// Writes 403 on failure. Returns (absPath, true) on success.
-func validateAndResolvePath(w http.ResponseWriter, r *http.Request, basePath, relPath string) (string, bool) {
-	absPath, ok := model.ValidatePath(basePath, relPath)
-	if !ok {
-		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-		return "", false
-	}
-	return absPath, true
 }
 
 // resolveAttachmentPath resolves a chat attachment path, which may arrive
@@ -310,72 +193,6 @@ func asAbsolutePath(basePath, path string) (string, bool) {
 		return "", false
 	}
 	return absPath, true
-}
-
-// resolveAbsPath resolves a path string to an absolute path under any root path.
-// Absolute paths are validated directly; relative paths are resolved against
-// the project path from cookie then validated. This unifies path handling for
-// all file mutation endpoints so callers don't need to worry about base-path
-// bookkeeping. Writes error on failure. Returns (absPath, true) on success.
-func resolveAbsPath(w http.ResponseWriter, r *http.Request, pathStr string) (string, bool) {
-	if filepath.IsAbs(pathStr) {
-		// Absolute path — validate it's under any root path
-		absPath, err := filepath.Abs(pathStr)
-		if err != nil {
-			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-			return "", false
-		}
-		if !isPathUnderAnyRoot(absPath) {
-			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-			return "", false
-		}
-		return absPath, true
-	}
-
-	// Relative path — resolve against projectPath from cookie
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return "", false
-	}
-	baseAbs, err := filepath.Abs(projectPath)
-	if err != nil {
-		model.WriteError(w, model.Internal(fmt.Errorf("failed to resolve project path: %w", err)))
-		return "", false
-	}
-	absPath, ok := validateAndResolvePath(w, r, baseAbs, pathStr)
-	if !ok {
-		return "", false
-	}
-	return absPath, true
-}
-
-// isPathUnderAnyRoot checks that absPath is under at least one of the
-// configured root paths. Uses the platform's IsPathUnderAnyRoot for
-// symlink-safe validation.
-func isPathUnderAnyRoot(absPath string) bool {
-	return platform.IsPathUnderAnyRoot(absPath, model.RootPaths)
-}
-
-// isPathUnderBase checks that absPath is under basePath by resolving symlinks
-// on both sides before comparing. This prevents symlink traversal attacks.
-// Both paths must be absolute.
-func isPathUnderBase(absPath, basePath string) bool {
-	evalBase, err := filepath.EvalSymlinks(basePath)
-	if err != nil {
-		return false
-	}
-	evalPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return false
-		}
-		// Target doesn't exist — resolve parent directory
-		evalPath = model.ResolveExistingPath(absPath, evalBase)
-		if evalPath == "" {
-			return false
-		}
-	}
-	return model.IsPathUnderBase(evalPath, evalBase)
 }
 
 // resolveAgentConfig resolves agent configuration from model.Agents.
@@ -668,12 +485,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// wrapped so a rejected request lands on the login page instead of a JSON
 	// body (the browser NAVIGATED here, so it renders whatever we return).
 	//
-	// Registered OUTSIDE middleware.Auth so the rejection can be a redirect:
-	// Auth writes a JSON 401, which the browser would render as a bare error
-	// body (it navigated here from the OS share sheet). The handler re-checks
-	// authentication itself and bounces to the app, where the login form lives.
-	registerRoute(mux, "/share-target", ShareTarget)
-	routeTable = append(routeTable, Route{Pattern: "/share-target", Authenticated: true})
 
 	// Cross-agent skill discovery: what was found across every agent's native
 	// directory, the user's own directory and cloned git repositories, plus a
@@ -738,8 +549,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/voice/turn/ws", VoiceTurnWS)
 	register("/api/stt/transcribe", STTTranscribe)
 	register("/api/stt/transcribe/ws", STTTranscribeWS)
-	register("/api/tasks", ServeTasks)
-	register("/api/tasks/", ServeTaskByID)
 	register("/api/rag/search", ServeRAGSearch)
 	register("/api/rag/message", ServeRAGMessage)
 	register("/api/rag/message/summarize", ServeMessageSummarize)
@@ -889,7 +698,15 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// TestPluginRegistry_EveryRoutePrefixHasMountedRoutes（声明了前缀就必须
 	// 有路由挂上去）与 TestPluginRegistry_DeclaredPrefixesOwnRealRoutes
 	// （挂上去的路由必须归同一个插件管）。
-	mount := plugins.Mount{Auth: register, Public: registerPublic}
+	mount := plugins.Mount{
+		Auth:   register,
+		Public: registerPublic,
+		// Raw：套中间件链但不套鉴权，登记为 authenticated=true。
+		Raw: func(pattern string, handler http.HandlerFunc) {
+			registerRoute(mux, pattern, handler)
+			routeTable = append(routeTable, Route{Pattern: pattern, Authenticated: true})
+		},
+	}
 	mountBuiltinRoutes(mount)
 
 	// Serve static assets from frontend filesystem (disk build dir > embed fallback)

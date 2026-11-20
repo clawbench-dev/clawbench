@@ -95,6 +95,7 @@ DIFF_THRESHOLD = 80.0
 exempt_files = {
     "cmd/server/main.go",                    # package main: -coverprofile empty in certain modes
     "internal/forgepoll/poller.go",          # forge 轮询接线：Start 会拉起真实轮询器 goroutine 并读 IM 后端状态，单测里起不了
+    "internal/handlertest/handlertest.go",   # 只被 _test.go 引用的测试夹具，本身没有可测逻辑
     "cmd/server/restart_unix.go",            # package main: signals own process, untestable without subprocess
     "internal/ai/cli_backend.go",            # ExecuteStream spawns CLI subprocesses
     "internal/ai/codex_stream.go",           # ExecuteStream spawns CLI subprocesses

@@ -7,7 +7,6 @@ package terminal
 import (
 	"log/slog"
 
-	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/plugins"
 	"clawbench/internal/terminal"
@@ -23,11 +22,11 @@ func Register(port int) {
 		// 终端关掉报 503 是既有行为，保留：那是"运行时没起来"而不是"被关掉了"。
 		DisabledStatus: 503,
 		Available: func() bool {
-			mgr := handler.GetTerminalManager()
+			mgr := GetTerminalManager()
 			return mgr != nil && mgr.IsPlatformSupported()
 		},
 		APIPrefixes: []string{"/api/terminal/"},
-		MountRoutes: handler.MountTerminalRoutes,
+		MountRoutes: MountTerminalRoutes,
 		ConfigFields: map[string]bool{
 			"terminal.enabled":      true,
 			"terminal.idle_timeout": true,
@@ -42,10 +41,10 @@ func Register(port int) {
 		// 三个钩子就是原 hotReloadTerminal 的三条分支，拆成"进程级起停"与
 		// "热更新调参"：开关翻转走 Start/Stop，开关不变走 Reconfigure。
 		Start: func(cfg model.Config) {
-			if handler.GetTerminalManager() != nil {
+			if GetTerminalManager() != nil {
 				return // 幂等：重复 Start 不叠加 Manager
 			}
-			handler.SetTerminalManager(terminal.NewManager(cfg.Terminal, port))
+			SetTerminalManager(terminal.NewManager(cfg.Terminal, port))
 			slog.Info(
 				"terminal manager initialized",
 				slog.String("idle_timeout", func() string {
@@ -58,16 +57,16 @@ func Register(port int) {
 			)
 		},
 		Stop: func() {
-			mgr := handler.GetTerminalManager()
+			mgr := GetTerminalManager()
 			if mgr == nil {
 				return // 幂等
 			}
 			mgr.CloseAllSessions()
-			handler.SetTerminalManager(nil)
+			SetTerminalManager(nil)
 			slog.Info("terminal manager closed")
 		},
 		Reconfigure: func(cfg model.Config) {
-			if mgr := handler.GetTerminalManager(); mgr != nil {
+			if mgr := GetTerminalManager(); mgr != nil {
 				mgr.Reconfigure(cfg.Terminal)
 			}
 		},

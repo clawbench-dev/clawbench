@@ -1,6 +1,8 @@
 package handler
 
 import (
+	pluginall "clawbench/internal/plugin/all"
+	"clawbench/internal/plugins"
 	"net/http"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 // silently drop out of the OpenAPI drift check).
 func TestRegisteredRoutes_CoversEveryRoute(t *testing.T) {
 	mux := http.NewServeMux()
+	registerAllPluginsForTest(t)
 	RegisterRoutes(mux)
 
 	routes := RegisteredRoutes()
@@ -48,6 +51,7 @@ func TestRegisteredRoutes_CoversEveryRoute(t *testing.T) {
 // auth without updating the OpenAPI spec fails here first.
 func TestRegisteredRoutes_AuthFlagMatchesSpec(t *testing.T) {
 	mux := http.NewServeMux()
+	registerAllPluginsForTest(t)
 	RegisterRoutes(mux)
 
 	got := map[string]bool{}
@@ -100,4 +104,14 @@ func isPublicPattern(p string) bool {
 		return true
 	}
 	return false
+}
+
+// registerAllPluginsForTest fills the registry so RegisterRoutes mounts the
+// plugin routes too. handler 自己的测试默认在空注册表下跑（那时只挂核心
+// 路由），但"路由表 vs OpenAPI spec"这类用例需要完整集合。
+func registerAllPluginsForTest(t *testing.T) {
+	t.Helper()
+	plugins.Reset()
+	t.Cleanup(plugins.Reset)
+	pluginall.RegisterAll(0)
 }

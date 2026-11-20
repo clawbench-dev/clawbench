@@ -2,7 +2,6 @@
 package kb
 
 import (
-	"clawbench/internal/handler"
 	"clawbench/internal/kb"
 	"clawbench/internal/model"
 	"clawbench/internal/plugins"
@@ -19,7 +18,7 @@ func Register() {
 		// 功能是开着的但跑不了，前端要灰显而不是隐藏。
 		Available:   kb.Available,
 		APIPrefixes: []string{"/api/kb/"},
-		MountRoutes: handler.MountKBRoutes,
+		MountRoutes: MountKBRoutes,
 		ConfigFields: map[string]bool{
 			"kb.enabled":               true,
 			"kb.auto_inject":           true,

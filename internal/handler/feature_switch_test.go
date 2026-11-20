@@ -1,6 +1,7 @@
 package handler
 
 import (
+	plugtasks "clawbench/internal/plugin/tasks"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+	plugshare "clawbench/internal/plugin/share"
 	"clawbench/internal/plugins"
 	"clawbench/internal/service"
 	"clawbench/internal/store"
@@ -80,7 +82,7 @@ func TestServeConfig_PatchTasksSwitchCancelsAndRestarts(t *testing.T) {
 	model.ConfigInstance = model.Config{Tasks: model.TasksConfig{Enabled: true}}
 
 	// 任务的开关是双向的，所以它声明 SwitchEffect 而不是 OnDisable。
-	registerSwitchEffectPlugin(t, "tasks", "tasks", TasksSwitchEffect, map[string]bool{
+	registerSwitchEffectPlugin(t, "tasks", "tasks", plugtasks.TasksSwitchEffect, map[string]bool{
 		"tasks.enabled":           true,
 		"tasks.retention_enabled": true,
 		"tasks.retention_days":    true,
@@ -354,14 +356,14 @@ func TestShareAllowSwitchesGateCreation(t *testing.T) {
 	model.FeaturePolicy.ShareAllowFiles = false
 	req := newRequest(t, http.MethodPost, "/api/share", map[string]any{"path": "a.md"})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeShareManage, req)
+	w := callHandler(plugshare.ServeShareManage, req)
 	assertStatus(t, w, http.StatusConflict)
 	assert.Contains(t, w.Body.String(), "ShareFilesDisabled")
 
 	model.FeaturePolicy.ShareAllowSessions = false
 	req = newRequest(t, http.MethodPost, "/api/share/session", map[string]any{"sessionId": "sess-x"})
 	req = withProjectCookie(req, env.ProjectDir)
-	w = callHandler(ServeSessionShareManage, req)
+	w = callHandler(plugshare.ServeSessionShareManage, req)
 	assertStatus(t, w, http.StatusConflict)
 	assert.Contains(t, w.Body.String(), "ShareSessionsDisabled")
 }
@@ -380,13 +382,13 @@ func TestShareDownloadSwitchForbidsDownload(t *testing.T) {
 	model.FeaturePolicy.ShareAllowDownload = false
 
 	req := httptest.NewRequest(http.MethodGet, "/api/share/"+token+"/download", http.NoBody)
-	w := callHandler(ServeSharePublic, req)
+	w := callHandler(plugshare.ServeSharePublic, req)
 	assertStatus(t, w, http.StatusForbidden)
 	assert.Contains(t, w.Body.String(), "ShareDownloadDisabled")
 }
 
 // "POST /api/tasks while tasks are off → 409 TasksDisabled" is now enforced by
-// the router's feature gate rather than inside ServeTasks, so it is pinned at
+// the router's feature gate rather than inside plugtasks.ServeTasks, so it is pinned at
 // the route level in cmd/server (TestGate_TasksKeepsReadAndCleanupRoutes).
 // Calling the handler directly no longer exercises that rule.
 
@@ -413,7 +415,7 @@ func TestServeTaskByID_TriggerRejectedWhenTasksDisabled(t *testing.T) {
 
 	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), map[string]any{"action": "trigger"})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTaskByID, req)
+	w := callHandler(plugtasks.ServeTaskByID, req)
 
 	assertStatus(t, w, http.StatusConflict)
 	assert.Contains(t, w.Body.String(), "TasksDisabled")
@@ -456,7 +458,7 @@ func TestServeTaskByID_ActionsRespectTasksSwitch(t *testing.T) {
 	put := func(body map[string]any) *httptest.ResponseRecorder {
 		req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), body)
 		req = withProjectCookie(req, env.ProjectDir)
-		return callHandler(ServeTaskByID, req)
+		return callHandler(plugtasks.ServeTaskByID, req)
 	}
 
 	refused := []map[string]any{
@@ -496,7 +498,7 @@ func TestServeSharePage_NotFoundWhenShareDisabled(t *testing.T) {
 	model.ShareEnabled = false
 
 	req := httptest.NewRequest(http.MethodGet, "/share/"+strings.Repeat("a", 32), http.NoBody)
-	w := callHandler(ServeSharePage, req)
+	w := callHandler(plugshare.ServeSharePage, req)
 
 	assertStatus(t, w, http.StatusNotFound)
 }
