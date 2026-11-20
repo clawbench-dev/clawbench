@@ -125,7 +125,7 @@ panel: {
 ## 7. 加设置页（可选）
 
 - [ ] `settingsFieldMap.ts` 的 `categoryItems` 加分类。
-- [ ] `SettingsIndex.vue` 的 `groupDefs` 加入口。左栏功能的配置页一律放进**功能模块**组（管理器 `dockPlugins` 打头，按 Dock 顺序排）；不属于任何页签的设置才进 项目与外观 / AI 与对话 / 模型能力 / 系统。
+- [ ] `SettingsIndex.vue` 的 `groupDefs` 加入口。左栏功能的配置页一律放进**功能模块**组（管理器 `dockPlugins` 打头，按 Dock 顺序排）；不属于任何页签的设置才进 项目与外观 / 模型能力 / 智能体 / 系统。
 - [ ] 如果分类是自定义页面，在 `SettingsCategory.vue` 加分支。
 - [ ] 中英文案。
 - [ ] 管理器里的 `settingsCategory` 填这个分类 id。
