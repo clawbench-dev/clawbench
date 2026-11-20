@@ -31,12 +31,13 @@ describe('quote drag drop wiring', () => {
     const src = readWebFile(APP)
     const body = functionBody(src, 'onChatColDragOver')
 
-    // Scoped to THIS function: a loose `[\s\S]*?` would happily match the
-    // preventDefault inside onChatColDrop and pass even with the quote case
-    // removed here.
-    const allowLine = body.split('\n').find(l => l.includes('preventDefault()'))
-    expect(allowLine, 'dragover must call preventDefault for a quote drag').toBeTruthy()
-    expect(allowLine).toContain('quote')
+    // The allow condition must name the quote payload: `quote` being part of
+    // the guard is what admits a quote drag. (It used to be one physical line
+    // `if (internal || quote || osFiles) e.preventDefault()`; the heartbeat
+    // refactor split the block, so the assertion checks the condition rather
+    // than the line shape.)
+    expect(body, 'dragover must allow quote drags').toMatch(/if \((?:internal \|\| )?quote(?: \|\| osFiles)?\)/)
+    expect(body).toContain('preventDefault()')
   })
 
   it('shows the drop highlight for a quote drag', () => {

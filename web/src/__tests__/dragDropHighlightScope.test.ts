@@ -28,6 +28,18 @@ describe('drag drop highlight scope', () => {
     return m[0]
   }
 
+  function colRightChatTag(src: string): string {
+    const m = src.match(/<div class="col-right-chat"[^>]*>/)
+    if (!m) throw new Error('col-right-chat opening tag not found')
+    return m[0]
+  }
+
+  function chatPanelRowTag(src: string): string {
+    const m = src.match(/<div class="chat-panel-row"[^>]*>/)
+    if (!m) throw new Error('chat-panel-row opening tag not found')
+    return m[0]
+  }
+
   it('binds the highlight to the chat column', () => {
     const src = readWebFile(APP)
 
@@ -41,15 +53,52 @@ describe('drag drop highlight scope', () => {
     expect(colRightTag(src)).not.toContain('chat-drop-active')
   })
 
-  // The drag events stay on .col-right on purpose: dropping anywhere on the pane
-  // (including over the sidebar) must still work. The highlight previews the
-  // DESTINATION, not the cursor's location.
-  it('keeps the drag handlers on the whole right pane', () => {
-    const tag = colRightTag(readWebFile(APP))
+  // The drag handlers must live on `.chat-col` — the ONLY element in this tree
+  // whose box is the chat column alone.
+  //
+  // They were on `.col-right` first (lit the sidebar too), then briefly on
+  // `.col-right-chat`. That move looked like a fix but changed nothing: both
+  // wrappers are `flex: 1` rows that also contain <SessionSidebar>, so the
+  // enter/leave range still covered the session list and the overlay stayed lit
+  // while the pointer was over it. `.chat-col` closes before <SessionSidebar>
+  // opens; nothing above it does.
+  it('keeps the drag handlers off the wrappers that contain the session sidebar', () => {
+    const src = readWebFile(APP)
+
+    for (const [name, tag] of [
+      ['col-right', colRightTag(src)],
+      ['col-right-chat', colRightChatTag(src)],
+      ['chat-panel-row', chatPanelRowTag(src)],
+    ] as const) {
+      for (const handler of ['onChatColDragEnter', 'onChatColDragOver', 'onChatColDragLeave', 'onChatColDrop']) {
+        expect(tag, `${name} must NOT handle ${handler}`).not.toContain(handler)
+      }
+    }
+  })
+
+  it('handles the drags on the chat column only', () => {
+    const tag = chatColTag(readWebFile(APP))
 
     for (const handler of ['onChatColDragEnter', 'onChatColDragOver', 'onChatColDragLeave', 'onChatColDrop']) {
-      expect(tag, `col-right must still handle ${handler}`).toContain(handler)
+      expect(tag, `chat-col must handle ${handler}`).toContain(handler)
     }
+  })
+
+  // Structural precondition for the guard above: if the chat column ever came to
+  // CONTAIN the sidebar, its enter/leave range would silently swallow the
+  // session list again and every assertion above would still pass.
+  it('closes the chat column before the session sidebar starts', () => {
+    const src = readWebFile(APP)
+    const colOpen = src.indexOf('<div class="chat-col"')
+    const sidebar = src.indexOf('<SessionSidebar', colOpen)
+
+    expect(colOpen).toBeGreaterThan(-1)
+    expect(sidebar, 'SessionSidebar must follow .chat-col').toBeGreaterThan(colOpen)
+    // The chat column's own closing tag precedes the sidebar, so they are siblings.
+    const between = src.slice(colOpen, sidebar)
+    const opens = (between.match(/<div\b/g) ?? []).length
+    const closes = (between.match(/<\/div>/g) ?? []).length
+    expect(closes, 'chat-col must be closed before <SessionSidebar>').toBe(opens)
   })
 
   // The pill is absolutely centred; centring it on .chat-panel-row (which spans

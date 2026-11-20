@@ -251,20 +251,25 @@
             </template>
 
             <template #right>
-              <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
+              <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')">
                 <div class="col-right-chat">
                   <div class="chat-panel-row">
                   <!-- Chat column: title bar + chat panel. Keeping the title
                        bar inside this column (rather than spanning the whole
                        right pane) leaves the session sidebar full-height. -->
-                  <!-- The drop highlight lives on THIS column, not on .col-right:
-                       .col-right also contains the session sidebar, so binding
-                       it there lit up the sidebar too and the user read that as
-                       "the whole pane is the target". The drag handlers stay on
-                       .col-right so the drop still works anywhere on the pane —
-                       the highlight previews the DESTINATION (the chat), not the
-                       cursor's location. -->
-                  <div class="chat-col" :class="{ 'chat-drop-active': chatDropActive }">
+                  <!-- The drag handlers AND the drop highlight both live on
+                       `.chat-col` — the only element whose box is the chat
+                       column and nothing else.
+                       Everything above it in this tree is a `flex: 1` row that
+                       also contains the session sidebar (`.col-right-chat`,
+                       `.chat-panel-row`), so binding to any of them means
+                       "dragging over the sidebar keeps the overlay lit" — which
+                       is exactly the reported bug. Only `.chat-col` closes
+                       before <SessionSidebar> opens. The two areas are separate
+                       destinations (drop on chat = attach/quote; drop on a
+                       session row = quote into THAT session), so their
+                       highlights must not share one range. -->
+                  <div class="chat-col" :class="{ 'chat-drop-active': chatDropActive }" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
                   <div class="chat-title-bar">
                     <!-- Session switch in flight: identity was cleared and the
                          new session's metadata has not arrived yet. Stand in
@@ -2739,6 +2744,11 @@ function registerAppEventListeners() {
   // listener set that both cold start and post-login initialization install.
   startSystemThemeWatcher()
 
+  // Drag-end safety net for the chat drop overlay. Captured (not bubbling) so a
+  // component that stops propagation on its own drop/dragend cannot hide it.
+  window.addEventListener('dragend', onGlobalDragEnd, true)
+  window.addEventListener('drop', onGlobalDragEnd, true)
+
   // Re-establish the native port forwards on every return to the foreground.
   //
   // The initial syncToNative() runs once during startup, but a forward can be
@@ -2799,6 +2809,8 @@ function unregisterAppEventListeners() {
   window.removeEventListener('clawbench-font-change', handleAppFontChange)
   window.removeEventListener('clawbench-showhidden-change', handleAppShowHiddenChange)
   window.removeEventListener('clawbench-sort-change', handleAppSortChange)
+  window.removeEventListener('dragend', onGlobalDragEnd, true)
+  window.removeEventListener('drop', onGlobalDragEnd, true)
   // The guard is module-level, so it outlives the component: without this a
   // remounted app would skip registration entirely and run on the previous
   // instance's (unmounted) closures.
@@ -3720,12 +3732,61 @@ const { uploadAndAttach, leaveInputDraft } = useFileUpload()
 const chatDropActive = ref(false)
 /** What the in-flight drag would DO on drop: attach a file, or quote an object. */
 const chatDropKind = ref('attach')
-let chatDropCounter = 0
+/**
+ * Whether the column is still under the pointer, kept fresh by `dragover`.
+ *
+ * CHROMIUM DOES NOT RELIABLY DELIVER `dragleave` HERE. When the pointer moves
+ * out of the column and the drag is then released — or even just while it
+ * travels over a sibling such as the session sidebar — the column gets no
+ * usable "leave": measured in the real app, dragging from the chat column to
+ * the session list left the hint permanently lit. `relatedTarget` was tried
+ * too (see git history): it is `null` in exactly those cases, which cannot be
+ * told apart from "the pointer is still inside".
+ *
+ * So the overlay is no longer driven by leave events at all. `dragover` fires
+ * continuously (every few tens of ms) on whatever is under the pointer for as
+ * long as a drag is in flight; that is the heartbeat. If it stops arriving for
+ * `DROP_HOVER_GRACE_MS`, the pointer is no longer over the column and the hint
+ * goes away on its own. A refresh that is one frame late cannot flicker: the
+ * timer only hides after a grace period longer than the normal inter-event gap.
+ */
+const DROP_HOVER_GRACE_MS = 260
+let chatDropHoverTimer: ReturnType<typeof setTimeout> | null = null
 
-/** Whether a drag event carries OS files (dragged from the file manager / desktop). */
-function isOSFileDrop(e: DragEvent) {
-  const types = e.dataTransfer?.types
-  return !!types && Array.from(types).includes('Files')
+/** Hide the chat drop overlay. Every path that ends a drag funnels through here. */
+function resetChatDrop() {
+  if (chatDropHoverTimer) {
+    clearTimeout(chatDropHoverTimer)
+    chatDropHoverTimer = null
+  }
+  chatDropActive.value = false
+}
+
+/** Mark the pointer as currently over the column; arms the staleness timer. */
+function markChatDropHover() {
+  if (chatDropHoverTimer) clearTimeout(chatDropHoverTimer)
+  chatDropHoverTimer = setTimeout(() => {
+    chatDropHoverTimer = null
+    chatDropActive.value = false
+  }, DROP_HOVER_GRACE_MS)
+}
+
+/**
+ * Last-resort teardown for the chat drop overlay.
+ *
+ * `dragend` fires on the DRAG SOURCE once the gesture is over — dropped
+ * anywhere, cancelled with Esc, or dragged out of the window. That is the one
+ * signal that survives a drop landing on ANOTHER element (a session row here):
+ * Chromium then skips the column's `dragleave`, and the row's own drop handler
+ * never touches our state, so without this the overlay stays lit forever.
+ *
+ * `drop` on the document catches the same moment when the drag STARTED outside
+ * the page (an OS file from Finder/Explorer has no source node in our DOM, so
+ * no `dragend` ever reaches us) and was then released over a foreign element.
+ * Both are captured so a handler that swallows the event cannot hide it.
+ */
+function onGlobalDragEnd() {
+  resetChatDrop()
 }
 
 function onChatColDragEnter(e: DragEvent) {
@@ -3738,8 +3799,14 @@ function onChatColDragEnter(e: DragEvent) {
   // card vs an attachment), so the hint has to say which — the ghost looks the
   // same for both.
   chatDropKind.value = quote && !internal ? 'quote' : 'attach'
-  chatDropCounter++
   chatDropActive.value = true
+  markChatDropHover()
+}
+
+/** Whether a drag event carries OS files (dragged from the file manager / desktop). */
+function isOSFileDrop(e: DragEvent) {
+  const types = e.dataTransfer?.types
+  return !!types && Array.from(types).includes('Files')
 }
 
 function onChatColDragOver(e: DragEvent) {
@@ -3754,20 +3821,31 @@ function onChatColDragOver(e: DragEvent) {
   const quote = hasQuoteDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
   if (internal && !isWideScreen.value) return
-  if (internal || quote || osFiles) e.preventDefault()
-}
-
-function onChatColDragLeave() {
-  chatDropCounter--
-  if (chatDropCounter <= 0) {
-    chatDropCounter = 0
-    chatDropActive.value = false
+  if (internal || quote || osFiles) {
+    e.preventDefault()
+    // The heartbeat: every `dragover` means the pointer is over the column
+    // RIGHT NOW. When they stop arriving the staleness timer hides the hint.
+    chatDropKind.value = quote && !internal ? 'quote' : 'attach'
+    chatDropActive.value = true
+    markChatDropHover()
   }
 }
 
+function onChatColDragLeave(e: DragEvent) {
+  // `dragleave` is treated as a hint, never as the source of truth: it is
+  // routinely missing (moving to the sidebar delivers none at all — measured),
+  // and it also fires for every child boundary the pointer crosses. Both
+  // mistakes are covered elsewhere — `relatedTarget` keeps us from hiding while
+  // the pointer only moved between children, and the `dragover` heartbeat in
+  // `markChatDropHover` hides the hint when the pointer is really gone.
+  const to = e.relatedTarget as Node | null
+  const column = e.currentTarget as HTMLElement | null
+  if (to && column && column.contains(to)) return
+  resetChatDrop()
+}
+
 function onChatColDrop(e: DragEvent) {
-  chatDropCounter = 0
-  chatDropActive.value = false
+  resetChatDrop()
   // Internal attach drag (from the file manager) → attach the referenced path(s).
   const internal = hasAttachDragData(e.dataTransfer)
   if (internal) {
