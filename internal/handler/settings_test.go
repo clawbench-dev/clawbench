@@ -1616,6 +1616,18 @@ func TestServeConfig_Patch_UsageMeterInvalidIsSpecificAndLocalized(t *testing.T)
 			wantKey:   "UsageMeterCycleModeInvalid",
 			wantField: "usage_meter.cycle_mode",
 		},
+		{
+			name:      "agent scope sent as a string",
+			body:      `{"usage_meter":{"agent_ids":"agent-a"}}`,
+			wantKey:   "UsageMeterAgentsInvalid",
+			wantField: "usage_meter.agent_ids",
+		},
+		{
+			name:      "agent scope with a blank id",
+			body:      `{"usage_meter":{"agent_ids":["agent-a"," "]}}`,
+			wantKey:   "UsageMeterAgentsInvalid",
+			wantField: "usage_meter.agent_ids",
+		},
 	}
 
 	for _, tc := range cases {

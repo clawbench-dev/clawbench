@@ -602,6 +602,61 @@ describe('SettingsItem', () => {
     })
   })
 
+  // ── Multi-select type ──
+
+  describe('multi-select type', () => {
+    const agents = [
+      { label: 'Agent A', value: 'a' },
+      { label: 'Agent B', value: 'b' },
+      { label: 'Agent C', value: 'c' },
+    ]
+
+    it('shows the placeholder when nothing is selected (empty = every agent)', () => {
+      const wrapper = mountItem({
+        type: 'multi-select',
+        modelValue: [],
+        options: agents,
+        placeholder: '全部智能体',
+      })
+      expect(wrapper.find('.settings-item__value').text()).toBe('全部智能体')
+    })
+
+    it('collapses a selection to the first label plus a count', () => {
+      const wrapper = mountItem({ type: 'multi-select', modelValue: ['a', 'b'], options: agents })
+      expect(wrapper.find('.settings-item__value').text()).toBe('Agent A +1')
+    })
+
+    it('toggles rows and keeps the picker open so several can be picked in one visit', async () => {
+      const wrapper = mountItem({ type: 'multi-select', modelValue: ['a'], options: agents })
+      const vm = wrapper.vm as any
+      await wrapper.find('.settings-item').trigger('click')
+      expect(vm.$.setupState.selectPicker.isOpen.value).toBe(true)
+
+      vm.$.setupState.selectOption('b')
+      await nextTick()
+      expect(wrapper.emitted('update:modelValue')![0]).toEqual([['a', 'b']])
+      expect(vm.$.setupState.selectPicker.isOpen.value).toBe(true)
+
+      // Toggling an already-selected row removes it. The prop has not been
+      // re-rendered by a parent here, so removing the only value leaves the
+      // empty list — which the consumer reads as "every agent".
+      vm.$.setupState.selectOption('a')
+      await nextTick()
+      expect(wrapper.emitted('update:modelValue')![1]).toEqual([[]])
+    })
+
+    it('closes the picker from the footer and reports the end of editing', async () => {
+      const wrapper = mountItem({ type: 'multi-select', modelValue: ['a'], options: agents })
+      const vm = wrapper.vm as any
+      await wrapper.find('.settings-item').trigger('click')
+      vm.$.setupState.closeMultiPicker()
+      await nextTick()
+      expect(vm.$.setupState.selectPicker.isOpen.value).toBe(false)
+      const events = wrapper.emitted('editToggle')!
+      expect(events[events.length - 1]).toEqual([false])
+    })
+  })
+
   // ── Select type ──
 
   describe('select type', () => {

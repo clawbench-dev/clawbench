@@ -329,6 +329,8 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"UsageMeterMetricInvalid",
 		"UsageMeterMetricNotString",
 		"UsageMeterCycleModeInvalid",
+		"UsageMeterAgentsInvalid",
+		"UsageMeterAgentsTooMany",
 		"PushShowTitle",
 		"PushShowEmpty",
 		"PushShowSessionLabel",

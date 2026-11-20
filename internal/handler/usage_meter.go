@@ -23,10 +23,9 @@ import (
 // panel's scope=all uses — a logged-in session can already read every project's
 // usage one at a time.
 //
-// `agent` (repeatable) narrows the measured usage to those agents, which is what
-// the popover's filter sends; the rule — quota, cycle, metric — stays global.
-// The capsule, the notifications and every broadcast keep calling without it, so
-// an alert is always about the whole budget.
+// What is counted is part of the RULE (`usage_meter.agent_ids`, empty = every
+// agent), not a query parameter: the capsule, the popover and the alerts must
+// agree, so the scope is configured once instead of being passed per request.
 //
 // A disabled rule (quota <= 0) returns 200 with {"enabled": false} rather than
 // 404: "the feature is off" is a valid state the client renders by hiding the
@@ -40,8 +39,7 @@ func ServeUsageMeter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentIDs := parseUsageAgentIDs(r.URL.Query()["agent"])
-	status, err := service.ComputeUsageMeterForAgents(r.Context(), time.Now(), agentIDs)
+	status, err := service.ComputeUsageMeter(r.Context(), time.Now())
 	if err != nil {
 		slog.Warn("handler: ServeUsageMeter — compute failed", slog.String("err", err.Error()))
 		writeLocalizedError(w, r, err)

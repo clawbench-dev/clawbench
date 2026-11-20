@@ -15,6 +15,7 @@ export default {
     pickEmpty: '没有其他知识库可选',
     unpin: '取消置顶',
     confirm: '确定',
+    done: '完成',
     close: '关闭',
     back: '返回',
     edit: '编辑',
@@ -645,10 +646,6 @@ export default {
     // usage alerts exist and how to turn them on.
     setupHint: '设置用量提醒',
     dayOfCycle: '第 {day} / {days} 天',
-    // Popover-only filter. The capsule and the alerts stay global.
-    agentFilter: '智能体',
-    allAgents: '全部智能体',
-    quotaGlobalHint: '额度为全局额度，数字只算所选智能体',
     actual: '实际',
     expected: '应花',
     quota: '额度',
@@ -4942,6 +4939,9 @@ export default {
       usageMeterMetricDesc: '额度按什么计量。token、credit 与费用是不同的量纲，无法互相换算，因此切换类型会清空额度。',
       usageMeterQuota: '额度',
       usageMeterQuotaDesc: '一个周期的预算。填 0 或留空表示不设预算，只统计用量、不做超额提醒',
+      usageMeterAgents: '智能体范围',
+      usageMeterAgentsDesc: '只统计所选智能体。不选=全部智能体；额度是这些智能体共用的一份，胶囊和超额提醒都按这个范围算',
+      usageMeterAgentsAll: '全部智能体',
       usageMeterMetricTokens: 'Token',
       usageMeterMetricCredit: 'Credit',
       usageMeterMetricCost: '费用（USD）',

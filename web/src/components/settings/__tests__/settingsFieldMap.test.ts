@@ -1503,6 +1503,19 @@ describe('usage meter cycle type', () => {
     expect(isDependsOnMet(period!.dependsOn, getValue('fixed'))).toBe(true)
   })
 
+  // The monitored set is part of the rule, not a per-request filter: the
+  // capsule and the alerts read the same value, so it has to be saved.
+  it('scopes the meter to agents and treats an empty selection as every agent', () => {
+    const scope = cfg().commonFields.find(f => f.key === 'usage_meter.agent_ids')
+    expect(scope).toBeDefined()
+    expect(scope!.type).toBe('multi-select')
+    expect(scope!.source).toBe('server')
+    // An empty list is a valid value ("every agent"), so the row must say so
+    // rather than look unset, and it must not block a save.
+    expect(scope!.placeholderKey).toBe('settings.items.usageMeterAgentsAll')
+    expect(cfg().requiredFields ?? []).not.toContain('usage_meter.agent_ids')
+  })
+
   // Reading the panel top-down must answer "what does the number below mean?"
   // before showing the number.
   it('puts the cycle type above the start time and the day count', () => {

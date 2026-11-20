@@ -346,6 +346,13 @@ type UsageMeterConfig struct {
 	PeriodDays int `yaml:"period_days"`
 	// Metric selects what is counted: "tokens" | "credit" | "cost".
 	Metric string `yaml:"metric"`
+	// AgentIDs limits what the meter counts. Empty means every agent (the
+	// historical behavior).
+	//
+	// A quota is ONE shared budget, so this narrows the monitored set rather
+	// than giving each agent its own budget: the capsule, the popover and the
+	// over-plan notifications all report these agents against the same quota.
+	AgentIDs []string `yaml:"agent_ids,omitempty"`
 	// Quota is the budget for one full cycle, in the metric's own unit
 	// (tokens / credit / USD). 0 means "no budget": the meter still reports the
 	// running total, it just has no baseline, no remaining amount and no

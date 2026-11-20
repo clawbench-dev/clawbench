@@ -364,20 +364,13 @@ func calendarDaySpan(from, to time.Time) int {
 //
 // "No cycle" is not "a 30-day cycle": it means an unbounded window, which is the
 // literal reading of a period the user never set.
-// ComputeUsageMeter is the instance-wide readout used by the header capsule,
-// the notifications and every broadcast.
-func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, error) {
-	return ComputeUsageMeterForAgents(ctx, now, nil)
-}
-
-// ComputeUsageMeterForAgents computes the readout over the named agents only;
-// an empty list means every agent (the historical behavior).
+// ComputeUsageMeter computes the readout used by the header capsule, the
+// popover, the notifications and every broadcast.
 //
-// The RULE is still the global one. A quota is a single shared budget, so a
-// filtered readout answers "how much of the shared quota did these agents use",
-// not "these agents' own quota" — which is why quota/expected are echoed
-// unchanged and only actual/series/projection are recomputed.
-func ComputeUsageMeterForAgents(ctx context.Context, now time.Time, agentIDs []string) (*UsageMeterStatus, error) {
+// The rule's AgentIDs limit what is counted (empty = every agent). The quota is
+// still the one shared budget, so a narrowed rule reports those agents against
+// the same quota — it does not invent a per-agent budget.
+func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, error) {
 	rule := model.ConfigInstance.UsageMeter
 	// Two gates, and they answer different questions: `Enabled` is the user's
 	// explicit decision, `UsageMeterConfigured` is whether there is anything to
@@ -423,13 +416,13 @@ func ComputeUsageMeterForAgents(ctx context.Context, now time.Time, agentIDs []s
 	}
 
 	rowExpr, _ := usageMeterRowExpr(rule.Metric)
-	actual, err := sumUsageInCycle(ctx, rowExpr, cycle, now, agentIDs)
+	actual, err := sumUsageInCycle(ctx, rowExpr, cycle, now, rule.AgentIDs)
 	if err != nil {
 		return nil, err
 	}
 	st.Actual = actual
 
-	series, err := queryUsageMeterSeries(ctx, rowExpr, cycle, now, agentIDs)
+	series, err := queryUsageMeterSeries(ctx, rowExpr, cycle, now, rule.AgentIDs)
 	if err != nil {
 		return nil, err
 	}

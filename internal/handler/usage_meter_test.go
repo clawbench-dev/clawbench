@@ -151,17 +151,14 @@ func TestServeUsageMeter_EnabledRuleReportsCycleAndTotals(t *testing.T) {
 	assert.NotEmpty(t, body.Series)
 }
 
-// The popover's agent filter rides on the same endpoint: repeated `agent`
-// values narrow the measured amount, while the rule (quota) stays global.
-func TestServeUsageMeter_AgentFilter(t *testing.T) {
+// The agent scope is part of the RULE, not a query parameter: setting it on the
+// rule must narrow the measured amount while the quota stays the global one.
+func TestServeUsageMeter_AgentScopeFromRule(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	now := time.Now()
-	setMeterRuleForTest(t, model.UsageMeterConfig{
-		AnchorDate: now.AddDate(0, 0, -5).Format("2006-01-02"), PeriodDays: 30,
-		Metric: model.UsageMeterMetricCost, Quota: 30,
-	})
+	anchor := now.AddDate(0, 0, -5).Format("2006-01-02")
 	stamp := now.Add(-24 * time.Hour).UTC().Format("2006-01-02 15:04:05")
 
 	db := store.UnsafeDBForTest()
@@ -171,8 +168,8 @@ func TestServeUsageMeter_AgentFilter(t *testing.T) {
 		agent   string
 		cost    float64
 	}{
-		{"s-agent-a", "agent-a", 1.5},
-		{"s-agent-b", "agent-b", 2.5},
+		{"s-scope-a", "agent-a", 1.5},
+		{"s-scope-b", "agent-b", 2.5},
 	} {
 		_, err := db.Exec(
 			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, 'claude', 't', ?)",
@@ -193,33 +190,45 @@ func TestServeUsageMeter_AgentFilter(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	cases := []struct {
-		name  string
-		query string
-		want  float64
-	}{
-		{"all agents", "", 4.0},
-		{"one agent", "?agent=agent-a", 1.5},
-		{"several agents", "?agent=agent-a&agent=agent-b", 4.0},
-		{"unknown agent", "?agent=nobody", 0},
-		// An empty value is "no filter", not "match nothing".
-		{"empty value ignored", "?agent=", 4.0},
+	readActual := func(t *testing.T) (actual, quota float64) {
+		t.Helper()
+		w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		var body struct {
+			Actual float64 `json:"actual"`
+			Quota  float64 `json:"quota"`
+		}
+		decodeRespJSON(t, w.Body, &body)
+		return body.Actual, body.Quota
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter"+tc.query, nil))
-			require.Equal(t, http.StatusOK, w.Code)
 
-			var body struct {
-				Actual float64 `json:"actual"`
-				Quota  float64 `json:"quota"`
-			}
-			decodeRespJSON(t, w.Body, &body)
-			assert.InDelta(t, tc.want, body.Actual, 1e-9)
-			assert.InDelta(t, 30.0, body.Quota, 1e-9, "the quota is always the global rule")
-		})
-	}
+	setMeterRuleForTest(t, model.UsageMeterConfig{
+		AnchorDate: anchor, PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+	})
+	actual, _ := readActual(t)
+	assert.InDelta(t, 4.0, actual, 1e-9, "no scope = every agent")
+
+	setMeterRuleForTest(t, model.UsageMeterConfig{
+		AnchorDate: anchor, PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+		AgentIDs: []string{"agent-a"},
+	})
+	actual, quota := readActual(t)
+	assert.InDelta(t, 1.5, actual, 1e-9, "only the scoped agent counts")
+	assert.InDelta(t, 30.0, quota, 1e-9, "the quota stays the shared global one")
+
+	setMeterRuleForTest(t, model.UsageMeterConfig{
+		AnchorDate: anchor, PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+		AgentIDs: []string{"agent-a", "agent-b"},
+	})
+	actual, _ = readActual(t)
+	assert.InDelta(t, 4.0, actual, 1e-9)
 }
+
+// The meter is instance-wide, so a project cookie must not narrow it: the
+// endpoint has no scope parameter at all.
 
 func TestServeUsageMeter_IgnoresProjectCookie(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -415,6 +424,21 @@ func TestValidateUsageMeterRule_EachFailureNamesItsField(t *testing.T) {
 			wantKey:   "UsageMeterCycleModeInvalid",
 			wantField: "usage_meter.cycle_mode",
 		},
+		{
+			name:      "blank agent id",
+			rule:      model.UsageMeterConfig{Quota: 10, AnchorDate: "2026-10-05", PeriodDays: 30, Metric: model.UsageMeterMetricCost, AgentIDs: []string{"agent-a", " "}},
+			wantKey:   "UsageMeterAgentsInvalid",
+			wantField: "usage_meter.agent_ids",
+		},
+		{
+			name: "too many agents",
+			rule: model.UsageMeterConfig{
+				Quota: 10, AnchorDate: "2026-10-05", PeriodDays: 30, Metric: model.UsageMeterMetricCost,
+				AgentIDs: make([]string, model.MaxUsageMeterAgents+1),
+			},
+			wantKey:   "UsageMeterAgentsTooMany",
+			wantField: "usage_meter.agent_ids",
+		},
 	}
 
 	keyToField := map[string]string{}
@@ -442,6 +466,29 @@ func TestValidateUsageMeterRule_EachFailureNamesItsField(t *testing.T) {
 			keyToField[tc.wantKey] = tc.wantField
 		})
 	}
+}
+
+// Saving the agent scope must persist it, and clearing it must mean "every
+// agent" again — the settings panel reads the rule back from the same endpoint.
+func TestServeConfig_Patch_UsageMeterAgentScopeRoundTrip(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	patch := func(t *testing.T, body string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	}
+
+	model.ConfigInstance = model.Config{}
+	patch(t, `{"usage_meter":{"enabled":true,"quota":10,"anchor_date":"2026-10-05","period_days":30,"metric":"cost","agent_ids":["agent-a","agent-b"]}}`)
+	assert.Equal(t, []string{"agent-a", "agent-b"}, model.ConfigInstance.UsageMeter.AgentIDs)
+
+	patch(t, `{"usage_meter":{"agent_ids":[]}}`)
+	assert.Empty(t, model.ConfigInstance.UsageMeter.AgentIDs, "an empty list means every agent")
 }
 
 // templateData must copy, not alias, the caller's map: the same error value can

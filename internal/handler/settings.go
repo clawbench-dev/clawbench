@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -280,6 +281,7 @@ var hotReloadFields = map[string]bool{
 	"usage_meter.cycle_mode":  true,
 	"usage_meter.period_days": true,
 	"usage_meter.metric":      true,
+	"usage_meter.agent_ids":   true,
 	"usage_meter.quota":       true,
 	// Agent process environment. Read from ConfigInstance at spawn time, so a
 	// change applies to the next process without a restart.
@@ -506,12 +508,13 @@ func parseMCPServers(raw []any) ([]model.MCPServer, error) {
 // are deliberately absent: they describe the server's notification progress,
 // not user configuration, and the UI has nothing to do with them.
 type configUsageMeter struct {
-	Enabled    bool    `json:"enabled"`
-	AnchorDate string  `json:"anchor_date"`
-	CycleMode  string  `json:"cycle_mode"`
-	PeriodDays int     `json:"period_days"`
-	Metric     string  `json:"metric"`
-	Quota      float64 `json:"quota"`
+	Enabled    bool     `json:"enabled"`
+	AnchorDate string   `json:"anchor_date"`
+	CycleMode  string   `json:"cycle_mode"`
+	PeriodDays int      `json:"period_days"`
+	Metric     string   `json:"metric"`
+	AgentIDs   []string `json:"agent_ids"`
+	Quota      float64  `json:"quota"`
 }
 
 // configShellEnv exposes the agent process environment switch.
@@ -1349,6 +1352,7 @@ var PatchableConfigPaths = map[string]bool{
 	"usage_meter.cycle_mode":  true,
 	"usage_meter.period_days": true,
 	"usage_meter.metric":      true,
+	"usage_meter.agent_ids":   true,
 	"usage_meter.quota":       true,
 	// Agent process environment (opt-in, off by default).
 	"shell_env.inherit": true,
@@ -1684,6 +1688,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			CycleMode:  model.NormalizeUsageMeterCycleMode(cfg.UsageMeter.CycleMode),
 			PeriodDays: cfg.UsageMeter.PeriodDays,
 			Metric:     cfg.UsageMeter.Metric,
+			AgentIDs:   cfg.UsageMeter.AgentIDs,
 			Quota:      cfg.UsageMeter.Quota,
 		},
 	}
@@ -2114,6 +2119,26 @@ func validUserProfile(s string) bool {
 	return utf8.RuneCountInString(strings.TrimSpace(s)) <= model.MaxUserProfileRunes
 }
 
+// usageMeterAgentIDs decodes the rule's agent filter. The wire shape is a JSON
+// array of ids; anything else (a bare string, a non-string element) is a client
+// error rather than something to coerce, because coercing would persist a rule
+// that silently monitors the wrong set.
+func usageMeterAgentIDs(raw any) ([]string, bool) {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		s, ok := e.(string)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
+}
+
 // validateUsageMeterRule checks a usage-meter rule that has already been merged
 // with the stored config, so a partial PATCH is validated against the values it
 // will actually run with.
@@ -2165,6 +2190,17 @@ func validateUsageMeterRule(r model.UsageMeterConfig) error {
 	// treats that as "disabled" until ApplyDefaults fills the default in.
 	if r.Metric != "" && !model.IsValidUsageMeterMetric(r.Metric) {
 		return &configValueError{MsgKey: "UsageMeterMetricInvalid", Field: "usage_meter.metric"}
+	}
+	if len(r.AgentIDs) > model.MaxUsageMeterAgents {
+		return &configValueError{
+			MsgKey: "UsageMeterAgentsTooMany", Field: "usage_meter.agent_ids",
+			Data: map[string]any{"Max": model.MaxUsageMeterAgents},
+		}
+	}
+	for _, id := range r.AgentIDs {
+		if strings.TrimSpace(id) == "" {
+			return &configValueError{MsgKey: "UsageMeterAgentsInvalid", Field: "usage_meter.agent_ids"}
+		}
 	}
 	return nil
 }
@@ -2574,6 +2610,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			}
 			effective.Metric = v
 		}
+		if raw, present := um["agent_ids"]; present {
+			ids, ok := usageMeterAgentIDs(raw)
+			if !ok {
+				return &configValueError{MsgKey: "UsageMeterAgentsInvalid", Field: "usage_meter.agent_ids"}
+			}
+			effective.AgentIDs = ids
+		}
 		if raw, present := um["quota"]; present {
 			v, ok := raw.(float64)
 			if !ok {
@@ -2637,7 +2680,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				if m, ok := aiSummary["model"].(string); ok {
 					effective = m
 				}
-				if effective != "" && !modelContains(provider.Models, effective) {
+				if effective != "" && !slices.Contains(provider.Models, effective) {
 					return aiSummaryProviderError("ai_summary.model",
 						fmt.Sprintf("%q is not in the model list of provider %q", effective, provider.Name))
 				}
@@ -3693,6 +3736,17 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := um["metric"].(string); ok {
 			cfg.UsageMeter.Metric = v
 		}
+		if v, ok := um["agent_ids"]; ok {
+			ids, idsOK := usageMeterAgentIDs(v)
+			if !idsOK {
+				// The validator rejected this shape before we got here; a
+				// hand-built patch that skipped it must not silently clear the
+				// filter either, so leave the stored value alone.
+				slog.Warn("settings: ignoring malformed usage_meter.agent_ids")
+			} else {
+				cfg.UsageMeter.AgentIDs = ids
+			}
+		}
 		if v, ok := um["quota"].(float64); ok {
 			cfg.UsageMeter.Quota = v
 		}
@@ -3742,6 +3796,7 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			before.CycleMode != cfg.UsageMeter.CycleMode ||
 			before.PeriodDays != cfg.UsageMeter.PeriodDays ||
 			before.Metric != cfg.UsageMeter.Metric ||
+			!slices.Equal(before.AgentIDs, cfg.UsageMeter.AgentIDs) ||
 			before.Quota != cfg.UsageMeter.Quota
 		if changed {
 			cfg.UsageMeter.NotifiedCycleStart = ""
@@ -4337,15 +4392,4 @@ func mergeUsageMeterStateIntoPatch(patch map[string]any) map[string]any {
 	}
 	out["usage_meter"] = merged
 	return out
-}
-
-// modelContains is a tiny helper kept local to avoid importing slices just for
-// one call site.
-func modelContains(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
 }

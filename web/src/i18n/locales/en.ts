@@ -12,6 +12,7 @@ export default {
     pin: 'Pin to Top',
     unpin: 'Unpin',
     confirm: 'OK',
+    done: 'Done',
     close: 'Close',
     back: 'Back',
     edit: 'Edit',
@@ -642,10 +643,6 @@ export default {
     // usage alerts exist and how to turn them on.
     setupHint: 'Set up usage alerts',
     dayOfCycle: 'Day {day} of {days}',
-    // Popover-only filter. The capsule and the alerts stay global.
-    agentFilter: 'Agent',
-    allAgents: 'All agents',
-    quotaGlobalHint: 'The quota is global; the figures cover only the selected agents',
     actual: 'Actual',
     expected: 'Planned',
     quota: 'Quota',
@@ -4943,6 +4940,9 @@ export default {
       usageMeterMetricDesc: 'What the quota is measured in. Tokens, credits and cost are different units and cannot be converted, so switching it clears the quota.',
       usageMeterQuota: 'Quota',
       usageMeterQuotaDesc: 'Budget for one cycle. 0 or empty means no budget: usage is still reported, just with no over-plan alert',
+      usageMeterAgents: 'Agent scope',
+      usageMeterAgentsDesc: 'Only these agents are counted. Nothing selected means every agent; the quota is one shared budget, and the capsule and over-plan alerts use the same scope',
+      usageMeterAgentsAll: 'All agents',
       usageMeterMetricTokens: 'Token',
       usageMeterMetricCredit: 'Credit',
       usageMeterMetricCost: 'Cost (USD)',
