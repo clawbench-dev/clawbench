@@ -204,7 +204,7 @@ describe('TerminalPanel xterm selection defaults', () => {
       source.indexOf('term.attachCustomKeyEventHandler'),
       source.indexOf('onCloseSessionViaHttp'),
     )
-    expect(handler).toContain('isPasteSelectionShortcut(ev)')
+    expect(handler).toContain('isPasteSelectionShortcut(ev, isMacDesktopUA)')
     expect(handler).toContain('ev.preventDefault()')
     expect(handler).toContain('void pasteIntoTerminal(term)')
 
@@ -221,8 +221,16 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(pasteFn.indexOf('term.getSelection()')).toBeLessThan(pasteFn.indexOf('readClipboardText()'))
     expect(pasteFn).toContain('term.paste(selected)')
     expect(pasteFn).toContain('term.paste(text)')
-    // An empty clipboard is a silent no-op; a failed READ is surfaced.
+    // A failed READ is surfaced, and a genuinely empty clipboard gets its own
+    // message rather than being silently skipped — the two look identical to the
+    // user otherwise, which is what made "paste does nothing" so hard to report.
     expect(pasteFn).toContain("t('terminal.clipboardReadFailed')")
+    expect(pasteFn).toContain("t('terminal.clipboardEmpty')")
+    // The read failure must be caught around the READ, not around the paste:
+    // catching the paste too would swallow a paste error as a clipboard error.
+    const tryBlock = pasteFn.slice(pasteFn.indexOf('try {'), pasteFn.indexOf('} catch'))
+    expect(tryBlock).toContain('readClipboardText()')
+    expect(tryBlock).not.toContain('term.paste')
   })
 
   it('provides a help button that opens the terminal help drawer', () => {

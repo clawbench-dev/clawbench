@@ -55,29 +55,52 @@ export function isCopySelectionShortcut(
 }
 
 /**
- * Whether this event is the "paste into the terminal" chord: Shift+Insert.
+ * Whether this event is a "paste into the terminal" chord.
  *
- * Why intercept it instead of leaving it to the browser: xterm only forwards
- * Insert WITHOUT Shift to the PTY and lets every other modifier combination
- * fall through to the browser's default action. That default is paste in
- * Chromium and Firefox, but it is not guaranteed in Safari, Android WebViews or
- * an Electron window whose menu swallows the accelerator — exactly the hosts
- * this app runs in. Claiming the chord here makes the behaviour identical
- * everywhere, and lets the caller decide what "paste" means (the live selection
- * first, the clipboard when nothing is selected).
+ * Chords:
+ * - Shift+Insert — the terminal convention, on every platform.
+ * - Ctrl+V — what people actually press on Windows. NOT free by default: xterm
+ *   sends one ONLY when `macOptionIsMeta`-style settings say so, and on Windows
+ *   it forwards the raw ^V (0x16) to the PTY unless the app's own key handler
+ *   claims it first. Leaving it to the browser fails in this app's desktop
+ *   shell, which runs with `Menu.setApplicationMenu(null)` — that removes the
+ *   menu-provided paste accelerator, so Ctrl+V had no native path left to fall
+ *   back to and did nothing at all.
+ * - Cmd+V on macOS — the native chord there (mirroring isCopySelectionShortcut).
  *
- * Shift is required and every other modifier is rejected:
- * - Ctrl+Insert is the copy chord, not paste.
- * - Alt/Meta combinations keep their normal terminal meaning.
+ * Why intercept instead of leaving it to the browser: xterm only forwards Insert
+ * WITHOUT Shift to the PTY and lets every other modifier combination fall
+ * through to the browser's default action. That default is paste in Chromium and
+ * Firefox, but it is not guaranteed in Safari, Android WebViews or an Electron
+ * window whose menu swallows the accelerator — exactly the hosts this app runs
+ * in. Claiming the chords here makes the behaviour identical everywhere, and
+ * lets the caller decide what "paste" means (the live selection first, the
+ * clipboard when nothing is selected).
+ *
+ * Modifier rules:
+ * - Ctrl+Insert is the copy chord, not paste, so Insert still requires Shift.
+ * - Ctrl+V additionally rejects Shift and Alt. Ctrl+Shift+V is "paste as plain
+ *   text" in browsers and some terminals; claiming it would make the plain-text
+ *   path silently paste exactly like the rich one. Alt must stay free because
+ *   AltGr arrives as Ctrl+Alt on Windows and has to keep composing characters.
  *
  * Only `keydown` counts, for the same reason as copy: acting on keydown,
  * keypress and keyup would paste the same text up to three times.
  */
-export function isPasteSelectionShortcut(ev: CopyKeyEvent): boolean {
+export function isPasteSelectionShortcut(ev: CopyKeyEvent, isMac = false): boolean {
   if (ev.type !== 'keydown') return false
-  if (!ev.shiftKey) return false
-  if (ev.ctrlKey || ev.altKey || ev.metaKey) return false
-  // `key` is 'Insert' in every current browser; `keyCode` is the fallback for
-  // environments that report an empty key for non-character keys.
-  return ev.key === 'Insert' || ev.keyCode === 45
+  // Cmd+V on macOS; the raw Ctrl+V there keeps its readline meaning.
+  const isInsertPaste = ev.shiftKey && !ev.ctrlKey && !ev.altKey && !ev.metaKey &&
+    (ev.key === 'Insert' || ev.keyCode === 45)
+  if (isMac) {
+    // Shift+Insert is host-agnostic and must keep working on macOS too.
+    if (isInsertPaste) return true
+    if (!ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey) return false
+    return ev.key.toLowerCase() === 'v'
+  }
+  if (ev.key.toLowerCase() === 'v') {
+    if (!ev.ctrlKey || ev.shiftKey || ev.altKey || ev.metaKey) return false
+    return true
+  }
+  return isInsertPaste
 }

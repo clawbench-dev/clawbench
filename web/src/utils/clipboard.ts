@@ -28,11 +28,20 @@ export function readClipboardText(): Promise<string> {
     // Prefer the native Android bridge (reliable in WebViews, e.g. ClawBench APK).
     const native = getNative()
     if (native?.readClipboardText) {
+        // Deliberately NOT caught here. This bridge used to swallow the failure
+        // and fall through to `navigator.clipboard`, which in the Electron shell
+        // is denied by the window permission handler — so the real reason was
+        // replaced by a generic "clipboard read failed", and (worse) a bridge
+        // that resolved to '' looked like an empty clipboard, i.e. a silent
+        // no-op with no message at all. Let the rejection through; the caller
+        // already turns it into a visible toast.
+        let result: string | Promise<string>
         try {
-            return Promise.resolve(native.readClipboardText() ?? '')
-        } catch {
-            // fall through to standard APIs
+            result = native.readClipboardText() ?? ''
+        } catch (err) {
+            return Promise.reject(err)
         }
+        return Promise.resolve(result).then((text) => text ?? '')
     }
     if (navigator.clipboard?.readText) {
         return navigator.clipboard.readText().then((text) => text ?? '')

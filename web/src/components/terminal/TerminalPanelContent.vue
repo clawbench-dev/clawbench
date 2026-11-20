@@ -887,7 +887,7 @@ function handleSelectionExtend(anchorCol: number, anchorRow: number, currentCol:
 }
 
 /**
- * Paste into the terminal for the Shift+Insert chord.
+ * Paste into the terminal for the Shift+Insert / Ctrl+V chords.
  *
  * The terminal's own selection comes first: in a traditional terminal
  * Shift+Insert pastes the PRIMARY selection, i.e. "whatever is highlighted
@@ -899,6 +899,12 @@ function handleSelectionExtend(anchorCol: number, anchorRow: number, currentCol:
  * `term.paste()` — not `sendInput` — so xterm applies its normal paste path
  * (CRLF normalisation and bracketed-paste wrapping) and the text lands at the
  * cursor WITHOUT being executed.
+ *
+ * Three outcomes are kept distinct on purpose:
+ * - selection present  → paste it (no clipboard access at all)
+ * - clipboard is empty → silent no-op, as in every terminal
+ * - clipboard read failed → toast, because "nothing happened" is indistinguishable
+ *   from a broken paste and that is exactly what users reported
  */
 async function pasteIntoTerminal(term: TerminalType) {
   const selected = term.getSelection() ?? ''
@@ -906,14 +912,22 @@ async function pasteIntoTerminal(term: TerminalType) {
     term.paste(selected)
     return
   }
+  let text: string
   try {
-    const text = await readClipboardText()
-    // An empty clipboard is a silent no-op in every terminal; only a real read
-    // failure is worth telling the user about.
-    if (text) term.paste(text)
+    text = await readClipboardText()
   } catch {
+    // Includes the desktop shell refusing an untrusted sender, a WebView without
+    // clipboard permission, and a page that is not a secure context.
     toast.show(t('terminal.clipboardReadFailed'), { icon: 'warning', type: 'error' })
+    return
   }
+  if (!text) {
+    // Genuinely empty clipboard: reported once, quietly. A real failure above is
+    // never routed here — that distinction is the whole point of the try/catch.
+    toast.show(t('terminal.clipboardEmpty'), { icon: 'info', type: 'info' })
+    return
+  }
+  term.paste(text)
 }
 
 // Quick commands
@@ -947,7 +961,7 @@ const tabManager = useTerminalTabs(getWsUrl, {
       // run in (Safari, Android WebView, Electron with a menu accelerator) —
       // and preventing the default is also what stops a double paste where the
       // native path DOES fire.
-      if (isPasteSelectionShortcut(ev)) {
+      if (isPasteSelectionShortcut(ev, isMacDesktopUA)) {
         ev.preventDefault()
         void pasteIntoTerminal(term)
         return false

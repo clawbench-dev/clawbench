@@ -40,6 +40,39 @@ import { registerFloatingIpc, updateFloatingColors } from './floating'
 import { getCloseAction, setCloseAction } from './closeFlow'
 import { registerAnnotateIpc } from './annotateOverlay'
 
+/**
+ * Whether an IPC sender is allowed to read the system clipboard.
+ *
+ * Every `native:*` handler is reachable from every webContents this app owns,
+ * and the preload is shared with the share window. The clipboard is the one
+ * channel where a wrong answer leaks data the user never meant to publish, so
+ * the sender is checked against the configured server origin — the same rule
+ * classifyUrl already uses to decide "ours" versus "someone else's".
+ *
+ * A frame whose URL cannot be read (detached or still on about:blank) is
+ * refused: guessing "probably ours" is how this kind of handle turns into a
+ * silent exfiltration path.
+ */
+function isTrustedClipboardSender(frame: Electron.WebFrameMain | null): boolean {
+  if (!frame) return false
+  // A frame with no readable URL (detached, or still about:blank) is refused
+  // outright: guessing "probably ours" is how this kind of handle turns into a
+  // silent exfiltration path.
+  let parsed: URL
+  try {
+    parsed = new URL(frame.url)
+  } catch {
+    return false
+  }
+  const serverUrl = getStore().get('serverUrl')
+  if (serverUrl) return classifyUrl(frame.url, serverUrl) === 'internal'
+  // No server configured yet (fresh install, the login page is up). Falling back
+  // to "allow" here would hand every renderer in the app an unrestricted
+  // clipboard read, so the loopback origins are recognised explicitly instead —
+  // that is what the embedded server and the startup page actually run on.
+  return parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || parsed.hostname === '::1'
+}
+
 export function registerBridge(): void {
   initStore()
   // Remote control IPC lives with the bridge because it is the same surface:
@@ -284,6 +317,24 @@ export function registerBridge(): void {
     openSandboxWindow(port, protocol, host, p)
   })
 
+  // Read side of the clipboard, which the renderer cannot do on its own here:
+  // the window's permission handler allows only media/display-capture, so
+  // `navigator.clipboard.readText()` always rejects, and the execCommand('paste')
+  // fallback is disabled outright in Electron. Before this channel existed the
+  // web app's readClipboardText() therefore always failed on desktop — Shift+
+  // Insert in the terminal did nothing (or reported a clipboard read failure).
+  //
+  // Resolved on the main process, which has no permission gate: the user already
+  // granted this by pressing a paste chord in our own window, and the value never
+  // leaves this app. Still sender-checked, because an IPC handle is reachable
+  // from ANY webContents in the app (sandbox/share windows included) and raw
+  // clipboard text is exactly what a hostile frame would want.
+  ipcMain.handle('native:read-clipboard-text', (e) => {
+    if (!isTrustedClipboardSender(e.senderFrame)) {
+      throw new Error('clipboard read denied')
+    }
+    return clipboard.readText()
+  })
   ipcMain.handle('native:share-text', (_e, text: string) => { clipboard.writeText(text); return Promise.resolve() })
   ipcMain.handle('native:share-file', async (_e, filePath: string, mime: string) => {
     const name = path.basename(filePath)

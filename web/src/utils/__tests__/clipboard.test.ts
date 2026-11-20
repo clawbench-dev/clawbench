@@ -232,6 +232,46 @@ describe('readClipboardText', () => {
     expect(nativeRead).toHaveBeenCalledOnce()
   })
 
+  it('surfaces a native bridge rejection instead of falling through', async () => {
+    // The Electron preload rejects this channel when it refuses the sender.
+    // Falling through to navigator.clipboard would replace the real reason with
+    // "clipboard read unsupported", and an unrejected resolve('') would look
+    // like an empty clipboard — a silent no-op with no message at all, which is
+    // exactly the "paste does nothing" report this path is fixing.
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { readText: mockReadText },
+      writable: true,
+    })
+    mockReadText.mockResolvedValue('should not be used')
+    ;(globalThis as any).ClawBenchNative = {
+      readClipboardText: vi.fn().mockRejectedValue(new Error('clipboard read denied')),
+    }
+
+    await expect(readClipboardText()).rejects.toThrow('clipboard read denied')
+    expect(mockReadText).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a native bridge that throws synchronously', async () => {
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { readText: mockReadText },
+      writable: true,
+    })
+    mockReadText.mockResolvedValue('should not be used')
+    ;(globalThis as any).ClawBenchNative = {
+      readClipboardText: vi.fn(() => { throw new Error('bridge exploded') }),
+    }
+
+    await expect(readClipboardText()).rejects.toThrow('bridge exploded')
+    expect(mockReadText).not.toHaveBeenCalled()
+  })
+
+  it('treats a native bridge returning null as an empty clipboard', async () => {
+    // Electron's clipboard.readText() yields '' for an empty clipboard; a
+    // bridge that answers null must read the same, not blow up on .then().
+    ;(globalThis as any).ClawBenchNative = { readClipboardText: vi.fn(() => null) }
+    await expect(readClipboardText()).resolves.toBe('')
+  })
+
   it('copies through the native bridge and reports a denied operation', async () => {
     const write = vi.fn().mockResolvedValue(undefined)
     const success = vi.fn()
