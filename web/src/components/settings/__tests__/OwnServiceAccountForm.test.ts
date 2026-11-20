@@ -45,6 +45,7 @@ const i18n = createI18n({
           codebuddyDomainHint: '域名说明',
           codebuddyKeyKeep: '已保存，留空表示不修改',
           codebuddySaved: '已保存',
+          accountApplyButton: '应用到现有智能体',
           accountKeyOnlyHint: '{name} 只需要密钥',
           accountNameCodeBuddy: 'CodeBuddy',
           accountNameCursor: 'Cursor',
@@ -203,5 +204,17 @@ describe('OwnServiceAccountForm', () => {
     // A Cursor key must not show up in the CodeBuddy panel (and vice versa).
     const wrapper = mountForm('codebuddy', [row({ id: 3, name: 'Cursor key', backend: 'cursor' })])
     expect(wrapper.find<HTMLInputElement>('[data-role="account-name"]').element.value).toBe('CodeBuddy')
+  })
+
+  it('offers the apply button only for an account that already exists', async () => {
+    // Nothing to bind before the row exists — the button would have no id.
+    expect(mountForm().find('[data-action="account-apply"]').exists()).toBe(false)
+
+    const wrapper = mountForm('codebuddy', [row()], 7)
+    const apply = wrapper.find('[data-action="account-apply"]')
+    expect(apply.exists()).toBe(true)
+
+    await apply.trigger('click')
+    expect(wrapper.emitted('apply')).toEqual([[7]])
   })
 })

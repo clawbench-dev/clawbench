@@ -5,13 +5,23 @@ import { createI18n } from 'vue-i18n'
 const mockGet = vi.fn()
 const mockPost = vi.fn()
 const mockPut = vi.fn()
+const mockPatch = vi.fn()
 const mockDelete = vi.fn()
 
 vi.mock('@/utils/api', () => ({
   apiGet: (...args: unknown[]) => mockGet(...args),
   apiPost: (...args: unknown[]) => mockPost(...args),
   apiPut: (...args: unknown[]) => mockPut(...args),
+  apiPatch: (...args: unknown[]) => mockPatch(...args),
   apiDelete: (...args: unknown[]) => mockDelete(...args),
+}))
+
+const { mockAgents, mockLoadAgents } = vi.hoisted(() => ({
+  mockAgents: { value: [] as Array<Record<string, unknown>> },
+  mockLoadAgents: vi.fn(() => Promise.resolve()),
+}))
+vi.mock('@/composables/useAgents', () => ({
+  useAgents: () => ({ agents: mockAgents, loadAgents: mockLoadAgents }),
 }))
 
 const mockConfirm = vi.fn().mockResolvedValue(true)
@@ -56,6 +66,15 @@ const i18n = createI18n({
           codebuddyDomainHint: '域名说明',
           codebuddyKeyKeep: '已保存，留空表示不修改',
           codebuddySaved: '已保存',
+          accountApplyTitle: '切换智能体到新提供商',
+          accountApplyMessage: '要把现有的 {count} 个 {backend} 智能体都改用「{provider}」吗？',
+          accountApplyConfirm: '全部切换',
+          accountApplyCancel: '暂不',
+          accountApplyDone: '已把 {count} 个智能体切换到「{provider}」',
+          accountApplyFailed: '{count} 个智能体切换失败：{reason}',
+          accountApplyButton: '应用到现有智能体',
+          accountApplyNone: '所有 {backend} 智能体都已经在用这个账号了',
+          accountApplyNoKey: '这个账号还没有密钥，先填好密钥再切换',
           providerEmpty: '还没有配置模型提供商',
           providerName: '名称',
           providerNamePlaceholder: '例如 MiniMax',
@@ -155,12 +174,55 @@ function openCreate(wrapper: ReturnType<typeof mountSetting>) {
   return wrapper.find('[data-action="provider-add"]').trigger('click')
 }
 
+/** Create the CodeBuddy account through its own tab, with `agents` already in
+ *  the store, and return the mounted page once the save has settled. */
+async function saveNewCodeBuddyAccount(agents: Array<Record<string, unknown>>) {
+  mockAgents.value = agents
+  const created = {
+    id: 12, name: '公司 CodeBuddy', protocol: 'private', backend: 'codebuddy', baseUrl: '',
+    deployment: '', authMode: 'auto', hasKey: true, agentCount: 0,
+  }
+  let list: unknown[] = []
+  mockGet.mockImplementation((url: string) => {
+    if (url === '/api/providers') return Promise.resolve({ providers: list })
+    if (url === '/api/providers/presets') return Promise.resolve({ presets: [] })
+    if (url === '/api/catalog') return Promise.resolve({})
+    return Promise.resolve({})
+  })
+  mockPost.mockImplementation((url: string) => {
+    if (url === '/api/providers') { list = [created]; return Promise.resolve(created) }
+    return Promise.resolve({})
+  })
+
+  const wrapper = mount(ProviderSetting, {
+    global: {
+      plugins: [i18n],
+      stubs: {
+        ModalDialog: {
+          props: ['open', 'title'],
+          template: '<div v-if="open" class="mock-dialog"><slot /></div>',
+        },
+      },
+    },
+  })
+  await flushPromises()
+
+  await wrapper.find('[data-tab="codebuddy"]').trigger('click')
+  await wrapper.find('[data-role="account-name"]').setValue('公司 CodeBuddy')
+  await wrapper.find('[data-role="account-key"]').setValue('ck-1')
+  await wrapper.find('[data-action="account-save"]').trigger('click')
+  await flushPromises()
+  return wrapper
+}
+
 describe('ProviderSetting', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockAgents.value = []
     mockConfirm.mockResolvedValue(true)
     mockPost.mockResolvedValue({})
     mockPut.mockResolvedValue({})
+    mockPatch.mockResolvedValue({})
     mockDelete.mockResolvedValue(undefined)
   })
 
@@ -207,6 +269,67 @@ describe('ProviderSetting', () => {
     // blank "add" form) and say so.
     expect(wrapper.find<HTMLInputElement>('[data-role="account-name"]').element.value).toBe('公司 CodeBuddy')
     expect(wrapper.find('[data-role="account-saved"]').exists()).toBe(true)
+  })
+
+  it('offers to move every agent of the backend onto the freshly saved account', async () => {
+    const wrapper = await saveNewCodeBuddyAccount([
+      { id: 'cb-1', name: 'Writer', backend: 'codebuddy', providerId: null },
+      { id: 'cb-2', name: 'Reviewer', backend: 'codebuddy', providerId: 3 },
+      { id: 'cu-1', name: 'Cursor', backend: 'cursor', providerId: null },
+    ])
+
+    // One question, naming how many agents and which account — not a silent
+    // change, and not one prompt per agent.
+    expect(mockConfirm).toHaveBeenCalledTimes(1)
+    expect(mockConfirm.mock.calls[0][0]).toContain('2 个 CodeBuddy')
+    expect(mockConfirm.mock.calls[0][0]).toContain('公司 CodeBuddy')
+
+    // Both CodeBuddy agents switch; the Cursor agent and the already-bound one
+    // are left alone.
+    expect(mockPatch).toHaveBeenCalledTimes(2)
+    expect(mockPatch).toHaveBeenCalledWith('/api/agents', { id: 'cb-1', provider_id: 12 })
+    expect(mockPatch).toHaveBeenCalledWith('/api/agents', { id: 'cb-2', provider_id: 12 })
+    expect(mockPatch).not.toHaveBeenCalledWith('/api/agents', expect.objectContaining({ id: 'cu-1' }))
+    // The agent list and the provider's "used by N" line are both stale now.
+    expect(mockLoadAgents).toHaveBeenCalledWith(true)
+    expect(mockGet).toHaveBeenCalledWith('/api/providers')
+    expect(wrapper.find('[data-role="account-saved"]').exists()).toBe(true)
+  })
+
+  it('leaves the agents alone when the switch is declined', async () => {
+    mockConfirm.mockResolvedValue(false)
+    await saveNewCodeBuddyAccount([
+      { id: 'cb-1', name: 'Writer', backend: 'codebuddy', providerId: null },
+    ])
+
+    expect(mockConfirm).toHaveBeenCalledTimes(1)
+    expect(mockPatch).not.toHaveBeenCalled()
+  })
+
+  it('does not ask when every agent of the backend already uses the account', async () => {
+    await saveNewCodeBuddyAccount([
+      { id: 'cb-1', name: 'Writer', backend: 'codebuddy', providerId: 12 },
+    ])
+
+    expect(mockConfirm).not.toHaveBeenCalled()
+    expect(mockPatch).not.toHaveBeenCalled()
+  })
+
+  it('runs the same binding from the account panel\'s apply button', async () => {
+    mockAgents.value = [
+      { id: 'cb-1', name: 'Writer', backend: 'codebuddy', providerId: null },
+    ]
+    const wrapper = mountSetting([
+      { id: 9, name: 'CodeBuddy', protocol: 'private', backend: 'codebuddy', baseUrl: '', authMode: 'auto', hasKey: true, agentCount: 0 },
+    ])
+    await flushPromises()
+
+    await wrapper.find('[data-tab="codebuddy"]').trigger('click')
+    await wrapper.find('[data-action="account-apply"]').trigger('click')
+    await flushPromises()
+
+    expect(mockConfirm).toHaveBeenCalledTimes(1)
+    expect(mockPatch).toHaveBeenCalledWith('/api/agents', { id: 'cb-1', provider_id: 9 })
   })
 
   it('routes an own-service row to its backend tab instead of the generic dialog', async () => {

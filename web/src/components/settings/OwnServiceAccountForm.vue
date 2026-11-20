@@ -78,6 +78,19 @@
     </p>
 
     <div class="oa-actions">
+      <!-- Manual repeat of the offer that follows a save: the user may have
+           declined it, or agents may have been added since. Only a saved
+           account has an id to bind them to. -->
+      <button
+        v-if="target"
+        type="button"
+        class="fbtn"
+        data-action="account-apply"
+        :disabled="saving"
+        @click="applyToAgents"
+      >
+        {{ t('settings.items.accountApplyButton') }}
+      </button>
       <button
         type="button"
         class="fbtn fbtn-primary"
@@ -111,8 +124,10 @@ const props = defineProps<{
 }>()
 
 /** `saved` carries the row's id: the parent keeps that account selected so the
- *  panel does not jump to another one after the list reloads. */
-const emit = defineEmits<{ saved: [id: number] }>()
+ *  panel does not jump to another one after the list reloads. `apply` asks the
+ *  parent to bind this backend's agents to the account (the same flow it runs
+ *  automatically after a save). */
+const emit = defineEmits<{ saved: [id: number]; apply: [id: number] }>()
 
 const { t } = useI18n()
 
@@ -200,6 +215,11 @@ function seed() {
   draft.apiKey = ''
   showKey.value = false
   error.value = ''
+}
+
+function applyToAgents() {
+  if (saving.value || !target.value) return
+  emit('apply', target.value.id)
 }
 
 async function save() {
@@ -340,6 +360,7 @@ async function save() {
 .oa-actions {
   display: flex;
   justify-content: flex-end;
+  gap: var(--space-3);
 }
 .oa-spin {
   animation: oa-spin 1s linear infinite;
