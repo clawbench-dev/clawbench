@@ -70,8 +70,8 @@ const i18n = createI18n({
         groups: {
           projectAppearance: '项目与外观',
           aiChat: '智能体',
-          dockModules: '功能模块',
-          modelCapability: '模型能力',
+          dockModules: '功能',
+          modelCapability: '模型',
           system: '系统',
         },
       },
@@ -172,7 +172,7 @@ describe('SettingsIndex', () => {
 
     const titles = wrapper.findAll('.settings-card__header').map(el => el.text())
     expect(titles).toEqual([
-      '项目与外观', '模型能力', '智能体', '功能模块', '系统',
+      '项目与外观', '模型', '智能体', '功能', '系统',
     ])
   })
 
@@ -183,9 +183,9 @@ describe('SettingsIndex', () => {
       card.findAll('.settings-index__row').length,
     )
     // 项目与外观 (2): 项目, 外观.
-    // 模型能力 (4): 模型提供商, 文本嵌入, 语音朗读, 语音识别.
+    // 模型 (4): 模型提供商, 文本嵌入, 语音朗读, 语音识别.
     // 智能体 (7): 身份, 聊天, 会话管理, 会话索引, 智能体, 技能, MCP.
-    // 功能模块 (16): 功能编排 + one page per dock plugin in DOCK order, then
+    // 功能 (16): 功能编排 + one page per dock plugin in DOCK order, then
     //   消息推送 and 用量监控 (features with a page but no dock entry).
     // 系统 (3): 调试, 安全, 关于.
     expect(perCard).toEqual([2, 4, 7, 16, 3])
@@ -226,11 +226,11 @@ describe('SettingsIndex', () => {
     const expectedIds = [
       // 项目与外观
       'project', 'appearance',
-      // 模型能力
+      // 模型
       'providers', 'embedding', 'tts', 'stt',
       // 智能体
       'identity', 'chat', 'sessions', 'rag', 'agents', 'skills', 'mcp',
-      // 功能模块
+      // 功能
       'dockPlugins', 'files', 'fileView', 'gitHistory', 'forgeIntegration', 'tasks',
       'terminal', 'stats', 'mail', 'kb', 'meeting', 'share', 'portForward',
       'notifications', 'notification', 'usageMeter',
@@ -255,7 +255,7 @@ describe('SettingsIndex', () => {
 // This guard reads the REAL locale files and the RENDERED rows rather than the
 // hand-written message subset above: that subset is precisely what made the bug
 // invisible (it silently lacks skills / mcp / rag / forgeIntegration). Reading
-// the DOM (not the component source) also covers the rows the 功能模块 group
+// the DOM (not the component source) also covers the rows the 功能 group
 // DERIVES from the plugin registry — a source-text scrape cannot see those.
 describe('SettingsIndex category i18n coverage', () => {
   const localeFiles = import.meta.glob('../../../i18n/locales/*.ts', { eager: true }) as Record<

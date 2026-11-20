@@ -113,7 +113,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 /**
- * Rows of the 功能模块 group that do NOT come from a dock plugin.
+ * Rows of the 功能 group that do NOT come from a dock plugin.
  *
  * The manager is the one page that configures every plugin, and message push /
  * usage meter are features with a settings page but no dock entry. Everything
@@ -185,7 +185,7 @@ const groupDefs = [
     ],
   },
   {
-    // 功能模块: everything that configures a left-dock feature lives in one
+    // 功能: everything that configures a left-dock feature lives in one
     // group. The manager comes first (it is where those switches live), then
     // one page per plugin in DOCK order — DERIVED from the plugin manifests, so
     // a new plugin's settings page appears here without touching this file —

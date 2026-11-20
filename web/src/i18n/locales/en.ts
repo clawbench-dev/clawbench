@@ -3522,8 +3522,8 @@ export default {
     groups: {
       projectAppearance: 'Project & Appearance',
       aiChat: 'Agents',
-      dockModules: 'Feature Modules',
-      modelCapability: 'Model Capability',
+      dockModules: 'Features',
+      modelCapability: 'Models',
       system: 'System',
     },
     dockPlugins: {

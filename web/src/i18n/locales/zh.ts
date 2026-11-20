@@ -3519,8 +3519,8 @@ export default {
     groups: {
       projectAppearance: '项目与外观',
       aiChat: '智能体',
-      dockModules: '功能模块',
-      modelCapability: '模型能力',
+      dockModules: '功能',
+      modelCapability: '模型',
       system: '系统',
     },
     dockPlugins: {
