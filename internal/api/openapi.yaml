@@ -532,6 +532,13 @@ paths:
           schema:
             type: string
             enum: [project, all]
+        - name: agent
+          in: query
+          description: 只看指定智能体；重复该参数可选多个，不传=全部。
+          schema:
+            type: array
+            items:
+              type: string
         - name: start
           in: query
           required: true

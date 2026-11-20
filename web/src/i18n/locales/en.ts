@@ -690,6 +690,8 @@ export default {
     scopeTitle: 'Scope',
     scopeProject: 'Current project',
     scopeAll: 'All projects',
+    agentTitle: 'Agent',
+    agentAll: 'All agents',
     dimTitle: 'Group by',
     dimModel: 'Model',
     dimBackend: 'Backend',

@@ -693,6 +693,8 @@ export default {
     scopeTitle: '统计范围',
     scopeProject: '当前项目',
     scopeAll: '所有项目',
+    agentTitle: '智能体',
+    agentAll: '全部智能体',
     dimTitle: '分组方式',
     dimModel: '模型',
     dimBackend: 'AI 后端',

@@ -100,6 +100,18 @@
           </div>
         </div>
         <div class="stats-filter-group">
+          <span class="stats-filter-label">{{ t('stats.agentTitle') }}</span>
+          <div class="stats-filter-select">
+            <MenuSelect
+              multiple
+              :min-selected="1"
+              :model-value="agentSelection"
+              :options="agentOptions"
+              @change="onAgentsChange"
+            />
+          </div>
+        </div>
+        <div class="stats-filter-group">
           <span class="stats-filter-label">{{ t('stats.dimTitle') }}</span>
           <div class="stats-filter-select">
             <MenuSelect
@@ -236,6 +248,7 @@ import {
   type UsageScope,
 } from '@/composables/useUsageStats'
 import { store } from '@/stores/app'
+import { useAgents } from '@/composables/useAgents'
 import { designToCss, UI_SCALE_EVENT } from '@/utils/uiScale'
 import {
   buildBarOption,
@@ -293,6 +306,43 @@ const chartTypeOptions = computed<MenuSelectOption[]>(() => [
 
 const customStart = ref<string>('')
 const customEnd = ref<string>('')
+
+// --- Agent filter ---
+// Empty `filter.agents` means every agent; the dropdown represents that as a
+// sentinel row so the control always has a checked option (MenuSelect cannot
+// render an empty multi-selection, and `min-selected=1` then only locks the
+// last checked row instead of letting a click be silently ignored). Agent ids
+// are never empty strings, so the sentinel cannot collide with a real agent.
+const ALL_AGENTS = ''
+const { agents, loadAgents } = useAgents()
+
+const agentOptions = computed<MenuSelectOption[]>(() => [
+  { value: ALL_AGENTS, label: t('stats.agentAll') },
+  ...agents.value.map(a => ({ value: a.id, label: a.name || a.id })),
+])
+
+const agentSelection = computed<string[]>(() =>
+  filter.value.agents.length > 0 ? filter.value.agents : [ALL_AGENTS],
+)
+
+/**
+ * Map the dropdown's raw selection onto the filter.
+ *
+ * Two transitions are not a plain copy of the checked rows:
+ * - ticking a concrete agent while 全部 is checked means "only that agent" —
+ *   the sentinel is dropped, otherwise the filter would still read as "all";
+ * - ticking 全部 from a concrete selection clears the filter (empty = all),
+ *   which the sentinel row alone cannot express.
+ */
+function onAgentsChange(value: MenuSelectValue) {
+  const next = (Array.isArray(value) ? value : [value]).map(String)
+  const hadAll = filter.value.agents.length === 0
+  if (next.includes(ALL_AGENTS) && !hadAll) {
+    stats.setAgents([])
+    return
+  }
+  stats.setAgents(next.filter(v => v !== ALL_AGENTS))
+}
 
 // Theme tick — bumped on every clawbench-theme-change so the chart options
 // (built from CSS variables via resolveStatsPalette) are recomputed and pushed
@@ -600,12 +650,16 @@ let projectRoot = store.state.projectRoot
 watch(() => store.state.projectRoot, (p) => {
   if (p !== projectRoot && props.active) {
     projectRoot = p
+    // A project switch clears the shared agent list (resetAgents), so the
+    // filter options must be refetched along with the numbers.
+    void loadAgents()
     void stats.loadStats()
   }
 })
 
 watch(() => props.active, (nowActive, was) => {
   if (nowActive && !was) {
+    void loadAgents()
     void stats.loadStats()
   }
 })
@@ -615,6 +669,7 @@ onMounted(() => {
   // that point props.active is already true, so the props.active watch never
   // fires. Fetch on mount so the very first open always loads data.
   if (props.active) {
+    void loadAgents()
     void stats.loadStats()
   }
 })

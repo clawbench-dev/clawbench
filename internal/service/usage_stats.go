@@ -63,6 +63,11 @@ type UsageParams struct {
 	// Scope selects single-project vs instance-wide aggregation. Empty means
 	// ScopeProject, so existing callers keep their behavior.
 	Scope UsageScope
+	// AgentIDs restricts the aggregate to these agents (the ledger's
+	// denormalized agent_id). Empty means every agent — the historical
+	// behavior. The ledger keeps agent_id even after the agents row is
+	// deleted, so filtering by a removed agent still returns its usage.
+	AgentIDs []string
 	// Start/End bound the usage window on chat_metadata.created_at.
 	// NOTE: chat_metadata.created_at is NOT the user message time — SaveMetadata
 	// (service/chat.go) upserts via INSERT OR REPLACE without writing created_at,
@@ -206,6 +211,11 @@ const (
 // them" stays legal.
 const maxUsageDims = 4
 
+// maxUsageAgents caps the agent filter list. The ids are bound parameters, so
+// this is not a safety limit but a sanity one: a request naming hundreds of
+// agents is a client bug, not a filter.
+const maxUsageAgents = 100
+
 // validateUsageScope resolves the scope and checks it against the supplied
 // project path, normalizing an empty scope to ScopeProject (the historical
 // single-project behavior).
@@ -234,6 +244,43 @@ func validateUsageScope(p *UsageParams) error {
 	return nil
 }
 
+// validateUsageDims checks the grouping dimensions: 1..maxUsageDims entries,
+// each whitelisted and distinct.
+func validateUsageDims(dims []UsageDim) error {
+	if len(dims) == 0 {
+		return usageErr("missing_dims", "at least one dimension required")
+	}
+	if len(dims) > maxUsageDims {
+		return usageErr("too_many_dims", "at most %d dimensions", maxUsageDims)
+	}
+	seen := map[UsageDim]bool{}
+	for _, d := range dims {
+		if _, ok := dimExpr(d); !ok {
+			return usageErr("invalid_dim", "invalid dimension %q", d)
+		}
+		if seen[d] {
+			return usageErr("duplicate_dim", "duplicate dimension %q", d)
+		}
+		seen[d] = true
+	}
+	return nil
+}
+
+// validateUsageAgentFilter checks the agent filter list. Blank ids are rejected
+// because an empty id cannot match any ledger row, and letting it through would
+// silently turn "filter by one agent" into "no usage at all".
+func validateUsageAgentFilter(ids []string) error {
+	if len(ids) > maxUsageAgents {
+		return usageErr("too_many_agents", "at most %d agents", maxUsageAgents)
+	}
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			return usageErr("invalid_agent", "agent id must not be empty")
+		}
+	}
+	return nil
+}
+
 func validateUsageParams(p *UsageParams) error {
 	if p == nil {
 		return usageErr("missing_params", "usage params required")
@@ -247,21 +294,8 @@ func validateUsageParams(p *UsageParams) error {
 	if p.End.Sub(p.Start) > maxRangeDays*24*time.Hour {
 		return usageErr("range_too_long", "range exceeds %d days", maxRangeDays)
 	}
-	if len(p.Dims) == 0 {
-		return usageErr("missing_dims", "at least one dimension required")
-	}
-	if len(p.Dims) > maxUsageDims {
-		return usageErr("too_many_dims", "at most %d dimensions", maxUsageDims)
-	}
-	seen := map[UsageDim]bool{}
-	for _, d := range p.Dims {
-		if _, ok := dimExpr(d); !ok {
-			return usageErr("invalid_dim", "invalid dimension %q", d)
-		}
-		if seen[d] {
-			return usageErr("duplicate_dim", "duplicate dimension %q", d)
-		}
-		seen[d] = true
+	if err := validateUsageDims(p.Dims); err != nil {
+		return err
 	}
 	if len(p.Metrics) == 0 {
 		return usageErr("missing_metrics", "at least one metric required")
@@ -270,6 +304,9 @@ func validateUsageParams(p *UsageParams) error {
 		if _, ok := sortExpr(m); !ok {
 			return usageErr("invalid_metric", "invalid metric %q", m)
 		}
+	}
+	if err := validateUsageAgentFilter(p.AgentIDs); err != nil {
+		return err
 	}
 	if p.SortBy == "" {
 		p.SortBy = MetricTotal
@@ -349,6 +386,7 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 		where = "WHERE m.project_id = ? AND m.created_at >= ? AND m.created_at < ?"
 		args = []any{projectID, startStr, endStr}
 	}
+	where, args = appendUsageAgentFilter(where, args, p.AgentIDs)
 	res := &UsageStatsResult{}
 
 	// Totals: same filter, no grouping — one aggregate row over the range.
@@ -379,6 +417,24 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	res.Rows = []*UsageRow{}
 	res.Trend = trimTrendToTopN(trendRows, topN)
 	return res, nil
+}
+
+// appendUsageAgentFilter narrows the aggregate to the requested agents.
+//
+// The ids are caller-supplied, not a whitelist, so they are bound parameters —
+// only the placeholder count is built into the SQL. An empty list leaves the
+// clause untouched (every agent), which is what the panel sends when the user
+// picks 全部智能体.
+func appendUsageAgentFilter(where string, args []any, ids []string) (string, []any) {
+	if len(ids) == 0 {
+		return where, args
+	}
+	placeholders := make([]string, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	return where + " AND m.agent_id IN (" + strings.Join(placeholders, ",") + ")", args
 }
 
 // queryUsageRows executes the grouped SELECT for non-trend queries.

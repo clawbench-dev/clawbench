@@ -248,6 +248,57 @@ func TestUsageStatsAgentFallbackToID(t *testing.T) {
 	assert.Equal(t, "orphan-agent", res.Rows[0].Key["agent"])
 }
 
+// TestUsageStatsAgentFilter pins the multi-agent filter: the range totals and
+// rows must cover exactly the named agents, and an empty list must keep the
+// historical "every agent" behavior.
+func TestUsageStatsAgentFilter(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "/p", sessionID: "s1", agentID: "agent-a", agentName: "Agent A",
+		backend: "claude", model: "opus", createdAt: "2026-01-10 10:00:00", total: 100,
+	})
+	insertUsageSeed(t, db, usageSeed{
+		project: "/p", sessionID: "s2", agentID: "agent-b", agentName: "Agent B",
+		backend: "claude", model: "opus", createdAt: "2026-01-11 10:00:00", total: 200,
+	})
+	// Ledger row whose agent row was deleted: the id is still filterable.
+	insertUsageSeed(t, db, usageSeed{
+		project: "/p", sessionID: "s3", agentID: "agent-gone",
+		backend: "claude", model: "opus", createdAt: "2026-01-12 10:00:00", total: 400,
+	})
+
+	base := service.UsageParams{
+		ProjectPath: "/p",
+		Dims:        []service.UsageDim{service.DimAgent},
+		Metrics:     []service.UsageMetric{service.MetricTotal},
+	}
+
+	// One agent.
+	one := base
+	one.AgentIDs = []string{"agent-a"}
+	res, err := service.UsageStats(context.Background(), usageParams(one))
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), res.Totals.Total)
+	require.Len(t, res.Rows, 1)
+	assert.Equal(t, "Agent A", res.Rows[0].Key["agent"])
+
+	// Several agents, including a deleted one.
+	several := base
+	several.AgentIDs = []string{"agent-b", "agent-gone"}
+	res, err = service.UsageStats(context.Background(), usageParams(several))
+	require.NoError(t, err)
+	assert.Equal(t, int64(600), res.Totals.Total)
+	assert.Len(t, res.Rows, 2)
+
+	// No filter → every agent, unchanged.
+	res, err = service.UsageStats(context.Background(), usageParams(base))
+	require.NoError(t, err)
+	assert.Equal(t, int64(700), res.Totals.Total)
+	assert.Len(t, res.Rows, 3)
+}
+
 func TestUsageStatsEmptyLabelAndZeroUsageRowsIncluded(t *testing.T) {
 	db := setupDB(t)
 	ensureAgentsTable(t, db)
@@ -418,6 +469,18 @@ func TestUsageStatsValidation(t *testing.T) {
 				service.DimProject, service.DimModel, service.DimBackend, service.DimAgent, service.DimModel,
 			}
 			p.Metrics = []service.UsageMetric{service.MetricTotal}
+		}},
+		{"blank agent id", "invalid_agent", func(p *service.UsageParams) {
+			p.Dims = []service.UsageDim{service.DimModel}
+			p.Metrics = []service.UsageMetric{service.MetricTotal}
+			p.AgentIDs = []string{"agent-a", "  "}
+		}},
+		{"too many agents", "too_many_agents", func(p *service.UsageParams) {
+			p.Dims = []service.UsageDim{service.DimModel}
+			p.Metrics = []service.UsageMetric{service.MetricTotal}
+			for range 101 {
+				p.AgentIDs = append(p.AgentIDs, "agent")
+			}
 		}},
 	}
 	for _, tc := range cases {
