@@ -240,7 +240,7 @@ func TestSniffTLS(t *testing.T) {
 func TestRedirectToHTTPS_StripsIncomingPort(t *testing.T) {
 	// A Host that already carries a port must not produce "host:port:port".
 	h := redirectToHTTPS(20000)
-	req := httptest.NewRequest("GET", "http://box:8080/a?b=c", nil)
+	req := httptest.NewRequest("GET", "http://box:8080/a?b=c", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if got, want := rec.Header().Get("Location"), "https://box:20000/a?b=c"; got != want {
@@ -250,7 +250,7 @@ func TestRedirectToHTTPS_StripsIncomingPort(t *testing.T) {
 
 func TestRedirectToHTTPS_NoHost(t *testing.T) {
 	h := redirectToHTTPS(20000)
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest("GET", "/", http.NoBody)
 	req.Host = ""
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

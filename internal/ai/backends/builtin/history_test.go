@@ -100,6 +100,61 @@ func TestHistoryReplay_ToolOnlyTurnIsReplayed(t *testing.T) {
 	}
 }
 
+// A tool that produced nothing must still replay as a result the model can
+// read: an empty text part is dropped by the accumulator, which would leave the
+// call/result pairing looking broken.
+func TestHistoryReplay_EmptyToolOutputIsPlaceholder(t *testing.T) {
+	req := ai.ChatRequest{History: []ai.HistoryMessage{
+		{Role: "assistant", Text: "ran it", ID: 51, Tools: []ai.HistoryToolCall{
+			{ID: "c1", Name: "bash", Input: `{}`, Output: ""},
+		}},
+		{Role: "user", Text: "next", ID: 52},
+	}}
+	got := buildHistoryReplay(req).Messages
+	if len(got) != 3 || got[1].Role != llm.RoleTool {
+		t.Fatalf("expected assistant + tool + user, got %+v", got)
+	}
+	if text := got[1].Parts[0].ToolResult.Parts[0].Text; text != "(no output)" {
+		t.Fatalf("an empty tool output must become a readable placeholder, got %q", text)
+	}
+}
+
+// The trimmer only removes a trailing tool round that answers an ASSISTANT
+// turn. A trailing tool message with anything else in front of it is not the
+// shape it exists for, so it must be left alone.
+func TestTrimIncompleteTail_KeepsWhenPreviousIsNotAssistant(t *testing.T) {
+	r := historyReplay{
+		Messages: []llm.Message{
+			llm.TextMessage(llm.RoleUser, "q"),
+			{Role: llm.RoleTool, Parts: []llm.Part{{ToolResult: &llm.ToolResult{CallID: "c1"}}}},
+		},
+		IDs: []int64{61, 62},
+	}
+	got := trimIncompleteTail(r)
+	if len(got.Messages) != 2 || len(got.IDs) != 2 {
+		t.Fatalf("a tool message not preceded by an assistant turn must be kept, got %+v", got)
+	}
+}
+
+// Both protocols require a JSON object as the tool input. An empty, malformed
+// or non-object blob must become {} so the call/result pairing survives instead
+// of producing an invalid request.
+func TestToolArguments_FallsBackToEmptyObject(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"empty", "", "{}"},
+		{"malformed", "{not json", "{}"},
+		{"valid but not an object", `["a"]`, "{}"},
+		{"object is kept", `{"file_path":"a.go"}`, `{"file_path":"a.go"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toolArguments(tc.in); got != tc.want {
+				t.Fatalf("toolArguments(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestTranslate_UsageDoesNotBecomeAMetadataFrame pins the accounting rule.
 //
 // A per-round metadata frame is a REPLACEMENT in the executor, and the terminal

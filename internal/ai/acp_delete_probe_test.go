@@ -235,6 +235,58 @@ func TestProbeDeleteSession_SuccessMeansSupported(t *testing.T) {
 	assert.True(t, confirmed)
 }
 
+// Any JSON-RPC error other than "method not found" is still the agent talking
+// about the METHOD (unknown session, busy, ...), so the method exists. This is
+// the fallback branch, not one of the two named codes.
+func TestProbeDeleteSession_OtherRPCErrorMeansSupported(t *testing.T) {
+	conn := probeConnForTest(t, func(_ context.Context, _ string, _ any) (json.RawMessage, error) {
+		return nil, &RawRPCError{Code: -32000, Message: "agent busy"}
+	})
+
+	confirmed, answered := probeDeleteSession(context.Background(), conn)
+	assert.True(t, answered, "a JSON-RPC answer is an answer")
+	assert.True(t, confirmed, "an error about the method still proves the method exists")
+}
+
+// A missing agent id or connection is a no-op, not a panic: the call site runs
+// on every spawn, including paths where the id has not been resolved yet.
+func TestRefreshDeleteSessionCapability_NoAgentOrConnIsNoop(t *testing.T) {
+	resetGlobalRegistryForTest(t)
+	reg := GetAgentCapabilityRegistry()
+	reg.UpdateDeleteSession("untouched", false)
+	require.True(t, reg.DeleteSessionProbePending("untouched"))
+
+	conn := probeConnForTest(t, func(_ context.Context, _ string, _ any) (json.RawMessage, error) {
+		t.Fatal("the probe must not run without an agent id")
+		return nil, nil
+	})
+
+	assert.NotPanics(t, func() {
+		refreshDeleteSessionCapability(context.Background(), nil, "some-agent")
+		refreshDeleteSessionCapability(context.Background(), conn, "")
+	})
+	assert.True(t, reg.DeleteSessionProbePending("untouched"),
+		"a no-op call must not touch any agent's capability")
+}
+
+// A transport failure answers nothing, so nothing is recorded: the registry
+// keeps waiting for a real answer instead of caching "unsupported".
+func TestRefreshDeleteSessionCapability_UnansweredRecordsNothing(t *testing.T) {
+	resetGlobalRegistryForTest(t)
+	reg := GetAgentCapabilityRegistry()
+	reg.UpdateDeleteSession("flaky", false)
+	require.True(t, reg.DeleteSessionProbePending("flaky"))
+
+	conn := probeConnForTest(t, func(_ context.Context, _ string, _ any) (json.RawMessage, error) {
+		return nil, errRawConnClosed
+	})
+	refreshDeleteSessionCapability(context.Background(), conn, "flaky")
+
+	assert.Never(t, func() bool { return !reg.DeleteSessionProbePending("flaky") },
+		300*time.Millisecond, 10*time.Millisecond,
+		"an unanswered probe must not record a result")
+}
+
 // A process respawn replaces the capability snapshot; the probe result is
 // learned knowledge and must be carried through (issue #707).
 func TestForceUpdate_CarriesDeleteSessionProbeResult(t *testing.T) {

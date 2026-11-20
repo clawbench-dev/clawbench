@@ -161,10 +161,10 @@ func toolInputJSON(raw string) string {
 	if raw == "" || json.Valid([]byte(raw)) {
 		return raw
 	}
-	if quoted, err := json.Marshal(raw); err == nil {
-		return string(quoted)
-	}
-	return ""
+	// Marshaling a string cannot fail, so the error is not a branch: a malformed
+	// blob always reaches the frontend as a quoted string.
+	quoted, _ := json.Marshal(raw)
+	return string(quoted)
 }
 
 // doneEvents renders the terminal frame.

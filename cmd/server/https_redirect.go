@@ -77,7 +77,11 @@ func redirectToHTTPS(port int) http.Handler {
 		// later would leave users stuck on a redirect to a scheme we no longer
 		// serve.
 		w.Header().Set("Cache-Control", "no-store")
-		http.Redirect(w, r, target, http.StatusMovedPermanently)
+		// The host is taken from the request on purpose: this listener must bounce
+		// whatever name the user actually typed (LAN IP, mDNS name, ...) to the
+		// same name on https, so there is no fixed host to validate against. Only
+		// the scheme and port are ours, so the redirect cannot leave this server.
+		http.Redirect(w, r, target, http.StatusMovedPermanently) //nolint:gosec // G710: target is same-host https on this server's port by design; see comment above
 	})
 }
 
