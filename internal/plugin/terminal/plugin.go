@@ -13,7 +13,11 @@ import (
 )
 
 // Register 把终端功能登记进注册表。
+// serverPort 是 Register 收到的端口，供 Manager 构造使用。
+var serverPort int
+
 func Register(port int) {
+	serverPort = port
 	plugins.Register(&plugins.Plugin{
 		ID:        "terminal",
 		Section:   "terminal",
@@ -40,35 +44,43 @@ func Register(port int) {
 		GateExempt: []string{"/api/terminal/status"},
 		// 三个钩子就是原 hotReloadTerminal 的三条分支，拆成"进程级起停"与
 		// "热更新调参"：开关翻转走 Start/Stop，开关不变走 Reconfigure。
-		Start: func(cfg model.Config) {
-			if GetTerminalManager() != nil {
-				return // 幂等：重复 Start 不叠加 Manager
-			}
-			SetTerminalManager(terminal.NewManager(cfg.Terminal, port))
-			slog.Info(
-				"terminal manager initialized",
-				slog.String("idle_timeout", func() string {
-					if cfg.Terminal.IdleTimeout == "" || cfg.Terminal.IdleTimeout == "0" {
-						return "never"
-					}
-					return cfg.Terminal.IdleTimeout
-				}()),
-				slog.Int("buffer_lines", cfg.Terminal.BufferLines),
-			)
-		},
-		Stop: func() {
-			mgr := GetTerminalManager()
-			if mgr == nil {
-				return // 幂等
-			}
-			mgr.CloseAllSessions()
-			SetTerminalManager(nil)
-			slog.Info("terminal manager closed")
-		},
-		Reconfigure: func(cfg model.Config) {
-			if mgr := GetTerminalManager(); mgr != nil {
-				mgr.Reconfigure(cfg.Terminal)
-			}
-		},
+		Start:       startManager,
+		Stop:        stopManager,
+		Reconfigure: reconfigureManager,
 	})
+}
+
+// 三个钩子就是原 hotReloadTerminal 的三条分支，拆成"进程级起停"与
+// "热更新调参"：开关翻转走 Start/Stop，开关不变走 Reconfigure。
+func startManager(cfg model.Config) {
+	if GetTerminalManager() != nil {
+		return // 幂等：重复 Start 不叠加 Manager
+	}
+	SetTerminalManager(terminal.NewManager(cfg.Terminal, serverPort))
+	slog.Info(
+		"terminal manager initialized",
+		slog.String("idle_timeout", func() string {
+			if cfg.Terminal.IdleTimeout == "" || cfg.Terminal.IdleTimeout == "0" {
+				return "never"
+			}
+			return cfg.Terminal.IdleTimeout
+		}()),
+		slog.Int("buffer_lines", cfg.Terminal.BufferLines),
+	)
+}
+
+func stopManager() {
+	mgr := GetTerminalManager()
+	if mgr == nil {
+		return // 幂等
+	}
+	mgr.CloseAllSessions()
+	SetTerminalManager(nil)
+	slog.Info("terminal manager closed")
+}
+
+func reconfigureManager(cfg model.Config) {
+	if mgr := GetTerminalManager(); mgr != nil {
+		mgr.Reconfigure(cfg.Terminal)
+	}
 }
