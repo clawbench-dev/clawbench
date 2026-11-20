@@ -266,15 +266,19 @@
           <BookOpen :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isPlayingAudio(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
-            <!-- Generating states carry NO text: the two phases are told apart by
-                 the glyph and its motion alone. Summarizing breathes a Sparkles
-                 in place (the same glyph SummaryToggle uses for "summary");
-                 synthesizing uses the app's one shared loading ring — the same
-                 "still working, not playing" language the input bar's voice
-                 button uses for its transcribing state. Waveform bars would be
-                 wrong here: they already mean "audio is playing" (the input
-                 bar's recording state), which is the very state that follows.
+          <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
+            <!-- Every phase carries NO text — the glyph alone says which one it
+                 is, so the action row never changes width mid-speech (that
+                 shove is what the removed `--wide` variant used to cause).
+                 Generating: summarizing breathes a Sparkles in place (the same
+                 glyph SummaryToggle uses for "summary"); synthesizing uses the
+                 app's one shared loading ring — the same "still working, not
+                 playing" language the input bar's voice button uses for its
+                 transcribing state. Waveform bars would be wrong here: they
+                 already mean "audio is playing" (the input bar's recording
+                 state), which is the very state that follows.
+                 Playing (the stop control): a Pause glyph plus the `active`
+                 class — accent colour is the state change.
                  The phase name is not lost — speakBtnLabel still puts it on
                  title/aria-label, which is where a screen reader reads it. -->
             <template v-if="autoSpeech.isGeneratingText(msg.id)">
@@ -284,7 +288,6 @@
             <!-- Playing state -->
             <template v-else-if="autoSpeech.isPlayingAudio(msg.id)">
               <Pause :size="14" />
-              <span>{{ t('chat.message.speaking') }}</span>
             </template>
             <!-- Default idle state -->
             <template v-else>

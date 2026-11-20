@@ -828,7 +828,7 @@ describe('ChatMessageItem', () => {
       expect(stopAudio).toHaveBeenCalled()
     })
 
-    it('shows the playing state label when audio is playing', () => {
+    it('marks the playing state by glyph and colour, not by text', () => {
       const wrapper = createWrapper(
         { msg: { id: 'sp2', role: 'assistant', content: 'speak me', blocks: [{ type: 'text', text: 'speak me' }], streaming: false } },
         {
@@ -845,9 +845,12 @@ describe('ChatMessageItem', () => {
         },
       )
       const btn = wrapper.find('.chat-speak-btn')
-      expect(btn.text()).toContain('正在朗读')
-      // The button is a stop control while playing — it must not advertise
-      // "read aloud" as its accessible name/tooltip.
+      // No text label on the button face in any phase — only the glyph changes
+      // (Volume2 → Pause), so the action row never reflows while speaking.
+      expect(btn.text()).toBe('')
+      expect(btn.classes()).toContain('active')
+      // It is a stop control while playing — it must not advertise "read
+      // aloud" as its accessible name/tooltip.
       expect(btn.attributes('aria-label')).toBe('正在朗读')
       expect(btn.attributes('title')).toBe('正在朗读')
     })
