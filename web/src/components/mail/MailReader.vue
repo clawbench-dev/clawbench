@@ -90,10 +90,12 @@
         </div>
         <iframe
           v-if="docSource"
+          ref="bodyFrameRef"
           class="mail-reader__frame"
           sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
           referrerpolicy="no-referrer"
           :srcdoc="docSource"
+          @load="attachQuoteBridge"
         />
         <pre v-else-if="detail.bodyText" class="mail-reader__text">{{ detail.bodyText }}</pre>
         <EmptyState
@@ -141,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, type Component } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { mailAttachmentKind, mailHue, mailInitial } from '@/utils/mailColors'
 import { ArrowLeft, Forward, FileArchive, FileImage, FileSpreadsheet, FileText, Mail, MailOpen, MessageSquare, MessageSquarePlus, Paperclip, Reply, ReplyAll, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
@@ -161,10 +163,11 @@ import {
 } from '@/utils/mailTypes'
 import { refreshMailUnread } from '@/composables/useMailUnread'
 import ActionBar from '@/components/common/ActionBar.vue'
-import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
+import { useQuoteQuestion, makeIframeQuoteShowHandler } from '@/composables/useQuoteQuestion'
+import { attachIframeSelectionQuoteBridge, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useToast } from '@/composables/useToast'
-import { buildMailQuote } from '@/utils/mailQuote'
+import { buildMailQuote, mailQuoteLabel } from '@/utils/mailQuote'
 import { localConfig } from '@/composables/useSettingsConfig'
 
 const props = defineProps<{ messageId: number }>()
@@ -258,6 +261,55 @@ function quoteToChat(): void {
   quoteQuestion.openComposer({ quote, label: quote.filePath })
 }
 
+// ── Selecting part of the body ─────────────────────────────────
+const bodyFrameRef = ref<HTMLIFrameElement | null>(null)
+
+/**
+ * Surface the shared quote bar for text selected INSIDE the body frame.
+ *
+ * The body is its own document, so a selection in it never fires the host's
+ * `selectionchange` and the global handler cannot see it — every other framed
+ * preview (HTML, OpenAPI) attaches the same bridge for this reason. Without it,
+ * the only thing a body selection produced was the platform's own menu, whose
+ * 「讨论」 item reads the selection back in the HOST document, finds nothing, and
+ * silently does nothing.
+ *
+ * The identity is the MESSAGE, not a path: the card must carry `sourceKind:
+ * 'mail'` plus the `mail` locator so it renders with the mail icon and its
+ * "jump to source" re-opens this email. The label is the same `主题 · 发件人` the
+ * whole-message button uses, so a snippet quote and a full quote are
+ * recognisably the same mail in the transcript.
+ */
+let disposeQuoteBridge: (() => void) | null = null
+
+async function attachQuoteBridge(): Promise<void> {
+  // Re-copying the frame's document (`srcdoc` changes when the message or the
+  // image permission changes) fires `load` again, and a disposed bridge must
+  // never stay attached to the dead document — always dispose before attaching.
+  disposeQuoteBridge?.()
+  disposeQuoteBridge = null
+  if (!detail.value) return
+  const win = await resolveIframeWindow(() => bodyFrameRef.value)
+  if (!win) return
+  disposeQuoteBridge = attachIframeSelectionQuoteBridge({
+    win,
+    filePath: () => {
+      const d = detail.value
+      return d ? mailQuoteLabel(d, t('mail.list.noSubject')) : ''
+    },
+    identity: () => {
+      const d = detail.value
+      if (!d) return {}
+      return { sourceKind: 'mail', locators: { mail: String(d.id) } }
+    },
+    // Shared with every other framed preview: maps the frame's anchor into host
+    // coordinates, shows immediately, and suppresses the in-page bar on Android
+    // (the system menu is the affordance there).
+    show: makeIframeQuoteShowHandler(quoteQuestion.showBar),
+    hide: () => quoteQuestion.hideBar(),
+  })
+}
+
 /**
  * Add one attachment to the chat input.
  *
@@ -323,6 +375,11 @@ async function load(): Promise<void> {
 }
 
 watch(() => props.messageId, load, { immediate: true })
+
+onBeforeUnmount(() => {
+  disposeQuoteBridge?.()
+  disposeQuoteBridge = null
+})
 
 async function patchFlags(body: { seen?: boolean; flagged?: boolean }): Promise<void> {
   if (!detail.value) return

@@ -48,6 +48,16 @@ export interface IframeSelectionQuoteOptions {
   /** Lazily resolve the current file path (the file may change under the iframe). */
   filePath: () => string
   /**
+   * Extra identity for the quote this frame produces.
+   *
+   * A previewed FILE is identified by its path, which `filePath` supplies. Other
+   * framed documents are not files at all: an email body is identified by the
+   * message it belongs to (`sourceKind: 'mail'`, `locators.mail`), and putting a
+   * path-shaped label there would render a card whose "jump to source" goes
+   * nowhere. Merged over the defaults, so a caller only names what differs.
+   */
+  identity?: () => Partial<QuoteData>
+  /**
    * Surface the quote bar with a QuoteData payload.
    *
    * `anchor` is the selection's rect in HOST viewport coordinates (the space
@@ -222,6 +232,7 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
   const {
     win,
     filePath,
+    identity,
     show,
     hide,
     debounceMs = 150,
@@ -305,6 +316,7 @@ export function attachIframeSelectionQuoteBridge(opts: IframeSelectionQuoteOptio
 
     barShown = true
     show({
+      ...identity?.(),
       text,
       filePath: filePath(),
       language: '',
