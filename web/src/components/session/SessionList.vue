@@ -778,9 +778,18 @@ async function loadSessions() {
   }
 }
 
-/** The tag filter query string, or '' when no filter is applied. */
+/**
+ * The tag filter query string, or '' when no filter is applied.
+ *
+ * Must start with '?' — the base URL (`/api/ai/sessions`) carries no query
+ * string of its own, and a bare `&tag=…` gets glued onto the path, which the
+ * router answers with 404 (the failed fetch then wipes the whole list).
+ * Built via URLSearchParams so later params can be appended without repeating
+ * the separator by hand.
+ */
 function buildTagQuery() {
-  return activeTag.value ? `&tag=${encodeURIComponent(activeTag.value)}` : ''
+  if (!activeTag.value) return ''
+  return `?${new URLSearchParams({ tag: activeTag.value }).toString()}`
 }
 
 /**

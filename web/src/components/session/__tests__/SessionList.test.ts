@@ -1109,7 +1109,42 @@ describe('SessionList', () => {
 
     const listCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('/api/ai/sessions'))
     expect(listCall).toBeTruthy()
-    expect(String(listCall![0])).toContain('tag=bug')
+    // Exact URL: a bare `&tag=bug` glued onto the path (`/api/ai/sessions&tag=bug`)
+    // is a 404 that cleared the list. `toContain('tag=bug')` alone let that slip.
+    expect(String(listCall![0])).toBe('/api/ai/sessions?tag=bug')
+  })
+
+  it('encodes the tag name in the filter query string', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+    const wrapper = await mountList()
+    await flushPromises()
+
+    mockFetch.mockClear()
+    wrapper.vm.activeTag = 'a&b c'
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    const listCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('/api/ai/sessions'))
+    expect(String(listCall![0])).toBe('/api/ai/sessions?tag=a%26b+c')
+  })
+
+  it('omits the query string entirely when no tag filter is active', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    const wrapper = await mountList()
+    await flushPromises()
+
+    mockFetch.mockClear()
+    wrapper.vm.activeTag = 'bug'
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    mockFetch.mockClear()
+    wrapper.vm.activeTag = ''
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    const listCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('/api/ai/sessions'))
+    expect(String(listCall![0])).toBe('/api/ai/sessions')
   })
 
   it('addSessionLocally prepends session', async () => {
