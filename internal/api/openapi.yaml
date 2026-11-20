@@ -618,6 +618,10 @@ paths:
         **口径固定为全局**（所有项目合计），没有 `scope` 参数——额度回答的是
         「我这个周期总共花了多少」，与当前停在哪个项目无关。
 
+        可选的 `agent` 参数只收窄**被统计的智能体**，额度与周期仍是全局规则：
+        它回答的是「这几个智能体占用了多少共享额度」，不是它们各自的额度。
+        胶囊、提醒与推送始终按全局计算，不受该参数影响。
+
         **开关与可选项**：`usage_meter.enabled` 是唯一的开关。其余字段全部可选，
         服务端按已配置的内容做最大程度展示：
 
@@ -669,6 +673,14 @@ paths:
         注意 `chat_metadata.created_at` 记录的是元数据**最终写入**时刻
         （约等于助手回复完成），因此跨周期边界的回合归入后一个周期。
       operationId: usageMeter
+      parameters:
+        - name: agent
+          in: query
+          description: 只看指定智能体；重复该参数可选多个，不传=全部。额度与周期仍是全局规则。
+          schema:
+            type: array
+            items:
+              type: string
       responses:
         "200":
           description: |

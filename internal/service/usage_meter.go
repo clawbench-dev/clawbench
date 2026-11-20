@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -363,7 +364,20 @@ func calendarDaySpan(from, to time.Time) int {
 //
 // "No cycle" is not "a 30-day cycle": it means an unbounded window, which is the
 // literal reading of a period the user never set.
+// ComputeUsageMeter is the instance-wide readout used by the header capsule,
+// the notifications and every broadcast.
 func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, error) {
+	return ComputeUsageMeterForAgents(ctx, now, nil)
+}
+
+// ComputeUsageMeterForAgents computes the readout over the named agents only;
+// an empty list means every agent (the historical behavior).
+//
+// The RULE is still the global one. A quota is a single shared budget, so a
+// filtered readout answers "how much of the shared quota did these agents use",
+// not "these agents' own quota" — which is why quota/expected are echoed
+// unchanged and only actual/series/projection are recomputed.
+func ComputeUsageMeterForAgents(ctx context.Context, now time.Time, agentIDs []string) (*UsageMeterStatus, error) {
 	rule := model.ConfigInstance.UsageMeter
 	// Two gates, and they answer different questions: `Enabled` is the user's
 	// explicit decision, `UsageMeterConfigured` is whether there is anything to
@@ -409,13 +423,13 @@ func ComputeUsageMeter(ctx context.Context, now time.Time) (*UsageMeterStatus, e
 	}
 
 	rowExpr, _ := usageMeterRowExpr(rule.Metric)
-	actual, err := sumUsageInCycle(ctx, rowExpr, cycle, now)
+	actual, err := sumUsageInCycle(ctx, rowExpr, cycle, now, agentIDs)
 	if err != nil {
 		return nil, err
 	}
 	st.Actual = actual
 
-	series, err := queryUsageMeterSeries(ctx, rowExpr, cycle, now)
+	series, err := queryUsageMeterSeries(ctx, rowExpr, cycle, now, agentIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -476,19 +490,39 @@ func applyUsageMeterDerived(st *UsageMeterStatus, rule model.UsageMeterConfig, c
 // A zero cycle.start means "no anchor": the window starts at the beginning of
 // the ledger, which is expressed as the empty lower bound rather than a
 // fabricated instant.
-func sumUsageInCycle(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time) (float64, error) {
+func sumUsageInCycle(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time, agentIDs []string) (float64, error) {
 	var actual float64
+	agentClause, agentArgs := usageMeterAgentClause(agentIDs)
+	args := append([]any{
+		usageMeterLowerBound(cycle),
+		now.UTC().Format("2006-01-02 15:04:05"),
+	}, agentArgs...)
 	err := store.ReadDB().QueryRowContext(
 		ctx,
 		"SELECT COALESCE(SUM("+rowExpr+"), 0) FROM chat_metadata m "+
-			"WHERE m.created_at >= ? AND m.created_at < ?",
-		usageMeterLowerBound(cycle),
-		now.UTC().Format("2006-01-02 15:04:05"),
+			"WHERE m.created_at >= ? AND m.created_at < ?"+agentClause,
+		args...,
 	).Scan(&actual)
 	if err != nil {
 		return 0, fmt.Errorf("usage meter total: %w", err)
 	}
 	return actual, nil
+}
+
+// usageMeterAgentClause renders the optional agent predicate. The ids are
+// caller-supplied, so they are bound parameters — only the placeholder count is
+// built into the SQL. An empty list leaves the query untouched (every agent).
+func usageMeterAgentClause(ids []string) (string, []any) {
+	if len(ids) == 0 {
+		return "", nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return " AND m.agent_id IN (" + strings.Join(placeholders, ",") + ")", args
 }
 
 // usageMeterLowerBound renders the window's lower bound for SQL. An unbounded
@@ -553,8 +587,8 @@ func projectExhaustDay(actual float64, rule model.UsageMeterConfig, cycle usageM
 // The per-row scan is bounded by the cycle window (at most a year of rows), and
 // the query only selects two columns, so the cost is a linear pass over one
 // cycle's ledger rows.
-func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time) ([]UsageMeterPoint, error) {
-	daily, err := scanUsageMeterDailyTotals(ctx, rowExpr, cycle, now)
+func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time, agentIDs []string) ([]UsageMeterPoint, error) {
+	daily, err := scanUsageMeterDailyTotals(ctx, rowExpr, cycle, now, agentIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -562,13 +596,17 @@ func queryUsageMeterSeries(ctx context.Context, rowExpr string, cycle usageMeter
 }
 
 // scanUsageMeterDailyTotals buckets the window's rows by LOCAL day.
-func scanUsageMeterDailyTotals(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time) (map[string]float64, error) {
+func scanUsageMeterDailyTotals(ctx context.Context, rowExpr string, cycle usageMeterCycle, now time.Time, agentIDs []string) (map[string]float64, error) {
+	agentClause, agentArgs := usageMeterAgentClause(agentIDs)
+	args := append([]any{
+		usageMeterLowerBound(cycle),
+		now.UTC().Format("2006-01-02 15:04:05"),
+	}, agentArgs...)
 	rows, err := store.ReadDB().QueryContext(
 		ctx,
 		"SELECT m.created_at, "+rowExpr+" AS v "+
-			"FROM chat_metadata m WHERE m.created_at >= ? AND m.created_at < ?",
-		usageMeterLowerBound(cycle),
-		now.UTC().Format("2006-01-02 15:04:05"),
+			"FROM chat_metadata m WHERE m.created_at >= ? AND m.created_at < ?"+agentClause,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("usage meter series: %w", err)

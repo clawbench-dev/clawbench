@@ -642,6 +642,10 @@ export default {
     // usage alerts exist and how to turn them on.
     setupHint: 'Set up usage alerts',
     dayOfCycle: 'Day {day} of {days}',
+    // Popover-only filter. The capsule and the alerts stay global.
+    agentFilter: 'Agent',
+    allAgents: 'All agents',
+    quotaGlobalHint: 'The quota is global; the figures cover only the selected agents',
     actual: 'Actual',
     expected: 'Planned',
     quota: 'Quota',

@@ -613,6 +613,55 @@ func TestUsageMeter_SumsAllProjects(t *testing.T) {
 	assert.InDelta(t, 4.0, st.Actual, 1e-9, "usage from every project must be counted")
 }
 
+// TestUsageMeter_AgentFilter pins the popover's agent filter: the measured
+// amount and the curve count only the named agents, while the rule (quota and
+// the linear baseline) stays global — a budget is shared, so filtering must not
+// invent a per-agent quota.
+func TestUsageMeter_AgentFilter(t *testing.T) {
+	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	for _, seed := range []usageSeed{
+		{
+			project: "/a", sessionID: "s-a1", agentID: "agent-a", agentName: "A", backend: "claude",
+			model: "m", createdAt: now.Add(-48 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 1.5,
+		},
+		{
+			project: "/a", sessionID: "s-a2", agentID: "agent-b", agentName: "B", backend: "claude",
+			model: "m", createdAt: now.Add(-24 * time.Hour).UTC().Format("2006-01-02 15:04:05"), costUSD: 2.5,
+		},
+	} {
+		insertUsageSeed(t, db, seed)
+	}
+
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: anchorOn(now, 5), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+	})
+
+	all, err := service.ComputeUsageMeter(context.Background(), now)
+	require.NoError(t, err)
+	assert.InDelta(t, 4.0, all.Actual, 1e-9)
+
+	one, err := service.ComputeUsageMeterForAgents(context.Background(), now, []string{"agent-a"})
+	require.NoError(t, err)
+	assert.InDelta(t, 1.5, one.Actual, 1e-9, "only the named agent counts")
+	assert.InDelta(t, all.Quota, one.Quota, 1e-9, "the quota is the shared global one")
+	assert.InDelta(t, all.Expected, one.Expected, 1e-9, "the baseline is the global plan")
+	require.NotEmpty(t, one.Series)
+	assert.InDelta(t, 1.5, one.Series[len(one.Series)-1].Actual, 1e-9,
+		"the curve must end at the filtered total")
+
+	both, err := service.ComputeUsageMeterForAgents(context.Background(), now, []string{"agent-a", "agent-b"})
+	require.NoError(t, err)
+	assert.InDelta(t, 4.0, both.Actual, 1e-9)
+
+	none, err := service.ComputeUsageMeterForAgents(context.Background(), now, []string{"agent-missing"})
+	require.NoError(t, err)
+	assert.InDelta(t, 0, none.Actual, 1e-9)
+}
+
 // A row from the previous cycle must not leak into this one.
 func TestUsageMeter_ExcludesPreviousCycle(t *testing.T) {
 	now := localMidnight(time.Date(2026, 10, 19, 0, 0, 0, 0, time.Local)).Add(12 * time.Hour)

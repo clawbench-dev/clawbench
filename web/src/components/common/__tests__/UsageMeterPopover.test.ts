@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { defineComponent } from 'vue'
 import UsageMeterPopover from '@/components/common/UsageMeterPopover.vue'
@@ -14,8 +14,27 @@ vi.mock('@/components/common/PopupMenu.vue', () => ({
   }),
 }))
 
-vi.mock('@/composables/useUsageMeter', () => ({
-  useUsageMeter: () => ({ refresh: vi.fn(), openRequest: { value: 0 } }),
+// The pure helpers stay real (they are what decides the badge / bar state);
+// only the singleton accessor is stubbed, and the filtered fetch is a spy so
+// the agent-filter test can assert both the request and the rendered result.
+const mockFetchMeter = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useUsageMeter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useUsageMeter')>()
+  return {
+    ...actual,
+    useUsageMeter: () => ({ refresh: vi.fn(), openRequest: { value: 0 } }),
+    fetchUsageMeterForAgents: (...args: unknown[]) => mockFetchMeter(...args),
+  }
+})
+
+const mockAgents = vi.hoisted(() => ({
+  value: [
+    { id: 'agent-a', name: '智能体 A', backend: 'claude' },
+    { id: 'agent-b', name: '智能体 B', backend: 'codebuddy' },
+  ],
+}))
+vi.mock('@/composables/useAgents', () => ({
+  useAgents: () => ({ agents: mockAgents, loadAgents: vi.fn() }),
 }))
 
 const mockSetPendingSettingsCategory = vi.fn()
@@ -388,5 +407,53 @@ describe('UsageMeterPopover — optional quota and cycle', () => {
     const values = wrapper.findAll('.um-stat-value').map(n => n.text())
     const daysLeft = values[labels.indexOf('usageMeter.remainingDays')]
     expect(daysLeft).toContain(INFINITE)
+  })
+})
+
+// ── Agent filter ────────────────────────────────────────────────────────────
+// The popover can narrow the numbers to one or more agents, but the budget is
+// still the shared global rule — so the capsule must not move, and the popover
+// says the quota is global whenever a filter is active.
+describe('UsageMeterPopover — agent filter', () => {
+  it('shows every agent by default and refetches when one is picked', async () => {
+    mockFetchMeter.mockReset()
+    mockFetchMeter.mockResolvedValue(status({ actual: 3 }))
+
+    const wrapper = mountPopover(status({ actual: 15 }), 'over')
+    const capsuleBefore = wrapper.get('.usage-used').text()
+    expect(wrapper.get('.um-agents .menu-select').text()).toContain('usageMeter.allAgents')
+    expect(wrapper.find('.um-global-hint').exists()).toBe(false)
+
+    await wrapper.get('.um-agents .menu-select').trigger('click')
+    const rows = wrapper.findAll('.menu-select-item').map(i => i.text())
+    expect(rows).toEqual(expect.arrayContaining(['usageMeter.allAgents', '智能体 A', '智能体 B']))
+
+    await wrapper.findAll('.menu-select-item').find(i => i.text() === '智能体 A')!.trigger('click')
+    await flushPromises()
+
+    expect(mockFetchMeter).toHaveBeenCalledWith(['agent-a'])
+    expect(wrapper.find('.um-global-hint').exists()).toBe(true)
+    // The filtered readout drives the popover's badge...
+    expect(wrapper.get('.um-pop').text()).toContain('usageMeter.badgeOk')
+    // ...while the capsule keeps reporting the global number.
+    expect(wrapper.get('.usage-used').text()).toBe(capsuleBefore)
+  })
+
+  it('clears the filter when 全部智能体 is ticked again', async () => {
+    mockFetchMeter.mockReset()
+    mockFetchMeter.mockResolvedValue(status({ actual: 3 }))
+
+    const wrapper = mountPopover(status({ actual: 15 }), 'over')
+    await wrapper.get('.um-agents .menu-select').trigger('click')
+    await wrapper.findAll('.menu-select-item').find(i => i.text() === '智能体 A')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.um-global-hint').exists()).toBe(true)
+
+    await wrapper.findAll('.menu-select-item').find(i => i.text() === 'usageMeter.allAgents')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.um-global-hint').exists()).toBe(false)
+    // Back to the global readout: the badge is the global "over plan" again.
+    expect(wrapper.get('.um-pop').text()).toContain('usageMeter.badgeOver')
   })
 })

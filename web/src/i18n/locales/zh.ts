@@ -645,6 +645,10 @@ export default {
     // usage alerts exist and how to turn them on.
     setupHint: '设置用量提醒',
     dayOfCycle: '第 {day} / {days} 天',
+    // Popover-only filter. The capsule and the alerts stay global.
+    agentFilter: '智能体',
+    allAgents: '全部智能体',
+    quotaGlobalHint: '额度为全局额度，数字只算所选智能体',
     actual: '实际',
     expected: '应花',
     quota: '额度',
