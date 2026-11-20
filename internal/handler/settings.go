@@ -84,6 +84,7 @@ var hotReloadFields = map[string]bool{
 	"session.max_count":                      true,
 	"session.archive_retention_enabled":      true,
 	"session.archive_retention_days":         true,
+	"session.delete_acp_on_destroy":          true,
 	"recent_projects.max_count":              true,
 	"upload.max_size_mb":                     true,
 	"upload.max_files":                       true,
@@ -547,6 +548,7 @@ type configSession struct {
 	MaxCount                int  `json:"max_count"`
 	ArchiveRetentionEnabled bool `json:"archive_retention_enabled"`
 	ArchiveRetentionDays    int  `json:"archive_retention_days"`
+	DeleteACPOnDestroy      bool `json:"delete_acp_on_destroy"`
 }
 
 type configRecentProjects struct {
@@ -1170,6 +1172,7 @@ var PatchableConfigPaths = map[string]bool{
 	"session.max_count":                      true,
 	"session.archive_retention_enabled":      true,
 	"session.archive_retention_days":         true,
+	"session.delete_acp_on_destroy":          true,
 	"recent_projects.max_count":              true,
 	"upload.max_size_mb":                     true,
 	"upload.max_files":                       true,
@@ -1481,6 +1484,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			MaxCount:                cfg.Session.MaxCount,
 			ArchiveRetentionEnabled: cfg.Session.ArchiveRetentionEnabled,
 			ArchiveRetentionDays:    cfg.Session.ArchiveRetentionDays,
+			DeleteACPOnDestroy:      cfg.Session.DeleteACPOnDestroy,
 		},
 		RecentProjects: configRecentProjects{
 			MaxCount: cfg.RecentProjects.MaxCount,
@@ -3164,6 +3168,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := session["archive_retention_days"].(float64); ok {
 			cfg.Session.ArchiveRetentionDays = int(v)
+		}
+		if v, ok := session["delete_acp_on_destroy"].(bool); ok {
+			cfg.Session.DeleteACPOnDestroy = v
 		}
 	}
 

@@ -600,19 +600,22 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 		service.CancelSession(sessionID)
 	}
 
-	// Close (but do NOT ACP-delete) the agent connection. The agent-side
-	// transcript stays on disk so the session remains recoverable from the
-	// external list. Destroy now only removes the ClawBench DB records.
-	// 仅关闭（不 ACP 删除）agent 连接：磁盘上的 agent 会话文件保持原样，
-	// 会话仍可从外部列表重新发现。destroy 现在只删 ClawBench 数据库记录。
+	// Tear down the agent connection. When session.delete_acp_on_destroy is on
+	// (the default) the agent is also asked to delete its own session, so the
+	// CLI's data directory keeps no transcript for a conversation the user
+	// permanently removed. The call is best-effort: an agent without
+	// session/delete, or a failing call, is silently ignored (see
+	// ACPConn.deleteACPSession).
 	agentID := service.GetSessionAgentID(sessionID)
+	deleteNative := model.ConfigInstance.Session.DeleteACPOnDestroy
 	if agentID != "" {
 		if agent := model.GetAgent(agentID); agent != nil && agent.SupportsACP() {
-			slog.Info("acp: closing connection for removed session", "session_id", sessionID, "agent_id", agentID)
-			go ai.GetACPConnManager().CloseConn(sessionID)
+			slog.Info("acp: tearing down connection for removed session",
+				"session_id", sessionID, "agent_id", agentID, "delete_native", deleteNative)
+			go acpTeardown(sessionID, deleteNative)
 		}
 	}
-	closeGroupMemberConns(sessionID)
+	teardownGroupMemberConns(sessionID, deleteNative)
 
 	// Delete RAG chunks for this session before hard-deleting session data.
 	// Best-effort — if RAG is not initialized, this is a no-op.
@@ -642,6 +645,14 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 // CloseConn may block on cmd.Wait() if the agent does not exit cleanly, and the
 // HTTP response must not wait on it.
 func closeGroupMemberConns(sessionID string) {
+	teardownGroupMemberConns(sessionID, false)
+}
+
+// teardownGroupMemberConns is closeGroupMemberConns with the permanent-delete
+// option: when deleteNative is set, each member's agent is asked to delete its
+// own session before the connection is closed. Archiving passes false — an
+// archived conversation must stay recoverable from the agent's own list.
+func teardownGroupMemberConns(sessionID string, deleteNative bool) {
 	if !service.IsGroupSession(sessionID) {
 		return
 	}
@@ -654,9 +665,26 @@ func closeGroupMemberConns(sessionID string) {
 		return
 	}
 	for _, m := range members {
-		slog.Info("acp: closing connection for group member", "group_id", sessionID, "member_id", m.ID)
-		go ai.GetACPConnManager().CloseConn(m.ID)
+		slog.Info("acp: tearing down connection for group member",
+			"group_id", sessionID, "member_id", m.ID, "delete_native", deleteNative)
+		go acpTeardown(m.ID, deleteNative)
 	}
+}
+
+// acpTeardown is teardownACPConn behind a variable so tests can observe which
+// path the destroy handler took (delete vs close) without a live agent process.
+var acpTeardown = teardownACPConn
+
+// teardownACPConn releases one ClawBench session's agent connection. With
+// deleteNative it first asks the agent to delete its own session
+// (ACP session/delete); DeleteSession already skips the call for agents that
+// do not implement it and swallows failures, so this stays best-effort.
+func teardownACPConn(sessionID string, deleteNative bool) {
+	if deleteNative {
+		ai.GetACPConnManager().DeleteSession(sessionID)
+		return
+	}
+	ai.GetACPConnManager().CloseConn(sessionID)
 }
 
 // getSessionID retrieves session ID from query param or cookie.

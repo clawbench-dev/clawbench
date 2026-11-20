@@ -319,6 +319,14 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Session.ArchiveRetentionDays < 0 {
 		cfg.Session.ArchiveRetentionDays = 0
 	}
+	// DeleteACPOnDestroy: default TRUE. Deleting a conversation in ClawBench is
+	// meant to delete it, and leaving the agent's own transcript behind is what
+	// produced ghost sessions that kept reappearing in the external list. Only
+	// an explicit `false` in config.yaml turns it off, which is why this reads
+	// the presence map instead of the zero value.
+	if p, ok := presence["session.delete_acp_on_destroy"]; !ok || !p {
+		cfg.Session.DeleteACPOnDestroy = true
+	}
 
 	// --- Recent Projects ---
 	if cfg.RecentProjects.MaxCount <= 0 {
