@@ -123,10 +123,10 @@ func TestCompaction_UnmappableBoundaryWritesNoBoundary(t *testing.T) {
 		name string
 		ev   ai.StreamEvent
 	}{
-		{"index past the end of the history", ai.StreamEvent{CompactedThroughHistory: 2, CompactedThroughMessageID: 12}},
-		// The id list is not consulted by the receiver (it maps the index onto
-		// the history it was given), so the way to express "the ids do not line
-		// up" is an index with no matching message.
+		// The id is the authoritative handle now: one stored turn can expand
+		// into two replayed messages, so an index past the end is legal. An id
+		// this caller cannot explain is the actual "unmappable" case.
+		{"id absent from the history", ai.StreamEvent{CompactedThroughHistory: 2, CompactedThroughMessageID: 99}},
 		{"negative index other than -1", ai.StreamEvent{CompactedThroughHistory: -7}},
 	}
 	for _, tc := range cases {
@@ -143,9 +143,23 @@ func TestCompaction_UnmappableBoundaryWritesNoBoundary(t *testing.T) {
 		})
 	}
 
+	// A valid id maps even when the engine's index is past the end of this list:
+	// that is exactly the tool-turn expansion (2 messages per stored turn).
+	expanded := []ai.HistoryMessage{
+		{Role: roleUser, Text: "q1", ID: 11, Turn: 0},
+		{Role: roleAssistant, Text: "a1", ID: 12, Turn: 1},
+		{Role: roleUser, Text: "q2", ID: 13, Turn: 2},
+	}
+	s := builtinSummaryFromCompaction(ai.StreamEvent{
+		Type: "compacted", Summary: "s", CompactedThroughHistory: 3, CompactedThroughMessageID: 12,
+	}, expanded)
+	if s.CoversThroughTurn != 2 || s.UpToMessageID != 12 {
+		t.Fatalf("a valid id must map through Turn even with an expanded index, got %+v", s)
+	}
+
 	// An entry with no stored id (the synthetic fork-context header) maps by
 	// position only: the boundary is still written, and the id is simply absent.
-	s := builtinSummaryFromCompaction(ai.StreamEvent{
+	s = builtinSummaryFromCompaction(ai.StreamEvent{
 		Type: "compacted", Summary: "s", CompactedThroughHistory: 0,
 	}, []ai.HistoryMessage{{Role: roleUser, Text: "context", ID: 0}})
 	if s.CoversThroughTurn != 1 {

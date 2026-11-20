@@ -236,6 +236,49 @@ func TestServeUsageStats_QueryParamPassthrough(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestServeUsageStats_AgentFilter pins the repeated `agent` parameter: the
+// seeded ledger rows all belong to "codebuddy", so naming it returns the
+// numbers, naming another agent returns nothing, and the parameter is not
+// silently dropped (which would leave the first two cases indistinguishable
+// from an unfiltered request).
+func TestServeUsageStats_AgentFilter(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	projectPath := env.ProjectDir
+
+	seedUsageStatsData(t, projectPath, "sess-a1", "glm-5.1", "2026-01-10 10:00:00", 150)
+
+	const base = "/api/usage/stats?start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z&dims=model&metrics=total"
+
+	cases := []struct {
+		name  string
+		query string
+		want  int64
+	}{
+		{"matching agent", "&agent=codebuddy", 150},
+		{"unknown agent", "&agent=nobody", 0},
+		// Repeated values are ORed: one matching id is enough.
+		{"several agents", "&agent=nobody&agent=codebuddy", 150},
+		// An empty value is "no filter", not "match nothing".
+		{"empty agent value ignored", "&agent=", 150},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := withProjectCookie(newRequest(t, http.MethodGet, base+tc.query, nil), projectPath)
+			w := callHandler(ServeUsageStats, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			var body struct {
+				Totals struct {
+					Total int64 `json:"total"`
+				} `json:"totals"`
+			}
+			decodeRespJSON(t, w.Body, &body)
+			assert.Equal(t, tc.want, body.Totals.Total)
+		})
+	}
+}
+
 func TestServeUsageStats_InvalidLimitIgnored(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

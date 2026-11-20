@@ -150,6 +150,7 @@
       :providers="providers"
       :selected-id="accountId"
       @saved="onAccountSaved"
+      @apply="onAccountApply"
     />
 
     <ProviderFormDialog
@@ -170,8 +171,10 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, CheckCircle2, Loader2, Plus, PlugZap, RefreshCw, Trash2 } from 'lucide-vue-next'
 import '@/assets/modal-footer-btn.css'
-import { apiDelete, apiGet, apiPost, apiPut } from '@/utils/api'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '@/utils/api'
 import { useDialog } from '@/composables/useDialog'
+import { useAgents } from '@/composables/useAgents'
+import { useToast } from '@/composables/useToast'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import ProviderFormDialog, { type ProviderFormValue, type ProviderRow } from './ProviderFormDialog.vue'
 import OwnServiceAccountForm from './OwnServiceAccountForm.vue'
@@ -183,6 +186,8 @@ defineProps<{ description?: string }>()
 
 const { t } = useI18n()
 const { confirm } = useDialog()
+const { agents, loadAgents } = useAgents()
+const toast = useToast()
 
 const providers = ref<ProviderRow[]>([])
 /** Backends whose credential is for their OWN service: the generic form cannot
@@ -320,9 +325,89 @@ function openEdit(p: ProviderRow) {
 }
 
 /** Keep the just-saved account selected, then refresh the shared list. */
-function onAccountSaved(id: number) {
+async function onAccountSaved(id: number) {
   accountId.value = id
-  void loadProviders()
+  await loadProviders()
+  await offerApplyToAgents(id)
+}
+
+/** The account panel's own "apply" button: same flow, but the user explicitly
+ *  asked for it, so "nothing to do" must say so instead of staying silent. */
+function onAccountApply(id: number) {
+  void offerApplyToAgents(id, { interactive: true })
+}
+
+/**
+ * After an own-service account is saved, every agent of that backend is very
+ * likely meant to run on it — that account is usually why the user came to this
+ * page at all. Ask once, then bind them all, instead of making the user repeat
+ * the same provider pick in each agent's settings page.
+ *
+ * Only agents not already on this provider are counted, so re-saving an account
+ * that everything already uses stays silent. The binding is refused per agent
+ * with a reason (ownership, protocol, consent); those reasons are surfaced
+ * rather than collapsed into one "save failed".
+ */
+async function offerApplyToAgents(providerId: number, opts: { interactive?: boolean } = {}) {
+  const provider = providers.value.find((p) => p.id === providerId)
+  if (!provider || provider.protocol !== 'private' || !provider.backend) return
+  const label = ACCOUNT_BACKEND_LABELS[provider.backend as AccountBackend]
+  const backendName = label ? t(label) : provider.backend
+  // A keyless row can still be saved (the form only requires a key when
+  // creating), but binding agents to it makes every turn fail with "provider
+  // has no API key" — so it gets no offer.
+  if (!provider.hasKey) {
+    if (opts.interactive) {
+      toast.show(t('settings.items.accountApplyNoKey'), { icon: 'warning', type: 'error' })
+    }
+    return
+  }
+
+  await loadAgents()
+  const targets = agents.value.filter((a) => a.backend === provider.backend && a.providerId !== providerId)
+  if (targets.length === 0) {
+    if (opts.interactive) {
+      toast.show(t('settings.items.accountApplyNone', { backend: backendName }), { icon: 'info', type: 'info' })
+    }
+    return
+  }
+
+  const ok = await confirm(
+    t('settings.items.accountApplyMessage', { count: targets.length, backend: backendName, provider: provider.name }),
+    {
+      title: t('settings.items.accountApplyTitle'),
+      confirmText: t('settings.items.accountApplyConfirm'),
+      cancelText: t('settings.items.accountApplyCancel'),
+    },
+  )
+  if (!ok) return
+
+  const failures: string[] = []
+  for (const agent of targets) {
+    try {
+      await apiPatch('/api/agents', { id: agent.id, provider_id: providerId })
+    } catch (err) {
+      const reason = err instanceof Error && err.message ? err.message : String(err)
+      failures.push(`${agent.name}: ${reason}`)
+    }
+  }
+
+  // The provider's "used by N agents" line and every agent picker read from
+  // these two lists; both are now stale.
+  await Promise.all([loadAgents(true), loadProviders()])
+
+  if (failures.length > 0) {
+    // The list-level error banner only renders on the general tab, and the user
+    // is standing on an account tab here — the toast is the only place this is
+    // visible.
+    toast.show(t('settings.items.accountApplyFailed', { count: failures.length, reason: failures[0] }), {
+      icon: 'warning',
+      type: 'error',
+      duration: 5000,
+    })
+    return
+  }
+  toast.show(t('settings.items.accountApplyDone', { count: targets.length, provider: provider.name }), { icon: 'success' })
 }
 
 function closeForm() {

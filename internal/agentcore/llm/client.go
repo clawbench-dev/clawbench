@@ -161,6 +161,10 @@ type Request struct {
 	// Neither is emulated: a model that cannot reason must fail loudly rather
 	// than quietly produce a normal answer under a level the user chose.
 	ReasoningEffort string
+	// SessionID is the conversation this call belongs to. OpenAI-compatible
+	// endpoints use it as the prompt-cache key so one conversation keeps one
+	// cache route; empty means no key. It is never sent as a user-visible field.
+	SessionID string
 }
 
 // Reasoning effort levels. Auto is the absence of a request, not a value sent
@@ -246,9 +250,17 @@ const (
 )
 
 // Usage is token accounting for one model round.
+//
+// InputTokens is the prompt size the provider billed as fresh input; the cache
+// fields are the part of that prompt it served from (or wrote to) its prompt
+// cache. Providers disagree on whether InputTokens INCLUDES the cached part
+// (OpenAI/DeepSeek do, Anthropic does not), so the two are kept separate and
+// never summed here.
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
 }
 
 // Client is one model endpoint.

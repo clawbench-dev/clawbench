@@ -202,8 +202,13 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// makes the AI configure a task that either never fires or fires on the
 		// whole inbox, so it stays in the spec rather than moving to the prompt
 		// template (same bytes, worse locality).
-		CommandTask:  11500,
-		CommandUsage: 2000,
+		CommandTask: 11500,
+		// 2000 → 2060 when the usageStats `agent` filter parameter landed
+		// (measured 2011). The operation selection is unchanged: the extra
+		// bytes are the one-line parameter note the AI needs to answer
+		// "this agent used how much". Kept tight so the fragment cannot drift
+		// back toward the whole System tag (3516).
+		CommandUsage: 2060,
 		// The agent command renders six operations: the CRUD four carry long
 		// field notes (name uniqueness, avatar, disabled, project_scope, ACP
 		// command ownership) plus the GET /api/agents ACP-model-list note, and

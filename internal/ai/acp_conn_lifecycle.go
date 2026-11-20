@@ -1412,6 +1412,13 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	c.cmdWaitState = nil
 
 	go c.watchProcessDeath()
+
+	// Learn whether session/delete actually works (issue #707): the advertised
+	// capability is not the truth for every agent (CodeBuddy implements it
+	// without advertising it). Runs here, right after Initialize, because this
+	// is the one place a fresh raw channel exists; the result is agent-level and
+	// cached, so only a new process pays for it.
+	refreshDeleteSessionCapability(ctx, c, c.agent.ID)
 	return nil
 }
 

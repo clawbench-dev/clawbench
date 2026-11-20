@@ -1353,6 +1353,60 @@ func TestSchema_HistorySessionIDIndex(t *testing.T) {
 	assert.True(t, indexes["idx_history_session_id"], "expected idx_history_session_id index to exist")
 }
 
+// TestSchema_HistoryReplayUsesTheSessionIndex pins the plan for the built-in
+// agent's per-turn history read.
+//
+// Without idx_history_session_stream the planner picks idx_history_indexing
+// (one equality column: streaming) and scans EVERY finalized message in the
+// database, then filters by session_id and sorts. Measured on the real DB:
+// 0.10s per turn versus under 5ms. The cost grew with the whole table, not with
+// the session, so the index is what keeps replay flat as the archive grows.
+func TestSchema_HistoryReplayUsesTheSessionIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+
+	err := InitDB()
+	require.NoError(t, err)
+	defer store.Close()
+
+	indexes := getIndexes(t, store.UnsafeDBForTest())
+	require.True(t, indexes["idx_history_session_stream"],
+		"the session/streaming index must be created by InitDB")
+
+	rows, err := store.UnsafeDBForTest().Query(`
+		EXPLAIN QUERY PLAN
+		SELECT id, role, content, files, backend, streaming, created_at, indexed, agent_id, injected
+		FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC`, "s1")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &notUsed, &detail))
+		plan.WriteString(detail)
+		plan.WriteString("\n")
+	}
+	require.NoError(t, rows.Err())
+	got := plan.String()
+	t.Logf("query plan:\n%s", got)
+
+	assert.Contains(t, got, "idx_history_session_stream",
+		"the history read must seek by session_id through the dedicated index")
+	assert.NotContains(t, got, "idx_history_indexing",
+		"falling back to the streaming index means a full scan of every message in the database")
+	assert.NotContains(t, got, "TEMP B-TREE",
+		"ORDER BY id must be served by the index order, not a sort")
+}
+
 func TestSchema_TasksProjectIndex(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := model.BinDir

@@ -2805,9 +2805,14 @@ func (c *ACPConn) Close() {
 
 // deleteACPSession best-effort tells the ACP agent to delete this session via
 // session/delete (unstable capability). It only runs when the connection is
-// alive, has a known ACP session ID, and the agent advertises the delete
-// capability. Failures are logged, never propagated — the caller must not rely
-// on the result.
+// alive, has a known ACP session ID, and the agent is known to implement
+// session/delete. Failures are logged, never propagated — the caller must not
+// rely on the result.
+//
+// The gate is the PROBED capability, not the Initialize advertisement (issue
+// #707): CodeBuddy implements session/delete while advertising no
+// sessionCapabilities at all, so gating on the advertisement means the call was
+// never made for it.
 func (c *ACPConn) deleteACPSession() {
 	c.mu.Lock()
 	conn := c.conn
@@ -2826,9 +2831,24 @@ func (c *ACPConn) deleteACPSession() {
 	}
 
 	if !GetAgentCapabilityRegistry().GetDeleteSession(agentID) {
-		slog.Debug("acp: skip session/delete, agent does not advertise delete capability",
+		slog.Debug("acp: skip session/delete, agent does not support it (probe and advertisement both say no)",
 			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "agent_id", agentID)
 		return
+	}
+
+	// One settle window for a probe that may still be in flight: the probe is
+	// what teaches us CodeBuddy supports this, and a session deleted right after
+	// its first turn can beat it by a few hundred milliseconds.
+	if GetAgentCapabilityRegistry().DeleteSessionProbePending(agentID) {
+		deadline := time.Now().Add(acpDeleteProbeTimeout)
+		for time.Now().Before(deadline) && GetAgentCapabilityRegistry().DeleteSessionProbePending(agentID) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !GetAgentCapabilityRegistry().GetDeleteSession(agentID) {
+			slog.Debug("acp: skip session/delete, probe did not confirm it",
+				"clawbench_sid", c.clawbenchSID, "agent_id", agentID)
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

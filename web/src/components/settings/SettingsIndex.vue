@@ -113,7 +113,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 /**
- * Rows of the 功能模块 group that do NOT come from a dock plugin.
+ * Rows of the 功能 group that do NOT come from a dock plugin.
  *
  * The manager is the one page that configures every plugin, and message push /
  * usage meter are features with a settings page but no dock entry. Everything
@@ -149,6 +149,22 @@ const groupDefs = [
     ],
   },
   {
+    // Model capability is its own top-level group, and it leads the agent
+    // group: every agent setting below depends on a model/engine being
+    // configured first (provider credentials, the shared embedding service,
+    // speech synthesis and recognition).
+    id: 'modelCapability',
+    items: [
+      { id: 'providers', icon: Boxes },
+      // The embedding service sits next to the providers because it IS one:
+      // one endpoint, one model, one key. Both 会话索引 and 知识库 call it, so it
+      // owns its own page instead of living inside either consumer.
+      { id: 'embedding', icon: ScanText },
+      { id: 'tts', icon: Volume2 },
+      { id: 'stt', icon: Mic },
+    ],
+  },
+  {
     id: 'aiChat',
     items: [
       // 身份 first: the nickname and self-description are the context every
@@ -169,7 +185,7 @@ const groupDefs = [
     ],
   },
   {
-    // 功能模块: everything that configures a left-dock feature lives in one
+    // 功能: everything that configures a left-dock feature lives in one
     // group. The manager comes first (it is where those switches live), then
     // one page per plugin in DOCK order — DERIVED from the plugin manifests, so
     // a new plugin's settings page appears here without touching this file —
@@ -180,22 +196,6 @@ const groupDefs = [
     // off: the user needs them to configure the feature back on.
     id: 'dockModules',
     items: DOCK_MODULE_ITEMS,
-  },
-  {
-    // Model capability is its own top-level group: these pages configure the
-    // models and engines themselves (provider credentials, the shared
-    // embedding service, speech synthesis and recognition), which is a
-    // different question from how the chat behaves.
-    id: 'modelCapability',
-    items: [
-      { id: 'providers', icon: Boxes },
-      // The embedding service sits next to the providers because it IS one:
-      // one endpoint, one model, one key. Both 会话索引 and 知识库 call it, so it
-      // owns its own page instead of living inside either consumer.
-      { id: 'embedding', icon: ScanText },
-      { id: 'tts', icon: Volume2 },
-      { id: 'stt', icon: Mic },
-    ],
   },
   {
     id: 'system',

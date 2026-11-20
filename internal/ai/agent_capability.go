@@ -54,7 +54,23 @@ type AgentCapability struct {
 	ConfigOptionState      *ConfigOptionState
 	LoadSession            *bool // AgentCapabilities.LoadSession from ACP Initialize (nil = not yet set)
 	ListSessions           *bool // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
-	DeleteSession          *bool // SessionCapabilities.Delete != nil from ACP Initialize (nil = not yet set)
+	// DeleteSession is the ADVERTISED SessionCapabilities.Delete (nil = not yet
+	// set). It is only half the answer — see DeleteSessionConfirmed.
+	DeleteSession *bool
+	// DeleteSessionConfirmed is whether session/delete actually WORKS, which is
+	// not the same as being advertised (issue #707): CodeBuddy implements the
+	// call but advertises no sessionCapabilities at all. It is learned by
+	// sending one probe request after Initialize (confirmed=true) or by
+	// listening to the agent, and is what deleteACPSession must gate on.
+	//
+	// A false from the probe only counts as an answer when DeleteSessionProbed
+	// is set: "the agent answered method not found" (-32601) is a fact, while
+	// "our request never reached it" (spawn failed, timeout) says nothing about
+	// the agent and must not lock the feature off forever.
+	DeleteSessionConfirmed *bool
+	// DeleteSessionProbed marks that the probe produced an answer, so a probe
+	// that could not reach the agent does not discard a previously known true.
+	DeleteSessionProbed *bool
 	// McpHTTP / McpSSE are AgentCapabilities.McpCapabilities from ACP
 	// Initialize. stdio is mandatory in the spec and never advertised, so it
 	// has no flag. Sending http/sse to an agent that did not advertise them is
@@ -122,6 +138,7 @@ func (c *AgentCapability) HasData() bool {
 		c.LoadSession != nil ||
 		c.ListSessions != nil ||
 		c.DeleteSession != nil ||
+		c.DeleteSessionConfirmed != nil ||
 		c.McpHTTP != nil ||
 		c.McpSSE != nil ||
 		len(c.AvailableOptions) > 0
@@ -257,6 +274,8 @@ func (r *AgentCapabilityRegistry) merge(agentID string, src *AgentCapability) {
 	overlayBool(&existing.LoadSession, src.LoadSession)
 	overlayBool(&existing.ListSessions, src.ListSessions)
 	overlayBool(&existing.DeleteSession, src.DeleteSession)
+	overlayBool(&existing.DeleteSessionConfirmed, src.DeleteSessionConfirmed)
+	overlayBool(&existing.DeleteSessionProbed, src.DeleteSessionProbed)
 	overlayBool(&existing.McpHTTP, src.McpHTTP)
 	overlayBool(&existing.McpSSE, src.McpSSE)
 	if len(src.AvailableOptions) > 0 {
@@ -377,9 +396,24 @@ func (r *AgentCapabilityRegistry) UpdateListSessions(agentID string, val bool) {
 	r.Update(agentID, &AgentCapability{ListSessions: &val})
 }
 
-// UpdateDeleteSession updates only the DeleteSession capability flag.
+// UpdateDeleteSession updates the ADVERTISED DeleteSession capability flag.
 func (r *AgentCapabilityRegistry) UpdateDeleteSession(agentID string, val bool) {
 	r.Update(agentID, &AgentCapability{DeleteSession: &val})
+}
+
+// RecordDeleteSessionProbe stores the outcome of the session/delete probe
+// (issue #707). confirmed=true means the agent answered the request (it either
+// executed it or refused it for a session-level reason), false means the method
+// itself is unavailable (-32601). answered=false (our request never reached the
+// agent) records nothing — it says nothing about the method.
+//
+// The CONFIRMED value, not the advertised one, is what GetDeleteSession gates
+// on: CodeBuddy implements session/delete without advertising it.
+func (r *AgentCapabilityRegistry) RecordDeleteSessionProbe(agentID string, confirmed, answered bool) {
+	if !answered {
+		return
+	}
+	r.Update(agentID, &AgentCapability{DeleteSessionConfirmed: &confirmed, DeleteSessionProbed: &answered})
 }
 
 // UpdateMCPCapabilities updates only the advertised MCP transports.
@@ -421,6 +455,14 @@ func (r *AgentCapabilityRegistry) ForceUpdate(agentID string, agentCap *AgentCap
 			merged[modelID] = levels
 		}
 		agentCap.ThinkingEffortsByModel = merged
+	}
+	// The session/delete probe result is likewise learned knowledge, not part of
+	// the handshake snapshot this call replaces (issue #707): dropping it would
+	// make the next delete fall back to the advertisement — which CodeBuddy does
+	// not send — until the next process respawns and probes again.
+	if ok && existing != nil && agentCap.DeleteSessionProbed == nil {
+		agentCap.DeleteSessionProbed = existing.DeleteSessionProbed
+		agentCap.DeleteSessionConfirmed = existing.DeleteSessionConfirmed
 	}
 	r.caps[agentID] = agentCap
 	r.mu.Unlock()
@@ -623,12 +665,44 @@ func (r *AgentCapabilityRegistry) GetMCPCapabilities(agentID string) model.MCPCa
 	}
 }
 
+// DeleteSessionProbePending reports that the session/delete probe has not
+// answered yet AND the agent never advertised the capability — i.e. a "no"
+// right now may still become a "yes" once the probe lands (issue #707).
+//
+// False when the advertisement already said yes (nothing to wait for) and when
+// the probe already answered.
+func (r *AgentCapabilityRegistry) DeleteSessionProbePending(agentID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agentCap, ok := r.caps[agentID]
+	if !ok || agentCap == nil {
+		return false
+	}
+	if agentCap.DeleteSessionProbed != nil && *agentCap.DeleteSessionProbed {
+		return false
+	}
+	return agentCap.DeleteSession == nil || !*agentCap.DeleteSession
+}
+
 // GetDeleteSession returns whether the agent supports DeleteSession.
+//
+// It answers the PROBED fact first (issue #707): some agents implement
+// session/delete without advertising it, so the Initialize advertisement alone
+// is not the truth. Only when the probe never produced an answer does the
+// advertised flag get used — that is the pre-probe state on a fresh install,
+// where an agent that DOES advertise the capability must not lose it.
 func (r *AgentCapabilityRegistry) GetDeleteSession(agentID string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	agentCap, ok := r.caps[agentID]
-	return ok && agentCap != nil && agentCap.DeleteSession != nil && *agentCap.DeleteSession
+	if !ok || agentCap == nil {
+		return false
+	}
+	if agentCap.DeleteSessionProbed != nil && *agentCap.DeleteSessionProbed &&
+		agentCap.DeleteSessionConfirmed != nil {
+		return *agentCap.DeleteSessionConfirmed
+	}
+	return agentCap.DeleteSession != nil && *agentCap.DeleteSession
 }
 
 // HasAvailableModes checks whether an agent has available modes in the registry.
@@ -1099,6 +1173,13 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 	if agentCap.McpSSE != nil {
 		mcpSSEVal = *agentCap.McpSSE
 	}
+	var deleteProbed, deleteConfirmed bool
+	if agentCap.DeleteSessionProbed != nil {
+		deleteProbed = *agentCap.DeleteSessionProbed
+	}
+	if agentCap.DeleteSessionConfirmed != nil {
+		deleteConfirmed = *agentCap.DeleteSessionConfirmed
+	}
 
 	_, err := db.Exec(`
 		UPDATE agents SET
@@ -1111,10 +1192,13 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 			acp_list_sessions = ?,
 			acp_mcp_http = ?,
 			acp_mcp_sse = ?,
+			acp_delete_session_probed = ?,
+			acp_delete_session_confirmed = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
 		string(modesJSON), string(effortsByModelJSON), string(cmdsJSON), string(modelsJSON), configJSON,
-		loadSessionVal, listSessionsVal, mcpHTTPVal, mcpSSEVal, agentID)
+		loadSessionVal, listSessionsVal, mcpHTTPVal, mcpSSEVal,
+		deleteProbed, deleteConfirmed, agentID)
 	return err
 }
 
@@ -1124,7 +1208,8 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 		SELECT id, acp_available_modes,
 		       acp_thinking_efforts_by_model,
 		       acp_available_commands, acp_available_models, acp_config_options,
-		       acp_load_session, acp_list_sessions, acp_mcp_http, acp_mcp_sse
+		       acp_load_session, acp_list_sessions, acp_mcp_http, acp_mcp_sse,
+		       acp_delete_session_probed, acp_delete_session_confirmed
 		FROM agents
 		WHERE transport = 'acp-stdio'
 	`)
@@ -1141,7 +1226,7 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 		var row capabilityRow
 		if err := rows.Scan(&row.agentID, &row.modes, &row.effortsByModel, &row.commands,
 			&row.models, &row.config, &row.loadSession, &row.listSessions,
-			&row.mcpHTTP, &row.mcpSSE); err != nil {
+			&row.mcpHTTP, &row.mcpSSE, &row.deleteProbed, &row.deleteConfirmed); err != nil {
 			slog.Warn("failed to scan agent capability row", "error", err)
 			continue
 		}
@@ -1164,16 +1249,18 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 
 // capabilityRow is one raw agents row, with the JSON columns still as strings.
 type capabilityRow struct {
-	agentID        string
-	modes          string
-	effortsByModel string
-	commands       string
-	models         string
-	config         string
-	loadSession    bool
-	listSessions   bool
-	mcpHTTP        bool
-	mcpSSE         bool
+	agentID         string
+	modes           string
+	effortsByModel  string
+	commands        string
+	models          string
+	config          string
+	loadSession     bool
+	listSessions    bool
+	mcpHTTP         bool
+	mcpSSE          bool
+	deleteProbed    bool
+	deleteConfirmed bool
 }
 
 // toCapability decodes the JSON columns. An unparseable column is skipped rather
@@ -1188,6 +1275,8 @@ func (row *capabilityRow) toCapability() *AgentCapability {
 		ListSessions:           &row.listSessions,
 		McpHTTP:                &row.mcpHTTP,
 		McpSSE:                 &row.mcpSSE,
+		DeleteSessionProbed:    &row.deleteProbed,
+		DeleteSessionConfirmed: &row.deleteConfirmed,
 	}
 	if row.config != "" {
 		var config ConfigOptionState

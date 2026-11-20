@@ -333,8 +333,13 @@ func TestAnthropic_PutsToolResultsInUserMessage(t *testing.T) {
 	}
 	collectEvents(t, ch)
 
-	if gotBody.System != "be brief" {
-		t.Fatalf("the system prompt must be a top-level field, got %q", gotBody.System)
+	if len(gotBody.System) != 1 || gotBody.System[0].Text != "be brief" {
+		t.Fatalf("the system prompt must be a top-level text block, got %+v", gotBody.System)
+	}
+	// The last system block carries a cache breakpoint: without one this
+	// protocol bills the whole prefix as fresh input on every turn.
+	if gotBody.System[0].CacheControl == nil || gotBody.System[0].CacheControl.Type != "ephemeral" {
+		t.Fatalf("the system prompt must be marked cacheable, got %+v", gotBody.System[0].CacheControl)
 	}
 	if gotBody.MaxTokens == 0 {
 		t.Fatal("max_tokens is required by this API and must be set")
@@ -933,5 +938,141 @@ func TestAnthropic_SignatureDeltaBecomesAnEvent(t *testing.T) {
 	}
 	if signature != "sig-9" {
 		t.Fatalf("signature = %q, want sig-9", signature)
+	}
+}
+
+// TestAnthropic_MarksTheStablePrefixCacheable pins the three cache breakpoints.
+// This protocol does not cache anything unless a block says so, so without
+// them every turn re-bills the entire history as fresh input.
+func TestAnthropic_MarksTheStablePrefixCacheable(t *testing.T) {
+	var gotBody anRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range []string{
+			`{"type":"message_start","message":{"usage":{"input_tokens":3}}}`,
+			`{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}`,
+			`{"type":"message_stop"}`,
+		} {
+			_, _ = io.WriteString(w, "data: "+f+"\n\n")
+		}
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolAnthropic, BaseURL: srv.URL, Model: "claude-x"})
+	ch, err := c.Stream(context.Background(), Request{
+		System:   "be brief",
+		Messages: []Message{TextMessage(RoleUser, "hi")},
+		Tools: []ToolSpec{
+			{Name: "read", Description: "read", Parameters: map[string]any{"type": "object"}},
+			{Name: "bash", Description: "run", Parameters: map[string]any{"type": "object"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch)
+
+	if gotBody.System[0].CacheControl == nil {
+		t.Fatal("the system block must be cacheable")
+	}
+	if n := len(gotBody.Tools); n != 2 || gotBody.Tools[n-1].CacheControl == nil {
+		t.Fatalf("only the LAST tool may carry the breakpoint, got %+v", gotBody.Tools)
+	}
+	lastMsg := gotBody.Messages[len(gotBody.Messages)-1]
+	if lastMsg.Content[len(lastMsg.Content)-1].CacheControl == nil {
+		t.Fatal("the last message block must be cacheable")
+	}
+}
+
+// TestAnthropic_UsageCarriesTheCacheSplit pins that the cache counters survive
+// parsing. Dropping them made every built-in turn look like a total miss.
+func TestAnthropic_UsageCarriesTheCacheSplit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range []string{
+			`{"type":"message_start","message":{"usage":{"input_tokens":9,"cache_read_input_tokens":1200,"cache_creation_input_tokens":34}}}`,
+			`{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}`,
+			`{"type":"message_delta","usage":{"output_tokens":3}}`,
+			`{"type":"message_stop"}`,
+		} {
+			_, _ = io.WriteString(w, "data: "+f+"\n\n")
+		}
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolAnthropic, BaseURL: srv.URL, Model: "claude-x"})
+	ch, _ := c.Stream(context.Background(), Request{Messages: []Message{TextMessage(RoleUser, "hi")}})
+	var usage *Usage
+	for _, ev := range collectEvents(t, ch) {
+		if ev.Kind == KindUsage {
+			usage = ev.Usage
+		}
+	}
+	if usage == nil {
+		t.Fatal("expected a usage event")
+	}
+	if usage.CacheReadTokens != 1200 || usage.CacheWriteTokens != 34 {
+		t.Fatalf("cache split lost: %+v", usage)
+	}
+}
+
+// TestOpenAI_UsageCarriesTheCacheHit covers the three field names providers use
+// for the same fact.
+func TestOpenAI_UsageCarriesTheCacheHit(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{"openai details", `{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":64}}`, 64},
+		{"deepseek top level", `{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":48}`, 48},
+		{"kimi top level", `{"prompt_tokens":100,"completion_tokens":5,"cached_tokens":32}`, 32},
+		{"none", `{"prompt_tokens":100,"completion_tokens":5}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				for _, f := range []string{
+					`{"choices":[{"delta":{"content":"ok"}}]}`,
+					`{"choices":[],"usage":` + tc.raw + `}`,
+					`[DONE]`,
+				} {
+					_, _ = io.WriteString(w, "data: "+f+"\n\n")
+				}
+			}))
+			defer srv.Close()
+
+			c, _ := New(Config{Protocol: ProtocolOpenAI, BaseURL: srv.URL, Model: "m"})
+			ch, _ := c.Stream(context.Background(), Request{Messages: []Message{TextMessage(RoleUser, "hi")}})
+			var usage *Usage
+			for _, ev := range collectEvents(t, ch) {
+				if ev.Kind == KindUsage {
+					usage = ev.Usage
+				}
+			}
+			if usage == nil {
+				t.Fatal("expected a usage event")
+			}
+			if usage.CacheReadTokens != tc.want {
+				t.Fatalf("cache read = %d, want %d", usage.CacheReadTokens, tc.want)
+			}
+		})
+	}
+}
+
+// TestOpenAI_PromptCacheKeyIsScopedToOpenAI pins the compatibility guard: an
+// unknown field on a strict gateway is a 400, which would break every turn.
+func TestOpenAI_PromptCacheKeyIsScopedToOpenAI(t *testing.T) {
+	if got := openAIPromptCacheKey("https://api.openai.com/v1", "sess-1"); got != "sess-1" {
+		t.Fatalf("the official endpoint must receive the key, got %q", got)
+	}
+	if got := openAIPromptCacheKey("https://api.deepseek.com/v1", "sess-1"); got != "" {
+		t.Fatalf("other gateways must not receive the key, got %q", got)
+	}
+	if got := openAIPromptCacheKey("https://api.openai.com/v1", ""); got != "" {
+		t.Fatalf("an empty session must send no key, got %q", got)
 	}
 }

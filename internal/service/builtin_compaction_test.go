@@ -26,10 +26,10 @@ import (
 // just been told to keep in mind.
 func TestBuiltinSummaryFromCompaction_RecordsTheFoldedTurnOnly(t *testing.T) {
 	history := []ai.HistoryMessage{
-		{Role: roleUser, Text: "q1", ID: 11},
-		{Role: roleAssistant, Text: "a1", ID: 12},
-		{Role: roleUser, Text: "q2", ID: 13},
-		{Role: roleAssistant, Text: "a2", ID: 14},
+		{Role: roleUser, Text: "q1", ID: 11, Turn: 0},
+		{Role: roleAssistant, Text: "a1", ID: 12, Turn: 1},
+		{Role: roleUser, Text: "q2", ID: 13, Turn: 2},
+		{Role: roleAssistant, Text: "a2", ID: 14, Turn: 3},
 	}
 	// The engine folded only the first exchange.
 	ev := ai.StreamEvent{

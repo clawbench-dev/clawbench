@@ -659,6 +659,19 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- Covering index for session-based queries (GetChatMessageCount, GetAssistantMessageCount,
 		-- unread subquery, GetChatHistoryPaged) — avoids full table scan through large content rows.
 		CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at);
+		-- Serves the "whole session, oldest first" read (GetMessagesBySessionIDRaw,
+		-- the built-in agent's per-turn replay) with a seek AND an ordered scan.
+		--
+		-- Without it the planner picks idx_history_indexing(streaming) — one
+		-- equality column — and scans EVERY finalized message in the database,
+		-- then filters by session_id and sorts. Measured on the real DB: 0.10s
+		-- per turn, versus under 5ms with this index. The cost grew with the
+		-- whole table, not with the session.
+		--
+		-- streaming is included so the index itself answers the predicate, and
+		-- the implicit rowid (id) makes ORDER BY id a forward scan instead of a
+		-- temp B-tree.
+		CREATE INDEX IF NOT EXISTS idx_history_session_stream ON chat_history(session_id, streaming);
 		-- Index for task listing by project
 		CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_id, created_at DESC);
 		-- Covering index for unread count subquery in GetSessions/GetSessionsPaged:
@@ -2310,6 +2323,22 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: persist the probe result for session/delete (issue #707). Some
+	// agents (CodeBuddy) implement it without advertising the capability, so the
+	// Initialize advertisement cannot answer it; the probed flag records what one
+	// real request taught us and is what the permanent-delete path gates on.
+	// "probed" is stored separately so a probe that could not reach the agent
+	// never masquerades as "the method is unavailable".
+	for _, col := range []string{"acp_delete_session_probed", "acp_delete_session_confirmed"} {
+		var has int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col).Scan(&has)
+		if has == 0 {
+			if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN " + col + " BOOLEAN NOT NULL DEFAULT false"); err != nil {
+				return fmt.Errorf("failed to add %s column to agents: %w", col, err)
+			}
+		}
+	}
+
 	// Migrate: per-agent MCP policy. Stores only WHICH global servers the agent
 	// may use ({"mode":"all"|"none"|"selected","names":[...]}); the server
 	// definitions live in config.yaml so API keys stay in one place.
@@ -2788,6 +2817,7 @@ const chatHistoryRoleCheckMigrationDDL = `
 var chatHistoryRoleCheckMigrationIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_history_session_stream ON chat_history(session_id, streaming)",
 	"CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_id, role, streaming, created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_history_sess_unread ON chat_history(session_id, role, streaming, project_id)",
 	"CREATE INDEX IF NOT EXISTS idx_history_indexing ON chat_history(streaming, indexed)",

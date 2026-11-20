@@ -118,4 +118,39 @@ describe('isPasteSelectionShortcut', () => {
     expect(isPasteSelectionShortcut(pasteChord({ key: 'Delete' }))).toBe(false)
     expect(isPasteSelectionShortcut(pasteChord({ key: 'v' }))).toBe(false)
   })
+
+  describe('Ctrl+V', () => {
+    /** Ctrl+V keydown — what Windows users actually press. */
+    const ctrlV = (partial: Partial<CopyKeyEvent> = {}) =>
+      ev({ key: 'v', ctrlKey: true, ...partial })
+
+    it('claims Ctrl+V', () => {
+      // The desktop shell runs with Menu.setApplicationMenu(null), which removes
+      // the accelerator that used to paste; without this the chord did nothing.
+      expect(isPasteSelectionShortcut(ctrlV())).toBe(true)
+      expect(isPasteSelectionShortcut(ctrlV({ key: 'V' }))).toBe(true)
+    })
+
+    it('rejects every extra modifier so the plain-text path stays distinct', () => {
+      expect(isPasteSelectionShortcut(ctrlV({ shiftKey: true }))).toBe(false)
+      expect(isPasteSelectionShortcut(ctrlV({ altKey: true }))).toBe(false)
+      expect(isPasteSelectionShortcut(ctrlV({ metaKey: true }))).toBe(false)
+    })
+
+    it('rejects a bare v', () => {
+      expect(isPasteSelectionShortcut(ev({ key: 'v' }))).toBe(false)
+    })
+
+    it('only reacts to keydown', () => {
+      expect(isPasteSelectionShortcut(ctrlV({ type: 'keypress' }))).toBe(false)
+      expect(isPasteSelectionShortcut(ctrlV({ type: 'keyup' }))).toBe(false)
+    })
+
+    it('gives Cmd+V to macOS and keeps Ctrl+V as ^V there', () => {
+      expect(isPasteSelectionShortcut(ev({ key: 'v', metaKey: true }), true)).toBe(true)
+      expect(isPasteSelectionShortcut(ctrlV(), true)).toBe(false)
+      // Shift+Insert still pastes on macOS.
+      expect(isPasteSelectionShortcut(pasteChord(), true)).toBe(true)
+    })
+  })
 })

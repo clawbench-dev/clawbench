@@ -14,6 +14,18 @@ vi.mock('@/composables/useLocale', () => ({
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
+// The agent filter reads the shared agent list. Mock it so the panel does not
+// fire a second request (which would also make "last apiGet call" assertions
+// race between /api/agents and /api/usage/stats).
+const mockAgents = vi.hoisted(() => ({
+  value: [
+    { id: 'agent-a', name: '智能体 A', backend: 'claude' },
+    { id: 'agent-b', name: '智能体 B', backend: 'codebuddy' },
+  ],
+}))
+vi.mock('@/composables/useAgents', () => ({
+  useAgents: () => ({ agents: mockAgents, loadAgents: vi.fn() }),
+}))
 vi.mock('echarts/core', () => ({
   use: vi.fn(),
   init: vi.fn(() => ({
@@ -51,6 +63,8 @@ const zhMessages = {
     scopeTitle: '统计范围',
     scopeProject: '当前项目',
     scopeAll: '所有项目',
+    agentTitle: '智能体',
+    agentAll: '全部智能体',
     dimTitle: '分组方式',
     dimModel: '模型',
     dimBackend: 'AI 后端',
@@ -360,6 +374,7 @@ describe('UsageStatsPanel', () => {
     const stats = useUsageStats()
     expect(stats.filter.value.metrics).toEqual(['total'])
     expect(stats.filter.value.dims).toEqual(['model'])
+    expect(stats.filter.value.agents).toEqual([])
     expect(stats.filter.value.chartType).toBe('bar')
   })
 
@@ -392,8 +407,9 @@ describe('UsageStatsPanel', () => {
     mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
     const wrapper = await mountPanel()
     const groups = wrapper.findAll('.stats-filter-group')
-    // Four filter rows, each a dropdown (no chip list any more).
-    expect(groups).toHaveLength(4)
+    // Five filter rows, each a dropdown (no chip list any more):
+    // scope / agent / dims / metrics / chart.
+    expect(groups).toHaveLength(5)
     expect(wrapper.findAll('.stats-chip').map(c => c.text())).not.toContain('当前项目')
 
     // The scope trigger shows the current selection and opens both scopes.
@@ -406,10 +422,44 @@ describe('UsageStatsPanel', () => {
 
     // In project scope the `项目` dim must not be offered. Assert the exact
     // option label, not a substring — "所有项目" contains "项目".
-    await groups[1].find('.menu-select').trigger('click')
+    await groups[2].find('.menu-select').trigger('click')
     const dimLabels = wrapper.findAll('.menu-select-item').map(i => i.text())
     expect(dimLabels).toContain('模型')
     expect(dimLabels).not.toContain('项目')
+  })
+
+  it('filters by one or more agents and clears back to all agents', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
+    const wrapper = await mountPanel()
+    mockApiGet.mockClear()
+
+    const trigger = wrapper.findAll('.stats-filter-group')[1].find('.menu-select')
+    // Default state is "all agents", shown as a checked sentinel row.
+    expect(trigger.text()).toContain('全部智能体')
+
+    const lastURL = (): URLSearchParams => {
+      const url = mockApiGet.mock.calls[mockApiGet.mock.calls.length - 1][0] as string
+      return new URLSearchParams(url.split('?')[1])
+    }
+
+    await trigger.trigger('click')
+    const rowLabels = wrapper.findAll('.menu-select-item').map(i => i.text())
+    expect(rowLabels).toEqual(expect.arrayContaining(['全部智能体', '智能体 A', '智能体 B']))
+
+    // Picking a concrete agent replaces the "all" sentinel.
+    await wrapper.findAll('.menu-select-item').find(i => i.text() === '智能体 A')!.trigger('click')
+    await flushPromises()
+    expect(lastURL().getAll('agent')).toEqual(['agent-a'])
+
+    // A second agent joins the filter.
+    await wrapper.findAll('.menu-select-item').find(i => i.text() === '智能体 B')!.trigger('click')
+    await flushPromises()
+    expect(lastURL().getAll('agent')).toEqual(['agent-a', 'agent-b'])
+
+    // 全部智能体 clears the filter entirely (no agent param = every agent).
+    await wrapper.findAll('.menu-select-item').find(i => i.text() === '全部智能体')!.trigger('click')
+    await flushPromises()
+    expect(lastURL().getAll('agent')).toEqual([])
   })
 
   it('switching to all projects reveals the project dim and requests scope=all', async () => {
@@ -431,7 +481,7 @@ describe('UsageStatsPanel', () => {
     expect(parsed.get('scope')).toBe('all')
     // The project dim becomes selectable (exact option label).
     await nextTick()
-    await wrapper.findAll('.stats-filter-group')[1].find('.menu-select').trigger('click')
+    await wrapper.findAll('.stats-filter-group')[2].find('.menu-select').trigger('click')
     expect(wrapper.findAll('.menu-select-item').map(i => i.text())).toContain('项目')
   })
 
@@ -444,7 +494,7 @@ describe('UsageStatsPanel', () => {
     const wrapper = await mountPanel()
     mockApiGet.mockClear()
 
-    const metricTrigger = wrapper.findAll('.stats-filter-group')[2].find('.menu-select')
+    const metricTrigger = wrapper.findAll('.stats-filter-group')[3].find('.menu-select')
     expect(metricTrigger.text()).toContain('总 Tokens')
     await metricTrigger.trigger('click')
 
@@ -470,7 +520,7 @@ describe('UsageStatsPanel', () => {
     mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
     const wrapper = await mountPanel()
 
-    await wrapper.findAll('.stats-filter-group')[2].find('.menu-select').trigger('click')
+    await wrapper.findAll('.stats-filter-group')[3].find('.menu-select').trigger('click')
     const total = wrapper.findAll('.menu-select-item').find(i => i.text() === '总 Tokens')
     expect(total!.attributes('disabled')).toBeDefined()
   })

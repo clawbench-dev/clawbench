@@ -80,9 +80,9 @@
               :data-session-id="row.session.id"
               class="session-row"
               :class="[rowClasses(row), { 'is-quote-drop': quoteDropSessionId === row.session.id }]"
-              @dragover="onRowQuoteDragOver($event, row.session.id)"
-              @dragleave="onRowQuoteDragLeave(row.session.id)"
-              @drop="onRowQuoteDrop($event, row.session.id)"
+              @dragover="onRowDropOver($event, row.session.id)"
+              @dragleave="onRowDragLeave(row.session.id)"
+              @drop="onRowDrop($event, row.session.id)"
             >
               <!-- The edge carries exactly ONE signal. A running row gets the
                    travelling comet (driven by v-running-sweep); a blocked row
@@ -338,6 +338,7 @@ import { useToast } from '@/composables/useToast'
 import { useSessionIdentity, reconcileRunningSessions, renameSessionById } from '@/composables/useSessionIdentity.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { hasQuoteDragData, readQuoteDragData } from '@/utils/quoteDrag'
+import { attachDragTargets, hasAttachDragData, readAttachDragData } from '@/utils/attachDrag'
 import { hydrateDraggedQuote } from '@/utils/quoteHydrate'
 import { dispatchToTarget, mintPendingQuoteId, requestTarget } from '@/composables/useConversationTarget'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
@@ -432,29 +433,73 @@ watch(
 // and Sortable reacts only to drags it started — a quote payload passes through
 // untouched. The handlers below return early for anything that is not a quote,
 // so reordering is unaffected.
-/** Row currently under a quote drag, for the drop highlight. '' when none. */
+/**
+ * Header comment for the two drop payloads a session row accepts.
+ *
+ * A row is a drop target for BOTH kinds of drag this app produces:
+ *  - a QUOTE card (commit / task / mail / CI row) → staged as a quote;
+ *  - an internal ATTACH drag (file manager entries) → attached to that
+ *    session's draft.
+ *
+ * Both land in the same draft via `dispatchToTarget`, so a row behaves the
+ * same whichever the user dragged. Keeping them in one handler matters for
+ * `preventDefault`: the browser only allows the drop if the row itself accepts
+ * it, and since the chat column's handlers no longer cover the sidebar, a
+ * silent `return` here means the drag is cancelled outright.
+ */
+
+/** Row currently under a drop drag, for the drop highlight. '' when none. */
 const quoteDropSessionId = ref('')
 
-function onRowQuoteDragOver(e, sessionId) {
-  if (!hasQuoteDragData(e.dataTransfer)) return
+/** Whether this drag event is one a row can accept (quote card or internal file drag). */
+function isRowDropPayload(dt) {
+  return hasQuoteDragData(dt) || hasAttachDragData(dt)
+}
+
+function onRowDropOver(e, sessionId) {
+  if (!isRowDropPayload(e.dataTransfer)) return
   e.preventDefault()
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
   quoteDropSessionId.value = sessionId
 }
 
-function onRowQuoteDragLeave(sessionId) {
+function onRowDragLeave(sessionId) {
   if (quoteDropSessionId.value === sessionId) quoteDropSessionId.value = ''
 }
 
-function onRowQuoteDrop(e, sessionId) {
-  const payload = readQuoteDragData(e.dataTransfer)
+function onRowDrop(e, sessionId) {
+  const quote = readQuoteDragData(e.dataTransfer)
+  const attach = quote ? null : readAttachDragData(e.dataTransfer)
   quoteDropSessionId.value = ''
-  if (!payload) return
+  if (!quote && !attach) return
   e.preventDefault()
   // Sortable listens on the container; a drop it did not start must not reach
   // it, or the list would try to reorder around a foreign payload.
   e.stopPropagation()
-  void deliverDraggedQuote(payload, sessionId)
+  if (quote) {
+    void deliverDraggedQuote(quote, sessionId)
+    return
+  }
+  deliverDraggedAttachments(attach, sessionId)
+}
+
+/**
+ * Stage DRAGGED file-manager entries into one session's draft.
+ *
+ * The delivery is `dispatchToTarget` — the same path the session picker and
+ * the quote drop use — so the file ends up looking identical however it got
+ * there. `add` does NOT switch to the row's session: the file waits in that
+ * session's stored draft until the user opens it, exactly as a dropped quote
+ * card does.
+ */
+function deliverDraggedAttachments(attach, sessionId) {
+  const entries = attachDragTargets(attach)
+  if (entries.length === 0) return
+  const request = { mode: 'add', quotes: [], attachments: entries, text: '' }
+  void dispatchToTarget({ kind: 'session', id: sessionId }, request).then(
+    (ok) => { if (!ok) requestTarget(request) },
+    () => requestTarget(request),
+  )
 }
 
 /**
@@ -733,9 +778,18 @@ async function loadSessions() {
   }
 }
 
-/** The tag filter query string, or '' when no filter is applied. */
+/**
+ * The tag filter query string, or '' when no filter is applied.
+ *
+ * Must start with '?' — the base URL (`/api/ai/sessions`) carries no query
+ * string of its own, and a bare `&tag=…` gets glued onto the path, which the
+ * router answers with 404 (the failed fetch then wipes the whole list).
+ * Built via URLSearchParams so later params can be appended without repeating
+ * the separator by hand.
+ */
 function buildTagQuery() {
-  return activeTag.value ? `&tag=${encodeURIComponent(activeTag.value)}` : ''
+  if (!activeTag.value) return ''
+  return `?${new URLSearchParams({ tag: activeTag.value }).toString()}`
 }
 
 /**

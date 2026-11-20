@@ -132,6 +132,8 @@ export interface UsageStatsResponse {
 
 export interface UsageFilter {
   scope: UsageScope // 'project' (current) | 'all' (instance-wide)
+  /** Agent ids to include; empty = every agent (the panel's 全部智能体). */
+  agents: string[]
   range: UsageRange
   dims: UsageDimId[] // >= 1
   metrics: UsageMetricId[] // >= 1; default ['total']
@@ -144,6 +146,7 @@ export interface UsageFilter {
 
 const DEFAULT_FILTER: UsageFilter = {
   scope: 'project',
+  agents: [],
   range: initialStatsRange(),
   dims: ['model'],
   metrics: ['total'],
@@ -152,7 +155,7 @@ const DEFAULT_FILTER: UsageFilter = {
   chartType: 'bar',
 }
 
-const filter = ref<UsageFilter>({ ...DEFAULT_FILTER, range: { ...DEFAULT_FILTER.range }, dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics] })
+const filter = ref<UsageFilter>({ ...DEFAULT_FILTER, range: { ...DEFAULT_FILTER.range }, dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics], agents: [...DEFAULT_FILTER.agents] })
 const raw = ref<UsageStatsResponse | null>(null)
 const loading = ref(false)
 const error = ref<{ status?: number; msgKey?: string; message?: string } | null>(null)
@@ -195,6 +198,7 @@ function buildURL(includeTrend: boolean): string {
   p.set('end', end)
   for (const d of filter.value.dims) p.append('dims', d)
   for (const m of filter.value.metrics) p.append('metrics', m)
+  for (const a of filter.value.agents) p.append('agent', a)
   p.set('sort', filter.value.sortBy)
   p.set('order', filter.value.sortDesc ? 'desc' : 'asc')
   p.set('limit', '200')
@@ -240,7 +244,7 @@ function reloadStats(): void {
 
 /** Reset filters to defaults and fetch. */
 async function resetStatsFilter(): Promise<void> {
-  filter.value = { ...DEFAULT_FILTER, range: initialStatsRange(), dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics] }
+  filter.value = { ...DEFAULT_FILTER, range: initialStatsRange(), dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics], agents: [...DEFAULT_FILTER.agents] }
   await loadStats()
 }
 
@@ -260,7 +264,7 @@ export function resetUsageStats(): void {
     abortController.abort()
     abortController = null
   }
-  filter.value = { ...DEFAULT_FILTER, range: initialStatsRange(), dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics] }
+  filter.value = { ...DEFAULT_FILTER, range: initialStatsRange(), dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics], agents: [...DEFAULT_FILTER.agents] }
   raw.value = null
   error.value = null
   loading.value = false
@@ -311,6 +315,15 @@ export function useUsageStats() {
     const allowed = dimsForScope(next)
     const kept = filter.value.dims.filter(d => allowed.includes(d))
     filter.value.dims = kept.length > 0 ? kept : [allowed[0]]
+    void loadStats()
+  }
+
+  /**
+   * Restrict the aggregate to the given agents. An empty list means every
+   * agent — the panel sends it when 全部智能体 is selected.
+   */
+  function setAgents(next: string[]) {
+    filter.value.agents = [...next]
     void loadStats()
   }
 
@@ -372,6 +385,7 @@ export function useUsageStats() {
     resetRangeToDefault,
     setScope,
     setDims,
+    setAgents,
     setMetrics,
     setSort,
     setRange,

@@ -153,15 +153,21 @@ func buildSpec(req ai.ChatRequest) (agentcore.Spec, error) {
 		return agentcore.Spec{}, err
 	}
 
+	// One pass builds the messages AND the parallel id list. An assistant turn
+	// with tool calls expands into two messages, so two independent loops would
+	// drift and make a compaction boundary cover the wrong stored turn.
+	replay := buildHistoryReplay(req)
+
 	return agentcore.Spec{
 		Client:       client,
 		SystemPrompt: req.SystemPrompt,
 		Prompt:       req.Prompt,
-		History:      historyFor(req),
+		History:      replay.Messages,
 		// Parallel to History: the boundary a compaction reports is an id from
 		// here, so the caller records exactly which stored turn the summary
 		// stands for.
-		HistoryMessageIDs: historyIDs(req),
+		HistoryMessageIDs: replay.IDs,
+		SessionID:         req.SessionID,
 		WorkDir:           req.WorkDir,
 		// The session mode narrows the agent's grant; it never widens it. An
 		// empty mode (background task, older client) leaves the grant as-is.

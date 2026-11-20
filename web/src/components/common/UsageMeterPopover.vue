@@ -49,7 +49,7 @@
         <span v-if="state === 'full'" class="usage-cap"></span>
       </span>
       <span class="usage-text">
-        <span class="usage-used">{{ fmtCompact(actual) }}</span>
+        <span class="usage-used">{{ fmtCompact(globalActual) }}</span>
         <!-- An unset quota is INFINITE, not absent: the user asked to see the
              total, and "12 / ∞" says exactly that in the same shape as a
              budgeted readout. Dropping the denominator instead made the capsule
@@ -63,7 +63,7 @@
       :target-element="btnRef"
       :max-width="320"
       :max-height="460"
-      :menu-items-count="14"
+      :menu-items-count="16"
       anchor="right"
       app-surface
       @after-leave="onAfterLeave"
@@ -72,7 +72,7 @@
         <div class="um-head">
           <span class="um-title">{{ t(titleKey) }}</span>
           <div class="um-head-actions">
-            <span class="um-badge" :class="`is-${state}`">{{ badgeText }}</span>
+            <span class="um-badge" :class="`is-${displayState}`">{{ badgeText }}</span>
             <!-- Shortcut into the rule that produces every number below. Lives
                  in the header rather than at the foot of the panel: the figures
                  are long and the action was below the fold on short viewports. -->
@@ -93,6 +93,21 @@
           {{ periodLine }}
         </div>
 
+        <div class="um-agents">
+          <span class="um-agents-label">{{ t('usageMeter.agentFilter') }}</span>
+          <MenuSelect
+            block
+            multiple
+            :min-selected="1"
+            :model-value="agentSelection"
+            :options="agentOptions"
+            @change="onAgentsChange"
+          />
+        </div>
+        <!-- The budget is one shared rule; a filtered view must say so, or
+             "remaining" reads as that agent's own leftover quota. -->
+        <div v-if="agentFilter.length > 0" class="um-global-hint">{{ t('usageMeter.quotaGlobalHint') }}</div>
+
         <!-- Three bars on one axis so their lengths are directly comparable.
              Only the rows that have a reference point are rendered: a quota row
              without a quota, or an expected row without a baseline, would be an
@@ -101,14 +116,14 @@
           <div class="um-row">
             <span class="um-row-name">{{ t('usageMeter.actual') }}</span>
             <span class="um-track">
-              <span class="um-bar" :class="`is-${state}`" :style="{ width: fillPercent + '%' }"></span>
+              <span class="um-bar" :class="`is-${displayState}`" :style="{ width: displayFillPercent + '%' }"></span>
             </span>
-            <span class="um-row-val" :class="`is-${state}`">{{ fmt(actual) }}</span>
+            <span class="um-row-val" :class="`is-${displayState}`">{{ fmt(actual) }}</span>
           </div>
           <div class="um-row">
             <span class="um-row-name">{{ t('usageMeter.expected') }}</span>
             <span class="um-track">
-              <span class="um-bar is-expected" :style="{ width: expectedPercent + '%' }"></span>
+              <span class="um-bar is-expected" :style="{ width: displayExpectedPercent + '%' }"></span>
             </span>
             <span class="um-row-val">{{ hasPlan ? fmt(expected) : INFINITE }}</span>
           </div>
@@ -135,7 +150,7 @@
           <line x1="8" :y1="PLOT_BOTTOM" x2="280" :y2="PLOT_BOTTOM" class="um-axis" />
           <line v-if="hasQuota" x1="8" :y1="PLOT_TOP" x2="280" :y2="PLOT_TOP" class="um-quota-line" />
           <polyline v-if="hasPlan" :points="expectedLine" class="um-expected-line" />
-          <polyline :points="actualLine" class="um-actual-line" :class="`is-${state}`" />
+          <polyline :points="actualLine" class="um-actual-line" :class="`is-${displayState}`" />
           <line
             v-if="projection"
             :x1="projection.x1" :y1="projection.y1" :x2="projection.x2" :y2="projection.y2"
@@ -161,11 +176,11 @@
           </div>
           <div>
             <div class="um-stat-label">{{ t('usageMeter.remainingDays') }}</div>
-            <div class="um-stat-value">{{ hasCycle ? t('usageMeter.days', { n: status.remainingDays }) : INFINITE }}</div>
+            <div class="um-stat-value">{{ hasCycle ? t('usageMeter.days', { n: display.remainingDays }) : INFINITE }}</div>
           </div>
           <div>
             <div class="um-stat-label">{{ t('usageMeter.projected') }}</div>
-            <div class="um-stat-value" :class="{ 'is-over': state !== 'ok' }">
+            <div class="um-stat-value" :class="{ 'is-over': displayState !== 'ok' }">
               {{ projectionText }}
             </div>
           </div>
@@ -184,9 +199,19 @@ import { computed, inject, ref, watch } from 'vue'
 import { Gauge, Settings2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
 import { formatUsageMeterValue, usageMeterMetricLabelKey, usageMeterTitleKey } from '@/utils/usageFormat'
+import { appLog } from '@/utils/appLog'
 import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
-import { useUsageMeter, type UsageMeterStatus } from '@/composables/useUsageMeter'
+import { useAgents } from '@/composables/useAgents'
+import {
+  fetchUsageMeterForAgents,
+  meterExpectedPercent,
+  meterFillPercent,
+  meterStateOf,
+  useUsageMeter,
+  type UsageMeterStatus,
+} from '@/composables/useUsageMeter'
 
 const props = defineProps<{
   status: UsageMeterStatus
@@ -210,14 +235,88 @@ const menuOpen = ref(false)
 const PLOT_TOP = 8
 const PLOT_BOTTOM = 82
 
-const metric = computed(() => props.status.metric ?? 'cost')
+// ── Agent filter ─────────────────────────────────────────────────────────────
+// The capsule, the notifications and every WS frame are about the WHOLE budget,
+// so this filter lives in the popover and only affects the numbers shown here.
+// An empty selection means every agent; MenuSelect cannot render an empty
+// multi-selection, so "all" is represented by a sentinel row (agent ids are
+// never empty, so it cannot collide with a real agent).
+const ALL_AGENTS = ''
+const { agents, loadAgents } = useAgents()
+const agentFilter = ref<string[]>([])
+const filteredStatus = ref<UsageMeterStatus | null>(null)
+
+const agentOptions = computed<MenuSelectOption[]>(() => [
+  { value: ALL_AGENTS, label: t('usageMeter.allAgents') },
+  ...agents.value.map(a => ({ value: a.id, label: a.name || a.id })),
+])
+const agentSelection = computed<string[]>(() =>
+  agentFilter.value.length > 0 ? agentFilter.value : [ALL_AGENTS],
+)
+
+/**
+ * Map the dropdown's raw selection onto the filter — same two special cases as
+ * the stats panel: ticking a concrete agent while 全部 is checked means "only
+ * that agent" (drop the sentinel), and ticking 全部 clears the filter (empty =
+ * all), which the sentinel row alone cannot express.
+ */
+function onAgentsChange(value: MenuSelectValue) {
+  const next = (Array.isArray(value) ? value : [value]).map(String)
+  const hadAll = agentFilter.value.length === 0
+  if (next.includes(ALL_AGENTS) && !hadAll) {
+    agentFilter.value = []
+    return
+  }
+  agentFilter.value = next.filter(v => v !== ALL_AGENTS)
+}
+
+/**
+ * The readout this popover renders: the filtered one while a filter is active,
+ * otherwise the shared global status. Falling back to the global status until
+ * the first filtered response arrives is deliberate — the query is a local
+ * SQLite aggregate, and blanking every number for one frame reads as a glitch.
+ */
+const display = computed<UsageMeterStatus>(() =>
+  agentFilter.value.length > 0 && filteredStatus.value ? filteredStatus.value : props.status,
+)
+const displayState = computed(() => meterStateOf(display.value))
+const displayFillPercent = computed(() => meterFillPercent(display.value))
+const displayExpectedPercent = computed(() => meterExpectedPercent(display.value))
+
+async function loadFiltered() {
+  const ids = [...agentFilter.value]
+  if (ids.length === 0) {
+    filteredStatus.value = null
+    return
+  }
+  try {
+    const data = await fetchUsageMeterForAgents(ids)
+    // Drop a response that lost the race against a newer selection.
+    if (ids.join('\u0000') !== agentFilter.value.join('\u0000')) return
+    filteredStatus.value = data
+  } catch (err) {
+    appLog.w('UsageMeter', 'filtered usage meter fetch failed', err)
+  }
+}
+
+watch(agentFilter, () => { void loadFiltered() })
+// A finished turn (or a rule change) moves the global numbers, so the filtered
+// view has to move with them.
+watch(() => props.status.actual, () => {
+  if (agentFilter.value.length > 0) void loadFiltered()
+})
+
+const metric = computed(() => display.value.metric ?? 'cost')
 /** The capsule's word, derived from the same metric the numbers are formatted with. */
-const metricLabelKey = computed(() => usageMeterMetricLabelKey(props.status.metric))
+const metricLabelKey = computed(() => usageMeterMetricLabelKey(display.value.metric))
 /** The popover heading: "Cost usage" / "费用用量" — same metric, feature noun appended. */
-const titleKey = computed(() => usageMeterTitleKey(props.status.metric))
-const actual = computed(() => props.status.actual ?? 0)
-const expected = computed(() => props.status.expected ?? 0)
-const quota = computed(() => props.status.quota ?? 0)
+const titleKey = computed(() => usageMeterTitleKey(display.value.metric))
+// The capsule is the global alarm: it must keep the instance-wide number even
+// while the popover below is filtered to one agent.
+const globalActual = computed(() => props.status.actual ?? 0)
+const actual = computed(() => display.value.actual ?? 0)
+const expected = computed(() => display.value.expected ?? 0)
+const quota = computed(() => display.value.quota ?? 0)
 
 /**
  * The three gates every quota/cycle-derived figure hangs off.
@@ -230,7 +329,7 @@ const quota = computed(() => props.status.quota ?? 0)
  * measurement behind it.
  */
 const hasQuota = computed(() => quota.value > 0)
-const hasCycle = computed(() => (props.status.periodDays ?? 0) > 0)
+const hasCycle = computed(() => (display.value.periodDays ?? 0) > 0)
 /** A baseline needs BOTH a quota and a cycle: quota/periodDays has no meaning otherwise. */
 const hasPlan = computed(() => hasQuota.value && hasCycle.value && expected.value > 0)
 
@@ -241,11 +340,11 @@ const INFINITE = '\u221e'
 const quotaLabel = computed(() => (hasQuota.value ? fmtCompact(quota.value) : INFINITE))
 const dailyLeft = computed(() => {
   if (!hasPlan.value) return 0
-  const days = props.status.remainingDays
+  const days = display.value.remainingDays
   if (days <= 0) return remaining.value
   return remaining.value / days
 })
-const points = computed(() => props.status.series ?? [])
+const points = computed(() => display.value.series ?? [])
 
 function fmt(v: number): string {
   return formatUsageMeterValue(metric.value, v, { compact: false })
@@ -258,8 +357,8 @@ function fmtCompact(v: number): string {
 }
 
 const badgeText = computed(() => {
-  if (props.state === 'full') return t('usageMeter.badgeFull')
-  if (props.state === 'over') {
+  if (displayState.value === 'full') return t('usageMeter.badgeFull')
+  if (displayState.value === 'over') {
     const pct = expected.value > 0 ? Math.round(((actual.value - expected.value) / expected.value) * 100) : 0
     return t('usageMeter.badgeOver', { pct })
   }
@@ -272,8 +371,8 @@ const badgeText = computed(() => {
 })
 
 const dateRange = computed(() => {
-  const s = props.status.cycleStart
-  const e = props.status.cycleEnd
+  const s = display.value.cycleStart
+  const e = display.value.cycleEnd
   if (!s || !e) return ''
   // Date-only: the time of day is noise for a multi-week cycle, and rendering
   // the raw RFC3339 string would show the UTC offset the user never chose.
@@ -294,18 +393,18 @@ const periodLine = computed(() => {
     // counter against infinity rather than dropping it, so "how long have I been
     // counting" stays visible; with no anchor at all there is no start either,
     // and the window is simply the whole ledger.
-    if (!props.status.cycleStart) return t('usageMeter.allTime')
-    const dayPart = t('usageMeter.dayOfCycle', { day: props.status.dayInCycle, days: INFINITE })
-    return `${dayPart} · ${t('usageMeter.sinceDate', { date: props.status.cycleStart.slice(0, 10) })}`
+    if (!display.value.cycleStart) return t('usageMeter.allTime')
+    const dayPart = t('usageMeter.dayOfCycle', { day: display.value.dayInCycle, days: INFINITE })
+    return `${dayPart} · ${t('usageMeter.sinceDate', { date: display.value.cycleStart.slice(0, 10) })}`
   }
-  const dayPart = t('usageMeter.dayOfCycle', { day: props.status.dayInCycle, days: props.status.periodDays ?? 0 })
+  const dayPart = t('usageMeter.dayOfCycle', { day: display.value.dayInCycle, days: display.value.periodDays ?? 0 })
   const range = dateRange.value
   return range ? `${dayPart} · ${range}` : dayPart
 })
 
 const projectionText = computed(() => {
-  const day = props.status.projectedExhaustDay
-  if (props.state === 'full') return t('usageMeter.projectedDone')
+  const day = display.value.projectedExhaustDay
+  if (displayState.value === 'full') return t('usageMeter.projectedDone')
   // No quota (or no cycle) means an infinite budget, which by definition never
   // runs out — "this cycle will not exhaust it" is the accurate reading, not a
   // blank.
@@ -324,7 +423,7 @@ const projectionText = computed(() => {
 // days the series covers: the curve still has a shape, it just has no
 // "remaining part of the cycle" to the right of today.
 const axisDays = computed(() => {
-  const period = props.status.periodDays ?? 0
+  const period = display.value.periodDays ?? 0
   if (period > 0) return period
   return Math.max(1, points.value.length)
 })
@@ -410,7 +509,11 @@ function toggle() {
   menuOpen.value = !menuOpen.value
   // Refetch on open: the WS event carries the headline numbers but not the
   // series, and a user opening the popover wants the curve up to date.
-  if (menuOpen.value) void refresh()
+  if (menuOpen.value) {
+    void loadAgents()
+    void refresh()
+    void loadFiltered()
+  }
 }
 
 function onAfterLeave() {
@@ -648,6 +751,30 @@ function openSettings() {
 
 .um-sep {
   margin: 0 var(--space-2);
+}
+
+/* ── Agent filter ────────────────────────────────────────────────────────── */
+.um-agents {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.um-agents-label {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.um-agents :deep(.menu-select) {
+  min-width: 0;
+}
+
+.um-global-hint {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-4);
 }
 
 /* ── Comparison bars ─────────────────────────────────────────────────────── */

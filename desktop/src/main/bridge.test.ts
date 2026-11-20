@@ -45,7 +45,7 @@ vi.mock('electron', () => ({
     on: (channel: string, fn: (...args: unknown[]) => void) => { onHandlers.set(channel, fn) },
   },
   shell: { openPath: () => undefined, openExternal: () => undefined },
-  clipboard: { writeText: () => undefined },
+  clipboard: { writeText: () => undefined, readText: () => 'clip-text' },
   nativeTheme: { themeSource: 'dark' },
   BrowserWindow: class {},
   Menu: class {},
@@ -155,6 +155,57 @@ describe('bridge: tunnel transport IPC', () => {
     // must not swallow the writer's answer.
     tunnelMock.persistTransportPreference.mockReturnValue(false)
     expect(invoke('native:set-tunnel-transport', 'garbage')).toBe(false)
+  })
+})
+
+describe('bridge: clipboard read IPC', () => {
+  beforeEach(() => {
+    handlers.clear()
+    onHandlers.clear()
+    vi.clearAllMocks()
+    registerBridge()
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  /** Invoke the channel with a sender frame, as Electron would. */
+  function invokeAs(frameUrl: string | null, ...args: unknown[]): unknown {
+    const fn = handlers.get('native:read-clipboard-text')
+    if (!fn) throw new Error('no ipcMain.handle registered for native:read-clipboard-text')
+    const senderFrame = frameUrl === null ? null : { url: frameUrl }
+    return fn({ senderFrame }, ...args)
+  }
+
+  it('registers the channel the preload invokes', () => {
+    // A missing handler is a runtime "No handler registered" — the renderer's
+    // readClipboardText would reject and Shift+Insert would report a failure.
+    expect(handlers.has('native:read-clipboard-text')).toBe(true)
+  })
+
+  it('returns the clipboard text', () => {
+    expect(invokeAs('http://127.0.0.1:20000/')).toBe('clip-text')
+  })
+
+  it('serves the login page before a server URL is configured', () => {
+    // Fresh install: the stored serverUrl is not written until the user picks
+    // one, so there is nothing to compare against and the window is ours.
+    expect(invokeAs('http://127.0.0.1:20000/login')).toBe('clip-text')
+  })
+
+  it('refuses a frame from another origin', () => {
+    // The bridge is exposed to every webContents in the app (share windows
+    // included). Raw clipboard text is exactly what a hostile frame would want,
+    // so a foreign origin must not reach the handler's result at all.
+    expect(() => invokeAs('https://evil.example.com/')).toThrow('clipboard read denied')
+  })
+
+  it('refuses a frame with no readable URL', () => {
+    // Detached / still-about:blank frames: guessing "probably ours" here is how
+    // this handle turns into silent exfiltration.
+    expect(() => invokeAs(null)).toThrow('clipboard read denied')
+    expect(() => invokeAs('about:blank')).toThrow('clipboard read denied')
   })
 })
 

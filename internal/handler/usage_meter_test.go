@@ -151,8 +151,76 @@ func TestServeUsageMeter_EnabledRuleReportsCycleAndTotals(t *testing.T) {
 	assert.NotEmpty(t, body.Series)
 }
 
-// The meter is instance-wide, so a project cookie must not narrow it: the
-// endpoint has no scope parameter at all.
+// The popover's agent filter rides on the same endpoint: repeated `agent`
+// values narrow the measured amount, while the rule (quota) stays global.
+func TestServeUsageMeter_AgentFilter(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	now := time.Now()
+	setMeterRuleForTest(t, model.UsageMeterConfig{
+		AnchorDate: now.AddDate(0, 0, -5).Format("2006-01-02"), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+	})
+	stamp := now.Add(-24 * time.Hour).UTC().Format("2006-01-02 15:04:05")
+
+	db := store.UnsafeDBForTest()
+	projectID := store.ProjectIDForTest(t, env.ProjectDir)
+	for _, seed := range []struct {
+		session string
+		agent   string
+		cost    float64
+	}{
+		{"s-agent-a", "agent-a", 1.5},
+		{"s-agent-b", "agent-b", 2.5},
+	} {
+		_, err := db.Exec(
+			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, 'claude', 't', ?)",
+			seed.session, projectID, seed.agent,
+		)
+		require.NoError(t, err)
+		res, err := db.Exec(
+			"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '{}', 0, ?)",
+			projectID, seed.session, stamp,
+		)
+		require.NoError(t, err)
+		msgID, _ := res.LastInsertId()
+		_, err = db.Exec(
+			`INSERT INTO chat_metadata (message_id, model, cost_usd, created_at, project_id, backend, agent_id, clawbench_session_id)
+			 VALUES (?, 'm', ?, ?, ?, 'claude', ?, ?)`,
+			msgID, seed.cost, stamp, projectID, seed.agent, seed.session,
+		)
+		require.NoError(t, err)
+	}
+
+	cases := []struct {
+		name  string
+		query string
+		want  float64
+	}{
+		{"all agents", "", 4.0},
+		{"one agent", "?agent=agent-a", 1.5},
+		{"several agents", "?agent=agent-a&agent=agent-b", 4.0},
+		{"unknown agent", "?agent=nobody", 0},
+		// An empty value is "no filter", not "match nothing".
+		{"empty value ignored", "?agent=", 4.0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter"+tc.query, nil))
+			require.Equal(t, http.StatusOK, w.Code)
+
+			var body struct {
+				Actual float64 `json:"actual"`
+				Quota  float64 `json:"quota"`
+			}
+			decodeRespJSON(t, w.Body, &body)
+			assert.InDelta(t, tc.want, body.Actual, 1e-9)
+			assert.InDelta(t, 30.0, body.Quota, 1e-9, "the quota is always the global rule")
+		})
+	}
+}
+
 func TestServeUsageMeter_IgnoresProjectCookie(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

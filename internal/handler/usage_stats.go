@@ -60,6 +60,19 @@ func resolveUsageScope(w http.ResponseWriter, r *http.Request, rawScope string) 
 	}
 }
 
+// parseUsageAgentIDs collects the repeated `agent` query values, dropping empty
+// ones: a form control with no selection sends `agent=`, which means "no
+// filter" and must not reach the service as a blank id.
+func parseUsageAgentIDs(values []string) []string {
+	ids := make([]string, 0, len(values))
+	for _, v := range values {
+		if v != "" {
+			ids = append(ids, v)
+		}
+	}
+	return ids
+}
+
 // ServeUsageStats handles GET /api/usage/stats.
 // Aggregates token/credit/cost usage within a time range, grouped by the
 // requested dimensions.
@@ -77,6 +90,7 @@ func resolveUsageScope(w http.ResponseWriter, r *http.Request, rawScope string) 
 //	top           trend: number of top dim combos to keep (default 10)
 //	limit         max rows (default 50, max 200)
 //	scope         "project" (default) | "all" — see below
+//	agent         repeated agent id; omit for every agent
 //
 // Project scope: by default the range is restricted to the project named by
 // the project cookie, which is required. scope=all aggregates every project on
@@ -120,10 +134,14 @@ func ServeUsageStats(w http.ResponseWriter, r *http.Request) {
 	for _, v := range q["metrics"] {
 		metrics = append(metrics, service.UsageMetric(v))
 	}
+	// Empty values are dropped rather than forwarded: `agent=` is what a form
+	// control sends for "no filter", and the service rejects an empty id.
+	agentIDs := parseUsageAgentIDs(q["agent"])
 
 	params := service.UsageParams{
 		ProjectPath: projectPath,
 		Scope:       scope,
+		AgentIDs:    agentIDs,
 		Start:       start,
 		End:         end,
 		Dims:        dims,

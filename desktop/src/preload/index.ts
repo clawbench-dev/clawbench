@@ -234,6 +234,10 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   startLogCapture: () => invoke('native:start-log-capture'),
   stopLogCapture: () => invoke('native:stop-log-capture'),
   shareText: (text: string) => invoke('native:share-text', text),
+  // The renderer's own clipboard read is gated by the window permission handler
+  // (only media/display-capture are allowed), so paste in the terminal has to go
+  // through the main process. Without it Shift+Insert could never read anything.
+  readClipboardText: () => invoke('native:read-clipboard-text') as Promise<string>,
   shareFile: (path: string, mime: string) => invoke('native:share-file', path, mime),
   shareFiles: (paths: string, mimes: string) => invoke('native:share-files', paths, mimes),
   openExternalUrl: (url: string) => invoke('native:open-external-url', url),

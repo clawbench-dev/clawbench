@@ -263,6 +263,7 @@ describe('SessionList', () => {
   // the session picker, which a drag cannot open.
   describe('quote drop on a row', () => {
     const QUOTE_MIME = 'application/x-clawbench-quote'
+    const ATTACH_MIME = 'application/x-clawbench-attach'
 
     /** Mount with one real row (the list renders nothing without a session). */
     async function mountWithRow() {
@@ -318,6 +319,61 @@ describe('SessionList', () => {
       expect(request.mode).toBe('add')
       expect(request.quotes).toHaveLength(1)
       expect(request.quotes[0]).toMatchObject({ filePath: 'abc1234 fix', commitSha: 'abc1234', note: '' })
+    })
+
+    // A row is also a target for the file manager's internal attach drag. This
+    // is the ONLY place that accepts it: the chat column's handlers cover just
+    // the chat column, so if the row declines the drop the browser cancels the
+    // whole gesture and the file goes nowhere.
+    function attachDragEvent(payload: Record<string, unknown>) {
+      return {
+        types: [ATTACH_MIME],
+        getData: (type: string) => (type === ATTACH_MIME ? JSON.stringify(payload) : ''),
+        dropEffect: '',
+      }
+    }
+
+    it('accepts an internal file drag so the browser allows the drop', async () => {
+      const wrapper = await mountWithRow()
+      const row = wrapper.find('.session-row')
+      const e = attachDragEvent({ path: '/repo/a.ts', name: 'a.ts', isDir: false })
+
+      await row.trigger('dragover', { dataTransfer: e })
+      expect(row.classes()).toContain('is-quote-drop')
+    })
+
+    it('attaches a dropped file to the row’s own session', async () => {
+      const wrapper = await mountWithRow()
+      const row = wrapper.find('.session-row')
+
+      await row.trigger('drop', { dataTransfer: attachDragEvent({ path: '/repo/a.ts', name: 'a.ts', isDir: false }) })
+      await flushPromises()
+
+      expect(delivery.dispatchToTarget).toHaveBeenCalledTimes(1)
+      const [target, request] = delivery.dispatchToTarget.mock.calls[0]
+      expect(target).toEqual({ kind: 'session', id: 's1' })
+      expect(request.mode).toBe('add')
+      expect(request.attachments).toEqual([{ path: '/repo/a.ts', isDir: false }])
+      expect(request.quotes).toHaveLength(0)
+    })
+
+    it('attaches a whole multi-selection, not just the item under the cursor', async () => {
+      const wrapper = await mountWithRow()
+      const row = wrapper.find('.session-row')
+
+      await row.trigger('drop', {
+        dataTransfer: attachDragEvent({
+          path: '/repo/a.ts', name: 'a.ts', isDir: false,
+          entries: [{ path: '/repo/a.ts', isDir: false }, { path: '/repo/b.ts', isDir: false }],
+        }),
+      })
+      await flushPromises()
+
+      const [, request] = delivery.dispatchToTarget.mock.calls[0]
+      expect(request.attachments).toEqual([
+        { path: '/repo/a.ts', isDir: false },
+        { path: '/repo/b.ts', isDir: false },
+      ])
     })
   })
 
@@ -1053,7 +1109,42 @@ describe('SessionList', () => {
 
     const listCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('/api/ai/sessions'))
     expect(listCall).toBeTruthy()
-    expect(String(listCall![0])).toContain('tag=bug')
+    // Exact URL: a bare `&tag=bug` glued onto the path (`/api/ai/sessions&tag=bug`)
+    // is a 404 that cleared the list. `toContain('tag=bug')` alone let that slip.
+    expect(String(listCall![0])).toBe('/api/ai/sessions?tag=bug')
+  })
+
+  it('encodes the tag name in the filter query string', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+    const wrapper = await mountList()
+    await flushPromises()
+
+    mockFetch.mockClear()
+    wrapper.vm.activeTag = 'a&b c'
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    const listCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('/api/ai/sessions'))
+    expect(String(listCall![0])).toBe('/api/ai/sessions?tag=a%26b+c')
+  })
+
+  it('omits the query string entirely when no tag filter is active', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+    const wrapper = await mountList()
+    await flushPromises()
+
+    mockFetch.mockClear()
+    wrapper.vm.activeTag = 'bug'
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    mockFetch.mockClear()
+    wrapper.vm.activeTag = ''
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    const listCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('/api/ai/sessions'))
+    expect(String(listCall![0])).toBe('/api/ai/sessions')
   })
 
   it('addSessionLocally prepends session', async () => {

@@ -43,6 +43,11 @@ type Spec struct {
 	// summary stands for, rather than recomputing an index. Empty means the
 	// caller keeps no per-message ids; the boundary is then index-only.
 	HistoryMessageIDs []int64
+	// SessionID is the caller's conversation id. It is sent as the provider's
+	// prompt-cache key so the cache follows one conversation instead of every
+	// request sharing a route. Empty means "no key" (the provider may still
+	// cache by prefix automatically).
+	SessionID string
 	// WorkDir confines every file path the tools touch.
 	WorkDir string
 	// Policy decides which tools exist at all.
@@ -604,6 +609,7 @@ func (r *runner) runModelRound(ctx context.Context, system string, allowTools bo
 		Tools:           r.toolSpecs(allowTools),
 		MaxOutputTokens: r.spec.MaxOutputTokens,
 		ReasoningEffort: r.spec.ThinkingEffort,
+		SessionID:       r.spec.SessionID,
 	})
 	if err != nil {
 		return roundOutput{}, err
@@ -724,6 +730,8 @@ func (a *roundAccumulator) apply(ev llm.Event, r *runner) error {
 		if ev.Usage != nil {
 			r.usage.InputTokens += ev.Usage.InputTokens
 			r.usage.OutputTokens += ev.Usage.OutputTokens
+			r.usage.CacheReadTokens += ev.Usage.CacheReadTokens
+			r.usage.CacheWriteTokens += ev.Usage.CacheWriteTokens
 			r.emit(Event{Kind: EventUsage, Usage: ev.Usage})
 		}
 

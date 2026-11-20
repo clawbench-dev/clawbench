@@ -1807,10 +1807,22 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// port, because the old process keeps it until shutdown step 4 (srv.Shutdown)
 	// — after the stream-finalize grace. Failing here is fatal (os.Exit(1)), so
 	// without the retry a replacement launched during the drain stayed down.
-	mainLn, err := listenMainWithRetry(addr, mainListenRetryWindow, mainListenRetryInterval)
+	rawLn, err := listenMainWithRetry(addr, mainListenRetryWindow, mainListenRetryInterval)
 	if err != nil {
 		slog.Error("failed to listen", slog.String("addr", addr), slog.String("err", err.Error()))
 		os.Exit(1)
+	}
+
+	// In HTTPS mode the listener speaks TLS only, so a plain http:// request
+	// dies in the handshake and never gets a response. Wrap it in the sniffing
+	// mux: TLS connections go to srv.ServeTLS unchanged, plaintext ones get a
+	// 301 to the https URL on this same port. In HTTP mode the listener is
+	// passed through untouched — there is nothing to redirect to.
+	mainLn := rawLn
+	var redirect *redirectMux
+	if scheme == schemeHTTPS {
+		redirect, mainLn = newRedirectMux(rawLn, port)
+		slog.Info("http→https redirect enabled on the same port", slog.Int("port", port))
 	}
 
 	// Start dev HTTP listener before banner (so its slog doesn't disrupt the banner)
@@ -1981,8 +1993,23 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		//    connection/stream after the snapshot below.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		// Drain the HTTP server FIRST, then stop the mux. Order matters: the mux
+		// owns the raw listener that srv.ServeTLS is blocked on, so closing the
+		// mux first makes Serve return "use of closed network connection" —
+		// which is NOT http.ErrServerClosed, so the main goroutine logs "server
+		// failed" and calls os.Exit(1) on every clean shutdown. Draining first
+		// lets Shutdown set its closed flag and Serve return ErrServerClosed.
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Error("server shutdown error", slog.String("err", err.Error()))
+		}
+		// Now free the port. srv.Shutdown only closes connections it accepted
+		// itself; anything still being sniffed (no bytes sent yet) is invisible
+		// to it, and the raw listener is not its to close — the chanListener
+		// handed to srv has a no-op Close. redirect.Close() closes both.
+		if redirect != nil {
+			if err := redirect.Close(); err != nil {
+				slog.Warn("redirect mux close failed", slog.String("err", err.Error()))
+			}
 		}
 		if devSrv != nil {
 			if err := devSrv.Shutdown(shutdownCtx); err != nil {

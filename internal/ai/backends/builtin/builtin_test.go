@@ -350,7 +350,7 @@ func TestHistoryFor_ReplaysUserAndAssistantOnly(t *testing.T) {
 			{Role: "system", Text: "ignored"},
 		},
 	}
-	got := historyFor(req)
+	got := buildHistoryReplay(req).Messages
 	if len(got) != 3 {
 		t.Fatalf("expected fork context + 2 turns, got %d", len(got))
 	}
@@ -364,7 +364,7 @@ func TestHistoryFor_ReplaysUserAndAssistantOnly(t *testing.T) {
 
 // TestHistoryFor_EmptyIsNil pins that a brand-new session replays nothing.
 func TestHistoryFor_EmptyIsNil(t *testing.T) {
-	if got := historyFor(ai.ChatRequest{}); got != nil {
+	if got := buildHistoryReplay(ai.ChatRequest{}).Messages; got != nil {
 		t.Fatalf("expected no history, got %+v", got)
 	}
 }
