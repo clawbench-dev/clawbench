@@ -1153,6 +1153,18 @@ func absWallpaperPath(name string) string {
 
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.
 // Any path not in this list will be rejected with 400 Bad Request.
+//
+// 这张表**只放不属于任何功能的字段**（user.nickname、chat.*、upload.*、
+// usage_meter.* …）。属于某个功能的字段（mail.*、kb.*、forge.*、share.*、
+// tasks.*、terminal.*）由功能自己在其 plugins.Plugin.ConfigFields 里声明，
+// 见 IsPatchablePath。
+//
+// 为什么要分家：原来这是一张 200 行的大表，插件的配置段和宿主自己的字段
+// 混在一起，加一个功能的代价是"记得去这张表补几行"，而漏补的表现是设置页
+// 保存时被 400 拒绝（字段白写）。现在归属关系由插件声明，漏声明的表现变成
+// 守卫测试直接报"这个插件的字段没人声明"。
+//
+// 白名单本身仍然是手写的，不反射派生——反射派生等于把安全边界交给反射。
 var PatchableConfigPaths = map[string]bool{
 	"default_agent":                          true,
 	"chat.initial_messages":                  true,
@@ -1181,10 +1193,6 @@ var PatchableConfigPaths = map[string]bool{
 	"upload.max_files":                       true,
 	"upload.retention_enabled":               true,
 	"upload.retention_days":                  true,
-	"terminal.enabled":                       true,
-	"terminal.idle_timeout":                  true,
-	"terminal.max_sessions":                  true,
-	"terminal.buffer_lines":                  true,
 	"tts.engine":                             true,
 	"tts.tts_model":                          true,
 	"tts.format":                             true,
@@ -1266,15 +1274,6 @@ var PatchableConfigPaths = map[string]bool{
 	"rag.search_limit":                       true,
 	"rag.search_pool_size":                   true,
 	"rag.retention_days":                     true,
-	"kb.enabled":                             true,
-	"kb.auto_inject":                         true,
-	"kb.inject_top_n":                        true,
-	"kb.inject_max_chars":                    true,
-	"kb.inject_min_similarity":               true,
-	"kb.max_file_mb":                         true,
-	"kb.max_text_mb":                         true,
-	"kb.poll_interval":                       true,
-	"kb.embed_batch_size":                    true,
 	"port_forward.enabled":                   true,
 	"port_forward.port":                      true,
 	"port_forward.allowed_ports":             true,
@@ -1300,36 +1299,9 @@ var PatchableConfigPaths = map[string]bool{
 	"feishu.app_secret":                      true,
 	"feishu.users":                           true,
 	"push_mode":                              true,
-	"forge.enabled":                          true,
-	"forge.insecure_tls":                     true,
-	"forge.notify.opened":                    true,
-	"forge.notify.closed":                    true,
-	"forge.notify.merged":                    true,
-	"forge.notify.reopened":                  true,
-	"forge.notify.commented":                 true,
-	"forge.notify.pipeline":                  true,
-	"forge.pause_event_tasks":                true,
-	"mail.enabled":                           true,
-	"mail.notify":                            true,
-	"mail.sync_interval_minutes":             true,
-	"mail.sync_window":                       true,
-	"mail.body_prefetch":                     true,
 	// Master switches for scheduled tasks and public share links. Both are
 	// destructive when set to false (cancel runs / revoke links) — see the
 	// PATCH description in the OpenAPI spec.
-	"tasks.enabled":              true,
-	"tasks.retention_enabled":    true,
-	"tasks.retention_days":       true,
-	"tasks.notify_on_success":    true,
-	"tasks.notify_on_failure":    true,
-	"tasks.timezone":             true,
-	"share.enabled":              true,
-	"share.allow_files":          true,
-	"share.allow_sessions":       true,
-	"share.allow_meetings":       true,
-	"share.allow_download":       true,
-	"share.link_ttl_days":        true,
-	"share.show_project_name":    true,
 	"git_history.page_size":      true,
 	"file_search.display_limit":  true,
 	"tls.cert_dir":               true,
@@ -1359,6 +1331,30 @@ var PatchableConfigPaths = map[string]bool{
 	// draw.io editor download source. Validated and applied below; without this
 	// entry the settings field is rejected with 400 and can never be saved.
 	"drawio.download_url": true,
+}
+
+// IsPatchablePath 报告 path 能否被 PATCH /api/config 修改。
+//
+// 三个来源，按顺序：
+//  1. PatchableConfigPaths —— 不属于任何功能的字段（user.nickname、chat.*…）；
+//  2. builtinConfigFields —— 属于某个内置功能的字段（mail.*、tasks.*…）；
+//  3. plugins 注册表 —— 第三方/动态注册的插件贡献的字段。
+//
+// 前两个是编译期事实，第三个是运行时状态。内置功能**同时**登记在 2 与 3
+// （后者用于声明归属与守卫核对），但校验只认 1、2 —— 理由见
+// builtin_config_fields.go 的头注释：单测里插件注册表是空的。
+//
+// 第 3 条是给未来的外部插件留的口子：它注册时不在编译期清单里，只能靠
+// 注册表补充。
+func IsPatchablePath(path string) bool {
+	if PatchableConfigPaths[path] {
+		return true
+	}
+	if IsBuiltinConfigField(path) {
+		return true
+	}
+	_, ok := plugins.ConfigPaths()[path]
+	return ok
 }
 
 // Engine identifiers for the TTS vendor engines. Constants because the same
@@ -1838,7 +1834,7 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	// the switch as enabled, while the server is disabled. The user would then
 	// be told "save failed" about a change that did take effect.
 	disableWarnings := applyPluginDisableEffects(patch)
-	disableWarnings = append(disableWarnings, applyFeatureDisableEffects(patch)...)
+	disableWarnings = append(disableWarnings, applyUnclaimedConfigEffects(patch)...)
 
 	// Classify fields into hot (no restart) and cold (needs restart).
 	//
@@ -1899,61 +1895,90 @@ func writePatchValueError(w http.ResponseWriter, r *http.Request, err error) {
 	})
 }
 
-// applyPluginDisableEffects runs every registered plugin's OnDisable hook for
-// the features THIS patch turned off.
+// applyPluginDisableEffects runs every registered plugin's OnDisable / SwitchEffect
+// hook for the features THIS patch switched.
 //
-// It is the generalized form of the two hand-written helpers it replaced
+// It is the generalized form of the hand-written helpers it replaced
 // (clearForgeBindingsOnDisable / the share half of applyFeatureDisableEffects):
 // the destructive work lives on the plugin, and the handler only owns the
-// timing (after writeConfigYAML succeeded) and the "did this patch turn it off"
-// test.
+// timing (after writeConfigYAML succeeded) and the "did this patch touch the
+// switch" test.
+//
+// Two hook shapes, because two kinds of switch exist:
+//   - OnDisable: one direction only ("off means revoke" — forge bindings,
+//     share links). Called only when the patch sets enabled=false.
+//   - SwitchEffect: both directions (tasks: off cancels runs and discards
+//     queued events, on restarts cron). Called with the new value either way.
 //
 // A plugin qualifies when it declares a Section and that section carries
-// `enabled: false` in the patch. Absent `enabled` means "this patch did not
-// touch the switch", so sub-setting edits never trigger a revoke.
-//
-// The tasks master switch is deliberately NOT modeled this way: its effect is
-// bidirectional (off cancels runs and discards queued events, on restarts cron)
-// while OnDisable only has one direction. It stays in
-// applyFeatureDisableEffects, which runs right after this.
+// `enabled` in the patch. Absent `enabled` means "this patch did not touch the
+// switch", so sub-setting edits never trigger a revoke.
 func applyPluginDisableEffects(patch map[string]any) []string {
 	var warnings []string
 	for _, p := range plugins.All() {
-		if p.OnDisable == nil || p.Section == "" {
+		if p.Section == "" {
+			continue
+		}
+		if p.OnDisable == nil && p.SwitchEffect == nil {
 			continue
 		}
 		section, ok := patch[p.Section].(map[string]any)
 		if !ok {
 			continue
 		}
+		// enabled 的"出现"是判据，不是它的值：只有补丁真的碰了开关才触发
+		// 副作用，改子配置项（mail.sync_window 之类）不该撤销任何东西。
 		enabled, ok := section["enabled"].(bool)
-		if !ok || enabled {
+		if !ok {
 			continue
 		}
-		warnings = append(warnings, p.OnDisable()...)
+		// 双向开关两个方向都要跑（关掉取消执行、打开重排 cron）；
+		// OnDisable 只在关的方向跑。
+		if p.SwitchEffect != nil {
+			warnings = append(warnings, p.SwitchEffect(enabled)...)
+			continue
+		}
+		if !enabled {
+			warnings = append(warnings, p.OnDisable()...)
+		}
 	}
 	return warnings
 }
 
-// applyFeatureDisableEffects applies the tasks master switch.
+// TasksSwitchEffect 应用任务总开关（双向）。
 //
-// Like applyPluginDisableEffects this runs AFTER the config write succeeded:
-// the destructive part (cancelling runs, discarding queued events) is
-// irreversible, so it must not happen for a change that failed to persist.
+// 它是 plugins.Plugin.SwitchEffect 的实现：任务开关与 forge/share 不同，
+// 两个方向都有不可逆动作 —— 关掉要取消运行中的执行、丢弃排队事件；打开要
+// 用当前的时区重排 cron，且每次激活时间从"现在"重算（不补做错过的）。
 //
-// A failure is a WARNING, not a 500, for the same reason as the plugin hooks:
-// the config is already the authoritative fact, and answering 500 would make
-// the client roll the switch back to "enabled" while the server is disabled.
-func applyFeatureDisableEffects(patch map[string]any) []string {
+// 因此它不能是 OnDisable（那个只有一个方向）。以前这段逻辑留在
+// handler.applyFeatureDisableEffects 里，让"任务"成为唯一没被插件化收编的
+// 功能；搬到这里之后，handler 不再认识任何一个具体功能。
+//
+// 失败是 WARNING 不是 500：配置已经落盘并生效了，回 500 会让客户端把开关
+// 回滚成"开着"，而服务端其实已经关了。
+func TasksSwitchEffect(enabled bool) []string {
+	// Scheduler.SetEnabled 自带 nil 判断（调度器在测试或初始化失败时可能是
+	// nil），所以这里不再加一层"否则静默返回"——那会让"调度器根本没起来"
+	// 表现为开关拨了但什么也没发生。
+	service.GlobalScheduler.SetEnabled(enabled)
+	return nil
+}
+
+// applyUnclaimedConfigEffects 应用那些**不属于任何插件**的配置段副作用。
+//
+// 名字里不再是"Disable"：任务总开关迁到 plugins.Plugin.SwitchEffect 之后
+// （见 TasksSwitchEffect），这里只剩 tasks.timezone —— 它不是开关，任何一次
+// 修改都要重排 cron，与"开了还是关了"无关，所以既不属于 OnDisable 也不属于
+// SwitchEffect。它是本包唯一还认识具体功能字段的地方，写在这里是因为时区
+// 只是调度器的一个参数，够不上"功能生命周期"。
+//
+// 与 applyPluginDisableEffects 一样，跑在配置写盘成功之后：破坏性动作不能
+// 发生在"其实没存上"的情况下。
+func applyUnclaimedConfigEffects(patch map[string]any) []string {
 	var warnings []string
 
 	if tasksMap, ok := patch["tasks"].(map[string]any); ok {
-		if enabled, ok := tasksMap["enabled"].(bool); ok {
-			// Handles BOTH directions: false stops cron, cancels running
-			// executions and discards queued events; true restarts cron with
-			// every next activation recomputed from now (no catch-up).
-			service.GlobalScheduler.SetEnabled(enabled)
-		}
 		if tz, ok := tasksMap["timezone"].(string); ok {
 			// Re-registers every cron entry under the new zone. A change to the
 			// zone is not destructive, so a failure is only a warning.
@@ -1979,7 +2004,7 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 			// recursing would silently accept an empty object, and the merged
 			// YAML (e.g. `wallpaper_enabled: {}`) would then fail to unmarshal
 			// into the typed config on the next startup.
-			if PatchableConfigPaths[path] {
+			if IsPatchablePath(path) {
 				return nil, fmt.Errorf("field '%s' must be a scalar value, not an object", path)
 			}
 			// An object is only allowed when it can contain something
@@ -1996,7 +2021,7 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 			}
 			fields = append(fields, nestedFields...)
 		} else {
-			if !PatchableConfigPaths[path] {
+			if !IsPatchablePath(path) {
 				return nil, fmt.Errorf("field '%s' is not allowed", path)
 			}
 			fields = append(fields, path)
@@ -2011,6 +2036,19 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 func hasPatchableDescendant(path string) bool {
 	prefix := path + "."
 	for p := range PatchableConfigPaths {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	// 内置功能与插件声明的字段同样算"这个对象里有可改的东西"（mail.*、kb.*
+	// 这类整个配置段）。只看核心表会让 `{"mail": {...}}` 被判成"不允许的
+	// 子树"，于是所有功能开关都改不了。
+	for p := range builtinConfigFields {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	for p := range plugins.ConfigPaths() {
 		if strings.HasPrefix(p, prefix) {
 			return true
 		}
@@ -3638,7 +3676,8 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 
 	// Tasks / Share: the two master switches plus their sub-settings. The
 	// destructive side effects (cancelling runs, revoking links) run AFTER the
-	// config write succeeds — see applyFeatureDisableEffects.
+	// config write succeeds — see applyPluginDisableEffects (forge/share/tasks)
+	// and applyUnclaimedConfigEffects (tasks.timezone).
 	if tasksMap, ok := patch["tasks"].(map[string]any); ok {
 		if v, ok := tasksMap["enabled"].(bool); ok {
 			cfg.Tasks.Enabled = v

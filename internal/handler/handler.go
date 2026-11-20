@@ -675,22 +675,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	registerRoute(mux, "/share-target", ShareTarget)
 	routeTable = append(routeTable, Route{Pattern: "/share-target", Authenticated: true})
 
-	// GitHub / GitLab integration (read-only issue & PR browsing).
-	register("/api/forge/credentials", ServeForgeCredentials)
-	register("/api/forge/verify-token", ServeForgeVerifyToken)
-	register("/api/forge/items", ServeForgeItems)
-	register("/api/forge/item", ServeForgeItem)
-	register("/api/forge/comments", ServeForgeComments)
-	register("/api/forge/pipelines", ServeForgePipelines)
-	register("/api/forge/pipeline", ServeForgePipeline)
-	register("/api/forge/item-pipelines", ServeForgeItemPipelines)
-	register("/api/forge/binding", ServeForgeBinding)
-	register("/api/forge/remotes", ServeForgeRemotes)
-	register("/api/forge/test", ServeForgeTest)
-	register("/api/forge/unread", ServeForgeUnread)
-	register("/api/forge/unread-items", ServeForgeUnreadItems)
-	register("/api/forge/read", ServeForgeMarkRead)
-
 	// Cross-agent skill discovery: what was found across every agent's native
 	// directory, the user's own directory and cloned git repositories, plus a
 	// manual git sync trigger. The settings themselves live in /api/config.
@@ -698,89 +682,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/skills/refresh", ServeSkillsRefresh)
 	register("/api/skills/rescan", ServeSkillsRescan)
 
-	// Public file-share links. Management endpoints are auth-protected; the
-	// public data endpoints (/api/share/{token}/...) and the share SPA page
-	// (/share/{token}) are intentionally unauthenticated — the capability token
-	// in the URL is the sole credential, and no token means a 404 (zero
-	// exposure when the feature is unused).
-	register("/api/share", ServeShareManage)
-	register("/api/share/list", ServeShareList)
-	// Conversation (session) share links. Exact path so it is matched ahead of
-	// the public /api/share/ subtree; see ServeSessionShareManage.
-	register("/api/share/session", ServeSessionShareManage)
-	// Management list for conversation shares: GET lists this project's shares,
-	// DELETE revokes one by token or all of them. Separate from
-	// /api/share/session because that one operates on a single session id, and an
-	// archived session has no addressable id left.
-	register("/api/share/session/list", ServeSessionShareList)
-	// Live screen/audio share. Management is authenticated (the publisher must
-	// own the project); the viewer socket is public because the share token IS
-	// the credential, exactly like the file/session share endpoints above.
-	register("/api/live-share", ServeLiveShareManage)
-	register("/api/live-share/publish/ws", LiveSharePublishWS)
-	// 中继服务 (LiveKit) endpoint + credential. Installation-wide, not per
-	// meeting: the create dialog edits it, every meeting that opts in uses it.
-	// The secret is write-only — see handler/live_sfu.go.
-	register("/api/live-share/sfu", ServeLiveSFUConfig)
-	register("/api/live-share/sfu/test", ServeLiveSFUTest)
-	// Signaling proxy for a LOOPBACK relay. Public like the viewer socket: an
-	// https page cannot open ws://, so it asks the origin instead, and the
-	// LiveKit token it carries is the credential. Only 127.0.0.1 is ever
-	// dialed — see handler/live_proxy.go.
-	registerPublic("/livekit/", ServeLiveKitProxy)
-	// AI 听记: the publisher uploads one audio segment per channel, reads the
-	// merged timeline back, and asks for the minutes once the share ends.
-	register("/api/live-share/notes", ServeLiveShareNotes)
-	register("/api/live-share/notes/segment", ServeLiveShareNoteSegment)
-	register("/api/live-share/notes/stream", LiveNotesStreamWS)
-	// Folds the per-segment audio into one file per channel plus the
-	// whole-meeting mix; called once the upload queue has drained.
-	register("/api/live-share/notes/audio/merge", ServeLiveNotesAudioMerge)
-	register("/api/live-share/notes/minutes", ServeLiveShareNotesMinutes)
-	// Chat is persisted as it happens (the publisher is the only writer): the
-	// meeting record keeps it after the room is gone.
-	register("/api/live-share/notes/chat", ServeLiveShareNoteChat)
-	// Files opened during the meeting, as intervals. Same reasoning as chat:
-	// the publisher reports them while the room is live, the record keeps them.
-	register("/api/live-share/notes/files", ServeLiveShareNoteFiles)
-	// Who was sharing the screen, as intervals. Recorded as transitions so the
-	// timeline can never show two sharers at once.
-	register("/api/live-share/notes/screen", ServeLiveShareNoteScreen)
-	// Key frames captured by the publisher while a screen is on the wire: POST
-	// uploads one, DELETE removes one, GET (below) lists them.
-	register("/api/live-share/notes/shot", ServeLiveShareNoteShot)
-	register("/api/live-share/notes/shots", ServeLiveNotesShots)
-	// Screen recording (picture + annotations + the meeting's audio mix). The
-	// publisher appends ordered chunks while the switch is on; finish closes the
-	// session. The file lives beside the other artifacts, so the record's
-	// resource tab lists it with no extra table.
-	register("/api/live-share/notes/recording", ServeLiveShareNoteRecording)
-	register("/api/live-share/notes/recording/finish", ServeLiveShareNoteRecordingFinish)
-	// Meeting records: GET lists the project's meetings (the database row is the
-	// record, permanent), DELETE removes one with its folder.
-	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)
-	// Whether this record's link stays readable after the meeting ends. Off by
-	// default: the token is minted automatically for viewers to join, which is
-	// not the same as publishing the archived record.
-	register("/api/live-share/notes/sessions/share", ServeLiveNotesShare)
-	// Clear every record of this project in one call. Its own path (not a query
-	// flag on the single delete) because the two answer differently: one either
-	// deletes or refuses, the other deletes what it can and reports the rest.
-	register("/api/live-share/notes/sessions/all", ServeLiveNotesClear)
-	register("/api/live-share/notes/sessions/artifact", ServeLiveNotesArtifact)
-	register("/api/live-share/notes/sessions/chat", ServeLiveNotesChat)
-	// Import an existing recording or video as a meeting: the file is decoded to
-	// the same mono Opus track a solo recording produces, then the ordinary
-	// transcript → proofread → minutes chain runs on it.
-	register("/api/live-share/notes/import", ServeLiveNotesImport)
-	// Regeneration: plan first (the confirmation sheet), then accept or cancel.
-	// The plan endpoint is read-only; the POST recomputes the plan instead of
-	// trusting the client's copy.
-	register("/api/live-share/notes/regenerate/plan", ServeLiveShareNotesRegeneratePlan)
-	register("/api/live-share/notes/regenerate/cancel", ServeLiveShareNotesRegenerateCancel)
-	register("/api/live-share/notes/regenerate", ServeLiveShareNotesRegenerate)
-	registerPublic("/api/share/", ServeSharePublic)
-	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)
 	register("/api/file/list-tree", ServeListTree)
 	register("/api/fs/thumb", FileThumb)
@@ -849,23 +750,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/rebuild/status", ServeRAGRebuildStatus)
 	register("/api/rag/session-search", ServeRAGSessionSearch)
 	register("/api/rag/session-first-message", ServeRAGSessionFirstMessage)
-
-	// Knowledge base: multiple collections scoped globally or per project,
-	// files copied into the data directory and indexed for keyword + semantic
-	// search. Separate tables from the chat index above.
-	register("/api/kb/collections", ServeKBCollections)
-	register("/api/kb/documents", ServeKBDocuments)
-	register("/api/kb/documents/upload", ServeKBDocumentUpload)
-	register("/api/kb/documents/import", ServeKBDocumentImport)
-	register("/api/kb/documents/url", ServeKBDocumentURL)
-	register("/api/kb/documents/move", ServeKBDocumentMove)
-	register("/api/kb/documents/usage", ServeKBDocumentUsage)
-	register("/api/kb/documents/reindex", ServeKBDocumentReindex)
-	register("/api/kb/documents/refresh", ServeKBDocumentRefresh)
-	register("/api/kb/documents/progress", ServeKBDocumentProgress)
-	register("/api/kb/search", ServeKBSearch)
-	register("/api/kb/reindex", ServeKBReindex)
-	register("/api/kb/status", ServeKBStatus)
 
 	// Client log collection — auth-protected.
 	// This is an append-only write primitive into a file on the server, so an
@@ -942,16 +826,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// allowed-range guard mirrors the SSH reverse path.
 	register("/api/tunnel/control", TunnelControl)
 
-	// Terminal (interactive web terminal with PTY + WebSocket + xterm.js)
-	register("/api/terminal/ws", TerminalWebSocket)
-	register("/api/terminal/status", TerminalStatus)
-	register("/api/terminal/close", TerminalClose)
-	register("/api/terminal/quick-commands", ServeQuickCommands)
-	register("/api/terminal/quick-commands/", ServeQuickCommandByID)
-	register("/api/terminal/history", ServeTerminalHistory)
-	register("/api/terminal/history/", ServeTerminalHistoryByID)
-	register("/api/terminal/key-config", ServeKeyConfig)
-
 	// Global event WebSocket (replaces polling for session/task status)
 	register("/api/ai/events/ws", func(w http.ResponseWriter, r *http.Request) {
 		ws.EventsHandler(w, r)
@@ -964,24 +838,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// events. GET lists (with project/kind/time filters + keyset paging);
 	// DELETE clears the whole log.
 	register("/api/notifications", ServeNotificationsOrClear)
-
-	// Built-in mail client: accounts, cached folders/messages, send, drafts.
-	// Data is global (a mailbox belongs to the person, not to a project).
-	// The whole prefix is gated by the mail plugin's master switch (see
-	// register above) — /api/mail/send used to stay reachable while mail was
-	// off, because the switch only stopped the background sync.
-	register("/api/mail/presets", ServeMailPresets)
-	register("/api/mail/accounts", ServeMailAccounts)
-	register("/api/mail/accounts/", ServeMailAccountSubRoutes)
-	register("/api/mail/folders", ServeMailFolders)
-	register("/api/mail/folders/", ServeMailFolderSubRoutes)
-	register("/api/mail/messages", ServeMailMessages)
-	register("/api/mail/messages/", ServeMailMessageSubRoutes)
-	register("/api/mail/unread", ServeMailUnread)
-	register("/api/mail/send", ServeMailSend)
-	register("/api/mail/attachments", ServeMailAttachments)
-	register("/api/mail/drafts", ServeMailDrafts)
-	register("/api/mail/drafts/", ServeMailDraftSubRoutes)
 
 	// Chat quick-send (CRUD for quick-send presets stored in database)
 	register("/api/chat/quick-send", ServeChatQuickSend)
@@ -1013,6 +869,26 @@ func RegisterRoutes(mux *http.ServeMux) {
 	registerPublic("/api/drawio/status", ServeDrawioStatus)
 	register("/api/drawio/install", ServeDrawioInstall)
 	register("/api/drawio/upload", ServeDrawioUpload)
+
+	// 内置功能的接口由功能自己的挂载文件注册。
+	//
+	// 这里直接调用本包的 Mount*Routes，而不是遍历 plugins 注册表 —— 两条
+	// 理由：
+	//
+	//  1. 路由是**编译期确定**的事实，注册表是运行时状态。测试会反复
+	//     plugins.Reset()，若路由挂在注册表上，RegisterRoutes 在空注册表
+	//     下就会少挂一半接口（整个 /api/share、/api/mail 消失），而这类
+	//     失败只会在单测里出现、生产上恰好正常，属于最难查的一类。
+	//  2. 门控仍然走注册表：mount.Auth 内部调用 plugins.ForRoute，
+	//     插件没注册就是不门控，路由照样可达 —— 与 "功能关不掉" 相比，
+	//     "测试里没人注册所以不门控" 是更可接受的降级。
+	//
+	// 插件注册表与这份清单的对应关系由 cmd/server 的两个守卫核对：
+	// TestPluginRegistry_EveryRoutePrefixHasMountedRoutes（声明了前缀就必须
+	// 有路由挂上去）与 TestPluginRegistry_DeclaredPrefixesOwnRealRoutes
+	// （挂上去的路由必须归同一个插件管）。
+	mount := plugins.Mount{Auth: register, Public: registerPublic}
+	mountBuiltinRoutes(mount)
 
 	// Serve static assets from frontend filesystem (disk build dir > embed fallback)
 	// http.FileServerFS internally cleans paths before Open(), preventing traversal.

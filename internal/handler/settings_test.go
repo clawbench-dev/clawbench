@@ -800,7 +800,10 @@ func TestServeConfig_Patch_ForgeDisableClearsBindings(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	registerDisableHookPlugin(t, "forge", "forge", ForgeDisableEffect)
+	registerDisableHookPlugin(t, "forge", "forge", ForgeDisableEffect, map[string]bool{
+		"forge.enabled":      true,
+		"forge.insecure_tls": true,
+	})
 	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: true}}
 
 	// Bind the test project (and a second one) so the clear has something to do.

@@ -2104,8 +2104,22 @@ func registerPlugins(port int) {
 		// 里的关闭分支），所以按方法豁免——POST/DELETE 仍然要被拒。
 		APIPrefixes: []string{"/api/forge/"},
 		GateExempt:  []string{"GET /api/forge/binding"},
-		Start:       func(model.Config) { startForgePoller() },
-		Stop:        service.StopForgePoller,
+		// 接口由功能自己的挂载文件声明（handler/mount_forge.go）。
+		// 可修改的配置字段（PATCH /api/config），归属声明；实际校验由
+		// handler.builtinConfigFields 承担，两份的一致性有守卫测试钉住。
+		ConfigFields: map[string]bool{
+			"forge.enabled":           true,
+			"forge.insecure_tls":      true,
+			"forge.pause_event_tasks": true,
+			"forge.notify.opened":     true,
+			"forge.notify.closed":     true,
+			"forge.notify.merged":     true,
+			"forge.notify.reopened":   true,
+			"forge.notify.commented":  true,
+			"forge.notify.pipeline":   true,
+		},
+		Start: func(model.Config) { startForgePoller() },
+		Stop:  service.StopForgePoller,
 		// 关闭即撤销：绑定是"会对外发请求"的东西，清掉它才让"关闭"等于
 		// "不再和 GitHub/GitLab 说话"，而不只是隐藏入口。轮询器每个周期也会
 		// 自己看开关（这里是第二道防线，覆盖清空提交前的窗口）。
@@ -2122,6 +2136,17 @@ func registerPlugins(port int) {
 		// 功能是开着的但跑不了，前端要灰显而不是隐藏。
 		Available:   kb.Available,
 		APIPrefixes: []string{"/api/kb/"},
+		ConfigFields: map[string]bool{
+			"kb.enabled":               true,
+			"kb.auto_inject":           true,
+			"kb.inject_top_n":          true,
+			"kb.inject_max_chars":      true,
+			"kb.inject_min_similarity": true,
+			"kb.max_file_mb":           true,
+			"kb.max_text_mb":           true,
+			"kb.poll_interval":         true,
+			"kb.embed_batch_size":      true,
+		},
 		// 热更新：索引器与嵌入客户端按新配置重建（与 rag 共享嵌入端点）。
 		Reconfigure: func(cfg model.Config) { kb.Reconfigure(cfg.KB, cfg.RAG) },
 	})
@@ -2133,6 +2158,13 @@ func registerPlugins(port int) {
 		DefaultOn: true,
 		// 邮箱数据是全局的（属于人，不属于项目），前缀下没有任何项目路由。
 		APIPrefixes: []string{"/api/mail/"},
+		ConfigFields: map[string]bool{
+			"mail.enabled":               true,
+			"mail.notify":                true,
+			"mail.sync_interval_minutes": true,
+			"mail.sync_window":           true,
+			"mail.body_prefetch":         true,
+		},
 		// 后台收信。worker 每个周期也会自己看开关（第二道防线），这里的
 		// Start/Stop 让"关掉"真的不占一个常驻 goroutine。
 		Start: func(model.Config) { service.StartMailSyncWorker() },
@@ -2149,6 +2181,15 @@ func registerPlugins(port int) {
 		// registerPublic，永远不进 Gate——分享关闭时旧链接由服务端返回 404，
 		// 而不是 409。
 		APIPrefixes: []string{"/api/share/"},
+		ConfigFields: map[string]bool{
+			"share.enabled":           true,
+			"share.allow_files":       true,
+			"share.allow_sessions":    true,
+			"share.allow_meetings":    true,
+			"share.allow_download":    true,
+			"share.link_ttl_days":     true,
+			"share.show_project_name": true,
+		},
 		// 关闭即撤销：链接是服务端签发的凭证，关掉必须让旧链接立刻失效。
 		// 重新打开不会恢复已撤销的链接——那是"撤销"唯一诚实的读法。
 		OnDisable: handler.ShareDisableEffect,
@@ -2162,6 +2203,18 @@ func registerPlugins(port int) {
 		// 路由表里 "/api/tasks" 与 "/api/tasks/" 是两个 pattern，声明一次即可
 		// 同时覆盖（ForRoute 抹平尾部斜杠后按段边界匹配）。
 		APIPrefixes: []string{"/api/tasks"},
+		ConfigFields: map[string]bool{
+			"tasks.enabled":           true,
+			"tasks.retention_enabled": true,
+			"tasks.retention_days":    true,
+			"tasks.notify_on_success": true,
+			"tasks.notify_on_failure": true,
+			"tasks.timezone":          true,
+		},
+		// 双向开关：关闭要取消运行中的执行并丢弃排队事件，打开要重排 cron。
+		// OnDisable 只表达"关"这一个方向，所以任务用 SwitchEffect（两个方向
+		// 都会带着新值回调）。两者互斥，同一个插件只声明其中一个。
+		SwitchEffect: handler.TasksSwitchEffect,
 		// 任务只有"新建"能被前缀门控——它是唯一靠 method+path 就能识别的操作。
 		//
 		// 其余全部豁免，因为**动作也走 PUT /api/tasks/{id}**，靠 body 里的
@@ -2190,6 +2243,12 @@ func registerPlugins(port int) {
 			return mgr != nil && mgr.IsPlatformSupported()
 		},
 		APIPrefixes: []string{"/api/terminal/"},
+		ConfigFields: map[string]bool{
+			"terminal.enabled":      true,
+			"terminal.idle_timeout": true,
+			"terminal.max_sessions": true,
+			"terminal.buffer_lines": true,
+		},
 		// 状态端点是只读能力探测，关闭时**必须**放行：前端靠它区分"功能关了"
 		// 与"这台机器跑不了终端"（设置页在 platform_supported=false 时把开关
 		// 置灰）。整段门控会让它 503，前端 catch 里把平台能力一起置 false，

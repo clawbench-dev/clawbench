@@ -79,6 +79,16 @@ func TestServeConfig_PatchTasksSwitchCancelsAndRestarts(t *testing.T) {
 	model.DataDir = t.TempDir()
 	model.ConfigInstance = model.Config{Tasks: model.TasksConfig{Enabled: true}}
 
+	// 任务的开关是双向的，所以它声明 SwitchEffect 而不是 OnDisable。
+	registerSwitchEffectPlugin(t, "tasks", "tasks", TasksSwitchEffect, map[string]bool{
+		"tasks.enabled":           true,
+		"tasks.retention_enabled": true,
+		"tasks.retention_days":    true,
+		"tasks.notify_on_success": true,
+		"tasks.notify_on_failure": true,
+		"tasks.timezone":          true,
+	})
+
 	s := service.NewScheduler()
 	t.Cleanup(s.Stop)
 	service.GlobalScheduler = s
@@ -124,18 +134,48 @@ func TestServeConfig_PatchTasksSwitchCancelsAndRestarts(t *testing.T) {
 // main), so the end-to-end "PATCH off → data revoked" tests register the hook
 // themselves. That the REAL forge/share plugins declare these hooks is pinned by
 // cmd/server's TestPluginRegistry_DestructiveDisablesDeclareHooks.
-func registerDisableHookPlugin(t *testing.T, id, section string, onDisable func() []string) {
+//
+// configFields 让测试把"这个功能的哪些配置可改"一并声明——白名单里功能
+// 字段已迁到插件（见 handler.IsPatchablePath），不声明就会被校验拒成 400。
+// 传 nil 表示这个功能没有可改字段。
+func registerDisableHookPlugin(t *testing.T, id, section string, onDisable func() []string, configFields map[string]bool) {
 	t.Helper()
 	plugins.Reset()
 	t.Cleanup(plugins.Reset)
-	plugins.Register(&plugins.Plugin{ID: id, Section: section, OnDisable: onDisable})
+	plugins.Register(&plugins.Plugin{
+		ID: id, Section: section,
+		OnDisable:    onDisable,
+		ConfigFields: configFields,
+	})
+}
+
+// registerSwitchEffectPlugin 对应 main.go 里"双向开关"的那一类插件（任务）。
+// 与 registerDisableHookPlugin 分开是因为两者互斥：同一个插件只该声明
+// OnDisable 或 SwitchEffect 之一。
+func registerSwitchEffectPlugin(t *testing.T, id, section string, effect func(bool) []string, configFields map[string]bool) {
+	t.Helper()
+	plugins.Reset()
+	t.Cleanup(plugins.Reset)
+	plugins.Register(&plugins.Plugin{
+		ID: id, Section: section,
+		SwitchEffect: effect,
+		ConfigFields: configFields,
+	})
 }
 
 func TestServeConfig_PatchShareSwitchRevokesLinks(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 	saveFeatureSwitchState(t)
-	registerDisableHookPlugin(t, "share", "share", ShareDisableEffect)
+	registerDisableHookPlugin(t, "share", "share", ShareDisableEffect, map[string]bool{
+		"share.enabled":           true,
+		"share.allow_files":       true,
+		"share.allow_sessions":    true,
+		"share.allow_meetings":    true,
+		"share.allow_download":    true,
+		"share.link_ttl_days":     true,
+		"share.show_project_name": true,
+	})
 
 	model.DataDir = t.TempDir()
 	model.ConfigInstance = model.Config{Share: model.ShareConfig{Enabled: true}}
