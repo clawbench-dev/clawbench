@@ -215,6 +215,12 @@ type Config struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
 		ArchiveRetentionEnabled bool `yaml:"archive_retention_enabled"` // Enable auto-purge of archived sessions after retention period (default: false)
 		ArchiveRetentionDays    int  `yaml:"archive_retention_days"`    // Days to keep archived sessions before auto-purge (0=keep forever, default: 0)
+		// DeleteACPOnDestroy makes a permanent delete also remove the agent's
+		// own session (ACP session/delete), so no ghost transcript is left in
+		// the CLI's data directory. Archiving never deletes. Best-effort: an
+		// agent without the method, or a failed call, is silently ignored.
+		// (default: true)
+		DeleteACPOnDestroy bool `yaml:"delete_acp_on_destroy"`
 	} `yaml:"session"`
 	RecentProjects struct {
 		MaxCount int `yaml:"max_count"` // Maximum number of recent projects to keep (default: 10)

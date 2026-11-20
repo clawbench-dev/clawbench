@@ -123,6 +123,7 @@
 | 字段 | 默认 | 说明 |
 |---|---|---|
 | `session.max_count` | `15` | 每个项目最多留多少个会话。`0`＝不限 |
+| `session.delete_acp_on_destroy` | `true` | 彻底删除会话时，是否让智能体把自己那边的对话记录也删掉。智能体不支持或调用失败时静默忽略；归档不受影响 |
 | `session.archive_retention_enabled` | `false` | 是否自动清理过期的归档会话 |
 | `session.archive_retention_days` | `0` | 归档保留几天。`0`＝永久保留 |
 | `recent_projects.max_count` | `10` | 项目下拉里保留几个最近项目 |

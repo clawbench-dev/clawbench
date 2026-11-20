@@ -786,7 +786,7 @@ func TestServeSessionsOverview_EmptyResult(t *testing.T) {
 	assert.Empty(t, result.Projects)
 }
 
-// ── DestroySession: DB-only removal, ACP connection closed (never deleted) ──
+// ── DestroySession: DB removal + agent connection teardown ──
 
 func TestDestroySession_ClosesACPConnAndHardDeletes(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -821,9 +821,10 @@ func TestDestroySession_ClosesACPConnAndHardDeletes(t *testing.T) {
 	w := callHandler(DestroySession, req)
 	assertOK(t, w)
 
-	// The ACP connection is closed (CloseConn removes it from the manager) —
-	// never ACP session/delete'd. The connection being gone proves the close
-	// path ran; DestroySession no longer calls DeleteSession at all.
+	// The ACP connection is removed from the manager. Which teardown ran (plain
+	// close vs session/delete) depends on session.delete_acp_on_destroy and is
+	// covered by TestDestroySession_DeletesAgentSessionWhenSettingOn; here the
+	// global config is the zero value, so this is the close path.
 	assert.Eventually(t, func() bool { return mgr.GetConn(sessionID) == nil }, 2*time.Second, 10*time.Millisecond, "ACP connection should be closed by DestroySession")
 
 	// DB records are gone (chat_sessions hard-deleted, no orphans in history).
