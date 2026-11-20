@@ -872,18 +872,20 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	// 内置功能的接口由功能自己的挂载文件注册。
 	//
-	// 这里直接调用本包的 Mount*Routes，而不是遍历 plugins 注册表 —— 两条
-	// 理由：
+	// mountBuiltinRoutes 有两条路径（见它的实现）：
 	//
-	//  1. 路由是**编译期确定**的事实，注册表是运行时状态。测试会反复
-	//     plugins.Reset()，若路由挂在注册表上，RegisterRoutes 在空注册表
-	//     下就会少挂一半接口（整个 /api/share、/api/mail 消失），而这类
-	//     失败只会在单测里出现、生产上恰好正常，属于最难查的一类。
-	//  2. 门控仍然走注册表：mount.Auth 内部调用 plugins.ForRoute，
-	//     插件没注册就是不门控，路由照样可达 —— 与 "功能关不掉" 相比，
-	//     "测试里没人注册所以不门控" 是更可接受的降级。
+	//  1. 生产：遍历 plugins 注册表，调每个插件声明的 MountRoutes。加一个
+	//     带接口的功能时，插件包（internal/plugin/<id>）声明 MountRoutes，
+	//     这里一行都不用改。
+	//  2. handler 单测：注册表为空（handler 不能 import 插件包，否则成环），
+	//     退回到编译期兜底清单。两条路径引用的是**同一批**导出函数
+	//     （MountMailRoutes 这类），所以不会漂移。
 	//
-	// 插件注册表与这份清单的对应关系由 cmd/server 的两个守卫核对：
+	// 门控仍然走注册表：mount.Auth 内部调用 plugins.ForRoute，插件没注册就是
+	// 不门控、路由照样可达。生产上注册表必然非空（cmd/server 在 RegisterRoutes
+	// 之前调 registerPlugins），所以这只影响单测里的降级。
+	//
+	// 插件声明与路由的对应关系由 cmd/server 的两个守卫核对：
 	// TestPluginRegistry_EveryRoutePrefixHasMountedRoutes（声明了前缀就必须
 	// 有路由挂上去）与 TestPluginRegistry_DeclaredPrefixesOwnRealRoutes
 	// （挂上去的路由必须归同一个插件管）。

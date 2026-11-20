@@ -31,12 +31,12 @@ import (
 	// go generate ./internal/ai/backends/all
 	_ "clawbench/internal/ai/backends/all"
 	"clawbench/internal/cli"
-	"clawbench/internal/forge"
 	"clawbench/internal/frontend"
 	"clawbench/internal/handler"
 	"clawbench/internal/kb"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	pluginall "clawbench/internal/plugin/all"
 	"clawbench/internal/plugins"
 	"clawbench/internal/push/common"
 	"clawbench/internal/push/dingtalk"
@@ -50,7 +50,6 @@ import (
 	"clawbench/internal/startup"
 	"clawbench/internal/stt"
 	"clawbench/internal/summarize"
-	"clawbench/internal/terminal"
 	"clawbench/internal/version"
 	"clawbench/internal/wallpaper"
 	"clawbench/internal/ws"
@@ -87,26 +86,6 @@ const (
 	// while leaving generous headroom over the worst observed drain.
 	instanceLockWait = 30 * time.Second
 )
-
-// forgeNotifierAdapter bridges the service package's ForgeNotifier interface to
-// the IM push backends, avoiding an import cycle (service → push → service).
-// It mirrors how emitTaskEvent dispatches to dingtalk/feishu.
-type forgeNotifierAdapter struct{}
-
-// PushForgeEvent renders the event and sends it to the active IM backend.
-func (forgeNotifierAdapter) PushForgeEvent(event service.ForgeEvent, item forge.Item) bool {
-	title, body := service.FormatForgeEventMessage(event, item)
-	switch {
-	case dingtalk.IsStarted():
-		return dingtalk.PushForgeEvent(title, body)
-	case feishu.IsStarted():
-		return feishu.PushForgeEvent(title, body)
-	case wechat.IsStarted():
-		return wechat.PushForgeEvent(title, body)
-	default:
-		return false
-	}
-}
 
 // dingtalkDBAdapter bridges the dingtalk package's DB interface to service package
 // functions, avoiding import cycles between service → dingtalk → service.
@@ -2081,238 +2060,23 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 // registerPlugins 登记全部服务端功能。
 //
-// 这是**唯一注册点**：internal/plugins 只提供类型与注册表，不认识任何实现，
-// 所以 Start / Stop / Reconfigure / OnDisable 这些需要 service / handler / kb
-// 的函数值都在这里注入（与上面 `_ "clawbench/internal/ai/backends/…"` 那批
-// 空白 import 同一个思路——main 是唯一知道所有实现的地方）。
+// 注册点已经不在本文件：每个功能在 internal/plugin/<id> 里自己声明
+// （ID / 路由 / 配置字段 / 生命周期 / 开关效果），internal/plugin/all 负责
+// 汇总，这里只调一次。加一个功能不必再改 main.go。
+//
+// 为什么参数是 port：终端 Manager 需要服务端口，init() 拿不到构造参数，
+// 所以走显式的 RegisterAll(port) 而不是各插件 init() 自注册。
 //
 // Enabled 必须读**实时值**（model.ConfigInstance / model.TasksEnabled 这类
 // 包级全局），不能读启动时的快照：热更新会在进程生命周期内改它，读快照会让
-// "关掉邮件"只对重启后的进程生效。
+// "关掉邮件"只对重启后的进程生效。这条约束现在由各插件包自己遵守。
 //
 // Section 只声明 config.yaml 的段名，PATCH 白名单仍然手写——反射派生白名单
 // 等于把安全边界交给反射，守卫测试会检查该段下每个 yaml 字段都在白名单里。
 func registerPlugins(port int) {
-	// ── 有服务端总开关的功能 ──────────────────────────────────────────────
-	plugins.Register(&plugins.Plugin{
-		ID:        "forge",
-		Section:   "forge",
-		Enabled:   func() bool { return model.ConfigInstance.Forge.Enabled },
-		DefaultOn: true,
-		// 整个前缀归 forge 管。GET /api/forge/binding 例外：前端靠它判断
-		// "未绑定"，关闭时它必须返回空对象而不是 409（见 serveForgeBindingGet
-		// 里的关闭分支），所以按方法豁免——POST/DELETE 仍然要被拒。
-		APIPrefixes: []string{"/api/forge/"},
-		GateExempt:  []string{"GET /api/forge/binding"},
-		// 接口由功能自己的挂载文件声明（handler/mount_forge.go）。
-		// 可修改的配置字段（PATCH /api/config），归属声明；实际校验由
-		// handler.builtinConfigFields 承担，两份的一致性有守卫测试钉住。
-		ConfigFields: map[string]bool{
-			"forge.enabled":           true,
-			"forge.insecure_tls":      true,
-			"forge.pause_event_tasks": true,
-			"forge.notify.opened":     true,
-			"forge.notify.closed":     true,
-			"forge.notify.merged":     true,
-			"forge.notify.reopened":   true,
-			"forge.notify.commented":  true,
-			"forge.notify.pipeline":   true,
-		},
-		Start: func(model.Config) { startForgePoller() },
-		Stop:  service.StopForgePoller,
-		// 关闭即撤销：绑定是"会对外发请求"的东西，清掉它才让"关闭"等于
-		// "不再和 GitHub/GitLab 说话"，而不只是隐藏入口。轮询器每个周期也会
-		// 自己看开关（这里是第二道防线，覆盖清空提交前的窗口）。
-		// 时机由 handler 保证：writeConfigYAML 成功之后才调用。
-		OnDisable: handler.ForgeDisableEffect,
-	})
-
-	plugins.Register(&plugins.Plugin{
-		ID:        "kb",
-		Section:   "kb",
-		Enabled:   func() bool { return model.ConfigInstance.KB.Enabled },
-		DefaultOn: true,
-		// 运行时可用性：知识库的存储/索引器没起来（初始化失败）时，
-		// 功能是开着的但跑不了，前端要灰显而不是隐藏。
-		Available:   kb.Available,
-		APIPrefixes: []string{"/api/kb/"},
-		ConfigFields: map[string]bool{
-			"kb.enabled":               true,
-			"kb.auto_inject":           true,
-			"kb.inject_top_n":          true,
-			"kb.inject_max_chars":      true,
-			"kb.inject_min_similarity": true,
-			"kb.max_file_mb":           true,
-			"kb.max_text_mb":           true,
-			"kb.poll_interval":         true,
-			"kb.embed_batch_size":      true,
-		},
-		// 热更新：索引器与嵌入客户端按新配置重建（与 rag 共享嵌入端点）。
-		Reconfigure: func(cfg model.Config) { kb.Reconfigure(cfg.KB, cfg.RAG) },
-	})
-
-	plugins.Register(&plugins.Plugin{
-		ID:        "mail",
-		Section:   "mail",
-		Enabled:   func() bool { return model.ConfigInstance.Mail.Enabled },
-		DefaultOn: true,
-		// 邮箱数据是全局的（属于人，不属于项目），前缀下没有任何项目路由。
-		APIPrefixes: []string{"/api/mail/"},
-		ConfigFields: map[string]bool{
-			"mail.enabled":               true,
-			"mail.notify":                true,
-			"mail.sync_interval_minutes": true,
-			"mail.sync_window":           true,
-			"mail.body_prefetch":         true,
-		},
-		// 后台收信。worker 每个周期也会自己看开关（第二道防线），这里的
-		// Start/Stop 让"关掉"真的不占一个常驻 goroutine。
-		Start: func(model.Config) { service.StartMailSyncWorker() },
-		Stop:  service.StopMailSyncWorker,
-	})
-
-	plugins.Register(&plugins.Plugin{
-		ID:        "share",
-		Section:   "share",
-		Enabled:   func() bool { return model.ShareEnabled },
-		DefaultOn: true,
-		// "/api/share/" 规范化后同时覆盖精确的 "/api/share" 与 "/api/share/list"
-		// 等子路径。公开的 /api/share/{token} 不在鉴权链上，注册在
-		// registerPublic，永远不进 Gate——分享关闭时旧链接由服务端返回 404，
-		// 而不是 409。
-		APIPrefixes: []string{"/api/share/"},
-		ConfigFields: map[string]bool{
-			"share.enabled":           true,
-			"share.allow_files":       true,
-			"share.allow_sessions":    true,
-			"share.allow_meetings":    true,
-			"share.allow_download":    true,
-			"share.link_ttl_days":     true,
-			"share.show_project_name": true,
-		},
-		// 关闭即撤销：链接是服务端签发的凭证，关掉必须让旧链接立刻失效。
-		// 重新打开不会恢复已撤销的链接——那是"撤销"唯一诚实的读法。
-		OnDisable: handler.ShareDisableEffect,
-	})
-
-	plugins.Register(&plugins.Plugin{
-		ID:        "tasks",
-		Section:   "tasks",
-		Enabled:   func() bool { return model.TasksEnabled },
-		DefaultOn: true,
-		// 路由表里 "/api/tasks" 与 "/api/tasks/" 是两个 pattern，声明一次即可
-		// 同时覆盖（ForRoute 抹平尾部斜杠后按段边界匹配）。
-		APIPrefixes: []string{"/api/tasks"},
-		ConfigFields: map[string]bool{
-			"tasks.enabled":           true,
-			"tasks.retention_enabled": true,
-			"tasks.retention_days":    true,
-			"tasks.notify_on_success": true,
-			"tasks.notify_on_failure": true,
-			"tasks.timezone":          true,
-		},
-		// 双向开关：关闭要取消运行中的执行并丢弃排队事件，打开要重排 cron。
-		// OnDisable 只表达"关"这一个方向，所以任务用 SwitchEffect（两个方向
-		// 都会带着新值回调）。两者互斥，同一个插件只声明其中一个。
-		SwitchEffect: handler.TasksSwitchEffect,
-		// 任务只有"新建"能被前缀门控——它是唯一靠 method+path 就能识别的操作。
-		//
-		// 其余全部豁免，因为**动作也走 PUT /api/tasks/{id}**，靠 body 里的
-		// action 区分（cancel / resume / trigger / pause / read / stop /
-		// deleteExecution），而路由层读不到 body：PUT 既可能是"整体更新"
-		// （要拒），也可能是"取消运行中的执行"（必须放行——关闭开关会取消
-		// 所有执行，用户得能看到并收拾残局）。所以 PUT 交给 handler 按 action
-		// 判断（见 ServeTaskByID），这里整棵子树豁免。
-		//
-		// GET 列表（精确的 "/api/tasks"）也要豁免：关闭后仍要能看。
-		GateExempt: []string{
-			"GET /api/tasks",
-			"/api/tasks/",
-		},
-	})
-
-	plugins.Register(&plugins.Plugin{
-		ID:        "terminal",
-		Section:   "terminal",
-		Enabled:   func() bool { return model.ConfigInstance.Terminal.Enabled },
-		DefaultOn: true,
-		// 终端关掉报 503 是既有行为，保留：那是"运行时没起来"而不是"被关掉了"。
-		DisabledStatus: http.StatusServiceUnavailable,
-		Available: func() bool {
-			mgr := handler.GetTerminalManager()
-			return mgr != nil && mgr.IsPlatformSupported()
-		},
-		APIPrefixes: []string{"/api/terminal/"},
-		ConfigFields: map[string]bool{
-			"terminal.enabled":      true,
-			"terminal.idle_timeout": true,
-			"terminal.max_sessions": true,
-			"terminal.buffer_lines": true,
-		},
-		// 状态端点是只读能力探测，关闭时**必须**放行：前端靠它区分"功能关了"
-		// 与"这台机器跑不了终端"（设置页在 platform_supported=false 时把开关
-		// 置灰）。整段门控会让它 503，前端 catch 里把平台能力一起置 false，
-		// 于是重新打开终端后开关变成"已开但置灰"、页签也不出现，只能刷新。
-		GateExempt: []string{"/api/terminal/status"},
-		// 三个钩子就是原 hotReloadTerminal 的三条分支，拆成"进程级起停"与
-		// "热更新调参"：开关翻转走 Start/Stop，开关不变走 Reconfigure。
-		Start: func(cfg model.Config) {
-			if handler.GetTerminalManager() != nil {
-				return // 幂等：重复 Start 不叠加 Manager
-			}
-			handler.SetTerminalManager(terminal.NewManager(cfg.Terminal, port))
-			slog.Info(
-				"terminal manager initialized",
-				slog.String("idle_timeout", func() string {
-					if cfg.Terminal.IdleTimeout == "" || cfg.Terminal.IdleTimeout == "0" {
-						return "never"
-					}
-					return cfg.Terminal.IdleTimeout
-				}()),
-				slog.Int("buffer_lines", cfg.Terminal.BufferLines),
-			)
-		},
-		Stop: func() {
-			mgr := handler.GetTerminalManager()
-			if mgr == nil {
-				return // 幂等
-			}
-			mgr.CloseAllSessions()
-			handler.SetTerminalManager(nil)
-			slog.Info("terminal manager closed")
-		},
-		Reconfigure: func(cfg model.Config) {
-			if mgr := handler.GetTerminalManager(); mgr != nil {
-				mgr.Reconfigure(cfg.Terminal)
-			}
-		},
-	})
-
-	// ── 纯偏好型（没有服务端开关） ────────────────────────────────────────
-	//
-	// 它们恒 enabled=true，注册是为了让 /api/features 能回答"这个功能存在且
-	// 可用"——前端不再需要按页签 id 硬编码一份清单。可用性（能力）仍在客户端
-	// 探测：端口映射有没有可用传输、原生能力位这些只有客户端知道。
-	plugins.Register(&plugins.Plugin{
-		ID:        "live",
-		DefaultOn: true,
-		// 会议记录与信令。会议"公开纪要"那条开关属于 share，不在这个前缀下。
-		APIPrefixes: []string{"/api/live-share/"},
-	})
-
-	plugins.Register(&plugins.Plugin{
-		ID:        "notifications",
-		DefaultOn: true,
-		// 通知中心是只追加的事件日志：隐藏页签只影响入口，服务端照常写入。
-		APIPrefixes: []string{"/api/notifications"},
-	})
-
-	plugins.Register(&plugins.Plugin{
-		ID:        "stats",
-		DefaultOn: true,
-		// 用量统计页：token/积分账本 + git 统计。
-		APIPrefixes: []string{"/api/usage/", "/api/git/stats", "/api/git/cloc"},
-	})
+	// 具体有哪些功能、各自管哪些路由与配置，全在 internal/plugin/<id> 里。
+	// 加一个功能：建那个包，再在 internal/plugin/all 里加一行。
+	pluginall.RegisterAll(port)
 }
 
 // ── 插件生命周期 ──────────────────────────────────────────────────────────
@@ -2394,52 +2158,6 @@ func syncPluginLifecycle(cfg model.Config) {
 			p.Reconfigure(cfg)
 		}
 	}
-}
-
-// startForgePoller wires the GitHub/GitLab change poller: event broadcasting over
-// WS, the IM push sink, the event-triggered task sink and the notification-center
-// recorder.
-//
-// The provider factory is supplied by the handler package (it owns the
-// credential + TLS policy). Read-only, and it only talks to a platform when at
-// least one project is bound to a repository.
-func startForgePoller() {
-	limiter := forge.NewLimiter(2, 5, 4)
-	// Broadcast forge events over the existing WS channel, and push to the
-	// active IM robot (dingtalk/feishu) when one is running.
-	dispatcher := service.NewForgeEventDispatcher(
-		func() model.Config { return model.ConfigInstance },
-		func(msg any) {
-			if m := ws.GetManager(); m != nil {
-				m.BroadcastEvent(ws.ServerMessage{
-					Type:  ws.MessageTypeEvent,
-					ID:    ws.GenerateEventID(),
-					Event: "forge_event",
-					Data:  msg,
-				})
-			}
-		},
-		forgeNotifierAdapter{},
-	)
-	// Event-triggered AI tasks run off the same derived events. The trigger
-	// owns queueing/debounce/kill-switch and the anti-recursion check; it is
-	// wired as a second sink so notification and automation stay independent.
-	trigger := service.NewForgeTaskTrigger(
-		service.GlobalScheduler,
-		func() model.Config { return model.ConfigInstance },
-		func(repo service.ForgeRepoRef) string {
-			return handler.ForgeCredentialLogin(repo.Platform, repo.Host)
-		},
-	)
-	// Exposed so the tasks master switch can discard queued events when it is
-	// turned off (see Scheduler.SetEnabled).
-	service.GlobalForgeTaskTrigger = trigger
-	// Third sink: the notification-center log. Kept separate from the
-	// dispatcher because it must record every change regardless of the
-	// per-event IM toggles (a muted event still belongs in the history).
-	recorder := service.NewForgeNotificationRecorder()
-	syncer := service.NewForgeSyncer(handler.NewForgeProvider, service.NewForgeCompositeSink(dispatcher, trigger, recorder))
-	service.StartForgePoller(syncer, limiter, func() model.Config { return model.ConfigInstance })
 }
 
 // hotReloadReconfigure is called by applyHotReloadGlobals() after a successful

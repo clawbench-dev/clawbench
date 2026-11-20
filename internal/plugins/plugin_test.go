@@ -197,3 +197,45 @@ func TestStartStopAreOptional(t *testing.T) {
 	withHooks.Start(model.Config{})
 	assert.True(t, started)
 }
+
+// TestRegisterPanicsOnConflictingConfigPaths pins the check that moved from
+// ConfigPaths() (called on every PATCH) to Register (called once at startup).
+//
+// Two plugins claiming the same config path means nobody can say which feature
+// owns it, so the gate has no honest answer. Failing at startup names both
+// plugins; failing inside ConfigPaths() would surface as "saving settings
+// randomly 500s" — much harder to trace back to a registration mistake.
+func TestRegisterPanicsOnConflictingConfigPaths(t *testing.T) {
+	resetRegistry(t)
+
+	Register(&Plugin{ID: "a", ConfigFields: map[string]bool{"shared.field": true}})
+	assert.Panics(t, func() {
+		Register(&Plugin{ID: "b", ConfigFields: map[string]bool{"shared.field": true}})
+	}, "two plugins claiming one config path must panic at Register")
+
+	// A non-conflicting field on a third plugin must still be accepted, and
+	// Reset must clear the reverse index (otherwise the next test would inherit
+	// these claims).
+	Register(&Plugin{ID: "c", ConfigFields: map[string]bool{"other.field": true}})
+	Reset()
+	Register(&Plugin{ID: "d", ConfigFields: map[string]bool{"shared.field": true}})
+}
+
+// TestConfigPaths pins the reverse index built in Register.
+//
+// ConfigPaths is on the PATCH hot path (handler.IsPatchablePath), and it used to
+// rebuild the map from byID on every call — including a duplicate check that
+// panicked there instead of at startup. The index now lives in configPathOwner,
+// so this test also guards that Register and Reset keep it in sync.
+func TestConfigPaths(t *testing.T) {
+	resetRegistry(t)
+
+	Register(&Plugin{ID: "a", ConfigFields: map[string]bool{"a.x": true, "a.y": true}})
+	Register(&Plugin{ID: "b", ConfigFields: map[string]bool{"b.z": true}})
+
+	got := ConfigPaths()
+	require.Len(t, got, 3)
+	assert.Equal(t, "a", got["a.x"].ID)
+	assert.Equal(t, "a", got["a.y"].ID)
+	assert.Equal(t, "b", got["b.z"].ID)
+}

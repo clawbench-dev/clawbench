@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -397,4 +398,34 @@ func TestPluginRegistry_TasksUseSwitchEffect(t *testing.T) {
 	require.NotNil(t, p, "the tasks plugin is not registered")
 	assert.NotNil(t, p.SwitchEffect, "the tasks switch is bi-directional; it must declare SwitchEffect")
 	assert.Nil(t, p.OnDisable, "SwitchEffect already covers the off direction")
+}
+
+// TestPluginRegistry_EveryPluginPackageIsRegistered pins the one manual step
+// left in "add a plugin": after creating internal/plugin/<id>, you must add it
+// to internal/plugin/all.
+//
+// A package that exists but is never registered is invisible at runtime — its
+// MountRoutes never runs (every endpoint 404s), /api/features never mentions it,
+// and its background worker never starts. Everything still compiles, so nothing
+// else catches it.
+func TestPluginRegistry_EveryPluginPackageIsRegistered(t *testing.T) {
+	entries, err := os.ReadDir("../../internal/plugin")
+	require.NoError(t, err, "read internal/plugin")
+	src, err := os.ReadFile("../../internal/plugin/all/all.go")
+	require.NoError(t, err, "read internal/plugin/all/all.go")
+	code := string(src)
+
+	checked := 0
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "all" {
+			continue
+		}
+		id := e.Name()
+		checked++
+		assert.Containsf(t, code, "clawbench/internal/plugin/"+id+`"`,
+			"internal/plugin/%s exists but all.go does not import it — add the import and a %s.Register() call", id, id)
+		assert.Containsf(t, code, "\t"+id+".Register(",
+			"internal/plugin/%s is imported but all.go never calls %s.Register() — the plugin is never registered", id, id)
+	}
+	assert.NotZero(t, checked, "no plugin packages found — the guard would be vacuous")
 }
