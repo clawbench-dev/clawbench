@@ -1306,7 +1306,10 @@ jobs:
       - name: Upload manifest to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" desktop-zips/SHA256SUMS --clobber
+        # `--repo` is required: this job never checks out the repository (it
+        # only downloads the zips), so `gh` has no git remote to infer the
+        # repository from and fails with "not a git repository".
+        run: gh release upload "${{ github.ref_name }}" desktop-zips/SHA256SUMS --clobber --repo "${{ github.repository }}"
 
   publish-npm:
     name: Publish to npm
