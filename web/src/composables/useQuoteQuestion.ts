@@ -471,17 +471,18 @@ function deriveQuoteData(sel: Selection, container: HTMLElement): QuoteData | nu
  * drawer could only show a generic label.
  *
  * `[data-quotable]` is the opt-in for everything the list cannot know about —
- * a new panel's own content. Presence is the whole declaration (the value is
- * ignored), and it is deliberately explicit: a panel says "this region is
- * content", rather than every `div` becoming quotable by accident. Pair it
- * with `data-quote-source` (and any `data-quote-*` locators) so the card has a
- * label and a way back; without them the quote is still valid, just anonymous.
+ * a new panel's own content. Presence turns it on, EXCEPT `="false"`, which
+ * turns it off: a Vue `:data-quotable="flag"` renders "false" rather than
+ * removing the attribute, and a boolean binding that keeps the region quotable
+ * after being switched off is a trap. Pair it with `data-quote-source` (and any
+ * `data-quote-*` locators) so the card has a label and a way back; without them
+ * the quote is still valid, just anonymous.
  */
 function quotableContainer(sel: Selection): HTMLElement | null {
   // `.transcript` and `.live-chat` are the meeting's own content: the minutes
   // and the chat are text the user may want to quote, and the meeting body
   // carries the token that makes the quote addressable.
-  return closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper, .git-diff-scroll, .transcript, .live-chat, [data-quotable]')
+  return closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper, .git-diff-scroll, .transcript, .live-chat, [data-quotable]:not([data-quotable="false"])')
 }
 
 function onSelectionChange() {

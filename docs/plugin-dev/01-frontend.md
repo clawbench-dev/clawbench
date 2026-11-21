@@ -155,12 +155,14 @@ chat.comment(payload, { anchorEl }) // 开浮条写批注
 chat.attach('src/a.ts')             // 附件（默认弹会话选择器）
 ```
 
+`payload` 是你构造好的引用载荷（`QuoteData`，用 `quoteItemFromTarget` / `buildMessageQuote` / `*DragPayload` 构造），`path` 是项目内文件路径。`v-chat-drag` 已在 `main.ts` 全局注册，面板里直接用。
+
 ```html
 <div v-chat-drag="{ kind: 'quote', payload }">…</div>
 <div v-chat-drag="{ kind: 'attach', path }">…</div>
 ```
 
-正文要能被划词引用，给容器加 `data-quotable`（身份仍用 `data-quote-*`）。完整说明见 `docs/spec/features/quotes-and-attachments.md` §3.1 / §3.4 / §3.5。
+正文要能被划词引用，给容器加 `data-quotable`（身份仍用 `data-quote-*`）。`:data-quotable="false"` 视为关闭，其余写法都算开启。完整说明见 `docs/spec/features/quotes-and-attachments.md` §3.1 / §3.4 / §3.5。
 
 ---
 

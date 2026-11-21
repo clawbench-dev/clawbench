@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   prompt: vi.fn(),
   toast: vi.fn(),
   uploadFilesToCollection: vi.fn(),
+  chatBridge: { quote: vi.fn(), comment: vi.fn(), attach: vi.fn() },
 }))
 
 vi.mock('@/utils/api', () => ({
@@ -36,7 +37,7 @@ vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: h.toast }) }
 // covered by useChatBridge.test.ts. Mocking it keeps this suite from pulling
 // the whole quote-bar / session graph in through the facade.
 vi.mock('@/composables/useChatBridge', () => ({
-  useChatBridge: () => ({ quote: vi.fn(), comment: vi.fn(), attach: vi.fn() }),
+  useChatBridge: () => h.chatBridge,
 }))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
 vi.mock('@/stores/app', async () => {
@@ -234,6 +235,7 @@ describe('KnowledgePanel', () => {
     h.confirm.mockResolvedValue(true)
     h.toast.mockReset()
     h.uploadFilesToCollection.mockReset()
+    h.chatBridge.quote.mockReset()
     h.uploadFilesToCollection.mockResolvedValue({ added: 0, failed: 0, errors: [], cancelled: false })
     store.state.projectRoot = '/p'
 
@@ -562,6 +564,32 @@ describe('KnowledgePanel', () => {
     expect(drawer.props('open')).toBe(true)
     expect(drawer.props('documentId')).toBe(1)
     expect(drawer.props('focusChunkId')).toBe(0)
+    wrapper.unmount()
+  })
+
+  // The KB panel used to park the quote in a module-level ref for App.vue to
+  // pick up. It now calls the shared bridge directly; this pins that the
+  // passage really reaches it (and that the drawer closes afterwards).
+  it('quotes a passage through the shared bridge and closes the drawer', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-kb-doc="1"] .kb-doc-open').trigger('click')
+    const drawer = wrapper.findComponent({ name: 'KBDocumentDrawer' })
+    expect(drawer.props('open')).toBe(true)
+
+    drawer.vm.$emit('quote', { text: 'passage', title: 'doc-1.txt' })
+    await nextTick()
+
+    expect(h.chatBridge.quote).toHaveBeenCalledWith({
+      text: 'doc-1.txt\n\npassage',
+      filePath: 'doc-1.txt',
+      language: 'markdown',
+      startLine: 0,
+      endLine: 0,
+      sourceKind: 'selection',
+    })
+    expect(drawer.props('open')).toBe(false)
     wrapper.unmount()
   })
 

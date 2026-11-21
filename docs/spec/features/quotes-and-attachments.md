@@ -140,7 +140,7 @@
 
 `data-quotable` 是**开关**，`data-quote-*` 是**身份**，两件事：
 
-- 白名单（`.markdown-body` / `.raw-content-pre` / `.transcript` …）认的是内置预览的类名；新面板的容器不在里面，**只标 `data-quote-*` 不会弹条**，必须再加 `data-quotable`（属性存在即生效，值忽略）。
+- 白名单（`.markdown-body` / `.raw-content-pre` / `.transcript` …）认的是内置预览的类名；新面板的容器不在里面，**只标 `data-quote-*` 不会弹条**，必须再加 `data-quotable`。属性存在即开启，但 `data-quotable="false"` 例外——Vue 的 `:data-quotable="flag"` 关掉时会渲染成 `"false"` 而不是删属性，所以这个值按关闭处理。
 - 只标 `data-quotable` 也能引用，但卡片没有标签、跳不回来源；实际使用时应同时给 `data-quote-source` 和需要的定位键。
 
 
