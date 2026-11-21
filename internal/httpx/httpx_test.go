@@ -173,9 +173,12 @@ func TestResolveAbsPath(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, filepath.Join(dir, "a.txt"), got, "the absolute form is returned unchanged")
 
-	// Absolute path outside every root → 403.
+	// Absolute path outside every root → 403. The sample must be absolute on
+	// THIS platform: "/etc/passwd" has no drive letter on Windows, so it would
+	// be resolved as a relative path under the project instead.
+	outside := t.TempDir()
 	rec2 := httptest.NewRecorder()
-	_, ok = ResolveAbsPath(rec2, r, "/etc/passwd")
+	_, ok = ResolveAbsPath(rec2, r, filepath.Join(outside, "passwd"))
 	assert.False(t, ok)
 	assert.Equal(t, http.StatusForbidden, rec2.Code)
 
