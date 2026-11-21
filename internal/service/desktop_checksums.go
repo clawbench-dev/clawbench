@@ -36,12 +36,24 @@ var (
 
 	desktopChecksumsMu    sync.Mutex
 	desktopChecksumsByTag = map[string]map[string]string{}
+	// desktopChecksumsRetry holds tags whose fetch FAILED, with the time they
+	// may be tried again. A success is immutable and cached forever; a failure
+	// is not an answer about the release at all (GitHub was unreachable, the
+	// 3s deadline expired), so remembering it for the process lifetime would
+	// silently disable verification for the rest of the server's uptime.
+	desktopChecksumsRetry = map[string]time.Time{}
 )
 
+// desktopChecksumsRetryInterval is how long a failed manifest fetch is
+// remembered before another attempt. Long enough that an offline server does
+// not pay the 3s timeout on every request, short enough that a network that
+// comes back starts verifying again without a restart.
+var desktopChecksumsRetryInterval = 30 * time.Second
+
 // desktopChecksums returns the parsed SHA256SUMS for a tag, or nil when it
-// cannot be fetched. Results (including failures) are cached for the process
-// lifetime: a release tag is immutable, and both API endpoints ask for the same
-// map.
+// cannot be fetched. Successes are cached for the process lifetime (a release
+// tag is immutable, and both API endpoints ask for the same map); failures are
+// retried after desktopChecksumsRetryInterval.
 //
 // The manifest is fetched from github.com DIRECTLY, never through the release
 // prefix proxies. If the zip and the checksum both came from the same proxy, a
@@ -56,12 +68,21 @@ func desktopChecksums(tag string) map[string]string {
 		desktopChecksumsMu.Unlock()
 		return cached
 	}
+	if retryAt, ok := desktopChecksumsRetry[tag]; ok && time.Now().Before(retryAt) {
+		desktopChecksumsMu.Unlock()
+		return nil
+	}
 	desktopChecksumsMu.Unlock()
 
 	checksums := desktopChecksumsFetch(tag)
 
 	desktopChecksumsMu.Lock()
-	desktopChecksumsByTag[tag] = checksums
+	if checksums != nil {
+		desktopChecksumsByTag[tag] = checksums
+		delete(desktopChecksumsRetry, tag)
+	} else {
+		desktopChecksumsRetry[tag] = time.Now().Add(desktopChecksumsRetryInterval)
+	}
 	desktopChecksumsMu.Unlock()
 	return checksums
 }

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,24 @@ func useRealChecksumFetch(t *testing.T) {
 	prev := desktopChecksumsFetch
 	desktopChecksumsFetch = fetchDesktopChecksums
 	t.Cleanup(func() { desktopChecksumsFetch = prev })
+}
+
+// isolateDesktopChecksumsCache gives the test its own empty cache — both the
+// successful-result map and the negative one — and restores the process maps on
+// cleanup. Without the negative map, a tag one test failed to fetch would be
+// served from the retry window in the next test that uses the same tag.
+func isolateDesktopChecksumsCache(t *testing.T) {
+	t.Helper()
+	desktopChecksumsMu.Lock()
+	origCache, origRetry := desktopChecksumsByTag, desktopChecksumsRetry
+	desktopChecksumsByTag = map[string]map[string]string{}
+	desktopChecksumsRetry = map[string]time.Time{}
+	desktopChecksumsMu.Unlock()
+	t.Cleanup(func() {
+		desktopChecksumsMu.Lock()
+		desktopChecksumsByTag, desktopChecksumsRetry = origCache, origRetry
+		desktopChecksumsMu.Unlock()
+	})
 }
 
 func TestParseSHA256SUMS(t *testing.T) {
@@ -55,16 +74,10 @@ func TestDesktopChecksums_FetchesOnceAndFilters(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	isolateDesktopChecksumsCache(t)
 	origURL, origClient := desktopChecksumsURL, desktopChecksumsHTTPClient
-	desktopChecksumsMu.Lock()
-	origCache := desktopChecksumsByTag
-	desktopChecksumsByTag = map[string]map[string]string{}
-	desktopChecksumsMu.Unlock()
 	t.Cleanup(func() {
 		desktopChecksumsURL, desktopChecksumsHTTPClient = origURL, origClient
-		desktopChecksumsMu.Lock()
-		desktopChecksumsByTag = origCache
-		desktopChecksumsMu.Unlock()
 	})
 
 	desktopChecksumsURL = func(gotTag string) string { return srv.URL + "/" + gotTag }
@@ -90,16 +103,10 @@ func TestDesktopChecksums_Non200IsCachedAsMissing(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	isolateDesktopChecksumsCache(t)
 	origURL, origClient := desktopChecksumsURL, desktopChecksumsHTTPClient
-	desktopChecksumsMu.Lock()
-	origCache := desktopChecksumsByTag
-	desktopChecksumsByTag = map[string]map[string]string{}
-	desktopChecksumsMu.Unlock()
 	t.Cleanup(func() {
 		desktopChecksumsURL, desktopChecksumsHTTPClient = origURL, origClient
-		desktopChecksumsMu.Lock()
-		desktopChecksumsByTag = origCache
-		desktopChecksumsMu.Unlock()
 	})
 
 	desktopChecksumsURL = func(gotTag string) string { return srv.URL + "/" + gotTag }
@@ -120,17 +127,11 @@ func isolateDesktopChecksums(t *testing.T, handler http.HandlerFunc) *httptest.S
 	t.Helper()
 	useRealChecksumFetch(t)
 	srv := httptest.NewServer(handler)
+	isolateDesktopChecksumsCache(t)
 	origURL, origClient := desktopChecksumsURL, desktopChecksumsHTTPClient
-	desktopChecksumsMu.Lock()
-	origCache := desktopChecksumsByTag
-	desktopChecksumsByTag = map[string]map[string]string{}
-	desktopChecksumsMu.Unlock()
 	t.Cleanup(func() {
 		srv.Close()
 		desktopChecksumsURL, desktopChecksumsHTTPClient = origURL, origClient
-		desktopChecksumsMu.Lock()
-		desktopChecksumsByTag = origCache
-		desktopChecksumsMu.Unlock()
 	})
 	desktopChecksumsURL = func(tag string) string { return srv.URL + "/" + tag }
 	desktopChecksumsHTTPClient = srv.Client()
@@ -165,6 +166,33 @@ func TestDesktopPackageChecksums_NoMatchingAssetsIsNil(t *testing.T) {
 	})
 	assert.Nil(t, desktopPackageChecksums("v2.0.3"))
 	assert.Nil(t, FusedDesktopChecksums("v2.0.3"))
+}
+
+// A failure is not an answer about the release: GitHub was unreachable, or the
+// 3s deadline expired. Remembering it forever would silently disable the
+// checksum on every later download for the rest of the process's life.
+func TestDesktopChecksums_FailedFetchIsRetriedAfterTheWindow(t *testing.T) {
+	const tag = "v3.0.0"
+	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	hits := 0
+	isolateDesktopChecksums(t, func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		if hits == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_, _ = w.Write([]byte(hash + "  full.zip\n"))
+	})
+	// Collapse the window: it exists so an offline server does not pay the 3s
+	// timeout on every request, not to make the failure permanent.
+	prevInterval := desktopChecksumsRetryInterval
+	desktopChecksumsRetryInterval = 0
+	t.Cleanup(func() { desktopChecksumsRetryInterval = prevInterval })
+
+	assert.Nil(t, desktopChecksums(tag), "the first fetch failed")
+	assert.Equal(t, map[string]string{"full.zip": hash}, desktopChecksums(tag),
+		"the retry must fetch again instead of returning the cached failure")
+	assert.Equal(t, 2, hits)
 }
 
 type failingReader struct{}
