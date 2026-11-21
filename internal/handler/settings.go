@@ -1974,6 +1974,16 @@ func applyPluginDisableEffects(patch map[string]any) []string {
 func applyUnclaimedConfigEffects(patch map[string]any) []string {
 	var warnings []string
 
+	if tasksMap, ok := patch["tasks"].(map[string]any); ok {
+		if tz, ok := tasksMap["timezone"].(string); ok {
+			// Re-registers every cron entry under the new zone. A change to the
+			// zone is not destructive, so a failure is only a warning.
+			if err := service.GlobalScheduler.SetTimezone(tz); err != nil {
+				warnings = append(warnings, fmt.Sprintf("tasks.timezone could not be applied: %v", err))
+			}
+		}
+	}
+
 	return warnings
 }
 
