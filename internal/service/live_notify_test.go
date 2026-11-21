@@ -53,9 +53,9 @@ func TestEmitMeetingEvent_LogsControlRequest(t *testing.T) {
 	assert.Equal(t, MeetingEventControlRequest, rows[0].EventType)
 	assert.Equal(t, "Weekly sync", rows[0].Title)
 	assert.Equal(t, "张三 请求远程控制你的屏幕", rows[0].Body)
-	assert.Equal(t, "tok-1", rows[0].MeetingToken, "the share token is the row's navigation key")
+	assert.Equal(t, "tok-1", rows[0].SubjectID, "the share token is the row's navigation key")
 	assert.NotZero(t, rows[0].ProjectID, "the row must be attributable to its project")
-	assert.Empty(t, rows[0].SessionID, "a meeting has no session")
+	assert.Empty(t, rows[0].ExecutionID, "a meeting has no execution")
 }
 
 func TestEmitMeetingEvent_LocalizesFromConfiguredLanguage(t *testing.T) {
@@ -171,8 +171,8 @@ func TestMarkMissingSources_ProbesLiveNotes(t *testing.T) {
 	require.NoError(t, err)
 
 	rows := []Notification{
-		{ID: 1, Kind: NotificationKindMeeting, MeetingToken: "tok-live"},
-		{ID: 2, Kind: NotificationKindMeeting, MeetingToken: "tok-deleted"},
+		{ID: 1, Kind: NotificationKindMeeting, SubjectID: "tok-live"},
+		{ID: 2, Kind: NotificationKindMeeting, SubjectID: "tok-deleted"},
 	}
 	MarkMissingSources(rows)
 

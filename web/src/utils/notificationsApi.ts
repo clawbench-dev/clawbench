@@ -22,21 +22,16 @@ export interface NotificationItem {
     body: string
     projectId: number
     projectPath: string
-    sessionId?: string
-    taskId?: string
+    /**
+     * The row's subject identity, interpreted by `kind`: a session id, a task
+     * id, a meeting share token, a forge item key, or a mail message id (as
+     * decimal text). Empty for kinds with no local subject (usage).
+     *
+     * One column for every kind, so a new kind needs no wire/schema change.
+     */
+    subjectId?: string
+    /** Task execution to highlight (kind='task'); not the subject identity. */
     executionId?: string
-    forgeItemKey?: string
-    /**
-     * The meeting a kind='meeting' row belongs to (the share token). Clicking
-     * the row opens that meeting's record, so this is its navigation key.
-     */
-    meetingToken?: string
-    /**
-     * The cached mail message a kind='mail' row announced. Clicking opens that
-     * message in the Mail tab; the reader fetches by id, so it need not be on
-     * the folder's loaded page.
-     */
-    mailMessageId?: number
     agentId?: string
     createdAt: string
     /**

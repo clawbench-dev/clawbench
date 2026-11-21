@@ -670,19 +670,19 @@ UNIQUE：`idx_project_forges_path(project_id)`、索引 `idx_project_forges_repo
 |---|---|---|---|---|
 | id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
 | event_id | TEXT | NOT NULL UNIQUE | — | 事件 UUID（幂等写入） |
-| kind | TEXT | NOT NULL | — | 分类：session / task / forge |
+| kind | TEXT | NOT NULL | — | 分类：session / task / forge / usage / meeting / mail |
 | event_type | TEXT | NOT NULL | — | 细类型 |
 | title | TEXT | NOT NULL | — | 标题 |
 | body | TEXT | NOT NULL | `''` | 正文 |
 | project_id | INTEGER | NOT NULL | `0` | 项目 id |
-| session_id | TEXT | NOT NULL | `''` | 关联会话 |
-| task_id | TEXT | NOT NULL | `''` | 关联任务 |
-| execution_id | TEXT | NOT NULL | `''` | 关联执行记录 |
-| forge_item_key | TEXT | NOT NULL | `''` | 关联 forge 条目 |
-| agent_id | TEXT | NOT NULL | `''` | 关联 agent |
+| subject_id | TEXT | NOT NULL | `''` | **所有类型共用的主体标识**，由 kind 解释：会话 id / 任务 id / 会议分享 token / 仓库条目键 / 邮件 id（十进制文本）；usage 为空 |
+| execution_id | TEXT | NOT NULL | `''` | 任务执行记录 id（不是主体标识） |
+| agent_id | TEXT | NOT NULL | `''` | 产生该事件的 agent |
 | created_at | TEXT | NOT NULL | — | 创建时间（亚秒精度） |
 
 索引：`idx_notifications_created(created_at DESC, id DESC)`、`idx_notifications_event UNIQUE(event_id)`、`idx_notifications_filter(project_id, kind, created_at)`
+
+> 早期版本按类型分列（`session_id` / `task_id` / `forge_item_key` / `meeting_token` / `mail_message_id`）。启动迁移会把这些值写进 `subject_id` 并删除旧列；新库直接只有 `subject_id`。
 
 ### pending_events（待推送事件）
 

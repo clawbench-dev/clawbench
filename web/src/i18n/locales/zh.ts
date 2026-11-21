@@ -1984,6 +1984,8 @@ export default {
       usage: '用量',
       meeting: '会议',
       mail: '邮件',
+      // 未知类型（来自更新版本的功能）。绝不冒充某个已知类型——贴错标签比留空更糟。
+      other: '其他',
     },
     range: {
       today: '今天',
@@ -1993,6 +1995,9 @@ export default {
     // 源（会话/任务）已删除时显示。点击不跳转（源自身的降级会静默改道到别处）。
     sourceDeleted: '源已删除',
     sourceDeletedHint: '这条通知指向的会话或任务已不存在。',
+    // 未知类型与「没有目的地」都必须开口说明，否则用户只看到点了没反应。
+    unknownKindHint: '这条通知来自当前版本还不认识的功能，暂时打不开。',
+    noDestinationHint: '这条通知没有可打开的位置。',
     // 通知日志是全局的（所有项目）。**只给「其他项目」的行标项目名**——
     // 没有名字的行就是当前项目的，这正是判据；把当前项目也印在每一行上是噪音。
     // 点击会整棵项目子树重建，这个后果写在 tooltip 里。
@@ -2004,7 +2009,7 @@ export default {
     loading: '加载中…',
     loadMore: '加载更多',
     empty: '暂无通知',
-    emptyHint: '会话、任务、仓库与会议事件会显示在这里。',
+    emptyHint: '各功能产生的事件会显示在这里。',
     emptyFiltered: '没有符合当前筛选的通知',
     clear: '清空',
     clearConfirm: '清空全部通知？此操作不可撤销。',
@@ -3626,7 +3631,7 @@ export default {
       shareShowProjectName: '分享页显示来源项目名',
       shareShowProjectNameDesc: '关闭后，分享页不显示内容来自哪个项目，只显示内容本身。',
       notificationsLogSection: '通知中心',
-      notificationsLogDesc: '通知中心是一份只追加的事件日志：没有已读状态，也没有角标。它记录会话完成、任务事件、代码托管变化、用量提醒和会议事件。',
+      notificationsLogDesc: '通知中心是一份只追加的事件日志：没有已读状态，也没有角标。它记录各个功能产生的事件。',
       notificationsRetention: '服务端最多保留 500 条、30 天，超过上限会自动清理旧记录。',
       notificationsClear: '清空通知',
       notificationsClearing: '正在清空…',

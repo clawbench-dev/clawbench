@@ -244,7 +244,7 @@ func TestRunBackgroundTurn_CancelledTurnClosesBubble(t *testing.T) {
 	// and a "completed" notification would contradict what they saw.
 	var completed int
 	if err := store.ReadDB().QueryRow(
-		`SELECT COUNT(*) FROM notifications WHERE session_id = ? AND event_type = 'completed'`, sid,
+		`SELECT COUNT(*) FROM notifications WHERE subject_id = ? AND event_type = 'completed'`, sid,
 	).Scan(&completed); err != nil {
 		t.Fatalf("count notifications: %v", err)
 	}
