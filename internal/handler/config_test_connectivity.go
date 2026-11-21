@@ -104,7 +104,38 @@ func ServeConfigTest(w http.ResponseWriter, r *http.Request) {
 		result = ConnectivityTestResult{Success: false, Message: "Unknown category: " + req.Category}
 	}
 
+	result.Message = withResolveHint(result.Message)
 	writeJSON(w, http.StatusOK, result)
+}
+
+// resolveFailureHints are the strings the Go resolver puts in its error when a
+// name lookup fails. Both come from the pure-Go resolver: with cgo off (see
+// AGENTS.md) ClawBench resolves names itself and bypasses the system's NSS
+// modules, so LAN names such as *.local, and names served only by an
+// NSS module (some corporate/VPN setups), fail here even though the machine
+// itself can reach them.
+var resolveFailureHints = []string{"no such host", "server misbehaving"}
+
+// withResolveHint appends an actionable explanation to a name-resolution
+// failure. Without it the user sees a bare "no such host" and has no way to
+// know that switching to an IP address, or adding the name to /etc/hosts, is
+// what fixes it.
+func withResolveHint(msg string) string {
+	lower := strings.ToLower(msg)
+	for _, needle := range resolveFailureHints {
+		if !strings.Contains(lower, needle) {
+			continue
+		}
+		if strings.Contains(msg, "hosts") {
+			// Already explained (e.g. a retried message); do not stack hints.
+			return msg
+		}
+		return msg + " — the name could not be resolved. ClawBench looks names up itself " +
+			"(no cgo), so LAN names like *.local and names served only by system NSS " +
+			"modules do not resolve. Use the IP address instead, or add the name to " +
+			"/etc/hosts."
+	}
+	return msg
 }
 
 // ── Helpers ──────────────────────────────────────────────────
