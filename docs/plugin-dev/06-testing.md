@@ -1,5 +1,7 @@
 # 06 · 测试：新增插件要补什么
 
+> **已过时（2026-11-21 契约收口后）**：顺序（`order`）、设置字段（`settings.ts`）、插件文案（`i18n.ts`）现在都写在 `web/src/plugins/<id>/` 里，本文描述的接线位置不再适用。操作步骤一律照 [`README.md`](README.md)；本文件只保留仍然成立的概念解释。
+
 ## 1. 纯函数测试
 
 `web/src/composables/__tests__/dockTabs.test.ts` 覆盖：

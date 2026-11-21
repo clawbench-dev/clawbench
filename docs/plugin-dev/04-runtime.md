@@ -1,5 +1,7 @@
 # 04 · 运行时：`dock.ts` 里放什么
 
+> **已过时（2026-11-21 契约收口后）**：顺序（`order`）、设置字段（`settings.ts`）、插件文案（`i18n.ts`）现在都写在 `web/src/plugins/<id>/` 里，本文描述的接线位置不再适用。操作步骤一律照 [`README.md`](README.md)；本文件只保留仍然成立的概念解释。
+
 每个插件的运行时资源放在功能目录的 `dock.ts` 里。App.vue 不再为某个插件写专门的角标 switch、门控 computed 或 `switchTab` 里的 `if`。
 
 ## 1. 契约

@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import {
-  DOCK_FEATURES,
-  DOCK_TAB_IDS,
+  dockFeatures,
+  dockTabIdsInDefaultOrder,
   isPermanentDockTab,
   mergeDockOrder,
   isDockTabId,
@@ -57,7 +57,7 @@ export interface DockFeatureChange {
  * One preset, as RULES rather than a spelled-out plan.
  *
  * Everything a preset does derives from these declarations plus the registry
- * constants (`DOCK_TAB_ORDER`, `DOCK_FEATURES`, the permanent-tab set), so a
+ * constants (`dockTabIdsInDefaultOrder()`, `dockFeatures()`, the permanent-tab set), so a
  * newly added plugin is handled correctly by all three presets with no
  * registration anywhere.
  *
@@ -85,7 +85,7 @@ export interface DockPresetRules {
  * The three presets as declarations.
  *
  * Default order is a product decision, so it is never spelled out here: a new
- * plugin takes its slot from `DOCK_TAB_ORDER` and the presets follow.
+ * plugin takes its slot from its own `order` and the presets follow.
  */
 export const DOCK_PRESETS: Readonly<Record<Exclude<DockPreset, 'custom'>, DockPresetRules>> = {
   developer: {
@@ -114,7 +114,7 @@ export const DOCK_PRESETS: Readonly<Record<Exclude<DockPreset, 'custom'>, DockPr
 export interface DockPresetPlan {
   /** Tabs hidden in the dock. */
   hidden: readonly DockTabId[]
-  /** Full left-dock order (all ids, derived from DOCK_TAB_ORDER). */
+  /** Full left-dock order (all ids, plugin-declared default order). */
   order: readonly DockTabId[]
   /** Server master switches to write, in one request. */
   features: readonly DockFeatureChange[]
@@ -132,14 +132,15 @@ export interface DockPresetPlan {
 function expandPreset(rules: DockPresetRules): DockPresetPlan {
   const hidden = new Set<DockTabId>()
   if (rules.keepOnly === 'permanent') {
-    for (const id of DOCK_TAB_IDS) if (!isPermanentDockTab(id)) hidden.add(id)
+    for (const id of dockTabIdsInDefaultOrder()) if (!isPermanentDockTab(id)) hidden.add(id)
   }
   for (const id of rules.hideTabs ?? []) {
     if (isDockTabId(id) && !isPermanentDockTab(id)) hidden.add(id)
   }
 
-  const visible: DockTabId[] = DOCK_TAB_IDS.filter((id) => !hidden.has(id))
-  const parked: DockTabId[] = DOCK_TAB_IDS.filter((id) => hidden.has(id))
+  const all = dockTabIdsInDefaultOrder()
+  const visible: DockTabId[] = all.filter((id) => !hidden.has(id))
+  const parked: DockTabId[] = all.filter((id) => hidden.has(id))
   let order = visible
   const before = rules.parkHiddenBefore
   if (before && parked.length > 0) {
@@ -150,23 +151,28 @@ function expandPreset(rules: DockPresetRules): DockPresetPlan {
         : [...visible, ...parked]
   }
 
-  const off = new Set<DockFeature>(rules.disableAllFeatures ? DOCK_FEATURES : (rules.disableFeatures ?? []))
-  const features: DockFeatureChange[] = DOCK_FEATURES.map((key) => ({ key, value: !off.has(key) }))
+  const everyFeature = dockFeatures()
+  const off = new Set<DockFeature>(
+    rules.disableAllFeatures ? everyFeature : (rules.disableFeatures ?? []),
+  )
+  const features: DockFeatureChange[] = everyFeature.map((key) => ({ key, value: !off.has(key) }))
 
   return { hidden: [...hidden], order, features }
 }
 
 /**
- * The three plans, derived from the declarations above.
+ * Expand one preset into the concrete plan.
  *
- * Kept as the public export because the manager previews the consequences from
- * the same data it applies, and the guard test asserts each plan still covers
- * the full tab set.
+ * A FUNCTION, not a module-level constant: the plans are built from the ids and
+ * switches the plugin runtime installs, and that install happens AFTER this
+ * module is evaluated. A snapshot here would freeze the empty pre-install list,
+ * and every preset would then hide nothing and write no switches.
+ *
+ * Kept public because the manager previews the consequences from the same data
+ * it applies, and the guard test asserts each plan still covers the full tab set.
  */
-export const DOCK_PRESET_PLANS: Readonly<Record<Exclude<DockPreset, 'custom'>, DockPresetPlan>> = {
-  developer: expandPreset(DOCK_PRESETS.developer),
-  standard: expandPreset(DOCK_PRESETS.standard),
-  minimal: expandPreset(DOCK_PRESETS.minimal),
+export function dockPresetPlan(name: Exclude<DockPreset, 'custom'>): DockPresetPlan {
+  return expandPreset(DOCK_PRESETS[name])
 }
 
 /** Presets that stop server-side work, so applying them needs a confirmation. */
@@ -248,7 +254,7 @@ function isClosable(id: DockTabId): boolean {
 
 /** Tabs the manager shows as enabled (hidden set inverted). */
 const visibleIds = computed<DockTabId[]>(() =>
-  DOCK_TAB_IDS.filter((id) => !isClosable(id) || !hidden.value.has(id)),
+  dockTabIdsInDefaultOrder().filter((id) => !isClosable(id) || !hidden.value.has(id)),
 )
 
 function persist(): void {
@@ -270,7 +276,7 @@ export async function applyDockPreset(
   next: Exclude<DockPreset, 'custom'>,
   commit?: (changes: readonly DockFeatureChange[]) => Promise<void>,
 ): Promise<void> {
-  const plan = DOCK_PRESET_PLANS[next]
+  const plan = dockPresetPlan(next)
   if (commit && plan.features.length > 0) await commit(plan.features)
   preset.value = next
   hidden.value = new Set(plan.hidden)

@@ -18,6 +18,7 @@ const { sshInfo, sshInfoResolved, transportAllowsH2 } = usePortForward()
  */
 export default {
   id: 'proxy',
+  order: 120,
   titleKey: 'nav.portForward',
   descriptionKey: 'settings.dockPlugins.desc.proxy',
   group: 'project',

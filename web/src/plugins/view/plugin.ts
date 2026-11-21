@@ -8,6 +8,7 @@ import type { DockPlugin } from '@/composables/dockPluginTypes'
  */
 export default {
   id: 'view',
+  order: 20,
   titleKey: 'nav.fileView',
   descriptionKey: 'settings.dockPlugins.desc.view',
   group: 'workspace',

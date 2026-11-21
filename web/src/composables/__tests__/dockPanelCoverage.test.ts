@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readWebFile } from '@/testUtils/readWebFile'
-import { DOCK_TAB_IDS } from '@/composables/dockTabs'
+import { dockTabIdsInDefaultOrder } from '@/composables/dockTabs'
 import { resolveDockPlugin } from '@/composables/dockPluginRuntime'
 
 /**
@@ -9,7 +9,7 @@ import { resolveDockPlugin } from '@/composables/dockPluginRuntime'
  * render an empty panel with no error — the tab would look broken.
  */
 describe('dock panel coverage', () => {
-  for (const id of DOCK_TAB_IDS) {
+  for (const id of dockTabIdsInDefaultOrder()) {
     if (id === 'browse' || id === 'view') continue
 
     it(`${id} declares a panel`, () => {

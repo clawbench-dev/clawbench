@@ -19,6 +19,7 @@ const { total } = useMailUnread()
  */
 export default {
   id: 'mail',
+  order: 80,
   titleKey: 'nav.mail',
   descriptionKey: 'settings.dockPlugins.desc.mail',
   group: 'personal',

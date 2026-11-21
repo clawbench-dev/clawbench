@@ -15,6 +15,7 @@ import type { DockPlugin } from '@/composables/dockPluginTypes'
  */
 export default {
   id: 'notifications',
+  order: 130,
   titleKey: 'nav.notifications',
   descriptionKey: 'settings.dockPlugins.desc.notifications',
   group: 'system',

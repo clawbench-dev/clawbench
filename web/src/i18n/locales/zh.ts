@@ -3565,29 +3565,11 @@ export default {
         system: '系统',
       },
       desc: {
-        browse: '浏览和整理项目文件。',
-        view: '预览当前打开的文件。',
-        history: '查看项目的 Git 提交历史。',
-        forge: '查看 GitHub、GitLab、Gitea 的议题、合并请求和流水线（代码托管集成）。',
-        tasks: '定时任务和事件触发的自动化任务。',
-        terminal: '在服务器上打开交互式终端。',
-        stats: '查看 token、积分和耗时统计。',
-        mail: '收发邮件，支持多个邮箱账号。',
-        kb: '管理知识库，按关键词和语义搜索。',
-        live: '屏幕共享、语音会议和 AI 听记。',
-        share: '管理已经分享出去的文件、会话和会议链接。',
-        proxy: '通过 SSH 或流隧道把服务器端口映射到本地。',
-        notifications: '查看应用产生的事件记录（关掉只是隐藏入口，通知照常产生）。',
-        settings: '应用和功能的配置入口。',
       },
       // Shown under a row whose switch is inert because this host cannot run
       // the feature (as opposed to the user switching it off).
       unavailable: {
         generic: '当前环境不支持。',
-        forge: '服务端没有启用代码托管集成。',
-        mail: '服务端没有启用邮件功能。',
-        terminal: '这台机器无法运行终端（需要 Linux / macOS，或服务端未就绪）。',
-        proxy: '当前环境无法建立端口映射（SSH 与流隧道都不可用）。',
       },
     },
     items: {

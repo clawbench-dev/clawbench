@@ -30,7 +30,12 @@ const {
   notifyFeatureDisabled,
 } = await import('@/composables/useFeatureFlags')
 
-const { DOCK_FEATURES } = await import('@/composables/dockTabs')
+// The dock registry (ids + master switches) is installed by the global test
+// setup — `dockTabs.ts` holds them as pushed-in data and no test loads the
+// plugin runtime. Read the switch list AFTER that, so the loop below is not
+// vacuously empty.
+const { dockFeatures } = await import('@/composables/dockTabs')
+const DOCK_FEATURES = dockFeatures()
 
 /** Build one `/api/features` row. */
 function feature(id: string, enabled: boolean, available = true) {

@@ -1,6 +1,6 @@
 # 02 · 清单：在 `DOCK_TABS` 里声明一个插件
 
-> **已过时（2026-11-15 重构）**：`DOCK_TABS` / `dockTabMeta.ts` / 各功能的 `dock.ts` 都已删除，清单与运行时资源现在写在 `web/src/plugins/<id>/plugin.ts`。操作步骤一律照 [`README.md`](README.md)；本文件只保留仍然成立的概念解释。
+> **已过时（2026-11-21 契约收口后）**：顺序（`order`）、设置字段（`settings.ts`）、插件文案（`i18n.ts`）现在都写在 `web/src/plugins/<id>/` 里，本文描述的接线位置不再适用。操作步骤一律照 [`README.md`](README.md)；本文件只保留仍然成立的概念解释。
 
 清单是 `web/src/composables/dockTabs.ts` 里的 `DOCK_TABS` 数组。它是左栏的唯一事实源：渲染列表、切换白名单、功能编排、顺序、可见性都从它派生。
 

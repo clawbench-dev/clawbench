@@ -40,6 +40,12 @@ vi.mock('@/composables/useDockAvailability', async () => {
 })
 
 import { useDockLifecycle } from '@/composables/useDockLifecycle'
+import { installDockTabIds } from '@/composables/dockTabs'
+
+// The lifecycle iterates the dock's registered ids; the plugin runtime (which
+// normally installs them) is fully mocked away above, so state them here. Only
+// `mail` declares a background resource — see the `resolveDockPlugin` mock.
+installDockTabIds(['mail'])
 
 const Host = defineComponent({
   setup() {

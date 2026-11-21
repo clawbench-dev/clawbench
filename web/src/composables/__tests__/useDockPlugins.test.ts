@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   _resetDockPluginsForTest,
   APPLICABLE_DOCK_PRESETS,
-  DOCK_PRESET_PLANS,
+  dockPresetPlan,
   applyDockPreset,
   isDockTabHidden,
   markDockPresetCustom,
@@ -13,7 +13,7 @@ import {
   useDockPlugins,
   usePluginProfile,
 } from '@/composables/useDockPlugins'
-import { DOCK_TAB_IDS } from '@/composables/dockTabs'
+import { dockTabIdsInDefaultOrder, installDockTabIds } from '@/composables/dockTabs'
 import { DOCK_TAB_BY_ID } from '@/composables/dockPluginRuntime'
 import { readPanelState } from '@/utils/panelState'
 
@@ -31,14 +31,14 @@ describe('useDockPlugins defaults', () => {
     expect(state.hidden.value.size).toBe(0)
     expect(state.visibleIds.value).toContain('terminal')
     expect(state.visibleIds.value).toContain('forge')
-    expect(state.order.value).toEqual(DOCK_TAB_IDS)
+    expect(state.order.value).toEqual(dockTabIdsInDefaultOrder())
   })
 
   it('keeps the order list complete after a legacy partial order', () => {
     localStorage.setItem('clawbench-panel.dockOrder', JSON.stringify(['mail', 'forge']))
     _resetDockPluginsForTest()
     const state = useDockPlugins()
-    expect(state.order.value).toHaveLength(DOCK_TAB_IDS.length)
+    expect(state.order.value).toHaveLength(dockTabIdsInDefaultOrder().length)
     expect(state.order.value.slice(0, 3)).toEqual(['browse', 'view', 'history'])
   })
 })
@@ -53,13 +53,30 @@ describe('presets', () => {
     expect(APPLICABLE_DOCK_PRESETS).toEqual(['developer', 'standard', 'minimal'])
   })
 
+  it('recomputes the plan instead of freezing the pre-install list', () => {
+    // Regression: the plans used to be a module-level constant built at import
+    // time. Any module that imported this file before the plugin runtime had
+    // installed the ids froze an empty plan — every preset then hid nothing and
+    // wrote no switches, silently. Expanding on demand is what keeps the order
+    // the presets apply identical to the dock's.
+    const installed = dockTabIdsInDefaultOrder()
+    try {
+      installDockTabIds([])
+      expect(dockPresetPlan('minimal').order).toEqual([])
+      installDockTabIds(installed)
+      expect(dockPresetPlan('minimal').order).toEqual(installed)
+    } finally {
+      installDockTabIds(installed)
+    }
+  })
+
   it('developer shows everything and turns every server feature on', async () => {
     await applyDockPreset('developer')
     const state = useDockPlugins()
     expect(state.preset.value).toBe('developer')
     expect(state.hidden.value.size).toBe(0)
-    expect(state.order.value).toEqual(DOCK_TAB_IDS)
-    expect(DOCK_PRESET_PLANS.developer.features.every((f) => f.value)).toBe(true)
+    expect(state.order.value).toEqual(dockTabIdsInDefaultOrder())
+    expect(dockPresetPlan('developer').features.every((f) => f.value)).toBe(true)
   })
 
   it('office hides and switches off forge + terminal, keeps the rest on', async () => {
@@ -73,7 +90,7 @@ describe('presets', () => {
     expect(isDockTabHidden('tasks')).toBe(false)
 
     const features = Object.fromEntries(
-      DOCK_PRESET_PLANS.standard.features.map((f) => [f.key, f.value]),
+      dockPresetPlan('standard').features.map((f) => [f.key, f.value]),
     )
     expect(features['forge.enabled']).toBe(false)
     expect(features['terminal.enabled']).toBe(false)
@@ -99,7 +116,7 @@ describe('presets', () => {
     for (const id of ['notifications', 'history', 'forge', 'tasks', 'terminal', 'stats', 'mail', 'kb', 'live', 'share', 'proxy']) {
       expect(isDockTabHidden(id), `${id} should be hidden`).toBe(true)
     }
-    expect(DOCK_PRESET_PLANS.minimal.features.every((f) => !f.value)).toBe(true)
+    expect(dockPresetPlan('minimal').features.every((f) => !f.value)).toBe(true)
   })
 
   it('minimal hides notifications without adding a server switch for it', async () => {
@@ -107,18 +124,18 @@ describe('presets', () => {
     // Display-only: the log keeps being written, so the tab must carry no
     // feature key and the plan must not try to switch one off.
     expect(DOCK_TAB_BY_ID.get('notifications')?.feature).toBeUndefined()
-    expect(DOCK_PRESET_PLANS.minimal.features).toHaveLength(6)
+    expect(dockPresetPlan('minimal').features).toHaveLength(6)
   })
 
   it('parks the hidden tabs before settings so a re-enabled one lands in a stable slot', async () => {
     await applyDockPreset('minimal')
     const order = useDockPlugins().order.value
-    const hidden = new Set(DOCK_PRESET_PLANS.minimal.hidden)
+    const hidden = new Set(dockPresetPlan('minimal').hidden)
     // Only the permanent tabs are visible…
     expect(order.filter((id) => !hidden.has(id))).toEqual(['browse', 'view', 'settings'])
     // …and the hidden block keeps the DEFAULT relative order, parked right
     // before settings (the order is derived, never hand-written).
-    expect(order.filter((id) => hidden.has(id))).toEqual(DOCK_TAB_IDS.filter((id) => hidden.has(id)))
+    expect(order.filter((id) => hidden.has(id))).toEqual(dockTabIdsInDefaultOrder().filter((id) => hidden.has(id)))
     expect(order.at(-1)).toBe('settings')
   })
 
@@ -126,7 +143,7 @@ describe('presets', () => {
     const commit = vi.fn(async () => {})
     await applyDockPreset('minimal', commit)
     expect(commit).toHaveBeenCalledTimes(1)
-    expect(commit).toHaveBeenCalledWith(DOCK_PRESET_PLANS.minimal.features)
+    expect(commit).toHaveBeenCalledWith(dockPresetPlan('minimal').features)
   })
 
   it('applies NOTHING when the commit fails', async () => {
@@ -139,7 +156,7 @@ describe('presets', () => {
     // what they were before the failed attempt.
     expect(state.preset.value).toBe('developer')
     expect(state.hidden.value.size).toBe(0)
-    expect(state.order.value).toEqual(DOCK_TAB_IDS)
+    expect(state.order.value).toEqual(dockTabIdsInDefaultOrder())
   })
 
   it('does not leave a half-applied preset behind when the second attempt fails', async () => {
@@ -152,7 +169,7 @@ describe('presets', () => {
     const state = useDockPlugins()
     expect(state.preset.value).toBe('standard')
     expect(isDockTabHidden('mail')).toBe(false)
-    expect(state.order.value).toEqual(DOCK_PRESET_PLANS.standard.order)
+    expect(state.order.value).toEqual(dockPresetPlan('standard').order)
   })
 })
 
@@ -211,7 +228,7 @@ describe('manual changes', () => {
   it('keeps the other tabs when the dragged list is partial', () => {
     setDockTabOrder(['mail'])
     const order = useDockPlugins().order.value
-    expect(order).toHaveLength(DOCK_TAB_IDS.length)
+    expect(order).toHaveLength(dockTabIdsInDefaultOrder().length)
     expect(order.slice(0, 3)).toEqual(['browse', 'view', 'history'])
   })
 
@@ -220,7 +237,7 @@ describe('manual changes', () => {
     const state = useDockPlugins()
     expect(state.preset.value).toBe('custom')
     expect(state.hidden.value.size).toBe(0)
-    expect(state.order.value).toEqual(DOCK_TAB_IDS)
+    expect(state.order.value).toEqual(dockTabIdsInDefaultOrder())
   })
 
   describe('unknown ids in the stored order', () => {
@@ -231,7 +248,7 @@ describe('manual changes', () => {
     beforeEach(() => {
       localStorage.setItem(
         'clawbench-panel.dock-order',
-        JSON.stringify(['weather', ...DOCK_TAB_IDS]),
+        JSON.stringify(['weather', ...dockTabIdsInDefaultOrder()]),
       )
       _resetDockPluginsForTest()
     })
@@ -240,14 +257,14 @@ describe('manual changes', () => {
       const state = useDockPlugins()
       expect(state.storedOrder.value).toContain('weather')
       expect(state.order.value).not.toContain('weather')
-      expect(state.order.value).toEqual(DOCK_TAB_IDS)
+      expect(state.order.value).toEqual(dockTabIdsInDefaultOrder())
     })
 
     it('writeOrder persists the list verbatim, removing the unknown id', () => {
       const state = useDockPlugins()
       state.writeOrder([...state.order.value])
       expect(state.storedOrder.value).not.toContain('weather')
-      expect(readPanelState<string[]>('dockOrder')).toEqual([...DOCK_TAB_IDS])
+      expect(readPanelState<string[]>('dockOrder')).toEqual([...dockTabIdsInDefaultOrder()])
     })
 
     it('setOrder alone cannot clear it when the merged order is unchanged', () => {
@@ -270,7 +287,7 @@ describe('persistence', () => {
 
   it('persists visibility, order and preset', async () => {
     await applyDockPreset('standard')
-    setDockTabOrder(['mail', ...DOCK_TAB_IDS.filter((id) => id !== 'mail')])
+    setDockTabOrder(['mail', ...dockTabIdsInDefaultOrder().filter((id) => id !== 'mail')])
     setDockTabVisible('tasks', false)
 
     expect(readPanelState<string[]>('dockHidden')).toContain('tasks')
@@ -290,7 +307,7 @@ describe('persistence', () => {
     const state = useDockPlugins()
     expect(state.preset.value).toBe('developer')
     expect(state.hidden.value.size).toBe(0)
-    expect(state.order.value).toEqual(DOCK_TAB_IDS)
+    expect(state.order.value).toEqual(dockTabIdsInDefaultOrder())
     expect(commit).toHaveBeenCalledTimes(1)
   })
 })

@@ -12,7 +12,6 @@
 import { getNative } from '@/utils/clawbenchNative'
 import { UI_SCALE_STEP, UI_SCALE_MANUAL_MIN, UI_SCALE_MANUAL_MAX } from '@/utils/uiScale'
 import { buildFontStack, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, type FontChoice } from '@/utils/fontConfig'
-import i18n from '@/i18n'
 
 /** Raw (untranslated) font option descriptor used by the settings pickers. */
 export interface FontOptionRaw {
@@ -388,28 +387,8 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   // and lives in the feature manager — turning it off stops the scheduler and
   // cancels running/queued runs, so this page only reports its state. Everything
   // below shapes HOW the scheduler behaves once it is on.
-  tasks: [
-    { type: 'item', spec: { labelKey: 'settings.items.featureStatusTasks', descriptionKey: 'settings.items.tasksStatusDesc', key: 'tasksStatus', type: 'info', source: 'server', statusFeature: 'tasks.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
-    // ── 执行记录 ──
-    // Same switch-plus-days shape as the upload and archive retention rows: 0
-    // days would otherwise be indistinguishable from "off".
-    { type: 'item', spec: { labelKey: 'settings.items.tasksRetentionEnabled', descriptionKey: 'settings.items.tasksRetentionEnabledDesc', key: 'tasks.retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.tasksRetentionSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.tasksRetentionDays', descriptionKey: 'settings.items.tasksRetentionDaysDesc', key: 'tasks.retention_days', type: 'number', source: 'server', min: 1, max: 3650, disableUnless: { key: 'tasks.retention_enabled', value: true }, sectionHeader: 'settings.items.tasksRetentionSection' } },
-    // ── 通知 ──
-    { type: 'item', spec: { labelKey: 'settings.items.tasksNotifySuccess', descriptionKey: 'settings.items.tasksNotifySuccessDesc', key: 'tasks.notify_on_success', type: 'switch', source: 'server', sectionHeader: 'settings.items.tasksNotifySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.tasksNotifyFailure', descriptionKey: 'settings.items.tasksNotifyFailureDesc', key: 'tasks.notify_on_failure', type: 'switch', source: 'server', sectionHeader: 'settings.items.tasksNotifySection' } },
-    // ── 调度 ──
-    // Free text (an IANA name such as Asia/Shanghai). A select would have to
-    // ship a timezone table and would still be incomplete.
-    { type: 'item', spec: { labelKey: 'settings.items.tasksTimezone', descriptionKey: 'settings.items.tasksTimezoneDesc', key: 'tasks.timezone', type: 'text', source: 'server', sectionHeader: 'settings.items.tasksScheduleSection' } },
-    // Local: which filter the task list opens with. A per-device view
-    // preference, like the stats panel's default tab.
-    { type: 'item', spec: { labelKey: 'settings.items.tasksDefaultFilter', descriptionKey: 'settings.items.tasksDefaultFilterDesc', key: 'tasksDefaultFilter', type: 'select', source: 'local', sectionHeader: 'settings.items.tasksScheduleSection', options: [
-      { labelKey: 'settings.items.tasksFilterAll', value: 'all' },
-      { labelKey: 'settings.items.tasksFilterEnabled', value: 'enabled' },
-      { labelKey: 'settings.items.tasksFilterPaused', value: 'paused' },
-    ]}},
-  ],
+  // Fields live in `plugins/tasks/settings.ts` — see PLUGIN_SETTINGS below.
+  tasks: [],
   project: [
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectsMaxCount', descriptionKey: 'settings.items.recentProjectsMaxCountDesc', key: 'recent_projects.max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.projectSectionHeader' } },
     // Opens the "all projects" card, which ProjectsSetting fills with the live
@@ -417,77 +396,22 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // must not also render as a generic row (see PLACEHOLDER_ITEMS).
     { type: 'item', spec: { labelKey: 'settings.items.allProjectsSection', key: 'allProjectsList', type: 'info', source: 'local', sectionHeader: 'settings.items.allProjectsSection' } },
   ],
-  files: [
-    { type: 'item', spec: { labelKey: 'settings.items.fileSearchDisplayLimit', descriptionKey: 'settings.items.fileSearchDisplayLimitDesc', key: 'file_search.display_limit', type: 'number', source: 'server', min: 10, max: 500, sectionHeader: 'settings.items.searchSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.showHidden', descriptionKey: 'settings.items.showHiddenDesc', key: 'showHidden', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.fileView', descriptionKey: 'settings.items.fileViewDesc', key: 'fileView', type: 'select', source: 'local', sectionHeader: 'settings.items.fileDisplaySection', options: [
-      { labelKey: 'settings.items.fileViewList', value: 'list' },
-      { labelKey: 'settings.items.fileViewGrid', value: 'grid' },
-    ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.sortField', descriptionKey: 'settings.items.sortFieldDesc', key: 'sortField', type: 'select', source: 'local', sectionHeader: 'settings.items.fileDisplaySection', options: [
-      { labelKey: 'settings.items.sortFieldDefault', value: null },
-      { labelKey: 'settings.items.sortFieldName', value: 'name' },
-      { labelKey: 'settings.items.sortFieldTime', value: 'time' },
-      { labelKey: 'settings.items.sortFieldType', value: 'type' },
-      { labelKey: 'settings.items.sortFieldSize', value: 'size' },
-    ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.sortDir', descriptionKey: 'settings.items.sortDirHint', key: 'sortDir', type: 'select', source: 'local', dependsOn: { key: 'sortField', values: ['name', 'time', 'type', 'size'] }, sectionHeader: 'settings.items.fileDisplaySection', options: [
-      { labelKey: 'settings.items.sortDirAsc', value: 'asc' },
-      { labelKey: 'settings.items.sortDirDesc', value: 'desc' },
-    ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.uploadMaxSize', descriptionKey: 'settings.items.uploadMaxSizeDesc', key: 'upload.max_size_mb', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.uploadMaxFiles', descriptionKey: 'settings.items.uploadMaxFilesDesc', key: 'upload.max_files', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
-    // Retention deletes files, so it is a switch plus a day count rather than a
-    // single number: 0 days would otherwise be indistinguishable from "off".
-    { type: 'item', spec: { labelKey: 'settings.items.uploadRetentionEnabled', descriptionKey: 'settings.items.uploadRetentionEnabledDesc', key: 'upload.retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.uploadRetentionDays', descriptionKey: 'settings.items.uploadRetentionDaysDesc', key: 'upload.retention_days', type: 'number', source: 'server', min: 1, disableUnless: { key: 'upload.retention_enabled', value: true }, sectionHeader: 'settings.items.uploadSection' } },
-  ],
+  // Fields live in `plugins/browse/settings.ts` — see PLUGIN_SETTINGS below.
+  files: [],
   // File preview is its own tab, so it gets its own settings page rather than
   // sharing the file manager's. The file manager keeps list/grid, sorting,
   // hidden files and upload; preview keeps the reading surface.
-  fileView: [
-    { type: 'item', spec: { labelKey: 'settings.items.recentFilesCount', descriptionKey: 'settings.items.recentFilesCountDesc', key: 'recentFilesCount', type: 'number', source: 'local', min: 1, max: 50, sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.wordWrap', descriptionKey: 'settings.items.wordWrapDesc', key: 'wordWrap', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.lineNumbers', descriptionKey: 'settings.items.lineNumbersDesc', key: 'lineNumbers', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.stickyScroll', descriptionKey: 'settings.items.stickyScrollDesc', key: 'stickyScroll', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.markdownCodeLinkPreview', descriptionKey: 'settings.items.markdownCodeLinkPreviewDesc', key: 'markdownCodeLinkPreview', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.filePreviewMode', descriptionKey: 'settings.items.filePreviewModeDesc', key: 'filePreviewMode', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
-    // draw.io editor is downloaded on first use rather than shipped. The URL
-    // only matters where github.com and the public proxies are unreachable —
-    // an air-gapped deployment points it at its own mirror.
-    { type: 'item', spec: { labelKey: 'settings.items.drawioDownloadUrl', descriptionKey: 'settings.items.drawioDownloadUrlDesc', key: 'drawio.download_url', type: 'text', source: 'server', sectionHeader: 'settings.items.drawioSection' } },
-  ],
+  // Fields live in `plugins/view/settings.ts` — see PLUGIN_SETTINGS below.
+  fileView: [],
   // Git history (the 历史 dock tab). Before this page the list length was a
   // hardcoded 30 in the server, the time column was a fixed "relative under a
   // week, absolute after" mix, and merges/the graph could not be turned off.
-  gitHistory: [
-    // Server-side: the page size is the `git log -30` argument, so it has to be
-    // part of the request. Local settings cannot change what the server reads.
-    { type: 'item', spec: { labelKey: 'settings.items.gitHistoryPageSize', descriptionKey: 'settings.items.gitHistoryPageSizeDesc', key: 'git_history.page_size', type: 'number', source: 'server', min: 10, max: 200, sectionHeader: 'settings.items.gitHistoryListSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.gitHistoryHideMerges', descriptionKey: 'settings.items.gitHistoryHideMergesDesc', key: 'gitHistoryHideMerges', type: 'switch', source: 'local', sectionHeader: 'settings.items.gitHistoryListSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.gitHistoryShowGraph', descriptionKey: 'settings.items.gitHistoryShowGraphDesc', key: 'gitHistoryShowGraph', type: 'switch', source: 'local', sectionHeader: 'settings.items.gitHistoryListSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.gitHistoryTimeFormat', descriptionKey: 'settings.items.gitHistoryTimeFormatDesc', key: 'gitHistoryTimeFormat', type: 'select', source: 'local', sectionHeader: 'settings.items.gitHistoryTimeSection', options: [
-      { labelKey: 'settings.items.gitHistoryTimeRelative', value: 'relative' },
-      { labelKey: 'settings.items.gitHistoryTimeAbsolute', value: 'absolute' },
-    ]}},
-  ],
+  // Fields live in `plugins/history/settings.ts` — see PLUGIN_SETTINGS below.
+  gitHistory: [],
   // Statistics panel defaults. All local: they only seed what the panel opens
   // with, and the same person may want a different default on a phone.
-  stats: [
-    { type: 'item', spec: { labelKey: 'settings.items.statsDefaultTab', descriptionKey: 'settings.items.statsDefaultTabDesc', key: 'statsDefaultTab', type: 'select', source: 'local', sectionHeader: 'settings.items.statsDefaultsSection', options: [
-      { labelKey: 'settings.items.statsTabUsage', value: 'usage' },
-      { labelKey: 'settings.items.statsTabCloc', value: 'cloc' },
-      { labelKey: 'settings.items.statsTabGit', value: 'git' },
-    ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.statsDefaultRange', descriptionKey: 'settings.items.statsDefaultRangeDesc', key: 'statsDefaultRange', type: 'select', source: 'local', sectionHeader: 'settings.items.statsDefaultsSection', options: [
-      { labelKey: 'settings.items.statsRange24h', value: '24h' },
-      { labelKey: 'settings.items.statsRange7d', value: '7d' },
-      { labelKey: 'settings.items.statsRange30d', value: '30d' },
-    ]}},
-    // Off by default: the panel resets to the two defaults above, which is what
-    // every existing user is used to.
-    { type: 'item', spec: { labelKey: 'settings.items.statsRememberLast', descriptionKey: 'settings.items.statsRememberLastDesc', key: 'statsRememberLast', type: 'switch', source: 'local', sectionHeader: 'settings.items.statsDefaultsSection' } },
-  ],
+  // Fields live in `plugins/stats/settings.ts` — see PLUGIN_SETTINGS below.
+  stats: [],
   debug: [
     // Opt-in: agent processes inherit what the user's shell startup files
     // export. Off by default because it runs those files and hands the agent
@@ -530,50 +454,8 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // listed in PLACEHOLDER_ITEMS in SettingsCategory.vue.
     { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
   ],
-  mail: [
-    // Master switch status, on its own card ahead of the accounts — same shape
-    // and reasoning as `forge.enabled`.
-    //
-    // The switch itself is in the Dock feature manager, not here: one toggle
-    // there has to control both the tab and the background feature, and two
-    // switches for one flag drift apart. This row reports the state and links
-    // to the manager.
-    //
-    // Server-side, not per-device: turning mail off stops the background IMAP
-    // sync and the email-triggered tasks on the server, so every client of one
-    // server must agree. Accounts are kept, not deleted.
-    { type: 'item', spec: { labelKey: 'settings.items.featureStatusMail', descriptionKey: 'settings.items.mailEnabledDesc', key: 'mailStatus', type: 'info', source: 'server', statusFeature: 'mail.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
-    // Mailbox accounts (IMAP + SMTP). The card body is MailSetting, so this
-    // placeholder only opens the section and must also be listed in
-    // PLACEHOLDER_ITEMS in SettingsCategory.vue.
-    { type: 'item', spec: { labelKey: 'settings.items.mailAccountsSection', descriptionKey: 'settings.items.mailAccountsDesc', key: 'mailAccounts', type: 'info', source: 'server', sectionHeader: 'settings.items.mailAccountsSection' } },
-    // New-mail notifications. A server switch, not a per-device preference:
-    // the sync runs on the server and the same event feeds the notification
-    // center, the OS notification and the IM push. Turning it off silences the
-    // ALERT only — syncing, the unread badge and the mail panel keep working.
-    { type: 'item', spec: { labelKey: 'settings.items.mailNotify', descriptionKey: 'settings.items.mailNotifyDesc', key: 'mail.notify', type: 'switch', source: 'server', sectionHeader: 'settings.items.mailNotifySection' } },
-    // How often the server polls, how deep it caches and how much it downloads
-    // up front. All three are server-side because they describe what the
-    // SERVER does to the mailbox and to its own disk — a per-device value
-    // would mean one client's server polling on another device's behalf.
-    //
-    // Deliberately NOT exposed: the flag re-read window, the per-account sync
-    // timeout, the startup delay, the page size and the 25MB attachment cap.
-    // Those are internal safety numbers — a user cannot make a better choice
-    // than the default, and each one would be a knob nobody can explain.
-    { type: 'item', spec: { labelKey: 'settings.items.mailSyncInterval', descriptionKey: 'settings.items.mailSyncIntervalDesc', key: 'mail.sync_interval_minutes', type: 'number', source: 'server', min: 1, max: 120, sectionHeader: 'settings.items.mailSyncSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.mailSyncWindow', descriptionKey: 'settings.items.mailSyncWindowDesc', key: 'mail.sync_window', type: 'number', source: 'server', min: 20, max: 500, sectionHeader: 'settings.items.mailSyncSection' } },
-    // 0 is a real value here (do not prefetch), so the row must not treat an
-    // empty input as 0 by accident — `min: 0` documents the floor.
-    { type: 'item', spec: { labelKey: 'settings.items.mailBodyPrefetch', descriptionKey: 'settings.items.mailBodyPrefetchDesc', key: 'mail.body_prefetch', type: 'number', source: 'server', min: 0, max: 50, sectionHeader: 'settings.items.mailSyncSection' } },
-    // How a message body is drawn. Local, not server: it changes nothing about
-    // what the server fetches or stores, only whether this screen lets the
-    // mail's own <img> tags hit the network. The default is ON, so the row is
-    // about letting a cautious reader turn the exposure off — the description
-    // has to name the risk (tracking pixels / read receipts), not just say
-    // "images".
-    { type: 'item', spec: { labelKey: 'settings.items.mailLoadImages', descriptionKey: 'settings.items.mailLoadImagesDesc', key: 'mailLoadRemoteImages', type: 'switch', source: 'local', sectionHeader: 'settings.items.mailReadSection' } },
-  ],
+  // Fields live in `plugins/mail/settings.ts` — see PLUGIN_SETTINGS below.
+  mail: [],
   providers: [
     // Model-provider list (endpoint + credential). Same shape as the MCP
     // section: the card body is ProviderSetting, so this placeholder item only
@@ -584,55 +466,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   // turning it off revokes every link already handed out, which is far more
   // than a display preference, so it belongs in the feature manager. This page
   // holds the finer sharing RULES.
-  share: [
-    { type: 'item', spec: { labelKey: 'settings.items.featureStatusShare', descriptionKey: 'settings.items.shareStatusDesc', key: 'shareStatus', type: 'info', source: 'server', statusFeature: 'share.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
-    // ── 分享范围 ──
-    { type: 'item', spec: { labelKey: 'settings.items.shareAllowFiles', descriptionKey: 'settings.items.shareAllowFilesDesc', key: 'share.allow_files', type: 'switch', source: 'server', sectionHeader: 'settings.items.shareScopeSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.shareAllowSessions', descriptionKey: 'settings.items.shareAllowSessionsDesc', key: 'share.allow_sessions', type: 'switch', source: 'server', sectionHeader: 'settings.items.shareScopeSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.shareAllowMeetings', descriptionKey: 'settings.items.shareAllowMeetingsDesc', key: 'share.allow_meetings', type: 'switch', source: 'server', sectionHeader: 'settings.items.shareScopeSection' } },
-    // Download only applies to file shares — session and meeting shares are
-    // read-only pages with no download action — so it is disabled while file
-    // sharing is off instead of being hidden (a hidden row looks deleted).
-    { type: 'item', spec: { labelKey: 'settings.items.shareAllowDownload', descriptionKey: 'settings.items.shareAllowDownloadDesc', key: 'share.allow_download', type: 'switch', source: 'server', disableUnless: { key: 'share.allow_files', value: true }, sectionHeader: 'settings.items.shareScopeSection' } },
-    // ── 链接与展示 ──
-    // 0 = never expires. Existing links keep the expiry they were created with;
-    // changing this does not shorten links already out there.
-    { type: 'item', spec: { labelKey: 'settings.items.shareLinkTtlDays', descriptionKey: 'settings.items.shareLinkTtlDaysDesc', key: 'share.link_ttl_days', type: 'number', source: 'server', min: 0, max: 3650, sectionHeader: 'settings.items.shareLinkSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.shareShowProjectName', descriptionKey: 'settings.items.shareShowProjectNameDesc', key: 'share.show_project_name', type: 'switch', source: 'server', sectionHeader: 'settings.items.shareLinkSection' } },
-  ],
-  forgeIntegration: [
-    // The master switch gets its OWN card, ahead of everything else: it decides
-    // whether the rest of this page applies at all (issue #590).
-    //
-    // The switch itself now lives in the Dock feature manager. Turning it OFF is
-    // destructive — the server clears every project's repository binding and
-    // re-enabling does NOT bring them back — so the confirmation belongs to the
-    // manager, where the switch is. This page reports the state and links there.
-    //
-    // Server-side, not per-device: "stop talking to GitHub" is about the
-    // credentials and the outbound polling, which live on the server, so every
-    // client of one server must agree.
-    // Title carries one line under it: the feature is called 代码托管集成
-    // everywhere now, so this is what tells the user WHICH services that means
-    // (GitHub / GitLab / Gitea). Without it the renamed entry reads as "some
-    // generic integration" and the user looking for GitHub loses the trail.
-    // A description on the status row (not a separate header row) because the
-    // status row is already the page's first element.
-    { type: 'item', spec: { labelKey: 'settings.items.featureStatusForge', descriptionKey: 'settings.items.forgePlatformsDesc', key: 'forgeStatus', type: 'info', source: 'server', statusFeature: 'forge.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
-    // Credentials row is a dedicated component (tokens are write-only; the
-    // server never returns them, so a plain text field cannot round-trip).
-    { type: 'item', spec: { labelKey: 'settings.items.forgeCredentials', descriptionKey: 'settings.items.forgeCredentialsDesc', key: 'forgeCredentials', type: 'info', source: 'server', sectionHeader: 'settings.items.forgeSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyOpened', descriptionKey: 'settings.items.forgeNotifyOpenedDesc', key: 'forge.notify.opened', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyClosed', descriptionKey: 'settings.items.forgeNotifyClosedDesc', key: 'forge.notify.closed', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyMerged', descriptionKey: 'settings.items.forgeNotifyMergedDesc', key: 'forge.notify.merged', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyReopened', descriptionKey: 'settings.items.forgeNotifyReopenedDesc', key: 'forge.notify.reopened', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyCommented', descriptionKey: 'settings.items.forgeNotifyCommentedDesc', key: 'forge.notify.commented', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyPipeline', descriptionKey: 'settings.items.forgeNotifyPipelineDesc', key: 'forge.notify.pipeline', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.forgeInsecureTLS', descriptionKey: 'settings.items.forgeInsecureTLSDesc', key: 'forge.insecure_tls', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeTlsSection' } },
-    // Global kill-switch for event-triggered AI tasks. Notifications and unread
-    // keep working while it is on; only automatic task firing stops.
-    { type: 'item', spec: { labelKey: 'settings.items.forgePauseEventTasks', descriptionKey: 'settings.items.forgePauseEventTasksDesc', key: 'forge.pause_event_tasks', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeAutomationSection' } },
-  ],
+  // Fields live in `plugins/share/settings.ts` — see PLUGIN_SETTINGS below.
+  share: [],
+  // Fields live in `plugins/forge/settings.ts` — see PLUGIN_SETTINGS below.
+  forgeIntegration: [],
   notification: [
     // In-app surfaces: the completion card and its alert sound. Both are local
     // settings and take effect immediately (no save button).
@@ -809,29 +646,8 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
 
   // ── Panel-only categories (formerly drill-down) ────────────
 
-  terminal: [
-    // The master switch is a Dock feature switch — it also decides whether the
-    // tab can exist, and turning it off closes every open PTY — so it lives in
-    // the feature manager. This page reports the state and links there; the
-    // fields below only describe how an ENABLED terminal behaves.
-    { type: 'item', spec: { labelKey: 'settings.items.featureStatusTerminal', descriptionKey: 'settings.items.terminalStatusDesc', key: 'terminalStatus', type: 'info', source: 'server', statusFeature: 'terminal.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
-    { type: 'panel', config: {
-      panelId: 'terminal',
-      commonFields: [
-        { labelKey: 'settings.items.terminalTheme', descriptionKey: 'settings.items.terminalThemeDesc', key: 'terminalTheme', type: 'select', source: 'local', defaultValue: 'auto' },
-        { labelKey: 'settings.items.terminalFontSize', descriptionKey: 'settings.items.terminalFontSizeDesc', key: 'terminalFontSize', type: 'slider', source: 'local', min: 10, max: 24, step: 1, defaultValue: 12 },
-        { labelKey: 'settings.items.terminalCopyOnSelect', descriptionKey: 'settings.items.terminalCopyOnSelectDesc', key: 'terminalCopyOnSelect', type: 'switch', source: 'local' },
-        // Recording is on by default; this is the escape hatch for anyone who
-        // does not want their shell commands stored at all. It gates capture
-        // and the import from the shell history files — already-recorded rows
-        // stay until cleared from the history panel.
-        { labelKey: 'settings.items.terminalHistoryEnabled', descriptionKey: 'settings.items.terminalHistoryEnabledDesc', key: 'terminalHistoryEnabled', type: 'switch', source: 'local', defaultValue: true },
-        { labelKey: 'settings.items.terminalIdleTimeout', descriptionKey: 'settings.items.terminalIdleTimeoutDesc', key: 'terminal.idle_timeout', type: 'text', source: 'server' },
-        { labelKey: 'settings.items.terminalMaxSessions', descriptionKey: 'settings.items.terminalMaxSessionsDesc', key: 'terminal.max_sessions', type: 'number', source: 'server' },
-        { labelKey: 'settings.items.terminalBufferLines', descriptionKey: 'settings.items.terminalBufferLinesDesc', key: 'terminal.buffer_lines', type: 'number', source: 'server' },
-      ],
-    }},
-  ],
+  // Fields live in `plugins/terminal/settings.ts` — see PLUGIN_SETTINGS below.
+  terminal: [],
   tts: [
     { type: 'item', spec: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'navigateTtsEngine', type: 'action', source: 'local', navigateTo: 'tts:tts_engine', sectionHeader: 'settings.items.ttsEngineSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.summarizeTtsSection', descriptionKey: 'settings.items.summarizeTtsBackendDesc', key: 'summarize.tts_backend', type: 'select', source: 'server', sectionHeader: 'settings.items.voiceSummarySection', options: [
@@ -1051,82 +867,8 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       getTestCategories: (values) => [{ category: 'stt', values }],
     }},
   ],
-  meeting: [
-    // AI 纪要. The model row reuses the shared ai_summary config on purpose:
-    // meeting minutes, proofreading, auto-title, voice summary, recommendations,
-    // session auto-title and /btw all share one model, so a meeting-specific
-    // picker would be a second source of truth for the same credential.
-    { type: 'item', spec: { labelKey: 'settings.items.summaryModelRow', descriptionKey: 'settings.items.summaryModelRowDescMeeting', key: 'summaryModel', type: 'summaryModel', source: 'local', showSummaryModelStatus: true, sectionHeader: 'settings.items.meetingSummarySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.meetingAutoMinutes', descriptionKey: 'settings.items.meetingAutoMinutesDesc', key: 'meeting.auto_minutes', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.meetingProofread', descriptionKey: 'settings.items.meetingProofreadDesc', key: 'meeting.proofread', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.meetingLanguage', descriptionKey: 'settings.items.meetingLanguageDesc', key: 'meeting.language', type: 'select', source: 'server', sectionHeader: 'settings.items.meetingSummarySection', options: [
-      { labelKey: 'settings.items.meetingLanguageAuto', value: '' },
-      { labelKey: 'settings.items.meetingLanguageZh', value: 'zh' },
-      { labelKey: 'settings.items.meetingLanguageEn', value: 'en' },
-    ]} },
-    { type: 'item', spec: { labelKey: 'settings.items.meetingFileExcerpts', descriptionKey: 'settings.items.meetingFileExcerptsDesc', key: 'meeting.file_excerpts', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.meetingMinutesMaxTokens', descriptionKey: 'settings.items.meetingMinutesMaxTokensDesc', key: 'meeting.minutes_max_tokens', type: 'number', source: 'server', min: 0, max: 8000, step: 500, sectionHeader: 'settings.items.meetingSummarySection' } },
-    // Agent mode: same inputs, same prompts, but the model call is made by the
-    // built-in agent, which can READ project files to check how a term is
-    // actually spelled. Placed after the summary-model rows because it replaces
-    // them for this task — reading it before them would suggest it is additive.
-    { type: 'item', spec: { labelKey: 'settings.items.meetingAgentMinutes', descriptionKey: 'settings.items.meetingAgentMinutesDesc', key: 'meeting.agent_minutes', type: 'switch', source: 'server', sectionHeader: 'settings.items.meetingSummarySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.meetingAgentMinutesMaxRounds', descriptionKey: 'settings.items.meetingAgentMinutesMaxRoundsDesc', key: 'meeting.agent_minutes_max_rounds', type: 'number', source: 'server', min: 0, max: 100, step: 1, sectionHeader: 'settings.items.meetingSummarySection' } },
-    // New-meeting defaults. These are local (per device) because they seed the
-    // create form; the room-level value is still chosen per meeting and can be
-    // changed in the stage's 会议管理 tab.
-    { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultNotes', descriptionKey: 'settings.items.meetingDefaultNotesDesc', key: 'meetingDefaultNotes', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultShots', descriptionKey: 'settings.items.meetingDefaultShotsDesc', key: 'meetingDefaultShots', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowTalk', descriptionKey: 'settings.items.meetingDefaultAllowTalkDesc', key: 'meetingDefaultAllowTalk', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.meetingDefaultAllowMemberScreen', descriptionKey: 'settings.items.meetingDefaultAllowMemberScreenDesc', key: 'meetingDefaultAllowMemberScreen', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingDefaultsSection' } },
-    // 画面质量. Local (per device): the right ceiling depends on the machine that
-    // has to encode the picture and the link it uploads over, so the same
-    // account on a phone and on a workstation must be able to differ. Read back
-    // by `utils/liveQualityPrefs` when a capture starts — the option values here
-    // and the whitelists there are one contract.
-    { type: 'item', spec: { labelKey: 'settings.items.liveScreenResolution', descriptionKey: 'settings.items.liveScreenResolutionDesc', key: 'liveScreenResolution', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
-      { labelKey: 'settings.items.liveScreenRes720p', value: '1280x720' },
-      { labelKey: 'settings.items.liveScreenRes1200p', value: '1920x1200' },
-      { labelKey: 'settings.items.liveScreenRes1600p', value: '2560x1600' },
-      { labelKey: 'settings.items.liveScreenRes2160p', value: '3840x2160' },
-    ] } },
-    { type: 'item', spec: { labelKey: 'settings.items.liveScreenFps', descriptionKey: 'settings.items.liveScreenFpsDesc', key: 'liveScreenFps', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
-      { labelKey: 'settings.items.liveFps15', value: '15' },
-      { labelKey: 'settings.items.liveFps24', value: '24' },
-      { labelKey: 'settings.items.liveFps30', value: '30' },
-      { labelKey: 'settings.items.liveFps60', value: '60' },
-    ] } },
-    { type: 'item', spec: { labelKey: 'settings.items.liveScreenBitrate', descriptionKey: 'settings.items.liveScreenBitrateDesc', key: 'liveScreenBitrate', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
-      { labelKey: 'settings.items.liveMbps2', value: '2' },
-      { labelKey: 'settings.items.liveMbps4', value: '4' },
-      { labelKey: 'settings.items.liveMbps6', value: '6' },
-      { labelKey: 'settings.items.liveMbps8', value: '8' },
-      { labelKey: 'settings.items.liveMbps12', value: '12' },
-    ] } },
-    { type: 'item', spec: { labelKey: 'settings.items.liveCameraResolution', descriptionKey: 'settings.items.liveCameraResolutionDesc', key: 'liveCameraResolution', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
-      { labelKey: 'settings.items.liveCamRes480p', value: '640x480' },
-      { labelKey: 'settings.items.liveCamRes720p', value: '1280x720' },
-      { labelKey: 'settings.items.liveCamRes1080p', value: '1920x1080' },
-    ] } },
-    { type: 'item', spec: { labelKey: 'settings.items.liveCameraFps', descriptionKey: 'settings.items.liveCameraFpsDesc', key: 'liveCameraFps', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
-      { labelKey: 'settings.items.liveFps15', value: '15' },
-      { labelKey: 'settings.items.liveFps24', value: '24' },
-      { labelKey: 'settings.items.liveFps30', value: '30' },
-    ] } },
-    { type: 'item', spec: { labelKey: 'settings.items.liveCameraBitrate', descriptionKey: 'settings.items.liveCameraBitrateDesc', key: 'liveCameraBitrate', type: 'select', source: 'local', sectionHeader: 'settings.items.meetingQualitySection', options: [
-      { labelKey: 'settings.items.liveMbps1', value: '1' },
-      { labelKey: 'settings.items.liveMbps1_5', value: '1.5' },
-      { labelKey: 'settings.items.liveMbps2_5', value: '2.5' },
-      { labelKey: 'settings.items.liveMbps4', value: '4' },
-    ] } },
-    { type: 'item', spec: { labelKey: 'settings.items.liveAutoDowngrade', descriptionKey: 'settings.items.liveAutoDowngradeDesc', key: 'liveAutoDowngrade', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingQualitySection' } },
-    // 中继服务 (LiveKit). Installation-wide, so it lives here rather than in the
-    // create form: the relay is deployed once and every meeting that opts in
-    // shares it. The row is a placeholder that only opens the card — the form
-    // is MeetingRelaySetting, because the credential is write-only and the save
-    // is a test-then-store action, neither of which the generic row can do.
-    { type: 'item', spec: { labelKey: 'settings.items.meetingRelaySection', key: 'meetingRelay', type: 'info', source: 'server', sectionHeader: 'settings.items.meetingRelaySection' } },
-  ],
+  // Fields live in `plugins/live/settings.ts` — see PLUGIN_SETTINGS below.
+  meeting: [],
   // 文本嵌入: the shared embedding service, its own page.
   //
   // Deliberately NOT a block inside 会话索引. The knowledge base calls the same
@@ -1178,56 +920,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   // switch (it stops the indexer and closes the database), so it lives in the
   // feature manager and this page only reports its state. Everything else that
   // is `kb.*` belongs here — those rows used to have no UI at all.
-  kb: [
-    // Master switch status. `kb.enabled` is a Dock feature switch (it stops the
-    // indexer and closes the database), so the switch itself lives in the
-    // manager — but every module page reports its state and links there, and
-    // the knowledge base is no exception.
-    { type: 'item', spec: { labelKey: 'settings.items.featureStatusKb', descriptionKey: 'settings.items.kbEnabledDesc', key: 'kbEnabledStatus', type: 'info', source: 'server', statusFeature: 'kb.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
-    // Status card (KbSetting.vue): collection/document counters plus the
-    // reindex action. The placeholder only opens the card — the body is a
-    // dedicated component, so it must also be listed in PLACEHOLDER_ITEMS.
-    { type: 'item', spec: { labelKey: 'settings.items.kbStatusSection', key: 'kbStatus', type: 'info', source: 'server', sectionHeader: 'settings.items.kbStatusSection' } },
-    // ── 自动注入 ──
-    // What the agent receives from the knowledge base on every turn.
-    { type: 'item', spec: { labelKey: 'settings.items.kbAutoInject', descriptionKey: 'settings.items.kbAutoInjectDesc', key: 'kb.auto_inject', type: 'switch', source: 'server', sectionHeader: 'settings.items.kbInjectSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.kbInjectTopN', descriptionKey: 'settings.items.kbInjectTopNDesc', key: 'kb.inject_top_n', type: 'number', source: 'server', min: 1, max: 20, disableUnless: { key: 'kb.auto_inject', value: true }, sectionHeader: 'settings.items.kbInjectSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.kbInjectMaxChars', descriptionKey: 'settings.items.kbInjectMaxCharsDesc', key: 'kb.inject_max_chars', type: 'number', source: 'server', min: 200, disableUnless: { key: 'kb.auto_inject', value: true }, sectionHeader: 'settings.items.kbInjectSection' } },
-    // 0–1 slider, shown as a percentage. Vector hits below it are dropped; FTS
-    // hits are not thresholded (a matched term is a match by definition).
-    { type: 'item', spec: { labelKey: 'settings.items.kbInjectMinSimilarity', descriptionKey: 'settings.items.kbInjectMinSimilarityDesc', key: 'kb.inject_min_similarity', type: 'slider', source: 'server', min: 0, max: 1, step: 0.05, displayFormat: 'percent', disableUnless: { key: 'kb.auto_inject', value: true }, sectionHeader: 'settings.items.kbInjectSection' } },
-    // ── 索引与限额 ──
-    { type: 'item', spec: { labelKey: 'settings.items.kbMaxFileMb', descriptionKey: 'settings.items.kbMaxFileMbDesc', key: 'kb.max_file_mb', type: 'number', source: 'server', min: 1, max: 1024, sectionHeader: 'settings.items.kbIndexSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.kbMaxTextMb', descriptionKey: 'settings.items.kbMaxTextMbDesc', key: 'kb.max_text_mb', type: 'number', source: 'server', min: 1, max: 512, sectionHeader: 'settings.items.kbIndexSection' } },
-    // Free text on purpose: it is a Go duration ("2s", "500ms"). A number row
-    // would have to pick a unit, and the server accepts either.
-    { type: 'item', spec: { labelKey: 'settings.items.kbPollInterval', descriptionKey: 'settings.items.kbPollIntervalDesc', key: 'kb.poll_interval', type: 'text', source: 'server', sectionHeader: 'settings.items.kbIndexSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.kbEmbedBatchSize', descriptionKey: 'settings.items.kbEmbedBatchSizeDesc', key: 'kb.embed_batch_size', type: 'number', source: 'server', min: 1, max: 128, sectionHeader: 'settings.items.kbIndexSection' } },
-  ],
+  // Fields live in `plugins/kb/settings.ts` — see PLUGIN_SETTINGS below.
+  kb: [],
   notifications: [],
-  portForward: [
-    { type: 'panel', config: {
-      panelId: 'portForward',
-      // No enable switch: the feature is always available (Enabled is pinned
-      // server-side in ApplyDefaults). What used to be a per-client choice is
-      // now the `port_forward.transport` row below — a server-side switch the
-      // clients follow, so it is visible and editable from the web too.
-      commonFields: [
-        { labelKey: 'settings.items.portForwardTransport', descriptionKey: 'settings.items.portForwardTransportDesc', key: 'port_forward.transport', type: 'select', source: 'server', options: [
-          { labelKey: 'proxy.transportH2', value: 'h2' },
-          { labelKey: 'proxy.transportSsh', value: 'ssh' },
-        ] },
-        { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', displayTransform: (v: unknown) => v === 0 ? i18n.global.t('settings.items.portForwardPortAuto') : v },
-      ],
-      // No connectivity test button: the panel's tunnel status row is the single
-      // readiness signal. The server-side test could only ever answer "the
-      // listener bound and accepts a loopback dial" — it runs inside the server,
-      // so it cannot observe whether a client actually connected — while the
-      // status row reports that plus the client-side tunnel and per-port
-      // liveness. Two rows answering overlapping questions is what the merge
-      // removed.
-    }},
-  ],
+  // Fields live in `plugins/proxy/settings.ts` — see PLUGIN_SETTINGS below.
+  portForward: [],
 }
 
 // ── Sub-page panel map (data-driven third-level navigation) ────────
@@ -1251,6 +948,79 @@ export const subPagePanelMap: Record<string, { panelConfig: GroupPanelConfig; ti
 /** Check if a category ID is a sub-page route (present in subPagePanelMap) */
 export function isSubPageRoute(categoryId: string): boolean {
   return categoryId in subPagePanelMap
+}
+
+/**
+ * Field lists contributed by the plugins themselves.
+ *
+ * A dock plugin owns a settings category (`settingsCategory`) and, until now,
+ * its field list lived only in this file — so adding a setting meant editing a
+ * 1300-line table in a different directory from the feature. Each plugin may now
+ * ship `plugins/<id>/settings.ts` (a default export of `CategoryEntry[]`) and the
+ * merge below puts it under that plugin's category.
+ *
+ * Why a glob here instead of a loader in the plugin runtime: this module is
+ * imported by `SettingsCategory.vue`, `SettingsIndex.vue` and the restart dialog,
+ * none of which otherwise care about plugins, and the plugin runtime would drag
+ * the whole plugin graph (lucide + every panel) into them. `import.meta.glob` is
+ * resolved at build time and only records module ids — the modules are the
+ * plugins' own field tables, which import nothing but types.
+ *
+ * A category listed in BOTH places is a mistake, not a merge: two sources would
+ * silently concatenate and the row order would depend on it. The guard below
+ * throws at module load so it fails in tests instead of in front of a user.
+ */
+/**
+ * Plugin directory → the settings category its `settings.ts` fills.
+ *
+ * Needed because the two names differ for five plugins. This is the one place
+ * that pairing is written down for the field table; the plugin's own
+ * `settingsCategory` is the runtime's copy (used for the gear button and the
+ * index row), and `dockPluginManifest.test.ts` pins the two together.
+ */
+const PLUGIN_SETTINGS_CATEGORY: Record<string, string> = {
+  browse: 'files',
+  forge: 'forgeIntegration',
+  history: 'gitHistory',
+  kb: 'kb',
+  live: 'meeting',
+  mail: 'mail',
+  notifications: 'notifications',
+  proxy: 'portForward',
+  share: 'share',
+  stats: 'stats',
+  tasks: 'tasks',
+  terminal: 'terminal',
+  view: 'fileView',
+}
+
+const PLUGIN_SETTINGS_MODULES = import.meta.glob<{ default?: CategoryEntry[] }>(
+  '@/plugins/*/settings.ts',
+  { eager: true },
+)
+
+/** Category id a plugin's `settings.ts` belongs to: its directory name. */
+function pluginSettingsCategoryId(path: string): string | null {
+  return path.match(/\/plugins\/([^/]+)\/settings\.ts$/)?.[1] ?? null
+}
+
+for (const [path, mod] of Object.entries(PLUGIN_SETTINGS_MODULES)) {
+  const pluginId = pluginSettingsCategoryId(path)
+  const entries = mod.default
+  if (!pluginId || !entries) continue
+  // The plugin's directory name is NOT always its settings category (browse →
+  // files, view → fileView, forge → forgeIntegration, proxy → portForward,
+  // live → meeting). The mapping is declared by the plugin as
+  // `settingsCategory`; reading it from the plugin module would mean importing
+  // the plugin graph, so it is stated once, here, next to the merge.
+  const categoryId = PLUGIN_SETTINGS_CATEGORY[pluginId] ?? pluginId
+  const existing = categoryItems[categoryId]
+  if (existing && existing.length > 0) {
+    throw new Error(
+      `settingsFieldMap: category "${categoryId}" declares fields twice — once in this file and once in plugins/${pluginId}/settings.ts. Keep exactly one source.`,
+    )
+  }
+  categoryItems[categoryId] = entries
 }
 
 /** Get sub-page panel config for a colon-separated sub-route ID */

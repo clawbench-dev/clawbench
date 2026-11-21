@@ -17,9 +17,8 @@ import {
   setChatCollapsed,
   computeIsWideScreen,
   isChatPanelVisible,
-  WIDE_SCREEN_DOCK_TABS,
 } from '@/composables/useWideScreenLayout'
-import { DOCK_TAB_IDS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
+import { dockTabIdsInDefaultOrder, isDockTabId, type DockTabId } from '@/composables/dockTabs'
 import { DOCK_TABS, DOCK_TABS_WITH_ICONS, dockTabs } from '@/composables/dockPluginRuntime'
 import { PANEL_KEY_PREFIX, _resetLayoutScopeForTest, setLayoutProjectRoot, setLayoutScopeMode } from '@/utils/panelState'
 import { portForwardUnavailable } from '@/utils/portForwardUtils'
@@ -117,7 +116,7 @@ describe('useWideScreenLayout', () => {
   it('leftTab defaults to browse and is clamped to allowed tabs', () => {
     const { leftTab } = useWideScreenLayout()
     expect(leftTab.value).toBe('browse')
-    expect(WIDE_SCREEN_DOCK_TABS).toContain(leftTab.value)
+    expect(dockTabIdsInDefaultOrder()).toContain(leftTab.value)
   })
 
   it('switchLeftTab ignores invalid tabs and applies valid ones', () => {
@@ -129,7 +128,7 @@ describe('useWideScreenLayout', () => {
   })
 
   it('view is a wide-screen dock tab and can be switched to', () => {
-    expect(WIDE_SCREEN_DOCK_TABS).toContain('view')
+    expect(dockTabIdsInDefaultOrder()).toContain('view')
     switchLeftTab('view')
     const { leftTab } = useWideScreenLayout()
     expect(leftTab.value).toBe('view')
@@ -400,26 +399,26 @@ describe('activePane focus tracking', () => {
 
 describe('wide dock order', () => {
   it('is the registry order — one list, no head/tail concatenation', () => {
-    expect(WIDE_SCREEN_DOCK_TABS).toEqual(DOCK_TAB_IDS)
-    expect(dockTabs()).toEqual(DOCK_TAB_IDS)
+    expect(dockTabIdsInDefaultOrder()).toEqual(dockTabIdsInDefaultOrder())
+    expect(dockTabs()).toEqual(dockTabIdsInDefaultOrder())
   })
 
   it('is deterministic regardless of any runtime geometry', () => {
     // The whole visible dock never depends on measured space — regression guard
     // for the old height-measured overflow that collapsed tabs into a popup.
     expect(dockTabs()).toEqual(dockTabs())
-    expect(dockTabs()).toHaveLength(DOCK_TAB_IDS.length)
+    expect(dockTabs()).toHaveLength(dockTabIdsInDefaultOrder().length)
   })
 })
 
 describe('dock tab registry (single source of truth)', () => {
-  it('derives the switch whitelist from the registry — no second hand-written list', () => {
-    // The whole point of the registry: the whitelist is the registry's ids, so
-    // the two cannot diverge. This is deliberately an identity check on the
-    // exported array: if someone reintroduces a separately maintained list, the
-    // reference stops matching DOCK_TAB_IDS and this fails.
-    expect(WIDE_SCREEN_DOCK_TABS).toBe(DOCK_TAB_IDS)
-    expect(WIDE_SCREEN_DOCK_TABS).toEqual(DOCK_TABS.map((t) => t.id))
+  it('publishes exactly the assembled dock tabs — no second hand-written list', () => {
+    // The registry's ids are the plugin-declared ones the runtime assembled, so
+    // the installed default order and the descriptors cannot diverge. Compared
+    // by VALUE: the install happens after `dockTabs.ts` loads, so both sides are
+    // read live through their accessors. A hand-written list would fail here.
+    expect(dockTabIdsInDefaultOrder()).toEqual(DOCK_TABS.map((t) => t.id))
+    expect(dockTabIdsInDefaultOrder().length).toBeGreaterThan(0)
   })
 
   it('has unique ids and every id is reachable by the type guard', () => {
@@ -434,7 +433,7 @@ describe('dock tab registry (single source of truth)', () => {
     // slots but the user may drag them anywhere.
     const permanent = DOCK_TABS.filter((t) => !t.closable).map((t) => t.id)
     expect(permanent).toEqual(['browse', 'view', 'settings'])
-    const order = [...DOCK_TAB_IDS].reverse()
+    const order = [...dockTabIdsInDefaultOrder()].reverse()
     expect(dockTabs({ order })).toEqual(order)
   })
 
@@ -480,7 +479,7 @@ describe('dock tab registry (single source of truth)', () => {
 
   it('has no separate notes tab any more', () => {
     // 听记 and 桌面共享 were two entries for one pipeline; they are now one.
-    expect(DOCK_TAB_IDS).not.toContain('notes')
+    expect(dockTabIdsInDefaultOrder()).not.toContain('notes')
   })
 
   it('every registry entry carries an i18n title key', () => {
@@ -523,8 +522,8 @@ describe('dock tab registry (single source of truth)', () => {
 describe('wide dock tab reachability (regression)', () => {
   // A tab rendered in the wide dock but not switchable is a dead button:
   // switchLeftTab() rejects it, so clicking does nothing visible. That was the
-  // forge tab bug — it was rendered by the wide dock but missing from the
-  // whitelist.
+  // forge tab bug — it was rendered by the wide dock but missing from the id set
+  // switchLeftTab() validates against.
   //
   // The render list comes from dockTabs(), the same function App.vue's
   // visibleDockTabs computed calls, so this asserts the real render list rather
@@ -532,9 +531,9 @@ describe('wide dock tab reachability (regression)', () => {
   const RENDERED_ALL = dockTabs()
 
   it('every tab the wide dock renders can actually be switched to', () => {
-    // Direct whitelist coverage: the dock renders exactly these tabs, so the
-    // switch whitelist must contain every one of them.
-    expect(RENDERED_ALL.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab))).toEqual([])
+    // The dock renders exactly these tabs, so the installed id set must contain
+    // every one of them.
+    expect(RENDERED_ALL.filter((tab) => !dockTabIdsInDefaultOrder().includes(tab))).toEqual([])
 
     for (const tab of RENDERED_ALL) {
       resetWideScreenState()
@@ -568,7 +567,7 @@ describe('wide dock tab reachability (regression)', () => {
       for (const featureDisabled of featureSets) {
         const rendered = dockTabs({ unavailable, featureDisabled })
         expect(
-          rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab)),
+          rendered.filter((tab) => !dockTabIdsInDefaultOrder().includes(tab)),
           `gate combination unavailable=${[...(unavailable ?? [])].join('+') || '-'} features=${[...(featureDisabled ?? [])].join('+') || '-'}`,
         ).toEqual([])
       }
@@ -647,7 +646,7 @@ describe('wide dock tab reachability (regression)', () => {
   })
 
   it('forge is switchable', () => {
-    expect(WIDE_SCREEN_DOCK_TABS).toContain('forge')
+    expect(dockTabIdsInDefaultOrder()).toContain('forge')
     switchLeftTab('forge')
     const { leftTab } = useWideScreenLayout()
     expect(leftTab.value).toBe('forge')

@@ -1,8 +1,10 @@
 import type { Component } from 'vue'
 import {
-  DOCK_TAB_IDS,
+  installDockFeatures,
+  installDockTabIds,
   isPermanentDockTab,
   mergeDockOrder,
+  type DockFeature,
   type DockTabDescriptor,
   type DockTabId,
   type TabId,
@@ -13,6 +15,8 @@ import type {
   DockPanelHost,
   DockPanelHostExtras,
   DockPlugin,
+  DockPluginRuntime,
+  DockTabPluginManifest,
 } from './dockPluginTypes'
 import { appLog } from '@/utils/appLog'
 
@@ -27,18 +31,37 @@ const TAG = 'DockPlugins'
  * in the main bundle), but each plugin's PANEL stays a dynamic `import()`, so
  * no panel code is loaded until its tab is opened.
  *
- * Order is NOT taken from the glob: it comes from `DOCK_TAB_ORDER`
- * (`dockTabs.ts`), because default order is a product decision and must not be
- * decided by the filesystem's alphabetical order.
+ * DEFAULT ORDER is not taken from the glob either: every plugin declares its
+ * own `order`, and the assembled list is sorted by it (ties broken by id, so the
+ * result never depends on the filesystem). That keeps the product decision
+ * ("the file manager is first, settings is the exit at the end") inside the
+ * plugin that owns the tab, instead of in a second hand-written list that the
+ * next plugin has to be added to.
+ *
+ * The sorted id list is then published back into `dockTabs.ts` via
+ * `installDockTabIds`, so every leaf module that only needs "which tabs exist,
+ * in what order" keeps working without importing this file.
  */
+/**
+ * A left-dock plugin: its full manifest is present.
+ *
+ * Written as the positive shape rather than as `Extract<DockPlugin, …>`: both
+ * union arms carry `id: string` (see `DockTabId`), so a discriminant-based
+ * `Extract` matches both and narrows nothing. Stating the shape directly is
+ * what lets the assembler read manifest fields without casts.
+ */
+type DockPluginWithManifest = { id: DockTabId } & DockTabPluginManifest & DockPluginRuntime
+
 /** A plugin module as the bundler hands it over. */
 export type PluginModuleMap = Record<string, { default?: DockPlugin }>
 
 export interface AssembledPlugins {
   /** Plugin by id; a duplicate id keeps the FIRST module and drops the rest. */
   runtime: Partial<Record<TabId, DockPlugin>>
-  /** One descriptor per left-dock id, in `DOCK_TAB_ORDER`. */
+  /** One descriptor per left-dock id, in plugin-declared `order`. */
   tabs: (DockTabDescriptor & { icon: Component })[]
+  /** Left-dock ids in default order — what `installDockTabIds` receives. */
+  defaultOrder: readonly DockTabId[]
 }
 
 /**
@@ -68,17 +91,33 @@ export function assemblePluginModules(modules: PluginModuleMap): AssembledPlugin
     runtime[plugin.id] = plugin
   }
 
+  // Every left-dock plugin, sorted by the `order` it declares. Sorting here
+  // (rather than in each consumer) is what makes the order single-sourced.
+  //
+  // `chat` is excluded by the type guard: it has no manifest (`order`,
+  // description, group, closable) because it is the right-hand pane, not a
+  // left-dock entry.
+  const dockPlugins = (Object.keys(runtime) as TabId[])
+    .map((id) => runtime[id])
+    .filter(
+      (p): p is DockPluginWithManifest =>
+        // `chat` is never a dock entry, whatever else it declares; every other
+        // plugin qualifies by carrying the manifest's `order`.
+        !!p &&
+        p.id !== 'chat' &&
+        typeof (p as Partial<DockTabPluginManifest>).order === 'number',
+    )
+    .sort((a, b) => {
+      const diff = a.order - b.order
+      // Equal numbers must not depend on glob order — pin a tie-break.
+      return diff !== 0 ? diff : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+    })
+
+  const dockIds: DockTabId[] = dockPlugins.map((p) => p.id)
+
   const tabs: (DockTabDescriptor & { icon: Component })[] = []
-  for (const id of DOCK_TAB_IDS) {
-    const plugin = runtime[id]
-    // `chat` is not a left-dock entry; a missing module means the id was added
-    // to DOCK_TAB_ORDER without its plugin.ts. Both are dropped here (and
-    // caught by the manifest guard test) rather than rendering a nameless
-    // button.
-    if (!plugin || plugin.id === 'chat') {
-      if (!plugin) appLog.w(TAG, `no plugin.ts for dock tab "${id}"`)
-      continue
-    }
+  for (const plugin of dockPlugins) {
+    const id = plugin.id
     tabs.push({
       id,
       titleKey: plugin.titleKey,
@@ -92,12 +131,21 @@ export function assemblePluginModules(modules: PluginModuleMap): AssembledPlugin
     })
   }
 
-  return { runtime, tabs }
+  return { runtime, tabs, defaultOrder: dockIds }
 }
 
-const { runtime: RUNTIME, tabs: assembled } = assemblePluginModules(
+const { runtime: RUNTIME, tabs: assembled, defaultOrder } = assemblePluginModules(
   import.meta.glob<{ default: DockPlugin }>('@/plugins/*/plugin.ts', { eager: true }),
 )
+
+// Publish the plugin-declared order to `dockTabs.ts`, which must stay free of
+// plugin imports (see its header). `dockTabs.ts` has no way to know the `order`
+// numbers by itself, so this is the only writer.
+installDockTabIds(defaultOrder)
+// Logged once so a mistyped/missing plugin id is visible without a debugger:
+// the compiler can no longer check ids (they are plain strings now), and a
+// plugin that fails to assemble simply vanishes from this list.
+appLog.i(TAG, `installed ${defaultOrder.length} dock tabs: ${defaultOrder.join(', ')}`)
 
 /** Every left-dock tab, in default order, with its manifest resolved. */
 export const DOCK_TABS: readonly DockTabDescriptor[] = assembled
@@ -114,6 +162,24 @@ export const DOCK_TAB_BY_ID: ReadonlyMap<DockTabId, DockTabDescriptor> = new Map
 export const DOCK_FEATURE_TABS: readonly DockTabId[] = assembled
   .filter((t) => t.feature)
   .map((t) => t.id)
+
+/**
+ * Every server master switch a dock plugin gates on, derived from the plugins.
+ *
+ * This is what a preset writes when it says "turn every feature on/off", and what
+ * `useFeatureFlags` checks before reading the server registry. It used to be a
+ * hand-written list in `dockTabs.ts`, which meant a new gated plugin had to be
+ * added in two places — the plugin and the list — with a test as the only thing
+ * keeping them equal. The plugins are now the only source.
+ *
+ * Deduplicated and sorted so the list is stable (presets diff it in tests).
+ */
+const DECLARED_FEATURES: readonly DockFeature[] = [
+  ...new Set(assembled.map((t) => t.feature).filter((f): f is DockFeature => !!f)),
+].sort()
+
+// Publish to `dockTabs.ts`, which the preset rules import (see `dockFeatures`).
+installDockFeatures(DECLARED_FEATURES)
 
 /** A settings page contributed by a plugin, resolved and in DOCK order. */
 export interface DockSettingsPageEntry {
@@ -136,8 +202,8 @@ export interface DockSettingsPageEntry {
  * editing `SettingsIndex.vue` / `SettingsCategory.vue`.
  */
 export const DOCK_SETTINGS_PAGES: readonly DockSettingsPageEntry[] = assembled.flatMap((tab) => {
-  const plugin = RUNTIME[tab.id]
-  if (!plugin || plugin.id === 'chat' || !plugin.settingsPage) return []
+  const plugin = RUNTIME[tab.id] as DockPluginWithManifest | undefined
+  if (!plugin || !plugin.settingsPage) return []
   const page = plugin.settingsPage
   const categoryId = page.categoryId ?? plugin.settingsCategory ?? plugin.id
   return [{ pluginId: tab.id, categoryId, group: page.group, icon: page.icon, kind: page.kind, component: page.component }]

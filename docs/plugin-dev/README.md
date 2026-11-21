@@ -6,7 +6,7 @@
 
 ---
 
-## 0. 最短路径（四步）
+## 0. 最短路径（一个目录 + 服务端一处）
 
 假设要加的功能叫 `foo`（id 全小写，见下方"id 的规矩"）。
 
@@ -18,12 +18,12 @@ import type { DockPlugin } from '@/composables/dockPluginTypes'
 
 export default {
   id: 'foo',
+  order: 80,                 // 出厂默认顺序，见下
   titleKey: 'nav.foo',
   descriptionKey: 'settings.dockPlugins.desc.foo',
   group: 'project',
   closable: true,
-  // 下面两行只有"这个功能有自己的设置页"时才要，且分类必须先在
-  // settingsFieldMap.ts 的 categoryItems 里存在（守卫会检查）。
+  // 下面两行只有"这个功能有自己的设置页"时才要。
   settingsCategory: 'foo',
   icon: Rocket,
   settingsPage: { group: 'dockModules', icon: Rocket, kind: 'flat' },
@@ -33,32 +33,50 @@ export default {
 
 **第二步：面板组件** 放 `web/src/components/foo/FooPanel.vue`。它只接收一个必有 prop `active`（是否当前可见），其余 props / 事件由 `plugin.ts` 的 `panel.props` / `panel.on` 决定。首屏是"空、只等数据"的，用 `<PanelSkeleton>`，不要居中转圈。
 
-**第三步：在 `web/src/composables/dockTabs.ts` 的 `DOCK_TAB_ORDER` 加一行 id**
+**第三步（有设置页才要）：新建 `web/src/plugins/foo/settings.ts`**
+
+这个插件设置页的字段清单写在这里，不再去 `settingsFieldMap.ts` 找位置：
 
 ```ts
-export const DOCK_TAB_ORDER = [
-  'browse',
-  ...
-  'foo',        // ← 加这一行，位置就是默认位置
-  'settings',
-] as const
+import type { CategoryEntry } from '@/components/settings/settingsFieldMap'
+
+export default [
+  { type: 'item', spec: { labelKey: 'settings.items.fooEnabled', descriptionKey: '…', key: 'foo.enabled', type: 'switch', source: 'server' } },
+] satisfies CategoryEntry[]
 ```
 
-这是整个流程里**唯一要改的既有文件**（除了 i18n 文案）。
+分类名默认等于 `id`。只有**设置页分类名与目录名不同**时（历史上 `browse` → `files` 这种），才要在 `settingsFieldMap.ts` 的 `PLUGIN_SETTINGS_CATEGORY` 补一行——那是整条流程里唯一还可能碰的既有文件，且只在这种情况才碰。
 
-**第四步：补文案**（见 §7）。少一个键，页签标题会显示成原始 key。
+**第四步（必做）：新建 `web/src/plugins/foo/i18n.ts`**
 
-不需要改：`dockPluginRuntime.ts`（`import.meta.glob` 自动收）、`App.vue`（一个 `DockPanelHost` 渲染所有面板）、`SettingsIndex.vue` / `SettingsCategory.vue`（设置页从注册表派生）、预设（从 `DOCK_TAB_ORDER` 派生）。
+管理器和功能编排里显示的两段文案，跟着插件走：
 
-### 为什么顺序必须手写
+```ts
+export default {
+  zh: { desc: '一句话说明这个功能。', unavailable: '这台机器跑不了的原因。' },
+  en: { desc: 'One line about what this does.', unavailable: 'Why this host cannot run it.' },
+}
+```
 
-`DOCK_TAB_ORDER` 是**产品决策**，不是文件系统的副产品：文件管理排第一（很多跳转的兜底落点），设置在最后（回到其他功能的唯一入口）。用 `glob` 的字母序决定新页签落在哪，等于让文件名排序替产品做决定。
+启动时会被合并到 `settings.dockPlugins.desc.foo` / `.unavailable.foo`——也就是 `descriptionKey` / `unavailableReasonKey` 指向的地方。少这一块，编排列表里会显示原始 key。`unavailable` 只在 `available()` 会返回 false 时才需要。
+
+**第五步（有服务端总开关才要）：** 在 `cmd/server/main.go` 的 `registerPlugins` 加一个条目，见 §4。
+
+不需要改：`dockPluginRuntime.ts`（`import.meta.glob` 自动收）、`dockTabs.ts`（顺序与 id 都来自插件声明）、`App.vue`、`SettingsIndex.vue` / `SettingsCategory.vue`（设置页从注册表派生）、预设（从插件声明的 `order` 与 `feature` 派生）、两个全局语言包（插件文案在插件目录里）。
+
+### 为什么顺序写在插件里
+
+`order` 是**产品决策**，但它写在插件自己身上，不写在第二份清单里：文件管理排第一（很多跳转的兜底落点），设置在最后（回到其他功能的唯一入口），各自在自己的 `plugin.ts` 里声明。运行时按 `order` 升序排，同号按 id 兜底。
+
+同号算**配置错误**，`dockPluginManifest.test.ts` 会直接红——不会让字母序替产品决定。数字按 10 留空档（10、20、30…），以后插在中间不用重排。
+
+用户拖动排序仍然优先：默认顺序只是出厂值，`dockOrder` 里存过就用存的。新插件上线后老用户那份顺序里没有它，`mergeDockOrder` 会把它补回自己的默认槽位，不会追加到末尾。
 
 另外 `dockTabs.ts` 必须**保持零 import**（无 Vue、无 lucide、无插件模块）。它被 `useWideScreenLayout` 依赖，而后者被 BottomSheet / AppHeader / FileViewer 等一大堆组件依赖——那些组件的测试只用窄 mock 替换 `lucide-vue-next`（只给几个图标）。这里一旦 import 图标，这些测试会在模块加载时就抛 `No "FolderOpen" export is defined on the "lucide-vue-next" mock`。守卫：`dockPluginManifest.test.ts` 的 "dockTabs.ts stays import-free"。
 
 ### id 的规矩
 
-`id` 是稳定身份，同时是：前端页签 id、`/api/features` 的键、i18n 错误键前缀（`forge` → `ForgeDisabled`）、`plugin.ts` 所在目录名、深链目标。**全小写，定了就不要改**（改了等于换了一个功能）。守卫会同时检查两件事：目录名必须等于 `id`，`DOCK_TAB_ORDER` 与"有 `plugin.ts` 的目录"必须一一对应（双向）。
+`id` 是稳定身份，同时是：前端页签 id、`/api/features` 的键、i18n 错误键前缀（`forge` → `ForgeDisabled`）、`plugin.ts` 所在目录名、深链目标。**全小写，定了就不要改**（改了等于换了一个功能）。守卫会检查两件事：目录名必须等于 `id`；每个插件都声明了唯一的、正数的 `order`（漏写或撞号都红）。
 
 ---
 
@@ -70,14 +88,15 @@ export const DOCK_TAB_ORDER = [
 
 | 字段 | 必填 | 什么时候需要 / 不写会怎样 |
 |---|---|---|
-| `id` | 是 | 见上。`chat` 是特例：它不占左栏，所以只要求 `id` + `icon` + `titleKey`。 |
+| `id` | 是 | 见上。`chat` 是特例：它不占左栏，所以只要求 `id` + `icon` + `titleKey`，**不写 `order`**（写了也不会进左栏）。 |
+| `order` | 左栏插件必填 | 出厂默认顺序，小的在前。按 10 留空档。同号按 id 兜底但算配置错误，守卫会红。`chat` 不写。 |
 | `titleKey` | 是 | 页签标签 / 悬停名称的 i18n 键。缺了会显示原始 key（如 `nav.foo`）。 |
 | `descriptionKey` | 是 | 功能编排里那一行的一句话说明。缺了同上。 |
 | `group` | 是 | 只决定**设置管理器里的分组**（`workspace` / `project` / `personal` / `system`），**不影响 Dock 顺序**。 |
 | `closable` | 是 | 用户能否隐藏这个页签。`false` 只给常驻三件套（`browse` / `view` / `settings`）；这个集合在 `dockTabs.ts` 的 `DOCK_PERMANENT_TAB_IDS` 里另有一份零 import 副本，两边不一致守卫会红。 |
-| `feature` | 否 | 关联的服务端总开关（`forge.enabled` / `mail.enabled` / `terminal.enabled` / `kb.enabled` / `tasks.enabled` / `share.enabled`）。写了 ⇒ 管理器里的开关写服务端配置、关闭时页签消失；不写 ⇒ 开关只在本机隐藏入口。**必须**是 `DOCK_FEATURES` 里的值（写错一个字母会永远读成"开"，页签永不消失）。 |
+| `feature` | 否 | 关联的服务端总开关（`forge.enabled` / `mail.enabled` / `terminal.enabled` / `kb.enabled` / `tasks.enabled` / `share.enabled`）。写了 ⇒ 管理器里的开关写服务端配置、关闭时页签消失；不写 ⇒ 开关只在本机隐藏入口。**这份清单就是从各插件的这个字段汇总出来的**，前端没有第二份数组可改；但服务端必须真有这个 key（`GET /api/features` 返回、PATCH 白名单、关闭时接口拒绝），否则前端藏了入口、接口照常能用。 |
 | `capability` | 否 | 宿主/环境能力（目前只有 `terminal`、`portForward`）。用于管理器把开关置灰并给原因。**能力不是功能**：能跑但被关掉，与开着但跑不了，是两件事。 |
-| `settingsCategory` | 否 | 这个插件自己的配置属于哪个设置分类。写了 ⇒ 管理器行上出现齿轮，跳到该分类。 |
+| `settingsCategory` | 否 | 这个插件自己的配置属于哪个设置分类。写了 ⇒ 管理器行上出现齿轮，跳到该分类。字段清单写在 `plugins/<id>/settings.ts`，不再进 `settingsFieldMap.ts`（分类名 ≠ 目录名时要在那张 13 行的映射表里补一行）。 |
 | `settingsPage` | 否 | 往设置首页贡献一行。**有 `settingsCategory` 就必须有它**，否则齿轮指向的分类在首页没有入口。字段：`categoryId`（默认取 `settingsCategory`，再默认取 `id`）、`group`（**必须是 `dockModules`**）、`icon`、`kind`（`flat` / `group` / `custom`）、`component`（仅 `custom`，必须是 `() => import()`）。 |
 | `icon` | 是 | 静态图标。随状态变的图标用运行时的 `dynamicIcon`（Forge 在 GitHub / GitLab 之间切）。 |
 
@@ -267,9 +286,9 @@ go test ./internal/model/              # config 手册漂移
 
 | 场景 | 改什么 |
 |---|---|
-| 新服务端开关 | `dockTabs.ts` 的 `DockFeature` 联合类型 + `DOCK_FEATURES` 数组各加一项（`dockPluginManifest.test.ts` 断言这个数组等于各 manifest 实际声明的集合）。`isFeatureEnabled('foo.enabled')` 自动可用；`useFeatureFlags()` 那个便捷对象是手写的，想在那里取简写名再加一行。 |
+| 新服务端开关 | 只在 `plugin.ts` 写 `feature: 'foo.enabled'`。前端的开关清单由各插件汇总而成，没有第二份数组要改；`isFeatureEnabled('foo.enabled')` 自动可用。`useFeatureFlags()` 那个便捷对象仍是手写的，想在那里取简写名才加一行。 |
 | 别的入口也要拦 | 按钮 / 菜单项 / 快捷键的处理器里用 `useFeatureFlag('foo.enabled')` 判断，被点时调 `notifyFeatureDisabled()` 给统一提示。**只隐藏 Dock 页签不够**——入口还在，用户点了只会收到服务端 409。 |
-| 新设置分类 | `settingsFieldMap.ts` 的 `categoryItems` 加分类（`flat` / `group` 页面要有条目；纯自定义页给空数组），再在 `plugin.ts` 里声明 `settingsPage`。**不要**去改 `SettingsIndex.vue` / `SettingsCategory.vue`。 |
+| 新设置分类 | 在 `plugins/<id>/settings.ts` 写字段清单，再在 `plugin.ts` 里声明 `settingsPage`。只有 `kind: 'custom'`（自己画页面）才要碰 `SettingsCategory.vue` 加一个分支。**不要**去改 `SettingsIndex.vue`。 |
 | 新面板事件 | 在 `plugin.ts` 的 `panel.on` 里给；事件名用组件 `defineEmits` 的**原始拼写**（模板里的 `@relay-settings` 会被编译器归一化，对象键不会）。 |
 
 ---
@@ -295,13 +314,13 @@ go test ./internal/model/              # config 手册漂移
 
 | 键 | 文件 | 说明 |
 |---|---|---|
-| `titleKey` | `web/src/i18n/locales/zh.ts` + `en.ts` | 页签标签 / 悬停名 |
-| `descriptionKey` | 同上 | 功能编排里的一句话说明 |
-| `unavailableReasonKey` | 同上 | 不可用原因（只在 `available()` 会返回 false 时需要） |
+| `titleKey`（`nav.*`） | `web/src/i18n/locales/zh.ts` + `en.ts` | 页签标签 / 悬停名。这一条留在全局语言包 |
+| `descriptionKey` | `web/src/plugins/<id>/i18n.ts` | 功能编排里的一句话说明（启动时合并到 `settings.dockPlugins.desc.<id>`） |
+| `unavailableReasonKey` | `web/src/plugins/<id>/i18n.ts` | 不可用原因（只在 `available()` 会返回 false 时需要；合并到 `settings.dockPlugins.unavailable.<id>`） |
 | `DisabledMsgKey` / 推导出的 `XxxDisabled` | `internal/i18n/locales/active.zh.yaml` + `active.en.yaml` | 接口被拒时的服务端文案 |
-| 设置页字段文案 | `web/src/i18n/locales/{zh,en}.ts` + `settingsFieldMap.ts` 里的 `labelKey` / `descriptionKey` | 新分类的每个字段都要 |
+| 设置页字段文案 | `web/src/i18n/locales/{zh,en}.ts`，键由 `plugins/<id>/settings.ts` 里的 `labelKey` / `descriptionKey` 引用 | 新分类的每个字段都要 |
 
-`nav.*` 是页签名、`settings.dockPlugins.desc.*` 是编排说明、`settings.dockPlugins.unavailable.*` 是不可用原因——跟现有插件保持一致即可。
+`nav.*` 是页签名（全局语言包），`settings.dockPlugins.desc.*` / `.unavailable.*` 由插件目录的 `i18n.ts` 提供。判据：**只属于一个插件的文案进插件目录；被两处以上复用的（保存、取消、已启用）留全局**。
 
 ---
 
@@ -320,11 +339,11 @@ npx vitest run web/src/__tests__/dockButtonWiring.test.ts
 
 `dockPluginManifest.test.ts` 覆盖的都是"漏了就静默失效"的步骤：
 
-- 目录名 = `id`；`DOCK_TAB_ORDER` 与插件目录双向一一对应；
-- 组装出来的顺序等于 `DOCK_TAB_ORDER`，每个页签都有图标；
+- 目录名 = `id`；每个左栏插件都声明了唯一、正数的 `order`；
+- 组装出来的顺序等于按 `order` 升序（同号按 id 兜底），每个页签都有图标；
 - `closable: false` 的集合等于 `DOCK_PERMANENT_TAB_IDS`；
-- `feature` 必须是 `DOCK_FEATURES` 里的值，且 `DOCK_FEATURES` 等于实际声明的集合；
-- 每个 `titleKey` / `descriptionKey` / `unavailableReasonKey` 在**中英两边**都能解析且非空；
+- 汇总出的开关清单等于各 manifest 实际声明的集合；
+- 每个 `titleKey`（全局语言包）与 `descriptionKey` / `unavailableReasonKey`（插件目录 `i18n.ts`）在**中英两边**都能解析且非空；
 - 有 `settingsCategory` 就必须有 `settingsPage`，`group === 'dockModules'`，且 `categoryId` 是真实的设置分类；
 - `kind: 'custom'` 必须给 `component`；
 - 三个预设展开后的 order 都是全部 id 的排列；
@@ -353,10 +372,13 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 
 | 文件 | 作用 |
 |---|---|
-| `web/src/plugins/<id>/plugin.ts` | **这个插件的全部自描述**：清单 + 运行时资源 |
+| `web/src/plugins/<id>/plugin.ts` | **这个插件的全部自描述**：清单（含 `order`）+ 运行时资源 |
+| `web/src/plugins/<id>/settings.ts` | 这个插件设置页的字段清单（`CategoryEntry[]`），可选 |
+| `web/src/plugins/<id>/i18n.ts` | 这个插件的描述与不可用原因（中英各一份），可选 |
+| `web/src/i18n/pluginMessages.ts` | 启动时把各插件 `i18n.ts` 合并进语言包（必须在 `createI18n` 之前） |
 | `web/src/composables/dockPluginTypes.ts` | 契约类型（纯类型，无运行时代码） |
-| `web/src/composables/dockPluginRuntime.ts` | 唯一聚合点：`import.meta.glob` 收全部 `plugin.ts`，按 `DOCK_TAB_ORDER` 组装；解析角标 / 标题 / 图标 / 可用性；`dockTabs()` 是唯一的渲染列表 |
-| `web/src/composables/dockTabs.ts` | id 与顺序（`DOCK_TAB_ORDER`）、分组 / 能力 / 功能联合类型、常驻集合、`mergeDockOrder`。**零 import** |
+| `web/src/composables/dockPluginRuntime.ts` | 唯一聚合点：`import.meta.glob` 收全部 `plugin.ts`，按插件声明的 `order` 组装，并把 id 与开关清单发布给 `dockTabs.ts`；解析角标 / 标题 / 图标 / 可用性；`dockTabs()` 是唯一的渲染列表 |
+| `web/src/composables/dockTabs.ts` | id 集合与开关集合（由注册表在启动时安装，本文件只读）、分组 / 能力类型、常驻集合、`mergeDockOrder`。**零 import** |
 | `web/src/composables/useDockPlugins.ts` | 隐藏集合、顺序、三个预设、`usePluginProfile`（给插件读预设） |
 | `web/src/composables/useDockAvailability.ts` | 三条轴合成一个对象（`featureDisabled` / `unavailable` / `hidden`）+ 导航守卫 |
 | `web/src/composables/useDockLifecycle.ts` | 后台资源启停、`onEnter` / `onLeave` |
@@ -378,3 +400,5 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 ## 10. 旧文档
 
 `01-model.md` … `09-settings.md` 是 2026-11 上一轮重构时写的，描述的是"每个功能自己一份 `components/<feature>/dock.ts`"的形态——那些文件已经删了，字段名和接线位置都不再适用。其中**仍然成立**的只有概念部分：三种"关闭"必须分开、常驻页签不能隐藏、预设是粗粒度选择而管理器是细粒度。具体照本文件做。
+
+2026-11-21 的契约收口（`order`、`settings.ts`、`i18n.ts` 都进插件目录）之后，本文件已同步更新；`01`–`09` 每篇顶部都加了同一条过时声明，避免有人照着旧步骤去改已经删掉的东西。

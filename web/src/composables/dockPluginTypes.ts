@@ -214,6 +214,21 @@ export interface DockPluginRuntime {
  * `DockTabDescriptor` by the runtime.
  */
 export interface DockTabPluginManifest {
+  /**
+   * Where this plugin sits in the DEFAULT dock order. Small numbers first.
+   *
+   * Declared by the plugin so the registry can be derived entirely from the
+   * plugin modules: adding a plugin means adding its directory and nothing
+   * else. This is only the factory default — the user's drag order (persisted
+   * as `dockOrder`) and the presets still win over it.
+   *
+   * Spaced by 10 so a plugin can be inserted between two others without
+   * renumbering the rest. Ties are broken by id, so a duplicate number renders
+   * deterministically instead of depending on glob order — but a duplicate is a
+   * configuration mistake, and `dockPluginManifest.test.ts` fails on it rather
+   * than letting the tie-break silently decide the product order.
+   */
+  order: number
   /** i18n key for the tab label / tooltip. */
   titleKey: string
   /** i18n key for the one-line description in the manager. */

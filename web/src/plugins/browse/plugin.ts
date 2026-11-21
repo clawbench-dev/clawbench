@@ -12,6 +12,7 @@ import type { DockPlugin } from '@/composables/dockPluginTypes'
  */
 export default {
   id: 'browse',
+  order: 10,
   titleKey: 'nav.fileManager',
   descriptionKey: 'settings.dockPlugins.desc.browse',
   group: 'workspace',

@@ -49,6 +49,7 @@ interface OpenForgeDetail {
  */
 export default {
   id: 'forge',
+  order: 40,
   titleKey: 'nav.forge',
   // Same key the dock label uses. `nav.forge` stays the platform-neutral
   // fallback (and the manifest guard requires a static key), but every

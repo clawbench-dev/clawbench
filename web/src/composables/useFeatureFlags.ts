@@ -25,7 +25,7 @@ import i18n from '@/i18n'
 import { useToast } from '@/composables/useToast'
 import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
-import { DOCK_FEATURES, type DockFeature } from '@/composables/dockTabs'
+import { dockFeatures, type DockFeature } from '@/composables/dockTabs'
 
 const TAG = 'FeatureFlags'
 
@@ -108,7 +108,7 @@ export function serverFeature(id: string): ServerFeature | undefined {
 
 /** True for the six master switches the server registry owns. */
 function isMasterFeature(key: FeatureFlagKey): key is DockFeature {
-  return (DOCK_FEATURES as readonly string[]).includes(key)
+  return dockFeatures().includes(key)
 }
 
 /**

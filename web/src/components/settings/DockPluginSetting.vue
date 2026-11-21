@@ -134,9 +134,9 @@ import { DOCK_TAB_BY_ID, dockTabTitleKey, dockTabWithIcon, dockUnavailableReason
 import type { DockTabDescriptor, DockTabId, DockFeature } from '@/composables/dockTabs'
 import {
   APPLICABLE_DOCK_PRESETS,
-  DOCK_PRESET_PLANS,
   PRESETS_NEEDING_CONFIRM,
   dockFeatureChangesToConfig,
+  dockPresetPlan,
   useDockPlugins,
   type DockPreset,
 } from '@/composables/useDockPlugins'
@@ -404,7 +404,7 @@ const presetStatusText = computed(() => {
  */
 async function onPreset(next: Exclude<DockPreset, 'custom'>): Promise<void> {
   if (presetBusy.value) return
-  const plan = DOCK_PRESET_PLANS[next]
+  const plan = dockPresetPlan(next)
 
   if (PRESETS_NEEDING_CONFIRM.includes(next)) {
     const lines = plan.features

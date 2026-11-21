@@ -15,6 +15,7 @@ const { terminalRuntimeEnabled, platformSupported } = useTerminalStatus()
  */
 export default {
   id: 'terminal',
+  order: 60,
   titleKey: 'terminal.title',
   descriptionKey: 'settings.dockPlugins.desc.terminal',
   group: 'project',

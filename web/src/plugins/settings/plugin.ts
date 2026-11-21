@@ -8,6 +8,7 @@ import type { DockPlugin } from '@/composables/dockPluginTypes'
  */
 export default {
   id: 'settings',
+  order: 140,
   titleKey: 'nav.settings',
   descriptionKey: 'settings.dockPlugins.desc.settings',
   group: 'system',

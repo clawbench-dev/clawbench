@@ -1,6 +1,5 @@
 /**
- * Dock tab identities and default order — the import-free half of the dock
- * registry.
+ * Dock tab identities — the import-free half of the dock registry.
  *
  * This module deliberately imports NOTHING (no Vue, no lucide, and — critically
  * — no plugin module) so that it stays safe to pull into composables that tests
@@ -11,56 +10,36 @@
  * tests throw at module load with
  * `No "FolderOpen" export is defined on the "lucide-vue-next" mock`.
  *
- * Everything else about a tab (title key, description key, group, closable,
- * feature, capability, settings category, icon, runtime resources) is declared
- * by the plugin itself in `web/src/plugins/<id>/plugin.ts` and assembled by
- * `composables/dockPluginRuntime.ts`. Adding a plugin therefore means adding
- * that file plus ONE line in `DOCK_TAB_ORDER` below — never editing this file's
- * data.
+ * EVERYTHING about a tab — id, default order, title key, description key,
+ * group, closable, feature, capability, settings category, icon, runtime
+ * resources — is declared by the plugin itself in
+ * `web/src/plugins/<id>/plugin.ts`. `composables/dockPluginRuntime.ts` globs
+ * those modules, sorts them by their declared `order` and publishes the result
+ * here through `installDockTabIds`. Adding a plugin therefore means adding its
+ * directory and nothing else.
  *
- * The order stays hand-written on purpose: it is a product decision (the file
- * manager is first, settings is the exit affordance at the end). Deriving it
- * from the glob would let the filesystem's alphabetical order decide where a
- * new tab lands, and would drag the plugin modules into this file.
+ * The plugin runtime fills in `DOCK_TAB_ID_SET` at module load (it imports this
+ * file, not the other way round), so the id helpers below answer for free while
+ * this file keeps its "imports nothing" property. Before the runtime has
+ * loaded, every `isDockTabId` answer is false — which is exactly what the first
+ * paint sees today, and the runtime loads eagerly with the app shell.
  */
 
 /**
- * Every left-column tab id, in DEFAULT order.
+ * Left-column tab ids (everything except chat).
  *
- * Order is the default order and the "developer" preset's order. The user can
- * drag every entry (including settings) anywhere afterwards.
- *
- * Runtime-gated tabs (terminal, proxy) are declared here too; the gates are
- * applied when the render list is built.
+ * A plain `string`: the set is derived from the plugin modules, so there is no
+ * literal union left to derive it from. The compiler can no longer catch a
+ * mistyped id — the plugin runtime logs the installed set once at startup
+ * instead, and `dockPluginManifest.test.ts` pins that every id has a plugin.
  */
-export const DOCK_TAB_ORDER = [
-  'browse',
-  'view',
-  'history',
-  'forge',
-  'tasks',
-  'terminal',
-  'stats',
-  'mail',
-  'kb',
-  'live',
-  'share',
-  'proxy',
-  // Notifications sits immediately before settings in the DEFAULT order:
-  // settings is the "exit" affordance at the end of the dock, and the
-  // notification log is the last stop before leaving the tool tabs.
-  'notifications',
-  'settings',
-] as const
-
-/** Left-column tab ids (everything except chat). */
-export type DockTabId = (typeof DOCK_TAB_ORDER)[number]
+export type DockTabId = string
 
 /**
  * Every tab id the app can navigate to.
  *
  * `chat` is the right-hand pane on wide screens and a normal tab on narrow
- * ones; the rest are left-column tabs. It is not part of `DOCK_TAB_ORDER`
+ * ones; the rest are left-column tabs. It is not part of `DOCK_TAB_IDS`
  * because it is not a left-dock entry, but it shares the plugin runtime
  * contract (badge, onEnter) — see `plugins/chat/plugin.ts`.
  */
@@ -73,31 +52,15 @@ export type DockGroup = 'workspace' | 'project' | 'personal' | 'system'
 export type DockCapability = 'terminal' | 'portForward'
 
 /**
- * Every server master switch a dock plugin may gate on.
- *
- * Declared here (not only in the manifests) so the preset rules in
- * `useDockPlugins` — a leaf module — can say "switch everything off" without
- * importing the plugin graph. `dockPluginManifest.test.ts` asserts this list
- * equals the set the manifests actually declare.
- *
- * The TYPE is derived from this array, so adding a switch is one line here —
- * not the two hand-maintained lists that used to drift apart.
- */
-export const DOCK_FEATURES = [
-  'forge.enabled',
-  'mail.enabled',
-  'terminal.enabled',
-  'kb.enabled',
-  'tasks.enabled',
-  'share.enabled',
-] as const
-
-/**
  * A server-side master switch. Turning one of these off stops the server's
  * background work as well as hiding the tab, so the manager's switch writes
  * the server config rather than a per-device preference.
+ *
+ * A plain `string`: the SET of switches is derived from the plugins that declare
+ * one (see `dockFeatures()` below), so there is no literal array left here to
+ * derive it from — and no second list to forget to extend.
  */
-export type DockFeature = (typeof DOCK_FEATURES)[number]
+export type DockFeature = string
 
 /**
  * The assembled view of a dock tab: manifest fields declared by the plugin,
@@ -134,8 +97,58 @@ export interface DockTabDescriptor {
   settingsCategory?: string
 }
 
-/** All left-column tab ids, in default order. Derived from the order above. */
-export const DOCK_TAB_IDS: readonly DockTabId[] = DOCK_TAB_ORDER
+/**
+ * Plugin ids, in default order, and the master switches they gate on.
+ *
+ * BOTH are pushed in by `dockPluginRuntime.ts`, never read from the plugin
+ * modules here: this file must stay import-free (see the header — a batch of
+ * component tests mock `lucide-vue-next` with only the icons they use, and
+ * anything pulled in here makes them throw at module load). The runtime imports
+ * THIS file, so it does the globbing and pushing; the direction never reverses.
+ *
+ * Both are also installed explicitly by tests that exercise a leaf module
+ * (`useProjectPanel`, `useDockPlugins`, …) without loading the runtime.
+ */
+let dockTabIds: readonly DockTabId[] = []
+let installedFeatures: readonly DockFeature[] = []
+
+/**
+ * The default order.
+ *
+ * Always read through this accessor rather than capturing the array at module
+ * scope: the value is only final once the plugin modules have been assembled.
+ */
+export function dockTabIdsInDefaultOrder(): readonly DockTabId[] {
+  return dockTabIds
+}
+
+/**
+ * The master switches the plugins declare.
+ *
+ * Read through this accessor by the preset rules in `useDockPlugins` — a leaf
+ * module that must not import the plugin graph.
+ */
+export function dockFeatures(): readonly DockFeature[] {
+  return installedFeatures
+}
+
+/**
+ * Install the plugin-declared default order. Called once by the runtime (and by
+ * tests that need the real ids without a full plugin load).
+ *
+ * Not exported as a mutable binding on purpose: this installer is the only
+ * writer, so "who changed the default order" has exactly one answer.
+ */
+export function installDockTabIds(ids: readonly DockTabId[]): void {
+  dockTabIds = Object.freeze([...ids]) as readonly DockTabId[]
+  DOCK_TAB_ID_SET = new Set(ids)
+}
+
+/** Install the plugin-declared master switches. Called once by the runtime. */
+export function installDockFeatures(features: readonly DockFeature[]): void {
+  installedFeatures = Object.freeze([...features]) as readonly DockFeature[]
+}
+
 
 /**
  * Tabs the user can never hide.
@@ -156,9 +169,15 @@ export function isPermanentDockTab(id: string): boolean {
   return DOCK_PERMANENT_TAB_SET.has(id)
 }
 
-const DOCK_TAB_ID_SET: ReadonlySet<string> = new Set(DOCK_TAB_ORDER)
+let DOCK_TAB_ID_SET: ReadonlySet<string> = new Set()
 
-/** True when `tab` is a known left-column tab id. */
+/**
+ * True when `tab` is a known left-column tab id.
+ *
+ * Answers from the installed set, so it is `false` for everything until
+ * `installDockTabIds` has run. The runtime loads eagerly with the app shell, and
+ * tests that need real answers install the ids themselves.
+ */
 export function isDockTabId(tab: string): tab is DockTabId {
   return DOCK_TAB_ID_SET.has(tab)
 }
@@ -190,7 +209,8 @@ export function mergeDockOrder(order: readonly DockTabId[] = []): DockTabId[] {
     seen.add(id)
     stored.push(id)
   }
-  if (stored.length === 0) return [...DOCK_TAB_IDS]
+  const defaults = dockTabIdsInDefaultOrder()
+  if (stored.length === 0) return [...defaults]
   let next = 0
-  return DOCK_TAB_IDS.map((id) => (seen.has(id) ? stored[next++] : id))
+  return defaults.map((id) => (seen.has(id) ? stored[next++] : id))
 }

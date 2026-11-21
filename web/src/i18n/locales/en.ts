@@ -3568,29 +3568,11 @@ export default {
         system: 'System',
       },
       desc: {
-        browse: 'Browse and organize project files.',
-        view: 'Preview the file you have open.',
-        history: 'Read the project Git history.',
-        forge: 'Issues, merge requests and pipelines from GitHub, GitLab and Gitea / Forgejo.',
-        tasks: 'Scheduled and event-triggered automation tasks.',
-        terminal: 'Open an interactive terminal on the server.',
-        stats: 'Token, credit and wall-clock usage.',
-        mail: 'Read and send mail from multiple accounts.',
-        kb: 'Collections indexed for keyword and semantic search.',
-        live: 'Screen sharing, voice meetings and AI notes.',
-        share: 'Manage public links for files, conversations and meetings.',
-        proxy: 'Forward server ports to your machine over SSH or the stream tunnel.',
-        notifications: 'An append-only log of what the app did (hiding it only removes the entry; notifications keep being produced).',
-        settings: 'Configuration for the app and its features.',
       },
       // Shown under a row whose switch is inert because this host cannot run
       // the feature (as opposed to the user switching it off).
       unavailable: {
         generic: 'Not supported on this host.',
-        forge: 'Software Forge is not enabled on the server.',
-        mail: 'Mail is not enabled on the server.',
-        terminal: 'This machine cannot run a terminal (needs Linux / macOS, or the server is not ready).',
-        proxy: 'Port mapping is unavailable here (neither SSH nor the stream tunnel can carry it).',
       },
     },
     items: {
