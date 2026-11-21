@@ -32,6 +32,15 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 ./build.sh --restart [--restart-skip-build] [--restart-port=8080]
 ```
 
+### 原则：不使用 cgo
+
+所有产物一律 `CGO_ENABLED=0`——发布流水线（`release.yml` 的五个平台任务）和本地 `build.sh` 都是如此。要新增依赖 cgo 的东西，先在 issue 里说清理由并改本节，不要悄悄打开。
+
+- **本来就不需要**：SQLite 用 `modernc.org/sqlite`（纯 Go，FTS5 已编入），代码里没有任何 `import "C"`。历史上开 cgo 只是因为误以为 FTS5 需要它。
+- **开了 cgo，产物就不再只由我们的代码决定**：cgo 会把构建机的 C 编译器拉进来，机器换了、编译器默认参数变了，产出的机器码就跟着变，而且这种变化在 Go 的构建信息里**看不出来**。issue #719 就是这样：0.141 起 linux 版在无 AVX 的 CPU 上启动即崩，Go 侧信息一切正常，最后查出来是 cgo 的 C 函数被塞进了新指令。
+- **附带好处**：产物是单个静态文件，不依赖目标机的 C 库（glibc 版本、Alpine 的 musl 都不再是问题）。
+- **代价要记住**：纯 Go 的域名解析绕开系统的 NSS 模块，`.local` 局域网名字、只靠 NSS 插件解析的内网地址会解析不到。遇到「域名解析失败」的反馈，先问是不是这类名字。
+
 ### 运维：一个数据目录只能跑一个服务
 
 服务启动时在数据目录下取一把独占锁（`.instance.lock`，进程退出即由系统释放，不存在残留锁）。同一个数据目录已有实例在跑时，新进程最多等 30 秒（覆盖重启时旧进程还没退完的窗口；锁一直持有到进程退出，比端口释放晚）后**拒绝启动**并报错。
