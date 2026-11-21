@@ -260,6 +260,14 @@ jobs:
       - name: Build Linux binary
         env:
           CGO_ENABLED: 1
+          # runtime/cgo is compiled by the runner's gcc, whose default -march
+          # follows the build host's CPU. When ubuntu-latest rolled to a host
+          # advertising AVX, gcc began emitting VEX-encoded instructions in
+          # x_cgo_getstackbound and the shipped binary died with SIGILL on
+          # every x86-64 CPU without AVX (#719). Pin the baseline so the
+          # output depends on this file, not on the runner image.
+          CGO_CFLAGS: "-march=x86-64"
+          CGO_CXXFLAGS: "-march=x86-64"
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux ./cmd/server
@@ -269,6 +277,41 @@ jobs:
         run: |
           file clawbench-linux
           ldd clawbench-linux
+
+      - name: Verify cgo code has no AVX
+        # #719 shipped a binary that died with SIGILL on every x86-64 CPU
+        # without AVX even though its Go build info said GOAMD64=v1. The VEX
+        # instructions came from gcc (the host compiler builds runtime/cgo),
+        # so the Go-level CPU check cannot see them.
+        #
+        # A blanket "no v* mnemonics" gate does not work: the Go runtime has
+        # feature-detected AVX2/AVX512 paths and baseline code uses VEX-encoded
+        # xmm forms (vpxor %xmm, vaddsd). AVX in Go code is harmless because a
+        # CPU check guards it at run time; AVX in a C function is fatal because
+        # nothing checks the CPU there.
+        #
+        # gcc emits runtime/cgo's x_cgo_getstackbound first in .text, and it is
+        # exactly where #719 crashed, so its body is the canary: scan it for
+        # VEX (C4/C5) and EVEX (62) raw bytes. If the function cannot be found
+        # the step fails closed — a check that cannot see the code is how #719
+        # shipped.
+        run: |
+          objdump -d clawbench-linux > /tmp/built.asm
+          body=$(awk '/^[0-9a-f]+ <x_cgo_getstackbound>:$/{seen=1; next}
+            seen && /^$/{exit} seen' /tmp/built.asm)
+          if [ -z "$body" ]; then
+            # Fail closed: without the canary there is nothing to prove the C
+            # code is baseline, and a silent pass is how #719 shipped.
+            echo "::error::x_cgo_getstackbound not found in the disassembly (#719)" >&2
+            exit 1
+          fi
+          hits=$(printf '%s\n' "$body" | grep -E '^ +[0-9a-f]+:\s+(c4|c5|62) ' | head -5 || true)
+          if [ -n "$hits" ]; then
+            echo "$hits" >&2
+            echo "::error::AVX/EVEX in cgo C code - CGO_CFLAGS baseline drifted (#719)" >&2
+            exit 1
+          fi
+          echo "cgo C code is baseline x86-64"
 
       - name: Package Linux
         # The release tag is part of the asset name so a downloaded file is
@@ -326,6 +369,10 @@ jobs:
       - name: Build Linux arm64 binary
         env:
           CGO_ENABLED: 1
+          # Same anti-drift pin as build-linux; resolves to -march=armv8-a on
+          # aarch64 gcc (the arm64 baseline).
+          CGO_CFLAGS: "-march=armv8-a"
+          CGO_CXXFLAGS: "-march=armv8-a"
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux-arm64 ./cmd/server
