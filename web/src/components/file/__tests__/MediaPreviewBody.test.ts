@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import MediaPreviewBody from '@/components/file/MediaPreviewBody.vue'
+import { ChatDragDirective } from '@/directives/chatDrag'
 import { readAttachDragData, cleanupDragGhost } from '@/utils/attachDrag'
 
 // buildLocalFileUrl is the single source of the media URL; mock it so the
@@ -16,6 +17,8 @@ vi.mock('@/utils/download.ts', () => ({
 const mockIsWideScreen = ref(true)
 vi.mock('@/composables/useWideScreenLayout.ts', () => ({
   useWideScreenLayout: () => ({ isWideScreen: mockIsWideScreen }),
+  // v-chat-drag reads the same singleton to gate itself.
+  getWideScreenState: () => ({ isWideScreen: mockIsWideScreen }),
 }))
 
 // Minimal DataTransfer stand-in for the internal attach payload.
@@ -58,6 +61,8 @@ function mountBody(kind: 'image' | 'video' | 'audio' | 'pdf', path = 'assets/log
     props: { path, kind },
     global: {
       plugins: [i18n],
+      // The image branch drags through the shared directive.
+      directives: { 'chat-drag': ChatDragDirective },
       // The PDF branch is a defineAsyncComponent; stub it so no dynamic import
       // (pdf.js) is triggered in the unit test.
       stubs: { PdfPreview: { name: 'PdfPreview', props: ['file'], template: '<div class="pdf-stub" />' } },

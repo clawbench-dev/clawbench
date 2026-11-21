@@ -32,6 +32,12 @@ vi.mock('@/composables/useWideScreenLayout', () => ({
 }))
 vi.mock('@/composables/useDialog', () => ({ useDialog: () => ({ confirm: h.confirm, prompt: h.prompt }) }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: h.toast }) }))
+// The panel only needs "quote this passage"; the bridge's own behaviour is
+// covered by useChatBridge.test.ts. Mocking it keeps this suite from pulling
+// the whole quote-bar / session graph in through the facade.
+vi.mock('@/composables/useChatBridge', () => ({
+  useChatBridge: () => ({ quote: vi.fn(), comment: vi.fn(), attach: vi.fn() }),
+}))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
 vi.mock('@/stores/app', async () => {
   const { reactive } = await import('vue')

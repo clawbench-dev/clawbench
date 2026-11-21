@@ -702,7 +702,8 @@ import {
 import { appLog } from '@/utils/appLog'
 import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
 import { kbAddFromURL, kbUploadText } from '@/composables/useKnowledgeBase'
-import { consumeKBPendingOpen, kbPendingOpen, requestStageKBQuote } from '@/utils/kbNavigation'
+import { consumeKBPendingOpen, kbPendingOpen } from '@/utils/kbNavigation'
+import { useChatBridge } from '@/composables/useChatBridge'
 import { attachDragTargets, hasAttachDragData, readAttachDragData } from '@/utils/attachDrag'
 import { expandDataTransfer, hasOSFileDrop, type ExpandResult } from '@/utils/dropFolder'
 import { useFileUpload } from '@/composables/useFileUpload'
@@ -718,6 +719,7 @@ const { isWideScreen } = useWideScreenLayout()
 const uiScale = useUiScale()
 const dialog = useDialog()
 const toast = useToast()
+const chatBridge = useChatBridge()
 const kb = useKnowledgeBase()
 const {
   dirUploading,
@@ -1436,7 +1438,9 @@ function onQuoteChunk(payload: { text: string; title: string; location?: string 
   const source = payload.location
     ? `${payload.title} · ${locationText(payload.location)}`
     : payload.title
-  requestStageKBQuote({
+  // Same call any panel uses; the bridge reveals the chat pane through the
+  // handler App.vue registered, so there is no bespoke hand-off to keep in sync.
+  chatBridge.quote({
     text: `${source}\n\n${payload.text}`,
     filePath: payload.title,
     language: 'markdown',

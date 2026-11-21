@@ -66,10 +66,11 @@ describe('meeting quote composer wiring', () => {
     expect(drop).toContain('stageQuoteInChat(resolved)')
     expect(drop).not.toContain('openComposer')
 
-    // And the helper really stages: it must reach addStagedQuote rather than
-    // routing back into the composer under a different name.
+    // And the helper really stages: it goes through the shared bridge, whose
+    // `quote` path stages the card (no composer detour). That the bridge does
+    // not open the composer is pinned by useChatBridge.test.ts.
     const stage = functionBody('stageQuoteInChat')
-    expect(stage).toContain('addStagedQuote(quote)')
+    expect(stage).toContain('chatBridge.quote(quote)')
     expect(stage).not.toContain('openComposer')
   })
 

@@ -144,6 +144,24 @@ export default [
 - 首屏"空、只等数据"用 `<PanelSkeleton>`，不要居中转圈——转圈会让整块内容在数据到达时跳一下。
 - 宿主能力分两层：通用的在 `DockPanelHost`（`projectPath` / `openFile` / `openSettingsCategory` / `openTab` / `isWideScreen`），插件专属的在 `DockPanelHostExtras`（按插件一个 key）。**新能力加到自己那个 key 下，不要往通用接口里塞**——那会让所有面板都看见别人的东西。
 
+### 5.1 引用到聊天 / 拖拽成附件（不用加 host 字段）
+
+这两件事是纯前端状态，直接用共享入口，比给每个插件加一个 host 方法更短：
+
+```ts
+const chat = useChatBridge()        // @/composables/useChatBridge
+chat.quote(payload)                 // 一键进当前会话
+chat.comment(payload, { anchorEl }) // 开浮条写批注
+chat.attach('src/a.ts')             // 附件（默认弹会话选择器）
+```
+
+```html
+<div v-chat-drag="{ kind: 'quote', payload }">…</div>
+<div v-chat-drag="{ kind: 'attach', path }">…</div>
+```
+
+正文要能被划词引用，给容器加 `data-quotable`（身份仍用 `data-quote-*`）。完整说明见 `docs/spec/features/quotes-and-attachments.md` §3.1 / §3.4 / §3.5。
+
 ---
 
 ## 6. 深链（从通知/引用跳到某个页签）
