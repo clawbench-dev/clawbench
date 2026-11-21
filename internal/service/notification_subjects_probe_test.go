@@ -73,7 +73,7 @@ func TestMarkMissingSources_FlagsOnlyGoneSubjects(t *testing.T) {
 		3: false, 4: true,
 		5: false, 6: true,
 		7: false, 8: true,
-		9: false, // malformed id must not be judged stale
+		9:  false, // malformed id must not be judged stale
 		10: false, 11: false,
 	}, got)
 }
