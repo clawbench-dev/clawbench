@@ -173,7 +173,6 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
 			name TEXT NOT NULL,
-			description TEXT,
 			cron_expr TEXT NOT NULL,
 			agent_id TEXT NOT NULL,
 			prompt TEXT NOT NULL,

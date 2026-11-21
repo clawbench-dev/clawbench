@@ -1,9 +1,11 @@
 // Package tasks 是任务（定时执行）功能的插件声明。
 //
-// 它没有 MountRoutes：/api/tasks 的路由仍写在 handler.RegisterRoutes 里。
-// 那组接口的动作走 PUT /api/tasks/{id} + body 里的 action，前缀门控只能
-// 靠 method+path 识别"新建"，其余全豁免（见 GateExempt 的说明），搬进
-// 独立挂载函数收益不大。
+// 它自己挂 /api/tasks 与 /api/tasks/（见 routes.go），并声明双向开关效果
+// （见 feature_switch.go）：关掉要取消运行中的执行并丢弃排队事件，打开要
+// 重排 cron。
+//
+// 前缀门控只按 method+path 识别"新建"这类动作，其余豁免（见 GateExempt 的
+// 说明）——因为关闭任务后，列表、详情、执行历史仍要能看。
 package tasks
 
 import (

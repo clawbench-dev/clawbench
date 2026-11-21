@@ -38,6 +38,7 @@ import (
 	"clawbench/internal/platform"
 	pluginall "clawbench/internal/plugin/all"
 	pluglive "clawbench/internal/plugin/live"
+	plugstats "clawbench/internal/plugin/stats"
 	"clawbench/internal/plugins"
 	"clawbench/internal/push/common"
 	"clawbench/internal/push/dingtalk"
@@ -1723,7 +1724,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Usage meter notification state lives in config.yaml, which the handler
 	// owns (configMutex + atomic YAML write); the service only computes.
-	service.SetUsageMeterStateSaver(handler.PersistUsageMeterState)
+	service.SetUsageMeterStateSaver(plugstats.PersistUsageMeterState)
 
 	// Wire up the user-message command renderer for GROUP host prompts. The
 	// templates live in the handler package (OpenAPI-rendered), and the group

@@ -169,7 +169,7 @@ func TestServeConfig_PatchShareSwitchRevokesLinks(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 	saveFeatureSwitchState(t)
-	registerDisableHookPlugin(t, "share", "share", ShareDisableEffect, map[string]bool{
+	registerDisableHookPlugin(t, "share", "share", plugshare.ShareDisableEffect, map[string]bool{
 		"share.enabled":           true,
 		"share.allow_files":       true,
 		"share.allow_sessions":    true,

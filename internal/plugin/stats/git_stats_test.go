@@ -1,4 +1,4 @@
-package handler
+package stats
 
 import (
 	"encoding/json"

@@ -1,6 +1,7 @@
-package handler
+package stats
 
 import (
+	"clawbench/internal/httpx"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -33,7 +34,7 @@ func resolveUsageScope(w http.ResponseWriter, r *http.Request, rawScope string) 
 			slog.Warn("handler: ServeUsageStats — project cookie is empty",
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path))
-			writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
+			httpx.WriteLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
 			return "", "", false
 		}
 		return service.ScopeProject, projectPath, true
@@ -45,7 +46,7 @@ func resolveUsageScope(w http.ResponseWriter, r *http.Request, rawScope string) 
 		// check is IsAuthenticated (session cookie OR local AI token), not
 		// IsLocalhost — the loopback address alone proves nothing.
 		if !middleware.IsAuthenticated(r) {
-			writeLocalizedErrorf(w, r, http.StatusForbidden, "AccessDenied")
+			httpx.WriteLocalizedErrorf(w, r, http.StatusForbidden, "AccessDenied")
 			return "", "", false
 		}
 		// The cookie is deliberately ignored, not merged: scope=all is the
@@ -55,7 +56,7 @@ func resolveUsageScope(w http.ResponseWriter, r *http.Request, rawScope string) 
 		// can never silently narrow an "all projects" request.
 		return service.ScopeAll, "", true
 	default:
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "scope"})
+		httpx.WriteLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "scope"})
 		return "", "", false
 	}
 }
@@ -100,7 +101,7 @@ func parseUsageAgentIDs(values []string) []string {
 // The project cookie is ignored (not merged) in scope=all, so a stale cookie
 // cannot narrow an instance-wide request.
 func ServeUsageStats(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet) {
+	if !httpx.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -117,12 +118,12 @@ func ServeUsageStats(w http.ResponseWriter, r *http.Request) {
 	endStr := q.Get("end")
 	start, err := time.Parse(time.RFC3339, startStr)
 	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "start"})
+		httpx.WriteLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "start"})
 		return
 	}
 	end, err := time.Parse(time.RFC3339, endStr)
 	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "end"})
+		httpx.WriteLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "end"})
 		return
 	}
 
@@ -170,12 +171,12 @@ func ServeUsageStats(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &vErr) {
 			// Report a stable machine-readable code in detail; never surface the
 			// server's English Error() text to the UI.
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: vErr.Code})
+			httpx.WriteLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: vErr.Code})
 			return
 		}
-		writeLocalizedError(w, r, err)
+		httpx.WriteLocalizedError(w, r, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	httpx.WriteJSON(w, http.StatusOK, result)
 }

@@ -469,10 +469,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/group/settings", ServeGroupSettings)
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)
-	register("/api/usage/stats", ServeUsageStats)
-	register("/api/usage/meter", ServeUsageMeter)
-	register("/api/git/stats", ServeGitStats)
-	register("/api/git/cloc", ServeGitCloc)
 	register("/api/ai/permission/respond", ServePermissionRespond)
 	register("/api/ai/elicitation/respond", ServeElicitationRespond)
 	register("/api/upload/file", UploadFile)
@@ -646,7 +642,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Notification-center log: a browsable history of session/task/forge
 	// events. GET lists (with project/kind/time filters + keyset paging);
 	// DELETE clears the whole log.
-	register("/api/notifications", ServeNotificationsOrClear)
 
 	// Chat quick-send (CRUD for quick-send presets stored in database)
 	register("/api/chat/quick-send", ServeChatQuickSend)
@@ -679,16 +674,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/drawio/install", ServeDrawioInstall)
 	register("/api/drawio/upload", ServeDrawioUpload)
 
-	// 内置功能的接口由功能自己的挂载文件注册。
+	// 内置功能的接口由功能自己的挂载文件注册（internal/plugin/<id>/routes.go），
+	// 这里只把「怎么挂」注入进去，不列出任何功能。
 	//
-	// mountBuiltinRoutes 有两条路径（见它的实现）：
-	//
-	//  1. 生产：遍历 plugins 注册表，调每个插件声明的 MountRoutes。加一个
-	//     带接口的功能时，插件包（internal/plugin/<id>）声明 MountRoutes，
-	//     这里一行都不用改。
-	//  2. handler 单测：注册表为空（handler 不能 import 插件包，否则成环），
-	//     退回到编译期兜底清单。两条路径引用的是**同一批**导出函数
-	//     （MountMailRoutes 这类），所以不会漂移。
+	// 注册表为空时一条插件路由都不挂（见 mountBuiltinRoutes 的头注释）：handler
+	// 的单测只覆盖核心路由，插件接口由各自的包测试，需要完整路由表的用例显式
+	// 调 registerAllPluginsForTest()。
 	//
 	// 门控仍然走注册表：mount.Auth 内部调用 plugins.ForRoute，插件没注册就是
 	// 不门控、路由照样可达。生产上注册表必然非空（cmd/server 在 RegisterRoutes

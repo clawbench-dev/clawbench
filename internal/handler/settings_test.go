@@ -1,6 +1,7 @@
 package handler
 
 import (
+	plugforge "clawbench/internal/plugin/forge"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -800,7 +801,7 @@ func TestServeConfig_Patch_ForgeDisableClearsBindings(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	registerDisableHookPlugin(t, "forge", "forge", ForgeDisableEffect, map[string]bool{
+	registerDisableHookPlugin(t, "forge", "forge", plugforge.ForgeDisableEffect, map[string]bool{
 		"forge.enabled":      true,
 		"forge.insecure_tls": true,
 	})

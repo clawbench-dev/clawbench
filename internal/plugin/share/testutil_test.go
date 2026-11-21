@@ -92,8 +92,7 @@ func projPath(p string) string { return model.NormalizeProjectPath(p) }
 // setupLiveNotesDB 造一个带会议纪要表的内存库（分享会议链接的用例要用）。
 func setupLiveNotesDB(t *testing.T) *sql.DB {
 	t.Helper()
-	env, teardown := setupTestEnv(t)
-	_ = env
+	_, teardown := setupTestEnv(t)
 	for _, ddl := range []string{service.LiveNotesDDL, service.NotificationsDDL} {
 		_, err := store.WriteExec(ddl)
 		require.NoError(t, err)
@@ -175,7 +174,6 @@ const chatSessionsDDL = `
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
 			name TEXT NOT NULL,
-			description TEXT,
 			cron_expr TEXT NOT NULL,
 			agent_id TEXT NOT NULL,
 			prompt TEXT NOT NULL,

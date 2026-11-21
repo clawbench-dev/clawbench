@@ -50,9 +50,14 @@ func TestResponsePath(t *testing.T) {
 	base := filepath.Join("/tmp", "proj")
 
 	// Project files are reported relative; external files absolute.
-	assert.Equal(t, filepath.Join("sub", "f.txt"),
-		ResponsePath(filepath.Join(base, "sub", "f.txt"), base, false))
+	assert.Equal(t, "sub/f.txt",
+		ResponsePath(filepath.Join(base, "sub", "f.txt"), base, false),
+		"the separator is always forward-slash: the client treats this as a path fragment")
 	assert.Equal(t, "/elsewhere/f.txt", ResponsePath("/elsewhere/f.txt", base, true))
+
+	// No relative form exists when one side is relative and the other absolute;
+	// "" means "no path" and callers (ResolveLinkTarget) fall back on it.
+	assert.Empty(t, ResponsePath("/abs/f.txt", "relative/proj", false))
 }
 
 func TestResolveLinkTarget(t *testing.T) {

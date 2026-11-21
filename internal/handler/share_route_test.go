@@ -39,3 +39,25 @@ func TestSessionShareRoute_RegisteredAuthenticated(t *testing.T) {
 	require.NotNil(t, publicFound)
 	assert.False(t, publicFound.Authenticated, "the token subtree stays public")
 }
+
+// /share-target 是系统分享面板的入口：它不走鉴权中间件（未登录时要重定向而
+// 不是 JSON 401），但**必须**在路由表里登记为 authenticated——它写文件，
+// 而且 handler 自己会重新校验登录态。登记成 public 就等于放出一个免登录的
+// 写入口。
+func TestShareTargetRoute_RegisteredAuthenticatedButUngated(t *testing.T) {
+	mux := http.NewServeMux()
+	registerAllPluginsForTest(t)
+	RegisterRoutes(mux)
+
+	var found *Route
+	for i := range routeTable {
+		if routeTable[i].Pattern == "/share-target" {
+			found = &routeTable[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "/share-target must be registered")
+	assert.True(t, found.Authenticated,
+		"/share-target bypasses middleware.Auth, so its authenticated flag is the only thing "+
+			"telling the spec (and readers) that it is not a public endpoint")
+}

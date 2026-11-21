@@ -12,7 +12,6 @@ import (
 // 这里保留同名别名，是为了不动本包内几百个调用点。别名是函数值，没有额外
 // 调用开销。
 var (
-	loc                    = httpx.Loc
 	T                      = httpx.T
 	writeLocalizedErrorf   = httpx.WriteLocalizedErrorf
 	writeLocalizedError    = httpx.WriteLocalizedError

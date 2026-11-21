@@ -460,9 +460,14 @@ func liveWSServer(t *testing.T) (*httptest.Server, string) {
 	require.NoError(t, err)
 
 	mux := http.NewServeMux()
-	// share 的公开入口在 /api/share/{token}/signal 上转发到本包的信令 socket。
-	// 这里内联同一个转发（只认 /signal），避免测试依赖 share 包——share 反过来
-	// 依赖本包的处理器，互相 import 会成环。
+	// 生产上 /api/share/{token}/signal 由 share 包的 ServeSharePublic 转发到
+	// LiveShareSignalWS。这里不能直接挂 ServeSharePublic：share 依赖本包的
+	// 处理器，互相 import 会成环。
+	//
+	// 所以只复刻「按路径分派」这一步，token 解析仍然走真实的
+	// LiveShareSignalWS（它自己从 r.URL.Path 取 token，本测试因此仍覆盖
+	// 生产解析）；share 侧的分派由 plugin/share 的
+	// TestServeSharePublic_RoutesNotesSubpath 覆盖。
 	mux.HandleFunc("/api/share/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/signal") {
 			LiveShareSignalWS(w, r)

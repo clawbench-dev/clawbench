@@ -1,6 +1,7 @@
-package handler
+package stats
 
 import (
+	"clawbench/internal/httpx"
 	"net/http"
 	"regexp"
 	"sort"
@@ -211,18 +212,18 @@ func getClocResult(projectPath string) (clocResult, error) {
 //
 // Never fails on a non-git directory — cloc is a plain tree walk.
 func ServeGitCloc(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet) {
+	if !httpx.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
-	projectPath, ok := requireProject(w, r)
+	projectPath, ok := httpx.RequireProject(w, r)
 	if !ok {
 		return
 	}
 
 	res, err := getClocResult(projectPath)
 	if err != nil {
-		writeLocalizedError(w, r, err)
+		httpx.WriteLocalizedError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	httpx.WriteJSON(w, http.StatusOK, res)
 }

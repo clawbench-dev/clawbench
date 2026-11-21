@@ -331,11 +331,11 @@ func TestPluginRegistry_ConfigFieldsMatchHandler(t *testing.T) {
 // "a feature owns its endpoints": every plugin that declares APIPrefixes must
 // actually have interfaces mounted under that prefix.
 //
-// The two facts live in different places by design (the prefix on the plugin
-// literal in main.go, the mounts in handler/mount_*.go), so one can be updated
-// without the other. What that looks like: a plugin claims /api/foo/ for gating
-// and the settings page renders its switch, but /api/foo/list was never mounted
-// — every call 404s and the feature appears broken "for no reason".
+// The two facts live in different places (the prefix on the plugin literal, the
+// mounts in internal/plugin/<id>/routes.go), so one can be updated without the
+// other. What that looks like: a plugin claims /api/foo/ for gating and the
+// settings page renders its switch, but /api/foo/list was never mounted — every
+// call 404s and the feature appears broken "for no reason".
 //
 // It is the same shape as TestPluginRegistry_DeclaredPrefixesOwnRealRoutes
 // (which checks the ROUTE TABLE agrees with the prefix); this one checks the
@@ -359,10 +359,34 @@ func TestPluginRegistry_EveryRoutePrefixHasMountedRoutes(t *testing.T) {
 			}
 			assert.NotZerof(t, covered,
 				"plugin %q declares prefix %q but no route under it is mounted — "+
-					"add the endpoints to handler/mount_%s.go (or drop the prefix)",
+					"add the endpoints to internal/plugin/%s/routes.go (or drop the prefix)",
 				p.ID, prefix, p.ID)
 		}
 	}
+}
+
+// TestPluginRegistry_PrefixedPluginsDeclareMountRoutes pins the cheap half of
+// the same contract directly on the declaration.
+//
+// The test above only notices a missing MountRoutes when NO route at all lives
+// under the prefix. A plugin that mounts nothing but happens to share a prefix
+// with a core route would slip through. Asserting the field itself is exact,
+// and it is what Plugin.MountRoutes documents as "the guard rejects empty".
+func TestPluginRegistry_PrefixedPluginsDeclareMountRoutes(t *testing.T) {
+	all := registeredPluginsForTest(t)
+
+	checked := 0
+	for _, p := range all {
+		if len(p.APIPrefixes) == 0 {
+			continue
+		}
+		checked++
+		assert.NotNilf(t, p.MountRoutes,
+			"plugin %q declares APIPrefixes %v but no MountRoutes — every endpoint under "+
+				"that prefix would 404 while the feature still looks enabled",
+			p.ID, p.APIPrefixes)
+	}
+	assert.NotZero(t, checked, "no plugin declares APIPrefixes — the guard would be vacuous")
 }
 
 // TestPluginRegistry_SwitchHooksAreExclusive pins the constraint documented on

@@ -69,17 +69,17 @@ type Plugin struct {
 
 	// MountRoutes 挂载这个功能的 HTTP 接口。
 	//
-	// 生产环境由 handler.RegisterRoutes 在构造好 Mount 之后遍历注册表调用；
-	// handler 的单测（注册表为空）走 handler 里那份编译期兜底清单。两边
-	// 调的是**同一批**导出函数（如 handler.MountMailRoutes），所以不会漂移。
+	// 生产环境由 handler.RegisterRoutes 构造好 Mount 之后遍历注册表调用。
+	// 注册表为空时（handler 自己的单测）一条插件路由都不会挂——那是既定语义，
+	// 不是降级：插件接口的测试在各自的包内，需要完整路由表的 handler 用例
+	// 显式注册全部插件。
 	//
-	// 为什么挂载函数留在 handler、插件包只引用它：share 与 live 互相依赖
-	// （share 读会议状态、live 用分享路径常量），各自成包会形成循环 import；
-	// file / stt 这些共享子系统也被多个功能引用。把实现也搬进插件包需要先
-	// 抽公共层并解开双向依赖，那是独立的重构，不属于"插件化"本身。
+	// 挂载函数住在插件包自己里（internal/plugin/<id>/routes.go），所以删掉那个
+	// 目录就等于删掉这个功能的接口。它引用 httpx / filex 这些公共层，不引用
+	// handler。
 	//
-	// 声明了 APIPrefixes 的插件必须有 MountRoutes（守卫测试会拒绝空值），
-	// 否则接口一条都不会挂上，功能"开着但全是 404"。
+	// 声明了 APIPrefixes 的插件必须有 MountRoutes（cmd/server 的守卫会拒绝
+	// 空值），否则接口一条都不会挂上，功能"开着但全是 404"。
 	MountRoutes func(Mount)
 
 	// Start / Stop / Reconfigure 是后台资源的生命周期。
@@ -181,7 +181,8 @@ type Mount struct {
 	// 的入口（/share-target：浏览器从系统分享面板跳过来，看到一坨 JSON 只会
 	// 以为坏了）。登记为 authenticated=true，与 OpenAPI 的 security 一致。
 	//
-	// nil 时退化为 Public。
+	// nil 时退化为 Auth：挂载方拿不到 Raw 只说明装配代码旧了，那条路由仍必须
+	// 受保护。绝不能退化到 Public——那会把一个能写文件的入口变成免登录。
 	Raw func(pattern string, handler http.HandlerFunc)
 }
 

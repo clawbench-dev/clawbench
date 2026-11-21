@@ -1,7 +1,7 @@
 package handler
 
 // 这几个常量与工具原先定义在 forge_endpoints.go 里，但 handler 的其他文件
-// （agent_sessions / notifications / chat_session / group / skills）也在用。
+// （agent_sessions / chat_session / group / skills）也在用。
 // forge 功能搬进 internal/plugin/forge 之后，那边保留了自己的一份，这里补回
 // handler 需要的同名定义。
 //
@@ -11,7 +11,12 @@ package handler
 const (
 	jsonItems   = "items"
 	jsonHasMore = "hasMore"
-	jsonSlug    = "slug"
+	jsonTotal   = "total"
+
+	// detailKey 是「被拒绝的查询参数」在 detail 对象里的键名（group / 统计
+	// 接口都用它）。小写 reason，前端按 detail.reason 读。
+	detailKey = "reason"
+	jsonSlug  = "slug"
 
 	// 这两个常量原先定义在会议纪要的挂载文件里，但 settings / providers 也在用。
 	liveNoteTextKey       = "text"

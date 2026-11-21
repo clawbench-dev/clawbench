@@ -239,17 +239,33 @@ func TestShareTarget_ManifestActionMatchesRoute(t *testing.T) {
 	assert.NotEmpty(t, manifest.ShareTarget.Params.Files[0].Accept,
 		"an empty accept list would make the OS offer ClawBench for every file type")
 
-	// The route must actually be registered as PUBLIC: middleware.Auth writes a
-	// JSON 401, which the browser would render as a bare error body after
-	// navigating here from the OS share sheet. The handler re-checks auth itself
-	// and bounces to the login form.
+	// The route must be mounted through Raw (middleware chain, no middleware.Auth):
+	// middleware.Auth writes a JSON 401, which the browser would render as a bare
+	// error body after navigating here from the OS share sheet. The handler
+	// re-checks auth itself and bounces to the login form.
+	//
+	// 生产装配由 handler 注入 Raw；handler 侧另有
+	// TestShareTargetRoute_RegisteredAuthenticatedButUngated 钉住「路由表里登记为
+	// authenticated」。这里只钉插件自己的选择。
 	var got []string
 	MountShareRoutes(plugins.Mount{
 		Auth:   func(pattern string, _ http.HandlerFunc) { got = append(got, "auth:"+pattern) },
 		Public: func(pattern string, _ http.HandlerFunc) { got = append(got, "public:"+pattern) },
+		Raw:    func(pattern string, _ http.HandlerFunc) { got = append(got, "raw:"+pattern) },
 	})
-	assert.Contains(t, got, "public:"+shareTargetPath,
-		"%s must be mounted as a public route", shareTargetPath)
+	assert.Contains(t, got, "raw:"+shareTargetPath)
+	assert.NotContains(t, got, "public:"+shareTargetPath,
+		"an unauthenticated mount would expose a file-writing endpoint")
+
+	// A Mount without Raw is an older assembly. The fallback must still be
+	// protected — degraded (JSON 401 instead of a redirect), never public.
+	got = nil
+	MountShareRoutes(plugins.Mount{
+		Auth:   func(pattern string, _ http.HandlerFunc) { got = append(got, "auth:"+pattern) },
+		Public: func(pattern string, _ http.HandlerFunc) { got = append(got, "public:"+pattern) },
+	})
+	assert.Contains(t, got, "auth:"+shareTargetPath, "the no-Raw fallback must stay authenticated")
+	assert.NotContains(t, got, "public:"+shareTargetPath)
 }
 
 func TestExtForContentType(t *testing.T) {

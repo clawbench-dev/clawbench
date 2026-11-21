@@ -23,12 +23,10 @@ var (
 	mimeTypes         = filex.MimeTypes
 	webAssetMimeTypes = filex.WebAssetMimeTypes
 
-	mimeForLocalFile       = filex.MimeForLocalFile
-	sniffBinaryContent     = filex.SniffBinaryContent
-	resolveLinkTarget      = filex.ResolveLinkTarget
-	responsePath           = filex.ResponsePath
-	sanitizeTextContent    = filex.SanitizeTextContent
-	hasBinaryContent       = filex.HasBinaryContent
-	sanitizeBinaryContent  = filex.SanitizeBinaryContent
-	truncateAtUTF8Boundary = filex.TruncateAtUTF8Boundary
+	mimeForLocalFile    = filex.MimeForLocalFile
+	sniffBinaryContent  = filex.SniffBinaryContent
+	resolveLinkTarget   = filex.ResolveLinkTarget
+	responsePath        = filex.ResponsePath
+	sanitizeTextContent = filex.SanitizeTextContent
+	hasBinaryContent    = filex.HasBinaryContent
 )

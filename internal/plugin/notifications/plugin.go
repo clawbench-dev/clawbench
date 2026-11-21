@@ -1,8 +1,7 @@
 // Package notifications 是通知中心功能的插件声明。
 //
 // 纯偏好型：通知中心是只追加的事件日志，隐藏页签只影响入口，服务端照常
-// 写入。没有 MountRoutes——/api/notifications 的路由仍在
-// handler.RegisterRoutes 里。
+// 写入。接口由本包自己挂，见 routes.go。
 package notifications
 
 import "clawbench/internal/plugins"
@@ -15,5 +14,6 @@ func Register() {
 		APIPrefixes: []string{
 			"/api/notifications",
 		},
+		MountRoutes: MountNotificationsRoutes,
 	})
 }

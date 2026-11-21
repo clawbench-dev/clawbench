@@ -195,11 +195,14 @@ func ResponsePath(absPath, projectPath string, isExternal bool) string {
 	if isExternal {
 		return absPath
 	}
-	relPath, err := filepath.Rel(projectPath, absPath)
-	if err != nil {
-		return absPath
-	}
-	return relPath
+	// Rel only fails when one side is relative and the other absolute. Callers
+	// pass absolute paths, so the error is unreachable in practice; keep the
+	// historical "" (no path) rather than leaking absPath to the client.
+	//
+	// ToSlash is load-bearing on Windows: these values are used as URL-ish
+	// identifiers by the client, and a backslash there breaks path handling.
+	relPath, _ := filepath.Rel(projectPath, absPath)
+	return filepath.ToSlash(relPath)
 }
 
 // ResolveLinkTarget returns the symlink target path (relative to projectPath when

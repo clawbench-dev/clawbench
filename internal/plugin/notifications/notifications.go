@@ -1,6 +1,7 @@
-package handler
+package notifications
 
 import (
+	"clawbench/internal/httpx"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,7 +23,7 @@ func ServeNotificationsOrClear(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		ServeNotificationsClear(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{strError: "method not allowed"})
+		httpx.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{strError: "method not allowed"})
 	}
 }
 
@@ -47,7 +48,7 @@ func ServeNotificationsOrClear(w http.ResponseWriter, r *http.Request) {
 // must not register a project as a side effect, and an unknown project is
 // "no data" rather than an error.
 func ServeNotifications(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet) {
+	if !httpx.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 	q := r.URL.Query()
@@ -58,14 +59,14 @@ func ServeNotifications(w http.ResponseWriter, r *http.Request) {
 	if projectPath := q.Get("project"); projectPath != "" {
 		id, ok, err := store.ProjectIDByPath(projectPath)
 		if err != nil {
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			httpx.WriteLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 			return
 		}
 		if !ok {
 			// An unknown project has no notifications. Returning empty (rather
 			// than erroring) keeps the panel's empty state reachable when the
 			// user filters by a project that has never produced an event.
-			writeJSON(w, http.StatusOK, map[string]any{
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
 				jsonItems: []service.Notification{}, jsonTotal: 0,
 			})
 			return
@@ -91,7 +92,7 @@ func ServeNotifications(w http.ResponseWriter, r *http.Request) {
 
 	items, err := service.ListNotifications(filter)
 	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		httpx.WriteLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 	service.MarkMissingSources(items)
@@ -100,7 +101,7 @@ func ServeNotifications(w http.ResponseWriter, r *http.Request) {
 	// the panel can show "N items" for the whole filtered set.
 	total, err := service.CountNotifications(filter)
 	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		httpx.WriteLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 
@@ -116,7 +117,7 @@ func ServeNotifications(w http.ResponseWriter, r *http.Request) {
 	}
 	hasMore := len(items) >= pageSize
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		jsonItems:   items,
 		jsonTotal:   total,
 		jsonHasMore: hasMore,
@@ -131,15 +132,15 @@ func ServeNotifications(w http.ResponseWriter, r *http.Request) {
 // destructive reset, and a filtered clear would leave the user unable to reason
 // about what remains. Returns the number of rows removed.
 func ServeNotificationsClear(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodDelete) {
+	if !httpx.RequireMethod(w, r, http.MethodDelete) {
 		return
 	}
 	n, err := service.ClearNotifications()
 	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		httpx.WriteLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
 
 // notificationRangeSince maps the `range` token to a created_at lower bound,

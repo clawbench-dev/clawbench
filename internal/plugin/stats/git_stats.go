@@ -1,7 +1,8 @@
 //nolint:noctx,gosec // git log uses exec.Command without context; projectPath (cmd.Dir) and args come from the authenticated project cookie — same trust model as git.go
-package handler
+package stats
 
 import (
+	"clawbench/internal/httpx"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -270,10 +271,10 @@ func parseNumstatValue(s string) (int64, bool) {
 // When projectPath is not a git repository the response is
 // `{"isGit": false, ...}` — the client shows a hint instead of stats.
 func ServeGitStats(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet) {
+	if !httpx.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
-	projectPath, ok := requireProject(w, r)
+	projectPath, ok := httpx.RequireProject(w, r)
 	if !ok {
 		return
 	}
@@ -283,32 +284,32 @@ func ServeGitStats(w http.ResponseWriter, r *http.Request) {
 	endStr := q.Get("end")
 	start, err := time.Parse(time.RFC3339, startStr)
 	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "start"})
+		httpx.WriteLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "start"})
 		return
 	}
 	end, err := time.Parse(time.RFC3339, endStr)
 	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "end"})
+		httpx.WriteLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "end"})
 		return
 	}
 	if !end.After(start) {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "range"})
+		httpx.WriteLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "range"})
 		return
 	}
 	// Cap the range so an accidental huge window cannot trigger a very long git
 	// log walk — mirrors the usage-stats guard (maxRangeDays).
 	if end.Sub(start) > gitStatsMaxRangeDays*24*time.Hour {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "range_too_long"})
+		httpx.WriteLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "range_too_long"})
 		return
 	}
 
 	res, err := collectGitStats(projectPath, start, end)
 	if err != nil {
-		writeLocalizedError(w, r, err)
+		httpx.WriteLocalizedError(w, r, err)
 		return
 	}
 	if q.Get("trend") != "1" {
 		res.Trend = nil
 	}
-	writeJSON(w, http.StatusOK, res)
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
