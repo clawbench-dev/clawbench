@@ -40,6 +40,21 @@ describe('agentIcons', () => {
             expect(getAgentSvg('')).toBeNull()
         })
 
+        it('covers every backend registered in all.go', () => {
+            // Cross-check the icon map against the Go backend registry. The
+            // hand-written ALL_BACKENDS list above can drift; this one cannot:
+            // adding a backend sub-package without an icon now fails here.
+            const src = readFileSync(
+                resolve(__dirname, '../../../../internal/ai/backends/all/all.go'),
+                'utf8',
+            )
+            const ids = [...src.matchAll(/backends\/([a-z0-9-]+)"/g)].map((m) => m[1])
+            expect(ids.length).toBeGreaterThan(10)
+            for (const id of ids) {
+                expect(getAgentSvg(id), `backend "${id}" should have icon data`).not.toBeNull()
+            }
+        })
+
         it('all SVG data contains path or rect elements', () => {
             for (const id of ALL_BACKENDS.filter(x => !RASTER_BACKENDS.includes(x))) {
                 const data = getAgentSvg(id)!

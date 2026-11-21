@@ -6763,9 +6763,12 @@ paths:
         部分更新单个 agent（body 含 `id`）。可更新字段：
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`acp_command`、`name`、`specialty`、`custom_system_prompt`、
-        `avatar`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
+        `avatar`、`avatar_style`、`avatar_seed`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
         `mcp_servers`、`provider_id`、`tool_policy`、`skip_project_context`。
-        `avatar` 为原始 SVG 字符串；空串恢复内置图标，非空时校验大小与安全性。
+        `avatar` 为原始 SVG 字符串或上传图片的 `data:image/...` URI；空串恢复内置图标，
+        非空时校验大小、格式与安全性。`avatar_style`/`avatar_seed` 记录生成头像所用的
+        DiceBear 风格与种子（上传图片与旧头像为空）；更换 `avatar` 时未同时提供的来源字段
+        会被清空，避免行里留下与图片不符的风格。
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
         `custom-acp` 可改**：非空同时把 `transport` 切到 `acp-stdio` 并重启其连接；
         空串被拒（无 CLI 回退）。内置后端的命令由自动发现维护，发送即 `400`

@@ -72,20 +72,35 @@
           </button>
         </div>
 
-        <!-- All styles at once; click a tile to select -->
-        <div class="avatar-picker__grid">
-          <button
-            v-for="s in AVATAR_STYLES"
-            :key="s"
-            type="button"
-            class="avatar-picker__tile"
-            :class="{ 'is-selected': selection === 'style' && s === style }"
-            :data-style="s"
-            @click="selectStyle(s)"
-          >
-            <img class="avatar-picker__tile-img" :src="tileSrc(s)" :alt="styleLabel(s)" />
-            <span class="avatar-picker__tile-name">{{ styleLabel(s) }}</span>
-          </button>
+        <!-- The selected avatar at the sizes it actually appears in the app. -->
+        <div v-if="previewSrc" class="avatar-picker__size-preview">
+          <span class="avatar-picker__label">{{ t('settings.items.agentAvatarSizePreview') }}</span>
+          <img
+            v-for="px in [16, 20, 24]"
+            :key="px"
+            :src="previewSrc"
+            :style="{ width: px + 'px', height: px + 'px' }"
+            alt=""
+          />
+        </div>
+
+        <!-- Grouped styles; click a tile to select -->
+        <div v-for="group in AVATAR_STYLE_GROUPS" :key="group.id" class="avatar-picker__group">
+          <div class="avatar-picker__group-title">{{ t(`settings.items.agentAvatarGroup.${group.id}`) }}</div>
+          <div class="avatar-picker__grid">
+            <button
+              v-for="s in group.styles"
+              :key="s"
+              type="button"
+              class="avatar-picker__tile"
+              :class="{ 'is-selected': selection === 'style' && s === style }"
+              :data-style="s"
+              @click="selectStyle(s)"
+            >
+              <img class="avatar-picker__tile-img" :src="tileSrc(s)" :alt="styleLabel(s)" />
+              <span class="avatar-picker__tile-name">{{ styleLabel(s) }}</span>
+            </button>
+          </div>
         </div>
 
         <div v-if="error" class="avatar-picker__error-text">{{ error }}</div>
@@ -116,9 +131,16 @@ import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
-import { loadAvatarKit, AVATAR_STYLES, type AvatarStyle, type AvatarKit } from '@/utils/lazyAvatar'
+import { loadAvatarKit, type AvatarKit } from '@/utils/lazyAvatar'
 import { avatarToSrc } from '@/utils/avatarSrc'
-import { avatarBackgroundFor } from '@/utils/avatarPolicy'
+import {
+  AVATAR_STYLES,
+  AVATAR_STYLE_GROUPS,
+  avatarBackgroundFor,
+  avatarStyleLabelKey,
+  type AvatarSaveSpec,
+  type AvatarStyle,
+} from '@/utils/avatarPolicy'
 import { fileToAvatarDataUri, AvatarImageError } from '@/utils/avatarImage'
 import { appLog } from '@/utils/appLog'
 
@@ -127,11 +149,14 @@ const props = defineProps<{
   agentName: string
   /** The avatar currently stored on the agent ("" = built-in icon). */
   currentAvatar?: string
+  /** Which style / seed produced it (empty for uploads and legacy avatars). */
+  currentStyle?: string
+  currentSeed?: string
 }>()
 
 const emit = defineEmits<{
   close: []
-  saved: [avatar: string]
+  saved: [spec: AvatarSaveSpec]
 }>()
 
 const { t } = useI18n()
@@ -156,13 +181,17 @@ const fileInput = ref<HTMLInputElement | null>(null)
 
 let unregisterBack: (() => void) | null = null
 
+/** The seed every tile is rendered with. Shared by the grid, the upload
+ *  background and the saved provenance so all three agree. */
+const effectiveSeed = computed(() => seed.value || props.agentName || 'agent')
+
 // All tiles render synchronously off the kit + current seed. `seed` is a
 // dependency so changing it recomputes every tile at once — the whole point of
 // this grid.
 const tileSvgs = computed<Partial<Record<AvatarStyle, string>>>(() => {
   const k = kit.value
   if (!k) return {}
-  const s = seed.value || props.agentName || 'agent'
+  const s = effectiveSeed.value
   const out: Partial<Record<AvatarStyle, string>> = {}
   for (const name of AVATAR_STYLES) {
     const styleInstance = k.styles[name]
@@ -195,8 +224,14 @@ const selectedAvatar = computed(() => {
 
 const canSave = computed(() => selection.value !== 'current' && !!selectedAvatar.value)
 
+/** Selected avatar at real list sizes, so a tile that only looks good large is
+ *  exposed before saving. */
+const previewSrc = computed(() => avatarToSrc(
+  selection.value === 'current' ? (props.currentAvatar || '') : selectedAvatar.value,
+))
+
 function styleLabel(s: string): string {
-  return s.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  return t(avatarStyleLabelKey(s))
 }
 
 function selectStyle(s: AvatarStyle) {
@@ -221,9 +256,18 @@ function syncCurrentSelection() {
     selection.value = 'upload'
     return
   }
-  // Match against the tiles rendered with the default seed. An avatar made with
-  // a different seed (or an older transparent one) will not match; that is
-  // exactly when Save must stay disabled until the user makes a new choice.
+  // Prefer the stored provenance: it tells us exactly which tile/seed produced
+  // this image, so the picker can reopen on it instead of guessing.
+  const knownStyle = props.currentStyle as AvatarStyle | undefined
+  if (knownStyle && AVATAR_STYLES.includes(knownStyle) && props.currentSeed) {
+    style.value = knownStyle
+    seed.value = props.currentSeed
+    selection.value = 'style'
+    return
+  }
+  // Legacy avatar (no provenance): match against the tiles rendered with the
+  // default seed. If it does not match, Save must stay disabled until the user
+  // makes a new choice — that is the whole point of the guard.
   const match = AVATAR_STYLES.find((name) => tileSvgs.value[name] === current)
   if (match) {
     style.value = match
@@ -258,7 +302,7 @@ async function onFileChange(event: Event) {
   uploadError.value = ''
   uploading.value = true
   try {
-    uploaded.value = await fileToAvatarDataUri(file, avatarBackgroundFor(seed.value || props.agentName || 'agent'))
+    uploaded.value = await fileToAvatarDataUri(file, avatarBackgroundFor(effectiveSeed.value))
     selection.value = 'upload'
   } catch (err) {
     uploaded.value = ''
@@ -290,11 +334,20 @@ function shuffle() {
 
 function save() {
   if (!canSave.value) return
-  emit('saved', selectedAvatar.value)
+  if (selection.value === 'upload') {
+    // An uploaded image is its own source: there is no style/seed to reopen.
+    emit('saved', { avatar: uploaded.value, style: '', seed: '' })
+    return
+  }
+  emit('saved', {
+    avatar: selectedAvatar.value,
+    style: style.value,
+    seed: effectiveSeed.value,
+  })
 }
 
 function clear() {
-  emit('saved', '')
+  emit('saved', { avatar: '', style: '', seed: '' })
 }
 
 function handleClose() {
@@ -435,6 +488,32 @@ onBeforeUnmount(() => {
 }
 
 .avatar-picker__shuffle {
+  flex-shrink: 0;
+}
+
+.avatar-picker__group {
+  margin-bottom: var(--space-4);
+}
+
+.avatar-picker__group-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-3);
+}
+
+.avatar-picker__size-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.avatar-picker__size-preview img {
+  border-radius: 20%;
+  object-fit: contain;
   flex-shrink: 0;
 }
 

@@ -18,10 +18,11 @@ vi.mock('@/utils/api', async (importOriginal) => {
   }
 })
 
-const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDuplicateAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded, mockGetServerValue } = vi.hoisted(() => ({
+const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockPatchAgentFields, mockToastShow, mockDeleteAgent, mockDuplicateAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded, mockGetServerValue } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockPatchAgentField: vi.fn().mockResolvedValue(undefined),
+  mockPatchAgentFields: vi.fn().mockResolvedValue(undefined),
   mockToastShow: vi.fn(),
   mockDeleteAgent: vi.fn().mockResolvedValue(undefined),
   mockDuplicateAgent: vi.fn().mockResolvedValue(undefined),
@@ -146,6 +147,7 @@ vi.mock('@/composables/useAgents', async () => {
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   patchAgentField: mockPatchAgentField,
+  patchAgentFields: mockPatchAgentFields,
   // AgentMCPSection reads the global server list and the agent patch helper
   // through the composable. Keep the mock total: a partial mock makes the
   // component's setup throw, which fails EVERY test in this file.
@@ -189,7 +191,6 @@ vi.mock('@/composables/useDialog', () => ({
 // The picker lazily imports DiceBear; stub the heavy dep so this file does not
 // pull the library (and its ESM/JSON chain) into jsdom.
 vi.mock('@/utils/lazyAvatar', () => ({
-  AVATAR_STYLES: ['bottts', 'identicon'],
   loadAvatarKit: vi.fn().mockResolvedValue({ Avatar: class {}, styles: {} }),
 }))
 vi.mock('@/components/common/AgentIcon.vue', () => ({
@@ -337,25 +338,33 @@ describe('SettingsAgentDetail', () => {
     })
   })
 
-  it('saves a new avatar via patchAgentField', async () => {
+  it('saves a new avatar and its provenance in one patch', async () => {
     const wrapper = mountDetail()
     const picker = wrapper.findComponent({ name: 'AgentAvatarPicker' })
 
     const svg = '<svg viewBox="0 0 2 2"><rect width="2" height="2"/></svg>'
-    await picker.vm.$emit('saved', svg)
+    await picker.vm.$emit('saved', { avatar: svg, style: 'bottts', seed: 'CodeBuddy' })
     await vi.waitFor(() => {
-      expect(mockPatchAgentField).toHaveBeenCalledWith('test-agent', 'avatar', svg)
+      expect(mockPatchAgentFields).toHaveBeenCalledWith('test-agent', {
+        avatar: svg,
+        avatar_style: 'bottts',
+        avatar_seed: 'CodeBuddy',
+      })
     })
     // Dialog closes after a successful save.
     expect(wrapper.findComponent({ name: 'AgentAvatarPicker' }).props('open')).toBe(false)
   })
 
-  it('clears the avatar by saving an empty string', async () => {
+  it('clears the avatar by saving an empty spec', async () => {
     const wrapper = mountDetail({ avatar: '<svg/>' })
     const picker = wrapper.findComponent({ name: 'AgentAvatarPicker' })
-    await picker.vm.$emit('saved', '')
+    await picker.vm.$emit('saved', { avatar: '', style: '', seed: '' })
     await vi.waitFor(() => {
-      expect(mockPatchAgentField).toHaveBeenCalledWith('test-agent', 'avatar', '')
+      expect(mockPatchAgentFields).toHaveBeenCalledWith('test-agent', {
+        avatar: '',
+        avatar_style: '',
+        avatar_seed: '',
+      })
     })
   })
 

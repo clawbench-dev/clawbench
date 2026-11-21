@@ -42,8 +42,14 @@ const { mockLoadAvatarKit, mockStyles, mockFileToAvatarDataUri, MockAvatarImageE
 })
 
 vi.mock('@/utils/lazyAvatar', () => ({
-  AVATAR_STYLES: ['bottts', 'identicon', 'shapes'],
   loadAvatarKit: mockLoadAvatarKit,
+}))
+
+vi.mock('@/utils/avatarPolicy', () => ({
+  AVATAR_STYLES: ['bottts', 'identicon', 'shapes'],
+  AVATAR_STYLE_GROUPS: [{ id: 'people', styles: ['bottts', 'identicon', 'shapes'] }],
+  avatarStyleLabelKey: (style: string) => `settings.items.avatarStyles.${style}`,
+  avatarBackgroundFor: () => '#E3ECF7',
 }))
 
 vi.mock('@/utils/avatarImage', () => ({
@@ -127,21 +133,24 @@ describe('AgentAvatarPicker', () => {
     }
   })
 
-  it('emits saved with the selected style SVG', async () => {
+  it('emits saved with the selected style SVG and its provenance', async () => {
     const wrapper = mountPicker()
     await flushPromises()
 
     await wrapper.find('.fbtn-primary').trigger('click')
     expect(wrapper.emitted('saved')).toBeTruthy()
-    expect(wrapper.emitted('saved')![0][0]).toContain('<svg')
+    const spec = wrapper.emitted('saved')![0][0] as { avatar: string; style: string; seed: string }
+    expect(spec.avatar).toContain('<svg')
+    expect(spec.style).toBe('bottts')
+    expect(spec.seed).toBe('CodeBuddy')
   })
 
-  it('emits saved with an empty string when cleared', async () => {
+  it('emits an empty spec when cleared', async () => {
     const wrapper = mountPicker()
     await flushPromises()
 
     await wrapper.find('.avatar-picker__clear').trigger('click')
-    expect(wrapper.emitted('saved')![0][0]).toBe('')
+    expect(wrapper.emitted('saved')![0][0]).toEqual({ avatar: '', style: '', seed: '' })
   })
 
   it('shows a retry affordance when the kit fails to load', async () => {
@@ -184,7 +193,11 @@ describe('AgentAvatarPicker', () => {
     expect(uploadedTile.find('img').attributes('src')).toBe('data:image/webp;base64,UklGRg==')
 
     await wrapper.find('.fbtn-primary').trigger('click')
-    expect(wrapper.emitted('saved')![0][0]).toBe('data:image/webp;base64,UklGRg==')
+    expect(wrapper.emitted('saved')![0][0]).toEqual({
+      avatar: 'data:image/webp;base64,UklGRg==',
+      style: '',
+      seed: '',
+    })
   })
 
   it('shows a localized error when the upload is rejected', async () => {
@@ -226,6 +239,20 @@ describe('AgentAvatarPicker', () => {
 
     expect(wrapper.find('.avatar-picker__current').exists()).toBe(false)
     expect(wrapper.find('.avatar-picker__tile.is-selected').attributes('data-style')).toBe('bottts')
+    expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeUndefined()
+  })
+
+  it('reopens on the stored style and seed without matching the image', async () => {
+    const wrapper = mountPicker({
+      currentAvatar: '<svg>legacy</svg>',
+      currentStyle: 'shapes',
+      currentSeed: 'Custom Seed',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.avatar-picker__current').exists()).toBe(false)
+    expect(wrapper.find('.avatar-picker__tile.is-selected').attributes('data-style')).toBe('shapes')
+    expect((wrapper.find('.avatar-picker__input').element as HTMLInputElement).value).toBe('Custom Seed')
     expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeUndefined()
   })
 

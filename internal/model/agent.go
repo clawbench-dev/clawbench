@@ -74,9 +74,18 @@ type Agent struct {
 	// client-side by DiceBear, or a `data:image/...` URI produced by the image
 	// upload path. Empty means "use the built-in per-backend brand icon". Both
 	// shapes are stored verbatim so the server can validate them (see
-	// handler.avatarLooksSafe). It is a plain persisted column, like
+	// internal/avatar.Validate). It is a plain persisted column, like
 	// CustomSystemPrompt.
 	Avatar string `json:"avatar"`
+
+	// AvatarStyle / AvatarSeed record HOW a generated avatar was made, so the
+	// settings picker can reopen it on the same tile/seed and the user can
+	// regenerate or restyle it later. Empty for an uploaded image (the data URI
+	// is its own source) and for avatars created before provenance was stored.
+	// Both are opaque strings: the server does not own the frontend style
+	// catalog, so it only caps their length.
+	AvatarStyle string `json:"avatarStyle"`
+	AvatarSeed  string `json:"avatarSeed"`
 
 	// ModelsAutoDetected indicates whether Models were filled by auto-discovery
 	// rather than user-defined. RefreshAgents uses it to decide which agents

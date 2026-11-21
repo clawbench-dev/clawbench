@@ -8,7 +8,7 @@ vi.mock('@/utils/appLog', () => ({
 // generateMemberAvatars pulls the DiceBear runtime via a dynamic import; stub it
 // so the test stays deterministic and never loads a real style chunk.
 vi.mock('@/utils/lazyAvatar', () => ({
-  generateAvatarSvg: vi.fn(async (seed: string) => `<svg>${seed}</svg>`),
+  generateAutoAvatarSvg: vi.fn(async (seed: string) => `<svg>${seed}</svg>`),
 }))
 
 function mockFetch(status: number, body: unknown) {

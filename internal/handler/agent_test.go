@@ -25,6 +25,7 @@ import (
 	_ "clawbench/internal/ai/backends/deepseek"
 	_ "clawbench/internal/ai/backends/opencode"
 	_ "clawbench/internal/ai/backends/pi"
+	"clawbench/internal/avatar"
 	"clawbench/internal/model"
 	"clawbench/internal/platform/source"
 	"clawbench/internal/service"
@@ -499,70 +500,11 @@ func TestAgentPatch_Avatar(t *testing.T) {
 	assert.Empty(t, model.Agents["codebuddy"].Avatar)
 }
 
-func TestAvatarSVGLooksSafe(t *testing.T) {
-	safe := []string{
-		`<svg viewBox="0 0 2 2"><rect width="2" height="2" fill="#123"/></svg>`,
-		// Same-document <use href="#..."> — DiceBear's real output shape.
-		`<svg xmlns="http://www.w3.org/2000/svg"><defs><g id="t"/></defs><use href="#t"/></svg>`,
-		// url(#...) fills.
-		`<svg><rect fill="url(#grad)"/></svg>`,
-	}
-	for i, s := range safe {
-		assert.True(t, avatarSVGLooksSafe([]byte(s)), "safe case %d should pass", i)
-	}
-
-	unsafe := []string{
-		``, // empty
-		`not an svg at all`,
-		`<svg><script>alert(1)</script></svg>`,
-		`<svg onload="alert(1)"></svg>`,
-		`<svg><image href="https://evil.example/x.png"/></svg>`,
-		`<svg><use href="https://evil.example/x.svg#a"/></svg>`,
-		`<svg><foreignObject/></svg>`,
-		`<svg><iframe src="x"/></svg>`,
-		`<svg><style>@import url(https://evil.example/x)</style></svg>`,
-		`<svg><a href="javascript:alert(1)"/></svg>`,
-	}
-	for i, s := range unsafe {
-		assert.False(t, avatarSVGLooksSafe([]byte(s)), "unsafe case %d should be rejected", i)
-	}
-}
-
-// testPNGDataURI builds a solid w×h PNG as a data URI.
 func testPNGDataURI(t *testing.T, w, h int) string {
 	t.Helper()
 	var buf bytes.Buffer
 	require.NoError(t, png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h))))
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
-}
-
-func TestAvatarLooksSafe_Raster(t *testing.T) {
-	pngURI := testPNGDataURI(t, 192, 192)
-	assert.True(t, avatarLooksSafe([]byte(pngURI)), "valid PNG data URI should pass")
-
-	// A real 192x192 WebP produced by the client's canvas path.
-	const webpB64 = "UklGRoIAAABXRUJQVlA4IHYAAADwCgCdASrAAMAAPm02mUmkIyKhIEgAgA2JaW7hdrEbQBPa9FXCDSdFXCDIIaqk122i4QZBDVUmu20XCDIIaqk122i4QZBDVUmu20XCDIIaqk122i4QZBDVUmu20XCDHIAA/v/B/l87HuD/0Hw07jcVAAAAAAAA"
-	assert.True(t, avatarLooksSafe([]byte("data:image/webp;base64,"+webpB64)), "valid WebP data URI should pass")
-
-	bad := []string{
-		"",                           // empty
-		"data:image/png;base64,",     // empty payload
-		"data:image/png;base64,AAAA", // decodes, not an image
-		"data:image/gif;base64," + base64.StdEncoding.EncodeToString([]byte("GIF89a")),     // unsupported MIME
-		"data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(`<svg/>`)), // SVG must use the raw form
-		"data:image/jpeg;base64," + strings.TrimPrefix(pngURI, "data:image/png;base64,"),   // declared format != real format
-		"data:image/png;base64,!!!!", // invalid base64 alphabet
-		testPNGDataURI(t, 600, 600),  // dimensions above the cap
-	}
-	for i, s := range bad {
-		assert.False(t, avatarLooksSafe([]byte(s)), "bad raster case %d should be rejected", i)
-	}
-}
-
-func TestAvatarRasterLooksSafe_EdgeCases(t *testing.T) {
-	assert.False(t, avatarRasterLooksSafe("png", nil), "empty payload")
-	assert.False(t, avatarRasterLooksSafe("png", []byte("A")), "invalid base64")
-	assert.False(t, avatarRasterLooksSafe("png", make([]byte, maxDecodedAvatarBytes*4/3+9)), "oversized payload")
 }
 
 func TestAgentPatch_Avatar_RasterDataURI(t *testing.T) {
@@ -584,10 +526,58 @@ func TestAgentPatch_Avatar_RasterDataURI(t *testing.T) {
 	assert.Equal(t, uri, stored)
 }
 
+func TestAgentPatch_AvatarProvenance(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	svg := `<svg viewBox="0 0 2 2"><rect width="2" height="2" fill="#123"/></svg>`
+	body := map[string]any{
+		"id":           "codebuddy",
+		"avatar":       svg,
+		"avatar_style": "bottts",
+		"avatar_seed":  "Alice",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "bottts", model.Agents["codebuddy"].AvatarStyle)
+	assert.Equal(t, "Alice", model.Agents["codebuddy"].AvatarSeed)
+
+	var style, seed string
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT avatar_style, avatar_seed FROM agents WHERE id = ?", "codebuddy",
+	).Scan(&style, &seed))
+	assert.Equal(t, "bottts", style)
+	assert.Equal(t, "Alice", seed)
+
+	// Replacing the image without provenance (an older client) must clear the
+	// stale pair rather than leave the row claiming a style it no longer uses.
+	body = map[string]any{"id": "codebuddy", "avatar": `<svg viewBox="0 0 2 2"/>`}
+	req = newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeAgents, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, model.Agents["codebuddy"].AvatarStyle)
+	assert.Empty(t, model.Agents["codebuddy"].AvatarSeed)
+
+	// Supplying only one half keeps the other empty.
+	body = map[string]any{
+		"id":           "codebuddy",
+		"avatar":       svg,
+		"avatar_style": "bottts",
+	}
+	req = newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeAgents, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "bottts", model.Agents["codebuddy"].AvatarStyle)
+	assert.Empty(t, model.Agents["codebuddy"].AvatarSeed)
+}
+
 func TestAgentPatch_Avatar_TooLarge(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	huge := "<svg viewBox=\"0 0 2 2\">" + strings.Repeat(" ", maxAgentAvatarBytes+1) + "</svg>"
+	huge := "<svg viewBox=\"0 0 2 2\">" + strings.Repeat(" ", avatar.MaxBytes+1) + "</svg>"
 	body := map[string]any{"id": "codebuddy", "avatar": huge}
 	req := newRequest(t, http.MethodPatch, "/api/agents", body)
 	withAuthCookie(req, model.SessionToken)
@@ -2070,7 +2060,8 @@ func TestAgentDelete_TakesOverSessions(t *testing.T) {
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type,
 		                            model, transport, external_session_id, context_state, archived)
 		 VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat',
-		         'claude-sonnet-4-6', 'cli', 'ext-1', '{"mode":"plan","usage":{"used":10}}', 0)`)
+		         'claude-sonnet-4-6', 'cli', 'ext-1', '{"mode":"plan","usage":{"used":10}}', 0)`,
+	)
 	require.NoError(t, err)
 
 	body := map[string]any{"id": "claude"}
@@ -2115,7 +2106,8 @@ func TestAgentDelete_TakesOverTasks(t *testing.T) {
 
 	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt)
-		 VALUES (1, 't', '0 8 * * *', 'claude', 'do')`)
+		 VALUES (1, 't', '0 8 * * *', 'claude', 'do')`,
+	)
 	require.NoError(t, err)
 
 	body := map[string]any{"id": "claude"}
@@ -2145,11 +2137,13 @@ func TestAgentDelete_TakesOverGroupMembership(t *testing.T) {
 	// otherwise the group keeps naming a deleted agent and loses its icon/name.
 	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, context_state, archived)
-		 VALUES ('g1', 1, 'claude', 'group', 'claude', 'group', '{"group_mode":"host","host_member_id":"m1"}', 0)`)
+		 VALUES ('g1', 1, 'claude', 'group', 'claude', 'group', '{"group_mode":"host","host_member_id":"m1"}', 0)`,
+	)
 	require.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_name, agent_id, session_type, group_id, archived)
-		 VALUES ('m1', 1, 'claude', '', 'Claude', 'claude', 'group_member', 'g1', 0)`)
+		 VALUES ('m1', 1, 'claude', '', 'Claude', 'claude', 'group_member', 'g1', 0)`,
+	)
 	require.NoError(t, err)
 
 	body := map[string]any{"id": "claude"}
@@ -2183,7 +2177,8 @@ func TestAgentDelete_BlockedByRunningSession(t *testing.T) {
 
 	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived)
-		 VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat', 0)`)
+		 VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat', 0)`,
+	)
 	require.NoError(t, err)
 
 	service.SetSessionRunning("s1", true, true)
@@ -2215,7 +2210,8 @@ func TestAgentDelete_TakesOverScheduledSessions(t *testing.T) {
 
 	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived)
-		 VALUES ('exec1', 1, 'claude', '⏰ task', 'claude', 'scheduled', 0)`)
+		 VALUES ('exec1', 1, 'claude', '⏰ task', 'claude', 'scheduled', 0)`,
+	)
 	require.NoError(t, err)
 
 	body := map[string]any{"id": "claude"}
@@ -2240,7 +2236,8 @@ func TestAgentDelete_ArchivedGroupMemberIsTakenOver(t *testing.T) {
 
 	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived)
-		 VALUES ('m1', 1, 'claude', 'Claude', 'claude', 'group_member', 'g1', 1)`)
+		 VALUES ('m1', 1, 'claude', 'Claude', 'claude', 'group_member', 'g1', 1)`,
+	)
 	require.NoError(t, err)
 
 	body := map[string]any{"id": "claude"}
@@ -2315,17 +2312,20 @@ func TestServeAgents_IncludesUsageCounts(t *testing.T) {
 
 	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, archived)
-		 VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat', 0)`)
+		 VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat', 0)`,
+	)
 	require.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt)
-		 VALUES (1, 't', '0 8 * * *', 'claude', 'do')`)
+		 VALUES (1, 't', '0 8 * * *', 'claude', 'do')`,
+	)
 	require.NoError(t, err)
 	// codebuddy participates in a group only as a plain member (its group row
 	// belongs to another agent). It must still be counted as a session.
 	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, group_id, archived)
-		 VALUES ('gm1', 1, 'codebuddy', 'Codebuddy', 'codebuddy', 'group_member', 'grp', 0)`)
+		 VALUES ('gm1', 1, 'codebuddy', 'Codebuddy', 'codebuddy', 'group_member', 'grp', 0)`,
+	)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/agents", nil)
@@ -3153,7 +3153,8 @@ func TestIsValidThinkingEffort_UsesTheSessionsModel(t *testing.T) {
 		[]ai.ThinkingEffortDef{{ID: "high"}, {ID: "max"}, {ID: "default"}})
 
 	_, err := store.WriteExec(
-		`INSERT INTO chat_sessions (id, agent_id, session_type, model) VALUES ('effort-scope-session', 'effort-scope-agent', 'chat', 'deepseek-v4-pro')`)
+		`INSERT INTO chat_sessions (id, agent_id, session_type, model) VALUES ('effort-scope-session', 'effort-scope-agent', 'chat', 'deepseek-v4-pro')`,
+	)
 	require.NoError(t, err)
 
 	assert.True(t, isValidThinkingEffort(agent, "max", "effort-scope-session"),

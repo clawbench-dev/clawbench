@@ -197,6 +197,8 @@
       :open="avatarPickerOpen"
       :agent-name="agent?.name ?? ''"
       :current-avatar="agent?.avatar ?? ''"
+      :current-style="agent?.avatarStyle ?? ''"
+      :current-seed="agent?.avatarSeed ?? ''"
       @close="avatarPickerOpen = false"
       @saved="handleAvatarSaved"
     />
@@ -227,7 +229,8 @@ import AgentAvatarPicker from './AgentAvatarPicker.vue'
 import AgentInstallDialog from '@/components/AgentInstallDialog.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
-import { patchAgentField } from '@/composables/useSettingsConfig'
+import { patchAgentField, patchAgentFields } from '@/composables/useSettingsConfig'
+import type { AvatarSaveSpec } from '@/utils/avatarPolicy'
 import { apiGet, apiPatch } from '@/utils/api'
 import type { ModelPrice } from '@/utils/modelPrice'
 import { useToast } from '@/composables/useToast'
@@ -867,9 +870,13 @@ async function handleUpdate(item: AgentItem, value: unknown) {
   }
 }
 
-async function handleAvatarSaved(svg: string) {
+async function handleAvatarSaved(spec: AvatarSaveSpec) {
   try {
-    await patchAgentField(props.agentId, 'avatar', svg)
+    await patchAgentFields(props.agentId, {
+      avatar: spec.avatar,
+      avatar_style: spec.style,
+      avatar_seed: spec.seed,
+    })
     avatarPickerOpen.value = false
     toast.show(t('settings.items.agentAvatarSaved'), { icon: 'success', duration: 2000 })
   } catch {

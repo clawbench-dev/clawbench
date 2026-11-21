@@ -37,7 +37,7 @@ RAG：同一数据库文件，独立连接池
 | auto_approve | INTEGER | NOT NULL | `0` | 自动批准模式 |
 | context_state | TEXT | | `''` | 会话级上下文状态 JSON（模式、思考档位等）。drain/续接路径靠它避免回落到默认值 |
 | agent_name | TEXT | NOT NULL | `''` | **群成员行的显示名（权威快照）**：首个实例=智能体本名，重复实例=名池名（池尽回退 `本名 序号`）。非成员行留空；成员行的 `title` 留空 |
-| agent_avatar | TEXT | NOT NULL | `''` | **群成员行自身的头像 SVG 快照**（前端 DiceBear 按成员名生成）。仅同一智能体的第 2+ 个实例写入（用于区分副本）；第 1 个/唯一实例留空，回退智能体头像 |
+| agent_avatar | TEXT | NOT NULL | `''` | **群成员行自身的头像 SVG 快照**（前端 DiceBear 按成员名从角色子集固定风格生成，带柔和底色）。仅同一智能体的第 2+ 个实例写入（用于区分副本）；第 1 个/唯一实例留空，回退智能体头像 |
 | compacted | INTEGER | NOT NULL | `0` | 上下文刚被压缩：下一轮需重注入系统提示（`MarkSessionCompacted`） |
 | title_renamed | INTEGER | NOT NULL | `0` | 用户是否手工改过标题 |
 | title_source | TEXT | NOT NULL | `''` | 标题来源等级：`''`/`placeholder`(0) < `auto`(1) < `custom`(2)。自动改名按此等级决定能否覆盖（`titleSourceRank`） |
@@ -268,7 +268,9 @@ UNIQUE：`(message_id)`
 | preferred_thinking_effort | TEXT | NOT NULL | `''` | 首选思考力度 |
 | thinking_effort_by_model | TEXT | NOT NULL | `'{}'` | 按模型 id 记忆的**用户显式选择**档位（JSON map）。优先级：该模型的选择 > 全局默认 > agent 默认；只有它会被跨轮继承，agent 自报的档位只用于显示；空值表示该模型无显式选择 |
 | custom_system_prompt | TEXT | NOT NULL | `''` | 用户自定义提示词 |
-| avatar | TEXT | NOT NULL | `''` | 用户自选的 DiceBear 头像 SVG（空＝用内置图标）；写入前经 `avatarSVGLooksSafe` 校验 |
+| avatar | TEXT | NOT NULL | `''` | 用户头像：DiceBear SVG 原文或上传图片的 `data:image/...` URI（空＝用内置图标）；写入前经 `internal/avatar.Validate` 校验 |
+| avatar_style | TEXT | NOT NULL | `''` | 生成头像所用的 DiceBear 风格 id（上传图片/旧头像为空）；供选择器重新打开同一格 |
+| avatar_seed | TEXT | NOT NULL | `''` | 生成头像所用的种子（上传图片/旧头像为空） |
 | models | TEXT | NOT NULL | `'[]'` | 可用模型列表 JSON |
 | models_auto_detected | INTEGER | NOT NULL | `0` | 自动检测模型标记 |
 | sort_order | INTEGER | NOT NULL | `0` | 排序顺序 |
@@ -1309,6 +1311,8 @@ erDiagram
         TEXT preferred_thinking_effort
         TEXT custom_system_prompt
         TEXT avatar
+        TEXT avatar_style
+        TEXT avatar_seed
         TEXT models
         INTEGER models_auto_detected
         INTEGER sort_order

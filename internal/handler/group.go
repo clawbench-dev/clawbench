@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/avatar"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -621,7 +622,7 @@ func ServeGroupSettings(w http.ResponseWriter, r *http.Request) {
 // maxGroupMemberAvatarsBody caps the raw request body of
 // ServeGroupMemberAvatars: every member slot at the maximum avatar size, plus
 // 1 MiB of slack for JSON syntax and the memberId/groupId keys.
-const maxGroupMemberAvatarsBody = service.MaxGroupMembers*maxAgentAvatarBytes + 1<<20
+const maxGroupMemberAvatarsBody = service.MaxGroupMembers*avatar.MaxBytes + 1<<20
 
 // ServeGroupMemberAvatars persists per-member avatar SVGs generated client-side
 // (DiceBear). Batch so a freshly created/expanded group writes all its new
@@ -675,7 +676,7 @@ func ServeGroupMemberAvatars(w http.ResponseWriter, r *http.Request) {
 	// validate-and-write loop would persist the valid items before returning
 	// 400 on a later invalid one, leaving the batch half-applied.
 	for _, a := range req.Avatars {
-		if a.MemberID == "" || len(a.Avatar) > maxAgentAvatarBytes || !avatarLooksSafe([]byte(a.Avatar)) {
+		if a.MemberID == "" || len(a.Avatar) > avatar.MaxBytes || !avatar.Validate([]byte(a.Avatar)) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 			return
 		}

@@ -10,7 +10,12 @@
  * declaration in `types/dicebear-styles.d.ts` keeps these imports typed.
  */
 import { retryableImport } from '@/utils/lazyMermaid'
-import { avatarBackgroundFor } from '@/utils/avatarPolicy'
+import {
+    AVATAR_STYLES,
+    autoAvatarStyle,
+    avatarBackgroundFor,
+    type AvatarStyle,
+} from '@/utils/avatarPolicy'
 import type { StyleDefinition } from '@dicebear/core'
 
 type CoreModule = typeof import('@dicebear/core')
@@ -32,56 +37,6 @@ export async function getAvatarLib(): Promise<CoreModule> {
     })
     return _corePending
 }
-
-/**
- * User-curated style set (40 styles). Each entry becomes its own lazy chunk and
- * is only fetched when selected in the picker, so the entry bundle is
- * unaffected. Extending this list only requires adding a matching loader below.
- */
-export const AVATAR_STYLES = [
-    'avataaars',
-    'avataaars-neutral',
-    'big-ears',
-    'big-smile',
-    'blobs',
-    'bottts',
-    'bottts-neutral',
-    'cameo',
-    'clay',
-    'critters',
-    'disco',
-    'dylan',
-    'glyphs',
-    'icons',
-    'identicon',
-    'landscape',
-    'line-face',
-    'loops',
-    'micah',
-    'miniavs',
-    'moods',
-    'patchwork',
-    'personas',
-    'pixel-art',
-    'pixel-art-neutral',
-    'planets',
-    'rings',
-    'shape-grid',
-    'shapes',
-    'slice',
-    'sprouts',
-    'squircles',
-    'stack',
-    'stripes',
-    'thumbs',
-    'toon-head',
-    'voxel-art',
-    'voxel-bot',
-    'waves',
-    'weave',
-] as const
-
-export type AvatarStyle = typeof AVATAR_STYLES[number]
 
 // Each entry becomes its own lazy chunk. Kept as an explicit map (not a
 // template-literal import) so Vite can statically discover every subpath.
@@ -144,26 +99,26 @@ export interface AvatarKit {
 }
 
 /**
- * Generate ONE DiceBear avatar SVG seeded by `seed`, using a RANDOM style from
- * the curated set. Loads only the single style chunk it picks (never the whole
- * kit), so it is cheap enough to call once per new group member. The chosen
- * style AND its background colour are baked into the returned SVG, so the
- * stored string renders identically on the public share page (which has no
- * DiceBear runtime and no app CSS).
+ * Generate ONE automatic avatar (group member) seeded by `seed`.
+ *
+ * The style is a PURE function of the seed (`autoAvatarStyle`), not a random
+ * roll. A random style re-rolls on every regeneration, so a member whose avatar
+ * had to be rebuilt would silently change face, and a group built from the
+ * forty-style catalog could mix a robot, a landscape and a stripe. Restricting
+ * automatic avatars to the character subset keeps a group coherent while still
+ * giving each member a distinct look.
  */
-export async function generateAvatarSvg(seed: string): Promise<string> {
-    const styleName = AVATAR_STYLES[Math.floor(Math.random() * AVATAR_STYLES.length)]
-    return generateAvatarSvgWithStyle(seed, styleName)
+export async function generateAutoAvatarSvg(seed: string): Promise<string> {
+    return generateAvatarSvgWithStyle(seed, autoAvatarStyle(seed))
 }
 
 /**
  * Generate ONE DiceBear avatar SVG with a PINNED style.
  *
- * `generateAvatarSvg` deliberately rolls a random style — the picker wants a
- * fresh look on every shuffle. Anything that must stay STABLE per person (a
- * meeting participant's icon, redrawn on every transcript line) cannot use
- * that: a random style re-rolls on every reload, so the same person changes
- * face. This variant makes the output a pure function of (seed, style).
+ * `generateAutoAvatarSvg` pins the style from the seed, and the picker lets the
+ * user choose it explicitly. This function is the shared primitive: given
+ * (seed, style) the output is a pure function, which is what keeps a meeting
+ * participant's icon stable across reloads and devices.
  *
  * A soft background is baked in so transparent character styles still read as
  * a solid tile instead of a floating face.
