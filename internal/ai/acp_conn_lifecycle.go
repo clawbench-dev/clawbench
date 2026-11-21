@@ -1332,6 +1332,13 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 		return fmt.Errorf("acp: initialize: %w", err)
 	}
 
+	// Key off the native server's handshake so custom agents using agy acp
+	// get the same handling as the built-in Antigravity backend.
+	if initResp.AgentInfo != nil && initResp.AgentInfo.Name == "Antigravity ACP Server" {
+		client.mu.Lock()
+		client.commandReplies = make(map[string]*asyncCommandReply)
+		client.mu.Unlock()
+	}
 	slog.Info("acp perf: spawnLocked.Initialize", "agent_id", c.agent.ID, "clawbench_sid", c.clawbenchSID, "protocol_version", initResp.ProtocolVersion, "elapsed", time.Since(initStart))
 
 	// Extract ListSessions capability from ACP Initialize.
