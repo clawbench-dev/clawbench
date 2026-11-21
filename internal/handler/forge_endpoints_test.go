@@ -30,6 +30,42 @@ func setupForgeEnv(t *testing.T) (*testEnv, func()) {
 	return env, teardown
 }
 
+// reachableHost returns a local TLS host whose every request answers an empty
+// JSON list, and re-enables the forge master switch (mockGitLab resets the
+// whole config for InsecureTLS).
+//
+// Binding now READS the repository before storing it (issue #722), so a test
+// that only cares about how a binding is PARSED must point it at a host that
+// answers. Using a real public or internal name here would put the test on the
+// network and its runtime at the mercy of DNS and the 30s client timeout.
+func reachableHost(t *testing.T) string {
+	return reachableServer(t, true)
+}
+
+// reachablePlainHost is reachableHost over plain HTTP, for the tests about the
+// binding's own scheme: those must keep "http" persisted, and a TLS server would
+// answer the http probe with a handshake error.
+func reachablePlainHost(t *testing.T) string {
+	return reachableServer(t, false)
+}
+
+func reachableServer(t *testing.T, tls bool) string {
+	t.Helper()
+	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: true, InsecureTLS: true}}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	})
+	var srv *httptest.Server
+	if tls {
+		srv = httptest.NewTLSServer(h)
+	} else {
+		srv = httptest.NewServer(h)
+	}
+	t.Cleanup(srv.Close)
+	return strings.TrimPrefix(strings.TrimPrefix(srv.URL, "https://"), "http://")
+}
+
 func bindProject(t *testing.T, projectPath, platform, host string) {
 	t.Helper()
 	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
@@ -58,9 +94,17 @@ func TestServeForgeBinding_CRUD(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Nil(t, resp["binding"], "unbound project returns a null binding")
 
-	// Bind via URL.
+	// Bind via URL, against a local mock. A public host cannot be used any
+	// more: binding now READS the repository before storing it (issue #722), and
+	// an anonymous read of a public repo is rate-limited by CI and hijackable by
+	// a squatter. The mock also keeps the test off the network.
+	host := mockGitLab(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	model.ConfigInstance.Forge.Enabled = true
 	req = newRequest(t, http.MethodPost, "/api/forge/binding",
-		map[string]any{"url": "https://github.com/acme/widgets.git"})
+		map[string]any{"url": "https://" + host + "/acme/widgets.git"})
 	withProjectCookie(req, env.ProjectDir)
 	withAuthCookie(req, model.SessionToken)
 	w = callHandler(ServeForgeBinding, req)
@@ -68,8 +112,8 @@ func TestServeForgeBinding_CRUD(t *testing.T) {
 
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	binding := resp["binding"].(map[string]any)
-	assert.Equal(t, "github", binding["platform"])
-	assert.Equal(t, "github.com", binding["host"])
+	assert.Equal(t, "gitlab", binding["platform"])
+	assert.Equal(t, host, binding["host"])
 	assert.Equal(t, "acme/widgets", binding["slug"])
 
 	// Read back.
@@ -218,8 +262,13 @@ func TestServeForgeBinding_ExplicitBindClearsOptOut(t *testing.T) {
 	require.True(t, opted)
 
 	// An explicit POST bind.
+	host := mockGitLab(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	model.ConfigInstance.Forge.Enabled = true
 	req := newRequest(t, http.MethodPost, "/api/forge/binding",
-		map[string]any{"url": "https://github.com/acme/widgets.git"})
+		map[string]any{"url": "https://" + host + "/acme/widgets.git"})
 	withProjectCookie(req, env.ProjectDir)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeForgeBinding, req)
@@ -241,8 +290,13 @@ func TestServeForgeBinding_AcceptsPrivateHost(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
 
+	host := mockGitLab(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	model.ConfigInstance.Forge.Enabled = true
 	req := newRequest(t, http.MethodPost, "/api/forge/binding",
-		map[string]any{"url": "https://127.0.0.1/acme/widgets.git"})
+		map[string]any{"url": "https://" + host + "/acme/widgets.git"})
 	withProjectCookie(req, env.ProjectDir)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeForgeBinding, req)
@@ -253,7 +307,7 @@ func TestServeForgeBinding_AcceptsPrivateHost(t *testing.T) {
 	pf, err := service.GetProjectForge(env.ProjectDir)
 	require.NoError(t, err)
 	require.NotNil(t, pf, "the binding must be persisted")
-	assert.Equal(t, "127.0.0.1", pf.Host)
+	assert.Equal(t, host, pf.Host)
 	assert.Equal(t, "acme/widgets", pf.Slug())
 }
 
@@ -273,10 +327,15 @@ func TestServeForgeBinding_AcceptsExplicitFields(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
 
-	// Use a publicly-resolvable host: the SSRF guard resolves names and fails
-	// closed, so an unresolvable self-hosted name is (correctly) rejected.
+	// A local mock serves both the binding's read and its existence: a name
+	// this machine cannot resolve would now be refused by the probe.
+	host := mockGitLab(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	model.ConfigInstance.Forge.Enabled = true
 	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
-		"platform": "gitlab", "host": "example.com",
+		"platform": "gitlab", "host": host,
 		"owner": "group/sub", "repo": "widgets",
 	})
 	withProjectCookie(req, env.ProjectDir)
@@ -287,7 +346,7 @@ func TestServeForgeBinding_AcceptsExplicitFields(t *testing.T) {
 	pf, err := service.GetProjectForge(env.ProjectDir)
 	require.NoError(t, err)
 	require.NotNil(t, pf)
-	assert.Equal(t, "example.com", pf.Host)
+	assert.Equal(t, host, pf.Host)
 	assert.Equal(t, "group/sub", pf.Owner)
 }
 
@@ -299,8 +358,9 @@ func TestServeForgeBinding_PersistsSchemeFromHostField(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
 
+	host := reachablePlainHost(t)
 	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
-		"platform": "gitlab", "host": "http://gitlab.internal:8080",
+		"platform": "gitlab", "host": "http://" + host,
 		"owner": "group", "repo": "widgets",
 	})
 	withProjectCookie(req, env.ProjectDir)
@@ -311,7 +371,7 @@ func TestServeForgeBinding_PersistsSchemeFromHostField(t *testing.T) {
 	pf, err := service.GetProjectForge(env.ProjectDir)
 	require.NoError(t, err)
 	require.NotNil(t, pf)
-	assert.Equal(t, "gitlab.internal:8080", pf.Host,
+	assert.Equal(t, host, pf.Host,
 		"the scheme must not leak into the host key")
 	assert.Equal(t, "http", pf.Scheme)
 
@@ -326,7 +386,7 @@ func TestServeForgeBinding_SchemeFieldHonored(t *testing.T) {
 	defer teardown()
 
 	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
-		"platform": "gitlab", "host": "gitlab.internal:8080", "scheme": "http",
+		"platform": "gitlab", "host": reachableHost(t), "scheme": "https",
 		"owner": "group", "repo": "widgets",
 	})
 	withProjectCookie(req, env.ProjectDir)
@@ -337,7 +397,7 @@ func TestServeForgeBinding_SchemeFieldHonored(t *testing.T) {
 	pf, err := service.GetProjectForge(env.ProjectDir)
 	require.NoError(t, err)
 	require.NotNil(t, pf)
-	assert.Equal(t, "http", pf.Scheme)
+	assert.Equal(t, "https", pf.Scheme)
 }
 
 // TestServeForgeBinding_SchemeInHostWinsOverField pins the precedence when a
@@ -348,7 +408,7 @@ func TestServeForgeBinding_SchemeInHostWinsOverField(t *testing.T) {
 	defer teardown()
 
 	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
-		"platform": "gitlab", "host": "http://gitlab.internal", "scheme": "https",
+		"platform": "gitlab", "host": "http://" + reachablePlainHost(t), "scheme": "https",
 		"owner": "group", "repo": "widgets",
 	})
 	withProjectCookie(req, env.ProjectDir)
@@ -368,8 +428,9 @@ func TestServeForgeBinding_URLSchemePersists(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
 
+	host := reachablePlainHost(t)
 	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
-		"url": "http://gitlab.internal/group/widgets.git",
+		"url": "http://" + host + "/group/widgets.git",
 	})
 	withProjectCookie(req, env.ProjectDir)
 	withAuthCookie(req, model.SessionToken)
@@ -379,7 +440,7 @@ func TestServeForgeBinding_URLSchemePersists(t *testing.T) {
 	pf, err := service.GetProjectForge(env.ProjectDir)
 	require.NoError(t, err)
 	require.NotNil(t, pf)
-	assert.Equal(t, "gitlab.internal", pf.Host)
+	assert.Equal(t, host, pf.Host)
 	assert.Equal(t, "http", pf.Scheme)
 }
 
@@ -391,6 +452,11 @@ func TestServeForgeBinding_SSHRemoteLeavesSchemeEmpty(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
 
+	// The scp form cannot carry a port and states no API scheme, so it cannot be
+	// pointed at a local mock: the probe would go to https://host:443 and fail on
+	// a machine with no such instance. The probe therefore declines it BEFORE it
+	// is sent (see isNameResolutionError's sibling rule for unstated hosts), and
+	// the binding records no scheme — which is the behaviour under test.
 	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
 		"url": "git@gitlab.internal:group/widgets.git",
 	})
@@ -1149,8 +1215,9 @@ func TestServeForgeBinding_ExplicitGiteaPlatform(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
 
+	host := reachableHost(t)
 	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
-		"url":      "https://git.acme.internal/team/widgets.git",
+		"url":      "https://" + host + "/team/widgets.git",
 		"platform": "gitea",
 	})
 	withProjectCookie(req, env.ProjectDir)
@@ -1168,7 +1235,7 @@ func TestServeForgeBinding_ExplicitGiteaPlatform(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, pf)
 	assert.Equal(t, "gitea", pf.Platform)
-	assert.Equal(t, "gitea", model.ConfigInstance.ForgePlatform("git.acme.internal"),
+	assert.Equal(t, "gitea", model.ConfigInstance.ForgePlatform(host),
 		"binding must teach the host what it runs")
 }
 
@@ -1179,8 +1246,9 @@ func TestServeForgeBinding_UrlWithoutPlatformKeepsInference(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
 
+	host := reachableHost(t)
 	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
-		"url": "https://git.acme.internal/team/widgets.git",
+		"url": "https://" + host + "/team/widgets.git",
 	})
 	withProjectCookie(req, env.ProjectDir)
 	withAuthCookie(req, model.SessionToken)
@@ -1190,7 +1258,7 @@ func TestServeForgeBinding_UrlWithoutPlatformKeepsInference(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "gitlab", resp["binding"].(map[string]any)["platform"])
-	assert.Empty(t, model.ConfigInstance.ForgePlatform("git.acme.internal"),
+	assert.Empty(t, model.ConfigInstance.ForgePlatform(host),
 		"nothing was named, so no hint may be invented")
 }
 

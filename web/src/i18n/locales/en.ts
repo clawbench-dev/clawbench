@@ -615,6 +615,8 @@ export default {
       rateLimit: 'Rate limited',
       network: 'Network unreachable',
       noCredential: 'Repository not accessible or no access token configured',
+      bindNotFound: 'The service does not know this repository (wrong address, or the instance is not the platform selected)',
+      withHint: '{message} ({hint})',
       generic: 'Failed to load',
     },
   },

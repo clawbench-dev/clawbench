@@ -500,7 +500,15 @@ func serveForgeBindingSet(w http.ResponseWriter, r *http.Request, projectPath st
 	if source == "" {
 		source = "manual"
 	}
+	// Probe the repository BEFORE storing it: a binding the server accepted and
+	// every read then failed on leaves the user with "bound" in the panel and a
+	// load error everywhere else (issue #722). Placed after the platform hint,
+	// so the probe reads the instance with the platform the user just named.
 	pf := service.ProjectForgeFromRemote(projectPath, remote, source)
+	if err := verifyBindingReachable(r, pf); err != nil {
+		writeForgeError(w, err, &pf)
+		return
+	}
 	if err := service.UpsertProjectForge(pf); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: err.Error()})
 		return
