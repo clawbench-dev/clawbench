@@ -27,7 +27,7 @@ func TestClosedStore_CollectionCallsReportTheClosedHandle(t *testing.T) {
 	_, err = st.GetCollection(1)
 	require.ErrorContains(t, err, "get collection")
 
-	require.ErrorContains(t, st.UpdateCollection(1, nil, nil, nil, nil), "update collection")
+	require.ErrorContains(t, st.UpdateCollection(1, nil, nil, nil), "update collection")
 
 	// DeleteCollection begins a transaction first, so the failure is named after
 	// the transaction, not the delete.
@@ -96,7 +96,10 @@ func TestAddColumnIfMissing_NamesTheTableAndColumn(t *testing.T) {
 	require.ErrorContains(t, err, "add column no_such_table.flag")
 
 	// An existing column is a no-op, not a second ALTER (which would fail).
-	require.NoError(t, st.addColumnIfMissing("kb_collections", "pinned", "INTEGER NOT NULL DEFAULT 0"))
+	require.NoError(t, st.addColumnIfMissing("kb_collections", "auto_inject", "INTEGER NOT NULL DEFAULT 1"))
+	// Dropping a column that is already gone is likewise a no-op, so the
+	// retirement migration is safe to run on every startup.
+	require.NoError(t, st.dropColumnIfExists("kb_collections", "pinned"))
 }
 
 // newStore runs a fixed startup sequence against whatever path it is given. A
@@ -212,22 +215,20 @@ func TestCreateCollection_RefusesUnknownScopes(t *testing.T) {
 	require.Equal(t, int64(0), col.ProjectID)
 }
 
-// ListCollections orders global collections first, then pinned ones, then by
-// creation. The panel relies on that order to keep the shared libraries on top.
-func TestListCollections_OrderIsGlobalThenPinnedThenOldest(t *testing.T) {
+// ListCollections orders global collections first, then by creation. The panel
+// relies on that order to keep the shared libraries on top.
+func TestListCollections_OrderIsGlobalThenOldest(t *testing.T) {
 	st := newTestStore(t)
 	first, err := st.CreateCollection(Collection{Name: "first", Scope: ScopeGlobal})
 	require.NoError(t, err)
 	second, err := st.CreateCollection(Collection{Name: "second", Scope: ScopeGlobal})
 	require.NoError(t, err)
-	pinned := true
-	require.NoError(t, st.UpdateCollection(second, nil, nil, nil, &pinned))
 
 	cols, err := st.ListCollections(0)
 	require.NoError(t, err)
 	require.Len(t, cols, 2)
-	require.Equal(t, second, cols[0].ID, "the pinned collection comes first")
-	require.Equal(t, first, cols[1].ID)
+	require.Equal(t, first, cols[0].ID)
+	require.Equal(t, second, cols[1].ID)
 }
 
 // Every statement that reads a row treats sql.ErrNoRows as "not found" and every
@@ -245,7 +246,7 @@ func TestMissingRows_AreNotFoundNotErrors(t *testing.T) {
 	_, err = st.DeleteDocument(12345)
 	require.ErrorIs(t, err, ErrDocumentNotFound)
 
-	require.ErrorIs(t, st.UpdateCollection(12345, nil, nil, nil, nil), ErrCollectionNotFound)
+	require.ErrorIs(t, st.UpdateCollection(12345, nil, nil, nil), ErrCollectionNotFound)
 	require.ErrorIs(t, st.DeleteCollection(12345), ErrCollectionNotFound)
 }
 
@@ -294,8 +295,9 @@ func TestNewStore_ReopensAnExistingFile(t *testing.T) {
 	require.Equal(t, "kept", col.Name)
 }
 
-// A database file whose schema was created by an older version has no `pinned`
-// column; the startup migration must add it instead of failing the open.
+// A database file whose schema was created by an older version still gets the
+// columns added since (here: kb_documents.tags), and a database that still
+// carries the removed `pinned` column must open and drop it.
 func TestNewStore_AddsMissingColumnsToAnOlderSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "kb.db")
 	raw, err := sql.Open("sqlite", path)
@@ -307,6 +309,7 @@ func TestNewStore_AddsMissingColumnsToAnOlderSchema(t *testing.T) {
 		scope TEXT NOT NULL,
 		project_id INTEGER NOT NULL DEFAULT 0,
 		auto_inject INTEGER NOT NULL DEFAULT 0,
+		pinned INTEGER NOT NULL DEFAULT 0,
 		created_at DATETIME NOT NULL,
 		updated_at DATETIME NOT NULL
 	)`)
@@ -319,8 +322,14 @@ func TestNewStore_AddsMissingColumnsToAnOlderSchema(t *testing.T) {
 
 	id, err := st.CreateCollection(Collection{Name: "migrated", Scope: ScopeGlobal})
 	require.NoError(t, err)
-	pinned := true
-	require.NoError(t, st.UpdateCollection(id, nil, nil, nil, &pinned), "the pinned column must exist after the migration")
+	autoInject := true
+	require.NoError(t, st.UpdateCollection(id, nil, nil, &autoInject))
+
+	var leftover int
+	require.NoError(t, st.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('kb_collections') WHERE name = 'pinned'",
+	).Scan(&leftover))
+	require.Zero(t, leftover, "the retired pinned column must be dropped on startup")
 }
 
 // A cancelled context must abort a search before any query runs: the search is

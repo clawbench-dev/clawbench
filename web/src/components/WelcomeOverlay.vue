@@ -275,8 +275,8 @@ import { useAgents } from '@/composables/useAgents'
 import { useBackendCatalog, type BackendInfo } from '@/composables/useBackendCatalog'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import {
-  DOCK_PRESET_PLANS,
   dockFeatureChangesToConfig,
+  dockPresetPlan,
   useDockPlugins,
   type DockPreset,
 } from '@/composables/useDockPlugins'
@@ -540,7 +540,7 @@ const PRESET_ICONS: Record<Exclude<DockPreset, 'custom'>, Component> = {
  */
 const presetCards = computed(() =>
   PRESET_KEYS.map((key) => {
-    const hidden = new Set<string>(DOCK_PRESET_PLANS[key].hidden)
+    const hidden = new Set<string>(dockPresetPlan(key).hidden)
     return {
       key,
       icon: PRESET_ICONS[key],

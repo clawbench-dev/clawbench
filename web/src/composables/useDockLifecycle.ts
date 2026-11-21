@@ -1,5 +1,5 @@
 import { onUnmounted, watchEffect } from 'vue'
-import { DOCK_TAB_IDS, type DockTabId } from './dockTabs'
+import { dockTabIdsInDefaultOrder, type DockTabId } from './dockTabs'
 import {
   resolveDockPlugin,
   runDockOnEnter,
@@ -36,7 +36,7 @@ export function useDockLifecycle() {
   }
 
   function sync(): void {
-    for (const id of DOCK_TAB_IDS) {
+    for (const id of dockTabIdsInDefaultOrder()) {
       const wanted = shouldRun(id)
       const running = cleanups.has(id)
       if (wanted && !running) {

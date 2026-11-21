@@ -170,14 +170,14 @@
         <!-- Pipelines: a repository-level view with its own filters and list. -->
         <template v-else-if="activeTab === 'pipeline'">
           <div class="forge-toolbar">
-            <div class="forge-chips forge-chips-scroll">
-              <button
-                v-for="f in FORGE_PIPELINE_FILTERS"
-                :key="f"
-                class="forge-chip"
-                :class="{ active: pipelines.filter.value === f }"
-                @click="pipelines.setFilter(f)"
-              >{{ t(`forge.pipeline.filter.${f}`) }}</button>
+            <div class="forge-chips">
+              <FilterSelect
+                :model-value="pipelines.filter.value"
+                :options="pipelineFilterOptions"
+                :caption="t('forge.filter.read')"
+                :all-label="t('forge.mine.all')"
+                @update:model-value="onPipelineFilterChange"
+              />
             </div>
           </div>
 
@@ -251,22 +251,21 @@
 
         <template v-else>
         <div class="forge-toolbar">
-          <div class="forge-chips forge-chips-scroll">
-            <button
-              v-for="s in stateOptions"
-              :key="s"
-              class="forge-chip"
-              :class="{ active: items.state.value === s }"
-              @click="items.setState(s)"
-            >{{ t(`forge.state.${s}`) }}</button>
-            <span class="forge-chips-divider"></span>
-            <button
-              v-for="f in mineOptions"
-              :key="f"
-              class="forge-chip"
-              :class="{ active: items.mineFilter.value === f }"
-              @click="items.setMineFilter(f)"
-            >{{ t(`forge.mine.${f}`) }}</button>
+          <div class="forge-chips">
+            <FilterSelect
+              :model-value="items.state.value"
+              :options="stateSelectOptions"
+              :caption="t('forge.filter.state')"
+              :all-label="t('forge.state.all')"
+              @update:model-value="onStateChange"
+            />
+            <FilterSelect
+              :model-value="items.mineFilter.value"
+              :options="mineSelectOptions"
+              :caption="t('forge.filter.mine')"
+              :all-label="t('forge.mine.all')"
+              @update:model-value="onMineChange"
+            />
           </div>
         </div>
 
@@ -457,7 +456,9 @@ import SearchInput from '@/components/common/SearchInput.vue'
 import ForgeDetail from '@/components/forge/ForgeDetail.vue'
 import ForgePipelineDetail from '@/components/forge/ForgePipelineDetail.vue'
 import ForgeOverviewList from '@/components/forge/ForgeOverviewList.vue'
-import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
+import { useForgeItems, useForgePipelines, type ForgePipelineFilter } from '@/composables/useForge'
+import FilterSelect from '@/components/common/FilterSelect.vue'
+import type { MenuSelectOption } from '@/components/common/MenuSelect.vue'
 import { useForgeBinding, forgeDockIconKind, forgeTabTitleKey } from '@/composables/useForgeBinding'
 import { forgeBrandIcon } from '@/components/forge/forgeBrandIcon'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
@@ -525,19 +526,44 @@ function tabIcon(key: ForgeTabKey) {
 const activeTab = ref<ForgeTabKey>('overview')
 
 /**
- * State chips for the current item type.
+ * Values for the "state" filter, per item type.
  *
  * "merged" is offered only for change requests: GitLab issues have no merged
  * lifecycle and its API rejects state=merged on the issues endpoint, and GitHub
- * issues have no merge concept at all. Showing the chip on the issues tab would
- * present a filter that is always empty.
+ * issues have no merge concept at all. Offering it on the issues tab would put
+ * a permanently empty choice in the menu.
+ *
+ * The "all" row is dropped here on purpose: FilterSelect prepends it from
+ * `all-label`, so this list holds real choices only.
  */
-const stateOptions = computed<Array<'open' | 'closed' | 'merged' | 'all'>>(() =>
-  items.type.value === 'pr'
-    ? ['open', 'closed', 'merged', 'all']
-    : ['open', 'closed', 'all'],
+const stateSelectOptions = computed<MenuSelectOption[]>(() => {
+  const values: Array<'open' | 'closed' | 'merged'> = items.type.value === 'pr'
+    ? ['open', 'closed', 'merged']
+    : ['open', 'closed']
+  return values.map(v => ({ value: v, label: t(`forge.state.${v}`) }))
+})
+
+const mineSelectOptions = computed<MenuSelectOption[]>(() =>
+  (['assigned', 'created', 'review'] as const)
+    .map(v => ({ value: v, label: t(`forge.mine.${v}`) })),
 )
-const mineOptions: Array<'all' | 'assigned' | 'created' | 'review'> = ['all', 'assigned', 'created', 'review']
+
+const pipelineFilterOptions = computed<MenuSelectOption[]>(() =>
+  (['failure', 'running'] as const)
+    .map(v => ({ value: v, label: t(`forge.pipeline.filter.${v}`) })),
+)
+
+// FilterSelect hands back plain model values; resolve the one reset case here
+// so the composable keeps its narrow union types.
+function onStateChange(v: string | number) {
+  items.setState(v === 'all' ? 'all' : v as 'open' | 'closed' | 'merged')
+}
+function onMineChange(v: string | number) {
+  items.setMineFilter(v === 'all' ? 'all' : v as 'assigned' | 'created' | 'review')
+}
+function onPipelineFilterChange(v: string | number) {
+  pipelines.setFilter(v as ForgePipelineFilter)
+}
 
 const searchInput = ref('')
 /**
@@ -949,7 +975,28 @@ async function submitBinding(input: {
     // The binding just changed server-side, so bypass the cache.
     await refresh(true)
   } catch (err) {
-    bindError.value = err instanceof ForgeApiError ? err.message : String(err)
+    // A refused binding carries the platform's classification (auth, rate
+    // limit, network, ...), which is the half the binding dialog can still act
+    // on: which repository settings to check. The server already sends both the
+    // platform's own message and that code, so they are shown together rather
+    // than dropping the classification on the floor.
+    if (err instanceof ForgeApiError) {
+      const hint = bindErrorHint(err.code)
+      bindError.value = hint ? t('forge.error.withHint', { message: err.message, hint }) : err.message
+    } else {
+      bindError.value = String(err)
+    }
+  }
+}
+
+/** A short "what to do" for a refused binding, or '' when none applies. */
+function bindErrorHint(code: string): string {
+  switch (code) {
+    case 'ForgeAuthFailed': return t('forge.error.auth')
+    case 'ForgeRateLimited': return t('forge.error.rateLimit')
+    case 'ForgeNoCredential': return t('forge.error.noCredential')
+    case 'ForgeNotFound': return t('forge.error.bindNotFound')
+    default: return ''
   }
 }
 

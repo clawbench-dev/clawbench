@@ -27,3 +27,19 @@ func TestInitDB_AgentAvatarMigrationIdempotent(t *testing.T) {
 		t.Fatalf("second InitDB: %v", err)
 	}
 }
+
+// InitDB 必须给 agents 加上头像来源列（style/seed），供选择器重新打开。
+func TestInitDB_AddsAgentAvatarProvenanceColumns(t *testing.T) {
+	setupGroupDB(t)
+	for _, col := range []string{"avatar_style", "avatar_seed"} {
+		var cnt int
+		if err := store.ReadDB().QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col,
+		).Scan(&cnt); err != nil {
+			t.Fatalf("pragma_table_info(%s): %v", col, err)
+		}
+		if cnt != 1 {
+			t.Fatalf("%s column count = %d, want 1", col, cnt)
+		}
+	}
+}

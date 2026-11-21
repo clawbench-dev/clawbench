@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"clawbench/internal/filex"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -435,23 +436,8 @@ func ServeFileCopy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// copyFile copies a single file from src to dst.
-func copyFile(src, dst string) error {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = srcFile.Close() }()
-
-	dstFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dstFile.Close() }()
-
-	_, err = dstFile.ReadFrom(srcFile)
-	return err
-}
+// copyFile 的实现已经搬到 internal/filex（会议纪要也要用）。
+var copyFile = filex.CopyFile
 
 // copyDir copies a directory recursively from src to dst.
 // Symlinks whose targets escape root paths are skipped to prevent data exfiltration.

@@ -1,6 +1,4 @@
 SessionNotRunning: Session is not running
-SessionStreamNotFound: Session stream not found
-SessionStreamBusy: Session stream is being viewed on another device
 ServiceBusy: The server is busy assembling shared conversations, please retry shortly
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
@@ -51,7 +49,6 @@ TokenRequired: token is required
 LiveShareAlreadyPublishing: another publisher is already sharing this room
 LiveShareTooManyRooms: too many concurrent screen shares
 LiveShareRelayNotConfigured: the relay service is not configured — fill in and test the relay URL and credentials first
-LiveShareRelayUnavailable: the relay service is unavailable, so the meeting cannot start
 LiveSFURelayMissingFields: relay URL, API Key and API Secret are all required
 LiveSFURelayUnreachable: 'cannot reach {{.URL}}: {{.Detail}}'
 LiveSFURelayRejected: 'LiveKit refused the request (the address is reachable, but the key or permissions are wrong): {{.Detail}}'
@@ -104,9 +101,7 @@ ThinkIdAndMessageIdRequired: think_id and message_id are required
 ThinkingNotFound: thinking not found
 JobIdRequired: job ID required
 FileNotFound: "File not found: {{.Path}}"
-ClientIdRequired: clientId required
 FileWatcherNotAvailable: file watcher not available
-InvalidRole: Invalid role
 MessageIdRequired: messageId required
 InvalidRequest: Invalid request
 SessionBackendNotFound: Session backend not found
@@ -118,13 +113,9 @@ InvalidLineRange: Invalid line range
 InvalidURLAttachment: URL attachments must be an http(s) address
 FileTooLargeOrInvalid: File too large or invalid form
 NoFileProvided: No file provided
-FileTooLargeShort: File too large
-InvalidImage: "Unsupported image: {{.Error}}"
 WriteFailed: "Failed to save: {{.Error}}"
 ReadFailed: "Failed to read: {{.Error}}"
 UploadSaveFailed: "Unable to save file: {{.Error}}"
-FileMustHaveExtension: File must have an extension
-FileTypeNotAllowed: "File type not allowed: {{.Ext}}"
 MissingPathOrName: Missing path or name
 MissingPath: Missing path
 MissingName: Missing name
@@ -148,7 +139,6 @@ TaskEventTriggerUnsupported: An event-triggered task cannot be run manually; it 
 TaskExecutionIdRequired: Execution ID is required
 TaskExecutionNotFound: Execution not found or already finished
 DirectoryNameRequired: Directory name required
-LineNumberOutOfRange: Line number out of range
 InvalidIndex: invalid index
 InvalidMessageId: invalid message id
 JobNotFound: job not found
@@ -185,8 +175,6 @@ ProviderProtocolConflict: "These agents do not support this protocol: {{.Agents}
 ProviderConfigConflict: Agent(s) {{.Agents}} are bound to another provider; this backend shares one global config file and can only bind one
 ProviderConfigConsentRequired: "This agent needs a config file change to apply the provider: {{.Files}}. Confirm and retry"
 ProviderModelsRequired: "Agent(s) {{.Agents}} use a backend that must declare at least one model; the model list cannot be emptied"
-CodeBuddyTokenUnsupported: Only CodeBuddy agents support using their own API key
-CodeBuddyTokenProviderConflict: A model provider and the CodeBuddy own API key cannot be used together; clear one of them first
 InvalidSHA: Invalid commit SHA format
 InvalidBranchName: Invalid branch name
 UnknownBranch: This branch no longer exists
@@ -201,12 +189,6 @@ NodeRuntimeMissing: "{{.Tool}} was not found, and installing Node.js automatical
 AgentInstallBusy: Another install is already running; wait for it to finish
 AgentInstallFailed: "Install failed: {{.Output}}"
 AgentInstallFailedNoOutput: Install failed — the command printed nothing (non-zero exit status)
-CustomURLOpenAIFormat: Custom URL for OpenAI format should end with /chat/completions
-CustomURLAnthropicFormat: Custom URL for Anthropic format should end with /v1/messages
-CustomURLInvalid: Invalid URL format
-CustomURLInvalidScheme: URL must start with http:// or https://
-CustomURLInvalidHost: URL is missing a valid hostname
-CustomURLUnrecognizedFormat: URL path must end with /chat/completions (OpenAI) or /v1/messages (Anthropic)
 PushTaskCompleted: Task completed
 PushTaskFailed: Task failed
 PushTaskCancelled: Task cancelled
@@ -218,7 +200,6 @@ PushActionRequired: Action requires approval
 # (the producer is a background goroutine with no request scope), and the
 # notification center and IM push share the same wording.
 MailNotifyNoSubject: (No subject)
-MailNotifyUnknownSender: Unknown sender
 MailNotifyTitle: New mail
 MailNotifyManyTitle: '{{.Count}} new emails'
 MailNotifyFrom: 'From: {{.Sender}}'
@@ -328,12 +309,9 @@ UserGuideNotAvailable: User guide is not available on this instance
 InvalidRegex: 'Invalid regular expression: {{.Error}}'
 UpgradeInProgress: Upgrade already in progress
 ManagedByEmbedder: This server was started by the desktop app and is updated together with it. Use the desktop app's update flow.
-AlreadyLatestVersion: Already on the latest version
 RAGNotAvailable: RAG is not available
 RAGResetInProgress: An index rebuild is already running
-RAGResetFailed: Index rebuild failed
 RAGSegmenterUnavailable: "Rebuild refused: the text segmenter is unavailable. Rebuilding now would replace correctly segmented text with unsplit text and break Chinese search — restart the service and try again."
-RAGRebuildAccepted: Rebuild started in the background
 AutoContinue: Continue
 # The ONLY persisted row (a role='system' notice) when a turn dies abnormally
 # and the system resumes it. Shown TO THE USER; it is NOT the prompt the agent
@@ -471,6 +449,8 @@ UsageMeterPeriodNotNumber: The cycle length must be a number
 UsageMeterMetricInvalid: "The metric must be one of: tokens, credit, cost"
 UsageMeterMetricNotString: "The metric must be one of: tokens, credit, cost"
 UsageMeterCycleModeInvalid: "The cycle type must be fixed (a set number of days) or monthly (calendar month)"
+UsageMeterAgentsInvalid: The agent scope must be a list of non-empty agent ids
+UsageMeterAgentsTooMany: The agent scope accepts at most {{.Max}} agents
 MeetingMinutesMaxTokensRange: "The minutes output limit must be between {{.Min}} and {{.Max}} tokens"
 RestartFailed: "Restart failed: {{.Error}}"
 RestartUnavailable: Restart is not wired up on this server, cannot restart
@@ -502,7 +482,6 @@ MeetingFilesReasonMissing: file no longer exists
 MeetingFilesReasonPermission: permission denied
 MeetingFilesReasonUnreadable: read failed
 MeetingFilesStayWrap: " ({{.Text}})"
-MeetingFilesExcerptHeader: File excerpts (truncated)
 MeetingScreenVoice: Screen
 MeetingScreenStarted: "{{.Name}} started sharing the screen"
 MeetingScreenStopped: "{{.Name}} stopped sharing the screen{{.Stay}}"
@@ -567,7 +546,6 @@ MailAccountInvalid: Fill in a valid email address and both server hosts
 KBUnavailable: The knowledge base is not enabled
 KBNotFound: This knowledge base item does not exist or was deleted
 KBDuplicate: This file is already in the selected knowledge base
-KBFileTooLarge: The file is too large to add
 KBUnsupportedFile: This file type is not supported
 KBNotDirectory: The selected path is not a folder
 KBSourceMissing: The original file is gone, so it cannot be refreshed (the stored copy is still searchable)
@@ -592,7 +570,6 @@ KBReasonExecutable: Executable files cannot be knowledge base content
 KBReasonBinary: This file looks like binary data and has no indexable text
 KBReasonFont: Font files cannot be knowledge base content
 KBReasonPDFEncrypted: Could not open the PDF (the file may be damaged or encrypted)
-KBReasonPDFMalformed: This PDF is damaged and could not be parsed
 KBReasonPDFNoText: This PDF has no extractable text (it may be a scanned document)
 KBReasonNoText: This file has no extractable text
 KBReasonFileTooLarge: "The file is too large ({{.MaxMB}} MB); the limit is {{.LimitMB}} MB"

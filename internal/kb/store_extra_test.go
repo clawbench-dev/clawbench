@@ -127,8 +127,8 @@ func TestStore_ResetVectorRecreatesImmediately(t *testing.T) {
 // (SQLite rejects a duplicate column), and a missing table must be reported.
 func TestStore_ColumnMigrationIsIdempotent(t *testing.T) {
 	st := newTestStore(t)
-	require.NoError(t, st.addColumnIfMissing("kb_collections", "pinned", "INTEGER NOT NULL DEFAULT 0"))
-	require.NoError(t, st.addColumnIfMissing("kb_collections", "pinned", "INTEGER NOT NULL DEFAULT 0"))
+	require.NoError(t, st.addColumnIfMissing("kb_documents", "tags", "TEXT NOT NULL DEFAULT ''"))
+	require.NoError(t, st.addColumnIfMissing("kb_documents", "tags", "TEXT NOT NULL DEFAULT ''"))
 	require.Error(t, st.addColumnIfMissing("no_such_table", "x", "INTEGER"))
 }
 
@@ -141,7 +141,7 @@ func TestStore_CollectionGuards(t *testing.T) {
 	_, err := st.CreateCollection(Collection{Name: "x", Scope: "invalid"})
 	require.ErrorIs(t, err, ErrInvalidScope)
 
-	require.ErrorIs(t, st.UpdateCollection(9999, nil, nil, nil, nil), ErrCollectionNotFound)
+	require.ErrorIs(t, st.UpdateCollection(9999, nil, nil, nil), ErrCollectionNotFound)
 	require.ErrorIs(t, st.DeleteCollection(9999), ErrCollectionNotFound)
 
 	id, err := st.CreateCollection(Collection{Name: "项目库", Scope: ScopeProject, ProjectID: 7, AutoInject: true})
@@ -340,4 +340,46 @@ func TestStatsForProject_FallsBackToGlobal(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, global, scoped)
 	}
+}
+
+// TestStore_DropColumnIfExists: the pinned column is removed on every start.
+// It must be a no-op on installs that never had it (fresh DBs), drop it when
+// present, and report a missing table rather than pretending success.
+func TestStore_DropColumnIfExists(t *testing.T) {
+	st := newTestStore(t)
+
+	// Fresh schema: the column is already gone, so this is a no-op.
+	require.NoError(t, st.dropColumnIfExists("kb_collections", "pinned"))
+
+	// Put it back, then confirm the migration removes it.
+	_, err := st.db.Exec("ALTER TABLE kb_collections ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+	require.NoError(t, err)
+	var before int
+	require.NoError(t, st.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('kb_collections') WHERE name = 'pinned'").Scan(&before))
+	require.Equal(t, 1, before)
+
+	require.NoError(t, st.dropColumnIfExists("kb_collections", "pinned"))
+	var after int
+	require.NoError(t, st.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('kb_collections') WHERE name = 'pinned'").Scan(&after))
+	require.Equal(t, 0, after, "the dead column must be dropped")
+
+	// A table that does not exist reports "no such column" (zero rows), which is
+	// the same state as a fresh install: nothing to drop.
+	require.NoError(t, st.dropColumnIfExists("no_such_table", "x"))
+
+	// SQLite refuses to drop a column an index depends on: the error must be
+	// reported, not swallowed (the caller aborts startup on it).
+	_, err = st.db.Exec("ALTER TABLE kb_collections ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+	require.NoError(t, err)
+	_, err = st.db.Exec("CREATE INDEX idx_kb_collections_pinned ON kb_collections(pinned)")
+	require.NoError(t, err)
+	require.Error(t, st.dropColumnIfExists("kb_collections", "pinned"))
+
+	// An unreadable handle must surface the inspection failure.
+	closed, err := NewStoreForTest(filepath.Join(t.TempDir(), "closed.db"))
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	require.Error(t, closed.dropColumnIfExists("kb_collections", "pinned"))
 }

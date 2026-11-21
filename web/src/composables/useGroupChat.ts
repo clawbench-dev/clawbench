@@ -178,8 +178,8 @@ export async function generateMemberAvatars(groupId: string, onlyMemberIds?: str
     return !onlyMemberIds || onlyMemberIds.includes(m.id)
   })
   if (!targets.length) return
-  const { generateAvatarSvg } = await import('@/utils/lazyAvatar')
-  const avatars = await Promise.all(targets.map(async m => ({ memberId: m.id, avatar: await generateAvatarSvg(m.name) })))
+  const { generateAutoAvatarSvg } = await import('@/utils/lazyAvatar')
+  const avatars = await Promise.all(targets.map(async m => ({ memberId: m.id, avatar: await generateAutoAvatarSvg(m.name) })))
   await setMemberAvatars(groupId, avatars)
 }
 

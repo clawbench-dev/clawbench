@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	plugforge "clawbench/internal/plugin/forge"
+
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -312,7 +314,7 @@ func TestServeConfig_Patch_UserNicknameTrimsWhitespace(t *testing.T) {
 // hot-reloaded into the model global, and bounded because it is injected into
 // every agent system prompt.
 func TestServeConfig_Patch_UserProfile(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}
@@ -800,7 +802,10 @@ func TestServeConfig_Patch_ForgeDisableClearsBindings(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	registerDisableHookPlugin(t, "forge", "forge", ForgeDisableEffect)
+	registerDisableHookPlugin(t, "forge", "forge", plugforge.ForgeDisableEffect, map[string]bool{
+		"forge.enabled":      true,
+		"forge.insecure_tls": true,
+	})
 	model.ConfigInstance = model.Config{Forge: model.ForgeConfig{Enabled: true}}
 
 	// Bind the test project (and a second one) so the clear has something to do.
@@ -1615,6 +1620,18 @@ func TestServeConfig_Patch_UsageMeterInvalidIsSpecificAndLocalized(t *testing.T)
 			body:      `{"usage_meter":{"quota":10,"anchor_date":"2026-10-05","cycle_mode":1,"period_days":30,"metric":"cost"}}`,
 			wantKey:   "UsageMeterCycleModeInvalid",
 			wantField: "usage_meter.cycle_mode",
+		},
+		{
+			name:      "agent scope sent as a string",
+			body:      `{"usage_meter":{"agent_ids":"agent-a"}}`,
+			wantKey:   "UsageMeterAgentsInvalid",
+			wantField: "usage_meter.agent_ids",
+		},
+		{
+			name:      "agent scope with a blank id",
+			body:      `{"usage_meter":{"agent_ids":["agent-a"," "]}}`,
+			wantKey:   "UsageMeterAgentsInvalid",
+			wantField: "usage_meter.agent_ids",
 		},
 	}
 

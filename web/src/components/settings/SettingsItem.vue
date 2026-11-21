@@ -71,6 +71,9 @@
         <ProviderIcon v-if="selectedOptionModelName" :model-name="selectedOptionModelName" :size="14" />
         <span class="settings-item__value">{{ displayValue }}</span>
       </template>
+      <template v-else-if="type === 'multi-select'">
+        <span class="settings-item__value">{{ displayValue }}</span>
+      </template>
       <template v-else-if="type === 'textarea'">
         <span class="settings-item__value">{{ displayValue }}</span>
       </template>
@@ -219,7 +222,7 @@
   </div>
   <!-- Select option picker BottomSheet -->
   <BottomSheet
-    v-if="type === 'select'"
+    v-if="type === 'select' || type === 'multi-select'"
     :open="selectPicker.effectiveOpen.value"
     auto
     @close="closeSelectPicker()"
@@ -237,6 +240,20 @@
         :placeholder="t('chat.sessionSetting.searchPlaceholder')"
       />
     </div>
+    <!-- Select-all row. An empty selection is the "all" value for fields like
+         the usage meter's agent scope, so "all" needs its own row: unchecking
+         every agent one by one is not a discoverable way back. -->
+    <div
+      v-if="type === 'multi-select' && allOptionLabel"
+      class="settings-item__option"
+      :class="{ 'settings-item__option--active': selectedValues.length === 0 }"
+      @click="selectAllOptions"
+    >
+      <span class="settings-item__option-labels">
+        <span class="settings-item__option-label">{{ allOptionLabel }}</span>
+      </span>
+      <span v-if="selectedValues.length === 0" class="settings-item__option-check">✓</span>
+    </div>
     <!-- One render path for both shapes: a grouped list (groupKey present) and a
          flat one differ only by the optional heading, and duplicating the row
          markup made the grouped variant silently lose the two-line model row
@@ -249,7 +266,7 @@
         v-for="opt in group.options"
         :key="opt.value as PropertyKey"
         class="settings-item__option"
-        :class="{ 'settings-item__option--active': modelValue === opt.value }"
+        :class="{ 'settings-item__option--active': isOptionSelected(opt.value) }"
         @click="selectOption(opt.value)"
       >
         <!-- Model options render the shared two-line model row (name over id).
@@ -263,20 +280,27 @@
           :active="modelValue === opt.value"
           :icon-size="14"
         >
-          <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
+          <span v-if="isOptionSelected(opt.value)" class="settings-item__option-check">✓</span>
         </ModelRow>
         <template v-else>
           <span class="settings-item__option-labels">
             <span class="settings-item__option-label" :style="opt.previewFont ? { fontFamily: opt.previewFont } : undefined">{{ opt.label }}</span>
             <span v-if="opt.badgeKey" class="settings-item__option-badge">{{ t(opt.badgeKey) }}</span>
           </span>
-          <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
+          <span v-if="isOptionSelected(opt.value)" class="settings-item__option-check">✓</span>
         </template>
       </div>
     </template>
     <div v-if="isModelSelect && filteredRenderOptions && filteredRenderOptions.length === 0" class="settings-item__option-empty">
       {{ t('chat.sessionSetting.noSearchResults') }}
     </div>
+    <!-- Multi-select keeps the sheet open while rows are toggled (ticking three
+         agents should not cost three visits), so it needs an explicit way out. -->
+    <template v-if="type === 'multi-select'" #footer>
+      <button type="button" class="fbtn settings-item__multi-done" @click="closeMultiPicker">
+        {{ t('common.done') }}
+      </button>
+    </template>
   </BottomSheet>
   <!-- Theme picker BottomSheet with color preview swatches. Wide tier: it is a
        swatch GRID, so extra width turns rows into more columns instead of
@@ -380,7 +404,7 @@ interface Props {
    *  Always visible in the row, unlike `warning` which only shows inside the
    *  open editor. Absent means no note. */
   note?: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'date' | 'datetime' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
+  type: 'switch' | 'select' | 'multi-select' | 'number' | 'text' | 'date' | 'datetime' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   modelValue?: unknown
   options?: SelectOption[]
   /** Async filter applied to options each time the select picker opens
@@ -397,6 +421,9 @@ interface Props {
    *  surfaced here so the user cannot type a value that will be rejected). */
   maxLength?: number
   placeholder?: string
+  /** multi-select only: label of the "select all" row. Its presence also tells
+   *  the row how to render an empty selection (an empty list means "all"). */
+  allOptionLabel?: string
   needsRestart?: boolean
   disabled?: boolean
   forceClose?: boolean
@@ -660,6 +687,14 @@ const displayValue = computed(() => {
     const opt = props.options.find(o => o.value === props.modelValue)
     return opt?.label ?? props.modelValue ?? props.placeholder
   }
+  if (props.type === 'multi-select') {
+    const values = Array.isArray(props.modelValue) ? (props.modelValue as (string | number)[]) : []
+    if (values.length === 0) return props.allOptionLabel ?? props.placeholder
+    // Same compact form as MenuSelect: the first label plus a count. The full
+    // list is one tap away, and a settings row must not grow with the selection.
+    const labels = values.map(v => props.options?.find(o => o.value === v)?.label ?? String(v))
+    return labels.length === 1 ? labels[0] : `${labels[0]} +${labels.length - 1}`
+  }
   if (props.modelValue !== undefined && props.modelValue !== '') {
     const v = props.displayTransform ? props.displayTransform(props.modelValue) : props.modelValue
     return String(v)
@@ -713,9 +748,10 @@ function handleClick() {
   if (props.type === 'switch' || props.type === 'slider' || props.type === 'info') {
     return
   }
-  // select: open BottomSheet picker (theme grid when previews are provided)
-  if (props.type === 'select') {
-    if (isThemeSelect.value) {
+  // select / multi-select: open BottomSheet picker (theme grid when previews
+  // are provided — only single selects use it).
+  if (props.type === 'select' || props.type === 'multi-select') {
+    if (props.type === 'select' && isThemeSelect.value) {
       themePicker.open()
       selectPicker.close()
     } else {
@@ -742,7 +778,39 @@ function handleClick() {
   emit('editToggle', editing.value)
 }
 
+/** Current multi-selection as a plain array (never the raw prop). */
+const selectedValues = computed<(string | number)[]>(() =>
+  Array.isArray(props.modelValue) ? (props.modelValue as (string | number)[]) : [],
+)
+
+/** 全选 = clear the filter: an empty list means "every agent", and it keeps
+ *  meaning that when a new agent is created later. */
+function selectAllOptions() {
+  emit('update:modelValue', [])
+}
+
+function closeMultiPicker() {
+  closeSelectPicker()
+  emit('editToggle', false)
+}
+
+function isOptionSelected(value: unknown): boolean {
+  if (props.type === 'multi-select') {
+    return Array.isArray(props.modelValue) && (props.modelValue as unknown[]).includes(value)
+  }
+  return props.modelValue === value
+}
+
 function selectOption(value: unknown) {
+  if (props.type === 'multi-select') {
+    const current = Array.isArray(props.modelValue) ? [...(props.modelValue as (string | number)[])] : []
+    const idx = current.indexOf(value as string | number)
+    if (idx >= 0) current.splice(idx, 1)
+    else current.push(value as string | number)
+    // Deliberately stays open: the footer's 完成 closes it.
+    emit('update:modelValue', current)
+    return
+  }
   closeSelectPicker()
   themePicker.close()
   emit('editToggle', false)

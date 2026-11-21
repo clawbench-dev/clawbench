@@ -13,6 +13,7 @@
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { extractPlainText } from '@/utils/userMsgIndexUtils'
 import { TOOL_STATUS_INTERRUPTED } from '@/utils/toolStatus'
+import { extractAskMatches, stripAskMatches } from '@/utils/askQuestion'
 
 /** A content block within a chat message (text, thinking, tool_use, error, warning). */
 export interface ContentBlock {
@@ -823,6 +824,32 @@ function joinTextBlocks(blocks: ContentBlock[]): string {
 }
 
 /**
+ * The text as Finalize leaves it, for containment comparisons only.
+ *
+ * Finalize turns a `<clawbench-ask-question>` text block into an
+ * AskUserQuestion tool block: the tag span is removed from the stored text and
+ * the rest is TrimSpace'd. The live bubble keeps the RAW tag, so comparing the
+ * two verbatim says "unrelated" whenever a tag sits anywhere but the very end of
+ * the reply — a message with two ask cards puts the first tag in the middle of
+ * the joined text. mergeStreamBlocks then found no overlap, fell through to the
+ * "DB prefix is a genuine prefix" branch and PREPENDED the whole DB copy on top
+ * of the live one: the reply rendered twice, which reads as "the text before the
+ * card is repeated after it" (msg 76392).
+ *
+ * Strip the spans the same way the backend does (parsed span → gone, unparsed →
+ * its inner text) and drop all whitespace, so both sides describe the same
+ * reply: removing a span leaves the newlines that surrounded it behind on the
+ * live side, while the DB's per-block TrimSpace has already eaten them. The raw
+ * text is still what gets rendered and what the seam trim operates on.
+ */
+function comparableReplyText(text: string): string {
+  const stripped = text.includes('<clawbench-ask-question')
+    ? stripAskMatches(text, extractAskMatches(text))
+    : text
+  return stripped.replace(/\s+/g, '')
+}
+
+/**
  * Find the thinking block a delta belongs to, and report whether it may be
  * extended.
  *
@@ -1357,6 +1384,12 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
 
   const dbText = joinTextBlocks(dbBlocks)
   const liveText = joinTextBlocks(liveBlocks)
+  // Both cases below ask "does one text cover the other". Ask on the Finalize
+  // shape, not the raw one: the DB copy has its ask-question spans removed, so
+  // a raw comparison breaks at every tag and hands a same-reply pair to case 2
+  // (which prepends a second copy of the whole reply).
+  const dbCmp = comparableReplyText(dbText)
+  const liveCmp = comparableReplyText(liveText)
 
   // Case 0 — the DB flush is a strict superset of the live text: the live
   // stream is behind, so the DB's text is authoritative. (Equal text is left to
@@ -1373,7 +1406,7 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   // discard live warning/error blocks and any block the DB's 500ms flush has not
   // caught up with yet. DB-only non-text blocks (tools that finished before the
   // placeholder was recreated) are spliced in at their DB position.
-  if (dbText && dbText !== liveText && dbText.startsWith(liveText)) {
+  if (dbText && dbCmp !== liveCmp && dbCmp.startsWith(liveCmp)) {
     return mergeOrderedBlocks(dbBlocks, liveBlocks, true)
   }
 
@@ -1381,7 +1414,7 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   // blocks (tool_use finished before the placeholder was recreated) that live
   // is missing, spliced in at their DB position so the text/tool interleaving
   // is preserved.
-  if (dbText && liveText.startsWith(dbText)) {
+  if (dbText && liveCmp.startsWith(dbCmp)) {
     return mergeOrderedBlocks(dbBlocks, liveBlocks, false)
   }
 

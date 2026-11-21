@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+	plugtasks "clawbench/internal/plugin/tasks"
 	"clawbench/internal/service"
 	"clawbench/internal/store"
 
@@ -427,7 +428,7 @@ func TestServeTasks_PostScopedAgentFromOtherProjectRejected(t *testing.T) {
 		"prompt":    "Do something",
 	})
 	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeTasks, req)
+	w := callHandler(plugtasks.ServeTasks, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
 	var resp map[string]any

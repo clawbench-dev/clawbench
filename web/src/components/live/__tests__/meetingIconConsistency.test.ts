@@ -36,7 +36,11 @@ const SURFACES = [
   'web/src/components/live/MeetingDetail.vue',
   'web/src/components/live/TranscriptList.vue',
   'web/src/components/share/ShareCenterPanel.vue',
-  'web/src/components/notifications/NotificationsPanelContent.vue',
+  // The notification centre no longer picks the glyph itself: every kind's icon
+  // (meeting included) comes from this registry, and the panel renders
+  // `specOf(n).icon`. The registry is therefore the surface that must keep the
+  // shared constant.
+  'web/src/utils/notificationKinds.ts',
 ]
 
 function read(path: string): string {

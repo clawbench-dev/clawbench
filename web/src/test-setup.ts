@@ -141,3 +141,22 @@ try {
 } catch {
   // vitest not available (e.g. typecheck-only mode) — skip cleanup
 }
+
+// ── Dock registry: install the real plugin-declared ids and master switches ──
+//
+// `dockTabs.ts` holds both as data pushed in from outside (it must stay
+// import-free — see its header): in the app the plugin runtime pushes them at
+// load time. No test loads that runtime unless it has to, so without this every
+// `isDockTabId` answer is `false` and tab switches are silently dropped.
+//
+// Installed here, once, for the whole suite: the alternative was an install call
+// in each of the ~10 specs that reach the registry through a component, which
+// is both noisy and easy to forget when a spec is added.
+//
+// The list is the REAL one (these modules only declare data — the panels stay
+// dynamic imports), so a test sees the same ids and order as the app.
+import { installDockFeatures, installDockTabIds } from '@/composables/dockTabs'
+import { TEST_DOCK_FEATURES, TEST_DOCK_TAB_IDS } from '@/testUtils/dockRegistryIds'
+
+installDockTabIds(TEST_DOCK_TAB_IDS)
+installDockFeatures(TEST_DOCK_FEATURES)

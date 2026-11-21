@@ -2,6 +2,7 @@ package service
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -86,12 +87,14 @@ func notifyNewInboxMail(accountID int64, folder mail.Folder, inserted []MailMess
 	eventID := ws.GenerateEventID()
 
 	StoreNotification(NotificationRecord{
-		EventID:       eventID,
-		Kind:          NotificationKindMail,
-		EventType:     MailEventReceived,
-		Title:         title,
-		Body:          body,
-		MailMessageID: newest.ID,
+		EventID:   eventID,
+		Kind:      NotificationKindMail,
+		EventType: MailEventReceived,
+		Title:     title,
+		Body:      body,
+		// mail_messages.id is an integer; subject_id is the one text identity
+		// column, so the id is stored in decimal.
+		SubjectID: strconv.FormatInt(newest.ID, 10),
 	})
 
 	// The WS frame is live delivery; the notification-center row above is the

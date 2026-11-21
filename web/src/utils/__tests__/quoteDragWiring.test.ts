@@ -18,11 +18,20 @@ describe('quote drag drop wiring', () => {
 
   // Dropping must STAGE the card (no annotation) and land the user in the chat,
   // which is the whole point of the feature.
+  //
+  // The staging call moved behind the shared chat bridge: App.vue's
+  // `stageQuoteInChat` is now a one-line `chatBridge.quote(quote)` (no note), so
+  // a dock panel can stage a card without reaching into App.vue. The bridge
+  // reveals the chat, and App registers `switchTab('chat')` as that handler.
   it('stages the card without an annotation and switches to the chat', () => {
     const src = readWebFile(APP)
 
-    expect(src).toMatch(/addStagedQuote\(quote\)/)
-    expect(src).toMatch(/switchTab\('chat'\)/)
+    const drop = functionBody(src, 'onChatColDrop')
+    expect(drop).toMatch(/void stageDraggedQuote\(quote\)/)
+
+    // No second argument: the drop path never asks for a note.
+    expect(src).toMatch(/function stageQuoteInChat\(quote: QuoteData\): void \{\s*chatBridge\.quote\(quote\)/)
+    expect(src).toMatch(/setChatRevealHandler\(\(\) => switchTab\('chat'\)\)/)
   })
 
   // Without this the browser never fires `drop` on the chat column, so the

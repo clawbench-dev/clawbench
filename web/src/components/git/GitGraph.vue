@@ -184,6 +184,8 @@ const svgHeight = computed(() => {
 // Which commit rows are on screen right now, tracked from the shared scroll
 // container. A ResizeObserver is also needed because the container can be
 // resized without scrolling (window resize, dock layout switch, tab switch).
+// `visibleLaneCount` covers every lane with geometry in that window — nodes
+// and connection lines alike; see measureViewport.
 const visibleRowCount = ref(0)
 const visibleLaneCount = ref(1)
 
@@ -251,6 +253,15 @@ function measureViewport() {
     if (node.row >= firstRow && node.row <= lastRow && node.lane > maxLane) {
       maxLane = node.lane
     }
+  }
+  // Lines can cross the window while every node on their lane is off-screen:
+  // a branch that forked above the viewport still runs its vertical through
+  // the visible rows, and its bezier lands on a lane with no visible node.
+  // Sizing from nodes alone clipped those lanes at the column edge, so a fork
+  // looked like it produced no lane until you scrolled its node into view.
+  for (const line of lines.value) {
+    if (line.rowEnd < firstRow || line.rowStart > lastRow) continue
+    if (line.widthLane > maxLane) maxLane = line.widthLane
   }
   visibleLaneCount.value = maxLane + 1
 }

@@ -291,6 +291,7 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"preferred_mode": true, "preferred_model": true, "preferred_thinking_effort": true,
 		"thinking_effort_by_model": true,
 		"custom_system_prompt":     true, "avatar": true,
+		"avatar_style": true, "avatar_seed": true,
 		"models": true, "models_auto_detected": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,

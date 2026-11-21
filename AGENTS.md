@@ -32,6 +32,15 @@ npx playwright test --config e2e/playwright.config.ts --project=chromium-coverag
 ./build.sh --restart [--restart-skip-build] [--restart-port=8080]
 ```
 
+### 原则：不使用 cgo
+
+所有产物一律 `CGO_ENABLED=0`——发布流水线（`release.yml` 的五个平台任务）和本地 `build.sh` 都是如此。要新增依赖 cgo 的东西，先在 issue 里说清理由并改本节，不要悄悄打开。
+
+- **本来就不需要**：SQLite 用 `modernc.org/sqlite`（纯 Go，FTS5 已编入），代码里没有任何 `import "C"`。历史上开 cgo 只是因为误以为 FTS5 需要它。
+- **开了 cgo，产物就不再只由我们的代码决定**：cgo 会把构建机的 C 编译器拉进来，机器换了、编译器默认参数变了，产出的机器码就跟着变，而且这种变化在 Go 的构建信息里**看不出来**。issue #719 就是这样：0.141 起 linux 版在无 AVX 的 CPU 上启动即崩，Go 侧信息一切正常，最后查出来是 cgo 的 C 函数被塞进了新指令。
+- **附带好处**：产物是单个静态文件，不依赖目标机的 C 库（glibc 版本、Alpine 的 musl 都不再是问题）。
+- **代价要记住**：纯 Go 的域名解析绕开系统的 NSS 模块，`.local` 局域网名字、只靠 NSS 插件解析的内网地址会解析不到。遇到「域名解析失败」的反馈，先问是不是这类名字。
+
 ### 运维：一个数据目录只能跑一个服务
 
 服务启动时在数据目录下取一把独占锁（`.instance.lock`，进程退出即由系统释放，不存在残留锁）。同一个数据目录已有实例在跑时，新进程最多等 30 秒（覆盖重启时旧进程还没退完的窗口；锁一直持有到进程退出，比端口释放晚）后**拒绝启动**并报错。
@@ -150,7 +159,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、M
 
 **一排图标按钮只有一个实现**：`components/common/ActionBar.vue` 统一管「空间够就带标签、放不下就收进『更多』菜单（`mode="menu"`）或左右滚动（`mode="scroll"`）」，宽度是量出来的不估算。接入方式、`mode` 语义、临界宽度不闪的两条前提、以及已接入清单见 [`docs/spec/client/design-guide.md`](docs/spec/client/design-guide.md)。新增工具栏不要再自己写一套测量逻辑。
 
-**Dock 页签由插件自描述**：每个功能在 `web/src/plugins/<id>/plugin.ts` 里声明自己的清单（标题键 / 说明键 / 分组 / 能否隐藏 / 关联的服务端开关 / 能力 / 设置分类 / 图标）与运行时资源（面板、角标、可用性、`onEnter` / `onLeave`、后台资源、按钮外观谓词、深链）。`web/src/composables/dockPluginRuntime.ts` 是唯一聚合点（`import.meta.glob('@/plugins/*/plugin.ts', { eager: true })`，因此 `plugin.ts` 不得 import 自己的面板、不得 import 别的插件、不放重依赖），`web/src/composables/dockTabs.ts` 只剩 id 与顺序（`DOCK_TAB_ORDER`，手写：默认顺序是产品决策，不能交给文件名排序）并必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。新增一个功能的前端步骤见 [`docs/plugin-dev/README.md`](docs/plugin-dev/README.md)，服务端注册表见 [`docs/spec/features/plugin-registry.md`](docs/spec/features/plugin-registry.md)。**forge 页签的标题按项目绑定的平台动态取**（`useForgeBinding` 的 `forgeTabTitleKey` → 「GitHub 集成 / GitLab 集成」，未绑定默认 GitHub），且必须与 `forgeDockIconKind()` 共用同一判定——图标与文案各判一次就会出现「GitLab 图标配 GitHub 文案」。三个标题入口（窄屏溢出菜单项、窄屏内联按钮 tooltip、宽屏竖向 Dock tooltip）都要走它，溢出按钮的 tooltip 尤其不能直接读注册表的中性标题。**所有面板/布局状态**（左栏折叠、聊天区折叠、分割比例、会话侧栏、TOC 停靠栏、文件管理器预览比例、左栏页签）统一登记在 `web/src/utils/panelState.ts`（叶子模块）：id / 键 / scope / 默认值 / 编解码一处声明，读写走 `readPanelState`/`writePanelState`，键名统一 `clawbench-panel.<名>`（按项目项追加 `:<项目根>`），并有一次性老键迁移。**除左栏页签（`leftTab`）按项目外，其余全为全局**；左栏页签由 `useProjectPanel.ts` 记忆；项目切换期间用计数器抑制误写（可并发调用，布尔会被先结束者清掉）。`switchLeftTab` **不隐式展开左栏**（它是程序性恢复路径），用户点页签的入口显式展开。
+**Dock 页签由插件自描述**：每个功能在 `web/src/plugins/<id>/plugin.ts` 里声明自己的清单（标题键 / 说明键 / 分组 / 能否隐藏 / 关联的服务端开关 / 能力 / 设置分类 / 图标）与运行时资源（面板、角标、可用性、`onEnter` / `onLeave`、后台资源、按钮外观谓词、深链）。`web/src/composables/dockPluginRuntime.ts` 是唯一聚合点（`import.meta.glob('@/plugins/*/plugin.ts', { eager: true })`，因此 `plugin.ts` 不得 import 自己的面板、不得 import 别的插件、不放重依赖），`web/src/composables/dockTabs.ts` 只剩 id 与顺序（顺序由每个插件的 `order` 声明、运行时排序后 `installDockTabIds` 灌入）并必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。新增一个功能的完整步骤见 [`docs/plugin-dev/`](docs/plugin-dev/README.md)（前端 `01-frontend.md`、后端 `02-backend.md`、两边契约 `03-contract.md`），服务端注册表的设计与不变量见 [`docs/spec/features/plugin-registry.md`](docs/spec/features/plugin-registry.md)。**forge 页签的标题按项目绑定的平台动态取**（`useForgeBinding` 的 `forgeTabTitleKey` → 「GitHub 集成 / GitLab 集成」，未绑定默认 GitHub），且必须与 `forgeDockIconKind()` 共用同一判定——图标与文案各判一次就会出现「GitLab 图标配 GitHub 文案」。三个标题入口（窄屏溢出菜单项、窄屏内联按钮 tooltip、宽屏竖向 Dock tooltip）都要走它，溢出按钮的 tooltip 尤其不能直接读注册表的中性标题。**所有面板/布局状态**（左栏折叠、聊天区折叠、分割比例、会话侧栏、TOC 停靠栏、文件管理器预览比例、左栏页签）统一登记在 `web/src/utils/panelState.ts`（叶子模块）：id / 键 / scope / 默认值 / 编解码一处声明，读写走 `readPanelState`/`writePanelState`，键名统一 `clawbench-panel.<名>`（按项目项追加 `:<项目根>`），并有一次性老键迁移。**除左栏页签（`leftTab`）按项目外，其余全为全局**；左栏页签由 `useProjectPanel.ts` 记忆；项目切换期间用计数器抑制误写（可并发调用，布尔会被先结束者清掉）。`switchLeftTab` **不隐式展开左栏**（它是程序性恢复路径），用户点页签的入口显式展开。
 
 `web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `.clawbench-web/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。它**有意不进根 Vite 构建**（否则主 bundle 会膨胀约 8MB），因此根 `npm run build` 不产出它——**所有 CI / release job 都必须显式构建该 vendor bundle**，否则发布二进制内嵌的前端里没有 `vendor/excalidraw/`，`/vendor/excalidraw/index.html` 走 `ServeIndex` 的 `http.NotFound` 返回 Go 的 "404 page not found"（本地用 `build.sh` 构建正常，缺陷只在 release / Docker 产物上暴露）。
 
@@ -214,7 +223,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、M
 
 ## 开发规则
 
-- **加一个功能（页签 / 服务端总开关）先读这两份**：前端从 `web/src/plugins/<id>/plugin.ts` + 面板组件 + `DOCK_TAB_ORDER` 一行开始，完整字段语义、三种「关闭」的区别、铁律与验证清单见 [`docs/plugin-dev/README.md`](docs/plugin-dev/README.md)；有服务端开关时再按 [`docs/spec/features/plugin-registry.md`](docs/spec/features/plugin-registry.md) 加一个 `plugins.Register(...)` + config 字段（路由门控、worker 启停、热更新、`/api/features`、守卫测试都是自动的）。
+- **加一个功能（页签 / 服务端总开关）先读 [`docs/plugin-dev/`](docs/plugin-dev/README.md)**：界面插件只建 `web/src/plugins/<id>/`（`plugin.ts` / `i18n.ts` / 可选 `settings.ts`，建目录即被发现）；功能插件建 `internal/plugin/<id>/`（`plugin.go` / `routes.go` / 可选 `feature_switch.go`）并在 `internal/plugin/all/all.go` 加一行；有配置的话在 `internal/plugin/config/<id>.go` 写 `Fields` / `Defaults` / `Validate` / `Apply`（PATCH 白名单、默认值、校验、写入都在这一处；路由门控、worker 启停、热更新、`/api/features` 是自动的）。
 - **改 UI 前先读视觉设计指导手册**：动样式、加组件、加主题、加动效之前必读 [`docs/spec/client/design-guide.md`](docs/spec/client/design-guide.md)——样式三层归属、设计 token（字号/间距/圆角/层级/时长）、36 主题机制与新增步骤、布局骨架，以及七条红线（`v-html` 匹配不到 scoped 规则、共享类基规则也必须全局、`app-region` 豁免只能是控件、对比度不能靠固定跳一档背景、`content-visibility` 滚动跳变、Android WebView 像素怪癖、`scrollbar-color` 弃用 `::-webkit-scrollbar-*`）。改动检查清单与守卫测试索引也在文末。
 - **日志必须用封装**：前端一律 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`；Android 一律 `AppLog.d/i/w/e()`，禁止 `android.util.Log`。两者的自身实现与测试除外。Tag 约定：短 PascalCase 模块名。
 - **功能和 Bug 修复必须包含单元测试**：Go 用 `*_test.go`，前端用 `.test.ts`，放在对应代码旁。测试须验证具体行为，非泛化快乐路径。

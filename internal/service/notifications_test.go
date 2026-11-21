@@ -87,17 +87,17 @@ func TestStoreNotification_AppendsAndDedupes(t *testing.T) {
 
 	StoreNotification(NotificationRecord{
 		EventID: "evt-1", Kind: NotificationKindSession, EventType: "completed",
-		Title: "Session A", Body: "done", SessionID: "s1", AgentID: "claude",
+		Title: "Session A", Body: "done", SubjectID: "s1", AgentID: "claude",
 	})
 	StoreNotification(NotificationRecord{
 		EventID: "evt-2", Kind: NotificationKindTask, EventType: "failed",
-		Title: "Task B", TaskID: "7",
+		Title: "Task B", SubjectID: "7",
 	})
 
 	// Same event id again — must be ignored, not duplicated.
 	StoreNotification(NotificationRecord{
 		EventID: "evt-1", Kind: NotificationKindSession, EventType: "completed",
-		Title: "Session A (retry)", Body: "done", SessionID: "s1",
+		Title: "Session A (retry)", Body: "done", SubjectID: "s1",
 	})
 
 	rows, err := ListNotifications(NotificationFilter{})
@@ -321,12 +321,12 @@ func TestMarkMissingSources(t *testing.T) {
 	require.NoError(t, err)
 
 	rows := []Notification{
-		{ID: 1, Kind: NotificationKindSession, SessionID: "s-live"},
-		{ID: 2, Kind: NotificationKindSession, SessionID: "s-archived"},
-		{ID: 3, Kind: NotificationKindSession, SessionID: "s-gone"},
-		{ID: 4, Kind: NotificationKindTask, TaskID: "3"},
-		{ID: 5, Kind: NotificationKindTask, TaskID: "99"},
-		{ID: 6, Kind: NotificationKindForge, ForgeItemKey: "issue/1"},
+		{ID: 1, Kind: NotificationKindSession, SubjectID: "s-live"},
+		{ID: 2, Kind: NotificationKindSession, SubjectID: "s-archived"},
+		{ID: 3, Kind: NotificationKindSession, SubjectID: "s-gone"},
+		{ID: 4, Kind: NotificationKindTask, SubjectID: "3"},
+		{ID: 5, Kind: NotificationKindTask, SubjectID: "99"},
+		{ID: 6, Kind: NotificationKindForge, SubjectID: "issue/1"},
 	}
 	MarkMissingSources(rows)
 
@@ -338,46 +338,29 @@ func TestMarkMissingSources(t *testing.T) {
 	assert.False(t, rows[5].SourceMissing, "forge items are never probed")
 }
 
-// TestMarkMissingSources_TaskRowSurvivesPurgedSession is the regression guard
-// for a task notification whose scheduled session was cleaned up.
+// TestMarkMissingSources_ProbesTheKindsOwnTable pins that the probe follows the
+// kind's registry entry, not "whichever id happens to be set". Both rows carry
+// the same subject id; only the task table has it.
 //
-// A task notification stores BOTH task_id and the scheduled session_id it ran
-// in. That session is an ordinary `session_type='scheduled'` row which
-// SessionCleanupWorker archives and then hard-deletes, while the task lives on.
-// If the probe consulted the session id first, a perfectly healthy task would be
-// flagged "source deleted" and lose its navigation.
-func TestMarkMissingSources_TaskRowSurvivesPurgedSession(t *testing.T) {
+// This replaces two older guards (a task whose scheduled session had been
+// purged, and a session with a stray task id): the per-kind columns that made
+// those mixes possible are gone, and subject_id is a single value, so the
+// hazard is now structural. What still needs guarding is the table choice.
+func TestMarkMissingSources_ProbesTheKindsOwnTable(t *testing.T) {
 	cleanup := notificationsTestDB(t)
 	defer cleanup()
 
-	// The task exists; its session does NOT (purged).
 	_, err := store.WriteExec("INSERT INTO scheduled_tasks (id, name) VALUES (7, 'live task')")
 	require.NoError(t, err)
 
 	rows := []Notification{
-		{ID: 1, Kind: NotificationKindTask, TaskID: "7", SessionID: "purged-session"},
+		{ID: 1, Kind: NotificationKindTask, SubjectID: "7"},
+		{ID: 2, Kind: NotificationKindSession, SubjectID: "7"},
 	}
 	MarkMissingSources(rows)
 
-	assert.False(t, rows[0].SourceMissing,
-		"a live task must not be flagged missing because its purged session is gone")
-}
-
-// TestMarkMissingSources_SessionRowIgnoresStrayTaskID is the mirror guard: a
-// session row is judged by its session, never by a stray task id.
-func TestMarkMissingSources_SessionRowIgnoresStrayTaskID(t *testing.T) {
-	cleanup := notificationsTestDB(t)
-	defer cleanup()
-
-	_, err := store.WriteExec("INSERT INTO chat_sessions (id, archived) VALUES ('s-live', 0)")
-	require.NoError(t, err)
-
-	rows := []Notification{
-		{ID: 1, Kind: NotificationKindSession, SessionID: "s-live", TaskID: "does-not-exist"},
-	}
-	MarkMissingSources(rows)
-
-	assert.False(t, rows[0].SourceMissing)
+	assert.False(t, rows[0].SourceMissing, "task 7 exists in scheduled_tasks")
+	assert.True(t, rows[1].SourceMissing, "session 7 does not exist in chat_sessions")
 }
 
 func TestMarkMissingSources_ProbeFailureFailsOpen(t *testing.T) {
@@ -388,7 +371,7 @@ func TestMarkMissingSources_ProbeFailureFailsOpen(t *testing.T) {
 	// Deliberately do NOT install the handle: ReadDBReady() is false.
 	_ = db
 
-	rows := []Notification{{ID: 1, Kind: NotificationKindSession, SessionID: "s1"}}
+	rows := []Notification{{ID: 1, Kind: NotificationKindSession, SubjectID: "s1"}}
 	MarkMissingSources(rows)
 	assert.False(t, rows[0].SourceMissing)
 }
@@ -426,7 +409,7 @@ func TestMarkMissingSources_MailProbeFailureFailsOpen(t *testing.T) {
 	cleanup := notificationsTestDB(t)
 	defer cleanup()
 
-	rows := []Notification{{ID: 1, Kind: NotificationKindMail, MailMessageID: 42}}
+	rows := []Notification{{ID: 1, Kind: NotificationKindMail, SubjectID: "42"}}
 	MarkMissingSources(rows)
 	assert.False(t, rows[0].SourceMissing)
 }

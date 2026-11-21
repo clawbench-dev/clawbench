@@ -77,14 +77,18 @@ let subscribed = false
  * cycle, and `actual > 0` would then report every user with any spend as "over
  * plan" — a claim about a budget they never set.
  */
-export function isOverPlanStatus(s: UsageMeterStatus): boolean {
-  return s.enabled && s.expected > 0 && s.actual > s.expected
-}
+const isOverPlan = computed(
+  () => status.value.enabled && status.value.expected > 0 && status.value.actual > status.value.expected,
+)
 
 /** True when the whole quota is consumed. Needs a quota; without one nothing is exhausted. */
-export function isQuotaExhaustedStatus(s: UsageMeterStatus): boolean {
-  return s.enabled && s.quota != null && s.quota > 0 && s.actual >= s.quota
-}
+const isQuotaExhausted = computed(
+  () =>
+    status.value.enabled &&
+    status.value.quota != null &&
+    status.value.quota > 0 &&
+    status.value.actual >= status.value.quota,
+)
 
 /**
  * Capsule state: drives colour and the end-cap marker.
@@ -93,36 +97,13 @@ export function isQuotaExhaustedStatus(s: UsageMeterStatus): boolean {
  * ratio-derived (fill, baseline tick, badge) applies. It is a distinct state
  * rather than a reuse of `ok` because `ok` claims "you are on plan", which is a
  * statement about a quota the user never set.
- *
- * Exported as a pure function so the popover can evaluate the SAME rules against
- * a filtered readout instead of duplicating them.
  */
-export function meterStateOf(s: UsageMeterStatus): 'ok' | 'over' | 'full' | 'off' {
-  if (!s.enabled) return 'off'
-  if (isQuotaExhaustedStatus(s)) return 'full'
-  if (isOverPlanStatus(s)) return 'over'
+const meterState = computed<'ok' | 'over' | 'full' | 'off'>(() => {
+  if (!status.value.enabled) return 'off'
+  if (isQuotaExhausted.value) return 'full'
+  if (isOverPlan.value) return 'over'
   return 'ok'
-}
-
-/** Fill width, clamped to 100% so an overshoot does not overflow the track. */
-export function meterFillPercent(s: UsageMeterStatus): number {
-  const quota = s.quota ?? 0
-  if (quota <= 0) return 0
-  return Math.max(0, Math.min(100, (s.actual / quota) * 100))
-}
-
-/** Baseline marker position, clamped the same way. */
-export function meterExpectedPercent(s: UsageMeterStatus): number {
-  const quota = s.quota ?? 0
-  if (quota <= 0) return 0
-  return Math.max(0, Math.min(100, (s.expected / quota) * 100))
-}
-
-const isOverPlan = computed(() => isOverPlanStatus(status.value))
-
-const isQuotaExhausted = computed(() => isQuotaExhaustedStatus(status.value))
-
-const meterState = computed<'ok' | 'over' | 'full' | 'off'>(() => meterStateOf(status.value))
+})
 
 /** Whether a quota exists at all — the gate for every ratio-derived figure. */
 const hasQuota = computed(() => (status.value.quota ?? 0) > 0)
@@ -130,9 +111,19 @@ const hasQuota = computed(() => (status.value.quota ?? 0) > 0)
 /** Whether the rule has a cycle at all — the gate for "day N of M" and the date range. */
 const hasCycle = computed(() => (status.value.periodDays ?? 0) > 0)
 
-const fillPercent = computed(() => meterFillPercent(status.value))
+/** Fill width, clamped to 100% so an overshoot does not overflow the track. */
+const fillPercent = computed(() => {
+  const quota = status.value.quota ?? 0
+  if (quota <= 0) return 0
+  return Math.max(0, Math.min(100, (status.value.actual / quota) * 100))
+})
 
-const expectedPercent = computed(() => meterExpectedPercent(status.value))
+/** Baseline marker position, clamped the same way. */
+const expectedPercent = computed(() => {
+  const quota = status.value.quota ?? 0
+  if (quota <= 0) return 0
+  return Math.max(0, Math.min(100, (status.value.expected / quota) * 100))
+})
 
 function fetchStatus(): Promise<void> {
   if (inflight) return inflight
@@ -153,22 +144,6 @@ function fetchStatus(): Promise<void> {
     }
   })()
   return inflight
-}
-
-/**
- * Fetch the meter's numbers for a set of agents (empty = every agent).
- *
- * Deliberately NOT routed through the singleton: the header capsule, the
- * notifications and every WS frame are about the whole budget, so a filtered
- * readout belongs to the popover that asked for it and must not overwrite the
- * global state.
- */
-export async function fetchUsageMeterForAgents(agentIDs: string[]): Promise<UsageMeterStatus> {
-  const q = new URLSearchParams()
-  for (const id of agentIDs) q.append('agent', id)
-  const suffix = q.toString()
-  const data = await apiGet<UsageMeterStatus>(`/api/usage/meter${suffix ? `?${suffix}` : ''}`)
-  return { ...EMPTY, ...data }
 }
 
 /**

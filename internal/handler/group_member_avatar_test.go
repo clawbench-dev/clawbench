@@ -151,7 +151,7 @@ func TestServeGroupMemberAvatars_RejectsUnsafeSVG(t *testing.T) {
 }
 
 // TestServeGroupMemberAvatars_EmptyAvatarRejected pins that an empty avatar is
-// refused too (avatarSVGLooksSafe returns false for empty input), so a caller
+// refused too (avatar.Validate returns false for empty input), so a caller
 // cannot use the endpoint to clear a stored avatar with a bogus payload.
 func TestServeGroupMemberAvatars_EmptyAvatarRejected(t *testing.T) {
 	env, teardown := setupTestEnv(t)

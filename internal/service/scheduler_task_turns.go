@@ -34,6 +34,18 @@ type taskTurnSpec struct {
 	CountRun bool
 }
 
+// settleExecutionStatus writes the run's terminal status.
+//
+// Always keyed on the execution row, never on the session: one session can hold
+// many executions (a resumed run finishes a row its session already shares with
+// the interrupted attempt and everything before it), so a session-wide UPDATE
+// relabels history. ExecutionID is set by both callers, so there is no path
+// where this has to fall back to the session-scoped form. Same reasoning as
+// markExecutionRestartInterrupted.
+func settleExecutionStatus(spec taskTurnSpec, status string) error {
+	return UpdateExecutionStatusByID(spec.ExecutionID, status)
+}
+
 // settleTaskAttempt persists one attempt's output and classifies its outcome.
 // An empty return means the turn ended cleanly.
 func settleTaskAttempt(at *activeTurn, taskID int64, sessionID string,
@@ -73,7 +85,7 @@ func (s *Scheduler) finishCancelledTask(spec taskTurnSpec, at *activeTurn) {
 		slog.Int64("task_id", task.ID),
 		slog.String("session_id", sessionID),
 	)
-	_ = UpdateExecutionStatus(sessionID, statusCancelled)
+	_ = settleExecutionStatus(spec, statusCancelled)
 	s.runningExecutions.Delete(sessionID)
 	SetSessionRunning(sessionID, false, true)
 	// Stop the client's stream FIRST: this event is what closes the
@@ -109,7 +121,7 @@ func (s *Scheduler) finishFailedTask(spec taskTurnSpec) {
 	task := spec.Task
 	projectPath := spec.ProjectPath
 	executionID := spec.ExecutionID
-	_ = UpdateExecutionStatus(sessionID, statusFailed)
+	_ = settleExecutionStatus(spec, statusFailed)
 	s.runningExecutions.Delete(sessionID)
 	SetSessionRunning(sessionID, false, true)
 	ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution ended unexpectedly"})
@@ -211,7 +223,7 @@ func (s *Scheduler) runTaskTurns(ctx context.Context, spec taskTurnSpec) {
 		if !at.started() {
 			at.release()
 			slog.Error("failed to start task execution", slog.String("err", at.earlyFails.Err))
-			_ = UpdateExecutionStatus(sessionID, statusFailed)
+			_ = settleExecutionStatus(spec, statusFailed)
 			SetSessionRunning(sessionID, false, true)
 			ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
 			emitTaskEvent(fmt.Sprintf("%d", task.ID), statusFailed, fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
@@ -283,7 +295,7 @@ func (s *Scheduler) runTaskTurns(ctx context.Context, spec taskTurnSpec) {
 	}
 
 	// Mark execution as completed
-	_ = UpdateExecutionStatus(sessionID, statusCompleted)
+	_ = settleExecutionStatus(spec, statusCompleted)
 
 	// Remove from runningExecutions BEFORE emitting task_update event.
 	// Without this, the frontend's loadTasks() (triggered by the WS event)

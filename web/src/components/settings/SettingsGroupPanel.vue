@@ -72,6 +72,7 @@
         :type="panelFieldType(entry.field)"
         :model-value="getLocalValue(entry.field)"
         :options="resolveFieldOptions(entry.field)"
+        :all-option-label="entry.field.allOptionKey ? t(entry.field.allOptionKey) : undefined"
         :option-previews="entry.field.key === 'terminalTheme' ? terminalThemePreviews : undefined"
         :terminal-theme-load-error="entry.field.key === 'terminalTheme' ? (terminalThemeLoadState === 'error' && terminalThemeRetriesExhausted) : false"
         :on-retry-terminal-themes="entry.field.key === 'terminalTheme' ? retryTerminalThemes : undefined"
@@ -243,6 +244,7 @@ import { reconnectTunnel } from '@/utils/clawbenchNative'
 import { usePortForward } from '@/composables/usePortForward'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
+import { useAgents } from '@/composables/useAgents'
 import { startRebuild, rebuildStatus, type RebuildKind } from '@/composables/useRagRebuild'
 import { formatFileSize } from '@/utils/fileType'
 import '@/assets/modal-footer-btn.css'
@@ -384,6 +386,8 @@ const terminalThemePreviews = computed<Record<string, TerminalPreview> | undefin
 
 // ── Lifecycle ──
 
+const { agents, loadAgents } = useAgents()
+
 onMounted(() => {
   initSnapshot()
   phoneVoiceDraft.value = settingsLocalConfig.systemSpeech === true
@@ -392,6 +396,11 @@ onMounted(() => {
   // embedding page needs it too: its only status row is the embedder health.
   if (props.config.panelId === 'rag' || props.config.panelId === 'embedding') {
     refreshRagStatus()
+  }
+  // The usage meter's scope row lists the live agents; loadAgents is cached, so
+  // opening any other panel costs nothing.
+  if (props.config.panelId === 'usageMeter') {
+    void loadAgents()
   }
   // The port-forward panel needs the server's resolved SSH port in two places:
   // the readiness row (web mode has no client tunnel to probe) and the auto
@@ -681,6 +690,11 @@ function panelFieldType(field: ItemSpec): Exclude<ItemSpec['type'], 'summaryMode
 }
 
 function resolveFieldOptions(field: ItemSpec): { label: string; value: unknown }[] | undefined {
+  // The usage meter's scope is the live agent list: an agent created after the
+  // panel opened must be selectable, and a deleted one simply disappears.
+  if (field.key === 'usage_meter.agent_ids') {
+    return agents.value.map(a => ({ label: a.name || a.id, value: a.id }))
+  }
   // Dynamic voice options based on current engine
   if (field.key === 'tts.voice') {
     const engine = (localValues['tts.engine'] as string) || 'edge'

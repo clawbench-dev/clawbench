@@ -173,7 +173,6 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
 			name TEXT NOT NULL,
-			description TEXT,
 			cron_expr TEXT NOT NULL,
 			agent_id TEXT NOT NULL,
 			prompt TEXT NOT NULL,
@@ -661,3 +660,9 @@ func assertJSONField(t *testing.T, w *httptest.ResponseRecorder, field string, e
 		t.Errorf("field %q: expected %v, got %v", field, expected, val)
 	}
 }
+
+// DB returns the in-memory database for the test environment.
+//
+// 这个方法原先定义在 session_share_test.go 里，随分享测试搬走了；handler 里
+// 仍有多个用例直接写库（迁移、历史保留），所以在这里保留一份。
+func (e *testEnv) DB() *sql.DB { return e.OrigDB }

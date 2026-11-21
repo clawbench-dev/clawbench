@@ -17,6 +17,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,9 +26,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"clawbench/internal/cfgwrite"
 	"clawbench/internal/forge"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/plugin/config"
 	"clawbench/internal/plugins"
 	"clawbench/internal/service"
 	"clawbench/internal/skill"
@@ -35,7 +39,6 @@ import (
 	"clawbench/internal/wallpaper"
 
 	"golang.org/x/crypto/bcrypt"
-	"gopkg.in/yaml.v3"
 )
 
 // configMutex protects ConfigInstance from concurrent access.
@@ -48,7 +51,7 @@ import (
 // internal/service and internal/ai access the globals WITHOUT this lock, so a
 // write racing them is still possible. See StartModelDiscoveryAsync in
 // internal/model/refresh.go.
-var configMutex sync.RWMutex
+var configMutex = &cfgwrite.Mu
 
 // WithConfigLock runs fn while holding the config write lock. Code outside this
 // package that mutates the agent globals (model.Agents / model.AgentList) should
@@ -280,6 +283,7 @@ var hotReloadFields = map[string]bool{
 	"usage_meter.cycle_mode":  true,
 	"usage_meter.period_days": true,
 	"usage_meter.metric":      true,
+	"usage_meter.agent_ids":   true,
 	"usage_meter.quota":       true,
 	// Agent process environment. Read from ConfigInstance at spawn time, so a
 	// change applies to the next process without a restart.
@@ -506,12 +510,13 @@ func parseMCPServers(raw []any) ([]model.MCPServer, error) {
 // are deliberately absent: they describe the server's notification progress,
 // not user configuration, and the UI has nothing to do with them.
 type configUsageMeter struct {
-	Enabled    bool    `json:"enabled"`
-	AnchorDate string  `json:"anchor_date"`
-	CycleMode  string  `json:"cycle_mode"`
-	PeriodDays int     `json:"period_days"`
-	Metric     string  `json:"metric"`
-	Quota      float64 `json:"quota"`
+	Enabled    bool     `json:"enabled"`
+	AnchorDate string   `json:"anchor_date"`
+	CycleMode  string   `json:"cycle_mode"`
+	PeriodDays int      `json:"period_days"`
+	Metric     string   `json:"metric"`
+	AgentIDs   []string `json:"agent_ids"`
+	Quota      float64  `json:"quota"`
 }
 
 // configShellEnv exposes the agent process environment switch.
@@ -1150,6 +1155,18 @@ func absWallpaperPath(name string) string {
 
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.
 // Any path not in this list will be rejected with 400 Bad Request.
+//
+// 这张表**只放不属于任何功能的字段**（user.nickname、chat.*、upload.*、
+// usage_meter.* …）。属于某个功能的字段（mail.*、kb.*、forge.*、share.*、
+// tasks.*、terminal.*）由功能自己在其 plugins.Plugin.ConfigFields 里声明，
+// 见 IsPatchablePath。
+//
+// 为什么要分家：原来这是一张 200 行的大表，插件的配置段和宿主自己的字段
+// 混在一起，加一个功能的代价是"记得去这张表补几行"，而漏补的表现是设置页
+// 保存时被 400 拒绝（字段白写）。现在归属关系由插件声明，漏声明的表现变成
+// 守卫测试直接报"这个插件的字段没人声明"。
+//
+// 白名单本身仍然是手写的，不反射派生——反射派生等于把安全边界交给反射。
 var PatchableConfigPaths = map[string]bool{
 	"default_agent":                          true,
 	"chat.initial_messages":                  true,
@@ -1178,10 +1195,6 @@ var PatchableConfigPaths = map[string]bool{
 	"upload.max_files":                       true,
 	"upload.retention_enabled":               true,
 	"upload.retention_days":                  true,
-	"terminal.enabled":                       true,
-	"terminal.idle_timeout":                  true,
-	"terminal.max_sessions":                  true,
-	"terminal.buffer_lines":                  true,
 	"tts.engine":                             true,
 	"tts.tts_model":                          true,
 	"tts.format":                             true,
@@ -1263,15 +1276,6 @@ var PatchableConfigPaths = map[string]bool{
 	"rag.search_limit":                       true,
 	"rag.search_pool_size":                   true,
 	"rag.retention_days":                     true,
-	"kb.enabled":                             true,
-	"kb.auto_inject":                         true,
-	"kb.inject_top_n":                        true,
-	"kb.inject_max_chars":                    true,
-	"kb.inject_min_similarity":               true,
-	"kb.max_file_mb":                         true,
-	"kb.max_text_mb":                         true,
-	"kb.poll_interval":                       true,
-	"kb.embed_batch_size":                    true,
 	"port_forward.enabled":                   true,
 	"port_forward.port":                      true,
 	"port_forward.allowed_ports":             true,
@@ -1297,36 +1301,9 @@ var PatchableConfigPaths = map[string]bool{
 	"feishu.app_secret":                      true,
 	"feishu.users":                           true,
 	"push_mode":                              true,
-	"forge.enabled":                          true,
-	"forge.insecure_tls":                     true,
-	"forge.notify.opened":                    true,
-	"forge.notify.closed":                    true,
-	"forge.notify.merged":                    true,
-	"forge.notify.reopened":                  true,
-	"forge.notify.commented":                 true,
-	"forge.notify.pipeline":                  true,
-	"forge.pause_event_tasks":                true,
-	"mail.enabled":                           true,
-	"mail.notify":                            true,
-	"mail.sync_interval_minutes":             true,
-	"mail.sync_window":                       true,
-	"mail.body_prefetch":                     true,
 	// Master switches for scheduled tasks and public share links. Both are
 	// destructive when set to false (cancel runs / revoke links) — see the
 	// PATCH description in the OpenAPI spec.
-	"tasks.enabled":              true,
-	"tasks.retention_enabled":    true,
-	"tasks.retention_days":       true,
-	"tasks.notify_on_success":    true,
-	"tasks.notify_on_failure":    true,
-	"tasks.timezone":             true,
-	"share.enabled":              true,
-	"share.allow_files":          true,
-	"share.allow_sessions":       true,
-	"share.allow_meetings":       true,
-	"share.allow_download":       true,
-	"share.link_ttl_days":        true,
-	"share.show_project_name":    true,
 	"git_history.page_size":      true,
 	"file_search.display_limit":  true,
 	"tls.cert_dir":               true,
@@ -1349,12 +1326,51 @@ var PatchableConfigPaths = map[string]bool{
 	"usage_meter.cycle_mode":  true,
 	"usage_meter.period_days": true,
 	"usage_meter.metric":      true,
+	"usage_meter.agent_ids":   true,
 	"usage_meter.quota":       true,
 	// Agent process environment (opt-in, off by default).
 	"shell_env.inherit": true,
 	// draw.io editor download source. Validated and applied below; without this
 	// entry the settings field is rejected with 400 and can never be saved.
 	"drawio.download_url": true,
+}
+
+// IsPatchablePath 报告 path 能否被 PATCH /api/config 修改。
+//
+// 两个来源，按顺序：
+//  1. PatchableConfigPaths —— 不属于任何功能的字段（user.nickname、chat.*…）；
+//  2. plugin/config —— 每个功能自己声明的字段（mail.*、tasks.*…）。
+//
+// 第 2 条是一个普通的静态包，不是运行时注册表：handler 的单测从不调用
+// registerPlugins，若白名单挂在注册表上，每个配置测试都会把功能字段判成
+// 非法。plugin/config 因此不 import 任何插件实现，只放声明。
+//
+// 运行时注册表（plugins.ConfigPaths）不再是校验来源——它现在只用于
+// "这个字段归谁"的归属查询（/api/features、守卫核对）。两条路径读的是
+// 同一份 plugin/config 声明，所以不存在两份清单漂移的窗口。
+func IsPatchablePath(path string) bool {
+	if PatchableConfigPaths[path] {
+		return true
+	}
+	return config.Owns(path)
+}
+
+// AllPatchablePaths 返回全部可 PATCH 的配置路径（两个来源的并集）。
+//
+// 供守卫测试做"某个对象下面有没有可改字段"这类前缀判断——只查
+// PatchableConfigPaths 会漏掉功能字段，把 forge.notify 这类中间层判成孤儿。
+func AllPatchablePaths() map[string]bool {
+	out := make(map[string]bool, len(PatchableConfigPaths))
+	for p := range PatchableConfigPaths {
+		out[p] = true
+	}
+	for p := range config.AllFields() {
+		out[p] = true
+	}
+	for p := range plugins.ConfigPaths() {
+		out[p] = true
+	}
+	return out
 }
 
 // Engine identifiers for the TTS vendor engines. Constants because the same
@@ -1684,6 +1700,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			CycleMode:  model.NormalizeUsageMeterCycleMode(cfg.UsageMeter.CycleMode),
 			PeriodDays: cfg.UsageMeter.PeriodDays,
 			Metric:     cfg.UsageMeter.Metric,
+			AgentIDs:   cfg.UsageMeter.AgentIDs,
 			Quota:      cfg.UsageMeter.Quota,
 		},
 	}
@@ -1833,7 +1850,7 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	// the switch as enabled, while the server is disabled. The user would then
 	// be told "save failed" about a change that did take effect.
 	disableWarnings := applyPluginDisableEffects(patch)
-	disableWarnings = append(disableWarnings, applyFeatureDisableEffects(patch)...)
+	disableWarnings = append(disableWarnings, applyUnclaimedConfigEffects(patch)...)
 
 	// Classify fields into hot (no restart) and cold (needs restart).
 	//
@@ -1894,69 +1911,68 @@ func writePatchValueError(w http.ResponseWriter, r *http.Request, err error) {
 	})
 }
 
-// applyPluginDisableEffects runs every registered plugin's OnDisable hook for
-// the features THIS patch turned off.
+// applyPluginDisableEffects runs every registered plugin's OnDisable / SwitchEffect
+// hook for the features THIS patch switched.
 //
-// It is the generalized form of the two hand-written helpers it replaced
+// It is the generalized form of the hand-written helpers it replaced
 // (clearForgeBindingsOnDisable / the share half of applyFeatureDisableEffects):
 // the destructive work lives on the plugin, and the handler only owns the
-// timing (after writeConfigYAML succeeded) and the "did this patch turn it off"
-// test.
+// timing (after writeConfigYAML succeeded) and the "did this patch touch the
+// switch" test.
+//
+// Two hook shapes, because two kinds of switch exist:
+//   - OnDisable: one direction only ("off means revoke" — forge bindings,
+//     share links). Called only when the patch sets enabled=false.
+//   - SwitchEffect: both directions (tasks: off cancels runs and discards
+//     queued events, on restarts cron). Called with the new value either way.
 //
 // A plugin qualifies when it declares a Section and that section carries
-// `enabled: false` in the patch. Absent `enabled` means "this patch did not
-// touch the switch", so sub-setting edits never trigger a revoke.
-//
-// The tasks master switch is deliberately NOT modeled this way: its effect is
-// bidirectional (off cancels runs and discards queued events, on restarts cron)
-// while OnDisable only has one direction. It stays in
-// applyFeatureDisableEffects, which runs right after this.
+// `enabled` in the patch. Absent `enabled` means "this patch did not touch the
+// switch", so sub-setting edits never trigger a revoke.
 func applyPluginDisableEffects(patch map[string]any) []string {
 	var warnings []string
 	for _, p := range plugins.All() {
-		if p.OnDisable == nil || p.Section == "" {
+		if p.Section == "" {
+			continue
+		}
+		if p.OnDisable == nil && p.SwitchEffect == nil {
 			continue
 		}
 		section, ok := patch[p.Section].(map[string]any)
 		if !ok {
 			continue
 		}
+		// enabled 的"出现"是判据，不是它的值：只有补丁真的碰了开关才触发
+		// 副作用，改子配置项（mail.sync_window 之类）不该撤销任何东西。
 		enabled, ok := section["enabled"].(bool)
-		if !ok || enabled {
+		if !ok {
 			continue
 		}
-		warnings = append(warnings, p.OnDisable()...)
+		// 双向开关两个方向都要跑（关掉取消执行、打开重排 cron）；
+		// OnDisable 只在关的方向跑。
+		if p.SwitchEffect != nil {
+			warnings = append(warnings, p.SwitchEffect(enabled)...)
+			continue
+		}
+		if !enabled {
+			warnings = append(warnings, p.OnDisable()...)
+		}
 	}
 	return warnings
 }
 
-// applyFeatureDisableEffects applies the tasks master switch.
+// applyUnclaimedConfigEffects 应用那些**不属于任何插件**的配置段副作用。
 //
-// Like applyPluginDisableEffects this runs AFTER the config write succeeded:
-// the destructive part (cancelling runs, discarding queued events) is
-// irreversible, so it must not happen for a change that failed to persist.
+// 名字里不再是"Disable"：任务总开关迁到 plugins.Plugin.SwitchEffect 之后
+// （见 TasksSwitchEffect），这里只剩 tasks.timezone —— 它不是开关，任何一次
+// 修改都要重排 cron，与"开了还是关了"无关，所以既不属于 OnDisable 也不属于
+// SwitchEffect。它是本包唯一还认识具体功能字段的地方，写在这里是因为时区
+// 只是调度器的一个参数，够不上"功能生命周期"。
 //
-// A failure is a WARNING, not a 500, for the same reason as the plugin hooks:
-// the config is already the authoritative fact, and answering 500 would make
-// the client roll the switch back to "enabled" while the server is disabled.
-func applyFeatureDisableEffects(patch map[string]any) []string {
+// 与 applyPluginDisableEffects 一样，跑在配置写盘成功之后：破坏性动作不能
+// 发生在"其实没存上"的情况下。
+func applyUnclaimedConfigEffects(patch map[string]any) []string {
 	var warnings []string
-
-	if tasksMap, ok := patch["tasks"].(map[string]any); ok {
-		if enabled, ok := tasksMap["enabled"].(bool); ok {
-			// Handles BOTH directions: false stops cron, cancels running
-			// executions and discards queued events; true restarts cron with
-			// every next activation recomputed from now (no catch-up).
-			service.GlobalScheduler.SetEnabled(enabled)
-		}
-		if tz, ok := tasksMap["timezone"].(string); ok {
-			// Re-registers every cron entry under the new zone. A change to the
-			// zone is not destructive, so a failure is only a warning.
-			if err := service.GlobalScheduler.SetTimezone(tz); err != nil {
-				warnings = append(warnings, fmt.Sprintf("tasks.timezone could not be applied: %v", err))
-			}
-		}
-	}
 
 	return warnings
 }
@@ -1974,7 +1990,7 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 			// recursing would silently accept an empty object, and the merged
 			// YAML (e.g. `wallpaper_enabled: {}`) would then fail to unmarshal
 			// into the typed config on the next startup.
-			if PatchableConfigPaths[path] {
+			if IsPatchablePath(path) {
 				return nil, fmt.Errorf("field '%s' must be a scalar value, not an object", path)
 			}
 			// An object is only allowed when it can contain something
@@ -1991,7 +2007,7 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 			}
 			fields = append(fields, nestedFields...)
 		} else {
-			if !PatchableConfigPaths[path] {
+			if !IsPatchablePath(path) {
 				return nil, fmt.Errorf("field '%s' is not allowed", path)
 			}
 			fields = append(fields, path)
@@ -2006,6 +2022,19 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 func hasPatchableDescendant(path string) bool {
 	prefix := path + "."
 	for p := range PatchableConfigPaths {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	// 功能声明的字段同样算"这个对象里有可改的东西"（mail.*、kb.* 这类整个
+	// 配置段）。只看核心表会让 `{"mail": {...}}` 被判成"不允许的子树"，于是
+	// 所有功能开关都改不了。
+	for p := range config.AllFields() {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	for p := range plugins.ConfigPaths() {
 		if strings.HasPrefix(p, prefix) {
 			return true
 		}
@@ -2114,6 +2143,26 @@ func validUserProfile(s string) bool {
 	return utf8.RuneCountInString(strings.TrimSpace(s)) <= model.MaxUserProfileRunes
 }
 
+// usageMeterAgentIDs decodes the rule's agent filter. The wire shape is a JSON
+// array of ids; anything else (a bare string, a non-string element) is a client
+// error rather than something to coerce, because coercing would persist a rule
+// that silently monitors the wrong set.
+func usageMeterAgentIDs(raw any) ([]string, bool) {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		s, ok := e.(string)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
+}
+
 // validateUsageMeterRule checks a usage-meter rule that has already been merged
 // with the stored config, so a partial PATCH is validated against the values it
 // will actually run with.
@@ -2165,6 +2214,17 @@ func validateUsageMeterRule(r model.UsageMeterConfig) error {
 	// treats that as "disabled" until ApplyDefaults fills the default in.
 	if r.Metric != "" && !model.IsValidUsageMeterMetric(r.Metric) {
 		return &configValueError{MsgKey: "UsageMeterMetricInvalid", Field: "usage_meter.metric"}
+	}
+	if len(r.AgentIDs) > model.MaxUsageMeterAgents {
+		return &configValueError{
+			MsgKey: "UsageMeterAgentsTooMany", Field: "usage_meter.agent_ids",
+			Data: map[string]any{"Max": model.MaxUsageMeterAgents},
+		}
+	}
+	for _, id := range r.AgentIDs {
+		if strings.TrimSpace(id) == "" {
+			return &configValueError{MsgKey: "UsageMeterAgentsInvalid", Field: "usage_meter.agent_ids"}
+		}
 	}
 	return nil
 }
@@ -2574,6 +2634,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			}
 			effective.Metric = v
 		}
+		if raw, present := um["agent_ids"]; present {
+			ids, ok := usageMeterAgentIDs(raw)
+			if !ok {
+				return &configValueError{MsgKey: "UsageMeterAgentsInvalid", Field: "usage_meter.agent_ids"}
+			}
+			effective.AgentIDs = ids
+		}
 		if raw, present := um["quota"]; present {
 			v, ok := raw.(float64)
 			if !ok {
@@ -2637,7 +2704,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				if m, ok := aiSummary["model"].(string); ok {
 					effective = m
 				}
-				if effective != "" && !modelContains(provider.Models, effective) {
+				if effective != "" && !slices.Contains(provider.Models, effective) {
 					return aiSummaryProviderError("ai_summary.model",
 						fmt.Sprintf("%q is not in the model list of provider %q", effective, provider.Name))
 				}
@@ -2814,45 +2881,10 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			return fmt.Errorf("chat.restart_resume_window_minutes must be non-negative")
 		}
 	}
-	// Mail sync tuning. The PATCH path does not re-run ApplyDefaults, so a value
-	// accepted here is what GET /api/config echoes back — every bound has to be
-	// enforced at the edge or the UI and the worker disagree.
-	if mailCfg, ok := patch["mail"].(map[string]any); ok {
-		// No "0 = never sync": that is what mail.enabled is for, and a second
-		// way to stop syncing would leave users guessing which one is in effect.
-		if v, ok := mailCfg["sync_interval_minutes"].(float64); ok && (v < 1 || v > 120) {
-			return fmt.Errorf("mail.sync_interval_minutes must be between 1 and 120")
-		}
-		// Below 20 the list reads as empty after a sync; above 500 every pass
-		// pulls a mailbox worth of headers for little benefit.
-		if v, ok := mailCfg["sync_window"].(float64); ok && (v < 20 || v > 500) {
-			return fmt.Errorf("mail.sync_window must be between 20 and 500")
-		}
-		// 0 is valid and means "do not prefetch" (metered connections).
-		if v, ok := mailCfg["body_prefetch"].(float64); ok && (v < 0 || v > 50) {
-			return fmt.Errorf("mail.body_prefetch must be between 0 and 50")
-		}
+	if err := config.Validate(patch); err != nil {
+		return err
 	}
-	if tasksCfg, ok := patch["tasks"].(map[string]any); ok {
-		// 0 would mean "delete everything today"; a retention window needs at
-		// least one day. The cap mirrors ApplyDefaults.
-		if v, ok := tasksCfg["retention_days"].(float64); ok && (v < 1 || v > model.MaxTaskRetentionDays) {
-			return fmt.Errorf("tasks.retention_days must be between 1 and %d", model.MaxTaskRetentionDays)
-		}
-		if v, ok := tasksCfg["timezone"].(string); ok {
-			if tz := strings.TrimSpace(v); tz != "" {
-				if _, err := time.LoadLocation(tz); err != nil {
-					return fmt.Errorf("tasks.timezone must be a valid IANA timezone (e.g. Asia/Shanghai): %w", err)
-				}
-			}
-		}
-	}
-	if shareCfg, ok := patch["share"].(map[string]any); ok {
-		// 0 is valid and means "never expire"; negative is not.
-		if v, ok := shareCfg["link_ttl_days"].(float64); ok && (v < 0 || v > model.MaxShareLinkTTLDays) {
-			return fmt.Errorf("share.link_ttl_days must be between 0 and %d", model.MaxShareLinkTTLDays)
-		}
-	}
+
 	if ghCfg, ok := patch["git_history"].(map[string]any); ok {
 		if v, ok := ghCfg["page_size"].(float64); ok && (v < 1 || v > model.MaxGitHistoryPageSize) {
 			return fmt.Errorf("git_history.page_size must be between 1 and %d", model.MaxGitHistoryPageSize)
@@ -2911,27 +2943,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		if v, ok := ragVal["retention_days"].(float64); ok && v < 0 {
 			return fmt.Errorf("rag.retention_days must be non-negative")
-		}
-	}
-
-	if kbVal, ok := patch["kb"].(map[string]any); ok {
-		if v, ok := kbVal["inject_top_n"].(float64); ok && (v < 1 || v > 20) {
-			return fmt.Errorf("kb.inject_top_n must be between 1 and 20")
-		}
-		if v, ok := kbVal["inject_max_chars"].(float64); ok && v < 200 {
-			return fmt.Errorf("kb.inject_max_chars must be at least 200")
-		}
-		if v, ok := kbVal["inject_min_similarity"].(float64); ok && (v < 0 || v > 1) {
-			return fmt.Errorf("kb.inject_min_similarity must be between 0 and 1")
-		}
-		if v, ok := kbVal["max_file_mb"].(float64); ok && (v < 1 || v > 1024) {
-			return fmt.Errorf("kb.max_file_mb must be between 1 and 1024")
-		}
-		if v, ok := kbVal["max_text_mb"].(float64); ok && (v < 1 || v > 512) {
-			return fmt.Errorf("kb.max_text_mb must be between 1 and 512")
-		}
-		if v, ok := kbVal["embed_batch_size"].(float64); ok && (v < 1 || v > 128) {
-			return fmt.Errorf("kb.embed_batch_size must be between 1 and 128")
 		}
 	}
 
@@ -3195,20 +3206,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
-	if terminal, ok := patch["terminal"].(map[string]any); ok {
-		if v, ok := terminal["enabled"].(bool); ok {
-			cfg.Terminal.Enabled = v
-		}
-		if v, ok := terminal["idle_timeout"].(string); ok {
-			cfg.Terminal.IdleTimeout = v
-		}
-		if v, ok := terminal["max_sessions"].(float64); ok {
-			cfg.Terminal.MaxSessions = int(v)
-		}
-		if v, ok := terminal["buffer_lines"].(float64); ok {
-			cfg.Terminal.BufferLines = int(v)
-		}
-	}
+	// 功能自己声明并写入自己的配置段。清单、校验、赋值都在
+	// internal/plugin/config/<id>.go，这里不再按功能逐个分支。
+	config.Apply(cfg, patch)
 
 	if tts, ok := patch["tts"].(map[string]any); ok {
 		if v, ok := tts["engine"].(string); ok {
@@ -3393,36 +3393,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
-	if kbVal, ok := patch["kb"].(map[string]any); ok {
-		if v, ok := kbVal["enabled"].(bool); ok {
-			cfg.KB.Enabled = v
-		}
-		if v, ok := kbVal["auto_inject"].(bool); ok {
-			cfg.KB.AutoInject = v
-		}
-		if v, ok := kbVal["inject_top_n"].(float64); ok {
-			cfg.KB.InjectTopN = int(v)
-		}
-		if v, ok := kbVal["inject_max_chars"].(float64); ok {
-			cfg.KB.InjectMaxChars = int(v)
-		}
-		if v, ok := kbVal["inject_min_similarity"].(float64); ok {
-			cfg.KB.InjectMinSimilarity = v
-		}
-		if v, ok := kbVal["max_file_mb"].(float64); ok {
-			cfg.KB.MaxFileMB = int(v)
-		}
-		if v, ok := kbVal["max_text_mb"].(float64); ok {
-			cfg.KB.MaxTextMB = int(v)
-		}
-		if v, ok := kbVal["poll_interval"].(string); ok {
-			cfg.KB.PollInterval = v
-		}
-		if v, ok := kbVal["embed_batch_size"].(float64); ok {
-			cfg.KB.EmbedBatchSize = int(v)
-		}
-	}
-
 	if pf, ok := patch["port_forward"].(map[string]any); ok {
 		// port_forward.enabled is deliberately NOT applied: the feature itself
 		// is always available (see ApplyDefaults); which wire carries it is the
@@ -3547,110 +3517,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
-	if forgeMap, ok := patch["forge"].(map[string]any); ok {
-		if v, ok := forgeMap["enabled"].(bool); ok {
-			cfg.Forge.Enabled = v
-		}
-		if v, ok := forgeMap["insecure_tls"].(bool); ok {
-			cfg.Forge.InsecureTLS = v
-		}
-		if v, ok := forgeMap["pause_event_tasks"].(bool); ok {
-			cfg.Forge.PauseEventTasks = v
-		}
-		if notify, ok := forgeMap["notify"].(map[string]any); ok {
-			applyBool := func(key string, target *bool) {
-				if v, ok := notify[key].(bool); ok {
-					*target = v
-				}
-			}
-			applyBool("opened", &cfg.Forge.Notify.Opened)
-			applyBool("closed", &cfg.Forge.Notify.Closed)
-			applyBool("merged", &cfg.Forge.Notify.Merged)
-			applyBool("reopened", &cfg.Forge.Notify.Reopened)
-			applyBool("commented", &cfg.Forge.Notify.Commented)
-			applyBool("pipeline", &cfg.Forge.Notify.Pipeline)
-		}
-	}
-
-	// Mail: the master switch plus the sync tuning. The accounts live in the
-	// database and are managed through /api/mail/accounts, so disabling mail
-	// must not (and does not) touch them.
-	if mailMap, ok := patch["mail"].(map[string]any); ok {
-		if v, ok := mailMap["enabled"].(bool); ok {
-			cfg.Mail.Enabled = v
-		}
-		if v, ok := mailMap["notify"].(bool); ok {
-			cfg.Mail.Notify = v
-		}
-		if v, ok := mailMap["sync_interval_minutes"].(float64); ok {
-			cfg.Mail.SyncIntervalMinutes = int(v)
-		}
-		if v, ok := mailMap["sync_window"].(float64); ok {
-			cfg.Mail.SyncWindow = int(v)
-		}
-		if v, ok := mailMap["body_prefetch"].(float64); ok {
-			cfg.Mail.BodyPrefetch = int(v)
-		}
-	}
-
-	// Tasks / Share: the two master switches plus their sub-settings. The
-	// destructive side effects (cancelling runs, revoking links) run AFTER the
-	// config write succeeds — see applyFeatureDisableEffects.
-	if tasksMap, ok := patch["tasks"].(map[string]any); ok {
-		if v, ok := tasksMap["enabled"].(bool); ok {
-			cfg.Tasks.Enabled = v
-			// Synced here rather than in applyHotReloadGlobals so an unrelated
-			// PATCH (which may run against a zero-valued ConfigInstance in
-			// tests) cannot silently flip the switch.
-			model.TasksEnabled = v
-		}
-		if v, ok := tasksMap["retention_enabled"].(bool); ok {
-			cfg.Tasks.RetentionEnabled = v
-		}
-		if v, ok := tasksMap["retention_days"].(float64); ok {
-			cfg.Tasks.RetentionDays = int(v)
-		}
-		if v, ok := tasksMap["notify_on_success"].(bool); ok {
-			cfg.Tasks.NotifyOnSuccess = v
-			model.FeaturePolicy.TasksNotifyOnSuccess = v
-		}
-		if v, ok := tasksMap["notify_on_failure"].(bool); ok {
-			cfg.Tasks.NotifyOnFailure = v
-			model.FeaturePolicy.TasksNotifyOnFailure = v
-		}
-		if v, ok := tasksMap["timezone"].(string); ok {
-			cfg.Tasks.Timezone = strings.TrimSpace(v)
-		}
-	}
-	if shareMap, ok := patch["share"].(map[string]any); ok {
-		if v, ok := shareMap["enabled"].(bool); ok {
-			cfg.Share.Enabled = v
-			model.ShareEnabled = v
-		}
-		if v, ok := shareMap["allow_files"].(bool); ok {
-			cfg.Share.AllowFiles = v
-			model.FeaturePolicy.ShareAllowFiles = v
-		}
-		if v, ok := shareMap["allow_sessions"].(bool); ok {
-			cfg.Share.AllowSessions = v
-			model.FeaturePolicy.ShareAllowSessions = v
-		}
-		if v, ok := shareMap["allow_meetings"].(bool); ok {
-			cfg.Share.AllowMeetings = v
-			model.FeaturePolicy.ShareAllowMeetings = v
-		}
-		if v, ok := shareMap["allow_download"].(bool); ok {
-			cfg.Share.AllowDownload = v
-			model.FeaturePolicy.ShareAllowDownload = v
-		}
-		if v, ok := shareMap["link_ttl_days"].(float64); ok {
-			cfg.Share.LinkTTLDays = int(v)
-		}
-		if v, ok := shareMap["show_project_name"].(bool); ok {
-			cfg.Share.ShowProjectName = v
-			model.FeaturePolicy.ShareShowProjectName = v
-		}
-	}
 	if gh, ok := patch["git_history"].(map[string]any); ok {
 		if v, ok := gh["page_size"].(float64); ok {
 			cfg.GitHistory.PageSize = int(v)
@@ -3692,6 +3558,17 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := um["metric"].(string); ok {
 			cfg.UsageMeter.Metric = v
+		}
+		if v, ok := um["agent_ids"]; ok {
+			ids, idsOK := usageMeterAgentIDs(v)
+			if !idsOK {
+				// The validator rejected this shape before we got here; a
+				// hand-built patch that skipped it must not silently clear the
+				// filter either, so leave the stored value alone.
+				slog.Warn("settings: ignoring malformed usage_meter.agent_ids")
+			} else {
+				cfg.UsageMeter.AgentIDs = ids
+			}
 		}
 		if v, ok := um["quota"].(float64); ok {
 			cfg.UsageMeter.Quota = v
@@ -3742,6 +3619,7 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			before.CycleMode != cfg.UsageMeter.CycleMode ||
 			before.PeriodDays != cfg.UsageMeter.PeriodDays ||
 			before.Metric != cfg.UsageMeter.Metric ||
+			!slices.Equal(before.AgentIDs, cfg.UsageMeter.AgentIDs) ||
 			before.Quota != cfg.UsageMeter.Quota
 		if changed {
 			cfg.UsageMeter.NotifiedCycleStart = ""
@@ -3822,170 +3700,6 @@ func applyHotReloadGlobals() {
 	// terminal reconfigure). Set by main.go.
 	if reconfigureOnHotReload != nil {
 		reconfigureOnHotReload()
-	}
-}
-
-// writeConfigYAML writes the patched fields back to config/config.yaml atomically.
-// Instead of rewriting the entire ConfigInstance (which would expand zero values
-// and break ApplyDefaults presence semantics), it reads the existing YAML into a
-// generic map, patches only the changed fields, and writes back. This preserves
-// user comments, field ordering, and absent-as-default semantics for untouched fields.
-func writeConfigYAML(patch map[string]any) error {
-	configDir := filepath.Join(model.DataDir, "config")
-	configPath := filepath.Join(configDir, "config.yaml")
-	tmpPath := configPath + ".tmp"
-	bakPath := configPath + ".bak"
-
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
-	}
-
-	// Read existing YAML content into a generic map
-	var raw map[string]any
-	if data, err := os.ReadFile(configPath); err == nil && len(data) > 0 {
-		if err := yaml.Unmarshal(data, &raw); err != nil {
-			slog.Warn("failed to parse existing config.yaml, starting fresh", "err", err)
-			raw = make(map[string]any)
-		}
-	} else {
-		// No existing file — marshal the full ConfigInstance as base
-		data, err := yaml.Marshal(&model.ConfigInstance) //nolint:gosec // Password field contains SHA-256 hash, not plaintext
-		if err != nil {
-			return fmt.Errorf("failed to marshal initial config: %w", err)
-		}
-		if err := yaml.Unmarshal(data, &raw); err != nil {
-			return fmt.Errorf("failed to unmarshal initial config: %w", err)
-		}
-	}
-
-	// The auto-generated password is a runtime fallback, not user configuration,
-	// so it must never reach config.yaml. Two ways it could: the fresh-install
-	// branch above dumps the whole ConfigInstance (which holds the plaintext auto
-	// password at this point), and a config.yaml written by an older build may
-	// already carry it. Strip it in both cases so the install stays "no password
-	// configured" — otherwise the next startup sees a password in the file,
-	// deletes auto-password and stops showing it in the banner.
-	//
-	// Guarded on the patch: ServeConfigPassword writes a real password and
-	// clears the flag first, but a direct "password" patch must never be dropped.
-	_, patchingPassword := patch["password"]
-	strippingAutoPassword := model.PasswordIsAutoGenerated && !patchingPassword
-	if strippingAutoPassword {
-		delete(raw, "password")
-	}
-
-	// Backup the previous file before overwriting. When the auto password is
-	// being stripped, the on-disk file still carries it, so the backup must come
-	// from the already-stripped raw — the secret the strip exists to remove must
-	// not survive in the sibling file.
-	backupConfigYAML(configPath, bakPath, raw, strippingAutoPassword)
-
-	// Merge patch into raw map (only touched fields are modified)
-	mergePatchIntoRaw(raw, patch)
-
-	// One-time cleanup of the legacy chat.user_nickname key (see
-	// dropLegacyChatNickname).
-	dropLegacyChatNickname(raw)
-	// The pre-per-engine flat stt.* keys: leaving them in the file would make a
-	// hand-edit of one look effective while nothing reads it.
-	model.DropLegacySTTKeys(raw)
-
-	data, err := yaml.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	// config.yaml holds secrets (API keys, forge tokens, password hash), so it
-	// must not be world-readable.
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
-		return fmt.Errorf("failed to write temp config: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, configPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to rename config file: %w", err)
-	}
-
-	return nil
-}
-
-// dropLegacyChatNickname migrates the legacy chat.user_nickname key into
-// user.nickname and removes it, in place on the generic config map. The value
-// was migrated at startup, but the write path merges into the existing file, so
-// without this the old key would survive forever and a hand-edit of it would
-// look effective while being ignored.
-//
-// The old ApplyDefaults materialized the fallback literal into every config.
-// Carrying that over would make an unconfigured install look configured, so it
-// is dropped instead: empty now means "not configured". An existing
-// user.nickname always wins.
-func dropLegacyChatNickname(raw map[string]any) {
-	chatMap, ok := raw["chat"].(map[string]any)
-	if !ok {
-		return
-	}
-	legacy, exists := chatMap["user_nickname"]
-	if !exists {
-		return
-	}
-
-	userMap, _ := raw["user"].(map[string]any)
-	if userMap == nil {
-		userMap = make(map[string]any, 2)
-		raw["user"] = userMap
-	}
-	if _, hasNew := userMap["nickname"]; !hasNew {
-		legacyStr, _ := legacy.(string)
-		if strings.TrimSpace(legacyStr) != model.DefaultUserNickname {
-			userMap["nickname"] = legacy
-		}
-	}
-	delete(chatMap, "user_nickname")
-}
-
-// backupConfigYAML copies the current config.yaml to bakPath before it is
-// overwritten. The backup is written 0600, matching config.yaml itself: the
-// generic copyFile helper would create it 0664, i.e. more permissive than the
-// file it protects, while config.yaml holds secrets (API keys, forge tokens,
-// password hash).
-//
-// strippedRaw is used instead of the on-disk bytes when useStripped is set, so
-// a caller that just removed a secret from the in-memory map (the auto-password
-// strip) does not leave that secret behind in the backup. Failure is non-fatal
-// — a missing backup must not block the config write.
-func backupConfigYAML(configPath, bakPath string, strippedRaw map[string]any, useStripped bool) {
-	if _, err := os.Stat(configPath); err != nil {
-		return // no previous file to back up
-	}
-	bakData, readErr := os.ReadFile(configPath)
-	if readErr == nil && useStripped {
-		bakData, readErr = yaml.Marshal(strippedRaw)
-	}
-	if readErr != nil {
-		slog.Warn("failed to prepare config.yaml backup", "err", readErr)
-		return
-	}
-	if err := os.WriteFile(bakPath, bakData, 0o600); err != nil {
-		slog.Warn("failed to backup config.yaml", "err", err)
-	}
-}
-
-// mergePatchIntoRaw merges the PATCH payload into the raw YAML map.
-// Only the leaf values present in the patch are updated; all other fields
-// in the raw map are preserved untouched.
-func mergePatchIntoRaw(raw map[string]any, patch map[string]any) {
-	for key, value := range patch {
-		if nested, ok := value.(map[string]any); ok {
-			// Recursively merge nested maps
-			existing, ok := raw[key].(map[string]any)
-			if !ok {
-				existing = make(map[string]any)
-			}
-			mergePatchIntoRaw(existing, nested)
-			raw[key] = existing
-		} else {
-			raw[key] = value
-		}
 	}
 }
 
@@ -4274,13 +3988,23 @@ func unitMainPID(unit string) string {
 	return pid
 }
 
+// systemdUnitNamePattern is the subset of systemd unit-name characters we
+// accept before handing a name to systemctl. The unit comes from a cgroup path
+// on disk, so treat it as untrusted: a name that does not match is not ours.
+var systemdUnitNamePattern = regexp.MustCompile(`^[A-Za-z0-9:_.@\\-]+\.service$`)
+
 // systemctlShowMainPID shells out to `systemctl show` for a unit's MainPID.
 // It uses CommandContext with a short timeout so a hung systemctl (e.g. a
 // stalled DBus) cannot block the upgrade/restart path indefinitely.
 func systemctlShowMainPID(unit string) string {
+	if !systemdUnitNamePattern.MatchString(unit) {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "systemctl", "show", "-p", "MainPID", "--value", unit).Output()
+	// No shell is involved: exec.CommandContext passes argv directly, and the
+	// unit name is constrained by systemdUnitNamePattern above.
+	out, err := exec.CommandContext(ctx, "systemctl", "show", "-p", "MainPID", "--value", unit).Output() //nolint:gosec // validated above; argv-only, no shell
 	if err != nil {
 		return ""
 	}
@@ -4337,15 +4061,4 @@ func mergeUsageMeterStateIntoPatch(patch map[string]any) map[string]any {
 	}
 	out["usage_meter"] = merged
 	return out
-}
-
-// modelContains is a tiny helper kept local to avoid importing slices just for
-// one call site.
-func modelContains(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
 }

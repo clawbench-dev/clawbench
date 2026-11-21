@@ -1,6 +1,7 @@
 import { createI18n } from 'vue-i18n'
 import zh from './locales/zh'
 import en from './locales/en'
+import { mergePluginMessages } from './pluginMessages'
 
 const STORAGE_KEY = 'clawbench-locale'
 const BASE_COOKIE_KEY = 'clawbench-locale'
@@ -25,6 +26,13 @@ export function setLocaleCookie(lang: string) {
   const key = scopedCookieKey()
   document.cookie = `${key}=${lang};path=/;max-age=31536000;samesite=strict`
 }
+
+// Fold in the copy each dock plugin owns (its manager description and the
+// "this host cannot run it" reason). Runs BEFORE `createI18n` so the very first
+// rendered string already has it — a plugin's row must not read `undefined` for
+// one frame. The base tables are plain data; the plugin modules are globbed in
+// `pluginMessages.ts`, deliberately not imported by `zh.ts` / `en.ts` themselves.
+mergePluginMessages({ zh, en })
 
 const i18n = createI18n({
   legacy: false,

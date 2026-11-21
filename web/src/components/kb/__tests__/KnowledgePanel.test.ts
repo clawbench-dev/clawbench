@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   prompt: vi.fn(),
   toast: vi.fn(),
   uploadFilesToCollection: vi.fn(),
+  chatBridge: { quote: vi.fn(), comment: vi.fn(), attach: vi.fn() },
 }))
 
 vi.mock('@/utils/api', () => ({
@@ -32,6 +33,12 @@ vi.mock('@/composables/useWideScreenLayout', () => ({
 }))
 vi.mock('@/composables/useDialog', () => ({ useDialog: () => ({ confirm: h.confirm, prompt: h.prompt }) }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: h.toast }) }))
+// The panel only needs "quote this passage"; the bridge's own behaviour is
+// covered by useChatBridge.test.ts. Mocking it keeps this suite from pulling
+// the whole quote-bar / session graph in through the facade.
+vi.mock('@/composables/useChatBridge', () => ({
+  useChatBridge: () => h.chatBridge,
+}))
 vi.mock('@/utils/appLog', () => ({ appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() } }))
 vi.mock('@/stores/app', async () => {
   const { reactive } = await import('vue')
@@ -228,6 +235,7 @@ describe('KnowledgePanel', () => {
     h.confirm.mockResolvedValue(true)
     h.toast.mockReset()
     h.uploadFilesToCollection.mockReset()
+    h.chatBridge.quote.mockReset()
     h.uploadFilesToCollection.mockResolvedValue({ added: 0, failed: 0, errors: [], cancelled: false })
     store.state.projectRoot = '/p'
 
@@ -235,8 +243,8 @@ describe('KnowledgePanel', () => {
       if (url === '/api/kb/collections') {
         return {
           collections: [
-            { id: 1, name: 'Policies', description: '', scope: 'global', auto_inject: true, pinned: false, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
-            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, pinned: false, doc_count: 2, failed_count: 1, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 1, name: 'Policies', description: '', scope: 'global', auto_inject: true, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, doc_count: 2, failed_count: 1, pending_count: 0, created_at: '', updated_at: '' },
           ],
         }
       }
@@ -511,8 +519,8 @@ describe('KnowledgePanel', () => {
       if (url === '/api/kb/collections') {
         return {
           collections: [
-            { id: 1, name: 'Policies', description: '', scope: 'global', auto_inject: true, pinned: false, doc_count: 1, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
-            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, pinned: false, doc_count: 2, failed_count: 1, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 1, name: 'Policies', description: '', scope: 'global', auto_inject: true, doc_count: 1, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, doc_count: 2, failed_count: 1, pending_count: 0, created_at: '', updated_at: '' },
           ],
         }
       }
@@ -556,6 +564,32 @@ describe('KnowledgePanel', () => {
     expect(drawer.props('open')).toBe(true)
     expect(drawer.props('documentId')).toBe(1)
     expect(drawer.props('focusChunkId')).toBe(0)
+    wrapper.unmount()
+  })
+
+  // The KB panel used to park the quote in a module-level ref for App.vue to
+  // pick up. It now calls the shared bridge directly; this pins that the
+  // passage really reaches it (and that the drawer closes afterwards).
+  it('quotes a passage through the shared bridge and closes the drawer', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-kb-doc="1"] .kb-doc-open').trigger('click')
+    const drawer = wrapper.findComponent({ name: 'KBDocumentDrawer' })
+    expect(drawer.props('open')).toBe(true)
+
+    drawer.vm.$emit('quote', { text: 'passage', title: 'doc-1.txt' })
+    await nextTick()
+
+    expect(h.chatBridge.quote).toHaveBeenCalledWith({
+      text: 'doc-1.txt\n\npassage',
+      filePath: 'doc-1.txt',
+      language: 'markdown',
+      startLine: 0,
+      endLine: 0,
+      sourceKind: 'selection',
+    })
+    expect(drawer.props('open')).toBe(false)
     wrapper.unmount()
   })
 
@@ -702,7 +736,7 @@ describe('KnowledgePanel', () => {
       if (url === '/api/kb/collections') {
         return {
           collections: [
-            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, pinned: false, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
           ],
         }
       }
@@ -735,31 +769,13 @@ describe('KnowledgePanel', () => {
     wrapper.unmount()
   })
 
-  it('pins a collection and reflects the new state', async () => {
-    const wrapper = mountPanel()
-    await flushPromises()
-
-    h.apiPatch.mockResolvedValueOnce({
-      id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true,
-      pinned: true, doc_count: 2, failed_count: 1, pending_count: 0, created_at: '', updated_at: '',
-    })
-    const row = wrapper.findAll('.kb-col-row').find((r) => r.find('[data-kb-collection="2"]').exists())!
-    await row.find('[data-action="kb-pin"]').trigger('click')
-    await flushPromises()
-
-    expect(h.apiPatch).toHaveBeenCalledWith('/api/kb/collections?id=2', { pinned: true })
-    const updated = wrapper.findAll('.kb-col-row').find((r) => r.find('[data-kb-collection="2"]').exists())!
-    expect(updated.find('[data-action="kb-unpin"]').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
   it('sorts collections by name', async () => {
     h.apiGet.mockImplementation(async (url: string) => {
       if (url === '/api/kb/collections') {
         return {
           collections: [
-            { id: 1, name: 'Beta', description: '', scope: 'global', auto_inject: true, pinned: false, doc_count: 0, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
-            { id: 2, name: 'Alpha', description: '', scope: 'global', auto_inject: true, pinned: false, doc_count: 0, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 1, name: 'Beta', description: '', scope: 'global', auto_inject: true, doc_count: 0, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
+            { id: 2, name: 'Alpha', description: '', scope: 'global', auto_inject: true, doc_count: 0, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' },
           ],
         }
       }
@@ -806,7 +822,7 @@ describe('KnowledgePanel', () => {
   it('filters documents by tag', async () => {
     h.apiGet.mockImplementation(async (url: string) => {
       if (url === '/api/kb/collections') {
-        return { collections: [{ id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, pinned: false, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' }] }
+        return { collections: [{ id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, doc_count: 2, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' }] }
       }
       if (url.startsWith('/api/kb/documents')) {
         return { documents: [doc(1, { tags: '制度, 报销' }), doc(2, { tags: '产品' })] }
@@ -829,7 +845,7 @@ describe('KnowledgePanel', () => {
   it('offers to re-add a deleted file from its source', async () => {
     h.apiGet.mockImplementation(async (url: string) => {
       if (url === '/api/kb/collections') {
-        return { collections: [{ id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, pinned: false, doc_count: 1, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' }] }
+        return { collections: [{ id: 2, name: 'Notes', description: '', scope: 'project', auto_inject: true, doc_count: 1, failed_count: 0, pending_count: 0, created_at: '', updated_at: '' }] }
       }
       if (url.startsWith('/api/kb/documents')) {
         return { documents: [doc(1, { source_path: '/p/a.md' })] }

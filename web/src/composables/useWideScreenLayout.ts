@@ -1,7 +1,7 @@
 import { ref, watch } from 'vue'
 import { DEFAULT_RATIO, normalizeRatio } from '@/utils/splitRatio'
 import { appLog } from '@/utils/appLog'
-import { DOCK_TAB_IDS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
+import { isDockTabId, type DockTabId } from '@/composables/dockTabs'
 import { DEFAULT_LEFT_COLLAPSED, layoutEpoch, readPanelState, writePanelState } from '@/utils/panelState'
 import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 
@@ -44,16 +44,6 @@ export const WIDE_SCREEN_MIN_WIDTH = 960
 // App.vue applies it after the workspace is restored. This module
 // deliberately keeps no storage for `leftTab` — a second writer here would race
 // the per-project one.
-/**
- * Validation whitelist for the wide-screen dock. Derived from the DOCK_TABS
- * registry (composables/dockTabs.ts) so it can never drift from what the dock
- * renders — the dock renders these ids, and these ids are switchable.
- *
- * Historically this was a hand-written array living apart from the render list;
- * adding a tab without updating it produced a button that did nothing on click.
- */
-export const WIDE_SCREEN_DOCK_TABS: readonly DockTabId[] = DOCK_TAB_IDS
-
 /**
  * Wide-screen detection: active when the viewport can hold two columns at the
  * current UI scale.
@@ -278,10 +268,11 @@ export function registerWideScreenCallbacks(opts: { sideEffects?: (tab: DockTabI
  *
  * Rejects unknown tabs loudly: a tab that the dock renders but that is not in
  * DOCK_TABS would otherwise be a silently dead button (the original forge bug
- * — click did nothing, with no state change, error or log). The whitelist is
- * derived from the same registry the dock renders from, so this should be
- * unreachable in practice; the log exists to make any future divergence
- * visible on the first click instead of being reported as "nothing happens".
+ * — click did nothing, with no state change, error or log). The id set is the
+ * one the plugin runtime installed, i.e. the same set the dock renders from, so
+ * this should be unreachable in practice; the log exists to make any future
+ * divergence visible on the first click instead of being reported as "nothing
+ * happens".
  */
 export function switchLeftTab(tab: string) {
   if (!isDockTabId(tab)) {

@@ -108,7 +108,7 @@ const notif = (over: Record<string, unknown> = {}) => ({
   body: 'body',
   projectId: 1,
   projectPath: '/proj',
-  sessionId: 's1',
+  subjectId: 's1',
   createdAt: '2026-10-15T12:00:00.000Z',
   ...over,
 })
@@ -162,7 +162,7 @@ describe('NotificationsPanelContent', () => {
   })
 
   it('clicking a session row dispatches clawbench-open-session', async () => {
-    items.value = [notif({ sessionId: 'sess-42' })]
+    items.value = [notif({ subjectId: 'sess-42' })]
     const w = mountPanel()
 
     const events: CustomEvent[] = []
@@ -183,8 +183,7 @@ describe('NotificationsPanelContent', () => {
       notif({
         kind: 'meeting',
         eventType: 'control_request',
-        meetingToken: 'tok-9',
-        sessionId: undefined,
+        subjectId: 'tok-9',
         projectPath: '/proj/other',
       }),
     ]
@@ -208,7 +207,7 @@ describe('NotificationsPanelContent', () => {
   })
 
   it('clicking a task row dispatches clawbench-open-task', async () => {
-    items.value = [notif({ kind: 'task', taskId: '7', executionId: '99', sessionId: undefined })]
+    items.value = [notif({ kind: 'task', subjectId: '7', executionId: '99' })]
     const w = mountPanel()
 
     const events: CustomEvent[] = []
@@ -223,7 +222,7 @@ describe('NotificationsPanelContent', () => {
   })
 
   it('clicking a forge row dispatches clawbench-open-forge with a rebuilt target', async () => {
-    items.value = [notif({ kind: 'forge', forgeItemKey: 'pr/42', sessionId: undefined })]
+    items.value = [notif({ kind: 'forge', subjectId: 'pr/42' })]
     const w = mountPanel()
 
     const events: CustomEvent[] = []
@@ -239,7 +238,7 @@ describe('NotificationsPanelContent', () => {
   })
 
   it('rebuilds a pipeline target from its run key', async () => {
-    items.value = [notif({ kind: 'forge', forgeItemKey: 'pipeline/run:555', sessionId: undefined })]
+    items.value = [notif({ kind: 'forge', subjectId: 'pipeline/run:555' })]
     const w = mountPanel()
 
     const events: CustomEvent[] = []
@@ -255,7 +254,7 @@ describe('NotificationsPanelContent', () => {
 
   it('refuses the task jump while 任务 is off, and explains instead', async () => {
     syncFeatureConfig({ tasks: { enabled: false } })
-    items.value = [notif({ kind: 'task', taskId: '7', executionId: '99', sessionId: undefined })]
+    items.value = [notif({ kind: 'task', subjectId: '7', executionId: '99' })]
     const w = mountPanel()
 
     const events: CustomEvent[] = []
@@ -276,9 +275,8 @@ describe('NotificationsPanelContent', () => {
       eventType: 'received',
       title: '季度报告',
       body: 'Bob · 本周数据',
-      sessionId: undefined,
       projectPath: '',
-      mailMessageId: 77,
+      subjectId: '77',
     })]
     const w = mountPanel()
     // The chip is the localized label, not the raw wire event type.
@@ -303,9 +301,8 @@ describe('NotificationsPanelContent', () => {
     items.value = [notif({
       kind: 'mail',
       eventType: 'received',
-      sessionId: undefined,
       projectPath: '',
-      mailMessageId: 77,
+      subjectId: '77',
     })]
     const w = mountPanel()
 
@@ -320,7 +317,7 @@ describe('NotificationsPanelContent', () => {
   })
 
   it('refuses the forge jump while Forge is off', async () => {    syncFeatureConfig({ forge: { enabled: false } })
-    items.value = [notif({ kind: 'forge', forgeItemKey: 'pr/42', sessionId: undefined })]
+    items.value = [notif({ kind: 'forge', subjectId: 'pr/42' })]
     const w = mountPanel()
 
     const events: CustomEvent[] = []
@@ -333,10 +330,46 @@ describe('NotificationsPanelContent', () => {
     expect(mockToastShow).toHaveBeenCalledTimes(1)
   })
 
+  it('renders an unknown kind as "Other" and explains instead of navigating', async () => {
+    // A row from a newer build (or a typo'd kind). The panel must NOT fall back
+    // to a concrete kind — labelling a plugin's notification "Session" is a
+    // wrong answer, and a silent click reads as a broken panel.
+    items.value = [notif({
+      kind: 'plugin_new',
+      eventType: 'created',
+      title: '',
+      subjectId: undefined,
+    })]
+    const w = mountPanel()
+
+    expect(w.text()).toContain('Other')
+    expect(w.text()).not.toContain('Session')
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-session', listener)
+    await w.find('.notif-card').trigger('click')
+    window.removeEventListener('clawbench-open-session', listener)
+
+    expect(events).toHaveLength(0)
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
+    expect(String(mockToastShow.mock.calls[0][0])).toContain('does not know yet')
+  })
+
+  it('explains when a row cannot name its destination', async () => {
+    // A malformed row (a task with no task id) must not swallow the press.
+    items.value = [notif({ kind: 'task', subjectId: undefined })]
+    const w = mountPanel()
+
+    await w.find('.notif-card').trigger('click')
+
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
+  })
+
   it('a sourceMissing row does NOT navigate and shows a hint instead', async () => {
     // The whole reason sourceMissing exists: a deleted session's own fallback
     // silently redirects to the newest session, which is worse than a hint.
-    items.value = [notif({ sourceMissing: true, sessionId: 'sess-gone' })]
+    items.value = [notif({ sourceMissing: true, subjectId: 'sess-gone' })]
     const w = mountPanel()
 
     const events: CustomEvent[] = []
@@ -378,7 +411,7 @@ describe('NotificationsPanelContent', () => {
   it('flags a same-project open so App.vue can record the log as the jump origin', async () => {
     // Without this flag the jump records whatever tab preceded the log, and
     // Back (header / edge swipe / Android) lands somewhere the user never was.
-    items.value = [notif({ sessionId: 'sess-42', projectPath: '/proj' })]
+    items.value = [notif({ subjectId: 'sess-42', projectPath: '/proj' })]
     const w = mountPanel()
 
     const events: CustomEvent[] = []
@@ -402,8 +435,7 @@ describe('NotificationsPanelContent', () => {
       eventType: 'full',
       title: 'Usage exhausted',
       body: 'used 20 / 20',
-      sessionId: undefined,
-      taskId: undefined,
+      subjectId: undefined,
     })]
     const w = mountPanel()
 
@@ -421,7 +453,7 @@ describe('NotificationsPanelContent', () => {
   })
 
   it('confirms before opening a row from ANOTHER project', async () => {
-    items.value = [notif({ sessionId: 'sess-9', projectPath: '/other-proj' })]
+    items.value = [notif({ subjectId: 'sess-9', projectPath: '/other-proj' })]
     const w = mountPanel()
 
     const events: CustomEvent[] = []
@@ -441,7 +473,7 @@ describe('NotificationsPanelContent', () => {
 
   it('declining the cross-project confirmation cancels the navigation', async () => {
     mockConfirm.mockResolvedValue(false)
-    items.value = [notif({ sessionId: 'sess-9', projectPath: '/other-proj' })]
+    items.value = [notif({ subjectId: 'sess-9', projectPath: '/other-proj' })]
     const w = mountPanel()
 
     const events: CustomEvent[] = []
@@ -457,7 +489,7 @@ describe('NotificationsPanelContent', () => {
   it('does not confirm for a row with no project attribution', async () => {
     // projectId 0 is the "cannot attribute" sentinel; we cannot name a target
     // project, so there is nothing to confirm and no external claim to make.
-    items.value = [notif({ sessionId: 'sess-1', projectPath: '' })]
+    items.value = [notif({ subjectId: 'sess-1', projectPath: '' })]
     const w = mountPanel()
 
     await w.find('.notif-card').trigger('click')
@@ -661,7 +693,7 @@ describe('NotificationsPanelContent', () => {
     // The confirmation must use the same canonical comparison — otherwise the
     // user gets a "switch project?" dialog for the project they are already in.
     store.state.projectRoot = '/proj/'
-    items.value = [notif({ sessionId: 's1', projectPath: '/proj' })]
+    items.value = [notif({ subjectId: 's1', projectPath: '/proj' })]
     const w = mountPanel()
 
     await w.find('.notif-card').trigger('click')

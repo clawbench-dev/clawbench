@@ -69,14 +69,14 @@ const SHARED_CHROME = [
   // No forge empty-state classes: the block is the shared `EmptyState` now
   // (common/EmptyState.vue), and its glyph comes from `.empty-state__icon`.
   'forge-overview-count-badge',
-  // Filter toolbar + chips. The activity tab renders its own toolbar from
+  // Filter toolbar + row. The activity tab renders its own toolbar from
   // ForgeOverviewList, the other tabs render theirs from ForgePanelContent, so
   // these belong to no single component.
+  //
+  // The individual chips are gone: every view now uses the shared `FilterSelect`
+  // pill, so there is no per-view chip class left to declare.
   'forge-toolbar',
   'forge-chips',
-  'forge-chips-scroll',
-  'forge-chips-divider',
-  'forge-chip',
 ]
 
 /** `pipeline-<status>` modifiers, used by both the dot and the badge. */

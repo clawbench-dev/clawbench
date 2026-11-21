@@ -88,20 +88,24 @@
           <span>{{ t('mail.reader.imagesBlocked') }}</span>
           <button class="mail-chip" @click="allowRemoteImages = true">{{ t('mail.reader.showImages') }}</button>
         </div>
-        <iframe
-          v-if="docSource"
-          class="mail-reader__frame"
-          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-          referrerpolicy="no-referrer"
-          :srcdoc="docSource"
-        />
-        <pre v-else-if="detail.bodyText" class="mail-reader__text">{{ detail.bodyText }}</pre>
-        <EmptyState
-          v-else
-          :icon="MailOpen"
-          :title="t('mail.reader.noBody')"
-          :desc="t('mail.reader.noBodyDesc')"
-        />
+        <div v-bind="quoteRegionAttrs" class="mail-reader__body-region">
+          <iframe
+            v-if="docSource"
+            ref="bodyFrameRef"
+            class="mail-reader__frame"
+            sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+            referrerpolicy="no-referrer"
+            :srcdoc="docSource"
+            @load="attachQuoteBridge"
+          />
+          <pre v-else-if="detail.bodyText" class="mail-reader__text">{{ detail.bodyText }}</pre>
+          <EmptyState
+            v-else
+            :icon="MailOpen"
+            :title="t('mail.reader.noBody')"
+            :desc="t('mail.reader.noBodyDesc')"
+          />
+        </div>
       </template>
     </div>
 
@@ -141,7 +145,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, type Component } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { mailAttachmentKind, mailHue, mailInitial } from '@/utils/mailColors'
 import { ArrowLeft, Forward, FileArchive, FileImage, FileSpreadsheet, FileText, Mail, MailOpen, MessageSquare, MessageSquarePlus, Paperclip, Reply, ReplyAll, Star, Trash2, TriangleAlert } from 'lucide-vue-next'
@@ -161,10 +165,11 @@ import {
 } from '@/utils/mailTypes'
 import { refreshMailUnread } from '@/composables/useMailUnread'
 import ActionBar from '@/components/common/ActionBar.vue'
-import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
+import { useQuoteQuestion, makeIframeQuoteShowHandler } from '@/composables/useQuoteQuestion'
+import { attachIframeSelectionQuoteBridge, resolveIframeWindow } from '@/utils/iframeSelectionQuote.ts'
 import { useFileUpload } from '@/composables/useFileUpload'
 import { useToast } from '@/composables/useToast'
-import { buildMailQuote } from '@/utils/mailQuote'
+import { buildMailQuote, mailQuoteLabel } from '@/utils/mailQuote'
 import { localConfig } from '@/composables/useSettingsConfig'
 
 const props = defineProps<{ messageId: number }>()
@@ -258,6 +263,74 @@ function quoteToChat(): void {
   quoteQuestion.openComposer({ quote, label: quote.filePath })
 }
 
+// ── Selecting the body ─────────────────────────────────────────
+const bodyFrameRef = ref<HTMLIFrameElement | null>(null)
+
+/**
+ * Surface the shared quote bar for text selected INSIDE the body frame.
+ *
+ * The body is its own document, so a selection in it never fires the host's
+ * `selectionchange` and the global handler cannot see it. The frame is sandboxed
+ * WITHOUT `allow-scripts` (utils/mailHtml.ts — that omission is what stops a
+ * payload DOMPurify missed from running), but `allow-same-origin` still lets the
+ * host read the document: a parent listener on the frame's `selectionchange`
+ * fires normally, which is exactly what this bridge does.
+ *
+ * The identity is the MESSAGE, not a path: the card must carry `sourceKind:
+ * 'mail'` plus the `mail` locator so it renders with the mail icon and its
+ * "jump to source" re-opens this email. The label is the same `主题 · 发件人` the
+ * whole-message button uses, so a snippet quote and a full quote are
+ * recognisably the same mail in the transcript.
+ */
+let disposeQuoteBridge: (() => void) | null = null
+
+async function attachQuoteBridge(): Promise<void> {
+  // Re-copying the frame's document (`srcdoc` changes when the message or the
+  // image permission changes) fires `load` again, and a disposed bridge must
+  // never stay attached to the dead document — always dispose before attaching.
+  disposeQuoteBridge?.()
+  disposeQuoteBridge = null
+  if (!detail.value) return
+  const win = await resolveIframeWindow(() => bodyFrameRef.value)
+  if (!win) return
+  disposeQuoteBridge = attachIframeSelectionQuoteBridge({
+    win,
+    filePath: () => {
+      const d = detail.value
+      return d ? mailQuoteLabel(d, t('mail.list.noSubject')) : ''
+    },
+    identity: () => {
+      const d = detail.value
+      if (!d) return {}
+      return { sourceKind: 'mail', locators: { mail: String(d.id) } }
+    },
+    // Shared with every other framed preview: maps the frame's anchor into host
+    // coordinates, shows immediately, and suppresses the in-page bar on Android
+    // (the system menu is the affordance there).
+    show: makeIframeQuoteShowHandler(quoteQuestion.showBar),
+    hide: () => quoteQuestion.hideBar(),
+  })
+}
+
+/**
+ * The plain-text body is a `<pre>` in the HOST document, so it never reaches the
+ * frame bridge. Mark the region with `data-quote-*` and let the host's own
+ * selection handler attribute it: `data-quote-language="mail"` renders the mail
+ * icon, and the `mail` locator makes "jump to source" re-open this email.
+ *
+ * The wrapper also covers a drag that starts outside the frame (the margins);
+ * a rich body's actual text selection is handled by the bridge above.
+ */
+const quoteRegionAttrs = computed(() => {
+  const d = detail.value
+  if (!d) return {}
+  return {
+    'data-quote-source': mailQuoteLabel(d, t('mail.list.noSubject')),
+    'data-quote-language': 'mail',
+    'data-quote-mail': String(d.id),
+  }
+})
+
 /**
  * Add one attachment to the chat input.
  *
@@ -323,6 +396,11 @@ async function load(): Promise<void> {
 }
 
 watch(() => props.messageId, load, { immediate: true })
+
+onBeforeUnmount(() => {
+  disposeQuoteBridge?.()
+  disposeQuoteBridge = null
+})
 
 async function patchFlags(body: { seen?: boolean; flagged?: boolean }): Promise<void> {
   if (!detail.value) return
@@ -495,12 +573,26 @@ async function remove(): Promise<void> {
   background: var(--bg-tertiary);
   flex-shrink: 0;
 }
+/* The quotable region (see quoteRegionAttrs). It is a plain wrapper so a drag
+   over a FRAMED body selects this element instead of dead-ending inside a
+   document the host cannot read: the frame takes no pointer events, so the
+   selection starts on the wrapper and the host's own handler attributes it. */
+.mail-reader__body-region {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .mail-reader__frame {
   flex: 1;
   width: 100%;
   min-height: 0;
   border: none;
   background: #fff;
+  /* Pointer events stay ON: the body must remain selectable, copyable and
+     clickable (links). A rich body's selection is read by the bridge above
+     through `allow-same-origin`; the wrapper only covers the plain-text body
+     and drags that start outside the frame. */
 }
 .mail-reader__text {
   flex: 1;

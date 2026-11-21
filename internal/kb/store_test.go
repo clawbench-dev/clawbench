@@ -307,14 +307,14 @@ func TestUpdateCollection(t *testing.T) {
 	name := "新名"
 	desc := "说明"
 	auto := false
-	require.NoError(t, st.UpdateCollection(id, &name, &desc, &auto, nil))
+	require.NoError(t, st.UpdateCollection(id, &name, &desc, &auto))
 	col, err := st.GetCollection(id)
 	require.NoError(t, err)
 	require.Equal(t, "新名", col.Name)
 	require.Equal(t, "说明", col.Description)
 	require.False(t, col.AutoInject)
 
-	require.NoError(t, st.UpdateCollection(id, nil, nil, nil, nil))
+	require.NoError(t, st.UpdateCollection(id, nil, nil, nil))
 }
 
 func TestDocumentTimestampsAdvance(t *testing.T) {
@@ -545,37 +545,6 @@ func TestDocumentProgress(t *testing.T) {
 	progress, err = st.DocumentProgress(other)
 	require.NoError(t, err)
 	require.Empty(t, progress)
-}
-
-func TestCollectionPinning(t *testing.T) {
-	st := newTestStore(t)
-	first, err := st.CreateCollection(Collection{Name: "乙", Scope: ScopeGlobal, AutoInject: true})
-	require.NoError(t, err)
-	second, err := st.CreateCollection(Collection{Name: "甲", Scope: ScopeGlobal, AutoInject: true})
-	require.NoError(t, err)
-
-	// Pinned first, regardless of creation order.
-	pinned := true
-	require.NoError(t, st.UpdateCollection(second, nil, nil, nil, &pinned))
-
-	cols, err := st.ListCollections(0)
-	require.NoError(t, err)
-	require.Len(t, cols, 2)
-	require.Equal(t, second, cols[0].ID)
-	require.True(t, cols[0].Pinned)
-	require.Equal(t, first, cols[1].ID)
-	require.False(t, cols[1].Pinned)
-
-	col, err := st.GetCollection(second)
-	require.NoError(t, err)
-	require.True(t, col.Pinned)
-
-	// Unpinning restores creation order.
-	unpinned := false
-	require.NoError(t, st.UpdateCollection(second, nil, nil, nil, &unpinned))
-	cols, err = st.ListCollections(0)
-	require.NoError(t, err)
-	require.Equal(t, first, cols[0].ID)
 }
 
 func TestSourceStateFlags(t *testing.T) {

@@ -72,25 +72,45 @@
         />
       </template>
 
-      <button class="fbtn fbtn-primary" :disabled="!canAdd || saving" @click="addServer">
-        {{ t('settings.items.mcpAdd') }}
-      </button>
+      <div class="mcp-add-actions">
+        <button class="fbtn fbtn-primary" :disabled="!canAdd || saving" @click="addServer">
+          {{ t('settings.items.mcpAdd') }}
+        </button>
+        <!-- Migration path: pasting a config from another tool is faster and
+             less error-prone than retyping every field, and it is the reason
+             most people open this page in the first place. -->
+        <button class="fbtn" :disabled="saving" @click="openImport">
+          <FileJson :size="13" />
+          {{ t('settings.items.mcpImport') }}
+        </button>
+      </div>
     </div>
 
     <div v-if="error" class="mcp-error">
       <AlertCircle :size="13" />
       <span>{{ error }}</span>
     </div>
+
+    <McpImportDialog
+      :open="importOpen"
+      :existing-names="servers.map((s) => s.name)"
+      :error-message="importError"
+      :busy="saving"
+      @close="importOpen = false"
+      @import="applyImport"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, CheckCircle2, Loader2, PlugZap, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, CheckCircle2, FileJson, Loader2, PlugZap, Trash2 } from 'lucide-vue-next'
 import '@/assets/modal-footer-btn.css'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useConnectivityTest } from '@/composables/useConnectivityTest'
+import McpImportDialog from '@/components/settings/McpImportDialog.vue'
+import type { McpImportServer } from '@/utils/mcpImport'
 import { appLog } from '@/utils/appLog'
 
 interface McpServer {
@@ -205,6 +225,44 @@ async function removeServer(idx: number) {
   const removed = servers.value[idx]?.name
   await save(servers.value.filter((_, i) => i !== idx))
   if (removed) delete testResults.value[removed]
+}
+
+const importOpen = ref(false)
+/** Rejection text from the last import attempt; shown inside the dialog. */
+const importError = ref('')
+
+function openImport() {
+  importError.value = ''
+  importOpen.value = true
+}
+
+/**
+ * Merges imported servers into the list and saves it in one request.
+ *
+ * Same-name entries replace the stored definition in place (the dialog only
+ * preselects names that do not exist, so this only happens when the user
+ * deliberately ticks one). On failure the dialog stays open with the server's
+ * message: the most common import failure is a command that is not installed
+ * on this machine, and the user needs to see which entry the server named
+ * while still holding the pasted text.
+ */
+async function applyImport(imported: McpImportServer[]) {
+  importError.value = ''
+  const next = servers.value.slice()
+  for (const srv of imported) {
+    // Compare trimmed: imported names already are, but a hand-edited
+    // config.yaml may carry a padded one, and a duplicate the server then
+    // rejects points at an entry the user never touched.
+    const idx = next.findIndex((existing) => existing.name.trim() === srv.name)
+    if (idx >= 0) next[idx] = srv
+    else next.push(srv)
+  }
+  await save(next)
+  if (error.value) {
+    importError.value = error.value
+    return
+  }
+  importOpen.value = false
 }
 
 /**
@@ -350,6 +408,11 @@ onMounted(() => {
   border-top: 1px solid var(--border-color);
 }
 .mcp-add-grid {
+  display: flex;
+  gap: var(--space-3);
+}
+/* Add + import sit side by side; the form fields above stay full width. */
+.mcp-add-actions {
   display: flex;
   gap: var(--space-3);
 }

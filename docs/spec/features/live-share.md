@@ -437,7 +437,7 @@ MediaProjection ─▶ VirtualDisplay ─▶ ImageReader ─▶ 缩放 + JPEG
 
 ## 会议通知
 
-会议里的五件事会写进通知中心并推送：**远程控制请求**（`control_request`）、**成员加入**（`viewer_joined`）、**成员开始共享屏幕**（`screen_share`）、**纪要生成完成 / 失败**（`minutes_ready` / `minutes_failed`）。通知中心那一行的 `kind` 是 `meeting`，身份是会议 token（`notifications.meeting_token`），点击打开该会议记录。
+会议里的五件事会写进通知中心并推送：**远程控制请求**（`control_request`）、**成员加入**（`viewer_joined`）、**成员开始共享屏幕**（`screen_share`）、**纪要生成完成 / 失败**（`minutes_ready` / `minutes_failed`）。通知中心那一行的 `kind` 是 `meeting`，身份是会议 token（`notifications.subject_id`），点击打开该会议记录。
 
 **两半，两个受众**：`EmitMeetingEvent` 一次做两件事——写 `notifications` 行（无条件、不经过任何推送开关，与其它三类一致），以及广播 `live_event`（`ws.MeetingEventData`，`title`/`body` 由服务端按配置语言渲染好，与 `usage_meter_update` 同一套做法）。前者是「发生过什么」的持久副本，后者是「现在提醒你」的实时信号。
 

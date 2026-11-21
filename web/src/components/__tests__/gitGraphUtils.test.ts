@@ -475,6 +475,71 @@ describe('graph dimensions', () => {
   })
 })
 
+// ─── Line row spans (viewport-driven column width) ─────────────────────────
+//
+// The column width is sized from the lanes whose geometry is inside the scroll
+// window. A line can cross the window while every node on its lane is
+// off-screen, so each line must report the rows it spans and the farthest lane
+// it reaches.
+describe('connection lines report the rows they span', () => {
+  const allRepos = [LINEAR, SINGLE_MERGE, MULTI_BRANCH, FREQUENT_MERGE, LONG_LIVED, OCTOPUS, OPEN_BRANCHES]
+
+  it('every line spans valid rows and reaches its own lane', () => {
+    for (const data of allRepos) {
+      const { lines, laneCount } = computeGraphData(data, ROW_HEIGHT, undefined) as any
+      expect(lines.length).toBeGreaterThan(0)
+      for (const l of lines) {
+        expect(Number.isInteger(l.rowStart)).toBe(true)
+        expect(Number.isInteger(l.rowEnd)).toBe(true)
+        expect(l.rowStart).toBeGreaterThanOrEqual(0)
+        expect(l.rowStart).toBeLessThanOrEqual(l.rowEnd)
+        expect(l.rowEnd).toBeLessThanOrEqual(data.length - 1)
+        expect(l.widthLane).toBeGreaterThanOrEqual(l.lane)
+        expect(l.widthLane).toBeLessThan(laneCount)
+      }
+    }
+  })
+
+  it('widthLane covers both ends of a cross-lane bezier', () => {
+    // laneCx(lane) = lane * 20 + 20, so the lane of an X coordinate is
+    // (x - 20) / 20. Both endpoints of a bezier must fit inside the width.
+    for (const data of allRepos) {
+      const { lines } = computeGraphData(data, ROW_HEIGHT, undefined) as any
+      for (const l of lines) {
+        const nums = l.path.match(/[\d.]+/g).map(Number)
+        const xs = l.path.includes('C') ? [nums[0], nums[nums.length - 2]] : [nums[0]]
+        for (const x of xs) {
+          expect(l.widthLane).toBeGreaterThanOrEqual((x - 20) / 20)
+        }
+      }
+    }
+  })
+
+  it('merge-in vertical spans from the child row down to the parent row', () => {
+    // SINGLE_MERGE: f1 (row 3, lane 1) has first parent m2 (row 5, lane 0).
+    const { lines } = computeGraphData(SINGLE_MERGE, ROW_HEIGHT, undefined) as any
+    const mergeInVert = lines.find((l: any) =>
+      l.lane === 1 && !l.path.includes('C') && !l.fade && l.rowStart === 3,
+    )
+    expect(mergeInVert).toBeDefined()
+    expect(mergeInVert.rowEnd).toBe(5)
+    expect(mergeInVert.widthLane).toBe(1)
+  })
+
+  it('continuation line runs to the last loaded row', () => {
+    // Truncated history: f1 (row 3) and m3 (row 4) both have parents outside
+    // the loaded slice, so each gets a fade continuation.
+    const truncated = SINGLE_MERGE.slice(0, 5)
+    const { lines } = computeGraphData(truncated, ROW_HEIGHT, undefined) as any
+    const fades = lines.filter((l: any) => l.fade)
+    expect(fades.length).toBeGreaterThan(0)
+    for (const fade of fades) {
+      expect(fade.rowEnd).toBe(truncated.length - 1)
+    }
+    expect(fades[0].rowStart).toBe(3)
+  })
+})
+
 describe('ref label helpers', () => {
   it('refLabelText strips tag prefix', () => {
     expect(refLabelText('main')).toBe('main')
@@ -798,6 +863,41 @@ describe('lane compression does not leave empty lanes next to the mainline', () 
   it('uses only 2 lanes (no empty lane between main and the long branch)', () => {
     const { laneCount } = getConnections(BRANCH_AFTER_FORK)
     expect(laneCount).toBe(2)
+  })
+})
+
+describe('lane compression respects continuation lines to the list bottom', () => {
+  // Regression: a branch tip whose first parent has not been paged in yet gets
+  // a continuation line running to the bottom of the loaded list. Compression
+  // used to look only at node rows, so a later branch was packed onto the same
+  // lane and the two lines were drawn on top of each other — two unrelated
+  // branches looked like one continuous track.
+  //
+  // Loaded prefix (u1/u2 live below the window):
+  //   c0 → c1 → c2(merge) → c3 → c4(merge) → c5 → c6
+  //              ↘ t1                ↘ t2
+  const TRUNCATED_TIPS = [
+    { sha: 'c0', parents: ['c1'] },
+    { sha: 'c1', parents: ['c2'] },
+    { sha: 'c2', parents: ['c3', 't1'] },
+    { sha: 't1', parents: ['u1'] },
+    { sha: 'c3', parents: ['c4'] },
+    { sha: 'c4', parents: ['c5', 't2'] },
+    { sha: 't2', parents: ['u2'] },
+    { sha: 'c5', parents: ['c6'] },
+    { sha: 'c6', parents: [] },
+  ]
+
+  it('gives each unfinished branch its own lane', () => {
+    const { nodes } = getConnections(TRUNCATED_TIPS)
+    expect(nodes[3].lane).not.toBe(nodes[6].lane)
+  })
+
+  it('both tips keep a continuation line down to the last row', () => {
+    const { lines } = getConnections(TRUNCATED_TIPS)
+    const fades = lines.filter((l: any) => l.fade)
+    expect(fades).toHaveLength(2)
+    for (const f of fades) expect(f.rowEnd).toBe(TRUNCATED_TIPS.length - 1)
   })
 })
 

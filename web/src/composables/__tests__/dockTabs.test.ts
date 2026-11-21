@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DOCK_TAB_IDS, isDockTabId, mergeDockOrder, type DockTabId } from '@/composables/dockTabs'
+import { dockTabIdsInDefaultOrder, isDockTabId, mergeDockOrder, type DockTabId } from '@/composables/dockTabs'
 import {
   DOCK_FEATURE_TABS,
   DOCK_TABS,
@@ -12,7 +12,7 @@ const OPTIONAL = DOCK_TABS.filter((t) => t.closable).map((t) => t.id)
 
 describe('dockTabs default order', () => {
   it('renders every left-column tab in registry order when nothing is hidden', () => {
-    expect(dockTabs()).toEqual(DOCK_TAB_IDS)
+    expect(dockTabs()).toEqual(dockTabIdsInDefaultOrder())
   })
 
   it('keeps only browse / view / settings permanent', () => {
@@ -40,7 +40,7 @@ describe('dockTabs default order', () => {
 
 describe('dockTabs ordering', () => {
   it('follows a complete user order verbatim — settings included', () => {
-    const order = [...DOCK_TAB_IDS].reverse()
+    const order = [...dockTabIdsInDefaultOrder()].reverse()
     expect(dockTabs({ order })).toEqual(order)
     // settings is no longer forced to the end: it is just another row.
     expect(dockTabs({ order })[0]).toBe('settings')
@@ -50,8 +50,8 @@ describe('dockTabs ordering', () => {
     // A partial order must never drop a tab — it just leaves the rest alone.
     const order: DockTabId[] = ['mail']
     const result = dockTabs({ order })
-    expect(result).toHaveLength(DOCK_TAB_IDS.length)
-    expect(new Set(result)).toEqual(new Set(DOCK_TAB_IDS))
+    expect(result).toHaveLength(dockTabIdsInDefaultOrder().length)
+    expect(new Set(result)).toEqual(new Set(dockTabIdsInDefaultOrder()))
   })
 
   it('drops hidden tabs but keeps their slot for when they come back', () => {
@@ -85,7 +85,7 @@ describe('mergeDockOrder', () => {
     expect(merged.at(-1)).toBe('settings')
     // The nine movable ids keep their slots but take the stored sequence.
     expect(merged.slice(3, 12)).toEqual(legacy)
-    expect(merged).toHaveLength(DOCK_TAB_IDS.length)
+    expect(merged).toHaveLength(dockTabIdsInDefaultOrder().length)
   })
 
   it('drops unknown and duplicate ids', () => {
@@ -95,20 +95,20 @@ describe('mergeDockOrder', () => {
       'not-a-tab' as DockTabId,
       'forge',
     ])
-    expect(merged).toHaveLength(DOCK_TAB_IDS.length)
+    expect(merged).toHaveLength(dockTabIdsInDefaultOrder().length)
     expect(new Set(merged).size).toBe(merged.length)
-    for (const id of DOCK_TAB_IDS) expect(merged).toContain(id)
+    for (const id of dockTabIdsInDefaultOrder()) expect(merged).toContain(id)
   })
 
   it('falls back to the default order for an empty or absent value', () => {
-    expect(mergeDockOrder([])).toEqual(DOCK_TAB_IDS)
-    expect(mergeDockOrder()).toEqual(DOCK_TAB_IDS)
+    expect(mergeDockOrder([])).toEqual(dockTabIdsInDefaultOrder())
+    expect(mergeDockOrder()).toEqual(dockTabIdsInDefaultOrder())
   })
 
   it('never drops a tab added after the order was saved', () => {
     const saved: DockTabId[] = ['mail', 'tasks']
     const merged = mergeDockOrder(saved)
-    for (const id of DOCK_TAB_IDS) expect(merged).toContain(id)
+    for (const id of dockTabIdsInDefaultOrder()) expect(merged).toContain(id)
   })
 })
 
@@ -118,7 +118,7 @@ describe('dockTabs gates', () => {
     const result = dockTabs({ featureDisabled })
     expect(result).not.toContain('forge')
     expect(result).not.toContain('share')
-    expect(result).toEqual(DOCK_TAB_IDS.filter((id) => id !== 'forge' && id !== 'share'))
+    expect(result).toEqual(dockTabIdsInDefaultOrder().filter((id) => id !== 'forge' && id !== 'share'))
   })
 
   it('declares the six server-switch tabs', () => {
@@ -145,7 +145,7 @@ describe('dockTabs gates', () => {
   })
 
   it('applies gates to the user order, not the other way round', () => {
-    const order = [...DOCK_TAB_IDS].reverse()
+    const order = [...dockTabIdsInDefaultOrder()].reverse()
     const result = dockTabs({
       order,
       unavailable: new Set<DockTabId>(['terminal']),
@@ -165,14 +165,14 @@ describe('dockTabs hidden set safety', () => {
   })
 
   it('ignores unknown ids in the stored order', () => {
-    expect(dockTabs({ order: ['nope' as DockTabId] })).toEqual(DOCK_TAB_IDS)
+    expect(dockTabs({ order: ['nope' as DockTabId] })).toEqual(dockTabIdsInDefaultOrder())
   })
 })
 
 describe('registry integrity', () => {
   it('has unique ids and every id is reachable by the type guard', () => {
-    expect(new Set(DOCK_TAB_IDS).size).toBe(DOCK_TAB_IDS.length)
-    for (const id of DOCK_TAB_IDS) expect(isDockTabId(id)).toBe(true)
+    expect(new Set(dockTabIdsInDefaultOrder()).size).toBe(dockTabIdsInDefaultOrder().length)
+    for (const id of dockTabIdsInDefaultOrder()) expect(isDockTabId(id)).toBe(true)
   })
 
   it('has no chat entry — chat is the right-hand pane', () => {

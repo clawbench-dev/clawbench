@@ -1189,6 +1189,83 @@ describe('useQuoteQuestion', () => {
       wrapper.unmount()
     })
 
+    // A panel whose content is not one of the built-in preview classes opts in
+    // with `data-quotable`; the identity attributes are what make the card
+    // labelled and addressable, exactly as for the built-in regions.
+    it('shows bar for a selection inside an opted-in [data-quotable] region', () => {
+      const wrapper = mountWithComposable()
+      createSelectionInContainer('plugin-card', {
+        'data-quotable': '',
+        'data-quote-source': 'Deploy log',
+        'data-quote-language': 'deploy',
+        'data-quote-deploy': 'd-42',
+      })
+
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value?.text).toBe('selected code text')
+      expect(ctx.quoteData.value?.filePath).toBe('Deploy log')
+      expect(ctx.quoteData.value?.locators).toEqual({ deploy: 'd-42' })
+
+      wrapper.unmount()
+    })
+
+    // The opt-in must not turn every panel into quotable content: an unmarked
+    // container stays out of the bar, which is why this is an attribute rather
+    // than a blanket `div` rule.
+    it('does not show the bar for an unmarked container', () => {
+      const wrapper = mountWithComposable()
+      createSelectionInContainer('plugin-card', { 'data-quote-source': 'Deploy log' })
+
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      expect(qq.visible.value).toBe(false)
+
+      wrapper.unmount()
+    })
+
+    // `:data-quotable="flag"` renders "false" rather than removing the
+    // attribute, so an off switch has to be recognised — otherwise switching
+    // the region off would leave it quotable.
+    it('treats data-quotable="false" as off', () => {
+      const wrapper = mountWithComposable()
+      createSelectionInContainer('plugin-card', {
+        'data-quotable': 'false',
+        'data-quote-source': 'Deploy log',
+      })
+
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      expect(qq.visible.value).toBe(false)
+
+      wrapper.unmount()
+    })
+
+    // The opt-in alone is enough to quote; the card is anonymous (a free-form
+    // selection) until the author adds `data-quote-*`.
+    it('quotes an opted-in region that carries no identity', () => {
+      const wrapper = mountWithComposable()
+      createSelectionInContainer('plugin-card', { 'data-quotable': '' })
+
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.advanceTimersByTime(150)
+
+      const qq = useQuoteQuestion()
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value?.text).toBe('selected code text')
+      expect(ctx.quoteData.value?.filePath).toBe('')
+      expect(ctx.quoteData.value?.sourceKind).toBe('selection')
+
+      wrapper.unmount()
+    })
+
     // Git history diffs became quotable so a selected hunk can be sent to the
     // AI. The container carries `data-quote-source` (the file name), so the
     // quote is labelled with the file rather than falling back to a generic

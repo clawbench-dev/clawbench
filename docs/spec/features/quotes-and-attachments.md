@@ -115,14 +115,17 @@
 | Markdown 预览 | `MarkdownPreview.vue` → `showBar` |
 | 代码预览（CodeMirror） | `CodeMirrorViewer.vue` → `showBar`（自带 anchor） |
 | HTML / OpenAPI 预览（iframe） | `utils/iframeSelectionQuote.ts` 的 `makeIframeQuoteShowHandler` |
+| 邮件正文（iframe / pre） | 富文本正文走 `utils/iframeSelectionQuote.ts` 的桥（沙箱保留 `allow-same-origin`，宿主可读其选区；`identity` 给出 `sourceKind: 'mail'` + `locators.mail`）；纯文本正文是宿主里的 `<pre>`，由带 `data-quote-*` 的外层区域识别 |
 | 终端 | `TerminalPanelContent.vue`（`sourceKind: 'terminal'`） |
 | 会议中的转写 / 会议聊天 | 白名单里的 `.transcript` / `.live-chat`，身份来自会议面板的 `data-quote-*` |
 | 议题 / PR 详情、CI 详情、Git diff、任务执行详情、会议正文 | 标 `data-quote-*` 属性，由 `quoteQuestionUtils.getQuoteSource` 统一读取 |
+| **任意插件面板** | 容器标 `data-quotable`（+ `data-quote-*` 给身份），见下 |
 
 `data-quote-*` 是给「一段可选中区域」标注身份的方式：
 
 ```html
 <div
+  data-quotable                    <!-- 让这块区域可被划词引用 -->
   data-quote-source="标签"        <!-- 卡片上显示的名字 -->
   data-quote-language="issue"     <!-- 类型标记，见 §4 -->
   data-quote-url="https://…"
@@ -134,6 +137,12 @@
   data-quote-meeting-token="tok-9"
 >
 ```
+
+`data-quotable` 是**开关**，`data-quote-*` 是**身份**，两件事：
+
+- 白名单（`.markdown-body` / `.raw-content-pre` / `.transcript` …）认的是内置预览的类名；新面板的容器不在里面，**只标 `data-quote-*` 不会弹条**，必须再加 `data-quotable`。属性存在即开启，但 `data-quotable="false"` 例外——Vue 的 `:data-quotable="flag"` 关掉时会渲染成 `"false"` 而不是删属性，所以这个值按关闭处理。
+- 只标 `data-quotable` 也能引用，但卡片没有标签、跳不回来源；实际使用时应同时给 `data-quote-source` 和需要的定位键。
+
 
 ### 3.2 按钮类（composer）
 
@@ -178,9 +187,23 @@
 - **正在进行的会议是个例外**：它还没有产物可拉，所以转写文本在 `dragstart` 时就被塞进载荷（`text` 非空），补内容那一层看到 `text` 非空就直接放行、不再请求。
 - 拖拽预览图是共享的（`buildAttachDragImage`），`dragend` 必须调 `cleanupDragGhost()`。
 
-### 3.4 附件拖拽的构造器
+### 3.4 拖拽源与附件构造器：优先用 `v-chat-drag`
 
-统一用 `utils/attachDrag.ts` 的 `startAttachDrag(e, path, opts)`：
+新面板不要手写 `draggable` + `dragstart` + `dragend` 三件套。指令把宽屏门控、载荷、拖影、清理都包了：
+
+```html
+<!-- 引用卡片：payload 可以是对象，也可以是 getter（v-for 行读当前值） -->
+<div v-chat-drag="{ kind: 'quote', payload: forgeItemDragPayload(item) }">
+
+<!-- 文件附件：opts 与 startAttachDrag 相同 -->
+<div v-chat-drag="{ kind: 'attach', path: file.path, name: file.name }">
+```
+
+- 窄屏默认自动禁用；确实有同屏落点时才加 `allowNarrow: true`。
+- 指令**只能放在行/卡片上**，不能放在正文容器上（`draggable` 会让文字选不中）。
+- 仍然需要 `data-quotable` 的面板，把两者放在不同层级：外层卡片拖拽，内层正文划词。
+
+底层构造器仍然可用（`utils/attachDrag.ts` 的 `startAttachDrag`），适用于指令表达不了的场景：
 
 ```ts
 startAttachDrag(e, '/proj/a.md', {
@@ -193,6 +216,27 @@ startAttachDrag(e, '/proj/a.md', {
 ```
 
 它负责写载荷、设光标、装预览图。**不要再自己 `setData` + `setDragImage`**。
+
+### 3.5 插件面板：`useChatBridge`
+
+投递这一段以前是「知道哪个模块管哪一步」才能用：暂存在 `useChatContext`、浮条在 `useQuoteQuestion`、选目标在 `useConversationTarget`，而「引用后跳到聊天」只有 App.vue 能切页签——知识库面板为此单独造了一个模块级 ref 让 App 去捡。现在这三件事收进一个门面：
+
+```ts
+import { useChatBridge } from '@/composables/useChatBridge'
+
+// setup() 里取一次
+const chat = useChatBridge()
+
+chat.quote(payload)                          // 直接进当前会话（含跳转 + toast）
+chat.quote(payload, { note: '为什么？' })     // 带批注
+chat.comment(payload, { anchorEl: btn })     // 开浮条，让用户先写批注
+chat.attach('src/a.ts')                      // 附件：弹会话选择器（文件管理器行为）
+chat.attach(['a.ts', 'b.ts'], { to: 'active' }) // 直接进当前会话
+```
+
+- `quote` 要求载荷**已经完整**；内容要现拉的来源（会议、邮件）用 `comment` 或拖拽（落点会 `hydrateDraggedQuote`）。
+- `comment` 只是打开浮条，用户提交才进草稿——关掉浮条不会污染输入框。
+- 门面**没有**挂到 `DockPanelHost` 上：宿主接口是给「面板拿不到的东西」用的，而这些都是纯前端状态，直接 import 更短，也不会让每个插件都看见别人的能力。
 
 ---
 
@@ -261,9 +305,10 @@ startAttachDrag(e, '/proj/a.md', {
 
 1. 构造载荷，优先复用 `quoteItemFromTarget` / `buildMessageQuote` / `*DragPayload`；不要手拼。
 2. `language` 给一个类型标记（如 `'mail'`），`sourceKind` 给来源类别；二者至少一个能让 `resolveQuoteType` 认出它。
-3. 入口走 `quoteQuestion.openComposer({ quote, label })`（要批注）或 `requestTarget(..., { deliverTo: 'active' })`（一键）。
-4. 拖拽源记得 `:draggable="isWideScreen"` + `@dragend="cleanupDragGhost()"`。
-5. 要能跳回源头，就往 `locators` 里塞一个键——**前后端都不用改**。
+3. 投递走 `useChatBridge()`：`quote(payload)`（一键）/ `comment(payload, { anchorEl })`（要批注）/ `attach(path, { to })`（附件）。
+4. 拖拽源用 `v-chat-drag`（宽屏门控、拖影、清理都已内置），不要手写三件套。
+5. 面板里的文字要能被划词引用，就给容器加 `data-quotable`；身份仍用 `data-quote-*`。
+6. 要能跳回源头，就往 `locators` 里塞一个键——**前后端都不用改**。
 
 ### 7.2 加定位键：零改动（除非要跳转）
 

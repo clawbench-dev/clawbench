@@ -11,6 +11,7 @@ import (
 
 	"clawbench/internal/handler"
 	"clawbench/internal/model"
+	plugterminal "clawbench/internal/plugin/terminal"
 	"clawbench/internal/plugins"
 	"clawbench/internal/terminal"
 
@@ -480,22 +481,22 @@ func TestTerminalPluginLifecycleIsIdempotent(t *testing.T) {
 	p := plugins.Lookup("terminal")
 	require.NotNil(t, p)
 
-	orig := handler.GetTerminalManager()
-	t.Cleanup(func() { handler.SetTerminalManager(orig) })
-	handler.SetTerminalManager(nil)
+	orig := plugterminal.GetTerminalManager()
+	t.Cleanup(func() { plugterminal.SetTerminalManager(orig) })
+	plugterminal.SetTerminalManager(nil)
 
 	p.Start(model.Config{})
-	first := handler.GetTerminalManager()
+	first := plugterminal.GetTerminalManager()
 	require.NotNil(t, first, "Start must create the manager")
 
 	p.Start(model.Config{})
-	assert.Same(t, first, handler.GetTerminalManager(), "a second Start must not stack a second manager")
+	assert.Same(t, first, plugterminal.GetTerminalManager(), "a second Start must not stack a second manager")
 
 	p.Stop()
-	assert.Nil(t, handler.GetTerminalManager(), "Stop must release the manager")
+	assert.Nil(t, plugterminal.GetTerminalManager(), "Stop must release the manager")
 
 	p.Stop() // must not panic or resurrect anything
-	assert.Nil(t, handler.GetTerminalManager())
+	assert.Nil(t, plugterminal.GetTerminalManager())
 }
 
 // TestOnDisableRunsOnlyAfterPersist pins the red line from the design: the

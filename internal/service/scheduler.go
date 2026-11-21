@@ -49,6 +49,11 @@ type RunningExecution struct {
 	TriggerType string // "auto" | "manual"
 	// Phase is RunningPhaseScript or RunningPhaseAI.
 	Phase string
+	// ExecID is the task_executions row id this run owns (0 when unknown).
+	// It is the only unambiguous handle on the row: ID is the session id for
+	// the AI phase, and a session accumulates one execution per run, so
+	// anything that has to touch "this run's row" must use ExecID.
+	ExecID int64
 }
 
 // ErrTasksDisabled is returned by manual triggers while the tasks master switch
@@ -422,7 +427,14 @@ func (s *Scheduler) cancelAllRunning(markRestartInterrupted bool) {
 		// is keyed "script-<id>" and has not written a row yet, so marking it
 		// would update nothing; its run is re-evaluated on the next tick anyway.
 		if markRestartInterrupted && exec.Phase == RunningPhaseAI {
-			markExecutionRestartInterrupted(exec.ID)
+			// ExecID == 0 means AddTaskExecution failed for this run, so there is
+			// no row to flag. Say so: the alternative is a run that silently
+			// neither resumes nor explains why.
+			if exec.ExecID <= 0 {
+				slog.Warn("cannot mark execution as restart-interrupted: no execution row",
+					slog.String("session_id", exec.ID), slog.Int64("task_id", exec.TaskID))
+			}
+			markExecutionRestartInterrupted(exec.ExecID)
 		}
 		slog.Info(
 			"cancelled running execution",
@@ -434,22 +446,31 @@ func (s *Scheduler) cancelAllRunning(markRestartInterrupted bool) {
 	})
 }
 
-// markExecutionRestartInterrupted records that this execution was cut short by
+// markExecutionRestartInterrupted records that THIS execution was cut short by
 // the graceful shutdown, so the next process can pick it up again.
+//
+// Keyed on the row's own primary key, NOT on session_id: one session can hold
+// many executions over its life, so a session-wide UPDATE stamped every past
+// run of that session as interrupted — and the startup resume then woke them
+// all up again, re-running work that had already finished.
+//
+// The caller passes RunningExecution.ExecID, NOT RunningExecution.ID: for the
+// AI phase ID holds the SESSION id (see executeTask), and binding that into an
+// int64 would mark nothing at all.
 //
 // Written to the DB rather than to the RunningExecution struct on purpose: the
 // executor goroutine reads that struct concurrently (a plain field would be a
 // data race), and the row is the only thing both processes share.
-func markExecutionRestartInterrupted(sessionID string) {
-	if sessionID == "" {
+func markExecutionRestartInterrupted(execID int64) {
+	if execID <= 0 {
 		return
 	}
 	if _, err := store.WriteExec(
-		"UPDATE task_executions SET restart_interrupted = 1 WHERE session_id = ?", sessionID,
+		"UPDATE task_executions SET restart_interrupted = 1 WHERE id = ?", execID,
 	); err != nil {
 		slog.Warn(
 			"failed to mark execution as restart-interrupted",
-			slog.String("session_id", sessionID),
+			slog.Int64("execution", execID),
 			slog.String("err", err.Error()),
 		)
 	}
@@ -1283,6 +1304,10 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// is created (line AddChatMessage streaming=true), the message stays streaming=1
 	// in DB forever. This handler finalizes it with an error, matching the pattern
 	// in handler/chat.go:443-461 for interactive sessions.
+	//
+	// declared before the execution row is inserted so this handler can settle
+	// THAT row (0 = the insert failed, so there is nothing to settle).
+	var execIDForPanic int64
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error(
@@ -1298,8 +1323,10 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			if _, finalizeErr := FinalizeStreamingMessage(projectPath, backendName, sessionID, string(errContent)); finalizeErr != nil {
 				slog.Warn("failed to finalize streaming message on panic", slog.String("error", finalizeErr.Error()))
 			}
-			// Mark execution as failed
-			_ = UpdateExecutionStatus(sessionID, "failed")
+			// Mark execution as failed. Keyed on the row, not the session: a
+			// panic can hit a restart-resumed run too, and that session holds
+			// older executions a session-wide UPDATE would relabel.
+			_ = UpdateExecutionStatusByID(execIDForPanic, "failed")
 			s.runningExecutions.Delete(sessionID)
 			emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", "", sessionID, projectPath, task.Name)
 		}
@@ -1334,6 +1361,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	if err != nil {
 		slog.Error("failed to record task execution", slog.String("err", err.Error()))
 	}
+	execIDForPanic = executionID
 
 	// Render the final prompt. For event-triggered runs the forge event context
 	// is prepended as a fixed, read-only block; the task's own prompt follows as
@@ -1466,6 +1494,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		StartedAt:   time.Now(),
 		TriggerType: triggerType,
 		Phase:       RunningPhaseAI,
+		ExecID:      executionID,
 	}
 	s.runningExecutions.Store(sessionID, running)
 	defer func() {
@@ -1937,11 +1966,31 @@ func AddTaskExecutionWithStatus(taskID int64, sessionID, triggerType, status str
 	return result.LastInsertId()
 }
 
-// UpdateExecutionStatus updates the status of a task execution by session_id.
+// UpdateExecutionStatus updates the status of every execution row of a
+// session.
+//
+// Deprecated for new callers: one session accumulates one execution row per
+// run, so this relabels the session's whole history. Every task terminal path
+// now resolves to UpdateExecutionStatusByID via settleExecutionStatus; this is
+// kept because it is exported and its tests document the historical shape.
 func UpdateExecutionStatus(sessionID string, status string) error {
 	_, err := store.WriteExec(
 		"UPDATE task_executions SET status = ? WHERE session_id = ?",
 		status, sessionID,
+	)
+	return err
+}
+
+// UpdateExecutionStatusByID settles ONE execution row, addressed by its primary
+// key. This is the form every task run must use: it knows its own row, and its
+// session may already hold older executions a session-wide write would relabel.
+func UpdateExecutionStatusByID(execID int64, status string) error {
+	if execID <= 0 {
+		return nil
+	}
+	_, err := store.WriteExec(
+		"UPDATE task_executions SET status = ? WHERE id = ?",
+		status, execID,
 	)
 	return err
 }

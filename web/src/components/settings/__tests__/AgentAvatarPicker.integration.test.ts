@@ -22,7 +22,7 @@ vi.mock('@/composables/useBackHandler', () => ({
 }))
 
 import AgentAvatarPicker from '@/components/settings/AgentAvatarPicker.vue'
-import { AVATAR_STYLES } from '@/utils/lazyAvatar'
+import { AVATAR_STYLES } from '@/utils/avatarPolicy'
 
 let wrappers: VueWrapper[] = []
 

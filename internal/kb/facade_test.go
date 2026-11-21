@@ -45,7 +45,7 @@ func TestFacades(t *testing.T) {
 	require.Equal(t, "制度", got.Name)
 
 	name := "新名字"
-	require.NoError(t, UpdateCollection(col.ID, &name, nil, nil, nil))
+	require.NoError(t, UpdateCollection(col.ID, &name, nil, nil))
 	got, err = GetCollection(col.ID)
 	require.NoError(t, err)
 	require.Equal(t, "新名字", got.Name)

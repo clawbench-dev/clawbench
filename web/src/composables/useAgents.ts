@@ -23,6 +23,8 @@ export interface ToolPolicy {
   maxRounds?: number
   /** Tool invocation budget per turn (0 = server default). */
   maxToolCalls?: number
+  /** Sub-agent budget per turn (0 = unlimited). */
+  maxSubagents?: number
   /** Per-command timeout in seconds (0 = server default). */
   bashTimeoutSec?: number
   /**
@@ -97,8 +99,11 @@ interface AgentRecord {
   acpAvailableModes?: Array<{ id: string; name: string }>
   transport?: string
   customSystemPrompt?: string
-  /** Raw SVG string for a user-configured avatar; empty = built-in brand icon. */
+  /** Raw SVG string or an uploaded `data:image/...` URI; empty = built-in brand icon. */
   avatar?: string
+  /** Which DiceBear style / seed produced `avatar` (empty for uploads/legacy). */
+  avatarStyle?: string
+  avatarSeed?: string
   canRefreshModels?: boolean
   /**
    * Whether this agent's backend has a registry spec, i.e. whether auto-discovery

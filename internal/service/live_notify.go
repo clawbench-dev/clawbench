@@ -78,13 +78,13 @@ func EmitMeetingEvent(token, projectPath, eventType, meetingTitle, viewerID, vie
 	// Log first: it must not depend on a WS manager existing (background jobs
 	// and tests run without one).
 	StoreNotification(NotificationRecord{
-		EventID:      eventID,
-		Kind:         NotificationKindMeeting,
-		EventType:    eventType,
-		Title:        title,
-		Body:         body,
-		ProjectID:    projectID,
-		MeetingToken: token,
+		EventID:   eventID,
+		Kind:      NotificationKindMeeting,
+		EventType: eventType,
+		Title:     title,
+		Body:      body,
+		ProjectID: projectID,
+		SubjectID: token,
 	})
 
 	mgr := ws.GetManager()

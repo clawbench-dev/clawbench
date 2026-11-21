@@ -2457,7 +2457,12 @@ describe('听记 lifecycle across the end of a meeting', () => {
  * that no reset helper has touched.
  */
 describe('a meeting with no picture', () => {
-  it('does not claim a screen is on the wire on a fresh page load', async () => {
+  // The explicit timeout is structural, not a race being papered over: the test
+  // deliberately re-imports the whole module graph (`vi.resetModules`), which
+  // measures ~2s on an idle machine because useLiveShare pulls in the media /
+  // socket stack. The assertions themselves are synchronous. Under a loaded
+  // full-suite run that import can exceed the 5s default.
+  it('does not claim a screen is on the wire on a fresh page load', { timeout: 20000 }, async () => {
     vi.resetModules()
     const mod = await import('../useLiveShare')
     const share = mod.useLiveShare()

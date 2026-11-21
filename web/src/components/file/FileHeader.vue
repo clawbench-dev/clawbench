@@ -707,6 +707,9 @@ function handleFileNameDragEnd() {
     display: flex;
     align-items: center;
     flex-shrink: 0;
+    /* A little air between the toolbar's tail and the exit — the row's own 4dp
+       gap is what made the close look crammed against the "more" button. */
+    margin-left: var(--space-2);
 }
 /* Deliberately NOT an ActionBar button: it closes the overlay view rather than
    acting on the file, so it keeps its own filled-red shape and full 26px box
@@ -741,12 +744,24 @@ function handleFileNameDragEnd() {
    at rest (colour + hover tint come from the shared `.is-danger` recipe), so it
    reads as "close this document", not as window chrome. */
 .overlay-close-btn--inline {
-    /* Same box as the row's buttons (`--ab-btn-size`, 28dp) — it sits beside
-       them and must not read as a smaller control. */
-    width: var(--ab-btn-size);
-    height: var(--ab-btn-size);
+    /* A step larger than the row's buttons (`--ab-btn-size`, 28dp): the exit is
+       the one control in this row that must not look pinched between the
+       toolbar's tail and the window controls. */
+    width: calc(32 * var(--dp));
+    height: calc(32 * var(--dp));
     padding: 0;
     border-radius: var(--radius-sm);
+}
+/* The glyph travels with the UI scale, like the row's icons do. A literal 14px
+   stays 14px while everything around it grows, which is what made the close
+   read as smaller than the icons beside it on a scaled UI. */
+.overlay-nav svg {
+    width: calc(15 * var(--dp));
+    height: calc(15 * var(--dp));
+}
+.overlay-close-btn--inline svg {
+    width: calc(16 * var(--dp));
+    height: calc(16 * var(--dp));
 }
 </style>
 

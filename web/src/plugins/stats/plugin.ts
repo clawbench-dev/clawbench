@@ -4,6 +4,7 @@ import type { DockPlugin } from '@/composables/dockPluginTypes'
 /** Usage statistics: the panel is its only dock resource. */
 export default {
   id: 'stats',
+  order: 70,
   titleKey: 'nav.stats',
   descriptionKey: 'settings.dockPlugins.desc.stats',
   group: 'project',

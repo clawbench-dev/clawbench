@@ -86,7 +86,7 @@ func TestRecordTaskNotification_ViaEmitTaskEvent(t *testing.T) {
 	assert.Equal(t, NotificationKindTask, rows[0].Kind)
 	assert.Equal(t, "completed", rows[0].EventType)
 	assert.Equal(t, "Nightly Audit", rows[0].Title)
-	assert.Equal(t, "42", rows[0].TaskID)
+	assert.Equal(t, "42", rows[0].SubjectID)
 	assert.Equal(t, "100", rows[0].ExecutionID)
 }
 
@@ -182,7 +182,7 @@ func TestRecordSessionNotification_OnTerminalPush(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, NotificationKindSession, rows[0].Kind)
 	assert.Equal(t, "completed", rows[0].EventType)
-	assert.Equal(t, "s1", rows[0].SessionID)
+	assert.Equal(t, "s1", rows[0].SubjectID)
 }
 
 func TestRecordSessionNotification_PermissionPending(t *testing.T) {
@@ -264,7 +264,7 @@ func TestForgeRecorderSink_RecordsChange(t *testing.T) {
 	assert.Equal(t, "merged", rows[0].EventType)
 	assert.Contains(t, rows[0].Title, "acme/widget")
 	assert.Equal(t, "Fix the thing", rows[0].Body)
-	assert.Equal(t, "pr/42", rows[0].ForgeItemKey)
+	assert.Equal(t, "pr/42", rows[0].SubjectID)
 }
 
 func TestForgeRecorderSink_PipelineUsesRunKey(t *testing.T) {
@@ -282,7 +282,7 @@ func TestForgeRecorderSink_PipelineUsesRunKey(t *testing.T) {
 	require.Len(t, rows, 1)
 	// A pipeline's number is always 0, so its identity is the run id — matching
 	// the frontend's forgeTargetItemKey.
-	assert.Equal(t, "pipeline/run:555", rows[0].ForgeItemKey)
+	assert.Equal(t, "pipeline/run:555", rows[0].SubjectID)
 }
 
 func TestForgeRecorderSink_SurvivesDisabledToggles(t *testing.T) {
@@ -435,7 +435,7 @@ func TestRecordSessionNotification_MemberRowLogsGroup(t *testing.T) {
 
 	rows := storedNotifications(t)
 	require.Len(t, rows, 1)
-	assert.Equal(t, "grp-1", rows[0].SessionID,
+	assert.Equal(t, "grp-1", rows[0].SubjectID,
 		"a member row must be logged as its group timeline, not the hidden member")
 	assert.Equal(t, "Standup", rows[0].Title, "the row should carry the group's title")
 }
@@ -484,14 +484,14 @@ func TestMarkMissingSources_RepairsLegacyMemberRows(t *testing.T) {
 
 	// A row stored the old way: pointing straight at the member row.
 	rows := []Notification{
-		{ID: 1, Kind: NotificationKindSession, SessionID: "mem-1"},
-		{ID: 2, Kind: NotificationKindSession, SessionID: "grp-1"},
+		{ID: 1, Kind: NotificationKindSession, SubjectID: "mem-1"},
+		{ID: 2, Kind: NotificationKindSession, SubjectID: "grp-1"},
 	}
 	MarkMissingSources(rows)
 
-	assert.Equal(t, "grp-1", rows[0].SessionID, "a legacy member-row target is repaired to the group")
+	assert.Equal(t, "grp-1", rows[0].SubjectID, "a legacy member-row target is repaired to the group")
 	assert.False(t, rows[0].SourceMissing, "the group exists, so the repaired row is navigable")
-	assert.Equal(t, "grp-1", rows[1].SessionID, "a group row is left alone")
+	assert.Equal(t, "grp-1", rows[1].SubjectID, "a group row is left alone")
 }
 
 // TestMarkMissingSources_RepairFailureIsNonFatal pins the best-effort contract:
@@ -504,7 +504,7 @@ func TestMarkMissingSources_RepairFailureIsNonFatal(t *testing.T) {
 	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
-	rows := []Notification{{ID: 1, Kind: NotificationKindSession, SessionID: "mem-1"}}
+	rows := []Notification{{ID: 1, Kind: NotificationKindSession, SubjectID: "mem-1"}}
 	require.NotPanics(t, func() { MarkMissingSources(rows) })
-	assert.Equal(t, "mem-1", rows[0].SessionID, "unrepairable rows keep their stored id")
+	assert.Equal(t, "mem-1", rows[0].SubjectID, "unrepairable rows keep their stored id")
 }

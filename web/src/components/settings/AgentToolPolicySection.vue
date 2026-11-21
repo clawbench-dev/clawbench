@@ -97,6 +97,20 @@
         />
         <span class="agent-tools__desc">{{ t('settings.items.toolPolicyMaxToolCallsDesc') }}</span>
       </label>
+      <label class="agent-tools__budget">
+        <span class="agent-tools__name">{{ t('settings.items.toolPolicyMaxSubagents') }}</span>
+        <input
+          type="number"
+          min="0"
+          step="1"
+          inputmode="numeric"
+          :value="props.agent?.toolPolicy?.maxSubagents || ''"
+          :placeholder="t('settings.items.toolPolicyUnlimited')"
+          :disabled="saving"
+          @change="saveBudget('maxSubagents', $event)"
+        />
+        <span class="agent-tools__desc">{{ t('settings.items.toolPolicyMaxSubagentsDesc') }}</span>
+      </label>
     </div>
 
     <!-- Project context files. Stated as the permission ("read AGENTS.md")
@@ -223,7 +237,7 @@ async function save(nextAllow: string[]) {
  * a partial object would rely on the server's "missing means leave alone"
  * behaviour, which is exactly what drops the other budget.
  */
-async function saveBudget(field: 'maxRounds' | 'maxToolCalls', event: Event) {
+async function saveBudget(field: 'maxRounds' | 'maxToolCalls' | 'maxSubagents', event: Event) {
   const input = event.target as HTMLInputElement
   const stored = props.agent?.toolPolicy?.[field] ?? 0
   if (!props.agent || saving.value) {

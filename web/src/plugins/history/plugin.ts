@@ -5,6 +5,7 @@ import type { DockPlugin } from '@/composables/dockPluginTypes'
 /** Git history: working-tree badge + the project history panel. */
 export default {
   id: 'history',
+  order: 30,
   titleKey: 'git.history.projectHistory',
   descriptionKey: 'settings.dockPlugins.desc.history',
   group: 'workspace',

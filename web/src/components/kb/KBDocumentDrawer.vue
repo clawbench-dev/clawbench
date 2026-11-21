@@ -106,7 +106,7 @@
               <span>{{ t('kb.quoteChunk') }}</span>
             </button>
           </header>
-          <div class="kb-drawer-text markdown-body" v-html="chunkHtml(chunk)" />
+          <div class="kb-drawer-text markdown-body" v-html="chunkHtml(chunk)" @error.capture="onChunkMediaError" />
         </article>
       </template>
     </div>
@@ -143,6 +143,10 @@ import {
   type KBDocumentDetail,
 } from '@/composables/useKnowledgeBase'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
+import { resolveChunkImages } from '@/utils/kbChunkMedia.ts'
+import { annotateMediaBlocks } from '@/utils/mediaBlockFactory.ts'
+import { applyMediaMissingFallback } from '@/utils/localMediaFallback.ts'
 import {
   documentErrorText,
   formatLocation,
@@ -175,6 +179,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { isWideScreen } = useWideScreenLayout()
 
 const loading = ref(false)
 const error = ref('')
@@ -212,10 +217,35 @@ function locationText(loc?: string): string {
 
 const htmlCache = new Map<number, string>()
 
+/**
+ * Cache-buster for the served image URLs of the CURRENT document. A re-parsed
+ * document points at the same path, so the stamp has to change with the parse —
+ * otherwise the browser would keep showing the old (or broken) response.
+ */
+const imageStamp = ref(Date.now())
+
+/**
+ * Render one passage, then point its images at the served file.
+ *
+ * A chunk carries the document's ORIGINAL relative srcs, which resolve against
+ * the app's own URL and 404 into the browser's broken glyph. Resolving them
+ * against the source file's directory (and marking them as content media, so
+ * localMediaFallback can paint the shared "could not load" card) is what makes
+ * a passage with a picture readable instead of ugly.
+ */
 function chunkHtml(chunk: KBChunk): string {
   let html = htmlCache.get(chunk.id)
   if (html === undefined) {
     html = renderMarkdownHtml(chunk.chunk_text, { skipEnhancements: true, wrapTables: false })
+    html = resolveChunkImages(html, detail.value?.document.source_path ?? '', {
+      isWideScreen: isWideScreen.value,
+      stamp: imageStamp.value,
+    })
+    // Lift every <img> into the shared media figure (1px frame + floating
+    // toolbar) — the same factory the chat and file-preview pipelines use, so a
+    // picture in a passage is framed and zoomable exactly like one in a message
+    // instead of sitting bare in the text flow.
+    html = annotateMediaBlocks(html)
     htmlCache.set(chunk.id, html)
   }
   return html
@@ -229,6 +259,7 @@ async function load(): Promise<void> {
   detail.value = null
   usage.value = null
   htmlCache.clear()
+  imageStamp.value = Date.now()
   try {
     const res = await fetchDocumentDetail(id, props.focusChunkId)
     detail.value = res
@@ -288,6 +319,24 @@ function onQuote(chunk: KBChunk): void {
 function onDelete(): void {
   if (!detail.value) return
   emit('delete', { id: detail.value.document.id, title: detail.value.document.title })
+}
+
+/**
+ * Paint the shared "could not load" card over a passage image that 404s.
+ *
+ * `localMediaFallback` only steps in for images it recognises as CONTENT media
+ * (the `lightbox-img` marker, or a still-streaming message), and a passage is
+ * neither: a bare markdown render has no marker. Rather than teach the global
+ * fallback about a fourth surface, the drawer handles its own — the outcome is
+ * the same component, so the card reads identically to chat.
+ */
+function onChunkMediaError(event: Event): void {
+  const target = event.target
+  // A bare markdown render has no marker, so the global fallback leaves it
+  // alone; the drawer handles its own. The outcome is the same component, so
+  // the card reads identically to chat.
+  if (!(target instanceof HTMLImageElement) || target.classList.contains('lightbox-img')) return
+  applyMediaMissingFallback(target)
 }
 
 defineExpose({ reload: load })

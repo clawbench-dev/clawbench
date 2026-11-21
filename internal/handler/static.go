@@ -12,8 +12,6 @@ import (
 
 // hashedAssetExts lists extensions for Vite hash-named assets that are
 // safe to cache aggressively (immutable — hash changes when content changes).
-//
-//nolint:goconst // ".png" appears in multiple unrelated string maps; extracting is overkill
 var hashedAssetExts = map[string]bool{
 	".js": true, ".css": true, ".mjs": true,
 	".woff2": true, ".woff": true, ".ttf": true,

@@ -1,6 +1,4 @@
 SessionNotRunning: 会话未在运行
-SessionStreamNotFound: 未找到会话流
-SessionStreamBusy: 会话流正在其他设备上查看
 ServiceBusy: 服务器正在装配分享的会话，请稍后重试
 SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档旧会话
 SessionIdRequired: session_id 为必填项
@@ -51,7 +49,6 @@ TokenRequired: 缺少 token
 LiveShareAlreadyPublishing: 已有发布端在共享这个房间
 LiveShareTooManyRooms: 同时进行的屏幕共享数量已达上限
 LiveShareRelayNotConfigured: 未配置中继服务，请先在创建会议页填写并测试中继地址与密钥
-LiveShareRelayUnavailable: 中继服务不可用，会议无法开始
 LiveSFURelayMissingFields: 中继地址、API Key、API Secret 都需要填写
 LiveSFURelayUnreachable: '无法连接 {{.URL}}：{{.Detail}}'
 LiveSFURelayRejected: 'LiveKit 拒绝了请求（地址可达，但密钥或权限不对）：{{.Detail}}'
@@ -104,9 +101,7 @@ ThinkIdAndMessageIdRequired: 缺少 think_id 或 message_id
 ThinkingNotFound: 思考内容未找到
 JobIdRequired: 任务ID为必填项
 FileNotFound: "文件未找到: {{.Path}}"
-ClientIdRequired: 客户端ID为必填项
 FileWatcherNotAvailable: 文件监视器不可用
-InvalidRole: 无效的角色
 MessageIdRequired: 消息ID为必填项
 InvalidRequest: 无效的请求
 SessionBackendNotFound: 会话后端未找到
@@ -118,13 +113,9 @@ InvalidLineRange: 无效的行范围
 InvalidURLAttachment: URL 附件必须是 http(s) 地址
 FileTooLargeOrInvalid: 文件过大或格式无效
 NoFileProvided: 未提供文件
-FileTooLargeShort: 文件过大
-InvalidImage: "不支持的图片: {{.Error}}"
 WriteFailed: "保存失败: {{.Error}}"
 ReadFailed: "读取失败: {{.Error}}"
 UploadSaveFailed: "无法保存文件: {{.Error}}"
-FileMustHaveExtension: 文件必须有扩展名
-FileTypeNotAllowed: "不允许的文件类型: {{.Ext}}"
 MissingPathOrName: 缺少路径或名称
 MissingPath: 缺少路径
 MissingName: 缺少名称
@@ -148,7 +139,6 @@ TaskEventTriggerUnsupported: 事件触发的任务无法手动执行，需等待
 TaskExecutionIdRequired: 执行实例ID为必填项
 TaskExecutionNotFound: 执行实例未找到或已结束
 DirectoryNameRequired: 目录名称为必填项
-LineNumberOutOfRange: 行号超出范围
 InvalidIndex: 无效的索引
 InvalidMessageId: 无效的消息 ID
 JobNotFound: 任务未找到
@@ -185,8 +175,6 @@ ProviderProtocolConflict: 以下智能体不支持该协议：{{.Agents}}
 ProviderConfigConflict: 智能体 {{.Agents}} 已绑定其他提供商；该后端共用一份全局配置文件，只能绑定一个
 ProviderConfigConsentRequired: 该智能体需要修改配置文件才能生效：{{.Files}}。请确认后重试
 ProviderModelsRequired: 智能体 {{.Agents}} 绑定的这个后端必须列出至少一个模型，不能清空模型清单
-CodeBuddyTokenUnsupported: 只有 CodeBuddy 智能体支持使用自有 API Key
-CodeBuddyTokenProviderConflict: 不能同时绑定模型提供商和使用 CodeBuddy 自有 API Key，请先清除其中一个
 InvalidSHA: 无效的提交SHA格式
 InvalidBranchName: 无效的分支名
 UnknownBranch: 该分支不存在或已被删除
@@ -203,12 +191,6 @@ NodeRuntimeMissing: 未检测到 {{.Tool}}，自动安装 Node.js 也失败了�
 AgentInstallBusy: 已有一个安装任务正在运行，请等它结束再试
 AgentInstallFailed: 安装失败：{{.Output}}
 AgentInstallFailedNoOutput: 安装失败，命令没有输出任何信息（退出码非 0）
-CustomURLOpenAIFormat: OpenAI 格式的自定义 URL 应以 /chat/completions 结尾
-CustomURLAnthropicFormat: Anthropic 格式的自定义 URL 应以 /v1/messages 结尾
-CustomURLInvalid: URL 格式无效
-CustomURLInvalidScheme: URL 必须以 http:// 或 https:// 开头
-CustomURLInvalidHost: URL 缺少有效的主机名
-CustomURLUnrecognizedFormat: URL 路径须以 /chat/completions（OpenAI）或 /v1/messages（Anthropic）结尾
 PushTaskCompleted: 任务已完成
 PushTaskFailed: 任务失败
 PushTaskCancelled: 任务已取消
@@ -219,7 +201,6 @@ PushActionRequired: 操作需批准
 # 新邮件通知。标题/正文由服务端在收信时渲染（后台 goroutine 没有 HTTP
 # 请求上下文），通知中心和 IM 推送共用同一份文案。
 MailNotifyNoSubject: 无主题
-MailNotifyUnknownSender: 未知发件人
 MailNotifyTitle: 收到新邮件
 MailNotifyManyTitle: 收到 {{.Count}} 封新邮件
 MailNotifyFrom: '发件人：{{.Sender}}'
@@ -327,12 +308,9 @@ UserGuideNotAvailable: 本实例的用户手册不可用
 InvalidRegex: '正则表达式无效：{{.Error}}'
 UpgradeInProgress: 升级正在进行中
 ManagedByEmbedder: 服务端由桌面端启动，随桌面端一起更新。请使用桌面端的更新方式。
-AlreadyLatestVersion: 已是最新版本
 RAGNotAvailable: 全文检索不可用
 RAGResetInProgress: 已有重建任务在执行
-RAGResetFailed: 索引重建失败
 RAGSegmenterUnavailable: "已拒绝重建：分词器不可用。此时重建会把已正确分词的文本替换为未切分文本，导致中文搜索失效 — 请重启服务后重试。"
-RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
 # 异常终止自动续接时唯一落库的一行（role='system' 提示）。这句是给用户看的：
 # 说明发生了什么、系统做了什么；它**不是**发给智能体的指令（指令是
@@ -463,6 +441,8 @@ UsageMeterPeriodNotNumber: 周期长度必须是数字
 UsageMeterMetricInvalid: 统计口径必须是 tokens、credit 或 cost 之一
 UsageMeterMetricNotString: 统计口径必须是 tokens、credit 或 cost 之一
 UsageMeterCycleModeInvalid: 周期类型必须是 fixed（固定天数）或 monthly（自然月）
+UsageMeterAgentsInvalid: 智能体范围必须是非空的智能体 ID 列表
+UsageMeterAgentsTooMany: 智能体范围最多 {{.Max}} 个
 MeetingMinutesMaxTokensRange: 纪要输出上限必须在 {{.Min}} 到 {{.Max}} tokens 之间
 RestartFailed: 重启失败：{{.Error}}
 RestartUnavailable: 重启功能未初始化，无法重启服务端
@@ -493,7 +473,6 @@ MeetingFilesReasonMissing: 文件已不存在
 MeetingFilesReasonPermission: 没有读取权限
 MeetingFilesReasonUnreadable: 读取失败
 MeetingFilesStayWrap: （{{.Text}}）
-MeetingFilesExcerptHeader: 文件内容摘录（已截断）
 MeetingScreenVoice: 屏幕
 MeetingScreenStarted: "{{.Name}} 开始共享屏幕"
 MeetingScreenStopped: "{{.Name}} 停止共享屏幕{{.Stay}}"
@@ -556,7 +535,6 @@ MailAccountInvalid: 请填写有效的邮箱地址和收发服务器
 KBUnavailable: 知识库没有启用
 KBNotFound: 知识库内容不存在或已被删除
 KBDuplicate: 这个文件已经在当前知识库里了
-KBFileTooLarge: 文件太大，无法加入知识库
 KBUnsupportedFile: 这个文件类型不支持
 KBNotDirectory: 选中的不是一个文件夹
 KBSourceMissing: 原文件已经不在了，无法从原文件更新（知识库里的副本仍在，可以继续搜索）
@@ -581,7 +559,6 @@ KBReasonExecutable: 可执行文件无法作为知识库内容
 KBReasonBinary: 这个文件看起来是二进制内容，没有可索引的文字
 KBReasonFont: 字体文件无法作为知识库内容
 KBReasonPDFEncrypted: 打开 PDF 失败（文件可能损坏或已加密）
-KBReasonPDFMalformed: PDF 文件已损坏，无法解析
 KBReasonPDFNoText: 这份 PDF 里没有可提取的文字（可能是扫描件）
 KBReasonNoText: 这个文件里没有可提取的文字
 KBReasonFileTooLarge: "文件太大（{{.MaxMB}} MB），上限 {{.LimitMB}} MB"

@@ -8,6 +8,7 @@ import type { DockPlugin } from '@/composables/dockPluginTypes'
  */
 export default {
   id: 'kb',
+  order: 90,
   titleKey: 'nav.knowledgeBase',
   descriptionKey: 'settings.dockPlugins.desc.kb',
   group: 'personal',

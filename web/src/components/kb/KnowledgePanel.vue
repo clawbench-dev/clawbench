@@ -156,18 +156,6 @@
                     </span>
                     <ChevronRight v-if="!split" :size="16" class="kb-col-chevron" />
                   </button>
-                  <button
-                    type="button"
-                    class="kb-col-pin"
-                    :class="{ 'is-on': col.pinned }"
-                    :title="col.pinned ? t('kb.unpin') : t('kb.pin')"
-                    :aria-label="col.pinned ? t('kb.unpin') : t('kb.pin')"
-                    :aria-pressed="col.pinned"
-                    :data-action="col.pinned ? 'kb-unpin' : 'kb-pin'"
-                    @click.stop="togglePin(col)"
-                  >
-                    <Pin :size="13" :fill="col.pinned ? 'currentColor' : 'none'" />
-                  </button>
                 </div>
               </div>
             </template>
@@ -670,7 +658,6 @@ import {
   FolderInput,
   ListChecks,
   Pencil,
-  Pin,
   Plus,
   RotateCw,
   Search,
@@ -715,7 +702,8 @@ import {
 import { appLog } from '@/utils/appLog'
 import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
 import { kbAddFromURL, kbUploadText } from '@/composables/useKnowledgeBase'
-import { consumeKBPendingOpen, kbPendingOpen, requestStageKBQuote } from '@/utils/kbNavigation'
+import { consumeKBPendingOpen, kbPendingOpen } from '@/utils/kbNavigation'
+import { useChatBridge } from '@/composables/useChatBridge'
 import { attachDragTargets, hasAttachDragData, readAttachDragData } from '@/utils/attachDrag'
 import { expandDataTransfer, hasOSFileDrop, type ExpandResult } from '@/utils/dropFolder'
 import { useFileUpload } from '@/composables/useFileUpload'
@@ -731,6 +719,7 @@ const { isWideScreen } = useWideScreenLayout()
 const uiScale = useUiScale()
 const dialog = useDialog()
 const toast = useToast()
+const chatBridge = useChatBridge()
 const kb = useKnowledgeBase()
 const {
   dirUploading,
@@ -768,7 +757,6 @@ const {
   updateCollection,
   deleteCollection,
   setAutoInject,
-  setPinned,
   addFile,
   importDirectory,
   previewDirectory,
@@ -1135,10 +1123,8 @@ const filteredCollections = computed(() => {
   const q = collectionQuery.value.trim().toLowerCase()
   let out = q ? collections.value.filter((c) => c.name.toLowerCase().includes(q)) : collections.value
   if (collectionSort.value === 'name') {
-    out = [...out].sort(
-      (a, b) =>
-        (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) ||
-        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
+    out = [...out].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }),
     )
   }
   return out
@@ -1320,14 +1306,6 @@ async function toggleAutoInject(): Promise<void> {
   }
 }
 
-async function togglePin(col: KBCollection): Promise<void> {
-  try {
-    await setPinned(col.id, !col.pinned)
-  } catch (e) {
-    toast.show(e instanceof Error ? e.message : String(e), { icon: 'warning', type: 'error', duration: 3000 })
-  }
-}
-
 async function removeCurrent(): Promise<void> {
   const col = selected.value
   if (!col) return
@@ -1460,7 +1438,9 @@ function onQuoteChunk(payload: { text: string; title: string; location?: string 
   const source = payload.location
     ? `${payload.title} · ${locationText(payload.location)}`
     : payload.title
-  requestStageKBQuote({
+  // Same call any panel uses; the bridge reveals the chat pane through the
+  // handler App.vue registered, so there is no bespoke hand-off to keep in sync.
+  chatBridge.quote({
     text: `${source}\n\n${payload.text}`,
     filePath: payload.title,
     language: 'markdown',
@@ -1990,31 +1970,6 @@ defineExpose({
 .kb-col-row .kb-col {
   flex: 1;
   min-width: 0;
-}
-
-.kb-col-pin {
-  flex: none;
-  width: calc(26 * var(--dp));
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.kb-col-pin.is-on {
-  color: var(--accent-color);
-}
-
-@media (hover: hover) {
-  .kb-col-pin {
-    opacity: 0;
-  }
-  .kb-col-row:hover .kb-col-pin,
-  .kb-col-pin.is-on,
-  .kb-col-pin:focus-visible {
-    opacity: 1;
-  }
 }
 
 .kb-col {

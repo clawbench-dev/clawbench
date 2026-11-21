@@ -28,6 +28,11 @@ const (
 // a rule that always errors.
 const MaxUsageMeterPeriodDays = 366
 
+// MaxUsageMeterAgents caps the rule's agent filter. The ids are bound query
+// parameters, so this is a sanity limit rather than a safety one: a rule naming
+// hundreds of agents is a client bug, not a filter.
+const MaxUsageMeterAgents = 100
+
 // NormalizeUsageMeterCycleMode maps the stored value onto a known mode.
 //
 // Empty means "fixed": every install written before cycle_mode existed has an

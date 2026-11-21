@@ -28,6 +28,7 @@ function liveState(): Ref<string> {
  */
 export default {
   id: 'live',
+  order: 100,
   titleKey: 'nav.meeting',
   descriptionKey: 'settings.dockPlugins.desc.live',
   group: 'personal',

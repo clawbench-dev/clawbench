@@ -47,7 +47,9 @@ func TestPatchablePathsExistInConfig(t *testing.T) {
 func TestHotReloadFieldsArePatchable(t *testing.T) {
 	var orphans []string
 	for path := range hotReloadFields {
-		if !PatchableConfigPaths[path] {
+		// IsPatchablePath，不是 PatchableConfigPaths：功能字段（tasks.enabled
+		// 这类）由 internal/plugin/config 声明，只看核心表会把它们全判成孤儿。
+		if !IsPatchablePath(path) {
 			orphans = append(orphans, path)
 		}
 	}

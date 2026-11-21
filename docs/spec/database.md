@@ -37,7 +37,7 @@ RAG：同一数据库文件，独立连接池
 | auto_approve | INTEGER | NOT NULL | `0` | 自动批准模式 |
 | context_state | TEXT | | `''` | 会话级上下文状态 JSON（模式、思考档位等）。drain/续接路径靠它避免回落到默认值 |
 | agent_name | TEXT | NOT NULL | `''` | **群成员行的显示名（权威快照）**：首个实例=智能体本名，重复实例=名池名（池尽回退 `本名 序号`）。非成员行留空；成员行的 `title` 留空 |
-| agent_avatar | TEXT | NOT NULL | `''` | **群成员行自身的头像 SVG 快照**（前端 DiceBear 按成员名生成）。仅同一智能体的第 2+ 个实例写入（用于区分副本）；第 1 个/唯一实例留空，回退智能体头像 |
+| agent_avatar | TEXT | NOT NULL | `''` | **群成员行自身的头像 SVG 快照**（前端 DiceBear 按成员名从角色子集固定风格生成，带柔和底色）。仅同一智能体的第 2+ 个实例写入（用于区分副本）；第 1 个/唯一实例留空，回退智能体头像 |
 | compacted | INTEGER | NOT NULL | `0` | 上下文刚被压缩：下一轮需重注入系统提示（`MarkSessionCompacted`） |
 | title_renamed | INTEGER | NOT NULL | `0` | 用户是否手工改过标题 |
 | title_source | TEXT | NOT NULL | `''` | 标题来源等级：`''`/`placeholder`(0) < `auto`(1) < `custom`(2)。自动改名按此等级决定能否覆盖（`titleSourceRank`） |
@@ -268,7 +268,9 @@ UNIQUE：`(message_id)`
 | preferred_thinking_effort | TEXT | NOT NULL | `''` | 首选思考力度 |
 | thinking_effort_by_model | TEXT | NOT NULL | `'{}'` | 按模型 id 记忆的**用户显式选择**档位（JSON map）。优先级：该模型的选择 > 全局默认 > agent 默认；只有它会被跨轮继承，agent 自报的档位只用于显示；空值表示该模型无显式选择 |
 | custom_system_prompt | TEXT | NOT NULL | `''` | 用户自定义提示词 |
-| avatar | TEXT | NOT NULL | `''` | 用户自选的 DiceBear 头像 SVG（空＝用内置图标）；写入前经 `avatarSVGLooksSafe` 校验 |
+| avatar | TEXT | NOT NULL | `''` | 用户头像：DiceBear SVG 原文或上传图片的 `data:image/...` URI（空＝用内置图标）；写入前经 `internal/avatar.Validate` 校验 |
+| avatar_style | TEXT | NOT NULL | `''` | 生成头像所用的 DiceBear 风格 id（上传图片/旧头像为空）；供选择器重新打开同一格 |
+| avatar_seed | TEXT | NOT NULL | `''` | 生成头像所用的种子（上传图片/旧头像为空） |
 | models | TEXT | NOT NULL | `'[]'` | 可用模型列表 JSON |
 | models_auto_detected | INTEGER | NOT NULL | `0` | 自动检测模型标记 |
 | sort_order | INTEGER | NOT NULL | `0` | 排序顺序 |
@@ -670,19 +672,19 @@ UNIQUE：`idx_project_forges_path(project_id)`、索引 `idx_project_forges_repo
 |---|---|---|---|---|
 | id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
 | event_id | TEXT | NOT NULL UNIQUE | — | 事件 UUID（幂等写入） |
-| kind | TEXT | NOT NULL | — | 分类：session / task / forge |
+| kind | TEXT | NOT NULL | — | 分类：session / task / forge / usage / meeting / mail |
 | event_type | TEXT | NOT NULL | — | 细类型 |
 | title | TEXT | NOT NULL | — | 标题 |
 | body | TEXT | NOT NULL | `''` | 正文 |
 | project_id | INTEGER | NOT NULL | `0` | 项目 id |
-| session_id | TEXT | NOT NULL | `''` | 关联会话 |
-| task_id | TEXT | NOT NULL | `''` | 关联任务 |
-| execution_id | TEXT | NOT NULL | `''` | 关联执行记录 |
-| forge_item_key | TEXT | NOT NULL | `''` | 关联 forge 条目 |
-| agent_id | TEXT | NOT NULL | `''` | 关联 agent |
+| subject_id | TEXT | NOT NULL | `''` | **所有类型共用的主体标识**，由 kind 解释：会话 id / 任务 id / 会议分享 token / 仓库条目键 / 邮件 id（十进制文本）；usage 为空 |
+| execution_id | TEXT | NOT NULL | `''` | 任务执行记录 id（不是主体标识） |
+| agent_id | TEXT | NOT NULL | `''` | 产生该事件的 agent |
 | created_at | TEXT | NOT NULL | — | 创建时间（亚秒精度） |
 
 索引：`idx_notifications_created(created_at DESC, id DESC)`、`idx_notifications_event UNIQUE(event_id)`、`idx_notifications_filter(project_id, kind, created_at)`
+
+> 早期版本按类型分列（`session_id` / `task_id` / `forge_item_key` / `meeting_token` / `mail_message_id`）。启动迁移会把这些值写进 `subject_id` 并删除旧列；新库直接只有 `subject_id`。
 
 ### pending_events（待推送事件）
 
@@ -1309,6 +1311,8 @@ erDiagram
         TEXT preferred_thinking_effort
         TEXT custom_system_prompt
         TEXT avatar
+        TEXT avatar_style
+        TEXT avatar_seed
         TEXT models
         INTEGER models_auto_detected
         INTEGER sort_order

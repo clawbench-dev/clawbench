@@ -644,7 +644,12 @@ func TestUsageMeter_AgentFilter(t *testing.T) {
 	require.NoError(t, err)
 	assert.InDelta(t, 4.0, all.Actual, 1e-9)
 
-	one, err := service.ComputeUsageMeterForAgents(context.Background(), now, []string{"agent-a"})
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: anchorOn(now, 5), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+		AgentIDs: []string{"agent-a"},
+	})
+	one, err := service.ComputeUsageMeter(context.Background(), now)
 	require.NoError(t, err)
 	assert.InDelta(t, 1.5, one.Actual, 1e-9, "only the named agent counts")
 	assert.InDelta(t, all.Quota, one.Quota, 1e-9, "the quota is the shared global one")
@@ -653,11 +658,21 @@ func TestUsageMeter_AgentFilter(t *testing.T) {
 	assert.InDelta(t, 1.5, one.Series[len(one.Series)-1].Actual, 1e-9,
 		"the curve must end at the filtered total")
 
-	both, err := service.ComputeUsageMeterForAgents(context.Background(), now, []string{"agent-a", "agent-b"})
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: anchorOn(now, 5), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+		AgentIDs: []string{"agent-a", "agent-b"},
+	})
+	both, err := service.ComputeUsageMeter(context.Background(), now)
 	require.NoError(t, err)
 	assert.InDelta(t, 4.0, both.Actual, 1e-9)
 
-	none, err := service.ComputeUsageMeterForAgents(context.Background(), now, []string{"agent-missing"})
+	setUsageMeterRule(t, model.UsageMeterConfig{
+		AnchorDate: anchorOn(now, 5), PeriodDays: 30,
+		Metric: model.UsageMeterMetricCost, Quota: 30,
+		AgentIDs: []string{"agent-missing"},
+	})
+	none, err := service.ComputeUsageMeter(context.Background(), now)
 	require.NoError(t, err)
 	assert.InDelta(t, 0, none.Actual, 1e-9)
 }

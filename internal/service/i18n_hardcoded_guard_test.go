@@ -422,6 +422,13 @@ func TestNoNewHardcodedUserVisibleCJKFrontend(t *testing.T) {
 			strings.Contains(path, string(filepath.Separator)+"i18n"+string(filepath.Separator)+"locales") {
 			return nil
 		}
+		// 插件自带的文案表：plugins/<id>/i18n.ts 与 i18n/locales/*.ts 是同一类
+		// 东西——启动时合并进同一棵消息树，只是按功能拆开存放。它是"这段文案
+		// 属于哪个功能"的单一来源，不是硬编码。
+		relSlash := filepath.ToSlash(path)
+		if strings.Contains(relSlash, "/plugins/") && strings.HasSuffix(relSlash, "/i18n.ts") {
+			return nil
+		}
 		ext := filepath.Ext(path)
 		if ext != ".ts" && ext != ".js" && ext != ".vue" {
 			return nil

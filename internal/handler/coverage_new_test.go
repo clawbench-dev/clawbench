@@ -20,7 +20,9 @@ import (
 	"time"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/filex"
 	"clawbench/internal/model"
+	plugterminal "clawbench/internal/plugin/terminal"
 	"clawbench/internal/service"
 	"clawbench/internal/terminal"
 
@@ -50,7 +52,7 @@ func TestSanitizeArchiveName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeArchiveName(tt.input)
+			got := filex.SanitizeArchiveName(tt.input)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -1473,7 +1475,7 @@ func TestUploadFile_SpacesInFilename(t *testing.T) {
 }
 
 // ============================================================================
-// ServeQuickCommands — PUT reorder and additional error paths (47.6% → 80%+)
+// plugterminal.ServeQuickCommands — PUT reorder and additional error paths (47.6% → 80%+)
 // ============================================================================
 
 func TestServeQuickCommands_Reorder(t *testing.T) {
@@ -1489,7 +1491,7 @@ func TestServeQuickCommands_Reorder(t *testing.T) {
 		"ids": []int64{id2, id1},
 	}
 	req := newRequest(t, http.MethodPut, "/api/terminal/quick-commands/reorder", body)
-	w := callHandler(ServeQuickCommands, req)
+	w := callHandler(plugterminal.ServeQuickCommands, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var result map[string]any
@@ -1505,7 +1507,7 @@ func TestServeQuickCommands_ReorderEmptyIDs(t *testing.T) {
 		"ids": []int64{},
 	}
 	req := newRequest(t, http.MethodPut, "/api/terminal/quick-commands/reorder", body)
-	w := callHandler(ServeQuickCommands, req)
+	w := callHandler(plugterminal.ServeQuickCommands, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -1514,7 +1516,7 @@ func TestServeQuickCommands_PutNonReorderPath(t *testing.T) {
 	defer teardown()
 
 	req := newRequest(t, http.MethodPut, "/api/terminal/quick-commands/something-else", nil)
-	w := callHandler(ServeQuickCommands, req)
+	w := callHandler(plugterminal.ServeQuickCommands, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
@@ -1528,12 +1530,12 @@ func TestServeQuickCommands_PostWithWhitespace(t *testing.T) {
 		"command": "  echo hi  ",
 	}
 	req := newRequest(t, http.MethodPost, "/api/terminal/quick-commands", body)
-	w := callHandler(ServeQuickCommands, req)
+	w := callHandler(plugterminal.ServeQuickCommands, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ============================================================================
-// ServeQuickCommandByID — additional error paths (59.4% → 80%+)
+// plugterminal.ServeQuickCommandByID — additional error paths (59.4% → 80%+)
 // ============================================================================
 
 func TestServeQuickCommandByID_UpdateValidation(t *testing.T) {
@@ -1556,7 +1558,7 @@ func TestServeQuickCommandByID_UpdateValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := newRequest(t, http.MethodPut, "/api/terminal/quick-commands/"+fmt.Sprint(id), tt.body)
-			w := callHandler(ServeQuickCommandByID, req)
+			w := callHandler(plugterminal.ServeQuickCommandByID, req)
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 		})
 	}
@@ -1566,9 +1568,9 @@ func TestServeQuickCommandByID_DelegateToServeQuickCommands(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// When idStr is empty or "reorder", it should delegate to ServeQuickCommands
+	// When idStr is empty or "reorder", it should delegate to plugterminal.ServeQuickCommands
 	req := newRequest(t, http.MethodGet, "/api/terminal/quick-commands/reorder", nil)
-	w := callHandler(ServeQuickCommandByID, req)
+	w := callHandler(plugterminal.ServeQuickCommandByID, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
@@ -1644,30 +1646,30 @@ func TestWriteDiffResponse_WithGitError(t *testing.T) {
 }
 
 // ============================================================================
-// TerminalWebSocket — additional error paths (50% → 70%+)
+// plugterminal.TerminalWebSocket — additional error paths (50% → 70%+)
 // ============================================================================
 
 func TestTerminalWebSocket_NilManager(t *testing.T) {
-	origMgr := GetTerminalManager()
-	defer SetTerminalManager(origMgr)
-	SetTerminalManager(nil)
+	origMgr := plugterminal.GetTerminalManager()
+	defer plugterminal.SetTerminalManager(origMgr)
+	plugterminal.SetTerminalManager(nil)
 
 	req := newRequest(t, http.MethodGet, "/api/terminal/ws", nil)
-	w := callHandler(TerminalWebSocket, req)
+	w := callHandler(plugterminal.TerminalWebSocket, req)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestTerminalWebSocket_NoProjectCookie(t *testing.T) {
-	origMgr := GetTerminalManager()
+	origMgr := plugterminal.GetTerminalManager()
 	defer func() {
-		curMgr := GetTerminalManager()
+		curMgr := plugterminal.GetTerminalManager()
 		if curMgr != nil && curMgr != origMgr {
 			curMgr.Close()
 		}
-		SetTerminalManager(origMgr)
+		plugterminal.SetTerminalManager(origMgr)
 	}()
 
-	SetTerminalManager(terminal.NewManager(model.TerminalConfig{
+	plugterminal.SetTerminalManager(terminal.NewManager(model.TerminalConfig{
 		Enabled:      true,
 		IdleTimeout:  "1m",
 		BufferLines:  100,
@@ -1676,7 +1678,7 @@ func TestTerminalWebSocket_NoProjectCookie(t *testing.T) {
 	}, 20000))
 
 	req := newRequest(t, http.MethodGet, "/api/terminal/ws", nil)
-	w := callHandler(TerminalWebSocket, req)
+	w := callHandler(plugterminal.TerminalWebSocket, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 

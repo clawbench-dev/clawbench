@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"clawbench/internal/handler"
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
+	"clawbench/internal/plugin/config"
 	"clawbench/internal/plugins"
 
 	"github.com/stretchr/testify/assert"
@@ -70,7 +72,11 @@ func TestPluginRegistry_EverySectionIsFullyWhitelisted(t *testing.T) {
 		require.NotEmptyf(t, fields, "section %q of plugin %q has no yaml fields — the reflection lookup is broken", p.Section, p.ID)
 
 		for _, path := range fields {
-			if handler.PatchableConfigPaths[path] {
+			// 三个合法出口，顺序对应"这个字段归谁"：
+			//  1. 插件自己声明了（缺口二的新语义）；
+			//  2. 是某个可改字段的容器（forge.notify 这类中间层）；
+			//  3. 显式登记为"故意不可改"。
+			if p.ConfigFields[path] {
 				continue
 			}
 			if hasPatchableDescendant(path) {
@@ -80,8 +86,8 @@ func TestPluginRegistry_EverySectionIsFullyWhitelisted(t *testing.T) {
 				assert.NotEmpty(t, reason, "%s is exempted without a reason", path)
 				continue
 			}
-			t.Errorf("%s is a config field of plugin %q but is not in PatchableConfigPaths "+
-				"(add it to the whitelist, or register it in nonPatchableByDesign with a reason)", path, p.ID)
+			t.Errorf("%s is a config field of plugin %q but the plugin does not declare it in ConfigFields "+
+				"(declare it with a reason, or register it in nonPatchableByDesign)", path, p.ID)
 		}
 	}
 	assert.NotZero(t, checkedSections, "no plugin declares a Section — the guard would be vacuous")
@@ -137,9 +143,9 @@ func TestPluginRegistry_EveryDisabledKeyIsLocalized(t *testing.T) {
 // revokes every issued link. Losing the hook would leave the switch claiming
 // "disabled" while the bindings/links keep working.
 //
-// The tasks master switch is deliberately absent: its effect is bidirectional
-// (off cancels runs, on restarts cron) and stays in
-// handler.applyFeatureDisableEffects.
+// The tasks master switch used to be deliberately absent here: its effect is
+// bidirectional (off cancels runs and discards queued events, on restarts cron)
+// while OnDisable only has one direction. It is now covered by SwitchEffect.
 func TestPluginRegistry_DestructiveDisablesDeclareHooks(t *testing.T) {
 	registeredPluginsForTest(t)
 
@@ -252,12 +258,202 @@ func sectionYAMLFields(t *testing.T, section string) []string {
 
 // hasPatchableDescendant reports whether some whitelisted path lives under the
 // given object path (e.g. "forge.notify" → "forge.notify.opened").
+//
+// 走 handler.AllPatchablePaths 而不是直接查 PatchableConfigPaths：功能字段
+// 不在那张核心表里（它们由 internal/plugin/config 持有），只查核心表会让
+// forge.notify 这类中间层被判成"没人管"。
 func hasPatchableDescendant(path string) bool {
 	prefix := path + "."
-	for candidate := range handler.PatchableConfigPaths {
+	for candidate := range handler.AllPatchablePaths() {
 		if strings.HasPrefix(candidate, prefix) {
 			return true
 		}
 	}
 	return false
+}
+
+// TestPluginRegistry_ConfigOwnershipMatchesFeatures pins the two facts that
+// make "this field belongs to that feature" unambiguous:
+//
+//   - every registered plugin with a Section has a config.Feature whose ID is
+//     that Section, and every path it declares lives under that prefix;
+//   - every config.Feature corresponds to a registered plugin with the same
+//     Section (an orphan feature would be a PATCHable field nobody owns).
+//
+// 白名单本身只有一份（internal/plugin/config），所以这里不再比对两份清单——
+// 比的是"声明归属"与"运行时注册"是否对得上。
+func TestPluginRegistry_ConfigOwnershipMatchesFeatures(t *testing.T) {
+	all := registeredPluginsForTest(t)
+
+	byID := map[string]*plugins.Plugin{}
+	for _, p := range all {
+		byID[p.ID] = p
+	}
+
+	for _, f := range config.All() {
+		p := byID[f.ID]
+		require.NotNilf(t, p,
+			"config feature %q has no registered plugin — its fields are PATCHable but nobody owns them", f.ID)
+		assert.Equalf(t, f.ID, p.Section,
+			"config feature %q must match the plugin Section %q", f.ID, p.Section)
+		for path := range f.Fields {
+			assert.Truef(t, strings.HasPrefix(path, f.ID+"."),
+				"config feature %q declares %q, which is outside its own section", f.ID, path)
+		}
+	}
+
+	for _, p := range all {
+		if p.Section == "" {
+			continue
+		}
+		f := config.ByID(p.Section)
+		require.NotNilf(t, f,
+			"plugin %q declares Section %q but internal/plugin/config has no feature for it "+
+				"(its fields would be rejected by PATCH)", p.ID, p.Section)
+		assert.NotEmptyf(t, f.Fields,
+			"config feature %q declares no fields; a section with no patchable field is a dead section", f.ID)
+	}
+
+	// 归属唯一：同一路径不能被两个功能声明（Register 管插件那份，这里管
+	// config 这份——两份现在同源，但 config 也可以被单独扩展）。
+	seen := map[string]string{}
+	for _, f := range config.All() {
+		for path := range f.Fields {
+			require.Emptyf(t, seen[path], "config path %q is declared by both %q and %q", path, seen[path], f.ID)
+			seen[path] = f.ID
+		}
+	}
+}
+
+// TestPluginRegistry_EveryRoutePrefixHasMountedRoutes pins the other half of
+// "a feature owns its endpoints": every plugin that declares APIPrefixes must
+// actually have interfaces mounted under that prefix.
+//
+// The two facts live in different places (the prefix on the plugin literal, the
+// mounts in internal/plugin/<id>/routes.go), so one can be updated without the
+// other. What that looks like: a plugin claims /api/foo/ for gating and the
+// settings page renders its switch, but /api/foo/list was never mounted — every
+// call 404s and the feature appears broken "for no reason".
+//
+// It is the same shape as TestPluginRegistry_DeclaredPrefixesOwnRealRoutes
+// (which checks the ROUTE TABLE agrees with the prefix); this one checks the
+// MOUNT LIST produced the routes in the first place. A prefix with no routes at
+// all is caught by that test; this one fires earlier and names the file.
+func TestPluginRegistry_EveryRoutePrefixHasMountedRoutes(t *testing.T) {
+	all := registeredPluginsForTest(t)
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	routes := handler.RegisteredRoutes()
+	require.NotEmpty(t, routes)
+
+	for _, p := range all {
+		for _, prefix := range p.APIPrefixes {
+			covered := 0
+			for _, r := range routes {
+				if plugins.PrefixMatchesPath(prefix, r.Pattern) {
+					covered++
+				}
+			}
+			assert.NotZerof(t, covered,
+				"plugin %q declares prefix %q but no route under it is mounted — "+
+					"add the endpoints to internal/plugin/%s/routes.go (or drop the prefix)",
+				p.ID, prefix, p.ID)
+		}
+	}
+}
+
+// TestPluginRegistry_PrefixedPluginsDeclareMountRoutes pins the cheap half of
+// the same contract directly on the declaration.
+//
+// The test above only notices a missing MountRoutes when NO route at all lives
+// under the prefix. A plugin that mounts nothing but happens to share a prefix
+// with a core route would slip through. Asserting the field itself is exact,
+// and it is what Plugin.MountRoutes documents as "the guard rejects empty".
+func TestPluginRegistry_PrefixedPluginsDeclareMountRoutes(t *testing.T) {
+	all := registeredPluginsForTest(t)
+
+	checked := 0
+	for _, p := range all {
+		if len(p.APIPrefixes) == 0 {
+			continue
+		}
+		checked++
+		assert.NotNilf(t, p.MountRoutes,
+			"plugin %q declares APIPrefixes %v but no MountRoutes — every endpoint under "+
+				"that prefix would 404 while the feature still looks enabled",
+			p.ID, p.APIPrefixes)
+	}
+	assert.NotZero(t, checked, "no plugin declares APIPrefixes — the guard would be vacuous")
+}
+
+// TestPluginRegistry_SwitchHooksAreExclusive pins the constraint documented on
+// Plugin.SwitchEffect: a plugin declares OnDisable OR SwitchEffect, never both.
+//
+// The handler calls SwitchEffect for every direction and OnDisable only for the
+// "off" direction, so a plugin declaring both would run its cleanup TWICE on
+// disable (once per hook). For forge (clear every binding) and share (revoke
+// every link) that is a second destructive pass over data that is already gone
+// — cheap, but it also means the two hooks' warnings are reported twice.
+func TestPluginRegistry_SwitchHooksAreExclusive(t *testing.T) {
+	all := registeredPluginsForTest(t)
+
+	for _, p := range all {
+		assert.Falsef(t, p.OnDisable != nil && p.SwitchEffect != nil,
+			"plugin %q declares both OnDisable and SwitchEffect — a disable would "+
+				"run both hooks; keep the one that matches the switch's shape", p.ID)
+	}
+}
+
+// TestPluginRegistry_TasksUseSwitchEffect pins the bi-directional switch that
+// used to live in handler.applyFeatureDisableEffects.
+//
+// The tasks master switch must reach the scheduler in BOTH directions (off
+// cancels running executions and discards queued events; on restarts cron).
+// OnDisable alone cannot express the "on" direction, so registering the tasks
+// plugin without SwitchEffect would silently make "turn tasks back on" a no-op
+// — the switch would flip in the settings UI while the cron never restarted.
+func TestPluginRegistry_TasksUseSwitchEffect(t *testing.T) {
+	registeredPluginsForTest(t)
+
+	p := plugins.Lookup("tasks")
+	require.NotNil(t, p, "the tasks plugin is not registered")
+	assert.NotNil(t, p.SwitchEffect, "the tasks switch is bi-directional; it must declare SwitchEffect")
+	assert.Nil(t, p.OnDisable, "SwitchEffect already covers the off direction")
+}
+
+// TestPluginRegistry_EveryPluginPackageIsRegistered pins the one manual step
+// left in "add a plugin": after creating internal/plugin/<id>, you must add it
+// to internal/plugin/all.
+//
+// A package that exists but is never registered is invisible at runtime — its
+// MountRoutes never runs (every endpoint 404s), /api/features never mentions it,
+// and its background worker never starts. Everything still compiles, so nothing
+// else catches it.
+func TestPluginRegistry_EveryPluginPackageIsRegistered(t *testing.T) {
+	entries, err := os.ReadDir("../../internal/plugin")
+	require.NoError(t, err, "read internal/plugin")
+	src, err := os.ReadFile("../../internal/plugin/all/all.go")
+	require.NoError(t, err, "read internal/plugin/all/all.go")
+	code := string(src)
+
+	checked := 0
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "all" {
+			continue
+		}
+		// config 不是功能包：它只放"哪些配置字段属于哪个功能"的静态声明，
+		// 没有 Register()，也不该出现在功能注册表里。其余每个目录都必须
+		// 是一个已注册的功能。
+		if e.Name() == "config" {
+			continue
+		}
+		id := e.Name()
+		checked++
+		assert.Containsf(t, code, "clawbench/internal/plugin/"+id+`"`,
+			"internal/plugin/%s exists but all.go does not import it — add the import and a %s.Register() call", id, id)
+		assert.Containsf(t, code, "\t"+id+".Register(",
+			"internal/plugin/%s is imported but all.go never calls %s.Register() — the plugin is never registered", id, id)
+	}
+	assert.NotZero(t, checked, "no plugin packages found — the guard would be vacuous")
 }

@@ -28,12 +28,12 @@
       </button>
     </ActionBar>
 
-    <!-- Filters: three dropdowns on one row (project / type / time). -->
+    <!-- Filters: three dropdowns on one row (project / type / time).
+         The project picker stays the app-header-shaped MenuSelect: it needs an
+         icon, a two-line name+path row and a divider, which the shared
+         FilterSelect pill deliberately does not express. Type and time are
+         plain FilterSelect pills. -->
     <div class="notif-filters">
-      <!-- Project filter mirrors the app-header project menu: an app-surface
-           panel with a title, stacked two-line rows (name over path) and an
-           accent-highlighted active row. "All projects" is a single-line row
-           like the header menu's footer action. -->
       <MenuSelect
         :model-value="projectValue"
         :options="projectSelectOptions"
@@ -46,9 +46,9 @@
           <button
             type="button"
             class="app-menu-item"
-            :class="{ active: projectValue === '__all__' }"
+            :class="{ active: projectValue === ALL_PROJECTS }"
             :title="t('notifications.allProjects')"
-            @click="onProjectChange('__all__')"
+            @click="onProjectChange(ALL_PROJECTS)"
           >
             <Layers :size="14" class="item-icon" />
             <span class="item-label">{{ t('notifications.allProjects') }}</span>
@@ -71,14 +71,18 @@
           </button>
         </template>
       </MenuSelect>
-      <MenuSelect
-        :model-value="kindValue"
+      <FilterSelect
+        :model-value="filterKind"
         :options="kindOptions"
+        :caption="t('notifications.kindFilter')"
+        :all-label="t('notifications.all')"
         @update:model-value="onKindChange"
       />
-      <MenuSelect
-        :model-value="rangeValue"
+      <FilterSelect
+        :model-value="filterRange"
         :options="rangeOptions"
+        :caption="t('notifications.rangeFilter')"
+        :all-label="t('notifications.all')"
         @update:model-value="onRangeChange"
       />
       <span class="filter-count">{{ t('notifications.count', { n: total }) }}</span>
@@ -188,22 +192,26 @@
 import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Inbox, Folder, Unlink, Trash2, AlertCircle,
-  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Hand, Mail,
+  Inbox, Folder, Layers, Unlink, Trash2, AlertCircle,
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
+import FilterSelect from '@/components/common/FilterSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { useNotifications, ALL_PROJECTS } from '@/composables/useNotifications'
 import { useToast } from '@/composables/useToast'
-import { useFeatureFlags, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
+import { isFeatureEnabled, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app'
 import { formatClockTime, formatDayLabel, formatFullTimestamp, startOfLocalDay } from '@/utils/format'
 import { normalizeSlashes, toProjectRelative } from '@/utils/path'
-import { MEETING_ICON } from '@/utils/meetingIcon'
+import {
+  NOTIFICATION_KINDS,
+  notificationKindSpec,
+  type NotificationKindSpec,
+} from '@/utils/notificationKinds'
 import type { NotificationItem, NotificationKind, NotificationRange } from '@/utils/notificationsApi'
 
 const props = defineProps<{ active: boolean }>()
@@ -211,10 +219,6 @@ const props = defineProps<{ active: boolean }>()
 const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
-// 任务 / Forge master switches (功能编排). Rows stay readable — the log is a
-// record of what happened — but their jump targets are gone with the tabs, so
-// the press must explain instead of dispatching a dead deep link.
-const { tasksEnabled, forgeEnabled, mailEnabled } = useFeatureFlags()
 
 const {
   items, total, hasMore, loading, loadingMore, error,
@@ -229,16 +233,15 @@ const isFiltered = computed(() =>
   filterKind.value !== '' || filterRange.value !== '' || filterProject.value !== ALL_PROJECTS,
 )
 
-// MenuSelect works in string values, so map the '' (all) sentinel explicitly.
-const kindValue = computed(() => filterKind.value || '__all__')
-const rangeValue = computed(() => filterRange.value || '__all__')
-const projectValue = computed(() => filterProject.value || '__all__')
+// The kind/range filters hand FilterSelect the raw `''` (their "no filter"
+// value). The project picker cannot: its reset target is ALL_PROJECTS, which
+// FilterSelect is told about via `all-value`.
+const projectValue = computed(() => filterProject.value || ALL_PROJECTS)
 
 /**
- * Project rows for the dropdown: the active project first (the common case),
- * then the registry, each de-duplicated. Carries the path separately so the row
- * can render the app-header two-line shape (name over full path) instead of one
- * run-on label.
+ * Project rows for the picker: the active project first (the common case),
+ * then the registry, each de-duplicated. The path rides alongside the name so
+ * the custom row can render the app-header two-line shape.
  */
 const projectMenuItems = computed<{ value: string; name: string; path: string }[]>(() => {
   const out: { value: string; name: string; path: string }[] = []
@@ -253,10 +256,11 @@ const projectMenuItems = computed<{ value: string; name: string; path: string }[
   return out
 })
 
-// projectSelectOptions is what MenuSelect sees; the slot replaces the default
-// rows, but the trigger still needs a matching label for the current value.
+// MenuSelect needs a label for the trigger; the custom slot below replaces the
+// rows. The "all" row is keyed to ALL_PROJECTS so its click and the stored
+// sentinel are the same value.
 const projectSelectOptions = computed<MenuSelectOption[]>(() => [
-  { value: '__all__', label: `${t('notifications.projectFilter')}: ${t('notifications.all')}` },
+  { value: ALL_PROJECTS, label: t('notifications.allProjects') },
   ...projectMenuItems.value.map(i => ({ value: i.value, label: i.name })),
 ])
 
@@ -286,31 +290,30 @@ const dayGroups = computed(() => {
   return groups
 })
 
-const kindOptions = computed<MenuSelectOption[]>(() => [
-  { value: '__all__', label: `${t('notifications.kindFilter')}: ${t('notifications.all')}` },
-  { value: 'session', label: t('notifications.kind.session') },
-  { value: 'task', label: t('notifications.kind.task') },
-  { value: 'forge', label: t('notifications.kind.forge') },
-  { value: 'usage', label: t('notifications.kind.usage') },
-  { value: 'meeting', label: t('notifications.kind.meeting') },
-  { value: 'mail', label: t('notifications.kind.mail') },
-])
+// The filter's kind list comes from the table, so a new kind cannot be
+// rendered without also being filterable. FilterSelect prepends the "all" row
+// from `all-label`, so it is not listed here.
+const kindOptions = computed<MenuSelectOption[]>(() =>
+  NOTIFICATION_KINDS.map(kind => ({ value: kind.id, label: t(kind.labelKey) })),
+)
 
+// No "all" row and no caption baked into the labels any more: FilterSelect
+// prepends the "all" row from `all-label` and prints the caption itself, so
+// the same strings drive both the trigger and the menu.
 const rangeOptions = computed<MenuSelectOption[]>(() => [
-  { value: '__all__', label: `${t('notifications.rangeFilter')}: ${t('notifications.all')}` },
   { value: 'today', label: t('notifications.range.today') },
   { value: '7d', label: t('notifications.range.7d') },
   { value: '30d', label: t('notifications.range.30d') },
 ])
 
-function onKindChange(v: MenuSelectValue) {
-  void setKind(v === '__all__' ? '' : (v as NotificationKind))
+function onKindChange(v: string | number) {
+  void setKind(v === '' ? '' : (v as NotificationKind))
 }
-function onRangeChange(v: MenuSelectValue) {
-  void setRange(v === '__all__' ? '' : (v as NotificationRange))
+function onRangeChange(v: string | number) {
+  void setRange(v === '' ? '' : (v as NotificationRange))
 }
 function onProjectChange(v: MenuSelectValue) {
-  void setProject(v === '__all__' ? ALL_PROJECTS : String(v))
+  void setProject(String(v))
 }
 
 /** Load when the tab becomes visible; the panel is v-show'd, so watch `active`. */
@@ -350,79 +353,31 @@ function onScroll(e: Event) {
 
 // ── Row rendering ───────────────────────────────────────────────────────────
 
-function kindIcon(n: NotificationItem) {
-  switch (n.kind) {
-    case 'task': return Clock
-    case 'forge': return GitMerge
-    case 'usage': return Gauge
-    case 'meeting': return MEETING_ICON
-    case 'mail': return Mail
-    default: return Bot
-  }
+/** The table entry for a row, or undefined for a kind this build does not know. */
+function specOf(n: NotificationItem): NotificationKindSpec | undefined {
+  return notificationKindSpec(n.kind)
 }
 
-/** Semantic tone for the event chip, keyed off kind + event type. */
+function kindIcon(n: NotificationItem) {
+  // Unknown kinds get the neutral inbox glyph, not a concrete kind's icon.
+  return specOf(n)?.icon ?? Inbox
+}
+
+/** Semantic tone for the event chip, from the kind table. */
 function eventTone(n: NotificationItem): string {
-  const s = n.eventType
-  if (n.kind === 'usage') return s === 'full' ? 'danger' : 'warning'
-  if (n.kind === 'mail') return 'info'
-  if (n.kind === 'meeting') {
-    // A remote-control request is the one meeting event that needs an answer,
-    // so it reads like permission_pending rather than like a completion.
-    if (s === 'control_request') return 'warning'
-    if (s === 'minutes_failed' || s === 'transcript_failed' || s === 'revised_failed') return 'danger'
-    return 'success'
-  }
-  if (s === 'failed' || s === 'cancelled') return 'danger'
-  if (s === 'permission_pending') return 'warning'
-  if (n.kind === 'forge') return 'purple'
-  if (s === 'running') return 'info'
-  return 'success'
+  const spec = specOf(n)
+  if (!spec) return 'info'
+  return spec.toneByEvent?.[n.eventType] ?? spec.tone
 }
 
 function eventIcon(n: NotificationItem) {
-  const s = n.eventType
-  if (n.kind === 'usage') return Gauge
-  if (n.kind === 'mail') return Mail
-  if (n.kind === 'meeting') {
-    if (s === 'control_request') return Hand
-    if (s === 'minutes_failed' || s === 'transcript_failed' || s === 'revised_failed') return X
-    if (s === 'minutes_ready' || s === 'transcript_ready' || s === 'revised_ready') return Check
-    return MEETING_ICON
-  }
-  if (s === 'failed' || s === 'cancelled') return X
-  if (s === 'permission_pending') return ShieldAlert
-  if (n.kind === 'forge') return GitMerge
-  return Check
+  const spec = specOf(n)
+  if (!spec) return AlertCircle
+  return spec.eventIconByEvent?.[n.eventType] ?? spec.eventIcon
 }
 
 function eventLabel(n: NotificationItem): string {
-  const map: Record<string, string> = {
-    completed: n.kind === 'task' ? 'notifications.event.taskCompleted' : 'notifications.event.sessionCompleted',
-    cancelled: n.kind === 'task' ? 'notifications.event.taskCancelled' : 'notifications.event.sessionCancelled',
-    permission_pending: 'notifications.event.permissionPending',
-    running: 'notifications.event.taskRunning',
-    failed: 'notifications.event.taskFailed',
-    opened: 'notifications.event.forgeOpened',
-    closed: 'notifications.event.forgeClosed',
-    merged: 'notifications.event.forgeMerged',
-    reopened: 'notifications.event.forgeReopened',
-    commented: 'notifications.event.forgeCommented',
-    pipeline_done: 'notifications.event.forgePipelineDone',
-    over: 'notifications.event.usageOver',
-    full: 'notifications.event.usageFull',
-    control_request: 'notifications.event.meetingControlRequest',
-    viewer_joined: 'notifications.event.meetingViewerJoined',
-    screen_share: 'notifications.event.meetingScreenShare',
-    minutes_ready: 'notifications.event.meetingMinutesReady',
-    minutes_failed: 'notifications.event.meetingMinutesFailed',
-    transcript_ready: 'notifications.event.transcriptReady',
-    transcript_failed: 'notifications.event.transcriptFailed',
-    revised_ready: 'notifications.event.revisedReady',
-    revised_failed: 'notifications.event.revisedFailed',
-    received: 'notifications.event.mailReceived',
-  }
-  const key = map[n.eventType]
+  const key = specOf(n)?.eventLabels[n.eventType]
   // Fall back to the raw event type rather than an empty chip: an unknown event
   // must still be readable.
   return key ? t(key) : n.eventType
@@ -480,157 +435,93 @@ function isExternalProject(n: NotificationItem): boolean {
 
 /** Fallback title when the row has none: the localized kind name, never the raw id. */
 function fallbackTitle(n: NotificationItem): string {
-  if (n.kind === 'forge') return n.forgeItemKey || t('notifications.kind.forge')
-  if (n.kind === 'task') return t('notifications.kind.task')
-  if (n.kind === 'usage') return t('notifications.kind.usage')
-  if (n.kind === 'meeting') return t('notifications.kind.meeting')
-  if (n.kind === 'mail') return t('notifications.kind.mail')
-  return t('notifications.kind.session')
+  const spec = specOf(n)
+  if (!spec) return t('notifications.kind.other')
+  return spec.fallbackTitle?.(n) || t(spec.labelKey)
 }
 
 /**
  * Open a notification's source.
  *
- * A row whose source is gone must NOT dispatch a navigation event: a deleted
- * session's own fallback silently redirects to the newest session, which would
- * drop the user somewhere unrelated. Show a hint instead.
+ * The destination itself lives in the kind table (utils/notificationKinds.ts);
+ * this function applies the rules that are the same for every kind:
  *
- * A row from ANOTHER project is confirmed first. That jump tears the whole
- * project subtree down and rebuilds it (hotSwitchProject), which is a much
- * bigger action than opening a session in the project you are already in — and
- * it is the one case that cannot offer a Back target (the switch deliberately
- * drops the previous project's navigation context, see hotSwitchProject). The
- * confirmation is what replaces Back there.
+ *   - an unknown kind (a row from a newer build) explains itself instead of
+ *     doing nothing;
+ *   - a kind whose feature is switched off says so — its tab is gone with it;
+ *   - a row whose source is gone must NOT dispatch a navigation event: a
+ *     deleted session's own fallback silently redirects to the newest session,
+ *     which would drop the user somewhere unrelated;
+ *   - a row from ANOTHER project is confirmed first, because that jump tears
+ *     the whole project subtree down and rebuilds it, and it is the one case
+ *     that cannot offer a Back target.
  *
  * EVERY row jump goes through `jumpTo`, which stamps `fromNotificationCenter`
  * so App.vue records the log as the jump origin and Back returns here. That is
- * not a per-kind courtesy: adding a row kind that navigates without it leaves
- * the user on a page Back cannot leave (see the wiring test's per-kind guard).
+ * why the table receives the dispatcher instead of dispatching on its own (see
+ * the wiring test's per-kind guard).
  */
 async function onOpen(n: NotificationItem) {
-  // A task/forge row whose feature was turned off has no destination any more:
-  // the tab is gone and the deep link would land nowhere. Say why, and where to
-  // turn it back on. Checked before the cross-project confirm — asking "switch
-  // project?" for a jump that will not happen is worse than the plain refusal.
-  if ((n.kind === 'task' && !tasksEnabled.value)
-    || (n.kind === 'forge' && !forgeEnabled.value)
-    || (n.kind === 'mail' && !mailEnabled.value)) {
+  const spec = specOf(n)
+  if (!spec) {
+    // A row from a newer build. Saying nothing would read as a broken panel,
+    // and guessing a destination would send the user somewhere unrelated.
+    toast.show(t('notifications.unknownKindHint'), { icon: 'info', type: 'info' })
+    return
+  }
+
+  // The feature is off, so the destination tab is gone with it. Checked before
+  // the cross-project confirm: asking "switch project?" for a jump that will
+  // not happen is worse than the plain refusal.
+  if (spec.feature && !isFeatureEnabled(spec.feature)) {
     notifyFeatureDisabled()
     return
   }
+
   if (n.sourceMissing) {
     toast.show(t('notifications.sourceDeletedHint'), { icon: 'warning', type: 'info' })
     return
   }
-  // Usage notifications are instance-wide: the row carries no project, and the
-  // click does not switch projects. Short-circuit BEFORE the cross-project gate
-  // so a future change that starts attributing a project to these rows cannot
-  // make it ask "switch to project X?" for an action that never switches.
-  //
-  // Narrow screens land on the settings page, so this jump needs the origin as
-  // much as the session/task/forge ones do — the press would otherwise only pop
-  // the settings nav stack and the next one exits the app.
-  if (n.kind === 'usage') {
-    jumpTo('clawbench-open-usage-meter', {})
-    return
-  }
 
-  // Same canonical comparison as isExternalProject — a raw-vs-canonical path
-  // pair must not pop a "switch project?" dialog for the project you are in.
-  const crossProject = isExternalProject(n)
-  if (crossProject) {
-    const ok = await dialog.confirm(
-      t('notifications.crossProjectConfirm', { name: projectName(n.projectPath) }),
-      {
-        title: t('notifications.crossProjectConfirmTitle'),
-        confirmText: t('notifications.crossProjectConfirmOk'),
-      },
-    )
-    if (!ok) return
-  }
-
-  switch (n.kind) {
-    case 'session':
-      if (n.sessionId) {
-        jumpTo('clawbench-open-session', {
-          sessionId: n.sessionId,
-          projectPath: n.projectPath,
-        })
-      }
-      return
-    case 'task':
-      if (n.taskId) {
-        jumpTo('clawbench-open-task', {
-          taskId: n.taskId,
-          executionId: n.executionId,
-          projectPath: n.projectPath,
-        })
-      }
-      return
-    case 'forge':
-      if (n.forgeItemKey) {
-        jumpTo('clawbench-open-forge', {
-          projectPath: n.projectPath,
-          target: forgeTargetFromItemKey(n.forgeItemKey),
-        })
-      }
-      return
-    case 'meeting':
-      // The share token IS the meeting's identity; the record it opens lives in
-      // the row's project, so the path travels with it.
-      if (n.meetingToken) {
-        jumpTo('clawbench-open-meeting', {
-          token: n.meetingToken,
-          projectPath: n.projectPath,
-        })
-      }
-      return
-    case 'mail':
-      // Mail is global (a mailbox belongs to the person, not a project), so
-      // there is no project switch here — the tab opens and the panel's reader
-      // fetches the message by id.
-      if (n.mailMessageId) {
-        jumpTo('clawbench-open-mail', { messageId: n.mailMessageId })
-      }
-      return
-    default: {
-      // Compile-time exhaustiveness for `NotificationKind`. A new kind must be
-      // given a destination (and go through `jumpTo`, so it is returnable); the
-      // compiler rejects this file until it is.
-      const unhandled: never = n.kind
-      void unhandled
+  // Rows that are not tied to a project skip the cross-project gate entirely
+  // (usage is instance-wide; mail is per-person). Checked before the gate so a
+  // future change that starts attributing a project to such a row cannot make
+  // it ask "switch to project X?" for an action that never switches.
+  if (!spec.instanceWide) {
+    // Same canonical comparison as isExternalProject — a raw-vs-canonical path
+    // pair must not pop a "switch project?" dialog for the project you are in.
+    const crossProject = isExternalProject(n)
+    if (crossProject) {
+      const ok = await dialog.confirm(
+        t('notifications.crossProjectConfirm', { name: projectName(n.projectPath) }),
+        {
+          title: t('notifications.crossProjectConfirmTitle'),
+          confirmText: t('notifications.crossProjectConfirmOk'),
+        },
+      )
+      if (!ok) return
     }
+  }
+
+  // A known kind that cannot name its destination (a malformed row, or a kind
+  // declared without an opener) must say so rather than swallow the press.
+  if (!spec.open || !spec.open(n, jumpTo)) {
+    toast.show(t('notifications.noDestinationHint'), { icon: 'info', type: 'info' })
   }
 }
 
 /**
  * Dispatch a row jump, always flagged as coming from the log.
  *
- * This is the ONLY place the panel may dispatch a `clawbench-open-*` event. It
- * exists so the origin flag cannot be forgotten per kind: Back has to return to
- * the notification center for every destination the log can open, and the flag
- * is what tells App.vue to record that origin.
+ * This is the ONLY place the panel may dispatch a `clawbench-open-*` event.
+ * It exists so the origin flag cannot be forgotten per kind: Back has to return
+ * to the notification center for every destination the log can open, and the
+ * flag is what tells App.vue to record that origin.
  */
 function jumpTo(event: string, detail: Record<string, unknown>) {
   window.dispatchEvent(new CustomEvent(event, {
     detail: { ...detail, fromNotificationCenter: true },
   }))
-}
-
-/**
- * Rebuild a forge deep-link target from the stored opaque key.
- *
- * The key is "issue/12" / "pr/34" / "pipeline/run:56". A pipeline's number is
- * always 0, so the run id is its identity — matching the writer's format.
- */
-function forgeTargetFromItemKey(key: string) {
-  if (key.startsWith('pipeline/run:')) {
-    const runId = Number(key.slice('pipeline/run:'.length)) || 0
-    return { type: 'pipeline', number: 0, runId, itemKey: key }
-  }
-  const [type, numStr] = key.split('/')
-  const number = Number(numStr) || 0
-  return { type, number, runId: 0, itemKey: key }
 }
 </script>
 
@@ -701,6 +592,9 @@ function forgeTargetFromItemKey(key: string) {
 }
 /* Keep each trigger at its natural width so wrapping is chosen over ellipsis. */
 .notif-filters :deep(.menu-select) { flex-shrink: 0; }
+/* FilterSelect's face is the trigger's whole content; pin it to natural width
+   for the same reason (its own `.menu-select` rule is scoped to the child). */
+.notif-filters :deep(.filter-select) { flex-shrink: 0; }
 /* Pushed right on the dropdowns' line; wraps to its own line when they fill it. */
 .filter-count {
   font-size: var(--font-size-2xs);

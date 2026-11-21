@@ -141,6 +141,28 @@ describe('attachIframeSelectionQuoteBridge', () => {
     dispose()
   })
 
+  it('merges the caller-supplied identity over the defaults', () => {
+    // The mail reader's framed body is not a file: its quote must carry the
+    // message identity so the card renders as a mail and can jump back to it.
+    const { doc, show, dispose } = makeBridge({
+      filePath: () => '季度汇报 · 张三',
+      identity: () => ({ sourceKind: 'mail', locators: { mail: '42' } }),
+    })
+    doc.fire('selectionchange')
+    vi.advanceTimersByTime(152)
+
+    expect(show).toHaveBeenCalledWith({
+      text: 'selected text',
+      filePath: '季度汇报 · 张三',
+      language: '',
+      startLine: 0,
+      endLine: 0,
+      sourceKind: 'mail',
+      locators: { mail: '42' },
+    }, null, null)
+    dispose()
+  })
+
   it('hides the bar for an empty / collapsed selection', () => {
     const { doc, getSelectionMock, show, hide, dispose } = makeBridge()
     const emptySel = new FakeSelection('', true)

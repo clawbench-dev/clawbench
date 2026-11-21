@@ -30,6 +30,11 @@ var emitTimeout = 30 * time.Second
 // the periodic flush persists as in_progress, so a reload adopts it too.
 type translator struct {
 	reasoningOpen bool
+	// reasoningParent is the id of the task call whose sub-agent opened the
+	// current reasoning block ("" for top-level). The close event must carry
+	// the same id, or the accumulator marks another parent's block done and
+	// this one keeps spinning.
+	reasoningParent string
 	// locale is the UI language the budget notice is written in. Empty falls
 	// back to the product default rather than emitting a raw message id.
 	locale string
@@ -43,30 +48,48 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 	var out []ai.StreamEvent
 
 	// Anything that appends visible content (or ends the turn) must close an
-	// open reasoning block first.
+	// open reasoning block first. An EventReasoningDone from a sub-agent closes
+	// its own parent's block even though it appends nothing.
 	switch ev.Kind {
 	case agentcore.EventText, agentcore.EventToolStart, agentcore.EventToolEnd,
-		agentcore.EventDone, agentcore.EventError:
-		if t.reasoningOpen {
-			t.reasoningOpen = false
-			out = append(out, ai.StreamEvent{Type: "thinking_done"})
-		}
+		agentcore.EventDone, agentcore.EventError, agentcore.EventReasoningDone:
+		t.closeReasoning(ev.ParentToolCallID, &out)
 	}
 
 	switch ev.Kind {
 	case agentcore.EventText:
-		out = append(out, ai.StreamEvent{Type: "content", Content: ev.Text})
+		out = append(out, ai.StreamEvent{
+			Type:             "content",
+			Content:          ev.Text,
+			ParentToolCallID: ev.ParentToolCallID,
+		})
 
 	case agentcore.EventReasoning:
+		// Reasoning from a DIFFERENT parent means the previous block was never
+		// closed (a backend that interleaves parents). Close it before opening
+		// this one so neither block is left spinning.
+		if t.reasoningOpen && t.reasoningParent != ev.ParentToolCallID {
+			t.closeReasoning(t.reasoningParent, &out)
+		}
 		t.reasoningOpen = true
-		out = append(out, ai.StreamEvent{Type: "thinking", Content: ev.Reasoning})
+		t.reasoningParent = ev.ParentToolCallID
+		out = append(out, ai.StreamEvent{
+			Type:             "thinking",
+			Content:          ev.Reasoning,
+			ParentToolCallID: ev.ParentToolCallID,
+		})
+
+	case agentcore.EventReasoningDone:
+		// The close (if one was open for this parent) was emitted above.
 
 	case agentcore.EventToolStart:
 		out = append(out, ai.StreamEvent{
-			Type: "tool_use",
+			Type:             "tool_use",
+			ParentToolCallID: ev.ParentToolCallID,
 			Tool: &ai.ToolCall{
-				ID:   ev.ToolCallID,
-				Name: ev.ToolName,
+				ID:               ev.ToolCallID,
+				Name:             ev.ToolName,
+				ParentToolCallID: ev.ParentToolCallID,
 				// Input is deliberately empty here: the arguments are still
 				// streaming. The completion event carries the full JSON.
 				Done: false,
@@ -78,12 +101,14 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 		// is what lets the card show the command / file while it executes —
 		// the start event had none, and the end event arrives minutes later.
 		out = append(out, ai.StreamEvent{
-			Type: "tool_use",
+			Type:             "tool_use",
+			ParentToolCallID: ev.ParentToolCallID,
 			Tool: &ai.ToolCall{
-				ID:    ev.ToolCallID,
-				Name:  ev.ToolName,
-				Input: toolInputJSON(ev.ToolInput),
-				Done:  false,
+				ID:               ev.ToolCallID,
+				Name:             ev.ToolName,
+				Input:            toolInputJSON(ev.ToolInput),
+				ParentToolCallID: ev.ParentToolCallID,
+				Done:             false,
 			},
 		})
 
@@ -93,15 +118,17 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 			status = "error"
 		}
 		out = append(out, ai.StreamEvent{
-			Type: "tool_use",
+			Type:             "tool_use",
+			ParentToolCallID: ev.ParentToolCallID,
 			Tool: &ai.ToolCall{
-				ID:         ev.ToolCallID,
-				Name:       ev.ToolName,
-				Input:      toolInputJSON(ev.ToolInput),
-				Output:     ev.ToolOutput,
-				Status:     status,
-				Done:       true,
-				DurationMs: int(ev.ToolDuration / time.Millisecond),
+				ID:               ev.ToolCallID,
+				Name:             ev.ToolName,
+				Input:            toolInputJSON(ev.ToolInput),
+				Output:           ev.ToolOutput,
+				Status:           status,
+				Done:             true,
+				DurationMs:       int(ev.ToolDuration / time.Millisecond),
+				ParentToolCallID: ev.ParentToolCallID,
 			},
 		})
 
@@ -150,6 +177,19 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 		})
 	}
 	return out
+}
+
+// closeReasoning closes the reasoning block belonging to parent, if one is
+// open. It is a no-op when the open block belongs to another parent: with
+// concurrent sub-agents, one agent's completion must not mark another's block
+// done.
+func (t *translator) closeReasoning(parent string, out *[]ai.StreamEvent) {
+	if !t.reasoningOpen || t.reasoningParent != parent {
+		return
+	}
+	t.reasoningOpen = false
+	t.reasoningParent = ""
+	*out = append(*out, ai.StreamEvent{Type: "thinking_done", ParentToolCallID: parent})
 }
 
 // toolInputJSON normalizes a tool call's argument blob for the frontend.

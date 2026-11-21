@@ -885,12 +885,12 @@ func CreateCollection(name, description, scope string, projectID int64) (*Collec
 	return st.GetCollection(id)
 }
 
-func UpdateCollection(id int64, name, description *string, autoInject, pinned *bool) error {
+func UpdateCollection(id int64, name, description *string, autoInject *bool) error {
 	st := currentStore()
 	if st == nil {
 		return ErrUnavailable
 	}
-	return st.UpdateCollection(id, name, description, autoInject, pinned)
+	return st.UpdateCollection(id, name, description, autoInject)
 }
 
 func CollectionAccessible(id, projectID int64) (bool, error) {

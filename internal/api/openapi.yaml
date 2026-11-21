@@ -618,9 +618,9 @@ paths:
         **口径固定为全局**（所有项目合计），没有 `scope` 参数——额度回答的是
         「我这个周期总共花了多少」，与当前停在哪个项目无关。
 
-        可选的 `agent` 参数只收窄**被统计的智能体**，额度与周期仍是全局规则：
-        它回答的是「这几个智能体占用了多少共享额度」，不是它们各自的额度。
-        胶囊、提醒与推送始终按全局计算，不受该参数影响。
+        **监控范围**是规则的一部分（`usage_meter.agent_ids`）：留空表示全部智能体，
+        填了就只统计这些智能体。额度仍是**一份共享预算**——胶囊、弹层和超额提醒
+        都按同一个范围计算，不会给每个智能体各算一份额度。
 
         **开关与可选项**：`usage_meter.enabled` 是唯一的开关。其余字段全部可选，
         服务端按已配置的内容做最大程度展示：
@@ -673,14 +673,6 @@ paths:
         注意 `chat_metadata.created_at` 记录的是元数据**最终写入**时刻
         （约等于助手回复完成），因此跨周期边界的回合归入后一个周期。
       operationId: usageMeter
-      parameters:
-        - name: agent
-          in: query
-          description: 只看指定智能体；重复该参数可选多个，不传=全部。额度与周期仍是全局规则。
-          schema:
-            type: array
-            items:
-              type: string
       responses:
         "200":
           description: |
@@ -936,7 +928,8 @@ paths:
               `UsageMeterAnchorNotString` / `UsageMeterPeriodRange`
               （带 `detail.Max`）/ `UsageMeterPeriodNotNumber` /
               `UsageMeterMetricInvalid` / `UsageMeterMetricNotString` /
-              `UsageMeterCycleModeInvalid`。
+              `UsageMeterCycleModeInvalid` / `UsageMeterAgentsInvalid` /
+              `UsageMeterAgentsTooMany`（带 `detail.Max`）。
             - 其余尚未逐个建键的校验错误仍是 `error: "invalid_value"` + 英文
               `message`（无 `msgKey`）。
           content:
@@ -3275,20 +3268,15 @@ paths:
                           type: integer
                         projectPath:
                           type: string
-                        sessionId:
+                        subjectId:
                           type: string
-                        taskId:
-                          type: string
+                          description: |
+                            该行指向的主体标识，由 kind 解释：会话 id / 任务 id / 会议分享 token /
+                            仓库条目键 / 邮件 id（十进制文本）。usage 没有本地主体，为空。
+                            所有类型共用这一列，新增类型不需要改表结构。
                         executionId:
                           type: string
-                        forgeItemKey:
-                          type: string
-                        meetingToken:
-                          type: string
-                          description: kind=meeting 行的会议标识（分享 token）；点击用它打开该会议记录
-                        mailMessageId:
-                          type: integer
-                          description: kind=mail 行的邮件 id（mail_messages.id）；点击用它打开该封邮件
+                          description: kind=task 时要定位的执行记录（不是主体标识）
                         agentId:
                           type: string
                         createdAt:
@@ -6763,9 +6751,12 @@ paths:
         部分更新单个 agent（body 含 `id`）。可更新字段：
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
         `transport`、`acp_command`、`name`、`specialty`、`custom_system_prompt`、
-        `avatar`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
+        `avatar`、`avatar_style`、`avatar_seed`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
         `mcp_servers`、`provider_id`、`tool_policy`、`skip_project_context`。
-        `avatar` 为原始 SVG 字符串；空串恢复内置图标，非空时校验大小与安全性。
+        `avatar` 为原始 SVG 字符串或上传图片的 `data:image/...` URI；空串恢复内置图标，
+        非空时校验大小、格式与安全性。`avatar_style`/`avatar_seed` 记录生成头像所用的
+        DiceBear 风格与种子（上传图片与旧头像为空）；更换 `avatar` 时未同时提供的来源字段
+        会被清空，避免行里留下与图片不符的风格。
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
         `custom-acp` 可改**：非空同时把 `transport` 切到 `acp-stdio` 并重启其连接；
         空串被拒（无 CLI 回退）。内置后端的命令由自动发现维护，发送即 `400`
@@ -6782,13 +6773,14 @@ paths:
         `mcp.servers`），省略 `mode` 即 `all`，下一轮生效。
 
         `tool_policy` 是工具授权
-        `{"allow":["fs.read"|"fs.write"|"exec"],"maxRounds":N,"maxToolCalls":N,"bashTimeoutSec":N}`，
+        `{"allow":["fs.read"|"fs.write"|"exec"],"maxRounds":N,"maxToolCalls":N,"maxSubagents":N,"bashTimeoutSec":N}`，
         **只对内置智能体（`backend=builtin`）有意义**：它的工具由 ClawBench 自己实现，
         未授权的工具根本不会声明给模型。外部 CLI 的工具在其进程内，本字段对它无效。
         服务端会把授权集按蕴含关系闭包后存储（`exec` ⇒ `fs.write` ⇒ `fs.read`），
         因为 `exec` 本身就能写文件，允许「禁止写但允许跑命令」会让设置页说谎。
-        `allow` 为空表示不开放任何工具（只能对话）。预算字段 `0` 表示用服务端默认值；
-        `maxRounds`/`maxToolCalls` 为负、或 `bashTimeoutSec` 超出 `0..3600` 返回 `400`。
+        `allow` 为空表示不开放任何工具（只能对话）。预算字段 `0` 表示不限制；
+        `maxSubagents` 是一回合最多派几个子智能体，`0` = 不限制；
+        `maxRounds`/`maxToolCalls`/`maxSubagents` 为负、或 `bashTimeoutSec` 超出 `0..3600` 返回 `400`。
 
         `skip_project_context` 为布尔值：`true` 表示**不再**把项目的
         `AGENTS.md` / `CLAUDE.md` 注入该智能体的系统提示词，`false` 恢复注入

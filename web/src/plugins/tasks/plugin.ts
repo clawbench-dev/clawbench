@@ -8,6 +8,7 @@ const { loadTasks } = useTaskTab()
 /** Tasks: unread badge + the "load on open" side effect + panel. */
 export default {
   id: 'tasks',
+  order: 50,
   titleKey: 'nav.tasks',
   descriptionKey: 'settings.dockPlugins.desc.tasks',
   group: 'project',

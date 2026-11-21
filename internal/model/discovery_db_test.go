@@ -43,6 +43,8 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			system_prompt TEXT NOT NULL DEFAULT '',
 			custom_system_prompt TEXT NOT NULL DEFAULT '',
 			avatar TEXT NOT NULL DEFAULT '',
+			avatar_style TEXT NOT NULL DEFAULT '',
+			avatar_seed TEXT NOT NULL DEFAULT '',
 			models TEXT NOT NULL DEFAULT '[]',
 			models_auto_detected INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0,
@@ -460,6 +462,26 @@ func TestLoadYamlAgents_SkipsInvalidFiles(t *testing.T) {
 	assert.Empty(t, inserted, "malformed, id-less and non-YAML files must all be skipped")
 }
 
+func TestLoadYamlAgents_SkipsInvalidAvatar(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	agentsDir := filepath.Join(t.TempDir(), "agents")
+	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "bad-avatar.yaml"), []byte(`
+id: bad-avatar
+name: Bad Avatar
+backend: claude
+avatar: "<svg><script>alert(1)</script></svg>"
+`), 0o644))
+
+	assert.Empty(t, LoadYamlAgents(db, filepath.Dir(agentsDir)),
+		"an avatar that fails the same gate as the HTTP path must skip the agent")
+
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM agents").Scan(&count))
+	assert.Zero(t, count)
+}
+
 func TestLoadYamlAgents_NeverOverwritesExisting(t *testing.T) {
 	db := setupTestDBForDiscovery(t)
 
@@ -657,6 +679,28 @@ func TestLoadAgentsFromDBRows_DisabledRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.False(t, agents[0].Disabled, "disabled=false must persist through saveAgentToDB")
+}
+
+// TestLoadAgentsFromDBRows_AvatarProvenanceRoundTrip pins that the style/seed
+// pair survives the model layer's own save → load SQL. Missing either column
+// from the INSERT or the SELECT would silently drop the picker's ability to
+// reopen an avatar on the tile that produced it.
+func TestLoadAgentsFromDBRows_AvatarProvenanceRoundTrip(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	require.NoError(t, saveAgentToDB(db, &Agent{
+		ID:          "pi",
+		Name:        "Pi",
+		Backend:     "pi",
+		Avatar:      "<svg/>",
+		AvatarStyle: "bottts",
+		AvatarSeed:  "Alice",
+	}))
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "bottts", agents[0].AvatarStyle)
+	assert.Equal(t, "Alice", agents[0].AvatarSeed)
 }
 
 // TestLoadAgentsFromDBRows_MalformedDisabledErrors pins the scan-error path: a

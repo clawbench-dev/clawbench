@@ -40,6 +40,7 @@ function mountSection(toolPolicy?: {
     allow: string[]
     maxRounds?: number
     maxToolCalls?: number
+    maxSubagents?: number
     restrictToWorkDir?: boolean
 }) {
     return mount(AgentToolPolicySection, {
@@ -58,7 +59,7 @@ function outsideSwitch(wrapper: ReturnType<typeof mount>) {
     return checkboxFor(wrapper, 'settings.items.toolPolicyOutside')
 }
 
-/** The budget inputs, in template order: rounds first, tool calls second. */
+/** The budget inputs, in template order: rounds, tool calls, sub-agents. */
 function budgetInputs(wrapper: ReturnType<typeof mount>) {
     return wrapper.findAll('.agent-tools__budget input[type="number"]')
 }
@@ -161,13 +162,26 @@ describe('AgentToolPolicySection', () => {
 
     it('shows the stored budgets and "unlimited" as the placeholder', () => {
         const wrapper = mountSection({ allow: [], maxRounds: 40 })
-        const [rounds, calls] = budgetInputs(wrapper)
+        const [rounds, calls, subagents] = budgetInputs(wrapper)
 
         expect((rounds.element as HTMLInputElement).value).toBe('40')
         // Unset means "no ceiling": the placeholder says so instead of naming
         // a number the agent would then be pinned to.
         expect((calls.element as HTMLInputElement).value).toBe('')
         expect((calls.element as HTMLInputElement).placeholder).toBe('settings.items.toolPolicyUnlimited')
+        expect((subagents.element as HTMLInputElement).value).toBe('')
+        expect((subagents.element as HTMLInputElement).placeholder).toBe('settings.items.toolPolicyUnlimited')
+    })
+
+    it('saves a changed sub-agent budget with the whole policy', async () => {
+        const wrapper = mountSection({ allow: ['fs.read'], maxRounds: 40 })
+        await budgetInputs(wrapper)[2].setValue('6')
+
+        expect(patchAgentField).toHaveBeenCalledWith('builtin', 'tool_policy', {
+            allow: ['fs.read'],
+            maxRounds: 40,
+            maxSubagents: 6,
+        })
     })
 
     it('saves a changed round budget with the whole policy', async () => {

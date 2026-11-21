@@ -13,6 +13,7 @@ import type { DockPlugin } from '@/composables/dockPluginTypes'
  */
 export default {
   id: 'share',
+  order: 110,
   titleKey: 'nav.share',
   descriptionKey: 'settings.dockPlugins.desc.share',
   group: 'project',

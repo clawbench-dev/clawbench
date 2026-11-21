@@ -90,60 +90,64 @@
           <span>{{ t('stats.filterTitle') }}</span>
         </div>
         <div class="stats-filter-group">
-          <span class="stats-filter-label">{{ t('stats.scopeTitle') }}</span>
-          <div class="stats-filter-select">
-            <MenuSelect
-              :model-value="filter.scope"
-              :options="scopeOptions"
-              @change="onScopeChange"
-            />
-          </div>
+          <!-- The caption moved into the pill (FilterSelect prints it), so the
+               separate label span is gone for every dropdown in this card. -->
+          <FilterSelect
+            :model-value="filter.scope"
+            :options="scopeOptions"
+            :caption="t('stats.scopeTitle')"
+            :all-label="t('stats.scopeAll')"
+            all-value="all"
+            :menu-width="240"
+            @update:model-value="onScopeChange"
+          />
         </div>
         <div class="stats-filter-group">
-          <span class="stats-filter-label">{{ t('stats.agentTitle') }}</span>
-          <div class="stats-filter-select">
-            <MenuSelect
-              multiple
-              :min-selected="1"
-              :model-value="agentSelection"
-              :options="agentOptions"
-              @change="onAgentsChange"
-            />
-          </div>
+          <FilterSelect
+            multiple
+            :min-selected="1"
+            :model-value="agentSelection"
+            :options="agentOptions"
+            :caption="t('stats.agentTitle')"
+            :all-label="t('stats.agentAll')"
+            :menu-width="240"
+            @change="onAgentsChange"
+          />
         </div>
         <div class="stats-filter-group">
-          <span class="stats-filter-label">{{ t('stats.dimTitle') }}</span>
-          <div class="stats-filter-select">
-            <MenuSelect
-              multiple
-              :min-selected="1"
-              :model-value="filter.dims"
-              :options="dimOptions"
-              @change="onDimsChange"
-            />
-          </div>
+          <FilterSelect
+            multiple
+            :min-selected="1"
+            :model-value="filter.dims"
+            :options="dimOptions"
+            :caption="t('stats.dimTitle')"
+            :all-label="t('stats.dimAll')"
+            :menu-width="240"
+            @change="onDimsChange"
+          />
         </div>
         <div class="stats-filter-group">
-          <span class="stats-filter-label">{{ t('stats.metricTitle') }}</span>
-          <div class="stats-filter-select">
-            <MenuSelect
-              multiple
-              :min-selected="1"
-              :model-value="filter.metrics"
-              :options="metricOptions"
-              @change="onMetricsChange"
-            />
-          </div>
+          <FilterSelect
+            multiple
+            :min-selected="1"
+            :model-value="filter.metrics"
+            :options="metricOptions"
+            :caption="t('stats.metricTitle')"
+            :all-label="t('stats.metricAll')"
+            :menu-width="240"
+            @change="onMetricsChange"
+          />
         </div>
         <div class="stats-filter-group">
-          <span class="stats-filter-label">{{ t('stats.chartTitle') }}</span>
-          <div class="stats-filter-select">
-            <MenuSelect
-              :model-value="filter.chartType"
-              :options="chartTypeOptions"
-              @change="onChartTypeChange"
-            />
-          </div>
+          <FilterSelect
+            :model-value="filter.chartType"
+            :options="chartTypeOptions"
+            :caption="t('stats.chartTitle')"
+            :all-label="t('stats.chartBar')"
+            all-value="bar"
+            :menu-width="240"
+            @update:model-value="onChartTypeChange"
+          />
         </div>
       </section>
 
@@ -234,7 +238,8 @@ import { useI18n } from 'vue-i18n'
 import { BarChart3, Clock, SlidersHorizontal, Gauge, Table, ChartPie, Sigma, ArrowDownToLine, ArrowUpFromLine, Database, Coins, CircleDollarSign, Percent, Timer } from 'lucide-vue-next'
 import StatsSkeleton from '@/components/stats/StatsSkeleton.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
-import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
+import type { MenuSelectOption, MenuSelectValue } from '@/components/common/MenuSelect.vue'
+import FilterSelect from '@/components/common/FilterSelect.vue'
 import { useDelayedFlag } from '@/composables/useDelayedFlag'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import {
@@ -726,29 +731,15 @@ onMounted(() => {
 
 /* ── Chips / toggles ──
    The range card still uses chips; the filter card uses dropdowns (one per
-   row) so seven numeric columns no longer stretch the row. */
+   row) so seven numeric columns no longer stretch the row.
+   One row per filter, each pill sized to its content: the caption now lives
+   INSIDE the pill, so there is no separate label column to keep aligned and
+   no fixed trigger width to stop the control from resizing. */
 .stats-filter-group {
   display: flex;
   align-items: center;
   gap: var(--space-4);
   min-width: 0;
-}
-.stats-filter-label {
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  min-width: 4em;
-}
-/* Fixed trigger width: the control must not resize as the selection changes
-   (a moving dropdown under the cursor is the classic form-control jitter).
-   The label ellipsises; the full selection is on the trigger's title. */
-.stats-filter-select {
-  width: calc(210 * var(--dp));
-  max-width: 100%;
-  min-width: 0;
-}
-.stats-filter-select :deep(.menu-select) {
-  width: 100%;
 }
 .stats-chip-scroll {
   display: flex;

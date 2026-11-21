@@ -259,16 +259,30 @@ jobs:
 
       - name: Build Linux binary
         env:
-          CGO_ENABLED: 1
+          # Pure-Go build: SQLite comes from modernc.org/sqlite, which has
+          # FTS5 compiled in, so no C code is needed. cgo was only ever here
+          # on the assumption that FTS5 required it — that assumption was
+          # wrong, and cgo is what let the runner's compiler inject AVX
+          # instructions into the shipped binary (#719). With cgo off the
+          # output no longer depends on the build machine's toolchain, and
+          # the binary is a single static file with no libc requirement.
+          CGO_ENABLED: 0
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux ./cmd/server
-          echo "Built with CGO_ENABLED=1: dynamically linked, SQLite FTS5/RAG enabled"
+          go build -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux ./cmd/server
+          echo "Built with CGO_ENABLED=0: static, SQLite FTS5/RAG from the pure-Go driver"
 
       - name: Verify Linux binary
+        # Static now that cgo is off: `ldd` exits 1 on such a binary and would
+        # fail the job, so assert the static linkage instead, then prove the
+        # binary actually starts.
         run: |
           file clawbench-linux
-          ldd clawbench-linux
+          file clawbench-linux | grep -q "statically linked" || {
+            echo "::error::expected a static binary - is CGO_ENABLED back on?" >&2
+            exit 1
+          }
+          ./clawbench-linux --version
 
       - name: Package Linux
         # The release tag is part of the asset name so a downloaded file is
@@ -325,16 +339,28 @@ jobs:
 
       - name: Build Linux arm64 binary
         env:
-          CGO_ENABLED: 1
+          # Pure-Go build: SQLite comes from modernc.org/sqlite, which has
+          # FTS5 compiled in, so no C code is needed. cgo was only ever here
+          # on the assumption that FTS5 required it — that assumption was
+          # wrong, and cgo is what let the runner's compiler inject AVX
+          # instructions into the shipped binary (#719). With cgo off the
+          # output no longer depends on the build machine's toolchain, and
+          # the binary is a single static file with no libc requirement.
+          CGO_ENABLED: 0
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux-arm64 ./cmd/server
-          echo "Built with CGO_ENABLED=1: dynamically linked, SQLite FTS5/RAG enabled"
+          go build -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux-arm64 ./cmd/server
+          echo "Built with CGO_ENABLED=0: static, SQLite FTS5/RAG from the pure-Go driver"
 
       - name: Verify Linux arm64 binary
+        # Same static check; the binary is aarch64 so it cannot be executed on
+        # this runner, but its linkage is still inspectable.
         run: |
           file clawbench-linux-arm64
-          ldd clawbench-linux-arm64
+          file clawbench-linux-arm64 | grep -q "statically linked" || {
+            echo "::error::expected a static binary - is CGO_ENABLED back on?" >&2
+            exit 1
+          }
 
       - name: Package Linux arm64
         run: |
@@ -448,10 +474,17 @@ jobs:
 
       - name: Build Windows binary
         env:
-          CGO_ENABLED: 1
+          # Pure-Go build: SQLite comes from modernc.org/sqlite, which has
+          # FTS5 compiled in, so no C code is needed. cgo was only ever here
+          # on the assumption that FTS5 required it — that assumption was
+          # wrong, and cgo is what let the runner's compiler inject AVX
+          # instructions into the shipped binary (#719). With cgo off the
+          # output no longer depends on the build machine's toolchain, and
+          # the binary is a single static file with no libc requirement.
+          CGO_ENABLED: 0
         run: |
           $VERSION = if (git describe --tags --always 2>$null) { git describe --tags --always } else { "dev" }
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench.exe ./cmd/server
+          go build -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench.exe ./cmd/server
 
       - name: Package Windows
         shell: pwsh
@@ -513,10 +546,17 @@ jobs:
 
       - name: Build macOS arm64 binary
         env:
-          CGO_ENABLED: 1
+          # Pure-Go build: SQLite comes from modernc.org/sqlite, which has
+          # FTS5 compiled in, so no C code is needed. cgo was only ever here
+          # on the assumption that FTS5 required it — that assumption was
+          # wrong, and cgo is what let the runner's compiler inject AVX
+          # instructions into the shipped binary (#719). With cgo off the
+          # output no longer depends on the build machine's toolchain, and
+          # the binary is a single static file with no libc requirement.
+          CGO_ENABLED: 0
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-darwin-arm64 ./cmd/server
+          go build -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-darwin-arm64 ./cmd/server
 
       - name: Package macOS arm64
         run: |
@@ -568,13 +608,18 @@ jobs:
 
       - name: Build macOS amd64 binary (cross-compile on arm64)
         env:
-          CGO_ENABLED: 1
+          # Pure-Go build: SQLite comes from modernc.org/sqlite, which has
+          # FTS5 compiled in, so no C code is needed. cgo was only ever here
+          # on the assumption that FTS5 required it — that assumption was
+          # wrong, and cgo is what let the runner's compiler inject AVX
+          # instructions into the shipped binary (#719). With cgo off the
+          # output no longer depends on the build machine's toolchain, and
+          # the binary is a single static file with no libc requirement.
+          CGO_ENABLED: 0
           GOARCH: amd64
-          CC: clang -target x86_64-apple-macos13.0
-          CXX: clang++ -target x86_64-apple-macos13.0
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-darwin-amd64 ./cmd/server
+          go build -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-darwin-amd64 ./cmd/server
 
       - name: Package macOS amd64
         run: |

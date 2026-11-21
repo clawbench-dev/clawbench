@@ -9,7 +9,7 @@
     class="menu-select"
     :class="{ 'is-open': show, 'is-disabled': disabled, 'is-block': block }"
     :disabled="disabled"
-    :title="triggerTitle"
+    :title="resolvedTriggerTitle"
     @click.stop="toggle"
   >
     <!-- Default trigger: label + caret. A caller that needs a richer face
@@ -99,6 +99,10 @@ const props = withDefaults(defineProps<{
   /** `multiple` only: never allow the selection to shrink below this count.
    *  Rows that would break the floor are rendered disabled. */
   minSelected?: number
+  /** Tooltip override for the trigger. Callers that build a richer face (a
+   *  custom `options` slot, or FilterSelect's caption+value pill) pass the text
+   *  they want; the default is the trigger's own label. */
+  triggerTitle?: string
 }>(), {
   placeholder: '',
   disabled: false,
@@ -109,6 +113,7 @@ const props = withDefaults(defineProps<{
   menuTitle: '',
   multiple: false,
   minSelected: 0,
+  triggerTitle: '',
 })
 
 const emit = defineEmits<{
@@ -175,6 +180,14 @@ function isLocked(value: string | number): boolean {
 const listStyle = computed(() =>
   props.appSurface ? { minWidth: `${props.menuWidth}px` } : undefined,
 )
+
+/**
+ * A caller-supplied `triggerTitle` wins over the derived one. The trigger slot
+ * receives the label inside a <button>, so a two-line face (a project name plus
+ * its path) has no text of its own to fall back on — without an override the
+ * tooltip would come out empty.
+ */
+const resolvedTriggerTitle = computed(() => props.triggerTitle || triggerTitle.value)
 
 /**
  * Exclusive-open coordination.

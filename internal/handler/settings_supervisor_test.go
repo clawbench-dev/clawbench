@@ -96,6 +96,32 @@ func TestUnitMainPID_SpacesTrimmed(t *testing.T) {
 	assert.Equal(t, "42", unitMainPID("clawbench.service"))
 }
 
+// ---------- systemctlShowMainPID ----------
+
+// The unit name comes from a cgroup path on disk, so a name that could be
+// something other than a systemd unit must never reach exec. These are refused
+// before systemctl runs (which also makes the test independent of the host).
+func TestSystemctlShowMainPID_RejectsInvalidUnitName(t *testing.T) {
+	for _, unit := range []string{
+		"",
+		"clawbench",
+		"clawbench.service --help",
+		"../../etc/passwd.service",
+		"clawbench.service;rm -rf /",
+		"clawbench.socket",
+	} {
+		t.Run(unit, func(t *testing.T) {
+			assert.Equal(t, "", systemctlShowMainPID(unit))
+		})
+	}
+}
+
+func TestSystemctlShowMainPID_AcceptsSystemdUnitName(t *testing.T) {
+	assert.True(t, systemdUnitNamePattern.MatchString("clawbench.service"))
+	assert.True(t, systemdUnitNamePattern.MatchString("tat_agent.service"))
+	assert.True(t, systemdUnitNamePattern.MatchString("user@1000.service"))
+}
+
 // ---------- IsRunningUnderSupervisor (systemd MainPID branch) ----------
 
 // 原版把继承自 systemd agent shell 的 INVOCATION_ID 当作"受托管"依据，

@@ -1,0 +1,207 @@
+package live
+
+// Relay (LiveKit) configuration endpoints.
+//
+// The relay is a property of this INSTALLATION, not of a meeting: one endpoint,
+// one credential pair, shared by every meeting that opts into it. The create
+// dialog is where it is edited because that is where the decision to use it is
+// made — but the values apply to all of them, which the UI says out loud.
+//
+// The credential is write-only by default: no response carries it unless the
+// client asks with `?reveal=1`, which is the explicit "show me what is stored"
+// behind the eye button in the settings panel. Reading the panel must not pull
+// a plaintext secret into the page.
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"clawbench/internal/httpx"
+	"clawbench/internal/i18n"
+	"clawbench/internal/model"
+
+	"clawbench/internal/liveshare"
+	"clawbench/internal/service"
+)
+
+type liveSFUResponse struct {
+	URL        string `json:"url"`
+	HasSecret  bool   `json:"hasSecret"`
+	Configured bool   `json:"configured"`
+	UpdatedAt  string `json:"updatedAt,omitempty"`
+}
+
+// liveSFURevealResponse is the one reply that carries the stored credential,
+// and only for GET /api/live-share/sfu?reveal=1 — the explicit "show me what is
+// stored" request behind the eye button in the settings panel.
+type liveSFURevealResponse struct {
+	liveSFUResponse
+	APIKey    string `json:"apiKey"`
+	APISecret string `json:"apiSecret"`
+}
+
+type liveSFUPatchBody struct {
+	URL string `json:"url"`
+	// Nil means "leave what is stored". The UI only receives the secret through
+	// the explicit reveal, so a save that only changes the URL must not blank
+	// the credential.
+	APIKey    *string `json:"apiKey"`
+	APISecret *string `json:"apiSecret"`
+	Clear     bool    `json:"clear"`
+}
+
+const (
+	jsonSuccessKey    = "success"
+	templateDetailKey = "Detail"
+	templateURLKey    = "URL"
+	templateRoomsKey  = "Rooms"
+)
+
+func toLiveSFUResponse(c *service.LiveSFUConfig) liveSFUResponse {
+	return liveSFUResponse{
+		URL:        c.URL,
+		HasSecret:  c.APIKey != "",
+		Configured: c.Configured(),
+		UpdatedAt:  c.UpdatedAt,
+	}
+}
+
+// ServeLiveSFUConfig handles GET (read, credential-free unless reveal=1) and
+// PATCH (edit).
+func ServeLiveSFUConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		cfg, err := service.GetLiveSFUConfig()
+		if err != nil {
+			httpx.WriteLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		if r.URL.Query().Get("reveal") == "1" {
+			httpx.WriteJSON(w, http.StatusOK, liveSFURevealResponse{
+				liveSFUResponse: toLiveSFUResponse(cfg),
+				APIKey:          cfg.APIKey,
+				APISecret:       cfg.APISecret,
+			})
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, toLiveSFUResponse(cfg))
+	case http.MethodPatch:
+		var body liveSFUPatchBody
+		if !httpx.DecodeJSON(w, r, &body) {
+			return
+		}
+		cfg, err := service.SaveLiveSFUConfig(service.LiveSFUPatch{
+			URL:       body.URL,
+			APIKey:    body.APIKey,
+			APISecret: body.APISecret,
+			Clear:     body.Clear,
+		})
+		if err != nil {
+			if errors.Is(err, service.ErrLiveSFUInvalid) {
+				httpx.WriteLocalizedErrorf(w, r, http.StatusBadRequest, "BadRequest", map[string]any{jsonKeyReason: err.Error()})
+				return
+			}
+			httpx.WriteLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, toLiveSFUResponse(cfg))
+	default:
+		httpx.WriteLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+	}
+}
+
+// liveSFUTestBody carries DRAFT values: the point of the button is to find out
+// whether they work before they are saved.
+//
+// An empty apiKey/apiSecret falls back to what is stored, so re-testing after a
+// URL change does not force the operator to paste the secret again.
+type liveSFUTestBody struct {
+	URL       string `json:"url"`
+	APIKey    string `json:"apiKey"`
+	APISecret string `json:"apiSecret"`
+}
+
+// ServeLiveSFUTest probes a relay endpoint and answers in the same shape as
+// /api/config/test-connectivity: {success, message}.
+//
+// It checks reachability AND credentials in one call (ListRooms). A bare TCP
+// probe would report success with a wrong secret, and the failure would only
+// surface at the first meeting — as "cannot join", with no hint why.
+func ServeLiveSFUTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	var body liveSFUTestBody
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	stored, err := service.GetLiveSFUConfig()
+	if err != nil {
+		httpx.WriteLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	url := strings.TrimSpace(body.URL)
+	if url == "" {
+		url = stored.URL
+	}
+	key := strings.TrimSpace(body.APIKey)
+	if key == "" {
+		key = stored.APIKey
+	}
+	secret := strings.TrimSpace(body.APISecret)
+	if secret == "" {
+		secret = stored.APISecret
+	}
+	if url == "" || key == "" || secret == "" {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			jsonSuccessKey: false,
+			messageKey:     i18n.T(i18n.LocalizerForLocale(model.Language), "LiveSFURelayMissingFields"),
+		})
+		return
+	}
+
+	cfg := liveshare.LiveKitConfig{
+		URL:       url,
+		APIURL:    service.LiveSFUConfig{URL: url}.APIBaseURL(),
+		APIKey:    key,
+		APISecret: secret,
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), relayProbeTimeout)
+	defer cancel()
+
+	rooms, err := cfg.ListRooms(ctx)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			jsonSuccessKey: false,
+			messageKey:     describeRelayError(url, err),
+		})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		jsonSuccessKey: true,
+		messageKey:     i18n.T(i18n.LocalizerForLocale(model.Language), "LiveSFURelayConnected", map[string]interface{}{templateRoomsKey: rooms}),
+	})
+}
+
+// relayProbeTimeout bounds the button. Long enough for a slow link, short
+// enough that a black-holed address reports a failure instead of hanging the
+// dialog forever.
+const relayProbeTimeout = 10 * time.Second
+
+// describeRelayError turns the client's two error kinds into something a user
+// can act on: "cannot reach" and "reached but refused" need different fixes.
+func describeRelayError(url string, err error) string {
+	loc := i18n.LocalizerForLocale(model.Language)
+	switch {
+	case errors.Is(err, liveshare.ErrRelayUnreachable):
+		return i18n.T(loc, "LiveSFURelayUnreachable", map[string]interface{}{templateURLKey: url, templateDetailKey: err.Error()})
+	case errors.Is(err, liveshare.ErrRelayRejected):
+		return i18n.T(loc, "LiveSFURelayRejected", map[string]interface{}{templateDetailKey: err.Error()})
+	default:
+		return i18n.T(loc, "LiveSFURelayFailed", map[string]interface{}{templateDetailKey: err.Error()})
+	}
+}

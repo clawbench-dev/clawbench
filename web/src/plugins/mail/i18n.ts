@@ -1,0 +1,21 @@
+/**
+ * Copy for the `mail` plugin: the dock manager's one-line description and the
+ * reason shown when this host cannot run it.
+ *
+ * Kept next to the plugin so a new plugin carries its own copy: the global
+ * `i18n/locales/*.ts` tables used to hold a hand-maintained `dockPlugins.desc`
+ * entry per plugin, which is one more file to remember when adding one.
+ *
+ * Shared wording ("保存"/"取消", and the generic "current host unsupported")
+ * stays in the global tables — it is not this plugin's property.
+ */
+export default {
+  zh: {
+    desc: '收发邮件，支持多个邮箱账号。',
+    unavailable: '服务端没有启用邮件功能。',
+  },
+  en: {
+    desc: 'Read and send mail from multiple accounts.',
+    unavailable: 'Mail is not enabled on the server.',
+  },
+} as const

@@ -27,6 +27,7 @@ package plugins
 
 import (
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -66,6 +67,21 @@ type Plugin struct {
 	// 匹配规则见 ForRoute。有 Section 的插件必须声明它（守卫测试会拒绝空值）。
 	APIPrefixes []string
 
+	// MountRoutes 挂载这个功能的 HTTP 接口。
+	//
+	// 生产环境由 handler.RegisterRoutes 构造好 Mount 之后遍历注册表调用。
+	// 注册表为空时（handler 自己的单测）一条插件路由都不会挂——那是既定语义，
+	// 不是降级：插件接口的测试在各自的包内，需要完整路由表的 handler 用例
+	// 显式注册全部插件。
+	//
+	// 挂载函数住在插件包自己里（internal/plugin/<id>/routes.go），所以删掉那个
+	// 目录就等于删掉这个功能的接口。它引用 httpx / filex 这些公共层，不引用
+	// handler。
+	//
+	// 声明了 APIPrefixes 的插件必须有 MountRoutes（cmd/server 的守卫会拒绝
+	// 空值），否则接口一条都不会挂上，功能"开着但全是 404"。
+	MountRoutes func(Mount)
+
 	// Start / Stop / Reconfigure 是后台资源的生命周期。
 	//
 	// Start 必须幂等（重复调用不叠加 goroutine），Stop 必须幂等。
@@ -82,6 +98,20 @@ type Plugin struct {
 	//
 	// 时机不能改：先撤销再写盘失败会毁掉用户的数据，而开关其实还开着。
 	OnDisable func() []string
+
+	// SwitchEffect 是**双向**的开关效果，用于 OnDisable 表达不了的功能。
+	//
+	// OnDisable 只有一个方向（从开到关），而有些开关两个方向都有不可逆动作：
+	// 任务总开关关掉要取消运行中的执行并丢弃排队事件，打开要重排 cron。
+	// 用 OnDisable 表达不了"打开时也要做事"，于是这个功能以前被留在
+	// handler 里（applyFeatureDisableEffects），成了"插件化没做完"的那一块。
+	//
+	// 与 OnDisable 的分工：OnDisable 表示"关闭即撤销"（分享链接、仓库绑定），
+	// 语义明确所以保留；SwitchEffect 表示"开关两个方向都要动状态"。
+	// 两者互斥——同一个插件只声明其中一个，否则关闭时会被调用两次。
+	//
+	// 时机与 OnDisable 完全一致：配置写盘**成功之后**。返回值是 warnings。
+	SwitchEffect func(enabled bool) []string
 
 	// DisabledMsgKey 是接口被拒时的 i18n 键（如 "ForgeDisabled"）。
 	// 空则按 DisabledKey 的约定从 ID 推导。
@@ -106,6 +136,55 @@ type Plugin struct {
 	// 写法："路径" 表示所有方法豁免；"METHOD 路径" 只豁免该方法
 	// （Forge 的 binding 就是这样：GET 放行、POST/DELETE 仍被拒）。
 	GateExempt []string
+
+	// ConfigFields 列出这个插件**允许被 PATCH /api/config 修改**的配置路径，
+	// 以及它们与插件语义的关系。
+	//
+	// 它反转了原来的依赖方向：以前是"插件的段下每个字段都必须出现在
+	// handler 的 PatchableConfigPaths 白名单里"（插件被迫去适配 handler 的
+	// 一张大表）；现在插件自己交清单，handler 在启动时把全部插件的清单
+	// 并进白名单。
+	//
+	// 白名单本身仍然手写（反射派生 = 把安全边界交给反射），只是它从
+	// "一张 200 行的全局表"变成了"每个插件一张小表 + 无主的那些还在原处"。
+	//
+	// 键是完整路径（"mail.sync_interval_minutes"），值为 true。说明写在
+	// 字面量上方的注释里——不放进 map 的值，因为那些文字是给维护者看的
+	// 文档，不是会展示给用户的数据，放进字符串只会被 i18n 守卫拦下。
+	//
+	// 清单本身住在 internal/plugin/config/<id>.go，这里只是把它挂到插件上：
+	// handler 的 PATCH 白名单读同一份，所以不存在"插件声明了但 PATCH 不认"。
+	// 归属与注册表是否对得上由 TestPluginRegistry_ConfigOwnershipMatchesFeatures 钉住。
+	ConfigFields map[string]bool
+}
+
+// Mount 是挂载一条路由的能力，由 handler.RegisterRoutes 构造后交给各功能的
+// 挂载函数（internal/plugin/<id>/routes.go）。
+//
+// 三个方法分别对应三种路由：要登录的（Auth）、故意免登录的（Public）、
+// 以及"套中间件链但不套鉴权"的（Raw，用于必须给重定向而不是 JSON 401 的
+// 入口）。之所以是 struct 而不是几个函数参数，是为了以后加"挂静态资源"时
+// 不用改所有功能的签名。
+//
+// 它住在 plugins 包而不是 handler 包，是为了让挂载函数的签名稳定：功能
+// 文件只依赖这一个类型，不必认识 middleware、Gate、routeTable。
+type Mount struct {
+	// Auth 挂一条**需要登录**的路由。功能门控、鉴权中间件、路由表登记
+	// 都由构造方负责，插件不需要（也不能）自己套。
+	Auth func(pattern string, handler http.HandlerFunc)
+
+	// Public 挂一条**故意不需要登录**的路由。每一条的免鉴权理由都必须写在
+	// 调用处 —— OpenAPI 里对应的操作要有 `security: []`，否则守卫测试会红。
+	Public func(pattern string, handler http.HandlerFunc)
+
+	// Raw 挂一条"需要登录但不要鉴权中间件"的路由：中间件链照常套，鉴权由
+	// handler 自己做。用于那些必须在未登录时给出**重定向**而不是 JSON 401
+	// 的入口（/share-target：浏览器从系统分享面板跳过来，看到一坨 JSON 只会
+	// 以为坏了）。登记为 authenticated=true，与 OpenAPI 的 security 一致。
+	//
+	// nil 时退化为 Auth：挂载方拿不到 Raw 只说明装配代码旧了，那条路由仍必须
+	// 受保护。绝不能退化到 Public——那会把一个能写文件的入口变成免登录。
+	Raw func(pattern string, handler http.HandlerFunc)
 }
 
 // DisabledKey 返回拒绝请求时使用的 i18n 键。
@@ -182,6 +261,9 @@ var (
 	mu      sync.RWMutex
 	byID    = map[string]*Plugin{}
 	ordered []*Plugin // 按 ID 升序，Register 时维护
+	// configPathOwner 是 ConfigFields 的反向索引（path → 主张它的插件）。
+	// Register 时建立，Register 时查重，因此不存在两份清单对不上的窗口。
+	configPathOwner = map[string]*Plugin{}
 )
 
 // Register 把一个功能登记进注册表。
@@ -210,6 +292,18 @@ func Register(p *Plugin) {
 	defer mu.Unlock()
 	if _, dup := byID[p.ID]; dup {
 		panic(fmt.Sprintf("plugins: duplicate plugin ID %q", p.ID))
+	}
+	// 两个插件声明同一个配置路径，说明这个字段被两个功能同时主张，谁也说不清
+	// 关掉其中一个该不该拦住它。和重复 ID 一样是编程错误，启动即崩——放在
+	// 每个请求都会走的 IsPatchablePath 里会让它变成"保存设置随机 500"。
+	for path := range p.ConfigFields {
+		if prev, dup := configPathOwner[path]; dup {
+			panic(fmt.Sprintf(
+				"plugins: config path %q is claimed by both %q and %q", path, prev.ID, p.ID))
+		}
+	}
+	for path := range p.ConfigFields {
+		configPathOwner[path] = p
 	}
 	byID[p.ID] = p
 	// 保持 ordered 按 ID 升序：/api/features 与 worker 启停顺序都要稳定，
@@ -295,6 +389,27 @@ func Reset() {
 	defer mu.Unlock()
 	byID = map[string]*Plugin{}
 	ordered = nil
+	configPathOwner = map[string]*Plugin{}
+}
+
+// ConfigPaths 汇总全部插件声明的可修改配置路径（path → 主张它的插件）。
+//
+// handler 用它把白名单里"属于某个功能"的那一部分交给插件自己维护，剩下的
+// 无主字段（user.nickname、upload.max_size_mb、chat.* 这类不属于任何功能的）
+// 仍然留在 handler 的手写白名单里。
+//
+// 冲突检测在 Register 里做，不在这里：这里是每个 PATCH 请求都会走的热路径
+// （见 handler.IsPatchablePath），把 panic 放在这儿会让一个编程错误变成
+// "每次保存设置都 500"，而不是"启动即崩、一眼看出是谁重复声明了"。
+// 与 Register 对重复 ID 直接 panic 同一个口径。
+func ConfigPaths() map[string]*Plugin {
+	mu.RLock()
+	defer mu.RUnlock()
+	out := make(map[string]*Plugin, len(configPathOwner))
+	for path, p := range configPathOwner {
+		out[path] = p
+	}
+	return out
 }
 
 // trimPath 抹平尾部斜杠，让精确路径与子树前缀共用一套比较。

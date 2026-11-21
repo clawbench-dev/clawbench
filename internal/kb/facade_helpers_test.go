@@ -78,7 +78,7 @@ func TestKBFacade_DisabledStoreReportsUnavailable(t *testing.T) {
 	require.ErrorIs(t, err, ErrUnavailable)
 	_, err = CreateCollection("c", "", ScopeGlobal, 0)
 	require.ErrorIs(t, err, ErrUnavailable)
-	require.ErrorIs(t, UpdateCollection(1, nil, nil, nil, nil), ErrUnavailable)
+	require.ErrorIs(t, UpdateCollection(1, nil, nil, nil), ErrUnavailable)
 	ok, err := CollectionAccessible(1, 0)
 	require.ErrorIs(t, err, ErrUnavailable)
 	require.False(t, ok)

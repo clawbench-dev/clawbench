@@ -32,6 +32,12 @@ import (
 // No foreign keys to chat_sessions / scheduled_tasks: a notification
 // legitimately outlives its source (that is the whole point of keeping it), and
 // the list probes for the source's existence at render time instead.
+//
+// subject_id is the ONE identity column for every kind: a session id, a task
+// id, a live_notes share token, a forge item key, or a mail message id (as
+// decimal text). The per-kind columns this replaced (session_id / task_id /
+// forge_item_key / meeting_token / mail_message_id) are migrated into it and
+// dropped, so a new kind needs no schema change. See notification_subjects.go.
 const NotificationsDDL = `
 CREATE TABLE IF NOT EXISTS notifications (
 	id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,13 +47,9 @@ CREATE TABLE IF NOT EXISTS notifications (
 	title          TEXT NOT NULL,
 	body           TEXT NOT NULL DEFAULT '',
 	project_id     INTEGER NOT NULL DEFAULT 0,
-	session_id     TEXT NOT NULL DEFAULT '',
-	task_id        TEXT NOT NULL DEFAULT '',
+	subject_id     TEXT NOT NULL DEFAULT '',
 	execution_id   TEXT NOT NULL DEFAULT '',
-	forge_item_key TEXT NOT NULL DEFAULT '',
 	agent_id       TEXT NOT NULL DEFAULT '',
-	meeting_token  TEXT NOT NULL DEFAULT '',
-	mail_message_id INTEGER NOT NULL DEFAULT 0,
 	created_at     TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_event ON notifications(event_id);
@@ -100,46 +102,38 @@ func notificationTimestamp(t time.Time) string {
 
 // Notification is one row of the notification log, shaped for the API.
 type Notification struct {
-	ID           int64  `json:"id"`
-	Kind         string `json:"kind"`
-	EventType    string `json:"eventType"`
-	Title        string `json:"title"`
-	Body         string `json:"body"`
-	ProjectID    int64  `json:"projectId"`
-	ProjectPath  string `json:"projectPath"`
-	SessionID    string `json:"sessionId,omitempty"`
-	TaskID       string `json:"taskId,omitempty"`
-	ExecutionID  string `json:"executionId,omitempty"`
-	ForgeItemKey string `json:"forgeItemKey,omitempty"`
-	AgentID      string `json:"agentId,omitempty"`
-	// MeetingToken identifies a kind=meeting row's meeting. The live_notes row
-	// is the subject: deleting the record is what makes the row stale.
-	MeetingToken string `json:"meetingToken,omitempty"`
-	// MailMessageID identifies a kind=mail row's message (mail_messages.id).
-	// Deleting the account or its cached messages is what makes the row stale.
-	MailMessageID int64  `json:"mailMessageId,omitempty"`
-	CreatedAt     string `json:"createdAt"`
-	// SourceMissing is set by the API layer when the session/task/meeting/mail
-	// this notification points at no longer exists. Forge items are never
-	// marked (they live upstream, with no local delete semantics).
+	ID        int64  `json:"id"`
+	Kind      string `json:"kind"`
+	EventType string `json:"eventType"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	ProjectID int64  `json:"projectId"`
+	// SubjectID is the identity of what this row points at, interpreted by
+	// Kind: a session id, a task id, a live_notes share token, a forge item
+	// key, or a mail message id (decimal). Empty for kinds with no local
+	// subject (usage). The registry knows which table/key it lives in.
+	SubjectID   string `json:"subjectId,omitempty"`
+	ExecutionID string `json:"executionId,omitempty"`
+	AgentID     string `json:"agentId,omitempty"`
+	ProjectPath string `json:"projectPath"`
+	CreatedAt   string `json:"createdAt"`
+	// SourceMissing is set by the API layer when the subject this notification
+	// points at no longer exists. Forge items are never marked (they live
+	// upstream, with no local delete semantics).
 	SourceMissing bool `json:"sourceMissing,omitempty"`
 }
 
 // NotificationRecord is a row to append to the log.
 type NotificationRecord struct {
-	EventID       string
-	Kind          string
-	EventType     string
-	Title         string
-	Body          string
-	ProjectID     int64
-	SessionID     string
-	TaskID        string
-	ExecutionID   string
-	ForgeItemKey  string
-	AgentID       string
-	MeetingToken  string
-	MailMessageID int64
+	EventID     string
+	Kind        string
+	EventType   string
+	Title       string
+	Body        string
+	ProjectID   int64
+	SubjectID   string
+	ExecutionID string
+	AgentID     string
 }
 
 // StoreNotification appends one notification to the log.
@@ -165,13 +159,21 @@ func StoreNotification(rec NotificationRecord) {
 			slog.String("kind", rec.Kind), slog.String("event_id", rec.EventID))
 		return
 	}
+	// A kind nobody registered is either a typo or a writer that skipped the
+	// registry entry. Store it anyway (the log must not lose a fact), but say
+	// so where the mistake is made: the client can only render such a row as
+	// "other", so without this warning the defect would surface as a vague UI
+	// oddity instead of a log line naming the kind.
+	if _, known := notificationSubjectFor(rec.Kind); !known {
+		slog.Warn("notifications: unregistered kind; client will show it as 'other'",
+			slog.String("kind", rec.Kind), slog.String("event_id", rec.EventID))
+	}
 	_, err := store.WriteExec(
 		`INSERT OR IGNORE INTO notifications
-			(event_id, kind, event_type, title, body, project_id, session_id, task_id, execution_id, forge_item_key, agent_id, meeting_token, mail_message_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(event_id, kind, event_type, title, body, project_id, subject_id, execution_id, agent_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.EventID, rec.Kind, rec.EventType, rec.Title, rec.Body,
-		rec.ProjectID, rec.SessionID, rec.TaskID, rec.ExecutionID,
-		rec.ForgeItemKey, rec.AgentID, rec.MeetingToken, rec.MailMessageID,
+		rec.ProjectID, rec.SubjectID, rec.ExecutionID, rec.AgentID,
 		notificationTimestamp(time.Now()),
 	)
 	if err != nil {
@@ -219,8 +221,7 @@ func ListNotifications(f NotificationFilter) ([]Notification, error) {
 	}
 
 	query := `SELECT n.id, n.kind, n.event_type, n.title, n.body, n.project_id,
-			COALESCE(p.path, ''), n.session_id, n.task_id, n.execution_id,
-			n.forge_item_key, n.agent_id, n.meeting_token, n.mail_message_id, n.created_at
+			COALESCE(p.path, ''), n.subject_id, n.execution_id, n.agent_id, n.created_at
 		FROM notifications n
 		LEFT JOIN projects p ON p.id = n.project_id
 		WHERE 1 = 1`
@@ -256,8 +257,7 @@ func ListNotifications(f NotificationFilter) ([]Notification, error) {
 		var n Notification
 		if err := rows.Scan(
 			&n.ID, &n.Kind, &n.EventType, &n.Title, &n.Body, &n.ProjectID,
-			&n.ProjectPath, &n.SessionID, &n.TaskID, &n.ExecutionID,
-			&n.ForgeItemKey, &n.AgentID, &n.MeetingToken, &n.MailMessageID, &n.CreatedAt,
+			&n.ProjectPath, &n.SubjectID, &n.ExecutionID, &n.AgentID, &n.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -334,304 +334,6 @@ func CleanupNotifications() {
 	} else if n, _ := res.RowsAffected(); n > 0 {
 		slog.Warn("notifications: evicted rows to cap", "count", n, "max", notificationMaxRows)
 	}
-}
-
-// MarkMissingSources sets SourceMissing on rows whose session/task no longer
-// exists. One query per id-space (session, task) for the whole page, so the
-// cost is constant regardless of page size.
-//
-// It also REPAIRS rows whose session_id names a hidden group MEMBER row, by
-// rewriting it to the group timeline. Those rows were written before the
-// recorder learned to resolve member→group (a member's ACP connection is keyed
-// by the member id, so permission_pending reached the log that way), and the
-// retention window is 30 days — so the bad rows are already on disk and a
-// write-time fix alone would leave them broken until they age out. Doing it here
-// means the fix is visible immediately, and the repair is idempotent.
-//
-// The probe is keyed off Kind, NOT "whichever id is non-empty". A task
-// notification stores BOTH task_id and the scheduled session_id it ran in, and
-// that session is a normal `session_type='scheduled'` row that SessionCleanupWorker
-// archives and then hard-deletes while the task itself lives on. Probing the
-// session first would therefore flag a perfectly healthy task as "source
-// deleted" and suppress its navigation. The kind says which id is the subject.
-//
-// "Archived" is NOT "deleted": an archived session row still exists (and can be
-// resumed), so it is reported as present — only a genuinely removed row counts
-// as missing. Forge items are skipped entirely: they live upstream and have no
-// local delete semantics, so a forge notification is never stale.
-//
-// A meeting row probes live_notes, not the room: the room is in-memory and dies
-// with the publisher's socket, so every meeting notification would look stale
-// the moment the meeting ended. The record row is what the click opens, and it
-// is deleted only when the user deletes the record.
-func MarkMissingSources(rows []Notification) {
-	if len(rows) == 0 || !store.ReadDBReady() {
-		return
-	}
-	// Repair member-row targets first, so the presence probe below runs against
-	// the group id the row will actually navigate to.
-	repairGroupMemberTargets(rows)
-	markMissingSubjects(rows)
-}
-
-// markMissingSubjects probes each subject table ONCE for the whole page and
-// flags the rows whose subject is gone.
-//
-// Split out of MarkMissingSources to keep both functions inside the linter's
-// complexity budget; the split is also the honest shape, since "repair legacy
-// targets" and "probe presence" are two independent passes.
-func markMissingSubjects(rows []Notification) {
-	present := probeNotificationSubjects(rows)
-	for i := range rows {
-		if present.missing(&rows[i]) {
-			rows[i].SourceMissing = true
-		}
-	}
-}
-
-// subjectPresence is the set of subject ids that still exist, one map per
-// probed kind.
-type subjectPresence struct {
-	sessions map[string]bool
-	tasks    map[string]bool
-	meetings map[string]bool
-	mail     map[int64]bool
-}
-
-// missing reports whether n points at a subject that is gone. Forge (and any
-// future kind) is never probed: its item lives in an external system this log
-// cannot query.
-func (p subjectPresence) missing(n *Notification) bool {
-	switch n.Kind {
-	case NotificationKindSession:
-		return n.SessionID != "" && !p.sessions[n.SessionID]
-	case NotificationKindTask:
-		return n.TaskID != "" && !p.tasks[n.TaskID]
-	case NotificationKindMeeting:
-		return n.MeetingToken != "" && !p.meetings[n.MeetingToken]
-	case NotificationKindMail:
-		return n.MailMessageID > 0 && !p.mail[n.MailMessageID]
-	}
-	return false
-}
-
-// probeNotificationSubjects runs ONE presence query per subject table for the
-// whole page.
-func probeNotificationSubjects(rows []Notification) subjectPresence {
-	// Only collect the ids the probe will actually consult, so a task row's
-	// session id is never even queried.
-	sessionIDs := distinctNonEmpty(rows, func(n Notification) string {
-		if n.Kind != NotificationKindSession {
-			return ""
-		}
-		return n.SessionID
-	})
-	taskIDs := distinctNonEmpty(rows, func(n Notification) string {
-		if n.Kind != NotificationKindTask {
-			return ""
-		}
-		return n.TaskID
-	})
-	meetingIDs := distinctNonEmpty(rows, func(n Notification) string {
-		if n.Kind != NotificationKindMeeting {
-			return ""
-		}
-		return n.MeetingToken
-	})
-	mailIDs := distinctNonEmptyInt64(rows, func(n Notification) int64 {
-		if n.Kind != NotificationKindMail {
-			return 0
-		}
-		return n.MailMessageID
-	})
-
-	return subjectPresence{
-		sessions: existingIDs("chat_sessions", "id", sessionIDs),
-		tasks:    existingIDs("scheduled_tasks", "id", taskIDs),
-		// A meeting's record row (live_notes) is created when the publisher
-		// attaches and deleted with the record, so it is the meeting's presence
-		// probe. The in-memory room is irrelevant here: the log outlives it.
-		meetings: existingIDs("live_notes", "token", meetingIDs),
-		// A mail row points at the cached message, which disappears when the
-		// message is deleted upstream or the whole account is removed.
-		mail: existingInt64IDs("mail_messages", "id", mailIDs),
-	}
-}
-
-// repairGroupMemberTargets rewrites session rows that point at a hidden group
-// MEMBER row so they point at the group timeline instead.
-//
-// One query for the whole page: the member ids are looked up in a single IN(...)
-// and only the rows that actually map are rewritten, so a page of ordinary
-// sessions costs one indexed lookup and no writes.
-func repairGroupMemberTargets(rows []Notification) {
-	ids := distinctNonEmpty(rows, func(n Notification) string {
-		if n.Kind != NotificationKindSession {
-			return ""
-		}
-		return n.SessionID
-	})
-	if len(ids) == 0 {
-		return
-	}
-
-	// member row id -> group timeline id, for the members present in this page.
-	groupOf := map[string]string{}
-	query := "SELECT id, COALESCE(group_id, '') FROM chat_sessions WHERE session_type = ? AND id IN (" +
-		sqlPlaceholders(len(ids)) + ")"
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, groupMemberSessionType)
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	dbRows, err := store.ReadDB().Query(query, args...)
-	if err != nil {
-		// Best-effort repair: on failure the rows simply keep their stored id
-		// (the pre-fix behavior) rather than failing the whole list.
-		slog.Warn("notifications: member-row repair probe failed", "error", err)
-		return
-	}
-	defer func() { _ = dbRows.Close() }()
-	for dbRows.Next() {
-		var id, groupID string
-		if err := dbRows.Scan(&id, &groupID); err != nil {
-			slog.Warn("notifications: member-row repair scan failed", "error", err)
-			continue
-		}
-		if groupID != "" {
-			groupOf[id] = groupID
-		}
-	}
-	if err := dbRows.Err(); err != nil {
-		slog.Warn("notifications: member-row repair iteration failed", "error", err)
-	}
-
-	if len(groupOf) == 0 {
-		return
-	}
-	for i := range rows {
-		n := &rows[i]
-		if n.Kind != NotificationKindSession {
-			continue
-		}
-		if groupID, ok := groupOf[n.SessionID]; ok {
-			n.SessionID = groupID
-		}
-	}
-}
-
-// distinctNonEmpty collects the unique non-empty values of one field.
-func distinctNonEmpty(rows []Notification, get func(Notification) string) []string {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, n := range rows {
-		v := get(n)
-		if v == "" || seen[v] {
-			continue
-		}
-		seen[v] = true
-		out = append(out, v)
-	}
-	return out
-}
-
-// distinctNonEmptyInt64 is the int64 variant of distinctNonEmpty, used by the
-// mail probe (mail_messages.id is an integer, unlike the string id-spaces).
-func distinctNonEmptyInt64(rows []Notification, get func(Notification) int64) []int64 {
-	seen := map[int64]bool{}
-	out := []int64{}
-	for _, n := range rows {
-		v := get(n)
-		if v <= 0 || seen[v] {
-			continue
-		}
-		seen[v] = true
-		out = append(out, v)
-	}
-	return out
-}
-
-// existingInt64IDs returns the subset of ids present in table.column. The
-// table/column literals are supplied by this file, never user input.
-func existingInt64IDs(table, column string, ids []int64) map[int64]bool {
-	present := map[int64]bool{}
-	if len(ids) == 0 || !store.ReadDBReady() {
-		return present
-	}
-	args := make([]any, 0, len(ids))
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	rows, err := store.ReadDB().Query(
-		"SELECT "+column+" FROM "+table+" WHERE "+column+" IN ("+sqlPlaceholders(len(ids))+")",
-		args...,
-	)
-	if err != nil {
-		// Fail open, matching existingIDs: a probe failure must not mark every
-		// mail row deleted and disable its navigation.
-		slog.Warn("notifications: source probe failed", "table", table, "error", err)
-		for _, id := range ids {
-			present[id] = true
-		}
-		return present
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			slog.Warn("notifications: source probe scan failed", "table", table, "error", err)
-			continue
-		}
-		present[id] = true
-	}
-	if err := rows.Err(); err != nil {
-		slog.Warn("notifications: source probe iteration failed", "table", table, "error", err)
-	}
-	return present
-}
-
-// existingIDs returns the subset of ids present in table.column. Both names are
-// allowlisted literals supplied by this file — never user input.
-//
-// The column is a parameter because the id-space differs per subject: sessions
-// and tasks are keyed by `id`, while a meeting is keyed by its share `token`
-// (live_notes has no id column at all). An empty id list short-circuits without
-// a query.
-func existingIDs(table, column string, ids []string) map[string]bool {
-	present := map[string]bool{}
-	if len(ids) == 0 || !store.ReadDBReady() {
-		return present
-	}
-	args := make([]any, 0, len(ids))
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	rows, err := store.ReadDB().Query(
-		"SELECT "+column+" FROM "+table+" WHERE "+column+" IN ("+sqlPlaceholders(len(ids))+")",
-		args...,
-	)
-	if err != nil {
-		// Fail open: treat every id as present. A probe failure must not make
-		// the whole list look deleted, which would disable every navigation.
-		slog.Warn("notifications: source probe failed", "table", table, "error", err)
-		for _, id := range ids {
-			present[id] = true
-		}
-		return present
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			slog.Warn("notifications: source probe scan failed", "table", table, "error", err)
-			continue
-		}
-		present[id] = true
-	}
-	if err := rows.Err(); err != nil {
-		slog.Warn("notifications: source probe iteration failed", "table", table, "error", err)
-	}
-	return present
 }
 
 // NotificationRangeSince maps the API's time-range token to an inclusive
@@ -716,7 +418,7 @@ func RecordSessionNotification(eventID, sessionID, status string, data *ws.Sessi
 		Title:     title,
 		Body:      notificationEventBody(data),
 		ProjectID: projectID,
-		SessionID: sessionID,
+		SubjectID: sessionID,
 		AgentID:   GetSessionAgentID(sessionID),
 	}
 	StoreNotification(rec)
@@ -781,9 +483,8 @@ func RecordTaskNotification(eventID, taskID, status, executionID, sessionID, pro
 		Title:       title,
 		Body:        body,
 		ProjectID:   projectID,
-		TaskID:      taskID,
+		SubjectID:   taskID,
 		ExecutionID: executionID,
-		SessionID:   sessionID,
 	})
 }
 
@@ -809,13 +510,13 @@ func RecordForgeNotification(eventID string, repo ForgeRepoRef, eventType, title
 		}
 	}
 	StoreNotification(NotificationRecord{
-		EventID:      eventID,
-		Kind:         NotificationKindForge,
-		EventType:    eventType,
-		Title:        title,
-		Body:         body,
-		ProjectID:    projectID,
-		ForgeItemKey: itemKey,
+		EventID:   eventID,
+		Kind:      NotificationKindForge,
+		EventType: eventType,
+		Title:     title,
+		Body:      body,
+		ProjectID: projectID,
+		SubjectID: itemKey,
 	})
 }
 

@@ -1,19 +1,11 @@
 package handler
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"clawbench/internal/frontend"
-	i18npkg "clawbench/internal/i18n"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
@@ -22,7 +14,6 @@ import (
 	"clawbench/internal/service"
 	"clawbench/internal/store"
 	"clawbench/internal/ws"
-	"github.com/nicksnyder/go-i18n/v2/i18n"
 )
 
 // jsonKeyStatus is the JSON key "status" used across handler responses (goconst).
@@ -45,10 +36,6 @@ const (
 	jsonMaxCount    = "MaxCount"
 	jsonSessions    = "sessions"
 	jsonCommands    = "commands"
-	// jsonFile is the "which file does this payload point at" key (artifact
-	// name, watched file). Distinct from entryTypeFile / shareKindFile, which
-	// are VALUES classifying a file, not a key.
-	jsonFile = "file"
 	// jsonTransport names the transport of a server/agent/session in responses
 	// and config patches ("stdio" / "http" / "sse" / "acp-stdio" / "ssh" / "h2").
 	jsonTransport = "transport"
@@ -56,59 +43,6 @@ const (
 	// project root. Emitted by both the WS and the HTTP job responses.
 	jsonAudioPath = "audioPath"
 )
-
-// loc returns the Localizer for the current request.
-func loc(r *http.Request) *i18n.Localizer {
-	return middleware.GetLocalizer(r)
-}
-
-// T is a shorthand for translating a message key in the handler layer.
-func T(r *http.Request, msgKey string, templateData ...map[string]any) string {
-	return i18npkg.T(loc(r), msgKey, templateData...)
-}
-
-// writeLocalizedErrorf writes a localized error response with i18n message key.
-func writeLocalizedErrorf(w http.ResponseWriter, r *http.Request, status int, msgKey string, templateData ...map[string]any) {
-	localizedMsg := T(r, msgKey, templateData...)
-	var detail map[string]any
-	if len(templateData) > 0 {
-		detail = templateData[0]
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(model.ErrorResponse{Error: localizedMsg, Code: status, MsgKey: msgKey, Detail: detail})
-}
-
-// writeLocalizedError writes a localized AppError response.
-func writeLocalizedError(w http.ResponseWriter, r *http.Request, err error) {
-	var appErr *model.AppError
-	if err == nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-		return
-	}
-	if ok := errors.As(err, &appErr); ok {
-		localizedMsg := T(r, appErr.Message)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(appErr.Code)
-		_ = json.NewEncoder(w).Encode(model.ErrorResponse{Error: localizedMsg, Code: appErr.Code, MsgKey: appErr.Message})
-		return
-	}
-	writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-}
-
-// requireProject extracts the project path from cookie and writes error if not set.
-// Returns the project path and true on success, or empty string and false on failure.
-func requireProject(w http.ResponseWriter, r *http.Request) (string, bool) {
-	projectPath := middleware.GetProjectFromCookie(r)
-	if projectPath == "" {
-		slog.Warn("handler: requireProject — project cookie is empty",
-			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path))
-		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
-		return "", false
-	}
-	return projectPath, true
-}
 
 // sessionOwnership describes the outcome of an ownership check.
 type sessionOwnership int
@@ -171,61 +105,6 @@ func requireSessionOwnership(w http.ResponseWriter, r *http.Request, sessionID, 
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 	}
 	return false
-}
-
-// requireMethod checks that the request method is one of the allowed methods.
-// Writes 405 on mismatch. Returns true if allowed.
-func requireMethod(w http.ResponseWriter, r *http.Request, methods ...string) bool {
-	if slices.Contains(methods, r.Method) {
-		return true
-	}
-	writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
-	return false
-}
-
-// writeJSON sets Content-Type and encodes v as JSON with the given status code.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// decodeJSON decodes the request body into v. Writes 400 on failure.
-// Returns true on success.
-func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
-		return false
-	}
-	return true
-}
-
-// decodeOptionalJSON decodes the request body into v, treating an EMPTY body as
-// "no fields supplied" rather than an error. A non-empty but malformed body is
-// still a 400.
-//
-// This is for endpoints where the body carries only optional refinements, so the
-// same route serves "act on everything" and "act on one thing".
-func decodeOptionalJSON(r *http.Request, v any) error {
-	if r.Body == nil {
-		return nil
-	}
-	err := json.NewDecoder(r.Body).Decode(v)
-	if errors.Is(err, io.EOF) {
-		return nil // empty body: keep v's zero values
-	}
-	return err
-}
-
-// validateAndResolvePath validates a relative path and returns the absolute path.
-// Writes 403 on failure. Returns (absPath, true) on success.
-func validateAndResolvePath(w http.ResponseWriter, r *http.Request, basePath, relPath string) (string, bool) {
-	absPath, ok := model.ValidatePath(basePath, relPath)
-	if !ok {
-		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-		return "", false
-	}
-	return absPath, true
 }
 
 // resolveAttachmentPath resolves a chat attachment path, which may arrive
@@ -310,72 +189,6 @@ func asAbsolutePath(basePath, path string) (string, bool) {
 		return "", false
 	}
 	return absPath, true
-}
-
-// resolveAbsPath resolves a path string to an absolute path under any root path.
-// Absolute paths are validated directly; relative paths are resolved against
-// the project path from cookie then validated. This unifies path handling for
-// all file mutation endpoints so callers don't need to worry about base-path
-// bookkeeping. Writes error on failure. Returns (absPath, true) on success.
-func resolveAbsPath(w http.ResponseWriter, r *http.Request, pathStr string) (string, bool) {
-	if filepath.IsAbs(pathStr) {
-		// Absolute path — validate it's under any root path
-		absPath, err := filepath.Abs(pathStr)
-		if err != nil {
-			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-			return "", false
-		}
-		if !isPathUnderAnyRoot(absPath) {
-			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-			return "", false
-		}
-		return absPath, true
-	}
-
-	// Relative path — resolve against projectPath from cookie
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return "", false
-	}
-	baseAbs, err := filepath.Abs(projectPath)
-	if err != nil {
-		model.WriteError(w, model.Internal(fmt.Errorf("failed to resolve project path: %w", err)))
-		return "", false
-	}
-	absPath, ok := validateAndResolvePath(w, r, baseAbs, pathStr)
-	if !ok {
-		return "", false
-	}
-	return absPath, true
-}
-
-// isPathUnderAnyRoot checks that absPath is under at least one of the
-// configured root paths. Uses the platform's IsPathUnderAnyRoot for
-// symlink-safe validation.
-func isPathUnderAnyRoot(absPath string) bool {
-	return platform.IsPathUnderAnyRoot(absPath, model.RootPaths)
-}
-
-// isPathUnderBase checks that absPath is under basePath by resolving symlinks
-// on both sides before comparing. This prevents symlink traversal attacks.
-// Both paths must be absolute.
-func isPathUnderBase(absPath, basePath string) bool {
-	evalBase, err := filepath.EvalSymlinks(basePath)
-	if err != nil {
-		return false
-	}
-	evalPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return false
-		}
-		// Target doesn't exist — resolve parent directory
-		evalPath = model.ResolveExistingPath(absPath, evalBase)
-		if evalPath == "" {
-			return false
-		}
-	}
-	return model.IsPathUnderBase(evalPath, evalBase)
 }
 
 // resolveAgentConfig resolves agent configuration from model.Agents.
@@ -652,10 +465,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/group/settings", ServeGroupSettings)
 	register("/api/ai/chat/tool-call", ServeToolCallDetail)
 	register("/api/ai/chat/thinking", ServeThinkingDetail)
-	register("/api/usage/stats", ServeUsageStats)
-	register("/api/usage/meter", ServeUsageMeter)
-	register("/api/git/stats", ServeGitStats)
-	register("/api/git/cloc", ServeGitCloc)
 	register("/api/ai/permission/respond", ServePermissionRespond)
 	register("/api/ai/elicitation/respond", ServeElicitationRespond)
 	register("/api/upload/file", UploadFile)
@@ -668,28 +477,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// wrapped so a rejected request lands on the login page instead of a JSON
 	// body (the browser NAVIGATED here, so it renders whatever we return).
 	//
-	// Registered OUTSIDE middleware.Auth so the rejection can be a redirect:
-	// Auth writes a JSON 401, which the browser would render as a bare error
-	// body (it navigated here from the OS share sheet). The handler re-checks
-	// authentication itself and bounces to the app, where the login form lives.
-	registerRoute(mux, "/share-target", ShareTarget)
-	routeTable = append(routeTable, Route{Pattern: "/share-target", Authenticated: true})
-
-	// GitHub / GitLab integration (read-only issue & PR browsing).
-	register("/api/forge/credentials", ServeForgeCredentials)
-	register("/api/forge/verify-token", ServeForgeVerifyToken)
-	register("/api/forge/items", ServeForgeItems)
-	register("/api/forge/item", ServeForgeItem)
-	register("/api/forge/comments", ServeForgeComments)
-	register("/api/forge/pipelines", ServeForgePipelines)
-	register("/api/forge/pipeline", ServeForgePipeline)
-	register("/api/forge/item-pipelines", ServeForgeItemPipelines)
-	register("/api/forge/binding", ServeForgeBinding)
-	register("/api/forge/remotes", ServeForgeRemotes)
-	register("/api/forge/test", ServeForgeTest)
-	register("/api/forge/unread", ServeForgeUnread)
-	register("/api/forge/unread-items", ServeForgeUnreadItems)
-	register("/api/forge/read", ServeForgeMarkRead)
 
 	// Cross-agent skill discovery: what was found across every agent's native
 	// directory, the user's own directory and cloned git repositories, plus a
@@ -698,89 +485,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/skills/refresh", ServeSkillsRefresh)
 	register("/api/skills/rescan", ServeSkillsRescan)
 
-	// Public file-share links. Management endpoints are auth-protected; the
-	// public data endpoints (/api/share/{token}/...) and the share SPA page
-	// (/share/{token}) are intentionally unauthenticated — the capability token
-	// in the URL is the sole credential, and no token means a 404 (zero
-	// exposure when the feature is unused).
-	register("/api/share", ServeShareManage)
-	register("/api/share/list", ServeShareList)
-	// Conversation (session) share links. Exact path so it is matched ahead of
-	// the public /api/share/ subtree; see ServeSessionShareManage.
-	register("/api/share/session", ServeSessionShareManage)
-	// Management list for conversation shares: GET lists this project's shares,
-	// DELETE revokes one by token or all of them. Separate from
-	// /api/share/session because that one operates on a single session id, and an
-	// archived session has no addressable id left.
-	register("/api/share/session/list", ServeSessionShareList)
-	// Live screen/audio share. Management is authenticated (the publisher must
-	// own the project); the viewer socket is public because the share token IS
-	// the credential, exactly like the file/session share endpoints above.
-	register("/api/live-share", ServeLiveShareManage)
-	register("/api/live-share/publish/ws", LiveSharePublishWS)
-	// 中继服务 (LiveKit) endpoint + credential. Installation-wide, not per
-	// meeting: the create dialog edits it, every meeting that opts in uses it.
-	// The secret is write-only — see handler/live_sfu.go.
-	register("/api/live-share/sfu", ServeLiveSFUConfig)
-	register("/api/live-share/sfu/test", ServeLiveSFUTest)
-	// Signaling proxy for a LOOPBACK relay. Public like the viewer socket: an
-	// https page cannot open ws://, so it asks the origin instead, and the
-	// LiveKit token it carries is the credential. Only 127.0.0.1 is ever
-	// dialed — see handler/live_proxy.go.
-	registerPublic("/livekit/", ServeLiveKitProxy)
-	// AI 听记: the publisher uploads one audio segment per channel, reads the
-	// merged timeline back, and asks for the minutes once the share ends.
-	register("/api/live-share/notes", ServeLiveShareNotes)
-	register("/api/live-share/notes/segment", ServeLiveShareNoteSegment)
-	register("/api/live-share/notes/stream", LiveNotesStreamWS)
-	// Folds the per-segment audio into one file per channel plus the
-	// whole-meeting mix; called once the upload queue has drained.
-	register("/api/live-share/notes/audio/merge", ServeLiveNotesAudioMerge)
-	register("/api/live-share/notes/minutes", ServeLiveShareNotesMinutes)
-	// Chat is persisted as it happens (the publisher is the only writer): the
-	// meeting record keeps it after the room is gone.
-	register("/api/live-share/notes/chat", ServeLiveShareNoteChat)
-	// Files opened during the meeting, as intervals. Same reasoning as chat:
-	// the publisher reports them while the room is live, the record keeps them.
-	register("/api/live-share/notes/files", ServeLiveShareNoteFiles)
-	// Who was sharing the screen, as intervals. Recorded as transitions so the
-	// timeline can never show two sharers at once.
-	register("/api/live-share/notes/screen", ServeLiveShareNoteScreen)
-	// Key frames captured by the publisher while a screen is on the wire: POST
-	// uploads one, DELETE removes one, GET (below) lists them.
-	register("/api/live-share/notes/shot", ServeLiveShareNoteShot)
-	register("/api/live-share/notes/shots", ServeLiveNotesShots)
-	// Screen recording (picture + annotations + the meeting's audio mix). The
-	// publisher appends ordered chunks while the switch is on; finish closes the
-	// session. The file lives beside the other artifacts, so the record's
-	// resource tab lists it with no extra table.
-	register("/api/live-share/notes/recording", ServeLiveShareNoteRecording)
-	register("/api/live-share/notes/recording/finish", ServeLiveShareNoteRecordingFinish)
-	// Meeting records: GET lists the project's meetings (the database row is the
-	// record, permanent), DELETE removes one with its folder.
-	register("/api/live-share/notes/sessions", ServeLiveNotesSessions)
-	// Whether this record's link stays readable after the meeting ends. Off by
-	// default: the token is minted automatically for viewers to join, which is
-	// not the same as publishing the archived record.
-	register("/api/live-share/notes/sessions/share", ServeLiveNotesShare)
-	// Clear every record of this project in one call. Its own path (not a query
-	// flag on the single delete) because the two answer differently: one either
-	// deletes or refuses, the other deletes what it can and reports the rest.
-	register("/api/live-share/notes/sessions/all", ServeLiveNotesClear)
-	register("/api/live-share/notes/sessions/artifact", ServeLiveNotesArtifact)
-	register("/api/live-share/notes/sessions/chat", ServeLiveNotesChat)
-	// Import an existing recording or video as a meeting: the file is decoded to
-	// the same mono Opus track a solo recording produces, then the ordinary
-	// transcript → proofread → minutes chain runs on it.
-	register("/api/live-share/notes/import", ServeLiveNotesImport)
-	// Regeneration: plan first (the confirmation sheet), then accept or cancel.
-	// The plan endpoint is read-only; the POST recomputes the plan instead of
-	// trusting the client's copy.
-	register("/api/live-share/notes/regenerate/plan", ServeLiveShareNotesRegeneratePlan)
-	register("/api/live-share/notes/regenerate/cancel", ServeLiveShareNotesRegenerateCancel)
-	register("/api/live-share/notes/regenerate", ServeLiveShareNotesRegenerate)
-	registerPublic("/api/share/", ServeSharePublic)
-	registerPublic("/share/", ServeSharePage)
 	register("/api/dir", ListDir)
 	register("/api/file/list-tree", ServeListTree)
 	register("/api/fs/thumb", FileThumb)
@@ -837,8 +541,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/voice/turn/ws", VoiceTurnWS)
 	register("/api/stt/transcribe", STTTranscribe)
 	register("/api/stt/transcribe/ws", STTTranscribeWS)
-	register("/api/tasks", ServeTasks)
-	register("/api/tasks/", ServeTaskByID)
 	register("/api/rag/search", ServeRAGSearch)
 	register("/api/rag/message", ServeRAGMessage)
 	register("/api/rag/message/summarize", ServeMessageSummarize)
@@ -849,23 +551,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/rebuild/status", ServeRAGRebuildStatus)
 	register("/api/rag/session-search", ServeRAGSessionSearch)
 	register("/api/rag/session-first-message", ServeRAGSessionFirstMessage)
-
-	// Knowledge base: multiple collections scoped globally or per project,
-	// files copied into the data directory and indexed for keyword + semantic
-	// search. Separate tables from the chat index above.
-	register("/api/kb/collections", ServeKBCollections)
-	register("/api/kb/documents", ServeKBDocuments)
-	register("/api/kb/documents/upload", ServeKBDocumentUpload)
-	register("/api/kb/documents/import", ServeKBDocumentImport)
-	register("/api/kb/documents/url", ServeKBDocumentURL)
-	register("/api/kb/documents/move", ServeKBDocumentMove)
-	register("/api/kb/documents/usage", ServeKBDocumentUsage)
-	register("/api/kb/documents/reindex", ServeKBDocumentReindex)
-	register("/api/kb/documents/refresh", ServeKBDocumentRefresh)
-	register("/api/kb/documents/progress", ServeKBDocumentProgress)
-	register("/api/kb/search", ServeKBSearch)
-	register("/api/kb/reindex", ServeKBReindex)
-	register("/api/kb/status", ServeKBStatus)
 
 	// Client log collection — auth-protected.
 	// This is an append-only write primitive into a file on the server, so an
@@ -942,16 +627,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// allowed-range guard mirrors the SSH reverse path.
 	register("/api/tunnel/control", TunnelControl)
 
-	// Terminal (interactive web terminal with PTY + WebSocket + xterm.js)
-	register("/api/terminal/ws", TerminalWebSocket)
-	register("/api/terminal/status", TerminalStatus)
-	register("/api/terminal/close", TerminalClose)
-	register("/api/terminal/quick-commands", ServeQuickCommands)
-	register("/api/terminal/quick-commands/", ServeQuickCommandByID)
-	register("/api/terminal/history", ServeTerminalHistory)
-	register("/api/terminal/history/", ServeTerminalHistoryByID)
-	register("/api/terminal/key-config", ServeKeyConfig)
-
 	// Global event WebSocket (replaces polling for session/task status)
 	register("/api/ai/events/ws", func(w http.ResponseWriter, r *http.Request) {
 		ws.EventsHandler(w, r)
@@ -963,25 +638,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Notification-center log: a browsable history of session/task/forge
 	// events. GET lists (with project/kind/time filters + keyset paging);
 	// DELETE clears the whole log.
-	register("/api/notifications", ServeNotificationsOrClear)
-
-	// Built-in mail client: accounts, cached folders/messages, send, drafts.
-	// Data is global (a mailbox belongs to the person, not to a project).
-	// The whole prefix is gated by the mail plugin's master switch (see
-	// register above) — /api/mail/send used to stay reachable while mail was
-	// off, because the switch only stopped the background sync.
-	register("/api/mail/presets", ServeMailPresets)
-	register("/api/mail/accounts", ServeMailAccounts)
-	register("/api/mail/accounts/", ServeMailAccountSubRoutes)
-	register("/api/mail/folders", ServeMailFolders)
-	register("/api/mail/folders/", ServeMailFolderSubRoutes)
-	register("/api/mail/messages", ServeMailMessages)
-	register("/api/mail/messages/", ServeMailMessageSubRoutes)
-	register("/api/mail/unread", ServeMailUnread)
-	register("/api/mail/send", ServeMailSend)
-	register("/api/mail/attachments", ServeMailAttachments)
-	register("/api/mail/drafts", ServeMailDrafts)
-	register("/api/mail/drafts/", ServeMailDraftSubRoutes)
 
 	// Chat quick-send (CRUD for quick-send presets stored in database)
 	register("/api/chat/quick-send", ServeChatQuickSend)
@@ -1013,6 +669,32 @@ func RegisterRoutes(mux *http.ServeMux) {
 	registerPublic("/api/drawio/status", ServeDrawioStatus)
 	register("/api/drawio/install", ServeDrawioInstall)
 	register("/api/drawio/upload", ServeDrawioUpload)
+
+	// 内置功能的接口由功能自己的挂载文件注册（internal/plugin/<id>/routes.go），
+	// 这里只把「怎么挂」注入进去，不列出任何功能。
+	//
+	// 注册表为空时一条插件路由都不挂（见 mountBuiltinRoutes 的头注释）：handler
+	// 的单测只覆盖核心路由，插件接口由各自的包测试，需要完整路由表的用例显式
+	// 调 registerAllPluginsForTest()。
+	//
+	// 门控仍然走注册表：mount.Auth 内部调用 plugins.ForRoute，插件没注册就是
+	// 不门控、路由照样可达。生产上注册表必然非空（cmd/server 在 RegisterRoutes
+	// 之前调 registerPlugins），所以这只影响单测里的降级。
+	//
+	// 插件声明与路由的对应关系由 cmd/server 的两个守卫核对：
+	// TestPluginRegistry_EveryRoutePrefixHasMountedRoutes（声明了前缀就必须
+	// 有路由挂上去）与 TestPluginRegistry_DeclaredPrefixesOwnRealRoutes
+	// （挂上去的路由必须归同一个插件管）。
+	mount := plugins.Mount{
+		Auth:   register,
+		Public: registerPublic,
+		// Raw：套中间件链但不套鉴权，登记为 authenticated=true。
+		Raw: func(pattern string, handler http.HandlerFunc) {
+			registerRoute(mux, pattern, handler)
+			routeTable = append(routeTable, Route{Pattern: pattern, Authenticated: true})
+		},
+	}
+	mountBuiltinRoutes(mount)
 
 	// Serve static assets from frontend filesystem (disk build dir > embed fallback)
 	// http.FileServerFS internally cleans paths before Open(), preventing traversal.

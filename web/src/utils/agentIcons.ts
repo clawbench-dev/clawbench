@@ -17,6 +17,7 @@ import codexIcon from '@lobehub/icons-static-svg/icons/codex-color.svg?raw'
 import copilotIcon from '@lobehub/icons-static-svg/icons/copilot-color.svg?raw'
 import deepseekIcon from '@lobehub/icons-static-svg/icons/deepseek-color.svg?raw'
 import qoderIcon from '@lobehub/icons-static-svg/icons/qoder-color.svg?raw'
+import zhipuIcon from '@lobehub/icons-static-svg/icons/zhipu-color.svg?raw'
 import mimoIcon from '@lobehub/icons-static-svg/icons/xiaomimimo.svg?raw'
 import antigravityIcon from '@lobehub/icons-static-svg/icons/antigravity-color.svg?raw'
 import openclawIcon from '@lobehub/icons-static-svg/icons/openclaw-color.svg?raw'
@@ -70,6 +71,10 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     // entries rather than an alias because the backend ids are independent:
     // each agent's icon is looked up by its own BackendSpec.Backend.
     qodercn: { svg: extractSvgInner(qoderIcon), viewBox: extractViewBox(qoderIcon) },
+    // ZCode is Zhipu's coding agent. lobe-icons has no ZCode-specific mark yet,
+    // so it wears the parent brand's blue Zhipu mark rather than falling back to
+    // a bare initial "Z".
+    zcode: { svg: extractSvgInner(zhipuIcon), viewBox: extractViewBox(zhipuIcon) },
     deepseek: { svg: extractSvgInner(deepseekIcon), viewBox: extractViewBox(deepseekIcon) },
     // DeepSeek Harness is DeepSeek's official agent, so it shares the DeepSeek mark.
     dsh: { svg: extractSvgInner(deepseekIcon), viewBox: extractViewBox(deepseekIcon) },

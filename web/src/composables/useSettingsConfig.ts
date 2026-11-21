@@ -869,6 +869,22 @@ export async function patchAgentPref(agentId: string, field: 'preferred_model' |
 }
 
 /**
+ * Patch several agent fields in ONE request and re-read the list.
+ *
+ * Used by the avatar picker: the rendered image, its style and its seed must
+ * land together, and the server clears provenance when an image arrives without
+ * it. A field-by-field sequence would leave a window where the row pairs the
+ * new image with the old style.
+ */
+export async function patchAgentFields(
+  agentId: string,
+  fields: Record<string, string | boolean | number | null | Record<string, unknown>>,
+): Promise<void> {
+  await apiPatch('/api/agents', { id: agentId, ...fields })
+  await useAgents().loadAgents(true)
+}
+
+/**
  * Patch an agent's settings-panel configurable field on the server.
  * Supports: name, specialty, custom_system_prompt, sort_order,
  * plus the original preferred_model/preferred_thinking_effort/transport.
@@ -920,6 +936,8 @@ export async function patchAgentField(
     transport: 'transport',
     custom_system_prompt: 'customSystemPrompt',
     avatar: 'avatar',
+    avatar_style: 'avatarStyle',
+    avatar_seed: 'avatarSeed',
     sort_order: 'sortOrder',
     auto_approve: 'autoApprove',
     disabled: 'disabled',
