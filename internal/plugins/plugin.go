@@ -158,12 +158,13 @@ type Plugin struct {
 	ConfigFields map[string]bool
 }
 
-// Mount 是挂载一条路由的能力，由 handler 构造后交给各功能的挂载函数
-// （handler/mount_*.go）。
+// Mount 是挂载一条路由的能力，由 handler.RegisterRoutes 构造后交给各功能的
+// 挂载函数（internal/plugin/<id>/routes.go）。
 //
-// 两个方法对应 RegisterRoutes 里原本的两个闭包：鉴权路由与公开路由。
-// 之所以是 struct 而不是两个函数参数，是为了以后加"挂静态资源""挂
-// WebSocket"时不用改所有功能的签名。
+// 三个方法分别对应三种路由：要登录的（Auth）、故意免登录的（Public）、
+// 以及"套中间件链但不套鉴权"的（Raw，用于必须给重定向而不是 JSON 401 的
+// 入口）。之所以是 struct 而不是几个函数参数，是为了以后加"挂静态资源"时
+// 不用改所有功能的签名。
 //
 // 它住在 plugins 包而不是 handler 包，是为了让挂载函数的签名稳定：功能
 // 文件只依赖这一个类型，不必认识 middleware、Gate、routeTable。

@@ -26,7 +26,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [功能注册表](features/plugin-registry.md) | 服务端功能注册表（`internal/plugins`，只依赖 `internal/model`）：功能自描述（ID / 配置段 / 实时开关 / 路由前缀 / 豁免 / 起停钩子 / 关闭副作用）+ `ForRoute` 最长前缀与段边界归属 + `Gate` 整段门控（默认 409、终端 503、`GateExempt` 三种写法）+ `GET /api/features`（`enabled` / `available` / `reason` / `defaultOn`）+ 生命周期时序（注册早于启动与路由、翻转才起停、`OnDisable` 只在写盘成功后）+ 不变量与守卫对照表；新增功能的操作步骤见 [Dock 插件开发指南](../plugin-dev/README.md) |
+| [功能注册表](features/plugin-registry.md) | 服务端功能注册表（`internal/plugins`，只依赖 `internal/model`）：功能自描述（ID / 配置段 / 实时开关 / 路由前缀 / 豁免 / 起停钩子 / 关闭副作用）+ `ForRoute` 最长前缀与段边界归属 + `Gate` 整段门控（默认 409、终端 503、`GateExempt` 三种写法）+ `GET /api/features`（`enabled` / `available` / `reason` / `defaultOn`）+ 生命周期时序（注册早于启动与路由、翻转才起停、`OnDisable` 只在写盘成功后）+ 不变量与守卫对照表；新增功能的操作步骤见 [插件开发指南](../plugin-dev/README.md) |
 | [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + 一键安装（`POST /api/backends/{id}/install`）；注册后端规格；检测期间显示加载指示器 |
 | [任务](features/scheduled-tasks.md) | cron 调度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话，运行中流式状态展示，**异常终止自动重试**（与聊天路径共用分类器，跨轮保持 running），执行历史事件驱动（订阅 `task_update`，不再 3s 轮询），执行级逐条已读（不再切 tab 自动清零），**前置自定义脚本**（cron 可选，静默成功则跳过 AI 且不发通知，脚本阶段不计入「运行中」但可见可取消）；含事件与**邮件**两种触发（GitHub/GitLab 事件唤起，只读事件上下文注入（未选事件时上下文块整块隐藏），列表行与聊天预览卡均展示订阅事件而非空白 cron 字段，见 [Forge 集成](features/forge-integration.md)） |
 | [Forge 集成](features/forge-integration.md) | **服务端总开关**（关闭即停轮询、解除全部项目绑定、页签不可达）、GitHub/GitLab Issue + PR/MR 只读浏览（仓库绑定 + 列表/详情/评论）、面板内「动态」页签（未读/已读/全部条目聚合）、后台轮询感知变化（水位线 + 快照 diff）、CI 完成事件（per-run 去重表 + 按 run 去重 debounce）、流水线 ↔ PR 双向跳转、按条目未读与通知、事件触发 AI 任务、URL 附件「引用到对话」、按 host 凭据隔离与自部署实例 http/https、下拉菜单「打开仓库」 |
