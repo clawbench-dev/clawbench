@@ -9,7 +9,8 @@ vi.mock('@dicebear/core', () => {
   class Avatar {
     constructor(public style: unknown, public options: Record<string, unknown>) {}
     toString() {
-      return `<svg data-seed="${this.options.seed}"></svg>`
+      const bg = (this.options.backgroundColor as string[] | undefined)?.[0] ?? ''
+      return `<svg data-seed="${this.options.seed}" data-bg="${bg}"></svg>`
     }
   }
   return { Avatar, Style }
@@ -24,8 +25,9 @@ vi.mock('@dicebear/styles/pixel-art.json', () => ({ default: { $id: 'pixel-art' 
 vi.mock('@dicebear/styles/fun-emoji.json', () => ({ default: { $id: 'fun-emoji' } }))
 vi.mock('@dicebear/styles/lorelei.json', () => ({ default: { $id: 'lorelei' } }))
 
-import { AVATAR_STYLES, getAvatarLib, generateAvatarSvg, loadAvatarKit } from '@/utils/lazyAvatar'
+import { getAvatarLib, generateAutoAvatarSvg, generateAvatarSvgWithStyle, loadAvatarKit } from '@/utils/lazyAvatar'
 import { svgToDataUri } from '@/utils/svgDataUri'
+import { AVATAR_STYLES, avatarBackgroundFor } from '@/utils/avatarPolicy'
 
 describe('lazyAvatar', () => {
   beforeEach(() => {
@@ -64,12 +66,22 @@ describe('lazyAvatar', () => {
   })
 })
 
-describe('generateAvatarSvg', () => {
+describe('generateAutoAvatarSvg', () => {
   it('returns a non-empty SVG string seeded by the member name', async () => {
-    const svg = await generateAvatarSvg('Alice')
+    const svg = await generateAutoAvatarSvg('Alice')
     expect(svg).toContain('<svg')
     // The seed is threaded through to DiceBear (mocked Avatar echoes it), so a
     // name change produces a different avatar.
     expect(svg).toContain('Alice')
   }, 20000)
+
+  it('is deterministic for the same name', async () => {
+    // A random style re-roll would change the member's face on regeneration.
+    expect(await generateAutoAvatarSvg('Alice')).toBe(await generateAutoAvatarSvg('Alice'))
+  })
+
+  it('bakes the stable background colour into the generated SVG', async () => {
+    const svg = await generateAvatarSvgWithStyle('Alice', 'bottts')
+    expect(svg).toContain(`data-bg="${avatarBackgroundFor('Alice')}"`)
+  })
 })

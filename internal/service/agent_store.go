@@ -92,6 +92,8 @@ CREATE TABLE IF NOT EXISTS agents (
 	thinking_effort_by_model TEXT NOT NULL DEFAULT '{}',
 	custom_system_prompt TEXT NOT NULL DEFAULT '',
 	avatar TEXT NOT NULL DEFAULT '',
+	avatar_style TEXT NOT NULL DEFAULT '',
+	avatar_seed TEXT NOT NULL DEFAULT '',
 	models TEXT NOT NULL DEFAULT '[]',
 	models_auto_detected INTEGER NOT NULL DEFAULT 0,
 	sort_order INTEGER NOT NULL DEFAULT 0,
@@ -127,7 +129,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		SELECT id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
-			custom_system_prompt, avatar, models, models_auto_detected,
+			custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve, disabled, project_id,
 			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
@@ -150,7 +152,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.ID, &a.Name, &a.Specialty, &a.Backend, &a.Command,
 			&a.ThinkingEffort, &levelsJSON,
 			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
-			&a.CustomSystemPrompt, &a.Avatar, &modelsJSON, &modelsAutoDetected,
+			&a.CustomSystemPrompt, &a.Avatar, &a.AvatarStyle, &a.AvatarSeed, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
 			&a.Transport, &a.AcpCommand, &autoApprove, &disabled, &projectID,
 			&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON,
@@ -238,12 +240,12 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		INSERT INTO agents (id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
-			custom_system_prompt, avatar, models, models_auto_detected,
+			custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve, disabled, project_id,
 			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
 			skip_project_context)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -256,6 +258,8 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			preferred_thinking_effort = excluded.preferred_thinking_effort,
 			custom_system_prompt = excluded.custom_system_prompt,
 			avatar = excluded.avatar,
+			avatar_style = excluded.avatar_style,
+			avatar_seed = excluded.avatar_seed,
 			models = excluded.models,
 			models_auto_detected = excluded.models_auto_detected,
 			sort_order = excluded.sort_order,
@@ -342,7 +346,7 @@ func agentInsertArgs(agent *model.Agent, cols agentJSONColumns) []any {
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, cols.levels,
 		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.CustomSystemPrompt, agent.Avatar, cols.models, boolToInt(agent.ModelsAutoDetected),
+		agent.CustomSystemPrompt, agent.Avatar, agent.AvatarStyle, agent.AvatarSeed, cols.models, boolToInt(agent.ModelsAutoDetected),
 		agent.SortOrder,
 		agentTransportForSave(agent), agent.AcpCommand, boolToInt(agent.AutoApprove), boolToInt(agent.Disabled),
 		nullableIDArg(agent.ProjectID), nullableIDArg(agent.ProviderID), cols.effortByModel,
@@ -549,9 +553,15 @@ type AgentPatch struct {
 	Specialty          *string
 	CustomSystemPrompt *string
 	Avatar             *string
-	SortOrder          *int
-	AutoApprove        *bool
-	Disabled           *bool
+	// AvatarStyle / AvatarSeed are the provenance of a generated avatar. They
+	// are cleared whenever the avatar itself changes without a replacement
+	// style/seed (see the handler), so a row never claims a style it no longer
+	// renders.
+	AvatarStyle *string
+	AvatarSeed  *string
+	SortOrder   *int
+	AutoApprove *bool
+	Disabled    *bool
 	// MCPServers replaces the agent's MCP enablement policy. Stored as JSON;
 	// only the policy (mode + names), never the server definitions.
 	MCPServers *model.MCPServerPolicy
@@ -693,8 +703,10 @@ func plainStringAgentFields(patch AgentPatch) []agentStringField {
 		// Only the user's own text is stored; the composed prompt is built at
 		// read time. Writing it here would freeze the shared prompt into the row.
 		{"custom_system_prompt", patch.CustomSystemPrompt},
-		// Raw SVG string (not a data URI); "" clears it back to the built-in icon.
+		// Raw SVG or uploaded data URI; "" clears it back to the built-in icon.
 		{"avatar", patch.Avatar},
+		{"avatar_style", patch.AvatarStyle},
+		{"avatar_seed", patch.AvatarSeed},
 	}
 }
 
@@ -965,6 +977,8 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		PreferredThinkingEffort: source.PreferredThinkingEffort,
 		CustomSystemPrompt:      source.CustomSystemPrompt,
 		Avatar:                  source.Avatar,
+		AvatarStyle:             source.AvatarStyle,
+		AvatarSeed:              source.AvatarSeed,
 		Transport:               source.Transport,
 		AcpCommand:              source.AcpCommand,
 		SortOrder:               source.SortOrder,

@@ -6,7 +6,7 @@ import { getAgentSvg } from '@/utils/agentIcons'
 const ALL_BACKENDS = [
     'claude', 'codebuddy', 'opencode', 'codex',
     'copilot', 'qoder', 'kimi', 'mimo', 'pi', 'deepseek', 'dsh', 'vecli', 'grok', 'antigravity', 'hermes', 'cursor',
-    'commandcode', 'openclaw', 'qodercn', 'custom-acp', 'builtin',
+    'commandcode', 'openclaw', 'qodercn', 'zcode', 'custom-acp', 'builtin',
 ]
 
 /**
@@ -40,6 +40,21 @@ describe('agentIcons', () => {
             expect(getAgentSvg('')).toBeNull()
         })
 
+        it('covers every backend registered in all.go', () => {
+            // Cross-check the icon map against the Go backend registry. The
+            // hand-written ALL_BACKENDS list above can drift; this one cannot:
+            // adding a backend sub-package without an icon now fails here.
+            const src = readFileSync(
+                resolve(__dirname, '../../../../internal/ai/backends/all/all.go'),
+                'utf8',
+            )
+            const ids = [...src.matchAll(/backends\/([a-z0-9-]+)"/g)].map((m) => m[1])
+            expect(ids.length).toBeGreaterThan(10)
+            for (const id of ids) {
+                expect(getAgentSvg(id), `backend "${id}" should have icon data`).not.toBeNull()
+            }
+        })
+
         it('all SVG data contains path or rect elements', () => {
             for (const id of ALL_BACKENDS.filter(x => !RASTER_BACKENDS.includes(x))) {
                 const data = getAgentSvg(id)!
@@ -67,7 +82,7 @@ describe('agentIcons', () => {
         })
 
         it('color backends do not have monoCssClass', () => {
-            const color = ['claude', 'codebuddy', 'copilot', 'qoder', 'qodercn', 'deepseek', 'dsh', 'antigravity', 'openclaw']
+            const color = ['claude', 'codebuddy', 'copilot', 'qoder', 'qodercn', 'zcode', 'deepseek', 'dsh', 'antigravity', 'openclaw']
             for (const id of color) {
                 const data = getAgentSvg(id)!
                 expect(data.monoCssClass, `backend "${id}" should not have monoCssClass`).toBeFalsy()
@@ -75,7 +90,7 @@ describe('agentIcons', () => {
         })
 
         it('backends with own background do not need needsBg', () => {
-            const noNeedsBg = ['codebuddy', 'claude', 'copilot', 'qoder', 'qodercn', 'deepseek', 'dsh', 'vecli', 'antigravity', 'openclaw']
+            const noNeedsBg = ['codebuddy', 'claude', 'copilot', 'qoder', 'qodercn', 'zcode', 'deepseek', 'dsh', 'vecli', 'antigravity', 'openclaw']
             for (const id of noNeedsBg) {
                 const data = getAgentSvg(id)!
                 expect(data.needsBg, `backend "${id}" should not have needsBg`).toBeFalsy()

@@ -2,7 +2,6 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -22,6 +21,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/avatar"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/platform/source"
@@ -920,76 +920,10 @@ func sessionOffersThinkingEffort(sessionID, agentID, level string) (offered, kno
 	return false, true
 }
 
-// maxAgentAvatarBytes caps the stored agent avatar (a raw DiceBear SVG string).
-// Real avatars are ~1–8 KB; 256 KiB is generous headroom.
-const maxAgentAvatarBytes = 256 * 1024
-
-// avatarSVGLooksSafe is the safety gate for a user-supplied agent avatar SVG.
-//
-// It is deliberately NOT wallpaper.SVGLooksSafe: that helper rejects ANY
-// `href=` / `<use>`, because it guards wallpapers rendered as a CSS background
-// where same-document references are pointless. DiceBear's rendered output
-// legitimately emits same-document fragment references
-// (`<use href="#texture-..."/>`, `fill="url(#...)"/>`) for its texture/color
-// layers, so reusing it would reject every real DiceBear avatar. Here we only
-// forbid *external* references and script vectors.
-//
-// This is a best-effort structural gate; the authoritative XSS boundary is that
-// the client renders the stored SVG inside an <img> (sandboxed: no script
-// execution, no external resource loads).
-func avatarSVGLooksSafe(src []byte) bool {
-	if len(src) == 0 {
-		return false
-	}
-	// Structural sanity: must look like an SVG document.
-	head := src
-	if len(head) > 4096 {
-		head = head[:4096]
-	}
-	if !bytes.Contains(bytes.ToLower(head), []byte("<svg")) {
-		return false
-	}
-
-	lower := bytes.ToLower(src)
-	for _, forbidden := range [][]byte{
-		[]byte("<script"),
-		[]byte("foreignobject"),
-		[]byte("<image"),
-		[]byte("javascript:"),
-		[]byte("<iframe"),
-		[]byte("<embed"),
-		[]byte("<object"),
-		[]byte("<style"), // no CSS import / url() exfiltration vectors
-	} {
-		if bytes.Contains(lower, forbidden) {
-			return false
-		}
-	}
-	// Reject any inline event handler (on*="...") — e.g. onload=, onerror=.
-	if inlineEventHandlerRE.Match(lower) {
-		return false
-	}
-	// Every href/xlink:href must be a same-document fragment ("#...").
-	for _, m := range hrefRE.FindAllSubmatch(lower, -1) {
-		if !bytes.HasPrefix(m[1], []byte("#")) {
-			return false
-		}
-	}
-	return true
-}
-
-var (
-	// Matches an inline event handler attribute: on<word>= preceded by whitespace
-	// or the start of a tag. `\bon` alone would false-positive on words like
-	// "only", so require the "=".
-	inlineEventHandlerRE = regexp.MustCompile(`[\s"']on[a-z]+\s*=`)
-	// Matches href="..." / xlink:href='...' and captures the target.
-	hrefRE = regexp.MustCompile(`(?:xlink:)?href\s*=\s*["']([^"']*)["']`)
-)
-
 // Expects: {"id": "claude", "preferred_model": "claude-opus-4-5", "preferred_thinking_effort": "high", ...}
 // Patchable fields: preferred_model, preferred_thinking_effort, transport,
-// name, specialty, custom_system_prompt, avatar, sort_order, auto_approve.
+// name, specialty, custom_system_prompt, avatar, avatar_style, avatar_seed,
+// sort_order, auto_approve.
 func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // multi-field agent patch logic
 	var patch map[string]any
 	if !decodeJSON(w, r, &patch) {
@@ -1198,16 +1132,47 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		ap.Specialty = &specialty
 	}
 
-	// Validate and apply avatar (raw DiceBear SVG string; "" clears it back to
-	// the built-in per-backend icon). Stored raw rather than as a data URI so
-	// the SVG safety scan below sees the actual markup.
+	// Validate and apply avatar (raw DiceBear SVG string or an uploaded raster
+	// data URI; "" clears it back to the built-in per-backend icon).
 	if v, exists := patch["avatar"]; exists {
-		avatar, _ := v.(string)
-		if avatar != "" && (len(avatar) > maxAgentAvatarBytes || !avatarSVGLooksSafe([]byte(avatar))) {
+		avatarValue, _ := v.(string)
+		if avatarValue != "" && (len(avatarValue) > avatar.MaxBytes || !avatar.Validate([]byte(avatarValue))) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentAvatar")
 			return
 		}
-		ap.Avatar = &avatar
+		ap.Avatar = &avatarValue
+		// Provenance only makes sense for a generated avatar. Whenever the
+		// image changes, clear any style/seed the patch did not explicitly
+		// provide; otherwise the row would claim a style for an avatar it no
+		// longer describes.
+		if ap.AvatarStyle == nil {
+			empty := ""
+			ap.AvatarStyle = &empty
+		}
+		if ap.AvatarSeed == nil {
+			empty := ""
+			ap.AvatarSeed = &empty
+		}
+	}
+
+	// Validate and apply avatar provenance (which DiceBear style and seed
+	// produced the stored SVG). The server does not own the style catalog, so
+	// the values are opaque strings with only length caps.
+	if v, exists := patch["avatar_style"]; exists {
+		style, _ := v.(string)
+		if len(style) > 64 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentAvatar")
+			return
+		}
+		ap.AvatarStyle = &style
+	}
+	if v, exists := patch["avatar_seed"]; exists {
+		seed, _ := v.(string)
+		if utf8.RuneCountInString(seed) > 128 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentAvatar")
+			return
+		}
+		ap.AvatarSeed = &seed
 	}
 
 	// Validate and apply custom_system_prompt
@@ -1525,6 +1490,12 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 		if ap.Avatar != nil {
 			agent.Avatar = *ap.Avatar
+		}
+		if ap.AvatarStyle != nil {
+			agent.AvatarStyle = *ap.AvatarStyle
+		}
+		if ap.AvatarSeed != nil {
+			agent.AvatarSeed = *ap.AvatarSeed
 		}
 		if ap.CustomSystemPrompt != nil {
 			agent.CustomSystemPrompt = *ap.CustomSystemPrompt

@@ -84,11 +84,13 @@ func resolveSessionSpeakersWithInfo(info *SessionInfo, sessionID string) (*Speak
 // differs from the stored member name, it is carried as AgentName so the UI can
 // disclose the real agent behind an auto-derived nickname.
 //
-// The custom avatar prefers the member's OWN snapshot (m.Avatar); the agent's
-// shared avatar is only a fallback for members created before per-member avatars
+// The custom avatar prefers the member's OWN snapshot (m.Avatar) even after the
+// underlying agent has been deleted: the member row is kept for history
+// attribution, and its avatar is the only surviving copy. The agent's shared
+// avatar is only a fallback for members created before per-member avatars
 // existed.
 func speakerFromMember(m GroupMember) SpeakerIdentity {
-	s := SpeakerIdentity{Backend: m.Backend, Name: m.Name}
+	s := SpeakerIdentity{Backend: m.Backend, Name: m.Name, Avatar: m.Avatar}
 	if a := model.GetAgent(m.AgentID); a != nil {
 		if a.Backend != "" {
 			s.Backend = a.Backend
@@ -96,9 +98,7 @@ func speakerFromMember(m GroupMember) SpeakerIdentity {
 		if a.Name != "" && a.Name != m.Name {
 			s.AgentName = a.Name
 		}
-		if m.Avatar != "" {
-			s.Avatar = m.Avatar
-		} else {
+		if s.Avatar == "" {
 			s.Avatar = a.Avatar
 		}
 	}

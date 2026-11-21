@@ -229,6 +229,24 @@ func TestSpeakerFromMember_PrefersMemberAvatarOverAgentAvatar(t *testing.T) {
 	assert.Empty(t, s.AgentName, "name equals agent name → no disclosure")
 }
 
+// TestSpeakerFromMember_KeepsMemberAvatarWhenAgentGone pins that a member's own
+// avatar snapshot survives the agent being deleted. Removed members keep their
+// row for history attribution; that row is the only surviving copy of the
+// avatar, so the lookup must not be nested under "agent exists".
+func TestSpeakerFromMember_KeepsMemberAvatarWhenAgentGone(t *testing.T) {
+	withAgents(t, map[string]*model.Agent{})
+
+	s := speakerFromMember(GroupMember{
+		AgentID: "deleted",
+		Name:    "Alice",
+		Backend: "claude",
+		Avatar:  "<svg>member</svg>",
+	})
+	assert.Equal(t, "<svg>member</svg>", s.Avatar)
+	assert.Equal(t, "claude", s.Backend, "backend falls back to the member row's snapshot")
+	assert.Empty(t, s.AgentName)
+}
+
 // TestSpeakerFromMember_CarriesAgentNameWhenDifferent pins that when a member's
 // display name was auto-derived (a pool nickname, or "<base> <n>"), the real
 // agent name is carried so the UI can disclose which agent is speaking. The

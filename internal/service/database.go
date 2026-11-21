@@ -2219,6 +2219,25 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add avatar provenance columns. A generated avatar's rendered SVG
+	// alone cannot tell the picker which style/seed produced it, so reopening it
+	// fell back to a default tile. These record that source; both are empty for
+	// an uploaded image and for avatars created before this migration.
+	var hasAgentAvatarStyle int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='avatar_style'").Scan(&hasAgentAvatarStyle)
+	if hasAgentAvatarStyle == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN avatar_style TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add avatar_style column to agents: %w", err)
+		}
+	}
+	var hasAgentAvatarSeed int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='avatar_seed'").Scan(&hasAgentAvatarSeed)
+	if hasAgentAvatarSeed == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN avatar_seed TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add avatar_seed column to agents: %w", err)
+		}
+	}
+
 	// Migrate: add disabled column to agents. A disabled agent is hidden from
 	// every new-entry picker (new session / task / group member) while its
 	// existing sessions and tasks keep running. Default 0 = enabled.

@@ -1,5 +1,12 @@
 <template>
-    <img v-if="avatarSrc" class="agent-icon-img" :class="sizeClass" :src="avatarSrc" :alt="name || backend" />
+    <img
+        v-if="avatarSrc"
+        class="agent-icon-img agent-icon-avatar"
+        :class="sizeClass"
+        :src="avatarSrc"
+        :style="avatarBg ? { backgroundColor: avatarBg } : undefined"
+        :alt="name || backend"
+    />
     <img v-else-if="imageUrl" class="agent-icon-img" :class="sizeClass" :src="imageUrl" :alt="name || backend" />
     <svg v-else-if="processedSvg" class="agent-icon-svg" :class="[sizeClass, svgData!.needsBg ? 'agent-icon-bg' : '', svgData!.monoCssClass]" :viewBox="svgData!.viewBox" role="img" :aria-label="name || backend" v-html="processedSvg" />
     <span v-else class="agent-icon-initial" :class="sizeClass">{{ initial }}</span>
@@ -8,7 +15,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { getAgentSvg } from '@/utils/agentIcons'
-import { svgToDataUri } from '@/utils/svgDataUri'
+import { avatarToSrc } from '@/utils/avatarSrc'
+import { avatarBackgroundFor } from '@/utils/avatarPolicy'
 
 // Per-instance unique suffix to avoid SVG gradient ID collisions when
 // multiple AgentIcon instances render on the same page. Without this,
@@ -28,7 +36,7 @@ const props = withDefaults(defineProps<{
     backend: string
     name?: string
     size?: AgentIconSize
-    /** Raw SVG string for a user-configured custom avatar ("" = built-in icon). */
+    /** Raw SVG string or a `data:image/...` URI for a custom avatar ("" = built-in icon). */
     avatar?: string
 }>(), {
     size: 'md',
@@ -44,8 +52,15 @@ const imageUrl = computed(() => svgData.value?.imageUrl ?? '')
 
 // A custom avatar is rendered as an <img> with a data URI, NOT via v-html:
 // the <img> context is sandboxed (no script execution, no external loads) and
-// sidesteps the scoped-CSS red line.
-const avatarSrc = computed(() => (props.avatar ? svgToDataUri(props.avatar) : ''))
+// sidesteps the scoped-CSS red line. `avatarToSrc` passes an uploaded raster
+// data URI through untouched and encodes only raw SVG.
+const avatarSrc = computed(() => avatarToSrc(props.avatar || ''))
+
+// A generated avatar already carries its own background. This CSS fallback is
+// for avatars stored BEFORE backgrounds were baked in: without it a transparent
+// character style floats over the chat bubble and looks thin. The colour is
+// derived from the same name so it stays stable per agent/member.
+const avatarBg = computed(() => (props.avatar ? avatarBackgroundFor(props.name || 'agent') : ''))
 
 // Replace all ID references (id="...", url(#...", href="#...") in SVG content
 // that match known gradient ID patterns (lobe-icons-* or ai-* prefixes)
@@ -104,12 +119,18 @@ const initial = computed(() => {
     line-height: 1;
 }
 
-/* User-configured custom avatar (DiceBear SVG rendered as a data-URI <img>). */
+/* User-configured custom avatar (DiceBear SVG or an uploaded raster, rendered
+   as a data-URI <img>). The inline background fills the transparent parts of a
+   line-art avatar; a baked-in background simply covers it. */
 .agent-icon-img {
     display: inline-block;
     flex-shrink: 0;
     border-radius: 20%;
     object-fit: contain;
+}
+
+.agent-icon-avatar {
+    background-clip: padding-box;
 }
 
 /* Contrasting background for monochrome icons that would be

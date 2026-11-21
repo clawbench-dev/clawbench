@@ -45,6 +45,7 @@ import (
 	"strings"
 	"sync"
 
+	"clawbench/internal/avatar"
 	"clawbench/internal/dbutil"
 	"gopkg.in/yaml.v3"
 )
@@ -523,13 +524,13 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	_, err = db.Exec(`INSERT INTO agents (id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
-		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
+		custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, provider_id, thinking_effort_by_model,
 		mcp_servers, tool_policy, skip_project_context)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
+		agent.CustomSystemPrompt, agent.Avatar, agent.AvatarStyle, agent.AvatarSeed, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
 		transport, agent.AcpCommand, autoApprove, disabled, agent.ProviderID, string(effortByModelJSON),
 		string(mcpServersJSON), toolPolicyJSON, skipProjectContextArg(agent.SkipProjectContext))
 	return err
@@ -559,6 +560,8 @@ type yamlAgent struct {
 	PreferredThinkingEffort string       `yaml:"preferred_thinking_effort"`
 	CustomSystemPrompt      string       `yaml:"custom_system_prompt"`
 	Avatar                  string       `yaml:"avatar"`
+	AvatarStyle             string       `yaml:"avatar_style"`
+	AvatarSeed              string       `yaml:"avatar_seed"`
 	Transport               string       `yaml:"transport"`
 	AcpCommand              string       `yaml:"acp_command"`
 	Models                  []AgentModel `yaml:"models"`
@@ -601,6 +604,13 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) []string {
 			slog.Warn("agent yaml missing id or backend", "file", entry.Name())
 			continue
 		}
+		// YAML is a write path like the HTTP PATCH: a malformed avatar must not
+		// enter the table just because it came from a file. Skip the whole agent
+		// rather than silently dropping one field.
+		if ya.Avatar != "" && !avatar.Validate([]byte(ya.Avatar)) {
+			slog.Warn("agent yaml has an invalid avatar; skipping", "id", ya.ID, "file", entry.Name())
+			continue
+		}
 
 		var count int
 		if err := db.QueryRow("SELECT COUNT(*) FROM agents WHERE id = ?", ya.ID).Scan(&count); err != nil {
@@ -624,6 +634,8 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) []string {
 			PreferredThinkingEffort: ya.PreferredThinkingEffort,
 			CustomSystemPrompt:      ya.CustomSystemPrompt,
 			Avatar:                  ya.Avatar,
+			AvatarStyle:             ya.AvatarStyle,
+			AvatarSeed:              ya.AvatarSeed,
 			Transport:               ya.Transport,
 			AcpCommand:              ya.AcpCommand,
 			Models:                  ya.Models,
@@ -720,7 +732,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 	rows, err := db.Query(`SELECT id, name, specialty, backend, command,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
-		custom_system_prompt, avatar, models, models_auto_detected, sort_order,
+		custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected, sort_order,
 		transport, acp_command, auto_approve, disabled, project_id,
 		provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
 		skip_project_context
@@ -751,7 +763,7 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 	if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
 		&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 		&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
-		&agent.CustomSystemPrompt, &agent.Avatar, &modelsJSON, &autoDetected,
+		&agent.CustomSystemPrompt, &agent.Avatar, &agent.AvatarStyle, &agent.AvatarSeed, &modelsJSON, &autoDetected,
 		&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
 		&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON, &skipProjectContext); err != nil {
 		return nil, err

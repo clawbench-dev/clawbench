@@ -16,13 +16,13 @@ vi.mock('@/utils/lazyAvatar', () => ({
 }))
 
 import {
-  SPEAKER_AVATAR_STYLES,
   _resetSpeakerAvatars,
   cachedSpeakerAvatar,
   speakerAvatarDataUri,
   speakerAvatarSeed,
   speakerAvatarStyle,
 } from '@/utils/speakerAvatar'
+import { AUTO_AVATAR_STYLES } from '@/utils/avatarPolicy'
 
 beforeEach(() => {
   generate.mockClear()
@@ -64,16 +64,16 @@ describe('speakerAvatarDataUri', () => {
     const names = ['我', '小明', '小李', '访客 2', 'Alex', 'Sarah', '王工', '张三', '李四', 'Mia']
     const styles = new Set(names.map(speakerAvatarStyle))
     expect(styles.size).toBeGreaterThanOrEqual(4)
-    for (const style of styles) expect(SPEAKER_AVATAR_STYLES).toContain(style)
+    for (const style of styles) expect(AUTO_AVATAR_STYLES).toContain(style)
   })
 
   it('only draws from styles that read as a character at 20dp', () => {
     // `landscape` is a mountain range and `stripes` is a texture — they are
     // legitimate DiceBear styles, but not avatars.
-    expect(SPEAKER_AVATAR_STYLES).not.toContain('landscape')
-    expect(SPEAKER_AVATAR_STYLES).not.toContain('stripes')
-    expect(SPEAKER_AVATAR_STYLES).not.toContain('shape-grid')
-    expect(new Set(SPEAKER_AVATAR_STYLES).size).toBe(SPEAKER_AVATAR_STYLES.length)
+    expect(AUTO_AVATAR_STYLES).not.toContain('landscape')
+    expect(AUTO_AVATAR_STYLES).not.toContain('stripes')
+    expect(AUTO_AVATAR_STYLES).not.toContain('shape-grid')
+    expect(new Set(AUTO_AVATAR_STYLES).size).toBe(AUTO_AVATAR_STYLES.length)
   })
 
   it('generates once per nickname and serves the rest from the cache', async () => {
