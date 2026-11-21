@@ -62,9 +62,60 @@
         />
       </template>
     </SettingsCard>
+    <!-- Tool grant. Only meaningful for the built-in backend, whose tools are
+         ClawBench's own; an external CLI ships its tools and ignores this. -->
+    <SettingsCard v-if="isBuiltinBackend" :title="t('settings.items.toolPolicySection')">
+      <AgentToolPolicySection :agent="agent ?? null" />
+    </SettingsCard>
+
+    <!-- MCP enable policy. A dedicated block rather than a SettingsItem: the
+         control is a three-way mode plus a per-server checklist, which the
+         generic row types cannot express. Hidden for the built-in agent: it has
+         no MCP client at all, so every option here would be inert. -->
+    <SettingsCard v-if="!isBuiltinBackend" :title="t('settings.items.mcpAgentSection')">
+      <AgentMCPSection :agent="agent ?? null" />
+    </SettingsCard>
+
+    <!-- Copy / install / disable / delete on the same row -->
+    <div class="settings-agent-detail__actions">
+      <button class="fbtn settings-agent-detail__action-btn" @click="startCopy">
+        <Copy :size="16" class="settings-agent-detail__action-icon" />
+        <span>{{ t('settings.items.agentCopy') }}</span>
+      </button>
+      <!-- One-click install / reinstall. Same command the welcome panel runs
+           (the server owns it), so this is the "reinstall or upgrade" path for
+           an agent that is already detected but broken or out of date. Hidden
+           when the backend ships no installer. -->
+      <button
+        v-if="agent?.installCmd"
+        class="fbtn settings-agent-detail__action-btn"
+        data-action="agent-install"
+        @click="installDialogOpen = true"
+      >
+        <PackagePlus :size="16" class="settings-agent-detail__action-icon" />
+        <span>{{ t('settings.items.agentInstall') }}</span>
+      </button>
+      <!-- Disable / enable toggle. The default agent cannot be disabled (the
+           backend refuses it too), so its button is inert with a tooltip. -->
+      <button
+        class="fbtn settings-agent-detail__action-btn"
+        :disabled="isDefaultAgentValue"
+        :title="isDefaultAgentValue ? t('settings.items.agentCannotDisableDefault') : undefined"
+        @click="handleToggleDisabled"
+      >
+        <component :is="agent?.disabled ? Play : Ban" :size="16" class="settings-agent-detail__action-icon" />
+        <span>{{ agent?.disabled ? t('settings.items.agentEnable') : t('settings.items.agentDisable') }}</span>
+      </button>
+      <button class="fbtn fbtn-danger settings-agent-detail__delete-btn" @click="handleDelete">
+        <Trash2 :size="16" class="settings-agent-detail__delete-icon" />
+        <span>{{ t('settings.items.agentDelete') }}</span>
+      </button>
+    </div>
     <!-- Integration self-test. Runs the backend's checks against this agent's
          real configuration and prints one row per check, so a broken setup is
-         diagnosable without reading server logs. -->
+         diagnosable without reading server logs. Deliberately last: it is a
+         diagnostic, not a configuration group, and sitting above the tool /
+         MCP cards made it read as their heading. -->
     <div class="settings-agent-detail__selftest">
       <div class="settings-agent-detail__selftest-actions">
         <button
@@ -136,55 +187,6 @@
           </li>
         </ul>
       </div>
-    </div>
-    <!-- Tool grant. Only meaningful for the built-in backend, whose tools are
-         ClawBench's own; an external CLI ships its tools and ignores this. -->
-    <SettingsCard v-if="isBuiltinBackend" :title="t('settings.items.toolPolicySection')">
-      <AgentToolPolicySection :agent="agent ?? null" />
-    </SettingsCard>
-
-    <!-- MCP enable policy. A dedicated block rather than a SettingsItem: the
-         control is a three-way mode plus a per-server checklist, which the
-         generic row types cannot express. Hidden for the built-in agent: it has
-         no MCP client at all, so every option here would be inert. -->
-    <SettingsCard v-if="!isBuiltinBackend" :title="t('settings.items.mcpAgentSection')">
-      <AgentMCPSection :agent="agent ?? null" />
-    </SettingsCard>
-
-    <!-- Copy / install / disable / delete on the same row -->
-    <div class="settings-agent-detail__actions">
-      <button class="fbtn settings-agent-detail__action-btn" @click="startCopy">
-        <Copy :size="16" class="settings-agent-detail__action-icon" />
-        <span>{{ t('settings.items.agentCopy') }}</span>
-      </button>
-      <!-- One-click install / reinstall. Same command the welcome panel runs
-           (the server owns it), so this is the "reinstall or upgrade" path for
-           an agent that is already detected but broken or out of date. Hidden
-           when the backend ships no installer. -->
-      <button
-        v-if="agent?.installCmd"
-        class="fbtn settings-agent-detail__action-btn"
-        data-action="agent-install"
-        @click="installDialogOpen = true"
-      >
-        <PackagePlus :size="16" class="settings-agent-detail__action-icon" />
-        <span>{{ t('settings.items.agentInstall') }}</span>
-      </button>
-      <!-- Disable / enable toggle. The default agent cannot be disabled (the
-           backend refuses it too), so its button is inert with a tooltip. -->
-      <button
-        class="fbtn settings-agent-detail__action-btn"
-        :disabled="isDefaultAgentValue"
-        :title="isDefaultAgentValue ? t('settings.items.agentCannotDisableDefault') : undefined"
-        @click="handleToggleDisabled"
-      >
-        <component :is="agent?.disabled ? Play : Ban" :size="16" class="settings-agent-detail__action-icon" />
-        <span>{{ agent?.disabled ? t('settings.items.agentEnable') : t('settings.items.agentDisable') }}</span>
-      </button>
-      <button class="fbtn fbtn-danger settings-agent-detail__delete-btn" @click="handleDelete">
-        <Trash2 :size="16" class="settings-agent-detail__delete-icon" />
-        <span>{{ t('settings.items.agentDelete') }}</span>
-      </button>
     </div>
     <CopyAgentDialog
       :open="copying"
