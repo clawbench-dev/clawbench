@@ -35,6 +35,27 @@ interface GraphNode {
   branchNames: string[]
 }
 
+/**
+ * A drawn connection segment.
+ *
+ * `rowStart`/`rowEnd` are the commit rows the segment spans (inclusive), and
+ * `widthLane` is the farthest lane its geometry reaches. Both exist for the
+ * viewport-driven column width: a line can cross the visible window while
+ * every node on its lane is off-screen (a branch that forked above the
+ * viewport still runs its vertical through it, and its bezier lands on a lane
+ * with no visible node). Sizing the column from visible nodes alone clipped
+ * those lanes at the column edge.
+ */
+interface GraphLine {
+  path: string
+  color: string
+  lane: number
+  fade?: boolean
+  rowStart: number
+  rowEnd: number
+  widthLane: number
+}
+
 function laneCx(lane: number): number {
   return lane * LANE_WIDTH + LANE_WIDTH / 2 + GRAPH_LEFT_PADDING
 }
@@ -265,7 +286,7 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
 
   // ── Phase 2: Generate nodes and connection lines ──
   const nodes: GraphNode[] = []
-  const lines = []
+  const lines: GraphLine[] = []
 
   // Nodes
   for (let row = 0; row < commits.length; row++) {
@@ -349,6 +370,9 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
               color: laneColor(childLane),
               lane: childLane,
               fade: true,
+              rowStart: row,
+              rowEnd: commits.length - 1,
+              widthLane: childLane,
             })
           }
         }
@@ -372,6 +396,9 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
           path: `M${x},${y1} L${x},${y2}`,
           color: laneColor(childLane),
           lane: childLane,
+          rowStart: row,
+          rowEnd: parentRow,
+          widthLane: childLane,
         })
       } else if (pi > 0) {
         // Cross-lane fork: merge commit's non-first parent (the branch tip).
@@ -411,6 +438,9 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
           path: `M${childX},${childBottom} C${childX},${cp1Y} ${parentX},${cp2Y} ${parentX},${bezierEndY}`,
           color: laneColor(parentLane),
           lane: parentLane,
+          rowStart: row,
+          rowEnd: row,
+          widthLane: Math.max(childLane, parentLane),
         })
 
         // Vertical line on the branch lane down to the branch tip
@@ -419,6 +449,9 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
             path: `M${parentX},${bezierEndY} L${parentX},${parentTop}`,
             color: laneColor(parentLane),
             lane: parentLane,
+            rowStart: row,
+            rowEnd: parentRow,
+            widthLane: parentLane,
           })
         }
       } else {
@@ -461,6 +494,9 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
               path: `M${branchX},${vertStart} L${branchX},${gapTop}`,
               color: laneColor(childLane),
               lane: childLane,
+              rowStart: row,
+              rowEnd: parentRow,
+              widthLane: childLane,
             })
           }
           vertStart = gapBottom
@@ -470,6 +506,9 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
             path: `M${branchX},${vertStart} L${branchX},${bezierStartY}`,
             color: laneColor(childLane),
             lane: childLane,
+            rowStart: row,
+            rowEnd: parentRow,
+            widthLane: childLane,
           })
         }
 
@@ -482,6 +521,9 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
           path: `M${branchX},${fromY} C${branchX},${cp1Y} ${parentX},${cp2Y} ${parentX},${toY}`,
           color: laneColor(childLane),
           lane: childLane,
+          rowStart: row,
+          rowEnd: parentRow,
+          widthLane: Math.max(childLane, parentLane),
         })
       }
     }
@@ -567,11 +609,14 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
  * So the column is sized from the lanes actually present in the visible row
  * window: lanes belonging to off-screen rows still exist and are still drawn
  * (they scroll into view later), they just do not claim horizontal space yet.
+ * A lane does claim space as soon as any of its geometry is in the window —
+ * nodes or connection lines — so a branch forked above the viewport keeps its
+ * track visible while its vertical runs through the visible rows.
  *
- * `visibleLaneCount` is the highest lane index among visible rows, plus one.
- * Lane 0 is always kept even when it has no node in the window, so the column
- * never collapses below the mainline's own track — without it the first
- * off-screen lane change would make the graph jump.
+ * `visibleLaneCount` is the highest lane index among visible nodes and lines,
+ * plus one. Lane 0 is always kept even when it has no node in the window, so
+ * the column never collapses below the mainline's own track — without it the
+ * first off-screen lane change would make the graph jump.
  *
  * `visibleRowCount` is how many rows the window can hold. When every loaded
  * commit fits on screen there is nothing hidden to reveal, so the full graph

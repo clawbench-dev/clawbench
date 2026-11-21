@@ -11,7 +11,9 @@ vi.mock('vue-i18n', async (importOriginal) => {
 // Real lane geometry matters here: the viewport tests assert on the *column
 // width*, which is derived from each node's lane, so the stub assigns lanes the
 // way computeGraphData does — a straight first-parent chain on lane 0, with
-// optional extra lanes supplied per commit.
+// optional extra lanes supplied per commit. A commit may also declare
+// `lines` to model connection segments (row span + lane) that cross the
+// window without a node of their own being visible.
 vi.mock('@/utils/gitGraph', async (importOriginal) => {
   const actual: any = await importOriginal()
   return {
@@ -27,10 +29,13 @@ vi.mock('@/utils/gitGraph', async (importOriginal) => {
         branchNames: [],
         isWT: !!c.isWT,
       }))
+      const lines = commits.flatMap((c: any) =>
+        (c.lines || []).map((l: any) => ({ path: '', color: '#0066cc', lane: l.lane, widthLane: l.widthLane ?? l.lane, rowStart: l.rowStart, rowEnd: l.rowEnd })),
+      )
       const maxLane = nodes.reduce((m, n) => Math.max(m, n.lane), 0)
       return {
         nodes,
-        lines: [],
+        lines,
         laneCount: maxLane + 1,
         graphWidth: Math.max(40, (maxLane + 1) * 20 + 20),
         shaToLane: new Map(),
@@ -221,6 +226,51 @@ describe('GitGraph viewport-driven column width', () => {
 
     expect((graph.vm as any).visibleLaneCount).toBe(2)
     expect(graphWidth(wrapper)).toBe('60')
+    wrapper.unmount()
+  })
+
+  it('widens for a lane whose connection crosses the window without a visible node', async () => {
+    // Regression: a branch forked above the viewport runs its merge-in vertical
+    // through the visible rows, but every node on that lane is off-screen. The
+    // column used to be sized from visible nodes only, so the lane was clipped
+    // at the column edge until its node was scrolled into view.
+    const commits = makeCommits()
+    commits[40] = {
+      ...commits[40],
+      lane: 2,
+      lines: [{ lane: 2, widthLane: 2, rowStart: 4, rowEnd: 40 }],
+    }
+    const wrapper = mountInScroller({ commits })
+    await nextTick()
+    const graph = wrapper.findComponent(GitGraph)
+    stubGeometry(wrapper, { scrollTop: 0, clientHeight: 640 }) // rows 0-9
+
+    ;(graph.vm as any).measureViewport()
+    await nextTick()
+
+    // Rows 0-12 hold only lane-0 nodes, but the lane-2 line crosses them.
+    expect((graph.vm as any).visibleLaneCount).toBe(3)
+    expect(graphWidth(wrapper)).toBe('80')
+    wrapper.unmount()
+  })
+
+  it('does not widen for a line that stays outside the window', async () => {
+    const commits = makeCommits()
+    commits[40] = {
+      ...commits[40],
+      lane: 2,
+      lines: [{ lane: 2, widthLane: 2, rowStart: 100, rowEnd: 120 }],
+    }
+    const wrapper = mountInScroller({ commits })
+    await nextTick()
+    const graph = wrapper.findComponent(GitGraph)
+    stubGeometry(wrapper, { scrollTop: 0, clientHeight: 640 })
+
+    ;(graph.vm as any).measureViewport()
+    await nextTick()
+
+    expect((graph.vm as any).visibleLaneCount).toBe(1)
+    expect(graphWidth(wrapper)).toBe('40')
     wrapper.unmount()
   })
 
