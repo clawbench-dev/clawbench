@@ -587,7 +587,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, type CSSProperties } from 'vue'
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
-import { kbPendingQuote, consumeKBPendingQuote } from '@/utils/kbNavigation'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
 import { attemptSavedPasswordLogin } from '@/utils/savedPasswordLogin'
@@ -639,6 +638,7 @@ import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import AgentIcon from './components/common/AgentIcon.vue'
 import GroupAvatarStack from './components/chat/GroupAvatarStack.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
+import { useChatBridge, setChatRevealHandler } from './composables/useChatBridge.ts'
 import { setOpenSessionHandler, usePendingTarget, usePickerIntent, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
 import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
@@ -2322,6 +2322,12 @@ function installQuoteSelectionBridge(
 
 const quoteQuestion = useQuoteQuestion()
 
+// One-call surface for panels that put something into the chat. The bridge
+// cannot reveal the chat pane itself (that is a tab switch only App owns), so
+// the handler is injected here once. Same pattern as `setOpenSessionHandler`.
+const chatBridge = useChatBridge()
+setChatRevealHandler(() => switchTab('chat'))
+
 // Quote bar commits. The bar emits `(text, { pickTarget })`; `pickTarget` is
 // set by the long-press gesture ("send this to another conversation"), so it
 // must be forwarded rather than dropped — dropping it would make every commit
@@ -3632,7 +3638,7 @@ function handleWideDockTabClick(tab: string) {
 }
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
-const { addAttachedFile, addStagedQuote, restoreAttachments } = useChatContext()
+const { addAttachedFile, restoreAttachments } = useChatContext()
 const { refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { refresh: refreshForgePlatform } = useForgeBinding()
@@ -3652,15 +3658,13 @@ const meetingHistory = useMeetingHistory()
  */
 /**
  * Stage a quote card into the live input and bring the chat into view.
+ *
+ * Thin alias for the shared bridge: the same call is what a dock panel uses
+ * (`useChatBridge().quote`), so the KB panel no longer needs its own
+ * module-level hand-off into App.vue.
  */
 function stageQuoteInChat(quote: QuoteData): void {
-  addStagedQuote(quote)
-  switchTab('chat')
-  toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), {
-    icon: 'chat',
-    type: 'success',
-    duration: 1800,
-  })
+  chatBridge.quote(quote)
 }
 
 /**
@@ -3681,14 +3685,6 @@ async function stageDraggedQuote(quote: QuoteData): Promise<void> {
   if (!resolved) return
   stageQuoteInChat(resolved)
 }
-
-// The knowledge base panel cannot reach switchTab (it lives in a dock tab), so
-// a quoted passage is parked here and staged by the app that owns the chat view.
-watch(kbPendingQuote, (pending) => {
-  if (!pending) return
-  consumeKBPendingQuote(pending.token)
-  stageQuoteInChat(pending.quote)
-})
 
 /**
  * "Quote in chat" from the meeting detail header — the SAME interaction as the

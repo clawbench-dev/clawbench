@@ -20,6 +20,7 @@ import i18n from './i18n'
 import { LongPressDirective } from './directives/longPress.ts'
 import { RunningSweepDirective } from './directives/runningSweep.ts'
 import { DockTipDirective } from './directives/dockTooltip.ts'
+import { ChatDragDirective } from './directives/chatDrag.ts'
 import { configureMarkedRenderer } from './utils/markedConfig.ts'
 import { appLog } from './utils/appLog.ts'
 import { installAuthRedirectInterceptor } from './utils/authExpiry.ts'
@@ -146,6 +147,7 @@ async function bootstrap() {
   app.directive('long-press', LongPressDirective)
   app.directive('running-sweep', RunningSweepDirective)
   app.directive('dock-tip', DockTipDirective)
+  app.directive('chat-drag', ChatDragDirective)
 
   // Capture Vue component errors (render, lifecycle, event handlers)
   app.config.errorHandler = (err, _instance, info) => {

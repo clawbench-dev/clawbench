@@ -13,11 +13,9 @@
       :alt="fileName"
       class="code-preview-media-img"
       :class="{ 'local-media-hidden': loadFailed }"
-      :draggable="isWideScreen"
+      v-chat-drag="{ kind: 'attach', path, name: fileName }"
       @load="onLoad"
       @error="onError"
-      @dragstart="onImageDragStart"
-      @dragend="onImageDragEnd"
     />
 
     <!-- Video: native controls, contained in the pane. Opening the preview
@@ -73,8 +71,6 @@ import { Music } from 'lucide-vue-next'
 import MediaLoadError from '@/components/media/MediaLoadError.vue'
 import { buildLocalFileUrl } from '@/utils/download.ts'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
-import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
-import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { mediaVersionFor, trackMediaPath } from '@/composables/useMediaWatch.ts'
 
 // pdf.js is heavy (~500KB) and only pulled in when a PDF is actually previewed.
@@ -92,8 +88,6 @@ const props = defineProps<{
   refreshNonce?: number
 }>()
 
-const { isWideScreen } = useWideScreenLayout()
-
 const fileName = computed(() => props.path.split('/').pop() || props.path)
 
 /**
@@ -106,15 +100,6 @@ const mediaErrorKind = computed<'image' | 'video' | 'audio' | 'file'>(() => {
   if (props.kind === 'image' || props.kind === 'video' || props.kind === 'audio') return props.kind
   return 'file'
 })
-
-/** Drag the previewed image onto the chat column → attach this path (no upload). */
-function onImageDragStart(e: DragEvent) {
-  startAttachDrag(e, props.path, { name: fileName.value })
-}
-
-function onImageDragEnd() {
-  cleanupDragGhost()
-}
 
 // Cache-bust on path change (or explicit refresh) so a re-opened / replaced
 // file is re-fetched rather than served from the element's cached bytes.
