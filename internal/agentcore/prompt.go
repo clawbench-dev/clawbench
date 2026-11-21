@@ -2,11 +2,77 @@ package agentcore
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"clawbench/internal/agentcore/tools"
 	"clawbench/internal/model"
 )
+
+// ProjectRulesFile is the file whose contents are injected into the system
+// prompt as standing project rules.
+const ProjectRulesFile = "AGENTS.md"
+
+// MaxProjectRulesBytes caps how much of the rules file is injected.
+//
+// A rules file is instructions, not data: at some point its bulk competes with
+// the task itself, and every byte is paid for on EVERY round of EVERY turn
+// (the system prompt is re-sent each time). 32 KiB is far more than a real
+// rules file needs and small enough that a runaway one cannot crowd out the
+// conversation. The cut is announced in-prompt so the model knows the rules it
+// is reading are incomplete rather than assuming it has them all.
+const MaxProjectRulesBytes = 32 << 10
+
+// loadProjectRules reads <workDir>/AGENTS.md for injection into the system
+// prompt.
+//
+// Returns "" when there is no workDir, no file, the file is unreadable, or it
+// is empty. Rules are a nice-to-have: a permissions error or a stray directory
+// named AGENTS.md must not fail the turn, so every error path is a silent
+// skip. Read permission on the agent's own working directory is not assumed —
+// the file tools are gated by the tool policy, but the rules file is read here
+// regardless, which is why this stays a plain os.ReadFile with no policy check:
+// it returns the user's own instructions to the user's own agent.
+//
+// The confined-to-workdir question does not arise: the path is always inside
+// workDir by construction, so this cannot be used to read outside it.
+func loadProjectRules(workDir string) string {
+	if workDir == "" {
+		return ""
+	}
+	path := filepath.Join(workDir, ProjectRulesFile)
+
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		return ""
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	truncated := false
+	if len(data) > MaxProjectRulesBytes {
+		data = data[:MaxProjectRulesBytes]
+		truncated = true
+	}
+
+	rules := strings.TrimSpace(string(data))
+	if rules == "" {
+		return ""
+	}
+
+	// Cut mid-rune or mid-line, the tail can be garbage; say so rather than
+	// letting the model treat a half sentence as a complete rule.
+	if truncated {
+		rules += fmt.Sprintf("\n\n[The rest of %s was not included: the file exceeds the %d-byte limit "+
+			"for injected project rules. Read the file directly for the remainder.]",
+			ProjectRulesFile, MaxProjectRulesBytes)
+	}
+	return rules
+}
 
 // buildSystemPrompt assembles the system prompt for a run.
 //
@@ -22,12 +88,32 @@ import (
 //  2. tools — one line per tool, so the model can CHOOSE between them. Bare
 //     names (the first version) tell it nothing, and it then shells out to
 //     bash for work a dedicated tool does better.
-//  3. rules — how to use them, including what is NOT available here.
-//  4. environment — where it is and what it is confined to.
-func buildSystemPrompt(agentPrompt, workDir string, toolList []tools.Tool, policy model.ToolPolicy) string {
+//  3. project-rules — the working directory's AGENTS.md, unwrapped, so it
+//     reads as the project's own instructions rather than ours. Placed above
+//     the mechanical sections because it is user-authored, and above rules so a
+//     project rule that contradicts a generic one wins.
+//  4. rules — how to use them, including what is NOT available here.
+//  5. environment — where it is and what it is confined to.
+//
+// projectRules is passed in already loaded (see loadProjectRules) rather than
+// read here: this function stays pure so it can be tested without a filesystem,
+// and so a missing or unreadable rules file cannot alter what the mechanical
+// sections say.
+func buildSystemPrompt(agentPrompt, projectRules, workDir string, toolList []tools.Tool, policy model.ToolPolicy) string {
 	var b strings.Builder
 
 	if s := strings.TrimSpace(agentPrompt); s != "" {
+		b.WriteString(s)
+		b.WriteString("\n\n")
+	}
+
+	// Unwrapped and headed by a line that says what it is: dropped in as a bare
+	// block the model has no way to tell project rules from its own
+	// instructions, and conflates the two in its replies.
+	if s := strings.TrimSpace(projectRules); s != "" {
+		b.WriteString("The project you are working in defines the following rules in its ")
+		b.WriteString(ProjectRulesFile)
+		b.WriteString(". Follow them:\n\n")
 		b.WriteString(s)
 		b.WriteString("\n\n")
 	}

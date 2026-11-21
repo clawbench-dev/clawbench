@@ -3,6 +3,8 @@ package agentcore
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -744,7 +746,7 @@ func TestRunSync_ReturnsTextAndCounters(t *testing.T) {
 // Without this it reads a missing tool as "I forgot" and spends rounds hunting
 // for a way to write the file.
 func TestBuildSystemPrompt_StatesDeniedCapabilities(t *testing.T) {
-	got := buildSystemPrompt("You are helpful.", "/tmp/x", nil, model.ToolPolicy{})
+	got := buildSystemPrompt("You are helpful.", "", "/tmp/x", nil, model.ToolPolicy{})
 	for _, want := range []string{
 		"You are helpful.",
 		"/tmp/x",
@@ -766,7 +768,7 @@ func TestBuildSystemPrompt_StatesDeniedCapabilities(t *testing.T) {
 // instructions and must outrank the mechanical text below it.
 func TestBuildSystemPrompt_UsesPiStyleSections(t *testing.T) {
 	list := tools.All(true, false, false)
-	got := buildSystemPrompt("AGENT-INSTRUCTIONS", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead}})
+	got := buildSystemPrompt("AGENT-INSTRUCTIONS", "", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead}})
 
 	if !strings.HasPrefix(got, "AGENT-INSTRUCTIONS") {
 		t.Fatalf("the agent's own prompt must lead and be unwrapped, got:\n%s", got)
@@ -793,7 +795,7 @@ func TestBuildSystemPrompt_UsesPiStyleSections(t *testing.T) {
 // point of granting read/glob/grep separately is that they are better at it.
 func TestBuildSystemPrompt_ToolListCarriesPurpose(t *testing.T) {
 	list := tools.All(true, true, false)
-	got := buildSystemPrompt("", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead, model.CapFSWrite}})
+	got := buildSystemPrompt("", "", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead, model.CapFSWrite}})
 
 	for _, t2 := range list {
 		snippet := t2.Snippet()
@@ -818,7 +820,7 @@ func TestBuildSystemPrompt_OnlyGrantedToolsAreListed(t *testing.T) {
 	// Read-only: the write/edit/bash guidelines must not appear, and neither
 	// may any rule that only makes sense with them.
 	list := tools.All(true, false, false)
-	got := buildSystemPrompt("", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead}})
+	got := buildSystemPrompt("", "", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead}})
 
 	for _, forbidden := range []string{
 		"Use write only for new files",
@@ -837,7 +839,7 @@ func TestBuildSystemPrompt_OnlyGrantedToolsAreListed(t *testing.T) {
 // is not told about restrictions it does not have.
 func TestBuildSystemPrompt_OmitsDenialsWhenGranted(t *testing.T) {
 	policy := model.ToolPolicy{Allow: []string{model.CapExec}}.Normalized()
-	got := buildSystemPrompt("", "/tmp/x", nil, policy)
+	got := buildSystemPrompt("", "", "/tmp/x", nil, policy)
 	if strings.Contains(got, "You cannot") {
 		t.Fatalf("a fully granted agent must not be told it is restricted, got:\n%s", got)
 	}
@@ -846,9 +848,113 @@ func TestBuildSystemPrompt_OmitsDenialsWhenGranted(t *testing.T) {
 // TestBuildSystemPrompt_NoWorkDirIsStated pins the empty-workdir case: the model
 // must know the file tools are unusable rather than trying them and failing.
 func TestBuildSystemPrompt_NoWorkDirIsStated(t *testing.T) {
-	got := buildSystemPrompt("", "", nil, model.ToolPolicy{})
+	got := buildSystemPrompt("", "", "", nil, model.ToolPolicy{})
 	if !strings.Contains(got, "No working directory") {
 		t.Fatalf("an empty workdir must be stated, got:\n%s", got)
+	}
+}
+
+// TestLoadProjectRules_Missing pins the no-file case: an absent AGENTS.md must
+// yield nothing rather than an error or a stray heading.
+//
+// Also covers the two shapes that are NOT "rules": no working directory at all,
+// and a directory that happens to be named AGENTS.md.
+func TestLoadProjectRules_Missing(t *testing.T) {
+	dir := t.TempDir()
+
+	if got := loadProjectRules(""); got != "" {
+		t.Fatalf("no workdir must yield no rules, got %q", got)
+	}
+	if got := loadProjectRules(dir); got != "" {
+		t.Fatalf("no AGENTS.md must yield no rules, got %q", got)
+	}
+
+	// A directory named AGENTS.md is not a rules file. Without the IsDir check
+	// os.ReadFile fails anyway, but on some systems it returns something
+	// non-obvious, and a silent "read the directory" is worse than a skip.
+	if err := os.Mkdir(filepath.Join(dir, ProjectRulesFile), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if got := loadProjectRules(dir); got != "" {
+		t.Fatalf("a directory named %s must yield no rules, got %q", ProjectRulesFile, got)
+	}
+
+	// Empty and whitespace-only files are also "no rules" — injecting the
+	// heading over an empty body would tell the model it has rules it does not.
+	if err := os.Remove(filepath.Join(dir, ProjectRulesFile)); err != nil {
+		t.Fatalf("rmdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ProjectRulesFile), []byte("  \n\t\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := loadProjectRules(dir); got != "" {
+		t.Fatalf("a whitespace-only file must yield no rules, got %q", got)
+	}
+}
+
+// TestLoadProjectRules_ReadsFile pins that the file's text reaches the prompt,
+// headed so the model can tell project rules from its own instructions.
+func TestLoadProjectRules_ReadsFile(t *testing.T) {
+	dir := t.TempDir()
+	body := "Compile the frontend after touching web/src.\nNever commit secrets."
+	if err := os.WriteFile(filepath.Join(dir, ProjectRulesFile), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	rules := loadProjectRules(dir)
+	if !strings.Contains(rules, "Compile the frontend after touching web/src.") {
+		t.Fatalf("the file's text must be loaded, got %q", rules)
+	}
+
+	got := buildSystemPrompt("AGENT-INSTRUCTIONS", rules, dir, tools.All(true, false, false),
+		model.ToolPolicy{Allow: []string{model.CapFSRead}})
+	// The agent's own instructions still lead the prompt.
+	if !strings.HasPrefix(got, "AGENT-INSTRUCTIONS") {
+		t.Fatalf("the agent's own prompt must still lead, got:\n%s", got)
+	}
+	// The rules are attributed, not dropped in bare.
+	if !strings.Contains(got, "defines the following rules in its AGENTS.md") {
+		t.Fatalf("project rules must be introduced as such, got:\n%s", got)
+	}
+	// They sit above the mechanical sections but below the agent's prompt.
+	agentAt := strings.Index(got, "AGENT-INSTRUCTIONS")
+	rulesAt := strings.Index(got, "Never commit secrets.")
+	toolsAt := strings.Index(got, "<tools>")
+	if !(agentAt < rulesAt && rulesAt < toolsAt) {
+		t.Fatalf("project rules must sit between the agent prompt and the tool list, got:\n%s", got)
+	}
+}
+
+// TestLoadProjectRules_Truncates pins the size cap.
+//
+// The cut must be announced: a silently truncated rules file reads to the model
+// as a complete one, so it would follow a half-written rule and never know the
+// rest existed.
+func TestLoadProjectRules_Truncates(t *testing.T) {
+	dir := t.TempDir()
+
+	// One distinctive line at the very top (must survive), then enough filler to
+	// cross the cap with a marker that must NOT appear.
+	const head = "RULE-AT-THE-TOP\n"
+	body := head + strings.Repeat("x", MaxProjectRulesBytes) + "\nRULE-BEYOND-THE-CAP\n"
+	if err := os.WriteFile(filepath.Join(dir, ProjectRulesFile), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	rules := loadProjectRules(dir)
+
+	if !strings.Contains(rules, "RULE-AT-THE-TOP") {
+		t.Fatalf("the head of the file must survive the cap, got %d bytes", len(rules))
+	}
+	if strings.Contains(rules, "RULE-BEYOND-THE-CAP") {
+		t.Fatal("content past the cap must not be injected")
+	}
+	if !strings.Contains(rules, "was not included") {
+		t.Fatalf("the cut must be announced to the model, got:\n%s", rules[len(rules)-300:])
+	}
+	// The injected text stays near the cap — the announcement is small.
+	if len(rules) > MaxProjectRulesBytes+512 {
+		t.Fatalf("injected rules overshoot the cap badly: %d bytes", len(rules))
 	}
 }
 

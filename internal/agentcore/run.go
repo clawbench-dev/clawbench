@@ -434,7 +434,8 @@ func (r *runner) run(ctx context.Context) {
 	}
 	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, r.spec.Prompt))
 
-	system := buildSystemPrompt(r.spec.SystemPrompt, r.spec.WorkDir, r.toolList, r.spec.Policy)
+	system := buildSystemPrompt(r.spec.SystemPrompt, loadProjectRules(r.spec.WorkDir),
+		r.spec.WorkDir, r.toolList, r.spec.Policy)
 	r.system = system
 
 	env := tools.Env{
