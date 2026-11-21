@@ -482,7 +482,12 @@ function quotableContainer(sel: Selection): HTMLElement | null {
   // `.transcript` and `.live-chat` are the meeting's own content: the minutes
   // and the chat are text the user may want to quote, and the meeting body
   // carries the token that makes the quote addressable.
-  return closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper, .git-diff-scroll, .transcript, .live-chat, [data-quotable]:not([data-quotable="false"])')
+  //
+  // `.mail-reader__body-region` is a mail body. A rich body's selection is read
+  // by the frame bridge (`iframeSelectionQuote.ts`); this entry covers the
+  // plain-text body and a drag that starts outside the frame, both of which
+  // land on the wrapper carrying the `data-quote-*` identity.
+  return closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body, .chat-message .msg-content-wrapper, .git-diff-scroll, .transcript, .live-chat, .mail-reader__body-region, [data-quotable]:not([data-quotable="false"])')
 }
 
 function onSelectionChange() {

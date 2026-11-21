@@ -163,7 +163,8 @@ describe('attachIframeSelectionQuoteBridge', () => {
     dispose()
   })
 
-  it('hides the bar for an empty / collapsed selection', () => {    const { doc, getSelectionMock, show, hide, dispose } = makeBridge()
+  it('hides the bar for an empty / collapsed selection', () => {
+    const { doc, getSelectionMock, show, hide, dispose } = makeBridge()
     const emptySel = new FakeSelection('', true)
     getSelectionMock.mockReturnValue(emptySel)
 

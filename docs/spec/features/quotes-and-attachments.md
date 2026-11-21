@@ -115,7 +115,7 @@
 | Markdown 预览 | `MarkdownPreview.vue` → `showBar` |
 | 代码预览（CodeMirror） | `CodeMirrorViewer.vue` → `showBar`（自带 anchor） |
 | HTML / OpenAPI 预览（iframe） | `utils/iframeSelectionQuote.ts` 的 `makeIframeQuoteShowHandler` |
-| 邮件正文（iframe） | 同上，但经 `identity` 额外给出 `sourceKind: 'mail'` + `locators.mail`（正文不是文件，`filePath` 只是「主题 · 发件人」标签） |
+| 邮件正文（iframe / pre） | 富文本正文走 `utils/iframeSelectionQuote.ts` 的桥（沙箱保留 `allow-same-origin`，宿主可读其选区；`identity` 给出 `sourceKind: 'mail'` + `locators.mail`）；纯文本正文是宿主里的 `<pre>`，由带 `data-quote-*` 的外层区域识别 |
 | 终端 | `TerminalPanelContent.vue`（`sourceKind: 'terminal'`） |
 | 会议中的转写 / 会议聊天 | 白名单里的 `.transcript` / `.live-chat`，身份来自会议面板的 `data-quote-*` |
 | 议题 / PR 详情、CI 详情、Git diff、任务执行详情、会议正文 | 标 `data-quote-*` 属性，由 `quoteQuestionUtils.getQuoteSource` 统一读取 |
