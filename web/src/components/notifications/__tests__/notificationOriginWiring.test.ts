@@ -77,15 +77,17 @@ const coordinator = stripComments(coordinatorRaw)
 
 describe('notification navigation origin wiring', () => {
   it('every jump goes through the single flagged dispatcher', () => {
-    // Neither the panel nor the kind table may dispatch a navigation event
-    // directly: the table receives `jump` from the panel, and that argument is
-    // `jumpTo` — the one function that stamps `fromNotificationCenter`. A raw
+    // The panel must not dispatch a navigation event itself: it goes through
+    // `jumpTo`, the one function that stamps `fromNotificationCenter`. A raw
     // dispatch added for a new row kind would silently drop the origin, and
     // Back would land on whatever tab preceded the log (or exit the app).
-    for (const [name, src] of [['panel', panel], ['kind table', kinds]] as const) {
-      const raw = src.match(/dispatchEvent\(new CustomEvent\('clawbench-open-/g) ?? []
-      expect(raw, `${name} must not dispatch navigation events directly`).toHaveLength(0)
-    }
+    const raw = panel.match(/dispatchEvent\(new CustomEvent\('clawbench-open-/g) ?? []
+    expect(raw, 'the panel must not dispatch navigation events directly').toHaveLength(0)
+    // The kind table must not touch dispatchEvent AT ALL. Its `open` functions
+    // receive the panel's `jumpTo`, so a table that grew its own dispatcher —
+    // under any event name — is caught here rather than passing because the
+    // event name happened not to match.
+    expect(kinds, 'the kind table must navigate only through the injected jump').not.toMatch(/dispatchEvent/)
     expect(panel).toMatch(/function jumpTo\(/)
     expect(panel).toMatch(/fromNotificationCenter: true/)
     // The table can only navigate through the injected dispatcher.
