@@ -475,6 +475,71 @@ describe('graph dimensions', () => {
   })
 })
 
+// ─── Line row spans (viewport-driven column width) ─────────────────────────
+//
+// The column width is sized from the lanes whose geometry is inside the scroll
+// window. A line can cross the window while every node on its lane is
+// off-screen, so each line must report the rows it spans and the farthest lane
+// it reaches.
+describe('connection lines report the rows they span', () => {
+  const allRepos = [LINEAR, SINGLE_MERGE, MULTI_BRANCH, FREQUENT_MERGE, LONG_LIVED, OCTOPUS, OPEN_BRANCHES]
+
+  it('every line spans valid rows and reaches its own lane', () => {
+    for (const data of allRepos) {
+      const { lines, laneCount } = computeGraphData(data, ROW_HEIGHT, undefined) as any
+      expect(lines.length).toBeGreaterThan(0)
+      for (const l of lines) {
+        expect(Number.isInteger(l.rowStart)).toBe(true)
+        expect(Number.isInteger(l.rowEnd)).toBe(true)
+        expect(l.rowStart).toBeGreaterThanOrEqual(0)
+        expect(l.rowStart).toBeLessThanOrEqual(l.rowEnd)
+        expect(l.rowEnd).toBeLessThanOrEqual(data.length - 1)
+        expect(l.widthLane).toBeGreaterThanOrEqual(l.lane)
+        expect(l.widthLane).toBeLessThan(laneCount)
+      }
+    }
+  })
+
+  it('widthLane covers both ends of a cross-lane bezier', () => {
+    // laneCx(lane) = lane * 20 + 20, so the lane of an X coordinate is
+    // (x - 20) / 20. Both endpoints of a bezier must fit inside the width.
+    for (const data of allRepos) {
+      const { lines } = computeGraphData(data, ROW_HEIGHT, undefined) as any
+      for (const l of lines) {
+        const nums = l.path.match(/[\d.]+/g).map(Number)
+        const xs = l.path.includes('C') ? [nums[0], nums[nums.length - 2]] : [nums[0]]
+        for (const x of xs) {
+          expect(l.widthLane).toBeGreaterThanOrEqual((x - 20) / 20)
+        }
+      }
+    }
+  })
+
+  it('merge-in vertical spans from the child row down to the parent row', () => {
+    // SINGLE_MERGE: f1 (row 3, lane 1) has first parent m2 (row 5, lane 0).
+    const { lines } = computeGraphData(SINGLE_MERGE, ROW_HEIGHT, undefined) as any
+    const mergeInVert = lines.find((l: any) =>
+      l.lane === 1 && !l.path.includes('C') && !l.fade && l.rowStart === 3,
+    )
+    expect(mergeInVert).toBeDefined()
+    expect(mergeInVert.rowEnd).toBe(5)
+    expect(mergeInVert.widthLane).toBe(1)
+  })
+
+  it('continuation line runs to the last loaded row', () => {
+    // Truncated history: f1 (row 3) and m3 (row 4) both have parents outside
+    // the loaded slice, so each gets a fade continuation.
+    const truncated = SINGLE_MERGE.slice(0, 5)
+    const { lines } = computeGraphData(truncated, ROW_HEIGHT, undefined) as any
+    const fades = lines.filter((l: any) => l.fade)
+    expect(fades.length).toBeGreaterThan(0)
+    for (const fade of fades) {
+      expect(fade.rowEnd).toBe(truncated.length - 1)
+    }
+    expect(fades[0].rowStart).toBe(3)
+  })
+})
+
 describe('ref label helpers', () => {
   it('refLabelText strips tag prefix', () => {
     expect(refLabelText('main')).toBe('main')
