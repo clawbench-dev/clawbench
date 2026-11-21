@@ -85,7 +85,7 @@ func (m *midTurnInjector) Inject(
 		return ai.MidTurnInjectResult{Reason: "idle"}, nil
 	}
 
-	raw, err := transport.CallRaw(ctx, methodSessionSteering, steerParams{
+	raw, err := transport.CallExtension(ctx, methodSessionSteering, steerParams{
 		SessionID: sessionID,
 		Prompt:    []steerContentBlock{{Type: "text", Text: req.Content}},
 	})

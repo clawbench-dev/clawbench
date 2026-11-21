@@ -1076,7 +1076,6 @@ func (c *ACPConn) killProcessLocked() {
 	oldCmd := c.cmd
 	oldFilter := c.stdoutFilter
 	c.stdoutFilter = nil
-	c.stdin = nil
 	c.rawRPC = nil
 	c.mu.Unlock()
 	c.reapProcess(oldCmd, oldFilter)
@@ -1126,7 +1125,6 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 		oldCmd := c.cmd
 		oldFilter := c.stdoutFilter
 		c.stdoutFilter = nil
-		c.stdin = nil
 		c.rawRPC = nil
 		c.mu.Unlock()
 		c.reapProcess(oldCmd, oldFilter)
@@ -1277,13 +1275,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	// - Some agents emit terminal escape sequences on stdout
 	stdoutFilter := newACPStdoutFilter(stdoutPipe)
 
-	// Share one write lock between the SDK and the raw JSON-RPC side channel
-	// (see acp_raw_rpc.go). Passing the wrapper to the SDK is what makes that
-	// possible: its own write mutex is private, so both parties must go through
-	// the same io.Writer or their bytes would interleave mid-line.
-	stdinWriter := &lockedWriter{dst: stdinPipe}
-
-	conn := acp.NewClientSideConnection(client, stdinWriter, stdoutFilter)
+	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutFilter)
 	// Deliberately NOT calling conn.SetLogger here. The SDK's SetLogger writes
 	// c.logger without synchronization (connection.go:125) while receive() —
 	// started by NewClientSideConnection above — reads it via loggerOrDefault()
@@ -1296,15 +1288,12 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	// slog.Default once at startup (cmd/server/main.go), before any connection
 	// exists, so SDK diagnostics still reach the same handler.
 
-	// Raw side channel: lets backends call private methods the SDK rejects
-	// (e.g. CodeBuddy's session/steer). Responses are demuxed from the filter's
-	// tee by request-id prefix.
-	rawRPC := newACPRawRPC(stdinWriter, conn.Done())
-	stdoutFilter.SetRawSink(rawRPC)
+	// Raw calls: private methods the typed surface does not model (CodeBuddy's
+	// session/steer). They ride the SDK's own connection, so no side channel.
+	rawRPC := newACPRawRPC(conn)
 
-	// Notification tee: the SDK's SessionUpdate union misclassifies extension
-	// variants (it re-types an unknown discriminator as SessionInfoUpdate and
-	// drops the payload), so the client reads those straight from the raw line.
+	// Notification tee: the SDK drops session/update variants it does not
+	// model, so the client reads those straight from the raw line.
 	stdoutFilter.SetNotificationSink(client)
 
 	initCtx, initCancel := context.WithTimeout(ctx, acpInitializeTimeout)
@@ -1402,7 +1391,6 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	c.conn = conn
 	c.client = client
 	c.stdoutFilter = stdoutFilter
-	c.stdin = stdinWriter
 	c.rawRPC = rawRPC
 	c.acpSID = "" // cleared on respawn — will be set by ensureAliveWithSession
 	c.alive = true

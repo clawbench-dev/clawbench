@@ -39,6 +39,10 @@ func (f *fakeTransport) CallRaw(_ context.Context, method string, params any) (j
 	return f.response, nil
 }
 
+func (f *fakeTransport) CallExtension(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	return f.CallRaw(ctx, method, params)
+}
+
 func (f *fakeTransport) AcpSessionID() string { return f.sessionID }
 
 func (f *fakeTransport) PromptInFlight() bool { return f.promptInFlight }

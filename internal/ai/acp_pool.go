@@ -927,13 +927,8 @@ type ACPConn struct {
 	// to unblock pending reads and prevent cleanup hangs.
 	stdoutFilter *acpStdoutFilter
 
-	// stdin is the write lock shared with the ACP SDK (the same instance is
-	// passed to acp.NewClientSideConnection). Retained so CallRaw can write
-	// without interleaving with SDK requests. Nil when not alive.
-	stdin *lockedWriter
-
-	// rawRPC carries JSON-RPC calls whose method names the SDK refuses to send
-	// (non-"_"-prefixed, e.g. CodeBuddy's session/steer). Nil when not alive.
+	// rawRPC carries JSON-RPC calls for methods the typed surface does not
+	// model (e.g. CodeBuddy's session/steer). Nil when not alive.
 	rawRPC *acpRawRPC
 
 	// acpSID is the ACP session ID. Populated from DB (ResumeSession) or
@@ -1570,8 +1565,10 @@ func (c *ACPConn) AcpSID() string {
 // AcpSessionID returns the ACP session ID, satisfying ai.RawRPCTransport.
 func (c *ACPConn) AcpSessionID() string { return c.AcpSID() }
 
-// CallRaw sends a raw JSON-RPC request for a method the ACP SDK will not send
-// (anything not prefixed with "_", e.g. CodeBuddy's session/steer).
+// CallRaw sends a JSON-RPC request for a method the typed SDK does not model
+// (CodeBuddy's session/steer, Hermes's session/set_model). It rides the SDK's
+// own connection, so it shares the wire lock and the id counter with typed
+// calls.
 //
 // Safe to call while a prompt is in flight: it does not touch the prompt's
 // context and never holds c.mu while waiting for the response (the same rule as
@@ -1596,6 +1593,58 @@ func (c *ACPConn) CallRaw(ctx context.Context, method string, params any) (json.
 		return nil, errRawConnClosed
 	}
 	return rpc.CallRaw(ctx, method, params)
+}
+
+// probeDeleteSessionCall issues the capability probe's session/delete. It is
+// the typed call — session/delete has been stable since schema 1.13 — with the
+// same test seam CallRaw offers, because the probe is unit-tested without an
+// agent.
+func (c *ACPConn) probeDeleteSessionCall(ctx context.Context, sid string) error {
+	c.mu.Lock()
+	conn := c.conn
+	alive := c.alive && c.isAliveLocked()
+	hook := c.rawCallFnForTest
+	c.mu.Unlock()
+
+	if hook != nil {
+		_, err := hook(ctx, "session/delete", map[string]any{"sessionId": sid})
+		return err
+	}
+	if conn == nil || !alive {
+		return errRawConnClosed
+	}
+	_, err := conn.DeleteSession(ctx, acp.DeleteSessionRequest{SessionId: acp.SessionId(sid)})
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+	}
+	return err
+}
+
+// CallExtension sends a documented ACP extension method (name starts with "_")
+// over the SDK's own connection. Same liveness rules as CallRaw.
+func (c *ACPConn) CallExtension(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	c.mu.Lock()
+	conn := c.conn
+	alive := c.alive && c.isAliveLocked()
+	hook := c.rawCallFnForTest
+	c.mu.Unlock()
+
+	if hook != nil {
+		return hook(ctx, method, params)
+	}
+	if conn == nil || !alive {
+		return nil, errRawConnClosed
+	}
+	raw, err := conn.CallExtension(ctx, method, params)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, rawCallError(err)
+	}
+	return raw, nil
 }
 
 // PromptInFlight reports whether a prompt is currently running on this
@@ -2719,7 +2768,6 @@ func (c *ACPConn) killAndMarkDeadLocked() {
 		oldCmd := c.cmd
 		oldFilter := c.stdoutFilter
 		c.stdoutFilter = nil
-		c.stdin = nil
 		c.rawRPC = nil
 		c.mu.Unlock()
 		c.reapProcess(oldCmd, oldFilter)
@@ -2763,7 +2811,6 @@ func (c *ACPConn) markSpawnFailedLocked() {
 	// Drop the I/O handles too: they belong to the process that just failed to
 	// come up. A stale stdin/rawRPC would otherwise point at a dead pipe.
 	c.stdoutFilter = nil
-	c.stdin = nil
 	c.rawRPC = nil
 	c.alive = false
 	c.startedAt = time.Time{}
@@ -2779,7 +2826,6 @@ func (c *ACPConn) close() {
 		oldCmd := c.cmd
 		oldFilter := c.stdoutFilter
 		c.stdoutFilter = nil
-		c.stdin = nil
 		c.rawRPC = nil
 		c.mu.Unlock()
 		c.reapProcess(oldCmd, oldFilter)

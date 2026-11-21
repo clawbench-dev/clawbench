@@ -27,10 +27,10 @@ import (
 // Verified against claude-agent-acp 0.89.1 by
 // TestACPSteeringProbe (acp_steering_probe_integration_test.go).
 
-// methodSessionSteering is the ACP steering extension method. It carries a "_"
-// prefix, so the SDK's CallExtension could send it — but the call deliberately
-// goes through the shared raw channel (RawRPCTransport.CallRaw) instead, which
-// writes through the same lockedWriter as the SDK and thus cannot interleave.
+// methodSessionSteering is the ACP steering extension method. Its "_" prefix
+// makes it a documented extension, so the call goes through CallExtension —
+// which validates the prefix, so a rename that drops it fails locally instead
+// of on the wire.
 const methodSessionSteering = "_session/steering"
 
 // steerContentBlock is one ACP content block in the steering request.
@@ -95,7 +95,7 @@ func (m *midTurnInjector) Inject(
 		return ai.MidTurnInjectResult{Reason: "idle"}, nil
 	}
 
-	raw, err := transport.CallRaw(ctx, methodSessionSteering, steerParams{
+	raw, err := transport.CallExtension(ctx, methodSessionSteering, steerParams{
 		SessionID: sessionID,
 		Prompt:    []steerContentBlock{{Type: "text", Text: req.Content}},
 		// idleBehavior=promptRequired is defense in depth: PromptInFlight above

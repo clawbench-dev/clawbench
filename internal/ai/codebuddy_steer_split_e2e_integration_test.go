@@ -143,7 +143,7 @@ loop:
 
 	if !sawBoundary {
 		t.Fatalf("FAILED: no steer_boundary event reached the stream. This means the production "+
-			"wiring (spawnLocked → stdoutFilter.SetRawSink → mapACPSessionUpdate UserMessageChunk) "+
+			"wiring (spawnLocked → stdoutFilter notification tee → mapACPSessionUpdate UserMessageChunk) "+
 			"did not turn the agent's echo into an event. injectedID=%q", injectID)
 	}
 

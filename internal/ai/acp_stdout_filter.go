@@ -32,19 +32,14 @@ const (
 //     on stdout during ACP stdio mode. These are silently stripped.
 //
 //  3. SessionModelState extraction: Some agents (e.g., kimi) return a "models" field
-//     in NewSessionResponse/ResumeSessionResponse that is not part of the ACP Go SDK
-//     v0.13.5 schema. The SDK's json.Unmarshal silently drops this field. This filter
+//     in NewSessionResponse/ResumeSessionResponse that the ACP schema does not
+//     model. The SDK's json.Unmarshal silently drops this field. This filter
 //     intercepts the raw JSON and caches the models for later retrieval.
 //
-//  4. Raw JSON-RPC demux: a rawResponseSink (see acp_raw_rpc.go) receives every
-//     parsed line so a side channel can claim responses the SDK would drop. This
-//     is a tee, not a steal — the line is still forwarded to the SDK.
-//
-//  5. Notification tee: a rawNotificationSink (see acp_raw_notification.go)
-//     receives every `session/update` line so the client can read extension
-//     variants the SDK's SessionUpdate union misclassifies (it re-types an
-//     unknown discriminator as SessionInfoUpdate, dropping the payload). Also a
-//     tee, not a steal.
+//  4. Notification tee: a rawNotificationSink (see acp_raw_notification.go)
+//     receives every agent→client JSON-RPC line so the client can read what the
+//     SDK drops: session/update variants it does not model (v0.20 rejects the
+//     decode outright) and custom notification methods. A tee, not a steal.
 //
 // The filter runs a background goroutine that reads from the underlying source and
 // writes filtered output to an io.Pipe. Closing the filter (via Close) unblocks any
@@ -59,45 +54,25 @@ type acpStdoutFilter struct {
 	// src is the underlying agent stdout. The pump is NOT started in the
 	// constructor — it is armed on the first Read (see startOnce). Starting it
 	// eagerly raced the sink installation: with an immediately-readable source
-	// the pump could drain the first line and call dispatchRawSink before
-	// SetRawSink had run, so the sink silently missed it (macOS scheduling
+	// the pump could drain the first line and dispatch it before the notification
+	// sink was installed, so the sink silently missed it (macOS scheduling
 	// exposed this; a strings.Reader in tests reproduces it deterministically).
-	// Deferring the start means every sink is installed before any line can be
-	// dispatched, since both callers install their sinks before the reader is
-	// consumed.
+	// Deferring the start means the sink is installed before any line can be
+	// dispatched, since the caller installs it before the reader is consumed.
 	src       io.Reader
 	startOnce sync.Once
 
 	// cachedModels holds the models extracted from the SessionModelState extension
-	// in a session/new or session/resume response. The ACP Go SDK v0.13.5 does not
-	// include the "models" field in NewSessionResponse/ResumeSessionResponse, so we
+	// in a session/new or session/resume response. The ACP schema does not model a
+	// "models" field on NewSessionResponse/ResumeSessionResponse, so we
 	// extract it from the raw JSON here. Thread-safe via modelsMu.
 	modelsMu     sync.Mutex
 	cachedModels *ModelListState
 
-	// rawSink, when set, is handed every parsed line (see SetRawSink). Stored in
-	// an atomic.Value because it is written once after construction and read on
-	// the pump goroutine.
-	rawSink atomic.Value // holds rawResponseSink
-
-	// notifSink, when set, is handed every `session/update` line (see
-	// SetNotificationSink). Same atomic.Value discipline as rawSink.
+	// notifSink, when set, is handed every agent→client JSON-RPC line (see
+	// SetNotificationSink). Stored in an atomic.Value because it is written once
+	// after construction and read on the pump goroutine.
 	notifSink atomic.Value // holds rawNotificationSink
-}
-
-// SetRawSink installs a sink that receives every parsed line. Must be called at
-// most once per filter, before the filter is read from (the pump is armed on the
-// first Read, so a sink installed afterwards would miss earlier lines).
-func (f *acpStdoutFilter) SetRawSink(s rawResponseSink) {
-	f.rawSink.Store(s)
-}
-
-// dispatchRawSink forwards one line to the registered sink, if any. Never blocks
-// on the caller's behalf beyond the sink's own contract (sinks must not block).
-func (f *acpStdoutFilter) dispatchRawSink(line []byte) {
-	if s, ok := f.rawSink.Load().(rawResponseSink); ok && s != nil {
-		s.DispatchRawResponse(line)
-	}
 }
 
 // SetNotificationSink installs a sink that receives every `session/update`
@@ -119,8 +94,8 @@ func (f *acpStdoutFilter) dispatchNotificationSink(line []byte) {
 // The caller must call Close when done to release resources and unblock pending reads.
 //
 // The pump is armed lazily on the first Read rather than started here, so sinks
-// installed between construction and the first read (SetRawSink /
-// SetNotificationSink) are guaranteed to see every line — see the src field.
+// installed between construction and the first read (SetNotificationSink) are
+// guaranteed to see every line — see the src field.
 func newACPStdoutFilter(r io.Reader) *acpStdoutFilter {
 	pr, pw := io.Pipe()
 	return &acpStdoutFilter{
@@ -153,11 +128,6 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 		// Fix string-number ID mismatch
 		fixed := fixStringNumericID(line)
 
-		// Tee to the raw JSON-RPC side channel. It claims only responses whose
-		// id carries its own string prefix; the line is still written to the SDK
-		// below, which no-ops ids it does not recognize.
-		f.dispatchRawSink(fixed)
-
 		// Tee agent→client JSON-RPC messages so the client can read both
 		// extension session/update variants and custom notification methods the
 		// SDK misclassifies or drops. Same tee discipline: the line is still
@@ -168,7 +138,7 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 
 		// Extract SessionModelState from session/new or session/resume responses.
 		// Some agents (e.g., kimi) return a "models" field that the ACP Go SDK
-		// v0.13.5 does not include in its NewSessionResponse type, so it gets
+		// schema does not model in its NewSessionResponse type, so it gets
 		// silently dropped by json.Unmarshal. We intercept it here.
 		if bytes.Contains(fixed, []byte("availableModels")) {
 			f.cacheModelsFromResponse(fixed)
@@ -341,7 +311,7 @@ func (f *acpStdoutFilter) cacheModelsFromResponse(line []byte) {
 
 // acpSessionModelState mirrors the ACP SessionModelState extension that agents
 // (kimi, hermes, …) return in NewSessionResponse / ResumeSessionResponse.
-// The ACP Go SDK v0.13.5 does not include this field, so we extract it from
+// The ACP schema does not model this field, so we extract it from
 // raw JSON in the stdout filter.
 type acpSessionModelState struct {
 	AvailableModels []acpModelInfo `json:"availableModels"`

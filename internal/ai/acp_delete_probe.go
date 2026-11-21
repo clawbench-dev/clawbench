@@ -2,7 +2,6 @@ package ai
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -41,14 +40,12 @@ func probeDeleteSession(ctx context.Context, conn *ACPConn) (confirmed, answered
 	defer cancel()
 
 	sid := fmt.Sprintf("__clawbench_capability_probe__:%d", time.Now().UnixNano())
-	_, err := conn.CallRaw(pctx, "session/delete", map[string]any{"sessionId": sid})
+	err := conn.probeDeleteSessionCall(pctx, sid)
 	if err == nil {
 		return true, true
 	}
-
-	var rpcErr *RawRPCError
-	if errors.As(err, &rpcErr) {
-		switch rpcErr.Code {
+	if code, ok := rpcErrorCode(err); ok {
+		switch code {
 		case -32601: // method not found
 			return false, true
 		case -32602: // invalid params — the agent took the call and looked at it

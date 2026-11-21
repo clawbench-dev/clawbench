@@ -12,8 +12,8 @@
 
 - 仓库：https://github.com/coder/acp-go-sdk
 - 基线：v0.13.5（2026-06-02），对应 ACP schema 0.13.5
-- 随后在仓内升级到 schema 1.32.0（对应上游 v0.20.0 的生成物）；
-  本目录文件与上游 v0.20.0 **逐字节一致**，没有任何手改
+- 随后在仓内升级到 schema 1.32.0（对应上游 v0.20.0 的生成物）：
+  上游文件**逐字节一致**，唯一新增是 `rawcall.go`（见下）
 - 升级的破坏性变更见同目录 `MIGRATION_v0.20.md`
 - 许可证：Apache-2.0，见同目录 `LICENSE`
 
@@ -25,6 +25,16 @@
 | `schema/` | 官方协议契约（JSON Schema）+ 版本号，生成器的唯一输入 |
 | `testdata/` | 上游单测夹具 |
 | `cmd/generate/` | 代码生成器（独立 module，不并入主 `go.mod`） |
+| `rawcall.go` | **我们加的**：`ClientSideConnection.CallRaw`，发任意方法名（生成器不碰它） |
+
+## 我们加的唯一一个文件：rawcall.go
+
+`CallExtension` 只接受 `_` 开头的方法名，而 CodeBuddy 的 `session/steer`、Hermes 的
+`session/set_model` 都没有下划线，typed 面也没有建模。`CallRaw` 就是 `SendRequest`
+去掉名字校验，约 20 行，让这些调用复用 SDK 自己的连接、写锁、id 计数器和响应表。
+
+有它之后，仓里不再需要那套自写的 JSON-RPC 通道（原 `internal/ai/acp_raw_rpc.go`
+里的 id 前缀、pending 表、响应分发、共享写锁全部删除）。
 
 ## 改动规则
 
