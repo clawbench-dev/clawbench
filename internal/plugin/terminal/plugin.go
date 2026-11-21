@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"clawbench/internal/model"
+	"clawbench/internal/plugin/config"
 	"clawbench/internal/plugins"
 	"clawbench/internal/terminal"
 )
@@ -29,14 +30,9 @@ func Register(port int) {
 			mgr := GetTerminalManager()
 			return mgr != nil && mgr.IsPlatformSupported()
 		},
-		APIPrefixes: []string{"/api/terminal/"},
-		MountRoutes: MountTerminalRoutes,
-		ConfigFields: map[string]bool{
-			"terminal.enabled":      true,
-			"terminal.idle_timeout": true,
-			"terminal.max_sessions": true,
-			"terminal.buffer_lines": true,
-		},
+		APIPrefixes:  []string{"/api/terminal/"},
+		MountRoutes:  MountTerminalRoutes,
+		ConfigFields: config.Fields("terminal"),
 		// 状态端点是只读能力探测，关闭时**必须**放行：前端靠它区分"功能关了"
 		// 与"这台机器跑不了终端"（设置页在 platform_supported=false 时把开关
 		// 置灰）。整段门控会让它 503，前端 catch 里把平台能力一起置 false，

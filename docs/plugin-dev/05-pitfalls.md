@@ -98,13 +98,13 @@
 
 **怎么做**：如果某个公开接口在关闭后必须消失，在 handler 里显式判断，别指望门控。
 
-### 12. 配置字段要加两处
+### 12. 配置字段漏了 `Fields`
 
-**现象**：设置页保存成功，但值没生效（或者反过来，PATCH 报 400）。
+**现象**：设置页保存被 400 拒绝，或值存进去了但没生效。
 
-**原因**：`builtinConfigFields`（校验）与插件 `ConfigFields`（声明）是两份。
+**原因**：白名单现在只有一份——`internal/plugin/config/<id>.go` 的 `Fields`。漏加这一行，handler 就不认这个路径。
 
-**怎么做**：两处都加。守卫 `ConfigFieldsMatchHandler` 双向核对。
+**怎么做**：字段、默认值、校验、写入都写在那一个文件里；另外别忘了 `model/config.go` 的结构体、`configResponse` 的下发形状和配置手册（见 `02-backend.md` §6）。
 
 ### 13. `OnDisable` 与 `SwitchEffect` 只能选一个
 

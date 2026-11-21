@@ -118,8 +118,8 @@ GET /api/features  ←──  internal/plugin/foo/plugin.go  ID: "foo"
 - [ ] `internal/plugin/foo/feature_switch.go`：有"关掉要撤销"才要
 - [ ] `internal/plugin/foo/<实现>.go` + 测试
 - [ ] `internal/plugin/all/all.go` 加一行 `foo.Register()`
-- [ ] `handler/builtin_config_fields.go` 加 `"foo.enabled": true`（以及其它可改字段）
-- [ ] 插件 `ConfigFields` 里加同一批字段（两份要一致）
+- [ ] 有配置的话：`internal/plugin/config/foo.go` 写 `Fields` / `Defaults` / `Validate` / `Apply`，并在 `plugin.go` 里 `ConfigFields: config.Fields("foo")`
+- [ ] `internal/model/config.go` 加结构体字段；`configResponse` 加下发形状；配置手册加一行
 - [ ] 语言表加 `FooDisabled`（中英）
 
 ### 验证

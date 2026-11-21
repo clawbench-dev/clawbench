@@ -152,9 +152,9 @@ type Plugin struct {
 	// 字面量上方的注释里——不放进 map 的值，因为那些文字是给维护者看的
 	// 文档，不是会展示给用户的数据，放进字符串只会被 i18n 守卫拦下。
 	//
-	// 这份清单的职责是**声明归属**（哪个字段属于哪个功能），校验不依赖它：
-	// handler 另有一份 builtinConfigFields 承担实际校验，两份由
-	// TestPluginRegistry_ConfigFieldsMatchHandler 钉住。
+	// 清单本身住在 internal/plugin/config/<id>.go，这里只是把它挂到插件上：
+	// handler 的 PATCH 白名单读同一份，所以不存在"插件声明了但 PATCH 不认"。
+	// 归属与注册表是否对得上由 TestPluginRegistry_ConfigOwnershipMatchesFeatures 钉住。
 	ConfigFields map[string]bool
 }
 

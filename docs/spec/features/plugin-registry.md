@@ -65,7 +65,7 @@
 | 字段 | 语义 | 关键约束 |
 |---|---|---|
 | `ID` | 稳定标识，同时是前端页签 id、`/api/features` 的键、i18n 错误键前缀 | 全小写；注册后不允许改 |
-| `Section` | `config.yaml` 里的段名（`mail` / `forge` / `kb` / …） | 空 = 这个功能没有服务端总开关（纯偏好型）。非空派生两件事：该段下每个 yaml 字段必须在 PATCH 白名单里（`builtinConfigFields` 或登记为不可改，守卫检查），以及"这次 PATCH 关掉它了吗"的判定依据 |
+| `Section` | `config.yaml` 里的段名（`mail` / `forge` / `kb` / …） | 空 = 这个功能没有服务端总开关（纯偏好型）。非空派生两件事：该段下每个 yaml 字段必须在 `plugin/config` 的 `Fields` 里（或登记为不可改，守卫检查），以及"这次 PATCH 关掉它了吗"的判定依据 |
 | `Enabled` | 读**实时**开关 | `nil` = 恒开。必须读包级全局 / `model.ConfigInstance`，不能读启动快照——热更新会在进程生命周期内改它 |
 | `DefaultOn` | 只用于文档与"缺键当开"的语义声明 | 真正的默认值在 `model.ApplyDefaults` 的 presence 检查里，那里是唯一实现 |
 | `APIPrefixes` | "这些路由属于我" | 有 `Section` 就必须非空（否则接口永不被门控）。精确路径或子树前缀都行，匹配见 §3 |
@@ -79,7 +79,7 @@
 | `DisabledStatus` | 拒绝时的 HTTP 状态码 | `0` 归一为 409；终端用 503（"运行时没起来"而非"被关掉了"） |
 | `Available()` | **运行时**可用性（能力轴） | `nil` = 恒可用。与 `Enabled` 正交：终端可以 `enabled=true` + `available=false` |
 | `GateExempt` | 关着也必须能访问的路径 | 必须显式声明，不能靠漏配前缀。写法见 §3.2 |
-| `ConfigFields` | 这个功能允许被 PATCH 的配置字段（**声明归属**） | 校验不依赖它（另有 `builtinConfigFields`），两份由 `ConfigFieldsMatchHandler` 钉住。重复声明同一路径会让 `Register` panic |
+| `ConfigFields` | 这个功能允许被 PATCH 的配置字段 | 直接写 `config.Fields("<id>")`；白名单只有这一份，handler 读同一处。重复声明同一路径会让 `Register` panic |
 
 派生方法：`DisabledKey()`（`<ID 首字母大写>Disabled`，如 `forge` → `ForgeDisabled`、`kb` → `KbDisabled`）、`DisabledHTTPStatus()`、`IsEnabled()`、`IsAvailable()`、`IsGateExempt(method, path)`。
 
@@ -234,14 +234,14 @@ PATCH /api/config
 | 表 | 放什么 |
 |---|---|
 | `handler.PatchableConfigPaths` | 不属于任何功能的字段（`user.nickname`、`chat.*`、`upload.*`） |
-| `handler.builtinConfigFields` | 属于某个功能的字段（实际校验用） |
+| `internal/plugin/config/<id>.go` | 属于某个功能的字段（`Fields`），同时声明默认值、校验与写入 |
 
 `Plugin.Section` 声明了"这个功能由哪个配置段控制"，守卫据此检查该段下每个 yaml 字段都在白名单里——但白名单本身**不派生**。
 
 反射派生白名单等于把安全边界交给反射：结构体里加一个字段（哪怕只是内部状态、迁移用的旧键）就自动开放了写入。所以：
 
 - 白名单手写；
-- 功能字段的**归属**由 `Plugin.ConfigFields` 声明，但校验不读它（编译期事实 vs 运行时状态：handler 单测注册表为空，读它会几十个测试同时红）；两份由 `TestPluginRegistry_ConfigFieldsMatchHandler` 钉住；
+- 功能字段的**归属与校验**读同一份 `internal/plugin/config`（静态包，不是运行时注册表）：handler 单测注册表为空也能工作，因此不存在两份清单漂移；`Plugin.ConfigFields` 只是 `config.Fields("<id>")` 的引用；
 - 该段里确实不该被设置页修改的字段，在 `nonPatchableByDesign` 里登记**并写明原因**（`forge.credentials`、`forge.schemes`、`forge.platforms`、`terminal.max_line_bytes`、`terminal.max_buffer_mb`）；
 - 豁免本身也有守卫（`TestPluginRegistry_NonPatchableExemptionsAreReal`）：指向不存在字段的豁免 = 红（它会静默预批一个未来可能被复用的名字），既豁免又可 PATCH = 红。
 
@@ -263,7 +263,7 @@ PATCH /api/config
 | 有 `Section` ⇒ `APIPrefixes` 非空 | `TestPluginRegistry_SectionsDeclareRoutes` |
 | 有 `APIPrefixes` ⇒ `MountRoutes` 非空 | `TestPluginRegistry_PrefixedPluginsDeclareMountRoutes` |
 | 每个声明的前缀下真的挂上了路由 | `TestPluginRegistry_EveryRoutePrefixHasMountedRoutes` |
-| 插件清单与 `builtinConfigFields` 一致 | `TestPluginRegistry_ConfigFieldsMatchHandler` |
+| `plugin/config` 的声明与已注册插件/`Section` 对得上（无孤儿功能、字段都在自己的段下） | `TestPluginRegistry_ConfigOwnershipMatchesFeatures` |
 | 建了插件目录就必须在 `all.go` 注册 | `TestPluginRegistry_EveryPluginPackageIsRegistered` |
 | 每个声明的前缀都命中至少一条真实路由，且该路由归回同一个插件（**按前缀计数**，否则同插件另一个前缀会掩盖手滑） | `TestPluginRegistry_DeclaredPrefixesOwnRealRoutes` |
 | 每个已注册 `Section` 的 `<section>.enabled` 都判为热更新；未注册段与子字段判为 false | `TestPluginRegistry_FeatureSwitchesAreHot` |

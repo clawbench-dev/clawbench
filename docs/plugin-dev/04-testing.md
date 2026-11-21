@@ -114,7 +114,7 @@ cp /tmp/bak internal/plugin/foo/plugin.go
 | `SectionsDeclareRoutes` | 有 `Section` 却没有 `APIPrefixes` |
 | `DeclaredPrefixesOwnRealRoutes` | 声明的前缀没有任何真实路由，或路由归到了别的插件 |
 | `FeatureSwitchesAreHot` | `<section>.enabled` 被判成需要重启 |
-| `ConfigFieldsMatchHandler` | 插件清单与 `builtinConfigFields` 不一致 |
+| `ConfigOwnershipMatchesFeatures` | `plugin/config` 的声明与已注册插件/`Section` 对不上 |
 | `EveryRoutePrefixHasMountedRoutes` | 声明了前缀但一条路由都没挂上 |
 | `PrefixedPluginsDeclareMountRoutes` | 有前缀但 `MountRoutes` 为空 |
 | `SwitchHooksAreExclusive` | 同时声明 `OnDisable` 与 `SwitchEffect` |

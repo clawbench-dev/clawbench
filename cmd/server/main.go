@@ -37,6 +37,7 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	pluginall "clawbench/internal/plugin/all"
+	pluginconfig "clawbench/internal/plugin/config"
 	pluglive "clawbench/internal/plugin/live"
 	plugstats "clawbench/internal/plugin/stats"
 	"clawbench/internal/plugins"
@@ -918,6 +919,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Apply all defaults (returns auto-generated password if created)
 	autoPassword := model.ApplyDefaults(&cfg, presence)
+	// 功能自己的默认值（开关缺省为开、调参范围等）住在
+	// internal/plugin/config/<id>.go；model 只处理宿主字段（端口、语言、
+	// 上传…）。放在这里而不是 model 里，是因为 model 不能 import 插件配置
+	// 包（会成环），而配置包必须能被 handler 直接引用。
+	pluginconfig.ApplyDefaults(&cfg, presence)
 	model.ConfigInstance = cfg
 	// Publish the MCP snapshot before any agent connection can be created:
 	// internal/ai reads the list through an atomic pointer rather than the

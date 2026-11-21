@@ -3,6 +3,7 @@ package share
 
 import (
 	"clawbench/internal/model"
+	"clawbench/internal/plugin/config"
 	"clawbench/internal/plugins"
 )
 
@@ -17,17 +18,9 @@ func Register() {
 		// 等子路径。公开的 /api/share/{token} 不在鉴权链上，注册在
 		// registerPublic，永远不进 Gate——分享关闭时旧链接由服务端返回 404，
 		// 而不是 409。
-		APIPrefixes: []string{"/api/share/"},
-		MountRoutes: MountShareRoutes,
-		ConfigFields: map[string]bool{
-			"share.enabled":           true,
-			"share.allow_files":       true,
-			"share.allow_sessions":    true,
-			"share.allow_meetings":    true,
-			"share.allow_download":    true,
-			"share.link_ttl_days":     true,
-			"share.show_project_name": true,
-		},
+		APIPrefixes:  []string{"/api/share/"},
+		MountRoutes:  MountShareRoutes,
+		ConfigFields: config.Fields("share"),
 		// 关闭即撤销：链接是服务端签发的凭证，关掉必须让旧链接立刻失效。
 		// 重新打开不会恢复已撤销的链接——那是"撤销"唯一诚实的读法。
 		OnDisable: ShareDisableEffect,

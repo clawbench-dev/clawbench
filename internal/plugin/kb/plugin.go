@@ -4,6 +4,7 @@ package kb
 import (
 	"clawbench/internal/kb"
 	"clawbench/internal/model"
+	"clawbench/internal/plugin/config"
 	"clawbench/internal/plugins"
 )
 
@@ -16,20 +17,10 @@ func Register() {
 		DefaultOn: true,
 		// 运行时可用性：知识库的存储/索引器没起来（初始化失败）时，
 		// 功能是开着的但跑不了，前端要灰显而不是隐藏。
-		Available:   kb.Available,
-		APIPrefixes: []string{"/api/kb/"},
-		MountRoutes: MountKBRoutes,
-		ConfigFields: map[string]bool{
-			"kb.enabled":               true,
-			"kb.auto_inject":           true,
-			"kb.inject_top_n":          true,
-			"kb.inject_max_chars":      true,
-			"kb.inject_min_similarity": true,
-			"kb.max_file_mb":           true,
-			"kb.max_text_mb":           true,
-			"kb.poll_interval":         true,
-			"kb.embed_batch_size":      true,
-		},
+		Available:    kb.Available,
+		APIPrefixes:  []string{"/api/kb/"},
+		MountRoutes:  MountKBRoutes,
+		ConfigFields: config.Fields("kb"),
 		// 热更新：索引器与嵌入客户端按新配置重建（与 rag 共享嵌入端点）。
 		Reconfigure: func(cfg model.Config) { kb.Reconfigure(cfg.KB, cfg.RAG) },
 	})

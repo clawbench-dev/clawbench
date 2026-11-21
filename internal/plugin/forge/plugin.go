@@ -8,6 +8,7 @@ package forge
 import (
 	"clawbench/internal/forgepoll"
 	"clawbench/internal/model"
+	"clawbench/internal/plugin/config"
 	"clawbench/internal/plugins"
 	"clawbench/internal/service"
 )
@@ -25,19 +26,10 @@ func Register() {
 		APIPrefixes: []string{"/api/forge/"},
 		GateExempt:  []string{"GET /api/forge/binding"},
 		MountRoutes: MountForgeRoutes,
-		// 可修改的配置字段（PATCH /api/config），归属声明；实际校验由
-		// handler.builtinConfigFields 承担，两份的一致性有守卫测试钉住。
-		ConfigFields: map[string]bool{
-			"forge.enabled":           true,
-			"forge.insecure_tls":      true,
-			"forge.pause_event_tasks": true,
-			"forge.notify.opened":     true,
-			"forge.notify.closed":     true,
-			"forge.notify.merged":     true,
-			"forge.notify.reopened":   true,
-			"forge.notify.commented":  true,
-			"forge.notify.pipeline":   true,
-		},
+		// 可修改的配置字段（PATCH /api/config）。清单住在
+		// internal/plugin/config/forge.go，handler 的白名单读同一份，
+		// 所以不存在"插件声明了但 PATCH 不认"的窗口。
+		ConfigFields: config.Fields("forge"),
 		Start: func(model.Config) {
 			forgepoll.Start(forgepoll.Deps{
 				NewProvider:     NewForgeProvider,

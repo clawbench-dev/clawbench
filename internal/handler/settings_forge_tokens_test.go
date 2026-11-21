@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+	pluginconfig "clawbench/internal/plugin/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,6 +65,9 @@ func TestServeConfig_ForgeNotifyDefaultsVisible(t *testing.T) {
 
 	var cfg model.Config
 	model.ApplyDefaults(&cfg, nil)
+	// 功能默认值（forge 开关与通知）住在 internal/plugin/config，model 只做
+	// 宿主字段；两者一起调用才是完整的"加载后状态"。
+	pluginconfig.ApplyDefaults(&cfg, nil)
 	model.ConfigInstance = cfg
 
 	req := newRequest(t, http.MethodGet, "/api/config", nil)

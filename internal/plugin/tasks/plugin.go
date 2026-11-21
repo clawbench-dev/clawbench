@@ -10,6 +10,7 @@ package tasks
 
 import (
 	"clawbench/internal/model"
+	"clawbench/internal/plugin/config"
 	"clawbench/internal/plugins"
 )
 
@@ -22,16 +23,9 @@ func Register() {
 		DefaultOn: true,
 		// 路由表里 "/api/tasks" 与 "/api/tasks/" 是两个 pattern，声明一次即可
 		// 同时覆盖（ForRoute 抹平尾部斜杠后按段边界匹配）。
-		APIPrefixes: []string{"/api/tasks"},
-		MountRoutes: MountTasksRoutes,
-		ConfigFields: map[string]bool{
-			"tasks.enabled":           true,
-			"tasks.retention_enabled": true,
-			"tasks.retention_days":    true,
-			"tasks.notify_on_success": true,
-			"tasks.notify_on_failure": true,
-			"tasks.timezone":          true,
-		},
+		APIPrefixes:  []string{"/api/tasks"},
+		MountRoutes:  MountTasksRoutes,
+		ConfigFields: config.Fields("tasks"),
 		// 双向开关：关闭要取消运行中的执行并丢弃排队事件，打开要重排 cron。
 		// OnDisable 只表达"关"这一个方向，所以任务用 SwitchEffect（两个方向
 		// 都会带着新值回调）。两者互斥，同一个插件只声明其中一个。

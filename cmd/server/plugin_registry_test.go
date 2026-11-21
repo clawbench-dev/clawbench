@@ -10,6 +10,7 @@ import (
 	"clawbench/internal/handler"
 	"clawbench/internal/i18n"
 	"clawbench/internal/model"
+	"clawbench/internal/plugin/config"
 	"clawbench/internal/plugins"
 
 	"github.com/stretchr/testify/assert"
@@ -258,9 +259,9 @@ func sectionYAMLFields(t *testing.T, section string) []string {
 // hasPatchableDescendant reports whether some whitelisted path lives under the
 // given object path (e.g. "forge.notify" → "forge.notify.opened").
 //
-// 走 handler.IsPatchablePath 而不是直接查 PatchableConfigPaths：功能字段
-// 已经不在那张核心表里了（它们由 builtinConfigFields 持有），只查核心表会
-// 让 forge.notify 这类中间层被判成"没人管"。
+// 走 handler.AllPatchablePaths 而不是直接查 PatchableConfigPaths：功能字段
+// 不在那张核心表里（它们由 internal/plugin/config 持有），只查核心表会让
+// forge.notify 这类中间层被判成"没人管"。
 func hasPatchableDescendant(path string) bool {
 	prefix := path + "."
 	for candidate := range handler.AllPatchablePaths() {
@@ -271,58 +272,55 @@ func hasPatchableDescendant(path string) bool {
 	return false
 }
 
-// TestPluginRegistry_ConfigFieldsMatchHandler pins the one duplication this
-// refactor deliberately keeps: a feature's patchable fields are declared twice
-// — once on the plugin (ownership: which feature owns which field, used by
-// /api/features and the guard above) and once in handler.builtinConfigFields
-// (enforcement: what PATCH accepts, evaluated without the registry so unit
-// tests do not need to register plugins).
+// TestPluginRegistry_ConfigOwnershipMatchesFeatures pins the two facts that
+// make "this field belongs to that feature" unambiguous:
 //
-// Two lists that "should" match will drift. This is the pin. It catches both
-// directions:
-//   - a field declared on the plugin but missing from the handler list → the
-//     plugin claims a field that PATCH silently rejects;
-//   - a field enforced by handler but not declared by any plugin → an orphan
-//     nobody owns, which is what "not fully modularized" looks like.
+//   - every registered plugin with a Section has a config.Feature whose ID is
+//     that Section, and every path it declares lives under that prefix;
+//   - every config.Feature corresponds to a registered plugin with the same
+//     Section (an orphan feature would be a PATCHable field nobody owns).
 //
-// The three non-patchable exemptions are exempt on both sides by construction,
-// so they are not compared.
-func TestPluginRegistry_ConfigFieldsMatchHandler(t *testing.T) {
+// 白名单本身只有一份（internal/plugin/config），所以这里不再比对两份清单——
+// 比的是"声明归属"与"运行时注册"是否对得上。
+func TestPluginRegistry_ConfigOwnershipMatchesFeatures(t *testing.T) {
 	all := registeredPluginsForTest(t)
 
-	declared := map[string]string{} // path -> plugin ID
+	byID := map[string]*plugins.Plugin{}
 	for _, p := range all {
-		for path := range p.ConfigFields {
-			require.Emptyf(t, declared[path],
-				"config path %q is declared by both %q and %q", path, declared[path], p.ID)
-			declared[path] = p.ID
+		byID[p.ID] = p
+	}
+
+	for _, f := range config.All() {
+		p := byID[f.ID]
+		require.NotNilf(t, p,
+			"config feature %q has no registered plugin — its fields are PATCHable but nobody owns them", f.ID)
+		assert.Equalf(t, f.ID, p.Section,
+			"config feature %q must match the plugin Section %q", f.ID, p.Section)
+		for path := range f.Fields {
+			assert.Truef(t, strings.HasPrefix(path, f.ID+"."),
+				"config feature %q declares %q, which is outside its own section", f.ID, path)
 		}
 	}
 
-	for path, id := range declared {
-		assert.Truef(t, handler.IsPatchablePath(path),
-			"%q is declared by plugin %q but PATCH would reject it "+
-				"(add it to handler.builtinConfigFields)", path, id)
+	for _, p := range all {
+		if p.Section == "" {
+			continue
+		}
+		f := config.ByID(p.Section)
+		require.NotNilf(t, f,
+			"plugin %q declares Section %q but internal/plugin/config has no feature for it "+
+				"(its fields would be rejected by PATCH)", p.ID, p.Section)
+		assert.NotEmptyf(t, f.Fields,
+			"config feature %q declares no fields; a section with no patchable field is a dead section", f.ID)
 	}
 
-	// 反向：handler 认的每个功能字段都必须有插件认领。核心表（无主字段）
-	// 不适用，只查功能前缀。
-	for prefix, id := range map[string]string{
-		"forge.": "forge", "kb.": "kb", "mail.": "mail",
-		"share.": "share", "tasks.": "tasks", "terminal.": "terminal",
-	} {
-		p := plugins.Lookup(id)
-		require.NotNilf(t, p, "plugin %q is not registered", id)
-		for path := range handler.AllPatchablePaths() {
-			if !strings.HasPrefix(path, prefix) {
-				continue
-			}
-			if _, exempt := nonPatchableByDesign[path]; exempt {
-				continue
-			}
-			assert.Truef(t, p.ConfigFields[path],
-				"%q is PATCHable but plugin %q does not declare it in ConfigFields "+
-					"(declare it, or it is an orphan nobody owns)", path, id)
+	// 归属唯一：同一路径不能被两个功能声明（Register 管插件那份，这里管
+	// config 这份——两份现在同源，但 config 也可以被单独扩展）。
+	seen := map[string]string{}
+	for _, f := range config.All() {
+		for path := range f.Fields {
+			require.Emptyf(t, seen[path], "config path %q is declared by both %q and %q", path, seen[path], f.ID)
+			seen[path] = f.ID
 		}
 	}
 }
@@ -442,6 +440,12 @@ func TestPluginRegistry_EveryPluginPackageIsRegistered(t *testing.T) {
 	checked := 0
 	for _, e := range entries {
 		if !e.IsDir() || e.Name() == "all" {
+			continue
+		}
+		// config 不是功能包：它只放"哪些配置字段属于哪个功能"的静态声明，
+		// 没有 Register()，也不该出现在功能注册表里。其余每个目录都必须
+		// 是一个已注册的功能。
+		if e.Name() == "config" {
 			continue
 		}
 		id := e.Name()

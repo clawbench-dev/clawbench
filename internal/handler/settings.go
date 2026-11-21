@@ -29,6 +29,7 @@ import (
 	"clawbench/internal/forge"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/plugin/config"
 	"clawbench/internal/plugins"
 	"clawbench/internal/service"
 	"clawbench/internal/skill"
@@ -1335,26 +1336,40 @@ var PatchableConfigPaths = map[string]bool{
 
 // IsPatchablePath 报告 path 能否被 PATCH /api/config 修改。
 //
-// 三个来源，按顺序：
+// 两个来源，按顺序：
 //  1. PatchableConfigPaths —— 不属于任何功能的字段（user.nickname、chat.*…）；
-//  2. builtinConfigFields —— 属于某个内置功能的字段（mail.*、tasks.*…）；
-//  3. plugins 注册表 —— 第三方/动态注册的插件贡献的字段。
+//  2. plugin/config —— 每个功能自己声明的字段（mail.*、tasks.*…）。
 //
-// 前两个是编译期事实，第三个是运行时状态。内置功能**同时**登记在 2 与 3
-// （后者用于声明归属与守卫核对），但校验只认 1、2 —— 理由见
-// builtin_config_fields.go 的头注释：单测里插件注册表是空的。
+// 第 2 条是一个普通的静态包，不是运行时注册表：handler 的单测从不调用
+// registerPlugins，若白名单挂在注册表上，每个配置测试都会把功能字段判成
+// 非法。plugin/config 因此不 import 任何插件实现，只放声明。
 //
-// 第 3 条是给未来的外部插件留的口子：它注册时不在编译期清单里，只能靠
-// 注册表补充。
+// 运行时注册表（plugins.ConfigPaths）不再是校验来源——它现在只用于
+// "这个字段归谁"的归属查询（/api/features、守卫核对）。两条路径读的是
+// 同一份 plugin/config 声明，所以不存在两份清单漂移的窗口。
 func IsPatchablePath(path string) bool {
 	if PatchableConfigPaths[path] {
 		return true
 	}
-	if IsBuiltinConfigField(path) {
-		return true
+	return config.Owns(path)
+}
+
+// AllPatchablePaths 返回全部可 PATCH 的配置路径（两个来源的并集）。
+//
+// 供守卫测试做"某个对象下面有没有可改字段"这类前缀判断——只查
+// PatchableConfigPaths 会漏掉功能字段，把 forge.notify 这类中间层判成孤儿。
+func AllPatchablePaths() map[string]bool {
+	out := make(map[string]bool, len(PatchableConfigPaths))
+	for p := range PatchableConfigPaths {
+		out[p] = true
 	}
-	_, ok := plugins.ConfigPaths()[path]
-	return ok
+	for p := range config.AllFields() {
+		out[p] = true
+	}
+	for p := range plugins.ConfigPaths() {
+		out[p] = true
+	}
+	return out
 }
 
 // Engine identifiers for the TTS vendor engines. Constants because the same
@@ -1958,16 +1973,6 @@ func applyPluginDisableEffects(patch map[string]any) []string {
 func applyUnclaimedConfigEffects(patch map[string]any) []string {
 	var warnings []string
 
-	if tasksMap, ok := patch["tasks"].(map[string]any); ok {
-		if tz, ok := tasksMap["timezone"].(string); ok {
-			// Re-registers every cron entry under the new zone. A change to the
-			// zone is not destructive, so a failure is only a warning.
-			if err := service.GlobalScheduler.SetTimezone(tz); err != nil {
-				warnings = append(warnings, fmt.Sprintf("tasks.timezone could not be applied: %v", err))
-			}
-		}
-	}
-
 	return warnings
 }
 
@@ -2020,10 +2025,10 @@ func hasPatchableDescendant(path string) bool {
 			return true
 		}
 	}
-	// 内置功能与插件声明的字段同样算"这个对象里有可改的东西"（mail.*、kb.*
-	// 这类整个配置段）。只看核心表会让 `{"mail": {...}}` 被判成"不允许的
-	// 子树"，于是所有功能开关都改不了。
-	for p := range builtinConfigFields {
+	// 功能声明的字段同样算"这个对象里有可改的东西"（mail.*、kb.* 这类整个
+	// 配置段）。只看核心表会让 `{"mail": {...}}` 被判成"不允许的子树"，于是
+	// 所有功能开关都改不了。
+	for p := range config.AllFields() {
 		if strings.HasPrefix(p, prefix) {
 			return true
 		}
@@ -2875,45 +2880,10 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 			return fmt.Errorf("chat.restart_resume_window_minutes must be non-negative")
 		}
 	}
-	// Mail sync tuning. The PATCH path does not re-run ApplyDefaults, so a value
-	// accepted here is what GET /api/config echoes back — every bound has to be
-	// enforced at the edge or the UI and the worker disagree.
-	if mailCfg, ok := patch["mail"].(map[string]any); ok {
-		// No "0 = never sync": that is what mail.enabled is for, and a second
-		// way to stop syncing would leave users guessing which one is in effect.
-		if v, ok := mailCfg["sync_interval_minutes"].(float64); ok && (v < 1 || v > 120) {
-			return fmt.Errorf("mail.sync_interval_minutes must be between 1 and 120")
-		}
-		// Below 20 the list reads as empty after a sync; above 500 every pass
-		// pulls a mailbox worth of headers for little benefit.
-		if v, ok := mailCfg["sync_window"].(float64); ok && (v < 20 || v > 500) {
-			return fmt.Errorf("mail.sync_window must be between 20 and 500")
-		}
-		// 0 is valid and means "do not prefetch" (metered connections).
-		if v, ok := mailCfg["body_prefetch"].(float64); ok && (v < 0 || v > 50) {
-			return fmt.Errorf("mail.body_prefetch must be between 0 and 50")
-		}
+	if err := config.Validate(patch); err != nil {
+		return err
 	}
-	if tasksCfg, ok := patch["tasks"].(map[string]any); ok {
-		// 0 would mean "delete everything today"; a retention window needs at
-		// least one day. The cap mirrors ApplyDefaults.
-		if v, ok := tasksCfg["retention_days"].(float64); ok && (v < 1 || v > model.MaxTaskRetentionDays) {
-			return fmt.Errorf("tasks.retention_days must be between 1 and %d", model.MaxTaskRetentionDays)
-		}
-		if v, ok := tasksCfg["timezone"].(string); ok {
-			if tz := strings.TrimSpace(v); tz != "" {
-				if _, err := time.LoadLocation(tz); err != nil {
-					return fmt.Errorf("tasks.timezone must be a valid IANA timezone (e.g. Asia/Shanghai): %w", err)
-				}
-			}
-		}
-	}
-	if shareCfg, ok := patch["share"].(map[string]any); ok {
-		// 0 is valid and means "never expire"; negative is not.
-		if v, ok := shareCfg["link_ttl_days"].(float64); ok && (v < 0 || v > model.MaxShareLinkTTLDays) {
-			return fmt.Errorf("share.link_ttl_days must be between 0 and %d", model.MaxShareLinkTTLDays)
-		}
-	}
+
 	if ghCfg, ok := patch["git_history"].(map[string]any); ok {
 		if v, ok := ghCfg["page_size"].(float64); ok && (v < 1 || v > model.MaxGitHistoryPageSize) {
 			return fmt.Errorf("git_history.page_size must be between 1 and %d", model.MaxGitHistoryPageSize)
@@ -2972,27 +2942,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		if v, ok := ragVal["retention_days"].(float64); ok && v < 0 {
 			return fmt.Errorf("rag.retention_days must be non-negative")
-		}
-	}
-
-	if kbVal, ok := patch["kb"].(map[string]any); ok {
-		if v, ok := kbVal["inject_top_n"].(float64); ok && (v < 1 || v > 20) {
-			return fmt.Errorf("kb.inject_top_n must be between 1 and 20")
-		}
-		if v, ok := kbVal["inject_max_chars"].(float64); ok && v < 200 {
-			return fmt.Errorf("kb.inject_max_chars must be at least 200")
-		}
-		if v, ok := kbVal["inject_min_similarity"].(float64); ok && (v < 0 || v > 1) {
-			return fmt.Errorf("kb.inject_min_similarity must be between 0 and 1")
-		}
-		if v, ok := kbVal["max_file_mb"].(float64); ok && (v < 1 || v > 1024) {
-			return fmt.Errorf("kb.max_file_mb must be between 1 and 1024")
-		}
-		if v, ok := kbVal["max_text_mb"].(float64); ok && (v < 1 || v > 512) {
-			return fmt.Errorf("kb.max_text_mb must be between 1 and 512")
-		}
-		if v, ok := kbVal["embed_batch_size"].(float64); ok && (v < 1 || v > 128) {
-			return fmt.Errorf("kb.embed_batch_size must be between 1 and 128")
 		}
 	}
 
@@ -3256,20 +3205,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
-	if terminal, ok := patch["terminal"].(map[string]any); ok {
-		if v, ok := terminal["enabled"].(bool); ok {
-			cfg.Terminal.Enabled = v
-		}
-		if v, ok := terminal["idle_timeout"].(string); ok {
-			cfg.Terminal.IdleTimeout = v
-		}
-		if v, ok := terminal["max_sessions"].(float64); ok {
-			cfg.Terminal.MaxSessions = int(v)
-		}
-		if v, ok := terminal["buffer_lines"].(float64); ok {
-			cfg.Terminal.BufferLines = int(v)
-		}
-	}
+	// 功能自己声明并写入自己的配置段。清单、校验、赋值都在
+	// internal/plugin/config/<id>.go，这里不再按功能逐个分支。
+	config.Apply(cfg, patch)
 
 	if tts, ok := patch["tts"].(map[string]any); ok {
 		if v, ok := tts["engine"].(string); ok {
@@ -3454,36 +3392,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
-	if kbVal, ok := patch["kb"].(map[string]any); ok {
-		if v, ok := kbVal["enabled"].(bool); ok {
-			cfg.KB.Enabled = v
-		}
-		if v, ok := kbVal["auto_inject"].(bool); ok {
-			cfg.KB.AutoInject = v
-		}
-		if v, ok := kbVal["inject_top_n"].(float64); ok {
-			cfg.KB.InjectTopN = int(v)
-		}
-		if v, ok := kbVal["inject_max_chars"].(float64); ok {
-			cfg.KB.InjectMaxChars = int(v)
-		}
-		if v, ok := kbVal["inject_min_similarity"].(float64); ok {
-			cfg.KB.InjectMinSimilarity = v
-		}
-		if v, ok := kbVal["max_file_mb"].(float64); ok {
-			cfg.KB.MaxFileMB = int(v)
-		}
-		if v, ok := kbVal["max_text_mb"].(float64); ok {
-			cfg.KB.MaxTextMB = int(v)
-		}
-		if v, ok := kbVal["poll_interval"].(string); ok {
-			cfg.KB.PollInterval = v
-		}
-		if v, ok := kbVal["embed_batch_size"].(float64); ok {
-			cfg.KB.EmbedBatchSize = int(v)
-		}
-	}
-
 	if pf, ok := patch["port_forward"].(map[string]any); ok {
 		// port_forward.enabled is deliberately NOT applied: the feature itself
 		// is always available (see ApplyDefaults); which wire carries it is the
@@ -3608,111 +3516,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
-	if forgeMap, ok := patch["forge"].(map[string]any); ok {
-		if v, ok := forgeMap["enabled"].(bool); ok {
-			cfg.Forge.Enabled = v
-		}
-		if v, ok := forgeMap["insecure_tls"].(bool); ok {
-			cfg.Forge.InsecureTLS = v
-		}
-		if v, ok := forgeMap["pause_event_tasks"].(bool); ok {
-			cfg.Forge.PauseEventTasks = v
-		}
-		if notify, ok := forgeMap["notify"].(map[string]any); ok {
-			applyBool := func(key string, target *bool) {
-				if v, ok := notify[key].(bool); ok {
-					*target = v
-				}
-			}
-			applyBool("opened", &cfg.Forge.Notify.Opened)
-			applyBool("closed", &cfg.Forge.Notify.Closed)
-			applyBool("merged", &cfg.Forge.Notify.Merged)
-			applyBool("reopened", &cfg.Forge.Notify.Reopened)
-			applyBool("commented", &cfg.Forge.Notify.Commented)
-			applyBool("pipeline", &cfg.Forge.Notify.Pipeline)
-		}
-	}
-
-	// Mail: the master switch plus the sync tuning. The accounts live in the
-	// database and are managed through /api/mail/accounts, so disabling mail
-	// must not (and does not) touch them.
-	if mailMap, ok := patch["mail"].(map[string]any); ok {
-		if v, ok := mailMap["enabled"].(bool); ok {
-			cfg.Mail.Enabled = v
-		}
-		if v, ok := mailMap["notify"].(bool); ok {
-			cfg.Mail.Notify = v
-		}
-		if v, ok := mailMap["sync_interval_minutes"].(float64); ok {
-			cfg.Mail.SyncIntervalMinutes = int(v)
-		}
-		if v, ok := mailMap["sync_window"].(float64); ok {
-			cfg.Mail.SyncWindow = int(v)
-		}
-		if v, ok := mailMap["body_prefetch"].(float64); ok {
-			cfg.Mail.BodyPrefetch = int(v)
-		}
-	}
-
-	// Tasks / Share: the two master switches plus their sub-settings. The
-	// destructive side effects (cancelling runs, revoking links) run AFTER the
-	// config write succeeds — see applyPluginDisableEffects (forge/share/tasks)
-	// and applyUnclaimedConfigEffects (tasks.timezone).
-	if tasksMap, ok := patch["tasks"].(map[string]any); ok {
-		if v, ok := tasksMap["enabled"].(bool); ok {
-			cfg.Tasks.Enabled = v
-			// Synced here rather than in applyHotReloadGlobals so an unrelated
-			// PATCH (which may run against a zero-valued ConfigInstance in
-			// tests) cannot silently flip the switch.
-			model.TasksEnabled = v
-		}
-		if v, ok := tasksMap["retention_enabled"].(bool); ok {
-			cfg.Tasks.RetentionEnabled = v
-		}
-		if v, ok := tasksMap["retention_days"].(float64); ok {
-			cfg.Tasks.RetentionDays = int(v)
-		}
-		if v, ok := tasksMap["notify_on_success"].(bool); ok {
-			cfg.Tasks.NotifyOnSuccess = v
-			model.FeaturePolicy.TasksNotifyOnSuccess = v
-		}
-		if v, ok := tasksMap["notify_on_failure"].(bool); ok {
-			cfg.Tasks.NotifyOnFailure = v
-			model.FeaturePolicy.TasksNotifyOnFailure = v
-		}
-		if v, ok := tasksMap["timezone"].(string); ok {
-			cfg.Tasks.Timezone = strings.TrimSpace(v)
-		}
-	}
-	if shareMap, ok := patch["share"].(map[string]any); ok {
-		if v, ok := shareMap["enabled"].(bool); ok {
-			cfg.Share.Enabled = v
-			model.ShareEnabled = v
-		}
-		if v, ok := shareMap["allow_files"].(bool); ok {
-			cfg.Share.AllowFiles = v
-			model.FeaturePolicy.ShareAllowFiles = v
-		}
-		if v, ok := shareMap["allow_sessions"].(bool); ok {
-			cfg.Share.AllowSessions = v
-			model.FeaturePolicy.ShareAllowSessions = v
-		}
-		if v, ok := shareMap["allow_meetings"].(bool); ok {
-			cfg.Share.AllowMeetings = v
-			model.FeaturePolicy.ShareAllowMeetings = v
-		}
-		if v, ok := shareMap["allow_download"].(bool); ok {
-			cfg.Share.AllowDownload = v
-			model.FeaturePolicy.ShareAllowDownload = v
-		}
-		if v, ok := shareMap["link_ttl_days"].(float64); ok {
-			cfg.Share.LinkTTLDays = int(v)
-		}
-		if v, ok := shareMap["show_project_name"].(bool); ok {
-			cfg.Share.ShowProjectName = v
-			model.FeaturePolicy.ShareShowProjectName = v
-		}
-	}
 	if gh, ok := patch["git_history"].(map[string]any); ok {
 		if v, ok := gh["page_size"].(float64); ok {
 			cfg.GitHistory.PageSize = int(v)

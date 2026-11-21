@@ -65,7 +65,7 @@ func Register() {
 | `DisabledStatus` | 拒绝时的状态码。`0` → 409；终端用 503（"运行时没起来"） |
 | `Available()` | **运行时**可用性（不是配置）。`nil` = 恒可用 |
 | `GateExempt` | 关着也必须能访问的路径，见 §4 |
-| `ConfigFields` | 这个功能允许被 PATCH 的配置字段（声明归属），见 §6 |
+| `ConfigFields` | 这个功能允许被 PATCH 的配置字段；直接写 `config.Fields("<id>")`，见 §6 |
 
 `Register` 对以下情况**直接 panic**（都是编程错误，静默覆盖最难查）：
 
@@ -169,19 +169,27 @@ func MountFooRoutes(m plugins.Mount) {
 
 ---
 
-## 6. 配置字段：三处，各有分工
+## 6. 配置字段：一处声明，两个读者
 
-| 位置 | 放什么 | 谁读 |
-|---|---|---|
-| `handler.PatchableConfigPaths` | 不属于任何功能的字段（`user.nickname`、`chat.*`、`upload.*`） | PATCH 校验 |
-| `handler.builtinConfigFields` | 属于某个功能的字段（实际校验） | PATCH 校验 |
-| `plugins.Plugin.ConfigFields` | 同样的功能字段，声明"归谁" | `/api/features`、守卫 |
+| 位置 | 放什么 |
+|---|---|
+| `handler.PatchableConfigPaths` | 不属于任何功能的字段（`user.nickname`、`chat.*`、`upload.*`） |
+| `internal/plugin/config/<id>.go` | 这个功能的全部配置事实：`Fields`（可 PATCH 的路径）、`Defaults`（缺省值）、`Validate`（范围/枚举）、`Apply`（写进 cfg） |
 
-**为什么校验不直接读插件清单**：字段是编译期事实，注册表是运行时状态。若校验建立在注册表上，handler 自己的单测（注册表为空）会把每个功能字段都判成非法，几十个测试同时红，而生产上恰好正常。所以保留两份，用守卫 `TestPluginRegistry_ConfigFieldsMatchHandler` 双向钉住。
+`plugins.Plugin.ConfigFields` 不再单独维护，它直接引用 `config.Fields("<id>")`；handler 的 PATCH 白名单读同一份。所以不存在"插件声明了但 PATCH 不认"的窗口，也没有两份清单要同步。
 
-加一个配置字段要动两处：`builtinConfigFields` 加一行、插件 `ConfigFields` 加一行。漏一处守卫会红。
+**为什么是独立包、不是 `internal/plugin/<id>` 的一部分**：字段是编译期事实，注册表是运行时状态。若校验挂在注册表上，handler 自己的单测（注册表为空）会把每个功能字段都判成非法，几十个测试同时红，而生产上恰好正常。`plugin/config` 只放静态声明、不 import 任何插件实现，因此 handler 和插件都能直接引用。
 
-`Plugin.Section` 下的每个 yaml 字段都必须在白名单里，或者登记为"故意不可改"（`nonPatchableByDesign`，要写原因）。
+加一个配置字段要动四处：
+
+1. `internal/model/config.go`：结构体字段（Go 是静态类型，类型只能集中在这里）；
+2. `internal/plugin/config/<id>.go`：`Fields` + `Defaults` + `Validate` + `Apply`，一个文件写完；
+3. `internal/handler/settings.go`：GET 下发形状（`configResponse` + `serveConfigGet`）；
+4. `docs/user-guide/configuration.md`：一行说明（`TestConfigReferenceMatchesConfigFile` 会卡）。
+
+漏了 `Fields` 的表现是设置页保存被 400 拒绝——不会静默写坏配置。
+
+`Plugin.Section` 下的每个 yaml 字段都必须在 `Fields` 里，或者登记为"故意不可改"（`nonPatchableByDesign`，要写原因）。
 
 ---
 

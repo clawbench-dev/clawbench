@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
 // ParsePresenceMap walks a raw YAML map and returns a flat set of dot-separated
@@ -641,57 +640,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.RAG.RetentionDays = 90
 	}
 
-	// --- Knowledge base ---
-	// Bool zero-value trap: the master switch defaults to true when absent.
-	if !presence["kb.enabled"] {
-		cfg.KB.Enabled = true
-	}
-	// Auto-inject is opt-in: a fresh install must not silently prepend retrieved
-	// snippets to every prompt. Zero value (false) is the intended default, so
-	// there is deliberately no presence branch here.
-	if cfg.KB.InjectTopN <= 0 {
-		cfg.KB.InjectTopN = 4
-	}
-	if cfg.KB.InjectMaxChars <= 0 {
-		cfg.KB.InjectMaxChars = 2000
-	}
-	if cfg.KB.InjectMinSimilarity <= 0 {
-		cfg.KB.InjectMinSimilarity = 0.35
-	}
-	if cfg.KB.MaxFileMB <= 0 {
-		cfg.KB.MaxFileMB = 50
-	}
-	if cfg.KB.MaxTextMB <= 0 {
-		cfg.KB.MaxTextMB = 20
-	}
-	if cfg.KB.PollInterval == "" {
-		cfg.KB.PollInterval = "2s"
-	}
-	if cfg.KB.EmbedBatchSize <= 0 {
-		cfg.KB.EmbedBatchSize = 16
-	}
-
-	// --- Terminal ---
-	// Bool zero-value trap: same as proxy/port_forward — default to true when absent.
-	if !presence["terminal.enabled"] {
-		cfg.Terminal.Enabled = true
-	}
-	if cfg.Terminal.IdleTimeout == "" {
-		cfg.Terminal.IdleTimeout = "0" // 0 = never timeout; PTY lives until process exits or user closes
-	}
-	if cfg.Terminal.BufferLines <= 0 {
-		cfg.Terminal.BufferLines = 2000
-	}
-	if cfg.Terminal.MaxLineBytes <= 0 {
-		cfg.Terminal.MaxLineBytes = 65536 // 64KB per line
-	}
-	if cfg.Terminal.MaxBufferMB <= 0 {
-		cfg.Terminal.MaxBufferMB = 4
-	}
-	if cfg.Terminal.MaxSessions <= 0 {
-		cfg.Terminal.MaxSessions = 10
-	}
-
 	// --- DingTalk ---
 	// Bool zero-value: enabled defaults to false (intentional — requires config), no presence check needed.
 
@@ -721,112 +669,10 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// of (or whose token the server has since expired).
 
 	// --- Forge (GitHub / GitLab integration) ---
-	// The master switch defaults to ON: bool zero-value trap, same as terminal /
-	// port_forward. An absent key means "keep the integration", so upgrading
-	// never silently turns it off; an explicit `enabled: false` is respected.
-	if !presence["forge.enabled"] {
-		cfg.Forge.Enabled = true
-	}
-	// Notification toggles default to ENABLED. Go's bool zero value is false, so
-	// without this block every flag would silently default to off — the opposite
-	// of the documented behavior. Presence is used to distinguish "user wrote
-	// false" from "user omitted the field": an absent key means default (true),
-	// a present key means respect the parsed value.
-	applyForgeNotifyDefaults(cfg, presence)
+	// 开关与通知默认值在 internal/plugin/config/forge.go（功能自己声明）。
+	// 这里只做加载期的 key 迁移：老配置里主机名的大小写/别名要收敛成规范
+	// 写法，否则同一个主机在两张表里各存一份。
 	normalizeForgeCredentialKeys(cfg)
-
-	// --- Mail (built-in mail client) ---
-	// The master switch defaults to ON for the same reason as forge.enabled: a
-	// bool zero value would silently turn mail off for every install that has
-	// never written the key. An explicit `enabled: false` is respected.
-	if !presence["mail.enabled"] {
-		cfg.Mail.Enabled = true
-	}
-	// New-mail notifications default to ON. Same trap: a bool zero value would
-	// silently mute every install that never wrote the key, which reads as a
-	// broken notification feature rather than a default.
-	if !presence["mail.notify"] {
-		cfg.Mail.Notify = true
-	}
-	// Sync tuning. Presence is checked the same way, but here it matters for a
-	// different reason: 0 is a MEANINGFUL value for body_prefetch ("do not
-	// prefetch"), so an absent key must not be read as "user chose 0".
-	if !presence["mail.sync_interval_minutes"] {
-		cfg.Mail.SyncIntervalMinutes = 3
-	}
-	if !presence["mail.sync_window"] {
-		cfg.Mail.SyncWindow = 100
-	}
-	if !presence["mail.body_prefetch"] {
-		cfg.Mail.BodyPrefetch = 10
-	}
-
-	// --- Tasks (scheduled tasks) ---
-	// The master switch defaults to ON for the same reason as forge.enabled:
-	// a bool zero value would silently stop every existing schedule for any
-	// install that has never written the key. An explicit `enabled: false` is
-	// respected.
-	if !presence["tasks.enabled"] {
-		cfg.Tasks.Enabled = true
-	}
-	// Retention defaults to OFF (deleting history is irreversible), but the day
-	// count defaults to 30 anyway so flipping the switch has an immediate
-	// effect instead of meaning "keep forever".
-	if cfg.Tasks.RetentionDays <= 0 {
-		cfg.Tasks.RetentionDays = 30
-	}
-	if cfg.Tasks.RetentionDays > MaxTaskRetentionDays {
-		cfg.Tasks.RetentionDays = MaxTaskRetentionDays
-	}
-	// Notification toggles default to ON: a bool zero value would silently
-	// mute every task notification on an install that never wrote the keys.
-	if !presence["tasks.notify_on_success"] {
-		cfg.Tasks.NotifyOnSuccess = true
-	}
-	if !presence["tasks.notify_on_failure"] {
-		cfg.Tasks.NotifyOnFailure = true
-	}
-	// An unknown zone is a bad preference, not a broken install: fall back to
-	// the server's local zone (the pre-existing behavior) and keep starting.
-	cfg.Tasks.Timezone = strings.TrimSpace(cfg.Tasks.Timezone)
-	if cfg.Tasks.Timezone != "" {
-		if _, err := time.LoadLocation(cfg.Tasks.Timezone); err != nil {
-			slog.Warn("tasks.timezone is not a known IANA zone, using server local time",
-				slog.String("timezone", cfg.Tasks.Timezone), slog.String("err", err.Error()))
-			cfg.Tasks.Timezone = ""
-		}
-	}
-
-	// --- Share (public share links) ---
-	// Defaults to ON for the same reason. Turning it off is destructive (it
-	// revokes every issued link), so it must never happen merely because the
-	// key is absent from an older config.yaml.
-	if !presence["share.enabled"] {
-		cfg.Share.Enabled = true
-	}
-	// Per-kind rules and the download switch also default ON.
-	if !presence["share.allow_files"] {
-		cfg.Share.AllowFiles = true
-	}
-	if !presence["share.allow_sessions"] {
-		cfg.Share.AllowSessions = true
-	}
-	if !presence["share.allow_meetings"] {
-		cfg.Share.AllowMeetings = true
-	}
-	if !presence["share.allow_download"] {
-		cfg.Share.AllowDownload = true
-	}
-	if !presence["share.show_project_name"] {
-		cfg.Share.ShowProjectName = true
-	}
-	// 0 is MEANINGFUL ("never expire"), so only a negative value is clamped.
-	if cfg.Share.LinkTTLDays < 0 {
-		cfg.Share.LinkTTLDays = 0
-	}
-	if cfg.Share.LinkTTLDays > MaxShareLinkTTLDays {
-		cfg.Share.LinkTTLDays = MaxShareLinkTTLDays
-	}
 
 	// --- Git history ---
 	if cfg.GitHistory.PageSize <= 0 {
@@ -987,21 +833,4 @@ func normalizeForgeHostKeys(in map[string]string, label string) map[string]strin
 		return in
 	}
 	return out
-}
-
-// applyForgeNotifyDefaults fills the forge notification toggles, defaulting each
-// absent flag to true. A flag explicitly present in the config file (even as
-// false) is left untouched.
-func applyForgeNotifyDefaults(cfg *Config, presence map[string]bool) {
-	defaultTrue := func(key string, target *bool) {
-		if _, present := presence[key]; !present {
-			*target = true
-		}
-	}
-	defaultTrue("forge.notify.opened", &cfg.Forge.Notify.Opened)
-	defaultTrue("forge.notify.closed", &cfg.Forge.Notify.Closed)
-	defaultTrue("forge.notify.merged", &cfg.Forge.Notify.Merged)
-	defaultTrue("forge.notify.reopened", &cfg.Forge.Notify.Reopened)
-	defaultTrue("forge.notify.commented", &cfg.Forge.Notify.Commented)
-	defaultTrue("forge.notify.pipeline", &cfg.Forge.Notify.Pipeline)
 }
