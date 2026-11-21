@@ -281,7 +281,7 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 				slog.String("session_id", sessionID),
 				slog.Any("panic", r),
 				slog.String("stack", string(debug.Stack())))
-			_ = UpdateExecutionStatus(sessionID, statusFailed)
+			_ = UpdateExecutionStatusByID(execID, statusFailed)
 			SetSessionRunning(sessionID, false, true)
 		}
 	}()

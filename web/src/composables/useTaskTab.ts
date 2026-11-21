@@ -3,6 +3,7 @@ import { store } from '@/stores/app'
 import { playNotificationSound } from '@/composables/useNotificationSound'
 import { showBrowserNotification } from '@/composables/useNotification'
 import { gt } from '@/composables/useLocale'
+import { appLog } from '@/utils/appLog'
 
 interface TaskItem {
   id: number
@@ -35,6 +36,8 @@ const formMode = ref<'create' | 'edit'>('create')
 // (same rule as useChatRender's empty-list handling). Flipped on the first
 // successful loadTasks() and reset on project switch (resetTaskTabState).
 const tasksLoaded = ref(false)
+
+const TAG = 'TaskTab'
 
 // AbortController for loadTasks — aborts previous in-flight request
 let loadTasksAbortController: AbortController | null = null
@@ -144,7 +147,15 @@ async function loadTasks() {
 
     try {
         const resp = await fetch('/api/tasks', { signal: controller.signal })
-        if (!resp.ok) return
+        // A non-OK answer is NOT "the project has no tasks": it means we do not
+        // know. Leaving `tasksLoaded` false keeps the detail view from claiming
+        // "task not found" — the exact misreport after a server restart, when
+        // the first request went out before the clawbench_project cookie was
+        // restored and came back 403.
+        if (!resp.ok) {
+            appLog.w(TAG, 'loadTasks failed:', resp.status, resp.statusText)
+            return
+        }
         const data = await resp.json() as { tasks: TaskItem[] }
         const newTasks: TaskItem[] = data.tasks || []
         // Race condition guard: if markAllTasksRead is in progress,
@@ -207,7 +218,10 @@ async function loadTasks() {
     } catch (e: unknown) {
         // AbortError is expected when a newer request supersedes this one
         if (e instanceof Error && e.name === 'AbortError') return
-        // Silently ignore fetch errors (network down, server restart, etc.)
+        // Network down / server restarting: the list is unknown, not empty, so
+        // `tasksLoaded` stays false and the detail view keeps showing the task
+        // instead of the "no longer exists" fallback.
+        appLog.w(TAG, 'loadTasks error:', e)
     }
 }
 

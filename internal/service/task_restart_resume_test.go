@@ -24,6 +24,9 @@ type recordingTaskBackend struct {
 	name   string
 	mu     sync.Mutex
 	prompt string
+	// emptyReply makes every turn answer with no content, which classifies the
+	// attempt as abnormal and drives the run into the failure branch.
+	emptyReply bool
 }
 
 func (b *recordingTaskBackend) Name() string { return b.name }
@@ -42,9 +45,14 @@ func newResumeBackend() *recordingTaskBackend {
 func (b *recordingTaskBackend) ExecuteStream(_ context.Context, req ai.ChatRequest) (<-chan ai.StreamEvent, error) {
 	b.mu.Lock()
 	b.prompt = req.Prompt
+	empty := b.emptyReply
 	b.mu.Unlock()
 	ch := make(chan ai.StreamEvent, 4)
-	ch <- ai.StreamEvent{Type: "content", Content: "continued"}
+	// An empty reply is the cheapest way to make a turn end abnormally without
+	// a crash: no content, then done. Stays a valid backend for every other test.
+	if !empty {
+		ch <- ai.StreamEvent{Type: "content", Content: "continued"}
+	}
 	ch <- ai.StreamEvent{Type: "done"}
 	close(ch)
 	return ch, nil
@@ -167,6 +175,65 @@ func TestResumeExecution_ContinuesTheSameRun(t *testing.T) {
 	).Scan(&noticeRows))
 	assert.Equal(t, 1, noticeRows, "the timeline gets exactly one recovery notice")
 
+	assert.False(t, s.HasRunningExecutions(task.ID), "the claim must be released")
+}
+
+// TestResumeExecution_SettlesOnlyItsOwnRow: finishing a resumed run must write
+// the terminal status to the execution row it continued — not to every row the
+// session owns.
+//
+// A session accumulates one execution per run, so a session-scoped UPDATE here
+// relabelled the session's whole history on every restart-resumed run. The
+// older rows are seeded as completed/cancelled and must survive untouched.
+func TestResumeExecution_SettlesOnlyItsOwnRow(t *testing.T) {
+	backend := newResumeBackend()
+	s, task, sessionID, execID := seedInterruptedExecution(t, backend, "active")
+
+	olderCompleted, err := AddTaskExecution(task.ID, sessionID, "event")
+	require.NoError(t, err)
+	require.NoError(t, UpdateExecutionStatusByID(olderCompleted, statusCompleted))
+	olderCancelled, err := AddTaskExecution(task.ID, sessionID, "event")
+	require.NoError(t, err)
+	require.NoError(t, UpdateExecutionStatusByID(olderCancelled, statusCancelled))
+
+	require.NoError(t, s.resumeExecution(execID))
+
+	status, _ := executionRow(t, execID)
+	assert.Equal(t, statusCompleted, status, "the resumed row carries the run's terminal status")
+
+	olderStatus, _ := executionRow(t, olderCompleted)
+	assert.Equal(t, statusCompleted, olderStatus,
+		"an older finished execution of the same session must keep its own status")
+	olderCancelledStatus, _ := executionRow(t, olderCancelled)
+	assert.Equal(t, statusCancelled, olderCancelledStatus,
+		"an older cancelled execution of the same session must keep its own status")
+}
+
+// TestResumeExecution_UnfinishedTurnLeavesNoRunningRow pins the SYMPTOM the
+// rest of this feature exists for: a run that never reaches a terminal write
+// stayed "running" in the DB forever, so the task list showed a spinner nobody
+// could stop and the next restart treated the row as interrupted work again.
+//
+// An empty reply walks the run into the failure branch, which is the ordinary
+// way a resumed run ends badly. Auto-continue is off so the retry loop cannot
+// turn one attempt into several.
+func TestResumeExecution_UnfinishedTurnLeavesNoRunningRow(t *testing.T) {
+	prev := model.ChatAutoContinueEnabled
+	model.ChatAutoContinueEnabled = false
+	t.Cleanup(func() { model.ChatAutoContinueEnabled = prev })
+
+	backend := newResumeBackend()
+	backend.emptyReply = true
+	s, task, _, execID := seedInterruptedExecution(t, backend, "active")
+
+	require.NoError(t, s.resumeExecution(execID))
+
+	status, flag := executionRow(t, execID)
+	assert.NotEqual(t, "running", status,
+		"a resumed run that ends abnormally must not leave its execution row running")
+	assert.Equal(t, "failed", status,
+		"an empty reply is an abnormal end, so the run is reported as failed")
+	assert.Equal(t, 0, flag, "the restart marker must still be consumed exactly once")
 	assert.False(t, s.HasRunningExecutions(task.ID), "the claim must be released")
 }
 
@@ -331,12 +398,50 @@ func TestCancelAllRunning_MarksAIExecutions(t *testing.T) {
 
 	s.AddRunningExecution(&RunningExecution{
 		ID: sessionID, TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(),
-		TriggerType: "auto", Phase: RunningPhaseAI,
+		TriggerType: "auto", Phase: RunningPhaseAI, ExecID: execID,
 	})
 	s.CancelAllRunning()
 
 	_, flag := executionRow(t, execID)
 	assert.Equal(t, 1, flag, "a graceful shutdown must mark its AI executions")
+}
+
+// TestCancelAllRunning_MarksOnlyTheRunningRow: the marker must name the row
+// that was actually running, not every execution the session ever had.
+//
+// The row lookup used to be `WHERE session_id = ?`, so a session's older runs
+// were stamped too and the next startup resumed finished work. Two historical
+// rows plus one running row is the smallest shape that shows the difference.
+func TestCancelAllRunning_MarksOnlyTheRunningRow(t *testing.T) {
+	setupSchedulerExecDB(t)
+	s := NewScheduler()
+	t.Cleanup(s.Stop)
+
+	const sessionID = "sess-shutdown-scope"
+	oldCompleted, err := AddTaskExecution(1, sessionID, "auto")
+	require.NoError(t, err)
+	require.NoError(t, UpdateExecutionStatusByID(oldCompleted, statusCompleted))
+	oldCancelled, err := AddTaskExecution(1, sessionID, "auto")
+	require.NoError(t, err)
+	require.NoError(t, UpdateExecutionStatusByID(oldCancelled, statusCancelled))
+	running, err := AddTaskExecution(1, sessionID, "auto")
+	require.NoError(t, err)
+
+	s.AddRunningExecution(&RunningExecution{
+		ID: sessionID, TaskID: 1, CancelFunc: func() {}, StartedAt: time.Now(),
+		TriggerType: "auto", Phase: RunningPhaseAI, ExecID: running,
+	})
+	s.CancelAllRunning()
+
+	_, flag := executionRow(t, running)
+	assert.Equal(t, 1, flag, "the running execution must be marked for resume")
+
+	_, oldCompletedFlag := executionRow(t, oldCompleted)
+	assert.Equal(t, 0, oldCompletedFlag,
+		"an already-finished execution of the same session must stay unmarked")
+	_, oldCancelledFlag := executionRow(t, oldCancelled)
+	assert.Equal(t, 0, oldCancelledFlag,
+		"a previously cancelled execution of the same session must stay unmarked")
 }
 
 // TestStartTaskRestartResume_UsesProductionDefaults pins the exported entry

@@ -41,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { defineAsyncComponent, ref, computed } from 'vue'
+import { defineAsyncComponent, ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, CalendarX } from 'lucide-vue-next'
 import TaskListPage from '@/components/task/TaskListPage.vue'
@@ -96,6 +96,20 @@ const taskMissing = computed(() =>
 )
 
 const listPageRef = ref<InstanceType<typeof TaskListPage> | null>(null)
+
+// Load the list when this tab is opened straight into a drill-down view (a
+// notification, a chat task card or a cross-project link calls
+// navigateToTaskSettings without ever mounting TaskListPage). Nothing else
+// requests the list on that path, so without this the panel stays on the
+// loading skeleton forever — and before the fix it claimed "task not found".
+// Guarded by `tasksLoaded` so a normal tab entry does not fetch twice.
+watch(
+  () => props.active,
+  (isActive) => {
+    if (isActive && currentView.value !== 'list' && !tasksLoaded.value) loadTasks()
+  },
+  { immediate: true },
+)
 
 // The "+" button leads to the manual form, but AI-managed tasks are the
 // smoother route, so an advisory hint is shown first. It is skipped entirely
