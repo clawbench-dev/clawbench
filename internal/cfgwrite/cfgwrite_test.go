@@ -159,3 +159,43 @@ func TestDropLegacyChatNickname_KeepsExistingNickname(t *testing.T) {
 	assert.Equal(t, "current", user["nickname"], "an existing nickname always wins")
 	assert.NotContains(t, raw["chat"], "user_nickname")
 }
+
+// 第二次写入前必须先把现有文件备份成 .bak：配置里有 API key 与密码哈希，
+// 一次写坏就没有回头路。
+func TestPatch_BacksUpExistingConfig(t *testing.T) {
+	dir := withDataDir(t)
+
+	require.NoError(t, Patch(map[string]any{"chat": map[string]any{"page_size": 20}}))
+	require.NoError(t, Patch(map[string]any{"chat": map[string]any{"page_size": 30}}))
+
+	bak := filepath.Join(dir, "config", "config.yaml.bak")
+	info, err := os.Stat(bak)
+	require.NoError(t, err, "a second write must leave a backup")
+	assert.Positive(t, info.Size())
+}
+
+// config 目录被一个同名文件占住时，MkdirAll 失败必须冒泡成 error——静默继续
+// 会让调用方以为配置已经保存。
+func TestPatch_FailsWhenConfigDirIsAFile(t *testing.T) {
+	dir := withDataDir(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config"), []byte("x"), 0o644))
+
+	assert.Error(t, Patch(map[string]any{"chat": map[string]any{"page_size": 1}}))
+}
+
+// 临时文件位置被目录占住时写入失败，错误必须冒泡（否则调用方以为保存成功）。
+func TestPatch_FailsWhenTempPathIsADirectory(t *testing.T) {
+	dir := withDataDir(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "config", "config.yaml.tmp"), 0o755))
+
+	assert.Error(t, Patch(map[string]any{"chat": map[string]any{"page_size": 1}}))
+}
+
+// config.yaml 本身是个目录时，重命名必然失败；这条路径同时验证错误被包装
+// 而不是 panic。
+func TestPatch_FailsWhenConfigPathIsADirectory(t *testing.T) {
+	dir := withDataDir(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "config", "config.yaml"), 0o755))
+
+	assert.Error(t, Patch(map[string]any{"chat": map[string]any{"page_size": 1}}))
+}

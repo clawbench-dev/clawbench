@@ -404,3 +404,38 @@ func TestServeNotificationsClear_RejectsNonDelete(t *testing.T) {
 	require.NoError(t, json.Unmarshal(lw.Body.Bytes(), &listResp))
 	assert.Len(t, listResp.Items, 1, "a rejected method must not have cleared the log")
 }
+
+// 数据库读失败时接口必须是 500，而不是静默返回空列表——空列表会让用户以为
+// 通知被清空了。这里用 DROP TABLE 制造真实的失败，而不是 mock。
+func TestServeNotifications_ReportsDBFailures(t *testing.T) {
+	t.Run("list", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		t.Cleanup(teardown)
+		_, err := store.WriteExec("DROP TABLE notifications")
+		require.NoError(t, err)
+
+		w := callHandler(ServeNotifications, newRequest(t, http.MethodGet, "/api/notifications", nil))
+		assertStatus(t, w, http.StatusInternalServerError)
+	})
+
+	t.Run("clear", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		t.Cleanup(teardown)
+		_, err := store.WriteExec("DROP TABLE notifications")
+		require.NoError(t, err)
+
+		w := callHandler(ServeNotificationsClear, newRequest(t, http.MethodDelete, "/api/notifications", nil))
+		assertStatus(t, w, http.StatusInternalServerError)
+	})
+
+	t.Run("project lookup", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		t.Cleanup(teardown)
+		_, err := store.WriteExec("DROP TABLE projects")
+		require.NoError(t, err)
+
+		req := newRequest(t, http.MethodGet, "/api/notifications?project=/proj/a", nil)
+		w := callHandler(ServeNotifications, req)
+		assertStatus(t, w, http.StatusInternalServerError)
+	})
+}

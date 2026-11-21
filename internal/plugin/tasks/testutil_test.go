@@ -1,6 +1,8 @@
 package tasks
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -87,4 +89,11 @@ func helperCreateScheduledTaskForHandler(t *testing.T, env *testEnv, s *service.
 	require.NoError(t, err)
 
 	return task.ID, execID
+}
+
+func decodeRespJSON(t *testing.T, body io.Reader, target any) {
+	t.Helper()
+	if err := json.NewDecoder(body).Decode(target); err != nil {
+		t.Fatalf("failed to decode JSON: %v", err)
+	}
 }
