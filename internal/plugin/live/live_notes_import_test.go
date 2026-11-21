@@ -471,6 +471,15 @@ func TestServeLiveNotesImport_KeepsTheRecording(t *testing.T) {
 		// The folder's own .gitignore is not a recording.
 		assert.Equal(t, ".gitignore", entry.Name())
 	}
+
+	// The conversion runs detached. Wait for it to settle before the test (and
+	// its in-memory DB) goes away: otherwise the goroutine can call
+	// SetArtifactFailed after teardown and panic on the nil write handle,
+	// killing the whole test binary.
+	require.Eventually(t, func() bool {
+		states, err := service.ArtifactStatesForToken(resp.Token)
+		return err == nil && states[service.ArtifactTranscript].JobStatus == service.ArtifactJobFailed
+	}, 5*time.Second, 20*time.Millisecond)
 }
 
 // End to end over a real video: conversion, transcript and the automatically
