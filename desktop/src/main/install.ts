@@ -661,20 +661,70 @@ export function executableIn(dir: string): string {
 }
 
 /**
+ * How long to wait for the OS to confirm that a detached spawn succeeded.
+ *
+ * `spawn` reports "could not start" (EACCES, an antivirus quarantine, a missing
+ * runtime) as an ASYNC 'error' event, not as a throw. Exiting before it arrives
+ * loses the failure, and because the pointer still names that version, EVERY
+ * later launch repeats it — the app closes and nothing opens. Waiting for
+ * 'spawn' or 'error' is what turns that silent brick into a recoverable error.
+ */
+const SPAWN_CONFIRM_TIMEOUT_MS = 3000
+
+/** Drop the `current` pointer so the next launch runs what is installed. */
+function clearPointer(): void {
+  try {
+    fs.rmSync(pointerPath(), { force: true })
+  } catch {
+    /* best effort: an unwritable pointer is reported by the next launch */
+  }
+}
+
+/**
+ * Spawn `bin` detached and resolve only once the OS accepted the process.
+ *
+ * Rejects when the child reports 'error'. A host that reports neither event is
+ * treated as success after the timeout: nothing says the binary is broken, and
+ * blocking the app on an unresponsive event emitter would be worse.
+ */
+function spawnDetachedConfirmed(bin: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, [], { detached: true, stdio: 'ignore' })
+    child.unref()
+    const timer = setTimeout(resolve, SPAWN_CONFIRM_TIMEOUT_MS)
+    child.once('spawn', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+    child.once('error', (err) => {
+      clearTimeout(timer)
+      reject(err)
+    })
+  })
+}
+
+/**
  * Start `version` as a detached process and quit this one.
  *
  * `app.relaunch()` is not usable here: it re-runs the CURRENT executable, which
  * is the version being replaced. Spawning the new binary explicitly is what
  * actually moves the user onto the upgrade — and it works whether the app was
  * started via the npm launcher or by running the unpacked binary directly.
+ *
+ * Rejects (without quitting) when the new binary cannot be started, and clears
+ * the pointer first so the failure does not repeat on the next launch.
  */
-export function restartInto(version: string): void {
+export async function restartInto(version: string): Promise<void> {
   const bin = executableIn(versionDir(version))
   if (!fs.existsSync(bin)) {
     throw new Error(`installed version has no executable: ${bin}`)
   }
-  const child = spawn(bin, [], { detached: true, stdio: 'ignore' })
-  child.unref()
+  try {
+    await spawnDetachedConfirmed(bin)
+  } catch (err) {
+    clearPointer()
+    throw err
+  }
   app.exit(0)
 }
 
@@ -725,11 +775,16 @@ export function selectStartupVersion(
  *     install) → continue rather than re-exec forever, and KEEP the pointer:
  *     a fused upgrade can legitimately install a package whose app reports an
  *     older version than its directory is named after
+ *   - the pointed binary exists but the OS refuses to start it (antivirus,
+ *     a missing runtime) → clear the pointer and continue with THIS version;
+ *     the same guard as a missing file, because exiting into a process that
+ *     never came up is a silent brick
  *
  * Returns true when a handoff was started (the caller should not continue
- * initialising; this process is about to exit).
+ * initialising; this process is about to exit). Resolves asynchronously because
+ * the OS reports "could not start" after `spawn` returns.
  */
-export function handOffToPointedVersion(runningVersion: string): boolean {
+export async function handOffToPointedVersion(runningVersion: string): Promise<boolean> {
   const pointed = readCurrentVersion()
   if (selectStartupVersion(pointed, runningVersion) === '') return false
 
@@ -743,7 +798,7 @@ export function handOffToPointedVersion(runningVersion: string): boolean {
   if (!fs.existsSync(bin)) {
     // Broken pointer (a deleted or half-written upgrade): drop it and run what
     // we have, so a broken upgrade can never leave the user unable to start.
-    try { fs.rmSync(pointerPath(), { force: true }) } catch { /* best effort */ }
+    clearPointer()
     return false
   }
   if (sameFile) {
@@ -757,7 +812,15 @@ export function handOffToPointedVersion(runningVersion: string): boolean {
     return false
   }
 
-  const child = spawn(bin, [], { detached: true, stdio: 'ignore' })
-  child.unref()
+  try {
+    await spawnDetachedConfirmed(bin)
+  } catch {
+    // The binary exists but cannot start (antivirus quarantine, a missing
+    // runtime). That is just as broken as a missing file: keep running the
+    // current version instead of exiting into nothing, and drop the pointer so
+    // the next launch does not repeat the same dead handoff.
+    clearPointer()
+    return false
+  }
   return true
 }

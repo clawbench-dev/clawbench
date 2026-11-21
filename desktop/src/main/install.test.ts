@@ -17,12 +17,37 @@ vi.mock('electron', () => ({
 // vi.hoisted because the factory below is hoisted above ordinary declarations;
 // referencing a plain `const` there would throw "Cannot access before
 // initialization". This mirrors how tunnel.test.ts exposes its FakeClient.
-const { spawnMock } = vi.hoisted(() => ({
+const { spawnMock, makeSpawnedChild } = vi.hoisted(() => {
+  /**
+   * Minimal ChildProcess stand-in. `install.ts` waits for 'spawn' (success) or
+   * 'error' (the binary could not start) before it exits, so the fake must
+   * deliver one of them asynchronously like the real module does.
+   */
+  interface FakeChild {
+    unref: () => void
+    once: (event: string, cb: (...args: unknown[]) => void) => FakeChild
+  }
+
+  const makeSpawnedChild = (fail?: Error): FakeChild => {
+    const handlers = new Map<string, ((...args: unknown[]) => void)[]>()
+    const child: FakeChild = {
+      unref: () => {},
+      once: (event, cb) => {
+        const list = handlers.get(event) ?? []
+        list.push(cb)
+        handlers.set(event, list)
+        if (event === 'spawn' && !fail) queueMicrotask(() => cb())
+        if (event === 'error' && fail) queueMicrotask(() => cb(fail))
+        return child
+      },
+    }
+    return child
+  }
   // Typed loosely: the assertions only inspect the first argument (the binary
   // path), and giving vi.fn a precise overload here would fight the spread of
   // child_process' own signatures.
-  spawnMock: vi.fn((..._args: unknown[]) => ({ unref: () => {} })),
-}))
+  return { spawnMock: vi.fn((..._args: unknown[]) => makeSpawnedChild()), makeSpawnedChild }
+})
 vi.mock('node:child_process', () => ({
   spawn: spawnMock,
   // Pass through everything else the module graph may need.
@@ -133,9 +158,11 @@ import {
   isSecureDownloadUrl,
   selectStartupVersion,
   handOffToPointedVersion,
+  restartInto,
   assetNameFromUrl,
   sha256Hex,
 } from './install'
+import { app } from 'electron'
 
 /**
  * Fingerprint the test shells advertise. Its VALUE is irrelevant to these
@@ -823,7 +850,8 @@ describe('handOffToPointedVersion', () => {
 
   beforeEach(() => {
     homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmpRoot)
-    spawnMock.mockClear()
+    spawnMock.mockReset()
+    spawnMock.mockImplementation(() => makeSpawnedChild())
   })
 
   afterEach(() => {
@@ -839,48 +867,48 @@ describe('handOffToPointedVersion', () => {
     return bin
   }
 
-  it('starts the pointed version and reports the handoff', () => {
+  it('starts the pointed version and reports the handoff', async () => {
     installVersion('1.2.3')
     writePointer('1.2.3')
 
-    expect(handOffToPointedVersion('1.0.0')).toBe(true)
+    await expect(handOffToPointedVersion('1.0.0')).resolves.toBe(true)
     expect(spawnMock).toHaveBeenCalledTimes(1)
     expect(String(spawnMock.mock.calls[0]?.[0])).toContain('1.2.3')
   })
 
-  it('does not hand off when the pointer names the running version', () => {
+  it('does not hand off when the pointer names the running version', async () => {
     installVersion('1.2.3')
     writePointer('1.2.3')
 
-    expect(handOffToPointedVersion('1.2.3')).toBe(false)
+    await expect(handOffToPointedVersion('1.2.3')).resolves.toBe(false)
     expect(spawnMock).not.toHaveBeenCalled()
   })
 
-  it('does not hand off when there is no pointer', () => {
-    expect(handOffToPointedVersion('1.0.0')).toBe(false)
+  it('does not hand off when there is no pointer', async () => {
+    await expect(handOffToPointedVersion('1.0.0')).resolves.toBe(false)
     expect(spawnMock).not.toHaveBeenCalled()
   })
 
-  it('clears a pointer whose version directory is gone, instead of refusing to start', () => {
+  it('clears a pointer whose version directory is gone, instead of refusing to start', async () => {
     // A deleted or half-written upgrade must not brick the app: the pointer is
     // dropped and the current version keeps running.
     writePointer('9.9.9') // never installed
 
-    expect(handOffToPointedVersion('1.0.0')).toBe(false)
+    await expect(handOffToPointedVersion('1.0.0')).resolves.toBe(false)
     expect(spawnMock).not.toHaveBeenCalled()
     expect(readCurrentVersion()).toBe('')
   })
 
-  it('clears a pointer whose version directory exists but has no executable', () => {
+  it('clears a pointer whose version directory exists but has no executable', async () => {
     fs.mkdirSync(versionDir('9.9.9'), { recursive: true })
     writePointer('9.9.9')
 
-    expect(handOffToPointedVersion('1.0.0')).toBe(false)
+    await expect(handOffToPointedVersion('1.0.0')).resolves.toBe(false)
     expect(spawnMock).not.toHaveBeenCalled()
     expect(readCurrentVersion()).toBe('')
   })
 
-  it('does not re-exec when the pointed binary IS the running process, and keeps the pointer', () => {
+  it('does not re-exec when the pointed binary IS the running process, and keeps the pointer', async () => {
     // The pointer naming the file we are already running means this process is
     // the pointed install. Two ways to get here:
     //
@@ -901,12 +929,70 @@ describe('handOffToPointedVersion', () => {
     const execSpy = vi.spyOn(process, 'execPath', 'get').mockReturnValue(bin)
 
     try {
-      expect(handOffToPointedVersion('1.0.0')).toBe(false)
+      await expect(handOffToPointedVersion('1.0.0')).resolves.toBe(false)
       expect(spawnMock).not.toHaveBeenCalled()
       expect(readCurrentVersion()).toBe('1.2.3')
     } finally {
       execSpy.mockRestore()
     }
+  })
+
+  it('keeps running the current version when the pointed binary cannot start', async () => {
+    // The binary exists but the OS refuses it (antivirus quarantine, a missing
+    // runtime). Exiting here would close the app and open nothing — and the
+    // pointer would make every later launch repeat it. The handoff must fail
+    // recoverably: drop the pointer, keep the current process alive.
+    installVersion('1.2.3')
+    writePointer('1.2.3')
+    spawnMock.mockImplementationOnce(() => makeSpawnedChild(new Error('spawn EACCES')))
+
+    await expect(handOffToPointedVersion('1.0.0')).resolves.toBe(false)
+    expect(readCurrentVersion()).toBe('')
+  })
+})
+
+describe('restartInto', () => {
+  let homedirSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmpRoot)
+    spawnMock.mockReset()
+    spawnMock.mockImplementation(() => makeSpawnedChild())
+    vi.mocked(app.exit).mockClear()
+  })
+
+  afterEach(() => {
+    homedirSpy.mockRestore()
+  })
+
+  function installVersion(version: string): string {
+    const dir = versionDir(version)
+    fs.mkdirSync(dir, { recursive: true })
+    const bin = path.join(dir, process.platform === 'win32' ? 'clawbench-desktop.exe' : 'clawbench-desktop')
+    fs.writeFileSync(bin, 'x')
+    return bin
+  }
+
+  it('starts the new version and only then quits', async () => {
+    installVersion('1.2.3')
+    writePointer('1.2.3')
+
+    await restartInto('1.2.3')
+
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('reports a binary that cannot start, clears the pointer and does not quit', async () => {
+    // Quitting after a failed spawn leaves the user with no window at all, and
+    // the pointer would send the next launch down the same dead path.
+    installVersion('1.2.3')
+    writePointer('1.2.3')
+    spawnMock.mockImplementationOnce(() => makeSpawnedChild(new Error('spawn EACCES')))
+
+    await expect(restartInto('1.2.3')).rejects.toThrow('EACCES')
+    expect(readCurrentVersion()).toBe('')
+    expect(app.exit).not.toHaveBeenCalled()
   })
 })
 

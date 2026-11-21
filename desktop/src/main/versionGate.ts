@@ -214,7 +214,7 @@ export async function installServerVersion(
   if (response !== 0) return true
 
   try {
-    restartInto(info.installVersion)
+    await restartInto(info.installVersion)
   } catch (err) {
     await dialog.showMessageBox(parentArg as BrowserWindow, {
       type: 'error',
