@@ -89,9 +89,10 @@ android/app/build/
 android/local.properties
 
 # ACP submodules (local dev only, not tracked in CI)
-acp-go-sdk/
-acp-go-ironpark/
-acp-spec/
+# 仅忽略仓库根目录的本地检出；third_party/acp-go-sdk 是仓内副本，需要跟踪
+/acp-go-sdk/
+/acp-go-ironpark/
+/acp-spec/
 *.jks
 clawbench-release
 .playwright-cli/
