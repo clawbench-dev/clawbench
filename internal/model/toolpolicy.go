@@ -84,6 +84,11 @@ type ToolPolicy struct {
 	MaxRounds int `json:"maxRounds,omitempty"`
 	// MaxToolCalls bounds tool invocations per turn (0 = unlimited).
 	MaxToolCalls int `json:"maxToolCalls,omitempty"`
+	// MaxSubagents bounds how many sub-agents one turn may spawn (0 =
+	// unlimited). It is a per-agent setting rather than a constant because the
+	// right number depends on the work: a survey of ten files may want ten,
+	// while a chat agent may want none.
+	MaxSubagents int `json:"maxSubagents,omitempty"`
 	// BashTimeoutSec bounds one shell command (0 = DefaultBashTimeoutSec).
 	BashTimeoutSec int `json:"bashTimeoutSec,omitempty"`
 	// RestrictToWorkDir confines the file tools to the working directory.
@@ -217,6 +222,7 @@ func (p ToolPolicy) Normalized() ToolPolicy {
 		Allow:          []string{},
 		MaxRounds:      p.MaxRounds,
 		MaxToolCalls:   p.MaxToolCalls,
+		MaxSubagents:   p.MaxSubagents,
 		BashTimeoutSec: p.BashTimeoutSec,
 		// Carried over, not defaulted: Normalized runs on every save and every
 		// load, so dropping it here would silently reset the switch to "off"
@@ -233,6 +239,9 @@ func (p ToolPolicy) Normalized() ToolPolicy {
 	}
 	if out.MaxToolCalls < 0 {
 		out.MaxToolCalls = 0
+	}
+	if out.MaxSubagents < 0 {
+		out.MaxSubagents = 0
 	}
 	if out.BashTimeoutSec < 0 {
 		out.BashTimeoutSec = 0
@@ -268,6 +277,13 @@ func (p ToolPolicy) ToolCalls() int {
 	return p.MaxToolCalls
 }
 
+// Subagents returns the effective sub-agent budget.
+//
+// Zero means unlimited, same as Rounds and ToolCalls.
+func (p ToolPolicy) Subagents() int {
+	return p.MaxSubagents
+}
+
 // CommandTimeout returns the effective per-command timeout.
 func (p ToolPolicy) CommandTimeout() int {
 	if p.BashTimeoutSec > 0 {
@@ -287,6 +303,9 @@ func ValidateToolPolicy(p ToolPolicy) error {
 	}
 	if p.MaxToolCalls < 0 {
 		return fmt.Errorf("tool policy: maxToolCalls must not be negative")
+	}
+	if p.MaxSubagents < 0 {
+		return fmt.Errorf("tool policy: maxSubagents must not be negative")
 	}
 	if p.BashTimeoutSec < 0 || p.BashTimeoutSec > MaxBashTimeoutSec {
 		return fmt.Errorf("tool policy: bashTimeoutSec must be between 0 and %d", MaxBashTimeoutSec)

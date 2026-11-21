@@ -120,6 +120,9 @@ type Env struct {
 	// otherwise the user's cancel button stops the loop but leaves the command
 	// running.
 	Ctx context.Context
+	// CallID is the id of the call being executed. Most tools ignore it; a
+	// tool that spawns sub-work uses it to attribute that work to this call.
+	CallID string
 }
 
 // Tool is one callable tool.
