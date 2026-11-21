@@ -1599,6 +1599,84 @@ describe('duplicate message root causes (regression)', () => {
     expect(texts.join('')).toBe('good work')
   })
 
+  // ── Ask-question cards must not make the merge duplicate the reply ──
+  //
+  // Finalize turns a `<clawbench-ask-question>` text block into an
+  // AskUserQuestion tool block: the tag span is dropped from the stored text.
+  // The live bubble keeps the RAW tag, so the two texts stop being prefixes of
+  // each other as soon as a tag is not at the very end — and the merge's
+  // "no overlap" branch prepended the whole DB copy, rendering the reply twice.
+  // Reported as "the text before the card is repeated after the card, and it
+  // goes away when you switch away and back".
+  const ASK_TAG = '\n\n<clawbench-ask-question>\n**Approach**\nWhich?\n- A — Fast\n- B — Safe\n</clawbench-ask-question>\n'
+  const askBlock = (id: string) => ({
+    type: 'tool_use',
+    name: 'AskUserQuestion',
+    id,
+    done: true,
+    input: {
+      questions: [{
+        header: 'Approach', multiSelect: false, question: 'Which?',
+        options: [{ label: 'A' }, { label: 'B' }],
+      }],
+    },
+  })
+
+  function mergedReply(liveBlocks: any[], dbBlocks: any[]) {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 42, content: '', blocks: liveBlocks, streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 42, content: '', blocks: dbBlocks, streaming: true },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    return merged.find((m: any) => m.role === 'assistant' && m.id === 42)!
+  }
+
+  it('rebuildFromDb does not duplicate the reply when an ask card sits mid-text', () => {
+    // Two cards: the first tag therefore lands in the MIDDLE of the joined text.
+    const liveText = '前半段。' + ASK_TAG + '后半段。' + ASK_TAG
+    const reply = mergedReply(
+      [{ type: 'text', text: '前半段。' + ASK_TAG }, { type: 'text', text: '后半段。' + ASK_TAG }],
+      [
+        { type: 'text', text: '前半段。' },
+        askBlock('ask-1'),
+        { type: 'text', text: '后半段。' },
+        askBlock('ask-2'),
+      ],
+    )
+    const blocks = reply.blocks || []
+    expect(blocks.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')).toBe(liveText)
+    expect(blocks.filter((b: any) => b.name === 'AskUserQuestion')).toHaveLength(2)
+  })
+
+  it('rebuildFromDb does not duplicate the reply when prose follows the ask card', () => {
+    const liveText = '先说结论。' + ASK_TAG + '另外，做完记得告诉我。'
+    const reply = mergedReply(
+      [{ type: 'text', text: liveText }],
+      // Finalize stripped the tag, keeping the prose on both sides in one block.
+      [{ type: 'text', text: '先说结论。另外，做完记得告诉我。' }, askBlock('ask-1')],
+    )
+    const blocks = reply.blocks || []
+    expect(blocks.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')).toBe(liveText)
+    expect(blocks.filter((b: any) => b.name === 'AskUserQuestion')).toHaveLength(1)
+  })
+
+  it('rebuildFromDb does not duplicate the reply over the whitespace a stripped tag leaves behind', () => {
+    // The DB text is TrimSpace'd per block, so the newlines that surrounded the
+    // tag are gone there but still present in the live text.
+    const reply = mergedReply(
+      [{ type: 'text', text: '\n\n先说结论。\n\n' + ASK_TAG + '\n\n' }],
+      [{ type: 'text', text: '先说结论。' }, askBlock('ask-1')],
+    )
+    const blocks = reply.blocks || []
+    expect(blocks.filter((b: any) => b.type === 'text').map((b: any) => b.text).join(''))
+      .toBe('\n\n先说结论。\n\n' + ASK_TAG + '\n\n')
+    expect(blocks.filter((b: any) => b.name === 'AskUserQuestion')).toHaveLength(1)
+  })
+
   it('rebuildFromDb does not duplicate tool_use blocks when live already has them (continuous stream)', () => {
     // Continuous streaming: the live placeholder already holds the full DB
     // text (the DB flush is a stale subset). DB tool_use already present in
