@@ -260,10 +260,31 @@ jobs:
       - name: Build Linux binary
         env:
           CGO_ENABLED: 1
+          # GOAMD64=v1 only constrains code emitted by the Go compiler, NOT
+          # the C/C++ code compiled by gcc via cgo. GitHub Actions runners
+          # default gcc to -march=x86-64-v3, which makes standard-library cgo
+          # code emit AVX/BMI instructions that SIGILL on pre-AVX CPUs.
+          # Pin both C and C++ to the baseline. See golang/go#82835, #719.
+          CGO_CFLAGS: "-march=x86-64"
+          CGO_CXXFLAGS: "-march=x86-64"
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux ./cmd/server
           echo "Built with CGO_ENABLED=1: dynamically linked, SQLite FTS5/RAG enabled"
+
+      - name: Verify cgo C code has no AVX instructions
+        # The shipped binary is stripped (-s -w) so its symbols are gone.
+        # Build one unstripped copy with the same CGO flags (cache hit, only
+        # an extra link) and assert no x_cgo_* function contains VEX/AVX
+        # bytes. Go's own AVX code is CPUID-guarded and lives elsewhere.
+        env:
+          CGO_ENABLED: 1
+          CGO_CFLAGS: "-march=x86-64"
+          CGO_CXXFLAGS: "-march=x86-64"
+        run: |
+          go build -tags "fts5" -o clawbench-linux.check ./cmd/server
+          python3 scripts/check-cgo-avx.py clawbench-linux.check
+          rm -f clawbench-linux.check
 
       - name: Verify Linux binary
         run: |
@@ -326,6 +347,10 @@ jobs:
       - name: Build Linux arm64 binary
         env:
           CGO_ENABLED: 1
+          # Lock the C/C++ compiler baseline too (GOAMD64 does not apply to
+          # arm64 at all, but the host gcc baseline can still drift). See #719.
+          CGO_CFLAGS: "-march=armv8-a"
+          CGO_CXXFLAGS: "-march=armv8-a"
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux-arm64 ./cmd/server
@@ -449,6 +474,11 @@ jobs:
       - name: Build Windows binary
         env:
           CGO_ENABLED: 1
+          # Pin the MinGW C/C++ baseline: GOAMD64=v1 does not constrain cgo C
+          # code, and a v3-default gcc would emit AVX that older x86-64 CPUs
+          # cannot execute. See golang/go#82835 and #719.
+          CGO_CFLAGS: "-march=x86-64"
+          CGO_CXXFLAGS: "-march=x86-64"
         run: |
           $VERSION = if (git describe --tags --always 2>$null) { git describe --tags --always } else { "dev" }
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench.exe ./cmd/server
@@ -514,6 +544,9 @@ jobs:
       - name: Build macOS arm64 binary
         env:
           CGO_ENABLED: 1
+          # Lock the clang C/C++ baseline for the cgo source. See #719.
+          CGO_CFLAGS: "-march=armv8-a"
+          CGO_CXXFLAGS: "-march=armv8-a"
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-darwin-arm64 ./cmd/server
@@ -572,6 +605,9 @@ jobs:
           GOARCH: amd64
           CC: clang -target x86_64-apple-macos13.0
           CXX: clang++ -target x86_64-apple-macos13.0
+          # Cross-compiled cgo C/C++ also needs the x86-64 baseline pinned.
+          CGO_CFLAGS: "-march=x86-64"
+          CGO_CXXFLAGS: "-march=x86-64"
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-darwin-amd64 ./cmd/server
