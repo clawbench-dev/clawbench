@@ -4763,6 +4763,8 @@ export default {
       toolPolicyMaxRoundsDesc: 'How many model round-trips one turn may use. Empty = unlimited: it keeps going until the task is done or you press stop.',
       toolPolicyMaxToolCalls: 'Tool calls per turn',
       toolPolicyMaxToolCallsDesc: 'How many tool calls one turn may run. Empty = unlimited.',
+      toolPolicyMaxSubagents: 'Sub-agents per turn',
+      toolPolicyMaxSubagentsDesc: 'How many sub-agents one turn may spawn. Empty = unlimited.',
       toolPolicyUnlimited: 'Unlimited',
       mcpAgentAll: 'All',
       mcpAgentNone: 'None',

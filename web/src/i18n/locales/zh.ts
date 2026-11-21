@@ -4762,6 +4762,8 @@ export default {
       toolPolicyMaxRoundsDesc: '一次提问最多让模型思考并调用工具几轮。留空 = 不限制，一直干到任务做完或你点停止。',
       toolPolicyMaxToolCalls: '每轮最多工具调用',
       toolPolicyMaxToolCallsDesc: '一次提问最多执行多少次工具调用。留空 = 不限制。',
+      toolPolicyMaxSubagents: '每轮最多子智能体',
+      toolPolicyMaxSubagentsDesc: '一次提问最多派几个子智能体干活。留空 = 不限制。',
       toolPolicyUnlimited: '不限',
       mcpAgentAll: '全部启用',
       mcpAgentNone: '全部禁用',

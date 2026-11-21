@@ -17,10 +17,6 @@ const (
 	// one-line change; the budget and event attribution are already built for
 	// more than one level.
 	maxSubagentDepth = 1
-	// maxSubagentsPerTurn bounds fan-out. Tool calls run sequentially today,
-	// so this is also a wall-clock guard: a turn that spawns eight children
-	// feels hung even when each one is fast.
-	maxSubagentsPerTurn = 4
 	// MaxSubagentReportRunes bounds the report handed to the parent. A child
 	// that pastes a whole file into its report would otherwise eat the parent's
 	// context — the exact cost delegation is meant to avoid.
@@ -113,9 +109,10 @@ func (t *taskTool) Run(env tools.Env, raw json.RawMessage) tools.Result {
 		return taskError("prompt is required: the sub-agent does not see this conversation, so it needs a complete brief")
 	}
 
-	ordinal, ok := t.r.spec.Budget.TakeSubagent(maxSubagentsPerTurn)
+	limit := t.r.spec.Policy.Subagents()
+	ordinal, ok := t.r.spec.Budget.TakeSubagent(limit)
 	if !ok {
-		return taskError(fmt.Sprintf("this turn has already used its %d sub-agents", maxSubagentsPerTurn))
+		return taskError(fmt.Sprintf("this turn has already used its %d sub-agents", limit))
 	}
 
 	child := t.childSpec(args.Prompt, ordinal)

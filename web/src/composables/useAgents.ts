@@ -23,6 +23,8 @@ export interface ToolPolicy {
   maxRounds?: number
   /** Tool invocation budget per turn (0 = server default). */
   maxToolCalls?: number
+  /** Sub-agent budget per turn (0 = unlimited). */
+  maxSubagents?: number
   /** Per-command timeout in seconds (0 = server default). */
   bashTimeoutSec?: number
   /**

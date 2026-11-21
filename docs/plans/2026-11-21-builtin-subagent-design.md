@@ -12,7 +12,7 @@
 
 - **隔离**：父的模型上下文只多一份报告，不多子读过的几十个文件、几百行搜索输出。
 - **不提权**：子只能做父本来就能做的事；递归到顶就不给 `task` 工具。
-- **不失控**：父子共用一本预算账，子智能体数量和递归深度都有硬上限。
+- **不失控**：父子共用一本预算账；递归深度有硬上限，子智能体数量默认不限、可在设置里配上限。
 - **不污染父回合**：子的结束、压缩、报错不能当成父的结束或父的压缩。
 
 ## 一期不做
@@ -42,7 +42,7 @@
 - `prompt`：完整任务说明。**子看不到父的对话**，父必须把背景、范围、期望产出写全。
 - 工具描述要写清楚什么时候用：独立、会产生大量中间输出、值得隔离的工作（大范围搜索、多文件调查）；什么时候不用：一次 `read` / `grep` 就能做完的事。
 
-前端已经认识 `task` 这个名字：有 Agent 图标，也有 `{description, prompt}` 的专用卡片（`web/src/utils/renderToolDetail.ts` 的 `Task` 渲染器）。**一期前端不需要改代码。**
+前端已经认识 `task` 这个名字：有 Agent 图标，也有 `{description, prompt}` 的专用卡片（`web/src/utils/renderToolDetail.ts` 的 `Task` 渲染器）。**卡片渲染不需要改代码**；设置页要加一个「每轮最多子智能体」的预算输入（见「要动的文件」）。
 
 ### 2. 子智能体看到什么
 
@@ -70,12 +70,12 @@
 
 ### 4. 递归与数量
 
-| 常量 | 取值 | 含义 |
+| 项 | 取值 | 含义 |
 |---|---|---|
-| `maxSubagentDepth` | 1 | 顶层可以派子智能体；子智能体不能再派 |
-| `maxSubagentsPerTurn` | 4 | 每个回合最多 4 次 `task` 调用；超出返回错误结果，父继续 |
+| `maxSubagentDepth` | 1（常量） | 顶层可以派子智能体；子智能体不能再派 |
+| `ToolPolicy.MaxSubagents` | 0 = 不限（默认） | 每个回合最多派几个子智能体；在设置页跟轮数、工具次数放在一起 |
 
-这两个是一期常量，不做设置项。以后要放开，改常量即可；预算和事件链路已经按「可能多层」写好。
+深度是一期常量：再放开要改代码。数量是设置项，默认不限——每个子智能体都是一整轮模型调用，用户想设上限自己填正数。超出上限时 `task` 返回错误结果，父继续。
 
 ### 5. 预算
 
@@ -154,10 +154,12 @@
 | `internal/agentcore/run.go` | `Spec` 加 `Depth`、共享预算；`Event` 加 `ParentToolCallID`；`buildTools` 在允许时注册 `task`；`executeTool` 把当前调用 id 传给工具；预算检查读共享账本；子循环不收尾 |
 | `internal/agentcore/subagent.go`（新） | `task` 工具、子 `Spec` 构造、子智能体角色段、事件泵、报告累积、用量合并、数量/深度检查 |
 | `internal/agentcore/tools/tools.go` | `Env` 加 `CallID`（每次调用复制一份填入） |
+| `internal/model/toolpolicy.go` | `ToolPolicy.MaxSubagents`（0 = 不限）+ 归一化 + 校验 |
 | `internal/ai/backends/builtin/translate.go` | 透传父标记；思考块按父收尾；处理 `EventReasoningDone` |
 | `internal/service/builtin_history.go` | 顶层文本提取；重放时排除子工具调用 |
-| `internal/agentcore/*_test.go`、`internal/ai/backends/builtin/*_test.go`、`internal/service/builtin_history_test.go` | 见下 |
-| 前端 | 无代码改动；可选补 `task` 工具的中文说明文案 |
+| `internal/agentcore/*_test.go`、`internal/ai/backends/builtin/*_test.go`、`internal/service/builtin_history_test.go`、`internal/model/toolpolicy_test.go` | 见下 |
+| `web/src/components/settings/AgentToolPolicySection.vue` | 新增「每轮最多子智能体」输入（留空 = 不限） |
+| `web/src/composables/useAgents.ts`、`web/src/i18n/locales/{en,zh}.ts` | 字段类型 + 文案 |
 
 ## 测试
 
@@ -169,7 +171,7 @@
 
 ## 风险
 
-1. **成本**：每次派生都是真实模型调用，token 会涨。共享预算 + 每回合 4 个上限兜底。
+1. **成本**：每次派生都是真实模型调用，token 会涨。共享预算 + 可配的子智能体上限兜底（默认不限，用户可在设置里填正数）。
 2. **延迟**：父同步等待，看起来像卡住；但展开卡片能看到子在跑（步数 + 转圈）。
 3. **信任**：子读到的不可信内容会以「报告」形式回到父，父要自己判断。这和父自己读是同一类风险，不是新洞。
 4. **调试**：子过程默认折叠，排查时要展开。

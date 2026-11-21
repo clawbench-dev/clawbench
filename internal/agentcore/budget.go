@@ -44,13 +44,14 @@ func (b *TurnBudget) AddToolCall() {
 
 // TakeSubagent reserves one sub-agent slot and returns its 1-based ordinal.
 //
-// It reports false when the cap is reached. A refused reservation must not
-// count: the model may keep asking after being told no, and each refusal would
+// It reports false when the cap is reached. A limit of zero means unlimited,
+// matching MaxRounds and MaxToolCalls. A refused reservation must not count:
+// the model may keep asking after being told no, and each refusal would
 // otherwise push the cap further away.
 func (b *TurnBudget) TakeSubagent(limit int) (int, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.subagents >= limit {
+	if limit > 0 && b.subagents >= limit {
 		return 0, false
 	}
 	b.subagents++

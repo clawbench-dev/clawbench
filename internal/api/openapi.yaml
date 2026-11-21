@@ -6782,13 +6782,14 @@ paths:
         `mcp.servers`），省略 `mode` 即 `all`，下一轮生效。
 
         `tool_policy` 是工具授权
-        `{"allow":["fs.read"|"fs.write"|"exec"],"maxRounds":N,"maxToolCalls":N,"bashTimeoutSec":N}`，
+        `{"allow":["fs.read"|"fs.write"|"exec"],"maxRounds":N,"maxToolCalls":N,"maxSubagents":N,"bashTimeoutSec":N}`，
         **只对内置智能体（`backend=builtin`）有意义**：它的工具由 ClawBench 自己实现，
         未授权的工具根本不会声明给模型。外部 CLI 的工具在其进程内，本字段对它无效。
         服务端会把授权集按蕴含关系闭包后存储（`exec` ⇒ `fs.write` ⇒ `fs.read`），
         因为 `exec` 本身就能写文件，允许「禁止写但允许跑命令」会让设置页说谎。
-        `allow` 为空表示不开放任何工具（只能对话）。预算字段 `0` 表示用服务端默认值；
-        `maxRounds`/`maxToolCalls` 为负、或 `bashTimeoutSec` 超出 `0..3600` 返回 `400`。
+        `allow` 为空表示不开放任何工具（只能对话）。预算字段 `0` 表示不限制；
+        `maxSubagents` 是一回合最多派几个子智能体，`0` = 不限制；
+        `maxRounds`/`maxToolCalls`/`maxSubagents` 为负、或 `bashTimeoutSec` 超出 `0..3600` 返回 `400`。
 
         `skip_project_context` 为布尔值：`true` 表示**不再**把项目的
         `AGENTS.md` / `CLAUDE.md` 注入该智能体的系统提示词，`false` 恢复注入

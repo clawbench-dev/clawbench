@@ -419,17 +419,26 @@ func TestRunSync_SubagentTextStaysOutOfTheAnswer(t *testing.T) {
 	}
 }
 
-// TestTurnBudget_SubagentCap pins the per-turn fan-out cap.
+// TestTurnBudget_SubagentCap pins the per-turn fan-out cap and the zero value
+// that means "unlimited".
 func TestTurnBudget_SubagentCap(t *testing.T) {
+	const limit = 2
 	b := NewTurnBudget()
-	for i := 1; i <= maxSubagentsPerTurn; i++ {
-		got, ok := b.TakeSubagent(maxSubagentsPerTurn)
+	for i := 1; i <= limit; i++ {
+		got, ok := b.TakeSubagent(limit)
 		if !ok || got != i {
 			t.Fatalf("sub-agent %d must be allowed with ordinal %d, got %d ok=%v", i, i, got, ok)
 		}
 	}
-	if got, ok := b.TakeSubagent(maxSubagentsPerTurn); ok {
+	if got, ok := b.TakeSubagent(limit); ok {
 		t.Fatalf("the cap must refuse the next sub-agent, got ordinal %d", got)
+	}
+
+	unlimited := NewTurnBudget()
+	for i := range 10 {
+		if _, ok := unlimited.TakeSubagent(0); !ok {
+			t.Fatalf("zero must mean unlimited, refused at %d", i+1)
+		}
 	}
 }
 
@@ -446,15 +455,21 @@ func TestTaskTool_RejectsBadInput(t *testing.T) {
 }
 
 // TestTaskTool_RejectsOverFanOut pins the cap at the tool boundary: once the
-// per-turn slots are gone, a delegation is refused without starting a child.
+// configured per-turn slots are gone, a delegation is refused without starting
+// a child.
 func TestTaskTool_RejectsOverFanOut(t *testing.T) {
+	const limit = 2
 	budget := NewTurnBudget()
-	for i := range maxSubagentsPerTurn {
-		if _, ok := budget.TakeSubagent(maxSubagentsPerTurn); !ok {
+	for i := range limit {
+		if _, ok := budget.TakeSubagent(limit); !ok {
 			t.Fatalf("slot %d must be available", i+1)
 		}
 	}
-	tool := &taskTool{r: &runner{spec: Spec{Budget: budget, Client: &scriptedClient{}}}}
+	tool := &taskTool{r: &runner{spec: Spec{
+		Budget: budget,
+		Client: &scriptedClient{},
+		Policy: model.ToolPolicy{MaxSubagents: limit},
+	}}}
 	res := tool.Run(tools.Env{}, json.RawMessage(taskArgs))
 	if !res.IsError || !strings.Contains(res.Text, "sub-agents") {
 		t.Fatalf("expected a fan-out refusal, got %+v", res)
