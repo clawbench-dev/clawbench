@@ -503,3 +503,28 @@ func TestServeSharePage_NotFoundWhenShareDisabled(t *testing.T) {
 
 	assertStatus(t, w, http.StatusNotFound)
 }
+
+// tasks.timezone is not a switch, so it is not a plugin effect — but every PATCH
+// that carries it must still re-arm cron. This branch went empty when the
+// feature effects moved into the plugin registry, which left the setting
+// applying only after a restart.
+func TestApplyUnclaimedConfigEffects_AppliesTimezone(t *testing.T) {
+	saveFeatureSwitchState(t)
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+
+	assert.Empty(t, applyUnclaimedConfigEffects(map[string]any{
+		"tasks": map[string]any{"timezone": "Asia/Tokyo"},
+	}), "a valid zone must apply without a warning")
+
+	// An unknown zone is rejected by the scheduler itself, which is only
+	// reachable when the patch actually got there; the warning is the contract.
+	warnings := applyUnclaimedConfigEffects(map[string]any{
+		"tasks": map[string]any{"timezone": "Not/AZone"},
+	})
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "tasks.timezone")
+}

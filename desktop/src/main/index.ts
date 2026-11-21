@@ -135,7 +135,7 @@ app.whenReady().then(async () => {
   //
   // Runs before any window exists: showing a window and then quitting would
   // flash a window on every upgrade launch.
-  if (handOffToPointedVersion(app.getVersion())) {
+  if (await handOffToPointedVersion(app.getVersion())) {
     app.exit(0)
     return
   }

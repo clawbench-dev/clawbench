@@ -2830,25 +2830,25 @@ func (c *ACPConn) deleteACPSession() {
 		return
 	}
 
-	if !GetAgentCapabilityRegistry().GetDeleteSession(agentID) {
-		slog.Debug("acp: skip session/delete, agent does not support it (probe and advertisement both say no)",
-			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "agent_id", agentID)
-		return
-	}
-
 	// One settle window for a probe that may still be in flight: the probe is
 	// what teaches us CodeBuddy supports this, and a session deleted right after
 	// its first turn can beat it by a few hundred milliseconds.
+	//
+	// This MUST come BEFORE the capability gate. An agent that advertises no
+	// sessionCapabilities (CodeBuddy) answers "not supported" until its probe
+	// lands, so gating first returned here immediately and the wait — the whole
+	// point of the settle window — never ran.
 	if GetAgentCapabilityRegistry().DeleteSessionProbePending(agentID) {
 		deadline := time.Now().Add(acpDeleteProbeTimeout)
 		for time.Now().Before(deadline) && GetAgentCapabilityRegistry().DeleteSessionProbePending(agentID) {
 			time.Sleep(50 * time.Millisecond)
 		}
-		if !GetAgentCapabilityRegistry().GetDeleteSession(agentID) {
-			slog.Debug("acp: skip session/delete, probe did not confirm it",
-				"clawbench_sid", c.clawbenchSID, "agent_id", agentID)
-			return
-		}
+	}
+
+	if !GetAgentCapabilityRegistry().GetDeleteSession(agentID) {
+		slog.Debug("acp: skip session/delete, agent does not support it (probe and advertisement both say no)",
+			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "agent_id", agentID)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

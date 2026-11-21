@@ -82,7 +82,7 @@ export async function installFusedUpdate(
   })
   if (response === 0) {
     try {
-      restartInto(version)
+      await restartInto(version)
     } catch (err) {
       recordError('FusedUpdate', err)
       await dialog.showMessageBox(parentArg as BrowserWindow, {

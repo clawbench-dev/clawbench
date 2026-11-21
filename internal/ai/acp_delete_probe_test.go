@@ -201,6 +201,37 @@ func TestDeleteACPSession_UsesProbedCapability(t *testing.T) {
 	assert.True(t, reg.GetDeleteSession("cb-del"))
 }
 
+// The settle window must run BEFORE the capability gate. An agent that
+// advertises nothing reads as "not supported" until its probe lands, so a
+// gate-first implementation returns immediately and never waits — which is the
+// window the delete-right-after-the-first-turn case depends on.
+func TestDeleteACPSession_WaitsForInFlightProbeBeforeGating(t *testing.T) {
+	resetGlobalRegistryForTest(t)
+	reg := GetAgentCapabilityRegistry()
+	reg.UpdateDeleteSession("cb-late", false)
+
+	agent := &model.Agent{ID: "cb-late", Backend: "codebuddy", AcpCommand: "codebuddy --acp"}
+	conn := newACPConn(agent, "sid-cb-late")
+	conn.SetAliveForTest()
+	conn.SetSessionMappingForTest("sid-cb-late", "acp-cb-late-1")
+	conn.SetRawCallFnForTest(nil)
+
+	// The probe is in flight and answers "no" shortly after the delete starts:
+	// the delete must wait for that answer, then honor it.
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		reg.RecordDeleteSessionProbe("cb-late", false, true)
+	}()
+
+	start := time.Now()
+	conn.deleteACPSession()
+	elapsed := time.Since(start)
+
+	assert.GreaterOrEqual(t, elapsed, 100*time.Millisecond,
+		"deleteACPSession must wait for the in-flight probe before gating")
+	assert.False(t, reg.GetDeleteSession("cb-late"))
+}
+
 // ...and deleteACPSession must stay silent for an agent the probe ruled out,
 // no matter what it advertised.
 func TestDeleteACPSession_ProbeRefutedSkips(t *testing.T) {
