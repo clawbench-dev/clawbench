@@ -2883,7 +2883,7 @@ func (c *ACPConn) sendDeleteSession(ctx context.Context) error {
 	if conn == nil || acpSID == "" || !alive {
 		return fmt.Errorf("acp: connection not usable for session/delete (alive=%v, sid=%q)", alive, acpSID)
 	}
-	_, err := conn.UnstableDeleteSession(ctx, acp.UnstableDeleteSessionRequest{
+	_, err := conn.DeleteSession(ctx, acp.DeleteSessionRequest{
 		SessionId: acp.SessionId(acpSID),
 	})
 	if err != nil {

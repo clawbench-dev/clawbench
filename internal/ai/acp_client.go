@@ -381,7 +381,8 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 		// Record the end marker so the load handler can stop waiting as soon as
 		// the replay is genuinely complete (see ReplayEndSeen).
 		if n.Update.SessionInfoUpdate != nil {
-			if metaString(n.Update.SessionInfoUpdate.Meta[metaKeyCodeBuddyHistoryReplay]) == "end" {
+			replayMeta, _ := n.Update.SessionInfoUpdate.Meta.Value()
+			if metaStringOf(replayMeta, metaKeyCodeBuddyHistoryReplay) == "end" {
 				c.replayEndSeen.Store(true)
 			}
 		}
@@ -396,7 +397,7 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	// registered and the lookup below would drop the whole turn. Open a route
 	// for it first — see acp_background_turn.go and issue #644.
 	if n.Update.SessionInfoUpdate != nil {
-		if reqID, isBackgroundTurn := codeBuddyUnsolicitedTurn(n.Update.SessionInfoUpdate.Meta); isBackgroundTurn {
+		if reqID, isBackgroundTurn := codeBuddyUnsolicitedTurn(PatchMetaAny(n.Update.SessionInfoUpdate.Meta)); isBackgroundTurn {
 			c.adoptBackgroundTurn(string(n.SessionId), reqID)
 		}
 	}
@@ -570,10 +571,12 @@ func (c *ClawBenchACPClient) cacheToolInput(sessionID acp.SessionId, update acp.
 	switch {
 	case update.ToolCall != nil:
 		toolCallID = string(update.ToolCall.ToolCallId)
-		rawInput = update.ToolCall.RawInput
+		rawInput = rawJSONValue(update.ToolCall.RawInput)
 	case update.ToolCallUpdate != nil:
 		toolCallID = string(update.ToolCallUpdate.ToolCallId)
-		rawInput = update.ToolCallUpdate.RawInput
+		if raw, ok := update.ToolCallUpdate.RawInput.Value(); ok {
+			rawInput = rawJSONValue(raw)
+		}
 	default:
 		return
 	}
@@ -614,18 +617,12 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 	key := PermissionKey(sessionID, toolCallID)
 
 	// Extract tool info for the frontend card
-	var title string
-	if p.ToolCall.Title != nil {
-		title = *p.ToolCall.Title
-	}
-	var kind acp.ToolKind
-	if p.ToolCall.Kind != nil {
-		kind = *p.ToolCall.Kind
-	}
+	title, _ := p.ToolCall.Title.Value()
+	kind, _ := p.ToolCall.Kind.Value()
 	toolName := extractToolName(title, kind, "")
 	var toolInput string
-	if p.ToolCall.RawInput != nil {
-		if b, err := json.Marshal(p.ToolCall.RawInput); err == nil {
+	if rawInput, ok := p.ToolCall.RawInput.Value(); ok {
+		if b, err := json.Marshal(rawInput); err == nil {
 			toolInput = string(b)
 		}
 	}
@@ -686,7 +683,7 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 	// stamps the member on the toolCall's _meta (NOT the request's). Without it
 	// concurrent members' approval cards are indistinguishable.
 	// See docs/dev/codebuddy_acp_team_integration.md §1.5.
-	if member := permissionMemberAttribution(p.ToolCall.Meta); member != nil {
+	if member := permissionMemberAttribution(PatchMetaAny(p.ToolCall.Meta)); member != nil {
 		approvalInput["teamMember"] = member
 	}
 
@@ -925,14 +922,14 @@ func (c *ClawBenchACPClient) ReadTextFile(_ context.Context, p acp.ReadTextFileR
 		lines := strings.Split(content, "\n")
 		start := 0
 		if p.Line != nil && *p.Line > 0 {
-			start = *p.Line - 1
+			start = int(*p.Line - 1)
 			if start > len(lines) {
 				start = len(lines)
 			}
 		}
 		end := len(lines)
-		if p.Limit != nil && *p.Limit > 0 && start+*p.Limit < end {
-			end = start + *p.Limit
+		if p.Limit != nil && *p.Limit > 0 && start+int(*p.Limit) < end {
+			end = start + int(*p.Limit)
 		}
 		content = strings.Join(lines[start:end], "\n")
 	}

@@ -15,7 +15,7 @@ import (
 //   - Field names may be mixed camelCase/snake_case
 func ParseACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
 	// Extract tool name: prefer _meta flat key
-	name := ai.ExtractMetaToolNameFlat(tc.Meta)
+	name := ai.ExtractMetaToolNameFlat(ai.MetaAny(tc.Meta))
 	if name == "" {
 		name = ai.ExtractToolName(tc.Title, tc.Kind, "codebuddy", string(tc.ToolCallId))
 	}
@@ -37,19 +37,19 @@ func ParseACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
 		ID: string(tcu.ToolCallId),
 	}
 
-	ai.MapToolCallStatus(tcu.Status, tool)
+	ai.MapToolCallStatus(tcu.Status.Ptr(), tool)
 
 	// Extract tool name: prefer _meta flat key
-	name := ai.ExtractMetaToolNameFlat(tcu.Meta)
+	name := ai.ExtractMetaToolNameFlat(ai.PatchMetaAny(tcu.Meta))
 	if name != "" {
 		tool.Name = name
-	} else if !tool.Done && tcu.Title != nil && *tcu.Title != "" {
+	} else if title, ok := tcu.Title.Value(); ok && title != "" && !tool.Done {
 		if tool.Name == "" || tool.Name == strings.ToLower(tool.Name) {
 			kind := acp.ToolKindExecute
-			if tcu.Kind != nil {
-				kind = *tcu.Kind
+			if k, ok := tcu.Kind.Value(); ok {
+				kind = k
 			}
-			tool.Name = ai.ExtractToolName(*tcu.Title, kind, "codebuddy", string(tcu.ToolCallId))
+			tool.Name = ai.ExtractToolName(title, kind, "codebuddy", string(tcu.ToolCallId))
 		}
 	}
 

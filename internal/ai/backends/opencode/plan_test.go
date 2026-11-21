@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -43,17 +44,13 @@ func ocCompletedTcu(rawInput, rawOutput any) acp.SessionToolCallUpdate {
 	st := acp.ToolCallStatusCompleted
 	return acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("call_todo"),
-		Status:     &st,
-		Title:      ptrStr("3 todos"),
-		RawInput:   rawInput,
-		RawOutput:  rawOutput,
+		Status:     acptest.Patch(st),
+		Title:      acptest.Patch("3 todos"),
+		RawInput:   acptest.PatchRaw(rawInput),
+		RawOutput:  acptest.PatchRaw(rawOutput),
 	}
 }
 
-func ptrStr(s string) *string { return &s }
-
-// ocAgent builds the agent every bridge test runs against. It is always the
-// opencode backend: the per-backend dispatch these tests exercise keys off it.
 func ocAgent() *model.Agent {
 	return &model.Agent{
 		ID:        "opencode-bridge-test",
@@ -232,8 +229,8 @@ func TestBridgeOpenCodePlanFromToolUpdate_SkipsNonCompleted(t *testing.T) {
 	st := acp.ToolCallStatusInProgress
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("call_todo"),
-		Status:     &st,
-		RawInput:   map[string]any{"todos": ocTodos(map[string]any{"content": "x", "status": "pending"})},
+		Status:     acptest.Patch(st),
+		RawInput:   acptest.PatchRaw(map[string]any{"todos": ocTodos(map[string]any{"content": "x", "status": "pending"})}),
 	}
 	n := BridgePlanFromToolUpdate(conn, ch, tcu)
 	assert.Zero(t, n, "in_progress frame must not bridge (avoids duplicate plan_update)")

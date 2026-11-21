@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"clawbench/internal/ai/acptest"
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,16 +57,16 @@ func TestOpenCodeChildAttribution_ByTitle(t *testing.T) {
 	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId:    "call_parent",
-			Title:         &title,
-			Status:        &status,
-			RawInput:      map[string]any{"agent": "general", "description": "probe", "prompt": "do it"},
+			Title:         acptest.Patch(title),
+			Status:        acptest.Patch(status),
+			RawInput:      acptest.PatchRaw(map[string]any{"agent": "general", "description": "probe", "prompt": "do it"}),
 			SessionUpdate: "tool_call_update",
 		},
 	})
 
 	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Meta:          openCodeChildMeta("ses_child", "ses_root", "probe"),
+			Meta:          acptest.Meta(openCodeChildMeta("ses_child", "ses_root", "probe")),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "child text", Type: "text"}},
 			SessionUpdate: "agent_message_chunk",
 		},
@@ -96,17 +97,17 @@ func TestOpenCodeChildAttribution_ByChildSessionID(t *testing.T) {
 	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId:    "call_parent",
-			Title:         &title,
-			Status:        &status,
-			RawInput:      map[string]any{"agent": "general", "description": "probe", "prompt": "do it"},
-			RawOutput:     map[string]any{"metadata": map[string]any{"sessionID": "ses_child", "status": "completed"}},
+			Title:         acptest.Patch(title),
+			Status:        acptest.Patch(status),
+			RawInput:      acptest.PatchRaw(map[string]any{"agent": "general", "description": "probe", "prompt": "do it"}),
+			RawOutput:     acptest.PatchRaw(map[string]any{"metadata": map[string]any{"sessionID": "ses_child", "status": "completed"}}),
 			SessionUpdate: "tool_call_update",
 		},
 	})
 
 	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Meta:          openCodeChildMeta("ses_child", "ses_root", "a different title"),
+			Meta:          acptest.Meta(openCodeChildMeta("ses_child", "ses_root", "a different title")),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "child text", Type: "text"}},
 			SessionUpdate: "agent_message_chunk",
 		},
@@ -130,7 +131,7 @@ func TestOpenCodeChildAttribution_UnattributedIsDropped(t *testing.T) {
 
 	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Meta:          openCodeChildMeta("ses_unknown", "ses_root", "no such parent"),
+			Meta:          acptest.Meta(openCodeChildMeta("ses_unknown", "ses_root", "no such parent")),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "leaked?", Type: "text"}},
 			SessionUpdate: "agent_message_chunk",
 		},
@@ -154,9 +155,9 @@ func TestOpenCodeChildAttribution_NestedSubagent(t *testing.T) {
 	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId:    "call_root",
-			Title:         &title,
-			Status:        &status,
-			RawInput:      map[string]any{"agent": "general", "description": "outer", "prompt": "outer task"},
+			Title:         acptest.Patch(title),
+			Status:        acptest.Patch(status),
+			RawInput:      acptest.PatchRaw(map[string]any{"agent": "general", "description": "outer", "prompt": "outer task"}),
 			SessionUpdate: "tool_call_update",
 		},
 	})
@@ -166,11 +167,11 @@ func TestOpenCodeChildAttribution_NestedSubagent(t *testing.T) {
 	title2 := "subagent"
 	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
-			Meta:          openCodeChildMeta("ses_child", "ses_root", "outer"),
+			Meta:          acptest.PatchMeta(openCodeChildMeta("ses_child", "ses_root", "outer")),
 			ToolCallId:    "ses_child:call_inner",
-			Title:         &title2,
-			Status:        &status,
-			RawInput:      map[string]any{"agent": "general", "description": "inner", "prompt": "inner task"},
+			Title:         acptest.Patch(title2),
+			Status:        acptest.Patch(status),
+			RawInput:      acptest.PatchRaw(map[string]any{"agent": "general", "description": "inner", "prompt": "inner task"}),
 			SessionUpdate: "tool_call_update",
 		},
 	})
@@ -178,7 +179,7 @@ func TestOpenCodeChildAttribution_NestedSubagent(t *testing.T) {
 	// The grandchild (inside ses_child) must map to the nested call, not the root.
 	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Meta:          openCodeChildMeta("ses_grandchild", "ses_child", "inner"),
+			Meta:          acptest.Meta(openCodeChildMeta("ses_grandchild", "ses_child", "inner")),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "grandchild", Type: "text"}},
 			SessionUpdate: "agent_message_chunk",
 		},
@@ -206,16 +207,16 @@ func TestOpenCodeChildAttribution_ChildToolCall(t *testing.T) {
 	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId:    "call_parent",
-			Title:         &title,
-			Status:        &status,
-			RawInput:      map[string]any{"agent": "general", "description": "probe", "prompt": "do it"},
+			Title:         acptest.Patch(title),
+			Status:        acptest.Patch(status),
+			RawInput:      acptest.PatchRaw(map[string]any{"agent": "general", "description": "probe", "prompt": "do it"}),
 			SessionUpdate: "tool_call_update",
 		},
 	})
 
 	sendOpenCodeUpdate(t, c, acp.SessionUpdate{
 		ToolCall: &acp.SessionUpdateToolCall{
-			Meta:          openCodeChildMeta("ses_child", "ses_root", "probe"),
+			Meta:          acptest.Meta(openCodeChildMeta("ses_child", "ses_root", "probe")),
 			ToolCallId:    "ses_child:call_1",
 			Title:         "write",
 			Kind:          acp.ToolKindEdit,

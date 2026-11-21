@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -228,7 +229,7 @@ func TestMapACPSessionUpdate_CompactionToolCall(t *testing.T) {
 		ToolCall: &acp.SessionUpdateToolCall{
 			ToolCallId: "tc-1",
 			Title:      title,
-			Meta:       map[string]any{"claudeCode": map[string]any{"toolName": "compact"}},
+			Meta:       acptest.Meta(map[string]any{"claudeCode": map[string]any{"toolName": "compact"}}),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -244,7 +245,7 @@ func TestMapACPSessionUpdate_CompactionToolCall(t *testing.T) {
 		ToolCall: &acp.SessionUpdateToolCall{
 			ToolCallId: "tc-1-dup",
 			Title:      title,
-			Meta:       map[string]any{"claudeCode": map[string]any{"toolName": "compact"}},
+			Meta:       acptest.Meta(map[string]any{"claudeCode": map[string]any{"toolName": "compact"}}),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -263,7 +264,7 @@ func TestMapACPSessionUpdate_OrdinaryToolCallIsNotCompaction(t *testing.T) {
 		ToolCall: &acp.SessionUpdateToolCall{
 			ToolCallId: "tc-2",
 			Title:      title,
-			Meta:       map[string]any{"claudeCode": map[string]any{"toolName": "Read"}},
+			Meta:       acptest.Meta(map[string]any{"claudeCode": map[string]any{"toolName": "Read"}}),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -372,7 +373,7 @@ func TestMapACPSessionUpdate_UsageDropDetectsCompaction(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "s1")
 	ch := make(chan StreamEvent, 64)
 
-	send := func(used, size int) {
+	send := func(used, size int64) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: size},
 		}, ch, context.Background(), conn, nil)
@@ -396,7 +397,7 @@ func TestMapACPSessionUpdate_UsageGrowthIsNotCompaction(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "s1")
 	ch := make(chan StreamEvent, 64)
 
-	for _, used := range []int{20000, 26000, 31000} {
+	for _, used := range []int64{20000, 26000, 31000} {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: 204800},
 		}, ch, context.Background(), conn, nil)
@@ -435,7 +436,7 @@ func TestMapACPSessionUpdate_NakedUsageUpdateIsNotCompaction(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "s1")
 	ch := make(chan StreamEvent, 64)
 
-	send := func(used, size int) {
+	send := func(used, size int64) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: size},
 		}, ch, context.Background(), conn, nil)
@@ -460,7 +461,7 @@ func TestMapACPSessionUpdate_NakedUsageUpdateIsNotCompaction(t *testing.T) {
 func TestMapACPSessionUpdate_UsageDropRetriedWhenChannelFull(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "s1")
 
-	send := func(ch chan StreamEvent, used, size int) {
+	send := func(ch chan StreamEvent, used, size int64) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: size},
 		}, ch, context.Background(), conn, nil)
@@ -493,7 +494,7 @@ func TestMapACPSessionUpdate_UsageDropRetriedWhenChannelFull(t *testing.T) {
 func TestMapACPSessionUpdate_PendingDropDoesNotLeakIntoNextTurn(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "s1")
 
-	send := func(ch chan StreamEvent, used, size int) {
+	send := func(ch chan StreamEvent, used, size int64) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: size},
 		}, ch, context.Background(), conn, nil)
@@ -525,7 +526,7 @@ func TestMapACPSessionUpdate_PendingDropDoesNotLeakIntoNextTurn(t *testing.T) {
 func TestMapACPSessionUpdate_ToolReportClearsPendingDrop(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "claude", Backend: "claude"}, "s1")
 
-	sendUsage := func(ch chan StreamEvent, used, size int) {
+	sendUsage := func(ch chan StreamEvent, used, size int64) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: size},
 		}, ch, context.Background(), conn, nil)
@@ -543,7 +544,7 @@ func TestMapACPSessionUpdate_ToolReportClearsPendingDrop(t *testing.T) {
 		ToolCall: &acp.SessionUpdateToolCall{
 			ToolCallId: "tc-1",
 			Title:      "Compact conversation",
-			Meta:       map[string]any{"claudeCode": map[string]any{"toolName": "compact"}},
+			Meta:       acptest.Meta(map[string]any{"claudeCode": map[string]any{"toolName": "compact"}}),
 		},
 	}, deliver, context.Background(), conn, nil)
 	assert.Equal(t, 1, drainCompactionEvents(t, deliver))
@@ -574,7 +575,7 @@ func TestMapACPSessionUpdate_CancelledCompactionClearsPendingDrop(t *testing.T) 
 
 	mapACPSessionUpdate(acp.SessionUpdate{
 		SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
-			Meta: map[string]any{"codebuddy.ai/compact-cancelled": true},
+			Meta: acptest.PatchMeta(map[string]any{"codebuddy.ai/compact-cancelled": true}),
 		},
 	}, full, context.Background(), conn, nil)
 

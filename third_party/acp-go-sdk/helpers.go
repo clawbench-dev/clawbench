@@ -1,5 +1,7 @@
 package acp
 
+import "encoding/json"
+
 // TextBlock constructs a text content block.
 func TextBlock(text string) ContentBlock {
 	return ContentBlock{Text: &ContentBlockText{
@@ -68,7 +70,7 @@ func ToolDiffContent(path string, newText string, oldText ...string) ToolCallCon
 // ToolTerminalRef constructs a terminal reference tool-call content.
 func ToolTerminalRef(terminalID string) ToolCallContent {
 	return ToolCallContent{Terminal: &ToolCallContentTerminal{
-		TerminalId: terminalID,
+		TerminalId: TerminalId(terminalID),
 		Type:       "terminal",
 	}}
 }
@@ -134,6 +136,14 @@ func WithStartKind(k ToolKind) ToolCallStartOpt {
 	}
 }
 
+// WithStartName sets the programmatic name of the tool, such as "read_file",
+// for a tool_call start update. Title stays the human-readable label.
+func WithStartName(n string) ToolCallStartOpt {
+	return func(tc *SessionUpdateToolCall) {
+		tc.Name = Ptr(n)
+	}
+}
+
 // WithStartStatus sets the status for a tool_call start update.
 func WithStartStatus(s ToolCallStatus) ToolCallStartOpt {
 	return func(tc *SessionUpdateToolCall) {
@@ -148,36 +158,33 @@ func WithStartContent(c []ToolCallContent) ToolCallStartOpt {
 	}
 }
 
-// WithStartLocations sets file locations and, if a single path is provided and rawInput is empty, mirrors it as rawInput.path.
+// WithStartLocations sets file locations. With a single path, it also sets
+// rawInput.path when rawInput is unset or an object without a path.
 func WithStartLocations(l []ToolCallLocation) ToolCallStartOpt {
 	return func(tc *SessionUpdateToolCall) {
 		tc.Locations = l
 		if len(l) == 1 && l[0].Path != "" {
-			if tc.RawInput == nil {
-				tc.RawInput = map[string]any{"path": l[0].Path}
-			} else {
-				m, ok := tc.RawInput.(map[string]any)
-				if ok {
-					if _, exists := m["path"]; !exists {
-						m["path"] = l[0].Path
-					}
-				}
-			}
+			tc.RawInput = withPath(tc.RawInput, l[0].Path)
 		}
 	}
 }
 
-// WithStartRawInput sets rawInput for a tool_call start update.
+// WithStartRawInput sets rawInput for a tool_call start update to v, encoded
+// with json.Marshal, so a json.RawMessage keeps its JSON. A nil v, or one
+// that json.Marshal cannot encode, leaves rawInput unset: the field is raw
+// JSON and cannot hold the error. To see the error, encode v yourself and
+// pass the json.RawMessage.
 func WithStartRawInput(v any) ToolCallStartOpt {
 	return func(tc *SessionUpdateToolCall) {
-		tc.RawInput = v
+		tc.RawInput = encodeRaw(v)
 	}
 }
 
-// WithStartRawOutput sets rawOutput for a tool_call start update.
+// WithStartRawOutput sets rawOutput for a tool_call start update to v
+// encoded as JSON, as WithStartRawInput does.
 func WithStartRawOutput(v any) ToolCallStartOpt {
 	return func(tc *SessionUpdateToolCall) {
-		tc.RawOutput = v
+		tc.RawOutput = encodeRaw(v)
 	}
 }
 
@@ -195,49 +202,73 @@ func UpdateToolCall(id ToolCallId, opts ...ToolCallUpdateOpt) SessionUpdate {
 // WithUpdateTitle sets the title for a tool_call_update.
 func WithUpdateTitle(t string) ToolCallUpdateOpt {
 	return func(tu *SessionToolCallUpdate) {
-		tu.Title = Ptr(t)
+		tu.Title = PatchSet(t)
+	}
+}
+
+// WithUpdateName sets the programmatic name of the tool for a
+// tool_call_update.
+func WithUpdateName(n string) ToolCallUpdateOpt {
+	return func(tu *SessionToolCallUpdate) {
+		tu.Name = PatchSet(n)
 	}
 }
 
 // WithUpdateKind sets the kind for a tool_call_update.
 func WithUpdateKind(k ToolKind) ToolCallUpdateOpt {
 	return func(tu *SessionToolCallUpdate) {
-		tu.Kind = Ptr(k)
+		tu.Kind = PatchSet(k)
 	}
 }
 
 // WithUpdateStatus sets the status for a tool_call_update.
 func WithUpdateStatus(s ToolCallStatus) ToolCallUpdateOpt {
 	return func(tu *SessionToolCallUpdate) {
-		tu.Status = Ptr(s)
+		tu.Status = PatchSet(s)
 	}
 }
 
 // WithUpdateContent replaces the content collection for a tool_call_update.
+// A nil c leaves the field unset, so the content stays as it is; an empty
+// non-nil c sends [], which replaces it with none.
 func WithUpdateContent(c []ToolCallContent) ToolCallUpdateOpt {
 	return func(tu *SessionToolCallUpdate) {
-		tu.Content = c
+		tu.Content = patchSlice(c)
 	}
 }
 
 // WithUpdateLocations replaces the locations collection for a tool_call_update.
+// A nil l leaves the field unset, so the locations stay as they are; an empty
+// non-nil l sends [], which replaces them with none.
 func WithUpdateLocations(l []ToolCallLocation) ToolCallUpdateOpt {
 	return func(tu *SessionToolCallUpdate) {
-		tu.Locations = l
+		tu.Locations = patchSlice(l)
 	}
 }
 
-// WithUpdateRawInput sets rawInput for a tool_call_update.
+// patchSlice returns the Patch that sets s, or an unset one for a nil s.
+func patchSlice[T any](s []T) Patch[[]T] {
+	if s == nil {
+		return Patch[[]T]{}
+	}
+	return PatchSet(s)
+}
+
+// WithUpdateRawInput sets rawInput for a tool_call_update to v, encoded with
+// json.Marshal, so a json.RawMessage keeps its JSON. A nil v leaves rawInput
+// unset. When json.Marshal cannot encode v, such as a channel or a NaN, the
+// update fails to encode with that error, so sending it returns the error.
 func WithUpdateRawInput(v any) ToolCallUpdateOpt {
 	return func(tu *SessionToolCallUpdate) {
-		tu.RawInput = v
+		tu.RawInput = patchRaw(v)
 	}
 }
 
-// WithUpdateRawOutput sets rawOutput for a tool_call_update.
+// WithUpdateRawOutput sets rawOutput for a tool_call_update to v encoded as
+// JSON, as WithUpdateRawInput does.
 func WithUpdateRawOutput(v any) ToolCallUpdateOpt {
 	return func(tu *SessionToolCallUpdate) {
-		tu.RawOutput = v
+		tu.RawOutput = patchRaw(v)
 	}
 }
 
@@ -256,4 +287,81 @@ func StartEditToolCall(id ToolCallId, title string, path string, content any, op
 	})}
 	args := append(base, opts...)
 	return StartToolCall(id, title, args...)
+}
+
+// encodeRaw returns v encoded as JSON, or nil when v is nil or json.Marshal
+// cannot encode it.
+func encodeRaw(v any) json.RawMessage {
+	if v == nil {
+		return nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// patchRaw returns the Patch that sets v encoded as JSON, an unset one when v
+// is nil, and one whose MarshalJSON returns the error when json.Marshal cannot
+// encode v.
+func patchRaw(v any) Patch[json.RawMessage] {
+	if v == nil {
+		return Patch[json.RawMessage]{}
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return Patch[json.RawMessage]{state: patchSet, err: err}
+	}
+	return PatchSet(json.RawMessage(raw))
+}
+
+// withPath returns rawInput with the member path set to path, when rawInput
+// is unset or an object without a path, and rawInput otherwise.
+func withPath(rawInput json.RawMessage, path string) json.RawMessage {
+	members := map[string]json.RawMessage{}
+	if rawInput != nil {
+		if err := json.Unmarshal(rawInput, &members); err != nil || members == nil {
+			return rawInput
+		}
+		if _, ok := members["path"]; ok {
+			return rawInput
+		}
+	}
+	members["path"] = encodeRaw(path)
+	return encodeRaw(members)
+}
+
+// NewElicitationContentValueString returns the elicitation content value s.
+func NewElicitationContentValueString(s string) ElicitationContentValue {
+	v := ElicitationContentValueString(s)
+	return ElicitationContentValue{String: &v}
+}
+
+// NewElicitationContentValueInteger returns the elicitation content value n.
+func NewElicitationContentValueInteger(n int64) ElicitationContentValue {
+	v := ElicitationContentValueInteger(n)
+	return ElicitationContentValue{Integer: &v}
+}
+
+// NewElicitationContentValueNumber returns the elicitation content value f.
+func NewElicitationContentValueNumber(f float64) ElicitationContentValue {
+	v := ElicitationContentValueNumber(f)
+	return ElicitationContentValue{Number: &v}
+}
+
+// NewElicitationContentValueBoolean returns the elicitation content value b.
+func NewElicitationContentValueBoolean(b bool) ElicitationContentValue {
+	v := ElicitationContentValueBoolean(b)
+	return ElicitationContentValue{Boolean: &v}
+}
+
+// NewElicitationContentValueStringArray returns the elicitation content value
+// that holds values, an array of strings, as a multi-select field takes.
+func NewElicitationContentValueStringArray(values ...string) ElicitationContentValue {
+	v := ElicitationContentValueStringArray(values)
+	if v == nil {
+		v = ElicitationContentValueStringArray{}
+	}
+	return ElicitationContentValue{StringArray: &v}
 }

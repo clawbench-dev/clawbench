@@ -7,6 +7,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -42,7 +43,7 @@ func TestMapACPSessionUpdate_CodeBuddyCompactionFlag(t *testing.T) {
 	for range 3 {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-				Meta:    compactionMeta,
+				Meta:    acptest.Meta(compactionMeta),
 				Content: acp.TextBlock("chunk"),
 			},
 		}, ch, context.Background(), conn, nil)
@@ -61,7 +62,7 @@ func TestMapACPSessionUpdate_CompactionResetPerTurn(t *testing.T) {
 	meta := map[string]any{"codebuddy.ai/isCompactInternal": true}
 
 	mapACPSessionUpdate(acp.SessionUpdate{
-		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Meta: meta, Content: acp.TextBlock("a")},
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Meta: acptest.Meta(meta), Content: acp.TextBlock("a")},
 	}, ch, context.Background(), conn, nil)
 	assert.Equal(t, 1, drainCompactionEvents(t, ch))
 
@@ -69,7 +70,7 @@ func TestMapACPSessionUpdate_CompactionResetPerTurn(t *testing.T) {
 	conn.compactReported.Store(false)
 
 	mapACPSessionUpdate(acp.SessionUpdate{
-		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Meta: meta, Content: acp.TextBlock("b")},
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Meta: acptest.Meta(meta), Content: acp.TextBlock("b")},
 	}, ch, context.Background(), conn, nil)
 	assert.Equal(t, 1, drainCompactionEvents(t, ch), "a second compaction must report again")
 }
@@ -83,7 +84,7 @@ func TestMapACPSessionUpdate_CancelledCompactionIsNotACompaction(t *testing.T) {
 
 	mapACPSessionUpdate(acp.SessionUpdate{
 		SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
-			Meta: map[string]any{"codebuddy.ai/compact-cancelled": map[string]any{"cancelled": true}},
+			Meta: acptest.PatchMeta(map[string]any{"codebuddy.ai/compact-cancelled": map[string]any{"cancelled": true}}),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -101,7 +102,7 @@ func TestMapACPSessionUpdate_CancelledCompactionClearsPendingReport(t *testing.T
 	// Compaction starts and is reported.
 	mapACPSessionUpdate(acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Meta:    map[string]any{"codebuddy.ai/isCompactInternal": true},
+			Meta:    acptest.Meta(map[string]any{"codebuddy.ai/isCompactInternal": true}),
 			Content: acp.TextBlock("summary"),
 		},
 	}, ch, context.Background(), conn, nil)
@@ -111,7 +112,7 @@ func TestMapACPSessionUpdate_CancelledCompactionClearsPendingReport(t *testing.T
 	// so a subsequent real compaction is not mistaken for this attempt.
 	mapACPSessionUpdate(acp.SessionUpdate{
 		SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
-			Meta: map[string]any{"codebuddy.ai/compact-cancelled": map[string]any{"cancelled": true}},
+			Meta: acptest.PatchMeta(map[string]any{"codebuddy.ai/compact-cancelled": map[string]any{"cancelled": true}}),
 		},
 	}, ch, context.Background(), conn, nil)
 	assert.False(t, conn.compactReported.Load(),
@@ -130,7 +131,7 @@ func TestMapACPSessionUpdate_CompactionRetriedWhenChannelFull(t *testing.T) {
 
 	meta := map[string]any{"codebuddy.ai/isCompactInternal": true}
 	mapACPSessionUpdate(acp.SessionUpdate{
-		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Meta: meta, Content: acp.TextBlock("a")},
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Meta: acptest.Meta(meta), Content: acp.TextBlock("a")},
 	}, ch, context.Background(), conn, nil)
 
 	assert.False(t, conn.compactReported.Load(),
@@ -139,7 +140,7 @@ func TestMapACPSessionUpdate_CompactionRetriedWhenChannelFull(t *testing.T) {
 	// Drain into a buffered channel: the next update must report the compaction.
 	buffered := make(chan StreamEvent, 8)
 	mapACPSessionUpdate(acp.SessionUpdate{
-		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Meta: meta, Content: acp.TextBlock("b")},
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Meta: acptest.Meta(meta), Content: acp.TextBlock("b")},
 	}, buffered, context.Background(), conn, nil)
 
 	assert.Equal(t, 1, drainCompactionEvents(t, buffered), "the retry must deliver the signal")
@@ -154,13 +155,13 @@ func TestMapACPSessionUpdate_NilConnDoesNotPanic(t *testing.T) {
 	assert.NotPanics(t, func() {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-				Meta:    map[string]any{"codebuddy.ai/isCompactInternal": true},
+				Meta:    acptest.Meta(map[string]any{"codebuddy.ai/isCompactInternal": true}),
 				Content: acp.TextBlock("x"),
 			},
 		}, ch, context.Background(), nil, nil)
 		mapACPSessionUpdate(acp.SessionUpdate{
 			SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
-				Meta: map[string]any{"codebuddy.ai/compact-cancelled": map[string]any{"cancelled": true}},
+				Meta: acptest.PatchMeta(map[string]any{"codebuddy.ai/compact-cancelled": map[string]any{"cancelled": true}}),
 			},
 		}, ch, context.Background(), nil, nil)
 		mapACPSessionUpdate(acp.SessionUpdate{
@@ -210,7 +211,7 @@ func TestMapACPSessionUpdate_NoCompactionOnNormalTurn(t *testing.T) {
 
 	mapACPSessionUpdate(acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Meta:    map[string]any{"codebuddy.ai/requestId": "abc"},
+			Meta:    acptest.Meta(map[string]any{"codebuddy.ai/requestId": "abc"}),
 			Content: acp.TextBlock("normal reply"),
 		},
 	}, ch, context.Background(), conn, nil)

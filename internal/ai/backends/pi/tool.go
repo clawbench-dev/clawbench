@@ -147,13 +147,10 @@ func parsePiACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
 // parsePiACPToolCallUpdate extracts a ai.ToolCall from a Pi ACP tool_call_update.
 func parsePiACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
 	tool := &ai.ToolCall{ID: string(tcu.ToolCallId)}
-	ai.MapToolCallStatus(tcu.Status, tool)
-	if tcu.RawInput != nil {
-		if inputBytes, err := json.Marshal(tcu.RawInput); err == nil {
-			title := ""
-			if tcu.Title != nil {
-				title = *tcu.Title
-			}
+	ai.MapToolCallStatus(tcu.Status.Ptr(), tool)
+	if rawInput, ok := tcu.RawInput.Value(); ok {
+		if inputBytes, err := json.Marshal(rawInput); err == nil {
+			title, _ := tcu.Title.Value()
 			tool.Input = normalizePiACPInput(piACPToolNameForInput(title), inputBytes)
 		}
 	} else {

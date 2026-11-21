@@ -97,13 +97,13 @@ func TestJSONGolden_ContentBlocks(t *testing.T) {
 	t.Run("content_resource_link", runGolden(
 		func() ContentBlock {
 			mt := "application/pdf"
-			sz := 1024000
+			sz := int64(1024000)
 			return ContentBlock{ResourceLink: &ContentBlockResourceLink{Type: "resource_link", Uri: "file:///home/user/document.pdf", Name: "document.pdf", MimeType: &mt, Size: &sz}}
 		},
 		func() ContentBlock {
 			cb := ResourceLinkBlock("document.pdf", "file:///home/user/document.pdf")
 			mt := "application/pdf"
-			sz := 1024000
+			sz := int64(1024000)
 			cb.ResourceLink.MimeType = &mt
 			cb.ResourceLink.Size = &sz
 			return cb
@@ -187,6 +187,45 @@ func TestJSONGolden_SessionUpdates(t *testing.T) {
 			return StartToolCall("call_001", "Reading configuration file", WithStartKind(ToolKindRead), WithStartStatus(ToolCallStatusPending))
 		},
 	))
+	t.Run("session_update_tool_call_name", runGolden(
+		func() SessionUpdate {
+			return SessionUpdate{ToolCall: &SessionUpdateToolCall{ToolCallId: "call_001", Title: "Reading configuration file", Name: Ptr("read_file"), Kind: ToolKindRead, Status: ToolCallStatusPending}}
+		},
+		func() SessionUpdate {
+			return StartToolCall("call_001", "Reading configuration file", WithStartName("read_file"), WithStartKind(ToolKindRead), WithStartStatus(ToolCallStatusPending))
+		},
+	))
+	t.Run("session_update_tool_call_update_name", runGolden(
+		func() SessionUpdate {
+			return UpdateToolCall("call_001", WithUpdateName("read_file"), WithUpdateStatus(ToolCallStatusCompleted))
+		},
+	))
+	t.Run("session_update_notice", runGolden(
+		func() SessionUpdate {
+			return SessionUpdate{Notice: &SessionUpdateNotice{
+				Severity:    NoticeSeverityWarning,
+				Title:       `MCP server "docs" failed to start`,
+				Description: Ptr("Its tools are unavailable in this session."),
+			}}
+		},
+	))
+	t.Run("session_update_compaction_update", runGolden(
+		func() SessionUpdate {
+			return SessionUpdate{CompactionUpdate: &SessionCompactionUpdate{
+				CompactionId: "cmp_1",
+				Status:       CompactionStatusCompleted,
+				Summary:      PatchSet([]ContentBlock{TextBlock("The user asked for a config change.")}),
+			}}
+		},
+	))
+	t.Run("session_update_compaction_summary_chunk", runGolden(
+		func() SessionUpdate {
+			return SessionUpdate{CompactionSummaryChunk: &SessionUpdateCompactionSummaryChunk{
+				CompactionId: "cmp_1",
+				Content:      TextBlock("The user asked for a config change."),
+			}}
+		},
+	))
 	t.Run("session_update_tool_call_read", runGolden(
 		func() SessionUpdate {
 			return StartReadToolCall("call_001", "Reading configuration file", "/home/user/project/src/config.json")
@@ -204,7 +243,7 @@ func TestJSONGolden_SessionUpdates(t *testing.T) {
 	))
 	t.Run("session_update_tool_call_update_content", runGolden(
 		func() SessionUpdate {
-			return SessionUpdate{ToolCallUpdate: &SessionToolCallUpdate{ToolCallId: "call_001", Status: Ptr(ToolCallStatusInProgress), Content: []ToolCallContent{ToolContent(TextBlock("Found 3 configuration files..."))}}}
+			return SessionUpdate{ToolCallUpdate: &SessionToolCallUpdate{ToolCallId: "call_001", Status: PatchSet(ToolCallStatusInProgress), Content: PatchSet([]ToolCallContent{ToolContent(TextBlock("Found 3 configuration files..."))})}}
 		},
 		func() SessionUpdate {
 			return UpdateToolCall("call_001", WithUpdateStatus(ToolCallStatusInProgress), WithUpdateContent([]ToolCallContent{ToolContent(TextBlock("Found 3 configuration files..."))}))
@@ -253,7 +292,7 @@ func TestJSONGolden_MethodPayloads(t *testing.T) {
 		return PromptRequest{SessionId: "sess_abc123def456", Prompt: []ContentBlock{TextBlock("Can you analyze this code for potential issues?"), ResourceBlock(EmbeddedResourceResource{TextResourceContents: &TextResourceContents{Uri: "file:///home/user/project/main.py", MimeType: Ptr("text/x-python"), Text: "def process_data(items):\n    for item in items:\n        print(item)"}})}}
 	}))
 	t.Run("fs_read_text_file_request", runGolden(func() ReadTextFileRequest {
-		line, limit := 10, 50
+		line, limit := int64(10), int64(50)
 		return ReadTextFileRequest{SessionId: "sess_abc123def456", Path: "/home/user/project/src/main.py", Line: &line, Limit: &limit}
 	}))
 	t.Run("fs_read_text_file_response", runGolden(func() ReadTextFileResponse {

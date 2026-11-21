@@ -63,7 +63,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		}
 	}
 	if conn != nil && update.SessionInfoUpdate != nil &&
-		IsCodeBuddyCompactionCancelledMeta(update.SessionInfoUpdate.Meta) {
+		IsCodeBuddyCompactionCancelledMeta(PatchMetaAny(update.SessionInfoUpdate.Meta)) {
 		// Cancelled/limit-reached compaction restores the original history, so it
 		// must clear any pending report from the same attempt — including a
 		// usage-drop detection that has not been delivered yet. Clearing only
@@ -89,7 +89,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// multi-page history broadcasts; without this gate those would be
 		// mistaken for live injections and wrongly split the assistant reply.
 		if conn != nil {
-			if id := metaString(update.UserMessageChunk.Meta[metaKeyCodeBuddyMessageID]); conn.claimPendingSteerID(id) {
+			if id := metaStringOf(update.UserMessageChunk.Meta, metaKeyCodeBuddyMessageID); conn.claimPendingSteerID(id) {
 				slog.Info("acp: steer boundary observed",
 					slog.String("client_user_message_id", id),
 					slog.String("clawbench_sid", conn.clawbenchSID))
@@ -119,10 +119,10 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// thinking block — with concurrent sub-agents an unfiltered done lands on
 		// whichever block happens to be last. For Agent Team members the parent
 		// is resolved via the member-name join (they carry no parentToolCallId).
-		memberName := extractTeamMemberName(update.AgentMessageChunk.Meta)
+		memberName := extractTeamMemberName(MetaAny(update.AgentMessageChunk.Meta))
 		forwardACPEvent(ch, StreamEvent{
 			Type:             "thinking_done",
-			ParentToolCallID: memberParentOrParent(backendID, conn, update.AgentMessageChunk.Meta),
+			ParentToolCallID: memberParentOrParent(backendID, conn, MetaAny(update.AgentMessageChunk.Meta)),
 			MemberName:       memberName,
 			MemberColor:      memberColorByName(conn, memberName),
 		})
@@ -143,9 +143,9 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		//     legitimately reuse a requestId, and thinking duplication is
 		//     already handled by the frontend's think_id mechanism.
 		replayed := false
-		if content.Text != nil && isReplayedTurnMeta(conn, backendID, update.AgentMessageChunk.Meta) {
+		if content.Text != nil && isReplayedTurnMeta(conn, backendID, MetaAny(update.AgentMessageChunk.Meta)) {
 			slog.Warn("acp: dropping replayed agent_message_chunk from previous turn",
-				slog.String("request_id", metaString(update.AgentMessageChunk.Meta[metaKeyCodeBuddyRequestID])),
+				slog.String("request_id", metaStringOf(update.AgentMessageChunk.Meta, metaKeyCodeBuddyRequestID)),
 				slog.String("clawbench_sid", conn.clawbenchSID))
 			replayed = true
 		}
@@ -162,7 +162,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			}
 		}
 		if !replayed {
-			parentID := memberParentOrParent(backendID, conn, update.AgentMessageChunk.Meta)
+			parentID := memberParentOrParent(backendID, conn, MetaAny(update.AgentMessageChunk.Meta))
 			if content.Text != nil {
 				forwardACPEvent(ch, StreamEvent{Type: "content", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: memberName, MemberColor: memberColorByName(conn, memberName)})
 			}
@@ -170,7 +170,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			// codebuddy.ai/* trace) — accumulate onto the connection so the
 			// turn-final metadata reflects the richest observed values.
 			if conn != nil {
-				mergeMetaExtractionToConn(conn, backendID, update.AgentMessageChunk.Meta)
+				mergeMetaExtractionToConn(conn, backendID, MetaAny(update.AgentMessageChunk.Meta))
 			}
 			// Model output observed: this turn really did run the model.
 			if conn != nil {
@@ -181,8 +181,8 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	case update.AgentThoughtChunk != nil:
 		content := update.AgentThoughtChunk.Content
 		if content.Text != nil {
-			parentID := memberParentOrParent(backendID, conn, update.AgentThoughtChunk.Meta)
-			thinkMember := extractTeamMemberName(update.AgentThoughtChunk.Meta)
+			parentID := memberParentOrParent(backendID, conn, MetaAny(update.AgentThoughtChunk.Meta))
+			thinkMember := extractTeamMemberName(MetaAny(update.AgentThoughtChunk.Meta))
 			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: thinkMember, MemberColor: memberColorByName(conn, thinkMember)})
 			if conn != nil {
 				conn.RecordTurnOutput()
@@ -196,7 +196,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// title "Compact conversation" + _meta.claudeCode.toolName="compact";
 		// codex-acp sends the same title with NO _meta. Detected here (the
 		// opening frame) because that is where both agents carry the title.
-		reportCompactionToolCall(conn, ch, extractMetaToolName(tc.Meta), tc.Title)
+		reportCompactionToolCall(conn, ch, extractMetaToolName(MetaAny(tc.Meta)), tc.Title)
 		// Envelope frames (openclaw: "tool_call: id: web_fetch, args: {...}")
 		// precede the real frame for the same tool under a different
 		// toolCallId. Drop them entirely: a card named "tool_call" is noise,
@@ -227,10 +227,10 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// thinking_done so the frontend can stop the thinking spinner. Scoped to
 		// the tool's own parent so a sub-agent's tool call closes that
 		// sub-agent's thinking block, not another agent's.
-		toolMember := extractTeamMemberNameForTool(tc.Meta)
+		toolMember := extractTeamMemberNameForTool(MetaAny(tc.Meta))
 		forwardACPEvent(ch, StreamEvent{
 			Type:             "thinking_done",
-			ParentToolCallID: memberParentOrParent(backendID, conn, tc.Meta),
+			ParentToolCallID: memberParentOrParent(backendID, conn, MetaAny(tc.Meta)),
 			MemberName:       toolMember,
 			MemberColor:      memberColorByName(conn, toolMember),
 		})
@@ -249,18 +249,24 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 
 	case update.ToolCallUpdate != nil:
 		tcu := update.ToolCallUpdate
+		// ACP v1 reads a null in a ToolCallUpdate field as absent (the Rust SDK
+		// does the same), so Value() covers unset and null alike.
+		tcuTitle, _ := tcu.Title.Value()
+		tcuStatus, hasStatus := tcu.Status.Value()
+		tcuKind, hasKind := tcu.Kind.Value()
+		tcuMeta := PatchMetaAny(tcu.Meta)
 
 		// Retry point for the compaction tool call: if the opening frame's
 		// compact_detected could not be delivered (full channel), this frame
 		// carries the same name/title and gets another attempt. Placed before
 		// the debouncer because the debouncer's terminal path breaks out of
 		// the switch.
-		reportCompactionToolCall(conn, ch, extractMetaToolName(tcu.Meta), derefStr(tcu.Title))
+		reportCompactionToolCall(conn, ch, extractMetaToolName(tcuMeta), tcuTitle)
 
 		// Track in-flight tool state from the status regardless of debouncing,
 		// so the stall watchdog knows whether a tool is still executing.
-		if conn != nil && tcu.Status != nil {
-			switch *tcu.Status {
+		if conn != nil && hasStatus {
+			switch tcuStatus {
 			case acp.ToolCallStatusCompleted, acp.ToolCallStatusFailed:
 				conn.SetToolInFlight(false)
 			case acp.ToolCallStatusPending, acp.ToolCallStatusInProgress:
@@ -283,11 +289,11 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		if conn != nil && isWrapperToolCallUpdate(*tcu, backendID, conn) {
 			id := toolCallIDOf(tcu.ToolCallId)
 			slog.Debug("acp: dropping tool_call_update for a wrapper frame",
-				"title", derefStr(tcu.Title), "tool_call_id", id, "status", fmt.Sprintf("%v", tcu.Status))
+				"title", tcuTitle, "tool_call_id", id, "status", fmt.Sprintf("%v", tcuStatus))
 			// The update stream under this id is over — release it so the id
 			// table cannot hold a stale entry for the rest of the session.
-			if tcu.Status != nil &&
-				(*tcu.Status == acp.ToolCallStatusCompleted || *tcu.Status == acp.ToolCallStatusFailed) {
+			if hasStatus &&
+				(tcuStatus == acp.ToolCallStatusCompleted || tcuStatus == acp.ToolCallStatusFailed) {
 				conn.forgetDroppedWrapperToolCallID(id)
 			}
 			break
@@ -321,12 +327,12 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			if buffered {
 				// Event was buffered — check if it's a think tool completion
 				// which needs immediate thinking_done forwarding.
-				if tcu.Kind != nil && *tcu.Kind == acp.ToolKindThink && tcu.Status != nil {
-					switch *tcu.Status {
+				if hasKind && tcuKind == acp.ToolKindThink && hasStatus {
+					switch tcuStatus {
 					case acp.ToolCallStatusCompleted, acp.ToolCallStatusFailed:
 						forwardACPEvent(ch, StreamEvent{
 							Type:             "thinking_done",
-							ParentToolCallID: extractParentToolCallID(backendID, tcu.Meta),
+							ParentToolCallID: extractParentToolCallID(backendID, tcuMeta),
 						})
 					}
 				}
@@ -334,12 +340,12 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			}
 			// Terminal event was already forwarded by the debouncer.
 			// But we still need to emit thinking_done for think tools.
-			if tcu.Kind != nil && *tcu.Kind == acp.ToolKindThink && tcu.Status != nil {
-				switch *tcu.Status {
+			if hasKind && tcuKind == acp.ToolKindThink && hasStatus {
+				switch tcuStatus {
 				case acp.ToolCallStatusCompleted, acp.ToolCallStatusFailed:
 					forwardACPEvent(ch, StreamEvent{
 						Type:             "thinking_done",
-						ParentToolCallID: extractParentToolCallID(backendID, tcu.Meta),
+						ParentToolCallID: extractParentToolCallID(backendID, tcuMeta),
 					})
 				}
 			}
@@ -354,12 +360,12 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// can stop the thinking spinner immediately — without this, the spinner
 		// stays until the entire AI response finishes because thinking blocks
 		// have no per-block "done" signal.
-		if tcu.Kind != nil && *tcu.Kind == acp.ToolKindThink && tcu.Status != nil {
-			switch *tcu.Status {
+		if hasKind && tcuKind == acp.ToolKindThink && hasStatus {
+			switch tcuStatus {
 			case acp.ToolCallStatusCompleted, acp.ToolCallStatusFailed:
 				forwardACPEvent(ch, StreamEvent{
 					Type:             "thinking_done",
-					ParentToolCallID: extractParentToolCallID(backendID, tcu.Meta),
+					ParentToolCallID: extractParentToolCallID(backendID, tcuMeta),
 				})
 			}
 		}
@@ -552,14 +558,14 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// teamUpdate key and is a no-op here, so non-team sessions are
 		// unaffected.
 		if b := acpBehavior(backendID); b != nil && b.OnSessionInfoUpdate != nil {
-			b.OnSessionInfoUpdate(conn, ch, update.SessionInfoUpdate.Meta)
+			b.OnSessionInfoUpdate(conn, ch, PatchMetaAny(update.SessionInfoUpdate.Meta))
 		}
 		slog.Debug("acp: session info update")
 
 	case update.UsageUpdate != nil:
 		usageState := &UsageState{
-			Used: update.UsageUpdate.Used,
-			Size: update.UsageUpdate.Size,
+			Used: int(update.UsageUpdate.Used),
+			Size: int(update.UsageUpdate.Size),
 		}
 		// Agents that repurpose the cost field (CodeBuddy) are still BILLING —
 		// the amount is credit, not money. Never let it reach Cost (which feeds
@@ -603,7 +609,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// window measurement, not a per-turn quantity). Credit goes with it for
 		// the same reason: the previous turn's per-request total must not be
 		// billed again.
-		ext := extractMetaUsage(backendID, update.UsageUpdate.Meta)
+		ext := extractMetaUsage(backendID, MetaAny(update.UsageUpdate.Meta))
 		if reusedCostAsCredit {
 			if ext == nil {
 				ext = &MetaExtraction{}
@@ -613,7 +619,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			}
 		}
 		if ext != nil {
-			if isReplayedTurnMeta(conn, backendID, update.UsageUpdate.Meta) {
+			if isReplayedTurnMeta(conn, backendID, MetaAny(update.UsageUpdate.Meta)) {
 				slog.Warn("acp: dropping replayed usage_update trace identity and token counters from previous turn",
 					slog.String("request_id", ext.traceRequestID()),
 					slog.String("clawbench_sid", conn.clawbenchSID))
@@ -908,12 +914,14 @@ func extractInputFromContent(tc acp.SessionUpdateToolCall) map[string]any {
 // extractInputFromContentUpdate extracts tool input from Content in tool_call_update events.
 // Same logic as extractInputFromContent but works with SessionToolCallUpdate (Title is *string).
 func extractInputFromContentUpdate(tcu acp.SessionToolCallUpdate) map[string]any {
+	title, _ := tcu.Title.Value()
+	content, _ := tcu.Content.Value()
 	input := make(map[string]any)
-	for _, c := range tcu.Content {
+	for _, c := range content {
 		if c.Terminal != nil {
 			// Terminal content — use title as command
-			if tcu.Title != nil && *tcu.Title != "" {
-				input["command"] = *tcu.Title
+			if title != "" {
+				input["command"] = title
 			}
 			return input
 		}
@@ -1005,8 +1013,8 @@ func mapToolCallStatus(status *acp.ToolCallStatus, tool *ToolCall) {
 
 // mapToolCallInput extracts tool input from RawInput, Content, or Locations/Title.
 func mapToolCallInput(tcu acp.SessionToolCallUpdate, tool *ToolCall, backendID string) {
-	if tcu.RawInput != nil {
-		if inputBytes, err := json.Marshal(tcu.RawInput); err == nil && string(inputBytes) != "{}" {
+	if rawInput, ok := tcu.RawInput.Value(); ok {
+		if inputBytes, err := json.Marshal(rawInput); err == nil && string(inputBytes) != "{}" {
 			remaps := acpRemapsForBackend(backendID)
 			normalized, normErr := normalizeToolInput(inputBytes, remaps)
 			if normErr == nil {
@@ -1021,7 +1029,7 @@ func mapToolCallInput(tcu acp.SessionToolCallUpdate, tool *ToolCall, backendID s
 	// For execute-kind tools without RawInput, try title as command (Kimi CLI)
 	// or Content terminal blocks. Do NOT extract text Content as description —
 	// that carries output, not input.
-	if tcu.Kind != nil && *tcu.Kind == acp.ToolKindExecute {
+	if kind, ok := tcu.Kind.Value(); ok && kind == acp.ToolKindExecute {
 		mapToolCallInputFromExecute(tcu, tool)
 		return
 	}
@@ -1032,19 +1040,21 @@ func mapToolCallInput(tcu acp.SessionToolCallUpdate, tool *ToolCall, backendID s
 
 // mapToolCallInputFromExecute handles input extraction for execute-kind tools.
 func mapToolCallInputFromExecute(tcu acp.SessionToolCallUpdate, tool *ToolCall) {
-	if tcu.Title != nil && *tcu.Title != "" {
-		input := map[string]any{"command": *tcu.Title}
+	title, _ := tcu.Title.Value()
+	content, _ := tcu.Content.Value()
+	if title != "" {
+		input := map[string]any{"command": title}
 		if inputBytes, err := json.Marshal(input); err == nil {
 			tool.Input = string(inputBytes)
 		}
 		return
 	}
 	// Check for terminal content blocks (rare, but some agents may use them)
-	for _, c := range tcu.Content {
+	for _, c := range content {
 		if c.Terminal != nil {
 			input := make(map[string]any)
-			if tcu.Title != nil && *tcu.Title != "" {
-				input["command"] = *tcu.Title
+			if title != "" {
+				input["command"] = title
 			}
 			if inputBytes, err := json.Marshal(input); err == nil && len(input) > 0 {
 				tool.Input = string(inputBytes)
@@ -1059,15 +1069,13 @@ func mapToolCallInputFromLocations(tcu acp.SessionToolCallUpdate, tool *ToolCall
 	if tool.Input != "" {
 		return
 	}
-	title := ""
-	if tcu.Title != nil {
-		title = *tcu.Title
+	title, _ := tcu.Title.Value()
+	kind, ok := tcu.Kind.Value()
+	if !ok {
+		kind = acp.ToolKindOther
 	}
-	kind := acp.ToolKindOther
-	if tcu.Kind != nil {
-		kind = *tcu.Kind
-	}
-	if input := extractInputFromLocationsAndTitle(tcu.Locations, title, kind, string(tcu.ToolCallId)); input != nil {
+	locations, _ := tcu.Locations.Value()
+	if input := extractInputFromLocationsAndTitle(locations, title, kind, string(tcu.ToolCallId)); input != nil {
 		if inputBytes, err := json.Marshal(input); err == nil {
 			tool.Input = string(inputBytes)
 		}
@@ -1076,7 +1084,8 @@ func mapToolCallInputFromLocations(tcu acp.SessionToolCallUpdate, tool *ToolCall
 
 // mapToolCallName sets the tool name from title when the tool is not yet done.
 func mapToolCallName(tcu acp.SessionToolCallUpdate, tool *ToolCall, backendID string) {
-	if tcu.Title == nil || *tcu.Title == "" || tool.Done {
+	title, hasTitle := tcu.Title.Value()
+	if !hasTitle || title == "" || tool.Done {
 		return
 	}
 	// If tool already has a recognized canonical name (from the initial ToolCall
@@ -1090,18 +1099,19 @@ func mapToolCallName(tcu acp.SessionToolCallUpdate, tool *ToolCall, backendID st
 		return
 	}
 	kind := acp.ToolKindExecute // default kind for title-based name extraction
-	if tcu.Kind != nil {
-		kind = *tcu.Kind
+	if k, ok := tcu.Kind.Value(); ok {
+		kind = k
 	}
-	tool.Name = extractToolName(*tcu.Title, kind, backendID, string(tcu.ToolCallId))
+	tool.Name = extractToolName(title, kind, backendID, string(tcu.ToolCallId))
 }
 
 // mapToolCallOutput extracts human-readable output from RawOutput or Content blocks.
 func mapToolCallOutput(tcu acp.SessionToolCallUpdate, tool *ToolCall) {
-	if tcu.RawOutput != nil {
-		tool.Output = truncateToolOutput(extractACPToolOutput(tcu.RawOutput))
-	} else if len(tcu.Content) > 0 {
-		tool.Output = truncateToolOutput(extractACPToolOutputFromContent(tcu.Content))
+	content, _ := tcu.Content.Value()
+	if rawOutput, ok := tcu.RawOutput.Value(); ok {
+		tool.Output = truncateToolOutput(extractACPToolOutput(rawOutput))
+	} else if len(content) > 0 {
+		tool.Output = truncateToolOutput(extractACPToolOutputFromContent(content))
 	}
 }
 
@@ -1128,6 +1138,11 @@ func extractACPToolOutputFromContent(contents []acp.ToolCallContent) string {
 // but the frontend expects plain text like CLI mode produces. This function extracts
 // the text content from known keys and falls back to pretty-printed JSON.
 func extractACPToolOutput(rawOutput any) string {
+	// The SDK hands over raw JSON; decode it so the shapes below match.
+	if raw, ok := rawOutput.(json.RawMessage); ok {
+		rawOutput = rawJSONValue(raw)
+	}
+
 	// Direct string — already human-readable
 	if s, ok := rawOutput.(string); ok {
 		return s
@@ -1405,7 +1420,8 @@ func EnrichModelListWith(agent *model.Agent, modelList *ModelListState) *ModelLi
 	// discovery alone made a bound provider's models disappear from the chat
 	// model drawer and could retire the session's model (issue #651).
 	enriched.ResolvedModels = model.WithPrices(agent.MergeProviderModels(
-		model.ResolveModels(agent.Models, modelList.Models, modelList.CurrentModelID)))
+		model.ResolveModels(agent.Models, modelList.Models, modelList.CurrentModelID),
+	))
 	return &enriched
 }
 

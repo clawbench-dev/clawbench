@@ -43,7 +43,9 @@ func (clientExample) SessionUpdate(ctx context.Context, n SessionNotification) e
 		title := u.ToolCall.Title
 		fmt.Printf("\n[tool] %s (%s)\n", title, u.ToolCall.Status)
 	case u.ToolCallUpdate != nil:
-		fmt.Printf("\n[tool] %s -> %v\n", u.ToolCallUpdate.ToolCallId, u.ToolCallUpdate.Status)
+		if status, ok := u.ToolCallUpdate.Status.Value(); ok {
+			fmt.Printf("\n[tool] %s -> %s\n", u.ToolCallUpdate.ToolCallId, status)
+		}
 	}
 	return nil
 }
@@ -71,16 +73,11 @@ func (clientExample) ReadTextFile(ctx context.Context, p ReadTextFileRequest) (R
 		lines := strings.Split(content, "\n")
 		start := 0
 		if p.Line != nil && *p.Line > 0 {
-			if *p.Line-1 > 0 {
-				start = *p.Line - 1
-			}
-			if start > len(lines) {
-				start = len(lines)
-			}
+			start = int(min(*p.Line-1, int64(len(lines))))
 		}
 		end := len(lines)
-		if p.Limit != nil && *p.Limit > 0 && start+*p.Limit < end {
-			end = start + *p.Limit
+		if p.Limit != nil && *p.Limit > 0 {
+			end = start + int(min(*p.Limit, int64(end-start)))
 		}
 		content = strings.Join(lines[start:end], "\n")
 	}
@@ -112,6 +109,16 @@ func (clientExample) WaitForTerminalExit(ctx context.Context, p WaitForTerminalE
 
 // Example_client launches the Go agent example, negotiates protocol,
 // opens a session, and sends a simple prompt.
+// CreateElicitation answers as a client without elicitation support: it does
+// not advertise the elicitation capability, so an agent should not ask.
+func (clientExample) CreateElicitation(ctx context.Context, p CreateElicitationRequest) (CreateElicitationResponse, error) {
+	return CreateElicitationResponse{}, NewMethodNotFound(ClientMethodElicitationCreate)
+}
+
+func (clientExample) CompleteElicitation(ctx context.Context, p CompleteElicitationNotification) error {
+	return nil
+}
+
 func Example_client() {
 	ctx := context.Background()
 	cmd := exec.Command("go", "run", "./example/agent")

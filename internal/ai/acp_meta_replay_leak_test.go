@@ -9,6 +9,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -47,9 +48,9 @@ func codebuddyUsageUpdate(requestID, messageID string, promptTokens int) acp.Ses
 	}
 	return acp.SessionUpdate{
 		UsageUpdate: &acp.SessionUsageUpdate{
-			Used: promptTokens,
+			Used: int64(promptTokens),
 			Size: 256000,
-			Meta: meta,
+			Meta: acptest.Meta(meta),
 		},
 	}
 }
@@ -138,13 +139,13 @@ func TestUsageUpdate_NonCodeBuddyUnaffected(t *testing.T) {
 	update := acp.SessionUpdate{
 		UsageUpdate: &acp.SessionUsageUpdate{
 			Used: 100, Size: 200000,
-			Meta: map[string]any{
+			Meta: acptest.Meta(map[string]any{
 				metaKeyCodeBuddyRequestID: "req-turn-A",
 				metaKeyCodeBuddyMessageID: "msg-turn-A",
-			},
+			}),
 		},
 	}
-	assert.False(t, isReplayedTurnMeta(conn, "claude", update.UsageUpdate.Meta),
+	assert.False(t, isReplayedTurnMeta(conn, "claude", MetaAny(update.UsageUpdate.Meta)),
 		"the replay filter is CodeBuddy-specific and must not affect other backends")
 
 	mapACPSessionUpdate(update, ch, context.Background(), conn, nil)

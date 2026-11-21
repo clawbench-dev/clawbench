@@ -288,8 +288,8 @@ func promptText(blocks []acp.ContentBlock) string {
 // before concluding a turn billed nothing.
 func promptResponseTokens(resp acp.PromptResponse, c *ACPConn) (input, output, total int) {
 	if resp.Usage != nil {
-		input = resp.Usage.InputTokens
-		output = resp.Usage.OutputTokens
+		input = int(resp.Usage.InputTokens)
+		output = int(resp.Usage.OutputTokens)
 	}
 	accIn, accOut, accTotal := c.peekMetaAccumUsage()
 	return max(input, accIn), max(output, accOut), max(input+output, accTotal)
@@ -307,11 +307,11 @@ func (c *ACPConn) emitRefusalWarningIfRefused(resp acp.PromptResponse, streamCh 
 	}
 	// The agent's own reason, when it reports one. CodeBuddy's -32603 is a
 	// placeholder that explains nothing; its _meta carries the real cause.
-	detail := refusalDetailFromMeta(resp.Meta)
+	detail := refusalDetailFromMeta(MetaAny(resp.Meta))
 	slog.Warn("acp conn: prompt refused by agent",
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
 		"stop_reason", resp.StopReason, "detail", detail)
-	httpStatus := acpHTTPStatusFromMeta(resp.Meta)
+	httpStatus := acpHTTPStatusFromMeta(MetaAny(resp.Meta))
 	forwardACPEvent(streamCh, StreamEvent{
 		Type:        "warning",
 		Content:     "AI request refused by the agent (model unavailable or upstream error)",
@@ -332,7 +332,7 @@ func (c *ACPConn) emitRefusalWarningIfRefused(resp acp.PromptResponse, streamCh 
 // persisted so the message record reflects why the turn ended.
 func (c *ACPConn) emitPromptTailMetadata(resp acp.PromptResponse, streamCh chan<- StreamEvent) {
 	if resp.Usage != nil || len(resp.Meta) > 0 {
-		c.emitPromptResponseUsage(resp.Usage, resp.Meta, resp.StopReason, streamCh)
+		c.emitPromptResponseUsage(resp.Usage, MetaAny(resp.Meta), resp.StopReason, streamCh)
 		return
 	}
 	if acc := c.getAndClearMetaAccum(); acc != nil {
@@ -431,8 +431,8 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 	// metadata event and the usage_update payload.
 	meta := &Metadata{}
 	if usage != nil {
-		meta.InputTokens = usage.InputTokens
-		meta.OutputTokens = usage.OutputTokens
+		meta.InputTokens = int(usage.InputTokens)
+		meta.OutputTokens = int(usage.OutputTokens)
 	}
 
 	// The PromptResponse carries no cost, but agents like Claude report it on
@@ -535,12 +535,12 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 		Currency: currency,
 	}
 	if usage != nil {
-		usageState.InputTokens = usage.InputTokens
-		usageState.OutputTokens = usage.OutputTokens
-		usageState.TotalTokens = usage.TotalTokens
-		usageState.CachedReadTokens = ptrIntVal(usage.CachedReadTokens)
-		usageState.CachedWriteTokens = ptrIntVal(usage.CachedWriteTokens)
-		usageState.ThoughtTokens = ptrIntVal(usage.ThoughtTokens)
+		usageState.InputTokens = int(usage.InputTokens)
+		usageState.OutputTokens = int(usage.OutputTokens)
+		usageState.TotalTokens = int(usage.TotalTokens)
+		usageState.CachedReadTokens = ptrInt64Val(usage.CachedReadTokens)
+		usageState.CachedWriteTokens = ptrInt64Val(usage.CachedWriteTokens)
+		usageState.ThoughtTokens = ptrInt64Val(usage.ThoughtTokens)
 	}
 	// Merge per-agent _meta usage detail (e.g. Claude/Codex quota, CodeBuddy
 	// credit) into the usage_update payload so the frontend sees it live.
@@ -572,11 +572,13 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 }
 
 // ptrIntVal dereferences a *int, returning 0 for nil.
-func ptrIntVal(p *int) int {
+
+// ptrInt64Val is ptrIntVal for the 64-bit counters the v0.20 SDK uses.
+func ptrInt64Val(p *int64) int {
 	if p == nil {
 		return 0
 	}
-	return *p
+	return int(*p)
 }
 
 // setConfigOptionWithCrashCheck sets a config option, checking whether it killed

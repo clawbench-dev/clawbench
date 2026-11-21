@@ -248,6 +248,15 @@ func (a *mockACPAgent) NewSession(ctx context.Context, params acp.NewSessionRequ
 	}, nil
 }
 
+// DeleteSession drops the session, mirroring the stable session/delete the
+// real agents advertise.
+func (a *mockACPAgent) DeleteSession(ctx context.Context, params acp.DeleteSessionRequest) (acp.DeleteSessionResponse, error) {
+	a.mu.Lock()
+	delete(a.sessions, string(params.SessionId))
+	a.mu.Unlock()
+	return acp.DeleteSessionResponse{}, nil
+}
+
 func (a *mockACPAgent) CloseSession(ctx context.Context, params acp.CloseSessionRequest) (acp.CloseSessionResponse, error) {
 	return acp.CloseSessionResponse{}, acp.NewMethodNotFound(acp.AgentMethodSessionClose)
 }
@@ -653,12 +662,15 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 		}
 		permToolCall := acp.ToolCallUpdate{
 			ToolCallId: writeCallID,
-			Title:      &writeTitle,
-			Kind:       &writeKind,
-			Status:     nil,
+			Title:      acp.PatchSet(writeTitle),
+			Kind:       acp.PatchSet(writeKind),
 		}
 		if !omitPermRawInput {
-			permToolCall.RawInput = map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"}
+			raw, err := json.Marshal(map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"})
+			if err != nil {
+				return err
+			}
+			permToolCall.RawInput = acp.PatchSet(json.RawMessage(raw))
 		}
 		permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
 			SessionId: acp.SessionId(sid),
@@ -880,7 +892,7 @@ func stableMessageID(role, text string) string {
 func (a *mockACPAgent) replayHistory(ctx context.Context, sid string) error {
 	msgs := a.snapshotMessages(sid)
 	for _, m := range msgs {
-		mid := stableMessageID(m.Role, m.Text)
+		mid := acp.MessageId(stableMessageID(m.Role, m.Text))
 		var upd acp.SessionUpdate
 		if m.Role == "user" {
 			upd = acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{

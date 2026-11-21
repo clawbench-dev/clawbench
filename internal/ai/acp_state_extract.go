@@ -323,7 +323,7 @@ func buildModelListStateFromSelect(sel *acp.SessionConfigOptionSelect) *ModelLis
 			state.Models = append(state.Models, model.AgentModel{
 				ID:      string(v.Value),
 				Name:    v.Name,
-				Credits: creditsFromOptionMeta(v.Meta),
+				Credits: creditsFromOptionMeta(MetaAny(v.Meta)),
 			})
 		}
 	}
@@ -333,7 +333,7 @@ func buildModelListStateFromSelect(sel *acp.SessionConfigOptionSelect) *ModelLis
 				state.Models = append(state.Models, model.AgentModel{
 					ID:      string(v.Value),
 					Name:    v.Name,
-					Credits: creditsFromOptionMeta(v.Meta),
+					Credits: creditsFromOptionMeta(MetaAny(v.Meta)),
 				})
 			}
 		}

@@ -10,6 +10,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -60,11 +61,11 @@ func TestMapToolCallInput_RawInputNormalization(t *testing.T) {
 	// RawInput with camelCase keys should be normalized to snake_case
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-norm"),
-		RawInput: map[string]any{
+		RawInput: acptest.PatchRaw(map[string]any{
 			"filePath":  "/tmp/test.go",
 			"oldString": "old",
 			"newString": "new",
-		},
+		}),
 	}
 	tool := &ToolCall{}
 	mapToolCallInput(tcu, tool, "")
@@ -79,7 +80,7 @@ func TestMapToolCallInput_RawInputEmptyObject(t *testing.T) {
 	// Empty object "{}" should not set tool.Input
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-empty"),
-		RawInput:   map[string]any{},
+		RawInput:   acptest.PatchRaw(map[string]any{}),
 	}
 	tool := &ToolCall{}
 	mapToolCallInput(tcu, tool, "")
@@ -92,9 +93,9 @@ func TestMapToolCallInput_RawInputReturnsEarly(t *testing.T) {
 	title := "ls"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-raw"),
-		RawInput:   map[string]any{"command": "rm -rf /"},
-		Kind:       &kind,
-		Title:      &title,
+		RawInput:   acptest.PatchRaw(map[string]any{"command": "rm -rf /"}),
+		Kind:       acptest.Patch(kind),
+		Title:      acptest.Patch(title),
 	}
 	tool := &ToolCall{}
 	mapToolCallInput(tcu, tool, "")
@@ -108,7 +109,7 @@ func TestMapToolCallInputFromExecute_WithTitle(t *testing.T) {
 	title := "npm run build"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-exec-title"),
-		Title:      &title,
+		Title:      acptest.Patch(title),
 	}
 	tool := &ToolCall{}
 	mapToolCallInputFromExecute(tcu, tool)
@@ -120,10 +121,10 @@ func TestMapToolCallInputFromExecute_NoTitleTerminalContent(t *testing.T) {
 	// Terminal content but no title → empty command
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-exec-notitle"),
-		Title:      nil,
-		Content: []acp.ToolCallContent{
+		Title:      acp.Patch[string]{},
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{Terminal: &acp.ToolCallContentTerminal{TerminalId: "term-1"}},
-		},
+		}),
 	}
 	tool := &ToolCall{}
 	mapToolCallInputFromExecute(tcu, tool)
@@ -135,10 +136,10 @@ func TestMapToolCallInputFromExecute_TerminalContentWithTitle(t *testing.T) {
 	title := "go test ./..."
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-exec-term"),
-		Title:      &title,
-		Content: []acp.ToolCallContent{
+		Title:      acptest.Patch(title),
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{Terminal: &acp.ToolCallContentTerminal{TerminalId: "term-1"}},
-		},
+		}),
 	}
 	tool := &ToolCall{}
 	mapToolCallInputFromExecute(tcu, tool)
@@ -150,7 +151,7 @@ func TestMapToolCallInputFromExecute_EmptyTitleNoContent(t *testing.T) {
 	title := ""
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-exec-empty"),
-		Title:      &title,
+		Title:      acptest.Patch(title),
 	}
 	tool := &ToolCall{}
 	mapToolCallInputFromExecute(tcu, tool)
@@ -160,7 +161,7 @@ func TestMapToolCallInputFromExecute_EmptyTitleNoContent(t *testing.T) {
 func TestMapToolCallInputFromExecute_NoTitleNoContent(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-exec-none"),
-		Title:      nil,
+		Title:      acp.Patch[string]{},
 	}
 	tool := &ToolCall{}
 	mapToolCallInputFromExecute(tcu, tool)
@@ -184,11 +185,11 @@ func TestMapToolCallInputFromLocations_ReadKindWithLocations(t *testing.T) {
 	title := "main.go"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-loc-read"),
-		Kind:       &kind,
-		Title:      &title,
-		Locations: []acp.ToolCallLocation{
+		Kind:       acptest.Patch(kind),
+		Title:      acptest.Patch(title),
+		Locations: acptest.Patch([]acp.ToolCallLocation{
 			{Path: "/home/user/main.go"},
-		},
+		}),
 	}
 	tool := &ToolCall{}
 	mapToolCallInputFromLocations(tcu, tool)
@@ -201,8 +202,8 @@ func TestMapToolCallInputFromLocations_NilKindDefaultsToOther(t *testing.T) {
 	title := "search query"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-loc-nil"),
-		Kind:       nil,
-		Title:      &title,
+		Kind:       acp.Patch[acp.ToolKind]{},
+		Title:      acptest.Patch(title),
 	}
 	tool := &ToolCall{}
 	mapToolCallInputFromLocations(tcu, tool)
@@ -213,11 +214,11 @@ func TestMapToolCallInputFromLocations_NilTitle(t *testing.T) {
 	kind := acp.ToolKindRead
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-loc-notitle"),
-		Kind:       &kind,
-		Title:      nil,
-		Locations: []acp.ToolCallLocation{
+		Kind:       acptest.Patch(kind),
+		Title:      acp.Patch[string]{},
+		Locations: acptest.Patch([]acp.ToolCallLocation{
 			{Path: "/home/user/main.go"},
-		},
+		}),
 	}
 	tool := &ToolCall{}
 	mapToolCallInputFromLocations(tcu, tool)
@@ -229,7 +230,7 @@ func TestMapToolCallInputFromLocations_NilTitle(t *testing.T) {
 func TestMapToolCallName_NilTitle(t *testing.T) {
 	tool := &ToolCall{}
 	tcu := acp.SessionToolCallUpdate{
-		Title: nil,
+		Title: acp.Patch[string]{},
 	}
 	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "", tool.Name)
@@ -239,7 +240,7 @@ func TestMapToolCallName_EmptyTitle(t *testing.T) {
 	tool := &ToolCall{}
 	title := ""
 	tcu := acp.SessionToolCallUpdate{
-		Title: &title,
+		Title: acptest.Patch(title),
 	}
 	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "", tool.Name)
@@ -249,7 +250,7 @@ func TestMapToolCallName_DoneToolSkipsName(t *testing.T) {
 	tool := &ToolCall{Done: true}
 	title := "Read"
 	tcu := acp.SessionToolCallUpdate{
-		Title: &title,
+		Title: acptest.Patch(title),
 	}
 	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "", tool.Name, "done tool should not update name from title")
@@ -259,7 +260,7 @@ func TestMapToolCallName_InProgressUpdatesName(t *testing.T) {
 	tool := &ToolCall{}
 	title := "Read"
 	tcu := acp.SessionToolCallUpdate{
-		Title: &title,
+		Title: acptest.Patch(title),
 	}
 	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Read", tool.Name)
@@ -270,8 +271,8 @@ func TestMapToolCallName_NilKindDefaultsToExecute(t *testing.T) {
 	tool := &ToolCall{}
 	title := "bash"
 	tcu := acp.SessionToolCallUpdate{
-		Title: &title,
-		Kind:  nil,
+		Title: acptest.Patch(title),
+		Kind:  acp.Patch[acp.ToolKind]{},
 	}
 	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Bash", tool.Name, "nil kind defaults to execute, lowercase 'bash' maps to Bash")
@@ -282,8 +283,8 @@ func TestMapToolCallName_WithKind(t *testing.T) {
 	kind := acp.ToolKindRead
 	title := "Read file contents"
 	tcu := acp.SessionToolCallUpdate{
-		Title: &title,
-		Kind:  &kind,
+		Title: acptest.Patch(title),
+		Kind:  acptest.Patch(kind),
 	}
 	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Read", tool.Name)
@@ -293,7 +294,7 @@ func TestMapToolCallName_WithKind(t *testing.T) {
 
 func TestMapToolCallOutput_RawOutput(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
-		RawOutput: map[string]any{"result": "file contents here"},
+		RawOutput: acptest.PatchRaw(map[string]any{"result": "file contents here"}),
 	}
 	tool := &ToolCall{}
 	mapToolCallOutput(tcu, tool)
@@ -302,7 +303,7 @@ func TestMapToolCallOutput_RawOutput(t *testing.T) {
 
 func TestMapToolCallOutput_ContentBlocks(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
-		Content: []acp.ToolCallContent{
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{
 				Content: &acp.ToolCallContentContent{
 					Content: acp.ContentBlock{
@@ -310,7 +311,7 @@ func TestMapToolCallOutput_ContentBlocks(t *testing.T) {
 					},
 				},
 			},
-		},
+		}),
 	}
 	tool := &ToolCall{}
 	mapToolCallOutput(tcu, tool)
@@ -1119,7 +1120,7 @@ func TestMapACPError_InternalError(t *testing.T) {
 func TestMapACPToolCallUpdate_NilStatus(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-nil-status"),
-		Status:     nil,
+		Status:     acp.Patch[acp.ToolCallStatus]{},
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Equal(t, "tool_use", event.Type)
@@ -1134,9 +1135,9 @@ func TestMapACPToolCallUpdate_ExecuteKindWithLocationsFallback(t *testing.T) {
 	inProgress := acp.ToolCallStatusInProgress
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("exec-build-1"),
-		Kind:       &kind,
-		Title:      &title,
-		Status:     &inProgress,
+		Kind:       acptest.Patch(kind),
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(inProgress),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Equal(t, "tool_use", event.Type)
@@ -1150,12 +1151,12 @@ func TestMapACPToolCallUpdate_ReadKindWithLocations(t *testing.T) {
 	inProgress := acp.ToolCallStatusInProgress
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("read-main-1"),
-		Kind:       &kind,
-		Title:      &title,
-		Status:     &inProgress,
-		Locations: []acp.ToolCallLocation{
+		Kind:       acptest.Patch(kind),
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(inProgress),
+		Locations: acptest.Patch([]acp.ToolCallLocation{
 			{Path: "/home/user/main.go"},
-		},
+		}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Equal(t, "tool_use", event.Type)
@@ -1167,11 +1168,11 @@ func TestMapACPToolCallUpdate_WithFilePathRawInputNormalization(t *testing.T) {
 	inProgress := acp.ToolCallStatusInProgress
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-camel"),
-		Status:     &inProgress,
-		RawInput: map[string]any{
+		Status:     acptest.Patch(inProgress),
+		RawInput: acptest.PatchRaw(map[string]any{
 			"filePath": "/tmp/main.go",
 			"dirPath":  "/tmp/subdir",
-		},
+		}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Contains(t, event.Tool.Input, "file_path")
@@ -1184,8 +1185,8 @@ func TestMapACPToolCallUpdate_CompletedWithRawOutput(t *testing.T) {
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-out"),
-		Status:     &completed,
-		RawOutput:  "plain string output",
+		Status:     acptest.Patch(completed),
+		RawOutput:  acptest.PatchRaw("plain string output"),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Equal(t, "tool_result", event.Type)
@@ -1239,7 +1240,7 @@ func TestMapACPToolCall_RawInputDirPathNormalization(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-dirpath"),
 		Title:      "LS",
 		Kind:       acp.ToolKindSearch,
-		RawInput:   map[string]any{"dirPath": "/home/user/project"},
+		RawInput:   acptest.Raw(map[string]any{"dirPath": "/home/user/project"}),
 	}
 	event := mapACPToolCall(tc, "", nil)
 	assert.Contains(t, event.Tool.Input, "path")
@@ -1252,10 +1253,10 @@ func TestMapACPToolCall_RawInputCellNormalization(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-cell"),
 		Title:      "NotebookEdit",
 		Kind:       acp.ToolKindEdit,
-		RawInput: map[string]any{
+		RawInput: acptest.Raw(map[string]any{
 			"cellIndex": 0,
 			"cellType":  "code",
-		},
+		}),
 	}
 	event := mapACPToolCall(tc, "", nil)
 	assert.Contains(t, event.Tool.Input, "cell_index")
@@ -1270,8 +1271,8 @@ func TestMapACPToolCallUpdate_RawInputDirPathNormalization(t *testing.T) {
 	inProgress := acp.ToolCallStatusInProgress
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-upd-dirpath"),
-		Status:     &inProgress,
-		RawInput:   map[string]any{"dirPath": "/home/user/project"},
+		Status:     acptest.Patch(inProgress),
+		RawInput:   acptest.PatchRaw(map[string]any{"dirPath": "/home/user/project"}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Contains(t, event.Tool.Input, "path")
@@ -1282,13 +1283,13 @@ func TestMapACPToolCallUpdate_RawInputDirPathNormalization(t *testing.T) {
 
 func TestExtractInputFromContentUpdate_NilContentBlock(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
-		Content: []acp.ToolCallContent{
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{
 				Content: &acp.ToolCallContentContent{
 					Content: acp.ContentBlock{}, // Text is nil
 				},
 			},
-		},
+		}),
 	}
 	input := extractInputFromContentUpdate(tcu)
 	assert.Nil(t, input)
@@ -1297,13 +1298,13 @@ func TestExtractInputFromContentUpdate_NilContentBlock(t *testing.T) {
 func TestExtractInputFromContentUpdate_EmptyText(t *testing.T) {
 	textStr := ""
 	tcu := acp.SessionToolCallUpdate{
-		Content: []acp.ToolCallContent{
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{
 				Content: &acp.ToolCallContentContent{
 					Content: acp.TextBlock(textStr),
 				},
 			},
-		},
+		}),
 	}
 	input := extractInputFromContentUpdate(tcu)
 	assert.Nil(t, input, "empty text should return nil")
@@ -1405,10 +1406,10 @@ func TestMapToolCallInputFromExecute_TerminalContentProducesValidJSON(t *testing
 	title := "cargo build"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-term-json"),
-		Title:      &title,
-		Content: []acp.ToolCallContent{
+		Title:      acptest.Patch(title),
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{Terminal: &acp.ToolCallContentTerminal{TerminalId: "term-1"}},
-		},
+		}),
 	}
 	tool := &ToolCall{}
 	mapToolCallInputFromExecute(tcu, tool)
@@ -1426,10 +1427,10 @@ func TestMapToolCallInputFromExecute_TerminalNoTitleEmptyInput(t *testing.T) {
 	emptyTitle := ""
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-term-empty"),
-		Title:      &emptyTitle,
-		Content: []acp.ToolCallContent{
+		Title:      acptest.Patch(emptyTitle),
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{Terminal: &acp.ToolCallContentTerminal{TerminalId: "term-1"}},
-		},
+		}),
 	}
 	tool := &ToolCall{}
 	mapToolCallInputFromExecute(tcu, tool)
@@ -1472,11 +1473,11 @@ func TestMapToolCallInput_NonExecuteFallsToLocations(t *testing.T) {
 	title := "main.go"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-read-loc"),
-		Kind:       &kind,
-		Title:      &title,
-		Locations: []acp.ToolCallLocation{
+		Kind:       acptest.Patch(kind),
+		Title:      acptest.Patch(title),
+		Locations: acptest.Patch([]acp.ToolCallLocation{
 			{Path: "/home/user/main.go"},
-		},
+		}),
 	}
 	tool := &ToolCall{}
 	mapToolCallInput(tcu, tool, "")
@@ -1488,8 +1489,8 @@ func TestMapToolCallInput_ExecuteKindNoRawInputNoTitle(t *testing.T) {
 	kind := acp.ToolKindExecute
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-exec-noraw"),
-		Kind:       &kind,
-		Title:      nil,
+		Kind:       acptest.Patch(kind),
+		Title:      acp.Patch[string]{},
 	}
 	tool := &ToolCall{}
 	mapToolCallInput(tcu, tool, "")
@@ -1501,7 +1502,7 @@ func TestMapToolCallInput_NilKindNoRawInputFallsToLocations(t *testing.T) {
 	// which defaults kind to ToolKindOther, returns nil → empty input
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-nil-kind"),
-		Kind:       nil,
+		Kind:       acp.Patch[acp.ToolKind]{},
 	}
 	tool := &ToolCall{}
 	mapToolCallInput(tcu, tool, "")
@@ -1532,7 +1533,7 @@ func TestMapToolCallName_ExistingCanonicalNotOverwritten(t *testing.T) {
 	tool := &ToolCall{Name: "Agent"}
 	title := "Explore project structure"
 	tcu := acp.SessionToolCallUpdate{
-		Title: &title,
+		Title: acptest.Patch(title),
 	}
 	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Agent", tool.Name, "existing canonical name should not be overwritten by ToolCallUpdate")
@@ -1544,7 +1545,7 @@ func TestMapToolCallName_LowercaseNameGetsOverwritten(t *testing.T) {
 	tool := &ToolCall{Name: "agent"}
 	title := "Bash"
 	tcu := acp.SessionToolCallUpdate{
-		Title: &title,
+		Title: acptest.Patch(title),
 	}
 	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Bash", tool.Name, "lowercase name should be overwritten by ToolCallUpdate")
@@ -1562,8 +1563,8 @@ func TestMapACPSessionUpdate_UsageUpdate(t *testing.T) {
 
 	update := acp.SessionUpdate{
 		UsageUpdate: &acp.SessionUsageUpdate{
-			Used: used,
-			Size: size,
+			Used: int64(used),
+			Size: int64(size),
 			Cost: &cost,
 		},
 	}
@@ -1627,7 +1628,7 @@ func TestMapACPSessionUpdate_ThinkingCarriesParentLink(t *testing.T) {
 	text := "child reasoning"
 	update := acp.SessionUpdate{
 		AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
-			Meta:          map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_1"},
+			Meta:          acptest.Meta(map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_1"}),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: text, Type: "text"}},
 			SessionUpdate: "agent_thought_chunk",
 		},
@@ -1644,7 +1645,7 @@ func TestMapACPSessionUpdate_ContentCarriesParentLink(t *testing.T) {
 	text := "child text"
 	update := acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Meta:          map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_2"},
+			Meta:          acptest.Meta(map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_2"}),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: text, Type: "text"}},
 			SessionUpdate: "agent_message_chunk",
 		},
@@ -1668,7 +1669,7 @@ func TestMapACPSessionUpdate_TopLevelContentHasNoParent(t *testing.T) {
 	text := "parent text"
 	update := acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Meta:          map[string]any{"codebuddy.ai/requestId": "r1"},
+			Meta:          acptest.Meta(map[string]any{"codebuddy.ai/requestId": "r1"}),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: text, Type: "text"}},
 			SessionUpdate: "agent_message_chunk",
 		},
@@ -1712,7 +1713,7 @@ func TestMapACPSessionUpdate_DropsOpenCodeChildSessionFrames(t *testing.T) {
 			name: "content",
 			update: acp.SessionUpdate{
 				AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-					Meta:          openCodeChildSessionMeta(),
+					Meta:          acptest.Meta(openCodeChildSessionMeta()),
 					Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "child text", Type: "text"}},
 					SessionUpdate: "agent_message_chunk",
 				},
@@ -1722,7 +1723,7 @@ func TestMapACPSessionUpdate_DropsOpenCodeChildSessionFrames(t *testing.T) {
 			name: "thinking",
 			update: acp.SessionUpdate{
 				AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
-					Meta:          openCodeChildSessionMeta(),
+					Meta:          acptest.Meta(openCodeChildSessionMeta()),
 					Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "child reasoning", Type: "text"}},
 					SessionUpdate: "agent_thought_chunk",
 				},
@@ -1732,7 +1733,7 @@ func TestMapACPSessionUpdate_DropsOpenCodeChildSessionFrames(t *testing.T) {
 			name: "tool_call",
 			update: acp.SessionUpdate{
 				ToolCall: &acp.SessionUpdateToolCall{
-					Meta:          openCodeChildSessionMeta(),
+					Meta:          acptest.Meta(openCodeChildSessionMeta()),
 					ToolCallId:    acp.ToolCallId("ses_child:call_1"),
 					Title:         "Read",
 					SessionUpdate: "tool_call",
@@ -1743,7 +1744,7 @@ func TestMapACPSessionUpdate_DropsOpenCodeChildSessionFrames(t *testing.T) {
 			name: "tool_call_update",
 			update: acp.SessionUpdate{
 				ToolCallUpdate: &acp.SessionToolCallUpdate{
-					Meta:          openCodeChildSessionMeta(),
+					Meta:          acptest.PatchMeta(openCodeChildSessionMeta()),
 					ToolCallId:    acp.ToolCallId("ses_child:call_1"),
 					SessionUpdate: "tool_call_update",
 				},
@@ -1770,7 +1771,7 @@ func TestMapACPSessionUpdate_KeepsOpenCodeTopLevelContent(t *testing.T) {
 	ch := make(chan StreamEvent, 10)
 	update := acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Meta:          map[string]any{"opencode/retry": nil},
+			Meta:          acptest.Meta(map[string]any{"opencode/retry": nil}),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "parent text", Type: "text"}},
 			SessionUpdate: "agent_message_chunk",
 		},
@@ -1791,7 +1792,7 @@ func TestMapACPToolCallUpdate_CarriesParentLink(t *testing.T) {
 	id := "call_child_tool"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId(id),
-		Meta:       map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_3", "codebuddy.ai/toolName": "Read"},
+		Meta:       acptest.PatchMeta(map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_3", "codebuddy.ai/toolName": "Read"}),
 	}
 	evt := mapACPToolCallUpdate(tcu, "codebuddy", nil)
 	require.NotNil(t, evt.Tool)
@@ -1801,7 +1802,7 @@ func TestMapACPToolCallUpdate_CarriesParentLink(t *testing.T) {
 func TestMapACPToolCall_CarriesParentLink(t *testing.T) {
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: acp.ToolCallId("call_child_start"),
-		Meta:       map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_4", "codebuddy.ai/toolName": "Grep"},
+		Meta:       acptest.Meta(map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_4", "codebuddy.ai/toolName": "Grep"}),
 	}
 	evt := mapACPToolCall(tc, "codebuddy", nil)
 	require.NotNil(t, evt.Tool)
@@ -1811,7 +1812,7 @@ func TestMapACPToolCall_CarriesParentLink(t *testing.T) {
 func TestMapACPToolCall_ClaudeParentToolUseID(t *testing.T) {
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: acp.ToolCallId("call_child_claude"),
-		Meta:       map[string]any{"claudeCode": map[string]any{"parentToolUseId": "toolu_parent_9", "toolName": "Read"}},
+		Meta:       acptest.Meta(map[string]any{"claudeCode": map[string]any{"parentToolUseId": "toolu_parent_9", "toolName": "Read"}}),
 	}
 	evt := mapACPToolCall(tc, "claude", nil)
 	require.NotNil(t, evt.Tool)
@@ -1840,7 +1841,7 @@ func TestMapACPSessionUpdate_SteerBoundary_OnlyForOurOwnInjections(t *testing.T)
 	chunk := func(id string) acp.SessionUpdate {
 		return acp.SessionUpdate{
 			UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-				Meta:          map[string]any{metaKeyCodeBuddyMessageID: id},
+				Meta:          acptest.Meta(map[string]any{metaKeyCodeBuddyMessageID: id}),
 				Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "injected text", Type: "text"}},
 				SessionUpdate: "user_message_chunk",
 			},
@@ -1879,7 +1880,7 @@ func TestMapACPSessionUpdate_SteerBoundary_NoConnIsSafe(t *testing.T) {
 	ch := make(chan StreamEvent, 10)
 	update := acp.SessionUpdate{
 		UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			Meta:          map[string]any{metaKeyCodeBuddyMessageID: "x"},
+			Meta:          acptest.Meta(map[string]any{metaKeyCodeBuddyMessageID: "x"}),
 			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "t", Type: "text"}},
 			SessionUpdate: "user_message_chunk",
 		},

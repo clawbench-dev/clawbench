@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"clawbench/internal/ai/acptest"
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,9 +20,9 @@ func TestEmitRefusalWarning_CarriesAgentDetail(t *testing.T) {
 
 	resp := acp.PromptResponse{
 		StopReason: acp.StopReasonRefusal,
-		Meta: map[string]any{
+		Meta: acptest.Meta(map[string]any{
 			metaKeyCodeBuddyErrorMessage: `{"code":-32603,"message":"Internal error","data":{"details":"Bad substitution: o.gaps.join"}}`,
-		},
+		}),
 	}
 	conn.emitRefusalWarningIfRefused(resp, ch, "acp-sid")
 	require.Len(t, ch, 1)
@@ -66,22 +67,22 @@ func TestIsACPQuotaError(t *testing.T) {
 	quotaErr := &acp.RequestError{
 		Code:    -32603,
 		Message: "Internal error: Insufficient Balance",
-		Data:    map[string]any{"service": "session", "errorName": "provider.quota"},
+		Data:    acptest.Raw(map[string]any{"service": "session", "errorName": "provider.quota"}),
 	}
 	rateLimitErr := &acp.RequestError{
 		Code:    -32603,
 		Message: "Internal error: Rate limit exceeded, please try again later",
-		Data:    map[string]any{"service": "session", "errorName": "provider.rate-limit"},
+		Data:    acptest.Raw(map[string]any{"service": "session", "errorName": "provider.rate-limit"}),
 	}
 	plainErr := &acp.RequestError{
 		Code:    -32603,
 		Message: "Internal error: something else broke",
-		Data:    map[string]any{"service": "session", "errorName": "provider.api_error"},
+		Data:    acptest.Raw(map[string]any{"service": "session", "errorName": "provider.api_error"}),
 	}
 	http402 := &acp.RequestError{
 		Code:    -32603,
 		Message: "Internal error",
-		Data:    map[string]any{"httpStatus": float64(402)},
+		Data:    acptest.Raw(map[string]any{"httpStatus": float64(402)}),
 	}
 	// opencode 1.x (the `opencode-ai` package) reports the generic SDK class
 	// instead of a provider-level limit type — captured from 1.19.5 against a
@@ -90,12 +91,12 @@ func TestIsACPQuotaError(t *testing.T) {
 	v1Quota := &acp.RequestError{
 		Code:    -32603,
 		Message: "Internal error: Insufficient Balance",
-		Data:    map[string]any{"service": "session", "errorName": "APIError"},
+		Data:    acptest.Raw(map[string]any{"service": "session", "errorName": "APIError"}),
 	}
 	v1Plain := &acp.RequestError{
 		Code:    -32603,
 		Message: "Internal error: internal server error",
-		Data:    map[string]any{"service": "session", "errorName": "APIError"},
+		Data:    acptest.Raw(map[string]any{"service": "session", "errorName": "APIError"}),
 	}
 
 	assert.True(t, isACPQuotaError(quotaErr), "provider.quota must classify as quota")
@@ -114,7 +115,7 @@ func TestIsACPQuotaError_ThroughWrappedError(t *testing.T) {
 	inner := &acp.RequestError{
 		Code:    -32603,
 		Message: "Internal error: Insufficient Balance",
-		Data:    map[string]any{"errorName": "provider.quota"},
+		Data:    acptest.Raw(map[string]any{"errorName": "provider.quota"}),
 	}
 	wrapped := fmt.Errorf("acp: prompt: %w", inner)
 	assert.True(t, isACPQuotaError(wrapped))
@@ -129,7 +130,7 @@ func TestPromptErrorReason(t *testing.T) {
 	quota := &acp.RequestError{
 		Code:    -32603,
 		Message: "Internal error: Insufficient Balance",
-		Data:    map[string]any{"errorName": "provider.quota"},
+		Data:    acptest.Raw(map[string]any{"errorName": "provider.quota"}),
 	}
 	assert.Equal(t, ReasonQuotaExhausted, promptErrorReason(quota))
 	assert.Equal(t, ReasonQuotaExhausted, promptErrorReason(fmt.Errorf("acp: prompt: %w", quota)),
@@ -146,18 +147,18 @@ func TestIsACPQuotaError_StringFormData(t *testing.T) {
 	strData := &acp.RequestError{
 		Code:    -32603,
 		Message: "Internal error",
-		Data:    `{"service":"session","errorName":"provider.quota"}`,
+		Data:    acptest.Raw(`{"service":"session","errorName":"provider.quota"}`),
 	}
 	assert.True(t, isACPQuotaError(strData), "errorName inside a JSON-string Data must be recognized")
 
 	str402 := &acp.RequestError{
 		Code:    -32603,
 		Message: "Internal error",
-		Data:    `{"httpStatus":402}`,
+		Data:    acptest.Raw(`{"httpStatus":402}`),
 	}
 	assert.True(t, isACPQuotaError(str402), "httpStatus 402 inside a JSON-string Data must be recognized")
 
 	// Malformed string Data must not panic and must fall through to text match.
-	broken := &acp.RequestError{Code: -32603, Message: "Internal error", Data: `not json`}
+	broken := &acp.RequestError{Code: -32603, Message: "Internal error", Data: acptest.Raw(`not json`)}
 	assert.False(t, isACPQuotaError(broken))
 }

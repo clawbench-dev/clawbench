@@ -2,8 +2,10 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -39,7 +41,7 @@ func testLoadSessionRequest(sessionID string) LoadSessionRequest {
 
 func testSessionUpdate(sessionID SessionId, seq int) SessionNotification {
 	return SessionNotification{
-		Meta:      map[string]any{"seq": seq},
+		Meta:      Meta{"seq": json.RawMessage(strconv.Itoa(seq))},
 		SessionId: sessionID,
 		Update: SessionUpdate{
 			AgentMessageChunk: &SessionUpdateAgentMessageChunk{
@@ -52,20 +54,11 @@ func testSessionUpdate(sessionID SessionId, seq int) SessionNotification {
 func notificationSequence(t *testing.T, n SessionNotification) int {
 	t.Helper()
 
-	value, ok := n.Meta["seq"]
-	if !ok {
-		t.Fatalf("notification missing seq metadata")
+	var seq int
+	if err := n.Meta.Get("seq", &seq); err != nil {
+		t.Fatalf("notification seq metadata: %v", err)
 	}
-
-	switch v := value.(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	default:
-		t.Fatalf("unexpected seq metadata type %T", value)
-		return 0
-	}
+	return seq
 }
 
 func waitForPendingRequests(t *testing.T, c *Connection, want int, timeout time.Duration) {
@@ -257,6 +250,139 @@ func TestSendRequest_DoesNotWaitForPostResponseNotification(t *testing.T) {
 			t.Fatalf("post-response notification send failed: %v", err)
 		}
 	default:
+	}
+}
+
+func TestSendRequest_FromNotificationHandlerReturns(t *testing.T) {
+	var clientConn *ClientSideConnection
+	results := make(chan error, 2)
+	client := &clientFuncs{
+		SessionUpdateFunc: func(ctx context.Context, _ SessionNotification) error {
+			_, err := clientConn.CallExtension(ctx, "_test/ping", map[string]any{})
+			results <- err
+			return nil
+		},
+	}
+	agent := agentFuncs{
+		HandleExtensionMethodFunc: func(context.Context, string, json.RawMessage) (any, error) {
+			return map[string]any{"pong": true}, nil
+		},
+	}
+
+	createdClientConn, agentConn := newNotificationBarrierTestPair(t, client, agent)
+	clientConn = createdClientConn
+
+	for seq := 1; seq <= 2; seq++ {
+		if err := agentConn.SessionUpdate(context.Background(), testSessionUpdate("nested", seq)); err != nil {
+			t.Fatalf("SessionUpdate %d returned error: %v", seq, err)
+		}
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("CallExtension from session/update handler %d returned error: %v", seq, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("CallExtension from session/update handler %d did not return", seq)
+		}
+	}
+}
+
+func TestSendRequest_WithOtherHandlerCtxWaitsForPreResponseNotification(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  func(t *testing.T, agentConn *AgentSideConnection, clientConn *ClientSideConnection, captured <-chan context.Context) context.Context
+	}{
+		{
+			name: "running handler ctx of another connection",
+			ctx: func(t *testing.T, _ *AgentSideConnection, _ *ClientSideConnection, _ <-chan context.Context) context.Context {
+				otherCtxs := make(chan context.Context, 1)
+				releaseOther := make(chan struct{})
+				t.Cleanup(func() { close(releaseOther) })
+				_, otherAgentConn := newNotificationBarrierTestPair(t, &clientFuncs{
+					SessionUpdateFunc: func(ctx context.Context, _ SessionNotification) error {
+						otherCtxs <- ctx
+						<-releaseOther
+						return nil
+					},
+				}, agentFuncs{})
+				if err := otherAgentConn.SessionUpdate(context.Background(), testSessionUpdate("other", 1)); err != nil {
+					t.Fatalf("SessionUpdate returned error: %v", err)
+				}
+				return <-otherCtxs
+			},
+		},
+		{
+			name: "ctx of a handler that returned",
+			ctx: func(t *testing.T, agentConn *AgentSideConnection, clientConn *ClientSideConnection, captured <-chan context.Context) context.Context {
+				if err := agentConn.SessionUpdate(context.Background(), testSessionUpdate("capture", 1)); err != nil {
+					t.Fatalf("SessionUpdate returned error: %v", err)
+				}
+				ctx := <-captured
+				waitForNotificationBarrierDrain(t, clientConn.conn, time.Second)
+				return ctx
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			captured := make(chan context.Context, 1)
+			handlerStarted := make(chan struct{})
+			releaseHandler := make(chan struct{})
+			client := &clientFuncs{
+				SessionUpdateFunc: func(ctx context.Context, n SessionNotification) error {
+					if n.SessionId == "capture" {
+						captured <- ctx
+						return nil
+					}
+					close(handlerStarted)
+					<-releaseHandler
+					return nil
+				},
+			}
+			var agentConn *AgentSideConnection
+			agent := agentFuncs{
+				HandleExtensionMethodFunc: func(ctx context.Context, _ string, _ json.RawMessage) (any, error) {
+					if err := agentConn.SessionUpdate(ctx, testSessionUpdate("pre-response", 1)); err != nil {
+						return nil, err
+					}
+					return map[string]any{"pong": true}, nil
+				},
+			}
+			clientConn, createdAgentConn := newNotificationBarrierTestPair(t, client, agent)
+			agentConn = createdAgentConn
+			ctx := tt.ctx(t, agentConn, clientConn, captured)
+
+			resultCh := make(chan error, 1)
+			go func() {
+				_, err := clientConn.CallExtension(ctx, "_test/ping", map[string]any{})
+				resultCh <- err
+			}()
+
+			select {
+			case <-handlerStarted:
+			case <-time.After(time.Second):
+				t.Fatalf("timeout waiting for pre-response notification handler to start")
+			}
+			waitForPendingRequests(t, clientConn.conn, 0, time.Second)
+
+			select {
+			case err := <-resultCh:
+				t.Fatalf("CallExtension returned before notification handler finished: %v", err)
+			case <-time.After(100 * time.Millisecond):
+			}
+
+			close(releaseHandler)
+
+			select {
+			case err := <-resultCh:
+				if err != nil {
+					t.Fatalf("CallExtension returned error: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("timeout waiting for CallExtension to return after notification handler finished")
+			}
+		})
 	}
 }
 

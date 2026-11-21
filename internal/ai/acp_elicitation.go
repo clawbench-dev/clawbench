@@ -75,14 +75,13 @@ type elicitationOption struct {
 	Description string `json:"description,omitempty"`
 }
 
-// UnstableCreateElicitation implements the ACP client side of
-// `elicitation/create` (form mode only). It emits the questions as an
-// AskUserQuestion tool block and blocks until the user answers or the turn is
-// cancelled.
-func (c *ClawBenchACPClient) UnstableCreateElicitation(
+// CreateElicitation implements the ACP client side of `elicitation/create`
+// (form mode only). It emits the questions as an AskUserQuestion tool block and
+// blocks until the user answers or the turn is cancelled.
+func (c *ClawBenchACPClient) CreateElicitation(
 	ctx context.Context,
-	p acp.UnstableCreateElicitationRequest,
-) (acp.UnstableCreateElicitationResponse, error) {
+	p acp.CreateElicitationRequest,
+) (acp.CreateElicitationResponse, error) {
 	if p.Form == nil {
 		// Only form elicitation is advertised; a URL request means the agent
 		// ignored the capability. Declining lets it fall back on its own.
@@ -154,8 +153,8 @@ func (c *ClawBenchACPClient) UnstableCreateElicitation(
 		if ans.Cancelled {
 			// The turn ended (or was unregistered) while the card was up; the
 			// answer is worthless now, so tell the agent to stop waiting.
-			return acp.UnstableCreateElicitationResponse{
-				Cancel: &acp.UnstableCreateElicitationCancel{Action: "cancel"},
+			return acp.CreateElicitationResponse{
+				Cancel: &acp.CreateElicitationCancel{Action: "cancel"},
 			}, nil
 		}
 		forwardACPEvent(ch, StreamEvent{
@@ -189,10 +188,19 @@ func (c *ClawBenchACPClient) UnstableCreateElicitation(
 		c.forgetElicitation(id)
 		// The connection is going away — mirror that to the agent rather than
 		// leaving it blocked on a request nobody will answer.
-		return acp.UnstableCreateElicitationResponse{
-			Cancel: &acp.UnstableCreateElicitationCancel{Action: "cancel"},
+		return acp.CreateElicitationResponse{
+			Cancel: &acp.CreateElicitationCancel{Action: "cancel"},
 		}, nil
 	}
+}
+
+// CompleteElicitation receives the agent's notice that a URL-based elicitation
+// finished. Only form elicitation is advertised, so a URL request is declined
+// before the user ever sees it; the notice is accepted and ignored rather than
+// surfaced as an error.
+func (c *ClawBenchACPClient) CompleteElicitation(ctx context.Context, p acp.CompleteElicitationNotification) error {
+	slog.Debug("acp: elicitation completion notice", "elicitation_id", string(p.ElicitationId))
+	return nil
 }
 
 func (c *ClawBenchACPClient) forgetElicitation(id string) {
@@ -259,15 +267,45 @@ func (c *ClawBenchACPClient) RegisterPendingElicitationForTest(id, acpSessionID 
 	return ch
 }
 
-func elicitationAccept(content map[string]any) acp.UnstableCreateElicitationResponse {
-	return acp.UnstableCreateElicitationResponse{
-		Accept: &acp.UnstableCreateElicitationAccept{Action: "accept", Content: content},
+func elicitationAccept(content map[string]any) acp.CreateElicitationResponse {
+	return acp.CreateElicitationResponse{
+		Accept: &acp.CreateElicitationAccept{Action: "accept", Content: elicitationContent(content)},
 	}
 }
 
-func elicitationDecline() acp.UnstableCreateElicitationResponse {
-	return acp.UnstableCreateElicitationResponse{
-		Decline: &acp.UnstableCreateElicitationDecline{Action: "decline"},
+// elicitationContent turns the card's untyped answers into the typed map the
+// protocol requires. Values the schema cannot express are dropped rather than
+// sent as an empty value (a zero ElicitationContentValue fails to encode).
+func elicitationContent(content map[string]any) map[string]acp.ElicitationContentValue {
+	if len(content) == 0 {
+		return nil
+	}
+	out := make(map[string]acp.ElicitationContentValue, len(content))
+	for k, v := range content {
+		switch t := v.(type) {
+		case string:
+			out[k] = acp.NewElicitationContentValueString(t)
+		case []string:
+			out[k] = acp.NewElicitationContentValueStringArray(t...)
+		case bool:
+			out[k] = acp.NewElicitationContentValueBoolean(t)
+		case int:
+			out[k] = acp.NewElicitationContentValueInteger(int64(t))
+		case int64:
+			out[k] = acp.NewElicitationContentValueInteger(t)
+		case float64:
+			out[k] = acp.NewElicitationContentValueNumber(t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func elicitationDecline() acp.CreateElicitationResponse {
+	return acp.CreateElicitationResponse{
+		Decline: &acp.CreateElicitationDecline{Action: "decline"},
 	}
 }
 
@@ -285,7 +323,7 @@ func elicitationResultText(content map[string]any) string {
 // Property order matters: the schema arrives as a JSON object (map), and the
 // agent expects answers keyed by property name, so the card must keep a stable
 // q0, q1, q2 … order rather than Go's randomized map order.
-func buildElicitationQuestions(schema acp.UnstableElicitationSchema) []elicitationQuestion {
+func buildElicitationQuestions(schema acp.ElicitationSchema) []elicitationQuestion {
 	if len(schema.Properties) == 0 {
 		return nil
 	}
@@ -303,7 +341,11 @@ func buildElicitationQuestions(schema acp.UnstableElicitationSchema) []elicitati
 
 	out := make([]elicitationQuestion, 0, len(keys))
 	for _, key := range keys {
-		if q, ok := elicitationQuestionFor(key, schema.Properties[key], present); ok {
+		prop, ok := elicitationPropertyMap(schema.Properties[key])
+		if !ok {
+			continue
+		}
+		if q, ok := elicitationQuestionFor(key, prop, present); ok {
 			out = append(out, q)
 		}
 	}
@@ -324,6 +366,22 @@ func buildElicitationQuestions(schema acp.UnstableElicitationSchema) []elicitati
 		out = withOptions
 	}
 	return out
+}
+
+// elicitationPropertyMap re-encodes a typed property schema into the raw JSON
+// object agents actually send. The card builder reads enum/oneOf/items from
+// that shape; the typed union only models the fields the schema names, so the
+// round trip is how the two stay in step without duplicating the parser.
+func elicitationPropertyMap(p acp.ElicitationPropertySchema) (map[string]any, bool) {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil, false
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, false
+	}
+	return m, true
 }
 
 // elicitationQuestionFor builds the card question for one schema property.

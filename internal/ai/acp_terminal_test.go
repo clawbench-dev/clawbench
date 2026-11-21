@@ -124,7 +124,7 @@ func TestCreateTerminal_ProcessGroupIsolation(t *testing.T) {
 	require.NotEmpty(t, resp.TerminalId)
 
 	// Command should complete quickly (not hang)
-	ts, ok := client.terminals[resp.TerminalId]
+	ts, ok := client.terminals[string(resp.TerminalId)]
 	require.True(t, ok)
 
 	select {
@@ -161,7 +161,7 @@ func TestCreateTerminal_InteractiveCommandFailsFast(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.TerminalId)
 
-	ts, ok := client.terminals[resp.TerminalId]
+	ts, ok := client.terminals[string(resp.TerminalId)]
 	require.True(t, ok)
 
 	// cat /dev/tty should fail within seconds (no controlling terminal),
@@ -193,7 +193,7 @@ func TestCreateTerminal_CancelKillsProcessGroup(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ts, ok := client.terminals[resp.TerminalId]
+	ts, ok := client.terminals[string(resp.TerminalId)]
 	require.True(t, ok)
 
 	// Command should still be running

@@ -64,7 +64,7 @@ func init() {
 			// Agent Teams: record member → spawn-call joins, bridge the team
 			// snapshot, and bridge Task* tool results into plan_update.
 			OnToolCall: func(conn *ai.ACPConn, tc *acp.SessionUpdateToolCall) {
-				NoteMemberSpawn(conn, tc.Meta, ai.ToolCallIDOf(tc.ToolCallId))
+				NoteMemberSpawn(conn, ai.MetaAny(tc.Meta), ai.ToolCallIDOf(tc.ToolCallId))
 			},
 			OnToolCallUpdate: func(conn *ai.ACPConn, ch chan<- ai.StreamEvent, tcu acp.SessionToolCallUpdate) {
 				if conn == nil {

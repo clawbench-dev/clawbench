@@ -12,6 +12,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -37,7 +38,7 @@ func TestMapACPToolCall_WithRawInput(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-456"),
 		Title:      "Write",
 		Kind:       acp.ToolKindEdit,
-		RawInput:   map[string]any{"path": "/tmp/test.txt", "content": "hello"},
+		RawInput:   acptest.Raw(map[string]any{"path": "/tmp/test.txt", "content": "hello"}),
 	}
 	event := mapACPToolCall(tc, "", nil)
 
@@ -109,7 +110,7 @@ func TestMapACPToolCall_RawInputPreferredOverContent(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-both"),
 		Title:      "Bash",
 		Kind:       acp.ToolKindExecute,
-		RawInput:   map[string]any{"command": "ls -la", "description": "List files"},
+		RawInput:   acptest.Raw(map[string]any{"command": "ls -la", "description": "List files"}),
 		Content: []acp.ToolCallContent{
 			{
 				Terminal: &acp.ToolCallContentTerminal{
@@ -131,7 +132,7 @@ func TestMapACPToolCall_WithFilePathRawInput(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-read-fp"),
 		Title:      "read",
 		Kind:       acp.ToolKindRead,
-		RawInput:   map[string]any{"filePath": "/home/user/project/main.go"},
+		RawInput:   acptest.Raw(map[string]any{"filePath": "/home/user/project/main.go"}),
 	}
 	event := mapACPToolCall(tc, "", nil)
 
@@ -147,8 +148,8 @@ func TestMapACPToolCallUpdate_Completed(t *testing.T) {
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-123"),
-		Status:     &completed,
-		RawOutput:  map[string]any{"result": "file contents"},
+		Status:     acptest.Patch(completed),
+		RawOutput:  acptest.PatchRaw(map[string]any{"result": "file contents"}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -164,8 +165,8 @@ func TestMapACPToolCallUpdate_Failed(t *testing.T) {
 	failed := acp.ToolCallStatusFailed
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-fail"),
-		Status:     &failed,
-		RawOutput:  map[string]any{"error": "permission denied"},
+		Status:     acptest.Patch(failed),
+		RawOutput:  acptest.PatchRaw(map[string]any{"error": "permission denied"}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -178,7 +179,7 @@ func TestMapACPToolCallUpdate_InProgress(t *testing.T) {
 	inProgress := acp.ToolCallStatusInProgress
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-wip"),
-		Status:     &inProgress,
+		Status:     acptest.Patch(inProgress),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -194,8 +195,8 @@ func TestMapACPToolCallUpdate_InProgressIgnoresRawOutput(t *testing.T) {
 	inProgress := acp.ToolCallStatusInProgress
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-wip"),
-		Status:     &inProgress,
-		RawOutput:  "}",
+		Status:     acptest.Patch(inProgress),
+		RawOutput:  acptest.PatchRaw("}"),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -208,7 +209,7 @@ func TestMapACPToolCallUpdate_Pending(t *testing.T) {
 	pending := acp.ToolCallStatusPending
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-pend"),
-		Status:     &pending,
+		Status:     acptest.Patch(pending),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -223,13 +224,13 @@ func TestMapACPToolCallUpdate_InProgressWithRawInput(t *testing.T) {
 	title := "Explore project structure"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("call_function_bla436bgujiz_1"),
-		Status:     &inProgress,
-		Title:      &title,
-		RawInput: map[string]any{
+		Status:     acptest.Patch(inProgress),
+		Title:      acptest.Patch(title),
+		RawInput: acptest.PatchRaw(map[string]any{
 			"description":   "Explore project structure",
 			"prompt":        "Explore the codebase thoroughly",
 			"subagent_type": "explore",
-		},
+		}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -253,14 +254,14 @@ func TestMapACPToolCallUpdate_CompletedWithRawInput(t *testing.T) {
 	title := "Explore project structure"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("call_function_bla436bgujiz_1"),
-		Status:     &completed,
-		Title:      &title,
-		RawInput: map[string]any{
+		Status:     acptest.Patch(completed),
+		Title:      acptest.Patch(title),
+		RawInput: acptest.PatchRaw(map[string]any{
 			"description":   "Explore project structure",
 			"prompt":        "Explore the codebase thoroughly",
 			"subagent_type": "explore",
-		},
-		RawOutput: map[string]any{"result": "project summary"},
+		}),
+		RawOutput: acptest.PatchRaw(map[string]any{"result": "project summary"}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -280,10 +281,10 @@ func TestMapACPToolCallUpdate_CompletedWithTitleNoOverride(t *testing.T) {
 	title := "cmd/server" // descriptive title, not a tool name
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-read-path"),
-		Status:     &completed,
-		Kind:       &readKind,
-		Title:      &title,
-		RawOutput:  map[string]any{"output": "directory listing"},
+		Status:     acptest.Patch(completed),
+		Kind:       acptest.Patch(readKind),
+		Title:      acptest.Patch(title),
+		RawOutput:  acptest.PatchRaw(map[string]any{"output": "directory listing"}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -300,9 +301,9 @@ func TestMapACPToolCallUpdate_InProgressWithTitleUpdate(t *testing.T) {
 	title := "read"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-read-1"),
-		Status:     &inProgress,
-		Kind:       &readKind,
-		Title:      &title,
+		Status:     acptest.Patch(inProgress),
+		Kind:       acptest.Patch(readKind),
+		Title:      acptest.Patch(title),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -317,9 +318,9 @@ func TestMapACPToolCallUpdate_InProgressWithDescriptiveTitle(t *testing.T) {
 	title := "Show all branches"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-bash-1"),
-		Status:     &inProgress,
-		Kind:       &executeKind,
-		Title:      &title,
+		Status:     acptest.Patch(inProgress),
+		Kind:       acptest.Patch(executeKind),
+		Title:      acptest.Patch(title),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -503,13 +504,13 @@ func TestMapACPToolCallUpdate_KimiCompleted(t *testing.T) {
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("read_file-1780647417975-1"),
-		Status:     &completed,
-		Kind:       nil,
-		Title:      nil,
-		Locations: []acp.ToolCallLocation{
+		Status:     acptest.Patch(completed),
+		Kind:       acp.Patch[acp.ToolKind]{},
+		Title:      acp.Patch[string]{},
+		Locations: acptest.Patch([]acp.ToolCallLocation{
 			{Path: "/home/user/project/README.md"},
-		},
-		RawOutput: map[string]any{"result": "file contents here"},
+		}),
+		RawOutput: acptest.PatchRaw(map[string]any{"result": "file contents here"}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -524,8 +525,8 @@ func TestMapACPToolCallUpdate_KimiCompletedWithContent(t *testing.T) {
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("glob-1780647418037-4"),
-		Status:     &completed,
-		Content: []acp.ToolCallContent{
+		Status:     acptest.Patch(completed),
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{
 				Content: &acp.ToolCallContentContent{
 					Content: acp.ContentBlock{
@@ -534,7 +535,7 @@ func TestMapACPToolCallUpdate_KimiCompletedWithContent(t *testing.T) {
 					Type: "content",
 				},
 			},
-		},
+		}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -548,8 +549,8 @@ func TestMapACPToolCallUpdate_KimiFailedWithContent(t *testing.T) {
 	failed := acp.ToolCallStatusFailed
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("read_file-1780647453119-9"),
-		Status:     &failed,
-		Content: []acp.ToolCallContent{
+		Status:     acptest.Patch(failed),
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{
 				Content: &acp.ToolCallContentContent{
 					Content: acp.ContentBlock{
@@ -558,7 +559,7 @@ func TestMapACPToolCallUpdate_KimiFailedWithContent(t *testing.T) {
 					Type: "content",
 				},
 			},
-		},
+		}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -573,9 +574,9 @@ func TestMapACPToolCallUpdate_RawOutputPreferredOverContent(t *testing.T) {
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tc-both"),
-		Status:     &completed,
-		RawOutput:  map[string]any{"result": "from rawOutput"},
-		Content: []acp.ToolCallContent{
+		Status:     acptest.Patch(completed),
+		RawOutput:  acptest.PatchRaw(map[string]any{"result": "from rawOutput"}),
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{
 				Content: &acp.ToolCallContentContent{
 					Content: acp.ContentBlock{
@@ -584,7 +585,7 @@ func TestMapACPToolCallUpdate_RawOutputPreferredOverContent(t *testing.T) {
 					Type: "content",
 				},
 			},
-		},
+		}),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 
@@ -1071,8 +1072,8 @@ func TestMapACPSessionUpdate_ToolCallUpdate_Completed(t *testing.T) {
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-1"),
-			Status:     &completed,
-			RawOutput:  map[string]any{"result": "done"},
+			Status:     acptest.Patch(completed),
+			RawOutput:  acptest.PatchRaw(map[string]any{"result": "done"}),
 		},
 	}
 
@@ -1097,8 +1098,8 @@ func TestMapACPSessionUpdate_ToolCallUpdate_ThinkCompleted(t *testing.T) {
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-think"),
-			Kind:       &thinkKind,
-			Status:     &completed,
+			Kind:       acptest.Patch(thinkKind),
+			Status:     acptest.Patch(completed),
 		},
 	}
 
@@ -1121,8 +1122,8 @@ func TestMapACPSessionUpdate_ToolCallUpdate_ThinkFailed(t *testing.T) {
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-think"),
-			Kind:       &thinkKind,
-			Status:     &failed,
+			Kind:       acptest.Patch(thinkKind),
+			Status:     acptest.Patch(failed),
 		},
 	}
 
@@ -1145,8 +1146,8 @@ func TestMapACPSessionUpdate_ToolCallUpdate_ThinkInProgress(t *testing.T) {
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-think"),
-			Kind:       &thinkKind,
-			Status:     &inProgress,
+			Kind:       acptest.Patch(thinkKind),
+			Status:     acptest.Patch(inProgress),
 		},
 	}
 
@@ -1168,8 +1169,8 @@ func TestMapACPSessionUpdate_ToolCallUpdate_NonThinkCompleted(t *testing.T) {
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-read"),
-			Kind:       &readKind,
-			Status:     &completed,
+			Kind:       acptest.Patch(readKind),
+			Status:     acptest.Patch(completed),
 		},
 	}
 
@@ -2080,9 +2081,9 @@ func TestMapACPToolCallUpdate_ExecuteKindFallbackToTitle(t *testing.T) {
 	status := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("exec-upd-1"),
-		Title:      &title,
-		Kind:       &kind,
-		Status:     &status,
+		Title:      acptest.Patch(title),
+		Kind:       acptest.Patch(kind),
+		Status:     acptest.Patch(status),
 	}
 	event := mapACPToolCallUpdate(tcu, "", nil)
 	require.NotNil(t, event.Tool)
@@ -2095,10 +2096,10 @@ func TestMapACPToolCallUpdate_ExecuteKindFallbackToTitle(t *testing.T) {
 func TestExtractInputFromContentUpdate_Terminal(t *testing.T) {
 	title := "npm test"
 	tcu := acp.SessionToolCallUpdate{
-		Title: &title,
-		Content: []acp.ToolCallContent{
+		Title: acptest.Patch(title),
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{Terminal: &acp.ToolCallContentTerminal{TerminalId: "term-1"}},
-		},
+		}),
 	}
 	input := extractInputFromContentUpdate(tcu)
 	assert.NotNil(t, input)
@@ -2108,13 +2109,13 @@ func TestExtractInputFromContentUpdate_Terminal(t *testing.T) {
 func TestExtractInputFromContentUpdate_Text(t *testing.T) {
 	textStr := "Running tests..."
 	tcu := acp.SessionToolCallUpdate{
-		Content: []acp.ToolCallContent{
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{
 				Content: &acp.ToolCallContentContent{
 					Content: acp.TextBlock(textStr),
 				},
 			},
-		},
+		}),
 	}
 	input := extractInputFromContentUpdate(tcu)
 	assert.NotNil(t, input)
@@ -2123,7 +2124,7 @@ func TestExtractInputFromContentUpdate_Text(t *testing.T) {
 
 func TestExtractInputFromContentUpdate_Empty(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
-		Content: []acp.ToolCallContent{},
+		Content: acptest.Patch([]acp.ToolCallContent{}),
 	}
 	input := extractInputFromContentUpdate(tcu)
 	assert.Nil(t, input)
@@ -2131,10 +2132,10 @@ func TestExtractInputFromContentUpdate_Empty(t *testing.T) {
 
 func TestExtractInputFromContentUpdate_NilTitle(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
-		Title: nil,
-		Content: []acp.ToolCallContent{
+		Title: acp.Patch[string]{},
+		Content: acptest.Patch([]acp.ToolCallContent{
 			{Terminal: &acp.ToolCallContentTerminal{TerminalId: "term-2"}},
-		},
+		}),
 	}
 	input := extractInputFromContentUpdate(tcu)
 	// Terminal without title → no command key
@@ -2279,7 +2280,7 @@ func TestExtractACPModelListFromResume_Nil(t *testing.T) {
 func TestIsACPPeerDisconnected_RequestErrorWithPeerDisconnect(t *testing.T) {
 	err := &acp.RequestError{
 		Code: -32603,
-		Data: map[string]any{"error": "peer disconnected during prompt"},
+		Data: acptest.Raw(map[string]any{"error": "peer disconnected during prompt"}),
 	}
 	assert.True(t, isACPPeerDisconnected(err))
 }
@@ -2287,7 +2288,7 @@ func TestIsACPPeerDisconnected_RequestErrorWithPeerDisconnect(t *testing.T) {
 func TestIsACPPeerDisconnected_RequestErrorBrokenPipe(t *testing.T) {
 	err := &acp.RequestError{
 		Code: -32603,
-		Data: map[string]any{"error": "broken pipe on write"},
+		Data: acptest.Raw(map[string]any{"error": "broken pipe on write"}),
 	}
 	assert.True(t, isACPPeerDisconnected(err))
 }
@@ -2295,7 +2296,7 @@ func TestIsACPPeerDisconnected_RequestErrorBrokenPipe(t *testing.T) {
 func TestIsACPPeerDisconnected_RequestErrorOtherCode(t *testing.T) {
 	err := &acp.RequestError{
 		Code: -32000,
-		Data: map[string]any{"error": "peer disconnected"},
+		Data: acptest.Raw(map[string]any{"error": "peer disconnected"}),
 	}
 	assert.False(t, isACPPeerDisconnected(err))
 }
@@ -2303,7 +2304,7 @@ func TestIsACPPeerDisconnected_RequestErrorOtherCode(t *testing.T) {
 func TestIsACPPeerDisconnected_RequestErrorNoPeerMsg(t *testing.T) {
 	err := &acp.RequestError{
 		Code: -32603,
-		Data: map[string]any{"error": "something else"},
+		Data: acptest.Raw(map[string]any{"error": "something else"}),
 	}
 	assert.False(t, isACPPeerDisconnected(err))
 }
@@ -2323,7 +2324,7 @@ func TestIsACPPeerDisconnected_NonPeerError(t *testing.T) {
 func TestIsUnknownConfigOption_RequestErrorWithDetails(t *testing.T) {
 	err := &acp.RequestError{
 		Code: -32603,
-		Data: map[string]any{"details": "Unknown config option: thinkingEffort"},
+		Data: acptest.Raw(map[string]any{"details": "Unknown config option: thinkingEffort"}),
 	}
 	assert.True(t, isUnknownConfigOption(err))
 }
@@ -2331,7 +2332,7 @@ func TestIsUnknownConfigOption_RequestErrorWithDetails(t *testing.T) {
 func TestIsUnknownConfigOption_RequestErrorNoDetails(t *testing.T) {
 	err := &acp.RequestError{
 		Code: -32603,
-		Data: map[string]any{"error": "peer disconnected before response"},
+		Data: acptest.Raw(map[string]any{"error": "peer disconnected before response"}),
 	}
 	assert.False(t, isUnknownConfigOption(err))
 }
@@ -2352,7 +2353,7 @@ func TestIsACPResourceNotFound_RequestError(t *testing.T) {
 	err := &acp.RequestError{
 		Code:    -32002,
 		Message: "Resource not found: abc-123",
-		Data:    map[string]any{"uri": "abc-123"},
+		Data:    acptest.Raw(map[string]any{"uri": "abc-123"}),
 	}
 	assert.True(t, IsACPResourceNotFound(err))
 }

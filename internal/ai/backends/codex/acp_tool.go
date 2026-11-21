@@ -100,7 +100,7 @@ func isCodexSubagentControlTitle(title string) bool {
 //   - `_meta.codex.collaboration` present (title "wait") → name stays "wait".
 //   - Otherwise fall back to the generic path (kind→canonical for read/execute).
 func ParseACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
-	if extractCodexSubagentMeta(tc.Meta) != "" || isCodexSubagentControlTitle(tc.Title) {
+	if extractCodexSubagentMeta(ai.MetaAny(tc.Meta)) != "" || isCodexSubagentControlTitle(tc.Title) {
 		tool := &ai.ToolCall{
 			Name: "Agent",
 			ID:   string(tc.ToolCallId),
@@ -109,7 +109,7 @@ func ParseACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
 		ai.ResolveACPToolInput(tc, tool, ai.ACPRemapsForBackend("codex"))
 		return tool
 	}
-	if tool := extractCodexCollaborationTool(tc.Meta); tool != "" {
+	if tool := extractCodexCollaborationTool(ai.MetaAny(tc.Meta)); tool != "" {
 		return &ai.ToolCall{
 			Name: tool,
 			ID:   string(tc.ToolCallId),
@@ -125,24 +125,22 @@ func ParseACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
 func ParseACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
 	tool := &ai.ToolCall{ID: string(tcu.ToolCallId)}
 
-	ai.MapToolCallStatus(tcu.Status, tool)
+	ai.MapToolCallStatus(tcu.Status.Ptr(), tool)
 
 	// Prefer meta-disambiguated names. When the completed "Complete subagent"
 	// update carries no _meta (some codex-acp versions only attach meta on the
 	// tool_call frame), fall back to the title prefix.
 	title := ""
-	if tcu.Title != nil {
-		title = *tcu.Title
-	}
+	title, _ = tcu.Title.Value()
 	switch {
-	case extractCodexSubagentMeta(tcu.Meta) != "" || isCodexSubagentControlTitle(title):
+	case extractCodexSubagentMeta(ai.PatchMetaAny(tcu.Meta)) != "" || isCodexSubagentControlTitle(title):
 		tool.Name = "Agent"
-	case extractCodexCollaborationTool(tcu.Meta) != "":
+	case extractCodexCollaborationTool(ai.PatchMetaAny(tcu.Meta)) != "":
 		tool.Name = "wait"
 	case !tool.Done && title != "":
 		kind := acp.ToolKindExecute
-		if tcu.Kind != nil {
-			kind = *tcu.Kind
+		if k, ok := tcu.Kind.Value(); ok {
+			kind = k
 		}
 		tool.Name = ai.ExtractToolName(title, kind, "codex", string(tcu.ToolCallId))
 	}

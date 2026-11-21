@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -44,11 +45,11 @@ func codebuddyTcuForBridge(name, status string, rawResp map[string]any) acp.Sess
 	st := acp.ToolCallStatus(status)
 	return acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("call_bridge"),
-		Status:     &st,
-		Meta: map[string]any{
+		Status:     acptest.Patch(st),
+		Meta: acptest.PatchMeta(map[string]any{
 			"codebuddy.ai/toolName":    name,
 			"codebuddy.ai/rawResponse": rawResp,
-		},
+		}),
 	}
 }
 

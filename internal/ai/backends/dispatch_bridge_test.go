@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/acptest"
 	_ "clawbench/internal/ai/backends/all"
 	"clawbench/internal/ai/backends/codebuddy"
 	"clawbench/internal/model"
@@ -23,10 +24,6 @@ func ocAgent(backend string) *model.Agent {
 	}
 }
 
-// ptrStr is a test helper for the *string fields of tool-call updates.
-func ptrStr(s string) *string { return &s }
-
-// cbCodebuddyAgent returns a CodeBuddy ACP agent for bridge unit tests.
 func cbCodebuddyAgent() *model.Agent {
 	return &model.Agent{
 		ID:        "codebuddy-bridge-test",
@@ -51,7 +48,7 @@ func TestMapACPSessionUpdate_MemberContentAttributed(t *testing.T) {
 	update := acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 			Content: acp.TextBlock("hello from alpha"),
-			Meta:    map[string]any{metaKeyMemberEvent: "probe-alpha"},
+			Meta:    acptest.Meta(map[string]any{metaKeyMemberEvent: "probe-alpha"}),
 		},
 	}
 	ai.MapACPSessionUpdateWithConnForTest(t.Context(), update, ch, conn, nil)
@@ -80,10 +77,10 @@ func TestMapACPSessionUpdate_MemberToolCallAttributed(t *testing.T) {
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: "call_tool",
 		Title:      "Bash",
-		Meta: map[string]any{
+		Meta: acptest.Meta(map[string]any{
 			metaKeyMemberEvent:      "probe-beta",
 			"codebuddy.ai/toolName": "Bash",
-		},
+		}),
 	}
 	ai.MapACPSessionUpdateWithConnForTest(t.Context(), acp.SessionUpdate{ToolCall: &tc}, ch, conn, nil)
 
@@ -166,11 +163,11 @@ func TestMapACPSessionUpdate_SpawnFrameGetsMemberColor(t *testing.T) {
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: "call_agent",
 		Title:      "Agent",
-		Meta: map[string]any{
+		Meta: acptest.Meta(map[string]any{
 			metaKeyMemberNameLocal:   "probe-alpha",
 			metaKeySubagentTypeLocal: "general-purpose",
 			"codebuddy.ai/toolName":  "Agent",
-		},
+		}),
 	}
 	ai.MapACPSessionUpdateWithConnForTest(t.Context(), acp.SessionUpdate{ToolCall: &tc}, ch, conn, nil)
 
@@ -196,14 +193,14 @@ func TestMapACPSessionUpdate_CodebuddyTaskCreate_BridgesPlanUpdate(t *testing.T)
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("call_map"),
-			Status:     &st,
-			Meta: map[string]any{
+			Status:     acptest.Patch(st),
+			Meta: acptest.PatchMeta(map[string]any{
 				"codebuddy.ai/toolName": "TaskCreate",
 				"codebuddy.ai/rawResponse": map[string]any{
 					"task":  map[string]any{"id": "1", "subject": "map-probe", "status": "pending"},
 					"todos": []any{map[string]any{"id": "1", "content": "map-probe", "status": "pending"}},
 				},
-			},
+			}),
 		},
 	}
 
@@ -249,14 +246,14 @@ func TestMapACPSessionUpdate_NonCodebuddy_NoBridge(t *testing.T) {
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("call_claude"),
-			Status:     &st,
-			Meta: map[string]any{
+			Status:     acptest.Patch(st),
+			Meta: acptest.PatchMeta(map[string]any{
 				"codebuddy.ai/toolName": "TaskCreate",
 				"codebuddy.ai/rawResponse": map[string]any{
 					"task":  map[string]any{"id": "1", "subject": "x"},
 					"todos": []any{map[string]any{"id": "1", "content": "x", "status": "pending"}},
 				},
-			},
+			}),
 		},
 	}
 	ai.MapACPSessionUpdateWithConnForTest(ctx, update, ch, conn, nil)
@@ -286,16 +283,16 @@ func TestMapACPSessionUpdate_OpenCodeTodoWrite_BridgesPlanUpdate(t *testing.T) {
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("call_map"),
-			Status:     &st,
-			Title:      ptrStr("3 todos"),
-			RawOutput: map[string]any{
+			Status:     acptest.Patch(st),
+			Title:      acptest.Patch("3 todos"),
+			RawOutput: acptest.PatchRaw(map[string]any{
 				"metadata": map[string]any{
 					"todos": ocTodos(
 						map[string]any{"content": "map-step-1", "priority": "high", "status": "completed"},
 						map[string]any{"content": "map-step-2", "priority": "high", "status": "in_progress"},
 					),
 				},
-			},
+			}),
 		},
 	}
 
@@ -345,15 +342,15 @@ func TestMapACPSessionUpdate_OpenCodeTodoWrite_WithDebouncer(t *testing.T) {
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("call_deb"),
-			Status:     &st,
-			Title:      ptrStr("3 todos"),
-			RawOutput: map[string]any{
+			Status:     acptest.Patch(st),
+			Title:      acptest.Patch("3 todos"),
+			RawOutput: acptest.PatchRaw(map[string]any{
 				"metadata": map[string]any{
 					"todos": ocTodos(
 						map[string]any{"content": "deb-step-1", "priority": "high", "status": "completed"},
 					),
 				},
-			},
+			}),
 		},
 	}
 	ai.MapACPSessionUpdateWithConnForTest(ctx, update, ch, conn, deb)
@@ -386,12 +383,12 @@ func TestMapACPSessionUpdate_MimoTodoWrite_BridgesPlanUpdate(t *testing.T) {
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("call_mimo"),
-			Status:     &st,
-			RawOutput: map[string]any{
+			Status:     acptest.Patch(st),
+			RawOutput: acptest.PatchRaw(map[string]any{
 				"metadata": map[string]any{
 					"todos": ocTodos(map[string]any{"content": "mimo-step", "status": "pending"}),
 				},
-			},
+			}),
 		},
 	}
 	ai.MapACPSessionUpdateWithConnForTest(ctx, update, ch, conn, nil)
@@ -423,12 +420,12 @@ func TestMapACPSessionUpdate_NonOpenCodeBackend_NoTodoBridge(t *testing.T) {
 	update := acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: acp.ToolCallId("call_claude"),
-			Status:     &st,
-			RawOutput: map[string]any{
+			Status:     acptest.Patch(st),
+			RawOutput: acptest.PatchRaw(map[string]any{
 				"metadata": map[string]any{
 					"todos": ocTodos(map[string]any{"content": "x", "status": "pending"}),
 				},
-			},
+			}),
 		},
 	}
 	ai.MapACPSessionUpdateWithConnForTest(ctx, update, ch, conn, nil)
@@ -453,7 +450,7 @@ func teamInfoUpdate(meta map[string]any) acp.SessionUpdate {
 	return acp.SessionUpdate{
 		SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
 			SessionUpdate: "session_info_update",
-			Meta:          meta,
+			Meta:          acptest.PatchMeta(meta),
 		},
 	}
 }
@@ -502,10 +499,10 @@ func TestParseACPToolCall_RoutesPiToPiParser(t *testing.T) {
 		ToolCallId: "call_dispatch_1",
 		Title:      "edit",
 		Kind:       acp.ToolKindEdit,
-		RawInput: map[string]any{
+		RawInput: acptest.Raw(map[string]any{
 			"path":  "f.txt",
 			"edits": []any{map[string]any{"oldText": "a", "newText": "b"}},
-		},
+		}),
 	})
 	m := mustParsePiACPInput(t, tc.Input)
 	if m["old_string"] != "a" || m["new_string"] != "b" {
@@ -521,10 +518,10 @@ func TestParseACPToolCall_NonPiBackendStaysGeneric(t *testing.T) {
 		ToolCallId: "call_dispatch_2",
 		Title:      "edit",
 		Kind:       acp.ToolKindEdit,
-		RawInput: map[string]any{
+		RawInput: acptest.Raw(map[string]any{
 			"path":  "f.txt",
 			"edits": []any{map[string]any{"oldText": "a", "newText": "b"}},
-		},
+		}),
 	})
 	if tc.Input == "" {
 		t.Fatal("generic parser produced no input")
@@ -540,11 +537,11 @@ func TestParseACPToolCallUpdate_RoutesPiToPiParser(t *testing.T) {
 	title := "edit"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "call_dispatch_3",
-		Title:      &title,
-		RawInput: map[string]any{
+		Title:      acptest.Patch(title),
+		RawInput: acptest.PatchRaw(map[string]any{
 			"path":  "f.txt",
 			"edits": []any{map[string]any{"oldText": "a", "newText": "b"}},
-		},
+		}),
 	}
 	tc := ai.ParseACPToolCallUpdateForTest("pi", tcu)
 	m := mustParsePiACPInput(t, tc.Input)
@@ -560,11 +557,11 @@ func TestParseACPToolCallUpdate_NonPiBackendStaysGeneric(t *testing.T) {
 	title := "edit"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "call_dispatch_4",
-		Title:      &title,
-		RawInput: map[string]any{
+		Title:      acptest.Patch(title),
+		RawInput: acptest.PatchRaw(map[string]any{
 			"path":  "f.txt",
 			"edits": []any{map[string]any{"oldText": "a", "newText": "b"}},
-		},
+		}),
 	}
 	tc := ai.ParseACPToolCallUpdateForTest("grok", tcu)
 	m := mustParsePiACPInput(t, tc.Input)

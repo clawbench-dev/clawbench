@@ -11,6 +11,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -297,7 +298,7 @@ func TestParseOpenClawToolCall(t *testing.T) {
 		ToolCallId: "call_abc",
 		Title:      "read: path: /a/b.go",
 		Kind:       acp.ToolKindRead,
-		RawInput:   map[string]any{"path": "/a/b.go"},
+		RawInput:   acptest.Raw(map[string]any{"path": "/a/b.go"}),
 	}
 	tool := parseOpenClawACPToolCall(tc)
 	require.NotNil(t, tool)
@@ -312,9 +313,9 @@ func TestParseOpenClawToolCallUpdate_Completed(t *testing.T) {
 	title := "exec: command: echo hi"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "call_abc",
-		Status:     &status,
-		Title:      &title,
-		RawInput:   map[string]any{"command": "echo hi"},
+		Status:     acptest.Patch(status),
+		Title:      acptest.Patch(title),
+		RawInput:   acptest.PatchRaw(map[string]any{"command": "echo hi"}),
 	}
 	tool := parseOpenClawACPToolCallUpdate(tcu)
 	require.NotNil(t, tool)
@@ -336,8 +337,8 @@ func TestParseOpenClawToolCallUpdate_DoesNotRenameOnCompletion(t *testing.T) {
 	title := "Reading the file now"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "call_abc",
-		Status:     &status,
-		Title:      &title,
+		Status:     acptest.Patch(status),
+		Title:      acptest.Patch(title),
 	}
 	tool := parseOpenClawACPToolCallUpdate(tcu)
 	require.NotNil(t, tool)

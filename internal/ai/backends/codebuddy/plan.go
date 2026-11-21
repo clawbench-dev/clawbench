@@ -123,15 +123,15 @@ func parseCodeBuddyTaskMetaTodos(meta map[string]any) ([]ai.PlanEntry, bool) {
 // The bridge only calls this for completed updates, so the title fallback
 // mirrors the parse function's non-done path (tool.Name set from _meta or title).
 func codebuddyToolCallNameFromUpdate(tcu acp.SessionToolCallUpdate) string {
-	if name := ai.ExtractMetaToolNameFlat(tcu.Meta); name != "" {
+	if name := ai.ExtractMetaToolNameFlat(ai.PatchMetaAny(tcu.Meta)); name != "" {
 		return name
 	}
-	if tcu.Title != nil && *tcu.Title != "" {
+	if title, ok := tcu.Title.Value(); ok && title != "" {
 		kind := acp.ToolKindExecute
-		if tcu.Kind != nil {
-			kind = *tcu.Kind
+		if k, ok := tcu.Kind.Value(); ok {
+			kind = k
 		}
-		return ai.ExtractToolName(*tcu.Title, kind, "codebuddy", string(tcu.ToolCallId))
+		return ai.ExtractToolName(title, kind, "codebuddy", string(tcu.ToolCallId))
 	}
 	return ""
 }
@@ -152,14 +152,14 @@ func codebuddyToolCallNameFromUpdate(tcu acp.SessionToolCallUpdate) string {
 //
 // Returns the number of plan_update events forwarded (0 or 1).
 func BridgePlanFromToolUpdate(conn *ai.ACPConn, ch chan<- ai.StreamEvent, tcu acp.SessionToolCallUpdate) int {
-	if tcu.Status == nil || *tcu.Status != acp.ToolCallStatusCompleted {
+	if status, ok := tcu.Status.Value(); !ok || status != acp.ToolCallStatusCompleted {
 		return 0
 	}
 	name := codebuddyToolCallNameFromUpdate(tcu)
 	if !codebuddyBridgedTaskTools[name] {
 		return 0
 	}
-	entries, ok := parseCodeBuddyTaskMetaTodos(tcu.Meta)
+	entries, ok := parseCodeBuddyTaskMetaTodos(ai.PatchMetaAny(tcu.Meta))
 	if !ok {
 		slog.Debug("codebuddy plan bridge: no todos snapshot in _meta", "tool", name, "tool_call_id", tcu.ToolCallId)
 		return 0

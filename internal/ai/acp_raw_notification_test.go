@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -27,21 +28,20 @@ func (c *recordingACPClient) SessionUpdate(_ context.Context, n acp.SessionNotif
 	return nil
 }
 
-// TestSDKMisclassifiesUnknownSessionUpdateVariant documents the exact gap the
-// raw notification bypass exists to close.
+// TestSDKRejectsUnknownSessionUpdateVariant documents the gap the raw
+// notification bypass exists to close.
 //
 // The ACP Go SDK's SessionUpdate union has no case for extension variants such
-// as `subagent_spawned`. Its UnmarshalJSON falls through to a set of
-// discriminator-only blocks, and SessionInfoUpdate's block matches on the mere
-// presence of `sessionUpdate` — so an unknown variant is NOT dropped, it is
-// silently re-typed as SessionInfoUpdate with:
-//   - SessionUpdate = the raw discriminator ("subagent_spawned"), and
-//   - every payload field (subagentSessionId / name / task) LOST.
+// as `subagent_spawned`. Up to v0.13.5 its UnmarshalJSON fell through to a set
+// of discriminator-only blocks and re-typed the frame as SessionInfoUpdate with
+// every payload field lost. Since v0.18 the decode rejects the frame outright
+// ("no matching variant for union"), so the typed callback never fires at all.
 //
-// The typed callback therefore fires, but with nothing usable. A known variant
-// in the same shape is classified correctly, so the difference is the
-// discriminator, not the transport.
-func TestSDKMisclassifiesUnknownSessionUpdateVariant(t *testing.T) {
+// Either way the typed path cannot see these frames: the stdout tee plus
+// DispatchRawNotification is the only path that does. A known variant in the
+// same shape is classified correctly, so the difference is the discriminator,
+// not the transport.
+func TestSDKRejectsUnknownSessionUpdateVariant(t *testing.T) {
 	clientReads, agentWrites := io.Pipe()
 
 	base := NewClawBenchACPClient()
@@ -61,24 +61,18 @@ func TestSDKMisclassifiesUnknownSessionUpdateVariant(t *testing.T) {
 		`"sessionId":"s1","update":{"sessionUpdate":"subagent_spawned",` +
 		`"subagentSessionId":"child-1","name":"probe-alpha","task":"do work"}}}`)
 	settle()
-	require.Len(t, client.got, 1, "the SDK still delivers the frame (it does not drop it)")
-	got := client.got[0].Update
-	require.NotNil(t, got.SessionInfoUpdate, "unknown variant is misclassified as SessionInfoUpdate")
-	assert.Equal(t, "subagent_spawned", got.SessionInfoUpdate.SessionUpdate,
-		"the discriminator string survives")
-	// The payload is gone: SessionInfoUpdate has no field for it, and the
-	// fallback block does not populate Meta.
-	assert.Empty(t, got.SessionInfoUpdate.Meta, "extension payload fields are lost")
+	require.Empty(t, client.got,
+		"the SDK rejects an unknown variant instead of delivering it to the typed callback")
 
 	// 2. Known variant: same transport, classified correctly.
 	write(`{"jsonrpc":"2.0","method":"session/update","params":{` +
 		`"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk",` +
 		`"content":{"type":"text","text":"hello"}}}}`)
 	settle()
-	require.Len(t, client.got, 2)
-	require.NotNil(t, client.got[1].Update.AgentMessageChunk)
-	assert.Nil(t, client.got[1].Update.SessionInfoUpdate)
-	assert.Equal(t, "hello", client.got[1].Update.AgentMessageChunk.Content.Text.Text)
+	require.Len(t, client.got, 1)
+	require.NotNil(t, client.got[0].Update.AgentMessageChunk)
+	assert.Nil(t, client.got[0].Update.SessionInfoUpdate)
+	assert.Equal(t, "hello", client.got[0].Update.AgentMessageChunk.Content.Text.Text)
 }
 
 // ---------------------------------------------------------------------------
@@ -163,24 +157,26 @@ func TestDispatchRawNotification_NoHandler(t *testing.T) {
 // sessionUpdateVariantMismatch must flag a variant the SDK parsed into the
 // WRONG known struct (its preserved discriminator differs from the struct's).
 func TestSessionUpdateVariantMismatch(t *testing.T) {
-	// tool_call_pending carries toolCallId+title, so the SDK parses it as
-	// ToolCall while keeping the original discriminator.
+	// The SDK now rejects a foreign discriminator at decode time; the guard is
+	// the backstop for any frame that still lands in a look-alike struct.
 	var u acp.SessionUpdate
-	require.NoError(t, json.Unmarshal([]byte(`{"sessionUpdate":"tool_call_pending","toolCallId":"x","title":"Bash"}`), &u))
-	require.NotNil(t, u.ToolCall)
-	assert.Equal(t, "tool_call_pending", u.ToolCall.SessionUpdate)
-	assert.True(t, sessionUpdateVariantMismatch(u), "misclassified variant must be flagged")
+	assert.Error(t, json.Unmarshal([]byte(`{"sessionUpdate":"tool_call_pending","toolCallId":"x","title":"Bash"}`), &u),
+		"a foreign discriminator must not decode into a known variant")
+
+	var misclassified acp.SessionUpdate
+	require.NoError(t, json.Unmarshal([]byte(`{"sessionUpdate":"tool_call","toolCallId":"x","title":"Bash"}`), &misclassified))
+	require.NotNil(t, misclassified.ToolCall)
+	misclassified.ToolCall.SessionUpdate = "tool_call_pending"
+	assert.True(t, sessionUpdateVariantMismatch(misclassified), "misclassified variant must be flagged")
 
 	// A genuine tool_call is not flagged.
 	var ok acp.SessionUpdate
 	require.NoError(t, json.Unmarshal([]byte(`{"sessionUpdate":"tool_call","toolCallId":"x","title":"Bash"}`), &ok))
 	assert.False(t, sessionUpdateVariantMismatch(ok))
 
-	// Unknown variant swallowed as SessionInfoUpdate is flagged too.
+	// An unknown variant no longer decodes at all.
 	var si acp.SessionUpdate
-	require.NoError(t, json.Unmarshal([]byte(`{"sessionUpdate":"model_update","model":"m"}`), &si))
-	require.NotNil(t, si.SessionInfoUpdate)
-	assert.True(t, sessionUpdateVariantMismatch(si))
+	assert.Error(t, json.Unmarshal([]byte(`{"sessionUpdate":"model_update","model":"m"}`), &si))
 }
 
 // Every known union member must be checked against its own discriminator: a
@@ -206,7 +202,7 @@ func TestSessionUpdateVariantMismatch_EveryUnionMember(t *testing.T) {
 		{"tool_call", "tool_call", "tool_call_pending", `"toolCallId":"x","title":"Bash"`},
 		{"tool_call_update", "tool_call_update", "tool_call_update_pending", `"toolCallId":"x","status":"completed"`},
 		{"plan", "plan", "plan_pending", `"entries":[]`},
-		{"plan_update", "plan_update", "plan_update_pending", `"plan":{}`},
+		{"plan_update", "plan_update", "plan_update_pending", `"plan":{"type":"items","planId":"p1","entries":[]}`},
 		{"plan_removed", "plan_removed", "plan_removed_pending", `"id":"p1"`},
 		{"available_commands_update", "available_commands_update", "available_commands_pending", `"availableCommands":[]`},
 		{"current_mode_update", "current_mode_update", "current_mode_pending", `"currentModeId":"code"`},
@@ -222,13 +218,14 @@ func TestSessionUpdateVariantMismatch_EveryUnionMember(t *testing.T) {
 			assert.False(t, sessionUpdateVariantMismatch(ok),
 				"a genuine %s must not be flagged", tc.name)
 
-			// A foreign discriminator over the same fields is flagged. Which
-			// struct the SDK's field-presence match picks is its own concern;
-			// what must hold is that the mismatch is detected.
+			// A foreign discriminator no longer lands in a look-alike struct:
+			// the SDK rejects it. If a future release starts decoding one
+			// again, the guard must flag it — that is what this branch pins.
 			var foreign acp.SessionUpdate
-			require.NoError(t, json.Unmarshal([]byte(`{"sessionUpdate":"`+tc.foreign+`",`+tc.fields+`}`), &foreign))
-			assert.True(t, sessionUpdateVariantMismatch(foreign),
-				"a %s frame must be flagged as misclassified", tc.foreign)
+			if err := json.Unmarshal([]byte(`{"sessionUpdate":"`+tc.foreign+`",`+tc.fields+`}`), &foreign); err == nil {
+				assert.True(t, sessionUpdateVariantMismatch(foreign),
+					"a %s frame that decoded must be flagged as misclassified", tc.foreign)
+			}
 		})
 	}
 
@@ -284,9 +281,13 @@ func TestSessionUpdate_MisclassifiedVariantIgnored(t *testing.T) {
 	ch := make(chan StreamEvent, 8)
 	c.RegisterSession("s1", ch)
 
-	// Simulate what the SDK delivers for tool_call_pending.
+	// Simulate what an older SDK delivered for tool_call_pending: a ToolCall
+	// that kept the foreign discriminator. The v0.20 SDK rejects the frame at
+	// decode time, so the shape is built by hand here.
 	var u acp.SessionUpdate
-	require.NoError(t, json.Unmarshal([]byte(`{"sessionUpdate":"tool_call_pending","toolCallId":"call_x","title":"Bash"}`), &u))
+	require.NoError(t, json.Unmarshal([]byte(`{"sessionUpdate":"tool_call","toolCallId":"call_x","title":"Bash"}`), &u))
+	require.NotNil(t, u.ToolCall)
+	u.ToolCall.SessionUpdate = "tool_call_pending"
 	n := acp.SessionNotification{SessionId: "s1", Update: u}
 	require.NoError(t, c.SessionUpdate(context.Background(), n))
 
@@ -377,7 +378,7 @@ func TestReplayEndMarker_SetOnlyOnEndDuringReplay(t *testing.T) {
 	start := acp.SessionNotification{
 		SessionId: "s1",
 		Update: acp.SessionUpdate{SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
-			Meta: map[string]any{metaKeyCodeBuddyHistoryReplay: "start"},
+			Meta: acptest.PatchMeta(map[string]any{metaKeyCodeBuddyHistoryReplay: "start"}),
 		}},
 	}
 	require.NoError(t, c.SessionUpdate(context.Background(), start))
@@ -387,7 +388,7 @@ func TestReplayEndMarker_SetOnlyOnEndDuringReplay(t *testing.T) {
 	end := acp.SessionNotification{
 		SessionId: "s1",
 		Update: acp.SessionUpdate{SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
-			Meta: map[string]any{metaKeyCodeBuddyHistoryReplay: "end"},
+			Meta: acptest.PatchMeta(map[string]any{metaKeyCodeBuddyHistoryReplay: "end"}),
 		}},
 	}
 	require.NoError(t, c.SessionUpdate(context.Background(), end))
@@ -411,7 +412,7 @@ func TestReplayEndMarker_IgnoredWhenNotReplaying(t *testing.T) {
 	require.NoError(t, c.SessionUpdate(context.Background(), acp.SessionNotification{
 		SessionId: "s1",
 		Update: acp.SessionUpdate{SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
-			Meta: map[string]any{metaKeyCodeBuddyHistoryReplay: "end"},
+			Meta: acptest.PatchMeta(map[string]any{metaKeyCodeBuddyHistoryReplay: "end"}),
 		}},
 	}))
 	assert.False(t, c.ReplayEndSeen(), "a live update must not set the replay marker")

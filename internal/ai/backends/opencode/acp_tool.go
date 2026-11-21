@@ -31,7 +31,7 @@ func ParseACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
 		ID: string(tcu.ToolCallId),
 	}
 
-	ai.MapToolCallStatus(tcu.Status, tool)
+	ai.MapToolCallStatus(tcu.Status.Ptr(), tool)
 	// OpenCode has no _meta — mapToolCallName uses title-based extraction only
 	ai.MapToolCallName(tcu, tool, "opencode")
 	ai.MapToolCallInput(tcu, tool, "opencode")

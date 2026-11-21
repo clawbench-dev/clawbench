@@ -15,6 +15,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -433,8 +434,8 @@ func TestClawBenchACPClient_RequestPermission_NoRoute_AutoCancel(t *testing.T) {
 		SessionId: acp.SessionId("sess-1"),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-1"),
-			Title:      &title,
-			Kind:       &[]acp.ToolKind{acp.ToolKindRead}[0],
+			Title:      acptest.Patch(title),
+			Kind:       acptest.Patch([]acp.ToolKind{acp.ToolKindRead}[0]),
 		},
 		Options: []acp.PermissionOption{
 			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
@@ -457,8 +458,8 @@ func TestClawBenchACPClient_RequestPermission_RespondApprove(t *testing.T) {
 		SessionId: acp.SessionId("sess-1"),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-1"),
-			Title:      &title,
-			Kind:       &kind,
+			Title:      acptest.Patch(title),
+			Kind:       acptest.Patch(kind),
 		},
 		Options: []acp.PermissionOption{
 			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
@@ -530,7 +531,7 @@ func TestClawBenchACPClient_RequestPermission_FallsBackToCachedToolInput(t *test
 				ToolCallId: acp.ToolCallId("tc-1"),
 				Title:      "Run git status",
 				Kind:       acp.ToolKindExecute,
-				RawInput:   map[string]any{"command": "git status"},
+				RawInput:   acptest.Raw(map[string]any{"command": "git status"}),
 			},
 		},
 	})
@@ -544,8 +545,8 @@ func TestClawBenchACPClient_RequestPermission_FallsBackToCachedToolInput(t *test
 		SessionId: acp.SessionId("sess-1"),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-1"),
-			Title:      &title,
-			Kind:       &kind,
+			Title:      acptest.Patch(title),
+			Kind:       acptest.Patch(kind),
 		},
 		Options: []acp.PermissionOption{
 			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
@@ -592,7 +593,7 @@ func TestClawBenchACPClient_RequestPermission_PrefersRequestRawInput(t *testing.
 				ToolCallId: acp.ToolCallId("tc-9"),
 				Title:      "stale",
 				Kind:       acp.ToolKindExecute,
-				RawInput:   map[string]any{"command": "stale-cmd"},
+				RawInput:   acptest.Raw(map[string]any{"command": "stale-cmd"}),
 			},
 		},
 	})
@@ -605,9 +606,9 @@ func TestClawBenchACPClient_RequestPermission_PrefersRequestRawInput(t *testing.
 		SessionId: acp.SessionId("sess-1"),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-9"),
-			Title:      &title,
-			Kind:       &kind,
-			RawInput:   map[string]any{"command": "fresh-cmd"},
+			Title:      acptest.Patch(title),
+			Kind:       acptest.Patch(kind),
+			RawInput:   acptest.PatchRaw(map[string]any{"command": "fresh-cmd"}),
 		},
 		Options: []acp.PermissionOption{
 			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
@@ -654,7 +655,7 @@ func TestClawBenchACPClient_ToolInputCache_NotClobberedByEmptyUpdate(t *testing.
 				ToolCallId: acp.ToolCallId("tc-3"),
 				Title:      "Run ls",
 				Kind:       acp.ToolKindExecute,
-				RawInput:   map[string]any{"command": "ls"},
+				RawInput:   acptest.Raw(map[string]any{"command": "ls"}),
 			},
 		},
 	})
@@ -667,7 +668,7 @@ func TestClawBenchACPClient_ToolInputCache_NotClobberedByEmptyUpdate(t *testing.
 		Update: acp.SessionUpdate{
 			ToolCallUpdate: &acp.SessionToolCallUpdate{
 				ToolCallId: acp.ToolCallId("tc-3"),
-				Status:     statusPtr(acp.ToolCallStatusInProgress),
+				Status:     acptest.Patch(acp.ToolCallStatusInProgress),
 			},
 		},
 	})
@@ -690,7 +691,7 @@ func TestClawBenchACPClient_RequestPermission_EmptyObjectRawInputUsesCache(t *te
 				ToolCallId: acp.ToolCallId("tc-empty"),
 				Title:      "Run git status",
 				Kind:       acp.ToolKindExecute,
-				RawInput:   map[string]any{"command": "git status"},
+				RawInput:   acptest.Raw(map[string]any{"command": "git status"}),
 			},
 		},
 	})
@@ -703,9 +704,9 @@ func TestClawBenchACPClient_RequestPermission_EmptyObjectRawInputUsesCache(t *te
 		SessionId: acp.SessionId("sess-1"),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-empty"),
-			Title:      &title,
-			Kind:       &kind,
-			RawInput:   map[string]any{}, // empty object — no usable detail
+			Title:      acptest.Patch(title),
+			Kind:       acptest.Patch(kind),
+			RawInput:   acptest.PatchRaw(map[string]any{}), // empty object — no usable detail
 		},
 		Options: []acp.PermissionOption{
 			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
@@ -750,10 +751,10 @@ func TestClawBenchACPClient_ToolInputCache_SkipsOversizedInput(t *testing.T) {
 				ToolCallId: acp.ToolCallId("tc-big"),
 				Title:      "Write",
 				Kind:       acp.ToolKindEdit,
-				RawInput: map[string]any{
+				RawInput: acptest.Raw(map[string]any{
 					"file_path": "/project/big.go",
 					"content":   strings.Repeat("x", maxCachedToolInputBytes+1),
-				},
+				}),
 			},
 		},
 	})
@@ -777,7 +778,7 @@ func TestClawBenchACPClient_ToolInputCache_ResetOnNewTurn(t *testing.T) {
 				ToolCallId: acp.ToolCallId("tc-old"),
 				Title:      "old",
 				Kind:       acp.ToolKindExecute,
-				RawInput:   map[string]any{"command": "old-cmd"},
+				RawInput:   acptest.Raw(map[string]any{"command": "old-cmd"}),
 			},
 		},
 	})
@@ -788,8 +789,6 @@ func TestClawBenchACPClient_ToolInputCache_ResetOnNewTurn(t *testing.T) {
 	assert.Empty(t, c.cachedToolInput("sess-1", "tc-old"),
 		"a new turn must not see the previous turn's cached tool input")
 }
-
-func statusPtr(s acp.ToolCallStatus) *acp.ToolCallStatus { return &s }
 
 // assertToolInputCommand parses a PermissionApproval card's Input (a JSON object
 // whose toolInput field is itself a JSON string) and asserts the wrapped
@@ -833,8 +832,8 @@ func TestClawBenchACPClient_RequestPermission_RespondCancel(t *testing.T) {
 		SessionId: acp.SessionId("sess-1"),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-2"),
-			Title:      &title,
-			Kind:       &kind,
+			Title:      acptest.Patch(title),
+			Kind:       acptest.Patch(kind),
 		},
 		Options: []acp.PermissionOption{
 			{Name: "Reject", Kind: acp.PermissionOptionKindRejectOnce, OptionId: "deny"},
@@ -881,8 +880,8 @@ func TestClawBenchACPClient_RequestPermission_ContextCancel(t *testing.T) {
 		SessionId: acp.SessionId("sess-1"),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-3"),
-			Title:      &title,
-			Kind:       &kind,
+			Title:      acptest.Patch(title),
+			Kind:       acptest.Patch(kind),
 		},
 		Options: []acp.PermissionOption{
 			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow"},
@@ -943,8 +942,8 @@ func TestClawBenchACPClient_UnregisterSession_KeepsPendingPermissions(t *testing
 		SessionId: acp.SessionId("sess-1"),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-clear"),
-			Title:      &title,
-			Kind:       &kind,
+			Title:      acptest.Patch(title),
+			Kind:       acptest.Patch(kind),
 		},
 		Options: []acp.PermissionOption{
 			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow"},
@@ -1229,7 +1228,7 @@ func TestClawBenchACPClient_ReadTextFile_RelativePathResolvedAgainstCwd(t *testi
 	c := NewClawBenchACPClient()
 	c.cwd = dir
 
-	line, limit := 2, 1
+	line, limit := int64(2), int64(1)
 	resp, err := c.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 		Path:  "notes.md",
 		Line:  &line,
@@ -1317,7 +1316,7 @@ func TestClawBenchACPClient_CreateTerminal_EchoCommand(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.NotNil(t, exitResp.ExitCode)
-	assert.Equal(t, 0, *exitResp.ExitCode)
+	assert.Equal(t, int64(0), *exitResp.ExitCode)
 
 	// Get output
 	outResp, err := c.TerminalOutput(context.Background(), acp.TerminalOutputRequest{
@@ -1327,7 +1326,7 @@ func TestClawBenchACPClient_CreateTerminal_EchoCommand(t *testing.T) {
 	assert.Contains(t, outResp.Output, "hello")
 	assert.NotNil(t, outResp.ExitStatus)
 	assert.NotNil(t, outResp.ExitStatus.ExitCode)
-	assert.Equal(t, 0, *outResp.ExitStatus.ExitCode)
+	assert.Equal(t, int64(0), *outResp.ExitStatus.ExitCode)
 }
 
 func TestClawBenchACPClient_CreateTerminal_FailingCommand(t *testing.T) {
@@ -1342,12 +1341,12 @@ func TestClawBenchACPClient_CreateTerminal_FailingCommand(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.NotNil(t, exitResp.ExitCode)
-	assert.Equal(t, 42, *exitResp.ExitCode)
+	assert.Equal(t, int64(42), *exitResp.ExitCode)
 }
 
 func TestClawBenchACPClient_CreateTerminal_OutputByteLimit(t *testing.T) {
 	c := NewClawBenchACPClient()
-	limit := 10
+	limit := int64(10)
 	resp, err := c.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
 		Command:         "echo abcdefghijklmnopqrstuvwxyz",
 		OutputByteLimit: &limit,
@@ -1362,7 +1361,7 @@ func TestClawBenchACPClient_CreateTerminal_OutputByteLimit(t *testing.T) {
 		TerminalId: resp.TerminalId,
 	})
 	assert.NoError(t, err)
-	assert.LessOrEqual(t, len(outResp.Output), limit)
+	assert.LessOrEqual(t, int64(len(outResp.Output)), limit)
 	assert.True(t, outResp.Truncated)
 }
 
@@ -1419,8 +1418,8 @@ func TestRequestPermission_AutoApprove(t *testing.T) {
 		SessionId: acp.SessionId(acpSessionID),
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: "tc-auto-1",
-			Title:      &title,
-			Kind:       &kind,
+			Title:      acptest.Patch(title),
+			Kind:       acptest.Patch(kind),
 		},
 		Options: []acp.PermissionOption{
 			{OptionId: acp.PermissionOptionId(allowOptID), Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce},
@@ -1477,8 +1476,8 @@ func TestRequestPermission_AutoApproveOff_Interactive(t *testing.T) {
 			SessionId: acp.SessionId(acpSessionID),
 			ToolCall: acp.ToolCallUpdate{
 				ToolCallId: "tc-interactive-1",
-				Title:      &title,
-				Kind:       &kind,
+				Title:      acptest.Patch(title),
+				Kind:       acptest.Patch(kind),
 			},
 			Options: []acp.PermissionOption{
 				{OptionId: "allow", Name: "Allow", Kind: acp.PermissionOptionKindAllowOnce},

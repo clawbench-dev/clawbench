@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"clawbench/internal/ai/acptest"
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,11 +14,11 @@ func TestParseCodeBuddyACPToolCall_WithCamelCaseRawInput(t *testing.T) {
 	// Verify that defaultMappings (filePath → file_path) are applied to RawInput.
 	// Note: codebuddy_acp remaps is {} — only defaultMappings apply.
 	tc := acp.SessionUpdateToolCall{
-		Meta:       map[string]any{"codebuddy.ai/toolName": "Edit"},
+		Meta:       acptest.Meta(map[string]any{"codebuddy.ai/toolName": "Edit"}),
 		ToolCallId: "cb-input-001",
 		Title:      "Edit file",
 		Kind:       acp.ToolKindEdit,
-		RawInput:   map[string]any{"filePath": "/tmp/a.go", "oldString": "foo", "newString": "bar"},
+		RawInput:   acptest.Raw(map[string]any{"filePath": "/tmp/a.go", "oldString": "foo", "newString": "bar"}),
 	}
 	result := ParseACPToolCall(tc)
 	assert.Equal(t, "Edit", result.Name)
@@ -37,7 +38,7 @@ func TestParseCodeBuddyACPToolCall_NilMeta(t *testing.T) {
 		ToolCallId: "cb-input-002",
 		Title:      "Read",
 		Kind:       acp.ToolKindRead,
-		RawInput:   map[string]any{"filePath": "/tmp/test.go"},
+		RawInput:   acptest.Raw(map[string]any{"filePath": "/tmp/test.go"}),
 	}
 	result := ParseACPToolCall(tc)
 	assert.Equal(t, "Read", result.Name)
@@ -54,9 +55,9 @@ func TestParseCodeBuddyACPToolCallUpdate_LowercaseNameUpdatedByTitle(t *testing.
 	kind := acp.ToolKindEdit
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "cb-lower-001",
-		Title:      &title,
-		Status:     &inProgress,
-		Kind:       &kind,
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(inProgress),
+		Kind:       acptest.Patch(kind),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.False(t, result.Done)
@@ -68,9 +69,9 @@ func TestParseCodeBuddyACPToolCallUpdate_CompletedWithCamelCaseInput(t *testing.
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "cb-update-001",
-		Status:     &completed,
-		RawInput:   map[string]any{"filePath": "/src/main.go", "oldString": "hello"},
-		RawOutput:  "edit applied",
+		Status:     acptest.Patch(completed),
+		RawInput:   acptest.PatchRaw(map[string]any{"filePath": "/src/main.go", "oldString": "hello"}),
+		RawOutput:  acptest.PatchRaw("edit applied"),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.True(t, result.Done)
@@ -88,11 +89,11 @@ func TestParseCodeBuddyACPToolCallUpdate_CompletedWithCamelCaseInput(t *testing.
 func TestParseCodeBuddyACPToolCall(t *testing.T) {
 	t.Run("meta flat key preferred", func(t *testing.T) {
 		tc := acp.SessionUpdateToolCall{
-			Meta:       map[string]any{"codebuddy.ai/toolName": "Bash"},
+			Meta:       acptest.Meta(map[string]any{"codebuddy.ai/toolName": "Bash"}),
 			ToolCallId: "019e95ac",
 			Title:      "Bash",
 			Kind:       acp.ToolKindOther,
-			RawInput:   map[string]any{},
+			RawInput:   acptest.Raw(map[string]any{}),
 		}
 		result := ParseACPToolCall(tc)
 		assert.Equal(t, "Bash", result.Name)
@@ -112,10 +113,10 @@ func TestParseCodeBuddyACPToolCall(t *testing.T) {
 func TestParseCodeBuddyACPToolCallUpdate_MetaFlatKey(t *testing.T) {
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
-		Meta:       map[string]any{"codebuddy.ai/toolName": "Edit"},
+		Meta:       acptest.PatchMeta(map[string]any{"codebuddy.ai/toolName": "Edit"}),
 		ToolCallId: "cb-001",
-		Status:     &completed,
-		RawOutput:  "edit applied",
+		Status:     acptest.Patch(completed),
+		RawOutput:  acptest.PatchRaw("edit applied"),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.True(t, result.Done)
@@ -128,9 +129,9 @@ func TestParseCodeBuddyACPToolCallUpdate_TitleFallbackWhenNotDone(t *testing.T) 
 	title := "Read file.go"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "cb-002",
-		Title:      &title,
-		Status:     &inProgress,
-		Kind:       (*acp.ToolKind)(nil),
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(inProgress),
+		Kind:       acp.Patch[acp.ToolKind]{},
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.False(t, result.Done)
@@ -144,9 +145,9 @@ func TestParseCodeBuddyACPToolCallUpdate_TitleFallbackWithKind(t *testing.T) {
 	kind := acp.ToolKindRead
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "cb-003",
-		Title:      &title,
-		Status:     &inProgress,
-		Kind:       &kind,
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(inProgress),
+		Kind:       acptest.Patch(kind),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.False(t, result.Done)
@@ -157,10 +158,10 @@ func TestParseCodeBuddyACPToolCallUpdate_MetaFlatKeyOverridesTitle(t *testing.T)
 	inProgress := acp.ToolCallStatusInProgress
 	title := "some title"
 	tcu := acp.SessionToolCallUpdate{
-		Meta:       map[string]any{"codebuddy.ai/toolName": "Bash"},
+		Meta:       acptest.PatchMeta(map[string]any{"codebuddy.ai/toolName": "Bash"}),
 		ToolCallId: "cb-004",
-		Title:      &title,
-		Status:     &inProgress,
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(inProgress),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.Equal(t, "Bash", result.Name)
@@ -170,9 +171,9 @@ func TestParseCodeBuddyACPToolCallUpdate_CompletedWithInput(t *testing.T) {
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "cb-005",
-		Status:     &completed,
-		RawInput:   map[string]any{"command": "ls -la"},
-		RawOutput:  "file1.txt\nfile2.txt",
+		Status:     acptest.Patch(completed),
+		RawInput:   acptest.PatchRaw(map[string]any{"command": "ls -la"}),
+		RawOutput:  acptest.PatchRaw("file1.txt\nfile2.txt"),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.True(t, result.Done)
@@ -183,8 +184,8 @@ func TestParseCodeBuddyACPToolCallUpdate_Failed(t *testing.T) {
 	failed := acp.ToolCallStatusFailed
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "cb-006",
-		Status:     &failed,
-		RawOutput:  "permission denied",
+		Status:     acptest.Patch(failed),
+		RawOutput:  acptest.PatchRaw("permission denied"),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.True(t, result.Done)
@@ -195,8 +196,8 @@ func TestParseCodeBuddyACPToolCallUpdate_EmptyTitleWhenDone(t *testing.T) {
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "cb-007",
-		Status:     &completed,
-		RawOutput:  "done",
+		Status:     acptest.Patch(completed),
+		RawOutput:  acptest.PatchRaw("done"),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.True(t, result.Done)

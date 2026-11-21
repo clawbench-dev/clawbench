@@ -28,7 +28,7 @@ type terminalSession struct {
 	output    bytes.Buffer
 	truncated bool
 	done      chan struct{} // closed when command exits
-	exitCode  *int
+	exitCode  *int64
 	signal    *string
 	mu        sync.Mutex
 }
@@ -146,7 +146,7 @@ func (c *ClawBenchACPClient) CreateTerminal(ctx context.Context, req acp.CreateT
 		if waitErr != nil {
 			var exitErr *exec.ExitError
 			if errors.As(waitErr, &exitErr) {
-				code := exitErr.ExitCode()
+				code := int64(exitErr.ExitCode())
 				ts.exitCode = &code
 			} else {
 				// Killed by signal or other error
@@ -154,16 +154,16 @@ func (c *ClawBenchACPClient) CreateTerminal(ctx context.Context, req acp.CreateT
 				ts.signal = &msg
 			}
 		} else {
-			code := 0
+			code := int64(0)
 			ts.exitCode = &code
 		}
 
 		// Apply output byte limit
 		if req.OutputByteLimit != nil && *req.OutputByteLimit > 0 {
 			limit := *req.OutputByteLimit
-			if ts.output.Len() > limit {
-				overflow := ts.output.Len() - limit
-				ts.output.Next(overflow)
+			if int64(ts.output.Len()) > limit {
+				overflow := int64(ts.output.Len()) - limit
+				ts.output.Next(int(overflow))
 				ts.truncated = true
 			}
 		}
@@ -173,13 +173,13 @@ func (c *ClawBenchACPClient) CreateTerminal(ctx context.Context, req acp.CreateT
 	// sends command=/bin/bash with the real work in args) otherwise logs a
 	// harmless-looking "command=/bin/bash" that hides what actually ran.
 	slog.Debug("acp: terminal created", "terminal_id", termID, "command", req.Command, "args", req.Args)
-	return acp.CreateTerminalResponse{TerminalId: termID}, nil
+	return acp.CreateTerminalResponse{TerminalId: acp.TerminalId(termID)}, nil
 }
 
 // KillTerminal kills a terminal session.
 func (c *ClawBenchACPClient) KillTerminal(_ context.Context, req acp.KillTerminalRequest) (acp.KillTerminalResponse, error) {
 	c.termMu.Lock()
-	ts, ok := c.terminals[req.TerminalId]
+	ts, ok := c.terminals[string(req.TerminalId)]
 	c.termMu.Unlock()
 	if !ok {
 		return acp.KillTerminalResponse{}, nil
@@ -191,7 +191,7 @@ func (c *ClawBenchACPClient) KillTerminal(_ context.Context, req acp.KillTermina
 // TerminalOutput returns terminal output and exit status.
 func (c *ClawBenchACPClient) TerminalOutput(_ context.Context, req acp.TerminalOutputRequest) (acp.TerminalOutputResponse, error) {
 	c.termMu.Lock()
-	ts, ok := c.terminals[req.TerminalId]
+	ts, ok := c.terminals[string(req.TerminalId)]
 	c.termMu.Unlock()
 	if !ok {
 		return acp.TerminalOutputResponse{}, fmt.Errorf("terminal %s not found", req.TerminalId)
@@ -224,10 +224,10 @@ func (c *ClawBenchACPClient) TerminalOutput(_ context.Context, req acp.TerminalO
 // ReleaseTerminal releases terminal resources.
 func (c *ClawBenchACPClient) ReleaseTerminal(_ context.Context, req acp.ReleaseTerminalRequest) (acp.ReleaseTerminalResponse, error) {
 	c.termMu.Lock()
-	ts, ok := c.terminals[req.TerminalId]
+	ts, ok := c.terminals[string(req.TerminalId)]
 	if ok {
 		ts.cancel() // ensure command context is cancelled
-		delete(c.terminals, req.TerminalId)
+		delete(c.terminals, string(req.TerminalId))
 	}
 	c.termMu.Unlock()
 	return acp.ReleaseTerminalResponse{}, nil
@@ -236,7 +236,7 @@ func (c *ClawBenchACPClient) ReleaseTerminal(_ context.Context, req acp.ReleaseT
 // WaitForTerminalExit waits for terminal command to exit.
 func (c *ClawBenchACPClient) WaitForTerminalExit(_ context.Context, req acp.WaitForTerminalExitRequest) (acp.WaitForTerminalExitResponse, error) {
 	c.termMu.Lock()
-	ts, ok := c.terminals[req.TerminalId]
+	ts, ok := c.terminals[string(req.TerminalId)]
 	c.termMu.Unlock()
 	if !ok {
 		return acp.WaitForTerminalExitResponse{}, fmt.Errorf("terminal %s not found", req.TerminalId)

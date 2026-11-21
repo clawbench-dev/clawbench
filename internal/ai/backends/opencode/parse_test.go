@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"clawbench/internal/ai/acptest"
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,7 +15,7 @@ func TestParseOpenCodeACPToolCall_EmptyRawInput(t *testing.T) {
 		ToolCallId: "oc-empty-001",
 		Title:      "bash",
 		Kind:       acp.ToolKindExecute,
-		RawInput:   map[string]any{},
+		RawInput:   acptest.Raw(map[string]any{}),
 	}
 	result := ParseACPToolCall(tc)
 	assert.Equal(t, "Bash", result.Name)
@@ -38,7 +39,7 @@ func TestParseOpenCodeACPToolCall_AlreadySnakeCaseInput(t *testing.T) {
 		ToolCallId: "oc-snake-001",
 		Title:      "edit",
 		Kind:       acp.ToolKindEdit,
-		RawInput:   map[string]any{"file_path": "/src/main.go", "old_string": "foo", "new_string": "bar"},
+		RawInput:   acptest.Raw(map[string]any{"file_path": "/src/main.go", "old_string": "foo", "new_string": "bar"}),
 	}
 	result := ParseACPToolCall(tc)
 	assert.Equal(t, "Edit", result.Name)
@@ -58,7 +59,7 @@ func TestParseOpenCodeACPToolCall(t *testing.T) {
 			ToolCallId: "call_00_xxx",
 			Title:      "read",
 			Kind:       acp.ToolKindRead,
-			RawInput:   map[string]any{"filePath": "/home/user/file.go"},
+			RawInput:   acptest.Raw(map[string]any{"filePath": "/home/user/file.go"}),
 		}
 		result := ParseACPToolCall(tc)
 		assert.Equal(t, "Read", result.Name)
@@ -75,9 +76,9 @@ func TestParseOpenCodeACPToolCallUpdate_InProgressWithInput(t *testing.T) {
 	title := "read"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "oc-001",
-		Title:      &title,
-		Status:     &inProgress,
-		RawInput:   map[string]any{"filePath": "/tmp/test.go"},
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(inProgress),
+		RawInput:   acptest.PatchRaw(map[string]any{"filePath": "/tmp/test.go"}),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.False(t, result.Done)
@@ -93,10 +94,10 @@ func TestParseOpenCodeACPToolCallUpdate_CompletedWithOutput(t *testing.T) {
 	title := "bash"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "oc-002",
-		Title:      &title,
-		Status:     &completed,
-		RawInput:   map[string]any{"command": "go test ./..."},
-		RawOutput:  "ok",
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(completed),
+		RawInput:   acptest.PatchRaw(map[string]any{"command": "go test ./..."}),
+		RawOutput:  acptest.PatchRaw("ok"),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.True(t, result.Done)
@@ -109,8 +110,8 @@ func TestParseOpenCodeACPToolCallUpdate_Failed(t *testing.T) {
 	failed := acp.ToolCallStatusFailed
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "oc-003",
-		Status:     &failed,
-		RawOutput:  "exit code 1",
+		Status:     acptest.Patch(failed),
+		RawOutput:  acptest.PatchRaw("exit code 1"),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.True(t, result.Done)
@@ -121,7 +122,7 @@ func TestParseOpenCodeACPToolCallUpdate_NoTitleNotDone(t *testing.T) {
 	inProgress := acp.ToolCallStatusInProgress
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "oc-004",
-		Status:     &inProgress,
+		Status:     acptest.Patch(inProgress),
 	}
 	result := ParseACPToolCallUpdate(tcu)
 	assert.False(t, result.Done)

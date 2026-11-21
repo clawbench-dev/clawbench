@@ -3,6 +3,7 @@ package claude
 import (
 	"testing"
 
+	"clawbench/internal/ai/acptest"
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 )
@@ -10,11 +11,11 @@ import (
 func TestParseClaudeACPToolCall(t *testing.T) {
 	t.Run("meta.claudeCode.toolName preferred", func(t *testing.T) {
 		tc := acp.SessionUpdateToolCall{
-			Meta:       map[string]any{"claudeCode": map[string]any{"toolName": "Edit"}},
+			Meta:       acptest.Meta(map[string]any{"claudeCode": map[string]any{"toolName": "Edit"}}),
 			ToolCallId: "call_001",
 			Title:      "Edit file",
 			Kind:       acp.ToolKindEdit,
-			RawInput:   map[string]any{"file_path": "/tmp/a.txt", "old_string": "foo", "new_string": "bar"},
+			RawInput:   acptest.Raw(map[string]any{"file_path": "/tmp/a.txt", "old_string": "foo", "new_string": "bar"}),
 		}
 		result := ParseACPToolCall(tc)
 		assert.Equal(t, "Edit", result.Name)
@@ -66,11 +67,11 @@ func TestParseClaudeACPToolCallUpdate(t *testing.T) {
 	t.Run("completed with meta toolName", func(t *testing.T) {
 		title := "Bash"
 		tcu := acp.SessionToolCallUpdate{
-			Meta:       map[string]any{"claudeCode": map[string]any{"toolName": "Bash"}},
+			Meta:       acptest.PatchMeta(map[string]any{"claudeCode": map[string]any{"toolName": "Bash"}}),
 			ToolCallId: "call_001",
-			Title:      &title,
-			Status:     &completed,
-			RawOutput:  "command output",
+			Title:      acptest.Patch(title),
+			Status:     acptest.Patch(completed),
+			RawOutput:  acptest.PatchRaw("command output"),
 		}
 		result := ParseACPToolCallUpdate(tcu)
 		assert.True(t, result.Done)
@@ -82,8 +83,8 @@ func TestParseClaudeACPToolCallUpdate(t *testing.T) {
 	t.Run("failed", func(t *testing.T) {
 		tcu := acp.SessionToolCallUpdate{
 			ToolCallId: "call_002",
-			Status:     &failed,
-			RawOutput:  "error message",
+			Status:     acptest.Patch(failed),
+			RawOutput:  acptest.PatchRaw("error message"),
 		}
 		result := ParseACPToolCallUpdate(tcu)
 		assert.True(t, result.Done)
@@ -94,9 +95,9 @@ func TestParseClaudeACPToolCallUpdate(t *testing.T) {
 		title := "Read"
 		tcu := acp.SessionToolCallUpdate{
 			ToolCallId: "call_003",
-			Title:      &title,
-			Status:     &inProgress,
-			RawInput:   map[string]any{"file_path": "/tmp/test.go"},
+			Title:      acptest.Patch(title),
+			Status:     acptest.Patch(inProgress),
+			RawInput:   acptest.PatchRaw(map[string]any{"file_path": "/tmp/test.go"}),
 		}
 		result := ParseACPToolCallUpdate(tcu)
 		assert.False(t, result.Done)

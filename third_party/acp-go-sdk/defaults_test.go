@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -126,4 +127,62 @@ func TestInitializeResponse_AgentCapabilities_Defaults(t *testing.T) {
 			t.Fatalf("unexpected agentCapabilities defaults: %+v", resp.AgentCapabilities)
 		}
 	})
+}
+
+func TestAgentCapabilities_UnmarshalJSON_ReusedValueReadsAbsentPropertiesAsDefaults(t *testing.T) {
+	t.Parallel()
+	var caps AgentCapabilities
+	for _, in := range []string{`{"loadSession":true,"sessionCapabilities":{"list":{}}}`, `{}`} {
+		if err := json.Unmarshal([]byte(in), &caps); err != nil {
+			t.Fatalf("unmarshal %s: %v", in, err)
+		}
+	}
+	if caps.LoadSession || caps.SessionCapabilities.List != nil {
+		t.Fatalf("a reused value decoded from {} has loadSession %v and session list capability %+v, want the defaults false and none", caps.LoadSession, caps.SessionCapabilities.List)
+	}
+}
+
+func TestInitializeResponse_UnmarshalJSON_TypeErrorNamesStructAndProperty(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		in        string
+		wantField string
+	}{
+		{"property without a default", `{"protocolVersion":"one"}`, "protocolVersion"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var resp InitializeResponse
+			err := json.Unmarshal([]byte(tt.in), &resp)
+			var typeErr *json.UnmarshalTypeError
+			if !errors.As(err, &typeErr) {
+				t.Fatalf("unmarshal error = %v, want a *json.UnmarshalTypeError", err)
+			}
+			if typeErr.Struct != "InitializeResponse" || typeErr.Field != tt.wantField {
+				t.Fatalf("error names %s.%s, want InitializeResponse.%s (error: %v)", typeErr.Struct, typeErr.Field, tt.wantField, err)
+			}
+		})
+	}
+}
+
+// Schema 1.17.0 marks agentCapabilities and loadSession with
+// x-deserialize-default-on-error, so a malformed value reads as the default
+// instead of failing the response.
+func TestInitializeResponse_UnmarshalJSON_MalformedCapabilitiesReadAsDefaults(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		`{"protocolVersion":1,"agentCapabilities":5}`,
+		`{"protocolVersion":1,"agentCapabilities":{"loadSession":"yes"}}`,
+	} {
+		var resp InitializeResponse
+		if err := json.Unmarshal([]byte(in), &resp); err != nil {
+			t.Fatalf("unmarshal %s: %v, want the default capabilities", in, err)
+		}
+		if resp.ProtocolVersion != 1 || resp.AgentCapabilities.LoadSession {
+			t.Fatalf("unmarshal %s = %+v, want protocol 1 and loadSession false", in, resp)
+		}
+	}
 }

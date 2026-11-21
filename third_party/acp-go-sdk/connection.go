@@ -31,8 +31,53 @@ type anyMessage struct {
 }
 
 type queuedNotification struct {
-	seq uint64
-	msg *anyMessage
+	seq     uint64
+	arrival uint64
+	msg     *anyMessage
+}
+
+// handlingNotification is the ctx value that processNotifications gives each
+// notification handler. arrival is the notification's place among the
+// messages that receive dispatched (see Connection.inboundMessages).
+type handlingNotification struct {
+	conn    *Connection
+	seq     uint64
+	arrival uint64
+}
+
+type handlingNotificationKey struct{}
+
+// handlingRequest is the ctx value that receive gives each handler of a
+// request from the peer. arrival is the request's place among the messages
+// that receive dispatched (see Connection.inboundMessages).
+type handlingRequest struct {
+	conn    *Connection
+	arrival uint64
+}
+
+type handlingRequestKey struct{}
+
+// notificationSeq returns the sequence number of the notification from c
+// whose handler runs with ctx.
+func (c *Connection) notificationSeq(ctx context.Context) (uint64, bool) {
+	h, ok := ctx.Value(handlingNotificationKey{}).(handlingNotification)
+	if !ok || h.conn != c {
+		return 0, false
+	}
+	return h.seq, true
+}
+
+// messageArrival returns the arrival number of the request or notification
+// from c whose handler runs with ctx. A message with a greater number arrived
+// after it.
+func (c *Connection) messageArrival(ctx context.Context) (uint64, bool) {
+	if h, ok := ctx.Value(handlingRequestKey{}).(handlingRequest); ok && h.conn == c {
+		return h.arrival, true
+	}
+	if h, ok := ctx.Value(handlingNotificationKey{}).(handlingNotification); ok && h.conn == c {
+		return h.arrival, true
+	}
+	return 0, false
 }
 
 type responseEnvelope struct {
@@ -61,6 +106,8 @@ type Connection struct {
 	nextID               atomic.Uint64
 	pending              map[string]*pendingResponse
 	inflight             map[string]context.CancelCauseFunc
+	inboundMessages      uint64              // requests and queued notifications that receive dispatched; only receive touches it
+	inflightArrivals     map[uint64]struct{} // arrival numbers of the requests in inflight
 	pendingCancelRequest []string
 	cancelRequestSignal  chan struct{}
 
@@ -77,7 +124,10 @@ type Connection struct {
 	inboundCtx    context.Context
 	inboundCancel context.CancelCauseFunc
 
-	logger *slog.Logger
+	// logger is atomic because SetLogger may be called after NewConnection has
+	// already spawned the receive/processNotifications goroutines that read it
+	// via loggerOrDefault.
+	logger atomic.Pointer[slog.Logger]
 
 	notifyMu sync.Mutex
 	// notifyCond coordinates response-scoped waits for sequential notification processing.
@@ -85,6 +135,10 @@ type Connection struct {
 	// invariant: completedNotificationSeq <= lastEnqueuedNotificationSeq.
 	lastEnqueuedNotificationSeq uint64
 	completedNotificationSeq    uint64
+	// peerWaits counts, per notification sequence number, the requests that
+	// were made with the ctx of that notification's running handler and still
+	// wait for the peer's response.
+	peerWaits map[uint64]int
 
 	// notificationQueue serializes notification processing to maintain order.
 	// It is bounded to keep memory usage predictable.
@@ -100,6 +154,8 @@ func NewConnection(handler MethodHandler, peerInput io.Writer, peerOutput io.Rea
 		handler:             handler,
 		pending:             make(map[string]*pendingResponse),
 		inflight:            make(map[string]context.CancelCauseFunc),
+		inflightArrivals:    make(map[uint64]struct{}),
+		peerWaits:           make(map[uint64]int),
 		cancelRequestSignal: make(chan struct{}, 1),
 		ctx:                 ctx,
 		cancel:              cancel,
@@ -122,11 +178,11 @@ func NewConnection(handler MethodHandler, peerInput io.Writer, peerOutput io.Rea
 
 // SetLogger installs a logger used for internal connection diagnostics.
 // If unset, logs are written via the default logger.
-func (c *Connection) SetLogger(l *slog.Logger) { c.logger = l }
+func (c *Connection) SetLogger(l *slog.Logger) { c.logger.Store(l) }
 
 func (c *Connection) loggerOrDefault() *slog.Logger {
-	if c.logger != nil {
-		return c.logger
+	if l := c.logger.Load(); l != nil {
+		return l
 	}
 	return slog.Default()
 }
@@ -397,39 +453,68 @@ func (c *Connection) receive() {
 			c.handleResponse(&msg)
 		case msg.Method != "":
 			if msg.ID != nil {
+				// Requests observe the notification queue as it stood when they arrived.
+				// Notifications already accepted onto the queue must finish before the
+				// handler starts, while later notifications must not delay the request.
+				// The handler also starts while the running notification handler waits
+				// for the peer, because the peer can need this answer first.
+				c.notifyMu.Lock()
+				watermark := c.lastEnqueuedNotificationSeq
+				c.notifyMu.Unlock()
+
 				idKey, err := canonicalJSONRPCIDKey(*msg.ID)
 				if err != nil {
 					c.loggerOrDefault().Error("failed to canonicalize inbound request id", "err", err, "id", string(*msg.ID))
 					idKey = string(*msg.ID)
 				}
 				reqCtx, cancel := context.WithCancelCause(c.ctx)
+				c.inboundMessages++
+				arrival := c.inboundMessages
+				reqCtx = context.WithValue(reqCtx, handlingRequestKey{}, handlingRequest{conn: c, arrival: arrival})
 
 				c.mu.Lock()
 				c.inflight[idKey] = cancel
+				c.inflightArrivals[arrival] = struct{}{}
 				c.mu.Unlock()
 
 				m := msg
-				go func(m *anyMessage, idKey string, reqCtx context.Context, cancel context.CancelCauseFunc) {
+				go func(m *anyMessage, idKey string, reqCtx context.Context, cancel context.CancelCauseFunc, watermark uint64) {
 					defer func() {
 						c.mu.Lock()
 						delete(c.inflight, idKey)
+						delete(c.inflightArrivals, arrival)
 						c.mu.Unlock()
 
 						cancel(nil)
 					}()
+					if err := c.waitInboundBarrier(reqCtx, watermark); err != nil {
+						select {
+						case <-c.Done():
+							// Preserve the existing disconnect contract: start accepted request
+							// handlers with a canceled context so they can run cleanup even when
+							// an earlier notification is still draining. The peer can no longer
+							// observe notification/request ordering after disconnect.
+							c.handleInbound(reqCtx, m)
+							return
+						default:
+						}
+						c.sendInboundRequestError(m, toReqErr(err))
+						return
+					}
 					c.handleInbound(reqCtx, m)
-				}(&m, idKey, reqCtx, cancel)
+				}(&m, idKey, reqCtx, cancel, watermark)
 				continue
 			}
 
 			// Queue the notification for sequential processing. The sequence number marks
 			// the response-scoped barrier boundary for requests that observe later responses.
 			m := msg
+			c.inboundMessages++
 			c.notifyMu.Lock()
 			c.lastEnqueuedNotificationSeq++
 			seq := c.lastEnqueuedNotificationSeq
 			select {
-			case c.notificationQueue <- queuedNotification{seq: seq, msg: &m}:
+			case c.notificationQueue <- queuedNotification{seq: seq, arrival: c.inboundMessages, msg: &m}:
 				c.notifyMu.Unlock()
 			default:
 				if c.lastEnqueuedNotificationSeq != seq {
@@ -494,7 +579,8 @@ func (c *Connection) shutdownReceive(cause error) {
 // It terminates when notificationQueue is closed (e.g. on disconnect in receive()).
 func (c *Connection) processNotifications() {
 	for queued := range c.notificationQueue {
-		c.handleInbound(c.inboundCtx, queued.msg)
+		handlerCtx := context.WithValue(c.inboundCtx, handlingNotificationKey{}, handlingNotification{conn: c, seq: queued.seq, arrival: queued.arrival})
+		c.handleInbound(handlerCtx, queued.msg)
 
 		c.notifyMu.Lock()
 		expectedSeq := c.completedNotificationSeq + 1
@@ -584,8 +670,15 @@ func (c *Connection) handleInbound(ctx context.Context, req *anyMessage) {
 	if req.ID == nil {
 		// Notification: no response is sent; log handler errors to surface decode failures.
 		if err != nil {
-			// Per ACP, unknown extension notifications should be ignored.
-			if err.Code == -32601 && strings.HasPrefix(req.Method, "_") {
+			if err.Code == -32601 {
+				// Per ACP, unknown extension notifications should be ignored.
+				if strings.HasPrefix(req.Method, "_") {
+					return
+				}
+				// A notification needs no answer, so one that this side does
+				// not handle, such as an optional method that the Client or
+				// Agent does not implement, is not a failure.
+				c.loggerOrDefault().Debug("ignored unhandled notification", "method", req.Method, "err", err)
 				return
 			}
 			c.loggerOrDefault().Error("failed to handle notification", "method", req.Method, "err", err)
@@ -593,7 +686,7 @@ func (c *Connection) handleInbound(ctx context.Context, req *anyMessage) {
 		return
 	}
 	if err != nil {
-		res.Error = err
+		res.Error = c.encodableError(req.Method, err)
 	} else {
 		// marshal result
 		b, mErr := json.Marshal(result)
@@ -604,6 +697,17 @@ func (c *Connection) handleInbound(ctx context.Context, req *anyMessage) {
 		}
 	}
 	_ = c.sendMessage(res)
+}
+
+func (c *Connection) sendInboundRequestError(req *anyMessage, err *RequestError) {
+	if req.ID == nil {
+		return
+	}
+	_ = c.sendMessage(anyMessage{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Error:   err,
+	})
 }
 
 func (c *Connection) sendMessage(msg anyMessage) error {
@@ -622,6 +726,17 @@ func (c *Connection) sendMessage(msg anyMessage) error {
 
 // SendRequest sends a JSON-RPC request and returns a typed result.
 // For methods that do not return a result, use SendRequestNoResult instead.
+//
+// SendRequest returns after the handlers of all notifications that arrived
+// before the response have returned. A notification handler that makes a
+// request on the same connection must pass its own ctx, or a ctx derived from
+// it. While the handler runs, such a request waits only for the notifications
+// before the handler's own. With any other ctx, such as context.Background(),
+// the request waits for the handler that made it, so it returns only when ctx
+// ends or the peer disconnects. The shorter wait applies to every goroutine that
+// uses the handler's ctx while the handler runs: a goroutine that the handler
+// starts and that needs the full wait must get a ctx that does not derive from
+// the handler's ctx.
 func SendRequest[T any](c *Connection, ctx context.Context, method string, params any) (T, error) {
 	var result T
 
@@ -640,7 +755,9 @@ func SendRequest[T any](c *Connection, ctx context.Context, method string, param
 		return result, NewInternalError(map[string]any{"error": err.Error()})
 	}
 
+	donePeerWait := c.startPeerWait(ctx)
 	resp, err := c.waitForResponse(ctx, pr, idKey)
+	donePeerWait()
 	if err != nil {
 		return result, err
 	}
@@ -771,6 +888,15 @@ func (c *Connection) waitForResponse(ctx context.Context, pr *pendingResponse, i
 }
 
 func (c *Connection) waitNotificationsUpTo(ctx context.Context, target uint64) error {
+	return c.waitNotifications(ctx, target, false)
+}
+
+// waitNotifications waits until the handlers of the notifications up to
+// target have returned. With stopAtPeerWait, it also returns while the running
+// notification handler waits for a response from the peer: the request from
+// the peer that waits here can be the one that the peer must get an answer to
+// before it answers the handler.
+func (c *Connection) waitNotifications(ctx context.Context, target uint64, stopAtPeerWait bool) error {
 	if target == 0 {
 		return nil
 	}
@@ -784,6 +910,12 @@ func (c *Connection) waitNotificationsUpTo(ctx context.Context, target uint64) e
 	if target > c.lastEnqueuedNotificationSeq {
 		panic("response watermark exceeded last enqueued notification sequence")
 	}
+	// While the handler of notification h.seq runs, it can be the caller, on the
+	// goroutine that completes h.seq. A wait for h.seq or a later notification
+	// would then never end. After h.seq completes, its ctx gets the full wait.
+	if h, ok := ctx.Value(handlingNotificationKey{}).(handlingNotification); ok && h.conn == c && c.completedNotificationSeq < h.seq {
+		target = min(target, h.seq-1)
+	}
 
 	go func() {
 		select {
@@ -796,7 +928,7 @@ func (c *Connection) waitNotificationsUpTo(ctx context.Context, target uint64) e
 		c.notifyMu.Unlock()
 	}()
 
-	for c.completedNotificationSeq < target {
+	for c.completedNotificationSeq < target && !(stopAtPeerWait && c.peerWaits[c.completedNotificationSeq+1] > 0) {
 		if c.completedNotificationSeq > c.lastEnqueuedNotificationSeq {
 			panic("completed notification sequence exceeded enqueued notification sequence while waiting")
 		}
@@ -827,6 +959,62 @@ func (c *Connection) waitNotificationsUpTo(ctx context.Context, target uint64) e
 		c.notifyCond.Wait()
 	}
 	return nil
+}
+
+// waitInboundBarrier waits until the handler of a request from the peer with
+// watermark can start. A $/cancel_request or a disconnect can end ctx just as
+// the barrier clears. It then returns the cancel error, as if ctx had ended the
+// wait.
+func (c *Connection) waitInboundBarrier(ctx context.Context, watermark uint64) error {
+	if err := c.waitNotifications(ctx, watermark, true); err != nil {
+		return err
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return toReqErr(cause)
+	}
+	return nil
+}
+
+// startPeerWait records that a request made with ctx waits for the peer's
+// response, if ctx belongs to the running notification handler. The returned
+// func ends the record.
+func (c *Connection) startPeerWait(ctx context.Context) func() {
+	seq, ok := c.notificationSeq(ctx)
+	if !ok {
+		return func() {}
+	}
+	c.notifyMu.Lock()
+	defer c.notifyMu.Unlock()
+	if c.completedNotificationSeq >= seq {
+		// The handler has returned. Requests with its ctx get the full wait.
+		return func() {}
+	}
+	c.peerWaits[seq]++
+	c.notifyCond.Broadcast()
+	return func() {
+		c.notifyMu.Lock()
+		defer c.notifyMu.Unlock()
+		if c.peerWaits[seq] <= 0 {
+			panic("peer wait count went below zero")
+		}
+		if c.peerWaits[seq]--; c.peerWaits[seq] == 0 {
+			delete(c.peerWaits, seq)
+		}
+	}
+}
+
+// oldestInflightArrival returns the smallest arrival number of the requests
+// from the peer whose handlers have not returned. ok is false when there are
+// none.
+func (c *Connection) oldestInflightArrival() (oldest uint64, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for a := range c.inflightArrivals {
+		if !ok || a < oldest {
+			oldest, ok = a, true
+		}
+	}
+	return oldest, ok
 }
 
 func (c *Connection) waitForNotificationDrain(target uint64, timeout time.Duration) {
@@ -875,6 +1063,7 @@ func (c *Connection) cleanupPending(idKey string) {
 }
 
 // SendRequestNoResult sends a JSON-RPC request that returns no result payload.
+// It waits for notification handlers as SendRequest does.
 func (c *Connection) SendRequestNoResult(ctx context.Context, method string, params any) error {
 	msg, idKey, err := c.prepareRequest(method, params)
 	if err != nil {
@@ -891,7 +1080,9 @@ func (c *Connection) SendRequestNoResult(ctx context.Context, method string, par
 		return NewInternalError(map[string]any{"error": err.Error()})
 	}
 
+	donePeerWait := c.startPeerWait(ctx)
 	resp, err := c.waitForResponse(ctx, pr, idKey)
+	donePeerWait()
 	if err != nil {
 		return err
 	}
@@ -944,4 +1135,16 @@ func (c *Connection) prepareNotification(method string, params any) (anyMessage,
 // (typically when the peer disconnects or the input stream is closed).
 func (c *Connection) Done() <-chan struct{} {
 	return c.ctx.Done()
+}
+
+// encodableError returns err, the error of the handler of method, when it
+// encodes as JSON. Otherwise, as when its Data is not valid JSON, it logs the
+// encode error and returns an internal error, so that the peer gets a response
+// instead of waiting for one that never comes.
+func (c *Connection) encodableError(method string, err *RequestError) *RequestError {
+	if _, mErr := json.Marshal(err); mErr != nil {
+		c.loggerOrDefault().Error("failed to encode the error of a request handler", "method", method, "err", mErr)
+		return NewInternalError(map[string]any{"error": mErr.Error()})
+	}
+	return err
 }

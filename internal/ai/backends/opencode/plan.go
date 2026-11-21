@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"encoding/json"
 	"log/slog"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -77,19 +78,34 @@ func opencodeTodoPriorityToPlan(priority string) string {
 // both: rawInput could be empty while rawOutput holds the real list, and
 // preferring rawInput would then wipe a real checklist.
 func opencodeTodoItems(rawInput, rawOutput any) ([]any, bool) {
-	if m, ok := rawOutput.(map[string]any); ok {
+	if m := opencodeRawMap(rawOutput); m != nil {
 		if meta, ok := m["metadata"].(map[string]any); ok {
 			if arr, ok := meta["todos"].([]any); ok {
 				return arr, true
 			}
 		}
 	}
-	if m, ok := rawInput.(map[string]any); ok {
+	if m := opencodeRawMap(rawInput); m != nil {
 		if arr, ok := m["todos"].([]any); ok {
 			return arr, true
 		}
 	}
 	return nil, false
+}
+
+// opencodeRawMap accepts either the decoded form or the raw JSON the v0.20 SDK
+// hands over (rawInput/rawOutput are json.RawMessage there).
+func opencodeRawMap(raw any) map[string]any {
+	switch t := raw.(type) {
+	case map[string]any:
+		return t
+	case json.RawMessage:
+		var m map[string]any
+		if len(t) > 0 && json.Unmarshal(t, &m) == nil {
+			return m
+		}
+	}
+	return nil
 }
 
 // parseOpenCodeTodoSnapshot extracts PlanEntry items from an opencode todowrite
@@ -142,10 +158,12 @@ func parseOpenCodeTodoSnapshot(rawInput, rawOutput any) ([]ai.PlanEntry, bool) {
 //
 // Returns the number of plan_update events forwarded (0 or 1).
 func BridgePlanFromToolUpdate(conn *ai.ACPConn, ch chan<- ai.StreamEvent, tcu acp.SessionToolCallUpdate) int {
-	if tcu.Status == nil || *tcu.Status != acp.ToolCallStatusCompleted {
+	if status, ok := tcu.Status.Value(); !ok || status != acp.ToolCallStatusCompleted {
 		return 0
 	}
-	entries, ok := parseOpenCodeTodoSnapshot(tcu.RawInput, tcu.RawOutput)
+	rawInput, _ := tcu.RawInput.Value()
+	rawOutput, _ := tcu.RawOutput.Value()
+	entries, ok := parseOpenCodeTodoSnapshot(rawInput, rawOutput)
 	if !ok {
 		return 0
 	}

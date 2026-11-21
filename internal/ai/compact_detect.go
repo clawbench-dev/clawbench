@@ -365,23 +365,23 @@ func compactDetectedEvent(source string) StreamEvent {
 func acpUpdateMeta(update acp.SessionUpdate) map[string]any {
 	switch {
 	case update.AgentMessageChunk != nil:
-		return update.AgentMessageChunk.Meta
+		return MetaAny(update.AgentMessageChunk.Meta)
 	case update.AgentThoughtChunk != nil:
-		return update.AgentThoughtChunk.Meta
+		return MetaAny(update.AgentThoughtChunk.Meta)
 	case update.UserMessageChunk != nil:
-		return update.UserMessageChunk.Meta
+		return MetaAny(update.UserMessageChunk.Meta)
 	case update.ToolCall != nil:
-		return update.ToolCall.Meta
+		return MetaAny(update.ToolCall.Meta)
 	case update.ToolCallUpdate != nil:
-		return update.ToolCallUpdate.Meta
+		return PatchMetaAny(update.ToolCallUpdate.Meta)
 	case update.UsageUpdate != nil:
-		return update.UsageUpdate.Meta
+		return MetaAny(update.UsageUpdate.Meta)
 	case update.SessionInfoUpdate != nil:
-		return update.SessionInfoUpdate.Meta
+		return PatchMetaAny(update.SessionInfoUpdate.Meta)
 	case update.CurrentModeUpdate != nil:
-		return update.CurrentModeUpdate.Meta
+		return MetaAny(update.CurrentModeUpdate.Meta)
 	case update.ConfigOptionUpdate != nil:
-		return update.ConfigOptionUpdate.Meta
+		return MetaAny(update.ConfigOptionUpdate.Meta)
 	}
 	return nil
 }

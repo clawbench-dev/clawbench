@@ -43,17 +43,67 @@ const (
 	metaKeyClawBenchParentToolCallID = "clawbench/parentToolCallId"
 )
 
+// metaSlot points at the _meta of the active variant: a plain bag for the
+// start-style frames, a Patch for the update-style ones.
+type metaSlot struct {
+	bag   *acp.Meta
+	patch *acp.Patch[acp.Meta]
+}
+
+// updateMetaSlot resolves the _meta slot of an ACP session update. The zero
+// value means the variant carries no _meta at all.
+func updateMetaSlot(update *acp.SessionUpdate) metaSlot {
+	switch {
+	case update.AgentMessageChunk != nil:
+		return metaSlot{bag: &update.AgentMessageChunk.Meta}
+	case update.AgentThoughtChunk != nil:
+		return metaSlot{bag: &update.AgentThoughtChunk.Meta}
+	case update.UserMessageChunk != nil:
+		return metaSlot{bag: &update.UserMessageChunk.Meta}
+	case update.ToolCall != nil:
+		return metaSlot{bag: &update.ToolCall.Meta}
+	case update.ToolCallUpdate != nil:
+		return metaSlot{patch: &update.ToolCallUpdate.Meta}
+	case update.UsageUpdate != nil:
+		return metaSlot{bag: &update.UsageUpdate.Meta}
+	case update.SessionInfoUpdate != nil:
+		return metaSlot{patch: &update.SessionInfoUpdate.Meta}
+	case update.CurrentModeUpdate != nil:
+		return metaSlot{bag: &update.CurrentModeUpdate.Meta}
+	case update.ConfigOptionUpdate != nil:
+		return metaSlot{bag: &update.ConfigOptionUpdate.Meta}
+	}
+	return metaSlot{}
+}
+
 // stampParentToolCallID writes ClawBench's attribution key into the update's
 // _meta. No-op when the update carries no meta (child frames always do).
+//
+// The v0.20 SDK keeps _meta as raw JSON, so the key has to be written into the
+// frame's own bag — acpUpdateMeta returns a decoded copy, and mutating that
+// copy would silently lose the stamp.
 func stampParentToolCallID(update *acp.SessionUpdate, parentToolCallID string) {
 	if update == nil || parentToolCallID == "" {
 		return
 	}
-	meta := acpUpdateMeta(*update)
-	if meta == nil {
+	slot := updateMetaSlot(update)
+	if slot.bag != nil {
+		if *slot.bag == nil {
+			return
+		}
+		_ = slot.bag.Set(metaKeyClawBenchParentToolCallID, parentToolCallID)
 		return
 	}
-	meta[metaKeyClawBenchParentToolCallID] = parentToolCallID
+	if slot.patch == nil {
+		return
+	}
+	meta, ok := slot.patch.Value()
+	if !ok {
+		return
+	}
+	if meta.Set(metaKeyClawBenchParentToolCallID, parentToolCallID) == nil {
+		*slot.patch = acp.PatchSet(meta)
+	}
 }
 
 // isOpenCodeChildSessionUpdate reports whether an ACP session update was

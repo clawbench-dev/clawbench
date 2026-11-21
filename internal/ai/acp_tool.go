@@ -155,7 +155,7 @@ func parseGenericACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID stri
 		ID: string(tcu.ToolCallId),
 	}
 
-	mapToolCallStatus(tcu.Status, tool)
+	mapToolCallStatus(tcu.Status.Ptr(), tool)
 	mapToolCallInput(tcu, tool, backendID)
 	mapToolCallName(tcu, tool, backendID)
 	if tool.Done {
@@ -185,8 +185,8 @@ func acpRemapsForBackend(backendID string) map[string]string {
 // Delegates to parseACPToolCall for per-agent routing.
 func mapACPToolCall(tc acp.SessionUpdateToolCall, backendID string, conn *ACPConn) StreamEvent {
 	tool := parseACPToolCall(backendID, tc)
-	attachParentToolCallIDToTool(tool, backendID, conn, tc.Meta)
-	member := extractTeamMemberNameForTool(tc.Meta)
+	attachParentToolCallIDToTool(tool, backendID, conn, MetaAny(tc.Meta))
+	member := extractTeamMemberNameForTool(MetaAny(tc.Meta))
 	return StreamEvent{Type: "tool_use", Tool: tool, MemberName: member, MemberColor: memberColorByName(conn, member)}
 }
 
@@ -194,18 +194,19 @@ func mapACPToolCall(tc acp.SessionUpdateToolCall, backendID string, conn *ACPCon
 // Delegates to parseACPToolCallUpdate for per-agent routing.
 func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string, conn *ACPConn) StreamEvent {
 	tool := parseACPToolCallUpdate(backendID, tcu)
-	attachParentToolCallIDToTool(tool, backendID, conn, tcu.Meta)
+	attachParentToolCallIDToTool(tool, backendID, conn, PatchMetaAny(tcu.Meta))
 
 	eventType := "tool_use"
 	if tool.Done {
 		eventType = "tool_result"
 	}
 
+	tcuContent, _ := tcu.Content.Value()
 	slog.Debug("acp: tool_call_update", "tool_call_id", tool.ID, "done", tool.Done, "event_type", eventType, "has_output", tool.Output != "",
-		"status", fmt.Sprintf("%v", tcu.Status), "content_count", len(tcu.Content), "title", tcu.Title,
-		"raw_input", fmt.Sprintf("%v", tcu.RawInput))
+		"status", fmt.Sprintf("%v", tcu.Status.Ptr()), "content_count", len(tcuContent), "title", tcu.Title.Ptr(),
+		"raw_input", fmt.Sprintf("%v", tcu.RawInput.Ptr()))
 
-	member := extractTeamMemberNameForTool(tcu.Meta)
+	member := extractTeamMemberNameForTool(PatchMetaAny(tcu.Meta))
 	return StreamEvent{Type: eventType, Tool: tool, MemberName: member, MemberColor: memberColorByName(conn, member)}
 }
 
