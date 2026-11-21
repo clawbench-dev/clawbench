@@ -270,7 +270,11 @@ jobs:
           CGO_CXXFLAGS: "-march=x86-64"
         run: |
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux ./cmd/server
+          # -w only, no -s: the AVX check below finds the cgo C code by symbol
+          # name, and -s deletes the symbol table, so a stripped binary makes
+          # the check fail closed on every release. Symbols are stripped after
+          # the scan instead (see "Strip symbols").
+          go build -tags "fts5" -ldflags="-w -X clawbench/internal/version.Version=$VERSION -X clawbench/internal/version.ClientBuildVersion=${{ needs.client-guard.outputs.desktop_source }}" -o clawbench-linux ./cmd/server
           echo "Built with CGO_ENABLED=1: dynamically linked, SQLite FTS5/RAG enabled"
 
       - name: Verify Linux binary
@@ -291,10 +295,11 @@ jobs:
         # nothing checks the CPU there.
         #
         # gcc emits runtime/cgo's x_cgo_getstackbound first in .text, and it is
-        # exactly where #719 crashed, so its body is the canary: scan it for
-        # VEX (C4/C5) and EVEX (62) raw bytes. If the function cannot be found
-        # the step fails closed — a check that cannot see the code is how #719
-        # shipped.
+        # exactly where #719 crashed (verified on real pre-AVX hardware, a
+        # Celeron J6412; upstream golang/go#82835 is the same failure), so its
+        # body is the canary: scan it for VEX (C4/C5) and EVEX (62) raw bytes.
+        # If the function cannot be found the step fails closed — a check that
+        # cannot see the code is how #719 shipped.
         run: |
           objdump -d clawbench-linux > /tmp/built.asm
           body=$(awk '/^[0-9a-f]+ <x_cgo_getstackbound>:$/{seen=1; next}
@@ -302,7 +307,7 @@ jobs:
           if [ -z "$body" ]; then
             # Fail closed: without the canary there is nothing to prove the C
             # code is baseline, and a silent pass is how #719 shipped.
-            echo "::error::x_cgo_getstackbound not found in the disassembly (#719)" >&2
+            echo "::error::x_cgo_getstackbound not found in the disassembly - was the build stripped with -s? (#719)" >&2
             exit 1
           fi
           hits=$(printf '%s\n' "$body" | grep -E '^ +[0-9a-f]+:\s+(c4|c5|62) ' | head -5 || true)
@@ -312,6 +317,16 @@ jobs:
             exit 1
           fi
           echo "cgo C code is baseline x86-64"
+
+      - name: Strip symbols
+        # The binary is built with -w only so the check above can find the cgo
+        # C code by name. Strip the symbol table afterwards to keep the shipped
+        # artifact the same size as the previous -s builds. `strip` only drops
+        # symbol/debug sections, so the .text that was scanned is the .text
+        # that ships; --version proves the stripped binary still starts.
+        run: |
+          strip --strip-all clawbench-linux
+          ./clawbench-linux --version
 
       - name: Package Linux
         # The release tag is part of the asset name so a downloaded file is

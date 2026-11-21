@@ -41,10 +41,28 @@ func TestAVXGuardScript_MirrorsReleaseWorkflow(t *testing.T) {
 		"<" + canaryFunctionName + ">:",
 		`CGO_CFLAGS: "-march=x86-64"`,
 		`CGO_CFLAGS: "-march=armv8-a"`,
+		"strip --strip-all clawbench-linux",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("release.yml no longer contains %q; update the AVX guard and this test together (#719)", want)
 		}
+	}
+
+	// The guard finds the cgo C code by symbol name, so the linux build must
+	// keep the symbol table: `-s` makes every release die on "canary not
+	// found". That regression is what these tests exist to prevent, so pin the
+	// exact flags rather than just checking the guard still exists.
+	var linuxBuild string
+	for _, line := range strings.Split(workflow, "\n") {
+		if strings.Contains(line, "-o clawbench-linux ./cmd/server") {
+			linuxBuild = line
+		}
+	}
+	if linuxBuild == "" {
+		t.Fatalf("linux build command not found in release.yml")
+	}
+	if !strings.Contains(linuxBuild, `-ldflags="-w -X`) {
+		t.Fatalf("linux build must use -ldflags=\"-w -X ...\" so the AVX canary keeps its symbol: %s", strings.TrimSpace(linuxBuild))
 	}
 }
 
@@ -106,10 +124,14 @@ func TestAVXGuardScript_DistinguishesCodegen(t *testing.T) {
 	writeTempFile(t, filepath.Join(dir, "main.go"),
 		"package main\n\n/*\n#include <pthread.h>\nstatic void cgostub(void) { }\n*/\nimport \"C\"\n\nfunc main() { C.cgostub() }\n")
 
+	// Build with the same -ldflags the release uses (-w, no -s). Building
+	// without it would leave the symbol table in place even if the workflow
+	// started stripping, and the test would pass on a binary the guard cannot
+	// read.
 	build := func(name, cflags string) string {
 		t.Helper()
 		out := filepath.Join(dir, name)
-		cmd := exec.Command(goBin, "build", "-o", out, ".")
+		cmd := exec.Command(goBin, "build", "-ldflags=-w", "-o", out, ".")
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"CGO_ENABLED=1",
