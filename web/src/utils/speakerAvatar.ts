@@ -26,7 +26,7 @@
  */
 import { generateAvatarSvgWithStyle } from '@/utils/lazyAvatar'
 import { svgToDataUri } from '@/utils/svgDataUri'
-import { autoAvatarStyle, type AvatarStyle } from '@/utils/avatarPolicy'
+import { autoAvatarStyle, avatarSeedKey, type AvatarStyle } from '@/utils/avatarPolicy'
 
 /**
  * The seed a nickname maps to.
@@ -38,7 +38,7 @@ import { autoAvatarStyle, type AvatarStyle } from '@/utils/avatarPolicy'
  * behaviour we want.
  */
 export function speakerAvatarSeed(name: string): string {
-  return name.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase()
+  return avatarSeedKey(name)
 }
 
 /**

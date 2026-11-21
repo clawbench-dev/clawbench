@@ -256,6 +256,32 @@ describe('AgentAvatarPicker', () => {
     expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeUndefined()
   })
 
+  it('falls back when provenance has a style but no seed', async () => {
+    const wrapper = mountPicker({
+      currentAvatar: '<svg>legacy</svg>',
+      currentStyle: 'shapes',
+      currentSeed: '',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.avatar-picker__current').exists()).toBe(true)
+    expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeDefined()
+  })
+
+  it('requires a new choice when the stored style is no longer in the catalog', async () => {
+    const wrapper = mountPicker({
+      currentAvatar: '<svg>legacy</svg>',
+      currentStyle: 'removed-style',
+      currentSeed: 'Custom Seed',
+    })
+    await flushPromises()
+
+    // The old image is still shown, but the picker cannot render that style
+    // any more, so Save stays disabled until the user picks an available one.
+    expect(wrapper.find('.avatar-picker__current').exists()).toBe(true)
+    expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeDefined()
+  })
+
   it('treats an uploaded current avatar as the selected upload', async () => {
     const wrapper = mountPicker({ currentAvatar: 'data:image/webp;base64,UklGRg==' })
     await flushPromises()

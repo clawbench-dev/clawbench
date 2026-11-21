@@ -33,7 +33,7 @@ const MaxDimension = 512
 
 // dataURIRE matches the only raster forms the picker produces. The payload is
 // standard base64 (no whitespace) because it comes from canvas.toDataURL.
-var dataURIRE = regexp.MustCompile(`(?i)^data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$`)
+var dataURIRE = regexp.MustCompile(`(?i)^data:image/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$`)
 
 // Validate reports whether a stored avatar is acceptable.
 func Validate(src []byte) bool {
@@ -52,6 +52,9 @@ func Validate(src []byte) bool {
 // <img>, so a malformed image is inert; this gate is about bounding work and
 // keeping the stored value to a sane shape.
 func rasterLooksSafe(declared string, payload []byte) bool {
+	if declared == "jpg" {
+		declared = "jpeg"
+	}
 	if len(payload) == 0 || len(payload) > (MaxDecodedBytes*4/3)+8 {
 		return false
 	}

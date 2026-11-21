@@ -30,7 +30,7 @@ export const AVATAR_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
  *  crisp on high-density screens without making the stored string large. */
 export const AVATAR_UPLOAD_SIZE = 192
 
-const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp'])
 
 /** Centre-crop rectangle for a source image. Exported for tests. */
 export function centerCropRect(width: number, height: number): { sx: number; sy: number; side: number } {
@@ -96,6 +96,9 @@ export async function fileToAvatarDataUri(file: File, background = '#F1F3F5'): P
 
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
+    // Fill FIRST, then draw. The default `source-over` keeps the fill visible
+    // through the image's transparent pixels (a transparent source pixel leaves
+    // the destination unchanged). Drawing the fill after would cover the image.
     ctx.fillStyle = background
     ctx.fillRect(0, 0, AVATAR_UPLOAD_SIZE, AVATAR_UPLOAD_SIZE)
     ctx.drawImage(source, sx, sy, side, side, 0, 0, AVATAR_UPLOAD_SIZE, AVATAR_UPLOAD_SIZE)

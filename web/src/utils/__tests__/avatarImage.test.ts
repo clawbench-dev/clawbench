@@ -62,6 +62,10 @@ describe('fileToAvatarDataUri', () => {
     expect(ctx.fillStyle).toBe('#E3ECF7')
     expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, AVATAR_UPLOAD_SIZE, AVATAR_UPLOAD_SIZE)
     expect(ctx.drawImage).toHaveBeenCalledWith(expect.anything(), 50, 0, 300, 300, 0, 0, AVATAR_UPLOAD_SIZE, AVATAR_UPLOAD_SIZE)
+    // The background must be painted BEFORE the image: with `source-over`, a
+    // transparent image pixel then leaves the colour visible instead of
+    // producing a transparent/black hole.
+    expect(ctx.fillRect.mock.invocationCallOrder[0]).toBeLessThan(ctx.drawImage.mock.invocationCallOrder[0])
     expect(close).toHaveBeenCalled()
   })
 
@@ -99,6 +103,22 @@ describe('fileToAvatarDataUri', () => {
     )
 
     await expect(fileToAvatarDataUri(makeFile())).resolves.toBe('data:image/png;base64,CCC')
+  })
+
+  it('accepts the non-standard image/jpg MIME alias', async () => {
+    vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({ width: 200, height: 200, close: vi.fn() }))
+
+    const ctx = {
+      imageSmoothingEnabled: false,
+      imageSmoothingQuality: '',
+      fillStyle: '',
+      fillRect: vi.fn(),
+      drawImage: vi.fn(),
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/webp;base64,AAA')
+
+    await expect(fileToAvatarDataUri(makeFile('image/jpg'))).resolves.toBe('data:image/webp;base64,AAA')
   })
 
   it('falls back to <img> when createImageBitmap is unavailable', async () => {

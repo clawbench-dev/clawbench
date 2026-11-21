@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"strings"
 	"testing"
@@ -56,6 +57,13 @@ func TestValidate_Raster(t *testing.T) {
 	// A real 192x192 WebP produced by the client's canvas path.
 	const webpB64 = "UklGRoIAAABXRUJQVlA4IHYAAADwCgCdASrAAMAAPm02mUmkIyKhIEgAgA2JaW7hdrEbQBPa9FXCDSdFXCDIIaqk122i4QZBDVUmu20XCDIIaqk122i4QZBDVUmu20XCDIIaqk122i4QZBDVUmu20XCDHIAA/v/B/l87HuD/0Hw07jcVAAAAAAAA"
 	assert.True(t, Validate([]byte("data:image/webp;base64,"+webpB64)), "valid WebP data URI should pass")
+
+	// `image/jpg` is a non-standard MIME some file pickers report; accept it as
+	// an alias for `image/jpeg` instead of rejecting a valid image.
+	var jpegBuf bytes.Buffer
+	require.NoError(t, jpeg.Encode(&jpegBuf, image.NewRGBA(image.Rect(0, 0, 192, 192)), nil))
+	assert.True(t, Validate([]byte("data:image/jpg;base64,"+base64.StdEncoding.EncodeToString(jpegBuf.Bytes()))),
+		"image/jpg alias should pass")
 
 	bad := []string{
 		"",                           // empty

@@ -58,8 +58,9 @@ const avatarSrc = computed(() => avatarToSrc(props.avatar || ''))
 
 // A generated avatar already carries its own background. This CSS fallback is
 // for avatars stored BEFORE backgrounds were baked in: without it a transparent
-// character style floats over the chat bubble and looks thin. The colour is
-// derived from the same name so it stays stable per agent/member.
+// character style floats over the chat bubble and looks thin. The name is the
+// only seed available for a legacy avatar (its original seed was not stored), so
+// it is a best-effort stable colour; new avatars carry their own and hide this.
 const avatarBg = computed(() => (props.avatar ? avatarBackgroundFor(props.name || 'agent') : ''))
 
 // Replace all ID references (id="...", url(#...", href="#...") in SVG content

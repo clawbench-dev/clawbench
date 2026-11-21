@@ -37,6 +37,11 @@ describe('avatar styles', () => {
     expect(AUTO_AVATAR_STYLES).not.toContain('shape-grid')
   })
 
+  it('uses one normalization for style and background', () => {
+    expect(autoAvatarStyle('访客  2')).toBe(autoAvatarStyle('访客 2'))
+    expect(avatarBackgroundFor('访客  2')).toBe(avatarBackgroundFor('访客 2'))
+  })
+
   it('maps a seed to a stable automatic style', () => {
     for (const seed of ['Alice', '小明', '访客 2']) {
       const style = autoAvatarStyle(seed)

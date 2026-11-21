@@ -152,10 +152,20 @@ export const AUTO_AVATAR_STYLES: AvatarStyle[] = [
   'voxel-bot',
 ]
 
+/**
+ * Normalize a display name/seed to the key every avatar hash uses.
+ *
+ * One normalizer for both the style and the background matters: a group member
+ * and the same nickname in a meeting must not get two different colours just
+ * because one path collapsed repeated spaces and the other did not.
+ */
+export function avatarSeedKey(seed: string): string {
+  return (seed || 'agent').normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
 /** Stable style for an automatic avatar. Pure function of the seed. */
 export function autoAvatarStyle(seed: string): AvatarStyle {
-  const key = (seed || 'agent').normalize('NFC').trim().toLowerCase()
-  return AUTO_AVATAR_STYLES[fnv1a32(key) % AUTO_AVATAR_STYLES.length]
+  return AUTO_AVATAR_STYLES[fnv1a32(avatarSeedKey(seed)) % AUTO_AVATAR_STYLES.length]
 }
 
 /**
@@ -175,8 +185,7 @@ export const AVATAR_BACKGROUNDS = [
 
 /** Stable background colour for a seed (agent name, member name, nickname). */
 export function avatarBackgroundFor(seed: string): string {
-  const key = (seed || 'agent').normalize('NFC').trim().toLowerCase()
-  return AVATAR_BACKGROUNDS[fnv1a32(key) % AVATAR_BACKGROUNDS.length]
+  return AVATAR_BACKGROUNDS[fnv1a32(avatarSeedKey(seed)) % AVATAR_BACKGROUNDS.length]
 }
 
 /** What the picker emits when the user saves (or clears) an avatar. */
