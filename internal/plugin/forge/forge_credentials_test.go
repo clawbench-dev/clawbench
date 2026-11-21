@@ -378,10 +378,13 @@ func TestWriteConfigYAML_FilePermissions(t *testing.T) {
 	require.NoError(t, err)
 
 	// The exact mode is masked by umask, so assert the group/other read+write
-	// bits are not set (the security-relevant part).
-	perm := info.Mode().Perm()
-	assert.Zero(t, perm&0o004, "config.yaml must not be world-readable")
-	assert.Zero(t, perm&0o040, "config.yaml must not be group-readable")
+	// bits are not set (the security-relevant part). Windows has no such bits —
+	// Go reports 0666 for every writable file — so the check is POSIX-only.
+	if runtime.GOOS != "windows" {
+		perm := info.Mode().Perm()
+		assert.Zero(t, perm&0o004, "config.yaml must not be world-readable")
+		assert.Zero(t, perm&0o040, "config.yaml must not be group-readable")
+	}
 }
 
 // TestServeForgeVerifyToken_RejectsMissingHost guards basic input validation.

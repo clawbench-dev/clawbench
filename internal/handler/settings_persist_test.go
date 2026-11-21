@@ -981,8 +981,12 @@ func TestPersist_AutoPasswordStrippedFromBackupToo(t *testing.T) {
 
 	info, err := os.Stat(bakPath)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
-		"backup must not be more permissive than config.yaml")
+	// Windows does not carry Unix permission bits (Go reports 0666 for any
+	// writable file), so this assertion only means something elsewhere.
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+			"backup must not be more permissive than config.yaml")
+	}
 }
 
 // The nickname moved from chat.user_nickname to the first-class user section.

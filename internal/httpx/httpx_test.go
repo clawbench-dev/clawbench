@@ -150,9 +150,10 @@ func TestResolveAbsPath(t *testing.T) {
 	dir := t.TempDir()
 	model.RootPaths = []string{dir}
 
-	// ResolveAbsPath follows symlinks, and on macOS /var is a symlink to
-	// /private/var — comparing against the raw TempDir would fail there while
-	// passing on Linux. Compare against the resolved form.
+	// The relative form goes through ValidateAndResolvePath, which resolves
+	// symlinks; on macOS /var is a symlink to /private/var, so that assertion
+	// must compare against the resolved temp dir while the absolute form (which
+	// is returned as-is) must compare against the raw one.
 	resolvedDir, err := filepath.EvalSymlinks(dir)
 	require.NoError(t, err)
 
@@ -163,7 +164,7 @@ func TestResolveAbsPath(t *testing.T) {
 	rec := httptest.NewRecorder()
 	got, ok := ResolveAbsPath(rec, r, filepath.Join(dir, "a.txt"))
 	require.True(t, ok)
-	assert.Equal(t, filepath.Join(resolvedDir, "a.txt"), got)
+	assert.Equal(t, filepath.Join(dir, "a.txt"), got, "the absolute form is returned unchanged")
 
 	// Absolute path outside every root → 403.
 	rec2 := httptest.NewRecorder()
