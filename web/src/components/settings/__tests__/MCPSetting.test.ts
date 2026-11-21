@@ -50,6 +50,23 @@ const i18n = createI18n({
           mcpUrl: '地址',
           mcpHeaders: '请求头',
           mcpAdd: '添加服务',
+          mcpImport: '从 JSON 导入',
+          mcpImportTitle: '从 JSON 导入 MCP 服务',
+          mcpImportHint: '粘贴配置',
+          mcpImportCount: '识别到 {count} 条',
+          mcpImportSkipped: '{count} 条未导入',
+          mcpImportExisting: '已存在',
+          mcpImportConfirm: '导入 {count} 条',
+          mcpImportInvalidJson: '不是合法的 JSON',
+          mcpImportUnsupported: '没认出这是 MCP 配置',
+          mcpImportEmpty: '没有可导入的服务',
+          mcpImportIssueEmptyName: '名称不能为空',
+          mcpImportIssueInvalidName: '名称非法',
+          mcpImportIssueDuplicateName: '名称重复',
+          mcpImportIssueMissingCommand: '缺少命令',
+          mcpImportIssueMissingUrl: '缺少地址',
+          mcpImportIssueBadUrl: '地址非法',
+          mcpImportIssueBadTransport: '传输方式非法',
           mcpRemove: '删除',
           mcpTest: '测试',
           mcpTesting: '测试中…',
@@ -65,7 +82,7 @@ function mountSetting(servers: unknown[]) {
   return mount(MCPSetting, {
     global: {
       plugins: [i18n],
-      stubs: { AlertCircle: true, CheckCircle2: true, Loader2: true, PlugZap: true, Trash2: true },
+      stubs: { AlertCircle: true, CheckCircle2: true, Loader2: true, PlugZap: true, Trash2: true, FileJson: true, Teleport: true },
     },
   })
 }
@@ -189,6 +206,38 @@ describe('MCPSetting', () => {
     await wrapper.find('input[placeholder="命令"]').setValue('node')
     const addBtn = wrapper.findAll('button').filter((b) => b.text().includes('添加服务'))[0]
     expect(addBtn.attributes('disabled')).toBeDefined()
+  })
+
+  // Import path: the pasted list is merged into the stored one and saved in a
+  // single request, because the endpoint replaces the whole array.
+  it('merges an imported config into the stored list', async () => {
+    const wrapper = mountSetting([{ name: 'old', transport: 'stdio', command: 'node' }])
+    await wrapper.findAll('button').filter((b) => b.text().includes('从 JSON 导入'))[0].trigger('click')
+    await wrapper.find('.mcp-import__text').setValue(JSON.stringify({
+      mcpServers: { fresh: { command: 'uvx', args: ['mcp-server-time'] } },
+    }))
+    await wrapper.findAll('button').filter((b) => b.text().includes('导入 1 条'))[0].trigger('click')
+    await flushPromises()
+
+    expect(mockSetServerValue).toHaveBeenCalledWith('mcp.servers', [
+      { name: 'old', transport: 'stdio', command: 'node' },
+      { name: 'fresh', transport: 'stdio', command: 'uvx', args: ['mcp-server-time'] },
+    ])
+  })
+
+  it('keeps the import dialog open and shows the server error when the save is rejected', async () => {
+    // Most likely failure when migrating: the command is not installed on this
+    // machine. The user needs the pasted text and the server's message at the
+    // same time to decide which entry to drop.
+    mockSetServerValue.mockRejectedValueOnce(new Error('mcp.servers[1].command "uvx" not found in PATH'))
+    const wrapper = mountSetting([])
+    await wrapper.findAll('button').filter((b) => b.text().includes('从 JSON 导入'))[0].trigger('click')
+    await wrapper.find('.mcp-import__text').setValue('{"mcpServers": {"time": {"command": "uvx"}}}')
+    await wrapper.findAll('button').filter((b) => b.text().includes('导入 1 条'))[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.mcp-import__error').text()).toContain('not found in PATH')
+    expect((wrapper.find('.mcp-import__text').element as HTMLTextAreaElement).value).toContain('uvx')
   })
 })
 
