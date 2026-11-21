@@ -24,8 +24,11 @@ const ProjectRulesFile = "AGENTS.md"
 //
 // AGENTS.md leads because it is the format the ecosystem is converging on
 // (Codex, Cursor and Copilot all read it); CLAUDE.md follows because repos
-// migrating from Claude Code commonly keep it.
-var ProjectRulesFiles = []string{ProjectRulesFile, "CLAUDE.md"}
+// migrating from Claude Code commonly keep it; CODEBUDDY.md last because it is
+// specific to one vendor. The ordering matches service.projectContextFiles —
+// two lists that disagree would have an agent obeying one rules file for its
+// prompt and a different one for its project context.
+var ProjectRulesFiles = []string{ProjectRulesFile, "CLAUDE.md", "CODEBUDDY.md"}
 
 // MaxProjectRulesBytes caps how much of the rules file is injected.
 //

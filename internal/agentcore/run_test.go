@@ -1019,6 +1019,73 @@ func TestLoadProjectRules_SkipsDirectoryToNextCandidate(t *testing.T) {
 	}
 }
 
+// TestLoadProjectRules_FallbackToCodebuddyMd pins the third candidate: a repo
+// whose only rules file is CodeBuddy's still gets them injected.
+func TestLoadProjectRules_FallbackToCodebuddyMd(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CODEBUDDY.md"), []byte("Use pnpm, not npm."), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	rules := loadProjectRules(dir)
+	if !strings.Contains(rules, "Use pnpm, not npm.") {
+		t.Fatalf("CODEBUDDY.md must be read when the higher-priority names are absent, got %q", rules)
+	}
+}
+
+// TestLoadProjectRules_CodebuddyIsLast pins the full ordering.
+//
+// Every higher-priority file must beat CODEBUDDY.md, not just AGENTS.md: a repo
+// carrying both CLAUDE.md and CODEBUDDY.md is expected to follow CLAUDE.md.
+func TestLoadProjectRules_CodebuddyIsLast(t *testing.T) {
+	for _, tc := range []struct{ winner, loser string }{
+		{"AGENTS.md", "CODEBUDDY.md"},
+		{"CLAUDE.md", "CODEBUDDY.md"},
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, tc.winner), []byte("FROM-WINNER"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", tc.winner, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, tc.loser), []byte("FROM-LOSER"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", tc.loser, err)
+		}
+
+		rules := loadProjectRules(dir)
+		if !strings.Contains(rules, "FROM-WINNER") {
+			t.Fatalf("%s must beat %s, got %q", tc.winner, tc.loser, rules)
+		}
+		if strings.Contains(rules, "FROM-LOSER") {
+			t.Fatalf("%s must not be read alongside %s, got %q", tc.loser, tc.winner, rules)
+		}
+	}
+}
+
+// TestProjectRulesFilesMatchServiceList pins that the injected-rules list and
+// the project-context list name the same files.
+//
+// They are separate vars in separate packages, so nothing but this test stops
+// them drifting apart — and a drift means the agent reads one rules file into
+// its system prompt while the surrounding project context was built from
+// another, which looks like the agent ignoring rules it was given.
+func TestProjectRulesFilesMatchServiceList(t *testing.T) {
+	// Mirrors internal/service/session_runtime.go's projectContextFiles minus
+	// README.md, which is documentation rather than standing instructions and
+	// must not be pushed into every turn's system prompt.
+	want := []string{"AGENTS.md", "CLAUDE.md", "CODEBUDDY.md"}
+	for _, name := range want {
+		found := false
+		for _, got := range ProjectRulesFiles {
+			if got == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("%s is read by the project-context builder but not injected as rules; lists:\n%v", name, ProjectRulesFiles)
+		}
+	}
+}
+
 // TestJoinWithOr pins the denial phrasing helper.
 func TestJoinWithOr(t *testing.T) {
 	cases := []struct {
