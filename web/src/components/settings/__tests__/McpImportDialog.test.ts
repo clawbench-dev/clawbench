@@ -34,9 +34,9 @@ const i18n = createI18n({
   },
 })
 
-function mountDialog(existingNames: string[] = [], errorMessage?: string) {
+function mountDialog(existingNames: string[] = [], errorMessage?: string, busy = false) {
   return mount(McpImportDialog, {
-    props: { open: true, existingNames, errorMessage },
+    props: { open: true, existingNames, errorMessage, busy },
     global: {
       plugins: [i18n],
       // ModalDialog teleports to <body>; keep the DOM inside the wrapper.
@@ -112,6 +112,12 @@ describe('McpImportDialog', () => {
     await wrapper.find('.mcp-import__name').setValue('my-server')
     expect(wrapper.find('.mcp-import__row').text()).not.toContain('名称非法')
     expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeUndefined()
+  })
+
+  it('disables the confirm button while the parent is saving', async () => {
+    const wrapper = mountDialog([], undefined, true)
+    await wrapper.find('.mcp-import__text').setValue(CONFIG)
+    expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeDefined()
   })
 
   it('shows a parse error instead of rows for unusable input', async () => {

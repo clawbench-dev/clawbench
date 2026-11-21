@@ -95,6 +95,7 @@
       :open="importOpen"
       :existing-names="servers.map((s) => s.name)"
       :error-message="importError"
+      :busy="saving"
       @close="importOpen = false"
       @import="applyImport"
     />

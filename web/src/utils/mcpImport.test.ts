@@ -70,10 +70,12 @@ describe('parseMcpImport', () => {
       mcpServers: {
         on: { command: 'node' },
         off: { command: 'node', disabled: true },
+        offNumeric: { command: 'node', disabled: 1 },
+        offEnabled: { command: 'node', enabled: false },
       },
     }))
     expect(entries.map((entry) => entry.server.name)).toEqual(['on'])
-    expect(skipped).toBe(1)
+    expect(skipped).toBe(3)
   })
 
   it('counts values that are not definitions instead of importing them', () => {

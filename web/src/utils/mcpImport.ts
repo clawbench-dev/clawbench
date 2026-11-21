@@ -104,9 +104,10 @@ function fromMap(map: Record<string, unknown>): McpImportParseResult {
       skipped++
       continue
     }
-    // `disabled: true` is how Cursor / Claude Desktop park a server. Importing
-    // it would silently switch on something the user had turned off.
-    if (value.disabled === true) {
+    // Cursor / Claude Desktop park a server with `disabled: true`; some forks
+    // write `1`, and others flip `enabled: false`. Importing any of them would
+    // silently switch on something the user had turned off.
+    if (isDisabled(value)) {
       skipped++
       continue
     }
@@ -114,6 +115,10 @@ function fromMap(map: Record<string, unknown>): McpImportParseResult {
   }
 
   return { ok: true, entries, skipped }
+}
+
+function isDisabled(cfg: Record<string, unknown>): boolean {
+  return cfg.disabled === true || cfg.disabled === 1 || cfg.enabled === false
 }
 
 function buildEntry(name: string, cfg: Record<string, unknown>): McpImportEntry {

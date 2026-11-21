@@ -66,7 +66,7 @@
 
     <template #footer>
       <button class="fbtn" @click="handleClose">{{ t('common.cancel') }}</button>
-      <button class="fbtn fbtn-primary" :disabled="selectedCount === 0" @click="submit">
+      <button class="fbtn fbtn-primary" :disabled="selectedCount === 0 || busy" @click="submit">
         {{ t('settings.items.mcpImportConfirm', { count: selectedCount }) }}
       </button>
     </template>
@@ -94,6 +94,9 @@ const props = defineProps<{
   /** Server-side rejection text, owned by the parent so the dialog can stay
    *  open while the user drops or fixes the offending entry. */
   errorMessage?: string
+  /** The parent is saving. Without this the confirm button stays live and a
+   *  double click fires two whole-array PATCHes. */
+  busy?: boolean
 }>()
 
 const emit = defineEmits<{
