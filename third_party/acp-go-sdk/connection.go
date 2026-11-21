@@ -101,6 +101,11 @@ type Connection struct {
 	r       io.Reader
 	handler MethodHandler
 
+	// unhandled, when set, receives inbound notifications this side could not
+	// handle (unknown method or undecodable payload). Set before the inbound
+	// goroutine starts, so it needs no lock. ClawBench addition, see unhandled.go.
+	unhandled UnhandledHandler
+
 	mu                   sync.Mutex
 	writeMu              sync.Mutex
 	nextID               atomic.Uint64
@@ -670,6 +675,13 @@ func (c *Connection) handleInbound(ctx context.Context, req *anyMessage) {
 	if req.ID == nil {
 		// Notification: no response is sent; log handler errors to surface decode failures.
 		if err != nil {
+			// Hand the raw payload to the optional hook before it is dropped.
+			// -32601 (no such method) and -32602 (the payload did not decode)
+			// are the two "this side cannot use it" answers; anything else is
+			// an application error the handler already reported.
+			if c.unhandled != nil && (err.Code == -32601 || err.Code == -32602) {
+				c.unhandled(ctx, req.Method, req.Params)
+			}
 			if err.Code == -32601 {
 				// Per ACP, unknown extension notifications should be ignored.
 				if strings.HasPrefix(req.Method, "_") {

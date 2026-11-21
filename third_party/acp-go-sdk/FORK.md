@@ -13,7 +13,8 @@
 - 仓库：https://github.com/coder/acp-go-sdk
 - 基线：v0.13.5（2026-06-02），对应 ACP schema 0.13.5
 - 随后在仓内升级到 schema 1.32.0（对应上游 v0.20.0 的生成物）：
-  上游文件**逐字节一致**，唯一新增是 `rawcall.go`（见下）
+  上游文件**逐字节一致，只有两处刻意改动**：新增 `rawcall.go`、`unhandled.go`，
+  并在 `connection.go` 的入站通知分支加了 6 行（见下）
 - 升级的破坏性变更见同目录 `MIGRATION_v0.20.md`
 - 许可证：Apache-2.0，见同目录 `LICENSE`
 
@@ -26,8 +27,11 @@
 | `testdata/` | 上游单测夹具 |
 | `cmd/generate/` | 代码生成器（独立 module，不并入主 `go.mod`） |
 | `rawcall.go` | **我们加的**：`ClientSideConnection.CallRaw`，发任意方法名（生成器不碰它） |
+| `unhandled.go` | **我们加的**：`SetUnhandledHandler`，库用不了的通知交回给调用方 |
 
-## 我们加的唯一一个文件：rawcall.go
+## 我们加的两个文件和一处改动
+
+### rawcall.go
 
 `CallExtension` 只接受 `_` 开头的方法名，而 CodeBuddy 的 `session/steer`、Hermes 的
 `session/set_model` 都没有下划线，typed 面也没有建模。`CallRaw` 就是 `SendRequest`
@@ -35,6 +39,23 @@
 
 有它之后，仓里不再需要那套自写的 JSON-RPC 通道（原 `internal/ai/acp_raw_rpc.go`
 里的 id 前缀、pending 表、响应分发、共享写锁全部删除）。
+
+### unhandled.go + connection.go 的 6 行
+
+库自己就知道一条通知“用不了”（方法没实现 → -32601，或载荷解不开 → -32602），
+但只是写日志丢掉。`SetUnhandledHandler` 把 method + 原始 params 交回给调用方，
+`connection.go` 的 `handleInbound` 里只多一个判断：
+
+```go
+if c.unhandled != nil && (err.Code == -32601 || err.Code == -32602) {
+    c.unhandled(ctx, req.Method, req.Params)
+}
+```
+
+有了它，仓里就不用再自己解析每一行 stdout、也不必维护「哪些方法算标准」
+「哪些变体算标准」两张白名单（原来 `acp_raw_notification.go` 的整套分发已删除）。
+**这是唯一一处改到上游文件的地方**；升级 schema 时重新打这一处即可（6 行，位置
+在 `handleInbound` 的 notification 分支）。
 
 ## 改动规则
 

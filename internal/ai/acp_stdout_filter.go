@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"clawbench/internal/model"
 )
@@ -36,10 +35,9 @@ const (
 //     model. The SDK's json.Unmarshal silently drops this field. This filter
 //     intercepts the raw JSON and caches the models for later retrieval.
 //
-//  4. Notification tee: a rawNotificationSink (see acp_raw_notification.go)
-//     receives every agent→client JSON-RPC line so the client can read what the
-//     SDK drops: session/update variants it does not model (v0.20 rejects the
-//     decode outright) and custom notification methods. A tee, not a steal.
+// Messages the SDK cannot use are not handled here: the connection reports them
+// through SetUnhandledHandler (see acp_ext.go), so this filter only scrubs the
+// bytes the SDK would choke on.
 //
 // The filter runs a background goroutine that reads from the underlying source and
 // writes filtered output to an io.Pipe. Closing the filter (via Close) unblocks any
@@ -68,26 +66,6 @@ type acpStdoutFilter struct {
 	// extract it from the raw JSON here. Thread-safe via modelsMu.
 	modelsMu     sync.Mutex
 	cachedModels *ModelListState
-
-	// notifSink, when set, is handed every agent→client JSON-RPC line (see
-	// SetNotificationSink). Stored in an atomic.Value because it is written once
-	// after construction and read on the pump goroutine.
-	notifSink atomic.Value // holds rawNotificationSink
-}
-
-// SetNotificationSink installs a sink that receives every `session/update`
-// notification line (the raw JSON-RPC envelope). Must be called at most once
-// per filter.
-func (f *acpStdoutFilter) SetNotificationSink(s rawNotificationSink) {
-	f.notifSink.Store(s)
-}
-
-// dispatchNotificationSink forwards a session/update line to the registered
-// sink, if any. Never blocks (sinks must not block — this runs on the pump).
-func (f *acpStdoutFilter) dispatchNotificationSink(line []byte) {
-	if s, ok := f.notifSink.Load().(rawNotificationSink); ok && s != nil {
-		s.DispatchRawNotification(line)
-	}
 }
 
 // newACPStdoutFilter creates a new filtered reader that fixes protocol violations.
@@ -128,14 +106,6 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 		// Fix string-number ID mismatch
 		fixed := fixStringNumericID(line)
 
-		// Tee agent→client JSON-RPC messages so the client can read both
-		// extension session/update variants and custom notification methods the
-		// SDK misclassifies or drops. Same tee discipline: the line is still
-		// written to the SDK below.
-		if bytes.Contains(fixed, jsonRPCMethodMarker) {
-			f.dispatchNotificationSink(fixed)
-		}
-
 		// Extract SessionModelState from session/new or session/resume responses.
 		// Some agents (e.g., kimi) return a "models" field that the ACP Go SDK
 		// schema does not model in its NewSessionResponse type, so it gets
@@ -158,8 +128,8 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 
 // Read implements io.Reader. It reads filtered JSON lines from the pipe.
 //
-// The pump is armed here (not in the constructor) so any sink installed before
-// the first read is in place before the first line is dispatched.
+// The pump is armed here (not in the constructor) so the caller can finish
+// wiring the connection before the first line is processed.
 func (f *acpStdoutFilter) Read(p []byte) (int, error) {
 	f.start()
 	return f.pr.Read(p)

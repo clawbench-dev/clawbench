@@ -1292,9 +1292,9 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	// session/steer). They ride the SDK's own connection, so no side channel.
 	rawRPC := newACPRawRPC(conn)
 
-	// Notification tee: the SDK drops session/update variants it does not
-	// model, so the client reads those straight from the raw line.
-	stdoutFilter.SetNotificationSink(client)
+	// Messages the SDK cannot use (unknown method, undecodable session/update
+	// variant) come back through this hook instead of being parsed off stdout.
+	conn.SetUnhandledHandler(client.handleUnhandledNotification)
 
 	initCtx, initCancel := context.WithTimeout(ctx, acpInitializeTimeout)
 	defer initCancel()

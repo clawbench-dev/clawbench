@@ -28,126 +28,119 @@ func (c *recordingACPClient) SessionUpdate(_ context.Context, n acp.SessionNotif
 	return nil
 }
 
-// TestSDKRejectsUnknownSessionUpdateVariant documents the gap the raw
-// notification bypass exists to close.
-//
-// The ACP Go SDK's SessionUpdate union has no case for extension variants such
-// as `subagent_spawned`. Up to v0.13.5 its UnmarshalJSON fell through to a set
-// of discriminator-only blocks and re-typed the frame as SessionInfoUpdate with
-// every payload field lost. Since v0.18 the decode rejects the frame outright
-// ("no matching variant for union"), so the typed callback never fires at all.
-//
-// Either way the typed path cannot see these frames: the stdout tee plus
-// DispatchRawNotification is the only path that does. A known variant in the
-// same shape is classified correctly, so the difference is the discriminator,
-// not the transport.
-func TestSDKRejectsUnknownSessionUpdateVariant(t *testing.T) {
-	clientReads, agentWrites := io.Pipe()
+// ---------------------------------------------------------------------------
+// SDK hook wiring
+// ---------------------------------------------------------------------------
 
-	base := NewClawBenchACPClient()
-	client := &recordingACPClient{ClawBenchACPClient: base}
+// newHookClient wires a real ClientSideConnection to the client exactly as
+// spawnLocked does: the SDK's unhandled-notification hook is the only path these
+// frames can take.
+func newHookClient(t *testing.T) (*ClawBenchACPClient, *recordingACPClient, func(string)) {
+	t.Helper()
+	agentToClientR, agentToClientW := io.Pipe()
+	client := NewClawBenchACPClient()
+	ch := make(chan StreamEvent, 8)
+	client.RegisterSession("s1", ch)
 
-	conn := acp.NewClientSideConnection(client, io.Discard, clientReads)
+	rec := &recordingACPClient{ClawBenchACPClient: client}
+	conn := acp.NewClientSideConnection(rec, io.Discard, agentToClientR)
 	conn.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	conn.SetUnhandledHandler(client.handleUnhandledNotification)
 
 	write := func(line string) {
-		_, err := agentWrites.Write([]byte(line + "\n"))
+		_, err := agentToClientW.Write([]byte(line + "\n"))
 		require.NoError(t, err)
 	}
 	settle := func() { time.Sleep(150 * time.Millisecond) }
-
-	// 1. Unknown extension variant.
-	write(`{"jsonrpc":"2.0","method":"session/update","params":{` +
-		`"sessionId":"s1","update":{"sessionUpdate":"subagent_spawned",` +
-		`"subagentSessionId":"child-1","name":"probe-alpha","task":"do work"}}}`)
-	settle()
-	require.Empty(t, client.got,
-		"the SDK rejects an unknown variant instead of delivering it to the typed callback")
-
-	// 2. Known variant: same transport, classified correctly.
-	write(`{"jsonrpc":"2.0","method":"session/update","params":{` +
-		`"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk",` +
-		`"content":{"type":"text","text":"hello"}}}}`)
-	settle()
-	require.Len(t, client.got, 1)
-	require.NotNil(t, client.got[0].Update.AgentMessageChunk)
-	assert.Nil(t, client.got[0].Update.SessionInfoUpdate)
-	assert.Equal(t, "hello", client.got[0].Update.AgentMessageChunk.Content.Text.Text)
+	return client, rec, func(line string) {
+		write(line)
+		settle()
+	}
 }
 
-// ---------------------------------------------------------------------------
-// DispatchRawNotification — client-side routing
-// ---------------------------------------------------------------------------
-
-func newRawNotifClient(t *testing.T) *ClawBenchACPClient {
-	t.Helper()
-	c := NewClawBenchACPClient()
-	ch := make(chan StreamEvent, 4)
-	c.RegisterSession("s1", ch)
-	return c
-}
-
-// An unknown variant on an active session reaches the handler with its payload
-// intact — the whole point of the bypass.
-func TestDispatchRawNotification_UnknownVariantDelivered(t *testing.T) {
-	c := newRawNotifClient(t)
+// An unknown session/update variant reaches the extension handler with its
+// payload intact — the SDK cannot decode it, so the hook is its only path.
+func TestUnhandled_UnknownVariantDelivered(t *testing.T) {
+	c, _, send := newHookClient(t)
 	var got []ExtensionUpdate
 	c.SetExtensionUpdateHandler(func(u ExtensionUpdate) { got = append(got, u) })
 
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{` +
+	send(`{"jsonrpc":"2.0","method":"session/update","params":{` +
 		`"sessionId":"s1","update":{"sessionUpdate":"subagent_spawned",` +
-		`"subagentSessionId":"child-1","name":"probe-alpha","task":"do work"}}}`))
+		`"subagentSessionId":"child-1","name":"probe-alpha","task":"do work"}}}`)
 
 	require.Len(t, got, 1)
 	assert.Equal(t, "s1", got[0].SessionID)
 	assert.Equal(t, "subagent_spawned", got[0].Variant)
-	// The payload the SDK would have dropped is intact.
 	assert.Contains(t, string(got[0].Params), "probe-alpha")
 	assert.Contains(t, string(got[0].Params), "child-1")
 }
 
-// A known variant must NOT be handed to the extension handler: the SDK's typed
-// callback already handles it, and doing both would double-process every frame.
-func TestDispatchRawNotification_KnownVariantIgnored(t *testing.T) {
-	c := newRawNotifClient(t)
+// A known variant stays on the typed path: it decodes, so the hook must not
+// fire and the frame must not be processed twice.
+func TestUnhandled_KnownVariantStaysTyped(t *testing.T) {
+	c, rec, send := newHookClient(t)
 	called := false
 	c.SetExtensionUpdateHandler(func(ExtensionUpdate) { called = true })
 
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{` +
+	send(`{"jsonrpc":"2.0","method":"session/update","params":{` +
 		`"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk",` +
-		`"content":{"type":"text","text":"hi"}}}}`))
-	assert.False(t, called, "known variants are the SDK's job")
+		`"content":{"type":"text","text":"hi"}}}}`)
+
+	assert.False(t, called, "known variants are the typed callback's job")
+	require.Len(t, rec.got, 1)
+	require.NotNil(t, rec.got[0].Update.AgentMessageChunk)
 }
 
-// Non-session/update lines are ignored.
-func TestDispatchRawNotification_IgnoresOtherLines(t *testing.T) {
-	c := newRawNotifClient(t)
+// A custom notification method reaches the notification handler; the same frame
+// gets the -32601 the SDK would have answered.
+func TestUnhandled_CustomMethodDelivered(t *testing.T) {
+	c, _, send := newHookClient(t)
+	var got []ExtensionNotification
+	c.SetExtensionNotificationHandler(func(n ExtensionNotification) { got = append(got, n) })
+
+	send(`{"jsonrpc":"2.0","method":"_codebuddy.ai/artifact","params":{` +
+		`"sessionId":"s1","event":"created","artifact":{"uri":"file:///x"}}}`)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, "_codebuddy.ai/artifact", got[0].Method)
+	assert.Contains(t, string(got[0].Params), "file:///x")
+}
+
+// A spec method the client does implement never reaches the hook. (The
+// recording client forwards to this one, so session/update is implemented.)
+func TestUnhandled_ImplementedMethodNotReported(t *testing.T) {
+	c, _, send := newHookClient(t)
 	called := false
+	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
 	c.SetExtensionUpdateHandler(func(ExtensionUpdate) { called = true })
 
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"session/request_permission","params":{}}`))
-	assert.False(t, called)
+	send(`{"jsonrpc":"2.0","method":"session/update","params":{` +
+		`"sessionId":"s1","update":{"sessionUpdate":"agent_thought_chunk",` +
+		`"content":{"type":"text","text":"hm"}}}}`)
+	assert.False(t, called, "a decodable update is handled by the SDK dispatch")
 }
 
 // An unknown variant for a session with no active stream is dropped, matching
 // the typed path's rule.
-func TestDispatchRawNotification_NoRouteDropped(t *testing.T) {
-	c := NewClawBenchACPClient()
+func TestUnhandled_NoRouteDropped(t *testing.T) {
+	c, _, send := newHookClient(t)
 	called := false
 	c.SetExtensionUpdateHandler(func(ExtensionUpdate) { called = true })
 
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{` +
-		`"sessionId":"unknown","update":{"sessionUpdate":"subagent_spawned"}}}`))
+	send(`{"jsonrpc":"2.0","method":"session/update","params":{` +
+		`"sessionId":"unknown","update":{"sessionUpdate":"subagent_spawned"}}}`)
 	assert.False(t, called, "no route → drop")
 }
 
-// With no handler registered the variant is ignored (default off).
-func TestDispatchRawNotification_NoHandler(t *testing.T) {
-	c := newRawNotifClient(t)
-	// Should not panic.
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{` +
-		`"sessionId":"s1","update":{"sessionUpdate":"subagent_spawned"}}}`))
+// With no handler registered the frames are a logged no-op, not a panic.
+func TestUnhandled_NoHandler(t *testing.T) {
+	_, _, send := newHookClient(t)
+	assert.NotPanics(t, func() {
+		send(`{"jsonrpc":"2.0","method":"session/update","params":{` +
+			`"sessionId":"s1","update":{"sessionUpdate":"subagent_spawned"}}}`)
+		send(`{"jsonrpc":"2.0","method":"_codebuddy.ai/command","params":{}}`)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -233,47 +226,6 @@ func TestSessionUpdateVariantMismatch_EveryUnionMember(t *testing.T) {
 	assert.False(t, sessionUpdateVariantMismatch(acp.SessionUpdate{}))
 }
 
-// A malformed line (not JSON) is dropped without panicking: it runs on the
-// stdout pump goroutine, so a panic would kill the connection.
-func TestDispatchRawNotification_MalformedLineIgnored(t *testing.T) {
-	c := newRawNotifClient(t)
-	called := false
-	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
-
-	c.DispatchRawNotification([]byte(`{not json`))
-	assert.False(t, called)
-}
-
-// session/update with malformed params must not reach the extension handler —
-// the probe unmarshal fails and the frame is dropped.
-func TestDispatchRawNotification_MalformedSessionUpdateParams(t *testing.T) {
-	c := newRawNotifClient(t)
-	called := false
-	c.SetExtensionUpdateHandler(func(ExtensionUpdate) { called = true })
-
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"session/update","params":"not-an-object"}`))
-	assert.False(t, called)
-}
-
-// An extension notification with no registered handler is a logged no-op, not a
-// panic — the default state before a backend wires its handler.
-func TestDispatchRawNotification_CustomMethodNoHandler(t *testing.T) {
-	c := newRawNotifClient(t)
-	assert.NotPanics(t, func() {
-		c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"_codebuddy.ai/command","params":{}}`))
-	})
-}
-
-// An empty method is not a notification (a response carries id + no method).
-func TestDispatchRawNotification_EmptyMethodIgnored(t *testing.T) {
-	c := newRawNotifClient(t)
-	called := false
-	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
-
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
-	assert.False(t, called)
-}
-
 // The typed callback must IGNORE a misclassified variant so it never emits a
 // bogus tool_use for a frame that is not a tool call.
 func TestSessionUpdate_MisclassifiedVariantIgnored(t *testing.T) {
@@ -292,72 +244,6 @@ func TestSessionUpdate_MisclassifiedVariantIgnored(t *testing.T) {
 	require.NoError(t, c.SessionUpdate(context.Background(), n))
 
 	assert.Empty(t, ch, "a misclassified variant must not produce a tool_use event")
-}
-
-// ---------------------------------------------------------------------------
-// Custom notification methods
-// ---------------------------------------------------------------------------
-
-// A custom agent→client notification method reaches the handler with its params
-// intact.
-func TestDispatchRawNotification_CustomMethodDelivered(t *testing.T) {
-	c := newRawNotifClient(t)
-	var got []ExtensionNotification
-	c.SetExtensionNotificationHandler(func(n ExtensionNotification) { got = append(got, n) })
-
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"_codebuddy.ai/artifact","params":{` +
-		`"sessionId":"s1","event":"created","artifact":{"uri":"file:///x"}}}`))
-
-	require.Len(t, got, 1)
-	assert.Equal(t, "_codebuddy.ai/artifact", got[0].Method)
-	assert.Contains(t, string(got[0].Params), "file:///x")
-}
-
-// Spec client methods are the SDK's job, not the extension handler's.
-func TestDispatchRawNotification_SpecMethodIgnored(t *testing.T) {
-	c := newRawNotifClient(t)
-	called := false
-	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
-
-	for _, m := range []string{"session/request_permission", "fs/read_text_file", "terminal/output", "elicitation/create"} {
-		c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"` + m + `","params":{}}`))
-	}
-	assert.False(t, called, "spec methods are the SDK's job")
-}
-
-// Requests (with an id) are not notifications and must be ignored here.
-func TestDispatchRawNotification_RequestIgnored(t *testing.T) {
-	c := newRawNotifClient(t)
-	called := false
-	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
-
-	// A request: has both method and id.
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","id":7,"method":"_codebuddy.ai/question","params":{}}`))
-	assert.False(t, called, "requests are not notifications")
-}
-
-// Responses (id + result, no method) are ignored.
-func TestDispatchRawNotification_ResponseIgnored(t *testing.T) {
-	c := newRawNotifClient(t)
-	called := false
-	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
-
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","id":"cb-1","result":{}}`))
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32601}}`))
-	assert.False(t, called)
-}
-
-// session/update lines go to the VARIANT handler, not the notification handler.
-func TestDispatchRawNotification_SessionUpdateNotTreatedAsMethod(t *testing.T) {
-	c := newRawNotifClient(t)
-	notifCalled, variantCalled := false, false
-	c.SetExtensionNotificationHandler(func(ExtensionNotification) { notifCalled = true })
-	c.SetExtensionUpdateHandler(func(ExtensionUpdate) { variantCalled = true })
-
-	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{` +
-		`"sessionId":"s1","update":{"sessionUpdate":"subagent_spawned"}}}`))
-	assert.True(t, variantCalled)
-	assert.False(t, notifCalled, "session/update must not go to the method handler")
 }
 
 // ---------------------------------------------------------------------------

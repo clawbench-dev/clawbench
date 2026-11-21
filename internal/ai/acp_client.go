@@ -107,13 +107,13 @@ type ClawBenchACPClient struct {
 	termSeq   atomic.Int64                // auto-increment ID for terminal IDs
 
 	// extensionUpdateHandler, when set, receives session/update variants the
-	// SDK's typed union misclassifies (see acp_raw_notification.go). Guarded by
-	// mu. Nil by default: reading a variant is a backend concern, wired per
-	// connection after the client is created.
+	// SDK cannot decode (see acp_ext.go). Guarded by mu. Nil by default:
+	// reading a variant is a backend concern, wired per connection after the
+	// client is created.
 	extensionUpdateHandler func(ExtensionUpdate)
 	// extensionNotificationHandler, when set, receives custom agent→client
-	// notification methods the SDK does not dispatch (see
-	// acp_raw_notification.go). Guarded by mu, nil by default.
+	// notification methods the SDK does not dispatch (see acp_ext.go).
+	// Guarded by mu, nil by default.
 	extensionNotificationHandler func(ExtensionNotification)
 }
 
@@ -337,9 +337,9 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	// be parsed into a known struct (e.g. `tool_call_pending` with toolCallId +
 	// title becomes ToolCall) with every payload field wrong. The original name
 	// survives in the variant's SessionUpdate field, so detect the mismatch and
-	// ignore it here — the raw notification path handles these (see
-	// acp_raw_notification.go). Without this the branch below would emit a bogus
-	// tool_use for a frame that is not a tool call at all.
+	// ignore it here — the SDK's unhandled hook handles these (see acp_ext.go).
+	// Without this the branch below would emit a bogus tool_use for a frame that
+	// is not a tool call at all.
 	if sessionUpdateVariantMismatch(n.Update) {
 		return nil
 	}
