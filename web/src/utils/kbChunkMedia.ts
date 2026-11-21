@@ -56,7 +56,7 @@ export function resolveChunkImages(
     const thumbWidth = opts.isWideScreen ? THUMB_WIDTH_WIDE : THUMB_WIDTH_NARROW
     const stamp = String(opts.stamp ?? Date.now())
 
-    return html.replace(/<img\b([^>]*)>/gi, (match: string, attrs: string) => {
+    return html.replace(/<img\b([^>]*)>/gi, (_match: string, attrs: string) => {
         const srcMatch = attrs.match(/\bsrc\s*=\s*"([^"]*)"/i)
         if (!srcMatch) return mark(attrs)
         const rawSrc = srcMatch[1]
