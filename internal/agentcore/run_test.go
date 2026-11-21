@@ -913,7 +913,7 @@ func TestLoadProjectRules_ReadsFile(t *testing.T) {
 		t.Fatalf("the agent's own prompt must still lead, got:\n%s", got)
 	}
 	// The rules are attributed, not dropped in bare.
-	if !strings.Contains(got, "defines the following rules in its AGENTS.md") {
+	if !strings.Contains(got, "defines the following rules in its project rules file") {
 		t.Fatalf("project rules must be introduced as such, got:\n%s", got)
 	}
 	// They sit above the mechanical sections but below the agent's prompt.
@@ -955,6 +955,67 @@ func TestLoadProjectRules_Truncates(t *testing.T) {
 	// The injected text stays near the cap — the announcement is small.
 	if len(rules) > MaxProjectRulesBytes+512 {
 		t.Fatalf("injected rules overshoot the cap badly: %d bytes", len(rules))
+	}
+}
+
+// TestLoadProjectRules_FallbackToClaudeMd pins the second candidate: a repo
+// with only CLAUDE.md still gets its rules injected.
+func TestLoadProjectRules_FallbackToClaudeMd(t *testing.T) {
+	dir := t.TempDir()
+	body := "Use tabs, not spaces."
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	rules := loadProjectRules(dir)
+	if !strings.Contains(rules, "Use tabs, not spaces.") {
+		t.Fatalf("CLAUDE.md must be read when AGENTS.md is absent, got %q", rules)
+	}
+}
+
+// TestLoadProjectRules_AgentsMdWins pins first-match-wins.
+//
+// Reading both would be worse than picking one: the same rule is commonly
+// duplicated across the two names, so the prompt would pay for it twice every
+// round, and wherever they disagree the model would face a contradiction with
+// no stated way to resolve it. AGENTS.md is the format the ecosystem is
+// converging on, so it wins.
+func TestLoadProjectRules_AgentsMdWins(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ProjectRulesFile), []byte("FROM-AGENTS-MD"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("FROM-CLAUDE-MD"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	rules := loadProjectRules(dir)
+	if !strings.Contains(rules, "FROM-AGENTS-MD") {
+		t.Fatalf("AGENTS.md must win, got %q", rules)
+	}
+	if strings.Contains(rules, "FROM-CLAUDE-MD") {
+		t.Fatalf("the lower-priority file must not be read as well, got %q", rules)
+	}
+}
+
+// TestLoadProjectRules_SkipsDirectoryToNextCandidate pins that a directory
+// occupying the primary name does not end the search.
+//
+// A repo can legitimately have a `AGENTS.md/` directory (a docs folder named
+// after the file is an easy mistake) next to a real CLAUDE.md; stopping at the
+// directory would silently drop the rules the repo does have.
+func TestLoadProjectRules_SkipsDirectoryToNextCandidate(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ProjectRulesFile), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("FROM-CLAUDE-MD"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	rules := loadProjectRules(dir)
+	if !strings.Contains(rules, "FROM-CLAUDE-MD") {
+		t.Fatalf("a directory named AGENTS.md must not block CLAUDE.md, got %q", rules)
 	}
 }
 

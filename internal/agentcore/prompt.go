@@ -10,9 +10,22 @@ import (
 	"clawbench/internal/model"
 )
 
-// ProjectRulesFile is the file whose contents are injected into the system
-// prompt as standing project rules.
+// ProjectRulesFile is the primary file whose contents are injected into the
+// system prompt as standing project rules.
 const ProjectRulesFile = "AGENTS.md"
+
+// ProjectRulesFiles lists every rules filename we look for, in priority order.
+//
+// The FIRST file that exists wins and the rest are not read at all. Reading
+// them all would be worse, not better: the same rule is often duplicated across
+// both names, so a repo that kept its CLAUDE.md alongside a newer AGENTS.md
+// would pay for the same instructions twice on every round, and any place the
+// two disagree would hand the model a contradiction with no way to resolve it.
+//
+// AGENTS.md leads because it is the format the ecosystem is converging on
+// (Codex, Cursor and Copilot all read it); CLAUDE.md follows because repos
+// migrating from Claude Code commonly keep it.
+var ProjectRulesFiles = []string{ProjectRulesFile, "CLAUDE.md"}
 
 // MaxProjectRulesBytes caps how much of the rules file is injected.
 //
@@ -24,54 +37,67 @@ const ProjectRulesFile = "AGENTS.md"
 // is reading are incomplete rather than assuming it has them all.
 const MaxProjectRulesBytes = 32 << 10
 
-// loadProjectRules reads <workDir>/AGENTS.md for injection into the system
-// prompt.
+// loadProjectRules reads the first existing rules file in ProjectRulesFiles
+// order for injection into the system prompt.
 //
-// Returns "" when there is no workDir, no file, the file is unreadable, or it
-// is empty. Rules are a nice-to-have: a permissions error or a stray directory
-// named AGENTS.md must not fail the turn, so every error path is a silent
-// skip. Read permission on the agent's own working directory is not assumed —
-// the file tools are gated by the tool policy, but the rules file is read here
+// Returns "" when there is no workDir, no file from the list exists, the file
+// is unreadable, or it is empty. Rules are a nice-to-have: a permissions error
+// or a stray directory named AGENTS.md must not fail the turn, so every error
+// path is a silent skip. A directory occupying a name does NOT stop the search
+// — the next candidate is still tried, since a repo can legitimately have a
+// `CLAUDE.md/` directory and an `AGENTS.md` file.
+//
+// Read permission on the agent's own working directory is not assumed — the
+// file tools are gated by the tool policy, but the rules file is read here
 // regardless, which is why this stays a plain os.ReadFile with no policy check:
 // it returns the user's own instructions to the user's own agent.
 //
-// The confined-to-workdir question does not arise: the path is always inside
+// The confined-to-workdir question does not arise: every path is inside
 // workDir by construction, so this cannot be used to read outside it.
 func loadProjectRules(workDir string) string {
 	if workDir == "" {
 		return ""
 	}
-	path := filepath.Join(workDir, ProjectRulesFile)
 
-	fi, err := os.Stat(path)
-	if err != nil || fi.IsDir() {
-		return ""
+	for _, name := range ProjectRulesFiles {
+		path := filepath.Join(workDir, name)
+
+		fi, err := os.Stat(path)
+		if err != nil || fi.IsDir() {
+			continue
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		truncated := false
+		if len(data) > MaxProjectRulesBytes {
+			data = data[:MaxProjectRulesBytes]
+			truncated = true
+		}
+
+		rules := strings.TrimSpace(string(data))
+		if rules == "" {
+			// An empty file is a deliberate "no rules here", not a reason to
+			// fall through to a lower-priority name: the user wrote the file
+			// that wins the search and left it blank.
+			return ""
+		}
+
+		// Cut mid-rune or mid-line, the tail can be garbage; say so rather than
+		// letting the model treat a half sentence as a complete rule. The name
+		// reported is the one actually read, not the primary constant.
+		if truncated {
+			rules += fmt.Sprintf("\n\n[The rest of %s was not included: the file exceeds the %d-byte limit "+
+				"for injected project rules. Read the file directly for the remainder.]",
+				name, MaxProjectRulesBytes)
+		}
+		return rules
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-
-	truncated := false
-	if len(data) > MaxProjectRulesBytes {
-		data = data[:MaxProjectRulesBytes]
-		truncated = true
-	}
-
-	rules := strings.TrimSpace(string(data))
-	if rules == "" {
-		return ""
-	}
-
-	// Cut mid-rune or mid-line, the tail can be garbage; say so rather than
-	// letting the model treat a half sentence as a complete rule.
-	if truncated {
-		rules += fmt.Sprintf("\n\n[The rest of %s was not included: the file exceeds the %d-byte limit "+
-			"for injected project rules. Read the file directly for the remainder.]",
-			ProjectRulesFile, MaxProjectRulesBytes)
-	}
-	return rules
+	return ""
 }
 
 // buildSystemPrompt assembles the system prompt for a run.
@@ -110,10 +136,14 @@ func buildSystemPrompt(agentPrompt, projectRules, workDir string, toolList []too
 	// Unwrapped and headed by a line that says what it is: dropped in as a bare
 	// block the model has no way to tell project rules from its own
 	// instructions, and conflates the two in its replies.
+	//
+	// The heading deliberately does NOT name the file: the text may have come
+	// from any candidate in ProjectRulesFiles, and this function is pure — it
+	// cannot know which one that was. Naming the primary constant here would
+	// tell the model "AGENTS.md" when the rules actually came from CLAUDE.md,
+	// which is exactly the kind of false detail it would then act on.
 	if s := strings.TrimSpace(projectRules); s != "" {
-		b.WriteString("The project you are working in defines the following rules in its ")
-		b.WriteString(ProjectRulesFile)
-		b.WriteString(". Follow them:\n\n")
+		b.WriteString("The project you are working in defines the following rules in its project rules file. Follow them:\n\n")
 		b.WriteString(s)
 		b.WriteString("\n\n")
 	}
