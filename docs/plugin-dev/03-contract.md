@@ -111,7 +111,7 @@ GET /api/features  ←──  internal/plugin/foo/plugin.go  ID: "foo"
 
 **不需要**再改 `dockTabs.ts`、`settingsFieldMap.ts`、全局语言表里的 `dockPlugins.desc`。
 
-### 后端（4 个文件 + 一行）
+### 后端（4 个文件 + `all.go` 一行；有配置再加 `plugin/config` 一个文件）
 
 - [ ] `internal/plugin/foo/plugin.go`：`Register()` 字面量
 - [ ] `internal/plugin/foo/routes.go`：`MountFooRoutes`

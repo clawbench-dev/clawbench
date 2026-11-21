@@ -214,7 +214,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、M
 
 ## 开发规则
 
-- **加一个功能（页签 / 服务端总开关）先读 [`docs/plugin-dev/`](docs/plugin-dev/README.md)**：界面插件只建 `web/src/plugins/<id>/`（`plugin.ts` / `i18n.ts` / 可选 `settings.ts`，建目录即被发现）；功能插件建 `internal/plugin/<id>/`（`plugin.go` / `routes.go` / 可选 `feature_switch.go`）并在 `internal/plugin/all/all.go` 加一行，配置字段同时加到 `handler/builtinConfigFields` 与插件 `ConfigFields`（路由门控、worker 启停、热更新、`/api/features`、守卫测试都是自动的）。
+- **加一个功能（页签 / 服务端总开关）先读 [`docs/plugin-dev/`](docs/plugin-dev/README.md)**：界面插件只建 `web/src/plugins/<id>/`（`plugin.ts` / `i18n.ts` / 可选 `settings.ts`，建目录即被发现）；功能插件建 `internal/plugin/<id>/`（`plugin.go` / `routes.go` / 可选 `feature_switch.go`）并在 `internal/plugin/all/all.go` 加一行；有配置的话在 `internal/plugin/config/<id>.go` 写 `Fields` / `Defaults` / `Validate` / `Apply`（PATCH 白名单、默认值、校验、写入都在这一处；路由门控、worker 启停、热更新、`/api/features` 是自动的）。
 - **改 UI 前先读视觉设计指导手册**：动样式、加组件、加主题、加动效之前必读 [`docs/spec/client/design-guide.md`](docs/spec/client/design-guide.md)——样式三层归属、设计 token（字号/间距/圆角/层级/时长）、36 主题机制与新增步骤、布局骨架，以及七条红线（`v-html` 匹配不到 scoped 规则、共享类基规则也必须全局、`app-region` 豁免只能是控件、对比度不能靠固定跳一档背景、`content-visibility` 滚动跳变、Android WebView 像素怪癖、`scrollbar-color` 弃用 `::-webkit-scrollbar-*`）。改动检查清单与守卫测试索引也在文末。
 - **日志必须用封装**：前端一律 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`；Android 一律 `AppLog.d/i/w/e()`，禁止 `android.util.Log`。两者的自身实现与测试除外。Tag 约定：短 PascalCase 模块名。
 - **功能和 Bug 修复必须包含单元测试**：Go 用 `*_test.go`，前端用 `.test.ts`，放在对应代码旁。测试须验证具体行为，非泛化快乐路径。

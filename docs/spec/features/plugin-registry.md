@@ -166,7 +166,7 @@ handler.RegisterRoutes(mux)           ← 之后才能按 ForRoute 套门控、�
 
 ```
 PATCH /api/config
-  ├─ applyConfigPatch(patch)          ← 写内存（含 ConfigInstance.X.Enabled）
+  ├─ applyConfigPatch(patch)          ← 写内存（功能字段转交 plugin/config）
   │    └─ applyHotReloadGlobals()     ← 末尾调用
   │         └─ reconfigureOnHotReload ← main 注册的回调
   │              └─ syncPluginLifecycle(cfg)

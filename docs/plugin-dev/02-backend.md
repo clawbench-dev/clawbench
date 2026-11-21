@@ -1,6 +1,6 @@
 # 功能插件（服务端）
 
-功能插件就是 `internal/plugin/<id>/` 这个目录。它拥有这个功能的**全部服务端事实**：接口、开关、后台资源、可改配置。
+功能插件就是 `internal/plugin/<id>/` 这个目录。它拥有这个功能的**全部服务端事实**：接口、开关、后台资源。配置字段另住 `internal/plugin/config/<id>.go`——原因见 §6。
 
 删掉这个目录 = 删掉这个功能（接口、后台任务、开关一并消失，编译期就能发现漏删的引用）。
 
@@ -217,5 +217,6 @@ handler.RegisterRoutes（只注入 Mount，不认识任何具体插件）
 - `routes.go`：`/api/tasks` 与 `/api/tasks/` 两条。
 - `feature_switch.go`：`TasksSwitchEffect(enabled)` 调 `service.GlobalScheduler.SetEnabled`。
 - `scheduler.go`：接口实现，内部用 `rejectIfTasksDisabled` 补"路由层读不到 body"的判断。
+- `internal/plugin/config/tasks.go`：可改字段、默认值（开关缺省为开、保留天数 30）、范围校验、PATCH 写入（含 `model.TasksEnabled` 同步）。
 
 照着它的形状建新插件，四类文件各看一眼就知道该写什么。
