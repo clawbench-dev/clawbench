@@ -2,12 +2,14 @@
 """Detect unconditional AVX instructions in Go cgo C functions.
 
 GOAMD64=v1 only constrains code emitted by the Go compiler. The C code that
-cgo compiles with the host C compiler (gcc/clang) is NOT covered by it. On
-GitHub Actions runners the C compiler defaults to -march=x86-64-v3, which
-makes standard-library cgo code (e.g. runtime/cgo x_cgo_getstackbound,
-x_cgo_sigaction, x_cgo_thread_start) emit AVX/BMI instructions. Those execute
-unconditionally during process startup and crash with SIGILL on pre-AVX CPUs
-(golang/go#82835, clawbench #719).
+cgo compiles with the host C compiler (gcc/clang) is NOT covered by it. The
+gcc shipped in Ubuntu 26.04 (the image behind GitHub Actions' ubuntu-latest)
+defaults to -march=x86-64-v3, which makes standard-library cgo code (e.g.
+runtime/cgo x_cgo_getstackbound, x_cgo_sigaction, x_cgo_thread_start) emit
+AVX/BMI instructions. Those execute unconditionally during process startup
+and crash with SIGILL on pre-AVX CPUs (golang/go#82835, clawbench #719).
+Other platforms' compilers default to v1 today, but pinning the baseline
+explicitly everywhere prevents a toolchain update from reintroducing this.
 
 The Go runtime itself also contains AVX code, but those paths are guarded by
 CPUID feature detection and are safe. So scanning the whole binary for AVX

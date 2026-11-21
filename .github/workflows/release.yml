@@ -261,10 +261,12 @@ jobs:
         env:
           CGO_ENABLED: 1
           # GOAMD64=v1 only constrains code emitted by the Go compiler, NOT
-          # the C/C++ code compiled by gcc via cgo. GitHub Actions runners
-          # default gcc to -march=x86-64-v3, which makes standard-library cgo
-          # code emit AVX/BMI instructions that SIGILL on pre-AVX CPUs.
-          # Pin both C and C++ to the baseline. See golang/go#82835, #719.
+          # the C/C++ code compiled by gcc via cgo. Ubuntu 26.04 (the image
+          # behind ubuntu-latest) ships a gcc whose default baseline is
+          # x86-64-v3, so standard-library cgo C code can emit AVX/BMI that
+          # SIGILLs on pre-AVX CPUs. Pin C/C++ to the v1 baseline explicitly
+          # so a runner image bump cannot silently change it again.
+          # See golang/go#82835, #719.
           CGO_CFLAGS: "-march=x86-64"
           CGO_CXXFLAGS: "-march=x86-64"
         run: |
@@ -474,9 +476,10 @@ jobs:
       - name: Build Windows binary
         env:
           CGO_ENABLED: 1
-          # Pin the MinGW C/C++ baseline: GOAMD64=v1 does not constrain cgo C
-          # code, and a v3-default gcc would emit AVX that older x86-64 CPUs
-          # cannot execute. See golang/go#82835 and #719.
+          # Pin the MinGW C/C++ baseline explicitly: GOAMD64=v1 does not
+          # constrain cgo C code, and the C compiler's default baseline can
+          # drift with toolchain updates. Keeps all platforms consistent.
+          # See golang/go#82835 and #719.
           CGO_CFLAGS: "-march=x86-64"
           CGO_CXXFLAGS: "-march=x86-64"
         run: |
