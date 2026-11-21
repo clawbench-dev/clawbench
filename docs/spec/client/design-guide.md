@@ -784,10 +784,10 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 ### 加一个 dock tab
 
 - [ ] `web/src/plugins/<id>/plugin.ts`（清单 + 运行时资源；**不能** import 自己的面板）
-- [ ] `dockTabs.ts` 的 `DOCK_TAB_ORDER` 加一行 id（**保持零 import**；顺序是产品决策，手写）
+- [ ] `order` 写在 `plugin.ts` 里（按 10 递增；不需要再改 `dockTabs.ts`，那里已经没有手写清单）
 - [ ] 按钮外观要新状态 → 加 `appearance` 谓词，样式写 `assets/dock.css`，**不要**在 App.vue 里给具体插件加分支
 - [ ] 深链接：在 `plugin.ts` 的 `deeplinks` 里声明，用 `ctx` 的导航原语（`switchTab` / `hotSwitchProject` / `tabBlocked`），不要在 App.vue 写 handler
-- [ ] 完整字段与验证清单见 [`docs/plugin-dev/README.md`](../../plugin-dev/README.md)
+- [ ] 完整字段与验证清单见 [`docs/plugin-dev/01-frontend.md`](../../plugin-dev/01-frontend.md)
 
 ### 加一个面板 / 面板里的新视图
 

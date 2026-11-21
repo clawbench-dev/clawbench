@@ -109,7 +109,7 @@ GET /api/features  ←──  internal/plugin/foo/plugin.go  ID: "foo"
 - [ ] 面板组件放 `web/src/components/foo/FooPanel.vue`（接收 `active`，首屏用 `PanelSkeleton`）
 - [ ] 标题等导航文案加到 `i18n/locales/{zh,en}.ts`（`nav.foo`）
 
-**不需要**再改 `dockTabs.ts`、`dockTabMeta.ts`、`settingsFieldMap.ts`、全局语言表里的 `dockPlugins.desc`。
+**不需要**再改 `dockTabs.ts`、`settingsFieldMap.ts`、全局语言表里的 `dockPlugins.desc`。
 
 ### 后端（4 个文件 + 一行）
 

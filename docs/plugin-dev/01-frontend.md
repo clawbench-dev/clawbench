@@ -131,6 +131,8 @@ export default [
 
 分类名默认等于目录名。历史上不一致的五个（`browse`→`files`、`live`→`meeting`、`proxy`→`portForward`、`forge`→`forgeIntegration`、`view`→`fileView`）登记在 `settingsFieldMap.ts` 的 `PLUGIN_SETTINGS_CATEGORY` 里。**新插件不要再制造例外。**
 
+同一个分类如果在 `plugins/<id>/settings.ts` 和 `settingsFieldMap.ts` 里都声明了，模块加载时**直接抛错**（不是静默覆盖）——迁移期间这是有意的，避免两份字段清单悄悄各管一半。
+
 `custom` 页面的组件在模块加载时被 `buildAsyncComponentOptions` 包一次——不要在渲染函数里调 `defineAsyncComponent`，那会每次渲染都产生新组件身份、整页重挂。
 
 ---
