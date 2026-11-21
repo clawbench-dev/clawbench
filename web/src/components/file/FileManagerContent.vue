@@ -112,10 +112,6 @@
             <Eye v-else :size="16" />
             <span class="action-label">{{ showHidden ? t('actionLabels.hideHidden') : t('actionLabels.showHidden') }}</span>
           </button>
-          <button class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
-            <FolderSearch :size="16" />
-            <span class="action-label">{{ t('jump.button') }}</span>
-          </button>
         </ActionBar>
       </div>
 
@@ -136,6 +132,15 @@
           <ArrowLeft :size="14" />
         </button>
         <DirBreadcrumb :path="currentDir" @navigate="$emit('navigateDir', $event)" />
+        <!-- "Go to a path" lives here, not in the toolbar: it acts on the location
+             the breadcrumb states, and in the toolbar it was one more icon button
+             competing for a slot that keeps folding it into the "more" menu.
+             `CornerUpRight` because it reads as "leave here and land somewhere
+             else"; the previous `FolderSearch` was read as a second search (the
+             row already has content search and the filename filter). -->
+        <button class="dir-jump-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
+          <CornerUpRight :size="14" />
+        </button>
         <!-- Explicit label beside the breadcrumb: the orange Home crumb alone
              is a colour cue, which is not enough to state "you are outside the
              project" (and is invisible to screen readers). -->
@@ -648,7 +653,7 @@ import { skipReasonHint } from '@/utils/kbFormat'
 import { readPanelState, writePanelState, layoutEpoch, DEFAULT_FM_PREVIEW_RATIO } from '@/utils/panelState'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail, BookOpen, Globe } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, Link2, ScanEye, ArrowLeft, SearchCode, Mail, BookOpen, Globe, CornerUpRight } from 'lucide-vue-next'
 import KBCollectionPickerDialog from '@/components/kb/KBCollectionPickerDialog.vue'
 import { kbAddByPath, kbImportDirectory, kbPreviewDirectory } from '@/composables/useKnowledgeBase'
 import { startKBIndexWatch } from '@/composables/useKBIndexStatus'
@@ -3443,8 +3448,10 @@ function scrollSelectedIntoView(path) {
 }
 
 /* Pinned outside the breadcrumb's horizontal scroll area so it stays reachable
-   when a deep path overflows. */
-.dir-up-btn {
+   when a deep path overflows. Same geometry as the up-one-level button on the
+   left, so the two ends of the row read as a pair. */
+.dir-up-btn,
+.dir-jump-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3458,8 +3465,16 @@ function scrollSelectedIntoView(path) {
     transition: background var(--duration-base), color var(--duration-base);
 }
 
+/* The go-to-path button sits at the END of the row, and does so on every
+   breadcrumb state — the external-badge swap happens mid-row, so it cannot be
+   relied on to push this one over. */
+.dir-jump-btn {
+    margin-left: auto;
+}
+
 @media (hover: hover) {
-    .dir-up-btn:hover {
+    .dir-up-btn:hover,
+    .dir-jump-btn:hover {
         background: var(--bg-secondary, #e0e0e0);
         color: var(--accent-color, #4a90d9);
     }

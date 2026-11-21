@@ -38,6 +38,18 @@ describe('JumpDirDialog', () => {
     expect(wrapper.findAll('button').length).toBeGreaterThanOrEqual(2)
   })
 
+  // Every other ModalDialog consumer supplies a header icon; without one the
+  // title is bare text and the dialog does not visibly belong to the button
+  // that opened it.
+  it('shows the same glyph in the header as the button that opens it', () => {
+    const wrapper = mountDialog({ open: true })
+    const header = wrapper.find('.modal-header')
+    expect(header.find('svg.lucide-corner-up-right').exists()).toBe(true)
+    // Title text is asserted for presence only: this suite's i18n locale is
+    // environment-dependent, so pinning the copy would be flaky.
+    expect(header.find('.modal-title').exists()).toBe(true)
+  })
+
   it('emits confirm with trimmed value on confirm click', async () => {
     const wrapper = mountDialog({ open: true })
     await wrapper.find('input').setValue('  src/utils  ')

@@ -1,5 +1,12 @@
 <template>
   <ModalDialog :open="open" :title="t('jump.title')" :z-index="2600" @close="$emit('close')">
+    <!-- Same glyph as the button that opens this dialog, so the two read as one
+         action. Every other ModalDialog consumer supplies a header icon; without
+         one this is the only dialog whose title is bare text. -->
+    <template #header>
+      <CornerUpRight :size="16" class="modal-header-icon" />
+      <span class="modal-title">{{ t('jump.title') }}</span>
+    </template>
     <div class="jump-dialog-body">
       <input
         ref="inputRef"
@@ -21,6 +28,7 @@
 <script setup>
 import { ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { CornerUpRight } from 'lucide-vue-next'
 import ModalDialog from '../common/ModalDialog.vue'
 
 const props = defineProps({
