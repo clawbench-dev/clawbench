@@ -3,6 +3,7 @@ package httpx
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,13 +100,17 @@ func TestRequireProject(t *testing.T) {
 	assert.Empty(t, got)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 
-	// With the project cookie → the path comes back.
+	// With the project cookie → the path comes back. The value must be a real
+	// absolute path for the platform (a POSIX-looking "/tmp/p" is relative on
+	// Windows and gets a drive prefix) and cookie-escaped, because a raw
+	// backslash is an invalid cookie byte and net/http silently drops it.
+	dir := t.TempDir()
 	rec2 := httptest.NewRecorder()
 	r2 := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
-	r2.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: "/tmp/p"})
+	r2.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(dir)})
 	got, ok = RequireProject(rec2, r2)
 	assert.True(t, ok)
-	assert.Equal(t, "/tmp/p", got)
+	assert.Equal(t, model.NormalizeProjectPath(dir), got)
 }
 
 func TestValidateAndResolvePath(t *testing.T) {
@@ -158,7 +163,9 @@ func TestResolveAbsPath(t *testing.T) {
 	require.NoError(t, err)
 
 	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
-	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: dir})
+	// Escaped: on Windows the path contains backslashes, which are invalid in a
+	// raw cookie value and would be dropped, leaving the project empty.
+	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: url.QueryEscape(dir)})
 
 	// Absolute path under a root → accepted.
 	rec := httptest.NewRecorder()

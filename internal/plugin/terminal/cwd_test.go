@@ -3,6 +3,7 @@ package terminal
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,9 +15,11 @@ func TestResolveTerminalCwd_RejectsPathsOutsideRoots(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	t.Cleanup(teardown)
 
-	// 绝对路径、但不在 model.RootPaths 里
+	// 绝对路径、但不在 model.RootPaths 里。用平台自己的绝对路径："/etc" 在
+	// Windows 上不是绝对路径（没有盘符），会被当成相对路径拼到项目下。
+	outside := t.TempDir()
 	w := httptest.NewRecorder()
-	_, ok := resolveTerminalCwd(w, httptest.NewRequest(http.MethodGet, "/api/terminal/status?cwd=/etc", http.NoBody), env.ProjectDir)
+	_, ok := resolveTerminalCwd(w, httptest.NewRequest(http.MethodGet, "/api/terminal/status?cwd="+url.QueryEscape(outside), http.NoBody), env.ProjectDir)
 	assert.False(t, ok)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 
