@@ -32,6 +32,20 @@ HarmonyOS 原生客户端正在实验性移植中，开发构建、已支持能�
 
 ### 前置准备
 
+#### 系统要求
+
+服务端由 Go 1.25 编译，对 CPU 指令集和操作系统的最低要求如下（发布包已按此基线构建并校验）：
+
+| 平台 | 最低 CPU / OS | 说明 |
+|---|---|---|
+| Linux x86-64 | 任意 64 位 x86（x86-64-v1，2003 年起）· 内核 ≥ 3.2 | **无需 AVX / AVX2**；2019/2021 年的 Intel Celeron J4125 / J6412 等低功耗 CPU 均可用 |
+| Windows x86-64 | 任意 64 位 x86 · Windows 10 / Server 2016 或更高 | cgo 需 binutils ≥ 2.37 的 GCC，发布包已满足 |
+| macOS x86-64 | 任意 64 位 x86 · macOS 12 Monterey 或更高 | — |
+| Linux / Android arm64 | ARMv8-A（2011 年起，如 Cortex-A53/A57、Apple A7 及之后所有 64 位 ARM） | Go `GOARM64=v8.0` 基线 |
+| macOS arm64 | Apple Silicon（M1 及之后）· macOS 12 或更高 | — |
+
+> 说明：Go 的 `GOAMD64=v1` 只约束 Go 代码；cgo 调用的 C/C++ 编译器可能默认使用更高的指令基线。发布流程对 C/C++ 编译器显式锁定基线，并对产物做指令自检，确保上述最低配置可运行。
+
 - **一台 PC（Linux / macOS / Windows）或装有 Termux 的安卓手机**：用于运行 ClawBench 服务端，并安装至少一个 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi）
 - **任意设备**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或用任意浏览器（桌面 / 平板 / 手机）访问服务端地址
 
