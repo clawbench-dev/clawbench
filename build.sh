@@ -207,8 +207,12 @@ elif command -v go >/dev/null 2>&1; then
         GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build $GO_TAGS_ARG -ldflags "$LDFLAGS" -o "$BINARY_NAME" ./cmd/server || { echo "ERROR: Go Android build failed" >&2; exit 1; }
         echo "  Go Android binary: ./$BINARY_NAME (GOOS=android/arm64, PIE)"
     else
-        go build $GO_TAGS_ARG -ldflags "$LDFLAGS" -o "$NAME$BINARY_SUFFIX" ./cmd/server || { echo "ERROR: Go build failed" >&2; exit 1; }
-        echo "  Go binary: ./$NAME$BINARY_SUFFIX"
+        # Same as the release build: no cgo, so the local binary is a single
+        # static file and its machine code does not depend on this machine's
+        # C compiler (#719). Without this the local build picked cgo up
+        # automatically whenever gcc was installed.
+        CGO_ENABLED=0 go build $GO_TAGS_ARG -ldflags "$LDFLAGS" -o "$NAME$BINARY_SUFFIX" ./cmd/server || { echo "ERROR: Go build failed" >&2; exit 1; }
+        echo "  Go binary: ./$NAME$BINARY_SUFFIX (static, no cgo)"
     fi
     # Build ACP mock agent binary (for E2E testing with ACP stdio transport)
     go build -o "acp-mock" ./cmd/acp-mock || { echo "ERROR: acp-mock build failed" >&2; exit 1; }
