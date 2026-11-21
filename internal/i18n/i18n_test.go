@@ -97,8 +97,6 @@ func TestT_TemplateDataChinese(t *testing.T) {
 func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 	keys := []string{
 		"SessionNotRunning",
-		"SessionStreamNotFound",
-		"SessionStreamBusy",
 		"SessionLimitReached",
 		"SessionIdRequired",
 		"NewSession",
@@ -207,7 +205,6 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"MeetingFilesColumnFile",
 		"MeetingFilesColumnStay",
 		"MeetingFilesColumnTime",
-		"MeetingFilesExcerptHeader",
 		"MeetingFilesManifestNote",
 		"MeetingFilesManifestTitle",
 		"MeetingFilesOpened",
@@ -449,7 +446,7 @@ func TestLocalizerForLocale_PushNotificationKeys(t *testing.T) {
 	keys := []string{
 		"PushTaskCompleted", "PushTaskFailed", "PushTaskCancelled", "PushTaskStarted",
 		"PushSessionCompleted", "PushSessionCancelled", "PushActionRequired",
-		"MailNotifyNoSubject", "MailNotifyUnknownSender", "MailNotifyManyTitle",
+		"MailNotifyNoSubject", "MailNotifyManyTitle",
 		"MailNotifyTitle", "MailNotifyFrom", "MailNotifyMoreItems",
 		"PushLabelSession", "PushLabelProject", "PushLabelTask", "PushLabelAction",
 		"PushLabelCommand", "PushLabelFile",
