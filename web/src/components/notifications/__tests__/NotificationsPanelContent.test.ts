@@ -333,6 +333,42 @@ describe('NotificationsPanelContent', () => {
     expect(mockToastShow).toHaveBeenCalledTimes(1)
   })
 
+  it('renders an unknown kind as "Other" and explains instead of navigating', async () => {
+    // A row from a newer build (or a typo'd kind). The panel must NOT fall back
+    // to a concrete kind — labelling a plugin's notification "Session" is a
+    // wrong answer, and a silent click reads as a broken panel.
+    items.value = [notif({
+      kind: 'plugin_new',
+      eventType: 'created',
+      title: '',
+      sessionId: undefined,
+    })]
+    const w = mountPanel()
+
+    expect(w.text()).toContain('Other')
+    expect(w.text()).not.toContain('Session')
+
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('clawbench-open-session', listener)
+    await w.find('.notif-card').trigger('click')
+    window.removeEventListener('clawbench-open-session', listener)
+
+    expect(events).toHaveLength(0)
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
+    expect(String(mockToastShow.mock.calls[0][0])).toContain('does not know yet')
+  })
+
+  it('explains when a row cannot name its destination', async () => {
+    // A malformed row (a task with no task id) must not swallow the press.
+    items.value = [notif({ kind: 'task', taskId: undefined, sessionId: undefined })]
+    const w = mountPanel()
+
+    await w.find('.notif-card').trigger('click')
+
+    expect(mockToastShow).toHaveBeenCalledTimes(1)
+  })
+
   it('a sourceMissing row does NOT navigate and shows a hint instead', async () => {
     // The whole reason sourceMissing exists: a deleted session's own fallback
     // silently redirects to the newest session, which is worse than a hint.

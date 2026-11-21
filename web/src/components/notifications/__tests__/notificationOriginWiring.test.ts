@@ -40,6 +40,13 @@ function readWebFile(relPath: string): string {
 }
 
 const panelRaw = readWebFile('src/components/notifications/NotificationsPanelContent.vue')
+/**
+ * The per-kind table: destinations live there now (see notificationKinds.ts).
+ * It receives `jump` from the panel, so every dispatch still goes through the
+ * one flagged dispatcher — the guard follows the code rather than pinning a
+ * file that no longer owns the destinations.
+ */
+const kindsRaw = readWebFile('src/utils/notificationKinds.ts')
 /** Plugin sources: deep-link handlers live there now (see usePluginDeeplinks). */
 const PLUGIN_SOURCES = Object.entries(
   import.meta.glob('../../../plugins/*/plugin.ts', { eager: true, query: '?raw', import: 'default' }) as Record<
@@ -64,27 +71,34 @@ function stripComments(src: string): string {
 }
 
 const panel = stripComments(panelRaw)
+const kinds = stripComments(kindsRaw)
 const app = stripComments(appRaw)
 const coordinator = stripComments(coordinatorRaw)
 
 describe('notification navigation origin wiring', () => {
   it('every jump goes through the single flagged dispatcher', () => {
-    // The panel must not dispatch `clawbench-open-*` events anywhere except
-    // `jumpTo`, which stamps `fromNotificationCenter`. A raw dispatch added for
-    // a new row kind would silently drop the origin, and Back would then land
-    // on whatever tab preceded the log (or exit the app).
-    const raw = panel.match(/dispatchEvent\(new CustomEvent\('clawbench-open-/g) ?? []
-    expect(raw, 'only jumpTo may dispatch navigation events').toHaveLength(0)
+    // Neither the panel nor the kind table may dispatch a navigation event
+    // directly: the table receives `jump` from the panel, and that argument is
+    // `jumpTo` — the one function that stamps `fromNotificationCenter`. A raw
+    // dispatch added for a new row kind would silently drop the origin, and
+    // Back would land on whatever tab preceded the log (or exit the app).
+    for (const [name, src] of [['panel', panel], ['kind table', kinds]] as const) {
+      const raw = src.match(/dispatchEvent\(new CustomEvent\('clawbench-open-/g) ?? []
+      expect(raw, `${name} must not dispatch navigation events directly`).toHaveLength(0)
+    }
     expect(panel).toMatch(/function jumpTo\(/)
     expect(panel).toMatch(/fromNotificationCenter: true/)
+    // The table can only navigate through the injected dispatcher.
+    expect(panel).toMatch(/spec\.open\(n, jumpTo\)/)
+    expect(kinds).toMatch(/open\?: \(n: NotificationItem, jump: NotificationJump\)/)
   })
 
   it('every navigating kind reaches jumpTo', () => {
     // One call per navigating kind. Kinds are enumerated here rather than
     // counted, so a missing destination names itself: session / task / forge /
-    // usage. (`NotificationKind` is also pinned by a `never` exhaustiveness
-    // check in the panel — this is the runtime half of that guard, catching a
-    // kind that is handled in the switch but forgets to call jumpTo.)
+    // usage / meeting / mail. (`NotificationKind` is also pinned by the table's
+    // `satisfies Record<NotificationKind, …>` — this is the runtime half of
+    // that guard, catching a kind declared without a destination.)
     for (const event of [
       'clawbench-open-session',
       'clawbench-open-task',
@@ -93,7 +107,7 @@ describe('notification navigation origin wiring', () => {
       'clawbench-open-meeting',
       'clawbench-open-mail',
     ]) {
-      expect(panel, `${event} must be dispatched through jumpTo`).toContain(`jumpTo('${event}'`)
+      expect(kinds, `${event} must be dispatched through the injected jump`).toContain(`jump('${event}'`)
     }
   })
 
@@ -138,16 +152,18 @@ describe('notification navigation origin wiring', () => {
   })
 
   it('every clawbench-open-* the panel dispatches has a handler that records the origin', () => {
-    // Self-maintaining half of the guard: whatever events the panel dispatches
-    // today, each one must have a listener in App.vue, and that listener must
-    // call recordNotificationOrigin. Adding a new row kind therefore cannot ship
-    // a jump whose Back target was never armed — the failure names the event.
+    // Self-maintaining half of the guard: whatever events the panel (or the
+    // kind table it drives) dispatches today, each one must have a listener in
+    // App.vue, and that listener must call recordNotificationOrigin. Adding a
+    // new row kind therefore cannot ship a jump whose Back target was never
+    // armed — the failure names the event.
     //
     // This complements (does not replace) the per-kind assertions above: those
     // pin the CURRENT set, this one covers whatever the set becomes.
-    const dispatched = [...new Set(
-      [...panel.matchAll(/jumpTo\('([^']+)'/g)].map((m) => m[1]),
-    )]
+    const dispatched = [...new Set([
+      ...[...panel.matchAll(/jumpTo\('([^']+)'/g)].map((m) => m[1]),
+      ...[...kinds.matchAll(/\bjump\('([^']+)'/g)].map((m) => m[1]),
+    ])]
     expect(dispatched.length, 'the panel must dispatch at least one jump').toBeGreaterThan(0)
 
     for (const event of dispatched) {

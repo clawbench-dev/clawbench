@@ -2010,6 +2010,9 @@ export default {
       usage: 'Usage',
       meeting: 'Meeting',
       mail: 'Mail',
+      // A kind this build does not know yet. Never impersonate a known kind —
+      // a wrong label is worse than a generic one.
+      other: 'Other',
     },
     range: {
       today: 'Today',
@@ -2020,6 +2023,10 @@ export default {
     // navigate (the source's own fallback would silently redirect elsewhere).
     sourceDeleted: 'Source deleted',
     sourceDeletedHint: 'The session or task this notification points at no longer exists.',
+    // An unknown kind and a row with no destination must both explain
+    // themselves; otherwise the press just looks broken.
+    unknownKindHint: 'This notification comes from a feature this build does not know yet, so it cannot be opened here.',
+    noDestinationHint: 'This notification has nowhere to open.',
     // The log is global (all projects). ONLY other-project rows are named —
     // a row with no name is one from the project you are in, and that is the
     // signal; printing your own project on every row is noise. The
@@ -2032,7 +2039,7 @@ export default {
     loading: 'Loading…',
     loadMore: 'Load more',
     empty: 'No notifications',
-    emptyHint: 'Session, task, repository and meeting events will show up here.',
+    emptyHint: 'Events from every feature show up here.',
     emptyFiltered: 'No notifications match the current filters',
     clear: 'Clear all',
     clearConfirm: 'Clear all notifications? This cannot be undone.',
@@ -3720,7 +3727,7 @@ export default {
       shareShowProjectName: 'Show source project on the share page',
       shareShowProjectNameDesc: 'When off, the share page does not name the project the content came from.',
       notificationsLogSection: 'Notification Center',
-      notificationsLogDesc: 'The notification center is an append-only event log: no read state, no badge. It records session completions, task events, Forge changes, usage alerts and meeting events.',
+      notificationsLogDesc: 'The notification center is an append-only event log: no read state, no badge. It records events from every feature.',
       notificationsRetention: 'The server keeps at most 500 rows for 30 days; older rows are cleaned up automatically.',
       notificationsClear: 'Clear notifications',
       notificationsClearing: 'Clearing…',
