@@ -1,7 +1,6 @@
 package handler
 
 import (
-	plugforge "clawbench/internal/plugin/forge"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +19,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	plugforge "clawbench/internal/plugin/forge"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
@@ -313,7 +314,7 @@ func TestServeConfig_Patch_UserNicknameTrimsWhitespace(t *testing.T) {
 // hot-reloaded into the model global, and bounded because it is injected into
 // every agent system prompt.
 func TestServeConfig_Patch_UserProfile(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}

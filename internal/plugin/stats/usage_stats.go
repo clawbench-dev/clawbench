@@ -1,12 +1,13 @@
 package stats
 
 import (
-	"clawbench/internal/httpx"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
+
+	"clawbench/internal/httpx"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"

@@ -13,11 +13,15 @@ import (
 	"clawbench/internal/service"
 )
 
+// pluginID is the plugin's identifier: it names the config section, the route
+// prefix owner and the plugin registry entry, so all of them stay in sync.
+const pluginID = "forge"
+
 // Register 把 forge 功能登记进注册表。
 func Register() {
 	plugins.Register(&plugins.Plugin{
-		ID:        "forge",
-		Section:   "forge",
+		ID:        pluginID,
+		Section:   pluginID,
 		Enabled:   func() bool { return model.ConfigInstance.Forge.Enabled },
 		DefaultOn: true,
 		// 整个前缀归 forge 管。GET /api/forge/binding 例外：前端靠它判断
@@ -29,7 +33,7 @@ func Register() {
 		// 可修改的配置字段（PATCH /api/config）。清单住在
 		// internal/plugin/config/forge.go，handler 的白名单读同一份，
 		// 所以不存在"插件声明了但 PATCH 不认"的窗口。
-		ConfigFields: config.Fields("forge"),
+		ConfigFields: config.Fields(pluginID),
 		Start: func(model.Config) {
 			forgepoll.Start(forgepoll.Deps{
 				NewProvider:     NewForgeProvider,

@@ -19,9 +19,9 @@ import (
 
 // setupPersistTestEnv sets up a test environment with DataDir configured
 // so that writeConfigYAML actually writes to disk.
-func setupPersistTestEnv(t *testing.T) (*testEnv, func()) {
+func setupPersistTestEnv(t *testing.T) func() {
 	t.Helper()
-	env, teardown := setupTestEnv(t)
+	_, teardown := setupTestEnv(t)
 
 	// Set DataDir to a temp directory so config.yaml gets written there
 	origBinDir := model.BinDir
@@ -44,7 +44,7 @@ func setupPersistTestEnv(t *testing.T) (*testEnv, func()) {
 		teardown()
 	}
 
-	return env, cleanup
+	return cleanup
 }
 
 // patchAndReadConfig sends a PATCH request and reads back config.yaml to verify persistence.
@@ -90,7 +90,7 @@ func getNestedValue(m map[string]any, path string) any {
 // ─── Top-level fields ──────────────────────────────────────
 
 func TestPersist_DefaultAgent(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -102,7 +102,7 @@ func TestPersist_DefaultAgent(t *testing.T) {
 // ─── Chat section ──────────────────────────────────────
 
 func TestPersist_ChatInitialMessages(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -112,7 +112,7 @@ func TestPersist_ChatInitialMessages(t *testing.T) {
 }
 
 func TestPersist_ChatPageSize(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -122,7 +122,7 @@ func TestPersist_ChatPageSize(t *testing.T) {
 }
 
 func TestPersist_ChatSystemPromptInterval(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -132,7 +132,7 @@ func TestPersist_ChatSystemPromptInterval(t *testing.T) {
 }
 
 func TestPersist_ChatForkContextBudget(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -147,7 +147,7 @@ func TestPersist_ChatForkContextBudget(t *testing.T) {
 // a negative budget would make every fork context fall back to the default
 // silently, so the write is refused up front.
 func TestPersist_ChatForkContextBudgetRejectsNegative(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -166,7 +166,7 @@ func TestPersist_ChatForkContextBudgetRejectsNegative(t *testing.T) {
 // would be echoed by GET /api/config while BoundForkContext substitutes the
 // default. The UI would show 0 while the server used 100000.
 func TestPersist_ChatForkContextBudgetRejectsZero(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -183,7 +183,7 @@ func TestPersist_ChatForkContextBudgetRejectsZero(t *testing.T) {
 // ─── Session section ──────────────────────────────────────
 
 func TestPersist_SessionMaxCount(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -195,7 +195,7 @@ func TestPersist_SessionMaxCount(t *testing.T) {
 // ─── Upload section ──────────────────────────────────────
 
 func TestPersist_UploadMaxSizeMB(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -205,7 +205,7 @@ func TestPersist_UploadMaxSizeMB(t *testing.T) {
 }
 
 func TestPersist_UploadMaxFiles(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -217,7 +217,7 @@ func TestPersist_UploadMaxFiles(t *testing.T) {
 // ─── Terminal section ──────────────────────────────────────
 
 func TestPersist_TerminalEnabled(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -227,7 +227,7 @@ func TestPersist_TerminalEnabled(t *testing.T) {
 }
 
 func TestPersist_TerminalIdleTimeout(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -237,7 +237,7 @@ func TestPersist_TerminalIdleTimeout(t *testing.T) {
 }
 
 func TestPersist_TerminalMaxSessions(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -247,7 +247,7 @@ func TestPersist_TerminalMaxSessions(t *testing.T) {
 }
 
 func TestPersist_TerminalBufferLines(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -259,7 +259,7 @@ func TestPersist_TerminalBufferLines(t *testing.T) {
 // ─── TTS core ──────────────────────────────────────
 
 func TestPersist_TTSEngine(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -269,7 +269,7 @@ func TestPersist_TTSEngine(t *testing.T) {
 }
 
 func TestPersist_TTSVoice(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -279,7 +279,7 @@ func TestPersist_TTSVoice(t *testing.T) {
 }
 
 func TestPersist_TTSSpeed(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -289,7 +289,7 @@ func TestPersist_TTSSpeed(t *testing.T) {
 }
 
 func TestPersist_TTSModel(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -299,7 +299,7 @@ func TestPersist_TTSModel(t *testing.T) {
 }
 
 func TestPersist_TTSFormat(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -309,7 +309,7 @@ func TestPersist_TTSFormat(t *testing.T) {
 }
 
 func TestPersist_SummarizeTTSBackend(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -319,7 +319,7 @@ func TestPersist_SummarizeTTSBackend(t *testing.T) {
 }
 
 func TestPersist_SummarizeTTSModel(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -329,7 +329,7 @@ func TestPersist_SummarizeTTSModel(t *testing.T) {
 }
 
 func TestPersist_TTSMaxCacheFiles(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -342,7 +342,7 @@ func TestPersist_TTSMaxCacheFiles(t *testing.T) {
 // Engine is set to "openai" first so the required-field validation for the
 // sub-config applies (a partial write would otherwise be accepted).
 func TestPersist_OpenAITTSSubConfig(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -359,7 +359,7 @@ func TestPersist_OpenAITTSSubConfig(t *testing.T) {
 }
 
 func TestPersist_OpenAITTSEngineAndVoice(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -375,7 +375,7 @@ func TestPersist_OpenAITTSEngineAndVoice(t *testing.T) {
 
 // The stream mode override must round-trip through config.yaml.
 func TestPersist_OpenAITTSStreamMode(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -392,7 +392,7 @@ func TestPersist_OpenAITTSStreamMode(t *testing.T) {
 // An unknown stream_mode must be rejected rather than silently persisted, so a
 // typo cannot leave the provider falling back to the model default unnoticed.
 func TestPersist_OpenAITTSStreamModeRejectsUnknown(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -415,7 +415,7 @@ func TestPersist_OpenAITTSStreamModeRejectsUnknown(t *testing.T) {
 // Each vendor engine keeps its credentials in its own section, so switching
 // engines never overwrites the one you are not using.
 func TestPersist_AlibabaTTSSubConfig(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -430,7 +430,7 @@ func TestPersist_AlibabaTTSSubConfig(t *testing.T) {
 }
 
 func TestPersist_TencentTTSSubConfig(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -445,7 +445,7 @@ func TestPersist_TencentTTSSubConfig(t *testing.T) {
 }
 
 func TestPersist_VolcanoTTSSubConfig(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -459,7 +459,7 @@ func TestPersist_VolcanoTTSSubConfig(t *testing.T) {
 }
 
 func TestPersist_MinimaxTTSSubConfig(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -478,7 +478,7 @@ func TestPersist_MinimaxTTSSubConfig(t *testing.T) {
 // filled in (the panel saves one field at a time), but saving a field while
 // that engine is already selected must require them.
 func TestPersist_TencentTTSRequiresCredentials(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -493,7 +493,7 @@ func TestPersist_TencentTTSRequiresCredentials(t *testing.T) {
 }
 
 func TestPersist_TTSEngineAcceptsVendorValues(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -506,7 +506,7 @@ func TestPersist_TTSEngineAcceptsVendorValues(t *testing.T) {
 // ─── TTS API sub-config ──────────────────────────────────────
 
 func TestPersist_AISummaryProviderID(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -524,7 +524,7 @@ func TestPersist_AISummaryProviderID(t *testing.T) {
 // ─── RAG section ──────────────────────────────────────
 
 func TestPersist_RAGSearchPoolSize(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -534,7 +534,7 @@ func TestPersist_RAGSearchPoolSize(t *testing.T) {
 }
 
 func TestPersist_RAGBaseURL(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -544,7 +544,7 @@ func TestPersist_RAGBaseURL(t *testing.T) {
 }
 
 func TestPersist_RAGModel(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -554,7 +554,7 @@ func TestPersist_RAGModel(t *testing.T) {
 }
 
 func TestPersist_RAGChunkSize(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -564,7 +564,7 @@ func TestPersist_RAGChunkSize(t *testing.T) {
 }
 
 func TestPersist_RAGChunkOverlap(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -574,7 +574,7 @@ func TestPersist_RAGChunkOverlap(t *testing.T) {
 }
 
 func TestPersist_RAGSearchLimit(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -584,7 +584,7 @@ func TestPersist_RAGSearchLimit(t *testing.T) {
 }
 
 func TestPersist_RAGRetentionDays(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -596,7 +596,7 @@ func TestPersist_RAGRetentionDays(t *testing.T) {
 // ─── Port Forward section ──────────────────────────────────────
 
 func TestPersist_PortForwardEnabled(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -606,7 +606,7 @@ func TestPersist_PortForwardEnabled(t *testing.T) {
 }
 
 func TestPersist_PortForwardPort(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -620,7 +620,7 @@ func TestPersist_PortForwardPort(t *testing.T) {
 // The sync knobs must survive a restart, so they have to reach config.yaml —
 // the worker reads them from the loaded config, not from the PATCH request.
 func TestPersist_MailSyncTuning(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -638,7 +638,7 @@ func TestPersist_MailSyncTuning(t *testing.T) {
 // ─── Multi-field PATCH ──────────────────────────────────────
 
 func TestPersist_MultipleFieldsInOnePatch(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -667,7 +667,7 @@ func TestPersist_MultipleFieldsInOnePatch(t *testing.T) {
 // ─── In-memory + on-disk consistency ──────────────────────────────
 
 func TestPersist_InMemoryAndDiskMatch(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -701,7 +701,7 @@ func TestPersist_InMemoryAndDiskMatch(t *testing.T) {
 // ─── Config backup created ──────────────────────────────────────
 
 func TestPersist_CreatesBackup(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -721,7 +721,7 @@ func TestPersist_CreatesBackup(t *testing.T) {
 // ─── Verify GET matches persisted config ──────────────────────────────
 
 func TestPersist_GetMatchesDiskAfterPatch(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -749,7 +749,7 @@ func TestPersist_GetMatchesDiskAfterPatch(t *testing.T) {
 // --- writeConfigYAML fresh file (no existing config.yaml) ---
 
 func TestPersist_FreshFileCreation(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	// Don't create config.yaml manually — let writeConfigYAML create it from ConfigInstance
@@ -763,7 +763,7 @@ func TestPersist_FreshFileCreation(t *testing.T) {
 // --- writeConfigYAML with corrupt existing file ---
 
 func TestPersist_CorruptYAMLRecovery(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	configDir := filepath.Join(model.DataDir, "config")
@@ -783,7 +783,7 @@ func TestPersist_CorruptYAMLRecovery(t *testing.T) {
 // --- writeConfigYAML with empty existing file ---
 
 func TestPersist_EmptyYAMLRecovery(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	configDir := filepath.Join(model.DataDir, "config")
@@ -802,7 +802,7 @@ func TestPersist_EmptyYAMLRecovery(t *testing.T) {
 // --- mergePatchIntoRaw creates nested map if missing ---
 
 func TestPersist_MergeCreatesNestedMap(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	// Create minimal config.yaml with no nested sections
@@ -823,7 +823,7 @@ func TestPersist_MergeCreatesNestedMap(t *testing.T) {
 // --- Config directory auto-creation ---
 
 func TestPersist_CreatesConfigDir(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	// Remove the config directory that setupPersistTestEnv created
@@ -844,7 +844,7 @@ func TestPersist_CreatesConfigDir(t *testing.T) {
 // --- Incremental patch preserves existing fields ---
 
 func TestPersist_IncrementalPatchPreservesFields(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
@@ -876,7 +876,7 @@ func TestPersist_IncrementalPatchPreservesFields(t *testing.T) {
 // auto-password and hiding the password from the banner.
 
 func TestPersist_FreshInstall_DoesNotWriteAutoPassword(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	// No config.yaml on disk — the fresh-install branch runs.
@@ -892,7 +892,7 @@ func TestPersist_FreshInstall_DoesNotWriteAutoPassword(t *testing.T) {
 }
 
 func TestPersist_ExistingFile_StripsLeakedAutoPassword(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	// An older build already leaked the auto password into config.yaml.
@@ -916,7 +916,7 @@ func TestPersist_ExistingFile_StripsLeakedAutoPassword(t *testing.T) {
 // A user-configured password (flag clear) must still be written — the strip is
 // gated on the auto-generated marker, not on the key name alone.
 func TestPersist_UserPassword_IsStillWritten(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{Password: "sha256:abc"}
@@ -933,7 +933,7 @@ func TestPersist_UserPassword_IsStillWritten(t *testing.T) {
 // Called on writeConfigYAML directly because "password" is not in
 // PatchableConfigPaths, so ServeConfigPassword is the only production caller.
 func TestPersist_ExplicitPasswordPatch_NotStripped(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{Password: "old"}
@@ -958,7 +958,7 @@ func TestPersist_AutoPasswordStrippedFromBackupToo(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on Windows: the file-permission model differs (mode bits are not enforced)")
 	}
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	configDir := filepath.Join(model.DataDir, "config")
@@ -990,7 +990,7 @@ func TestPersist_AutoPasswordStrippedFromBackupToo(t *testing.T) {
 // the old key would survive forever and a hand-edit of it would look effective
 // while being ignored. The new value wins when both are present.
 func TestWriteConfigYAML_MigratesLegacyNicknameKey(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 
 	configPath := filepath.Join(model.DataDir, "config", "config.yaml")
@@ -1021,7 +1021,7 @@ func TestWriteConfigYAML_MigratesLegacyNicknameKey(t *testing.T) {
 // the meeting UI), so a legacy value equal to the fallback is dropped: empty
 // now means "not configured".
 func TestWriteConfigYAML_DropsLegacyFallbackNickname(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 
 	configPath := filepath.Join(model.DataDir, "config", "config.yaml")
@@ -1045,7 +1045,7 @@ func TestWriteConfigYAML_DropsLegacyFallbackNickname(t *testing.T) {
 }
 
 func TestPersist_MeetingConfig(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
+	cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}

@@ -1,11 +1,12 @@
 package share
 
 import (
-	"clawbench/internal/filex"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"testing"
+
+	"clawbench/internal/filex"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

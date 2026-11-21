@@ -207,8 +207,6 @@ func resetThumbDecodeTracker() {
 // (registered in the import block above); it is what the meeting key frames are
 // stored as, so without it every shot thumbnail 404s. BMP and TIFF are still
 // out, SVG is explicitly excluded because it's vector, not raster.
-//
-//nolint:goconst // ".png" appears in multiple unrelated string maps; extracting is overkill
 var thumbDecodeExts = []string{
 	".png", ".jpg", ".jpeg", ".gif", ".webp",
 }

@@ -208,7 +208,7 @@ func TestServeGitStats_ValidResponse(t *testing.T) {
 	start := now.Add(-24 * time.Hour).Format(time.RFC3339)
 	end := now.Add(24 * time.Hour).Format(time.RFC3339)
 	req := withProjectCookie(newRequest(t, http.MethodGet,
-		"/api/git/stats?start="+start+"&end="+end+"&trend=1", nil), env.ProjectDir)
+		"/api/git/stats?start="+start+"&end="+end+"&trend=1"), env.ProjectDir)
 	w := callHandler(ServeGitStats, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -237,7 +237,7 @@ func TestServeGitStats_NotGitRepo(t *testing.T) {
 	// env.ProjectDir exists but is not a git repo.
 
 	req := withProjectCookie(newRequest(t, http.MethodGet,
-		"/api/git/stats?start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z", nil), env.ProjectDir)
+		"/api/git/stats?start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z"), env.ProjectDir)
 	w := callHandler(ServeGitStats, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -272,7 +272,7 @@ func TestServeGitStats_ValidationErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := withProjectCookie(newRequest(t, http.MethodGet, "/api/git/stats?"+tc.params, nil), projectPath)
+			req := withProjectCookie(newRequest(t, http.MethodGet, "/api/git/stats?"+tc.params), projectPath)
 			w := callHandler(ServeGitStats, req)
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 		})
@@ -283,7 +283,7 @@ func TestServeGitStats_MissingProjectCookie(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodGet, "/api/git/stats?start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z", nil)
+	req := newRequest(t, http.MethodGet, "/api/git/stats?start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z")
 	w := callHandler(ServeGitStats, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
@@ -292,7 +292,7 @@ func TestServeGitStats_MethodNotAllowed(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := withProjectCookie(newRequest(t, http.MethodPost, "/api/git/stats?start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodPost, "/api/git/stats?start=2026-01-01T00:00:00Z&end=2026-02-01T00:00:00Z"), env.ProjectDir)
 	w := callHandler(ServeGitStats, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }

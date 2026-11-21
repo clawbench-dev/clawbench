@@ -36,10 +36,6 @@ const (
 	jsonMaxCount    = "MaxCount"
 	jsonSessions    = "sessions"
 	jsonCommands    = "commands"
-	// jsonFile is the "which file does this payload point at" key (artifact
-	// name, watched file). Distinct from entryTypeFile / shareKindFile, which
-	// are VALUES classifying a file, not a key.
-	jsonFile = "file"
 	// jsonTransport names the transport of a server/agent/session in responses
 	// and config patches ("stdio" / "http" / "sse" / "acp-stdio" / "ssh" / "h2").
 	jsonTransport = "transport"

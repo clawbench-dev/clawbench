@@ -2,14 +2,14 @@ package handler
 
 import (
 	"archive/zip"
-	"strings"
-
-	"clawbench/internal/filex"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"clawbench/internal/filex"
 )
 
 // maxArchivePaths limits the number of paths in a single archive request.
@@ -142,25 +142,6 @@ func ServeFileArchive(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		slog.Warn("archive: no files written")
 	}
 }
-
-// rfc5987Unreserved is the set of unreserved characters per RFC 5987
-// (ASCII alphanums plus !#$&+-.^_`|~).
-var rfc5987Unreserved = func() map[rune]bool {
-	m := make(map[rune]bool, 26+26+10+15)
-	for r := 'a'; r <= 'z'; r++ {
-		m[r] = true
-	}
-	for r := 'A'; r <= 'Z'; r++ {
-		m[r] = true
-	}
-	for r := '0'; r <= '9'; r++ {
-		m[r] = true
-	}
-	for _, r := range "!#$&+-.^_`|~" {
-		m[r] = true
-	}
-	return m
-}()
 
 // addFileToZip adds a single file to the zip writer.
 func addFileToZip(zw *zip.Writer, absPath, zipRelPath string, fi os.FileInfo) error {

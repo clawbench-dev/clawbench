@@ -49,7 +49,7 @@ func TestDecodeOptionalJSON(t *testing.T) {
 }
 
 func TestRequireMethod(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 
 	rec := httptest.NewRecorder()
 	assert.True(t, RequireMethod(rec, r, http.MethodGet, http.MethodPost))
@@ -61,7 +61,7 @@ func TestRequireMethod(t *testing.T) {
 
 func TestWriteLocalizedErrorf(t *testing.T) {
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 
 	WriteLocalizedErrorf(rec, r, http.StatusForbidden, "AccessDenied")
 
@@ -71,7 +71,7 @@ func TestWriteLocalizedErrorf(t *testing.T) {
 }
 
 func TestWriteLocalizedError(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 
 	// nil error → 500, never a panic.
 	rec := httptest.NewRecorder()
@@ -93,7 +93,7 @@ func TestWriteLocalizedError(t *testing.T) {
 func TestRequireProject(t *testing.T) {
 	// No cookie → 403 and false.
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 	got, ok := RequireProject(rec, r)
 	assert.False(t, ok)
 	assert.Empty(t, got)
@@ -101,7 +101,7 @@ func TestRequireProject(t *testing.T) {
 
 	// With the project cookie → the path comes back.
 	rec2 := httptest.NewRecorder()
-	r2 := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r2 := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 	r2.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: "/tmp/p"})
 	got, ok = RequireProject(rec2, r2)
 	assert.True(t, ok)
@@ -110,7 +110,7 @@ func TestRequireProject(t *testing.T) {
 
 func TestValidateAndResolvePath(t *testing.T) {
 	dir := t.TempDir()
-	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 
 	rec := httptest.NewRecorder()
 	got, ok := ValidateAndResolvePath(rec, r, dir, "sub/file")
@@ -150,7 +150,7 @@ func TestResolveAbsPath(t *testing.T) {
 	dir := t.TempDir()
 	model.RootPaths = []string{dir}
 
-	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: dir})
 
 	// Absolute path under a root → accepted.
@@ -174,16 +174,16 @@ func TestResolveAbsPath(t *testing.T) {
 
 func TestT_And_Loc(t *testing.T) {
 	// Without the locale middleware GetLocalizer falls back, so this must not panic.
-	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 	assert.NotNil(t, Loc(r))
-	// An unknown key falls back to the key itself (go-i18n behaviour).
+	// An unknown key falls back to the key itself (go-i18n behavior).
 	assert.NotEmpty(t, T(r, "AccessDenied"))
 }
 
 // templateData 会原样落进响应体的 detail 字段（前端靠它指出是哪个参数被拒）。
 func TestWriteLocalizedErrorf_CarriesTemplateData(t *testing.T) {
 	rec := httptest.NewRecorder()
-	WriteLocalizedErrorf(rec, httptest.NewRequest(http.MethodGet, "/x", nil),
+	WriteLocalizedErrorf(rec, httptest.NewRequest(http.MethodGet, "/x", http.NoBody),
 		http.StatusBadRequest, "InvalidRequest", map[string]any{"reason": "start"})
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
@@ -194,7 +194,7 @@ func TestWriteLocalizedErrorf_CarriesTemplateData(t *testing.T) {
 // "没有可选字段"，不是错误。
 func TestDecodeOptionalJSON_NilBody(t *testing.T) {
 	var v struct{ A int }
-	r := httptest.NewRequest(http.MethodGet, "/x", nil)
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 	r.Body = nil
 	assert.NoError(t, DecodeOptionalJSON(r, &v))
 }
@@ -206,12 +206,12 @@ func TestResolveAbsPath_Rejections(t *testing.T) {
 	model.RootPaths = []string{t.TempDir()}
 
 	rec := httptest.NewRecorder()
-	_, ok := ResolveAbsPath(rec, httptest.NewRequest(http.MethodGet, "/x", nil), "/etc/passwd")
+	_, ok := ResolveAbsPath(rec, httptest.NewRequest(http.MethodGet, "/x", http.NoBody), "/etc/passwd")
 	assert.False(t, ok)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 
 	rec = httptest.NewRecorder()
-	_, ok = ResolveAbsPath(rec, httptest.NewRequest(http.MethodGet, "/x", nil), "relative.txt")
+	_, ok = ResolveAbsPath(rec, httptest.NewRequest(http.MethodGet, "/x", http.NoBody), "relative.txt")
 	assert.False(t, ok)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }

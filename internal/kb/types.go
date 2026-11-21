@@ -77,7 +77,7 @@ type Collection struct {
 	ProjectID   int64  `json:"-"`
 	ProjectPath string `json:"project_path,omitempty"`
 	AutoInject  bool   `json:"auto_inject"`
-	DocCount int  `json:"doc_count"`
+	DocCount    int    `json:"doc_count"`
 	// FailedCount / PendingCount let the collection rail show which library
 	// needs attention without opening every one of them. PendingCount covers
 	// both queued and extracting documents (the two states the user reads as

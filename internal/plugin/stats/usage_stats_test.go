@@ -68,7 +68,7 @@ func TestServeUsageStats_ValidResponse(t *testing.T) {
 		"metrics": "total",
 		"sort":    "total",
 		"order":   "desc",
-	}), nil), projectPath)
+	})), projectPath)
 
 	w := callHandler(ServeUsageStats, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -100,7 +100,7 @@ func TestServeUsageStats_ValidationErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(tc.params), nil), projectPath)
+			req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(tc.params)), projectPath)
 			w := callHandler(ServeUsageStats, req)
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 		})
@@ -112,7 +112,7 @@ func TestServeUsageStats_ValidationErrors(t *testing.T) {
 		req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 			"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 			"dims": "bogus", "metrics": "total",
-		}), nil), projectPath)
+		})), projectPath)
 		w := callHandler(ServeUsageStats, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 
@@ -138,7 +138,7 @@ func TestServeUsageStats_TrendResponse(t *testing.T) {
 		"dims":    "model",
 		"metrics": "total",
 		"trend":   "1",
-	}), nil), projectPath)
+	})), projectPath)
 
 	w := callHandler(ServeUsageStats, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -166,7 +166,7 @@ func TestServeUsageStats_MissingProjectCookie(t *testing.T) {
 	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "model", "metrics": "total",
-	}), nil)
+	}))
 	w := callHandler(ServeUsageStats, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
@@ -187,7 +187,7 @@ func TestServeUsageStats_DBFailureReturns500(t *testing.T) {
 	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "model", "metrics": "total",
-	}), nil), projectPath)
+	})), projectPath)
 	w := callHandler(ServeUsageStats, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 
@@ -205,7 +205,7 @@ func TestServeUsageStats_MethodNotAllowed(t *testing.T) {
 	req := withProjectCookie(newRequest(t, http.MethodPost, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "model", "metrics": "total",
-	}), nil), env.ProjectDir)
+	})), env.ProjectDir)
 	w := callHandler(ServeUsageStats, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
@@ -230,7 +230,7 @@ func TestServeUsageStats_QueryParamPassthrough(t *testing.T) {
 		"limit":   "5",
 		"trend":   "1",
 		"top":     "3",
-	}), nil), projectPath)
+	})), projectPath)
 
 	w := callHandler(ServeUsageStats, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -264,7 +264,7 @@ func TestServeUsageStats_AgentFilter(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := withProjectCookie(newRequest(t, http.MethodGet, base+tc.query, nil), projectPath)
+			req := withProjectCookie(newRequest(t, http.MethodGet, base+tc.query), projectPath)
 			w := callHandler(ServeUsageStats, req)
 			require.Equal(t, http.StatusOK, w.Code)
 
@@ -292,7 +292,7 @@ func TestServeUsageStats_InvalidLimitIgnored(t *testing.T) {
 		"metrics": "total",
 		"limit":   "abc",
 		"top":     "-2",
-	}), nil), projectPath)
+	})), projectPath)
 
 	w := callHandler(ServeUsageStats, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -312,7 +312,7 @@ func TestServeUsageStats_ScopeAllWithAIToken(t *testing.T) {
 	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "project", "metrics": "total", "scope": "all",
-	}), nil)
+	}))
 	req.RemoteAddr = "127.0.0.1:12345"
 	withAIToken(req)
 
@@ -348,7 +348,7 @@ func TestServeUsageStats_ScopeAllLoopbackWithoutTokenDenied(t *testing.T) {
 	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "project", "metrics": "total", "scope": "all",
-	}), nil)
+	}))
 	req.RemoteAddr = "127.0.0.1:12345" // loopback, but no token
 
 	w := callHandler(ServeUsageStats, req)
@@ -374,7 +374,7 @@ func TestServeUsageStats_ScopeAllRemoteDenied(t *testing.T) {
 	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "project", "metrics": "total", "scope": "all",
-	}), nil)
+	}))
 	// Default RemoteAddr is non-loopback; still send a valid token.
 	withAIToken(req)
 
@@ -398,7 +398,7 @@ func TestServeUsageStats_ScopeAllIgnoresProjectCookie(t *testing.T) {
 	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "project", "metrics": "total", "scope": "all",
-	}), nil), env.ProjectDir)
+	})), env.ProjectDir)
 	// Authenticated browser session — the cookie is what carries auth here.
 	withAuthCookie(req, "instance-key")
 
@@ -428,7 +428,7 @@ func TestServeUsageStats_ScopeAllUnauthenticatedDenied(t *testing.T) {
 	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "project", "metrics": "total", "scope": "all",
-	}), nil)
+	}))
 	req.RemoteAddr = "127.0.0.1:12345" // loopback, but no token and no session cookie
 
 	w := callHandler(ServeUsageStats, req)
@@ -452,7 +452,7 @@ func TestServeUsageStats_InvalidScopeRejected(t *testing.T) {
 	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "model", "metrics": "total", "scope": "everything",
-	}), nil), env.ProjectDir)
+	})), env.ProjectDir)
 
 	w := callHandler(ServeUsageStats, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -478,7 +478,7 @@ func TestServeUsageStats_ScopeProjectStillRequiresCookie(t *testing.T) {
 	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "model", "metrics": "total", "scope": "project",
-	}), nil)
+	}))
 	req.RemoteAddr = "127.0.0.1:12345"
 	withAIToken(req) // even a valid token must not bypass the cookie here
 
@@ -503,7 +503,7 @@ func TestServeUsageStats_ScopeAllEndToEndThroughAuth(t *testing.T) {
 		req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 			"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 			"dims": "project", "metrics": "total", "scope": "all",
-		}), nil)
+		}))
 		req.RemoteAddr = "127.0.0.1:12345"
 		withAIToken(req)
 
@@ -515,7 +515,7 @@ func TestServeUsageStats_ScopeAllEndToEndThroughAuth(t *testing.T) {
 		req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 			"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 			"dims": "project", "metrics": "total", "scope": "all",
-		}), nil)
+		}))
 		req.RemoteAddr = "127.0.0.1:12345"
 
 		w := callHandlerWithAuth(ServeUsageStats, req)
@@ -530,7 +530,7 @@ func TestServeUsageStats_ScopeAllEndToEndThroughAuth(t *testing.T) {
 		req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 			"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 			"dims": "project", "metrics": "total", "scope": "all",
-		}), nil), env.ProjectDir)
+		})), env.ProjectDir)
 		withAuthCookie(req, "instance-key")
 
 		w := callHandlerWithAuth(ServeUsageStats, req)

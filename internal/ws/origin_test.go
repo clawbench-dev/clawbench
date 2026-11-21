@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -8,7 +9,7 @@ import (
 )
 
 func TestOriginPatterns(t *testing.T) {
-	r := httptest.NewRequest("GET", "http://example.com:20000/ws", nil)
+	r := httptest.NewRequest("GET", "http://example.com:20000/ws", http.NoBody)
 	got := OriginPatterns(r)
 
 	assert.Contains(t, got, "http://example.com:20000")

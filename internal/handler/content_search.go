@@ -254,8 +254,6 @@ func shouldSearchFile(include, exclude []gogitignore.Pattern, relPathSlash strin
 //
 // literals are the point (they must each be present), and the same list is
 // intentionally independent of the display-oriented lists elsewhere.
-//
-//nolint:goconst // an exhaustive media/archive extension list; the repeated
 var binaryContentExts = []string{
 	".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".tif", ".avif",
 	".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".wma", ".opus",

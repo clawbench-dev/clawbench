@@ -1,10 +1,11 @@
 package notifications
 
 import (
-	"clawbench/internal/httpx"
 	"net/http"
 	"strconv"
 	"time"
+
+	"clawbench/internal/httpx"
 
 	"clawbench/internal/service"
 	"clawbench/internal/store"

@@ -71,8 +71,6 @@ var MimeTypes = map[string]string{
 // runs inside a sandboxed iframe the user opened deliberately), and the public
 // /doc/ endpoint, which grants them ONLY together with a sandbox CSP (no
 // allow-same-origin).
-//
-//nolint:goconst // font extension literals repeat across the MIME / hashed-asset / custom-font maps
 var WebAssetMimeTypes = map[string]string{
 	".html":  "text/html",
 	".htm":   "text/html",

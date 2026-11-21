@@ -1,13 +1,13 @@
-//nolint:goconst,govet // JSON response field names are domain strings; shadowed err is acceptable in sequential blocks
 package tasks
 
 import (
-	"clawbench/internal/httpx"
 	"database/sql"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"clawbench/internal/httpx"
 
 	"clawbench/internal/store"
 
@@ -707,7 +707,7 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 	// Parse pagination parameters
 	limit := 0
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		if l, parseErr := strconv.Atoi(limitStr); parseErr == nil && l > 0 {
 			limit = l
 		}
 	}

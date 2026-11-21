@@ -1,4 +1,3 @@
-//nolint:goconst // JSON response field names are domain strings
 package share
 
 import (

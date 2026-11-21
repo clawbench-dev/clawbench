@@ -1,7 +1,5 @@
 package handler
 
-import ()
-
 // Response validators for assembled (non-file) bodies.
 //
 // The repo has exactly one other conditional-request implementation

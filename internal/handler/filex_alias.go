@@ -20,8 +20,7 @@ const (
 )
 
 var (
-	mimeTypes         = filex.MimeTypes
-	webAssetMimeTypes = filex.WebAssetMimeTypes
+	mimeTypes = filex.MimeTypes
 
 	mimeForLocalFile    = filex.MimeForLocalFile
 	sniffBinaryContent  = filex.SniffBinaryContent

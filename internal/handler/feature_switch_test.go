@@ -1,7 +1,6 @@
 package handler
 
 import (
-	plugtasks "clawbench/internal/plugin/tasks"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	plugtasks "clawbench/internal/plugin/tasks"
 
 	"clawbench/internal/model"
 	plugshare "clawbench/internal/plugin/share"

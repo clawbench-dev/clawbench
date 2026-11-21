@@ -156,7 +156,7 @@ func TestServeGitCloc_ValidResponse(t *testing.T) {
 
 	writeClocFile(t, env.ProjectDir, "main.go", "package main\nfunc main() {}\n")
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/git/cloc", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/git/cloc"), env.ProjectDir)
 	w := callHandler(ServeGitCloc, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -180,7 +180,7 @@ func TestServeGitCloc_NotGitRepoStillWorks(t *testing.T) {
 
 	writeClocFile(t, env.ProjectDir, "x.py", "# c\nprint(1)\n")
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/git/cloc", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/git/cloc"), env.ProjectDir)
 	w := callHandler(ServeGitCloc, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -195,7 +195,7 @@ func TestServeGitCloc_MissingProjectCookie(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodGet, "/api/git/cloc", nil)
+	req := newRequest(t, http.MethodGet, "/api/git/cloc")
 	w := callHandler(ServeGitCloc, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
@@ -204,7 +204,7 @@ func TestServeGitCloc_MethodNotAllowed(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := withProjectCookie(newRequest(t, http.MethodPost, "/api/git/cloc", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodPost, "/api/git/cloc"), env.ProjectDir)
 	w := callHandler(ServeGitCloc, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
@@ -216,7 +216,7 @@ func TestServeGitCloc_CacheHit(t *testing.T) {
 	writeClocFile(t, env.ProjectDir, "a.go", "package a\nfunc a() {}\n")
 
 	// First scan populates the cache.
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/git/cloc", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/git/cloc"), env.ProjectDir)
 	w := callHandler(ServeGitCloc, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 

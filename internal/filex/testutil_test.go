@@ -13,27 +13,18 @@ type testEnv = handlertest.Env
 
 func setupTestEnv(t *testing.T) (*testEnv, func()) { return handlertest.Setup(t) }
 
-func newRequest(t *testing.T, method, path string, body any) *http.Request {
-	return handlertest.NewRequest(t, method, path, body)
+func newRequest(t *testing.T, path string) *http.Request {
+	return handlertest.NewRequest(t, http.MethodGet, path, nil)
 }
 
 func callHandler(handler http.HandlerFunc, req *http.Request) *httptest.ResponseRecorder {
 	return handlertest.Call(handler, req)
 }
 
-func assertStatus(t *testing.T, w *httptest.ResponseRecorder, expected int) {
-	handlertest.AssertStatus(t, w, expected)
-}
-
-func assertOK(t *testing.T, w *httptest.ResponseRecorder) {
-	t.Helper()
-	handlertest.AssertStatus(t, w, http.StatusOK)
-}
-
 func createTestFile(t *testing.T, projectDir, relPath, content string) {
 	handlertest.CreateFile(t, projectDir, relPath, content)
 }
 
-func withProjectCookie(req *http.Request, projectPath string) *http.Request {
-	return handlertest.WithProjectCookie(req, projectPath)
+func withProjectCookie(req *http.Request, projectPath string) {
+	handlertest.WithProjectCookie(req, projectPath)
 }

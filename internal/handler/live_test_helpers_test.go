@@ -6,9 +6,6 @@ import (
 	"io"
 	"testing"
 
-	"clawbench/internal/liveshare"
-	"clawbench/internal/model"
-	pluglive "clawbench/internal/plugin/live"
 	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
@@ -16,22 +13,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// 这三个辅助随会议纪要搬进了 internal/plugin/live，但 handler 里仍有不依赖
-// 会议纪要接口、只需要"重置房间表 / 规范化项目路径 / 弄坏写库"的用例。
-
-// resetLiveRegistry installs a fresh registry for a test and restores the
-// process-wide one afterwards.
-func resetLiveRegistry(t *testing.T) {
-	t.Helper()
-	prev := pluglive.LiveRegistry
-	pluglive.LiveRegistry = liveshare.NewRegistry()
-	t.Cleanup(func() { pluglive.LiveRegistry = prev })
-}
-
-// projPath normalizes a test project path the SAME way the server does.
-func projPath(p string) string {
-	return model.NormalizeProjectPath(p)
-}
+// 这些辅助随会议纪要搬进了 internal/plugin/live，但 handler 里仍有不依赖
+// 会议纪要接口、只需要"弄坏写库 / 造 PCM 帧 / 假 STT"的用例。
 
 // breakWrites replaces the write handle with a closed DB, leaving reads working.
 func breakWrites(t *testing.T, project string) {

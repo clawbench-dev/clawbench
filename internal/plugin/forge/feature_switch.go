@@ -12,7 +12,7 @@ import (
 //
 // Bindings are what make the server talk to GitHub/GitLab, so "off" has to mean
 // "stop talking to them", not just "hide the entry". The poller also checks the
-// switch every cycle (second line of defence, covering the window before this
+// switch every cycle (second line of defense, covering the window before this
 // runs). Timing is owned by the caller: after config.yaml was written
 // successfully.
 func ForgeDisableEffect() []string {

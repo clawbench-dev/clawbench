@@ -72,7 +72,9 @@ func verifyBindingReachable(r *http.Request, pf service.ProjectForge) error {
 	}
 	provider, err := newForgeProvider(&pf)
 	if err != nil {
-		return nil
+		// Deliberate: a provider the normal path could not build is reported by
+		// the later read, not by refusing the bind (see the doc comment above).
+		return nil //nolint:nilerr // probe is best-effort; see comment
 	}
 	_, err = provider.ListItems(r.Context(), forge.ListOptions{Type: forge.ItemTypeIssue, State: "open", Page: 1, PerPage: 1})
 	if err != nil && !isRefusal(err) {

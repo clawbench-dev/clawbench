@@ -240,7 +240,12 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// the old 12200 so the split cannot silently regress to whole paragraphs:
 		// if the shared descriptions start leaking back in, the failure message
 		// names the operation that grew.
-		CommandMCP: 4000,
+		//
+		// 4000 → 4300 when PATCH /api/agents gained the avatar source fields
+		// (`avatar_style` / `avatar_seed`) and `tool_policy.maxSubagents`
+		// (measured 4213). Both are real field semantics the agent command must
+		// keep, so the growth is content, not leaked config prose.
+		CommandMCP: 4300,
 		// Three read-only operations (collections, documents, search). The
 		// writes are deliberately absent: a question must not mutate the
 		// library. Measured at 1070; headroom covers the search contract.

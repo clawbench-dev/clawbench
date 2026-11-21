@@ -385,6 +385,7 @@ func TestLiveShareManage_MethodNotAllowed(t *testing.T) {
 
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
+
 func TestLiveTokenFromSignalPath(t *testing.T) {
 	cases := []struct{ path, want string }{
 		{"/api/share/abc123/signal", "abc123"},

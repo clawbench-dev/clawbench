@@ -44,16 +44,8 @@ func callHandler(handler http.HandlerFunc, req *http.Request) *httptest.Response
 	return handlertest.Call(handler, req)
 }
 
-func assertStatus(t *testing.T, w *httptest.ResponseRecorder, expected int) {
-	handlertest.AssertStatus(t, w, expected)
-}
-
 func withProjectCookie(req *http.Request, projectPath string) *http.Request {
 	return handlertest.WithProjectCookie(req, projectPath)
-}
-
-func createTestFile(t *testing.T, projectDir, relPath, content string) {
-	handlertest.CreateFile(t, projectDir, relPath, content)
 }
 
 // setupPersistTestEnv points DataDir/BinDir at a temp directory so config.yaml
@@ -83,10 +75,9 @@ func setupPersistTestEnv(t *testing.T) (*testEnv, func()) {
 }
 
 // withAuthCookie adds the clawbench_session cookie to the request.
-func withAuthCookie(req *http.Request, token string) *http.Request {
+func withAuthCookie(req *http.Request, token string) {
 	req.AddCookie(&http.Cookie{
 		Name:  model.ScopedCookieName(model.SessionCookie),
 		Value: token,
 	})
-	return req
 }

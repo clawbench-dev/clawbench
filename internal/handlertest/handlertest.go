@@ -14,6 +14,7 @@ package handlertest
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"io"
@@ -29,7 +30,7 @@ import (
 	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // registers the "sqlite" driver used by sql.Open above
 )
 
 // Env is the state a test needs after setup.
@@ -58,8 +59,8 @@ func Setup(t *testing.T) (*Env, func()) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	_, _ = db.Exec("PRAGMA busy_timeout=5000")
-	_, err = db.Exec(store.ProjectsDDL)
+	_, _ = db.ExecContext(context.Background(), "PRAGMA busy_timeout=5000")
+	_, err = db.ExecContext(context.Background(), store.ProjectsDDL)
 	require.NoError(t, err)
 	restoreDB := store.SetDBForTest(db, db)
 
@@ -97,7 +98,7 @@ func NewRequest(t *testing.T, method, path string, body any) *http.Request {
 		require.NoError(t, err)
 		reader = bytes.NewReader(data)
 	}
-	req := httptest.NewRequest(method, path, reader)
+	req := httptest.NewRequestWithContext(context.Background(), method, path, reader)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

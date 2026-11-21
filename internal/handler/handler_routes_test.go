@@ -1,10 +1,11 @@
 package handler
 
 import (
-	pluginall "clawbench/internal/plugin/all"
-	"clawbench/internal/plugins"
 	"net/http"
 	"testing"
+
+	pluginall "clawbench/internal/plugin/all"
+	"clawbench/internal/plugins"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

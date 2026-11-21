@@ -28,8 +28,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	return env, teardown
 }
 
-func newRequest(t *testing.T, method, path string, body any) *http.Request {
-	return handlertest.NewRequest(t, method, path, body)
+func newRequest(t *testing.T, method, path string) *http.Request {
+	return handlertest.NewRequest(t, method, path, nil)
 }
 
 func callHandler(handler http.HandlerFunc, req *http.Request) *httptest.ResponseRecorder {
@@ -38,11 +38,6 @@ func callHandler(handler http.HandlerFunc, req *http.Request) *httptest.Response
 
 func assertStatus(t *testing.T, w *httptest.ResponseRecorder, expected int) {
 	handlertest.AssertStatus(t, w, expected)
-}
-
-func assertOK(t *testing.T, w *httptest.ResponseRecorder) {
-	t.Helper()
-	handlertest.AssertStatus(t, w, http.StatusOK)
 }
 
 func withProjectCookie(req *http.Request, projectPath string) *http.Request {

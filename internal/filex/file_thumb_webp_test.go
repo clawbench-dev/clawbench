@@ -26,7 +26,7 @@ func TestFileThumb_WebP(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "shot.webp"), raw, 0o644))
 
-	req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=shot.webp&w=50", nil)
+	req := newRequest(t, "/api/fs/thumb?target=shot.webp&w=50")
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(FileThumb, req)

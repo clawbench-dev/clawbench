@@ -2,7 +2,6 @@ package share
 
 import (
 	"bytes"
-	"clawbench/internal/plugins"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -13,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"clawbench/internal/plugins"
 
 	"clawbench/internal/model"
 

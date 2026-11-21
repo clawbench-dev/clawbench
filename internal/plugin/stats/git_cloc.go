@@ -1,12 +1,13 @@
 package stats
 
 import (
-	"clawbench/internal/httpx"
 	"net/http"
 	"regexp"
 	"sort"
 	"sync"
 	"time"
+
+	"clawbench/internal/httpx"
 
 	"clawbench/internal/gitignore"
 

@@ -20,7 +20,7 @@ import (
 // GET /api/config must report which hosts have a token but must never include
 // the token value itself.
 func TestServeConfig_ForgeTokensNeverReturned(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 
 	cfg := model.Config{}
@@ -60,7 +60,7 @@ func TestServeConfig_ForgeTokensNeverReturned(t *testing.T) {
 }
 
 func TestServeConfig_ForgeNotifyDefaultsVisible(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 
 	var cfg model.Config
@@ -88,7 +88,7 @@ func TestServeConfig_ForgeNotifyDefaultsVisible(t *testing.T) {
 // scheme per host must be reported so an http instance is distinguishable from
 // an https one.
 func TestServeConfig_ForgeSchemesExposed(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 
 	cfg := model.Config{}
@@ -121,7 +121,7 @@ func TestServeConfig_ForgeSchemesExposed(t *testing.T) {
 // TestServeConfig_PatchForgeNotify verifies the forge notification toggles are
 // accepted by the PATCH whitelist and applied to the in-memory config.
 func TestServeConfig_PatchForgeNotify(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 	model.ConfigInstance = model.Config{}
 
@@ -144,7 +144,7 @@ func TestServeConfig_PatchForgeNotify(t *testing.T) {
 // TestServeConfig_PatchForgeInsecureTLS verifies the TLS escape hatch is
 // patchable.
 func TestServeConfig_PatchForgeInsecureTLS(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 	model.ConfigInstance = model.Config{}
 
@@ -160,7 +160,7 @@ func TestServeConfig_PatchForgeInsecureTLS(t *testing.T) {
 // TestServeConfig_PatchRejectsUnknownForgeField ensures the whitelist still
 // blocks arbitrary forge keys (e.g. a path traversal attempt via credentials).
 func TestServeConfig_PatchRejectsUnknownForgeField(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 	model.ConfigInstance = model.Config{}
 
@@ -176,7 +176,7 @@ func TestServeConfig_PatchRejectsUnknownForgeField(t *testing.T) {
 // Platforms are reported RESOLVED, so a host that will be spoken to as GitLab
 // says so even when nobody recorded a hint.
 func TestServeConfig_ForgePlatformsExposed(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 
 	cfg := model.Config{}

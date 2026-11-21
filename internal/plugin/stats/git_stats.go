@@ -2,7 +2,6 @@
 package stats
 
 import (
-	"clawbench/internal/httpx"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -10,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"clawbench/internal/httpx"
 )
 
 // Git code-change statistics for the project — added/deleted line totals per

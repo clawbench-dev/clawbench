@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -3987,13 +3988,23 @@ func unitMainPID(unit string) string {
 	return pid
 }
 
+// systemdUnitNamePattern is the subset of systemd unit-name characters we
+// accept before handing a name to systemctl. The unit comes from a cgroup path
+// on disk, so treat it as untrusted: a name that does not match is not ours.
+var systemdUnitNamePattern = regexp.MustCompile(`^[A-Za-z0-9:_.@\\-]+\.service$`)
+
 // systemctlShowMainPID shells out to `systemctl show` for a unit's MainPID.
 // It uses CommandContext with a short timeout so a hung systemctl (e.g. a
 // stalled DBus) cannot block the upgrade/restart path indefinitely.
 func systemctlShowMainPID(unit string) string {
+	if !systemdUnitNamePattern.MatchString(unit) {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "systemctl", "show", "-p", "MainPID", "--value", unit).Output()
+	// No shell is involved: exec.CommandContext passes argv directly, and the
+	// unit name is constrained by systemdUnitNamePattern above.
+	out, err := exec.CommandContext(ctx, "systemctl", "show", "-p", "MainPID", "--value", unit).Output() //nolint:gosec // validated above; argv-only, no shell
 	if err != nil {
 		return ""
 	}

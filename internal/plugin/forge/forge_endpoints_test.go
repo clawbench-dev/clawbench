@@ -456,7 +456,7 @@ func TestServeForgeBinding_SSHRemoteLeavesSchemeEmpty(t *testing.T) {
 	// pointed at a local mock: the probe would go to https://host:443 and fail on
 	// a machine with no such instance. The probe therefore declines it BEFORE it
 	// is sent (see isNameResolutionError's sibling rule for unstated hosts), and
-	// the binding records no scheme — which is the behaviour under test.
+	// the binding records no scheme — which is the behavior under test.
 	req := newRequest(t, http.MethodPost, "/api/forge/binding", map[string]any{
 		"url": "git@gitlab.internal:group/widgets.git",
 	})

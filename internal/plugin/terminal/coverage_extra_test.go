@@ -1,10 +1,10 @@
 package terminal
 
 import (
+	"testing"
+
 	"clawbench/internal/model"
 	"clawbench/internal/terminal"
-
-	"testing"
 )
 
 // Recording a command from the terminal is what makes the history panel useful,

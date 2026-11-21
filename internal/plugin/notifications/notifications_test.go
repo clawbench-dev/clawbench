@@ -35,7 +35,7 @@ func TestServeNotifications_ListsNewestFirst(t *testing.T) {
 	insertNotification(t, "e1", service.NotificationKindSession, "completed", "First", pid, "")
 	insertNotification(t, "e2", service.NotificationKindTask, "failed", "Second", pid, "")
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications"), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
 	assertStatus(t, w, http.StatusOK)
 
@@ -56,7 +56,7 @@ func TestServeNotifications_FilterByKind(t *testing.T) {
 	insertNotification(t, "e1", service.NotificationKindSession, "completed", "S", pid, "")
 	insertNotification(t, "e2", service.NotificationKindTask, "failed", "T", pid, "")
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?kind=task", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?kind=task"), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
 	assertStatus(t, w, http.StatusOK)
 
@@ -78,7 +78,7 @@ func TestServeNotifications_FilterByProject(t *testing.T) {
 	// filtering by a real project.
 	insertNotification(t, "e2", service.NotificationKindSession, "completed", "Global", 0, "")
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?project="+env.ProjectDir, nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?project="+env.ProjectDir), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
 	assertStatus(t, w, http.StatusOK)
 
@@ -95,7 +95,7 @@ func TestServeNotifications_UnknownProjectReturnsEmpty(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?project=/never/seen", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?project=/never/seen"), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
 	assertStatus(t, w, http.StatusOK)
 
@@ -119,7 +119,7 @@ func TestServeNotifications_MarksMissingSource(t *testing.T) {
 	insertNotification(t, "e2", service.NotificationKindTask, "failed", "Gone task", pid, "999")
 	insertNotification(t, "e3", service.NotificationKindForge, "merged", "PR", pid, "")
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications"), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
 	assertStatus(t, w, http.StatusOK)
 
@@ -145,7 +145,7 @@ func TestServeNotifications_ClearDeletesEverything(t *testing.T) {
 	insertNotification(t, "e1", service.NotificationKindSession, "completed", "A", pid, "")
 	insertNotification(t, "e2", service.NotificationKindSession, "completed", "B", pid, "")
 
-	req := withProjectCookie(newRequest(t, http.MethodDelete, "/api/notifications", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodDelete, "/api/notifications"), env.ProjectDir)
 	w := callHandler(ServeNotificationsClear, req)
 	assertStatus(t, w, http.StatusOK)
 
@@ -156,7 +156,7 @@ func TestServeNotifications_ClearDeletesEverything(t *testing.T) {
 	assert.Equal(t, int64(2), resp.Deleted)
 
 	// Confirm the log is actually empty afterwards.
-	listReq := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications", nil), env.ProjectDir)
+	listReq := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications"), env.ProjectDir)
 	lw := callHandler(ServeNotifications, listReq)
 	var listResp struct {
 		Items []service.Notification `json:"items"`
@@ -170,15 +170,15 @@ func TestServeNotificationsOrClear_MethodDispatch(t *testing.T) {
 	defer teardown()
 
 	// GET lists.
-	getReq := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications", nil), env.ProjectDir)
+	getReq := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications"), env.ProjectDir)
 	assertStatus(t, callHandler(ServeNotificationsOrClear, getReq), http.StatusOK)
 
 	// DELETE clears.
-	delReq := withProjectCookie(newRequest(t, http.MethodDelete, "/api/notifications", nil), env.ProjectDir)
+	delReq := withProjectCookie(newRequest(t, http.MethodDelete, "/api/notifications"), env.ProjectDir)
 	assertStatus(t, callHandler(ServeNotificationsOrClear, delReq), http.StatusOK)
 
 	// Anything else is rejected rather than silently treated as a read.
-	postReq := withProjectCookie(newRequest(t, http.MethodPost, "/api/notifications", nil), env.ProjectDir)
+	postReq := withProjectCookie(newRequest(t, http.MethodPost, "/api/notifications"), env.ProjectDir)
 	assertStatus(t, callHandler(ServeNotificationsOrClear, postReq), http.StatusMethodNotAllowed)
 }
 
@@ -196,7 +196,7 @@ func TestServeNotifications_PartialCursorIsIgnored(t *testing.T) {
 
 	// before_at present, before_id missing.
 	req := withProjectCookie(
-		newRequest(t, http.MethodGet, "/api/notifications?before_at=2026-10-15T12:00:00.000Z", nil),
+		newRequest(t, http.MethodGet, "/api/notifications?before_at=2026-10-15T12:00:00.000Z"),
 		env.ProjectDir,
 	)
 	w := callHandler(ServeNotifications, req)
@@ -224,7 +224,7 @@ func TestServeNotifications_CompleteCursorApplies(t *testing.T) {
 	// excludes it. This proves the cursor is applied rather than ignored.
 	req := withProjectCookie(
 		newRequest(t, http.MethodGet,
-			"/api/notifications?before_at=2026-10-15T12:00:00.000Z&before_id=0", nil),
+			"/api/notifications?before_at=2026-10-15T12:00:00.000Z&before_id=0"),
 		env.ProjectDir,
 	)
 	w := callHandler(ServeNotifications, req)
@@ -240,7 +240,7 @@ func TestServeNotifications_CompleteCursorApplies(t *testing.T) {
 	// id < 999), confirming the two halves are combined, not just before_at.
 	keepReq := withProjectCookie(
 		newRequest(t, http.MethodGet,
-			"/api/notifications?before_at=2026-10-15T12:00:00.000Z&before_id=999", nil),
+			"/api/notifications?before_at=2026-10-15T12:00:00.000Z&before_id=999"),
 		env.ProjectDir,
 	)
 	kw := callHandler(ServeNotifications, keepReq)
@@ -265,7 +265,7 @@ func TestServeNotifications_LimitControlsPageAndHasMore(t *testing.T) {
 	}
 
 	// limit=2 against 3 rows → full page, so hasMore must be true.
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?limit=2", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?limit=2"), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
 	assertStatus(t, w, http.StatusOK)
 
@@ -281,7 +281,7 @@ func TestServeNotifications_LimitControlsPageAndHasMore(t *testing.T) {
 	assert.Equal(t, 3, resp.Total)
 
 	// limit=10 against 3 rows → partial page, so hasMore must be false.
-	bigReq := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?limit=10", nil), env.ProjectDir)
+	bigReq := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?limit=10"), env.ProjectDir)
 	bw := callHandler(ServeNotifications, bigReq)
 	assertStatus(t, bw, http.StatusOK)
 	var bigResp struct {
@@ -303,7 +303,7 @@ func TestServeNotifications_LimitIsCappedAt200(t *testing.T) {
 
 	insertNotification(t, "e1", service.NotificationKindSession, "completed", "One", pid, "")
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?limit=500", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?limit=500"), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
 	assertStatus(t, w, http.StatusOK)
 
@@ -326,7 +326,7 @@ func TestServeNotifications_UnparsableLimitFallsBackToDefault(t *testing.T) {
 
 	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Row", pid, "")
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?limit=abc", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?limit=abc"), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
 	assertStatus(t, w, http.StatusOK)
 
@@ -362,7 +362,7 @@ func TestServeNotifications_RangeFiltersOldRows(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?range=today", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?range=today"), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
 	assertStatus(t, w, http.StatusOK)
 
@@ -380,7 +380,7 @@ func TestServeNotifications_RejectsNonGet(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := withProjectCookie(newRequest(t, http.MethodPost, "/api/notifications", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodPost, "/api/notifications"), env.ProjectDir)
 	assertStatus(t, callHandler(ServeNotifications, req), http.StatusMethodNotAllowed)
 }
 
@@ -392,11 +392,11 @@ func TestServeNotificationsClear_RejectsNonDelete(t *testing.T) {
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
 	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Keep", pid, "")
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications"), env.ProjectDir)
 	assertStatus(t, callHandler(ServeNotificationsClear, req), http.StatusMethodNotAllowed)
 
 	// The row must still be there.
-	listReq := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications", nil), env.ProjectDir)
+	listReq := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications"), env.ProjectDir)
 	lw := callHandler(ServeNotifications, listReq)
 	var listResp struct {
 		Items []service.Notification `json:"items"`
@@ -414,7 +414,7 @@ func TestServeNotifications_ReportsDBFailures(t *testing.T) {
 		_, err := store.WriteExec("DROP TABLE notifications")
 		require.NoError(t, err)
 
-		w := callHandler(ServeNotifications, newRequest(t, http.MethodGet, "/api/notifications", nil))
+		w := callHandler(ServeNotifications, newRequest(t, http.MethodGet, "/api/notifications"))
 		assertStatus(t, w, http.StatusInternalServerError)
 	})
 
@@ -424,7 +424,7 @@ func TestServeNotifications_ReportsDBFailures(t *testing.T) {
 		_, err := store.WriteExec("DROP TABLE notifications")
 		require.NoError(t, err)
 
-		w := callHandler(ServeNotificationsClear, newRequest(t, http.MethodDelete, "/api/notifications", nil))
+		w := callHandler(ServeNotificationsClear, newRequest(t, http.MethodDelete, "/api/notifications"))
 		assertStatus(t, w, http.StatusInternalServerError)
 	})
 
@@ -434,7 +434,7 @@ func TestServeNotifications_ReportsDBFailures(t *testing.T) {
 		_, err := store.WriteExec("DROP TABLE projects")
 		require.NoError(t, err)
 
-		req := newRequest(t, http.MethodGet, "/api/notifications?project=/proj/a", nil)
+		req := newRequest(t, http.MethodGet, "/api/notifications?project=/proj/a")
 		w := callHandler(ServeNotifications, req)
 		assertStatus(t, w, http.StatusInternalServerError)
 	})

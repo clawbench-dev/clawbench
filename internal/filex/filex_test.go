@@ -122,7 +122,7 @@ func TestSanitizeBinaryContent(t *testing.T) {
 	assert.False(t, truncated)
 	assert.Equal(t, ".A.", string(out))
 
-	big := bytes.Repeat([]byte{0}, MaxBinaryTextSize+1)
+	big := make([]byte, MaxBinaryTextSize+1)
 	out, truncated = SanitizeBinaryContent(big)
 	assert.True(t, truncated)
 	assert.Len(t, out, MaxBinaryTextSize)

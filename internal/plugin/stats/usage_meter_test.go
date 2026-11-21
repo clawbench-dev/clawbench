@@ -54,7 +54,7 @@ func TestServeUsageMeter_DisabledRuleReturns200(t *testing.T) {
 	defer teardown()
 	setMeterRuleForTest(t, model.UsageMeterConfig{Quota: 0})
 
-	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter", nil))
+	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter"))
 	require.Equal(t, http.StatusOK, w.Code, "a disabled rule is a state, not an error")
 
 	// The body is read once and decoded twice (key set + values): a second
@@ -130,7 +130,7 @@ func TestServeUsageMeter_EnabledRuleReportsCycleAndTotals(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter", nil))
+	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter"))
 	require.Equal(t, http.StatusOK, w.Code)
 
 	var body struct {
@@ -197,7 +197,7 @@ func TestServeUsageMeter_AgentScopeFromRule(t *testing.T) {
 
 	readActual := func(t *testing.T) (actual, quota float64) {
 		t.Helper()
-		w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter", nil))
+		w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter"))
 		require.Equal(t, http.StatusOK, w.Code)
 		var body struct {
 			Actual float64 `json:"actual"`
@@ -271,7 +271,7 @@ func TestServeUsageMeter_IgnoresProjectCookie(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/usage/meter", nil), env.ProjectDir)
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/usage/meter"), env.ProjectDir)
 	w := callHandler(ServeUsageMeter, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
@@ -286,7 +286,7 @@ func TestServeUsageMeter_IgnoresProjectCookie(t *testing.T) {
 func TestServeUsageMeter_MethodNotAllowed(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
-	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodPost, "/api/usage/meter", nil))
+	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodPost, "/api/usage/meter"))
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
@@ -310,11 +310,11 @@ func TestServeUsageMeter_RequiresAuth(t *testing.T) {
 		model.CookieToken = origCookie
 	})
 
-	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter", nil))
+	w := callHandler(ServeUsageMeter, newRequest(t, http.MethodGet, "/api/usage/meter"))
 	assert.Equal(t, http.StatusForbidden, w.Code,
 		"an unauthenticated request must not read instance-wide spend")
 
-	authed := withAuthCookie(newRequest(t, http.MethodGet, "/api/usage/meter", nil), "secret-token")
+	authed := withAuthCookie(newRequest(t, http.MethodGet, "/api/usage/meter"), "secret-token")
 	w = callHandler(ServeUsageMeter, authed)
 	assert.Equal(t, http.StatusOK, w.Code, "an authenticated request must still work")
 }
@@ -329,7 +329,7 @@ func TestServeUsageMeter_RequiresAuth(t *testing.T) {
 // query was running; writing a captured snapshot back would silently undo the
 // user's edit.
 func TestPersistUsageMeterState_WritesOnlyBookkeeping(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{
@@ -367,7 +367,7 @@ func TestServeUsageMeter_ComputeErrorIsReported(t *testing.T) {
 	_, err := store.UnsafeDBForTest().Exec(`DROP TABLE chat_metadata`)
 	require.NoError(t, err)
 
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/usage/meter", nil), t.TempDir())
+	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/usage/meter"), t.TempDir())
 	w := callHandler(ServeUsageMeter, req)
 	assert.NotEqual(t, http.StatusOK, w.Code,
 		"a failed aggregate must not be reported as a healthy zero total")
@@ -381,7 +381,7 @@ func TestServeUsageMeter_ComputeErrorIsReported(t *testing.T) {
 // leaving the cleared state in memory while the file still holds the old stage
 // makes the next process start suppress a notification the user never saw.
 func TestPersistUsageMeterState_RollsBackOnWriteFailure(t *testing.T) {
-	_, teardown := setupPersistTestEnv(t)
+	teardown := setupPersistTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance.UsageMeter = model.UsageMeterConfig{

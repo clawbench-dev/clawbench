@@ -1,11 +1,12 @@
 package stats
 
 import (
-	"clawbench/internal/cfgwrite"
-	"clawbench/internal/httpx"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"clawbench/internal/cfgwrite"
+	"clawbench/internal/httpx"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"

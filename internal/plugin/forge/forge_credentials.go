@@ -177,7 +177,7 @@ func setForgeToken(host, token, scheme, platform string) error {
 	// per-host delete must be reflected on disk too. Writing them together keeps
 	// a token and its hints from diverging on disk.
 	patch := map[string]any{
-		"forge": map[string]any{
+		pluginID: map[string]any{
 			"credentials": next,
 			"schemes":     nextSchemes,
 			"platforms":   nextPlatforms,
@@ -220,7 +220,7 @@ func setForgePlatformHint(host, platform string) error {
 	next[host] = platform
 	model.ConfigInstance.Forge.Platforms = next
 
-	if err := cfgwrite.Patch(map[string]any{"forge": map[string]any{"platforms": next}}); err != nil {
+	if err := cfgwrite.Patch(map[string]any{pluginID: map[string]any{"platforms": next}}); err != nil {
 		model.ConfigInstance = snapshot
 		return fmt.Errorf("persist forge platform: %w", err)
 	}

@@ -65,8 +65,8 @@ func assertStatus(t *testing.T, w *httptest.ResponseRecorder, expected int) {
 	handlertest.AssertStatus(t, w, expected)
 }
 
-func withProjectCookie(req *http.Request, projectPath string) *http.Request {
-	return handlertest.WithProjectCookie(req, projectPath)
+func withProjectCookie(req *http.Request, projectPath string) {
+	handlertest.WithProjectCookie(req, projectPath)
 }
 
 func createTestFile(t *testing.T, projectDir, relPath, content string) {
