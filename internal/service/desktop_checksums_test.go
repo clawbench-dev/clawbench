@@ -195,6 +195,59 @@ func TestDesktopChecksums_FailedFetchIsRetriedAfterTheWindow(t *testing.T) {
 	assert.Equal(t, 2, hits)
 }
 
+// The other half of the contract: inside the window the failure IS remembered.
+// Without this the retry map buys nothing — an offline server would pay the 3s
+// timeout on every single download request, which is the cost the caching was
+// there to avoid in the first place.
+func TestDesktopChecksums_FailedFetchIsNotRetriedInsideTheWindow(t *testing.T) {
+	const tag = "v3.0.1"
+	hits := 0
+	isolateDesktopChecksums(t, func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusBadGateway)
+	})
+	// Long enough that the test cannot outlive it; only "not yet" is asserted.
+	prevInterval := desktopChecksumsRetryInterval
+	desktopChecksumsRetryInterval = time.Hour
+	t.Cleanup(func() { desktopChecksumsRetryInterval = prevInterval })
+
+	for range 3 {
+		assert.Nil(t, desktopChecksums(tag))
+	}
+	assert.Equal(t, 1, hits, "the failure must be remembered for the window, not refetched per call")
+}
+
+// A success must clear the failed attempt, or a tag that failed once and then
+// succeeded would keep being re-fetched until the window lapsed even though the
+// answer is already cached.
+func TestDesktopChecksums_SuccessClearsTheRetryMarker(t *testing.T) {
+	const tag = "v3.0.2"
+	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	hits := 0
+	isolateDesktopChecksums(t, func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		if hits == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_, _ = w.Write([]byte(hash + "  full.zip\n"))
+	})
+	prevInterval := desktopChecksumsRetryInterval
+	desktopChecksumsRetryInterval = 0
+	t.Cleanup(func() { desktopChecksumsRetryInterval = prevInterval })
+
+	assert.Nil(t, desktopChecksums(tag))
+	require.Equal(t, map[string]string{"full.zip": hash}, desktopChecksums(tag))
+
+	// Restore a real window: the success is cached forever, so the now-cleared
+	// retry marker must not let another fetch through.
+	desktopChecksumsRetryInterval = time.Hour
+	for range 3 {
+		assert.Equal(t, map[string]string{"full.zip": hash}, desktopChecksums(tag))
+	}
+	assert.Equal(t, 2, hits, "a cached success must be served without another fetch")
+}
+
 type failingReader struct{}
 
 func (failingReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }

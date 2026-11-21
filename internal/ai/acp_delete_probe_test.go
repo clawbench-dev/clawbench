@@ -217,7 +217,7 @@ func TestDeleteACPSession_WaitsForInFlightProbeBeforeGating(t *testing.T) {
 	conn.SetRawCallFnForTest(nil)
 
 	// The probe is in flight and answers "no" shortly after the delete starts:
-	// the delete must wait for that answer, then honour it.
+	// the delete must wait for that answer, then honor it.
 	go func() {
 		time.Sleep(150 * time.Millisecond)
 		reg.RecordDeleteSessionProbe("cb-late", false, true)

@@ -994,6 +994,28 @@ describe('restartInto', () => {
     expect(readCurrentVersion()).toBe('')
     expect(app.exit).not.toHaveBeenCalled()
   })
+
+  it('proceeds when the child reports neither spawn nor error', async () => {
+    // Some hosts never deliver either event. Nothing says the binary is broken,
+    // so blocking the app on a silent emitter is worse than going ahead: the
+    // timeout resolves and the handoff completes.
+    installVersion('1.2.3')
+    writePointer('1.2.3')
+    spawnMock.mockImplementationOnce(
+      () => ({ unref: () => {}, once: () => ({ unref: () => {}, once: () => {} }) }) as never,
+    )
+    vi.useFakeTimers()
+    try {
+      const pending = restartInto('1.2.3')
+      await vi.advanceTimersByTimeAsync(3000)
+      await expect(pending).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(readCurrentVersion()).toBe('1.2.3')
+    expect(app.exit).toHaveBeenCalledWith(0)
+  })
 })
 
 describe('versionDir', () => {
