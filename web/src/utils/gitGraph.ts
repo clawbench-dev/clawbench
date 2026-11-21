@@ -210,6 +210,17 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
       if (c.isWT) continue
       const rowLane = lane
       const parents = c.parents || []
+
+      // A first parent that is not loaded is drawn as a continuation line
+      // running from this node all the way to the bottom of the list (the
+      // commit exists, it just has not been paged in yet). The lane is
+      // therefore occupied to the end, even though the node list makes it look
+      // finished here — reusing it for a later branch would stack the two
+      // branches on one track and draw their lines on top of each other.
+      if (parents.length > 0 && !shaToRow.has(parents[0])) {
+        laneLastRow.set(rowLane, commits.length - 1)
+      }
+
       for (let pi = 0; pi < parents.length; pi++) {
         const pSha = parents[pi]
         if (!shaToRow.has(pSha) || !shaToLane.has(pSha)) continue

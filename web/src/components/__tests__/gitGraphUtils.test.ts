@@ -866,6 +866,41 @@ describe('lane compression does not leave empty lanes next to the mainline', () 
   })
 })
 
+describe('lane compression respects continuation lines to the list bottom', () => {
+  // Regression: a branch tip whose first parent has not been paged in yet gets
+  // a continuation line running to the bottom of the loaded list. Compression
+  // used to look only at node rows, so a later branch was packed onto the same
+  // lane and the two lines were drawn on top of each other — two unrelated
+  // branches looked like one continuous track.
+  //
+  // Loaded prefix (u1/u2 live below the window):
+  //   c0 → c1 → c2(merge) → c3 → c4(merge) → c5 → c6
+  //              ↘ t1                ↘ t2
+  const TRUNCATED_TIPS = [
+    { sha: 'c0', parents: ['c1'] },
+    { sha: 'c1', parents: ['c2'] },
+    { sha: 'c2', parents: ['c3', 't1'] },
+    { sha: 't1', parents: ['u1'] },
+    { sha: 'c3', parents: ['c4'] },
+    { sha: 'c4', parents: ['c5', 't2'] },
+    { sha: 't2', parents: ['u2'] },
+    { sha: 'c5', parents: ['c6'] },
+    { sha: 'c6', parents: [] },
+  ]
+
+  it('gives each unfinished branch its own lane', () => {
+    const { nodes } = getConnections(TRUNCATED_TIPS)
+    expect(nodes[3].lane).not.toBe(nodes[6].lane)
+  })
+
+  it('both tips keep a continuation line down to the last row', () => {
+    const { lines } = getConnections(TRUNCATED_TIPS)
+    const fades = lines.filter((l: any) => l.fade)
+    expect(fades).toHaveLength(2)
+    for (const f of fades) expect(f.rowEnd).toBe(TRUNCATED_TIPS.length - 1)
+  })
+})
+
 describe('branchNames on nodes', () => {
   it('attaches branch names to nodes by walking first-parent chain from branch refs', () => {
     const { nodes } = getConnections(SINGLE_MERGE) as any
