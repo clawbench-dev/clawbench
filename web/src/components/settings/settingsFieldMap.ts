@@ -105,9 +105,10 @@ export interface ItemSpec {
   source: 'server' | 'local'
   needsRestart?: boolean
   options?: { labelKey: string; value: unknown; modelName?: string; groupKey?: string; badgeKey?: string }[]
-  /** multi-select only: shown when nothing is selected (an empty selection is a
-   *  meaningful value — e.g. "every agent" — not "nothing chosen"). */
-  placeholderKey?: string
+  /** multi-select only: a "select all" row at the top of the picker, also used
+   *  as the row's value when nothing is selected. Required when an empty
+   *  selection is a meaningful value (e.g. "every agent") rather than "none". */
+  allOptionKey?: string
   min?: number
   max?: number
   step?: number
@@ -613,7 +614,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.usageMeterQuota', descriptionKey: 'settings.items.usageMeterQuotaDesc', key: 'usage_meter.quota', type: 'number', source: 'server', min: 0 },
       // What the quota is measured against. Empty = every agent, which is why
       // the row is not required: an empty selection IS the default.
-      { labelKey: 'settings.items.usageMeterAgents', descriptionKey: 'settings.items.usageMeterAgentsDesc', key: 'usage_meter.agent_ids', type: 'multi-select', source: 'server', placeholderKey: 'settings.items.usageMeterAgentsAll' },
+      { labelKey: 'settings.items.usageMeterAgents', descriptionKey: 'settings.items.usageMeterAgentsDesc', key: 'usage_meter.agent_ids', type: 'multi-select', source: 'server', allOptionKey: 'settings.items.usageMeterAgentsAll' },
     ],
     requiredFields: [],
     // Switching the metric changes the unit, so a stored quota would silently

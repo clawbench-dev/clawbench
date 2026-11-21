@@ -72,7 +72,7 @@
         :type="panelFieldType(entry.field)"
         :model-value="getLocalValue(entry.field)"
         :options="resolveFieldOptions(entry.field)"
-        :placeholder="entry.field.placeholderKey ? t(entry.field.placeholderKey) : undefined"
+        :all-option-label="entry.field.allOptionKey ? t(entry.field.allOptionKey) : undefined"
         :option-previews="entry.field.key === 'terminalTheme' ? terminalThemePreviews : undefined"
         :terminal-theme-load-error="entry.field.key === 'terminalTheme' ? (terminalThemeLoadState === 'error' && terminalThemeRetriesExhausted) : false"
         :on-retry-terminal-themes="entry.field.key === 'terminalTheme' ? retryTerminalThemes : undefined"

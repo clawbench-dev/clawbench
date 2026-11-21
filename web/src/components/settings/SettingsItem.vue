@@ -240,6 +240,20 @@
         :placeholder="t('chat.sessionSetting.searchPlaceholder')"
       />
     </div>
+    <!-- Select-all row. An empty selection is the "all" value for fields like
+         the usage meter's agent scope, so "all" needs its own row: unchecking
+         every agent one by one is not a discoverable way back. -->
+    <div
+      v-if="type === 'multi-select' && allOptionLabel"
+      class="settings-item__option"
+      :class="{ 'settings-item__option--active': selectedValues.length === 0 }"
+      @click="selectAllOptions"
+    >
+      <span class="settings-item__option-labels">
+        <span class="settings-item__option-label">{{ allOptionLabel }}</span>
+      </span>
+      <span v-if="selectedValues.length === 0" class="settings-item__option-check">✓</span>
+    </div>
     <!-- One render path for both shapes: a grouped list (groupKey present) and a
          flat one differ only by the optional heading, and duplicating the row
          markup made the grouped variant silently lose the two-line model row
@@ -407,6 +421,9 @@ interface Props {
    *  surfaced here so the user cannot type a value that will be rejected). */
   maxLength?: number
   placeholder?: string
+  /** multi-select only: label of the "select all" row. Its presence also tells
+   *  the row how to render an empty selection (an empty list means "all"). */
+  allOptionLabel?: string
   needsRestart?: boolean
   disabled?: boolean
   forceClose?: boolean
@@ -672,7 +689,7 @@ const displayValue = computed(() => {
   }
   if (props.type === 'multi-select') {
     const values = Array.isArray(props.modelValue) ? (props.modelValue as (string | number)[]) : []
-    if (values.length === 0) return props.placeholder
+    if (values.length === 0) return props.allOptionLabel ?? props.placeholder
     // Same compact form as MenuSelect: the first label plus a count. The full
     // list is one tap away, and a settings row must not grow with the selection.
     const labels = values.map(v => props.options?.find(o => o.value === v)?.label ?? String(v))
@@ -759,6 +776,17 @@ function handleClick() {
     }
   }
   emit('editToggle', editing.value)
+}
+
+/** Current multi-selection as a plain array (never the raw prop). */
+const selectedValues = computed<(string | number)[]>(() =>
+  Array.isArray(props.modelValue) ? (props.modelValue as (string | number)[]) : [],
+)
+
+/** 全选 = clear the filter: an empty list means "every agent", and it keeps
+ *  meaning that when a new agent is created later. */
+function selectAllOptions() {
+  emit('update:modelValue', [])
 }
 
 function closeMultiPicker() {

@@ -611,38 +611,50 @@ describe('SettingsItem', () => {
       { label: 'Agent C', value: 'c' },
     ]
 
-    it('shows the placeholder when nothing is selected (empty = every agent)', () => {
+    it('shows the 全部 label when nothing is selected (empty = every agent)', () => {
       const wrapper = mountItem({
         type: 'multi-select',
         modelValue: [],
         options: agents,
-        placeholder: '全部智能体',
+        allOptionLabel: '全部智能体',
       })
       expect(wrapper.find('.settings-item__value').text()).toBe('全部智能体')
     })
 
-    it('collapses a selection to the first label plus a count', () => {
-      const wrapper = mountItem({ type: 'multi-select', modelValue: ['a', 'b'], options: agents })
-      expect(wrapper.find('.settings-item__value').text()).toBe('Agent A +1')
+    // The sheet is a BottomSheet (teleported + gated on `open`); stub it to a
+    // plain container so the rows are queryable.
+    function mountMulti(modelValue: unknown[]) {
+      return mount(SettingsItem, {
+        props: {
+          label: 'Test Item',
+          type: 'multi-select',
+          modelValue,
+          options: agents,
+          allOptionLabel: '全部智能体',
+        },
+        global: {
+          plugins: [i18n],
+          stubs: { BottomSheet: { template: '<div class="bs-stub"><slot /></div>' } },
+        },
+      })
+    }
+
+    it('offers a one-click 全部 row that clears the selection', async () => {
+      const wrapper = mountMulti(['a', 'b'])
+      const rows = wrapper.findAll('.settings-item__option')
+      // The row sits above the agent rows and is not checked while a subset is
+      // selected.
+      expect(rows[0].text()).toContain('全部智能体')
+      expect(rows[0].find('.settings-item__option-check').exists()).toBe(false)
+
+      await rows[0].trigger('click')
+      expect(wrapper.emitted('update:modelValue')![0]).toEqual([[]])
     })
 
-    it('toggles rows and keeps the picker open so several can be picked in one visit', async () => {
-      const wrapper = mountItem({ type: 'multi-select', modelValue: ['a'], options: agents })
-      const vm = wrapper.vm as any
-      await wrapper.find('.settings-item').trigger('click')
-      expect(vm.$.setupState.selectPicker.isOpen.value).toBe(true)
-
-      vm.$.setupState.selectOption('b')
-      await nextTick()
-      expect(wrapper.emitted('update:modelValue')![0]).toEqual([['a', 'b']])
-      expect(vm.$.setupState.selectPicker.isOpen.value).toBe(true)
-
-      // Toggling an already-selected row removes it. The prop has not been
-      // re-rendered by a parent here, so removing the only value leaves the
-      // empty list — which the consumer reads as "every agent".
-      vm.$.setupState.selectOption('a')
-      await nextTick()
-      expect(wrapper.emitted('update:modelValue')![1]).toEqual([[]])
+    it('marks the 全部 row as checked when the selection is empty', () => {
+      const wrapper = mountMulti([])
+      const allRow = wrapper.findAll('.settings-item__option')[0]
+      expect(allRow.find('.settings-item__option-check').exists()).toBe(true)
     })
 
     it('closes the picker from the footer and reports the end of editing', async () => {

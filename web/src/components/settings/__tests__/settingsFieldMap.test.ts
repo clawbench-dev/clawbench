@@ -1510,9 +1510,9 @@ describe('usage meter cycle type', () => {
     expect(scope).toBeDefined()
     expect(scope!.type).toBe('multi-select')
     expect(scope!.source).toBe('server')
-    // An empty list is a valid value ("every agent"), so the row must say so
-    // rather than look unset, and it must not block a save.
-    expect(scope!.placeholderKey).toBe('settings.items.usageMeterAgentsAll')
+    // An empty list is a valid value ("every agent"), so the picker needs a
+    // one-click 全部 row instead of making the user untick every agent.
+    expect(scope!.allOptionKey).toBe('settings.items.usageMeterAgentsAll')
     expect(cfg().requiredFields ?? []).not.toContain('usage_meter.agent_ids')
   })
 
