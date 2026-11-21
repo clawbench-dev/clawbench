@@ -77,10 +77,12 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		return fmt.Errorf("acp: connection not initialized")
 	}
 
+	var commandReply *asyncCommandReply
 	// Register the stream channel so SessionUpdate callbacks are forwarded
 	if client != nil {
 		slog.Info("acp conn: RegisterSession starting", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
 		client.RegisterSession(acpSID, streamCh)
+		commandReply = client.trackCommandReply(acpSID)
 		defer client.UnregisterSession(acpSID)
 	}
 
@@ -193,9 +195,16 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		}
 	}
 
+	if resp.StopReason == acp.StopReasonEndTurn && commandReply != nil {
+		// The prompt was accepted. A disconnect during the follow-up must
+		// not enter the retry path and execute its commands a second time.
+		err = commandReply.wait(promptCtx, conn.Done())
+		if ctx.Err() != nil {
+			resp.StopReason = acp.StopReasonCancelled
+		}
+	}
 	c.emitPromptTailMetadata(resp, streamCh)
-
-	return nil
+	return err
 }
 
 // emitCancelledTurnUsage emits the turn-final metadata event for a prompt that

@@ -38,6 +38,7 @@ type pendingPermission struct {
 type ClawBenchACPClient struct {
 	mu                sync.Mutex
 	sessionRoutes     map[string]chan<- StreamEvent // acpSessionID → streamCh
+	commandReplies    map[string]*asyncCommandReply // enabled by the Antigravity handshake
 	commands          []acp.AvailableCommand        // cached from available_commands_update
 	pendingPermission map[string]*pendingPermission // PermissionKey → pending request
 	// pendingElicitations tracks blocking `elicitation/create` requests (see
@@ -194,6 +195,7 @@ func (c *ClawBenchACPClient) UnregisterSession(acpSessionID string) {
 		return
 	}
 	delete(c.sessionRoutes, acpSessionID)
+	delete(c.commandReplies, acpSessionID)
 
 	// A question still waiting on the user belongs to the turn that just
 	// ended. Leaving it blocked would keep the handler alive and
@@ -404,6 +406,7 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	c.mu.Lock()
 	ch, ok := c.sessionRoutes[string(n.SessionId)]
 	deb := c.debouncers[string(n.SessionId)]
+	reply := c.commandReplies[string(n.SessionId)]
 	c.mu.Unlock()
 
 	if !ok {
@@ -437,6 +440,10 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	c.cacheToolInput(n.SessionId, n.Update)
 
 	mapACPSessionUpdate(n.Update, ch, ctx, c.connRef, deb)
+	// Signal only after the final frame has been forwarded to the stream.
+	if reply != nil {
+		reply.observe(n.Update)
+	}
 	return nil
 }
 
