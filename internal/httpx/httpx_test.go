@@ -150,6 +150,12 @@ func TestResolveAbsPath(t *testing.T) {
 	dir := t.TempDir()
 	model.RootPaths = []string{dir}
 
+	// ResolveAbsPath follows symlinks, and on macOS /var is a symlink to
+	// /private/var — comparing against the raw TempDir would fail there while
+	// passing on Linux. Compare against the resolved form.
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+
 	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: dir})
 
@@ -157,7 +163,7 @@ func TestResolveAbsPath(t *testing.T) {
 	rec := httptest.NewRecorder()
 	got, ok := ResolveAbsPath(rec, r, filepath.Join(dir, "a.txt"))
 	require.True(t, ok)
-	assert.Equal(t, filepath.Join(dir, "a.txt"), got)
+	assert.Equal(t, filepath.Join(resolvedDir, "a.txt"), got)
 
 	// Absolute path outside every root → 403.
 	rec2 := httptest.NewRecorder()
@@ -169,7 +175,7 @@ func TestResolveAbsPath(t *testing.T) {
 	rec3 := httptest.NewRecorder()
 	got, ok = ResolveAbsPath(rec3, r, "a.txt")
 	require.True(t, ok)
-	assert.Equal(t, filepath.Join(dir, "a.txt"), got)
+	assert.Equal(t, filepath.Join(resolvedDir, "a.txt"), got)
 }
 
 func TestT_And_Loc(t *testing.T) {
