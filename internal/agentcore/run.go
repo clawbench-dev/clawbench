@@ -52,6 +52,15 @@ type Spec struct {
 	WorkDir string
 	// Policy decides which tools exist at all.
 	Policy model.ToolPolicy
+	// Depth is how many delegation levels deep this run is. 0 is the top-level
+	// turn; a sub-agent runs at Depth+1. At maxSubagentDepth the task tool is
+	// not registered at all, so recursion stops by absence rather than by a
+	// call-time refusal the model can argue with.
+	Depth int
+	// Budget is the turn's shared spend ledger. A nil value is replaced by a
+	// fresh one in Run; a sub-agent receives its parent's ledger so the two
+	// cannot each spend the full cap.
+	Budget *TurnBudget
 	// ThinkingEffort is the reasoning level the user picked ("low", "medium",
 	// "high"), or "" / "auto" for "let the model decide". It is advisory: a
 	// model that does not support reasoning fails the call rather than silently
@@ -103,6 +112,14 @@ const (
 	EventDone EventKind = "done"
 	// EventError is the terminal failure event.
 	EventError EventKind = "error"
+	// EventReasoningDone closes the reasoning block of the event's parent.
+	//
+	// It exists for sub-agents: their run ends by emitting EventDone, which the
+	// parent's event pump deliberately swallows (a child's terminal event must
+	// not end the parent's turn). Without an explicit close the child's last
+	// reasoning block would stay "in progress" forever, which the UI renders as
+	// a spinner with no body.
+	EventReasoningDone EventKind = "reasoning_done"
 )
 
 // Event is one update from a run.
@@ -122,6 +139,12 @@ type Event struct {
 
 	Usage *llm.Usage
 	Err   error
+
+	// ParentToolCallID is the id of the task call that spawned the sub-agent
+	// which produced this event, or "" for top-level output. The event pump
+	// stamps it on everything a child emits; the frontend groups those blocks
+	// under the task card.
+	ParentToolCallID string
 
 	// Summary carries the compaction summary. It is set on EventCompacted (the
 	// text that just replaced the dropped turns) and on EventDone (the latest
@@ -232,6 +255,9 @@ var (
 // A caller that stops reading MUST keep draining the channel: the producer
 // blocks on it, so abandoning it leaks the goroutine.
 func Run(ctx context.Context, spec Spec) <-chan Event {
+	if spec.Budget == nil {
+		spec.Budget = NewTurnBudget()
+	}
 	ch := make(chan Event, 64)
 	go func() {
 		defer close(ch)
@@ -274,7 +300,13 @@ func RunSync(ctx context.Context, spec Spec, onEvent func(Event)) (RunResult, er
 		}
 		switch ev.Kind {
 		case EventText:
-			text.WriteString(ev.Text)
+			// A sub-agent's text is part of the transcript, not of the parent's
+			// answer. A background task has no UI to group it under a card, so
+			// including it here would paste the child's narration into the
+			// generated artifact.
+			if ev.ParentToolCallID == "" {
+				text.WriteString(ev.Text)
+			}
 		case EventDone:
 			res.StopReason = ev.StopReason
 			res.Rounds = ev.Rounds
@@ -299,8 +331,6 @@ type runner struct {
 	messages  []llm.Message
 	toolList  []tools.Tool
 	toolIndex map[string]tools.Tool
-	rounds    int
-	toolCalls int
 	usage     llm.Usage
 	// system is the prompt built for this run, kept so the terminal event can
 	// report how much of the window the conversation occupies. Compaction uses
@@ -364,14 +394,14 @@ const emptyRoundNudge = "Your previous reply contained no message to the user an
 // budget of zero means unlimited.
 func (r *runner) roundsExhausted() bool {
 	limit := r.spec.Policy.Rounds()
-	return limit > 0 && r.rounds >= limit
+	return limit > 0 && r.spec.Budget.Rounds() >= limit
 }
 
 // toolCallsExhausted reports whether the per-turn tool-call budget has been
 // spent. A budget of zero means unlimited.
 func (r *runner) toolCallsExhausted() bool {
 	limit := r.spec.Policy.ToolCalls()
-	return limit > 0 && r.toolCalls >= limit
+	return limit > 0 && r.spec.Budget.ToolCalls() >= limit
 }
 
 func (r *runner) run(ctx context.Context) {
@@ -428,9 +458,9 @@ func (r *runner) run(ctx context.Context) {
 			r.finishWithClosing(runCtx, StopMaxRounds, system)
 			return
 		}
-		r.rounds++
+		round := r.spec.Budget.AddRound()
 
-		out, err := r.runModelRound(runCtx, system, true)
+		out, err := r.runModelRound(runCtx, system, true, round)
 		if err != nil {
 			if runCtx.Err() != nil {
 				r.finishCancelled()
@@ -494,7 +524,7 @@ func (r *runner) continueTruncated(out roundOutput) bool {
 	}
 	r.truncations++
 	slog.Info("agentcore: reply hit the output cap, asking the model to continue",
-		"round", r.rounds, "continuation", r.truncations)
+		"round", r.spec.Budget.Rounds(), "continuation", r.truncations)
 	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, truncationNudge))
 	return true
 }
@@ -551,7 +581,7 @@ func (r *runner) nudgeEmptyRound(text []string) bool {
 	}
 	r.nudges++
 	slog.Info("agentcore: empty model round, asking the model to continue",
-		"round", r.rounds)
+		"round", r.spec.Budget.Rounds())
 	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, emptyRoundNudge))
 	return true
 }
@@ -576,9 +606,24 @@ func (r *runner) buildTools() {
 	if !r.spec.Client.SupportsVision() {
 		r.toolList = filterVisionlessRead(r.toolList)
 	}
+	// Delegation is derived, not a capability of its own: a sub-agent with no
+	// tools can only talk, which the parent can do itself. Depth is enforced by
+	// the tool's ABSENCE, matching the rest of the safety model.
+	if r.canDelegate() {
+		r.toolList = append(r.toolList, &taskTool{r: r})
+	}
 	for _, t := range r.toolList {
 		r.toolIndex[t.Name()] = t
 	}
+}
+
+// canDelegate reports whether this run may spawn a sub-agent.
+func (r *runner) canDelegate() bool {
+	if r.spec.Depth >= maxSubagentDepth {
+		return false
+	}
+	p := r.spec.Policy
+	return p.Has(model.CapFSRead) || p.Has(model.CapFSWrite) || p.Has(model.CapExec)
 }
 
 // filterVisionlessRead swaps read for a variant that refuses images, so a
@@ -602,7 +647,7 @@ func filterVisionlessRead(list []tools.Tool) []tools.Tool {
 // for work the budget cannot pay for. A provider that emits a tool call anyway
 // is ignored rather than announced, so the UI never shows a card whose result
 // will never arrive.
-func (r *runner) runModelRound(ctx context.Context, system string, allowTools bool) (roundOutput, error) {
+func (r *runner) runModelRound(ctx context.Context, system string, allowTools bool, round int) (roundOutput, error) {
 	stream, err := r.spec.Client.Stream(ctx, llm.Request{
 		System:          system,
 		Messages:        r.messages,
@@ -631,7 +676,7 @@ func (r *runner) runModelRound(ctx context.Context, system string, allowTools bo
 			return roundOutput{}, ctx.Err()
 		case ev, ok = <-stream:
 			if !ok {
-				return acc.result(r.rounds), nil
+				return acc.result(round), nil
 			}
 		}
 		if err := acc.apply(ev, r); err != nil {
@@ -1136,7 +1181,7 @@ func (r *runner) executeTool(env tools.Env, c llm.ToolCall) *llm.ToolResult {
 			Parts:   []llm.Part{{Text: "Tool call budget for this turn is exhausted; no further tools will run."}},
 		}
 	}
-	r.toolCalls++
+	r.spec.Budget.AddToolCall()
 
 	// Arguments are complete now — tell the UI before running, so the tool
 	// card can show WHAT is running (the command, the file) instead of a
@@ -1154,7 +1199,11 @@ func (r *runner) executeTool(env tools.Env, c llm.ToolCall) *llm.ToolResult {
 			IsError: true,
 		}
 	} else {
-		res = tool.Run(env, []byte(c.Arguments))
+		// A tool that spawns sub-work needs to know which call it is running
+		// under, so the sub-work's events can be attributed to this card.
+		callEnv := env
+		callEnv.CallID = c.ID
+		res = tool.Run(callEnv, []byte(c.Arguments))
 	}
 	elapsed := time.Since(start)
 
@@ -1254,11 +1303,19 @@ func (r *runner) finishWithClosing(ctx context.Context, reason, system string) {
 		r.finishCancelled()
 		return
 	}
+	// A sub-agent does not get a closing round. Its budget is the parent's, so
+	// a child that hit the cap must hand back what it has; the parent is the
+	// one that writes the user-facing hand-off, and two closing rounds would
+	// spend two extra calls past the cap.
+	if r.spec.Depth > 0 {
+		r.finish(reason, limit)
+		return
+	}
 	// Counted in Rounds because it really is a model call; the budget is
 	// already spent, so this is deliberately the one call past the cap.
-	r.rounds++
+	round := r.spec.Budget.AddRound()
 	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, closingPrompt(reason)))
-	if out, err := r.runModelRound(ctx, system, false); err != nil {
+	if out, err := r.runModelRound(ctx, system, false, round); err != nil {
 		// Pressing stop during the closing round is still a cancellation, not
 		// a completed turn that happened to run out of budget.
 		if ctx.Err() != nil {
@@ -1288,8 +1345,8 @@ func (r *runner) finish(reason string, limit int) {
 		StopReason:    reason,
 		Limit:         limit,
 		Truncated:     r.lastTruncated,
-		Rounds:        r.rounds,
-		ToolCalls:     r.toolCalls,
+		Rounds:        r.spec.Budget.Rounds(),
+		ToolCalls:     r.spec.Budget.ToolCalls(),
 		TotalUsage:    r.usage,
 		Summary:       r.summary,
 		ContextTokens: used,

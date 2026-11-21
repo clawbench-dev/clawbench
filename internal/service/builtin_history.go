@@ -1,8 +1,10 @@
 package service
 
 import (
+	"encoding/json"
 	"strings"
 
+	"clawbench/internal/agentcore"
 	"clawbench/internal/agentcore/compaction"
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
@@ -146,6 +148,14 @@ func collectBuiltinTurns(messages []model.ChatMessage, beforeMessageID int64, su
 			continue
 		}
 		text := strings.TrimSpace(ExtractPlainText(m.Content))
+		if role == roleAssistant {
+			// A sub-agent's text lives in the same message with
+			// parent_tool_call_id set. Flattening it into the assistant's text
+			// would put it back into the parent's context — and duplicate the
+			// report, which also rides the task tool result. The child's work
+			// belongs to the task card, not to the parent's voice.
+			text = strings.TrimSpace(extractTopLevelText(m.Content))
+		}
 		var calls []ai.HistoryToolCall
 		if role == roleAssistant {
 			calls = tools[m.ID]
@@ -205,20 +215,94 @@ func builtinToolCalls(messages []model.ChatMessage) map[int64][]ai.HistoryToolCa
 	if err != nil || len(records) == 0 {
 		return nil
 	}
+	// Child tool calls are stored in the same table (it has no parent column),
+	// so the message content blocks are the only place that says which calls
+	// belong to a sub-agent. Replaying them as the parent's own would put the
+	// child's reads back into the parent's context — exactly what delegation is
+	// meant to avoid.
+	childCalls := childToolCallIDs(messages)
 	out := make(map[int64][]ai.HistoryToolCall, len(records))
 	for _, r := range records {
 		if !r.Done || strings.TrimSpace(r.Name) == "" {
 			continue
 		}
+		if childCalls[r.ToolID] {
+			continue
+		}
 		out[r.MessageID] = append(out[r.MessageID], ai.HistoryToolCall{
-			ID:      r.ToolID,
-			Name:    r.Name,
-			Input:   truncateRunes(string(r.Input), builtinToolInputMaxRunes),
-			Output:  truncateRunes(r.Output, builtinToolOutputMaxRunes),
+			ID:    r.ToolID,
+			Name:  r.Name,
+			Input: truncateRunes(string(r.Input), builtinToolInputMaxRunes),
+			// A task call's output is the child's report — the deliverable,
+			// not a file body — so it keeps the larger cap.
+			Output:  truncateRunes(r.Output, builtinOutputCap(r.Name)),
 			IsError: strings.EqualFold(r.Status, "error"),
 		})
 	}
 	return out
+}
+
+// extractTopLevelText renders the assistant's own text, excluding blocks
+// produced by a sub-agent.
+//
+// It falls back to the legacy extractor for content that is not the
+// {"blocks":[...]} shape: those rows predate block storage and have no parent
+// attribution to honor.
+func extractTopLevelText(content string) string {
+	blocks, ok := parseContentBlocks(content)
+	if !ok {
+		return ExtractPlainText(content)
+	}
+	texts := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b.Type != contentKeyText || b.ParentToolCallID != "" {
+			continue
+		}
+		if s := strings.TrimSpace(b.Text); s != "" {
+			texts = append(texts, s)
+		}
+	}
+	return strings.Join(texts, "\n\n")
+}
+
+// childToolCallIDs collects the ids of tool calls that belong to a sub-agent,
+// read from the message content blocks. The tool-call table has no parent
+// column, so this is the authoritative link.
+func childToolCallIDs(messages []model.ChatMessage) map[string]bool {
+	out := make(map[string]bool)
+	for _, m := range messages {
+		if m.Role != roleAssistant {
+			continue
+		}
+		blocks, ok := parseContentBlocks(m.Content)
+		if !ok {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == eventTypeToolUse && b.ID != "" && b.ParentToolCallID != "" {
+				out[b.ID] = true
+			}
+		}
+	}
+	return out
+}
+
+// parseContentBlocks decodes the {"blocks":[...]} shape. It reports false for
+// anything else, so callers can fall back to the legacy text extractor.
+func parseContentBlocks(content string) ([]model.ContentBlock, bool) {
+	if content == "" {
+		return nil, false
+	}
+	var wrapper struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(content), &wrapper); err != nil {
+		return nil, false
+	}
+	if wrapper.Blocks == nil {
+		return nil, false
+	}
+	return wrapper.Blocks, true
 }
 
 // Per-call caps. They keep one large file read or one large write from eating
@@ -227,7 +311,19 @@ func builtinToolCalls(messages []model.ChatMessage) map[int64][]ai.HistoryToolCa
 const (
 	builtinToolInputMaxRunes  = 1000
 	builtinToolOutputMaxRunes = 2000
+	// builtinTaskToolName is agentcore's delegation tool. Its output is the
+	// sub-agent's report — the deliverable, not a file body — so it gets its
+	// own cap below.
+	builtinTaskToolName = "task"
 )
+
+// builtinOutputCap picks the output cap for one replayed call.
+func builtinOutputCap(name string) int {
+	if strings.EqualFold(name, builtinTaskToolName) {
+		return agentcore.MaxSubagentReportRunes
+	}
+	return builtinToolOutputMaxRunes
+}
 
 // builtinHistoryStart returns the index of the first turn that fits the budget.
 //
