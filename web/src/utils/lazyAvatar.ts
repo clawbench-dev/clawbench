@@ -10,6 +10,7 @@
  * declaration in `types/dicebear-styles.d.ts` keeps these imports typed.
  */
 import { retryableImport } from '@/utils/lazyMermaid'
+import { avatarBackgroundFor } from '@/utils/avatarPolicy'
 import type { StyleDefinition } from '@dicebear/core'
 
 type CoreModule = typeof import('@dicebear/core')
@@ -146,8 +147,9 @@ export interface AvatarKit {
  * Generate ONE DiceBear avatar SVG seeded by `seed`, using a RANDOM style from
  * the curated set. Loads only the single style chunk it picks (never the whole
  * kit), so it is cheap enough to call once per new group member. The chosen
- * style is baked into the returned SVG, so the stored string renders identically
- * on the public share page (which has no DiceBear runtime).
+ * style AND its background colour are baked into the returned SVG, so the
+ * stored string renders identically on the public share page (which has no
+ * DiceBear runtime and no app CSS).
  */
 export async function generateAvatarSvg(seed: string): Promise<string> {
     const styleName = AVATAR_STYLES[Math.floor(Math.random() * AVATAR_STYLES.length)]
@@ -162,12 +164,15 @@ export async function generateAvatarSvg(seed: string): Promise<string> {
  * meeting participant's icon, redrawn on every transcript line) cannot use
  * that: a random style re-rolls on every reload, so the same person changes
  * face. This variant makes the output a pure function of (seed, style).
+ *
+ * A soft background is baked in so transparent character styles still read as
+ * a solid tile instead of a floating face.
  */
 export async function generateAvatarSvgWithStyle(seed: string, styleName: AvatarStyle): Promise<string> {
     const core = await getAvatarLib()
     const mod = await retryableImport(STYLE_LOADERS[styleName])
     const style = new core.Style(mod.default as StyleDefinition)
-    return new core.Avatar(style, { seed }).toString()
+    return new core.Avatar(style, { seed, backgroundColor: [avatarBackgroundFor(seed)] }).toString()
 }
 
 /** How many style chunks to fetch concurrently. 40 parallel imports would

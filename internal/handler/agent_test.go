@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -522,6 +526,62 @@ func TestAvatarSVGLooksSafe(t *testing.T) {
 	for i, s := range unsafe {
 		assert.False(t, avatarSVGLooksSafe([]byte(s)), "unsafe case %d should be rejected", i)
 	}
+}
+
+// testPNGDataURI builds a solid w×h PNG as a data URI.
+func testPNGDataURI(t *testing.T, w, h int) string {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h))))
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+func TestAvatarLooksSafe_Raster(t *testing.T) {
+	pngURI := testPNGDataURI(t, 192, 192)
+	assert.True(t, avatarLooksSafe([]byte(pngURI)), "valid PNG data URI should pass")
+
+	// A real 192x192 WebP produced by the client's canvas path.
+	const webpB64 = "UklGRoIAAABXRUJQVlA4IHYAAADwCgCdASrAAMAAPm02mUmkIyKhIEgAgA2JaW7hdrEbQBPa9FXCDSdFXCDIIaqk122i4QZBDVUmu20XCDIIaqk122i4QZBDVUmu20XCDIIaqk122i4QZBDVUmu20XCDHIAA/v/B/l87HuD/0Hw07jcVAAAAAAAA"
+	assert.True(t, avatarLooksSafe([]byte("data:image/webp;base64,"+webpB64)), "valid WebP data URI should pass")
+
+	bad := []string{
+		"",                           // empty
+		"data:image/png;base64,",     // empty payload
+		"data:image/png;base64,AAAA", // decodes, not an image
+		"data:image/gif;base64," + base64.StdEncoding.EncodeToString([]byte("GIF89a")),     // unsupported MIME
+		"data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(`<svg/>`)), // SVG must use the raw form
+		"data:image/jpeg;base64," + strings.TrimPrefix(pngURI, "data:image/png;base64,"),   // declared format != real format
+		"data:image/png;base64,!!!!", // invalid base64 alphabet
+		testPNGDataURI(t, 600, 600),  // dimensions above the cap
+	}
+	for i, s := range bad {
+		assert.False(t, avatarLooksSafe([]byte(s)), "bad raster case %d should be rejected", i)
+	}
+}
+
+func TestAvatarRasterLooksSafe_EdgeCases(t *testing.T) {
+	assert.False(t, avatarRasterLooksSafe("png", nil), "empty payload")
+	assert.False(t, avatarRasterLooksSafe("png", []byte("A")), "invalid base64")
+	assert.False(t, avatarRasterLooksSafe("png", make([]byte, maxDecodedAvatarBytes*4/3+9)), "oversized payload")
+}
+
+func TestAgentPatch_Avatar_RasterDataURI(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	uri := testPNGDataURI(t, 192, 192)
+	body := map[string]any{"id": "codebuddy", "avatar": uri}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, uri, model.Agents["codebuddy"].Avatar)
+
+	var stored string
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT avatar FROM agents WHERE id = ?", "codebuddy",
+	).Scan(&stored))
+	assert.Equal(t, uri, stored)
 }
 
 func TestAgentPatch_Avatar_TooLarge(t *testing.T) {

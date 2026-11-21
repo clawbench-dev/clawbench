@@ -15,14 +15,26 @@ vi.mock('@/utils/appLog', () => ({
 
 // A fake kit whose Avatar renders a seed-tagged SVG, so tests can assert that a
 // seed change re-renders every tile.
-const { mockLoadAvatarKit, mockStyles } = vi.hoisted(() => {
+const { mockLoadAvatarKit, mockStyles, mockFileToAvatarDataUri, MockAvatarImageError } = vi.hoisted(() => {
   const mockStyles = { bottts: { $id: 'bottts' }, identicon: { $id: 'identicon' }, shapes: { $id: 'shapes' } }
+  class MockAvatarImageError extends Error {
+    code: string
+    constructor(code: string) {
+      super(code)
+      this.name = 'AvatarImageError'
+      this.code = code
+    }
+  }
   return {
     mockStyles,
+    MockAvatarImageError,
+    mockFileToAvatarDataUri: vi.fn(),
     mockLoadAvatarKit: vi.fn().mockResolvedValue({
       Avatar: class {
-        constructor(public style: unknown, public options: { seed: string }) {}
-        toString() { return `<svg data-seed="${this.options.seed}"></svg>` }
+        constructor(public style: unknown, public options: { seed: string; backgroundColor?: string[] }) {}
+        toString() {
+          return `<svg data-seed="${this.options.seed}" data-bg="${this.options.backgroundColor?.[0] ?? ''}"></svg>`
+        }
       },
       styles: mockStyles,
     }),
@@ -34,12 +46,18 @@ vi.mock('@/utils/lazyAvatar', () => ({
   loadAvatarKit: mockLoadAvatarKit,
 }))
 
+vi.mock('@/utils/avatarImage', () => ({
+  fileToAvatarDataUri: mockFileToAvatarDataUri,
+  AvatarImageError: MockAvatarImageError,
+}))
+
 vi.mock('@/composables/useBackHandler', () => ({
   registerBackHandler: () => () => {},
   PRIORITY_OVERLAY: 100,
 }))
 
 import AgentAvatarPicker from '@/components/settings/AgentAvatarPicker.vue'
+import { avatarBackgroundFor } from '@/utils/avatarPolicy'
 
 let wrappers: VueWrapper[] = []
 
@@ -57,6 +75,7 @@ function mountPicker(props: Record<string, unknown> = {}) {
 describe('AgentAvatarPicker', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockFileToAvatarDataUri.mockReset()
   })
 
   afterEach(() => {
@@ -137,5 +156,84 @@ describe('AgentAvatarPicker', () => {
     mountPicker({ open: false })
     await flushPromises()
     expect(mockLoadAvatarKit).not.toHaveBeenCalled()
+  })
+
+  it('bakes a soft background into every tile', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const bg = avatarBackgroundFor('CodeBuddy')
+    const srcs = wrapper.findAll('.avatar-picker__tile-img').map(i => decodeURIComponent(i.attributes('src') || ''))
+    for (const src of srcs) expect(src).toContain(`data-bg="${bg}"`)
+  })
+
+  it('uploads an image and saves it as a data URI', async () => {
+    mockFileToAvatarDataUri.mockResolvedValue('data:image/webp;base64,UklGRg==')
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const file = new File(['x'], 'avatar.png', { type: 'image/png' })
+    const input = wrapper.find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(mockFileToAvatarDataUri).toHaveBeenCalledWith(file, expect.any(String))
+    const uploadedTile = wrapper.find('.avatar-picker__uploaded .avatar-picker__tile.is-selected')
+    expect(uploadedTile.exists()).toBe(true)
+    expect(uploadedTile.find('img').attributes('src')).toBe('data:image/webp;base64,UklGRg==')
+
+    await wrapper.find('.fbtn-primary').trigger('click')
+    expect(wrapper.emitted('saved')![0][0]).toBe('data:image/webp;base64,UklGRg==')
+  })
+
+  it('shows a localized error when the upload is rejected', async () => {
+    mockFileToAvatarDataUri.mockRejectedValue(new MockAvatarImageError('too-large'))
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const input = wrapper.find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', {
+      value: [new File(['x'], 'avatar.png', { type: 'image/png' })],
+      configurable: true,
+    })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(wrapper.find('.avatar-picker__error-text').text()).toBe('settings.items.agentAvatarUploadTooLarge')
+  })
+
+  it('blocks save when the current avatar cannot be matched to a tile', async () => {
+    const wrapper = mountPicker({ currentAvatar: '<svg>custom</svg>' })
+    await flushPromises()
+
+    expect(wrapper.find('.avatar-picker__current').exists()).toBe(true)
+    expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeDefined()
+  })
+
+  it('re-enables save after an explicit shuffle', async () => {
+    const wrapper = mountPicker({ currentAvatar: '<svg>custom</svg>' })
+    await flushPromises()
+
+    await wrapper.find('.avatar-picker__shuffle').trigger('click')
+    expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeUndefined()
+  })
+
+  it('selects the matching tile when the current avatar uses the default seed', async () => {
+    const svg = `<svg data-seed="CodeBuddy" data-bg="${avatarBackgroundFor('CodeBuddy')}"></svg>`
+    const wrapper = mountPicker({ currentAvatar: svg })
+    await flushPromises()
+
+    expect(wrapper.find('.avatar-picker__current').exists()).toBe(false)
+    expect(wrapper.find('.avatar-picker__tile.is-selected').attributes('data-style')).toBe('bottts')
+    expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeUndefined()
+  })
+
+  it('treats an uploaded current avatar as the selected upload', async () => {
+    const wrapper = mountPicker({ currentAvatar: 'data:image/webp;base64,UklGRg==' })
+    await flushPromises()
+
+    expect(wrapper.find('.avatar-picker__uploaded .avatar-picker__tile.is-selected').exists()).toBe(true)
+    expect(wrapper.find('.fbtn-primary').attributes('disabled')).toBeUndefined()
   })
 })

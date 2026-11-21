@@ -196,6 +196,7 @@
     <AgentAvatarPicker
       :open="avatarPickerOpen"
       :agent-name="agent?.name ?? ''"
+      :current-avatar="agent?.avatar ?? ''"
       @close="avatarPickerOpen = false"
       @saved="handleAvatarSaved"
     />

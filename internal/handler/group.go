@@ -675,7 +675,7 @@ func ServeGroupMemberAvatars(w http.ResponseWriter, r *http.Request) {
 	// validate-and-write loop would persist the valid items before returning
 	// 400 on a later invalid one, leaving the batch half-applied.
 	for _, a := range req.Avatars {
-		if a.MemberID == "" || len(a.Avatar) > maxAgentAvatarBytes || !avatarSVGLooksSafe([]byte(a.Avatar)) {
+		if a.MemberID == "" || len(a.Avatar) > maxAgentAvatarBytes || !avatarLooksSafe([]byte(a.Avatar)) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 			return
 		}

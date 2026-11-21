@@ -5,8 +5,12 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,6 +24,7 @@ import (
 	"clawbench/internal/store"
 
 	acp "github.com/coder/acp-go-sdk"
+	_ "golang.org/x/image/webp"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/middleware"
@@ -920,9 +925,64 @@ func sessionOffersThinkingEffort(sessionID, agentID, level string) (offered, kno
 	return false, true
 }
 
-// maxAgentAvatarBytes caps the stored agent avatar (a raw DiceBear SVG string).
-// Real avatars are ~1–8 KB; 256 KiB is generous headroom.
+// maxAgentAvatarBytes caps the stored agent avatar. Real DiceBear SVGs are
+// ~1–8 KB and a 192px uploaded image is a few tens of KB; 256 KiB is generous
+// headroom for either shape.
 const maxAgentAvatarBytes = 256 * 1024
+
+// maxDecodedAvatarBytes bounds the decoded raster payload. A 192x192 WebP or
+// JPEG avatar is a few tens of KB; 160 KiB also leaves room for the PNG last
+// resort, while still bounding work and staying inside the string cap once
+// base64 expands it.
+const maxDecodedAvatarBytes = 160 * 1024
+
+// maxAvatarDimension bounds the decoded raster's width/height. The client
+// produces 192px; 512 leaves room for a future size change without accepting
+// wallpapers.
+const maxAvatarDimension = 512
+
+// avatarDataURIRE matches the only raster forms the picker produces. The
+// payload is standard base64 (no whitespace) because it comes from
+// canvas.toDataURL.
+var avatarDataURIRE = regexp.MustCompile(`(?i)^data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$`)
+
+// avatarLooksSafe is the entry gate for a stored avatar: either a raw SVG
+// (DiceBear-generated or user-picked) or an uploaded raster data URI.
+func avatarLooksSafe(src []byte) bool {
+	if len(src) == 0 {
+		return false
+	}
+	if m := avatarDataURIRE.FindSubmatch(src); m != nil {
+		return avatarRasterLooksSafe(strings.ToLower(string(m[1])), m[2])
+	}
+	return avatarSVGLooksSafe(src)
+}
+
+// avatarRasterLooksSafe validates an uploaded image without trusting the
+// client's declared MIME. It decodes the base64, caps the decoded size, and
+// asks the image package for the real format and dimensions. The rendered
+// surface is an <img>, so a malformed image is inert; this gate is about
+// bounding work and keeping the stored value to a sane shape.
+func avatarRasterLooksSafe(declared string, payload []byte) bool {
+	if len(payload) == 0 || len(payload) > (maxDecodedAvatarBytes*4/3)+8 {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(payload))
+	if err != nil || len(decoded) == 0 || len(decoded) > maxDecodedAvatarBytes {
+		return false
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(decoded))
+	if err != nil {
+		return false
+	}
+	if !strings.EqualFold(format, declared) {
+		return false
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxAvatarDimension || cfg.Height > maxAvatarDimension {
+		return false
+	}
+	return true
+}
 
 // avatarSVGLooksSafe is the safety gate for a user-supplied agent avatar SVG.
 //
@@ -1203,7 +1263,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	// the SVG safety scan below sees the actual markup.
 	if v, exists := patch["avatar"]; exists {
 		avatar, _ := v.(string)
-		if avatar != "" && (len(avatar) > maxAgentAvatarBytes || !avatarSVGLooksSafe([]byte(avatar))) {
+		if avatar != "" && (len(avatar) > maxAgentAvatarBytes || !avatarLooksSafe([]byte(avatar))) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentAvatar")
 			return
 		}

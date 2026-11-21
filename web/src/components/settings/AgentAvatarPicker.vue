@@ -16,6 +16,21 @@
       </div>
 
       <template v-else>
+        <!-- Current avatar that could not be matched to a tile. Shown so Save
+             cannot silently overwrite it with the default bottts + name. -->
+        <div v-if="selection === 'current'" class="avatar-picker__current">
+          <img
+            class="avatar-picker__current-img"
+            :src="currentSrc"
+            :style="{ backgroundColor: currentBg }"
+            alt=""
+          />
+          <div class="avatar-picker__current-text">
+            <div class="avatar-picker__label">{{ t('settings.items.agentAvatarCurrent') }}</div>
+            <div class="avatar-picker__hint">{{ t('settings.items.agentAvatarPickNew') }}</div>
+          </div>
+        </div>
+
         <!-- Seed controls (global: changing it re-renders every tile) -->
         <div class="avatar-picker__seed-row">
           <label class="avatar-picker__label">{{ t('settings.items.agentAvatarSeed') }}</label>
@@ -24,10 +39,36 @@
             type="text"
             class="avatar-picker__input"
             :placeholder="agentName"
+            @input="markStyleSelection"
             @keydown.enter="save"
           />
           <button class="fbtn avatar-picker__shuffle" @click="shuffle">
             {{ t('settings.items.agentAvatarShuffle') }}
+          </button>
+        </div>
+
+        <!-- Upload: cropped and resized in the browser, saved as a data URI.
+             The original photo never enters the database or a share payload. -->
+        <div class="avatar-picker__upload-row">
+          <button class="fbtn" :disabled="uploading" @click="fileInput?.click()">
+            {{ uploading ? t('settings.items.agentAvatarUploading') : t('settings.items.agentAvatarUpload') }}
+          </button>
+          <span class="avatar-picker__hint">{{ t('settings.items.agentAvatarUploadHint') }}</span>
+          <input
+            ref="fileInput"
+            class="avatar-picker__file"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            @change="onFileChange"
+          />
+        </div>
+        <div v-if="uploadError" class="avatar-picker__error-text">{{ uploadError }}</div>
+
+        <!-- The uploaded image is one more selectable tile, not a separate mode. -->
+        <div v-if="selection === 'upload' && uploaded" class="avatar-picker__uploaded">
+          <button type="button" class="avatar-picker__tile is-selected" @click="selectUploaded">
+            <img class="avatar-picker__tile-img" :src="uploaded" :alt="t('settings.items.agentAvatarUploaded')" />
+            <span class="avatar-picker__tile-name">{{ t('settings.items.agentAvatarUploaded') }}</span>
           </button>
         </div>
 
@@ -38,7 +79,7 @@
             :key="s"
             type="button"
             class="avatar-picker__tile"
-            :class="{ 'is-selected': s === style }"
+            :class="{ 'is-selected': selection === 'style' && s === style }"
             :data-style="s"
             @click="selectStyle(s)"
           >
@@ -60,7 +101,7 @@
       </button>
       <button
         class="fbtn fbtn-primary"
-        :disabled="loading || !!loadError || !selectedSvg"
+        :disabled="loading || !!loadError || !canSave"
         @click="save"
       >
         {{ t('settings.items.agentAvatarSave') }}
@@ -76,20 +117,26 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { loadAvatarKit, AVATAR_STYLES, type AvatarStyle, type AvatarKit } from '@/utils/lazyAvatar'
-import { svgToDataUri } from '@/utils/svgDataUri'
+import { avatarToSrc } from '@/utils/avatarSrc'
+import { avatarBackgroundFor } from '@/utils/avatarPolicy'
+import { fileToAvatarDataUri, AvatarImageError } from '@/utils/avatarImage'
 import { appLog } from '@/utils/appLog'
 
 const props = defineProps<{
   open: boolean
   agentName: string
+  /** The avatar currently stored on the agent ("" = built-in icon). */
+  currentAvatar?: string
 }>()
 
 const emit = defineEmits<{
   close: []
-  saved: [svg: string]
+  saved: [avatar: string]
 }>()
 
 const { t } = useI18n()
+
+type Selection = 'style' | 'upload' | 'current'
 
 const loading = ref(false)
 const loadError = ref(false)
@@ -101,6 +148,11 @@ const kit = shallowRef<AvatarKit | null>(null)
 const style = ref<AvatarStyle>('bottts')
 const seed = ref('')
 const error = ref('')
+const selection = ref<Selection>('style')
+const uploaded = ref('')
+const uploading = ref(false)
+const uploadError = ref('')
+const fileInput = ref<HTMLInputElement | null>(null)
 
 let unregisterBack: (() => void) | null = null
 
@@ -116,7 +168,10 @@ const tileSvgs = computed<Partial<Record<AvatarStyle, string>>>(() => {
     const styleInstance = k.styles[name]
     if (!styleInstance) continue // still loading
     try {
-      out[name] = new k.Avatar(styleInstance, { seed: s }).toString()
+      out[name] = new k.Avatar(styleInstance, {
+        seed: s,
+        backgroundColor: [avatarBackgroundFor(s)],
+      }).toString()
     } catch (err) {
       appLog.w('AgentAvatar', `failed to render style ${name}`, err)
     }
@@ -126,10 +181,19 @@ const tileSvgs = computed<Partial<Record<AvatarStyle, string>>>(() => {
 
 function tileSrc(s: AvatarStyle): string {
   const svg = tileSvgs.value[s]
-  return svg ? svgToDataUri(svg) : ''
+  return svg ? avatarToSrc(svg) : ''
 }
 
-const selectedSvg = computed(() => tileSvgs.value[style.value] || '')
+const currentSrc = computed(() => avatarToSrc(props.currentAvatar || ''))
+const currentBg = computed(() => avatarBackgroundFor(props.agentName || 'agent'))
+
+const selectedAvatar = computed(() => {
+  if (selection.value === 'upload') return uploaded.value
+  if (selection.value === 'style') return tileSvgs.value[style.value] || ''
+  return ''
+})
+
+const canSave = computed(() => selection.value !== 'current' && !!selectedAvatar.value)
 
 function styleLabel(s: string): string {
   return s.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
@@ -137,6 +201,36 @@ function styleLabel(s: string): string {
 
 function selectStyle(s: AvatarStyle) {
   style.value = s
+  selection.value = 'style'
+  uploaded.value = ''
+}
+
+function selectUploaded() {
+  selection.value = 'upload'
+}
+
+/** Decide what the picker should show for the avatar already stored on the agent. */
+function syncCurrentSelection() {
+  const current = props.currentAvatar || ''
+  if (!current) {
+    selection.value = 'style'
+    return
+  }
+  if (current.startsWith('data:image/')) {
+    uploaded.value = current
+    selection.value = 'upload'
+    return
+  }
+  // Match against the tiles rendered with the default seed. An avatar made with
+  // a different seed (or an older transparent one) will not match; that is
+  // exactly when Save must stay disabled until the user makes a new choice.
+  const match = AVATAR_STYLES.find((name) => tileSvgs.value[name] === current)
+  if (match) {
+    style.value = match
+    selection.value = 'style'
+  } else {
+    selection.value = 'current'
+  }
 }
 
 async function initLib() {
@@ -145,6 +239,7 @@ async function initLib() {
   kit.value = null
   try {
     kit.value = await loadAvatarKit()
+    syncCurrentSelection()
   } catch (err) {
     appLog.w('AgentAvatar', 'failed to load DiceBear kit', err)
     loadError.value = true
@@ -153,13 +248,49 @@ async function initLib() {
   }
 }
 
+async function onFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  // Clear the input so selecting the same file again still fires `change`.
+  input.value = ''
+  if (!file) return
+
+  uploadError.value = ''
+  uploading.value = true
+  try {
+    uploaded.value = await fileToAvatarDataUri(file, avatarBackgroundFor(seed.value || props.agentName || 'agent'))
+    selection.value = 'upload'
+  } catch (err) {
+    uploaded.value = ''
+    uploadError.value = uploadErrorMessage(err)
+    selection.value = props.currentAvatar ? 'current' : 'style'
+  } finally {
+    uploading.value = false
+  }
+}
+
+function uploadErrorMessage(err: unknown): string {
+  if (err instanceof AvatarImageError) {
+    if (err.code === 'unsupported') return t('settings.items.agentAvatarUploadUnsupported')
+    if (err.code === 'too-large') return t('settings.items.agentAvatarUploadTooLarge')
+  }
+  return t('settings.items.agentAvatarUploadFailed')
+}
+
+function markStyleSelection() {
+  // Editing the seed / shuffling is an explicit "make me a new one" action, so
+  // it is safe to re-enable Save even when the old avatar could not be matched.
+  if (selection.value === 'current') selection.value = 'style'
+}
+
 function shuffle() {
   seed.value = Math.random().toString(36).slice(2, 10)
+  markStyleSelection()
 }
 
 function save() {
-  if (!selectedSvg.value) return
-  emit('saved', selectedSvg.value)
+  if (!canSave.value) return
+  emit('saved', selectedAvatar.value)
 }
 
 function clear() {
@@ -178,6 +309,10 @@ watch(() => props.open, (open) => {
     loadError.value = false
     kit.value = null
     style.value = 'bottts'
+    selection.value = 'style'
+    uploaded.value = ''
+    uploading.value = false
+    uploadError.value = ''
     // Prefer a stable seed so re-opening shows the same avatars; fall back to name.
     seed.value = props.agentName || 'agent'
     unregisterBack = registerBackHandler({
@@ -218,6 +353,61 @@ onBeforeUnmount(() => {
   gap: var(--space-4);
   margin-bottom: var(--space-5);
   flex-shrink: 0;
+}
+
+.avatar-picker__current {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+}
+
+.avatar-picker__current-img {
+  width: calc(40 * var(--dp));
+  height: calc(40 * var(--dp));
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.avatar-picker__current-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.avatar-picker__hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.avatar-picker__upload-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.avatar-picker__file {
+  display: none;
+}
+
+.avatar-picker__uploaded {
+  display: flex;
+  justify-content: center;
+  margin-bottom: var(--space-4);
+}
+
+.avatar-picker__uploaded .avatar-picker__tile {
+  width: calc(96 * var(--dp));
 }
 
 .avatar-picker__label {

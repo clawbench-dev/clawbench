@@ -141,6 +141,25 @@ describe('AgentIcon', () => {
       const img = wrapper.find('img.agent-icon-img')
       expect(img.classes()).toContain('agent-icon--lg')
     })
+
+    it('passes an uploaded data URI through untouched', () => {
+      const uri = 'data:image/webp;base64,UklGRg=='
+      const wrapper = mountIcon({ avatar: uri })
+      // Encoding it again would produce a broken nested SVG data URI.
+      expect(wrapper.find('img.agent-icon-img').attributes('src')).toBe(uri)
+    })
+
+    it('paints a soft background behind a custom avatar', () => {
+      const wrapper = mountIcon({ name: 'Luna', avatar: '<svg/>' })
+      const img = wrapper.find('img.agent-icon-img')
+      expect(img.classes()).toContain('agent-icon-avatar')
+      expect(img.attributes('style')).toContain('background-color')
+    })
+
+    it('does not paint a background behind the brand raster mark', () => {
+      const wrapper = mountIcon({ backend: 'rasterBackend' })
+      expect(wrapper.find('img.agent-icon-img').attributes('style')).toBeUndefined()
+    })
   })
 
   describe('SVG gradient ID uniqueness', () => {

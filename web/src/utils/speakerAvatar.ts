@@ -27,6 +27,7 @@
  */
 import { generateAvatarSvgWithStyle, type AvatarStyle } from '@/utils/lazyAvatar'
 import { svgToDataUri } from '@/utils/svgDataUri'
+import { fnv1a32 } from '@/utils/stableHash'
 
 /**
  * Styles a participant's icon may come from.
@@ -73,16 +74,6 @@ export function speakerAvatarSeed(name: string): string {
   return name.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
-/** FNV-1a: stable across devices and engines, and no dependency. */
-function hash32(input: string): number {
-  let h = 0x811c9dc5
-  for (const ch of input) {
-    h ^= ch.codePointAt(0) ?? 0
-    h = Math.imul(h, 0x01000193) >>> 0
-  }
-  return h >>> 0
-}
-
 /**
  * The style a nickname maps to.
  *
@@ -92,7 +83,7 @@ function hash32(input: string): number {
  * style list.
  */
 export function speakerAvatarStyle(name: string): AvatarStyle {
-  return SPEAKER_AVATAR_STYLES[hash32(speakerAvatarSeed(name)) % SPEAKER_AVATAR_STYLES.length]
+  return SPEAKER_AVATAR_STYLES[fnv1a32(speakerAvatarSeed(name)) % SPEAKER_AVATAR_STYLES.length]
 }
 
 /** seed -> data URI, filled once the DiceBear chunk has produced it. */
