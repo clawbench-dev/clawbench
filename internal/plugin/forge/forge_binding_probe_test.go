@@ -1,4 +1,4 @@
-package handler
+package forge
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"clawbench/internal/forge"
+	forgecore "clawbench/internal/forge"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -117,22 +117,22 @@ func TestServeForgeBinding_StoresWhenHostIsUnreachable(t *testing.T) {
 
 // TestIsRefusal pins which probe failures are the platform answering.
 func TestIsRefusal(t *testing.T) {
-	assert.True(t, isRefusal(&forgeError{Kind: forge.ErrKindAuth, Status: 401}))
-	assert.True(t, isRefusal(&forgeError{Kind: forge.ErrKindRateLimit, Status: 429}))
-	assert.True(t, isRefusal(&forgeError{Kind: forge.ErrKindServer, Status: 502}))
-	assert.True(t, isRefusal(&forgeError{Kind: forge.ErrKindUnknown, Status: 405}),
+	assert.True(t, isRefusal(&forgeError{Kind: forgecore.ErrKindAuth, Status: 401}))
+	assert.True(t, isRefusal(&forgeError{Kind: forgecore.ErrKindRateLimit, Status: 429}))
+	assert.True(t, isRefusal(&forgeError{Kind: forgecore.ErrKindServer, Status: 502}))
+	assert.True(t, isRefusal(&forgeError{Kind: forgecore.ErrKindUnknown, Status: 405}),
 		"405 is an answer from something in front of the instance")
 
-	assert.False(t, isRefusal(&forgeError{Kind: forge.ErrKindNetwork, Status: 0}),
+	assert.False(t, isRefusal(&forgeError{Kind: forgecore.ErrKindNetwork, Status: 0}),
 		"a transport failure is not the platform refusing")
-	assert.False(t, isRefusal(&forgeError{Kind: forge.ErrKindNotFound, Status: 404}),
+	assert.False(t, isRefusal(&forgeError{Kind: forgecore.ErrKindNotFound, Status: 404}),
 		"404 cannot be told apart from a private repository without a token")
 	assert.False(t, isRefusal(errors.New("plain error")), "an unclassified error is not a refusal")
 }
 
 // forgeError aliases the forge package's error type so the table above reads as
 // the values it is about.
-type forgeError = forge.Error
+type forgeError = forgecore.Error
 
 // TestServeForgeBinding_StoresOn404 pins the 404 rule: a private repository and
 // an instance queried without a token both answer 404, so refusing there would
