@@ -975,7 +975,28 @@ async function submitBinding(input: {
     // The binding just changed server-side, so bypass the cache.
     await refresh(true)
   } catch (err) {
-    bindError.value = err instanceof ForgeApiError ? err.message : String(err)
+    // A refused binding carries the platform's classification (auth, rate
+    // limit, network, ...), which is the half the binding dialog can still act
+    // on: which repository settings to check. The server already sends both the
+    // platform's own message and that code, so they are shown together rather
+    // than dropping the classification on the floor.
+    if (err instanceof ForgeApiError) {
+      const hint = bindErrorHint(err.code)
+      bindError.value = hint ? t('forge.error.withHint', { message: err.message, hint }) : err.message
+    } else {
+      bindError.value = String(err)
+    }
+  }
+}
+
+/** A short "what to do" for a refused binding, or '' when none applies. */
+function bindErrorHint(code: string): string {
+  switch (code) {
+    case 'ForgeAuthFailed': return t('forge.error.auth')
+    case 'ForgeRateLimited': return t('forge.error.rateLimit')
+    case 'ForgeNoCredential': return t('forge.error.noCredential')
+    case 'ForgeNotFound': return t('forge.error.bindNotFound')
+    default: return ''
   }
 }
 

@@ -611,6 +611,8 @@ export default {
       rateLimit: '请求过于频繁',
       network: '网络不可达',
       noCredential: '仓库不可访问或未配置访问令牌',
+      bindNotFound: '服务端不认识这个仓库地址（可能填错，或该实例不是所选的平台）',
+      withHint: '{message}（{hint}）',
       generic: '加载失败',
     },
   },
