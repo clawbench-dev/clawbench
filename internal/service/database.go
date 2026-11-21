@@ -1201,32 +1201,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := store.WriteExec(NotificationsDDL); err != nil {
 		return fmt.Errorf("failed to create notifications table: %w", err)
 	}
-	// notifications.meeting_token: the subject of a kind=meeting row (the share
-	// token, i.e. live_notes.token). The CREATE TABLE above is a no-op on an
-	// existing database, so the column would never appear there.
-	var hasMeetingToken int
-	_ = store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM pragma_table_info('notifications') WHERE name='meeting_token'",
-	).Scan(&hasMeetingToken)
-	if hasMeetingToken == 0 {
-		if _, err := store.WriteExec(
-			"ALTER TABLE notifications ADD COLUMN meeting_token TEXT NOT NULL DEFAULT ''",
-		); err != nil {
-			return fmt.Errorf("failed to add notifications.meeting_token: %w", err)
-		}
-	}
-	// notifications.mail_message_id: the subject of a kind=mail row. Same
-	// CREATE-TABLE-no-op reason as meeting_token above.
-	var hasMailMessageID int
-	_ = store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM pragma_table_info('notifications') WHERE name='mail_message_id'",
-	).Scan(&hasMailMessageID)
-	if hasMailMessageID == 0 {
-		if _, err := store.WriteExec(
-			"ALTER TABLE notifications ADD COLUMN mail_message_id INTEGER NOT NULL DEFAULT 0",
-		); err != nil {
-			return fmt.Errorf("failed to add notifications.mail_message_id: %w", err)
-		}
+	// notifications.subject_id: the ONE subject identity column. The per-kind
+	// columns this replaced (session_id / task_id / forge_item_key /
+	// meeting_token / mail_message_id) are migrated into it and dropped here;
+	// see notification_subjects.go. The CREATE TABLE above is a no-op on an
+	// existing database, which is why the column addition lives in the helper.
+	if err := migrateNotificationSubjects(); err != nil {
+		return err
 	}
 	// Model providers (endpoint + credential shared by agents). Defined in
 	// providers.go as a constant so tests share one source of truth.

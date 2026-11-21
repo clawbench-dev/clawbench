@@ -3275,20 +3275,15 @@ paths:
                           type: integer
                         projectPath:
                           type: string
-                        sessionId:
+                        subjectId:
                           type: string
-                        taskId:
-                          type: string
+                          description: |
+                            该行指向的主体标识，由 kind 解释：会话 id / 任务 id / 会议分享 token /
+                            仓库条目键 / 邮件 id（十进制文本）。usage 没有本地主体，为空。
+                            所有类型共用这一列，新增类型不需要改表结构。
                         executionId:
                           type: string
-                        forgeItemKey:
-                          type: string
-                        meetingToken:
-                          type: string
-                          description: kind=meeting 行的会议标识（分享 token）；点击用它打开该会议记录
-                        mailMessageId:
-                          type: integer
-                          description: kind=mail 行的邮件 id（mail_messages.id）；点击用它打开该封邮件
+                          description: kind=task 时要定位的执行记录（不是主体标识）
                         agentId:
                           type: string
                         createdAt:

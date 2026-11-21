@@ -118,9 +118,9 @@ export const NOTIFICATION_SPECS = {
     eventIcon: Check,
     eventIconByEvent: RUN_ICON_BY_EVENT,
     open: (n, jump) => {
-      if (!n.sessionId) return false
+      if (!n.subjectId) return false
       jump('clawbench-open-session', {
-        sessionId: n.sessionId,
+        sessionId: n.subjectId,
         projectPath: n.projectPath,
       })
       return true
@@ -140,9 +140,9 @@ export const NOTIFICATION_SPECS = {
     eventIcon: Check,
     eventIconByEvent: RUN_ICON_BY_EVENT,
     open: (n, jump) => {
-      if (!n.taskId) return false
+      if (!n.subjectId) return false
       jump('clawbench-open-task', {
-        taskId: n.taskId,
+        taskId: n.subjectId,
         executionId: n.executionId,
         projectPath: n.projectPath,
       })
@@ -165,12 +165,12 @@ export const NOTIFICATION_SPECS = {
     tone: 'purple',
     toneByEvent: { failed: 'danger', cancelled: 'danger' },
     eventIcon: GitMerge,
-    fallbackTitle: (n) => n.forgeItemKey || '',
+    fallbackTitle: (n) => n.subjectId || '',
     open: (n, jump) => {
-      if (!n.forgeItemKey) return false
+      if (!n.subjectId) return false
       jump('clawbench-open-forge', {
         projectPath: n.projectPath,
-        target: forgeTargetFromItemKey(n.forgeItemKey),
+        target: forgeTargetFromItemKey(n.subjectId),
       })
       return true
     },
@@ -231,9 +231,9 @@ export const NOTIFICATION_SPECS = {
     open: (n, jump) => {
       // The share token IS the meeting's identity; the record it opens lives in
       // the row's project, so the path travels with it.
-      if (!n.meetingToken) return false
+      if (!n.subjectId) return false
       jump('clawbench-open-meeting', {
-        token: n.meetingToken,
+        token: n.subjectId,
         projectPath: n.projectPath,
       })
       return true
@@ -252,8 +252,9 @@ export const NOTIFICATION_SPECS = {
     open: (n, jump) => {
       // The reader fetches by id, so the message need not be on the folder's
       // loaded page.
-      if (!n.mailMessageId) return false
-      jump('clawbench-open-mail', { messageId: n.mailMessageId })
+      const messageId = Number(n.subjectId)
+      if (!messageId) return false
+      jump('clawbench-open-mail', { messageId })
       return true
     },
   },

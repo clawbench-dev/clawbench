@@ -31,14 +31,14 @@ sequenceDiagram
     participant P as NotificationsPanel
     participant H as GET /api/notifications
     participant DB as notifications 表
-    participant SRC as chat_sessions / scheduled_tasks
+    participant SRC as 源表（会话 / 任务 / 会议记录 / 邮件缓存）
     P->>H: project / kind / range / 游标 / limit
     H->>DB: 单表查询（按 project_id / kind / created_at 过滤 + 分页）
-    H->>SRC: 对当页去重后的 session_id / task_id 各一次 IN (...) 探测
+    H->>SRC: 按 kind 从 subject_id 取 id，对当页去重后每个源表一次 IN (...) 探测
     H-->>P: items（每行带 sourceMissing）+ total + hasMore
 ```
 
-列表渲染时对当页去重后的 `session_id` / `task_id` 各做一次存在性探测，给源已删除的行打 `sourceMissing`——覆盖所有删除路径，无需在每处删除点挂钩子。**归档不算删除**（`archived=1` 的行仍可 resume），探测只看行是否存在。仓库条目不参与探测（条目在上游、本地无删除语义），故永不标 `sourceMissing`。
+列表渲染时按 `kind` 从 `subject_id` 取出当页去重后的 id，对每个源表各做一次存在性探测，给源已删除的行打 `sourceMissing`——覆盖所有删除路径，无需在每处删除点挂钩子。**归档不算删除**（`archived=1` 的行仍可 resume），探测只看行是否存在。仓库条目不参与探测（条目在上游、本地无删除语义），故永不标 `sourceMissing`。
 
 ### 跳转：同项目记来源、跨项目先确认
 
@@ -75,19 +75,21 @@ flowchart TD
 - **写入不复用 `pending_events` 的任何门控**：`StoreNotifiableEvent` 受 `push_mode != "disabled"` 与「有客户端订阅」双重门控——通知中心必须无视这两条（**推送关 ≠ 不记录，没人在看也要记录**）。这是「日志」与「推送」两种语义的分野：推送是尽力而为的实时投递，日志是无条件的事实记录。三个 `Record*` 适配器还都先查 `store.DBReady()` 再碰 DB（无 DB 的测试路径下不得 panic）。
 - **`created_at` 用亚秒精度文本而非秒级 `CURRENT_TIMESTAMP`**：一次仓库轮询会 drain 一批事件、同一秒内产生多条通知，秒级时间戳会让它们无法稳定排序，翻页时可能重复或漏行。分页游标用 `(created_at, id)` 复合条件。
 - **源存在性靠「渲染时批量探测」而非「删除时挂钩子」**：删除路径有硬删、归档、项目删除、清理 worker 等多条，逐条挂钩子必漏；反过来，只在列表渲染时对当页去重 id 各查一次，就天然覆盖所有删除路径、零新增钩子。代价是每页每个源表一次 `IN (...)`（当前最多 4 次）——以通知量级（≤500 条）计可忽略。
-- **会议通知带自己的身份列，源探测也走自己的表**：会议没有会话，身份是分享 token，所以 `notifications` 多一列 `meeting_token`，点击走 `clawbench-open-meeting`。`sourceMissing` 探测 `live_notes` 而**不是**内存里的房间——房间随发布端 socket 消失，拿它当判据会让每一行在会议结束后立刻变成「源已删除」；记录行只在用户删记录时才消失，那才是「点不开了」。
+- **会议通知的身份存在 `subject_id`，源探测走自己的表**：会议没有会话，身份是分享 token，`subject_id` 存的就是它，点击走 `clawbench-open-meeting`。`sourceMissing` 探测 `live_notes` 而**不是**内存里的房间——房间随发布端 socket 消失，拿它当判据会让每一行在会议结束后立刻变成「源已删除」；记录行只在用户删记录时才消失，那才是「点不开了」。
 - **会议事件不进 `pending_events`**：一次远程控制请求只在会议还活着时有意义，而房间是内存对象、进程重启即消失。持久副本是通知中心那一行；客户端重新打开应用后看到的是日志，不是一条迟到两小时的「有人请求远程控制」弹窗。
-- **邮件行带 `mail_message_id`，并进 `pending_events`**：邮件是「实体」（缓存里的 `mail_messages` 行），所以点开走 `clawbench-open-mail` 并带本地邮件 id，阅读器按 id 取，不受当前文件夹 / 已加载页限制。与会议相反，邮件事件值得离线补发（收件箱里确实多了一封），因此写进 `pending_events`；`sourceMissing` 探测 `mail_messages`，账号或缓存被删后那行就点不开了。
-- **群聊通知的 session_id 必须解析到群时间线（三层修复）**：群成员的 ACP 连接以**隐藏成员行**为键，权限回调把 member id 交给 `EmitSessionEvent`，通知里存的就是 member id——点开是一条空的单聊。三层都要修：①回调处 `ResolveGroupTimelineID`（同时覆盖 WS 广播与 `pending_events`）；②`RecordSessionNotification` 写入时解析；③`MarkMissingSources` 读取时**修复已落盘的旧行**（保留期 30 天，只修写入要等过期才自愈）。
+- **邮件行的 `subject_id` 存邮件 id（十进制文本），并进 `pending_events`**：邮件是「实体」（缓存里的 `mail_messages` 行），所以点开走 `clawbench-open-mail` 并带本地邮件 id，阅读器按 id 取，不受当前文件夹 / 已加载页限制。与会议相反，邮件事件值得离线补发（收件箱里确实多了一封），因此写进 `pending_events`；`sourceMissing` 探测 `mail_messages`，账号或缓存被删后那行就点不开了。
+- **群聊通知的 subject_id 必须解析到群时间线（三层修复）**：群成员的 ACP 连接以**隐藏成员行**为键，权限回调把 member id 交给 `EmitSessionEvent`，通知里存的就是 member id——点开是一条空的单聊。三层都要修：①回调处 `ResolveGroupTimelineID`（同时覆盖 WS 广播与 `pending_events`）；②`RecordSessionNotification` 写入时解析；③`MarkMissingSources` 读取时**修复已落盘的旧行**（保留期 30 天，只修写入要等过期才自愈）。
 
 ### 新增一种通知（接入收口）
 
 新增一类通知只改三处，不再有并行的 switch 需要逐个记得：
 
-1. **服务端注册表** `internal/service/notification_subjects.go`：在 `notificationSubjects` 里加一条，写明 `kind`、从行里读哪个字段（`id` 或 `intID`）、源表与主键（`table` / `key`）。没有本地源的（仓库条目在上游、用量阈值是聚合值）只写 `{kind: …}` 声明。存在性探测、`sourceMissing` 与探测前的修复都遍历这张表；`TestNotificationSubjects_EveryKindRegisteredOnce` 会拦住漏注册。
+1. **服务端注册表** `internal/service/notification_subjects.go`：在 `notificationSubjects` 里加一条，写明 `kind`、源表与主键（`table` / `key`）、以及源主键是不是整数（`integer`，邮件那种）。没有本地源的（仓库条目在上游、用量阈值是聚合值）只写 `{kind: …}` 声明。主体标识统一读 `subject_id`，**不需要改表结构**。存在性探测、`sourceMissing` 与探测前的修复都遍历这张表；`TestNotificationSubjects_EveryKindRegisteredOnce` 会拦住漏注册。
 2. **前端表** `web/src/utils/notificationKinds.ts`：在 `NOTIFICATION_SPECS` 里加一条，写图标、类型名、事件 chip（文案键 / 色调 / 图标）、可选的 `feature`（功能关着时点击改为提示）与 `instanceWide`（不涉及项目切换）、以及 `open`（返回是否真的跳转）。表由 `satisfies Record<NotificationKind, …>` 约束，少一条编译不过；面板的筛选下拉、行图标、chip、兜底标题与点击目的地全部从这张表读。
 3. **文案**：`notifications.kind.<id>` 与每个 `notifications.event.<eventType>` 在中英两份 locale 都要有（`notificationKinds.test.ts` 会查）。
 
 写入端调 `StoreNotification`（或照 `RecordSessionNotification` 加一个适配器），`event_id` 用产生该事件的稳定 id（重发靠它去重）。
 
 **未知类型必须安全降级**：服务端未注册的 kind 仍会落库（日志不丢事实）并打一条 warning；前端未声明的 kind 显示「其他」并提示当前版本打不开——**绝不冒充某个已知类型**，点击也不会静默无反应。
+
+**老库升级**：`migrateNotificationSubjects` 在启动时把旧的按类型列（`session_id` / `task_id` / `forge_item_key` / `meeting_token` / `mail_message_id`）写进 `subject_id` 再删列。每列独立判断是否存在，中途崩溃可从下一列续跑；回填带 `subject_id = ''` 守卫，不会覆盖已写入的值。

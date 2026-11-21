@@ -1870,7 +1870,7 @@ func waitMeetingNotifications(t *testing.T, token, eventType string) []service.N
 		}
 		matched = matched[:0]
 		for _, n := range all {
-			if n.MeetingToken == token && n.EventType == eventType {
+			if n.SubjectID == token && n.EventType == eventType {
 				matched = append(matched, n)
 			}
 		}
@@ -2086,7 +2086,7 @@ func listMeetingNotifications(t *testing.T, token, eventType string) []service.N
 	require.NoError(t, err)
 	var matched []service.Notification
 	for _, n := range all {
-		if n.MeetingToken == token && n.EventType == eventType {
+		if n.SubjectID == token && n.EventType == eventType {
 			matched = append(matched, n)
 		}
 	}

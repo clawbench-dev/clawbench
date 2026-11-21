@@ -15,12 +15,12 @@ import (
 
 // insertNotification seeds one row directly, so the handler tests do not depend
 // on the emit sites.
-func insertNotification(t *testing.T, eventID, kind, eventType, title string, projectID int64, sessionID, taskID string) {
+func insertNotification(t *testing.T, eventID, kind, eventType, title string, projectID int64, subjectID string) {
 	t.Helper()
 	_, err := store.WriteExec(
-		`INSERT INTO notifications (event_id, kind, event_type, title, body, project_id, session_id, task_id, created_at)
-		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?)`,
-		eventID, kind, eventType, title, projectID, sessionID, taskID,
+		`INSERT INTO notifications (event_id, kind, event_type, title, body, project_id, subject_id, created_at)
+		 VALUES (?, ?, ?, ?, '', ?, ?, ?)`,
+		eventID, kind, eventType, title, projectID, subjectID,
 		// Fixed sub-second timestamp so ordering is deterministic across rows.
 		"2026-10-15T12:00:00.000Z",
 	)
@@ -32,8 +32,8 @@ func TestServeNotifications_ListsNewestFirst(t *testing.T) {
 	defer teardown()
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
 
-	insertNotification(t, "e1", service.NotificationKindSession, "completed", "First", pid, "", "")
-	insertNotification(t, "e2", service.NotificationKindTask, "failed", "Second", pid, "", "")
+	insertNotification(t, "e1", service.NotificationKindSession, "completed", "First", pid, "")
+	insertNotification(t, "e2", service.NotificationKindTask, "failed", "Second", pid, "")
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications", nil), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
@@ -53,8 +53,8 @@ func TestServeNotifications_FilterByKind(t *testing.T) {
 	defer teardown()
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
 
-	insertNotification(t, "e1", service.NotificationKindSession, "completed", "S", pid, "", "")
-	insertNotification(t, "e2", service.NotificationKindTask, "failed", "T", pid, "", "")
+	insertNotification(t, "e1", service.NotificationKindSession, "completed", "S", pid, "")
+	insertNotification(t, "e2", service.NotificationKindTask, "failed", "T", pid, "")
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?kind=task", nil), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
@@ -73,10 +73,10 @@ func TestServeNotifications_FilterByProject(t *testing.T) {
 	defer teardown()
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
 
-	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Mine", pid, "", "")
+	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Mine", pid, "")
 	// A row attributed to no project (the 0 sentinel) must not appear when
 	// filtering by a real project.
-	insertNotification(t, "e2", service.NotificationKindSession, "completed", "Global", 0, "", "")
+	insertNotification(t, "e2", service.NotificationKindSession, "completed", "Global", 0, "")
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?project="+env.ProjectDir, nil), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
@@ -115,9 +115,9 @@ func TestServeNotifications_MarksMissingSource(t *testing.T) {
 
 	// One notification points at a session that does not exist; another at a
 	// task that does not exist; a forge row is never probed.
-	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Gone session", pid, "no-such-session", "")
-	insertNotification(t, "e2", service.NotificationKindTask, "failed", "Gone task", pid, "", "999")
-	insertNotification(t, "e3", service.NotificationKindForge, "merged", "PR", pid, "", "")
+	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Gone session", pid, "no-such-session")
+	insertNotification(t, "e2", service.NotificationKindTask, "failed", "Gone task", pid, "999")
+	insertNotification(t, "e3", service.NotificationKindForge, "merged", "PR", pid, "")
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications", nil), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
@@ -142,8 +142,8 @@ func TestServeNotifications_ClearDeletesEverything(t *testing.T) {
 	defer teardown()
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
 
-	insertNotification(t, "e1", service.NotificationKindSession, "completed", "A", pid, "", "")
-	insertNotification(t, "e2", service.NotificationKindSession, "completed", "B", pid, "", "")
+	insertNotification(t, "e1", service.NotificationKindSession, "completed", "A", pid, "")
+	insertNotification(t, "e2", service.NotificationKindSession, "completed", "B", pid, "")
 
 	req := withProjectCookie(newRequest(t, http.MethodDelete, "/api/notifications", nil), env.ProjectDir)
 	w := callHandler(ServeNotificationsClear, req)
@@ -192,7 +192,7 @@ func TestServeNotifications_PartialCursorIsIgnored(t *testing.T) {
 	defer teardown()
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
 
-	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Row", pid, "", "")
+	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Row", pid, "")
 
 	// before_at present, before_id missing.
 	req := withProjectCookie(
@@ -217,7 +217,7 @@ func TestServeNotifications_CompleteCursorApplies(t *testing.T) {
 	defer teardown()
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
 
-	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Only", pid, "", "")
+	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Only", pid, "")
 
 	// Cursor at the row's own timestamp with before_id=0: the row's id (>=1) is
 	// NOT < 0, and its created_at is not strictly older, so the tiebreaker
@@ -261,7 +261,7 @@ func TestServeNotifications_LimitControlsPageAndHasMore(t *testing.T) {
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
 
 	for _, id := range []string{"e1", "e2", "e3"} {
-		insertNotification(t, id, service.NotificationKindSession, "completed", id, pid, "", "")
+		insertNotification(t, id, service.NotificationKindSession, "completed", id, pid, "")
 	}
 
 	// limit=2 against 3 rows → full page, so hasMore must be true.
@@ -301,7 +301,7 @@ func TestServeNotifications_LimitIsCappedAt200(t *testing.T) {
 	defer teardown()
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
 
-	insertNotification(t, "e1", service.NotificationKindSession, "completed", "One", pid, "", "")
+	insertNotification(t, "e1", service.NotificationKindSession, "completed", "One", pid, "")
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?limit=500", nil), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
@@ -324,7 +324,7 @@ func TestServeNotifications_UnparsableLimitFallsBackToDefault(t *testing.T) {
 	defer teardown()
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
 
-	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Row", pid, "", "")
+	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Row", pid, "")
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications?limit=abc", nil), env.ProjectDir)
 	w := callHandler(ServeNotifications, req)
@@ -348,15 +348,15 @@ func TestServeNotifications_RangeFiltersOldRows(t *testing.T) {
 	// stays valid however long after this test was written it runs.
 	recent := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	_, err := store.WriteExec(
-		`INSERT INTO notifications (event_id, kind, event_type, title, body, project_id, session_id, task_id, created_at)
-		 VALUES (?, ?, ?, ?, '', ?, '', '', ?)`,
+		`INSERT INTO notifications (event_id, kind, event_type, title, body, project_id, subject_id, created_at)
+		 VALUES (?, ?, ?, ?, '', ?, '', ?)`,
 		"recent", service.NotificationKindSession, "completed", "Recent", pid, recent,
 	)
 	require.NoError(t, err)
 	// A row far in the past: any supported range token must exclude it.
 	_, err = store.WriteExec(
-		`INSERT INTO notifications (event_id, kind, event_type, title, body, project_id, session_id, task_id, created_at)
-		 VALUES (?, ?, ?, ?, '', ?, '', '', ?)`,
+		`INSERT INTO notifications (event_id, kind, event_type, title, body, project_id, subject_id, created_at)
+		 VALUES (?, ?, ?, ?, '', ?, '', ?)`,
 		"old", service.NotificationKindSession, "completed", "Ancient", pid,
 		"2000-01-01T00:00:00.000Z",
 	)
@@ -390,7 +390,7 @@ func TestServeNotificationsClear_RejectsNonDelete(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 	pid := store.ProjectIDForTest(t, env.ProjectDir)
-	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Keep", pid, "", "")
+	insertNotification(t, "e1", service.NotificationKindSession, "completed", "Keep", pid, "")
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/notifications", nil), env.ProjectDir)
 	assertStatus(t, callHandler(ServeNotificationsClear, req), http.StatusMethodNotAllowed)

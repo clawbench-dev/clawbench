@@ -32,6 +32,12 @@ import (
 // No foreign keys to chat_sessions / scheduled_tasks: a notification
 // legitimately outlives its source (that is the whole point of keeping it), and
 // the list probes for the source's existence at render time instead.
+//
+// subject_id is the ONE identity column for every kind: a session id, a task
+// id, a live_notes share token, a forge item key, or a mail message id (as
+// decimal text). The per-kind columns this replaced (session_id / task_id /
+// forge_item_key / meeting_token / mail_message_id) are migrated into it and
+// dropped, so a new kind needs no schema change. See notification_subjects.go.
 const NotificationsDDL = `
 CREATE TABLE IF NOT EXISTS notifications (
 	id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,13 +47,9 @@ CREATE TABLE IF NOT EXISTS notifications (
 	title          TEXT NOT NULL,
 	body           TEXT NOT NULL DEFAULT '',
 	project_id     INTEGER NOT NULL DEFAULT 0,
-	session_id     TEXT NOT NULL DEFAULT '',
-	task_id        TEXT NOT NULL DEFAULT '',
+	subject_id     TEXT NOT NULL DEFAULT '',
 	execution_id   TEXT NOT NULL DEFAULT '',
-	forge_item_key TEXT NOT NULL DEFAULT '',
 	agent_id       TEXT NOT NULL DEFAULT '',
-	meeting_token  TEXT NOT NULL DEFAULT '',
-	mail_message_id INTEGER NOT NULL DEFAULT 0,
 	created_at     TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_event ON notifications(event_id);
@@ -100,46 +102,38 @@ func notificationTimestamp(t time.Time) string {
 
 // Notification is one row of the notification log, shaped for the API.
 type Notification struct {
-	ID           int64  `json:"id"`
-	Kind         string `json:"kind"`
-	EventType    string `json:"eventType"`
-	Title        string `json:"title"`
-	Body         string `json:"body"`
-	ProjectID    int64  `json:"projectId"`
-	ProjectPath  string `json:"projectPath"`
-	SessionID    string `json:"sessionId,omitempty"`
-	TaskID       string `json:"taskId,omitempty"`
-	ExecutionID  string `json:"executionId,omitempty"`
-	ForgeItemKey string `json:"forgeItemKey,omitempty"`
-	AgentID      string `json:"agentId,omitempty"`
-	// MeetingToken identifies a kind=meeting row's meeting. The live_notes row
-	// is the subject: deleting the record is what makes the row stale.
-	MeetingToken string `json:"meetingToken,omitempty"`
-	// MailMessageID identifies a kind=mail row's message (mail_messages.id).
-	// Deleting the account or its cached messages is what makes the row stale.
-	MailMessageID int64  `json:"mailMessageId,omitempty"`
-	CreatedAt     string `json:"createdAt"`
-	// SourceMissing is set by the API layer when the session/task/meeting/mail
-	// this notification points at no longer exists. Forge items are never
-	// marked (they live upstream, with no local delete semantics).
+	ID        int64  `json:"id"`
+	Kind      string `json:"kind"`
+	EventType string `json:"eventType"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	ProjectID int64  `json:"projectId"`
+	// SubjectID is the identity of what this row points at, interpreted by
+	// Kind: a session id, a task id, a live_notes share token, a forge item
+	// key, or a mail message id (decimal). Empty for kinds with no local
+	// subject (usage). The registry knows which table/key it lives in.
+	SubjectID   string `json:"subjectId,omitempty"`
+	ExecutionID string `json:"executionId,omitempty"`
+	AgentID     string `json:"agentId,omitempty"`
+	ProjectPath string `json:"projectPath"`
+	CreatedAt   string `json:"createdAt"`
+	// SourceMissing is set by the API layer when the subject this notification
+	// points at no longer exists. Forge items are never marked (they live
+	// upstream, with no local delete semantics).
 	SourceMissing bool `json:"sourceMissing,omitempty"`
 }
 
 // NotificationRecord is a row to append to the log.
 type NotificationRecord struct {
-	EventID       string
-	Kind          string
-	EventType     string
-	Title         string
-	Body          string
-	ProjectID     int64
-	SessionID     string
-	TaskID        string
-	ExecutionID   string
-	ForgeItemKey  string
-	AgentID       string
-	MeetingToken  string
-	MailMessageID int64
+	EventID     string
+	Kind        string
+	EventType   string
+	Title       string
+	Body        string
+	ProjectID   int64
+	SubjectID   string
+	ExecutionID string
+	AgentID     string
 }
 
 // StoreNotification appends one notification to the log.
@@ -176,11 +170,10 @@ func StoreNotification(rec NotificationRecord) {
 	}
 	_, err := store.WriteExec(
 		`INSERT OR IGNORE INTO notifications
-			(event_id, kind, event_type, title, body, project_id, session_id, task_id, execution_id, forge_item_key, agent_id, meeting_token, mail_message_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(event_id, kind, event_type, title, body, project_id, subject_id, execution_id, agent_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.EventID, rec.Kind, rec.EventType, rec.Title, rec.Body,
-		rec.ProjectID, rec.SessionID, rec.TaskID, rec.ExecutionID,
-		rec.ForgeItemKey, rec.AgentID, rec.MeetingToken, rec.MailMessageID,
+		rec.ProjectID, rec.SubjectID, rec.ExecutionID, rec.AgentID,
 		notificationTimestamp(time.Now()),
 	)
 	if err != nil {
@@ -228,8 +221,7 @@ func ListNotifications(f NotificationFilter) ([]Notification, error) {
 	}
 
 	query := `SELECT n.id, n.kind, n.event_type, n.title, n.body, n.project_id,
-			COALESCE(p.path, ''), n.session_id, n.task_id, n.execution_id,
-			n.forge_item_key, n.agent_id, n.meeting_token, n.mail_message_id, n.created_at
+			COALESCE(p.path, ''), n.subject_id, n.execution_id, n.agent_id, n.created_at
 		FROM notifications n
 		LEFT JOIN projects p ON p.id = n.project_id
 		WHERE 1 = 1`
@@ -265,8 +257,7 @@ func ListNotifications(f NotificationFilter) ([]Notification, error) {
 		var n Notification
 		if err := rows.Scan(
 			&n.ID, &n.Kind, &n.EventType, &n.Title, &n.Body, &n.ProjectID,
-			&n.ProjectPath, &n.SessionID, &n.TaskID, &n.ExecutionID,
-			&n.ForgeItemKey, &n.AgentID, &n.MeetingToken, &n.MailMessageID, &n.CreatedAt,
+			&n.ProjectPath, &n.SubjectID, &n.ExecutionID, &n.AgentID, &n.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -427,7 +418,7 @@ func RecordSessionNotification(eventID, sessionID, status string, data *ws.Sessi
 		Title:     title,
 		Body:      notificationEventBody(data),
 		ProjectID: projectID,
-		SessionID: sessionID,
+		SubjectID: sessionID,
 		AgentID:   GetSessionAgentID(sessionID),
 	}
 	StoreNotification(rec)
@@ -492,9 +483,8 @@ func RecordTaskNotification(eventID, taskID, status, executionID, sessionID, pro
 		Title:       title,
 		Body:        body,
 		ProjectID:   projectID,
-		TaskID:      taskID,
+		SubjectID:   taskID,
 		ExecutionID: executionID,
-		SessionID:   sessionID,
 	})
 }
 
@@ -520,13 +510,13 @@ func RecordForgeNotification(eventID string, repo ForgeRepoRef, eventType, title
 		}
 	}
 	StoreNotification(NotificationRecord{
-		EventID:      eventID,
-		Kind:         NotificationKindForge,
-		EventType:    eventType,
-		Title:        title,
-		Body:         body,
-		ProjectID:    projectID,
-		ForgeItemKey: itemKey,
+		EventID:   eventID,
+		Kind:      NotificationKindForge,
+		EventType: eventType,
+		Title:     title,
+		Body:      body,
+		ProjectID: projectID,
+		SubjectID: itemKey,
 	})
 }
 

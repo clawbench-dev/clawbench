@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -105,8 +106,8 @@ func TestSyncMailAccount_NotifiesOnlyNewUnseenInboxMail(t *testing.T) {
 	if n.EventType != MailEventReceived {
 		t.Errorf("eventType = %q, want %q", n.EventType, MailEventReceived)
 	}
-	if n.MailMessageID == 0 {
-		t.Error("mailMessageId must point at the cached message")
+	if n.SubjectID == "" {
+		t.Error("subjectId must point at the cached message")
 	}
 	if !strings.Contains(n.Body, "Bob") {
 		t.Errorf("body %q should name the sender", n.Body)
@@ -114,7 +115,11 @@ func TestSyncMailAccount_NotifiesOnlyNewUnseenInboxMail(t *testing.T) {
 
 	// Deleting the cached message makes the row stale, so the panel refuses to
 	// navigate instead of opening a dead message id.
-	if err := DeleteMailMessageRow(n.MailMessageID); err != nil {
+	msgID, err := strconv.ParseInt(n.SubjectID, 10, 64)
+	if err != nil {
+		t.Fatalf("subjectId %q is not a message id: %v", n.SubjectID, err)
+	}
+	if err := DeleteMailMessageRow(msgID); err != nil {
 		t.Fatalf("delete message: %v", err)
 	}
 	MarkMissingSources(rows)
@@ -336,8 +341,8 @@ func TestNotifyNewInboxMail_NewestTieBreaksOnID(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected one notification, got %d", len(rows))
 	}
-	if rows[0].MailMessageID != 7 {
-		t.Fatalf("notification must point at the newest message (id 7), got %d", rows[0].MailMessageID)
+	if rows[0].SubjectID != "7" {
+		t.Fatalf("notification must point at the newest message (id 7), got %q", rows[0].SubjectID)
 	}
 }
 

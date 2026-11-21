@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"log/slog"
 	"strconv"
 
@@ -9,26 +10,26 @@ import (
 
 // This file is the notification center's ONE per-kind extension point.
 //
-// A kind declares two things here: how to read its subject id off a row, and
-// where that subject lives. Everything downstream — the staleness probe, the
+// Every row carries its subject identity in the single `subject_id` column;
+// a kind declares only WHERE that id lives (table + key) and whether it is an
+// integer id-space. Everything downstream — the staleness probe, the
 // `sourceMissing` flag and the pre-probe repair pass — iterates this table, so
-// adding a kind cannot leave one of those passes behind. The alternative (the
-// shape this replaced) was three parallel switches over the kind plus a
-// hand-written collector per id-space, which silently mislabelled a task whose
-// session had been purged.
+// adding a kind cannot leave one of those passes behind.
 //
 // Adding a notification kind therefore means:
 //
 //  1. a NotificationKind* constant and one entry in notificationSubjects here;
-//  2. a writer that calls StoreNotification (see notifications.go);
+//  2. a writer that calls StoreNotification with SubjectID set;
 //  3. the frontend's kind table (web/src/utils/notificationKinds.ts).
 //
+// No schema change: subject_id already exists for every kind.
+//
 // A kind with no local source (forge items live upstream; a usage threshold is
-// an aggregate) is registered with no subject: it is declared, but never
-// probed. Registering it anyway is what lets the completeness test insist that
-// every kind is accounted for.
+// an aggregate) is registered with no table: it is declared, but never probed.
+// Registering it anyway is what lets the completeness test insist that every
+// kind is accounted for.
 
-// notificationSubject says how one kind names and locates its source row.
+// notificationSubject says where one kind's subject row lives.
 //
 // The zero value means "no local source": the row is never marked stale. That
 // is a declaration, not an omission — see the forge/usage entries below.
@@ -36,11 +37,8 @@ type notificationSubject struct {
 	// kind is the NotificationKind* value this entry describes.
 	kind string
 
-	// id / intID read the subject id off a row. Exactly one is set, selected
-	// by integer: string ids are the norm (session/task/meeting), the mail
-	// cache is the one integer id-space.
-	id      func(*Notification) string
-	intID   func(*Notification) int64
+	// integer marks a decimal id-space (mail_messages.id). subject_id is text
+	// for every kind; the probe converts when the source key is an integer.
 	integer bool
 
 	// table / key locate the subject row. Both are allowlisted literals from
@@ -48,31 +46,31 @@ type notificationSubject struct {
 	table string
 	key   string
 
-	// repair optionally rewrites stored ids before the presence probe runs
-	// (best effort, whole page at once). Only sessions need it today: legacy
-	// rows written with a group MEMBER id must be pointed at the group
+	// repair optionally rewrites stored subject ids before the presence probe
+	// runs (best effort, whole page at once). Only sessions need it today:
+	// legacy rows written with a group MEMBER id must be pointed at the group
 	// timeline, or the probe judges the wrong id.
 	repair func([]Notification)
 }
 
 // hasSource reports whether the kind points at a local row that can disappear.
 func (s notificationSubject) hasSource() bool {
-	return s.id != nil || s.intID != nil
+	return s.table != "" && s.key != ""
 }
 
-// idOf reads the subject id and reports whether the row carries one. An empty
-// id means "this row has no subject", which is never stale.
+// idOf returns the subject id to probe, or false when the row has none.
 func (s notificationSubject) idOf(n *Notification) (string, bool) {
-	if s.integer {
-		if id := s.intID(n); id > 0 {
-			return strconv.FormatInt(id, 10), true
-		}
+	if n.SubjectID == "" {
 		return "", false
 	}
-	if id := s.id(n); id != "" {
-		return id, true
+	if s.integer {
+		if _, err := strconv.ParseInt(n.SubjectID, 10, 64); err != nil {
+			// A malformed id must not be probed: treating it as missing would
+			// mark a row stale over a data error the user cannot fix.
+			return "", false
+		}
 	}
-	return "", false
+	return n.SubjectID, true
 }
 
 // tableScheduledTasks is the scheduled-tasks table name. A constant because the
@@ -86,26 +84,22 @@ const tableScheduledTasks = "scheduled_tasks"
 var notificationSubjects = []notificationSubject{
 	{
 		kind:   NotificationKindSession,
-		id:     func(n *Notification) string { return n.SessionID },
 		table:  "chat_sessions",
 		key:    "id",
 		repair: repairGroupMemberTargets,
 	},
 	{
 		kind:  NotificationKindTask,
-		id:    func(n *Notification) string { return n.TaskID },
 		table: tableScheduledTasks,
 		key:   "id",
 	},
 	{
 		kind:  NotificationKindMeeting,
-		id:    func(n *Notification) string { return n.MeetingToken },
 		table: "live_notes",
 		key:   "token",
 	},
 	{
 		kind:    NotificationKindMail,
-		intID:   func(n *Notification) int64 { return n.MailMessageID },
 		integer: true,
 		table:   "mail_messages",
 		key:     "id",
@@ -266,7 +260,7 @@ func repairGroupMemberTargets(rows []Notification) {
 		if n.Kind != NotificationKindSession {
 			return ""
 		}
-		return n.SessionID
+		return n.SubjectID
 	})
 	if len(ids) == 0 {
 		return
@@ -311,8 +305,8 @@ func repairGroupMemberTargets(rows []Notification) {
 		if n.Kind != NotificationKindSession {
 			continue
 		}
-		if groupID, ok := groupOf[n.SessionID]; ok {
-			n.SessionID = groupID
+		if groupID, ok := groupOf[n.SubjectID]; ok {
+			n.SubjectID = groupID
 		}
 	}
 }
@@ -330,6 +324,83 @@ func distinctNonEmpty(rows []Notification, get func(Notification) string) []stri
 		out = append(out, v)
 	}
 	return out
+}
+
+// ── Migration from the per-kind subject columns ─────────────────────────────
+
+// legacyNotificationSubjectColumns lists the per-kind identity columns this
+// table used to carry, with the kind they belong to and how to read a value.
+//
+// Each entry is handled only while the column still exists, so a run
+// interrupted after a drop resumes at the next one. The backfill is guarded by
+// subject_id = ” so re-running cannot overwrite a value a later writer stored.
+// legacySessionIDColumn is the old per-kind session column. Named once so the
+// migration entry and its SQL expression cannot drift.
+const legacySessionIDColumn = "session_id"
+
+var legacyNotificationSubjectColumns = []struct {
+	column    string
+	kind      string
+	expr      string
+	condition string
+}{
+	{legacySessionIDColumn, NotificationKindSession, legacySessionIDColumn, "session_id <> ''"},
+	{"task_id", NotificationKindTask, "task_id", "task_id <> ''"},
+	{"forge_item_key", NotificationKindForge, "forge_item_key", "forge_item_key <> ''"},
+	{"meeting_token", NotificationKindMeeting, "meeting_token", "meeting_token <> ''"},
+	{"mail_message_id", NotificationKindMail, "CAST(mail_message_id AS TEXT)", "mail_message_id > 0"},
+}
+
+// migrateNotificationSubjects moves every per-kind subject column into the one
+// subject_id column and drops the old column.
+//
+// Called from database.go after NotificationsDDL. The CREATE TABLE there is a
+// no-op on an existing database, which is why both the column addition and the
+// backfill live here.
+func migrateNotificationSubjects() error {
+	hasSubject, err := notificationHasColumn("subject_id")
+	if err != nil {
+		return err
+	}
+	if !hasSubject {
+		if _, err := store.WriteExec(
+			"ALTER TABLE notifications ADD COLUMN subject_id TEXT NOT NULL DEFAULT ''",
+		); err != nil {
+			return fmt.Errorf("failed to add notifications.subject_id: %w", err)
+		}
+	}
+
+	for _, legacy := range legacyNotificationSubjectColumns {
+		hasColumn, err := notificationHasColumn(legacy.column)
+		if err != nil {
+			return err
+		}
+		if !hasColumn {
+			continue
+		}
+		if _, err := store.WriteExec(
+			"UPDATE notifications SET subject_id = "+legacy.expr+
+				" WHERE kind = ? AND subject_id = '' AND "+legacy.condition,
+			legacy.kind,
+		); err != nil {
+			return fmt.Errorf("failed to backfill notifications.subject_id from %s: %w", legacy.column, err)
+		}
+		if _, err := store.WriteExec("ALTER TABLE notifications DROP COLUMN " + legacy.column); err != nil {
+			return fmt.Errorf("failed to drop notifications.%s: %w", legacy.column, err)
+		}
+	}
+	return nil
+}
+
+// notificationHasColumn reports whether the notifications table has column.
+func notificationHasColumn(column string) (bool, error) {
+	var n int
+	if err := store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('notifications') WHERE name = ?", column,
+	).Scan(&n); err != nil {
+		return false, fmt.Errorf("failed to inspect notifications.%s: %w", column, err)
+	}
+	return n > 0, nil
 }
 
 // existingInt64IDs returns the subset of ids present in table.column. The
