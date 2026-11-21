@@ -1,16 +1,17 @@
 <template>
-  <!-- Read-state filter. Same chip affordance as the state/mine chips on the
-       issues and PR tabs, and the status chips on the pipelines tab, so all four
-       views of this panel are filtered the same way. -->
+  <!-- Read-state filter. The same FilterSelect as the state/mine filters on the
+       issues and PR tabs and the status filter on the pipelines tab, so all four
+       views of this panel are filtered by the same control. -->
   <div class="forge-toolbar">
-    <div class="forge-chips forge-chips-scroll">
-      <button
-        v-for="f in FORGE_ACTIVITY_FILTERS"
-        :key="f"
-        class="forge-chip"
-        :class="{ active: unread.filter.value === f }"
-        @click="unread.setFilter(f)"
-      >{{ t(`forge.overview.filter.${f}`) }}</button>
+    <div class="forge-chips">
+      <FilterSelect
+        :model-value="unread.filter.value"
+        :options="activityFilterOptions"
+        :caption="t('forge.filter.read')"
+        :all-label="t('forge.overview.filter.all')"
+        all-value="all"
+        @update:model-value="onActivityFilterChange"
+      />
     </div>
   </div>
 
@@ -81,14 +82,16 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, MessageSquare, Rss } from 'lucide-vue-next'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
-import { useForgeUnreadItems, FORGE_ACTIVITY_FILTERS } from '@/composables/useForge'
+import { useForgeUnreadItems } from '@/composables/useForge'
+import FilterSelect from '@/components/common/FilterSelect.vue'
+import type { MenuSelectOption } from '@/components/common/MenuSelect.vue'
 import { forgeOverviewLabel } from '@/utils/forgeEventLabels'
-import type { ForgeUnreadItem } from '@/utils/forgeApi'
+import type { ForgeUnreadItem, ForgeActivityFilter } from '@/utils/forgeApi'
 import { startQuoteDrag, forgeUnreadDragPayload } from '@/utils/quoteDrag'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
@@ -124,6 +127,21 @@ const { t } = useI18n()
 const { isWideScreen } = useWideScreenLayout()
 
 const unread = useForgeUnreadItems(() => props.projectPath)
+
+/**
+ * Options for the read-state filter. "All" is FilterSelect's own reset row
+ * (`all-label` + `all-value="all"`), so it is not listed here — the filter's
+ * default in this view is "unread", and "all" is a real choice the user has to
+ * pick, not a placeholder.
+ */
+const activityFilterOptions = computed<MenuSelectOption[]>(() => [
+  { value: 'unread', label: t('forge.overview.filter.unread') },
+  { value: 'read', label: t('forge.overview.filter.read') },
+])
+
+function onActivityFilterChange(v: string | number) {
+  unread.setFilter(v as ForgeActivityFilter)
+}
 
 /** Load on first activation and whenever the project changes. */
 watch(

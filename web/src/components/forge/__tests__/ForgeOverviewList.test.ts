@@ -68,6 +68,9 @@ vi.mock('lucide-vue-next', () => {
     RotateCw: stub('RotateCw'),
     RotateCcw: stub('RotateCcw'),
     CheckCircle2: stub('CheckCircle2'),
+    // Rendered by the shared FilterSelect pill (the caret) and its menu rows.
+    ChevronDown: stub('ChevronDown'),
+    Check: stub('Check'),
   }
 })
 
@@ -225,25 +228,25 @@ describe('ForgeOverviewList', () => {
     expect(rows[1].find('.forge-unread-dot').exists()).toBe(true)
   })
 
-  it('offers the read-state filter as chips, with unread active by default', async () => {
-    // Same chip affordance as the issues/PR/pipeline tabs. The default must be
-    // unread — that is the reason to open this view.
+  it('offers the read-state filter as one FilterSelect, unread by default', async () => {
+    // Same control as the issues/PR/pipeline tabs. The default must be unread —
+    // that is the reason to open this view — and the "all" row comes from the
+    // control itself rather than from this component's option list.
     const w = mountPanel()
     await nextTick()
     await nextTick()
 
-    const chips = w.findAll('.forge-chip')
-    expect(chips.map(c => c.text())).toEqual([
-      'forge.overview.filter.unread',
-      'forge.overview.filter.read',
-      'forge.overview.filter.all',
-    ])
-    const active = chips.filter(c => c.classes().includes('active'))
-    expect(active).toHaveLength(1)
-    expect(active[0].text()).toBe('forge.overview.filter.unread')
+    expect(w.find('.filter-select').exists()).toBe(true)
+    const filter = w.findComponent({ name: 'FilterSelect' })
+    expect(filter.exists()).toBe(true)
+    expect(filter.props('modelValue')).toBe('unread')
+    // "All" is the control's reset row: unread is a real choice here (the
+    // default), so it must NOT be folded into the all-label.
+    expect(filter.props('allValue')).toBe('all')
+    expect((filter.props('options') as { value: string }[]).map(o => o.value)).toEqual(['unread', 'read'])
   })
 
-  it('loads with the selected filter and re-requests when a chip is clicked', async () => {
+  it('loads with the selected filter and re-requests when another is picked', async () => {
     // The split is an aggregate over each item's events, so the SERVER must do
     // the filtering; the client only sends which view it wants.
     const w = mountPanel()
@@ -251,7 +254,7 @@ describe('ForgeOverviewList', () => {
     await nextTick()
     expect(mockFetchForgeUnreadItems).toHaveBeenCalledWith('unread', expect.anything())
 
-    await w.findAll('.forge-chip')[1].trigger('click')
+    w.findComponent({ name: 'FilterSelect' }).vm.$emit('update:modelValue', 'read')
     await nextTick()
     await nextTick()
 
@@ -282,7 +285,7 @@ describe('ForgeOverviewList', () => {
     await nextTick()
     await nextTick()
 
-    await w.findAll('.forge-chip')[2].trigger('click') // "All"
+    w.findComponent({ name: 'FilterSelect' }).vm.$emit('update:modelValue', 'all')
     await nextTick()
     await nextTick()
     expect(w.findAll('.forge-overview-row')).toHaveLength(1)

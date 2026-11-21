@@ -28,12 +28,12 @@
       </button>
     </ActionBar>
 
-    <!-- Filters: three dropdowns on one row (project / type / time). -->
+    <!-- Filters: three dropdowns on one row (project / type / time).
+         The project picker stays the app-header-shaped MenuSelect: it needs an
+         icon, a two-line name+path row and a divider, which the shared
+         FilterSelect pill deliberately does not express. Type and time are
+         plain FilterSelect pills. -->
     <div class="notif-filters">
-      <!-- Project filter mirrors the app-header project menu: an app-surface
-           panel with a title, stacked two-line rows (name over path) and an
-           accent-highlighted active row. "All projects" is a single-line row
-           like the header menu's footer action. -->
       <MenuSelect
         :model-value="projectValue"
         :options="projectSelectOptions"
@@ -46,9 +46,9 @@
           <button
             type="button"
             class="app-menu-item"
-            :class="{ active: projectValue === '__all__' }"
+            :class="{ active: projectValue === ALL_PROJECTS }"
             :title="t('notifications.allProjects')"
-            @click="onProjectChange('__all__')"
+            @click="onProjectChange(ALL_PROJECTS)"
           >
             <Layers :size="14" class="item-icon" />
             <span class="item-label">{{ t('notifications.allProjects') }}</span>
@@ -71,14 +71,18 @@
           </button>
         </template>
       </MenuSelect>
-      <MenuSelect
-        :model-value="kindValue"
+      <FilterSelect
+        :model-value="filterKind"
         :options="kindOptions"
+        :caption="t('notifications.kindFilter')"
+        :all-label="t('notifications.all')"
         @update:model-value="onKindChange"
       />
-      <MenuSelect
-        :model-value="rangeValue"
+      <FilterSelect
+        :model-value="filterRange"
         :options="rangeOptions"
+        :caption="t('notifications.rangeFilter')"
+        :all-label="t('notifications.all')"
         @update:model-value="onRangeChange"
       />
       <span class="filter-count">{{ t('notifications.count', { n: total }) }}</span>
@@ -188,10 +192,11 @@
 import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Inbox, Folder, Unlink, Trash2, AlertCircle,
-  Bot, Clock, GitMerge, Check, X, ShieldAlert, Layers, Gauge, Hand, Mail,
+  Inbox, Folder, Layers, Unlink, Trash2, AlertCircle,
+  Bot, Clock, GitMerge, Check, X, ShieldAlert, Gauge, Hand, Mail,
 } from 'lucide-vue-next'
 import MenuSelect, { type MenuSelectOption, type MenuSelectValue } from '@/components/common/MenuSelect.vue'
+import FilterSelect from '@/components/common/FilterSelect.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ActionBar from '@/components/common/ActionBar.vue'
 import PanelSkeleton from '@/components/common/PanelSkeleton.vue'
@@ -229,16 +234,15 @@ const isFiltered = computed(() =>
   filterKind.value !== '' || filterRange.value !== '' || filterProject.value !== ALL_PROJECTS,
 )
 
-// MenuSelect works in string values, so map the '' (all) sentinel explicitly.
-const kindValue = computed(() => filterKind.value || '__all__')
-const rangeValue = computed(() => filterRange.value || '__all__')
-const projectValue = computed(() => filterProject.value || '__all__')
+// The kind/range filters hand FilterSelect the raw `''` (their "no filter"
+// value). The project picker cannot: its reset target is ALL_PROJECTS, which
+// FilterSelect is told about via `all-value`.
+const projectValue = computed(() => filterProject.value || ALL_PROJECTS)
 
 /**
- * Project rows for the dropdown: the active project first (the common case),
- * then the registry, each de-duplicated. Carries the path separately so the row
- * can render the app-header two-line shape (name over full path) instead of one
- * run-on label.
+ * Project rows for the picker: the active project first (the common case),
+ * then the registry, each de-duplicated. The path rides alongside the name so
+ * the custom row can render the app-header two-line shape.
  */
 const projectMenuItems = computed<{ value: string; name: string; path: string }[]>(() => {
   const out: { value: string; name: string; path: string }[] = []
@@ -253,10 +257,11 @@ const projectMenuItems = computed<{ value: string; name: string; path: string }[
   return out
 })
 
-// projectSelectOptions is what MenuSelect sees; the slot replaces the default
-// rows, but the trigger still needs a matching label for the current value.
+// MenuSelect needs a label for the trigger; the custom slot below replaces the
+// rows. The "all" row is keyed to ALL_PROJECTS so its click and the stored
+// sentinel are the same value.
 const projectSelectOptions = computed<MenuSelectOption[]>(() => [
-  { value: '__all__', label: `${t('notifications.projectFilter')}: ${t('notifications.all')}` },
+  { value: ALL_PROJECTS, label: t('notifications.allProjects') },
   ...projectMenuItems.value.map(i => ({ value: i.value, label: i.name })),
 ])
 
@@ -287,7 +292,6 @@ const dayGroups = computed(() => {
 })
 
 const kindOptions = computed<MenuSelectOption[]>(() => [
-  { value: '__all__', label: `${t('notifications.kindFilter')}: ${t('notifications.all')}` },
   { value: 'session', label: t('notifications.kind.session') },
   { value: 'task', label: t('notifications.kind.task') },
   { value: 'forge', label: t('notifications.kind.forge') },
@@ -296,21 +300,23 @@ const kindOptions = computed<MenuSelectOption[]>(() => [
   { value: 'mail', label: t('notifications.kind.mail') },
 ])
 
+// No "all" row and no caption baked into the labels any more: FilterSelect
+// prepends the "all" row from `all-label` and prints the caption itself, so
+// the same strings drive both the trigger and the menu.
 const rangeOptions = computed<MenuSelectOption[]>(() => [
-  { value: '__all__', label: `${t('notifications.rangeFilter')}: ${t('notifications.all')}` },
   { value: 'today', label: t('notifications.range.today') },
   { value: '7d', label: t('notifications.range.7d') },
   { value: '30d', label: t('notifications.range.30d') },
 ])
 
-function onKindChange(v: MenuSelectValue) {
-  void setKind(v === '__all__' ? '' : (v as NotificationKind))
+function onKindChange(v: string | number) {
+  void setKind(v === '' ? '' : (v as NotificationKind))
 }
-function onRangeChange(v: MenuSelectValue) {
-  void setRange(v === '__all__' ? '' : (v as NotificationRange))
+function onRangeChange(v: string | number) {
+  void setRange(v === '' ? '' : (v as NotificationRange))
 }
 function onProjectChange(v: MenuSelectValue) {
-  void setProject(v === '__all__' ? ALL_PROJECTS : String(v))
+  void setProject(String(v))
 }
 
 /** Load when the tab becomes visible; the panel is v-show'd, so watch `active`. */
@@ -701,6 +707,9 @@ function forgeTargetFromItemKey(key: string) {
 }
 /* Keep each trigger at its natural width so wrapping is chosen over ellipsis. */
 .notif-filters :deep(.menu-select) { flex-shrink: 0; }
+/* FilterSelect's face is the trigger's whole content; pin it to natural width
+   for the same reason (its own `.menu-select` rule is scoped to the child). */
+.notif-filters :deep(.filter-select) { flex-shrink: 0; }
 /* Pushed right on the dropdowns' line; wraps to its own line when they fill it. */
 .filter-count {
   font-size: var(--font-size-2xs);

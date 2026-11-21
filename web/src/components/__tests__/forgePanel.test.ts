@@ -160,6 +160,7 @@ function makeI18n() {
         file: { header: { quoteInChat: 'Quote in chat' } },
         forge: {
           type: { issues: 'Issues', prs: 'Pull Requests', pipelines: 'Pipelines' },
+          filter: { state: 'State', mine: 'Assignee', read: 'Read' },
           state: { open: 'Open', closed: 'Closed', all: 'All', merged: 'Merged' },
           mine: { all: 'All', assigned: 'Assigned to me', created: 'Created by me', review: 'Awaiting my review' },
           searchIssuePlaceholder: 'Search issues',
@@ -245,6 +246,31 @@ function makeI18n() {
   })
 }
 
+/**
+ * FilterSelect stub.
+ *
+ * The real component is a popup, so "which options are offered" cannot be read
+ * off the rendered DOM without opening a menu. The stub exposes the `options`
+ * prop (the choice vocabulary) and the resolved caption/current value as data
+ * attributes, which is exactly the contract the panel promises the filter bar.
+ */
+const FilterSelectStub = {
+  name: 'FilterSelect',
+  props: ['modelValue', 'options', 'caption', 'allLabel', 'allValue', 'menuWidth', 'disabled'],
+  emits: ['update:modelValue'],
+  template: `<div class="filter-select-stub"
+    :data-caption="caption"
+    :data-value="String(modelValue)"
+    :data-options="(options || []).map(o => o.label).join(',')"
+    :data-active="String(modelValue !== (allValue ?? ''))" />`,
+}
+
+/** Labels of the state filter's real options, read off the FilterSelect stub. */
+function stateFilterOptions(wrapper: { findAll: (sel: string) => { attributes: (n: string) => string | undefined }[] }) {
+  const filter = wrapper.findAll('.filter-select-stub').find(f => f.attributes('data-caption') === 'State')
+  return (filter?.attributes('data-options') ?? '').split(',').filter(Boolean)
+}
+
 const globalOpts = {
   plugins: [makeI18n()],
   stubs: {
@@ -252,6 +278,7 @@ const globalOpts = {
     RefreshButton: true,
     ModalDialog: true,
     ForgeDetail: true,
+    FilterSelect: FilterSelectStub,
     PopupMenu: {
       props: ['show'],
       template: '<div class="popup-menu-stub" v-if="show"><slot /></div>',
@@ -436,19 +463,17 @@ describe('ForgePanelContent', () => {
     state.isBound.value = true
     state.items.value = []
 
-    // Issues tab: no merged chip.
+    // Issues tab: no merged option.
     state.type.value = 'issue'
     const issues = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
-    const issueChips = issues.findAll('.forge-chip').map(c => c.text())
-    expect(issueChips).not.toContain('Merged')
+    expect(stateFilterOptions(issues)).not.toContain('Merged')
 
     // Change-request tab: merged is offered.
     state.type.value = 'pr'
     const prs = await mountOnIssues()
     await new Promise(r => setTimeout(r, 0))
-    const prChips = prs.findAll('.forge-chip').map(c => c.text())
-    expect(prChips).toContain('Merged')
+    expect(stateFilterOptions(prs)).toContain('Merged')
   })
 
   it('switches to the pipelines tab and loads its data', async () => {
@@ -519,13 +544,16 @@ describe('ForgePanelContent', () => {
     await wrapper.findAll('.forge-tab')[3].trigger('click')
     await new Promise(r => setTimeout(r, 0))
 
-    // A run has no open/closed state and no assignee, so those chips must be
-    // replaced rather than shown and silently ignored.
-    const chips = wrapper.findAll('.forge-chip')
-    const labels = chips.map(c => c.text())
-    expect(labels).toEqual(['Failures only', 'Running', 'All'])
-    expect(labels).not.toContain('Assigned to me')
-    expect(labels).not.toContain('Open')
+    // A run has no open/closed state and no assignee, so there must be no
+    // state or assignee filter at all — not one that is shown and ignored.
+    const filters = wrapper.findAll('.filter-select-stub')
+    expect(filters).toHaveLength(1)
+    const labels = filters[0].attributes('data-options')!.split(',')
+    // FilterSelect owns the "All" row (from `all-label`), so the caller only
+    // supplies the real choices.
+    expect(labels).toEqual(['Failures only', 'Running'])
+    expect(filters[0].attributes('data-caption')).toBe('Read')
+    expect(wrapper.text()).not.toContain('Assigned to me')
   })
 
   it('defaults the pipeline list to failures', async () => {
@@ -543,8 +571,11 @@ describe('ForgePanelContent', () => {
     // A busy repository produces far more green runs than anyone wants to
     // scroll, and the reason to open this tab is usually "what broke".
     expect(pipelineState.filter.value).toBe('failure')
-    const active = wrapper.findAll('.forge-chip').find(c => c.classes().includes('active'))
-    expect(active?.text()).toBe('Failures only')
+    const filter = wrapper.find('.filter-select-stub')
+    expect(filter.attributes('data-value')).toBe('failure')
+    // Non-default value ⇒ the pill tints (this is the "is this filtering?"
+    // judgement FilterSelect owns; the panel must not re-derive it).
+    expect(filter.attributes('data-active')).toBe('true')
   })
 
   it('marks only the active type tab', async () => {

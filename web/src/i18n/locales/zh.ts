@@ -506,6 +506,8 @@ export default {
   },
   forge: {
     type: { issues: '议题', prs: '合并', pipelines: '流水线' },
+    // Captions on the filter dropdowns ("状态: 开启").
+    filter: { state: '状态', mine: '归属', read: '阅读状态' },
     state: { open: '开启', closed: '已关闭', all: '全部', merged: '已合并' },
     mine: { all: '全部', assigned: '分配给我', created: '我提的', review: '待我 review' },
     searchIssuePlaceholder: '搜索议题，或输入编号定位…',
@@ -689,11 +691,13 @@ export default {
     agentTitle: '智能体',
     agentAll: '全部智能体',
     dimTitle: '分组方式',
+    dimAll: '全部维度',
     dimModel: '模型',
     dimBackend: 'AI 后端',
     dimAgent: '智能体',
     dimProject: '项目',
     metricTitle: '数值列',
+    metricAll: '全部数值',
     colInput: '输入 Tokens',
     colOutput: '输出 Tokens',
     colTotal: '总 Tokens',
