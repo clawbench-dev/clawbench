@@ -74,7 +74,7 @@
         <span class="action-label">{{ t('chat.actions.wideLabels.share') }}</span>
       </button>
       <button
-        v-if="isACPTransport && !isGroupSession"
+        v-if="isACP && !isGroupSession"
         class="chat-action-btn acp-sync-btn"
         :class="{ disabled: acpSyncDisabled }"
         :disabled="acpSyncDisabled"
@@ -423,26 +423,20 @@ import { apiGet } from '@/utils/api'
 import ActionBar from '@/components/common/ActionBar.vue'
 
 const { t } = useI18n()
-const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, cruise, toggleCruise, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
+const { availableCommands, availableModes, autoApprove, toggleAutoApprove, cruise, toggleCruise, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
 const { supportsACP, hasPreferredMode, getAgentAvatar, isBuiltinAgent } = useAgents()
 const toast = useToast()
 const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
 
-// isACP: true when the current agent supports ACP (has acpCommand).
-// Used for mode chips — these are ACP features
-// that apply regardless of the current session's transport mode.
+// isACP: true when the current agent supports ACP (has acpCommand). This is the
+// ONE gate for every ACP-only affordance here — mode chips, the sync button and
+// the agent's own slash commands. There is no per-session transport to consult:
+// an agent with an ACP command always runs over ACP, and the in-process agent
+// never does, so a session-level value could only ever agree or be stale.
 const isACP = computed(() => supportsACP(props.currentAgentId || ''))
 // The built-in agent defines its own modes even though it never speaks ACP, so
 // the mode chip must not be gated on ACP alone.
 const isBuiltin = computed(() => isBuiltinAgent(props.currentAgentId || ''))
-
-// isACPTransport: true when the current session is using ACP transport.
-// Slash commands are only available in ACP transport mode — even if the
-// agent supports dual transport, CLI sessions don't have slash commands.
-const isACPTransport = computed(() => {
-  if (sessionTransport.value) return sessionTransport.value === 'acp-stdio'
-  return props.currentTransport === 'acp-stdio'
-})
 
 // ACP 同步按钮的禁用状态与提示：空会话（无 ACP 会话）或当前会话运行中时不可同步。
 const currentSessionRunning = computed(() => !!props.currentSessionRunning)
@@ -572,7 +566,7 @@ function onGroupParallelClick() {
     type: next ? 'success' : 'info',
   })
 }
-const showUsageInfo = computed(() => isACPTransport.value || contextSize.value > 0)
+const showUsageInfo = computed(() => isACP.value || contextSize.value > 0)
 // The panel body lives in ContextUsageDetail (shared with the group member
 // panel). This snapshot is the only place the component's individual usage refs
 // are assembled; the display rules (thresholds, cost formatting, category
@@ -695,7 +689,6 @@ const props = defineProps({
   currentModelId: String,
   currentModelName: String,
   currentModeName: String,
-  currentTransport: String,
   currentAgentId: String,
   currentSessionRunning: Boolean,
   active: Boolean,
@@ -1124,7 +1117,7 @@ const slashCandidates = computed(() => {
     seen.add(cmd.key.startsWith('/') ? cmd.key.slice(1) : cmd.key)
     items.push({ key: cmd.key, label: cmd.label, description: cmd.description, source: 'clawbench' })
   }
-  if (isACPTransport.value) {
+  if (isACP.value) {
     const toSlash = (name) => (name.startsWith('/') ? name : '/' + name)
     for (const cmd of availableCommands.value) {
       const canonical = cmd.name.startsWith('/') ? cmd.name.slice(1) : cmd.name

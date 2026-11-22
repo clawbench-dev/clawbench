@@ -391,7 +391,6 @@ export function useChatSession(options: UseChatSessionOptions) {
       (sessionData.modeState as Record<string, unknown>)?.currentModeId as string || '',
       (sessionData.modeState as Record<string, unknown>)?.availableModes as Array<{id: string; name: string}> || [],
     )
-    syncTransportFromData(sessionData.transport as string)
     syncUsageFromData(sessionData.usageState as { used?: number; size?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }, returnedId)
     // (autoApprove / cruise are read back earlier, before the change-detection
     // early return — see the "Server-authoritative switch flags" block above.)
@@ -487,17 +486,6 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   function syncModeFromData(modeIdFromServer?: string, availableModes?: Array<{id: string; name: string}>) {
     modeState.syncAndFallback(modeIdFromServer || '', availableModes || [], currentAgentId.value)
-  }
-
-  // Helper: sync transport from server data
-  // Falls back to the agent's derived transport.
-  function syncTransportFromData(transportFromServer?: string) {
-    if (transportFromServer) {
-      identity.currentTransport.value = transportFromServer
-    } else {
-      const agent = getAgent(currentAgentId.value)
-      identity.currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : agent?.builtinBackend ? 'in-process' : '')
-    }
   }
 
   // Helper: sync usage state from server data.

@@ -340,9 +340,9 @@ const REFRESH_TIMEOUT_MS = 180_000
 
 const { t } = useI18n()
 const toast = useToast()
-const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshAgentState, getAgentTransport, isBuiltinAgent } = useAgents()
+const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshAgentState, isBuiltinAgent, supportsACP } = useAgents()
 const identity = useSessionIdentity()
-const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove, cruise, toggleCruise } = identity
+const { currentModelId, currentThinkingEffort, currentModeId, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove, cruise, toggleCruise } = identity
 
 // ── Target-session state ──
 // When targetSessionId is set (group member), the drawer describes THAT session
@@ -361,7 +361,6 @@ const compactingFor = ref('')
 const effectiveModelId = computed(() => isTargeted.value ? (target.value?.modelId || '') : currentModelId.value)
 const effectiveModeId = computed(() => isTargeted.value ? (target.value?.modeState?.currentModeId || '') : currentModeId.value)
 const effectiveThinkingEffort = computed(() => isTargeted.value ? (target.value?.thinkingEffortState?.currentId || '') : currentThinkingEffort.value)
-const effectiveTransport = computed(() => isTargeted.value ? (target.value?.transport || '') : currentTransport.value)
 const effectiveAutoApprove = computed(() => isTargeted.value ? target.value?.autoApprove === true : autoApprove.value)
 const effectiveCruise = computed(() => isTargeted.value ? target.value?.cruise === true : cruise.value)
 const effectiveModes = computed(() => isTargeted.value ? (target.value?.modeState?.availableModes || []) : availableModes.value)
@@ -456,10 +455,10 @@ const hasWindow = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
 // compact. A DISABLED member still can: muting only removes it from the schedule,
 // its context window is untouched (and is what most needs compacting).
 //
-// A CLI-transport member must NOT offer it either: /compact is an ACP slash
-// command, and a CLI agent has no command channel — sending the text would reach
-// the model as prose. The server rejects that case with a 400, so showing the
-// button only produced an error after the click.
+// A member whose agent has no ACP command must NOT offer it either: /compact is
+// an ACP slash command, and such an agent has no command channel — sending the
+// text would reach the model as prose. The server rejects that case with a 400,
+// so showing the button only produced an error after the click.
 const canCompactHere = computed(() => {
   if (!hasWindow.value) return false
   // Single chat: a built-in agent has no slash-command channel either. Its
@@ -467,9 +466,9 @@ const canCompactHere = computed(() => {
   // the model as a prose message.
   if (!isTargeted.value) return !isBuiltinAgent(props.agentId || '')
   if (!target.value?.isGroupMember) return false
-  // A member row's transport is derived by the server from its agent; only the
-  // in-process agent lacks the slash-command channel compaction needs.
-  return target.value?.transport !== 'in-process'
+  // The member row's agent is the authority; its ACP command decides whether a
+  // slash-command channel exists at all.
+  return supportsACP(props.agentId || '')
 })
 
 async function onCompact() {
@@ -564,12 +563,12 @@ const thinkingLevels = computed(() => {
 })
 const canRefresh = computed(() => canRefreshAgentState(props.agentId || ''))
 
-const isACP = computed(() => {
-  // Prefer the session row's value, fall back to the agent's. Both are derived
-  // from the ACP command; there is no per-session switch to disagree with.
-  if (effectiveTransport.value) return effectiveTransport.value === 'acp-stdio'
-  return getAgentTransport(props.agentId || '') === 'acp-stdio'
-})
+// The agent's ACP command IS the answer: it decides whether this drawer shows
+// the ACP-only tabs (mode, thinking effort, slash-command-driven controls). No
+// session row carries a transport any more — the server clears that column and
+// derives it from the command, so reading it here could only restate the same
+// fact or lag behind it.
+const isACP = computed(() => supportsACP(props.agentId || ''))
 
 // The built-in agent has no ACP connection but does define its own modes.
 // Without this the mode tab renders "not available" for the one backend whose
@@ -839,8 +838,6 @@ function selectMode(mode) {
   emit('switch-mode', mode)
   emit('close')
 }
-
-// --- Transport selection ---
 
 // --- Refresh (all lists, from the header) ---
 

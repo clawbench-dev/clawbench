@@ -113,12 +113,12 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       ...attachedFiles,
     ])
 
-    // Carry the current session's agent/model/transport so a queued message
-    // resolves against the same configuration as a direct send. Only for the
-    // session on screen: `enqueueToSession` also sends to OTHER sessions, whose
-    // live agent/model/transport are not the ones in these refs — sending them
-    // would misconfigure the target session's turn. The backend then inherits
-    // each target session's own persisted values.
+    // Carry the current session's agent/model so a queued message resolves
+    // against the same configuration as a direct send. Only for the session on
+    // screen: `enqueueToSession` also sends to OTHER sessions, whose live
+    // agent/model are not the ones in these refs — sending them would
+    // misconfigure the target session's turn. The backend then inherits each
+    // target session's own persisted values.
     //
     // thinkingEffort is deliberately NOT sent: the queue endpoint has no such
     // field, so it would be silently dropped. Thinking effort for a queued turn
@@ -126,7 +126,6 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     const isCurrentSession = sessionId === identity.currentSessionId?.value
     const agentId = isCurrentSession ? (identity.currentAgentId?.value || undefined) : undefined
     const modelId = isCurrentSession ? (identity.currentModelId?.value || undefined) : undefined
-    const transport = isCurrentSession ? (identity.currentTransport?.value || undefined) : undefined
 
     try {
       const resp = await fetch(
@@ -141,7 +140,6 @@ export function useSessionManager(options: UseSessionManagerOptions) {
             files: allFileEntries,
             agentId,
             modelId,
-            transport,
             // Required so the backend's user_message broadcast carries
             // senderClientId and this device can skip its own echo — without
             // it the queued message is rendered twice (pending bubble + remote

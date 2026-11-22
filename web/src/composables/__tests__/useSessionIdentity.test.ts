@@ -611,7 +611,6 @@ describe('useSessionIdentity', () => {
             // Stale values from whatever session was open before.
             identity.currentAgentId.value = 'stale-agent'
             identity.currentModelId.value = 'stale-model'
-            identity.currentTransport.value = 'acp-stdio'
 
             await identity.sendMessage('first message')
 
@@ -2361,7 +2360,6 @@ describe('useSessionIdentity', () => {
             identity.currentAgentId.value = 'agent-1'
             identity.currentModelId.value = 'model-1'
             identity.currentModelName.value = 'Model One'
-            identity.currentTransport.value = 'acp-stdio'
             identity.autoApprove.value = true
             identity.thinkingEffortState.currentId.value = 'high'
             updateModeState('code', [{ id: 'code', name: 'Code' }])
@@ -2375,7 +2373,6 @@ describe('useSessionIdentity', () => {
             expect(identity.currentAgentId.value).toBe('')
             expect(identity.currentModelId.value).toBe('')
             expect(identity.currentModelName.value).toBe('')
-            expect(identity.currentTransport.value).toBe('')
             expect(identity.autoApprove.value).toBe(false)
             expect(identity.currentModeId.value).toBe('')
             expect(identity.availableModes.value).toEqual([])
@@ -2440,26 +2437,6 @@ describe('useSessionIdentity', () => {
             identity.currentSessionId.value = 'session-A'
             expect(identity.contextInputTokens.value).toBe(100)
             expect(identity.contextOutputTokens.value).toBe(200)
-        })
-    })
-
-    // ── currentTransport ──
-
-    describe('currentTransport', () => {
-        beforeEach(() => {
-            resetIdentity()
-        })
-
-        it('can be set to acp-stdio', () => {
-            const identity = useSessionIdentity()
-            identity.currentTransport.value = 'acp-stdio'
-            expect(identity.currentTransport.value).toBe('acp-stdio')
-        })
-
-        it('can be set to in-process', () => {
-            const identity = useSessionIdentity()
-            identity.currentTransport.value = 'in-process'
-            expect(identity.currentTransport.value).toBe('in-process')
         })
     })
 

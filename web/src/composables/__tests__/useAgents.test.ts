@@ -80,7 +80,7 @@ describe('useAgents', () => {
     getAgent, getAgentModel, getAgentDefaultModelName, agentHeaderTitle,
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
-    agentCanResume, supportsACP, getAgentTransport,
+    agentCanResume, supportsACP,
     setDefaultAgent, duplicateAgent, createAcpAgent, deleteAgent, rescanAgents, reorderAgents, hasPreferredMode, applyRefreshedModelList, selectableAgents, resolveModelSelection } = useAgents()
 
   const mockReconcileModelSelection = vi.fn()
@@ -1379,45 +1379,6 @@ describe('useAgents', () => {
 
     it('returns false for unknown agent', () => {
       expect(supportsACP('nonexistent')).toBe(false)
-    })
-  })
-
-  // --- getAgentTransport ---
-
-  describe('getAgentTransport', () => {
-    it('returns the transport field when set', async () => {
-      resetAgents()
-      registerMocks()
-      const agentsWithTransport = testAgents.map(a => a.id === 'claude' ? { ...a, transport: 'acp-stdio' } : a)
-      mockApiGet.mockResolvedValue({ agents: agentsWithTransport, defaultAgent: 'claude' })
-      await loadAgents()
-      expect(getAgentTransport('claude')).toBe('acp-stdio')
-    })
-
-    it('returns empty when the agent has neither ACP nor an in-process backend', () => {
-      expect(getAgentTransport('gpt')).toBe('')
-    })
-
-    it('returns acp-stdio when transport is empty but acpCommand is set', async () => {
-      resetAgents()
-      registerMocks()
-      const agentsWithAcp = testAgents.map(a => a.id === 'claude' ? { ...a, acpCommand: 'claude --acp' } : a)
-      mockApiGet.mockResolvedValue({ agents: agentsWithAcp, defaultAgent: 'claude' })
-      await loadAgents()
-      expect(getAgentTransport('claude')).toBe('acp-stdio')
-    })
-
-    it('returns in-process for the built-in agent', async () => {
-      resetAgents()
-      registerMocks()
-      const builtin = testAgents.map(a => a.id === 'gpt' ? { ...a, builtinBackend: true } : a)
-      mockApiGet.mockResolvedValue({ agents: builtin, defaultAgent: 'gpt' })
-      await loadAgents()
-      expect(getAgentTransport('gpt')).toBe('in-process')
-    })
-
-    it('returns empty for an unknown agent', () => {
-      expect(getAgentTransport('nonexistent')).toBe('')
     })
   })
 

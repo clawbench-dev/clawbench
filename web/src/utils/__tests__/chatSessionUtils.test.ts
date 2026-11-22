@@ -729,35 +729,45 @@ describe('normalizeDisplayMode', () => {
 //
 // A group turn is a multi-round loop with no single "current reply" to join, so
 // mid-turn INSERT is never available in a group — the only meaningful action on
-// a queued group message is "interrupt and send". The capability is per-backend
-// and per-transport, but the GROUP branch must win regardless of both: a
-// CodeBuddy-hosted group is steer-capable and ACP, yet its "insert" path can
-// never land (the inject endpoint looks up a connection keyed by the group id,
-// which never exists) so showing "insert into the current reply" is a lie that
-// fails on click.
+// a queued group message is "interrupt and send". The GROUP branch must win
+// regardless of the other two: a CodeBuddy-hosted group is steer-capable and
+// ACP, yet its "insert" path can never land (the inject endpoint looks up a
+// connection keyed by the group id, which never exists) so showing "insert into
+// the current reply" is a lie that fails on click.
+//
+// Outside a group both remaining inputs are properties of the AGENT, not of a
+// session: the backend advertises steer support, and whether it runs over ACP
+// is exactly "has an ACP command" (model.Agent.DeriveTransport).
 describe('resolveMidTurnSupported', () => {
   it('forces interrupt for a group session even when the backend is steer-capable over ACP', () => {
-    expect(resolveMidTurnSupported(true, true, 'acp-stdio')).toBe(false)
+    expect(resolveMidTurnSupported(true, true, true)).toBe(false)
   })
 
-  it('forces interrupt for a group session regardless of transport', () => {
-    expect(resolveMidTurnSupported(true, true, 'in-process')).toBe(false)
-    expect(resolveMidTurnSupported(true, true, '')).toBe(false)
+  it('forces interrupt for a group session regardless of the agent', () => {
+    expect(resolveMidTurnSupported(true, true, false)).toBe(false)
+    expect(resolveMidTurnSupported(true, false, true)).toBe(false)
   })
 
-  it('allows insert for a single chat when the backend is steer-capable over ACP', () => {
-    expect(resolveMidTurnSupported(false, true, 'acp-stdio')).toBe(true)
+  it('allows insert for a single chat when the agent is steer-capable over ACP', () => {
+    expect(resolveMidTurnSupported(false, true, true)).toBe(true)
   })
 
-  it('falls back to interrupt for an in-process session of a steer-capable backend', () => {
-    expect(resolveMidTurnSupported(false, true, 'in-process')).toBe(false)
+  // This row also covers the "agent not loaded yet" window: supportsACP()
+  // answers false for any agent the client has not fetched, so between mount and
+  // the /api/agents response the third argument is false. The answer must stay
+  // false — the transport era returned true for an unknown value ("assume ACP"),
+  // which would show an insert button for an agent that has no connection to
+  // insert into. Enumerated rather than left implicit: a refactor that restores
+  // an optimistic default must fail here.
+  it('falls back to interrupt for an in-process (non-ACP) steer-capable agent', () => {
+    expect(resolveMidTurnSupported(false, true, false)).toBe(false)
   })
 
   it('falls back to interrupt when the backend is not steer-capable', () => {
-    expect(resolveMidTurnSupported(false, false, 'acp-stdio')).toBe(false)
+    expect(resolveMidTurnSupported(false, false, true)).toBe(false)
   })
 
-  it('assumes ACP when the transport is unknown', () => {
-    expect(resolveMidTurnSupported(false, true, '')).toBe(true)
+  it('falls back to interrupt when both are false', () => {
+    expect(resolveMidTurnSupported(false, false, false)).toBe(false)
   })
 })

@@ -715,7 +715,7 @@ function canRefreshModels(agentId: string): boolean {
  * matters most.
  */
 function canRefreshAgentState(agentId: string): boolean {
-    if (getAgentTransport(agentId) === 'acp-stdio') return supportsACP(agentId)
+    if (supportsACP(agentId)) return true
     return canRefreshModels(agentId)
 }
 
@@ -740,17 +740,6 @@ function supportsACP(agentId: string): boolean {
 function supportsMidTurn(agentId: string): boolean {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.supportsMidTurn === true
-}
-
-/**
- * Get the transport an agent runs on: 'acp-stdio' for an external agent,
- * 'in-process' for the built-in one. Empty means neither is available.
- */
-function getAgentTransport(agentId: string): string {
-    const agent = agents.value.find(a => a.id === agentId)
-    if (agent?.transport) return agent.transport
-    if (agent?.acpCommand) return 'acp-stdio'
-    return agent?.builtinBackend ? 'in-process' : ''
 }
 
 /** Invalidate the ACP state cache for an agent so next access force-refreshes. */
@@ -956,7 +945,6 @@ export function useAgents() {
         agentCanResume,
         supportsACP,
         supportsMidTurn,
-        getAgentTransport,
         invalidateACPStateCache,
         updateACPModelList,
         restoreACPModelView,

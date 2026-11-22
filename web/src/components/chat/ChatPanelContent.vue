@@ -153,7 +153,6 @@
       :currentModelId="identity.currentModelId.value"
       :currentModelName="identity.currentModelName.value"
       :currentModeName="identity.currentModeName.value"
-      :currentTransport="identity.currentTransport.value"
       :currentAgentId="identity.currentAgentId.value"
       :acpSyncing="acpSyncing"
       :busyKind="busy"
@@ -444,20 +443,19 @@ const { agents: agentsList, getAgent, getAgentBackend, getAgentName, getAgentAva
  *  "interrupt and send".
  *
  *  The rule lives in resolveMidTurnSupported (chatSessionUtils) so it is unit
- *  tested. Two conditions for a single chat, because the capability is
- *  per-backend but the ability is per-transport: injection goes through the
- *  agent's live ACP connection (ai.InjectMidTurn returns a decline when there
- *  is none), so a CLI session of a steer-capable backend cannot actually
- *  insert. Showing "insert" there would make the label lie about what the
- *  button does — the one thing it must not do — so fall back to "interrupt and
- *  send" for CLI sessions. A GROUP session is forced to interrupt: it has no
- *  single running reply to join and the inject endpoint can never find a
+ *  tested. Both conditions are properties of the AGENT: injection goes through
+ *  the agent's live ACP connection (ai.InjectMidTurn returns a decline when
+ *  there is none), and an agent runs over ACP exactly when it has an ACP
+ *  command. The in-process built-in agent is the only one without a connection.
+ *  Showing "insert" for it would make the label lie about what the button does
+ *  — the one thing it must not do. A GROUP session is forced to interrupt: it
+ *  has no single running reply to join and the inject endpoint can never find a
  *  connection under the group id. */
 const midTurnSupported = computed(() =>
   resolveMidTurnSupported(
     isGroupSession.value,
     agentsComposable.supportsMidTurn(identity.currentAgentId.value || ''),
-    identity.currentTransport.value,
+    agentsComposable.supportsACP(identity.currentAgentId.value || ''),
   ),
 )
 /** queueId (or id) of the queued bubble whose action request is in flight. */
@@ -2345,7 +2343,7 @@ async function sendMessageNow(text, filePaths, files) {
         const resp = await fetch(safeUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, queueId: pendingId, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined, modeId: identity.currentModeId.value || undefined, transport: identity.currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
+            body: JSON.stringify({ message: text, queueId: pendingId, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined, modeId: identity.currentModeId.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
         })
         const data = await resp.json()
         if (!resp.ok) {

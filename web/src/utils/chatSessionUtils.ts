@@ -266,12 +266,11 @@ export function applySummaryUpdate(msg: Record<string, unknown>, summary: string
  * Whether a queued message's single action should be "insert into the current
  * reply" (true) or "interrupt and send" (false).
  *
- * Two conditions for a single chat, because the capability is per-backend but
- * the ability is per-transport: injection goes through the agent's live ACP
- * connection, so a CLI session of a steer-capable backend cannot actually
- * insert. Unknown transport assumes ACP (a steer-capable backend defaults to
- * it), and the button still fails safe — the backend declines and the UI
- * reports it.
+ * Both conditions are about the AGENT, not the session: injection goes through
+ * the agent's live ACP connection, and an agent runs over ACP exactly when it
+ * has an ACP command (model.Agent.DeriveTransport — the single source of truth).
+ * The in-process built-in agent is the only one without a connection, so a
+ * capable agent whose command is missing cannot insert.
  *
  * A GROUP session is forced to interrupt regardless of both. A group turn is a
  * multi-round loop with no single running reply to join, and the inject
@@ -283,11 +282,9 @@ export function applySummaryUpdate(msg: Record<string, unknown>, summary: string
 export function resolveMidTurnSupported(
   isGroupSession: boolean,
   agentSupportsMidTurn: boolean,
-  transport: string,
+  agentRunsOverACP: boolean,
 ): boolean {
   if (isGroupSession) return false
   if (!agentSupportsMidTurn) return false
-  // Only the in-process agent lacks the channel; an unknown value keeps the
-  // legacy "assume ACP" behaviour rather than hiding the affordance.
-  return transport !== 'in-process'
+  return agentRunsOverACP
 }
