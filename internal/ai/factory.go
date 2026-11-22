@@ -2,7 +2,6 @@ package ai
 
 import (
 	"fmt"
-	"log/slog"
 	"sync"
 
 	"clawbench/internal/model"
@@ -19,11 +18,11 @@ type BackendFactoryEntry struct {
 	NewBackendFn func() AIBackend // returns a new backend instance
 }
 
-// RegisterBackend registers a backend factory function.
+// RegisterBackend registers an in-process backend factory function.
 //
 // Callers are expected to be the plugin forwarding point
 // (backends.Register), not backend sub-packages: a sub-package declares its
-// CLI factory as BackendPlugin.CLI.NewBackend and gets this call for free.
+// factory as BackendPlugin.Implementation.NewBackend and gets this call for free.
 // Keeping the exported function lets tests register throwaway factories.
 func RegisterBackend(id string, newBackend func() AIBackend) {
 	backendFactoriesMu.Lock()
@@ -49,63 +48,44 @@ func LookupBackendFactoryForTest(id string) *BackendFactoryEntry {
 	return lookupBackendFactory(id)
 }
 
-// BackendSupportsCLI returns true if a CLI backend factory is registered
-// for the given backend ID. Backends that only implement ACP (e.g. grok)
-// have no CLI factory and return false.
-func BackendSupportsCLI(id string) bool {
-	return lookupBackendFactory(id) != nil
-}
-
 // NewBackend creates the backend via the factory entry.
 func (e *BackendFactoryEntry) NewBackend() AIBackend {
 	return e.NewBackendFn()
 }
 
-// NewBackend creates a backend instance based on the backend type.
-// For agents with ACP transport configured, use NewBackendForAgent instead.
+// NewBackend creates an in-process backend instance based on the backend type.
+//
+// Only the built-in agent has one. Every other backend reaches its agent over
+// ACP, so an id without a factory is an error rather than a CLI fallback.
 func NewBackend(backendType string) (AIBackend, error) {
-	// Try plugin registry first (migrated backends)
 	if entry := lookupBackendFactory(backendType); entry != nil {
-		backend := entry.NewBackendFn()
-		return backend, nil
+		return entry.NewBackendFn(), nil
 	}
-
-	// All backends have been migrated to the plugin registry.
-	// If we reach here, the backend type is truly unsupported.
-	return nil, fmt.Errorf("unsupported backend type: %s (no CLI implementation registered; is it an ACP-only backend?)", backendType)
+	return nil, fmt.Errorf("unsupported backend type: %s (no in-process implementation registered)", backendType)
 }
 
 // NewBackendForAgent creates a backend instance for the given agent.
-// If the agent has ACP transport configured (acp-stdio), it creates
-// an ACPBackend directly (ACP uses session/cancel
-// instead of process kill for stuck agents). Otherwise, it falls back to the
-// CLI-based NewBackend.
+//
+// An agent with an ACP command always runs over ACP (ACP uses session/cancel
+// instead of process kill for stuck agents). The in-process backend (the
+// built-in agent) has no ACP command, so it is the only case that resolves
+// through the factory table.
 //
 // This is the preferred entry point when the agent ID is known (all handler paths).
 func NewBackendForAgent(backendType, agentID string) (AIBackend, error) {
-	return NewBackendForAgentWithTransport(backendType, agentID, "")
+	return NewBackendForAgentFn(backendType, agentID)
 }
 
-// NewBackendForAgentWithTransport creates a backend with an optional per-session
-// transport override. If transportOverride is non-empty, it takes precedence over
-// the agent's configured transport. Otherwise, falls back to the agent's Transport.
-// If the override requests acp-stdio but the agent doesn't support it, falls back
-// to CLI backend gracefully instead of erroring out.
-func NewBackendForAgentWithTransport(backendType, agentID, transportOverride string) (AIBackend, error) {
-	return NewBackendForAgentWithTransportFn(backendType, agentID, transportOverride)
-}
-
-// NewBackendForAgentWithTransportFn is the indirection behind
-// NewBackendForAgentWithTransport.
+// NewBackendForAgentFn is the indirection behind NewBackendForAgent.
 //
 // It exists so a test can observe the exact ai.ChatRequest a caller handed to
 // the backend (the turn runners build it, then resolve a backend, then execute).
 // Asserting on the backend's input is the only way to catch a request assembly
 // bug without also depending on real streaming: a stubbed turn runner would
 // assert on the caller instead of on the request the backend actually sees.
-var NewBackendForAgentWithTransportFn = newBackendForAgentWithTransport
+var NewBackendForAgentFn = newBackendForAgent
 
-func newBackendForAgentWithTransport(backendType, agentID, transportOverride string) (AIBackend, error) {
+func newBackendForAgent(backendType, agentID string) (AIBackend, error) {
 	// agentID and backendType are different identifiers (agent ID vs backend
 	// name) and are not interchangeable: resolving an agent by backendType is
 	// only a best-effort recovery for callers that omitted the agent ID. It is
@@ -113,8 +93,8 @@ func newBackendForAgentWithTransport(backendType, agentID, transportOverride str
 	// have nothing to do with backendType, so using it here would hand back an
 	// ACPBackend for an unrelated agent (whose Name() is that agent's backend)
 	// and silently run the wrong agent/command. When no agent matches the
-	// backend type, fall through to the CLI factory, which fails loudly for
-	// ACP-only backends instead of running something unintended.
+	// backend type, fall through to the factory table, which fails loudly
+	// instead of running something unintended.
 	effectiveAgentID := agentID
 	if effectiveAgentID == "" {
 		if a := model.GetAgent(backendType); a != nil {
@@ -123,25 +103,16 @@ func newBackendForAgentWithTransport(backendType, agentID, transportOverride str
 	}
 	if effectiveAgentID != "" {
 		if agent := model.GetAgent(effectiveAgentID); agent != nil {
-			effectiveTransport := transportOverride
-			if effectiveTransport == "" {
-				effectiveTransport = agent.Transport
-			}
-			if effectiveTransport == "acp-stdio" {
-				if agent.SupportsACP() {
-					acpBackend, err := NewACPBackend(agent)
-					if err != nil {
-						return nil, fmt.Errorf("acp backend for agent %q: %w", effectiveAgentID, err)
-					}
-					return acpBackend, nil
+			if agent.SupportsACP() {
+				acpBackend, err := NewACPBackend(agent)
+				if err != nil {
+					return nil, fmt.Errorf("acp backend for agent %q: %w", effectiveAgentID, err)
 				}
-				// transport override says acp-stdio but agent doesn't support it;
-				// fall through to CLI backend instead of erroring out.
-				slog.Warn("agent does not support acp-stdio transport, falling back to CLI", "agentID", effectiveAgentID)
+				return acpBackend, nil
 			}
 		}
 	}
 
-	// Fall back to CLI backend
+	// In-process backend (built-in agent); fails loudly for anything else.
 	return NewBackend(backendType)
 }

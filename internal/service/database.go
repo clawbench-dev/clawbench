@@ -42,6 +42,7 @@ const (
 	migEffortPickFlag       = "2026-10-18_mark_legacy_effort_picks"
 	migUsageLedgerHeal      = "2026-10-19_heal_usage_ledger"
 	migLedgerWallClock      = "2026-10-25_backfill_ledger_wall_clock"
+	migTransportSinglePath  = "2026-11-22_transport_single_path_v2"
 	migGroupMemberDisabled  = "2026-10-28_group_member_disabled"
 	migBlankThinking        = "2026-11-13_drop_blank_thinking_blocks"
 )
@@ -2527,6 +2528,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// sees the repaired created_at values — a re-stamped row would otherwise
 	// derive a runtime of hours.
 	runOnce(migLedgerWallClock, MigrateLedgerWallClock)
+	runOnce(migTransportSinglePath, MigrateTransportToSinglePath)
+	runOnce(migTransportSinglePath+"_sessions", MigrateSessionTransportColumns)
 
 	// Migrate: archived group MEMBER rows (the old "removed from the group"
 	// representation) become disabled rows. Runs last so it sees rows created by any

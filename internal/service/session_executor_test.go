@@ -87,19 +87,15 @@ func TestSessionExecutor_Finalize_ACPModeInjection(t *testing.T) {
 	}
 }
 
-func TestSessionExecutor_Finalize_TransportFromSessionOverride(t *testing.T) {
-	// Cover line 353-354: transport from session transport override.
+// The persisted transport metadata is derived from the agent's command.
+func TestSessionExecutor_Finalize_TransportFromAgentCommand(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test", AcpCommand: "acp-server"},
 	}
 	defer func() { model.Agents = nil }()
 
 	sid := setupExecutorSession(t, "test-agent")
-	// Set session transport to "sse"
-	if err := UpdateSessionTransport(sid, "sse"); err != nil {
-		t.Fatalf("UpdateSessionTransport failed: %v", err)
-	}
 
 	ctx := context.Background()
 	cfg := RunConfig{
@@ -119,8 +115,8 @@ func TestSessionExecutor_Finalize_TransportFromSessionOverride(t *testing.T) {
 	}
 	finalized := executor.Finalize(result, nil)
 
-	if finalized.Metadata.Transport != "sse" {
-		t.Fatalf("expected Transport='sse', got %q", finalized.Metadata.Transport)
+	if finalized.Metadata.Transport != "acp-stdio" {
+		t.Fatalf("expected Transport='acp-stdio', got %q", finalized.Metadata.Transport)
 	}
 }
 
@@ -419,7 +415,9 @@ func TestSessionExecutor_Finalize_NilMetadata(t *testing.T) {
 	// Instead test with an empty Metadata struct.
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+		// An ACP command gives the derived transport something to report, which
+		// is what this test asserts Finalize fills in.
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test", AcpCommand: "test --acp"},
 	}
 	defer func() { model.Agents = nil }()
 
@@ -446,8 +444,8 @@ func TestSessionExecutor_Finalize_NilMetadata(t *testing.T) {
 	if finalized.Metadata == nil {
 		t.Fatal("expected Metadata to be set")
 	}
-	if finalized.Metadata.Transport == "" {
-		t.Fatal("expected Transport to be set")
+	if finalized.Metadata.Transport != model.TransportACPStdio {
+		t.Fatalf("expected the derived ACP transport, got %q", finalized.Metadata.Transport)
 	}
 }
 

@@ -43,7 +43,7 @@ func (f *fakeCompactBackend) ExecuteStream(_ context.Context, req ai.ChatRequest
 func withFakeCompactBackend(t *testing.T, be ai.AIBackend, err error) {
 	t.Helper()
 	orig := newBackendForAgent
-	newBackendForAgent = func(_, _, _ string) (ai.AIBackend, error) { return be, err }
+	newBackendForAgent = func(_, _ string) (ai.AIBackend, error) { return be, err }
 	t.Cleanup(func() { newBackendForAgent = orig })
 }
 
@@ -55,12 +55,30 @@ func setupCompactableGroup(t *testing.T, project string) (groupID, memberID stri
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	groupID, memberID, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	// The bound agent must exist (transport is decided by its ACP command) and
+	// must be the seeded backend, so the fake backend seam can stand in for it.
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	hostAgent := &model.Agent{ID: "agent-host", Name: "Host", Backend: "codebuddy", AcpCommand: "codebuddy --acp"}
+	model.Agents[hostAgent.ID] = hostAgent
+	model.AgentList = append(model.AgentList, hostAgent)
+	t.Cleanup(func() { model.DeleteAgent(hostAgent.ID) })
+	groupID, memberID, err := CreateGroup(project, "c", "codebuddy", hostAgent.ID, "Host")
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	// The member row's transport override is what CompactGroupMember reads.
-	require.NoError(t, UpdateSessionTransport(memberID, "acp-stdio"))
+	// The transport is decided by the agent's ACP command. The agent this fixture
+	// binds may not be the seeded "codebuddy" row, so give it one explicitly.
+	agentID := ""
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT agent_id FROM chat_sessions WHERE id = ?", memberID).Scan(&agentID))
+	if a := model.GetAgent(agentID); a != nil && a.AcpCommand == "" {
+		clone := *a
+		clone.AcpCommand = "codebuddy --acp"
+		model.Agents[agentID] = &clone
+		t.Cleanup(func() { model.Agents[agentID] = a })
+	}
 	return groupID, memberID
 }
 
@@ -148,7 +166,16 @@ func TestConsumeCompactEvent(t *testing.T) {
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	groupID, memberID, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	// The bound agent must exist (transport is decided by its ACP command) and
+	// must be the seeded backend, so the fake backend seam can stand in for it.
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	hostAgent := &model.Agent{ID: "agent-host", Name: "Host", Backend: "codebuddy", AcpCommand: "codebuddy --acp"}
+	model.Agents[hostAgent.ID] = hostAgent
+	model.AgentList = append(model.AgentList, hostAgent)
+	t.Cleanup(func() { model.DeleteAgent(hostAgent.ID) })
+	groupID, memberID, err := CreateGroup(project, "c", "codebuddy", hostAgent.ID, "Host")
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
@@ -309,11 +336,19 @@ func TestCompactGroupMember_UnknownAgentIsNotCompacted(t *testing.T) {
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	groupID, memberID, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	// The bound agent must exist (transport is decided by its ACP command) and
+	// must be the seeded backend, so the fake backend seam can stand in for it.
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	hostAgent := &model.Agent{ID: "agent-host", Name: "Host", Backend: "codebuddy", AcpCommand: "codebuddy --acp"}
+	model.Agents[hostAgent.ID] = hostAgent
+	model.AgentList = append(model.AgentList, hostAgent)
+	t.Cleanup(func() { model.DeleteAgent(hostAgent.ID) })
+	groupID, memberID, err := CreateGroup(project, "c", "codebuddy", hostAgent.ID, "Host")
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	require.NoError(t, UpdateSessionTransport(memberID, "acp-stdio"))
 	// Blank the agent binding: the row can no longer name a real agent.
 	_, werr := store.WriteExec("UPDATE chat_sessions SET agent_id = '' WHERE id = ?", memberID)
 	require.NoError(t, werr)
@@ -336,7 +371,16 @@ func TestActiveMember_AgentIDRequired(t *testing.T) {
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	groupID, memberID, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	// The bound agent must exist (transport is decided by its ACP command) and
+	// must be the seeded backend, so the fake backend seam can stand in for it.
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	hostAgent := &model.Agent{ID: "agent-host", Name: "Host", Backend: "codebuddy", AcpCommand: "codebuddy --acp"}
+	model.Agents[hostAgent.ID] = hostAgent
+	model.AgentList = append(model.AgentList, hostAgent)
+	t.Cleanup(func() { model.DeleteAgent(hostAgent.ID) })
+	groupID, memberID, err := CreateGroup(project, "c", "codebuddy", hostAgent.ID, "Host")
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
@@ -399,23 +443,31 @@ func TestRunMemberCompact_UsesMemberAgent(t *testing.T) {
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	groupID, memberID, err := CreateGroup(project, "c", "codebuddy", "agent-host", "Host")
+	// The bound agent must exist (transport is decided by its ACP command) and
+	// must be the seeded backend, so the fake backend seam can stand in for it.
+	if model.Agents == nil {
+		model.Agents = map[string]*model.Agent{}
+	}
+	hostAgent := &model.Agent{ID: "agent-host", Name: "Host", Backend: "codebuddy", AcpCommand: "codebuddy --acp"}
+	model.Agents[hostAgent.ID] = hostAgent
+	model.AgentList = append(model.AgentList, hostAgent)
+	t.Cleanup(func() { model.DeleteAgent(hostAgent.ID) })
+	groupID, memberID, err := CreateGroup(project, "c", "codebuddy", hostAgent.ID, "Host")
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 
-	var gotAgent, gotTransport string
+	var gotAgent string
 	orig := newBackendForAgent
-	newBackendForAgent = func(_, agentID, transport string) (ai.AIBackend, error) {
-		gotAgent, gotTransport = agentID, transport
+	newBackendForAgent = func(_, agentID string) (ai.AIBackend, error) {
+		gotAgent = agentID
 		return &fakeCompactBackend{events: []ai.StreamEvent{{Type: "done"}}}, nil
 	}
 	t.Cleanup(func() { newBackendForAgent = orig })
 
-	_, err = runMemberCompact(context.Background(), groupID, memberID, "agent-host", "acp-stdio")
+	_, err = runMemberCompact(context.Background(), groupID, memberID, "agent-host")
 	require.NoError(t, err)
 	assert.Equal(t, "agent-host", gotAgent)
-	assert.Equal(t, "acp-stdio", gotTransport)
 }
 
 // TestCompactGroupMember_DoesNotLeakIntoRunningSessions pins decision #73: a
@@ -427,7 +479,7 @@ func TestCompactGroupMember_DoesNotLeakIntoRunningSessions(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	orig := newBackendForAgent
-	newBackendForAgent = func(_, _, _ string) (ai.AIBackend, error) {
+	newBackendForAgent = func(_, _ string) (ai.AIBackend, error) {
 		return &blockingCompactBackend{started: started, release: release}, nil
 	}
 	t.Cleanup(func() { newBackendForAgent = orig })

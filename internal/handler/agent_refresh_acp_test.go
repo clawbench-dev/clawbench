@@ -78,9 +78,8 @@ func TestAgentRefreshModels_ACPProbesAgentAndReturnsState(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	var resp struct {
-		Models    []model.AgentModel `json:"models"`
-		CLIModels []model.AgentModel `json:"cliModels"`
-		ACPState  struct {
+		Models   []model.AgentModel `json:"models"`
+		ACPState struct {
 			Commands       []ai.AvailableCommandInfo `json:"commands"`
 			ModeState      *ai.ModeState             `json:"modeState"`
 			ThinkingEffort *ai.ThinkingEffortState   `json:"thinkingEffortState"`
@@ -92,10 +91,8 @@ func TestAgentRefreshModels_ACPProbesAgentAndReturnsState(t *testing.T) {
 	// an absolute cwd, and the agent's answers can depend on it.
 	assert.Equal(t, env.ProjectDir, gotCwd)
 
-	// ACP membership is authoritative: the agent's list wins, and the CLI list is
-	// still reported for a later transport switch.
+	// ACP membership is authoritative: the agent's list wins.
 	assert.Equal(t, []string{"acp-a", "acp-b"}, modelIDs(resp.Models))
-	assert.Equal(t, []string{"cli-a", "cli-b"}, modelIDs(resp.CLIModels))
 
 	// The other lists must ride along, or the drawer's mode/thinking/`/` menu
 	// would keep showing the pre-refresh state.
@@ -106,8 +103,8 @@ func TestAgentRefreshModels_ACPProbesAgentAndReturnsState(t *testing.T) {
 	require.NotNil(t, resp.ACPState.ThinkingEffort)
 	assert.Equal(t, "high", resp.ACPState.ThinkingEffort.AvailableLevels[0].ID)
 
-	// The agent row keeps the CLI list: overwriting it with the ACP list would
-	// make a later switch to CLI show models that transport cannot run.
+	// The agent row keeps the discovered list: the resolved view is a response,
+	// not a stored overwrite.
 	assert.Equal(t, []string{"cli-a", "cli-b"}, modelIDs(model.GetAgent("acp-refresh").Models))
 }
 
@@ -138,13 +135,11 @@ func TestAgentRefreshModels_ACPEmptyProbeDoesNotFallBackToCLI(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	var resp struct {
-		Models    []model.AgentModel `json:"models"`
-		CLIModels []model.AgentModel `json:"cliModels"`
+		Models []model.AgentModel `json:"models"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	assert.Empty(t, resp.Models, "the CLI skeleton must never be reported as runnable over ACP")
-	assert.Equal(t, []string{"cli-a"}, modelIDs(resp.CLIModels))
+	assert.Empty(t, resp.Models, "the discovered skeleton must never be reported as runnable over ACP")
 }
 
 // A failed probe is a failure — the CLI list must not be substituted for it.

@@ -10,7 +10,6 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
-	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -552,29 +551,6 @@ func TestServeSessionSettings_ResolvesEffectiveTransport(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	assert.Equal(t, "acp-stdio", got.Transport,
 		"the effective transport must be resolved from the agent, not echoed as empty")
-}
-
-// An explicit per-session transport wins over the agent's: the user picked it
-// for this session, and the drawer must show what the next turn will actually
-// use.
-func TestServeSessionSettings_SessionTransportWinsOverAgent(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sid, err := service.CreateSession(env.ProjectDir, "codebuddy", "Explicit", "codebuddy", "", "user", "chat")
-	require.NoError(t, err)
-	_, err = store.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET transport = 'acp-stdio' WHERE id = ?`, sid)
-	require.NoError(t, err)
-
-	req := withProjectCookie(newRequest(t, http.MethodGet, "/api/ai/session/settings?session_id="+sid, nil), env.ProjectDir)
-	w := callHandlerWithAuth(ServeSessionSettings, req)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	var got struct {
-		Transport string `json:"transport"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	assert.Equal(t, "acp-stdio", got.Transport)
 }
 
 // An ARCHIVED session must still be describable: the drawer is read-only, and

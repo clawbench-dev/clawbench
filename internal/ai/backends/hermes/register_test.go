@@ -44,7 +44,6 @@ func TestHermesBackendPlugin_AdvertisesLoadSession(t *testing.T) {
 // No CLI factory is registered: `hermes` has no stream-json CLI mode, so chat
 // must always go through the ACP stdio transport.
 func TestHermesBackendPlugin_IsACPIOnly(t *testing.T) {
-	assert.False(t, ai.BackendSupportsCLI("hermes"), "hermes is ACP-only")
 }
 
 // Hermes loads its own skills from ~/.hermes/skills (the hermes-acp toolset

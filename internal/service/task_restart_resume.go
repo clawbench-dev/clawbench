@@ -293,7 +293,7 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 	// A scheduled run has nobody to approve permission requests; the session
 	// already carries this flag, but re-asserting it costs one UPDATE and keeps
 	// the resumed run from blocking on a prompt nobody will answer.
-	if agent.Transport == transportACPStdio {
+	if agent.SupportsACP() {
 		if err := UpdateSessionAutoApprove(sessionID, true); err != nil {
 			slog.Warn("task restart resume: failed to enable auto-approve",
 				slog.String("session_id", sessionID), slog.String("err", err.Error()))
@@ -319,11 +319,11 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 	if effectiveModel == "" {
 		effectiveModel = agent.DefaultModelID()
 	}
-	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.Transport == transportACPStdio)
+	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.SupportsACP())
 
 	req := BuildChatRequest(
 		AutoContinuePrompt(), sessionID, task.ProjectPath, backendName, task.AgentID,
-		effectiveModel, effectiveThinking, "", "", task.ProjectPath, false,
+		effectiveModel, effectiveThinking, "", task.ProjectPath, false,
 	)
 	// BuildChatRequest is the interactive builder; a resumed task run is still a
 	// scheduled execution (pi's --no-session and the prompt layers key on it).

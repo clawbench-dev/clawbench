@@ -136,43 +136,6 @@ func TestIsGrokCompactionCompleted(t *testing.T) {
 	assert.False(t, isGrokCompactionCompleted("text"))
 }
 
-func TestIsCLICompactionMessage(t *testing.T) {
-	t.Run("claude compact_boundary", func(t *testing.T) {
-		assert.True(t, isCLICompactionMessage(&ClaudeStreamMessage{Type: "system", Subtype: "compact_boundary"}))
-	})
-	t.Run("codebuddy compacting status", func(t *testing.T) {
-		assert.True(t, isCLICompactionMessage(&ClaudeStreamMessage{Type: "system", Subtype: "status", Status: "compacting"}))
-	})
-	t.Run("codebuddy status null is not compaction", func(t *testing.T) {
-		assert.False(t, isCLICompactionMessage(&ClaudeStreamMessage{Type: "system", Subtype: "status"}))
-	})
-	t.Run("codebuddy providerData flag", func(t *testing.T) {
-		msg := &ClaudeStreamMessage{Type: "message"}
-		msg.ProviderData = &struct {
-			Model string `json:"model,omitempty"`
-			Usage *struct {
-				InputTokens  int `json:"inputTokens"`
-				OutputTokens int `json:"outputTokens"`
-			} `json:"usage,omitempty"`
-			IsCompactInternal bool   `json:"isCompactInternal,omitempty"`
-			CompactType       string `json:"compactType,omitempty"`
-		}{IsCompactInternal: true}
-		assert.True(t, isCLICompactionMessage(msg))
-	})
-	t.Run("codebuddy _meta flag", func(t *testing.T) {
-		assert.True(t, isCLICompactionMessage(&ClaudeStreamMessage{
-			Type: "message",
-			Meta: map[string]any{"codebuddy.ai/isCompactInternal": true},
-		}))
-	})
-	t.Run("plain assistant text is not compaction", func(t *testing.T) {
-		assert.False(t, isCLICompactionMessage(&ClaudeStreamMessage{Type: "assistant", Subtype: "text", Text: "hello"}))
-	})
-	t.Run("nil message", func(t *testing.T) {
-		assert.False(t, isCLICompactionMessage(nil))
-	})
-}
-
 // TestStreamParser_ReportsCompactionOnce pins the latch: the CLI repeats the
 // compaction flag on every item emitted while compacting, but the service layer
 // must be told about the compaction a single time.

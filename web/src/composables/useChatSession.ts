@@ -14,7 +14,7 @@ import { getRecentSession, clearRecentSession } from '@/composables/useRecentSes
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { discardPendingMessageNavigation } from '@/composables/useMessageNavigation'
 import { clearTeamState, updateTeamState } from '@/composables/useTeamState'
-import { useAgents, resetModelViewForTransport, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
+import { useAgents, restoreACPModelView, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
 import { resolveModelSelection } from '@/utils/modelSelection'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
@@ -368,17 +368,16 @@ export function useChatSession(options: UseChatSessionOptions) {
     // from the agent-level capability registry and returns them here.
     //
     // Prefer the backend-resolved list — it already applied ACP membership over
-    // the CLI skeleton, and cliModels comes with it for the transport switch.
-    // The raw `models` fallback covers a backend too old to send resolvedModels.
+    // the discovered skeleton. The raw `models` fallback covers an emit path
+    // with no model source to resolve against.
     const modelListState = sessionData.modelListState as {
       models?: Array<{ id: string; name: string }>
       resolvedModels?: Array<{ id: string; name: string; default: boolean }>
-      cliModels?: Array<{ id: string; name: string; default: boolean }>
       currentModelId?: string
     } | undefined
     if (currentAgentId.value) {
       if (modelListState?.resolvedModels && modelListState.resolvedModels.length > 0) {
-        applyResolvedModelList(currentAgentId.value, modelListState.resolvedModels, modelListState.cliModels)
+        applyResolvedModelList(currentAgentId.value, modelListState.resolvedModels)
       } else if (modelListState?.models && modelListState.models.length > 0) {
         updateACPModelList(currentAgentId.value, modelListState.models, modelListState.currentModelId)
       }
@@ -491,13 +490,13 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   // Helper: sync transport from server data
-  // Falls back to agent's configured transport, defaulting to 'cli'.
+  // Falls back to the agent's derived transport.
   function syncTransportFromData(transportFromServer?: string) {
     if (transportFromServer) {
       identity.currentTransport.value = transportFromServer
     } else {
       const agent = getAgent(currentAgentId.value)
-      identity.currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : 'cli')
+      identity.currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : agent?.builtinBackend ? 'in-process' : '')
     }
   }
 
@@ -1066,14 +1065,12 @@ export function useChatSession(options: UseChatSessionOptions) {
     // Clear stale blockAskQuestions from previous session
     Object.keys(blockTasks).forEach(k => delete blockTasks[k])
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
-    // Reset the previous agent's model list to its own transport's view. ACP
-    // and CLI share the one `agent.models` field, so an unconditional "restore
-    // the CLI list" would leave an acp-stdio agent showing the CLI guess — the
-    // very list the backend withholds until the agent reports its own models.
-    // Must run BEFORE clearing currentAgentId so the old agent's models can be
-    // properly restored.
+    // Reset the previous agent's model list to the ACP-reported view: an ACP
+    // agent's discovered list is a guess the backend withholds until the agent
+    // reports its own models. Must run BEFORE clearing currentAgentId so the
+    // old agent can be found.
     const prevAgentId = _currentAgentId.value
-    if (prevAgentId) resetModelViewForTransport(prevAgentId)
+    if (prevAgentId) restoreACPModelView(prevAgentId)
     // Clear all identity refs and set currentSessionId to the target — avoids
     // flashing stale info during the async fetch. Will be repopulated from
     // the REST response. This also clears ACP state (mode/commands/thinking).

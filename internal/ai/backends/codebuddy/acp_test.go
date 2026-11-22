@@ -1,10 +1,8 @@
 package codebuddy
 
 import (
-	"os/exec"
 	"testing"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 
 	"github.com/stretchr/testify/assert"
@@ -38,99 +36,6 @@ func TestCodebuddyBackendPlugin_NoACPPlugin(t *testing.T) {
 }
 
 // --- CLI backend functionality ---
-
-func TestCodebuddyBackend_BuildArgsWithSessionID(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("codebuddy")
-	require.NotNil(t, entry)
-	clib := entry.NewBackend().(*ai.CLIBackend)
-
-	req := ai.ChatRequest{
-		Prompt:    "test prompt",
-		SessionID: "sess-123",
-		WorkDir:   "/tmp/test",
-	}
-	args := clib.BuildArgsFn(req)
-
-	// Should contain session ID
-	foundSession := false
-	for i, a := range args {
-		if a == "--session-id" && i+1 < len(args) && args[i+1] == "sess-123" {
-			foundSession = true
-		}
-	}
-	assert.True(t, foundSession, "expected --session-id in args")
-}
-
-func TestCodebuddyBackend_BuildArgsWithModel(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("codebuddy")
-	require.NotNil(t, entry)
-	clib := entry.NewBackend().(*ai.CLIBackend)
-
-	req := ai.ChatRequest{
-		Prompt:  "test prompt",
-		Model:   "glm-5.1",
-		WorkDir: "/tmp/test",
-	}
-	args := clib.BuildArgsFn(req)
-
-	// Should contain model
-	foundModel := false
-	for i, a := range args {
-		if a == "--model" && i+1 < len(args) && args[i+1] == "glm-5.1" {
-			foundModel = true
-		}
-	}
-	assert.True(t, foundModel, "expected --model in args")
-}
-
-func TestCodebuddyBackend_FilterLine_BOMVariants(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("codebuddy")
-	require.NotNil(t, entry)
-	clib := entry.NewBackend().(*ai.CLIBackend)
-
-	tests := []struct {
-		name     string
-		line     string
-		accepted bool
-		clean    string
-	}{
-		{"normal JSON", `{"type":"assistant"}`, true, `{"type":"assistant"}`},
-		{"BOM prefixed", "\xEF\xBB\xBF{\"type\":\"assistant\"}", true, `{"type":"assistant"}`},
-		{"empty line", "", false, ""},
-		{"whitespace only", "   ", true, "   "}, // whitespace is accepted but not BOM
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			filtered, ok := clib.FilterLineFn(tt.line)
-			assert.Equal(t, tt.accepted, ok)
-			if ok {
-				assert.Equal(t, tt.clean, filtered)
-			}
-		})
-	}
-}
-
-func TestCodebuddyBackend_NewParserFn(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("codebuddy")
-	require.NotNil(t, entry)
-	clib := entry.NewBackend().(*ai.CLIBackend)
-
-	parser := clib.NewParserFn()
-	assert.NotNil(t, parser, "NewParserFn should return a StreamParser")
-}
-
-func TestCodebuddyBackend_PreStart_SetsStdin(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("codebuddy")
-	require.NotNil(t, entry)
-	clib := entry.NewBackend().(*ai.CLIBackend)
-
-	req := ai.ChatRequest{Prompt: "hello world"}
-	cmd := exec.Command("echo", "test")
-	clib.PreStartFn(cmd, req)
-
-	assert.NotNil(t, cmd.Stdin, "stdin should be set for codebuddy preStart")
-}
 
 // --- DiscoverCodebuddyModels edge cases ---
 

@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 
 	"github.com/stretchr/testify/assert"
@@ -57,7 +56,6 @@ func TestCursorBackendPlugin_AdvertisesLoadSession(t *testing.T) {
 // No CLI factory is registered: chat must always go through the ACP stdio
 // transport (the official `agent acp` subcommand).
 func TestCursorBackendPlugin_IsACPIOnly(t *testing.T) {
-	assert.False(t, ai.BackendSupportsCLI("cursor"), "cursor is ACP-only")
 
 	plugin := backends.Lookup("cursor")
 	require.NotNil(t, plugin)

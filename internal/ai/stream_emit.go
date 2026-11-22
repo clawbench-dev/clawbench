@@ -113,10 +113,8 @@ const acpNotificationSource = "acp"
 // terminal `done` — the single event the UI needs to stop loading — to be
 // dropped alongside them.
 //
-// source identifies the producer for log correlation (e.g. "claude", "codex",
-// "cli"). It must be a short, stable lowercase token; parsers shared across
-// backends (StreamParser/claude_tool) use "cli" since they run on CLI stream
-// channels.
+// source identifies the producer for log correlation (e.g. "claude", "codex").
+// It must be a short, stable lowercase token.
 //
 // A send to a closed channel panics; the recover makes it safe for producer
 // goroutines that may outlive the channel close on cancellation (mirrors

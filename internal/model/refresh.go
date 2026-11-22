@@ -188,7 +188,7 @@ func syncThinkingEffortLevels(db dbutil.Writer) {
 
 // detectAndInsertAgents probes PATH for every registered backend, inserts an
 // agent for each newly present one, and syncs spec-derived infrastructure fields
-// (acp_command, transport) on existing records.
+// (acp_command) on existing records.
 //
 // Returns the set of present backends and the IDs of inserted agents.
 //
@@ -250,18 +250,18 @@ func probeBackendPresence(registry []BackendSpec) []bool {
 // gets a fresh agent row. It reports the inserted agent ID, if any.
 func syncOrInsertAgent(db dbutil.Writer, spec BackendSpec, exists bool) (string, bool) {
 	var count int
-	var existingAcpCommand, existingTransport string
+	var existingAcpCommand string
 	err := db.QueryRow(
-		"SELECT COUNT(*), COALESCE(acp_command, ''), COALESCE(transport, '') FROM agents WHERE backend = ?",
+		"SELECT COUNT(*), COALESCE(acp_command, '') FROM agents WHERE backend = ?",
 		spec.Backend,
-	).Scan(&count, &existingAcpCommand, &existingTransport)
+	).Scan(&count, &existingAcpCommand)
 	if err != nil {
 		slog.Warn("failed to query agents table", "backend", spec.Backend, "error", err)
 		return "", false
 	}
 
 	if count > 0 {
-		if syncAgentInfrastructure(db, spec, existingAcpCommand, existingTransport) {
+		if syncAgentInfrastructure(db, spec, existingAcpCommand) {
 			slog.Info("synced agent infrastructure from backend spec", "backend", spec.Backend)
 		}
 		return "", false
@@ -279,7 +279,6 @@ func syncOrInsertAgent(db dbutil.Writer, spec BackendSpec, exists bool) (string,
 	}
 	if spec.AcpCommand != "" {
 		agent.AcpCommand = spec.AcpCommand
-		agent.Transport = "acp-stdio"
 	}
 	if err := saveAgentToDB(db, agent); err != nil {
 		slog.Warn("failed to insert discovered agent", "backend", spec.ID, "error", err)
@@ -291,20 +290,14 @@ func syncOrInsertAgent(db dbutil.Writer, spec BackendSpec, exists bool) (string,
 
 // syncAgentInfrastructure updates the fields derived from a BackendSpec when they
 // drift. User-customized name and command are deliberately left alone.
-func syncAgentInfrastructure(db dbutil.Writer, spec BackendSpec, existingAcpCommand, existingTransport string) bool {
+func syncAgentInfrastructure(db dbutil.Writer, spec BackendSpec, existingAcpCommand string) bool {
 	updates := map[string]interface{}{}
 
 	// Sync acp_command in both directions: a newly added ACP command must be
 	// recorded, and a removed one must be cleared so a stale value cannot make
-	// the agent advertise a transport it no longer supports.
+	// the agent advertise ACP support it no longer has.
 	if spec.AcpCommand != existingAcpCommand {
 		updates["acp_command"] = spec.AcpCommand
-	}
-	switch {
-	case spec.AcpCommand != "" && existingTransport == "cli":
-		updates["transport"] = "acp-stdio"
-	case spec.AcpCommand == "" && existingTransport == "acp-stdio":
-		updates["transport"] = "cli"
 	}
 
 	if len(updates) == 0 {
@@ -486,14 +479,6 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 		effortByModelJSON = []byte("{}")
 	}
 
-	transport := agent.Transport
-	if transport == "" {
-		if agent.AcpCommand != "" {
-			transport = "acp-stdio"
-		} else {
-			transport = "cli"
-		}
-	}
 	autoApprove := 0
 	if agent.AutoApprove {
 		autoApprove = 1
@@ -525,13 +510,13 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected, sort_order,
-		transport, acp_command, auto_approve, disabled, provider_id, thinking_effort_by_model,
+		acp_command, auto_approve, disabled, provider_id, thinking_effort_by_model,
 		mcp_servers, tool_policy, skip_project_context)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, agent.AvatarStyle, agent.AvatarSeed, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
-		transport, agent.AcpCommand, autoApprove, disabled, agent.ProviderID, string(effortByModelJSON),
+		agent.AcpCommand, autoApprove, disabled, agent.ProviderID, string(effortByModelJSON),
 		string(mcpServersJSON), toolPolicyJSON, skipProjectContextArg(agent.SkipProjectContext))
 	return err
 }
@@ -562,7 +547,6 @@ type yamlAgent struct {
 	Avatar                  string       `yaml:"avatar"`
 	AvatarStyle             string       `yaml:"avatar_style"`
 	AvatarSeed              string       `yaml:"avatar_seed"`
-	Transport               string       `yaml:"transport"`
 	AcpCommand              string       `yaml:"acp_command"`
 	Models                  []AgentModel `yaml:"models"`
 	SortOrder               int          `yaml:"sort_order"`
@@ -636,7 +620,6 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) []string {
 			Avatar:                  ya.Avatar,
 			AvatarStyle:             ya.AvatarStyle,
 			AvatarSeed:              ya.AvatarSeed,
-			Transport:               ya.Transport,
 			AcpCommand:              ya.AcpCommand,
 			Models:                  ya.Models,
 			SortOrder:               ya.SortOrder,
@@ -655,7 +638,7 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) []string {
 
 // LoadAgentsIntoMemoryFromDB loads agents from the database into the global
 // Agents map and AgentList, then populates the runtime-only fields that are not
-// persisted: CanRefreshModels, SupportsCLI, SupportsMidTurn, ThinkingEffortLevels
+// persisted: CanRefreshModels, SupportsMidTurn, ThinkingEffortLevels
 // and the composed SystemPrompt.
 //
 // The new map is built completely before assignment so a concurrent reader never
@@ -684,7 +667,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 				agent.ThinkingEffortLevels = spec.ThinkingEffortLevels
 			}
 		}
-		agent.SupportsCLI = BackendSupportsCLI(agent.Backend)
+		agent.Transport = agent.DeriveTransport()
 		agent.SupportsMidTurn = BackendSupportsMidTurn(agent.Backend)
 		agent.ProviderProtocols = SupportedProtocols(agent.Backend)
 		agent.ProviderKeyOnly = BackendIsKeyOnly(agent.Backend)
@@ -733,7 +716,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected, sort_order,
-		transport, acp_command, auto_approve, disabled, project_id,
+		acp_command, auto_approve, disabled, project_id,
 		provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
 		skip_project_context
 		FROM agents ORDER BY id`)
@@ -764,7 +747,7 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 		&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 		&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 		&agent.CustomSystemPrompt, &agent.Avatar, &agent.AvatarStyle, &agent.AvatarSeed, &modelsJSON, &autoDetected,
-		&agent.SortOrder, &agent.Transport, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
+		&agent.SortOrder, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
 		&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON, &skipProjectContext); err != nil {
 		return nil, err
 	}

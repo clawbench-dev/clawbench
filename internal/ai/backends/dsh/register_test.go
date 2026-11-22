@@ -45,7 +45,6 @@ func TestDshBackendPlugin_DoesNotAdvertiseLoadSession(t *testing.T) {
 // No CLI factory is registered: `dsh` has no CLI transport, so chat must always
 // go through the ACP stdio transport.
 func TestDshBackendPlugin_IsACPIOnly(t *testing.T) {
-	assert.False(t, ai.BackendSupportsCLI("dsh"), "dsh is ACP-only")
 
 	plugin := backends.Lookup("dsh")
 	require.NotNil(t, plugin)

@@ -29,7 +29,6 @@ func init() {
 			// login) — see backends/qodercn.
 			LoginCmd: "qodercli login",
 		},
-		CLI: &backends.CLIPlugin{NewBackend: newQoderBackend},
 		// Qoder is a Claude Code fork: same ACP tool/meta wire shapes, so the
 		// parsers are imported rather than copied.
 		Behavior: &ai.ACPBehavior{
@@ -42,9 +41,4 @@ func init() {
 		// provider variables.
 		ProviderEnv: &model.ProviderEnvSpec{},
 	})
-}
-
-// newQoderBackend returns a CLIBackend instance for Qoder CLI.
-func newQoderBackend() ai.AIBackend {
-	return NewCLIBackend("qoder", "qodercli")
 }

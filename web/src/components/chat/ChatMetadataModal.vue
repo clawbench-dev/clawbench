@@ -174,7 +174,10 @@ const sections = computed(() => {
     overview.push({ key: 'backend', label: t('chat.metadata.backend'), value: props.backend })
   }
   if (d.transport) {
-    overview.push({ key: 'transport', label: t('chat.metadata.transport'), value: d.transport === 'cli' ? 'CLI' : 'ACP' })
+    const transportLabel = d.transport === 'in-process'
+      ? t('chat.metadata.transportInProcess')
+      : t('chat.metadata.transportAcp')
+    overview.push({ key: 'transport', label: t('chat.metadata.transport'), value: transportLabel })
   }
   if (d.model) {
     overview.push({ key: 'model', label: t('chat.metadata.model'), value: d.model })

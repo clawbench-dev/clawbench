@@ -28,7 +28,6 @@ func init() {
 		// Codex can inject a message into the running turn via the ACP steering
 		// extension (_session/steering). It emits no echo boundary, so the
 		// injection MERGES into the running reply (no split).
-		CLI: &backends.CLIPlugin{NewBackend: newCodexBackend},
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       ParseACPToolCall,
 			ParseToolCallUpdate: ParseACPToolCallUpdate,
@@ -47,11 +46,4 @@ func init() {
 			KeyOnly:         "CLAWBENCH_PROVIDER_API_KEY",
 		},
 	})
-}
-
-// newCodexBackend returns a CodexBackend instance.
-// Codex is a custom backend — it directly implements AIBackend,
-// not using the CLIBackend skeleton.
-func newCodexBackend() ai.AIBackend {
-	return &CodexBackend{}
 }

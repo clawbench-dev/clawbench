@@ -667,8 +667,9 @@ func TestSessionExecutor_InjectSessionMetadata_NilModeAndEffort(t *testing.T) {
 	meta := &ai.Metadata{}
 	executor.injectSessionMetadata(meta)
 
-	// No ACP conn, no session transport → should default to "cli"
-	assert.Equal(t, "cli", meta.Transport)
+	// No command and not the built-in backend: there is no transport to report.
+	// The value is derived, never defaulted to a mode the agent cannot run.
+	assert.Equal(t, "", meta.Transport)
 }
 
 func TestSessionExecutor_InjectSessionMetadata_WithSessionModel(t *testing.T) {

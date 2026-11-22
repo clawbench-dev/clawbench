@@ -77,9 +77,9 @@ const (
 	eventTypeDone = "done"
 
 	// transportACPStdio is the ACP stdio transport type.
-	transportACPStdio = "acp-stdio"
-	// transportCLI is the CLI transport type.
-	transportCLI = "cli"
+	transportACPStdio = model.TransportACPStdio
+	// transportInProcess is the built-in agent's transport (this process).
+	transportInProcess = model.TransportInProcess
 	// eventTypeError is the stream event type for errors.
 	eventTypeError = "error"
 	// eventTypeSessionUpdate is the stream event type for session updates.
@@ -1754,13 +1754,10 @@ func (e *SessionExecutor) injectSessionMetadata(meta *ai.Metadata) {
 			meta.ThinkingEffort = s.Effort.CurrentID
 		}
 	}
-	effectiveTransport := transportCLI
-	if t := GetSessionTransport(e.cfg.SessionID); t != "" {
-		effectiveTransport = t
-	} else if agent := model.GetAgent(e.cfg.AgentID); agent != nil && agent.Transport != "" {
-		effectiveTransport = agent.Transport
+	meta.Transport = ""
+	if agent := model.GetAgent(e.cfg.AgentID); agent != nil {
+		meta.Transport = agent.DeriveTransport()
 	}
-	meta.Transport = effectiveTransport
 
 	if sessionModel := GetSessionModel(e.cfg.SessionID); sessionModel != "" {
 		meta.Model = sessionModel

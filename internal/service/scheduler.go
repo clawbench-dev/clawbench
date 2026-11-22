@@ -1348,7 +1348,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// ACP tasks have no user present to approve permission requests.
 	// Enable auto-approve so the ACP client automatically selects the first
 	// allow option, preventing indefinite blocking on permission dialogs.
-	if agent.Transport == "acp-stdio" {
+	if agent.SupportsACP() {
 		if err := UpdateSessionAutoApprove(sessionID, true); err != nil {
 			slog.Error("failed to enable auto-approve for scheduled ACP session",
 				slog.String("session_id", sessionID),
@@ -1448,7 +1448,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// same priority a chat turn uses: per-model pick > supported global default >
 	// let the agent decide. Reading agent.ThinkingEffort directly would ignore
 	// both the per-model memory and PreferredThinkingEffort.
-	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.Transport == transportACPStdio)
+	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.SupportsACP())
 
 	chatReq := ai.ChatRequest{
 		Prompt:             promptForAI,

@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,144 +9,46 @@ import (
 	"clawbench/internal/model"
 )
 
-// setupTestBackends registers backend factories for testing.
-// We can't import backend sub-packages due to import cycles,
-// so we register lightweight stubs that satisfy NewBackend's lookup.
+// stubBackend is the in-process backend a test factory returns. It exists so
+// the factory tests never depend on the built-in agent's real implementation.
+type stubBackend struct{ id string }
+
+func (b *stubBackend) Name() string { return b.id }
+
+func (b *stubBackend) ExecuteStream(context.Context, ChatRequest) (<-chan StreamEvent, error) {
+	return nil, nil
+}
+
+// setupTestBackends registers one in-process factory for the built-in agent.
+// Every other backend is reached over ACP and therefore needs no factory at
+// all, which is exactly the property these tests pin.
 func setupTestBackends() {
 	backendFactoriesMu.Lock()
 	defer backendFactoriesMu.Unlock()
 	backendFactories = make(map[string]*BackendFactoryEntry)
-
-	stubs := []string{
-		"claude",
-		"codebuddy",
-		"opencode",
-		"qoder",
-		"vecli",
-		"pi",
-		"deepseek",
-		"kimi",
-		"copilot",
-		"codex",
-		"mimo",
-	}
-	for _, id := range stubs {
-		backendType := id // capture for closure
-		// A stub CLIBackend is enough: this test is about factory dispatch, not
-		// about any particular backend's transport. vecli/codex used to be
-		// special-cased here only because their implementations lived in this
-		// package; they now live in their own sub-packages.
-		backendFactories[backendType] = &BackendFactoryEntry{
-			NewBackendFn: func() AIBackend {
-				return &CLIBackend{
-					BackendName: backendType,
-					Cmd:         backendType,
-					BuildArgsFn: func(req ChatRequest) []string { return nil },
-					NewParserFn: func() LineParser { return &testLineParser{} },
-				}
-			},
-		}
+	backendFactories["builtin"] = &BackendFactoryEntry{
+		NewBackendFn: func() AIBackend { return &stubBackend{id: "builtin"} },
 	}
 }
 
-func TestNewBackend_Claude(t *testing.T) {
+func TestNewBackend_InProcessBackend(t *testing.T) {
 	setupTestBackends()
-	backend, err := NewBackend("claude")
+	backend, err := NewBackend("builtin")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
-	assert.Equal(t, "claude", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "claude should be a CLIBackend")
+	assert.Equal(t, "builtin", backend.Name())
 }
 
-func TestNewBackend_Codebuddy(t *testing.T) {
+// A backend that only speaks ACP has no factory, so the CLI entry point must
+// fail loudly instead of returning a half-working backend.
+func TestNewBackend_ACPOnlyBackendFailsLoudly(t *testing.T) {
 	setupTestBackends()
-	backend, err := NewBackend("codebuddy")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "codebuddy", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "codebuddy should be a CLIBackend")
-}
-
-func TestNewBackend_OpenCode(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackend("opencode")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "opencode", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "opencode should be a CLIBackend")
-}
-
-func TestNewBackend_Qoder(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackend("qoder")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "qoder", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "qoder should be a CLIBackend")
-}
-
-func TestNewBackend_Vecli(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackend("vecli")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "vecli", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "vecli should resolve through its factory")
-}
-
-func TestNewBackend_Pi(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackend("pi")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "pi", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "pi should be a CLIBackend")
-}
-
-func TestNewBackend_DeepSeek(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackend("deepseek")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "deepseek", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "deepseek should be a CLIBackend")
-}
-
-func TestNewBackend_Kimi(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackend("kimi")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "kimi", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "kimi should be a CLIBackend")
-}
-
-func TestNewBackend_Copilot(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackend("copilot")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "copilot", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "copilot should be a CLIBackend")
-}
-
-func TestNewBackend_Codex(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackend("codex")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "codex", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "codex should resolve through its factory")
+	for _, id := range []string{"claude", "codebuddy", "opencode", "codex", "kimi", "vecli", "copilot"} {
+		backend, err := NewBackend(id)
+		assert.Error(t, err, "%s must not resolve through a CLI factory", id)
+		assert.Nil(t, backend)
+		assert.Contains(t, err.Error(), "unsupported backend type")
+	}
 }
 
 func TestNewBackend_Unsupported(t *testing.T) {
@@ -163,55 +66,21 @@ func TestNewBackend_Empty(t *testing.T) {
 
 func TestNewBackend_CaseSensitive(t *testing.T) {
 	setupTestBackends()
-	// Backend type is case-sensitive
-	_, err := NewBackend("Claude")
+	_, err := NewBackend("Builtin")
 	assert.Error(t, err, "backend type should be case-sensitive")
-
-	_, err = NewBackend("PI")
-	assert.Error(t, err, "backend type should be case-sensitive")
-}
-
-func TestBackendSupportsCLI(t *testing.T) {
-	setupTestBackends()
-	// Registered CLI backends report true
-	assert.True(t, BackendSupportsCLI("claude"))
-	assert.True(t, BackendSupportsCLI("kimi"))
-	assert.True(t, BackendSupportsCLI("codex")) // custom backend also counts as CLI
-	assert.True(t, BackendSupportsCLI("vecli"))
-
-	// Backends not in the test stub map report false (grok is ACP-first but
-	// also registers a CLI fallback; it's simply absent from the stub map).
-	assert.False(t, BackendSupportsCLI("grok"))
-	assert.False(t, BackendSupportsCLI("unsupported"))
-	assert.False(t, BackendSupportsCLI(""))
 }
 
 // --- NewBackendForAgent tests ---
 
-func TestNewBackendForAgent_NoAgentID_FallsBackToCLI(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackendForAgent("claude", "")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "claude", backend.Name())
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok)
-}
-
-func TestNewBackendForAgent_UnknownAgentID_FallsBackToCLI(t *testing.T) {
-	setupTestBackends()
-	backend, err := NewBackendForAgent("claude", "nonexistent-agent")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "claude", backend.Name())
+func agentForACP(t *testing.T) {
+	t.Helper()
+	origAgents := model.Agents
+	t.Cleanup(func() { model.Agents = origAgents })
 }
 
 func TestNewBackendForAgent_ACPStdioTransport(t *testing.T) {
 	setupTestBackends()
-	// Set up a test agent with ACP acp-stdio transport
-	origAgents := model.Agents
-	t.Cleanup(func() { model.Agents = origAgents })
-
+	agentForACP(t)
 	model.Agents = map[string]*model.Agent{
 		"test-acp": {
 			ID:         "test-acp",
@@ -226,103 +95,61 @@ func TestNewBackendForAgent_ACPStdioTransport(t *testing.T) {
 	assert.NotNil(t, backend)
 	assert.Equal(t, "claude", backend.Name())
 
-	// ACP backends are ACPBackend directly
 	_, ok := backend.(*ACPBackend)
 	assert.True(t, ok, "claude ACP should be ACPBackend directly")
 }
 
-func TestNewBackendForAgent_ACPHttpTransport_Unsupported(t *testing.T) {
+// A legacy "cli" value on an ACP-capable agent must not strand the turn: the
+// factory reads the command, not the column.
+func TestNewBackendForAgent_CLITransport_FallsBackToACP(t *testing.T) {
 	setupTestBackends()
-	origAgents := model.Agents
-	t.Cleanup(func() { model.Agents = origAgents })
-
-	model.Agents = map[string]*model.Agent{
-		"test-http": {
-			ID:        "test-http",
-			Backend:   "codebuddy",
-			Transport: "acp-http",
-		},
-	}
-
-	// acp-http is no longer supported; should fall back to CLI backend
-	backend, err := NewBackendForAgent("codebuddy", "test-http")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "codebuddy", backend.Name())
-
-	// Should fall back to CLIBackend (CLI mode), not ACPBackend
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "acp-http should fall back to CLIBackend")
-}
-
-func TestNewBackendForAgent_CLITransport_FallsBack(t *testing.T) {
-	setupTestBackends()
-	origAgents := model.Agents
-	t.Cleanup(func() { model.Agents = origAgents })
-
+	agentForACP(t)
 	model.Agents = map[string]*model.Agent{
 		"test-cli": {
-			ID:        "test-cli",
-			Backend:   "claude",
-			Transport: "cli",
+			ID:         "test-cli",
+			Backend:    "claude",
+			Transport:  "cli",
+			AcpCommand: "claude acp",
 		},
 	}
 
 	backend, err := NewBackendForAgent("claude", "test-cli")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
-	assert.Equal(t, "claude", backend.Name())
-
-	// Should be the standard CLIBackend (not ACPBackend)
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok)
+	_, ok := backend.(*ACPBackend)
+	assert.True(t, ok, "a legacy cli transport must run over ACP")
 }
 
-func TestNewBackendForAgentWithTransport_ACPOverrideOnCLIAgent_FallsBack(t *testing.T) {
+func TestNewBackendForAgent_LegacyCLITransportStillUsesACP(t *testing.T) {
 	setupTestBackends()
-	origAgents := model.Agents
-	t.Cleanup(func() { model.Agents = origAgents })
-
+	agentForACP(t)
 	model.Agents = map[string]*model.Agent{
 		"test-pi": {
-			ID:        "test-pi",
-			Backend:   "pi",
-			Transport: "cli",
+			ID:         "test-pi",
+			Backend:    "pi",
+			AcpCommand: "pi-acp",
 		},
 	}
 
-	// Session had acp-stdio persisted but agent (pi) only supports CLI.
-	// Should fall back gracefully to CLI backend instead of erroring out.
-	backend, err := NewBackendForAgentWithTransport("pi", "test-pi", "acp-stdio")
+	backend, err := NewBackendForAgent("pi", "test-pi")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
-	assert.Equal(t, "pi", backend.Name())
-
-	// Should be CLIBackend (CLI mode), NOT ACPBackend
-	_, ok := backend.(*CLIBackend)
-	assert.True(t, ok, "acp-stdio override on CLI agent should fall back to CLIBackend")
-
-	_, ok = backend.(*ACPBackend)
-	assert.False(t, ok, "should NOT be ACPBackend when agent transport is cli")
+	_, ok := backend.(*ACPBackend)
+	assert.True(t, ok)
 }
 
-func TestNewBackendForAgentWithTransport_EmptyAgentID_ResolvesBackendAgent(t *testing.T) {
+func TestNewBackendForAgent_EmptyAgentID_ResolvesBackendAgent(t *testing.T) {
 	setupTestBackends()
-	origAgents := model.Agents
-	t.Cleanup(func() { model.Agents = origAgents })
-
+	agentForACP(t)
 	model.Agents = map[string]*model.Agent{
 		"antigravity": {
 			ID:         "antigravity",
 			Backend:    "antigravity",
-			Transport:  "acp-stdio",
 			AcpCommand: "agy acp",
 		},
 	}
 
-	// When agentID is empty, it should resolve to model.GetAgent("antigravity")
-	// and create an ACPBackend instead of failing with no CLI implementation.
-	backend, err := NewBackendForAgentWithTransport("antigravity", "", "acp-stdio")
+	backend, err := NewBackendForAgent("antigravity", "")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
 	assert.Equal(t, "antigravity", backend.Name())
@@ -331,59 +158,44 @@ func TestNewBackendForAgentWithTransport_EmptyAgentID_ResolvesBackendAgent(t *te
 	assert.True(t, ok, "should resolve to ACPBackend for ACP-only agent when agentID is empty")
 }
 
-// TestNewBackendForAgentWithTransport_EmptyAgentID_UnknownBackend_FailsLoudly
+// TestNewBackendForAgent_EmptyAgentID_UnknownBackend_FailsLoudly
 // pins the boundary of the empty-agentID recovery: it resolves an agent only
 // when the backend type matches one. It must NOT fall back to the default agent
 // — the default agent may belong to a different backend, and handing back an
-// ACPBackend for it would silently run the wrong agent/command. With no match,
-// the CLI factory runs and fails loudly for an ACP-only backend, which is the
-// signal callers should see (and what the queue fix prevents from happening).
-func TestNewBackendForAgentWithTransport_EmptyAgentID_UnknownBackend_FailsLoudly(t *testing.T) {
+// ACPBackend for it would silently run the wrong agent/command.
+func TestNewBackendForAgent_EmptyAgentID_UnknownBackend_FailsLoudly(t *testing.T) {
 	setupTestBackends()
-	origAgents := model.Agents
+	agentForACP(t)
 	origDefault := model.DefaultAgentID
-	t.Cleanup(func() {
-		model.Agents = origAgents
-		model.DefaultAgentID = origDefault
-	})
+	t.Cleanup(func() { model.DefaultAgentID = origDefault })
 
 	model.Agents = map[string]*model.Agent{
 		"default-acp": {
 			ID:         "default-acp",
 			Backend:    "antigravity",
-			Transport:  "acp-stdio",
 			AcpCommand: "agy acp",
 		},
 	}
 	model.DefaultAgentID = "default-acp"
 
-	// backendType matches no agent, and agentID is empty. The default agent is
-	// ACP-only and unrelated to "unknown-backend" — it must NOT be used.
-	backend, err := NewBackendForAgentWithTransport("unknown-backend", "", "acp-stdio")
+	backend, err := NewBackendForAgent("unknown-backend", "")
 	assert.Error(t, err, "an unknown backend with no matching agent must fail, not run the default agent")
 	assert.Nil(t, backend)
 	assert.Contains(t, err.Error(), "unsupported backend type")
 }
 
-// TestNewBackendForAgentWithTransport_EmptyAgentID_MatchesAgentByBackendType
-// covers the legitimate recovery: when agentID is empty but an agent's ID equals
-// the backend type, that agent is used (so ACP-only backends still work when a
-// caller passes only the backend name).
-func TestNewBackendForAgentWithTransport_EmptyAgentID_MatchesAgentByBackendType(t *testing.T) {
+func TestNewBackendForAgent_EmptyAgentID_MatchesAgentByBackendType(t *testing.T) {
 	setupTestBackends()
-	origAgents := model.Agents
-	t.Cleanup(func() { model.Agents = origAgents })
-
+	agentForACP(t)
 	model.Agents = map[string]*model.Agent{
 		"antigravity": {
 			ID:         "antigravity",
 			Backend:    "antigravity",
-			Transport:  "acp-stdio",
 			AcpCommand: "agy acp",
 		},
 	}
 
-	backend, err := NewBackendForAgentWithTransport("antigravity", "", "acp-stdio")
+	backend, err := NewBackendForAgent("antigravity", "")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
 	assert.Equal(t, "antigravity", backend.Name())

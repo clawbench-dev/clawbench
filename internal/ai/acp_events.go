@@ -1413,7 +1413,6 @@ func EnrichModelListWith(agent *model.Agent, modelList *ModelListState) *ModelLi
 	// Prices are attached here so every channel that ships this state over WS
 	// (model_list_update, session bootstrap) carries them; see model.WithPrices.
 	enriched.Models = model.WithPrices(modelList.Models)
-	enriched.CLIModels = model.WithPrices(agent.Models)
 	// The provider's models ride along on the resolved list. This state is what
 	// GET /api/ai/chat and WS model_list_update ship, and the client writes
 	// `resolvedModels` straight onto the agent — building it from the agent's own

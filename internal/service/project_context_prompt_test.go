@@ -192,11 +192,11 @@ func TestProjectContextSection_WiredIntoBuiltinSystemPrompt(t *testing.T) {
 		"c1": {ID: "c1", Backend: "codebuddy", RuntimeSystemPrompt: "C1", Command: "codebuddy"},
 	})
 
-	builtinReq := BuildChatRequest("hi", "sess-builtin", project, "builtin", "b1", "", "", "", "", project, false)
+	builtinReq := BuildChatRequest("hi", "sess-builtin", project, "builtin", "b1", "", "", "", project, false)
 	assert.Contains(t, builtinReq.SystemPrompt, "PROJECT-RULE-MARKER",
 		"the built-in agent has no discovery of its own, so it must be injected")
 
-	cliReq := BuildChatRequest("hi", "sess-cli", project, "codebuddy", "c1", "", "", "", "", project, false)
+	cliReq := BuildChatRequest("hi", "sess-cli", project, "codebuddy", "c1", "", "", "", project, false)
 	assert.NotContains(t, cliReq.SystemPrompt, "PROJECT-RULE-MARKER",
 		"external backends read their own AGENTS.md")
 }
@@ -328,11 +328,11 @@ func TestAgentSkipsProjectContext(t *testing.T) {
 		"off": {ID: "off", Backend: "builtin", RuntimeSystemPrompt: "B"},
 	})
 
-	skipped := BuildChatRequest("hi", "sess-skip", project, "builtin", "on", "", "", "", "", project, false)
+	skipped := BuildChatRequest("hi", "sess-skip", project, "builtin", "on", "", "", "", project, false)
 	assert.NotContains(t, skipped.SystemPrompt, "PROJECT-RULE-MARKER",
 		"the switch must turn injection off")
 
-	kept := BuildChatRequest("hi", "sess-keep", project, "builtin", "off", "", "", "", "", project, false)
+	kept := BuildChatRequest("hi", "sess-keep", project, "builtin", "off", "", "", "", project, false)
 	assert.Contains(t, kept.SystemPrompt, "PROJECT-RULE-MARKER",
 		"the zero value must keep injecting")
 }

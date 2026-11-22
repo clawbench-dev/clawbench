@@ -187,7 +187,6 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			sessionInfoBackend = cachedSessionInfo.Backend
 			sessionAgentID = cachedSessionInfo.AgentID
 			sessionModelID = cachedSessionInfo.Model
-			sessionTransport = cachedSessionInfo.Transport
 			sessionAutoApprove = cachedSessionInfo.AutoApprove
 		}
 		if sessionInfoBackend != "" {
@@ -198,6 +197,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// any fetch failure, which would make a group render as a single chat
 		// (fork/rewind/model chrome reappearing). Empty for a session that no
 		// longer exists.
+		if a := model.GetAgent(sessionAgentID); a != nil {
+			sessionTransport = a.DeriveTransport()
+		}
 		sessionType := service.GetSessionType(sessionID)
 		// Auto-cruise switch (both group and single chat): read from the
 		// session's context_state so the frontend's toggle reflects the persisted
@@ -208,7 +210,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// Session-scoped capability snapshot (mode / thinking effort / models /
 		// plan / usage / commands), shared with the member-context endpoint so
 		// both surfaces resolve state the same way.
-		st := sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport)
+		st := sessionStateSnapshot(sessionID, sessionAgentID)
 		modeState, thinkingEffortState, modelListState := st.Mode, st.Effort, st.ModelList
 		configOptions := st.ConfigOptions
 		planState, usageState := st.Plan, st.Usage
@@ -290,7 +292,6 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		ModelID        string            `json:"modelId"`
 		ThinkingEffort string            `json:"thinkingEffort"`
 		ModeID         string            `json:"modeId"`
-		Transport      string            `json:"transport"`
 		ClientID       string            `json:"clientId"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
@@ -490,17 +491,6 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// and would freeze the global default the moment a message was sent. The
 	// explicit pick is recorded by the PATCH the picker fires when the user
 	// actually clicks a level; this request only applies it to the turn.
-
-	// Persist transport selection for this session so subsequent loads
-	// restore the user's choice instead of the agent default.
-	// Per-session cleanup: when switching THIS session to CLI, close only
-	// this session's ACP connection (not all sessions for the agent).
-	if req.Transport != "" {
-		service.UpdateSessionTransport(sessionID, req.Transport)
-		if req.Transport == "cli" {
-			ai.GetACPConnManager().CloseConn(sessionID)
-		}
-	}
 
 	// Sync auto-approve mode from DB to ACPConn on prompt
 	if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
@@ -734,13 +724,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// the connection after the idle timeout only if no new request has
 		// claimed it.
 		defer func() {
-			effectiveTransport := "cli"
-			if t := service.GetSessionTransport(sessionID); t != "" {
-				effectiveTransport = t
-			} else if agent := model.GetAgent(effectiveAgentID); agent != nil && agent.Transport != "" {
-				effectiveTransport = agent.Transport
-			}
-			if effectiveTransport == "acp-stdio" {
+			if agent := model.GetAgent(effectiveAgentID); agent != nil && agent.SupportsACP() {
 				slog.Info("acp: marking connection idle for completed session", "session_id", sessionID, "agent_id", effectiveAgentID)
 				ai.GetACPConnManager().MarkIdle(sessionID)
 			}
@@ -762,7 +746,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		if turnFiles := turnFilesForModel(allFiles, validatedFilePaths); len(turnFiles) > 0 {
 			firstOpts = append(firstOpts, service.WithTurnFiles(turnFiles))
 		}
-		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments, firstOpts...)
+		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, fileDir, hasAttachments, firstOpts...)
 
 		// Execute first message
 		result := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir)
@@ -801,7 +785,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					// makes it the newest row — bound the replayed history there
 					// so the built-in backend does not see it twice.
 					retryOpts := []service.ChatRequestOption{service.WithCurrentMessageID(service.LastChatMessageID(sessionID))}
-					retryChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false, retryOpts...)
+					retryChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, fileDir, false, retryOpts...)
 					retryResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, retryChatReq, fileDir)
 					return service.DrainResult{
 						CancelReason:   retryResult.cancelReason,
@@ -825,7 +809,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					// Same bound as auto-continue: the confirmation prompt is
 					// persisted by the runner before the request is built.
 					confirmOpts := []service.ChatRequestOption{service.WithCurrentMessageID(service.LastChatMessageID(sessionID))}
-					confirmReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, false, confirmOpts...)
+					confirmReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, fileDir, false, confirmOpts...)
 					confirmResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, confirmReq, fileDir)
 					return service.DrainResult{
 						CancelReason: confirmResult.cancelReason,
@@ -877,9 +861,8 @@ type sessionState struct {
 
 // isBuiltinAgent reports whether an agent runs on the in-process backend.
 //
-// Its transport is "cli" for the same reason a real CLI's is — there is no ACP
-// connection — but that is not a reason to hide the options this build defines
-// itself.
+// It has no ACP connection, but that is not a reason to hide the options this
+// build defines itself.
 func isBuiltinAgent(agentID string) bool {
 	a := model.GetAgent(agentID)
 	return a != nil && a.BuiltinBackend
@@ -892,25 +875,18 @@ func isBuiltinAgent(agentID string) bool {
 // row is a session too, and its settings drawer needs exactly this state. Two
 // copies would drift — one would learn about a new fallback source and the
 // other would keep showing a stale mode.
-func sessionStateSnapshot(sessionID, sessionAgentID, sessionTransport string) sessionState {
+func sessionStateSnapshot(sessionID, sessionAgentID string) sessionState {
 	var st sessionState
 	if sessionID == "" {
 		return st
 	}
-	// An explicit "cli" transport means there is no ACP connection to ask. The
-	// built-in agent is the exception: its transport is "cli" by construction
-	// (it runs in-process), yet its mode and thinking options are static and
-	// must still reach the drawer.
-	if sessionTransport == "cli" && !isBuiltinAgent(sessionAgentID) {
-		return st
-	}
-	// A session row can carry an EMPTY transport (a group member row never had
-	// one written: the member inherits the agent's transport, exactly as a turn
-	// does through resolveIsACP). Empty is NOT "cli" — treating it as a reason to
-	// bail out left every member's mode/thinking/usage permanently empty in the
-	// settings drawer. Only an explicit "cli" opts out; empty falls through to
-	// the agent-level lookups below, which is where the real transport is
-	// resolved.
+	// No transport gate here: the cached snapshot is keyed by SESSION, so only
+	// a session that actually ran over ACP has one to read. The in-process
+	// agent has no connection but still falls through to the agent-level
+	// registry, where this build publishes its static mode/thinking options.
+	// Bailing out on "not an ACP agent" would also blank a session whose agent
+	// row is missing or has lost its command, even though its context_state
+	// still holds the last real selection.
 	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || s.ConfigOptions != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil || s.Team != nil || s.ReplayPending {
 		st.Mode = s.Mode
 		st.Effort = s.Effort
@@ -1121,8 +1097,8 @@ func executeStreamRun(
 // Kept as a thin wrapper (rather than updating the ~30 call sites and tests that
 // use it) so the unification lands as one behavioral change: the handler no
 // longer has its own copy to drift from the queue/push path.
-func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool, opts ...service.ChatRequestOption) ai.ChatRequest {
-	return service.BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir, hasAttachments, opts...)
+func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, fileDir string, hasAttachments bool, opts ...service.ChatRequestOption) ai.ChatRequest {
+	return service.BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, fileDir, hasAttachments, opts...)
 }
 
 // buildForkContext delegates to the service layer's single implementation.
@@ -1200,10 +1176,10 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, msgID int64, sessionID,
 		prompt = injected + "\n\n" + prompt
 	}
 
-	// No explicit model/transport overrides: the shared builder reads the
-	// session's persisted choices itself, so a queued message honors the same
-	// model and transport a direct send would. Passing them here as well would
-	// duplicate that lookup and invite the two paths to drift again.
+	// No explicit model override: the shared builder reads the session's
+	// persisted choice itself, so a queued message honors the same model a
+	// direct send would. Passing it here as well would duplicate that lookup and
+	// invite the two paths to drift again.
 	hasAttachments := len(qMsg.FilePaths) > 0 || len(qMsg.Files) > 0
 	var opts []service.ChatRequestOption
 	if !ai.IsACPSlashCommand(qMsg.Text) {
@@ -1213,7 +1189,7 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, msgID int64, sessionID,
 	if len(qMsg.Files) > 0 {
 		opts = append(opts, service.WithTurnFiles(qMsg.Files))
 	}
-	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, "", "", "", "", fileDir, hasAttachments, opts...), nil
+	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, "", "", "", fileDir, hasAttachments, opts...), nil
 }
 
 // turnFilesForModel merges the two attachment channels into one list.

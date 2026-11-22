@@ -137,7 +137,7 @@ test.describe('first-session auto probe', () => {
       const agentId = (created.body as { id: string }).id
 
       // A brand-new agent has no capability snapshot: the API must gate its
-      // model list (empty `models`, raw CLI list preserved under `cliModels`).
+      // model list (empty `models` until the agent reports its own).
       const before = await json('/api/agents')
       const beforeAgent = (before.body.agents || []).find((a: { id: string }) => a.id === agentId)
 

@@ -70,7 +70,7 @@ func TestBuildChatRequest_InjectsKBContext(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	withKB := BuildChatRequest("报销流程是什么", "s-kb", "/proj", "codebuddy", "codebuddy", "", "", "", "", "/proj", false, WithKBInjection())
+	withKB := BuildChatRequest("报销流程是什么", "s-kb", "/proj", "codebuddy", "codebuddy", "", "", "", "/proj", false, WithKBInjection())
 	require.Contains(t, withKB.Prompt, "[知识库参考]")
 	require.Contains(t, withKB.Prompt, "handbook.md")
 	require.Contains(t, withKB.Prompt, "财务审批")
@@ -84,16 +84,16 @@ func TestBuildChatRequest_InjectsKBContext(t *testing.T) {
 	// An explicit query retrieves with the user's question even when the prompt
 	// itself is a long group timeline.
 	longPrompt := "群聊历史：大家讨论了很多与知识库无关的内容。现在轮到成员发言。"
-	withQuery := BuildChatRequest(longPrompt, "s-kb", "/proj", "codebuddy", "codebuddy", "", "", "", "", "/proj", false, WithKBQuery("报销流程是什么"))
+	withQuery := BuildChatRequest(longPrompt, "s-kb", "/proj", "codebuddy", "codebuddy", "", "", "", "/proj", false, WithKBQuery("报销流程是什么"))
 	require.Contains(t, withQuery.Prompt, "[知识库参考]")
 	require.Contains(t, withQuery.Prompt, "财务审批")
 	require.NotEmpty(t, withQuery.KBRefs)
 
-	without := BuildChatRequest("报销流程是什么", "s-kb", "/proj", "codebuddy", "codebuddy", "", "", "", "", "/proj", false)
+	without := BuildChatRequest("报销流程是什么", "s-kb", "/proj", "codebuddy", "codebuddy", "", "", "", "/proj", false)
 	require.NotContains(t, without.Prompt, "[知识库参考]")
 	require.Empty(t, without.KBRefs)
 
-	slash := BuildChatRequest("/compact", "s-kb", "/proj", "codebuddy", "codebuddy", "", "", "", "", "/proj", false, WithKBInjection())
+	slash := BuildChatRequest("/compact", "s-kb", "/proj", "codebuddy", "codebuddy", "", "", "", "/proj", false, WithKBInjection())
 	require.NotContains(t, slash.Prompt, "[知识库参考]")
 	require.Empty(t, slash.KBRefs)
 

@@ -1,7 +1,6 @@
 package backends
 
 import (
-	"clawbench/internal/ai"
 	"clawbench/internal/model"
 )
 
@@ -9,9 +8,8 @@ import (
 // backend. The bool is false when the backend is not registered.
 //
 // This is the ONE place that answers "what can this backend do". Before it,
-// every caller had to know the mapping itself: a CLI factory means HasCLI, a
-// non-nil MidTurn means mid-turn injection, a non-empty ProviderEnvSpec means
-// provider binding. ProviderEnvSpec additionally had no vocabulary for the
+// every caller had to know the mapping itself: a non-nil MidTurn means
+// mid-turn injection, a non-empty ProviderEnvSpec means provider binding. ProviderEnvSpec additionally had no vocabulary for the
 // DELIVERY METHODS (env vs config-dir vs config-file …), so that taxonomy
 // existed only in prose.
 //
@@ -24,7 +22,6 @@ func Capabilities(backendID string) (model.BackendCapabilities, bool) {
 		return model.BackendCapabilities{}, false
 	}
 	caps := model.BackendCapabilities{
-		HasCLI: ai.BackendSupportsCLI(backendID),
 		// ACP support is the spawn command, not the mapping data: backends with
 		// plain ACP (claude, cursor) leave ACP nil and use the generic remaps.
 		HasACP:                 p.Spec.AcpCommand != "",

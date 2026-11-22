@@ -83,7 +83,6 @@ func setupAgentTestEnv(t *testing.T) func() {
 			{ID: "claude-sonnet-4-6", Name: "Claude Sonnet", Default: true},
 		},
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
-		SupportsCLI:          true, // claude has a CLI backend implementation
 	}
 
 	require.NoError(t, service.SaveAgent(db, codebuddyAgent))
@@ -180,9 +179,8 @@ func TestAgentGet_ModelsResolvedFromACP(t *testing.T) {
 
 	var resp struct {
 		Agents []struct {
-			ID        string             `json:"id"`
-			Models    []model.AgentModel `json:"models"`
-			CLIModels []model.AgentModel `json:"cliModels"`
+			ID     string             `json:"id"`
+			Models []model.AgentModel `json:"models"`
 		} `json:"agents"`
 		ACPStates map[string]struct {
 			ModelList *ai.ModelListState `json:"modelListState"`
@@ -191,9 +189,8 @@ func TestAgentGet_ModelsResolvedFromACP(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	var claude *struct {
-		ID        string             `json:"id"`
-		Models    []model.AgentModel `json:"models"`
-		CLIModels []model.AgentModel `json:"cliModels"`
+		ID     string             `json:"id"`
+		Models []model.AgentModel `json:"models"`
 	}
 	for i := range resp.Agents {
 		if resp.Agents[i].ID == "claude" {
@@ -210,11 +207,6 @@ func TestAgentGet_ModelsResolvedFromACP(t *testing.T) {
 	assert.Equal(t, "claude-opus-4-5", claude.Models[1].ID)
 	assert.True(t, claude.Models[1].Default, "the session's current model is the default")
 
-	// The untouched CLI list is reported alongside for the CLI transport view.
-	require.Len(t, claude.CLIModels, 1)
-	assert.Equal(t, "claude-sonnet-4-6", claude.CLIModels[0].ID)
-	assert.Equal(t, "Claude Sonnet", claude.CLIModels[0].Name, "the CLI list keeps its own name")
-
 	// ACP state is still delivered separately, now carrying both lists.
 	acpState, ok := resp.ACPStates["claude"]
 	require.True(t, ok, "claude should have cached ACP state")
@@ -222,7 +214,6 @@ func TestAgentGet_ModelsResolvedFromACP(t *testing.T) {
 	require.Len(t, acpState.ModelList.Models, 2)
 	assert.Equal(t, "claude-opus-4-5", acpState.ModelList.CurrentModelID)
 	require.Len(t, acpState.ModelList.ResolvedModels, 2, "the resolved list travels with the ACP state")
-	require.Len(t, acpState.ModelList.CLIModels, 1)
 }
 
 func TestAgentPatch_PreferredModel(t *testing.T) {
@@ -262,12 +253,26 @@ func TestAgentPatch_InvalidPreferredModel(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// cleanupSeed clears what a test merged into the process-wide capability
+// registry. Update() only ever ADDS, and the public API has no "forget an
+// agent" call, so tests that seed a model list must remove the entry outright —
+// otherwise the next test (in this or another file) sees a list it never wrote.
+func cleanupSeed(t *testing.T, reg *ai.AgentCapabilityRegistry) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, id := range []string{"codebuddy", "claude"} {
+			reg.ResetForTest(id)
+		}
+	})
+}
+
 func TestAgentPatch_PreferredModel_ACPReportedModel(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	// Simulate ACP reporting a model that is NOT in the CLI-discovered
 	// agent.Models list (e.g. a model only exposed by the ACP runtime).
 	reg := ai.GetAgentCapabilityRegistry()
+	cleanupSeed(t, reg)
 	reg.Update("codebuddy", &ai.AgentCapability{
 		AvailableModels: []model.AgentModel{
 			{ID: "claude-opus-4-5", Name: "Claude Opus 4.5", Default: true},
@@ -630,6 +635,7 @@ func TestAgentPatch_PreferredThinkingEffort_ACPLevels(t *testing.T) {
 	// Simulate ACP reporting levels that differ from BackendSpec
 	// (e.g., ACP reports "minimal"/"max" which aren't in static ThinkingEffortLevels)
 	reg := ai.GetAgentCapabilityRegistry()
+	t.Cleanup(func() { reg.Update("codebuddy", &ai.AgentCapability{}) })
 	reg.Update("codebuddy", &ai.AgentCapability{
 		AvailableThinkingEfforts: []ai.ThinkingEffortDef{
 			{ID: "minimal", Name: "Minimal"},
@@ -681,6 +687,7 @@ func TestAgentPatch_PreferredThinkingEffort_CLIModeIgnoresACPLevels(t *testing.T
 
 	// Agent stays in CLI mode (default) — ACP levels should be ignored
 	reg := ai.GetAgentCapabilityRegistry()
+	t.Cleanup(func() { reg.Update("codebuddy", &ai.AgentCapability{}) })
 	reg.Update("codebuddy", &ai.AgentCapability{
 		AvailableThinkingEfforts: []ai.ThinkingEffortDef{
 			{ID: "minimal", Name: "Minimal"},
@@ -717,6 +724,7 @@ func TestAgentPatch_PreferredMode(t *testing.T) {
 
 	// Register available modes for the agent so validation passes
 	reg := ai.GetAgentCapabilityRegistry()
+	t.Cleanup(func() { reg.Update("codebuddy", &ai.AgentCapability{}) })
 	reg.Update("codebuddy", &ai.AgentCapability{
 		AvailableModes: []ai.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}},
 	})
@@ -746,6 +754,7 @@ func TestAgentPatch_InvalidPreferredMode(t *testing.T) {
 
 	// Register available modes for the agent
 	reg := ai.GetAgentCapabilityRegistry()
+	t.Cleanup(func() { reg.Update("codebuddy", &ai.AgentCapability{}) })
 	reg.Update("codebuddy", &ai.AgentCapability{
 		AvailableModes: []ai.ModeDef{{ID: "code", Name: "Code"}},
 	})
@@ -899,6 +908,7 @@ func TestAgentPatch_MethodNotAllowed(t *testing.T) {
 
 func TestAgentRefreshModels_Success(t *testing.T) {
 	defer setupAgentTestEnv(t)()
+	// TEMP: dump registry before/after
 
 	// Override discovery for testing
 	origDiscover := model.DiscoverWithDetail
@@ -927,49 +937,44 @@ func TestAgentRefreshModels_Success(t *testing.T) {
 	require.True(t, ok, "response should contain models array")
 	assert.Len(t, models, 2)
 
-	// The pure CLI list travels alongside so the client can rebase its CLI
-	// baseline for a later transport switch.
-	cliModels, ok := resp["cliModels"].([]any)
-	require.True(t, ok, "response should contain cliModels array")
-	assert.Len(t, cliModels, 2)
-
 	// Verify in-memory agent models were updated
 	assert.Equal(t, "glm-6", model.Agents["codebuddy"].Models[0].ID)
 	assert.Equal(t, "glm-5.1", model.Agents["codebuddy"].Models[1].ID)
 }
 
-// TestAgentRefreshModels_ResolvesAgainstCachedACPModels verifies that a CLI
-// refresh reports the ACP-resolved list as `models`, not the raw CLI list.
+// TestAgentRefreshModels_ResolvesAgainstCachedACPModels verifies that a
+// discovery OVERWRITE still reports ACP membership.
 //
-// The discovered list is only the CLI skeleton: when the agent's runtime has
-// already reported its own model list, ACP membership is authoritative. Before
-// this, refresh-models answered with the raw CLI list, so refreshing silently
-// replaced the list of models the agent can actually run.
-//
-// Transport is explicit "cli" — an agent running over ACP is refreshed by
-// probing the agent itself (see agent_refresh_acp_test.go), so this is the
-// dual-transport agent that is currently on CLI.
+// resolveRefreshedModels persists the discovered list on the agent, so the
+// membership check must not read the agent it just overwrote — it reads the
+// runtime registry (the same source GET /api/agents uses).
 func TestAgentRefreshModels_ResolvesAgainstCachedACPModels(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	codebuddyAgent := model.Agents["codebuddy"]
-	codebuddyAgent.AcpCommand = "codebuddy --acp"
-	codebuddyAgent.Transport = "cli"
-	t.Cleanup(func() {
-		codebuddyAgent.AcpCommand = ""
-		codebuddyAgent.Transport = ""
-	})
+	agent := &model.Agent{
+		ID: "refresh-unconfirmed", Name: "Refresh Unconfirmed", Backend: "custom-refresh",
+		Models: []model.AgentModel{{ID: "glm-6", Name: "GLM 6", Default: true}, {ID: "glm-5.1", Name: "GLM 5.1"}},
+		// No ACP command → the discovery path (an ACP agent is refreshed by
+		// probing the agent itself, see agent_refresh_acp_test.go).
+	}
+	model.Agents[agent.ID] = agent
+	model.AgentList = append(model.AgentList, agent)
+	model.RegisterModelSource(model.StaticSource(agent.Backend, "", nil))
 
 	reg := ai.GetAgentCapabilityRegistry()
-	reg.UpdateModels("codebuddy", []model.AgentModel{
+	// A CONCRETE model (not a tier alias) is what makes ACP membership
+	// authoritative; an alias-only list cannot be, by design.
+	reg.UpdateModels(agent.ID, []model.AgentModel{
 		{ID: "glm-6", Name: "GLM 6"},
 	})
-	t.Cleanup(func() { reg.UpdateModels("codebuddy", nil) })
+	// The registry is a process-wide singleton: leaving the seeded list behind
+	// would make LATER tests see codebuddy-family membership this test invented.
+	t.Cleanup(func() { reg.UpdateModels(agent.ID, nil) })
 
 	origDiscover := model.DiscoverWithDetail
 	model.DiscoverWithDetail = func(backend string) ([]model.AgentModel, string) {
-		if backend == "codebuddy" {
-			// The CLI knows a model the runtime does not report.
+		if backend == agent.Backend {
+			// The discovery source knows a model the runtime does not report.
 			return []model.AgentModel{
 				{ID: "glm-6", Name: "GLM 6", Default: true},
 				{ID: "glm-5.1", Name: "GLM 5.1"},
@@ -979,25 +984,21 @@ func TestAgentRefreshModels_ResolvesAgainstCachedACPModels(t *testing.T) {
 	}
 	defer func() { model.DiscoverWithDetail = origDiscover }()
 
-	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
+	req := newRequest(t, http.MethodPost, "/api/agents/"+agent.ID+"/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgentRefreshModels, req)
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	var resp struct {
-		Models    []model.AgentModel `json:"models"`
-		CLIModels []model.AgentModel `json:"cliModels"`
+		Models []model.AgentModel `json:"models"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
-	require.Len(t, resp.Models, 1, "ACP membership drops the CLI-only model")
+	require.Len(t, resp.Models, 1, "ACP membership drops the discovery-only model")
 	assert.Equal(t, "glm-6", resp.Models[0].ID)
 
-	require.Len(t, resp.CLIModels, 2, "the pure CLI list keeps every discovered model")
-	assert.Equal(t, "glm-5.1", resp.CLIModels[1].ID)
-
-	// The persisted list stays the discovered CLI list — resolution is a view.
-	require.Len(t, model.Agents["codebuddy"].Models, 2)
+	// The persisted list stays the discovered list — resolution is a view.
+	require.Len(t, model.GetAgent(agent.ID).Models, 2)
 }
 
 // An acp-stdio agent whose runtime has not reported models must not have the
@@ -1360,115 +1361,6 @@ func TestAgentPatch_PatchAgentDBError(t *testing.T) {
 	w := callHandler(ServeAgents, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-// ---------- Transport switching ----------
-
-func TestAgentPatch_TransportSwitchToCLI(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-
-	// Start with ACP transport
-	model.Agents["claude"].Transport = "acp-stdio"
-
-	body := map[string]any{
-		"id":        "claude",
-		"transport": "cli",
-	}
-	req := newRequest(t, http.MethodPatch, "/api/agents", body)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeAgents, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "cli", model.Agents["claude"].Transport)
-
-	// Verify DB updated
-	var transport string
-	err := store.UnsafeDBForTest().QueryRow("SELECT transport FROM agents WHERE id = ?", "claude").Scan(&transport)
-	require.NoError(t, err)
-	assert.Equal(t, "cli", transport)
-}
-
-func TestAgentPatch_TransportSwitchToACP(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-
-	// claude has AcpCommand in BackendRegistry
-	body := map[string]any{
-		"id":        "claude",
-		"transport": "acp-stdio",
-	}
-	req := newRequest(t, http.MethodPatch, "/api/agents", body)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeAgents, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "acp-stdio", model.Agents["claude"].Transport)
-}
-
-func TestAgentPatch_TransportACPNotAllowedForNoACPAgent(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-
-	// Create an agent whose backend has no ACP support in BackendRegistry
-	model.Agents["noacp"] = &model.Agent{
-		ID:      "noacp",
-		Name:    "NoACP",
-		Backend: "nonexistent-backend",
-		Models:  []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
-	}
-	model.AgentList = append(model.AgentList, model.Agents["noacp"])
-	require.NoError(t, service.SaveAgent(store.UnsafeDBForTest(), model.Agents["noacp"]))
-
-	body := map[string]any{
-		"id":        "noacp",
-		"transport": "acp-stdio",
-	}
-	req := newRequest(t, http.MethodPatch, "/api/agents", body)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeAgents, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestAgentPatch_TransportCLINotAllowedForACPOnlyAgent(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-
-	// Create an agent whose backend is ACP-only (no CLI implementation).
-	// This mirrors grok — has AcpCommand but no CLI factory.
-	model.Agents["acp-only"] = &model.Agent{
-		ID:          "acp-only",
-		Name:        "ACPOnly",
-		Backend:     "acp-only",
-		AcpCommand:  "grok agent stdio",
-		SupportsCLI: false,
-		Transport:   "acp-stdio",
-		Models:      []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
-	}
-	model.AgentList = append(model.AgentList, model.Agents["acp-only"])
-	require.NoError(t, service.SaveAgent(store.UnsafeDBForTest(), model.Agents["acp-only"]))
-
-	body := map[string]any{
-		"id":        "acp-only",
-		"transport": "cli",
-	}
-	req := newRequest(t, http.MethodPatch, "/api/agents", body)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeAgents, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, "acp-stdio", model.Agents["acp-only"].Transport, "transport should remain unchanged")
-}
-
-func TestAgentPatch_TransportInvalid(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-
-	body := map[string]any{
-		"id":        "claude",
-		"transport": "invalid",
-	}
-	req := newRequest(t, http.MethodPatch, "/api/agents", body)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeAgents, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ---------- ServeAgents method not allowed ----------
@@ -1863,6 +1755,22 @@ func TestServeAgentsGet_NonACPAgentNoACPState(t *testing.T) {
 func TestServeAgentsGet_ACPModelListIsResolvedIntoModels(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
+	// Restore any runtime state an earlier test may have seeded for these
+	// shared agent ids, so the resolution below is deterministic.
+	ai.GetAgentCapabilityRegistry().UpdateModels("claude", nil)
+	ai.GetAgentCapabilityRegistry().UpdateModels("codebuddy", nil)
+	t.Cleanup(func() {
+		ai.GetAgentCapabilityRegistry().UpdateModels("claude", nil)
+		ai.GetAgentCapabilityRegistry().UpdateModels("codebuddy", nil)
+	})
+
+	ai.GetAgentCapabilityRegistry().UpdateModels("claude", nil)
+	ai.GetAgentCapabilityRegistry().UpdateModels("codebuddy", nil)
+	t.Cleanup(func() {
+		ai.GetAgentCapabilityRegistry().UpdateModels("claude", nil)
+		ai.GetAgentCapabilityRegistry().UpdateModels("codebuddy", nil)
+	})
+
 	acpAgent := &model.Agent{
 		ID:         "acp-ml-override",
 		Name:       "ACP ML Override",
@@ -1881,6 +1789,7 @@ func TestServeAgentsGet_ACPModelListIsResolvedIntoModels(t *testing.T) {
 		{ID: "acp-model-1", Name: "ACP Model 1", Default: true},
 		{ID: "acp-model-2", Name: "ACP Model 2"},
 	})
+	t.Cleanup(func() { ai.GetAgentCapabilityRegistry().UpdateModels("acp-ml-override", nil) })
 
 	req := newRequest(t, http.MethodGet, "/api/agents", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -2076,20 +1985,19 @@ func TestAgentDelete_TakesOverSessions(t *testing.T) {
 	assert.Equal(t, "codebuddy", resp["replacementAgentId"])
 
 	// The row is rebound, and every agent-specific piece of state is cleared:
-	// model/transport describe the OLD agent, external_session_id names a native
-	// session the replacement never saw, and mode/usage belong to the old
-	// capability set and context window.
-	var agentID, backend, agentSource, modelName, transport, extID, takeoverFrom, ctxState string
+	// model describes the OLD agent, external_session_id names a native session
+	// the replacement never saw, and mode/usage belong to the old capability set
+	// and context window.
+	var agentID, backend, agentSource, modelName, extID, takeoverFrom, ctxState string
 	require.NoError(t, store.UnsafeDBForTest().QueryRow(
-		`SELECT agent_id, backend, agent_source, model, transport, external_session_id,
+		`SELECT agent_id, backend, agent_source, model, external_session_id,
 		        agent_takeover_from, context_state
 		   FROM chat_sessions WHERE id = 's1'`,
-	).Scan(&agentID, &backend, &agentSource, &modelName, &transport, &extID, &takeoverFrom, &ctxState))
+	).Scan(&agentID, &backend, &agentSource, &modelName, &extID, &takeoverFrom, &ctxState))
 	assert.Equal(t, "codebuddy", agentID)
 	assert.Equal(t, "codebuddy", backend)
 	assert.Equal(t, "default", agentSource)
 	assert.Empty(t, modelName)
-	assert.Empty(t, transport)
 	assert.Empty(t, extID)
 	// The DELETED agent's display name, not the replacement's: this is what the
 	// badge shows and what BuildChatRequest reads.
@@ -2453,6 +2361,7 @@ func TestServeAgentsGet_ResolvesACPModelsIntoAgentList(t *testing.T) {
 		{ID: "acp-m1", Name: "ACP Model 1"},
 		{ID: "acp-only", Name: "ACP Only"},
 	})
+	t.Cleanup(func() { reg.UpdateModels("acp-agent", nil) })
 
 	acpAgent := &model.Agent{
 		ID: "acp-agent", Name: "ACP Agent", Backend: "acp-backend",
@@ -2538,32 +2447,6 @@ func TestServeAgentsGet_UnconfirmedACPHidesCLIModels(t *testing.T) {
 
 	assert.Empty(t, got.Models,
 		"an acp-stdio agent whose ACP runtime has not reported models must expose no model list")
-	require.Len(t, got.CLIModels, 2,
-		"the CLI list is still shipped for the CLI transport view")
-	assert.Equal(t, "cli-m1", got.CLIModels[0].ID)
-}
-
-// The same agent on the CLI transport legitimately uses its CLI list.
-func TestServeAgentsGet_CLITransportKeepsCLIModels(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-
-	agent := &model.Agent{
-		ID: "dual-cli", Name: "Dual CLI", Backend: "acp-backend",
-		AcpCommand: "acp-server",
-		Transport:  "cli",
-		Models: []model.AgentModel{
-			{ID: "cli-m1", Name: "CLI M1", Default: true},
-			{ID: "cli-m2", Name: "CLI M2"},
-		},
-	}
-	model.Agents[agent.ID] = agent
-	model.AgentList = append(model.AgentList, agent)
-
-	got := fetchAgentFromAPI(t, agent.ID)
-
-	require.Len(t, got.Models, 2,
-		"a dual-transport agent currently on CLI uses its CLI list")
-	assert.Equal(t, "cli-m1", got.Models[0].ID)
 }
 
 // Once the ACP runtime has reported models, they are authoritative for
@@ -2574,6 +2457,7 @@ func TestServeAgentsGet_ConfirmedACPUsesACPMembership(t *testing.T) {
 	ai.GetAgentCapabilityRegistry().UpdateModels("acp-confirmed", []model.AgentModel{
 		{ID: "acp-live", Name: "ACP Live"},
 	})
+	t.Cleanup(func() { ai.GetAgentCapabilityRegistry().UpdateModels("acp-confirmed", nil) })
 
 	agent := &model.Agent{
 		ID: "acp-confirmed", Name: "ACP Confirmed", Backend: "acp-backend",
@@ -2784,7 +2668,6 @@ func TestAgentDuplicate_NoRaceWithConcurrentReaders(t *testing.T) {
 			default:
 			}
 			for _, a := range model.GetAgentList() {
-				_ = a.SupportsCLI
 				_ = a.SupportsMidTurn
 				_ = a.CanRefreshModels
 				_ = len(a.ThinkingEffortLevels)
@@ -2830,10 +2713,9 @@ func TestAgentCreate_CustomACPPersistsAndPublishes(t *testing.T) {
 	assert.Equal(t, "Trae", created.Name)
 	assert.Equal(t, model.CustomACPBackend, created.Backend,
 		"a custom agent must never borrow a registered backend id — the discovery sync would overwrite its command")
-	assert.Equal(t, "acp-stdio", created.Transport)
+	assert.Equal(t, model.TransportACPStdio, created.DeriveTransport())
 	assert.Equal(t, "trae acp --stdio", created.AcpCommand)
 	assert.True(t, created.SupportsACP(), "a stored command is what makes the ACP transport usable")
-	assert.False(t, created.SupportsCLI, "a custom backend has no CLI factory")
 	require.NotEmpty(t, created.ID)
 
 	// Persisted, not just in memory: the row survives a reload.
@@ -2847,7 +2729,7 @@ func TestAgentCreate_CustomACPPersistsAndPublishes(t *testing.T) {
 		}
 	}
 	require.NotNil(t, found, "the created agent must be in the database")
-	assert.Equal(t, "acp-stdio", found.Transport)
+	assert.Equal(t, model.TransportACPStdio, found.DeriveTransport())
 	assert.Equal(t, "trae acp --stdio", found.AcpCommand)
 
 	// Published into the live map for immediate reflection (no reload needed).
@@ -2911,9 +2793,9 @@ func TestAgentCreate_NameTakenReturnsConflict(t *testing.T) {
 }
 
 // PATCHing acp_command is what makes the field editable for an existing agent.
-// Setting one must also flip the transport to acp-stdio, otherwise the agent
-// holds a command it never uses.
-func TestAgentPatch_AcpCommandSetsTransportOnCustomAgent(t *testing.T) {
+// The stored command is what the next turn spawns; the transport is derived
+// from it, so no separate column has to be kept in sync.
+func TestAgentPatch_AcpCommandTakesEffectOnCustomAgent(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	custom := &model.Agent{
@@ -2937,14 +2819,14 @@ func TestAgentPatch_AcpCommandSetsTransportOnCustomAgent(t *testing.T) {
 	var updated model.Agent
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &updated))
 	assert.Equal(t, "new acp --stdio", updated.AcpCommand)
-	assert.Equal(t, "acp-stdio", updated.Transport, "a stored command must be in effect")
+	assert.Equal(t, model.TransportACPStdio, updated.DeriveTransport(), "a stored command must be in effect")
 
 	// The in-memory agent is the published copy, so callers reading it without
 	// the config lock see the new values too.
 	live := model.GetAgent("custom-patch")
 	require.NotNil(t, live)
 	assert.Equal(t, "new acp --stdio", live.AcpCommand)
-	assert.Equal(t, "acp-stdio", live.Transport)
+	assert.Equal(t, model.TransportACPStdio, live.DeriveTransport())
 }
 
 // A built-in backend's command is owned by auto-discovery: model.RefreshAgents
@@ -2976,43 +2858,8 @@ func TestAgentPatch_BuiltinAcpCommandIsRefused(t *testing.T) {
 	}
 }
 
-// The command already decides the transport, so a request carrying both is
-// ambiguous. Rejecting it keeps the outcome independent of branch order (the
-// alternative made {acp_command:"", transport:"acp-stdio"} silently re-adopt
-// the spec's command after having closed the connections).
-func TestAgentPatch_CommandAndTransportTogetherRejected(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-
-	custom := &model.Agent{
-		ID:         "custom-both",
-		Name:       "Custom Both",
-		Backend:    model.CustomACPBackend,
-		Transport:  "acp-stdio",
-		AcpCommand: "thing acp",
-	}
-	require.NoError(t, service.SaveAgent(store.WriteDB(), custom))
-	model.AddAgent(custom)
-	t.Cleanup(func() { model.DeleteAgent("custom-both") })
-
-	body := map[string]any{
-		"id":          "custom-both",
-		"acp_command": "other acp",
-		"transport":   "cli",
-	}
-	req := newRequest(t, http.MethodPatch, "/api/agents", body)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeAgents, req)
-
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	// Neither field may have been applied.
-	live := model.GetAgent("custom-both")
-	require.NotNil(t, live)
-	assert.Equal(t, "thing acp", live.AcpCommand)
-	assert.Equal(t, "acp-stdio", live.Transport)
-}
-
-// Clearing the command on a custom agent must be refused: it has no CLI
-// fallback, so the agent would be left with no usable transport at all.
+// Clearing the command on a custom agent must be refused: the command is the
+// only thing that makes it runnable, so an empty one leaves no usable path.
 func TestAgentPatch_CannotClearCommandOnCustomAgent(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
@@ -3041,33 +2888,7 @@ func TestAgentPatch_CannotClearCommandOnCustomAgent(t *testing.T) {
 	live := model.GetAgent("custom-clear")
 	require.NotNil(t, live)
 	assert.Equal(t, "thing acp", live.AcpCommand)
-	assert.Equal(t, "acp-stdio", live.Transport)
-}
-
-// The transport selector must be usable for an agent that has a command but no
-// registry spec (the custom-ACP case). It used to be gated on the BackendSpec,
-// which made the control dead for exactly those agents.
-func TestAgentPatch_TransportAcceptsAgentWithoutSpec(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-
-	custom := &model.Agent{
-		ID:         "custom-1",
-		Name:       "Custom",
-		Backend:    model.CustomACPBackend,
-		Transport:  "acp-stdio",
-		AcpCommand: "thing acp",
-	}
-	require.NoError(t, service.SaveAgent(store.WriteDB(), custom))
-	model.AddAgent(custom)
-	t.Cleanup(func() { model.DeleteAgent("custom-1") })
-
-	body := map[string]any{"id": "custom-1", "transport": "acp-stdio"}
-	req := newRequest(t, http.MethodPatch, "/api/agents", body)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeAgents, req)
-
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Equal(t, "acp-stdio", model.GetAgent("custom-1").Transport)
+	assert.Equal(t, model.TransportACPStdio, live.DeriveTransport())
 }
 
 // An unknown/empty source_id is still a create request, so a body with neither
@@ -3141,7 +2962,7 @@ func TestAgentPatch_RenameCollisionReturnsConflict(t *testing.T) {
 func TestIsValidThinkingEffort_UsesTheSessionsModel(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	agent := &model.Agent{ID: "effort-scope-agent", Backend: "opencode", Transport: "acp-stdio"}
+	agent := &model.Agent{ID: "effort-scope-agent", Backend: "opencode", Transport: "acp-stdio", AcpCommand: "opencode acp"}
 
 	// Agent-level fallback (used only when the session's model is unknown).
 	reg := ai.GetAgentCapabilityRegistry()

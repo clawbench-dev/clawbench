@@ -171,7 +171,7 @@ func TestPatchAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Patch preferred model and thinking
-	err = service.PatchAgent("pi", "openai/gpt-5.5", "high", "cli")
+	err = service.PatchAgent("pi", "openai/gpt-5.5", "high")
 	require.NoError(t, err)
 
 	// Verify
@@ -197,7 +197,7 @@ func TestPatchAgent_ClearPreferences(t *testing.T) {
 	require.NoError(t, err)
 
 	// Patch to clear preferences
-	err = service.PatchAgent("pi", "", "", "cli")
+	err = service.PatchAgent("pi", "", "")
 	require.NoError(t, err)
 
 	// Verify preferences are cleared
@@ -212,7 +212,7 @@ func TestPatchAgent_NotFound(t *testing.T) {
 	_ = setupTestDBForAgents(t)
 
 	// Patching non-existent agent should not error (no rows affected)
-	err := service.PatchAgent("nonexistent", "model", "high", "cli")
+	err := service.PatchAgent("nonexistent", "model", "high")
 	assert.NoError(t, err)
 }
 
@@ -390,47 +390,33 @@ func TestSaveAgent_ModelsWithSpecialChars(t *testing.T) {
 	assert.Contains(t, agents[0].CustomSystemPrompt, "newlines and \"quotes\"")
 }
 
-func TestSaveAgent_WithTransport(t *testing.T) {
+// The transport column is retired: the value is derived from the command at
+// load time. A caller that still sets it must not create a second source of
+// truth that survives a round trip.
+func TestSaveAgent_TransportIsDerivedNotPersisted(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
-	agent := &model.Agent{
+	withCmd := &model.Agent{
 		ID:         "kimi",
 		Name:       "Kimi",
 		Backend:    "kimi",
-		Transport:  "acp-stdio",
+		Transport:  "cli",
 		AcpCommand: "kimi --acp",
 	}
+	require.NoError(t, service.SaveAgent(db, withCmd))
+	noCmd := &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}
+	require.NoError(t, service.SaveAgent(db, noCmd))
 
-	err := service.SaveAgent(db, agent)
-	require.NoError(t, err)
-
-	// Load and verify transport fields
 	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
-	require.Len(t, agents, 1)
-
-	got := agents[0]
-	assert.Equal(t, "acp-stdio", got.Transport)
-	assert.Equal(t, "kimi --acp", got.AcpCommand)
-}
-
-func TestSaveAgent_TransportDefaultsToCLI(t *testing.T) {
-	db := setupTestDBForAgents(t)
-
-	// Save agent without Transport — should default to "cli"
-	agent := &model.Agent{
-		ID:      "pi",
-		Name:    "Pi",
-		Backend: "pi",
+	byID := make(map[string]*model.Agent, len(agents))
+	for _, a := range agents {
+		byID[a.ID] = a
 	}
-
-	err := service.SaveAgent(db, agent)
-	require.NoError(t, err)
-
-	agents, err := service.LoadAgentsFromDB()
-	require.NoError(t, err)
-	require.Len(t, agents, 1)
-	assert.Equal(t, "cli", agents[0].Transport)
+	require.Contains(t, byID, "kimi")
+	assert.Equal(t, "", byID["kimi"].Transport, "the retired column must not be echoed back")
+	assert.Equal(t, model.TransportACPStdio, byID["kimi"].DeriveTransport())
+	assert.Equal(t, "", byID["pi"].DeriveTransport())
 }
 
 func TestSaveAgent_AutoApproveRoundTrip(t *testing.T) {
@@ -1297,17 +1283,16 @@ func TestCreateCustomACPAgent_PersistsRunnableAgent(t *testing.T) {
 	assert.Equal(t, "My Tool", agent.Name)
 	assert.Equal(t, model.CustomACPBackend, agent.Backend,
 		"a custom agent must not borrow a registered backend id")
-	assert.Equal(t, "acp-stdio", agent.Transport)
+	assert.Equal(t, model.TransportACPStdio, agent.DeriveTransport())
 	assert.Equal(t, "my-tool acp --stdio", agent.AcpCommand, "the command is trimmed before storage")
 	assert.True(t, agent.SupportsACP())
-	assert.False(t, model.BackendSupportsCLI(agent.Backend))
 	assert.NotEmpty(t, agent.RuntimeSystemPrompt, "the shared prompt must be composed immediately")
 
 	persisted, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, persisted, 1)
 	assert.Equal(t, "my-tool acp --stdio", persisted[0].AcpCommand)
-	assert.Equal(t, "acp-stdio", persisted[0].Transport)
+	assert.Equal(t, model.TransportACPStdio, persisted[0].DeriveTransport())
 }
 
 // The command is the only thing that makes the agent usable, so an empty one

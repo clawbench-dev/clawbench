@@ -29,7 +29,7 @@ const (
 type selfTestDeepResult struct {
 	// Reply is the assistant text the model produced (empty on failure).
 	Reply string `json:"reply,omitempty"`
-	// Transport is the transport the turn actually used ("acp-stdio" / "cli"),
+	// Transport is the transport the turn actually used ("acp-stdio" / "in-process"),
 	// read back from the persisted metadata — the ground truth, not the config.
 	Transport string `json:"transport,omitempty"`
 	// StopReason is the ACP/CLI stop reason (e.g. "end_turn").
@@ -116,7 +116,7 @@ func runDeepSelfTest(ctx context.Context, agent *model.Agent, projectPath string
 	// LLM call would be pure waste.
 	req := service.BuildChatRequest(
 		selfTestDeepPrompt, sessionID, projectPath, agent.Backend, agent.ID,
-		modelOverride, "", "", "", service.ResolveFileDir(projectPath), false,
+		modelOverride, "", "", service.ResolveFileDir(projectPath), false,
 	)
 
 	turnCtx, cancel := context.WithTimeout(ctx, selfTestDeepTimeout)

@@ -104,7 +104,7 @@ func WithKBQuery(query string) ChatRequestOption {
 // agent's default. That ordering is why a queued message now honors the model
 // the user selected in the session, instead of silently reverting to the
 // agent default.
-func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool, opts ...ChatRequestOption) ai.ChatRequest { //nolint:gocyclo // request assembly: every branch is a distinct compatibility rule
+func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, fileDir string, hasAttachments bool, opts ...ChatRequestOption) ai.ChatRequest { //nolint:gocyclo // request assembly: every branch is a distinct compatibility rule
 	agentID = ResolveAgentID(sessionID, agentID)
 
 	// An explicit per-request pick always describes the model being sent right
@@ -112,7 +112,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	// context_state) remembers which model it was made under.
 	explicitThinkingEffort := thinkingEffortOverride != ""
 
-	modelOverride, transportOverride, thinkingEffortOverride, modeOverride = applySessionOverrides(sessionID, modelOverride, transportOverride, thinkingEffortOverride, modeOverride)
+	modelOverride, thinkingEffortOverride, modeOverride = applySessionOverrides(sessionID, modelOverride, thinkingEffortOverride, modeOverride)
 
 	thinkingEffortModel := ""
 	if !explicitThinkingEffort && thinkingEffortOverride != "" {
@@ -125,10 +125,8 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	effectiveMode := modeOverride                     // Explicit pick > session > agent default
 
 	// Resolved before resolveAgentConfig because the model fallback depends on
-	// whether this turn goes over ACP (see resolveAgentConfig). applySessionOverrides
-	// above has already finalized transportOverride, so the effective transport is
-	// known here.
-	isACP := resolveIsACP(agentID, transportOverride)
+	// whether this turn goes over ACP (see resolveAgentConfig).
+	isACP := resolveIsACP(agentID)
 
 	systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, thinkingEffortModel, effectiveMode, isACP)
 
@@ -348,7 +346,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 // user's selection.
 //
 // Sources differ by field:
-//   - model / transport have their own chat_sessions columns;
+//   - model has its own chat_sessions column;
 //   - mode / thinking effort have NO column — they live in
 //     chat_sessions.context_state (written by PATCH /api/ai/session/update).
 //     Without reading context_state a drained turn would silently revert to the
@@ -363,12 +361,9 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 // decides the next turn.
 //
 // Explicit overrides always win; this only fills the blanks.
-func applySessionOverrides(sessionID, modelOverride, transportOverride, thinkingEffortOverride, modeOverride string) (string, string, string, string) {
+func applySessionOverrides(sessionID, modelOverride, thinkingEffortOverride, modeOverride string) (string, string, string) {
 	if modelOverride == "" {
 		modelOverride = GetSessionModel(sessionID)
-	}
-	if transportOverride == "" {
-		transportOverride = GetSessionTransport(sessionID)
 	}
 	if thinkingEffortOverride == "" {
 		// The pick carries the model it was made under; resolveAgentConfig
@@ -381,7 +376,7 @@ func applySessionOverrides(sessionID, modelOverride, transportOverride, thinking
 			modeOverride = cs.Mode.CurrentModeID
 		}
 	}
-	return modelOverride, transportOverride, thinkingEffortOverride, modeOverride
+	return modelOverride, thinkingEffortOverride, modeOverride
 }
 
 // resolveAgentConfig looks up the agent and derives the prompt, model, command,
@@ -392,9 +387,9 @@ func applySessionOverrides(sessionID, modelOverride, transportOverride, thinking
 // isACP suppresses ONLY the agent-default model fallback. ACP has no concept of
 // a client-chosen default: the agent reports its own currentValue at session/new
 // and the client should leave it alone until it knows which models the agent can
-// run. Before that first handshake, agent.Models holds the CLI-discovered list,
-// which is a guess — sending one as session/set_config_option can select a model
-// the agent cannot run. An EXPLICIT choice (modelOverride) is always honored:
+// run. Before that first handshake, agent.Models holds the last list the agent
+// reported (or nothing), which is not a client-side default — sending one as
+// session/set_config_option can select a model the agent cannot run. An EXPLICIT choice (modelOverride) is always honored:
 // that is the user's intent, not a guess.
 //
 // thinkingEffortModel is the model the inherited effort pick was made under
@@ -537,17 +532,14 @@ func ThinkingEffortIsOffered(agent *model.Agent, isACP bool, level, modelID stri
 	return false
 }
 
-// resolveIsACP decides whether this turn goes over ACP. An explicit transport
-// override is authoritative; otherwise the agent's configured transport wins.
-func resolveIsACP(agentID, transportOverride string) bool {
-	if transportOverride != "" {
-		return transportOverride == transportACPStdio
-	}
+// resolveIsACP decides whether this turn goes over ACP: every agent with an ACP
+// command does. There is no per-session override any more.
+func resolveIsACP(agentID string) bool {
 	agent := model.GetAgent(agentID)
 	if agent == nil {
 		return false
 	}
-	return agent.Transport == transportACPStdio
+	return agent.SupportsACP()
 }
 
 // resolveResumeSessionID picks the session id to hand the CLI and the final

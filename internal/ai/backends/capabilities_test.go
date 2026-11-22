@@ -21,11 +21,10 @@ func TestCapabilities_RepresentativeBackends(t *testing.T) {
 		want    model.BackendCapabilities
 	}{
 		{
-			// CLI + ACP + mid-turn steering; the endpoint is delivered through
-			// both env variables and a private settings.json.
+			// ACP + mid-turn steering; the endpoint is delivered through both
+			// env variables and a private settings.json.
 			backend: "claude",
 			want: model.BackendCapabilities{
-				HasCLI:               true,
 				HasACP:               true,
 				SupportsMidTurn:      true,
 				MidTurnSplitsReply:   false,
@@ -40,7 +39,6 @@ func TestCapabilities_RepresentativeBackends(t *testing.T) {
 			// The only backend whose mid-turn injection SPLITS the reply.
 			backend: "codebuddy",
 			want: model.BackendCapabilities{
-				HasCLI:                 true,
 				HasACP:                 true,
 				SupportsMidTurn:        true,
 				MidTurnSplitsReply:     true,
@@ -56,7 +54,6 @@ func TestCapabilities_RepresentativeBackends(t *testing.T) {
 			// accepts is its own account key.
 			backend: "cursor",
 			want: model.BackendCapabilities{
-				HasCLI:            false,
 				HasACP:            true,
 				CanBindProvider:   true,
 				ProviderProtocols: []string{model.ProviderProtocolPrivate},
@@ -70,7 +67,6 @@ func TestCapabilities_RepresentativeBackends(t *testing.T) {
 			// cannot be configured with a provider".
 			backend: "openclaw",
 			want: model.BackendCapabilities{
-				HasCLI:                     false,
 				HasACP:                     true,
 				ACPModesMirrorThoughtLevel: true,
 				CanBindProvider:            false,
@@ -81,7 +77,6 @@ func TestCapabilities_RepresentativeBackends(t *testing.T) {
 			// env channel even though both protocols are declared.
 			backend: "builtin",
 			want: model.BackendCapabilities{
-				HasCLI:            true,
 				HasACP:            false,
 				CanBindProvider:   true,
 				ProviderProtocols: []string{model.ProviderProtocolAnthropic, model.ProviderProtocolOpenAI},

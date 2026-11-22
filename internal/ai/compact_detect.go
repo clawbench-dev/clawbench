@@ -306,34 +306,6 @@ func isGrokCompactionCompleted(eventType string) bool {
 	return false
 }
 
-// isCLICompactionMessage reports whether a parsed CLI stream-json message
-// signals that the session context was compacted. Covers the shapes the Claude
-// and CodeBuddy CLIs use (see the package comment for the per-backend list):
-//
-//   - Claude CLI: `system` with subtype `compact_boundary`.
-//   - CodeBuddy CLI: `system` with subtype `status` and status `compacting`,
-//     or any message whose providerData/_meta carries the compaction flag.
-//
-// Negative signals (a cancelled or limit-reached compaction) are not produced
-// in the CLI stream-json shape, so nothing is excluded here.
-func isCLICompactionMessage(msg *ClaudeStreamMessage) bool {
-	if msg == nil {
-		return false
-	}
-	if msg.Type == "system" {
-		if msg.Subtype == "compact_boundary" {
-			return true
-		}
-		if msg.Subtype == "status" && msg.Status == "compacting" {
-			return true
-		}
-	}
-	if msg.ProviderData != nil && (msg.ProviderData.IsCompactInternal || msg.ProviderData.CompactType != "") {
-		return true
-	}
-	return IsCodeBuddyCompactionMeta(msg.Meta)
-}
-
 // metaBool reads a boolean field that may be a real bool or a JSON-ish
 // string/number (the bundles serialize some flags as 1/"true").
 func metaBool(v any) bool {

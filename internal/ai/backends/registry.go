@@ -33,9 +33,9 @@ func Register(p *BackendPlugin) {
 	plugins[p.ID] = p
 	pluginsMu.Unlock()
 
-	// CLI factory (nil for ACP-only backends).
-	if p.CLI != nil && p.CLI.NewBackend != nil {
-		ai.RegisterBackend(p.ID, p.CLI.NewBackend)
+	// In-process factory (nil for every backend that spawns an agent).
+	if p.Implementation != nil && p.Implementation.NewBackend != nil {
+		ai.RegisterBackend(p.ID, p.Implementation.NewBackend)
 	}
 
 	if p.ModelSource != nil {

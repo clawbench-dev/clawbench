@@ -218,7 +218,7 @@ PATCH /api/agents takes "mcp_servers" as an object: {"mode":"all"|"none"|"select
 - Changing the policy does NOT need a restart and does NOT interrupt a running turn: the connection re-reads the policy before each turn and reconnects with the new list if it changed. Say "takes effect from the next message", not "restart required".
 
 Which agents can actually use MCP:
-- ACP transport only. An agent with transport "cli" has no MCP parameter and reads its own config file — the global list has no effect on it. If the user asks to enable MCP on a CLI agent, explain that and offer to switch it to ACP (PATCH transport) only if they have an ACP command for it.
+- ACP agents only. The built-in agent runs inside this process and has no MCP client, so the global list has no effect on it. There is no transport switch to offer: every external agent already runs over ACP.
 - Three backends accept the field and ignore it entirely: "dsh", "deepseek", "pi". ClawBench filters the list out for them, so enabling MCP there does nothing. Tell the user instead of silently writing a policy.
 - "codex" and "commandcode" reject the "sse" transport; the whole session fails if one is sent. Those servers are filtered out for them. Prefer "http" when the user has a choice.
 - "hermes" attaches MCP asynchronously, so the first turn after connecting may not see the tools. Mention this only if the user reports missing tools.

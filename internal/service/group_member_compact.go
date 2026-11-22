@@ -126,8 +126,7 @@ func CompactGroupMember(ctx context.Context, groupID, memberID string) (*ai.Usag
 		return nil, err
 	}
 	agentID := member.AgentID
-	transport := GetSessionTransport(memberID)
-	if !resolveIsACP(agentID, transport) {
+	if !resolveIsACP(agentID) {
 		return nil, ErrCompactNeedsACP
 	}
 	if !beginCompaction(groupID, memberID) {
@@ -161,7 +160,7 @@ func CompactGroupMember(ctx context.Context, groupID, memberID string) (*ai.Usag
 	// later context reset look like the member losing its thread.
 	writeCompactionSystemMessage(projectPath, groupID, member.Name, member.AgentID, "GroupMemberCompactionStarted", nil)
 
-	runErr, err := runMemberCompact(ctx, groupID, memberID, agentID, transport)
+	runErr, err := runMemberCompact(ctx, groupID, memberID, agentID)
 	if err != nil {
 		// Setup failed (backend create / stream start): nothing was compacted.
 		// Close the pair so the timeline does not keep claiming a compaction that
@@ -295,23 +294,23 @@ func endCompaction(memberID string) {
 // newBackendForAgent is a seam for tests: the real call would spawn an ACP
 // subprocess, which a unit test cannot do. Production always uses the ai
 // factory (same pattern as injectMidTurn in midturn.go).
-var newBackendForAgent = ai.NewBackendForAgentWithTransport
+var newBackendForAgent = ai.NewBackendForAgent
 
 // runMemberCompact sends "/compact" to the member's agent and consumes the
 // stream. It returns a user-facing error (runErr) separately from a setup
 // failure (err) so the caller can tell "the agent refused" from "we could not
 // start it".
-func runMemberCompact(ctx context.Context, groupID, memberID, agentID, transport string) (runErr, err error) {
+func runMemberCompact(ctx context.Context, groupID, memberID, agentID string) (runErr, err error) {
 	projectPath := GetSessionProjectPathAnyPath(groupID)
 	backend := groupBackend(memberID)
-	req := BuildChatRequest("/compact", memberID, projectPath, backend, agentID, "", "", "", "", resolveFileDir(projectPath), false)
+	req := BuildChatRequest("/compact", memberID, projectPath, backend, agentID, "", "", "", resolveFileDir(projectPath), false)
 	// A member row carries no chat_history of its own (all speech lands on the
 	// group timeline), so the usual resume signals must come from its external
 	// session id — exactly what a member turn does. Without this the command
 	// would open a BRAND NEW agent session and compact an empty context.
 	applyMemberResumeOverrides(&req, GetExternalSessionID(memberID), true)
 
-	be, err := newBackendForAgent(backend, agentID, transport)
+	be, err := newBackendForAgent(backend, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("create backend: %w", err)
 	}

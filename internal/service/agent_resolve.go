@@ -10,10 +10,10 @@ import "clawbench/internal/model"
 //  3. the configured default agent.
 //
 // Every entry point that can create a backend must resolve the agent the same
-// way. The ACP/CLI decision lives inside ai.NewBackendForAgentWithTransport and
-// is driven by the agent ID: an empty ID skips the ACP branch entirely, so a
-// pure-ACP backend (no CLI factory) fails outright with "unsupported backend
-// type". That is why this resolution is centralized here instead of being
+// way. The ACP/in-process decision lives inside ai.NewBackendForAgent and is
+// driven by the agent ID: an empty ID skips the ACP branch entirely, so a
+// backend with no in-process implementation fails outright with "unsupported
+// backend type". That is why this resolution is centralized here instead of being
 // re-derived at each call site — the previous copies drifted, and a fix to one
 // (the queue path) left the others still passing an empty ID.
 func ResolveAgentID(sessionID, requested string) string {

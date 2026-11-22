@@ -74,7 +74,6 @@ func TestCommandCodeBackendPlugin_AdvertisesLoadSession(t *testing.T) {
 // No CLI factory is registered: chat must always go through the ACP stdio
 // transport (`cmdc acp`).
 func TestCommandCodeBackendPlugin_IsACPIOnly(t *testing.T) {
-	assert.False(t, ai.BackendSupportsCLI("commandcode"), "commandcode is ACP-only")
 }
 
 // Command Code reads ~/.commandcode/skills AND ~/.agents/skills at the user

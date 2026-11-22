@@ -1,9 +1,6 @@
 package claude
 
 import (
-	"os/exec"
-	"strings"
-
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 	"clawbench/internal/model"
@@ -30,7 +27,6 @@ func init() {
 		// Claude can inject a message into the running turn via the ACP
 		// steering extension (_session/steering). It emits no echo boundary, so
 		// the injection MERGES into the running reply (no split).
-		CLI: &backends.CLIPlugin{NewBackend: newClaudeBackend},
 		// This is the definition of the Claude-family ACP hook set. qoder /
 		// qodercn are Claude Code forks and re-export these same function
 		// values rather than copying the parsers; codex shares ExtractMeta too.
@@ -66,29 +62,5 @@ func init() {
 			ConfigDirProviderID:   "clawbench",
 			ConfigDirSecretInFile: true,
 		},
-	})
-}
-
-// newClaudeBackend returns a CLIBackend instance configured for Claude CLI.
-func newClaudeBackend() ai.AIBackend {
-	return &ai.CLIBackend{
-		BackendName:  "claude",
-		Cmd:          "claude",
-		BuildArgsFn:  buildClaudeStreamArgs,
-		NewParserFn:  NewStreamParser,
-		FilterLineFn: nil, // skip empty lines only (default)
-		PreStartFn: func(cmd *exec.Cmd, req ai.ChatRequest) {
-			// Claude CLI in --print mode with stdout piped (non-TTY) requires prompt
-			// via stdin — positional prompt argument is not recognized.
-			// Both new sessions and resume sessions use stdin for prompt.
-			cmd.Stdin = strings.NewReader(req.Prompt)
-		},
-	}
-}
-
-// buildClaudeStreamArgs constructs the CLI arguments for Claude streaming.
-func buildClaudeStreamArgs(req ai.ChatRequest) []string {
-	return ai.BuildBaseStreamArgs(req, func(r ai.ChatRequest) []string {
-		return []string{"--verbose"}
 	})
 }

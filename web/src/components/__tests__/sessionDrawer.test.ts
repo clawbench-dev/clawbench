@@ -134,7 +134,7 @@ const mockAgents = {
     // Mirrors the backend split: transport decides which source can refresh.
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     if (!a) return false
-    const transport = a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
+    const transport = a.transport || (a.acpCommand ? 'acp-stdio' : a.builtinBackend ? 'in-process' : '')
     return transport === 'acp-stdio' ? !!a.acpCommand : !!a.canRefreshModels
   }),
   supportsACP: vi.fn((agentId: string) => {
@@ -145,13 +145,9 @@ const mockAgents = {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return a?.builtinBackend === true
   }),
-  supportsCLI: vi.fn((agentId: string) => {
-    const a = mockAgents.agents.value.find(a => a.id === agentId)
-    return a ? a.supportsCLI !== false : false
-  }),
   getAgentTransport: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
-    return a?.transport || 'cli'
+    return a?.transport || (a?.acpCommand ? 'acp-stdio' : a?.builtinBackend ? 'in-process' : '')
   }),
 }
 
@@ -293,15 +289,11 @@ describe('SessionDrawer', () => {
     expect(wrapper.find('.refresh-btn').exists()).toBe(false)
   })
 
-  it('calls refresh API and applies the resolved + CLI lists on success', async () => {
+  it('calls refresh API and applies the resolved list on success', async () => {
     const newModels = [
       { id: 'claude-new', name: 'Claude New', default: true },
     ]
-    const cliModels = [
-      { id: 'claude-new', name: 'Claude New', default: true },
-      { id: 'claude-cli-only', name: 'Claude CLI Only' },
-    ]
-    vi.mocked(apiPost).mockResolvedValue({ models: newModels, cliModels })
+    vi.mocked(apiPost).mockResolvedValue({ models: newModels })
 
     const wrapper = mountDrawer()
     await wrapper.find('.refresh-btn').trigger('click')
@@ -312,7 +304,7 @@ describe('SessionDrawer', () => {
     // A refresh probe can take several seconds (process start + the agent's
     // delayed command push), so the request raises the client timeout.
     expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {}, { timeoutMs: 180000 })
-    expect(applyRefreshedModelList).toHaveBeenCalledWith('claude', newModels, cliModels)
+    expect(applyRefreshedModelList).toHaveBeenCalledWith('claude', newModels)
     expect(mockToastShow).toHaveBeenCalledWith('chat.sessionSetting.refreshSuccess', expect.any(Object))
   })
 
@@ -554,28 +546,8 @@ describe('SessionDrawer', () => {
   it('shows empty hint in thinking tab for agents without thinking effort levels', () => {
     const wrapper = mountDrawer({ agentId: 'kimi', initialTab: 'thinking' })
     const tabs = wrapper.findAll('.model-tab')
-    expect(tabs.length).toBe(5) // model / thinking / mode / transport / usage
+    expect(tabs.length).toBe(4) // model / thinking / mode / usage
     expect(wrapper.find('.tab-empty-hint').exists()).toBe(true)
-  })
-
-  // --- Transport tab ---
-
-  describe('transport tab', () => {
-    it('supportsACP returns true for agents with acpCommand', async () => {
-      const wrapper = mountDrawer()
-      expect(wrapper.vm.supportsACP('claude')).toBe(true)
-    })
-
-    it('supportsACP returns false for agents without acpCommand', async () => {
-      const wrapper = mountDrawer({ agentId: 'kimi' })
-      expect(wrapper.vm.supportsACP('kimi')).toBe(false)
-    })
-
-    it('isACP is true when currentTransport is acp-stdio', async () => {
-      mockIdentity.currentTransport.value = 'acp-stdio'
-      const wrapper = mountDrawer()
-      expect(wrapper.vm.isACP).toBe(true)
-    })
   })
 
   // --- Mode tab ---
@@ -604,35 +576,16 @@ describe('SessionDrawer', () => {
     })
   })
 
-  // --- selectTransport ---
-
-  describe('selectTransport', () => {
-    it('does nothing when selecting same transport (ACP)', async () => {
+  // --- No transport picker ---
+  //
+  // The drawer used to expose a protocol switch. Every agent with an ACP
+  // command now runs over ACP, so that picker (and its setDefaultTransport
+  // path) is gone; the tab strip must not offer it either.
+  describe('transport', () => {
+    it('exposes no transport switch helpers', () => {
       const wrapper = mountDrawer()
-      vi.mocked(patchAgentPref).mockClear()
-      await wrapper.vm.selectTransport('acp-stdio')
-
-      expect(wrapper.emitted('switch-transport')).toBeFalsy()
-    })
-
-    it('switches from ACP to CLI', async () => {
-      const wrapper = mountDrawer()
-      await wrapper.vm.selectTransport('cli')
-
-      expect(wrapper.emitted('switch-transport')).toBeTruthy()
-      expect(wrapper.emitted('close')).toBeTruthy()
-    })
-  })
-
-  // --- setDefaultTransport ---
-
-  describe('setDefaultTransport', () => {
-    it('calls patchAgentPref and updateAgentField', async () => {
-      const wrapper = mountDrawer()
-      await wrapper.vm.setDefaultTransport('cli')
-
-      expect(patchAgentPref).toHaveBeenCalledWith('claude', 'transport', 'cli')
-      expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'transport', 'cli')
+      expect(wrapper.vm.selectTransport).toBeUndefined()
+      expect(wrapper.vm.setDefaultTransport).toBeUndefined()
     })
   })
 
@@ -744,8 +697,8 @@ describe('SessionDrawer', () => {
       mockIdentity.currentTransport.value = 'acp-stdio'
     })
 
-    it('is false when transport is cli and agent config is cli', async () => {
-      mockIdentity.currentTransport.value = 'cli'
+    it('is false when transport is in-process', async () => {
+      mockIdentity.currentTransport.value = 'in-process'
       const wrapper = mountDrawer({ agentId: 'kimi' })
       expect(wrapper.vm.isACP).toBe(false)
       mockIdentity.currentTransport.value = 'acp-stdio'

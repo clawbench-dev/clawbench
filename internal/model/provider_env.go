@@ -616,7 +616,7 @@ func SupportedProtocols(backendID string) []string {
 // reach the spawned process this way"; a backend may declare several.
 //
 // An empty result means no provider can reach it (openclaw: the provider
-// belongs to its Gateway; qoder/copilot/vecli: no channel exists).
+// belongs to its Gateway; qoder: no channel exists).
 func ProviderMethods(backendID string) []string {
 	spec, ok := providerEnvSpec(backendID)
 	if !ok {

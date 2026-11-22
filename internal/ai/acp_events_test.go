@@ -1943,10 +1943,6 @@ func TestEnrichModelList_AttachesCLIAndResolvedLists(t *testing.T) {
 	// The raw list is preserved.
 	assert.Equal(t, raw.Models, got.Models)
 	assert.Equal(t, "acp-a", got.CurrentModelID)
-	// The CLI list is shipped untouched.
-	require.Len(t, got.CLIModels, 2)
-	assert.Equal(t, "cli-a", got.CLIModels[0].ID)
-	assert.Equal(t, "retired", got.CLIModels[1].ID)
 	// The resolved list follows ACP membership: "retired" is dropped, "acp-a" added,
 	// and the ACP display name wins for the shared ID.
 	require.Len(t, got.ResolvedModels, 2)
@@ -1968,8 +1964,8 @@ func TestEnrichModelList_DoesNotAliasAgentModels(t *testing.T) {
 	got := EnrichModelList(agentID, &ModelListState{Models: []model.AgentModel{{ID: "m", Name: "M"}}})
 	require.NotNil(t, got)
 
-	// Mutating the raw input's models must not reach the agent's stored list.
-	got.CLIModels = nil
+	// Mutating the returned value must not reach the agent's stored list.
+	got.Models = nil
 	assert.Len(t, agent.Models, 1, "the agent's own list must be unaffected")
 }
 
@@ -2018,8 +2014,8 @@ func TestEnrichModelList_ConnectionUsesLiveAgent(t *testing.T) {
 	got := enrichModelList(conn, &ModelListState{Models: []model.AgentModel{{ID: "new", Name: "New"}}})
 
 	require.NotNil(t, got)
-	require.Len(t, got.CLIModels, 1)
-	assert.Equal(t, "new", got.CLIModels[0].ID, "the live agent's list must win over the captured pointer")
+	require.Len(t, got.ResolvedModels, 1)
+	assert.Equal(t, "new", got.ResolvedModels[0].ID, "the live agent's list must win over the captured pointer")
 }
 
 // A nil connection or list yields the input unchanged (the caller then ships the
@@ -2070,8 +2066,6 @@ func TestEnrichModelList_FallsBackToConnectionAgent(t *testing.T) {
 	got := enrichModelList(conn, &ModelListState{Models: []model.AgentModel{{ID: "cli-fallback", Name: "CLI Fallback"}}})
 
 	require.NotNil(t, got)
-	require.Len(t, got.CLIModels, 1)
-	assert.Equal(t, "cli-fallback", got.CLIModels[0].ID)
 	require.Len(t, got.ResolvedModels, 1)
 }
 

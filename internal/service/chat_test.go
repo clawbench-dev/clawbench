@@ -3673,7 +3673,6 @@ func TestGetSessionFullInfo(t *testing.T) {
 	assert.Equal(t, "Full Info Test", info.Title)
 	assert.Equal(t, "my-agent", info.AgentID)
 	assert.Equal(t, "gpt-4o", info.Model)
-	assert.Equal(t, "", info.Transport)
 }
 
 func TestGetSessionFullInfo_WithThinkingEffort(t *testing.T) {
@@ -3717,7 +3716,6 @@ func TestGetSessionInfo(t *testing.T) {
 	assert.Equal(t, "claude", info.Backend)
 	assert.Equal(t, "claude", info.AgentID)
 	assert.Equal(t, "claude-sonnet-4-6", info.Model)
-	assert.Equal(t, "", info.Transport)
 }
 
 // ---------- SaveMetadata ----------

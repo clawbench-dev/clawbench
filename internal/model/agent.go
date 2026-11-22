@@ -60,8 +60,11 @@ type Agent struct {
 	// no effect. Only CustomSystemPrompt is durable; this field is derived.
 	RuntimeSystemPrompt string `json:"-"`
 
-	// ACP configuration (only used when Transport != "cli")
-	Transport  string `json:"transport"`            // "cli" | "acp-stdio"; default depends on AcpCommand
+	// Transport is DERIVED at load time (see DeriveTransport), never stored or
+	// patched. There are only two values: "acp-stdio" for an agent with a
+	// command, "in-process" for the built-in agent. Empty means the agent has
+	// neither and cannot start.
+	Transport  string `json:"transport"`
 	AcpCommand string `json:"acpCommand,omitempty"` // acp-stdio: spawn command, e.g. "kimi --acp"
 
 	// CustomSystemPrompt is the user's own prompt text — the only prompt value
@@ -116,20 +119,6 @@ type Agent struct {
 	// flag (rather than letting the client match on the backend id) keeps one
 	// definition of "built-in" on the server.
 	BuiltinBackend bool `json:"builtinBackend"`
-
-	// CLIModels is the pure CLI-discovered list, without any ACP merge. It is
-	// populated only in API responses, so a client can show the CLI view when the
-	// agent is switched to CLI transport without re-deriving it.
-	//
-	// Models, by contrast, carries the resolved list (ACP membership applied).
-	// Keeping both on the wire is what lets the transport toggle be a plain field
-	// read on the client instead of a merge.
-	CLIModels []AgentModel `json:"cliModels,omitempty"`
-
-	// SupportsCLI indicates whether this agent's backend has a CLI implementation
-	// (a registered CLI backend factory). Backends like grok are ACP-only and
-	// return false. Computed at load time from the ai backend factory registry.
-	SupportsCLI bool `json:"supportsCLI"`
 
 	// SupportsMidTurn indicates whether this agent's backend can inject a
 	// message into a turn that is ALREADY RUNNING instead of queueing it for the
@@ -464,8 +453,31 @@ func (a *Agent) EffectiveModeID() string {
 	return ""
 }
 
-// SupportsACP returns true if the agent has ACP capability (has an acp_command configured),
-// regardless of its current transport setting.
+// Transport values. They describe HOW a turn runs, not which backend it uses:
+// either an external agent over ACP, or ClawBench's own tool loop in this
+// process.
+const (
+	TransportACPStdio  = "acp-stdio"
+	TransportInProcess = "in-process"
+)
+
+// DeriveTransport returns the only transport this agent can run on. It is the
+// single source of truth for the Transport field: nothing persists or patches
+// it any more, so a stale column value can never steer a turn.
+func (a *Agent) DeriveTransport() string {
+	if a == nil {
+		return ""
+	}
+	if a.AcpCommand != "" {
+		return TransportACPStdio
+	}
+	if a.BuiltinBackend {
+		return TransportInProcess
+	}
+	return ""
+}
+
+// SupportsACP returns true if the agent has ACP capability (has an acp_command configured).
 func (a *Agent) SupportsACP() bool {
 	return a.AcpCommand != ""
 }
