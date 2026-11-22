@@ -210,21 +210,29 @@ describe('desktop asset names match the Go download URLs', () => {
   })
 })
 
-describe('all-in-one (fused) package name matches the Go download URLs', () => {
-  it('release.yml assembles the basename the server builds', () => {
-    // A fused install upgrades by downloading this exact asset; a drift here
-    // makes every in-app upgrade 404 while the URL still looks well-formed.
-    const src = readFileSync(repoPath('.github/workflows/release.yml'), 'utf8')
-    expect(src).toContain('clawbench-desktop-windows-x64-local-$env:RELEASE_TAG.zip')
-
+describe('integrated package names match the Go download URLs', () => {
+  it('release.yml assembles every basename the server builds', () => {
+    // An integrated install upgrades by downloading this exact asset; a drift
+    // here makes every in-app upgrade 404 while the URL still looks
+    // well-formed. Every desktop platform publishes one, so every basename the
+    // server advertises must be assembled by the workflow — and nothing else.
     const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
-    expect(go).toContain('clawbench-desktop-windows-x64-local')
-    // Windows-only on purpose: release.yml assembles no other platform's fused
-    // package, so advertising one would hand the client a dead URL.
-    const block = /desktopFusedAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
-    expect(block).toContain('platformWindowsAMD64')
-    expect(block).not.toContain('platformLinux')
-    expect(block).not.toContain('platformDarwin')
+    const block = /desktopIntegratedAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
+    const bases = [...block.matchAll(/"([a-z0-9-]+-local)"/g)].map((m) => m[1])
+    expect(bases).toEqual([
+      'clawbench-desktop-linux-x64-local',
+      'clawbench-desktop-linux-arm64-local',
+      'clawbench-desktop-darwin-x64-local',
+      'clawbench-desktop-darwin-arm64-local',
+      'clawbench-desktop-windows-x64-local',
+    ])
+
+    const src = readFileSync(repoPath('.github/workflows/release.yml'), 'utf8')
+    for (const base of bases) {
+      // The thin name (`<base without -local>-<tag>.zip`) is a prefix of this
+      // one, so the `-` is what makes the assertion about the integrated zip.
+      expect(src, `${base} is advertised but never assembled`).toContain(`${base}-`)
+    }
   })
 })
 

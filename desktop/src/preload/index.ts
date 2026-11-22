@@ -151,15 +151,19 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // proceeds on the current version, "download" installs the server's version.
   versionContinue: () => { ipcRenderer.send('native:version-continue') },
   versionDownload: () => { ipcRenderer.send('native:version-download') },
-  // Fused ("integrated") install only: downloads and installs the whole
+  // Integrated ("all-in-one") install only: downloads and installs the whole
   // package for `version`, then asks about restarting. `downloads` is the
   // platform-keyed map the server returned in /api/upgrade/check.
-  installIntegratedUpdate: (
+  //
+  // The member name is a cross-version bridge contract (a shell built before
+  // the rename exposes only this name, and the web UI is always the server's
+  // newest build), so it stays `installFusedUpdate` — see clawbenchNative.ts.
+  installFusedUpdate: (
     version: string,
     downloads: Record<string, string[]>,
     checksums: Record<string, string>,
   ) =>
-    ipcRenderer.invoke('native:install-integrated-update', version, downloads, checksums) as Promise<{
+    ipcRenderer.invoke('native:install-fused-update', version, downloads, checksums) as Promise<{
       ok: boolean
       error: string
     }>,

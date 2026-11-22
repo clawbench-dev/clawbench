@@ -112,7 +112,7 @@ flowchart TD
 
 ### 整合包的升级：只装整包
 
-整合包（客户端自带 `server/`，Windows / macOS / Linux 都有）的升级单位是**整个整合包**：瘦包会把 `server/` 弄丢，只有整包能同时更新客户端和自带服务端。服务端在 `/api/upgrade/check` 里用 `fused_downloads` 下发该版本整合包的地址（字段名是跨版本契约，与 Release 资产命名同一处生成，客户端不自己拼），网页端的「检查更新」在 `managed` 时改为调用桌面桥 `installIntegratedUpdate`，由壳下载整包、侧装、翻转指针，再询问是否重启。
+整合包（客户端自带 `server/`，Windows / macOS / Linux 都有）的升级单位是**整个整合包**：瘦包会把 `server/` 弄丢，只有整包能同时更新客户端和自带服务端。服务端在 `/api/upgrade/check` 里用 `fused_downloads` 下发该版本整合包的地址（字段名是跨版本契约，与 Release 资产命名同一处生成，客户端不自己拼），网页端的「检查更新」在 `managed` 时改为调用桌面桥 `installFusedUpdate`（成员名是跨版本契约，实现文件已改名 `integratedUpdate.ts`，桥接名保持不变——老壳只暴露这个名字），由壳下载整包、侧装、翻转指针，再询问是否重启。
 
 **macOS 的 `server/` 与 `ClawBench.app` 并排，不放进 bundle**：macOS 的代码签名覆盖整个 `.app` 树，先放进去再为瘦包删掉会让两个包的签名都失效。整合包的 zip 里 `server/` 和 `ClawBench.app` 同在 `mac-arm64/`（或 `mac/`）这一层，安装器剥掉这层后两者在安装目录里并排；`localServerPolicy.ts` 从 `Contents/MacOS/` 往上三层找它。因此 macOS 用户解压/移动时要让两者待在一起——只把 `ClawBench.app` 拖走，整合包会退化成瘦客户端（仍可连别的服务器，不会崩）。
 
