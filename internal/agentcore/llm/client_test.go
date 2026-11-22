@@ -1076,3 +1076,75 @@ func TestOpenAI_PromptCacheKeyIsScopedToOpenAI(t *testing.T) {
 		t.Fatalf("an empty session must send no key, got %q", got)
 	}
 }
+
+// A picture the user attached as a LINK is passed as the address itself: the
+// endpoint fetches it, so no bytes pass through us. Both protocols accept the
+// remote form natively, so neither has to download anything.
+func TestOpenAI_RemoteImageIsPassedAsURL(t *testing.T) {
+	var gotBody oaRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolOpenAI, BaseURL: srv.URL, Model: "m", SupportsVision: true})
+	ch, _ := c.Stream(context.Background(), Request{Messages: []Message{
+		{Role: RoleUser, Parts: []Part{
+			{Text: "look"},
+			{Image: &Image{URL: "https://example.com/shot.png"}},
+		}},
+	}})
+	collectEvents(t, ch)
+
+	parts, ok := gotBody.Messages[0].Content.([]any)
+	if !ok {
+		t.Fatalf("expected a part array, got %T", gotBody.Messages[0].Content)
+	}
+	var url string
+	for _, p := range parts {
+		pm, _ := p.(map[string]any)
+		if pm["type"] == "image_url" {
+			img, _ := pm["image_url"].(map[string]any)
+			url, _ = img["url"].(string)
+		}
+	}
+	if url != "https://example.com/shot.png" {
+		t.Fatalf("the address must be passed through, got %q", url)
+	}
+}
+
+// The Anthropic half: a remote picture becomes a source of type "url", not an
+// inline base64 blob.
+func TestAnthropic_RemoteImageIsPassedAsURL(t *testing.T) {
+	var gotBody anRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer srv.Close()
+
+	c, _ := New(Config{Protocol: ProtocolAnthropic, BaseURL: srv.URL, Model: "claude-x", SupportsVision: true})
+	ch, _ := c.Stream(context.Background(), Request{Messages: []Message{
+		{Role: RoleUser, Parts: []Part{
+			{Text: "look"},
+			{Image: &Image{URL: "https://example.com/shot.png"}},
+		}},
+	}})
+	collectEvents(t, ch)
+
+	block := gotBody.Messages[0].Content[1]
+	if block.Type != "image" || block.Source == nil {
+		t.Fatalf("expected an image block, got %+v", block)
+	}
+	if block.Source.Type != "url" || block.Source.URL != "https://example.com/shot.png" {
+		t.Fatalf("a remote picture must be a url source, got %+v", block.Source)
+	}
+	if block.Source.Data != "" {
+		t.Fatal("a remote picture must not be inlined")
+	}
+}

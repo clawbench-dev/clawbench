@@ -159,15 +159,25 @@ func buildSpec(req ai.ChatRequest) (agentcore.Spec, error) {
 	// with tool calls expands into two messages, so two independent loops would
 	// drift and make a compaction boundary cover the wrong stored turn.
 	replay := buildHistoryReplay(req)
-	// Attached images become real image parts: the prompt only names the
-	// files, so without this an image-only message reaches the model as a
-	// sentence about a path. Gated on the model's own ability to read images.
-	replay.Messages = replayImages(replay.Messages, req.History, client.SupportsVision())
+
+	// This turn's pictures ride the prompt message. History is replayed WITHOUT
+	// images on purpose: re-attaching every earlier turn's pictures made each
+	// turn pay again for what the model had already described.
+	prompt := req.Prompt
+	var promptParts []llm.Part
+	if client.SupportsVision() {
+		parts, notes := turnImageParts(req.Files)
+		promptParts = parts
+		for _, n := range notes {
+			prompt += "\n" + n
+		}
+	}
 
 	return agentcore.Spec{
 		Client:       client,
 		SystemPrompt: req.SystemPrompt,
-		Prompt:       req.Prompt,
+		Prompt:       prompt,
+		PromptParts:  promptParts,
 		History:      replay.Messages,
 		// Parallel to History: the boundary a compaction reports is an id from
 		// here, so the caller records exactly which stored turn the summary

@@ -757,6 +757,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// self-hosted backend's replayed history must stop just before it —
 		// otherwise the prompt reaches the model twice.
 		firstOpts = append(firstOpts, service.WithCurrentMessageID(msgID))
+		// The attachments of THIS message: the built-in backend sends an attached
+		// picture as a picture, and the prompt only names it.
+		if len(allFiles) > 0 {
+			firstOpts = append(firstOpts, service.WithTurnFiles(allFiles))
+		}
 		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments, firstOpts...)
 
 		// Execute first message
@@ -1205,6 +1210,9 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, msgID int64, sessionID,
 		opts = append(opts, service.WithKBInjection())
 	}
 	opts = append(opts, service.WithCurrentMessageID(msgID))
+	if len(qMsg.Files) > 0 {
+		opts = append(opts, service.WithTurnFiles(qMsg.Files))
+	}
 	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, "", "", "", "", fileDir, hasAttachments, opts...), nil
 }
 

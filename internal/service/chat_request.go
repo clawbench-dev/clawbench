@@ -24,6 +24,9 @@ type chatRequestOptions struct {
 	// the request is built. It bounds the replayed history for self-hosted
 	// backends so the prompt does not appear twice (see buildBuiltinHistory).
 	currentMessageID int64
+	// turnFiles are this turn's attachments. Only the built-in backend reads
+	// them, and only to send an attached picture as a picture.
+	turnFiles []model.FileEntry
 }
 
 // WithCurrentMessageID tells BuildChatRequest which persisted row is this
@@ -42,6 +45,16 @@ type chatRequestOptions struct {
 // TestBuildChatRequest_EveryTurnBoundsItsOwnMessage for the guard.
 func WithCurrentMessageID(id int64) ChatRequestOption {
 	return func(o *chatRequestOptions) { o.currentMessageID = id }
+}
+
+// WithTurnFiles attaches this turn's files to the request.
+//
+// The prompt already names them; the built-in backend needs the paths because a
+// name is not a picture — an image-only message otherwise reaches the model as a
+// sentence about a path. External backends ignore it: their CLI receives the
+// same paths in the prompt and reads them itself.
+func WithTurnFiles(files []model.FileEntry) ChatRequestOption {
+	return func(o *chatRequestOptions) { o.turnFiles = files }
 }
 
 // WithKBInjection prepends knowledge base snippets retrieved with this turn's
@@ -301,6 +314,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		ForkContext:            forkContext,
 		KBRefs:                 kbRefs,
 		Compacted:              compacted,
+		Files:                  reqOpts.turnFiles,
 	}
 
 	// Self-hosted backends replay the conversation from our own history: they

@@ -91,7 +91,6 @@ func buildBuiltinHistoryWithBudget(sessionID string, beforeMessageID int64, summ
 			ID:    t.id,
 			Turn:  t.turn,
 			Tools: t.tools,
-			Files: t.files,
 		})
 	}
 	return out
@@ -111,9 +110,6 @@ type builtinTurn struct {
 	// the engine's boundary (an index into the EXPANDED message list) back to
 	// the stored turn the summary actually covers.
 	turn int
-	// files are the turn's attachments. The stored prompt names them, but the
-	// backend needs the paths to send an attached image as a picture.
-	files []model.FileEntry
 }
 
 // collectBuiltinTurns filters a session's stored messages down to the turns the
@@ -196,7 +192,6 @@ func collectBuiltinTurns(messages []model.ChatMessage, beforeMessageID int64, su
 			tools: calls,
 			id:    m.ID,
 			turn:  position,
-			files: m.Files,
 		})
 	}
 	return turns

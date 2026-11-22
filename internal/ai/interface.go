@@ -37,6 +37,14 @@ type ChatRequest struct {
 	// triggers exactly one extra injection.
 	Compacted bool
 
+	// Files are THIS turn's attachments (the ones the prompt already names).
+	//
+	// Only the built-in backend reads them, and only to send an attached picture
+	// as a picture: the prompt carries a path, and a path is not an image. They
+	// are deliberately NOT replayed with History — that would re-send every
+	// earlier screenshot on every turn.
+	Files []model.FileEntry
+
 	// History is the prior conversation, oldest first, for backends that run
 	// the model themselves instead of delegating to an external CLI.
 	//
@@ -83,11 +91,6 @@ type HistoryMessage struct {
 	// order. A call with no stored result is deliberately absent: both wire
 	// protocols reject an unanswered tool_use.
 	Tools []HistoryToolCall `json:"tools,omitempty"`
-	// Files are the user turn's attachments. The prompt already names them, but
-	// a name is not the picture: a backend that can send image bytes must, or an
-	// image-only message reaches the model as a sentence about a path. Empty for
-	// assistant turns.
-	Files []model.FileEntry `json:"files,omitempty"`
 }
 
 // HistoryToolCall is one completed tool call replayed with its turn.

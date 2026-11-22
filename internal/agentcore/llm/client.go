@@ -36,15 +36,21 @@ const (
 	RoleTool      Role = "tool"
 )
 
-// Image is one inline image handed to the model.
+// Image is one image handed to the model.
 //
 // MediaType must be a type the target endpoint accepts (image/png,
 // image/jpeg, image/gif, image/webp). Data is the raw bytes; base64 encoding
 // happens inside each client because the two wire formats disagree on where
 // the encoding lives (a data URL vs a separate field).
+//
+// URL is set instead of Data when the picture already lives at an address the
+// endpoint can fetch (the user attached a link). Passing the address costs no
+// bytes on our side, and both protocols accept it natively.
 type Image struct {
 	MediaType string
 	Data      []byte
+	// URL is the picture's own address. When set, Data is empty.
+	URL string
 }
 
 // Thinking is one reasoning block the assistant produced.

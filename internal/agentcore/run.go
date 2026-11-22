@@ -68,6 +68,14 @@ type Spec struct {
 	ThinkingEffort string
 	// MaxOutputTokens caps one model reply. Zero uses the client's default.
 	MaxOutputTokens int
+	// PromptParts are extra parts appended to THIS turn's user message, after
+	// its text. Only images use it: an attached picture must reach the model as
+	// a picture, and the prompt text alone only names the file.
+	//
+	// Deliberately not part of History: earlier turns are replayed without their
+	// images, so a long conversation does not re-send every screenshot on every
+	// turn.
+	PromptParts []llm.Part
 	// Timeout bounds the whole run. Zero means no extra bound beyond ctx.
 	Timeout time.Duration
 
@@ -432,7 +440,11 @@ func (r *runner) run(ctx context.Context) {
 	if r.spec.PriorSummary != "" {
 		r.messages = append([]llm.Message{compaction.SummaryMessage(r.spec.PriorSummary)}, r.messages...)
 	}
-	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, r.spec.Prompt))
+	promptMsg := llm.TextMessage(llm.RoleUser, r.spec.Prompt)
+	if len(r.spec.PromptParts) > 0 {
+		promptMsg.Parts = append(promptMsg.Parts, r.spec.PromptParts...)
+	}
+	r.messages = append(r.messages, promptMsg)
 
 	system := buildSystemPrompt(r.spec.SystemPrompt, loadProjectRules(r.spec.WorkDir),
 		r.spec.WorkDir, r.toolList, r.spec.Policy)

@@ -828,6 +828,9 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	if msgID > 0 {
 		opts = append(opts, WithCurrentMessageID(msgID))
 	}
+	if len(cfg.Files) > 0 {
+		opts = append(opts, WithTurnFiles(cfg.Files))
+	}
 	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files), opts...)
 
 	// The one AI-turn implementation — shared with the /api/ai/chat handler and

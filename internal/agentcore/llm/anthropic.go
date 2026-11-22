@@ -125,9 +125,12 @@ type anCacheControl struct {
 }
 
 type anImageSource struct {
-	Type      string `json:"type"` // always "base64"
-	MediaType string `json:"media_type"`
-	Data      string `json:"data"`
+	Type      string `json:"type"` // "base64", or "url" for a remote picture
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
+	// URL is set for Type == "url": the endpoint fetches the picture itself, so
+	// an attached link costs no bytes here.
+	URL string `json:"url,omitempty"`
 }
 
 type anTool struct {
@@ -436,12 +439,8 @@ func (c *anthropicClient) toolResultContent(tr *ToolResult) []anBlock {
 				continue
 			}
 			blocks = append(blocks, anBlock{
-				Type: anBlockImage,
-				Source: &anImageSource{
-					Type:      "base64",
-					MediaType: p.Image.MediaType,
-					Data:      base64.StdEncoding.EncodeToString(p.Image.Data),
-				},
+				Type:   anBlockImage,
+				Source: anImageSourceFor(p.Image),
 			})
 		default:
 			if p.Text != "" {
@@ -456,6 +455,22 @@ func (c *anthropicClient) toolResultContent(tr *ToolResult) []anBlock {
 	return blocks
 }
 
+// anImageSourceFor renders one image for this protocol.
+//
+// A remote picture is passed as its own address — this API fetches it, so the
+// bytes never pass through us. A local one must be inline base64: there is no
+// address the endpoint could open.
+func anImageSourceFor(img *Image) *anImageSource {
+	if img.URL != "" {
+		return &anImageSource{Type: "url", URL: img.URL}
+	}
+	return &anImageSource{
+		Type:      "base64",
+		MediaType: img.MediaType,
+		Data:      base64.StdEncoding.EncodeToString(img.Data),
+	}
+}
+
 func (c *anthropicClient) userBlocks(parts []Part) ([]anBlock, error) {
 	var blocks []anBlock
 	for _, p := range parts {
@@ -465,12 +480,8 @@ func (c *anthropicClient) userBlocks(parts []Part) ([]anBlock, error) {
 				return nil, ErrVisionUnsupported
 			}
 			blocks = append(blocks, anBlock{
-				Type: anBlockImage,
-				Source: &anImageSource{
-					Type:      "base64",
-					MediaType: p.Image.MediaType,
-					Data:      base64.StdEncoding.EncodeToString(p.Image.Data),
-				},
+				Type:   anBlockImage,
+				Source: anImageSourceFor(p.Image),
 			})
 		case p.ToolResult != nil:
 			blocks = append(blocks, anBlock{
