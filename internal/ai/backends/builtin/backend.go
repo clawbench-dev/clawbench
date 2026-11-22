@@ -173,6 +173,14 @@ func hasModelID(models []model.AgentModel, id string) bool {
 	return false
 }
 
+// Backend implements ai.AIBackend by driving agentcore in-process.
+//
+// It is stateless between turns on purpose: the conversation lives in
+// chat_history, which the service layer reads and hands over as History. A
+// cached transcript here would be a second source of truth that drifts the
+// moment the user edits or deletes a message.
+type Backend struct{}
+
 // ModelListState reports the model list of one built-in agent.
 //
 // The backend is created per run (see ai.ModelListProvider) and is stateless,
@@ -196,14 +204,6 @@ func (b *Backend) ModelListState(agentID string) *ai.ModelListState {
 func newBackend() ai.AIBackend {
 	return &Backend{}
 }
-
-// Backend implements ai.AIBackend by driving agentcore in-process.
-//
-// It is stateless between turns on purpose: the conversation lives in
-// chat_history, which the service layer reads and hands over as History. A
-// cached transcript here would be a second source of truth that drifts the
-// moment the user edits or deletes a message.
-type Backend struct{}
 
 // Name reports the backend id.
 func (b *Backend) Name() string { return BackendID }
@@ -426,7 +426,7 @@ func buildClient(agent *model.Agent, modelOverride string) (llm.Client, string, 
 }
 
 // errNoProvider identifies the "no provider" failure, so callers and tests can
-// recognise it regardless of the language it is rendered in.
+// recognize it regardless of the language it is rendered in.
 var errNoProvider = errors.New("built-in agent has no model provider")
 
 // noProviderError is the user-facing "no provider" failure.

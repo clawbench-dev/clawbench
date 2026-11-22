@@ -394,4 +394,3 @@ func TestCompactSignalProbe_ACP(t *testing.T) {
 func TestCompactSignalProbe_Summary(t *testing.T) {
 	t.Skip("informational: the per-backend PROBE lines above ARE the summary table")
 }
-

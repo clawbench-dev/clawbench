@@ -95,7 +95,7 @@ func ApplyProvider(p *model.Provider) error {
 	// last apply, and that newer value — not the one we recorded back then — is
 	// what unbinding has to put back. Keeping the old record made "bind again,
 	// then unbind" overwrite the user's edit with a stale original.
-	_, current, hadKey := findTopLevelKey(stripManagedBlock(content, blockStart, blockEnd), "model_provider")
+	_, current, hadKey := findTopLevelKey(stripManagedBlock(content), "model_provider")
 	switch {
 	case hadKey && tomlValueIsManagedProvider(current):
 		// Still our own value: what the user had is in the sidecar, or — when
@@ -117,7 +117,7 @@ func ApplyProvider(p *model.Provider) error {
 		prev = fileState{OriginalModelProvider: current, HadModelProvider: hadKey}
 	}
 
-	next := upsertTopLevelKey(stripManagedBlock(content, blockStart, blockEnd), "model_provider", tomlString(managedProviderKey))
+	next := upsertTopLevelKey(stripManagedBlock(content), tomlString(managedProviderKey))
 	next = strings.TrimRight(next, "\n")
 	if next != "" {
 		next += "\n\n"
@@ -182,7 +182,7 @@ func RestoreProvider() error {
 		return saveState(state)
 	}
 
-	next := stripManagedBlock(string(content), blockStart, blockEnd)
+	next := stripManagedBlock(string(content))
 	// Only a value ClawBench itself wrote is ours to put back. Another tool
 	// sharing this file may have pointed model_provider somewhere else after our
 	// last apply; restoring a remembered original over it would hijack that
@@ -194,22 +194,7 @@ func RestoreProvider() error {
 	// that is about to disappear.
 	if _, current, hasKey := findTopLevelKey(next, "model_provider"); hasKey &&
 		tomlValueIsManagedProvider(current) {
-		switch {
-		case hadState && prev.HadModelProvider:
-			next = upsertTopLevelKey(next, "model_provider", prev.OriginalModelProvider)
-		case hadState:
-			next = removeTopLevelKey(next, "model_provider")
-		default:
-			// No sidecar record (corrupt, deleted, or a different data dir).
-			// The backups are the only surviving record of the user's value;
-			// without a usable one, drop the key rather than leave it dangling
-			// at the managed provider.
-			if value, had, ok := originalModelProviderFromBackup(path); ok && had {
-				next = upsertTopLevelKey(next, "model_provider", value)
-			} else {
-				next = removeTopLevelKey(next, "model_provider")
-			}
-		}
+		next = restoreModelProviderKey(next, path, prev, hadState)
 	}
 	if next != string(content) {
 		if err := model.WriteFileAtomic(path, []byte(next)); err != nil {
@@ -227,6 +212,26 @@ func RestoreProvider() error {
 	// user has edited by hand since.
 	delete(state, path)
 	return saveState(state)
+}
+
+// restoreModelProviderKey puts the user's own top-level model_provider back
+// after the managed block has been stripped. Only called for a key that still
+// holds our own provider id.
+func restoreModelProviderKey(next, path string, prev fileState, hadState bool) string {
+	switch {
+	case hadState && prev.HadModelProvider:
+		return upsertTopLevelKey(next, prev.OriginalModelProvider)
+	case hadState:
+		return removeTopLevelKey(next)
+	}
+	// No sidecar record (corrupt, deleted, or a different data dir). The
+	// backups are the only surviving record of the user's value; without a
+	// usable one, drop the key rather than leave it dangling at the managed
+	// provider.
+	if value, had, ok := originalModelProviderFromBackup(path); ok && had {
+		return upsertTopLevelKey(next, value)
+	}
+	return removeTopLevelKey(next)
 }
 
 // originalModelProviderFromBackup recovers the user's top-level model_provider
@@ -310,13 +315,15 @@ func tomlString(s string) string {
 	return `"` + escaped + `"`
 }
 
-func stripManagedBlock(content, start, end string) string {
+// The markers are this backend's own, so they are not parameters: every
+// caller strips exactly the block ApplyProvider writes.
+func stripManagedBlock(content string) string {
 	for {
-		i := strings.Index(content, start)
+		i := strings.Index(content, blockStart)
 		if i < 0 {
 			return content
 		}
-		j := strings.Index(content[i:], end)
+		j := strings.Index(content[i:], blockEnd)
 		if j < 0 {
 			// Half a block: the end marker was deleted by hand. Keeping the
 			// remainder would leave two start markers, and the next strip would
@@ -324,7 +331,7 @@ func stripManagedBlock(content, start, end string) string {
 			// config. Drop to the end of the file instead.
 			return content[:i]
 		}
-		j += i + len(end)
+		j += i + len(blockEnd)
 		// Swallow the newline that follows the end marker.
 		if j < len(content) && content[j] == '\n' {
 			j++
@@ -351,7 +358,10 @@ func findTopLevelKey(content, key string) (lineIndex int, value string, found bo
 	return -1, "", false
 }
 
-func upsertTopLevelKey(content, key, value string) string {
+// upsertTopLevelKey writes the top-level model_provider assignment, replacing
+// an existing one in place.
+func upsertTopLevelKey(content, value string) string {
+	key := "model_provider"
 	lines := strings.Split(content, "\n")
 	limit := topLevelLimit(lines)
 	if idx, _, found := findTopLevelKey(content, key); found {
@@ -364,8 +374,9 @@ func upsertTopLevelKey(content, key, value string) string {
 	return strings.Join(insert, "\n")
 }
 
-func removeTopLevelKey(content, key string) string {
-	idx, _, found := findTopLevelKey(content, key)
+// removeTopLevelKey drops the top-level model_provider assignment.
+func removeTopLevelKey(content string) string {
+	idx, _, found := findTopLevelKey(content, "model_provider")
 	if !found {
 		return content
 	}

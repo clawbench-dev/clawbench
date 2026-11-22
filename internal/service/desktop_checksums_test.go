@@ -51,7 +51,7 @@ func TestParseSHA256SUMS(t *testing.T) {
 	got, err := parseSHA256SUMS(strings.NewReader(body))
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{
-		"full.zip":  hash,
+		"full.zip":       hash,
 		"integrated.zip": hash,
 	}, got)
 }

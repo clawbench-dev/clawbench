@@ -66,7 +66,7 @@ func TestSteerBoundaryID_OnlyDeclaredBackendsContribute(t *testing.T) {
 }
 
 // Wiring: a declared hook's answer must actually reach the emitted events —
-// naming and colouring the member, and folding its content under the Agent
+// naming and coloring the member, and folding its content under the Agent
 // card. This is the test that fails if the loop keeps calling a helper directly
 // instead of going through the hook.
 func TestFrameAttribution_HookResultReachesTheEvents(t *testing.T) {
@@ -162,7 +162,7 @@ func TestFrameAttribution_EveryBranchAsksTheHook(t *testing.T) {
 	assertAttributed := func(ev StreamEvent, branch string) {
 		t.Helper()
 		assert.Equal(t, "mem", ev.MemberName, "%s: member name must reach the event", branch)
-		assert.Equal(t, "teal", ev.MemberColor, "%s: member colour must reach the event", branch)
+		assert.Equal(t, "teal", ev.MemberColor, "%s: member color must reach the event", branch)
 	}
 
 	// text

@@ -273,11 +273,11 @@ func catalogModelsForAgent(a *model.Agent) []model.AgentModel {
 		}
 		return model.CatalogModelsForPreset(provider.PresetID)
 	}
-	// Unbound agent: the backend's own discovered list is the only catalogue we
+	// Unbound agent: the backend's own discovered list is the only catalog we
 	// have before ACP reports one. It is still "not confirmed to run", which is
 	// exactly what the settings picker's caveat says. Hiding it left the
 	// backends whose ACP adapter never reports a model list (kimi, qodercn,
-	// mimo, …) with an empty picker forever, even though their static catalogue
+	// mimo, …) with an empty picker forever, even though their static catalog
 	// is known and shown in the CLI era.
 	if len(a.Models) == 0 {
 		return nil

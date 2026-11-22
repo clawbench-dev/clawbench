@@ -716,7 +716,6 @@ func TestAIChat_NewSession_ModelListStateCarriesResolvedList(t *testing.T) {
 	}
 	assert.Contains(t, ids, "auto")
 	assert.Contains(t, ids, "deepseek-v4-flash")
-
 }
 
 // The built-in agent has no ACP connection, so it must not be served ACP model

@@ -2,7 +2,7 @@ package grok
 
 import "testing"
 
-// `grok models` lists the catalogue even when nobody is signed in, which is what
+// `grok models` lists the catalog even when nobody is signed in, which is what
 // gives the picker a list before the first ACP handshake. Captured from grok
 // 4.6 (2026-11-22).
 func TestParseGrokModels_UnauthenticatedOutput(t *testing.T) {

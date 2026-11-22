@@ -21,7 +21,7 @@ var agyLogPrefixRE = regexp.MustCompile(`^[IWEF]\d{4}\s`)
 // Listing is a CLI feature, not a chat transport. It needs a signed-in CLI
 // (`agy models` answers "Please sign in to view available models" otherwise),
 // so an unauthenticated install still gets AntigravityCatalog — the same
-// behaviour the picker had before the CLI transport was removed. Once signed
+// behavior the picker had before the CLI transport was removed. Once signed
 // in, the live list replaces the fallback.
 func discoverAntigravityModels() ([]model.AgentModel, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

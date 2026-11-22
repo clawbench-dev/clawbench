@@ -2,7 +2,6 @@ package ai
 
 import (
 	"encoding/json"
-	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -221,12 +220,6 @@ func metaString(v any) string {
 		return s
 	}
 	return ""
-}
-
-// splitTraceParent splits a W3C traceparent header
-// ("00-<traceid>-<spanid>-<flags>") into its dash-separated components.
-func splitTraceParent(tp string) []string {
-	return strings.Split(tp, "-")
 }
 
 // metaMaxInt returns the maximum of base and vals (used to keep the richest

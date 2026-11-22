@@ -98,7 +98,7 @@ func TestAgentGet_BuiltinAgentReportsItsModelsBeforeAnyMessage(t *testing.T) {
 	require.Len(t, got.Models, 2, "the picker needs the list before the first message")
 	assert.Equal(t, "profile-model", got.Models[0].ID)
 	assert.True(t, got.Models[0].Default, "the model a turn would run must be flagged default")
-	assert.Empty(t, got.Catalog, "a confirmed list must not also ship the catalogue fallback")
+	assert.Empty(t, got.Catalog, "a confirmed list must not also ship the catalog fallback")
 }
 
 // TestAgentRefreshModels_BuiltinAgentAnswersFromItsProvider pins the drawer's

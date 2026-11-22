@@ -7,7 +7,7 @@ import (
 )
 
 // The registry is what replaces the old hard-coded three-row table. These tests
-// pin the two behaviours that make it safe to be a registry at all: matching is
+// pin the two behaviors that make it safe to be a registry at all: matching is
 // driven by what backends registered, and registration cannot double up.
 
 // TestOrphanCmdlinePattern_MatchesOnlyWhenBothHalvesPresent is the core
