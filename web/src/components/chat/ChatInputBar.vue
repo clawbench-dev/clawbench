@@ -172,6 +172,7 @@
           v-model="inputText"
           :disabled="inputDisabled"
           :placeholder="dynamicPlaceholder"
+          :enterkeyhint="mobileEnterInsertsNewline ? 'enter' : 'send'"
           rows="1"
           @keydown="onTextareaKeydown"
           @paste="onPaste"
@@ -408,6 +409,7 @@ import { useFileUpload } from '@/composables/useFileUpload'
 import { useVoiceInput } from '@/composables/useVoiceInput'
 import { useChatRecommendation } from '@/composables/useChatRecommendation'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import { localConfig } from '@/composables/useSettingsConfig'
 import { useShareKindAllowed, notifyFeatureDisabled } from '@/composables/useFeatureFlags'
 import { ensureSkillsLoaded, skillMenuRows } from '@/composables/useSkillsState'
 import { useChatContext } from '@/composables/useChatContext'
@@ -610,6 +612,7 @@ let placeholderTimer = null
 // is available, so its hint is shown only there. Keyboard users get the
 // ArrowUp/ArrowDown hint instead — the two gestures are mutually exclusive.
 const { isTouchPrimary } = usePlatformDetect()
+const mobileEnterInsertsNewline = computed(() => isTouchPrimary.value && !localConfig.mobileEnterToSend)
 // 分享 switches (功能编排). Off revokes every public conversation link and
 // refuses new ones, so the share entry disappears rather than opening a dialog
 // that cannot publish. Gated per KIND: turning off file or meeting links leaves
@@ -1742,6 +1745,15 @@ function onTextareaKeydown(e) {
   if (skillMenu.handleKeydown(e)) return
   // Input history navigation (ArrowUp/ArrowDown), only when the input is active
   if (handleHistoryKeydown(e)) return
+  // Touch devices with mobileEnterToSend off (default): let plain Enter insert
+  // a newline natively; Ctrl+Enter / Cmd+Enter still submits for external keyboards.
+  if (mobileEnterInsertsNewline.value) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey) {
+      e.preventDefault()
+      dispatchSend(inputText.value.trim())
+    }
+    return
+  }
   // Default: Enter (without modifier) sends
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault()
