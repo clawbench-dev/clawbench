@@ -236,3 +236,17 @@ func TestInjector_AttachmentHeaderGoesThroughVerbatim(t *testing.T) {
 		assert.Equal(t, content, params.Prompt[0].Text)
 	})
 }
+
+// An adapter that leaves StartedNewTurnReason empty gets "rejected": the
+// zero-option case must still report a concrete reason, never "".
+func TestNew_DefaultsStartedNewTurnReason(t *testing.T) {
+	tr := &fakeTransport{
+		sessionID:      "s",
+		promptInFlight: true,
+		response:       resp(t, map[string]any{"outcome": "startedNewTurn"}),
+	}
+	res, err := New(Options{}).Inject(context.Background(), tr, ai.MidTurnInjectRequest{Content: "x"})
+	require.NoError(t, err)
+	assert.False(t, res.Injected)
+	assert.Equal(t, "rejected", res.Reason)
+}

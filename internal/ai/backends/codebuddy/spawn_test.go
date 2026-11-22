@@ -10,6 +10,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/model"
 )
 
 // writeUserMCPConfig seeds ~/.codebuddy/.mcp.json under a temporary HOME and
@@ -62,4 +63,27 @@ func TestSpawnHooks_AttachedToPlugin(t *testing.T) {
 	hooks := backends.LookupACPSpawnHooks("codebuddy")
 	require.NotNil(t, hooks, "codebuddy's spawn hooks must be reachable through the registry")
 	assert.NotNil(t, hooks.Args)
+}
+
+// An own-service provider (a dedicated / self-hosted edition) carries a
+// customer address that has no environment variable, so it must ride along as
+// --settings. This is the branch that keeps those editions reachable at all.
+func TestSpawnArgs_OwnServiceSettings(t *testing.T) {
+	provider := &model.Provider{
+		ID: 1, Name: "CB", Protocol: model.ProviderProtocolPrivate, APIKey: "ck-1",
+		Deployment: model.ProviderDeploymentSelfhosted, BaseURL: "https://cb.example.com",
+	}
+	model.ReplaceProviders([]*model.Provider{provider})
+	pid := provider.ID
+	agent := &model.Agent{ID: "cb-agent", Name: "cb", Backend: "codebuddy", ProviderID: &pid}
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+	t.Cleanup(func() {
+		model.ReplaceProviders(nil)
+		model.ReplaceAgents(nil, nil)
+	})
+
+	args := spawnArgs(ai.ACPSpawnContext{Agent: agent, SessionID: "sid", MCPServerCount: 1})
+	require.Len(t, args, 2, "expected --settings <json>, got %v", args)
+	assert.Equal(t, "--settings", args[0])
+	assert.JSONEq(t, `{"enterpriseEndpoint":"https://cb.example.com"}`, args[1])
 }

@@ -91,12 +91,26 @@ func normalizeToolInput(rawInput []byte, pathMappings map[string]string) ([]byte
 		merged[k] = v
 	}
 
-	// Apply all remappings in a single pass (no double-remap risk)
+	// Apply the remappings in a single pass. A rule may only consume a key the
+	// frame ACTUALLY carried: without this snapshot, one rule's output becomes
+	// another rule's input and the result depends on map iteration order. That
+	// is not hypothetical — deepseek's table maps dirPath→path and path→file_path,
+	// so a directory argument used to land on either "path" or "file_path"
+	// depending on which rule ran first.
+	original := make(map[string]struct{}, len(input))
+	for k := range input {
+		original[k] = struct{}{}
+	}
 	for from, to := range merged {
-		if v, ok := input[from]; ok {
-			delete(input, from)
-			input[to] = v
+		if _, carried := original[from]; !carried {
+			continue
 		}
+		v, ok := input[from]
+		if !ok {
+			continue
+		}
+		delete(input, from)
+		input[to] = v
 	}
 
 	normalized, err := json.Marshal(input)

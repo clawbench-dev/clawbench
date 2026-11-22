@@ -394,3 +394,39 @@ func TestExecCommandJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(result), &parsed))
 	assert.Equal(t, `echo "hello\nworld"`, parsed["command"])
 }
+
+// --- Remap chaining ---
+
+// dirPath→path together with path→file_path is deepseek's real ACP table. The
+// two rules form a chain, so applying them one after another would turn a
+// DIRECTORY argument into a file_path on some runs (map iteration order).
+// A rule may only consume a key the frame actually carried, which makes the
+// outcome stable: dirPath lands on "path" and stops there.
+func TestNormalizeToolInput_RemapsNeverCascade(t *testing.T) {
+	remaps := map[string]string{"dirPath": "path", "path": "file_path"}
+
+	// Repeated because the failure mode was iteration-order dependent.
+	for range 32 {
+		norm, err := normalizeToolInput(json.RawMessage(`{"dirPath":"./src"}`), remaps)
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		require.NoError(t, json.Unmarshal(norm, &parsed))
+		assert.Equal(t, "./src", parsed["path"], "a directory argument must stay a path")
+		assert.NotContains(t, parsed, "file_path", "the path→file_path rule must not re-consume a key another rule created")
+	}
+}
+
+// The same table must still map a real path to file_path: the snapshot only
+// stops CASCADING, it does not disable the rules.
+func TestNormalizeToolInput_DirectSourceStillMaps(t *testing.T) {
+	remaps := map[string]string{"dirPath": "path", "path": "file_path"}
+
+	norm, err := normalizeToolInput(json.RawMessage(`{"path":"main.go"}`), remaps)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(norm, &parsed))
+	assert.Equal(t, "main.go", parsed["file_path"])
+	assert.NotContains(t, parsed, "path")
+}
