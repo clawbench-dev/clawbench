@@ -26,17 +26,6 @@ var GrokACPTCIDPrefixes = map[string]string{
 	"ask":               "AskUserQuestion",
 }
 
-// GrokACPRemaps normalizes Grok ACP rawInput field names to canonical snake_case.
-var GrokACPRemaps = map[string]string{
-	"oldString":  "old_string",
-	"newString":  "new_string",
-	"replaceAll": "replace_all",
-	"dirPath":    "path",
-	"filePath":   "file_path",
-	"cellIndex":  "cell_index",
-	"cellType":   "cell_type",
-}
-
 func init() {
 	// Grok runs over ACP only (grok agent stdio).
 	backends.Register(&backends.BackendPlugin{
@@ -51,7 +40,8 @@ func init() {
 		},
 		ACP: &backends.ACPPlugin{
 			ToolCallIDPrefixes: GrokACPTCIDPrefixes,
-			InputRemaps:        GrokACPRemaps,
+			// No InputRemaps: Grok's camelCase fields are exactly the shared
+			// generic set (ai.GenericACPRemaps).
 		},
 		ProviderEnv: &model.ProviderEnvSpec{
 			OpenAI: model.ProtoEnv("GROK_XAI_API_BASE_URL", "XAI_API_KEY", ""),

@@ -26,9 +26,9 @@ func init() {
 			InstallCmd:            "npm install -g @mimo-ai/cli",
 			SortOrder:             12,
 		},
-		ACP: &backends.ACPPlugin{
-			InputRemaps: opencode.OpenCodeACPInputRemaps,
-		},
+		// No InputRemaps: MiMo inherits OpenCode's field names, which are the
+		// shared generic set (ai.GenericACPRemaps) — declaring a copy here would
+		// only create a second place to keep in sync.
 		// MiMo-Code is an OpenCode fork: same ACP wire shapes, shared parsers.
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       opencode.ParseACPToolCall,

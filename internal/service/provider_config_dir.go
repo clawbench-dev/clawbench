@@ -65,23 +65,32 @@ func ProviderConfigDir(agentID string) string {
 
 // userConfigDir returns the directory the backend would use without
 // ClawBench's override — the thing we symlink the user's own data back from.
-func userConfigDir(backend string) string {
+//
+// known is false when this function has no mapping for the backend. That is a
+// programming error, not "no config": model already declared the backend as
+// relocatable (ProviderUsesConfigDir), so silently returning "" would write an
+// isolated directory with no symlinks and hand the CLI a login-less config.
+// Callers that gate on the model spec must treat !known as an error; the
+// literal callers below ignore it because they name a mapped backend.
+func userConfigDir(backend string) (dir string, known bool) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return ""
+		// No home directory: there is nothing to link, which is not a mapping
+		// gap. Every backend is still "known".
+		return "", true
 	}
 	switch backend {
 	case "kimi":
-		return filepath.Join(home, ".kimi")
+		return filepath.Join(home, ".kimi"), true
 	case "pi":
-		return filepath.Join(home, ".pi", "agent")
+		return filepath.Join(home, ".pi", "agent"), true
 	case backendCodebuddy:
-		return filepath.Join(home, ".codebuddy")
+		return filepath.Join(home, ".codebuddy"), true
 	case "claude":
 		// CLAUDE_CONFIG_DIR relocates the whole ~/.claude tree.
-		return filepath.Join(home, ".claude")
+		return filepath.Join(home, ".claude"), true
 	}
-	return ""
+	return "", false
 }
 
 // ensureProviderConfigDir materializes the agent's config directory: it creates
@@ -102,7 +111,10 @@ func ensureProviderConfigDir(backend, agentID string) (string, error) {
 	}
 
 	owned := model.ProviderConfigDirFile(backend)
-	source := userConfigDir(backend)
+	source, known := userConfigDir(backend)
+	if !known {
+		return "", fmt.Errorf("backend %q declares a relocatable config directory but service has no user-directory mapping for it", backend)
+	}
 	if source == "" {
 		return dir, nil
 	}
@@ -366,7 +378,8 @@ func claudeSettingsContent(p *model.Provider) ([]byte, error) {
 // to carry over, and the isolated file still gets the env block that makes the
 // provider work.
 func readUserClaudeSettings() (map[string]any, bool) {
-	path := filepath.Join(userConfigDir("claude"), "settings.json")
+	dir, _ := userConfigDir("claude") // "claude" is always mapped
+	path := filepath.Join(dir, "settings.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false

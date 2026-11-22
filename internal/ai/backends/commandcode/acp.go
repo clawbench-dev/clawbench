@@ -71,20 +71,9 @@ var CommandCodeACPTitlePrefixes = map[string]string{
 	"plan_review": "DeepThink",
 }
 
-// CommandCodeACPInputRemaps maps Command Code ACP rawInput field names to
-// canonical names.
+// No InputRemaps for Command Code.
 //
 // Command Code's own tool arguments are already canonical (path / file_path /
-// old_string / new_string / command / pattern — read off the tool schemas), so
-// this table only carries the generic camelCase normalizations other ACP
-// backends also need. A plugin/MCP tool that emits camelCase rawInput still gets
-// normalized.
-var CommandCodeACPInputRemaps = map[string]string{
-	"filePath":   "file_path",
-	"dirPath":    "path",
-	"oldString":  "old_string",
-	"newString":  "new_string",
-	"replaceAll": "replace_all",
-	"cellIndex":  "cell_index",
-	"cellType":   "cell_type",
-}
+// old_string / new_string / command / pattern — read off the tool schemas). The
+// only normalization it needs is the shared camelCase set
+// (ai.GenericACPRemaps), which every backend gets by default.

@@ -172,13 +172,13 @@ func parseGenericACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID stri
 // acpRemapsForBackend returns the ACP input remapping map for the given backendID.
 // Uses LookupACPRemapsFn (wired to backends.LookupACPRemaps) when available,
 // which handles backend-specific remaps and generic fallback internally.
-// Falls back to getRemaps("generic_acp") only when the backends package
-// is not loaded (e.g., isolated test runs).
+// Falls back to GenericACPRemaps only when the backends package is not loaded
+// (e.g., isolated test runs) — the same table the registry would have returned.
 func acpRemapsForBackend(backendID string) map[string]string {
 	if LookupACPRemapsFn != nil {
 		return LookupACPRemapsFn(backendID)
 	}
-	return getRemaps("generic_acp")
+	return GenericACPRemaps
 }
 
 // mapACPToolCall creates a StreamEvent from an ACP ToolCall start event.

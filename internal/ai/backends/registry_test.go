@@ -212,7 +212,7 @@ func TestRegistry_LookupACPRemaps(t *testing.T) {
 func TestRegistry_LookupACPRemapsEmptyMapFallback(t *testing.T) {
 	t.Cleanup(backends.ResetForTest())
 
-	// Backend with empty ACP remaps should fall back to generic
+	// A backend that declares an empty table gets the generic one.
 	backends.Register(&backends.BackendPlugin{
 		ID: "empty_acp",
 		ACP: &backends.ACPPlugin{
@@ -222,7 +222,7 @@ func TestRegistry_LookupACPRemapsEmptyMapFallback(t *testing.T) {
 
 	remaps := backends.LookupACPRemaps("empty_acp")
 	if len(remaps) == 0 {
-		t.Error("expected generic_acp fallback remaps for empty_acp, got empty map")
+		t.Error("expected generic fallback remaps for empty_acp, got empty map")
 	}
 	if remaps["oldString"] != "old_string" {
 		t.Errorf("expected oldString->old_string from generic fallback, got %q", remaps["oldString"])

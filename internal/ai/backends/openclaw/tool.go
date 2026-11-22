@@ -104,48 +104,24 @@ func normalizeOpenClawACPInput(toolName string, rawInput []byte) string {
 // "path" is included because it is the field every file tool uses and the
 // Read/Write/Edit cards all read "file_path". The one tool that disagrees (ls)
 // removes it (see normalizeOpenClawACPInput).
+//
+// filePath→file_path is NOT here: normalizeToolInput applies it to every
+// backend already (defaultMappings).
 var openClawACPBaseRemaps = map[string]string{
 	"path":       "file_path",
-	"filePath":   "file_path",
 	"oldString":  "old_string",
 	"newString":  "new_string",
 	"replaceAll": "replace_all",
 }
 
-// parseOpenClawACPToolCall extracts a ai.ToolCall from an OpenClaw ACP tool_call.
-func parseOpenClawACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
-	tool := &ai.ToolCall{
-		Name: ai.ExtractToolName(tc.Title, tc.Kind, "openclaw", string(tc.ToolCallId)),
-		ID:   string(tc.ToolCallId),
-		Done: false,
-	}
-	if tc.RawInput != nil {
-		if inputBytes, err := json.Marshal(tc.RawInput); err == nil {
-			tool.Input = normalizeOpenClawACPInput(openClawACPToolName(tc.Title), inputBytes)
-		}
-	}
-	return tool
-}
-
-// parseOpenClawACPToolCallUpdate extracts a ai.ToolCall from an OpenClaw ACP
-// tool_call_update.
-func parseOpenClawACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
-	tool := &ai.ToolCall{ID: string(tcu.ToolCallId)}
-	ai.MapToolCallStatus(tcu.Status.Ptr(), tool)
-	if rawInput, ok := tcu.RawInput.Value(); ok {
-		if inputBytes, err := json.Marshal(rawInput); err == nil {
-			title, _ := tcu.Title.Value()
-			tool.Input = normalizeOpenClawACPInput(openClawACPToolName(title), inputBytes)
-		}
-	} else {
-		ai.MapToolCallInput(tcu, tool, "openclaw")
-	}
-	ai.MapToolCallName(tcu, tool, "openclaw")
-	if tool.Done {
-		ai.MapToolCallOutput(tcu, tool)
-	}
-	return tool
-}
+// The call/update sequence is shared with pi (see
+// ai.NewNormalizingToolCallParser); openclaw supplies only the tool-name reader
+// and the per-tool normalizer.
+var (
+	parseOpenClawACPToolCall, parseOpenClawACPToolCallUpdate = ai.NewNormalizingToolCallParser(
+		"openclaw", openClawACPToolName, normalizeOpenClawACPInput,
+	)
+)
 
 // ---------------------------------------------------------------------------
 // Test-only exports

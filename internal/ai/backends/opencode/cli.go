@@ -22,11 +22,18 @@ func init() {
 			AutoLoadsNativeSkills: true,
 			AcpCommand:            "opencode acp",
 			ACPLoadSession:        true,
-			InstallCmd:            "npm install -g opencode-ai",
-			SortOrder:             3,
+			// opencode can move a session into another directory from inside the
+			// conversation (session_move), so recovery asks it where the session
+			// lives before re-attaching. See model.BackendSpec.
+			ACPRecoversByReportedCwd: true,
+			InstallCmd:               "npm install -g opencode-ai",
+			SortOrder:                3,
 		},
 		ACP: &backends.ACPPlugin{
-			InputRemaps: OpenCodeACPInputRemaps,
+			// No InputRemaps: OpenCode's field names are the shared generic set.
+			// SpawnHooks carries the OPENCODE_PERMISSION workaround for the
+			// subagent permission-ask hang (see spawn.go).
+			SpawnHooks: spawnHooks(),
 		},
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       ParseACPToolCall,

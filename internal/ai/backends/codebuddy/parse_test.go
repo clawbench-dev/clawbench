@@ -11,8 +11,10 @@ import (
 )
 
 func TestParseCodeBuddyACPToolCall_WithCamelCaseRawInput(t *testing.T) {
-	// Verify that defaultMappings (filePath → file_path) are applied to RawInput.
-	// Note: codebuddy_acp remaps is {} — only defaultMappings apply.
+	// Verify the shared generic remaps apply to RawInput: defaultMappings
+	// (filePath → file_path) plus the shared camelCase set (oldString →
+	// old_string). Both the call and update paths use the same table, so an
+	// Edit card renders the diff from either frame.
 	tc := acp.SessionUpdateToolCall{
 		Meta:       acptest.Meta(map[string]any{"codebuddy.ai/toolName": "Edit"}),
 		ToolCallId: "cb-input-001",
@@ -28,9 +30,11 @@ func TestParseCodeBuddyACPToolCall_WithCamelCaseRawInput(t *testing.T) {
 	// filePath is remapped by defaultMappings
 	assert.Contains(t, input, "file_path")
 	assert.NotContains(t, input, "filePath")
-	// oldString and newString are NOT in codebuddy_acp remaps, so they stay as-is
-	assert.Contains(t, input, "oldString")
-	assert.Contains(t, input, "newString")
+	// oldString/newString come from the shared generic table
+	assert.Equal(t, "foo", input["old_string"])
+	assert.Equal(t, "bar", input["new_string"])
+	assert.NotContains(t, input, "oldString")
+	assert.NotContains(t, input, "newString")
 }
 
 func TestParseCodeBuddyACPToolCall_NilMeta(t *testing.T) {

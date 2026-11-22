@@ -156,6 +156,15 @@ type ACPPlugin struct {
 	// \"mode\"", so a mode picker would be dead AND duplicate the effort picker.
 	// With this set, the host suppresses the mode surface for the backend.
 	ModesMirrorThoughtLevel bool
+
+	// SpawnHooks customizes the ACP child's argv/env at spawn time.
+	//
+	// Backend-private spawn workarounds live here instead of in the shared
+	// lifecycle: reading a backend's own MCP config file, pointing it at an
+	// own-service endpoint, or setting a permission variable are that backend's
+	// business, and a shared `if backend == "x"` is exactly the coupling this
+	// registry exists to remove.
+	SpawnHooks *ai.ACPSpawnHooks
 }
 
 // ACPModelSwitchSetModel is the ACP-standard model-switch method. Declare it as

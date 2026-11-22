@@ -41,6 +41,10 @@ func init() {
 	// CodeBuddy's session/steer) without importing the backends package.
 	ai.LookupMidTurnInjectorFn = LookupMidTurnInjector
 
+	// Wire up the spawn-hook lookup so the shared lifecycle can append a
+	// backend's own argv/env without naming the backend.
+	ai.LookupACPSpawnHooksFn = LookupACPSpawnHooks
+
 	// Wire up the BackendSpec loader so model/discovery.go can build
 	// BackendRegistry dynamically from backend plugins.
 	model.LoadBackendSpecs = AllSpecsSorted

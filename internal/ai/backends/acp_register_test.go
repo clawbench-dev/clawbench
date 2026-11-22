@@ -65,16 +65,18 @@ func TestACPInitRegistration(t *testing.T) {
 		p := mustLookup(t, "opencode")
 		ACP := mustACP(t, p)
 
-		remaps := ACP.InputRemaps
-		if remaps == nil {
-			t.Fatal("expected opencode InputRemaps to be non-nil")
+		// OpenCode declares no table of its own: its field names are the shared
+		// generic set, which LookupACPRemaps falls back to.
+		if ACP.InputRemaps != nil {
+			t.Errorf("expected nil InputRemaps for opencode (shared generic set), got %v", ACP.InputRemaps)
 		}
+		remaps := backends.LookupACPRemaps("opencode")
 		expected := map[string]string{
 			"oldString": "old_string", "newString": "new_string", "replaceAll": "replace_all",
 		}
 		for k, v := range expected {
 			if remaps[k] != v {
-				t.Errorf("InputRemaps[%q] = %q, want %q", k, remaps[k], v)
+				t.Errorf("LookupACPRemaps(opencode)[%q] = %q, want %q", k, remaps[k], v)
 			}
 		}
 		// OpenCode has no ToolCallIDPrefixes
@@ -100,16 +102,19 @@ func TestACPInitRegistration(t *testing.T) {
 
 	t.Run("codebuddy", func(t *testing.T) {
 		p := mustLookup(t, "codebuddy")
-		// Codebuddy ACP uses generic remaps (no ACP plugin registered)
-		if p.ACP != nil {
-			t.Fatal("expected nil ACP plugin for codebuddy (redundant InputRemaps removed)")
+		// Codebuddy declares no input remaps (its mixed camelCase fields are the
+		// shared generic set), but it DOES need a spawn hook for the legacy
+		// ~/.codebuddy/.mcp.json injection and the own-service --settings
+		// override.
+		if p.ACP == nil || p.ACP.SpawnHooks == nil {
+			t.Fatal("expected an ACP plugin with SpawnHooks for codebuddy")
+		}
+		if p.ACP.InputRemaps != nil {
+			t.Errorf("expected nil InputRemaps for codebuddy (shared generic set), got %v", p.ACP.InputRemaps)
 		}
 		remaps := backends.LookupACPRemaps("codebuddy")
-		if remaps == nil {
-			t.Fatal("expected generic fallback remaps for codebuddy")
-		}
-		if remaps["filePath"] != "file_path" {
-			t.Errorf("expected generic filePath->file_path for codebuddy, got %q", remaps["filePath"])
+		if remaps["oldString"] != "old_string" {
+			t.Errorf("expected generic oldString->old_string for codebuddy, got %q", remaps["oldString"])
 		}
 	})
 
@@ -234,8 +239,13 @@ func TestACPInitRegistration(t *testing.T) {
 		if ACP.ToolTitlePrefixes["delegate_task"] != "Agent" {
 			t.Errorf("expected delegate_task->Agent, got %q", ACP.ToolTitlePrefixes["delegate_task"])
 		}
-		if len(ACP.InputRemaps) == 0 {
-			t.Error("expected non-empty InputRemaps for hermes ACP")
+		// Hermes declares no remap table: its field names are the shared
+		// generic set.
+		if ACP.InputRemaps != nil {
+			t.Errorf("expected nil InputRemaps for hermes (shared generic set), got %v", ACP.InputRemaps)
+		}
+		if remaps := backends.LookupACPRemaps("hermes"); remaps["oldString"] != "old_string" {
+			t.Errorf("expected generic oldString->old_string for hermes, got %q", remaps["oldString"])
 		}
 	})
 }

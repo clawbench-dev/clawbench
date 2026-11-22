@@ -36,7 +36,7 @@ func init() {
 		},
 		ModelSource:  model.PluginSource("codex", discoverCodexModels),
 		ListSessions: listCodexSessionsFromDisk,
-		MidTurn:      &midTurnInjector{},
+		MidTurn:      midTurn,
 		ProviderEnv: &model.ProviderEnvSpec{
 			// codex reads its provider from ~/.codex/config.toml. The managed
 			// block references this variable for env_key, so the secret never

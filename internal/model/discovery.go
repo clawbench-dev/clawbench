@@ -38,7 +38,20 @@ type BackendSpec struct {
 	// same id against the Gateway and DOES restore history (verified by asking
 	// the model to recall a seeded secret after a hard kill).
 	ACPResumeIsProcessLocal bool
-	InstallCmd              string // npm/pip install command, e.g. "npm install -g @anthropic-ai/claude-code"; empty = not installable
+	// ACPRecoversByReportedCwd marks an agent that can RELOCATE an existing
+	// session to another directory from inside the conversation. Recovery must
+	// then ask the agent where the session actually lives (session/list) before
+	// re-attaching, because ACP requires every resume/load to carry the
+	// session's own cwd and the agent rejects a stale one.
+	//
+	// Measured on opencode: its session_move tool (typically into a git
+	// worktree) moves the session, the ACP layer neither notifies the client
+	// nor exposes a single-session lookup, so after a restart the old project
+	// root is rejected with "session ... does not belong to cwd" and the
+	// conversation becomes unrecoverable. Other ACP backends do not move a
+	// session on their own, so the extra RPC would buy nothing there.
+	ACPRecoversByReportedCwd bool
+	InstallCmd               string // npm/pip install command, e.g. "npm install -g @anthropic-ai/claude-code"; empty = not installable
 	// LoginCmd is the command the user must run once in a terminal to sign this
 	// agent in, e.g. "cmdc login". Empty = the backend does not gate sessions on
 	// a sign-in, or it advertises its own instruction. Used only to render the

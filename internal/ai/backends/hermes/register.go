@@ -49,7 +49,7 @@ func init() {
 		},
 		ACP: &backends.ACPPlugin{
 			ToolTitlePrefixes: HermesACPTitlePrefixes,
-			InputRemaps:       HermesACPInputRemaps,
+			// No InputRemaps: its field names are the shared generic set.
 			// Hermes accepts a "model" config option but never reads it back
 			// (acp_adapter/server.py: set_config_option only stores the value in
 			// state.config_options), so a config-option switch is a silent no-op.
