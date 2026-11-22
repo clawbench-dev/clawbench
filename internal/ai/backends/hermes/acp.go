@@ -60,20 +60,10 @@ var HermesACPTitlePrefixes = map[string]string{
 	"web_search": "WebSearch",
 }
 
-// HermesACPInputRemaps maps Hermes ACP rawInput field names to canonical names.
+// No InputRemaps for Hermes.
 //
 // Hermes' tool arguments are already canonical (path / old_string / new_string /
 // command / pattern — verified against the tool schemas and a live session), and
 // rawInput is null for most tools because Hermes renders structured content
-// instead. The map therefore carries only the generic camelCase normalizations
-// other ACP backends also need, so a plugin/MCP tool that does emit camelCase
-// rawInput is still normalized.
-var HermesACPInputRemaps = map[string]string{
-	"filePath":   "file_path",
-	"dirPath":    "path",
-	"oldString":  "old_string",
-	"newString":  "new_string",
-	"replaceAll": "replace_all",
-	"cellIndex":  "cell_index",
-	"cellType":   "cell_type",
-}
+// instead. The only normalization it needs is the shared camelCase set
+// (ai.GenericACPRemaps), which every backend gets by default.

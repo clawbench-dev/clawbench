@@ -173,7 +173,7 @@ func TestSessionExecutor_CompactDetectedNotConsumedByItsOwnTurn(t *testing.T) {
 	executor.RunWithChannel(ch)
 
 	// A request built AFTER the turn must observe the flag.
-	req := BuildChatRequest("continue", sid, "/test", "test", "test-agent", "", "", "", "", "/test", false)
+	req := BuildChatRequest("continue", sid, "/test", "test", "test-agent", "", "", "", "/test", false)
 	assert.True(t, req.Compacted, "the turn after the compaction must re-inject")
 }
 

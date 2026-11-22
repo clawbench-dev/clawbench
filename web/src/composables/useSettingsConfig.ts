@@ -911,10 +911,10 @@ export async function patchAgentField(
     await loadAgents(true)
     return
   }
-  // acp_command: the server also flips `transport` in the same patch (clearing
-  // the command forces CLI, setting one forces acp-stdio), so mirroring only
-  // the command locally would leave a stale transport in every consumer that
-  // reads it. Re-fetch instead.
+  // acp_command: the transport is derived from this field, and the server also
+  // re-derives capability flags and drops the old ACP connection, so mirroring
+  // only the command locally could leave stale derived state behind. Re-fetch
+  // instead.
   if (field === 'acp_command') {
     await loadAgents(true)
     return

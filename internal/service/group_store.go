@@ -945,7 +945,7 @@ func listGroupMembers(groupID string, includeRemoved bool) ([]GroupMember, error
 // and which model it is running.
 type GroupMemberContext struct {
 	// Usage is the member row's persisted context_state.usage. nil means the
-	// member never reported usage (a CLI-transport agent does not report it at
+	// member never reported usage (the in-process agent does not report it at
 	// all), which the UI renders as "—" rather than as 0%.
 	Usage *ai.UsageState
 	// Model is the member row's model override. "" means "use the agent's

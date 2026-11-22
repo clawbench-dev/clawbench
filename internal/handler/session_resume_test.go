@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -164,7 +165,8 @@ func TestServeSessionResume_CrossProjectDenied(t *testing.T) {
 
 	sessionID := "test-other-project-session"
 	_, err := store.UnsafeDBForTest().Exec(
-		"INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING")
+		"INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING",
+	)
 	assert.NoError(t, err)
 	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other Session', 0)",
@@ -509,7 +511,9 @@ func TestServeACPLoadSession_SessionMetadataBeforeLoad(t *testing.T) {
 	if err == nil {
 		// If the session exists (may have been hard-deleted), verify metadata
 		assert.Equal(t, "acp:"+acpSessionID, sourceID, "source_session_id should be 'acp:<acpSessionId>'")
-		assert.Equal(t, "acp-stdio", transport, "transport should be 'acp-stdio'")
+		// The session's own transport column is no longer written: the agent
+		// row (which has an acp_command) is what decides the path.
+		assert.Empty(t, transport, "the per-session transport column must stay unwritten")
 		assert.Equal(t, acpSessionID, extID, "external_session_id should be the loaded ACP session id")
 	}
 }
@@ -1148,7 +1152,7 @@ func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
 		{
 			Update: acp.SessionUpdate{
 				UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-					MessageId: &replayMsgID,
+					MessageId: acptest.MsgID(replayMsgID),
 					Content:   acp.TextBlock("Hello from replay"),
 				},
 			},
@@ -1246,7 +1250,7 @@ func TestServeACPLoadSession_ReplayPersistsToolCalls(t *testing.T) {
 					ToolCallId: acp.ToolCallId("tc-replay-read"),
 					Title:      "Read file",
 					Kind:       acp.ToolKindRead,
-					RawInput:   map[string]any{"file_path": "/tmp/a.go"},
+					RawInput:   acptest.Raw(map[string]any{"file_path": "/tmp/a.go"}),
 				},
 			},
 		},
@@ -1254,8 +1258,8 @@ func TestServeACPLoadSession_ReplayPersistsToolCalls(t *testing.T) {
 			Update: acp.SessionUpdate{
 				ToolCallUpdate: &acp.SessionToolCallUpdate{
 					ToolCallId: acp.ToolCallId("tc-replay-read"),
-					Status:     &completed,
-					RawOutput:  "file contents here",
+					Status:     acptest.Patch(completed),
+					RawOutput:  acptest.PatchRaw("file contents here"),
 				},
 			},
 		},

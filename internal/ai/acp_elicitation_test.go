@@ -15,33 +15,66 @@ import (
 // elicitationFormSchema builds the shape OpenCode sends for its question tool:
 // one property per question, a companion "<key>_custom" free-text field, and a
 // multiselect expressed as an array whose items carry the enum.
-func elicitationFormSchema() acp.UnstableElicitationSchema {
-	return acp.UnstableElicitationSchema{
-		Type: acp.UnstableElicitationSchemaTypeObject,
-		Properties: map[string]any{
-			"q0": map[string]any{
-				"type":        "string",
-				"title":       "部署方式",
+func elicitationFormSchema() acp.ElicitationSchema {
+	// Decoded from the wire shape rather than built from structs: the typed
+	// union only keeps the members the schema names, so going through JSON is
+	// what the client actually sees (including `anyOf` on array items).
+	const raw = `{
+		"type": "object",
+		"properties": {
+			"q0": {
+				"type": "string",
+				"title": "部署方式",
 				"description": "你想怎么部署？",
-				"oneOf": []any{
-					map[string]any{"const": "docker", "title": "Docker", "description": "容器部署"},
-					map[string]any{"const": "binary", "title": "二进制"},
-				},
+				"oneOf": [
+					{"const": "docker", "title": "Docker", "description": "容器部署"},
+					{"const": "binary", "title": "二进制"}
+				]
 			},
-			"q0_custom": map[string]any{"type": "string", "title": "部署方式 (other)"},
-			"q1": map[string]any{
-				"type":        "array",
-				"title":       "要开哪些",
+			"q0_custom": {"type": "string", "title": "部署方式 (other)"},
+			"q1": {
+				"type": "array",
+				"title": "要开哪些",
 				"description": "可以多选",
-				"items": map[string]any{
-					"anyOf": []any{
-						map[string]any{"const": "logs", "title": "日志"},
-						map[string]any{"const": "metrics", "title": "指标"},
-					},
-				},
-			},
-		},
+				"items": {
+					"anyOf": [
+						{"const": "logs", "title": "日志"},
+						{"const": "metrics", "title": "指标"}
+					]
+				}
+			}
+		}
+	}`
+	var schema acp.ElicitationSchema
+	if err := json.Unmarshal([]byte(raw), &schema); err != nil {
+		panic(err)
 	}
+	return schema
+}
+
+// newElicitationFormRequest builds the request OpenCode sends for its question
+// tool: form mode with the question schema.
+func newElicitationFormRequest(schema acp.ElicitationSchema) acp.CreateElicitationRequest {
+	return acp.CreateElicitationRequest{Form: &acp.CreateElicitationForm{
+		Message:         "Please answer",
+		Mode:            "form",
+		RequestedSchema: schema,
+	}}
+}
+
+// mustElicitationSchema decodes a JSON-shaped schema into the typed form, the
+// way the client receives it on the wire.
+func mustElicitationSchema(t *testing.T, v any) acp.ElicitationSchema {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	var schema acp.ElicitationSchema
+	if err := json.Unmarshal(b, &schema); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	return schema
 }
 
 func TestBuildElicitationQuestions_OrderAndCustomFolding(t *testing.T) {
@@ -56,7 +89,10 @@ func TestBuildElicitationQuestions_OrderAndCustomFolding(t *testing.T) {
 			"oneOf": []any{map[string]any{"const": "a", "title": "A"}},
 		}
 	}
-	got := buildElicitationQuestions(acp.UnstableElicitationSchema{Properties: props})
+	got := buildElicitationQuestions(mustElicitationSchema(t, map[string]any{
+		"type":       "object",
+		"properties": props,
+	}))
 	order := make([]string, 0, len(got))
 	for _, q := range got {
 		order = append(order, q.Key)
@@ -94,23 +130,24 @@ func TestBuildElicitationQuestions_OrderAndCustomFolding(t *testing.T) {
 func TestBuildElicitationQuestions_SkipsUnrepresentableFields(t *testing.T) {
 	// A number field has no control on the card. Dropping it leaves the answer
 	// "unanswered" for that property; inventing a value would be worse.
-	got := buildElicitationQuestions(acp.UnstableElicitationSchema{
-		Properties: map[string]any{
+	got := buildElicitationQuestions(mustElicitationSchema(t, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
 			"count": map[string]any{"type": "integer", "title": "多少个"},
 		},
-	})
+	}))
 	if len(got) != 0 {
 		t.Fatalf("questions = %+v, want none", got)
 	}
 }
 
-func TestUnstableCreateElicitation_EmitsCardAndReturnsAnswer(t *testing.T) {
+func TestCreateElicitation_EmitsCardAndReturnsAnswer(t *testing.T) {
 	client := NewClawBenchACPClient()
 	ch := make(chan StreamEvent, 8)
 	client.RegisterSession("acp-sess-1", ch)
 
 	type result struct {
-		resp acp.UnstableCreateElicitationResponse
+		resp acp.CreateElicitationResponse
 		err  error
 	}
 	done := make(chan result, 1)
@@ -118,7 +155,7 @@ func TestUnstableCreateElicitation_EmitsCardAndReturnsAnswer(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		resp, err := client.UnstableCreateElicitation(ctx, acp.NewUnstableCreateElicitationRequestForm(elicitationFormSchema()))
+		resp, err := client.CreateElicitation(ctx, newElicitationFormRequest(elicitationFormSchema()))
 		done <- result{resp: resp, err: err}
 	}()
 
@@ -162,12 +199,12 @@ func TestUnstableCreateElicitation_EmitsCardAndReturnsAnswer(t *testing.T) {
 	select {
 	case r := <-done:
 		if r.err != nil {
-			t.Fatalf("UnstableCreateElicitation: %v", r.err)
+			t.Fatalf("CreateElicitation: %v", r.err)
 		}
 		if r.resp.Accept == nil || r.resp.Accept.Action != "accept" {
 			t.Fatalf("response = %+v, want accept", r.resp)
 		}
-		if got := r.resp.Accept.Content["q0"]; got != "binary" {
+		if got := r.resp.Accept.Content["q0"].String; got == nil || string(*got) != "binary" {
 			t.Fatalf("q0 answer = %v, want binary", got)
 		}
 	case <-time.After(2 * time.Second):
@@ -185,18 +222,21 @@ func TestUnstableCreateElicitation_EmitsCardAndReturnsAnswer(t *testing.T) {
 	}
 }
 
-func TestUnstableCreateElicitation_AnswersUnansweredWhenNothingRenderable(t *testing.T) {
+func TestCreateElicitation_AnswersUnansweredWhenNothingRenderable(t *testing.T) {
 	client := NewClawBenchACPClient()
 	ch := make(chan StreamEvent, 4)
 	client.RegisterSession("acp-sess-1", ch)
 
-	resp, err := client.UnstableCreateElicitation(context.Background(), acp.NewUnstableCreateElicitationRequestForm(
-		acp.UnstableElicitationSchema{Properties: map[string]any{
-			"count": map[string]any{"type": "integer", "title": "多少个"},
-		}},
+	resp, err := client.CreateElicitation(context.Background(), newElicitationFormRequest(
+		mustElicitationSchema(t, map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"count": map[string]any{"type": "integer", "title": "多少个"},
+			},
+		}),
 	))
 	if err != nil {
-		t.Fatalf("UnstableCreateElicitation: %v", err)
+		t.Fatalf("CreateElicitation: %v", err)
 	}
 	// Accepting with empty content makes the agent report "unanswered" and keep
 	// going. Declining/cancelling would end the whole turn instead.
@@ -213,15 +253,15 @@ func TestUnstableCreateElicitation_AnswersUnansweredWhenNothingRenderable(t *tes
 	}
 }
 
-func TestUnstableCreateElicitation_CancelsWithTurn(t *testing.T) {
+func TestCreateElicitation_CancelsWithTurn(t *testing.T) {
 	client := NewClawBenchACPClient()
 	ch := make(chan StreamEvent, 4)
 	client.RegisterSession("acp-sess-1", ch)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan acp.UnstableCreateElicitationResponse, 1)
+	done := make(chan acp.CreateElicitationResponse, 1)
 	go func() {
-		resp, _ := client.UnstableCreateElicitation(ctx, acp.NewUnstableCreateElicitationRequestForm(elicitationFormSchema()))
+		resp, _ := client.CreateElicitation(ctx, newElicitationFormRequest(elicitationFormSchema()))
 		done <- resp
 	}()
 
@@ -282,7 +322,7 @@ func TestSDKDispatchesElicitationCreateToClient(t *testing.T) {
 	conn.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	request := `{"jsonrpc":"2.0","id":7,"method":"elicitation/create","params":{` +
-		`"mode":"form","message":"Questions","requestedSchema":{` +
+		`"sessionId":"acp-sess-1","mode":"form","message":"Questions","requestedSchema":{` +
 		`"type":"object","properties":{"q0":{"type":"string","title":"部署方式",` +
 		`"description":"你想怎么部署？","oneOf":[{"const":"docker","title":"Docker"},` +
 		`{"const":"binary","title":"二进制"}]}}}}}`
@@ -344,20 +384,26 @@ func TestSDKDispatchesElicitationCreateToClient(t *testing.T) {
 func TestBuildElicitationQuestions_FreeTextOnlyWhenAlone(t *testing.T) {
 	freeText := map[string]any{"type": "string", "title": "你的名字", "description": "请输入"}
 	// Alone: the card's single note box is the answer.
-	got := buildElicitationQuestions(acp.UnstableElicitationSchema{Properties: map[string]any{"name": freeText}})
+	got := buildElicitationQuestions(mustElicitationSchema(t, map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"name": freeText},
+	}))
 	if len(got) != 1 || got[0].Key != "name" {
 		t.Fatalf("questions = %+v, want the sole free-text question kept", got)
 	}
 	// Alongside a question with options: the one note box cannot be attributed,
 	// so the free-text question must not render an unanswerable box.
-	got = buildElicitationQuestions(acp.UnstableElicitationSchema{Properties: map[string]any{
-		"name": freeText,
-		"mode": map[string]any{
-			"type":  "string",
-			"title": "方式",
-			"oneOf": []any{map[string]any{"const": "a", "title": "A"}},
+	got = buildElicitationQuestions(mustElicitationSchema(t, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": freeText,
+			"mode": map[string]any{
+				"type":  "string",
+				"title": "方式",
+				"oneOf": []any{map[string]any{"const": "a", "title": "A"}},
+			},
 		},
-	}})
+	}))
 	if len(got) != 1 || got[0].Key != "mode" {
 		t.Fatalf("questions = %+v, want only the option-backed question", got)
 	}
@@ -371,9 +417,9 @@ func TestUnregisterSession_CancelsPendingElicitation(t *testing.T) {
 	ch := make(chan StreamEvent, 8)
 	client.RegisterSession("acp-sess-1", ch)
 
-	done := make(chan acp.UnstableCreateElicitationResponse, 1)
+	done := make(chan acp.CreateElicitationResponse, 1)
 	go func() {
-		resp, _ := client.UnstableCreateElicitation(context.Background(), acp.NewUnstableCreateElicitationRequestForm(elicitationFormSchema()))
+		resp, _ := client.CreateElicitation(context.Background(), newElicitationFormRequest(elicitationFormSchema()))
 		done <- resp
 	}()
 
@@ -394,5 +440,42 @@ func TestUnregisterSession_CancelsPendingElicitation(t *testing.T) {
 	}
 	if len(client.pendingElicitations) != 0 {
 		t.Fatalf("pendingElicitations = %d, want 0", len(client.pendingElicitations))
+	}
+}
+
+// TestElicitationContent_JSONDecodedMultiSelect pins the wire shape the HTTP
+// handler actually produces: encoding/json decodes a multi-select answer as
+// []any, not []string. Before the v0.20 typed response, the untyped map passed
+// it straight through; the typed conversion must accept []any or the field is
+// silently dropped and the agent reports the question as unanswered.
+func TestElicitationContent_JSONDecodedMultiSelect(t *testing.T) {
+	var content map[string]any
+	if err := json.Unmarshal([]byte(`{"q0":["logs","metrics"],"q1":"binary"}`), &content); err != nil {
+		t.Fatal(err)
+	}
+
+	got := elicitationContent(content)
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"q0":["logs","metrics"],"q1":"binary"}`
+	if string(b) != want {
+		t.Fatalf("elicitationContent = %s, want %s", b, want)
+	}
+}
+
+// A multi-select answer whose elements are not strings cannot be expressed by
+// the protocol's string-array value; the non-string elements are dropped rather
+// than turning into an empty value that fails to encode.
+func TestElicitationContent_NonStringArrayElements(t *testing.T) {
+	got := elicitationContent(map[string]any{"q0": []any{"logs", 1, true}})
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"q0":["logs"]}`
+	if string(b) != want {
+		t.Fatalf("elicitationContent = %s, want %s", b, want)
 	}
 }

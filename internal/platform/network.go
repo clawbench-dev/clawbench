@@ -214,8 +214,6 @@ const (
 	KindVirtual InterfaceKind = "virtual"
 	// KindPublic is a globally routable address.
 	KindPublic InterfaceKind = "public"
-	// KindOther is anything unclassified.
-	KindOther InterfaceKind = "other"
 )
 
 // LocalAddress is one address a client might reach this server on.

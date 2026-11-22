@@ -56,19 +56,18 @@ func TestDeleteAgentWithTakeover_RebindsSessionState(t *testing.T) {
 	assert.Equal(t, 0, res.Tasks)
 	assert.Equal(t, 0, res.Groups)
 
-	var agentID, backend, source, modelName, transport, extID, takeoverFrom, ctx string
+	var agentID, backend, source, modelName, extID, takeoverFrom, ctx string
 	require.NoError(t, db.QueryRow(`
-		SELECT agent_id, backend, agent_source, model, transport, external_session_id,
+		SELECT agent_id, backend, agent_source, model, external_session_id,
 		       agent_takeover_from, context_state
 		  FROM chat_sessions WHERE id = 's1'`).
-		Scan(&agentID, &backend, &source, &modelName, &transport, &extID, &takeoverFrom, &ctx))
+		Scan(&agentID, &backend, &source, &modelName, &extID, &takeoverFrom, &ctx))
 
 	assert.Equal(t, "codebuddy", agentID)
 	assert.Equal(t, "codebuddy", backend)
 	assert.Equal(t, "default", source)
-	// A model id / transport / native session id all describe the deleted agent.
+	// A model id / native session id both describe the deleted agent.
 	assert.Empty(t, modelName)
-	assert.Empty(t, transport)
 	assert.Empty(t, extID)
 	// The OLD agent's name: this is the badge text and the turn-path switch.
 	assert.Equal(t, "Claude", takeoverFrom)
@@ -334,34 +333,6 @@ func TestDeleteAgentWithTakeover_ClearsNativeSessionAcrossBackends(t *testing.T)
 	assert.Empty(t, extID, "a cross-backend takeover must rebuild from chat_history")
 	// The rebuild path sends the system prompt anyway (resume=false), so the flag
 	// must stay untouched — setting it would be a lie about a compaction.
-	assert.Zero(t, compacted)
-}
-
-// A session that carried its own transport override may have created its native
-// session in the OTHER mode (a CLI id from an ACP adapter, or the reverse), which
-// the replacement cannot resume. Those rows must be rebuilt even on the same
-// backend.
-func TestDeleteAgentWithTakeover_ClearsNativeSessionWithTransportOverride(t *testing.T) {
-	db := setupTakeoverDB(t)
-
-	_, err := db.Exec(`
-		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type,
-		                           transport, external_session_id, compacted)
-		VALUES ('s1', 1, 'codebuddy', 'chat', 'cb-old', 'chat', 'acp-stdio', 'native-1', 0)`)
-	require.NoError(t, err)
-
-	old := &model.Agent{ID: "cb-old", Name: "Old Buddy", Backend: "codebuddy"}
-	replacement := &model.Agent{ID: "cb-new", Name: "New Buddy", Backend: "codebuddy"}
-	_, err = service.DeleteAgentWithTakeover(old, replacement)
-	require.NoError(t, err)
-
-	var extID, transport string
-	var compacted int
-	require.NoError(t, db.QueryRow(
-		"SELECT external_session_id, transport, compacted FROM chat_sessions WHERE id = 's1'",
-	).Scan(&extID, &transport, &compacted))
-	assert.Empty(t, extID)
-	assert.Empty(t, transport)
 	assert.Zero(t, compacted)
 }
 

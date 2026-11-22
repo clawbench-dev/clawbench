@@ -79,7 +79,7 @@ func isACPToolCallWrapper(title, backendID string) bool {
 // Returning false for a nil conn is intentional: without a connection there is
 // no id table to consult, and the title check is still applied.
 func isWrapperToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string, conn *ACPConn) bool {
-	if isACPToolCallWrapper(derefStr(tcu.Title), backendID) {
+	if isACPToolCallWrapper(derefStr(tcu.Title.Ptr()), backendID) {
 		return true
 	}
 	return conn != nil && conn.isDroppedWrapperToolCallID(toolCallIDOf(tcu.ToolCallId))

@@ -7,6 +7,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -23,12 +24,12 @@ func unsolicitedTurnUpdate(requestID, reason string) acp.SessionUpdate {
 	return acp.SessionUpdate{
 		SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
 			SessionUpdate: "session_info_update",
-			Meta: map[string]any{
+			Meta: acptest.PatchMeta(map[string]any{
 				metaKeyCodeBuddyUnsolicitedTurn: map[string]any{
 					"requestId": requestID,
 					"reason":    reason,
 				},
-			},
+			}),
 		},
 	}
 }

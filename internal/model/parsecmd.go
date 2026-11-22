@@ -1,16 +1,9 @@
 package model
 
 import (
-	"context"
 	"regexp"
 	"strings"
-	"time"
 )
-
-// commandContext returns a context bounded by timeout, for CLI probes.
-func commandContext(timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), timeout)
-}
 
 // ---------------------------------------------------------------------------
 // Shared post-processing
@@ -107,62 +100,6 @@ func ParsePlainLines(output string, opts PlainLineOptions) []AgentModel {
 		seen[line] = struct{}{}
 		models = append(models, AgentModel{ID: line, Name: displayName(line, opts.Names)})
 	}
-	if len(models) == 0 {
-		return nil
-	}
-	markFirstDefault(models)
-	return models
-}
-
-// ---------------------------------------------------------------------------
-// ParseTabular — "provider model ..." rows
-// ---------------------------------------------------------------------------
-
-// ParseTabular parses whitespace-separated tables whose first two columns are
-// provider and model (pi's `--list-models`). Models are named "provider/model"
-// so identical model names from different providers stay distinguishable.
-func ParseTabular(output string) []AgentModel {
-	var models []AgentModel
-	for _, raw := range strings.Split(output, "\n") {
-		fields := strings.Fields(raw)
-		if len(fields) < 2 {
-			continue
-		}
-		provider, modelID := fields[0], fields[1]
-		// Header row, e.g. "provider  model  context  max-out".
-		if strings.EqualFold(provider, "provider") || strings.EqualFold(modelID, "model") {
-			continue
-		}
-		full := provider + "/" + modelID
-		models = append(models, AgentModel{ID: full, Name: full})
-	}
-	models = dedupeModels(models)
-	if len(models) == 0 {
-		return nil
-	}
-	markFirstDefault(models)
-	return models
-}
-
-// ---------------------------------------------------------------------------
-// ParseProviderModel — "provider/model" one per line
-// ---------------------------------------------------------------------------
-
-var providerModelRe = regexp.MustCompile(`^(\S+)/(\S+)$`)
-
-// ParseProviderModel parses output of one "provider/model" per line (opencode).
-// The full "provider/model" string is the ID, since that is what the CLI expects
-// when selecting a model.
-func ParseProviderModel(output string) []AgentModel {
-	var models []AgentModel
-	for _, raw := range strings.Split(output, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || !providerModelRe.MatchString(line) {
-			continue
-		}
-		models = append(models, AgentModel{ID: line, Name: line})
-	}
-	models = dedupeModels(models)
 	if len(models) == 0 {
 		return nil
 	}

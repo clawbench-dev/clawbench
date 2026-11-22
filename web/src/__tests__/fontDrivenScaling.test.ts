@@ -448,7 +448,6 @@ describe('design px vs measured CSS px', () => {
       // Reactive sites keep a local multiply (documented at each site) — they
       // still must be a scale multiplication, not a bare comparison.
       { file: 'src/composables/useDockOverflow.ts', pattern: /designPx \* scale/ },
-      { file: 'src/composables/useToolbarOverflow.ts', pattern: /designPx \* scale/ },
       { file: 'src/composables/useWideScreenLayout.ts', pattern: /cssWidth \/ scale/ },
     ]
     for (const { file, pattern } of consumers) {

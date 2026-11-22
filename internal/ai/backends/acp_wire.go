@@ -41,13 +41,16 @@ func init() {
 	// CodeBuddy's session/steer) without importing the backends package.
 	ai.LookupMidTurnInjectorFn = LookupMidTurnInjector
 
+	// Wire up the spawn-hook lookup so the shared lifecycle can append a
+	// backend's own argv/env without naming the backend.
+	ai.LookupACPSpawnHooksFn = LookupACPSpawnHooks
+
 	// Wire up the BackendSpec loader so model/discovery.go can build
 	// BackendRegistry dynamically from backend plugins.
 	model.LoadBackendSpecs = AllSpecsSorted
 
 	// Wire up the capability snapshot so model can answer "what can this
-	// backend do" in one call. It replaced three per-capability function
-	// variables (CLI, mid-turn, splits-reply); model's BackendSupportsCLI /
-	// BackendSupportsMidTurn / BackendMidTurnSplitsReply now read this one.
+	// backend do" in one call; model's BackendSupportsMidTurn /
+	// BackendMidTurnSplitsReply read this one.
 	model.LookupBackendCapabilitiesFn = Capabilities
 }

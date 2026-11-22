@@ -25,7 +25,21 @@ import (
 // spawning an agent.
 // ---------------------------------------------------------------------------
 
+// stubCwdRecoverySpecs installs the minimal backend specs these tests need:
+// opencode declares ACPRecoversByReportedCwd, claude does not. The real specs
+// live in the backend sub-packages, which this package cannot import (cycle),
+// so the capability bit has to be declared here explicitly.
+func stubCwdRecoverySpecs(t *testing.T) {
+	t.Helper()
+	restore := model.SetBackendRegistryForTest([]model.BackendSpec{
+		{Backend: "opencode", ACPRecoversByReportedCwd: true},
+		{Backend: "claude"},
+	})
+	t.Cleanup(restore)
+}
+
 func TestOpenCodeRecoveryCwd_AdoptsAgentReportedDirectory(t *testing.T) {
+	stubCwdRecoverySpecs(t)
 	requested := t.TempDir()
 	moved := t.TempDir()
 
@@ -52,7 +66,8 @@ func TestOpenCodeRecoveryCwd_AdoptsAgentReportedDirectory(t *testing.T) {
 		"recovery must resume at the directory opencode reports, not the stale project root")
 }
 
-func TestOpenCodeRecoveryCwd_OnlyAppliesToOpenCode(t *testing.T) {
+func TestOpenCodeRecoveryCwd_OnlyAppliesWhenBackendDeclaresIt(t *testing.T) {
+	stubCwdRecoverySpecs(t)
 	requested := t.TempDir()
 	moved := t.TempDir()
 
@@ -74,11 +89,12 @@ func TestOpenCodeRecoveryCwd_OnlyAppliesToOpenCode(t *testing.T) {
 	)
 
 	require.NoError(t, conn.recoverExistingSession(context.Background(), requested, "acp-sid", cachedConfigSnapshot{}))
-	assert.Equal(t, requested, resumedCwd, "other backends must keep resuming with the requested cwd")
-	assert.False(t, listCalled, "other backends must not pay for the extra session/list call")
+	assert.Equal(t, requested, resumedCwd, "a backend without ACPRecoversByReportedCwd must keep resuming with the requested cwd")
+	assert.False(t, listCalled, "a backend without ACPRecoversByReportedCwd must not pay for the extra session/list call")
 }
 
 func TestOpenCodeRecoveryCwd_PagesUntilSessionFound(t *testing.T) {
+	stubCwdRecoverySpecs(t)
 	requested := t.TempDir()
 	moved := t.TempDir()
 
@@ -159,6 +175,7 @@ func TestOpenCodeRecoveryCwd_KeepsRequestedWhenLookupCannotHelp(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			stubCwdRecoverySpecs(t)
 			conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "sid")
 			conn.alive = true
 			tc.setup(t, conn, requested)

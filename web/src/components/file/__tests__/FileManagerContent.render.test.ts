@@ -1296,11 +1296,20 @@ describe('FileManagerContent — up one level', () => {
 describe('FileManagerContent — jump to dir', () => {
   it('opens jump dialog when jump button clicked', async () => {
     const wrapper = mountContent()
-    const jumpBtn = wrapper.find('.toolbar-btn.jump-btn')
+    const jumpBtn = wrapper.find('.dir-jump-btn')
     expect(jumpBtn.exists()).toBe(true)
     await jumpBtn.trigger('click')
     await nextTick()
     expect(wrapper.find('.jump-dialog-stub').exists()).toBe(true)
+  })
+
+  // The button belongs to the location row, not the action toolbar: it acts on
+  // the path the breadcrumb states, and in the toolbar it was one more icon
+  // competing for a slot that kept folding it into the "more" menu.
+  it('renders the jump button inside the breadcrumb row and nowhere in the toolbar', () => {
+    const wrapper = mountContent()
+    expect(wrapper.find('.dir-nav-bottom .dir-jump-btn').exists()).toBe(true)
+    expect(wrapper.find('.dir-toolbar-btns .jump-btn').exists()).toBe(false)
   })
 
   it('navigates to dir on jump confirm', async () => {
@@ -1321,9 +1330,10 @@ describe('FileManagerContent — jump to dir', () => {
     vi.unstubAllGlobals()
   })
 
-  it('opens the jump dialog from its toolbar button', async () => {
+  it('labels the jump button with its own tooltip in the location row', async () => {
     const wrapper = mountContent()
-    const jump = wrapper.findAll('.toolbar-btn').find(b => (b.attributes('title') ?? '').includes('跳转'))
+    const jump = wrapper.findAll('.dir-nav-bottom .toolbar-btn, .dir-nav-bottom .dir-jump-btn')
+      .find(b => (b.attributes('title') ?? '').includes('跳转'))
     expect(jump).toBeTruthy()
     await jump!.trigger('click')
     await nextTick()

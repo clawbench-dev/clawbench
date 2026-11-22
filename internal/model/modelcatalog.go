@@ -16,10 +16,10 @@
 //
 // The replacement has exactly one of each:
 //
-//   - One source per backend, described by a ModelSource (CLI command, static
-//     catalog, or a plugin probe for the odd layouts).
+//   - One source per backend, described by a ModelSource (static catalog or a
+//     plugin probe for the odd layouts).
 //   - One merge point, ResolveModels, which treats ACP membership as
-//     authoritative and the CLI list as the source of order and display names.
+//     authoritative and the local list as the source of order and display names.
 //   - One cache, TTL-based and shared by the startup path and the HTTP refresh
 //     endpoint.
 package model
@@ -40,8 +40,6 @@ type ModelSourceKind string
 const (
 	// SourceKindStatic is a built-in catalog gated on CLI presence.
 	SourceKindStatic ModelSourceKind = "static"
-	// SourceKindCLI runs a CLI subcommand and parses its output.
-	SourceKindCLI ModelSourceKind = "cli"
 	// SourceKindPlugin is a custom probe for layouts that need more than a
 	// single command (config files, binary strings, bundled JS).
 	SourceKindPlugin ModelSourceKind = "plugin"
@@ -56,11 +54,6 @@ const (
 type ModelSource interface {
 	Backend() string
 	Kind() ModelSourceKind
-	// Timeout bounds a single discovery probe. Zero means "not applicable":
-	// static and plugin sources run in-process and have no CLI command to
-	// bound. Only CLI sources shell out, and this is the value the probe
-	// actually uses, so tests can assert a backend tightened its budget.
-	Timeout() time.Duration
 	Discover() ([]AgentModel, string)
 }
 
@@ -156,8 +149,8 @@ func ResetModelSourcesForTest() {
 // Cache
 // ---------------------------------------------------------------------------
 
-// defaultDiscoveryTTL bounds how often a backend probe may re-run. Probes shell
-// out to CLIs and read multi-MB binaries, so the startup path and the manual
+// defaultDiscoveryTTL bounds how often a backend probe may re-run. Probes read
+// config files and multi-MB binaries, so the startup path and the manual
 // refresh endpoint share this cache instead of each doing their own work.
 const defaultDiscoveryTTL = 5 * time.Minute
 
@@ -212,7 +205,7 @@ var globalDiscoveryCache = newDiscoveryCache(defaultDiscoveryTTL)
 // get returns the cached result for a backend, probing on a miss or after the
 // TTL.
 //
-// The probe runs outside the cache lock so a slow CLI cannot block other
+// The probe runs outside the cache lock so a slow probe cannot block other
 // backends, but under a per-backend lock so concurrent first-callers for the SAME
 // backend probe once. The double-check inside the lock picks up a result a
 // sibling just wrote, so a transient failure cannot overwrite a concurrent
@@ -354,7 +347,7 @@ func safeDiscover(src ModelSource) (models []AgentModel, detail string) {
 //     the CLI default flag, then the first entry.
 //
 // Inputs are never mutated.
-func ResolveModels(cliModels, acpModels []AgentModel, currentModelID string) []AgentModel {
+func ResolveModels(discovered, acpModels []AgentModel, currentModelID string) []AgentModel {
 	acpByID, acpOrder := indexACPModels(acpModels)
 
 	// Split the ACP list into tier aliases and concrete models. The two behave
@@ -362,14 +355,14 @@ func ResolveModels(cliModels, acpModels []AgentModel, currentModelID string) []A
 	// alias list cannot be, because its IDs never match a CLI model ID.
 	aliasNames, concreteACP := splitTierAliases(acpByID)
 
-	seen := make(map[string]struct{}, len(cliModels)+len(acpByID))
-	out := make([]AgentModel, 0, len(cliModels)+len(acpByID))
+	seen := make(map[string]struct{}, len(discovered)+len(acpByID))
+	out := make([]AgentModel, 0, len(discovered)+len(acpByID))
 	usedAliases := make(map[string]struct{})
 
-	// The CLI list supplies order and names; ACP contributes display names and
+	// The known list supplies order and names; ACP contributes display names and
 	// (when concrete) membership.
 	cliDefaultID := ""
-	for _, m := range cliModels {
+	for _, m := range discovered {
 		entry, ok := resolveCLIEntry(m, acpByID, concreteACP, aliasNames, seen, usedAliases)
 		if !ok {
 			continue
@@ -686,9 +679,8 @@ type staticSource struct {
 	catalog []AgentModel
 }
 
-func (s *staticSource) Backend() string        { return s.backend }
-func (s *staticSource) Kind() ModelSourceKind  { return SourceKindStatic }
-func (s *staticSource) Timeout() time.Duration { return 0 }
+func (s *staticSource) Backend() string       { return s.backend }
+func (s *staticSource) Kind() ModelSourceKind { return SourceKindStatic }
 
 func (s *staticSource) Discover() ([]AgentModel, string) {
 	if s.cliCmd != "" && !CheckCLIExists(s.cliCmd) {
@@ -697,109 +689,6 @@ func (s *staticSource) Discover() ([]AgentModel, string) {
 	models := cloneModels(s.catalog)
 	markFirstDefault(models)
 	return models, ""
-}
-
-// CommandSpec is one CLI invocation to try.
-type CommandSpec struct {
-	Command string
-	Args    []string
-	// CombineStderr appends stderr to stdout before parsing. Some CLIs print
-	// their model table to stderr.
-	CombineStderr bool
-}
-
-// CLIOptions configures a command-based source.
-type CLIOptions struct {
-	// Command/Args describe a single invocation. Ignored when Commands is set.
-	Command string
-	Args    []string
-	// CombineStderr appends stderr to stdout before parsing.
-	CombineStderr bool
-	// Commands lists invocations to try in order, for backends with a legacy
-	// command name (e.g. codewhale before deepseek).
-	Commands []CommandSpec
-	// Parse turns raw output into models. Required.
-	Parse func(output string) []AgentModel
-	// Fallback is used when every command fails or parses to nothing. Its first
-	// entry is marked default.
-	Fallback []AgentModel
-	// Timeout bounds each command. Defaults to 10s.
-	Timeout time.Duration
-}
-
-// NewCLISource builds a source that runs a CLI subcommand and parses its output.
-func NewCLISource(backend string, opts CLIOptions) ModelSource {
-	if opts.Timeout <= 0 {
-		opts.Timeout = 10 * time.Second
-	}
-	if len(opts.Commands) == 0 && opts.Command != "" {
-		opts.Commands = []CommandSpec{{
-			Command:       opts.Command,
-			Args:          opts.Args,
-			CombineStderr: opts.CombineStderr,
-		}}
-	}
-	return &cliSource{backend: backend, opts: opts}
-}
-
-type cliSource struct {
-	backend string
-	opts    CLIOptions
-}
-
-func (s *cliSource) Backend() string        { return s.backend }
-func (s *cliSource) Kind() ModelSourceKind  { return SourceKindCLI }
-func (s *cliSource) Timeout() time.Duration { return s.opts.Timeout }
-
-func (s *cliSource) Discover() ([]AgentModel, string) {
-	var tried []string
-	for _, spec := range s.opts.Commands {
-		if spec.Command == "" {
-			continue
-		}
-		tried = append(tried, spec.Command)
-		output, err := runDiscoveryCommand(spec, s.opts.Timeout)
-		if err != nil {
-			slog.Debug("model discovery: command failed",
-				"backend", s.backend, "command", spec.Command, "error", err)
-			continue
-		}
-		if models := s.opts.Parse(output); len(models) > 0 {
-			markFirstDefault(models)
-			slog.Info("model discovery succeeded",
-				"backend", s.backend, "command", spec.Command, "models", len(models))
-			return models, ""
-		}
-	}
-
-	if len(s.opts.Fallback) > 0 {
-		models := cloneModels(s.opts.Fallback)
-		markFirstDefault(models)
-		slog.Info("model discovery: using fallback catalog",
-			"backend", s.backend, "models", len(models))
-		return models, ""
-	}
-
-	if len(tried) == 0 {
-		return nil, fmt.Sprintf("%s: no command configured", s.backend)
-	}
-	detail := fmt.Sprintf("%s: no models parsed from %s", s.backend, strings.Join(tried, ", "))
-	slog.Debug("model discovery: no models parsed", "backend", s.backend, "commands", tried)
-	return nil, detail
-}
-
-func runDiscoveryCommand(spec CommandSpec, timeout time.Duration) (string, error) {
-	ctx, cancel := commandContext(timeout)
-	defer cancel()
-
-	stdout, stderr, err := RunCommandContext(ctx, spec.Command, spec.Args...)
-	if err != nil {
-		return "", err
-	}
-	if spec.CombineStderr {
-		return stdout + stderr, nil
-	}
-	return stdout, nil
 }
 
 // PluginSource wraps a custom probe for backends whose layout needs more than a
@@ -816,9 +705,8 @@ type pluginSource struct {
 	probe   func() ([]AgentModel, string)
 }
 
-func (s *pluginSource) Backend() string        { return s.backend }
-func (s *pluginSource) Kind() ModelSourceKind  { return SourceKindPlugin }
-func (s *pluginSource) Timeout() time.Duration { return 0 }
+func (s *pluginSource) Backend() string       { return s.backend }
+func (s *pluginSource) Kind() ModelSourceKind { return SourceKindPlugin }
 
 func (s *pluginSource) Discover() ([]AgentModel, string) {
 	if s.probe == nil {

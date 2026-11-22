@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	acp "github.com/coder/acp-go-sdk"
-
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends/pi"
 )
@@ -104,81 +102,21 @@ func normalizeOpenClawACPInput(toolName string, rawInput []byte) string {
 // "path" is included because it is the field every file tool uses and the
 // Read/Write/Edit cards all read "file_path". The one tool that disagrees (ls)
 // removes it (see normalizeOpenClawACPInput).
+//
+// filePath→file_path is NOT here: normalizeToolInput applies it to every
+// backend already (defaultMappings).
 var openClawACPBaseRemaps = map[string]string{
 	"path":       "file_path",
-	"filePath":   "file_path",
 	"oldString":  "old_string",
 	"newString":  "new_string",
 	"replaceAll": "replace_all",
 }
 
-// parseOpenClawACPToolCall extracts a ai.ToolCall from an OpenClaw ACP tool_call.
-func parseOpenClawACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
-	tool := &ai.ToolCall{
-		Name: ai.ExtractToolName(tc.Title, tc.Kind, "openclaw", string(tc.ToolCallId)),
-		ID:   string(tc.ToolCallId),
-		Done: false,
-	}
-	if tc.RawInput != nil {
-		if inputBytes, err := json.Marshal(tc.RawInput); err == nil {
-			tool.Input = normalizeOpenClawACPInput(openClawACPToolName(tc.Title), inputBytes)
-		}
-	}
-	return tool
-}
-
-// parseOpenClawACPToolCallUpdate extracts a ai.ToolCall from an OpenClaw ACP
-// tool_call_update.
-func parseOpenClawACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
-	tool := &ai.ToolCall{ID: string(tcu.ToolCallId)}
-	ai.MapToolCallStatus(tcu.Status, tool)
-	if tcu.RawInput != nil {
-		if inputBytes, err := json.Marshal(tcu.RawInput); err == nil {
-			title := ""
-			if tcu.Title != nil {
-				title = *tcu.Title
-			}
-			tool.Input = normalizeOpenClawACPInput(openClawACPToolName(title), inputBytes)
-		}
-	} else {
-		ai.MapToolCallInput(tcu, tool, "openclaw")
-	}
-	ai.MapToolCallName(tcu, tool, "openclaw")
-	if tool.Done {
-		ai.MapToolCallOutput(tcu, tool)
-	}
-	return tool
-}
-
-// ---------------------------------------------------------------------------
-// Test-only exports
-//
-// The backend sub-package (backends/openclaw) cannot import internal/ai's
-// unexported helpers, and internal/ai must not import the sub-package (cycle).
-// These thin wrappers let that package's tests exercise the real parsing paths
-// instead of re-implementing them.
-// ---------------------------------------------------------------------------
-
-// NormalizeOpenClawACPInputForTest exports normalizeOpenClawACPInput.
-func NormalizeOpenClawACPInputForTest(toolName, rawInput string) string {
-	return normalizeOpenClawACPInput(toolName, []byte(rawInput))
-}
-
-// OpenClawACPBaseRemapsForTest exports a copy of openClawACPBaseRemaps so the
-// backend sub-package's register_test.go can pin it against
-// OpenClawACPInputRemaps — the two tables live in different packages (this one
-// must not import backends/openclaw: cycle) and are kept in sync only by
-// convention. A copy, not the map itself, so a test cannot mutate production
-// state.
-func OpenClawACPBaseRemapsForTest() map[string]string {
-	out := make(map[string]string, len(openClawACPBaseRemaps))
-	for k, v := range openClawACPBaseRemaps {
-		out[k] = v
-	}
-	return out
-}
-
-// ParseOpenClawToolCallUpdateForTest exports parseOpenClawACPToolCallUpdate.
-func ParseOpenClawToolCallUpdateForTest(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
-	return parseOpenClawACPToolCallUpdate(tcu)
-}
+// The call/update sequence is shared with pi (see
+// ai.NewNormalizingToolCallParser); openclaw supplies only the tool-name reader
+// and the per-tool normalizer.
+var (
+	parseOpenClawACPToolCall, parseOpenClawACPToolCallUpdate = ai.NewNormalizingToolCallParser(
+		"openclaw", openClawACPToolName, normalizeOpenClawACPInput,
+	)
+)

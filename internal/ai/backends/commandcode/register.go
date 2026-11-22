@@ -50,6 +50,9 @@ func init() {
 			// instruction instead of a raw JSON-RPC blob.
 			LoginCmd:  "cmdc login",
 			SortOrder: 18,
+			// Same rejection as codex: an `sse` server fails session/new, so the
+			// UI must not offer that transport (measured alongside codex).
+			MCPRejectsSSE: true,
 			// Command Code reads its own skills from both the user-level
 			// ~/.commandcode/skills and the shared ~/.agents/skills (cli.mjs
 			// resolveSkillLoadPlan adds both at the "user" tier), plus the
@@ -66,7 +69,7 @@ func init() {
 		},
 		ACP: &backends.ACPPlugin{
 			ToolTitlePrefixes: CommandCodeACPTitlePrefixes,
-			InputRemaps:       CommandCodeACPInputRemaps,
+			// No InputRemaps: its field names are the shared generic set.
 			// ModelSwitchMethod is deliberately empty. Command Code honors BOTH
 			// session/set_model and the "model" config option, and its
 			// handleSetConfigOption routes configId="model" straight into

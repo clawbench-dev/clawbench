@@ -51,6 +51,89 @@ type ACPBehavior struct {
 	// sub-agent's own session into the parent's stream (OpenCode v2). Such
 	// frames carry no parent link and are dropped unless one was resolved.
 	IsChildSessionUpdate func(meta map[string]any) bool
+
+	// RefusalDetail reads the agent's own explanation out of a
+	// stopReason=refusal PromptResponse._meta.
+	//
+	// A refusal carries no content, and the JSON-RPC code is usually a generic
+	// placeholder (-32603 Internal error) that explains nothing. Backends that
+	// stash the real cause somewhere in _meta return it here; the shared code
+	// then puts it in the warning event instead of the useless code. nil (or an
+	// empty return) falls back to the generic refusal copy.
+	RefusalDetail func(meta map[string]any) string
+
+	// CostFieldCarriesCredit reports that this backend repurposes the
+	// ACP-standard usage_update.cost field to carry a CREDIT amount instead of
+	// a monetary cost.
+	//
+	// The amount is still real billing (it is kept as
+	// MetaExtraction.CostCredit), but persisting it as chat_metadata.cost_usd
+	// would inflate the cost statistics with a unit-less number. CodeBuddy is
+	// the only backend that does this today; every other agent reports money.
+	//
+	// A field rather than a backend-id comparison in the core: the fact belongs
+	// to the backend that ships the shape, and the core should not have to learn
+	// a new id to interpret its own wire format.
+	CostFieldCarriesCredit bool
+
+	// FrameAttribution resolves which sub-agent or team member produced a frame.
+	//
+	// Everything the shared event loop needs to attribute one frame — the member
+	// name, its display color and the parent tool call it belongs under — comes
+	// from here in ONE call. Before this hook, the loop asked three separate
+	// package functions on every branch (content / thinking / tool call), and
+	// each of them carried a private _meta key from one backend. A backend that
+	// speaks plain ACP declares nothing and its frames stay top-level.
+	//
+	// A nil return means "no attribution": the frame belongs to the top level.
+	// conn is passed because attribution needs state accumulated earlier in the
+	// turn (the roster for colors, the member→spawn-call join) — that state
+	// lives on the connection, and the hook runs on the notification goroutine,
+	// so it must only touch leaf-locked accessors (GetCachedTeamState,
+	// MemberToolCallID).
+	AttributeFrame func(conn *ACPConn, meta map[string]any) *FrameAttribution
+
+	// IsCompactionMeta reports whether a frame's _meta announces a context
+	// compaction. The shared loop latches on it so the system prompt is
+	// re-injected after the context is rewritten.
+	IsCompactionMeta func(meta map[string]any) bool
+
+	// IsCompactionCancelledMeta reports whether a frame's _meta announces a
+	// compaction that did NOT go through (cancelled, or the token limit was
+	// hit). The agent keeps the original history in both cases, so a pending
+	// report from the same attempt must be cleared rather than delivered.
+	IsCompactionCancelledMeta func(meta map[string]any) bool
+
+	// SteerBoundaryID returns the client user-message id a frame echoes for a
+	// mid-turn injection, or "" when the frame is something else.
+	//
+	// The shared loop compares the returned id against the ids THIS host issued
+	// (conn.claimPendingSteerID) and emits a boundary event on a match. Reading
+	// the id is the backend's business (the key it stamps is private); deciding
+	// whether the id is ours is the core's.
+	SteerBoundaryID func(meta map[string]any) string
+
+	// PermissionMemberAttribution extracts the team-member attribution a backend
+	// stamps on a requestPermission's toolCall._meta, as
+	// {"name": "...", "color": "..."} (color optional), or nil when the request
+	// is not from a member.
+	//
+	// The shared permission path puts the result on the approval card so
+	// concurrent members' requests are distinguishable. Reading the shape is the
+	// backend's business; the shared code only forwards what it gets.
+	PermissionMemberAttribution func(meta map[string]any) map[string]any
+
+	// IsReplayedTurnMeta reports whether a notification's _meta belongs to the
+	// previous, already-completed turn rather than the current one.
+	//
+	// CodeBuddy re-emits the tail of the previous turn when an ACP session is
+	// reused across prompts (stale agent_message_chunk text and stale
+	// usage_update trace identity), so the core needs a way to recognize that.
+	// Declaring the hook (rather than comparing ids in the core) keeps "which
+	// backends can be compared across turns" a fact of the backend: other
+	// backends' requestIds are not comparable, and their genuine chunks could
+	// share an id with the baseline.
+	IsReplayedTurnMeta func(conn *ACPConn, meta map[string]any) bool
 }
 
 // LookupACPBehaviorFn resolves a backend's behavior hooks. Wired by

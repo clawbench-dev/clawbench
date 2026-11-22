@@ -1,6 +1,9 @@
 import i18n from '@/i18n'
 import type { CategoryEntry } from '@/components/settings/settingsFieldMap'
 
+/** Settings category id (the plugin's directory is `proxy`). */
+export const category = 'portForward'
+
 /**
  * Settings fields for this plugin's own settings page (`portForward`).
  *

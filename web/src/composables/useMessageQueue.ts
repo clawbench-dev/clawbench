@@ -12,7 +12,7 @@
  * panel, the input bar and the WS event handler without prop drilling.
  */
 
-import { ref, computed, type Ref } from 'vue'
+import { ref, computed } from 'vue'
 import { dedupeFiles, type FileEntry } from '@/utils/fileAttachmentUtils'
 import { isInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils'
 
@@ -329,9 +329,6 @@ export function resetQueuesForTest(): void {
   activeSessionId.value = ''
   queueVersion.value = 0
 }
-
-/** Reactive version, for consumers that need to react to any mutation. */
-export const queueStateVersion: Ref<number> = queueVersion
 
 export function useMessageQueue() {
   return {

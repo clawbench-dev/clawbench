@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -36,87 +37,6 @@ func TestIsCompactCommand(t *testing.T) {
 	}
 }
 
-func TestIsCodeBuddyCompactionMeta(t *testing.T) {
-	tests := []struct {
-		name string
-		meta map[string]any
-		want bool
-	}{
-		{"nil meta", nil, false},
-		{"empty meta", map[string]any{}, false},
-		{
-			"boolean flag",
-			map[string]any{"codebuddy.ai/isCompactInternal": true},
-			true,
-		},
-		{
-			"flag serialized as string",
-			map[string]any{"codebuddy.ai/isCompactInternal": "true"},
-			true,
-		},
-		{
-			"flag serialized as number",
-			map[string]any{"codebuddy.ai/isCompactInternal": float64(1)},
-			true,
-		},
-		{
-			"explicit false flag",
-			map[string]any{"codebuddy.ai/isCompactInternal": false},
-			false,
-		},
-		{
-			"compactType alone (manual)",
-			map[string]any{"codebuddy.ai/compactType": "user-command"},
-			true,
-		},
-		{
-			"compactType alone (auto)",
-			map[string]any{"codebuddy.ai/compactType": "pre-message-auto"},
-			true,
-		},
-		{
-			"unrelated meta",
-			map[string]any{"codebuddy.ai/requestId": "abc"},
-			false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsCodeBuddyCompactionMeta(tt.meta))
-		})
-	}
-}
-
-func TestIsCodeBuddyCompactionCancelledMeta(t *testing.T) {
-	tests := []struct {
-		name string
-		meta map[string]any
-		want bool
-	}{
-		{"nil meta", nil, false},
-		{
-			"cancelled",
-			map[string]any{"codebuddy.ai/compact-cancelled": map[string]any{"cancelled": true}},
-			true,
-		},
-		{
-			"limit reached",
-			map[string]any{"codebuddy.ai/compact-limit-reached": map[string]any{"limitReached": true}},
-			true,
-		},
-		{
-			"successful compaction is not a cancellation",
-			map[string]any{"codebuddy.ai/isCompactInternal": true},
-			false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsCodeBuddyCompactionCancelledMeta(tt.meta))
-		})
-	}
-}
-
 func TestIsClaudeCompactionText(t *testing.T) {
 	assert.True(t, IsClaudeCompactionText("Compacting completed."))
 	assert.True(t, IsClaudeCompactionText("\n\nCompacting completed."))
@@ -133,43 +53,6 @@ func TestIsGrokCompactionCompleted(t *testing.T) {
 	assert.False(t, isGrokCompactionCompleted("auto_compact_failed"))
 	assert.False(t, isGrokCompactionCompleted("compact_cancelled"))
 	assert.False(t, isGrokCompactionCompleted("text"))
-}
-
-func TestIsCLICompactionMessage(t *testing.T) {
-	t.Run("claude compact_boundary", func(t *testing.T) {
-		assert.True(t, isCLICompactionMessage(&ClaudeStreamMessage{Type: "system", Subtype: "compact_boundary"}))
-	})
-	t.Run("codebuddy compacting status", func(t *testing.T) {
-		assert.True(t, isCLICompactionMessage(&ClaudeStreamMessage{Type: "system", Subtype: "status", Status: "compacting"}))
-	})
-	t.Run("codebuddy status null is not compaction", func(t *testing.T) {
-		assert.False(t, isCLICompactionMessage(&ClaudeStreamMessage{Type: "system", Subtype: "status"}))
-	})
-	t.Run("codebuddy providerData flag", func(t *testing.T) {
-		msg := &ClaudeStreamMessage{Type: "message"}
-		msg.ProviderData = &struct {
-			Model string `json:"model,omitempty"`
-			Usage *struct {
-				InputTokens  int `json:"inputTokens"`
-				OutputTokens int `json:"outputTokens"`
-			} `json:"usage,omitempty"`
-			IsCompactInternal bool   `json:"isCompactInternal,omitempty"`
-			CompactType       string `json:"compactType,omitempty"`
-		}{IsCompactInternal: true}
-		assert.True(t, isCLICompactionMessage(msg))
-	})
-	t.Run("codebuddy _meta flag", func(t *testing.T) {
-		assert.True(t, isCLICompactionMessage(&ClaudeStreamMessage{
-			Type: "message",
-			Meta: map[string]any{"codebuddy.ai/isCompactInternal": true},
-		}))
-	})
-	t.Run("plain assistant text is not compaction", func(t *testing.T) {
-		assert.False(t, isCLICompactionMessage(&ClaudeStreamMessage{Type: "assistant", Subtype: "text", Text: "hello"}))
-	})
-	t.Run("nil message", func(t *testing.T) {
-		assert.False(t, isCLICompactionMessage(nil))
-	})
 }
 
 // TestStreamParser_ReportsCompactionOnce pins the latch: the CLI repeats the
@@ -228,7 +111,7 @@ func TestMapACPSessionUpdate_CompactionToolCall(t *testing.T) {
 		ToolCall: &acp.SessionUpdateToolCall{
 			ToolCallId: "tc-1",
 			Title:      title,
-			Meta:       map[string]any{"claudeCode": map[string]any{"toolName": "compact"}},
+			Meta:       acptest.Meta(map[string]any{"claudeCode": map[string]any{"toolName": "compact"}}),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -244,7 +127,7 @@ func TestMapACPSessionUpdate_CompactionToolCall(t *testing.T) {
 		ToolCall: &acp.SessionUpdateToolCall{
 			ToolCallId: "tc-1-dup",
 			Title:      title,
-			Meta:       map[string]any{"claudeCode": map[string]any{"toolName": "compact"}},
+			Meta:       acptest.Meta(map[string]any{"claudeCode": map[string]any{"toolName": "compact"}}),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -263,7 +146,7 @@ func TestMapACPSessionUpdate_OrdinaryToolCallIsNotCompaction(t *testing.T) {
 		ToolCall: &acp.SessionUpdateToolCall{
 			ToolCallId: "tc-2",
 			Title:      title,
-			Meta:       map[string]any{"claudeCode": map[string]any{"toolName": "Read"}},
+			Meta:       acptest.Meta(map[string]any{"claudeCode": map[string]any{"toolName": "Read"}}),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -372,7 +255,7 @@ func TestMapACPSessionUpdate_UsageDropDetectsCompaction(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "s1")
 	ch := make(chan StreamEvent, 64)
 
-	send := func(used, size int) {
+	send := func(used, size int64) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: size},
 		}, ch, context.Background(), conn, nil)
@@ -396,7 +279,7 @@ func TestMapACPSessionUpdate_UsageGrowthIsNotCompaction(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "s1")
 	ch := make(chan StreamEvent, 64)
 
-	for _, used := range []int{20000, 26000, 31000} {
+	for _, used := range []int64{20000, 26000, 31000} {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: 204800},
 		}, ch, context.Background(), conn, nil)
@@ -435,7 +318,7 @@ func TestMapACPSessionUpdate_NakedUsageUpdateIsNotCompaction(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "s1")
 	ch := make(chan StreamEvent, 64)
 
-	send := func(used, size int) {
+	send := func(used, size int64) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: size},
 		}, ch, context.Background(), conn, nil)
@@ -460,7 +343,7 @@ func TestMapACPSessionUpdate_NakedUsageUpdateIsNotCompaction(t *testing.T) {
 func TestMapACPSessionUpdate_UsageDropRetriedWhenChannelFull(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "s1")
 
-	send := func(ch chan StreamEvent, used, size int) {
+	send := func(ch chan StreamEvent, used, size int64) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: size},
 		}, ch, context.Background(), conn, nil)
@@ -493,7 +376,7 @@ func TestMapACPSessionUpdate_UsageDropRetriedWhenChannelFull(t *testing.T) {
 func TestMapACPSessionUpdate_PendingDropDoesNotLeakIntoNextTurn(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "opencode", Backend: "opencode"}, "s1")
 
-	send := func(ch chan StreamEvent, used, size int) {
+	send := func(ch chan StreamEvent, used, size int64) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: size},
 		}, ch, context.Background(), conn, nil)
@@ -525,7 +408,7 @@ func TestMapACPSessionUpdate_PendingDropDoesNotLeakIntoNextTurn(t *testing.T) {
 func TestMapACPSessionUpdate_ToolReportClearsPendingDrop(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "claude", Backend: "claude"}, "s1")
 
-	sendUsage := func(ch chan StreamEvent, used, size int) {
+	sendUsage := func(ch chan StreamEvent, used, size int64) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{Used: used, Size: size},
 		}, ch, context.Background(), conn, nil)
@@ -543,7 +426,7 @@ func TestMapACPSessionUpdate_ToolReportClearsPendingDrop(t *testing.T) {
 		ToolCall: &acp.SessionUpdateToolCall{
 			ToolCallId: "tc-1",
 			Title:      "Compact conversation",
-			Meta:       map[string]any{"claudeCode": map[string]any{"toolName": "compact"}},
+			Meta:       acptest.Meta(map[string]any{"claudeCode": map[string]any{"toolName": "compact"}}),
 		},
 	}, deliver, context.Background(), conn, nil)
 	assert.Equal(t, 1, drainCompactionEvents(t, deliver))
@@ -574,7 +457,7 @@ func TestMapACPSessionUpdate_CancelledCompactionClearsPendingDrop(t *testing.T) 
 
 	mapACPSessionUpdate(acp.SessionUpdate{
 		SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
-			Meta: map[string]any{"codebuddy.ai/compact-cancelled": true},
+			Meta: acptest.PatchMeta(map[string]any{"codebuddy.ai/compact-cancelled": true}),
 		},
 	}, full, context.Background(), conn, nil)
 
@@ -587,4 +470,97 @@ func TestMapACPSessionUpdate_CancelledCompactionClearsPendingDrop(t *testing.T) 
 	}, ch, context.Background(), conn, nil)
 	assert.Equal(t, 0, drainCompactionEvents(t, ch),
 		"nothing was compacted, so nothing may be reported")
+}
+
+// TestCompactionToolSignals_AreAdapterWireFacts is the deliberate answer to
+// "why is this table still in the shared package?".
+//
+// The two entries name what the ACP ADAPTERS put on the wire, not something any
+// backend negotiates: claude-agent-acp sends a tool call titled "Compact
+// conversation" whose _meta.claudeCode.toolName is "compact"; codex-acp sends
+// the same title with no _meta at all. Neither is a per-backend capability, so
+// asking every backend to declare "my compaction tool is called X" would mean
+// ~19 registrations that say nothing, plus one silently-missing registration the
+// day a new adapter starts reporting compaction as a tool call.
+//
+// The cost of being wrong here is asymmetric: a missed detection means the
+// injected system prompt is not re-injected after the context is rewritten, and
+// nothing in the UI says so. A shared table cannot go missing. This test pins
+// both signals so the reasoning is visible at the point of change rather than in
+// a commit message.
+func TestCompactionToolSignals_AreAdapterWireFacts(t *testing.T) {
+	// Signal 1: the tool NAME claude-agent-acp stamps into _meta.
+	assert.True(t, IsCompactionToolCall("compact", ""),
+		"claude-agent-acp reports compaction as a tool named \"compact\"")
+	assert.True(t, IsCompactionToolCall("Compact", ""),
+		"the match is case-insensitive so an adapter casing change cannot blind it")
+
+	// Signal 2: the TITLE, which codex-acp sends WITHOUT any _meta. Name and
+	// title are OR-ed on purpose: the adapters disagree on which one they send.
+	assert.True(t, IsCompactionToolCall("", "Compact conversation"),
+		"codex-acp reports compaction by title only")
+
+	// Narrowness: neither signal may widen into an ordinary tool.
+	assert.False(t, IsCompactionToolCall("", "Write compact.md"),
+		"an ordinary file write must not be mistaken for a compaction")
+	assert.False(t, IsCompactionToolCall("compact_report", ""),
+		"a differently-named tool must not match on a prefix")
+}
+
+// CodeBuddy reports compaction through its own _meta flags instead of a tool
+// call, and a CANCELLED compaction must not count — the agent restores the
+// original history, so nothing was rewritten and the prompt need not be
+// re-injected. Both halves are pinned because "flag armed" and "flag cancelled"
+// arrive on different notification types from the same attempt.
+func TestCompactionFlags_CodeBuddyMetaSignals(t *testing.T) {
+	assert.True(t, isCompactionMeta("codebuddy", map[string]any{
+		"codebuddy.ai/isCompactInternal": true,
+	}), "the boolean flag marks every update emitted while compacting")
+
+	assert.True(t, isCompactionMeta("codebuddy", map[string]any{
+		"codebuddy.ai/compactType": "auto",
+	}), "compactType alone is accepted: the key is the same signal")
+
+	assert.False(t, isCompactionMeta("codebuddy", map[string]any{
+		"codebuddy.ai/isCompactInternal": false,
+	}), "an explicit false is not a compaction")
+
+	assert.True(t, isCompactionCancelledMeta("codebuddy", map[string]any{
+		"codebuddy.ai/compact-cancelled": true,
+	}), "a cancelled compaction restores history and must clear the report")
+
+	assert.True(t, isCompactionCancelledMeta("codebuddy", map[string]any{
+		"codebuddy.ai/compact-limit-reached": true,
+	}), "a limit-reached compaction restores history the same way")
+
+	assert.False(t, isCompactionCancelledMeta("codebuddy", map[string]any{"unrelated": 1}),
+		"an ordinary payload must not be read as a cancelled compaction")
+}
+
+// The parser moved to backends/codebuddy/meta, so the shared loop must still
+// reach it through the registered hook — otherwise every CodeBuddy turn loses
+// usage and model attribution with no error anywhere.
+func TestCodeBuddyMeta_ParsedThroughTheRegisteredHook(t *testing.T) {
+	// The generic scan is the intended fallback for an unregistered backend,
+	// not a failure: it still reads the OpenAI-style usage block, it just
+	// cannot attribute the model call the way the CodeBuddy parser does.
+	generic := ExtractMetaUsageForTest("no-such-backend", map[string]any{
+		"usage": map[string]any{"prompt_tokens": 1234},
+	})
+	require.NotNil(t, generic, "the generic scan still reads a plain usage block")
+	require.NotNil(t, generic.Usage)
+	assert.False(t, generic.Usage.Accumulate,
+		"per-call accumulation is CodeBuddy's own fact and must not come from the generic scan")
+	assert.Nil(t, generic.Trace, "the generic scan cannot identify the trace identity")
+
+	ext := ExtractMetaUsageForTest("codebuddy", map[string]any{
+		"usage":                  map[string]any{"prompt_tokens": 1234, "completion_tokens": 7},
+		"codebuddy.ai/requestId": "req-1",
+	})
+	require.NotNil(t, ext)
+	require.NotNil(t, ext.Usage)
+	assert.Equal(t, 1234, ext.Usage.InputTokens,
+		"the CodeBuddy parser must be reachable through ACPBehavior.ExtractMeta")
+	require.NotNil(t, ext.Trace)
+	assert.Equal(t, "req-1", ext.Trace.RequestID)
 }

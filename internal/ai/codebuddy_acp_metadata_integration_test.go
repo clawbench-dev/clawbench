@@ -282,7 +282,7 @@ func (c *capturingACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 
 // Renderers -----------------------------------------------------------------
 
-func renderMetaDump(label string, meta map[string]any) string {
+func renderMetaDump(label string, meta acp.Meta) string {
 	if len(meta) == 0 {
 		return fmt.Sprintf("%s._meta: <absent/empty>", label)
 	}
@@ -297,7 +297,7 @@ func renderUsageDump(label string, u *acp.Usage) string {
 	return fmt.Sprintf(
 		"%s.usage: input=%d output=%d total=%d cachedRead=%d cachedWrite=%d thought=%d",
 		label, u.InputTokens, u.OutputTokens, u.TotalTokens,
-		ptrIntVal(u.CachedReadTokens), ptrIntVal(u.CachedWriteTokens), ptrIntVal(u.ThoughtTokens),
+		ptrInt64Val(u.CachedReadTokens), ptrInt64Val(u.CachedWriteTokens), ptrInt64Val(u.ThoughtTokens),
 	)
 }
 
@@ -564,7 +564,7 @@ func TestACP_MetadataMining(t *testing.T) {
 
 			t.Log("=== 5. PromptResponse ===")
 			if promptResp != nil {
-				t.Logf("stop_reason=%v userMessageId=%v", promptResp.StopReason, promptResp.UserMessageId)
+				t.Logf("stop_reason=%v", promptResp.StopReason)
 				t.Log(renderUsageDump("prompt_response", promptResp.Usage))
 				t.Log(renderMetaDump("prompt_response", promptResp.Meta))
 			}
@@ -590,12 +590,12 @@ func TestACP_MetadataMining(t *testing.T) {
 			if promptResp != nil && promptResp.Usage != nil {
 				u := promptResp.Usage
 				usageState := &UsageState{
-					InputTokens:       u.InputTokens,
-					OutputTokens:      u.OutputTokens,
-					TotalTokens:       u.TotalTokens,
-					CachedReadTokens:  ptrIntVal(u.CachedReadTokens),
-					CachedWriteTokens: ptrIntVal(u.CachedWriteTokens),
-					ThoughtTokens:     ptrIntVal(u.ThoughtTokens),
+					InputTokens:       int(u.InputTokens),
+					OutputTokens:      int(u.OutputTokens),
+					TotalTokens:       int(u.TotalTokens),
+					CachedReadTokens:  ptrInt64Val(u.CachedReadTokens),
+					CachedWriteTokens: ptrInt64Val(u.CachedWriteTokens),
+					ThoughtTokens:     ptrInt64Val(u.ThoughtTokens),
 				}
 				if usageState.InputTokens != 0 || usageState.OutputTokens != 0 {
 					t.Logf("CONFIRMED: PromptResponse.Usage carries token info (input=%d output=%d total=%d) → maps to UsageState",

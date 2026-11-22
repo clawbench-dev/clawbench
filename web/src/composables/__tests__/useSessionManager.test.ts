@@ -6,7 +6,6 @@ const mockCurrentSessionId = ref('session-1')
 const mockCurrentBackend = ref('claude')
 const mockCurrentAgentId = ref('')
 const mockCurrentModelId = ref('')
-const mockCurrentTransport = ref('')
 const mockRunningSessions = ref(new Set<string>())
 
 vi.mock('@/composables/useSessionIdentity', () => ({
@@ -15,7 +14,6 @@ vi.mock('@/composables/useSessionIdentity', () => ({
         currentBackend: mockCurrentBackend,
         currentAgentId: mockCurrentAgentId,
         currentModelId: mockCurrentModelId,
-        currentTransport: mockCurrentTransport,
         registerSessionActions: vi.fn(),
     }),
     get runningSessions() { return mockRunningSessions },
@@ -81,7 +79,6 @@ describe('useSessionManager', () => {
         mockCurrentBackend.value = 'claude'
         mockCurrentAgentId.value = ''
         mockCurrentModelId.value = ''
-        mockCurrentTransport.value = ''
         mockRunningSessions.value = new Set()
         mockCancelChat.mockResolvedValue(undefined)
         _resetAskStatesForTesting()
@@ -591,14 +588,13 @@ describe('useSessionManager', () => {
             fetchSpy.mockRestore()
         })
 
-        it('carries the current session agent/model/transport so a queued turn matches a direct send', async () => {
+        it('carries the current session agent/model so a queued turn matches a direct send', async () => {
             // Regression: without these the queued request reached the backend
             // with an empty agentId, backend creation skipped the ACP branch,
             // and a pure-ACP backend failed with "unsupported backend type".
             const opts = createMockOptions()
             mockCurrentAgentId.value = 'agent-xyz'
             mockCurrentModelId.value = 'model-abc'
-            mockCurrentTransport.value = 'acp-stdio'
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
                 json: () => Promise.resolve({ ok: true, started: false }),
@@ -610,9 +606,10 @@ describe('useSessionManager', () => {
             const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
             expect(body.agentId).toBe('agent-xyz')
             expect(body.modelId).toBe('model-abc')
-            expect(body.transport).toBe('acp-stdio')
-            // The queue endpoint has no thinkingEffort field — sending it would
-            // be silently dropped, so it must not be in the payload.
+            // Neither of these has a queue-endpoint field: transport is derived
+            // by the server from the agent's command, and thinkingEffort comes
+            // from the agent/session state. Sending either would be dropped.
+            expect(body.transport).toBeUndefined()
             expect(body.thinkingEffort).toBeUndefined()
 
             fetchSpy.mockRestore()
@@ -625,7 +622,6 @@ describe('useSessionManager', () => {
             const opts = createMockOptions()
             mockCurrentAgentId.value = 'agent-of-visible-session'
             mockCurrentModelId.value = 'model-of-visible-session'
-            mockCurrentTransport.value = 'acp-stdio'
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
                 json: () => Promise.resolve({ ok: true, started: false }),

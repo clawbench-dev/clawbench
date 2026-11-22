@@ -94,7 +94,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { getAgentBackend, getAgentAvatar } = useAgents()
+const { getAgent, getAgentBackend, getAgentAvatar } = useAgents()
 const resumingId = ref('')
 const searchQuery = ref('')
 
@@ -123,8 +123,14 @@ function normalizeProjectPath(p: string): string {
   return result.replace(/\/+$/, '')
 }
 
+/**
+ * Codex's on-disk session list contains untitled placeholder rollouts that its
+ * own UI never shows, so they are hidden here. The fact comes from the server
+ * (computed from the backend's spec) instead of matching on the backend id, so
+ * a future backend with the same quirk only has to declare it once.
+ */
 const displayableSessions = computed(() => {
-  if (backendId.value !== 'codex') return acpSessions.value
+  if (getAgent(props.agentId)?.listSessionsOmitsEmptyTitle !== true) return acpSessions.value
   return acpSessions.value.filter((session) => session.title.trim() !== '')
 })
 

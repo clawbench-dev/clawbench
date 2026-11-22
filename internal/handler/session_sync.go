@@ -18,7 +18,7 @@ import (
 )
 
 // transportACP is the transport value recorded for ACP stdio sessions.
-const transportACP = "acp-stdio"
+const transportACP = model.TransportACPStdio
 
 // replayMessage 是一条从 LoadSession 回放重建的消息。
 type replayMessage struct {
@@ -73,12 +73,12 @@ func groupLoadSessionReplay(client *ai.ClawBenchACPClient) []replayMessage {
 		case n.Update.UserMessageChunk != nil:
 			notifRole = strUser
 			if n.Update.UserMessageChunk.MessageId != nil {
-				notifMsgID = *n.Update.UserMessageChunk.MessageId
+				notifMsgID = string(*n.Update.UserMessageChunk.MessageId)
 			}
 		case n.Update.AgentMessageChunk != nil && n.Update.AgentMessageChunk.MessageId != nil:
-			notifMsgID = *n.Update.AgentMessageChunk.MessageId
+			notifMsgID = string(*n.Update.AgentMessageChunk.MessageId)
 		case n.Update.AgentThoughtChunk != nil && n.Update.AgentThoughtChunk.MessageId != nil:
-			notifMsgID = *n.Update.AgentThoughtChunk.MessageId
+			notifMsgID = string(*n.Update.AgentThoughtChunk.MessageId)
 		}
 
 		if notifRole != currentRole && currentRole != "" {

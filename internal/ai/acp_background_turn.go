@@ -37,9 +37,11 @@ const (
 	// silently treated as a drain.
 	backgroundTurnReasonDrain = "background_drain"
 	// sessionEndVariant is CodeBuddy's non-standard "this turn is over" frame.
-	// The ACP SDK does not model it (it re-types unknown discriminators as
-	// SessionInfoUpdate with the payload dropped), so it is read from the raw
-	// notification path.
+	// It is read from the RAW params in the SDK's unhandled hook
+	// (dispatchSessionUpdateVariant in acp_ext.go), NOT from the typed struct:
+	// since schema 1.32 the union rejects a foreign discriminator at decode time
+	// (v0.13.5 re-typed it as SessionInfoUpdate). Reading it off the typed path
+	// is why issue #644 regressed — an adopted turn never saw its terminal.
 	sessionEndVariant = "session_end"
 )
 

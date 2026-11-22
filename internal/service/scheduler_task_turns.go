@@ -180,7 +180,7 @@ func (s *Scheduler) runTaskTurns(ctx context.Context, spec taskTurnSpec) {
 		turnReq := chatReq
 		if attempt > 1 {
 			turnReq = BuildChatRequest(AutoContinuePrompt(), sessionID, projectPath, backendName,
-				task.AgentID, effectiveModel, effectiveThinking, "", "", projectPath, false)
+				task.AgentID, effectiveModel, effectiveThinking, "", projectPath, false)
 		}
 
 		// The "running" event rides OnStarted rather than being emitted after this

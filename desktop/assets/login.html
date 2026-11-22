@@ -28,6 +28,8 @@
       this_device_name: 'This device',
       server_running: 'Running',
       server_stopped: 'Not running',
+      server_stop: 'Stop',
+      server_stop_confirm: 'Stop the built-in server? Devices connected to it will be disconnected.',
       authenticating: 'Authenticating...',
       saving: 'Saving...',
       name_label: 'Name (optional)',
@@ -79,6 +81,8 @@
       this_device_name: '本机',
       server_running: '运行中',
       server_stopped: '未运行',
+      server_stop: '停止',
+      server_stop_confirm: '停止本机服务？正在连接的设备会断开。',
       authenticating: '认证中...',
       saving: '保存中...',
       name_label: '名称（选填）',
@@ -1057,6 +1061,27 @@
 
   .server-item-status.is-running {
     color: var(--accent-color);
+  }
+
+  /* The server keeps running after the desktop closes, so the row needs an
+     explicit way to end it. A text button, not an icon: "stop" is not obvious
+     enough to guess from a glyph. */
+  .server-stop-btn {
+    flex-shrink: 0;
+    margin-left: 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .server-stop-btn:hover {
+    background: rgba(220, 38, 38, 0.1);
+    color: var(--color-red);
   }
 
   /* Row actions: edit + delete, kept in one group so the info block can
@@ -2178,6 +2203,10 @@
     if (isEmbedded) {
       html += '  <span class="server-item-status' + (srv.running ? ' is-running' : '') + '">' +
         t(srv.running ? 'server_running' : 'server_stopped') + '</span>';
+      if (srv.running) {
+        html += '  <button class="server-stop-btn" onclick="event.stopPropagation(); stopEmbeddedServer()">' +
+          t('server_stop') + '</button>';
+      }
     } else {
       html += '  <div class="server-item-actions">';
       html += '    <button class="server-edit-btn" onclick="event.stopPropagation(); editServer(\'' + escJs(srv.url) + '\')" title="' + t('edit_server') + '">';
@@ -2273,6 +2302,29 @@
   function selectServer(url) {
     var srv = findServer(url);
     if (srv) applySelection(srv);
+  }
+
+  /**
+   * Stop the built-in server without quitting the app.
+   *
+   * Quitting the desktop deliberately leaves it running (phones and other
+   * clients keep working), so this row is where a user who is done with it can
+   * end it. The state is refreshed from the shell afterwards instead of being
+   * assumed: the stop can fail, and a row that lies about it is worse than no
+   * button.
+   */
+  function stopEmbeddedServer() {
+    if (!embeddedServer || !embeddedServer.running) return;
+    if (!ClawBenchNative.stopEmbeddedServer) return;
+    customConfirm(t('server_stop_confirm'), { title: t('this_device_section') }).then(function (ok) {
+      if (!ok) return;
+      return Promise.resolve(ClawBenchNative.stopEmbeddedServer()).then(function () {
+        return Promise.resolve(ClawBenchNative.getEmbeddedServer()).then(function (json) {
+          try { embeddedServer = JSON.parse(json); } catch (e) { embeddedServer = null; }
+          renderServerList();
+        });
+      });
+    }).catch(function () {});
   }
 
   function customConfirm(message, opts) {

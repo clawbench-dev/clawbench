@@ -16,6 +16,7 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
 
+	"clawbench/internal/ai/acptest"
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -169,7 +170,7 @@ func TestServeACPLoadSession_ReplayToolCallPersistFail(t *testing.T) {
 					ToolCallId: "tc-replay-1",
 					Title:      "Read",
 					Kind:       acp.ToolKindRead,
-					RawInput:   map[string]any{"file_path": "/tmp/x.go"},
+					RawInput:   acptest.Raw(map[string]any{"file_path": "/tmp/x.go"}),
 				},
 			},
 		},

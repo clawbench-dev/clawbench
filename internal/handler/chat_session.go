@@ -357,7 +357,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 				return
 			}
 		}
-		backend2, _, _, _, ok := resolveAgentConfig(agentID)
+		backend2, _, _, ok := resolveAgentConfig(agentID)
 		if !ok {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
 			return
@@ -758,7 +758,6 @@ type sessionUpdateRequest struct {
 	// mode/model/thinkingEffort keep their own fields because they carry
 	// extra behavior (persistence, per-model validation).
 	ConfigOptions map[string]string `json:"configOptions"`
-	Transport     string            `json:"transport"`
 	AutoApprove   *bool             `json:"autoApprove"` // pointer: distinguish "not sent" from false
 	Cruise        *bool             `json:"cruise"`      // pointer: distinguish "not sent" from false (auto-cruise)
 	Title         string            `json:"title"`
@@ -771,7 +770,7 @@ type sessionUpdateRequest struct {
 }
 
 // ServeAISessionUpdate handles PATCH /api/ai/session — immediately persists
-// session-scoped settings (mode, thinkingEffort, model, transport) so they
+// session-scoped settings (mode, thinkingEffort, model) so they
 // survive page reload even without sending a chat message.
 func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPatch) {
@@ -909,13 +908,6 @@ func thinkingEffortStateAfterModelSwitch(sessionID string) *ai.ThinkingEffortSta
 // has no optimistic copy to fall back on — so it must be surfaced rather than
 // reported as a silent ok.
 func (req *sessionUpdateRequest) applyNonModelFields(sessionID string) error {
-	if req.Transport != "" {
-		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
-		service.UpdateSessionTransport(sessionID, req.Transport)
-		if req.Transport == "cli" {
-			ai.GetACPConnManager().CloseConn(sessionID)
-		}
-	}
 	if req.AutoApprove != nil {
 		applyAutoApprove(sessionID, *req.AutoApprove)
 	}
@@ -1034,14 +1026,11 @@ func switchSessionEffortToModel(sessionID, modelID string, deferred bool) string
 	return effort
 }
 
-// sessionUsesACP reports whether this session's turns go over ACP. The session
-// row's transport override is authoritative; otherwise the agent's configured
-// transport decides.
-func sessionUsesACP(sessionID string, agent *model.Agent) bool {
-	if t := service.GetSessionTransport(sessionID); t != "" {
-		return t == "acp-stdio"
-	}
-	return agent != nil && agent.Transport == "acp-stdio"
+// sessionUsesACP reports whether this session's turns go over ACP: they do
+// whenever the agent has an ACP command. The per-session transport column is no
+// longer an input.
+func sessionUsesACP(_ string, agent *model.Agent) bool {
+	return agent != nil && agent.SupportsACP()
 }
 
 // applySessionTags replaces a session's tag set, filing any brand-new labels
@@ -1167,14 +1156,25 @@ func applyExtraConfigOptions(sessionID string, opts map[string]string) {
 	// is not mere validation: without it the generic channel would be a way to
 	// write "mode"/"model" behind the dedicated paths' backs — no persistence,
 	// no per-model effort validation, no auto-approve bookkeeping.
-	known := make(map[string]bool)
+	known := make(map[string]ai.ExtraConfigOption)
 	for _, extra := range conn.GetExtraConfigOptions() {
-		known[extra.ConfigID] = true
+		known[extra.ConfigID] = extra
 	}
 	for id, value := range opts {
-		if id == "" || value == "" || !known[id] {
+		opt, ok := known[id]
+		if id == "" || value == "" || !ok {
 			slog.Warn("session update: ignoring config option the agent did not advertise",
 				"session_id", sessionID, "config_id", id)
+			continue
+		}
+		if opt.Type == "boolean" {
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				slog.Warn("session update: ignoring non-boolean value for a boolean option",
+					"session_id", sessionID, "config_id", id, "value", value)
+				continue
+			}
+			forwardSessionConfigOptionBool(sessionID, id, parsed)
 			continue
 		}
 		forwardSessionConfigOption(sessionID, id, value)
@@ -1197,6 +1197,20 @@ func forwardSessionConfigOption(sessionID, category, value string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		conn.SetSessionConfigOption(ctx, category, value)
+	}()
+}
+
+// forwardSessionConfigOptionBool is forwardSessionConfigOption for the
+// boolean variant of session/set_config_option.
+func forwardSessionConfigOptionBool(sessionID, configID string, value bool) {
+	conn := ai.GetACPConnManager().GetConn(sessionID)
+	if conn == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		conn.SetSessionConfigOptionBool(ctx, configID, value)
 	}()
 }
 
@@ -1223,8 +1237,8 @@ const modelSwitchHTTPTimeout = 35 * time.Second
 // applySessionModel pushes a model selection to the session's live ACP agent.
 //
 // Returns (deferred=false, nil) when the switch was applied now (or there was
-// nothing to push: no live connection — CLI transport, or an ACP session that
-// has not started yet).
+// nothing to push: no live ACP connection, or an ACP session that has not
+// started yet).
 //
 // Returns (deferred=true, nil) when the agent rejected it transiently (busy /
 // timed out / connection dropped): the caller still persists the choice, and
@@ -1756,7 +1770,7 @@ func forkGroupTarget(w http.ResponseWriter, r *http.Request, hostAgentID string,
 // A fork creates a NEW session, so the same rules as session creation apply
 // (the picker hides disabled agents, but the server is the authoritative gate).
 func forkAgentAllowed(w http.ResponseWriter, r *http.Request, agentID, projectPath string) bool {
-	if _, _, _, _, ok := resolveAgentConfig(agentID); !ok {
+	if _, _, _, ok := resolveAgentConfig(agentID); !ok {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentID")
 		return false
 	}

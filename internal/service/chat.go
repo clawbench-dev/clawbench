@@ -278,38 +278,6 @@ func GetMessageContent(id int64, sessionID string) (string, error) {
 	return ExtractPlainText(content), nil
 }
 
-// IsMessageRole checks whether the message with the given ID in the session
-// has the specified role.
-func IsMessageRole(id int64, sessionID, role string) bool {
-	var r string
-	err := store.ReadDB().QueryRow(
-		"SELECT role FROM chat_history WHERE id = ? AND session_id = ?",
-		id, sessionID,
-	).Scan(&r)
-	if err != nil {
-		return false
-	}
-	return r == role
-}
-
-// GetPrecedingUserMessageContent returns the plain-text content of the last
-// user message before the given message ID in the same session. Used for
-// building fork titles when the fork point is an assistant message.
-func GetPrecedingUserMessageContent(afterID int64, sessionID string) (string, error) {
-	var content string
-	err := store.ReadDB().QueryRow(
-		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND id < ? ORDER BY id DESC LIMIT 1",
-		sessionID, afterID,
-	).Scan(&content)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	return ExtractPlainText(content), nil
-}
-
 // GetMessageByID fetches a single chat message by its database ID.
 // Returns the complete message including all content blocks (text, thinking, tool_use).
 func GetMessageByID(id int64) (*model.ChatMessage, error) {
@@ -1995,22 +1963,6 @@ func UpdateSessionModel(sessionID, modelID string) error {
 	return err
 }
 
-// UpdateSessionTransport updates the transport field for a session.
-func UpdateSessionTransport(sessionID, transport string) error {
-	_, err := store.WriteExec("UPDATE chat_sessions SET transport = ? WHERE id = ?", transport, sessionID)
-	return err
-}
-
-// GetSessionTransport returns the transport for a session, or empty string if not set.
-func GetSessionTransport(sessionID string) string {
-	var transport string
-	err := store.ReadDB().QueryRow("SELECT COALESCE(transport, '') FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&transport)
-	if err != nil {
-		return ""
-	}
-	return transport
-}
-
 // GetSessionAutoApprove returns whether auto-approve mode is enabled for a session.
 func GetSessionAutoApprove(sessionID string) bool {
 	var val int
@@ -2209,7 +2161,7 @@ func normalizeLedgerCost(sessionID string, messageID int64, meta *ai.Metadata) (
 	}
 	var prev float64
 	// Prefer the agent connection id; fall back to the ClawBench session when
-	// the agent never reported one (CLI transports).
+	// the agent never reported one.
 	partition := meta.SessionID
 	if partition == "" {
 		partition = sessionID
@@ -2672,7 +2624,6 @@ type SessionInfo struct {
 	Backend     string
 	AgentID     string
 	Model       string
-	Transport   string
 	AutoApprove bool
 	ProjectPath string // populated by GetSessionFullInfo only
 	// SessionType is the raw chat_sessions.session_type ('chat' / 'group' /
@@ -3282,15 +3233,15 @@ func UserThinkingEffortPick(sessionID string) (effortID, modelID string, ok bool
 	return state.ThinkingEffort.CurrentID, state.ThinkingEffort.ModelID, state.ThinkingEffort.CurrentID != ""
 }
 
-// GetSessionInfo fetches session metadata (title, backend, agent_id, model, transport)
+// GetSessionInfo fetches session metadata (title, backend, agent_id, model)
 // in a single query instead of separate queries.
 func GetSessionInfo(sessionID string) (*SessionInfo, error) {
 	info := &SessionInfo{}
 	err := store.ReadDB().QueryRow(
-		`SELECT title, backend, agent_id, model, COALESCE(transport, '')
+		`SELECT title, backend, agent_id, model
 		 FROM chat_sessions WHERE id = ? AND archived = 0`,
 		sessionID,
-	).Scan(&info.Title, &info.Backend, &info.AgentID, &info.Model, &info.Transport)
+	).Scan(&info.Title, &info.Backend, &info.AgentID, &info.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -3317,7 +3268,7 @@ func GetSessionFullInfoAny(sessionID string) *SessionInfo {
 
 func sessionFullInfo(sessionID string, includeArchived bool) *SessionInfo {
 	info := &SessionInfo{}
-	query := `SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, COALESCE(s.transport, ''), s.auto_approve, COALESCE(s.session_type, '')
+	query := `SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, s.auto_approve, COALESCE(s.session_type, '')
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
 		  WHERE s.id = ?`
@@ -3325,7 +3276,7 @@ func sessionFullInfo(sessionID string, includeArchived bool) *SessionInfo {
 		query += " AND s.archived = 0"
 	}
 	err := store.ReadDB().QueryRow(query, sessionID).
-		Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.Transport, &info.AutoApprove, &info.SessionType)
+		Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.AutoApprove, &info.SessionType)
 	if err != nil {
 		return nil
 	}
@@ -3476,21 +3427,15 @@ func SessionHasRealAssistantContent(sessionID string) bool {
 	return false
 }
 
-// CreateStreamingMessage inserts a fresh streaming assistant placeholder and
-// returns its id. Used when a mid-turn injection splits an assistant reply: the
-// "after" half needs its own streaming row so it finalizes independently of the
-// "before" half.
+// CreateStreamingMessageWithAgent creates a fresh streaming assistant placeholder
+// and returns its id, with speaker attribution (agentID = member row id for group
+// turns, "" otherwise). Used when a mid-turn injection splits an assistant reply:
+// the "after" half needs its own streaming row so it finalizes independently of
+// the "before" half, and it must keep its speaker.
 //
 // No anchor is needed: the injected question is materialized into chat_history
 // at injection time (before this row is created), so the new row's higher id
 // already places it directly below that question.
-func CreateStreamingMessage(projectPath, backend, sessionID string) (int64, error) {
-	return CreateStreamingMessageWithAgent(projectPath, backend, sessionID, "")
-}
-
-// CreateStreamingMessageWithAgent is CreateStreamingMessage plus speaker
-// attribution (agentID = member row id for group turns, "" otherwise). Needed
-// so a mid-turn split's "after" row keeps its speaker.
 func CreateStreamingMessageWithAgent(projectPath, backend, sessionID, agentID string) (int64, error) {
 	emptyContent, err := json.Marshal(map[string]any{"blocks": []any{}})
 	if err != nil {
@@ -3776,9 +3721,9 @@ func UpdateExternalSessionID(sessionID, externalID string) error {
 }
 
 // ClearExternalSessionID clears the external session ID for a ClawBench session.
-// Called when transport switches from CLI to ACP — ACP manages its own session
-// mapping internally, so the CLI's external_session_id must not leak into the
-// ACP connection pool's GetOrCreateConn pre-population logic.
+// Called when the agent behind a session changes — ACP manages its own session
+// mapping internally, so an external_session_id from a previous agent must not
+// leak into the ACP connection pool's GetOrCreateConn pre-population logic.
 //
 // Also called by ACP session recovery when the agent answers that the session no
 // longer exists. There the clear is load-bearing rather than hygienic: the pool

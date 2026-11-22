@@ -23,7 +23,7 @@ sequenceDiagram
     runTurn-->>前端: WS 流式推送 + 落库
 ```
 
-用户点击发送后，请求进入 handler，由 handler 解析出目标 Agent 和后端类型（CLI 或 ACP）；`runTurn` 负责编排单个 AI 回合，内部的 `SessionExecutor` 持有会话运行时状态并把执行委托给 AI 后端。**"用户消息 → ai.ChatRequest"只有一份实现**：直发路径（HTTP handler）与排队路径（队列 drain、钉钉/飞书）曾各写一份并漂移成 7 处不一致——resume 守卫、会话持久化的 model 与 transport、**会话持久化的 mode 与 thinkingEffort**、fork 上下文格式、非 block 内容解包——导致同一条消息在"直接发送"与"排队发送"下行为不同（排队路径会把 CLI 从未见过的会话 ID 传下去造成上下文失忆，或把用户选好的模型/模式/思考档位悄悄回退成 agent 默认值）。现在两者共用同一实现（`applySessionOverrides` 统一补齐空 override，优先级为**显式选择 > 会话持久值 > agent 默认**），并有一条对比测试锁住两条路径对同一会话的构造结果一致。注意 mode/thinkingEffort 没有独立列，只存在于 `chat_sessions.context_state`（由 `PATCH /api/ai/session/update` 写入），因此 drain 路径必须显式读回该状态——agent 侧 `EffectiveModeID()` 只返回 PreferredMode，不记得会话当前的 mode。
+用户点击发送后，请求进入 handler，由 handler 解析出目标 Agent 和后端类型（ACP 或进程内内置）；`runTurn` 负责编排单个 AI 回合，内部的 `SessionExecutor` 持有会话运行时状态并把执行委托给 AI 后端。**"用户消息 → ai.ChatRequest"只有一份实现**：直发路径（HTTP handler）与排队路径（队列 drain、钉钉/飞书）曾各写一份并漂移成 7 处不一致——resume 守卫、会话持久化的 model 与 transport、**会话持久化的 mode 与 thinkingEffort**、fork 上下文格式、非 block 内容解包——导致同一条消息在"直接发送"与"排队发送"下行为不同（排队路径会把 CLI 从未见过的会话 ID 传下去造成上下文失忆，或把用户选好的模型/模式/思考档位悄悄回退成 agent 默认值）。现在两者共用同一实现（`applySessionOverrides` 统一补齐空 override，优先级为**显式选择 > 会话持久值 > agent 默认**），并有一条对比测试锁住两条路径对同一会话的构造结果一致。注意 mode/thinkingEffort 没有独立列，只存在于 `chat_sessions.context_state`（由 `PATCH /api/ai/session/update` 写入），因此 drain 路径必须显式读回该状态——agent 侧 `EffectiveModeID()` 只返回 PreferredMode，不记得会话当前的 mode。
 
 ### 唯一 turn 实现：三入口共用
 
@@ -126,6 +126,8 @@ sequenceDiagram
 父 Agent 卡片就是那条发起子智能体的工具调用（前端渲染为 Agent 胶囊）。子智能体产出的 thinking/text/tool 全部收进同一张卡片，折叠时只显示步数摘要、展开才挂载并递归复用主渲染组件——这样一条"派发多个子智能体并行探索"的长轨迹不会淹没主对话。归属靠 Agent 在 `_meta` 上打的父工具调用 id 精确判定，不靠时间窗口推断。
 
 **团队（Agent Teams）走同一套分组，但关联键是成员名**：CodeBuddy 的具名团队**不给成员帧打 `parentToolCallId`**（实测 116/116 全无该键），因此后端桥接层（`codebuddy_team_bridge.go`）用**成员名**把成员内容挂到它的派发工具调用上，再回填 `ParentToolCallID`——前端分组逻辑零改动即可生效。团队状态另走 `team_update` 事件驱动一个会话级团队面板（见[AI 后端抽象](ai-backend.md)与前端 `useTeamState` / `TeamPanel`）。**团队快照必须随历史一起下发**：`team_update` 是纯实时事件、只在回合开始重发，中途打开或重连的客户端永远收不到，面板就不出现（执行计划面板没这个问题，因为 `/api/ai/chat` 返回 `planState`）。所以会话快照里要带团队状态、历史响应也要带 `teamState`；前端还必须在「消息没变」的变更检测**之前**更新它，否则一次 WS 重连触发的空刷新又会把面板丢掉。
+
+**内置智能体也走同一套分组，只是父 id 由自己填**：内置智能体没有 ACP 的 `_meta`，它派出的子智能体是进程内的另一次运行（`task` 工具），但事件的父工具调用 id 由内核自己标上，前端照常按父 id 折叠进那张 `task` 卡片——卡片渲染器本来就有 `{description, prompt}` 的形状，不需要改。子智能体有三个边界值得记住：**它看不到父的对话**（历史、压缩摘要全部丢弃，父必须把背景写进 prompt）、**同级不可递归**（子拿不到 `task` 工具）、**开销记在父这一轮**（轮次、工具次数与子智能体数量共用一本账，子失败也计费）。
 
 **OpenCode v2 是第三种关联键：子会话，而且需要客户端自己补出父 id**。它把 `subagent` 工具跑在独立的子会话里，子会话的内容帧被投影到父会话的流上，但只带 `_meta["opencode/child-session"]`（子会话 id / 父 id / 深度 / 标题），**没有父工具调用 id**。若不处理，这些帧会被当成顶层内容铺在发起它的那张工具卡之后（issue #639：看起来像 AI 又把整段分析重讲了一遍）。因此客户端在宿主侧解析归属并回填成自己的父 id 键：先按子会话标题（= 调用参数里的 description）配对，工具结果到达后再用确切的子会话 id 精确纠正；解析不出父调用的子帧一律丢弃——宁可少显示，也不污染主对话。
 

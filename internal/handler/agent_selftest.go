@@ -49,9 +49,9 @@ const (
 	selfTestOK   = "ok"
 	selfTestWarn = "warn"
 	selfTestFail = "fail"
-	// transportCLI mirrors the stored transport value. transportACP already
-	// exists in session_sync.go for the ACP side.
-	transportCLI = "cli"
+	// transportInProcess is the built-in agent's mode, which has no ACP command.
+	// Every process-spawning backend is transportACP.
+	transportInProcess = model.TransportInProcess
 )
 
 // Check keys. Constants (not literals) because they are also the client's i18n
@@ -133,14 +133,10 @@ func (s *selfTestRun) fail(key, detail string) {
 }
 
 // effectiveTransport resolves the transport the turn would actually use.
+// An agent with an ACP command always runs over ACP; only the built-in agent
+// (no command) runs in-process, and anything else has nothing to start.
 func effectiveTransport(agent *model.Agent) string {
-	if agent.Transport != "" {
-		return agent.Transport
-	}
-	if agent.AcpCommand != "" {
-		return transportACP
-	}
-	return transportCLI
+	return agent.DeriveTransport()
 }
 
 // runAgentSelfTest evaluates every check and aggregates the outcome.
@@ -151,14 +147,13 @@ func effectiveTransport(agent *model.Agent) string {
 func runAgentSelfTest(ctx context.Context, agent *model.Agent, projectPath string) AgentSelfTestResult {
 	run := &selfTestRun{res: AgentSelfTestResult{AgentID: agent.ID}}
 	transport := effectiveTransport(agent)
-	hasCLI := model.BackendSupportsCLI(agent.Backend)
 
 	checkEnabled(run, agent)
 	checkProjectScope(run, agent, projectPath)
-	checkBackendKnown(run, agent, hasCLI)
-	checkTransport(run, agent, transport, hasCLI)
+	checkBackendKnown(run, agent)
+	checkTransport(run, agent, transport)
 	checkSpawnTarget(ctx, run, agent, transport)
-	checkModels(run, agent, transport)
+	checkModels(run, agent)
 	checkAcpState(run, agent, transport)
 	checkPreferredMode(run, agent, transport)
 	checkSystemPrompt(run, agent)
@@ -189,17 +184,17 @@ func checkProjectScope(run *selfTestRun, agent *model.Agent, projectPath string)
 
 // checkBackendKnown reports a backend the runtime has no way to construct.
 //
-// The real question is "can anything start this agent?", and three things can:
-// a registered spec (drives discovery), a CLI factory (drives CLI spawn), or a
-// stored ACP command (drives ACP spawn — NewACPBackend only needs the command).
+// The real question is "can anything start this agent?", and two things can:
+// a registered spec (drives discovery) or a stored ACP command (drives spawn —
+// NewACPBackend only needs the command).
 //
-// That third case is why the check must not be "is the backend in the registry".
+// That second case is why the check must not be "is the backend in the registry".
 // A YAML-defined agent (the E2E acp-mock) and a user-created custom agent both
 // have no registry entry and are perfectly valid; calling them "unknown" would
 // make the test cry wolf on exactly the agents that work fine.
-func checkBackendKnown(run *selfTestRun, agent *model.Agent, hasCLI bool) {
+func checkBackendKnown(run *selfTestRun, agent *model.Agent) {
 	switch {
-	case model.FindSpecByBackend(agent.Backend) != nil || hasCLI:
+	case model.FindSpecByBackend(agent.Backend) != nil:
 		run.ok(selfTestKeyBackendKnown)
 	case agent.AcpCommand != "":
 		run.add(AgentSelfTestCheck{
@@ -208,19 +203,16 @@ func checkBackendKnown(run *selfTestRun, agent *model.Agent, hasCLI bool) {
 		})
 	default:
 		run.fail(selfTestKeyBackendKnown,
-			fmt.Sprintf("Unknown backend %q: it has no registry spec, no CLI factory and no ACP command.", agent.Backend))
+			fmt.Sprintf("Unknown backend %q: it has no registry spec and no ACP command.", agent.Backend))
 	}
 }
 
 // checkTransport reports a transport the agent cannot actually run on.
-func checkTransport(run *selfTestRun, agent *model.Agent, transport string, hasCLI bool) {
-	switch {
-	case transport == transportACP && agent.AcpCommand == "":
+func checkTransport(run *selfTestRun, agent *model.Agent, transport string) {
+	switch transport {
+	case "":
 		run.fail(selfTestKeyTransport,
-			"Transport is acp-stdio but no ACP command is configured, so nothing can be spawned.")
-	case transport != transportACP && !hasCLI:
-		run.fail(selfTestKeyTransport,
-			fmt.Sprintf("Transport is cli but backend %q has no CLI implementation.", agent.Backend))
+			fmt.Sprintf("Agent %q has neither an ACP command nor the in-process backend, so nothing can start it.", agent.ID))
 	default:
 		run.add(AgentSelfTestCheck{
 			Key: selfTestKeyTransport, Status: selfTestOK,
@@ -237,34 +229,34 @@ func checkSpawnTarget(ctx context.Context, run *selfTestRun, agent *model.Agent,
 		run.add(probeCommand(ctx, selfTestKeyAcpCommand, agent.AcpCommand))
 		return
 	}
-	cmd := cliProbeCommand(agent, model.FindSpecByBackend(agent.Backend))
-	if cmd == "" {
-		run.warn(selfTestKeyCliCommand,
-			"No CLI binary name is known for this backend, so the install could not be verified.")
-		return
-	}
-	run.add(probeCommand(ctx, selfTestKeyCliCommand, cmd))
+	// Only the in-process backend has no ACP command, and checkTransport has
+	// already failed any agent with no transport at all. The in-process agent
+	// spawns nothing, so there is no binary to probe.
+	run.ok(selfTestKeyCliCommand)
 }
 
-// checkModels reports the model list. Empty is normal for an ACP agent before
-// its first turn (the agent reports them at session/new), so it is a warning
-// there and a failure only for a CLI agent that should have discovered some.
-func checkModels(run *selfTestRun, agent *model.Agent, transport string) {
-	if len(agent.Models) > 0 {
+// checkModels reports the model list. An empty list is never a hard failure: an
+// ACP agent reports its models at session/new, so before the first turn there is
+// nothing to discover yet (the built-in agent ships a static list).
+func checkModels(run *selfTestRun, agent *model.Agent) {
+	// ACP reports models into the capability registry (persisted across
+	// restarts), not into the agent row, so both sources count.
+	count := len(agent.Models)
+	if count == 0 {
+		if ml := ai.GetAgentCapabilityRegistry().GetModelListState(agent.ID, ""); ml != nil {
+			count = len(ml.Models)
+		}
+	}
+	if count > 0 {
 		run.add(AgentSelfTestCheck{
 			Key: selfTestKeyModels, Status: selfTestOK,
-			Detail: fmt.Sprintf("%d model(s) available.", len(agent.Models)),
+			Detail: fmt.Sprintf("%d model(s) available.", count),
 		})
 		checkPreferredModel(run, agent)
 		return
 	}
-	if transport == transportACP {
-		run.warn(selfTestKeyModels,
-			"No models reported yet. An ACP agent reports them on its first session; send one message to populate the list.")
-		return
-	}
-	run.fail(selfTestKeyModels,
-		"No models available: the CLI discovery returned nothing, so a turn cannot pick a model.")
+	run.warn(selfTestKeyModels,
+		"No models reported yet. An ACP agent reports them on its first session; send one message to populate the list.")
 }
 
 // checkPreferredModel flags a preference that would be silently dropped at turn
@@ -332,20 +324,6 @@ func checkUsage(run *selfTestRun, agent *model.Agent) {
 		Detail: fmt.Sprintf("%d session(s), %d task(s), %d group membership(s).",
 			usage.Sessions, usage.Tasks, usage.Memberships),
 	})
-}
-
-// cliProbeCommand picks the binary to verify for a CLI-transport agent: the
-// agent's own override wins (that is what spawn uses), then the spec default.
-func cliProbeCommand(agent *model.Agent, spec *model.BackendSpec) string {
-	if cmd := strings.TrimSpace(agent.Command); cmd != "" {
-		if fields := strings.Fields(cmd); len(fields) > 0 {
-			return fields[0]
-		}
-	}
-	if spec != nil {
-		return spec.DefaultCmd
-	}
-	return ""
 }
 
 // probeCommand verifies the executable named by a command line is resolvable.

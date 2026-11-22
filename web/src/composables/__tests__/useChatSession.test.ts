@@ -102,6 +102,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     getAgent: vi.fn().mockReturnValue(undefined),
     syncModelFromAgent: vi.fn().mockReturnValue({ modelId: '', modelName: '' }),
     getAgentModel: vi.fn().mockReturnValue(undefined),
+    getDefaultModelId: vi.fn().mockReturnValue(''),
     agentHeaderTitle: vi.fn().mockReturnValue('🤖 Test'),
     // ACP model list consumption — the subject of the new-session model-list fix.
     updateACPModelList: vi.fn(),
@@ -144,6 +145,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockAgentFns.getAgent.mockReset().mockReturnValue(undefined)
     mockAgentFns.syncModelFromAgent.mockReset().mockReturnValue({ modelId: '', modelName: '' })
     mockAgentFns.getAgentModel.mockReset().mockReturnValue(undefined)
+    mockAgentFns.getDefaultModelId.mockReset().mockReturnValue('')
     mockAgentFns.agentHeaderTitle.mockReset().mockReturnValue('🤖 Test')
     mockAgentFns.updateACPModelList.mockReset()
     mockAgentFns.applyResolvedModelList.mockReset()
@@ -400,12 +402,12 @@ vi.mock('@/composables/useAgents', () => ({
     getAgent: mockAgentFns.getAgent,
     syncModelFromAgent: mockAgentFns.syncModelFromAgent,
     getAgentModel: mockAgentFns.getAgentModel,
+    getDefaultModelId: mockAgentFns.getDefaultModelId,
     agentHeaderTitle: mockAgentFns.agentHeaderTitle,
     getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
     supportsACP: vi.fn().mockReturnValue(false),
   }),
-  restoreOriginalModels: vi.fn(),
-  resetModelViewForTransport: vi.fn(),
+  restoreACPModelView: vi.fn(),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
   updateACPModelList: mockAgentFns.updateACPModelList,
@@ -6188,6 +6190,42 @@ describe('syncModelFromData', () => {
     expect(mockIdentity.currentModelId).toBe('new-default')
     expect(mockIdentity.currentModelName).toBe('New Default')
   })
+
+  // Regression: the chip showed「默认」for the built-in agent with a bound
+  // provider. Its chat_sessions.model can be '' (no model chosen in the session)
+  // and the agent has no preferredModel, so there was no candidate at all — and
+  // when the list happened to be empty at that instant the chip resolved to a
+  // blank name, which renders as the placeholder even though the turn runs a
+  // concrete model. The agent default is what WILL run, so it must be the
+  // candidate rather than an empty string.
+  it('when server has no modelId and there is no preference: falls back to the agent default', async () => {
+    mockIdentityFns.loadModelPref.mockReturnValue('')
+    mockAgentFns.getDefaultModelId.mockReturnValue('deepseek-v4.1-flash')
+    mockAgentFns.getAgentModel.mockReturnValue(undefined)
+    // The list has not arrived yet (agents response in flight, or an ACP view
+    // that cleared it) — the name must still come out non-empty.
+    mockAgentFns.getAgent.mockReturnValue({ models: [], preferredModel: '' })
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [],
+        total: 0,
+        backend: 'builtin',
+        agentId: 'builtin',
+        modelId: '',  // session row has no model
+        thinkingEffort: '',
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockIdentity.currentModelId).toBe('deepseek-v4.1-flash')
+    expect(mockIdentity.currentModelName).toBe('deepseek-v4.1-flash')
+  })
 })
 
 // ───────────────────────────────────────────────────────────
@@ -8208,7 +8246,7 @@ describe('loadHistory session_id recovery', () => {
 // disappeared depending on unrelated frontend cache timing.
 //
 // The backend now resolves the list, so the client must prefer `resolvedModels`
-// and store `cliModels` alongside it (the transport switch reads that).
+// and apply it as the agent's model list.
 describe('syncSessionState — ACP model list', () => {
   let originalFetch: typeof globalThis.fetch
 
@@ -8230,7 +8268,6 @@ describe('syncSessionState — ACP model list', () => {
       { id: 'auto', name: 'Auto', default: true },
       { id: 'deepseek-v4-flash', name: 'Deepseek v4 Flash', default: false },
     ]
-    const cliModels = [{ id: 'cli-only', name: 'CLI Only', default: true }]
 
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
@@ -8239,7 +8276,7 @@ describe('syncSessionState — ACP model list', () => {
           sessionId: 's-acp-1', sessionTitle: 'S', messages: [], total: 0,
           backend: 'codebuddy', agentId: 'agent2', modelId: 'auto',
           transport: 'acp-stdio',
-          modelListState: { currentModelId: 'auto', models: resolved, resolvedModels: resolved, cliModels },
+          modelListState: { currentModelId: 'auto', models: resolved, resolvedModels: resolved },
           running: false,
         }),
       })
@@ -8251,7 +8288,7 @@ describe('syncSessionState — ACP model list', () => {
     const session = useChatSession(options)
     await session.switchSession('s-acp-1')
 
-    expect(mockAgentFns.applyResolvedModelList).toHaveBeenCalledWith('agent2', resolved, cliModels)
+    expect(mockAgentFns.applyResolvedModelList).toHaveBeenCalledWith('agent2', resolved)
     // The resolved path wins; the raw merge must not also run.
     expect(mockAgentFns.updateACPModelList).not.toHaveBeenCalled()
   })
@@ -8293,8 +8330,8 @@ describe('syncSessionState — ACP model list', () => {
         ok: true,
         json: () => Promise.resolve({
           sessionId: 's-cli-1', sessionTitle: 'S', messages: [], total: 0,
-          backend: 'codebuddy', agentId: 'agent2', modelId: 'cli-only',
-          transport: 'cli', running: false,
+          backend: 'codebuddy', agentId: 'agent2', modelId: 'acp-only',
+          transport: 'acp-stdio', running: false,
         }),
       })
       .mockResolvedValueOnce({

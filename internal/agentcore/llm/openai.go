@@ -405,7 +405,7 @@ func (c *openAIClient) buildUserParts(parts []Part) (any, error) {
 	for _, img := range images {
 		out = append(out, oaContentPart{
 			Type:     oaPartImageURL,
-			ImageURL: &oaImageURL{URL: dataURL(img)},
+			ImageURL: &oaImageURL{URL: imageURL(img)},
 		})
 	}
 	return out, nil
@@ -420,7 +420,7 @@ func imageParts(images []Image, lead string) []oaContentPart {
 	for _, img := range images {
 		out = append(out, oaContentPart{
 			Type:     oaPartImageURL,
-			ImageURL: &oaImageURL{URL: dataURL(img)},
+			ImageURL: &oaImageURL{URL: imageURL(img)},
 		})
 	}
 	return out
@@ -440,7 +440,15 @@ func splitToolResultParts(parts []Part) (string, []Image) {
 	return text.String(), images
 }
 
-func dataURL(img Image) string {
+// imageURL is the address the endpoint should fetch the picture from.
+//
+// A remote picture is passed through untouched (the endpoint downloads it); a
+// local one becomes a data URL, which is the only form an endpoint can read
+// without a reachable address.
+func imageURL(img Image) string {
+	if img.URL != "" {
+		return img.URL
+	}
 	return "data:" + img.MediaType + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
 }
 

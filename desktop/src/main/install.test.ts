@@ -3,7 +3,6 @@ import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
 import { deflateRawSync, gzipSync, gunzipSync } from 'node:zlib'
-import { createHash } from 'node:crypto'
 
 // The installer touches `app` only in restartInto(); mock electron so the pure
 // extraction/pointer logic can be exercised without a running Electron process.
@@ -163,12 +162,6 @@ import {
   sha256Hex,
 } from './install'
 import { app } from 'electron'
-
-/**
- * Fingerprint the test shells advertise. Its VALUE is irrelevant to these
- * tests — only whether the two sides agree — so a literal keeps them readable.
- */
-const SHELL_FP = 'sha256-test-shell-identity'
 
 /**
  * Build a zip archive from entries.
@@ -453,23 +446,6 @@ function installAsarShim(): AsarShim {
     restore() {
       for (const s of spies) s.mockRestore()
     },
-  }
-}
-
-/**
- * Run `fn` with `process.platform` reporting `platform`.
- *
- * `platform` is a configurable (non-writable) data property, so it is redefined
- * rather than spied on — same technique the appRoot test uses for
- * `process.resourcesPath`.
- */
-function withPlatform<T>(platform: string, fn: () => T): T {
-  const original = Object.getOwnPropertyDescriptor(process, 'platform')
-  Object.defineProperty(process, 'platform', { value: platform, configurable: true })
-  try {
-    return fn()
-  } finally {
-    if (original) Object.defineProperty(process, 'platform', original)
   }
 }
 
@@ -914,7 +890,7 @@ describe('handOffToPointedVersion', () => {
     //
     //   - someone unpacked a release on top of the version store (the old
     //     reason for dropping the pointer);
-    //   - a FUSED upgrade installed an all-in-one package whose shell was
+    //   - a INTEGRATED upgrade installed an integrated package whose shell was
     //     reused from a previous release: the directory is named after the
     //     release tag, while the app inside reports the older build's version,
     //     so `selectStartupVersion` sees two different versions for the same

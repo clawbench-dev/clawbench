@@ -47,7 +47,6 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentModelsGroupProvider': 'Model provider',
         'settings.items.agentModelsGroupAgent': 'Agent defaults',
         'settings.items.agentPreferredThinkingEffort': 'Thinking Effort',
-        'settings.items.agentTransport': 'Protocol',
         'settings.items.agentAutoApprove': 'Auto-Approve by Default',
         'settings.items.agentAutoApproveDesc': 'New sessions use this',
         'settings.items.agentProjectOnly': 'Only This Project',
@@ -64,7 +63,6 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentSystemPromptACPNote': 'ACP note',
         'settings.items.agentSectionInfo': 'Info',
         'settings.items.agentBackend': 'Backend',
-        'settings.items.agentCommand': 'Command',
         'settings.items.agentModels': 'Models',
         'settings.items.agentModelCount': `${params?.count ?? 0} models`,
         'settings.items.agentSessionCountLabel': 'Sessions',
@@ -207,8 +205,7 @@ const baseAgent = {
   name: 'Test Agent',
   specialty: 'coding',
   backend: 'claude',
-  command: 'claude',
-  transport: 'cli',
+  transport: 'acp-stdio',
   models: [{ id: 'model-1', name: 'Model 1', default: true }],
   preferredModel: 'model-1',
   customSystemPrompt: '',
@@ -376,35 +373,26 @@ describe('SettingsAgentDetail', () => {
     })
   })
 
-  it('renders more items for dual-transport agent', () => {
+  it('renders the command row once the agent has an ACP command', () => {
     const wrapper1 = mountDetail()
     const count1 = wrapper1.findAllComponents({ name: 'SettingsItem' }).length
 
     const wrapper2 = mountDetail({ acpCommand: 'claude --acp' })
     const count2 = wrapper2.findAllComponents({ name: 'SettingsItem' }).length
 
-    // Dual-transport agent has transport select + acp_command info
+    // An ACP agent gains the acp_command row; the transport select is gone for
+    // every agent, so the command row is the only difference.
     expect(count2).toBeGreaterThan(count1)
   })
 
-  it('ACP-only agent has no transport select (no CLI option offered)', () => {
-    // Genuine ACP-only agent: acpCommand set but supportsCLI=false (e.g. grok).
-    // A transport select must NOT be rendered — CLI is not available to switch to.
-    const wrapper = mountDetail({ acpCommand: 'grok agent stdio', supportsCLI: false })
+  it('never renders a transport select (one path per agent)', () => {
+    // Every agent that spawns a process runs over ACP, so there is nothing to
+    // switch between; a select here would offer a choice that does not exist.
+    const wrapper = mountDetail({ acpCommand: 'grok agent stdio' })
     const items = wrapper.findAllComponents({ name: 'SettingsItem' })
 
     const transportItem = items.find((it: any) => it.props('item')?.key === 'transport')
     expect(transportItem).toBeUndefined()
-  })
-
-  it('renders fewer items for agent without command', () => {
-    const wrapper1 = mountDetail({ command: 'claude' })
-    const count1 = wrapper1.findAllComponents({ name: 'SettingsItem' }).length
-
-    const wrapper2 = mountDetail({ command: '' })
-    const count2 = wrapper2.findAllComponents({ name: 'SettingsItem' }).length
-
-    expect(count1).toBeGreaterThan(count2)
   })
 
   it('renders more items when thinking effort levels exist', () => {
@@ -421,9 +409,8 @@ describe('SettingsAgentDetail', () => {
     const wrapper1 = mountDetail({ acpCommand: '', canRefreshModels: true })
     const count1 = wrapper1.findAllComponents({ name: 'SettingsItem' }).length
 
-    // Genuine ACP-only agent: has acpCommand but no CLI support (supportsCLI=false).
-    // No transport select (no dual transport) and system prompt shown as info.
-    const wrapper2 = mountDetail({ acpCommand: 'grok agent stdio', supportsCLI: false })
+    // An ACP agent: no transport select, system prompt shown as info.
+    const wrapper2 = mountDetail({ acpCommand: 'grok agent stdio' })
     const count2 = wrapper2.findAllComponents({ name: 'SettingsItem' }).length
 
     // Both should have items
@@ -453,7 +440,7 @@ describe('SettingsAgentDetail', () => {
   })
 
   it('renders a custom agent\'s ACP command as an editable text row', () => {
-    const wrapper = mountDetail({ acpCommand: 'trae acp', backend: 'custom-acp', supportsCLI: false, backendHasSpec: false })
+    const wrapper = mountDetail({ acpCommand: 'trae acp', backend: 'custom-acp', backendHasSpec: false })
     const item = wrapper.findAllComponents({ name: 'SettingsItem' })
       .find((it: any) => it.props('label') === 'ACP Command')
 
@@ -464,7 +451,7 @@ describe('SettingsAgentDetail', () => {
   it('keeps the ACP command row for a custom agent whose command is empty', () => {
     // A custom agent always shows the row, even before its command is set:
     // without it there would be no way to make the agent runnable.
-    const wrapper = mountDetail({ backend: 'custom-acp', acpCommand: '', supportsCLI: false, backendHasSpec: false })
+    const wrapper = mountDetail({ backend: 'custom-acp', acpCommand: '', backendHasSpec: false })
     const item = wrapper.findAllComponents({ name: 'SettingsItem' })
       .find((it: any) => it.props('label') === 'ACP Command')
 

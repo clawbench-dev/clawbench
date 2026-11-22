@@ -1,8 +1,12 @@
 package antigravity
 
 import (
+	"context"
+	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"clawbench/internal/model"
 )
@@ -11,6 +15,27 @@ import (
 // Matches agy's own log-prefix lines so they are dropped rather than parsed as
 // model IDs.
 var agyLogPrefixRE = regexp.MustCompile(`^[IWEF]\d{4}\s`)
+
+// discoverAntigravityModels lists models by running `agy models`.
+//
+// Listing is a CLI feature, not a chat transport. It needs a signed-in CLI
+// (`agy models` answers "Please sign in to view available models" otherwise),
+// so an unauthenticated install still gets AntigravityCatalog — the same
+// behavior the picker had before the CLI transport was removed. Once signed
+// in, the live list replaces the fallback.
+func discoverAntigravityModels() ([]model.AgentModel, string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "agy", "models").Output()
+	if err != nil {
+		return AntigravityCatalog, fmt.Sprintf("agy: `agy models` failed: %v", err)
+	}
+	if models := parseAgyModels(string(out)); len(models) > 0 {
+		return models, ""
+	}
+	return AntigravityCatalog, "agy: no models parsed from `agy models` (sign in to see the live list)"
+}
 
 // parseAgyModels parses `agy models`: each non-status line is a model ID or a
 // display name. Diagnostics (progress, auth failures, log noise) are dropped.

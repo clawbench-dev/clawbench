@@ -13,34 +13,24 @@ import (
 // ---------------------------------------------------------------------------
 
 // parseACPToolCall dispatches ACP ToolCall parsing to the backend's registered
-// behavior hook, falling back to the legacy in-package mapper.
+// behavior hook, falling back to the generic mapper.
 //
-// Backends whose frames need no special handling declare nothing and take the
-// generic path; a backend with a private shape implements ParseToolCall in its
-// own sub-package.
+// The fallback is the intended path, not a leftover: a backend that speaks
+// plain ACP (cursor, dsh, grok, …) declares nothing and works through the
+// generic parser. Only a backend with a private wire shape registers its own.
 func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 	if b := acpBehavior(backend); b != nil && b.ParseToolCall != nil {
 		return b.ParseToolCall(tc)
 	}
-	return parseACPToolCallLegacy(backend, tc)
+	return parseGenericACPToolCall(tc, backend)
 }
 
-// parseACPToolCallUpdate dispatches ACP ToolCallUpdate parsing to the
-// backend's registered behavior hook, falling back to the legacy mapper.
+// parseACPToolCallUpdate dispatches ACP ToolCallUpdate parsing to the backend's
+// registered behavior hook, falling back to the generic mapper.
 func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *ToolCall {
 	if b := acpBehavior(backend); b != nil && b.ParseToolCallUpdate != nil {
 		return b.ParseToolCallUpdate(tcu)
 	}
-	return parseACPToolCallUpdateLegacy(backend, tcu)
-}
-
-// TODO(phase3): delete once every backend registers ParseToolCall.
-func parseACPToolCallLegacy(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
-	return parseGenericACPToolCall(tc, backend)
-}
-
-// TODO(phase3): delete once every backend registers ParseToolCallUpdate.
-func parseACPToolCallUpdateLegacy(backend string, tcu acp.SessionToolCallUpdate) *ToolCall {
 	return parseGenericACPToolCallUpdate(tcu, backend)
 }
 
@@ -155,7 +145,7 @@ func parseGenericACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID stri
 		ID: string(tcu.ToolCallId),
 	}
 
-	mapToolCallStatus(tcu.Status, tool)
+	mapToolCallStatus(tcu.Status.Ptr(), tool)
 	mapToolCallInput(tcu, tool, backendID)
 	mapToolCallName(tcu, tool, backendID)
 	if tool.Done {
@@ -172,54 +162,65 @@ func parseGenericACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID stri
 // acpRemapsForBackend returns the ACP input remapping map for the given backendID.
 // Uses LookupACPRemapsFn (wired to backends.LookupACPRemaps) when available,
 // which handles backend-specific remaps and generic fallback internally.
-// Falls back to getRemaps("generic_acp") only when the backends package
-// is not loaded (e.g., isolated test runs).
+// Falls back to GenericACPRemaps only when the backends package is not loaded
+// (e.g., isolated test runs) — the same table the registry would have returned.
 func acpRemapsForBackend(backendID string) map[string]string {
 	if LookupACPRemapsFn != nil {
 		return LookupACPRemapsFn(backendID)
 	}
-	return getRemaps("generic_acp")
+	return GenericACPRemaps
 }
 
 // mapACPToolCall creates a StreamEvent from an ACP ToolCall start event.
 // Delegates to parseACPToolCall for per-agent routing.
 func mapACPToolCall(tc acp.SessionUpdateToolCall, backendID string, conn *ACPConn) StreamEvent {
 	tool := parseACPToolCall(backendID, tc)
-	attachParentToolCallIDToTool(tool, backendID, conn, tc.Meta)
-	member := extractTeamMemberNameForTool(tc.Meta)
-	return StreamEvent{Type: "tool_use", Tool: tool, MemberName: member, MemberColor: memberColorByName(conn, member)}
+	meta := MetaAny(tc.Meta)
+	attr := frameAttribution(backendID, conn, meta)
+	attachParentToolCallIDToTool(tool, attr)
+	member, color := "", ""
+	if attr != nil {
+		member, color = attr.MemberName, attr.MemberColor
+	}
+	return StreamEvent{Type: "tool_use", Tool: tool, MemberName: member, MemberColor: color}
 }
 
 // mapACPToolCallUpdate creates a StreamEvent from an ACP ToolCallUpdate.
 // Delegates to parseACPToolCallUpdate for per-agent routing.
 func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string, conn *ACPConn) StreamEvent {
 	tool := parseACPToolCallUpdate(backendID, tcu)
-	attachParentToolCallIDToTool(tool, backendID, conn, tcu.Meta)
+	updateMeta := PatchMetaAny(tcu.Meta)
+	attr := frameAttribution(backendID, conn, updateMeta)
+	attachParentToolCallIDToTool(tool, attr)
 
 	eventType := "tool_use"
 	if tool.Done {
 		eventType = "tool_result"
 	}
 
+	tcuContent, _ := tcu.Content.Value()
 	slog.Debug("acp: tool_call_update", "tool_call_id", tool.ID, "done", tool.Done, "event_type", eventType, "has_output", tool.Output != "",
-		"status", fmt.Sprintf("%v", tcu.Status), "content_count", len(tcu.Content), "title", tcu.Title,
-		"raw_input", fmt.Sprintf("%v", tcu.RawInput))
+		"status", fmt.Sprintf("%v", tcu.Status.Ptr()), "content_count", len(tcuContent), "title", tcu.Title.Ptr(),
+		"raw_input", fmt.Sprintf("%v", tcu.RawInput.Ptr()))
 
-	member := extractTeamMemberNameForTool(tcu.Meta)
-	return StreamEvent{Type: eventType, Tool: tool, MemberName: member, MemberColor: memberColorByName(conn, member)}
+	member, color := "", ""
+	if attr != nil {
+		member, color = attr.MemberName, attr.MemberColor
+	}
+	return StreamEvent{Type: eventType, Tool: tool, MemberName: member, MemberColor: color}
 }
 
 // attachParentToolCallIDToTool stamps the sub-agent parent link (if any) onto a
 // parsed tool call. Shared by the start/update mappers so the debouncer path
 // (which also routes through mapACPToolCallUpdate) carries the link too.
 //
-// For Agent Team members the wire carries no parentToolCallId; the member-name
-// join resolves the spawning Agent card instead (see codebuddy_team_bridge.go).
-func attachParentToolCallIDToTool(tool *ToolCall, backendID string, conn *ACPConn, meta map[string]any) {
-	if tool == nil {
+// The link comes from the backend's frame-attribution hook: a backend whose
+// members carry no parentToolCallId resolves one from its own join key there.
+func attachParentToolCallIDToTool(tool *ToolCall, attr *FrameAttribution) {
+	if tool == nil || attr == nil {
 		return
 	}
-	if id := memberParentOrParent(backendID, conn, meta); id != "" {
-		tool.ParentToolCallID = id
+	if attr.ParentToolCallID != "" {
+		tool.ParentToolCallID = attr.ParentToolCallID
 	}
 }

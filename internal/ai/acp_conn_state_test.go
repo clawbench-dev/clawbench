@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -1364,9 +1365,9 @@ func TestEmitPromptResponseUsage_NilCachedState(t *testing.T) {
 	require.Nil(t, conn.GetCachedUsageState())
 
 	streamCh := make(chan StreamEvent, 8)
-	cachedRead := 5
-	cachedWrite := 6
-	thought := 7
+	cachedRead := int64(5)
+	cachedWrite := int64(6)
+	thought := int64(7)
 	usage := &acp.Usage{
 		InputTokens:       10,
 		OutputTokens:      20,
@@ -1797,7 +1798,7 @@ func TestExtractSessionState_NewResp_MergesCreditsFromModelExtension(t *testing.
 						{Value: "deepseek-v4-flash", Name: "Deepseek-V4-Flash"},
 						// An agent that puts the multiplier on the option itself
 						// must not be overwritten by the extension.
-						{Value: "glm-5.3", Name: "GLM 5.3", Meta: map[string]any{"credits": "x0.4 credits"}},
+						{Value: "glm-5.3", Name: "GLM 5.3", Meta: acptest.Meta(map[string]any{"credits": "x0.4 credits"})},
 					},
 				},
 			},

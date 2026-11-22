@@ -8,7 +8,7 @@ vi.mock('vue-i18n', async (importOriginal) => {
     useI18n: () => ({
       t: (key: string) => {
         const map: Record<string, string> = {
-          'settings.items.agentCreateAcpTitle': 'Add ACP Agent',
+          'settings.items.agentCreateAcpTitle': 'Add Agent',
           'settings.items.agentName': 'Name',
           'settings.items.agentCreateAcpNamePlaceholder': 'Enter an agent name',
           'settings.items.agentCreateAcpCommand': 'ACP Command',

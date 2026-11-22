@@ -8,17 +8,6 @@ import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 const TAG = 'WideScreenLayout'
 
 /**
- * Broadcast when the applied UI scale changes.
- *
- * Re-exported from `utils/uiScale.ts` (a leaf module) rather than declared here:
- * the applier lives there, and importing it back from this module would create a
- * cycle. A scale change resizes every element but leaves `innerWidth` alone, so
- * `resize` never fires and any layout decision derived from the scale has to be
- * told explicitly.
- */
-export { UI_SCALE_EVENT as SCALE_EVENT }
-
-/**
  * Wide-screen (two-column) threshold, in CSS pixels.
  *
  * 960 rather than 1024: the original 1024 existed only so that a 2400-physical-px

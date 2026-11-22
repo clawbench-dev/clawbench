@@ -142,10 +142,9 @@ describe('providerIcons', () => {
             // A model served through a gateway whose name carries no known
             // provider falls back to the gateway's own brand icon.
             expect(getModelProvider('opencode-go/space-bunny')).toBe('opencode-go')
-            expect(getModelProvider('github-copilot/mai-code-1.1-flash')).toBe('github-copilot')
-            // The model-name part still wins when it is recognizable, so a
-            // gateway-hosted Claude model shows the Claude icon, not the gateway.
-            expect(getModelProvider('github-copilot/claude-opus-4.8')).toBe('claude')
+            // A gateway-hosted Claude model still shows the Claude icon: the
+            // recognizable model name wins over the gateway.
+            expect(getModelProvider('opencode-go/claude-opus-4.8')).toBe('claude')
             expect(getModelProvider('opencode-go/deepseek-v4-pro')).toBe('deepseek')
         })
 
@@ -193,7 +192,6 @@ describe('providerIcons', () => {
                 tencent: ['tencent', 'tencent-coding-plan', 'tencent-tokenhub'],
                 volcengine: ['volcengine', 'volcengine-coding-plan'],
                 siliconflow: ['siliconflow', 'siliconflow-cn'],
-                copilot: ['github-copilot'],
                 google: ['google', 'google-vertex'],
                 bedrock: ['bedrock', 'amazon-bedrock'],
             }
@@ -226,7 +224,7 @@ describe('providerIcons', () => {
 
     describe('getProviderIcon', () => {
         it('returns icon data for known providers', () => {
-            const providers = ['openai', 'anthropic', 'claude', 'gemini', 'deepseek', 'mistral', 'meta', 'qwen', 'kimi', 'xiaomi', 'groq', 'xai', 'copilot', 'codex', 'codebuddy', 'zhipu', 'chatglm', 'glm', 'longcat', 'stepfun', 'nvidia', 'opencode-go', 'github-copilot']
+            const providers = ['openai', 'anthropic', 'claude', 'gemini', 'deepseek', 'mistral', 'meta', 'qwen', 'kimi', 'xiaomi', 'groq', 'xai', 'codex', 'codebuddy', 'zhipu', 'chatglm', 'glm', 'longcat', 'stepfun', 'nvidia', 'opencode-go']
             for (const id of providers) {
                 const data = getProviderIcon(id)
                 expect(data, `provider "${id}" should have icon data`).not.toBeNull()
@@ -236,12 +234,6 @@ describe('providerIcons', () => {
 
         it('returns null for unknown providers', () => {
             expect(getProviderIcon('unknown')).toBeNull()
-        })
-
-        it('vecli uses inline fallback SVG', () => {
-            const data = getProviderIcon('vecli')
-            expect(data).not.toBeNull()
-            expect(data!.raw).toContain('<svg')
         })
 
         // Same hazard class as the agent icons: lobe-icons' "-color" variants

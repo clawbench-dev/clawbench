@@ -49,11 +49,8 @@ vi.mock('@/composables/useAgents', () => ({
     canRefreshAgentState: () => false,
     supportsACP: () => true,
     isBuiltinAgent: () => false,
-    supportsCLI: () => true,
-    getAgentTransport: () => 'acp-stdio',
   }),
-  restoreOriginalModels: vi.fn(),
-  resetModelViewForTransport: vi.fn(),
+  restoreACPModelView: vi.fn(),
   applyRefreshedModelList: vi.fn(),
   applyRefreshedACPState: vi.fn(),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
@@ -172,8 +169,8 @@ describe('session drawer tab strip scrolling', () => {
     expect(src).toContain("from '@/utils/horizontalWheelScroll'")
   })
 
-  it('renders all five tabs inside the strip', () => {
+  it('renders the tabs inside the strip (no protocol tab)', () => {
     const wrapper = mountDrawer()
-    expect(wrapper.findAll('.session-setting-tabs .model-tab')).toHaveLength(5)
+    expect(wrapper.findAll('.session-setting-tabs .model-tab')).toHaveLength(4)
   })
 })

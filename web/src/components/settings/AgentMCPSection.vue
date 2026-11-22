@@ -82,6 +82,14 @@ interface AgentLike {
   backend: string
   transport?: string
   mcpServers?: { mode?: string; names?: string[] }
+  /**
+   * Server-computed MCP facts for this agent's backend. They used to be three
+   * hard-coded lists of backend ids here, which meant every new backend had to
+   * be remembered in this Vue file as well as in its own Go spec.
+   */
+  mcpUnsupportedBackend?: boolean
+  mcpRejectsSse?: boolean
+  mcpAttachesAsync?: boolean
 }
 
 interface McpServerLike {
@@ -96,20 +104,18 @@ const { getServerValue, patchAgentField } = useSettingsConfig()
 const error = ref('')
 const saving = ref(false)
 
-/** Backends the probe measured as accepting mcpServers and ignoring it. */
-const UNSUPPORTED_BACKENDS = new Set(['dsh', 'deepseek', 'pi'])
-/** Backends whose adapter rejects an sse server outright (session/new fails). */
-const NO_SSE_BACKENDS = new Set(['codex', 'commandcode'])
-/** Backends that attach MCP servers asynchronously after session/new. */
-const SLOW_START_BACKENDS = new Set(['hermes'])
-
 const servers = computed<McpServerLike[]>(() => {
   const raw = getServerValue('mcp.servers')
   return Array.isArray(raw) ? (raw as McpServerLike[]) : []
 })
 
-const backend = computed(() => props.agent?.backend ?? '')
-const unsupportedBackend = computed(() => UNSUPPORTED_BACKENDS.has(backend.value))
+/**
+ * All three MCP facts come from the server (computed from the backend's own
+ * spec when it loads), so no backend id appears in this component. An agent
+ * record that predates them reports the fields absent, which reads as "plain
+ * backend" — the same assumption the server makes for an unmeasured backend.
+ */
+const unsupportedBackend = computed(() => props.agent?.mcpUnsupportedBackend === true)
 
 const mode = computed(() => {
   // Zero value means "all" — see model.MCPServerPolicy.Normalized. Reading it
@@ -127,11 +133,11 @@ const modeOptions = computed(() => [
 ])
 
 const showsSlowStartHint = computed(
-  () => SLOW_START_BACKENDS.has(backend.value) && mode.value !== 'none',
+  () => props.agent?.mcpAttachesAsync === true && mode.value !== 'none',
 )
 
 function transportSupported(transport: string): boolean {
-  if (transport === 'sse') return !NO_SSE_BACKENDS.has(backend.value)
+  if (transport === 'sse') return props.agent?.mcpRejectsSse !== true
   // stdio and http are supported everywhere the probe found MCP working; an
   // unsupported backend was already short-circuited above.
   return true

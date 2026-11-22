@@ -53,7 +53,7 @@ func Register() {
 | `ID` | 稳定标识。前端页签 id、`/api/features` 的键、i18n 错误键前缀都靠它 |
 | `Section` | `config.yaml` 的段名。空 = 没有服务端总开关（纯偏好型） |
 | `Enabled` | 读**实时**开关。`nil` = 恒开。必须读包级全局或 `model.ConfigInstance`，**不能读启动快照**——热更新会在运行期改它 |
-| `DefaultOn` | 只用于文档和"缺键当开"的声明。真正的默认值在 `model.ApplyDefaults` |
+| `DefaultOn` | 只用于文档和"缺键当开"的声明。真正的默认值在 `internal/plugin/config` 的 `Defaults`（`main` 加载配置后调 `config.ApplyDefaults`） |
 | `APIPrefixes` | "这些路由归我"。命中前缀的接口自动被门控（见 §4）。有 `Section` 就必须非空 |
 | `MountRoutes` | 挂接口。函数住在 `routes.go`。声明了前缀就必须有它，否则接口全 404 |
 | `Start(cfg)` | 启动后台资源。**必须幂等** |
@@ -203,9 +203,20 @@ handler.RegisterRoutes（只注入 Mount，不认识任何具体插件）
 
 **插件包不能 import `internal/handler`**：那会让"删掉一个插件目录"变成"handler 编译失败"。需要 handler 里的能力时，把它抽到上表那些公共层——它们就是因为这个原因存在的。
 
-反过来，handler 也不该 import 具体插件包（测试里可以，为了验证跨功能行为）。
+| 公共层 | 收的是什么 |
+|---|---|
+| `httpx` | 写 JSON / 解析请求体 / 本地化错误 / 项目路径校验 |
+| `filex` | MIME、二进制嗅探、文本截断、缩略图、ETag、归档头、文件复制 |
+| `cfgwrite` | `config.yaml` 的合并写入与那把锁 |
+| `sharecore` | 分享 token 形状校验（分享与会议纪要共用） |
+| `stt` | 全局 provider + PCM/WAV 工具 |
+| `ws` | WebSocket origin 模式 |
+| `forgepoll` | forge 轮询接线（插件不能 import `main`） |
+| `handlertest` | 插件测试的公共夹具（见 [04-testing.md](04-testing.md)） |
 
-唯一允许的单向功能依赖：`share → live`（分享页要把 `/notes`、`/signal` 这些子路径转给会议纪要）。删 `live` 会连带破坏 `share`，删 `share` 不影响 `live`。
+**插件拥有自己的实现**：生产文件、`routes.go`、关闭效果和测试都在 `internal/plugin/<id>/` 里，`internal/handler` 只留核心流程（chat / 文件 / 设置 / agent）。`share → live` 是唯一允许的单向功能依赖（分享页要把 `/notes`、`/signal` 这些子路径转给会议纪要）；删 `live` 会连带破坏 `share`，删 `share` 不影响 `live`。
+
+反过来说，handler 也不该 import 具体插件包（测试里可以，为了验证跨功能行为）。
 
 ---
 

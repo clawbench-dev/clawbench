@@ -22,7 +22,7 @@ import (
 // 缺失。本测试驱动**生产** ACPConn（而非探针自建的 writer），验证：
 //
 //  1. ACPConn.CallRaw 能在真实 conn 上发出 `_session/steering`（经共享
-//     lockedWriter，与 SDK 请求不交错）；
+//     SDK 自己的连接，与 typed 请求不交错）；
 //  2. 轮中调用返回 {outcome:"injected"}；
 //  3. **合并语义**：steer 之后不产生任何 steer_boundary（适配器不回显）——
 //     这正是 claude/codex 只能"并入"、不能"切分"的根据，也是它们注册

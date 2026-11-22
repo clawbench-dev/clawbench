@@ -38,73 +38,16 @@
         v-if="card.type === 'group'"
         :title="card.title"
       >
-        <!-- Custom wallpaper block: dedicated component with thumbnail/upload/
-             remove + its own panel-opacity slider. Rendered at the top of the
-             wallpaper section card. -->
-        <WallpaperSetting
-          v-if="card.title === t('settings.items.wallpaperSection')"
-          :description="t('settings.items.wallpaperDesc')"
+        <!-- A card whose body is not a list of rows (token table, account
+             list, status card…) declares it on the item that opens the card.
+             The settings module does not know which component belongs to which
+             plugin: the declaration lives with the fields. -->
+        <component
+          :is="card.body.component"
+          v-if="card.body"
+          :description="card.body.description"
+          v-on="card.body.on ?? {}"
         />
-        <!-- HTTPS certificate: status + one-click self-signed generation. The
-             generator also exists as `clawbench --gen-cert`, but the people who
-             need HTTPS are exactly the ones who never open a terminal. -->
-        <TlsCertPanel v-if="card.title === t('settings.items.tlsSection')" />
-        <!-- Forge credentials: write-only tokens, so a dedicated row manages
-             per-host tokens and never renders a stored value. -->
-        <ForgeCredentialsRow
-          v-if="card.title === t('settings.items.forgeSection')"
-          :description="t('settings.items.forgeCredentialsDesc')"
-        />
-        <!-- Global MCP server list. One definition shared by every ACP agent;
-             the per-agent enable policy lives on the agent page. -->
-        <MCPSetting
-          v-if="card.title === t('settings.items.mcpSection')"
-          :description="t('settings.items.mcpDesc')"
-        />
-        <!-- Model providers: endpoint + credential shared by agents. The card
-             body is a dedicated component (same pattern as MCPSetting). -->
-        <!-- Mailbox accounts: the one place an IMAP/SMTP account is added or
-             edited. The mail panel's gear sends the user here instead of
-             growing a second copy of this form. -->
-        <MailSetting
-          v-if="card.title === t('settings.items.mailAccountsSection')"
-        />
-        <ProviderSetting
-          v-if="card.title === t('settings.items.providerSection')"
-          :description="t('settings.items.providerDesc')"
-        />
-        <!-- 中继服务: installation-wide LiveKit endpoint + write-only
-             credential, with a test-then-save action. Lives here instead of the
-             per-meeting create form, which keeps only its own switch. -->
-        <MeetingRelaySetting v-if="card.title === t('settings.items.meetingRelaySection')" />
-        <!-- Cross-agent skill discovery: directory + git repo lists with
-             write-only tokens, plus the live discovered-skill listing. -->
-        <SkillsSetting
-          v-if="card.title === t('settings.items.skillsSection')"
-          :description="t('settings.items.skillsCardDesc')"
-        />
-        <!-- Local directories and git repositories are separate cards: they
-             differ in what they hold (paths vs cloned remotes with sync state),
-             so a single blob made the two read as one. -->
-        <SkillsDirsSetting v-if="card.title === t('settings.items.skillsDirs')" />
-        <SkillsReposSetting v-if="card.title === t('settings.items.skillsRepos')" />
-        <!-- The discovered listing is read-only output, so it gets its own card
-             rather than being glued to the configuration controls. -->
-        <SkillsDiscoveredSetting
-          v-if="card.title === t('settings.items.skillsDiscoveredSection')"
-        />
-        <!-- Project registry listing: a live list fetched from the backend,
-             rendered in place of the card's (placeholder-only) rows. Its row
-             clicks drill into project:<id>, so the navigate event must be
-             forwarded up to SettingsPage. -->
-        <ProjectsSetting
-          v-if="card.title === t('settings.items.allProjectsSection')"
-          @navigate="(id: string) => $emit('navigate', id)"
-        />
-        <!-- Knowledge-base index status + rebuild action. A dedicated card body
-             (counters and a destructive reindex button have no generic row), so
-             the placeholder item only opens the card. -->
-        <KbSetting v-if="card.title === t('settings.items.kbStatusSection')" />
         <!-- Feature master switches live in the Dock feature manager. These
              rows report the state and link there; the row itself carries no
              control (see FeatureStatusRow). -->
@@ -196,19 +139,7 @@ import SettingsGroupPanel from './SettingsGroupPanel.vue'
 import FeatureStatusRow from './FeatureStatusRow.vue'
 import SettingsCard from './SettingsCard.vue'
 import SettingsAboutBrand from './SettingsAboutBrand.vue'
-import WallpaperSetting from './WallpaperSetting.vue'
-import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
-import SkillsSetting from './SkillsSetting.vue'
-import TlsCertPanel from './TlsCertPanel.vue'
-import MCPSetting from './MCPSetting.vue'
-import MailSetting from './MailSetting.vue'
-import ProviderSetting from './ProviderSetting.vue'
-import MeetingRelaySetting from './MeetingRelaySetting.vue'
 import SummaryModelPicker from './SummaryModelPicker.vue'
-import SkillsDirsSetting from './SkillsDirsSetting.vue'
-import SkillsReposSetting from './SkillsReposSetting.vue'
-import SkillsDiscoveredSetting from './SkillsDiscoveredSetting.vue'
-import ProjectsSetting from './ProjectsSetting.vue'
 import ProjectDetailSetting from './ProjectDetailSetting.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import UpgradeDialog from './UpgradeDialog.vue'
@@ -216,7 +147,6 @@ import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
 import SettingsAgentSessions from './SettingsAgentSessions.vue'
 import DockPluginSetting from './DockPluginSetting.vue'
-import KbSetting from './KbSetting.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
 import SettingsSearchFilter from './SettingsSearchFilter.vue'
 import { useSettingsConfig, getEffectiveUIScale, autoFitUIScale } from '@/composables/useSettingsConfig'
@@ -233,7 +163,7 @@ import { managedByEmbedder as upgradeManagedByEmbedder } from '@/composables/use
 import { downloadByUrl } from '@/utils/download'
 import { openExternalUrl } from '@/utils/externalLink'
 import { PROJECT_FEEDBACK_URL, PROJECT_GITHUB_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
-import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
+import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig, type CardBody, type CardBodyEmit } from './settingsFieldMap'
 import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 import { DOCK_SETTINGS_PAGES } from '@/composables/dockPluginRuntime'
@@ -543,7 +473,7 @@ const renderList = computed(() => {
       if (entry.spec.key === 'closeAction' && getNative()?.hasCustomWindowControls?.() !== true) continue
       // The desktop app owns the server it ships, so it refuses to restart it:
       // the row would only ever fail. See useUpgrade's managedByEmbedder.
-      // "Check for updates" stays — a fused install upgrades as a whole package
+      // "Check for updates" stays — an integrated install upgrades as a whole package
       // (the desktop shell downloads and installs it).
       if (entry.spec.key === 'restartServer' && upgradeManagedByEmbedder.value) continue
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
@@ -570,7 +500,42 @@ const renderList = computed(() => {
 
 const basicGroupTitle = computed(() => t('settings.categories.basic'))
 
-interface CardGroup { type: 'group'; title: string; items: ItemSpec[] }
+// ── Card bodies (declared by the field tables) ──
+
+/** A resolved `cardBody`: stable component identity plus translated props. */
+interface ResolvedCardBody {
+  component: Component
+  description?: string
+  on?: Record<string, (payload: unknown) => void>
+}
+
+/**
+ * Loader → async component, wrapped once per declaration.
+ *
+ * `defineAsyncComponent` must not run during render: it would return a new
+ * component identity on every pass and remount the card body each time.
+ */
+const CARD_BODY_COMPONENTS = new WeakMap<CardBody, Component>()
+
+/** Events a card body may emit, forwarded to the settings page. */
+const CARD_BODY_HANDLERS: Record<CardBodyEmit, (payload: unknown) => void> = {
+  navigate: (payload) => emit('navigate', payload as string),
+}
+
+function resolveCardBody(body: CardBody): ResolvedCardBody {
+  const cached = CARD_BODY_COMPONENTS.get(body)
+  const component = cached ?? defineAsyncComponent(buildAsyncComponentOptions({ loader: body.load }))
+  if (!cached) CARD_BODY_COMPONENTS.set(body, component)
+  const on: Record<string, (payload: unknown) => void> = {}
+  for (const name of body.emits ?? []) on[name] = CARD_BODY_HANDLERS[name]
+  return {
+    component,
+    description: body.descriptionKey ? t(body.descriptionKey) : undefined,
+    on: body.emits?.length ? on : undefined,
+  }
+}
+
+interface CardGroup { type: 'group'; title: string; items: ItemSpec[]; body?: ResolvedCardBody }
 interface CardPanel { type: 'panel'; config: GroupPanelConfig }
 type RenderCard = CardGroup | CardPanel
 
@@ -594,20 +559,10 @@ const cards = computed<RenderCard[]>(() => {
           flush()
           cur = { type: 'group', title: header, items: [] }
         }
-        // Some section headers exist only to open a card that a dedicated
-        // component fills. Their placeholder item must NOT also render as a
-        // generic row: it has no control, and because the generic loop runs
-        // after the custom components it would appear at the BOTTOM of the card
-        // (the skills page showed a stray "cross-agent skills" row carrying a
-        // duplicate of the description paragraph).
-        //   - panelOpacity   → rendered inside WallpaperSetting
-        //   - skillsCard     → supplies the description, rendered by SkillsSetting
-        //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        //   - kbStatus       → rendered by KbSetting (counters + reindex)
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList', 'mcpServers', 'providersCard', 'tlsCert', 'mailAccounts', 'meetingRelay', 'kbStatus'])
-        if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
-          cur.items.push(entry.spec)
-        }
+        // An item with a `cardBody` is a placeholder: it opens the card and
+        // names it, but renders no row — the body component owns that content.
+        if (entry.spec.cardBody) cur.body = resolveCardBody(entry.spec.cardBody)
+        else cur.items.push(entry.spec)
       } else {
         // Header-less items all merge into a single "其他" group (at the end),
         // so a page can never have more than one "其他" card.

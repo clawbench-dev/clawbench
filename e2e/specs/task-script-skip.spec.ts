@@ -288,7 +288,7 @@ test.describe.serial('Task pre-AI script (smoke)', () => {
     await expect(page.locator('.completion-notify')).toHaveCount(0)
   })
 
-  test('the script field renders for a cron task but not for an event task', async ({ page }) => {
+  test('the gating script switch renders for every trigger kind', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 })
     await openTasksTab(page)
     await openCreateForm(page)
@@ -297,8 +297,13 @@ test.describe.serial('Task pre-AI script (smoke)', () => {
     // gates the script editor (`.script-switch-row`), not a bare textarea.
     await expect(page.locator('.task-form-page .script-switch-row')).toBeVisible()
 
-    // Switching to Event must drop the cron-only script fields entirely.
-    await page.locator('.task-form-page .preset-btn').filter({ hasText: /^(Event|事件)$/ }).click()
-    await expect(page.locator('.task-form-page .script-switch-row')).toHaveCount(0)
+    // The pre-AI script is NOT cron-only any more: an email task runs it after
+    // the mailbox conditions pass and an event task runs it after the
+    // subscription matches, so the section must stay for every kind. Dropping it
+    // on those kinds would silently make the gate impossible to configure.
+    for (const label of [/^(Event|事件)$/, /^(Email|邮件)$/]) {
+      await page.locator('.task-form-page .preset-btn').filter({ hasText: label }).click()
+      await expect(page.locator('.task-form-page .script-switch-row')).toHaveCount(1)
+    }
   })
 })

@@ -294,11 +294,6 @@ export function dockCategoryTitleKey(categoryId: string): string | undefined {
   return id ? dockTabTitleKey(id) : undefined
 }
 
-/** Button appearance states, declared by the plugin (never by the host). */
-export function resolveDockAppearance(id: string) {
-  return resolveDockPlugin(id)?.appearance
-}
-
 /** True when the plugin is usable now; plugins without a check are usable. */
 export function isDockPluginAvailable(id: string): boolean {
   return resolveDockPlugin(id)?.available?.() ?? true

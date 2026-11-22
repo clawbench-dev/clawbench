@@ -1,5 +1,8 @@
 import type { CategoryEntry } from '@/components/settings/settingsFieldMap'
 
+/** Settings category id (the plugin's directory is `live`). */
+export const category = 'meeting'
+
 /**
  * Settings fields for this plugin's own settings page (`meeting`).
  *
@@ -82,8 +85,8 @@ export default [
     { type: 'item', spec: { labelKey: 'settings.items.liveAutoDowngrade', descriptionKey: 'settings.items.liveAutoDowngradeDesc', key: 'liveAutoDowngrade', type: 'switch', source: 'local', sectionHeader: 'settings.items.meetingQualitySection' } },
     // 中继服务 (LiveKit). Installation-wide, so it lives here rather than in the
     // create form: the relay is deployed once and every meeting that opts in
-    // shares it. The row is a placeholder that only opens the card — the form
+    // shares it. The item is a placeholder that only opens the card — the form
     // is MeetingRelaySetting, because the credential is write-only and the save
     // is a test-then-store action, neither of which the generic row can do.
-    { type: 'item', spec: { labelKey: 'settings.items.meetingRelaySection', key: 'meetingRelay', type: 'info', source: 'server', sectionHeader: 'settings.items.meetingRelaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.meetingRelaySection', key: 'meetingRelay', type: 'info', source: 'server', sectionHeader: 'settings.items.meetingRelaySection', cardBody: { load: () => import('@/components/settings/MeetingRelaySetting.vue') } } },
 ] satisfies CategoryEntry[]

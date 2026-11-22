@@ -366,7 +366,6 @@ vi.mock('@/composables/useChatKeyboard', () => ({
 // Mock useSessionIdentity
 const mockAvailableCommands = ref([])
 const mockAvailableModes = ref([])
-const mockSessionTransport = ref('')
 const mockAutoApprove = ref(false)
 const mockToggleAutoApprove = vi.fn()
 const mockCruise = ref(false)
@@ -390,7 +389,6 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   useSessionIdentity: () => ({
     availableCommands: mockAvailableCommands,
     availableModes: mockAvailableModes,
-    currentTransport: mockSessionTransport,
     autoApprove: mockAutoApprove,
     toggleAutoApprove: mockToggleAutoApprove,
     cruise: mockCruise,
@@ -440,7 +438,6 @@ vi.mock('@/composables/useAgents', () => ({
     hasPreferredMode: () => false,
     supportsACP: mockSupportsACP,
     isBuiltinAgent: () => mockIsBuiltin(),
-    getAgentTransport: () => 'cli',
     invalidateACPStateCache: vi.fn(),
     updateACPModelList: vi.fn(),
     restoreOriginalModels: vi.fn(),
@@ -1855,13 +1852,6 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('switch-mode')![0]).toEqual(['plan'])
   })
 
-  it('handleSwitchTransport emits switch-transport', async () => {
-    const wrapper = mountBar()
-    wrapper.vm.handleSwitchTransport('acp-stdio')
-    expect(wrapper.emitted('switch-transport')).toBeTruthy()
-    expect(wrapper.emitted('switch-transport')![0]).toEqual(['acp-stdio'])
-  })
-
   it('stop button appears when loading and disappears when not loading', async () => {
     const wrapper = mountBar({ loading: true })
     await wrapper.vm.$nextTick()
@@ -1925,7 +1915,6 @@ describe('ChatInputBar', () => {
 
   it('command menu shows agent commands when input starts with /', async () => {
     mockSupportsACP.mockReturnValue(true)
-    mockSessionTransport.value = 'acp-stdio'
     mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
     const wrapper = mountBar()
     wrapper.vm.inputText = '/hel'
@@ -1934,7 +1923,6 @@ describe('ChatInputBar', () => {
     const labels = wrapper.findAll('.completion-label').map(i => i.text())
     expect(labels.some(l => l.includes('/help'))).toBe(true)
     mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
   })
 
@@ -1951,7 +1939,6 @@ describe('ChatInputBar', () => {
 
   it('marks ClawBench vs agent commands with distinct source classes', async () => {
     mockSupportsACP.mockReturnValue(true)
-    mockSessionTransport.value = 'acp-stdio'
     mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
@@ -1963,13 +1950,11 @@ describe('ChatInputBar', () => {
     // Each row carries a source icon.
     expect(clawbench.find('.completion-source-icon').exists()).toBe(true)
     mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
   })
 
   it('hides an agent command that collides with a ClawBench built-in', async () => {
     mockSupportsACP.mockReturnValue(true)
-    mockSessionTransport.value = 'acp-stdio'
     // An agent command literally named /cb-task collides with the built-in.
     // ClawBench intercepts /cb-task before it can reach the agent, so the
     // agent's copy could never run — only the ClawBench entry is shown.
@@ -1982,7 +1967,6 @@ describe('ChatInputBar', () => {
     expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
     expect(wrapper.findAll('.completion-item--agent')).toHaveLength(0)
     mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
   })
 
@@ -1990,7 +1974,6 @@ describe('ChatInputBar', () => {
   // agent sees it, so the native copy must not appear in the menu.
   it('hides the AI backend native /btw in favour of the ClawBench one', async () => {
     mockSupportsACP.mockReturnValue(true)
-    mockSessionTransport.value = 'acp-stdio'
     mockAvailableCommands.value = [{ name: 'btw', description: 'Native side question', inputHint: '' }]
     const wrapper = mountBar()
     wrapper.vm.inputText = '/btw'
@@ -2001,14 +1984,12 @@ describe('ChatInputBar', () => {
     expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
     expect(wrapper.findAll('.completion-item--agent')).toHaveLength(0)
     mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
   })
 
   it('hides a slash-prefixed native /btw too', async () => {
     // Names arrive either slashless or slash-prefixed depending on the source.
     mockSupportsACP.mockReturnValue(true)
-    mockSessionTransport.value = 'acp-stdio'
     mockAvailableCommands.value = [{ name: '/btw', description: 'Native side question', inputHint: '' }]
     const wrapper = mountBar()
     wrapper.vm.inputText = '/btw'
@@ -2016,7 +1997,6 @@ describe('ChatInputBar', () => {
     expect(wrapper.findAll('.completion-item--agent')).toHaveLength(0)
     expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
     mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
   })
 
@@ -2032,7 +2012,6 @@ describe('ChatInputBar', () => {
   it('still shows unrelated agent commands', async () => {
     // The dedupe must only drop the ClawBench-owned names, not everything.
     mockSupportsACP.mockReturnValue(true)
-    mockSessionTransport.value = 'acp-stdio'
     mockAvailableCommands.value = [
       { name: 'btw', description: 'Native', inputHint: '' },
       { name: 'mmx-cli', description: 'MMX', inputHint: '' },
@@ -2044,7 +2023,6 @@ describe('ChatInputBar', () => {
     expect(labels.some(l => l.includes('/mmx-cli'))).toBe(true)
     expect(wrapper.findAll('.completion-item--agent')).toHaveLength(1)
     mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
   })
 
@@ -2125,7 +2103,6 @@ describe('ChatInputBar', () => {
     mockContextUsed.value = 80000
     mockContextSize.value = 100000
     mockAvailableCommands.value = [{ name: '/compact', description: 'Compact' }]
-    mockSessionTransport.value = 'acp-stdio'
     mockDrawerClose.mockClear()
     const wrapper = mountBar({ currentModelName: 'gpt-4' })
     await nextTick()
@@ -2135,7 +2112,6 @@ describe('ChatInputBar', () => {
     mockContextUsed.value = 0
     mockContextSize.value = 0
     mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
   })
 
   it('groups all token/cost rows under the Token Detail section header', async () => {
@@ -2680,9 +2656,13 @@ describe('ChatInputBar', () => {
     await wrapper.vm.$nextTick()
 
     // Nothing local matches, so the popup only opens once the async hits land.
+    // The search itself is debounced (250ms in useAtFileSearch), so the wait
+    // budget has to clear that debounce with room for a loaded worker — the
+    // default 1s leaves too little headroom and made this case flake when the
+    // suite runs in parallel.
     await vi.waitFor(() => {
       expect(wrapper.findAll('.completion-label').map(i => i.text())).toContain('ChatInputBar.vue')
-    })
+    }, { timeout: 5000 })
 
     const rows = wrapper.findAll('.completion-item')
     const fileRow = rows.find(r => r.find('.completion-label').text() === 'ChatInputBar.vue')!
@@ -3089,7 +3069,6 @@ describe('ChatInputBar', () => {
 
   it('Enter confirms an agent command when it is selected', async () => {
     mockSupportsACP.mockReturnValue(true)
-    mockSessionTransport.value = 'acp-stdio'
     mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
     const wrapper = mountBar()
     wrapper.vm.inputText = '/help'
@@ -3101,7 +3080,6 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.inputText).toBe('/help ')
     expect(wrapper.vm.showCommandMenu).toBe(false)
     mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
   })
 
@@ -3137,7 +3115,6 @@ describe('ChatInputBar', () => {
 
   it('command menu dedupes agent commands that differ only by slash prefix', async () => {
     mockSupportsACP.mockReturnValue(true)
-    mockSessionTransport.value = 'acp-stdio'
     // Same skill reported slashless by CodeBuddy ACP and slash-prefixed by the
     // pre-scan ("mmx-cli" vs "/mmx-cli"). Only one menu entry may render, with
     // exactly one leading slash — otherwise the user sees a "//mmx-cli".
@@ -3165,7 +3142,6 @@ describe('ChatInputBar', () => {
     } finally {
       wrapper.unmount()
       mockAvailableCommands.value = []
-      mockSessionTransport.value = ''
       mockSupportsACP.mockReturnValue(false)
     }
   })
@@ -3209,10 +3185,17 @@ describe('ChatInputBar', () => {
     })
   })
 
+  // The sync button is gated on the AGENT's ACP command (supportsACP), not on a
+  // session-level transport: an agent without a command can never have an ACP
+  // session to re-establish.
   describe('ACP sync button', () => {
-    it('shows sync button in ACP transport and emits sync-acp-session', async () => {
+    afterEach(() => {
+      mockSupportsACP.mockReturnValue(false)
+    })
+
+    it('shows sync button for an ACP agent and emits sync-acp-session', async () => {
+      mockSupportsACP.mockReturnValue(true)
       const wrapper = mountBar({
-        currentTransport: 'acp-stdio',
         currentAgentId: 'agent1',
         currentSessionId: 'sid-1',
         currentSessionRunning: false,
@@ -3226,9 +3209,9 @@ describe('ChatInputBar', () => {
       wrapper.unmount()
     })
 
-    it('hides sync button when not ACP transport', () => {
+    it('hides sync button for a non-ACP agent', () => {
+      mockSupportsACP.mockReturnValue(false)
       const wrapper = mountBar({
-        currentTransport: 'cli',
         currentAgentId: 'agent1',
         currentSessionId: 'sid-1',
         currentSessionRunning: false,
@@ -3240,9 +3223,9 @@ describe('ChatInputBar', () => {
 
     it('hides sync button in a group session', () => {
       // Syncing re-establishes ONE agent's ACP session; a group has several, so
-      // the button is suppressed even in ACP transport.
+      // the button is suppressed even for an ACP agent.
+      mockSupportsACP.mockReturnValue(true)
       const wrapper = mountBar({
-        currentTransport: 'acp-stdio',
         currentAgentId: 'agent1',
         currentSessionId: 'sid-1',
         currentSessionRunning: false,
@@ -3255,8 +3238,8 @@ describe('ChatInputBar', () => {
     })
 
     it('disables sync button for an empty session (no ACP session)', () => {
+      mockSupportsACP.mockReturnValue(true)
       const wrapper = mountBar({
-        currentTransport: 'acp-stdio',
         currentAgentId: 'agent1',
         currentSessionId: 'sid-1',
         currentSessionRunning: false,
@@ -3271,8 +3254,8 @@ describe('ChatInputBar', () => {
     })
 
     it('disables sync button while the current session is running', () => {
+      mockSupportsACP.mockReturnValue(true)
       const wrapper = mountBar({
-        currentTransport: 'acp-stdio',
         currentAgentId: 'agent1',
         currentSessionId: 'sid-1',
         currentSessionRunning: true,
@@ -3286,8 +3269,8 @@ describe('ChatInputBar', () => {
     })
 
     it('does not emit sync-acp-session when disabled (empty session)', async () => {
+      mockSupportsACP.mockReturnValue(true)
       const wrapper = mountBar({
-        currentTransport: 'acp-stdio',
         currentAgentId: 'agent1',
         currentSessionId: 'sid-1',
         currentSessionRunning: false,
@@ -3301,8 +3284,8 @@ describe('ChatInputBar', () => {
     })
 
     it('shows a loading indicator on the sync button while syncing', async () => {
+      mockSupportsACP.mockReturnValue(true)
       const wrapper = mountBar({
-        currentTransport: 'acp-stdio',
         currentAgentId: 'agent1',
         currentSessionId: 'sid-1',
         currentSessionRunning: false,
@@ -3986,7 +3969,6 @@ describe('ChatInputBar', () => {
       mockContextUsed.value = 0
       mockContextSize.value = 0
       mockAvailableCommands.value = []
-      mockSessionTransport.value = ''
       mockIsBuiltin.mockReturnValue(false)
     })
 
@@ -3994,7 +3976,6 @@ describe('ChatInputBar', () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
-      mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
       await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
@@ -4008,7 +3989,6 @@ describe('ChatInputBar', () => {
       mockContextUsed.value = 50000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
-      mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
       await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
@@ -4021,7 +4001,6 @@ describe('ChatInputBar', () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/help', description: 'Show help' }]
-      mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
       await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
@@ -4034,7 +4013,6 @@ describe('ChatInputBar', () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: 'compact', description: 'Compact conversation' }]
-      mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
       await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
@@ -4047,7 +4025,6 @@ describe('ChatInputBar', () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
-      mockSessionTransport.value = 'cli'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
       await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()
@@ -4060,7 +4037,6 @@ describe('ChatInputBar', () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
-      mockSessionTransport.value = 'acp-stdio'
       const wrapper = mountBar({ currentModelName: 'gpt-4' })
       await wrapper.find('.session-info-usage').trigger('click')
       await wrapper.vm.$nextTick()

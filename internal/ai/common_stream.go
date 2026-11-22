@@ -2,79 +2,7 @@ package ai
 
 import (
 	"encoding/json"
-	"fmt"
-	"log/slog"
 )
-
-// buildBaseStreamArgs builds the shared base arguments for Claude-family CLI backends.
-// It constructs the common argument list for --print / --output-format stream-json.
-//
-// The extraFlags callback receives the ChatRequest and returns additional backend-specific
-// flags (e.g., disallowed-tools list, verbose flag). If nil, no extra flags are appended.
-func BuildBaseStreamArgs(req ChatRequest, extraFlags func(ChatRequest) []string) []string {
-	args := []string{
-		"--print",
-		"--output-format", "stream-json",
-		"--include-partial-messages",
-	}
-
-	if req.Resume && req.SessionID != "" {
-		args = append(args, "--resume", req.SessionID)
-		slog.Info("cli: --resume",
-			slog.String("backend", req.AgentID),
-			slog.String("session_id", req.SessionID),
-			slog.Int("assistant_msg_count", req.AssistantMessageCount))
-	} else if req.Resume {
-		// Resume requested but SessionID is empty — the AI never established
-		// a session. Start fresh instead of passing --resume "" (which would
-		// cause CLI errors).
-		slog.Warn("cli: resume requested but no session_id, starting fresh",
-			slog.String("backend", req.AgentID))
-	} else if req.SessionID != "" {
-		args = append(args, "--session-id", req.SessionID)
-		slog.Info("cli: --session-id (new conversation)",
-			slog.String("backend", req.AgentID),
-			slog.String("session_id", req.SessionID))
-	} else {
-		slog.Warn("cli: no session ID, starting fresh CLI session",
-			slog.String("backend", req.AgentID))
-	}
-
-	if req.WorkDir != "" {
-		args = append(args, "--add-dir", req.WorkDir)
-	}
-	args = append(args, "--dangerously-skip-permissions")
-
-	if req.SystemPrompt != "" {
-		args = append(args, "--system-prompt", req.SystemPrompt)
-	}
-
-	// Pass model name if per-request override is set
-	if req.Model != "" {
-		args = append(args, "--model", req.Model)
-	}
-
-	// Pass thinking effort level (e.g., --effort high) for Claude/Codebuddy
-	if req.ThinkingEffort != "" {
-		args = append(args, "--effort", req.ThinkingEffort)
-	}
-
-	if extraFlags != nil {
-		args = append(args, extraFlags(req)...)
-	}
-
-	return args
-}
-
-// InjectSystemPrompt prepends the system prompt to req.Prompt when
-// ShouldInjectSystemPrompt returns true. Used by CLI backends that lack
-// a --system-prompt flag (opencode, codex, vecli, kimi).
-func InjectSystemPrompt(req ChatRequest) string {
-	if !req.ShouldInjectSystemPrompt() {
-		return req.Prompt
-	}
-	return fmt.Sprintf("[System Instructions: %s]\n\n%s", req.SystemPrompt, req.Prompt)
-}
 
 // normalizeToolName maps backend-specific tool names to the canonical names
 // used by ToolCall throughout the codebase.
@@ -163,12 +91,26 @@ func normalizeToolInput(rawInput []byte, pathMappings map[string]string) ([]byte
 		merged[k] = v
 	}
 
-	// Apply all remappings in a single pass (no double-remap risk)
+	// Apply the remappings in a single pass. A rule may only consume a key the
+	// frame ACTUALLY carried: without this snapshot, one rule's output becomes
+	// another rule's input and the result depends on map iteration order. That
+	// is not hypothetical — deepseek's table maps dirPath→path and path→file_path,
+	// so a directory argument used to land on either "path" or "file_path"
+	// depending on which rule ran first.
+	original := make(map[string]struct{}, len(input))
+	for k := range input {
+		original[k] = struct{}{}
+	}
 	for from, to := range merged {
-		if v, ok := input[from]; ok {
-			delete(input, from)
-			input[to] = v
+		if _, carried := original[from]; !carried {
+			continue
 		}
+		v, ok := input[from]
+		if !ok {
+			continue
+		}
+		delete(input, from)
+		input[to] = v
 	}
 
 	normalized, err := json.Marshal(input)
@@ -182,37 +124,6 @@ func normalizeToolInput(rawInput []byte, pathMappings map[string]string) ([]byte
 // Production code must not use this.
 func NormalizeToolInputForTest(rawInput []byte, pathMappings map[string]string) ([]byte, error) {
 	return normalizeToolInput(rawInput, pathMappings)
-}
-
-// perAgentInputRemaps defines per-agent input field remapping tables.
-// Each key is a "<backend>_<mode>" identifier (e.g., "opencode_cli", "claude_acp").
-// Per-agent remaps only contain backend-specific overrides — the shared defaultMappings
-// (filePath→file_path, cmd→command, exec→command) are applied automatically by
-// normalizeToolInput, so they don't need to be repeated here.
-var perAgentInputRemaps = map[string]map[string]string{
-	// CLI layer
-	"opencode_cli": {"oldString": "old_string", "newString": "new_string"},
-	"deepseek_cli": {
-		"path": "file_path", "search": "old_string", "replace": "new_string",
-		"filePaths": "file_paths", "dirPath": "path",
-	},
-	"pi_cli": {"path": "file_path"},
-	// ACP layer
-	"claude_acp":    {}, // Claude ACP rawInput already snake_case, defaultMappings sufficient
-	"opencode_acp":  {"oldString": "old_string", "newString": "new_string"},
-	"codebuddy_acp": {},
-	"kimi_acp":      {}, // Kimi ACP has no rawInput; remap key exists for completeness only
-	"generic_acp": { // Full remap table for generic fallback — includes defaultMappings overlap as safety net
-		"oldString": "old_string", "newString": "new_string",
-		"dirPath":   "path",
-		"cellIndex": "cell_index", "cellType": "cell_type",
-	},
-}
-
-// getRemaps returns the per-agent input remapping table for the given key.
-// Returns nil if no remaps are defined for that key.
-func getRemaps(key string) map[string]string {
-	return perAgentInputRemaps[key]
 }
 
 // execCommandJSON is a shared helper that returns canonical {"command":"..."} JSON

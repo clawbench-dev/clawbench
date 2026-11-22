@@ -591,7 +591,7 @@ func isACPPeerDisconnected(err error) bool {
 	if reqErr.Code != -32603 {
 		return false
 	}
-	if dataMap, ok := reqErr.Data.(map[string]any); ok {
+	if dataMap := acpErrorDataMap(reqErr.Data); dataMap != nil {
 		if errMsg, ok := dataMap["error"].(string); ok && (isPeerDisconnectMsg(errMsg) || isACPDeadlineMsg(errMsg)) {
 			return true
 		}
@@ -622,7 +622,7 @@ func isUnknownConfigOption(err error) bool {
 	if !errors.As(err, &reqErr) {
 		return strings.Contains(err.Error(), "Unknown config option")
 	}
-	if dataMap, ok := reqErr.Data.(map[string]any); ok {
+	if dataMap := acpErrorDataMap(reqErr.Data); dataMap != nil {
 		if details, ok := dataMap["details"].(string); ok && strings.Contains(details, "Unknown config option") {
 			return true
 		}
@@ -703,8 +703,8 @@ func isSessionGoneError(err error) bool {
 	// data carries details on some agents (CodeBuddy). It also echoes request
 	// parameters, so only the explicit phrase counts there — not the looser
 	// adjacency rule used for the message.
-	if reqErr.Data != nil {
-		return containsSessionGonePhrase(strings.ToLower(fmt.Sprint(reqErr.Data)))
+	if len(reqErr.Data) > 0 {
+		return containsSessionGonePhrase(strings.ToLower(string(reqErr.Data)))
 	}
 	return false
 }

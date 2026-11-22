@@ -1598,7 +1598,6 @@ func TestExecuteTask_ExecuteStreamError(t *testing.T) {
 			ID:      "test-codex",
 			Name:    "Test Codex",
 			Backend: "codex",
-			Command: "/nonexistent/binary/that/does/not/exist",
 		},
 	}
 	defer func() { model.Agents = origAgents }()

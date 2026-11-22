@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -163,9 +164,9 @@ func TestRefactor_IsACPPeerDisconnected(t *testing.T) {
 		reqErr := &acp.RequestError{
 			Code:    -32603,
 			Message: "Internal error",
-			Data: map[string]any{
+			Data: acptest.Raw(map[string]any{
 				"error": "peer disconnected",
-			},
+			}),
 		}
 		assert.True(t, isACPPeerDisconnected(reqErr))
 	})
@@ -174,9 +175,9 @@ func TestRefactor_IsACPPeerDisconnected(t *testing.T) {
 		reqErr := &acp.RequestError{
 			Code:    -32603,
 			Message: "Internal error",
-			Data: map[string]any{
+			Data: acptest.Raw(map[string]any{
 				"error": "something else",
-			},
+			}),
 		}
 		assert.False(t, isACPPeerDisconnected(reqErr))
 	})
@@ -248,9 +249,9 @@ func TestRefactor_IsUnknownConfigOption(t *testing.T) {
 		reqErr := &acp.RequestError{
 			Code:    -32602,
 			Message: "Invalid params",
-			Data: map[string]any{
+			Data: acptest.Raw(map[string]any{
 				"details": "Unknown config option: thinkingEffort",
-			},
+			}),
 		}
 		assert.True(t, isUnknownConfigOption(reqErr))
 	})
@@ -259,9 +260,9 @@ func TestRefactor_IsUnknownConfigOption(t *testing.T) {
 		reqErr := &acp.RequestError{
 			Code:    -32602,
 			Message: "Invalid params",
-			Data: map[string]any{
+			Data: acptest.Raw(map[string]any{
 				"details": "invalid value",
-			},
+			}),
 		}
 		assert.False(t, isUnknownConfigOption(reqErr))
 	})
@@ -313,7 +314,7 @@ func TestRefactor_IsACPResourceNotFound(t *testing.T) {
 		reqErr := &acp.RequestError{
 			Code:    -32603,
 			Message: "Internal error",
-			Data:    map[string]any{"details": "Resource not found: /path/to/file.txt"},
+			Data:    acptest.Raw(map[string]any{"details": "Resource not found: /path/to/file.txt"}),
 		}
 		assert.False(t, IsACPResourceNotFound(reqErr))
 	})
@@ -354,7 +355,7 @@ func TestRefactor_ACPErrorText(t *testing.T) {
 		reqErr := &acp.RequestError{
 			Code:    -32000,
 			Message: "Auth required",
-			Data:    map[string]any{"details": "token expired"},
+			Data:    acptest.Raw(map[string]any{"details": "token expired"}),
 		}
 		got := acpErrorText(reqErr)
 		// The human-readable message (and code) must win over the raw JSON blob.
@@ -396,7 +397,7 @@ func TestRefactor_ACPErrorDetails(t *testing.T) {
 		reqErr := &acp.RequestError{
 			Code:    -32603,
 			Message: "Internal error",
-			Data:    map[string]any{"httpStatus": 500},
+			Data:    acptest.Raw(map[string]any{"httpStatus": 500}),
 		}
 		code, httpStatus := acpErrorDetails(reqErr)
 		assert.Equal(t, -32603, code)
@@ -407,7 +408,7 @@ func TestRefactor_ACPErrorDetails(t *testing.T) {
 		reqErr := &acp.RequestError{
 			Code:    -32603,
 			Message: "Internal error",
-			Data:    `{"httpStatus":500,"details":"refusal"}`,
+			Data:    acptest.Raw(`{"httpStatus":500,"details":"refusal"}`),
 		}
 		code, httpStatus := acpErrorDetails(reqErr)
 		assert.Equal(t, -32603, code)
@@ -3745,7 +3746,7 @@ func TestRefactor_Terminal_CreateAndOutput(t *testing.T) {
 	assert.Contains(t, outResp.Output, "hello")
 	assert.NotNil(t, outResp.ExitStatus)
 	assert.NotNil(t, outResp.ExitStatus.ExitCode)
-	assert.Equal(t, 0, *outResp.ExitStatus.ExitCode)
+	assert.Equal(t, int64(0), *outResp.ExitStatus.ExitCode)
 }
 
 func TestRefactor_Terminal_KillAndRelease(t *testing.T) {
@@ -3809,7 +3810,7 @@ func TestRefactor_Terminal_OutputByteLimit(t *testing.T) {
 	client := NewClawBenchACPClient()
 	ctx := context.Background()
 
-	limit := 10
+	limit := int64(10)
 	resp, err := client.CreateTerminal(ctx, acp.CreateTerminalRequest{
 		Command:         "echo abcdefghijklmnopqrstuvwxyz",
 		OutputByteLimit: &limit,

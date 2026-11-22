@@ -1,11 +1,5 @@
 package ai
 
-import (
-	"encoding/json"
-	"strings"
-	"unicode/utf8"
-)
-
 // ---------------------------------------------------------------------------
 // CodeBuddy ACP _meta adapter
 // ---------------------------------------------------------------------------
@@ -27,257 +21,75 @@ import (
 // These appear on both session/update notifications (on the per-variant
 // update._meta) and the PromptResponse._meta.
 
-// costFieldCarriesCredit reports whether a backend's ACP-standard
-// usage_update.cost field actually carries a credit value rather than a
-// monetary cost.
+// The CodeBuddy _meta PARSER now lives in
+// internal/ai/backends/codebuddy/meta: the key names, the shapes and the quirks
+// (a usage block per model call, a re-reported credit total, a refusal whose
+// cause hides in a JSON envelope) are that backend's own business. The shared
+// layer reaches it through ACPBehavior.ExtractMeta / RefusalDetail.
 //
-// CodeBuddy repurposes the standard `cost` field: it ships the turn's credit
-// consumption as cost.amount with an empty currency. Persisting it as
-// chat_metadata.cost_usd would inflate the cost stats with a unit-less credit
-// number, so it is never treated as money. It is still real billing, though:
-// the cost-only paths (generation tools, team-member turns) carry no usage
-// block, so that amount is captured as MetaExtraction.CostCredit.
-// Every other agent reports a real monetary cost (e.g. Claude's USD).
-func costFieldCarriesCredit(backend string) bool {
-	return backend == "codebuddy"
-}
+// What stays in this package is the set of CodeBuddy keys the SHARED EVENT LOOP
+// has to read while routing frames — the replay identity — because those
+// decisions are made per-notification by code that cannot be moved out of the
+// loop. Each is a narrow, documented read of one key.
 
+// CodeBuddy keys the SHARED event loop still reads directly.
+//
+// Everything else CodeBuddy-specific moved to the backend's own sub-package
+// (internal/ai/backends/codebuddy) and reaches the loop through an ACPBehavior
+// hook. What remains here is the set of keys the loop must read PER FRAME while
+// routing it, where the decision itself is shared:
+//
+//   - the replay-identity keys (requestId / conversationRequestId / messageId /
+//     traceId): the loop's log line and the connection's chunk-dedup key name
+//     them, and a hook cannot cover a key the loop drops a frame on.
+//
+// Each is a narrow, documented read of one key — not a behavior branch on a
+// backend id. The refusal payload key is deliberately NOT here: it is read only
+// by CodeBuddy's own RefusalDetail hook, and the tests that prove a hookless
+// backend cannot read it spell the literal out on purpose — a constant in this
+// package would suggest the core knows the key, which is exactly what the hook
+// exists to avoid.
 const (
-	metaKeyCodeBuddyUsage      = "usage"
-	metaKeyCodeBuddyByCategory = "codebuddy.ai/usageByCategory"
-	//nolint:gosec // G101: a _meta key name, not a credential
-	metaKeyCodeBuddyRequestCredits = "codebuddy.ai/requestCredits"
-	metaKeyCodeBuddyRequestID      = "codebuddy.ai/requestId"
-	// metaKeyCodeBuddyConversationRequestID is the turn-level request id. It is
-	// preferred over RequestID in the chunk de-duplication key, matching
-	// upstream's `conversationRequestId ?? requestId`.
+	// metaKeyCodeBuddyRequestID is the per-generation request id. The shared
+	// event loop logs it when it drops a replayed chunk; the replay hook reads
+	// it to compare against the completed-turn baseline.
+	metaKeyCodeBuddyRequestID = "codebuddy.ai/requestId"
+	// metaKeyCodeBuddyConversationRequestID is the turn-level request id,
+	// preferred over RequestID in the chunk de-duplication key (matching
+	// upstream's `conversationRequestId ?? requestId`).
 	metaKeyCodeBuddyConversationRequestID = "codebuddy.ai/conversationRequestId"
 	metaKeyCodeBuddyTraceID               = "codebuddy.ai/traceId"
-	metaKeyCodeBuddyTraceParent           = "codebuddy.ai/traceparent"
 	metaKeyCodeBuddyMessageID             = "codebuddy.ai/messageId"
-	metaKeyCodeBuddyMsgRequestID          = "codebuddy.ai/messageRequestId"
-	metaKeyCodeBuddyReqModelID            = "codebuddy.ai/requestModelId"
-	metaKeyCodeBuddyReqModelName          = "codebuddy.ai/requestModelName"
-	metaKeyCodeBuddyRespModelID           = "codebuddy.ai/responseModelId"
-	metaKeyCodeBuddyFinishReason          = "codebuddy.ai/finishReason"
-	metaKeyCodeBuddyOutcome               = "codebuddy.ai/outcome"
-	metaKeyCodeBuddyAgentPhase            = "codebuddy.ai/agentPhase"
-	// metaKeyCodeBuddyErrorMessage carries the refusal payload on a
-	// stopReason=refusal PromptResponse: a JSON-encoded
-	// {code,message,data} blob whose data.details holds the real cause.
-	metaKeyCodeBuddyErrorMessage = "codebuddy.ai/errorMessage"
-	// metaKeyCodeBuddyErrorMessageBare is the same payload under an unprefixed
-	// key. CodeBuddy uses it on the out-of-band control-command failure path
-	// (a plain message string rather than the JSON blob), and both shapes reach
-	// the client as stopReason=refusal.
-	metaKeyCodeBuddyErrorMessageBare = "errorMessage"
 )
 
-// maxErrorDetailRunes bounds the extracted refusal detail so a pathological
-// upstream payload cannot bloat every persisted warning block. The details are
-// human-readable one-liners (e.g. "Bad substitution: o.gaps.join"), so this is
-// far above any real value.
-const maxErrorDetailRunes = 300
-
-// refusalDetailFromMeta extracts the human-readable failure reason from a
-// PromptResponse._meta on a refusal.
+// costFieldCarriesCredit reports whether a backend repurposes the
+// ACP-standard usage_update.cost field to carry a CREDIT amount rather than a
+// monetary cost.
 //
-// CodeBuddy reports stopReason=refusal with a generic JSON-RPC code (-32603
-// Internal error) and stashes the real cause in _meta as a JSON string:
-//
-//	{"code":-32603,"message":"Internal error","data":{"details":"Bad substitution: x"}}
-//
-// The `details` field carries the actionable text; `message` alone is the
-// generic "Internal error". When the payload parses but neither field carries
-// usable text, the result is "" so the caller falls back to the generic
-// refusal copy rather than echoing a JSON envelope as if it were a reason.
-//
-// A bare (non-JSON) string is returned as-is: CodeBuddy uses that shape too
-// (the sensitive-input block path and the out-of-band control-command failure
-// path put the message directly there), and a malformed/truncated blob is
-// likewise surfaced verbatim — the text still tells the user more than the
-// bare -32603 code.
-func refusalDetailFromMeta(meta map[string]any) string {
-	if len(meta) == 0 {
-		return ""
+// The fact is read from the backend's registered ACPBehavior
+// (CostFieldCarriesCredit), not hard-coded here. The amount is still real
+// billing: the cost-only paths (generation tools, team-member turns) carry no
+// usage block, so it is captured as MetaExtraction.CostCredit instead of being
+// discarded, and never let into chat_metadata.cost_usd.
+func costFieldCarriesCredit(backendID string) bool {
+	if b := acpBehavior(backendID); b != nil {
+		return b.CostFieldCarriesCredit
 	}
-	raw := metaString(meta[metaKeyCodeBuddyErrorMessage])
-	if raw == "" {
-		raw = metaString(meta[metaKeyCodeBuddyErrorMessageBare])
-	}
-	if raw == "" {
-		return ""
-	}
-
-	detail, parsed := refusalDetailFromPayload(raw)
-	if !parsed {
-		// Not a JSON object (bare string, or a malformed/truncated blob): the
-		// raw text is all we have, and it beats the bare code.
-		detail = raw
-	}
-	return truncateRunes(strings.TrimSpace(detail), maxErrorDetailRunes)
+	return false
 }
 
-// refusalDetailFromPayload pulls data.details (preferred) or message out of a
-// JSON-encoded error payload. The bool reports whether raw parsed as a JSON
-// object at all: when it did but neither field carried usable text, the caller
-// must NOT echo the raw blob (a JSON envelope like {"code":-32603} is noise,
-// not a reason), whereas unparseable text is worth surfacing verbatim.
-func refusalDetailFromPayload(raw string) (detail string, parsed bool) {
-	trimmed := strings.TrimSpace(raw)
-	if !strings.HasPrefix(trimmed, "{") {
-		return "", false
-	}
-	var payload struct {
-		Message string `json:"message"`
-		Data    struct {
-			Details string `json:"details"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-		return "", false
-	}
-	if details := strings.TrimSpace(payload.Data.Details); details != "" {
-		return details, true
-	}
-	// "Internal error" and friends are the generic placeholder, not a cause.
-	msg := strings.TrimSpace(payload.Message)
-	if msg == "" || msg == "Internal error" {
-		return "", true
-	}
-	return msg, true
-}
-
-// truncateRunes truncates s to at most n runes, appending an ellipsis marker
-// when it was cut. Rune-based so a multi-byte detail never splits mid-character.
-func truncateRunes(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	return string([]rune(s)[:n]) + "…"
-}
-
-// tokenUsageFromCodeBuddyUsage builds a MetaTokenUsage from the OpenAI-style
-// _meta.usage block that CodeBuddy reports.
-func tokenUsageFromCodeBuddyUsage(m map[string]any) *MetaTokenUsage {
-	u := &MetaTokenUsage{
-		InputTokens:         metaInt(m["prompt_tokens"]),
-		OutputTokens:        metaInt(m["completion_tokens"]),
-		TotalTokens:         metaInt(m["total_tokens"]),
-		ThoughtTokens:       metaInt(m["completion_thinking_tokens"]),
-		CachedReadTokens:    metaInt(m["prompt_cache_hit_tokens"]),
-		CachedWriteTokens:   metaInt(m["prompt_cache_write_tokens"]),
-		CacheCreationTokens: metaInt(m["cache_creation_input_tokens"]),
-		CacheHitTokens:      metaInt(m["prompt_cache_hit_tokens"]),
-		CacheMissTokens:     metaInt(m["prompt_cache_miss_tokens"]),
-		Credit:              metaFloat(m["credit"]),
-	}
-	// Also accept cache_read_input_tokens as a cache-read source.
-	u.CachedReadTokens = metaMaxInt(u.CachedReadTokens, metaInt(m["cache_read_input_tokens"]))
-	if u.InputTokens != 0 || u.OutputTokens != 0 || u.TotalTokens != 0 ||
-		u.CachedReadTokens != 0 || u.CachedWriteTokens != 0 ||
-		u.CacheCreationTokens != 0 || u.CacheHitTokens != 0 || u.CacheMissTokens != 0 ||
-		u.ThoughtTokens != 0 || u.Credit != 0 {
-		u.Present = true
-	}
-	return u
-}
-
-// extractCodeBuddyMeta parses a CodeBuddy _meta payload.
-func ExtractCodeBuddyMeta(meta map[string]any) *MetaExtraction {
-	if len(meta) == 0 {
-		return nil
-	}
-	ext := &MetaExtraction{}
-
-	// OpenAI-style usage block.
-	if m, ok := meta[metaKeyCodeBuddyUsage].(map[string]any); ok {
-		ext.Usage = tokenUsageFromCodeBuddyUsage(m)
-		// CodeBuddy emits one usage_update per MODEL CALL within a turn, each
-		// carrying only that call's counters (verified on the raw wire: a
-		// 4-command turn produced prompt_tokens 38229/38328/38427/38526/38625
-		// under a single requestId). The turn total is their SUM, so the
-		// accumulator must add them rather than adopt the last one.
-		// messageId identifies the call and is the dedup key.
-		ext.Usage.Accumulate = true
-		ext.Usage.CallID = metaString(meta[metaKeyCodeBuddyMessageID])
-	}
-
-	// Context-window breakdown.
-	if m, ok := meta[metaKeyCodeBuddyByCategory].(map[string]any); ok {
-		cat := &MetaCategoryUsage{Categories: map[string]int64{}}
-		for _, k := range []string{"conversation", "tools", "systemPrompt", "skills", "mcp"} {
-			if v, ok := m[k]; ok {
-				cat.Categories[k] = int64(metaInt(v))
-			}
-		}
-		if len(cat.Categories) > 0 {
-			cat.Present = true
-		}
-		ext.Category = cat
-	}
-
-	// Per-request credit totals. CodeBuddy accumulates the credit of a whole
-	// REQUEST (which may span several model calls) server-side and re-reports
-	// the running total on every notification, so a throttled or dropped frame
-	// does not lose credit. It is also the only credit source on the cost-only
-	// paths (generation tools, team-member turns) which carry no usage block.
-	ext.RequestCredits = codeBuddyRequestCredits(meta[metaKeyCodeBuddyRequestCredits])
-
-	// Trace/identity namespace.
-	t := &MetaTrace{
-		RequestID:        metaString(meta[metaKeyCodeBuddyRequestID]),
-		TraceID:          metaString(meta[metaKeyCodeBuddyTraceID]),
-		TraceParent:      metaString(meta[metaKeyCodeBuddyTraceParent]),
-		MessageID:        metaString(meta[metaKeyCodeBuddyMessageID]),
-		MessageRequestID: metaString(meta[metaKeyCodeBuddyMsgRequestID]),
-		RequestModelID:   metaString(meta[metaKeyCodeBuddyReqModelID]),
-		RequestModelName: metaString(meta[metaKeyCodeBuddyReqModelName]),
-		ResponseModelID:  metaString(meta[metaKeyCodeBuddyRespModelID]),
-		FinishReason:     metaString(meta[metaKeyCodeBuddyFinishReason]),
-		Outcome:          metaString(meta[metaKeyCodeBuddyOutcome]),
-		AgentPhase:       metaString(meta[metaKeyCodeBuddyAgentPhase]),
-	}
-	// The traceparent header (when the dedicated traceId key is absent) also
-	// carries the root trace id as its first component (00-<traceid>-<spanid>-01).
-	if t.TraceID == "" && t.TraceParent != "" {
-		if parts := splitTraceParent(t.TraceParent); len(parts) >= 2 {
-			t.TraceID = parts[1]
-		}
-	}
-	if t.HasData() {
-		ext.Trace = t
-	}
-
-	if !ext.HasData() {
-		return nil
-	}
-	return ext
-}
-
-// codeBuddyRequestCredits parses _meta["codebuddy.ai/requestCredits"], the
-// agent's own per-request running credit totals.
+// ACPConnIsCompletedTurnRequestID reports whether rid belongs to a turn that has
+// already completed on this connection (and is not the currently adopted
+// agent-initiated turn).
 //
-// Non-positive entries are dropped: an absent entry means the same thing to
-// creditTotal(), and this also keeps a malformed value from being recorded as a
-// real 0 alongside a valid sibling. Returns nil when nothing usable remains so
-// HasData() does not report an empty extraction.
-func codeBuddyRequestCredits(v any) map[string]float64 {
-	m, ok := v.(map[string]any)
-	if !ok || len(m) == 0 {
-		return nil
+// It exists for backends whose own replay hook needs the same baseline
+// comparison this package's event loop uses: the requestId set lives on
+// ACPConn, whose fields are private to this package. Backends that declare
+// ACPBehavior.IsReplayedTurnMeta call this to answer their own question; it
+// carries no backend knowledge itself.
+func ACPConnIsCompletedTurnRequestID(conn *ACPConn, rid string) bool {
+	if conn == nil {
+		return false
 	}
-	credits := make(map[string]float64, len(m))
-	for rid, raw := range m {
-		if rid == "" {
-			continue
-		}
-		if c := metaFloat(raw); c > 0 {
-			credits[rid] = c
-		}
-	}
-	if len(credits) == 0 {
-		return nil
-	}
-	return credits
+	return conn.isCompletedTurnRequestID(rid)
 }

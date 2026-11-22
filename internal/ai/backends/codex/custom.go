@@ -24,11 +24,19 @@ func init() {
 			// inject these again.
 			NativeSkillsDirs:      []string{".codex/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
+			// codex-acp rejects an `sse` MCP server outright: session/new answers
+			// RequestError.invalidRequest, so the whole session dies. The
+			// settings UI must refuse that transport rather than let the user
+			// configure a server that kills the next turn.
+			MCPRejectsSSE: true,
+			// listCodexSessionsFromDisk returns every rollout file, including the
+			// untitled placeholders codex creates before the first prompt — its
+			// own UI does not list those, so the drawer must not either.
+			ListSessionsOmitsEmptyTitle: true,
 		},
 		// Codex can inject a message into the running turn via the ACP steering
 		// extension (_session/steering). It emits no echo boundary, so the
 		// injection MERGES into the running reply (no split).
-		CLI: &backends.CLIPlugin{NewBackend: newCodexBackend},
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       ParseACPToolCall,
 			ParseToolCallUpdate: ParseACPToolCallUpdate,
@@ -37,21 +45,23 @@ func init() {
 		},
 		ModelSource:  model.PluginSource("codex", discoverCodexModels),
 		ListSessions: listCodexSessionsFromDisk,
-		MidTurn:      &midTurnInjector{},
+		MidTurn:      midTurn,
+		// codex-acp delegates every turn to a `codex app-server` child, so a
+		// leftover from a crashed run shows up under that command line rather
+		// than under the adapter's. Only reached when the marker is unreadable.
+		OrphanCmdline: ai.OrphanCmdlinePattern{Binary: "codex", Arg: "app-server"},
 		ProviderEnv: &model.ProviderEnvSpec{
 			// codex reads its provider from ~/.codex/config.toml. The managed
 			// block references this variable for env_key, so the secret never
 			// lands on disk.
 			ConfigOnly:      true,
 			ConfigProtocols: []string{model.ProviderProtocolOpenAI},
-			KeyOnly:         "CLAWBENCH_PROVIDER_API_KEY",
+			// The file layout, the writer and the restorer are declared here so
+			// the shared layer never has to name codex: see config_file.go.
+			ConfigFileTarget:  ".codex/config.toml",
+			ConfigFileApply:   ApplyProvider,
+			ConfigFileRestore: RestoreProvider,
+			KeyOnly:           "CLAWBENCH_PROVIDER_API_KEY",
 		},
 	})
-}
-
-// newCodexBackend returns a CodexBackend instance.
-// Codex is a custom backend — it directly implements AIBackend,
-// not using the CLIBackend skeleton.
-func newCodexBackend() ai.AIBackend {
-	return &CodexBackend{}
 }

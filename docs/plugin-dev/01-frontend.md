@@ -129,7 +129,25 @@ export default [
 ] satisfies CategoryEntry[]
 ```
 
-分类名默认等于目录名。历史上不一致的五个（`browse`→`files`、`live`→`meeting`、`proxy`→`portForward`、`forge`→`forgeIntegration`、`view`→`fileView`）登记在 `settingsFieldMap.ts` 的 `PLUGIN_SETTINGS_CATEGORY` 里。**新插件不要再制造例外。**
+分类名默认等于目录名。历史上不一致的五个（`browse`→`files`、`live`→`meeting`、`proxy`→`portForward`、`forge`→`forgeIntegration`、`view`→`fileView`）在 `settings.ts` 里加一行 `export const category = '…'`，`plugin.ts` 直接 `import { category as settingsCategory } from './settings'`——字段表和运行时共用同一个常量。**新插件不要再制造例外。**
+
+### 4.1 卡片主体是自定义组件时
+
+一行行设置项装不下的卡片（令牌表、账号列表、状态卡），在该卡片的占位条目上直接声明 `cardBody`：
+
+```ts
+{ type: 'item', spec: {
+  labelKey: 'settings.items.kbStatusSection', key: 'kbStatus', type: 'info', source: 'server',
+  sectionHeader: 'settings.items.kbStatusSection',
+  cardBody: {
+    load: () => import('@/components/settings/KbSetting.vue'),
+    descriptionKey: 'settings.items.kbStatusDesc', // 可选，翻译后以 `description` 传入
+    emits: ['navigate'],                            // 可选，转交给设置页
+  },
+} },
+```
+
+带 `cardBody` 的条目**不渲染成行**，只负责开卡片和起标题；组件本体用动态导入（这张表被设置首页、重启对话框等同步引用，静态导入会把所有卡片体拖进它们的包里）。设置模块不认识任何具体组件——加一个卡片体只动插件目录。
 
 同一个分类如果在 `plugins/<id>/settings.ts` 和 `settingsFieldMap.ts` 里都声明了，模块加载时**直接抛错**（不是静默覆盖）——迁移期间这是有意的，避免两份字段清单悄悄各管一半。
 

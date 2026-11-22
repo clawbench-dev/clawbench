@@ -586,21 +586,21 @@ describe('useUpgrade', () => {
   // ── managed by the desktop app ──
 
   describe('managedByEmbedder', () => {
-    it('offers the all-in-one package instead of the server-only upgrade', async () => {
+    it('offers the integrated package instead of the server-only upgrade', async () => {
       mockApiGet.mockResolvedValue({
         current_version: 'v1.0.0',
         latest_version: 'v1.1.0',
         has_upgrade: true,
         managed: true,
-        fused_downloads: { 'win32-x64': ['https://example.test/fused.zip'] },
+        fused_downloads: { 'win32-x64': ['https://example.test/integrated.zip'] },
       })
-      mockGetNative.mockReturnValue({ installFusedUpdate: vi.fn() })
+      mockGetNative.mockReturnValue({ installIntegratedUpdate: vi.fn() })
       const upgrade = useUpgrade()
       await upgrade.checkUpgrade()
 
       expect(managedByEmbedder.value).toBe(true)
       expect(upgrade.hasUpgrade.value).toBe(true)
-      expect(upgrade.fusedDownloads.value).toEqual({ 'win32-x64': ['https://example.test/fused.zip'] })
+      expect(upgrade.fusedDownloads.value).toEqual({ 'win32-x64': ['https://example.test/integrated.zip'] })
       // The prompt still appears; the upgrade it starts is the package install.
       expect(await upgrade.checkForUpgradePrompt()).toBe('v1.1.0')
     })
@@ -613,7 +613,7 @@ describe('useUpgrade', () => {
         managed: true,
         fused_downloads: {},
       })
-      mockGetNative.mockReturnValue({ installFusedUpdate: vi.fn() })
+      mockGetNative.mockReturnValue({ installIntegratedUpdate: vi.fn() })
       const upgrade = useUpgrade()
       await upgrade.checkUpgrade()
 
@@ -621,14 +621,14 @@ describe('useUpgrade', () => {
     })
 
     it('offers nothing on a desktop build without the package-install bridge', async () => {
-      // The feature ships with the SERVER, so a fused install on an older shell
+      // The feature ships with the SERVER, so an integrated install on an older shell
       // can receive the response but cannot act on it.
       mockApiGet.mockResolvedValue({
         current_version: 'v1.0.0',
         latest_version: 'v1.1.0',
         has_upgrade: true,
         managed: true,
-        fused_downloads: { 'win32-x64': ['https://example.test/fused.zip'] },
+        fused_downloads: { 'win32-x64': ['https://example.test/integrated.zip'] },
       })
       mockGetNative.mockReturnValue({})
       const upgrade = useUpgrade()
@@ -639,34 +639,34 @@ describe('useUpgrade', () => {
 
     it('starts the package install through the shell, never /api/upgrade/start', async () => {
       // A managed server refuses /api/upgrade/start (403): it must never even
-      // be attempted for a fused install.
-      const installFusedUpdate = vi.fn(async () => ({ ok: true, error: '' }))
-      mockGetNative.mockReturnValue({ installFusedUpdate })
+      // be attempted for an integrated install.
+      const installIntegratedUpdate = vi.fn(async () => ({ ok: true, error: '' }))
+      mockGetNative.mockReturnValue({ installIntegratedUpdate })
       mockApiGet.mockResolvedValue({
         current_version: 'v1.0.0',
         latest_version: 'v1.1.0',
         has_upgrade: true,
         managed: true,
-        fused_downloads: { 'win32-x64': ['https://example.test/fused.zip'] },
+        fused_downloads: { 'win32-x64': ['https://example.test/integrated.zip'] },
       })
       const upgrade = useUpgrade()
       await upgrade.startUpgrade()
 
-      expect(installFusedUpdate).toHaveBeenCalledWith('v1.1.0', { 'win32-x64': ['https://example.test/fused.zip'] }, {})
+      expect(installIntegratedUpdate).toHaveBeenCalledWith('v1.1.0', { 'win32-x64': ['https://example.test/integrated.zip'] }, {})
       expect(mockApiPost).not.toHaveBeenCalled()
-      expect(upgrade.installingFused.value).toBe(false)
+      expect(upgrade.installingIntegrated.value).toBe(false)
     })
 
     it('surfaces a package-install failure on the dialog', async () => {
       mockGetNative.mockReturnValue({
-        installFusedUpdate: vi.fn(async () => ({ ok: false, error: 'mirror unreachable' })),
+        installIntegratedUpdate: vi.fn(async () => ({ ok: false, error: 'mirror unreachable' })),
       })
       mockApiGet.mockResolvedValue({
         current_version: 'v1.0.0',
         latest_version: 'v1.1.0',
         has_upgrade: true,
         managed: true,
-        fused_downloads: { 'win32-x64': ['https://example.test/fused.zip'] },
+        fused_downloads: { 'win32-x64': ['https://example.test/integrated.zip'] },
       })
       const upgrade = useUpgrade()
       await upgrade.startUpgrade()

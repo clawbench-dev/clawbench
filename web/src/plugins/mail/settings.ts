@@ -24,10 +24,9 @@ export default [
     // sync and the email-triggered tasks on the server, so every client of one
     // server must agree. Accounts are kept, not deleted.
     { type: 'item', spec: { labelKey: 'settings.items.featureStatusMail', descriptionKey: 'settings.items.mailEnabledDesc', key: 'mailStatus', type: 'info', source: 'server', statusFeature: 'mail.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
-    // Mailbox accounts (IMAP + SMTP). The card body is MailSetting, so this
-    // placeholder only opens the section and must also be listed in
-    // PLACEHOLDER_ITEMS in SettingsCategory.vue.
-    { type: 'item', spec: { labelKey: 'settings.items.mailAccountsSection', descriptionKey: 'settings.items.mailAccountsDesc', key: 'mailAccounts', type: 'info', source: 'server', sectionHeader: 'settings.items.mailAccountsSection' } },
+    // Mailbox accounts (IMAP + SMTP). The card body is MailSetting; this item
+    // only opens the card, so it renders no row.
+    { type: 'item', spec: { labelKey: 'settings.items.mailAccountsSection', descriptionKey: 'settings.items.mailAccountsDesc', key: 'mailAccounts', type: 'info', source: 'server', sectionHeader: 'settings.items.mailAccountsSection', cardBody: { load: () => import('@/components/settings/MailSetting.vue') } } },
     // New-mail notifications. A server switch, not a per-device preference:
     // the sync runs on the server and the same event feeds the notification
     // center, the OS notification and the IM push. Turning it off silences the

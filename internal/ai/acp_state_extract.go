@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"strconv"
 	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -323,7 +324,7 @@ func buildModelListStateFromSelect(sel *acp.SessionConfigOptionSelect) *ModelLis
 			state.Models = append(state.Models, model.AgentModel{
 				ID:      string(v.Value),
 				Name:    v.Name,
-				Credits: creditsFromOptionMeta(v.Meta),
+				Credits: creditsFromOptionMeta(MetaAny(v.Meta)),
 			})
 		}
 	}
@@ -333,7 +334,7 @@ func buildModelListStateFromSelect(sel *acp.SessionConfigOptionSelect) *ModelLis
 				state.Models = append(state.Models, model.AgentModel{
 					ID:      string(v.Value),
 					Name:    v.Name,
-					Credits: creditsFromOptionMeta(v.Meta),
+					Credits: creditsFromOptionMeta(MetaAny(v.Meta)),
 				})
 			}
 		}
@@ -441,6 +442,12 @@ func isWellKnownConfigCategory(category string) bool {
 func extractExtraConfigOptions(opts []acp.SessionConfigOption) []ExtraConfigOption {
 	var extras []ExtraConfigOption
 	for _, opt := range opts {
+		if opt.Boolean != nil {
+			if extra, ok := extraBooleanConfigOption(opt.Boolean); ok {
+				extras = append(extras, extra)
+			}
+			continue
+		}
 		if opt.Select == nil {
 			continue
 		}
@@ -456,6 +463,7 @@ func extractExtraConfigOptions(opts []acp.SessionConfigOption) []ExtraConfigOpti
 			ConfigID:  string(sel.Id),
 			Name:      sel.Name,
 			Category:  category,
+			Type:      "select",
 			CurrentID: string(sel.CurrentValue),
 		}
 		if sel.Description != nil {
@@ -470,4 +478,34 @@ func extractExtraConfigOptions(opts []acp.SessionConfigOption) []ExtraConfigOpti
 		extras = append(extras, extra)
 	}
 	return extras
+}
+
+// extraBooleanConfigOption converts an agent-advertised boolean option.
+//
+// A boolean has no value list: the card renders On/Off from the type, and
+// CurrentID is the string form the rest of the config path (dedup, session
+// cache, HTTP body) already uses. Keeping it a string means the existing
+// `configOptions` API does not need a second value type.
+func extraBooleanConfigOption(opt *acp.SessionConfigOptionBoolean) (ExtraConfigOption, bool) {
+	if opt == nil || opt.Id == "" {
+		return ExtraConfigOption{}, false
+	}
+	category := ""
+	if opt.Category != nil {
+		category = string(*opt.Category)
+	}
+	if isWellKnownConfigCategory(category) {
+		return ExtraConfigOption{}, false
+	}
+	extra := ExtraConfigOption{
+		ConfigID:  string(opt.Id),
+		Name:      opt.Name,
+		Category:  category,
+		Type:      "boolean",
+		CurrentID: strconv.FormatBool(opt.CurrentValue),
+	}
+	if opt.Description != nil {
+		extra.Description = *opt.Description
+	}
+	return extra, true
 }

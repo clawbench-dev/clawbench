@@ -128,6 +128,11 @@ jobs:
         # leaving the slowest observed run ~2.5x headroom.
         run: go test -timeout 20m ./...
 
+      # third_party/acp-go-sdk is its own module, so the root ./... does not
+      # reach it. Its tests are the safety net for hand edits to the fork.
+      - name: Test vendored ACP SDK
+        run: cd third_party/acp-go-sdk && go test ./...
+
       - name: Go build
         run: go build ./cmd/server
 

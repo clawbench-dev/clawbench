@@ -5,7 +5,7 @@ import { getAgentSvg } from '@/utils/agentIcons'
 
 const ALL_BACKENDS = [
     'claude', 'codebuddy', 'opencode', 'codex',
-    'copilot', 'qoder', 'kimi', 'mimo', 'pi', 'deepseek', 'dsh', 'vecli', 'grok', 'antigravity', 'hermes', 'cursor',
+    'qoder', 'kimi', 'mimo', 'pi', 'deepseek', 'dsh', 'grok', 'antigravity', 'hermes', 'cursor',
     'commandcode', 'openclaw', 'qodercn', 'zcode', 'custom-acp', 'builtin',
 ]
 
@@ -82,7 +82,7 @@ describe('agentIcons', () => {
         })
 
         it('color backends do not have monoCssClass', () => {
-            const color = ['claude', 'codebuddy', 'copilot', 'qoder', 'qodercn', 'zcode', 'deepseek', 'dsh', 'antigravity', 'openclaw']
+            const color = ['claude', 'codebuddy', 'qoder', 'qodercn', 'zcode', 'deepseek', 'dsh', 'antigravity', 'openclaw']
             for (const id of color) {
                 const data = getAgentSvg(id)!
                 expect(data.monoCssClass, `backend "${id}" should not have monoCssClass`).toBeFalsy()
@@ -90,7 +90,7 @@ describe('agentIcons', () => {
         })
 
         it('backends with own background do not need needsBg', () => {
-            const noNeedsBg = ['codebuddy', 'claude', 'copilot', 'qoder', 'qodercn', 'zcode', 'deepseek', 'dsh', 'vecli', 'antigravity', 'openclaw']
+            const noNeedsBg = ['codebuddy', 'claude', 'qoder', 'qodercn', 'zcode', 'deepseek', 'dsh', 'antigravity', 'openclaw']
             for (const id of noNeedsBg) {
                 const data = getAgentSvg(id)!
                 expect(data.needsBg, `backend "${id}" should not have needsBg`).toBeFalsy()
@@ -98,7 +98,7 @@ describe('agentIcons', () => {
         })
 
         it('gradient SVGs contain gradient URL references', () => {
-            const gradientBackends = ['codebuddy', 'codex', 'copilot', 'openclaw']
+            const gradientBackends = ['codebuddy', 'codex', 'openclaw']
             for (const id of gradientBackends) {
                 const data = getAgentSvg(id)!
                 // Gradient IDs now come from lobe-icons npm package (lobe-icons-* prefix)

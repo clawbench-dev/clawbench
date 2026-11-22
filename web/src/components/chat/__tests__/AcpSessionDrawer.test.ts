@@ -51,6 +51,8 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 
 const mockStoreState = vi.hoisted(() => ({ projectRoot: '/project' }))
 const mockAgentBackend = vi.hoisted(() => ({ value: 'claude' }))
+/** Per-agent record the drawer reads the session-list quirk from. */
+const mockAgentRecord = vi.hoisted(() => ({ value: undefined as Record<string, unknown> | undefined }))
 vi.mock('@/stores/app.ts', () => ({
   store: { state: mockStoreState },
 }))
@@ -59,6 +61,7 @@ vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     getAgentBackend: () => mockAgentBackend.value,
     getAgentAvatar: () => '',
+    getAgent: () => mockAgentRecord.value,
   }),
 }))
 
@@ -141,6 +144,7 @@ describe('AcpSessionDrawer', () => {
     mockResuming.value = false
     mockStoreState.projectRoot = '/project'
     mockAgentBackend.value = 'claude'
+    mockAgentRecord.value = undefined
   })
 
   describe('handleSelect', () => {
@@ -283,8 +287,11 @@ describe('AcpSessionDrawer', () => {
       expect((wrapper.vm as { hiddenOtherProjectCount: number }).hiddenOtherProjectCount).toBe(2)
     })
 
-    it('hides untitled Codex sessions without affecting other backends', async () => {
-      mockAgentBackend.value = 'codex'
+    it('hides untitled sessions for a backend that lists placeholders', async () => {
+      // The quirk is a server-computed flag (from the backend's spec), not a
+      // backend id: the drawer no longer knows the name "codex".
+      mockAgentBackend.value = 'placeholder-listing-agent'
+      mockAgentRecord.value = { listSessionsOmitsEmptyTitle: true }
       mockSessions.value = [
         inProject('s1', 'Main Session', '/project'),
         inProject('s2', '', '/project'),

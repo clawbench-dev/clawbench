@@ -130,44 +130,12 @@ export interface MailDraftFile {
   size: number
 }
 
-export interface MailDraft {
-  id: number
-  accountId: number
-  to: string
-  cc: string
-  bcc: string
-  subject: string
-  bodyText: string
-  bodyHtml: string
-  inReplyTo: string
-  references: string
-  attachments: MailDraftFile[]
-  updatedAt: number
-}
-
-export interface MailSendRequest {
-  accountId: number
-  to: string[]
-  cc: string[]
-  bcc: string[]
-  subject: string
-  text: string
-  html?: string
-  inReplyTo?: string
-  references?: string
-  attachments: MailDraftFile[]
-  draftId?: number
-}
-
 export interface MailUnreadSummary {
   accountId: number
   name: string
   email: string
   unread: number
 }
-
-/** The special-use values the folder bar knows how to label. */
-export const MAIL_SPECIAL_FOLDERS = ['inbox', 'sent', 'drafts', 'trash', 'junk', 'archive'] as const
 
 /**
  * mailErrorMessage turns an API failure into something a person can read.

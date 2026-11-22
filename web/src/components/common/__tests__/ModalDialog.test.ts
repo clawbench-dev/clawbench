@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ModalDialog from '../ModalDialog.vue'
+import { resetEscapeLayersForTest } from '@/utils/escapeStack'
 
 describe('ModalDialog', () => {
   it('renders slot content when open', async () => {
@@ -99,6 +100,69 @@ describe('ModalDialog', () => {
     wrapper.vm.close()
     vi.advanceTimersByTime(300)
     expect(wrapper.emitted('close')).toBeTruthy()
+    vi.useRealTimers()
+  })
+
+  it('closes on Escape even when focus is outside the overlay', async () => {
+    // The reported bug: opening the dialog from a popup menu left focus on the
+    // trigger behind the overlay, so an overlay-scoped keydown handler never
+    // fired and Esc appeared dead.
+    vi.useFakeTimers()
+    resetEscapeLayersForTest()
+    const wrapper = mount(ModalDialog, {
+      props: { open: true },
+      slots: { default: 'Body' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await flushPromises()
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    vi.advanceTimersByTime(300)
+    expect(wrapper.emitted('close')).toBeTruthy()
+    vi.useRealTimers()
+  })
+
+  it('closes only the topmost dialog on Escape', async () => {
+    vi.useFakeTimers()
+    resetEscapeLayersForTest()
+    const stub = { stubs: { Teleport: { template: '<div><slot/></div>' } } }
+    const bottom = mount(ModalDialog, { props: { open: true }, slots: { default: 'Bottom' }, global: stub })
+    const top = mount(ModalDialog, { props: { open: true }, slots: { default: 'Top' }, global: stub })
+    await flushPromises()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    vi.advanceTimersByTime(300)
+    expect(top.emitted('close')).toBeTruthy()
+    expect(bottom.emitted('close')).toBeFalsy()
+
+    // Once the top one is gone, the next Escape reaches the one below it.
+    await top.setProps({ open: false })
+    await flushPromises()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    vi.advanceTimersByTime(300)
+    expect(bottom.emitted('close')).toBeTruthy()
+    vi.useRealTimers()
+  })
+
+  it('leaves the dialog open when Escape was already handled', async () => {
+    // A search box inside the dialog clears its query and calls
+    // preventDefault; that keypress must not also close the dialog.
+    vi.useFakeTimers()
+    resetEscapeLayersForTest()
+    const wrapper = mount(ModalDialog, {
+      props: { open: true },
+      slots: { default: 'Body' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await flushPromises()
+    const swallow = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') e.preventDefault()
+    }
+    window.addEventListener('keydown', swallow, { capture: true })
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    window.removeEventListener('keydown', swallow, { capture: true })
+    vi.advanceTimersByTime(300)
+    expect(wrapper.emitted('close')).toBeFalsy()
     vi.useRealTimers()
   })
 })

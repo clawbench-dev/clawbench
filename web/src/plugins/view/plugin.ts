@@ -1,5 +1,6 @@
 import { FileText, Eye } from 'lucide-vue-next'
 import type { DockPlugin } from '@/composables/dockPluginTypes'
+import { category as settingsCategory } from './settings'
 
 /**
  * File preview. Like the file manager, its panel is rendered directly by
@@ -13,7 +14,7 @@ export default {
   descriptionKey: 'settings.dockPlugins.desc.view',
   group: 'workspace',
   closable: false,
-  settingsCategory: 'fileView',
+  settingsCategory,
   icon: FileText,
   settingsPage: {
     group: 'dockModules',

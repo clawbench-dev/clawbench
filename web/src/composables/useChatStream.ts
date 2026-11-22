@@ -1178,18 +1178,16 @@ export function useChatStream(options: UseChatStreamOptions) {
           models?: unknown[]
           currentModelId?: string
           resolvedModels?: unknown[]
-          cliModels?: unknown[]
         }
         const aid = currentAgentId.value
         if (!aid) break
-        // The backend resolves the CLI and ACP lists and sends both, so prefer
-        // the resolved list. Falling back to the raw ACP list keeps older
-        // backends (or an emit path without a bound agent) working.
+        // The backend resolves the discovered and ACP lists, so prefer the
+        // resolved one. Falling back to the raw ACP list keeps an emit path
+        // with no model source working.
         if (Array.isArray(mlData.resolvedModels) && mlData.resolvedModels.length > 0) {
           applyResolvedModelList(
             aid,
             mlData.resolvedModels as Array<{ id: string; name: string; default: boolean }>,
-            mlData.cliModels as Array<{ id: string; name: string; default: boolean }> | undefined,
           )
         } else if (Array.isArray(mlData.models) && mlData.models.length > 0) {
           updateACPModelList(aid, mlData.models as { id: string; name: string }[], mlData.currentModelId)

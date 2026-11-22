@@ -52,6 +52,10 @@ const messages = {
         relatedFile: 'Related file:',
         sessionId: 'Session ID:',
         model: 'Model:',
+        transport: 'Transport:',
+        transportAcp: 'ACP',
+        transportInProcess: 'In-process',
+        transportCli: 'CLI (removed)',
         wallDuration: 'Wall duration:',
         tokenRate: 'Output speed:',
         tokenRateHint: 'Generated for {seconds}s (tool runs excluded)',
@@ -254,6 +258,15 @@ describe('ChatMetadataModal', () => {
     const wrapper = mountModal({ ftsIndexed: true, vecIndexed: false })
     expect(wrapper.find('.md-value--ok').text()).toBe('Yes')
     expect(wrapper.find('.md-value--muted').text()).toBe('No')
+  })
+
+  it('labels a retired CLI transport as such instead of ACP', () => {
+    // Messages written before CLI transport was removed still carry "cli".
+    // The old fallthrough labelled anything that was not "in-process" as ACP,
+    // which is a different path than the one that actually ran.
+    expect(mountModal({ data: { transport: 'cli' } }).text()).toContain('CLI (removed)')
+    expect(mountModal({ data: { transport: 'acp-stdio' } }).text()).toContain('ACP')
+    expect(mountModal({ data: { transport: 'in-process' } }).text()).toContain('In-process')
   })
 
   it('insets the content from the card edges (rows are not flush left/right)', () => {

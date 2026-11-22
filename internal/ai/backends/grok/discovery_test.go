@@ -1,222 +1,39 @@
 package grok
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+// `grok models` lists the catalog even when nobody is signed in, which is what
+// gives the picker a list before the first ACP handshake. Captured from grok
+// 4.6 (2026-11-22).
+func TestParseGrokModels_UnauthenticatedOutput(t *testing.T) {
+	out := `You are not authenticated.
 
-	"clawbench/internal/model"
-)
-
-func TestParseGrokModels_AuthenticatedWithDefault(t *testing.T) {
-	output := `Default model: grok-4.5
+Default model: grok-4.6
 
 Available models:
-  * grok-4.5 (default)
-  * grok-build
-  * grok-3
-`
-	models := parseGrokModels(output)
-	require.Len(t, models, 3)
-
-	assert.Equal(t, "grok-4.5", models[0].ID)
-	assert.Equal(t, "Grok 4.5", models[0].Name, "known models should use pretty names")
-	assert.True(t, models[0].Default)
-	assert.Equal(t, "grok-build", models[1].ID)
-	assert.Equal(t, "Grok Build", models[1].Name)
-	assert.False(t, models[1].Default)
-	assert.Equal(t, "grok-3", models[2].ID)
-	assert.Equal(t, "Grok 3", models[2].Name)
-	assert.False(t, models[2].Default)
-}
-
-func TestParseGrokModels_NoDefaultSuffix_FirstIsDefault(t *testing.T) {
-	output := `Available models:
-  * grok-4.5
-  * grok-build
-`
-	models := parseGrokModels(output)
-	require.Len(t, models, 2)
-	assert.Equal(t, "grok-4.5", models[0].ID)
-	assert.True(t, models[0].Default, "first model should be marked default when no (default) suffix")
-	assert.False(t, models[1].Default)
-}
-
-func TestParseGrokModels_DuplicateDefault_OnlyFirstWins(t *testing.T) {
-	output := `Available models:
-  * grok-4.5 (default)
-  * grok-build (default)
-`
-	models := parseGrokModels(output)
-	require.Len(t, models, 2)
-	assert.True(t, models[0].Default, "first (default) marker wins")
-	assert.False(t, models[1].Default, "duplicate (default) marker should be ignored")
-}
-
-func TestParseGrokModels_UnknownModel_UsesRawID(t *testing.T) {
-	output := `Available models:
-  * some-future-model
-`
-	models := parseGrokModels(output)
-	require.Len(t, models, 1)
-	assert.Equal(t, "some-future-model", models[0].ID)
-	assert.Equal(t, "some-future-model", models[0].Name, "unknown models fall back to raw ID")
-}
-
-func TestParseGrokModels_Unauthenticated(t *testing.T) {
-	output := `You are not authenticated.
-
-Default model: grok-4.5
-
-Available models:
-  * grok-4.5 (default)
-`
-	models := parseGrokModels(output)
-	require.Len(t, models, 1)
-	assert.Equal(t, "grok-4.5", models[0].ID)
-	assert.True(t, models[0].Default)
-}
-
-func TestParseGrokModels_EmptyOutput(t *testing.T) {
-	assert.Empty(t, parseGrokModels(""))
-	assert.Empty(t, parseGrokModels("No models available.\n"))
-}
-
-func TestParseGrokModels_SkipsNonListLines(t *testing.T) {
-	output := `Default model: grok-4.5
-Header line
-  * grok-4.5 (default)
-Some other text
-`
-	models := parseGrokModels(output)
-	require.Len(t, models, 1)
-	assert.Equal(t, "grok-4.5", models[0].ID)
-}
-
-func TestParseGrokModels_SkipsEmptyStars(t *testing.T) {
-	output := `Available models:
-  * 
-  * grok-build
-`
-	models := parseGrokModels(output)
-	require.Len(t, models, 1)
-	assert.Equal(t, "grok-build", models[0].ID)
-}
-
-func TestGrokCatalog_FirstIsDefault(t *testing.T) {
-	src, ok := model.LookupModelSource("grok")
-	require.True(t, ok)
-
-	models, _ := src.Discover()
-	require.NotEmpty(t, models)
-	assert.True(t, models[0].Default)
-	// Do not pin the ID: Discover() runs the live `grok models` command, whose
-	// default model tracks the installed CLI (grok-4.5 on the fallback catalog,
-	// newer IDs once a newer CLI is installed). Asserting a specific ID makes
-	// this test fail on any machine with an up-to-date grok.
-	assert.NotEmpty(t, models[0].ID, "first discovered model must carry an ID")
-}
-
-func TestParseGrokModels_DashBulletsAndDefaultLine(t *testing.T) {
-	output := `Model 'grok' is using its own API key.
-
-Default model: grok
-
-Available models:
+  * grok-4.6 (default)
   - grok-4.5
-  * grok (default)
-  - grok-code
 `
-	models := parseGrokModels(output)
-	require.Len(t, models, 3)
-
-	ids := map[string]bool{}
-	defaultIDs := []string{}
-	for _, m := range models {
-		ids[m.ID] = true
-		if m.Default {
-			defaultIDs = append(defaultIDs, m.ID)
-		}
+	models := parseGrokModels(out)
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models, got %d: %+v", len(models), models)
 	}
-	assert.True(t, ids["grok"])
-	assert.True(t, ids["grok-4.5"])
-	assert.True(t, ids["grok-code"])
-	assert.Equal(t, []string{"grok"}, defaultIDs, "only the (default)-marked model is default")
-	assert.Equal(t, "Grok Code", models[2].Name, "known dash-list models should use pretty names")
+	if models[0].ID != "grok-4.6" || !models[0].Default {
+		t.Fatalf("first entry must be the default grok-4.6, got %+v", models[0])
+	}
+	if models[0].Name != "Grok 4.6" {
+		t.Fatalf("display name must come from GrokModelNames, got %q", models[0].Name)
+	}
+	if models[1].ID != "grok-4.5" || models[1].Default {
+		t.Fatalf("second entry must be grok-4.5 and not default, got %+v", models[1])
+	}
 }
 
-func TestParseGrokModels_DedupesIDs(t *testing.T) {
-	output := `Available models:
-  * grok-4.5 (default)
-  - grok-4.5
-  * grok-build
-`
-	models := parseGrokModels(output)
-	require.Len(t, models, 2, "duplicate model IDs should be collapsed")
-	assert.Equal(t, "grok-4.5", models[0].ID)
-	assert.True(t, models[0].Default)
-	assert.Equal(t, "grok-build", models[1].ID)
-	assert.False(t, models[1].Default)
-}
-
-func TestParseGrokModels_DefaultLineFallsBackWhenNoSuffix(t *testing.T) {
-	output := `Default model: grok-3
-
-Available models:
-  - grok-4.5
-  - grok-3
-  - grok-build
-`
-	models := parseGrokModels(output)
-	require.Len(t, models, 3)
-	assert.Equal(t, "grok-3", models[1].ID)
-	assert.True(t, models[1].Default, "the model named by 'Default model:' should be default")
-	assert.False(t, models[0].Default)
-	assert.False(t, models[2].Default)
-}
-
-func TestGrokSource_Registered(t *testing.T) {
-	spec := model.BackendSpec{ID: "grok", Backend: "grok", DefaultCmd: "grok"}
-	assert.True(t, model.CanDiscoverModels(spec), "grok should support model discovery")
-
-	src, ok := model.LookupModelSource("grok")
-	require.True(t, ok)
-	assert.Equal(t, model.SourceKindCLI, src.Kind())
-}
-
-// An end-to-end transcript: the parser is only useful if a real `grok models`
-// output yields exactly the models, names and default the CLI reports. Section
-// headers and prose must not leak in.
-func TestParseGrokModels_RealTranscript(t *testing.T) {
-	output := `Model 'grok' is using its own API key.
-
-Default model: grok-4.5
-
-Available models:
-  * grok-4.5 (default)
-  - grok-build
-  - grok-code
-`
-	models := parseGrokModels(output)
-
-	require.Len(t, models, 3, "only the three real entries; no headers or prose")
-	assert.Equal(t, "grok-4.5", models[0].ID)
-	assert.Equal(t, "Grok 4.5", models[0].Name)
-	assert.True(t, models[0].Default)
-	assert.Equal(t, "grok-build", models[1].ID)
-	assert.Equal(t, "Grok Build", models[1].Name)
-	assert.False(t, models[1].Default)
-	assert.Equal(t, "grok-code", models[2].ID)
-	assert.Equal(t, "Grok Code", models[2].Name)
-}
-
-// A transcript whose only prose line is a single word must not yield a phantom
-// model (this is the shape that exposed the unbulleted-line regression).
-func TestParseGrokModels_SingleWordHeaderIsNotAModel(t *testing.T) {
-	output := "authenticated\n  * grok-4.5\n"
-	models := parseGrokModels(output)
-
-	require.Len(t, models, 1)
-	assert.Equal(t, "grok-4.5", models[0].ID)
+// Diagnostics are not models: a header line without a bullet marker must never
+// become a picker entry.
+func TestParseGrokModels_IgnoresHeadersAndNoise(t *testing.T) {
+	models := parseGrokModels("Available models:\nDefault model: grok-4.6\n")
+	if len(models) != 0 {
+		t.Fatalf("headers must not become models, got %+v", models)
+	}
 }

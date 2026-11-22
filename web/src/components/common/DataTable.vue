@@ -12,6 +12,7 @@
         :data-mode="isData ? 'data' : 'normal'"
         @click="openModeMenu"
       >
+        <component :is="isData ? Table2 : Table" :size="11" class="dt-mode-icon" aria-hidden="true" />
         <span class="dt-mode-label">{{ isData ? t('dataTable.data') : t('dataTable.normal') }}</span>
         <ChevronDown :size="9" class="dt-mode-caret" />
       </button>
@@ -308,6 +309,13 @@
           >
             <Check v-if="option.active" :size="13" class="dt-pop-icon is-check" />
             <span v-else class="dt-pop-icon-gap" aria-hidden="true" />
+            <component
+              :is="option.value === 'data' ? Table2 : Table"
+              :size="13"
+              class="dt-pop-icon"
+              aria-hidden="true"
+              :data-mode-icon="option.value"
+            />
             {{ option.label }}
           </button>
         </template>
@@ -353,6 +361,8 @@ import {
   ListFilter,
   Pin,
   Search,
+  Table,
+  Table2,
   WrapText,
   X,
 } from 'lucide-vue-next'
@@ -482,7 +492,8 @@ const columnCount = computed(() => props.headers.length)
 const detected = computed(() => isNumericTable(props.headers, props.rows))
 const isData = computed(() => (mode.value === 'auto' ? detected.value : mode.value === 'data'))
 
-/** 表头那个按钮点开的菜单：两项并列，当前项打勾。 */
+/** 表头那个按钮点开的菜单：两项并列，当前项打勾。
+ *  两行各配一个图标，一眼看出差别：简单表无内部竖线，数据表带列分隔。 */
 const modeOptions = computed(() => [
   { value: 'normal' as const, label: t('dataTable.normal'), active: !isData.value },
   { value: 'data' as const, label: t('dataTable.data'), active: isData.value },
@@ -1101,6 +1112,16 @@ defineExpose({ focusSearch, closeSearch })
   outline-offset: 1px;
 }
 
+.dt-mode-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color var(--duration-base);
+}
+
+.dt-mode-btn[aria-expanded='true'] .dt-mode-icon {
+  color: var(--text-secondary);
+}
+
 .dt-mode-caret {
   color: var(--text-muted);
   transition: transform var(--duration-base), color var(--duration-base);
@@ -1639,6 +1660,10 @@ defineExpose({ focusSearch, closeSearch })
   }
 
   .dt-mode-btn:hover .dt-mode-caret {
+    color: var(--text-secondary);
+  }
+
+  .dt-mode-btn:hover .dt-mode-icon {
     color: var(--text-secondary);
   }
 

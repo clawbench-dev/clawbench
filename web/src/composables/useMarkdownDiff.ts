@@ -68,18 +68,6 @@ export interface DiffMarker {
     ariaLabel: string
 }
 
-/** Marker info for code rendering — one per marker group */
-export interface CodeDiffMarkerInfo {
-    /** Marker type */
-    type: MarkerType
-    /** Label text: M / D / + */
-    label: string
-    /** Marker id — shared by grouped lines, used for click → drawer */
-    id: string
-    /** Number of lines this marker spans (for multi-line marker height) */
-    lineCount?: number
-}
-
 /** Char-level diff result for a modified block */
 export interface CharDiff {
     oldText: string

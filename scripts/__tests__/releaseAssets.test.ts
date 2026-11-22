@@ -210,21 +210,40 @@ describe('desktop asset names match the Go download URLs', () => {
   })
 })
 
-describe('all-in-one (fused) package name matches the Go download URLs', () => {
-  it('release.yml assembles the basename the server builds', () => {
-    // A fused install upgrades by downloading this exact asset; a drift here
-    // makes every in-app upgrade 404 while the URL still looks well-formed.
+describe('all-in-one (integrated) package name matches the Go download URLs', () => {
+  it('release.yml assembles every basename the server advertises', () => {
+    // An integrated install upgrades by downloading this exact asset; a drift
+    // here makes every in-app upgrade 404 while the URL still looks well-formed.
+    // Every desktop platform publishes one, so the server must advertise
+    // exactly the set release.yml builds — neither a missing entry (an install
+    // that can never upgrade) nor an extra one (a dead URL).
     const src = readFileSync(repoPath('.github/workflows/release.yml'), 'utf8')
-    expect(src).toContain('clawbench-desktop-windows-x64-local-$env:RELEASE_TAG.zip')
 
     const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
-    expect(go).toContain('clawbench-desktop-windows-x64-local')
-    // Windows-only on purpose: release.yml assembles no other platform's fused
-    // package, so advertising one would hand the client a dead URL.
-    const block = /desktopFusedAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
-    expect(block).toContain('platformWindowsAMD64')
-    expect(block).not.toContain('platformLinux')
-    expect(block).not.toContain('platformDarwin')
+    const block =
+      /desktopIntegratedAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
+    expect(block).not.toBe('')
+
+    const platforms = [
+      'platformWindowsAMD64',
+      'platformLinuxAMD64',
+      'platformLinuxARM64',
+      'platformDarwinAMD64',
+      'platformDarwinARM64',
+    ]
+    const bases = [
+      'clawbench-desktop-windows-x64-local',
+      'clawbench-desktop-linux-x64-local',
+      'clawbench-desktop-linux-arm64-local',
+      'clawbench-desktop-darwin-x64-local',
+      'clawbench-desktop-darwin-arm64-local',
+    ]
+    platforms.forEach((platform, i) => {
+      expect(block, `${platform} must be advertised`).toContain(platform)
+      // The Go map and the workflow must name the same file.
+      expect(block).toContain(bases[i])
+      expect(src, `${bases[i]} must be assembled by release.yml`).toContain(bases[i])
+    })
   })
 })
 

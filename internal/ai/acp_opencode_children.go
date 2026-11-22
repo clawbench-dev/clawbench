@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -81,10 +82,10 @@ func openCodeToolCallFields(update acp.SessionUpdate) (id, title string, rawInpu
 	case update.ToolCall != nil:
 		return string(update.ToolCall.ToolCallId), update.ToolCall.Title, update.ToolCall.RawInput, update.ToolCall.RawOutput
 	case update.ToolCallUpdate != nil:
-		if update.ToolCallUpdate.Title != nil {
-			title = *update.ToolCallUpdate.Title
-		}
-		return string(update.ToolCallUpdate.ToolCallId), title, update.ToolCallUpdate.RawInput, update.ToolCallUpdate.RawOutput
+		title, _ := update.ToolCallUpdate.Title.Value()
+		rawInput, _ := update.ToolCallUpdate.RawInput.Value()
+		rawOutput, _ := update.ToolCallUpdate.RawOutput.Value()
+		return string(update.ToolCallUpdate.ToolCallId), title, rawInput, rawOutput
 	}
 	return "", "", nil, nil
 }
@@ -97,7 +98,7 @@ func looksLikeOpenCodeSubagent(title string, rawInput any) bool {
 	if strings.Contains(l, "subagent") || strings.Contains(l, "sub agent") {
 		return true
 	}
-	m, _ := rawInput.(map[string]any)
+	m := rawJSONMap(rawInput)
 	if m == nil {
 		return false
 	}
@@ -115,7 +116,7 @@ func openCodeChildSessionID(update acp.SessionUpdate) string {
 }
 
 func rawInputString(raw any, key string) string {
-	m, _ := raw.(map[string]any)
+	m := rawJSONMap(raw)
 	if m == nil {
 		return ""
 	}
@@ -126,7 +127,7 @@ func rawInputString(raw any, key string) string {
 // rawOutputSessionID extracts rawOutput.metadata.sessionID from a completed
 // subagent tool call (the exact child session id).
 func rawOutputSessionID(raw any) string {
-	m, _ := raw.(map[string]any)
+	m := rawJSONMap(raw)
 	if m == nil {
 		return ""
 	}
@@ -136,6 +137,26 @@ func rawOutputSessionID(raw any) string {
 	}
 	s, _ := meta["sessionID"].(string)
 	return s
+}
+
+// rawJSONMap accepts either the decoded form or the raw JSON the v0.20 SDK
+// hands over (rawInput/rawOutput are json.RawMessage there).
+func rawJSONMap(raw any) map[string]any {
+	switch t := raw.(type) {
+	case map[string]any:
+		return t
+	case json.RawMessage:
+		var m map[string]any
+		if len(t) > 0 && json.Unmarshal(t, &m) == nil {
+			return m
+		}
+	case []byte:
+		var m map[string]any
+		if len(t) > 0 && json.Unmarshal(t, &m) == nil {
+			return m
+		}
+	}
+	return nil
 }
 
 func subagentTitleKey(sessionID, title string) string {

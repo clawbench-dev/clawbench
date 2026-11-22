@@ -11,6 +11,7 @@ import (
 
 	"clawbench/internal/model"
 
+	"clawbench/internal/ai/acptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +45,7 @@ func TestIsSessionGoneError(t *testing.T) {
 			err: &acp.RequestError{
 				Code:    -32602,
 				Message: "Invalid params",
-				Data:    map[string]any{"details": "session not found"},
+				Data:    acptest.Raw(map[string]any{"details": "session not found"}),
 			},
 			want: true,
 		},

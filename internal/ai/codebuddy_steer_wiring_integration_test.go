@@ -19,7 +19,7 @@ import (
 // ===========================================================================
 //
 // 目的：单测覆盖了策略与 demux 逻辑，但无法证明 spawnLocked 里的接线正确
-// （lockedWriter 是否真的同时服务 SDK 与本通道、stdout filter 的 sink 是否真的
+// （raw 调用是否真的走 SDK 连接、stdout filter 的 sink 是否真的
 // 挂上了、rawRPC 是否绑定了正确的 conn.Done()）。本测试驱动**生产** ACPConn
 // （而非探针自建的 writer）验证这条链路。
 //
@@ -70,7 +70,7 @@ func TestCodebuddyACP_SteerWiring_RawChannelOnProductionConn(t *testing.T) {
 	defer cancel()
 
 	// Drive one real turn so the production spawn path runs end to end
-	// (spawnLocked → lockedWriter → stdoutFilter.SetRawSink → Initialize → NewSession).
+	// (spawnLocked → newACPRawRPC(conn) → Initialize → NewSession).
 	ch, err := backend.ExecuteStream(ctx, ChatRequest{
 		Prompt:             "只回复一个词：ok",
 		SessionID:          sessionID,
@@ -102,7 +102,7 @@ func TestCodebuddyACP_SteerWiring_RawChannelOnProductionConn(t *testing.T) {
 		},
 	})
 	require.NoError(t, err, "CallRaw must work on a production connection; "+
-		"a failure here means the spawn-time wiring (lockedWriter + filter sink) is broken")
+		"a failure here means the spawn-time wiring (raw call over the SDK conn) is broken")
 	var res struct {
 		Steered bool   `json:"steered"`
 		Reason  string `json:"reason"`

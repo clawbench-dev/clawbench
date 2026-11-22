@@ -41,14 +41,19 @@ test.describe('Meeting tab', () => {
 
     await expect(refresh).toBeVisible()
     await expect(clear).toBeVisible()
-    // The row is disabled only while there is nothing to clear.
+    // Wait for the list to settle first: while the first load is in flight the
+    // skeleton is up and the button is disabled for a reason that has nothing to
+    // do with "there is nothing to clear".
+    await expect(page.locator('.meeting-list-skeleton')).toHaveCount(0)
+    // Branch on the button's own gate instead of a row count sampled from the
+    // DOM: both come from the same store, but the rows are derived and can lag.
     const rows = page.locator('.meeting-row')
-    const count = await rows.count()
-    if (count === 0) {
-      await expect(clear).toBeDisabled()
+    if (await clear.isDisabled()) {
+      await expect(rows).toHaveCount(0)
       return
     }
     await expect(clear).toBeEnabled()
+    const count = await rows.count()
 
     await clear.click()
     await expect(page.locator('.dlg-box')).toBeVisible({ timeout: 5000 })

@@ -132,11 +132,6 @@ export function onLanguageLoaded(listener: (language: string) => void): () => vo
     return () => loadedListeners.delete(listener)
 }
 
-/** True when `language` can be highlighted right now (no lazy load pending). */
-export function isLanguageReady(language: string): boolean {
-    return !!language && !!hljs.getLanguage(language)
-}
-
 /**
  * Highlight code with a specific language.
  * Falls back to plain text (no highlighting) for unregistered languages.

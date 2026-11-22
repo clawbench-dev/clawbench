@@ -153,7 +153,6 @@
       :currentModelId="identity.currentModelId.value"
       :currentModelName="identity.currentModelName.value"
       :currentModeName="identity.currentModeName.value"
-      :currentTransport="identity.currentTransport.value"
       :currentAgentId="identity.currentAgentId.value"
       :acpSyncing="acpSyncing"
       :busyKind="busy"
@@ -191,7 +190,6 @@
       @switch-model="handleSwitchModel"
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
-      @switch-transport="handleSwitchTransport"
       @switch-config-option="handleSwitchConfigOption"
       @sync-acp-session="handleSyncAcpSession"
       @open-group-settings="$emit('open-group-settings')"
@@ -371,7 +369,7 @@ import { collectStopTargets } from '@/utils/chatStopTargets'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate, isShowingSummary, isLastAssistantMessage, normalizeDisplayMode, resolveMidTurnSupported } from '@/utils/chatSessionUtils.ts'
-import { localConfig, serverConfig } from '@/composables/useSettingsConfig'
+import { localConfig, serverConfig, patchAgentPref } from '@/composables/useSettingsConfig'
 import { nextClientSeq } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -383,7 +381,7 @@ import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRout
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
-import { buildSendPayload, fileEntryKey } from '@/utils/fileAttachmentUtils.ts'
+import { buildSendPayload, buildRetryPayload, fileEntryKey } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
@@ -445,20 +443,19 @@ const { agents: agentsList, getAgent, getAgentBackend, getAgentName, getAgentAva
  *  "interrupt and send".
  *
  *  The rule lives in resolveMidTurnSupported (chatSessionUtils) so it is unit
- *  tested. Two conditions for a single chat, because the capability is
- *  per-backend but the ability is per-transport: injection goes through the
- *  agent's live ACP connection (ai.InjectMidTurn returns a decline when there
- *  is none), so a CLI session of a steer-capable backend cannot actually
- *  insert. Showing "insert" there would make the label lie about what the
- *  button does — the one thing it must not do — so fall back to "interrupt and
- *  send" for CLI sessions. A GROUP session is forced to interrupt: it has no
- *  single running reply to join and the inject endpoint can never find a
+ *  tested. Both conditions are properties of the AGENT: injection goes through
+ *  the agent's live ACP connection (ai.InjectMidTurn returns a decline when
+ *  there is none), and an agent runs over ACP exactly when it has an ACP
+ *  command. The in-process built-in agent is the only one without a connection.
+ *  Showing "insert" for it would make the label lie about what the button does
+ *  — the one thing it must not do. A GROUP session is forced to interrupt: it
+ *  has no single running reply to join and the inject endpoint can never find a
  *  connection under the group id. */
 const midTurnSupported = computed(() =>
   resolveMidTurnSupported(
     isGroupSession.value,
     agentsComposable.supportsMidTurn(identity.currentAgentId.value || ''),
-    identity.currentTransport.value,
+    agentsComposable.supportsACP(identity.currentAgentId.value || ''),
   ),
 )
 /** queueId (or id) of the queued bubble whose action request is in flight. */
@@ -1591,8 +1588,13 @@ async function handleSwitchModel(model) {
 
   const sid = identity.currentSessionId.value
   if (!sid) {
-    // No session yet — nothing to push; the selection rides along on the first
-    // message, exactly as before.
+    // No session yet — nothing to push, but the pick must not evaporate: the
+    // first message carries it, and the session it creates inherits it. Without
+    // recording it on the AGENT, the next new session resolved its model from
+    // the agent's preference alone and silently landed back on the old default
+    // (the reported symptom: pick a model, open a new chat, it is "Default"
+    // again). Persisting here is what makes the pick stick across sessions.
+    await persistAgentModelPref(identity.currentAgentId.value, model.id)
     return
   }
 
@@ -1649,6 +1651,25 @@ async function handleSwitchModel(model) {
     // The server rejected the switch outright and did not keep it, so the
     // optimistic chip would lie. Restore the previous model.
     restoreModelSelection(sid)
+  }
+}
+
+/**
+ * Record a model pick as the agent's preferred model, for a pick made where
+ * there is no session row to store it on.
+ *
+ * Same field the drawer's star writes (preferred_model), so the two entry
+ * points cannot disagree about what "the agent's model" means. Failures are
+ * logged and swallowed: the pick still rides along on the first message, so
+ * the user's immediate turn is correct either way — only "it also becomes the
+ * default" is lost, which is not worth an error toast mid-composition.
+ */
+async function persistAgentModelPref(agentId, modelId) {
+  if (!agentId) return
+  try {
+    await patchAgentPref(agentId, 'preferred_model', modelId)
+  } catch (err) {
+    appLog.w(TAG, 'failed to persist model preference', agentId, modelId, err)
   }
 }
 
@@ -1806,23 +1827,6 @@ function handleSwitchMode(mode) {
     identity.modeState.currentName.value = previousName
     toast.show(t('chat.modeSwitcher.saveFailed', { mode: mode.name || mode.id }), { icon: 'warning', type: 'error' })
   })
-}
-
-function handleSwitchTransport(transport) {
-  identity.currentTransport.value = transport
-  // Persist transport selection immediately so it survives page reload
-  persistSessionUpdate({ transport }).then((res) => {
-    if (res?.saveFailed) {
-      toast.show(t('chat.transportSwitcher.saveFailed'), { icon: 'warning', type: 'error' })
-    }
-  })
-  // When switching from ACP to CLI for this session, clear ACP-specific state.
-  if (transport === 'cli') {
-    identity.clearModeState()
-    identity.clearCommandState()
-    identity.clearThinkingEffortState()
-    identity.clearConfigOptions()
-  }
 }
 
 function handleOpenUserMsgIndex() {
@@ -2363,7 +2367,7 @@ async function sendMessageNow(text, filePaths, files) {
         const resp = await fetch(safeUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, queueId: pendingId, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined, modeId: identity.currentModeId.value || undefined, transport: identity.currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
+            body: JSON.stringify({ message: text, queueId: pendingId, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined, modeId: identity.currentModeId.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
         })
         const data = await resp.json()
         if (!resp.ok) {
@@ -2857,7 +2861,14 @@ async function handleResetSession() {
         // Re-send the last persisted user message so the conversation continues
         // in the freshly-reset agent session.
         const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user')
-        if (lastUserMsg?.content) await sendMessage(lastUserMsg.content)
+        if (!lastUserMsg) return
+
+        // Replay its ATTACHMENTS too, not just its text — see buildRetryPayload.
+        // It reuses the normal send builder, so URL/quote/line-range routing is
+        // identical to a first send. Returns null when there is nothing to send.
+        const retry = buildRetryPayload(lastUserMsg.content, lastUserMsg.files)
+        if (!retry) return
+        await sendMessageNow(retry.text, retry.filePaths, retry.allFiles)
     } catch {
         toast.show(t('chat.contentBlocks.resetSessionFailed'), { icon: 'warning', type: 'error' })
     }

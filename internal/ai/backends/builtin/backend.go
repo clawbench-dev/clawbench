@@ -4,7 +4,8 @@
 // (internal/agentcore) rather than in an external CLI. That difference drives
 // every choice here:
 //
-//   - no spawn command, no install command, no login, no MCP injection;
+//   - no spawn command, no install command, no login; MCP is attached by
+//     ClawBench's own client (internal/mcp), not injected into a CLI;
 //   - no external session: the conversation is rebuilt from chat_history each
 //     turn, so there is no session_capture and nothing to resume;
 //   - tools are granted per agent (model.ToolPolicy) instead of being whatever
@@ -13,16 +14,22 @@ package builtin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"clawbench/internal/agentcore"
 	"clawbench/internal/agentcore/compaction"
 	"clawbench/internal/agentcore/llm"
+	"clawbench/internal/agentcore/mcptools"
+	"clawbench/internal/agentcore/tools"
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/i18n"
+	"clawbench/internal/mcp"
 	"clawbench/internal/model"
 )
 
@@ -32,8 +39,8 @@ const BackendID = "builtin"
 
 func init() {
 	backends.Register(&backends.BackendPlugin{
-		ID:  BackendID,
-		CLI: &backends.CLIPlugin{NewBackend: newBackend},
+		ID:             BackendID,
+		Implementation: &backends.InProcessPlugin{NewBackend: newBackend},
 		Spec: model.BackendSpec{
 			ID:      BackendID,
 			Backend: BackendID,
@@ -47,9 +54,9 @@ func init() {
 			// describes how it is implemented, not what it is).
 			Name:      "ClawBench Agent",
 			Specialty: "内置智能体：文件读写与命令执行，工具权限可精细控制", // i18n-exempt: backend spec specialty, localized by the client
-			// No AcpCommand: this backend never spawns a process. Transport is
-			// always "cli" in the sense of "the in-process path", and
-			// SupportsACP() stays false because acp_command is empty.
+			// No AcpCommand: this backend never spawns a process. Its transport
+			// is "in-process", and SupportsACP() stays false because
+			// acp_command is empty.
 			//
 			// AutoLoadsNativeSkills must be false: this agent has no skill
 			// directory of its own, so ClawBench must inject the shared table
@@ -57,7 +64,12 @@ func init() {
 			// loads it. Getting this wrong in the true direction would leave
 			// the agent with no skills at all.
 			AutoLoadsNativeSkills: false,
-			SortOrder:             0,
+			// Legacy SSE is not implemented by our client: it needs a
+			// server-to-client event stream and a separate message endpoint.
+			// Declaring it here disables the option in the settings page instead
+			// of letting a user pick a transport that will fail at connect time.
+			MCPRejectsSSE: true,
+			SortOrder:     0,
 			// The reasoning levels this backend understands. They are static
 			// (every model gets the same list) because the choice is translated
 			// by our own client, not advertised per model by an external agent.
@@ -101,9 +113,64 @@ func staticCapability() *ai.AgentCapability {
 	}
 }
 
-// newBackend constructs the in-process backend.
-func newBackend() ai.AIBackend {
-	return &Backend{}
+// modelListStateForAgent returns the model list this agent can run, in the same
+// shape an ACP agent reports when it answers session/new.
+//
+// The built-in agent has NO handshake, so this is the only model list anyone
+// can get for it: every consumer (the chat drawer, GET /api/agents, the ACP
+// gate in internal/handler via ai.HasConfirmedACPModels, the selftest) reads it
+// through ai.AgentCapabilityRegistry.GetModelListState, which asks the backend
+// this question.
+//
+// The source is the bound provider's curated list — the ids the endpoint is
+// known to serve. An unbound agent (or a provider with no curated models) has
+// nothing trustworthy to offer, because whatever it runs is inherited from the
+// user's endpoint configuration rather than chosen. CurrentModelID is the model
+// a turn will actually run (model.Agent.DefaultModelID answers exactly as the
+// turn does), so the picker marks the right row and the client does not fall
+// back to "Default".
+func modelListStateForAgent(agent *model.Agent) *ai.ModelListState {
+	if agent == nil {
+		return nil
+	}
+	current := agent.DefaultModelID()
+	models := model.WithPrices(agent.ProviderPickerModels())
+	if len(models) == 0 {
+		// A provider with no curated list can still have an explicit pick (the
+		// "custom…" escape hatch). Echo that single model back: it is what the
+		// next turn sends, so the chip must name it instead of "Default", and
+		// withholding the list would leave the drawer empty for the one model
+		// the user deliberately chose.
+		if current == "" || agent.Provider() == nil {
+			return nil
+		}
+		models = model.WithPrices([]model.AgentModel{{
+			ID:      current,
+			Name:    current,
+			Default: true,
+		}})
+	}
+	out := make([]model.AgentModel, len(models))
+	copy(out, models)
+	for i := range out {
+		out[i].Default = out[i].ID == current
+	}
+	if current != "" && !hasModelID(out, current) {
+		// The pick is outside the provider's list (typed by hand). Keep it first
+		// and flagged: it IS the model running, and the picker groups by
+		// "what this agent can run" before "what the endpoint also offers".
+		out = append([]model.AgentModel{{ID: current, Name: current, Default: true}}, out...)
+	}
+	return &ai.ModelListState{CurrentModelID: current, Models: out}
+}
+
+func hasModelID(models []model.AgentModel, id string) bool {
+	for _, m := range models {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Backend implements ai.AIBackend by driving agentcore in-process.
@@ -113,6 +180,30 @@ func newBackend() ai.AIBackend {
 // cached transcript here would be a second source of truth that drifts the
 // moment the user edits or deletes a message.
 type Backend struct{}
+
+// ModelListState reports the model list of one built-in agent.
+//
+// The backend is created per run (see ai.ModelListProvider) and is stateless,
+// and several built-in agents (the auto-inserted one plus any copies) share it,
+// so the agent has to be named. An id this backend does not serve yields nil
+// rather than some other agent's list.
+func (b *Backend) ModelListState(agentID string) *ai.ModelListState {
+	agent := model.GetAgent(agentID)
+	if agent == nil || !agent.BuiltinBackend || agent.Backend != BackendID {
+		return nil
+	}
+	state := modelListStateForAgent(agent)
+	if state == nil {
+		return nil
+	}
+	state.AgentID = agent.ID
+	return state
+}
+
+// newBackend constructs the in-process backend.
+func newBackend() ai.AIBackend {
+	return &Backend{}
+}
 
 // Name reports the backend id.
 func (b *Backend) Name() string { return BackendID }
@@ -133,12 +224,52 @@ func (b *Backend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan
 		// One translator per turn: it tracks whether a reasoning block is
 		// still open, so the closing event is emitted exactly once.
 		tr := &translator{locale: model.Language}
+		// MCP tools are attached per turn. The pool keeps the connections, so
+		// after the first turn this is a policy lookup rather than a process
+		// start, and a policy change lands on the next turn.
+		toolList, notes, release := attachMCP(ctx, req, spec.Client)
+		if release != nil {
+			defer release()
+		}
+		spec.ExtraTools = toolList
+		spec.ToolNotes = append(spec.ToolNotes, notes...)
+
 		runEvents := agentcore.Run(ctx, spec)
 		for ev := range runEvents {
 			forward(ch, tr, ev)
 		}
 	}()
 	return ch, nil
+}
+
+// attachMCP resolves this agent's MCP policy and returns the tools it may use.
+//
+// It never fails the turn: a server that cannot start becomes a note the model
+// can relay. Failing the whole turn because one of five servers is
+// misconfigured would make an unrelated typo look like the agent is broken.
+//
+// Only http is advertised as a capability. Our client does not implement legacy
+// SSE, and ResolveMCPServers drops transports the backend cannot take — the
+// same gate ACP backends use for servers they cannot accept.
+func attachMCP(ctx context.Context, req ai.ChatRequest, client llm.Client) ([]tools.Tool, []string, func()) {
+	servers := model.ResolveMCPServers(req.AgentID, model.MCPCapabilities{HTTP: true})
+	if len(servers) == 0 {
+		return nil, nil, nil
+	}
+
+	// The working directory is part of the key: a stdio server is started in
+	// it, so two projects must not share one process. Cleaning it keeps a
+	// trailing slash from creating a second key for the same directory.
+	workDir := req.WorkDir
+	if workDir != "" {
+		workDir = filepath.Clean(workDir)
+	}
+	key := req.AgentID + "\x00" + workDir
+	bundle := mcp.DefaultPool().Acquire(ctx, key, servers, mcp.DialOptions{WorkDir: workDir})
+
+	toolList, notes := mcptools.Build(mcptools.FromBundle(bundle), client.SupportsVision())
+	notes = append(append([]string(nil), bundle.Notes...), notes...)
+	return toolList, notes, bundle.Release
 }
 
 // buildSpec resolves everything a run needs from the agent and the request.
@@ -158,10 +289,44 @@ func buildSpec(req ai.ChatRequest) (agentcore.Spec, error) {
 	// drift and make a compaction boundary cover the wrong stored turn.
 	replay := buildHistoryReplay(req)
 
+	// This turn's pictures. The PREFERRED form is a pointer, not the bytes: the
+	// agent's read tool returns an image, so the model opens the file when it
+	// actually needs to look, and the path stays in the transcript as the handle
+	// for later turns. Bytes are sent only when the agent cannot open the file
+	// itself (no read capability, or a path outside the confined working
+	// directory) — a path nobody can open is a picture nobody sees.
+	//
+	// History never carries images either way: re-sending every earlier turn's
+	// picture made each turn pay again for what the model had already described.
+	prompt := req.Prompt
+	var promptParts []llm.Part
+	policy := agent.ToolPolicy.Normalized().ForMode(req.Mode)
+	if !client.SupportsVision() && len(req.Files) > 0 {
+		// Worth a line: the user attached a picture and this model will only see
+		// its name. Without it "the agent ignored my screenshot" has no trace at
+		// all, because nothing fails — the turn just answers about a path.
+		slog.Info("builtin: model cannot read images, attachments are only named",
+			"agent", req.AgentID, "model", modelID, "attachments", len(req.Files))
+	}
+	if client.SupportsVision() {
+		hints, fallback := readableImageHints(req.Files, req.WorkDir, policy.Has(model.CapFSRead), policy.ConfinesToWorkDir())
+		for _, h := range hints {
+			prompt += "\n" + imageHint(h)
+		}
+		if len(fallback) > 0 {
+			parts, notes := turnImageParts(fallback)
+			promptParts = parts
+			for _, n := range notes {
+				prompt += "\n" + n
+			}
+		}
+	}
+
 	return agentcore.Spec{
 		Client:       client,
 		SystemPrompt: req.SystemPrompt,
-		Prompt:       req.Prompt,
+		Prompt:       prompt,
+		PromptParts:  promptParts,
 		History:      replay.Messages,
 		// Parallel to History: the boundary a compaction reports is an id from
 		// here, so the caller records exactly which stored turn the summary
@@ -171,7 +336,7 @@ func buildSpec(req ai.ChatRequest) (agentcore.Spec, error) {
 		WorkDir:           req.WorkDir,
 		// The session mode narrows the agent's grant; it never widens it. An
 		// empty mode (background task, older client) leaves the grant as-is.
-		Policy:         agent.ToolPolicy.Normalized().ForMode(req.Mode),
+		Policy:         policy,
 		ThinkingEffort: req.ThinkingEffort,
 		// A reply budget derived from the model, not the provider default: a
 		// reasoning model spends it on thinking first, and an unset max_tokens
@@ -242,7 +407,7 @@ func buildClient(agent *model.Agent, modelOverride string) (llm.Client, string, 
 
 	provider := agent.Provider()
 	if provider == nil {
-		return nil, "", ErrNoProvider
+		return nil, "", newNoProviderError()
 	}
 
 	client, err := llm.New(llm.Config{
@@ -260,12 +425,35 @@ func buildClient(agent *model.Agent, modelOverride string) (llm.Client, string, 
 	return client, modelID, nil
 }
 
-// ErrNoProvider is returned when an agent has no model endpoint bound.
+// errNoProvider identifies the "no provider" failure, so callers and tests can
+// recognize it regardless of the language it is rendered in.
+var errNoProvider = errors.New("built-in agent has no model provider")
+
+// noProviderError is the user-facing "no provider" failure.
 //
-// It is a hard error rather than a silent fallback: an agent that quietly ran
-// on some other endpoint would produce answers the user cannot account for.
-var ErrNoProvider = fmt.Errorf("this agent has no model provider bound; " +
-	"open its settings and choose a provider, or configure the shared summary model")
+// It is its own type rather than fmt.Errorf("%w: %s", …) on purpose: a %w wrap
+// makes the sentinel's own wording part of Error(), so users saw
+// "built-in agent has no model provider: 内置智能体还没配模型提供商…" — English
+// internal vocabulary in front of the sentence they need to read. Here Error()
+// returns ONLY the localized text, and Is() carries the identity for errors.Is.
+type noProviderError struct{ text string }
+
+func (e *noProviderError) Error() string { return e.text }
+
+func (e *noProviderError) Is(target error) bool { return target == errNoProvider }
+
+// newNoProviderError renders the failure in the current UI language.
+//
+// Rendered per call rather than stored: the language can change while the
+// server runs, and a package-level string would freeze whichever language was
+// set at startup.
+func newNoProviderError() error {
+	locale := model.Language
+	if locale == "" {
+		locale = model.DefaultLanguage
+	}
+	return &noProviderError{text: i18n.T(i18n.LocalizerForLocale(locale), "BuiltinNoProvider")}
+}
 
 // forward translates one agentcore event into ai.StreamEvent.
 //

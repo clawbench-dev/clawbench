@@ -42,7 +42,6 @@ var mcpProbeBackends = []mcpProbeBackend{
 	{ID: "hermes", Args: []string{"hermes", "acp"}, CLI: "hermes"},
 	{ID: "dsh", Args: []string{"dsh", "--profile", "acp"}, CLI: "dsh"},
 	{ID: "deepseek", Args: []string{"codewhale", "serve", "--acp"}, CLI: "codewhale"},
-	{ID: "copilot", Args: []string{"copilot", "--acp"}, CLI: "copilot"},
 	{ID: "pi", Args: []string{"npx", "-y", "pi-acp@latest"}, CLI: "pi"},
 	{ID: "antigravity", Args: []string{"agy", "acp"}, CLI: "agy"},
 	{ID: "zcode", Args: []string{"npx", "-y", "zcode-acp-server"}},

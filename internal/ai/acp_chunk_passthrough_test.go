@@ -7,6 +7,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -51,12 +52,15 @@ func codebuddyTextChunk(text, member string) acp.SessionUpdate {
 		metaKeyCodeBuddyRequestID:             "01a18c913e5c7b1f81f6c61cbd8333cb",
 	}
 	if member != "" {
-		meta[metaKeyCodeBuddyMemberEvent] = member
+		// The member-event key is read by the codebuddy attribution hook, not by
+		// this package: the frame shape is what this fixture reproduces, and the
+		// connection below is a codebuddy backend so the hook resolves it.
+		meta["codebuddy.ai/memberEvent"] = member
 	}
 	return acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Meta:      meta,
-			MessageId: &mid,
+			Meta:      acptest.Meta(meta),
+			MessageId: acptest.MsgID(mid),
 			Content:   acp.TextBlock(text),
 		},
 	}
@@ -87,8 +91,8 @@ func TestMapACPSessionUpdate_KeepsAdjacentIdenticalThoughtChunks(t *testing.T) {
 	for _, frame := range []string{"\n", "\n"} {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
-				Meta:      map[string]any{metaKeyCodeBuddyMessageID: mid, "timestamp": "1793359697100"},
-				MessageId: &mid,
+				Meta:      acptest.Meta(map[string]any{metaKeyCodeBuddyMessageID: mid, "timestamp": "1793359697100"}),
+				MessageId: acptest.MsgID(mid),
 				Content:   acp.TextBlock(frame),
 			},
 		}, ch, context.Background(), conn, nil)

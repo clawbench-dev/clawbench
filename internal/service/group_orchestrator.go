@@ -2411,9 +2411,9 @@ func (o *GroupOrchestrator) buildMemberTurnSpec(ctx context.Context, groupID str
 	project := o.project
 	agentID := ResolveAgentID(turn.MemberRowID, "")
 	backend := groupBackend(turn.MemberRowID)
-	req := BuildChatRequest(turn.Prompt, turn.MemberRowID, project, backend, agentID, "", "", "", "", resolveFileDir(project), false, o.kbOptions(turn.MemberRowID)...)
+	req := BuildChatRequest(turn.Prompt, turn.MemberRowID, project, backend, agentID, "", "", "", resolveFileDir(project), false, o.kbOptions(turn.MemberRowID)...)
 	// Fix the chat_history-derived resume signals for a member row.
-	applyMemberResumeOverrides(&req, GetExternalSessionID(turn.MemberRowID), resolveIsACP(agentID, ""))
+	applyMemberResumeOverrides(&req, GetExternalSessionID(turn.MemberRowID), resolveIsACP(agentID))
 	return TurnSpec{
 		Ctx:               ctx,
 		Mode:              ModeInteractive,

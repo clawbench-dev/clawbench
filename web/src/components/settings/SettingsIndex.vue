@@ -115,13 +115,18 @@ const { t } = useI18n()
 /**
  * Rows of the 功能 group that do NOT come from a dock plugin.
  *
- * The manager is the one page that configures every plugin, and message push /
+ * The manager is the one page that configures every plugin. 聊天会话, 会话列表
+ * and 会话索引 are settings pages of the right-pane chat (chat is not a dock
+ * entry), so they are listed explicitly right under the manager. Message push /
  * usage meter are features with a settings page but no dock entry. Everything
  * between them is derived from the plugin registry (see `DOCK_SETTINGS_PAGES`),
  * in DOCK order.
  */
 const DOCK_MODULE_ITEMS = [
   { id: 'dockPlugins', icon: LayoutGrid },
+  { id: 'chat', icon: MessageSquare },
+  { id: 'sessions', icon: MessagesSquare },
+  { id: 'rag', icon: Brain },
   ...DOCK_SETTINGS_PAGES.filter((page) => page.group === 'dockModules').map((page) => ({
     id: page.categoryId,
     icon: page.icon,
@@ -170,15 +175,6 @@ const groupDefs = [
       // 身份 first: the nickname and self-description are the context every
       // agent sees, and they are not specific to chat or group chat.
       { id: 'identity', icon: UserRound },
-      { id: 'chat', icon: MessageSquare },
-      // 会话管理 right after 聊天: it is the same subject one level up (sessions
-      // as objects, not the conversation), and separating them made users hunt
-      // for the session-list options in two places.
-      { id: 'sessions', icon: MessagesSquare },
-      // 会话索引 right after 会话管理: it is the index those sessions are
-      // searched through, so it belongs with the sessions rather than with the
-      // model services.
-      { id: 'rag', icon: Brain },
       { id: 'agents', icon: Bot },
       { id: 'skills', icon: Wand2 },
       { id: 'mcp', icon: Plug },
@@ -187,10 +183,11 @@ const groupDefs = [
   {
     // 功能: everything that configures a left-dock feature lives in one
     // group. The manager comes first (it is where those switches live), then
-    // one page per plugin in DOCK order — DERIVED from the plugin manifests, so
-    // a new plugin's settings page appears here without touching this file —
-    // then the two pages that configure a feature without owning a dock entry
-    // (message push, usage meter).
+    // the right-pane chat's own three pages, then one page per plugin in DOCK
+    // order — DERIVED from the plugin manifests, so a new plugin's settings
+    // page appears here without touching this file — then the two pages that
+    // configure a feature without owning a dock entry (message push, usage
+    // meter).
     //
     // These pages stay listed even when their plugin is hidden or switched
     // off: the user needs them to configure the feature back on.

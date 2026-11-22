@@ -151,15 +151,15 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // proceeds on the current version, "download" installs the server's version.
   versionContinue: () => { ipcRenderer.send('native:version-continue') },
   versionDownload: () => { ipcRenderer.send('native:version-download') },
-  // Fused ("all-in-one") install only: downloads and installs the whole
+  // Fused ("integrated") install only: downloads and installs the whole
   // package for `version`, then asks about restarting. `downloads` is the
   // platform-keyed map the server returned in /api/upgrade/check.
-  installFusedUpdate: (
+  installIntegratedUpdate: (
     version: string,
     downloads: Record<string, string[]>,
     checksums: Record<string, string>,
   ) =>
-    ipcRenderer.invoke('native:install-fused-update', version, downloads, checksums) as Promise<{
+    ipcRenderer.invoke('native:install-integrated-update', version, downloads, checksums) as Promise<{
       ok: boolean
       error: string
     }>,
@@ -177,11 +177,13 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   getAppVersion: () => invoke('native:get-app-version'),
   getServerList: () => invoke('native:get-server-list'),
   /**
-   * The server this build ships with (desktop "all-in-one" builds), or the
+   * The server this build ships with (desktop "integrated" builds), or the
    * JSON string "null" in a build without one. Kept out of getServerList():
    * that list is the user's own rows, which they can rename and delete.
    */
   getEmbeddedServer: () => invoke('native:get-embedded-server'),
+  /** Stop that server without quitting the app (it outlives a plain quit). */
+  stopEmbeddedServer: () => invoke('native:stop-embedded-server'),
   getSavedServerConfig: () => invoke('native:get-saved-server-config'),
   getServerUrl: () => invoke('native:get-server-url'),
   getPassword: () => invoke('native:get-password'),

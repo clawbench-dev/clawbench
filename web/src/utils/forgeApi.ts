@@ -341,10 +341,6 @@ export function fetchForgeRemotes(signal?: AbortSignal): Promise<{ remotes: Forg
     return forgeFetch('/api/forge/remotes', { signal })
 }
 
-export function testForgeConnection(): Promise<{ ok: boolean; identity?: string; error?: string; code?: string }> {
-    return forgeFetch('/api/forge/test', { method: 'POST' })
-}
-
 /**
  * Save a token for a forge host.
  *

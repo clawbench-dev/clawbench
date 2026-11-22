@@ -168,6 +168,42 @@ func TestAgents_ExposeCatalogModelsBeforeACPReport(t *testing.T) {
 	assert.Equal(t, "claude-a", body.Agents[0].CatalogModels[0].ID)
 }
 
+// A backend whose ACP adapter never reports a model list still has a static
+// catalog of its own. It must reach the settings picker (marked unconfirmed),
+// otherwise those backends show an empty picker forever — the CLI-era list is
+// gone with the CLI transport, and there is no handshake that would replace it.
+func TestAgents_ExposeStaticCatalogWhenACPReportsNone(t *testing.T) {
+	setupProvidersHandlerTest(t)
+
+	agent := &model.Agent{
+		ID: "unbound-static-agent", Name: "Kimi", Backend: "kimi",
+		Transport: "acp-stdio", AcpCommand: "kimi acp",
+		Models: []model.AgentModel{
+			{ID: "kimi-k3", Name: "Kimi K3", Default: true},
+			{ID: "kimi-k2-0711-chat", Name: "Kimi K2"},
+		},
+	}
+	require.NoError(t, service.SaveAgent(store.WriteDB(), agent))
+	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
+
+	rec := doProviderRequest(t, ServeAgents, http.MethodGet, "/api/agents", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var body struct {
+		Agents []struct {
+			Models        []any `json:"models"`
+			CatalogModels []struct {
+				ID string `json:"id"`
+			} `json:"catalogModels"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Agents, 1)
+	assert.Empty(t, body.Agents[0].Models, "the unconfirmed list must stay out of the turn's model field")
+	require.Len(t, body.Agents[0].CatalogModels, 2)
+	assert.Equal(t, "kimi-k3", body.Agents[0].CatalogModels[0].ID)
+}
+
 func TestAgents_ACPModelsWinOverCatalog(t *testing.T) {
 	setupProvidersHandlerTest(t)
 	installCatalog(t)

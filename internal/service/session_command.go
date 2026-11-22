@@ -28,14 +28,6 @@ type DingTalkSessionInfo struct {
 	Model       string
 }
 
-// FeishuSessionInfo carries session metadata for the Feishu session command feature.
-// It shares the same structure as DingTalkSessionInfo.
-type FeishuSessionInfo = DingTalkSessionInfo
-
-// WeChatSessionInfo carries session metadata for the WeChat session command feature.
-// It shares the same structure as DingTalkSessionInfo.
-type WeChatSessionInfo = DingTalkSessionInfo
-
 // FindSessionsByPrefix finds non-archived chat sessions whose ID starts with the given prefix.
 // Case-insensitive matching.
 func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
@@ -441,11 +433,10 @@ type EnqueueStartConfig struct {
 	Message     string
 	Files       []model.FileEntry
 	QueueID     string
-	// ModelID / Transport are persisted to the session so the drain loop's
-	// buildChatRequestFromQueue uses the user's choices, not agent defaults
+	// ModelID is persisted to the session so the drain loop's
+	// buildChatRequestFromQueue uses the user's choice, not the agent default
 	// (parity with the POST /api/ai/chat path).
-	ModelID   string
-	Transport string
+	ModelID string
 	// SenderClientID is the WS client id of the sending device, echoed on the
 	// queue_added event so the sender can skip its own optimistic entry.
 	SenderClientID string
@@ -485,12 +476,6 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 	if cfg.ModelID != "" {
 		if updateErr := UpdateSessionModel(cfg.SessionID, cfg.ModelID); updateErr != nil {
 			slog.Warn("enqueue: failed to persist session model",
-				slog.String("session", cfg.SessionID), slog.String("error", updateErr.Error()))
-		}
-	}
-	if cfg.Transport != "" {
-		if updateErr := UpdateSessionTransport(cfg.SessionID, cfg.Transport); updateErr != nil {
-			slog.Warn("enqueue: failed to persist session transport",
 				slog.String("session", cfg.SessionID), slog.String("error", updateErr.Error()))
 		}
 	}
@@ -696,13 +681,7 @@ func handleSessionPanic(cfg LaunchConfig, sessionID string) {
 
 // handleACPCleanup marks the ACP connection as idle after session completion.
 func handleACPCleanup(sessionID, agentID string) {
-	effectiveTransport := transportCLI
-	if t := GetSessionTransport(sessionID); t != "" {
-		effectiveTransport = t
-	} else if agent := model.GetAgent(agentID); agent != nil && agent.Transport != "" {
-		effectiveTransport = agent.Transport
-	}
-	if effectiveTransport == transportACPStdio {
+	if agent := model.GetAgent(agentID); agent != nil && agent.SupportsACP() {
 		slog.Info("acp: marking connection idle for completed session", "session_id", sessionID, "agent_id", agentID)
 		ai.GetACPConnManager().MarkIdle(sessionID)
 	}
@@ -828,7 +807,10 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	if msgID > 0 {
 		opts = append(opts, WithCurrentMessageID(msgID))
 	}
-	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files), opts...)
+	if len(cfg.Files) > 0 {
+		opts = append(opts, WithTurnFiles(cfg.Files))
+	}
+	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files), opts...)
 
 	// The one AI-turn implementation — shared with the /api/ai/chat handler and
 	// the scheduler so a fix can no longer land in only one copy.

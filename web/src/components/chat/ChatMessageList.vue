@@ -69,8 +69,23 @@
         </EmptyState>
 
         <EmptyState v-else-if="currentAgent && !isGroupSession" :title="currentAgent.name">
+          <!-- The glyph is the entry point to this agent's config page (same
+               target as the speaker avatar on a bubble and the header icon).
+               Only when the agent carries a real id: without one the page has
+               nothing to open, and a button that does nothing is worse than a
+               plain icon. -->
           <template #icon>
-            <span class="agent-welcome-icon">
+            <button
+              v-if="currentAgent.id"
+              type="button"
+              class="agent-welcome-icon agent-welcome-icon-btn"
+              :title="t('session.configAgent')"
+              :aria-label="t('session.configAgent')"
+              @click="emit('open-agent-config', currentAgent.id)"
+            >
+              <AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" size="xxl" />
+            </button>
+            <span v-else class="agent-welcome-icon">
               <AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" size="xxl" />
             </span>
           </template>
@@ -2256,6 +2271,24 @@ defineExpose({
   justify-content: center;
   background: var(--bg-tertiary);
   border-radius: var(--radius-md);
+}
+
+/* Same tile, made a button (opens the agent's config page). The tile keeps its
+   geometry — only the affordances are added, so the empty state looks identical
+   whether or not the agent id can be resolved. */
+.agent-welcome-icon-btn {
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  transition: background var(--duration-base);
+}
+@media (hover: hover) {
+  .agent-welcome-icon-btn:hover {
+    background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+  }
+}
+.agent-welcome-icon-btn:active {
+  opacity: 0.7;
 }
 
 .agent-welcome-specialty {

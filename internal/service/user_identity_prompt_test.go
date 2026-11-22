@@ -86,7 +86,7 @@ func TestResolveAgentConfig_InjectsUserIdentity(t *testing.T) {
 	t.Cleanup(func() { model.Agents = origAgents })
 	setUserIdentity(t, "老板", "做后端，偏好简洁回答")
 
-	systemPrompt, _, _, _, _ := resolveAgentConfig("identity-agent", "", "", "", "", "", false)
+	systemPrompt, _, _, _ := resolveAgentConfig("identity-agent", "", "", "", "", "", false)
 
 	assert.Contains(t, systemPrompt, "BASE PROMPT")
 	assert.Contains(t, systemPrompt, "## About the User")
@@ -175,7 +175,7 @@ func TestBuildChatRequest_UserIdentityFollowsInjectionPoint(t *testing.T) {
 	setUserIdentity(t, "老板", "做后端，偏好简洁回答")
 
 	// New session: the system prompt is sent, so the identity lives there.
-	fresh := BuildChatRequest("hello", "sess-identity-new", "/proj", "codebuddy", "identity-agent", "", "", "", "", "/proj", false)
+	fresh := BuildChatRequest("hello", "sess-identity-new", "/proj", "codebuddy", "identity-agent", "", "", "", "/proj", false)
 	assert.Contains(t, fresh.SystemPrompt, "## About the User")
 	assert.NotContains(t, fresh.Prompt, "## About the User",
 		"the prompt must not duplicate what the system prompt already carries")
@@ -197,7 +197,7 @@ func TestBuildChatRequest_UserIdentityFollowsInjectionPoint(t *testing.T) {
 	}
 
 	seedResumable("sess-identity-resume")
-	resumed := BuildChatRequest("hello", "sess-identity-resume", "/proj", "codebuddy", "identity-agent", "", "", "", "", "/proj", true)
+	resumed := BuildChatRequest("hello", "sess-identity-resume", "/proj", "codebuddy", "identity-agent", "", "", "", "/proj", true)
 	require.True(t, resumed.Resume)
 	assert.True(t, strings.HasPrefix(resumed.Prompt, "## About the User"),
 		"a resumed turn must carry the identity in the prompt, got %q", resumed.Prompt)
@@ -207,7 +207,7 @@ func TestBuildChatRequest_UserIdentityFollowsInjectionPoint(t *testing.T) {
 	// Slash commands must keep their leading "/" or the ACP dispatcher will
 	// route them to the LLM instead of the command executor.
 	seedResumable("sess-identity-slash")
-	slash := BuildChatRequest("/compact", "sess-identity-slash", "/proj", "codebuddy", "identity-agent", "", "", "", "", "/proj", true)
+	slash := BuildChatRequest("/compact", "sess-identity-slash", "/proj", "codebuddy", "identity-agent", "", "", "", "/proj", true)
 	require.True(t, slash.Resume, "the slash-command case must actually exercise the resumed path")
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(slash.Prompt), "/compact"),
 		"a slash command must not be prefixed, got %q", slash.Prompt)

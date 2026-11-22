@@ -655,9 +655,8 @@ func TestServeAISessionUpdate_CookieSessionIDFallback(t *testing.T) {
 // --- AIChat: modelListState carries the resolved list ---
 //
 // GET /api/ai/chat must ship the same model-state shape as GET /api/agents: the
-// raw ACP list (models) plus the CLI list (cliModels) and the resolved list
-// (resolvedModels). The frontend renders resolvedModels directly instead of
-// merging the two halves itself.
+// raw ACP list (models) plus the resolved list (resolvedModels). The frontend
+// renders resolvedModels directly instead of merging two halves itself.
 //
 // Regression guard: this endpoint previously returned the raw ACP list only, so a
 // client that consumed just modelListState.models lost every CLI model — and a
@@ -717,35 +716,28 @@ func TestAIChat_NewSession_ModelListStateCarriesResolvedList(t *testing.T) {
 	}
 	assert.Contains(t, ids, "auto")
 	assert.Contains(t, ids, "deepseek-v4-flash")
-
-	// The CLI list is shipped untouched for the CLI transport view.
-	require.Len(t, resp.ModelListState.CLIModels, 2)
-	assert.Equal(t, "cli-only", resp.ModelListState.CLIModels[0].ID)
 }
 
-// A CLI session must NOT be served ACP model state at all — the branch is gated
-// on transport != "cli". Negative half of the contract above.
-func TestAIChat_CLISession_OmitsModelListState(t *testing.T) {
+// The built-in agent has no ACP connection, so it must not be served ACP model
+// state — its model list comes from the agent row itself.
+func TestAIChat_InProcessAgent_OmitsModelListState(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	const agentID = "acp-model-list-cli-agent"
+	const agentID = "builtin-model-list-agent"
 	agent := &model.Agent{
-		ID:         agentID,
-		Name:       "CLI Session Agent",
-		Backend:    "acp-model-list-cli",
-		Transport:  "acp-stdio",
-		AcpCommand: "acp-model-list-cli --acp",
-		Models:     []model.AgentModel{{ID: "cli-only", Name: "CLI Only", Default: true}},
+		ID:             agentID,
+		Name:           "Builtin Agent",
+		Backend:        "builtin",
+		BuiltinBackend: true,
+		Transport:      "cli",
+		Models:         []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
 	}
 	model.Agents[agentID] = agent
 	model.AgentList = append(model.AgentList, agent)
 
-	ai.GetAgentCapabilityRegistry().UpdateModels(agentID, []model.AgentModel{{ID: "auto", Name: "Auto"}})
-
-	sessionID, err := service.CreateSession(env.ProjectDir, agent.Backend, "CLI", agentID, "", "default", "chat")
+	sessionID, err := service.CreateSession(env.ProjectDir, agent.Backend, "Builtin", agentID, "", "default", "chat")
 	require.NoError(t, err)
-	require.NoError(t, service.UpdateSessionTransport(sessionID, "cli"))
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -755,7 +747,7 @@ func TestAIChat_CLISession_OmitsModelListState(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Nil(t, resp["modelListState"], "CLI sessions must not receive ACP model state")
+	assert.Nil(t, resp["modelListState"], "the built-in agent has no ACP state to ship")
 }
 
 // With no CLI list to resolve against, the raw ACP state must still be delivered

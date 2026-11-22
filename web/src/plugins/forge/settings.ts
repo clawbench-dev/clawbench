@@ -1,5 +1,8 @@
 import type { CategoryEntry } from '@/components/settings/settingsFieldMap'
 
+/** Settings category id (the plugin's directory is `forge`). */
+export const category = 'forgeIntegration'
+
 /**
  * Settings fields for this plugin's own settings page (`forgeIntegration`).
  *
@@ -32,7 +35,9 @@ export default [
     { type: 'item', spec: { labelKey: 'settings.items.featureStatusForge', descriptionKey: 'settings.items.forgePlatformsDesc', key: 'forgeStatus', type: 'info', source: 'server', statusFeature: 'forge.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
     // Credentials row is a dedicated component (tokens are write-only; the
     // server never returns them, so a plain text field cannot round-trip).
-    { type: 'item', spec: { labelKey: 'settings.items.forgeCredentials', descriptionKey: 'settings.items.forgeCredentialsDesc', key: 'forgeCredentials', type: 'info', source: 'server', sectionHeader: 'settings.items.forgeSection' } },
+    // Declaring it as the card body keeps the component choice in this file —
+    // the settings module only knows there is a body, not which one.
+    { type: 'item', spec: { labelKey: 'settings.items.forgeCredentials', descriptionKey: 'settings.items.forgeCredentialsDesc', key: 'forgeCredentials', type: 'info', source: 'server', sectionHeader: 'settings.items.forgeSection', cardBody: { load: () => import('@/components/settings/ForgeCredentialsRow.vue'), descriptionKey: 'settings.items.forgeCredentialsDesc' } } },
     { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyOpened', descriptionKey: 'settings.items.forgeNotifyOpenedDesc', key: 'forge.notify.opened', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyClosed', descriptionKey: 'settings.items.forgeNotifyClosedDesc', key: 'forge.notify.closed', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyMerged', descriptionKey: 'settings.items.forgeNotifyMergedDesc', key: 'forge.notify.merged', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },

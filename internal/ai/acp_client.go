@@ -38,6 +38,7 @@ type pendingPermission struct {
 type ClawBenchACPClient struct {
 	mu                sync.Mutex
 	sessionRoutes     map[string]chan<- StreamEvent // acpSessionID → streamCh
+	commandReplies    map[string]*asyncCommandReply // enabled by the Antigravity handshake
 	commands          []acp.AvailableCommand        // cached from available_commands_update
 	pendingPermission map[string]*pendingPermission // PermissionKey → pending request
 	// pendingElicitations tracks blocking `elicitation/create` requests (see
@@ -107,13 +108,13 @@ type ClawBenchACPClient struct {
 	termSeq   atomic.Int64                // auto-increment ID for terminal IDs
 
 	// extensionUpdateHandler, when set, receives session/update variants the
-	// SDK's typed union misclassifies (see acp_raw_notification.go). Guarded by
-	// mu. Nil by default: reading a variant is a backend concern, wired per
-	// connection after the client is created.
+	// SDK cannot decode (see acp_ext.go). Guarded by mu. Nil by default:
+	// reading a variant is a backend concern, wired per connection after the
+	// client is created.
 	extensionUpdateHandler func(ExtensionUpdate)
 	// extensionNotificationHandler, when set, receives custom agent→client
-	// notification methods the SDK does not dispatch (see
-	// acp_raw_notification.go). Guarded by mu, nil by default.
+	// notification methods the SDK does not dispatch (see acp_ext.go).
+	// Guarded by mu, nil by default.
 	extensionNotificationHandler func(ExtensionNotification)
 }
 
@@ -194,6 +195,7 @@ func (c *ClawBenchACPClient) UnregisterSession(acpSessionID string) {
 		return
 	}
 	delete(c.sessionRoutes, acpSessionID)
+	delete(c.commandReplies, acpSessionID)
 
 	// A question still waiting on the user belongs to the turn that just
 	// ended. Leaving it blocked would keep the handler alive and
@@ -337,9 +339,9 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	// be parsed into a known struct (e.g. `tool_call_pending` with toolCallId +
 	// title becomes ToolCall) with every payload field wrong. The original name
 	// survives in the variant's SessionUpdate field, so detect the mismatch and
-	// ignore it here — the raw notification path handles these (see
-	// acp_raw_notification.go). Without this the branch below would emit a bogus
-	// tool_use for a frame that is not a tool call at all.
+	// ignore it here — the SDK's unhandled hook handles these (see acp_ext.go).
+	// Without this the branch below would emit a bogus tool_use for a frame that
+	// is not a tool call at all.
 	if sessionUpdateVariantMismatch(n.Update) {
 		return nil
 	}
@@ -381,7 +383,8 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 		// Record the end marker so the load handler can stop waiting as soon as
 		// the replay is genuinely complete (see ReplayEndSeen).
 		if n.Update.SessionInfoUpdate != nil {
-			if metaString(n.Update.SessionInfoUpdate.Meta[metaKeyCodeBuddyHistoryReplay]) == "end" {
+			replayMeta, _ := n.Update.SessionInfoUpdate.Meta.Value()
+			if metaStringOf(replayMeta, metaKeyCodeBuddyHistoryReplay) == "end" {
 				c.replayEndSeen.Store(true)
 			}
 		}
@@ -396,7 +399,7 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	// registered and the lookup below would drop the whole turn. Open a route
 	// for it first — see acp_background_turn.go and issue #644.
 	if n.Update.SessionInfoUpdate != nil {
-		if reqID, isBackgroundTurn := codeBuddyUnsolicitedTurn(n.Update.SessionInfoUpdate.Meta); isBackgroundTurn {
+		if reqID, isBackgroundTurn := codeBuddyUnsolicitedTurn(PatchMetaAny(n.Update.SessionInfoUpdate.Meta)); isBackgroundTurn {
 			c.adoptBackgroundTurn(string(n.SessionId), reqID)
 		}
 	}
@@ -404,6 +407,7 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	c.mu.Lock()
 	ch, ok := c.sessionRoutes[string(n.SessionId)]
 	deb := c.debouncers[string(n.SessionId)]
+	reply := c.commandReplies[string(n.SessionId)]
 	c.mu.Unlock()
 
 	if !ok {
@@ -437,17 +441,26 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	c.cacheToolInput(n.SessionId, n.Update)
 
 	mapACPSessionUpdate(n.Update, ch, ctx, c.connRef, deb)
+	// Signal only after the final frame has been forwarded to the stream.
+	if reply != nil {
+		reply.observe(n.Update)
+	}
 	return nil
 }
 
-// maybeCloseAdoptedTurn handles CodeBuddy's non-standard `session_end` frame for
-// a turn the agent started on its own (background_drain).
+// maybeCloseAdoptedTurn is the LEGACY path for CodeBuddy's non-standard
+// `session_end` frame — kept only for SDK releases that re-type unknown
+// discriminators into SessionInfoUpdate (v0.13.5 did). Since schema 1.32 the
+// union rejects the frame at decode time, so this never fires and the real
+// handling lives in the SDK's unhandled hook: dispatchSessionUpdateVariant in
+// acp_ext.go, which reads the discriminator from the raw params.
 //
-// The SDK re-types that frame as a SessionInfoUpdate with its payload dropped,
-// so the discriminator is read from the typed struct here — on the SAME
-// goroutine that delivers the turn's content, which is what keeps the terminal
-// event ordered after every frame. (Reading it from the raw stdout tee instead
-// would let it overtake frames still queued in the SDK and truncate the reply.)
+// Do NOT rely on this function for the background_drain turn: it is a backstop
+// for an SDK downgrade, not the live path.
+//
+// It reads the variant from the typed struct on the same goroutine that
+// delivers the turn's content, which is what would keep the terminal event
+// ordered after every frame.
 //
 // Reports whether the frame closed an adopted turn; a user turn's session_end
 // returns false and keeps its existing handling.
@@ -570,10 +583,12 @@ func (c *ClawBenchACPClient) cacheToolInput(sessionID acp.SessionId, update acp.
 	switch {
 	case update.ToolCall != nil:
 		toolCallID = string(update.ToolCall.ToolCallId)
-		rawInput = update.ToolCall.RawInput
+		rawInput = rawJSONValue(update.ToolCall.RawInput)
 	case update.ToolCallUpdate != nil:
 		toolCallID = string(update.ToolCallUpdate.ToolCallId)
-		rawInput = update.ToolCallUpdate.RawInput
+		if raw, ok := update.ToolCallUpdate.RawInput.Value(); ok {
+			rawInput = rawJSONValue(raw)
+		}
 	default:
 		return
 	}
@@ -614,18 +629,12 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 	key := PermissionKey(sessionID, toolCallID)
 
 	// Extract tool info for the frontend card
-	var title string
-	if p.ToolCall.Title != nil {
-		title = *p.ToolCall.Title
-	}
-	var kind acp.ToolKind
-	if p.ToolCall.Kind != nil {
-		kind = *p.ToolCall.Kind
-	}
+	title, _ := p.ToolCall.Title.Value()
+	kind, _ := p.ToolCall.Kind.Value()
 	toolName := extractToolName(title, kind, "")
 	var toolInput string
-	if p.ToolCall.RawInput != nil {
-		if b, err := json.Marshal(p.ToolCall.RawInput); err == nil {
+	if rawInput, ok := p.ToolCall.RawInput.Value(); ok {
+		if b, err := json.Marshal(rawInput); err == nil {
 			toolInput = string(b)
 		}
 	}
@@ -686,7 +695,11 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 	// stamps the member on the toolCall's _meta (NOT the request's). Without it
 	// concurrent members' approval cards are indistinguishable.
 	// See docs/dev/codebuddy_acp_team_integration.md §1.5.
-	if member := permissionMemberAttribution(p.ToolCall.Meta); member != nil {
+	backendID := ""
+	if c.connRef != nil {
+		backendID = c.connRef.BackendID()
+	}
+	if member := permissionAttribution(backendID, PatchMetaAny(p.ToolCall.Meta)); member != nil {
 		approvalInput["teamMember"] = member
 	}
 
@@ -925,14 +938,14 @@ func (c *ClawBenchACPClient) ReadTextFile(_ context.Context, p acp.ReadTextFileR
 		lines := strings.Split(content, "\n")
 		start := 0
 		if p.Line != nil && *p.Line > 0 {
-			start = *p.Line - 1
+			start = int(*p.Line - 1)
 			if start > len(lines) {
 				start = len(lines)
 			}
 		}
 		end := len(lines)
-		if p.Limit != nil && *p.Limit > 0 && start+*p.Limit < end {
-			end = start + *p.Limit
+		if p.Limit != nil && *p.Limit > 0 && start+int(*p.Limit) < end {
+			end = start + int(*p.Limit)
 		}
 		content = strings.Join(lines[start:end], "\n")
 	}

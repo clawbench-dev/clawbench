@@ -48,17 +48,14 @@ func parseACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
 		ID: string(tcu.ToolCallId),
 	}
 
-	ai.MapToolCallStatus(tcu.Status, tool)
+	ai.MapToolCallStatus(tcu.Status.Ptr(), tool)
 
 	// Name from toolCallId prefix or title
 	if !tool.Done {
-		title := ""
-		if tcu.Title != nil {
-			title = *tcu.Title
-		}
-		kind := acp.ToolKindOther
-		if tcu.Kind != nil {
-			kind = *tcu.Kind
+		title, _ := tcu.Title.Value()
+		kind, ok := tcu.Kind.Value()
+		if !ok {
+			kind = acp.ToolKindOther
 		}
 		if title != "" {
 			if tool.Name == "" || tool.Name == strings.ToLower(tool.Name) {

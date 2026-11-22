@@ -1,5 +1,8 @@
 import type { CategoryEntry } from '@/components/settings/settingsFieldMap'
 
+/** Settings category id (the plugin's directory is `browse`). */
+export const category = 'files'
+
 /**
  * Settings fields for this plugin's own settings page (`files`).
  *

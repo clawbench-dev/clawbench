@@ -144,13 +144,6 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
    */
   type Mode = 'idle' | 'splash' | 'gate'
   let mode: Mode = 'idle'
-  /**
-   * Set by EVERY `dismiss()` call, including ones that arrive while the gate is
-   * up. Without it, a dismiss that lands during the gate would be lost: after
-   * the gate closes the overlay would stay hidden only by accident, and a
-   * subsequent `show()` could not tell whether the app was already done.
-   */
-  let dismissRequested = false
   /** A gate requested before the overlay page was ready, replayed on load. */
   let pendingMismatch: GateOverlayInfo | null = null
 
@@ -280,9 +273,6 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
   }
 
   function dismiss(): void {
-    // Record the request even when the gate defers it: the app HAS finished
-    // booting, and once the gate closes the overlay must not reappear.
-    dismissRequested = true
     // While the gate is up the app finishes booting behind it; hiding here would
     // reveal the very app the gate exists to hold back. `continueGate()` does
     // the hiding instead.
@@ -422,7 +412,6 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
     // fire mid-way through this show and hide the overlay again.
     cancelTimers()
     mode = 'splash'
-    dismissRequested = false
     visible = true
     syncBounds()
     view.setVisible(true)
@@ -497,7 +486,6 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
     continueGate(): void {
       if (mode !== 'gate') return
       mode = 'idle'
-      dismissRequested = false
       // Unconditional: the gate is the thing being dismissed, so it must come
       // down even though the app's own dismiss was deferred while it was up.
       if (isAlive()) fadeOut()

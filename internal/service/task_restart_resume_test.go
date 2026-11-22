@@ -544,3 +544,25 @@ func TestStartTaskRestartResume_SkippedWhileTasksDisabled(t *testing.T) {
 	assert.Zero(t, flag, "the restart marker must be cleared so a later enable does not replay it")
 	assert.Empty(t, backend.lastPrompt(), "no turn may run while tasks are disabled")
 }
+
+// An agent with an empty backend must NOT be resumed under a guessed backend.
+//
+// The previous fallback was a literal "codebuddy": the resumed turn then ran on
+// an unrelated backend and every message it wrote was filed under that name, so
+// the resulting breakage looked like a codebuddy defect instead of bad agent
+// data. The resume now stops, marks the execution failed and says why.
+func TestResumeExecution_EmptyBackendAborts(t *testing.T) {
+	backend := newResumeBackend()
+	s, _, _, execID := seedInterruptedExecution(t, backend, "active")
+
+	model.Agents["test-agent"].Backend = ""
+
+	err := s.resumeExecution(execID)
+	require.Error(t, err, "an agent with no backend must abort the resume")
+	assert.Contains(t, err.Error(), "has no backend")
+
+	status, _ := executionRow(t, execID)
+	assert.Equal(t, statusFailed, status,
+		"the row must not be left claiming to be running after an aborted resume")
+	assert.Empty(t, backend.lastPrompt(), "no turn may run without a backend to run it on")
+}

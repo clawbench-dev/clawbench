@@ -58,7 +58,6 @@ const currentSessionType = ref('')
 export const currentAgentId = ref('')
 export const currentModelId = ref('')
 const currentModelName = ref('')
-const currentTransport = ref('') // 'acp-stdio' or 'cli'
 const autoApprove = ref(false)
 // Auto-cruise switch for the CURRENT session (single chat AND group). Server
 // truth lives in chat_sessions.context_state's `cruise` key; this ref mirrors it
@@ -90,6 +89,8 @@ export interface ExtraConfigOption {
   name?: string
   description?: string
   category: string
+  /** "select" (default) or "boolean". Boolean options have no values. */
+  type?: 'select' | 'boolean'
   currentValueId?: string
   values?: Array<{ id: string; name?: string }>
 }
@@ -278,7 +279,7 @@ export function getSessionTitle(): string {
 registerSessionIdRef(currentSessionId)
 
 /** Clear session identity refs for a session switch — resets all displayed
- *  state (agent/model/mode/transport/usage) but keeps action callbacks and
+ *  state (agent/model/mode/usage) but keeps action callbacks and
  *  the session drawer intact. Use resetIdentity() for full teardown (project
  *  switch). Optionally sets currentSessionId to the upcoming session ID so
  *  per-session computed refs (usage) switch instantly. */
@@ -289,7 +290,6 @@ export function clearSessionIdentity(upcomingSessionId?: string): void {
   currentAgentId.value = ''
   currentModelId.value = ''
   currentModelName.value = ''
-  currentTransport.value = ''
   autoApprove.value = false
   cruise.value = false
   modeState.clear()
@@ -306,7 +306,6 @@ export function resetIdentity(): void {
   currentAgentId.value = ''
   currentModelId.value = ''
   currentModelName.value = ''
-  currentTransport.value = ''
   autoApprove.value = false
   cruise.value = false
   modeState.clear()
@@ -932,14 +931,6 @@ export async function initSessionFromAPI(preferredSessionId?: string | null) {
         // Initialize thinking effort: from ACP state or agent preference
         thinkingEffortState.clear()
         thinkingEffortState.syncAndFallback(data.thinkingEffortState?.currentId || '', data.thinkingEffortState?.availableLevels || [], data.agentId || '', data.modelId || '')
-        // Initialize transport from agent's transport field
-        if (data.transport) {
-          currentTransport.value = data.transport
-        } else {
-          // Fall back to agent's stored transport
-          const agent = agentsApi.getAgent(data.agentId || '')
-          currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : 'cli')
-        }
         // Initialize autoApprove from server state
         if (data.autoApprove !== undefined) {
           autoApprove.value = data.autoApprove
@@ -1227,7 +1218,9 @@ export function useSessionIdentity() {
       const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, queueId, filePaths, files: allFiles, agentId: createdSession ? undefined : (currentAgentId.value || undefined), modelId: createdSession ? undefined : (currentModelId.value || undefined), transport: createdSession ? undefined : (currentTransport.value || undefined), clientId: localStorage.getItem('clawbench_client_id') || undefined }),
+        // No `transport`: the agent's ACP command decides the path, so the
+        // queue endpoint has no such field and would ignore it.
+        body: JSON.stringify({ message: text, queueId, filePaths, files: allFiles, agentId: createdSession ? undefined : (currentAgentId.value || undefined), modelId: createdSession ? undefined : (currentModelId.value || undefined), clientId: localStorage.getItem('clawbench_client_id') || undefined }),
       })
       if (resp.ok) {
         // Delivered — drop the batch so it is not sent again on the next message.
@@ -1304,7 +1297,6 @@ export function useSessionIdentity() {
     currentThinkingEffortName,
     currentModeId,
     currentModeName,
-    currentTransport,
     autoApprove,
     cruise,
     availableModes,

@@ -40,7 +40,7 @@ func TestBuiltinAgentAvailable_ReportsWhyNot(t *testing.T) {
 	}{
 		{name: "absent", agent: nil, want: "not installed"},
 		{name: "disabled", agent: &model.Agent{ID: BuiltinAgentID, Disabled: true}, want: "disabled"},
-		{name: "no provider", agent: &model.Agent{ID: BuiltinAgentID}, want: "no model provider bound"},
+		{name: "no provider", agent: &model.Agent{ID: BuiltinAgentID}, want: "模型提供商"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

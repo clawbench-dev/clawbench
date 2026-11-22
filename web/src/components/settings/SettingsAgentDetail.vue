@@ -62,9 +62,60 @@
         />
       </template>
     </SettingsCard>
+    <!-- Tool grant. Only meaningful for the built-in backend, whose tools are
+         ClawBench's own; an external CLI ships its tools and ignores this. -->
+    <SettingsCard v-if="isBuiltinBackend" :title="t('settings.items.toolPolicySection')">
+      <AgentToolPolicySection :agent="agent ?? null" />
+    </SettingsCard>
+
+    <!-- MCP enable policy. A dedicated block rather than a SettingsItem: the
+         control is a three-way mode plus a per-server checklist, which the
+         generic row types cannot express. Shown for every backend, including
+         the built-in agent, which has its own MCP client. -->
+    <SettingsCard :title="t('settings.items.mcpAgentSection')">
+      <AgentMCPSection :agent="agent ?? null" />
+    </SettingsCard>
+
+    <!-- Copy / install / disable / delete on the same row -->
+    <div class="settings-agent-detail__actions">
+      <button class="fbtn settings-agent-detail__action-btn" @click="startCopy">
+        <Copy :size="16" class="settings-agent-detail__action-icon" />
+        <span>{{ t('settings.items.agentCopy') }}</span>
+      </button>
+      <!-- One-click install / reinstall. Same command the welcome panel runs
+           (the server owns it), so this is the "reinstall or upgrade" path for
+           an agent that is already detected but broken or out of date. Hidden
+           when the backend ships no installer. -->
+      <button
+        v-if="agent?.installCmd"
+        class="fbtn settings-agent-detail__action-btn"
+        data-action="agent-install"
+        @click="installDialogOpen = true"
+      >
+        <PackagePlus :size="16" class="settings-agent-detail__action-icon" />
+        <span>{{ t('settings.items.agentInstall') }}</span>
+      </button>
+      <!-- Disable / enable toggle. The default agent cannot be disabled (the
+           backend refuses it too), so its button is inert with a tooltip. -->
+      <button
+        class="fbtn settings-agent-detail__action-btn"
+        :disabled="isDefaultAgentValue"
+        :title="isDefaultAgentValue ? t('settings.items.agentCannotDisableDefault') : undefined"
+        @click="handleToggleDisabled"
+      >
+        <component :is="agent?.disabled ? Play : Ban" :size="16" class="settings-agent-detail__action-icon" />
+        <span>{{ agent?.disabled ? t('settings.items.agentEnable') : t('settings.items.agentDisable') }}</span>
+      </button>
+      <button class="fbtn fbtn-danger settings-agent-detail__delete-btn" @click="handleDelete">
+        <Trash2 :size="16" class="settings-agent-detail__delete-icon" />
+        <span>{{ t('settings.items.agentDelete') }}</span>
+      </button>
+    </div>
     <!-- Integration self-test. Runs the backend's checks against this agent's
          real configuration and prints one row per check, so a broken setup is
-         diagnosable without reading server logs. -->
+         diagnosable without reading server logs. Deliberately last: it is a
+         diagnostic, not a configuration group, and sitting above the tool /
+         MCP cards made it read as their heading. -->
     <div class="settings-agent-detail__selftest">
       <div class="settings-agent-detail__selftest-actions">
         <button
@@ -136,55 +187,6 @@
           </li>
         </ul>
       </div>
-    </div>
-    <!-- Tool grant. Only meaningful for the built-in backend, whose tools are
-         ClawBench's own; an external CLI ships its tools and ignores this. -->
-    <SettingsCard v-if="isBuiltinBackend" :title="t('settings.items.toolPolicySection')">
-      <AgentToolPolicySection :agent="agent ?? null" />
-    </SettingsCard>
-
-    <!-- MCP enable policy. A dedicated block rather than a SettingsItem: the
-         control is a three-way mode plus a per-server checklist, which the
-         generic row types cannot express. Hidden for the built-in agent: it has
-         no MCP client at all, so every option here would be inert. -->
-    <SettingsCard v-if="!isBuiltinBackend" :title="t('settings.items.mcpAgentSection')">
-      <AgentMCPSection :agent="agent ?? null" />
-    </SettingsCard>
-
-    <!-- Copy / install / disable / delete on the same row -->
-    <div class="settings-agent-detail__actions">
-      <button class="fbtn settings-agent-detail__action-btn" @click="startCopy">
-        <Copy :size="16" class="settings-agent-detail__action-icon" />
-        <span>{{ t('settings.items.agentCopy') }}</span>
-      </button>
-      <!-- One-click install / reinstall. Same command the welcome panel runs
-           (the server owns it), so this is the "reinstall or upgrade" path for
-           an agent that is already detected but broken or out of date. Hidden
-           when the backend ships no installer. -->
-      <button
-        v-if="agent?.installCmd"
-        class="fbtn settings-agent-detail__action-btn"
-        data-action="agent-install"
-        @click="installDialogOpen = true"
-      >
-        <PackagePlus :size="16" class="settings-agent-detail__action-icon" />
-        <span>{{ t('settings.items.agentInstall') }}</span>
-      </button>
-      <!-- Disable / enable toggle. The default agent cannot be disabled (the
-           backend refuses it too), so its button is inert with a tooltip. -->
-      <button
-        class="fbtn settings-agent-detail__action-btn"
-        :disabled="isDefaultAgentValue"
-        :title="isDefaultAgentValue ? t('settings.items.agentCannotDisableDefault') : undefined"
-        @click="handleToggleDisabled"
-      >
-        <component :is="agent?.disabled ? Play : Ban" :size="16" class="settings-agent-detail__action-icon" />
-        <span>{{ agent?.disabled ? t('settings.items.agentEnable') : t('settings.items.agentDisable') }}</span>
-      </button>
-      <button class="fbtn fbtn-danger settings-agent-detail__delete-btn" @click="handleDelete">
-        <Trash2 :size="16" class="settings-agent-detail__delete-icon" />
-        <span>{{ t('settings.items.agentDelete') }}</span>
-      </button>
     </div>
     <CopyAgentDialog
       :open="copying"
@@ -265,7 +267,7 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const selfTest = useAgentSelfTest()
-const { loadAgents, getAgent, agentsLoaded, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP, getAgentAvailableModes } = useAgents()
+const { loadAgents, getAgent, agentsLoaded, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentAvailableModes } = useAgents()
 const activeKey = ref<string | null>(null)
 const copying = ref(false)
 
@@ -323,17 +325,9 @@ const isDefaultAgentValue = computed(() => agent.value?.id === defaultAgentId.va
 // missing — the list starts empty, so before the fetch lands every id is absent.
 const agentMissing = computed(() => !agent.value && agentsLoaded.value)
 
-// Determine if agent is ACP-only (has acpCommand but no CLI backend implementation)
-const isACPOnly = computed(() => {
-  const a = agent.value
-  if (!a) return false
-  return a.acpCommand && !a.supportsCLI
-})
-
 // A user-defined ACP agent (issue #557). Its backend has no registry entry, so
-// `supportsCLI` is false and every capability comes from the agent at runtime —
-// the same shape as an ACP-only built-in, which is why it needs no special
-// handling beyond keeping the command field editable when it is empty.
+// every capability comes from the agent at runtime, which is why it needs no
+// special handling beyond keeping the command field editable when it is empty.
 const isCustomAcpAgent = computed(() => agent.value?.backend === 'custom-acp')
 
 /**
@@ -349,16 +343,20 @@ const hasBackendSpec = computed(() => agent.value?.backendHasSpec === true)
  * Whether this agent's tools are ClawBench's own (the built-in backend).
  *
  * The server computes the flag so this page never matches on a backend id: a
- * built-in agent has no CLI command, no install command and no MCP client, so
- * every one of those fields would be an inert control that looks editable.
+ * built-in agent has no CLI command and no install command, so those fields
+ * would be inert controls that look editable. (MCP is different: the built-in
+ * agent has its own MCP client, so that section is shown for every backend.)
  */
 const isBuiltinBackend = computed(() => agent.value?.builtinBackend === true)
 
-// Determine if agent supports both ACP and CLI (dual transport)
-const isDualTransport = computed(() => {
+/**
+ * Whether this agent runs over ACP — true for everything except the built-in
+ * agent, whose tools are this process. ACP agents own their system prompt, so
+ * the page shows it read-only for them.
+ */
+const agentUsesACP = computed(() => {
   const a = agent.value
-  if (!a) return false
-  return a.acpCommand && a.supportsCLI !== false
+  return !!a && !a.builtinBackend && !!a.acpCommand
 })
 
 interface AgentItem {
@@ -439,8 +437,9 @@ const items = computed<AgentItem[]>(() => {
     patchField: 'specialty',
   })
 
-  // System Prompt: editable for CLI/dual agents, read-only info for ACP-only.
-  if (isACPOnly.value) {
+  // System Prompt: editable for the in-process agent, read-only info for ACP
+  // agents (which own their system prompt).
+  if (agentUsesACP.value) {
     result.push({
       key: 'custom_system_prompt',
       label: t('settings.items.agentSystemPrompt'),
@@ -575,20 +574,6 @@ const items = computed<AgentItem[]>(() => {
     })
   }
 
-  // Transport (only for dual-transport agents — both ACP and CLI supported)
-  if (isDualTransport.value) {
-    result.push({
-      key: 'transport',
-      label: t('settings.items.agentTransport'),
-      type: 'select',
-      options: [
-        { label: 'CLI', value: 'cli' },
-        { label: 'ACP-stdio', value: 'acp-stdio' },
-      ],
-      patchField: 'transport',
-    })
-  }
-
   // Preferred Mode. ACP agents advertise their modes at session/new; the
   // built-in agent's modes are fixed by the build. Both arrive through the same
   // acpStates cache, so the picker is driven by "what the server reported",
@@ -636,14 +621,6 @@ const items = computed<AgentItem[]>(() => {
     type: 'info',
   })
 
-  if (a.command) {
-    result.push({
-      key: 'command',
-      label: t('settings.items.agentCommand'),
-      type: 'info',
-    })
-  }
-
   const modelCount = a.models?.length ?? 0
   result.push({
     key: 'models_count',
@@ -678,7 +655,7 @@ const items = computed<AgentItem[]>(() => {
   //
   // For a spec-backed agent the field is read-only on purpose. Discovery owns
   // `acp_command` there — model.RefreshAgents' syncAgentInfrastructure does
-  // `UPDATE agents SET acp_command = <spec>, transport = ... WHERE backend = ?`
+  // `UPDATE agents SET acp_command = <spec> WHERE backend = ?`
   // — so any edit a user made would be silently reverted on the next startup or
   // "Rescan", including a deliberate clear. Offering an input that quietly
   // undoes itself is worse than showing the effective value.
@@ -743,8 +720,6 @@ function getItemValue(item: AgentItem): unknown {
       return a.providerId ?? ''
     case 'preferred_mode':
       return a.preferredMode || ''
-    case 'transport':
-      return a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
     case 'auto_approve':
       return !!a.autoApprove
     case 'project_scope':
@@ -761,8 +736,6 @@ function getItemValue(item: AgentItem): unknown {
       return a.customSystemPrompt || ''
     case 'backend':
       return a.backend || ''
-    case 'command':
-      return a.command || ''
     case 'acp_command':
       return a.acpCommand || ''
     default:
@@ -850,21 +823,6 @@ async function handleUpdate(item: AgentItem, value: unknown) {
 
   try {
     await patchAgentField(props.agentId, item.patchField, value as string | number | boolean | null)
-    // When changing transport, clear preferred thinking effort if it's no longer valid
-    if (item.patchField === 'transport') {
-      const newTransport = value as string
-      const a = getAgent(props.agentId)
-      const currentPref = a?.preferredThinkingEffort || ''
-      if (currentPref) {
-        const validLevels = newTransport === 'acp-stdio'
-          ? getAgentThinkingEffortLevelsIncludingACP(props.agentId)
-          : (a?.thinkingEffortLevels || [])
-        if (!validLevels.includes(currentPref)) {
-          await patchAgentField(props.agentId, 'preferred_thinking_effort', '')
-          updateAgentField(props.agentId, 'preferredThinkingEffort', '')
-        }
-      }
-    }
   } catch {
     toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }

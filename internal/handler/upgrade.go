@@ -27,11 +27,11 @@ var (
 	upgradeIsDocker            = service.IsDocker
 	upgradeReadSkippedVersion  = service.ReadSkippedUpgradeVersion
 	upgradeWriteSkippedVersion = service.WriteSkippedUpgradeVersion
-	// The all-in-one package is the only thing a fused install may upgrade
-	// with; see FusedDesktopDownloads for why the thin package and the payload
-	// are not options there.
-	upgradeFusedDownloads = service.FusedDesktopDownloads
-	upgradeFusedChecksums = service.FusedDesktopChecksums
+	// The integrated package is the only thing an integrated install may
+	// upgrade with; see IntegratedDesktopDownloads for why the thin package and
+	// the payload are not options there.
+	upgradeIntegratedDownloads = service.IntegratedDesktopDownloads
+	upgradeIntegratedChecksums = service.IntegratedDesktopChecksums
 )
 
 // managedRefusal answers 403 and reports whether the request was refused.
@@ -83,20 +83,20 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 	installDir, installErr := upgradeCheckInstallDirWrit()
 	installWritable := installErr == nil || installDir == ""
 
-	// fused_downloads is present only when the desktop app started this server.
-	// Such an install carries its own server, so it cannot upgrade by replacing
-	// the binary (that is refused below) — it upgrades by installing the whole
-	// all-in-one package for the new release. The URLs are built here, from the
-	// same tag the registry just reported, so the client never has to know the
-	// release-asset naming rules. Empty means the platform publishes no fused
-	// package (or this is not a fused install), which the UI reads as "no
-	// in-app upgrade".
-	fusedDownloads := map[string][]string{}
-	var fusedChecksums map[string]string
+	// fused_downloads (the JSON key is a cross-version contract) is present only
+	// when the desktop app started this server. Such an install carries its own
+	// server, so it cannot upgrade by replacing the binary (that is refused
+	// below) — it upgrades by installing the whole integrated package for the
+	// new release. The URLs are built here, from the same tag the registry just
+	// reported, so the client never has to know the release-asset naming rules.
+	// Empty means the platform publishes no integrated package (or this is not
+	// an integrated install), which the UI reads as "no in-app upgrade".
+	integratedDownloads := map[string][]string{}
+	var integratedChecksums map[string]string
 	if model.ManagedByEmbedder {
 		tag := version.ReleaseTag(latestVer)
-		fusedDownloads = upgradeFusedDownloads(tag)
-		fusedChecksums = upgradeFusedChecksums(tag)
+		integratedDownloads = upgradeIntegratedDownloads(tag)
+		integratedChecksums = upgradeIntegratedChecksums(tag)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -127,10 +127,10 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		// managed is true when the desktop app started this server. The UI hides
 		// the server-restart entry then, because the server's own binary is part
 		// of the app package and is replaced by the desktop updater. The upgrade
-		// entry stays: it installs the all-in-one package (see fused_downloads).
+		// entry stays: it installs the integrated package (see fused_downloads).
 		"managed":         model.ManagedByEmbedder,
-		"fused_downloads": fusedDownloads,
-		"fused_checksums": fusedChecksums,
+		"fused_downloads": integratedDownloads,
+		"fused_checksums": integratedChecksums,
 	})
 }
 

@@ -794,25 +794,6 @@ func (m *ACPConnManager) GetCommandsByAgentID(agentID string) []AvailableCommand
 	return GetAgentCapabilityRegistry().GetCommands(agentID)
 }
 
-// GetClientByAgentID returns the ClawBenchACPClient for any connection
-// belonging to the given agent. Returns nil if not found.
-func (m *ACPConnManager) GetClientByAgentID(agentID string) *ClawBenchACPClient {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for key, conn := range m.conns {
-		conn.mu.Lock()
-		matched := (conn.agent != nil && conn.agent.ID == agentID) || key == agentID
-		if matched {
-			client := conn.client
-			conn.mu.Unlock()
-			return client
-		}
-		conn.mu.Unlock()
-	}
-	return nil
-}
-
 // GetCurrentModelIDByAgentID returns the current model ID from any live ACP
 // connection of the given agent. Returns "" if the agent has no active
 // connection or none has selected a model yet. This lets /api/agents report
@@ -845,7 +826,8 @@ func (m *ACPConnManager) SetConnForTest(clawbenchSID string, conn *ACPConn) {
 }
 
 // CloseConnsByAgentID closes all ACP connections for the given agent ID.
-// Used when transport is switched from ACP to CLI.
+// Used when the agent's ACP command changes: its running processes were spawned
+// with the previous one.
 func (m *ACPConnManager) CloseConnsByAgentID(agentID string) {
 	m.mu.Lock()
 	var toClose []*ACPConn
@@ -927,13 +909,8 @@ type ACPConn struct {
 	// to unblock pending reads and prevent cleanup hangs.
 	stdoutFilter *acpStdoutFilter
 
-	// stdin is the write lock shared with the ACP SDK (the same instance is
-	// passed to acp.NewClientSideConnection). Retained so CallRaw can write
-	// without interleaving with SDK requests. Nil when not alive.
-	stdin *lockedWriter
-
-	// rawRPC carries JSON-RPC calls whose method names the SDK refuses to send
-	// (non-"_"-prefixed, e.g. CodeBuddy's session/steer). Nil when not alive.
+	// rawRPC carries JSON-RPC calls for methods the typed surface does not
+	// model (e.g. CodeBuddy's session/steer). Nil when not alive.
 	rawRPC *acpRawRPC
 
 	// acpSID is the ACP session ID. Populated from DB (ResumeSession) or
@@ -1570,8 +1547,10 @@ func (c *ACPConn) AcpSID() string {
 // AcpSessionID returns the ACP session ID, satisfying ai.RawRPCTransport.
 func (c *ACPConn) AcpSessionID() string { return c.AcpSID() }
 
-// CallRaw sends a raw JSON-RPC request for a method the ACP SDK will not send
-// (anything not prefixed with "_", e.g. CodeBuddy's session/steer).
+// CallRaw sends a JSON-RPC request for a method the typed SDK does not model
+// (CodeBuddy's session/steer, Hermes's session/set_model). It rides the SDK's
+// own connection, so it shares the wire lock and the id counter with typed
+// calls.
 //
 // Safe to call while a prompt is in flight: it does not touch the prompt's
 // context and never holds c.mu while waiting for the response (the same rule as
@@ -1596,6 +1575,58 @@ func (c *ACPConn) CallRaw(ctx context.Context, method string, params any) (json.
 		return nil, errRawConnClosed
 	}
 	return rpc.CallRaw(ctx, method, params)
+}
+
+// probeDeleteSessionCall issues the capability probe's session/delete. It is
+// the typed call — session/delete has been stable since schema 1.13 — with the
+// same test seam CallRaw offers, because the probe is unit-tested without an
+// agent.
+func (c *ACPConn) probeDeleteSessionCall(ctx context.Context, sid string) error {
+	c.mu.Lock()
+	conn := c.conn
+	alive := c.alive && c.isAliveLocked()
+	hook := c.rawCallFnForTest
+	c.mu.Unlock()
+
+	if hook != nil {
+		_, err := hook(ctx, "session/delete", map[string]any{"sessionId": sid})
+		return err
+	}
+	if conn == nil || !alive {
+		return errRawConnClosed
+	}
+	_, err := conn.DeleteSession(ctx, acp.DeleteSessionRequest{SessionId: acp.SessionId(sid)})
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+	}
+	return err
+}
+
+// CallExtension sends a documented ACP extension method (name starts with "_")
+// over the SDK's own connection. Same liveness rules as CallRaw.
+func (c *ACPConn) CallExtension(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	c.mu.Lock()
+	conn := c.conn
+	alive := c.alive && c.isAliveLocked()
+	hook := c.rawCallFnForTest
+	c.mu.Unlock()
+
+	if hook != nil {
+		return hook(ctx, method, params)
+	}
+	if conn == nil || !alive {
+		return nil, errRawConnClosed
+	}
+	raw, err := conn.CallExtension(ctx, method, params)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, rawCallError(err)
+	}
+	return raw, nil
 }
 
 // PromptInFlight reports whether a prompt is currently running on this
@@ -1696,6 +1727,28 @@ func (c *ACPConn) GetClient() *ClawBenchACPClient {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.client
+}
+
+// ReportedModelFromNewSession returns the model id the agent reported as its own
+// current one in the pending NewSessionResponse, or "" when there is none.
+//
+// Read-only and non-consuming on purpose: the response is consumed exactly once
+// by the turn's own extractSessionState, which is what populates the capability
+// registry and the per-connection current model. A caller that needs the value
+// BEFORE the turn runs (the self-test, to name the model it is about to
+// exercise) must not steal that response, since then the registry would never
+// learn the model list at all.
+func (c *ACPConn) ReportedModelFromNewSession() string {
+	c.mu.Lock()
+	resp := c.lastNewSessionResp
+	c.mu.Unlock()
+	if resp == nil {
+		return ""
+	}
+	if state := extractACPModelList(resp); state != nil {
+		return state.CurrentModelID
+	}
+	return ""
 }
 
 // GetAndClearNewSessionResp returns the last NewSessionResponse and clears it.
@@ -2719,7 +2772,6 @@ func (c *ACPConn) killAndMarkDeadLocked() {
 		oldCmd := c.cmd
 		oldFilter := c.stdoutFilter
 		c.stdoutFilter = nil
-		c.stdin = nil
 		c.rawRPC = nil
 		c.mu.Unlock()
 		c.reapProcess(oldCmd, oldFilter)
@@ -2763,7 +2815,6 @@ func (c *ACPConn) markSpawnFailedLocked() {
 	// Drop the I/O handles too: they belong to the process that just failed to
 	// come up. A stale stdin/rawRPC would otherwise point at a dead pipe.
 	c.stdoutFilter = nil
-	c.stdin = nil
 	c.rawRPC = nil
 	c.alive = false
 	c.startedAt = time.Time{}
@@ -2779,7 +2830,6 @@ func (c *ACPConn) close() {
 		oldCmd := c.cmd
 		oldFilter := c.stdoutFilter
 		c.stdoutFilter = nil
-		c.stdin = nil
 		c.rawRPC = nil
 		c.mu.Unlock()
 		c.reapProcess(oldCmd, oldFilter)
@@ -2883,7 +2933,7 @@ func (c *ACPConn) sendDeleteSession(ctx context.Context) error {
 	if conn == nil || acpSID == "" || !alive {
 		return fmt.Errorf("acp: connection not usable for session/delete (alive=%v, sid=%q)", alive, acpSID)
 	}
-	_, err := conn.UnstableDeleteSession(ctx, acp.UnstableDeleteSessionRequest{
+	_, err := conn.DeleteSession(ctx, acp.DeleteSessionRequest{
 		SessionId: acp.SessionId(acpSID),
 	})
 	if err != nil {
@@ -3108,4 +3158,23 @@ func (m *ACPConnManager) InjectAliveConnForTest(clawbenchSID string, agent *mode
 // Production code must not use this.
 func NewACPConnForTest(agent *model.Agent, clawbenchSID string) *ACPConn {
 	return newACPConn(agent, clawbenchSID)
+}
+
+// LastUsedForTest reports the connection's lastUsed stamp.
+//
+// The only observable effect of MarkIdle is refreshing this field, so a test
+// that asserts "the connection was marked idle" needs a way to read it.
+// Production code must not use this.
+func (c *ACPConn) LastUsedForTest() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastUsed
+}
+
+// SetLastUsedForTest overwrites the connection's lastUsed stamp so a test can
+// establish a stale starting point. Production code must not use this.
+func (c *ACPConn) SetLastUsedForTest(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastUsed = t
 }

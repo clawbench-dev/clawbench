@@ -72,7 +72,7 @@ import (
 // fsReadRecord 记录一次客户端 fs/read_text_file 调用。
 type fsReadRecord struct {
 	Path          string
-	Line, Limit   *int
+	Line, Limit   *int64
 	ReturnedBytes int
 }
 
@@ -273,14 +273,16 @@ func collectImageProbeEvidence(t *testing.T, notifications []acp.SessionNotifica
 		if tcu == nil {
 			continue
 		}
-		name, _ := tcu.Meta["codebuddy.ai/toolName"].(string)
+		tcuMeta, _ := tcu.Meta.Value()
+		name, _ := metaToMap(tcuMeta)["codebuddy.ai/toolName"].(string)
 		status := "<nil>"
-		if tcu.Status != nil {
-			status = string(*tcu.Status)
+		if v, ok := tcu.Status.Value(); ok {
+			status = string(v)
 		}
 		hasImage := false
 		var texts []string
-		for _, c := range tcu.Content {
+		contents, _ := tcu.Content.Value()
+		for _, c := range contents {
 			if c.Content == nil {
 				continue
 			}
@@ -293,8 +295,8 @@ func collectImageProbeEvidence(t *testing.T, notifications []acp.SessionNotifica
 				texts = append(texts, txt.Text)
 			}
 		}
-		if tcu.RawOutput != nil {
-			if b, err := json.Marshal(tcu.RawOutput); err == nil {
+		if raw, ok := tcu.RawOutput.Value(); ok {
+			if b, err := json.Marshal(raw); err == nil {
 				t.Logf("  [tool %s status=%s] rawOutput: %s", name, status, truncate(string(b), 200))
 			}
 		}

@@ -46,9 +46,9 @@
       <button class="model-tab" :class="{ active: activeTab === 'mode' }" @click="activeTab = 'mode'">
         <ShieldAlert :size="13" />{{ t('chat.modeSwitcher.title') }}
       </button>
-      <button class="model-tab" :class="{ active: activeTab === 'transport' }" @click="activeTab = 'transport'">
-        <Cable :size="13" />{{ t('chat.transportSwitcher.title') }}
-      </button>
+      <!-- No transport tab: every agent with an ACP command runs over ACP.
+           There is exactly one path per agent, so a picker would offer a
+           choice that does not exist. -->
       <!-- Context usage tab. Same body as the session-info popup (they share
            ContextUsageDetail), but reachable from the settings drawer so the
            usage numbers live next to the other per-session settings instead of
@@ -153,49 +153,6 @@
       </div>
     </div>
 
-    <!-- Transport tab -->
-    <div v-if="activeTab === 'transport'" class="model-tab-content">
-      <div class="model-list">
-        <!-- Only show ACP option for agents that support ACP -->
-        <div v-if="supportsACP(props.agentId || '')" class="model-item-wrapper">
-          <button
-            class="thinking-item"
-            :class="{ current: isACP, 'is-default': defaultTransport === 'acp-stdio' }"
-            @click="selectTransport('acp-stdio')"
-          >
-            <span class="model-item-indicator" :class="{ active: isACP }"></span>
-            <span class="model-item-name">{{ t('chat.transportSwitcher.acp') }}</span>
-            <span v-if="defaultTransport === 'acp-stdio'" class="default-label">
-              <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
-              <span class="default-star"><Star :size="12" fill="currentColor" /></span>
-            </span>
-            <button v-if="defaultTransport !== 'acp-stdio'" class="set-default-btn" @click.stop="setDefaultTransport('acp-stdio')" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
-              <Star :size="12" />
-            </button>
-          </button>
-          <div class="model-divider"></div>
-        </div>
-        <!-- Only show CLI option for agents that support CLI -->
-        <div v-if="supportsCLI(props.agentId || '')" class="model-item-wrapper">
-          <button
-            class="thinking-item"
-            :class="{ current: !isACP, 'is-default': defaultTransport !== 'acp-stdio' }"
-            @click="selectTransport('cli')"
-          >
-            <span class="model-item-indicator" :class="{ active: !isACP }"></span>
-            <span class="model-item-name">{{ t('chat.transportSwitcher.cli') }}</span>
-            <span v-if="defaultTransport !== 'acp-stdio'" class="default-label">
-              <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
-              <span class="default-star"><Star :size="12" fill="currentColor" /></span>
-            </span>
-            <button v-if="defaultTransport === 'acp-stdio'" class="set-default-btn" @click.stop="setDefaultTransport('cli')" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
-              <Star :size="12" />
-            </button>
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- Mode tab -->
     <div v-if="activeTab === 'mode'" class="model-tab-content">
       <div v-if="effectiveModes.length === 0 || (!isACP && !isBuiltin)" class="tab-empty-hint">
@@ -279,7 +236,24 @@
           <span class="extra-config-title">{{ opt.name || opt.configId }}</span>
           <span v-if="opt.description" class="extra-config-desc">{{ opt.description }}</span>
         </div>
-        <div class="model-list">
+        <div v-if="opt.type === 'boolean'" class="model-list">
+          <div
+            v-for="(v, idx) in booleanChoices"
+            :key="v.id"
+            class="model-item-wrapper"
+          >
+            <button
+              class="thinking-item"
+              :class="{ current: v.id === opt.currentValueId }"
+              @click="selectConfigOption(opt, v.id)"
+            >
+              <span class="model-item-indicator" :class="{ active: v.id === opt.currentValueId }"></span>
+              <span class="model-item-name">{{ v.name }}</span>
+            </button>
+            <div v-if="idx < booleanChoices.length - 1" class="model-divider"></div>
+          </div>
+        </div>
+        <div v-else class="model-list">
           <div
             v-for="(v, idx) in opt.values || []"
             :key="v.id"
@@ -322,7 +296,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Star, Cpu, Brain, ShieldAlert, Cable, Activity, Gauge } from 'lucide-vue-next'
+import { Star, Cpu, Brain, ShieldAlert, Activity, Gauge } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -335,10 +309,10 @@ import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { appLog } from '@/utils/appLog'
 import { compactGroupMember } from '@/composables/useGroupChat'
-import { useAgents, restoreOriginalModels, resetModelViewForTransport, applyRefreshedModelList, applyRefreshedACPState, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
+import { useAgents, applyRefreshedModelList, applyRefreshedACPState } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
-import { useSessionIdentity, clearModeState, clearCommandState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
+import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
@@ -371,7 +345,7 @@ const props = defineProps({
   tokenRate: { type: Object, default: null },
 })
 
-const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport', 'switch-config-option', 'changed'])
+const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-config-option', 'changed'])
 
 /**
  * Client-side budget for one refresh. It covers the agent process starting, the
@@ -383,9 +357,9 @@ const REFRESH_TIMEOUT_MS = 180_000
 
 const { t } = useI18n()
 const toast = useToast()
-const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshAgentState, supportsACP, supportsCLI, getAgentTransport, isBuiltinAgent } = useAgents()
+const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshAgentState, isBuiltinAgent, supportsACP } = useAgents()
 const identity = useSessionIdentity()
-const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove, cruise, toggleCruise } = identity
+const { currentModelId, currentThinkingEffort, currentModeId, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove, cruise, toggleCruise } = identity
 
 // ── Target-session state ──
 // When targetSessionId is set (group member), the drawer describes THAT session
@@ -404,7 +378,6 @@ const compactingFor = ref('')
 const effectiveModelId = computed(() => isTargeted.value ? (target.value?.modelId || '') : currentModelId.value)
 const effectiveModeId = computed(() => isTargeted.value ? (target.value?.modeState?.currentModeId || '') : currentModeId.value)
 const effectiveThinkingEffort = computed(() => isTargeted.value ? (target.value?.thinkingEffortState?.currentId || '') : currentThinkingEffort.value)
-const effectiveTransport = computed(() => isTargeted.value ? (target.value?.transport || '') : currentTransport.value)
 const effectiveAutoApprove = computed(() => isTargeted.value ? target.value?.autoApprove === true : autoApprove.value)
 const effectiveCruise = computed(() => isTargeted.value ? target.value?.cruise === true : cruise.value)
 const effectiveModes = computed(() => isTargeted.value ? (target.value?.modeState?.availableModes || []) : availableModes.value)
@@ -412,6 +385,12 @@ const effectiveEfforts = computed(() => isTargeted.value ? (target.value?.thinki
 // Agent-declared options (codex "fast-mode"). Same two-source rule as the rest:
 // a group member's drawer must describe THAT member, not the current chat.
 const effectiveConfigOptions = computed(() => isTargeted.value ? (target.value?.configOptions || []) : identity.configOptions.value)
+// Boolean options carry no agent-provided value labels; the two states are
+// fixed, so they are localized here instead of coming from the wire.
+const booleanChoices = computed(() => [
+  { id: 'true', name: t('chat.sessionSetting.on') },
+  { id: 'false', name: t('chat.sessionSetting.off') },
+])
 // Output speed shown in the usage tab. Target mode must use the target row's
 // measurement (the host's prop describes the CURRENT session and would be
 // another member's number). normalizeTokenRate guards both shapes identically.
@@ -499,10 +478,10 @@ const hasWindow = computed(() => (usageSnapshot.value?.size ?? 0) > 0)
 // compact. A DISABLED member still can: muting only removes it from the schedule,
 // its context window is untouched (and is what most needs compacting).
 //
-// A CLI-transport member must NOT offer it either: /compact is an ACP slash
-// command, and a CLI agent has no command channel — sending the text would reach
-// the model as prose. The server rejects that case with a 400, so showing the
-// button only produced an error after the click.
+// A member whose agent has no ACP command must NOT offer it either: /compact is
+// an ACP slash command, and such an agent has no command channel — sending the
+// text would reach the model as prose. The server rejects that case with a 400,
+// so showing the button only produced an error after the click.
 const canCompactHere = computed(() => {
   if (!hasWindow.value) return false
   // Single chat: a built-in agent has no slash-command channel either. Its
@@ -510,11 +489,9 @@ const canCompactHere = computed(() => {
   // the model as a prose message.
   if (!isTargeted.value) return !isBuiltinAgent(props.agentId || '')
   if (!target.value?.isGroupMember) return false
-  const transport = target.value?.transport || ''
-  // Empty transport means "the member row does not override the agent's", and
-  // the server resolves that from the agent; only an explicit "cli" is known to
-  // be uncompactable here.
-  return transport !== 'cli'
+  // The member row's agent is the authority; its ACP command decides whether a
+  // slash-command channel exists at all.
+  return supportsACP(props.agentId || '')
 })
 
 async function onCompact() {
@@ -609,12 +586,12 @@ const thinkingLevels = computed(() => {
 })
 const canRefresh = computed(() => canRefreshAgentState(props.agentId || ''))
 
-const isACP = computed(() => {
-  // Prefer session-level transport, fallback to agent config. The targeted
-  // transport comes from the member row, which is authoritative for that row.
-  if (effectiveTransport.value) return effectiveTransport.value === 'acp-stdio'
-  return getAgentTransport(props.agentId || '') === 'acp-stdio'
-})
+// The agent's ACP command IS the answer: it decides whether this drawer shows
+// the ACP-only tabs (mode, thinking effort, slash-command-driven controls). No
+// session row carries a transport any more — the server clears that column and
+// derives it from the command, so reading it here could only restate the same
+// fact or lag behind it.
+const isACP = computed(() => supportsACP(props.agentId || ''))
 
 // The built-in agent has no ACP connection but does define its own modes.
 // Without this the mode tab renders "not available" for the one backend whose
@@ -639,10 +616,6 @@ const defaultThinkingEffort = computed(() => {
 const defaultModeId = computed(() => {
   const agent = getAgent(props.agentId || '')
   return agent?.preferredMode || ''
-})
-
-const defaultTransport = computed(() => {
-  return getAgentTransport(props.agentId || '')
 })
 
 const filteredModels = computed(() => {
@@ -889,53 +862,6 @@ function selectMode(mode) {
   emit('close')
 }
 
-// --- Transport selection ---
-
-async function selectTransport(transport) {
-  if (transport === 'acp-stdio' && isACP.value) return
-  if (transport === 'cli' && !isACP.value) return
-
-  if (isTargeted.value) {
-    persistTargeted({ transport }).catch((err) => {
-      appLog.w('SessionDrawer', 'switch transport failed', err)
-      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
-    })
-    emit('close')
-    return
-  }
-
-  await applyTransportSwitch(transport)
-
-  emit('switch-transport', transport)
-  emit('close')
-}
-
-// Apply the session-side effects of switching transport (shared by selection
-// and set-as-default, which also selects the new transport as current).
-async function applyTransportSwitch(transport) {
-  // Session-scoped: update local ref only (like selectModel)
-  currentTransport.value = transport
-
-  // When switching to CLI, clear ACP-specific state and restore CLI models
-  if (transport === 'cli') {
-    clearModeState()
-    clearCommandState()
-    clearThinkingEffortState()
-    restoreOriginalModels(props.agentId || '')
-    invalidateACPStateCache(props.agentId || '')
-  }
-
-  // When switching to ACP, re-populate ACP state from cache (force-refresh).
-  // resetModelViewForTransport runs AFTER the populate so it can clear the list
-  // when the cache holds no ACP models — otherwise the CLI baseline left by the
-  // branch above would survive the switch back and re-enter the ACP view.
-  if (transport === 'acp-stdio') {
-    invalidateACPStateCache(props.agentId || '')
-    await populateACPStateFromCache(props.agentId || '')
-    resetModelViewForTransport(props.agentId || '')
-  }
-}
-
 // --- Refresh (all lists, from the header) ---
 
 /**
@@ -961,10 +887,10 @@ async function handleRefresh() {
     // picked may have been removed). The old `if (data?.models)` guard silently
     // ignored that case.
     if (data && Array.isArray(data.models)) {
-      // The backend answers with the resolved list plus the pure CLI list (same
-      // shape as GET /api/agents), so the ACP view is not downgraded to the raw
-      // CLI list and the CLI baseline is rebased for a later transport switch.
-      applyRefreshedModelList(props.agentId, data.models, data.cliModels)
+      // The backend answers with the resolved list (same shape as GET
+      // /api/agents), so the ACP view is not downgraded to the raw discovered
+      // list.
+      applyRefreshedModelList(props.agentId, data.models)
     }
     if (data?.acpState) {
       applyRefreshedACPState(props.agentId, data.acpState)
@@ -1015,30 +941,6 @@ async function setDefaultThinkingEffort(level) {
     emit('switch-thinking-effort', level)
     const levelName = thinkingLevels.value.find(l => l.id === level)?.name || level
     toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: levelName }), { icon: 'star', type: 'success', duration: 2000 })
-  } catch {
-    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
-  }
-}
-
-async function setDefaultTransport(transport) {
-  try {
-    await patchAgentPref(props.agentId, 'transport', transport)
-    updateAgentField(props.agentId, 'transport', transport)
-    await applyTransportSwitch(transport)
-    emit('switch-transport', transport)
-    const transportName = transport === 'acp-stdio' ? t('chat.transportSwitcher.acp') : t('chat.transportSwitcher.cli')
-    toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: transportName }), { icon: 'star', type: 'success', duration: 2000 })
-    // Clear preferred thinking effort if it's not valid for the new transport
-    const currentPref = getAgent(props.agentId || '')?.preferredThinkingEffort || ''
-    if (currentPref) {
-      const validLevels = transport === 'acp-stdio'
-        ? availableThinkingEfforts.value.map(l => l.id)
-        : getAgentThinkingEffortLevels(props.agentId || '')
-      if (!validLevels.includes(currentPref)) {
-        await patchAgentPref(props.agentId, 'preferred_thinking_effort', '')
-        updateAgentField(props.agentId, 'preferredThinkingEffort', '')
-      }
-    }
   } catch {
     toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
@@ -1172,8 +1074,6 @@ defineExpose({
   searchQuery,
   showDefaultPopupMenu,
   refreshing,
-  selectTransport,
-  setDefaultTransport,
   setDefaultModel,
   setDefaultThinkingEffort,
   selectMode,

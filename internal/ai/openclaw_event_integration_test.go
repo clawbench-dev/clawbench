@@ -9,6 +9,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +48,7 @@ func TestMapACPSessionUpdate_DropsWrapperToolCall(t *testing.T) {
 			ToolCallId: "call_wrapper",
 			Title:      `tool_call: id: web_fetch, args: {"url":"https://example.com"}`,
 			Kind:       acp.ToolKindOther,
-			RawInput:   map[string]any{"id": "web_fetch", "args": map[string]any{"url": "https://example.com"}},
+			RawInput:   acptest.Raw(map[string]any{"id": "web_fetch", "args": map[string]any{"url": "https://example.com"}}),
 		},
 	}
 
@@ -79,7 +80,7 @@ func TestMapACPSessionUpdate_KeepsRealFrameAfterWrapper(t *testing.T) {
 			ToolCallId: "tool_call:call_wrapper:web_fetch:1",
 			Title:      "web_fetch: url: https://example.com",
 			Kind:       acp.ToolKindFetch,
-			RawInput:   map[string]any{"url": "https://example.com"},
+			RawInput:   acptest.Raw(map[string]any{"url": "https://example.com"}),
 		},
 	}
 
@@ -109,7 +110,7 @@ func TestMapACPSessionUpdate_WrapperFilterIsBackendScoped(t *testing.T) {
 			ToolCallId: "call_other",
 			Title:      "tool_call: id: something",
 			Kind:       acp.ToolKindOther,
-			RawInput:   map[string]any{},
+			RawInput:   acptest.Raw(map[string]any{}),
 		},
 	}
 
@@ -138,7 +139,7 @@ func wrapperOpeningFrame(id string) acp.SessionUpdate {
 			ToolCallId: acp.ToolCallId(id),
 			Title:      `tool_call: id: web_fetch, args: {"url":"https://example.com"}`,
 			Kind:       acp.ToolKindOther,
-			RawInput:   map[string]any{"id": "web_fetch"},
+			RawInput:   acptest.Raw(map[string]any{"id": "web_fetch"}),
 		},
 	}
 }
@@ -179,7 +180,7 @@ func TestMapACPSessionUpdate_DropsWrapperToolCallUpdate_ByID(t *testing.T) {
 	mapACPSessionUpdate(acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: "call_wrapper",
-			Status:     &inProgress,
+			Status:     acptest.Patch(inProgress),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -210,8 +211,8 @@ func TestMapACPSessionUpdate_DropsWrapperToolCallUpdate_ByTitle(t *testing.T) {
 	mapACPSessionUpdate(acp.SessionUpdate{
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId: "call_never_seen",
-			Status:     &inProgress,
-			Title:      &title,
+			Status:     acptest.Patch(inProgress),
+			Title:      acptest.Patch(title),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -235,14 +236,14 @@ func TestMapACPSessionUpdate_WrapperIDIsReleasedOnTerminalStatus(t *testing.T) {
 	// Mid-stream updates keep being dropped...
 	pending := acp.ToolCallStatusPending
 	mapACPSessionUpdate(acp.SessionUpdate{
-		ToolCallUpdate: &acp.SessionToolCallUpdate{ToolCallId: "call_wrapper", Status: &pending},
+		ToolCallUpdate: &acp.SessionToolCallUpdate{ToolCallId: "call_wrapper", Status: acptest.Patch(pending)},
 	}, ch, context.Background(), conn, nil)
 	assert.Empty(t, drainACPTestEvents(ch), "a pending wrapper update must be dropped")
 
 	// ...and the terminal one drops too, then releases the id.
 	completed := acp.ToolCallStatusCompleted
 	mapACPSessionUpdate(acp.SessionUpdate{
-		ToolCallUpdate: &acp.SessionToolCallUpdate{ToolCallId: "call_wrapper", Status: &completed},
+		ToolCallUpdate: &acp.SessionToolCallUpdate{ToolCallId: "call_wrapper", Status: acptest.Patch(completed)},
 	}, ch, context.Background(), conn, nil)
 	assert.Empty(t, drainACPTestEvents(ch), "the terminal wrapper update must be dropped too")
 	assert.False(t, conn.isDroppedWrapperToolCallID("call_wrapper"),
@@ -254,7 +255,7 @@ func TestMapACPSessionUpdate_WrapperIDIsReleasedOnTerminalStatus(t *testing.T) {
 			ToolCallId: "call_wrapper",
 			Title:      "web_fetch: url: https://example.com",
 			Kind:       acp.ToolKindFetch,
-			RawInput:   map[string]any{"url": "https://example.com"},
+			RawInput:   acptest.Raw(map[string]any{"url": "https://example.com"}),
 		},
 	}, ch, context.Background(), conn, nil)
 	var names []string

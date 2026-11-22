@@ -97,11 +97,6 @@ exempt_files = {
     "internal/forgepoll/poller.go",          # forge 轮询接线：Start 会拉起真实轮询器 goroutine 并读 IM 后端状态，单测里起不了
     "internal/handlertest/handlertest.go",   # 只被 _test.go 引用的测试夹具，本身没有可测逻辑
     "cmd/server/restart_unix.go",            # package main: signals own process, untestable without subprocess
-    "internal/ai/cli_backend.go",            # ExecuteStream spawns CLI subprocesses
-    "internal/ai/codex_stream.go",           # ExecuteStream spawns CLI subprocesses
-    "internal/ai/vecli.go",                  # ExecuteStream spawns CLI subprocesses
-    "internal/ai/vecli_stream.go",           # parseVeCLISessionSummary: integration-only
-    "internal/ai/mimo.go",                   # filterLine closure: private CLIBackend field, exercised only via ExecuteStream
     "internal/model/discovery.go",           # model discovery spawns CLI subprocesses and reads external files
     "internal/handler/chat.go",              # executeStreamRun ctx.Done needs mock AI backend + goroutine sync
     "internal/handler/agent.go",              # serveAgentsPatch: multi-field validation branches, DB update, in-memory sync
@@ -149,20 +144,10 @@ exempt_files = {
     "internal/ai/backends/codex/discovery.go",  # Codex binary scanning: requires real codex binary + npm package structure
     "internal/ai/backends/codex/list_sessions.go",  # Codex on-disk session scan: rollout file-system error paths (UserHomeDir/entry.Info/readErr) require integration setup
     "internal/ai/backends/claude/discovery.go",  # Claude binary strings scanning: requires real claude binary
-    "internal/ai/backends/deepseek/discovery.go",  # DeepSeek/CodeWhale CLI models: requires codewhale/deepseek binary
-    "internal/ai/backends/pi/discovery.go",  # Pi --list-models: requires pi binary
-    "internal/ai/backends/vecli/discovery.go",  # VeCLI JS bundle parsing: requires installed vecli with MODEL_REGISTRY
     "internal/ai/backends/qoder/discovery.go",  # Qoder dynamic-texts.json: requires ~/.qoder/.auth/dynamic-texts.json
-    "internal/ai/backends/copilot/discovery.go",  # Copilot defaults: requires copilot binary
-    "internal/ai/backends/kimi/discovery.go",  # Kimi CLI defaults: requires kimi binary
-    "internal/ai/backends/mimo/discovery.go",  # Mimo defaults: requires mimo binary
-    "internal/ai/backends/grok/discovery.go",  # Grok models: requires grok binary + authentication
-    "internal/ai/backends/opencode/discovery.go",  # OpenCode CLI models: requires opencode binary
-    "internal/ai/backends/pi/cli.go",  # Pi API key injection: requires real DB + agent API key loader
     "internal/service/proxy.go",            # Defensive reverse proxy error paths, port conflict, OS-specific port detection
     "internal/handler/file_ops.go",         # File move/copy: symlink escape, directory tree removal
     "internal/handler/project.go",          # ServeRoots: platform-specific path resolution
-    "internal/ai/pi_stream.go",             # normalizePiInput branches: exercise via integration only
 }
 
 # ── Colors ──────────────────────────────────────────────────────
