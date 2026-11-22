@@ -511,8 +511,37 @@ describe('KaTeX stretchy-delimiter svgs are not hijacked as media (issue #473)',
       // The formula still rendered (KaTeX markup present, no error fallback).
       expect(html).toContain('class="katex"')
       expect(html).not.toContain('katex-error')
+      const doc = new DOMParser().parseFromString(html, 'text/html')
+      const paths = Array.from(doc.querySelectorAll('.katex svg path'))
+      expect(paths.length).toBeGreaterThan(0)
+      for (const path of paths) expect(path.getAttribute('d')?.trim()).toBeTruthy()
     })
   }
+
+  it('renders LaTeX commands in mixed Markdown and keeps code literal', () => {
+    const md = [
+      '> **速度 $\\sqrt{x}$** 和 \\(\\sqrt{y_2}\\)',
+      '',
+      '1. 推导',
+      '   $$',
+      '   \\underbrace{\\sqrt{x}}_{\\text{速度}} \\xrightarrow{\\substack{a=b \\\\ c=d}} y',
+      '   $$',
+      '',
+      '`$\\sqrt{x}$`',
+      '',
+      '```tex',
+      '$$\\sqrt{z}$$',
+      '```',
+    ].join('\n')
+    const doc = new DOMParser().parseFromString(renderMarkdownHtml(md), 'text/html')
+    expect(doc.querySelectorAll('blockquote .katex')).toHaveLength(2)
+    expect(doc.querySelector('strong .sqrt svg path[d]')).not.toBeNull()
+    expect(doc.querySelector('li .katex-display .sqrt svg path[d]')).not.toBeNull()
+    expect(doc.querySelector('mtable[columnalign][columnspacing]')).not.toBeNull()
+    expect(doc.querySelectorAll('.katex-error, code .katex')).toHaveLength(0)
+    expect(doc.querySelector('code')?.textContent).toBe('$\\sqrt{x}$')
+    expect(doc.querySelector('pre code')?.textContent).toContain('$$\\sqrt{z}$$')
+  })
 
   it('keeps every svg of a dense multi-formula reply inside its formula', () => {
     // The reported reply: two \underbrace in one display formula, plus inline

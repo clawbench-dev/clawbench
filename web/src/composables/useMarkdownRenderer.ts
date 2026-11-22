@@ -79,7 +79,7 @@ export interface RenderResult {
 // The protection pipeline lives in the shared module; import it here for the
 // render pipeline and re-export for existing importers of `MathEntry` /
 // `extractCodeAndMath` / `MATH_PH_RE` from this file (kept unchanged).
-import { protectMarkdown, MATH_PH_RE, type MathEntry } from '@/utils/markdownProtect.ts'
+import { protectMarkdown, MATH_PH_RE, PAREN_MATH_RE, type MathEntry } from '@/utils/markdownProtect.ts'
 export type { MathEntry } from '@/utils/markdownProtect.ts'
 export { protectMarkdown as extractCodeAndMath, MATH_PH_RE }
 
@@ -191,7 +191,7 @@ export function renderKatexInString(html: string, mathEntries?: MathEntry[]): st
                 return pre + escapeHtml(whole.slice(pre.length))
             }
         })
-        html = html.replace(/\\\(([^\\\n]+?)\\\)/g, (_, math) => {
+        html = html.replace(PAREN_MATH_RE, (_, math) => {
             try {
                 return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false })
             } catch {
@@ -298,7 +298,14 @@ export function renderMarkdown(
 
     // 3. Sanitize HTML (XSS prevention)
     if (sanitize) {
-        html = DOMPurify.sanitize(html, { ADD_TAGS: DOMPURIFY_ADD_TAGS, ADD_ATTR: DOMPURIFY_ADD_ATTR, ALLOWED_URI_REGEXP: DOMPURIFY_ALLOWED_URI_REGEXP })
+        html = DOMPurify.sanitize(html, {
+            ADD_TAGS: DOMPURIFY_ADD_TAGS,
+            ADD_ATTR: [...DOMPURIFY_ADD_ATTR, 'columnalign', 'columnspacing'],
+            // SVG path geometry and MathML table layout are never URLs.
+            // Applying the link policy to them erases KaTeX strokes and spacing.
+            ADD_URI_SAFE_ATTR: ['d', 'columnalign', 'columnspacing'],
+            ALLOWED_URI_REGEXP: DOMPURIFY_ALLOWED_URI_REGEXP,
+        })
     }
 
     // 4. Fix image paths (MarkdownPreview-specific)
