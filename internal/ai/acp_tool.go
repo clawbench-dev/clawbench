@@ -13,34 +13,24 @@ import (
 // ---------------------------------------------------------------------------
 
 // parseACPToolCall dispatches ACP ToolCall parsing to the backend's registered
-// behavior hook, falling back to the legacy in-package mapper.
+// behavior hook, falling back to the generic mapper.
 //
-// Backends whose frames need no special handling declare nothing and take the
-// generic path; a backend with a private shape implements ParseToolCall in its
-// own sub-package.
+// The fallback is the intended path, not a leftover: a backend that speaks
+// plain ACP (cursor, dsh, grok, …) declares nothing and works through the
+// generic parser. Only a backend with a private wire shape registers its own.
 func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 	if b := acpBehavior(backend); b != nil && b.ParseToolCall != nil {
 		return b.ParseToolCall(tc)
 	}
-	return parseACPToolCallLegacy(backend, tc)
+	return parseGenericACPToolCall(tc, backend)
 }
 
-// parseACPToolCallUpdate dispatches ACP ToolCallUpdate parsing to the
-// backend's registered behavior hook, falling back to the legacy mapper.
+// parseACPToolCallUpdate dispatches ACP ToolCallUpdate parsing to the backend's
+// registered behavior hook, falling back to the generic mapper.
 func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *ToolCall {
 	if b := acpBehavior(backend); b != nil && b.ParseToolCallUpdate != nil {
 		return b.ParseToolCallUpdate(tcu)
 	}
-	return parseACPToolCallUpdateLegacy(backend, tcu)
-}
-
-// TODO(phase3): delete once every backend registers ParseToolCall.
-func parseACPToolCallLegacy(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
-	return parseGenericACPToolCall(tc, backend)
-}
-
-// TODO(phase3): delete once every backend registers ParseToolCallUpdate.
-func parseACPToolCallUpdateLegacy(backend string, tcu acp.SessionToolCallUpdate) *ToolCall {
 	return parseGenericACPToolCallUpdate(tcu, backend)
 }
 
