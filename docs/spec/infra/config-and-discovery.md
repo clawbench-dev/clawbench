@@ -63,7 +63,7 @@ flowchart TD
 - **零配置启动**：没有 `config.yaml` 也能运行，系统自动填充所有默认值（端口、密码、TTS 引擎等）。`config.yaml` 是可选的增强，不是必须的前置步骤
 - **首次访问欢迎面板**：用户首次访问时显示 `WelcomeOverlay`（不是分步向导）。[WelcomeOverlay 详情](../features/setup-wizard.md)。Agent 创建通过自动发现或 `AgentInstallDialog` 完成，不存在 `/api/setup/*` 端点
 - **Agent 自动发现**：启动时检测 PATH 中是否存在 AI CLI 工具，为新发现的工具自动在数据库中创建 Agent（含 ACP 命令检测，即检查后端规格中的 `AcpCommand` 字段）。用户安装新 CLI 后重启即自动识别
-- **传输只有一条**：有 `acp_command` 的智能体一律走 ACP stdio，`Transport` 是推导值（`Agent.DeriveTransport()`），库里那列只剩兼容占位、不再读。没有 ACP 命令的智能体根本跑不起来，所以不存在传输切换（PATCH `transport` 会被 400 拒绝）。唯一的例外是内置智能体，它的值是 `in-process`（进程内实现，不走 CLI 也不走 ACP）
+- **传输只有一条**：有 `acp_command` 的智能体一律走 ACP stdio，`Transport` 是推导值（`Agent.DeriveTransport()`），库里那列只剩兼容占位、不再读。没有 ACP 命令的智能体根本跑不起来，所以不存在传输切换（PATCH `transport` 会被 400 拒绝）。唯一的例外是内置智能体，它的值是 `in-process`（进程内实现，不走 CLI 也不走 ACP）。升级时一次性删掉已移除后端（vecli / copilot）的智能体——它们没有 ACP 也没有进程内实现，留着只会是一条永远跑不动的条目；会话按删除接口同一套接管交给存活智能体（历史保留，并写一条系统提示）
 - **Model 自动发现**：每个后端在自己的包内注册一个 `model.ModelSource`（`RegisterModelSource`），共两种形态：
   - `StaticSource` —— 内置清单，仅在该 CLI 存在时可用（kimi / mimo）
   - `PluginSource` —— 自定义探测，应对单一命令无法覆盖的布局（codebuddy 读 product JSON 与运行时缓存、codex 读缓存并扫描二进制字符串、claude 扫描二进制 + 读取 settings.json 覆盖、qoder / qodercn 读本地缓存）
