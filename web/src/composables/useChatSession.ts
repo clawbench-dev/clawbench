@@ -490,13 +490,13 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   // Helper: sync transport from server data
-  // Falls back to agent's configured transport, defaulting to 'cli'.
+  // Falls back to the agent's derived transport.
   function syncTransportFromData(transportFromServer?: string) {
     if (transportFromServer) {
       identity.currentTransport.value = transportFromServer
     } else {
       const agent = getAgent(currentAgentId.value)
-      identity.currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : 'cli')
+      identity.currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : agent?.builtinBackend ? 'in-process' : '')
     }
   }
 

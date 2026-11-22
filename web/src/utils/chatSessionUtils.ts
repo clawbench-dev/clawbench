@@ -287,5 +287,7 @@ export function resolveMidTurnSupported(
 ): boolean {
   if (isGroupSession) return false
   if (!agentSupportsMidTurn) return false
-  return transport !== 'cli'
+  // Only the in-process agent lacks the channel; an unknown value keeps the
+  // legacy "assume ACP" behaviour rather than hiding the affordance.
+  return transport !== 'in-process'
 }

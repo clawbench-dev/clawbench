@@ -452,9 +452,6 @@ func TestSessionUsesACP_DecidedByTheAgentCommand(t *testing.T) {
 	require.NotNil(t, agent)
 	assert.True(t, sessionUsesACP(sid, agent), "an ACP agent runs over ACP")
 
-	require.NoError(t, service.UpdateSessionTransport(sid, "cli"))
-	assert.True(t, sessionUsesACP(sid, agent), "a legacy per-session value must not select a path that does not exist")
-
 	assert.False(t, sessionUsesACP(sid, &model.Agent{ID: "builtin", BuiltinBackend: true}),
 		"the in-process agent is the only non-ACP path")
 }

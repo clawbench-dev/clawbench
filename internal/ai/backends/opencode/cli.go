@@ -38,11 +38,6 @@ func init() {
 			},
 			IsChildSessionUpdate: IsChildSessionUpdate,
 		},
-		ModelSource: model.NewCLISource("opencode", model.CLIOptions{
-			Command: "opencode",
-			Args:    []string{"models"},
-			Parse:   model.ParseProviderModel,
-		}),
 		ProviderEnv: &model.ProviderEnvSpec{
 			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
 			OpenAI:    model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),

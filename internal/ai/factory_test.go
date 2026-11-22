@@ -99,10 +99,8 @@ func TestNewBackendForAgent_ACPStdioTransport(t *testing.T) {
 	assert.True(t, ok, "claude ACP should be ACPBackend directly")
 }
 
-// A "cli" transport on an ACP-capable agent has no CLI implementation behind
-// it any more. The factory adopts the agent's ACP command rather than failing
-// the turn: the transport column is legacy data, and refusing to run would
-// strand every conversation created before CLI was removed.
+// A legacy "cli" value on an ACP-capable agent must not strand the turn: the
+// factory reads the command, not the column.
 func TestNewBackendForAgent_CLITransport_FallsBackToACP(t *testing.T) {
 	setupTestBackends()
 	agentForACP(t)
@@ -122,38 +120,36 @@ func TestNewBackendForAgent_CLITransport_FallsBackToACP(t *testing.T) {
 	assert.True(t, ok, "a legacy cli transport must run over ACP")
 }
 
-func TestNewBackendForAgentWithTransport_ACPOverrideOnCLITransportAgent(t *testing.T) {
+func TestNewBackendForAgent_LegacyCLITransportStillUsesACP(t *testing.T) {
 	setupTestBackends()
 	agentForACP(t)
 	model.Agents = map[string]*model.Agent{
 		"test-pi": {
 			ID:         "test-pi",
 			Backend:    "pi",
-			Transport:  "cli",
 			AcpCommand: "pi-acp",
 		},
 	}
 
-	backend, err := NewBackendForAgentWithTransport("pi", "test-pi", "acp-stdio")
+	backend, err := NewBackendForAgent("pi", "test-pi")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
 	_, ok := backend.(*ACPBackend)
 	assert.True(t, ok)
 }
 
-func TestNewBackendForAgentWithTransport_EmptyAgentID_ResolvesBackendAgent(t *testing.T) {
+func TestNewBackendForAgent_EmptyAgentID_ResolvesBackendAgent(t *testing.T) {
 	setupTestBackends()
 	agentForACP(t)
 	model.Agents = map[string]*model.Agent{
 		"antigravity": {
 			ID:         "antigravity",
 			Backend:    "antigravity",
-			Transport:  "acp-stdio",
 			AcpCommand: "agy acp",
 		},
 	}
 
-	backend, err := NewBackendForAgentWithTransport("antigravity", "", "acp-stdio")
+	backend, err := NewBackendForAgent("antigravity", "")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
 	assert.Equal(t, "antigravity", backend.Name())
@@ -162,12 +158,12 @@ func TestNewBackendForAgentWithTransport_EmptyAgentID_ResolvesBackendAgent(t *te
 	assert.True(t, ok, "should resolve to ACPBackend for ACP-only agent when agentID is empty")
 }
 
-// TestNewBackendForAgentWithTransport_EmptyAgentID_UnknownBackend_FailsLoudly
+// TestNewBackendForAgent_EmptyAgentID_UnknownBackend_FailsLoudly
 // pins the boundary of the empty-agentID recovery: it resolves an agent only
 // when the backend type matches one. It must NOT fall back to the default agent
 // — the default agent may belong to a different backend, and handing back an
 // ACPBackend for it would silently run the wrong agent/command.
-func TestNewBackendForAgentWithTransport_EmptyAgentID_UnknownBackend_FailsLoudly(t *testing.T) {
+func TestNewBackendForAgent_EmptyAgentID_UnknownBackend_FailsLoudly(t *testing.T) {
 	setupTestBackends()
 	agentForACP(t)
 	origDefault := model.DefaultAgentID
@@ -177,31 +173,29 @@ func TestNewBackendForAgentWithTransport_EmptyAgentID_UnknownBackend_FailsLoudly
 		"default-acp": {
 			ID:         "default-acp",
 			Backend:    "antigravity",
-			Transport:  "acp-stdio",
 			AcpCommand: "agy acp",
 		},
 	}
 	model.DefaultAgentID = "default-acp"
 
-	backend, err := NewBackendForAgentWithTransport("unknown-backend", "", "acp-stdio")
+	backend, err := NewBackendForAgent("unknown-backend", "")
 	assert.Error(t, err, "an unknown backend with no matching agent must fail, not run the default agent")
 	assert.Nil(t, backend)
 	assert.Contains(t, err.Error(), "unsupported backend type")
 }
 
-func TestNewBackendForAgentWithTransport_EmptyAgentID_MatchesAgentByBackendType(t *testing.T) {
+func TestNewBackendForAgent_EmptyAgentID_MatchesAgentByBackendType(t *testing.T) {
 	setupTestBackends()
 	agentForACP(t)
 	model.Agents = map[string]*model.Agent{
 		"antigravity": {
 			ID:         "antigravity",
 			Backend:    "antigravity",
-			Transport:  "acp-stdio",
 			AcpCommand: "agy acp",
 		},
 	}
 
-	backend, err := NewBackendForAgentWithTransport("antigravity", "", "acp-stdio")
+	backend, err := NewBackendForAgent("antigravity", "")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
 	assert.Equal(t, "antigravity", backend.Name())

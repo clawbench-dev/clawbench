@@ -49,9 +49,9 @@ const (
 	selfTestOK   = "ok"
 	selfTestWarn = "warn"
 	selfTestFail = "fail"
-	// transportCLI is the in-process mode of the built-in agent, which has no
-	// ACP command. Every process-spawning backend is transportACP.
-	transportCLI = "cli"
+	// transportInProcess is the built-in agent's mode, which has no ACP command.
+	// Every process-spawning backend is transportACP.
+	transportInProcess = model.TransportInProcess
 )
 
 // Check keys. Constants (not literals) because they are also the client's i18n
@@ -136,10 +136,7 @@ func (s *selfTestRun) fail(key, detail string) {
 // An agent with an ACP command always runs over ACP; only the built-in agent
 // (no command) runs in-process, and anything else has nothing to start.
 func effectiveTransport(agent *model.Agent) string {
-	if agent.AcpCommand != "" {
-		return transportACP
-	}
-	return transportCLI
+	return agent.DeriveTransport()
 }
 
 // runAgentSelfTest evaluates every check and aggregates the outcome.
@@ -213,7 +210,7 @@ func checkBackendKnown(run *selfTestRun, agent *model.Agent) {
 // checkTransport reports a transport the agent cannot actually run on.
 func checkTransport(run *selfTestRun, agent *model.Agent, transport string) {
 	switch {
-	case transport != transportACP && !agent.BuiltinBackend:
+	case transport == "":
 		run.fail(selfTestKeyTransport,
 			fmt.Sprintf("Agent %q has neither an ACP command nor the in-process backend, so nothing can start it.", agent.ID))
 	default:
@@ -232,6 +229,10 @@ func checkSpawnTarget(ctx context.Context, run *selfTestRun, agent *model.Agent,
 		run.add(probeCommand(ctx, selfTestKeyAcpCommand, agent.AcpCommand))
 		return
 	}
+	if agent.BuiltinBackend {
+		run.ok(selfTestKeyCliCommand)
+		return
+	}
 	cmd := cliProbeCommand(agent, model.FindSpecByBackend(agent.Backend))
 	if cmd == "" {
 		run.warn(selfTestKeyCliCommand,
@@ -245,10 +246,18 @@ func checkSpawnTarget(ctx context.Context, run *selfTestRun, agent *model.Agent,
 // ACP agent reports its models at session/new, so before the first turn there is
 // nothing to discover yet (the built-in agent ships a static list).
 func checkModels(run *selfTestRun, agent *model.Agent) {
-	if len(agent.Models) > 0 {
+	// ACP reports models into the capability registry (persisted across
+	// restarts), not into the agent row, so both sources count.
+	count := len(agent.Models)
+	if count == 0 {
+		if ml := ai.GetAgentCapabilityRegistry().GetModelListState(agent.ID, ""); ml != nil {
+			count = len(ml.Models)
+		}
+	}
+	if count > 0 {
 		run.add(AgentSelfTestCheck{
 			Key: selfTestKeyModels, Status: selfTestOK,
-			Detail: fmt.Sprintf("%d model(s) available.", len(agent.Models)),
+			Detail: fmt.Sprintf("%d model(s) available.", count),
 		})
 		checkPreferredModel(run, agent)
 		return

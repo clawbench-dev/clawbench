@@ -167,7 +167,7 @@ func TestBuildChatRequest_NewSession(t *testing.T) {
 
 	// Test that BuildChatRequest produces a valid ChatRequest for a new session
 	// (no assistant messages → resume=false)
-	req := BuildChatRequest("hello", "sess-1", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-1", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	if req.Prompt != "hello" {
 		t.Errorf("expected prompt 'hello', got %q", req.Prompt)
 	}
@@ -193,11 +193,11 @@ func TestBuildChatRequest_CruiseAddendumInjected(t *testing.T) {
 	require.NoError(t, err)
 
 	// Off by default: no addendum.
-	req := BuildChatRequest("hello", "sess-cruise", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-cruise", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.NotContains(t, req.Prompt, "[自动巡航模式]", "cruise off must not inject the addendum")
 
 	require.NoError(t, SetSessionCruise("sess-cruise", true))
-	req = BuildChatRequest("hello", "sess-cruise", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req = BuildChatRequest("hello", "sess-cruise", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.Contains(t, req.Prompt, "[自动巡航模式]", "cruise on must inject the addendum")
 	assert.Contains(t, req.Prompt, "hello", "the user's message must survive the addendum")
 }
@@ -216,7 +216,7 @@ func TestBuildChatRequest_CruiseAddendumSkipsSlashCommand(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, SetSessionCruise("sess-cruise-slash", true))
 
-	req := BuildChatRequest("/compact", "sess-cruise-slash", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("/compact", "sess-cruise-slash", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.False(t, strings.HasPrefix(req.Prompt, "\n\n[自动巡航模式]"),
 		"a slash command must keep its leading '/' (no addendum prefix): %q", req.Prompt)
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(req.Prompt), "/compact"),
@@ -237,15 +237,15 @@ func TestBuildChatRequest_CompactedFlagConsumedOnce(t *testing.T) {
 	require.NoError(t, err)
 
 	// Before any compaction the flag is not set.
-	req := BuildChatRequest("hello", "sess-compact", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-compact", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.False(t, req.Compacted, "a session that never compacted must not carry the flag")
 
 	MarkSessionCompacted("sess-compact")
 
-	req = BuildChatRequest("continue", "sess-compact", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req = BuildChatRequest("continue", "sess-compact", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.True(t, req.Compacted, "the turn after a compaction must re-inject the system prompt")
 
-	req = BuildChatRequest("and again", "sess-compact", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req = BuildChatRequest("and again", "sess-compact", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.False(t, req.Compacted, "the flag must not survive into a second turn")
 }
 
@@ -267,13 +267,13 @@ func TestBuildChatRequest_CompactCommandDoesNotConsumeFlag(t *testing.T) {
 	// request is built the flag is already set (both happen in the same request).
 	MarkSessionCompacted("sess-cmd")
 
-	cmdReq := BuildChatRequest("/compact", "sess-cmd", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	cmdReq := BuildChatRequest("/compact", "sess-cmd", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.False(t, cmdReq.Compacted, "the /compact turn itself must not consume the flag")
 
-	nextReq := BuildChatRequest("continue", "sess-cmd", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	nextReq := BuildChatRequest("continue", "sess-cmd", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.True(t, nextReq.Compacted, "the flag must survive the /compact turn for the next real turn")
 
-	finalReq := BuildChatRequest("more", "sess-cmd", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	finalReq := BuildChatRequest("more", "sess-cmd", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.False(t, finalReq.Compacted, "the flag is consumed by the first real turn after /compact")
 }
 
@@ -472,7 +472,7 @@ func TestBuildChatRequest_UnknownAgentID_EmptyAgentFields(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{})
 
-	req := BuildChatRequest("hi", "sess-unknown-agent", "/proj", "claude", "nonexistent", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hi", "sess-unknown-agent", "/proj", "claude", "nonexistent", "", "", "", "/proj", false)
 
 	assert.Equal(t, "", req.Model)
 	assert.Equal(t, "", req.Command)
@@ -494,7 +494,7 @@ func TestBuildChatRequest_AgentWithAllFields(t *testing.T) {
 		},
 	})
 
-	req := BuildChatRequest("hi", "sess-all-fields", "/home/user/proj", "claude", "test-agent", "", "", "", "", "/home/user/proj", false)
+	req := BuildChatRequest("hi", "sess-all-fields", "/home/user/proj", "claude", "test-agent", "", "", "", "/home/user/proj", false)
 
 	assert.Equal(t, "You are at /home/user/proj", req.SystemPrompt)
 	assert.Equal(t, "model-1", req.Model)
@@ -510,7 +510,7 @@ func TestBuildChatRequest_ModelOverridePrecedence(t *testing.T) {
 		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", Models: []model.AgentModel{{ID: "default-model", Default: true}}},
 	})
 
-	req := BuildChatRequest("hi", "sess-model-override", "", "claude", "test-agent", "custom-model", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-model-override", "", "claude", "test-agent", "custom-model", "", "", "", false)
 
 	assert.Equal(t, "custom-model", req.Model, "explicit override beats the agent default")
 }
@@ -522,7 +522,7 @@ func TestBuildChatRequest_NoOverride_NoDefaultModel(t *testing.T) {
 		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", Models: []model.AgentModel{}},
 	})
 
-	req := BuildChatRequest("hi", "sess-no-model", "", "claude", "test-agent", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-no-model", "", "claude", "test-agent", "", "", "", "", false)
 
 	assert.Equal(t, "", req.Model)
 }
@@ -534,7 +534,7 @@ func TestBuildChatRequest_ProjectPathReplacement(t *testing.T) {
 		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "Work on {{PROJECT_PATH}} and {{PROJECT_PATH}} again"},
 	})
 
-	req := BuildChatRequest("hi", "sess-path-repl", "/my/path", "claude", "test-agent", "", "", "", "", "/my/path", false)
+	req := BuildChatRequest("hi", "sess-path-repl", "/my/path", "claude", "test-agent", "", "", "", "/my/path", false)
 
 	assert.Equal(t, "Work on /my/path and /my/path again", req.SystemPrompt)
 }
@@ -546,7 +546,7 @@ func TestBuildChatRequest_EmptyProjectPath_NoReplacement(t *testing.T) {
 		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "Work on {{PROJECT_PATH}}"},
 	})
 
-	req := BuildChatRequest("hi", "sess-empty-path", "", "claude", "test-agent", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-empty-path", "", "claude", "test-agent", "", "", "", "", false)
 
 	assert.Equal(t, "Work on {{PROJECT_PATH}}", req.SystemPrompt)
 }
@@ -558,7 +558,7 @@ func TestBuildChatRequest_ThinkingEffortOverridePrecedence(t *testing.T) {
 		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", ThinkingEffort: "low"},
 	})
 
-	req := BuildChatRequest("hi", "sess-effort-override", "", "claude", "test-agent", "", "high", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-effort-override", "", "claude", "test-agent", "", "high", "", "", false)
 
 	assert.Equal(t, "high", req.ThinkingEffort)
 }
@@ -570,7 +570,7 @@ func TestBuildChatRequest_ThinkingEffortFromAgent(t *testing.T) {
 		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", ThinkingEffort: "low", PreferredThinkingEffort: "medium"},
 	})
 
-	req := BuildChatRequest("hi", "sess-effort-agent", "", "claude", "test-agent", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-effort-agent", "", "claude", "test-agent", "", "", "", "", false)
 
 	assert.Equal(t, "medium", req.ThinkingEffort, "PreferredThinkingEffort wins over ThinkingEffort")
 }
@@ -582,7 +582,7 @@ func TestBuildChatRequest_ModeOverridePrecedence(t *testing.T) {
 		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", PreferredMode: "code"},
 	})
 
-	req := BuildChatRequest("hi", "sess-mode-override", "", "claude", "test-agent", "", "", "plan", "", "", false)
+	req := BuildChatRequest("hi", "sess-mode-override", "", "claude", "test-agent", "", "", "plan", "", false)
 
 	assert.Equal(t, "plan", req.Mode)
 }
@@ -594,7 +594,7 @@ func TestBuildChatRequest_ModeFromAgent(t *testing.T) {
 		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello", PreferredMode: "code"},
 	})
 
-	req := BuildChatRequest("hi", "sess-mode-agent", "", "claude", "test-agent", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-mode-agent", "", "claude", "test-agent", "", "", "", "", false)
 
 	assert.Equal(t, "code", req.Mode)
 }
@@ -606,7 +606,7 @@ func TestBuildChatRequest_NoCommand(t *testing.T) {
 		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello"},
 	})
 
-	req := BuildChatRequest("hi", "sess-no-command", "", "claude", "test-agent", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-no-command", "", "claude", "test-agent", "", "", "", "", false)
 
 	assert.Equal(t, "", req.Command)
 }
@@ -622,7 +622,7 @@ func TestBuildChatRequest_DefaultModelFromPreferredModel(t *testing.T) {
 		},
 	})
 
-	req := BuildChatRequest("hi", "sess-preferred-model", "", "claude", "test-agent", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-preferred-model", "", "claude", "test-agent", "", "", "", "", false)
 
 	assert.Equal(t, "preferred-model", req.Model)
 }
@@ -638,7 +638,7 @@ func TestBuildChatRequest_TransportOverrideACPStdio(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", RuntimeSystemPrompt: "s"}})
 
-	req := BuildChatRequest("hi", "sess-acp-override", "", "claude", "any-agent", "", "", "", "acp-stdio", "", false)
+	req := BuildChatRequest("hi", "sess-acp-override", "", "claude", "any-agent", "", "", "", "", false)
 
 	assert.Equal(t, "sess-acp-override", req.SessionID)
 }
@@ -649,7 +649,7 @@ func TestBuildChatRequest_TransportOverrideCLI(t *testing.T) {
 	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", RuntimeSystemPrompt: "s"}})
 
 	// No assistant history → resume stays false, so the id is kept regardless.
-	req := BuildChatRequest("hi", "sess-cli-override", "", "claude", "any-agent", "", "", "", "cli", "", false)
+	req := BuildChatRequest("hi", "sess-cli-override", "", "claude", "any-agent", "", "", "", "", false)
 
 	assert.False(t, req.Resume)
 }
@@ -659,7 +659,7 @@ func TestBuildChatRequest_NoOverride_AgentWithACPTransport(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio", AcpCommand: "acp-server"}})
 
-	req := BuildChatRequest("hi", "sess-acp-agent", "", "claude", "acp-agent", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-acp-agent", "", "claude", "acp-agent", "", "", "", "", false)
 
 	assert.Equal(t, "sess-acp-agent", req.SessionID)
 }
@@ -676,7 +676,7 @@ func TestBuildChatRequest_ACPUnconfirmed_NoModelFallback(t *testing.T) {
 		Models: []model.AgentModel{{ID: "cli-guess", Name: "CLI Guess", Default: true}},
 	}})
 
-	req := BuildChatRequest("hi", "sess-acp-unconf", "", "claude", "acp-unconf", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-acp-unconf", "", "claude", "acp-unconf", "", "", "", "", false)
 
 	assert.Equal(t, "", req.Model,
 		"the CLI-discovered default must not be sent before the ACP runtime reports models")
@@ -692,7 +692,7 @@ func TestBuildChatRequest_ACPUnconfirmed_ExplicitModelStillWins(t *testing.T) {
 		Models: []model.AgentModel{{ID: "cli-guess", Name: "CLI Guess", Default: true}},
 	}})
 
-	req := BuildChatRequest("hi", "sess-acp-explicit", "", "claude", "acp-unconf2", "user-pick", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-acp-explicit", "", "claude", "acp-unconf2", "user-pick", "", "", "", false)
 
 	assert.Equal(t, "user-pick", req.Model)
 }
@@ -710,7 +710,7 @@ func TestBuildChatRequest_ACPConfirmed_ModelFallbackApplies(t *testing.T) {
 		{ID: "acp-live", Name: "ACP Live"},
 	})
 
-	req := BuildChatRequest("hi", "sess-acp-conf", "", "claude", "acp-conf", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-acp-conf", "", "claude", "acp-conf", "", "", "", "", false)
 
 	assert.Equal(t, "cli-default", req.Model,
 		"with ACP models confirmed the normal agent-default fallback applies")
@@ -725,7 +725,7 @@ func TestBuildChatRequest_CLITransport_KeepsModelFallback(t *testing.T) {
 		Models: []model.AgentModel{{ID: "cli-default", Name: "CLI Default", Default: true}},
 	}})
 
-	req := BuildChatRequest("hi", "sess-cli-a", "", "claude", "cli-a", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-cli-a", "", "claude", "cli-a", "", "", "", "", false)
 
 	assert.Equal(t, "cli-default", req.Model)
 }
@@ -735,7 +735,7 @@ func TestBuildChatRequest_NoOverride_AgentWithCLITransport(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{"cli-agent": {ID: "cli-agent", RuntimeSystemPrompt: "s", Transport: "cli"}})
 
-	req := BuildChatRequest("hi", "sess-cli-agent", "", "claude", "cli-agent", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-cli-agent", "", "claude", "cli-agent", "", "", "", "", false)
 
 	assert.False(t, req.Resume)
 }
@@ -745,7 +745,7 @@ func TestBuildChatRequest_NoOverride_UnknownAgent(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{})
 
-	req := BuildChatRequest("hi", "sess-unknown", "", "claude", "nope", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-unknown", "", "claude", "nope", "", "", "", "", false)
 
 	assert.Equal(t, "sess-unknown", req.SessionID)
 }
@@ -756,7 +756,7 @@ func TestBuildChatRequest_OverrideTakesPrecedenceOverAgent(t *testing.T) {
 	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio", AcpCommand: "acp-server"}})
 
 	// Explicit "cli" must win over the agent's acp-stdio transport.
-	req := BuildChatRequest("hi", "sess-override-wins", "", "claude", "acp-agent", "", "", "", "cli", "", false)
+	req := BuildChatRequest("hi", "sess-override-wins", "", "claude", "acp-agent", "", "", "", "", false)
 
 	assert.False(t, req.Resume)
 }
@@ -768,7 +768,7 @@ func TestBuildChatRequest_NewSession_NoResume(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{"a": {ID: "a", RuntimeSystemPrompt: "s"}})
 
-	req := BuildChatRequest("hi", "new-session", "", "claude", "a", "", "", "", "", "", false)
+	req := BuildChatRequest("hi", "new-session", "", "claude", "a", "", "", "", "", false)
 
 	assert.Equal(t, "new-session", req.SessionID)
 	assert.False(t, req.Resume)
@@ -792,7 +792,7 @@ func TestBuildChatRequest_ResumeWithExternalID_NonACP(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := BuildChatRequest("hi", sessionID, "", "claude", "a", "", "", "", "cli", "", false)
+	req := BuildChatRequest("hi", sessionID, "", "claude", "a", "", "", "", "", false)
 
 	assert.Equal(t, "ext-123", req.SessionID, "non-ACP resume uses the external session ID")
 	assert.True(t, req.Resume)
@@ -821,7 +821,7 @@ func TestBuildChatRequest_ResumeWithoutExternalID_Fork(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := BuildChatRequest("hi", sessionID, "", "claude", "a", "", "", "", "cli", "", false)
+	req := BuildChatRequest("hi", sessionID, "", "claude", "a", "", "", "", "", false)
 
 	assert.Equal(t, "", req.SessionID, "non-ACP fork without external ID clears the session ID")
 	assert.True(t, req.Resume)
@@ -855,7 +855,7 @@ func TestBuildChatRequest_ResumeACPWithForkContext(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := BuildChatRequest("hi", sessionID, "", "claude", "acp", "", "", "", "acp-stdio", "", false)
+	req := BuildChatRequest("hi", sessionID, "", "claude", "acp", "", "", "", "", false)
 
 	assert.Equal(t, sessionID, req.SessionID, "ACP keeps the ClawBench session ID")
 	assert.False(t, req.Resume, "ACP with fork context starts a new session")
@@ -879,7 +879,7 @@ func TestBuildChatRequest_ResumeACPWithExternalID(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := BuildChatRequest("hi", sessionID, "", "claude", "acp", "", "", "", "acp-stdio", "", false)
+	req := BuildChatRequest("hi", sessionID, "", "claude", "acp", "", "", "", "", false)
 
 	assert.Equal(t, sessionID, req.SessionID, "ACP keeps the ClawBench session ID even with an external ID")
 	assert.True(t, req.Resume)
@@ -912,7 +912,7 @@ func TestBuildChatRequest_EmptyAgentID_UsesDefault(t *testing.T) {
 		model.DefaultAgentID = origDefaultID
 	}()
 
-	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "", "", "", "", "/proj", false)
 	assert.Equal(t, "default-agent", req.AgentID)
 	assert.Equal(t, "default-model", req.Model)
 }
@@ -948,7 +948,7 @@ func TestBuildChatRequest_EmptyAgentID_InheritsSessionAgent(t *testing.T) {
 	)
 	assert.NoError(t, err)
 
-	req := BuildChatRequest("hello", "sess-custom-agent", "/proj", "antigravity", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-custom-agent", "/proj", "antigravity", "", "", "", "", "/proj", false)
 	assert.Equal(t, "custom-agent", req.AgentID)
 	assert.Equal(t, "custom-model", req.Model)
 }
@@ -981,7 +981,7 @@ func TestBuildChatRequest_EmptyOverrides_InheritSessionModeAndEffort(t *testing.
 	require.NoError(t, err)
 
 	// Empty overrides, exactly as the drain/push path calls it.
-	req := BuildChatRequest("hello", "sess-mode-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-mode-effort", "/proj", "claude", "acp-agent", "", "", "", "/proj", false)
 	assert.Equal(t, "plan", req.Mode, "drained turn must inherit the session's persisted mode")
 	assert.Equal(t, "high", req.ThinkingEffort, "drained turn must inherit the session's persisted thinking effort")
 }
@@ -1014,7 +1014,7 @@ func TestBuildChatRequest_AgentReportedEffort_IsNotInherited(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := BuildChatRequest("hello", "sess-agent-reported-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-agent-reported-effort", "/proj", "claude", "acp-agent", "", "", "", "/proj", false)
 	assert.Equal(t, "max", req.ThinkingEffort,
 		"the agent's reported default must not be replayed as a user choice; the agent's configured default applies")
 }
@@ -1041,13 +1041,13 @@ func TestBuildChatRequest_PerModelEffortWins(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := BuildChatRequest("hello", "sess-per-model-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-per-model-effort", "/proj", "claude", "acp-agent", "", "", "", "/proj", false)
 	assert.Equal(t, "max", req.ThinkingEffort, "the pick remembered for this model must win over the agent default")
 
 	// A different model has no pick, so the model-independent default applies.
 	_, err = db.Exec(`UPDATE chat_sessions SET model = 'deepseek-v4-pro' WHERE id = 'sess-per-model-effort'`)
 	require.NoError(t, err)
-	req = BuildChatRequest("hello", "sess-per-model-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	req = BuildChatRequest("hello", "sess-per-model-effort", "/proj", "claude", "acp-agent", "", "", "", "/proj", false)
 	assert.Equal(t, "low", req.ThinkingEffort, "another model must not inherit this model's pick")
 }
 
@@ -1074,7 +1074,7 @@ func TestBuildChatRequest_PickFromOtherModel_Dropped(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := BuildChatRequest("hello", "sess-stale-pick", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-stale-pick", "/proj", "claude", "acp-agent", "", "", "", "/proj", false)
 	assert.Equal(t, "high", req.ThinkingEffort,
 		"a pick made under another model must be dropped; this model's default applies")
 }
@@ -1098,7 +1098,7 @@ func TestBuildChatRequest_ExplicitOverrides_WinOverSession(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := BuildChatRequest("hello", "sess-mode-effort-explicit", "/proj", "claude", "acp-agent", "", "low", "default", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-mode-effort-explicit", "/proj", "claude", "acp-agent", "", "low", "default", "/proj", false)
 	assert.Equal(t, "default", req.Mode, "explicit mode must win over the persisted one")
 	assert.Equal(t, "low", req.ThinkingEffort, "explicit effort must win over the persisted one")
 }
@@ -1127,7 +1127,7 @@ func TestBuildChatRequest_NoContextState_FallsBackToAgentDefault(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := BuildChatRequest("hello", "sess-no-ctx", "/proj", "claude", "plain-agent", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-no-ctx", "/proj", "claude", "plain-agent", "", "", "", "/proj", false)
 	assert.Equal(t, "medium", req.ThinkingEffort, "agent's default effort applies when nothing is persisted")
 	assert.Equal(t, "agent-mode", req.Mode, "agent's preferred mode applies when nothing is persisted")
 }
@@ -1136,7 +1136,7 @@ func TestBuildChatRequest_WithAttachments(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "", "", "", "", "", "/proj", true)
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "", "", "", "", "/proj", true)
 	assert.True(t, req.HasAttachments)
 	// With attachments, media prompt should be appended to system prompt
 	mediaPrompt := model.BuildMediaPrompt()
@@ -1149,7 +1149,7 @@ func TestBuildChatRequest_NoAttachments(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "", "", "", "", "/proj", false)
 	assert.False(t, req.HasAttachments)
 }
 
@@ -1167,7 +1167,7 @@ func TestBuildChatRequest_WithModelOverride(t *testing.T) {
 	}
 	defer func() { model.Agents = origAgents }()
 
-	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "test-agent", "custom-model", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "test-agent", "custom-model", "", "", "/proj", false)
 	assert.Equal(t, "custom-model", req.Model)
 }
 
@@ -1175,7 +1175,7 @@ func TestBuildChatRequest_WithThinkingEffortAndMode(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "agent", "", "high", "plan", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "agent", "", "high", "plan", "/proj", false)
 	assert.Equal(t, "high", req.ThinkingEffort)
 	assert.Equal(t, "plan", req.Mode)
 }
@@ -1184,7 +1184,7 @@ func TestBuildChatRequest_TransportOverrideACP(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "agent", "", "", "", "acp-stdio", "/proj", false)
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "agent", "", "", "", "/proj", false)
 	// Just verify it doesn't panic and builds correctly
 	assert.Equal(t, "hello", req.Prompt)
 }
@@ -1203,7 +1203,7 @@ func TestBuildChatRequest_AgentWithCommand(t *testing.T) {
 	}
 	defer func() { model.Agents = origAgents }()
 
-	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "cmd-agent", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "cmd-agent", "", "", "", "/proj", false)
 	assert.Equal(t, "/usr/local/bin/special-cli", req.Command)
 }
 
@@ -1220,7 +1220,7 @@ func TestBuildChatRequest_AgentWithProjectPathReplacement(t *testing.T) {
 	}
 	defer func() { model.Agents = origAgents }()
 
-	req := BuildChatRequest("hello", "sess-1", "/my/project", "claude", "path-agent", "", "", "", "", "/my/project", false)
+	req := BuildChatRequest("hello", "sess-1", "/my/project", "claude", "path-agent", "", "", "", "/my/project", false)
 	assert.Equal(t, "You are working in /my/project", req.SystemPrompt)
 }
 
@@ -2543,7 +2543,7 @@ func TestBuildChatRequest_ResumeWithForkContext(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	req := BuildChatRequest("follow-up", sessionID, "/proj", "claude", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("follow-up", sessionID, "/proj", "claude", "", "", "", "", "/proj", false)
 	assert.NotEmpty(t, req.ForkContext, "should have fork context when resuming without external session ID")
 	assert.Contains(t, req.ForkContext, "previous answer")
 }
@@ -2555,7 +2555,7 @@ func TestBuildChatRequest_EmptyFileDir_WorkDirEmpty(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	req := BuildChatRequest("hello", "sess-1", "/home/user/project", "claude", "", "", "", "", "", "", false)
+	req := BuildChatRequest("hello", "sess-1", "/home/user/project", "claude", "", "", "", "", "", false)
 	assert.Empty(t, req.WorkDir, "fileDir='' should produce empty WorkDir (this is the bug)")
 }
 
@@ -2563,7 +2563,7 @@ func TestBuildChatRequest_FileDirPassedThrough_WorkDir(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	req := BuildChatRequest("hello", "sess-1", "/home/user/project", "claude", "", "", "", "", "", "/home/user/project", false)
+	req := BuildChatRequest("hello", "sess-1", "/home/user/project", "claude", "", "", "", "", "/home/user/project", false)
 	assert.Equal(t, "/home/user/project", req.WorkDir, "fileDir should be passed through to WorkDir")
 }
 

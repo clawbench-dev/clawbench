@@ -147,10 +147,11 @@ func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 		specs[s.ID] = s
 	}
 
-	// All backends with a discovery function registered support model discovery
-	assert.True(t, model.CanDiscoverModels(specs["opencode"]), "opencode should support model discovery")
-	assert.True(t, model.CanDiscoverModels(specs["deepseek"]), "deepseek should support model discovery")
-	assert.True(t, model.CanDiscoverModels(specs["qoder"]), "qoder should support model discovery")
+	// Only backends that read a local cache/static catalog keep a discovery
+	// source; the ones that used to shell out for a model list now rely on ACP.
+	assert.False(t, model.CanDiscoverModels(specs["opencode"]), "opencode no longer probes a command")
+	assert.False(t, model.CanDiscoverModels(specs["deepseek"]), "deepseek no longer probes a command")
+	assert.True(t, model.CanDiscoverModels(specs["qoder"]), "qoder reads its cached catalog")
 
 	// Backend with no registered discovery function does not support model discovery
 	assert.False(t, model.CanDiscoverModels(model.BackendSpec{Backend: "nonexistent_xyz"}), "nonexistent backend should not support model discovery")
@@ -388,16 +389,3 @@ func TestCheckCLIExistsErr_EmptyCommand(t *testing.T) {
 }
 
 // --- Test 13: DiscoverModels for backends with a registered source ---
-
-func TestDiscoverModels_DeepSeekWithRealCLI(t *testing.T) {
-	if !model.CheckCLIExists("deepseek") {
-		t.Skip("deepseek not installed, skipping integration test")
-	}
-
-	require.True(t, model.HasModelSource("deepseek"))
-	models := model.DiscoverModels("deepseek")
-	if len(models) == 0 {
-		t.Skip("deepseek model discovery returned no models")
-	}
-	t.Logf("deepseek discovered %d models", len(models))
-}

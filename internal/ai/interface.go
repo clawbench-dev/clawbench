@@ -142,7 +142,7 @@ type KBRef struct {
 type Metadata struct {
 	Mode           string `json:"mode,omitempty"`           // ACP mode (e.g., "code", "ask", "architect")
 	ThinkingEffort string `json:"thinkingEffort,omitempty"` // Thinking effort level (e.g., "low", "medium", "high")
-	Transport      string `json:"transport,omitempty"`      // Backend transport type: "acp-stdio" or "cli"
+	Transport      string `json:"transport,omitempty"`      // Backend transport: "acp-stdio" or "in-process" (derived from the agent)
 	Model          string `json:"model,omitempty"`
 	// KBRefs are the knowledge-base passages prepended to this turn's prompt.
 	// Empty means the turn did not consult the knowledge base. Persisted with

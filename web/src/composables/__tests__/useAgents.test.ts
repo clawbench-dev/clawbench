@@ -109,10 +109,6 @@ describe('useAgents', () => {
         { id: 'claude-3.5', name: 'Claude 3.5 Sonnet', default: true },
         { id: 'claude-3-haiku', name: 'Claude 3 Haiku', default: false },
       ],
-      cliModels: [
-        { id: 'claude-3.5', name: 'Claude 3.5 Sonnet', default: true },
-        { id: 'claude-3-haiku', name: 'Claude 3 Haiku', default: false },
-      ],
       thinkingEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
     },
     {
@@ -121,7 +117,6 @@ describe('useAgents', () => {
       backend: 'gpt',
       canRefreshModels: true,
       models: [{ id: 'gpt-4o', name: 'GPT-4o', default: true }],
-      cliModels: [{ id: 'gpt-4o', name: 'GPT-4o', default: true }],
       thinkingEffortLevels: ['low', 'medium', 'high'],
     },
     {
@@ -1399,8 +1394,8 @@ describe('useAgents', () => {
       expect(getAgentTransport('claude')).toBe('acp-stdio')
     })
 
-    it('returns cli when transport is not set', () => {
-      expect(getAgentTransport('gpt')).toBe('cli')
+    it('returns empty when the agent has neither ACP nor an in-process backend', () => {
+      expect(getAgentTransport('gpt')).toBe('')
     })
 
     it('returns acp-stdio when transport is empty but acpCommand is set', async () => {
@@ -1412,8 +1407,17 @@ describe('useAgents', () => {
       expect(getAgentTransport('claude')).toBe('acp-stdio')
     })
 
-    it('returns cli for unknown agent', () => {
-      expect(getAgentTransport('nonexistent')).toBe('cli')
+    it('returns in-process for the built-in agent', async () => {
+      resetAgents()
+      registerMocks()
+      const builtin = testAgents.map(a => a.id === 'gpt' ? { ...a, builtinBackend: true } : a)
+      mockApiGet.mockResolvedValue({ agents: builtin, defaultAgent: 'gpt' })
+      await loadAgents()
+      expect(getAgentTransport('gpt')).toBe('in-process')
+    })
+
+    it('returns empty for an unknown agent', () => {
+      expect(getAgentTransport('nonexistent')).toBe('')
     })
   })
 

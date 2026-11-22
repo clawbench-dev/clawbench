@@ -1995,22 +1995,6 @@ func UpdateSessionModel(sessionID, modelID string) error {
 	return err
 }
 
-// UpdateSessionTransport updates the transport field for a session.
-func UpdateSessionTransport(sessionID, transport string) error {
-	_, err := store.WriteExec("UPDATE chat_sessions SET transport = ? WHERE id = ?", transport, sessionID)
-	return err
-}
-
-// GetSessionTransport returns the transport for a session, or empty string if not set.
-func GetSessionTransport(sessionID string) string {
-	var transport string
-	err := store.ReadDB().QueryRow("SELECT COALESCE(transport, '') FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&transport)
-	if err != nil {
-		return ""
-	}
-	return transport
-}
-
 // GetSessionAutoApprove returns whether auto-approve mode is enabled for a session.
 func GetSessionAutoApprove(sessionID string) bool {
 	var val int
@@ -2672,7 +2656,6 @@ type SessionInfo struct {
 	Backend     string
 	AgentID     string
 	Model       string
-	Transport   string
 	AutoApprove bool
 	ProjectPath string // populated by GetSessionFullInfo only
 	// SessionType is the raw chat_sessions.session_type ('chat' / 'group' /
@@ -3282,15 +3265,15 @@ func UserThinkingEffortPick(sessionID string) (effortID, modelID string, ok bool
 	return state.ThinkingEffort.CurrentID, state.ThinkingEffort.ModelID, state.ThinkingEffort.CurrentID != ""
 }
 
-// GetSessionInfo fetches session metadata (title, backend, agent_id, model, transport)
+// GetSessionInfo fetches session metadata (title, backend, agent_id, model)
 // in a single query instead of separate queries.
 func GetSessionInfo(sessionID string) (*SessionInfo, error) {
 	info := &SessionInfo{}
 	err := store.ReadDB().QueryRow(
-		`SELECT title, backend, agent_id, model, COALESCE(transport, '')
+		`SELECT title, backend, agent_id, model
 		 FROM chat_sessions WHERE id = ? AND archived = 0`,
 		sessionID,
-	).Scan(&info.Title, &info.Backend, &info.AgentID, &info.Model, &info.Transport)
+	).Scan(&info.Title, &info.Backend, &info.AgentID, &info.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -3317,7 +3300,7 @@ func GetSessionFullInfoAny(sessionID string) *SessionInfo {
 
 func sessionFullInfo(sessionID string, includeArchived bool) *SessionInfo {
 	info := &SessionInfo{}
-	query := `SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, COALESCE(s.transport, ''), s.auto_approve, COALESCE(s.session_type, '')
+	query := `SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, s.auto_approve, COALESCE(s.session_type, '')
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
 		  WHERE s.id = ?`
@@ -3325,7 +3308,7 @@ func sessionFullInfo(sessionID string, includeArchived bool) *SessionInfo {
 		query += " AND s.archived = 0"
 	}
 	err := store.ReadDB().QueryRow(query, sessionID).
-		Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.Transport, &info.AutoApprove, &info.SessionType)
+		Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.AutoApprove, &info.SessionType)
 	if err != nil {
 		return nil
 	}

@@ -58,7 +58,7 @@ const currentSessionType = ref('')
 export const currentAgentId = ref('')
 export const currentModelId = ref('')
 const currentModelName = ref('')
-const currentTransport = ref('') // 'acp-stdio' or 'cli'
+const currentTransport = ref('') // 'acp-stdio' or 'in-process'
 const autoApprove = ref(false)
 // Auto-cruise switch for the CURRENT session (single chat AND group). Server
 // truth lives in chat_sessions.context_state's `cruise` key; this ref mirrors it
@@ -938,7 +938,7 @@ export async function initSessionFromAPI(preferredSessionId?: string | null) {
         } else {
           // Fall back to agent's stored transport
           const agent = agentsApi.getAgent(data.agentId || '')
-          currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : 'cli')
+          currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : agent?.builtinBackend ? 'in-process' : '')
         }
         // Initialize autoApprove from server state
         if (data.autoApprove !== undefined) {

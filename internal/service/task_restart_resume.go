@@ -323,7 +323,7 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 
 	req := BuildChatRequest(
 		AutoContinuePrompt(), sessionID, task.ProjectPath, backendName, task.AgentID,
-		effectiveModel, effectiveThinking, "", "", task.ProjectPath, false,
+		effectiveModel, effectiveThinking, "", task.ProjectPath, false,
 	)
 	// BuildChatRequest is the interactive builder; a resumed task run is still a
 	// scheduled execution (pi's --no-session and the prompt layers key on it).

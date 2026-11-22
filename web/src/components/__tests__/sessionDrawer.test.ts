@@ -134,7 +134,7 @@ const mockAgents = {
     // Mirrors the backend split: transport decides which source can refresh.
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     if (!a) return false
-    const transport = a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
+    const transport = a.transport || (a.acpCommand ? 'acp-stdio' : a.builtinBackend ? 'in-process' : '')
     return transport === 'acp-stdio' ? !!a.acpCommand : !!a.canRefreshModels
   }),
   supportsACP: vi.fn((agentId: string) => {
@@ -147,7 +147,7 @@ const mockAgents = {
   }),
   getAgentTransport: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
-    return a?.transport || 'cli'
+    return a?.transport || (a?.acpCommand ? 'acp-stdio' : a?.builtinBackend ? 'in-process' : '')
   }),
 }
 
@@ -550,26 +550,6 @@ describe('SessionDrawer', () => {
     expect(wrapper.find('.tab-empty-hint').exists()).toBe(true)
   })
 
-  // --- Transport tab ---
-
-  describe('transport tab', () => {
-    it('supportsACP returns true for agents with acpCommand', async () => {
-      const wrapper = mountDrawer()
-      expect(wrapper.vm.supportsACP('claude')).toBe(true)
-    })
-
-    it('supportsACP returns false for agents without acpCommand', async () => {
-      const wrapper = mountDrawer({ agentId: 'kimi' })
-      expect(wrapper.vm.supportsACP('kimi')).toBe(false)
-    })
-
-    it('isACP is true when currentTransport is acp-stdio', async () => {
-      mockIdentity.currentTransport.value = 'acp-stdio'
-      const wrapper = mountDrawer()
-      expect(wrapper.vm.isACP).toBe(true)
-    })
-  })
-
   // --- Mode tab ---
 
   describe('mode tab', () => {
@@ -717,8 +697,8 @@ describe('SessionDrawer', () => {
       mockIdentity.currentTransport.value = 'acp-stdio'
     })
 
-    it('is false when transport is cli and agent config is cli', async () => {
-      mockIdentity.currentTransport.value = 'cli'
+    it('is false when transport is in-process', async () => {
+      mockIdentity.currentTransport.value = 'in-process'
       const wrapper = mountDrawer({ agentId: 'kimi' })
       expect(wrapper.vm.isACP).toBe(false)
       mockIdentity.currentTransport.value = 'acp-stdio'

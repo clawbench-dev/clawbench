@@ -441,11 +441,10 @@ type EnqueueStartConfig struct {
 	Message     string
 	Files       []model.FileEntry
 	QueueID     string
-	// ModelID / Transport are persisted to the session so the drain loop's
-	// buildChatRequestFromQueue uses the user's choices, not agent defaults
+	// ModelID is persisted to the session so the drain loop's
+	// buildChatRequestFromQueue uses the user's choice, not the agent default
 	// (parity with the POST /api/ai/chat path).
-	ModelID   string
-	Transport string
+	ModelID string
 	// SenderClientID is the WS client id of the sending device, echoed on the
 	// queue_added event so the sender can skip its own optimistic entry.
 	SenderClientID string
@@ -485,12 +484,6 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 	if cfg.ModelID != "" {
 		if updateErr := UpdateSessionModel(cfg.SessionID, cfg.ModelID); updateErr != nil {
 			slog.Warn("enqueue: failed to persist session model",
-				slog.String("session", cfg.SessionID), slog.String("error", updateErr.Error()))
-		}
-	}
-	if cfg.Transport != "" {
-		if updateErr := UpdateSessionTransport(cfg.SessionID, cfg.Transport); updateErr != nil {
-			slog.Warn("enqueue: failed to persist session transport",
 				slog.String("session", cfg.SessionID), slog.String("error", updateErr.Error()))
 		}
 	}
@@ -822,7 +815,7 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	if msgID > 0 {
 		opts = append(opts, WithCurrentMessageID(msgID))
 	}
-	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files), opts...)
+	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files), opts...)
 
 	// The one AI-turn implementation — shared with the /api/ai/chat handler and
 	// the scheduler so a fix can no longer land in only one copy.

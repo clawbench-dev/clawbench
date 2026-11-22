@@ -67,38 +67,25 @@ func NewBackend(backendType string) (AIBackend, error) {
 // NewBackendForAgent creates a backend instance for the given agent.
 //
 // An agent with an ACP command always runs over ACP (ACP uses session/cancel
-// instead of process kill for stuck agents). A legacy per-session "cli"
-// transport is honored as "use the agent's ACP command anyway": there is no
-// CLI implementation behind it any more, and refusing would strand sessions
-// created before CLI support was removed.
-//
-// The in-process backend (the built-in agent) has no ACP command, so it is
-// the only case that resolves through the factory table.
+// instead of process kill for stuck agents). The in-process backend (the
+// built-in agent) has no ACP command, so it is the only case that resolves
+// through the factory table.
 //
 // This is the preferred entry point when the agent ID is known (all handler paths).
 func NewBackendForAgent(backendType, agentID string) (AIBackend, error) {
-	return NewBackendForAgentWithTransport(backendType, agentID, "")
+	return NewBackendForAgentFn(backendType, agentID)
 }
 
-// NewBackendForAgentWithTransport creates a backend with an optional per-session
-// transport override. The override is accepted for API compatibility and no
-// longer changes which backend is built: every process-spawning backend runs
-// over ACP.
-func NewBackendForAgentWithTransport(backendType, agentID, transportOverride string) (AIBackend, error) {
-	return NewBackendForAgentWithTransportFn(backendType, agentID, transportOverride)
-}
-
-// NewBackendForAgentWithTransportFn is the indirection behind
-// NewBackendForAgentWithTransport.
+// NewBackendForAgentFn is the indirection behind NewBackendForAgent.
 //
 // It exists so a test can observe the exact ai.ChatRequest a caller handed to
 // the backend (the turn runners build it, then resolve a backend, then execute).
 // Asserting on the backend's input is the only way to catch a request assembly
 // bug without also depending on real streaming: a stubbed turn runner would
 // assert on the caller instead of on the request the backend actually sees.
-var NewBackendForAgentWithTransportFn = newBackendForAgentWithTransport
+var NewBackendForAgentFn = newBackendForAgent
 
-func newBackendForAgentWithTransport(backendType, agentID, _ string) (AIBackend, error) {
+func newBackendForAgent(backendType, agentID string) (AIBackend, error) {
 	// agentID and backendType are different identifiers (agent ID vs backend
 	// name) and are not interchangeable: resolving an agent by backendType is
 	// only a best-effort recovery for callers that omitted the agent ID. It is

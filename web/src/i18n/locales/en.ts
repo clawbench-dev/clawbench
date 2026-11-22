@@ -1670,6 +1670,8 @@ export default {
       relatedFile: 'Related file:',
       backend: 'Backend:',
       transport: 'Protocol:',
+      transportAcp: 'ACP',
+      transportInProcess: 'In-process',
       mode: 'Mode:',
       thinkingEffort: 'Thinking effort:',
       model: 'Model:',

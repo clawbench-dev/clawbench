@@ -741,7 +741,7 @@ describe('resolveMidTurnSupported', () => {
   })
 
   it('forces interrupt for a group session regardless of transport', () => {
-    expect(resolveMidTurnSupported(true, true, 'cli')).toBe(false)
+    expect(resolveMidTurnSupported(true, true, 'in-process')).toBe(false)
     expect(resolveMidTurnSupported(true, true, '')).toBe(false)
   })
 
@@ -749,8 +749,8 @@ describe('resolveMidTurnSupported', () => {
     expect(resolveMidTurnSupported(false, true, 'acp-stdio')).toBe(true)
   })
 
-  it('falls back to interrupt for a CLI session of a steer-capable backend', () => {
-    expect(resolveMidTurnSupported(false, true, 'cli')).toBe(false)
+  it('falls back to interrupt for an in-process session of a steer-capable backend', () => {
+    expect(resolveMidTurnSupported(false, true, 'in-process')).toBe(false)
   })
 
   it('falls back to interrupt when the backend is not steer-capable', () => {

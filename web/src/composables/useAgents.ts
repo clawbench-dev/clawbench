@@ -742,11 +742,15 @@ function supportsMidTurn(agentId: string): boolean {
     return agent?.supportsMidTurn === true
 }
 
-/** Get the current transport mode for an agent. Returns 'acp-stdio' or 'cli'. */
+/**
+ * Get the transport an agent runs on: 'acp-stdio' for an external agent,
+ * 'in-process' for the built-in one. Empty means neither is available.
+ */
 function getAgentTransport(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
     if (agent?.transport) return agent.transport
-    return agent?.acpCommand ? 'acp-stdio' : 'cli'
+    if (agent?.acpCommand) return 'acp-stdio'
+    return agent?.builtinBackend ? 'in-process' : ''
 }
 
 /** Invalidate the ACP state cache for an agent so next access force-refreshes. */

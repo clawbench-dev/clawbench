@@ -494,7 +494,7 @@ func TestEffectiveTransport(t *testing.T) {
 		"an ACP command implies ACP even when the column is empty")
 	assert.Equal(t, "acp-stdio", effectiveTransport(&model.Agent{Transport: "cli", AcpCommand: "x"}),
 		"a legacy cli value on an ACP agent must not select a CLI path")
-	assert.Equal(t, "cli", effectiveTransport(&model.Agent{BuiltinBackend: true}),
+	assert.Equal(t, "in-process", effectiveTransport(&model.Agent{BuiltinBackend: true}),
 		"the built-in agent runs in-process")
 }
 
@@ -506,8 +506,8 @@ func TestCheckAcpState_NoHandshakeIsWarning(t *testing.T) {
 	require.NotNil(t, agent)
 
 	run := &selfTestRun{res: AgentSelfTestResult{AgentID: agent.ID}}
-	checkAcpState(run, agent, transportCLI)
-	assert.Empty(t, run.res.Checks, "a CLI agent has no ACP state to report")
+	checkAcpState(run, agent, transportInProcess)
+	assert.Empty(t, run.res.Checks, "an in-process agent has no ACP state to report")
 
 	run = &selfTestRun{res: AgentSelfTestResult{AgentID: agent.ID}}
 	checkAcpState(run, agent, transportACP)

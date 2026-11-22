@@ -43,7 +43,7 @@ func (f *fakeCompactBackend) ExecuteStream(_ context.Context, req ai.ChatRequest
 func withFakeCompactBackend(t *testing.T, be ai.AIBackend, err error) {
 	t.Helper()
 	orig := newBackendForAgent
-	newBackendForAgent = func(_, _, _ string) (ai.AIBackend, error) { return be, err }
+	newBackendForAgent = func(_, _ string) (ai.AIBackend, error) { return be, err }
 	t.Cleanup(func() { newBackendForAgent = orig })
 }
 
@@ -349,7 +349,6 @@ func TestCompactGroupMember_UnknownAgentIsNotCompacted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	require.NoError(t, UpdateSessionTransport(memberID, "acp-stdio"))
 	// Blank the agent binding: the row can no longer name a real agent.
 	_, werr := store.WriteExec("UPDATE chat_sessions SET agent_id = '' WHERE id = ?", memberID)
 	require.NoError(t, werr)
@@ -458,18 +457,17 @@ func TestRunMemberCompact_UsesMemberAgent(t *testing.T) {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 
-	var gotAgent, gotTransport string
+	var gotAgent string
 	orig := newBackendForAgent
-	newBackendForAgent = func(_, agentID, transport string) (ai.AIBackend, error) {
-		gotAgent, gotTransport = agentID, transport
+	newBackendForAgent = func(_, agentID string) (ai.AIBackend, error) {
+		gotAgent = agentID
 		return &fakeCompactBackend{events: []ai.StreamEvent{{Type: "done"}}}, nil
 	}
 	t.Cleanup(func() { newBackendForAgent = orig })
 
-	_, err = runMemberCompact(context.Background(), groupID, memberID, "agent-host", "acp-stdio")
+	_, err = runMemberCompact(context.Background(), groupID, memberID, "agent-host")
 	require.NoError(t, err)
 	assert.Equal(t, "agent-host", gotAgent)
-	assert.Equal(t, "acp-stdio", gotTransport)
 }
 
 // TestCompactGroupMember_DoesNotLeakIntoRunningSessions pins decision #73: a
@@ -481,7 +479,7 @@ func TestCompactGroupMember_DoesNotLeakIntoRunningSessions(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	orig := newBackendForAgent
-	newBackendForAgent = func(_, _, _ string) (ai.AIBackend, error) {
+	newBackendForAgent = func(_, _ string) (ai.AIBackend, error) {
 		return &blockingCompactBackend{started: started, release: release}, nil
 	}
 	t.Cleanup(func() { newBackendForAgent = orig })

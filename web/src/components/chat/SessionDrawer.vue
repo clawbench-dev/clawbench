@@ -467,11 +467,9 @@ const canCompactHere = computed(() => {
   // the model as a prose message.
   if (!isTargeted.value) return !isBuiltinAgent(props.agentId || '')
   if (!target.value?.isGroupMember) return false
-  const transport = target.value?.transport || ''
-  // Empty transport means "the member row does not override the agent's", and
-  // the server resolves that from the agent; only an explicit "cli" is known to
-  // be uncompactable here.
-  return transport !== 'cli'
+  // A member row's transport is derived by the server from its agent; only the
+  // in-process agent lacks the slash-command channel compaction needs.
+  return target.value?.transport !== 'in-process'
 })
 
 async function onCompact() {

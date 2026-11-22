@@ -26,14 +26,6 @@ func init() {
 			ToolCallIDPrefixes: CodeWhaleACPToolCallIDPrefixes,
 			InputRemaps:        CodeWhaleACPInputRemaps,
 		},
-		ModelSource: model.NewCLISource("deepseek", model.CLIOptions{
-			Commands: []model.CommandSpec{
-				{Command: "codewhale", Args: []string{"models", "--provider", "deepseek"}, CombineStderr: true},
-				{Command: "codewhale", Args: []string{"models"}, CombineStderr: true},
-				{Command: "deepseek", Args: []string{"models"}, CombineStderr: true},
-			},
-			Parse: parseDeepSeekModels,
-		}),
 		ProviderEnv: &model.ProviderEnvSpec{
 			OpenAI: model.ProtoEnv("OPENAI_BASE_URL", "OPENAI_API_KEY", ""),
 		},

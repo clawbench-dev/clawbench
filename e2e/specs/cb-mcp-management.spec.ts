@@ -101,7 +101,7 @@ test.describe('cb-mcp API surface', () => {
     })
     expect(agents.length).toBeGreaterThan(0)
 
-    const target = agents.find((a: any) => a.transport !== 'cli') ?? agents[0]
+    const target = agents.find((a: any) => a.transport === 'acp-stdio') ?? agents[0]
     const original = JSON.stringify(target.mcpServers ?? null)
 
     try {

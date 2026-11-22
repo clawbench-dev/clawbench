@@ -2456,10 +2456,10 @@ describe('useSessionIdentity', () => {
             expect(identity.currentTransport.value).toBe('acp-stdio')
         })
 
-        it('can be set to cli', () => {
+        it('can be set to in-process', () => {
             const identity = useSessionIdentity()
-            identity.currentTransport.value = 'cli'
-            expect(identity.currentTransport.value).toBe('cli')
+            identity.currentTransport.value = 'in-process'
+            expect(identity.currentTransport.value).toBe('in-process')
         })
     })
 

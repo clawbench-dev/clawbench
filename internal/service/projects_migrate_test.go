@@ -373,9 +373,11 @@ func TestMigrateProjectsToIDs_DropsEveryProjectPathColumn(t *testing.T) {
 // tables keep every row and every column that a LATER migration added.
 //
 // chat_sessions is the trap: its createTables definition omits nine columns
-// (source_session_id, transport, auto_approve, …) that arrive via separate ALTER
+// (source_session_id, auto_approve, …) that arrive via separate ALTER
 // statements. A rebuild driven by a hard-coded column list would drop them
-// silently; reading the stored DDL is what keeps them.
+// silently; reading the stored DDL is what keeps them. (transport is seeded too
+// but is expected to come back empty: it is retired and the data migration
+// clears it.)
 func TestMigrateProjectsToIDs_PreservesRowsAndLateColumns(t *testing.T) {
 	raw := openLegacyDB(t)
 	defer func() { _ = raw.Close() }()
@@ -402,8 +404,11 @@ func TestMigrateProjectsToIDs_PreservesRowsAndLateColumns(t *testing.T) {
 	if title != "kept" {
 		t.Errorf("title = %q, want kept", title)
 	}
-	if sourceSessionID != "parent-1" || transport != "acp" {
-		t.Errorf("late columns lost: source_session_id=%q transport=%q", sourceSessionID, transport)
+	if sourceSessionID != "parent-1" {
+		t.Errorf("late column lost: source_session_id=%q", sourceSessionID)
+	}
+	if transport != "" {
+		t.Errorf("retired transport must be cleared, got %q", transport)
 	}
 	if autoApprove != 1 || pinned != 1 || sortOrder != 7 {
 		t.Errorf("late flags lost: auto_approve=%d pinned=%d sort_order=%d", autoApprove, pinned, sortOrder)

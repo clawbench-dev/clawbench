@@ -6,32 +6,31 @@ import (
 	"clawbench/internal/store"
 )
 
-// migAgentTransportFromCommand records the transport column's new single source
-// of truth: every agent with an ACP command runs over ACP.
+// MigrateTransportToSinglePath rewrites the retired per-agent transport column
+// to the only two values that exist now: "acp-stdio" for every agent with an
+// ACP command, "in-process" for the built-in agent, and "" for an agent that
+// has neither (nothing can start it).
 //
-// The column USED to be a user choice ("cli" vs "acp-stdio") and drove the
-// backend factory. CLI support is gone, so the factory now decides from the
-// command alone, and the column is only what clients read. Rows still say "cli"
-// for agents that have an ACP command (either because the user picked CLI, or
-// because they were written before the command was added), which makes the
-// client show a non-ACP agent for one that in fact runs over ACP.
-//
-// The PATCH handler refuses the field now, so the in-memory model no longer
-// derives it on write. This migration is what stops an upgraded install from
-// keeping the stale value forever.
-func MigrateAgentTransportFromCommand() bool {
+// The column used to be a user choice ("cli" vs "acp-stdio") and drove the
+// backend factory. CLI support is gone, so the factory decides from the command
+// alone; the column is a read-only derived value for clients. Doing the rewrite
+// here — once — is what lets the runtime stop carrying "what if the row still
+// says cli" branches.
+func MigrateTransportToSinglePath() bool {
 	res, err := store.WriteExec(`
 		UPDATE agents
-		   SET transport = 'acp-stdio'
-		 WHERE COALESCE(acp_command, '') != ''
-		   AND COALESCE(transport, '') != 'acp-stdio'`)
+		   SET transport = CASE
+		         WHEN COALESCE(acp_command, '') != '' THEN 'acp-stdio'
+		         WHEN backend = 'builtin' THEN 'in-process'
+		         ELSE ''
+		       END`)
 	if err != nil {
 		slog.Warn("migration: normalize agent transport failed", "err", err)
 		return false
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {
-		slog.Info("migration: normalized agent transport from acp_command", "rows", n)
+		slog.Info("migration: normalized agent transport to the single path", "rows", n)
 	}
 	return true
 }
@@ -39,9 +38,9 @@ func MigrateAgentTransportFromCommand() bool {
 // MigrateSessionTransportColumns retires the per-session transport column.
 //
 // The column used to pin one session to CLI. Nothing reads it any more (the
-// factory decides from the agent's command), but a stale "cli" value made
-// clients keep rendering the CLI-facing gates for that session. Clearing it
-// leaves every row on the single meaning of "derived from the agent".
+// agent's command decides), but a stale value made clients keep rendering the
+// CLI-facing gates for that session. Clearing it leaves every row on the single
+// meaning of "derived from the agent".
 func MigrateSessionTransportColumns() bool {
 	res, err := store.WriteExec(`
 		UPDATE chat_sessions

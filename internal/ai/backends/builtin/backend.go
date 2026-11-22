@@ -47,9 +47,9 @@ func init() {
 			// describes how it is implemented, not what it is).
 			Name:      "ClawBench Agent",
 			Specialty: "内置智能体：文件读写与命令执行，工具权限可精细控制", // i18n-exempt: backend spec specialty, localized by the client
-			// No AcpCommand: this backend never spawns a process. Transport is
-			// always "cli" in the sense of "the in-process path", and
-			// SupportsACP() stays false because acp_command is empty.
+			// No AcpCommand: this backend never spawns a process. Its transport
+			// is "in-process", and SupportsACP() stays false because
+			// acp_command is empty.
 			//
 			// AutoLoadsNativeSkills must be false: this agent has no skill
 			// directory of its own, so ClawBench must inject the shared table

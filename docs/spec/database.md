@@ -33,7 +33,7 @@ RAG：同一数据库文件，独立连接池
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
 | source_session_id | TEXT | | `NULL` | 派生来源。三种写入方共用：分叉/任务续接写源会话 ID，ACP 载入写标记串 `acp:{acpSessionId}`（非会话 ID，消费时须跳过该前缀）。部分索引 `idx_sessions_source_session ... WHERE source_session_id IS NOT NULL` |
-| transport | TEXT | | `''` | 传输方式：cli / acp |
+| transport | TEXT | | `''` | **已废弃**：传输由 agent 的 `acp_command` 推导（`acp-stdio` / `in-process`），数据迁移已清空此列，代码不再读写 |
 | auto_approve | INTEGER | NOT NULL | `0` | 自动批准模式 |
 | context_state | TEXT | | `''` | 会话级上下文状态 JSON（模式、思考档位等）。drain/续接路径靠它避免回落到默认值 |
 | agent_name | TEXT | NOT NULL | `''` | **群成员行的显示名（权威快照）**：首个实例=智能体本名，重复实例=名池名（池尽回退 `本名 序号`）。非成员行留空；成员行的 `title` 留空 |
@@ -82,7 +82,7 @@ UNIQUE：`(backend, id)`
 | message_id | INTEGER | PRIMARY KEY | — | 原 chat_history.id（仅作标识，无 FK） |
 | mode | TEXT | | `''` | 模式：chat / plan / code |
 | thinking_effort | TEXT | | `''` | 思考力度等级 |
-| transport | TEXT | | `''` | 传输方式：cli / acp |
+| transport | TEXT | | `''` | **已废弃**：传输由 agent 的 `acp_command` 推导（`acp-stdio` / `in-process`），数据迁移已清空此列，代码不再读写 |
 | model | TEXT | | `''` | 使用的模型 |
 | input_tokens | INTEGER | | `0` | 输入 token 数 |
 | output_tokens | INTEGER | | `0` | 输出 token 数 |
@@ -274,7 +274,7 @@ UNIQUE：`(message_id)`
 | models | TEXT | NOT NULL | `'[]'` | 可用模型列表 JSON |
 | models_auto_detected | INTEGER | NOT NULL | `0` | 自动检测模型标记 |
 | sort_order | INTEGER | NOT NULL | `0` | 排序顺序 |
-| transport | TEXT | NOT NULL | `'cli'` | 传输方式：cli / acp |
+| transport | TEXT | NOT NULL | `''` | **已废弃**：由 `acp_command` / `builtin` 推导（`Agent.DeriveTransport()`），列只为老库兼容保留，不再写入 |
 | acp_command | TEXT | NOT NULL | `''` | ACP 命令 |
 | acp_available_modes | TEXT | NOT NULL | `'[]'` | ACP 可用模式 JSON |
 | acp_available_thinking_efforts | TEXT | NOT NULL | `'[]'` | ACP 可选力度 JSON |

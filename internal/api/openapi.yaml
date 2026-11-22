@@ -792,8 +792,8 @@ paths:
         （默认 `true`）、`minutes_max_tokens`（默认 `3000`，范围 `1000`–`8000`）。
         它**不含模型字段**：纪要复用 `ai_summary`，与其共享一次改动。
 
-        `mcp.servers` 是全局 MCP 服务列表，供所有 ACP 传输的智能体使用（CLI 传输读
-        各自配置文件，不受影响）。`env` / `headers` **明文返回**，与 `stt` / `rag` /
+        `mcp.servers` 是全局 MCP 服务列表，供所有走 ACP 的智能体使用（内置智能体
+        是进程内实现，不接 MCP 客户端）。`env` / `headers` **明文返回**，与 `stt` / `rag` /
         `tts` 的 `api_key` 一致。
 
         每个智能体能用到哪些由它自己的 `mcpServers` 策略决定（见
@@ -1518,13 +1518,13 @@ paths:
       description: |
         分页返回会话消息，并附带运行状态与 ACP 状态。`session_id` 缺省时回退到会话 Cookie。
 
-        **`modelListState` 与 `/api/agents` 同构**：返回原始 ACP 列表 `models`、
-        未经合并的纯 CLI 列表 `cliModels`，以及已解析的最终列表 `resolvedModels`
-        （CLI 提供顺序与名称，具体 ACP 列表对成员资格有权威性；档位别名只取其
-        显示名）。客户端直接渲染 `resolvedModels`，无需自行合并。
+        **`modelListState` 与 `/api/agents` 同构**：返回 ACP 上报的原始列表 `models`
+        与服务端解析后的最终列表 `resolvedModels`（本地清单提供顺序与名称，具体 ACP
+        列表对成员资格有权威性；档位别名只取其显示名）。客户端直接渲染
+        `resolvedModels`，无需自行合并。
 
         新建会话从不与 ACP 通信，其模型列表只能来自这里（后端从 agent 级能力
-        注册表解析）。CLI 会话不返回该字段。当 agent 没有 CLI 列表可合并时，
+        注册表解析）。进程内智能体不返回该字段。当 agent 没有本地列表可合并时，
         `resolvedModels` 为空但 `models` 仍会返回，避免整个列表丢失。
       operationId: chatGet
       parameters:
@@ -2230,7 +2230,7 @@ paths:
                   agentId: {type: string}
                   backend: {type: string}
                   modelId: {type: string}
-                  transport: {type: string, enum: [acp-stdio, cli]}
+                  transport: {type: string, enum: [acp-stdio, in-process]}
                   autoApprove: {type: boolean}
                   cruise: {type: boolean}
                   modeState:
@@ -2321,7 +2321,6 @@ paths:
                 modelId: {type: string}
                 thinkingEffort: {type: string}
                 modeId: {type: string}
-                transport: {type: string, enum: [acp-stdio, cli]}
                 autoApprove: {type: boolean}
                 cruise: {type: boolean}
                 configOptions:
@@ -6659,18 +6658,17 @@ paths:
         模型列表、计划状态）。斜杠命令由 `acpStates[].commands` 提供，取代已移除的
         `/api/ai/commands`。
 
-        **模型列表由服务端合并**：`agents[].models` 是已解析的最终列表——CLI 发现的
-        列表提供顺序与名称，ACP 上报的**具体**模型列表在存在时对成员资格有权威性
-        （ACP 未上报的 CLI 模型会被剔除）。绑定了模型提供商的 agent，其提供商编目的
-        模型**并入**该列表（不会被 ACP 的列表挤掉），并单独放在
+        **模型列表由服务端合并**：`agents[].models` 是已解析的最终列表——本地发现的
+        清单（内置目录或配置探测）提供顺序与名称，ACP 上报的**具体**模型列表在存在时
+        对成员资格有权威性（ACP 未上报的本地模型会被剔除）。绑定了模型提供商的 agent，
+        其提供商编目的模型**并入**该列表（不会被 ACP 的列表挤掉），并单独放在
         `agents[].providerModels` 里供选择器按来源分组。ACP 若上报的是
         `opus`/`sonnet`/`haiku` 这类**档位别名**，则不参与成员资格判定，而是对齐到
-        对应的 CLI 条目并只取其显示名（保留具体 ID，CLI 仍能识别）。`agents[].cliModels`
-        是未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染，无需自行保留
-        基线并重新合并。
+        对应的本地条目并只取其显示名（保留具体 ID，agent 仍能识别）。
 
-        同一对列表也挂在 `acpStates[].modelListState` 的 `resolvedModels` /
-        `cliModels` 字段上，便于客户端仅凭 ACP 状态缓存刷新视图。
+        同一份已解析列表也挂在 `acpStates[].modelListState.resolvedModels` 上，
+        便于客户端仅凭 ACP 状态缓存刷新视图。未经合并的原始本地清单**不再下发**：
+        只有一种传输，客户端不需要第二套合并规则。
 
         **目录校验型后端的模型 ID 形态**：opencode 会在发请求前用自己的静态目录
         解析模型 ID，目录外的 ID 直接被拒。ClawBench 因此把提供商编目**声明进它的
@@ -6680,14 +6678,14 @@ paths:
         `preferred_model` 存的是带前缀的形态；其他后端仍是编目原值。客户端只需
         回传服务端给的 ID，不要自行拼接或裁剪前缀。
 
-        **ACP 未确认时不展示 CLI 猜测列表**：agent 的 `transport` 为 `acp-stdio`
-        且其 ACP 运行时**从未上报过**模型列表时，`agents[].models` 返回**空数组**
-        （`cliModels` 仍照常返回）。ACP 协议没有「客户端默认模型」的概念——模型是
+        **ACP 未确认时不展示本地猜测列表**：agent 有 `acp_command`（即
+        `transport == "acp-stdio"`）且其 ACP 运行时**从未上报过**模型列表时，
+        `agents[].models` 返回**空数组**。ACP 协议没有「客户端默认模型」的概念——模型是
         `category: "model"` 的会话配置项，agent 在 `session/new` 自带 `currentValue`，
-        客户端只需显示、可选地改；在 agent 开口之前，CLI 发现的列表只是猜测，把它当
+        客户端只需显示、可选地改；在 agent 开口之前，本地发现的列表只是猜测，把它当
         可运行模型展示（并据此发送 `session/set_config_option`）可能选中 agent 无法
         运行的模型。客户端此时应显示占位（如「默认」）并在发送时不带 `modelId`，
-        交由 agent 自行决定。传输为 `cli` 的双传输 agent 不受此约束。
+        交由 agent 自行决定。进程内智能体（`transport == "in-process"`）不受此约束。
 
         **按项目过滤**：返回的列表只包含当前项目可见的 agent——全局 agent
         （`project_id` 为空）始终可见，被标记「仅当前项目」的 agent 只在其所属
@@ -6750,7 +6748,7 @@ paths:
       description: |
         部分更新单个 agent（body 含 `id`）。可更新字段：
         `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
-        `transport`、`acp_command`、`name`、`specialty`、`custom_system_prompt`、
+        `acp_command`、`name`、`specialty`、`custom_system_prompt`、
         `avatar`、`avatar_style`、`avatar_seed`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
         `mcp_servers`、`provider_id`、`tool_policy`、`skip_project_context`。
         `avatar` 为原始 SVG 字符串或上传图片的 `data:image/...` URI；空串恢复内置图标，
@@ -6758,9 +6756,10 @@ paths:
         DiceBear 风格与种子（上传图片与旧头像为空）；更换 `avatar` 时未同时提供的来源字段
         会被清空，避免行里留下与图片不符的风格。
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
-        `custom-acp` 可改**：非空同时把 `transport` 切到 `acp-stdio` 并重启其连接；
-        空串被拒（无 CLI 回退）。内置后端的命令由自动发现维护，发送即 `400`
-        `AcpCommandManagedByDiscovery`。二者不可同请求出现。
+        无 spec 的 agent 可改**：改非空命令会重启其 ACP 连接（旧进程是用旧命令起的），
+        `transport` 由命令推导、无需单独传；空串被拒（没有别的实现兜底）。内置后端的
+        命令由自动发现维护，发送即 `400` `AcpCommandManagedByDiscovery`。已废弃的
+        `transport` 字段会被忽略。
         `disabled` 为布尔值：禁用后不再出现在任何新建入口；**默认智能体不能
         禁用**（`CannotDisableDefaultAgent`）。
         `project_scope` 为布尔值：`true` 表示「仅当前项目」（按
@@ -6807,10 +6806,10 @@ paths:
         响应中的 `sessions` / `tasks` / `groups` 是实际转交的数量。
 
         转交会重写每个会话行的执行身份：`agent_id` 与 `backend` 换成默认智能体的，
-        `model` / `transport` 清空（旧值只对旧后端有效），
-        `external_session_id` **仅在后端不同时清空**——后端、ACP 命令与传输都一致时原生会话
+        `model` 清空（旧值只对旧后端有效），
+        `external_session_id` **仅在后端或 ACP 命令不同时清空**——两者都一致时原生会话
         仍然有效，直接沿用（并置 `compacted=1`，让新 agent 的系统提示在下一轮重播一次）；
-        带会话级 transport 覆盖的行与跨后端的行都清空，由下一轮重建，
+        跨后端的行都清空，由下一轮重建，
         `context_state` 里的 `mode` / `thinkingEffort` / `usage` 一并清掉（旧 agent
         的能力集与上下文窗口）。会话行本身与 `chat_history` **一条都不删**：历史照常
         可读，只是下一轮会以「全新原生会话 + 历史作为背景注入」的方式继续
@@ -6885,25 +6884,24 @@ paths:
       tags: [Agents]
       summary: agent 子操作
       description: |
-        `/api/agents/{id}/refresh-models`：刷新该 agent 对外提供的**全部**能力列表，
-        按传输方式选策略：
+        `/api/agents/{id}/refresh-models`：刷新该 agent 对外提供的**全部**能力列表：
 
-        - **ACP**（`transport == "acp-stdio"` 且有 `acp_command`；`transport` 为空时
-          按有 `acp_command` 即 ACP 解析）：**直接问 agent 本身**。临时创建一个会话，
-          从 `session/new` 响应与随后推送的 `available_commands_update` 采集模型、
-          思考等级、模式与斜杠命令，写回能力缓存，然后调用 `session/delete` 删除该
-          临时会话（**不检查** agent 是否广告 delete 能力：CodeBuddy 实现了该方法却
-          不广告 `sessionCapabilities`，按能力跳过会每次刷新泄漏一个孤儿会话）。
-          探测失败即失败，**不回落到 CLI 发现**——ACP 下的 CLI 列表只是猜测。
-        - **CLI**：重跑该后端的模型发现并落库。
+        - **ACP**（有 `acp_command`，即 `Agent.SupportsACP()`）：**直接问 agent 本身**。
+          临时创建一个会话，从 `session/new` 响应与随后推送的
+          `available_commands_update` 采集模型、思考等级、模式与斜杠命令，写回能力
+          缓存，然后调用 `session/delete` 删除该临时会话（**不检查** agent 是否广告
+          delete 能力：CodeBuddy 实现了该方法却不广告 `sessionCapabilities`，按能力
+          跳过会每次刷新泄漏一个孤儿会话）。探测失败即失败，**不回落到本地发现**——
+          ACP 下的本地清单只是猜测。
+        - **进程内智能体**：重跑该后端的本地发现并落库（模式与思考等级由本 build
+          固定，没有 ACP 握手可问）。
 
-        两者都返回 `{ models, cliModels, acpState? }`——与 GET /api/agents 同一形状。
-        `models` 是发现/探测结果与 ACP 模型列表合并后的列表（ACP 对成员资格有权威性），
-        `cliModels` 是未经合并的纯 CLI 列表，供客户端在切换到 CLI 传输时直接渲染。
+        都返回 `{ models, acpState? }`——与 GET /api/agents 同一形状。`models` 是
+        发现/探测结果与 ACP 模型列表合并后的列表（ACP 对成员资格有权威性）。
         `acpState` 仅 ACP 分支返回，含 `{ commands, modeState?, thinkingEffortState? }`
         （只含**可用列表**，不含当前选择）。
 
-        ACP 分支在 agent 未上报任何模型时 `models` 返回**空数组**（不回退 CLI 列表），
+        ACP 分支在 agent 未上报任何模型时 `models` 返回**空数组**（不回退本地清单），
         与 GET /api/agents 一致：客户端会把 `models` 直接写到 acp-stdio 的 agent 上。
         探测需要当前项目作为工作目录（`session/new` 要求绝对 cwd），无项目 Cookie 时
         返回 400 `NoProjectSelected`；探测失败返回 500 `ModelDiscoveryFailed`，
@@ -9668,7 +9666,7 @@ paths:
                             `usageState`、`usage_update` 载荷完全一致（`ai.UsageState`）。
                             活 ACP 连接有缓存时优先返回缓存（更实时），连接被空闲回收后
                             回落 `context_state.usage`。`null` 表示该成员从未上报用量
-                            （CLI 传输的智能体不上报），**不等于 0%**。
+                            （进程内智能体不上报），**不等于 0%**。
                           properties:
                             used: {type: integer}
                             size: {type: integer}

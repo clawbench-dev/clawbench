@@ -224,10 +224,10 @@ func visibleDefaultAgent(defaultAgent string, agents []*model.Agent, projectPath
 // acpModelsUnconfirmed reports whether the agent runs over ACP but its runtime
 // has not reported a model list yet.
 //
-// In that state agent.Models holds the CLI-discovered list, which is a GUESS:
-// ACP has no client-side "default model" concept — the agent reports its own
-// currentValue at session/new — so presenting the CLI list as if the agent could
-// run it lets the user pick a model the agent may reject. See
+// In that state agent.Models holds whatever was known last (or nothing), which
+// is a GUESS: ACP has no client-side "default model" concept — the agent
+// reports its own currentValue at session/new — so presenting that list as if
+// the agent could run it lets the user pick a model the agent may reject. See
 // ai.HasConfirmedACPModels.
 //
 // An unconfirmed ACP agent has no trustworthy model list yet, so a pick from
@@ -299,8 +299,8 @@ type acpState struct {
 // single place this rule lives.
 //
 // The resolved list goes on a COPY of the agent. Mutating the shared *Agent
-// would overwrite the stored CLI-discovered list with a merged one, and the
-// next refresh would treat ACP-only models as CLI-discovered.
+// would overwrite the stored list with a merged one, and the next refresh would
+// treat ACP-only models as known.
 func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 	reg *ai.AgentCapabilityRegistry, connManager *ai.ACPConnManager,
 ) {
@@ -311,8 +311,8 @@ func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 	// which is the single place this rule lives.
 	//
 	// The resolved list goes on a COPY of the agent. Mutating the shared *Agent
-	// would overwrite the stored CLI-discovered list with a merged one, and the
-	// next refresh would treat ACP-only models as CLI-discovered.
+	// would overwrite the stored list with a merged one, and the next refresh
+	// would treat ACP-only models as known.
 	for i, a := range agents {
 		if !a.SupportsACP() {
 			// The built-in agent has no ACP handshake, but its mode and thinking
@@ -422,15 +422,13 @@ func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 // Done here, on copies, rather than inside ResolveModels: prices come from a
 // different source (the weekly catalog snapshot) and must never be written back
 // into the agent's stored model list. Every list the picker can render is
-// priced — the resolved list, the CLI baseline behind the transport switch, and
-// the unconfirmed catalog fallback.
+// priced — the resolved list and the unconfirmed catalog fallback.
 func applyModelPrices(agents []*model.Agent, states map[string]*acpState) {
 	// Attach per-model prices (issue #643). Done here, on copies, rather than
 	// inside ResolveModels: prices come from a different source (the weekly
 	// catalog snapshot) and must never be written back into the agent's stored
 	// model list. Every list the picker can render is priced — the resolved
-	// list, the CLI baseline behind the transport switch, and the unconfirmed
-	// catalog fallback.
+	// list and the unconfirmed catalog fallback.
 	for i, a := range agents {
 		priced := *a
 		priced.Models = model.WithPrices(a.Models)
@@ -951,7 +949,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 				}
 			}
 			// Accept models reported by the ACP runtime even if they aren't in
-			// the CLI-discovered agent.Models list (runtime union of both sources).
+			// the stored agent.Models list (runtime union of both sources).
 			if !found {
 				reg := ai.GetAgentCapabilityRegistry()
 				if mls := reg.GetModelListState(agentID, ""); mls != nil {
@@ -1029,27 +1027,9 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAcpCommand")
 			return
 		}
-		newTransport := "acp-stdio"
-		ap.Transport = &newTransport
 		// A changed command invalidates every running process of this agent:
-		// they were spawned with the previous one. Keyed on the command, not on
-		// the agent-level transport — a session can carry its own acp-stdio
-		// override while the agent row says cli, and those processes hold the
-		// old command too.
+		// they were spawned with the previous one.
 		closeACPConns = acpCommand != agent.AcpCommand
-	}
-
-	// The "transport" patch field is refused: every agent that spawns a
-	// process runs over ACP, so there is nothing to switch. Clients that still
-	// send it get a clear error instead of a silent no-op. The built-in agent
-	// is the exception — its "cli" value means "in-process", which is the only
-	// mode it has.
-	if v, exists := patch[jsonTransport]; exists {
-		transport, _ := v.(string)
-		if transport != "cli" || !agent.BuiltinBackend {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidTransport")
-			return
-		}
 	}
 
 	// Validate and apply name
@@ -1432,9 +1412,6 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		if ap.PreferredThinkingEffort != nil {
 			agent.PreferredThinkingEffort = *ap.PreferredThinkingEffort
 		}
-		if ap.Transport != nil {
-			agent.Transport = *ap.Transport
-		}
 		if ap.AcpCommand != nil {
 			agent.AcpCommand = *ap.AcpCommand
 		}
@@ -1720,26 +1697,23 @@ func refreshViaACPProbe(w http.ResponseWriter, r *http.Request, agent *model.Age
 
 	// The probe already wrote the ACP lists (models/modes/efforts/commands) into
 	// the capability registry, which persists them on its own. The agent row is
-	// deliberately left alone: `agents.models` holds the CLI-discovered list, and
-	// overwriting it with the ACP list would make a later transport switch show
-	// ACP models in the CLI view (and the next refresh treat them as
-	// CLI-discovered). Resolution happens per read, exactly like GET /api/agents.
+	// deliberately left alone: `agents.models` is the last list the agent
+	// reported, and resolution happens per read, exactly like GET /api/agents.
 	current := model.GetAgent(agent.ID)
 	if current == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 		return
 	}
-	cliModels := current.Models
+	discovered := current.Models
 
-	// Resolve the same way GET /api/agents does: the CLI list supplies order and
-	// names, the agent's own list is authoritative for membership. When the agent
-	// reported nothing the answer is EMPTY, never the CLI skeleton — the client
-	// writes `models` straight onto an acp-stdio agent, so a fallback would
-	// present models the agent cannot run. ResolveModels cannot express that on
-	// its own (with no ACP list it echoes the CLI list back).
+	// Resolve the same way GET /api/agents does: the known list supplies order
+	// and names, the agent's own report is authoritative for membership. When
+	// the agent reported nothing the answer is EMPTY — the client writes
+	// `models` straight onto an acp-stdio agent, so a fallback would present
+	// models the agent cannot run.
 	var resolved []model.AgentModel
 	if len(res.Models) > 0 {
-		resolved = model.ResolveModels(cliModels, res.Models, res.CurrentModelID)
+		resolved = model.ResolveModels(discovered, res.Models, res.CurrentModelID)
 	}
 	if resolved == nil {
 		resolved = []model.AgentModel{}

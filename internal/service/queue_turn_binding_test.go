@@ -63,7 +63,7 @@ func TestBuildChatRequest_CurrentMessageBoundExcludesQuestion(t *testing.T) {
 	setupTestDBForBuiltinHistory(t)
 	qID := seedBuiltinTurnHistory(t, "sess-bound")
 
-	req := BuildChatRequest("current question", "sess-bound", "/proj", builtinBackendID, "", "", "", "", "", "/proj", false,
+	req := BuildChatRequest("current question", "sess-bound", "/proj", builtinBackendID, "", "", "", "", "/proj", false,
 		WithCurrentMessageID(qID))
 	assertQuestionNotReplayed(t, req, "current question")
 	assert.Len(t, req.History, 2, "the earlier exchange must still be replayed")
@@ -76,7 +76,7 @@ func TestBuildChatRequest_EveryTurnBoundsItsOwnMessage(t *testing.T) {
 	setupTestDBForBuiltinHistory(t)
 	seedBuiltinTurnHistory(t, "sess-unbound")
 
-	unbound := BuildChatRequest("current question", "sess-unbound", "/proj", builtinBackendID, "", "", "", "", "", "/proj", false)
+	unbound := BuildChatRequest("current question", "sess-unbound", "/proj", builtinBackendID, "", "", "", "", "/proj", false)
 	var replayed bool
 	for _, h := range unbound.History {
 		if h.Text == "current question" {
@@ -145,11 +145,11 @@ func TestLastChatMessageID_EmptySessionIsZero(t *testing.T) {
 // backend registry lookup happens on.
 func captureTurnRequest(t *testing.T, run func() streamRunResultShared) ai.ChatRequest {
 	t.Helper()
-	prev := ai.NewBackendForAgentWithTransportFn
-	t.Cleanup(func() { ai.NewBackendForAgentWithTransportFn = prev })
+	prev := ai.NewBackendForAgentFn
+	t.Cleanup(func() { ai.NewBackendForAgentFn = prev })
 
 	var captured ai.ChatRequest
-	ai.NewBackendForAgentWithTransportFn = func(backendType, agentID, transport string) (ai.AIBackend, error) {
+	ai.NewBackendForAgentFn = func(backendType, agentID string) (ai.AIBackend, error) {
 		return &requestCapturingBackend{onExecute: func(req ai.ChatRequest) { captured = req }}, nil
 	}
 

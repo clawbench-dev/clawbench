@@ -87,9 +87,7 @@ func TestSessionExecutor_Finalize_ACPModeInjection(t *testing.T) {
 	}
 }
 
-// The persisted transport metadata is derived from the agent's command, not
-// from a per-session override: every agent with an ACP command runs over ACP,
-// and a legacy session value must not claim otherwise.
+// The persisted transport metadata is derived from the agent's command.
 func TestSessionExecutor_Finalize_TransportFromAgentCommand(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
@@ -98,10 +96,6 @@ func TestSessionExecutor_Finalize_TransportFromAgentCommand(t *testing.T) {
 	defer func() { model.Agents = nil }()
 
 	sid := setupExecutorSession(t, "test-agent")
-	// A stale override from before the CLI removal must be ignored.
-	if err := UpdateSessionTransport(sid, "cli"); err != nil {
-		t.Fatalf("UpdateSessionTransport failed: %v", err)
-	}
 
 	ctx := context.Background()
 	cfg := RunConfig{
@@ -421,7 +415,9 @@ func TestSessionExecutor_Finalize_NilMetadata(t *testing.T) {
 	// Instead test with an empty Metadata struct.
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+		// An ACP command gives the derived transport something to report, which
+		// is what this test asserts Finalize fills in.
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test", AcpCommand: "test --acp"},
 	}
 	defer func() { model.Agents = nil }()
 
@@ -448,8 +444,8 @@ func TestSessionExecutor_Finalize_NilMetadata(t *testing.T) {
 	if finalized.Metadata == nil {
 		t.Fatal("expected Metadata to be set")
 	}
-	if finalized.Metadata.Transport == "" {
-		t.Fatal("expected Transport to be set")
+	if finalized.Metadata.Transport != model.TransportACPStdio {
+		t.Fatalf("expected the derived ACP transport, got %q", finalized.Metadata.Transport)
 	}
 }
 

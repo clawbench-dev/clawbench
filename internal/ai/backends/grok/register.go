@@ -53,12 +53,6 @@ func init() {
 			ToolCallIDPrefixes: GrokACPTCIDPrefixes,
 			InputRemaps:        GrokACPRemaps,
 		},
-		ModelSource: model.NewCLISource("grok", model.CLIOptions{
-			Command:  "grok",
-			Args:     []string{"models"},
-			Parse:    parseGrokModels,
-			Fallback: GrokCatalog,
-		}),
 		ProviderEnv: &model.ProviderEnvSpec{
 			OpenAI: model.ProtoEnv("GROK_XAI_API_BASE_URL", "XAI_API_KEY", ""),
 		},

@@ -13,7 +13,7 @@ import (
 // GET and PATCH are two handlers on one path, so the route needs a dispatcher.
 // Registering only the GET handler is a real failure mode, not a hypothetical
 // one: it shipped that way, and every PATCH from the settings drawer (a group
-// member's model / effort / mode / transport) answered 405 "MethodNotAllowed"
+// member's model / effort / mode) answered 405 "MethodNotAllowed"
 // because the mux never reached ServeSessionSettingsUpdate. The handler tests
 // all call the functions directly, so none of them could see it —
 // TestSessionSettingsRoute_DispatchesPatch is the route-level guard.
@@ -27,7 +27,7 @@ func ServeSessionSettingsRoute(w http.ResponseWriter, r *http.Request) {
 
 // ServeSessionSettings returns one session's settings state in the exact shape
 // the settings drawer (SessionDrawer) needs: model, thinking effort, mode,
-// transport, auto-approve, auto-cruise, plus the context-usage snapshot.
+// auto-approve, auto-cruise, plus the context-usage snapshot.
 //
 //	GET /api/ai/session/settings?session_id=<id>
 //
@@ -78,39 +78,24 @@ func ServeSessionSettings(w http.ResponseWriter, r *http.Request) {
 	agentID := ""
 	backendName := ""
 	modelID := ""
-	transport := ""
 	autoApprove := false
 	if info != nil {
 		agentID = info.AgentID
 		backendName = info.Backend
 		modelID = info.Model
-		transport = info.Transport
 		autoApprove = info.AutoApprove
 	}
 	if agentID == "" {
 		agentID = service.GetSessionAgentID(sessionID)
 	}
-	// Resolve the EFFECTIVE transport rather than echoing the raw column.
-	//
-	// A group member row has transport='' by design (it inherits whatever its
-	// agent uses, exactly as a turn does through resolveIsACP). Echoing the empty
-	// column made the drawer's protocol tab render no selection at all.
-	//
-	// An explicit per-session override wins; otherwise take the agent's own
-	// transport, then "has an ACP command" (the same fallback resolveIsACP uses).
-	// If neither is known the value stays EMPTY — deliberately NOT "cli": a row
-	// with no transport is not a CLI row, and claiming so would hide the ACP-only
-	// tabs. The client already treats empty as "ask the agent config".
-	if transport == "" {
-		if agent := model.GetAgent(agentID); agent != nil {
-			transport = agent.Transport
-			if transport == "" && agent.AcpCommand != "" {
-				transport = transportACP
-			}
-		}
+	// Transport is derived from the agent's command; there is no per-session
+	// override any more.
+	transport := ""
+	if agent := model.GetAgent(agentID); agent != nil {
+		transport = agent.DeriveTransport()
 	}
 
-	st := sessionStateSnapshot(sessionID, agentID, transport)
+	st := sessionStateSnapshot(sessionID, agentID)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                  true,
@@ -173,7 +158,6 @@ type sessionSettingsPatch struct {
 	ModelID        string `json:"modelId"`
 	ThinkingEffort string `json:"thinkingEffort"`
 	ModeID         string `json:"modeId"`
-	Transport      string `json:"transport"`
 	AutoApprove    *bool  `json:"autoApprove"`
 	Cruise         *bool  `json:"cruise"`
 	// ConfigOptions sets agent-specific select options by the agent's own
@@ -184,13 +168,12 @@ type sessionSettingsPatch struct {
 
 // isModelOnly reports whether the request touches nothing but the model. The
 // other fields all need the member's live connection (mode / effort / config
-// options are pushed at it, transport decides the next spawn), so they cannot be
+// options are pushed at it), so they cannot be
 // "stored and deferred" while a group turn owns that connection.
 func (req sessionSettingsPatch) isModelOnly() bool {
 	return req.ModelID != "" &&
 		req.ThinkingEffort == "" &&
 		req.ModeID == "" &&
-		req.Transport == "" &&
 		req.AutoApprove == nil &&
 		req.Cruise == nil &&
 		len(req.ConfigOptions) == 0
@@ -232,7 +215,7 @@ func applySessionModelForSettings(ctx context.Context, sessionID, modelID string
 // including a group MEMBER row.
 //
 //	PATCH /api/ai/session/settings {sessionId, modelId?, thinkingEffort?, modeId?,
-//	                                transport?, autoApprove?, cruise?}
+//	                                autoApprove?, cruise?}
 //
 // This is deliberately NOT /api/ai/session/update: that endpoint resolves its
 // target through the session cookie/query, and its write path assumes a
@@ -273,7 +256,6 @@ func ServeSessionSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		ModeID:         req.ModeID,
 		ThinkingEffort: req.ThinkingEffort,
 		ModelID:        req.ModelID,
-		Transport:      req.Transport,
 		AutoApprove:    req.AutoApprove,
 		Cruise:         req.Cruise,
 		ConfigOptions:  req.ConfigOptions,

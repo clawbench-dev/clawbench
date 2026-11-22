@@ -909,9 +909,6 @@ func thinkingEffortStateAfterModelSwitch(sessionID string) *ai.ThinkingEffortSta
 // has no optimistic copy to fall back on — so it must be surfaced rather than
 // reported as a silent ok.
 func (req *sessionUpdateRequest) applyNonModelFields(sessionID string) error {
-	// req.Transport is accepted for API compatibility and ignored — every agent
-	// with an ACP command runs over ACP, so there is no per-session path to
-	// switch to.
 	if req.AutoApprove != nil {
 		applyAutoApprove(sessionID, *req.AutoApprove)
 	}

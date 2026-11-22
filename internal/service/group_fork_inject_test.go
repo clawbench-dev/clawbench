@@ -242,7 +242,7 @@ func TestBuildChatRequest_InjectsForkBackgroundOnFirstTurn(t *testing.T) {
 	require.NoError(t, err)
 	SetForkContext("sess-bg", "历史正文XYZ")
 
-	req := BuildChatRequest("新问题", "sess-bg", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("新问题", "sess-bg", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.Contains(t, req.ForkContext, "历史正文XYZ")
 }
 
@@ -265,7 +265,7 @@ func TestBuildChatRequest_NoInjectionAfterRealReply(t *testing.T) {
 	// gate itself rather than passing because another branch short-circuited it.
 	require.NoError(t, UpdateExternalSessionID("sess-bg2", "ext-bg2"))
 
-	req := BuildChatRequest("新问题", "sess-bg2", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("新问题", "sess-bg2", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	// The legacy copied-rows fork path may still build its own envelope from the
 	// session's history; what must NOT happen is the stored background being
 	// appended on top of it.
@@ -289,7 +289,7 @@ func TestBuildChatRequest_InjectsAfterFailedFirstTurn(t *testing.T) {
 		`{"blocks":[{"type":"warning","text":"backend exploded"}]}`, nil, false, "", "")
 	require.NoError(t, err)
 
-	req := BuildChatRequest("重试", "sess-bg3", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("重试", "sess-bg3", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.Contains(t, req.ForkContext, "历史正文XYZ",
 		"a warning-only row is not a successful turn, so the background must survive")
 }
@@ -309,6 +309,6 @@ func TestClearForkContext_EndsInjection(t *testing.T) {
 
 	ClearForkContext("sess-bg4")
 
-	req := BuildChatRequest("下一轮", "sess-bg4", "/proj", "codebuddy", "", "", "", "", "", "/proj", false)
+	req := BuildChatRequest("下一轮", "sess-bg4", "/proj", "codebuddy", "", "", "", "", "/proj", false)
 	assert.Empty(t, req.ForkContext)
 }

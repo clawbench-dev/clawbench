@@ -207,7 +207,7 @@ const baseAgent = {
   specialty: 'coding',
   backend: 'claude',
   command: 'claude',
-  transport: 'cli',
+  transport: 'acp-stdio',
   models: [{ id: 'model-1', name: 'Model 1', default: true }],
   preferredModel: 'model-1',
   customSystemPrompt: '',
@@ -375,7 +375,7 @@ describe('SettingsAgentDetail', () => {
     })
   })
 
-  it('renders more items for dual-transport agent', () => {
+  it('renders the command row once the agent has an ACP command', () => {
     const wrapper1 = mountDetail()
     const count1 = wrapper1.findAllComponents({ name: 'SettingsItem' }).length
 

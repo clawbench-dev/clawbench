@@ -18,7 +18,7 @@ import (
 )
 
 // transportACP is the transport value recorded for ACP stdio sessions.
-const transportACP = "acp-stdio"
+const transportACP = model.TransportACPStdio
 
 // replayMessage 是一条从 LoadSession 回放重建的消息。
 type replayMessage struct {

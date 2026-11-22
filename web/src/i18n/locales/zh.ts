@@ -1679,6 +1679,8 @@ export default {
       relatedFile: '关联文件:',
       backend: '后端:',
       transport: '协议:',
+      transportAcp: 'ACP',
+      transportInProcess: '内置',
       mode: '模式:',
       thinkingEffort: '思考深度:',
       model: '模型:',

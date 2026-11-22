@@ -1365,11 +1365,11 @@ describe('SessionDrawer', () => {
       expect(mockCompactMember).toHaveBeenCalledWith('member-1', 'member-1')
     })
 
-    // A CLI-transport member has no slash-command channel, so /compact would
+    // An in-process member has no slash-command channel, so /compact would
     // reach the model as prose; the server answers 400. Offering the button only
     // produced an error AFTER the click.
-    it('does not offer compaction for a CLI-transport member', async () => {
-      mockApiGet.mockResolvedValue({ ...targetPayload, transport: 'cli' })
+    it('does not offer compaction for an in-process member', async () => {
+      mockApiGet.mockResolvedValue({ ...targetPayload, transport: 'in-process' })
       const wrapper = mountDrawer({ targetSessionId: 'member-1' })
       await nextTick()
       await nextTick()
