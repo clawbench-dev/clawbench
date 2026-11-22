@@ -861,6 +861,24 @@ func TestDestroySession_BadMethod(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
+func TestDestroySession_WithoutProjectCookieAndMissingDir(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	missingDir := filepath.Join(env.WatchDir, "deleted-project-dir")
+	sessionID, err := service.CreateSession(missingDir, "claude", "orphan-session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	// No project cookie at all, and the session's project directory does not exist on disk.
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/destroy?session_id="+sessionID, nil)
+	w := callHandler(DestroySession, req)
+	assertOK(t, w)
+
+	var nSessions int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sessionID).Scan(&nSessions))
+	assert.Zero(t, nSessions, "session belonging to a missing directory must be hard-deleted")
+}
+
 func TestServeAISessionUpdate_ThinkingEffort_UsesAdvertisedWireID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

@@ -11,6 +11,15 @@
     </template>
     <div class="acp-session-search-row">
       <SearchInput v-model="searchQuery" :placeholder="t('chat.acpSession.searchPlaceholder')" />
+      <button
+        v-if="hasUntitledNonCodex"
+        type="button"
+        class="acp-session-filter-chip"
+        :class="{ active: hideUntitled }"
+        @click="toggleHideUntitled"
+      >
+        {{ t('chat.acpSession.hideUntitled') }}
+      </button>
     </div>
     <div class="acp-session-list">
       <div v-if="acpSessionsLoading && acpSessions.length === 0" class="acp-session-skeleton">
@@ -24,12 +33,21 @@
       </div>
       <div v-else-if="filteredSessions.length === 0" class="acp-session-empty">
         {{ t('chat.acpSession.noResults') }}
+        <div v-if="hiddenLocalCount > 0" class="acp-session-hidden-actions">
+          <button type="button" class="acp-session-link-btn" @click="showHidden = !showHidden">
+            {{ showHidden ? t('chat.acpSession.hideHidden', { count: hiddenLocalCount }) : t('chat.acpSession.showHidden', { count: hiddenLocalCount }) }}
+          </button>
+          <button type="button" class="acp-session-link-btn" @click="restoreAllHidden">
+            {{ t('chat.acpSession.restoreAllHidden') }}
+          </button>
+        </div>
       </div>
       <template v-else>
         <div
           v-for="session in filteredSessions"
           :key="session.sessionId"
           class="acp-session-item"
+          :class="{ 'is-hidden-local': isLocallyHidden(session.sessionId) }"
         >
             <div class="acp-session-item-info">
               <span class="acp-session-item-title">{{ session.title || t('chat.acpSession.untitled') }}</span>
@@ -38,6 +56,16 @@
                 <span class="acp-session-item-id" :title="session.sessionId">{{ session.sessionId }}</span>
               </div>
             </div>
+          <button
+            type="button"
+            class="acp-session-hide-btn"
+            :title="isLocallyHidden(session.sessionId) ? t('chat.acpSession.unhideSession') : t('chat.acpSession.hideSession')"
+            :aria-label="isLocallyHidden(session.sessionId) ? t('chat.acpSession.unhideSession') : t('chat.acpSession.hideSession')"
+            @click.stop="toggleLocalHide(session.sessionId)"
+          >
+            <Eye v-if="isLocallyHidden(session.sessionId)" :size="14" />
+            <EyeOff v-else :size="14" />
+          </button>
           <button
             class="acp-session-resume-btn"
             :disabled="acpResuming"
@@ -50,6 +78,14 @@
         </div>
         <div v-if="acpSessionsLoading && acpSessions.length > 0" class="acp-session-loading-more">
           <LoadingIndicator size="sm" inline :label="t('chat.acpSession.loading')" />
+        </div>
+        <div v-if="hiddenLocalCount > 0" class="acp-session-hidden-actions">
+          <button type="button" class="acp-session-link-btn" @click="showHidden = !showHidden">
+            {{ showHidden ? t('chat.acpSession.hideHidden', { count: hiddenLocalCount }) : t('chat.acpSession.showHidden', { count: hiddenLocalCount }) }}
+          </button>
+          <button type="button" class="acp-session-link-btn" @click="restoreAllHidden">
+            {{ t('chat.acpSession.restoreAllHidden') }}
+          </button>
         </div>
         <div v-if="acpSessions.length > 0 && hiddenOtherProjectCount > 0" class="acp-session-hidden-hint">
           {{ t('chat.acpSession.hiddenInOtherProjects', { count: hiddenOtherProjectCount }) }}
@@ -71,7 +107,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, toRef, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Import as ImportIcon } from 'lucide-vue-next'
+import { Eye, EyeOff, Import as ImportIcon } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -123,6 +159,75 @@ function normalizeProjectPath(p: string): string {
   return result.replace(/\/+$/, '')
 }
 
+const HIDE_UNTITLED_STORAGE_KEY = 'clawbench_acp_hide_untitled'
+
+function hiddenStorageKey(agentId: string): string {
+  return `clawbench_hidden_acp_sessions:${agentId}`
+}
+
+function readHiddenIds(agentId: string): Set<string> {
+  if (!agentId) return new Set()
+  try {
+    const raw = localStorage.getItem(hiddenStorageKey(agentId))
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw)
+    return new Set(Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeHiddenIds(agentId: string, ids: Set<string>): void {
+  if (!agentId) return
+  try {
+    if (ids.size === 0) {
+      localStorage.removeItem(hiddenStorageKey(agentId))
+    } else {
+      localStorage.setItem(hiddenStorageKey(agentId), JSON.stringify([...ids]))
+    }
+  } catch { /* ignore storage quota errors */ }
+}
+
+const hiddenSessionIds = ref<Set<string>>(readHiddenIds(props.agentId))
+const showHidden = ref(false)
+const hideUntitled = ref(false)
+try {
+  hideUntitled.value = localStorage.getItem(HIDE_UNTITLED_STORAGE_KEY) === '1'
+} catch { /* ignore */ }
+
+watch(() => props.agentId, (aid) => {
+  hiddenSessionIds.value = readHiddenIds(aid)
+  showHidden.value = false
+})
+
+function isLocallyHidden(sessionId: string): boolean {
+  return hiddenSessionIds.value.has(sessionId)
+}
+
+function toggleLocalHide(sessionId: string): void {
+  const next = new Set(hiddenSessionIds.value)
+  if (next.has(sessionId)) {
+    next.delete(sessionId)
+  } else {
+    next.add(sessionId)
+  }
+  hiddenSessionIds.value = next
+  writeHiddenIds(props.agentId, next)
+}
+
+function restoreAllHidden(): void {
+  hiddenSessionIds.value = new Set()
+  showHidden.value = false
+  writeHiddenIds(props.agentId, hiddenSessionIds.value)
+}
+
+function toggleHideUntitled(): void {
+  hideUntitled.value = !hideUntitled.value
+  try {
+    localStorage.setItem(HIDE_UNTITLED_STORAGE_KEY, hideUntitled.value ? '1' : '0')
+  } catch { /* ignore */ }
+}
+
 /**
  * Codex's on-disk session list contains untitled placeholder rollouts that its
  * own UI never shows, so they are hidden here. The fact comes from the server
@@ -140,12 +245,27 @@ const sessionsInCurrentProject = computed(() => {
   return displayableSessions.value.filter((s) => normalizeProjectPath(s.cwd || '') === root)
 })
 
+const hasUntitledNonCodex = computed(() =>
+  getAgent(props.agentId)?.listSessionsOmitsEmptyTitle !== true &&
+  sessionsInCurrentProject.value.some((s) => s.title.trim() === ''),
+)
+
 const hiddenOtherProjectCount = computed(
   () => displayableSessions.value.length - sessionsInCurrentProject.value.length
 )
 
+const hiddenLocalCount = computed(() =>
+  sessionsInCurrentProject.value.filter((s) => hiddenSessionIds.value.has(s.sessionId)).length
+)
+
 const filteredSessions = computed(() => {
-  const base = sessionsInCurrentProject.value
+  let base = sessionsInCurrentProject.value
+  if (hideUntitled.value && backendId.value !== 'codex') {
+    base = base.filter((s) => s.title.trim() !== '')
+  }
+  if (!showHidden.value) {
+    base = base.filter((s) => !hiddenSessionIds.value.has(s.sessionId))
+  }
   const q = searchQuery.value.trim().toLowerCase()
   if (!q) return base
   return base.filter((s) => s.title.toLowerCase().includes(q))
@@ -361,5 +481,67 @@ onBeforeUnmount(teardownObserver)
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   text-align: center;
+}
+
+.acp-session-filter-chip {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-color, #dee2e6);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary, #495057);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.acp-session-filter-chip.active {
+  border-color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
+  color: var(--accent-color, #0066cc);
+}
+
+.acp-session-item.is-hidden-local {
+  opacity: 0.6;
+}
+
+.acp-session-hide-btn {
+  flex-shrink: 0;
+  margin-left: var(--space-2);
+  width: calc(28 * var(--dp));
+  height: calc(28 * var(--dp));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--duration-base), background var(--duration-base);
+}
+
+@media (hover: hover) {
+  .acp-session-hide-btn:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: var(--text-primary, #1a1a1a);
+  }
+}
+
+.acp-session-hidden-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: var(--space-3) calc(14 * var(--dp));
+}
+
+.acp-session-link-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent-color, #0066cc);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  padding: 0;
 }
 </style>

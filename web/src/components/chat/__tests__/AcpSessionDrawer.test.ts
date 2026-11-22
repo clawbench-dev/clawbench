@@ -87,6 +87,8 @@ vi.mock('@/i18n', () => ({
 }))
 
 vi.mock('lucide-vue-next', () => ({
+  Eye: { name: 'EyeIcon', render: () => null },
+  EyeOff: { name: 'EyeOffIcon', render: () => null },
   Import: { name: 'ImportIcon', render: () => null },
   LoaderCircle: { name: 'LoaderCircleIcon', render: () => null },
 }))
@@ -497,6 +499,69 @@ describe('AcpSessionDrawer', () => {
       const wrapper = mountDrawer()
       await nextTick()
       expect(wrapper.find('.acp-session-item-time').exists()).toBe(false)
+    })
+  })
+
+  describe('local hide and untitled filter', () => {
+    let memStorage: Map<string, string>
+    beforeEach(() => {
+      memStorage = new Map()
+      vi.stubGlobal('localStorage', {
+        getItem: (k: string) => memStorage.get(k) ?? null,
+        setItem: (k: string, v: string) => { memStorage.set(k, v) },
+        removeItem: (k: string) => { memStorage.delete(k) },
+        clear: () => { memStorage.clear() },
+      })
+    })
+
+    it('hides an external session locally, persists to localStorage, and supports restore', async () => {
+      mockSessions.value = [
+        { sessionId: 's1', title: 'Keep Me', cwd: '/project', createdAt: '', updatedAt: '' },
+        { sessionId: 's2', title: 'Hide Me', cwd: '/project', createdAt: '', updatedAt: '' },
+      ]
+      const wrapper = mountDrawer()
+      await nextTick()
+
+      const hideBtns = wrapper.findAll('.acp-session-hide-btn')
+      expect(hideBtns).toHaveLength(2)
+      await hideBtns[1].trigger('click')
+      await nextTick()
+
+      // s2 is hidden; localStorage stores it; hidden actions bar appears
+      expect(wrapper.findAll('.acp-session-item')).toHaveLength(1)
+      expect(wrapper.text()).toContain('Keep Me')
+      expect(wrapper.text()).not.toContain('Hide Me')
+      expect(JSON.parse(localStorage.getItem('clawbench_hidden_acp_sessions:agent-1') || '[]')).toEqual(['s2'])
+
+      // Toggle showHidden to reveal it, then restore all
+      const actionBtns = wrapper.findAll('.acp-session-link-btn')
+      expect(actionBtns.length).toBeGreaterThanOrEqual(2)
+      await actionBtns[0].trigger('click')
+      await nextTick()
+      expect(wrapper.findAll('.acp-session-item')).toHaveLength(2)
+
+      await wrapper.findAll('.acp-session-link-btn')[1].trigger('click')
+      await nextTick()
+      expect(localStorage.getItem('clawbench_hidden_acp_sessions:agent-1')).toBeNull()
+      expect(wrapper.findAll('.acp-session-item')).toHaveLength(2)
+    })
+
+    it('lets non-codex backends toggle hiding untitled sessions', async () => {
+      mockSessions.value = [
+        { sessionId: 's1', title: 'Named', cwd: '/project', createdAt: '', updatedAt: '' },
+        { sessionId: 's2', title: '', cwd: '/project', createdAt: '', updatedAt: '' },
+      ]
+      const wrapper = mountDrawer()
+      await nextTick()
+
+      const filterBtn = wrapper.find('.acp-session-filter-chip')
+      expect(filterBtn.exists()).toBe(true)
+      expect(wrapper.findAll('.acp-session-item')).toHaveLength(2)
+
+      await filterBtn.trigger('click')
+      await nextTick()
+      expect(wrapper.findAll('.acp-session-item')).toHaveLength(1)
+      expect(wrapper.text()).toContain('Named')
     })
   })
 })

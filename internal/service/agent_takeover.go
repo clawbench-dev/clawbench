@@ -329,7 +329,9 @@ func deleteAgentTakeoverTx(old *model.Agent, replacement *model.Agent, reuseNati
 // collectTakeoverNoticesTx lists the conversations that deserve a visible
 // "changed hands" row: live 1:1 chats and live groups that had this agent as a
 // member. Archived rows are skipped because AddSystemMessage refuses them — and
-// nobody is looking at an archived timeline anyway.
+// nobody is looking at an archived timeline anyway. Empty 1:1 placeholder
+// sessions are filtered out post-commit in writeTakeoverNotices so a missing or
+// broken chat_history table never aborts the deletion transaction itself.
 func collectTakeoverNoticesTx(ctx context.Context, tx *sql.Tx, agentID string) ([]takeoverNotice, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT s.id, s.session_type, COALESCE(s.group_id, ''), COALESCE(s.agent_name, ''),
@@ -488,6 +490,12 @@ func writeTakeoverNotices(notices []takeoverNotice, oldName, newName string, reu
 			writeGroupSystemMessage(n.ProjectPath, n.SessionID, text)
 			continue
 		}
+		// Skip empty 1:1 placeholder sessions (zero user/assistant messages) so
+		// deleting an agent does not pollute untouched placeholders or bump their
+		// activity timestamp in the overview.
+		if !sessionHasRealMessages(n.SessionID) {
+			continue
+		}
 		// Two wordings: a rebuilt context really was re-injected, a resumed one
 		// was not — telling the user otherwise would send them looking for a
 		// re-injection that never happened.
@@ -501,6 +509,22 @@ func writeTakeoverNotices(notices []takeoverNotice, oldName, newName string, reu
 		})
 		writeSessionSystemMessage(n.ProjectPath, n.SessionID, text)
 	}
+}
+
+// sessionHasRealMessages reports whether sessionID contains at least one
+// user or assistant turn in chat_history. Best-effort: on query error it logs
+// a warning and returns false so notice writing never fails a committed deletion.
+func sessionHasRealMessages(sessionID string) bool {
+	var exists bool
+	err := store.ReadDB().QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM chat_history WHERE session_id = ? AND role IN ('user', 'assistant'))`,
+		sessionID,
+	).Scan(&exists)
+	if err != nil {
+		slog.Warn("agent takeover: checking session messages failed", "session", sessionID, "err", err)
+		return false
+	}
+	return exists
 }
 
 // writeSessionSystemMessage is the single-chat counterpart of

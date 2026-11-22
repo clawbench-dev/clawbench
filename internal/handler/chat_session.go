@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -41,8 +42,10 @@ type overviewSession struct {
 // or (via LastActiveAt) a project that was merely touched inside the recency
 // window and therefore renders collapsed.
 type overviewProjectGroup struct {
-	Name     string            `json:"name"`
-	Sessions []overviewSession `json:"sessions"`
+	Name       string            `json:"name"`
+	ProjectID  int64             `json:"projectId,omitempty"`
+	DirMissing bool              `json:"dirMissing,omitempty"`
+	Sessions   []overviewSession `json:"sessions"`
 	// LastActiveAt is set ONLY on groups that have no active session (they
 	// exist because the project was touched inside the recency window). It
 	// is what the collapsed card shows instead of a session count.
@@ -80,7 +83,26 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 		ai.GetACPConnManager().GetPendingApprovalSessionIDs(), callerProject)
 	attachOverviewGroupMembers(groups, groupIDs)
 	groups = appendRecentProjectCards(groups, callerProject)
+	annotateOverviewProjectGroups(groups)
 	writeJSON(w, http.StatusOK, map[string]any{"projects": groups, "total": total})
+}
+
+// annotateOverviewProjectGroups attaches each group's registry ProjectID and
+// checks whether its directory still exists on disk so the client can flag
+// stale projects and offer direct cleanup without switching into a missing path.
+func annotateOverviewProjectGroups(groups []*overviewProjectGroup) {
+	for _, g := range groups {
+		if g.Name == "" {
+			continue
+		}
+		if id, ok, err := store.ProjectIDByPath(g.Name); err == nil && ok {
+			g.ProjectID = id
+		}
+		fi, err := os.Stat(g.Name)
+		if err != nil || !fi.IsDir() {
+			g.DirMissing = true
+		}
+	}
 }
 
 // buildOverviewGroups keeps only rows worth showing (running, pending approval
@@ -580,11 +602,6 @@ func archiveEmptySessionHardDelete(w http.ResponseWriter, projectPath, sessionID
 // from the database — chat_history, tool_calls, raw_responses, task_executions, and
 // the session record itself.
 func DestroySession(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-
 	if !requireMethod(w, r, http.MethodDelete) {
 		return
 	}
@@ -593,6 +610,11 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	// Do not require a valid on-disk project cookie here: callers also destroy
+	// sessions from the cross-project overview, including sessions whose project
+	// directory was removed from disk (where POST /api/project would 400).
+	callerProject := middleware.GetProjectFromCookie(r)
 
 	// Cancel the running session before destroying to kill the CLI process.
 	if service.IsSessionRunning(sessionID) {
@@ -630,7 +652,10 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionCount, _ := service.GetSessionCount(projectPath)
+	sessionCount := 0
+	if callerProject != "" {
+		sessionCount, _ = service.GetSessionCount(callerProject)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": true, "sessionCount": sessionCount})
 }
 
