@@ -1380,18 +1380,32 @@ describe('AI summary model picker rows', () => {
 describe('placeholder items (section openers)', () => {
   // A section header may exist only to open a card that a dedicated component
   // fills. Such an entry must carry NO rendered row: SettingsCategory renders
-  // the generic rows AFTER the custom components, so a leftover placeholder
-  // shows up at the bottom of the card with no control and (for skillsCard) a
-  // second copy of the description paragraph.
-  it('renders no generic row for the skills placeholders', async () => {
+  // the generic rows AFTER the body component, so a leftover placeholder shows
+  // up at the bottom of the card with no control and (for skillsCard) a second
+  // copy of the description paragraph.
+  //
+  // The contract is `cardBody`: the settings module skips any item that
+  // declares one. Which component fills which card is NOT in SettingsCategory
+  // any more — it is declared next to the fields, so adding a card body to a
+  // plugin never edits the settings module.
+  it('declares the skills card bodies with no rendered row', () => {
     const entries = categoryItems['skills'].filter((e) => e.type === 'item')
     const keys = entries.map((e) => (e.type === 'item' ? e.spec.key : ''))
     // Both placeholders must exist (they open the two cards)...
     expect(keys).toContain('skillsCard')
     expect(keys).toContain('skillsDiscovered')
-    // ...and SettingsCategory must skip them when building the row list. The
-    // skip set is the contract; assert it by name so a rename cannot silently
-    // re-introduce the row.
+    // ...and each must declare its body instead of rendering a row.
+    for (const key of ['skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered']) {
+      const entry = categoryItems['skills'].find((e) => e.type === 'item' && e.spec.key === key)
+      expect(entry, key).toBeDefined()
+      expect(entry!.type === 'item' && typeof entry!.spec.cardBody?.load, `${key} must declare a cardBody`).toBe('function')
+    }
+  })
+
+  it('the settings renderer knows no card body by name', async () => {
+    // Regression guard for the hand-written if-chain that used to compare
+    // `card.title === t('settings.items.…')` for a dozen components. Any such
+    // comparison means a plugin's card body is back inside the settings module.
     // cwd differs between a bare `vitest` run (web/) and scripts/vitest-run.sh
     // (repo root), so probe both roots (same convention as the CSS guards).
     let src = ''
@@ -1402,12 +1416,24 @@ describe('placeholder items (section openers)', () => {
       } catch { /* try the next root */ }
     }
     expect(src, 'SettingsCategory.vue must be readable').not.toBe('')
-    const m = src.match(/const PLACEHOLDER_ITEMS = new Set\(\[([^\]]*)\]\)/)
-    expect(m, 'PLACEHOLDER_ITEMS must exist in SettingsCategory.vue').toBeTruthy()
-    const listed = m![1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean)
-    for (const key of ['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered']) {
-      expect(listed).toContain(key)
+    expect(src).not.toMatch(/card\.title === t\(/)
+    expect(src).not.toContain('PLACEHOLDER_ITEMS')
+  })
+
+  it('every cardBody item renders in a category without the settings module importing it', () => {
+    // A card body lives where its fields live. SettingsCategory must reach it
+    // only through the loader, so no card-body component is statically
+    // imported there.
+    const cardBodyItems: { category: string; key: string }[] = []
+    for (const [category, entries] of Object.entries(categoryItems)) {
+      for (const entry of entries) {
+        if (entry.type !== 'item' || !entry.spec.cardBody) continue
+        // Placement sanity: the body needs a section header to open a card.
+        expect(entry.spec.sectionHeader, `${category}/${entry.spec.key}`).toBeTruthy()
+        cardBodyItems.push({ category, key: entry.spec.key })
+      }
     }
+    expect(cardBodyItems.length).toBeGreaterThan(5)
   })
 })
 
