@@ -221,31 +221,10 @@ var cliBackends = []cliTestConfig{
 		SupportsResume:      true,
 		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestCancelMidStream),
 	},
-	{
-		Backend:        "vecli",
-		CLIName:        "vecli",
-		Timeout:        60 * time.Second,
-		CollectTimeout: 90 * time.Second,
-		HasModelInMeta: true,
-		// VeCLI: no session_capture, no session ID in metadata, no resume support
-		HasSessionIDInMeta:  false,
-		HasTokenUsageInMeta: false,
-		SkipNewSessionID:    true,
-		EmitsSessionCapture: false,
-		SupportedTests:      withTestPoints(allCLITestPoints(), TestCancelMidStream, TestInvalidWorkDir),
-	},
-
-	{
-		Backend:             "copilot",
-		CLIName:             "copilot",
-		Timeout:             60 * time.Second,
-		CollectTimeout:      90 * time.Second,
-		HasModelInMeta:      true,
-		HasSessionIDInMeta:  true,
-		HasTokenUsageInMeta: false,
-		SupportsResume:      true,
-		SupportedTests:      withResumeTestPoints(allCLITestPoints(), TestResumeSessionIDConsistency),
-	},
+	// vecli and copilot were retired along with the CLI transport (see
+	// transport_migrate.go); they have no ACP command and no in-process
+	// implementation, so there is nothing left to run an integration suite
+	// against.
 	{
 		Backend:             "kimi",
 		CLIName:             "kimi",
