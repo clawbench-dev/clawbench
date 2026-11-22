@@ -131,6 +131,24 @@ describe('a failed start does not poison every later attempt', () => {
     expect(fn![0]).toContain('await waitForHealth(port)')
     expect(fn![0]).toMatch(/catch \(err\) \{[\s\S]*?stopEmbeddedServer\(\)[\s\S]*?throw err/)
   })
+
+  it('names the OS error when the bundled binary cannot be spawned', () => {
+    // A missing or non-executable `server/clawbench` makes Node set exitCode -2
+    // and emit `error`. Reporting the code alone ("exited with code -2") leaves
+    // the user with a corrupt install and no clue; the OS message is the only
+    // thing that says what is wrong. The spawn error must therefore be checked
+    // BEFORE the exitCode branch, which would otherwise win the race.
+    const src = readRepoFile(LOCAL_SERVER)
+    expect(src).toContain("spawned.once('error'")
+    expect(src).toMatch(/spawnError = err/)
+    const fn = src.match(/async function waitForHealth\(port: number\)[\s\S]*?\n\}/)
+    expect(fn, 'waitForHealth not found').not.toBeNull()
+    const errorCheck = fn![0].indexOf('if (spawnError)')
+    const exitCheck = fn![0].indexOf('child.exitCode !== null')
+    expect(errorCheck).toBeGreaterThan(-1)
+    expect(exitCheck).toBeGreaterThan(-1)
+    expect(errorCheck).toBeLessThan(exitCheck)
+  })
 })
 
 describe('the server outlives the app', () => {

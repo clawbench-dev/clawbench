@@ -191,7 +191,7 @@ export interface ClawBenchNative {
    */
   cancelSplash?(): void
   /**
-   * Install the integrated ("integrated") desktop package for `version`.
+   * Install the integrated ("all-in-one") desktop package for `version`.
    *
    * Desktop only, and only meaningful when the server reports it is managed by
    * its embedder (see useUpgrade's managedByEmbedder): such an install carries
@@ -202,8 +202,15 @@ export interface ClawBenchNative {
    *
    * Optional: older desktop builds have no such channel, and Android never
    * does. Absent ⇒ the caller must not offer the upgrade.
+   *
+   * The member name stays `installFusedUpdate` on purpose. It is a cross-version
+   * bridge contract, not an internal identifier: a shell built before the rename
+   * exposes only that name, and the web UI it loads is always the server's
+   * (newest) build. Renaming the member would either strand those shells with no
+   * in-app upgrade or force a protocol bump that reinstalls every client — the
+   * same reason the JSON field is still `fused_downloads`.
    */
-  installIntegratedUpdate?(
+  installFusedUpdate?(
     version: string,
     downloads: Record<string, string[]>,
     checksums: Record<string, string>,

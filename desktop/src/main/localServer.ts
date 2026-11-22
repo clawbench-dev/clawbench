@@ -72,6 +72,13 @@ const SERVER_LOG = 'desktop-server.log'
 
 let child: ChildProcess | null = null
 /**
+ * Why the last spawn failed, if it did (missing/corrupt bundled binary, no
+ * execute permission). The `exit` event alone reports only a negative code, so
+ * without this a broken install surfaces as "exited with code -2" instead of
+ * naming the OS error.
+ */
+let spawnError: Error | null = null
+/**
  * PID of the server this app manages. Set for a server we spawned AND for one
  * adopted from a previous run (where `child` is null — there is no handle to a
  * process started by an older shell).
@@ -461,6 +468,11 @@ async function waitForHealth(port: number): Promise<void> {
   let lastBody: unknown = null
   let exitCode: number | null = null
   while (Date.now() < deadline) {
+    // A failed spawn sets exitCode too (-2), so check this first to name the
+    // actual OS error instead of reporting the code.
+    if (spawnError) {
+      throw new Error(`cannot start the embedded server: ${spawnError.message}`)
+    }
     if (child && child.exitCode !== null) {
       exitCode = child.exitCode
       break
@@ -682,6 +694,7 @@ export async function startEmbeddedServer(): Promise<string> {
   } catch (e) {
     record('W', 'LocalServer', `cannot open ${SERVER_LOG}: ${(e as Error).message}`)
   }
+  spawnError = null
   const spawned = spawn(binary, args, {
     stdio: ['ignore', logFd, logFd],
     windowsHide: true,
@@ -706,7 +719,10 @@ export async function startEmbeddedServer(): Promise<string> {
       embeddedActive = false
     }
   })
-  spawned.once('error', (err) => recordError('LocalServer', err))
+  spawned.once('error', (err) => {
+    spawnError = err
+    recordError('LocalServer', err)
+  })
 
   try {
     await waitForHealth(port)
