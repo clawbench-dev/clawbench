@@ -44,6 +44,10 @@ TTSPreviewDefaultSample: 您好，这是一段语音合成测试
 TTSSpeakerSaysPrefix: "{{.Name}}说："
 BackendCreateFailed: "创建 AI Backend 失败: {{.Error}}"
 StreamStartFailed: "启动流式输出失败: {{.Error}}"
+# 内置智能体没配模型提供商时，警告里显示的提示。两步都写清楚了：全新安装时提供
+# 商列表是空的，只说「选一个提供商」会让人对着空列表找。
+BuiltinNoProvider: "内置智能体还没配模型提供商，这条消息没有可以发送的地址。请在「设置 → 模型 → 模型提供商」里添加一个提供商（填端点和 API 密钥），再到「设置 → 智能体 → 这个智能体 → 模型提供商」选中它"
+BuiltinNoModel: "内置智能体已经配了提供商，但还没选模型。请在「设置 → 智能体 → 这个智能体 → 模型」里选一个"
 MethodNotAllowed: 方法不允许
 TokenRequired: 缺少 token
 LiveShareAlreadyPublishing: 已有发布端在共享这个房间
