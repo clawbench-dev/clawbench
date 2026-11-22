@@ -28,8 +28,8 @@ const i18n = createI18n({
           agentRescanFailed: 'Rescan failed',
           agentReorderFailed: 'Reorder failed',
           agentDragHandle: 'Drag to reorder',
-          agentCreateAcp: 'Add ACP Agent',
-          agentCreateAcpSuccess: 'ACP agent added',
+          agentCreateAcp: 'Add Agent',
+          agentCreateAcpSuccess: 'Agent added',
           agentCreateAcpFailed: 'Failed to add agent',
           agentInstallable: 'Available to install',
           agentInstalled: 'Installed',
@@ -345,7 +345,7 @@ describe('SettingsAgentsIndex', () => {
 
     expect(mockCreateAcpAgent).toHaveBeenCalledWith('Trae', 'trae acp')
     expect(wrapper.emitted('navigate')![0]).toEqual(['agents:custom-acp-abc123'])
-    expect(mockToastShow).toHaveBeenCalledWith('ACP agent added', expect.any(Object))
+    expect(mockToastShow).toHaveBeenCalledWith('Agent added', expect.any(Object))
   })
 
   it('keeps the dialog open with an inline message on a name collision', async () => {

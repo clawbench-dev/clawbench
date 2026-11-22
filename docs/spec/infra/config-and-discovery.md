@@ -103,7 +103,7 @@ flowchart TD
 - **ACP 模型持久化**：ACP 上报的模型列表写入 `agents.acp_available_models`，因此重启后仍然可见。此前它只存在于内存，导致同一 agent 的模型列表在重启前后跳变（首个 ACP 会话前是本地清单，之后是 ACP 列表）
 - **后台模型刷新**：模型探测在启动后台执行（`model.StartModelDiscoveryAsync`，`internal/model/refresh.go`）。完成后服务端广播 WS 事件 `agents_updated`，前端 `useAgents` 收到后强制重拉 `GET /api/agents`。手动刷新仍走 `POST /api/agents/rescan`（失效缓存、重跑完整发现）或单个 agent 的 `POST /api/agents/{id}/refresh-models`（只重探该 agent 的模型）
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖（`models_auto_detected = 0` 且列表非空即受保护）；自动管理的 agent 保持其自动管理状态，该标记不是单向闩锁
-- **用户自定义 ACP 智能体（issue #557）**：内置后端之外的工具，只要它能以 **stdio 方式说 ACP**，就能通过「设置 → 智能体 → 添加 ACP 智能体」接入，无需为它写后端子包。创建只需两项：名称 + 启动命令（如 `trae acp`）。四个约束：
+- **用户自定义 ACP 智能体（issue #557）**：内置后端之外的工具，只要它能以 **stdio 方式说 ACP**，就能通过「设置 → 智能体 → 添加智能体」接入，无需为它写后端子包。创建只需两项：名称 + 启动命令（如 `trae acp`）。四个约束：
   - **backend 恒为 `custom-acp`，且刻意不在 `BackendRegistry` 里**。这是承重的：`model.RefreshAgents` 的 `syncAgentInfrastructure` 按 backend 重写 `acp_command`（`UPDATE … WHERE backend = ?`），自定义智能体一旦借用 `claude`、`codex` 这类内置 id，用户填的命令会在下一次重新扫描或启动时被内置适配器的命令**静默覆盖**。用注册表里不存在的 id，那条同步永远碰不到它。因此创建接口**不接受客户端指定 backend**（`POST /api/agents` 只认 `{name, acp_command}`）。
   - **能力全部来自 agent 本身**。没有 spec 就没有 `ModelSource`、没有 `ThinkingEffortLevels`；传输固定 `acp-stdio`（`Agent.SupportsACP()` 就是 `AcpCommand != ""`），模型 / 模式 / 斜杠命令 / 思考档位都在首次 `session/new` 握手后由该 agent 上报。此前 `models` 为空是**正常状态**（客户端显示「默认」占位，发送时不带 `modelId`），不是配置错误——自检里对应项是 `warn` 而非 `fail`。
   - **命令按空格拆分，不支持引号**（`strings.Fields`，与 `acp_conn_lifecycle.go` 的 spawn 同一实现）。因此带空格或引号的参数无法表达；上限 4096 字节（`service.MaxAcpCommandBytes`）。这条限制**不是安全边界**——同一用户本来就能用终端 API 执行任意命令；它只约束 DB 行与设置输入。
