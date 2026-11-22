@@ -120,6 +120,21 @@ func normalizeElicitationProperty(raw json.RawMessage) (json.RawMessage, bool) {
 	if err := json.Unmarshal(raw, &prop); err != nil || prop == nil {
 		return nil, false
 	}
+	collapsed, ok := collapseSchemaType(prop)
+	if !ok {
+		return nil, false
+	}
+	fixed, ok := normalizeTypedProperty(raw, prop)
+	if !ok {
+		return nil, false
+	}
+	if collapsed && bytes.Equal(fixed, raw) {
+		return marshalJSON(prop)
+	}
+	return fixed, true
+}
+
+func normalizeTypedProperty(raw json.RawMessage, prop map[string]json.RawMessage) (json.RawMessage, bool) {
 	switch typ := jsonString(prop["type"]); typ {
 	case "string":
 		return normalizeStringProperty(raw, prop)
@@ -130,6 +145,42 @@ func normalizeElicitationProperty(raw json.RawMessage) (json.RawMessage, bool) {
 	default:
 		return raw, true
 	}
+}
+
+// collapseSchemaType turns a JSON Schema type array (e.g. ["number","integer"])
+// into the single string the SDK's union discriminator requires. A type array
+// makes the discriminator decode fail, which would drop the whole request.
+func collapseSchemaType(prop map[string]json.RawMessage) (changed, ok bool) {
+	raw, present := prop["type"]
+	if !present || jsonString(raw) != "" {
+		return false, true
+	}
+	typ := jsonSchemaType(raw)
+	if typ == "" {
+		return false, false
+	}
+	prop["type"] = json.RawMessage(`"` + typ + `"`)
+	return true, true
+}
+
+// jsonSchemaType reads a string type, or picks one out of a type array.
+// Renderable types win; anything unsupported (null/object) is left out.
+func jsonSchemaType(raw json.RawMessage) string {
+	if s := jsonString(raw); s != "" {
+		return s
+	}
+	var types []string
+	if json.Unmarshal(raw, &types) != nil {
+		return ""
+	}
+	for _, want := range []string{"string", "boolean", "number", "integer", "array"} {
+		for _, typ := range types {
+			if typ == want {
+				return typ
+			}
+		}
+	}
+	return ""
 }
 
 // normalizeStringProperty keeps a string property's options in the fields the
@@ -179,53 +230,69 @@ func normalizeArrayItems(raw json.RawMessage) (json.RawMessage, bool) {
 	if err := json.Unmarshal(raw, &items); err != nil || items == nil {
 		return nil, false
 	}
-	switch typ := jsonString(items["type"]); typ {
-	case "string":
-		// MultiSelectItemsString models enum, not oneOf/anyOf. Titled options
-		// are modeled by the type-less anyOf variant, so drop `type` when
-		// converting.
-		if oneOf, ok := items["oneOf"]; ok {
-			if !enumOptionsAllStrings(oneOf) {
-				return nil, false
-			}
-			items["anyOf"] = oneOf
-			delete(items, "oneOf")
-			delete(items, "type")
-			return marshalJSON(items)
-		}
-		if enum, ok := items["enum"]; ok && !jsonAllStrings(enum) {
+	if rawType, present := items["type"]; present && jsonString(rawType) == "" {
+		typ := jsonSchemaType(rawType)
+		if typ == "" {
 			return nil, false
 		}
-		return marshalJSON(items)
+		items["type"] = json.RawMessage(`"` + typ + `"`)
+	}
+	switch typ := jsonString(items["type"]); typ {
+	case "string":
+		return normalizeStringArrayItems(items)
 	case "":
-		if anyOf, ok := items["anyOf"]; ok {
-			if !enumOptionsAllStrings(anyOf) {
-				return nil, false
-			}
-			return marshalJSON(items)
-		}
-		if oneOf, ok := items["oneOf"]; ok {
-			if !enumOptionsAllStrings(oneOf) {
-				return nil, false
-			}
-			items["anyOf"] = oneOf
-			delete(items, "oneOf")
-			return marshalJSON(items)
-		}
-		if enum, ok := items["enum"]; ok {
-			if !jsonAllStrings(enum) {
-				return nil, false
-			}
-			items["type"] = json.RawMessage(`"string"`)
-			return marshalJSON(items)
-		}
-		return nil, false
+		return normalizeUntypedArrayItems(items)
 	default:
 		// The card only has a string multi-select. A numeric/boolean/custom
 		// item type would decode but render an unanswerable question, so drop
 		// it with the other unrenderable properties.
 		return nil, false
 	}
+}
+
+// normalizeStringArrayItems keeps a typed string item's options in the fields
+// MultiSelectItemsString models. Titled options live on the type-less anyOf
+// variant, so `type` is dropped when oneOf is moved there.
+func normalizeStringArrayItems(items map[string]json.RawMessage) (json.RawMessage, bool) {
+	if oneOf, ok := items["oneOf"]; ok {
+		if !enumOptionsAllStrings(oneOf) {
+			return nil, false
+		}
+		items["anyOf"] = oneOf
+		delete(items, "oneOf")
+		delete(items, "type")
+		return marshalJSON(items)
+	}
+	if enum, ok := items["enum"]; ok && !jsonAllStrings(enum) {
+		return nil, false
+	}
+	return marshalJSON(items)
+}
+
+// normalizeUntypedArrayItems infers the item type from anyOf/oneOf/enum.
+func normalizeUntypedArrayItems(items map[string]json.RawMessage) (json.RawMessage, bool) {
+	if anyOf, ok := items["anyOf"]; ok {
+		if !enumOptionsAllStrings(anyOf) {
+			return nil, false
+		}
+		return marshalJSON(items)
+	}
+	if oneOf, ok := items["oneOf"]; ok {
+		if !enumOptionsAllStrings(oneOf) {
+			return nil, false
+		}
+		items["anyOf"] = oneOf
+		delete(items, "oneOf")
+		return marshalJSON(items)
+	}
+	if enum, ok := items["enum"]; ok {
+		if !jsonAllStrings(enum) {
+			return nil, false
+		}
+		items["type"] = json.RawMessage(`"string"`)
+		return marshalJSON(items)
+	}
+	return nil, false
 }
 
 // inferElicitationProperty fills in a missing `type` from the property's own

@@ -177,6 +177,11 @@ func TestBuildInitializeRequest_CapabilitiesAreWired(t *testing.T) {
 	if req.ClientCapabilities.Plan == nil {
 		t.Error("Initialize request must advertise plan operations (plan_update/plan_removed)")
 	}
+	if req.ClientCapabilities.Session == nil ||
+		req.ClientCapabilities.Session.ConfigOptions == nil ||
+		req.ClientCapabilities.Session.ConfigOptions.Boolean == nil {
+		t.Error("Initialize request must advertise boolean config options")
+	}
 
 	// A non-CodeBuddy agent must get the full capability set — proves the
 	// request is built per-agent rather than from a constant.

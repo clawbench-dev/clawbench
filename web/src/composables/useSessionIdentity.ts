@@ -89,6 +89,8 @@ export interface ExtraConfigOption {
   name?: string
   description?: string
   category: string
+  /** "select" (default) or "boolean". Boolean options have no values. */
+  type?: 'select' | 'boolean'
   currentValueId?: string
   values?: Array<{ id: string; name?: string }>
 }

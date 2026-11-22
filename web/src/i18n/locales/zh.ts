@@ -1236,6 +1236,8 @@ export default {
       advanced: '高级',
       configOptionSaveFailed: '该选项保存失败，请重试',
       notAvailable: '当前模式下不可用',
+      on: '开启',
+      off: '关闭',
       noUsage: '该会话还没有上报上下文用量。',
       noSearchResults: '未找到匹配的模型',
       priceHint: '每百万 token 的美元单价（输入 / 输出）',

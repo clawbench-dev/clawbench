@@ -494,9 +494,12 @@ type ExtraConfigOption struct {
 	ConfigID    string              `json:"configId"` // wire id, e.g. "fast-mode"
 	Name        string              `json:"name,omitempty"`
 	Description string              `json:"description,omitempty"`
-	Category    string              `json:"category"`       // e.g. "model_config"
-	CurrentID   string              `json:"currentValueId"` // empty when the agent reported none
-	Values      []ConfigOptionValue `json:"values,omitempty"`
+	Category    string              `json:"category"` // e.g. "model_config"
+	// Type is "select" (the default) or "boolean". A boolean option has no
+	// Values; CurrentID is "true" or "false".
+	Type      string              `json:"type,omitempty"`
+	CurrentID string              `json:"currentValueId,omitempty"` // empty when the agent reported none
+	Values    []ConfigOptionValue `json:"values,omitempty"`
 }
 
 // AvailableCommandInfo represents a slash command discovered from an ACP agent

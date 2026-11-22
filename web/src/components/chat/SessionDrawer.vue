@@ -236,7 +236,24 @@
           <span class="extra-config-title">{{ opt.name || opt.configId }}</span>
           <span v-if="opt.description" class="extra-config-desc">{{ opt.description }}</span>
         </div>
-        <div class="model-list">
+        <div v-if="opt.type === 'boolean'" class="model-list">
+          <div
+            v-for="(v, idx) in booleanChoices"
+            :key="v.id"
+            class="model-item-wrapper"
+          >
+            <button
+              class="thinking-item"
+              :class="{ current: v.id === opt.currentValueId }"
+              @click="selectConfigOption(opt, v.id)"
+            >
+              <span class="model-item-indicator" :class="{ active: v.id === opt.currentValueId }"></span>
+              <span class="model-item-name">{{ v.name }}</span>
+            </button>
+            <div v-if="idx < booleanChoices.length - 1" class="model-divider"></div>
+          </div>
+        </div>
+        <div v-else class="model-list">
           <div
             v-for="(v, idx) in opt.values || []"
             :key="v.id"
@@ -368,6 +385,12 @@ const effectiveEfforts = computed(() => isTargeted.value ? (target.value?.thinki
 // Agent-declared options (codex "fast-mode"). Same two-source rule as the rest:
 // a group member's drawer must describe THAT member, not the current chat.
 const effectiveConfigOptions = computed(() => isTargeted.value ? (target.value?.configOptions || []) : identity.configOptions.value)
+// Boolean options carry no agent-provided value labels; the two states are
+// fixed, so they are localized here instead of coming from the wire.
+const booleanChoices = computed(() => [
+  { id: 'true', name: t('chat.sessionSetting.on') },
+  { id: 'false', name: t('chat.sessionSetting.off') },
+])
 // Output speed shown in the usage tab. Target mode must use the target row's
 // measurement (the host's prop describes the CURRENT session and would be
 // another member's number). normalizeTokenRate guards both shapes identically.

@@ -130,6 +130,25 @@ func TestNormalizeElicitationSchema_InfersMissingType(t *testing.T) {
 			},
 		},
 		{
+			name:       "type array collapses to string",
+			properties: `{"q0":{"type":["string","null"],"enum":["a","b"],"title":"Pick"}}`,
+			assert: func(t *testing.T, p acp.ElicitationPropertySchema) {
+				if p.String == nil || len(p.String.Enum) != 2 {
+					t.Fatalf("property = %+v, want string with 2 enum values", p)
+				}
+			},
+		},
+		{
+			name:       "array items type array collapses",
+			properties: `{"q0":{"type":["array"],"items":{"type":["string"],"enum":["a","b"]}}}`,
+			assert: func(t *testing.T, p acp.ElicitationPropertySchema) {
+				if p.Array == nil || p.Array.Items.String == nil ||
+					len(p.Array.Items.String.Enum) != 2 {
+					t.Fatalf("property = %+v, want array of string enum", p)
+				}
+			},
+		},
+		{
 			name:          "default implies string",
 			properties:    `{"q0":{"default":"x","title":"Pick"}}`,
 			wantNoOptions: true,
@@ -170,7 +189,8 @@ func TestNormalizeElicitationSchema_DropsUnrenderableProperties(t *testing.T) {
 		`"q1":{"oneOf":[{"const":1,"title":"number"}]},` +
 		`"q2":{"type":"string","title":"ok"},` +
 		`"q3":{"type":"array","items":{"type":"number"}},` +
-		`"q4":{"type":"array"}},"required":["q0","q1","q2","q3","q4"]}}}`)
+		`"q4":{"type":"array"},` +
+		`"q5":{"type":["null"],"title":"N"}},"required":["q0","q1","q2","q3","q4","q5"]}}}`)
 	req := decodeNormalizedElicitation(t, line)
 
 	if _, ok := req.Form.RequestedSchema.Properties["q0"]; ok {
@@ -182,7 +202,7 @@ func TestNormalizeElicitationSchema_DropsUnrenderableProperties(t *testing.T) {
 	if _, ok := req.Form.RequestedSchema.Properties["q2"]; !ok {
 		t.Fatal("valid property must be kept")
 	}
-	for _, name := range []string{"q3", "q4"} {
+	for _, name := range []string{"q3", "q4", "q5"} {
 		if _, ok := req.Form.RequestedSchema.Properties[name]; ok {
 			t.Fatalf("%s must be dropped (unrenderable array)", name)
 		}
@@ -257,5 +277,52 @@ func TestElicitationSchemaWithoutTypeReachesClient(t *testing.T) {
 	}
 	if len(payload.Questions) != 1 || len(payload.Questions[0].Options) != 2 {
 		t.Fatalf("questions = %+v, want one question with two options", payload.Questions)
+	}
+}
+
+// OpenCode's MCP schema layer describes numbers as ["number","integer"]. The
+// form builder usually emits a single type, but a type array must not fail the
+// whole request if one arrives.
+func TestNormalizeElicitationSchema_CollapsesNumericTypeArray(t *testing.T) {
+	req := decodeNormalizedElicitation(t, elicitationLine(`{"q0":{"type":["number","integer"],"title":"N"}}`))
+	p, ok := req.Form.RequestedSchema.Properties["q0"]
+	if !ok {
+		t.Fatal("q0 was dropped")
+	}
+	if p.Number == nil {
+		t.Fatalf("property = %+v, want number", p)
+	}
+}
+
+// OpenCode v2.2.7 builds elicitation forms in `Tg`: string questions carry
+// oneOf, multi-select carries items.anyOf, and numbers/booleans carry a single
+// type. This fixture mirrors that shape (plus the custom companion field) so a
+// future change to the fallback cannot silently start dropping OpenCode's
+// questions.
+func TestOpenCodeElicitationSchemaIsAccepted(t *testing.T) {
+	properties := `{` +
+		`"q0":{"type":"string","title":"Deploy","description":"How?",` +
+		`"oneOf":[{"const":"docker","title":"Docker"},{"const":"binary","title":"Binary"}],"default":"docker"},` +
+		`"q0_custom":{"type":"string","title":"Type your own answer"},` +
+		`"q1":{"type":"array","title":"Logs","description":"Pick",` +
+		`"items":{"anyOf":[{"const":"logs","title":"Logs"},{"const":"metrics","title":"Metrics"}]},"minItems":1},` +
+		`"q_num":{"type":"number","title":"Count","minimum":1,"maximum":10},` +
+		`"q_int":{"type":"integer","title":"Count 2","minimum":1,"maximum":10},` +
+		`"q_bool":{"type":"boolean","title":"Verbose","default":false}` +
+		`}`
+
+	req := decodeNormalizedElicitation(t, elicitationLine(properties))
+	questions := buildElicitationQuestions(req.Form.RequestedSchema)
+
+	// q0 and q1 render; q0_custom folds into q0; numbers/booleans have no
+	// control on this card and are skipped.
+	if len(questions) != 2 {
+		t.Fatalf("questions = %+v, want q0 and q1", questions)
+	}
+	if questions[0].Key != "q0" || len(questions[0].Options) != 2 {
+		t.Fatalf("q0 = %+v, want two options", questions[0])
+	}
+	if questions[1].Key != "q1" || !questions[1].MultiSelect || len(questions[1].Options) != 2 {
+		t.Fatalf("q1 = %+v, want a two-option multi-select", questions[1])
 	}
 }

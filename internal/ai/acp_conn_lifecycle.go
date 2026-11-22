@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -182,6 +183,14 @@ func buildInitializeRequest(agent *model.Agent) acp.InitializeRequest {
 			// The panel now handles both; without this an agent keeps sending
 			// the legacy `plan` shape (one plan per session, no plan IDs).
 			Plan: &acp.PlanCapabilities{},
+			// Boolean config options are only sent to clients that advertise
+			// them. The card renders them as On/Off and the set path uses the
+			// boolean session/set_config_option variant.
+			Session: &acp.ClientSessionCapabilities{
+				ConfigOptions: &acp.SessionConfigOptionsCapabilities{
+					Boolean: &acp.BooleanConfigOptionCapabilities{},
+				},
+			},
 		},
 		ClientInfo: &acp.Implementation{
 			Name:    "clawbench",
@@ -1473,6 +1482,24 @@ func (c *ACPConn) CancelTurn(ctx context.Context) {
 // resolved wire id, so a rejection under one spelling is not bypassed by
 // sending under another (issue #429).
 func (c *ACPConn) SetSessionConfigOption(ctx context.Context, configID, value string) {
+	c.applySessionConfigOption(ctx, configID, value, func(ctx context.Context, acpSID, wireID string) error {
+		return c.setSessionConfigOption(ctx, acpSID, wireID, value)
+	})
+}
+
+// SetSessionConfigOptionBool sets a boolean config option. The agent must have
+// advertised the option with `type: "boolean"`; the wire request uses the
+// boolean variant of session/set_config_option, not a value id.
+func (c *ACPConn) SetSessionConfigOptionBool(ctx context.Context, configID string, value bool) {
+	c.applySessionConfigOption(ctx, configID, strconv.FormatBool(value), func(ctx context.Context, acpSID, wireID string) error {
+		return c.setSessionConfigOptionBool(ctx, acpSID, wireID, value)
+	})
+}
+
+// applySessionConfigOption is the shared bookkeeping for select and boolean
+// options: resolve the wire id, dedup, send, and only record a value the agent
+// accepted.
+func (c *ACPConn) applySessionConfigOption(ctx context.Context, configID, value string, send func(context.Context, string, string) error) {
 	category, wireID := c.resolveConfigCategory(configID)
 	if !c.shouldSetConfig(wireID, value) {
 		slog.Debug("acp conn: SetSessionConfigOption skipped (unchanged)", "config_id", wireID, "value", value, "clawbench_sid", c.clawbenchSID)
@@ -1490,7 +1517,7 @@ func (c *ACPConn) SetSessionConfigOption(ctx context.Context, configID, value st
 
 	wasUnsupported := c.IsConfigUnsupported(wireID)
 
-	err := c.setSessionConfigOption(ctx, acpSID, wireID, value)
+	err := send(ctx, acpSID, wireID)
 
 	nowUnsupported := c.IsConfigUnsupported(wireID)
 
@@ -1600,6 +1627,27 @@ func (c *ACPConn) configCategoryForWireIDLocked(configID string) string {
 // caller needs it to avoid recording a rejected value as the session's current
 // setting — see SetSessionConfigOption.
 func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, configID, value string) error {
+	return c.setSessionConfigOptionRequest(ctx, acpSessionID, configID, value, acp.SetSessionConfigOptionRequest{
+		ValueId: &acp.SetSessionConfigOptionValueId{
+			SessionId: acp.SessionId(acpSessionID),
+			ConfigId:  acp.SessionConfigId(configID),
+			Value:     acp.SessionConfigValueId(value),
+		},
+	})
+}
+
+func (c *ACPConn) setSessionConfigOptionBool(ctx context.Context, acpSessionID, configID string, value bool) error {
+	return c.setSessionConfigOptionRequest(ctx, acpSessionID, configID, strconv.FormatBool(value), acp.SetSessionConfigOptionRequest{
+		Boolean: &acp.SetSessionConfigOptionBoolean{
+			SessionId: acp.SessionId(acpSessionID),
+			ConfigId:  acp.SessionConfigId(configID),
+			Type:      "boolean",
+			Value:     value,
+		},
+	})
+}
+
+func (c *ACPConn) setSessionConfigOptionRequest(ctx context.Context, acpSessionID, configID, value string, req acp.SetSessionConfigOptionRequest) error {
 	c.mu.Lock()
 	conn := c.conn
 	alive := c.alive && c.isAliveLocked()
@@ -1626,13 +1674,7 @@ func (c *ACPConn) setSessionConfigOption(ctx context.Context, acpSessionID, conf
 	configCtx, configCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer configCancel()
 
-	resp, err := conn.SetSessionConfigOption(configCtx, acp.SetSessionConfigOptionRequest{
-		ValueId: &acp.SetSessionConfigOptionValueId{
-			SessionId: acp.SessionId(acpSessionID),
-			ConfigId:  acp.SessionConfigId(configID),
-			Value:     acp.SessionConfigValueId(value),
-		},
-	})
+	resp, err := conn.SetSessionConfigOption(configCtx, req)
 	if err != nil {
 		slog.Warn("acp conn: set_config_option failed", "config_id", configID, "value", value, "error", err)
 		if isUnknownConfigOption(err) {

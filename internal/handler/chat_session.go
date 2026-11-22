@@ -1156,14 +1156,25 @@ func applyExtraConfigOptions(sessionID string, opts map[string]string) {
 	// is not mere validation: without it the generic channel would be a way to
 	// write "mode"/"model" behind the dedicated paths' backs — no persistence,
 	// no per-model effort validation, no auto-approve bookkeeping.
-	known := make(map[string]bool)
+	known := make(map[string]ai.ExtraConfigOption)
 	for _, extra := range conn.GetExtraConfigOptions() {
-		known[extra.ConfigID] = true
+		known[extra.ConfigID] = extra
 	}
 	for id, value := range opts {
-		if id == "" || value == "" || !known[id] {
+		opt, ok := known[id]
+		if id == "" || value == "" || !ok {
 			slog.Warn("session update: ignoring config option the agent did not advertise",
 				"session_id", sessionID, "config_id", id)
+			continue
+		}
+		if opt.Type == "boolean" {
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				slog.Warn("session update: ignoring non-boolean value for a boolean option",
+					"session_id", sessionID, "config_id", id, "value", value)
+				continue
+			}
+			forwardSessionConfigOptionBool(sessionID, id, parsed)
 			continue
 		}
 		forwardSessionConfigOption(sessionID, id, value)
@@ -1186,6 +1197,20 @@ func forwardSessionConfigOption(sessionID, category, value string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		conn.SetSessionConfigOption(ctx, category, value)
+	}()
+}
+
+// forwardSessionConfigOptionBool is forwardSessionConfigOption for the
+// boolean variant of session/set_config_option.
+func forwardSessionConfigOptionBool(sessionID, configID string, value bool) {
+	conn := ai.GetACPConnManager().GetConn(sessionID)
+	if conn == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		conn.SetSessionConfigOptionBool(ctx, configID, value)
 	}()
 }
 
