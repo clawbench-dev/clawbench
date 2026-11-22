@@ -76,6 +76,53 @@ type ACPBehavior struct {
 	// a new id to interpret its own wire format.
 	CostFieldCarriesCredit bool
 
+	// FrameAttribution resolves which sub-agent or team member produced a frame.
+	//
+	// Everything the shared event loop needs to attribute one frame — the member
+	// name, its display colour and the parent tool call it belongs under — comes
+	// from here in ONE call. Before this hook, the loop asked three separate
+	// package functions on every branch (content / thinking / tool call), and
+	// each of them carried a private _meta key from one backend. A backend that
+	// speaks plain ACP declares nothing and its frames stay top-level.
+	//
+	// A nil return means "no attribution": the frame belongs to the top level.
+	// conn is passed because attribution needs state accumulated earlier in the
+	// turn (the roster for colours, the member→spawn-call join) — that state
+	// lives on the connection, and the hook runs on the notification goroutine,
+	// so it must only touch leaf-locked accessors (GetCachedTeamState,
+	// MemberToolCallID).
+	AttributeFrame func(conn *ACPConn, meta map[string]any) *FrameAttribution
+
+	// IsCompactionMeta reports whether a frame's _meta announces a context
+	// compaction. The shared loop latches on it so the system prompt is
+	// re-injected after the context is rewritten.
+	IsCompactionMeta func(meta map[string]any) bool
+
+	// IsCompactionCancelledMeta reports whether a frame's _meta announces a
+	// compaction that did NOT go through (cancelled, or the token limit was
+	// hit). The agent keeps the original history in both cases, so a pending
+	// report from the same attempt must be cleared rather than delivered.
+	IsCompactionCancelledMeta func(meta map[string]any) bool
+
+	// SteerBoundaryID returns the client user-message id a frame echoes for a
+	// mid-turn injection, or "" when the frame is something else.
+	//
+	// The shared loop compares the returned id against the ids THIS host issued
+	// (conn.claimPendingSteerID) and emits a boundary event on a match. Reading
+	// the id is the backend's business (the key it stamps is private); deciding
+	// whether the id is ours is the core's.
+	SteerBoundaryID func(meta map[string]any) string
+
+	// PermissionMemberAttribution extracts the team-member attribution a backend
+	// stamps on a requestPermission's toolCall._meta, as
+	// {"name": "...", "color": "..."} (color optional), or nil when the request
+	// is not from a member.
+	//
+	// The shared permission path puts the result on the approval card so
+	// concurrent members' requests are distinguishable. Reading the shape is the
+	// backend's business; the shared code only forwards what it gets.
+	PermissionMemberAttribution func(meta map[string]any) map[string]any
+
 	// IsReplayedTurnMeta reports whether a notification's _meta belongs to the
 	// previous, already-completed turn rather than the current one.
 	//

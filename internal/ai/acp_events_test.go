@@ -1826,7 +1826,11 @@ func TestMapACPToolCall_ClaudeParentToolUseID(t *testing.T) {
 // newBoundaryTestConn builds a minimal ACPConn whose only meaningful state is
 // the pending-steer registry used by the boundary gate.
 func newBoundaryTestConn() *ACPConn {
-	return &ACPConn{clawbenchSID: "boundary-test"}
+	// The backend id is REQUIRED, not incidental: reading the echo id is the
+	// backend's own job (ACPBehavior.SteerBoundaryID), so a connection with no
+	// backend cannot produce a boundary at all. What this test pins is the
+	// shared half — that an id we did not issue never fires one.
+	return &ACPConn{clawbenchSID: "boundary-test", agent: &model.Agent{ID: "codebuddy", Backend: "codebuddy"}}
 }
 
 // TestMapACPSessionUpdate_SteerBoundary_OnlyForOurOwnInjections is the core gate

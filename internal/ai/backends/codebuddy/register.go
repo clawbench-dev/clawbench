@@ -89,6 +89,15 @@ func init() {
 				BridgePlanFromToolUpdate(conn, ch, tcu)
 			},
 			OnSessionInfoUpdate: BridgeTeamUpdate,
+			// Agent Teams attribution: member content carries a member NAME
+			// instead of a parent tool-call link, so the shared loop cannot
+			// group it without asking this backend.
+			AttributeFrame:              FrameAttribution,
+			PermissionMemberAttribution: PermissionMemberAttribution,
+			// Compaction and mid-turn injection both ride on private _meta keys.
+			IsCompactionMeta:          IsCompactionMeta,
+			IsCompactionCancelledMeta: IsCompactionCancelledMeta,
+			SteerBoundaryID:           SteerBoundaryID,
 		},
 		ModelSource:        model.PluginSource("codebuddy", discoverCodebuddyModels),
 		ListSessions:       listCodebuddySessionsFromDisk,

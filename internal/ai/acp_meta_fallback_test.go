@@ -655,11 +655,16 @@ func TestExportSeams_DebouncerAndSessionUpdate(t *testing.T) {
 	}
 }
 
-// TestExportSeams_ParentLinkResolution pins ResolveMemberParent's delegation: a
-// frame tagged with a team-member name resolves through the resolution helper,
-// and one with nothing to resolve returns "".
+// TestExportSeams_ParentLinkResolution pins the standard parent-link decoder
+// that backend attribution hooks build on: a frame with nothing to resolve
+// yields "", and the ClawBench-stamped link is preferred when present.
 func TestExportSeams_ParentLinkResolution(t *testing.T) {
-	if got := ResolveMemberParent(nil, nil); got != "" {
-		t.Fatalf("no connection and no meta must resolve to empty, got %q", got)
+	if got := ExtractParentToolCallIDForHook(nil); got != "" {
+		t.Fatalf("nil meta must resolve to empty, got %q", got)
+	}
+	if got := ExtractParentToolCallIDForHook(map[string]any{
+		metaKeyClawBenchParentToolCallID: "call_parent",
+	}); got != "call_parent" {
+		t.Fatalf("the ClawBench-stamped link must be decoded, got %q", got)
 	}
 }

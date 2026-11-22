@@ -56,14 +56,14 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	// leaving the latch open lets the NEXT update retry — otherwise a single
 	// dropped send would lose the re-injection for good.
 	if conn != nil && !conn.compactReported.Load() {
-		if meta := acpUpdateMeta(update); IsCodeBuddyCompactionMeta(meta) {
+		if isCompactionMeta(backendID, acpUpdateMeta(update)) {
 			if tryForwardACPEvent(ch, compactDetectedEvent("acp_meta")) {
 				conn.noteCompactionReported()
 			}
 		}
 	}
 	if conn != nil && update.SessionInfoUpdate != nil &&
-		IsCodeBuddyCompactionCancelledMeta(PatchMetaAny(update.SessionInfoUpdate.Meta)) {
+		isCompactionCancelledMeta(backendID, PatchMetaAny(update.SessionInfoUpdate.Meta)) {
 		// Cancelled/limit-reached compaction restores the original history, so it
 		// must clear any pending report from the same attempt — including a
 		// usage-drop detection that has not been delivered yet. Clearing only
@@ -89,7 +89,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// multi-page history broadcasts; without this gate those would be
 		// mistaken for live injections and wrongly split the assistant reply.
 		if conn != nil {
-			if id := metaStringOf(update.UserMessageChunk.Meta, metaKeyCodeBuddyMessageID); conn.claimPendingSteerID(id) {
+			if id := steerBoundaryID(backendID, MetaAny(update.UserMessageChunk.Meta)); conn.claimPendingSteerID(id) {
 				slog.Info("acp: steer boundary observed",
 					slog.String("client_user_message_id", id),
 					slog.String("clawbench_sid", conn.clawbenchSID))
@@ -119,12 +119,17 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// thinking block — with concurrent sub-agents an unfiltered done lands on
 		// whichever block happens to be last. For Agent Team members the parent
 		// is resolved via the member-name join (they carry no parentToolCallId).
-		memberName := extractTeamMemberName(MetaAny(update.AgentMessageChunk.Meta))
+		chunkMeta := MetaAny(update.AgentMessageChunk.Meta)
+		chunkAttr := frameAttribution(backendID, conn, chunkMeta)
+		memberName := ""
+		if chunkAttr != nil {
+			memberName = chunkAttr.MemberName
+		}
 		forwardACPEvent(ch, StreamEvent{
 			Type:             "thinking_done",
-			ParentToolCallID: memberParentOrParent(backendID, conn, MetaAny(update.AgentMessageChunk.Meta)),
+			ParentToolCallID: frameParentToolCallID(backendID, conn, chunkMeta),
 			MemberName:       memberName,
-			MemberColor:      memberColorByName(conn, memberName),
+			MemberColor:      frameMemberColor(backendID, conn, chunkMeta),
 		})
 		// Defensive filter against a codebuddy CLI resume defect: when an ACP
 		// session is reused across prompts, codebuddy occasionally re-emits the
@@ -162,9 +167,9 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			}
 		}
 		if !replayed {
-			parentID := memberParentOrParent(backendID, conn, MetaAny(update.AgentMessageChunk.Meta))
+			parentID := frameParentToolCallID(backendID, conn, chunkMeta)
 			if content.Text != nil {
-				forwardACPEvent(ch, StreamEvent{Type: "content", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: memberName, MemberColor: memberColorByName(conn, memberName)})
+				forwardACPEvent(ch, StreamEvent{Type: "content", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: memberName, MemberColor: frameMemberColor(backendID, conn, chunkMeta)})
 			}
 			// Per-agent _meta on the chunk (e.g. CodeBuddy OpenAI-style usage +
 			// codebuddy.ai/* trace) — accumulate onto the connection so the
@@ -181,9 +186,10 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	case update.AgentThoughtChunk != nil:
 		content := update.AgentThoughtChunk.Content
 		if content.Text != nil {
-			parentID := memberParentOrParent(backendID, conn, MetaAny(update.AgentThoughtChunk.Meta))
-			thinkMember := extractTeamMemberName(MetaAny(update.AgentThoughtChunk.Meta))
-			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: thinkMember, MemberColor: memberColorByName(conn, thinkMember)})
+			thinkMeta := MetaAny(update.AgentThoughtChunk.Meta)
+			parentID := frameParentToolCallID(backendID, conn, thinkMeta)
+			thinkMember := frameMemberName(backendID, conn, thinkMeta)
+			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: thinkMember, MemberColor: frameMemberColor(backendID, conn, thinkMeta)})
 			if conn != nil {
 				conn.RecordTurnOutput()
 			}
@@ -227,12 +233,13 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// thinking_done so the frontend can stop the thinking spinner. Scoped to
 		// the tool's own parent so a sub-agent's tool call closes that
 		// sub-agent's thinking block, not another agent's.
-		toolMember := extractTeamMemberNameForTool(MetaAny(tc.Meta))
+		toolMeta := MetaAny(tc.Meta)
+		toolMember := frameMemberName(backendID, conn, toolMeta)
 		forwardACPEvent(ch, StreamEvent{
 			Type:             "thinking_done",
-			ParentToolCallID: memberParentOrParent(backendID, conn, MetaAny(tc.Meta)),
+			ParentToolCallID: frameParentToolCallID(backendID, conn, toolMeta),
 			MemberName:       toolMember,
-			MemberColor:      memberColorByName(conn, toolMember),
+			MemberColor:      frameMemberColor(backendID, conn, toolMeta),
 		})
 		// A tool call is starting — mark it in-flight so the stall watchdog
 		// treats the agent as active while it runs the tool.

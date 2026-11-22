@@ -52,7 +52,10 @@ func codebuddyTextChunk(text, member string) acp.SessionUpdate {
 		metaKeyCodeBuddyRequestID:             "01a18c913e5c7b1f81f6c61cbd8333cb",
 	}
 	if member != "" {
-		meta[metaKeyCodeBuddyMemberEvent] = member
+		// The member-event key is read by the codebuddy attribution hook, not by
+		// this package: the frame shape is what this fixture reproduces, and the
+		// connection below is a codebuddy backend so the hook resolves it.
+		meta["codebuddy.ai/memberEvent"] = member
 	}
 	return acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{

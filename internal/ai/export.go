@@ -57,6 +57,9 @@ func ForwardACPEvent(ch chan<- StreamEvent, event StreamEvent) {
 // values. Agents encode the same quantity as int, float64 or json.Number
 // depending on the adapter, so every backend parser goes through these.
 func MetaString(v any) string { return metaString(v) }
+
+// MetaBool reads a truthy boolean field (a real bool, or a string "true").
+func MetaBool(v any) bool     { return metaBool(v) }
 func MetaInt(v any) int       { return metaInt(v) }
 func MetaFloat(v any) float64 { return metaFloat(v) }
 func MetaMaxInt(base int, vals ...int) int {
@@ -155,12 +158,6 @@ func MapACPSessionUpdateWithConnForTest(ctx context.Context, update acp.SessionU
 // ACP event loop from outside this package.
 func NewToolCallDebouncerForTest(ch chan<- StreamEvent, conn *ACPConn) *toolCallDebouncer {
 	return newToolCallDebouncer(ch, conn)
-}
-
-// ResolveMemberParent maps a frame's team-member name to the tool-call id that
-// spawned it, so member content can reuse the ordinary sub-agent grouping.
-func ResolveMemberParent(conn *ACPConn, meta map[string]any) string {
-	return resolveMemberParent(conn, meta)
 }
 
 // NormalizeToolName maps a backend's raw tool name to the canonical one.

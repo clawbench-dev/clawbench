@@ -226,7 +226,9 @@ func TestMemberSpawnJoin_RecordsAndResolves(t *testing.T) {
 	// A member content frame carries only memberEvent; the join resolves the
 	// parent tool-call id for grouping.
 	contentMeta := map[string]any{metaKeyMemberEvent: "probe-alpha"}
-	assert.Equal(t, "call_00_gQeF1pbxpR25Ip7O4kwj0521", ai.ResolveMemberParent(conn, contentMeta))
+	attr := FrameAttribution(conn, contentMeta)
+	require.NotNil(t, attr)
+	assert.Equal(t, "call_00_gQeF1pbxpR25Ip7O4kwj0521", attr.ParentToolCallID)
 }
 
 // memberName WITHOUT subagentType is not a spawn frame (some non-spawn frames

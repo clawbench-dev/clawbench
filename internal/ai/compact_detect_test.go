@@ -37,87 +37,6 @@ func TestIsCompactCommand(t *testing.T) {
 	}
 }
 
-func TestIsCodeBuddyCompactionMeta(t *testing.T) {
-	tests := []struct {
-		name string
-		meta map[string]any
-		want bool
-	}{
-		{"nil meta", nil, false},
-		{"empty meta", map[string]any{}, false},
-		{
-			"boolean flag",
-			map[string]any{"codebuddy.ai/isCompactInternal": true},
-			true,
-		},
-		{
-			"flag serialized as string",
-			map[string]any{"codebuddy.ai/isCompactInternal": "true"},
-			true,
-		},
-		{
-			"flag serialized as number",
-			map[string]any{"codebuddy.ai/isCompactInternal": float64(1)},
-			true,
-		},
-		{
-			"explicit false flag",
-			map[string]any{"codebuddy.ai/isCompactInternal": false},
-			false,
-		},
-		{
-			"compactType alone (manual)",
-			map[string]any{"codebuddy.ai/compactType": "user-command"},
-			true,
-		},
-		{
-			"compactType alone (auto)",
-			map[string]any{"codebuddy.ai/compactType": "pre-message-auto"},
-			true,
-		},
-		{
-			"unrelated meta",
-			map[string]any{"codebuddy.ai/requestId": "abc"},
-			false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsCodeBuddyCompactionMeta(tt.meta))
-		})
-	}
-}
-
-func TestIsCodeBuddyCompactionCancelledMeta(t *testing.T) {
-	tests := []struct {
-		name string
-		meta map[string]any
-		want bool
-	}{
-		{"nil meta", nil, false},
-		{
-			"cancelled",
-			map[string]any{"codebuddy.ai/compact-cancelled": map[string]any{"cancelled": true}},
-			true,
-		},
-		{
-			"limit reached",
-			map[string]any{"codebuddy.ai/compact-limit-reached": map[string]any{"limitReached": true}},
-			true,
-		},
-		{
-			"successful compaction is not a cancellation",
-			map[string]any{"codebuddy.ai/isCompactInternal": true},
-			false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsCodeBuddyCompactionCancelledMeta(tt.meta))
-		})
-	}
-}
-
 func TestIsClaudeCompactionText(t *testing.T) {
 	assert.True(t, IsClaudeCompactionText("Compacting completed."))
 	assert.True(t, IsClaudeCompactionText("\n\nCompacting completed."))
@@ -594,27 +513,27 @@ func TestCompactionToolSignals_AreAdapterWireFacts(t *testing.T) {
 // re-injected. Both halves are pinned because "flag armed" and "flag cancelled"
 // arrive on different notification types from the same attempt.
 func TestCompactionFlags_CodeBuddyMetaSignals(t *testing.T) {
-	assert.True(t, IsCodeBuddyCompactionMeta(map[string]any{
-		metaKeyCodeBuddyIsCompactInternal: true,
+	assert.True(t, isCompactionMeta("codebuddy", map[string]any{
+		"codebuddy.ai/isCompactInternal": true,
 	}), "the boolean flag marks every update emitted while compacting")
 
-	assert.True(t, IsCodeBuddyCompactionMeta(map[string]any{
-		metaKeyCodeBuddyCompactType: "auto",
+	assert.True(t, isCompactionMeta("codebuddy", map[string]any{
+		"codebuddy.ai/compactType": "auto",
 	}), "compactType alone is accepted: the key is the same signal")
 
-	assert.False(t, IsCodeBuddyCompactionMeta(map[string]any{
-		metaKeyCodeBuddyIsCompactInternal: false,
+	assert.False(t, isCompactionMeta("codebuddy", map[string]any{
+		"codebuddy.ai/isCompactInternal": false,
 	}), "an explicit false is not a compaction")
 
-	assert.True(t, IsCodeBuddyCompactionCancelledMeta(map[string]any{
-		metaKeyCodeBuddyCompactCancelled: true,
+	assert.True(t, isCompactionCancelledMeta("codebuddy", map[string]any{
+		"codebuddy.ai/compact-cancelled": true,
 	}), "a cancelled compaction restores history and must clear the report")
 
-	assert.True(t, IsCodeBuddyCompactionCancelledMeta(map[string]any{
-		metaKeyCodeBuddyCompactLimitReached: true,
+	assert.True(t, isCompactionCancelledMeta("codebuddy", map[string]any{
+		"codebuddy.ai/compact-limit-reached": true,
 	}), "a limit-reached compaction restores history the same way")
 
-	assert.False(t, IsCodeBuddyCompactionCancelledMeta(map[string]any{"unrelated": 1}),
+	assert.False(t, isCompactionCancelledMeta("codebuddy", map[string]any{"unrelated": 1}),
 		"an ordinary payload must not be read as a cancelled compaction")
 }
 

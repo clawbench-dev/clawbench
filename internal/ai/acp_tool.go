@@ -175,16 +175,23 @@ func acpRemapsForBackend(backendID string) map[string]string {
 // Delegates to parseACPToolCall for per-agent routing.
 func mapACPToolCall(tc acp.SessionUpdateToolCall, backendID string, conn *ACPConn) StreamEvent {
 	tool := parseACPToolCall(backendID, tc)
-	attachParentToolCallIDToTool(tool, backendID, conn, MetaAny(tc.Meta))
-	member := extractTeamMemberNameForTool(MetaAny(tc.Meta))
-	return StreamEvent{Type: "tool_use", Tool: tool, MemberName: member, MemberColor: memberColorByName(conn, member)}
+	meta := MetaAny(tc.Meta)
+	attr := frameAttribution(backendID, conn, meta)
+	attachParentToolCallIDToTool(tool, attr)
+	member, color := "", ""
+	if attr != nil {
+		member, color = attr.MemberName, attr.MemberColor
+	}
+	return StreamEvent{Type: "tool_use", Tool: tool, MemberName: member, MemberColor: color}
 }
 
 // mapACPToolCallUpdate creates a StreamEvent from an ACP ToolCallUpdate.
 // Delegates to parseACPToolCallUpdate for per-agent routing.
 func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string, conn *ACPConn) StreamEvent {
 	tool := parseACPToolCallUpdate(backendID, tcu)
-	attachParentToolCallIDToTool(tool, backendID, conn, PatchMetaAny(tcu.Meta))
+	updateMeta := PatchMetaAny(tcu.Meta)
+	attr := frameAttribution(backendID, conn, updateMeta)
+	attachParentToolCallIDToTool(tool, attr)
 
 	eventType := "tool_use"
 	if tool.Done {
@@ -196,21 +203,24 @@ func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string, conn 
 		"status", fmt.Sprintf("%v", tcu.Status.Ptr()), "content_count", len(tcuContent), "title", tcu.Title.Ptr(),
 		"raw_input", fmt.Sprintf("%v", tcu.RawInput.Ptr()))
 
-	member := extractTeamMemberNameForTool(PatchMetaAny(tcu.Meta))
-	return StreamEvent{Type: eventType, Tool: tool, MemberName: member, MemberColor: memberColorByName(conn, member)}
+	member, color := "", ""
+	if attr != nil {
+		member, color = attr.MemberName, attr.MemberColor
+	}
+	return StreamEvent{Type: eventType, Tool: tool, MemberName: member, MemberColor: color}
 }
 
 // attachParentToolCallIDToTool stamps the sub-agent parent link (if any) onto a
 // parsed tool call. Shared by the start/update mappers so the debouncer path
 // (which also routes through mapACPToolCallUpdate) carries the link too.
 //
-// For Agent Team members the wire carries no parentToolCallId; the member-name
-// join resolves the spawning Agent card instead (see codebuddy_team_bridge.go).
-func attachParentToolCallIDToTool(tool *ToolCall, backendID string, conn *ACPConn, meta map[string]any) {
-	if tool == nil {
+// The link comes from the backend's frame-attribution hook: a backend whose
+// members carry no parentToolCallId resolves one from its own join key there.
+func attachParentToolCallIDToTool(tool *ToolCall, attr *FrameAttribution) {
+	if tool == nil || attr == nil {
 		return
 	}
-	if id := memberParentOrParent(backendID, conn, meta); id != "" {
-		tool.ParentToolCallID = id
+	if attr.ParentToolCallID != "" {
+		tool.ParentToolCallID = attr.ParentToolCallID
 	}
 }

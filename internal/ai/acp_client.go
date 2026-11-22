@@ -690,7 +690,11 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 	// stamps the member on the toolCall's _meta (NOT the request's). Without it
 	// concurrent members' approval cards are indistinguishable.
 	// See docs/dev/codebuddy_acp_team_integration.md §1.5.
-	if member := permissionMemberAttribution(PatchMetaAny(p.ToolCall.Meta)); member != nil {
+	backendID := ""
+	if c.connRef != nil {
+		backendID = c.connRef.BackendID()
+	}
+	if member := permissionAttribution(backendID, PatchMetaAny(p.ToolCall.Meta)); member != nil {
 		approvalInput["teamMember"] = member
 	}
 
