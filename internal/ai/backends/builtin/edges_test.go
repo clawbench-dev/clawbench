@@ -28,7 +28,9 @@ func TestHasModelID(t *testing.T) {
 }
 
 func TestWithinDir(t *testing.T) {
-	dir := filepath.Join(string(filepath.Separator), "work", "proj")
+	// t.TempDir is absolute on every platform; a bare "\work\proj" is
+	// drive-relative on Windows and fails the IsAbs check for the wrong reason.
+	dir := t.TempDir()
 	cases := []struct {
 		name string
 		dir  string

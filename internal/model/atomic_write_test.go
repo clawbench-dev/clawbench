@@ -3,6 +3,7 @@ package model
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,9 +19,11 @@ func TestWriteFileAtomic_CreatesMissingDirectories(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "hello", string(data))
 
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "a new file is private by default")
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "a new file is private by default")
+	}
 }
 
 func TestWriteFileAtomic_ReplacesContentAndKeepsMode(t *testing.T) {
@@ -34,9 +37,11 @@ func TestWriteFileAtomic_ReplacesContentAndKeepsMode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "new", string(data))
 
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o640), info.Mode().Perm(), "the existing permission bits survive")
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o640), info.Mode().Perm(), "the existing permission bits survive")
+	}
 }
 
 func TestWriteFileAtomic_LeavesNoTempFileBehind(t *testing.T) {

@@ -443,7 +443,9 @@ func TestConfigDirFacts_ComeFromTheBackendRegistration(t *testing.T) {
 		// Each of these declares UserConfigDir + ConfigDirRender in its own
 		// registration; nothing in internal/service knows their names.
 		{backend: "kimi", userDir: ".kimi", fileName: "config.toml"},
-		{backend: "pi", userDir: filepath.Join(".pi", "agent"), fileName: "models.json"},
+		// Declared as a slash-separated relative path; callers join it onto the
+		// home directory with filepath.Join, which normalizes the separator.
+		{backend: "pi", userDir: ".pi/agent", fileName: "models.json"},
 		{backend: "codebuddy", userDir: ".codebuddy", fileName: "models.json"},
 		{backend: "claude", userDir: ".claude", fileName: "settings.json"},
 	}
