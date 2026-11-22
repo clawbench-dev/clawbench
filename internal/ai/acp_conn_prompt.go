@@ -469,6 +469,18 @@ func acpHTTPStatusFromMeta(meta map[string]any) int {
 // InputTokens (TotalTokens = Input + Output + CachedRead + CachedWrite, or
 // + Thought when reasoning is excluded from Output). Checking that identity
 // prevents double-counting backends whose InputTokens already includes cache.
+// Thought stays a separate counter either way (the ledger has its own column),
+// so a row whose Total includes it still adds up.
+//
+// When TotalTokens is absent or matches neither identity, the raw counters are
+// kept but the hit/miss split is left EMPTY on purpose: guessing there used to
+// produce "hit=8000, miss=0, input=1000", which the UI renders as a 100% cache
+// hit rate. An absent split hides the hit-rate row instead (see
+// web/src/utils/usageDisplay.ts cacheHitRate).
+//
+// Precedence: emitPromptResponseUsage applies this FIRST and the per-agent
+// _meta extraction SECOND; applyTokenUsageTo only overlays non-zero fields, so
+// _meta wins on any shared counter. Do not reorder those two calls.
 func applyPromptResponseUsageToMetadata(meta *Metadata, usage *acp.Usage) {
 	if meta == nil || usage == nil {
 		return
@@ -487,20 +499,23 @@ func applyPromptResponseUsageToMetadata(meta *Metadata, usage *acp.Usage) {
 	meta.CachedWriteTokens = cachedWrite
 	meta.ThoughtTokens = thought
 
-	if cachedRead > 0 || cachedWrite > 0 {
-		excludedTotal := inputTokens + outputTokens + cachedRead + cachedWrite
-		cacheExcluded := totalTokens > 0 &&
-			(totalTokens == excludedTotal || (thought > 0 && totalTokens == excludedTotal+thought))
-		if cacheExcluded {
-			meta.CacheHitTokens = cachedRead
-			meta.CacheMissTokens = inputTokens
-			meta.InputTokens += cachedRead + cachedWrite
-		} else {
-			meta.CacheHitTokens = cachedRead
-			if inputTokens >= cachedRead+cachedWrite {
-				meta.CacheMissTokens = inputTokens - cachedRead - cachedWrite
-			}
-		}
+	cachedTotal := cachedRead + cachedWrite
+	if cachedTotal <= 0 || totalTokens <= 0 {
+		return
+	}
+	// The two conventions, each optionally reporting Thought outside Output.
+	cacheOutside := totalTokens == inputTokens+outputTokens+cachedTotal ||
+		(thought > 0 && totalTokens == inputTokens+outputTokens+cachedTotal+thought)
+	cacheInside := totalTokens == inputTokens+outputTokens ||
+		(thought > 0 && totalTokens == inputTokens+outputTokens+thought)
+	switch {
+	case cacheOutside:
+		meta.CacheHitTokens = cachedRead
+		meta.CacheMissTokens = inputTokens
+		meta.InputTokens = inputTokens + cachedTotal
+	case cacheInside && inputTokens >= cachedTotal:
+		meta.CacheHitTokens = cachedRead
+		meta.CacheMissTokens = inputTokens - cachedTotal
 	}
 }
 
