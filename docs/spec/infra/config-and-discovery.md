@@ -182,7 +182,7 @@ flowchart TD
   「没有需要转换的行」与「扫描正常跑完、按设计留下了无法转换的行」两种情况，随后记账；
   返回 `false` 表示硬失败（查询/事务错误），**不记账**，下次启动重试并打 warn 日志。
 
-被台账门控的四个迁移：
+被台账门控的迁移：
 
 | 迁移 | 转换内容 |
 |---|---|
@@ -190,6 +190,14 @@ flowchart TD
 | `MigrateTaskExecutionSummaries` | `task_execution` 摘要 → `chat_message` 形式的摘要 |
 | `MigrateToolCallsFromContent` | `tool_use` 的 input/output → `chat_tool_calls`，content 改写为 slim 格式 |
 | `MigrateThinkingFromContent` | thinking 文本 → `chat_thinking`，content 改写为 slim 格式（只留 `think_id`） |
+| `MigrateAskSummaryCardsDone` | 摘要卡里的 ask 块补 `done: true`（旧写入把 false 当零值丢了，前端会永久转圈） |
+| `MigrateLegacyThinkingEffortPicks` | 旧会话补「用户显式选过思考深度」标记，避免升级后回落到智能体默认 |
+| `MigrateUsageLedger` | 用量台账按实测缺陷逐项修数（累计成本改单轮增量、累计输入改增量、补 total/model、归一缓存拆分、群成员归属、恢复 created_at） |
+| `MigrateLedgerWallClock` | 用已有时间字段回填 `wall_ms = 0` 的行（AI 工作时长） |
+| `MigrateTransportToSinglePath` | `agents.transport` 归一为 `acp-stdio` / `in-process`（CLI 传输已移除） |
+| `MigrateSessionTransportColumns` | 清空 `chat_sessions.transport`（同一列的会话级残留） |
+| `MigrateRemoveRetiredBackends` | 删除 vecli / copilot 的智能体行，会话按删除守卫移交给可运行的智能体 |
+| `MigrateGroupMemberDisabled` | 群成员行 `archived = 1` 归一到禁用标记，避免旧成员被复活 |
 
 顺序上有一处硬约束：建索引类迁移 `migrateChatThinkingSeq()`（给 `chat_thinking` 加
 `seq` 列）必须先于 `MigrateThinkingFromContent`，后者的插入要匹配前者建立的约束。该约束由
