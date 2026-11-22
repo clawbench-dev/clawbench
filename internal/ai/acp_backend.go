@@ -116,8 +116,9 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 				return
 			}
 			// ACP connection failed — surface the error directly.
-			// Do NOT fall back to CLI backend: the user chose ACP transport
-			// and silent fallback hides real problems (e.g., NewSession timeout).
+			// Do NOT fall back to another implementation: an agent with an ACP
+			// command runs over ACP, and silent fallback hides real problems
+			// (e.g., NewSession timeout).
 			if authErr := asACPAuthRequired(err); authErr != nil {
 				// Some agents gate session creation on a signed-in account and
 				// answer with a non-standard JSON-RPC code (Command Code uses
@@ -197,8 +198,8 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		slog.Info("acp perf: ExecuteStream.step3_Prompt_start", "session_id", req.SessionID, "after_emitSession", time.Since(streamStart))
 		// Skills are injected upstream in req.SystemPrompt by
 		// service.AppendSkillsSection (see service/chat_request.go and
-		// service/scheduler.go), so every transport — ACP and CLI, chat and
-		// scheduled tasks — sees the same table.
+		// service/scheduler.go), so every entry point — chat and scheduled
+		// tasks — sees the same table.
 		promptBlocks := b.buildPromptBlocks(req)
 		err = conn.Prompt(ctx, promptBlocks, ch, req)
 		if err != nil {

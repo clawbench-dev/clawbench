@@ -68,7 +68,6 @@ func TestAgentSelfTest_NoStartableTransportFails(t *testing.T) {
 		ID:                  "selftest-nocmd",
 		Name:                "No Command",
 		Backend:             model.CustomACPBackend,
-		Transport:           "acp-stdio",
 		AcpCommand:          "", // the contradictory state
 		RuntimeSystemPrompt: "prompt",
 	}
@@ -88,7 +87,6 @@ func TestAgentSelfTest_UnknownBackendFails(t *testing.T) {
 		ID:                  "selftest-unknown",
 		Name:                "Unknown",
 		Backend:             "not-a-backend",
-		Transport:           "cli",
 		RuntimeSystemPrompt: "prompt",
 	}
 	res := runAgentSelfTest(context.Background(), agent, "")
@@ -109,7 +107,6 @@ func TestAgentSelfTest_CustomAcpBackendIsKnown(t *testing.T) {
 		ID:                  "selftest-custom",
 		Name:                "Custom",
 		Backend:             model.CustomACPBackend,
-		Transport:           "acp-stdio",
 		AcpCommand:          "go version",
 		RuntimeSystemPrompt: "prompt",
 	}
@@ -132,7 +129,6 @@ func TestAgentSelfTest_YamlDefinedBackendIsKnown(t *testing.T) {
 		ID:                  "selftest-yaml",
 		Name:                "YAML Agent",
 		Backend:             "acp-mock",
-		Transport:           "acp-stdio",
 		AcpCommand:          "go version",
 		Models:              []model.AgentModel{{ID: "mock-pro", Name: "Mock Pro", Default: true}},
 		RuntimeSystemPrompt: "prompt",
@@ -153,7 +149,6 @@ func TestAgentSelfTest_BackendWithNothingFails(t *testing.T) {
 		ID:                  "selftest-nothing",
 		Name:                "Nothing",
 		Backend:             "totally-unknown",
-		Transport:           "cli",
 		RuntimeSystemPrompt: "prompt",
 	}
 	res := runAgentSelfTest(context.Background(), agent, "")
@@ -171,7 +166,6 @@ func TestAgentSelfTest_MissingExecutableFails(t *testing.T) {
 		ID:                  "selftest-missing",
 		Name:                "Missing",
 		Backend:             model.CustomACPBackend,
-		Transport:           "acp-stdio",
 		AcpCommand:          "definitely-not-installed-acp --stdio",
 		RuntimeSystemPrompt: "prompt",
 	}
@@ -193,7 +187,6 @@ func TestAgentSelfTest_DisabledIsWarningNotFailure(t *testing.T) {
 		ID:                  "selftest-disabled",
 		Name:                "Disabled",
 		Backend:             model.CustomACPBackend,
-		Transport:           "acp-stdio",
 		AcpCommand:          "go version",
 		Disabled:            true,
 		RuntimeSystemPrompt: "prompt",
@@ -216,7 +209,7 @@ func TestAgentSelfTest_EmptyModelsIsOnlyAWarning(t *testing.T) {
 
 	acpAgent := &model.Agent{
 		ID: "selftest-acp-models", Name: "ACP",
-		Backend: model.CustomACPBackend, Transport: "acp-stdio",
+		Backend: model.CustomACPBackend,
 		AcpCommand: "go version", RuntimeSystemPrompt: "prompt",
 	}
 	acpRes := runAgentSelfTest(context.Background(), acpAgent, "")
@@ -225,7 +218,7 @@ func TestAgentSelfTest_EmptyModelsIsOnlyAWarning(t *testing.T) {
 
 	inProcess := &model.Agent{
 		ID: "selftest-builtin-models", Name: "Builtin",
-		Backend: "builtin", BuiltinBackend: true, Transport: "cli",
+		Backend: "builtin", BuiltinBackend: true,
 		RuntimeSystemPrompt: "prompt",
 	}
 	builtinRes := runAgentSelfTest(context.Background(), inProcess, "")
@@ -240,7 +233,7 @@ func TestAgentSelfTest_PreferredModelMustExist(t *testing.T) {
 
 	agent := &model.Agent{
 		ID: "selftest-pref", Name: "Pref",
-		Backend: "claude", Transport: "cli",
+		Backend: "claude",
 		Command:             "go",
 		Models:              []model.AgentModel{{ID: "model-a", Name: "A", Default: true}},
 		PreferredModel:      "model-gone",
@@ -358,12 +351,12 @@ func TestServeAgentSelfTestDeep_RefusesOnStaticFailure(t *testing.T) {
 	// executable probe, so no turn may be attempted.
 	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{
 		ID: "deep-broken", Name: "Deep Broken",
-		Backend: model.CustomACPBackend, Transport: "acp-stdio",
+		Backend: model.CustomACPBackend,
 		AcpCommand: "not-installed-anywhere-deep --stdio",
 	}))
 	model.AddAgent(&model.Agent{
 		ID: "deep-broken", Name: "Deep Broken",
-		Backend: model.CustomACPBackend, Transport: "acp-stdio",
+		Backend: model.CustomACPBackend,
 		AcpCommand:          "not-installed-anywhere-deep --stdio",
 		RuntimeSystemPrompt: "prompt",
 	})
@@ -489,13 +482,14 @@ func TestServeAgentSelfTest_Guards(t *testing.T) {
 // otherwise the agent is the in-process one. A stale stored transport value must
 // not bring a CLI mode back.
 func TestEffectiveTransport(t *testing.T) {
-	assert.Equal(t, "acp-stdio", effectiveTransport(&model.Agent{Transport: "acp-stdio", AcpCommand: "x"}))
 	assert.Equal(t, "acp-stdio", effectiveTransport(&model.Agent{AcpCommand: "x"}),
 		"an ACP command implies ACP even when the column is empty")
 	assert.Equal(t, "acp-stdio", effectiveTransport(&model.Agent{Transport: "cli", AcpCommand: "x"}),
 		"a legacy cli value on an ACP agent must not select a CLI path")
 	assert.Equal(t, "in-process", effectiveTransport(&model.Agent{BuiltinBackend: true}),
 		"the built-in agent runs in-process")
+	assert.Equal(t, "", effectiveTransport(&model.Agent{Transport: "cli"}),
+		"a legacy cli value with no command resolves to nothing, not a CLI path")
 }
 
 // checkAcpState must WARN (not fail) before the first handshake: capabilities

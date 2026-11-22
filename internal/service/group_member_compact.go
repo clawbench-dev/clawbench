@@ -37,7 +37,7 @@ import (
 // onto the MEMBER row, which is where a member's usage lives), and never emit
 // anything to the WS hub.
 //
-// ACP only: the command is an ACP slash command. A CLI-transport agent has no
+// ACP only: the command is an ACP slash command. The in-process agent has no
 // command channel — sending the text would reach the model as prose.
 
 // Errors the handler maps to HTTP statuses.
@@ -51,7 +51,7 @@ var (
 	// qualifies: muting only takes it off the schedule, its context window is
 	// exactly what the user may want to compact while it is disabled.
 	ErrGroupMemberNotFound = errors.New("group member not found")
-	// ErrCompactNeedsACP is returned for a CLI-transport member, which has no
+	// ErrCompactNeedsACP is returned for an in-process member, which has no
 	// slash-command channel.
 	ErrCompactNeedsACP = errors.New("member does not use ACP transport")
 	// ErrMemberCompacting is returned when the same member is already being

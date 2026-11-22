@@ -333,8 +333,8 @@ func checkUsage(run *selfTestRun, agent *model.Agent) {
 	})
 }
 
-// cliProbeCommand picks the binary to verify for a CLI-transport agent: the
-// agent's own override wins (that is what spawn uses), then the spec default.
+// cliProbeCommand picks the binary to verify for an agent that runs over ACP:
+// the agent's own command wins (that is what spawn uses), then the spec default.
 func cliProbeCommand(agent *model.Agent, spec *model.BackendSpec) string {
 	if cmd := strings.TrimSpace(agent.Command); cmd != "" {
 		if fields := strings.Fields(cmd); len(fields) > 0 {

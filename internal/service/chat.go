@@ -2193,7 +2193,7 @@ func normalizeLedgerCost(sessionID string, messageID int64, meta *ai.Metadata) (
 	}
 	var prev float64
 	// Prefer the agent connection id; fall back to the ClawBench session when
-	// the agent never reported one (CLI transports).
+	// the agent never reported one.
 	partition := meta.SessionID
 	if partition == "" {
 		partition = sessionID
@@ -3759,9 +3759,9 @@ func UpdateExternalSessionID(sessionID, externalID string) error {
 }
 
 // ClearExternalSessionID clears the external session ID for a ClawBench session.
-// Called when transport switches from CLI to ACP — ACP manages its own session
-// mapping internally, so the CLI's external_session_id must not leak into the
-// ACP connection pool's GetOrCreateConn pre-population logic.
+// Called when the agent behind a session changes — ACP manages its own session
+// mapping internally, so an external_session_id from a previous agent must not
+// leak into the ACP connection pool's GetOrCreateConn pre-population logic.
 //
 // Also called by ACP session recovery when the agent answers that the session no
 // longer exists. There the clear is load-bearing rather than hygienic: the pool

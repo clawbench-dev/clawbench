@@ -77,7 +77,7 @@ type BackendSpec struct {
 	// that does not actually load its directory would then receive no skills at
 	// all. Verify against the real CLI before setting it — grep the installed
 	// binary/package for "SKILL.md" or "available_skills", and confirm the
-	// transport ClawBench uses (CLI vs ACP) shares that code path.
+	// transport ClawBench uses (an agent's ACP command) shares that code path.
 	AutoLoadsNativeSkills bool
 
 	// Builtin marks a backend whose tools are implemented by ClawBench itself

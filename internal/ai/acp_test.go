@@ -845,7 +845,6 @@ func TestNewACPBackend_InvalidTransport(t *testing.T) {
 	agent := &model.Agent{
 		ID:         "test",
 		Backend:    "claude",
-		Transport:  "cli",
 		AcpCommand: "",
 	}
 	_, err := NewACPBackend(agent)

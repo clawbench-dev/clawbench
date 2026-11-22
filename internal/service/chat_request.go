@@ -87,7 +87,8 @@ func WithKBQuery(query string) ChatRequestOption {
 //     amnesia).
 //  2. persisted model — the handler honored the session's saved model; the
 //     queue path ignored it and fell back to the agent default.
-//  3. persisted transport — same split for the session's CLI/ACP override.
+//  3. persisted transport — the CLI/ACP split the old per-session override
+//     carried (retired with CLI transport).
 //  4. fork envelope — the handler wrapped injected history in an explanatory
 //     envelope with "User:"/"Assistant:" roles; the queue path emitted bare
 //     "user:"/"assistant:" lines with no envelope.

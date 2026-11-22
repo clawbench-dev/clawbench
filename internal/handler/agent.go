@@ -916,9 +916,10 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		return
 	}
 
-	// Set when the transport is being switched from ACP to CLI. The connections
-	// are closed only after the new transport is published, so no concurrent
-	// turn can observe acp-stdio and spawn a replacement.
+	// A changed ACP command invalidates its running processes: they were
+	// spawned with the previous one. Closing the connections happens only after
+	// the new command is published, so no concurrent turn can observe the old
+	// command and spawn a replacement.
 	closeACPConns := false
 
 	ap := service.AgentPatch{}

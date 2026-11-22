@@ -1382,9 +1382,11 @@ func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
 
 	// Add an ACP agent
 	acpAgent := &model.Agent{
-		ID:         "acp-agent",
-		Name:       "ACP Agent",
-		Backend:    "acp-test",
+		ID:      "acp-agent",
+		Name:    "ACP Agent",
+		Backend: "acp-test",
+		// A stale transport value must not matter: the ACP command is what
+		// makes this an ACP agent.
 		Transport:  "cli",
 		AcpCommand: "acp-test --acp",
 		Models:     []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
@@ -1661,12 +1663,14 @@ func TestServeAgentsGet_PrefetchACPStateForUncachedAgent(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	// Add an ACP agent with no pool cache entry
+	// Deliberately WITHOUT an AcpCommand: the prefetch decision must key on the
+	// spec's command, and the absence of a per-agent command is what proves an
+	// agent that cannot start over ACP is not handed an acpState.
 	acpAgent := &model.Agent{
-		ID:        "acp-prefetch",
-		Name:      "ACP Prefetch",
-		Backend:   "acp-prefetch",
-		Transport: "acp-stdio",
-		Models:    []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+		ID:      "acp-prefetch",
+		Name:    "ACP Prefetch",
+		Backend: "acp-prefetch",
+		Models:  []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
 	}
 	model.Agents["acp-prefetch"] = acpAgent
 	model.AgentList = append(model.AgentList, acpAgent)
@@ -1710,8 +1714,8 @@ func TestServeAgentsGet_PrefetchACPStateForUncachedAgent(t *testing.T) {
 	conn := mgr.GetConn("_prefetch_acp-prefetch")
 	// The connection may have been cleaned up if the spawn failed (echo isn't ACP),
 	// but the key behavior is that PrefetchACPState was called.
-	// This agent has Transport=acp-stdio but no AcpCommand, so SupportsACP()
-	// returns false and it won't appear in acpStates.
+	// This agent has no AcpCommand, so SupportsACP() returns false and it will
+	// not appear in acpStates — whatever its (retired) transport column says.
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	acpStates, _ := resp["acpStates"].(map[string]any)

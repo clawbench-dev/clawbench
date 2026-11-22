@@ -1227,7 +1227,9 @@ export function useSessionIdentity() {
       const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, queueId, filePaths, files: allFiles, agentId: createdSession ? undefined : (currentAgentId.value || undefined), modelId: createdSession ? undefined : (currentModelId.value || undefined), transport: createdSession ? undefined : (currentTransport.value || undefined), clientId: localStorage.getItem('clawbench_client_id') || undefined }),
+        // No `transport`: the agent's ACP command decides the path, so the
+        // queue endpoint has no such field and would ignore it.
+        body: JSON.stringify({ message: text, queueId, filePaths, files: allFiles, agentId: createdSession ? undefined : (currentAgentId.value || undefined), modelId: createdSession ? undefined : (currentModelId.value || undefined), clientId: localStorage.getItem('clawbench_client_id') || undefined }),
       })
       if (resp.ok) {
         // Delivered — drop the batch so it is not sent again on the next message.

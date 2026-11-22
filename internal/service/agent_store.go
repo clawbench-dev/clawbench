@@ -1014,9 +1014,9 @@ const MaxAcpCommandBytes = 4096
 // that appears in no registry entry is never touched by that sync.
 //
 // Everything spec-derived then degrades exactly as it already does for the
-// built-in backends that ship without ACP mapping data: no CLI transport, no
-// model discovery, and LoadSession/ListSessions reported unsupported until the
-// agent advertises them itself.
+// built-in backends that ship without ACP mapping data: no local model
+// discovery, and LoadSession/ListSessions reported unsupported until the agent
+// advertises them itself.
 func CreateCustomACPAgent(name, acpCommand string) (*model.Agent, error) {
 	trimmed := strings.TrimSpace(acpCommand)
 	if trimmed == "" {

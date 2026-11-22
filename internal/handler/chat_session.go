@@ -1213,8 +1213,8 @@ const modelSwitchHTTPTimeout = 35 * time.Second
 // applySessionModel pushes a model selection to the session's live ACP agent.
 //
 // Returns (deferred=false, nil) when the switch was applied now (or there was
-// nothing to push: no live connection — CLI transport, or an ACP session that
-// has not started yet).
+// nothing to push: no live ACP connection, or an ACP session that has not
+// started yet).
 //
 // Returns (deferred=true, nil) when the agent rejected it transiently (busy /
 // timed out / connection dropped): the caller still persists the choice, and

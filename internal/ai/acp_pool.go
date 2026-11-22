@@ -845,7 +845,8 @@ func (m *ACPConnManager) SetConnForTest(clawbenchSID string, conn *ACPConn) {
 }
 
 // CloseConnsByAgentID closes all ACP connections for the given agent ID.
-// Used when transport is switched from ACP to CLI.
+// Used when the agent's ACP command changes: its running processes were spawned
+// with the previous one.
 func (m *ACPConnManager) CloseConnsByAgentID(agentID string) {
 	m.mu.Lock()
 	var toClose []*ACPConn
@@ -3176,4 +3177,23 @@ func (m *ACPConnManager) InjectAliveConnForTest(clawbenchSID string, agent *mode
 // Production code must not use this.
 func NewACPConnForTest(agent *model.Agent, clawbenchSID string) *ACPConn {
 	return newACPConn(agent, clawbenchSID)
+}
+
+// LastUsedForTest reports the connection's lastUsed stamp.
+//
+// The only observable effect of MarkIdle is refreshing this field, so a test
+// that asserts "the connection was marked idle" needs a way to read it.
+// Production code must not use this.
+func (c *ACPConn) LastUsedForTest() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastUsed
+}
+
+// SetLastUsedForTest overwrites the connection's lastUsed stamp so a test can
+// establish a stale starting point. Production code must not use this.
+func (c *ACPConn) SetLastUsedForTest(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastUsed = t
 }

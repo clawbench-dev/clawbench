@@ -18,7 +18,8 @@ import (
 // what keeps API keys in one place: editing a key once updates every agent,
 // instead of asking the user to paste it into ten agent records.
 //
-// Scope: ACP transport only. CLI backends have no `mcpServers` parameter, so a
+// Scope: ACP transport only. The in-process backend has no `mcpServers`
+// parameter, so a
 // CLI session reads its own config file and this list has no effect there.
 type MCPConfig struct {
 	Servers []MCPServer `yaml:"servers"`

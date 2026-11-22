@@ -36,7 +36,9 @@ func TestServeACPSessions_NonACPTransport(t *testing.T) {
 	defer teardown()
 
 	model.Agents = map[string]*model.Agent{
-		"cli-agent": {ID: "cli-agent", Backend: "claude", Transport: "cli"},
+		// No AcpCommand → not an ACP agent. The retired transport column is gone;
+		// the ACP command is what decides.
+		"cli-agent": {ID: "cli-agent", Backend: "claude"},
 	}
 	model.AgentList = []*model.Agent{model.Agents["cli-agent"]}
 
@@ -54,7 +56,7 @@ func TestServeACPSessions_NoLoadSessionCapability(t *testing.T) {
 
 	agentID := "acp-no-load"
 	model.Agents = map[string]*model.Agent{
-		agentID: {ID: agentID, Backend: "acp-stdio", Transport: "acp-stdio", AcpCommand: "echo"},
+		agentID: {ID: agentID, Backend: "acp-stdio", AcpCommand: "echo"},
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
@@ -76,7 +78,7 @@ func TestServeACPSessions_NoAliveConnection(t *testing.T) {
 
 	agentID := "acp-no-conn"
 	model.Agents = map[string]*model.Agent{
-		agentID: {ID: agentID, Backend: "acp-stdio", Transport: "acp-stdio", AcpCommand: "echo"},
+		agentID: {ID: agentID, Backend: "acp-stdio", AcpCommand: "echo"},
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
@@ -106,7 +108,7 @@ func TestServeACPSessions_SpawnOnDemandWhenNoCapabilityRegistered(t *testing.T) 
 
 	agentID := "acp-spawn-ondemand"
 	model.Agents = map[string]*model.Agent{
-		agentID: {ID: agentID, Backend: "acp-stdio", Transport: "acp-stdio", AcpCommand: "echo"},
+		agentID: {ID: agentID, Backend: "acp-stdio", AcpCommand: "echo"},
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
@@ -133,7 +135,7 @@ func TestServeACPSessions_CapabilityFromDBPersistence(t *testing.T) {
 
 	agentID := "acp-db-cap"
 	model.Agents = map[string]*model.Agent{
-		agentID: {ID: agentID, Backend: "acp-stdio", Transport: "acp-stdio", AcpCommand: "echo"},
+		agentID: {ID: agentID, Backend: "acp-stdio", AcpCommand: "echo"},
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
@@ -190,7 +192,9 @@ func TestServeACPLoadSession_NonACPTransport(t *testing.T) {
 	defer teardown()
 
 	model.Agents = map[string]*model.Agent{
-		"cli-agent": {ID: "cli-agent", Backend: "claude", Transport: "cli"},
+		// No AcpCommand → not an ACP agent. The retired transport column is gone;
+		// the ACP command is what decides.
+		"cli-agent": {ID: "cli-agent", Backend: "claude"},
 	}
 	model.AgentList = []*model.Agent{model.Agents["cli-agent"]}
 
@@ -211,7 +215,7 @@ func TestServeACPLoadSession_NoLoadSessionCapability(t *testing.T) {
 
 	agentID := "acp-no-load"
 	model.Agents = map[string]*model.Agent{
-		agentID: {ID: agentID, Backend: "acp-stdio", Transport: "acp-stdio", AcpCommand: "echo"},
+		agentID: {ID: agentID, Backend: "acp-stdio", AcpCommand: "echo"},
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
@@ -234,7 +238,7 @@ func TestServeAgentsGet_IncludesLoadSessionCapability(t *testing.T) {
 
 	agentID := "acp-with-load"
 	model.Agents = map[string]*model.Agent{
-		agentID: {ID: agentID, Backend: "claude", Transport: "acp-stdio", AcpCommand: "echo"},
+		agentID: {ID: agentID, Backend: "claude", AcpCommand: "echo"},
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
@@ -272,7 +276,7 @@ func TestServeAgentsGet_NoCapabilityOmitsFields(t *testing.T) {
 	agentID := "acp-no-cap"
 	// Use codebuddy backend (has AcpCommand and ACPLoadSession=true)
 	model.Agents = map[string]*model.Agent{
-		agentID: {ID: agentID, Backend: "codebuddy", Transport: "acp-stdio", AcpCommand: "codebuddy --acp"},
+		agentID: {ID: agentID, Backend: "codebuddy", AcpCommand: "codebuddy --acp"},
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 

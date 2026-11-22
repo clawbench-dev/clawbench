@@ -716,26 +716,29 @@ func TestBuildChatRequest_ACPConfirmed_ModelFallbackApplies(t *testing.T) {
 		"with ACP models confirmed the normal agent-default fallback applies")
 }
 
-// The gate is ACP-only: a CLI agent keeps its discovered default.
-func TestBuildChatRequest_CLITransport_KeepsModelFallback(t *testing.T) {
+// The gate is ACP-only: an agent with no ACP command keeps its discovered
+// default. This is the in-process shape (the retired "cli" transport is gone,
+// and the default must still survive for the one backend that has no ACP
+// handshake to ask).
+func TestBuildChatRequest_NonACPTransport_KeepsModelFallback(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"cli-a": {
-		ID: "cli-a", RuntimeSystemPrompt: "s", Transport: "cli",
-		Models: []model.AgentModel{{ID: "cli-default", Name: "CLI Default", Default: true}},
+	withAgents(t, map[string]*model.Agent{"inproc-a": {
+		ID: "inproc-a", RuntimeSystemPrompt: "s", BuiltinBackend: true,
+		Models: []model.AgentModel{{ID: "local-default", Name: "Local Default", Default: true}},
 	}})
 
-	req := BuildChatRequest("hi", "sess-cli-a", "", "claude", "cli-a", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-inproc-a", "", "builtin", "inproc-a", "", "", "", "", false)
 
-	assert.Equal(t, "cli-default", req.Model)
+	assert.Equal(t, "local-default", req.Model)
 }
 
-func TestBuildChatRequest_NoOverride_AgentWithCLITransport(t *testing.T) {
+func TestBuildChatRequest_NoOverride_AgentWithoutACPCommand(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"cli-agent": {ID: "cli-agent", RuntimeSystemPrompt: "s", Transport: "cli"}})
+	withAgents(t, map[string]*model.Agent{"inproc-agent": {ID: "inproc-agent", RuntimeSystemPrompt: "s", BuiltinBackend: true}})
 
-	req := BuildChatRequest("hi", "sess-cli-agent", "", "claude", "cli-agent", "", "", "", "", false)
+	req := BuildChatRequest("hi", "sess-inproc-agent", "", "builtin", "inproc-agent", "", "", "", "", false)
 
 	assert.False(t, req.Resume)
 }
@@ -1396,52 +1399,84 @@ func TestGetThinkingBySessionAll_ClosedDB(t *testing.T) {
 
 // ============================================================================
 // handleACPCleanup tests
+//
+// The decision is "does this agent run over ACP", which is exactly
+// AcpCommand != "". A connection's lastUsed stamp is the only observable effect
+// of MarkIdle, so every test below seeds a stale stamp and asserts whether it
+// was refreshed — asserting only "did not panic" passed even when the ACP
+// branch was unreachable.
 // ============================================================================
 
-func TestHandleACPCleanup_NonACPTransport(t *testing.T) {
+// seedIdleMarkConn injects a connection whose lastUsed is already stale, so a
+// refreshed value proves MarkIdle ran for it.
+func seedIdleMarkConn(t *testing.T, agentID, sessionID string) *ai.ACPConn {
+	t.Helper()
+	stale := time.Now().Add(-time.Hour)
+	conn := ai.NewACPConnForTest(&model.Agent{ID: agentID}, sessionID)
+	conn.SetLastUsedForTest(stale)
+	mgr := ai.GetACPConnManager()
+	mgr.SetConnForTest(sessionID, conn)
+	t.Cleanup(func() { mgr.SetConnForTest(sessionID, nil) })
+	return conn
+}
+
+func TestHandleACPCleanup_AgentWithoutACPCommand_LeavesConnAlone(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	origAgents := model.Agents
+	// No AcpCommand → not an ACP agent, whatever the retired transport column
+	// might say. This is the in-process shape.
 	model.Agents = map[string]*model.Agent{
-		"cli-agent": {ID: "cli-agent", Transport: "cli"},
+		"inproc-agent": {ID: "inproc-agent", BuiltinBackend: true},
 	}
 	defer func() { model.Agents = origAgents }()
 
-	// Insert session so GetSessionTransport doesn't panic on nil DB
-	sessionID := "cleanup-cli-sess"
-	_, err := store.WriteExec(
-		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Test', 'cli-agent', 'default', '', 'chat')",
-		sessionID,
-	)
-	require.NoError(t, err)
+	sessionID := "cleanup-inproc-sess"
+	conn := seedIdleMarkConn(t, "inproc-agent", sessionID)
+	stale := conn.LastUsedForTest()
 
-	// Should not panic for non-ACP transport
-	handleACPCleanup(sessionID, "cli-agent")
+	handleACPCleanup(sessionID, "inproc-agent")
+
+	assert.Equal(t, stale, conn.LastUsedForTest(),
+		"a non-ACP agent must not touch the ACP connection")
 }
 
-func TestHandleACPCleanup_SessionTransportACP(t *testing.T) {
+func TestHandleACPCleanup_SessionTransportColumnIsIgnored(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	sessionID := "acp-session-1"
+	origAgents := model.Agents
+	// The agent resolves to non-ACP. A stale chat_sessions.transport value must
+	// not resurrect the ACP branch: the column is retired and nothing reads it.
+	model.Agents = map[string]*model.Agent{
+		"inproc-agent": {ID: "inproc-agent", BuiltinBackend: true},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	sessionID := "retired-transport-column-sess"
 	_, err := store.WriteExec(
-		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, transport) VALUES (?, 1, 'claude', 'Test', '', 'default', '', 'chat', ?)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, transport) VALUES (?, 1, 'claude', 'Test', 'inproc-agent', 'default', '', 'chat', ?)",
 		sessionID, "acp-stdio",
 	)
 	require.NoError(t, err)
 
-	// Should not panic for ACP transport (ACPConnManager singleton handles nil pool gracefully)
-	handleACPCleanup(sessionID, "some-agent")
+	conn := seedIdleMarkConn(t, "inproc-agent", sessionID)
+	stale := conn.LastUsedForTest()
+
+	handleACPCleanup(sessionID, "inproc-agent")
+
+	assert.Equal(t, stale, conn.LastUsedForTest(),
+		"the retired per-session transport column must not drive this decision")
 }
 
-func TestHandleACPCleanup_NoSessionTransport_AgentACP(t *testing.T) {
+func TestHandleACPCleanup_AgentWithACPCommand_MarksIdle(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	origAgents := model.Agents
 	model.Agents = map[string]*model.Agent{
-		"acp-agent": {ID: "acp-agent", Transport: "acp-stdio"},
+		"acp-agent": {ID: "acp-agent", AcpCommand: "acp-server"},
 	}
 	defer func() { model.Agents = origAgents }()
 
@@ -1452,11 +1487,16 @@ func TestHandleACPCleanup_NoSessionTransport_AgentACP(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Agent has ACP transport, no session transport set
+	conn := seedIdleMarkConn(t, "acp-agent", sessionID)
+	stale := conn.LastUsedForTest()
+
 	handleACPCleanup(sessionID, "acp-agent")
+
+	assert.True(t, conn.LastUsedForTest().After(stale),
+		"an ACP agent's connection must be marked idle")
 }
 
-func TestHandleACPCleanup_UnknownAgent(t *testing.T) {
+func TestHandleACPCleanup_UnknownAgent_IsNoop(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
@@ -1471,8 +1511,13 @@ func TestHandleACPCleanup_UnknownAgent(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Unknown agent, no session transport → defaults to CLI
+	conn := seedIdleMarkConn(t, "nonexistent-agent", sessionID)
+	stale := conn.LastUsedForTest()
+
 	handleACPCleanup(sessionID, "nonexistent-agent")
+
+	assert.Equal(t, stale, conn.LastUsedForTest(),
+		"an unknown agent resolves to no ACP path")
 }
 
 // ============================================================================

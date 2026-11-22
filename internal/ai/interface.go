@@ -293,10 +293,9 @@ const (
 	// spends the retry budget and writes a user+assistant row pair per attempt
 	// for a failure only the user can fix.
 	//
-	// Both transports report it, in different shapes: the CLI prints a
-	// `type:"error"` frame with `error.type == "provider.quota"`, while ACP
-	// returns a JSON-RPC error whose data carries `errorName: "provider.quota"`
-	// (see opencode_stream.go and isACPQuotaError).
+	// Only ACP reports it, in a JSON-RPC error whose data carries
+	// `errorName: "provider.quota"` (see opencode_stream.go and
+	// isACPQuotaError).
 	ReasonQuotaExhausted = "quota_exhausted"
 )
 
