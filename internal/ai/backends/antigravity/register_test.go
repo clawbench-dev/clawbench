@@ -19,6 +19,7 @@ func TestAntigravityBackendPlugin_SpecFields(t *testing.T) {
 	assert.Equal(t, "Antigravity", plugin.Spec.Name)
 	assert.NotEmpty(t, plugin.Spec.Specialty)
 	assert.True(t, plugin.Spec.ACPLoadSession, "initialize advertises loadSession:true")
+	assert.True(t, plugin.Spec.ACPMCPHTTP, "agy acp natively accepts HTTP MCP servers even though initialize omits mcpCapabilities")
 	assert.Equal(t, 14, plugin.Spec.SortOrder)
 }
 

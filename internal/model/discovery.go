@@ -21,6 +21,11 @@ type BackendSpec struct {
 	ThinkingEffortLevels []string // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
 	AcpCommand           string   // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
 	ACPLoadSession       bool     // whether the ACP agent truly supports LoadSession (overrides ACP Initialize report)
+	// ACPMCPHTTP supplements the ACP initialize handshake's mcpCapabilities.http
+	// flag for backends that natively accept HTTP MCP servers in session/new,
+	// session/load, and session/resume but omit mcpCapabilities.http in their
+	// InitializeResponse (e.g. agy acp 1.5.x).
+	ACPMCPHTTP bool
 	// ACPResumeIsProcessLocal marks an agent whose session/resume only resolves
 	// ids created by the CURRENT process — after the process dies the same id
 	// must be recovered with session/load instead.

@@ -670,7 +670,9 @@ func (r *AgentCapabilityRegistry) GetListSessions(agentID string) bool {
 	return ok && agentCap != nil && agentCap.ListSessions != nil && *agentCap.ListSessions
 }
 
-// GetMCPCapabilities returns the agent's advertised MCP transports.
+// GetMCPCapabilities returns the agent's advertised MCP transports, supplemented
+// by BackendSpec.ACPMCPHTTP for backends that natively support HTTP MCP servers
+// but omit mcpCapabilities in their InitializeResponse.
 //
 // stdio is not represented: the ACP spec makes it mandatory, so it needs no
 // flag. A false value for http/sse means "not advertised", which must be read
@@ -678,15 +680,21 @@ func (r *AgentCapabilityRegistry) GetListSessions(agentID string) bool {
 // does not support fails the whole session/new.
 func (r *AgentCapabilityRegistry) GetMCPCapabilities(agentID string) model.MCPCapabilities {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 	agentCap, ok := r.caps[agentID]
-	if !ok || agentCap == nil {
-		return model.MCPCapabilities{}
+	var caps model.MCPCapabilities
+	if ok && agentCap != nil {
+		caps.HTTP = agentCap.McpHTTP != nil && *agentCap.McpHTTP
+		caps.SSE = agentCap.McpSSE != nil && *agentCap.McpSSE
 	}
-	return model.MCPCapabilities{
-		HTTP: agentCap.McpHTTP != nil && *agentCap.McpHTTP,
-		SSE:  agentCap.McpSSE != nil && *agentCap.McpSSE,
+	r.mu.RUnlock()
+	if !caps.HTTP {
+		if agent := model.GetAgent(agentID); agent != nil {
+			if spec := model.FindSpecByBackend(agent.Backend); spec != nil && spec.ACPMCPHTTP {
+				caps.HTTP = true
+			}
+		}
 	}
+	return caps
 }
 
 // DeleteSessionProbePending reports that the session/delete probe has not

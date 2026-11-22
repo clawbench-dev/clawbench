@@ -1326,8 +1326,11 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 		// MCP transports. stdio is mandatory in the spec and never advertised;
 		// http/sse are optional and MUST gate what we send — codex-acp throws
 		// invalidRequest for an sse server it does not support, which fails the
-		// whole session/new rather than degrading.
-		mcpHTTP := initResp.AgentCapabilities.McpCapabilities.Http
+		// whole session/new rather than degrading. Backends whose spec sets
+		// ACPMCPHTTP (e.g. agy acp 1.5.x) natively support HTTP MCP despite
+		// omitting mcpCapabilities in InitializeResponse.
+		spec := model.FindSpecByBackend(c.agent.Backend)
+		mcpHTTP := initResp.AgentCapabilities.McpCapabilities.Http || (spec != nil && spec.ACPMCPHTTP)
 		mcpSSE := initResp.AgentCapabilities.McpCapabilities.Sse
 		reg.UpdateListSessions(c.agent.ID, listSessions)
 		reg.UpdateDeleteSession(c.agent.ID, deleteSession)
