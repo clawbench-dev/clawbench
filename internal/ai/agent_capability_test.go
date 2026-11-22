@@ -923,3 +923,76 @@ func TestRegistry_MCPCapabilitiesPersistAcrossRestart(t *testing.T) {
 	assert.Equal(t, model.MCPCapabilities{HTTP: true, SSE: true}, fresh.GetMCPCapabilities("a1"),
 		"http/sse must survive a restart, or the first session after restart sends only stdio")
 }
+
+// TestRegistry_MCPCapabilitiesSupplementedByBackendSpec verifies that when a
+// backend's BackendSpec declares ACPMCPHTTP=true (e.g. agy acp 1.5.x, which
+// natively accepts HTTP MCP servers but omits mcpCapabilities in Initialize),
+// GetMCPCapabilities returns HTTP:true even before/after a false handshake and
+// ResolveMCPServers passes transport=http servers through while still filtering
+// unsupported SSE servers.
+func TestRegistry_MCPCapabilitiesSupplementedByBackendSpec(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+
+	const backendName = "test-spec-mcp-http"
+	const agentID = "agent-spec-mcp-http"
+
+	prevSpecs := append([]model.BackendSpec(nil), model.GetBackendRegistry()...)
+	model.BackendRegistry = append(append([]model.BackendSpec(nil), prevSpecs...), model.BackendSpec{
+		ID:         backendName,
+		Backend:    backendName,
+		AcpCommand: "fake-acp",
+		ACPMCPHTTP: true,
+	})
+	t.Cleanup(func() { model.BackendRegistry = prevSpecs })
+
+	prevAgents := model.Agents
+	if model.Agents == nil {
+		model.Agents = make(map[string]*model.Agent)
+	}
+	prevAgent, hadPrevAgent := model.Agents[agentID]
+	model.Agents[agentID] = &model.Agent{
+		ID:         agentID,
+		Name:       "Spec HTTP MCP Agent",
+		Backend:    backendName,
+		Transport:  "acp-stdio",
+		MCPServers: model.MCPServerPolicy{Mode: model.MCPPolicyAll},
+	}
+	t.Cleanup(func() {
+		if prevAgents == nil {
+			model.Agents = nil
+			return
+		}
+		if hadPrevAgent {
+			model.Agents[agentID] = prevAgent
+		} else {
+			delete(model.Agents, agentID)
+		}
+	})
+
+	prevSnap := model.MCPServersSnapshot()
+	model.PublishMCPSnapshot(model.MCPConfig{
+		Servers: []model.MCPServer{
+			{Name: "exa", Transport: model.MCPTransportHTTP, URL: "https://mcp.exa.ai/mcp"},
+			{Name: "legacy-sse", Transport: model.MCPTransportSSE, URL: "https://example.com/sse"},
+			{Name: "local-stdio", Transport: model.MCPTransportStdio, Command: "echo"},
+		},
+	})
+	t.Cleanup(func() { model.PublishMCPSnapshot(model.MCPConfig{Servers: prevSnap}) })
+
+	// Before any handshake, BackendSpec.ACPMCPHTTP already unlocks HTTP MCP.
+	assert.Equal(t, model.MCPCapabilities{HTTP: true, SSE: false}, reg.GetMCPCapabilities(agentID))
+
+	// Even if a prior handshake persisted false/false (e.g. legacy DB row),
+	// BackendSpec.ACPMCPHTTP still keeps HTTP enabled while SSE remains false.
+	reg.UpdateMCPCapabilities(agentID, false, false)
+	caps := reg.GetMCPCapabilities(agentID)
+	assert.Equal(t, model.MCPCapabilities{HTTP: true, SSE: false}, caps)
+
+	resolved := model.ResolveMCPServers(agentID, caps)
+	names := make([]string, 0, len(resolved))
+	for _, s := range resolved {
+		names = append(names, s.Name)
+	}
+	assert.ElementsMatch(t, []string{"exa", "local-stdio"}, names,
+		"HTTP and stdio MCP servers must be resolved, while unsupported SSE stays filtered")
+}
