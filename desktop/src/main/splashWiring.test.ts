@@ -152,7 +152,7 @@ describe('the main window waits for the embedded server before navigating', () =
   })
 
   it('settles the gate when there is no built-in server to wait for', () => {
-    // A thin client has no server to wait for, and a integrated build pointed at
+    // A thin client has no server to wait for, and an integrated build pointed at
     // another machine will open that machine — gating either would delay the
     // window for a local server it is not going to open.
     const src = readRepoFile('desktop/src/main/index.ts')

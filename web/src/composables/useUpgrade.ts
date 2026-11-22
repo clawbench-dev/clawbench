@@ -126,7 +126,7 @@ const showProgressDialog = ref(false)
 
 /**
  * All-in-one package URLs for the latest release, keyed by platform. Only
- * populated for a integrated install (a server managed by its desktop embedder),
+ * populated for an integrated install (a server managed by its desktop embedder),
  * where the only valid upgrade unit is the whole package — see
  * `installIntegratedUpdate`.
  */

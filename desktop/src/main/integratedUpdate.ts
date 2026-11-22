@@ -39,9 +39,9 @@ export async function installIntegratedUpdate(
   const parentArg = parent ?? undefined
 
   if (!hasEmbeddedServerBinary()) {
-    // Only a integrated install has something to update this way. Reaching here
+    // Only an integrated install has something to update this way. Reaching here
     // means the UI offered an action this build cannot perform.
-    recordError('IntegratedUpdate', 'not a integrated install')
+    recordError('IntegratedUpdate', 'not an integrated install')
     return { ok: false, error: 'this build does not carry its own server' }
   }
 

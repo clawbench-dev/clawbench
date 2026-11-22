@@ -773,7 +773,7 @@ export function selectStartupVersion(
  *     so a broken upgrade can never leave the user unable to start the app
  *   - the pointed binary is this very file (already running the pointed
  *     install) → continue rather than re-exec forever, and KEEP the pointer:
- *     a integrated upgrade can legitimately install a package whose app reports an
+ *     an integrated upgrade can legitimately install a package whose app reports an
  *     older version than its directory is named after
  *   - the pointed binary exists but the OS refuses to start it (antivirus,
  *     a missing runtime) → clear the pointer and continue with THIS version;

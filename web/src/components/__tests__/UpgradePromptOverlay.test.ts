@@ -61,7 +61,7 @@ describe('UpgradePromptOverlay', () => {
     startUpgrade.mockReset()
   })
 
-  it('closes immediately when the upgrade is not a integrated install', async () => {
+  it('closes immediately when the upgrade is not an integrated install', async () => {
     startUpgrade.mockResolvedValue(undefined)
     const wrapper = await mountOverlay()
     expect(wrapper.find('.up-overlay').exists()).toBe(true)

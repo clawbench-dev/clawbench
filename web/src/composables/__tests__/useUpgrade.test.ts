@@ -621,7 +621,7 @@ describe('useUpgrade', () => {
     })
 
     it('offers nothing on a desktop build without the package-install bridge', async () => {
-      // The feature ships with the SERVER, so a integrated install on an older shell
+      // The feature ships with the SERVER, so an integrated install on an older shell
       // can receive the response but cannot act on it.
       mockApiGet.mockResolvedValue({
         current_version: 'v1.0.0',
@@ -639,7 +639,7 @@ describe('useUpgrade', () => {
 
     it('starts the package install through the shell, never /api/upgrade/start', async () => {
       // A managed server refuses /api/upgrade/start (403): it must never even
-      // be attempted for a integrated install.
+      // be attempted for an integrated install.
       const installIntegratedUpdate = vi.fn(async () => ({ ok: true, error: '' }))
       mockGetNative.mockReturnValue({ installIntegratedUpdate })
       mockApiGet.mockResolvedValue({

@@ -67,7 +67,7 @@ export function checkVersionGateFor(url: string): void {
   // version can never be a mismatch this gate could fix — and walking the
   // middle of a download here would only offer to replace the app under itself.
   //
-  // Keyed on the ADDRESS, not on "we run a built-in server": a integrated build
+  // Keyed on the ADDRESS, not on "we run a built-in server": an integrated build
   // keeps its own server running while the user is connected to another
   // machine, and that machine's version must still be checked.
   if (isEmbeddedServerUrl(url)) {
