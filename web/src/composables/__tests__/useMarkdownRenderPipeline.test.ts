@@ -518,6 +518,22 @@ describe('KaTeX stretchy-delimiter svgs are not hijacked as media (issue #473)',
     })
   }
 
+  it('keeps drawing and layout attributes without letting them carry script', () => {
+    // `d` and the two MathML layout attributes are exempted from the URI
+    // policy. That exemption must not turn into an XSS hole: geometry stays,
+    // event handlers and nested script are still stripped.
+    const md = [
+      '<svg><path d="M0 0 L10 10" onload="alert(1)"></path></svg>',
+      '',
+      '<math><mtable columnalign="javascript:alert(1)"><mtr><mtd>x</mtd></mtr></mtable></math>',
+    ].join('\n')
+    const doc = new DOMParser().parseFromString(renderMarkdownHtml(md), 'text/html')
+    // Match our own geometry: the pipeline injects icon svgs of its own.
+    expect(doc.querySelector('path[d="M0 0 L10 10"]')).not.toBeNull()
+    expect(doc.querySelectorAll('[onload]')).toHaveLength(0)
+    expect(doc.querySelectorAll('script')).toHaveLength(0)
+  })
+
   it('renders LaTeX commands in mixed Markdown and keeps code literal', () => {
     const md = [
       '> **速度 $\\sqrt{x}$** 和 \\(\\sqrt{y_2}\\)',
@@ -537,7 +553,9 @@ describe('KaTeX stretchy-delimiter svgs are not hijacked as media (issue #473)',
     expect(doc.querySelectorAll('blockquote .katex')).toHaveLength(2)
     expect(doc.querySelector('strong .sqrt svg path[d]')).not.toBeNull()
     expect(doc.querySelector('li .katex-display .sqrt svg path[d]')).not.toBeNull()
-    expect(doc.querySelector('mtable[columnalign][columnspacing]')).not.toBeNull()
+    // Attribute-based lookup, not `mtable[...]`: the point is that the layout
+    // attributes survive sanitization, regardless of which element KaTeX uses.
+    expect(doc.querySelector('[columnalign][columnspacing]')).not.toBeNull()
     expect(doc.querySelectorAll('.katex-error, code .katex')).toHaveLength(0)
     expect(doc.querySelector('code')?.textContent).toBe('$\\sqrt{x}$')
     expect(doc.querySelector('pre code')?.textContent).toContain('$$\\sqrt{z}$$')

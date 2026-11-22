@@ -231,7 +231,12 @@ function stripMathPlaceholders(html: string, mathEntries: MathEntry[]): string {
 // ---------------------------------------------------------------------------
 
 const DOMPURIFY_ADD_TAGS = ['math', 'button']
-const DOMPURIFY_ADD_ATTR = ['data-action', 'aria-label', 'title', 'data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-line-ranges', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-path', 'data-table-idx', 'data-row-idx', 'data-href']
+// `columnalign` / `columnspacing` come from KaTeX's MathML matrix and cases
+// output; without them the columns lose alignment.
+const DOMPURIFY_ADD_ATTR = ['data-action', 'aria-label', 'title', 'data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-line-ranges', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-path', 'data-table-idx', 'data-row-idx', 'data-href', 'columnalign', 'columnspacing']
+// Attributes whose values are never URLs. The URI policy would otherwise strip
+// them: SVG `d` is path geometry, the two MathML ones are table layout.
+const DOMPURIFY_ADD_URI_SAFE_ATTR = ['d', 'columnalign', 'columnspacing']
 const DOMPURIFY_ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file):|[^a-z]|[a-z+.-]+(?:[/?#][\s\S]*)?$)/i
 
 // ---------------------------------------------------------------------------
@@ -300,10 +305,8 @@ export function renderMarkdown(
     if (sanitize) {
         html = DOMPurify.sanitize(html, {
             ADD_TAGS: DOMPURIFY_ADD_TAGS,
-            ADD_ATTR: [...DOMPURIFY_ADD_ATTR, 'columnalign', 'columnspacing'],
-            // SVG path geometry and MathML table layout are never URLs.
-            // Applying the link policy to them erases KaTeX strokes and spacing.
-            ADD_URI_SAFE_ATTR: ['d', 'columnalign', 'columnspacing'],
+            ADD_ATTR: [...DOMPURIFY_ADD_ATTR],
+            ADD_URI_SAFE_ATTR: DOMPURIFY_ADD_URI_SAFE_ATTR,
             ALLOWED_URI_REGEXP: DOMPURIFY_ALLOWED_URI_REGEXP,
         })
     }
