@@ -39,16 +39,17 @@ package ai
 // hook. What remains here is the set of keys the loop must read PER FRAME while
 // routing it, where the decision itself is shared:
 //
-//   - the replay-identity keys (requestId / messageId / traceId): the loop's
-//     log lines and the connection's chunk-dedup key name them, and a hook
-//     cannot cover a key the loop drops a frame on;
-//   - the refusal keys: read only by the refusal-detail hook's callers-in-test.
+//   - the replay-identity keys (requestId / conversationRequestId / messageId /
+//     traceId): the loop's log line and the connection's chunk-dedup key name
+//     them, and a hook cannot cover a key the loop drops a frame on.
 //
 // Each is a narrow, documented read of one key — not a behaviour branch on a
-// backend id.
+// backend id. The refusal payload key is deliberately NOT here: it is read only
+// by CodeBuddy's own RefusalDetail hook, and the tests that prove a hookless
+// backend cannot read it spell the literal out on purpose — a constant in this
+// package would suggest the core knows the key, which is exactly what the hook
+// exists to avoid.
 const (
-	//nolint:gosec // G101: a _meta key name, not a credential
-	metaKeyCodeBuddyRequestCredits = "codebuddy.ai/requestCredits"
 	// metaKeyCodeBuddyRequestID is the per-generation request id. The shared
 	// event loop logs it when it drops a replayed chunk; the replay hook reads
 	// it to compare against the completed-turn baseline.
@@ -59,9 +60,6 @@ const (
 	metaKeyCodeBuddyConversationRequestID = "codebuddy.ai/conversationRequestId"
 	metaKeyCodeBuddyTraceID               = "codebuddy.ai/traceId"
 	metaKeyCodeBuddyMessageID             = "codebuddy.ai/messageId"
-	// metaKeyCodeBuddyErrorMessage carries the refusal payload on a
-	// stopReason=refusal PromptResponse (a JSON-encoded {code,message,data}).
-	metaKeyCodeBuddyErrorMessage = "codebuddy.ai/errorMessage"
 )
 
 // costFieldCarriesCredit reports whether a backend repurposes the

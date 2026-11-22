@@ -25,7 +25,10 @@ func TestEmitRefusalWarning_CarriesAgentDetail(t *testing.T) {
 	resp := acp.PromptResponse{
 		StopReason: acp.StopReasonRefusal,
 		Meta: acptest.Meta(map[string]any{
-			metaKeyCodeBuddyErrorMessage: `{"code":-32603,"message":"Internal error","data":{"details":"Bad substitution: o.gaps.join"}}`,
+			// The literal, not a package constant: the key belongs to CodeBuddy's
+			// own hook, and a named constant in this package would imply the core
+			// knows it.
+			"codebuddy.ai/errorMessage": `{"code":-32603,"message":"Internal error","data":{"details":"Bad substitution: o.gaps.join"}}`,
 		}),
 	}
 	conn.emitRefusalWarningIfRefused(resp, ch, "acp-sid")

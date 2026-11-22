@@ -229,10 +229,14 @@ sequenceDiagram
 
 #### 留在公共层、不搬的东西
 
-这三样刻意不交给后端，理由都是「**它描述的是 wire 事实或共享决策，不是某个后端可协商的能力**」：
+下面这些刻意不交给后端，理由都是「**它描述的是 wire 事实或共享决策，不是某个后端可协商的能力**」：
 
 - **压缩检测的工具名与标题表**（`compact_detect.go` 的 `compactionToolNames` / `compactionToolCallTitle`）。`compact` 这个工具名和 `Compact conversation` 这个标题是两个 ACP 适配器**在线上实际发的东西**（claude-agent-acp 发名字 + 标题，codex-acp 只发标题）。逐后端登记会让十几个后端各声明一份空表，而将来某个适配器改成发工具调用时要靠有人记得回来登记——漏了就是压缩后系统提示不再注入，界面上毫无提示。留在公共处按「谁发这个形状就认谁」反而不会漏。有测试 `TestCompactionToolSignals_AreAdapterWireFacts` 钉住。
 - **LoadSession 回放结束键**（`metaKeyCodeBuddyHistoryReplay`，`acp_client.go` 读 `=="end"`）。回放期间进来的帧不能被当成实时内容，这个判断对**所有后端**都要成立，不能被某一个后端的钩子推翻。
 - **插话 id 判定**（`conn.claimPendingSteerID`）。后端只负责「从这帧里取出回显的 id」（`SteerBoundaryID`），「这个 id 是不是本机发出去的那次插话」留在公共层——否则一个后端说「是我发的」就能把助手回复从错误的位置切成两条。
+- **父链接的通用解码**（`parentLinkWithoutBackend`：`clawbench/parentToolCallId` → `codebuddy.ai/parentToolCallId` → 嵌套 `claudeCode.parentToolUseId`）。这三套编码在 ACP 生态里是事实标准，而**目前没有任何后端声明 `ParentToolCallID` 钩子**，所有后端的父链接都走这条兜底，它不是边缘路径。子智能体内容一旦丢了父链接就会掉进主时间线，所以这里按「能解就解」而不是「等后端来登记」。**真正的后端专属 join（成员名 → spawn 调用 id）走 `AttributeFrame`**——公共层不认识成员名，只认识工具调用 id。
+- **子会话标记**（`opencode/child-session`，`isOpenCodeChildSessionUpdate`）。与上一条同性质：opencode v2 把子智能体内容投影到父会话流里、且不带父链接，认不出来就只能丢弃（`acp_events.go` 与 `acp_client.go` 两条路径都会 drop）。这条兜底认的是「线上确实出现的键」，不认后端名。
 
 同理，`CostFieldCarriesCredit` 是**钩子**，但「积分不能当钱写进 `chat_metadata.cost_usd`」这条规则在公共层：后端只说明它这个字段装的是什么，怎么记账不由它决定。
+
+**这些条目共同的判据**：如果某个后端「说自己不发这个形状」就能改变**别的**后端的行为，那它不该是钩子；如果它只描述「我自己发的帧长这样」，那就该搬进它自己的子包。上面五条都属于前一类。

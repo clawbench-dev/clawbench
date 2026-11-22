@@ -25,7 +25,10 @@ func TestRefusalDetail_OnlyDeclaredBackendsContribute(t *testing.T) {
 	resp := acp.PromptResponse{
 		StopReason: acp.StopReasonRefusal,
 		Meta: acptest.Meta(map[string]any{
-			metaKeyCodeBuddyErrorMessage: `{"code":-32603,"message":"Internal error","data":{"details":"should not be read here"}}`,
+			// Spelled out on purpose, not via a constant: this frame is CodeBuddy's
+			// private key fed to a backend that declares no hook. If the core knew
+			// the key by name, this assertion could pass for the wrong reason.
+			"codebuddy.ai/errorMessage": `{"code":-32603,"message":"Internal error","data":{"details":"should not be read here"}}`,
 		}),
 	}
 	conn.emitRefusalWarningIfRefused(resp, ch, "acp-sid")

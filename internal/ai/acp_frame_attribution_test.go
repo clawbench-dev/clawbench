@@ -121,7 +121,13 @@ func TestFrameAttribution_HookResultReachesTheEvents(t *testing.T) {
 // Every content/thinking/tool branch must ask the hook, not just the text one.
 // A branch left calling a removed helper would silently stop attributing — the
 // member's output would render as top-level content in the main timeline, with
-// no error anywhere. This walks all four branches.
+// no error anywhere.
+//
+// The branches walked here are the four that CARRY attribution: agent_message,
+// agent_thought, tool_call and tool_call_update. user_message_chunk is
+// deliberately absent — that branch reads a steer-boundary id through its own
+// hook (SteerBoundaryID) and forwards no content of its own, so it has no
+// member to attribute.
 func TestFrameAttribution_EveryBranchAsksTheHook(t *testing.T) {
 	const backend = "attr-branch-backend"
 	restore := LookupACPBehaviorFn
@@ -183,4 +189,21 @@ func TestFrameAttribution_EveryBranchAsksTheHook(t *testing.T) {
 	require.NotNil(t, tool.Tool)
 	assert.Equal(t, "call_x", tool.Tool.ParentToolCallID,
 		"the tool call must be folded under the Agent card, not the main timeline")
+
+	// tool call update (the RESULT frame). This branch is the easiest one to
+	// break silently: it flows through mapACPToolCallUpdate, and losing the
+	// attribution there leaves the result card without its parent link — it
+	// pops out of the Agent card and lands in the main timeline as if the
+	// assistant had said something unrelated. Nothing errors.
+	ch = make(chan StreamEvent, 32)
+	mapACPSessionUpdate(acp.SessionUpdate{ToolCallUpdate: &acp.SessionToolCallUpdate{
+		Meta:       acp.PatchSet(meta),
+		ToolCallId: "tc-1",
+		Status:     acptest.Patch(acp.ToolCallStatusCompleted),
+	}}, ch, nil, conn, nil)
+	result := drain(ch, "tool_result")
+	assertAttributed(result, "tool_call_update")
+	require.NotNil(t, result.Tool)
+	assert.Equal(t, "call_x", result.Tool.ParentToolCallID,
+		"the tool result must inherit the member's parent link, or it leaves the Agent card")
 }
