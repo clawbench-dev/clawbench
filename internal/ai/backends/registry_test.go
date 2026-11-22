@@ -344,3 +344,32 @@ func TestLookupACPModesMirrorThoughtLevel(t *testing.T) {
 		t.Error("expected false for an unknown backend")
 	}
 }
+
+func TestLookupACPSpawnHooks(t *testing.T) {
+	t.Cleanup(backends.ResetForTest())
+
+	hooks := &ai.ACPSpawnHooks{Args: func(ai.ACPSpawnContext) []string { return nil }}
+	backends.Register(&backends.BackendPlugin{
+		ID: "with_spawn_hooks",
+		ACP: &backends.ACPPlugin{
+			SpawnHooks: hooks,
+		},
+	})
+	backends.Register(&backends.BackendPlugin{
+		ID:   "no_acp_plugin",
+		Spec: model.BackendSpec{ID: "no_acp_plugin", Backend: "no_acp_plugin"},
+	})
+	backends.Register(&backends.BackendPlugin{
+		ID:  "acp_without_hooks",
+		ACP: &backends.ACPPlugin{},
+	})
+
+	if got := backends.LookupACPSpawnHooks("with_spawn_hooks"); got != hooks {
+		t.Errorf("LookupACPSpawnHooks returned %p, want the registered hooks %p", got, hooks)
+	}
+	for _, id := range []string{"no_acp_plugin", "acp_without_hooks", "unknown"} {
+		if got := backends.LookupACPSpawnHooks(id); got != nil {
+			t.Errorf("LookupACPSpawnHooks(%q) = %v, want nil", id, got)
+		}
+	}
+}
