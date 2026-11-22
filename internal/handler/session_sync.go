@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -279,6 +280,17 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sync replaces history and respawns the agent. Serialize both operations
+	// with the runner, including a group member's shared timeline. The runner
+	// stays claimed by chat while the requester waits for delayed task output.
+	timeline := service.ResolveGroupTimelineID(req.SessionID)
+	syncCtx, release, err := claimHistorySync(r.Context(), timeline)
+	if err != nil {
+		return
+	}
+	defer release()
+	r = r.WithContext(syncCtx)
+
 	// 解析 ACP 会话 ID：优先 external_session_id，其次活动连接 acpSID
 	acpSID := extID
 	if acpSID == "" {
@@ -344,6 +356,9 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 	for _, m := range messages {
 		svcMsgs = append(svcMsgs, service.ReplayMessage{Role: m.role, Content: m.content, ExtMsgID: m.extMsgID, ToolCalls: m.toolCalls})
 	}
+	if r.Context().Err() != nil {
+		return
+	}
 	replaced, err := service.ReplaceSessionHistory(req.SessionID, projectPath, agent.Backend, svcMsgs)
 	if err != nil {
 		slog.Error("handler: ReplaceSessionHistory failed", "session_id", req.SessionID, "error", err)
@@ -365,6 +380,37 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		"ok":    true,
 		"added": added,
 	})
+}
+
+// claimHistorySync waits for persisted completion before acquiring the same
+// session claim as chat. The request lifetime bounds both the wait and replay.
+func claimHistorySync(ctx context.Context, sid string) (context.Context, func(), error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if !service.IsSessionRunning(sid) {
+			if run, ok := service.TryClaimSessionRun(sid); ok {
+				syncCtx, cancel := context.WithCancel(ctx)
+				stop := context.AfterFunc(run, cancel)
+				return syncCtx, func() {
+					stop()
+					cancel()
+					if service.FinishClaimedSessionRun(sid, run) {
+						service.EmitSessionEvent(sid, "completed", true)
+					}
+					if service.GetQueuedCount(sid) > 0 {
+						service.EnsureConsumer(sid)
+					}
+				}, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 
 // waitForReplaySettled 阻塞直到 LoadSession 回放完成。优先使用 CodeBuddy 的显式

@@ -36,11 +36,13 @@ type pendingPermission struct {
 // all sessions on a connection. It uses sessionRoutes to demultiplex
 // SessionUpdate notifications to the correct StreamEvent channel.
 type ClawBenchACPClient struct {
-	mu                sync.Mutex
-	sessionRoutes     map[string]chan<- StreamEvent // acpSessionID → streamCh
-	commandReplies    map[string]*asyncCommandReply // enabled by the Antigravity handshake
-	commands          []acp.AvailableCommand        // cached from available_commands_update
-	pendingPermission map[string]*pendingPermission // PermissionKey → pending request
+	mu                  sync.Mutex
+	sessionRoutes       map[string]chan<- StreamEvent // acpSessionID → streamCh
+	backgroundWork      map[string]*promptBackgroundWork
+	expectTaskFollowup  bool
+	trackFiniteCommands bool                          // enabled by the native Antigravity handshake
+	commands            []acp.AvailableCommand        // cached from available_commands_update
+	pendingPermission   map[string]*pendingPermission // PermissionKey → pending request
 	// pendingElicitations tracks blocking `elicitation/create` requests (see
 	// acp_elicitation.go). Keyed by the card block id, which is unique per
 	// request and is what the frontend posts back.
@@ -121,6 +123,7 @@ type ClawBenchACPClient struct {
 // NewClawBenchACPClient creates a new ACP client with session routing support.
 func NewClawBenchACPClient() *ClawBenchACPClient {
 	return &ClawBenchACPClient{
+		backgroundWork:      make(map[string]*promptBackgroundWork),
 		sessionRoutes:       make(map[string]chan<- StreamEvent),
 		pendingPermission:   make(map[string]*pendingPermission),
 		pendingElicitations: make(map[string]*pendingElicitation),
@@ -146,7 +149,7 @@ func newConnClient(conn *ACPConn) *ClawBenchACPClient {
 // RegisterSession registers a StreamEvent channel for an ACP session.
 // Events from this session will be forwarded to ch.
 // Must be called before sending a Prompt for this session.
-func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- StreamEvent) {
+func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- StreamEvent) *promptBackgroundWork {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// A user turn is taking the session over. Close out any agent-initiated turn
@@ -160,6 +163,12 @@ func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- Stre
 		deliverBackgroundTurnEnd(turn)
 	}
 	c.sessionRoutes[acpSessionID] = ch
+	work := newPromptBackgroundWork()
+	work.expectFollowup = c.expectTaskFollowup
+	if c.trackFiniteCommands {
+		work.commands = &asyncCommandReply{commands: make(map[acp.ToolCallId]bool)}
+	}
+	c.backgroundWork[acpSessionID] = work
 	c.activeSessionID = acpSessionID
 	c.debouncers[acpSessionID] = newToolCallDebouncer(ch, c.connRef)
 	// Reset the tool-input cache for this session at the start of each turn: a
@@ -172,6 +181,7 @@ func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- Stre
 			delete(c.toolInputs, k)
 		}
 	}
+	return work
 }
 
 // UnregisterSession removes the StreamEvent channel for an ACP session.
@@ -195,7 +205,10 @@ func (c *ClawBenchACPClient) UnregisterSession(acpSessionID string) {
 		return
 	}
 	delete(c.sessionRoutes, acpSessionID)
-	delete(c.commandReplies, acpSessionID)
+	delete(c.backgroundWork, acpSessionID)
+	if c.connRef != nil {
+		c.connRef.backgroundTasksRunning.Store(false)
+	}
 
 	// A question still waiting on the user belongs to the turn that just
 	// ended. Leaving it blocked would keep the handler alive and
@@ -330,6 +343,12 @@ func (c *ClawBenchACPClient) MergeCommandsFromScan(pluginCmds []AvailableCommand
 // ACP session ID. If no route is registered (session unregistered or
 // cancelled), the update is silently dropped.
 func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNotification) error {
+	if u := n.Update.SessionInfoUpdate; u != nil && u.Meta[backgroundEventKey] != nil {
+		if !c.IsLoadSessionActive() {
+			c.onBackgroundEvent(string(n.SessionId), u.Meta[backgroundEventKey])
+		}
+		return nil
+	}
 	if c.maybeCloseAdoptedTurn(n) {
 		return nil
 	}
@@ -406,7 +425,7 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	c.mu.Lock()
 	ch, ok := c.sessionRoutes[string(n.SessionId)]
 	deb := c.debouncers[string(n.SessionId)]
-	reply := c.commandReplies[string(n.SessionId)]
+	work := c.backgroundWork[string(n.SessionId)]
 	c.mu.Unlock()
 
 	if !ok {
@@ -441,8 +460,8 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 
 	mapACPSessionUpdate(n.Update, ch, ctx, c.connRef, deb)
 	// Signal only after the final frame has been forwarded to the stream.
-	if reply != nil {
-		reply.observe(n.Update)
+	if work != nil && work.commands != nil {
+		work.commands.observe(n.Update)
 	}
 	return nil
 }

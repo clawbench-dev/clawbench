@@ -3336,6 +3336,7 @@ export default {
       // text (a bare task id / a status), so the tool name alone told the user
       // nothing; the title states the action and the id stays as the summary.
       action: {
+        background: 'Run background task',
         create: 'Create task',
         update: 'Update task',
         list: 'List tasks',

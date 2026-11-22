@@ -577,7 +577,7 @@ func isACPPeerDisconnected(err error) bool {
 	// 60s wait. Checked first because the wrapped SDK error's message
 	// contains "context deadline exceeded", which the string heuristics
 	// below would otherwise match. See acpInitTimeoutError.
-	if isACPInitTimeout(err) {
+	if isACPInitTimeout(err) || errors.Is(err, errBackgroundFollowup) {
 		return false
 	}
 	// Direct context.DeadlineExceeded (not wrapped in RequestError)

@@ -555,7 +555,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				},
 			})
 			go func() {
-				defer service.FinishSessionRun(sessionID)
+				defer service.FinishClaimedSessionRun(sessionID, runCtx)
 				service.RunGroupDrainLoop(runCtx, sessionID, projectPath, msgID, req.Message, allFiles)
 			}()
 			// Return msgId like the single-agent idle path does. The frontend
@@ -693,7 +693,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// previous three separate defers (clear flag / cancel / unregister) whose
 		// execution order was load-bearing and left a window where the session was
 		// still "running" with no cancel func registered.
-		defer service.FinishSessionRun(sessionID)
+		defer service.FinishClaimedSessionRun(sessionID, runCtx)
 		// Mark session as not-running BEFORE sending terminal WS event.
 		// Without this, a race exists: the "done" event reaches the client,
 		// which calls loadHistory(), but the deferred SetSessionRunning(false)

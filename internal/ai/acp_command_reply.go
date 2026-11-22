@@ -21,17 +21,6 @@ type asyncCommandReply struct {
 	changed  chan struct{}
 }
 
-func (c *ClawBenchACPClient) trackCommandReply(sessionID string) *asyncCommandReply {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.commandReplies == nil {
-		return nil
-	}
-	reply := &asyncCommandReply{commands: make(map[acp.ToolCallId]bool)}
-	c.commandReplies[sessionID] = reply
-	return reply
-}
-
 func isFiniteCommand(tc *acp.SessionUpdateToolCall) bool {
 	args, _ := tc.RawInput.(map[string]any)
 	command, _ := args["CommandLine"].(string)

@@ -164,6 +164,7 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 		// written to the SDK below.
 		if bytes.Contains(fixed, jsonRPCMethodMarker) {
 			f.dispatchNotificationSink(fixed)
+			fixed = normalizeAsyncTaskUpdate(fixed)
 		}
 
 		// Extract SessionModelState from session/new or session/resume responses.

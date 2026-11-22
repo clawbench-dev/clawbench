@@ -167,6 +167,9 @@ func buildInitializeRequest(agent *model.Agent) acp.InitializeRequest {
 	return acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
+			Meta: map[string]any{"jetbrains": map[string]any{"air": map[string]any{
+				"version": 1, "capabilities": []string{"asyncTasks"},
+			}}},
 			Fs:       fileSystemCapabilities(agent),
 			Terminal: advertiseTerminalCapability(agent),
 			// OpenCode asks questions through `elicitation/create` (form mode)
@@ -1332,13 +1335,16 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 		return fmt.Errorf("acp: initialize: %w", err)
 	}
 
-	// Key off the native server's handshake so custom agents using agy acp
-	// get the same handling as the built-in Antigravity backend.
-	if initResp.AgentInfo != nil && initResp.AgentInfo.Name == "Antigravity ACP Server" {
-		client.mu.Lock()
-		client.commandReplies = make(map[string]*asyncCommandReply)
-		client.mu.Unlock()
+	// Use protocol identity rather than a user-facing backend or model name.
+	client.mu.Lock()
+	client.expectTaskFollowup, _ = initResp.AgentCapabilities.Meta["clawbench/asyncTaskFollowup"].(bool)
+	if info := initResp.AgentInfo; info != nil {
+		client.trackFiniteCommands = info.Name == "Antigravity ACP Server"
+		if info.Name == "@agentclientprotocol/claude-agent-acp" {
+			client.expectTaskFollowup = true
+		}
 	}
+	client.mu.Unlock()
 	slog.Info("acp perf: spawnLocked.Initialize", "agent_id", c.agent.ID, "clawbench_sid", c.clawbenchSID, "protocol_version", initResp.ProtocolVersion, "elapsed", time.Since(initStart))
 
 	// Extract ListSessions capability from ACP Initialize.
