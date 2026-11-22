@@ -38,6 +38,7 @@ import (
 var contextFileCandidates = []string{
 	"AGENTS.override.md", "AGENTS.md", "AGENTS.MD",
 	"CLAUDE.md", "CLAUDE.MD",
+	"CODEBUDDY.md", "CODEBUDDY.MD",
 }
 
 // contextFileMaxBytes caps ONE injected file. Unlike the recommendation's cap

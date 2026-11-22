@@ -23,6 +23,9 @@ import (
 // 「哪些方法/变体算标准」的白名单——SDK 以后支持了新变体，我们自动少接一类。
 //
 // 本文件只做路由，不解释内容：解释是后端的事（见 backends/codebuddy 等）。
+// 目前生产代码没有注册任何 handler（两类消息都会走到「handler == nil」分支
+// 被静默丢弃，与移除 stdout tee 之前的行为一致）；这里保留的是后端按需接线的
+// 入口，不要据此以为某个变体已经在处理。
 // 其余非标准处理的位置：_meta 挖掘在 acp_meta*.go，压缩检测的启发式在
 // compact_detect.go，对端不合规的兜底在 acp_stdout_filter.go。
 

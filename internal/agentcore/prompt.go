@@ -2,106 +2,11 @@ package agentcore
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"clawbench/internal/agentcore/tools"
 	"clawbench/internal/model"
 )
-
-// ProjectRulesFile is the primary file whose contents are injected into the
-// system prompt as standing project rules.
-const ProjectRulesFile = "AGENTS.md"
-
-// ProjectRulesFiles lists every rules filename we look for, in priority order.
-//
-// The FIRST file that exists wins and the rest are not read at all. Reading
-// them all would be worse, not better: the same rule is often duplicated across
-// both names, so a repo that kept its CLAUDE.md alongside a newer AGENTS.md
-// would pay for the same instructions twice on every round, and any place the
-// two disagree would hand the model a contradiction with no way to resolve it.
-//
-// AGENTS.md leads because it is the format the ecosystem is converging on
-// (Codex, Cursor and Copilot all read it); CLAUDE.md follows because repos
-// migrating from Claude Code commonly keep it; CODEBUDDY.md last because it is
-// specific to one vendor. The ordering matches service.projectContextFiles —
-// two lists that disagree would have an agent obeying one rules file for its
-// prompt and a different one for its project context.
-var ProjectRulesFiles = []string{ProjectRulesFile, "CLAUDE.md", "CODEBUDDY.md"}
-
-// MaxProjectRulesBytes caps how much of the rules file is injected.
-//
-// A rules file is instructions, not data: at some point its bulk competes with
-// the task itself, and every byte is paid for on EVERY round of EVERY turn
-// (the system prompt is re-sent each time). 32 KiB is far more than a real
-// rules file needs and small enough that a runaway one cannot crowd out the
-// conversation. The cut is announced in-prompt so the model knows the rules it
-// is reading are incomplete rather than assuming it has them all.
-const MaxProjectRulesBytes = 32 << 10
-
-// loadProjectRules reads the first existing rules file in ProjectRulesFiles
-// order for injection into the system prompt.
-//
-// Returns "" when there is no workDir, no file from the list exists, the file
-// is unreadable, or it is empty. Rules are a nice-to-have: a permissions error
-// or a stray directory named AGENTS.md must not fail the turn, so every error
-// path is a silent skip. A directory occupying a name does NOT stop the search
-// — the next candidate is still tried, since a repo can legitimately have a
-// `CLAUDE.md/` directory and an `AGENTS.md` file.
-//
-// Read permission on the agent's own working directory is not assumed — the
-// file tools are gated by the tool policy, but the rules file is read here
-// regardless, which is why this stays a plain os.ReadFile with no policy check:
-// it returns the user's own instructions to the user's own agent.
-//
-// The confined-to-workdir question does not arise: every path is inside
-// workDir by construction, so this cannot be used to read outside it.
-func loadProjectRules(workDir string) string {
-	if workDir == "" {
-		return ""
-	}
-
-	for _, name := range ProjectRulesFiles {
-		path := filepath.Join(workDir, name)
-
-		fi, err := os.Stat(path)
-		if err != nil || fi.IsDir() {
-			continue
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-
-		truncated := false
-		if len(data) > MaxProjectRulesBytes {
-			data = data[:MaxProjectRulesBytes]
-			truncated = true
-		}
-
-		rules := strings.TrimSpace(string(data))
-		if rules == "" {
-			// An empty file is a deliberate "no rules here", not a reason to
-			// fall through to a lower-priority name: the user wrote the file
-			// that wins the search and left it blank.
-			return ""
-		}
-
-		// Cut mid-rune or mid-line, the tail can be garbage; say so rather than
-		// letting the model treat a half sentence as a complete rule. The name
-		// reported is the one actually read, not the primary constant.
-		if truncated {
-			rules += fmt.Sprintf("\n\n[The rest of %s was not included: the file exceeds the %d-byte limit "+
-				"for injected project rules. Read the file directly for the remainder.]",
-				name, MaxProjectRulesBytes)
-		}
-		return rules
-	}
-
-	return ""
-}
 
 // buildSystemPrompt assembles the system prompt for a run.
 //
@@ -114,39 +19,20 @@ func loadProjectRules(workDir string) string {
 //
 //  1. preamble — the agent's own instructions. Unwrapped and first, because it
 //     is what the user wrote and it must outrank the mechanical text below it.
+//     The project's rules file is already part of this preamble: the service
+//     layer appends its <project_context> section before the prompt gets here
+//     (it is the only layer that knows the project root, the working directory
+//     and the agent's skip switch). Reading the rules file again here would put
+//     every rule in the prompt twice.
 //  2. tools — one line per tool, so the model can CHOOSE between them. Bare
 //     names (the first version) tell it nothing, and it then shells out to
 //     bash for work a dedicated tool does better.
-//  3. project-rules — the working directory's AGENTS.md, unwrapped, so it
-//     reads as the project's own instructions rather than ours. Placed above
-//     the mechanical sections because it is user-authored, and above rules so a
-//     project rule that contradicts a generic one wins.
-//  4. rules — how to use them, including what is NOT available here.
-//  5. environment — where it is and what it is confined to.
-//
-// projectRules is passed in already loaded (see loadProjectRules) rather than
-// read here: this function stays pure so it can be tested without a filesystem,
-// and so a missing or unreadable rules file cannot alter what the mechanical
-// sections say.
-func buildSystemPrompt(agentPrompt, projectRules, workDir string, toolList []tools.Tool, policy model.ToolPolicy) string {
+//  3. rules — how to use them, including what is NOT available here.
+//  4. environment — where it is and what it is confined to.
+func buildSystemPrompt(agentPrompt, workDir string, toolList []tools.Tool, policy model.ToolPolicy) string {
 	var b strings.Builder
 
 	if s := strings.TrimSpace(agentPrompt); s != "" {
-		b.WriteString(s)
-		b.WriteString("\n\n")
-	}
-
-	// Unwrapped and headed by a line that says what it is: dropped in as a bare
-	// block the model has no way to tell project rules from its own
-	// instructions, and conflates the two in its replies.
-	//
-	// The heading deliberately does NOT name the file: the text may have come
-	// from any candidate in ProjectRulesFiles, and this function is pure — it
-	// cannot know which one that was. Naming the primary constant here would
-	// tell the model "AGENTS.md" when the rules actually came from CLAUDE.md,
-	// which is exactly the kind of false detail it would then act on.
-	if s := strings.TrimSpace(projectRules); s != "" {
-		b.WriteString("The project you are working in defines the following rules in its project rules file. Follow them:\n\n")
 		b.WriteString(s)
 		b.WriteString("\n\n")
 	}

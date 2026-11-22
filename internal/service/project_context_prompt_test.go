@@ -73,6 +73,29 @@ func TestAppendProjectContextSection_CandidatePriority(t *testing.T) {
 	assert.NotContains(t, got, "AGENTS-RULES", "the override replaces AGENTS.md in the same dir")
 }
 
+// TestAppendProjectContextSection_CodebuddyFallback pins the last candidate:
+// a repo whose only rules file is CodeBuddy's still gets it injected, and any
+// of the earlier names beats it.
+func TestAppendProjectContextSection_CodebuddyFallback(t *testing.T) {
+	root := t.TempDir()
+	writeContextFile(t, root, "CODEBUDDY.md", "CODEBUDDY-RULES")
+	assert.Contains(t, buildProjectContextSection(root, ""), "CODEBUDDY-RULES")
+
+	writeContextFile(t, root, "CLAUDE.md", "CLAUDE-RULES")
+	got := buildProjectContextSection(root, "")
+	assert.Contains(t, got, "CLAUDE-RULES")
+	assert.NotContains(t, got, "CODEBUDDY-RULES", "CLAUDE.md outranks CODEBUDDY.md")
+
+	writeContextFile(t, root, "CODEBUDDY.MD", "CODEBUDDY-UPPER")
+	got = buildProjectContextSection(root, "")
+	assert.NotContains(t, got, "CODEBUDDY-UPPER", "the uppercase spelling is lower priority")
+
+	// Alone, the uppercase spelling is still read (case-sensitive filesystems).
+	root2 := t.TempDir()
+	writeContextFile(t, root2, "CODEBUDDY.MD", "CODEBUDDY-UPPER")
+	assert.Contains(t, buildProjectContextSection(root2, ""), "CODEBUDDY-UPPER")
+}
+
 // TestAppendProjectContextSection_AncestorsRootFirst pins the layering that
 // makes a monorepo work: the rules of every directory between the working
 // directory and the filesystem root are stacked, outermost first, so the most

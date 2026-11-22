@@ -20,6 +20,8 @@ npm test                                # Vitest
 ./scripts/pre-push-checks.sh            # 推送前全量检查
 ```
 
+**20000 是主服务端口**：本地实验一律 `--data-dir /tmp/<临时目录>` 并换个端口；绝不杀 20000 及其后代进程树（按 `/proc` 树判定，不是 `pgrep -f` 模糊匹配——`clawbench --acp` 派生的 vitest/build/worker 都在树里）。
+
 ## 五条硬约束
 
 **1. 不用 cgo。** 所有产物 `CGO_ENABLED=0`，发布流水线和 `build.sh` 都是。SQLite 用 `modernc.org/sqlite`，FTS5 已编入，代码里没有 `import "C"`。开了 cgo 产物就不再只由我们的代码决定——issue #719 就是这么来的（linux 版在无 AVX 的 CPU 上启动即崩，Go 侧信息全正常）。要新增 cgo 依赖先在 issue 说清理由并改本节。代价：纯 Go 域名解析绕开 NSS，`.local` 和只靠 NSS 插件解析的内网地址会解析不到。

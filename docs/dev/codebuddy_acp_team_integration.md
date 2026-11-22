@@ -1,5 +1,10 @@
 # CodeBuddy ACP Agent Teams：协议实测与 ClawBench 集成方案
 
+> 注（2026-11-22）：CodeBuddy 专属解析已从 `internal/ai` 公共层搬到
+> `internal/ai/backends/codebuddy/`（团队归属、压缩、meta 提取、spawn 钩子），
+> 文中 `internal/ai/codebuddy_*`、`acp_raw_notification*` 等路径是当时的位置，
+> 现在分别对应后端子包与 `acp_ext.go`。
+
 本文基于**真机全生命周期探针**（非静态分析）给出 CodeBuddy Agent Teams 在
 `codebuddy --acp`（stdio）上的完整协议面，并给出 ClawBench 的集成与展示方案。
 

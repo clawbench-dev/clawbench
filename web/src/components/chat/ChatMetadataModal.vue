@@ -174,9 +174,14 @@ const sections = computed(() => {
     overview.push({ key: 'backend', label: t('chat.metadata.backend'), value: props.backend })
   }
   if (d.transport) {
+    // Rows written before CLI transport was removed still say "cli". Without
+    // its own branch the fallthrough labelled them "ACP", which is a different
+    // path than the one that actually ran.
     const transportLabel = d.transport === 'in-process'
       ? t('chat.metadata.transportInProcess')
-      : t('chat.metadata.transportAcp')
+      : d.transport === 'cli'
+        ? t('chat.metadata.transportCli')
+        : t('chat.metadata.transportAcp')
     overview.push({ key: 'transport', label: t('chat.metadata.transport'), value: transportLabel })
   }
   if (d.model) {

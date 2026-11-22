@@ -307,8 +307,9 @@ export function readAppliedUIScale(): number {
  * "460px is wide enough" check really fires at 230 design px.
  *
  * Keep this the single implementation: it used to be copy-pasted in four places
- * (`useDockOverflow`, `useToolbarOverflow`, `App.vue`'s `dp()`, `SplitView`),
- * which is how the fifth and sixth call sites came to be forgotten.
+ * (`useDockOverflow`, the retired toolbar-overflow composable, `App.vue`'s
+ * `dp()`, `SplitView`), which is how the fifth and sixth call sites came to be
+ * forgotten.
  *
  * Non-reactive by design (it reads the DOM once). Reactive consumers use
  * `useUiScale()` from `composables/useUiScale.ts`.

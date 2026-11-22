@@ -1,8 +1,8 @@
 # ACP Go SDK 选型与旁路策略（决策记录）
 
 > 记录日期：2026-10-02
-> 状态：**决定维持现状**（`github.com/coder/acp-go-sdk v0.13.5` + 自研旁路）
-> 相关实现：`internal/ai/acp_raw_notification.go`、`internal/ai/acp_stdout_filter.go`
+> 状态：**已被取代（2026-11-21）**——仓内 fork 了 SDK 并升到 schema 1.32（`third_party/acp-go-sdk`，见 `FORK.md`），未知变体在解码期被拒并走 `SetUnhandledHandler`（`internal/ai/acp_ext.go`）；`acp_raw_notification.go` 的 stdout tee 旁路已删除。本文只作为当时的决策依据保留，**不要照它找当前实现**。
+> 相关实现（历史）：`internal/ai/acp_raw_notification.go`、`internal/ai/acp_stdout_filter.go`
 > 相关实测：`internal/ai/acp_raw_notification_probe_integration_test.go`
 
 ---

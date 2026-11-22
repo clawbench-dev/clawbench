@@ -1672,6 +1672,7 @@ export default {
       transport: 'Protocol:',
       transportAcp: 'ACP',
       transportInProcess: 'In-process',
+      transportCli: 'CLI (removed)',
       mode: 'Mode:',
       thinkingEffort: 'Thinking effort:',
       model: 'Model:',

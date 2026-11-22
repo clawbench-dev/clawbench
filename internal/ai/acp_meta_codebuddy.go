@@ -28,9 +28,9 @@ package ai
 // layer reaches it through ACPBehavior.ExtractMeta / RefusalDetail.
 //
 // What stays in this package is the set of CodeBuddy keys the SHARED EVENT LOOP
-// has to read while routing frames — the compaction flags and the replay
-// identity — because those decisions are made per-notification by code that
-// cannot be moved out of the loop. Each is a narrow, documented read of one key.
+// has to read while routing frames — the replay identity — because those
+// decisions are made per-notification by code that cannot be moved out of the
+// loop. Each is a narrow, documented read of one key.
 
 // CodeBuddy keys the SHARED event loop still reads directly.
 //

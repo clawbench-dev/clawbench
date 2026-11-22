@@ -18,10 +18,10 @@ func TestMigrateRemoveRetiredBackends_HandsOverAndDeletes(t *testing.T) {
 
 	_, err := store.WriteExec(`INSERT INTO projects (id, path) VALUES (1, '/proj')`)
 	require.NoError(t, err)
-	_, err = store.WriteExec(`INSERT INTO agents (id, name, backend, sort_order) VALUES
-		('copilot-agent', 'Copilot', 'copilot', 1),
-		('vecli-agent', 'VeCLI', 'vecli', 2),
-		('claude-agent', 'Claude', 'claude', 3)`)
+	_, err = store.WriteExec(`INSERT INTO agents (id, name, backend, sort_order, acp_command) VALUES
+		('copilot-agent', 'Copilot', 'copilot', 1, ''),
+		('vecli-agent', 'VeCLI', 'vecli', 2, ''),
+		('claude-agent', 'Claude', 'claude', 3, 'claude --acp')`)
 	require.NoError(t, err)
 	_, err = store.WriteExec(`INSERT INTO chat_sessions
 			(id, project_id, backend, title, agent_id, model, external_session_id, context_state)
@@ -82,6 +82,34 @@ func TestMigrateRemoveRetiredBackends_HandsOverAndDeletes(t *testing.T) {
 		"SELECT agent_id FROM scheduled_tasks WHERE name = 'daily'",
 	).Scan(&taskAgent))
 	assert.Equal(t, "claude-agent", taskAgent, "a task left on a deleted agent would fail every run")
+}
+
+// A surviving agent that cannot start a turn is not a valid takeover target.
+// Handing the conversations to it would replace one permanently broken agent
+// with another — the exact outcome this migration exists to prevent.
+func TestMigrateRemoveRetiredBackends_SkipsUnrunnableSurvivor(t *testing.T) {
+	setupTransportMigrationDB(t)
+
+	_, err := store.WriteExec(`INSERT INTO projects (id, path) VALUES (1, '/proj')`)
+	require.NoError(t, err)
+	// "broken" sorts first but has neither an ACP command nor the in-process
+	// implementation, so it can never run a turn.
+	_, err = store.WriteExec(`INSERT INTO agents (id, name, backend, sort_order, acp_command) VALUES
+		('copilot-agent', 'Copilot', 'copilot', 1, ''),
+		('broken', 'Broken', 'claude', 2, ''),
+		('runnable', 'Runnable', 'claude', 3, 'claude --acp')`)
+	require.NoError(t, err)
+	_, err = store.WriteExec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id)
+		VALUES ('s-copilot', 1, 'copilot', 'chat', 'copilot-agent')`)
+	require.NoError(t, err)
+
+	require.True(t, MigrateRemoveRetiredBackends())
+
+	var agentID string
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT agent_id FROM chat_sessions WHERE id = 's-copilot'",
+	).Scan(&agentID))
+	assert.Equal(t, "runnable", agentID, "the takeover target must be able to run a turn")
 }
 
 // With nothing to hand the conversations to, deleting would strand every

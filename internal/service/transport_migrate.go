@@ -112,16 +112,27 @@ func MigrateRemoveRetiredBackends() bool {
 	// Prefer a global, enabled agent so the handed-over sessions stay visible in
 	// every project. Fall back to a scoped one, then to a disabled one: a broken
 	// agent id is worse than a hidden target.
+	//
+	// Every candidate must also be able to RUN a turn. An agent with neither an
+	// ACP command nor the in-process implementation cannot start one (see
+	// model.Agent.DeriveTransport), so handing the conversations to it would
+	// replace one permanently broken agent with another — exactly what this
+	// migration exists to avoid.
 	var replacement *model.Agent
 	for _, q := range []string{
 		`SELECT id, name, backend, acp_command FROM agents
-		  WHERE backend NOT IN ('vecli', 'copilot') AND disabled = 0 AND project_id IS NULL
-		  ORDER BY sort_order, id LIMIT 1`,
-		`SELECT id, name, backend, acp_command FROM agents
-		  WHERE backend NOT IN ('vecli', 'copilot') AND disabled = 0
+		  WHERE backend NOT IN ('vecli', 'copilot')
+		    AND (COALESCE(acp_command, '') != '' OR backend = 'builtin')
+		    AND disabled = 0 AND project_id IS NULL
 		  ORDER BY sort_order, id LIMIT 1`,
 		`SELECT id, name, backend, acp_command FROM agents
 		  WHERE backend NOT IN ('vecli', 'copilot')
+		    AND (COALESCE(acp_command, '') != '' OR backend = 'builtin')
+		    AND disabled = 0
+		  ORDER BY sort_order, id LIMIT 1`,
+		`SELECT id, name, backend, acp_command FROM agents
+		  WHERE backend NOT IN ('vecli', 'copilot')
+		    AND (COALESCE(acp_command, '') != '' OR backend = 'builtin')
 		  ORDER BY sort_order, id LIMIT 1`,
 	} {
 		rows, err := query(q)

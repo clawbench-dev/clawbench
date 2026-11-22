@@ -1681,6 +1681,7 @@ export default {
       transport: '协议:',
       transportAcp: 'ACP',
       transportInProcess: '内置',
+      transportCli: 'CLI（已移除）',
       mode: '模式:',
       thinkingEffort: '思考深度:',
       model: '模型:',
