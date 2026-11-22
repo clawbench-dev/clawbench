@@ -46,6 +46,30 @@ type ProviderEnvSpec struct {
 	// ConfigProtocols lists the protocols a ConfigOnly backend's file format
 	// can express (e.g. codex understands OpenAI wire APIs only).
 	ConfigProtocols []string
+	// ConfigFileTarget is the config file this backend reads its provider from,
+	// relative to the user's home (".codex/config.toml"), or "" when it declares
+	// none.
+	//
+	// Declared here rather than in a switch in model.ProviderConfigPaths so a
+	// new config-file backend only edits its own registration: the mapping used
+	// to live there behind `if backendID == "codex"`, which meant a second such
+	// backend got a nil path list and had its binding silently do nothing.
+	ConfigFileTarget string
+	// ConfigFileApply writes the provider into that file, and ConfigFileRestore
+	// puts the user's own settings back.
+	//
+	// Two hooks rather than one because restoring is not the inverse of a fresh
+	// write: these backends EDIT a file the user (and possibly another tool)
+	// already owns, so undoing our change needs its own record of what was
+	// there. The shared layer owns the lock, the file write and the sequencing;
+	// the format and the bookkeeping are the backend's, because only it knows
+	// what its own file means.
+	//
+	// A backend that declares ConfigOnly but no applier cannot be given a
+	// provider: the writer refuses instead of reporting success on a file it
+	// never touched.
+	ConfigFileApply   func(p *Provider) error
+	ConfigFileRestore func() error
 
 	// ConfigDirEnv names the environment variable that relocates this backend's
 	// whole config directory (kimi's KIMI_SHARE_DIR, pi's PI_CODING_AGENT_DIR,
@@ -205,6 +229,24 @@ func providerEnvSpecs() []ProviderEnvSpec {
 	out := make([]ProviderEnvSpec, 0, len(providerEnvRegistry))
 	for _, spec := range providerEnvRegistry {
 		out = append(out, spec)
+	}
+	return out
+}
+
+// ConfigFileBackends lists the backends that declare a config FILE (as opposed
+// to a config directory), in no particular order.
+//
+// Callers use it to reconcile every such backend without naming one: a restart
+// must undo a stale provider block for every config-file backend, not only the
+// one that happens to be hard-coded at the call site.
+func ConfigFileBackends() []string {
+	providerEnvMu.RLock()
+	defer providerEnvMu.RUnlock()
+	var out []string
+	for id, spec := range providerEnvRegistry {
+		if spec.ConfigOnly && spec.ConfigFileTarget != "" {
+			out = append(out, id)
+		}
 	}
 	return out
 }
@@ -537,6 +579,20 @@ func ProviderConfigDirFile(backendID string) string {
 	return spec.ConfigDirFile
 }
 
+// ProviderConfigFileHooks returns the backend's config-FILE writer and restorer.
+//
+// (nil, nil) means the backend declares no such hooks — either it does not use a
+// config file at all, or it declares one without a writer, which the caller must
+// treat as an error rather than a no-op: a binding persisted on top of a file
+// nobody wrote is a binding the CLI never learns about.
+func ProviderConfigFileHooks(backendID string) (apply func(p *Provider) error, restore func() error) {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok {
+		return nil, nil
+	}
+	return spec.ConfigFileApply, spec.ConfigFileRestore
+}
+
 // ProviderConfigSecretInFile reports whether the backend's config file forces
 // the API key to be written in clear text (no ${ENV} reference syntax).
 func ProviderConfigSecretInFile(backendID string) bool {
@@ -616,17 +672,15 @@ func ProviderConfigDisplayPath(backendID, agentID string) string {
 // Kept in the model layer so both the handler and the display path agree on the
 // layout.
 func ProviderConfigPaths(backendID string) []string {
-	if !ProviderUsesConfigFile(backendID) {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok || !spec.ConfigOnly || spec.ConfigFileTarget == "" {
 		return nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return nil
 	}
-	if backendID == "codex" {
-		return []string{filepath.Join(home, ".codex", "config.toml")}
-	}
-	return nil
+	return []string{filepath.Join(home, spec.ConfigFileTarget)}
 }
 
 // SupportedProtocols lists the protocols a backend can be pointed at. An empty

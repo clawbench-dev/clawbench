@@ -56,7 +56,12 @@ func init() {
 			// lands on disk.
 			ConfigOnly:      true,
 			ConfigProtocols: []string{model.ProviderProtocolOpenAI},
-			KeyOnly:         "CLAWBENCH_PROVIDER_API_KEY",
+			// The file layout, the writer and the restorer are declared here so
+			// the shared layer never has to name codex: see config_file.go.
+			ConfigFileTarget:  ".codex/config.toml",
+			ConfigFileApply:   ApplyProvider,
+			ConfigFileRestore: RestoreProvider,
+			KeyOnly:           "CLAWBENCH_PROVIDER_API_KEY",
 		},
 	})
 }

@@ -172,7 +172,7 @@ func applyProviderConfigDir(backend, agentID string, p *model.Provider) ([]strin
 	if err != nil {
 		return nil, err
 	}
-	if err := writeFileAtomic(path, content); err != nil {
+	if err := model.WriteFileAtomic(path, content); err != nil {
 		return nil, err
 	}
 	return []string{model.ProviderConfigDirEnv(backend) + "=" + dir}, nil
