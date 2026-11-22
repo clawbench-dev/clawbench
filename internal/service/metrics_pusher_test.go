@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"clawbench/internal/system"
@@ -171,31 +172,34 @@ func TestMetricsPusher_StopsWhenDemandDrops(t *testing.T) {
 // of no demand the first frame is pushed on the very next tick, rather than
 // waiting out the previous interval.
 func TestMetricsPusher_ResumesImmediatelyOnNewDemand(t *testing.T) {
-	rig := newMetricsTestRig()
-	rig.setDemand(1, 5000) // slow rate: one push, then nothing for a long time
-	rig.pusher.Start()
-	defer rig.pusher.Stop()
+	synctest.Test(t, func(t *testing.T) {
+		rig := newMetricsTestRig()
+		rig.setDemand(1, 5000)
+		rig.pusher.Start()
+		defer rig.pusher.Stop()
+		synctest.Wait() // let the worker create its ticker
 
-	time.Sleep(50 * time.Millisecond)
-	rig.mu.Lock()
-	pushesBefore := rig.pushCalls
-	rig.mu.Unlock()
-	if pushesBefore != 1 {
-		t.Fatalf("expected exactly one push at the slow rate, got %d", pushesBefore)
-	}
+		// Two ticks at the slow rate should still produce only the first frame.
+		time.Sleep(2 * testMetricsTick)
+		synctest.Wait()
+		if _, pushes := rig.counts(); pushes != 1 {
+			t.Fatalf("expected exactly one push at the slow rate, got %d", pushes)
+		}
 
-	// Drop demand (clears lastSampleAt), then demand again.
-	rig.setDemand(0, 0)
-	time.Sleep(40 * time.Millisecond)
-	rig.setDemand(1, 5000)
-	time.Sleep(50 * time.Millisecond)
+		rig.setDemand(0, 0)
+		time.Sleep(testMetricsTick)
+		synctest.Wait()
+		if _, pushes := rig.counts(); pushes != 1 {
+			t.Fatalf("expected no additional push without demand, got %d total", pushes)
+		}
 
-	rig.mu.Lock()
-	pushesAfter := rig.pushCalls
-	rig.mu.Unlock()
-	if pushesAfter != pushesBefore+1 {
-		t.Fatalf("expected an immediate push on resumed demand, got %d -> %d", pushesBefore, pushesAfter)
-	}
+		rig.setDemand(1, 5000)
+		time.Sleep(testMetricsTick)
+		synctest.Wait()
+		if _, pushes := rig.counts(); pushes != 2 {
+			t.Fatalf("expected a second push on the first tick after demand resumed, got %d", pushes)
+		}
+	})
 }
 
 // TestMetricsPusher_SampleErrorIsNotFatal verifies a failing sample does not
