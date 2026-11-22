@@ -138,18 +138,53 @@ export function usageColor(pct: number): string {
  * small a number. Falling back to hit+miss keeps older/partial snapshots
  * renderable rather than hiding the row.
  *
- * Returns null when nothing is reported — the row is hidden entirely rather
- * than showing a fabricated 0%.
+ * When an ACP backend reports standard `cachedReadTokens` / `cachedWriteTokens`
+ * (e.g. Antigravity `PromptResponse.Usage`) without explicit `cacheHitTokens` /
+ * `cacheMissTokens`, derive the hit rate from `cachedReadTokens` and the prompt
+ * denominator (detecting uncached-exclusive `inputTokens` via `totalTokens` so
+ * we never double-count or exceed 100%).
+ *
+ * Returns null when nothing is reported or the ratio cannot be safely
+ * determined — the row is hidden entirely rather than showing a fabricated 0%.
  */
-export function cacheHitRate(usage: Pick<UsageSnapshot, 'cacheHitTokens' | 'cacheMissTokens' | 'inputTokens'> | null | undefined): number | null {
+export function cacheHitRate(
+  usage: Pick<
+    UsageSnapshot,
+    | 'cacheHitTokens'
+    | 'cacheMissTokens'
+    | 'cachedReadTokens'
+    | 'cachedWriteTokens'
+    | 'cacheCreationTokens'
+    | 'inputTokens'
+    | 'outputTokens'
+    | 'totalTokens'
+    | 'thoughtTokens'
+  > | null | undefined,
+): number | null {
   const hit = usage?.cacheHitTokens ?? 0
   const miss = usage?.cacheMissTokens ?? 0
   const input = usage?.inputTokens ?? 0
-  if (hit <= 0 && miss <= 0) return null
-  const split = hit + miss
-  const denominator = input > 0 && input >= split ? input : split
-  if (denominator <= 0) return 0
-  return (hit / denominator) * 100
+  if (hit > 0 || miss > 0) {
+    const split = hit + miss
+    const denominator = input > 0 && input >= split ? input : split
+    if (denominator <= 0) return 0
+    return (hit / denominator) * 100
+  }
+
+  const cachedRead = usage?.cachedReadTokens ?? 0
+  const cachedWrite = Math.max(usage?.cachedWriteTokens ?? 0, usage?.cacheCreationTokens ?? 0)
+  if ((cachedRead <= 0 && cachedWrite <= 0) || input <= 0) return null
+
+  const output = usage?.outputTokens ?? 0
+  const total = usage?.totalTokens ?? 0
+  const thought = usage?.thoughtTokens ?? 0
+  const exclusiveNoThought = input + output + cachedRead + cachedWrite
+  const isExclusivePrompt =
+    total > 0 &&
+    (total === exclusiveNoThought || (thought > 0 && total === exclusiveNoThought + thought))
+  const denominator = isExclusivePrompt ? input + cachedRead + cachedWrite : input
+  if (denominator <= 0 || cachedRead > denominator) return null
+  return (cachedRead / denominator) * 100
 }
 
 /**

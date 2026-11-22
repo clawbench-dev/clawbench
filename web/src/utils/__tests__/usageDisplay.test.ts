@@ -83,6 +83,38 @@ describe('cacheHitRate', () => {
   it('is 0 when only misses are reported', () => {
     expect(cacheHitRate({ cacheMissTokens: 10 })).toBe(0)
   })
+
+  it('derives hit rate from cachedReadTokens / inputTokens when explicit hit/miss are absent (inclusive prompt)', () => {
+    // Antigravity PromptResponse.Usage: inputTokens already includes cachedReadTokens.
+    expect(cacheHitRate({
+      inputTokens: 238591,
+      outputTokens: 2152,
+      totalTokens: 240743,
+      cachedReadTokens: 235640,
+      thoughtTokens: 1096,
+    })).toBeCloseTo(98.76, 1)
+  })
+
+  it('handles uncached-exclusive inputTokens when totalTokens proves the split', () => {
+    // Exclusive prompt: input=200 (uncached), cachedRead=600, cachedWrite=200, output=100, total=1100.
+    expect(cacheHitRate({
+      inputTokens: 200,
+      outputTokens: 100,
+      cachedReadTokens: 600,
+      cachedWriteTokens: 200,
+      totalTokens: 1100,
+    })).toBeCloseTo(60, 5)
+  })
+
+  it('returns 0 when only cachedWriteTokens and inputTokens are reported', () => {
+    expect(cacheHitRate({ inputTokens: 1000, cachedWriteTokens: 1000 })).toBe(0)
+  })
+
+  it('returns null when cachedReadTokens cannot safely divide by inputTokens', () => {
+    // Missing inputTokens or inconsistent snapshot (cachedRead > input without exclusive total proof).
+    expect(cacheHitRate({ cachedReadTokens: 5000 })).toBeNull()
+    expect(cacheHitRate({ cachedReadTokens: 5000, inputTokens: 1000 })).toBeNull()
+  })
 })
 
 describe('hasTokenDetail', () => {
