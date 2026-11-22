@@ -195,16 +195,17 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		}
 	}
 
-	if resp.StopReason == acp.StopReasonEndTurn && commandReply != nil {
-		// The prompt was accepted. A disconnect during the follow-up must
-		// not enter the retry path and execute its commands a second time.
-		err = commandReply.wait(promptCtx, conn.Done())
-		if ctx.Err() != nil {
-			resp.StopReason = acp.StopReasonCancelled
-		}
+	// Antigravity (agy acp) returns end_turn while a background command is
+	// still running: the completion, any further permission requests and the
+	// final answer arrive on this same session afterwards, with no second
+	// prompt response. Keep the turn open until they land, otherwise they hit
+	// the "no route for this session" drop and the user has to type "continue"
+	// to see them (issue #644).
+	if waitErr := c.awaitBackgroundCommand(ctx, promptCtx, conn, acpSID, commandReply, &resp, streamCh); waitErr != nil {
+		return waitErr
 	}
 	c.emitPromptTailMetadata(resp, streamCh)
-	return err
+	return nil
 }
 
 // emitCancelledTurnUsage emits the turn-final metadata event for a prompt that
@@ -366,6 +367,41 @@ func (c *ACPConn) emitPromptTailMetadata(resp acp.PromptResponse, streamCh chan<
 			StopReason: string(resp.StopReason),
 		}})
 	}
+}
+
+// awaitBackgroundCommand blocks until Antigravity's follow-up (command result,
+// late permission request, final answer) has finished arriving, and reports the
+// error Prompt must return when the wait could not complete.
+//
+// A wait that ends in a dead peer is deliberately NOT retryable: the prompt was
+// already accepted, so respawning and re-sending it would run the background
+// command a second time. classifyPromptError still records the crash (exit
+// code, stderr) and marks the connection dead; its wrapping keeps the error out
+// of the peer-disconnect classification that ExecuteStream retries on.
+func (c *ACPConn) awaitBackgroundCommand(ctx context.Context, promptCtx context.Context, conn *acp.ClientSideConnection, acpSID string, reply *asyncCommandReply, resp *acp.PromptResponse, streamCh chan<- StreamEvent) error {
+	if reply == nil || resp.StopReason != acp.StopReasonEndTurn {
+		return nil
+	}
+	waitStart := time.Now()
+	waited, waitErr := reply.wait(promptCtx, conn.Done())
+	if !waited {
+		return nil
+	}
+	slog.Info("acp conn: awaited background command follow-up",
+		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
+		"elapsed", time.Since(waitStart), "error", waitErr)
+	if waitErr == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		// Same bookkeeping as a cancel during the prompt itself: the turn
+		// already billed for the model calls it made.
+		resp.StopReason = acp.StopReasonCancelled
+		c.emitCancelledTurnUsage(streamCh)
+		c.handlePromptCancel(conn)
+		return ctx.Err()
+	}
+	return c.classifyPromptError(waitErr, conn, acpSID)
 }
 
 // classifyPromptError maps a conn.Prompt error to the appropriate wrapped
