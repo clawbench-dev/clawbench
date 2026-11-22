@@ -4080,6 +4080,8 @@ export default {
       messageDisplayModeOriginal: '原文模式',
       compactToolCalls: '收起工具调用',
       compactToolCallsDesc: '把连续的工具调用合并成一行，只显示执行次数；点这一行可以展开查看每个工具的详情',
+      mobileEnterToSend: '移动端回车发送',
+      mobileEnterToSendDesc: '关闭时（默认），触屏设备按键盘回车键仅换行，通过发送按钮或 Ctrl/Cmd+Enter 发送，与其他移动端智能体操作方式保持同步；开启后按回车直接发送',
       chatSystemPromptInterval: '系统提示间隔',
       chatSystemPromptIntervalDesc: '每隔多少条消息插入一次系统提示（0 = 从不插入）',
       chatForkContextBudget: '分支/回溯历史上限',

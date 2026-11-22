@@ -465,6 +465,11 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // On by default: a long turn otherwise becomes a wall of full-width pills.
   // Per device: it is purely how this screen draws a transcript.
   compactToolCalls: true,
+  // Mobile / touch devices: whether pressing Enter on the keyboard submits the
+  // message directly (设置 → 聊天 → 消息). Off by default so Enter inserts a
+  // newline and users tap the send button (or press Ctrl/Cmd+Enter on an
+  // external keyboard), matching mainstream mobile AI agent apps.
+  mobileEnterToSend: false,
   // Where the OTHER projects' sessions go in the session list:
   //   'strip' — the default: cards under the project's own rows, one scroll.
   //   'tabs'  — a two-slot bar at the bottom switches between this project and

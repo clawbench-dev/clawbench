@@ -316,6 +316,9 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // a long turn otherwise becomes a wall of full-width pills. The per-tool
     // detail is one click away (the row unfolds in place).
     { type: 'item', spec: { labelKey: 'settings.items.compactToolCalls', descriptionKey: 'settings.items.compactToolCallsDesc', key: 'compactToolCalls', type: 'switch', source: 'local', sectionHeader: 'settings.items.chatMessageSection' } },
+    // Mobile / touch Enter key behavior: off by default so Enter inserts a
+    // newline instead of hijacking send, matching other mobile AI agent apps.
+    { type: 'item', spec: { labelKey: 'settings.items.mobileEnterToSend', descriptionKey: 'settings.items.mobileEnterToSendDesc', key: 'mobileEnterToSend', type: 'switch', source: 'local', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatInitialMessages', descriptionKey: 'settings.items.chatInitialMessagesDesc', key: 'chat.initial_messages', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     // Its own card: how often the system prompt is re-injected and how much

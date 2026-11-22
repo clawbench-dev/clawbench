@@ -4083,6 +4083,8 @@ export default {
       messageDisplayModeOriginal: 'Original text',
       compactToolCalls: 'Collapse tool calls',
       compactToolCallsDesc: 'Merge consecutive tool calls into one row that only shows how many ran; click the row to see each tool',
+      mobileEnterToSend: 'Enter to send on mobile',
+      mobileEnterToSendDesc: 'When off (default), pressing Enter on touch devices inserts a newline instead of sending (use the send button or Ctrl/Cmd+Enter), matching other mobile agent apps; turn on to send directly with Enter',
       chatSystemPromptInterval: 'System Prompt Interval',
       chatSystemPromptIntervalDesc: 'Insert a system prompt every N messages (0 = never)',
       chatForkContextBudget: 'Fork / Rewind History Limit',
