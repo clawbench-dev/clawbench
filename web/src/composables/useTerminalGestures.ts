@@ -1,4 +1,5 @@
 import { ref, type Ref } from 'vue'
+import { isTerminalSurfaceTarget } from '@/utils/terminalBlurUtils'
 
 export type TerminalMode = 'browse' | 'gesture' | 'selection'
 const MODE_ORDER: TerminalMode[] = ['browse', 'gesture', 'selection']
@@ -62,6 +63,10 @@ export interface GestureCallbacks {
   onPinchZoom?: (delta: number) => void
   onGestureHint?: (symbol: string) => void
   onTouchScroll?: (deltaY: number) => void
+  /** Browse mode: fired on touchend only when a single-finger press stayed within TAP_THRESHOLD (not a scroll). */
+  onBrowseTap?: () => void
+  /** Returns true while an upper-layer terminal popup, drawer, or modal is open. */
+  isOverlayOpen?: () => boolean
   /** Selection mode: read the current terminal cell height (px) for coord→row conversion. */
   getCellHeight?: () => number
   /** Selection mode: read the current terminal cell width (px) for coord→col conversion. */
@@ -111,6 +116,7 @@ export function useTerminalGestures(
 
   // Gesture mode state
   const mode = ref<TerminalMode>('browse')
+  const isBrowseScrolling = ref(false)
   let listenersAttached = false
   let disabledScrollListenersAttached = false
   let selectionListenersAttached = false
@@ -124,8 +130,10 @@ export function useTerminalGestures(
 
   let disabledScrollStartX = 0
   let disabledScrollStartY = 0
+  let disabledScrollStartTime = 0
   let disabledScrollLastY = 0
   let disabledScrollActive = false
+  let disabledScrollMoved = false
   let disabledScrollTracking = false
 
   // Direction tracking for hold-to-repeat
@@ -210,12 +218,21 @@ export function useTerminalGestures(
     twoFingerMode = 'pending'
   }
 
-  function resetDisabledScrollState() {
+  /**
+   * `keepScrollingFlag` leaves `isBrowseScrolling` true for the caller that is
+   * about to hand control back to the browser (touchend). The blur listener runs
+   * AFTER this function — clearing the flag here would make its "don't re-focus
+   * while scrolling" check read `false` and never take effect.
+   */
+  function resetDisabledScrollState(keepScrollingFlag = false) {
     disabledScrollStartX = 0
     disabledScrollStartY = 0
+    disabledScrollStartTime = 0
     disabledScrollLastY = 0
     disabledScrollActive = false
+    disabledScrollMoved = false
     disabledScrollTracking = false
+    if (!keepScrollingFlag) isBrowseScrolling.value = false
   }
 
   function detectDirection(dx: number, dy: number): Direction | null {
@@ -236,6 +253,10 @@ export function useTerminalGestures(
   }
 
   function onTouchStart(e: TouchEvent) {
+    if (callbacks.isOverlayOpen?.() || !isTerminalSurfaceTarget(e.target, elementRef.value)) {
+      resetGestureState()
+      return
+    }
     if (e.touches.length === 2) {
       // Pinch gesture start. Prevent browser pinch/selection only once a
       // terminal gesture is clear; stationary single-finger long press is left
@@ -347,13 +368,22 @@ export function useTerminalGestures(
       resetDisabledScrollState()
       return
     }
+    // Pressing while an upper-layer popup/drawer is open, or on an overlay/control
+    // inside the container, must never initiate a browse tap or focus the terminal.
+    if (callbacks.isOverlayOpen?.() || !isTerminalSurfaceTarget(e.target, elementRef.value)) {
+      resetDisabledScrollState()
+      return
+    }
 
     const touch = e.touches[0]
     disabledScrollStartX = touch.clientX
     disabledScrollStartY = touch.clientY
+    disabledScrollStartTime = Date.now()
     disabledScrollLastY = touch.clientY
     disabledScrollActive = false
+    disabledScrollMoved = false
     disabledScrollTracking = true
+    isBrowseScrolling.value = false
   }
 
   function onDisabledTouchMove(e: TouchEvent) {
@@ -369,9 +399,14 @@ export function useTerminalGestures(
     const absDx = Math.abs(dx)
     const absDy = Math.abs(dy)
 
+    if (absDx > TAP_THRESHOLD || absDy > TAP_THRESHOLD) {
+      disabledScrollMoved = true
+    }
+
     if (!disabledScrollActive) {
       if (absDy < TAP_THRESHOLD || absDy <= absDx) return
       disabledScrollActive = true
+      isBrowseScrolling.value = true
     }
 
     preventNativeTouch(e)
@@ -383,10 +418,36 @@ export function useTerminalGestures(
   }
 
   function onDisabledTouchEnd(e: TouchEvent) {
-    if (disabledScrollActive) {
+    const wasTracking = disabledScrollTracking
+    const wasScrolling = disabledScrollActive
+    const wasMoved = disabledScrollMoved
+    const startX = disabledScrollStartX
+    const startY = disabledScrollStartY
+    const startTime = disabledScrollStartTime
+
+    // Only a real vertical scroll suppresses the browser's default; a small
+    // horizontal drag is not a terminal scroll and must not swallow the default
+    // (it would also cancel the synthesized click for no reason).
+    if (wasScrolling) {
       preventNativeTouch(e)
     }
-    resetDisabledScrollState()
+    // Keep the flag set while the browser processes this touchend, so the
+    // Android blur listener can see "we were scrolling" and skip re-focusing.
+    resetDisabledScrollState(wasScrolling)
+
+    if (wasTracking && !wasScrolling && !wasMoved) {
+      const endTouch = e.changedTouches?.[0]
+      const endMoved = endTouch
+        ? Math.abs(endTouch.clientX - startX) > TAP_THRESHOLD || Math.abs(endTouch.clientY - startY) > TAP_THRESHOLD
+        : false
+      // startTime is always set when tracking started, so a 0 here means the
+      // press was never recorded — treat that as "not a tap" rather than a hit.
+      const isQuickTap = startTime > 0 && Date.now() - startTime < 400
+      if (!endMoved && isQuickTap) {
+        preventNativeTouch(e)
+        callbacks.onBrowseTap?.()
+      }
+    }
   }
 
   function onDisabledTouchCancel() {
@@ -622,6 +683,7 @@ export function useTerminalGestures(
     attach,
     detach,
     mode,
+    isBrowseScrolling,
     setMode,
     cycleMode,
   }

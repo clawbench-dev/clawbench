@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldAutoRefocusTerminal, shouldInstallTerminalBlurRefocus } from '@/utils/terminalBlurUtils'
+import { isTerminalSurfaceTarget, shouldAutoRefocusTerminal, shouldInstallTerminalBlurRefocus } from '@/utils/terminalBlurUtils'
 
 const body = () => ({ tagName: 'BODY' }) as unknown as Element
 const button = () => ({ tagName: 'BUTTON' }) as unknown as Element
@@ -24,6 +24,46 @@ describe('shouldAutoRefocusTerminal', () => {
 
   it('does not steal focus from a textarea (e.g. command editor inside a modal)', () => {
     expect(shouldAutoRefocusTerminal(true, textarea())).toBe(false)
+  })
+
+  it('does not re-focus while actively scrolling or when an overlay is open (#9)', () => {
+    expect(shouldAutoRefocusTerminal(true, null, { isScrolling: true })).toBe(false)
+    expect(shouldAutoRefocusTerminal(true, body(), { hasOverlayOpen: true })).toBe(false)
+    expect(shouldAutoRefocusTerminal(true, body(), { isScrolling: false, hasOverlayOpen: false })).toBe(true)
+  })
+})
+
+describe('isTerminalSurfaceTarget', () => {
+  it('accepts xterm surface descendants and xterm helper textarea inside the container', () => {
+    const container = document.createElement('div')
+    const screen = document.createElement('div')
+    screen.className = 'xterm-screen'
+    const helperTa = document.createElement('textarea')
+    helperTa.className = 'xterm-helper-textarea'
+    container.appendChild(screen)
+    container.appendChild(helperTa)
+
+    expect(isTerminalSurfaceTarget(container, container)).toBe(true)
+    expect(isTerminalSurfaceTarget(screen, container)).toBe(true)
+    expect(isTerminalSurfaceTarget(helperTa, container)).toBe(true)
+  })
+
+  it('rejects elements outside the terminal container or upper-layer overlays/controls', () => {
+    const container = document.createElement('div')
+    const errorOverlay = document.createElement('div')
+    errorOverlay.className = 'terminal-error-overlay'
+    const reconnectBtn = document.createElement('button')
+    errorOverlay.appendChild(reconnectBtn)
+    container.appendChild(errorOverlay)
+
+    const outsideOverlay = document.createElement('div')
+    outsideOverlay.className = 'bottom-sheet-overlay'
+
+    expect(isTerminalSurfaceTarget(errorOverlay, container)).toBe(false)
+    expect(isTerminalSurfaceTarget(reconnectBtn, container)).toBe(false)
+    expect(isTerminalSurfaceTarget(outsideOverlay, container)).toBe(false)
+    expect(isTerminalSurfaceTarget(null, container)).toBe(false)
+    expect(isTerminalSurfaceTarget(container, null)).toBe(false)
   })
 })
 

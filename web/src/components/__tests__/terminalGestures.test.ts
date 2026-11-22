@@ -581,3 +581,93 @@ describe('selectionCellsToSelect', () => {
     expect(selectionCellsToSelect(4, 1, 4, 1, 0, 80)).toEqual({ col: 4, row: 1, length: 1 })
   })
 })
+
+describe('useTerminalGestures — browse mode deferred focus & upper-layer guard (#9)', () => {
+  function setupBrowseWithCallbacks() {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const scrollDeltas: number[] = []
+    const onBrowseTap = vi.fn()
+    const gestures = useTerminalGestures(ref(el), {
+      sendArrowUp: vi.fn(),
+      sendArrowDown: vi.fn(),
+      sendArrowLeft: vi.fn(),
+      sendArrowRight: vi.fn(),
+      sendPageUp: vi.fn(),
+      sendPageDown: vi.fn(),
+      sendTab: vi.fn(),
+      onTouchScroll: (d: number) => scrollDeltas.push(d),
+      onBrowseTap,
+    })
+    gestures.attach()
+    gestures.setMode('browse')
+    activeGestures = gestures
+    return { el, scrollDeltas, onBrowseTap, gestures }
+  }
+
+  it('does not trigger onBrowseTap on touchstart or during vertical scroll (touchstart -> touchmove -> touchend)', () => {
+    const { el, scrollDeltas, onBrowseTap, gestures } = setupBrowseWithCallbacks()
+
+    dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
+    expect(onBrowseTap).not.toHaveBeenCalled()
+
+    dispatchTouch(el, 'touchmove', [makeTouch(82, 145)])
+    expect(gestures.isBrowseScrolling.value).toBe(true)
+    expect(scrollDeltas).toEqual([45])
+    expect(onBrowseTap).not.toHaveBeenCalled()
+
+    const endEv = dispatchTouch(el, 'touchend', [], [makeTouch(82, 145)])
+    expect(endEv.preventDefault).toHaveBeenCalled()
+    // The flag must survive touchend: the Android blur listener runs after this
+    // event and reads it to decide "don't re-focus, we were scrolling". It is
+    // cleared on the next touchstart.
+    expect(gestures.isBrowseScrolling.value).toBe(true)
+    expect(onBrowseTap).not.toHaveBeenCalled()
+
+    dispatchTouch(el, 'touchstart', [makeTouch(82, 145)])
+    expect(gestures.isBrowseScrolling.value).toBe(false)
+  })
+
+  it('does not swallow the default on a horizontal drag (not a vertical scroll)', () => {
+    const { el, scrollDeltas, onBrowseTap, gestures } = setupBrowseWithCallbacks()
+
+    dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
+    dispatchTouch(el, 'touchmove', [makeTouch(140, 104)])
+    expect(gestures.isBrowseScrolling.value).toBe(false)
+    expect(scrollDeltas).toEqual([])
+
+    const endEv = dispatchTouch(el, 'touchend', [], [makeTouch(140, 104)])
+    // A horizontal drag is neither a scroll nor a tap, so the browser default
+    // (and any synthesized click) is left intact.
+    expect(endEv.preventDefault).not.toHaveBeenCalled()
+    expect(onBrowseTap).not.toHaveBeenCalled()
+  })
+
+  it('fires onBrowseTap only on touchend for a stationary tap within TAP_THRESHOLD', () => {
+    const { el, onBrowseTap } = setupBrowseWithCallbacks()
+
+    dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
+    expect(onBrowseTap).not.toHaveBeenCalled()
+
+    const endEv = dispatchTouch(el, 'touchend', [], [makeTouch(83, 102)])
+    expect(endEv.preventDefault).toHaveBeenCalled()
+    expect(onBrowseTap).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores touches starting on an upper-layer overlay element inside the terminal container', () => {
+    const { el, onBrowseTap, scrollDeltas } = setupBrowseWithCallbacks()
+    const overlay = document.createElement('div')
+    overlay.className = 'terminal-error-overlay'
+    const btn = document.createElement('button')
+    overlay.appendChild(btn)
+    el.appendChild(overlay)
+
+    dispatchTouch(btn, 'touchstart', [makeTouch(50, 50)])
+    dispatchTouch(btn, 'touchmove', [makeTouch(50, 120)])
+    const endEv = dispatchTouch(btn, 'touchend', [], [makeTouch(50, 50)])
+
+    expect(endEv.preventDefault).not.toHaveBeenCalled()
+    expect(scrollDeltas).toEqual([])
+    expect(onBrowseTap).not.toHaveBeenCalled()
+  })
+})
