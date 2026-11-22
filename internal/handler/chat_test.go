@@ -4109,7 +4109,7 @@ func TestBuildChatRequest_ModeOverride(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "mode-test", "claude", "", "default", "chat")
 	assert.NoError(t, err)
 
-	model.Agents["claude"] = &model.Agent{ID: "claude", Backend: "cli", Command: "echo"}
+	model.Agents["claude"] = &model.Agent{ID: "claude", Backend: "cli"}
 
 	req := buildChatRequest("hello", sessionID, env.ProjectDir, "claude", "claude", "", "", "architect", "", false)
 	assert.Equal(t, "architect", req.Mode, "modeOverride should be passed to ChatRequest.Mode")
@@ -4122,7 +4122,7 @@ func TestBuildChatRequest_ModeEmpty(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "mode-empty", "claude", "", "default", "chat")
 	assert.NoError(t, err)
 
-	model.Agents["claude"] = &model.Agent{ID: "claude", Backend: "cli", Command: "echo"}
+	model.Agents["claude"] = &model.Agent{ID: "claude", Backend: "cli"}
 
 	req := buildChatRequest("hello", sessionID, env.ProjectDir, "claude", "claude", "", "", "", "", false)
 	assert.Equal(t, "", req.Mode, "empty modeOverride should result in empty Mode")
@@ -4170,7 +4170,7 @@ func TestAIChat_POST_WithSessionID_Succeeds(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "test session", "codebuddy", "", "default", "chat")
 	assert.NoError(t, err)
 
-	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "cli", Command: "echo"}
+	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "cli"}
 
 	// POST with explicit session_id in query param
 	body := map[string]string{"message": "hello", "agentId": "codebuddy"}

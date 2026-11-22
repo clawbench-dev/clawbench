@@ -229,17 +229,10 @@ func checkSpawnTarget(ctx context.Context, run *selfTestRun, agent *model.Agent,
 		run.add(probeCommand(ctx, selfTestKeyAcpCommand, agent.AcpCommand))
 		return
 	}
-	if agent.BuiltinBackend {
-		run.ok(selfTestKeyCliCommand)
-		return
-	}
-	cmd := cliProbeCommand(agent, model.FindSpecByBackend(agent.Backend))
-	if cmd == "" {
-		run.warn(selfTestKeyCliCommand,
-			"No CLI binary name is known for this backend, so the install could not be verified.")
-		return
-	}
-	run.add(probeCommand(ctx, selfTestKeyCliCommand, cmd))
+	// Only the in-process backend has no ACP command, and checkTransport has
+	// already failed any agent with no transport at all. The in-process agent
+	// spawns nothing, so there is no binary to probe.
+	run.ok(selfTestKeyCliCommand)
 }
 
 // checkModels reports the model list. An empty list is never a hard failure: an
@@ -331,20 +324,6 @@ func checkUsage(run *selfTestRun, agent *model.Agent) {
 		Detail: fmt.Sprintf("%d session(s), %d task(s), %d group membership(s).",
 			usage.Sessions, usage.Tasks, usage.Memberships),
 	})
-}
-
-// cliProbeCommand picks the binary to verify for an agent that runs over ACP:
-// the agent's own command wins (that is what spawn uses), then the spec default.
-func cliProbeCommand(agent *model.Agent, spec *model.BackendSpec) string {
-	if cmd := strings.TrimSpace(agent.Command); cmd != "" {
-		if fields := strings.Fields(cmd); len(fields) > 0 {
-			return fields[0]
-		}
-	}
-	if spec != nil {
-		return spec.DefaultCmd
-	}
-	return ""
 }
 
 // probeCommand verifies the executable named by a command line is resolvable.

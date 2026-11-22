@@ -86,7 +86,7 @@ func TestResolveAgentConfig_InjectsUserIdentity(t *testing.T) {
 	t.Cleanup(func() { model.Agents = origAgents })
 	setUserIdentity(t, "老板", "做后端，偏好简洁回答")
 
-	systemPrompt, _, _, _, _ := resolveAgentConfig("identity-agent", "", "", "", "", "", false)
+	systemPrompt, _, _, _ := resolveAgentConfig("identity-agent", "", "", "", "", "", false)
 
 	assert.Contains(t, systemPrompt, "BASE PROMPT")
 	assert.Contains(t, systemPrompt, "## About the User")

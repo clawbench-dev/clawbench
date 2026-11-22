@@ -403,7 +403,7 @@ func validateQueueAgentOverride(w http.ResponseWriter, r *http.Request, agentID,
 	if agentID == "" {
 		return true
 	}
-	if _, _, _, _, agentOK := resolveAgentConfig(agentID); !agentOK {
+	if _, _, _, agentOK := resolveAgentConfig(agentID); !agentOK {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentID")
 		return false
 	}

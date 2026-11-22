@@ -63,7 +63,6 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentSystemPromptACPNote': 'ACP note',
         'settings.items.agentSectionInfo': 'Info',
         'settings.items.agentBackend': 'Backend',
-        'settings.items.agentCommand': 'Command',
         'settings.items.agentModels': 'Models',
         'settings.items.agentModelCount': `${params?.count ?? 0} models`,
         'settings.items.agentSessionCountLabel': 'Sessions',
@@ -206,7 +205,6 @@ const baseAgent = {
   name: 'Test Agent',
   specialty: 'coding',
   backend: 'claude',
-  command: 'claude',
   transport: 'acp-stdio',
   models: [{ id: 'model-1', name: 'Model 1', default: true }],
   preferredModel: 'model-1',
@@ -390,21 +388,11 @@ describe('SettingsAgentDetail', () => {
   it('never renders a transport select (one path per agent)', () => {
     // Every agent that spawns a process runs over ACP, so there is nothing to
     // switch between; a select here would offer a choice that does not exist.
-    const wrapper = mountDetail({ acpCommand: 'grok agent stdio', command: 'grok' })
+    const wrapper = mountDetail({ acpCommand: 'grok agent stdio' })
     const items = wrapper.findAllComponents({ name: 'SettingsItem' })
 
     const transportItem = items.find((it: any) => it.props('item')?.key === 'transport')
     expect(transportItem).toBeUndefined()
-  })
-
-  it('renders fewer items for agent without command', () => {
-    const wrapper1 = mountDetail({ command: 'claude' })
-    const count1 = wrapper1.findAllComponents({ name: 'SettingsItem' }).length
-
-    const wrapper2 = mountDetail({ command: '' })
-    const count2 = wrapper2.findAllComponents({ name: 'SettingsItem' }).length
-
-    expect(count1).toBeGreaterThan(count2)
   })
 
   it('renders more items when thinking effort levels exist', () => {

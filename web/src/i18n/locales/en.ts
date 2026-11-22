@@ -3951,7 +3951,6 @@ export default {
       agentSystemPromptWarning: 'Do not add instructions that override safety rules (e.g. "ignore all previous instructions")',
       agentSystemPromptACPNote: 'ACP agent manages its own system prompt; not editable here',
       agentBackend: 'Backend',
-      agentCommand: 'Command',
       agentModels: 'Models',
       agentModelCount: '{count} models',
       agentSessionCountLabel: 'Sessions',

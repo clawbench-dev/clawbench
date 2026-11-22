@@ -3947,7 +3947,6 @@ export default {
       agentSystemPromptWarning: '请勿添加覆盖安全规则的指令（如"忽略以上所有指令"）',
       agentSystemPromptACPNote: 'ACP智能体自行管理系统提示，此处不可编辑',
       agentBackend: '后端',
-      agentCommand: '命令',
       agentModels: '模型',
       agentModelCount: '{count} 个模型',
       agentSessionCountLabel: '会话数',

@@ -189,7 +189,7 @@ func TestProjectContextSection_WiredIntoBuiltinSystemPrompt(t *testing.T) {
 
 	withAgents(t, map[string]*model.Agent{
 		"b1": {ID: "b1", Backend: "builtin", RuntimeSystemPrompt: "B1"},
-		"c1": {ID: "c1", Backend: "codebuddy", RuntimeSystemPrompt: "C1", Command: "codebuddy"},
+		"c1": {ID: "c1", Backend: "codebuddy", RuntimeSystemPrompt: "C1"},
 	})
 
 	builtinReq := BuildChatRequest("hi", "sess-builtin", project, "builtin", "b1", "", "", "", project, false)

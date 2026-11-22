@@ -54,7 +54,6 @@ func TestSaveAgent_Insert(t *testing.T) {
 		Name:      "Pi",
 		Specialty: "极简编程智能体",
 		Backend:   "pi",
-		Command:   "/path/to/pi",
 		Models: []model.AgentModel{
 			{ID: "openai/gpt-5.5", Name: "GPT-5.5", Default: true},
 			{ID: "openai/gpt-5.4", Name: "GPT-5.4"},
@@ -76,7 +75,6 @@ func TestSaveAgent_Insert(t *testing.T) {
 	assert.Equal(t, "Pi", got.Name)
 	assert.Equal(t, "极简编程智能体", got.Specialty)
 	assert.Equal(t, "pi", got.Backend)
-	assert.Equal(t, "/path/to/pi", got.Command)
 	assert.Equal(t, "openai/gpt-5.5", got.PreferredModel)
 	assert.Len(t, got.Models, 2)
 	assert.Equal(t, "openai/gpt-5.5", got.Models[0].ID)
@@ -842,7 +840,6 @@ func TestDuplicateAgent_Success(t *testing.T) {
 		Name:                    "Pi",
 		Specialty:               "极简编程智能体",
 		Backend:                 "pi",
-		Command:                 "/path/to/pi",
 		ThinkingEffort:          "medium",
 		ThinkingEffortLevels:    []string{"off", "low", "medium", "high"},
 		PreferredMode:           "code",

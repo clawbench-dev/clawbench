@@ -620,14 +620,6 @@ const items = computed<AgentItem[]>(() => {
     type: 'info',
   })
 
-  if (a.command) {
-    result.push({
-      key: 'command',
-      label: t('settings.items.agentCommand'),
-      type: 'info',
-    })
-  }
-
   const modelCount = a.models?.length ?? 0
   result.push({
     key: 'models_count',
@@ -743,8 +735,6 @@ function getItemValue(item: AgentItem): unknown {
       return a.customSystemPrompt || ''
     case 'backend':
       return a.backend || ''
-    case 'command':
-      return a.command || ''
     case 'acp_command':
       return a.acpCommand || ''
     default:

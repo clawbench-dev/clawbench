@@ -33,7 +33,6 @@ type Agent struct {
 	Specialty               string       `json:"specialty"`
 	Backend                 string       `json:"backend"`
 	Models                  []AgentModel `json:"models"`
-	Command                 string       `json:"command"`                 // optional: custom command path for the AI backend CLI
 	ThinkingEffort          string       `json:"thinkingEffort"`          // agent's default thinking effort; not modified by user preference
 	ThinkingEffortLevels    []string     `json:"thinkingEffortLevels"`    // valid levels for this backend, e.g. ["low","medium","high","xhigh"]
 	PreferredMode           string       `json:"preferredMode"`           // user's preferred ACP mode; empty = use agent's default

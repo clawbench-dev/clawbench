@@ -129,7 +129,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	// whether this turn goes over ACP (see resolveAgentConfig).
 	isACP := resolveIsACP(agentID)
 
-	systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, thinkingEffortModel, effectiveMode, isACP)
+	systemPrompt, agentModel, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, thinkingEffortModel, effectiveMode, isACP)
 
 	// The project's own AGENTS.md / CLAUDE.md. ONLY the built-in agent needs
 	// this: every external backend discovers context files itself (pi even gets
@@ -302,7 +302,6 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		WorkDir:                fileDir,
 		SystemPrompt:           systemPrompt,
 		Model:                  agentModel,
-		Command:                agentCommand,
 		AgentID:                agentID,
 		ThinkingEffort:         effectiveThinkingEffort,
 		Mode:                   effectiveMode,
@@ -398,13 +397,13 @@ func applySessionOverrides(sessionID, modelOverride, thinkingEffortOverride, mod
 // being sent right now). When it names a DIFFERENT model, the pick is dropped:
 // it belongs to the previous model and its level may not even be offered by the
 // one now running (OpenCode rejects it with -32602).
-func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, thinkingEffortModel, mode string, isACP bool) (systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode string) {
+func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, thinkingEffortModel, mode string, isACP bool) (systemPrompt, agentModel, effectiveThinkingEffort, effectiveMode string) {
 	effectiveThinkingEffort = thinkingEffort
 	effectiveMode = mode
 
 	agent := model.GetAgent(agentID)
 	if agent == nil {
-		return "", "", "", effectiveThinkingEffort, effectiveMode
+		return "", "", effectiveThinkingEffort, effectiveMode
 	}
 
 	systemPrompt = agent.RuntimeSystemPrompt
@@ -431,9 +430,6 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, thi
 			agentModel = defaultID
 		}
 	}
-	if agent.Command != "" {
-		agentCommand = agent.Command
-	}
 	// A pick made under a different model does not apply to this turn.
 	if effectiveThinkingEffort != "" && thinkingEffortModel != "" && thinkingEffortModel != agentModel {
 		effectiveThinkingEffort = ""
@@ -456,7 +452,7 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, thi
 	if effectiveMode == "" && agent.EffectiveModeID() != "" {
 		effectiveMode = agent.EffectiveModeID()
 	}
-	return systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode
+	return systemPrompt, agentModel, effectiveThinkingEffort, effectiveMode
 }
 
 // EffectiveThinkingEffortForModel resolves the effort a turn should run, for the

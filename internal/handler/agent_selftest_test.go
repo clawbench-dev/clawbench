@@ -234,7 +234,6 @@ func TestAgentSelfTest_PreferredModelMustExist(t *testing.T) {
 	agent := &model.Agent{
 		ID: "selftest-pref", Name: "Pref",
 		Backend: "claude",
-		Command:             "go",
 		Models:              []model.AgentModel{{ID: "model-a", Name: "A", Default: true}},
 		PreferredModel:      "model-gone",
 		RuntimeSystemPrompt: "prompt",

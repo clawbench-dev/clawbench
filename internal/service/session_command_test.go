@@ -475,7 +475,6 @@ func TestBuildChatRequest_UnknownAgentID_EmptyAgentFields(t *testing.T) {
 	req := BuildChatRequest("hi", "sess-unknown-agent", "/proj", "claude", "nonexistent", "", "", "", "/proj", false)
 
 	assert.Equal(t, "", req.Model)
-	assert.Equal(t, "", req.Command)
 	assert.Equal(t, "", req.ThinkingEffort)
 	assert.Equal(t, "", req.Mode)
 }
@@ -487,7 +486,6 @@ func TestBuildChatRequest_AgentWithAllFields(t *testing.T) {
 		"test-agent": {
 			ID:                  "test-agent",
 			RuntimeSystemPrompt: "You are at {{PROJECT_PATH}}",
-			Command:             "/usr/bin/test-cli",
 			ThinkingEffort:      "high",
 			PreferredMode:       "code",
 			Models:              []model.AgentModel{{ID: "model-1", Default: true}},
@@ -498,7 +496,6 @@ func TestBuildChatRequest_AgentWithAllFields(t *testing.T) {
 
 	assert.Equal(t, "You are at /home/user/proj", req.SystemPrompt)
 	assert.Equal(t, "model-1", req.Model)
-	assert.Equal(t, "/usr/bin/test-cli", req.Command)
 	assert.Equal(t, "high", req.ThinkingEffort)
 	assert.Equal(t, "code", req.Mode)
 }
@@ -599,17 +596,6 @@ func TestBuildChatRequest_ModeFromAgent(t *testing.T) {
 	assert.Equal(t, "code", req.Mode)
 }
 
-func TestBuildChatRequest_NoCommand(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", RuntimeSystemPrompt: "hello"},
-	})
-
-	req := BuildChatRequest("hi", "sess-no-command", "", "claude", "test-agent", "", "", "", "", false)
-
-	assert.Equal(t, "", req.Command)
-}
 
 func TestBuildChatRequest_DefaultModelFromPreferredModel(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
@@ -1182,7 +1168,7 @@ func TestBuildChatRequest_WithThinkingEffortAndMode(t *testing.T) {
 	assert.Equal(t, "plan", req.Mode)
 }
 
-func TestBuildChatRequest_TransportOverrideACP(t *testing.T) {
+func TestBuildChatRequest_BuildsPrompt(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
@@ -1191,23 +1177,6 @@ func TestBuildChatRequest_TransportOverrideACP(t *testing.T) {
 	assert.Equal(t, "hello", req.Prompt)
 }
 
-func TestBuildChatRequest_AgentWithCommand(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
-
-	origAgents := model.Agents
-	model.Agents = map[string]*model.Agent{
-		"cmd-agent": {
-			ID:                  "cmd-agent",
-			RuntimeSystemPrompt: "prompt",
-			Command:             "/usr/local/bin/special-cli",
-		},
-	}
-	defer func() { model.Agents = origAgents }()
-
-	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "cmd-agent", "", "", "", "/proj", false)
-	assert.Equal(t, "/usr/local/bin/special-cli", req.Command)
-}
 
 func TestBuildChatRequest_AgentWithProjectPathReplacement(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
@@ -3054,7 +3023,7 @@ func TestDrainReplyFollowsItsQuestion(t *testing.T) {
 
 	origAgents := model.Agents
 	model.Agents = map[string]*model.Agent{}
-	model.Agents["mock-agent"] = &model.Agent{ID: "mock-agent", Backend: "cli", Command: "echo"}
+	model.Agents["mock-agent"] = &model.Agent{ID: "mock-agent", Backend: "cli"}
 	defer func() { model.Agents = origAgents }()
 
 	sid := "queue-reply-order"

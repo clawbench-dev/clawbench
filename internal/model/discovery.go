@@ -15,7 +15,7 @@ type BackendSpec struct {
 	Backend              string   // backend type, e.g. "claude"
 	DefaultCmd           string   // command to detect on PATH, e.g. "claude"
 	AltCmd               string   // fallback CLI command (e.g. "deepseek" when primary is "codewhale"); used for detection if DefaultCmd not found
-	NoCLI                bool     // if true, this backend has no CLI (e.g. mock); always considered "present"
+	NoCLI                bool     // if true, this backend has no CLI binary (the built-in agent); always considered "present"
 	Name                 string   // display name, e.g. "Claude"
 	Specialty            string   // short description, e.g. "代码编写与推理"
 	ThinkingEffortLevels []string // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported

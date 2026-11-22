@@ -231,7 +231,6 @@ func setupSchedulerForExecuteTask(t *testing.T) {
 			Name:                "Test Agent",
 			Backend:             "codebuddy",
 			RuntimeSystemPrompt: "test prompt",
-			Command:             "echo hello",
 		},
 	}
 	t.Cleanup(func() {

@@ -70,7 +70,7 @@ func resolveOrCreateProjectSession(w http.ResponseWriter, r *http.Request, proje
 	// Scope-aware: the configured default may be scoped to another
 	// project, so resolve to the first agent visible here.
 	agentID := resolveDefaultAgentForProject(projectPath)
-	agentBackend, _, _, _, agentOK := resolveAgentConfig(agentID)
+	agentBackend, _, _, agentOK := resolveAgentConfig(agentID)
 	if !agentOK {
 		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
 		return "", "", false

@@ -14,7 +14,6 @@ type ChatRequest struct {
 	WorkDir                string
 	SystemPrompt           string
 	Model                  string // per-request model override (empty = use global default)
-	Command                string // optional: custom command path for the AI backend CLI
 	AgentID                string // agent ID for logging and persistence
 	ThinkingEffort         string // thinking effort level, e.g., "high"; empty = auto (don't pass flag)
 	Mode                   string // ACP session mode, e.g., "code", "ask", "architect"; empty = use current

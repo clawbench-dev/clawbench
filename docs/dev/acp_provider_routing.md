@@ -96,7 +96,7 @@ go test -tags integration -v -run 'TestACPProviderRoutingProbe' -timeout 900s ./
 ### 4.1 数据模型
 
 `internal/model/agent.go:9` 的 `AgentModel` 加 `Provider string`（provider id，空=原生）。
-provider 元数据复用 `internal/model/provider_registry.go`。凭证跟随现有 `APIConfig`
+provider 元数据复用 `internal/model` 的 provider 配置（旧的 `provider_registry.go` 已删除）。凭证跟随现有 `APIConfig`
 模式存 config.yaml（不建表），走 settings 敏感字段掩码。
 
 ### 4.2 接缝（照搬 mid-turn 模式）

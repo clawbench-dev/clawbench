@@ -260,7 +260,7 @@ UNIQUE：`(message_id)`
 | icon | TEXT | NOT NULL | `''` | 已废弃：仅为 SQLite <3.35 兼容保留，不读不写 |
 | specialty | TEXT | NOT NULL | `''` | 专长描述 |
 | backend | TEXT | NOT NULL | — | AI 后端 |
-| command | TEXT | NOT NULL | `''` | CLI 命令 |
+| command | TEXT | NOT NULL | `''` | **已废弃**：CLI 传输时代的二进制覆盖路径，代码不再读写，列只为老库兼容保留 |
 | thinking_effort | TEXT | NOT NULL | `''` | 默认思考力度 |
 | thinking_effort_levels | TEXT | NOT NULL | `'[]'` | 可选力度等级 JSON |
 | preferred_mode | TEXT | NOT NULL | `''` | 首选模式 |

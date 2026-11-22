@@ -1456,7 +1456,6 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		WorkDir:            projectPath,
 		SystemPrompt:       systemPrompt,
 		Model:              effectiveModel,
-		Command:            agent.Command,
 		AgentID:            task.AgentID,
 		ThinkingEffort:     effectiveThinking,
 		Resume:             false,

@@ -506,14 +506,14 @@ func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 		return err
 	}
 
-	_, err = db.Exec(`INSERT INTO agents (id, name, specialty, backend, command,
+	_, err = db.Exec(`INSERT INTO agents (id, name, specialty, backend,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected, sort_order,
 		acp_command, auto_approve, disabled, provider_id, thinking_effort_by_model,
 		mcp_servers, tool_policy, skip_project_context)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		agent.ID, agent.Name, agent.Specialty, agent.Backend,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, agent.AvatarStyle, agent.AvatarSeed, string(modelsJSON), agent.ModelsAutoDetected, agent.SortOrder,
 		agent.AcpCommand, autoApprove, disabled, agent.ProviderID, string(effortByModelJSON),
@@ -537,7 +537,6 @@ type yamlAgent struct {
 	Name                    string       `yaml:"name"`
 	Specialty               string       `yaml:"specialty"`
 	Backend                 string       `yaml:"backend"`
-	Command                 string       `yaml:"command"`
 	ThinkingEffort          string       `yaml:"thinking_effort"`
 	ThinkingEffortLevels    []string     `yaml:"thinking_effort_levels"`
 	PreferredMode           string       `yaml:"preferred_mode"`
@@ -610,7 +609,6 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) []string {
 			Name:                    ya.Name,
 			Specialty:               ya.Specialty,
 			Backend:                 ya.Backend,
-			Command:                 ya.Command,
 			ThinkingEffort:          ya.ThinkingEffort,
 			ThinkingEffortLevels:    ya.ThinkingEffortLevels,
 			PreferredMode:           ya.PreferredMode,
@@ -712,7 +710,7 @@ func ComposeSystemPrompt(customPrompt string) string {
 // (issue #552) would survive until the background discovery finished and then
 // vanish.
 func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
-	rows, err := db.Query(`SELECT id, name, specialty, backend, command,
+	rows, err := db.Query(`SELECT id, name, specialty, backend,
 		thinking_effort, thinking_effort_levels,
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected, sort_order,
@@ -744,7 +742,7 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 	var projectID, providerID sql.NullInt64
 
 	if err := rows.Scan(&agent.ID, &agent.Name, &agent.Specialty,
-		&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
+		&agent.Backend, &agent.ThinkingEffort, &levelsJSON,
 		&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 		&agent.CustomSystemPrompt, &agent.Avatar, &agent.AvatarStyle, &agent.AvatarSeed, &modelsJSON, &autoDetected,
 		&agent.SortOrder, &agent.AcpCommand, &autoApprove, &disabled, &projectID,

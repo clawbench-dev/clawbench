@@ -357,7 +357,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 				return
 			}
 		}
-		backend2, _, _, _, ok := resolveAgentConfig(agentID)
+		backend2, _, _, ok := resolveAgentConfig(agentID)
 		if !ok {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
 			return
@@ -1745,7 +1745,7 @@ func forkGroupTarget(w http.ResponseWriter, r *http.Request, hostAgentID string,
 // A fork creates a NEW session, so the same rules as session creation apply
 // (the picker hides disabled agents, but the server is the authoritative gate).
 func forkAgentAllowed(w http.ResponseWriter, r *http.Request, agentID, projectPath string) bool {
-	if _, _, _, _, ok := resolveAgentConfig(agentID); !ok {
+	if _, _, _, ok := resolveAgentConfig(agentID); !ok {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentID")
 		return false
 	}

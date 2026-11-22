@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	icon TEXT NOT NULL DEFAULT '',  -- deprecated: kept for SQLite <3.35 compat; not read or written
 	specialty TEXT NOT NULL DEFAULT '',
 	backend TEXT NOT NULL,
-	command TEXT NOT NULL DEFAULT '',
+	command TEXT NOT NULL DEFAULT '',  -- retired: CLI-transport binary override; never read or written
 	thinking_effort TEXT NOT NULL DEFAULT '',
 	thinking_effort_levels TEXT NOT NULL DEFAULT '[]',
 	preferred_mode TEXT NOT NULL DEFAULT '',
@@ -126,7 +126,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_sort ON agents(sort_order);
 // LoadAgentsFromDB loads all agents from the database and returns them sorted by ID.
 func LoadAgentsFromDB() ([]*model.Agent, error) {
 	rows, err := store.ReadDB().Query(`
-		SELECT id, name, specialty, backend, command,
+		SELECT id, name, specialty, backend,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected,
@@ -149,7 +149,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		var projectID, providerID sql.NullInt64
 
 		err := rows.Scan(
-			&a.ID, &a.Name, &a.Specialty, &a.Backend, &a.Command,
+			&a.ID, &a.Name, &a.Specialty, &a.Backend,
 			&a.ThinkingEffort, &levelsJSON,
 			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
 			&a.CustomSystemPrompt, &a.Avatar, &a.AvatarStyle, &a.AvatarSeed, &modelsJSON, &modelsAutoDetected,
@@ -237,7 +237,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 	}
 
 	_, err = db.Exec(`
-		INSERT INTO agents (id, name, specialty, backend, command,
+		INSERT INTO agents (id, name, specialty, backend,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected,
@@ -245,7 +245,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			acp_command, auto_approve, disabled, project_id,
 			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
 			skip_project_context)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -342,7 +342,7 @@ func encodeAgentJSONColumns(agent *model.Agent) (agentJSONColumns, error) {
 // agentInsertArgs binds the INSERT column order of SaveAgent.
 func agentInsertArgs(agent *model.Agent, cols agentJSONColumns) []any {
 	return []any{
-		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
+		agent.ID, agent.Name, agent.Specialty, agent.Backend,
 		agent.ThinkingEffort, cols.levels,
 		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, agent.AvatarStyle, agent.AvatarSeed, cols.models, boolToInt(agent.ModelsAutoDetected),
@@ -941,7 +941,6 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		Name:                    newName,
 		Specialty:               source.Specialty,
 		Backend:                 source.Backend,
-		Command:                 source.Command,
 		ThinkingEffort:          source.ThinkingEffort,
 		ThinkingEffortLevels:    make([]string, len(source.ThinkingEffortLevels)),
 		PreferredMode:           source.PreferredMode,

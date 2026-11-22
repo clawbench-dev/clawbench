@@ -192,19 +192,19 @@ func asAbsolutePath(basePath, path string) (string, bool) {
 }
 
 // resolveAgentConfig resolves agent configuration from model.Agents.
-// Returns (backend, defaultModelID, systemPrompt, command, ok).
-func resolveAgentConfig(agentID string) (string, string, string, string, bool) {
+// Returns (backend, defaultModelID, systemPrompt, ok).
+func resolveAgentConfig(agentID string) (string, string, string, bool) {
 	if agentID == "" {
 		agentID = model.GetDefaultAgentID()
 	}
 	if agentID == "" {
-		return "", "", "", "", false
+		return "", "", "", false
 	}
 	agent := model.GetAgent(agentID)
 	if agent == nil {
-		return "", "", "", "", false
+		return "", "", "", false
 	}
-	return agent.Backend, agent.DefaultModelID(), agent.RuntimeSystemPrompt, agent.Command, true
+	return agent.Backend, agent.DefaultModelID(), agent.RuntimeSystemPrompt, true
 }
 
 // agentVisibleInProject reports whether an agent may be used as a NEW entry in
