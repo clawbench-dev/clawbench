@@ -8,6 +8,7 @@ import (
 
 	"clawbench/internal/agentcore"
 	"clawbench/internal/agentcore/llm"
+	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 )
 
@@ -41,9 +42,21 @@ func builtinAgentAvailable() (*model.Agent, error) {
 		return nil, fmt.Errorf("the built-in agent is disabled")
 	}
 	if agent.Provider() == nil {
-		return nil, fmt.Errorf("the built-in agent has no model provider bound")
+		return nil, fmt.Errorf("%s", serviceMessage("BuiltinNoProvider"))
 	}
 	return agent, nil
+}
+
+// serviceMessage renders one message id in the current UI language.
+//
+// Background tasks have no HTTP request in scope, which is exactly why
+// model.Language exists (see its comment in model/config.go).
+func serviceMessage(id string) string {
+	locale := model.Language
+	if locale == "" {
+		locale = model.DefaultLanguage
+	}
+	return i18n.T(i18n.LocalizerForLocale(locale), id)
 }
 
 // BuiltinAgentAvailable reports whether the built-in agent can run a task.
@@ -147,11 +160,11 @@ func RunBuiltinAgentTask(ctx context.Context, task BuiltinAgentTask) (string, er
 func builtinAgentClient(agent *model.Agent) (llm.Client, string, error) {
 	provider := agent.Provider()
 	if provider == nil {
-		return nil, "", fmt.Errorf("the built-in agent has no model provider bound")
+		return nil, "", fmt.Errorf("%s", serviceMessage("BuiltinNoProvider"))
 	}
 	modelID := agent.DefaultModelID()
 	if modelID == "" {
-		return nil, "", fmt.Errorf("the built-in agent has no model selected")
+		return nil, "", fmt.Errorf("%s", serviceMessage("BuiltinNoModel"))
 	}
 	client, err := llm.New(llm.Config{
 		Protocol:       provider.Protocol,

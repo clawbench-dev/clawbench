@@ -13,6 +13,7 @@ package builtin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"clawbench/internal/agentcore/llm"
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 )
 
@@ -242,7 +244,7 @@ func buildClient(agent *model.Agent, modelOverride string) (llm.Client, string, 
 
 	provider := agent.Provider()
 	if provider == nil {
-		return nil, "", ErrNoProvider
+		return nil, "", newNoProviderError()
 	}
 
 	client, err := llm.New(llm.Config{
@@ -260,12 +262,35 @@ func buildClient(agent *model.Agent, modelOverride string) (llm.Client, string, 
 	return client, modelID, nil
 }
 
-// ErrNoProvider is returned when an agent has no model endpoint bound.
+// errNoProvider identifies the "no provider" failure, so callers and tests can
+// recognise it regardless of the language it is rendered in.
+var errNoProvider = errors.New("built-in agent has no model provider")
+
+// noProviderError is the user-facing "no provider" failure.
 //
-// It is a hard error rather than a silent fallback: an agent that quietly ran
-// on some other endpoint would produce answers the user cannot account for.
-var ErrNoProvider = fmt.Errorf("this agent has no model provider bound; " +
-	"open its settings and choose a provider, or configure the shared summary model")
+// It is its own type rather than fmt.Errorf("%w: %s", …) on purpose: a %w wrap
+// makes the sentinel's own wording part of Error(), so users saw
+// "built-in agent has no model provider: 内置智能体还没配模型提供商…" — English
+// internal vocabulary in front of the sentence they need to read. Here Error()
+// returns ONLY the localized text, and Is() carries the identity for errors.Is.
+type noProviderError struct{ text string }
+
+func (e *noProviderError) Error() string { return e.text }
+
+func (e *noProviderError) Is(target error) bool { return target == errNoProvider }
+
+// newNoProviderError renders the failure in the current UI language.
+//
+// Rendered per call rather than stored: the language can change while the
+// server runs, and a package-level string would freeze whichever language was
+// set at startup.
+func newNoProviderError() error {
+	locale := model.Language
+	if locale == "" {
+		locale = model.DefaultLanguage
+	}
+	return &noProviderError{text: i18n.T(i18n.LocalizerForLocale(locale), "BuiltinNoProvider")}
+}
 
 // forward translates one agentcore event into ai.StreamEvent.
 //
