@@ -43,6 +43,9 @@ func init() {
 			// No InputRemaps: Grok's camelCase fields are exactly the shared
 			// generic set (ai.GenericACPRemaps).
 		},
+		// `grok models` works without signing in, so the picker has a list
+		// before the first ACP handshake (which does need auth).
+		ModelSource: model.PluginSource("grok", discoverGrokModels),
 		ProviderEnv: &model.ProviderEnvSpec{
 			OpenAI: model.ProtoEnv("GROK_XAI_API_BASE_URL", "XAI_API_KEY", ""),
 		},

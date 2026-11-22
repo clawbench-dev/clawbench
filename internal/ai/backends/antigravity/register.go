@@ -44,6 +44,10 @@ func init() {
 			LoginCmd:  "agy acp --login",
 			SortOrder: 14,
 		},
+		// `agy models` lists the live catalogue once signed in; before that
+		// (and before the first ACP handshake) the built-in catalog stands in,
+		// so the picker is never blank.
+		ModelSource: model.PluginSource("antigravity", discoverAntigravityModels),
 		ProviderEnv: &model.ProviderEnvSpec{
 			Gemini:  model.ProtoEnv("GOOGLE_GEMINI_BASE_URL", "GEMINI_API_KEY", ""),
 			KeyOnly: "GEMINI_API_KEY",
