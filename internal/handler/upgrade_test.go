@@ -777,24 +777,24 @@ func TestServeUpgradeCheck_ReportsManaged(t *testing.T) {
 	}
 }
 
-// TestServeUpgradeCheck_FusedDownloadsOnlyForManaged pins where the all-in-one
-// package URLs come from: only a managed (fused) install can use them, and they
+// TestServeUpgradeCheck_IntegratedDownloadsOnlyForManaged pins where the integrated
+// package URLs come from: only a managed (integrated) install can use them, and they
 // are built for the version the registry just reported — not for the running
 // server's own version, which is the one being upgraded away from.
-func TestServeUpgradeCheck_FusedDownloadsOnlyForManaged(t *testing.T) {
+func TestServeUpgradeCheck_IntegratedDownloadsOnlyForManaged(t *testing.T) {
 	origFetch := upgradeCheckForUpgradeInfo
 	origCmp := upgradeCompareVersions
 	origDev := upgradeIsDevBuild
 	origWrit := upgradeCheckInstallDirWrit
 	origDocker := upgradeIsDocker
-	origFused := upgradeFusedDownloads
+	origIntegrated := upgradeIntegratedDownloads
 	defer func() {
 		upgradeCheckForUpgradeInfo = origFetch
 		upgradeCompareVersions = origCmp
 		upgradeIsDevBuild = origDev
 		upgradeCheckInstallDirWrit = origWrit
 		upgradeIsDocker = origDocker
-		upgradeFusedDownloads = origFused
+		upgradeIntegratedDownloads = origIntegrated
 	}()
 
 	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
@@ -806,15 +806,15 @@ func TestServeUpgradeCheck_FusedDownloadsOnlyForManaged(t *testing.T) {
 	upgradeIsDocker = func() bool { return false }
 
 	var gotTag string
-	upgradeFusedDownloads = func(tag string) map[string][]string {
+	upgradeIntegratedDownloads = func(tag string) map[string][]string {
 		gotTag = tag
-		return map[string][]string{"win32-x64": {"https://example.test/fused.zip"}}
+		return map[string][]string{"win32-x64": {"https://example.test/integrated.zip"}}
 	}
 
 	origManaged := model.ManagedByEmbedder
 	defer func() { model.ManagedByEmbedder = origManaged }()
 
-	// A thin server has no all-in-one package to install: the client is a
+	// A thin server has no integrated package to install: the client is a
 	// separate product and upgrades itself.
 	model.ManagedByEmbedder = false
 	gotTag = "unset"
@@ -825,17 +825,17 @@ func TestServeUpgradeCheck_FusedDownloadsOnlyForManaged(t *testing.T) {
 	var thin map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &thin))
 	assert.Equal(t, map[string]any{}, thin["fused_downloads"])
-	assert.Equal(t, "unset", gotTag, "a thin server must not build fused URLs")
+	assert.Equal(t, "unset", gotTag, "a thin server must not build integrated URLs")
 
 	model.ManagedByEmbedder = true
 	req = newRequest(t, http.MethodGet, "/api/upgrade/check", nil)
 	withAuthCookie(req, model.SessionToken)
 	w = callHandler(ServeUpgradeCheck, req)
 	require.Equal(t, http.StatusOK, w.Code)
-	var fused map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fused))
+	var integrated map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &integrated))
 	assert.Equal(t, "v1.1.0", gotTag, "URLs must target the registry's latest version")
 	assert.Equal(t,
-		map[string]any{"win32-x64": []any{"https://example.test/fused.zip"}},
-		fused["fused_downloads"])
+		map[string]any{"win32-x64": []any{"https://example.test/integrated.zip"}},
+		integrated["fused_downloads"])
 }

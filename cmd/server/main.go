@@ -735,8 +735,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		fmt.Println("  --host ADDR       Bind address (overrides config file, default: 0.0.0.0)")
 		fmt.Println("  --data-dir DIR    Runtime data directory (default: ~/.clawbench)")
 		fmt.Println("  --exit-on-stdin-close")
-		fmt.Println("                    Shut down when stdin closes (used by the desktop")
-		fmt.Println("                    shell, which holds the pipe as the server's owner)")
+		fmt.Println("                    Shut down when stdin closes (opt-in for an embedder")
+		fmt.Println("                    that holds the pipe; the desktop shell does not use it)")
 		fmt.Println("  --managed         Refuse self-upgrade and in-app restart (the")
 		fmt.Println("                    embedding program owns the binary)")
 		fmt.Println("  --gen-cert        Generate a self-signed HTTPS certificate and exit")
@@ -1883,8 +1883,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Embedded mode: the program that started us holds our stdin. Its closing
-	// (a deliberate quit, or the shell crashing) is a shutdown request. Armed
+	// Opt-in stdin-close shutdown (--exit-on-stdin-close). The desktop shell no
+	// longer uses it: its bundled server must outlive the app so phones and
+	// browsers keep working, and the shell stops it explicitly instead. Armed
 	// only now, after the listeners are bound, so the watcher and the shutdown
 	// goroutine below start in an order where the channel already has a reader.
 	enableParentPipeExit()

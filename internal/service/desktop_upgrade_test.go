@@ -176,46 +176,59 @@ func TestFetchDesktopLatest_DevBuildStillReportsProtocol(t *testing.T) {
 	assert.Equal(t, version.ClientProtocol, res.Protocol)
 }
 
-func TestDesktopFusedAssetName_MatchesReleaseWorkflow(t *testing.T) {
-	// The fused package is assembled by the "Assemble fused desktop (Windows)"
-	// step in release.yml, which names it exactly this way. A drift here makes
-	// every fused upgrade 404 while the URL still looks well-formed.
-	assert.Equal(t,
-		"clawbench-desktop-windows-x64-local-v0.99.1.zip",
-		desktopFusedAssetName("windows/amd64", "v0.99.1"))
-	// Only Windows publishes an all-in-one package; other platforms must yield
-	// the empty string so callers skip them instead of building a dead URL.
-	assert.Empty(t, desktopFusedAssetName("linux/amd64", "v0.99.1"))
-	assert.Empty(t, desktopFusedAssetName("darwin/arm64", "v0.99.1"))
+func TestDesktopIntegratedAssetName_MatchesReleaseWorkflow(t *testing.T) {
+	// The integrated package is assembled by the "Assemble integrated desktop"
+	// steps in release.yml, which name it exactly this way. A drift here makes
+	// every integrated upgrade 404 while the URL still looks well-formed.
+	want := map[string]string{
+		"windows/amd64": "clawbench-desktop-windows-x64-local-v0.99.1.zip",
+		"linux/amd64":   "clawbench-desktop-linux-x64-local-v0.99.1.zip",
+		"linux/arm64":   "clawbench-desktop-linux-arm64-local-v0.99.1.zip",
+		"darwin/amd64":  "clawbench-desktop-darwin-x64-local-v0.99.1.zip",
+		"darwin/arm64":  "clawbench-desktop-darwin-arm64-local-v0.99.1.zip",
+	}
+	for osArch, name := range want {
+		assert.Equal(t, name, desktopIntegratedAssetName(osArch, "v0.99.1"), osArch)
+	}
+	// An unknown platform must yield the empty string so callers skip it instead
+	// of building a dead URL.
+	assert.Empty(t, desktopIntegratedAssetName("freebsd/amd64", "v0.99.1"))
 }
 
-func TestFusedDesktopDownloads_WindowsOnlyAndNeverEmptyTag(t *testing.T) {
+func TestIntegratedDesktopDownloads_AllDesktopPlatformsAndNeverEmptyTag(t *testing.T) {
 	withChina(t, false)
 
-	urls := FusedDesktopDownloads("v0.99.1")
-	require.Contains(t, urls, "win32-x64")
-	require.NotEmpty(t, urls["win32-x64"])
+	urls := IntegratedDesktopDownloads("v0.99.1")
+	// Every desktop platform ships an integrated package.
+	assert.Len(t, urls, 5)
+	for _, key := range []string{"win32-x64", "linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"} {
+		require.NotEmpty(t, urls[key], key)
+	}
 	assert.True(t,
 		strings.HasSuffix(urls["win32-x64"][0], "/clawbench-desktop-windows-x64-local-v0.99.1.zip"),
-		"expected the fused asset, got %q", urls["win32-x64"][0])
-	// No thin or payload URL may appear here: a fused install that installed
-	// either would lose its server or leave it stale.
-	for _, u := range urls["win32-x64"] {
-		assert.NotContains(t, u, "-payload")
-		assert.NotRegexp(t, `desktop-windows-x64-v`, u, "thin package must not be offered")
+		"expected the integrated asset, got %q", urls["win32-x64"][0])
+	assert.True(t,
+		strings.HasSuffix(urls["darwin-arm64"][0], "/clawbench-desktop-darwin-arm64-local-v0.99.1.zip"),
+		"expected the integrated asset, got %q", urls["darwin-arm64"][0])
+	// No thin or payload URL may appear here: an integrated install that
+	// installed either would lose its server or leave it stale.
+	for _, list := range urls {
+		for _, u := range list {
+			assert.NotContains(t, u, "-payload")
+			assert.Regexp(t, `-local-`, u)
+		}
 	}
-	assert.Len(t, urls, 1, "only Windows has a fused package")
 
 	// An empty tag (dev build, or a registry answer with no release) must not
 	// produce a URL at all.
-	assert.Empty(t, FusedDesktopDownloads(""))
+	assert.Empty(t, IntegratedDesktopDownloads(""))
 }
 
-func TestFusedDesktopDownloads_UsesChinaMirrorsFirst(t *testing.T) {
+func TestIntegratedDesktopDownloads_UsesChinaMirrorsFirst(t *testing.T) {
 	withChina(t, true)
 	defer withChina(t, false)
 
-	urls := FusedDesktopDownloads("v0.99.1")
+	urls := IntegratedDesktopDownloads("v0.99.1")
 	require.NotEmpty(t, urls["win32-x64"])
 	assert.Contains(t, urls["win32-x64"][0], "gh-proxy.com/", "mainland China should try the mirror first")
 	assert.Contains(t, urls["win32-x64"][len(urls["win32-x64"])-1], "github.com/", "direct must stay as the fallback")

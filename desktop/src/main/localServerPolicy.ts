@@ -1,31 +1,47 @@
 import path from 'node:path'
 
 /**
- * Pure decisions for the embedded ("all-in-one") desktop build.
+ * Pure decisions for the integrated desktop build (the "整合包": client and
+ * server in one package).
  *
  * In this build the desktop app starts a ClawBench server of its own from inside
  * its install directory, logs in with the password that server generated, and
- * quits the server when the app quits. Everything that is a DECISION lives here
+ * leaves it running when the app quits. Everything that is a DECISION lives here
  * so it can be tested without Electron, a spawned process or a network — the
  * same split as `splashPolicy.ts` / `loadFailure.ts`. The Electron-facing half is
  * `localServer.ts`.
  */
 
-/** Where the server lives inside the app's resources directory. */
+/** Where the server lives inside the app's install directory. */
 export const EMBEDDED_SERVER_DIR = 'server'
 
-/** Windows executable name inside {@link EMBEDDED_SERVER_DIR}. */
-export const EMBEDDED_SERVER_EXE = 'clawbench.exe'
+/** Executable name of the bundled server on `platform`. */
+export function embeddedServerExe(platform: NodeJS.Platform): string {
+  return platform === 'win32' ? 'clawbench.exe' : 'clawbench'
+}
 
 /**
  * Where the embedded server binary lives for a given app executable.
  *
- * electron-builder's `extraFiles` puts it at `<install root>/server/` — NOT under
- * `resources/`, which a desktop payload update replaces wholesale. Kept here as
- * a pure function so the path can be asserted without Electron.
+ * Windows/Linux: electron-builder's `extraFiles` puts it at `<install root>/server/`
+ * (outside `resources/`, which a desktop payload update replaces wholesale).
+ * macOS: it is a SIBLING of `ClawBench.app`, not inside it — adding a file to a
+ * signed bundle invalidates the signature, so the integrated zip carries
+ * `server/` next to the bundle and this walks up from `Contents/MacOS/` to the
+ * folder that holds the `.app`.
+ *
+ * Kept here as a pure function so the path can be asserted without Electron.
  */
-export function embeddedServerBinaryPath(execPath: string): string {
-  return path.join(path.dirname(execPath), EMBEDDED_SERVER_DIR, EMBEDDED_SERVER_EXE)
+export function embeddedServerBinaryPath(
+  execPath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  // Use the target platform's separator rules, not the host's: the tests run on
+  // Linux and still assert the Windows path.
+  const p = platform === 'win32' ? path.win32 : path.posix
+  const execDir = p.dirname(execPath)
+  const contentDir = platform === 'darwin' ? p.resolve(execDir, '..', '..', '..') : execDir
+  return p.join(contentDir, EMBEDDED_SERVER_DIR, embeddedServerExe(platform))
 }
 
 /**
@@ -149,17 +165,17 @@ export interface EmbeddedArgsInput {
 /**
  * Command-line arguments for the embedded server.
  *
- * `--exit-on-stdin-close` is what makes "app quits, server quits" work on
- * Windows, where a child cannot be signalled gracefully; `--managed` stops the
- * server from replacing its own binary or restarting itself behind the app's
- * back.
+ * `--managed` stops the server from replacing its own binary or restarting
+ * itself behind the app's back. There is deliberately no
+ * `--exit-on-stdin-close`: the server now outlives the desktop app (it keeps
+ * serving phones and other clients), so the shell does not hold a pipe whose
+ * closure would stop it.
  */
 export function embeddedServerArgs(input: EmbeddedArgsInput): string[] {
   return [
     '--port', String(input.port),
     '--data-dir', input.dataDir,
     '--host', input.host || '0.0.0.0',
-    '--exit-on-stdin-close',
     '--managed',
   ]
 }
@@ -226,6 +242,35 @@ export interface HealthBody {
   version?: string
   /** PID of the answering server. Absent on builds that predate the field. */
   pid?: number
+  /**
+   * True when the desktop shell started this server (--managed). Absent on
+   * older builds, which the shell treats as a standalone server.
+   */
+  managed?: boolean
+}
+
+/**
+ * Data directory of the built-in server: the SAME default a standalone install
+ * uses (`~/.clawbench`), so the desktop app sees the same sessions and
+ * projects. One data directory only allows one server, which is why the shell
+ * adopts a running one instead of spawning a second.
+ */
+export function embeddedDataDirFor(home: string): string {
+  return path.join(home, '.clawbench')
+}
+
+/**
+ * Whether the old per-app data directory should be moved into the shared one.
+ *
+ * Only when the old copy exists AND the shared directory is empty. A standalone
+ * install's data is never merged or overwritten: if the shared directory has
+ * anything in it, it wins and the old embedded copy is left alone.
+ */
+export function shouldMigrateEmbeddedData(input: {
+  legacyExists: boolean
+  targetEntries: number
+}): boolean {
+  return input.legacyExists && input.targetEntries === 0
 }
 
 /**
@@ -268,4 +313,38 @@ export function isHealthFromChild(body: unknown, childPid: number | undefined): 
  */
 export function sessionCookieName(port: number): string {
   return port === EMBEDDED_DEFAULT_PORT ? 'clawbench_session' : `cb${port}_clawbench_session`
+}
+
+/**
+ * Normalize a version string to `major.minor.patch`.
+ *
+ * The server reports the release it was built from (`v0.145.0`,
+ * `v0.145.0-12-gabc1234`), while the desktop shell reads `0.145.0` from its
+ * package.json. Comparing the raw strings would say "different" on every launch
+ * and make the app kill and restart a perfectly good background server each
+ * time.
+ */
+export function normalizeVersion(raw: string): string {
+  const match = /^v?(\d+\.\d+\.\d+)/.exec((raw || '').trim())
+  return match ? match[1] : ''
+}
+
+/**
+ * Whether a running background server belongs to this desktop build.
+ *
+ * Unknown/unparseable versions answer `true`: the alternative is an endless
+ * stop-and-start loop against a server whose version format we do not recognize.
+ * A genuine mismatch (the app was upgraded while the old server kept running)
+ * answers `false`, and the caller replaces the server.
+ */
+export function versionsMatch(serverVersion: string, appVersion: string): boolean {
+  const a = normalizeVersion(serverVersion)
+  const b = normalizeVersion(appVersion)
+  if (!a || !b) return true
+  // `desktop/package.json` keeps 0.1.0 as its placeholder in the repository;
+  // a local build therefore reports 0.1.0 against a real server version.
+  // Treating that as a mismatch would kill and restart the server on every
+  // development launch.
+  if (b === '0.1.0') return true
+  return a === b
 }

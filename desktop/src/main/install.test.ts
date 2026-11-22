@@ -890,7 +890,7 @@ describe('handOffToPointedVersion', () => {
     //
     //   - someone unpacked a release on top of the version store (the old
     //     reason for dropping the pointer);
-    //   - a FUSED upgrade installed an all-in-one package whose shell was
+    //   - a INTEGRATED upgrade installed an integrated package whose shell was
     //     reused from a previous release: the directory is named after the
     //     release tag, while the app inside reports the older build's version,
     //     so `selectStartupVersion` sees two different versions for the same

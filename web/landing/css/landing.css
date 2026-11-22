@@ -1185,9 +1185,9 @@ main {
 }
 
 /* ── 客户端下载（第二步）────────────────────────────────────
-   分开装时那一栏是瘦客户端，一体化时是一体包，各自单列铺满。 */
+   两种装法都是三个桌面系统并排；窄屏自动退回单列。 */
 #step-client > .dl-grid {
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 12px;
 }
 
@@ -1208,8 +1208,8 @@ main {
   font-size: 13px;
 }
 
-/* 推荐方案：一体包是「不想折腾服务端」的默认答案，用主色描边和底色
-   让它排在视线里第一个被读到——它靠右，眼睛先扫到左边再落下。 */
+/* 推荐方案：整合包是「不想折腾服务端」的默认答案，用主色描边和底色
+   让三张桌面卡都排在视线里第一组被读到的位置。 */
 .dl-card-accent {
   border-color: rgba(254, 128, 25, 0.45);
   background: linear-gradient(
@@ -1358,7 +1358,7 @@ main {
   width: 72px;
 }
 
-/* 两块方块的配色与一体化那块完全同源（中性底、选中转橙），
+/* 两块方块的配色与整合包那块完全同源（中性底、选中转橙），
    否则两张卡在「都没选中」时一边白一边蓝，像两种不同的东西。 */
 .mode-ico {
   display: grid;
@@ -1598,13 +1598,15 @@ main {
   letter-spacing: 0.03em;
 }
 
-/* 一体化只选了 Windows：非 Windows 访客看到的是一张写清原因的灰卡，
-   而不是一个点不动的按钮，也不是空白 */
+/* 整合包装不了手机：手机访客看到的是三张写清原因的灰卡，
+   而不是点不动的按钮，也不是空白。is-unavailable 挂在网格上。 */
+.dl-grid.is-unavailable .dl-card,
 .dl-card.is-unavailable {
   border-color: var(--line);
   background: transparent;
 }
 
+.dl-grid.is-unavailable .dl-chip,
 .dl-card.is-unavailable .dl-chip {
   border-color: var(--line);
   background: transparent;
@@ -1613,6 +1615,8 @@ main {
   pointer-events: none;
 }
 
+.dl-grid.is-unavailable .dl-icon,
+.dl-grid.is-unavailable .dl-name,
 .dl-card.is-unavailable .dl-icon,
 .dl-card.is-unavailable .dl-name {
   color: var(--fg-faint);
@@ -1639,10 +1643,6 @@ main {
   text-decoration: underline;
   text-underline-offset: 3px;
   cursor: pointer;
-}
-
-.dl-grid-single {
-  grid-template-columns: 1fr;
 }
 
 .step-back {
@@ -2095,7 +2095,7 @@ main {
   }
 
   /* 安装方式两张卡靠「并列」表达是同一层级的选项；手机撑不下两栏时
-     退回上下排，一体化仍在前面，推荐标签也还在。 */
+     退回上下排，整合包仍在前面，推荐标签也还在。 */
   .mode-grid {
     grid-template-columns: 1fr;
   }
@@ -2669,7 +2669,7 @@ main {
     height: 38px;
   }
 
-  /* 分开装的两块必须跟着一起缩，否则会比一体化那块大一圈 */
+  /* 分开装的两块必须跟着一起缩，否则会比整合包那块大一圈 */
   .mode-ico {
     width: 60px;
     height: 60px;

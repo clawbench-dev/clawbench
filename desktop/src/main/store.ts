@@ -10,7 +10,7 @@ export interface ServerListSchema {
   servers: ServerEntry[]
   serverUrl: string
   /**
-   * Address of the server this build ships with (the "all-in-one" desktop
+   * Address of the server this build ships with (the "integrated" desktop
    * build), or '' when there is none.
    *
    * Kept OUT of `servers` on purpose: that list is the user's own rows — they

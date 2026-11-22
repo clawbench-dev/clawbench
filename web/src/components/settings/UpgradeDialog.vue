@@ -22,10 +22,10 @@
           <LoadingIndicator size="md" :label="t('upgrade.checking')" />
         </div>
 
-        <!-- Fused install: client and server ship as one package, so the
+        <!-- Integrated install: client and server ship as one package, so the
              upgrade is that whole package rather than a server binary swap. -->
-        <p v-if="managedByEmbedder && hasUpgrade && !isInProgress && !isCompleted && !isFailed" class="ug-fused-note">
-          {{ t('upgrade.fusedNote') }}
+        <p v-if="managedByEmbedder && hasUpgrade && !isInProgress && !isCompleted && !isFailed" class="ug-integrated-note">
+          {{ t('upgrade.integratedNote') }}
         </p>
 
         <!-- Version info (before upgrade, after check) -->
@@ -81,8 +81,8 @@
 
         <!-- Fused package install: the desktop shell owns the download and its
              own dialogs, so this is an indeterminate wait. -->
-        <div v-if="installingFused" class="ug-progress-area">
-          <LoadingIndicator size="md" :label="t('upgrade.fusedInstalling')" />
+        <div v-if="installingIntegrated" class="ug-progress-area">
+          <LoadingIndicator size="md" :label="t('upgrade.integratedInstalling')" />
         </div>
 
         <!-- Progress area -->
@@ -135,7 +135,7 @@
 
         <!-- Actions -->
         <div class="ug-footer">
-          <button v-if="hasUpgrade && !isInProgress && !isCompleted && !installingFused" class="fbtn fbtn-primary ug-start" @click="startUpgrade">
+          <button v-if="hasUpgrade && !isInProgress && !isCompleted && !installingIntegrated" class="fbtn fbtn-primary ug-start" @click="startUpgrade">
             {{ isFailed ? t('upgrade.retry') : t('upgrade.start') }}
           </button>
           <button v-if="canClose" class="fbtn ug-cancel" @click="close">
@@ -164,7 +164,7 @@ const { t } = useI18n()
 const {
   state, checking, hasUpgrade, isInProgress, isRestarting, isCompleted, isFailed,
   installWritable, installDir, isDocker, verificationWarning, checkUpgrade, startUpgrade, releaseNotesUrl,
-  managedByEmbedder, installingFused,
+  managedByEmbedder, installingIntegrated,
 } = useUpgrade()
 
 /**
@@ -214,7 +214,7 @@ function show() {
 }
 
 const canClose = computed(() => {
-  if (installingFused.value) return false
+  if (installingIntegrated.value) return false
   if (isCompleted.value || isFailed.value) return true
   if (!isInProgress.value) return true
   return false
@@ -402,9 +402,9 @@ watch(visible, (v) => {
 }
 
 /* Pre-flight install-directory warning (amber, non-fatal) */
-/* Fused install: an explanation, not a warning — the package install is the
+/* Integrated install: an explanation, not a warning — the package install is the
    normal and only upgrade path for a client that carries its own server. */
-.ug-fused-note {
+.ug-integrated-note {
   margin: 0 var(--space-7) var(--space-5);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);

@@ -126,21 +126,21 @@ const showProgressDialog = ref(false)
 
 /**
  * All-in-one package URLs for the latest release, keyed by platform. Only
- * populated for a fused install (a server managed by its desktop embedder),
+ * populated for a integrated install (a server managed by its desktop embedder),
  * where the only valid upgrade unit is the whole package — see
- * `installFusedUpdate`.
+ * `installIntegratedUpdate`.
  */
 const fusedDownloads = ref<Record<string, string[]>>({})
 
-/** SHA256 by asset filename for the fused package, from the same response. */
+/** SHA256 by asset filename for the integrated package, from the same response. */
 const fusedChecksums = ref<Record<string, string>>({})
 
 /**
- * True while the desktop shell is downloading/installing the all-in-one
+ * True while the desktop shell is downloading/installing the integrated
  * package. The shell shows its own dialogs; this only keeps the web UI from
  * offering the button again or closing mid-install.
  */
-const installingFused = ref(false)
+const installingIntegrated = ref(false)
 
 // Install-directory writability, reported by /api/upgrade/check. Kept outside
 // `state` because upgrade_update WS events (which overwrite state wholesale)
@@ -350,14 +350,14 @@ export function useUpgrade() {
       skippedVersion.value = data.skipped_version ?? ''
 
       if (managedByEmbedder.value) {
-        // A fused install: the server cannot replace its own binary under the
-        // app, so the upgrade is the WHOLE all-in-one package, installed by the
+        // A integrated install: the server cannot replace its own binary under the
+        // app, so the upgrade is the WHOLE integrated package, installed by the
         // desktop shell. The server builds those URLs for the release it just
         // found (fused_downloads); if this platform publishes none, or the
         // shell predates the bridge, there is nothing to offer.
         fusedDownloads.value = data.fused_downloads ?? {}
         fusedChecksums.value = data.fused_checksums ?? {}
-        // The map only carries platforms that PUBLISH an all-in-one package
+        // The map only carries platforms that PUBLISH an integrated package
         // (Windows today), so a non-empty map means one exists for some
         // platform. Which key applies is the shell's call — it knows its own
         // OS/arch and reports "no package for this platform" if the map lacks
@@ -366,7 +366,7 @@ export function useUpgrade() {
         hasUpgrade.value =
           data.has_upgrade &&
           Object.keys(fusedDownloads.value).length > 0 &&
-          !!getNative()?.installFusedUpdate
+          !!getNative()?.installIntegratedUpdate
         // Server-only concerns (install-directory writability, npm signature,
         // container advice) do not apply to a package install.
         installWritable.value = true
@@ -467,7 +467,7 @@ export function useUpgrade() {
   }
 
   /**
-   * Install the all-in-one package through the desktop shell.
+   * Install the integrated package through the desktop shell.
    *
    * The shell downloads the package, installs it side by side and asks about
    * restarting; its dialogs are the user-visible outcome, so this only keeps
@@ -475,16 +475,16 @@ export function useUpgrade() {
    */
   async function startFusedUpgrade(): Promise<void> {
     const native = getNative()
-    if (!native?.installFusedUpdate) {
+    if (!native?.installIntegratedUpdate) {
       hasUpgrade.value = false
       return
     }
-    installingFused.value = true
+    installingIntegrated.value = true
     state.phase = ''
     state.error = ''
     state.error_code = ''
     try {
-      const res = await native.installFusedUpdate(
+      const res = await native.installIntegratedUpdate(
         state.latest_version,
         fusedDownloads.value,
         fusedChecksums.value,
@@ -495,14 +495,14 @@ export function useUpgrade() {
         hasUpgrade.value = false
       } else {
         state.phase = 'failed'
-        state.error = res?.error || gt('upgrade.fusedInstallFailed')
+        state.error = res?.error || gt('upgrade.integratedInstallFailed')
       }
     } catch (e) {
       appLog.w(TAG, 'Fused package install failed', e)
       state.phase = 'failed'
       state.error = String((e as Error)?.message || e)
     } finally {
-      installingFused.value = false
+      installingIntegrated.value = false
     }
   }
 
@@ -627,7 +627,7 @@ export function useUpgrade() {
     managedByEmbedder,
     fusedDownloads,
     fusedChecksums,
-    installingFused,
+    installingIntegrated,
     releaseNotesUrl,
     showProgressDialog,
     installWritable,

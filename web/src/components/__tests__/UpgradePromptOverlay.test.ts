@@ -4,12 +4,12 @@ import { createI18n } from 'vue-i18n'
 import { ref } from 'vue'
 
 /**
- * A fused install (desktop shell downloads the whole package) takes a while.
+ * A integrated install (desktop shell downloads the whole package) takes a while.
  * The prompt used to close on click, leaving an app that looked idle while the
  * shell worked. It must stay up with a spinner for the duration and close only
  * once `startUpgrade` resolves — that is the regression this file pins.
  */
-const installingFused = ref(false)
+const installingIntegrated = ref(false)
 const startUpgrade = vi.fn()
 
 vi.mock('@/composables/useUpgrade', () => ({
@@ -18,7 +18,7 @@ vi.mock('@/composables/useUpgrade', () => ({
     startUpgrade,
     releaseNotesUrl: ref(''),
     isDocker: ref(false),
-    installingFused,
+    installingIntegrated,
   }),
 }))
 
@@ -34,7 +34,7 @@ const i18n = createI18n({
         upgradeNow: 'Upgrade now',
         skipVersion: 'Skip this version',
         remindLater: 'Remind me later',
-        fusedInstalling: 'Installing the new version…',
+        integratedInstalling: 'Installing the new version…',
         dockerHintBody: 'Docker hint',
         dockerHintRestart: 'restart',
       },
@@ -57,11 +57,11 @@ async function mountOverlay() {
 
 describe('UpgradePromptOverlay', () => {
   beforeEach(() => {
-    installingFused.value = false
+    installingIntegrated.value = false
     startUpgrade.mockReset()
   })
 
-  it('closes immediately when the upgrade is not a fused install', async () => {
+  it('closes immediately when the upgrade is not a integrated install', async () => {
     startUpgrade.mockResolvedValue(undefined)
     const wrapper = await mountOverlay()
     expect(wrapper.find('.up-overlay').exists()).toBe(true)
@@ -73,10 +73,10 @@ describe('UpgradePromptOverlay', () => {
     expect(wrapper.find('.up-overlay').exists()).toBe(false)
   })
 
-  it('stays up with a spinner while the fused install runs, then closes', async () => {
+  it('stays up with a spinner while the integrated install runs, then closes', async () => {
     let finish: () => void = () => {}
     startUpgrade.mockImplementation(() => {
-      installingFused.value = true
+      installingIntegrated.value = true
       return new Promise<void>((resolve) => { finish = resolve })
     })
     const wrapper = await mountOverlay()
@@ -90,7 +90,7 @@ describe('UpgradePromptOverlay', () => {
     expect(wrapper.find('.up-installing').exists()).toBe(true)
     expect(wrapper.find('.up-footer').exists()).toBe(false)
 
-    installingFused.value = false
+    installingIntegrated.value = false
     finish()
     await flushPromises()
 
