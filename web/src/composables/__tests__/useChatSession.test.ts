@@ -102,6 +102,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     getAgent: vi.fn().mockReturnValue(undefined),
     syncModelFromAgent: vi.fn().mockReturnValue({ modelId: '', modelName: '' }),
     getAgentModel: vi.fn().mockReturnValue(undefined),
+    getDefaultModelId: vi.fn().mockReturnValue(''),
     agentHeaderTitle: vi.fn().mockReturnValue('🤖 Test'),
     // ACP model list consumption — the subject of the new-session model-list fix.
     updateACPModelList: vi.fn(),
@@ -144,6 +145,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockAgentFns.getAgent.mockReset().mockReturnValue(undefined)
     mockAgentFns.syncModelFromAgent.mockReset().mockReturnValue({ modelId: '', modelName: '' })
     mockAgentFns.getAgentModel.mockReset().mockReturnValue(undefined)
+    mockAgentFns.getDefaultModelId.mockReset().mockReturnValue('')
     mockAgentFns.agentHeaderTitle.mockReset().mockReturnValue('🤖 Test')
     mockAgentFns.updateACPModelList.mockReset()
     mockAgentFns.applyResolvedModelList.mockReset()
@@ -400,6 +402,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgent: mockAgentFns.getAgent,
     syncModelFromAgent: mockAgentFns.syncModelFromAgent,
     getAgentModel: mockAgentFns.getAgentModel,
+    getDefaultModelId: mockAgentFns.getDefaultModelId,
     agentHeaderTitle: mockAgentFns.agentHeaderTitle,
     getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
     supportsACP: vi.fn().mockReturnValue(false),
@@ -6186,6 +6189,42 @@ describe('syncModelFromData', () => {
 
     expect(mockIdentity.currentModelId).toBe('new-default')
     expect(mockIdentity.currentModelName).toBe('New Default')
+  })
+
+  // Regression: the chip showed「默认」for the built-in agent with a bound
+  // provider. Its chat_sessions.model can be '' (no model chosen in the session)
+  // and the agent has no preferredModel, so there was no candidate at all — and
+  // when the list happened to be empty at that instant the chip resolved to a
+  // blank name, which renders as the placeholder even though the turn runs a
+  // concrete model. The agent default is what WILL run, so it must be the
+  // candidate rather than an empty string.
+  it('when server has no modelId and there is no preference: falls back to the agent default', async () => {
+    mockIdentityFns.loadModelPref.mockReturnValue('')
+    mockAgentFns.getDefaultModelId.mockReturnValue('deepseek-v4.1-flash')
+    mockAgentFns.getAgentModel.mockReturnValue(undefined)
+    // The list has not arrived yet (agents response in flight, or an ACP view
+    // that cleared it) — the name must still come out non-empty.
+    mockAgentFns.getAgent.mockReturnValue({ models: [], preferredModel: '' })
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [],
+        total: 0,
+        backend: 'builtin',
+        agentId: 'builtin',
+        modelId: '',  // session row has no model
+        thinkingEffort: '',
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockIdentity.currentModelId).toBe('deepseek-v4.1-flash')
+    expect(mockIdentity.currentModelName).toBe('deepseek-v4.1-flash')
   })
 })
 

@@ -453,7 +453,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   const { currentSessionTitle, currentBackend, currentSessionType, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, cruise, modeState } = identity
 
   // ── Agents from singleton ──
-  const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()
+  const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, getAgentModel, getDefaultModelId, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()
 
   // Helper: sync model state from server data, preferring persisted modelId
   // over the agent default. Falls back to agent default when server has no model.
@@ -461,9 +461,18 @@ export function useChatSession(options: UseChatSessionOptions) {
   // Both sources are resolved against the agent's CURRENT list: a persisted id
   // the agent no longer offers (refreshed away) falls back to the new default
   // instead of keeping a dead id on the chip and shipping it on the next turn.
+  //
+  // With NO candidate at all the agent's own default is the candidate. That is
+  // not a merge guess, it is what the next turn will run: the server falls back
+  // to DefaultModelID() for an explicit-only binding (see resolveAgentConfig —
+  // the ACP case is the only one that leaves the model empty), and for the
+  // in-process agent the turn's model is DefaultModelID() outright. Resolving
+  // an empty candidate instead left the chip blank whenever the list was also
+  // empty at that moment (built-in agent + provider, chat_sessions.model = ''),
+  // which renders as the「默认」placeholder even though a concrete model runs.
   function syncModelFromData(agentId: string, modelIdFromServer: string) {
     const agent = getAgent(agentId)
-    const candidate = modelIdFromServer || identity.loadModelPref(agentId) || ''
+    const candidate = modelIdFromServer || identity.loadModelPref(agentId) || getDefaultModelId(agentId) || ''
     const { modelId, modelName } = resolveModelSelection(
       agent?.models || [],
       agent?.preferredModel || '',

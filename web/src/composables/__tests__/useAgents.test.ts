@@ -380,6 +380,40 @@ describe('useAgents', () => {
         retired: false,
       })
     })
+
+    // Regression: the chip showed「默认」for an in-process (built-in) agent with a
+    // bound provider whose session row had model='' — the backend had already
+    // sent the provider model (models=[deepseek-…, default:true]) yet the chip
+    // came out empty, because this path never consulted the list's own default
+    // when there was no candidate to resolve. The list is authoritative: with no
+    // candidate the chip must show the agent's default, never nothing.
+    it('shows the list default when the candidate is empty (built-in agent, empty chat_sessions.model)', () => {
+      agents.value = agents.value.map(a =>
+        a.id === 'simple'
+          ? {
+              ...a,
+              providerModels: [{ id: 'deepseek-v4.1-flash', name: 'deepseek-v4.1-flash', default: false }],
+              models: [{ id: 'deepseek-v4.1-flash', name: 'deepseek-v4.1-flash', default: true }],
+            }
+          : a,
+      )
+
+      expect(resolveModelSelection('simple', '')).toEqual({
+        modelId: 'deepseek-v4.1-flash',
+        modelName: 'deepseek-v4.1-flash',
+        retired: false,
+      })
+    })
+
+    // Only a genuinely list-less agent may leave the chip empty (the ACP
+    // "not reported yet" state, which renders the placeholder on purpose).
+    it('leaves the chip empty only when the list is empty too', () => {
+      expect(resolveModelSelection('simple', '')).toEqual({
+        modelId: '',
+        modelName: '',
+        retired: false,
+      })
+    })
   })
 
   // --- getAgentModels ---
