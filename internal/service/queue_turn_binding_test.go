@@ -174,3 +174,37 @@ func (b *requestCapturingBackend) ExecuteStream(_ context.Context, req ai.ChatRe
 }
 
 var _ = model.Agent{}
+
+// The turn's own attachments must reach the backend, or an image the user just
+// sent is only a path in the prompt: the model answers the path and nothing
+// shows it saw a picture. Pinned on the enqueue path, which builds its own
+// prompt and is the one most likely to lose a field.
+func TestExecuteStreamRunShared_CarriesTurnFiles(t *testing.T) {
+	setupTestDBForBuiltinHistory(t)
+	qID := seedBuiltinTurnHistory(t, "sess-files-launch")
+
+	captured := captureTurnRequest(t, func() streamRunResultShared {
+		return executeStreamRunShared(context.Background(), LaunchConfig{
+			SessionID:   "sess-files-launch",
+			ProjectPath: "/proj",
+			BackendName: builtinBackendID,
+			Message:     "current question",
+			MessageID:   qID,
+			Files:       []model.FileEntry{{Path: "/proj/.clawbench/uploads/a.png"}},
+		})
+	})
+
+	require.Len(t, captured.Files, 1, "the attachment must reach the request")
+	assert.Equal(t, "/proj/.clawbench/uploads/a.png", captured.Files[0].Path)
+}
+
+// The option itself, independent of any entry point.
+func TestBuildChatRequest_CarriesTurnFiles(t *testing.T) {
+	setupTestDBForBuiltinHistory(t)
+	files := []model.FileEntry{{Path: "/proj/a.png"}}
+
+	req := BuildChatRequest("hi", "sess-files-opt", "/proj", builtinBackendID, "", "", "", "", "", "/proj", true,
+		WithTurnFiles(files))
+	require.Len(t, req.Files, 1)
+	assert.Equal(t, "/proj/a.png", req.Files[0].Path)
+}

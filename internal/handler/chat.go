@@ -757,10 +757,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// self-hosted backend's replayed history must stop just before it —
 		// otherwise the prompt reaches the model twice.
 		firstOpts = append(firstOpts, service.WithCurrentMessageID(msgID))
-		// The attachments of THIS message: the built-in backend sends an attached
-		// picture as a picture, and the prompt only names it.
-		if len(allFiles) > 0 {
-			firstOpts = append(firstOpts, service.WithTurnFiles(allFiles))
+		// The attachments of THIS message: the built-in backend needs them to
+		// point the model at an attached picture, and the prompt only names it.
+		if turnFiles := turnFilesForModel(allFiles, validatedFilePaths); len(turnFiles) > 0 {
+			firstOpts = append(firstOpts, service.WithTurnFiles(turnFiles))
 		}
 		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments, firstOpts...)
 
@@ -1214,6 +1214,41 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, msgID int64, sessionID,
 		opts = append(opts, service.WithTurnFiles(qMsg.Files))
 	}
 	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, "", "", "", "", fileDir, hasAttachments, opts...), nil
+}
+
+// turnFilesForModel merges the two attachment channels into one list.
+//
+// A whole-file attachment travels ONLY the legacy filePaths channel — the
+// frontend routes ranged files and uploads as structured entries and everything
+// else as a bare path (see buildSendChannels). Handing the model allFiles alone
+// therefore made an image attached from the file picker invisible, while the
+// same image uploaded through the composer worked.
+//
+// The queue path does not need this: a queued row stores Files only, and its
+// FilePaths is derived from them (queue_store.go), so nothing is lost there.
+func turnFilesForModel(files []model.FileEntry, filePaths []string) []model.FileEntry {
+	if len(filePaths) == 0 {
+		return files
+	}
+	out := make([]model.FileEntry, 0, len(files)+len(filePaths))
+	seen := make(map[string]struct{}, len(files)+len(filePaths))
+	for _, f := range files {
+		if f.Path != "" {
+			seen[f.Path] = struct{}{}
+		}
+		out = append(out, f)
+	}
+	for _, p := range filePaths {
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, model.FileEntry{Path: p})
+	}
+	return out
 }
 
 // CancelChat handles POST to cancel an ongoing AI stream for a session.

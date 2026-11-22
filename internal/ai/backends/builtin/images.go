@@ -101,6 +101,7 @@ func withinDir(dir, path string) bool {
 func turnImageParts(files []model.FileEntry) ([]llm.Part, []string) {
 	var parts []llm.Part
 	var notes []string
+	var dropped []string
 	seen := make(map[string]bool, len(files))
 	for _, f := range files {
 		if f.IsQuote() || f.IsDir {
@@ -117,7 +118,7 @@ func turnImageParts(files []model.FileEntry) ([]llm.Part, []string) {
 			}
 			seen[f.URL] = true
 			if len(parts) >= maxTurnImages {
-				notes = append(notes, notAttachedNotice(f.URL, "only the first few images of a message are sent"))
+				dropped = append(dropped, f.URL)
 				continue
 			}
 			parts = append(parts, llm.Part{Image: &llm.Image{URL: f.URL}})
@@ -137,7 +138,7 @@ func turnImageParts(files []model.FileEntry) ([]llm.Part, []string) {
 		seen[path] = true
 		name := filepath.Base(path)
 		if len(parts) >= maxTurnImages {
-			notes = append(notes, notAttachedNotice(name, "only the first few images of a message are sent"))
+			dropped = append(dropped, name)
 			continue
 		}
 		// One read serves both the size check and the payload: a separate Stat
@@ -153,21 +154,27 @@ func turnImageParts(files []model.FileEntry) ([]llm.Part, []string) {
 		}
 		parts = append(parts, llm.Part{Image: &llm.Image{MediaType: mediaType, Data: data}})
 	}
+	// One line for the whole overflow, not one per picture: ten screenshots over
+	// the cap used to produce ten identical sentences.
+	if len(dropped) > 0 {
+		notes = append(notes, notAttachedNotice(strings.Join(dropped, ", "),
+			"only the first "+strconv.Itoa(maxTurnImages)+" images of a message are sent"))
+	}
 	return parts, notes
 }
 
-// imageHint points the model at the pictures it can open itself.
+// imageHint points the model at one picture it can open itself.
 //
-// One line for all of them: the prompt's attachment header already lists the
-// same paths, so a line per picture would just repeat it. Phrased as an
-// instruction, not a label: the standing media rule says not to read a file
-// unless the intent is clear, and "the user attached these" is that clarity.
-func imageHint(paths []string) string {
-	if len(paths) == 1 {
-		return "[User attached an image: " + paths[0] + " — view it with the read tool before answering]"
-	}
-	return "[User attached " + strconv.Itoa(len(paths)) + " images: " + strings.Join(paths, ", ") +
-		" — view them with the read tool before answering]"
+// One line per picture rather than a comma-joined list: a path may itself
+// contain a comma or a bracket, and a joined list would then read as several
+// paths — the model would call read on a path that does not exist.
+//
+// The path comes LAST so the closing bracket can never cut it short, and the
+// wording is an instruction rather than a label: the standing media rule says
+// not to read a file unless the intent is clear, and "the user attached this"
+// is that clarity.
+func imageHint(path string) string {
+	return "[User attached an image — view it with the read tool before answering: " + path + "]"
 }
 
 // notAttachedNotice tells the model an attachment existed but was not sent.

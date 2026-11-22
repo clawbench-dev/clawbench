@@ -172,10 +172,17 @@ func buildSpec(req ai.ChatRequest) (agentcore.Spec, error) {
 	prompt := req.Prompt
 	var promptParts []llm.Part
 	policy := agent.ToolPolicy.Normalized().ForMode(req.Mode)
+	if !client.SupportsVision() && len(req.Files) > 0 {
+		// Worth a line: the user attached a picture and this model will only see
+		// its name. Without it "the agent ignored my screenshot" has no trace at
+		// all, because nothing fails — the turn just answers about a path.
+		slog.Info("builtin: model cannot read images, attachments are only named",
+			"agent", req.AgentID, "model", modelID, "attachments", len(req.Files))
+	}
 	if client.SupportsVision() {
 		hints, fallback := readableImageHints(req.Files, req.WorkDir, policy.Has(model.CapFSRead), policy.ConfinesToWorkDir())
-		if len(hints) > 0 {
-			prompt += "\n" + imageHint(hints)
+		for _, h := range hints {
+			prompt += "\n" + imageHint(h)
 		}
 		if len(fallback) > 0 {
 			parts, notes := turnImageParts(fallback)
