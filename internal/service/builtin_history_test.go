@@ -537,3 +537,40 @@ func TestBuiltinBackendIDMatchesSpec(t *testing.T) {
 			builtinBackendID)
 	}
 }
+
+// The stored prompt already names an attached image, but the built-in backend
+// needs the PATH to send the picture itself: with only the name it answers the
+// sentence about the path, which is why an image-only message produced a reply
+// that never mentioned the image.
+func TestBuildBuiltinHistory_CarriesAttachedFiles(t *testing.T) {
+	setupTestDBForBuiltinHistory(t)
+	const sid = "sess-files"
+	if _, err := store.WriteExec(
+		`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title) VALUES (?, 0, 'builtin', '')`, sid,
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	first, err := AddChatMessage("/tmp/p", "builtin", sid, "user", "look at this", nil, false, "")
+	if err != nil {
+		t.Fatalf("seed first message: %v", err)
+	}
+	second, err := AddChatMessage("/tmp/p", "builtin", sid, "user", "and this",
+		[]model.FileEntry{{Path: "/tmp/p/a.png"}}, false, "")
+	if err != nil {
+		t.Fatalf("seed second message: %v", err)
+	}
+
+	got := buildBuiltinHistory(sid, 0, builtinSummary{})
+	if len(got) != 2 {
+		t.Fatalf("expected two turns, got %d", len(got))
+	}
+	if len(got[0].Files) != 0 {
+		t.Fatalf("a turn without attachments must carry none, got %+v", got[0].Files)
+	}
+	if len(got[1].Files) != 1 || got[1].Files[0].Path != "/tmp/p/a.png" {
+		t.Fatalf("the attachment must ride its turn, got %+v", got[1].Files)
+	}
+	if got[1].ID != second || got[0].ID != first {
+		t.Fatalf("unexpected ids %d/%d", got[0].ID, got[1].ID)
+	}
+}
