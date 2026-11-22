@@ -365,7 +365,8 @@ func TestToolResultSplitPoint_KeepsExactlyKResults(t *testing.T) {
 	KeepRecentToolRounds = 2
 	defer func() { KeepRecentToolRounds = old }()
 
-	msgs := []llm.Message{userMsg("read four files")}
+	msgs := make([]llm.Message, 0, 9)
+	msgs = append(msgs, userMsg("read four files"))
 	for i := range 4 {
 		id := string(rune('a' + i))
 		msgs = append(msgs,

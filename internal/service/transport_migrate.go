@@ -82,7 +82,7 @@ func MigrateRemoveRetiredBackends() bool {
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		var out []agentRow
 		for rows.Next() {
 			var r agentRow

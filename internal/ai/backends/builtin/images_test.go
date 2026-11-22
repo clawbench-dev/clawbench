@@ -186,8 +186,8 @@ func TestTurnImageParts_MissingFileIsReported(t *testing.T) {
 // the model knows there were more.
 func TestTurnImageParts_RespectsCap(t *testing.T) {
 	dir := t.TempDir()
-	var files []model.FileEntry
-	for i := 0; i < maxTurnImages+1; i++ {
+	files := make([]model.FileEntry, 0, maxTurnImages+1)
+	for i := range maxTurnImages + 1 {
 		files = append(files, model.FileEntry{Path: writeImage(t, dir, string(rune('a'+i))+".png", 4)})
 	}
 	parts, notes := turnImageParts(files)
@@ -368,8 +368,8 @@ func TestImageHint_PathIsLastAndBracketsCannotCutIt(t *testing.T) {
 // identical sentence per picture.
 func TestTurnImageParts_OverCapIsOneNote(t *testing.T) {
 	dir := t.TempDir()
-	var files []model.FileEntry
-	for i := 0; i < maxTurnImages+3; i++ {
+	files := make([]model.FileEntry, 0, maxTurnImages+3)
+	for i := range maxTurnImages + 3 {
 		files = append(files, model.FileEntry{Path: writeImage(t, dir, string(rune('a'+i))+".png", 4)})
 	}
 	_, notes := turnImageParts(files)

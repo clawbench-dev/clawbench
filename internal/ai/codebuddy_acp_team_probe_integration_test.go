@@ -606,6 +606,18 @@ func sessionUpdateKind(n acp.SessionNotification) string {
 }
 
 // ---------------------------------------------------------------------------
+// Wire keys
+// ---------------------------------------------------------------------------
+
+// The canonical readers live in backends/codebuddy, which this package cannot
+// import (ai → backends → ai), so the probes mirror the two _meta keys they
+// inspect. Keep in sync with metaKeyMemberName / metaKeySubagentType there.
+const (
+	metaKeyCodeBuddyMemberName   = "codebuddy.ai/memberName"
+	metaKeyCodeBuddySubagentType = "codebuddy.ai/subagentType"
+)
+
+// ---------------------------------------------------------------------------
 // Scenarios
 // ---------------------------------------------------------------------------
 

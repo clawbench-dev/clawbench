@@ -209,8 +209,8 @@ func checkBackendKnown(run *selfTestRun, agent *model.Agent) {
 
 // checkTransport reports a transport the agent cannot actually run on.
 func checkTransport(run *selfTestRun, agent *model.Agent, transport string) {
-	switch {
-	case transport == "":
+	switch transport {
+	case "":
 		run.fail(selfTestKeyTransport,
 			fmt.Sprintf("Agent %q has neither an ACP command nor the in-process backend, so nothing can start it.", agent.ID))
 	default:

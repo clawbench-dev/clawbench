@@ -21,7 +21,7 @@ func withModellessProvider(t *testing.T, defaultModel string) int64 {
 	return id
 }
 
-func addBuiltinAgent(t *testing.T, id string, providerID *int64, preferred string) *model.Agent {
+func addBuiltinAgent(t *testing.T, id string, providerID *int64, preferred string) {
 	t.Helper()
 	if model.Agents == nil {
 		model.Agents = map[string]*model.Agent{}
@@ -32,7 +32,6 @@ func addBuiltinAgent(t *testing.T, id string, providerID *int64, preferred strin
 	}
 	model.Agents[id] = a
 	t.Cleanup(func() { delete(model.Agents, id) })
-	return a
 }
 
 // TestModelListState_ReportsTheBoundProvidersList pins the whole point of the

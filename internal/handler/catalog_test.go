@@ -169,7 +169,7 @@ func TestAgents_ExposeCatalogModelsBeforeACPReport(t *testing.T) {
 }
 
 // A backend whose ACP adapter never reports a model list still has a static
-// catalogue of its own. It must reach the settings picker (marked unconfirmed),
+// catalog of its own. It must reach the settings picker (marked unconfirmed),
 // otherwise those backends show an empty picker forever — the CLI-era list is
 // gone with the CLI transport, and there is no handshake that would replace it.
 func TestAgents_ExposeStaticCatalogWhenACPReportsNone(t *testing.T) {

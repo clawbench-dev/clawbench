@@ -25,7 +25,7 @@ func TestFrameAttribution_UnknownMember(t *testing.T) {
 	assert.Equal(t, "", attr.MemberColor)
 
 	// No connection: the name is still read off the frame, but nothing can be
-	// joined or coloured.
+	// joined or colored.
 	orphan := FrameAttribution(nil, map[string]any{metaKeyMemberEvent: "x"})
 	require.NotNil(t, orphan)
 	assert.Equal(t, "x", orphan.MemberName)
@@ -75,7 +75,7 @@ func TestFrameAttribution_PlainFrameIsNil(t *testing.T) {
 	assert.Nil(t, FrameAttribution(conn, nil))
 }
 
-// A member's colour comes from the latest roster snapshot, so a member that has
+// A member's color comes from the latest roster snapshot, so a member that has
 // left (or was never listed) is left uncoloured rather than guessed.
 func TestFrameAttribution_MemberColor(t *testing.T) {
 	conn := newMemberConn()

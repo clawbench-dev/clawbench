@@ -209,7 +209,7 @@ func TestAgentSelfTest_EmptyModelsIsOnlyAWarning(t *testing.T) {
 
 	acpAgent := &model.Agent{
 		ID: "selftest-acp-models", Name: "ACP",
-		Backend: model.CustomACPBackend,
+		Backend:    model.CustomACPBackend,
 		AcpCommand: "go version", RuntimeSystemPrompt: "prompt",
 	}
 	acpRes := runAgentSelfTest(context.Background(), acpAgent, "")
@@ -233,7 +233,7 @@ func TestAgentSelfTest_PreferredModelMustExist(t *testing.T) {
 
 	agent := &model.Agent{
 		ID: "selftest-pref", Name: "Pref",
-		Backend: "claude",
+		Backend:             "claude",
 		Models:              []model.AgentModel{{ID: "model-a", Name: "A", Default: true}},
 		PreferredModel:      "model-gone",
 		RuntimeSystemPrompt: "prompt",
@@ -350,12 +350,12 @@ func TestServeAgentSelfTestDeep_RefusesOnStaticFailure(t *testing.T) {
 	// executable probe, so no turn may be attempted.
 	require.NoError(t, service.SaveAgent(store.WriteDB(), &model.Agent{
 		ID: "deep-broken", Name: "Deep Broken",
-		Backend: model.CustomACPBackend,
+		Backend:    model.CustomACPBackend,
 		AcpCommand: "not-installed-anywhere-deep --stdio",
 	}))
 	model.AddAgent(&model.Agent{
 		ID: "deep-broken", Name: "Deep Broken",
-		Backend: model.CustomACPBackend,
+		Backend:             model.CustomACPBackend,
 		AcpCommand:          "not-installed-anywhere-deep --stdio",
 		RuntimeSystemPrompt: "prompt",
 	})

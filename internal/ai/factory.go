@@ -23,7 +23,7 @@ var (
 // registry. Without this hook its picker was empty until the first turn.
 //
 // It takes the agent id because several in-process agents can share one
-// backend and each has its own provider binding; an id it does not recognise
+// backend and each has its own provider binding; an id it does not recognize
 // must yield nil rather than some other agent's list.
 type ModelListProvider interface {
 	ModelListState(agentID string) *ModelListState

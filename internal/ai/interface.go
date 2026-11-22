@@ -491,10 +491,10 @@ type ConfigOptionState struct {
 // advertises Fast mode for models that support it, so an agent-level cache
 // would leak the toggle into sessions running a different model.
 type ExtraConfigOption struct {
-	ConfigID    string              `json:"configId"` // wire id, e.g. "fast-mode"
-	Name        string              `json:"name,omitempty"`
-	Description string              `json:"description,omitempty"`
-	Category    string              `json:"category"` // e.g. "model_config"
+	ConfigID    string `json:"configId"` // wire id, e.g. "fast-mode"
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Category    string `json:"category"` // e.g. "model_config"
 	// Type is "select" (the default) or "boolean". A boolean option has no
 	// Values; CurrentID is "true" or "false".
 	Type      string              `json:"type,omitempty"`

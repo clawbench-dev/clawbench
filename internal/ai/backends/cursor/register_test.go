@@ -56,7 +56,6 @@ func TestCursorBackendPlugin_AdvertisesLoadSession(t *testing.T) {
 // No CLI factory is registered: chat must always go through the ACP stdio
 // transport (the official `agent acp` subcommand).
 func TestCursorBackendPlugin_IsACPIOnly(t *testing.T) {
-
 	plugin := backends.Lookup("cursor")
 	require.NotNil(t, plugin)
 	assert.Nil(t, plugin.ACP, "cursor needs no tool-name remapping yet: tools fall back to the shared alias table")

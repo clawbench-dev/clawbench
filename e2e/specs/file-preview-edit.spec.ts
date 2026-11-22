@@ -188,7 +188,8 @@ test.describe('Rendered previews open an editable source view', () => {
     await clickEdit(page)
     await expectSourceEditable(page)
 
-    await page.locator('.file-overlay .overlay-close-btn').click()
+    // Wide layout renders the inline variant; narrow renders `.overlay-close-btn`.
+    await page.locator('.file-overlay .overlay-close-btn, .file-overlay .overlay-close-btn--inline').click()
     await expect(page.locator('.file-overlay')).toHaveCount(0, { timeout: 5000 })
   })
 

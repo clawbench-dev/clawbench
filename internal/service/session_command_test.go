@@ -596,7 +596,6 @@ func TestBuildChatRequest_ModeFromAgent(t *testing.T) {
 	assert.Equal(t, "code", req.Mode)
 }
 
-
 func TestBuildChatRequest_DefaultModelFromPreferredModel(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
@@ -1176,7 +1175,6 @@ func TestBuildChatRequest_BuildsPrompt(t *testing.T) {
 	// Just verify it doesn't panic and builds correctly
 	assert.Equal(t, "hello", req.Prompt)
 }
-
 
 func TestBuildChatRequest_AgentWithProjectPathReplacement(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)

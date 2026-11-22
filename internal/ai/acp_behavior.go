@@ -79,7 +79,7 @@ type ACPBehavior struct {
 	// FrameAttribution resolves which sub-agent or team member produced a frame.
 	//
 	// Everything the shared event loop needs to attribute one frame — the member
-	// name, its display colour and the parent tool call it belongs under — comes
+	// name, its display color and the parent tool call it belongs under — comes
 	// from here in ONE call. Before this hook, the loop asked three separate
 	// package functions on every branch (content / thinking / tool call), and
 	// each of them carried a private _meta key from one backend. A backend that
@@ -87,7 +87,7 @@ type ACPBehavior struct {
 	//
 	// A nil return means "no attribution": the frame belongs to the top level.
 	// conn is passed because attribution needs state accumulated earlier in the
-	// turn (the roster for colours, the member→spawn-call join) — that state
+	// turn (the roster for colors, the member→spawn-call join) — that state
 	// lives on the connection, and the hook runs on the notification goroutine,
 	// so it must only touch leaf-locked accessors (GetCachedTeamState,
 	// MemberToolCallID).
@@ -128,7 +128,7 @@ type ACPBehavior struct {
 	//
 	// CodeBuddy re-emits the tail of the previous turn when an ACP session is
 	// reused across prompts (stale agent_message_chunk text and stale
-	// usage_update trace identity), so the core needs a way to recognise that.
+	// usage_update trace identity), so the core needs a way to recognize that.
 	// Declaring the hook (rather than comparing ids in the core) keeps "which
 	// backends can be compared across turns" a fact of the backend: other
 	// backends' requestIds are not comparable, and their genuine chunks could

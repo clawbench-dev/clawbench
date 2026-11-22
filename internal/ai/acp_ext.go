@@ -117,7 +117,7 @@ func (c *ClawBenchACPClient) dispatchSessionUpdateVariant(params json.RawMessage
 	// It has to be this path. Since schema 1.32 the SDK rejects a foreign
 	// discriminator at decode time, so the frame never reaches the typed
 	// SessionUpdate and `n.Update.SessionInfoUpdate` is nil there — reading the
-	// variant from the typed struct (the v0.13.5 behaviour) silently matched
+	// variant from the typed struct (the v0.13.5 behavior) silently matched
 	// nothing, and an adopted turn then spun until the backstop timeout. The
 	// route/liveness bookkeeping the typed path performs is already done by the
 	// closeBackgroundTurnOnSessionEnd call chain, which owns the same state.

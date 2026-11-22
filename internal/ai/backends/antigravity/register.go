@@ -44,7 +44,7 @@ func init() {
 			LoginCmd:  "agy acp --login",
 			SortOrder: 14,
 		},
-		// `agy models` lists the live catalogue once signed in; before that
+		// `agy models` lists the live catalog once signed in; before that
 		// (and before the first ACP handshake) the built-in catalog stands in,
 		// so the picker is never blank.
 		ModelSource: model.PluginSource("antigravity", discoverAntigravityModels),

@@ -281,7 +281,7 @@ func ServeAgentSelfTestDeep(w http.ResponseWriter, r *http.Request) {
 //
 // Returns "" whenever nothing trustworthy is known (connection failure, no
 // reported model). That is not an error: an empty override keeps the previous
-// behaviour of deferring the choice to the agent, which is still a valid test.
+// behavior of deferring the choice to the agent, which is still a valid test.
 func handshakeModelForSelfTest(ctx context.Context, agent *model.Agent, sessionID, projectPath string) string {
 	conn, _, err := ai.GetACPConnManager().GetOrCreateConn(ctx, agent, sessionID, projectPath)
 	if err != nil || conn == nil {

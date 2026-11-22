@@ -2655,9 +2655,13 @@ describe('ChatInputBar', () => {
     await wrapper.vm.$nextTick()
 
     // Nothing local matches, so the popup only opens once the async hits land.
+    // The search itself is debounced (250ms in useAtFileSearch), so the wait
+    // budget has to clear that debounce with room for a loaded worker — the
+    // default 1s leaves too little headroom and made this case flake when the
+    // suite runs in parallel.
     await vi.waitFor(() => {
       expect(wrapper.findAll('.completion-label').map(i => i.text())).toContain('ChatInputBar.vue')
-    })
+    }, { timeout: 5000 })
 
     const rows = wrapper.findAll('.completion-item')
     const fileRow = rows.find(r => r.find('.completion-label').text() === 'ChatInputBar.vue')!

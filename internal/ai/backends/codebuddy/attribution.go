@@ -22,7 +22,7 @@ import "clawbench/internal/ai"
 // below backfills the parent link from it.
 
 const (
-	// metaKeyAgentColor carries the member's display colour on a permission
+	// metaKeyAgentColor carries the member's display color on a permission
 	// request's toolCall._meta.
 	metaKeyAgentColor = "codebuddy.ai/agentColor"
 	// metaKeyIsTeamMember marks a permission request as coming from a team
@@ -30,13 +30,13 @@ const (
 	metaKeyIsTeamMember = "codebuddy.ai/isTeamMember"
 )
 
-// FrameAttribution resolves a frame's team member, its colour and the Agent
+// FrameAttribution resolves a frame's team member, its color and the Agent
 // card it belongs under.
 //
 // Content frames carry `memberEvent`; the Agent spawn frame that HOSTS a
 // member's timeline carries `memberName` instead, so both are read — that is
-// what lets the Agent card itself be attributed to its member and coloured with
-// the member's own colour.
+// what lets the Agent card itself be attributed to its member and colored with
+// the member's own color.
 func FrameAttribution(conn *ai.ACPConn, meta map[string]any) *ai.FrameAttribution {
 	if len(meta) == 0 {
 		return nil

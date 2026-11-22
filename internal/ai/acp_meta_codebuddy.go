@@ -43,7 +43,7 @@ package ai
 //     traceId): the loop's log line and the connection's chunk-dedup key name
 //     them, and a hook cannot cover a key the loop drops a frame on.
 //
-// Each is a narrow, documented read of one key — not a behaviour branch on a
+// Each is a narrow, documented read of one key — not a behavior branch on a
 // backend id. The refusal payload key is deliberately NOT here: it is read only
 // by CodeBuddy's own RefusalDetail hook, and the tests that prove a hookless
 // backend cannot read it spell the literal out on purpose — a constant in this

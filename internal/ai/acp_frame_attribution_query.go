@@ -36,7 +36,7 @@ func frameMemberName(backendID string, conn *ACPConn, meta map[string]any) strin
 	return ""
 }
 
-// frameMemberColor is frameAttribution reduced to the member colour.
+// frameMemberColor is frameAttribution reduced to the member color.
 func frameMemberColor(backendID string, conn *ACPConn, meta map[string]any) string {
 	if a := frameAttribution(backendID, conn, meta); a != nil {
 		return a.MemberColor

@@ -18,7 +18,9 @@ import (
 func writeUserMCPConfig(t *testing.T, body string) {
 	t.Helper()
 	home := t.TempDir()
+	// os.UserHomeDir reads %USERPROFILE% on Windows and $HOME elsewhere.
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := filepath.Join(home, ".codebuddy")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(body), 0o600))
@@ -41,7 +43,9 @@ func TestSpawnArgs_LegacyMCPConfigOnlyWhenClawbenchHasNone(t *testing.T) {
 }
 
 func TestSpawnArgs_NoUserFileMeansNoArgs(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	assert.Empty(t, spawnArgs(ai.ACPSpawnContext{MCPServerCount: 0}))
 }
 

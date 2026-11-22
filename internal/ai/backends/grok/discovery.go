@@ -12,7 +12,7 @@ import (
 // discoverGrokModels lists models by running `grok models`.
 //
 // Listing is a CLI feature, not a chat transport: it works without signing in
-// (the command still prints the catalogue and marks its default), so it is what
+// (the command still prints the catalog and marks its default), so it is what
 // gives the picker a list before the first ACP handshake. The probe falls back
 // to GrokCatalog when the binary is missing or the output cannot be parsed.
 func discoverGrokModels() ([]model.AgentModel, string) {
