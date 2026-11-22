@@ -47,7 +47,9 @@ StreamStartFailed: "Failed to start streaming: {{.Error}}"
 # Shown in the warning when the built-in agent has no model provider. It names
 # both steps in the order that actually fixes it: a fresh install has no provider
 # at all, so "pick a provider" alone would point the user at an empty list.
-BuiltinNoProvider: "The built-in agent has no model provider configured, so there is no endpoint to send this message to. Fix it in Settings → Models → Model Providers: add a provider (endpoint + API key), then pick it for this agent in Settings → Agents → (this agent) → Model provider"
+# The last sentence points at the avatar above the message (msg-speaker-btn in
+# ChatMessageItem), which lands straight on this agent's config page.
+BuiltinNoProvider: "The built-in agent has no model provider configured, so there is no endpoint to send this message to. Fix it in Settings → Models → Model Providers: add a provider (endpoint + API key), then pick it for this agent in Settings → Agents → (this agent) → Model provider. You can also click the agent avatar at the top of this message to open its settings in one step"
 BuiltinNoModel: "The built-in agent's provider is configured but no model is selected. Pick one in Settings → Agents → (this agent) → Model"
 MethodNotAllowed: Method not allowed
 TokenRequired: token is required
