@@ -66,6 +66,15 @@ func init() {
 			ParseToolCall:       ParseACPToolCall,
 			ParseToolCallUpdate: ParseACPToolCallUpdate,
 			ExtractMeta:         ai.ExtractCodeBuddyMeta,
+			// CodeBuddy ships the turn's CREDIT consumption in the
+			// ACP-standard `cost` field (with an empty currency). It is still
+			// real billing, but persisting it as cost_usd would inflate the
+			// cost statistics, so the core must not treat it as money.
+			CostFieldCarriesCredit: true,
+			// CodeBuddy re-emits the previous turn's tail when an ACP session is
+			// reused across prompts. Its requestIds are the only ones comparable
+			// across turns, so it — and only it — declares the replay filter.
+			IsReplayedTurnMeta: isReplayedTurnMeta,
 			// Agent Teams: record member → spawn-call joins, bridge the team
 			// snapshot, and bridge Task* tool results into plan_update.
 			OnToolCall: func(conn *ai.ACPConn, tc *acp.SessionUpdateToolCall) {
@@ -102,6 +111,8 @@ func init() {
 			ConfigDirProtocols:      []string{model.ProviderProtocolOpenAI},
 			ConfigDirProviderID:     "clawbench",
 			ConfigDirDeclaresModels: true,
+			UserConfigDir:           ".codebuddy",
+			ConfigDirRender:         ModelsJSONContent,
 			// A provider with NO endpoint means the CodeBuddy account's own
 			// token: the request goes to CodeBuddy's own service, so the models
 			// file (which needs a URL per model) is skipped and the credential

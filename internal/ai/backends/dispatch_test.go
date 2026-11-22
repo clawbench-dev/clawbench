@@ -149,3 +149,34 @@ func TestClaudeFamilyBehaviorsAreShared(t *testing.T) {
 	assert.Equal(t, reflect.ValueOf(root.ExtractMeta).Pointer(), reflect.ValueOf(codex.ExtractMeta).Pointer(),
 		"codex shares the bridge _meta shape and must re-use claude's parser")
 }
+
+// TestWireQuirks_AreDeclaredByTheOwningBackend pins the two backends whose
+// wire quirks the core used to special-case with `backend == "codebuddy"`.
+//
+// Both are now declared on the owner's ACPBehavior, so the guard is on the
+// DECLARATION: dropping it from codebuddy would silently turn its credits into
+// dollars in the cost statistics and let the previous turn's replayed text leak
+// into the next reply, and neither would fail anywhere else.
+func TestWireQuirks_AreDeclaredByTheOwningBackend(t *testing.T) {
+	codebuddy := backends.LookupACPBehavior("codebuddy")
+	require.NotNil(t, codebuddy, "codebuddy must declare its ACP behavior")
+	assert.True(t, codebuddy.CostFieldCarriesCredit,
+		"codebuddy ships credit in the standard cost field; without this flag it is persisted as USD")
+	require.NotNil(t, codebuddy.IsReplayedTurnMeta,
+		"codebuddy must declare the replay filter or the previous turn's tail leaks into the next reply")
+
+	// No other backend may claim either quirk. Claude-family forks in
+	// particular share codebuddy's tool/meta parsers nowhere, but codex shares
+	// claude's _meta shape — an accidental copy of these flags would make one
+	// of them drop real content.
+	for _, id := range []string{"claude", "codex", "qoder", "qodercn", "cursor", "opencode", "kimi", "pi"} {
+		behavior := backends.LookupACPBehavior(id)
+		if behavior == nil {
+			continue
+		}
+		assert.Falsef(t, behavior.CostFieldCarriesCredit,
+			"%s reports a real monetary cost and must not reuse the credit flag", id)
+		assert.Nilf(t, behavior.IsReplayedTurnMeta,
+			"%s has no comparable cross-turn requestId, so it must not declare the replay filter", id)
+	}
+}

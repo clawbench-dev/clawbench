@@ -70,6 +70,8 @@ func init() {
 			ConfigDirProviderID:     "clawbench",
 			ConfigDirSecretInFile:   true,
 			ConfigDirDeclaresModels: true,
+			UserConfigDir:           ".kimi",
+			ConfigDirRender:         ConfigTOMLContent,
 		},
 	})
 }

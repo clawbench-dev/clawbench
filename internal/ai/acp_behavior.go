@@ -51,6 +51,32 @@ type ACPBehavior struct {
 	// sub-agent's own session into the parent's stream (OpenCode v2). Such
 	// frames carry no parent link and are dropped unless one was resolved.
 	IsChildSessionUpdate func(meta map[string]any) bool
+
+	// CostFieldCarriesCredit reports that this backend repurposes the
+	// ACP-standard usage_update.cost field to carry a CREDIT amount instead of
+	// a monetary cost.
+	//
+	// The amount is still real billing (it is kept as
+	// MetaExtraction.CostCredit), but persisting it as chat_metadata.cost_usd
+	// would inflate the cost statistics with a unit-less number. CodeBuddy is
+	// the only backend that does this today; every other agent reports money.
+	//
+	// A field rather than a backend-id comparison in the core: the fact belongs
+	// to the backend that ships the shape, and the core should not have to learn
+	// a new id to interpret its own wire format.
+	CostFieldCarriesCredit bool
+
+	// IsReplayedTurnMeta reports whether a notification's _meta belongs to the
+	// previous, already-completed turn rather than the current one.
+	//
+	// CodeBuddy re-emits the tail of the previous turn when an ACP session is
+	// reused across prompts (stale agent_message_chunk text and stale
+	// usage_update trace identity), so the core needs a way to recognise that.
+	// Declaring the hook (rather than comparing ids in the core) keeps "which
+	// backends can be compared across turns" a fact of the backend: other
+	// backends' requestIds are not comparable, and their genuine chunks could
+	// share an id with the baseline.
+	IsReplayedTurnMeta func(conn *ACPConn, meta map[string]any) bool
 }
 
 // LookupACPBehaviorFn resolves a backend's behavior hooks. Wired by

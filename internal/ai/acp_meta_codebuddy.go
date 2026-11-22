@@ -38,8 +38,14 @@ import (
 // the cost-only paths (generation tools, team-member turns) carry no usage
 // block, so that amount is captured as MetaExtraction.CostCredit.
 // Every other agent reports a real monetary cost (e.g. Claude's USD).
+//
+// The fact is read from the backend's registered ACPBehavior
+// (CostFieldCarriesCredit), not hard-coded here: a backend that repurposes the
+// field declares it beside its own _meta parser, and this package stays free of
+// backend ids.
 func costFieldCarriesCredit(backend string) bool {
-	return backend == "codebuddy"
+	b := acpBehavior(backend)
+	return b != nil && b.CostFieldCarriesCredit
 }
 
 const (
@@ -280,4 +286,21 @@ func codeBuddyRequestCredits(v any) map[string]float64 {
 		return nil
 	}
 	return credits
+}
+
+// MetaKeyCodeBuddyRequestID is the _meta key carrying the turn's requestId.
+// Exported for the CodeBuddy sub-package's replay hook, which has to read the
+// same key this package's _meta parser does.
+const MetaKeyCodeBuddyRequestID = metaKeyCodeBuddyRequestID
+
+// ACPConnIsCompletedTurnRequestID reports whether rid belongs to a turn that has
+// already completed on this connection (and is not the currently adopted
+// agent-initiated turn). Exported for backends whose replay hook needs the same
+// baseline comparison this package uses: the requestId set lives on ACPConn,
+// whose fields are private to this package.
+func ACPConnIsCompletedTurnRequestID(conn *ACPConn, rid string) bool {
+	if conn == nil {
+		return false
+	}
+	return conn.isCompletedTurnRequestID(rid)
 }

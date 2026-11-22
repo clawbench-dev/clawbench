@@ -1448,17 +1448,19 @@ func MapACPSessionUpdateForTest(update acp.SessionUpdate, ch chan<- StreamEvent)
 // incident fffc1395 showed the new reply prefixed by the previous message's
 // full conclusion. See ACPConn.lastCompletedRequestIDs.
 //
-// Deliberately scoped to CodeBuddy: other backends' requestIds are not
-// comparable across turns, and their genuine chunks could share an id with the
-// baseline. Safe to call from the ACP notification goroutine — it only reads
-// immutable fields and takes metaMu.
+// Which backends can be compared across turns is the backend's own fact, so it
+// is asked of the registered hook (ACPBehavior.IsReplayedTurnMeta) rather than
+// decided from an id here: other backends' requestIds are not comparable, and
+// their genuine chunks could share an id with the baseline. Safe to call from
+// the ACP notification goroutine — it only reads immutable fields and takes
+// metaMu.
 func isReplayedTurnMeta(conn *ACPConn, backendID string, meta map[string]any) bool {
-	if conn == nil || backendID != "codebuddy" || len(meta) == 0 {
+	if conn == nil || len(meta) == 0 {
 		return false
 	}
-	rid := metaString(meta[metaKeyCodeBuddyRequestID])
-	if rid == "" {
+	b := acpBehavior(backendID)
+	if b == nil || b.IsReplayedTurnMeta == nil {
 		return false
 	}
-	return conn.isCompletedTurnRequestID(rid)
+	return b.IsReplayedTurnMeta(conn, meta)
 }

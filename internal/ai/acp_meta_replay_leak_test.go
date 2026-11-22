@@ -173,3 +173,49 @@ func TestUsageUpdate_ReplayedTurnDoesNotAccumulateTokens(t *testing.T) {
 	assert.Equal(t, 1000, acc.Usage.InputTokens,
 		"the replayed turn's 5000 tokens must not be added to this turn")
 }
+
+// The replay filter must be decided by the backend's registered hook, not by a
+// comparison against a hard-coded id in the core.
+//
+// The two directions matter equally:
+//   - a backend that DOES declare the hook gets replayed frames dropped;
+//   - a backend that declares none must let them through, even when its
+//     requestId happens to equal the baseline (its ids are not comparable
+//     across turns, so a match is a coincidence, not a replay).
+//
+// Wiring the decision through LookupACPBehaviorFn is what lets a new backend
+// opt in without editing internal/ai.
+func TestReplayedTurnMeta_ComesFromTheRegisteredBehavior(t *testing.T) {
+	orig := LookupACPBehaviorFn
+	t.Cleanup(func() { LookupACPBehaviorFn = orig })
+
+	// Every backend that declares the hook gets this test implementation, which
+	// answers "yes" for one magic id. That isolates the DISPATCH (which the core
+	// owns) from the comparison itself (which the backend owns).
+	behaviors := map[string]*ACPBehavior{
+		"with-filter": {
+			IsReplayedTurnMeta: func(_ *ACPConn, meta map[string]any) bool {
+				return meta["rid"] == "magic"
+			},
+		},
+		"without-filter": {CostFieldCarriesCredit: true},
+	}
+	LookupACPBehaviorFn = func(id string) *ACPBehavior { return behaviors[id] }
+
+	conn := newACPConn(&model.Agent{ID: "x", Backend: "with-filter"}, "s1")
+
+	assert.True(t, isReplayedTurnMeta(conn, "with-filter", map[string]any{"rid": "magic"}),
+		"the declaring backend's hook must be consulted")
+	assert.False(t, isReplayedTurnMeta(conn, "with-filter", map[string]any{"rid": "other"}),
+		"the hook's own answer must be respected")
+
+	assert.False(t, isReplayedTurnMeta(conn, "without-filter", map[string]any{"rid": "magic"}),
+		"a backend declaring no hook must let every frame through")
+	assert.False(t, isReplayedTurnMeta(conn, "unregistered", map[string]any{"rid": "magic"}),
+		"an unknown backend must let every frame through")
+
+	assert.False(t, isReplayedTurnMeta(nil, "with-filter", map[string]any{"rid": "magic"}),
+		"a nil connection can never be a replay")
+	assert.False(t, isReplayedTurnMeta(conn, "with-filter", nil),
+		"empty meta can never be a replay")
+}

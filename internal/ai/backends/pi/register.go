@@ -75,6 +75,8 @@ func init() {
 			ConfigDirProviderID:     "clawbench",
 			ConfigDirAddressPrefix:  true,
 			ConfigDirDeclaresModels: true,
+			UserConfigDir:           ".pi/agent",
+			ConfigDirRender:         ModelsJSONContent,
 		},
 	})
 }

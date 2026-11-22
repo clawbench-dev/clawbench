@@ -131,3 +131,28 @@ func TestExtractCodeBuddyMeta_RequestCredits(t *testing.T) {
 // The cost-only paths (generation tools, team-member turns) carry credit with
 // NO usage block. Before this, costFieldCarriesCredit discarded the amount and
 // the billing vanished entirely.
+
+// The credit-vs-money decision must come from the backend's own registration,
+// not from an id comparison in the core. Two failure modes this pins:
+//
+//   - codebuddy declares it, so its `cost` field is still read as credit;
+//   - a backend that does NOT declare it is treated as money even when its
+//     registered behavior exists for other reasons (ExtractMeta), which is the
+//     regression a bare `backend == ""` check would not catch.
+func TestCostFieldCarriesCredit_ComesFromTheRegisteredBehavior(t *testing.T) {
+	orig := LookupACPBehaviorFn
+	t.Cleanup(func() { LookupACPBehaviorFn = orig })
+
+	behaviors := map[string]*ACPBehavior{
+		"credit-backend": {CostFieldCarriesCredit: true},
+		"money-backend":  {ExtractMeta: func(map[string]any) *MetaExtraction { return nil }},
+	}
+	LookupACPBehaviorFn = func(id string) *ACPBehavior { return behaviors[id] }
+
+	assert.True(t, costFieldCarriesCredit("credit-backend"),
+		"a backend declaring the flag must have its cost field treated as credit")
+	assert.False(t, costFieldCarriesCredit("money-backend"),
+		"a backend with a behavior but no flag reports real money")
+	assert.False(t, costFieldCarriesCredit(""),
+		"an empty backend id must not resolve to anything")
+}

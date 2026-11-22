@@ -61,6 +61,8 @@ func init() {
 			ConfigDirProtocols:    []string{model.ProviderProtocolAnthropic},
 			ConfigDirProviderID:   "clawbench",
 			ConfigDirSecretInFile: true,
+			UserConfigDir:         ".claude",
+			ConfigDirRender:       SettingsJSONContent,
 		},
 	})
 }
