@@ -218,7 +218,13 @@ export function useTerminalGestures(
     twoFingerMode = 'pending'
   }
 
-  function resetDisabledScrollState() {
+  /**
+   * `keepScrollingFlag` leaves `isBrowseScrolling` true for the caller that is
+   * about to hand control back to the browser (touchend). The blur listener runs
+   * AFTER this function — clearing the flag here would make its "don't re-focus
+   * while scrolling" check read `false` and never take effect.
+   */
+  function resetDisabledScrollState(keepScrollingFlag = false) {
     disabledScrollStartX = 0
     disabledScrollStartY = 0
     disabledScrollStartTime = 0
@@ -226,7 +232,7 @@ export function useTerminalGestures(
     disabledScrollActive = false
     disabledScrollMoved = false
     disabledScrollTracking = false
-    isBrowseScrolling.value = false
+    if (!keepScrollingFlag) isBrowseScrolling.value = false
   }
 
   function detectDirection(dx: number, dy: number): Direction | null {
@@ -419,17 +425,24 @@ export function useTerminalGestures(
     const startY = disabledScrollStartY
     const startTime = disabledScrollStartTime
 
-    if (wasScrolling || wasMoved) {
+    // Only a real vertical scroll suppresses the browser's default; a small
+    // horizontal drag is not a terminal scroll and must not swallow the default
+    // (it would also cancel the synthesized click for no reason).
+    if (wasScrolling) {
       preventNativeTouch(e)
     }
-    resetDisabledScrollState()
+    // Keep the flag set while the browser processes this touchend, so the
+    // Android blur listener can see "we were scrolling" and skip re-focusing.
+    resetDisabledScrollState(wasScrolling)
 
     if (wasTracking && !wasScrolling && !wasMoved) {
       const endTouch = e.changedTouches?.[0]
       const endMoved = endTouch
         ? Math.abs(endTouch.clientX - startX) > TAP_THRESHOLD || Math.abs(endTouch.clientY - startY) > TAP_THRESHOLD
         : false
-      const isQuickTap = startTime === 0 || Date.now() - startTime < 400
+      // startTime is always set when tracking started, so a 0 here means the
+      // press was never recorded — treat that as "not a tap" rather than a hit.
+      const isQuickTap = startTime > 0 && Date.now() - startTime < 400
       if (!endMoved && isQuickTap) {
         preventNativeTouch(e)
         callbacks.onBrowseTap?.()

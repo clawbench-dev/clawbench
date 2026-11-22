@@ -618,7 +618,28 @@ describe('useTerminalGestures — browse mode deferred focus & upper-layer guard
 
     const endEv = dispatchTouch(el, 'touchend', [], [makeTouch(82, 145)])
     expect(endEv.preventDefault).toHaveBeenCalled()
+    // The flag must survive touchend: the Android blur listener runs after this
+    // event and reads it to decide "don't re-focus, we were scrolling". It is
+    // cleared on the next touchstart.
+    expect(gestures.isBrowseScrolling.value).toBe(true)
+    expect(onBrowseTap).not.toHaveBeenCalled()
+
+    dispatchTouch(el, 'touchstart', [makeTouch(82, 145)])
     expect(gestures.isBrowseScrolling.value).toBe(false)
+  })
+
+  it('does not swallow the default on a horizontal drag (not a vertical scroll)', () => {
+    const { el, scrollDeltas, onBrowseTap, gestures } = setupBrowseWithCallbacks()
+
+    dispatchTouch(el, 'touchstart', [makeTouch(80, 100)])
+    dispatchTouch(el, 'touchmove', [makeTouch(140, 104)])
+    expect(gestures.isBrowseScrolling.value).toBe(false)
+    expect(scrollDeltas).toEqual([])
+
+    const endEv = dispatchTouch(el, 'touchend', [], [makeTouch(140, 104)])
+    // A horizontal drag is neither a scroll nor a tap, so the browser default
+    // (and any synthesized click) is left intact.
+    expect(endEv.preventDefault).not.toHaveBeenCalled()
     expect(onBrowseTap).not.toHaveBeenCalled()
   })
 

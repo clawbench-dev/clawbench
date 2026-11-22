@@ -1399,8 +1399,10 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   // interaction), this guard will fight that intent by re-showing it. The
   // decision logic lives in shouldAutoRefocusTerminal() (utils/terminalBlurUtils.ts)
   // and is unit-tested; keep any new "should dismiss" exceptions gated there.
-  // On mobile, block xterm's own mousedown->focus() in browse mode or while a
-  // popup/drawer/modal is open over the terminal; desktop is untouched.
+  //
+  // Separate concern (mobile only): block xterm's own mousedown->focus() in
+  // browse mode or while a popup/drawer/modal is open over the terminal.
+  // Desktop is untouched.
   const xtermEl = tab.xterm?.element
   if (xtermEl && !(xtermEl as unknown as { __mobileMousedownGuard?: boolean }).__mobileMousedownGuard) {
     ;(xtermEl as unknown as { __mobileMousedownGuard?: boolean }).__mobileMousedownGuard = true
