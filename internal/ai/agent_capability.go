@@ -595,7 +595,11 @@ func (r *AgentCapabilityRegistry) GetModelListState(agentID, currentModelID stri
 	agentCap, ok := r.caps[agentID]
 	r.mu.RUnlock()
 	if !ok || agentCap == nil || len(agentCap.AvailableModels) == 0 {
-		return nil
+		// An in-process backend never reports models over a handshake, so this
+		// is its ONLY model list. Without it the picker was empty until the
+		// first turn, and the chip had to guess. The answer depends only on the
+		// agent's provider binding, so nothing needs caching here.
+		return inProcessModelListState(agentID, currentModelID)
 	}
 	return &ModelListState{
 		CurrentModelID: currentModelID,
@@ -616,6 +620,14 @@ func (r *AgentCapabilityRegistry) GetModelListState(agentID, currentModelID stri
 // The data comes from the AgentCapabilityRegistry, written on the session/new
 // handshake and persisted to agents.acp_available_models, so it stays true
 // across restarts.
+//
+// An in-process backend (the built-in agent) counts as confirmed: it has no
+// handshake to wait for, and its list comes from the provider the user bound
+// themselves. Answering false there hid every one of its models behind the ACP
+// "not reported yet" gate, which is what left the picker empty and the model
+// chip on "Default" before the first message. It is safe to answer true for it:
+// the gate exists to stop a GUESSED list (CLI discovery) from being sent as
+// set_config_option over ACP, and an in-process agent has neither.
 func HasConfirmedACPModels(agentID string) bool {
 	return GetAgentCapabilityRegistry().GetModelListState(agentID, "") != nil
 }
@@ -763,9 +775,15 @@ func (r *AgentCapabilityRegistry) IsModelAvailable(agentID, modelID string) bool
 // every session would skip its model selection.
 func (r *AgentCapabilityRegistry) HasModelList(agentID string) bool {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 	agentCap, ok := r.caps[agentID]
-	return ok && agentCap != nil && len(agentCap.AvailableModels) > 0
+	r.mu.RUnlock()
+	if ok && agentCap != nil && len(agentCap.AvailableModels) > 0 {
+		return true
+	}
+	// An in-process backend's list is derived, never stored: asking the same
+	// question of GetModelListState keeps "is there a list?" and "what is it?"
+	// from disagreeing.
+	return inProcessModelListState(agentID, "") != nil
 }
 
 func (r *AgentCapabilityRegistry) IsModeAvailable(agentID, modeID string) bool {

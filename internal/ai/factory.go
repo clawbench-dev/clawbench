@@ -14,6 +14,21 @@ var (
 	backendFactoriesMu sync.RWMutex
 )
 
+// ModelListProvider is implemented by in-process backends that can name the
+// models they run WITHOUT a handshake.
+//
+// It exists because GetModelListState is the single funnel every model-list
+// consumer reads (the chat drawer, GET /api/agents, the ACP gate, the selftest),
+// and an in-process backend has no session/new to ever write the capability
+// registry. Without this hook its picker was empty until the first turn.
+//
+// It takes the agent id because several in-process agents can share one
+// backend and each has its own provider binding; an id it does not recognise
+// must yield nil rather than some other agent's list.
+type ModelListProvider interface {
+	ModelListState(agentID string) *ModelListState
+}
+
 type BackendFactoryEntry struct {
 	NewBackendFn func() AIBackend // returns a new backend instance
 }
@@ -35,11 +50,70 @@ func RegisterBackend(id string, newBackend func() AIBackend) {
 	}
 }
 
+// inProcessModelListState returns the model list an in-process backend reports
+// for this agent, or nil when it has none (an unbound built-in agent, a
+// non-built-in agent, or a backend without the hook).
+//
+// The registry only holds a backend id, so the agent is resolved here — the list
+// is a property of (backend, the agent's provider binding), and only the agent
+// knows which provider it is bound to.
+//
+// Resolution (which model is current, which provider ids apply) belongs to the
+// backend: it is the one place that knows an in-process turn's model, and the
+// ids it accepts. Here it is only asked whether one exists, and checked that it
+// names the agent we asked about.
+func inProcessModelListState(agentID, currentModelID string) *ModelListState {
+	agent := model.GetAgent(agentID)
+	if agent == nil || !agent.BuiltinBackend {
+		return nil
+	}
+	entry := lookupBackendFactory(agent.Backend)
+	if entry == nil || entry.NewBackendFn == nil {
+		return nil
+	}
+	provider, ok := entry.NewBackendFn().(ModelListProvider)
+	if !ok {
+		return nil
+	}
+	state := provider.ModelListState(agentID)
+	if state == nil || state.AgentID != agentID || len(state.Models) == 0 {
+		return nil
+	}
+	// Copied before the current-model override: callers hand the result to a
+	// response or a price pass, and an in-place edit would leak into whatever
+	// the next caller receives.
+	out := &ModelListState{
+		CurrentModelID: state.CurrentModelID,
+		Models:         append([]model.AgentModel(nil), state.Models...),
+	}
+	// A session may have picked a model the agent's list has since lost. Echo
+	// the pick back instead of marking someone else's row current: the turn
+	// really does run it (the backend falls back only when the endpoint is
+	// known not to serve it), so the chip must not claim otherwise.
+	if currentModelID != "" {
+		out.CurrentModelID = currentModelID
+	}
+	return out
+}
+
 // lookupBackendFactory returns the factory entry for the given backend ID.
 func lookupBackendFactory(id string) *BackendFactoryEntry {
 	backendFactoriesMu.RLock()
 	defer backendFactoriesMu.RUnlock()
 	return backendFactories[id]
+}
+
+// LookupInProcessBackend returns the factory entry for an in-process backend,
+// or nil when that id has no in-process implementation (every backend that
+// spawns an agent over ACP).
+//
+// The caller uses it to reach a backend's own capability hooks (such as
+// ModelListProvider) without instantiating a run: the handler needs the model
+// list of a provider-backed agent whose process is not running, and importing
+// the plugin registry from there would close an import cycle (plugins register
+// INTO this package).
+func LookupInProcessBackend(id string) *BackendFactoryEntry {
+	return lookupBackendFactory(id)
 }
 
 // LookupBackendFactoryForTest returns the factory entry for testing.

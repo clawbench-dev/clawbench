@@ -1586,6 +1586,13 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The in-process (built-in) agent: its list is derived from the provider
+	// binding, not discovered from a CLI, so it never reaches the discovery path
+	// below — that path would answer ModelDiscoveryNotSupported for it.
+	if respondWithBuiltinModels(w, r, &snapshot) {
+		return
+	}
+
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
@@ -1666,6 +1673,64 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 // agent with an ACP command does; only the built-in agent is refreshed locally.
 func agentUsesACP(a *model.Agent) bool {
 	return a != nil && a.SupportsACP()
+}
+
+// builtinModelRefresher is the subset of ai.ModelListProvider this file needs.
+//
+// Declared as a local interface (not imported as ai.ModelListProvider) so the
+// assertion below reads as "this backend can answer for one agent" without the
+// handler depending on the provider contract's full shape.
+type builtinModelRefresher interface {
+	ModelListState(agentID string) *ai.ModelListState
+}
+
+// builtinModelRefresherFor returns the in-process backend's model refresher.
+//
+// Resolved through the in-process factory registry rather than the backend
+// plugin registry: handler code never imports the plugin package (that would
+// make the dependency circular, since plugins register INTO internal/ai).
+func builtinModelRefresherFor(backendID string) (builtinModelRefresher, bool) {
+	factory := ai.LookupInProcessBackend(backendID)
+	if factory == nil || factory.NewBackendFn == nil {
+		return nil, false
+	}
+	refresher, ok := factory.NewBackendFn().(builtinModelRefresher)
+	return refresher, ok
+}
+
+// respondWithBuiltinModels answers POST /api/agents/{id}/refresh-models for an
+// in-process agent, and reports whether it handled the request.
+//
+// The built-in agent has nothing to discover: its models are the provider
+// binding the user configured, and its backend names them without a probe. It
+// is therefore answered here, not by the discovery path below — that path asks
+// for a BackendSpec model source, and the built-in backend deliberately has
+// none (no CLI to probe). Without this branch the drawer's refresh button
+// answered 400 ModelDiscoveryNotSupported for the one agent whose list is
+// already known, while the startup path had silently started showing it.
+//
+// Persisting the list would be wrong: it is derived from the provider (which
+// already owns the truth) and prices must never reach the database. Nothing is
+// written; the response IS the state.
+func respondWithBuiltinModels(w http.ResponseWriter, r *http.Request, agent *model.Agent) bool {
+	if agent == nil || !agent.BuiltinBackend {
+		return false
+	}
+	refresher, ok := builtinModelRefresherFor(agent.Backend)
+	if !ok {
+		return false
+	}
+	state := refresher.ModelListState(agent.ID)
+	if state == nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ModelDiscoveryNotSupported")
+		return true
+	}
+	resolved := model.WithPrices(state.ResolvedModels)
+	if len(resolved) == 0 {
+		resolved = model.WithPrices(state.Models)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"models": resolved})
+	return true
 }
 
 // refreshViaACPProbe answers POST /api/agents/{id}/refresh-models for an ACP

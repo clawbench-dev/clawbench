@@ -429,6 +429,12 @@ type ModelListState struct {
 	// Empty when the CLI list was unavailable at emit time; clients then fall
 	// back to Models.
 	ResolvedModels []model.AgentModel `json:"resolvedModels,omitempty"`
+	// AgentID names the agent this state was resolved for. Only in-process
+	// backends set it: their list is derived per agent rather than collected
+	// over a handshake, and the derivation needs the agent to know which
+	// provider it is bound to. Consumers narrow with it so one agent's list can
+	// never be served for another. Empty for ACP state (the registry keys it).
+	AgentID string `json:"-"`
 }
 
 // ThinkingEffortState carries the current and available thinking effort levels for an ACP session.

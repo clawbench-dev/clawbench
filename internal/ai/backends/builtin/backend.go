@@ -103,6 +103,85 @@ func staticCapability() *ai.AgentCapability {
 	}
 }
 
+// modelListStateForAgent returns the model list this agent can run, in the same
+// shape an ACP agent reports when it answers session/new.
+//
+// The built-in agent has NO handshake, so this is the only model list anyone
+// can get for it: every consumer (the chat drawer, GET /api/agents, the ACP
+// gate in internal/handler via ai.HasConfirmedACPModels, the selftest) reads it
+// through ai.AgentCapabilityRegistry.GetModelListState, which asks the backend
+// this question.
+//
+// The source is the bound provider's curated list — the ids the endpoint is
+// known to serve. An unbound agent (or a provider with no curated models) has
+// nothing trustworthy to offer, because whatever it runs is inherited from the
+// user's endpoint configuration rather than chosen. CurrentModelID is the model
+// a turn will actually run (model.Agent.DefaultModelID answers exactly as the
+// turn does), so the picker marks the right row and the client does not fall
+// back to "Default".
+func modelListStateForAgent(agent *model.Agent) *ai.ModelListState {
+	if agent == nil {
+		return nil
+	}
+	current := agent.DefaultModelID()
+	models := model.WithPrices(agent.ProviderPickerModels())
+	if len(models) == 0 {
+		// A provider with no curated list can still have an explicit pick (the
+		// "custom…" escape hatch). Echo that single model back: it is what the
+		// next turn sends, so the chip must name it instead of "Default", and
+		// withholding the list would leave the drawer empty for the one model
+		// the user deliberately chose.
+		if current == "" || agent.Provider() == nil {
+			return nil
+		}
+		models = model.WithPrices([]model.AgentModel{{
+			ID:      current,
+			Name:    current,
+			Default: true,
+		}})
+	}
+	out := make([]model.AgentModel, len(models))
+	copy(out, models)
+	for i := range out {
+		out[i].Default = out[i].ID == current
+	}
+	if current != "" && !hasModelID(out, current) {
+		// The pick is outside the provider's list (typed by hand). Keep it first
+		// and flagged: it IS the model running, and the picker groups by
+		// "what this agent can run" before "what the endpoint also offers".
+		out = append([]model.AgentModel{{ID: current, Name: current, Default: true}}, out...)
+	}
+	return &ai.ModelListState{CurrentModelID: current, Models: out}
+}
+
+func hasModelID(models []model.AgentModel, id string) bool {
+	for _, m := range models {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// ModelListState reports the model list of one built-in agent.
+//
+// The backend is created per run (see ai.ModelListProvider) and is stateless,
+// and several built-in agents (the auto-inserted one plus any copies) share it,
+// so the agent has to be named. An id this backend does not serve yields nil
+// rather than some other agent's list.
+func (b *Backend) ModelListState(agentID string) *ai.ModelListState {
+	agent := model.GetAgent(agentID)
+	if agent == nil || !agent.BuiltinBackend || agent.Backend != BackendID {
+		return nil
+	}
+	state := modelListStateForAgent(agent)
+	if state == nil {
+		return nil
+	}
+	state.AgentID = agent.ID
+	return state
+}
+
 // newBackend constructs the in-process backend.
 func newBackend() ai.AIBackend {
 	return &Backend{}
