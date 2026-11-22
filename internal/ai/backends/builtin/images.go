@@ -3,18 +3,19 @@ package builtin
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"clawbench/internal/agentcore/llm"
 	"clawbench/internal/model"
 )
 
-// maxTurnImages bounds how many pictures one message may send.
+// maxTurnImages bounds how many pictures are sent as BYTES for one message.
 //
-// Only THIS turn's images are sent (see buildSpec) — replaying them from the
-// whole history made every turn pay again for pictures the model had already
-// described. The cap is a separate, smaller guard: a message with twenty
-// screenshots still fits one request.
+// Only the fallback path sends bytes (the agent normally opens the file itself,
+// see readableImageHints), and a message with twenty screenshots would otherwise
+// put all of them in one request. The pictures over the cap are still named, so
+// the model can open them by path.
 const maxTurnImages = 4
 
 // maxTurnImageBytes bounds one image.
@@ -23,6 +24,66 @@ const maxTurnImages = 4
 // a picture and the model cannot see it" is the failure this file exists to
 // prevent, and silence is what made it invisible.
 const maxTurnImageBytes = 10 * 1024 * 1024
+
+// readableImageHints names the pictures the agent can open for itself.
+//
+// Preferred over sending the bytes: the agent's read tool returns an image, so
+// the model can look whenever it actually needs to. The path is the handle — it
+// stays in the transcript, so a later turn can re-open an older picture without
+// anyone re-sending it.
+//
+// It returns hints for the files the read tool can reach, plus the ones it
+// cannot (outside the working directory while the policy confines paths, or no
+// read capability at all). The caller sends those inline instead, because a
+// path the agent cannot open is a picture nobody sees.
+func readableImageHints(files []model.FileEntry, workDir string, canRead, confined bool) ([]string, []model.FileEntry) {
+	var hints []string
+	var fallback []model.FileEntry
+	seen := make(map[string]bool, len(files))
+	for _, f := range files {
+		if f.IsQuote() || f.IsDir {
+			continue
+		}
+		// A remote picture has no local file to read; it keeps the address.
+		if f.IsURL() {
+			if _, ok := imageMediaType(f.URL); !ok || seen[f.URL] {
+				continue
+			}
+			seen[f.URL] = true
+			fallback = append(fallback, f)
+			continue
+		}
+		path := strings.TrimSpace(f.Path)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		if _, ok := imageMediaType(path); !ok {
+			continue
+		}
+		if canRead && (!confined || withinDir(workDir, path)) {
+			hints = append(hints, path)
+			continue
+		}
+		fallback = append(fallback, f)
+	}
+	return hints, fallback
+}
+
+// withinDir reports whether path sits inside dir.
+//
+// A path that cannot be compared (relative, or dir unknown) is treated as
+// outside: the caller then sends the picture inline, which always works.
+func withinDir(dir, path string) bool {
+	if dir == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
 
 // turnImageParts renders this turn's image attachments as message parts.
 //
@@ -93,6 +154,20 @@ func turnImageParts(files []model.FileEntry) ([]llm.Part, []string) {
 		parts = append(parts, llm.Part{Image: &llm.Image{MediaType: mediaType, Data: data}})
 	}
 	return parts, notes
+}
+
+// imageHint points the model at the pictures it can open itself.
+//
+// One line for all of them: the prompt's attachment header already lists the
+// same paths, so a line per picture would just repeat it. Phrased as an
+// instruction, not a label: the standing media rule says not to read a file
+// unless the intent is clear, and "the user attached these" is that clarity.
+func imageHint(paths []string) string {
+	if len(paths) == 1 {
+		return "[User attached an image: " + paths[0] + " — view it with the read tool before answering]"
+	}
+	return "[User attached " + strconv.Itoa(len(paths)) + " images: " + strings.Join(paths, ", ") +
+		" — view them with the read tool before answering]"
 }
 
 // notAttachedNotice tells the model an attachment existed but was not sent.

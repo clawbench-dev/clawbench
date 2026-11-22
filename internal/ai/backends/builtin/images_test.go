@@ -14,6 +14,29 @@ import (
 // vision-capable, which is what gates the image path.
 func withVisionProvider(t *testing.T, baseURL string) string {
 	t.Helper()
+	return visionAgent(t, baseURL, true)
+}
+
+// withVisionProviderNoRead is the same agent with the read capability removed:
+// the only way it can see a picture is to be sent the bytes.
+func withVisionProviderNoRead(t *testing.T, baseURL string) string {
+	t.Helper()
+	return visionAgent(t, baseURL, false)
+}
+
+// withConfinedVisionProvider confines file paths to the working directory, so a
+// path elsewhere cannot be opened by the read tool.
+func withConfinedVisionProvider(t *testing.T, baseURL string) string {
+	t.Helper()
+	id := visionAgent(t, baseURL, true)
+	agent := model.Agents[id]
+	agent.ToolPolicy.RestrictToWorkDir = true
+	model.Agents[id] = agent
+	return id
+}
+
+func visionAgent(t *testing.T, baseURL string, canRead bool) string {
+	t.Helper()
 	prevCat := model.CatalogSnapshot()
 	model.ReplaceCatalog(&model.Catalog{Providers: map[string]model.CatalogProvider{
 		"vision": {
@@ -41,12 +64,16 @@ func withVisionProvider(t *testing.T, baseURL string) string {
 	if model.Agents == nil {
 		model.Agents = map[string]*model.Agent{}
 	}
-	id := "builtin-vision-" + t.Name()
+	id := "builtin-vision-" + t.Name() + "-" + map[bool]string{true: "read", false: "noread"}[canRead]
 	pid := int64(72)
+	policy := model.ToolPolicy{}
+	if canRead {
+		policy.Allow = []string{model.CapFSRead}
+	}
 	model.Agents[id] = &model.Agent{
 		ID: id, Backend: BackendID, BuiltinBackend: true,
 		ProviderID: &pid, PreferredModel: "vision-model",
-		ToolPolicy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+		ToolPolicy: policy,
 	}
 	t.Cleanup(func() { delete(model.Agents, id) })
 	return id
@@ -184,16 +211,18 @@ func TestTurnImageParts_IgnoresNonFiles(t *testing.T) {
 	}
 }
 
-// The wiring: this turn's picture rides the PROMPT message, and history carries
-// none. Re-attaching earlier turns' pictures made every turn pay again for
-// images the model had already described.
-func TestBuildSpec_ImagesRideOnlyTheCurrentTurn(t *testing.T) {
+// The preferred form: a picture inside the working directory is POINTED AT, not
+// sent. The agent's read tool returns the image, so the bytes only travel when
+// the model actually looks — and the path stays in the transcript as the handle.
+func TestBuildSpec_ImageInsideWorkDirIsPointedAt(t *testing.T) {
 	agentID := withVisionProvider(t, "http://127.0.0.1:1")
-	path := writeImage(t, t.TempDir(), "now.png", 6)
+	dir := t.TempDir()
+	path := writeImage(t, dir, "now.png", 6)
 
 	spec, err := buildSpec(ai.ChatRequest{
 		AgentID: agentID,
-		Prompt:  "[User uploaded 1 file(s): " + path + "]",
+		Prompt:  "[User uploaded 1 file(s): " + path + "]\n看看这个",
+		WorkDir: dir,
 		Files:   []model.FileEntry{{Path: path}},
 		History: []ai.HistoryMessage{
 			{Role: "user", Text: "earlier", ID: 11},
@@ -203,8 +232,11 @@ func TestBuildSpec_ImagesRideOnlyTheCurrentTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSpec: %v", err)
 	}
-	if len(spec.PromptParts) != 1 || spec.PromptParts[0].Image == nil {
-		t.Fatalf("the current turn's picture must ride the prompt, got %+v", spec.PromptParts)
+	if len(spec.PromptParts) != 0 {
+		t.Fatalf("a readable picture must not be sent as bytes, got %+v", spec.PromptParts)
+	}
+	if !strings.Contains(spec.Prompt, path) || !strings.Contains(spec.Prompt, "read tool") {
+		t.Fatalf("the prompt must point the model at the picture, got %q", spec.Prompt)
 	}
 	for i, m := range spec.History {
 		for _, p := range m.Parts {
@@ -215,15 +247,62 @@ func TestBuildSpec_ImagesRideOnlyTheCurrentTurn(t *testing.T) {
 	}
 }
 
-// A text-only model keeps the name-only prompt: an image part would make every
-// turn fail at the endpoint.
-func TestBuildSpec_TextOnlyModelGetsNoImageParts(t *testing.T) {
-	agentID := withProvider(t, "http://127.0.0.1:1") // edge-model is not in the catalog
-	path := writeImage(t, t.TempDir(), "now.png", 6)
+// Without a read capability the pointer is useless, so the bytes are sent: the
+// model has no other way to see the picture.
+func TestBuildSpec_NoReadCapabilitySendsBytes(t *testing.T) {
+	agentID := withVisionProviderNoRead(t, "http://127.0.0.1:1")
+	dir := t.TempDir()
+	path := writeImage(t, dir, "now.png", 6)
 
 	spec, err := buildSpec(ai.ChatRequest{
 		AgentID: agentID,
 		Prompt:  "look",
+		WorkDir: dir,
+		Files:   []model.FileEntry{{Path: path}},
+	})
+	if err != nil {
+		t.Fatalf("buildSpec: %v", err)
+	}
+	if len(spec.PromptParts) != 1 || spec.PromptParts[0].Image == nil {
+		t.Fatalf("without read the picture must be sent, got %+v", spec.PromptParts)
+	}
+	if strings.Contains(spec.Prompt, "read tool") {
+		t.Fatalf("no hint may be given for a tool the agent does not have: %q", spec.Prompt)
+	}
+}
+
+// A path the confined read tool cannot open is sent instead, or the picture is
+// silently lost.
+func TestBuildSpec_OutsideConfinedDirSendsBytes(t *testing.T) {
+	agentID := withConfinedVisionProvider(t, "http://127.0.0.1:1")
+	work := t.TempDir()
+	elsewhere := writeImage(t, t.TempDir(), "outside.png", 6)
+
+	spec, err := buildSpec(ai.ChatRequest{
+		AgentID: agentID,
+		Prompt:  "look",
+		WorkDir: work,
+		Files:   []model.FileEntry{{Path: elsewhere}},
+	})
+	if err != nil {
+		t.Fatalf("buildSpec: %v", err)
+	}
+	if len(spec.PromptParts) != 1 || spec.PromptParts[0].Image == nil {
+		t.Fatalf("an unreadable path must be sent as bytes, got %+v", spec.PromptParts)
+	}
+}
+
+// A text-only model keeps the name-only prompt: an image part would make every
+// turn fail at the endpoint.
+func TestBuildSpec_TextOnlyModelGetsNothing(t *testing.T) {
+	agentID := withProvider(t, "http://127.0.0.1:1") // edge-model is not in the catalog
+	dir := t.TempDir()
+	path := writeImage(t, dir, "now.png", 6)
+
+	spec, err := buildSpec(ai.ChatRequest{
+		AgentID: agentID,
+		Prompt:  "look",
+		WorkDir: dir,
 		Files:   []model.FileEntry{{Path: path}},
 	})
 	if err != nil {
@@ -231,5 +310,39 @@ func TestBuildSpec_TextOnlyModelGetsNoImageParts(t *testing.T) {
 	}
 	if len(spec.PromptParts) != 0 {
 		t.Fatalf("a blind model must not receive image parts, got %+v", spec.PromptParts)
+	}
+	if strings.Contains(spec.Prompt, "read tool") {
+		t.Fatalf("a blind model must not be told to look at a picture: %q", spec.Prompt)
+	}
+}
+
+// The split itself: hints for what the read tool can reach, bytes for the rest.
+func TestReadableImageHints_SplitsByReachability(t *testing.T) {
+	dir := t.TempDir()
+	inside := writeImage(t, dir, "in.png", 4)
+	outside := writeImage(t, t.TempDir(), "out.png", 4)
+
+	hints, fallback := readableImageHints([]model.FileEntry{
+		{Path: inside},
+		{Path: outside},
+		{Kind: "url", URL: "https://example.com/x.png"},
+	}, dir, true, true)
+
+	if len(hints) != 1 || hints[0] != inside {
+		t.Fatalf("only the reachable file may be hinted, got %v", hints)
+	}
+	if len(fallback) != 2 {
+		t.Fatalf("the unreachable file and the link must be sent, got %+v", fallback)
+	}
+}
+
+// With the fence off, a path anywhere is reachable, so it is hinted.
+func TestReadableImageHints_OpenPolicyHintsAnyPath(t *testing.T) {
+	dir := t.TempDir()
+	outside := writeImage(t, t.TempDir(), "out.png", 4)
+
+	hints, fallback := readableImageHints([]model.FileEntry{{Path: outside}}, dir, true, false)
+	if len(hints) != 1 || len(fallback) != 0 {
+		t.Fatalf("an open policy can reach any path, got hints=%v fallback=%v", hints, fallback)
 	}
 }

@@ -160,16 +160,29 @@ func buildSpec(req ai.ChatRequest) (agentcore.Spec, error) {
 	// drift and make a compaction boundary cover the wrong stored turn.
 	replay := buildHistoryReplay(req)
 
-	// This turn's pictures ride the prompt message. History is replayed WITHOUT
-	// images on purpose: re-attaching every earlier turn's pictures made each
-	// turn pay again for what the model had already described.
+	// This turn's pictures. The PREFERRED form is a pointer, not the bytes: the
+	// agent's read tool returns an image, so the model opens the file when it
+	// actually needs to look, and the path stays in the transcript as the handle
+	// for later turns. Bytes are sent only when the agent cannot open the file
+	// itself (no read capability, or a path outside the confined working
+	// directory) — a path nobody can open is a picture nobody sees.
+	//
+	// History never carries images either way: re-sending every earlier turn's
+	// picture made each turn pay again for what the model had already described.
 	prompt := req.Prompt
 	var promptParts []llm.Part
+	policy := agent.ToolPolicy.Normalized().ForMode(req.Mode)
 	if client.SupportsVision() {
-		parts, notes := turnImageParts(req.Files)
-		promptParts = parts
-		for _, n := range notes {
-			prompt += "\n" + n
+		hints, fallback := readableImageHints(req.Files, req.WorkDir, policy.Has(model.CapFSRead), policy.ConfinesToWorkDir())
+		if len(hints) > 0 {
+			prompt += "\n" + imageHint(hints)
+		}
+		if len(fallback) > 0 {
+			parts, notes := turnImageParts(fallback)
+			promptParts = parts
+			for _, n := range notes {
+				prompt += "\n" + n
+			}
 		}
 	}
 
@@ -187,7 +200,7 @@ func buildSpec(req ai.ChatRequest) (agentcore.Spec, error) {
 		WorkDir:           req.WorkDir,
 		// The session mode narrows the agent's grant; it never widens it. An
 		// empty mode (background task, older client) leaves the grant as-is.
-		Policy:         agent.ToolPolicy.Normalized().ForMode(req.Mode),
+		Policy:         policy,
 		ThinkingEffort: req.ThinkingEffort,
 		// A reply budget derived from the model, not the provider default: a
 		// reasoning model spends it on thinking first, and an unset max_tokens
