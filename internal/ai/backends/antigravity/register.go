@@ -36,9 +36,10 @@ func init() {
 			ACPLoadSession:       true,
 			// agy acp 1.5.x omits mcpCapabilities from InitializeResponse even
 			// though session/new, session/load, and session/resume natively
-			// connect HTTP MCP servers.
-			ACPMCPHTTP: true,
-			InstallCmd: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+			// connect HTTP MCP servers. Verified by hand on 1.5.2; if a future
+			// release starts advertising it, this bit simply becomes redundant.
+			ACPMCPHTTPUnadvertised: true,
+			InstallCmd:             "curl -fsSL https://antigravity.google/cli/install.sh | bash",
 			// `agy acp` refuses session/new with -32000 Authentication required
 			// until the CLI has been signed in. `--login` is agy's own
 			// "ACP terminal auth" flag: it signs in with Google and exits,

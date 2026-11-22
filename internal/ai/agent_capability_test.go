@@ -925,49 +925,43 @@ func TestRegistry_MCPCapabilitiesPersistAcrossRestart(t *testing.T) {
 }
 
 // TestRegistry_MCPCapabilitiesSupplementedByBackendSpec verifies that when a
-// backend's BackendSpec declares ACPMCPHTTP=true (e.g. agy acp 1.5.x, which
-// natively accepts HTTP MCP servers but omits mcpCapabilities in Initialize),
-// GetMCPCapabilities returns HTTP:true even before/after a false handshake and
+// backend's BackendSpec sets ACPMCPHTTPUnadvertised (e.g. agy acp 1.5.x, which
+// accepts HTTP MCP servers but omits mcpCapabilities in Initialize),
+// GetMCPCapabilities returns HTTP:true even before/after a false handshake, and
 // ResolveMCPServers passes transport=http servers through while still filtering
-// unsupported SSE servers.
+// unsupported SSE servers. A backend that does not set the bit must be
+// unaffected — the supplement is per backend, not a global unlock.
 func TestRegistry_MCPCapabilitiesSupplementedByBackendSpec(t *testing.T) {
 	reg := resetGlobalRegistryForTest(t)
 
 	const backendName = "test-spec-mcp-http"
+	const plainBackend = "test-plain-mcp"
 	const agentID = "agent-spec-mcp-http"
+	const plainAgentID = "agent-plain-mcp"
 
-	prevSpecs := append([]model.BackendSpec(nil), model.GetBackendRegistry()...)
-	model.BackendRegistry = append(append([]model.BackendSpec(nil), prevSpecs...), model.BackendSpec{
-		ID:         backendName,
-		Backend:    backendName,
-		AcpCommand: "fake-acp",
-		ACPMCPHTTP: true,
-	})
-	t.Cleanup(func() { model.BackendRegistry = prevSpecs })
+	t.Cleanup(model.SetBackendRegistryForTest([]model.BackendSpec{
+		{ID: backendName, Backend: backendName, AcpCommand: "fake-acp", ACPMCPHTTPUnadvertised: true},
+		{ID: plainBackend, Backend: plainBackend, AcpCommand: "fake-acp"},
+	}))
 
 	prevAgents := model.Agents
-	if model.Agents == nil {
-		model.Agents = make(map[string]*model.Agent)
+	model.Agents = map[string]*model.Agent{
+		agentID: {
+			ID:         agentID,
+			Name:       "Spec HTTP MCP Agent",
+			Backend:    backendName,
+			Transport:  "acp-stdio",
+			MCPServers: model.MCPServerPolicy{Mode: model.MCPPolicyAll},
+		},
+		plainAgentID: {
+			ID:         plainAgentID,
+			Name:       "Plain MCP Agent",
+			Backend:    plainBackend,
+			Transport:  "acp-stdio",
+			MCPServers: model.MCPServerPolicy{Mode: model.MCPPolicyAll},
+		},
 	}
-	prevAgent, hadPrevAgent := model.Agents[agentID]
-	model.Agents[agentID] = &model.Agent{
-		ID:         agentID,
-		Name:       "Spec HTTP MCP Agent",
-		Backend:    backendName,
-		Transport:  "acp-stdio",
-		MCPServers: model.MCPServerPolicy{Mode: model.MCPPolicyAll},
-	}
-	t.Cleanup(func() {
-		if prevAgents == nil {
-			model.Agents = nil
-			return
-		}
-		if hadPrevAgent {
-			model.Agents[agentID] = prevAgent
-		} else {
-			delete(model.Agents, agentID)
-		}
-	})
+	t.Cleanup(func() { model.Agents = prevAgents })
 
 	prevSnap := model.MCPServersSnapshot()
 	model.PublishMCPSnapshot(model.MCPConfig{
@@ -979,14 +973,21 @@ func TestRegistry_MCPCapabilitiesSupplementedByBackendSpec(t *testing.T) {
 	})
 	t.Cleanup(func() { model.PublishMCPSnapshot(model.MCPConfig{Servers: prevSnap}) })
 
-	// Before any handshake, BackendSpec.ACPMCPHTTP already unlocks HTTP MCP.
+	// Before any handshake, the spec bit already unlocks HTTP MCP.
 	assert.Equal(t, model.MCPCapabilities{HTTP: true, SSE: false}, reg.GetMCPCapabilities(agentID))
 
-	// Even if a prior handshake persisted false/false (e.g. legacy DB row),
-	// BackendSpec.ACPMCPHTTP still keeps HTTP enabled while SSE remains false.
+	// Even if a prior handshake persisted false/false (e.g. legacy DB row), the
+	// spec bit keeps HTTP enabled — and it never supplements SSE, because
+	// sending an unsupported sse server fails the whole session/new.
 	reg.UpdateMCPCapabilities(agentID, false, false)
 	caps := reg.GetMCPCapabilities(agentID)
 	assert.Equal(t, model.MCPCapabilities{HTTP: true, SSE: false}, caps)
+
+	// Per-backend: an agent whose spec does not set the bit sees exactly what it
+	// advertised, even though another backend is unlocked in the same registry.
+	reg.UpdateMCPCapabilities(plainAgentID, false, false)
+	assert.Equal(t, model.MCPCapabilities{}, reg.GetMCPCapabilities(plainAgentID),
+		"a backend without ACPMCPHTTPUnadvertised must not gain HTTP MCP")
 
 	resolved := model.ResolveMCPServers(agentID, caps)
 	names := make([]string, 0, len(resolved))

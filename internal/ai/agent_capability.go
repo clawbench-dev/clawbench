@@ -670,14 +670,20 @@ func (r *AgentCapabilityRegistry) GetListSessions(agentID string) bool {
 	return ok && agentCap != nil && agentCap.ListSessions != nil && *agentCap.ListSessions
 }
 
-// GetMCPCapabilities returns the agent's advertised MCP transports, supplemented
-// by BackendSpec.ACPMCPHTTP for backends that natively support HTTP MCP servers
-// but omit mcpCapabilities in their InitializeResponse.
+// GetMCPCapabilities returns the EFFECTIVE MCP transports for an agent: what it
+// advertised in Initialize, supplemented by BackendSpec.ACPMCPHTTPUnadvertised
+// for backends that accept HTTP MCP servers without advertising it.
+//
+// This is the single place that decides the effective value. Callers (session
+// new/load/resume, the injector) must not OR the spec bit in themselves — two
+// copies of the rule drift apart, and the comment that explains the risk lives
+// here.
 //
 // stdio is not represented: the ACP spec makes it mandatory, so it needs no
 // flag. A false value for http/sse means "not advertised", which must be read
 // as "do not send" — those transports are optional and sending one the agent
-// does not support fails the whole session/new.
+// does not support fails the whole session/new. Only HTTP has a spec override;
+// SSE stays purely advertisement-driven.
 func (r *AgentCapabilityRegistry) GetMCPCapabilities(agentID string) model.MCPCapabilities {
 	r.mu.RLock()
 	agentCap, ok := r.caps[agentID]
@@ -687,9 +693,13 @@ func (r *AgentCapabilityRegistry) GetMCPCapabilities(agentID string) model.MCPCa
 		caps.SSE = agentCap.McpSSE != nil && *agentCap.McpSSE
 	}
 	r.mu.RUnlock()
+
+	// The agent lookup happens AFTER releasing the registry lock on purpose: it
+	// takes model.agentsMu, and no registry method acquires a second lock while
+	// holding r.mu, so the order stays one-way (registry -> agents).
 	if !caps.HTTP {
 		if agent := model.GetAgent(agentID); agent != nil {
-			if spec := model.FindSpecByBackend(agent.Backend); spec != nil && spec.ACPMCPHTTP {
+			if spec := model.FindSpecByBackend(agent.Backend); spec != nil && spec.ACPMCPHTTPUnadvertised {
 				caps.HTTP = true
 			}
 		}
