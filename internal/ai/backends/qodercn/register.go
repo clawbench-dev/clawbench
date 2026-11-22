@@ -52,7 +52,6 @@ func init() {
 			NativeSkillsDirs:      []string{".qoder-cn/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
 		},
-		CLI: &backends.CLIPlugin{NewBackend: newQoderCNBackend},
 		// Same protocol family as qoder (and claude): shared parsers.
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       claude.ParseACPToolCall,
@@ -65,13 +64,4 @@ func init() {
 		// Deliberately empty: same as qoder — login-based, no provider vars.
 		ProviderEnv: &model.ProviderEnvSpec{},
 	})
-}
-
-// newQoderCNBackend returns a CLIBackend instance for Qoder CLI CN.
-//
-// It reuses the international build's argument builder and stdin-prompt
-// prestart hook: the CLI surface is identical (probe L0 asserts all 59 flags
-// match), only the binary name differs.
-func newQoderCNBackend() ai.AIBackend {
-	return qoder.NewCLIBackend("qodercn", "qoderclicn")
 }

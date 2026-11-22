@@ -222,6 +222,18 @@ func (r *AgentCapabilityRegistry) Get(agentID string) *AgentCapability {
 	return staticCapabilitiesForAgent(agentID)
 }
 
+// ResetForTest forgets everything recorded for one agent id.
+//
+// Update/UpdateModels only MERGE (a list can be replaced, never removed), so a
+// test that seeds runtime state has no way to put the registry back — the next
+// test would see a model list it never wrote. Test-only; production never drops
+// an agent's capability row (the agent row itself is deleted, not the cache).
+func (r *AgentCapabilityRegistry) ResetForTest(agentID string) {
+	r.mu.Lock()
+	delete(r.caps, agentID)
+	r.mu.Unlock()
+}
+
 // Update updates the capability for an agent and persists to DB.
 // Only non-nil/non-empty fields are overwritten; others are preserved.
 func (r *AgentCapabilityRegistry) Update(agentID string, agentCap *AgentCapability) {

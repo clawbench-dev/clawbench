@@ -423,9 +423,6 @@ type ModelListState struct {
 	// Empty when the CLI list was unavailable at emit time; clients then fall
 	// back to Models.
 	ResolvedModels []model.AgentModel `json:"resolvedModels,omitempty"`
-	// CLIModels is the pure CLI-discovered list for the agent, so a client can
-	// render the CLI view after a transport switch without re-deriving it.
-	CLIModels []model.AgentModel `json:"cliModels,omitempty"`
 }
 
 // ThinkingEffortState carries the current and available thinking effort levels for an ACP session.

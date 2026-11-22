@@ -44,7 +44,7 @@ test.describe('custom ACP agent', () => {
       const created = await send('POST', '/api/agents', { name: agentName, acp_command: command })
       if (!created.ok) return { step: 'create', ok: false, created }
       const agent = created.body as {
-        id: string; backend: string; transport: string; acpCommand: string; supportsCLI: boolean
+        id: string; backend: string; transport: string; acpCommand: string
       }
 
       // 3. It must survive a reload (persisted, not just in the live map).
@@ -123,7 +123,7 @@ test.describe('custom ACP agent', () => {
     expect(result.ok, JSON.stringify(result)).toBe(true)
 
     const r = result as {
-      agent: { id: string; backend: string; transport: string; acpCommand: string; supportsCLI: boolean }
+      agent: { id: string; backend: string; transport: string; acpCommand: string }
       reloaded?: { backend: string; transport: string; acpCommand: string }
       assistantContent: string | null
       blockTypes: string[]
@@ -135,9 +135,6 @@ test.describe('custom ACP agent', () => {
     expect(r.agent.backend).toBe('custom-acp')
     expect(r.agent.transport).toBe('acp-stdio')
     expect(r.agent.acpCommand).toBeTruthy()
-    // A custom backend has no CLI factory, so no CLI transport may be offered.
-    expect(r.agent.supportsCLI).toBe(false)
-
     expect(r.reloaded).toBeTruthy()
     expect(r.reloaded!.transport).toBe('acp-stdio')
     expect(r.reloaded!.acpCommand).toBe(r.agent.acpCommand)

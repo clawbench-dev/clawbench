@@ -39,18 +39,14 @@ const (
 // backend: everything a caller can know WITHOUT connecting to the agent.
 //
 // It exists because those facts used to be reachable only by knowing which
-// field to inspect: "has a CLI" is `plugin.CLI != nil`, "can join a running
-// turn" is `plugin.MidTurn != nil`, "can be pointed at a provider" is a
-// non-empty ProviderEnvSpec. Every consumer had to re-derive that mapping, and
+// field to inspect: "can join a running turn" is `plugin.MidTurn != nil`,
+// "can be pointed at a provider" is a non-empty ProviderEnvSpec. Every consumer had to re-derive that mapping, and
 // the provider "method" taxonomy had no representation at all.
 //
 // Runtime facts (available models, modes, thinking levels) are deliberately
 // absent: they can only come from the agent over ACP, so a static snapshot
 // must not pretend to know them.
 type BackendCapabilities struct {
-	// HasCLI is true when the backend has a CLI-transport factory. ACP-only
-	// backends (antigravity, cursor, dsh, commandcode) report false.
-	HasCLI bool
 	// HasACP is true when the backend can be spawned over the ACP transport
 	// (its spec names an AcpCommand). This is deliberately not "declares ACP
 	// mapping data": backends that speak plain ACP (claude, cursor) leave the
@@ -113,11 +109,6 @@ func LookupBackendCapabilities(backendID string) BackendCapabilities {
 	}
 	caps, _ := LookupBackendCapabilitiesFn(backendID)
 	return caps
-}
-
-// BackendSupportsCLI reports whether the backend has a CLI implementation.
-func BackendSupportsCLI(backendID string) bool {
-	return LookupBackendCapabilities(backendID).HasCLI
 }
 
 // BackendSupportsMidTurn reports whether the backend can join a running turn.

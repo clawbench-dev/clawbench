@@ -267,7 +267,7 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const selfTest = useAgentSelfTest()
-const { loadAgents, getAgent, agentsLoaded, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP, getAgentAvailableModes } = useAgents()
+const { loadAgents, getAgent, agentsLoaded, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentAvailableModes } = useAgents()
 const activeKey = ref<string | null>(null)
 const copying = ref(false)
 
@@ -325,17 +325,9 @@ const isDefaultAgentValue = computed(() => agent.value?.id === defaultAgentId.va
 // missing — the list starts empty, so before the fetch lands every id is absent.
 const agentMissing = computed(() => !agent.value && agentsLoaded.value)
 
-// Determine if agent is ACP-only (has acpCommand but no CLI backend implementation)
-const isACPOnly = computed(() => {
-  const a = agent.value
-  if (!a) return false
-  return a.acpCommand && !a.supportsCLI
-})
-
 // A user-defined ACP agent (issue #557). Its backend has no registry entry, so
-// `supportsCLI` is false and every capability comes from the agent at runtime —
-// the same shape as an ACP-only built-in, which is why it needs no special
-// handling beyond keeping the command field editable when it is empty.
+// every capability comes from the agent at runtime, which is why it needs no
+// special handling beyond keeping the command field editable when it is empty.
 const isCustomAcpAgent = computed(() => agent.value?.backend === 'custom-acp')
 
 /**
@@ -356,11 +348,14 @@ const hasBackendSpec = computed(() => agent.value?.backendHasSpec === true)
  */
 const isBuiltinBackend = computed(() => agent.value?.builtinBackend === true)
 
-// Determine if agent supports both ACP and CLI (dual transport)
-const isDualTransport = computed(() => {
+/**
+ * Whether this agent runs over ACP — true for everything except the built-in
+ * agent, whose tools are this process. ACP agents own their system prompt, so
+ * the page shows it read-only for them.
+ */
+const agentUsesACP = computed(() => {
   const a = agent.value
-  if (!a) return false
-  return a.acpCommand && a.supportsCLI !== false
+  return !!a && !a.builtinBackend && !!a.acpCommand
 })
 
 interface AgentItem {
@@ -441,8 +436,9 @@ const items = computed<AgentItem[]>(() => {
     patchField: 'specialty',
   })
 
-  // System Prompt: editable for CLI/dual agents, read-only info for ACP-only.
-  if (isACPOnly.value) {
+  // System Prompt: editable for the in-process agent, read-only info for ACP
+  // agents (which own their system prompt).
+  if (agentUsesACP.value) {
     result.push({
       key: 'custom_system_prompt',
       label: t('settings.items.agentSystemPrompt'),
@@ -574,20 +570,6 @@ const items = computed<AgentItem[]>(() => {
       type: 'select',
       options: a.thinkingEffortLevels.map((l: string) => ({ label: l, value: l })),
       patchField: 'preferred_thinking_effort',
-    })
-  }
-
-  // Transport (only for dual-transport agents — both ACP and CLI supported)
-  if (isDualTransport.value) {
-    result.push({
-      key: 'transport',
-      label: t('settings.items.agentTransport'),
-      type: 'select',
-      options: [
-        { label: 'CLI', value: 'cli' },
-        { label: 'ACP-stdio', value: 'acp-stdio' },
-      ],
-      patchField: 'transport',
     })
   }
 
@@ -745,8 +727,6 @@ function getItemValue(item: AgentItem): unknown {
       return a.providerId ?? ''
     case 'preferred_mode':
       return a.preferredMode || ''
-    case 'transport':
-      return a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
     case 'auto_approve':
       return !!a.autoApprove
     case 'project_scope':
@@ -852,21 +832,6 @@ async function handleUpdate(item: AgentItem, value: unknown) {
 
   try {
     await patchAgentField(props.agentId, item.patchField, value as string | number | boolean | null)
-    // When changing transport, clear preferred thinking effort if it's no longer valid
-    if (item.patchField === 'transport') {
-      const newTransport = value as string
-      const a = getAgent(props.agentId)
-      const currentPref = a?.preferredThinkingEffort || ''
-      if (currentPref) {
-        const validLevels = newTransport === 'acp-stdio'
-          ? getAgentThinkingEffortLevelsIncludingACP(props.agentId)
-          : (a?.thinkingEffortLevels || [])
-        if (!validLevels.includes(currentPref)) {
-          await patchAgentField(props.agentId, 'preferred_thinking_effort', '')
-          updateAgentField(props.agentId, 'preferredThinkingEffort', '')
-        }
-      }
-    }
   } catch {
     toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }

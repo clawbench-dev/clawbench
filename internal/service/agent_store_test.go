@@ -1300,7 +1300,6 @@ func TestCreateCustomACPAgent_PersistsRunnableAgent(t *testing.T) {
 	assert.Equal(t, "acp-stdio", agent.Transport)
 	assert.Equal(t, "my-tool acp --stdio", agent.AcpCommand, "the command is trimmed before storage")
 	assert.True(t, agent.SupportsACP())
-	assert.False(t, model.BackendSupportsCLI(agent.Backend))
 	assert.NotEmpty(t, agent.RuntimeSystemPrompt, "the shared prompt must be composed immediately")
 
 	persisted, err := service.LoadAgentsFromDB()

@@ -491,16 +491,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// explicit pick is recorded by the PATCH the picker fires when the user
 	// actually clicks a level; this request only applies it to the turn.
 
-	// Persist transport selection for this session so subsequent loads
-	// restore the user's choice instead of the agent default.
-	// Per-session cleanup: when switching THIS session to CLI, close only
-	// this session's ACP connection (not all sessions for the agent).
-	if req.Transport != "" {
-		service.UpdateSessionTransport(sessionID, req.Transport)
-		if req.Transport == "cli" {
-			ai.GetACPConnManager().CloseConn(sessionID)
-		}
-	}
+	// req.Transport is accepted for API compatibility and ignored: every agent
+	// with an ACP command runs over ACP, so there is no per-session path to
+	// switch to.
 
 	// Sync auto-approve mode from DB to ACPConn on prompt
 	if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
@@ -734,13 +727,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// the connection after the idle timeout only if no new request has
 		// claimed it.
 		defer func() {
-			effectiveTransport := "cli"
-			if t := service.GetSessionTransport(sessionID); t != "" {
-				effectiveTransport = t
-			} else if agent := model.GetAgent(effectiveAgentID); agent != nil && agent.Transport != "" {
-				effectiveTransport = agent.Transport
-			}
-			if effectiveTransport == "acp-stdio" {
+			if agent := model.GetAgent(effectiveAgentID); agent != nil && agent.SupportsACP() {
 				slog.Info("acp: marking connection idle for completed session", "session_id", sessionID, "agent_id", effectiveAgentID)
 				ai.GetACPConnManager().MarkIdle(sessionID)
 			}

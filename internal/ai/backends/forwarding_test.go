@@ -24,7 +24,7 @@ var pluginsAtInit = backends.All()
 // Both directions matter. Forwarding is what lets a new backend exist as a
 // single directory; the reverse direction is what keeps a stale
 // ai.RegisterBackend call from silently resurrecting a backend that no longer
-// declares a CLI transport.
+// declares an in-process implementation.
 func TestRegisterForwardsCapabilities(t *testing.T) {
 	if len(pluginsAtInit) == 0 {
 		t.Fatal("no backends registered at init; the check would be vacuous")
@@ -32,9 +32,9 @@ func TestRegisterForwardsCapabilities(t *testing.T) {
 
 	for _, p := range pluginsAtInit {
 		hasFactory := ai.LookupBackendFactoryForTest(p.ID) != nil
-		wantFactory := p.CLI != nil && p.CLI.NewBackend != nil
+		wantFactory := p.Implementation != nil && p.Implementation.NewBackend != nil
 		if hasFactory != wantFactory {
-			t.Errorf("%s: CLI factory registered=%v, plugin declares CLI=%v", p.ID, hasFactory, wantFactory)
+			t.Errorf("%s: in-process factory registered=%v, plugin declares one=%v", p.ID, hasFactory, wantFactory)
 		}
 
 		if p.ModelSource != nil && !model.HasModelSource(p.ID) {

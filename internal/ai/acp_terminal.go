@@ -20,6 +20,12 @@ import (
 // Terminal session management — ACP terminal/* method implementations
 // ---------------------------------------------------------------------------
 
+// terminalWaitDelay bounds how long the command's exec-managed pipes may be
+// held open by child processes that inherit them after the command exits.
+// Without this, a spawned background command (e.g. `npm run dev`) keeps the
+// pipe open forever and Wait blocks indefinitely.
+const terminalWaitDelay = 15 * time.Second
+
 // terminalSession tracks an executing terminal command.
 type terminalSession struct {
 	id        string
@@ -124,7 +130,7 @@ func (c *ClawBenchACPClient) CreateTerminal(ctx context.Context, req acp.CreateT
 	// Bound how long pipes may stay open after the process exits when a
 	// spawned child inherited them. Wait() forcibly closes the parent's pipe
 	// ends after the delay, unblocking the output buffer read.
-	cmd.WaitDelay = streamWaitDelay
+	cmd.WaitDelay = terminalWaitDelay
 
 	if err := cmd.Start(); err != nil {
 		cancel() // release the context timeout

@@ -1176,12 +1176,6 @@ export default {
       title: 'Mode',
       saveFailed: "Couldn't save the mode — reverted to the previous one",
     },
-    transportSwitcher: {
-      title: 'Protocol',
-      acp: 'ACP Mode',
-      cli: 'CLI Mode',
-      saveFailed: "Couldn't save the protocol — it will revert on refresh",
-    },
     autoApprove: {
       title: 'Auto-Approve',
       description: 'Automatically approve all permission requests from the agent.',
@@ -3874,7 +3868,6 @@ export default {
       agentPreferredThinkingEffortDesc: 'Only models that support reasoning honor this. A model that does not will fail the request rather than ignore the level',
       agentPreferredMode: 'Preferred Mode',
       agentPreferredModeDesc: 'Mode new sessions start in. A mode only narrows the tool grant above; it never widens it',
-      agentTransport: 'Protocol',
       agentAutoApprove: 'Auto-Approve by Default',
       agentAutoApproveDesc: 'New sessions created with this agent start with Auto-Approve on, saved to the session so it survives a reload; you can still turn it off per session',
       agentProjectOnly: 'Only This Project',

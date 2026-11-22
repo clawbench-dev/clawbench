@@ -657,7 +657,7 @@ func TestBuildChatRequest_TransportOverrideCLI(t *testing.T) {
 func TestBuildChatRequest_NoOverride_AgentWithACPTransport(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio", AcpCommand: "acp-server"}})
 
 	req := BuildChatRequest("hi", "sess-acp-agent", "", "claude", "acp-agent", "", "", "", "", "", false)
 
@@ -672,7 +672,7 @@ func TestBuildChatRequest_ACPUnconfirmed_NoModelFallback(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{"acp-unconf": {
-		ID: "acp-unconf", RuntimeSystemPrompt: "s", Transport: "acp-stdio",
+		ID: "acp-unconf", RuntimeSystemPrompt: "s", Transport: "acp-stdio", AcpCommand: "acp-server",
 		Models: []model.AgentModel{{ID: "cli-guess", Name: "CLI Guess", Default: true}},
 	}})
 
@@ -688,7 +688,7 @@ func TestBuildChatRequest_ACPUnconfirmed_ExplicitModelStillWins(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{"acp-unconf2": {
-		ID: "acp-unconf2", RuntimeSystemPrompt: "s", Transport: "acp-stdio",
+		ID: "acp-unconf2", RuntimeSystemPrompt: "s", Transport: "acp-stdio", AcpCommand: "acp-server",
 		Models: []model.AgentModel{{ID: "cli-guess", Name: "CLI Guess", Default: true}},
 	}})
 
@@ -753,7 +753,7 @@ func TestBuildChatRequest_NoOverride_UnknownAgent(t *testing.T) {
 func TestBuildChatRequest_OverrideTakesPrecedenceOverAgent(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio", AcpCommand: "acp-server"}})
 
 	// Explicit "cli" must win over the agent's acp-stdio transport.
 	req := BuildChatRequest("hi", "sess-override-wins", "", "claude", "acp-agent", "", "", "", "cli", "", false)
@@ -836,7 +836,7 @@ func TestBuildChatRequest_ResumeWithoutExternalID_Fork(t *testing.T) {
 func TestBuildChatRequest_ResumeACPWithForkContext(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", RuntimeSystemPrompt: "s", Transport: "acp-stdio", AcpCommand: "acp-server"}})
 
 	sessionID := "sess-acp-fork"
 	_, err := store.WriteExec(
@@ -865,7 +865,7 @@ func TestBuildChatRequest_ResumeACPWithForkContext(t *testing.T) {
 func TestBuildChatRequest_ResumeACPWithExternalID(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", RuntimeSystemPrompt: "s", Transport: "acp-stdio"}})
+	withAgents(t, map[string]*model.Agent{"acp": {ID: "acp", RuntimeSystemPrompt: "s", Transport: "acp-stdio", AcpCommand: "acp-server"}})
 
 	sessionID := "sess-acp-ext"
 	_, err := store.WriteExec(

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 	"clawbench/internal/model"
 
@@ -96,45 +95,6 @@ func TestQoderCNBackendPlugin_DeclaresCNSkillsDirs(t *testing.T) {
 }
 
 // --- CLI backend ---
-
-func TestQoderCNBackend_NewBackend(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("qodercn")
-	require.NotNil(t, entry, "qodercn CLI factory must be registered")
-	backend := entry.NewBackend()
-	require.NotNil(t, backend)
-	assert.Equal(t, "qodercn", backend.Name())
-}
-
-func TestQoderCNBackend_IsCLIBackendWithCNCmd(t *testing.T) {
-	entry := ai.LookupBackendFactoryForTest("qodercn")
-	clib, ok := entry.NewBackend().(*ai.CLIBackend)
-	require.True(t, ok, "expected *CLIBackend")
-
-	assert.Equal(t, "qoderclicn", clib.Cmd)
-	assert.NotNil(t, clib.NewParserFn())
-	assert.NotNil(t, clib.PreStartFn, "prompt must go through stdin (--print with a piped stdout)")
-}
-
-// The CLI surface is identical between the builds (probe L0 compares all 59
-// flags), so the CN backend must produce the same argv as the international
-// one. If this drifts, one build silently loses a flag.
-func TestQoderCNBackend_ArgsMatchInternational(t *testing.T) {
-	cnEntry := ai.LookupBackendFactoryForTest("qodercn")
-	intlEntry := ai.LookupBackendFactoryForTest("qoder")
-	require.NotNil(t, cnEntry)
-	require.NotNil(t, intlEntry)
-
-	req := ai.ChatRequest{
-		Prompt:       "p",
-		SessionID:    "sess-1",
-		WorkDir:      "/tmp/proj",
-		Model:        "m",
-		SystemPrompt: "sys",
-	}
-	cnArgs := cnEntry.NewBackend().(*ai.CLIBackend).BuildArgsFn(req)
-	intlArgs := intlEntry.NewBackend().(*ai.CLIBackend).BuildArgsFn(req)
-	assert.Equal(t, intlArgs, cnArgs, "the two builds share one argv builder")
-}
 
 // --- Model discovery ---
 

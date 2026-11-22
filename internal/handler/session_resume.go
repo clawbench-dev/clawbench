@@ -515,11 +515,6 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("handler: failed to update external_session_id for acp-load session", "session_id", sessionID, "error", errExt)
 	}
 
-	// Set transport to acp-stdio for ACP-loaded sessions
-	if errTransport := service.UpdateSessionTransport(sessionID, transportACP); errTransport != nil {
-		slog.Warn("handler: failed to update transport for acp-load session", "session_id", sessionID, "error", errTransport)
-	}
-
 	// Load ACP session via connection manager
 	conn, err := getOrCreateConnForLoad(r.Context(), agent, sessionID, req.AcpSessionID, projectPath)
 	if err != nil {

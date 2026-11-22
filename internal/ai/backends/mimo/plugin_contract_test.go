@@ -3,7 +3,6 @@ package mimo
 import (
 	"testing"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 )
 
@@ -52,17 +51,5 @@ func TestMimoPlugin_DeclaresItsOwnCommandAndSkills(t *testing.T) {
 	}
 	if len(spec.NativeSkillsDirs) == 0 {
 		t.Fatal("the skill directories must be declared so detection can find them")
-	}
-}
-
-// TestMimoPlugin_RegistersAClientBackend pins that the CLI factory builds a
-// usable backend rather than returning nil.
-func TestMimoPlugin_RegistersAClientBackend(t *testing.T) {
-	factory := ai.LookupBackendFactoryForTest("mimo")
-	if factory == nil {
-		t.Fatal("mimo factory missing")
-	}
-	if b := factory.NewBackend(); b == nil || b.Name() != "mimo" {
-		t.Fatalf("factory returned %v", b)
 	}
 }

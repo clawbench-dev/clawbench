@@ -1,15 +1,12 @@
 package codebuddy
 
 import (
-	"os/exec"
-	"strings"
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
-	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/model"
 )
 
@@ -55,7 +52,6 @@ func init() {
 		// session/steer method, instead of queueing it for the next turn.
 		// It echoes the injected message back with a correlation id, so the
 		// reply can be SPLIT exactly at the injection point.
-		CLI:            &backends.CLIPlugin{NewBackend: newCodebuddyBackend},
 		PluginCommands: ScanPluginCommands,
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       ParseACPToolCall,
@@ -116,37 +112,4 @@ func init() {
 			OwnServiceEndpoint: true,
 		},
 	})
-}
-
-// newCodebuddyBackend returns a CLIBackend instance configured for Codebuddy CLI.
-func newCodebuddyBackend() ai.AIBackend {
-	return &ai.CLIBackend{
-		BackendName: "codebuddy",
-		Cmd:         "codebuddy",
-		BuildArgsFn: buildCodebuddyStreamArgs,
-		NewParserFn: claude.NewStreamParser,
-		FilterLineFn: func(line string) (string, bool) {
-			line = strings.TrimPrefix(line, "\xEF\xBB\xBF") // UTF-8 BOM
-			if line == "" {
-				return "", false
-			}
-			return line, true
-		},
-		PreStartFn: func(cmd *exec.Cmd, req ai.ChatRequest) {
-			// Codebuddy CLI in --print mode with stdout piped (non-TTY) requires
-			// prompt via stdin — positional prompt argument is not recognized.
-			cmd.Stdin = strings.NewReader(req.Prompt)
-		},
-	}
-}
-
-// buildCodebuddyStreamArgs constructs the CLI arguments for Codebuddy streaming.
-func buildCodebuddyStreamArgs(req ai.ChatRequest) []string {
-	args := ai.BuildBaseStreamArgs(req, nil)
-	// Same own-service address as the ACP path (see ai.OwnServiceSettingsArg):
-	// the environment has no variable for it.
-	if payload := ai.OwnServiceSettingsArg(req.AgentID); payload != "" {
-		args = append(args, "--settings", payload)
-	}
-	return args
 }

@@ -511,7 +511,9 @@ func TestServeACPLoadSession_SessionMetadataBeforeLoad(t *testing.T) {
 	if err == nil {
 		// If the session exists (may have been hard-deleted), verify metadata
 		assert.Equal(t, "acp:"+acpSessionID, sourceID, "source_session_id should be 'acp:<acpSessionId>'")
-		assert.Equal(t, "acp-stdio", transport, "transport should be 'acp-stdio'")
+		// The session's own transport column is no longer written: the agent
+		// row (which has an acp_command) is what decides the path.
+		assert.Empty(t, transport, "the per-session transport column must stay unwritten")
 		assert.Equal(t, acpSessionID, extID, "external_session_id should be the loaded ACP session id")
 	}
 }

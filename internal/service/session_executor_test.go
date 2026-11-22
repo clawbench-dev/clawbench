@@ -87,17 +87,19 @@ func TestSessionExecutor_Finalize_ACPModeInjection(t *testing.T) {
 	}
 }
 
-func TestSessionExecutor_Finalize_TransportFromSessionOverride(t *testing.T) {
-	// Cover line 353-354: transport from session transport override.
+// The persisted transport metadata is derived from the agent's command, not
+// from a per-session override: every agent with an ACP command runs over ACP,
+// and a legacy session value must not claim otherwise.
+func TestSessionExecutor_Finalize_TransportFromAgentCommand(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test", AcpCommand: "acp-server"},
 	}
 	defer func() { model.Agents = nil }()
 
 	sid := setupExecutorSession(t, "test-agent")
-	// Set session transport to "sse"
-	if err := UpdateSessionTransport(sid, "sse"); err != nil {
+	// A stale override from before the CLI removal must be ignored.
+	if err := UpdateSessionTransport(sid, "cli"); err != nil {
 		t.Fatalf("UpdateSessionTransport failed: %v", err)
 	}
 
@@ -119,8 +121,8 @@ func TestSessionExecutor_Finalize_TransportFromSessionOverride(t *testing.T) {
 	}
 	finalized := executor.Finalize(result, nil)
 
-	if finalized.Metadata.Transport != "sse" {
-		t.Fatalf("expected Transport='sse', got %q", finalized.Metadata.Transport)
+	if finalized.Metadata.Transport != "acp-stdio" {
+		t.Fatalf("expected Transport='acp-stdio', got %q", finalized.Metadata.Transport)
 	}
 }
 

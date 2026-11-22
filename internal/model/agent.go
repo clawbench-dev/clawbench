@@ -61,7 +61,10 @@ type Agent struct {
 	RuntimeSystemPrompt string `json:"-"`
 
 	// ACP configuration (only used when Transport != "cli")
-	Transport  string `json:"transport"`            // "cli" | "acp-stdio"; default depends on AcpCommand
+	// Derived, not chosen: "acp-stdio" when AcpCommand is set, "cli" only for
+	// the in-process built-in agent. Every process-spawning backend runs over
+	// ACP, so there is no CLI-vs-ACP switch left to persist.
+	Transport  string `json:"transport"`
 	AcpCommand string `json:"acpCommand,omitempty"` // acp-stdio: spawn command, e.g. "kimi --acp"
 
 	// CustomSystemPrompt is the user's own prompt text — the only prompt value
@@ -116,20 +119,6 @@ type Agent struct {
 	// flag (rather than letting the client match on the backend id) keeps one
 	// definition of "built-in" on the server.
 	BuiltinBackend bool `json:"builtinBackend"`
-
-	// CLIModels is the pure CLI-discovered list, without any ACP merge. It is
-	// populated only in API responses, so a client can show the CLI view when the
-	// agent is switched to CLI transport without re-deriving it.
-	//
-	// Models, by contrast, carries the resolved list (ACP membership applied).
-	// Keeping both on the wire is what lets the transport toggle be a plain field
-	// read on the client instead of a merge.
-	CLIModels []AgentModel `json:"cliModels,omitempty"`
-
-	// SupportsCLI indicates whether this agent's backend has a CLI implementation
-	// (a registered CLI backend factory). Backends like grok are ACP-only and
-	// return false. Computed at load time from the ai backend factory registry.
-	SupportsCLI bool `json:"supportsCLI"`
 
 	// SupportsMidTurn indicates whether this agent's backend can inject a
 	// message into a turn that is ALREADY RUNNING instead of queueing it for the

@@ -32,8 +32,8 @@ const BackendID = "builtin"
 
 func init() {
 	backends.Register(&backends.BackendPlugin{
-		ID:  BackendID,
-		CLI: &backends.CLIPlugin{NewBackend: newBackend},
+		ID:             BackendID,
+		Implementation: &backends.InProcessPlugin{NewBackend: newBackend},
 		Spec: model.BackendSpec{
 			ID:      BackendID,
 			Backend: BackendID,

@@ -46,8 +46,7 @@ func init() {
 	model.LoadBackendSpecs = AllSpecsSorted
 
 	// Wire up the capability snapshot so model can answer "what can this
-	// backend do" in one call. It replaced three per-capability function
-	// variables (CLI, mid-turn, splits-reply); model's BackendSupportsCLI /
-	// BackendSupportsMidTurn / BackendMidTurnSplitsReply now read this one.
+	// backend do" in one call; model's BackendSupportsMidTurn /
+	// BackendMidTurnSplitsReply read this one.
 	model.LookupBackendCapabilitiesFn = Capabilities
 }

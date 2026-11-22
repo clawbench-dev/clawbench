@@ -655,7 +655,7 @@ func LoadYamlAgents(db dbutil.Writer, configDir string) []string {
 
 // LoadAgentsIntoMemoryFromDB loads agents from the database into the global
 // Agents map and AgentList, then populates the runtime-only fields that are not
-// persisted: CanRefreshModels, SupportsCLI, SupportsMidTurn, ThinkingEffortLevels
+// persisted: CanRefreshModels, SupportsMidTurn, ThinkingEffortLevels
 // and the composed SystemPrompt.
 //
 // The new map is built completely before assignment so a concurrent reader never
@@ -684,7 +684,6 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 				agent.ThinkingEffortLevels = spec.ThinkingEffortLevels
 			}
 		}
-		agent.SupportsCLI = BackendSupportsCLI(agent.Backend)
 		agent.SupportsMidTurn = BackendSupportsMidTurn(agent.Backend)
 		agent.ProviderProtocols = SupportedProtocols(agent.Backend)
 		agent.ProviderKeyOnly = BackendIsKeyOnly(agent.Backend)

@@ -46,9 +46,9 @@
       <button class="model-tab" :class="{ active: activeTab === 'mode' }" @click="activeTab = 'mode'">
         <ShieldAlert :size="13" />{{ t('chat.modeSwitcher.title') }}
       </button>
-      <button class="model-tab" :class="{ active: activeTab === 'transport' }" @click="activeTab = 'transport'">
-        <Cable :size="13" />{{ t('chat.transportSwitcher.title') }}
-      </button>
+      <!-- No transport tab: every agent with an ACP command runs over ACP.
+           There is exactly one path per agent, so a picker would offer a
+           choice that does not exist. -->
       <!-- Context usage tab. Same body as the session-info popup (they share
            ContextUsageDetail), but reachable from the settings drawer so the
            usage numbers live next to the other per-session settings instead of
@@ -149,49 +149,6 @@
             </button>
           </button>
           <div v-if="idx < thinkingLevels.length - 1" class="model-divider"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Transport tab -->
-    <div v-if="activeTab === 'transport'" class="model-tab-content">
-      <div class="model-list">
-        <!-- Only show ACP option for agents that support ACP -->
-        <div v-if="supportsACP(props.agentId || '')" class="model-item-wrapper">
-          <button
-            class="thinking-item"
-            :class="{ current: isACP, 'is-default': defaultTransport === 'acp-stdio' }"
-            @click="selectTransport('acp-stdio')"
-          >
-            <span class="model-item-indicator" :class="{ active: isACP }"></span>
-            <span class="model-item-name">{{ t('chat.transportSwitcher.acp') }}</span>
-            <span v-if="defaultTransport === 'acp-stdio'" class="default-label">
-              <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
-              <span class="default-star"><Star :size="12" fill="currentColor" /></span>
-            </span>
-            <button v-if="defaultTransport !== 'acp-stdio'" class="set-default-btn" @click.stop="setDefaultTransport('acp-stdio')" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
-              <Star :size="12" />
-            </button>
-          </button>
-          <div class="model-divider"></div>
-        </div>
-        <!-- Only show CLI option for agents that support CLI -->
-        <div v-if="supportsCLI(props.agentId || '')" class="model-item-wrapper">
-          <button
-            class="thinking-item"
-            :class="{ current: !isACP, 'is-default': defaultTransport !== 'acp-stdio' }"
-            @click="selectTransport('cli')"
-          >
-            <span class="model-item-indicator" :class="{ active: !isACP }"></span>
-            <span class="model-item-name">{{ t('chat.transportSwitcher.cli') }}</span>
-            <span v-if="defaultTransport !== 'acp-stdio'" class="default-label">
-              <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
-              <span class="default-star"><Star :size="12" fill="currentColor" /></span>
-            </span>
-            <button v-if="defaultTransport === 'acp-stdio'" class="set-default-btn" @click.stop="setDefaultTransport('cli')" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
-              <Star :size="12" />
-            </button>
-          </button>
         </div>
       </div>
     </div>
@@ -322,7 +279,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Star, Cpu, Brain, ShieldAlert, Cable, Activity, Gauge } from 'lucide-vue-next'
+import { Star, Cpu, Brain, ShieldAlert, Activity, Gauge } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -335,10 +292,10 @@ import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { appLog } from '@/utils/appLog'
 import { compactGroupMember } from '@/composables/useGroupChat'
-import { useAgents, restoreOriginalModels, resetModelViewForTransport, applyRefreshedModelList, applyRefreshedACPState, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
+import { useAgents, applyRefreshedModelList, applyRefreshedACPState } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
-import { useSessionIdentity, clearModeState, clearCommandState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
+import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
@@ -371,7 +328,7 @@ const props = defineProps({
   tokenRate: { type: Object, default: null },
 })
 
-const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport', 'switch-config-option', 'changed'])
+const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-config-option', 'changed'])
 
 /**
  * Client-side budget for one refresh. It covers the agent process starting, the
@@ -383,7 +340,7 @@ const REFRESH_TIMEOUT_MS = 180_000
 
 const { t } = useI18n()
 const toast = useToast()
-const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshAgentState, supportsACP, supportsCLI, getAgentTransport, isBuiltinAgent } = useAgents()
+const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshAgentState, getAgentTransport, isBuiltinAgent } = useAgents()
 const identity = useSessionIdentity()
 const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove, cruise, toggleCruise } = identity
 
@@ -610,8 +567,8 @@ const thinkingLevels = computed(() => {
 const canRefresh = computed(() => canRefreshAgentState(props.agentId || ''))
 
 const isACP = computed(() => {
-  // Prefer session-level transport, fallback to agent config. The targeted
-  // transport comes from the member row, which is authoritative for that row.
+  // Prefer the session row's value, fall back to the agent's. Both are derived
+  // from the ACP command; there is no per-session switch to disagree with.
   if (effectiveTransport.value) return effectiveTransport.value === 'acp-stdio'
   return getAgentTransport(props.agentId || '') === 'acp-stdio'
 })
@@ -639,10 +596,6 @@ const defaultThinkingEffort = computed(() => {
 const defaultModeId = computed(() => {
   const agent = getAgent(props.agentId || '')
   return agent?.preferredMode || ''
-})
-
-const defaultTransport = computed(() => {
-  return getAgentTransport(props.agentId || '')
 })
 
 const filteredModels = computed(() => {
@@ -891,51 +844,6 @@ function selectMode(mode) {
 
 // --- Transport selection ---
 
-async function selectTransport(transport) {
-  if (transport === 'acp-stdio' && isACP.value) return
-  if (transport === 'cli' && !isACP.value) return
-
-  if (isTargeted.value) {
-    persistTargeted({ transport }).catch((err) => {
-      appLog.w('SessionDrawer', 'switch transport failed', err)
-      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
-    })
-    emit('close')
-    return
-  }
-
-  await applyTransportSwitch(transport)
-
-  emit('switch-transport', transport)
-  emit('close')
-}
-
-// Apply the session-side effects of switching transport (shared by selection
-// and set-as-default, which also selects the new transport as current).
-async function applyTransportSwitch(transport) {
-  // Session-scoped: update local ref only (like selectModel)
-  currentTransport.value = transport
-
-  // When switching to CLI, clear ACP-specific state and restore CLI models
-  if (transport === 'cli') {
-    clearModeState()
-    clearCommandState()
-    clearThinkingEffortState()
-    restoreOriginalModels(props.agentId || '')
-    invalidateACPStateCache(props.agentId || '')
-  }
-
-  // When switching to ACP, re-populate ACP state from cache (force-refresh).
-  // resetModelViewForTransport runs AFTER the populate so it can clear the list
-  // when the cache holds no ACP models — otherwise the CLI baseline left by the
-  // branch above would survive the switch back and re-enter the ACP view.
-  if (transport === 'acp-stdio') {
-    invalidateACPStateCache(props.agentId || '')
-    await populateACPStateFromCache(props.agentId || '')
-    resetModelViewForTransport(props.agentId || '')
-  }
-}
-
 // --- Refresh (all lists, from the header) ---
 
 /**
@@ -961,10 +869,10 @@ async function handleRefresh() {
     // picked may have been removed). The old `if (data?.models)` guard silently
     // ignored that case.
     if (data && Array.isArray(data.models)) {
-      // The backend answers with the resolved list plus the pure CLI list (same
-      // shape as GET /api/agents), so the ACP view is not downgraded to the raw
-      // CLI list and the CLI baseline is rebased for a later transport switch.
-      applyRefreshedModelList(props.agentId, data.models, data.cliModels)
+      // The backend answers with the resolved list (same shape as GET
+      // /api/agents), so the ACP view is not downgraded to the raw discovered
+      // list.
+      applyRefreshedModelList(props.agentId, data.models)
     }
     if (data?.acpState) {
       applyRefreshedACPState(props.agentId, data.acpState)
@@ -1015,30 +923,6 @@ async function setDefaultThinkingEffort(level) {
     emit('switch-thinking-effort', level)
     const levelName = thinkingLevels.value.find(l => l.id === level)?.name || level
     toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: levelName }), { icon: 'star', type: 'success', duration: 2000 })
-  } catch {
-    toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
-  }
-}
-
-async function setDefaultTransport(transport) {
-  try {
-    await patchAgentPref(props.agentId, 'transport', transport)
-    updateAgentField(props.agentId, 'transport', transport)
-    await applyTransportSwitch(transport)
-    emit('switch-transport', transport)
-    const transportName = transport === 'acp-stdio' ? t('chat.transportSwitcher.acp') : t('chat.transportSwitcher.cli')
-    toast.show(t('chat.sessionSetting.setDefaultSuccess', { name: transportName }), { icon: 'star', type: 'success', duration: 2000 })
-    // Clear preferred thinking effort if it's not valid for the new transport
-    const currentPref = getAgent(props.agentId || '')?.preferredThinkingEffort || ''
-    if (currentPref) {
-      const validLevels = transport === 'acp-stdio'
-        ? availableThinkingEfforts.value.map(l => l.id)
-        : getAgentThinkingEffortLevels(props.agentId || '')
-      if (!validLevels.includes(currentPref)) {
-        await patchAgentPref(props.agentId, 'preferred_thinking_effort', '')
-        updateAgentField(props.agentId, 'preferredThinkingEffort', '')
-      }
-    }
   } catch {
     toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
   }
@@ -1172,8 +1056,6 @@ defineExpose({
   searchQuery,
   showDefaultPopupMenu,
   refreshing,
-  selectTransport,
-  setDefaultTransport,
   setDefaultModel,
   setDefaultThinkingEffort,
   selectMode,

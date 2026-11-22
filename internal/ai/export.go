@@ -16,7 +16,6 @@ package ai
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -24,10 +23,9 @@ import (
 	"clawbench/internal/model"
 )
 
-// StreamChanSize is the buffer size of a stream event channel. Backends that
-// build their own channel (a custom AIBackend) must use it so the consumer's
-// expectations about buffering stay uniform.
-const StreamChanSize = streamChanSize
+// streamChanSize is the buffer size of a stream event channel, so the
+// consumer's expectations about buffering stay uniform across emit paths.
+const streamChanSize = 512
 
 // EmitStreamEvent sends one event to a stream channel, honoring the critical
 // event policy (critical events wait briefly for room, deltas are dropped).
@@ -190,16 +188,8 @@ func TruncateToolOutput(output string) string { return truncateToolOutput(output
 // StreamErrorReason turns a backend's raw error text into a user-facing reason.
 func StreamErrorReason(text string) string { return streamErrorReason(text) }
 
-// ExtractContentText flattens an ACP content block's JSON into plain text.
-func ExtractContentText(raw json.RawMessage) string { return extractContentText(raw) }
-
 // CompactDetectedEvent builds the internal compaction signal event.
 func CompactDetectedEvent(source string) StreamEvent { return compactDetectedEvent(source) }
-
-// ToolResultAccum accumulates streamed tool-result text and reports when the
-// result is complete. Backends with their own streaming format use it the same
-// way the shared parsers do.
-type ToolResultAccum = toolResultAccum
 
 // MaxToolOutputBytes is the shared display cap for a tool result's text.
 const MaxToolOutputBytes = maxToolOutputBytes
@@ -208,21 +198,8 @@ const MaxToolOutputBytes = maxToolOutputBytes
 // a context compaction.
 func IsGrokCompactionCompleted(eventType string) bool { return isGrokCompactionCompleted(eventType) }
 
-// ScannerInitial / ScannerMax are the shared stdout scanner buffer bounds.
-const (
-	ScannerInitial = scannerInitial
-	ScannerMax     = scannerMax
-)
-
-// IsCLICompactionMessage reports whether a parsed CLI stream message carries a
-// compaction signal.
-func IsCLICompactionMessage(msg *ClaudeStreamMessage) bool { return isCLICompactionMessage(msg) }
-
 // ExecCommandJSON builds the canonical {"command":"..."} tool input.
 func ExecCommandJSON(command string) string { return execCommandJSON(command) }
-
-// RedactArgs masks secret-looking flag values for logging.
-func RedactArgs(args []string) []string { return redactArgs(args) }
 
 // AgentProcessEnv returns the environment overrides an agent CLI needs.
 func AgentProcessEnv() []string { return agentProcessEnv() }
@@ -235,10 +212,6 @@ func ProviderEnvForRequest(req ChatRequest, fallback string) ([]string, error) {
 // CriticalSendTimeout is the bounded wait a critical event may spend waiting
 // for room in a full stream channel.
 var CriticalSendTimeout = criticalSendTimeout
-
-// StreamErrorReporter is implemented by parsers that track whether they already
-// reported a stream error, so the skeleton does not double-report.
-type StreamErrorReporter = streamErrorReporter
 
 // IsLimitErrorText reports whether an error text describes a quota/limit hit.
 func IsLimitErrorText(text string) bool { return isLimitErrorText(text) }

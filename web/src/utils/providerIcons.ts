@@ -47,7 +47,6 @@ import qwenIcon from '@lobehub/icons-static-svg/icons/qwen-color.svg?raw'
 import doubaoIcon from '@lobehub/icons-static-svg/icons/doubao-color.svg?raw'
 import hunyuanIcon from '@lobehub/icons-static-svg/icons/hunyuan-color.svg?raw'
 import codexIcon from '@lobehub/icons-static-svg/icons/codex-color.svg?raw'
-import copilotIcon from '@lobehub/icons-static-svg/icons/copilot-color.svg?raw'
 import codebuddyIcon from '@lobehub/icons-static-svg/icons/codebuddy-color.svg?raw'
 import mimoIcon from '@lobehub/icons-static-svg/icons/xiaomimimo.svg?raw'
 import qoderIcon from '@lobehub/icons-static-svg/icons/qoder-color.svg?raw'
@@ -190,7 +189,6 @@ const providerIconMap: Record<string, ProviderIconData> = {
 
     // CLI backend tools — color icons
     codex: { raw: codexIcon },
-    copilot: { raw: copilotIcon },
     codebuddy: { raw: codebuddyIcon },
     qoder: { raw: qoderIcon },
     zhipu: { raw: zhipuIcon },
@@ -203,7 +201,6 @@ const providerIconMap: Record<string, ProviderIconData> = {
     // are only reached when the model-name part matches nothing, so a
     // `github-copilot/claude-*` still shows the Claude icon, not this one.
     'opencode-go': { raw: opencodeIcon, needsBg: true, monoCssClass: 'mono-opencode' },
-    'github-copilot': { raw: copilotIcon },
 
     // CLI backend tools — monochrome icons
     opencode: { raw: opencodeIcon, needsBg: true, monoCssClass: 'mono-opencode' },
@@ -214,8 +211,6 @@ const providerIconMap: Record<string, ProviderIconData> = {
     // on both themes and needs no backdrop.
     kimi: { raw: kimiIcon, monoCssClass: 'mono-kimi' },
 
-    // VeCLI not in lobe-icons — inline fallback (explicit fill colors, not currentColor)
-    vecli: { raw: '<svg fill-rule="evenodd" height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>VeCLI</title><path d="M19.44 10.153l-2.936 11.586a.215.215 0 00.214.261h5.87a.215.215 0 00.214-.261l-2.95-11.586a.214.214 0 00-.412 0zM3.28 12.778l-2.275 8.96A.214.214 0 001.22 22h4.532a.212.212 0 00.214-.165.214.214 0 000-.097l-2.276-8.96a.214.214 0 00-.41 0z" fill="#00E5E5"/><path d="M7.29 5.359L3.148 21.738a.215.215 0 00.203.261h8.29a.214.214 0 00.215-.261L7.7 5.358a.214.214 0 00-.41 0z" fill="#006EFF"/><path d="M14.44.15a.214.214 0 00-.41 0L8.366 21.739a.214.214 0 00.214.261H19.9a.216.216 0 00.171-.078.214.214 0 00.044-.183L14.439.15z" fill="#006EFF"/><path d="M10.278 7.741L6.685 21.736a.214.214 0 00.214-.264h7.17a.215.215 0 00.214-.264L10.688 7.741a.214.214 0 00-.41 0z" fill="#00E5E5"/></svg>' },
 }
 
 // ---- Model name → provider pattern matching ----

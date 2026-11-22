@@ -34,18 +34,19 @@ func statusOf(res AgentSelfTestResult, key string) string {
 	return ""
 }
 
-// A healthy CLI agent must pass every check. This is the baseline the other
+// A healthy ACP agent must pass every check. This is the baseline the other
 // cases are read against: without it, a self-test that failed everything would
 // look "correct" in the failure cases.
-func TestAgentSelfTest_HealthyCLIAgentPasses(t *testing.T) {
+func TestAgentSelfTest_HealthyACPAgentPasses(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	agent := model.GetAgent("claude")
 	require.NotNil(t, agent)
 	// `go` is guaranteed to exist on the machine running the tests, so the
 	// executable probe has a real target instead of depending on a vendor CLI.
-	agent.Command = "go"
-	t.Cleanup(func() { agent.Command = "claude" })
+	agent.AcpCommand = "go version"
+	agent.Models = []model.AgentModel{{ID: "m1", Name: "M1", Default: true}}
+	t.Cleanup(func() { agent.AcpCommand = "claude acp" })
 
 	res := runAgentSelfTest(context.Background(), agent, "/project")
 
@@ -53,51 +54,29 @@ func TestAgentSelfTest_HealthyCLIAgentPasses(t *testing.T) {
 	assert.Equal(t, 0, res.Failed)
 	assert.Contains(t, statusOf(res, "enabled"), selfTestOK)
 	assert.Contains(t, statusOf(res, "transport"), selfTestOK)
-	assert.Contains(t, statusOf(res, "cli_command"), selfTestOK)
+	assert.Contains(t, statusOf(res, "acp_command"), selfTestOK)
 	assert.Contains(t, statusOf(res, "models"), selfTestOK)
 }
 
-// An ACP agent with no command cannot spawn anything: that must be a hard
-// failure, not a warning, because every turn would fail at backend creation.
-func TestAgentSelfTest_AcpTransportWithoutCommandFails(t *testing.T) {
+// An agent with neither an ACP command nor the in-process backend cannot be
+// started at all: that must be a hard failure, because every turn would fail at
+// backend creation.
+func TestAgentSelfTest_NoStartableTransportFails(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	agent := &model.Agent{
-		ID:        "selftest-acp-nocmd",
-		Name:      "ACP No Command",
-		Backend:   model.CustomACPBackend,
-		Transport: "acp-stdio",
-		// AcpCommand deliberately empty — the contradictory state.
+		ID:                  "selftest-nocmd",
+		Name:                "No Command",
+		Backend:             model.CustomACPBackend,
+		Transport:           "acp-stdio",
+		AcpCommand:          "", // the contradictory state
 		RuntimeSystemPrompt: "prompt",
 	}
 	res := runAgentSelfTest(context.Background(), agent, "")
 
 	assert.False(t, res.OK)
 	assert.Equal(t, selfTestFail, statusOf(res, "transport"))
-	assert.Contains(t, findCheck(res, "transport").Detail, "no ACP command")
-}
-
-// A CLI-transport agent on a backend with no CLI implementation is likewise
-// unspawnable.
-func TestAgentSelfTest_CliTransportOnAcpOnlyBackendFails(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-
-	agent := &model.Agent{
-		ID:   "selftest-cli-acponly",
-		Name: "CLI on ACP-only",
-		// cursor is ACP-only: it registers a spec but no CLI factory. (grok used
-		// to stand in here, but it gained a streaming-json CLI fallback, so the
-		// premise "no CLI implementation" no longer held — the test passed only
-		// because this binary did not register the plugins at all.)
-		Backend:             "cursor",
-		Transport:           "cli",
-		RuntimeSystemPrompt: "prompt",
-	}
-	res := runAgentSelfTest(context.Background(), agent, "")
-
-	assert.False(t, res.OK)
-	assert.Equal(t, selfTestFail, statusOf(res, "transport"))
-	assert.Contains(t, findCheck(res, "transport").Detail, "no CLI implementation")
+	assert.Contains(t, findCheck(res, "transport").Detail, "nothing can start it")
 }
 
 // An unknown backend with neither a spec nor a CLI factory cannot be resolved at
@@ -229,9 +208,10 @@ func TestAgentSelfTest_DisabledIsWarningNotFailure(t *testing.T) {
 	assert.Equal(t, 0, res.Failed)
 }
 
-// An empty model list is normal for an ACP agent before its first turn but fatal
-// for a CLI agent, which should have discovered its models at startup.
-func TestAgentSelfTest_EmptyModelsDiffersByTransport(t *testing.T) {
+// An empty model list is normal before the first turn: an ACP agent reports its
+// models at session/new, and the in-process agent ships its own static list, so
+// neither path has "discovered models" to check here.
+func TestAgentSelfTest_EmptyModelsIsOnlyAWarning(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
 	acpAgent := &model.Agent{
@@ -243,14 +223,14 @@ func TestAgentSelfTest_EmptyModelsDiffersByTransport(t *testing.T) {
 	assert.Equal(t, selfTestWarn, statusOf(acpRes, "models"),
 		"an ACP agent reports its models at session/new, so empty is expected early")
 
-	cliAgent := &model.Agent{
-		ID: "selftest-cli-models", Name: "CLI",
-		Backend: "claude", Transport: "cli",
-		Command: "go", RuntimeSystemPrompt: "prompt",
+	inProcess := &model.Agent{
+		ID: "selftest-builtin-models", Name: "Builtin",
+		Backend: "builtin", BuiltinBackend: true, Transport: "cli",
+		RuntimeSystemPrompt: "prompt",
 	}
-	cliRes := runAgentSelfTest(context.Background(), cliAgent, "")
-	assert.Equal(t, selfTestFail, statusOf(cliRes, "models"),
-		"a CLI agent with no discovered models cannot pick one for a turn")
+	builtinRes := runAgentSelfTest(context.Background(), inProcess, "")
+	assert.Equal(t, selfTestWarn, statusOf(builtinRes, "models"),
+		"an empty model list is never a hard failure")
 }
 
 // A preferred model that is not in the list would be dropped silently at turn
@@ -505,15 +485,17 @@ func TestServeAgentSelfTest_Guards(t *testing.T) {
 	})
 }
 
-// effectiveTransport must prefer an explicit override, then "has an ACP
-// command", then CLI — the same order resolveIsACP uses.
+// effectiveTransport is decided by the command alone: an ACP command means ACP,
+// otherwise the agent is the in-process one. A stale stored transport value must
+// not bring a CLI mode back.
 func TestEffectiveTransport(t *testing.T) {
-	assert.Equal(t, "acp-stdio", effectiveTransport(&model.Agent{Transport: "acp-stdio", AcpCommand: "x"}),
-		"an explicit transport wins")
+	assert.Equal(t, "acp-stdio", effectiveTransport(&model.Agent{Transport: "acp-stdio", AcpCommand: "x"}))
 	assert.Equal(t, "acp-stdio", effectiveTransport(&model.Agent{AcpCommand: "x"}),
-		"an ACP command implies ACP")
-	assert.Equal(t, "cli", effectiveTransport(&model.Agent{Command: "claude"}),
-		"neither → CLI")
+		"an ACP command implies ACP even when the column is empty")
+	assert.Equal(t, "acp-stdio", effectiveTransport(&model.Agent{Transport: "cli", AcpCommand: "x"}),
+		"a legacy cli value on an ACP agent must not select a CLI path")
+	assert.Equal(t, "cli", effectiveTransport(&model.Agent{BuiltinBackend: true}),
+		"the built-in agent runs in-process")
 }
 
 // checkAcpState must WARN (not fail) before the first handshake: capabilities

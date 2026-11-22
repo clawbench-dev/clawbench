@@ -306,12 +306,11 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 		return at
 	}
 
-	// If the session's transport says acp-stdio but the agent fell back to CLI,
-	// clear the stale override so later messages stop warning.
-	if sessionTransport == transportACPStdio {
-		if _, ok := backend.(*ai.ACPBackend); !ok {
-			_ = UpdateSessionTransport(spec.SessionID, "")
-		}
+	// The session's stored transport is no longer an input (everything runs over
+	// ACP), so stale overrides are dropped: a legacy "cli" row would otherwise
+	// keep every client switching gate on a mode that no longer exists.
+	if sessionTransport != "" {
+		_ = UpdateSessionTransport(spec.SessionID, "")
 	}
 
 	slog.Info("acp perf: executeStreamRun.ExecuteStream_start",

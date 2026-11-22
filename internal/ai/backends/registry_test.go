@@ -11,6 +11,15 @@ import (
 	"clawbench/internal/model"
 )
 
+// stubBackend is an inert AIBackend for the registration tests.
+type stubBackend struct{}
+
+func (stubBackend) Name() string { return "stub" }
+
+func (stubBackend) ExecuteStream(context.Context, ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	return nil, nil
+}
+
 func TestRegistry_RegisterAndLookup(t *testing.T) {
 	t.Cleanup(backends.ResetForTest())
 
@@ -22,9 +31,9 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 			Name:      "Test",
 			Specialty: "test backend",
 		},
-		CLI: &backends.CLIPlugin{
+		Implementation: &backends.InProcessPlugin{
 			NewBackend: func() ai.AIBackend {
-				return &ai.CLIBackend{}
+				return &stubBackend{}
 			},
 		},
 	}
@@ -35,13 +44,13 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 	if got.ID != "test-backend" {
 		t.Errorf("expected ID 'test-backend', got %q", got.ID)
 	}
-	if got.CLI == nil {
-		t.Error("expected CLI plugin to be non-nil")
+	if got.Implementation == nil {
+		t.Error("expected an in-process plugin")
 	}
-	// Register() must forward the CLI factory to internal/ai — that is what
+	// Register() must forward the in-process factory to internal/ai — that is what
 	// makes a single init() enough for a backend.
 	if ai.LookupBackendFactoryForTest("test-backend") == nil {
-		t.Error("expected Register to forward CLI.NewBackend to the ai factory table")
+		t.Error("expected Register to forward Implementation.NewBackend to the ai factory table")
 	}
 }
 

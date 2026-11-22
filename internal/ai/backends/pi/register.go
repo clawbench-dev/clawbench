@@ -1,28 +1,17 @@
 package pi
 
 import (
-	"log/slog"
-
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 	"clawbench/internal/model"
 )
 
-// PiInputRemaps maps Pi CLI input field names to canonical names.
-// Injected into PiStreamParser at construction time.
-var PiInputRemaps = map[string]string{
-	"path": "file_path",
-}
-
 // PiACPInputRemaps is the ACP remap table for Pi.
 //
-// It is intentionally minimal and mirrors PiInputRemaps: pi-acp forwards Pi's
-// native tool arguments, and the tool-aware normalization (including the nested
-// edits[] array) lives in internal/ai's Pi-specific ACP parser
-// (parsePiACPToolCall → normalizePiACPInput), which reuses the same
-// normalizePiToolInput the CLI path uses. Registering the table here keeps the
-// backend's declared remaps inspectable, and LookupACPRemaps falls back to the
-// generic table when a backend has no ACP plugin.
+// It is intentionally minimal and mirrors the CLI's "path" remap: pi-acp
+// forwards Pi's native tool arguments, and the tool-aware normalization
+// (including the nested edits[] array) lives in this package's ACP parser
+// (parsePiACPToolCall → normalizePiACPInput).
 //
 // Do NOT add oldText/newText here: the generic ACP normalizer is a flat
 // single-pass remap that never recurses into edits[], so those entries would be
@@ -68,7 +57,6 @@ func init() {
 		ACP: &backends.ACPPlugin{
 			InputRemaps: PiACPInputRemaps,
 		},
-		CLI: &backends.CLIPlugin{NewBackend: newPiBackend},
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       parsePiACPToolCall,
 			ParseToolCallUpdate: parsePiACPToolCallUpdate,
@@ -95,80 +83,4 @@ func init() {
 			ConfigDirDeclaresModels: true,
 		},
 	})
-}
-
-// newPiBackend returns a CLIBackend instance configured for Pi CLI.
-func newPiBackend() ai.AIBackend {
-	return &ai.CLIBackend{
-		BackendName: "pi",
-		Cmd:         "pi",
-		BuildArgsFn: buildPiStreamArgs,
-		NewParserFn: func() ai.LineParser {
-			return &PiStreamParser{InputRemaps: PiInputRemaps}
-		},
-		FilterLineFn: nil,
-		PreStartFn:   nil,
-	}
-}
-
-// buildPiStreamArgs constructs the CLI arguments for Pi streaming.
-//
-// Command: pi -p --mode json [flags] "prompt"
-//
-// Supported flags:
-//
-//	--session <id>              Resume a specific session
-//	--continue                  Continue the most recent session
-//	--no-session                Start a new session (no persistence)
-//	--no-context-files          Skip AGENTS.md / CLAUDE.md discovery
-//	--append-system-prompt <text> Append to Pi's built-in system prompt
-//	--model <model>             Override model
-//
-// Working directory is set via cmd.Dir (CLIBackend sets cmd.Dir = req.WorkDir),
-// not via a CLI flag — Pi does not have a --add-dir option.
-func buildPiStreamArgs(req ai.ChatRequest) []string {
-	args := []string{"-p", "--mode", "json"}
-
-	// Session management
-	switch {
-	case req.Resume && req.SessionID != "":
-		// Resume a specific session by its Pi-assigned ID (captured via
-		// external_session_id). This allows conversation continuity.
-		args = append(args, "--session", req.SessionID)
-		slog.Info("cli: --session resume (pi)",
-			slog.String("session_id", req.SessionID))
-	case req.Resume:
-		// Resume without a known session ID — continue the most recent session.
-		args = append(args, "--continue")
-		slog.Warn("cli: --continue fallback (pi, session_id missing)",
-			slog.String("backend", "pi"))
-	case req.ScheduledExecution:
-		// Tasks are independent executions — no need to persist sessions.
-		args = append(args, "--no-session")
-	}
-	// Default: new interactive session without --no-session so Pi creates
-	// a persistent session whose ID can be captured for future resumption.
-
-	// Skip AGENTS.md / CLAUDE.md discovery — ClawBench injects its own rules
-	args = append(args, "--no-context-files")
-
-	// System prompt — use --append-system-prompt to preserve Pi's built-in prompt
-	if req.SystemPrompt != "" {
-		args = append(args, "--append-system-prompt", req.SystemPrompt)
-	}
-
-	// Model override
-	if req.Model != "" {
-		args = append(args, "--model", req.Model)
-	}
-
-	// Thinking effort level (e.g., --thinking high)
-	if req.ThinkingEffort != "" {
-		args = append(args, "--thinking", req.ThinkingEffort)
-	}
-
-	// Prompt is the last positional argument
-	args = append(args, req.Prompt)
-
-	return args
 }

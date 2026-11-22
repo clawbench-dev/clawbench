@@ -438,14 +438,8 @@ func TestExportSeams_DelegateToTheSameImplementation(t *testing.T) {
 // internal ones; a backend sizing its own channel or scanner from a copy would
 // silently produce a different buffering contract.
 func TestExportSeams_ConstantsMatchTheCore(t *testing.T) {
-	if StreamChanSize != streamChanSize {
-		t.Fatalf("StreamChanSize = %d, core %d", StreamChanSize, streamChanSize)
-	}
 	if MaxToolOutputBytes != maxToolOutputBytes {
 		t.Fatal("MaxToolOutputBytes must be the core cap")
-	}
-	if ScannerInitial != scannerInitial || ScannerMax != scannerMax {
-		t.Fatal("the scanner bounds must be the core ones")
 	}
 	if CriticalSendTimeout != criticalSendTimeout {
 		t.Fatal("CriticalSendTimeout must be the core timeout")
@@ -603,23 +597,14 @@ func TestExportSeams_MappingWrappers(t *testing.T) {
 	}
 
 	// The remaining small wrappers.
-	if got := ExtractContentText(json.RawMessage(`{"type":"text","text":"hello"}`)); got == "" {
-		t.Fatal("ExtractContentText must flatten a text block")
-	}
 	if ExtractMetaUsageForTest("no-such-backend", map[string]any{}) != nil {
 		t.Fatal("an empty meta must extract nothing")
 	}
 	if IsACPToolCallWrapperForTest("anything", "no-such-backend") != isACPToolCallWrapper("anything", "no-such-backend") {
 		t.Fatal("IsACPToolCallWrapperForTest diverged")
 	}
-	if IsCLICompactionMessage(nil) != isCLICompactionMessage(nil) {
-		t.Fatal("IsCLICompactionMessage diverged")
-	}
 	if IsGrokCompactionCompleted("x") != isGrokCompactionCompleted("x") {
 		t.Fatal("IsGrokCompactionCompleted diverged")
-	}
-	if got := RedactArgs([]string{"--api-key", "secret"}); len(got) != 2 {
-		t.Fatalf("RedactArgs = %v", got)
 	}
 	if AgentProcessEnv() == nil {
 		// nil is a legitimate answer on a platform with no overrides; only the

@@ -82,8 +82,6 @@ interface AgentRecord {
   command?: string
   specialty?: string
   models?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
-  /** Pure CLI-discovered list, supplied by the backend for the CLI view. */
-  cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
   preferredModel?: string
   thinkingEffort?: string
   thinkingEffortLevels?: string[]
@@ -127,7 +125,6 @@ interface AgentRecord {
    * prompt (built-in backend only). Absent / false means "inject".
    */
   skipProjectContext?: boolean
-  supportsCLI?: boolean
   supportsMidTurn?: boolean
   autoApprove?: boolean
   /** Hidden from every new-entry picker (new session / task / group member). */
@@ -210,7 +207,6 @@ interface AcpState {
   modelListState?: {
     models?: Array<{ id: string; name: string; price?: ModelPrice; credits?: string }>
     resolvedModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
-    cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
     currentModelId?: string
   }
   planState?: { entries?: Array<Record<string, unknown>> }
@@ -242,10 +238,9 @@ async function loadAgents(force = false): Promise<void> {
     loadPromise = (async () => {
         try {
             const data = await apiGet<{ agents: AgentRecord[]; defaultAgent?: string; acpStates?: Record<string, Record<string, unknown>> }>('/api/agents')
-            // The backend resolves the model list (CLI order/names with ACP
-            // membership applied) and also reports the untouched CLI list as
-            // cliModels. The client renders what it is given; it keeps no
-            // baseline of its own.
+            // The backend resolves the model list (discovery order/names with
+            // ACP membership applied). The client renders what it is given and
+            // keeps no baseline of its own.
             agents.value = data.agents || []
             // The list is now authoritative: an id absent from it is genuinely
             // gone, not merely unloaded. Views that gate on a looked-up agent
@@ -294,7 +289,7 @@ async function loadAgents(force = false): Promise<void> {
                     // them, so apply the resolved list when present.
                     const ml = activeState.modelListState
                     if (ml?.resolvedModels && ml.resolvedModels.length > 0) {
-                        applyResolvedModelList(activeAgentId, ml.resolvedModels, ml.cliModels)
+                        applyResolvedModelList(activeAgentId, ml.resolvedModels)
                     } else if (ml?.models && ml.models.length > 0) {
                         updateACPModelList(activeAgentId, ml.models, ml.currentModelId)
                     }
@@ -612,11 +607,9 @@ async function setDefaultAgent(agentId: string): Promise<void> {
 /**
  * Apply an ACP model list update pushed over the WebSocket.
  *
- * The backend sends the already-resolved list (`resolvedModels`) plus the pure
- * CLI list (`cliModels`), so this is a plain assignment. Previously the client
- * held a CLI baseline and merged the two lists itself, which needed a tier-alias
- * pass for claude-style agents and a manual save/restore around transport
- * switches.
+ * The backend sends the already-resolved list (`resolvedModels`), so this is a
+ * plain assignment. Previously the client held a separate baseline and merged
+ * the two lists itself, which needed a tier-alias pass for claude-style agents.
  *
  * Falls back to the raw ACP list when the backend could not resolve it (no CLI
  * list available at emit time) — better to show the ACP list alone than nothing.
@@ -639,49 +632,26 @@ export function updateACPModelList(agentId: string, models: Array<{ id: string; 
 }
 
 /**
- * Apply a backend-resolved model list together with its CLI counterpart.
+ * Apply a backend-resolved model list.
  *
- * This is the preferred path: the backend already applied ACP membership over the
- * CLI skeleton, so the client only assigns. `cliModels` is stored alongside so a
- * later transport switch to CLI is a plain field read.
+ * The backend already applied ACP membership over the discovered skeleton, so
+ * the client only assigns.
  */
 export function applyResolvedModelList(
     agentId: string,
     resolved: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>,
-    cliModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>,
 ): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
     agent.models = resolved.map(m => ({ ...m }))
-    if (cliModels && cliModels.length > 0) {
-        agent.cliModels = cliModels.map(m => ({ ...m }))
-    }
 }
 
 /**
- * Switch the agent's displayed model list to the CLI view.
+ * Restore the agent's model list from the cached ACP state.
  *
- * `cliModels` is supplied by the backend on every /api/agents response, so no
- * client-side baseline is needed.
- */
-export function restoreOriginalModels(agentId: string): void {
-    const agent = agents.value.find(a => a.id === agentId)
-    if (!agent?.cliModels) return
-    agent.models = agent.cliModels.map(m => ({ ...m }))
-}
-
-/**
- * Restore the agent's model list to the ACP view.
- *
- * The counterpart to restoreOriginalModels. Switching ACP → CLI replaces
- * `agent.models` with the CLI list, so switching back must NOT leave it there:
- * the CLI list is a guess until the ACP agent has reported its own models
- * (ACP has no client-side default-model concept). So this either applies the
- * ACP-reported list or clears the list entirely — never falls through to the
- * CLI baseline.
- *
- * Deliberately separate from populateACPStateFromCache, which the settings page
- * also calls and which must leave a dual-transport agent's CLI list intact.
+ * Either applies the ACP-reported (resolved) list or clears the list entirely:
+ * the discovered list is a guess until the ACP agent has reported its own
+ * models (ACP has no client-side default-model concept).
  *
  * Returns true when an ACP-reported list was applied, false when the list was
  * cleared because the agent has not reported models yet.
@@ -692,7 +662,7 @@ export function restoreACPModelView(agentId: string): boolean {
     const state = acpStatesCache[agentId] as AcpState | undefined
     const ml = state?.modelListState
     if (ml?.resolvedModels && ml.resolvedModels.length > 0) {
-        applyResolvedModelList(agentId, ml.resolvedModels, ml.cliModels)
+        applyResolvedModelList(agentId, ml.resolvedModels)
         return true
     }
     if (ml?.models && ml.models.length > 0) {
@@ -706,58 +676,20 @@ export function restoreACPModelView(agentId: string): boolean {
 }
 
 /**
- * Reset the agent's displayed model list to whichever view its CURRENT
- * transport calls for.
- *
- * Both baselines live on the same `agent.models` field, so a caller that resets
- * "to the CLI list" unconditionally is wrong for an agent running over ACP (and
- * vice versa). This picks the right one: ACP → the ACP view (see
- * restoreACPModelView, which clears the list when the agent has not reported
- * models yet); CLI → the CLI baseline.
- *
- * The server response is authoritative and self-heals on the next loadAgents,
- * so this only covers the window between fetches (a transport toggle, a session
- * switch).
- */
-export function resetModelViewForTransport(agentId: string): void {
-    if (getAgentTransport(agentId) === 'acp-stdio') {
-        restoreACPModelView(agentId)
-        return
-    }
-    restoreOriginalModels(agentId)
-}
-
-/**
  * Apply the result of a manual "refresh models".
  *
- * The backend persists the newly discovered CLI list and answers with the same
- * pair GET /api/agents reports: the resolved list (`models`) plus the pure CLI
- * list (`cliModels`). The CLI baseline is always replaced — a later transport
- * switch reads it — while the displayed list depends on the active transport,
- * because in ACP mode the ACP-resolved list is authoritative for membership.
- *
- * `cliModels` is optional for backwards compatibility: an older backend answers
- * with only `models`, which is then used for both lists (the previous behavior).
+ * The backend persists the newly discovered list and answers with the resolved
+ * list GET /api/agents reports, so the client only assigns.
  */
 export function applyRefreshedModelList(
     agentId: string,
     resolved: Array<{ id: string; name: string; default?: boolean; price?: ModelPrice }>,
-    cliModels?: Array<{ id: string; name: string; default?: boolean; price?: ModelPrice }>,
 ): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
-    // Spread keeps the backend-supplied `price` on both views; a refresh is
-    // also the moment the catalog-derived tag is most likely to have changed.
-    const cli = (cliModels && cliModels.length > 0 ? cliModels : resolved).map(m => ({
-        ...m,
-        default: !!m.default,
-    }))
-    agent.cliModels = cli
-    if (getAgentTransport(agentId) === 'acp-stdio') {
-        agent.models = resolved.map(m => ({ ...m, default: !!m.default }))
-    } else {
-        agent.models = cli.map(m => ({ ...m }))
-    }
+    // Spread keeps the backend-supplied `price`; a refresh is also the moment
+    // the catalog-derived tag is most likely to have changed.
+    agent.models = resolved.map(m => ({ ...m, default: !!m.default }))
     // A refresh is authoritative for membership: if the session's model is no
     // longer in the new list, the chip must move to the new default now rather
     // than keep displaying a model that cannot run.
@@ -774,16 +706,13 @@ function canRefreshModels(agentId: string): boolean {
  * Whether a manual "refresh all" can produce anything for this agent.
  *
  * Mirrors the backend's strategy split exactly (see agentUsesACP in
- * internal/handler/agent.go): the transport decides. An ACP agent is asked
- * directly — its models/modes/thinking levels/slash commands come from its own
- * session handshake, so an ACP-only backend with no CLI model source
- * (canRefreshModels === false) is still perfectly refreshable. A CLI agent
- * re-runs backend discovery, so it needs a model source.
+ * internal/handler/agent.go): an agent with an ACP command is asked directly —
+ * its models/modes/thinking levels/slash commands come from its own session
+ * handshake, so a backend with no model source (canRefreshModels === false) is
+ * still perfectly refreshable. Only the in-process agent re-runs discovery.
  *
  * Gating on canRefreshModels alone hid the button exactly where refreshing
- * matters most; gating on "has an acp_command" alone would show it for a
- * dual-transport agent currently on CLI, which would then answer
- * ModelDiscoveryNotSupported.
+ * matters most.
  */
 function canRefreshAgentState(agentId: string): boolean {
     if (getAgentTransport(agentId) === 'acp-stdio') return supportsACP(agentId)
@@ -791,23 +720,12 @@ function canRefreshAgentState(agentId: string): boolean {
 }
 
 /**
- * Check if an agent supports ACP transport (has acpCommand set).
- * ACP-only backends (e.g. grok) support ACP but not CLI.
+ * Check if an agent runs over ACP (it has an acpCommand). Every backend except
+ * the in-process built-in agent does.
  */
 function supportsACP(agentId: string): boolean {
     const agent = agents.value.find(a => a.id === agentId)
     return !!agent?.acpCommand
-}
-
-/**
- * Check if an agent supports CLI transport (has a CLI backend implementation).
- * Backends without a CLI factory (e.g. grok, ACP-only) return false.
- * Falls back to true for legacy agents where supportsCLI is not reported.
- */
-function supportsCLI(agentId: string): boolean {
-    const agent = agents.value.find(a => a.id === agentId)
-    if (!agent) return false
-    return agent.supportsCLI !== false
 }
 
 /**
@@ -822,14 +740,6 @@ function supportsCLI(agentId: string): boolean {
 function supportsMidTurn(agentId: string): boolean {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.supportsMidTurn === true
-}
-
-/**
- * Check if an agent supports BOTH ACP and CLI transport modes
- * (has acpCommand AND a CLI backend implementation).
- */
-function supportsDualTransport(agentId: string): boolean {
-    return supportsACP(agentId) && supportsCLI(agentId)
 }
 
 /** Get the current transport mode for an agent. Returns 'acp-stdio' or 'cli'. */
@@ -915,7 +825,7 @@ export async function populateACPStateFromCache(agentId: string): Promise<void> 
     }
     const ml = state.modelListState
     if (ml?.resolvedModels && ml.resolvedModels.length > 0) {
-        applyResolvedModelList(agentId, ml.resolvedModels, ml.cliModels)
+        applyResolvedModelList(agentId, ml.resolvedModels)
     } else if (ml?.models && ml.models.length > 0) {
         updateACPModelList(agentId, ml.models, ml.currentModelId)
     }
@@ -1041,15 +951,11 @@ export function useAgents() {
         canRefreshAgentState,
         agentCanResume,
         supportsACP,
-        supportsCLI,
         supportsMidTurn,
-        supportsDualTransport,
         getAgentTransport,
         invalidateACPStateCache,
         updateACPModelList,
-        restoreOriginalModels,
         restoreACPModelView,
-        resetModelViewForTransport,
         applyRefreshedModelList,
         applyRefreshedACPState,
         populateACPStateFromCache,

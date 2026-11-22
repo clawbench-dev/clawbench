@@ -37,10 +37,9 @@ func TestProviderMethods(t *testing.T) {
 		// backend — nothing is injected into a spawned process.
 		{"builtin", []string{ProviderMethodInProcess}},
 		// No channel at all: openclaw's provider belongs to its Gateway; qoder
-		// and copilot have no provider configuration.
+		// has no provider configuration.
 		{"openclaw", nil},
 		{"qoder", nil},
-		{"copilot", nil},
 		{"vecli", nil},
 		{"custom-acp", nil},
 	}
@@ -71,7 +70,7 @@ func TestLookupBackendCapabilities_UnwiredFallsBack(t *testing.T) {
 	LookupBackendCapabilitiesFn = nil
 
 	caps := LookupBackendCapabilities("claude")
-	if caps.HasCLI || caps.CanBindProvider || caps.SupportsMidTurn {
+	if caps.CanBindProvider || caps.SupportsMidTurn {
 		t.Fatalf("unwired lookup must return the zero value, got %+v", caps)
 	}
 }

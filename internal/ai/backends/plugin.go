@@ -9,9 +9,9 @@ import (
 // Each backend sub-package registers itself via ONE init() calling Register().
 //
 // Register() is the only entry point a backend needs: it forwards each non-nil
-// field to the registry that consumes it (the CLI factory table in internal/ai,
-// the model-source registry in internal/model, the on-disk session scanner
-// table). Before that, every backend had to call three or four registration
+// field to the registry that consumes it (the in-process factory table in
+// internal/ai, the model-source registry in internal/model, the on-disk session
+// scanner table). Before that, every backend had to call three or four registration
 // functions from three or four init() blocks, and forgetting one produced a
 // backend that half worked (e.g. detectable but with no models).
 type BackendPlugin struct {
@@ -23,14 +23,10 @@ type BackendPlugin struct {
 	// Collected into model.BackendRegistry at startup.
 	Spec model.BackendSpec
 
-	// CLI is the CLI-transport factory. nil means the backend has no CLI
-	// transport (ACP-only backends: cursor, commandcode, dsh, grok's ACP path…).
-	//
-	// There used to be a second `Custom` field for backends that implement
-	// AIBackend directly instead of riding the CLIBackend skeleton. Both
-	// factories have the same signature (func() ai.AIBackend), so the split
-	// carried no information — one field is enough.
-	CLI *CLIPlugin
+	// Implementation is the in-process factory for a backend that runs inside
+	// this process instead of spawning an agent (only the built-in agent).
+	// nil for every process-spawning backend, which reach an agent over ACP.
+	Implementation *InProcessPlugin
 
 	// ACP is the ACP-mode mapping data. nil means no ACP support.
 	// ACP event handling logic stays in internal/ai/ as shared infrastructure;
@@ -46,7 +42,7 @@ type BackendPlugin struct {
 	Behavior *ai.ACPBehavior
 
 	// ModelSource is how this backend enumerates its models (static catalog,
-	// CLI probe, or custom plugin). nil means the backend has no discovery
+	// command probe, or custom plugin). nil means the backend has no discovery
 	// source of its own.
 	//
 	// This used to be a separate model.RegisterModelSource() call in a
@@ -98,14 +94,10 @@ type BackendPlugin struct {
 	MidTurnSplitsReply bool
 }
 
-// CLIPlugin is the CLI-transport factory for a backend.
-//
-// Tool-name normalization and input remapping deliberately do NOT live here:
-// they are properties of the line parser the factory builds (StreamJSONParser
-// holds its own ToolNameMap/InputRemaps), and duplicating them in the plugin
-// would create two sources of truth that can drift. The plugin only answers
-// "can this backend run over CLI, and how do I construct it".
-type CLIPlugin struct {
+// InProcessPlugin is the factory for a backend implemented in this process
+// (the built-in agent). It is NOT a CLI transport: the backend never spawns a
+// subprocess, it runs ClawBench's own tool loop.
+type InProcessPlugin struct {
 	// NewBackend returns a fresh backend instance for one run.
 	NewBackend func() ai.AIBackend
 }

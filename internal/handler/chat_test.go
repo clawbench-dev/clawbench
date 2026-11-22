@@ -4204,12 +4204,15 @@ func TestBuildChatRequest_ACPResume_UsesClawBenchUUID(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "test-acp-resume", "codebuddy", "", "default", "chat")
 	assert.NoError(t, err)
 
+	// The ACP path is decided by the agent's command, not by a session column.
+	origAgents := model.Agents
+	t.Cleanup(func() { model.Agents = origAgents })
+	codebuddyAgent := *model.GetAgent("codebuddy")
+	codebuddyAgent.AcpCommand = "codebuddy --acp"
+	model.Agents["codebuddy"] = &codebuddyAgent
+
 	// Simulate: first message completed, ACP session ID was captured
 	err = service.UpdateExternalSessionID(sessionID, "acp-sess-abc-123")
-	assert.NoError(t, err)
-
-	// Mark as ACP transport
-	err = service.UpdateSessionTransport(sessionID, "acp-stdio")
 	assert.NoError(t, err)
 
 	// Add assistant message so SessionHasAssistant returns true
@@ -4218,7 +4221,7 @@ func TestBuildChatRequest_ACPResume_UsesClawBenchUUID(t *testing.T) {
 
 	// buildChatRequest with acp-stdio transport should use the ClawBench UUID,
 	// not the ACP session ID — the pool maps internally
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "acp-stdio", "", false)
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume, "should be resume since session has assistant messages")
 	assert.Equal(t, sessionID, req.SessionID, "ACP resume should use ClawBench UUID, not external_session_id")
 }
@@ -4235,10 +4238,14 @@ func TestBuildChatRequest_ACPResume_AfterServerRestart(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "test-acp-restart", "codebuddy", "", "default", "chat")
 	assert.NoError(t, err)
 
+	origAgents := model.Agents
+	t.Cleanup(func() { model.Agents = origAgents })
+	codebuddyAgent := *model.GetAgent("codebuddy")
+	codebuddyAgent.AcpCommand = "codebuddy --acp"
+	model.Agents["codebuddy"] = &codebuddyAgent
+
 	// Simulate: before restart, ACP session was captured
 	err = service.UpdateExternalSessionID(sessionID, "698ddb14-d532-44c1-8cf6-6378907ec72a")
-	assert.NoError(t, err)
-	err = service.UpdateSessionTransport(sessionID, "acp-stdio")
 	assert.NoError(t, err)
 
 	// Add assistant messages
@@ -4248,7 +4255,7 @@ func TestBuildChatRequest_ACPResume_AfterServerRestart(t *testing.T) {
 	assert.NoError(t, err)
 
 	// After restart: pool is empty, but handler still works correctly
-	req := buildChatRequest("next message", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "acp-stdio", "", false)
+	req := buildChatRequest("next message", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume, "should be resume after restart since session has assistant messages")
 	assert.Equal(t, sessionID, req.SessionID, "ACP resume after restart should use ClawBench UUID")
 }
@@ -4379,7 +4386,10 @@ func TestAIChat_UserMessageEmit_NewSession(t *testing.T) {
 	mgr.Subscribe(nil, &writeMu, "test-client-1", "")
 	mgr.StreamHub().Subscribe("test-client-1", sessionID)
 
-	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "cli", Command: "echo"}
+	// Every real backend runs over ACP now, so the agent needs a command. The
+	// turn itself may fail to spawn here; this test only pins that the stream is
+	// ANNOUNCED (stream_start carries the placeholder id) before anything else.
+	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "codebuddy", AcpCommand: "echo"}
 
 	body := map[string]string{"message": "hello from test", "agentId": "codebuddy"}
 	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
@@ -4503,7 +4513,10 @@ func TestAIChat_StreamStartEvent(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "test-stream-start-client", "")
 	mgr.StreamHub().Subscribe("test-stream-start-client", sessionID)
 
-	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "cli", Command: "echo"}
+	// Every real backend runs over ACP now, so the agent needs a command. The
+	// turn itself may fail to spawn here; this test only pins that the stream is
+	// ANNOUNCED (stream_start carries the placeholder id) before anything else.
+	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "codebuddy", AcpCommand: "echo"}
 
 	body := map[string]string{"message": "hello from test", "agentId": "codebuddy"}
 	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)

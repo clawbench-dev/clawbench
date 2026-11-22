@@ -523,17 +523,15 @@ func ThinkingEffortIsOffered(agent *model.Agent, isACP bool, level, modelID stri
 	return false
 }
 
-// resolveIsACP decides whether this turn goes over ACP. An explicit transport
-// override is authoritative; otherwise the agent's configured transport wins.
-func resolveIsACP(agentID, transportOverride string) bool {
-	if transportOverride != "" {
-		return transportOverride == transportACPStdio
-	}
+// resolveIsACP decides whether this turn goes over ACP: every agent with an ACP
+// command does. The per-session transport override is accepted for API
+// compatibility but cannot select a CLI path any more — there is none.
+func resolveIsACP(agentID, _ string) bool {
 	agent := model.GetAgent(agentID)
 	if agent == nil {
 		return false
 	}
-	return agent.Transport == transportACPStdio
+	return agent.SupportsACP()
 }
 
 // resolveResumeSessionID picks the session id to hand the CLI and the final

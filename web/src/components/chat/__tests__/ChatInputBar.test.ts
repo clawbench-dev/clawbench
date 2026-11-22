@@ -1854,13 +1854,6 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('switch-mode')![0]).toEqual(['plan'])
   })
 
-  it('handleSwitchTransport emits switch-transport', async () => {
-    const wrapper = mountBar()
-    wrapper.vm.handleSwitchTransport('acp-stdio')
-    expect(wrapper.emitted('switch-transport')).toBeTruthy()
-    expect(wrapper.emitted('switch-transport')![0]).toEqual(['acp-stdio'])
-  })
-
   it('stop button appears when loading and disappears when not loading', async () => {
     const wrapper = mountBar({ loading: true })
     await wrapper.vm.$nextTick()

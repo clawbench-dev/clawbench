@@ -1179,12 +1179,6 @@ export default {
       title: '模式',
       saveFailed: '模式未能保存，已还原为之前的模式',
     },
-    transportSwitcher: {
-      title: '协议',
-      acp: 'ACP 模式',
-      cli: 'CLI 模式',
-      saveFailed: '协议未能保存，刷新后会恢复原值',
-    },
     autoApprove: {
       title: '自动批准',
       description: '自动批准代理的所有权限请求。',
@@ -3870,7 +3864,6 @@ export default {
       agentPreferredThinkingEffortDesc: '仅对支持推理的模型生效；不支持的模型选择了会直接报错，不会静默忽略',
       agentPreferredMode: '首选模式',
       agentPreferredModeDesc: '新建会话默认使用的模式。模式只会收窄上面的工具权限，不会扩大',
-      agentTransport: '协议',
       agentAutoApprove: '新建会话默认自动审批',
       agentAutoApproveDesc: '用此智能体新建会话时，自动审批默认开启并写入会话，重启后仍保留；之后仍可在会话中单独关闭',
       agentProjectOnly: '仅当前项目',

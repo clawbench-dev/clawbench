@@ -404,8 +404,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
     supportsACP: vi.fn().mockReturnValue(false),
   }),
-  restoreOriginalModels: vi.fn(),
-  resetModelViewForTransport: vi.fn(),
+  restoreACPModelView: vi.fn(),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
   updateACPModelList: mockAgentFns.updateACPModelList,
@@ -8208,7 +8207,7 @@ describe('loadHistory session_id recovery', () => {
 // disappeared depending on unrelated frontend cache timing.
 //
 // The backend now resolves the list, so the client must prefer `resolvedModels`
-// and store `cliModels` alongside it (the transport switch reads that).
+// and apply it as the agent's model list.
 describe('syncSessionState — ACP model list', () => {
   let originalFetch: typeof globalThis.fetch
 
@@ -8230,7 +8229,6 @@ describe('syncSessionState — ACP model list', () => {
       { id: 'auto', name: 'Auto', default: true },
       { id: 'deepseek-v4-flash', name: 'Deepseek v4 Flash', default: false },
     ]
-    const cliModels = [{ id: 'cli-only', name: 'CLI Only', default: true }]
 
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
@@ -8239,7 +8237,7 @@ describe('syncSessionState — ACP model list', () => {
           sessionId: 's-acp-1', sessionTitle: 'S', messages: [], total: 0,
           backend: 'codebuddy', agentId: 'agent2', modelId: 'auto',
           transport: 'acp-stdio',
-          modelListState: { currentModelId: 'auto', models: resolved, resolvedModels: resolved, cliModels },
+          modelListState: { currentModelId: 'auto', models: resolved, resolvedModels: resolved },
           running: false,
         }),
       })
@@ -8251,7 +8249,7 @@ describe('syncSessionState — ACP model list', () => {
     const session = useChatSession(options)
     await session.switchSession('s-acp-1')
 
-    expect(mockAgentFns.applyResolvedModelList).toHaveBeenCalledWith('agent2', resolved, cliModels)
+    expect(mockAgentFns.applyResolvedModelList).toHaveBeenCalledWith('agent2', resolved)
     // The resolved path wins; the raw merge must not also run.
     expect(mockAgentFns.updateACPModelList).not.toHaveBeenCalled()
   })

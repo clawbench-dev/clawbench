@@ -354,12 +354,13 @@ func agentInsertArgs(agent *model.Agent, cols agentJSONColumns) []any {
 	}
 }
 
-// agentTransportForSave resolves the persisted transport, defaulting by command
-// shape when the caller left it empty.
+// agentTransportForSave resolves the persisted transport from the command:
+// an ACP command is the only process-spawning transport left, and an agent
+// without one is either the built-in (in-process) agent or unrunnable.
+//
+// The stored column is kept because clients read it to decide which state to
+// show (ACP options vs in-process), but it is derived, never a user choice.
 func agentTransportForSave(agent *model.Agent) string {
-	if agent.Transport != "" {
-		return agent.Transport
-	}
 	if agent.AcpCommand != "" {
 		return transportACPStdio
 	}
@@ -910,8 +911,11 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// normalizeAgentTransport maps an empty transport to the CLI default. Split out
-// of PatchAgentFields to keep its branch count in budget.
+// normalizeAgentTransport maps an empty transport to the in-process default.
+// Split out of PatchAgentFields to keep its branch count in budget.
+//
+// Only acp-stdio and the empty value are reachable: the discovery sync derives
+// the column from the ACP command, and the PATCH handler refuses the field.
 func normalizeAgentTransport(transport string) string {
 	if transport == "" {
 		return transportCLI

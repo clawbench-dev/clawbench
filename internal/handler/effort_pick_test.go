@@ -437,7 +437,10 @@ func TestSwitchSessionEffortToModel_UnknownAgentIsANoop(t *testing.T) {
 // TestSessionUsesACP_TransportOverrideWins pins the precedence: the session
 // row's transport override is authoritative over the agent's configured one
 // (a user can flip one session to CLI without touching the agent).
-func TestSessionUsesACP_TransportOverrideWins(t *testing.T) {
+// The per-session transport column is no longer an input: an agent with an ACP
+// command always runs over ACP, so a legacy "cli" value in a session row must
+// not steer effort validation down a path the turn will not take.
+func TestSessionUsesACP_DecidedByTheAgentCommand(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 	setACPAgentEffortLevels(t, "glm-5.3")
@@ -447,13 +450,13 @@ func TestSessionUsesACP_TransportOverrideWins(t *testing.T) {
 
 	agent := model.GetAgent(testEffortAgentID)
 	require.NotNil(t, agent)
-	assert.True(t, sessionUsesACP(sid, agent), "no override: the agent's acp-stdio transport decides")
+	assert.True(t, sessionUsesACP(sid, agent), "an ACP agent runs over ACP")
 
 	require.NoError(t, service.UpdateSessionTransport(sid, "cli"))
-	assert.False(t, sessionUsesACP(sid, agent), "a per-session cli override must win")
+	assert.True(t, sessionUsesACP(sid, agent), "a legacy per-session value must not select a path that does not exist")
 
-	require.NoError(t, service.UpdateSessionTransport(sid, "acp-stdio"))
-	assert.True(t, sessionUsesACP(sid, agent))
+	assert.False(t, sessionUsesACP(sid, &model.Agent{ID: "builtin", BuiltinBackend: true}),
+		"the in-process agent is the only non-ACP path")
 }
 
 // TestRememberEffortForModel_MissingAgentIsANoop pins the deleted-agent guard.

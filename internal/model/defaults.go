@@ -367,7 +367,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// with nothing bound, which read as a broken configuration forever).
 	agentBackends := map[string]bool{
 		"claude": true, "codebuddy": true, "opencode": true, "codex": true,
-		"qoder": true, "vecli": true, "deepseek": true, "pi": true, "mimo": true,
+		"qoder": true, "deepseek": true, "pi": true, "mimo": true,
 	}
 	if agentBackends[cfg.Summarize.TTSBackend] {
 		slog.Warn("summarize.tts_backend is a removed agent backend, falling back to simple", slog.String("old", cfg.Summarize.TTSBackend))

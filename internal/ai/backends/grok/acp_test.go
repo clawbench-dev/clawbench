@@ -3,7 +3,6 @@ package grok
 import (
 	"testing"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 
 	"github.com/stretchr/testify/assert"
@@ -47,9 +46,4 @@ func TestGrokBackendPlugin_ACPToolMapping(t *testing.T) {
 	assert.Equal(t, "Read", plugin.ACP.ToolCallIDPrefixes["read_file"])
 	assert.Equal(t, "Edit", plugin.ACP.ToolCallIDPrefixes["search_replace"])
 	assert.Equal(t, "old_string", plugin.ACP.InputRemaps["oldString"])
-}
-
-func TestGrokBackendPlugin_RegisteredCLIFactory(t *testing.T) {
-	// Grok registers a streaming-json CLI fallback via ai.RegisterBackend.
-	assert.NotNil(t, ai.LookupBackendFactoryForTest("grok"), "grok should have a CLI backend factory")
 }

@@ -191,7 +191,6 @@
       @switch-model="handleSwitchModel"
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
-      @switch-transport="handleSwitchTransport"
       @switch-config-option="handleSwitchConfigOption"
       @sync-acp-session="handleSyncAcpSession"
       @open-group-settings="$emit('open-group-settings')"
@@ -1808,22 +1807,6 @@ function handleSwitchMode(mode) {
   })
 }
 
-function handleSwitchTransport(transport) {
-  identity.currentTransport.value = transport
-  // Persist transport selection immediately so it survives page reload
-  persistSessionUpdate({ transport }).then((res) => {
-    if (res?.saveFailed) {
-      toast.show(t('chat.transportSwitcher.saveFailed'), { icon: 'warning', type: 'error' })
-    }
-  })
-  // When switching from ACP to CLI for this session, clear ACP-specific state.
-  if (transport === 'cli') {
-    identity.clearModeState()
-    identity.clearCommandState()
-    identity.clearThinkingEffortState()
-    identity.clearConfigOptions()
-  }
-}
 
 function handleOpenUserMsgIndex() {
   messageListRef.value?.toggleUserMsgIndex()

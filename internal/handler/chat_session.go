@@ -909,13 +909,9 @@ func thinkingEffortStateAfterModelSwitch(sessionID string) *ai.ThinkingEffortSta
 // has no optimistic copy to fall back on — so it must be surfaced rather than
 // reported as a silent ok.
 func (req *sessionUpdateRequest) applyNonModelFields(sessionID string) error {
-	if req.Transport != "" {
-		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
-		service.UpdateSessionTransport(sessionID, req.Transport)
-		if req.Transport == "cli" {
-			ai.GetACPConnManager().CloseConn(sessionID)
-		}
-	}
+	// req.Transport is accepted for API compatibility and ignored — every agent
+	// with an ACP command runs over ACP, so there is no per-session path to
+	// switch to.
 	if req.AutoApprove != nil {
 		applyAutoApprove(sessionID, *req.AutoApprove)
 	}
@@ -1034,14 +1030,11 @@ func switchSessionEffortToModel(sessionID, modelID string, deferred bool) string
 	return effort
 }
 
-// sessionUsesACP reports whether this session's turns go over ACP. The session
-// row's transport override is authoritative; otherwise the agent's configured
-// transport decides.
-func sessionUsesACP(sessionID string, agent *model.Agent) bool {
-	if t := service.GetSessionTransport(sessionID); t != "" {
-		return t == "acp-stdio"
-	}
-	return agent != nil && agent.Transport == "acp-stdio"
+// sessionUsesACP reports whether this session's turns go over ACP: they do
+// whenever the agent has an ACP command. The per-session transport column is no
+// longer an input.
+func sessionUsesACP(_ string, agent *model.Agent) bool {
+	return agent != nil && agent.SupportsACP()
 }
 
 // applySessionTags replaces a session's tag set, filing any brand-new labels

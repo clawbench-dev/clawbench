@@ -249,7 +249,6 @@
         @switch-model="handleSwitchModel"
         @switch-thinking-effort="handleSwitchThinkingEffort"
         @switch-mode="handleSwitchMode"
-        @switch-transport="handleSwitchTransport"
         @switch-config-option="handleSwitchConfigOption"
       />
       <QuickSendDrawer :open="quickSendDrawer.effectiveOpen.value" @close="quickSendDrawer.close()" />
@@ -791,7 +790,6 @@ const emit = defineEmits([
   'switch-model',
   'switch-thinking-effort',
   'switch-mode',
-  'switch-transport',
   'switch-config-option',
   'sync-acp-session',
   'toggle-group-cruise',
@@ -2350,10 +2348,6 @@ function handleSwitchThinkingEffort(level) {
 
 function handleSwitchMode(mode) {
   emit('switch-mode', mode)
-}
-
-function handleSwitchTransport(transport) {
-  emit('switch-transport', transport)
 }
 
 function handleSwitchConfigOption(payload) {

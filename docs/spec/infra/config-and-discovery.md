@@ -65,7 +65,7 @@ flowchart TD
 - **零配置启动**：没有 `config.yaml` 也能运行，系统自动填充所有默认值（端口、密码、TTS 引擎等）。`config.yaml` 是可选的增强，不是必须的前置步骤
 - **首次访问欢迎面板**：用户首次访问时显示 `WelcomeOverlay`（不是分步向导）。[WelcomeOverlay 详情](../features/setup-wizard.md)。Agent 创建通过自动发现或 `AgentInstallDialog` 完成，不存在 `/api/setup/*` 端点
 - **Agent 自动发现**：启动时检测 PATH 中是否存在 AI CLI 工具，为新发现的工具自动在数据库中创建 Agent（含 ACP 命令检测，即检查后端规格中的 `AcpCommand` 字段）。用户安装新 CLI 后重启即自动识别
-- **双传输支持**：Agent 的 `Transport` 字段（"cli" / "acp-stdio"）决定使用哪种传输模式。ACP 支持的 Agent 自动设置 `acp_command`，用户可以在会话中切换传输方式
+- **传输只有一条**：有 `acp_command` 的智能体一律走 ACP stdio，`Transport` 列由 `acp_command` 推导（「cli」只剩进程内的内置智能体）。没有 ACP 命令的智能体根本跑不起来，所以不再有 CLI/ACP 切换（PATCH `transport` 会被 400 拒绝）
 - **Model 自动发现**：每个后端在自己的包内注册一个 `model.ModelSource`（`RegisterModelSource`），共三种形态：
   - `StaticSource` —— 内置清单，仅在该 CLI 存在时可用（copilot / kimi / mimo）
   - `NewCLISource` —— 执行 CLI 子命令并用共享解析器解析（antigravity / deepseek / grok / opencode / pi）
@@ -83,7 +83,7 @@ flowchart TD
 
   前端不再做任何合并，只渲染后端给出的 `resolvedModels`。未经合并的纯 CLI 列表通过 `cliModels` 一并下发，供切换到 CLI 传输时直接渲染。
 
-- **ACP 传输下、ACP 未确认时不展示 CLI 猜测列表**：`transport == "acp-stdio"` 且该 agent 的 ACP 运行时**从未上报过**模型（`ai.HasConfirmedACPModels` 为假，数据源是 `AgentCapabilityRegistry`，经 `agents.acp_available_models` 持久化）时，`GET /api/agents` 与 `POST /api/agents/{id}/refresh-models` 的 `models` 返回**空数组**（`cliModels` 照常返回，发现结果照常落库）。判据用**有效传输**而非「有无 `acp_command`」，故 `transport == "cli"` 的双传输 agent 不受影响。
+- **ACP 未确认时不展示发现结果当猜测列表**：该 agent 有 `acp_command` 且 ACP 运行时**从未上报过**模型（`ai.HasConfirmedACPModels` 为假，数据源是 `AgentCapabilityRegistry`，经 `agents.acp_available_models` 持久化）时，`GET /api/agents` 与 `POST /api/agents/{id}/refresh-models` 的 `models` 返回**空数组**（发现结果照常落库）。
   - **理由**：ACP 协议没有「客户端默认模型」的概念——模型是 `category: "model"` 的会话配置项，agent 在 `session/new` 自带 `currentValue`，客户端只需显示、可选地改。在 agent 开口之前，CLI 发现的列表只是猜测；把它当可运行模型展示，会让前端推导出一个「默认模型」并在首条消息里作为 `modelId` 发回，触发一次 `session/set_config_option`，可能选中 agent 无法运行的模型（新装用户在首次 ACP 会话前必然踩到）。
   - **发送侧同步门控**：`service.BuildChatRequest` 的 `resolveAgentConfig` 在该状态下**跳过** `agent.DefaultModelID()` 兜底（`DefaultModelID` 含 `PreferredModel`，故一并覆盖），使 `ai.ChatRequest.Model` 保持空 —— `applyModelSelection` 对空值直接返回，不发任何模型 RPC，由 agent 用自己的默认。**显式选择一律尊重**（请求参数 / `chat_sessions.model` 持久值 / `preferredModel` 均不受影响）——那是用户意图，不是猜测。
   - **前端**：列表为空时模型 chip 显示占位（`chat.sessionInfo.default`），发送路径的 `modelId: currentModelId.value || undefined` 自然不发。两个基线共用 `agent.models` 一个字段，故传输切换/会话切换的复位必须按当前传输选择（`resetModelViewForTransport`）：ACP 侧要么应用 ACP 列表、要么清空，绝不回落到 CLI 基线（否则切换 ACP→CLI→ACP 会把 CLI 列表带回 ACP 视图）。
@@ -159,7 +159,7 @@ flowchart TD
 - **API 密钥与密码联动**：加密密钥由登录密码派生。`agent_api_keys` 表和 `crypto.go` 已移除，密码修改不再触发 API Key 加密轮换
 - **发现结果缓存**：`DiscoveryCache` 按后端缓存探测结果（含失败结果）5 分钟。探测要执行 CLI 或读取数 MB 的二进制，缓存让启动路径与手动刷新共用同一次工作。显式刷新会先失效缓存
 - **ACP 运行时模型验证**：设置 preferred_model 时，验证范围包含 CLI 发现的模型和 ACP 运行时返回的模型（`GetModelListState`），ACP-only 模型（如 Kimi kimi-k3）不再因 CLI 模型列表中不存在而报 `InvalidModelForAgent`
-- **部分后端无 CLI 模型列表**：VeCLI、Qoder 等后端没有 `--list-models` 类命令，其发现函数只能返回内置默认清单或读取本地缓存，也可由用户手动提供模型。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确
+- **部分后端无模型列表命令**：Qoder 等后端没有 `--list-models` 类命令，其发现函数只能返回内置默认清单或读取本地缓存，也可由用户手动提供模型。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确
 - **发现失败的原因随返回值传递**：`ModelSource.Discover` 返回 `(models, detail)`，detail 说明探测了哪些位置。此前 codebuddy 用进程级全局变量记录失败原因，并发刷新会互相串台；现在原因随调用返回，不会误归因
 - **默认值只用 presence 判定，不用零值比较**：新增的 `chat.auto_continue_max_retries` 中 `-1`（不限）与 `0`（不重试）**都有意义**，因此"未设置时回退到默认值"不能写成 `if v <= 0 { v = default }`——那会把用户显式选择的 0 冲成 3。凡是有多个合法特殊值的数值配置项都必须区分"字段缺省"与"显式零值"
 - **Codex 的多级发现**：Codex 无列模型命令且发布的是 stripped Rust 二进制，因此按可信度依次尝试——先读 CLI 缓存的完整模型目录（`~/.codex/models_cache.json`，含账号可用清单），再扫描二进制字符串，最后落到 `internal/ai/backends/codex/catalog.go` 中的内置清单。原先的 state SQLite 分支是死代码（定位到文件后无条件 `return nil`），已删除

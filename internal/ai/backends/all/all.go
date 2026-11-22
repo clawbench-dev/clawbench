@@ -14,7 +14,6 @@ import (
 	_ "clawbench/internal/ai/backends/codebuddy"
 	_ "clawbench/internal/ai/backends/codex"
 	_ "clawbench/internal/ai/backends/commandcode"
-	_ "clawbench/internal/ai/backends/copilot"
 	_ "clawbench/internal/ai/backends/cursor"
 	_ "clawbench/internal/ai/backends/deepseek"
 	_ "clawbench/internal/ai/backends/dsh"
@@ -27,6 +26,5 @@ import (
 	_ "clawbench/internal/ai/backends/pi"
 	_ "clawbench/internal/ai/backends/qoder"
 	_ "clawbench/internal/ai/backends/qodercn"
-	_ "clawbench/internal/ai/backends/vecli"
 	_ "clawbench/internal/ai/backends/zcode"
 )

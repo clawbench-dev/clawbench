@@ -8,7 +8,6 @@ describe('getBackendDisplayName', () => {
     expect(getBackendDisplayName('opencode')).toBe('OpenCode')
     expect(getBackendDisplayName('deepseek')).toBe('CodeWhale')
     expect(getBackendDisplayName('dsh')).toBe('DeepSeek Harness')
-    expect(getBackendDisplayName('vecli')).toBe('VeCLI')
     expect(getBackendDisplayName('hermes')).toBe('Hermes Agent')
     expect(getBackendDisplayName('cursor')).toBe('Cursor')
     expect(getBackendDisplayName('commandcode')).toBe('Command Code')

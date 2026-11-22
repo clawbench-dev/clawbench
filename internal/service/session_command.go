@@ -696,13 +696,7 @@ func handleSessionPanic(cfg LaunchConfig, sessionID string) {
 
 // handleACPCleanup marks the ACP connection as idle after session completion.
 func handleACPCleanup(sessionID, agentID string) {
-	effectiveTransport := transportCLI
-	if t := GetSessionTransport(sessionID); t != "" {
-		effectiveTransport = t
-	} else if agent := model.GetAgent(agentID); agent != nil && agent.Transport != "" {
-		effectiveTransport = agent.Transport
-	}
-	if effectiveTransport == transportACPStdio {
+	if agent := model.GetAgent(agentID); agent != nil && agent.SupportsACP() {
 		slog.Info("acp: marking connection idle for completed session", "session_id", sessionID, "agent_id", agentID)
 		ai.GetACPConnManager().MarkIdle(sessionID)
 	}

@@ -419,7 +419,7 @@ export class ChatPage {
   }
 
   /** Open the session setting drawer on a specific tab. */
-  private async openSettingTab(tab: 'model' | 'thinking' | 'mode' | 'transport'): Promise<void> {
+  private async openSettingTab(tab: 'model' | 'thinking' | 'mode'): Promise<void> {
     // Prefer the direct trigger when it exists: the model chip always does; the
     // mode chip only renders for ACP agents with modes.
     const trigger = tab === 'mode'
@@ -439,12 +439,11 @@ export class ChatPage {
   }
 
   /** Locale-independent label matcher for a drawer tab. */
-  private tabLabel(tab: 'model' | 'thinking' | 'mode' | 'transport'): RegExp {
+  private tabLabel(tab: 'model' | 'thinking' | 'mode'): RegExp {
     switch (tab) {
       case 'model': return /Model|模型/i
       case 'thinking': return /Thinking|思考/i
       case 'mode': return /^Mode$|^模式$/i
-      case 'transport': return /Protocol|协议|传输/i
     }
   }
 

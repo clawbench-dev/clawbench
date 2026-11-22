@@ -14,7 +14,6 @@
 import claudeIcon from '@lobehub/icons-static-svg/icons/claude-color.svg?raw'
 import codebuddyIcon from '@lobehub/icons-static-svg/icons/codebuddy-color.svg?raw'
 import codexIcon from '@lobehub/icons-static-svg/icons/codex-color.svg?raw'
-import copilotIcon from '@lobehub/icons-static-svg/icons/copilot-color.svg?raw'
 import deepseekIcon from '@lobehub/icons-static-svg/icons/deepseek-color.svg?raw'
 import qoderIcon from '@lobehub/icons-static-svg/icons/qoder-color.svg?raw'
 import zhipuIcon from '@lobehub/icons-static-svg/icons/zhipu-color.svg?raw'
@@ -64,7 +63,6 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     claude: { svg: extractSvgInner(claudeIcon), viewBox: extractViewBox(claudeIcon) },
     codebuddy: { svg: extractSvgInner(codebuddyIcon), viewBox: extractViewBox(codebuddyIcon) },
     codex: { svg: extractSvgInner(codexIcon), viewBox: extractViewBox(codexIcon) },
-    copilot: { svg: extractSvgInner(copilotIcon), viewBox: extractViewBox(copilotIcon) },
     qoder: { svg: extractSvgInner(qoderIcon), viewBox: extractViewBox(qoderIcon) },
     // Qoder CN is the same product compiled with a different brand constant
     // (`Gs="cn"==(Z4a="cn")` vs `"global"`), so it ships the same mark. Two
@@ -103,12 +101,6 @@ const agentSvgMap: Record<string, AgentSvgData> = {
 
     // Command Code's mark is monochrome, so it gets the theme-aware mono class.
     commandcode: { svg: commandcodeIcon, viewBox: '0 0 144 144', needsBg: true, monoCssClass: 'mono-commandcode' },
-
-    // VeCLI not in lobe-icons — kept as inline fallback (explicit fill colors)
-    vecli: {
-        svg: '<path d="M19.44 10.153l-2.936 11.586a.215.215 0 00.214.261h5.87a.215.215 0 00.214-.261l-2.95-11.586a.214.214 0 00-.412 0zM3.28 12.778l-2.275 8.96A.214.214 0 001.22 22h4.532a.212.212 0 00.214-.165.214.214 0 000-.097l-2.276-8.96a.214.214 0 00-.41 0z" fill="#00E5E5"/><path d="M7.29 5.359L3.148 21.738a.215.215 0 00.203.261h8.29a.214.214 0 00.215-.261L7.7 5.358a.214.214 0 00-.41 0z" fill="#006EFF"/><path d="M14.44.15a.214.214 0 00-.41 0L8.366 21.739a.214.214 0 00.214.261H19.9a.216.216 0 00.171-.078.214.214 0 00.044-.183L14.439.15z" fill="#006EFF"/><path d="M10.278 7.741L6.685 21.736a.214.214 0 00.214-.264h7.17a.215.215 0 00.214-.264L10.688 7.741a.214.214 0 00-.41 0z" fill="#00E5E5"/>',
-        viewBox: '0 0 24 24',
-    },
 
     // The built-in agent IS ClawBench itself — its tools are ours, not a
     // vendor's. So it wears the product logo rather than an invented glyph: an
