@@ -437,7 +437,6 @@ vi.mock('@/composables/useAgents', () => ({
     hasPreferredMode: () => false,
     supportsACP: mockSupportsACP,
     isBuiltinAgent: () => mockIsBuiltin(),
-    getAgentTransport: () => 'cli',
     invalidateACPStateCache: vi.fn(),
     updateACPModelList: vi.fn(),
     restoreOriginalModels: vi.fn(),

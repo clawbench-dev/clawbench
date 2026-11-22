@@ -230,7 +230,7 @@
       'Everything stays on your own machine: a SQLite database plus files in the data directory, with no third-party relay. Passwords are stored salted with SHA-256, and even local requests carry a short-lived HMAC token. For public access, use a tunnel or reverse proxy with TLS.',
     'faq.q4': 'Which AI agents are supported?',
     'faq.a4':
-      '19 built-in backends: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, DeepSeek Harness, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode, Cursor, Hermes Agent, Command Code and OpenClaw. You can also add a <strong>custom ACP agent</strong> — any tool that speaks ACP over stdio works with one launch command.',
+      '19 built-in backends: ClawBench Agent (built in), CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, Qoder CN, CodeWhale, DeepSeek Harness, MiMo-Code, Pi, Kimi, Antigravity, Grok Build, ZCode, Cursor, Hermes Agent, Command Code and OpenClaw. You can also add a <strong>custom ACP agent</strong> — any tool that speaks ACP over stdio works with one launch command.',
     'faq.q5': 'How do I reach my home machine from outside?',
     'faq.a5':
       'IPv6 direct connection, EasyTier decentralized networking (no VPS needed), SSH tunnels and an HTTP/2 stream tunnel. Reverse mappings bind only to <code>127.0.0.1</code> and reserved ports are rejected, so nothing extra gets exposed.',

@@ -68,7 +68,7 @@ sequenceDiagram
   - 后端名称 + 描述
   - 是否已检测到 CLI（来自 `agents` 表）
   - 安装命令（`BackendSpec.InstallCmd`，如 `"npm install -g @anthropic-ai/claude-code"`）
-  - ACP 能力（是否支持 `Transport: "acp-stdio"`）
+  - ACP 能力（`BackendSpec.AcpCommand` 是否为空；非空即走 ACP stdio）
 - **检测期间显示加载指示器**：`GET /api/backends` 未返回前，面板显示加载态而不是空白（否则用户看到的是一个空框，会以为面板坏了）。每项也带一个小的状态 spinner，直到该后端的检测结果落定
 - **手动刷新**：`POST /api/agents/rescan` 触发 `model.RefreshAgents`（`internal/model/refresh.go`）重新扫描 PATH 中的 CLI
 - **安装对话框**：`AgentInstallDialog` 同时提供两条路——「开始安装」直接在本机执行，以及命令 + 复制按钮供手动执行

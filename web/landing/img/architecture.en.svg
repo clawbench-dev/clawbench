@@ -111,18 +111,8 @@
     <text x="622" y="254" font-size="8.5" fill="#f0b24b" font-weight="600">Codex</text>
   </g>
 
-  <!-- Row 3: Copilot -->
-  <g filter="url(#sh)">
-    <rect x="500" y="276" width="90" height="36" rx="6" fill="#1c2128" stroke="#fbbf24"/>
-    <g transform="translate(513,286) scale(0.45)">
-      <path d="M9 22h8.749c2.5 0 4-3.332 5-6.663 1.184-3.948 2.734-9.227-1.75-9.227H17.22c-1.129 0-2.12.754-2.43 1.848a1149.2 1149.2 0 01-2.713 9.437c-.46 1.564-.842 2.907-1.43 3.743A1.97 1.97 0 019 22" fill="#6366f1"/>
-      <path d="M15 0H6.252c-2.5 0-4 3.331-5 6.662-1.184 3.947-2.734 9.225 1.75 9.225H6.78c1.13 0 2.12-.753 2.43-1.847.657-2.317 1.809-6.359 2.713-9.436.46-1.563.842-2.906 1.43-3.742A1.97 1.97 0 0115 0" fill="#22c55e"/>
-    </g>
-    <text x="524" y="298" font-size="8.5" fill="#f0b24b" font-weight="600">Copilot</text>
-  </g>
-
   <!-- Remaining agents -->
-  <text x="594" y="328" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">Qoder · VeCLI · CodeWhale · MiMo · Pi · Kimi</text>
+  <text x="594" y="298" text-anchor="middle" font-size="9" fill="#8b949e" font-style="italic">Qoder · CodeWhale · MiMo · Pi · Kimi · Cursor · Hermes</text>
 
   <!-- ===== Data ===== -->
   <text x="28" y="365" font-size="10" fill="#8b949e" font-weight="600" letter-spacing="1">DATA</text>

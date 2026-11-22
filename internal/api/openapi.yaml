@@ -1639,8 +1639,6 @@ paths:
                   type: string
                 modeId:
                   type: string
-                transport:
-                  type: string
                 clientId:
                   type: string
       responses:
@@ -2367,7 +2365,7 @@ paths:
       tags: [Sessions]
       summary: 即时持久化会话设置
       description: |
-        模式 / 思考深度 / 模型 / 传输方式的变更即时写库，无需发消息。会话由 `session_id` 查询参数（或会话 Cookie）决定。
+        模式 / 思考深度 / 模型的变更即时写库，无需发消息。会话由 `session_id` 查询参数（或会话 Cookie）决定。
 
         **移动到另一个工作区**（`projectPath`，issue #685）：把已有会话重新绑定到
         另一个**已注册且目录仍存在**的项目，历史保留。会话行、它的消息行（历史
@@ -2383,7 +2381,7 @@ paths:
         `MoveMembersUnavailable` 返回成员名单（`detail.members`），因为新工作区的
         智能体选择器看不到它们。任务执行（`scheduled`）属于产生它的任务，不能移动。
 
-        **原生（CLI/ACP）会话不沿用**：它的转录按工作目录存放，换目录后无法续用。
+        **原生（ACP）会话不沿用**：它的转录按工作目录存放，换目录后无法续用。
         本端点会清掉 `external_session_id`，并把历史变成下一轮注入的上下文——单聊
         走已有的 fork 背景机制（有长度预算，首轮成功后清除），群聊把每个成员的
         `seen_cursor` 归零（等同成员中途加入已有群，下一次发言带上完整时间线）。
@@ -2422,8 +2420,6 @@ paths:
                     按 agent 自己声明的配置项 id 设置选项，例如 codex 的
                     `{"fast-mode": "on"}`。与 `PATCH /api/ai/session/settings`
                     的同名字段语义一致。
-                transport:
-                  type: string
                 autoApprove:
                   type: boolean
                   description: |
@@ -2930,8 +2926,6 @@ paths:
                     必须能解析到会话自身的 agent，否则后端创建会退化为 CLI 工厂并报
                     `unsupported backend type`。
                 modelId:
-                  type: string
-                transport:
                   type: string
                 clientId:
                   type: string

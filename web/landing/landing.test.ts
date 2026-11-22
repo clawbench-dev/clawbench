@@ -1112,10 +1112,11 @@ describe('landing page', () => {
       const doc = dom.window.document
       const items = Array.from(doc.querySelectorAll('.strip-list li:not(.more)'))
 
-      // 19 = the backend registry (internal/ai/backends) minus Qoder CN,
-      // which is the same product as Qoder and reads as a duplicate here.
+      // 17 = the backend registry (internal/ai/backends) minus the built-in
+      // agent (no logo of its own) and Qoder CN (same product as Qoder and
+      // reads as a duplicate here).
       // Bumping this number is the reminder to add a logo when one is added.
-      expect(items.length).toBe(19)
+      expect(items.length).toBe(17)
       for (const li of items) {
         const svg = li.querySelector('svg.strip-logo')
         expect(svg, `no inline logo for "${li.textContent?.trim()}"`).toBeTruthy()
@@ -1148,7 +1149,7 @@ describe('landing page', () => {
       const dom = new JSDOM(html)
       const doc = dom.window.document
       const items = Array.from(doc.querySelectorAll('.strip-list li'))
-      expect(items.length).toBe(19)
+      expect(items.length).toBe(17)
       for (const li of items) {
         expect(li.querySelector('svg.strip-logo-mono'), li.textContent?.trim()).toBeTruthy()
         const colour = li.querySelector('svg.strip-logo-color')
@@ -1165,9 +1166,9 @@ describe('landing page', () => {
       // compound path are filled. OpenCode's mark turns from a thick frame
       // into a solid block (or the reverse) with no other symptom.
       //
-      // Not every logo declares it (VeCLI and Command Code ship without), so
-      // the guard is "preserved where present", checked against the source
-      // files rather than a blanket assertion that would fail on those two.
+      // Not every logo declares it (Command Code ships without), so the guard
+      // is "preserved where present", checked against the source files rather
+      // than a blanket assertion that would fail on it.
       const withEvenOdd = ['opencode', 'cursor', 'grok', 'pi', 'hermesagent', 'zhipu']
       for (const slug of withEvenOdd) {
         const src = resolve(here, '../../node_modules/@lobehub/icons-static-svg/icons', slug + '.svg')
@@ -1181,7 +1182,7 @@ describe('landing page', () => {
       const dom = new JSDOM(html)
       const doc = dom.window.document
       const logos = Array.from(doc.querySelectorAll('svg.strip-logo-mono'))
-      expect(logos.length).toBe(19)
+      expect(logos.length).toBe(17)
       const kept = logos.filter((svg) => svg.getAttribute('fill-rule') === 'evenodd')
       expect(kept.length).toBeGreaterThanOrEqual(15)
       dom.window.close()

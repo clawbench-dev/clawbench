@@ -223,17 +223,6 @@ var acpBackends = []acpTestConfig{
 		ThinkingLevels: []string{"low", "medium", "high"},
 		SupportedTests: withACPConfigTestPoints(allACPTestPoints()),
 	},
-	{
-		ID:             "copilot",
-		Backend:        "copilot",
-		AcpCommand:     "copilot --acp",
-		DefaultCmd:     "copilot",
-		Timeout:        90 * time.Second,
-		HasThinking:    true,
-		SupportsConfig: true,
-		ThinkingLevels: []string{"low", "medium", "high"},
-		SupportedTests: withACPConfigTestPoints(allACPTestPoints()),
-	},
 	// DeepSeek (CodeWhale) — uses ChatRequest.Resume/SystemPrompt fields, separate test points
 	{
 		ID:             "deepseek",

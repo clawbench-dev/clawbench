@@ -23,7 +23,7 @@ sequenceDiagram
     runTurn-->>前端: WS 流式推送 + 落库
 ```
 
-用户点击发送后，请求进入 handler，由 handler 解析出目标 Agent 和后端类型（CLI 或 ACP）；`runTurn` 负责编排单个 AI 回合，内部的 `SessionExecutor` 持有会话运行时状态并把执行委托给 AI 后端。**"用户消息 → ai.ChatRequest"只有一份实现**：直发路径（HTTP handler）与排队路径（队列 drain、钉钉/飞书）曾各写一份并漂移成 7 处不一致——resume 守卫、会话持久化的 model 与 transport、**会话持久化的 mode 与 thinkingEffort**、fork 上下文格式、非 block 内容解包——导致同一条消息在"直接发送"与"排队发送"下行为不同（排队路径会把 CLI 从未见过的会话 ID 传下去造成上下文失忆，或把用户选好的模型/模式/思考档位悄悄回退成 agent 默认值）。现在两者共用同一实现（`applySessionOverrides` 统一补齐空 override，优先级为**显式选择 > 会话持久值 > agent 默认**），并有一条对比测试锁住两条路径对同一会话的构造结果一致。注意 mode/thinkingEffort 没有独立列，只存在于 `chat_sessions.context_state`（由 `PATCH /api/ai/session/update` 写入），因此 drain 路径必须显式读回该状态——agent 侧 `EffectiveModeID()` 只返回 PreferredMode，不记得会话当前的 mode。
+用户点击发送后，请求进入 handler，由 handler 解析出目标 Agent 和后端类型（ACP 或进程内内置）；`runTurn` 负责编排单个 AI 回合，内部的 `SessionExecutor` 持有会话运行时状态并把执行委托给 AI 后端。**"用户消息 → ai.ChatRequest"只有一份实现**：直发路径（HTTP handler）与排队路径（队列 drain、钉钉/飞书）曾各写一份并漂移成 7 处不一致——resume 守卫、会话持久化的 model 与 transport、**会话持久化的 mode 与 thinkingEffort**、fork 上下文格式、非 block 内容解包——导致同一条消息在"直接发送"与"排队发送"下行为不同（排队路径会把 CLI 从未见过的会话 ID 传下去造成上下文失忆，或把用户选好的模型/模式/思考档位悄悄回退成 agent 默认值）。现在两者共用同一实现（`applySessionOverrides` 统一补齐空 override，优先级为**显式选择 > 会话持久值 > agent 默认**），并有一条对比测试锁住两条路径对同一会话的构造结果一致。注意 mode/thinkingEffort 没有独立列，只存在于 `chat_sessions.context_state`（由 `PATCH /api/ai/session/update` 写入），因此 drain 路径必须显式读回该状态——agent 侧 `EffectiveModeID()` 只返回 PreferredMode，不记得会话当前的 mode。
 
 ### 唯一 turn 实现：三入口共用
 

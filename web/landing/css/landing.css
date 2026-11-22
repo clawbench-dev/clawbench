@@ -998,7 +998,7 @@ main {
 
 /* 彩色层压在单色层之上，常驻显示。
    没有彩色版的品牌（Cursor / Pi / OpenCode / Grok / Hermes / MiMo /
-   VeCLI / Command Code）只保留单色层 —— 它们本身就是单色标。 */
+   Command Code）只保留单色层 —— 它们本身就是单色标。 */
 .strip-logo-color {
   position: absolute;
   left: 0;

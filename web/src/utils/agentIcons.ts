@@ -3,8 +3,7 @@
  * Maps backend ID → { svg: inner HTML for <svg>, viewBox }
  * Backends without a logo fall back to the initial letter in AgentIcon.vue.
  *
- * Most icons use ?raw imports from the npm package. VeCLI is not available
- * in lobe-icons and is kept as an inline fallback.
+ * Most icons use ?raw imports from the npm package.
  *
  * Monochrome icons (fill="currentColor") inherit CSS `color` property,
  * which adapts to light/dark theme automatically via CSS variables.

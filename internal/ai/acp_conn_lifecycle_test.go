@@ -90,7 +90,7 @@ func TestAdvertiseTerminalCapability_OtherBackendsAdvertised(t *testing.T) {
 	ResetAdvertiseTerminalForTest()
 	defer ResetAdvertiseTerminalForTest()
 
-	for _, backend := range []string{"claude", "opencode", "kimi", "codex", "qoder", "copilot"} {
+	for _, backend := range []string{"claude", "opencode", "kimi", "codex", "qoder"} {
 		agent := &model.Agent{ID: backend + "-agent", Backend: backend}
 		if got := advertiseTerminalCapability(agent); !got {
 			t.Errorf("advertiseTerminalCapability(%q) = false, want true (Terminal capability should stay advertised)", backend)
@@ -140,7 +140,7 @@ func TestAdvertiseReadTextFileCapability_OtherBackendsAdvertised(t *testing.T) {
 	ResetAdvertiseReadTextFileForTest()
 	defer ResetAdvertiseReadTextFileForTest()
 
-	for _, backend := range []string{"claude", "opencode", "kimi", "codex", "qoder", "copilot"} {
+	for _, backend := range []string{"claude", "opencode", "kimi", "codex", "qoder"} {
 		agent := &model.Agent{ID: backend + "-agent", Backend: backend}
 		if got := advertiseReadTextFileCapability(agent); !got {
 			t.Errorf("advertiseReadTextFileCapability(%q) = false, want true (only CodeBuddy swaps its Read tool on this capability)", backend)

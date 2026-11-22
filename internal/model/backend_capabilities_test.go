@@ -40,7 +40,6 @@ func TestProviderMethods(t *testing.T) {
 		// has no provider configuration.
 		{"openclaw", nil},
 		{"qoder", nil},
-		{"vecli", nil},
 		{"custom-acp", nil},
 	}
 	for _, c := range cases {

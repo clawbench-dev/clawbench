@@ -8291,8 +8291,8 @@ describe('syncSessionState — ACP model list', () => {
         ok: true,
         json: () => Promise.resolve({
           sessionId: 's-cli-1', sessionTitle: 'S', messages: [], total: 0,
-          backend: 'codebuddy', agentId: 'agent2', modelId: 'cli-only',
-          transport: 'cli', running: false,
+          backend: 'codebuddy', agentId: 'agent2', modelId: 'acp-only',
+          transport: 'acp-stdio', running: false,
         }),
       })
       .mockResolvedValueOnce({

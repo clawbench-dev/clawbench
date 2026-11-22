@@ -487,7 +487,7 @@ export function getAgentThinkingEffortLevels(agentId: string): string[] {
     return agent?.thinkingEffortLevels || []
 }
 
-/** Get thinking effort levels including ACP-reported levels for dual-transport agents. */
+/** Get thinking effort levels including ACP-reported levels for ACP agents. */
 export function getAgentThinkingEffortLevelsIncludingACP(agentId: string): string[] {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return []
@@ -766,8 +766,8 @@ export function invalidateACPStateCache(agentId: string): void {
 export function applyRefreshedACPState(agentId: string, state: unknown): void {
     const st = state as AcpState | undefined
     if (!st || !agentId) return
-    // Keep the cache in step so populateACPStateFromCache (transport switch, new
-    // session) sees the refreshed lists instead of the stale snapshot.
+    // Keep the cache in step so populateACPStateFromCache (new session) sees the
+    // refreshed lists instead of the stale snapshot.
     const cached = acpStatesCache[agentId]
     acpStatesCache[agentId] = { ...(cached || {}), ...(st as Record<string, unknown>) }
 

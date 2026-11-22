@@ -145,10 +145,6 @@ const mockAgents = {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return a?.builtinBackend === true
   }),
-  getAgentTransport: vi.fn((agentId: string) => {
-    const a = mockAgents.agents.value.find(a => a.id === agentId)
-    return a?.transport || (a?.acpCommand ? 'acp-stdio' : a?.builtinBackend ? 'in-process' : '')
-  }),
 }
 
 const mockIdentity = {

@@ -43,7 +43,7 @@ func TestNewBackend_InProcessBackend(t *testing.T) {
 // fail loudly instead of returning a half-working backend.
 func TestNewBackend_ACPOnlyBackendFailsLoudly(t *testing.T) {
 	setupTestBackends()
-	for _, id := range []string{"claude", "codebuddy", "opencode", "codex", "kimi", "vecli", "copilot"} {
+	for _, id := range []string{"claude", "codebuddy", "opencode", "codex", "kimi"} {
 		backend, err := NewBackend(id)
 		assert.Error(t, err, "%s must not resolve through a CLI factory", id)
 		assert.Nil(t, backend)

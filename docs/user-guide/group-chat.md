@@ -36,7 +36,7 @@ ClawBench 启动（以及每次点「重新扫描」）时，会在服务器上�
 
 - 探测到 `claude` → 出现「Claude」，后端 `claude`，描述「简单编码、日常操作、辅助任务」
 - 探测到 `codebuddy` → 出现「Codebuddy」，后端 `codebuddy`
-- 探测到 `codex` / `deepseek` / `grok` / `kimi` / `qoder` / `copilot` / `opencode` / `pi` / `mimo` / `vecli` / `antigravity` 等同理
+- 探测到 `codex` / `deepseek` / `grok` / `kimi` / `qoder` / `opencode` / `pi` / `mimo` / `antigravity` 等同理
 
 **关键点**：
 

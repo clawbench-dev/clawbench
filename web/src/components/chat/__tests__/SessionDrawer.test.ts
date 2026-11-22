@@ -144,11 +144,11 @@ const mockAgents = {
     return !!a?.canRefreshModels
   }),
   canRefreshAgentState: vi.fn((agentId: string) => {
-    // Mirrors the backend split: transport decides which source can refresh.
+    // Mirrors the backend: an ACP agent refreshes by asking the agent itself;
+    // only an agent without an ACP command falls back to model discovery.
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     if (!a) return false
-    const transport = a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
-    return transport === 'acp-stdio' ? !!a.acpCommand : !!a.canRefreshModels
+    return a.acpCommand ? true : !!a.canRefreshModels
   }),
   supportsACP: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
@@ -157,10 +157,6 @@ const mockAgents = {
   isBuiltinAgent: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return a?.builtinBackend === true
-  }),
-  getAgentTransport: vi.fn((agentId: string) => {
-    const a = mockAgents.agents.value.find(a => a.id === agentId)
-    return a?.transport || 'cli'
   }),
 }
 
@@ -533,27 +529,26 @@ describe('SessionDrawer', () => {
     }
   })
 
-  // A dual-transport agent currently on CLI refreshes through discovery, so it
-  // must stay hidden when it has no model source (the backend would answer
-  // ModelDiscoveryNotSupported).
-  it('hides the refresh button for a CLI agent without a model source', () => {
+  // Without a model source the backend would answer ModelDiscoveryNotSupported,
+  // so the refresh button must stay hidden.
+  it('hides the refresh button for an agent without a model source', () => {
     mockAgents.agents.value.push({
-      id: 'tmp-cli-no-source',
-      name: 'CLI No Source',
-      backend: 'cli-no-source',
+      id: 'tmp-no-source',
+      name: 'No Source',
+      backend: 'no-source',
       models: [],
       thinkingEffortLevels: [],
       preferredModel: '',
       preferredThinkingEffort: '',
       canRefreshModels: false,
-      acpCommand: 'cli-no-source --acp',
-      transport: 'cli',
+      acpCommand: '',
+      transport: '',
     } as any)
     try {
-      const wrapper = mountDrawer({ agentId: 'tmp-cli-no-source' })
+      const wrapper = mountDrawer({ agentId: 'tmp-no-source' })
       expect(wrapper.find('.refresh-btn').exists()).toBe(false)
     } finally {
-      mockAgents.agents.value = mockAgents.agents.value.filter(a => a.id !== 'tmp-cli-no-source')
+      mockAgents.agents.value = mockAgents.agents.value.filter(a => a.id !== 'tmp-no-source')
     }
   })
 
@@ -1168,7 +1163,7 @@ describe('SessionDrawer', () => {
         ...mockAgents.agents.value[0],
         id: 'tmp-builtin',
         builtinBackend: true,
-        transport: 'cli',
+        transport: 'in-process',
         acpCommand: '',
       })
       try {

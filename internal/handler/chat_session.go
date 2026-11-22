@@ -758,7 +758,6 @@ type sessionUpdateRequest struct {
 	// mode/model/thinkingEffort keep their own fields because they carry
 	// extra behavior (persistence, per-model validation).
 	ConfigOptions map[string]string `json:"configOptions"`
-	Transport     string            `json:"transport"`
 	AutoApprove   *bool             `json:"autoApprove"` // pointer: distinguish "not sent" from false
 	Cruise        *bool             `json:"cruise"`      // pointer: distinguish "not sent" from false (auto-cruise)
 	Title         string            `json:"title"`
@@ -771,7 +770,7 @@ type sessionUpdateRequest struct {
 }
 
 // ServeAISessionUpdate handles PATCH /api/ai/session — immediately persists
-// session-scoped settings (mode, thinkingEffort, model, transport) so they
+// session-scoped settings (mode, thinkingEffort, model) so they
 // survive page reload even without sending a chat message.
 func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPatch) {

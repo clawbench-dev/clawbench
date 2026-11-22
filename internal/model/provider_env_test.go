@@ -123,8 +123,8 @@ func TestProviderEnvSupported(t *testing.T) {
 		{"opencode", ProviderProtocolOpenAI, true},
 		{"antigravity", ProviderProtocolGemini, true},
 		{"cursor", ProviderProtocolAnthropic, true}, // key-only accepts any protocol
-		{"copilot", ProviderProtocolOpenAI, false},
-		{"copilot", "", false},
+		{"qoder", ProviderProtocolOpenAI, false},
+		{"qoder", "", false},
 		{"codex", "", true},
 	}
 	for _, tc := range cases {
@@ -154,7 +154,7 @@ func TestProviderEnvSupportedProvider(t *testing.T) {
 		{"commandcode", keyOnlyWithEndpoint, false},
 		{"claude", anthropic, true},
 		{"claude", openai, false},
-		{"copilot", openai, false},
+		{"qoder", openai, false},
 		{"codex", openai, true},
 		{"cursor", nil, false},
 		{"nope", openai, false},

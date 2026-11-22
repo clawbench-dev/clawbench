@@ -57,10 +57,10 @@ func TestProviderEnvForRequest_NoProviderIsNoop(t *testing.T) {
 }
 
 func TestProviderEnvForRequest_UnsupportedBackendFails(t *testing.T) {
-	setupProviderAgent(t, "agent-copilot", "copilot", &model.Provider{
+	setupProviderAgent(t, "agent-qoder", "qoder", &model.Provider{
 		ID: 2, Name: "P2", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://x", APIKey: "k", AuthMode: model.ProviderAuthAuto,
 	})
-	if _, err := providerEnvForRequest(ChatRequest{AgentID: "agent-copilot"}, "copilot"); err == nil {
+	if _, err := providerEnvForRequest(ChatRequest{AgentID: "agent-qoder"}, "qoder"); err == nil {
 		t.Fatal("an unsupported backend must fail loudly instead of starting with the wrong endpoint")
 	}
 }

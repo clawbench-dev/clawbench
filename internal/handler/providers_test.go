@@ -196,7 +196,7 @@ func TestAgentPatch_ProviderUnsupportedBackend(t *testing.T) {
 
 	provider, err := service.CreateProvider(model.Provider{Name: "P", Protocol: model.ProviderProtocolOpenAI, APIKey: "k"})
 	require.NoError(t, err)
-	agent := &model.Agent{ID: "copilot-agent", Name: "Copilot", Backend: "copilot"}
+	agent := &model.Agent{ID: "qoder-agent", Name: "Qoder", Backend: "qoder"}
 	model.ReplaceAgents(map[string]*model.Agent{agent.ID: agent}, []*model.Agent{agent})
 
 	rec := doProviderRequest(t, ServeAgents, http.MethodPatch, "/api/agents", map[string]any{

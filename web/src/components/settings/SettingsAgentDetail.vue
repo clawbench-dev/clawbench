@@ -662,7 +662,7 @@ const items = computed<AgentItem[]>(() => {
   //
   // For a spec-backed agent the field is read-only on purpose. Discovery owns
   // `acp_command` there — model.RefreshAgents' syncAgentInfrastructure does
-  // `UPDATE agents SET acp_command = <spec>, transport = ... WHERE backend = ?`
+  // `UPDATE agents SET acp_command = <spec> WHERE backend = ?`
   // — so any edit a user made would be silently reverted on the next startup or
   // "Rescan", including a deliberate clear. Offering an input that quietly
   // undoes itself is worse than showing the effective value.

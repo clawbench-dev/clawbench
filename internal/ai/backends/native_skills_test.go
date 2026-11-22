@@ -23,7 +23,6 @@ var skillAwareBackends = map[string]bool{
 	// Load their own skills → ClawBench must NOT re-inject.
 	"claude":      true, // .claude/skills (claude.exe)
 	"codex":       true, // core-skills crate; .codex/skills + .agents/skills
-	"copilot":     true, // .copilot/skills + .github/skills + .agents/skills
 	"opencode":    true, // .config/opencode/skill + .opencode/skills + .agents/skills
 	"mimo":        true, // OpenCode fork: .mimocode/skills + .agents/skills
 	"qoder":       true, // .qoder/skills + .agents/skills
@@ -52,7 +51,6 @@ var skillAwareBackends = map[string]bool{
 	"kimi":        false,
 	"grok":        false,
 	"zcode":       false,
-	"vecli":       false,
 	// builtin has no skill directory of its own: its tools are ClawBench's,
 	// not a CLI's, and it never reads SKILL.md on its own. It therefore takes
 	// the shared table through ClawBench's normal injection (or gets nothing
@@ -125,7 +123,7 @@ func TestNativeSkillsDirsAreHomeRelative(t *testing.T) {
 func TestSharedSkillsDirDeclaredWhereReadable(t *testing.T) {
 	// Verified by grepping each shipped CLI for ".agents/skills".
 	readsShared := map[string]bool{
-		"codex": true, "copilot": true, "opencode": true,
+		"codex": true, "opencode": true,
 		"mimo": true, "qoder": true, "qodercn": true, "dsh": true, "deepseek": true,
 		"cursor": true, "commandcode": true, "openclaw": true,
 	}

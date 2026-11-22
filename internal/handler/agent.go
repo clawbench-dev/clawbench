@@ -892,9 +892,9 @@ func sessionOffersThinkingEffort(sessionID, agentID, level string) (offered, kno
 }
 
 // Expects: {"id": "claude", "preferred_model": "claude-opus-4-5", "preferred_thinking_effort": "high", ...}
-// Patchable fields: preferred_model, preferred_thinking_effort, transport,
+// Patchable fields: preferred_model, preferred_thinking_effort,
 // name, specialty, custom_system_prompt, avatar, avatar_style, avatar_seed,
-// sort_order, auto_approve.
+// sort_order, auto_approve. (transport is derived, not patchable.)
 func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // multi-field agent patch logic
 	var patch map[string]any
 	if !decodeJSON(w, r, &patch) {
