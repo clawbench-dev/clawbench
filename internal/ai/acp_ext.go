@@ -110,6 +110,28 @@ func (c *ClawBenchACPClient) dispatchSessionUpdateVariant(params json.RawMessage
 		return
 	}
 
+	// CodeBuddy's non-standard `session_end` is the ONLY terminal signal an
+	// agent-initiated (background_drain) turn gets, so it is consumed here —
+	// before every other gate below (route lookup, handler registration).
+	//
+	// It has to be this path. Since schema 1.32 the SDK rejects a foreign
+	// discriminator at decode time, so the frame never reaches the typed
+	// SessionUpdate and `n.Update.SessionInfoUpdate` is nil there — reading the
+	// variant from the typed struct (the v0.13.5 behaviour) silently matched
+	// nothing, and an adopted turn then spun until the backstop timeout. The
+	// route/liveness bookkeeping the typed path performs is already done by the
+	// closeBackgroundTurnOnSessionEnd call chain, which owns the same state.
+	if variant == sessionEndVariant {
+		// Same liveness bookkeeping as the generic path below: this frame is
+		// proof the connection is alive, and skipping it would let the idle
+		// sweep consider a session that just finished its turn as silent.
+		if c.connRef != nil {
+			c.connRef.TouchSessionUpdate()
+		}
+		c.closeBackgroundTurnOnSessionEnd(probe.SessionID)
+		return
+	}
+
 	// Connection liveness, mirroring the typed path: every notification counts
 	// as activity so an async workflow's connection is not swept. These frames
 	// are model output, so they also refresh the progress clock. Both are

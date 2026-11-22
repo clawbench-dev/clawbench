@@ -353,3 +353,119 @@ func TestReplayEndMarker_IgnoredWhenNotReplaying(t *testing.T) {
 	}))
 	assert.False(t, c.ReplayEndSeen(), "a live update must not set the replay marker")
 }
+
+// ---------------------------------------------------------------------------
+// CodeBuddy `session_end` on the unhandled path
+// ---------------------------------------------------------------------------
+
+// TestSessionEnd_UnhandledPathClosesAdoptedTurn is the regression test for the
+// turn that never finished (issue #644 after the schema 1.32 upgrade).
+//
+// The frame must be driven through a REAL ClientSideConnection: the SDK's union
+// rejects the foreign discriminator, so it only ever arrives via the unhandled
+// hook. Building an acp.SessionUpdate by hand (what the older test did) fed the
+// client a shape this SDK can no longer produce, which is why it stayed green
+// while the live path was broken.
+func TestSessionEnd_UnhandledPathClosesAdoptedTurn(t *testing.T) {
+	c, _, send := newHookClient(t)
+
+	// Drop the route RegisterSession installed: an adopted turn is only opened
+	// on an IDLE session, so nothing may be registered when the frame lands.
+	c.mu.Lock()
+	delete(c.sessionRoutes, "s1")
+	c.mu.Unlock()
+
+	turn, ok := c.beginBackgroundTurn("s1", "cli-req-1")
+	require.True(t, ok, "beginBackgroundTurn refused an idle session")
+
+	send(`{"jsonrpc":"2.0","method":"session/update","params":{` +
+		`"sessionId":"s1","update":{"sessionUpdate":"session_end"}}}`)
+
+	select {
+	case ev := <-turn.ch:
+		assert.Equal(t, "done", ev.Type,
+			"session_end on the unhandled path must terminate the adopted turn")
+	case <-time.After(2 * time.Second):
+		t.Fatal("adopted turn never received its terminal event: " +
+			"the bubble would spin until the backstop timeout")
+	}
+}
+
+// TestSessionEnd_UnhandledPathIgnoresOrdinaryTurn: an ordinary turn also ends
+// with session_end. Only an adopted turn may be closed by it, so a frame for a
+// session that has no adopted turn must not emit anything.
+func TestSessionEnd_UnhandledPathIgnoresOrdinaryTurn(t *testing.T) {
+	c := NewClawBenchACPClient()
+	c.connRef = &ACPConn{clawbenchSID: "cb-1"}
+
+	// An ordinary (user) turn owns the route and is receive-readable here.
+	live := make(chan StreamEvent, 8)
+	c.RegisterSession("acp-1", live)
+
+	// The typed-path helper is the legacy entry point; it must refuse a turn
+	// that was never adopted, whatever shape the frame arrives in.
+	require.False(t, c.maybeCloseAdoptedTurn(acp.SessionNotification{
+		SessionId: "acp-1",
+		Update: acp.SessionUpdate{
+			SessionInfoUpdate: &acp.SessionSessionInfoUpdate{SessionUpdate: sessionEndVariant},
+		},
+	}), "an ordinary turn must not be closed by session_end")
+
+	c.mu.Lock()
+	_, stillAdopted := c.backgroundTurns["acp-1"]
+	c.mu.Unlock()
+	assert.False(t, stillAdopted, "session_end must not adopt a turn by itself")
+
+	select {
+	case ev := <-live:
+		t.Fatalf("ordinary turn received %+v from session_end", ev)
+	default:
+	}
+}
+
+// TestSessionEnd_DebouncerFlushedBeforeTerminal: buffered tool_call_update
+// frames must land ahead of the terminal, or the tool card is left mid-status
+// in the UI after the turn closes.
+func TestSessionEnd_DebouncerFlushedBeforeTerminal(t *testing.T) {
+	c := NewClawBenchACPClient()
+	c.connRef = &ACPConn{clawbenchSID: "cb-1"}
+
+	ch := make(chan StreamEvent, 16)
+	c.mu.Lock()
+	c.sessionRoutes["acp-1"] = ch
+	c.debouncers["acp-1"] = newToolCallDebouncer(ch, c.connRef)
+	turn := &backgroundTurn{ch: ch, route: ch, requestID: "req-1"}
+	c.backgroundTurns["acp-1"] = turn
+	c.mu.Unlock()
+
+	// Buffer a non-terminal tool_call_update in the debouncer, then close the
+	// turn: only an update is debounced (an initial tool_call flushes at once).
+	buffered := c.debouncers["acp-1"].handleToolCallUpdate(acp.SessionToolCallUpdate{
+		ToolCallId: "t1",
+		Title:      acptest.Patch("Bash"),
+		Status:     acptest.Patch(acp.ToolCallStatusInProgress),
+	})
+	require.True(t, buffered, "a non-terminal update must be debounced, not forwarded")
+
+	require.True(t, c.closeBackgroundTurnOnSessionEnd("acp-1"))
+
+	var sawTool, sawDone bool
+	for {
+		select {
+		case ev := <-ch:
+			switch ev.Type {
+			case "tool_use":
+				sawTool = true
+				assert.False(t, sawDone, "tool frame arrived after the terminal")
+			case "done":
+				sawDone = true
+			}
+			if sawDone {
+				assert.True(t, sawTool, "buffered tool frame was lost")
+				return
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("no terminal event")
+		}
+	}
+}

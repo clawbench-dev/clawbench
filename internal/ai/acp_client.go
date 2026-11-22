@@ -448,14 +448,19 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	return nil
 }
 
-// maybeCloseAdoptedTurn handles CodeBuddy's non-standard `session_end` frame for
-// a turn the agent started on its own (background_drain).
+// maybeCloseAdoptedTurn is the LEGACY path for CodeBuddy's non-standard
+// `session_end` frame — kept only for SDK releases that re-type unknown
+// discriminators into SessionInfoUpdate (v0.13.5 did). Since schema 1.32 the
+// union rejects the frame at decode time, so this never fires and the real
+// handling lives in the SDK's unhandled hook: dispatchSessionUpdateVariant in
+// acp_ext.go, which reads the discriminator from the raw params.
 //
-// The SDK re-types that frame as a SessionInfoUpdate with its payload dropped,
-// so the discriminator is read from the typed struct here — on the SAME
-// goroutine that delivers the turn's content, which is what keeps the terminal
-// event ordered after every frame. (Reading it from the raw stdout tee instead
-// would let it overtake frames still queued in the SDK and truncate the reply.)
+// Do NOT rely on this function for the background_drain turn: it is a backstop
+// for an SDK downgrade, not the live path.
+//
+// It reads the variant from the typed struct on the same goroutine that
+// delivers the turn's content, which is what would keep the terminal event
+// ordered after every frame.
 //
 // Reports whether the frame closed an adopted turn; a user turn's session_end
 // returns false and keeps its existing handling.
