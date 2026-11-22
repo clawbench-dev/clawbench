@@ -854,9 +854,15 @@ func (t *httpTransport) post(ctx context.Context, payload any) ([]byte, int, str
 		t.mu.Unlock()
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	// Read one byte past the limit: without the extra byte an oversized body is
+	// silently cut into invalid JSON, which is then reported as "not an MCP
+	// endpoint" — the wrong diagnosis for a server that simply answered too much.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("read response: %w", err)
+	}
+	if len(raw) > maxResponseBytes {
+		return nil, 0, "", fmt.Errorf("response exceeds %d bytes", maxResponseBytes)
 	}
 	return raw, resp.StatusCode, resp.Header.Get("Content-Type"), nil
 }

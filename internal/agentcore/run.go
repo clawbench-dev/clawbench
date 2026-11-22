@@ -52,10 +52,10 @@ type Spec struct {
 	WorkDir string
 	// Policy decides which tools exist at all.
 	Policy model.ToolPolicy
-	// ExtraTools are tools supplied by the caller — MCP servers today. They are
-	// appended to the capability-derived list, so they travel the same
-	// declaration, event and result path without this package knowing where
-	// they came from.
+	// ExtraTools are tools supplied by the caller — MCP servers today, whose
+	// names all start with tools.MCPNamePrefix. They are appended to the
+	// capability-derived list, so they travel the same declaration, event and
+	// result path without this package knowing where they came from.
 	//
 	// A sub-agent inherits them (childSpec copies Spec), which is intended: a
 	// delegated task often needs the same external tools.

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -405,4 +406,20 @@ func TestParseSSEResponse_NoReply(t *testing.T) {
 	_, err := parseSSEResponse([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{}}\n\n"), 7)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "without a reply")
+}
+
+// TestHTTPTransport_OversizedResponse pins the diagnosis: a body over the limit
+// is "too large", not "this is not an MCP endpoint" (which is what a truncated
+// JSON body used to look like).
+func TestHTTPTransport_OversizedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(bytes.Repeat([]byte("x"), maxResponseBytes+1))
+	}))
+	defer srv.Close()
+
+	tr := newHTTPTransport(model.MCPServer{Name: "big", Transport: model.MCPTransportHTTP, URL: srv.URL})
+	_, err := tr.call(context.Background(), "tools/list", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
 }

@@ -215,12 +215,9 @@ func TestPool_ConnectedServerAccessors(t *testing.T) {
 // advertises listChanged is re-listed on the next turn, one that does not is
 // left alone.
 func TestPool_RefreshesListChangedTools(t *testing.T) {
-	// The throttle is what makes this testable without a 30s sleep.
-	old := listRefreshInterval
-	listRefreshInterval = 0
-	t.Cleanup(func() { listRefreshInterval = old })
-
 	p := NewPool(time.Minute)
+	// The throttle is what makes this testable without a 30s sleep.
+	p.listRefreshInterval = 0
 	ctx := testCtx(t)
 
 	bundle := p.Acquire(ctx, "agent-1", []model.MCPServer{helperServer(t, "listchanged")}, DialOptions{})
@@ -267,5 +264,39 @@ func TestPool_CachesFailedDials(t *testing.T) {
 	starts, err := os.ReadFile(countFile)
 	require.NoError(t, err)
 	assert.Len(t, string(starts), 1, "the server must be started exactly once")
+	p.CloseAll()
+}
+
+// TestPool_RetiresOldConnectionsUntilReleased pins the lifecycle rule: a config
+// change while a turn is still running must not kill the connection that turn
+// is using. Retired connections close only when the last reference is gone.
+func TestPool_RetiresOldConnectionsUntilReleased(t *testing.T) {
+	p := NewPool(time.Minute)
+	ctx := testCtx(t)
+
+	a := helperServer(t, "server")
+	b := helperServer(t, "server")
+	b.Args = []string{"--changed"}
+
+	held := p.Acquire(ctx, "agent-1", []model.MCPServer{a}, DialOptions{})
+	require.Len(t, held.Servers, 1)
+	old := held.Servers[0].Session
+
+	// A different fingerprint redials while `held` is still outstanding.
+	fresh := p.Acquire(ctx, "agent-1", []model.MCPServer{b}, DialOptions{})
+	require.Len(t, fresh.Servers, 1)
+	assert.NotSame(t, old, fresh.Servers[0].Session)
+
+	_, err := old.ListTools(ctx)
+	require.NoError(t, err, "a retired connection must keep working while its turn holds it")
+
+	held.Release()
+	_, err = old.ListTools(ctx)
+	require.NoError(t, err, "the new turn still holds a reference")
+
+	fresh.Release()
+	_, err = old.ListTools(ctx)
+	assert.Error(t, err, "the last release must close retired connections")
+
 	p.CloseAll()
 }

@@ -48,10 +48,6 @@ const (
 	defaultListRefreshInterval = 30 * time.Second
 )
 
-// listRefreshInterval is a variable so tests can drive the refresh path
-// without waiting half a minute. Production never changes it.
-var listRefreshInterval = defaultListRefreshInterval
-
 // ConnectedServer is one server with its current tool list.
 //
 // Tools can change while the connection is open (a server that advertises
@@ -88,10 +84,10 @@ func (c *ConnectedServer) setTools(tools []ToolDef) {
 // claimRefresh reports whether this server is due for a tool-list refresh and,
 // if so, marks it as done. One check-and-set under the lock keeps two
 // concurrent turns from both paying for the same round trip.
-func (c *ConnectedServer) claimRefresh(now time.Time) bool {
+func (c *ConnectedServer) claimRefresh(now time.Time, interval time.Duration) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if now.Sub(c.lastRefresh) < listRefreshInterval {
+	if now.Sub(c.lastRefresh) < interval {
 		return false
 	}
 	c.lastRefresh = now
@@ -122,7 +118,8 @@ func (b *Bundle) Release() {
 
 // Pool caches connections per key.
 type Pool struct {
-	idleTimeout time.Duration
+	idleTimeout         time.Duration
+	listRefreshInterval time.Duration
 
 	mu      sync.Mutex
 	entries map[string]*poolEntry
@@ -165,9 +162,10 @@ func CloseAllSessions() { defaultPool.CloseAll() }
 // what tests that drive reap() by hand want.
 func NewPool(idleTimeout time.Duration) *Pool {
 	return &Pool{
-		idleTimeout: idleTimeout,
-		entries:     make(map[string]*poolEntry),
-		stop:        make(chan struct{}),
+		idleTimeout:         idleTimeout,
+		listRefreshInterval: defaultListRefreshInterval,
+		entries:             make(map[string]*poolEntry),
+		stop:                make(chan struct{}),
 	}
 }
 
@@ -198,12 +196,15 @@ func (p *Pool) Acquire(ctx context.Context, key string, servers []model.MCPServe
 		// cannot interrupt a turn that still holds one.
 		alive, dead := splitAlive(e.servers)
 		if len(dead) > 0 {
+			// Retire rather than close: another turn may still hold this bundle,
+			// and an HTTP session that failed one request can have a call in
+			// flight. release closes them when the last reference goes away.
 			e.servers = alive
+			e.retired = append(e.retired, dead...)
 			specs := make([]model.MCPServer, 0, len(dead))
 			for _, cs := range dead {
 				specs = append(specs, cs.spec)
 			}
-			closeServers(dead)
 			dialed, dialNotes := dialAll(ctx, specs, opts)
 			e.servers = append(e.servers, dialed...)
 			e.notes = append(e.notes, dialNotes...)
@@ -220,7 +221,7 @@ func (p *Pool) Acquire(ctx context.Context, key string, servers []model.MCPServe
 		// A server that advertises listChanged may have gained or lost tools
 		// since the last turn. Refresh those outside the lock: this is a round
 		// trip, and other turns for the same agent must not wait behind it.
-		refreshChangedTools(ctx, cached)
+		refreshChangedTools(ctx, cached, p.listRefreshInterval)
 		return &Bundle{Servers: cached, Notes: notes, release: func() { p.release(e) }}
 	}
 
@@ -405,11 +406,11 @@ func dialAll(ctx context.Context, servers []model.MCPServer, opts DialOptions) (
 // refreshChangedTools re-lists tools only for servers that said the list can
 // change. A server that never advertised listChanged keeps its cached list,
 // which is the common case and costs nothing.
-func refreshChangedTools(ctx context.Context, servers []*ConnectedServer) {
+func refreshChangedTools(ctx context.Context, servers []*ConnectedServer, interval time.Duration) {
 	now := time.Now()
 	var wg sync.WaitGroup
 	for _, cs := range servers {
-		if !cs.Session.ListChanged() || !cs.claimRefresh(now) {
+		if !cs.Session.ListChanged() || !cs.claimRefresh(now, interval) {
 			continue
 		}
 		wg.Add(1)
