@@ -51,16 +51,16 @@ test.describe.serial('group from a single installed agent', () => {
     // (1) The switch exists with exactly one agent installed. This is the
     // regression: gating on >= 2 removed it entirely, so the group tab (and
     // therefore group creation) was unreachable.
-    const switchEl = picker.locator('.agent-mode-switch')
+    const switchEl = picker.locator('.agent-mode-slot')
     await expect(switchEl).toBeVisible({ timeout: 5000 })
-    await expect(switchEl.locator('.agent-mode-tab')).toHaveCount(2)
+    await expect(switchEl.locator('.segmented-tab')).toHaveCount(2)
 
     // (2) Only one row is offered — proves the stub really is a single-agent
     // install and assertion (1) is not passing on the two-agent default.
     await expect(picker.locator('.agent-option')).toHaveCount(1)
 
     // (3) Flip to group mode and build a two-instance group from that one agent.
-    await picker.locator('.agent-mode-tab[data-mode="group"]').click()
+    await picker.locator('.agent-mode-slot .segmented-tab[data-mode="group"]').click()
     await waitPastTouchGuard(page)
     const row = await selectAgentRow(picker, page)
     await bumpInstances(row, 2)

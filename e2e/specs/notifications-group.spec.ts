@@ -105,8 +105,12 @@ test.describe('group notifications', () => {
     // The stored target must be the group. Resolving each logged id as a group
     // must succeed — a member row would not answer the members endpoint.
     const body = await (await page.request.get('/api/notifications')).json()
-    const ids = ((body.items ?? []) as Array<{ sessionId?: string }>)
-      .map((i) => i.sessionId)
+    // The row points at its subject through `subjectId` (the notification
+    // center is one table for sessions, tasks, meetings, mail…), so the session
+    // id is only there for kind === 'session'.
+    const ids = ((body.items ?? []) as Array<{ subjectId?: string; kind?: string }>)
+      .filter((i) => i.kind === 'session')
+      .map((i) => i.subjectId)
       .filter((v): v is string => !!v)
     expect(ids, 'the group turn should be logged').toContain(groupId)
     for (const id of ids) {

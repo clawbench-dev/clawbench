@@ -44,7 +44,7 @@ test.describe('custom ACP agent', () => {
       const created = await send('POST', '/api/agents', { name: agentName, acp_command: command })
       if (!created.ok) return { step: 'create', ok: false, created }
       const agent = created.body as {
-        id: string; backend: string; transport: string; acpCommand: string
+        id: string; backend: string; acpCommand: string
       }
 
       // 3. It must survive a reload (persisted, not just in the live map).
@@ -123,8 +123,8 @@ test.describe('custom ACP agent', () => {
     expect(result.ok, JSON.stringify(result)).toBe(true)
 
     const r = result as {
-      agent: { id: string; backend: string; transport: string; acpCommand: string }
-      reloaded?: { backend: string; transport: string; acpCommand: string }
+      agent: { id: string; backend: string; acpCommand: string }
+      reloaded?: { backend: string; acpCommand: string }
       assistantContent: string | null
       blockTypes: string[]
       stopReason: string
@@ -133,10 +133,10 @@ test.describe('custom ACP agent', () => {
     }
 
     expect(r.agent.backend).toBe('custom-acp')
-    expect(r.agent.transport).toBe('acp-stdio')
+    // The transport is derived from the ACP command now (the per-agent transport
+    // field was retired), so the command IS the thing to assert here.
     expect(r.agent.acpCommand).toBeTruthy()
     expect(r.reloaded).toBeTruthy()
-    expect(r.reloaded!.transport).toBe('acp-stdio')
     expect(r.reloaded!.acpCommand).toBe(r.agent.acpCommand)
 
     // The turn actually completed an ACP round trip. Asserting only "some

@@ -101,7 +101,8 @@ test.describe('File Manager', () => {
     await expect(nav.getTabButton('browse')).not.toHaveClass(/active/)
 
     // Close the file via the viewer's close button
-    await page.locator('.overlay-close-btn').click()
+    // Wide layout renders the inline variant; narrow renders `.overlay-close-btn`.
+    await page.locator('.overlay-close-btn, .overlay-close-btn--inline').click()
 
     // The file manager tab becomes active again automatically
     await expect(nav.getTabButton('browse')).toHaveClass(/active/)

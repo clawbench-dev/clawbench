@@ -171,6 +171,10 @@ test.describe('Startup UI scale suggestion', () => {
     await expect(welcome).toBeVisible({ timeout: 20000 })
     await expect(page.locator('.dlg-overlay')).toBeHidden()
 
+    // The panel is a two-step wizard (agents, then features), so closing it
+    // takes both steps: "Next" only advances to step 2.
+    await page.locator('.welcome-footer .btn-ok').click()
+    await expect(page.locator('.welcome-footer .btn-back')).toBeVisible()
     await page.locator('.welcome-footer .btn-ok').click()
     await expect(welcome).toBeHidden()
 

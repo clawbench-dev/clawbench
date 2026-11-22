@@ -309,16 +309,18 @@ describe('login page supports splash mode', () => {
  * failures — the overlay would just vanish — so they are pinned at the source.
  */
 describe('splash controller supports the version gate', () => {
-  it('defers dismiss while the gate is up, and records the request', () => {
+  it('defers dismiss while the gate is up', () => {
     const src = readRepoFile('desktop/src/main/splash.ts')
     const fn = src.match(/function dismiss\(\): void \{[\s\S]*?\n  \}/)
     expect(fn, 'dismiss not found').not.toBeNull()
     const body = fn![0]
-    // The app's dismissSplash() must not reveal the app under the gate.
+    // The app's dismissSplash() must not reveal the app under the gate. The
+    // gate owns the hiding: continueGate() is what takes it down.
     expect(body, 'dismiss must return early while gating').toMatch(/if \(mode === 'gate'\) return/)
-    // But the request is still recorded, so the overlay does not reappear later.
-    expect(body, 'dismiss must record the request').toContain('dismissRequested = true')
-    expect(body.indexOf('dismissRequested = true')).toBeLessThan(body.indexOf("if (mode === 'gate') return"))
+    expect(
+      body.indexOf("if (mode === 'gate') return"),
+      'the early return must come before anything that hides the overlay',
+    ).toBeLessThan(body.indexOf('fadeOut()'))
   })
 
   it('never arms the fail-safe while gating', () => {

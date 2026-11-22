@@ -101,7 +101,9 @@ test.describe('cb-mcp API surface', () => {
     })
     expect(agents.length).toBeGreaterThan(0)
 
-    const target = agents.find((a: any) => a.transport === 'acp-stdio') ?? agents[0]
+    // An ACP agent is the one with a command; the retired per-agent transport
+    // field is gone, and MCP injection is an ACP-path concern.
+    const target = agents.find((a: any) => a.acpCommand) ?? agents[0]
     const original = JSON.stringify(target.mcpServers ?? null)
 
     try {

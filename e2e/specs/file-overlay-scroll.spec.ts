@@ -105,7 +105,8 @@ test.describe('File overlay: scroll-to-line and nav stack', () => {
     // through the app's own path we close it first and re-open from the list.
     // (Dispatching `open-file-overlay` directly would skip the content fetch
     // and land on an empty viewer — see FileManagerContent.vue.)
-    await page.locator('.overlay-close-btn').click()
+    // Wide layout renders the inline variant; narrow renders `.overlay-close-btn`.
+    await page.locator('.overlay-close-btn, .overlay-close-btn--inline').click()
     await expect(page.locator('.file-overlay')).not.toBeVisible({ timeout: 10000 })
 
     const goMod = page.locator('.file-item, .grid-item', { hasText: 'go.mod' }).first()
