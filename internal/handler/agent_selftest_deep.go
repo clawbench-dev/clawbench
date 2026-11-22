@@ -38,6 +38,11 @@ type selfTestDeepResult struct {
 	DurationMs int64 `json:"durationMs"`
 	// SessionID is the throwaway session the turn ran in (deleted afterwards).
 	SessionID string `json:"-"`
+	// Model is the model this turn actually asked for: the agent's own reported
+	// current model when the handshake supplied one, empty when the turn left
+	// the choice to the agent. Reported so the user can see what was tested
+	// instead of assuming the settings page's pick was used.
+	Model string `json:"model,omitempty"`
 }
 
 // runDeepSelfTest performs one REAL turn and reports what came back.
@@ -86,11 +91,32 @@ func runDeepSelfTest(ctx context.Context, agent *model.Agent, projectPath string
 		_ = err
 	}
 
+	// Hand the turn a model the AGENT itself vouched for, when one is knowable.
+	//
+	// BuildChatRequest deliberately leaves the model empty for an ACP agent that
+	// has never reported a model list: the only list available then is the
+	// CLI-side guess, and sending it as a set_config_option can select a model
+	// the agent cannot run. That conservative rule is right for a real chat, but
+	// it made a self-test of a freshly bound agent report a model it never
+	// actually used — the test is precisely the moment the agent is about to
+	// speak, so waiting for a "later" report never happens.
+	//
+	// So the handshake is forced BEFORE the request is built: NewSession is what
+	// makes the agent report its own current model, and that value is the one
+	// piece of information that is trustworthy before any turn has run. It is
+	// only a hint for THIS turn — nothing is persisted, because the throwaway
+	// session is deleted on the way out.
+	modelOverride := ""
+	if effectiveTransport(agent) == transportACP {
+		modelOverride = handshakeModelForSelfTest(ctx, agent, sessionID, projectPath)
+	}
+	out.Model = modelOverride
+
 	// No summarize/recommend: this session is deleted immediately, so any extra
 	// LLM call would be pure waste.
 	req := service.BuildChatRequest(
 		selfTestDeepPrompt, sessionID, projectPath, agent.Backend, agent.ID,
-		"", "", "", "", service.ResolveFileDir(projectPath), false,
+		modelOverride, "", "", "", service.ResolveFileDir(projectPath), false,
 	)
 
 	turnCtx, cancel := context.WithTimeout(ctx, selfTestDeepTimeout)
@@ -241,4 +267,32 @@ func ServeAgentSelfTestDeep(w http.ResponseWriter, r *http.Request) {
 		"deep":   deep,
 		"static": static,
 	})
+}
+
+// handshakeModelForSelfTest brings the ACP session up and returns the model the
+// agent reported as its own current one, so the self-test can name the model it
+// is about to exercise.
+//
+// Why force the connection here instead of letting the turn do it: NewSession is
+// what populates the capability registry with the agent's model list and its
+// `currentValue`, and the chat request has to be assembled BEFORE the turn runs.
+// Waiting for the turn therefore always reads "not reported yet" and leaves the
+// model empty — the very state this exists to avoid.
+//
+// Returns "" whenever nothing trustworthy is known (connection failure, no
+// reported model). That is not an error: an empty override keeps the previous
+// behaviour of deferring the choice to the agent, which is still a valid test.
+func handshakeModelForSelfTest(ctx context.Context, agent *model.Agent, sessionID, projectPath string) string {
+	conn, _, err := ai.GetACPConnManager().GetOrCreateConn(ctx, agent, sessionID, projectPath)
+	if err != nil || conn == nil {
+		// The turn will retry and surface the real failure; a handshake error
+		// here must not mask it with a different message.
+		return ""
+	}
+	// Read straight off the pending NewSessionResponse. The connection's own
+	// current model is only populated when the TURN extracts that response, and
+	// this runs before the turn — reading it here always returned "". The
+	// response itself is left for the turn to consume, because that extraction
+	// is what teaches the capability registry the agent's model list.
+	return conn.ReportedModelFromNewSession()
 }

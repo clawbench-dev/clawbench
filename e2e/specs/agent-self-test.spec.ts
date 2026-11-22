@@ -183,6 +183,63 @@ test.describe('agent self-test', () => {
     expect(result.afterCount).toBe(result.beforeCount)
   })
 
+  test('deep mode names the model the agent reported, not the configured default', async ({ page }) => {
+    // A freshly created ACP agent has never reported a model list, so the chat
+    // request used to leave the model empty and the turn fell back to whatever
+    // the agent had on its own. The self-test therefore exercised a model the
+    // settings page never showed. The handshake is now forced before the request
+    // is built, so the agent's own current model is reported back.
+    const result = await page.evaluate(async () => {
+      const json = async (url: string, init?: RequestInit) => {
+        const resp = await fetch(url, init)
+        return { ok: resp.ok, status: resp.status, body: await resp.json().catch(() => ({})) }
+      }
+      const send = (method: string, url: string, body?: unknown) =>
+        json(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        })
+
+      const list = await json('/api/agents')
+      const mock = ((list.body.agents || []) as Array<{ id: string; acpCommand?: string }>)
+        .find(a => a.id === 'acp-mock')
+      if (!mock?.acpCommand) return { step: 'read-mock', ok: false }
+
+      const created = await send('POST', '/api/agents', {
+        name: `Model Report ${Date.now()}`,
+        acp_command: mock.acpCommand,
+      })
+      if (!created.ok) return { step: 'create', ok: false, created }
+      const agentId = (created.body as { id: string }).id
+
+      try {
+        // A brand-new agent: no model list reported yet, which is the state this
+        // test is about. Asserting the precondition keeps the test from passing
+        // for the wrong reason once a previous run has warmed something up.
+        const fresh = await json(`/api/agents`)
+        const row = ((fresh.body.agents || []) as Array<{ id: string; models?: unknown[] }>)
+          .find(a => a.id === agentId)
+        const modelsBefore = (row?.models || []).length
+
+        const resp = await send('POST', `/api/agents/${encodeURIComponent(agentId)}/self-test-deep`)
+        return { step: 'done', ok: true, status: resp.status, body: resp.body, modelsBefore }
+      } finally {
+        await send('DELETE', `/api/agents?id=${encodeURIComponent(agentId)}`)
+      }
+    })
+
+    expect(result.step).toBe('done')
+    const body = result.body as { ok: boolean; deep?: { model?: string; reply?: string } }
+    expect(body.ok, JSON.stringify(result.body)).toBe(true)
+    // Precondition: the agent knew nothing about models before the handshake.
+    expect(result.modelsBefore).toBe(0)
+    expect(body.deep?.reply).toBeTruthy()
+    // The mock reports "mock-pro" as its own current model at session/new, so
+    // that is the model the turn actually asked for.
+    expect(body.deep?.model).toBe('mock-pro')
+  })
+
   test('deep mode auto-approves permissions so an unattended turn cannot hang', async ({ page }) => {
     // The mock requests approval before writing in every mode except
     // bypass-permissions. Nobody is watching a self-test, so without

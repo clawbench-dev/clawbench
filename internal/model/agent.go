@@ -725,3 +725,34 @@ func BuildCommonPrompt() string {
 func BuildMediaPrompt() string {
 	return strings.TrimSpace(bt(mediaRulesTemplate))
 }
+
+// PreferredModelForProvider reports the preferred model an agent should store
+// after being bound to p, given its CURRENT pin.
+//
+// The rule mirrors what a turn actually does, so the stored value stops
+// disagreeing with the value in use (issue: the settings page showed the old
+// model while every turn silently ran the provider default, and the self-test
+// reported a failure for an agent that would have worked):
+//
+//   - no pin                     → "" (the provider default is already used)
+//   - pin the provider serves    → unchanged
+//   - pin it does not serve      → the provider's default model
+//
+// "Serves" goes through providerAcceptsPin, not a bare list lookup: for a
+// backend that can declare an out-of-list id inline, a hand-typed pin is a
+// deliberate choice and has to survive a re-bind.
+//
+// A provider with no curated list gets no rewrite — it publishes nothing to
+// validate a pin against, and that is precisely the "custom…" case.
+func (a *Agent) PreferredModelForProvider(p *Provider) string {
+	if a == nil || p == nil || len(p.Models) == 0 || a.PreferredModel == "" {
+		if a == nil {
+			return ""
+		}
+		return a.PreferredModel
+	}
+	if a.providerAcceptsPin(p, a.PreferredModel) {
+		return a.PreferredModel
+	}
+	return p.DefaultModel
+}

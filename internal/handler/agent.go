@@ -994,7 +994,14 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			// user-chosen (often a BYOK gateway) and may serve ids neither the
 			// CLI discovery nor the ACP runtime has listed. Without one, the
 			// list stays authoritative so a typo cannot be saved.
-			if !found && agent.ProviderID == nil {
+			//
+			// The binding is resolved for THIS patch, not from the stored agent:
+			// "bind a provider" and "pick a model" routinely arrive together
+			// (one settings save), and reading the old row made the model name
+			// subject to a catalog it was never meant to be checked against —
+			// the user could not save a valid model for the endpoint they were
+			// binding in the same request.
+			if !found && !providerBoundAfterPatch(agent, patch) {
 				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidModelForAgent")
 				return
 			}
@@ -1443,6 +1450,22 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 				}
 			}
 			ap.ProviderID = &providerID
+			// Re-point the preferred model at the new provider. Binding used to
+			// leave the old name in place, which produced a state nothing could
+			// explain: the settings page showed model A while every turn silently
+			// ran the provider's default, because DefaultModelID() drops a pin the
+			// endpoint does not serve. That same dropped pin is what made the
+			// self-test report a failure for an agent that would have worked.
+			//
+			// Only rewritten when the caller did not set one explicitly in the
+			// same patch — an explicit preferred_model stays authoritative, and
+			// providerAcceptsPin still honors a deliberate out-of-list pick for
+			// backends that can declare it inline.
+			if _, explicit := patch["preferred_model"]; !explicit {
+				if replacement := agent.PreferredModelForProvider(provider); replacement != agent.PreferredModel {
+					ap.PreferredModel = &replacement
+				}
+			}
 		}
 	}
 
@@ -2543,4 +2566,26 @@ func ServeBackends(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"backends": backends,
 	})
+}
+
+// providerBoundAfterPatch reports whether the agent will be bound to a model
+// provider once this patch is applied, i.e. whether its model list is advisory.
+//
+// It exists because the model-name check and the provider binding are separate
+// blocks in the same request: a save that binds a provider AND picks a model
+// would otherwise be validated against the catalog of the provider it is
+// leaving (or against no provider at all). Every turn resolves the model
+// through DefaultModelID(), which already treats a bound provider's list as
+// advisory — so validation has to use the same end state or it rejects names
+// the runtime accepts.
+//
+// Only the two cheap cases are decided here; an unknown or unparsable id falls
+// back to the stored binding, and an empty provider_id means "no provider"
+// because that is exactly how the binding block reads it (null clears).
+func providerBoundAfterPatch(stored *model.Agent, patch map[string]any) bool {
+	if _, exists := patch["provider_id"]; !exists {
+		return stored.ProviderID != nil
+	}
+	num, ok := patch["provider_id"].(float64)
+	return ok && num > 0
 }

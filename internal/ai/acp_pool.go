@@ -1747,6 +1747,28 @@ func (c *ACPConn) GetClient() *ClawBenchACPClient {
 	return c.client
 }
 
+// ReportedModelFromNewSession returns the model id the agent reported as its own
+// current one in the pending NewSessionResponse, or "" when there is none.
+//
+// Read-only and non-consuming on purpose: the response is consumed exactly once
+// by the turn's own extractSessionState, which is what populates the capability
+// registry and the per-connection current model. A caller that needs the value
+// BEFORE the turn runs (the self-test, to name the model it is about to
+// exercise) must not steal that response, since then the registry would never
+// learn the model list at all.
+func (c *ACPConn) ReportedModelFromNewSession() string {
+	c.mu.Lock()
+	resp := c.lastNewSessionResp
+	c.mu.Unlock()
+	if resp == nil {
+		return ""
+	}
+	if state := extractACPModelList(resp); state != nil {
+		return state.CurrentModelID
+	}
+	return ""
+}
+
 // GetAndClearNewSessionResp returns the last NewSessionResponse and clears it.
 func (c *ACPConn) GetAndClearNewSessionResp() *acp.NewSessionResponse {
 	c.mu.Lock()
