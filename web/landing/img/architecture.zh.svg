@@ -67,7 +67,7 @@
 
   <!-- 服务端 → 智能体 -->
   <line x1="480" y1="240" x2="498" y2="240" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#arr-b)"/>
-  <text x="489" y="233" text-anchor="middle" font-size="8" fill="#3b82f6" font-weight="500">CLI / ACP</text>
+  <text x="489" y="233" text-anchor="middle" font-size="8" fill="#3b82f6" font-weight="500">ACP stdio</text>
 
   <!-- ===== AI 智能体 ===== -->
   <text x="500" y="178" font-size="10" fill="#8b949e" font-weight="600" letter-spacing="1">AI 智能体</text>

@@ -1531,20 +1531,21 @@ func containsPromptOverride(prompt string) bool {
 // re-discovery of everything the agent offers (models, thinking levels, modes and
 // slash commands) and returns the updated model list.
 //
-// Two strategies, chosen by transport:
+// An ACP agent is refreshed by asking the AGENT itself: it is the only
+// authority for its own model list, thinking levels, modes and commands —
+// those arrive in its session/new response and in the available_commands_update
+// it pushes right after. The probe creates a throwaway session and deletes it
+// again (see ai.ProbeACPState).
 //
-//   - ACP (`Transport == "acp-stdio"` and an acp_command): ask the AGENT. It is
-//     the only authority for its own model list, thinking levels, modes and
-//     commands — those arrive in its session/new response and in the
-//     available_commands_update it pushes right after. The probe creates a
-//     throwaway session and deletes it again (see ai.ProbeACPState).
-//   - CLI: run the backend's model discovery (e.g. `pi --list-models`).
+// An in-process backend (the built-in agent) has no ACP connection, so it is
+// refreshed through its own ModelSource when it declares one. The built-in
+// agent declares none, which is why its refresh returns an empty list.
 //
-// The ACP branch deliberately does NOT fall back to CLI discovery when the probe
-// fails: the CLI list is a guess for an agent running over ACP (ACP has no
-// client-side default-model concept), and reporting it as runnable is exactly the
-// bug the empty-list gate below exists to prevent. A failed probe is reported as
-// a failure.
+// The ACP branch deliberately does NOT fall back to local discovery when the
+// probe fails: that list is a guess for an agent running over ACP (ACP has no
+// client-side default-model concept), and reporting it as runnable is exactly
+// the bug the empty-list gate below exists to prevent. A failed probe is
+// reported as a failure.
 //
 // The response carries the same shape GET /api/agents reports: `models` is the
 // list resolved against the ACP models (ACP membership wins). Returning the raw

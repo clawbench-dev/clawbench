@@ -136,12 +136,12 @@ func TestAgentGet(t *testing.T) {
 }
 
 // TestAgentGet_ModelsResolvedFromACP verifies that GET /api/agents merges the
-// ACP-reported model list over the CLI-discovered skeleton, and reports both the
-// resolved list (models) and the pure CLI list (cliModels).
+// ACP-reported model list over the locally discovered skeleton and reports the
+// resolved list as `models`.
 //
-// This merge used to happen in the frontend, which needed to keep a CLI baseline
-// and re-run a tier-alias pass for claude-style agents. It now happens here, so
-// the response is directly renderable.
+// This merge used to happen in the frontend, which needed to keep a local
+// baseline and re-run a tier-alias pass for claude-style agents. It now happens
+// here, so the response is directly renderable.
 func TestAgentGet_ModelsResolvedFromACP(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 

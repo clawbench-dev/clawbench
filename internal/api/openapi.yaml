@@ -2303,7 +2303,7 @@ paths:
         **群成员行的并发守卫**：群回合进行中该成员的连接是忙的，压缩也会直接驱动它。
         其中**模型切换**例外：它不需要碰那条连接——下一回合读回 `chat_sessions.model`
         并在发 prompt 前应用，所以只落库、响应 `modelSwitchDeferred=true`，由前端提示
-        「下一回合生效」。其余字段（模式 / 思考深度 / 传输 / 配置项 / 自动批准 / 巡航）
+        「下一回合生效」。其余字段（模式 / 思考深度 / 配置项 / 自动批准 / 巡航）
         仍需要活连接，返回 409 `GroupRunning`；成员正在压缩时一律 409
         `GroupMemberCompacting`。抽屉是交互式的，用户可以稍后重试。
       operationId: sessionSettingsUpdate
@@ -2535,7 +2535,7 @@ paths:
             `modelId` 被 agent 拒绝且重试无用（例如该 provider 未连接）。响应为
             `{error, code, msgKey: "ModelSwitchFailed"|"ModelSwitchFailedDetail",
             detail: {Detail}}`，其中 `Detail` 是 agent 给出的具体原因。**不会写库**
-            （选择未被接受）。注意：同一请求里其它字段（mode/transport/title/tags 等）
+            （选择未被接受）。注意：同一请求里其它字段（mode/title/tags 等）
             **已经生效** —— model 是最后一个应用、且唯一可能让整请求失败的字段。
 
   /api/ai/session/generate-title:

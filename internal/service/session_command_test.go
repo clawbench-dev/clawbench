@@ -643,7 +643,7 @@ func TestBuildChatRequest_TransportOverrideACPStdio(t *testing.T) {
 	assert.Equal(t, "sess-acp-override", req.SessionID)
 }
 
-func TestBuildChatRequest_TransportOverrideCLI(t *testing.T) {
+func TestBuildChatRequest_NewSessionWithAgent_NoResume(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{"any-agent": {ID: "any-agent", RuntimeSystemPrompt: "s"}})
@@ -753,12 +753,11 @@ func TestBuildChatRequest_NoOverride_UnknownAgent(t *testing.T) {
 	assert.Equal(t, "sess-unknown", req.SessionID)
 }
 
-func TestBuildChatRequest_OverrideTakesPrecedenceOverAgent(t *testing.T) {
+func TestBuildChatRequest_NewSessionWithACPAgent_NoResume(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 	withAgents(t, map[string]*model.Agent{"acp-agent": {ID: "acp-agent", RuntimeSystemPrompt: "s", Transport: "acp-stdio", AcpCommand: "acp-server"}})
 
-	// Explicit "cli" must win over the agent's acp-stdio transport.
 	req := BuildChatRequest("hi", "sess-override-wins", "", "claude", "acp-agent", "", "", "", "", false)
 
 	assert.False(t, req.Resume)
