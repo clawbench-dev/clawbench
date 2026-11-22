@@ -163,7 +163,8 @@ sequenceDiagram
 - **不覆盖智能体未广告的模型（`keepUnlistedModel`）**：agent 的模型列表是「它通过 ACP 能跑什么」的权威，但**不是「会话可以合法钉在什么」的全集**。Command Code 用 BYOK 时 provider 与模型写在 `~/.commandcode/config.json`，而 `availableModels()` 恒定只返回厂商目录，于是 ClawBench 每轮都把会话里的默认值推过去，把 BYOK 绑定**静默重路由**到厂商网关（占位 key → 401）。规则改为「列表已知且不含该值 → 保留原值、不推送」，对所有后端安全：列表外的值要么来自带外配置（应保留），要么是陈旧值（用户下次显式选择的值必在列表里）。**列表「未知」不等于「不可用」**——`HasModelList` 单独存在，未提取到能力时放行，否则每个后端每个新会话都会跳过模型选择。`applyModelSelection` 与 resume 后的 `reapplyModelSelection` 两条路径都接入
 - **思考档位按「模型」记忆，agent 自报值只用于显示**：同一个智能体在不同模型上支持的档位不同，而 agent 会在切换模型后上报该模型的默认档位（OpenCode 的 `glm-5.3 → low`、`deepseek-v4-pro → high`）。若把这份自报值当成用户选择持久化并逐轮重放，agent 的默认值就会变成粘性值、设置里的全局默认永远不生效。因此 `context_state` 里**区分「用户显式选择」与「agent 自报值」**：只有前者可被继承与重放，后者仅用于展示；用户的选择另存 `agents.thinking_effort_by_model`（按模型 id 键控），取值优先级为「该模型的选择 > 全局默认 > agent 默认」。切模型时重新推导新档位（跨模型的选择直接丢弃，不硬套），且**被 agent 以 `-32602` 拒绝的档位不记为已设置**——否则界面显示与实际运行不一致且永不重试
 - **ACP 一对一连接而非连接池**：`ACPConnManager` 是单例，管理每个 ClawBench 会话独占一个 ACP 连接。AI Agent 的会话状态是私有的，无法在连接间共享。`ACPConn` 内部可能复用 goroutine，但对外是一对一映射
-- **新增后端只建一个目录**：规格、ACP 映射与行为钩子、模型发现源、BYOK 环境变量、MCP 支持位、磁盘会话扫描器，全部写在同一个 `backends.Register(&BackendPlugin{...})` 里（各子包一次 `init()`）。`cmd/server/main.go` 只有一行生成出来的空导入（`go generate ./internal/ai/backends/all`），不再需要手工登记。模型发现仍是**独立注册表**而非规格字段——发现方式（静态目录 / 插件探测）与后端执行方式正交，混进规格会让"只加模型目录"这类改动也不得不碰工厂
+- **新增后端只建一个目录**：规格、ACP 映射与行为钩子、模型发现源、BYOK 环境变量、MCP 支持位、磁盘会话扫描器，全部写在同一个 `backends.Register(&BackendPlugin{...})` 里（各子包一次 `init()`）。`cmd/server/main.go` 只有一行生成出来的空导入（`go generate ./internal/ai/backends/all`），不再需要手工登记。模型发现仍是**独立注册表**而非规格字段——发现方式（静态目录 / 插件探测）与后端执行方式正交，混进规格会让"只加模型目录"这类改动也不得不碰工厂。逐项清单见下节[后端专属点归谁](#后端专属点归谁插件表与钩子集合)
+
 - **内置模型目录分散在各子包**：`backends/<id>/catalog.go`。它们只在 ACP 还没上报模型时兜底，且会过时——agent 一旦能通过 ACP 自报模型，以 ACP 列表为准。要一次看全：`grep -rl "Catalog = \[\]model.AgentModel" internal/ai/backends/`
 - **ACP 状态缓存与重发**：每个连接缓存当前的 mode、thinking effort、config、commands、plan 状态和 `replayPending` 标志。新连接或重连时自动重发，保证前端在任何时刻都能恢复完整的 UI 状态。`replayPending` 标识 LoadSession 异步回放是否仍在进行
 - **ACP 全局函数变量打破循环依赖**：`internal/ai` 包通过全局函数变量（`getExternalSessionID`、`getSessionAutoApprove`、`onPermissionStateChange`）与 `internal/service` 和 `internal/ws` 包通信——Go 不允许循环依赖，函数变量是在编译期解耦、运行期桥接的折中方案
@@ -176,3 +177,62 @@ sequenceDiagram
 - **ListSessions 使用磁盘回退而非降级**：磁盘扫描不是降级，而是补充——ACP 协议的 `session/list` 是可选能力，后端可以不实现，磁盘扫描保证功能完整性
 - **CodeBuddy MCP 注入是两条路，不是一条**：协议字段可用后仍保留 `--mcp-config`，理由不是技术债而是用户数据——`.mcp.json` 里已有用户自己配的服务。以「全局列表为空」为切换条件，让老用户不动配置就继续能用，新用户在 ClawBench 里配了就统一走协议字段，不会出现两个来源同时生效。
 - **CodeBuddy Plugin Skills 竞态是 ACP 协议的时序问题**：ACP NewSession 时 Agent 尚未完成初始化，后续的 `AvailableCommandsUpdate` 才包含完整命令——这不是 CodeBuddy 的 bug，而是 ACP 单次握手模型与异步初始化的固有矛盾。预扫描 + 延迟重发是在协议约束下的务实补偿
+
+### 后端专属点归谁：插件表与钩子集合
+
+公共的 ACP 事件循环（`acp_events.go`、`acp_conn_lifecycle.go`、`acp_client.go`）**不含任何 `if backend == "xxx"`**。任何「这个后端在 wire 上长这样」的事实，只有两个去处：写进它自己的注册结构，或者留在公共层并说明为什么搬不走。这条边界的意义不在于代码整齐，而在于**判错了不报错**——把积分当钱记、把上一轮结论渗进新回复、成员内容掉进主时间线、用户登录过却被要求登录，这几种缺陷都不会让测试变红。
+
+#### 三种登记形态
+
+| 形态 | 载体 | 适合什么 | 例子 |
+|---|---|---|---|
+| **映射数据** | `BackendPlugin.ACP`（`ACPPlugin`） | 纯查表，无分支：工具 id/标题前缀 → 规范名、输入字段改名、模型切换方法名、外层信封前缀、`modes` 与思考档位同组 | Kimi 的 `read_file-*` 前缀；Hermes 的 `read_file: foo.go` 标题前缀；OpenClaw 的 `session/set_model` |
+| **能力位** | `BackendPlugin.Spec`（`BackendSpec`） | 「是 / 否」的事实，不需要代码，只影响网关行为或界面 | `MCPUnsupported` / `MCPRejectsSSE` / `MCPAttachesAsync` / `ListSessionsOmitsEmptyTitle` / `ACPLoadSession` / `LoginCmd` 等 |
+| **行为钩子** | `BackendPlugin.Behavior`（`ACPBehavior`） | 需要**读这一帧再算**，函数式，nil 即回落通用实现 | 见下表 |
+
+#### `ACPBehavior` 钩子集合（16 个，全部可选）
+
+各字段的 nil 语义是「用公共层的通用实现」，所以一个只说标准 ACP 的后端（cursor、dsh、grok）一个都不用填，照样能跑。
+
+| 钩子 | 解决什么问题 | 谁在用 |
+|---|---|---|
+| `ParseToolCall` / `ParseToolCallUpdate` | 私有工具帧形状 → `ToolCall` | claude 家族（qoder/qodercn 复用同一函数值）、codebuddy、opencode 家族、pi、openclaw |
+| `ExtractMeta` | 私有 `_meta` 里的 token / 缓存 / credit / trace | codebuddy、claude、codex |
+| `RefusalDetail` | `stopReason=refusal` 时真正的原因藏在 `_meta` 里（`-32603` 只是占位） | codebuddy |
+| `ParentToolCallID` | 子智能体的父工具调用 id | claude 家族 |
+| `AttributeFrame` | **一次答完**成员名 / 颜色 / 父工具调用 id；成员帧只有成员名、没有父链接，靠名字 join | codebuddy（Agent Teams） |
+| `PermissionMemberAttribution` | 权限卡片上的成员归属 | codebuddy |
+| `OnToolCall` / `OnToolCallUpdate` / `OnSessionInfoUpdate` | 需要先记状态、后续帧才用得上的桥（成员 → spawn 调用映射、清单 → `plan_update`、团队快照） | codebuddy、opencode 家族（MiMo 是它的分支：解析器直接复用 opencode 的函数值，`plan_update` 桥由自己的闭包转调） |
+| `IsChildSessionUpdate` | 该帧来自子会话、不可直接上主时间线 | opencode 家族 |
+| `IsCompactionMeta` / `IsCompactionCancelledMeta` | 「正在压缩」与「压缩被取消 / 撞上限，历史已还原」 | codebuddy |
+| `IsReplayedTurnMeta` | 上一轮尾部重放（同一 requestId）该丢 | codebuddy |
+| `CostFieldCarriesCredit` | 标准 `cost` 字段装的是积分而不是钱 | codebuddy |
+| `SteerBoundaryID` | 从一帧里取出**插话回显的 id**（判断这 id 是不是我们发的，由公共层做） | codebuddy |
+
+新增一个钩子时注意两点：**同一个「问什么」不要拆成几个钩子**（`AttributeFrame` 就是由原来散在正文 / 思考 / 工具开始 / 工具结果各分支的 `extractTeamMemberName` / `memberColorByName` / `memberParentOrParent` 合成的，调用点从十来次降到 3 处），**需要连接状态就传 `conn`**（归属、重放判断都依赖本轮早先累积的状态）。
+
+#### 新增一个后端要登记什么
+
+按需勾选，不做的一律不写：
+
+1. `ID` + `Spec`（`ID` / `Backend` / `DefaultCmd` / `Name` / `AcpCommand` 必填，其余按事实填）
+2. `ACP`：工具名与输入字段对不上公共表时才写
+3. `Behavior`：只有私有 wire 形状才写，一个不填也合法
+4. `ProviderEnv`：BYOK 怎么收（env / 配置文件 / 私有目录）；**必须有一个条目**，用空条目显式表示「不能绑 provider」——覆盖测试双向校验
+5. `ModelSource`：模型怎么发现
+6. `ListSessions`：磁盘扫描兜底（agent 不实现 `session/list` 时）
+7. `MidTurn` / `MidTurnSplitsReply`：能不能中途插话、插话是否切分回复
+8. `OrphanCmdline`（`{Binary, Arg}`）：崩溃残留进程的命令行特征
+9. `PluginCommands`：agent 自己在握手时不广告、需要预扫描的命令
+
+**漏登记的代价都是静默的**：漏 `OrphanCmdline` = 崩一次就留一个进程直到重启；漏 `Behavior.AttributeFrame` = 成员内容掉进主时间线（用户只觉得「AI 突然说了不相干的话」）；漏 `ProviderEnv` 是唯一会直接红的一项（`TestProviderEnvTableCoversEveryBackend` 双向校验）。
+
+#### 留在公共层、不搬的东西
+
+这三样刻意不交给后端，理由都是「**它描述的是 wire 事实或共享决策，不是某个后端可协商的能力**」：
+
+- **压缩检测的工具名与标题表**（`compact_detect.go` 的 `compactionToolNames` / `compactionToolCallTitle`）。`compact` 这个工具名和 `Compact conversation` 这个标题是两个 ACP 适配器**在线上实际发的东西**（claude-agent-acp 发名字 + 标题，codex-acp 只发标题）。逐后端登记会让十几个后端各声明一份空表，而将来某个适配器改成发工具调用时要靠有人记得回来登记——漏了就是压缩后系统提示不再注入，界面上毫无提示。留在公共处按「谁发这个形状就认谁」反而不会漏。有测试 `TestCompactionToolSignals_AreAdapterWireFacts` 钉住。
+- **LoadSession 回放结束键**（`metaKeyCodeBuddyHistoryReplay`，`acp_client.go` 读 `=="end"`）。回放期间进来的帧不能被当成实时内容，这个判断对**所有后端**都要成立，不能被某一个后端的钩子推翻。
+- **插话 id 判定**（`conn.claimPendingSteerID`）。后端只负责「从这帧里取出回显的 id」（`SteerBoundaryID`），「这个 id 是不是本机发出去的那次插话」留在公共层——否则一个后端说「是我发的」就能把助手回复从错误的位置切成两条。
+
+同理，`CostFieldCarriesCredit` 是**钩子**，但「积分不能当钱写进 `chat_metadata.cost_usd`」这条规则在公共层：后端只说明它这个字段装的是什么，怎么记账不由它决定。
