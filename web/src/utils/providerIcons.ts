@@ -199,7 +199,7 @@ const providerIconMap: Record<string, ProviderIconData> = {
     // recognizable model name fall back to the gateway's own brand icon (the
     // same thing `opencode/…` already gets via the provider-prefix match). These
     // are only reached when the model-name part matches nothing, so a
-    // `github-copilot/claude-*` still shows the Claude icon, not this one.
+    // `vendor/claude-*` still shows the Claude icon, not the gateway's.
     'opencode-go': { raw: opencodeIcon, needsBg: true, monoCssClass: 'mono-opencode' },
 
     // CLI backend tools — monochrome icons
