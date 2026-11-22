@@ -212,7 +212,7 @@ func TestRegistry_LookupACPRemaps(t *testing.T) {
 func TestRegistry_LookupACPRemapsEmptyMapFallback(t *testing.T) {
 	t.Cleanup(backends.ResetForTest())
 
-	// Backend with empty ACP remaps should fall back to generic
+	// A backend that declares an empty table gets the generic one.
 	backends.Register(&backends.BackendPlugin{
 		ID: "empty_acp",
 		ACP: &backends.ACPPlugin{
@@ -222,7 +222,7 @@ func TestRegistry_LookupACPRemapsEmptyMapFallback(t *testing.T) {
 
 	remaps := backends.LookupACPRemaps("empty_acp")
 	if len(remaps) == 0 {
-		t.Error("expected generic_acp fallback remaps for empty_acp, got empty map")
+		t.Error("expected generic fallback remaps for empty_acp, got empty map")
 	}
 	if remaps["oldString"] != "old_string" {
 		t.Errorf("expected oldString->old_string from generic fallback, got %q", remaps["oldString"])
@@ -342,5 +342,34 @@ func TestLookupACPModesMirrorThoughtLevel(t *testing.T) {
 	}
 	if backends.LookupACPModesMirrorThoughtLevel("nonexistent") {
 		t.Error("expected false for an unknown backend")
+	}
+}
+
+func TestLookupACPSpawnHooks(t *testing.T) {
+	t.Cleanup(backends.ResetForTest())
+
+	hooks := &ai.ACPSpawnHooks{Args: func(ai.ACPSpawnContext) []string { return nil }}
+	backends.Register(&backends.BackendPlugin{
+		ID: "with_spawn_hooks",
+		ACP: &backends.ACPPlugin{
+			SpawnHooks: hooks,
+		},
+	})
+	backends.Register(&backends.BackendPlugin{
+		ID:   "no_acp_plugin",
+		Spec: model.BackendSpec{ID: "no_acp_plugin", Backend: "no_acp_plugin"},
+	})
+	backends.Register(&backends.BackendPlugin{
+		ID:  "acp_without_hooks",
+		ACP: &backends.ACPPlugin{},
+	})
+
+	if got := backends.LookupACPSpawnHooks("with_spawn_hooks"); got != hooks {
+		t.Errorf("LookupACPSpawnHooks returned %p, want the registered hooks %p", got, hooks)
+	}
+	for _, id := range []string{"no_acp_plugin", "acp_without_hooks", "unknown"} {
+		if got := backends.LookupACPSpawnHooks(id); got != nil {
+			t.Errorf("LookupACPSpawnHooks(%q) = %v, want nil", id, got)
+		}
 	}
 }

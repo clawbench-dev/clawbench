@@ -66,7 +66,7 @@ func init() {
 		},
 		ACP: &backends.ACPPlugin{
 			ToolTitlePrefixes: CommandCodeACPTitlePrefixes,
-			InputRemaps:       CommandCodeACPInputRemaps,
+			// No InputRemaps: its field names are the shared generic set.
 			// ModelSwitchMethod is deliberately empty. Command Code honors BOTH
 			// session/set_model and the "model" config option, and its
 			// handleSetConfigOption routes configId="model" straight into

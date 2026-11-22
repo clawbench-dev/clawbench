@@ -98,7 +98,6 @@ func init() {
 		},
 		ACP: &backends.ACPPlugin{
 			ToolTitlePrefixes: OpenClawACPTitlePrefixes,
-			InputRemaps:       OpenClawACPInputRemaps,
 			// Every plugin/MCP tool is preceded by an envelope frame whose title
 			// is "tool_call: id: <tool>, args: {...}". It carries a different
 			// toolCallId than the real frame, so only the title can identify it.

@@ -108,7 +108,9 @@ func TestCommandCodeBackendPlugin_RegistersTitlePrefixesOnly(t *testing.T) {
 	assert.Nil(t, plugin.ACP.ToolCallIDPrefixes,
 		"Command Code toolCallIDs carry no tool name; a prefix map cannot work")
 	assert.NotEmpty(t, plugin.ACP.ToolTitlePrefixes)
-	assert.NotEmpty(t, plugin.ACP.InputRemaps)
+	// No table of its own: the shared generic set covers its camelCase fields.
+	assert.Nil(t, plugin.ACP.InputRemaps)
+	assert.Equal(t, "old_string", backends.LookupACPRemaps("commandcode")["oldString"])
 
 	// Both switch paths are equivalent (handleSetConfigOption routes
 	// configId="model" into switchModel), so the default path is correct.
@@ -204,8 +206,9 @@ func TestCommandCodeTitlePrefixesCoverLeakingTools(t *testing.T) {
 // TestCommandCodeRemapsDoNotRenameCanonicalFields guards against adding a remap
 // that would corrupt Command Code's already-canonical rawInput.
 func TestCommandCodeRemapsDoNotRenameCanonicalFields(t *testing.T) {
+	remaps := backends.LookupACPRemaps("commandcode")
 	for _, canonical := range []string{"file_path", "path", "old_string", "new_string", "command", "pattern"} {
-		assert.NotContains(t, CommandCodeACPInputRemaps, canonical,
+		assert.NotContains(t, remaps, canonical,
 			"%q is already canonical in Command Code's rawInput; remapping it would break the tool card", canonical)
 	}
 }

@@ -124,15 +124,15 @@ func ResetForTest() func() {
 }
 
 // LookupACPRemaps returns the ACP input remapping map for the given backend.
-// Falls back to genericACPRemaps if the backend has no ACP plugin or no
-// non-empty InputRemaps registered.
+// Falls back to ai.GenericACPRemaps when the backend declares no table (no ACP
+// plugin, or an empty one).
 func LookupACPRemaps(backendID string) map[string]string {
 	pluginsMu.RLock()
 	defer pluginsMu.RUnlock()
 	if p, ok := plugins[backendID]; ok && p.ACP != nil && len(p.ACP.InputRemaps) > 0 {
 		return p.ACP.InputRemaps
 	}
-	return genericACPRemaps
+	return ai.GenericACPRemaps
 }
 
 // LookupACPToolCallIDPrefixes returns the ACP toolCallID prefix map for the given backend.
@@ -203,6 +203,17 @@ func LookupACPBehavior(backendID string) *ai.ACPBehavior {
 	return nil
 }
 
+// LookupACPSpawnHooks returns the backend's spawn-time argv/env customization,
+// or nil when it declares none.
+func LookupACPSpawnHooks(backendID string) *ai.ACPSpawnHooks {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok && p.ACP != nil {
+		return p.ACP.SpawnHooks
+	}
+	return nil
+}
+
 // LookupPluginCommands returns the backend's extra-command scanner, or nil.
 func LookupPluginCommands(backendID string) func() []ai.AvailableCommandInfo {
 	pluginsMu.RLock()
@@ -235,12 +246,4 @@ func LookupMidTurnSplitsReply(backendID string) bool {
 		return p.MidTurnSplitsReply
 	}
 	return false
-}
-
-// genericACPRemaps is the fallback ACP input normalization map.
-// Migrated from common_stream.go's "generic_acp" entry.
-var genericACPRemaps = map[string]string{
-	"oldString": "old_string", "newString": "new_string",
-	"dirPath": "path", "filePath": "file_path",
-	"cellIndex": "cell_index", "cellType": "cell_type",
 }

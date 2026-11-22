@@ -2,7 +2,6 @@ package ai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -623,8 +622,8 @@ func (c *ACPConn) recoverExistingSession(ctx context.Context, cwd, acpSID string
 	// opencode's session can be moved into another directory (a git worktree)
 	// from inside the conversation, while ACP still expects every resume to
 	// carry the session's own directory. Ask it where the session actually
-	// lives before re-attaching; see openCodeRecoveryCwd.
-	cwd = c.openCodeRecoveryCwd(ctx, cwd, acpSID)
+	// lives before re-attaching; see reportedRecoveryCwd.
+	cwd = c.reportedRecoveryCwd(ctx, cwd, acpSID)
 
 	// An agent whose session/resume is process-local answers a cross-process
 	// resume with a BUSINESS error, not -32601, so the fallback below would
@@ -690,37 +689,41 @@ func (c *ACPConn) recoverExistingSession(ctx context.Context, cwd, acpSID string
 	return c.recoveryFailure("ResumeSession", acpSID, resumeSessionTimeout, err)
 }
 
-// openCodeSessionCwdPageLimit bounds how many session/list pages recovery scans
-// for the target session id. opencode returns 100 sessions per page in
+// recoveryCwdPageLimit bounds how many session/list pages recovery scans
+// for the target session id. Agents return ~100 sessions per page in
 // most-recently-updated order, so the session being recovered is normally on
 // the first page; the cap only keeps a missing id from delaying recovery
 // indefinitely.
-const openCodeSessionCwdPageLimit = 20
+const recoveryCwdPageLimit = 20
 
-// openCodeRecoveryCwd returns the working directory opencode itself reports for
+// reportedRecoveryCwd returns the working directory the agent itself reports for
 // acpSID, falling back to requested when it cannot be determined.
 //
 // ACP requires every resume/load to carry the session's working directory, and
-// opencode validates that value against the directory stored on the session
-// (packages/cli/src/acp/service.ts, getSession → SessionDirectoryMismatchError,
-// "does not belong to cwd"). It does not otherwise use the value: the session
-// is re-attached at its own stored directory.
+// some agents validate that value against the directory stored on the session
+// (opencode: packages/cli/src/acp/service.ts, getSession →
+// SessionDirectoryMismatchError, "does not belong to cwd"). They do not
+// otherwise use the value: the session is re-attached at its own stored
+// directory.
 //
-// The problem is that opencode can move a session between directories from
-// inside the conversation (its session_move tool, typically into a git
-// worktree), and the ACP layer neither notifies the client nor exposes a
+// The problem is an agent that can move a session between directories from
+// inside the conversation (opencode's session_move tool, typically into a git
+// worktree): the ACP layer neither notifies the client nor exposes a
 // single-session lookup. ClawBench always resumes a project at its root, so
 // after such a move the next server restart sends the old directory and the
 // conversation becomes unrecoverable. session/list is the one ACP method that
 // exposes the stored directory (there is no session/get), so recovery asks for
 // it before re-attaching.
 //
-// Only opencode gets this treatment: the other ACP backends do not relocate an
-// existing session on their own, so the extra RPC and behavior change would
-// buy nothing there. Any failure is non-fatal — recovery proceeds with the
-// requested cwd exactly as before.
-func (c *ACPConn) openCodeRecoveryCwd(ctx context.Context, requested, acpSID string) string {
-	if acpSID == "" || c.agent == nil || c.agent.Backend != "opencode" {
+// Only backends that declare ACPRecoversByReportedCwd get this treatment: the
+// others do not relocate an existing session on their own, so the extra RPC and
+// behavior change would buy nothing there. Any failure is non-fatal — recovery
+// proceeds with the requested cwd exactly as before.
+func (c *ACPConn) reportedRecoveryCwd(ctx context.Context, requested, acpSID string) string {
+	if acpSID == "" || c.agent == nil {
+		return requested
+	}
+	if spec := c.backendSpec(); spec == nil || !spec.ACPRecoversByReportedCwd {
 		return requested
 	}
 	if c.conn == nil && c.listSessionsFn == nil {
@@ -732,15 +735,15 @@ func (c *ACPConn) openCodeRecoveryCwd(ctx context.Context, requested, acpSID str
 
 	var cursor *string
 	scanned := 0
-	for range openCodeSessionCwdPageLimit {
-		sessions, next, err := c.listOpenCodeSessions(lookupCtx, cursor)
+	for range recoveryCwdPageLimit {
+		sessions, next, err := c.listRecoverySessions(lookupCtx, cursor)
 		if err != nil {
 			slog.Warn("acp conn: opencode session/list failed, resuming with the requested cwd",
 				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
 			return requested
 		}
 		scanned += len(sessions)
-		if found, ok := c.reportedOpenCodeCwd(sessions, requested, acpSID); ok {
+		if found, ok := c.reportedSessionCwd(sessions, requested, acpSID); ok {
 			return found
 		}
 		if next == nil || *next == "" {
@@ -754,9 +757,9 @@ func (c *ACPConn) openCodeRecoveryCwd(ctx context.Context, requested, acpSID str
 	return requested
 }
 
-// listOpenCodeSessions fetches one page of opencode's session list, through the
+// listRecoverySessions fetches one page of the agent's session list, through the
 // injected lister in tests or the live ACP connection otherwise.
-func (c *ACPConn) listOpenCodeSessions(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error) {
+func (c *ACPConn) listRecoverySessions(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error) {
 	if c.listSessionsFn != nil {
 		return c.listSessionsFn(ctx, cursor)
 	}
@@ -767,10 +770,10 @@ func (c *ACPConn) listOpenCodeSessions(ctx context.Context, cursor *string) ([]a
 	return resp.Sessions, resp.NextCursor, nil
 }
 
-// reportedOpenCodeCwd looks for acpSID among one page of sessions. ok reports
+// reportedSessionCwd looks for acpSID among one page of sessions. ok reports
 // whether the session was found at all; the returned cwd is the one to resume
 // with (requested when opencode's answer is empty, unchanged or unusable).
-func (c *ACPConn) reportedOpenCodeCwd(sessions []acp.SessionInfo, requested, acpSID string) (string, bool) {
+func (c *ACPConn) reportedSessionCwd(sessions []acp.SessionInfo, requested, acpSID string) (string, bool) {
 	for _, sess := range sessions {
 		if sess.SessionId != acp.SessionId(acpSID) {
 			continue
@@ -1146,39 +1149,18 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	cmdName := cmdParts[0]
 	cmdArgs := cmdParts[1:]
 
-	// Workaround for https://github.com/clawbench-dev/clawbench/issues/270:
-	// When Codebuddy starts with --acp, it sets strictDynamic=true which causes
-	// McpConfigManager.shouldLoadFromFilesystem() to return false for ALL
-	// filesystem scopes (user/project/local), resulting in 0 MCP servers loaded.
-	// User's MCP services (websearch, tavily, chrome-devtools, etc.) configured
-	// in ~/.codebuddy/.mcp.json become completely unavailable.
-	//
-	// We read ~/.codebuddy/.mcp.json and inject it via --mcp-config so the ACP
-	// process can still load MCP tools. Only applied to the codebuddy backend
-	// since other ACP agents may not recognize this flag.
-	//
-	// COMPATIBILITY PERIOD: this flag is only used while ClawBench has no MCP
-	// servers of its own. Once mcp.servers is non-empty the protocol field
-	// carries the configuration (probed working on codebuddy), and passing both
-	// would register the same server twice. Keeping the old path for the empty
-	// case is what stops an upgrade from silently deleting the tools of every
-	// user who configured ~/.codebuddy/.mcp.json by hand.
-	if cmdParts[0] == "codebuddy" && len(model.ConfigInstance.MCP.Servers) == 0 {
-		if mcpConfigJSON := readUserMcpConfig(); mcpConfigJSON != "" {
-			cmdArgs = append(cmdArgs, "--mcp-config", mcpConfigJSON)
-			slog.Info("acp conn: injecting user MCP config via --mcp-config (workaround for issue #270; legacy path, mcp.servers is empty)")
-		}
+	// Backend-specific spawn customization (extra argv/env). The hook is
+	// resolved by backend id — not by the command's first token — because
+	// AcpCommand is user-editable and its first token is not a stable identity.
+	spawnHooks := acpSpawnHooks(c.agent.Backend)
+	spawnCtx := ACPSpawnContext{
+		Agent:          c.agent,
+		CmdName:        cmdName,
+		MCPServerCount: len(model.ConfigInstance.MCP.Servers),
 	}
-
-	// An own-service provider may point the CLI at a customer-defined address
-	// (CodeBuddy's dedicated / self-hosted editions). The environment has no
-	// variable for it, and writing settings.json would fight the user's own
-	// file, so it rides along as the documented per-process override.
-	if cmdParts[0] == "codebuddy" {
-		if payload := OwnServiceSettingsArg(c.agent.ID); payload != "" {
-			cmdArgs = append(cmdArgs, "--settings", payload)
-			slog.Info("acp conn: pointing codebuddy at an own-service endpoint",
-				slog.String("clawbench_sid", c.clawbenchSID))
+	if spawnHooks != nil && spawnHooks.Args != nil {
+		if extra := spawnHooks.Args(spawnCtx); len(extra) > 0 {
+			cmdArgs = append(cmdArgs, extra...)
 		}
 	}
 
@@ -1217,21 +1199,12 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 			slog.String("backend", providerAgent.Backend),
 			slog.Any("env", model.RedactProviderEnv(providerEnv)))
 	}
-	// Workaround for the opencode ACP subagent permission-ask hang:
-	// opencode's ACP layer (packages/opencode/src/acp/permission.ts) silently
-	// drops permission requests from subagent (task-tool) sessions — the
-	// subagent's session isn't in the ACP session registry, so the handler
-	// hits `if (!session) return` and never replies. The subagent's tool call
-	// then blocks forever waiting for the approval, hanging the whole session.
-	//
-	// Injecting OPENCODE_PERMISSION makes the three permissions that default to
-	// "ask" resolve to "allow" client-side, so subagents never trigger an ask.
-	// We deliberately DON'T use {"*":"allow"}: that would be merged last into
-	// every agent's permission rules and override per-mode enforcement (e.g.
-	// plan mode's edit deny, explore's read-only boundary). Only these three
-	// ask-type gates are lifted, and mode protections stay intact.
-	if perm := openCodePermissionEnv(cmdName); perm != "" {
-		cmd.Env = append(cmd.Env, perm)
+	// Backend-specific environment (see ACPSpawnHooks). Same resolution as the
+	// argv hook above.
+	if spawnHooks != nil && spawnHooks.Env != nil {
+		if extra := spawnHooks.Env(spawnCtx); len(extra) > 0 {
+			cmd.Env = append(cmd.Env, extra...)
+		}
 	}
 	// Put the ACP process in its own process group so we can kill the
 	// entire tree (npx + child claude process) when closing the connection.
@@ -1415,52 +1388,6 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	// cached, so only a new process pays for it.
 	refreshDeleteSessionCapability(ctx, c, c.agent.ID)
 	return nil
-}
-
-// readUserMcpConfig reads ~/.codebuddy/.mcp.json and returns the mcpServers
-// JSON string if non-empty, suitable for --mcp-config CLI injection.
-// Returns "" on any error or if no servers configured.
-func readUserMcpConfig() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	path := filepath.Join(home, ".codebuddy", ".mcp.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var cfg struct {
-		McpServers map[string]any `json:"mcpServers"`
-	}
-	if unmarshalErr := json.Unmarshal(data, &cfg); unmarshalErr != nil {
-		return ""
-	}
-	if len(cfg.McpServers) == 0 {
-		return ""
-	}
-	// Re-marshal just the mcpServers object as --mcp-config expects
-	serversJSON, err := json.Marshal(cfg.McpServers)
-	if err != nil {
-		return ""
-	}
-	return string(serversJSON)
-}
-
-// openCodePermissionEnvValue is injected into opencode ACP processes via the
-// OPENCODE_PERMISSION env var (opencode merges it into its `permission` config
-// and it is inherited by subagent sessions). See the workaround comment in
-// spawnLocked for the full bug context.
-const openCodePermissionEnvValue = `{"external_directory":"allow","read":{"*.env":"allow","*.env.*":"allow"},"doom_loop":"allow"}`
-
-// openCodePermissionEnv returns the "OPENCODE_PERMISSION=<json>" env entry for
-// opencode ACP processes, or "" for other backends so their behavior is
-// unchanged.
-func openCodePermissionEnv(cmdName string) string {
-	if cmdName != "opencode" {
-		return ""
-	}
-	return "OPENCODE_PERMISSION=" + openCodePermissionEnvValue
 }
 
 // watchProcessDeath monitors the ACP connection and marks it as dead

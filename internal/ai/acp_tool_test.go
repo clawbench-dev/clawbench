@@ -59,29 +59,23 @@ func TestExtractMetaToolNameFlat(t *testing.T) {
 	})
 }
 
-func TestGetRemaps(t *testing.T) {
-	t.Run("generic_acp has full remap table", func(t *testing.T) {
-		remaps := getRemaps("generic_acp")
-		assert.NotNil(t, remaps)
-		assert.Contains(t, remaps, "oldString")
-		assert.Contains(t, remaps, "dirPath")
+func TestGenericACPRemaps(t *testing.T) {
+	t.Run("carries the shared camelCase set", func(t *testing.T) {
+		assert.Contains(t, GenericACPRemaps, "oldString")
+		assert.Contains(t, GenericACPRemaps, "dirPath")
+		assert.Contains(t, GenericACPRemaps, "replaceAll")
 	})
 
-	t.Run("claude_acp is empty (defaultMappings sufficient)", func(t *testing.T) {
-		remaps := getRemaps("claude_acp")
-		assert.NotNil(t, remaps)
-		assert.Empty(t, remaps)
+	t.Run("does not repeat defaultMappings it does not need", func(t *testing.T) {
+		// normalizeToolInput applies cmd/exec to every backend, so a copy here
+		// would be a second place to keep in sync.
+		assert.NotContains(t, GenericACPRemaps, "cmd")
+		assert.NotContains(t, GenericACPRemaps, "exec")
 	})
 
-	t.Run("unknown key returns nil", func(t *testing.T) {
-		remaps := getRemaps("nonexistent")
-		assert.Nil(t, remaps)
-	})
-
-	t.Run("deepseek_cli has path remap", func(t *testing.T) {
-		remaps := getRemaps("deepseek_cli")
-		assert.NotNil(t, remaps)
-		assert.Equal(t, "file_path", remaps["path"])
-		assert.Equal(t, "old_string", remaps["search"])
+	t.Run("is the fallback when the backend registry is not wired", func(t *testing.T) {
+		// No backends package imported in this binary, so LookupACPRemapsFn is
+		// nil and the shared table must be returned.
+		assert.Equal(t, GenericACPRemaps, acpRemapsForBackend("any-backend"))
 	})
 }

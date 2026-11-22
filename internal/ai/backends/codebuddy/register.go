@@ -53,6 +53,15 @@ func init() {
 		// It echoes the injected message back with a correlation id, so the
 		// reply can be SPLIT exactly at the injection point.
 		PluginCommands: ScanPluginCommands,
+		ACP: &backends.ACPPlugin{
+			// CodeBuddy needs extra argv at spawn: the legacy ~/.codebuddy/.mcp.json
+			// injection and the own-service --settings override. Both are
+			// CodeBuddy-specific, so they live in spawn.go behind this hook.
+			//
+			// No InputRemaps: its mixed camelCase fields are the shared generic
+			// set, which is also what the update path already used.
+			SpawnHooks: spawnHooks(),
+		},
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       ParseACPToolCall,
 			ParseToolCallUpdate: ParseACPToolCallUpdate,

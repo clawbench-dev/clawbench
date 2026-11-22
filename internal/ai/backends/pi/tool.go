@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	acp "github.com/coder/acp-go-sdk"
-
 	"clawbench/internal/ai"
 )
 
@@ -64,50 +62,17 @@ func normalizePiACPInput(toolName string, rawInput []byte) string {
 	if len(rawInput) == 0 {
 		return "{}"
 	}
-	return normalizePiToolInput(toolName, json.RawMessage(rawInput), piACPBaseRemaps)
+	return normalizePiToolInput(toolName, json.RawMessage(rawInput), PiACPInputRemaps)
 }
 
-// piACPBaseRemaps is the remap table used by the ACP path. It matches the CLI's
-// PiInputRemaps so both transports normalize identically. Kept as a separate
-// value (rather than importing backends/pi, which would be an import cycle)
-// because internal/ai must not depend on backend sub-packages.
-var piACPBaseRemaps = map[string]string{
-	"path": "file_path",
-}
-
-// parsePiACPToolCall extracts a ai.ToolCall from a Pi ACP tool_call event.
-func parsePiACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
-	tool := &ai.ToolCall{
-		Name: ai.ExtractToolName(tc.Title, tc.Kind, "pi", string(tc.ToolCallId)),
-		ID:   string(tc.ToolCallId),
-		Done: false,
-	}
-	if tc.RawInput != nil {
-		if inputBytes, err := json.Marshal(tc.RawInput); err == nil {
-			tool.Input = normalizePiACPInput(piACPToolNameForInput(tc.Title), inputBytes)
-		}
-	}
-	return tool
-}
-
-// parsePiACPToolCallUpdate extracts a ai.ToolCall from a Pi ACP tool_call_update.
-func parsePiACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
-	tool := &ai.ToolCall{ID: string(tcu.ToolCallId)}
-	ai.MapToolCallStatus(tcu.Status.Ptr(), tool)
-	if rawInput, ok := tcu.RawInput.Value(); ok {
-		if inputBytes, err := json.Marshal(rawInput); err == nil {
-			title, _ := tcu.Title.Value()
-			tool.Input = normalizePiACPInput(piACPToolNameForInput(title), inputBytes)
-		}
-	} else {
-		ai.MapToolCallInput(tcu, tool, "pi")
-	}
-	ai.MapToolCallName(tcu, tool, "pi")
-	if tool.Done {
-		ai.MapToolCallOutput(tcu, tool)
-	}
-	return tool
-}
+// The call/update sequence is shared with openclaw (see
+// ai.NewNormalizingToolCallParser); pi supplies only the tool-name reader and
+// the normalizer.
+var (
+	parsePiACPToolCall, parsePiACPToolCallUpdate = ai.NewNormalizingToolCallParser(
+		"pi", piACPToolNameForInput, normalizePiACPInput,
+	)
+)
 
 // piACPToolNameForInput returns the raw Pi tool name used to select the
 // normalization branch. Pi's ACP title is the bare tool name ("edit", "read"),

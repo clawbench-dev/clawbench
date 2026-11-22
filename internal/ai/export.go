@@ -131,15 +131,6 @@ func ParseGenericACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID stri
 // ACPUpdateMeta returns the _meta of any ACP session update variant.
 func ACPUpdateMeta(update acp.SessionUpdate) map[string]any { return acpUpdateMeta(update) }
 
-// GetRemaps returns the legacy per-agent input remap table for a
-// "<backend>_<mode>" key (e.g. "claude_acp"). Backends whose ACP rawInput is
-// already canonical pass an empty table here.
-//
-// TODO(phase5): collapse perAgentInputRemaps into the ACPPlugin.InputRemaps
-// registry — two tables describing the same thing is exactly the drift this
-// refactor is meant to remove.
-func GetRemaps(key string) map[string]string { return getRemaps(key) }
-
 // MapToolCallName fills a ToolCall's name from an update's title/kind when the
 // backend has no better source.
 func MapToolCallName(tcu acp.SessionToolCallUpdate, tool *ToolCall, backendID string) {

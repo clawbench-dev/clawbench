@@ -592,8 +592,8 @@ func TestExportSeams_MappingWrappers(t *testing.T) {
 	if meta["k"] != "v" {
 		t.Fatalf("ACPUpdateMeta = %v", meta)
 	}
-	if got := GetRemaps("claude_acp"); got == nil && getRemaps("claude_acp") != nil {
-		t.Fatal("GetRemaps diverged")
+	if got := ACPRemapsForBackend("claude"); got == nil {
+		t.Fatal("ACPRemapsForBackend must fall back to the generic table")
 	}
 
 	// The remaining small wrappers.

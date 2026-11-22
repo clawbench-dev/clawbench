@@ -42,8 +42,10 @@ func TestGrokBackendPlugin_ACPToolMapping(t *testing.T) {
 	require.NotNil(t, plugin)
 	require.NotNil(t, plugin.ACP, "grok should register ACP tool mapping data")
 	assert.NotEmpty(t, plugin.ACP.ToolCallIDPrefixes, "grok should map ACP toolCallID prefixes")
-	assert.NotEmpty(t, plugin.ACP.InputRemaps, "grok should map ACP input field names")
+	// Grok declares no remap table: its camelCase fields are the shared generic
+	// set, reached through the registry's fallback.
+	assert.Nil(t, plugin.ACP.InputRemaps, "grok's field names are the shared generic set")
 	assert.Equal(t, "Read", plugin.ACP.ToolCallIDPrefixes["read_file"])
 	assert.Equal(t, "Edit", plugin.ACP.ToolCallIDPrefixes["search_replace"])
-	assert.Equal(t, "old_string", plugin.ACP.InputRemaps["oldString"])
+	assert.Equal(t, "old_string", backends.LookupACPRemaps("grok")["oldString"])
 }

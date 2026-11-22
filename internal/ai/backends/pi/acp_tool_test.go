@@ -123,7 +123,7 @@ func TestPiACPRemapMatchesCLIPath(t *testing.T) {
 	}
 	for name, raw := range cases {
 		acpOut := normalizePiACPInput(name, []byte(raw))
-		cliOut := normalizePiToolInput(name, json.RawMessage(raw), piACPBaseRemaps)
+		cliOut := normalizePiToolInput(name, json.RawMessage(raw), PiACPInputRemaps)
 		if acpOut != cliOut {
 			t.Errorf("%s: ACP and CLI normalizers diverged\n  acp=%s\n  cli=%s", name, acpOut, cliOut)
 		}

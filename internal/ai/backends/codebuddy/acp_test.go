@@ -29,10 +29,14 @@ func TestCodebuddyBackendPlugin_SpecFields(t *testing.T) {
 	assert.True(t, plugin.Spec.ACPLoadSession, "codebuddy should support LoadSession (verified by integration test)")
 }
 
-func TestCodebuddyBackendPlugin_NoACPPlugin(t *testing.T) {
+func TestCodebuddyBackendPlugin_SpawnHooksOnly(t *testing.T) {
 	plugin := backends.Lookup("codebuddy")
 	require.NotNil(t, plugin)
-	assert.Nil(t, plugin.ACP, "codebuddy should have nil ACP plugin (redundant InputRemaps removed)")
+	require.NotNil(t, plugin.ACP, "codebuddy needs an ACP plugin for its spawn hooks")
+	assert.Nil(t, plugin.ACP.InputRemaps, "codebuddy's field names are the shared generic set")
+	require.NotNil(t, plugin.ACP.SpawnHooks, "codebuddy's --mcp-config / --settings workarounds live in spawn hooks")
+	assert.NotNil(t, plugin.ACP.SpawnHooks.Args)
+	assert.Nil(t, plugin.ACP.SpawnHooks.Env, "codebuddy needs no extra env")
 }
 
 // --- CLI backend functionality ---

@@ -41,7 +41,7 @@ func init() {
 			ExtractMeta:         ExtractMeta,
 		},
 		ModelSource: model.PluginSource("claude", discoverClaudeModels),
-		MidTurn:     &midTurnInjector{},
+		MidTurn:     midTurn,
 		ProviderEnv: &model.ProviderEnvSpec{
 			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
 			// CLAUDE_CONFIG_DIR relocates the whole ~/.claude tree, and the ACP
