@@ -17,7 +17,7 @@ const i18n = createI18n({
       nav: {
         fileManager: '文件管理',
         fileView: '文件浏览',
-        tasks: '任务',
+        tasks: '自动化任务',
         notifications: '通知中心',
         meeting: '视频会议',
         share: '分享中心',
@@ -39,10 +39,10 @@ const i18n = createI18n({
           gitHistory: 'Git 历史',
           stats: '统计',
           identity: '身份',
-          chat: '聊天',
-          sessions: '会话管理',
+          chat: '聊天会话',
+          sessions: '会话列表',
           agents: 'Agent偏好',
-          tasks: '任务',
+          tasks: '自动化任务',
           terminal: '终端',
           tts: 'TTS语音',
           stt: '语音识别',
@@ -149,9 +149,9 @@ describe('SettingsIndex', () => {
     expect(labels).toContain('项目历史')
     expect(labels).toContain('数据统计')
     expect(labels).toContain('身份')
-    expect(labels).toContain('聊天')
-    expect(labels).toContain('会话管理')
-    expect(labels).toContain('任务')
+    expect(labels).toContain('聊天会话')
+    expect(labels).toContain('会话列表')
+    expect(labels).toContain('自动化任务')
     expect(labels).toContain('会话索引')
     expect(labels).toContain('文本嵌入')
     expect(labels).toContain('邮件')
@@ -184,11 +184,12 @@ describe('SettingsIndex', () => {
     )
     // 项目与外观 (2): 项目, 外观.
     // 模型 (4): 模型提供商, 文本嵌入, 语音朗读, 语音识别.
-    // 智能体 (7): 身份, 聊天, 会话管理, 会话索引, 智能体, 技能, MCP.
-    // 功能 (16): 功能编排 + one page per dock plugin in DOCK order, then
-    //   消息推送 and 用量监控 (features with a page but no dock entry).
+    // 智能体 (4): 身份, 智能体, 技能, MCP.
+    // 功能 (19): 功能编排, then the right-pane chat's three pages (聊天会话,
+    //   会话列表, 会话索引), then one page per dock plugin in DOCK order,
+    //   then 消息推送 and 用量监控 (features with a page but no dock entry).
     // 系统 (3): 调试, 安全, 关于.
-    expect(perCard).toEqual([2, 4, 7, 16, 3])
+    expect(perCard).toEqual([2, 4, 4, 19, 3])
     expect(perCard.reduce((a, b) => a + b, 0)).toBe(32)
   })
 
@@ -229,9 +230,9 @@ describe('SettingsIndex', () => {
       // 模型
       'providers', 'embedding', 'tts', 'stt',
       // 智能体
-      'identity', 'chat', 'sessions', 'rag', 'agents', 'skills', 'mcp',
+      'identity', 'agents', 'skills', 'mcp',
       // 功能
-      'dockPlugins', 'files', 'fileView', 'gitHistory', 'forgeIntegration', 'tasks',
+      'dockPlugins', 'chat', 'sessions', 'rag', 'files', 'fileView', 'gitHistory', 'forgeIntegration', 'tasks',
       'terminal', 'stats', 'mail', 'kb', 'meeting', 'share', 'portForward',
       'notifications', 'notification', 'usageMeter',
       // 系统

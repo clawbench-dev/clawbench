@@ -337,7 +337,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // is not group-chat-specific.
     { type: 'item', spec: { labelKey: 'settings.items.groupMaxSpeeches', descriptionKey: 'settings.items.groupMaxSpeechesDesc', key: 'chat.group_max_speeches', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.groupChatSectionHeader' } },
   ],
-  // 会话管理: the session list and the session lifecycle. Split out of 聊天 so
+  // 会话列表: the session list and the session lifecycle. Split out of 聊天会话 so
   // that "how many sessions, how they are ordered, when they are cleaned up"
   // is not interleaved with "how a message is drawn".
   sessions: [
