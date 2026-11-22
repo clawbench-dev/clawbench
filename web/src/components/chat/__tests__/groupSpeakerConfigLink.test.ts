@@ -89,13 +89,20 @@ describe('header icon / empty-state glyph → agent config wiring', () => {
   const app = stripComments(read('App.vue'))
   const list = stripComments(read('components/chat/ChatMessageList.vue'))
 
-  it('the chat header agent icon opens the config page for the session agent', () => {
+  it('the chat header agent icon AND name open the config page for the session agent', () => {
     // Scoped to the single-agent header branch: a bare `openAgentConfig(` search
     // would also match the handler definition and the ChatPanelContent binding.
     const region = app.slice(app.indexOf('class="bs-header-title"'), app.indexOf('bs-header-title-editable'))
     expect(region, 'the header icon block must exist').toContain('chat-title-agent-btn')
     expect(region).toMatch(/@click\.stop="openAgentConfig\(\s*sessionIdentity\.currentAgentId\.value\s*\)"/)
-    // Icon-only control: it has to say what it does.
+    // The name is INSIDE the same button, so clicking it hits the button. A
+    // name left outside (as plain text next to the button) is the exact
+    // regression to catch: it still looks like part of the control.
+    expect(region).toMatch(/class="chat-title-agent-name">\{\{\s*sessionIdentity\.agentHeaderTitle\.value\s*\}\}/)
+    const btnStart = region.indexOf('chat-title-agent-btn')
+    const btnEnd = region.indexOf('</button>', btnStart)
+    expect(region.slice(btnStart, btnEnd), 'the name must sit inside the button').toContain('chat-title-agent-name')
+    // The control now has visible text, so it has to say what it does.
     expect(region).toContain(`:title="t('session.configAgent')"`)
     expect(region).toContain(`:aria-label="t('session.configAgent')"`)
   })

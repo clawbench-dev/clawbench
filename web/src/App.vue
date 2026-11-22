@@ -298,12 +298,16 @@
                       :groupRunning="sessionIdentity.runningSessions.value.has(sessionIdentity.currentSessionId.value)"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                     />
-                    <!-- Single-agent sessions: the agent's icon doubles as the
-                         entry point to its config page (same target as the
-                         speaker avatar on a bubble and the big glyph in the
-                         empty state). The NAME stays plain text: it is squeezed
-                         between the icon and the rename pencil, and a click
-                         there would be an easy mis-tap on the title. -->
+                    <!-- Single-agent sessions: the agent's icon AND name together
+                         form the entry point to its config page (same target as
+                         the speaker avatar on a bubble and the big glyph in the
+                         empty state). One button wrapping both, so there is no
+                         dead gap between them and the hit area matches what
+                         looks clickable. This does NOT collide with renaming:
+                         renaming lives on the session title row below and on
+                         the pencil at the right edge, which is exactly why the
+                         agent name was made clickable and the session title was
+                         not reused for this. -->
                     <span v-else-if="sessionIdentity.currentAgentId.value" class="bs-header-title">
                       <button
                         type="button"
@@ -314,8 +318,8 @@
                         @click.stop="openAgentConfig(sessionIdentity.currentAgentId.value)"
                       >
                         <AgentIcon :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" size="md" />
+                        <span class="chat-title-agent-name">{{ sessionIdentity.agentHeaderTitle.value }}</span>
                       </button>
-                      {{ sessionIdentity.agentHeaderTitle.value }}
                     </span>
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
@@ -5000,23 +5004,36 @@ onUnmounted(() => {
     height: calc(14 * var(--dp));
 }
 
-/* The agent icon in the chat title bar, made clickable (opens that agent's
-   config page). `.bs-header-title` is an inline-flex row, so this button joins
-   the row without disturbing the header's layout; negative margins keep the
-   icon in the same optical position it occupied as a bare glyph and give the
-   hit area a little padding without growing the row. */
+/* The agent icon + name in the chat title bar, made clickable (opens that
+   agent's config page). `.bs-header-title` is an inline-flex row, so this button
+   joins the row without disturbing the header's layout; negative margins keep
+   the icon in the same optical position it occupied as a bare glyph and give the
+   hit area a little padding without growing the row. `max-width` + the name's
+   ellipsis keep a long agent name from pushing the session title (and the rename
+   pencil) off the header — the name was plain text before and inherited the
+   row's own clipping, which a nowrap button does not do on its own. */
 .chat-title-agent-btn {
-    flex-shrink: 0;
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 100%;
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    padding: calc(2 * var(--dp));
-    margin: calc(-2 * var(--dp));
+    gap: var(--space-2);
+    padding: calc(2 * var(--dp)) calc(4 * var(--dp));
+    margin: calc(-2 * var(--dp)) calc(-4 * var(--dp));
     border: none;
     background: none;
+    color: inherit;
+    font: inherit;
     cursor: pointer;
     border-radius: var(--radius-sm);
     transition: background var(--duration-base), opacity var(--duration-base);
+}
+.chat-title-agent-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 @media (hover: hover) {
     .chat-title-agent-btn:hover {
