@@ -122,8 +122,9 @@ describe('header icon / empty-state glyph → agent config wiring', () => {
     // handler wins and the rename handler is dead.
     const btnEnd = region.indexOf('</button>')
     expect(titleStart, 'the title must not be inside the agent button').toBeGreaterThan(btnEnd)
-    // A divider marks where one click target ends and the other begins.
-    expect(region.slice(0, titleStart)).toContain('chat-title-sep')
+    // No divider between the two: the header shows agent name and session
+    // title as one continuous line.
+    expect(region.slice(0, titleStart)).not.toContain('chat-title-sep')
   })
 
   it('the empty-state glyph emits open-agent-config with the agent id', () => {

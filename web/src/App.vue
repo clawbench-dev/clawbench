@@ -322,12 +322,8 @@
                       </button>
                     </span>
                     <!-- Session title: click = rename (unchanged). Kept a
-                         SEPARATE element from the agent button above, and
-                         visually separated by a rule, because the two clicks do
-                         different things — without a divider the agent name and
-                         the title read as one string and users cannot tell
-                         where "open config" ends and "rename" begins. -->
-                    <span v-if="sessionIdentity.currentSessionTitle.value" class="chat-title-sep" aria-hidden="true"></span>
+                         SEPARATE element from the agent button above, because
+                         the two clicks do different things. -->
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
@@ -5042,16 +5038,6 @@ onUnmounted(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-/* Divider between the agent button (opens config) and the session title
-   (renames). Purely visual separation of two different click targets — it
-   collapses with the title below it, since neither exists without a session. */
-.chat-title-sep {
-    flex-shrink: 0;
-    width: 1px;
-    height: calc(12 * var(--dp));
-    margin: 0 var(--space-3);
-    background: var(--border-color, rgba(0, 0, 0, 0.12));
 }
 @media (hover: hover) {
     .chat-title-agent-btn:hover {
