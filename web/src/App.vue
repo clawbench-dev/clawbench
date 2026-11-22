@@ -321,6 +321,13 @@
                         <span class="chat-title-agent-name">{{ sessionIdentity.agentHeaderTitle.value }}</span>
                       </button>
                     </span>
+                    <!-- Session title: click = rename (unchanged). Kept a
+                         SEPARATE element from the agent button above, and
+                         visually separated by a rule, because the two clicks do
+                         different things — without a divider the agent name and
+                         the title read as one string and users cannot tell
+                         where "open config" ends and "rename" begins. -->
+                    <span v-if="sessionIdentity.currentSessionTitle.value" class="chat-title-sep" aria-hidden="true"></span>
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
@@ -5008,14 +5015,15 @@ onUnmounted(() => {
    agent's config page). `.bs-header-title` is an inline-flex row, so this button
    joins the row without disturbing the header's layout; negative margins keep
    the icon in the same optical position it occupied as a bare glyph and give the
-   hit area a little padding without growing the row. `max-width` + the name's
-   ellipsis keep a long agent name from pushing the session title (and the rename
-   pencil) off the header — the name was plain text before and inherited the
-   row's own clipping, which a nowrap button does not do on its own. */
+   hit area a little padding without growing the row. `flex: 0 1 auto` (NOT
+   `flex-shrink: 1` with `max-width: 100%`) caps the button at its content width
+   so it can never grow across the divider into the session title — the two have
+   different click actions, so their hit areas must not overlap. The name's
+   ellipsis keeps a long agent name from pushing the session title (and the
+   rename pencil) off the header. */
 .chat-title-agent-btn {
-    flex-shrink: 1;
+    flex: 0 1 auto;
     min-width: 0;
-    max-width: 100%;
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
@@ -5034,6 +5042,16 @@ onUnmounted(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+/* Divider between the agent button (opens config) and the session title
+   (renames). Purely visual separation of two different click targets — it
+   collapses with the title below it, since neither exists without a session. */
+.chat-title-sep {
+    flex-shrink: 0;
+    width: 1px;
+    height: calc(12 * var(--dp));
+    margin: 0 var(--space-3);
+    background: var(--border-color, rgba(0, 0, 0, 0.12));
 }
 @media (hover: hover) {
     .chat-title-agent-btn:hover {

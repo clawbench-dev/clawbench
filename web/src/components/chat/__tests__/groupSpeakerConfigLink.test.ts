@@ -107,6 +107,25 @@ describe('header icon / empty-state glyph → agent config wiring', () => {
     expect(region).toContain(`:aria-label="t('session.configAgent')"`)
   })
 
+  it('the session title keeps its own click target — rename, NOT open config', () => {
+    // The header carries two different actions side by side: the agent button
+    // opens config, the session title renames. Folding the title into the agent
+    // button (or dropping its `@click`) silently changes what a click does, so
+    // both halves of that contract are pinned here.
+    const region = app.slice(app.indexOf('class="bs-header-title"'), app.indexOf('class="chat-title-edit-btn"'))
+    const titleStart = region.indexOf('bs-header-title-editable')
+    expect(titleStart, 'the session title row must exist').toBeGreaterThan(-1)
+    const titleTag = region.slice(titleStart, region.indexOf('>', titleStart))
+    expect(titleTag).toMatch(/@click="handleRenameSession"/)
+    expect(titleTag, 'renaming must not be routed into openAgentConfig').not.toContain('openAgentConfig')
+    // The title must live OUTSIDE the agent button, otherwise the button's click
+    // handler wins and the rename handler is dead.
+    const btnEnd = region.indexOf('</button>')
+    expect(titleStart, 'the title must not be inside the agent button').toBeGreaterThan(btnEnd)
+    // A divider marks where one click target ends and the other begins.
+    expect(region.slice(0, titleStart)).toContain('chat-title-sep')
+  })
+
   it('the empty-state glyph emits open-agent-config with the agent id', () => {
     expect(list).toMatch(/@click="emit\('open-agent-config',\s*currentAgent\.id\)"/)
     // Without an id there is no page to open — the tile must stay inert rather
