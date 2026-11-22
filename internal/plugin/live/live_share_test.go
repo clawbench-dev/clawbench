@@ -481,8 +481,18 @@ func liveWSServer(t *testing.T) (*httptest.Server, string) {
 		LiveSharePublishWS(w, r)
 	})
 
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
+	// Server.Close does not wait for hijacked WebSocket connections. Let both
+	// handlers finish their database writes before the fixture restores the DB.
+	var handlers sync.WaitGroup
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlers.Add(1)
+		defer handlers.Done()
+		mux.ServeHTTP(w, r)
+	}))
+	t.Cleanup(func() {
+		srv.Close()
+		handlers.Wait()
+	})
 	return srv, room.Token()
 }
 
@@ -572,6 +582,20 @@ func writeJSONFrame(t *testing.T, conn *websocket.Conn, v any) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	require.NoError(t, conn.Write(ctx, websocket.MessageText, data))
+}
+
+func TestLiveWS_CleanupFinalizesMeeting(t *testing.T) {
+	var registry *liveshare.Registry
+	var token string
+	if !t.Run("connected publisher", func(t *testing.T) {
+		srv, roomToken := liveWSServer(t)
+		dialPublisher(t, srv, roomToken)
+		registry, token = LiveRegistry, roomToken
+		// Leave the publisher connected until the subtest's cleanup closes it.
+	}) {
+		return
+	}
+	assert.Nil(t, registry.Get(token), "the meeting must end before the fixture is torn down")
 }
 
 func TestLiveWS_ViewerJoinReachesPublisher(t *testing.T) {
