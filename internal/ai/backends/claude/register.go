@@ -42,6 +42,8 @@ func init() {
 		},
 		ModelSource: model.PluginSource("claude", discoverClaudeModels),
 		MidTurn:     midTurn,
+		// Only reached when the CLAWBENCH_CHILD marker is unreadable.
+		OrphanCmdline: ai.OrphanCmdlinePattern{Binary: "claude", Arg: "--acp"},
 		ProviderEnv: &model.ProviderEnvSpec{
 			Anthropic: model.ProtoEnv("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
 			// CLAUDE_CONFIG_DIR relocates the whole ~/.claude tree, and the ACP

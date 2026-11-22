@@ -7,6 +7,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/ai/backends/codebuddy/meta"
 	"clawbench/internal/model"
 )
 
@@ -65,7 +66,8 @@ func init() {
 		Behavior: &ai.ACPBehavior{
 			ParseToolCall:       ParseACPToolCall,
 			ParseToolCallUpdate: ParseACPToolCallUpdate,
-			ExtractMeta:         ai.ExtractCodeBuddyMeta,
+			ExtractMeta:         meta.Extract,
+			RefusalDetail:       meta.RefusalDetail,
 			// CodeBuddy ships the turn's CREDIT consumption in the
 			// ACP-standard `cost` field (with an empty currency). It is still
 			// real billing, but persisting it as cost_usd would inflate the
@@ -92,6 +94,9 @@ func init() {
 		ListSessions:       listCodebuddySessionsFromDisk,
 		MidTurn:            &midTurnInjector{},
 		MidTurnSplitsReply: true,
+		// Only reached when the CLAWBENCH_CHILD marker is unreadable: `codebuddy --acp`
+		// is the process shape this backend spawns.
+		OrphanCmdline: ai.OrphanCmdlinePattern{Binary: "codebuddy", Arg: "--acp"},
 		ProviderEnv: &model.ProviderEnvSpec{
 			// CodeBuddy speaks the OpenAI wire protocol only: its request path is
 			// hardcoded to /chat/completions and ignores the entry's "provider"

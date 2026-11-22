@@ -315,9 +315,15 @@ func (c *ACPConn) emitRefusalWarningIfRefused(resp acp.PromptResponse, streamCh 
 	if resp.StopReason != acp.StopReasonRefusal {
 		return
 	}
-	// The agent's own reason, when it reports one. CodeBuddy's -32603 is a
-	// placeholder that explains nothing; its _meta carries the real cause.
-	detail := refusalDetailFromMeta(MetaAny(resp.Meta))
+	// The agent's own reason, when it reports one. A -32603 is a placeholder
+	// that explains nothing; a backend that stashes the real cause in _meta
+	// declares RefusalDetail and it is used instead.
+	detail := ""
+	if c.agent != nil {
+		if b := acpBehavior(c.agent.Backend); b != nil && b.RefusalDetail != nil {
+			detail = b.RefusalDetail(MetaAny(resp.Meta))
+		}
+	}
 	slog.Warn("acp conn: prompt refused by agent",
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
 		"stop_reason", resp.StopReason, "detail", detail)

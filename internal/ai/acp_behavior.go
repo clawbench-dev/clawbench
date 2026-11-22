@@ -52,6 +52,16 @@ type ACPBehavior struct {
 	// frames carry no parent link and are dropped unless one was resolved.
 	IsChildSessionUpdate func(meta map[string]any) bool
 
+	// RefusalDetail reads the agent's own explanation out of a
+	// stopReason=refusal PromptResponse._meta.
+	//
+	// A refusal carries no content, and the JSON-RPC code is usually a generic
+	// placeholder (-32603 Internal error) that explains nothing. Backends that
+	// stash the real cause somewhere in _meta return it here; the shared code
+	// then puts it in the warning event instead of the useless code. nil (or an
+	// empty return) falls back to the generic refusal copy.
+	RefusalDetail func(meta map[string]any) string
+
 	// CostFieldCarriesCredit reports that this backend repurposes the
 	// ACP-standard usage_update.cost field to carry a CREDIT amount instead of
 	// a monetary cost.

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"clawbench/internal/ai/acptest"
+	"clawbench/internal/model"
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,7 +16,10 @@ import (
 // path: the extractor can be correct while the emitter silently drops its
 // result, leaving the user with an unexplained -32603.
 func TestEmitRefusalWarning_CarriesAgentDetail(t *testing.T) {
-	conn := &ACPConn{clawbenchSID: "refusal-detail-test"}
+	// The detail comes from the backend's RefusalDetail hook, so this is also
+	// the test that the hook is wired: a connection with no agent (or an agent
+	// whose backend declares no hook) reports the generic copy instead.
+	conn := &ACPConn{clawbenchSID: "refusal-detail-test", agent: &model.Agent{Backend: "codebuddy"}}
 	ch := make(chan StreamEvent, 4)
 
 	resp := acp.PromptResponse{

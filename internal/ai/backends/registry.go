@@ -47,6 +47,9 @@ func Register(p *BackendPlugin) {
 	if p.Spec.MCPUnsupported {
 		model.RegisterMCPUnsupported(p.ID)
 	}
+	if p.OrphanCmdline.Binary != "" && p.OrphanCmdline.Arg != "" {
+		ai.RegisterOrphanCmdline(p.OrphanCmdline.Binary, p.OrphanCmdline.Arg)
+	}
 	if p.Spec.MCPRejectsSSE {
 		model.RegisterMCPRejectsSSE(p.ID)
 	}

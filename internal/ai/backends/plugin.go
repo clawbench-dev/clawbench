@@ -80,8 +80,7 @@ type BackendPlugin struct {
 	// than under ACP — a non-ACP backend could implement it too.
 	MidTurn ai.MidTurnInjector
 
-	// MidTurnSplitsReply reports whether an injected message SPLITS the running
-	// assistant reply into two (a "before" and "after" half) rather than merely
+	// MidTurnSplitsReply reports whether an injected message SPLITS the running	// assistant reply into two (a "before" and "after" half) rather than merely
 	// merging into it. Only meaningful when MidTurn is non-nil.
 	//
 	// CodeBuddy echoes the injected message back on the wire with a
@@ -92,6 +91,17 @@ type BackendPlugin struct {
 	// ignored". The frontend renders a hint on the injected bubble ONLY for the
 	// merge-only case, so this bit is the switch that turns it on.
 	MidTurnSplitsReply bool
+
+	// OrphanCmdline is this backend's command-line shape, used by
+	// CleanupOrphans as a FALLBACK when the CLAWBENCH_CHILD=1 marker is
+	// unreadable or absent (an agent spawned by an older build, or a /proc
+	// entry whose environ we may not read).
+	//
+	// It is a fallback, not the primary signal: the marker is exact, while a
+	// command line can in principle be reproduced by hand. Declaring nothing
+	// means this backend's leftovers are only cleaned up when the marker is
+	// readable — which is every child the current build spawns.
+	OrphanCmdline ai.OrphanCmdlinePattern
 }
 
 // InProcessPlugin is the factory for a backend implemented in this process

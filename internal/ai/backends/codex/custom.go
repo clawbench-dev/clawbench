@@ -46,6 +46,10 @@ func init() {
 		ModelSource:  model.PluginSource("codex", discoverCodexModels),
 		ListSessions: listCodexSessionsFromDisk,
 		MidTurn:      midTurn,
+		// codex-acp delegates every turn to a `codex app-server` child, so a
+		// leftover from a crashed run shows up under that command line rather
+		// than under the adapter's. Only reached when the marker is unreadable.
+		OrphanCmdline: ai.OrphanCmdlinePattern{Binary: "codex", Arg: "app-server"},
 		ProviderEnv: &model.ProviderEnvSpec{
 			// codex reads its provider from ~/.codex/config.toml. The managed
 			// block references this variable for env_key, so the secret never

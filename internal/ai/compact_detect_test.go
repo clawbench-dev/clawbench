@@ -552,3 +552,96 @@ func TestMapACPSessionUpdate_CancelledCompactionClearsPendingDrop(t *testing.T) 
 	assert.Equal(t, 0, drainCompactionEvents(t, ch),
 		"nothing was compacted, so nothing may be reported")
 }
+
+// TestCompactionToolSignals_AreAdapterWireFacts is the deliberate answer to
+// "why is this table still in the shared package?".
+//
+// The two entries name what the ACP ADAPTERS put on the wire, not something any
+// backend negotiates: claude-agent-acp sends a tool call titled "Compact
+// conversation" whose _meta.claudeCode.toolName is "compact"; codex-acp sends
+// the same title with no _meta at all. Neither is a per-backend capability, so
+// asking every backend to declare "my compaction tool is called X" would mean
+// ~19 registrations that say nothing, plus one silently-missing registration the
+// day a new adapter starts reporting compaction as a tool call.
+//
+// The cost of being wrong here is asymmetric: a missed detection means the
+// injected system prompt is not re-injected after the context is rewritten, and
+// nothing in the UI says so. A shared table cannot go missing. This test pins
+// both signals so the reasoning is visible at the point of change rather than in
+// a commit message.
+func TestCompactionToolSignals_AreAdapterWireFacts(t *testing.T) {
+	// Signal 1: the tool NAME claude-agent-acp stamps into _meta.
+	assert.True(t, IsCompactionToolCall("compact", ""),
+		"claude-agent-acp reports compaction as a tool named \"compact\"")
+	assert.True(t, IsCompactionToolCall("Compact", ""),
+		"the match is case-insensitive so an adapter casing change cannot blind it")
+
+	// Signal 2: the TITLE, which codex-acp sends WITHOUT any _meta. Name and
+	// title are OR-ed on purpose: the adapters disagree on which one they send.
+	assert.True(t, IsCompactionToolCall("", "Compact conversation"),
+		"codex-acp reports compaction by title only")
+
+	// Narrowness: neither signal may widen into an ordinary tool.
+	assert.False(t, IsCompactionToolCall("", "Write compact.md"),
+		"an ordinary file write must not be mistaken for a compaction")
+	assert.False(t, IsCompactionToolCall("compact_report", ""),
+		"a differently-named tool must not match on a prefix")
+}
+
+// CodeBuddy reports compaction through its own _meta flags instead of a tool
+// call, and a CANCELLED compaction must not count — the agent restores the
+// original history, so nothing was rewritten and the prompt need not be
+// re-injected. Both halves are pinned because "flag armed" and "flag cancelled"
+// arrive on different notification types from the same attempt.
+func TestCompactionFlags_CodeBuddyMetaSignals(t *testing.T) {
+	assert.True(t, IsCodeBuddyCompactionMeta(map[string]any{
+		metaKeyCodeBuddyIsCompactInternal: true,
+	}), "the boolean flag marks every update emitted while compacting")
+
+	assert.True(t, IsCodeBuddyCompactionMeta(map[string]any{
+		metaKeyCodeBuddyCompactType: "auto",
+	}), "compactType alone is accepted: the key is the same signal")
+
+	assert.False(t, IsCodeBuddyCompactionMeta(map[string]any{
+		metaKeyCodeBuddyIsCompactInternal: false,
+	}), "an explicit false is not a compaction")
+
+	assert.True(t, IsCodeBuddyCompactionCancelledMeta(map[string]any{
+		metaKeyCodeBuddyCompactCancelled: true,
+	}), "a cancelled compaction restores history and must clear the report")
+
+	assert.True(t, IsCodeBuddyCompactionCancelledMeta(map[string]any{
+		metaKeyCodeBuddyCompactLimitReached: true,
+	}), "a limit-reached compaction restores history the same way")
+
+	assert.False(t, IsCodeBuddyCompactionCancelledMeta(map[string]any{"unrelated": 1}),
+		"an ordinary payload must not be read as a cancelled compaction")
+}
+
+// The parser moved to backends/codebuddy/meta, so the shared loop must still
+// reach it through the registered hook — otherwise every CodeBuddy turn loses
+// usage and model attribution with no error anywhere.
+func TestCodeBuddyMeta_ParsedThroughTheRegisteredHook(t *testing.T) {
+	// The generic scan is the intended fallback for an unregistered backend,
+	// not a failure: it still reads the OpenAI-style usage block, it just
+	// cannot attribute the model call the way the CodeBuddy parser does.
+	generic := ExtractMetaUsageForTest("no-such-backend", map[string]any{
+		"usage": map[string]any{"prompt_tokens": 1234},
+	})
+	require.NotNil(t, generic, "the generic scan still reads a plain usage block")
+	require.NotNil(t, generic.Usage)
+	assert.False(t, generic.Usage.Accumulate,
+		"per-call accumulation is CodeBuddy's own fact and must not come from the generic scan")
+	assert.Nil(t, generic.Trace, "the generic scan cannot identify the trace identity")
+
+	ext := ExtractMetaUsageForTest("codebuddy", map[string]any{
+		"usage":                  map[string]any{"prompt_tokens": 1234, "completion_tokens": 7},
+		"codebuddy.ai/requestId": "req-1",
+	})
+	require.NotNil(t, ext)
+	require.NotNil(t, ext.Usage)
+	assert.Equal(t, 1234, ext.Usage.InputTokens,
+		"the CodeBuddy parser must be reachable through ACPBehavior.ExtractMeta")
+	require.NotNil(t, ext.Trace)
+	assert.Equal(t, "req-1", ext.Trace.RequestID)
+}

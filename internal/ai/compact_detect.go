@@ -65,52 +65,10 @@ import (
 // explicitly NOT treated as compaction: the agent restores the original history
 // in those cases, so the context was never rewritten.
 
-const (
-	// metaKeyCodeBuddyIsCompactInternal marks every session update emitted while
-	// CodeBuddy is compacting the session context.
-	metaKeyCodeBuddyIsCompactInternal = "codebuddy.ai/isCompactInternal"
-	// metaKeyCodeBuddyCompactType carries the compaction purpose
-	// (user-command | pre-message-auto | emergency-auto).
-	metaKeyCodeBuddyCompactType = "codebuddy.ai/compactType"
-	// metaKeyCodeBuddyCompactCancelled marks a compaction that was aborted; the
-	// original history is restored, so the session is NOT considered compacted.
-	metaKeyCodeBuddyCompactCancelled = "codebuddy.ai/compact-cancelled"
-	// metaKeyCodeBuddyCompactLimitReached marks a compaction that gave up after
-	// repeated max-token failures; likewise not a completed compaction.
-	metaKeyCodeBuddyCompactLimitReached = "codebuddy.ai/compact-limit-reached"
-)
-
 // claudeACPCompactCompletedText is the exact text the claude-agent-acp adapter
 // emits on a `compact_boundary` system message. Matched as a substring so
 // surrounding whitespace/newlines in the chunk do not matter.
 const claudeACPCompactCompletedText = "Compacting completed."
-
-// IsCodeBuddyCompactionMeta reports whether a CodeBuddy _meta payload marks the
-// session as compacting. The boolean flag is authoritative; compactType is
-// accepted as an alternative carrier because the broadcast service attaches
-// both, and older/newer builds may omit one.
-func IsCodeBuddyCompactionMeta(meta map[string]any) bool {
-	if len(meta) == 0 {
-		return false
-	}
-	if v, ok := meta[metaKeyCodeBuddyIsCompactInternal]; ok && metaBool(v) {
-		return true
-	}
-	return metaString(meta[metaKeyCodeBuddyCompactType]) != ""
-}
-
-// IsCodeBuddyCompactionCancelledMeta reports whether a CodeBuddy _meta payload
-// announces a compaction that did NOT complete (cancelled by the user, or the
-// max-token limit was reached). The agent restores the original history in both
-// cases, so the session must not be flagged as compacted.
-func IsCodeBuddyCompactionCancelledMeta(meta map[string]any) bool {
-	if len(meta) == 0 {
-		return false
-	}
-	_, cancelled := meta[metaKeyCodeBuddyCompactCancelled]
-	_, limitReached := meta[metaKeyCodeBuddyCompactLimitReached]
-	return cancelled || limitReached
-}
 
 // IsCompactCommand reports whether the user's message is the /compact slash
 // command (with or without arguments, e.g. "/compact" or "/compact keep the

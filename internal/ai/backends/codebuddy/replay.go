@@ -1,6 +1,9 @@
 package codebuddy
 
-import "clawbench/internal/ai"
+import (
+	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends/codebuddy/meta"
+)
 
 // isReplayedTurnMeta reports whether a notification's _meta belongs to the
 // previous, already-completed turn rather than the current one.
@@ -24,11 +27,11 @@ import "clawbench/internal/ai"
 // internal/ai because "which backends can be compared across turns" is this
 // backend's own fact: other backends' requestIds are not comparable, and their
 // genuine chunks could share an id with the baseline.
-func isReplayedTurnMeta(conn *ai.ACPConn, meta map[string]any) bool {
-	if conn == nil || len(meta) == 0 {
+func isReplayedTurnMeta(conn *ai.ACPConn, payload map[string]any) bool {
+	if conn == nil || len(payload) == 0 {
 		return false
 	}
-	rid, _ := meta[ai.MetaKeyCodeBuddyRequestID].(string)
+	rid := meta.RequestIDOf(payload)
 	if rid == "" {
 		return false
 	}
