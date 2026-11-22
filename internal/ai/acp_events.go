@@ -377,18 +377,45 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			}
 		}
 	case update.Plan != nil:
-		entries := make([]PlanEntry, 0, len(update.Plan.Entries))
-		for _, e := range update.Plan.Entries {
-			entries = append(entries, PlanEntry{
-				Content:  e.Content,
-				Priority: string(e.Priority),
-				Status:   string(e.Status),
-			})
-		}
-		planState := &PlanState{Entries: entries}
+		planState := &PlanState{Entries: planEntriesFromACP(update.Plan.Entries)}
 		forwardACPEvent(ch, StreamEvent{Type: "plan_update", Plan: planState})
 		if conn != nil {
 			conn.SetCachedPlanState(planState)
+		}
+
+	case update.PlanUpdate != nil:
+		// schema 1.32's typed plan operation. The panel holds one plan, so
+		// only the main checklist (planId "plan" or omitted) is rendered; an
+		// auxiliary plan (a subagent's checklist) must not replace it.
+		plan := update.PlanUpdate.Plan
+		if plan.Items == nil {
+			if plan.Markdown != nil {
+				slog.Debug("acp: markdown plan update has no checklist entries",
+					"plan_id", string(plan.Markdown.PlanId))
+			}
+			break
+		}
+		if !isMainPlanID(string(plan.Items.PlanId)) {
+			slog.Debug("acp: ignoring auxiliary plan update", "plan_id", string(plan.Items.PlanId))
+			break
+		}
+		planState := &PlanState{Entries: planEntriesFromACP(plan.Items.Entries)}
+		forwardACPEvent(ch, StreamEvent{Type: "plan_update", Plan: planState})
+		if conn != nil {
+			conn.SetCachedPlanState(planState)
+		}
+
+	case update.PlanRemoved != nil:
+		// Removing the main plan is how an agent clears the panel. Send an
+		// empty replacement (the frontend's replace semantics) and drop the
+		// cached snapshot so a reconnect does not resurrect it.
+		if !isMainPlanID(string(update.PlanRemoved.PlanId)) {
+			slog.Debug("acp: ignoring auxiliary plan removal", "plan_id", string(update.PlanRemoved.PlanId))
+			break
+		}
+		forwardACPEvent(ch, StreamEvent{Type: "plan_update", Plan: &PlanState{Entries: []PlanEntry{}}})
+		if conn != nil {
+			conn.SetCachedPlanState(nil)
 		}
 
 	case update.AvailableCommandsUpdate != nil:
@@ -666,6 +693,28 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			reportCompactionUsageDrop(conn, ch, prev, usageState)
 		}
 	}
+}
+
+// isMainPlanID reports whether a schema 1.32 plan ID names the one checklist
+// the single-panel UI can hold. Claude uses "plan" for the conversation's
+// checklist and "plan:<toolCallId>" for a subagent's; the latter must not
+// replace or clear the main plan.
+func isMainPlanID(id string) bool {
+	return id == "" || id == "plan"
+}
+
+// planEntriesFromACP converts the SDK's plan entries to the frontend shape.
+// Shared by the legacy `plan` update and schema 1.32's typed `plan_update`.
+func planEntriesFromACP(entries []acp.PlanEntry) []PlanEntry {
+	out := make([]PlanEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, PlanEntry{
+			Content:  e.Content,
+			Priority: string(e.Priority),
+			Status:   string(e.Status),
+		})
+	}
+	return out
 }
 
 // reportCompactionUsageDrop emits compact_detected when the context occupancy

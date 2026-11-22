@@ -442,3 +442,40 @@ func TestUnregisterSession_CancelsPendingElicitation(t *testing.T) {
 		t.Fatalf("pendingElicitations = %d, want 0", len(client.pendingElicitations))
 	}
 }
+
+// TestElicitationContent_JSONDecodedMultiSelect pins the wire shape the HTTP
+// handler actually produces: encoding/json decodes a multi-select answer as
+// []any, not []string. Before the v0.20 typed response, the untyped map passed
+// it straight through; the typed conversion must accept []any or the field is
+// silently dropped and the agent reports the question as unanswered.
+func TestElicitationContent_JSONDecodedMultiSelect(t *testing.T) {
+	var content map[string]any
+	if err := json.Unmarshal([]byte(`{"q0":["logs","metrics"],"q1":"binary"}`), &content); err != nil {
+		t.Fatal(err)
+	}
+
+	got := elicitationContent(content)
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"q0":["logs","metrics"],"q1":"binary"}`
+	if string(b) != want {
+		t.Fatalf("elicitationContent = %s, want %s", b, want)
+	}
+}
+
+// A multi-select answer whose elements are not strings cannot be expressed by
+// the protocol's string-array value; the non-string elements are dropped rather
+// than turning into an empty value that fails to encode.
+func TestElicitationContent_NonStringArrayElements(t *testing.T) {
+	got := elicitationContent(map[string]any{"q0": []any{"logs", 1, true}})
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"q0":["logs"]}`
+	if string(b) != want {
+		t.Fatalf("elicitationContent = %s, want %s", b, want)
+	}
+}
