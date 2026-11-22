@@ -155,6 +155,18 @@ describe('the server outlives the app', () => {
     expect(src).toContain('terminateServer(pid)')
   })
 
+  it('shares the standalone data directory and migrates the old one', () => {
+    // The desktop app must see a standalone install's sessions, so both use
+    // ~/.clawbench. The old per-app copy is moved only into an empty target.
+    const src = readRepoFile(LOCAL_SERVER)
+    expect(src).toContain('embeddedDataDirFor(os.homedir())')
+    expect(src).toContain('await migrateEmbeddedDataDir()')
+    expect(src).toContain('shouldMigrateEmbeddedData')
+    // A live server we could not adopt must not be killed: it may be the user's
+    // standalone server sharing the directory.
+    expect(src).toContain('is already using ${embeddedDataDir()}')
+  })
+
   it('offers an explicit stop action on all three surfaces', () => {
     // Quitting no longer stops the server, so each surface a user can reach
     // must be able to end it: the close dialog, the tray, and the login page.

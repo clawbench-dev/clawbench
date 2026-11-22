@@ -1,6 +1,7 @@
 import { app, session, type Session } from 'electron'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { getStore } from './store'
 import { getEmbeddedPassword, getRowPasswordFor, saveEmbeddedPassword } from './secrets'
@@ -12,6 +13,7 @@ import {
   EMBEDDED_HEALTH_INTERVAL_MS,
   EMBEDDED_STARTUP_TIMEOUT_MS,
   chooseEmbeddedPort,
+  embeddedDataDirFor,
   embeddedServerArgs,
   embeddedServerBinaryPath as embeddedServerBinaryPathFor,
   embeddedServerUrl,
@@ -21,6 +23,7 @@ import {
   sameServerUrl,
   sessionCookieName,
   shouldAdoptEmbeddedServer,
+  shouldMigrateEmbeddedData,
   versionsMatch,
   type HealthBody,
 } from './localServerPolicy'
@@ -48,11 +51,17 @@ import {
  * action (close dialog, tray menu, login page), because the whole point is that
  * phones and other clients keep working after the desktop is closed.
  *
- * Only one server per data directory is allowed (the server locks it), which is
- * why a stale server from a crashed run must be replaced before spawning: the
- * new one would wait out the 30s lock window and fail. Killing it is safe here
- * and only here — the data directory belongs to the app package, and no other
- * ClawBench install in its right mind points at it.
+ * The data directory is the SAME `~/.clawbench` a standalone install uses, so
+ * the desktop app sees the same sessions and projects. One data directory only
+ * allows one server: a running one (standalone or left behind by an earlier
+ * desktop run) is adopted, never duplicated. A standalone server is adopted
+ * as-is even when its version differs; only a server this shell started
+ * (`managed`) is replaced on a version mismatch.
+ *
+ * Only one server per data directory is allowed (the server locks it). A server
+ * we could not reach on any candidate port is therefore NOT killed and not
+ * duplicated: the launch fails with an explanation, because with the shared
+ * directory it may be the user's standalone server.
  */
 
 /** Store key: the port the embedded server used last time. */
@@ -154,12 +163,19 @@ export function hasEmbeddedServerBinary(): boolean {
 }
 
 /**
- * Data directory for the embedded server: under the app's own userData, so it
- * never collides with a standalone install in `~/.clawbench` (two servers on one
- * data directory corrupt each other, and the lock would make one refuse to
- * start).
+ * Data directory for the embedded server: the standalone default, so both see
+ * the same data. One directory = one server, which is why this file adopts a
+ * running one instead of starting a second.
  */
 export function embeddedDataDir(): string {
+  return embeddedDataDirFor(os.homedir())
+}
+
+/**
+ * Where older integrated builds kept their own copy (`<userData>/server`).
+ * Migrated into the shared directory on first launch after the switch.
+ */
+function legacyEmbeddedDataDir(): string {
   return path.join(app.getPath('userData'), 'server')
 }
 
@@ -204,16 +220,20 @@ async function probeHealth(port: number): Promise<unknown> {
 }
 
 /**
- * The PID of the server a previous run left behind, or 0.
+ * The PID recorded in `dir/server.pid`, or 0.
  *
  * Read from `server.pid`, which the server writes after taking the data
  * directory lock and removes on a graceful exit. A hard kill leaves it, which is
  * the only situation this is needed for.
  */
-function previousServerPid(): number {
-  const raw = readTextQuietly(path.join(embeddedDataDir(), 'server.pid'))
+function readServerPid(dir: string): number {
+  const raw = readTextQuietly(path.join(dir, 'server.pid'))
   const pid = Number(raw)
   return Number.isInteger(pid) && pid > 0 ? pid : 0
+}
+
+function previousServerPid(): number {
+  return readServerPid(embeddedDataDir())
 }
 
 /**
@@ -311,23 +331,38 @@ async function adoptRunningServer(binary: string): Promise<string | null> {
   const pid = previousServerPid()
   if (!pid || !isClawBenchProcess(pid)) return null
   const expected = bundledServerVersion(binary)
-  for (const port of candidatePorts()) {
-    const body = await probeHealth(port)
-    if (!isClawBenchHealth(body)) continue
-    const answeredPid = (body as HealthBody).pid
-    if (typeof answeredPid === 'number' && answeredPid !== pid) continue
-    const runningVersion = (body as HealthBody).version || ''
-    if (expected && !versionsMatch(runningVersion, expected)) {
-      record('W', 'LocalServer', `running server ${pid} is ${runningVersion}; this package ships ${expected}, replacing it`)
-      await terminateServer(pid)
-      return null
+  // A server that is still starting (a crash-restart, a slow disk) has no
+  // health answer yet. Give it a few seconds instead of failing the launch and
+  // leaving the user with a "stop it first" dialog.
+  const deadline = Date.now() + 5_000
+  for (;;) {
+    for (const port of candidatePorts()) {
+      const body = await probeHealth(port)
+      if (!isClawBenchHealth(body)) continue
+      const answeredPid = (body as HealthBody).pid
+      if (typeof answeredPid === 'number' && answeredPid !== pid) continue
+      const runningVersion = (body as HealthBody).version || ''
+      // A standalone server the user started by hand must never be killed behind
+      // their back, even when it is a different version — adopt it and let the
+      // normal version gate explain any protocol mismatch. Only a server this
+      // shell started (`managed`) is ours to replace.
+      const managed = (body as HealthBody).managed === true
+      if (managed && expected && !versionsMatch(runningVersion, expected)) {
+        record('W', 'LocalServer', `running server ${pid} is ${runningVersion}; this package ships ${expected}, replacing it`)
+        await terminateServer(pid)
+        return null
+      }
+      if (!managed && expected && runningVersion && !versionsMatch(runningVersion, expected)) {
+        record('I', 'LocalServer', `adopting the standalone server ${pid} (${runningVersion}); this package ships ${expected}`)
+      }
+      managedPid = pid
+      serverUrl = embeddedServerUrl(port)
+      record('I', 'LocalServer', `adopted the running server at ${serverUrl} (pid ${pid})`)
+      return serverUrl
     }
-    managedPid = pid
-    serverUrl = embeddedServerUrl(port)
-    record('I', 'LocalServer', `adopted the running server at ${serverUrl} (pid ${pid})`)
-    return serverUrl
+    if (Date.now() >= deadline) return null
+    await wait(250)
   }
-  return null
 }
 
 /**
@@ -366,12 +401,58 @@ async function terminateServer(pid: number): Promise<boolean> {
 }
 
 /**
- * Stop a server this app left behind (a crash or a force-kill skips the graceful
- * path, and the next launch would otherwise fail on the data directory lock).
+ * Move the old per-app data directory into the shared `~/.clawbench`.
+ *
+ * Older integrated builds used `<userData>/server`, which meant the desktop app
+ * could not see a standalone install's sessions. The move happens once:
+ *
+ *  - only when the shared directory is empty (a standalone install's data is
+ *    never merged or overwritten — it wins);
+ *  - only after stopping a server still running from the old directory, since
+ *    moving files out from under SQLite corrupts them;
+ *  - cross-device (`EXDEV`) falls back to copy + delete.
+ *
+ * A failure is fatal on purpose: silently starting with an empty directory
+ * would look like all the user's sessions vanished.
  */
-async function reapPreviousServer(pid: number): Promise<boolean> {
-  record('W', 'LocalServer', `reaping a server left behind by a previous run (pid ${pid})`)
-  return terminateServer(pid)
+async function migrateEmbeddedDataDir(): Promise<void> {
+  const legacy = legacyEmbeddedDataDir()
+  if (!fs.existsSync(legacy)) return
+  const target = embeddedDataDir()
+  if (path.resolve(legacy) === path.resolve(target)) return
+  let targetEntries = 0
+  try {
+    targetEntries = fs.existsSync(target) ? fs.readdirSync(target).length : 0
+  } catch (e) {
+    throw new Error(`cannot inspect the data directory ${target}: ${(e as Error).message}`)
+  }
+  if (!shouldMigrateEmbeddedData({ legacyExists: true, targetEntries })) {
+    record('I', 'LocalServer', `${target} already has data; leaving the old embedded copy at ${legacy} untouched`)
+    return
+  }
+
+  const pid = readServerPid(legacy)
+  if (pid && isClawBenchProcess(pid)) {
+    const stopped = await terminateServer(pid)
+    if (!stopped) {
+      throw new Error(`the old built-in server (pid ${pid}) is still running; close it before upgrading the data directory`)
+    }
+  }
+  // A hard kill leaves the PID file; carrying it over would make the next
+  // launch think a stranger owns the shared directory.
+  fs.rmSync(path.join(legacy, 'server.pid'), { force: true })
+
+  try {
+    if (fs.existsSync(target)) fs.rmdirSync(target)
+    fs.renameSync(legacy, target)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EXDEV') {
+      throw new Error(`cannot move ${legacy} to ${target}: ${(e as Error).message}`)
+    }
+    fs.cpSync(legacy, target, { recursive: true })
+    fs.rmSync(legacy, { recursive: true, force: true })
+  }
+  record('I', 'LocalServer', `moved the old embedded data directory into ${target}`)
 }
 
 /** Wait until the server answers as ClawBench, or throw with what it said. */
@@ -534,6 +615,11 @@ export async function startEmbeddedServer(): Promise<string> {
   // retry path above on every click.
   stopping = false
 
+  // Before anything reads the data directory: move an older integrated build's
+  // private copy into the shared one. This is also before the mkdir below, so
+  // an empty target can be replaced by the old directory in one rename.
+  await migrateEmbeddedDataDir()
+
   fs.mkdirSync(embeddedDataDir(), { recursive: true })
   // Before anything reads the server list: retire the row older builds kept for
   // this server. It is what reserved its own port and pushed the app one port
@@ -545,7 +631,14 @@ export async function startEmbeddedServer(): Promise<string> {
   const adopted = await adoptRunningServer(binary)
   if (adopted) {
     const port = portOf(adopted)
-    await plantSessionCookie(port, session.defaultSession)
+    try {
+      await plantSessionCookie(port, session.defaultSession)
+    } catch (e) {
+      // A standalone install may have a password the desktop has never seen.
+      // The server is up and usable; let its own login page ask for it instead
+      // of failing the whole start.
+      record('W', 'LocalServer', `adopted the server but could not sign in automatically: ${(e as Error).message}`)
+    }
     rememberServer(port)
     return adopted
   }
@@ -558,14 +651,15 @@ export async function startEmbeddedServer(): Promise<string> {
   // moving port looks like a fresh install.
   const reserved = reservedPortsForEmbedded(store.get('servers').map((s) => s.url))
 
-  // A server this app left behind holds the data directory lock, so it must go
-  // before the port walk — a different port would not help, the new server
-  // would still wait 30s and fail. The PID file is only written by our own
-  // server and only survives a crash, and the executable is checked before
-  // signalling, so a standalone install is never touched.
+  // A server still alive here could not be adopted: it is not answering on any
+  // candidate port, or its health probe failed. With the shared data directory
+  // it may be the user's standalone server, so it must NOT be killed. Spawning
+  // would only wait out the data-directory lock and fail; say what is wrong.
   const stalePid = previousServerPid()
   if (stalePid && isClawBenchProcess(stalePid)) {
-    await reapPreviousServer(stalePid)
+    throw new Error(
+      `a ClawBench server (pid ${stalePid}) is already using ${embeddedDataDir()} but is not answering on the expected port; stop it before starting the desktop app`,
+    )
   }
   // Probe the preferred port and the default; the walk itself finds what is
   // free, and a port it skips for being reserved is never probed. The default

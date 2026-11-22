@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"clawbench/internal/model"
 	"clawbench/internal/version"
 )
 
@@ -18,6 +19,7 @@ func ServeHealth(w http.ResponseWriter, r *http.Request) {
 		Version:  version.Get(),
 		Protocol: version.ClientProtocol,
 		PID:      os.Getpid(),
+		Managed:  model.ManagedByEmbedder,
 	})
 }
 
@@ -36,4 +38,11 @@ type healthResponse struct {
 	// that is about to exit (its page can then never reconnect). Additive:
 	// clients that do not know it ignore it, and an older server omits it.
 	PID int `json:"pid"`
+	// Managed is true when the desktop shell started this server (--managed).
+	// The integrated package and a standalone install share the same data
+	// directory, so the shell must distinguish "my own orphaned server" (safe
+	// to replace on a version mismatch) from "the user's standalone server"
+	// (must be adopted, never killed behind their back). Additive: older
+	// servers omit it, and the shell treats that as standalone.
+	Managed bool `json:"managed"`
 }

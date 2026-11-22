@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/model"
 	"clawbench/internal/version"
 )
 
@@ -34,4 +36,15 @@ func TestServeHealth(t *testing.T) {
 	// The desktop shell compares this with the child it spawned. A missing or
 	// wrong value would make it accept a stale server on the same port.
 	assert.Equal(t, os.Getpid(), resp.PID)
+	// A standalone server reports false; the desktop shell uses this to decide
+	// whether a running server on the shared data directory may be replaced.
+	assert.False(t, resp.Managed)
+
+	origManaged := model.ManagedByEmbedder
+	model.ManagedByEmbedder = true
+	t.Cleanup(func() { model.ManagedByEmbedder = origManaged })
+	w = httptest.NewRecorder()
+	ServeHealth(w, req)
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.True(t, resp.Managed, "an embedded server must identify itself")
 }

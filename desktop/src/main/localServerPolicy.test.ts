@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   EMBEDDED_DEFAULT_PORT,
   chooseEmbeddedPort,
+  embeddedDataDirFor,
   embeddedServerArgs,
   embeddedServerBinaryPath,
   embeddedServerUrl,
@@ -13,6 +14,7 @@ import {
   sameServerUrl,
   sessionCookieName,
   shouldAdoptEmbeddedServer,
+  shouldMigrateEmbeddedData,
   versionsMatch,
 } from './localServerPolicy'
 
@@ -212,5 +214,18 @@ describe('versionsMatch', () => {
     expect(versionsMatch('v0.145.0', '0.1.0')).toBe(true)
     expect(versionsMatch('dev', '0.145.0')).toBe(true)
     expect(versionsMatch('', '0.145.0')).toBe(true)
+  })
+})
+
+describe('shared data directory', () => {
+  it('uses the standalone default so both see the same data', () => {
+    expect(embeddedDataDirFor('/home/me')).toBe(path.join('/home/me', '.clawbench'))
+  })
+
+  it('moves the old embedded copy only when the shared directory is empty', () => {
+    // A standalone install's data wins: never merge or overwrite it.
+    expect(shouldMigrateEmbeddedData({ legacyExists: true, targetEntries: 0 })).toBe(true)
+    expect(shouldMigrateEmbeddedData({ legacyExists: true, targetEntries: 3 })).toBe(false)
+    expect(shouldMigrateEmbeddedData({ legacyExists: false, targetEntries: 0 })).toBe(false)
   })
 })

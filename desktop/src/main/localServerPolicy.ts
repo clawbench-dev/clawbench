@@ -242,6 +242,35 @@ export interface HealthBody {
   version?: string
   /** PID of the answering server. Absent on builds that predate the field. */
   pid?: number
+  /**
+   * True when the desktop shell started this server (--managed). Absent on
+   * older builds, which the shell treats as a standalone server.
+   */
+  managed?: boolean
+}
+
+/**
+ * Data directory of the built-in server: the SAME default a standalone install
+ * uses (`~/.clawbench`), so the desktop app sees the same sessions and
+ * projects. One data directory only allows one server, which is why the shell
+ * adopts a running one instead of spawning a second.
+ */
+export function embeddedDataDirFor(home: string): string {
+  return path.join(home, '.clawbench')
+}
+
+/**
+ * Whether the old per-app data directory should be moved into the shared one.
+ *
+ * Only when the old copy exists AND the shared directory is empty. A standalone
+ * install's data is never merged or overwritten: if the shared directory has
+ * anything in it, it wins and the old embedded copy is left alone.
+ */
+export function shouldMigrateEmbeddedData(input: {
+  legacyExists: boolean
+  targetEntries: number
+}): boolean {
+  return input.legacyExists && input.targetEntries === 0
 }
 
 /**
