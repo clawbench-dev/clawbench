@@ -194,8 +194,8 @@ func TestTurnImageParts_RespectsCap(t *testing.T) {
 	if len(parts) != maxTurnImages {
 		t.Fatalf("expected %d images, got %d", maxTurnImages, len(parts))
 	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "only the first few") {
-		t.Fatalf("the dropped image must be reported, got %v", notes)
+	if len(notes) != 1 || !strings.Contains(notes[0], "only the first 4") {
+		t.Fatalf("the dropped images must be reported in ONE note, got %v", notes)
 	}
 }
 
@@ -344,5 +344,39 @@ func TestReadableImageHints_OpenPolicyHintsAnyPath(t *testing.T) {
 	hints, fallback := readableImageHints([]model.FileEntry{{Path: outside}}, dir, true, false)
 	if len(hints) != 1 || len(fallback) != 0 {
 		t.Fatalf("an open policy can reach any path, got hints=%v fallback=%v", hints, fallback)
+	}
+}
+
+// A path may itself contain a comma or a bracket, so the hint puts it LAST: a
+// joined list would read as several paths and the model would call read on one
+// that does not exist.
+func TestImageHint_PathIsLastAndBracketsCannotCutIt(t *testing.T) {
+	const path = "/p/a,b]c.png"
+	hint := imageHint(path)
+	if !strings.HasSuffix(hint, path+"]") {
+		t.Fatalf("the path must be the last thing on the line, got %q", hint)
+	}
+	if !strings.Contains(hint, "read tool") {
+		t.Fatalf("the hint must say what to do, got %q", hint)
+	}
+	if strings.Count(hint, "\n") != 0 {
+		t.Fatalf("one hint is one line, got %q", hint)
+	}
+}
+
+// Over the cap the report is ONE line naming the dropped pictures, not one
+// identical sentence per picture.
+func TestTurnImageParts_OverCapIsOneNote(t *testing.T) {
+	dir := t.TempDir()
+	var files []model.FileEntry
+	for i := 0; i < maxTurnImages+3; i++ {
+		files = append(files, model.FileEntry{Path: writeImage(t, dir, string(rune('a'+i))+".png", 4)})
+	}
+	_, notes := turnImageParts(files)
+	if len(notes) != 1 {
+		t.Fatalf("expected one merged note, got %d: %v", len(notes), notes)
+	}
+	if !strings.Contains(notes[0], "only the first 4") {
+		t.Fatalf("the note must say the cap, got %q", notes[0])
 	}
 }

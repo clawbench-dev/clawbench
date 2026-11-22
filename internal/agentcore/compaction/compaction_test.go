@@ -353,3 +353,47 @@ func TestSummaryMessage_IsFramedUnmistakably(t *testing.T) {
 		t.Fatalf("the summary must be bracketed so the model can tell where it ends, got %q", text)
 	}
 }
+
+// TestToolResultSplitPoint_KeepsExactlyKResults pins the arithmetic a reviewer
+// suspected was off by one: the cut is the index of the K-th NEWEST result, and
+// folding replaces only results BEFORE that index, so exactly K stay verbatim.
+//
+// It matters because the kept tail is what the model can still read; folding one
+// extra result silently removes evidence from the turn being answered.
+func TestToolResultSplitPoint_KeepsExactlyKResults(t *testing.T) {
+	old := KeepRecentToolRounds
+	KeepRecentToolRounds = 2
+	defer func() { KeepRecentToolRounds = old }()
+
+	msgs := []llm.Message{userMsg("read four files")}
+	for i := range 4 {
+		id := string(rune('a' + i))
+		msgs = append(msgs,
+			llm.Message{Role: llm.RoleAssistant, Parts: []llm.Part{
+				{ToolCall: &llm.ToolCall{ID: id, Name: "read", Arguments: `{}`}},
+			}},
+			llm.Message{Role: llm.RoleTool, Parts: []llm.Part{
+				{ToolResult: &llm.ToolResult{CallID: id, Parts: []llm.Part{{Text: strings.Repeat("x", 5000)}}}},
+			}},
+		)
+	}
+
+	cut := ToolResultSplitPoint(msgs)
+	folded := FoldToolResults(msgs, cut)
+
+	// Walk the results newest-first and count the ones that kept their body.
+	kept := 0
+	for i := len(folded) - 1; i >= 0; i-- {
+		m := folded[i]
+		if len(m.Parts) != 1 || m.Parts[0].ToolResult == nil {
+			continue
+		}
+		body := m.Parts[0].ToolResult.Parts[0].Text
+		if len(body) >= 5000 {
+			kept++
+		}
+	}
+	if kept != KeepRecentToolRounds {
+		t.Fatalf("expected the last %d results verbatim, got %d (cut=%d)", KeepRecentToolRounds, kept, cut)
+	}
+}
