@@ -14,10 +14,13 @@
  * (see the note on `openLandscape` in DataTable.vue).
  */
 
+import type { TableMathCells } from '@/utils/tableData'
+
 /** The source table state, captured when the overlay opens. */
 export interface BlockLandscapeTable {
   headers: string[]
   rows: string[][]
+  mathCells?: TableMathCells
   /** The mode the live table was showing, so fullscreen does not flip it. */
   mode: 'normal' | 'data'
   /** The per-block wrap toggle, so fullscreen does not silently re-wrap. */
