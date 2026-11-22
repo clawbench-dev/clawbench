@@ -37,7 +37,7 @@
 
     <template v-else>
     <!-- Tab bar (replaces old header) -->
-    <div class="terminal-tab-bar">
+    <div class="terminal-tab-bar" @mousedown="onBarMouseDown">
       <TerminalIcon :size="14" class="panel-header-icon" />
       <div class="terminal-tab-list">
         <div
@@ -119,7 +119,7 @@
         v-show="tab.id === activeTabId"
         :ref="(el) => setTabContainer(tab.id, el as HTMLElement | null)"
         class="terminal-container"
-        @click.self="focusTerminal"
+        @click.self="onContainerSelfClick"
       >
         <!-- Rebuild overlay (per-tab) -->
         <div v-if="rebuildingTabId === tab.id" class="terminal-rebuild-overlay">
@@ -150,7 +150,7 @@
     </div>
 
     <!-- Virtual key toolbar -->
-    <div class="terminal-toolbar" v-show="isTouchPrimary">
+    <div class="terminal-toolbar" v-show="isTouchPrimary" @mousedown="onBarMouseDown">
       <!-- Symbol bar (toggleable, above main toolbar) -->
       <Transition name="symbol-bar">
         <div v-if="showSymbolBar" class="symbol-bar">
@@ -528,12 +528,12 @@ const visibleKeys = computed(() => selectedKeys.value)
 
 function handleSymbolClick(sym: string) {
   activeTab.value?.session.sendInput(sym)
-  focusTerminal()
+  focusTerminalOnDesktop()
 }
 
 function toggleSymbolBar() {
   showSymbolBar.value = !showSymbolBar.value
-  focusTerminal()
+  focusTerminalOnDesktop()
 }
 
 function openCommands() {
@@ -573,7 +573,8 @@ function handleModeCycle() {
   const label = m === 'browse' ? t('terminal.modeBrowse') : m === 'gesture' ? t('terminal.modeGesture') : t('terminal.modeSelection')
   const icon = m === 'browse' ? 'eye' : m === 'gesture' ? 'hand' : 'cut'
   toast.show(label, { icon, type: 'info', duration: 1200 })
-  focusTerminal()
+  // Do not focus the terminal here: toggling between browse/gesture/selection
+  // modes is a toolbar UI toggle and must not pop up the soft keyboard.
 }
 
 // Build WS URL for a given CWD, with optional initial terminal dimensions.
@@ -764,7 +765,7 @@ function confirmDanger() {
   } else {
     tab.session.sendInput(pending.command + '\r')
   }
-  focusTerminal()
+  focusTerminalOnDesktop()
 }
 
 function cancelDanger() {
@@ -773,7 +774,7 @@ function cancelDanger() {
   // Nothing to undo: the line is still where it was (on the shell's input line,
   // or in the drawer's textarea) and the tracker still holds it, so the user can
   // edit it or press Enter again.
-  if (pending?.onInputLine) focusTerminal()
+  if (pending?.onInputLine) focusTerminalOnDesktop()
 }
 
 // 选中即复制 — read the setting at copy time so toggling it in Settings takes
@@ -1199,6 +1200,28 @@ function handleTerminalTouchScroll(deltaY: number) {
   touchScrollRemainder -= lines
 }
 
+function hasOverlayOpen(): boolean {
+  return (
+    showCommands.value ||
+    themeMenuOpen.value ||
+    showTabMenu.value ||
+    pendingDanger.value !== null ||
+    inputDrawer.effectiveOpen.value ||
+    helpDrawer.effectiveOpen.value ||
+    quickCmdDrawer.effectiveOpen.value ||
+    keyConfigDrawer.effectiveOpen.value
+  )
+}
+
+function onBarMouseDown(e: MouseEvent) {
+  if (isTouchPrimary.value) e.preventDefault()
+}
+
+function onContainerSelfClick() {
+  if (isTouchPrimary.value && (gestures.mode.value === 'browse' || hasOverlayOpen())) return
+  focusTerminal()
+}
+
 // Gestures
 const gestures = useTerminalGestures(
   computed(() => activeTab.value?.container || null),
@@ -1215,6 +1238,10 @@ const gestures = useTerminalGestures(
     // pinch (12 → 18 at 150%, then 27, …).
     onPinchZoom: (delta: number) => applyFontSize(fontSizeDesign.value + delta),
     onTouchScroll: handleTerminalTouchScroll,
+    onBrowseTap: () => {
+      if (isTouchPrimary.value && !hasOverlayOpen()) focusTerminal()
+    },
+    isOverlayOpen: () => hasOverlayOpen(),
     getCellHeight: () => getXtermCellHeight(activeTab.value?.xterm ?? null),
     getCellWidth: () => getXtermCellWidth(activeTab.value?.xterm ?? null),
     onSelectionExtend: handleSelectionExtend,
@@ -1372,6 +1399,19 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   // interaction), this guard will fight that intent by re-showing it. The
   // decision logic lives in shouldAutoRefocusTerminal() (utils/terminalBlurUtils.ts)
   // and is unit-tested; keep any new "should dismiss" exceptions gated there.
+  // On mobile, block xterm's own mousedown->focus() in browse mode or while a
+  // popup/drawer/modal is open over the terminal; desktop is untouched.
+  const xtermEl = tab.xterm?.element
+  if (xtermEl && !(xtermEl as unknown as { __mobileMousedownGuard?: boolean }).__mobileMousedownGuard) {
+    ;(xtermEl as unknown as { __mobileMousedownGuard?: boolean }).__mobileMousedownGuard = true
+    xtermEl.addEventListener('mousedown', (e: MouseEvent) => {
+      if (!isTouchPrimary.value) return
+      if (gestures.mode.value === 'browse' || hasOverlayOpen()) {
+        e.stopImmediatePropagation()
+      }
+    }, true)
+  }
+
   const installBlurRefocus = () => {
     if (!shouldInstallTerminalBlurRefocus(isAndroidApp.value)) return
     const textareaEl = tab.xterm?.textarea
@@ -1379,7 +1419,11 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
     ;(textareaEl as unknown as { __blurRefocus?: boolean }).__blurRefocus = true
     textareaEl.addEventListener('blur', () => {
       const next = document.activeElement
-      if (!shouldAutoRefocusTerminal(!!props.active, next)) return
+      const refocusCtx = () => ({
+        isScrolling: gestures.isBrowseScrolling.value,
+        hasOverlayOpen: hasOverlayOpen(),
+      })
+      if (!shouldAutoRefocusTerminal(!!props.active, next, refocusCtx())) return
       // Refocus as a microtask: runs after the current event (and the browser's
       // touch-down default that blurred us) but before the next paint, so the
       // keyboard never visibly collapses. Faster than requestAnimationFrame.
@@ -1388,7 +1432,7 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
       queueMicrotask(() => {
         const ta = tab.xterm?.textarea
         if (!ta || !props.active) return
-        if (!shouldAutoRefocusTerminal(!!props.active, document.activeElement)) return
+        if (!shouldAutoRefocusTerminal(!!props.active, document.activeElement, refocusCtx())) return
         if (document.activeElement !== ta) {
           ta.focus()
         }
@@ -1407,10 +1451,14 @@ function focusTerminal() {
   activeTab.value?.xterm?.focus()
 }
 
+function focusTerminalOnDesktop() {
+  if (!isTouchPrimary.value) focusTerminal()
+}
+
 // Tab bar actions
 function handleTabClick(tabId: string) {
   if (tabId === activeTabId.value) return
-  tabManager.switchTab(tabId)
+  tabManager.switchTab(tabId, { focus: !isTouchPrimary.value })
 
   // Connect the newly active tab if it's disconnected (e.g. after panel reactivation)
   const tab = tabManager.getTab(tabId)
@@ -1496,7 +1544,7 @@ function handleReconnect(tab: TerminalTab) {
   tab.session.disconnect()
   tab.session.connect().then(() => {
     tabManager.syncTabSessionId(tab.id)
-    focusTerminal()
+    focusTerminalOnDesktop()
   }).catch(() => { /* error shown via overlay */ })
 }
 
@@ -1504,7 +1552,7 @@ function handleReconnect(tab: TerminalTab) {
 function executeCommand(cmd: { id: number; label: string; command: string }) {
   if (activeTab.value) tabManager.runCommandLine(activeTab.value.id, cmd.command)
   showCommands.value = false
-  focusTerminal()
+  focusTerminalOnDesktop()
 }
 
 /**
@@ -1516,7 +1564,7 @@ function executeCommand(cmd: { id: number; label: string; command: string }) {
  */
 function insertCommand(command: string) {
   if (activeTab.value) tabManager.insertCommandLine(activeTab.value.id, command)
-  focusTerminal()
+  focusTerminalOnDesktop()
 }
 
 function openEditDialog() {
@@ -1576,7 +1624,7 @@ function handleToolbarKeyClick(def: KeyDef) {
     const labelKey = GESTURE_KEY_LABELS[def.id]
     if (labelKey) showGestureHint(t('terminal.' + labelKey))
   }
-  focusTerminal()
+  focusTerminalOnDesktop()
 }
 
 // Whether the component has been mounted (DOM is available)
@@ -1616,7 +1664,7 @@ watch(() => props.active, async (isActive) => {
         } catch { /* error shown via overlay */ }
       }
       gestures.attach()
-      focusTerminal()
+      focusTerminalOnDesktop()
     }
    } else {
      disableVolumeKeys()
@@ -1708,7 +1756,7 @@ onMounted(async () => {
         } catch { /* error shown via overlay */ }
       }
       gestures.attach()
-      focusTerminal()
+      focusTerminalOnDesktop()
     }
   }
 })
