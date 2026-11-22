@@ -11,6 +11,7 @@
 
 import { appLog } from '@/utils/appLog'
 import { localConfig } from '@/composables/useSettingsConfig'
+import { onAppResume } from '@/composables/useAppForeground'
 
 const TAG = 'NotificationSound'
 
@@ -40,6 +41,7 @@ let lastPlayedAt = 0
 export function _resetSoundThrottleForTesting() {
   lastPlayedAt = 0
   audioCtx = null
+  pendingChime = false
 }
 
 function getAudioContext(): AudioContext {
@@ -65,11 +67,88 @@ function vibrateNotification() {
 }
 
 /**
+ * Play the chime now, even if the page is hidden.
+ *
+ * For alerts that exist BECAUSE nobody is looking at that page — a meeting
+ * control request reaches the host while they are on another tab or in another
+ * window. Deferring those to the next return (as the completion chime is, see
+ * playNotificationSound) would be the opposite of what they are for.
+ */
+export function playImmediateNotificationSound() {
+  if (localConfig.notificationSound === false) return
+  playChime()
+}
+
+/**
  * Play a short two-tone descending chime (C5 → G4)
  * and trigger haptic vibration.
  * Resumes the AudioContext if it was suspended (browser autoplay policy).
+ *
+ * On a hidden page the chime is deferred to the next return instead of being
+ * played (see the block below) — that is the #728 fix.
  */
 export function playNotificationSound() {
+  // Respect the notification sound setting — skip if user disabled it
+  if (localConfig.notificationSound === false) return
+
+  // No chime while nobody is looking (#728).
+  // A hidden page alerts through the OS notification (or the phone), not
+  // through a speaker that may not even be near the user. Sounding it anyway
+  // is how every return to the foreground chimed for work that had already
+  // happened: the reply finalises, the socket reconnects and replays it, and
+  // both play on a page that was in the background the whole time.
+  //
+  // Deferred, not dropped: the call is remembered and a single chime plays when
+  // the page becomes visible again, so a turn that finished in the background
+  // still announces itself once on return. A burst (replay buffer + pending
+  // backlog) collapses into that one chime.
+  if (isPageHidden()) {
+    pendingChime = true
+    armResumeFlush()
+    return
+  }
+
+  playChime()
+}
+
+/**
+ * One queued chime, played the next time the app is in the foreground.
+ *
+ * Set while hidden, consumed by a single resume. Both sources are used because
+ * neither alone covers every host: `visibilitychange` is the only signal in a
+ * desktop browser and the Electron shell, while the Android WebView may never
+ * deliver it (onPause does not reliably flip visibilityState) — there the
+ * native resume hook is the reliable one. useAppForeground already collapses
+ * the redundant pair on Android.
+ *
+ * The subscription is module-level and installed at most once, and is
+ * deliberately never removed: this module outlives every component.
+ */
+let pendingChime = false
+let resumeFlushArmed = false
+
+function isPageHidden(): boolean {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden'
+}
+
+function playPendingChime() {
+  if (!pendingChime) return
+  if (isPageHidden()) return
+  pendingChime = false
+  playChime()
+}
+
+function armResumeFlush() {
+  if (resumeFlushArmed) return
+  resumeFlushArmed = true
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', playPendingChime)
+  }
+  onAppResume(playPendingChime)
+}
+
+/** The chime itself: setting gate, coalescing window, Web Audio, vibration. */
+function playChime() {
   // Respect the notification sound setting — skip if user disabled it
   if (localConfig.notificationSound === false) return
 

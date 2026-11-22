@@ -4,7 +4,7 @@ import { useForgeUnread } from './useForgeUnread'
 import { useAppMode } from './useAppMode'
 import { useAppForeground, onAppResume } from './useAppForeground'
 import { showBrowserNotification } from './useNotification'
-import { playNotificationSound } from './useNotificationSound'
+import { playNotificationSound, playImmediateNotificationSound } from './useNotificationSound'
 import { useToast, type ToastIconKey, type ToastType } from './useToast'
 import { shouldNotifyMeeting } from '@/utils/meetingVisibility'
 import { gt } from './useLocale'
@@ -849,7 +849,10 @@ function handleMeetingEvent(data: ServerEvent['data']): void {
         duration: 6000,
         onClick: open,
     })
-    if (presentation.sound) playNotificationSound()
+    // Immediate, not deferred: this alert exists precisely because the host is
+    // not looking at the meeting page (other tab / backgrounded app), so the
+    // completion chime's "wait until visible" rule (#728) must not apply here.
+    if (presentation.sound) playImmediateNotificationSound()
 
     showBrowserNotification(title, {
         body,
@@ -895,8 +898,12 @@ function handleMeetingEvent(data: ServerEvent['data']): void {
 function showEventBrowserNotification(event: string, data: ServerEvent['data'], skipReplay = false) {
     if (!data) return
 
-    // A replay-phase event is caught-up history, not a live completion — never
-    // notify for it, even if the page is in the background right now.
+    // A replay-phase event is caught-up history, not a live completion. Both
+    // call sites pass skipReplay=true; whether THIS frame is a replay is
+    // decided by the flag, which is set for the pending-event batch
+    // (fetchPendingEvents) and for frames the server tags `replayed` (WS buffer
+    // after a reconnect). A live frame arrives with the flag cleared, so it
+    // still notifies.
     if (skipReplay && isReplayingEvents.value) return
 
     // Only show notification when page is not focused
