@@ -357,3 +357,47 @@ func TestACPLookupAfterInit(t *testing.T) {
 		}
 	})
 }
+
+// TestCriticalSpecWiring guards the specs that replaced a hard-coded backend
+// name in the shared ACP lifecycle. Each of these degrades SILENTLY when lost:
+// opencode sessions stop recovering after a restart (or get rejected with
+// "does not belong to cwd"), codebuddy loses the user's ~/.codebuddy MCP tools,
+// opencode subagent permission asks hang the session.
+func TestCriticalSpecWiring(t *testing.T) {
+	oc := mustLookup(t, "opencode")
+	if !oc.Spec.ACPRecoversByReportedCwd {
+		t.Error("opencode must declare ACPRecoversByReportedCwd: session_move relocates the session, and resume rejects a stale cwd")
+	}
+	if oc.ACP == nil || oc.ACP.SpawnHooks == nil || oc.ACP.SpawnHooks.Env == nil {
+		t.Error("opencode must declare spawn Env hooks (OPENCODE_PERMISSION workaround for subagent permission asks)")
+	}
+
+	cb := mustLookup(t, "codebuddy")
+	if cb.ACP == nil || cb.ACP.SpawnHooks == nil || cb.ACP.SpawnHooks.Args == nil {
+		t.Error("codebuddy must declare spawn Args hooks (--mcp-config for ~/.codebuddy/.mcp.json, --settings for own-service)")
+	}
+	if cb.ACP.SpawnHooks.Env != nil {
+		t.Error("codebuddy needs no extra env; declaring one would apply to every codebuddy spawn")
+	}
+
+	// Neither workaround may leak onto another backend: the hooks are resolved
+	// by backend id, so an unexpected declaration is a copy-paste bug.
+	for _, p := range backends.All() {
+		if p.ID == "opencode" || p.ID == "codebuddy" {
+			continue
+		}
+		if p.Spec.ACPRecoversByReportedCwd {
+			t.Errorf("%s must not declare ACPRecoversByReportedCwd (only opencode relocates sessions)", p.ID)
+		}
+		if p.ACP != nil && p.ACP.SpawnHooks != nil {
+			t.Errorf("%s must not declare spawn hooks", p.ID)
+		}
+	}
+
+	// The steering policy must stay attached to the two adapters that expose it.
+	for _, id := range []string{"claude", "codex"} {
+		if p := mustLookup(t, id); p.MidTurn == nil {
+			t.Errorf("%s must keep its _session/steering mid-turn policy", id)
+		}
+	}
+}

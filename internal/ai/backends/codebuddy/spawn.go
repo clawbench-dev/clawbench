@@ -39,7 +39,8 @@ func spawnArgs(sc ai.ACPSpawnContext) []string {
 	if sc.MCPServerCount == 0 {
 		if mcpConfigJSON := readUserMCPConfig(); mcpConfigJSON != "" {
 			args = append(args, "--mcp-config", mcpConfigJSON)
-			slog.Info("acp conn: injecting user MCP config via --mcp-config (workaround for issue #270; legacy path, mcp.servers is empty)")
+			slog.Info("acp conn: injecting user MCP config via --mcp-config (workaround for issue #270; legacy path, mcp.servers is empty)",
+				slog.String("clawbench_sid", sc.SessionID))
 		}
 	}
 
@@ -51,7 +52,8 @@ func spawnArgs(sc ai.ACPSpawnContext) []string {
 		if payload := ai.OwnServiceSettingsArg(sc.Agent.ID); payload != "" {
 			args = append(args, "--settings", payload)
 			slog.Info("acp conn: pointing codebuddy at an own-service endpoint",
-				slog.String("agent_id", sc.Agent.ID))
+				slog.String("agent_id", sc.Agent.ID),
+				slog.String("clawbench_sid", sc.SessionID))
 		}
 	}
 

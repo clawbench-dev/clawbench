@@ -273,6 +273,12 @@ func BackendsWithModelDiscovery() []string {
 // nothing would ever populate BackendRegistry again, and every later test in
 // the binary (and the production code path it exercises) would see an empty
 // backend registry.
+//
+// It writes the package-level BackendRegistry without synchronization, which is
+// what every other reader (GetBackendRegistry and the tests that assign the var
+// directly) also does. A test that overrides the registry must therefore NOT run
+// in parallel: two such tests would race on the variable and each could restore
+// the other's snapshot. Do not add t.Parallel to a test that calls this.
 func SetBackendRegistryForTest(specs []BackendSpec) func() {
 	old := GetBackendRegistry()
 	snapshot := make([]BackendSpec, len(old))

@@ -8,11 +8,10 @@ import "clawbench/internal/model"
 type ACPSpawnContext struct {
 	// Agent is the agent being spawned.
 	Agent *model.Agent
-	// CmdName is the first token of the agent's AcpCommand (e.g. "codebuddy",
-	// "npx"). Hooks that care about the binary should read Agent.Backend
-	// instead: AcpCommand is user-editable, so its first token is not a stable
-	// identity.
-	CmdName string
+	// SessionID is the ClawBench session this connection serves, for log
+	// correlation. It is the same id the shared lifecycle logs as
+	// "clawbench_sid".
+	SessionID string
 	// MCPServerCount is how many MCP servers the running configuration
 	// declares. 0 means ClawBench injects nothing over the protocol.
 	MCPServerCount int

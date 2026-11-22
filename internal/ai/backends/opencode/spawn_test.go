@@ -58,7 +58,7 @@ func TestSpawnEnv_PreservesModeRestrictions(t *testing.T) {
 }
 
 // The hook must be registered, or the shared lifecycle never asks for it.
-func TestSpawnHooks_RegisteredForOpenCodeOnly(t *testing.T) {
+func TestSpawnHooks_Shape(t *testing.T) {
 	hooks := spawnHooks()
 	require.NotNil(t, hooks)
 	assert.NotNil(t, hooks.Env)

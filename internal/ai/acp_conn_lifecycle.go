@@ -738,7 +738,7 @@ func (c *ACPConn) reportedRecoveryCwd(ctx context.Context, requested, acpSID str
 	for range recoveryCwdPageLimit {
 		sessions, next, err := c.listRecoverySessions(lookupCtx, cursor)
 		if err != nil {
-			slog.Warn("acp conn: opencode session/list failed, resuming with the requested cwd",
+			slog.Warn("acp conn: session/list failed during recovery, resuming with the requested cwd",
 				"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
 			return requested
 		}
@@ -751,7 +751,7 @@ func (c *ACPConn) reportedRecoveryCwd(ctx context.Context, requested, acpSID str
 		}
 		cursor = next
 	}
-	slog.Debug("acp conn: opencode session/list did not contain the session, resuming with the requested cwd",
+	slog.Debug("acp conn: session/list did not contain the session, resuming with the requested cwd",
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
 		"requested_cwd", requested, "sessions_scanned", scanned)
 	return requested
@@ -1155,7 +1155,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	spawnHooks := acpSpawnHooks(c.agent.Backend)
 	spawnCtx := ACPSpawnContext{
 		Agent:          c.agent,
-		CmdName:        cmdName,
+		SessionID:      c.clawbenchSID,
 		MCPServerCount: len(model.ConfigInstance.MCP.Servers),
 	}
 	if spawnHooks != nil && spawnHooks.Args != nil {

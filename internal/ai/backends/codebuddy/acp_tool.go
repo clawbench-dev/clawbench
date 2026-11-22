@@ -8,7 +8,8 @@ import (
 // CodeBuddy ACP specifics:
 //   - Tool name from _meta["codebuddy.ai/toolName"] (preferred), fallback to extractToolName
 //   - rawInput is streamed incrementally (each tool_call_update contains partial content)
-//   - Field names may be mixed camelCase/snake_case
+//   - Field names may be mixed camelCase/snake_case, normalized by the shared
+//     generic remap table (ai.GenericACPRemaps)
 //
 // The call/update sequence is shared with claude (see
 // ai.NewMetaToolCallParser); only the _meta key layout differs.
