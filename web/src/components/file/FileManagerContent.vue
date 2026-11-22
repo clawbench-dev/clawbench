@@ -987,7 +987,7 @@ watch(sortMenuOpen, (open) => {
 // platform — preview mode is available on mobile too, so it takes a slot like
 // any other button and can collapse into the More dropdown.
 //
-// ORDER IS PRIORITY: useToolbarOverflow keeps a PREFIX inline and collapses the
+// ORDER IS PRIORITY: ActionBar keeps a PREFIX inline and collapses the
 // tail, so the first entries are the last to collapse. `contentSearch` sits
 // early (right after the create/upload basics) because it is a primary action
 // users look for in the toolbar — leaving it last made it the very first button

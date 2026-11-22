@@ -75,19 +75,6 @@ var (
 	codebuddyGetenv         = os.Getenv
 )
 
-// DiscoverCodebuddyModels discovers CodeBuddy models from, in order:
-//  1. an explicit ACC_PRODUCT_CONFIG* override,
-//  2. CodeBuddy's runtime cache under ~/.codebuddy/local_storage/ — the
-//     per-enterprise config the CLI actually fetched and uses,
-//  3. a product.*.json file next to the resolved CLI (npm or native layout) —
-//     generic factory defaults, used only when no runtime cache exists.
-//
-// Returns nil if none of the sources yields a model list.
-func DiscoverCodebuddyModels() []model.AgentModel {
-	models, _ := discoverCodebuddyModels()
-	return models
-}
-
 // discoverCodebuddyModels is the ModelSource entry point. The failure detail is
 // returned to the caller rather than stashed in package state: discovery also
 // runs from the background refresher, so a process-global "last failure" string

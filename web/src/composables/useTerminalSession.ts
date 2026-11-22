@@ -13,11 +13,6 @@ const TAG = 'TerminalSession'
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error'
 
-export interface TerminalStatus {
-  running: boolean
-  cwd: string
-}
-
 /** Error messages used by useTerminalSession — caller provides localized strings. */
 export interface TerminalErrorMessages {
   shellStartFailed: string

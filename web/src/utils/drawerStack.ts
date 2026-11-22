@@ -41,11 +41,6 @@ export function nextDrawerId(): number {
   return ++_drawerId
 }
 
-/** @internal Reset the id counter — tests only. */
-export function _resetDrawerId(): void {
-  _drawerId = 0
-}
-
 /** Instance seq numbers, oldest-opened first. */
 const stack = reactive<number[]>([])
 

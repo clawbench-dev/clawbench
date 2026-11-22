@@ -15,12 +15,6 @@
  * OfflineAudioContext in tests. The caller supplies the AudioContext.
  */
 
-/** What a mixer needs from one viewer. */
-export interface MixerViewerInput {
-  /** The viewer's own microphone, as received from its PeerConnection. */
-  stream: MediaStream | null
-}
-
 interface ViewerSlot {
   /** Destination fed to this viewer's sender. Created once, never replaced. */
   dest: MediaStreamAudioDestinationNode

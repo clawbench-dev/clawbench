@@ -739,7 +739,7 @@ export function showLoginPage(): void {
   }
 }
 
-export function openSandboxWindow(port: number, protocol: string, host: string, path: string): void {
+export function openSandboxWindow(port: number, protocol: string, _host: string, path: string): void {
   const win = new BrowserWindow({
     width: 1000, height: 720,
     webPreferences: { partition: `sandbox-${port}`, contextIsolation: true },

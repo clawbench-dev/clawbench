@@ -27,12 +27,6 @@ const taskSummarizePrompt = `你是一个精简总结助手。请对以下 AI �
 6. 目标长度不超过原文的 30%
 7. 使用与原文相同的语言输出`
 
-// TaskSummarizePrompt returns the task summarization system prompt.
-// Exported for use in initTaskSummarizer.
-func TaskSummarizePrompt() string {
-	return taskSummarizePrompt
-}
-
 // TaskSummarizer generates Markdown-preserving summaries for task executions.
 // Unlike the TTS summarization pipeline (summarizePipeline), it does NOT strip markdown
 // from input or output — the summary retains formatting for readability.

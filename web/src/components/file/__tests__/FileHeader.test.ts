@@ -137,17 +137,6 @@ vi.mock('@/utils/mailAttach', () => ({
   sendPathsByMail: mockSendPathsByMail,
 }))
 
-// Mock useToolbarOverflow — simulate wide toolbar: all demotable items inline
-vi.mock('@/composables/useToolbarOverflow', () => ({
-  useToolbarOverflow: (_getEl, getDemotableIds) => ({
-    inlineIds: computed(() => getDemotableIds()),
-    collapsedIds: computed(() => []),
-    contentWidth: ref(800),
-    startObserving: vi.fn(),
-    stopObserving: vi.fn(),
-  }),
-}))
-
 // Mock getFileType
 vi.mock('@/utils/fileType.ts', () => ({
   getFileType: (name: string) => {

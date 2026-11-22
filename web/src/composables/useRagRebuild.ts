@@ -37,14 +37,6 @@ export const rebuildStatus = ref<RebuildStatus>({
   progress_pct: 0, elapsed_ms: 0,
 })
 
-/** Human-readable progress label for the running rebuild, or '' when idle. */
-export function rebuildProgressLabel(): string {
-  const s = rebuildStatus.value
-  if (s.status !== 'running') return ''
-  if (s.total <= 0) return ''
-  return `${s.processed}/${s.total}`
-}
-
 /**
  * Poll the rebuild status until it reaches a terminal state.
  *

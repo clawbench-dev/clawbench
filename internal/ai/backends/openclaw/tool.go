@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	acp "github.com/coder/acp-go-sdk"
-
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends/pi"
 )
@@ -123,21 +121,3 @@ var (
 	)
 )
 
-// ---------------------------------------------------------------------------
-// Test-only exports
-//
-// The backend sub-package (backends/openclaw) cannot import internal/ai's
-// unexported helpers, and internal/ai must not import the sub-package (cycle).
-// These thin wrappers let that package's tests exercise the real parsing paths
-// instead of re-implementing them.
-// ---------------------------------------------------------------------------
-
-// NormalizeOpenClawACPInputForTest exports normalizeOpenClawACPInput.
-func NormalizeOpenClawACPInputForTest(toolName, rawInput string) string {
-	return normalizeOpenClawACPInput(toolName, []byte(rawInput))
-}
-
-// ParseOpenClawToolCallUpdateForTest exports parseOpenClawACPToolCallUpdate.
-func ParseOpenClawToolCallUpdateForTest(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
-	return parseOpenClawACPToolCallUpdate(tcu)
-}

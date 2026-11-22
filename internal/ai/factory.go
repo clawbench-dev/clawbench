@@ -122,11 +122,6 @@ func LookupBackendFactoryForTest(id string) *BackendFactoryEntry {
 	return lookupBackendFactory(id)
 }
 
-// NewBackend creates the backend via the factory entry.
-func (e *BackendFactoryEntry) NewBackend() AIBackend {
-	return e.NewBackendFn()
-}
-
 // NewBackend creates an in-process backend instance based on the backend type.
 //
 // Only the built-in agent has one. Every other backend reaches its agent over

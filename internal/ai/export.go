@@ -195,11 +195,6 @@ func ExecCommandJSON(command string) string { return execCommandJSON(command) }
 // AgentProcessEnv returns the environment overrides an agent CLI needs.
 func AgentProcessEnv() []string { return agentProcessEnv() }
 
-// ProviderEnvForRequest resolves the provider environment for one turn.
-func ProviderEnvForRequest(req ChatRequest, fallback string) ([]string, error) {
-	return providerEnvForRequest(req, fallback)
-}
-
 // CriticalSendTimeout is the bounded wait a critical event may spend waiting
 // for room in a full stream channel.
 var CriticalSendTimeout = criticalSendTimeout

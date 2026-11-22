@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -689,6 +688,3 @@ func dropCommentChanges(changes []forge.Change) []forge.Change {
 
 // pfPlatform returns the platform string for a repo key.
 func pfPlatform(k ForgeRepoKey) string { return k.Platform }
-
-// ErrNoForgeProviderFactory is returned when the syncer has no factory.
-var ErrNoForgeProviderFactory = errors.New("forge: no provider factory configured")

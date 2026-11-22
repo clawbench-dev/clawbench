@@ -356,13 +356,3 @@ func StopQueueReaper() {
 	}
 	queueReaperMu.Unlock()
 }
-
-// CountStrandedQueuedSessions reports how many sessions currently have a
-// stranded queued message older than grace. Used by diagnostics.
-func CountStrandedQueuedSessions(grace time.Duration) (int, error) {
-	ids, err := findStrandedQueuedSessions(grace)
-	if err != nil {
-		return 0, err
-	}
-	return len(ids), nil
-}

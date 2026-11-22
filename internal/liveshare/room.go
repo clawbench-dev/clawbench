@@ -21,16 +21,12 @@ import (
 // Errors returned by the registry and rooms. Callers map them onto transport
 // responses; they are sentinel values so that mapping stays exhaustive.
 var (
-	// ErrRoomExists means another publisher already owns this project's room.
-	ErrRoomExists = errors.New("liveshare: room already has a publisher")
 	// ErrRoomNotFound means the token names no live room.
 	ErrRoomNotFound = errors.New("liveshare: room not found")
 	// ErrTooManyRooms means the registry's room ceiling has been reached.
 	ErrTooManyRooms = errors.New("liveshare: too many live rooms")
 	// ErrRoomFull means the viewer cap has been reached.
 	ErrRoomFull = errors.New("liveshare: room is full")
-	// ErrViewerExists means the same viewer id was added twice.
-	ErrViewerExists = errors.New("liveshare: viewer already present")
 	// ErrViewerNameTaken means the display name is already in use by somebody
 	// else in this room. Two participants with one name make the roster and the
 	// meeting record ambiguous: every chat line, transcript segment and
