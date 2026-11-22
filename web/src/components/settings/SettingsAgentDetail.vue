@@ -70,9 +70,9 @@
 
     <!-- MCP enable policy. A dedicated block rather than a SettingsItem: the
          control is a three-way mode plus a per-server checklist, which the
-         generic row types cannot express. Hidden for the built-in agent: it has
-         no MCP client at all, so every option here would be inert. -->
-    <SettingsCard v-if="!isBuiltinBackend" :title="t('settings.items.mcpAgentSection')">
+         generic row types cannot express. Shown for every backend, including
+         the built-in agent, which has its own MCP client. -->
+    <SettingsCard :title="t('settings.items.mcpAgentSection')">
       <AgentMCPSection :agent="agent ?? null" />
     </SettingsCard>
 
@@ -343,8 +343,9 @@ const hasBackendSpec = computed(() => agent.value?.backendHasSpec === true)
  * Whether this agent's tools are ClawBench's own (the built-in backend).
  *
  * The server computes the flag so this page never matches on a backend id: a
- * built-in agent has no CLI command, no install command and no MCP client, so
- * every one of those fields would be an inert control that looks editable.
+ * built-in agent has no CLI command and no install command, so those fields
+ * would be inert controls that look editable. (MCP is different: the built-in
+ * agent has its own MCP client, so that section is shown for every backend.)
  */
 const isBuiltinBackend = computed(() => agent.value?.builtinBackend === true)
 

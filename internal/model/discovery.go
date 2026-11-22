@@ -95,10 +95,13 @@ type BackendSpec struct {
 
 	// Builtin marks a backend whose tools are implemented by ClawBench itself
 	// rather than by an external CLI. Such a backend has no install command, no
-	// login, no external command line, no MCP injection and no skill injection
-	// — the UI must hide all of those instead of offering fields that do
-	// nothing, and the settings page must not present the tool grant as if it
-	// applied to a CLI that would ignore it.
+	// login and no external command line — the UI must hide those instead of
+	// offering fields that do nothing, and the settings page must not present
+	// the tool grant as if it applied to a CLI that would ignore it.
+	//
+	// MCP is NOT part of that list: the built-in agent runs its own MCP client
+	// (internal/mcp) and receives the same per-agent mcp_servers policy as an
+	// ACP backend.
 	//
 	// Appended (not inserted) so adding it does not re-align every field above
 	// (a cosmetic churn that hides the real change in review).

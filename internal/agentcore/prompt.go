@@ -29,7 +29,10 @@ import (
 //     bash for work a dedicated tool does better.
 //  3. rules — how to use them, including what is NOT available here.
 //  4. environment — where it is and what it is confined to.
-func buildSystemPrompt(agentPrompt, workDir string, toolList []tools.Tool, policy model.ToolPolicy) string {
+//  5. unavailable — tools the caller tried to attach and could not, so the
+//     model knows the capability is missing for a reason rather than assuming
+//     it forgot how to use it.
+func buildSystemPrompt(agentPrompt, workDir string, toolList []tools.Tool, policy model.ToolPolicy, toolNotes []string) string {
 	var b strings.Builder
 
 	if s := strings.TrimSpace(agentPrompt); s != "" {
@@ -40,6 +43,7 @@ func buildSystemPrompt(agentPrompt, workDir string, toolList []tools.Tool, polic
 	b.WriteString(section("tools", renderToolList(toolList)))
 	b.WriteString(section("rules", renderRules(toolList, policy, workDir != "")))
 	b.WriteString(section("environment", renderEnvironment(workDir)))
+	b.WriteString(section("unavailable", renderToolNotes(toolNotes)))
 	b.WriteString(section("output", renderOutputRules()))
 
 	return strings.TrimRight(b.String(), "\n")
@@ -128,6 +132,15 @@ func renderRules(toolList []tools.Tool, policy model.ToolPolicy, hasWorkDir bool
 			"instead of pretending it happened.", joinWithOr(denied)))
 	}
 
+	if hasMCPTools(toolList) {
+		// The path rules above are about OUR file tools. An MCP server is a
+		// separate process with its own reach, so pretending the fence covers
+		// it would make the model reason wrongly about what it just did.
+		add("Tools whose name starts with " + tools.MCPNamePrefix + " belong to an external MCP server. " +
+			"They can reach network services and data outside the working directory; " +
+			"the file path rules above do not apply to them.")
+	}
+
 	if len(toolList) == 0 {
 		add("You have no tools in this session. Answer from what you already know and say when " +
 			"an answer would need a file or a command.")
@@ -137,6 +150,30 @@ func renderRules(toolList []tools.Tool, policy model.ToolPolicy, hasWorkDir bool
 		rules[i] = "- " + r
 	}
 	return strings.Join(rules, "\n")
+}
+
+// hasMCPTools reports whether any tool came from an MCP server.
+func hasMCPTools(toolList []tools.Tool) bool {
+	for _, t := range toolList {
+		if strings.HasPrefix(t.Name(), tools.MCPNamePrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// renderToolNotes lists attachments that failed.
+//
+// The wording is "unavailable", not "error": the turn still runs, and the model
+// should say which capability is missing rather than retry or invent a result.
+func renderToolNotes(notes []string) string {
+	var lines []string
+	for _, n := range notes {
+		if n = strings.TrimSpace(n); n != "" {
+			lines = append(lines, "- "+n)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // joinWithOr renders a list as "a, b or c".
