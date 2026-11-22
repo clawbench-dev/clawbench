@@ -115,6 +115,41 @@ describe('cacheHitRate', () => {
     expect(cacheHitRate({ cachedReadTokens: 5000 })).toBeNull()
     expect(cacheHitRate({ cachedReadTokens: 5000, inputTokens: 1000 })).toBeNull()
   })
+
+  it('tolerates small extra counters in totalTokens when detecting an exclusive prompt', () => {
+    // Same split as above, but total carries two extra tokens (e.g. a counter we
+    // do not model). A strict equality would fall back to the inclusive reading
+    // and shrink the denominator to input=200 → hidden/understated.
+    expect(cacheHitRate({
+      inputTokens: 200,
+      outputTokens: 100,
+      cachedReadTokens: 600,
+      cachedWriteTokens: 200,
+      totalTokens: 1102,
+    })).toBeCloseTo(60, 5)
+  })
+
+  it('does not treat an inclusive prompt as exclusive when the difference is the cache size', () => {
+    // input=1000 already includes cachedRead=600; total = input + output.
+    expect(cacheHitRate({
+      inputTokens: 1000,
+      outputTokens: 100,
+      cachedReadTokens: 600,
+      totalTokens: 1100,
+    })).toBeCloseTo(60, 5)
+  })
+
+  it('treats a missing totalTokens as an inclusive prompt (conservative)', () => {
+    // Without totalTokens the split cannot be proven, so the denominator stays
+    // inputTokens; cachedRead > input therefore hides the row instead of
+    // reporting a fabricated 100%.
+    expect(cacheHitRate({
+      inputTokens: 200,
+      outputTokens: 100,
+      cachedReadTokens: 600,
+      cachedWriteTokens: 200,
+    })).toBeNull()
+  })
 })
 
 describe('hasTokenDetail', () => {

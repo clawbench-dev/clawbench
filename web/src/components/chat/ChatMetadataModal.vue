@@ -81,7 +81,7 @@ import { copyText } from '@/utils/clipboard'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
-import { formatTokenRate, normalizeTokenRate } from '@/utils/usageDisplay'
+import { formatTokenRate, normalizeTokenRate, cacheHitRate } from '@/utils/usageDisplay'
 
 const { t } = useI18n()
 
@@ -114,21 +114,27 @@ function catLabel(key) {
   return i18nKey ? t(i18nKey) : key
 }
 
-// Cache hit rate, same formula as the context panel and the stats page:
-// hit / FULL PROMPT, because inputTokens already includes the cached and the
-// cache-write portions. Dividing by (hit + miss) would omit the write side and
-// report a higher rate than the agent itself does. Null when nothing is
-// reported; falls back to hit+miss for a row whose input does not cover the
-// split.
+// Cache hit rate comes from the shared helper, not a local copy: the context
+// panel and this modal must never disagree about the formula (including the
+// cachedReadTokens fallback for ACP backends that only report cache-read
+// counters, and the inclusive/exclusive prompt decision).
 const metadataCacheHitRate = computed(() => {
-  const hit = Number(props.data?.cacheHitTokens) || 0
-  const miss = Number(props.data?.cacheMissTokens) || 0
-  if (hit <= 0 && miss <= 0) return null
-  const split = hit + miss
-  const input = Number(props.data?.inputTokens) || 0
-  const denominator = input > 0 && input >= split ? input : split
-  if (denominator <= 0) return 0
-  return (hit / denominator) * 100
+  const d = props.data || {}
+  const num = (v) => {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : 0
+  }
+  return cacheHitRate({
+    cacheHitTokens: num(d.cacheHitTokens),
+    cacheMissTokens: num(d.cacheMissTokens),
+    cachedReadTokens: num(d.cachedReadTokens),
+    cachedWriteTokens: num(d.cachedWriteTokens),
+    cacheCreationTokens: num(d.cacheCreationTokens),
+    inputTokens: num(d.inputTokens),
+    outputTokens: num(d.outputTokens),
+    totalTokens: num(d.totalTokens),
+    thoughtTokens: num(d.thoughtTokens),
+  })
 })
 
 /** `1,234` for counts. Every token figure in this modal is a count. */

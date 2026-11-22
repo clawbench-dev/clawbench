@@ -144,6 +144,17 @@ export function usageColor(pct: number): string {
  * denominator (detecting uncached-exclusive `inputTokens` via `totalTokens` so
  * we never double-count or exceed 100%).
  *
+ * The exclusive/inclusive decision ASSUMES both counters describe the same
+ * request. A snapshot mixing a per-call input with turn-level cache counters
+ * cannot be detected here; the `cachedRead > denominator` guard only catches
+ * the blatant case, so a moderately inflated rate is possible for such a
+ * mismatched producer.
+ *
+ * When `totalTokens` is absent the prompt is treated as INCLUSIVE (denominator
+ * = inputTokens). That is the conservative direction: an exclusive prompt then
+ * divides by the uncached part only, which can only understate the rate or hit
+ * the guard above — never fabricate a higher one.
+ *
  * Returns null when nothing is reported or the ratio cannot be safely
  * determined — the row is hidden entirely rather than showing a fabricated 0%.
  */
@@ -172,16 +183,28 @@ export function cacheHitRate(
   }
 
   const cachedRead = usage?.cachedReadTokens ?? 0
+  // The two write spellings describe the same counter, so take the larger
+  // rather than summing them. (CodeBuddy reports prompt_cache_write_tokens and
+  // cache_creation_input_tokens as separate fields, but it always carries
+  // explicit hit/miss counters and therefore never reaches this branch.)
   const cachedWrite = Math.max(usage?.cachedWriteTokens ?? 0, usage?.cacheCreationTokens ?? 0)
   if ((cachedRead <= 0 && cachedWrite <= 0) || input <= 0) return null
 
   const output = usage?.outputTokens ?? 0
   const total = usage?.totalTokens ?? 0
   const thought = usage?.thoughtTokens ?? 0
+  // Some agents fold thinking into output, others report it as a fourth term,
+  // and a few add small extra counters to `total`. Accept any of those sums
+  // within a 1% band: a near-miss must not silently fall back to the inclusive
+  // reading, which would shrink the denominator to the uncached part only.
+  // Misclassifying an inclusive prompt is harmless here — its difference is
+  // cachedRead + cachedWrite, which is large whenever the rate is non-trivial.
   const exclusiveNoThought = input + output + cachedRead + cachedWrite
+  const slack = Math.max(1, Math.round(total * 0.01))
+  const near = (a: number, b: number) => Math.abs(a - b) <= slack
   const isExclusivePrompt =
     total > 0 &&
-    (total === exclusiveNoThought || (thought > 0 && total === exclusiveNoThought + thought))
+    (near(total, exclusiveNoThought) || (thought > 0 && near(total, exclusiveNoThought + thought)))
   const denominator = isExclusivePrompt ? input + cachedRead + cachedWrite : input
   if (denominator <= 0 || cachedRead > denominator) return null
   return (cachedRead / denominator) * 100
