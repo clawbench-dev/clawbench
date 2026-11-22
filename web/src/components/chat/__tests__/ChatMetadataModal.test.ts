@@ -145,6 +145,22 @@ describe('ChatMetadataModal', () => {
     expect(wrapper.text()).not.toContain('Cache hit rate:')
   })
 
+  it('derives cache hit rate from cachedReadTokens so the modal matches the context panel', () => {
+    // Antigravity-style snapshot: only cache-read counters, no explicit hit/miss.
+    const wrapper = mountModal({
+      data: {
+        inputTokens: 238591,
+        outputTokens: 2152,
+        totalTokens: 240743,
+        cachedReadTokens: 235640,
+        thoughtTokens: 1096,
+      },
+    })
+    // 235640 / 238591 = 98.76%
+    expect(wrapper.text()).toContain('Cache hit rate:')
+    expect(wrapper.text()).toContain('98.8%')
+  })
+
   it('renders cost with two decimals', () => {
     const wrapper = mountModal({ data: { costUsd: 0.05126895 } })
     const text = wrapper.text()

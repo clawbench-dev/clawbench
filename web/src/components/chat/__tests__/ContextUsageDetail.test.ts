@@ -91,6 +91,45 @@ describe('ContextUsageDetail', () => {
     expect(w.text()).toContain('99.0%')
   })
 
+  it('places cache hit rate immediately after output speed and avoids duplicates', () => {
+    const w = mountDetail({
+      usage: {
+        used: 238591,
+        size: 1000000,
+        inputTokens: 238591,
+        outputTokens: 2152,
+        totalTokens: 240743,
+        cachedReadTokens: 235640,
+      },
+      tokenRate: { tokensPerSecond: 42.5, genMs: 10000 },
+    })
+    const labels = w.findAll('.usage-popup-label').map(el => el.text())
+    const rateIdx = labels.indexOf('Output speed')
+    const hitRateIdx = labels.indexOf('Hit rate')
+    expect(rateIdx).toBeGreaterThan(-1)
+    expect(hitRateIdx).toBe(rateIdx + 1)
+    expect(w.text()).toContain('98.8%')
+
+    // Even when an agent already reports cacheHitTokens/cacheMissTokens alongside
+    // cachedReadTokens, Hit rate renders exactly once right after Output speed.
+    const both = mountDetail({
+      usage: {
+        used: 326400,
+        size: 1000000,
+        inputTokens: 329384,
+        outputTokens: 500,
+        totalTokens: 329884,
+        cachedReadTokens: 326400,
+        cacheHitTokens: 326400,
+        cacheMissTokens: 2984,
+      },
+      tokenRate: { tokensPerSecond: 30, genMs: 5000 },
+    })
+    const bothLabels = both.findAll('.usage-popup-label').map(el => el.text())
+    expect(bothLabels.filter(l => l === 'Hit rate')).toHaveLength(1)
+    expect(bothLabels.indexOf('Hit rate')).toBe(bothLabels.indexOf('Output speed') + 1)
+  })
+
   it('renders the cost with the reported currency only', () => {
     const usd = mountDetail({ usage: { used: 1, size: 100, cost: 0.0512, currency: 'USD' } })
     expect(usd.text()).toContain('$0.05')
