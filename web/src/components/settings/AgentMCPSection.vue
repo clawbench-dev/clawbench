@@ -98,8 +98,12 @@ const saving = ref(false)
 
 /** Backends the probe measured as accepting mcpServers and ignoring it. */
 const UNSUPPORTED_BACKENDS = new Set(['dsh', 'deepseek', 'pi'])
-/** Backends whose adapter rejects an sse server outright (session/new fails). */
-const NO_SSE_BACKENDS = new Set(['codex', 'commandcode'])
+/**
+ * Backends that cannot take an sse server: codex/commandcode fail session/new,
+ * and the built-in agent's client does not implement the legacy sse transport
+ * (it needs a server-to-client event stream and a separate message endpoint).
+ */
+const NO_SSE_BACKENDS = new Set(['codex', 'commandcode', 'builtin'])
 /** Backends that attach MCP servers asynchronously after session/new. */
 const SLOW_START_BACKENDS = new Set(['hermes'])
 

@@ -8,16 +8,16 @@ import (
 	"strconv"
 )
 
-// setProbeProcessGroup is a no-op: Windows has no process groups to join.
-// Tree termination is handled by killProbeProcessGroup (taskkill /T).
-func setProbeProcessGroup(_ *exec.Cmd) {}
+// setProcessGroup is a no-op: Windows has no process groups to join.
+// Tree termination is handled by killProcessGroup (taskkill /T).
+func setProcessGroup(_ *exec.Cmd) {}
 
-// killProbeProcessGroup terminates proc and every descendant.
+// killProcessGroup terminates proc and every descendant.
 //
 // proc.Kill() alone leaves children orphaned and holding the inherited pipes,
 // which keeps cmd.Wait() blocked — the same hang the Unix process-group kill
 // prevents.
-func killProbeProcessGroup(proc *os.Process) {
+func killProcessGroup(proc *os.Process) {
 	if proc == nil || proc.Pid <= 0 {
 		return
 	}

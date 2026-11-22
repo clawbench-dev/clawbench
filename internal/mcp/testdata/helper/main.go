@@ -10,6 +10,7 @@
 //	server     answer initialize + tools/list (2 tools)
 //	notools    answer initialize; tools/list returns []
 //	half       answer initialize; tools/list returns a JSON-RPC error
+//	callhang   answer initialize and tools/list; never reply to tools/call
 //	silent     stay alive, never speak MCP
 //	die        print to stderr and exit 1
 //	diequiet   exit 1 without printing anything
@@ -29,10 +30,19 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
 func main() {
+	// MCP_PROBE_TEST_COUNT_FILE lets a test count how many times the server was
+	// started, without relying on timing. One byte per start.
+	if p := os.Getenv("MCP_PROBE_TEST_COUNT_FILE"); p != "" {
+		if f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			_, _ = f.WriteString("x")
+			_ = f.Close()
+		}
+	}
 	os.Exit(run(os.Getenv("MCP_PROBE_TEST_HELPER")))
 }
 
@@ -74,8 +84,9 @@ func run(mode string) int {
 		}
 
 		var req struct {
-			ID     int    `json:"id"`
-			Method string `json:"method"`
+			ID     int             `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 		}
 		if json.Unmarshal([]byte(line), &req) != nil {
 			continue
@@ -83,9 +94,13 @@ func run(mode string) int {
 
 		switch req.Method {
 		case "initialize":
+			listChanged := "false"
+			if mode == "listchanged" {
+				listChanged = "true"
+			}
 			fmt.Fprintf(writer,
-				`{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"probe-test","version":"9.9"}}}`+"\n",
-				req.ID)
+				`{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":%s}},"serverInfo":{"name":"probe-test","version":"9.9"}}}`+"\n",
+				req.ID, listChanged)
 		case "tools/list":
 			switch mode {
 			case "half":
@@ -96,13 +111,90 @@ func run(mode string) int {
 				fmt.Fprintf(writer, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[]}}`+"\n", req.ID)
 			default:
 				fmt.Fprintf(writer,
-					`{"jsonrpc":"2.0","id":%d,"result":{"tools":[{"name":"alpha"},{"name":"beta"}]}}`+"\n",
+					`{"jsonrpc":"2.0","id":%d,"result":{"tools":[`+
+						`{"name":"alpha","description":"Echo the arguments back.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}} ,`+
+						`{"name":"beta","description":"Return text and an image.\nSecond line.","inputSchema":{"type":"object","properties":{"fail":{"type":"boolean"}}}}`+
+						`]}}`+"\n",
 					req.ID)
 			}
+		case "tools/call":
+			if mode == "callhang" {
+				// Deliberately silent: the client must time out (and send a
+				// cancellation) instead of hanging forever.
+				continue
+			}
+			handleToolCall(writer, req.ID, req.Params)
 		}
 		_ = writer.Flush()
 	}
 }
+
+// handleToolCall answers the two tools this fixture publishes.
+//
+// alpha echoes its arguments; beta returns text plus a 1x1 PNG, and switches to
+// an isError result when called with {"fail":true}. That is enough for the
+// session tests to cover both content shapes without changing the tool count
+// the probe tests pin.
+func handleToolCall(w *bufio.Writer, id int, params json.RawMessage) {
+	var call struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	_ = json.Unmarshal(params, &call)
+
+	reply := func(result any) {
+		b, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"result":  result,
+		})
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(w, "%s\n", b)
+	}
+
+	switch call.Name {
+	case "alpha":
+		args := strings.TrimSpace(string(call.Arguments))
+		if args == "" {
+			args = "{}"
+		}
+		// Built through Marshal, never by hand: pasting raw arguments into a
+		// JSON string produces unescaped quotes, which the client then drops as
+		// malformed — the failure looks like a hang, not a bad fixture.
+		reply(map[string]any{"content": []any{
+			map[string]any{"type": "text", "text": "alpha:" + args},
+		}})
+	case "beta":
+		var args struct {
+			Fail bool `json:"fail"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		if args.Fail {
+			reply(map[string]any{
+				"isError": true,
+				"content": []any{map[string]any{"type": "text", "text": "beta failed on purpose"}},
+			})
+			return
+		}
+		reply(map[string]any{"content": []any{
+			map[string]any{"type": "text", "text": "beta text"},
+			map[string]any{"type": "image", "data": onePixelPNG, "mimeType": "image/png"},
+		}})
+	default:
+		b, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"error":   map[string]any{"code": -32602, "message": "unknown tool " + call.Name},
+		})
+		fmt.Fprintf(w, "%s\n", b)
+	}
+}
+
+// onePixelPNG is a 1x1 transparent PNG, base64. Small enough to inline and
+// valid enough that a decoder accepts it.
+const onePixelPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 
 // spawnPipeHoldingChild starts a copy of this binary in "holdpipes" mode with
 // stdout/stderr inherited from us, exactly like a launcher's interpreter child.

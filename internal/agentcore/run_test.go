@@ -744,7 +744,7 @@ func TestRunSync_ReturnsTextAndCounters(t *testing.T) {
 // Without this it reads a missing tool as "I forgot" and spends rounds hunting
 // for a way to write the file.
 func TestBuildSystemPrompt_StatesDeniedCapabilities(t *testing.T) {
-	got := buildSystemPrompt("You are helpful.", "/tmp/x", nil, model.ToolPolicy{})
+	got := buildSystemPrompt("You are helpful.", "/tmp/x", nil, model.ToolPolicy{}, nil)
 	for _, want := range []string{
 		"You are helpful.",
 		"/tmp/x",
@@ -766,7 +766,7 @@ func TestBuildSystemPrompt_StatesDeniedCapabilities(t *testing.T) {
 // instructions and must outrank the mechanical text below it.
 func TestBuildSystemPrompt_UsesPiStyleSections(t *testing.T) {
 	list := tools.All(true, false, false)
-	got := buildSystemPrompt("AGENT-INSTRUCTIONS", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead}})
+	got := buildSystemPrompt("AGENT-INSTRUCTIONS", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead}}, nil)
 
 	if !strings.HasPrefix(got, "AGENT-INSTRUCTIONS") {
 		t.Fatalf("the agent's own prompt must lead and be unwrapped, got:\n%s", got)
@@ -793,7 +793,7 @@ func TestBuildSystemPrompt_UsesPiStyleSections(t *testing.T) {
 // point of granting read/glob/grep separately is that they are better at it.
 func TestBuildSystemPrompt_ToolListCarriesPurpose(t *testing.T) {
 	list := tools.All(true, true, false)
-	got := buildSystemPrompt("", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead, model.CapFSWrite}})
+	got := buildSystemPrompt("", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead, model.CapFSWrite}}, nil)
 
 	for _, t2 := range list {
 		snippet := t2.Snippet()
@@ -818,7 +818,7 @@ func TestBuildSystemPrompt_OnlyGrantedToolsAreListed(t *testing.T) {
 	// Read-only: the write/edit/bash guidelines must not appear, and neither
 	// may any rule that only makes sense with them.
 	list := tools.All(true, false, false)
-	got := buildSystemPrompt("", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead}})
+	got := buildSystemPrompt("", "/tmp/x", list, model.ToolPolicy{Allow: []string{model.CapFSRead}}, nil)
 
 	for _, forbidden := range []string{
 		"Use write only for new files",
@@ -837,7 +837,7 @@ func TestBuildSystemPrompt_OnlyGrantedToolsAreListed(t *testing.T) {
 // is not told about restrictions it does not have.
 func TestBuildSystemPrompt_OmitsDenialsWhenGranted(t *testing.T) {
 	policy := model.ToolPolicy{Allow: []string{model.CapExec}}.Normalized()
-	got := buildSystemPrompt("", "/tmp/x", nil, policy)
+	got := buildSystemPrompt("", "/tmp/x", nil, policy, nil)
 	if strings.Contains(got, "You cannot") {
 		t.Fatalf("a fully granted agent must not be told it is restricted, got:\n%s", got)
 	}
@@ -846,7 +846,7 @@ func TestBuildSystemPrompt_OmitsDenialsWhenGranted(t *testing.T) {
 // TestBuildSystemPrompt_NoWorkDirIsStated pins the empty-workdir case: the model
 // must know the file tools are unusable rather than trying them and failing.
 func TestBuildSystemPrompt_NoWorkDirIsStated(t *testing.T) {
-	got := buildSystemPrompt("", "", nil, model.ToolPolicy{})
+	got := buildSystemPrompt("", "", nil, model.ToolPolicy{}, nil)
 	if !strings.Contains(got, "No working directory") {
 		t.Fatalf("an empty workdir must be stated, got:\n%s", got)
 	}

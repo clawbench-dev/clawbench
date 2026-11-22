@@ -34,6 +34,7 @@ import (
 	"clawbench/internal/frontend"
 	"clawbench/internal/handler"
 	"clawbench/internal/kb"
+	"clawbench/internal/mcp"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	pluginall "clawbench/internal/plugin/all"
@@ -2015,6 +2016,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		secondCtx, secondCancel := context.WithTimeout(context.Background(), secondFinalizeGrace)
 		service.WaitStreamsDrained(secondCtx)
 		secondCancel()
+
+		// 7. Close cached MCP connections. Every turn that could use one has
+		//    finished or been cancelled by now, so this only reaps idle servers.
+		//    Without it, stdio MCP children outlive the process that started
+		//    them (npx/uvx interpreters keep running).
+		mcp.CloseAllSessions()
 
 		slog.Info("shutdown drain complete")
 		close(shutdownComplete)

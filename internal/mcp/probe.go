@@ -182,7 +182,7 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 	// and cmd.Wait then blocks on the pipe copy goroutines forever. Observed
 	// with `uvx mcp-server-time`: the handshake and tools/list both succeeded,
 	// yet the probe never returned and the UI timed out after 15s.
-	setProbeProcessGroup(cmd)
+	setProcessGroup(cmd)
 	// Belt and braces for the timeout path: CommandContext kills the leader, and
 	// WaitDelay then bounds how long Wait may block on pipes still held open by
 	// anything that outlived it (a grandchild, a detached daemon). Wait returns
@@ -212,7 +212,7 @@ func probeStdio(ctx context.Context, srv model.MCPServer) Result {
 			return
 		}
 		reaped = true
-		killProbeProcessGroup(cmd.Process)
+		killProcessGroup(cmd.Process)
 		// ErrWaitDelay means the pipe-holding grandchildren outlived WaitDelay
 		// and Wait closed the pipes itself. The probe outcome is already known,
 		// so that is not a failure to report.

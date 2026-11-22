@@ -4,7 +4,8 @@
 // (internal/agentcore) rather than in an external CLI. That difference drives
 // every choice here:
 //
-//   - no spawn command, no install command, no login, no MCP injection;
+//   - no spawn command, no install command, no login; MCP is attached by
+//     ClawBench's own client (internal/mcp), not injected into a CLI;
 //   - no external session: the conversation is rebuilt from chat_history each
 //     turn, so there is no session_capture and nothing to resume;
 //   - tools are granted per agent (model.ToolPolicy) instead of being whatever
@@ -15,14 +16,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"clawbench/internal/agentcore"
 	"clawbench/internal/agentcore/compaction"
 	"clawbench/internal/agentcore/llm"
+	"clawbench/internal/agentcore/mcptools"
+	"clawbench/internal/agentcore/tools"
 	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
+	"clawbench/internal/mcp"
 	"clawbench/internal/model"
 )
 
@@ -133,12 +138,52 @@ func (b *Backend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan
 		// One translator per turn: it tracks whether a reasoning block is
 		// still open, so the closing event is emitted exactly once.
 		tr := &translator{locale: model.Language}
+		// MCP tools are attached per turn. The pool keeps the connections, so
+		// after the first turn this is a policy lookup rather than a process
+		// start, and a policy change lands on the next turn.
+		toolList, notes, release := attachMCP(ctx, req, spec.Client)
+		if release != nil {
+			defer release()
+		}
+		spec.ExtraTools = toolList
+		spec.ToolNotes = append(spec.ToolNotes, notes...)
+
 		runEvents := agentcore.Run(ctx, spec)
 		for ev := range runEvents {
 			forward(ch, tr, ev)
 		}
 	}()
 	return ch, nil
+}
+
+// attachMCP resolves this agent's MCP policy and returns the tools it may use.
+//
+// It never fails the turn: a server that cannot start becomes a note the model
+// can relay. Failing the whole turn because one of five servers is
+// misconfigured would make an unrelated typo look like the agent is broken.
+//
+// Only http is advertised as a capability. Our client does not implement legacy
+// SSE, and ResolveMCPServers drops transports the backend cannot take — the
+// same gate ACP backends use for servers they cannot accept.
+func attachMCP(ctx context.Context, req ai.ChatRequest, client llm.Client) ([]tools.Tool, []string, func()) {
+	servers := model.ResolveMCPServers(req.AgentID, model.MCPCapabilities{HTTP: true})
+	if len(servers) == 0 {
+		return nil, nil, nil
+	}
+
+	// The working directory is part of the key: a stdio server is started in
+	// it, so two projects must not share one process. Cleaning it keeps a
+	// trailing slash from creating a second key for the same directory.
+	workDir := req.WorkDir
+	if workDir != "" {
+		workDir = filepath.Clean(workDir)
+	}
+	key := req.AgentID + "\x00" + workDir
+	bundle := mcp.DefaultPool().Acquire(ctx, key, servers, mcp.DialOptions{WorkDir: workDir})
+
+	toolList, notes := mcptools.Build(mcptools.FromBundle(bundle), client.SupportsVision())
+	notes = append(append([]string(nil), bundle.Notes...), notes...)
+	return toolList, notes, bundle.Release
 }
 
 // buildSpec resolves everything a run needs from the agent and the request.
