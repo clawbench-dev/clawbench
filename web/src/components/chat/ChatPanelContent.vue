@@ -383,7 +383,7 @@ import { stripGroupProtocolTags, serializeMentionCards } from '@/utils/groupRout
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
-import { buildSendPayload, fileEntryKey } from '@/utils/fileAttachmentUtils.ts'
+import { buildSendPayload, buildRetryPayload, fileEntryKey } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
@@ -2857,7 +2857,14 @@ async function handleResetSession() {
         // Re-send the last persisted user message so the conversation continues
         // in the freshly-reset agent session.
         const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user')
-        if (lastUserMsg?.content) await sendMessage(lastUserMsg.content)
+        if (!lastUserMsg) return
+
+        // Replay its ATTACHMENTS too, not just its text — see buildRetryPayload.
+        // It reuses the normal send builder, so URL/quote/line-range routing is
+        // identical to a first send. Returns null when there is nothing to send.
+        const retry = buildRetryPayload(lastUserMsg.content, lastUserMsg.files)
+        if (!retry) return
+        await sendMessageNow(retry.text, retry.filePaths, retry.allFiles)
     } catch {
         toast.show(t('chat.contentBlocks.resetSessionFailed'), { icon: 'warning', type: 'error' })
     }
