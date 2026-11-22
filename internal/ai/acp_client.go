@@ -343,13 +343,7 @@ func (c *ClawBenchACPClient) MergeCommandsFromScan(pluginCmds []AvailableCommand
 // ACP session ID. If no route is registered (session unregistered or
 // cancelled), the update is silently dropped.
 func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNotification) error {
-	if u := n.Update.SessionInfoUpdate; u != nil && u.Meta[backgroundEventKey] != nil {
-		if !c.IsLoadSessionActive() {
-			c.onBackgroundEvent(string(n.SessionId), u.Meta[backgroundEventKey])
-		}
-		return nil
-	}
-	if c.maybeCloseAdoptedTurn(n) {
+	if c.handleBackgroundLifecycle(n) {
 		return nil
 	}
 
@@ -464,6 +458,18 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 		work.commands.observe(n.Update)
 	}
 	return nil
+}
+
+// handleBackgroundLifecycle consumes ordered lifecycle notifications before
+// the content route lookup, including notifications on an idle session.
+func (c *ClawBenchACPClient) handleBackgroundLifecycle(n acp.SessionNotification) bool {
+	if u := n.Update.SessionInfoUpdate; u != nil && u.Meta[backgroundEventKey] != nil {
+		if !c.IsLoadSessionActive() {
+			c.onBackgroundEvent(string(n.SessionId), u.Meta[backgroundEventKey])
+		}
+		return true
+	}
+	return c.maybeCloseAdoptedTurn(n)
 }
 
 // maybeCloseAdoptedTurn handles CodeBuddy's non-standard `session_end` frame for

@@ -307,7 +307,7 @@ func ResumeInterruptedSession(sessionID string) error {
 		// the persisted notice: the notice is user-facing prose and would tell the
 		// host to "restore the session", not what to do next.
 		go func() {
-			defer FinishClaimedSessionRun(sessionID, runCtx)
+			defer FinishClaimedSessionRun(runCtx, sessionID)
 			// Signal AFTER the drain loop returns, so a test can wait for the
 			// goroutine's whole lifetime instead of guessing. The loop keeps
 			// touching the store after it releases the claim (terminal push →

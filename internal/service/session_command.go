@@ -321,7 +321,7 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 		defer handleSessionPanic(cfg, sessionID)
 
 		// Single cleanup: removes the runner and cancels its context.
-		defer FinishClaimedSessionRun(sessionID, ctx)
+		defer FinishClaimedSessionRun(ctx, sessionID)
 		defer handleACPCleanup(sessionID, cfg.AgentID)
 
 		markDoneAndSendFinal := func(event ai.StreamEvent) {
@@ -650,7 +650,7 @@ func EnqueueGroupMessage(sessionID, message string, files []model.FileEntry, que
 	}
 	emitUserMessage(sessionID, matMsgID, row, false)
 	go func() {
-		defer FinishClaimedSessionRun(sessionID, runCtx)
+		defer FinishClaimedSessionRun(runCtx, sessionID)
 		runGroupDrainLoopFn(runCtx, sessionID, info.ProjectPath, matMsgID, row.Content, row.Files)
 	}()
 	return true, nil

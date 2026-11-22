@@ -194,25 +194,30 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		}
 	}
 
-	// An accepted prompt must never be retried on a follow-up disconnect.
 	if resp.StopReason == acp.StopReasonEndTurn && background != nil {
-		err = background.wait(promptCtx, conn.Done())
-		if err != nil {
-			err = fmt.Errorf("%w: %w", errBackgroundFollowup, err)
-		}
-		if err != nil && ctx.Err() != nil {
-			resp.StopReason = acp.StopReasonCancelled
-			// The prompt RPC has already returned. session/cancel alone may leave
-			// its detached shell and a later autonomous turn running on this session.
-			c.mu.Lock()
-			if c.conn == conn {
-				c.killAndMarkDeadLocked()
-			}
-			c.mu.Unlock()
-		}
+		err = c.awaitBackgroundReply(ctx, promptCtx, conn, background, &resp)
 	}
 	c.emitPromptTailMetadata(resp, streamCh)
 	return err
+}
+
+// An accepted prompt must never be retried on a follow-up disconnect.
+func (c *ACPConn) awaitBackgroundReply(ctx, promptCtx context.Context, conn *acp.ClientSideConnection, background *promptBackgroundWork, resp *acp.PromptResponse) error {
+	err := background.wait(promptCtx, conn.Done())
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		resp.StopReason = acp.StopReasonCancelled
+		// The prompt RPC has already returned. session/cancel alone may leave
+		// its detached shell and a later autonomous turn running on this session.
+		c.mu.Lock()
+		if c.conn == conn {
+			c.killAndMarkDeadLocked()
+		}
+		c.mu.Unlock()
+	}
+	return fmt.Errorf("%w: %w", errBackgroundFollowup, err)
 }
 
 // emitCancelledTurnUsage emits the turn-final metadata event for a prompt that

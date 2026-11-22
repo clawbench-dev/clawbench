@@ -362,9 +362,9 @@ func TestFinishClaimedSessionRunPreservesNewOwner(t *testing.T) {
 	next, ok := submitRunner(sid)
 	require.True(t, ok)
 	t.Cleanup(func() { FinishSessionRun(sid) })
-	require.False(t, FinishClaimedSessionRun(sid, old))
+	require.False(t, FinishClaimedSessionRun(old, sid))
 	require.NoError(t, next.Err())
 	require.True(t, IsSessionRunning(sid))
-	require.True(t, FinishClaimedSessionRun(sid, next))
+	require.True(t, FinishClaimedSessionRun(next, sid))
 	require.ErrorIs(t, next.Err(), context.Canceled)
 }

@@ -150,25 +150,6 @@ func removeRunner(sessionID string) {
 	registryMu.Unlock()
 }
 
-// finishRunner removes the runner and cancels its context.
-//
-// Removal and cancel are one operation from the registry's point of view, so no
-// observer can see a session that is still "running" with nothing left to
-// cancel it. This is the replacement for the old LIFO defer chain that
-// unregistered the cancel func before clearing the running flag.
-func finishRunner(sessionID string, owner context.Context) bool {
-	registryMu.Lock()
-	r, ok := registry[sessionID]
-	if !ok || (owner != nil && r.ctx != owner) {
-		registryMu.Unlock()
-		return false
-	}
-	delete(registry, sessionID)
-	registryMu.Unlock()
-	r.cancel()
-	return true
-}
-
 // takeRunner removes and returns the runner so the caller can cancel it.
 //
 // The cancel func is invoked by the caller OUTSIDE registryMu: cancelling runs
@@ -231,14 +212,25 @@ func allRunners() []*sessionRunner {
 // goroutine, replacing the previous sequence of separate unregister/cancel/
 // clear-flag defers whose order was load-bearing.
 func FinishSessionRun(sessionID string) {
-	finishRunner(sessionID, nil)
+	if r, ok := takeRunner(sessionID); ok {
+		r.cancel()
+	}
 }
 
 // FinishClaimedSessionRun releases only the caller's claim. A turn can retire
 // before broadcasting done, then unwind after a new prompt or history sync
 // already owns the session.
-func FinishClaimedSessionRun(sessionID string, owner context.Context) bool {
-	return finishRunner(sessionID, owner)
+func FinishClaimedSessionRun(owner context.Context, sessionID string) bool {
+	registryMu.Lock()
+	r, ok := registry[sessionID]
+	if !ok || r.ctx != owner {
+		registryMu.Unlock()
+		return false
+	}
+	delete(registry, sessionID)
+	registryMu.Unlock()
+	r.cancel()
+	return true
 }
 
 // RegisterExternalExecution registers an execution whose lifecycle is managed
