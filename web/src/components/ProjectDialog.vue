@@ -15,15 +15,20 @@
           <Eye v-else :size="16" />
         </button>
         <RefreshButton icon="RotateCw" :size="16" class="toolbar-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click="doRefresh" />
-        <button class="toolbar-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
-          <LocateFixed :size="16" />
-        </button>
         <SearchInput v-model="searchQuery" :placeholder="t('projectDialog.search')" />
       </div>
-      <!-- No project concept here: the picker browses the whole filesystem, so
-           "" already means the filesystem top level. Home must not be
-           repurposed as "project root", nor a filesystem-root crumb added. -->
-      <DirBreadcrumb :path="browsePath === '/' ? '' : browsePath" :project-scoped="false" @navigate="onBreadcrumbNavigate" />
+      <!-- The breadcrumb row owns the location, so "go to a path" belongs beside
+           it rather than among the actions above: same placement and same icon as
+           the file manager's button (see FileManagerContent.vue). -->
+      <div class="dialog-nav-row">
+        <!-- No project concept here: the picker browses the whole filesystem, so
+             "" already means the filesystem top level. Home must not be
+             repurposed as "project root", nor a filesystem-root crumb added. -->
+        <DirBreadcrumb :path="browsePath === '/' ? '' : browsePath" :project-scoped="false" @navigate="onBreadcrumbNavigate" />
+        <button class="dir-jump-btn jump-btn" @click="jumpOpen = true" :title="t('jump.button')">
+          <CornerUpRight :size="14" />
+        </button>
+      </div>
     </div>
 
     <!-- Content -->
@@ -64,7 +69,7 @@
 </template>
 
 <script setup>
-import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, LocateFixed } from 'lucide-vue-next'
+import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, CornerUpRight } from 'lucide-vue-next'
 import { ref, computed, watch, inject, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from './common/ModalDialog.vue'
@@ -362,7 +367,41 @@ onBeforeUnmount(() => {
 }
 
 .dialog-nav :deep(.dir-breadcrumb) {
-  padding: 0 var(--space-5) calc(3 * var(--dp));
+  flex: 1;
+  min-width: 0;
+  padding: 0 0 calc(3 * var(--dp)) var(--space-5);
+}
+
+/* The row beneath the toolbar: breadcrumb on the left, "go to a path" pinned to
+   the right edge. `margin-left: auto` keeps it off the breadcrumb's horizontal
+   scroll — the crumb list only scrolls itself, the button stays put. */
+.dialog-nav-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-5);
+  min-width: 0;
+}
+
+.dir-jump-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--toolbar-btn-size, calc(26 * var(--dp)));
+  height: var(--toolbar-btn-size, calc(26 * var(--dp)));
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+}
+
+.dir-jump-btn:hover {
+  background: var(--bg-secondary, #eee);
+  color: var(--text-primary);
 }
 
 /* Toolbar buttons */

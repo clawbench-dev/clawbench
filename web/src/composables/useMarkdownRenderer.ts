@@ -79,7 +79,7 @@ export interface RenderResult {
 // The protection pipeline lives in the shared module; import it here for the
 // render pipeline and re-export for existing importers of `MathEntry` /
 // `extractCodeAndMath` / `MATH_PH_RE` from this file (kept unchanged).
-import { protectMarkdown, MATH_PH_RE, type MathEntry } from '@/utils/markdownProtect.ts'
+import { protectMarkdown, MATH_PH_RE, PAREN_MATH_RE, type MathEntry } from '@/utils/markdownProtect.ts'
 export type { MathEntry } from '@/utils/markdownProtect.ts'
 export { protectMarkdown as extractCodeAndMath, MATH_PH_RE }
 
@@ -191,7 +191,7 @@ export function renderKatexInString(html: string, mathEntries?: MathEntry[]): st
                 return pre + escapeHtml(whole.slice(pre.length))
             }
         })
-        html = html.replace(/\\\(([^\\\n]+?)\\\)/g, (_, math) => {
+        html = html.replace(PAREN_MATH_RE, (_, math) => {
             try {
                 return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false })
             } catch {
@@ -231,7 +231,12 @@ function stripMathPlaceholders(html: string, mathEntries: MathEntry[]): string {
 // ---------------------------------------------------------------------------
 
 const DOMPURIFY_ADD_TAGS = ['math', 'button']
-const DOMPURIFY_ADD_ATTR = ['data-action', 'aria-label', 'title', 'data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-line-ranges', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-path', 'data-table-idx', 'data-row-idx', 'data-href']
+// `columnalign` / `columnspacing` come from KaTeX's MathML matrix and cases
+// output; without them the columns lose alignment.
+const DOMPURIFY_ADD_ATTR = ['data-action', 'aria-label', 'title', 'data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-line-ranges', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-path', 'data-table-idx', 'data-row-idx', 'data-href', 'columnalign', 'columnspacing']
+// Attributes whose values are never URLs. The URI policy would otherwise strip
+// them: SVG `d` is path geometry, the two MathML ones are table layout.
+const DOMPURIFY_ADD_URI_SAFE_ATTR = ['d', 'columnalign', 'columnspacing']
 const DOMPURIFY_ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file):|[^a-z]|[a-z+.-]+(?:[/?#][\s\S]*)?$)/i
 
 // ---------------------------------------------------------------------------
@@ -298,7 +303,12 @@ export function renderMarkdown(
 
     // 3. Sanitize HTML (XSS prevention)
     if (sanitize) {
-        html = DOMPurify.sanitize(html, { ADD_TAGS: DOMPURIFY_ADD_TAGS, ADD_ATTR: DOMPURIFY_ADD_ATTR, ALLOWED_URI_REGEXP: DOMPURIFY_ALLOWED_URI_REGEXP })
+        html = DOMPurify.sanitize(html, {
+            ADD_TAGS: DOMPURIFY_ADD_TAGS,
+            ADD_ATTR: [...DOMPURIFY_ADD_ATTR],
+            ADD_URI_SAFE_ATTR: DOMPURIFY_ADD_URI_SAFE_ATTR,
+            ALLOWED_URI_REGEXP: DOMPURIFY_ALLOWED_URI_REGEXP,
+        })
     }
 
     // 4. Fix image paths (MarkdownPreview-specific)

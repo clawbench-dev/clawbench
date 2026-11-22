@@ -59,8 +59,7 @@ var OpenClawACPTitlePrefixes = map[string]string{
 	"tool_describe": "DeepThink",
 }
 
-// OpenClawACPInputRemaps maps OpenClaw ACP rawInput field names to canonical
-// names.
+// No InputRemaps for OpenClaw.
 //
 // Measured shapes (TestOpenClawACPProbe_L4_ToolFrameShapes):
 //
@@ -71,27 +70,13 @@ var OpenClawACPTitlePrefixes = map[string]string{
 //	edit    {"path": "/x", "edits": [{"oldText","newText"}]} → file_path + old_string/new_string
 //	web_fetch {"url": "…"}                               → url
 //
-// Two gaps that a flat remap table CANNOT close, and which are therefore handled
-// in acp.go's tool parser instead:
+// The generic flat table (ai.GenericACPRemaps) already covers the camelCase
+// fields, and the two cases it cannot express are handled by the per-tool
+// normalizer in tool.go:
 //   - `read`/`write`/`edit` use "path", but Read/Write/Edit cards read
-//     "file_path". LS reads "path", so remapping path→file_path globally would
-//     break LS. acp.go therefore keeps path→file_path in its BASE table (so a
-//     tool this list has never seen still renders a path) and drops it for `ls`.
-//     The shared keys are asserted against that base table by register_test.go.
+//     "file_path". LS reads "path", so remapping path→file_path in a flat table
+//     would break LS. tool.go keeps path→file_path in its BASE table (so a tool
+//     this list has never seen still renders a path) and drops it for `ls`.
 //   - `edit` carries a nested edits[] array with oldText/newText and NO flat
 //     old_string/new_string. The renderer only reads the flat fields, so the
 //     first edit must be promoted (same treatment pi needs).
-//
-// This table additionally carries OpenClaw-only keys (dirPath/cellIndex/
-// cellType) that acp.go's base table does not need, so the two are NOT
-// identical — only the keys they must agree on are pinned by that test.
-var OpenClawACPInputRemaps = map[string]string{
-	// Generic camelCase normalizations other ACP backends also need.
-	"filePath":   "file_path",
-	"dirPath":    "path",
-	"oldString":  "old_string",
-	"newString":  "new_string",
-	"replaceAll": "replace_all",
-	"cellIndex":  "cell_index",
-	"cellType":   "cell_type",
-}

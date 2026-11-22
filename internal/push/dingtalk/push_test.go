@@ -1,8 +1,12 @@
 package dingtalk
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/push/common"
@@ -685,5 +689,75 @@ func TestPushMailEvent_NoSubscribers(t *testing.T) {
 
 	if PushMailEvent("Title", "Body") {
 		t.Error("expected false with no subscribers")
+	}
+}
+
+// TestPushEvents_CardBodyCarriesTitle pins the heading DingTalk needs.
+// msgParam.title is only the conversation-list preview; the card renders
+// msgParam.text alone, so a body that does not repeat the title (the mail list,
+// the usage sentence) would never show "收到 N 封新邮件" / "用量超出计划".
+func TestPushEvents_CardBodyCarriesTitle(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
+	cases := []struct {
+		name  string
+		push  func(title, body string) bool
+		title string
+		body  string
+	}{
+		{"mail", PushMailEvent, "收到 2 封新邮件", "- 周报\n- 报价单"},
+		{"usage", PushUsageMeterEvent, "用量超出计划", "本周期已用 80%，应花 60%"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var received struct {
+				MsgParam string `json:"msgParam"`
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&received)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+
+			origSendURL, origTokenURL := dingtalkRobotSendURL, dingtalkTokenURL
+			dingtalkRobotSendURL, dingtalkTokenURL = srv.URL, srv.URL
+			defer func() {
+				dingtalkRobotSendURL, dingtalkTokenURL = origSendURL, origTokenURL
+			}()
+
+			origDB := db
+			defer func() { db = origDB }()
+			db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "u"}}}
+
+			origChecker := clientChecker
+			defer func() { clientChecker = origChecker }()
+			RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+			mgr := NewManager(&model.DingTalkConfig{AppKey: "k"})
+			mgr.started = true
+			mgr.cachedToken = "test-access-token"
+			mgr.cachedExp = time.Now().Add(time.Hour)
+			origMgr := GetManager()
+			SetManager(mgr)
+			defer SetManager(origMgr)
+			defer resetTokenCache(mgr)
+
+			if !tc.push(tc.title, tc.body) {
+				t.Fatal("expected the push to reach the subscriber")
+			}
+
+			var param struct{ Title, Text string }
+			if err := json.Unmarshal([]byte(received.MsgParam), &param); err != nil {
+				t.Fatalf("msgParam is not JSON: %v", err)
+			}
+			if param.Title != tc.title {
+				t.Errorf("title = %q, want %q", param.Title, tc.title)
+			}
+			if want := "### " + tc.title + "\n\n" + tc.body; param.Text != want {
+				t.Errorf("text = %q, want %q", param.Text, want)
+			}
+		})
 	}
 }

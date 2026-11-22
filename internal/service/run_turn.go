@@ -289,16 +289,14 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 
 	agentID := ResolveAgentID(spec.SessionID, spec.AgentID)
 
-	sessionTransport := GetSessionTransport(spec.SessionID)
 	slog.Info("acp perf: executeStreamRun.start",
 		"session_id", spec.SessionID,
 		"backend", spec.BackendName,
 		"agent_id", agentID,
-		"transport", sessionTransport,
 		"resume", spec.ChatReq.Resume,
 		"mode", int(spec.Mode))
 
-	backend, err := ai.NewBackendForAgentWithTransport(spec.BackendName, agentID, sessionTransport)
+	backend, err := ai.NewBackendForAgent(spec.BackendName, agentID)
 	if err != nil {
 		slog.Error("failed to create backend",
 			slog.String("backend", spec.BackendName), slog.String("err", err.Error()))
@@ -306,17 +304,8 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 		return at
 	}
 
-	// If the session's transport says acp-stdio but the agent fell back to CLI,
-	// clear the stale override so later messages stop warning.
-	if sessionTransport == transportACPStdio {
-		if _, ok := backend.(*ai.ACPBackend); !ok {
-			_ = UpdateSessionTransport(spec.SessionID, "")
-		}
-	}
-
 	slog.Info("acp perf: executeStreamRun.ExecuteStream_start",
 		"session_id", spec.SessionID,
-		"transport", sessionTransport,
 		"after_backend_create", time.Since(runStart))
 
 	eventCh, err := backend.ExecuteStream(turnCtx, spec.ChatReq)

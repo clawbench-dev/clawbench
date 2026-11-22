@@ -245,16 +245,19 @@ describe('ProjectDialog — toolbar buttons', () => {
     expect(mockFetch).toHaveBeenCalled()
   })
 
-  it('jump button is grouped with the toolbar actions before the search input', async () => {
+  it('jump button sits in the breadcrumb row, not the toolbar', async () => {
     const wrapper = await mountOpen()
     await flushPromises()
-    const toolbarRow = wrapper.find('.dialog-toolbar-row')
-    const jumpBtn = toolbarRow.find('button[title*="jump.button"]')
-    const searchInput = toolbarRow.find('.search-stub')
-    expect(jumpBtn.exists()).toBe(true)
-    // Search input is pushed to the right edge (margin-left:auto), so the jump
-    // button must sit before it in DOM order to be part of the toolbar cluster.
-    expect(jumpBtn.element.compareDocumentPosition(searchInput.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // The button acts on the location the breadcrumb states, so it lives in
+    // that row; in the toolbar it was one more icon between the file actions
+    // and the search box.
+    const navRow = wrapper.find('.dialog-nav-row')
+    expect(navRow.find('.jump-btn').exists()).toBe(true)
+    expect(wrapper.find('.dialog-toolbar-row .jump-btn').exists()).toBe(false)
+    // Pinned to the right edge: the button is the last thing in the row, after
+    // whatever the breadcrumb renders (it is stubbed in this suite).
+    const children = Array.from(navRow.element.children)
+    expect(children[children.length - 1].classList.contains('jump-btn')).toBe(true)
   })
 
   it('new folder button calls dialog.prompt', async () => {

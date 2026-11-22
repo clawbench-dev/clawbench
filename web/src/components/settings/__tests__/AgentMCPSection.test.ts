@@ -59,16 +59,25 @@ describe('AgentMCPSection', () => {
   })
 
   it('shows the unsupported notice for a backend that ignores MCP', () => {
-    // dsh / deepseek / pi accept the field and ignore it (probed). Offering
-    // controls there would promise something that cannot work.
-    for (const backend of ['dsh', 'deepseek', 'pi']) {
-      const wrapper = mountSection({ id: 'a', backend, mcpServers: { mode: 'all' } }, [
-        { name: 'x', transport: 'stdio' },
-      ])
-      expect(wrapper.text()).toContain('该智能体不支持 MCP')
-      expect(wrapper.find('input[type="radio"]').exists()).toBe(false)
-      wrapper.unmount()
-    }
+    // The fact comes from the server (the backend's spec), so the component
+    // reads the flag rather than matching on a backend id: a new backend with
+    // the same quirk only has to declare it in its Go spec.
+    const wrapper = mountSection(
+      { id: 'a', backend: 'some-new-agent', mcpUnsupportedBackend: true, mcpServers: { mode: 'all' } },
+      [{ name: 'x', transport: 'stdio' }],
+    )
+    expect(wrapper.text()).toContain('该智能体不支持 MCP')
+    expect(wrapper.find('input[type="radio"]').exists()).toBe(false)
+  })
+
+  it('does not consult the backend id for the unsupported notice', () => {
+    // A backend id that used to be in the hard-coded list must be treated as
+    // supported when the server does not flag it (and vice versa below).
+    const wrapper = mountSection({ id: 'a', backend: 'dsh', mcpServers: { mode: 'all' } }, [
+      { name: 'x', transport: 'stdio' },
+    ])
+    expect(wrapper.text()).not.toContain('该智能体不支持 MCP')
+    expect(wrapper.findAll('input[type="radio"]')).toHaveLength(3)
   })
 
   it('renders three mode options for a supported backend', () => {
@@ -101,10 +110,10 @@ describe('AgentMCPSection', () => {
   })
 
   it('disables and grays out an SSE server on a backend that rejects SSE', () => {
-    // codex and commandcode throw invalidRequest for an sse server, which fails
-    // the whole session/new. A tick that cannot work must not be tickable.
+    // Such a backend fails session/new outright on an sse server, so a tick that
+    // cannot work must not be tickable. Flag-driven, not backend-id-driven.
     const wrapper = mountSection(
-      { id: 'a', backend: 'codex', mcpServers: { mode: 'selected', names: [] } },
+      { id: 'a', backend: 'some-new-agent', mcpRejectsSse: true, mcpServers: { mode: 'selected', names: [] } },
       [
         { name: 'ok', transport: 'stdio' },
         { name: 'nope', transport: 'sse' },
@@ -169,16 +178,18 @@ describe('AgentMCPSection', () => {
     })
   })
 
-  it('shows the slow-start hint only for hermes with MCP enabled', () => {
-    const on = mountSection({ id: 'a', backend: 'hermes', mcpServers: { mode: 'all' } }, [
-      { name: 'x', transport: 'stdio' },
-    ])
+  it('shows the slow-start hint only when the backend attaches servers async', () => {
+    const on = mountSection(
+      { id: 'a', backend: 'slow-start-agent', mcpAttachesAsync: true, mcpServers: { mode: 'all' } },
+      [{ name: 'x', transport: 'stdio' }],
+    )
     expect(on.text()).toContain('首次对话可能拿不到工具')
     on.unmount()
 
-    const off = mountSection({ id: 'a', backend: 'hermes', mcpServers: { mode: 'none' } }, [
-      { name: 'x', transport: 'stdio' },
-    ])
+    const off = mountSection(
+      { id: 'a', backend: 'slow-start-agent', mcpAttachesAsync: true, mcpServers: { mode: 'none' } },
+      [{ name: 'x', transport: 'stdio' }],
+    )
     expect(off.text()).not.toContain('首次对话可能拿不到工具')
     off.unmount()
 

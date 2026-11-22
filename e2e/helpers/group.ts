@@ -39,7 +39,10 @@ export async function openCreateGroupPicker(page: Page): Promise<Locator> {
   const picker = page.locator('.bs-panel').filter({ has: page.locator('.agent-list') }).last()
   await expect(picker).toBeVisible({ timeout: 5000 })
 
-  await picker.locator('.agent-mode-tab[data-mode="group"]').click()
+  // The switch is the shared SegmentedTabs primitive (class `agent-mode-slot`
+  // on the wrapper, `.segmented-tab` per option); the old hand-rolled
+  // `.agent-mode-tab` markup is gone.
+  await picker.locator('.agent-mode-slot .segmented-tab[data-mode="group"]').click()
   await waitPastTouchGuard(page)
   return picker
 }

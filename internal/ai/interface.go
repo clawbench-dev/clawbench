@@ -14,7 +14,6 @@ type ChatRequest struct {
 	WorkDir                string
 	SystemPrompt           string
 	Model                  string // per-request model override (empty = use global default)
-	Command                string // optional: custom command path for the AI backend CLI
 	AgentID                string // agent ID for logging and persistence
 	ThinkingEffort         string // thinking effort level, e.g., "high"; empty = auto (don't pass flag)
 	Mode                   string // ACP session mode, e.g., "code", "ask", "architect"; empty = use current
@@ -36,6 +35,14 @@ type ChatRequest struct {
 	// consumed by the turn that reads it (see service.BuildChatRequest), so it
 	// triggers exactly one extra injection.
 	Compacted bool
+
+	// Files are THIS turn's attachments (the ones the prompt already names).
+	//
+	// Only the built-in backend reads them, and only to send an attached picture
+	// as a picture: the prompt carries a path, and a path is not an image. They
+	// are deliberately NOT replayed with History — that would re-send every
+	// earlier screenshot on every turn.
+	Files []model.FileEntry
 
 	// History is the prior conversation, oldest first, for backends that run
 	// the model themselves instead of delegating to an external CLI.
@@ -142,7 +149,7 @@ type KBRef struct {
 type Metadata struct {
 	Mode           string `json:"mode,omitempty"`           // ACP mode (e.g., "code", "ask", "architect")
 	ThinkingEffort string `json:"thinkingEffort,omitempty"` // Thinking effort level (e.g., "low", "medium", "high")
-	Transport      string `json:"transport,omitempty"`      // Backend transport type: "acp-stdio" or "cli"
+	Transport      string `json:"transport,omitempty"`      // Backend transport: "acp-stdio" or "in-process" (derived from the agent)
 	Model          string `json:"model,omitempty"`
 	// KBRefs are the knowledge-base passages prepended to this turn's prompt.
 	// Empty means the turn did not consult the knowledge base. Persisted with
@@ -285,10 +292,9 @@ const (
 	// spends the retry budget and writes a user+assistant row pair per attempt
 	// for a failure only the user can fix.
 	//
-	// Both transports report it, in different shapes: the CLI prints a
-	// `type:"error"` frame with `error.type == "provider.quota"`, while ACP
-	// returns a JSON-RPC error whose data carries `errorName: "provider.quota"`
-	// (see opencode_stream.go and isACPQuotaError).
+	// Only ACP reports it, in a JSON-RPC error whose data carries
+	// `errorName: "provider.quota"` (see opencode_stream.go and
+	// isACPQuotaError).
 	ReasonQuotaExhausted = "quota_exhausted"
 )
 
@@ -423,9 +429,12 @@ type ModelListState struct {
 	// Empty when the CLI list was unavailable at emit time; clients then fall
 	// back to Models.
 	ResolvedModels []model.AgentModel `json:"resolvedModels,omitempty"`
-	// CLIModels is the pure CLI-discovered list for the agent, so a client can
-	// render the CLI view after a transport switch without re-deriving it.
-	CLIModels []model.AgentModel `json:"cliModels,omitempty"`
+	// AgentID names the agent this state was resolved for. Only in-process
+	// backends set it: their list is derived per agent rather than collected
+	// over a handshake, and the derivation needs the agent to know which
+	// provider it is bound to. Consumers narrow with it so one agent's list can
+	// never be served for another. Empty for ACP state (the registry keys it).
+	AgentID string `json:"-"`
 }
 
 // ThinkingEffortState carries the current and available thinking effort levels for an ACP session.
@@ -482,12 +491,15 @@ type ConfigOptionState struct {
 // advertises Fast mode for models that support it, so an agent-level cache
 // would leak the toggle into sessions running a different model.
 type ExtraConfigOption struct {
-	ConfigID    string              `json:"configId"` // wire id, e.g. "fast-mode"
-	Name        string              `json:"name,omitempty"`
-	Description string              `json:"description,omitempty"`
-	Category    string              `json:"category"`       // e.g. "model_config"
-	CurrentID   string              `json:"currentValueId"` // empty when the agent reported none
-	Values      []ConfigOptionValue `json:"values,omitempty"`
+	ConfigID    string `json:"configId"` // wire id, e.g. "fast-mode"
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Category    string `json:"category"` // e.g. "model_config"
+	// Type is "select" (the default) or "boolean". A boolean option has no
+	// Values; CurrentID is "true" or "false".
+	Type      string              `json:"type,omitempty"`
+	CurrentID string              `json:"currentValueId,omitempty"` // empty when the agent reported none
+	Values    []ConfigOptionValue `json:"values,omitempty"`
 }
 
 // AvailableCommandInfo represents a slash command discovered from an ACP agent

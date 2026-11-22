@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	icon TEXT NOT NULL DEFAULT '',  -- deprecated: kept for SQLite <3.35 compat; not read or written
 	specialty TEXT NOT NULL DEFAULT '',
 	backend TEXT NOT NULL,
-	command TEXT NOT NULL DEFAULT '',
+	command TEXT NOT NULL DEFAULT '',  -- retired: CLI-transport binary override; never read or written
 	thinking_effort TEXT NOT NULL DEFAULT '',
 	thinking_effort_levels TEXT NOT NULL DEFAULT '[]',
 	preferred_mode TEXT NOT NULL DEFAULT '',
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	models TEXT NOT NULL DEFAULT '[]',
 	models_auto_detected INTEGER NOT NULL DEFAULT 0,
 	sort_order INTEGER NOT NULL DEFAULT 0,
-	transport TEXT NOT NULL DEFAULT 'cli',
+	transport TEXT NOT NULL DEFAULT '',  -- retired: derived from acp_command / builtin (model.Agent.DeriveTransport); kept for old DBs, never read or written
 	acp_command TEXT NOT NULL DEFAULT '',
 	acp_available_modes TEXT NOT NULL DEFAULT '[]',
 	acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',  -- legacy: no longer read or written (issue #637); per-model lists live in acp_thinking_efforts_by_model
@@ -126,12 +126,12 @@ CREATE INDEX IF NOT EXISTS idx_agents_sort ON agents(sort_order);
 // LoadAgentsFromDB loads all agents from the database and returns them sorted by ID.
 func LoadAgentsFromDB() ([]*model.Agent, error) {
 	rows, err := store.ReadDB().Query(`
-		SELECT id, name, specialty, backend, command,
+		SELECT id, name, specialty, backend,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected,
 			sort_order,
-			transport, acp_command, auto_approve, disabled, project_id,
+			acp_command, auto_approve, disabled, project_id,
 			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
 			skip_project_context
 		FROM agents ORDER BY id
@@ -149,12 +149,12 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		var projectID, providerID sql.NullInt64
 
 		err := rows.Scan(
-			&a.ID, &a.Name, &a.Specialty, &a.Backend, &a.Command,
+			&a.ID, &a.Name, &a.Specialty, &a.Backend,
 			&a.ThinkingEffort, &levelsJSON,
 			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
 			&a.CustomSystemPrompt, &a.Avatar, &a.AvatarStyle, &a.AvatarSeed, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
-			&a.Transport, &a.AcpCommand, &autoApprove, &disabled, &projectID,
+			&a.AcpCommand, &autoApprove, &disabled, &projectID,
 			&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON,
 			&skipProjectContext,
 		)
@@ -237,15 +237,15 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 	}
 
 	_, err = db.Exec(`
-		INSERT INTO agents (id, name, specialty, backend, command,
+		INSERT INTO agents (id, name, specialty, backend,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected,
 			sort_order,
-			transport, acp_command, auto_approve, disabled, project_id,
+			acp_command, auto_approve, disabled, project_id,
 			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
 			skip_project_context)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -263,7 +263,6 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			models = excluded.models,
 			models_auto_detected = excluded.models_auto_detected,
 			sort_order = excluded.sort_order,
-			transport = excluded.transport,
 			acp_command = excluded.acp_command,
 			auto_approve = excluded.auto_approve,
 			disabled = excluded.disabled,
@@ -343,27 +342,15 @@ func encodeAgentJSONColumns(agent *model.Agent) (agentJSONColumns, error) {
 // agentInsertArgs binds the INSERT column order of SaveAgent.
 func agentInsertArgs(agent *model.Agent, cols agentJSONColumns) []any {
 	return []any{
-		agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
+		agent.ID, agent.Name, agent.Specialty, agent.Backend,
 		agent.ThinkingEffort, cols.levels,
 		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.CustomSystemPrompt, agent.Avatar, agent.AvatarStyle, agent.AvatarSeed, cols.models, boolToInt(agent.ModelsAutoDetected),
 		agent.SortOrder,
-		agentTransportForSave(agent), agent.AcpCommand, boolToInt(agent.AutoApprove), boolToInt(agent.Disabled),
+		agent.AcpCommand, boolToInt(agent.AutoApprove), boolToInt(agent.Disabled),
 		nullableIDArg(agent.ProjectID), nullableIDArg(agent.ProviderID), cols.effortByModel,
 		cols.mcpServers, cols.toolPolicy, boolToInt(agent.SkipProjectContext),
 	}
-}
-
-// agentTransportForSave resolves the persisted transport, defaulting by command
-// shape when the caller left it empty.
-func agentTransportForSave(agent *model.Agent) string {
-	if agent.Transport != "" {
-		return agent.Transport
-	}
-	if agent.AcpCommand != "" {
-		return transportACPStdio
-	}
-	return transportCLI
 }
 
 // nullableIDArg binds a *int64 as SQL NULL when nil.
@@ -520,14 +507,13 @@ func GetAllAgentUsage() (map[string]AgentUsageCounts, error) {
 	return out, nil
 }
 
-// PatchAgent updates only the original user-editable fields (preferred_model, preferred_thinking_effort, transport).
-// Returns nil even if the agent doesn't exist (no rows affected).
-// Kept for backward compatibility — delegates to PatchAgentFields.
-func PatchAgent(id, preferredModel, preferredThinkingEffort, transport string) error {
+// PatchAgent updates only the original user-editable fields (preferred_model,
+// preferred_thinking_effort). Returns nil even if the agent doesn't exist (no
+// rows affected). Delegates to PatchAgentFields.
+func PatchAgent(id, preferredModel, preferredThinkingEffort string) error {
 	patch := AgentPatch{
 		PreferredModel:          &preferredModel,
 		PreferredThinkingEffort: &preferredThinkingEffort,
-		Transport:               &transport,
 	}
 	return PatchAgentFields(id, patch)
 }
@@ -542,12 +528,10 @@ type AgentPatch struct {
 	// user's effort pick for ONE model. Separate from PreferredThinkingEffort
 	// so a per-model pick never overwrites the model-independent default.
 	ThinkingEffortForModel *ThinkingEffortModelPatch
-	Transport              *string
-	// AcpCommand overrides the ACP spawn command. Only meaningful for
-	// transport=acp-stdio; a non-empty value is what makes SupportsACP() true,
-	// and the spawn path reads it straight from the agent (issue #557). The
-	// handler forces the transport in the same patch, so this can never leave
-	// an agent advertising ACP without a command.
+	// AcpCommand overrides the ACP spawn command. A non-empty value is what
+	// makes SupportsACP() true, and the spawn path reads it straight from the
+	// agent (issue #557). The transport is derived from it, so a command can
+	// never leave an agent advertising a transport it cannot run.
 	AcpCommand         *string
 	Name               *string
 	Specialty          *string
@@ -640,9 +624,6 @@ func buildAgentSetClauses(id string, patch AgentPatch) ([]string, []any, error) 
 		if f.value != nil {
 			addSet(f.column, *f.value)
 		}
-	}
-	if patch.Transport != nil {
-		addSet("transport", normalizeAgentTransport(*patch.Transport))
 	}
 	if patch.Name != nil {
 		if err := ensureAgentNameFree(id, *patch.Name); err != nil {
@@ -910,15 +891,6 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// normalizeAgentTransport maps an empty transport to the CLI default. Split out
-// of PatchAgentFields to keep its branch count in budget.
-func normalizeAgentTransport(transport string) string {
-	if transport == "" {
-		return transportCLI
-	}
-	return transport
-}
-
 // LoadAgentsIntoMemory loads agents from the database into the global
 // model.Agents map and model.AgentList, populating runtime-only fields and
 // composing each agent's system prompt.
@@ -969,7 +941,6 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		Name:                    newName,
 		Specialty:               source.Specialty,
 		Backend:                 source.Backend,
-		Command:                 source.Command,
 		ThinkingEffort:          source.ThinkingEffort,
 		ThinkingEffortLevels:    make([]string, len(source.ThinkingEffortLevels)),
 		PreferredMode:           source.PreferredMode,
@@ -979,7 +950,6 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		Avatar:                  source.Avatar,
 		AvatarStyle:             source.AvatarStyle,
 		AvatarSeed:              source.AvatarSeed,
-		Transport:               source.Transport,
 		AcpCommand:              source.AcpCommand,
 		SortOrder:               source.SortOrder,
 		AutoApprove:             source.AutoApprove,
@@ -1043,9 +1013,9 @@ const MaxAcpCommandBytes = 4096
 // that appears in no registry entry is never touched by that sync.
 //
 // Everything spec-derived then degrades exactly as it already does for the
-// built-in backends that ship without ACP mapping data: no CLI transport, no
-// model discovery, and LoadSession/ListSessions reported unsupported until the
-// agent advertises them itself.
+// built-in backends that ship without ACP mapping data: no local model
+// discovery, and LoadSession/ListSessions reported unsupported until the agent
+// advertises them itself.
 func CreateCustomACPAgent(name, acpCommand string) (*model.Agent, error) {
 	trimmed := strings.TrimSpace(acpCommand)
 	if trimmed == "" {
@@ -1059,7 +1029,6 @@ func CreateCustomACPAgent(name, acpCommand string) (*model.Agent, error) {
 		ID:         newAgentCopyID(model.CustomACPBackend),
 		Name:       name,
 		Backend:    model.CustomACPBackend,
-		Transport:  transportACPStdio,
 		AcpCommand: trimmed,
 		// Land at the end of the user's list instead of tying at 0 with every
 		// never-reordered agent (the tiebreak is the random ID, which would

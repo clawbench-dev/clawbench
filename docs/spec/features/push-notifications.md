@@ -126,6 +126,7 @@ sequenceDiagram
 
 - **Stream API 长连接**：`Manager`（`internal/push/dingtalk/manager.go`）通过钉钉 Stream SDK（`open-dingtalk/dingtalk-stream-sdk-go`）建立长轮询连接，注册 ChatBot 回调处理单聊消息
 - **Markdown 单聊消息**：`SendMarkdownMessage()`（`internal/push/dingtalk/sender.go`）调用 `/v1.0/robot/oToMessages/batchSend` API，以 `sampleMarkdown` 格式发送，4000 字符截断（`truncateForDingTalk`）
+- **标题必须同时写进正文**：钉钉的 `msgParam.title` 只用于会话列表预览，卡片本身只渲染 `msgParam.text`。所以正文顶部要自带 `### <标题>`（会话/任务推送由各自的正文构造器写，forge 正文本来就带；新邮件与用量提醒的正文只有列表/一句话，由 `PushMailEvent()` / `PushUsageMeterEvent()` 补），否则用户看到的卡片没有「收到 N 封新邮件」「用量超出计划」这类事件标题
 - **文案本地化**：推送后端跑在各自 goroutine（IM 回调 / 终态钩子）里，没有 HTTP 请求上下文，故与 `AutoContinue` 一样走 `common.T()` → `i18n.LocalizerForLocale(model.Language)`——语言取前端持久化到服务端的值，默认中文。**此前所有文案硬编码中文**，英文界面用户收到的机器人消息也是中文。缺键回退到键本身（可见而非空白）
 - **DB Outbox 可靠投递**：`PushSessionEvent()` / `PushTaskEvent()`（`internal/push/dingtalk/push.go`）遍历 DB 订阅者列表逐个发送。**当 WS 客户端在线时抑制推送**——避免重复通知。订阅者数据由 `internal/service/dingtalk_subscribers.go` 管理
 - **交互式命令**：用户在钉钉单聊中发 `@{短ID} 消息内容` 即可向对应会话发送消息。`handleSessionCommand()`（`internal/push/dingtalk/session_command.go`）解析短 ID、匹配运行中会话、入队消息。`handleSessionList()` 列出最近会话按项目分组。消息正文**保留多行**——解析正则使用 `(?s)` 内联标志使 `.` 匹配换行，否则 `@会话ID` 后的多行消息会被截断为第一行；钉钉与飞书共用 `ParseSessionCommand`，一处修复两边生效

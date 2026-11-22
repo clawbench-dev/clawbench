@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -27,7 +29,7 @@ func makeToolCallUpdate(toolCallID string, done bool) acp.SessionToolCallUpdate 
 	}
 	return acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId(toolCallID),
-		Status:     &status,
+		Status:     acptest.Patch(status),
 	}
 }
 
@@ -399,12 +401,12 @@ func TestHandleToolCallUpdate_RawInputMerging(t *testing.T) {
 
 	// First update with RawInput
 	tcu1 := makeToolCallUpdate("tool-1", false)
-	tcu1.RawInput = map[string]any{"file": "a.txt"}
+	tcu1.RawInput = acptest.PatchRaw(map[string]any{"file": "a.txt"})
 	d.handleToolCallUpdate(tcu1)
 
 	// Second update with new RawInput — should overwrite
 	tcu2 := makeToolCallUpdate("tool-1", false)
-	tcu2.RawInput = map[string]any{"file": "b.txt"}
+	tcu2.RawInput = acptest.PatchRaw(map[string]any{"file": "b.txt"})
 	d.handleToolCallUpdate(tcu2)
 
 	// Verify the pending entry has the latest rawInput
@@ -428,12 +430,12 @@ func TestHandleToolCallUpdate_RawInputNilPreserved(t *testing.T) {
 
 	// First update with RawInput
 	tcu1 := makeToolCallUpdate("tool-1", false)
-	tcu1.RawInput = map[string]any{"file": "a.txt"}
+	tcu1.RawInput = acptest.PatchRaw(map[string]any{"file": "a.txt"})
 	d.handleToolCallUpdate(tcu1)
 
 	// Second update without RawInput — should preserve existing
 	tcu2 := makeToolCallUpdate("tool-1", false)
-	tcu2.RawInput = nil
+	tcu2.RawInput = acp.Patch[json.RawMessage]{}
 	d.handleToolCallUpdate(tcu2)
 
 	d.mu.Lock()
@@ -463,7 +465,7 @@ func TestHandleToolCallUpdate_InputPreservedWhenNewEventLacksInput(t *testing.T)
 
 	// First update with rawInput (e.g., Read tool with file_path)
 	tcu1 := makeToolCallUpdate("tool-read-1", false)
-	tcu1.RawInput = map[string]any{"file_path": "/home/user/project/main.go"}
+	tcu1.RawInput = acptest.PatchRaw(map[string]any{"file_path": "/home/user/project/main.go"})
 	d.handleToolCallUpdate(tcu1)
 
 	// Verify the first pending event has input
@@ -477,7 +479,7 @@ func TestHandleToolCallUpdate_InputPreservedWhenNewEventLacksInput(t *testing.T)
 	// Second update WITHOUT rawInput (e.g., _meta.toolResponse update)
 	// This would previously zero out the input
 	tcu2 := makeToolCallUpdate("tool-read-1", false)
-	tcu2.RawInput = nil
+	tcu2.RawInput = acp.Patch[json.RawMessage]{}
 	d.handleToolCallUpdate(tcu2)
 
 	// After merge, input should be preserved
@@ -509,12 +511,12 @@ func TestHandleToolCallUpdate_InputOverwrittenWhenNewEventHasInput(t *testing.T)
 
 	// First update with rawInput
 	tcu1 := makeToolCallUpdate("tool-edit-1", false)
-	tcu1.RawInput = map[string]any{"file_path": "a.go", "old_string": "foo"}
+	tcu1.RawInput = acptest.PatchRaw(map[string]any{"file_path": "a.go", "old_string": "foo"})
 	d.handleToolCallUpdate(tcu1)
 
 	// Second update with NEW rawInput — should overwrite
 	tcu2 := makeToolCallUpdate("tool-edit-1", false)
-	tcu2.RawInput = map[string]any{"file_path": "b.go", "old_string": "bar"}
+	tcu2.RawInput = acptest.PatchRaw(map[string]any{"file_path": "b.go", "old_string": "bar"})
 	d.handleToolCallUpdate(tcu2)
 
 	// After merge, input should be from the second update
@@ -585,7 +587,7 @@ func TestHandleToolCallUpdate_ToolMetaPreservedWhenNewEventLacksMeta(t *testing.
 
 	// Second update without ToolMeta — should preserve existing
 	tcu2 := makeToolCallUpdate("tool-meta-1", false)
-	tcu2.RawInput = nil
+	tcu2.RawInput = acp.Patch[json.RawMessage]{}
 	d.handleToolCallUpdate(tcu2)
 
 	// After merge, ToolMeta should be preserved
@@ -658,8 +660,8 @@ func TestHandleToolCallUpdate_PreservesParentAcrossMerge(t *testing.T) {
 	status := acp.ToolCallStatusInProgress
 	tcu1 := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tool-sub"),
-		Status:     &status,
-		Meta:       map[string]any{"codebuddy.ai/parentToolCallId": "call_parent"},
+		Status:     acptest.Patch(status),
+		Meta:       acptest.PatchMeta(map[string]any{"codebuddy.ai/parentToolCallId": "call_parent"}),
 	}
 	d.handleToolCallUpdate(tcu1)
 
@@ -667,7 +669,7 @@ func TestHandleToolCallUpdate_PreservesParentAcrossMerge(t *testing.T) {
 	// carry only toolResponse/_meta without it). The merge must preserve it.
 	tcu2 := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("tool-sub"),
-		Status:     &status,
+		Status:     acptest.Patch(status),
 	}
 	d.handleToolCallUpdate(tcu2)
 

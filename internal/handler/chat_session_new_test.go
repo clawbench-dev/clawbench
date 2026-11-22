@@ -465,7 +465,10 @@ func TestServeAISessionUpdate_ModelID(t *testing.T) {
 	assert.Equal(t, "claude-sonnet-4-6", got)
 }
 
-func TestServeAISessionUpdate_TransportToCLI_ClosesACPConn(t *testing.T) {
+// A client that still sends `transport` must not tear down the ACP connection:
+// the field is accepted for compatibility and ignored, because every ACP agent
+// keeps running over ACP.
+func TestServeAISessionUpdate_TransportFieldIsIgnored(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -473,7 +476,7 @@ func TestServeAISessionUpdate_TransportToCLI_ClosesACPConn(t *testing.T) {
 	t.Cleanup(func() { model.Agents = origAgents })
 
 	model.Agents = map[string]*model.Agent{
-		"acp-agent": {ID: "acp-agent", Backend: "claude", Transport: "cli", AcpCommand: "claude --acp"},
+		"acp-agent": {ID: "acp-agent", Backend: "claude", Transport: "acp-stdio", AcpCommand: "claude --acp"},
 	}
 
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "patch-transport", "acp-agent", "", "default", "chat")
@@ -491,10 +494,10 @@ func TestServeAISessionUpdate_TransportToCLI_ClosesACPConn(t *testing.T) {
 	})
 	w := callHandler(ServeAISessionUpdate, req)
 	assertOK(t, w)
-	assert.Nil(t, mgr.GetConn(sessionID), "transport=cli should close the ACP connection")
+	assert.NotNil(t, mgr.GetConn(sessionID), "transport=cli must not close the ACP connection any more")
 }
 
-func TestServeAISessionUpdate_TransportNonCLI(t *testing.T) {
+func TestServeAISessionUpdate_TransportFieldAcceptsACP(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 

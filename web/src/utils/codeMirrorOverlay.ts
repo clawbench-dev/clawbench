@@ -14,13 +14,6 @@ export function diffLineClass(type: string): string {
     return `cm-diff-line-${type}`
 }
 
-/** A diff marker whose first line carries a clickable gutter label. */
-export interface DiffLineEntry {
-    marker: DiffMarker
-    /** 1-based first line of the marker group (anchor for the gutter label) */
-    line: number
-}
-
 /**
  * Build line decorations for diff markers plus char-flash marks in a single
  * ordered decoration set.

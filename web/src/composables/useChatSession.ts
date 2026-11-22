@@ -14,7 +14,7 @@ import { getRecentSession, clearRecentSession } from '@/composables/useRecentSes
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { discardPendingMessageNavigation } from '@/composables/useMessageNavigation'
 import { clearTeamState, updateTeamState } from '@/composables/useTeamState'
-import { useAgents, resetModelViewForTransport, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
+import { useAgents, restoreACPModelView, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
 import { resolveModelSelection } from '@/utils/modelSelection'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
@@ -368,17 +368,16 @@ export function useChatSession(options: UseChatSessionOptions) {
     // from the agent-level capability registry and returns them here.
     //
     // Prefer the backend-resolved list — it already applied ACP membership over
-    // the CLI skeleton, and cliModels comes with it for the transport switch.
-    // The raw `models` fallback covers a backend too old to send resolvedModels.
+    // the discovered skeleton. The raw `models` fallback covers an emit path
+    // with no model source to resolve against.
     const modelListState = sessionData.modelListState as {
       models?: Array<{ id: string; name: string }>
       resolvedModels?: Array<{ id: string; name: string; default: boolean }>
-      cliModels?: Array<{ id: string; name: string; default: boolean }>
       currentModelId?: string
     } | undefined
     if (currentAgentId.value) {
       if (modelListState?.resolvedModels && modelListState.resolvedModels.length > 0) {
-        applyResolvedModelList(currentAgentId.value, modelListState.resolvedModels, modelListState.cliModels)
+        applyResolvedModelList(currentAgentId.value, modelListState.resolvedModels)
       } else if (modelListState?.models && modelListState.models.length > 0) {
         updateACPModelList(currentAgentId.value, modelListState.models, modelListState.currentModelId)
       }
@@ -392,7 +391,6 @@ export function useChatSession(options: UseChatSessionOptions) {
       (sessionData.modeState as Record<string, unknown>)?.currentModeId as string || '',
       (sessionData.modeState as Record<string, unknown>)?.availableModes as Array<{id: string; name: string}> || [],
     )
-    syncTransportFromData(sessionData.transport as string)
     syncUsageFromData(sessionData.usageState as { used?: number; size?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }, returnedId)
     // (autoApprove / cruise are read back earlier, before the change-detection
     // early return — see the "Server-authoritative switch flags" block above.)
@@ -455,7 +453,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   const { currentSessionTitle, currentBackend, currentSessionType, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, cruise, modeState } = identity
 
   // ── Agents from singleton ──
-  const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()
+  const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, getAgentModel, getDefaultModelId, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()
 
   // Helper: sync model state from server data, preferring persisted modelId
   // over the agent default. Falls back to agent default when server has no model.
@@ -463,9 +461,18 @@ export function useChatSession(options: UseChatSessionOptions) {
   // Both sources are resolved against the agent's CURRENT list: a persisted id
   // the agent no longer offers (refreshed away) falls back to the new default
   // instead of keeping a dead id on the chip and shipping it on the next turn.
+  //
+  // With NO candidate at all the agent's own default is the candidate. That is
+  // not a merge guess, it is what the next turn will run: the server falls back
+  // to DefaultModelID() for an explicit-only binding (see resolveAgentConfig —
+  // the ACP case is the only one that leaves the model empty), and for the
+  // in-process agent the turn's model is DefaultModelID() outright. Resolving
+  // an empty candidate instead left the chip blank whenever the list was also
+  // empty at that moment (built-in agent + provider, chat_sessions.model = ''),
+  // which renders as the「默认」placeholder even though a concrete model runs.
   function syncModelFromData(agentId: string, modelIdFromServer: string) {
     const agent = getAgent(agentId)
-    const candidate = modelIdFromServer || identity.loadModelPref(agentId) || ''
+    const candidate = modelIdFromServer || identity.loadModelPref(agentId) || getDefaultModelId(agentId) || ''
     const { modelId, modelName } = resolveModelSelection(
       agent?.models || [],
       agent?.preferredModel || '',
@@ -488,17 +495,6 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   function syncModeFromData(modeIdFromServer?: string, availableModes?: Array<{id: string; name: string}>) {
     modeState.syncAndFallback(modeIdFromServer || '', availableModes || [], currentAgentId.value)
-  }
-
-  // Helper: sync transport from server data
-  // Falls back to agent's configured transport, defaulting to 'cli'.
-  function syncTransportFromData(transportFromServer?: string) {
-    if (transportFromServer) {
-      identity.currentTransport.value = transportFromServer
-    } else {
-      const agent = getAgent(currentAgentId.value)
-      identity.currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : 'cli')
-    }
   }
 
   // Helper: sync usage state from server data.
@@ -1066,14 +1062,12 @@ export function useChatSession(options: UseChatSessionOptions) {
     // Clear stale blockAskQuestions from previous session
     Object.keys(blockTasks).forEach(k => delete blockTasks[k])
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
-    // Reset the previous agent's model list to its own transport's view. ACP
-    // and CLI share the one `agent.models` field, so an unconditional "restore
-    // the CLI list" would leave an acp-stdio agent showing the CLI guess — the
-    // very list the backend withholds until the agent reports its own models.
-    // Must run BEFORE clearing currentAgentId so the old agent's models can be
-    // properly restored.
+    // Reset the previous agent's model list to the ACP-reported view: an ACP
+    // agent's discovered list is a guess the backend withholds until the agent
+    // reports its own models. Must run BEFORE clearing currentAgentId so the
+    // old agent can be found.
     const prevAgentId = _currentAgentId.value
-    if (prevAgentId) resetModelViewForTransport(prevAgentId)
+    if (prevAgentId) restoreACPModelView(prevAgentId)
     // Clear all identity refs and set currentSessionId to the target — avoids
     // flashing stale info during the async fetch. Will be repopulated from
     // the REST response. This also clears ACP state (mode/commands/thinking).

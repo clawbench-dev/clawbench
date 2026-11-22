@@ -11,7 +11,7 @@ import { createUnhandledRejectionHandler } from '@/utils/unhandledRejectionGuard
 
 // ── ResizeObserver polyfill for jsdom ──
 // jsdom does not implement ResizeObserver, but components like FileHeader and
-// FileManagerContent use useToolbarOverflow which creates one on mount.
+// ActionBar create one on mount.
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class ResizeObserver {
     constructor(_callback: ResizeObserverCallback) {

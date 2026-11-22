@@ -11,13 +11,12 @@ import {
   getPassword, savePassword, savePasswordFor, getPasswordFor, removePasswordFor,
   migratePasswords, getServersForRenderer, saveServerName,
 } from './secrets'
-import { getEmbeddedServerInfo, isEmbeddedServerUrl, setEmbeddedServerActive, startEmbeddedServer } from './localServer'
+import { getEmbeddedServerInfo, isEmbeddedServerUrl, setEmbeddedServerActive, startEmbeddedServer, stopEmbeddedServer } from './localServer'
 import { embeddedServerLabels, resolveNativeLanguage } from './labels'
 import { sameServerUrl } from './localServerPolicy'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel,
   getTransportPreference, getActiveTransport, initTransportPreference, persistTransportPreference } from './tunnel'
-import type { TransportPreference } from './transport'
 import {
   getMainWindow, createMainWindow, openSandboxWindow, showLoginPage,
   showSplashFor, dismissSplash, cancelSplash,
@@ -25,7 +24,7 @@ import {
   minimizeMainWindow, toggleMaximizeMainWindow, closeMainWindow, isMainWindowMaximized,
 } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob, cancelDownload } from './download'
-import { installFusedUpdate } from './fusedUpdate'
+import { installIntegratedUpdate } from './integratedUpdate'
 import { setKeepScreenOnImpl } from './powersave'
 import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification, dismissTerminalNotification } from './notification'
 import type { NotificationNav } from '../shared/types'
@@ -109,6 +108,13 @@ export function registerBridge(): void {
   // login page and the in-app switcher ask for it separately. `"null"` in a
   // thin build, where there is no such server.
   ipcMain.handle('native:get-embedded-server', () => JSON.stringify(getEmbeddedServerInfo()))
+  // Explicit stop for the background server (the login page's 本机服务 row).
+  // Quitting the shell leaves it running on purpose, so the UI must be able to
+  // end it without hunting for the process.
+  ipcMain.handle('native:stop-embedded-server', async () => {
+    await stopEmbeddedServer()
+    return JSON.stringify({ ok: true })
+  })
   ipcMain.handle('native:get-saved-server-config', () => {
     const u = getStore().get('serverUrl')
     if (!u) return '{}'
@@ -259,14 +265,14 @@ export function registerBridge(): void {
   // "download" installs the server's version (the gate stays up on failure).
   ipcMain.on('native:version-continue', () => continueVersionGate())
   ipcMain.on('native:version-download', () => { void downloadVersionFromGate() })
-  // Upgrading a fused ("all-in-one") install: the server reports the release's
+  // Upgrading an integrated ("integrated") install: the server reports the release's
   // package URLs (they are built server-side, next to the release-asset names),
   // and this side downloads and installs the whole package. Invoke rather than
   // send so the caller can keep a spinner up for the whole download.
   ipcMain.handle(
-    'native:install-fused-update',
+    'native:install-integrated-update',
     (_e, version: string, downloads: Record<string, string[]>, checksums: Record<string, string>) =>
-      installFusedUpdate(version, downloads, checksums, getMainWindow()),
+      installIntegratedUpdate(version, downloads, checksums, getMainWindow()),
   )
 
   ipcMain.handle('native:get-forwarded-ports', () => JSON.stringify(getForwardedPorts()))
@@ -299,7 +305,7 @@ export function registerBridge(): void {
   ipcMain.handle('native:cancel-download', (_e, downloadId: number) => { cancelDownload(downloadId) })
   ipcMain.handle('native:download-url', (_e, url: string, fileName: string) => downloadByUrl(url, fileName))
   ipcMain.handle('native:download-blob', (_e, b64: string, fileName: string) => downloadBlob(b64, fileName))
-  ipcMain.handle('native:open-in-browser', (_e, port: number, protocol: string, host: string, p: string) => {
+  ipcMain.handle('native:open-in-browser', (_e, port: number, protocol: string, _host: string, p: string) => {
     shell.openExternal(`${protocol}://localhost:${port}${p || '/'}`)
   })
   // Open an http(s) URL in the default browser. The renderer routes the
@@ -313,7 +319,7 @@ export function registerBridge(): void {
       void shell.openExternal(url)
     }
   })
-  ipcMain.handle('native:open-in-sandbox', (_e, port: number, protocol: string, host: string, p: string, sessionId?: string) => {
+  ipcMain.handle('native:open-in-sandbox', (_e, port: number, protocol: string, host: string, p: string, _sessionId?: string) => {
     openSandboxWindow(port, protocol, host, p)
   })
 
@@ -336,7 +342,7 @@ export function registerBridge(): void {
     return clipboard.readText()
   })
   ipcMain.handle('native:share-text', (_e, text: string) => { clipboard.writeText(text); return Promise.resolve() })
-  ipcMain.handle('native:share-file', async (_e, filePath: string, mime: string) => {
+  ipcMain.handle('native:share-file', async (_e, filePath: string, _mime: string) => {
     const name = path.basename(filePath)
     const tmp = path.join(os.tmpdir(), `clawbench-share-${Date.now()}-${name}`)
     await downloadFileByPathTo(filePath, tmp)
@@ -416,7 +422,7 @@ export function registerBridge(): void {
   // that would drop it.
   ipcMain.on('native:renderer-ready', () => markRendererReady())
   ipcMain.on('native:set-push-enabled', (_e, enabled: boolean) => getStore().set('nativePushEnabled', enabled))
-  ipcMain.on('native:update-last-seen', (_e, id: string) => { /* desktop has no SharedPreferences */ })
+  ipcMain.on('native:update-last-seen', (_e, _id: string) => { /* desktop has no SharedPreferences */ })
   ipcMain.on('native:keep-screen-on', (_e, on: boolean) => setKeepScreenOnImpl(on))
   // Normalise on read: an older build may have persisted a collapsed
   // 'dark'/'light', which matches no [data-theme] rule and would leave the

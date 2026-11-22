@@ -11,6 +11,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -169,19 +170,18 @@ func TestOpenClawModesMirrorThoughtLevelIsWired(t *testing.T) {
 // --- Input normalization ---
 
 // sharedRemapKeys are the remaps that must be IDENTICAL in both tables:
-// OpenClawACPInputRemaps (this package, wired into the generic flat remap) and
-// openClawACPBaseRemaps (internal/ai, used by the per-tool OpenClaw
-// normalizer). They live in different packages — internal/ai must not import
-// this one (cycle) — so nothing but this test keeps them aligned. A drift means
-// the same field is normalized two different ways depending on which code path
-// parsed the frame.
+// ai.GenericACPRemaps (the shared flat remap) and
+// openClawACPBaseRemaps (used by the per-tool OpenClaw normalizer). They are
+// separate tables by necessity (the base table must not remap dirPath into the
+// path it then remaps), so nothing but this test keeps the shared keys aligned.
+// A drift means the same field is normalized two different ways depending on
+// which code path parsed the frame.
 //
-// Deliberately NOT the whole table: OpenClawACPInputRemaps additionally carries
+// Deliberately NOT the whole table: the generic table additionally carries
 // dirPath/cellIndex/cellType, which the per-tool normalizer does not need.
 // `path` is also absent here — it is asserted separately below, because the two
 // tables must NOT agree on it (see the test after this one).
 var sharedRemapKeys = []string{
-	"filePath",
 	"oldString",
 	"newString",
 	"replaceAll",
@@ -192,16 +192,16 @@ func TestOpenClawRemapTablesAgreeOnSharedKeys(t *testing.T) {
 	require.NotEmpty(t, base, "the base table must not be empty")
 
 	for _, key := range sharedRemapKeys {
-		want, ok := OpenClawACPInputRemaps[key]
+		want, ok := ai.GenericACPRemaps[key]
 		require.True(t, ok,
-			"OpenClawACPInputRemaps must carry the shared key %q — the two tables "+
+			"ai.GenericACPRemaps must carry the shared key %q — the two tables "+
 				"are kept in sync by this test alone", key)
 		got, ok := base[key]
 		require.True(t, ok,
 			"openClawACPBaseRemaps must carry the shared key %q — the two tables "+
 				"are kept in sync by this test alone", key)
 		assert.Equal(t, want, got,
-			"remap %q diverges between the packages: OpenClawACPInputRemaps says %q, "+
+			"remap %q diverges between the packages: ai.GenericACPRemaps says %q, "+
 				"openClawACPBaseRemaps says %q", key, want, got)
 	}
 }
@@ -216,7 +216,7 @@ func TestOpenClawPathRemapLivesInTheBaseTableOnly(t *testing.T) {
 	assert.Equal(t, "file_path", base["path"],
 		"the per-tool base table must remap path — openclaw's tool set grows, and an "+
 			"unlisted tool carrying \"path\" would otherwise render a blank file header")
-	assert.NotContains(t, OpenClawACPInputRemaps, "path",
+	assert.NotContains(t, ai.GenericACPRemaps, "path",
 		"the flat table is applied blindly (no per-tool opt-out), so path→file_path "+
 			"there would blank the LS card; it belongs in the per-tool base table")
 }
@@ -297,7 +297,7 @@ func TestParseOpenClawToolCall(t *testing.T) {
 		ToolCallId: "call_abc",
 		Title:      "read: path: /a/b.go",
 		Kind:       acp.ToolKindRead,
-		RawInput:   map[string]any{"path": "/a/b.go"},
+		RawInput:   acptest.Raw(map[string]any{"path": "/a/b.go"}),
 	}
 	tool := parseOpenClawACPToolCall(tc)
 	require.NotNil(t, tool)
@@ -312,9 +312,9 @@ func TestParseOpenClawToolCallUpdate_Completed(t *testing.T) {
 	title := "exec: command: echo hi"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "call_abc",
-		Status:     &status,
-		Title:      &title,
-		RawInput:   map[string]any{"command": "echo hi"},
+		Status:     acptest.Patch(status),
+		Title:      acptest.Patch(title),
+		RawInput:   acptest.PatchRaw(map[string]any{"command": "echo hi"}),
 	}
 	tool := parseOpenClawACPToolCallUpdate(tcu)
 	require.NotNil(t, tool)
@@ -336,8 +336,8 @@ func TestParseOpenClawToolCallUpdate_DoesNotRenameOnCompletion(t *testing.T) {
 	title := "Reading the file now"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "call_abc",
-		Status:     &status,
-		Title:      &title,
+		Status:     acptest.Patch(status),
+		Title:      acptest.Patch(title),
 	}
 	tool := parseOpenClawACPToolCallUpdate(tcu)
 	require.NotNil(t, tool)

@@ -220,6 +220,9 @@ func PushForgeEvent(title, markdown string) bool {
 // PushUsageMeterEvent sends a DingTalk notification for a usage-meter threshold
 // crossing. Like PushForgeEvent, the wording is owned by the service layer;
 // this function only owns the transport and the push-mode gate.
+//
+// The title is repeated as a heading in the card body for the same reason as
+// PushMailEvent: msgParam.title only reaches the conversation-list preview.
 func PushUsageMeterEvent(title, markdown string) bool {
 	if !IsStarted() || db == nil {
 		return false
@@ -227,12 +230,18 @@ func PushUsageMeterEvent(title, markdown string) bool {
 	if title == "" || markdown == "" {
 		return false
 	}
-	return sendToAllSubscribers(title, markdown)
+	return sendToAllSubscribers(title, "### "+title+"\n\n"+markdown)
 }
 
 // PushMailEvent sends a DingTalk notification for newly arrived inbox mail.
 // Like PushForgeEvent, the wording is owned by the service layer; this function
 // only owns the transport and the push-mode gate.
+//
+// The title is repeated as a heading at the top of the card body. DingTalk only
+// uses msgParam.title for the conversation-list preview; the card itself
+// renders msgParam.text alone. A mail body is a bare "- subject" list, so
+// without this the card never says "收到 N 封新邮件". Session/task pushes get
+// the same heading from their own body builders; forge already includes one.
 func PushMailEvent(title, markdown string) bool {
 	if !IsStarted() || db == nil {
 		return false
@@ -240,5 +249,5 @@ func PushMailEvent(title, markdown string) bool {
 	if title == "" || markdown == "" {
 		return false
 	}
-	return sendToAllSubscribers(title, markdown)
+	return sendToAllSubscribers(title, "### "+title+"\n\n"+markdown)
 }

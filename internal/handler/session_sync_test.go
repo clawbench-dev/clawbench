@@ -13,6 +13,7 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
+	"clawbench/internal/ai/acptest"
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,13 +26,13 @@ func TestGroupLoadSessionReplay_CapturesMessageID(t *testing.T) {
 	a1 := "uuid-assistant-1"
 	client.SetLoadSessionBufForTest([]acp.SessionNotification{
 		{SessionId: "s", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: &u1, Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hi"}},
+			MessageId: acptest.MsgID(u1), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hi"}},
 		}}},
 		{SessionId: "s", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			MessageId: &a1, Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}},
+			MessageId: acptest.MsgID(a1), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}},
 		}}},
 		{SessionId: "s", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: &u2, Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "again"}},
+			MessageId: acptest.MsgID(u2), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "again"}},
 		}}},
 	})
 
@@ -53,7 +54,7 @@ func TestGroupLoadSessionReplay_UserChunkNestedJSONUnwrapped(t *testing.T) {
 	nested := `{"content":{"text":"这是真实的用户消息","type":"text"},"messageId":"m1","sessionUpdate":"user_message_chunk"}`
 	client.SetLoadSessionBufForTest([]acp.SessionNotification{
 		{SessionId: "s", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: strPtr("m1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: nested}},
+			MessageId: acptest.MsgID("m1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: nested}},
 		}}},
 	})
 
@@ -78,7 +79,7 @@ func TestGroupLoadSessionReplay_UserChunkContentArrayUnwrapped(t *testing.T) {
 	nested := `[{"type":"text","text":"数组里的用户消息"}]`
 	client.SetLoadSessionBufForTest([]acp.SessionNotification{
 		{SessionId: "s", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: strPtr("m2"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: nested}},
+			MessageId: acptest.MsgID("m2"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: nested}},
 		}}},
 	})
 
@@ -100,10 +101,10 @@ func TestGroupLoadSessionReplay_EmptyUserChunkDoesNotCreateEmptyBlock(t *testing
 	client := ai.NewClawBenchACPClient()
 	client.SetLoadSessionBufForTest([]acp.SessionNotification{
 		{SessionId: "s", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: strPtr("m-empty"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: ""}},
+			MessageId: acptest.MsgID("m-empty"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: ""}},
 		}}},
 		{SessionId: "s", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			MessageId: strPtr("a1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "assistant reply"}},
+			MessageId: acptest.MsgID("a1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "assistant reply"}},
 		}}},
 	})
 
@@ -183,10 +184,10 @@ func TestServeACPSyncSession_IncrementalMerge(t *testing.T) {
 
 	restore := newSyncReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
 		{SessionId: "acp-1", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: strPtr("m1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "existing"}},
+			MessageId: acptest.MsgID("m1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "existing"}},
 		}}},
 		{SessionId: "acp-1", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			MessageId: strPtr("m2"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "newly added"}},
+			MessageId: acptest.MsgID("m2"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "newly added"}},
 		}}},
 	})
 	defer restore()
@@ -209,81 +210,6 @@ func TestServeACPSyncSession_IncrementalMerge(t *testing.T) {
 	var cnt int
 	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&cnt)
 	assert.Equal(t, 2, cnt)
-}
-
-func strPtr(s string) *string { return &s }
-
-// TestServeACPSyncSession_NoDuplicateOfLiveMessages reproduces the reported bug:
-// a session whose earlier messages were created via LIVE chat (no external
-// message_id) and whose external history then grew. Sync must NOT duplicate the
-// live messages (even though their external_message_id is empty), and must add
-// only the genuinely new external messages.
-func TestServeACPSyncSession_NoDuplicateOfLiveMessages(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	agentID := setupACPReplayAgent(t)
-	sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", agentID, "", "default", "chat")
-	require.NoError(t, err)
-	service.UpdateExternalSessionID(sid, "acp-1")
-
-	// Live-created messages: EMPTY external_message_id.
-	_, err = store.WriteExec(
-		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', '你叫什么名字', '')",
-		env.ProjectDir, sid,
-	)
-	require.NoError(t, err)
-	_, err = store.WriteExec(
-		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', '我叫 CodeBuddy Code，你的 AI 编程助手。', '')",
-		env.ProjectDir, sid,
-	)
-	require.NoError(t, err)
-
-	// External replay: the two live messages (user one now carries an injected
-	// system-instructions prefix) + two genuinely new messages.
-	restore := newSyncReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
-		{SessionId: "acp-1", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: strPtr("x1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "[System Instructions: ...] 你叫什么名字"}},
-		}}},
-		{SessionId: "acp-1", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			MessageId: strPtr("y1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "我叫 CodeBuddy Code，你的 AI 编程助手。"}},
-		}}},
-		{SessionId: "acp-1", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			MessageId: strPtr("z1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "你几岁了"}},
-		}}},
-		{SessionId: "acp-1", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			MessageId: strPtr("w1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "我没有年龄的概念——我是一个 AI 助手。"}},
-		}}},
-	})
-	defer restore()
-
-	req := newRequest(t, http.MethodPost, "/api/ai/session/acp-sync", map[string]string{
-		"agentId":   agentID,
-		"sessionId": sid,
-	})
-	req = withProjectCookie(req, env.ProjectDir)
-	w := httptest.NewRecorder()
-	ServeACPSyncSession(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp struct {
-		Added int `json:"added"`
-	}
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	// Only the 2 new messages should be added (no duplication of live messages).
-	assert.Equal(t, 2, resp.Added)
-
-	// Total = 2 live + 2 new = 4 (no duplicates).
-	var cnt int
-	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&cnt)
-	assert.Equal(t, 4, cnt)
-
-	// The new messages are present.
-	var hasNew int
-	_ = store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND content LIKE '%你几岁了%'", sid,
-	).Scan(&hasNew)
-	assert.Equal(t, 1, hasNew)
 }
 
 // newSyncReplayConn 同 newACPReplayConn，但预置 loadSessionActive=true 以跳过

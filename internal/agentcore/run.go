@@ -14,7 +14,6 @@ package agentcore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -52,6 +51,18 @@ type Spec struct {
 	WorkDir string
 	// Policy decides which tools exist at all.
 	Policy model.ToolPolicy
+	// ExtraTools are tools supplied by the caller — MCP servers today, whose
+	// names all start with tools.MCPNamePrefix. They are appended to the
+	// capability-derived list, so they travel the same declaration, event and
+	// result path without this package knowing where they came from.
+	//
+	// A sub-agent inherits them (childSpec copies Spec), which is intended: a
+	// delegated task often needs the same external tools.
+	ExtraTools []tools.Tool
+	// ToolNotes explains tools that could not be attached, one line each (for
+	// example an MCP server that failed to start). They reach the model so a
+	// missing capability is explained rather than silently absent.
+	ToolNotes []string
 	// Depth is how many delegation levels deep this run is. 0 is the top-level
 	// turn; a sub-agent runs at Depth+1. At maxSubagentDepth the task tool is
 	// not registered at all, so recursion stops by absence rather than by a
@@ -68,6 +79,14 @@ type Spec struct {
 	ThinkingEffort string
 	// MaxOutputTokens caps one model reply. Zero uses the client's default.
 	MaxOutputTokens int
+	// PromptParts are extra parts appended to THIS turn's user message, after
+	// its text. Only images use it: an attached picture must reach the model as
+	// a picture, and the prompt text alone only names the file.
+	//
+	// Deliberately not part of History: earlier turns are replayed without their
+	// images, so a long conversation does not re-send every screenshot on every
+	// turn.
+	PromptParts []llm.Part
 	// Timeout bounds the whole run. Zero means no extra bound beyond ctx.
 	Timeout time.Duration
 
@@ -234,16 +253,7 @@ const (
 	StopComplete     = "complete"
 	StopMaxRounds    = "max_rounds"
 	StopMaxToolCalls = "max_tool_calls"
-	StopTimeout      = "timeout"
-	StopCancelled    = "cancelled"
 	StopError        = "error"
-)
-
-// Errors surfaced as terminal events.
-var (
-	// ErrNoToolsConfigured means the policy granted no capabilities, so the
-	// model can only talk. That is a valid configuration, not a failure.
-	ErrNoToolsConfigured = errors.New("no tools are enabled")
 )
 
 // Run executes one turn, streaming events on the returned channel.
@@ -432,9 +442,13 @@ func (r *runner) run(ctx context.Context) {
 	if r.spec.PriorSummary != "" {
 		r.messages = append([]llm.Message{compaction.SummaryMessage(r.spec.PriorSummary)}, r.messages...)
 	}
-	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, r.spec.Prompt))
+	promptMsg := llm.TextMessage(llm.RoleUser, r.spec.Prompt)
+	if len(r.spec.PromptParts) > 0 {
+		promptMsg.Parts = append(promptMsg.Parts, r.spec.PromptParts...)
+	}
+	r.messages = append(r.messages, promptMsg)
 
-	system := buildSystemPrompt(r.spec.SystemPrompt, r.spec.WorkDir, r.toolList, r.spec.Policy)
+	system := buildSystemPrompt(r.spec.SystemPrompt, r.spec.WorkDir, r.toolList, r.spec.Policy, r.spec.ToolNotes)
 	r.system = system
 
 	env := tools.Env{
@@ -611,6 +625,20 @@ func (r *runner) buildTools() {
 	// the tool's ABSENCE, matching the rest of the safety model.
 	if r.canDelegate() {
 		r.toolList = append(r.toolList, &taskTool{r: r})
+	}
+	// Caller-supplied tools come last. A name that already exists is dropped
+	// rather than appended: providers reject duplicate declarations, and the
+	// built-in tool is the one whose behavior this package guarantees.
+	seen := make(map[string]bool, len(r.toolList))
+	for _, t := range r.toolList {
+		seen[t.Name()] = true
+	}
+	for _, t := range r.spec.ExtraTools {
+		if t == nil || t.Name() == "" || seen[t.Name()] {
+			continue
+		}
+		seen[t.Name()] = true
+		r.toolList = append(r.toolList, t)
 	}
 	for _, t := range r.toolList {
 		r.toolIndex[t.Name()] = t

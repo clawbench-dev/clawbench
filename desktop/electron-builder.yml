@@ -37,14 +37,13 @@ files:
 win:
   target: dir
   icon: build/icon.png
-  # The ClawBench server this app starts by itself (the "all-in-one" build).
-  # Built by scripts/build-server.mjs at prebuild time; see src/main/localServer.ts
-  # for the lifecycle. Windows-only on purpose: Linux/macOS packages keep using
-  # the login page and a server elsewhere.
+  # The ClawBench server this app starts by itself (the integrated package,
+  # 整合包). Built by scripts/build-server.mjs at prebuild time; see
+  # src/main/localServer.ts for the lifecycle.
   #
   # extraFiles, NOT extraResources: it lands at the app root (next to the
   # executable), outside `resources/`. That keeps the thin package's `resources/`
-  # from carrying the ~150MB server. The release job zips the fused package
+  # from carrying the ~150MB server. The release job zips the integrated package
   # before stripping `server/` for the thin one.
   extraFiles:
     - from: assets/server
@@ -62,6 +61,13 @@ win:
 mac:
   target: dir
   icon: build/icon.icns
+  # NO extraFiles here, unlike Windows/Linux. A macOS app bundle is code-signed
+  # over its whole tree: putting the server inside `Contents/` and then stripping
+  # it for the thin package would invalidate the signature of BOTH packages. The
+  # integrated zip therefore carries `server/` as a SIBLING of `ClawBench.app`
+  # (inside the `mac-arm64/` wrapper), and localServerPolicy.ts looks one level
+  # above the bundle. The bundle itself stays byte-identical to the thin one.
+  #
   # TCC usage descriptions. Without these macOS kills the app the moment it asks
   # for the microphone or the screen — and it does so WITHOUT showing a prompt,
   # which makes the failure look like "capture silently does nothing".
@@ -74,3 +80,7 @@ mac:
 linux:
   target: dir
   icon: build/icon.png
+  # Same embedded server; lands next to the executable, like Windows.
+  extraFiles:
+    - from: assets/server
+      to: server

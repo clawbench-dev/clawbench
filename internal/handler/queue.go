@@ -313,7 +313,6 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		Files     []model.FileEntry `json:"files"`
 		AgentID   string            `json:"agentId"`
 		ModelID   string            `json:"modelId"`
-		Transport string            `json:"transport"`
 		ClientID  string            `json:"clientId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -377,7 +376,6 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		Files:          validatedFiles,
 		QueueID:        req.QueueID,
 		ModelID:        req.ModelID,
-		Transport:      req.Transport,
 		SenderClientID: req.ClientID,
 	})
 	if err != nil {
@@ -405,7 +403,7 @@ func validateQueueAgentOverride(w http.ResponseWriter, r *http.Request, agentID,
 	if agentID == "" {
 		return true
 	}
-	if _, _, _, _, agentOK := resolveAgentConfig(agentID); !agentOK {
+	if _, _, _, agentOK := resolveAgentConfig(agentID); !agentOK {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentID")
 		return false
 	}

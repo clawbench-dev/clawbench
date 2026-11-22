@@ -150,7 +150,6 @@ icon: "\\U0001F916"
 id: acp-mock
 name: ACP Mock Agent
 specialty: E2E Testing (ACP)
-transport: acp-stdio
 acp_command: ${tempAcpMockBinPath}
 preferred_model: mock-pro
 models:
@@ -174,7 +173,6 @@ icon: "\\U0001F916"
 id: acp-mock-b
 name: ACP Mock Agent B
 specialty: E2E Testing (ACP, member)
-transport: acp-stdio
 acp_command: ${tempAcpMockBinPath}
 preferred_model: mock-pro
 models:

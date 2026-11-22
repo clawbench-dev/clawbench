@@ -78,3 +78,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// ACP 协议库改为仓内副本，来源与改动规则见 third_party/acp-go-sdk/FORK.md。
+replace github.com/coder/acp-go-sdk => ./third_party/acp-go-sdk

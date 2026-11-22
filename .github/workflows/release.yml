@@ -300,6 +300,15 @@ jobs:
           generate_release_notes: false
           files: pkg-linux/clawbench-linux-amd64-${{ env.RELEASE_TAG }}.zip
 
+      - name: Upload server for the desktop build
+        # The integrated desktop package embeds THIS binary, so it is uploaded
+        # raw (not inside the user-facing zip) and downloaded by the desktop job.
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-server
+          path: clawbench-linux
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v4
         with:
           name: linux-package
@@ -373,6 +382,13 @@ jobs:
         with:
           generate_release_notes: false
           files: pkg-linux-arm64/clawbench-linux-arm64-${{ env.RELEASE_TAG }}.zip
+
+      - name: Upload server for the desktop build
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-server
+          path: clawbench-linux-arm64
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
@@ -570,6 +586,13 @@ jobs:
           generate_release_notes: false
           files: pkg-mac-arm64/clawbench-darwin-arm64-${{ env.RELEASE_TAG }}.zip
 
+      - name: Upload server for the desktop build
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-server
+          path: clawbench-darwin-arm64
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64-package
@@ -632,6 +655,13 @@ jobs:
         with:
           generate_release_notes: false
           files: pkg-mac-amd64/clawbench-darwin-amd64-${{ env.RELEASE_TAG }}.zip
+
+      - name: Upload server for the desktop build
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-amd64-server
+          path: clawbench-darwin-amd64
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
@@ -829,7 +859,10 @@ jobs:
     # Gate on lint + tests like every other build job. Without this the
     # desktop packages were the only ones that could reach npm while the
     # rest of the release was still failing its checks.
-    needs: [test, client-guard]
+    #
+    # build-linux is here for the embedded server: the integrated package ships
+    # the SAME binary the standalone package does.
+    needs: [test, client-guard, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -887,12 +920,36 @@ jobs:
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('desktop/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('desktop/package.json',JSON.stringify(p,null,2)+'\n')"
           echo "desktop version set to $VERSION"
 
+      - name: Download the embedded server (Linux x64)
+        # Unconditional: the integrated package must exist even when the shell
+        # is reused from a previous tag. The shell is reused; the server is not.
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-server
+          path: clawbench-server/linux-x64/
+
+      - name: Normalize the embedded server name (Linux x64)
+        # The artifact keeps its build-time filename; scripts/build-server.mjs
+        # and the assembly step both expect the app's own `clawbench` name.
+        run: |
+          mv clawbench-server/linux-x64/clawbench-linux clawbench-server/linux-x64/clawbench
+          chmod +x clawbench-server/linux-x64/clawbench
+
       - name: Build desktop (Linux)
         if: env.NEEDS_BUILD == 'true'
         run: |
           cd desktop
           npm ci
           npm run build
+
+      - name: Strip the server for the thin package (Linux)
+        if: env.NEEDS_BUILD == 'true'
+        # Keeping the ~150MB binary here would silently turn every Linux
+        # desktop install into the integrated one. The integrated package is
+        # assembled from this zip plus the server artifact.
+        run: |
+          rm -rf desktop/release/linux-unpacked/server
+          test ! -e desktop/release/linux-unpacked/server
 
       - name: Zip desktop (Linux)
         if: env.NEEDS_BUILD == 'true'
@@ -907,22 +964,49 @@ jobs:
           cd desktop/release/linux-unpacked
           zip -r "../clawbench-desktop-linux-x64-${RELEASE_TAG}.zip" .
 
+      - name: Assemble integrated desktop (Linux)
+        # Thin zip + `server/clawbench` at the app root. Assembled from the zip
+        # so a reused shell (no unpacked directory) still gets a package.
+        run: |
+          rm -rf desktop/release/integrated-linux
+          mkdir -p desktop/release/integrated-linux
+          cd desktop/release/integrated-linux
+          unzip -q "../clawbench-desktop-linux-x64-${RELEASE_TAG}.zip"
+          mkdir -p server
+          cp "$GITHUB_WORKSPACE/clawbench-server/linux-x64/clawbench" server/clawbench
+          chmod +x server/clawbench
+          zip -r "../clawbench-desktop-linux-x64-local-${RELEASE_TAG}.zip" .
+          cd ..
+          rm -rf integrated-linux
+
+      - name: Verify integrated package (Linux)
+        run: |
+          unzip -l "desktop/release/clawbench-desktop-linux-x64-local-${RELEASE_TAG}.zip" \
+            | grep -q "server/clawbench" || {
+              echo "::error::integrated package is missing server/clawbench" >&2
+              exit 1
+            }
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
+          files: |
+            desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-linux-x64-local-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux-zip
-          path: desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
+          path: |
+            desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-linux-x64-local-${{ env.RELEASE_TAG }}.zip
 
   build-desktop-linux-arm64:
     name: Build Desktop Linux arm64
     # Gate on lint + tests like every other build job. Without this the
     # desktop packages were the only ones that could reach npm while the
     # rest of the release was still failing its checks.
-    needs: [test, client-guard]
+    needs: [test, client-guard, build-linux-arm64]
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: write
@@ -980,12 +1064,29 @@ jobs:
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('desktop/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('desktop/package.json',JSON.stringify(p,null,2)+'\n')"
           echo "desktop version set to $VERSION"
 
+      - name: Download the embedded server (Linux arm64)
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-arm64-server
+          path: clawbench-server/linux-arm64/
+
+      - name: Normalize the embedded server name (Linux arm64)
+        run: |
+          mv clawbench-server/linux-arm64/clawbench-linux-arm64 clawbench-server/linux-arm64/clawbench
+          chmod +x clawbench-server/linux-arm64/clawbench
+
       - name: Build desktop (Linux arm64)
         if: env.NEEDS_BUILD == 'true'
         run: |
           cd desktop
           npm ci
           npm run build -- --arm64
+
+      - name: Strip the server for the thin package (Linux arm64)
+        if: env.NEEDS_BUILD == 'true'
+        run: |
+          rm -rf desktop/release/linux-arm64-unpacked/server
+          test ! -e desktop/release/linux-arm64-unpacked/server
 
       - name: Zip desktop (Linux arm64)
         if: env.NEEDS_BUILD == 'true'
@@ -994,15 +1095,40 @@ jobs:
           cd desktop/release/linux-arm64-unpacked
           zip -r "../clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip" .
 
+      - name: Assemble integrated desktop (Linux arm64)
+        run: |
+          rm -rf desktop/release/integrated-linux-arm64
+          mkdir -p desktop/release/integrated-linux-arm64
+          cd desktop/release/integrated-linux-arm64
+          unzip -q "../clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip"
+          mkdir -p server
+          cp "$GITHUB_WORKSPACE/clawbench-server/linux-arm64/clawbench" server/clawbench
+          chmod +x server/clawbench
+          zip -r "../clawbench-desktop-linux-arm64-local-${RELEASE_TAG}.zip" .
+          cd ..
+          rm -rf integrated-linux-arm64
+
+      - name: Verify integrated package (Linux arm64)
+        run: |
+          unzip -l "desktop/release/clawbench-desktop-linux-arm64-local-${RELEASE_TAG}.zip" \
+            | grep -q "server/clawbench" || {
+              echo "::error::integrated package is missing server/clawbench" >&2
+              exit 1
+            }
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
+          files: |
+            desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-linux-arm64-local-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux-arm64-zip
-          path: desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
+          path: |
+            desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-linux-arm64-local-${{ env.RELEASE_TAG }}.zip
 
   build-desktop-windows:
     name: Build Desktop Windows
@@ -1059,13 +1185,13 @@ jobs:
           go-version: '1.25'
 
       - name: Download the embedded server
-        # NOT conditional on NEEDS_BUILD: the fused package must exist for every
-        # release, including one that reuses the previous desktop shell. The
-        # shell is reused; the server is always this release's build.
+        # NOT conditional on NEEDS_BUILD: the integrated package must exist for
+        # every release, including one that reuses the previous desktop shell.
+        # The shell is reused; the server is always this release's build.
         uses: actions/download-artifact@v4
         with:
           name: windows-server
-          path: clawbench-server/
+          path: clawbench-server/win32-x64/
 
       - name: Set desktop version from tag
         if: env.NEEDS_BUILD == 'true'
@@ -1096,7 +1222,7 @@ jobs:
         if: env.NEEDS_BUILD == 'true'
         # The thin package connects to a server elsewhere. Keeping the 150MB
         # binary here would silently turn every Windows desktop install into the
-        # embedded one. The fused package is assembled from this zip plus the
+        # embedded one. The integrated package is assembled from this zip plus the
         # server artifact below, so both variants are produced on every release
         # — including the ones where the desktop shell itself is reused from a
         # previous tag.
@@ -1119,11 +1245,11 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path desktop/release/win-unpacked/* -DestinationPath "desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip"
 
-      - name: Assemble fused desktop (Windows)
-        # Thin zip + the server at the app root = the "all-in-one" package. Doing
+      - name: Assemble integrated desktop (Windows)
+        # Thin zip + the server at the app root = the integrated package. Doing
         # it from the zip (rather than the unpacked dir) is what lets a release
-        # that REUSED the previous shell still ship a fused package: the shell is
-        # byte-identical to the thin one, only `server/` differs.
+        # that REUSED the previous shell still ship an integrated package: the
+        # shell is byte-identical to the thin one, only `server/` differs.
         #
         # .NET's ZipFile, not Compress-Archive: the latter's `*` glob skips
         # hidden entries, and `resources/` contains dotfiles (cpu-features'
@@ -1132,15 +1258,15 @@ jobs:
         run: |
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $thin = "$PWD/desktop/release/clawbench-desktop-windows-x64-$env:RELEASE_TAG.zip"
-          $fusedDir = "$PWD/desktop/release/fused-unpacked"
+          $integratedDir = "$PWD/desktop/release/integrated-unpacked"
           $out = "$PWD/desktop/release/clawbench-desktop-windows-x64-local-$env:RELEASE_TAG.zip"
-          if (Test-Path $fusedDir) { Remove-Item -Recurse -Force $fusedDir }
+          if (Test-Path $integratedDir) { Remove-Item -Recurse -Force $integratedDir }
           if (Test-Path $out) { Remove-Item -Force $out }
-          [System.IO.Compression.ZipFile]::ExtractToDirectory($thin, $fusedDir)
-          New-Item -ItemType Directory -Force -Path "$fusedDir/server" | Out-Null
-          Copy-Item "$PWD/clawbench-server/clawbench.exe" "$fusedDir/server/clawbench.exe"
-          [System.IO.Compression.ZipFile]::CreateFromDirectory($fusedDir, $out)
-          Remove-Item -Recurse -Force $fusedDir
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($thin, $integratedDir)
+          New-Item -ItemType Directory -Force -Path "$integratedDir/server" | Out-Null
+          Copy-Item "$PWD/clawbench-server/win32-x64/clawbench.exe" "$integratedDir/server/clawbench.exe"
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($integratedDir, $out)
+          Remove-Item -Recurse -Force $integratedDir
 
       - name: Verify full package (Windows)
         if: env.NEEDS_BUILD == 'true'
@@ -1156,21 +1282,22 @@ jobs:
             Write-Host "full package OK: $($names.Count) entries"
           } finally { $zip.Dispose() }
 
-      - name: Verify fused package (Windows)
-        # Runs on BOTH paths: the fused package is assembled unconditionally, so
-        # a release that reused the shell still has one to check.
+      - name: Verify integrated package (Windows)
+        # Runs on BOTH paths: the integrated package is assembled unconditionally,
+        # so a release that reused the shell still has one to check.
         #
-        # The fused package is the one feature that is invisible until launch:
-        # without the binary the app opens to an error dialog every time. Assert
-        # the server is at the archive root (extraFiles), not under resources/.
+        # The integrated package is the one feature that is invisible until
+        # launch: without the binary the app opens to an error dialog every
+        # time. Assert the server is at the archive root (extraFiles), not
+        # under resources/.
         shell: pwsh
         run: |
           $zip = [System.IO.Compression.ZipFile]::OpenRead("$PWD/desktop/release/clawbench-desktop-windows-x64-local-$env:RELEASE_TAG.zip")
           try {
             $names = $zip.Entries | ForEach-Object { $_.FullName }
-            if ($names -notcontains 'server/clawbench.exe') { throw 'fused package is missing server/clawbench.exe' }
-            if ($names -contains 'resources/server/clawbench.exe') { throw 'fused package put the server under resources/' }
-            Write-Host "fused package OK: $($names.Count) entries"
+            if ($names -notcontains 'server/clawbench.exe') { throw 'integrated package is missing server/clawbench.exe' }
+            if ($names -contains 'resources/server/clawbench.exe') { throw 'integrated package put the server under resources/' }
+            Write-Host "integrated package OK: $($names.Count) entries"
           } finally { $zip.Dispose() }
 
       - uses: softprops/action-gh-release@v2
@@ -1192,7 +1319,10 @@ jobs:
     # Gate on lint + tests like every other build job. Without this the
     # desktop packages were the only ones that could reach npm while the
     # rest of the release was still failing its checks.
-    needs: [test, client-guard]
+    #
+    # The two server jobs are here for the embedded server: one integrated
+    # package per architecture, each shipping its own matching binary.
+    needs: [test, client-guard, build-macos-arm64, build-macos-amd64]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -1273,6 +1403,27 @@ jobs:
             echo "CSC_KEY_PASSWORD=$MAC_CERT_PASSWORD" >> "$GITHUB_ENV"
           fi
 
+      - name: Download the embedded servers (macOS)
+        # Both architectures, unconditionally: the integrated packages must
+        # exist even when the shell is reused from a previous tag.
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-arm64-server
+          path: clawbench-server/darwin-arm64/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-amd64-server
+          path: clawbench-server/darwin-x64/
+
+      - name: Normalize the embedded server names (macOS)
+        # Artifacts keep their build-time filenames; the app expects
+        # `server/clawbench` in each architecture's directory.
+        run: |
+          mv clawbench-server/darwin-arm64/clawbench-darwin-arm64 clawbench-server/darwin-arm64/clawbench
+          mv clawbench-server/darwin-x64/clawbench-darwin-amd64 clawbench-server/darwin-x64/clawbench
+          chmod +x clawbench-server/darwin-arm64/clawbench clawbench-server/darwin-x64/clawbench
+
       - name: Build desktop (macOS arm64 + x64)
         if: env.NEEDS_BUILD == 'true'
         # CSC_LINK is only set when the MAC_CERT secret exists (see step above).
@@ -1307,19 +1458,74 @@ jobs:
           # not `mac-x64/` — only non-default archs get an arch suffix.
           zip -r "clawbench-desktop-darwin-x64-${RELEASE_TAG}.zip" mac
 
+      - name: Assemble integrated desktop (macOS)
+        # `server/` is a SIBLING of ClawBench.app, not inside it: a macOS bundle
+        # is code-signed over its whole tree, so adding a file under Contents/
+        # (and stripping it again for the thin package) would invalidate the
+        # signature of both packages. The thin zip is the signed bundle alone;
+        # the integrated zip adds the server next to it.
+        #
+        # Do NOT add `zip -y`: the desktop installer's extractor writes every
+        # entry as a regular file, so symlinks must be dereferenced here (the
+        # thin zip has always been built the same way).
+        run: |
+          cd desktop/release
+
+          rm -rf integrated-darwin-arm64
+          unzip -q "clawbench-desktop-darwin-arm64-${RELEASE_TAG}.zip" -d integrated-darwin-arm64
+          # Inside the `mac-arm64/` wrapper, next to ClawBench.app. The installer
+          # strips the single top-level wrapper, leaving the bundle and server/
+          # side by side in the install directory.
+          mkdir -p integrated-darwin-arm64/mac-arm64/server
+          cp "$GITHUB_WORKSPACE/clawbench-server/darwin-arm64/clawbench" integrated-darwin-arm64/mac-arm64/server/clawbench
+          chmod +x integrated-darwin-arm64/mac-arm64/server/clawbench
+          # Ad-hoc sign the server: it is a separate executable outside the
+          # signed bundle, and an unsigned child is what Gatekeeper refuses on
+          # first launch. Ad-hoc is enough here (the app itself is ad-hoc unless
+          # MAC_CERT is configured).
+          codesign --force --sign - integrated-darwin-arm64/mac-arm64/server/clawbench
+          ( cd integrated-darwin-arm64 && zip -r "../clawbench-desktop-darwin-arm64-local-${RELEASE_TAG}.zip" mac-arm64 )
+          rm -rf integrated-darwin-arm64
+
+          rm -rf integrated-darwin-x64
+          unzip -q "clawbench-desktop-darwin-x64-${RELEASE_TAG}.zip" -d integrated-darwin-x64
+          mkdir -p integrated-darwin-x64/mac/server
+          cp "$GITHUB_WORKSPACE/clawbench-server/darwin-x64/clawbench" integrated-darwin-x64/mac/server/clawbench
+          chmod +x integrated-darwin-x64/mac/server/clawbench
+          codesign --force --sign - integrated-darwin-x64/mac/server/clawbench
+          ( cd integrated-darwin-x64 && zip -r "../clawbench-desktop-darwin-x64-local-${RELEASE_TAG}.zip" mac )
+          rm -rf integrated-darwin-x64
+
+      - name: Verify integrated packages (macOS)
+        run: |
+          unzip -l "desktop/release/clawbench-desktop-darwin-arm64-local-${RELEASE_TAG}.zip" \
+            | grep -q "server/clawbench" || {
+              echo "::error::arm64 integrated package is missing server/clawbench" >&2
+              exit 1
+            }
+          unzip -l "desktop/release/clawbench-desktop-darwin-x64-local-${RELEASE_TAG}.zip" \
+            | grep -q "server/clawbench" || {
+              echo "::error::x64 integrated package is missing server/clawbench" >&2
+              exit 1
+            }
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
           files: |
             desktop/release/clawbench-desktop-darwin-arm64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-darwin-arm64-local-${{ env.RELEASE_TAG }}.zip
             desktop/release/clawbench-desktop-darwin-x64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-darwin-x64-local-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-macos-zip
           path: |
             desktop/release/clawbench-desktop-darwin-arm64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-darwin-arm64-local-${{ env.RELEASE_TAG }}.zip
             desktop/release/clawbench-desktop-darwin-x64-${{ env.RELEASE_TAG }}.zip
+            desktop/release/clawbench-desktop-darwin-x64-local-${{ env.RELEASE_TAG }}.zip
 
   desktop-checksums:
     name: Desktop checksums

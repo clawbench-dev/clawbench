@@ -32,9 +32,12 @@
         @click.stop="$emit('open-agent-config', speaker.agentId)"
       >
         <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
+        <span class="msg-speaker-name">{{ speaker.name }}</span>
       </button>
-      <AgentIcon v-else :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
-      <span class="msg-speaker-name">{{ speaker.name }}</span>
+      <template v-else>
+        <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
+        <span class="msg-speaker-name">{{ speaker.name }}</span>
+      </template>
       <RealAgentNameTag class="msg-speaker-real" :agent-name="speaker.agentName" :display-name="speaker.name" />
       <!-- Auto-cruise completion badge: this speaker declared the goal met
            (<clawbench-goal-satisfied/>) in this message. A per-message fact, so
@@ -1935,26 +1938,44 @@ const copyPayload = quotableText
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
-/* The avatar doubles as the entry point to the agent's config page. It wraps
-   only the icon, so it must carry no button chrome of its own — the size is the
-   icon's, and the whole control is the touch target. Hover raises the icon to
-   signal it is interactive. */
+/* The avatar AND the name are the entry point to the agent's config page,
+   wrapped in one button so the hit area matches what reads as a single label
+   (an avatar that opens config next to a name that does nothing is a split
+   target the eye cannot see). The button carries no chrome: it inherits the
+   row's gap for the icon/name spacing, and hover only underlines the name —
+   the avatar keeps its own subtle curve so it still reads as a face. */
 .msg-speaker-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
   padding: 0;
   border: none;
   background: none;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   transition: opacity var(--duration-fast) ease;
-}
-.msg-speaker-btn:hover {
-  opacity: 0.8;
 }
 .msg-speaker-btn:active {
   opacity: 0.6;
+}
+@media (hover: hover) {
+  .msg-speaker-btn:hover .msg-speaker-name {
+    color: var(--accent-color, #0066cc);
+    text-decoration: underline;
+  }
+}
+/* A long agent name must not push the host/goal badges out of the row. The
+   button is a flex item of `.msg-speaker`, so it has to shrink itself, and the
+   name (the only text in it) ellipsises once there is no room. */
+.msg-speaker-btn .msg-speaker-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* .msg-speaker-real (the real-agent disclosure chip) is styled by the shared
    RealAgentNameTag component; no override needed here. */

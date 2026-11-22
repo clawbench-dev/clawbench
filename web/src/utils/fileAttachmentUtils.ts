@@ -193,6 +193,31 @@ export function buildSendPayload(
 }
 
 /**
+ * Build the payload for retrying a previously sent user message.
+ *
+ * Retrying used to replay ONLY the message text, which silently dropped every
+ * uploaded image/file: the message reached the backend as bare text and the
+ * model had nothing to look at. The attachments are already persisted with the
+ * message, so their paths are replayed as-is — the backend resolves them
+ * without re-uploading, so no `_1` duplicate copy appears.
+ *
+ * Returns null when there is nothing to resend (no text and no attachments).
+ * Text-less messages are the common case here — an image sent on its own — and
+ * a truthiness check on the text alone used to skip them, making the retry
+ * button appear to do nothing.
+ */
+export function buildRetryPayload(
+  content: string | null | undefined,
+  files: (string | FileEntry)[] | null | undefined,
+): { text: string; allFiles: FileEntry[]; filePaths: string[] } | null {
+  const replay = (files || []).map(f => normalizeFileEntry(f))
+  const { allFiles, filePaths } = buildSendPayload([], replay)
+  const text = content || ''
+  if (!text && allFiles.length === 0) return null
+  return { text, allFiles, filePaths }
+}
+
+/**
  * Split attachments into the two backend channels.
  *
  * The backend cross-deduplicates: a `Files` entry whose path is also in

@@ -4,64 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	acp "github.com/coder/acp-go-sdk"
-
 	"clawbench/internal/ai"
 )
-
-// parsePiToolCallEnd extracts a tool_use ai.ToolCall from a Pi toolcall_end event.
-// Pi toolcall_end provides the complete tool arguments (Done=true).
-// Tool name is normalized via normalizeToolName; input field names are
-// remapped using the provided remap table. The edit tool uses normalizePiEditInput
-// for its nested edits array structure.
-func parsePiToolCallEnd(evt *PiAssistantMessageEvent, remaps map[string]string) *ai.ToolCall {
-	if evt.ToolCall == nil {
-		return nil
-	}
-
-	tc := evt.ToolCall
-	normalizedInput := normalizePiToolInput(tc.Name, tc.Arguments, remaps)
-
-	return &ai.ToolCall{
-		Name:  ai.NormalizeToolName(tc.Name),
-		ID:    tc.ID,
-		Input: normalizedInput,
-		Done:  true,
-	}
-}
-
-// parsePiToolExecutionEnd extracts a tool_result ai.ToolCall from a Pi tool_execution_end event.
-// Returns nil if toolCallId is empty. Output text is extracted from result.content[].text
-// (joined with newline for multiple items) and truncated via truncateToolOutput.
-func parsePiToolExecutionEnd(msg *PiStreamMessage) *ai.ToolCall {
-	if msg.ToolCallID == "" {
-		return nil
-	}
-
-	var outputText string
-	if msg.Result != nil {
-		var parts []string
-		for _, c := range msg.Result.Content {
-			if c.Type == "text" && c.Text != "" {
-				parts = append(parts, c.Text)
-			}
-		}
-		if len(parts) > 0 {
-			outputText = strings.Join(parts, "\n")
-		}
-	}
-
-	status := "success"
-	if msg.IsError {
-		status = "error"
-	}
-
-	return &ai.ToolCall{
-		ID:     msg.ToolCallID,
-		Output: ai.TruncateToolOutput(outputText),
-		Status: status,
-	}
-}
 
 // normalizePiToolInput normalizes tool input for Pi tool calls.
 // For the edit tool, it uses normalizePiEditInput for nested edits array handling.
@@ -118,53 +62,17 @@ func normalizePiACPInput(toolName string, rawInput []byte) string {
 	if len(rawInput) == 0 {
 		return "{}"
 	}
-	return normalizePiToolInput(toolName, json.RawMessage(rawInput), piACPBaseRemaps)
+	return normalizePiToolInput(toolName, json.RawMessage(rawInput), PiACPInputRemaps)
 }
 
-// piACPBaseRemaps is the remap table used by the ACP path. It matches the CLI's
-// PiInputRemaps so both transports normalize identically. Kept as a separate
-// value (rather than importing backends/pi, which would be an import cycle)
-// because internal/ai must not depend on backend sub-packages.
-var piACPBaseRemaps = map[string]string{
-	"path": "file_path",
-}
-
-// parsePiACPToolCall extracts a ai.ToolCall from a Pi ACP tool_call event.
-func parsePiACPToolCall(tc acp.SessionUpdateToolCall) *ai.ToolCall {
-	tool := &ai.ToolCall{
-		Name: ai.ExtractToolName(tc.Title, tc.Kind, "pi", string(tc.ToolCallId)),
-		ID:   string(tc.ToolCallId),
-		Done: false,
-	}
-	if tc.RawInput != nil {
-		if inputBytes, err := json.Marshal(tc.RawInput); err == nil {
-			tool.Input = normalizePiACPInput(piACPToolNameForInput(tc.Title), inputBytes)
-		}
-	}
-	return tool
-}
-
-// parsePiACPToolCallUpdate extracts a ai.ToolCall from a Pi ACP tool_call_update.
-func parsePiACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
-	tool := &ai.ToolCall{ID: string(tcu.ToolCallId)}
-	ai.MapToolCallStatus(tcu.Status, tool)
-	if tcu.RawInput != nil {
-		if inputBytes, err := json.Marshal(tcu.RawInput); err == nil {
-			title := ""
-			if tcu.Title != nil {
-				title = *tcu.Title
-			}
-			tool.Input = normalizePiACPInput(piACPToolNameForInput(title), inputBytes)
-		}
-	} else {
-		ai.MapToolCallInput(tcu, tool, "pi")
-	}
-	ai.MapToolCallName(tcu, tool, "pi")
-	if tool.Done {
-		ai.MapToolCallOutput(tcu, tool)
-	}
-	return tool
-}
+// The call/update sequence is shared with openclaw (see
+// ai.NewNormalizingToolCallParser); pi supplies only the tool-name reader and
+// the normalizer.
+var (
+	parsePiACPToolCall, parsePiACPToolCallUpdate = ai.NewNormalizingToolCallParser(
+		"pi", piACPToolNameForInput, normalizePiACPInput,
+	)
+)
 
 // piACPToolNameForInput returns the raw Pi tool name used to select the
 // normalization branch. Pi's ACP title is the bare tool name ("edit", "read"),

@@ -238,10 +238,9 @@ func TestRefreshAgents_SyncsACPCommandFromSpec(t *testing.T) {
 	_, err = RefreshAgents(db, RefreshOptions{SkipDiscovery: true})
 	require.NoError(t, err)
 
-	var acpCommand, transport string
-	require.NoError(t, db.QueryRow("SELECT acp_command, transport FROM agents WHERE id = 'acp'").Scan(&acpCommand, &transport))
+	var acpCommand string
+	require.NoError(t, db.QueryRow("SELECT acp_command FROM agents WHERE id = 'acp'").Scan(&acpCommand))
 	assert.Equal(t, "acp-server --stdio", acpCommand, "a newly available ACP command must be recorded")
-	assert.Equal(t, "acp-stdio", transport, "transport must follow the ACP command")
 }
 
 func TestRefreshAgents_ClearsRemovedACPCommand(t *testing.T) {
@@ -259,10 +258,9 @@ func TestRefreshAgents_ClearsRemovedACPCommand(t *testing.T) {
 	_, err = RefreshAgents(db, RefreshOptions{SkipDiscovery: true})
 	require.NoError(t, err)
 
-	var acpCommand, transport string
-	require.NoError(t, db.QueryRow("SELECT acp_command, transport FROM agents WHERE id = 'gone'").Scan(&acpCommand, &transport))
+	var acpCommand string
+	require.NoError(t, db.QueryRow("SELECT acp_command FROM agents WHERE id = 'gone'").Scan(&acpCommand))
 	assert.Empty(t, acpCommand, "a removed ACP command must be cleared, not left stale")
-	assert.Equal(t, "cli", transport, "transport must fall back when ACP is withdrawn")
 }
 
 func TestRefreshAgents_PersistsDiscoveredModelsForAutoManagedAgents(t *testing.T) {
@@ -526,23 +524,22 @@ func TestCustomACPAgent_CommandSurvivesDiscoverySync(t *testing.T) {
 	// error.
 	for _, spec := range GetBackendRegistry() {
 		var count int
-		var existingAcpCommand, existingTransport string
+		var existingAcpCommand string
 		require.NoError(t, db.QueryRow(
-			"SELECT COUNT(*), COALESCE(acp_command, ''), COALESCE(transport, '') FROM agents WHERE backend = ?",
+			"SELECT COUNT(*), COALESCE(acp_command, '') FROM agents WHERE backend = ?",
 			spec.Backend,
-		).Scan(&count, &existingAcpCommand, &existingTransport))
+		).Scan(&count, &existingAcpCommand))
 		if count == 0 {
 			continue
 		}
-		syncAgentInfrastructure(db, spec, existingAcpCommand, existingTransport)
+		syncAgentInfrastructure(db, spec, existingAcpCommand)
 	}
 
-	var gotCmd, gotTransport string
+	var gotCmd string
 	require.NoError(t, db.QueryRow(
-		"SELECT acp_command, transport FROM agents WHERE id = 'custom-1'",
-	).Scan(&gotCmd, &gotTransport))
+		"SELECT acp_command FROM agents WHERE id = 'custom-1'",
+	).Scan(&gotCmd))
 	assert.Equal(t, customCmd, gotCmd, "the discovery sync must not touch a custom ACP agent's command")
-	assert.Equal(t, "acp-stdio", gotTransport)
 }
 
 // The counter-case: a row carrying a REGISTERED backend id IS overwritten by the
@@ -561,12 +558,12 @@ func TestRegisteredBackend_CommandIsOverwrittenByDiscoverySync(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	var existingAcpCommand, existingTransport string
+	var existingAcpCommand string
 	require.NoError(t, db.QueryRow(
-		"SELECT COALESCE(acp_command, ''), COALESCE(transport, '') FROM agents WHERE backend = ?",
+		"SELECT COALESCE(acp_command, '') FROM agents WHERE backend = ?",
 		spec.Backend,
-	).Scan(&existingAcpCommand, &existingTransport))
-	require.True(t, syncAgentInfrastructure(db, *spec, existingAcpCommand, existingTransport))
+	).Scan(&existingAcpCommand))
+	require.True(t, syncAgentInfrastructure(db, *spec, existingAcpCommand))
 
 	var gotCmd string
 	require.NoError(t, db.QueryRow(
@@ -751,7 +748,7 @@ func TestSyncAgentInfrastructure_NoChangeReturnsFalse(t *testing.T) {
 	_, err := db.Exec(`INSERT INTO agents (id, name, backend, transport, acp_command) VALUES ('same', 'Same', 'b', 'acp-stdio', 'cmd')`)
 	require.NoError(t, err)
 
-	updated := syncAgentInfrastructure(db, BackendSpec{Backend: "b", AcpCommand: "cmd"}, "cmd", "acp-stdio")
+	updated := syncAgentInfrastructure(db, BackendSpec{Backend: "b", AcpCommand: "cmd"}, "cmd")
 
 	assert.False(t, updated, "no drift means no write")
 }

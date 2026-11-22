@@ -24,15 +24,8 @@ import (
 // as a marker for orphan detection.
 const OrphanChildEnvVar = "CLAWBENCH_CHILD=1"
 
-// orphanCmdlinePatterns are patterns that identify an orphan ACP agent process
-// by its command line. Each pattern is a pair of (binarySubstring, argSubstring).
-// Both must be present in the cmdline for a match. Used as a fallback when
-// env markers are missing.
-var orphanCmdlinePatterns = [][2]string{
-	{"codebuddy", "--acp"},
-	{"claude", "--acp"},
-	{"codex", "app-server"},
-}
+// orphanCmdlinePatterns live in orphan_patterns.go: each backend declares its
+// own shape in its plugin registration.
 
 // CleanupOrphans kills any AI subprocess left running after a previous
 // server crash. Called once at startup, before any new subprocesses spawn.
@@ -258,8 +251,8 @@ func hasClawBenchChildMarker(environData []byte) bool {
 // between arguments. Both the binary substring and arg substring must match.
 func hasOrphanCmdlinePattern(cmdData []byte) bool {
 	cmdStr := strings.ReplaceAll(string(cmdData), "\x00", " ")
-	for _, pattern := range orphanCmdlinePatterns {
-		if strings.Contains(cmdStr, pattern[0]) && strings.Contains(cmdStr, pattern[1]) {
+	for _, pattern := range orphanCmdlinePatterns() {
+		if strings.Contains(cmdStr, pattern.Binary) && strings.Contains(cmdStr, pattern.Arg) {
 			return true
 		}
 	}

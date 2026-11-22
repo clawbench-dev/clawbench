@@ -15,6 +15,10 @@ export interface MathEntry {
 // eslint-disable-next-line no-control-regex -- NUL bytes are intentional placeholder delimiters
 export const MATH_PH_RE = /\x00MATH([DI])(\d+)\x00/g
 
+// A backslash can start a TeX command inside \(...\). Stop at the next
+// delimiter, without pairing an unfinished opener with a later formula.
+export const PAREN_MATH_RE = /\\\(((?:[^\\\n]|\\[^()\n])+)\\\)/g
+
 /** Placeholder for a pre-extracted inline/fenced code segment: \x01CODE<n>\x01 */
 // eslint-disable-next-line no-control-regex -- SOH bytes are intentional placeholder delimiters
 export const CODE_PH_RE = /\x01CODE(\d+)\x01/g
@@ -106,7 +110,7 @@ export function protectMarkdown(markdown: string): ProtectResult {
     })
 
     // 2d. Inline math: \(...\)
-    result = result.replace(/\\\(([^\\\n]+?)\\\)/g, (_whole, math) => {
+    result = result.replace(PAREN_MATH_RE, (_whole, math) => {
         mathEntries.push({ math: math.trim(), displayMode: false })
         return ph(false)
     })

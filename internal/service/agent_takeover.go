@@ -129,8 +129,6 @@ func anySessionOfAgentRunning(ctx context.Context, q rowQueryer, agentID string,
 //	agent_source           'default' — nobody picked this agent for this row.
 //	model                  model ids are per-backend; the old id would be
 //	                       rejected (or silently mis-resolved) by the new one.
-//	transport              a session-level CLI/ACP override describes the OLD
-//	                       agent; the replacement's own transport must win.
 //	external_session_id    the native session belongs to a process that is
 //	                       gone. Clearing it makes the next turn rebuild the
 //	                       context from chat_history (see BuildChatRequest).
@@ -181,16 +179,14 @@ func DeleteAgentWithTakeover(old *model.Agent, replacement *model.Agent) (AgentT
 // chat_history.
 //
 // The native session id only means something to the process that issued it, so
-// "same AI backend" is the necessary condition and the command/transport are the
-// sufficient ones:
+// "same AI backend" is the necessary condition and the command is the
+// sufficient one:
 //
 //   - different backend        → different CLI/adapter, different session store.
 //   - same backend, CLI        → same binary, same store; the id is still valid.
 //   - same backend, ACP        → the session lives inside whatever process the
 //     ACP command starts, so two custom ACP agents that both call themselves
 //     "custom-acp" do NOT share it. The command must match as well.
-//   - different transport      → a CLI session id handed to an ACP adapter (or
-//     the reverse) is a namespace mismatch; the pool would fail the resume.
 //
 // Reusing keeps the conversation's real context (no 100k-char re-injection, no
 // loss of tool history). What it does NOT carry over is the agent's own system
@@ -203,10 +199,7 @@ func canReuseNativeSession(old, replacement *model.Agent) bool {
 	if old.Backend == "" || old.Backend != replacement.Backend {
 		return false
 	}
-	if old.AcpCommand != replacement.AcpCommand {
-		return false
-	}
-	return old.Transport == replacement.Transport
+	return old.AcpCommand == replacement.AcpCommand
 }
 
 // deleteAgentTakeoverTx performs the whole rewrite under one transaction and
@@ -279,21 +272,14 @@ func deleteAgentTakeoverTx(old *model.Agent, replacement *model.Agent, reuseNati
 	// (ShouldInjectSystemPrompt is false on resume), so the replacement's own
 	// instructions would never reach the model on backends that only inject on a
 	// fresh session. The flag is consumed by exactly one turn.
-	//
-	// The `transport = ''` half of both CASEs reads the OLD row value (SQLite
-	// evaluates every SET expression against the pre-update row): a session with
-	// its own transport override may have established its native session in the
-	// OTHER mode (CLI id vs ACP id), which the replacement cannot resume. Only
-	// sessions that followed the agent's own transport are safe to keep.
 	_, err = tx.ExecContext(ctx, `
 		UPDATE chat_sessions SET
 			agent_id = ?,
 			backend = ?,
 			agent_source = 'default',
 			model = '',
-			transport = '',
-			external_session_id = CASE WHEN ? AND transport = '' THEN external_session_id ELSE '' END,
-			compacted = CASE WHEN ? AND transport = '' THEN 1 ELSE compacted END,
+			external_session_id = CASE WHEN ? THEN external_session_id ELSE '' END,
+			compacted = CASE WHEN ? THEN 1 ELSE compacted END,
 			agent_takeover_from = ?,
 			context_state = CASE
 				WHEN context_state IS NULL OR context_state = '' THEN '{}'

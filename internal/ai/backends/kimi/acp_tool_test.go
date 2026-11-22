@@ -3,6 +3,7 @@ package kimi
 import (
 	"testing"
 
+	"clawbench/internal/ai/acptest"
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 )
@@ -49,10 +50,10 @@ func TestParseKimiACPToolCallUpdate(t *testing.T) {
 	t.Run("completed with content", func(t *testing.T) {
 		tcu := acp.SessionToolCallUpdate{
 			ToolCallId: "read_file-1780629348181-1",
-			Status:     &completed,
-			Content: []acp.ToolCallContent{
+			Status:     acptest.Patch(completed),
+			Content: acptest.Patch([]acp.ToolCallContent{
 				acp.ToolContent(acp.TextBlock("file contents here")),
-			},
+			}),
 		}
 		result := parseACPToolCallUpdate(tcu)
 		assert.True(t, result.Done)
@@ -63,10 +64,10 @@ func TestParseKimiACPToolCallUpdate(t *testing.T) {
 	t.Run("orphan completed update without prior tool_call", func(t *testing.T) {
 		tcu := acp.SessionToolCallUpdate{
 			ToolCallId: "orphan_call_001",
-			Status:     &completed,
-			Content: []acp.ToolCallContent{
+			Status:     acptest.Patch(completed),
+			Content: acptest.Patch([]acp.ToolCallContent{
 				acp.ToolContent(acp.TextBlock("result text")),
-			},
+			}),
 		}
 		result := parseACPToolCallUpdate(tcu)
 		assert.True(t, result.Done)
@@ -106,9 +107,9 @@ func TestParseKimiACPToolCallUpdate_InProgressWithTitle(t *testing.T) {
 	title := "read_file-1780629348181-1"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "read_file-1780629348181-1",
-		Title:      &title,
-		Status:     &inProgress,
-		Locations:  []acp.ToolCallLocation{{Path: "/tmp/test.go"}},
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(inProgress),
+		Locations:  acptest.Patch([]acp.ToolCallLocation{{Path: "/tmp/test.go"}}),
 	}
 	result := parseACPToolCallUpdate(tcu)
 	assert.False(t, result.Done)
@@ -119,7 +120,7 @@ func TestParseKimiACPToolCallUpdate_InProgressNoTitle(t *testing.T) {
 	inProgress := acp.ToolCallStatusInProgress
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "unknown-call-id",
-		Status:     &inProgress,
+		Status:     acptest.Patch(inProgress),
 	}
 	result := parseACPToolCallUpdate(tcu)
 	assert.False(t, result.Done)
@@ -132,10 +133,10 @@ func TestParseKimiACPToolCallUpdate_LocationsExtracted(t *testing.T) {
 	kind := acp.ToolKindRead
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "read_file-1780629348181-1",
-		Title:      &title,
-		Status:     &inProgress,
-		Kind:       &kind,
-		Locations:  []acp.ToolCallLocation{{Path: "/src/main.go"}},
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(inProgress),
+		Kind:       acptest.Patch(kind),
+		Locations:  acptest.Patch([]acp.ToolCallLocation{{Path: "/src/main.go"}}),
 	}
 	result := parseACPToolCallUpdate(tcu)
 	assert.False(t, result.Done)
@@ -171,11 +172,11 @@ func TestParseKimiACPToolCallUpdate_DoneWithContent(t *testing.T) {
 	title := "read_file-1780629348181-30"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "read_file-1780629348181-30",
-		Title:      &title,
-		Status:     &completed,
-		Content: []acp.ToolCallContent{
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(completed),
+		Content: acptest.Patch([]acp.ToolCallContent{
 			acp.ToolContent(acp.TextBlock("file content here")),
-		},
+		}),
 	}
 	result := parseACPToolCallUpdate(tcu)
 	assert.True(t, result.Done)

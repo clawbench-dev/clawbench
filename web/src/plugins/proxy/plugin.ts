@@ -4,6 +4,7 @@ import { usePortForward } from '@/composables/usePortForward'
 import { getNative } from '@/utils/clawbenchNative'
 import { portForwardUnavailable } from '@/utils/portForwardUtils'
 import type { DockPlugin } from '@/composables/dockPluginTypes'
+import { category as settingsCategory } from './settings'
 
 const { sshInfo, sshInfoResolved, transportAllowsH2 } = usePortForward()
 
@@ -24,7 +25,7 @@ export default {
   group: 'project',
   closable: true,
   capability: 'portForward',
-  settingsCategory: 'portForward',
+  settingsCategory,
   icon: Network,
   settingsPage: {
     group: 'dockModules',

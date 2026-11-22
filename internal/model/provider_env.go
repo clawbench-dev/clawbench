@@ -46,6 +46,30 @@ type ProviderEnvSpec struct {
 	// ConfigProtocols lists the protocols a ConfigOnly backend's file format
 	// can express (e.g. codex understands OpenAI wire APIs only).
 	ConfigProtocols []string
+	// ConfigFileTarget is the config file this backend reads its provider from,
+	// relative to the user's home (".codex/config.toml"), or "" when it declares
+	// none.
+	//
+	// Declared here rather than in a switch in model.ProviderConfigPaths so a
+	// new config-file backend only edits its own registration: the mapping used
+	// to live there behind `if backendID == "codex"`, which meant a second such
+	// backend got a nil path list and had its binding silently do nothing.
+	ConfigFileTarget string
+	// ConfigFileApply writes the provider into that file, and ConfigFileRestore
+	// puts the user's own settings back.
+	//
+	// Two hooks rather than one because restoring is not the inverse of a fresh
+	// write: these backends EDIT a file the user (and possibly another tool)
+	// already owns, so undoing our change needs its own record of what was
+	// there. The shared layer owns the lock, the file write and the sequencing;
+	// the format and the bookkeeping are the backend's, because only it knows
+	// what its own file means.
+	//
+	// A backend that declares ConfigOnly but no applier cannot be given a
+	// provider: the writer refuses instead of reporting success on a file it
+	// never touched.
+	ConfigFileApply   func(p *Provider) error
+	ConfigFileRestore func() error
 
 	// ConfigDirEnv names the environment variable that relocates this backend's
 	// whole config directory (kimi's KIMI_SHARE_DIR, pi's PI_CODING_AGENT_DIR,
@@ -85,6 +109,26 @@ type ProviderEnvSpec struct {
 	// disk in clear text. The file is 0600 inside ClawBench's data directory,
 	// which is where the key already lives in the database.
 	ConfigDirSecretInFile bool
+	// UserConfigDir is the path of the backend's own config directory,
+	// relative to the user's home, that ClawBench symlinks the per-agent copy
+	// back to (".kimi", ".pi/agent", ".codebuddy", ".claude").
+	//
+	// Declared here rather than in a switch in internal/service so that a new
+	// relocatable backend only edits its own registration: the service layer
+	// used to keep this mapping, which meant forgetting it produced a silent
+	// "no symlinks" directory and a login-less CLI.
+	//
+	// Empty means the backend's config dir is not under the user's home; in that
+	// case the per-agent directory is created empty and nothing is linked.
+	UserConfigDir string
+	// ConfigDirRender renders the file ClawBench owns inside that directory
+	// from the bound provider.
+	//
+	// The format is the CLI's own, so it belongs beside the backend that reads
+	// it. A backend that declares ConfigDirEnv/ConfigDirFile but no renderer
+	// cannot be given a provider: the writer refuses instead of leaving a file
+	// the CLI would misread.
+	ConfigDirRender func(p *Provider) ([]byte, error)
 
 	// OwnServiceEnv names the variable a config-directory backend reads
 	// when a provider carries NO endpoint. Such a provider means the backend's
@@ -185,6 +229,24 @@ func providerEnvSpecs() []ProviderEnvSpec {
 	out := make([]ProviderEnvSpec, 0, len(providerEnvRegistry))
 	for _, spec := range providerEnvRegistry {
 		out = append(out, spec)
+	}
+	return out
+}
+
+// ConfigFileBackends lists the backends that declare a config FILE (as opposed
+// to a config directory), in no particular order.
+//
+// Callers use it to reconcile every such backend without naming one: a restart
+// must undo a stale provider block for every config-file backend, not only the
+// one that happens to be hard-coded at the call site.
+func ConfigFileBackends() []string {
+	providerEnvMu.RLock()
+	defer providerEnvMu.RUnlock()
+	var out []string
+	for id, spec := range providerEnvRegistry {
+		if spec.ConfigOnly && spec.ConfigFileTarget != "" {
+			out = append(out, id)
+		}
 	}
 	return out
 }
@@ -517,6 +579,20 @@ func ProviderConfigDirFile(backendID string) string {
 	return spec.ConfigDirFile
 }
 
+// ProviderConfigFileHooks returns the backend's config-FILE writer and restorer.
+//
+// (nil, nil) means the backend declares no such hooks — either it does not use a
+// config file at all, or it declares one without a writer, which the caller must
+// treat as an error rather than a no-op: a binding persisted on top of a file
+// nobody wrote is a binding the CLI never learns about.
+func ProviderConfigFileHooks(backendID string) (apply func(p *Provider) error, restore func() error) {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok {
+		return nil, nil
+	}
+	return spec.ConfigFileApply, spec.ConfigFileRestore
+}
+
 // ProviderConfigSecretInFile reports whether the backend's config file forces
 // the API key to be written in clear text (no ${ENV} reference syntax).
 func ProviderConfigSecretInFile(backendID string) bool {
@@ -539,6 +615,38 @@ func ProviderConfigProviderID(backendID string) string {
 		return "clawbench"
 	}
 	return spec.ConfigDirProviderID
+}
+
+// ProviderUserConfigDir returns the backend's own config directory relative to
+// the user's home (".kimi", ".claude", …), or "" when it declares none.
+//
+// The caller joins it onto the home directory; keeping it relative is what lets
+// tests point $HOME at a temp dir.
+func ProviderUserConfigDir(backendID string) string {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok {
+		return ""
+	}
+	return spec.UserConfigDir
+}
+
+// ProviderHasConfigDirRenderer reports whether the backend can render the file
+// ClawBench owns inside its config directory. A backend with a relocatable
+// directory but no renderer cannot take a provider at all.
+func ProviderHasConfigDirRenderer(backendID string) bool {
+	spec, ok := providerEnvSpec(backendID)
+	return ok && spec.ConfigDirRender != nil
+}
+
+// ProviderRenderConfigDirFile produces the content of the file ClawBench owns
+// inside the backend's config directory. Returns an error when the backend
+// declares no renderer or the provider cannot be expressed in its format.
+func ProviderRenderConfigDirFile(backendID string, p *Provider) ([]byte, error) {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok || spec.ConfigDirRender == nil {
+		return nil, fmt.Errorf("backend %q has no config-dir writer", backendID)
+	}
+	return spec.ConfigDirRender(p)
 }
 
 // ProviderConfigDisplayPath is the path shown in the consent dialog: the
@@ -564,17 +672,15 @@ func ProviderConfigDisplayPath(backendID, agentID string) string {
 // Kept in the model layer so both the handler and the display path agree on the
 // layout.
 func ProviderConfigPaths(backendID string) []string {
-	if !ProviderUsesConfigFile(backendID) {
+	spec, ok := providerEnvSpec(backendID)
+	if !ok || !spec.ConfigOnly || spec.ConfigFileTarget == "" {
 		return nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return nil
 	}
-	if backendID == "codex" {
-		return []string{filepath.Join(home, ".codex", "config.toml")}
-	}
-	return nil
+	return []string{filepath.Join(home, spec.ConfigFileTarget)}
 }
 
 // SupportedProtocols lists the protocols a backend can be pointed at. An empty
@@ -616,7 +722,7 @@ func SupportedProtocols(backendID string) []string {
 // reach the spawned process this way"; a backend may declare several.
 //
 // An empty result means no provider can reach it (openclaw: the provider
-// belongs to its Gateway; qoder/copilot/vecli: no channel exists).
+// belongs to its Gateway; qoder: no channel exists).
 func ProviderMethods(backendID string) []string {
 	spec, ok := providerEnvSpec(backendID)
 	if !ok {
@@ -1150,3 +1256,29 @@ func RedactProviderEnv(env []string) []string {
 	}
 	return out
 }
+
+// ProviderModelIDs returns the provider's curated model list, falling back to
+// its default model when the list is empty.
+//
+// Config-file backends must declare at least one model: a provider block with
+// no models is invisible to the CLI. Exported because the per-backend config-dir
+// renderers live in their own sub-packages and all need this same fallback.
+func ProviderModelIDs(p *Provider) []string {
+	if p == nil {
+		return nil
+	}
+	out := make([]string, 0, len(p.Models))
+	for _, id := range p.Models {
+		if id = strings.TrimSpace(id); id != "" {
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 && strings.TrimSpace(p.DefaultModel) != "" {
+		out = append(out, strings.TrimSpace(p.DefaultModel))
+	}
+	return out
+}
+
+// ProviderConfigJSONNameKey is the model-display-name key inside the generated
+// JSON config documents (every config-dir backend that writes JSON uses "name").
+const ProviderConfigJSONNameKey = "name"

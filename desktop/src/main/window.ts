@@ -67,7 +67,7 @@ export function checkVersionGateFor(url: string): void {
   // version can never be a mismatch this gate could fix — and walking the
   // middle of a download here would only offer to replace the app under itself.
   //
-  // Keyed on the ADDRESS, not on "we run a built-in server": a fused build
+  // Keyed on the ADDRESS, not on "we run a built-in server": an integrated build
   // keeps its own server running while the user is connected to another
   // machine, and that machine's version must still be checked.
   if (isEmbeddedServerUrl(url)) {
@@ -158,7 +158,7 @@ function loginPagePath(): string {
  * Show the server-selection login page, or explain why there is nothing to show.
  *
  * In the normal build there is always something to pick, so this is the login
- * page plus the connection error it must display. In the fused build, a failure
+ * page plus the connection error it must display. In the integrated build, a failure
  * against the built-in server gets a dialog naming that address first (the
  * overlay may already be gone, so a page change alone would look like a plain
  * failure) — and then the login page anyway, so the user can still reach
@@ -739,7 +739,7 @@ export function showLoginPage(): void {
   }
 }
 
-export function openSandboxWindow(port: number, protocol: string, host: string, path: string): void {
+export function openSandboxWindow(port: number, protocol: string, _host: string, path: string): void {
   const win = new BrowserWindow({
     width: 1000, height: 720,
     webPreferences: { partition: `sandbox-${port}`, contextIsolation: true },

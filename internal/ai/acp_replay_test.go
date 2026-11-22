@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -32,7 +33,7 @@ func codebuddyChunk(requestID, text string) acp.SessionUpdate {
 	return acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: text}},
-			Meta:    meta,
+			Meta:    acptest.Meta(meta),
 		},
 	}
 }
@@ -45,7 +46,7 @@ func codebuddyThoughtChunk(requestID, text string) acp.SessionUpdate {
 	return acp.SessionUpdate{
 		AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
 			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: text}},
-			Meta:    meta,
+			Meta:    acptest.Meta(meta),
 		},
 	}
 }

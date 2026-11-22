@@ -74,7 +74,6 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.Equal(t, "opencode", specs["opencode"].DefaultCmd)
 	assert.Equal(t, "codex", specs["codex"].DefaultCmd)
 	assert.Equal(t, "qodercli", specs["qoder"].DefaultCmd)
-	assert.Equal(t, "vecli", specs["vecli"].DefaultCmd)
 	assert.Equal(t, "codewhale", specs["deepseek"].DefaultCmd)
 	assert.Equal(t, "deepseek", specs["deepseek"].AltCmd)
 	assert.Equal(t, "pi", specs["pi"].DefaultCmd)
@@ -98,7 +97,6 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.Equal(t, "dsh --profile acp", specs["dsh"].AcpCommand)
 	assert.False(t, specs["dsh"].ACPLoadSession, "dsh does not implement session/load")
 	assert.Equal(t, "npm install -g @deepseek-ai/dsh", specs["dsh"].InstallCmd)
-	assert.False(t, model.BackendSupportsCLI("dsh"), "dsh is ACP-only: no CLI factory")
 
 	// Cursor is ACP-only via the CLI's built-in `acp` subcommand (no bridge
 	// adapter). `cursor-agent` is the unambiguous binary name — the CLI also
@@ -108,7 +106,6 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.Empty(t, specs["cursor"].AltCmd, "`agent` collides with Grok's CLI")
 	assert.Equal(t, "cursor-agent acp", specs["cursor"].AcpCommand)
 	assert.True(t, specs["cursor"].ACPLoadSession, "cursor advertises loadSession:true")
-	assert.False(t, model.BackendSupportsCLI("cursor"), "cursor is ACP-only: no CLI factory")
 
 	// OpenClaw is ACP-only via its built-in `acp` subcommand, which is a BRIDGE
 	// to a separate Gateway process — not an agent. Two facts follow from that
@@ -121,32 +118,8 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.True(t, specs["openclaw"].ACPLoadSession, "the bridge implements session/load")
 	assert.True(t, specs["openclaw"].ACPResumeIsProcessLocal,
 		"session/resume only resolves ids created by the current bridge process")
-	assert.False(t, model.BackendSupportsCLI("openclaw"), "openclaw is ACP-only: no CLI factory")
 	assert.False(t, model.BackendSupportsMCP("openclaw"),
 		"the bridge refuses per-session mcpServers — session/new would fail")
-}
-
-func TestBackendSupportsCLI_ComputedFromFactoryRegistry(t *testing.T) {
-	// Backends with a CLI factory report true
-	assert.True(t, model.BackendSupportsCLI("claude"))
-	assert.True(t, model.BackendSupportsCLI("opencode"))
-	assert.True(t, model.BackendSupportsCLI("kimi"))
-	// grok registers a streaming-json CLI fallback in addition to ACP
-	assert.True(t, model.BackendSupportsCLI("grok"), "grok has a CLI fallback factory")
-
-	// Truly ACP-only backends (e.g. antigravity) report false
-	assert.False(t, model.BackendSupportsCLI("antigravity"), "antigravity is ACP-only and has no CLI factory")
-}
-
-func TestBackendSupportsCLI_UnwiredFnFallsBack(t *testing.T) {
-	// When the capability lookup is not wired (isolated test), the helper
-	// falls back to false instead of panicking.
-	orig := model.LookupBackendCapabilitiesFn
-	t.Cleanup(func() { model.LookupBackendCapabilitiesFn = orig })
-	model.LookupBackendCapabilitiesFn = nil
-
-	assert.False(t, model.BackendSupportsCLI("claude"))
-	assert.False(t, model.BackendSupportsCLI("grok"))
 }
 
 // --- Test 2: checkCLIExists ---
@@ -174,11 +147,11 @@ func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 		specs[s.ID] = s
 	}
 
-	// All backends with a discovery function registered support model discovery
-	assert.True(t, model.CanDiscoverModels(specs["opencode"]), "opencode should support model discovery")
-	assert.True(t, model.CanDiscoverModels(specs["deepseek"]), "deepseek should support model discovery")
-	assert.True(t, model.CanDiscoverModels(specs["qoder"]), "qoder should support model discovery")
-	assert.True(t, model.CanDiscoverModels(specs["vecli"]), "vecli should support model discovery")
+	// Only backends that read a local cache/static catalog keep a discovery
+	// source; the ones that used to shell out for a model list now rely on ACP.
+	assert.False(t, model.CanDiscoverModels(specs["opencode"]), "opencode no longer probes a command")
+	assert.False(t, model.CanDiscoverModels(specs["deepseek"]), "deepseek no longer probes a command")
+	assert.True(t, model.CanDiscoverModels(specs["qoder"]), "qoder reads its cached catalog")
 
 	// Backend with no registered discovery function does not support model discovery
 	assert.False(t, model.CanDiscoverModels(model.BackendSpec{Backend: "nonexistent_xyz"}), "nonexistent backend should not support model discovery")
@@ -416,16 +389,3 @@ func TestCheckCLIExistsErr_EmptyCommand(t *testing.T) {
 }
 
 // --- Test 13: DiscoverModels for backends with a registered source ---
-
-func TestDiscoverModels_DeepSeekWithRealCLI(t *testing.T) {
-	if !model.CheckCLIExists("deepseek") {
-		t.Skip("deepseek not installed, skipping integration test")
-	}
-
-	require.True(t, model.HasModelSource("deepseek"))
-	models := model.DiscoverModels("deepseek")
-	if len(models) == 0 {
-		t.Skip("deepseek model discovery returned no models")
-	}
-	t.Logf("deepseek discovered %d models", len(models))
-}

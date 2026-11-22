@@ -17,6 +17,8 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
 
@@ -231,7 +233,6 @@ func setupSchedulerForExecuteTask(t *testing.T) {
 			Name:                "Test Agent",
 			Backend:             "codebuddy",
 			RuntimeSystemPrompt: "test prompt",
-			Command:             "echo hello",
 		},
 	}
 	t.Cleanup(func() {
@@ -991,4 +992,53 @@ func TestMaybeWarnPersistentScriptGateFailure_SilentForNonFailures(t *testing.T)
 	if n := h.count(persistentGateWarnMsg); n != 0 {
 		t.Fatalf("timeouts/cancels must not be reported as script failures, got %d", n)
 	}
+}
+
+// TestExecuteTask_EmptyBackendAborts: a scheduled run whose agent has no
+// backend must stop instead of running under a guessed backend.
+//
+// The removed fallback was a literal "codebuddy", so the run created its
+// session, ran its turn and filed every message under codebuddy — the task then
+// looked like a codebuddy problem rather than bad agent data. What must be
+// observable here: no scheduled session is created and the task is paused (the
+// same disposition as an unresolvable agent).
+func TestExecuteTask_EmptyBackendAborts(t *testing.T) {
+	setupSchedulerForExecuteTask(t)
+	model.Agents["test-agent"].Backend = ""
+
+	s := NewScheduler()
+	defer s.Stop()
+
+	task := &model.ScheduledTask{
+		ProjectPath: "/tmp",
+		Name:        "No Backend",
+		CronExpr:    "0 * * * *",
+		AgentID:     "test-agent",
+		Prompt:      "do the thing",
+		Status:      "active",
+		RepeatMode:  "unlimited",
+	}
+	require.NoError(t, s.AddTask(task))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.executeTask(task, task.ProjectPath, "manual", nil, nil)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("executeTask did not return")
+	}
+
+	var sessions int
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE session_type = 'scheduled'",
+	).Scan(&sessions))
+	assert.Zero(t, sessions, "no session may be created without a backend to run it")
+
+	got, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "paused", got.Status,
+		"a task that cannot run must be paused rather than left to retry every tick")
 }

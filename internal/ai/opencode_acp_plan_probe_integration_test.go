@@ -79,8 +79,8 @@ func (c *opencodePlanProbeClient) permissionRequests() []string {
 // block on a pending permission no frontend can answer.
 func (c *opencodePlanProbeClient) RequestPermission(_ context.Context, p acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 	title := ""
-	if p.ToolCall.Title != nil {
-		title = *p.ToolCall.Title
+	if v, ok := p.ToolCall.Title.Value(); ok {
+		title = v
 	}
 	c.permMu.Lock()
 	c.permRequests = append(c.permRequests, fmt.Sprintf("toolCall=%s title=%q options=%d",
@@ -129,7 +129,7 @@ func startOpencodePlanProbe(t *testing.T, ctx context.Context, cmd *exec.Cmd, cl
 
 	conn := acp.NewClientSideConnection(client, recIn, filter)
 	conn.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	filter.SetNotificationSink(client)
+	conn.SetUnhandledHandler(client.handleUnhandledNotification)
 
 	require.NoError(t, cmd.Start(), "spawn opencode acp")
 	t.Cleanup(func() {

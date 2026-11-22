@@ -10,7 +10,7 @@ ClawBench 支持零配置启动：安装 CLI 工具后直接运行 `./clawbench`
 flowchart TD
     A[服务启动 main.go] --> B[InitDB 迁移<br/>含 schema_migrations 台账]
     B --> C[model.RefreshAgents<br/>SkipDiscovery: true 同步]
-    C --> C1[1. 探测 PATH 中的 CLI<br/>插入新 agent + 同步 acp_command/transport]
+    C --> C1[1. 探测 PATH 中的 CLI<br/>插入新 agent + 同步 acp_command]
     C1 --> C2[2. 加载 config/agents/*.yaml]
     C2 --> C3[3. 从 DB 重载内存<br/>填充运行时字段 + 组装 system prompt]
     C3 --> D[系统就绪<br/>立即接受请求]
@@ -45,12 +45,10 @@ YAML 加载与内存重载（约 0.1s，CLI 探测已并行），启动与
 flowchart TD
     A[BackendSpec 注册于 backends 包] --> B{ModelSource 类型}
     B -->|StaticSource| C[内置清单<br/>CLI 存在时可用]
-    B -->|NewCLISource| D[执行 CLI 子命令<br/>用声明式解析器解析]
     B -->|PluginSource| E[自定义探测<br/>配置文件/二进制/打包 JS]
     C --> F[DiscoveryCache<br/>TTL 5 分钟]
-    D --> F
     E --> F
-    F --> G[CLI 模型列表]
+    F --> G[本地发现的模型清单]
     H[ACP 运行时<br/>NewSession/ConfigOptions] --> I[AgentCapabilityRegistry<br/>持久化到 acp_available_models]
     I --> J[ACP 模型列表]
     G --> K[ResolveModels<br/>唯一合并点]
@@ -65,57 +63,56 @@ flowchart TD
 - **零配置启动**：没有 `config.yaml` 也能运行，系统自动填充所有默认值（端口、密码、TTS 引擎等）。`config.yaml` 是可选的增强，不是必须的前置步骤
 - **首次访问欢迎面板**：用户首次访问时显示 `WelcomeOverlay`（不是分步向导）。[WelcomeOverlay 详情](../features/setup-wizard.md)。Agent 创建通过自动发现或 `AgentInstallDialog` 完成，不存在 `/api/setup/*` 端点
 - **Agent 自动发现**：启动时检测 PATH 中是否存在 AI CLI 工具，为新发现的工具自动在数据库中创建 Agent（含 ACP 命令检测，即检查后端规格中的 `AcpCommand` 字段）。用户安装新 CLI 后重启即自动识别
-- **双传输支持**：Agent 的 `Transport` 字段（"cli" / "acp-stdio"）决定使用哪种传输模式。ACP 支持的 Agent 自动设置 `acp_command`，用户可以在会话中切换传输方式
-- **Model 自动发现**：每个后端在自己的包内注册一个 `model.ModelSource`（`RegisterModelSource`），共三种形态：
-  - `StaticSource` —— 内置清单，仅在该 CLI 存在时可用（copilot / kimi / mimo）
-  - `NewCLISource` —— 执行 CLI 子命令并用共享解析器解析（antigravity / deepseek / grok / opencode / pi）
-  - `PluginSource` —— 自定义探测，应对单一命令无法覆盖的布局（codebuddy 读 product JSON 与运行时缓存、codex 读缓存并扫描二进制字符串、claude 扫描二进制 + 读取 settings.json 覆盖、vecli 扫描打包 JS、qoder / qodercn 读本地缓存）
+- **传输只有一条**：有 `acp_command` 的智能体一律走 ACP stdio，`Transport` 是推导值（`Agent.DeriveTransport()`），库里那列只剩兼容占位、不再读。没有 ACP 命令的智能体根本跑不起来，所以不存在传输切换（PATCH `transport` 会被 400 拒绝）。唯一的例外是内置智能体，它的值是 `in-process`（进程内实现，不走 CLI 也不走 ACP）。升级时一次性删掉已移除后端（vecli / copilot）的智能体——它们没有 ACP 也没有进程内实现，留着只会是一条永远跑不动的条目；会话按删除接口同一套接管交给存活智能体（历史保留，并写一条系统提示）
+- **Model 自动发现**：每个后端在自己的包内注册一个 `model.ModelSource`（`RegisterModelSource`），共两种形态：
+  - `StaticSource` —— 内置清单，仅在该 CLI 存在时可用（kimi / mimo）
+  - `PluginSource` —— 自定义探测，应对单一命令无法覆盖的布局（codebuddy 读 product JSON 与运行时缓存、codex 读缓存并扫描二进制字符串、claude 扫描二进制 + 读取 settings.json 覆盖、qoder / qodercn 读本地缓存）
 
-  纯 ACP 后端（zcode / dsh / hermes / cursor / commandcode）不注册 `ModelSource`：它们的模型清单只来自 ACP 的 `configOptions` / `session/new` 的 `models`（`ResolveModels` 的 ACP 独有分支），因此没有 CLI 侧的「刷新模型」入口。
+  纯 ACP 后端（zcode / dsh / hermes / cursor / commandcode）不注册 `ModelSource`：它们的模型清单只来自 ACP 的 `configOptions` / `session/new` 的 `models`（`ResolveModels` 的 ACP 独有分支），因此没有本地的「刷新模型」入口。
 
   发现结果由 `DiscoveryCache` 按后端缓存 5 分钟；显式刷新（`refresh-models` / `rescan`）会先失效缓存再重新探测。内置清单分散在各后端子包的 `catalog.go`（`internal/ai/backends/<id>/`），更新清单只动那个后端自己的目录
 - **模型列表由服务端合并**：`ResolveModels`（`internal/model/modelcatalog.go`）是唯一的合并点。规则：
-  - **具体 ACP 列表在存在时对成员资格有权威性** —— agent 最清楚自己能跑哪些模型；CLI 列表可能过时（端点被重定向、模型在服务端下线），ACP 未上报的 CLI 模型会被剔除
-  - **档位别名（tier alias）不参与成员资格判定**。claude 经 ACP 上报的是 `opus`/`sonnet`/`haiku` 这类**档位** ID，其显示名携带被重定向后的真实模型；CLI 发现的是 `claude-sonnet-4-6` 这类具体 ID，两者 ID 永不相等。若把别名列表也当作成员资格依据，会剔掉全部 CLI 模型、只留若干条显示同名真实模型的别名条目（这正是历史上 Issue #404 的问题）。因此别名改为**对齐到对应的 CLI 骨架条目**：保留具体 ID（CLI 仍能识别），仅取其显示名。CLI 骨架无法代表的别名仍会追加，避免用户可选档位静默丢失；元档位 `default` 是回退标记而非模型，始终跳过
-  - **CLI 列表提供顺序与名称**；同名 ID 时 ACP 的显示名优先
+  - **具体 ACP 列表在存在时对成员资格有权威性** —— agent 最清楚自己能跑哪些模型；本地清单可能过时（端点被重定向、模型在服务端下线），ACP 未上报的本地模型会被剔除
+  - **档位别名（tier alias）不参与成员资格判定**。claude 经 ACP 上报的是 `opus`/`sonnet`/`haiku` 这类**档位** ID，其显示名携带被重定向后的真实模型；本地发现的是 `claude-sonnet-4-6` 这类具体 ID，两者 ID 永不相等。若把别名列表也当作成员资格依据，会剔掉全部本地模型、只留若干条显示同名真实模型的别名条目（这正是历史上 Issue #404 的问题）。因此别名改为**对齐到对应的本地骨架条目**：保留具体 ID（agent 仍能识别），仅取其显示名。本地骨架无法代表的别名仍会追加，避免用户可选档位静默丢失；元档位 `default` 是回退标记而非模型，始终跳过
+  - **本地清单提供顺序与名称**；同名 ID 时 ACP 的显示名优先
   - ACP 独有的具体模型按 ACP 顺序追加
-  - 恰好一个模型是默认：会话当前模型 > CLI 默认标记 > 列表首项
+  - 恰好一个模型是默认：会话当前模型 > 本地默认标记 > 列表首项
 
-  前端不再做任何合并，只渲染后端给出的 `resolvedModels`。未经合并的纯 CLI 列表通过 `cliModels` 一并下发，供切换到 CLI 传输时直接渲染。
+  前端不做任何合并，只渲染后端给出的 `resolvedModels`。本地清单不再单独下发——没有第二种传输要切，保留一份「未合并的原始列表」只会让客户端多一套合并规则。
 
-- **ACP 传输下、ACP 未确认时不展示 CLI 猜测列表**：`transport == "acp-stdio"` 且该 agent 的 ACP 运行时**从未上报过**模型（`ai.HasConfirmedACPModels` 为假，数据源是 `AgentCapabilityRegistry`，经 `agents.acp_available_models` 持久化）时，`GET /api/agents` 与 `POST /api/agents/{id}/refresh-models` 的 `models` 返回**空数组**（`cliModels` 照常返回，发现结果照常落库）。判据用**有效传输**而非「有无 `acp_command`」，故 `transport == "cli"` 的双传输 agent 不受影响。
-  - **理由**：ACP 协议没有「客户端默认模型」的概念——模型是 `category: "model"` 的会话配置项，agent 在 `session/new` 自带 `currentValue`，客户端只需显示、可选地改。在 agent 开口之前，CLI 发现的列表只是猜测；把它当可运行模型展示，会让前端推导出一个「默认模型」并在首条消息里作为 `modelId` 发回，触发一次 `session/set_config_option`，可能选中 agent 无法运行的模型（新装用户在首次 ACP 会话前必然踩到）。
+- **ACP 未确认时不展示发现结果当猜测列表**：该 agent 有 `acp_command` 且 ACP 运行时**从未上报过**模型（`ai.HasConfirmedACPModels` 为假，数据源是 `AgentCapabilityRegistry`，经 `agents.acp_available_models` 持久化）时，`GET /api/agents` 与 `POST /api/agents/{id}/refresh-models` 的 `models` 返回**空数组**（发现结果照常落库）。
+  - **理由**：ACP 协议没有「客户端默认模型」的概念——模型是 `category: "model"` 的会话配置项，agent 在 `session/new` 自带 `currentValue`，客户端只需显示、可选地改。在 agent 开口之前，本地发现的列表只是猜测；把它当可运行模型展示，会让前端推导出一个「默认模型」并在首条消息里作为 `modelId` 发回，触发一次 `session/set_config_option`，可能选中 agent 无法运行的模型（新装用户在首次 ACP 会话前必然踩到）。
   - **发送侧同步门控**：`service.BuildChatRequest` 的 `resolveAgentConfig` 在该状态下**跳过** `agent.DefaultModelID()` 兜底（`DefaultModelID` 含 `PreferredModel`，故一并覆盖），使 `ai.ChatRequest.Model` 保持空 —— `applyModelSelection` 对空值直接返回，不发任何模型 RPC，由 agent 用自己的默认。**显式选择一律尊重**（请求参数 / `chat_sessions.model` 持久值 / `preferredModel` 均不受影响）——那是用户意图，不是猜测。
-  - **前端**：列表为空时模型 chip 显示占位（`chat.sessionInfo.default`），发送路径的 `modelId: currentModelId.value || undefined` 自然不发。两个基线共用 `agent.models` 一个字段，故传输切换/会话切换的复位必须按当前传输选择（`resetModelViewForTransport`）：ACP 侧要么应用 ACP 列表、要么清空，绝不回落到 CLI 基线（否则切换 ACP→CLI→ACP 会把 CLI 列表带回 ACP 视图）。
+  - **前端**：列表为空时模型 chip 显示占位（`chat.sessionInfo.default`），发送路径的 `modelId: currentModelId.value || undefined` 自然不发。`agent.models` 是唯一基线，切换会话时按当前 agent 重新解析（`reconcileModelSelection`），不存在第二种传输的基线要回落。
   - **不在范围**：定时任务（`scheduler.go` 直接构造 `ai.ChatRequest`，不走 `BuildChatRequest`）与设置页的 preferred-model 选择器保持现状。
 
   **三条下发通道同构**（`internal/ai/acp_events.go` 的 `EnrichModelList` 是唯一实现）：
-  - `GET /api/agents` → `agents[].models` / `agents[].cliModels`，以及 `acpStates[].modelListState.{resolvedModels,cliModels}`
-  - `GET /api/ai/chat` → `modelListState.{models,resolvedModels,cliModels}`（新建会话从不与 ACP 通信，其模型列表只能来自这里，由 agent 级能力注册表解析；CLI 会话不返回该字段）
+  - `GET /api/agents` → `agents[].models`，以及 `acpStates[].modelListState.{models,resolvedModels}`
+  - `GET /api/ai/chat` → `modelListState.{models,resolvedModels}`（新建会话从不与 ACP 通信，其模型列表只能来自这里，由 agent 级能力注册表解析；进程内智能体不返回该字段）
   - WS `model_list_update` → 同一组字段
-  - `POST /api/agents/{id}/refresh-models` → `{ models, cliModels, acpState? }`（`models` 为与已缓存 ACP 列表合并后的结果；无 ACP 的 agent 直接返回发现结果。ACP agent 见下条「刷新按传输分策略」）
+  - `POST /api/agents/{id}/refresh-models` → `{ models, acpState? }`（`models` 为与已缓存 ACP 列表合并后的结果；无 ACP 的 agent 直接返回发现结果。ACP agent 见下条「刷新策略」）
 
-  四者形状必须一致：此前 `/api/ai/chat` 只返回原始 ACP 列表，任何只消费 `models` 的客户端都会丢掉全部 CLI 模型。当 agent 没有 CLI 列表可合并时，`resolvedModels` 为空但 `models` 仍返回——整条列表丢失比未合并且更糟。`refresh-models` 曾只返回原始 CLI 发现结果，于是在 ACP 传输下点一次刷新就会把「agent 实际能跑的模型」替换成 CLI 骨架（含运行时不支持的条目）。
-- **刷新按传输分策略（`refresh-models`）**：
-  - **ACP**（`agentUsesACP`：`transport == "acp-stdio"`；`transport` 为空时按「有 `acp_command` 即 ACP」解析）：**直接问 agent 本身**——`ai.ProbeACPState` 建一个**临时** ACP 会话（连接不入池，避免污染 `GetCurrentModelIDByAgentID` 与正在跑的会话），从 `session/new` 响应取模型/模式/思考等级，再等 `available_commands_update` 稳定后取斜杠命令，写回 `AgentCapabilityRegistry`（用 merge 式 `Update*` 而非 `ForceUpdate`：后者整结构替换，会把命令清空），最后 `session/delete` 删除临时会话。
+  四者形状必须一致：此前 `/api/ai/chat` 只返回原始 ACP 列表，任何只消费 `models` 的客户端都会丢掉全部本地模型。当 agent 没有本地列表可合并时，`resolvedModels` 为空但 `models` 仍返回——整条列表丢失比未合并且更糟。`refresh-models` 曾只返回原始发现结果，于是在 ACP 下点一次刷新就会把「agent 实际能跑的模型」替换成本地骨架（含运行时不支持的条目）。
+- **刷新策略（`refresh-models`）**：
+  - **ACP**（`agentUsesACP`：有 `acp_command`，即 `Agent.SupportsACP()`）：**直接问 agent 本身**——`ai.ProbeACPState` 建一个**临时** ACP 会话（连接不入池，避免污染 `GetCurrentModelIDByAgentID` 与正在跑的会话），从 `session/new` 响应取模型/模式/思考等级，再等 `available_commands_update` 稳定后取斜杠命令，写回 `AgentCapabilityRegistry`（用 merge 式 `Update*` 而非 `ForceUpdate`：后者整结构替换，会把命令清空），最后 `session/delete` 删除临时会话。
   - **`session/delete` 不查能力位**（`sendDeleteSession`）：CodeBuddy 实现了该方法却不广告 `sessionCapabilities`，按能力跳过会每次刷新泄漏一个孤儿会话。永久删除路径 `deleteACPSession` 仍保留能力位门控。
-  - **探测失败不回落到 CLI 发现**：ACP 下的 CLI 列表只是猜测，回落会把不可运行的模型当成可运行。失败返回 500 `ModelDiscoveryFailed`（`detail.detail` 带原因）；无项目 Cookie 时 400 `NoProjectSelected`（`session/new` 要求绝对 cwd）。
+  - **探测失败不回落到本地发现**：本地清单只是猜测，回落会把不可运行的模型当成可运行。失败返回 500 `ModelDiscoveryFailed`（`detail.detail` 带原因）；无项目 Cookie 时 400 `NoProjectSelected`（`session/new` 要求绝对 cwd）。
+  - **进程内智能体**：重跑该后端的本地发现并落库（内置智能体的模式/思考等级由本 build 固定，不走 ACP 握手）。
   - **命令等待窗口**：CodeBuddy 的插件/skill 命令要等 PluginManager 加载完（`codebuddyPluginLoadDelay` ≈ 4s）才推，窗口短了只会拿到内置命令；其他后端 1.5s / 400ms 静默。空结果表示「agent 没推」→ 保留已有列表，不清空 `/` 菜单。
-  - **CLI**：重跑后端模型发现并落库（原行为）。
   - 响应 `acpState`（仅 ACP 分支）含 `{ commands, modeState?, thinkingEffortState? }`，只带**可用列表**与 agent 自报的 current id，不带用户选择。前端 `applyRefreshedACPState` 把它推进 mode/思考/命令三处（仅当 agent 是当前会话的 agent，否则会改错会话的 chip）。
-- **ACP 模型持久化**：ACP 上报的模型列表写入 `agents.acp_available_models`，因此重启后仍然可见。此前它只存在于内存，导致同一 agent 的模型列表在重启前后跳变（首个 ACP 会话前是 CLI 列表，之后是 ACP 列表）
+- **ACP 模型持久化**：ACP 上报的模型列表写入 `agents.acp_available_models`，因此重启后仍然可见。此前它只存在于内存，导致同一 agent 的模型列表在重启前后跳变（首个 ACP 会话前是本地清单，之后是 ACP 列表）
 - **后台模型刷新**：模型探测在启动后台执行（`model.StartModelDiscoveryAsync`，`internal/model/refresh.go`）。完成后服务端广播 WS 事件 `agents_updated`，前端 `useAgents` 收到后强制重拉 `GET /api/agents`。手动刷新仍走 `POST /api/agents/rescan`（失效缓存、重跑完整发现）或单个 agent 的 `POST /api/agents/{id}/refresh-models`（只重探该 agent 的模型）
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖（`models_auto_detected = 0` 且列表非空即受保护）；自动管理的 agent 保持其自动管理状态，该标记不是单向闩锁
-- **用户自定义 ACP 智能体（issue #557）**：内置后端之外的工具，只要它能以 **stdio 方式说 ACP**，就能通过「设置 → 智能体 → 添加 ACP 智能体」接入，无需为它写后端子包。创建只需两项：名称 + 启动命令（如 `trae acp`）。四个约束：
-  - **backend 恒为 `custom-acp`，且刻意不在 `BackendRegistry` 里**。这是承重的：`model.RefreshAgents` 的 `syncAgentInfrastructure` 按 backend 重写 `acp_command` / `transport`（`UPDATE … WHERE backend = ?`），自定义智能体一旦借用 `claude`、`codex` 这类内置 id，用户填的命令会在下一次重新扫描或启动时被内置适配器的命令**静默覆盖**。用注册表里不存在的 id，那条同步永远碰不到它。因此创建接口**不接受客户端指定 backend**（`POST /api/agents` 只认 `{name, acp_command}`）。
-  - **能力全部来自 agent 本身**。没有 spec 就没有 `BackendSupportsCLI`、没有 `ModelSource`、没有 `ThinkingEffortLevels`；传输固定 `acp-stdio`（`Agent.SupportsACP()` 就是 `AcpCommand != ""`），模型 / 模式 / 斜杠命令 / 思考档位都在首次 `session/new` 握手后由该 agent 上报。此前 `models` 为空是**正常状态**（客户端显示「默认」占位，发送时不带 `modelId`），不是配置错误——自检里对应项是 `warn` 而非 `fail`。
+- **用户自定义 ACP 智能体（issue #557）**：内置后端之外的工具，只要它能以 **stdio 方式说 ACP**，就能通过「设置 → 智能体 → 添加智能体」接入，无需为它写后端子包。创建只需两项：名称 + 启动命令（如 `trae acp`）。四个约束：
+  - **backend 恒为 `custom-acp`，且刻意不在 `BackendRegistry` 里**。这是承重的：`model.RefreshAgents` 的 `syncAgentInfrastructure` 按 backend 重写 `acp_command`（`UPDATE … WHERE backend = ?`），自定义智能体一旦借用 `claude`、`codex` 这类内置 id，用户填的命令会在下一次重新扫描或启动时被内置适配器的命令**静默覆盖**。用注册表里不存在的 id，那条同步永远碰不到它。因此创建接口**不接受客户端指定 backend**（`POST /api/agents` 只认 `{name, acp_command}`）。
+  - **能力全部来自 agent 本身**。没有 spec 就没有 `ModelSource`、没有 `ThinkingEffortLevels`；传输固定 `acp-stdio`（`Agent.SupportsACP()` 就是 `AcpCommand != ""`），模型 / 模式 / 斜杠命令 / 思考档位都在首次 `session/new` 握手后由该 agent 上报。此前 `models` 为空是**正常状态**（客户端显示「默认」占位，发送时不带 `modelId`），不是配置错误——自检里对应项是 `warn` 而非 `fail`。
   - **命令按空格拆分，不支持引号**（`strings.Fields`，与 `acp_conn_lifecycle.go` 的 spawn 同一实现）。因此带空格或引号的参数无法表达；上限 4096 字节（`service.MaxAcpCommandBytes`）。这条限制**不是安全边界**——同一用户本来就能用终端 API 执行任意命令；它只约束 DB 行与设置输入。
-  - **`acp_command` 可编辑，但仅限无 spec 的 agent**：`PATCH /api/agents` 对 `FindSpecByBackend != nil` 的 agent 直接返回 `400 AcpCommandManagedByDiscovery`（内置命令归自动发现所有，改了也会被同步回去）。非空命令会同时把 `transport` 切到 `acp-stdio` 并**关闭该 agent 现有 ACP 连接**（旧进程是用旧命令起的，不关就等于没改）；**空串被拒**（`InvalidAcpCommand`）——自定义 agent 没有 CLI 工厂兜底，清空命令会让它彻底无法运行，正确的退场方式是删除。前端用服务端下发的 `backendHasSpec` 判断该行是输入框还是只读，与 PATCH 守卫共用同一判据。命令写错**不必删了重建**：改完重跑自检即可（`/cb-agent` 的提示词也是这么要求的）。
+  - **`acp_command` 可编辑，但仅限无 spec 的 agent**：`PATCH /api/agents` 对 `FindSpecByBackend != nil` 的 agent 直接返回 `400 AcpCommandManagedByDiscovery`（内置命令归自动发现所有，改了也会被同步回去）。改非空命令会**关闭该 agent 现有 ACP 连接**（旧进程是用旧命令起的，不关就等于没改）；**空串被拒**（`InvalidAcpCommand`）——自定义 agent 没有别的后端实现兜底，清空命令会让它彻底无法运行，正确的退场方式是删除。前端用服务端下发的 `backendHasSpec` 判断该行是输入框还是只读，与 PATCH 守卫共用同一判据。命令写错**不必删了重建**：改完重跑自检即可（`/cb-agent` 的提示词也是这么要求的）。
 - **智能体自检（配置 / 深度两级）**：`POST /api/agents/{id}/self-test` 只读持久化状态、后端注册表与文件系统（唯一的副作用是 `exec.LookPath`），**不 spawn 进程、不计费**，返回逐项 `{key, status, detail}`；`POST /api/agents/{id}/self-test-deep` 真实跑一轮并回报 `{reply, transport, stopReason, durationMs}`（后两者取自**落库的回合元数据**，是事实而非配置）。两者分成**两个路由**而不是一个带 flag 的接口，客户端就无法用一个字段意外触发付费调用；深度自检自己会先跑静态自检，有 `fail` 即返回而不浪费一个回合的超时。**`backend_known` 判据不是「在注册表里」**——YAML 定义的 agent（E2E 的 acp-mock）与自定义 ACP 智能体都没有注册表条目却完全可用，判据是「有 spec / 有 CLI 工厂 / 有存储的 `acp_command`」三者之一。自检入口只在**智能体详情页**（按需对单个智能体运行）——批量「测试全部」入口已移除：智能体多时逐个跑一遍太耗时，而自检本来就只在排查时用。
 - **智能体生命周期管理（计数 / 禁用 / 删除守卫）**：`agents` 表新增 `disabled` 列，配合删除前的用量守卫。
   - **计数**：`GET /api/agents` 为每个 agent 附 `sessionCount` / `taskCount`（派生字段，不进 `model.Agent` 持久化模型）。会话数 = 1:1 聊天（`session_type='chat'`，含归档）+ 该 agent 的**活跃群成员关系**（`session_type='group_member'` 且 `archived=0`）——群聊的时间线行只记录主持人，普通成员若按 `group` 行统计会永远是 0，故必须按成员行统计。任务执行自动产生的 `scheduled` 会话**不计入**：删任务只归档其会话、用户又没有单条清理入口，计入会让计数永不清零。列表用 `GetAllAgentUsage` 三条 GROUP BY 查询一次性取回（而非 per-agent N+1，读池只有 2 连接）
   - **删除守卫（issue #606 起改为「接管」）**：`DELETE /api/agents` **不再**因存在会话/任务/群成员而拒绝——它把这些全部转交给**默认智能体**，并在响应里回报 `sessions` / `tasks` / `groups` 数量。唯一的拒绝是**有会话正在运行**（409 `AgentHasRunningSessions`，包括它作为发言成员的群回合：群回合在 `groupActiveMembers` 里按成员行登记，而群行的 `agent_id` 是主持人，只看 `GetRunningSessionIDs` 会漏）。运行中检查在**任何破坏性动作之前**做，并在写事务内**再查一次**（两次检查之间可能刚好起了一轮）；ACP 连接则在**事务提交成功之后**才关闭——放在提交前的话，事务复检一旦拒绝，被保护的那一轮已经被杀了。
-  - **接管改写了什么**（`internal/service/agent_takeover.go`）：`agent_id`/`backend` 换成默认智能体的；`agent_source='default'`；`model`/`transport` 清空（只对旧 agent 有效）；`external_session_id` **仅在后端不同时才清空**——后端、ACP 命令与传输都一致时原生会话仍然有效，直接沿用（同时置 `compacted=1`，让新 agent 的系统提示在下一轮重新播报一次，因为 resume 不会重发系统提示）；带**会话级 transport 覆盖**的行例外（它可能在另一种模式下建立的会话，id 是另一个命名空间），以及跨后端的行都清空并由下一轮重建；`context_state` 里的 `mode`/`thinkingEffort`/`usage` 移除（旧能力集与旧上下文窗口）；`agent_takeover_from` 写入**旧 agent 的显示名**。`chat_history` 一条不删，`agent_name`/`agent_avatar`（群成员实例名与头像）保留，成员行 id 不变 ⇒ 群时间线归属不变。
+  - **接管改写了什么**（`internal/service/agent_takeover.go`）：`agent_id`/`backend` 换成默认智能体的；`agent_source='default'`；`model` 清空；`external_session_id` **仅在后端不同时才清空**——后端与 ACP 命令都一致时原生会话仍然有效，直接沿用（同时置 `compacted=1`，让新 agent 的系统提示在下一轮重新播报一次，因为 resume 不会重发系统提示）；跨后端的行都清空并由下一轮重建；`context_state` 里的 `mode`/`thinkingEffort`/`usage` 移除（旧能力集与旧上下文窗口）；`agent_takeover_from` 写入**旧 agent 的显示名**。`chat_history` 一条不删，`agent_name`/`agent_avatar`（群成员实例名与头像）保留，成员行 id 不变 ⇒ 群时间线归属不变。
   - **下一轮如何续上**：同后端时走普通 resume（`--resume <旧 id>` / ACP `ResumeSession`），没有重建开销。跨后端时 `BuildChatRequest` 在 `external_session_id == '' && agent_takeover_from != ''` 时**强制 `resume=false`**，同时由 fork 路径把历史渲染成背景文本注入（`ChatForkContextBudget` 默认 10 万字符，用户消息优先、超限给省略提示）。强制重开是必需的：`deepseek`/`pi` 等 CLI 在「要 resume 但没给 id」时会退化成 `--continue`，等于让新 agent 接上那个 CLI 在**当前工作目录**里最近的会话（可能是完全无关的一段）。新 agent 回完第一轮后 `captureExternalSessionID` 落下它自己的 id，该分支自动失效，恢复普通 resume。
   - **群行与任务**：群行（`session_type='group'`）的 `agent_id`/`backend` 按成员行重算（主持人模式取主持人、自由模式取第一个成员，与 `groupIdentityFields` 同规则），否则群会继续指向已删除的 agent；`scheduled_tasks.agent_id` 一并转交（留悬挂会让任务每次执行都失败）。
   - **时间线提示**：转交后向每个受影响的 1:1 会话写一条 `role='system'` 行，群成员则在**群时间线**写一条（成员行没有自己的时间线）。归档会话跳过（`AddSystemMessage` 本就拒绝归档）。
@@ -148,22 +145,21 @@ flowchart TD
 
 ### 设计要点
 
-- **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent（如 E2E 测试使用的 acp-mock）。DB 优先；自动发现只更新基础设施字段（`acp_command`、`transport`），用户自定义的 `name`、`command` 不被覆盖
+- **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent（如 E2E 测试使用的 acp-mock）。DB 优先；自动发现只更新基础设施字段（`acp_command`），用户自定义的 `name`、`command` 不被覆盖
 - **「谁拥有 `acp_command`」由 backend 是否有 spec 决定**：自动发现按 backend 重写该列，所以只有**在 `BackendRegistry` 里有条目**的 agent 才被它接管。用户自定义 ACP 智能体的 backend 是 `custom-acp`（注册表里刻意不存在），YAML 定义的 agent 同样没有 spec——这两类的命令由用户/文件持有，可编辑、永不被同步覆盖。这一条同时解释了为什么自定义 agent 不能借用内置 backend id（会被静默改回），以及为什么 `PATCH` 的守卫用 `FindSpecByBackend != nil` 而不是「backend 是不是 `custom-acp`」（YAML agent 也要可编辑）。前端把服务端算好的 `backendHasSpec` 直接用于渲染只读/可编辑，两侧不会给出不同答案
 - **可见性规则只拦「新建」，不追溯历史**：项目作用域与禁用开关共用这一取向——两者都只影响**接下来要创建**的入口与设置列表，对已存在的会话/任务一律放行。这不是遗漏而是刻意取舍：若可见性变化追溯性地作废在跑的会话/任务，用户改一个开关就会打断正在执行的工作，且被隐藏的会话反而更难清理。代价是「全局时建的会话在智能体被限到别的项目后仍在本项目跑」，这是可接受的（用户能继续使用，也能主动清理）
 - **作用域判定在服务端兜底、前端只做过滤**：前端 `selectableAgents` 过滤是体验优化，真正的门在服务端三个新建入口（老客户端或竞态不能把项目级智能体塞进别的项目）。前端过滤用的是同一份可见性数据，因此两侧不会给出不同的候选集
 - **发现与重载的两条入口**：`RefreshAgents` 是同步路径，按固定顺序执行探测 CLI → 加载 YAML →（可选）发现模型 → 重载内存，顺序本身承载语义（例如必须先探测才能给新装的后端发现模型）。启动时传 `SkipDiscovery: true` 只跑同步那一半（约 0.1s），`StartModelDiscoveryAsync` 随后在后台补上模型探测、落库与加锁重载。`service.LoadAgentsIntoMemory` 委托给 `model.LoadAgentsIntoMemoryFromDB`，因此"加载并组装 prompt"只有一份实现
 - **默认项目持久化**：`recent_projects.is_default` 标记服务端默认项目（表按 `project_id` 记录，见「项目 id 化注册表」）。读取时依次回退到显式默认项目、最近访问项目、用户主目录和首个可用根路径，确保首次启动和旧数据均可用
-- **ACP 能力持久化**：Agent 的 ACP 相关属性（`transport`、`acp_command`、可用模式、思考深度、命令、模型等）持久化在 `agents` 表中，重启后无需重新发现——这些信息在首次连接时从 ACP Initialize 握手中提取并缓存
+- **ACP 能力持久化**：Agent 的 ACP 相关属性（`acp_command`、可用模式、思考深度、命令、模型等）持久化在 `agents` 表中，重启后无需重新发现——这些信息在首次连接时从 ACP Initialize 握手中提取并缓存。`transport` 不再是持久字段，由 `acp_command` / `BuiltinBackend` 推导（`Agent.DeriveTransport()`）
 - **供应商模型注册**：模型列表通过各后端的 `RegisterModelSource()` 在 `init()` 注册，`model.DiscoverModels` 只走这张注册表（没有静态声明的已知模型字段）。运行时可通过 `POST /api/agents/rescan` 重新触发 PATH 扫描；模型数据不依赖 `<dataDir>/provider_models.json` 或生成脚本
 - **API 密钥与密码联动**：加密密钥由登录密码派生。`agent_api_keys` 表和 `crypto.go` 已移除，密码修改不再触发 API Key 加密轮换
-- **发现结果缓存**：`DiscoveryCache` 按后端缓存探测结果（含失败结果）5 分钟。探测要执行 CLI 或读取数 MB 的二进制，缓存让启动路径与手动刷新共用同一次工作。显式刷新会先失效缓存
-- **ACP 运行时模型验证**：设置 preferred_model 时，验证范围包含 CLI 发现的模型和 ACP 运行时返回的模型（`GetModelListState`），ACP-only 模型（如 Kimi kimi-k3）不再因 CLI 模型列表中不存在而报 `InvalidModelForAgent`
-- **部分后端无 CLI 模型列表**：VeCLI、Qoder 等后端没有 `--list-models` 类命令，其发现函数只能返回内置默认清单或读取本地缓存，也可由用户手动提供模型。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确
+- **发现结果缓存**：`DiscoveryCache` 按后端缓存探测结果（含失败结果）5 分钟。探测要读配置文件或数 MB 的二进制，缓存让启动路径与手动刷新共用同一次工作。显式刷新会先失效缓存
+- **ACP 运行时模型验证**：设置 preferred_model 时，验证范围包含本地发现的模型和 ACP 运行时返回的模型（`GetModelListState`），ACP-only 模型（如 Kimi kimi-k3）不再因本地模型列表中不存在而报 `InvalidModelForAgent`
+- **部分后端无模型列表来源**：Qoder 等后端没有可执行的列模型命令，其发现函数只能返回内置默认清单或读取本地缓存，也可由用户手动提供模型。ACP 后端优先使用 ACP 提供的模型列表（覆盖本地发现结果）——ACP 模型列表更准确
 - **发现失败的原因随返回值传递**：`ModelSource.Discover` 返回 `(models, detail)`，detail 说明探测了哪些位置。此前 codebuddy 用进程级全局变量记录失败原因，并发刷新会互相串台；现在原因随调用返回，不会误归因
 - **默认值只用 presence 判定，不用零值比较**：新增的 `chat.auto_continue_max_retries` 中 `-1`（不限）与 `0`（不重试）**都有意义**，因此"未设置时回退到默认值"不能写成 `if v <= 0 { v = default }`——那会把用户显式选择的 0 冲成 3。凡是有多个合法特殊值的数值配置项都必须区分"字段缺省"与"显式零值"
 - **Codex 的多级发现**：Codex 无列模型命令且发布的是 stripped Rust 二进制，因此按可信度依次尝试——先读 CLI 缓存的完整模型目录（`~/.codex/models_cache.json`，含账号可用清单），再扫描二进制字符串，最后落到 `internal/ai/backends/codex/catalog.go` 中的内置清单。原先的 state SQLite 分支是死代码（定位到文件后无条件 `return nil`），已删除
-- **CLI 模型输出会随版本漂移，解析必须 header 感知**：CodeWhale 0.10.0 的 `models` 输出改为本地化（中/英）、只列 active provider、行内不再带 provider 标签，旧正则两个方向都失配（模型列表刷新后解析为 0 条）。因此解析器同时兼容中英 header 与有无标签两种行格式、尾部锚定挡住 banner/footer，并新增 `scopedProvider`：**无标签的行只在 header 为空或等于目标 provider 时才接受**——否则未 scope 的 fallback 输出会把别的 provider 的模型误标成本 provider。命令链也随版本分叉（0.10.0 无 `--provider` 时只打印 active provider 的模型，故显式 scope；旧版二进制拒绝该 flag 会 exit 2，自动回退到无 scope 调用）。教训：解析第三方 CLI 的文本输出不是稳定契约，需对"标签缺失/本地化/多 provider"三种漂移同时设防
 
 ## 迁移台账（schema_migrations）
 

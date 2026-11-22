@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"strings"
@@ -286,14 +287,26 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 		}
 	}()
 
+	// Same rule as a fresh task run (see Scheduler.executeTask): an agent with no
+	// backend stops here instead of resuming under a hard-coded "codebuddy". The
+	// execution row is put back to failed so the run is not left claiming to be
+	// in progress; a paused-on-restart row with this shape would otherwise
+	// retry forever.
 	backendName := agent.Backend
 	if backendName == "" {
-		backendName = "codebuddy"
+		slog.Error(
+			"task restart resume: agent has no backend, aborting",
+			slog.String("agent_id", agent.ID),
+			slog.Int64("task_id", task.ID),
+			slog.Int64("execution", execID),
+		)
+		_ = UpdateExecutionStatusByID(execID, statusFailed)
+		return fmt.Errorf("task restart resume: agent %q has no backend", task.AgentID)
 	}
 	// A scheduled run has nobody to approve permission requests; the session
 	// already carries this flag, but re-asserting it costs one UPDATE and keeps
 	// the resumed run from blocking on a prompt nobody will answer.
-	if agent.Transport == transportACPStdio {
+	if agent.SupportsACP() {
 		if err := UpdateSessionAutoApprove(sessionID, true); err != nil {
 			slog.Warn("task restart resume: failed to enable auto-approve",
 				slog.String("session_id", sessionID), slog.String("err", err.Error()))
@@ -319,11 +332,11 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 	if effectiveModel == "" {
 		effectiveModel = agent.DefaultModelID()
 	}
-	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.Transport == transportACPStdio)
+	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.SupportsACP())
 
 	req := BuildChatRequest(
 		AutoContinuePrompt(), sessionID, task.ProjectPath, backendName, task.AgentID,
-		effectiveModel, effectiveThinking, "", "", task.ProjectPath, false,
+		effectiveModel, effectiveThinking, "", task.ProjectPath, false,
 	)
 	// BuildChatRequest is the interactive builder; a resumed task run is still a
 	// scheduled execution (pi's --no-session and the prompt layers key on it).

@@ -3,7 +3,6 @@ package mimo
 import (
 	"testing"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/ai/backends"
 )
 
@@ -20,13 +19,14 @@ func TestMimoPlugin_BehavesLikeOpenCode(t *testing.T) {
 	if plugin == nil {
 		t.Fatal("mimo backend is not registered")
 	}
-	if plugin.ACP == nil || plugin.ACP.InputRemaps == nil {
-		t.Fatal("MiMo must declare OpenCode's ACP input remaps")
+	if plugin.ACP != nil && plugin.ACP.InputRemaps != nil {
+		t.Fatal("MiMo must not carry its own remap copy: OpenCode's fields are the shared generic set")
 	}
 	// OpenCode sends camelCase fields; the canonical form the frontend and the
-	// tool cards read is snake_case, so both spellings must be in the table.
-	if plugin.ACP.InputRemaps["filePath"] != "file_path" || plugin.ACP.InputRemaps["oldString"] != "old_string" {
-		t.Fatalf("the remap table must map OpenCode's camelCase field names, got %v", plugin.ACP.InputRemaps)
+	// tool cards read is snake_case, so the effective table must map both.
+	remaps := backends.LookupACPRemaps("mimo")
+	if remaps["filePath"] != "file_path" || remaps["oldString"] != "old_string" {
+		t.Fatalf("the effective remap table must map OpenCode's camelCase field names, got %v", remaps)
 	}
 	if plugin.Behavior == nil {
 		t.Fatal("MiMo must declare an ACP behavior")
@@ -52,17 +52,5 @@ func TestMimoPlugin_DeclaresItsOwnCommandAndSkills(t *testing.T) {
 	}
 	if len(spec.NativeSkillsDirs) == 0 {
 		t.Fatal("the skill directories must be declared so detection can find them")
-	}
-}
-
-// TestMimoPlugin_RegistersAClientBackend pins that the CLI factory builds a
-// usable backend rather than returning nil.
-func TestMimoPlugin_RegistersAClientBackend(t *testing.T) {
-	factory := ai.LookupBackendFactoryForTest("mimo")
-	if factory == nil {
-		t.Fatal("mimo factory missing")
-	}
-	if b := factory.NewBackend(); b == nil || b.Name() != "mimo" {
-		t.Fatalf("factory returned %v", b)
 	}
 }

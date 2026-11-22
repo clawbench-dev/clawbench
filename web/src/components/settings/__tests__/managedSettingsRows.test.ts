@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
  * desktop app: /api/config/restart answers 403 there, and offering a button
  * that always fails reads as a bug rather than as a policy.
  *
- * "Check for updates" deliberately STAYS. A fused ("all-in-one") install does
+ * "Check for updates" deliberately STAYS. A integrated ("integrated") install does
  * upgrade from inside the app — it installs the whole package (client and
  * server together) through the desktop shell, instead of swapping the server
  * binary. Hiding the row would leave such an install with no update entry at

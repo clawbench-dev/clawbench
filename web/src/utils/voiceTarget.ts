@@ -266,8 +266,3 @@ export function removeVoiceText(t: VoiceTarget): void {
   t.applied = ''
   t.hasWritten = false
 }
-
-/** True when the surface is still writable (a re-rendered editor is not). */
-export function isTargetAlive(t: VoiceTarget | null): t is VoiceTarget {
-  return !!t && t.host.alive()
-}

@@ -65,52 +65,10 @@ import (
 // explicitly NOT treated as compaction: the agent restores the original history
 // in those cases, so the context was never rewritten.
 
-const (
-	// metaKeyCodeBuddyIsCompactInternal marks every session update emitted while
-	// CodeBuddy is compacting the session context.
-	metaKeyCodeBuddyIsCompactInternal = "codebuddy.ai/isCompactInternal"
-	// metaKeyCodeBuddyCompactType carries the compaction purpose
-	// (user-command | pre-message-auto | emergency-auto).
-	metaKeyCodeBuddyCompactType = "codebuddy.ai/compactType"
-	// metaKeyCodeBuddyCompactCancelled marks a compaction that was aborted; the
-	// original history is restored, so the session is NOT considered compacted.
-	metaKeyCodeBuddyCompactCancelled = "codebuddy.ai/compact-cancelled"
-	// metaKeyCodeBuddyCompactLimitReached marks a compaction that gave up after
-	// repeated max-token failures; likewise not a completed compaction.
-	metaKeyCodeBuddyCompactLimitReached = "codebuddy.ai/compact-limit-reached"
-)
-
 // claudeACPCompactCompletedText is the exact text the claude-agent-acp adapter
 // emits on a `compact_boundary` system message. Matched as a substring so
 // surrounding whitespace/newlines in the chunk do not matter.
 const claudeACPCompactCompletedText = "Compacting completed."
-
-// IsCodeBuddyCompactionMeta reports whether a CodeBuddy _meta payload marks the
-// session as compacting. The boolean flag is authoritative; compactType is
-// accepted as an alternative carrier because the broadcast service attaches
-// both, and older/newer builds may omit one.
-func IsCodeBuddyCompactionMeta(meta map[string]any) bool {
-	if len(meta) == 0 {
-		return false
-	}
-	if v, ok := meta[metaKeyCodeBuddyIsCompactInternal]; ok && metaBool(v) {
-		return true
-	}
-	return metaString(meta[metaKeyCodeBuddyCompactType]) != ""
-}
-
-// IsCodeBuddyCompactionCancelledMeta reports whether a CodeBuddy _meta payload
-// announces a compaction that did NOT complete (cancelled by the user, or the
-// max-token limit was reached). The agent restores the original history in both
-// cases, so the session must not be flagged as compacted.
-func IsCodeBuddyCompactionCancelledMeta(meta map[string]any) bool {
-	if len(meta) == 0 {
-		return false
-	}
-	_, cancelled := meta[metaKeyCodeBuddyCompactCancelled]
-	_, limitReached := meta[metaKeyCodeBuddyCompactLimitReached]
-	return cancelled || limitReached
-}
 
 // IsCompactCommand reports whether the user's message is the /compact slash
 // command (with or without arguments, e.g. "/compact" or "/compact keep the
@@ -306,34 +264,6 @@ func isGrokCompactionCompleted(eventType string) bool {
 	return false
 }
 
-// isCLICompactionMessage reports whether a parsed CLI stream-json message
-// signals that the session context was compacted. Covers the shapes the Claude
-// and CodeBuddy CLIs use (see the package comment for the per-backend list):
-//
-//   - Claude CLI: `system` with subtype `compact_boundary`.
-//   - CodeBuddy CLI: `system` with subtype `status` and status `compacting`,
-//     or any message whose providerData/_meta carries the compaction flag.
-//
-// Negative signals (a cancelled or limit-reached compaction) are not produced
-// in the CLI stream-json shape, so nothing is excluded here.
-func isCLICompactionMessage(msg *ClaudeStreamMessage) bool {
-	if msg == nil {
-		return false
-	}
-	if msg.Type == "system" {
-		if msg.Subtype == "compact_boundary" {
-			return true
-		}
-		if msg.Subtype == "status" && msg.Status == "compacting" {
-			return true
-		}
-	}
-	if msg.ProviderData != nil && (msg.ProviderData.IsCompactInternal || msg.ProviderData.CompactType != "") {
-		return true
-	}
-	return IsCodeBuddyCompactionMeta(msg.Meta)
-}
-
 // metaBool reads a boolean field that may be a real bool or a JSON-ish
 // string/number (the bundles serialize some flags as 1/"true").
 func metaBool(v any) bool {
@@ -365,23 +295,23 @@ func compactDetectedEvent(source string) StreamEvent {
 func acpUpdateMeta(update acp.SessionUpdate) map[string]any {
 	switch {
 	case update.AgentMessageChunk != nil:
-		return update.AgentMessageChunk.Meta
+		return MetaAny(update.AgentMessageChunk.Meta)
 	case update.AgentThoughtChunk != nil:
-		return update.AgentThoughtChunk.Meta
+		return MetaAny(update.AgentThoughtChunk.Meta)
 	case update.UserMessageChunk != nil:
-		return update.UserMessageChunk.Meta
+		return MetaAny(update.UserMessageChunk.Meta)
 	case update.ToolCall != nil:
-		return update.ToolCall.Meta
+		return MetaAny(update.ToolCall.Meta)
 	case update.ToolCallUpdate != nil:
-		return update.ToolCallUpdate.Meta
+		return PatchMetaAny(update.ToolCallUpdate.Meta)
 	case update.UsageUpdate != nil:
-		return update.UsageUpdate.Meta
+		return MetaAny(update.UsageUpdate.Meta)
 	case update.SessionInfoUpdate != nil:
-		return update.SessionInfoUpdate.Meta
+		return PatchMetaAny(update.SessionInfoUpdate.Meta)
 	case update.CurrentModeUpdate != nil:
-		return update.CurrentModeUpdate.Meta
+		return MetaAny(update.CurrentModeUpdate.Meta)
 	case update.ConfigOptionUpdate != nil:
-		return update.ConfigOptionUpdate.Meta
+		return MetaAny(update.ConfigOptionUpdate.Meta)
 	}
 	return nil
 }

@@ -212,18 +212,6 @@ vi.mock('@/composables/useFileNavStack', () => ({
   }),
 }))
 
-const mockToolbarCollapsedIds = vi.hoisted(() => ([]))
-
-vi.mock('@/composables/useToolbarOverflow', () => ({
-  useToolbarOverflow: () => ({
-    inlineIds: computed(() => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'previewMode', 'multiselect', 'hidden', 'jump']),
-    collapsedIds: computed(() => mockToolbarCollapsedIds),
-    contentWidth: ref(800),
-    startObserving: vi.fn(),
-    stopObserving: vi.fn(),
-  }),
-}))
-
 // ── Quick-preview composable mock ──
 // The file manager owns an instance of useCodeLinkPreview gated on preview mode.
 // Mock it so tests can assert open/close decisions without the real fetch/cache.
@@ -633,7 +621,6 @@ beforeEach(() => {
   mockIsAppMode.value = false
   mockIsDesktopApp.value = false
   mockIsRefreshing.value = false
-  mockToolbarCollapsedIds.length = 0
   mockDirUploading.value = false
   mockDirUploadProgress.value = 0
   mockDirUploadTotal.value = 0
@@ -748,7 +735,6 @@ export const mocks = {
   mockShowPreview,
   mockThumbable,
   mockToastShow,
-  mockToolbarCollapsedIds,
   searchState,
   mockLocalConfig,
   mockLocalConfigProxy,

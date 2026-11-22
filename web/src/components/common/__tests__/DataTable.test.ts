@@ -183,6 +183,35 @@ describe('DataTable', () => {
     wrapper.unmount()
   })
 
+  it('puts a type icon on the mode button and on both menu rows', async () => {
+    const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS)
+    // 简单表 = 光板（无内部竖线），数据表 = 带列分隔线：靠图形本身区分两种类型。
+    const PLAIN = 'M3 9h18'
+    const DATA_COLS = 'M9 3v18'
+    // 一个图标里有多条 path，断言图形内容而不是「第一条 path」。
+    const buttonIcon = () => wrapper.find('.dt-mode-btn .dt-mode-icon').html()
+
+    expect(buttonIcon()).toContain(DATA_COLS)
+
+    await wrapper.find('.dt-mode-btn').trigger('click')
+    // 两行都有各自的图标——不是「选中打勾、未选中留空」。
+    const plainIcon = wrapper.find('[data-mode-icon="normal"]')
+    const dataIcon = wrapper.find('[data-mode-icon="data"]')
+    expect(plainIcon.exists()).toBe(true)
+    expect(dataIcon.exists()).toBe(true)
+    expect(plainIcon.attributes('class')).toContain('dt-pop-icon')
+    expect(plainIcon.html()).not.toContain(DATA_COLS)
+    expect(dataIcon.html()).toContain(DATA_COLS)
+    expect(plainIcon.html()).toContain(PLAIN)
+
+    await menuItem(wrapper, 'Simple').trigger('click')
+    expect(wrapper.find('.dt').classes()).not.toContain('is-data')
+    expect(wrapper.find('.dt-mode-btn').attributes('data-mode')).toBe('normal')
+    expect(buttonIcon()).toContain(PLAIN)
+    expect(buttonIcon()).not.toContain(DATA_COLS)
+    wrapper.unmount()
+  })
+
   it('searches every column and reports the narrowed count', async () => {
     const wrapper = mountTable(NUMERIC_HEADERS, NUMERIC_ROWS)
     await wrapper.find('.dt-search input').setValue('west')

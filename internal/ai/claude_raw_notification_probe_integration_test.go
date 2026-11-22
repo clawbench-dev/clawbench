@@ -96,7 +96,7 @@ func TestClaudeACPRawNotificationProbe(t *testing.T) {
 
 	conn := acp.NewClientSideConnection(client, agentIn, filter)
 	conn.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	filter.SetNotificationSink(client)
+	conn.SetUnhandledHandler(client.handleUnhandledNotification)
 
 	require.NoError(t, cmd.Start(), "spawn claude-agent-acp")
 	t.Cleanup(func() {
@@ -108,25 +108,27 @@ func TestClaudeACPRawNotificationProbe(t *testing.T) {
 
 	initCtx, initCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer initCancel()
+	// The adapter gates its native-subagent session updates on this AIR
+	// extension capability (clientSupportsSubagents → clientSupportsAirCapability):
+	//   clientCapabilities._meta.jetbrains.air = { version: >=1, capabilities: [...] }
+	// Without it, no subagent_spawned/subagent_state_update is emitted at
+	// all, so the raw bypass would see nothing. Advertised here to probe
+	// whether that is what turns the events on.
+	capMeta, err := acp.NewMeta(map[string]any{
+		"jetbrains": map[string]any{
+			"air": map[string]any{
+				"version":      1,
+				"capabilities": []string{"nativeSubagentSessions"},
+			},
+		},
+	})
+	require.NoError(t, err)
 	_, err = conn.Initialize(initCtx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
 			Fs:       acp.FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true},
 			Terminal: true,
-			// The adapter gates its native-subagent session updates on this AIR
-			// extension capability (clientSupportsSubagents → clientSupportsAirCapability):
-			//   clientCapabilities._meta.jetbrains.air = { version: >=1, capabilities: [...] }
-			// Without it, no subagent_spawned/subagent_state_update is emitted at
-			// all, so the raw bypass would see nothing. Advertised here to probe
-			// whether that is what turns the events on.
-			Meta: map[string]any{
-				"jetbrains": map[string]any{
-					"air": map[string]any{
-						"version":      1,
-						"capabilities": []string{"nativeSubagentSessions"},
-					},
-				},
-			},
+			Meta:     capMeta,
 		},
 		ClientInfo: &acp.Implementation{Name: "clawbench-raw-notif-probe", Version: "1.0.0"},
 	})

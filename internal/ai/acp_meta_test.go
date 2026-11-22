@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -150,7 +151,7 @@ func TestMapACPSessionUpdate_UsageUpdate_CodeBuddyMeta(t *testing.T) {
 	}
 	update := acp.SessionUpdate{
 		UsageUpdate: &acp.SessionUsageUpdate{
-			Meta: meta,
+			Meta: acptest.Meta(meta),
 			Used: 29495,
 			Size: 200000,
 		},
@@ -185,10 +186,10 @@ func TestMapACPSessionUpdate_AgentMessageChunk_AccumulatesMeta(t *testing.T) {
 	update := acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "好"}},
-			Meta: map[string]any{
+			Meta: acptest.Meta(map[string]any{
 				"codebuddy.ai/requestId": "req-123",
 				"codebuddy.ai/messageId": "msg-456",
-			},
+			}),
 		},
 	}
 	mapACPSessionUpdate(update, ch, context.Background(), conn, nil)
@@ -383,9 +384,9 @@ func TestMapACPSessionUpdate_UsageUpdate_CodeBuddyCostDiscarded(t *testing.T) {
 			Used: 29495,
 			Size: 200000,
 			Cost: &acp.Cost{Amount: 1.48}, // CodeBuddy credit, empty currency
-			Meta: map[string]any{
+			Meta: acptest.Meta(map[string]any{
 				"usage": map[string]any{"credit": 1.48},
-			},
+			}),
 		},
 	}
 	mapACPSessionUpdate(update, ch, context.Background(), conn, nil)
@@ -671,7 +672,7 @@ func TestMapACPSessionUpdate_CostOnlyCreditIsCaptured(t *testing.T) {
 		UsageUpdate: &acp.SessionUsageUpdate{
 			Used: 0, Size: 0,
 			Cost: &acp.Cost{Amount: 12.5},
-			Meta: map[string]any{"codebuddy.ai/requestId": "req-gen"},
+			Meta: acptest.Meta(map[string]any{"codebuddy.ai/requestId": "req-gen"}),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -698,10 +699,10 @@ func TestMapACPSessionUpdate_ReplayedFrameDropsCredit(t *testing.T) {
 		UsageUpdate: &acp.SessionUsageUpdate{
 			Used: 0, Size: 0,
 			Cost: &acp.Cost{Amount: 99.0},
-			Meta: map[string]any{
+			Meta: acptest.Meta(map[string]any{
 				"codebuddy.ai/requestId":      "req-old",
 				"codebuddy.ai/requestCredits": map[string]any{"req-old": 99.0},
-			},
+			}),
 		},
 	}, ch, context.Background(), conn, nil)
 
@@ -727,11 +728,11 @@ func TestMapACPSessionUpdate_CreditIsTurnCumulative(t *testing.T) {
 		mapACPSessionUpdate(acp.SessionUpdate{
 			UsageUpdate: &acp.SessionUsageUpdate{
 				Used: 30000, Size: 200000,
-				Meta: map[string]any{
+				Meta: acptest.Meta(map[string]any{
 					"codebuddy.ai/requestId": "req-1",
 					"codebuddy.ai/messageId": msgID,
 					"usage":                  map[string]any{"prompt_tokens": 30000, "completion_tokens": 5, "credit": credit},
-				},
+				}),
 			},
 		}, ch, context.Background(), conn, nil)
 	}

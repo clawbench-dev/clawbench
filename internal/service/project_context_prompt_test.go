@@ -73,6 +73,29 @@ func TestAppendProjectContextSection_CandidatePriority(t *testing.T) {
 	assert.NotContains(t, got, "AGENTS-RULES", "the override replaces AGENTS.md in the same dir")
 }
 
+// TestAppendProjectContextSection_CodebuddyFallback pins the last candidate:
+// a repo whose only rules file is CodeBuddy's still gets it injected, and any
+// of the earlier names beats it.
+func TestAppendProjectContextSection_CodebuddyFallback(t *testing.T) {
+	root := t.TempDir()
+	writeContextFile(t, root, "CODEBUDDY.md", "CODEBUDDY-RULES")
+	assert.Contains(t, buildProjectContextSection(root, ""), "CODEBUDDY-RULES")
+
+	writeContextFile(t, root, "CLAUDE.md", "CLAUDE-RULES")
+	got := buildProjectContextSection(root, "")
+	assert.Contains(t, got, "CLAUDE-RULES")
+	assert.NotContains(t, got, "CODEBUDDY-RULES", "CLAUDE.md outranks CODEBUDDY.md")
+
+	writeContextFile(t, root, "CODEBUDDY.MD", "CODEBUDDY-UPPER")
+	got = buildProjectContextSection(root, "")
+	assert.NotContains(t, got, "CODEBUDDY-UPPER", "the uppercase spelling is lower priority")
+
+	// Alone, the uppercase spelling is still read (case-sensitive filesystems).
+	root2 := t.TempDir()
+	writeContextFile(t, root2, "CODEBUDDY.MD", "CODEBUDDY-UPPER")
+	assert.Contains(t, buildProjectContextSection(root2, ""), "CODEBUDDY-UPPER")
+}
+
 // TestAppendProjectContextSection_AncestorsRootFirst pins the layering that
 // makes a monorepo work: the rules of every directory between the working
 // directory and the filesystem root are stacked, outermost first, so the most
@@ -157,7 +180,11 @@ func TestAppendProjectContextSection_StripsBOM(t *testing.T) {
 // it, a task would run the built-in agent with no project rules while a chat
 // turn in the same project had them.
 func TestProjectContextSectionWiredIntoBothProducers(t *testing.T) {
-	call := regexp.MustCompile(`AppendProjectContextSection\(systemPrompt,\s*projectPath,\s*\w+\)`)
+	// The guard and the call must be bound together: asserting them
+	// independently would still pass if the call drifted out of the
+	// isBuiltinBackend branch (and an external backend would then get the
+	// project rules injected a second time).
+	guardedCall := regexp.MustCompile(`isBuiltinBackend\([^)]*\)[^{]*\{[^}]{0,600}?AppendProjectContextSection\(systemPrompt,`)
 	cases := []struct {
 		file string
 		why  string
@@ -169,10 +196,8 @@ func TestProjectContextSectionWiredIntoBothProducers(t *testing.T) {
 		t.Run(tc.file, func(t *testing.T) {
 			src, err := os.ReadFile(tc.file)
 			require.NoError(t, err)
-			assert.Regexp(t, call, string(src),
-				"%s must inject the project context (%s)", tc.file, tc.why)
-			assert.Regexp(t, regexp.MustCompile(`isBuiltinBackend\(`), string(src),
-				"%s must gate the injection on the built-in backend", tc.file)
+			assert.Regexp(t, guardedCall, string(src),
+				"%s must inject the project context inside the isBuiltinBackend guard (%s)", tc.file, tc.why)
 		})
 	}
 }
@@ -189,14 +214,14 @@ func TestProjectContextSection_WiredIntoBuiltinSystemPrompt(t *testing.T) {
 
 	withAgents(t, map[string]*model.Agent{
 		"b1": {ID: "b1", Backend: "builtin", RuntimeSystemPrompt: "B1"},
-		"c1": {ID: "c1", Backend: "codebuddy", RuntimeSystemPrompt: "C1", Command: "codebuddy"},
+		"c1": {ID: "c1", Backend: "codebuddy", RuntimeSystemPrompt: "C1"},
 	})
 
-	builtinReq := BuildChatRequest("hi", "sess-builtin", project, "builtin", "b1", "", "", "", "", project, false)
+	builtinReq := BuildChatRequest("hi", "sess-builtin", project, "builtin", "b1", "", "", "", project, false)
 	assert.Contains(t, builtinReq.SystemPrompt, "PROJECT-RULE-MARKER",
 		"the built-in agent has no discovery of its own, so it must be injected")
 
-	cliReq := BuildChatRequest("hi", "sess-cli", project, "codebuddy", "c1", "", "", "", "", project, false)
+	cliReq := BuildChatRequest("hi", "sess-cli", project, "codebuddy", "c1", "", "", "", project, false)
 	assert.NotContains(t, cliReq.SystemPrompt, "PROJECT-RULE-MARKER",
 		"external backends read their own AGENTS.md")
 }
@@ -328,11 +353,11 @@ func TestAgentSkipsProjectContext(t *testing.T) {
 		"off": {ID: "off", Backend: "builtin", RuntimeSystemPrompt: "B"},
 	})
 
-	skipped := BuildChatRequest("hi", "sess-skip", project, "builtin", "on", "", "", "", "", project, false)
+	skipped := BuildChatRequest("hi", "sess-skip", project, "builtin", "on", "", "", "", project, false)
 	assert.NotContains(t, skipped.SystemPrompt, "PROJECT-RULE-MARKER",
 		"the switch must turn injection off")
 
-	kept := BuildChatRequest("hi", "sess-keep", project, "builtin", "off", "", "", "", "", project, false)
+	kept := BuildChatRequest("hi", "sess-keep", project, "builtin", "off", "", "", "", project, false)
 	assert.Contains(t, kept.SystemPrompt, "PROJECT-RULE-MARKER",
 		"the zero value must keep injecting")
 }

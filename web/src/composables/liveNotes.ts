@@ -51,16 +51,6 @@ export const NOTES_MIN_SEGMENT_MS = 4_000
 /** How long a pause must last before it counts as the end of a sentence. */
 export const NOTES_SILENCE_HOLD_MS = 450
 
-/**
- * The value 听记 originally used as its silence floor (≈ -40 dBFS).
- *
- * No longer the live threshold: it now comes from the shared sensitivity
- * setting (`SENSITIVITY_RMS`). The old number was lowered after measuring that
- * it cut most of ordinary speech, so this constant is kept only as the
- * historical reference the design notes quote.
- */
-export const NOTES_SILENCE_RMS = 0.01
-
 /** How often the level is sampled while a segment is recording. */
 const NOTES_VAD_INTERVAL_MS = 100
 

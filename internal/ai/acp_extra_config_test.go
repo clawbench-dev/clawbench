@@ -55,7 +55,41 @@ func TestExtractExtraConfigOptions_OnlyUnknownCategories(t *testing.T) {
 	assert.Equal(t, "model_config", extras[0].Category)
 	assert.Equal(t, "1.5x speed, increased usage", extras[0].Description)
 	assert.Equal(t, "off", extras[0].CurrentID)
+	assert.Equal(t, "select", extras[0].Type)
 	assert.Equal(t, []ConfigOptionValue{{ID: "off", Name: "Off"}, {ID: "on", Name: "On"}}, extras[0].Values)
+}
+
+// A boolean option has no value list. Its current value becomes the same
+// "true"/"false" string the rest of the config path already uses, so the HTTP
+// body and session cache do not need a second value type.
+func TestExtractExtraConfigOptions_Boolean(t *testing.T) {
+	category := acp.SessionConfigOptionCategory("model_config")
+	desc := "1.5x speed"
+	opts := []acp.SessionConfigOption{{Boolean: &acp.SessionConfigOptionBoolean{
+		Id: "fast-mode", Name: "Fast mode", Category: &category,
+		Description: &desc, Type: "boolean", CurrentValue: true,
+	}}}
+
+	extras := extractExtraConfigOptions(opts)
+
+	require.Len(t, extras, 1)
+	assert.Equal(t, "fast-mode", extras[0].ConfigID)
+	assert.Equal(t, "Fast mode", extras[0].Name)
+	assert.Equal(t, "1.5x speed", extras[0].Description)
+	assert.Equal(t, "model_config", extras[0].Category)
+	assert.Equal(t, "boolean", extras[0].Type)
+	assert.Equal(t, "true", extras[0].CurrentID)
+	assert.Empty(t, extras[0].Values)
+}
+
+// A boolean whose category is one of the three dedicated pickers would
+// duplicate that picker; it is skipped like the select case.
+func TestExtractExtraConfigOptions_SkipsWellKnownBoolean(t *testing.T) {
+	category := acp.SessionConfigOptionCategory("mode")
+	opts := []acp.SessionConfigOption{{Boolean: &acp.SessionConfigOptionBoolean{
+		Id: "toggle", Name: "Toggle", Category: &category, Type: "boolean", CurrentValue: true,
+	}}}
+	assert.Empty(t, extractExtraConfigOptions(opts))
 }
 
 // An option with no values cannot be rendered as a picker, and an option with
@@ -68,13 +102,7 @@ func TestExtractExtraConfigOptions_SkipsUnusableOptions(t *testing.T) {
 	noCategory := extraSelect("uncategorised", "Uncategorised", "", "x",
 		acp.SessionConfigSelectOption{Value: "x", Name: "X"})
 
-	// Boolean options (advertised only to clients that declare the capability)
-	// carry no Select block and are out of scope here.
-	boolean := acp.SessionConfigOption{Boolean: &acp.SessionConfigOptionBoolean{
-		Id: "toggle", Name: "Toggle", Type: "boolean", CurrentValue: true,
-	}}
-
-	extras := extractExtraConfigOptions([]acp.SessionConfigOption{noValues, noCategory, boolean})
+	extras := extractExtraConfigOptions([]acp.SessionConfigOption{noValues, noCategory})
 	assert.Empty(t, extras)
 }
 

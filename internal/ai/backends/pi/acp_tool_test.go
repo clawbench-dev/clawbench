@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"clawbench/internal/ai/acptest"
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,7 +29,7 @@ func TestParsePiACPToolCall_ReadRemapsPath(t *testing.T) {
 		ToolCallId: "call_1",
 		Title:      "read",
 		Kind:       acp.ToolKindRead,
-		RawInput:   map[string]any{"path": "probe-target.txt"},
+		RawInput:   acptest.Raw(map[string]any{"path": "probe-target.txt"}),
 	})
 	if tc.Name != "Read" {
 		t.Errorf("tool name = %q, want Read", tc.Name)
@@ -50,10 +51,10 @@ func TestParsePiACPToolCall_EditFlattensNestedEdits(t *testing.T) {
 		ToolCallId: "call_2",
 		Title:      "edit",
 		Kind:       acp.ToolKindEdit,
-		RawInput: map[string]any{
+		RawInput: acptest.Raw(map[string]any{
 			"path":  "edit-target.txt",
 			"edits": []any{map[string]any{"oldText": "beta", "newText": "BETA"}},
-		},
+		}),
 	})
 	if tc.Name != "Edit" {
 		t.Errorf("tool name = %q, want Edit", tc.Name)
@@ -78,7 +79,7 @@ func TestParsePiACPToolCall_GrepKeepsPathRemap(t *testing.T) {
 		ToolCallId: "call_3",
 		Title:      "grep",
 		Kind:       acp.ToolKindSearch,
-		RawInput:   map[string]any{"path": "/home/u/proj", "pattern": "func main"},
+		RawInput:   acptest.Raw(map[string]any{"path": "/home/u/proj", "pattern": "func main"}),
 	})
 	m := mustParsePiACPInput(t, tc.Input)
 	if m["file_path"] != "/home/u/proj" {
@@ -93,11 +94,11 @@ func TestParsePiACPToolCallUpdate_EditFlattensNestedEdits(t *testing.T) {
 	title := "edit"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "call_4",
-		Title:      &title,
-		RawInput: map[string]any{
+		Title:      acptest.Patch(title),
+		RawInput: acptest.PatchRaw(map[string]any{
 			"path":  "f.txt",
 			"edits": []any{map[string]any{"oldText": "a", "newText": "b"}},
-		},
+		}),
 	}
 	tc := parsePiACPToolCallUpdate(tcu)
 	m := mustParsePiACPInput(t, tc.Input)
@@ -122,7 +123,7 @@ func TestPiACPRemapMatchesCLIPath(t *testing.T) {
 	}
 	for name, raw := range cases {
 		acpOut := normalizePiACPInput(name, []byte(raw))
-		cliOut := normalizePiToolInput(name, json.RawMessage(raw), piACPBaseRemaps)
+		cliOut := normalizePiToolInput(name, json.RawMessage(raw), PiACPInputRemaps)
 		if acpOut != cliOut {
 			t.Errorf("%s: ACP and CLI normalizers diverged\n  acp=%s\n  cli=%s", name, acpOut, cliOut)
 		}
@@ -160,10 +161,10 @@ func TestParsePiACPToolCallUpdate_NilRawInputFallsBackToLocations(t *testing.T) 
 	inProgress := acp.ToolCallStatusInProgress
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "call_loc_1",
-		Title:      &title,
-		Kind:       &kind,
-		Status:     &inProgress,
-		Locations:  []acp.ToolCallLocation{{Path: "/proj/main.go"}},
+		Title:      acptest.Patch(title),
+		Kind:       acptest.Patch(kind),
+		Status:     acptest.Patch(inProgress),
+		Locations:  acptest.Patch([]acp.ToolCallLocation{{Path: "/proj/main.go"}}),
 	}
 	tc := parsePiACPToolCallUpdate(tcu)
 	if tc.Input == "" {
@@ -179,8 +180,8 @@ func TestParsePiACPToolCallUpdate_CompletedMapsOutput(t *testing.T) {
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: "call_done_1",
-		Status:     &completed,
-		RawOutput:  "the tool output",
+		Status:     acptest.Patch(completed),
+		RawOutput:  acptest.PatchRaw("the tool output"),
 	}
 	tc := parsePiACPToolCallUpdate(tcu)
 	require.True(t, tc.Done, "completed status must mark the call done")

@@ -69,7 +69,7 @@ type skillInfoJSON struct {
 	// own directory. It is deliberately EMPTY for the shared directory: those
 	// skills belong to no single agent, and emitting the list of every backend
 	// that happens to read the directory invited the UI to render exactly that
-	// roster (the bug that made shared skills show as "Agent codex,copilot,…").
+	// roster (the bug that made shared skills show as "Agent codex,qoder,…").
 	AgentID string `json:"agent_id,omitempty"`
 	// Backends are the AI backend IDs whose native directory this skill lives
 	// in (e.g. "claude", "codex"). The UI renders one icon+name chip per
@@ -94,7 +94,7 @@ type skillInfoJSON struct {
 // agentIDFor returns the agent id to report for a source.
 //
 // A shared (.agents/skills) source names no agent: the directory is read by
-// several backends, so reporting "codex,copilot,dsh,…" describes who declares
+// several backends, so reporting "codex,qoder,dsh,…" describes who declares
 // the path rather than who owns the skill. The UI labels those "generic" and
 // must not receive a roster it could render by mistake.
 func agentIDFor(src skill.Source) string {

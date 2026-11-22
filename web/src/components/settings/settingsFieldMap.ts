@@ -9,6 +9,7 @@
  * Both the category page and the restart dialog will pick it up automatically.
  */
 
+import type { Component } from 'vue'
 import { getNative } from '@/utils/clawbenchNative'
 import { UI_SCALE_STEP, UI_SCALE_MANUAL_MIN, UI_SCALE_MANUAL_MAX } from '@/utils/uiScale'
 import { buildFontStack, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, type FontChoice } from '@/utils/fontConfig'
@@ -97,6 +98,32 @@ export function formatAnchorForDisplay(value: unknown): string {
 /** Sentinel option value for "type it yourself" in a model select. */
 export const CUSTOM_OPTION_VALUE = '__custom__'
 
+/**
+ * A dedicated component that fills a card instead of a row.
+ *
+ * Declared on the item that opens the card: the item still supplies the card's
+ * title (`sectionHeader`) and is NOT rendered as a row. Used where the body is
+ * not a list of settings rows — a token table, an account list, a status card.
+ *
+ * `load` is a dynamic import on purpose: this table is eager-imported by the
+ * settings index, the restart dialog and the plugin field tables, so a static
+ * component import here would drag every card body (and its dependencies) into
+ * those chunks. The renderer wraps the loader once, so the component identity
+ * stays stable across renders.
+ *
+ * `descriptionKey` is translated by the renderer and passed to the component as
+ * `description`. `emits` lists events forwarded back to the settings page.
+ */
+export interface CardBody {
+  load: () => Promise<Component>
+  descriptionKey?: string
+  /** Events the body may emit; each is re-emitted by the settings page. */
+  emits?: CardBodyEmit[]
+}
+
+/** Card-body events the settings page knows how to forward. */
+export type CardBodyEmit = 'navigate'
+
 export interface ItemSpec {
   labelKey: string
   descriptionKey?: string
@@ -168,6 +195,11 @@ export interface ItemSpec {
    * for the same flag.
    */
   statusFeature?: string
+  /**
+   * Fill this item's card with a dedicated component. The item becomes a
+   * placeholder: it opens the card and names it, but renders no row.
+   */
+  cardBody?: CardBody
 }
 
 // ── Group panel config types ─────────────────────────────
@@ -288,15 +320,13 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.fontUi', descriptionKey: 'settings.items.fontUiDesc', key: 'fontUi', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(false) }},
     { type: 'item', spec: { labelKey: 'settings.items.fontUiFallback', descriptionKey: 'settings.items.fontUiFallbackDesc', key: 'fontUiFallback', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(false) }},
     { type: 'item', spec: { labelKey: 'settings.items.fontDir', descriptionKey: 'settings.items.fontDirDesc', key: 'fonts.dir', type: 'text', source: 'server', sectionHeader: 'settings.items.fontSection' }},
-    // Custom wallpaper: the wallpaper-file control is a dedicated component
-    // (WallpaperSetting.vue) rendered by SettingsCategory at the top of this
-    // section; only the panel-opacity slider is a real data item here. The
-    // slider item is NOT rendered through the generic row (its UI lives inside
-    // WallpaperSetting) — it exists so the section card is created and the
-    // value flows through the same local-config pipeline as the other display
-    // tweaks. Panel opacity is a per-device preference (localStorage), like
-    // blur / edge fade / wave speed.
-    { type: 'item', spec: { labelKey: 'settings.items.wallpaperPanelOpacity', key: 'panelOpacity', type: 'slider', source: 'local', min: 0, max: 1, step: 0.01, defaultValue: 0.7, displayFormat: 'percent', sectionHeader: 'settings.items.wallpaperSection' }},
+    // Custom wallpaper: the whole card body is a dedicated component
+    // (WallpaperSetting.vue) — the file control AND the panel-opacity slider
+    // live inside it. The item below is a placeholder that only opens the card
+    // and routes the value through the same local-config pipeline as the other
+    // display tweaks. Panel opacity is a per-device preference (localStorage),
+    // like blur / edge fade / wave speed.
+    { type: 'item', spec: { labelKey: 'settings.items.wallpaperPanelOpacity', key: 'panelOpacity', type: 'slider', source: 'local', min: 0, max: 1, step: 0.01, defaultValue: 0.7, displayFormat: 'percent', sectionHeader: 'settings.items.wallpaperSection', cardBody: { load: () => import('./WallpaperSetting.vue'), descriptionKey: 'settings.items.wallpaperDesc' } }},
   ],
   agents: [],
   // 聊天 owns what a turn looks like and how it behaves: reading aloud, the
@@ -337,7 +367,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // is not group-chat-specific.
     { type: 'item', spec: { labelKey: 'settings.items.groupMaxSpeeches', descriptionKey: 'settings.items.groupMaxSpeechesDesc', key: 'chat.group_max_speeches', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.groupChatSectionHeader' } },
   ],
-  // 会话管理: the session list and the session lifecycle. Split out of 聊天 so
+  // 会话列表: the session list and the session lifecycle. Split out of 聊天会话 so
   // that "how many sessions, how they are ordered, when they are cleaned up"
   // is not interleaved with "how a message is drawn".
   sessions: [
@@ -393,9 +423,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   project: [
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectsMaxCount', descriptionKey: 'settings.items.recentProjectsMaxCountDesc', key: 'recent_projects.max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.projectSectionHeader' } },
     // Opens the "all projects" card, which ProjectsSetting fills with the live
-    // registry listing. The placeholder carries only the section header, so it
-    // must not also render as a generic row (see PLACEHOLDER_ITEMS).
-    { type: 'item', spec: { labelKey: 'settings.items.allProjectsSection', key: 'allProjectsList', type: 'info', source: 'local', sectionHeader: 'settings.items.allProjectsSection' } },
+    // registry listing. The placeholder carries only the section header and the
+    // body; it renders no row. `navigate` is forwarded to the settings page so
+    // a row click can drill into project:<id>.
+    { type: 'item', spec: { labelKey: 'settings.items.allProjectsSection', key: 'allProjectsList', type: 'info', source: 'local', sectionHeader: 'settings.items.allProjectsSection', cardBody: { load: () => import('./ProjectsSetting.vue'), emits: ['navigate'] } } },
   ],
   // Fields live in `plugins/browse/settings.ts` — see PLUGIN_SETTINGS below.
   files: [],
@@ -426,7 +457,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // dedicated component fills (TlsCertPanel). The directory row stays below
     // the panel in the same card, because it is the one thing the panel needs
     // from the generic form.
-    { type: 'item', spec: { labelKey: 'settings.items.tlsSection', descriptionKey: 'settings.items.tlsPanelDesc', key: 'tlsCert', type: 'info', source: 'server', sectionHeader: 'settings.items.tlsSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.tlsSection', descriptionKey: 'settings.items.tlsPanelDesc', key: 'tlsCert', type: 'info', source: 'server', sectionHeader: 'settings.items.tlsSection', cardBody: { load: () => import('./TlsCertPanel.vue') } } },
     { type: 'item', spec: { labelKey: 'settings.items.tlsCertDir', descriptionKey: 'settings.items.tlsCertDirDesc', key: 'tls.cert_dir', type: 'text', source: 'server', needsRestart: true, sectionHeader: 'settings.items.tlsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local', sectionHeader: 'settings.items.securitySection' } },
     // Desktop-only: the Electron shell remembers accepted self-signed
@@ -437,31 +468,28 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   ],
   skills: [
     // Cross-agent skill discovery, split into one card per concern. Each entry
-    // below carries no rendered row — it exists only to open a section (and
-    // therefore a card), which SettingsCategory fills with a dedicated
-    // component. They must be listed in PLACEHOLDER_ITEMS there.
-    //   skillsCard     → master switch (SkillsSetting)
-    //   skillsDirs     → local directories (SkillsDirsSetting)
-    //   skillsRepos    → git repositories + sync (SkillsReposSetting)
+    // below carries no rendered row — it opens a section (and therefore a card)
+    // whose body is the `cardBody` component named next to it.
+    //   skillsCard       → master switch (SkillsSetting)
+    //   skillsDirs       → local directories (SkillsDirsSetting)
+    //   skillsRepos      → git repositories + sync (SkillsReposSetting)
     //   skillsDiscovered → the read-only result listing (SkillsDiscoveredSetting)
-    { type: 'item', spec: { labelKey: 'settings.items.skillsCard', descriptionKey: 'settings.items.skillsCardDesc', key: 'skillsCard', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.skillsDirs', key: 'skillsDirs', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsDirs' } },
-    { type: 'item', spec: { labelKey: 'settings.items.skillsRepos', key: 'skillsRepos', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsRepos' } },
-    { type: 'item', spec: { labelKey: 'settings.items.skillsDiscoveredSection', key: 'skillsDiscovered', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsDiscoveredSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.skillsCard', descriptionKey: 'settings.items.skillsCardDesc', key: 'skillsCard', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsSection', cardBody: { load: () => import('./SkillsSetting.vue'), descriptionKey: 'settings.items.skillsCardDesc' } } },
+    { type: 'item', spec: { labelKey: 'settings.items.skillsDirs', key: 'skillsDirs', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsDirs', cardBody: { load: () => import('./SkillsDirsSetting.vue') } } },
+    { type: 'item', spec: { labelKey: 'settings.items.skillsRepos', key: 'skillsRepos', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsRepos', cardBody: { load: () => import('./SkillsReposSetting.vue') } } },
+    { type: 'item', spec: { labelKey: 'settings.items.skillsDiscoveredSection', key: 'skillsDiscovered', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsDiscoveredSection', cardBody: { load: () => import('./SkillsDiscoveredSetting.vue') } } },
   ],
   mcp: [
-    // Global MCP server list. The card body is a dedicated component
-    // (MCPSetting); this entry only opens the section, so it must also be
-    // listed in PLACEHOLDER_ITEMS in SettingsCategory.vue.
-    { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection' } },
+    // Global MCP server list. The card body is MCPSetting; this entry only
+    // opens the section.
+    { type: 'item', spec: { labelKey: 'settings.items.mcpSection', descriptionKey: 'settings.items.mcpDesc', key: 'mcpServers', type: 'info', source: 'server', sectionHeader: 'settings.items.mcpSection', cardBody: { load: () => import('./MCPSetting.vue'), descriptionKey: 'settings.items.mcpDesc' } } },
   ],
   // Fields live in `plugins/mail/settings.ts` — see PLUGIN_SETTINGS below.
   mail: [],
   providers: [
     // Model-provider list (endpoint + credential). Same shape as the MCP
-    // section: the card body is ProviderSetting, so this placeholder item only
-    // opens the section and must be listed in PLACEHOLDER_ITEMS.
-    { type: 'item', spec: { labelKey: 'settings.items.providerSection', descriptionKey: 'settings.items.providerDesc', key: 'providersCard', type: 'info', source: 'server', sectionHeader: 'settings.items.providerSection' } },
+    // section: the card body is ProviderSetting; this entry only opens it.
+    { type: 'item', spec: { labelKey: 'settings.items.providerSection', descriptionKey: 'settings.items.providerDesc', key: 'providersCard', type: 'info', source: 'server', sectionHeader: 'settings.items.providerSection', cardBody: { load: () => import('./ProviderSetting.vue'), descriptionKey: 'settings.items.providerDesc' } } },
   ],
   // Share center. The global switch (`share.enabled`) is a Dock feature switch:
   // turning it off revokes every link already handed out, which is far more
@@ -954,11 +982,9 @@ export function isSubPageRoute(categoryId: string): boolean {
 /**
  * Field lists contributed by the plugins themselves.
  *
- * A dock plugin owns a settings category (`settingsCategory`) and, until now,
- * its field list lived only in this file — so adding a setting meant editing a
- * 1300-line table in a different directory from the feature. Each plugin may now
- * ship `plugins/<id>/settings.ts` (a default export of `CategoryEntry[]`) and the
- * merge below puts it under that plugin's category.
+ * Each plugin ships `plugins/<id>/settings.ts` (a default export of
+ * `CategoryEntry[]`), and the merge below puts it under that plugin's category.
+ * Adding a setting to a feature therefore touches ONE directory.
  *
  * Why a glob here instead of a loader in the plugin runtime: this module is
  * imported by `SettingsCategory.vue`, `SettingsIndex.vue` and the restart dialog,
@@ -967,40 +993,21 @@ export function isSubPageRoute(categoryId: string): boolean {
  * resolved at build time and only records module ids — the modules are the
  * plugins' own field tables, which import nothing but types.
  *
+ * The category id defaults to the directory name. A plugin whose category is
+ * named differently exports `category` from the same file (browse → files,
+ * live → meeting, …) and `plugin.ts` imports that constant for its
+ * `settingsCategory`, so the field table and the runtime cannot drift apart.
+ *
  * A category listed in BOTH places is a mistake, not a merge: two sources would
  * silently concatenate and the row order would depend on it. The guard below
  * throws at module load so it fails in tests instead of in front of a user.
  */
-/**
- * Plugin directory → the settings category its `settings.ts` fills.
- *
- * Needed because the two names differ for five plugins. This is the one place
- * that pairing is written down for the field table; the plugin's own
- * `settingsCategory` is the runtime's copy (used for the gear button and the
- * index row), and `dockPluginManifest.test.ts` pins the two together.
- */
-const PLUGIN_SETTINGS_CATEGORY: Record<string, string> = {
-  browse: 'files',
-  forge: 'forgeIntegration',
-  history: 'gitHistory',
-  kb: 'kb',
-  live: 'meeting',
-  mail: 'mail',
-  notifications: 'notifications',
-  proxy: 'portForward',
-  share: 'share',
-  stats: 'stats',
-  tasks: 'tasks',
-  terminal: 'terminal',
-  view: 'fileView',
-}
-
-const PLUGIN_SETTINGS_MODULES = import.meta.glob<{ default?: CategoryEntry[] }>(
+const PLUGIN_SETTINGS_MODULES = import.meta.glob<{ default?: CategoryEntry[]; category?: string }>(
   '@/plugins/*/settings.ts',
   { eager: true },
 )
 
-/** Category id a plugin's `settings.ts` belongs to: its directory name. */
+/** Plugin directory a `settings.ts` path belongs to. */
 function pluginSettingsCategoryId(path: string): string | null {
   return path.match(/\/plugins\/([^/]+)\/settings\.ts$/)?.[1] ?? null
 }
@@ -1009,12 +1016,7 @@ for (const [path, mod] of Object.entries(PLUGIN_SETTINGS_MODULES)) {
   const pluginId = pluginSettingsCategoryId(path)
   const entries = mod.default
   if (!pluginId || !entries) continue
-  // The plugin's directory name is NOT always its settings category (browse →
-  // files, view → fileView, forge → forgeIntegration, proxy → portForward,
-  // live → meeting). The mapping is declared by the plugin as
-  // `settingsCategory`; reading it from the plugin module would mean importing
-  // the plugin graph, so it is stated once, here, next to the merge.
-  const categoryId = PLUGIN_SETTINGS_CATEGORY[pluginId] ?? pluginId
+  const categoryId = mod.category ?? pluginId
   const existing = categoryItems[categoryId]
   if (existing && existing.length > 0) {
     throw new Error(

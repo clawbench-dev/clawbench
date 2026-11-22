@@ -70,7 +70,7 @@ func TestProviderUsesConfigDir(t *testing.T) {
 	assert.False(t, model.ProviderUsesConfigDir("codex"))
 	assert.True(t, model.ProviderUsesConfigFile("codex"))
 	// Env-driven backends need no file at all.
-	for _, backend := range []string{"opencode", "deepseek", "zcode", "cursor", "copilot"} {
+	for _, backend := range []string{"opencode", "deepseek", "zcode", "cursor", "qoder"} {
 		assert.False(t, model.ProviderNeedsConfigWrite(backend), backend)
 	}
 }

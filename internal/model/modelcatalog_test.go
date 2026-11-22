@@ -248,83 +248,6 @@ func TestStaticSource_EmptyCommandIsAlwaysAvailable(t *testing.T) {
 	require.Len(t, models, 1)
 }
 
-func TestCLISource_ParsesCommandOutput(t *testing.T) {
-	// printf via sh, not `echo` with an embedded newline: Windows has no echo
-	// executable (it is a cmd builtin), so exec.Command("echo", …) fails there
-	// and the test would see an empty catalog. sh is available on every CI
-	// runner this repo uses (see exec_test.go, which relies on the same).
-	src := NewCLISource("cli-test", CLIOptions{
-		Command: "sh",
-		Args:    []string{"-c", "printf 'alpha/beta\\ngamma/delta\\n'"},
-		Parse:   ParseProviderModel,
-	})
-
-	models, detail := src.Discover()
-
-	assert.Empty(t, detail)
-	require.Len(t, models, 2)
-	assert.Equal(t, "alpha/beta", models[0].ID)
-	assert.Equal(t, "gamma/delta", models[1].ID)
-	assert.True(t, models[0].Default)
-}
-
-func TestCLISource_FallsBackWhenCommandFails(t *testing.T) {
-	src := NewCLISource("cli-test", CLIOptions{
-		Command:  "definitely-not-a-real-cli-xyz",
-		Args:     []string{"models"},
-		Parse:    ParseProviderModel,
-		Fallback: []AgentModel{{ID: "fb", Name: "Fallback"}},
-	})
-
-	models, _ := src.Discover()
-
-	require.Len(t, models, 1)
-	assert.Equal(t, "fb", models[0].ID)
-	assert.True(t, models[0].Default, "fallback list gets its first entry marked default")
-}
-
-func TestCLISource_ReturnsNilWhenCommandFailsWithNoFallback(t *testing.T) {
-	src := NewCLISource("cli-test", CLIOptions{
-		Command: "definitely-not-a-real-cli-xyz",
-		Parse:   ParseProviderModel,
-	})
-
-	models, detail := src.Discover()
-
-	assert.Nil(t, models)
-	assert.Contains(t, detail, "cli-test", "failure detail names the backend")
-}
-
-func TestCLISource_TriesAlternateCommands(t *testing.T) {
-	src := NewCLISource("cli-test", CLIOptions{
-		Commands: []CommandSpec{
-			{Command: "definitely-not-a-real-cli-xyz", Args: []string{"models"}},
-			{Command: "echo", Args: []string{"p/m"}},
-		},
-		Parse: ParseProviderModel,
-	})
-
-	models, _ := src.Discover()
-
-	require.Len(t, models, 1)
-	assert.Equal(t, "p/m", models[0].ID)
-}
-
-func TestCLISource_CustomParser(t *testing.T) {
-	src := NewCLISource("cli-test", CLIOptions{
-		Command: "echo",
-		Args:    []string{"ignored"},
-		Parse: func(string) []AgentModel {
-			return []AgentModel{{ID: "custom", Name: "Custom"}}
-		},
-	})
-
-	models, _ := src.Discover()
-
-	require.Len(t, models, 1)
-	assert.Equal(t, "custom", models[0].ID)
-}
-
 func TestPluginSource_ClearsDetailOnSuccess(t *testing.T) {
 	src := PluginSource("plug", func() ([]AgentModel, string) {
 		return []AgentModel{{ID: "x", Name: "X"}}, "some intermediate note"
@@ -601,23 +524,7 @@ func TestDiscoverWithDetail_ProbePanicBecomesDetail(t *testing.T) {
 
 func TestModelSourceKinds(t *testing.T) {
 	assert.Equal(t, SourceKindStatic, StaticSource("s", "", nil).Kind())
-	assert.Equal(t, SourceKindCLI, NewCLISource("c", CLIOptions{}).Kind())
 	assert.Equal(t, SourceKindPlugin, PluginSource("p", nil).Kind())
-}
-
-// Timeout() drives the per-source probe budget in the concurrent discovery
-// pass: static and plugin sources resolve in-process (no budget), while a CLI
-// source reports its configured command timeout.
-func TestModelSourceTimeouts(t *testing.T) {
-	assert.Equal(t, time.Duration(0), StaticSource("s", "", nil).Timeout())
-	assert.Equal(t, time.Duration(0), PluginSource("p", nil).Timeout())
-
-	// An unset timeout defaults to 10s rather than 0 (0 would mean "no budget"
-	// to the caller and make a hung CLI block discovery forever).
-	assert.Equal(t, 10*time.Second, NewCLISource("c", CLIOptions{}).Timeout())
-
-	custom := NewCLISource("c", CLIOptions{Timeout: 3 * time.Second})
-	assert.Equal(t, 3*time.Second, custom.Timeout())
 }
 
 func TestInvalidateDiscoveredModels_SingleBackend(t *testing.T) {
@@ -647,30 +554,6 @@ func TestRegisterModelSource_IgnoresInvalidInput(t *testing.T) {
 	RegisterModelSource(StaticSource("", "", nil))
 
 	assert.Empty(t, RegisteredModelSources(), "nil sources and empty backend IDs must be rejected")
-}
-
-func TestCLISource_NoCommandsConfigured(t *testing.T) {
-	src := NewCLISource("empty", CLIOptions{Parse: ParseProviderModel})
-
-	models, detail := src.Discover()
-
-	assert.Nil(t, models)
-	assert.Contains(t, detail, "no command configured")
-}
-
-func TestCLISource_InvalidPatternReportsDetail(t *testing.T) {
-	src := NewCLISource("bad-re", CLIOptions{
-		Command: "echo",
-		Args:    []string{"anything"},
-		Parse: func(string) []AgentModel {
-			return ParseRegexCapture("x", RegexOptions{Pattern: "(["})
-		},
-	})
-
-	models, detail := src.Discover()
-
-	assert.Nil(t, models)
-	assert.Contains(t, detail, "no models parsed")
 }
 
 func TestPluginSource_NilProbe(t *testing.T) {

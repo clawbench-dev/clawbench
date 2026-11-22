@@ -10,6 +10,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ func TestMimoPlugin_RegistersOpenCodeACPBehavior(t *testing.T) {
 		ToolCallId: acp.ToolCallId("call_1"),
 		Title:      "read",
 		Kind:       acp.ToolKindRead,
-		RawInput:   map[string]any{"filePath": "/tmp/a.txt"},
+		RawInput:   acptest.Raw(map[string]any{"filePath": "/tmp/a.txt"}),
 	}
 	got := plugin.Behavior.ParseToolCall(tc)
 	require.NotNil(t, got)
@@ -44,15 +45,15 @@ func TestMimoPlugin_RegistersOpenCodeACPBehavior(t *testing.T) {
 	title := "N todos"
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("call_1"),
-		Title:      &title,
-		Status:     &st,
-		RawOutput: map[string]any{
+		Title:      acptest.Patch(title),
+		Status:     acptest.Patch(st),
+		RawOutput: acptest.PatchRaw(map[string]any{
 			"metadata": map[string]any{
 				"todos": []any{
 					map[string]any{"content": "step 1", "priority": "high", "status": "completed"},
 				},
 			},
-		},
+		}),
 	}
 	upd := plugin.Behavior.ParseToolCallUpdate(tcu)
 	require.NotNil(t, upd)
@@ -73,14 +74,14 @@ func TestMimoPlugin_OnToolCallUpdateBridgesThePlan(t *testing.T) {
 	st := acp.ToolCallStatusCompleted
 	plugin.Behavior.OnToolCallUpdate(conn, ch, acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("call_todo"),
-		Status:     &st,
-		RawOutput: map[string]any{
+		Status:     acptest.Patch(st),
+		RawOutput: acptest.PatchRaw(map[string]any{
 			"metadata": map[string]any{
 				"todos": []any{
 					map[string]any{"content": "write the report", "priority": "high", "status": "in_progress"},
 				},
 			},
-		},
+		}),
 	})
 
 	select {
@@ -104,10 +105,10 @@ func TestMimoPlugin_OnToolCallUpdateBridgesThePlan(t *testing.T) {
 	inProgress := acp.ToolCallStatusInProgress
 	plugin.Behavior.OnToolCallUpdate(conn, ch, acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("call_todo"),
-		Status:     &inProgress,
-		RawInput: map[string]any{
+		Status:     acptest.Patch(inProgress),
+		RawInput: acptest.PatchRaw(map[string]any{
 			"todos": []any{map[string]any{"content": "write the report", "status": "pending"}},
-		},
+		}),
 	})
 	select {
 	case event := <-ch:

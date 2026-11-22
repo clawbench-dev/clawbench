@@ -89,9 +89,9 @@ func TestInit_WiresBackendSpecLoader(t *testing.T) {
 		"the loader must expose the plugins registered by the imported backends")
 }
 
-// TestInit_WiresCLICapabilityReporter verifies the CLI reporter bridge: model
-// asks the capability snapshot whether a backend has a CLI implementation.
-func TestInit_WiresCLICapabilityReporter(t *testing.T) {
+// TestInit_WiresCapabilityReporter verifies the capability bridge: model asks
+// the capability snapshot what a backend can do.
+func TestInit_WiresCapabilityReporter(t *testing.T) {
 	require.NotNil(t, model.LookupBackendCapabilitiesFn, "init must wire the capability lookup")
-	assert.False(t, model.BackendSupportsCLI("no-such-backend"))
+	assert.False(t, model.LookupBackendCapabilities("no-such-backend").HasACP)
 }

@@ -668,7 +668,6 @@ describe('resetIdentity', () => {
     identity.thinkingEffortState.currentName.value = 'High'
     identity.modeState.currentId.value = 'code'
     identity.modeState.currentName.value = 'Code'
-    identity.currentTransport.value = 'acp-stdio'
     identity.autoApprove.value = true
     identity.modeState.available.value = [{ id: 'code', name: 'Code' }]
     identity.availableCommands.value = [{ name: '/commit', description: 'Commit' }]
@@ -690,7 +689,6 @@ describe('resetIdentity', () => {
     expect(identity.currentThinkingEffortName.value).toBe('')
     expect(identity.currentModeId.value).toBe('')
     expect(identity.currentModeName.value).toBe('')
-    expect(identity.currentTransport.value).toBe('')
     expect(identity.autoApprove.value).toBe(false)
     expect(identity.availableModes.value).toEqual([])
     expect(identity.availableCommands.value).toEqual([])

@@ -33,7 +33,13 @@ import (
 // the ability to call a method the ACP SDK will not send, plus the agent-side
 // session id. *ACPConn implements it.
 type RawRPCTransport interface {
+	// CallRaw sends a method the typed SDK does not model (a private name with
+	// no "_" prefix, e.g. CodeBuddy's session/steer).
 	CallRaw(ctx context.Context, method string, params any) (json.RawMessage, error)
+	// CallExtension sends a documented ACP extension method — a name that starts
+	// with "_" (claude/codex's _session/steering). The SDK validates the prefix,
+	// so a policy that drifts away from the convention fails loudly.
+	CallExtension(ctx context.Context, method string, params any) (json.RawMessage, error)
 	AcpSessionID() string
 	// PromptInFlight reports whether a prompt is currently running on this
 	// connection. A policy whose agent silently STARTS A NEW TURN when it has

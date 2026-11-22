@@ -73,3 +73,64 @@ describe('group speaker → agent config wiring', () => {
     expect(region).toMatch(/switchTab\('settings'\)/)
   })
 })
+
+/**
+ * The same destination has two MORE entry points, both inside the chat pane:
+ * the agent icon in the header and the big glyph in the empty state.
+ *
+ * They do not travel the same way — the header lives in App.vue (calls the
+ * handler directly), the glyph lives four components down (emits) — and each is
+ * a single binding that no mount-level test in this repo covers (App.vue has
+ * none; the glyph's own emit value is pinned in ChatMessageList.agentWelcome).
+ * A dropped binding on either turns it into a dead icon, which is the whole
+ * failure mode this file exists for.
+ */
+describe('header icon / empty-state glyph → agent config wiring', () => {
+  const app = stripComments(read('App.vue'))
+  const list = stripComments(read('components/chat/ChatMessageList.vue'))
+
+  it('the chat header agent icon AND name open the config page for the session agent', () => {
+    // Scoped to the single-agent header branch: a bare `openAgentConfig(` search
+    // would also match the handler definition and the ChatPanelContent binding.
+    const region = app.slice(app.indexOf('class="bs-header-title"'), app.indexOf('bs-header-title-editable'))
+    expect(region, 'the header icon block must exist').toContain('chat-title-agent-btn')
+    expect(region).toMatch(/@click\.stop="openAgentConfig\(\s*sessionIdentity\.currentAgentId\.value\s*\)"/)
+    // The name is INSIDE the same button, so clicking it hits the button. A
+    // name left outside (as plain text next to the button) is the exact
+    // regression to catch: it still looks like part of the control.
+    expect(region).toMatch(/class="chat-title-agent-name">\{\{\s*sessionIdentity\.agentHeaderTitle\.value\s*\}\}/)
+    const btnStart = region.indexOf('chat-title-agent-btn')
+    const btnEnd = region.indexOf('</button>', btnStart)
+    expect(region.slice(btnStart, btnEnd), 'the name must sit inside the button').toContain('chat-title-agent-name')
+    // The control now has visible text, so it has to say what it does.
+    expect(region).toContain(`:title="t('session.configAgent')"`)
+    expect(region).toContain(`:aria-label="t('session.configAgent')"`)
+  })
+
+  it('the session title keeps its own click target — rename, NOT open config', () => {
+    // The header carries two different actions side by side: the agent button
+    // opens config, the session title renames. Folding the title into the agent
+    // button (or dropping its `@click`) silently changes what a click does, so
+    // both halves of that contract are pinned here.
+    const region = app.slice(app.indexOf('class="bs-header-title"'), app.indexOf('class="chat-title-edit-btn"'))
+    const titleStart = region.indexOf('bs-header-title-editable')
+    expect(titleStart, 'the session title row must exist').toBeGreaterThan(-1)
+    const titleTag = region.slice(titleStart, region.indexOf('>', titleStart))
+    expect(titleTag).toMatch(/@click="handleRenameSession"/)
+    expect(titleTag, 'renaming must not be routed into openAgentConfig').not.toContain('openAgentConfig')
+    // The title must live OUTSIDE the agent button, otherwise the button's click
+    // handler wins and the rename handler is dead.
+    const btnEnd = region.indexOf('</button>')
+    expect(titleStart, 'the title must not be inside the agent button').toBeGreaterThan(btnEnd)
+    // No divider between the two: the header shows agent name and session
+    // title as one continuous line.
+    expect(region.slice(0, titleStart)).not.toContain('chat-title-sep')
+  })
+
+  it('the empty-state glyph emits open-agent-config with the agent id', () => {
+    expect(list).toMatch(/@click="emit\('open-agent-config',\s*currentAgent\.id\)"/)
+    // Without an id there is no page to open — the tile must stay inert rather
+    // than become a button that does nothing.
+    expect(list).toMatch(/v-if="currentAgent\.id"[\s\S]{0,400}agent-welcome-icon-btn/)
+  })
+})

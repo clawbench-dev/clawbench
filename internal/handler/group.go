@@ -117,7 +117,7 @@ func groupSessionLimitOK(w http.ResponseWriter, r *http.Request, projectPath str
 func groupMemberSpecs(agentIDs []string, projectPath string) ([]service.GroupMemberSpec, bool) {
 	specs := make([]service.GroupMemberSpec, 0, len(agentIDs))
 	for _, agentID := range agentIDs {
-		backend, _, _, _, ok := resolveAgentConfig(agentID)
+		backend, _, _, ok := resolveAgentConfig(agentID)
 		if !ok {
 			return nil, false
 		}
@@ -339,7 +339,7 @@ func serveGroupMembersAdd(w http.ResponseWriter, r *http.Request, projectPath st
 	// roster silently changed.
 	specs := make([]service.GroupMemberSpec, 0, len(req.AgentIDs))
 	for _, agentID := range req.AgentIDs {
-		backend, _, _, _, ok := resolveAgentConfig(agentID)
+		backend, _, _, ok := resolveAgentConfig(agentID)
 		if !ok {
 			continue
 		}

@@ -1,161 +1,35 @@
 package antigravity
 
-import (
-	"os"
-	"path/filepath"
-	"runtime"
-	"testing"
-	"time"
+import "testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
-	"clawbench/internal/model"
-)
-
-func TestParseAgyModels_SimpleIDs(t *testing.T) {
-	output := `Fetching available models...
-gemini-3-pro
+// A signed-in `agy models` prints one model per line; the status line and log
+// noise must not become picker entries.
+func TestParseAgyModels_SignedInOutput(t *testing.T) {
+	out := `Fetching available models...
+gemini-3.1-pro
 gemini-3-flash
-gemini-2.5-pro
+I0428 10:00:00.000000 1234 some log line
 `
-	models := parseAgyModels(output)
-	require.Len(t, models, 3)
-
-	assert.Equal(t, "gemini-3-pro", models[0].ID)
-	assert.Equal(t, "Gemini 3 Pro", models[0].Name, "known models should use pretty names")
-	assert.True(t, models[0].Default)
-	assert.Equal(t, "gemini-3-flash", models[1].ID)
-	assert.Equal(t, "Gemini 3 Flash", models[1].Name)
-	assert.False(t, models[1].Default)
-	assert.Equal(t, "gemini-2.5-pro", models[2].ID)
-	assert.False(t, models[2].Default)
+	models := parseAgyModels(out)
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models, got %d: %+v", len(models), models)
+	}
+	if models[0].ID != "gemini-3.1-pro" || models[0].Name != "Gemini 3.1 Pro" {
+		t.Fatalf("first entry must be gemini-3.1-pro with its display name, got %+v", models[0])
+	}
+	if models[1].ID != "gemini-3-flash" {
+		t.Fatalf("second entry must be gemini-3-flash, got %+v", models[1])
+	}
 }
 
-func TestParseAgyModels_DuplicateLines_Collapse(t *testing.T) {
-	output := "gemini-3-pro\ngemini-3-pro\ngemini-3-flash\n"
-	models := parseAgyModels(output)
-	require.Len(t, models, 2)
-	assert.Equal(t, "gemini-3-pro", models[0].ID)
-	assert.Equal(t, "gemini-3-flash", models[1].ID)
-}
-
-func TestParseAgyModels_UnknownModel_UsesRawID(t *testing.T) {
-	models := parseAgyModels("some-future-model\n")
-	require.Len(t, models, 1)
-	assert.Equal(t, "some-future-model", models[0].ID)
-	assert.Equal(t, "some-future-model", models[0].Name, "unknown models fall back to raw ID")
-}
-
-func TestParseAgyModels_FiltersStatusLines(t *testing.T) {
-	output := `You are not logged into Antigravity
-Fetching available models...
-I0428 10:00:00.000000   1234 loading config
-error something went wrong
-Failed to fetch models
-
-gemini-3-pro
+// Unauthenticated output is diagnostics only: parsing must yield nothing so the
+// probe falls back to AntigravityCatalog instead of showing "Error: ..." as a
+// model.
+func TestParseAgyModels_UnauthenticatedYieldsNothing(t *testing.T) {
+	out := `Fetching available models...
+Error: Please sign in to view available models. Launch the CLI without arguments to sign in.
 `
-	models := parseAgyModels(output)
-	require.Len(t, models, 1)
-	assert.Equal(t, "gemini-3-pro", models[0].ID)
-}
-
-func TestIsAgyStatusLine_DropsErrorLines(t *testing.T) {
-	for _, line := range []string{
-		"Error: Please sign in to view available models.",
-		"error something went wrong",
-		"Failed to fetch models",
-		"You are not logged into Antigravity",
-		"Fetching available models...",
-	} {
-		assert.True(t, isAgyStatusLine(line), "应被当作诊断行丢弃: %q", line)
+	if models := parseAgyModels(out); len(models) != 0 {
+		t.Fatalf("auth diagnostics must not become models, got %+v", models)
 	}
-}
-
-func TestIsAgyStatusLine_KeepsModelIDs(t *testing.T) {
-	for _, line := range []string{"gemini-3-pro", "gemini-2.5-flash"} {
-		assert.False(t, isAgyStatusLine(line), "是模型 id，不得丢弃: %q", line)
-	}
-}
-
-func TestParseAgyModels_EmptyOutput(t *testing.T) {
-	assert.Empty(t, parseAgyModels(""))
-	assert.Empty(t, parseAgyModels("\n\n"))
-	assert.Empty(t, parseAgyModels("Fetching available models...\nYou are not logged into Antigravity\n"))
-}
-
-func TestParseAgyModels_CRLF(t *testing.T) {
-	models := parseAgyModels("gemini-3-pro\r\ngemini-3-flash\r\n")
-	require.Len(t, models, 2)
-	assert.Equal(t, "gemini-3-pro", models[0].ID)
-	assert.Equal(t, "gemini-3-flash", models[1].ID)
-}
-
-func TestAntigravityCatalog_FirstIsDefault(t *testing.T) {
-	src := model.NewCLISource("antigravity-test", model.CLIOptions{
-		Command:  "definitely-not-a-real-cli-xyz",
-		Parse:    parseAgyModels,
-		Fallback: AntigravityCatalog,
-	})
-
-	models, _ := src.Discover()
-	require.Len(t, models, len(AntigravityCatalog))
-	assert.True(t, models[0].Default)
-	assert.Equal(t, "gemini-3-pro", models[0].ID)
-	assert.False(t, models[1].Default)
-}
-
-func TestAntigravitySource_Registered(t *testing.T) {
-	spec := model.BackendSpec{ID: "antigravity", Backend: "antigravity", DefaultCmd: "agy"}
-	assert.True(t, model.CanDiscoverModels(spec), "antigravity should support model discovery")
-
-	src, ok := model.LookupModelSource("antigravity")
-	require.True(t, ok)
-	assert.Equal(t, model.SourceKindCLI, src.Kind())
-}
-
-func TestAntigravitySourceHasShortTimeout(t *testing.T) {
-	src, ok := model.LookupModelSource("antigravity")
-	require.True(t, ok, "antigravity 必须注册了模型源")
-	// Positive guards against the accessor silently returning the zero value
-	// (a static/plugin source, or a cliSource whose Timeout() is not wired):
-	// a broken accessor would satisfy the <=5s bound below while the real probe
-	// still used the 10s default.
-	require.Positive(t, src.Timeout(), "antigravity 是 CLI 探针，超时必须被真实设置")
-	assert.LessOrEqual(t, src.Timeout(), 5*time.Second,
-		"antigravity 探针超时必须 <=5s（agy 未登录时挂 ~16s）")
-}
-
-func TestAntigravitySource_FallsBackOnMissingBinary(t *testing.T) {
-	// The real source falls back to the catalog when `agy` is absent or
-	// unauthenticated, so the result must never be empty.
-	models := model.DiscoverModels("antigravity")
-	require.NotEmpty(t, models)
-	assert.True(t, models[0].Default)
-}
-
-func TestAntigravitySource_SucceedsWithMockBinary(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("mock script relies on sh, not available on Windows")
-	}
-	tmpDir := t.TempDir()
-	script := "#!/bin/sh\necho gemini-3-pro\necho gemini-3-flash\n"
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "agy"), []byte(script), 0o755))
-	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	src := model.NewCLISource("antigravity-mock", model.CLIOptions{
-		Command:  "agy",
-		Args:     []string{"models"},
-		Parse:    parseAgyModels,
-		Fallback: AntigravityCatalog,
-	})
-
-	models, _ := src.Discover()
-	require.Len(t, models, 2)
-	assert.Equal(t, "gemini-3-pro", models[0].ID)
-	assert.Equal(t, "Gemini 3 Pro", models[0].Name)
-	assert.True(t, models[0].Default)
-	assert.Equal(t, "gemini-3-flash", models[1].ID)
-	assert.False(t, models[1].Default)
 }

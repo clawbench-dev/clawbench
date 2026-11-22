@@ -152,7 +152,7 @@ describe('secrets: per-server password storage', () => {
 })
 
 /**
- * The built-in ("all-in-one") server has a credential but no saved-server row.
+ * The built-in ("integrated") server has a credential but no saved-server row.
  * Storing it as a row is what made the app's own address editable, deletable
  * and — worst — reservable against its own port.
  */

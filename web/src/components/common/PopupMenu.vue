@@ -1,7 +1,7 @@
 <template>
   <Teleport to="body">
     <Transition name="menu-fade" @after-leave="emit('after-leave')">
-      <div v-if="show" ref="menuEl" class="popup-menu" :class="{ 'popup-menu--app': appSurface }" role="menu" :style="menuStyle" @click.stop="onContentClick" @keydown.escape="emit('update:show', false)">
+      <div v-if="show" ref="menuEl" class="popup-menu" :class="{ 'popup-menu--app': appSurface }" role="menu" :style="menuStyle" @click.stop="onContentClick">
         <slot />
       </div>
     </Transition>
@@ -23,6 +23,7 @@ import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { computeMenuStyle } from '@/utils/popupMenuPosition'
 import { measureFixedContainingBlock } from '@/utils/fixedPosition'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import { pushEscapeLayer } from '@/utils/escapeStack'
 
 /** Disambiguates several menus that may be open at once (nested pickers). */
 const instanceSeq = nextMenuSeq()
@@ -321,9 +322,26 @@ watch(() => props.show, (val) => {
   else unregisterBackHandlerForMenu()
 }, { immediate: true })
 
+// A menu is a layer of its own: Escape closes the menu first, and only the next
+// Escape closes the dialog it sits in. The old element-scoped handler needed
+// focus inside the menu and let the same keypress bubble on to the dialog.
+let releaseEscape = null
+watch(() => props.show, (val) => {
+  if (val) {
+    if (!releaseEscape) releaseEscape = pushEscapeLayer(() => emit('update:show', false))
+  } else if (releaseEscape) {
+    releaseEscape()
+    releaseEscape = null
+  }
+}, { immediate: true })
+
 // Cleanup on unmount
 onBeforeUnmount(() => {
   unregisterBackHandlerForMenu()
+  if (releaseEscape) {
+    releaseEscape()
+    releaseEscape = null
+  }
   unbindOpenListeners()
 })
 </script>

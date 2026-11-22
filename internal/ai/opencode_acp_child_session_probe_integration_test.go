@@ -101,7 +101,7 @@ func startOpencodeChildProbe(t *testing.T, ctx context.Context) *opencodeChildPr
 	t.Cleanup(filter.Close)
 
 	conn := acp.NewClientSideConnection(client, recIn, filter)
-	filter.SetNotificationSink(client)
+	conn.SetUnhandledHandler(client.handleUnhandledNotification)
 
 	require.NoError(t, cmd.Start(), "spawn opencode acp")
 	t.Cleanup(func() {

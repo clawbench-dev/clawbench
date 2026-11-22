@@ -492,18 +492,22 @@ describe('landing page', () => {
         ),
       }))
 
-      expect(layout.length).toBe(9)
+      expect(layout.length).toBe(11)
       expect(layout.map((c) => `${c.platform}: ${c.arches.join('+')}`)).toEqual([
         // 服务端（第一步的安装包页签）
         'Windows: x64',
         'macOS: Apple Silicon+Intel',
         'Linux: x64+ARM64',
         'Android · Termux: arm64',
-        // 客户端（第二步）
+        // 客户端（第二步）：分开装是三个桌面系统的瘦客户端
         'Windows: x64',
-        'Windows · 一体包: x64',
         'macOS: Apple Silicon+Intel',
         'Linux: x64+ARM64',
+        // 整合包：三个桌面系统各一份
+        'Windows · 整合包: x64',
+        'macOS · 整合包: Apple Silicon+Intel',
+        'Linux · 整合包: x64+ARM64',
+        // 手机客户端
         'Android: arm64',
       ])
       dom.window.close()
@@ -619,23 +623,25 @@ describe('landing page', () => {
       // 「1 装客户端」撞号，两个「1」并排，看着像重复了一整步。
       expect(steps[0].querySelector('.step-no')).toBeNull()
       expect(steps[0].querySelector('.step-title')?.getAttribute('data-kicker')).toBeTruthy()
+      // 分开装是两步，序号 1 / 2（默认方案是整合包，先切过去再看）
+      ;(doc.querySelector('.mode-card[data-mode="split"]') as HTMLElement).click()
       expect(steps.slice(1).map((s) => s.querySelector('.step-no')?.textContent)).toEqual(['1', '2'])
 
       // 第一步永远可见，后面两步的显隐由所选方案决定
       expect((steps[0] as HTMLElement).hidden).toBe(false)
 
       const modes = Array.from(doc.querySelectorAll('.mode-card'))
-      expect(modes.map((m) => m.getAttribute('data-mode'))).toEqual(['allinone', 'split'])
+      expect(modes.map((m) => m.getAttribute('data-mode'))).toEqual(['integrated', 'split'])
       for (const m of modes) {
         expect(m.getAttribute('role')).toBe('radio')
         expect(m.querySelector('.mode-name')?.textContent?.trim()).toBeTruthy()
         expect(m.querySelector('.mode-desc')?.textContent?.trim()).toBeTruthy()
-        // 两张卡都要有大图标：一体化是一整块，分开装是上下两块
+        // 两张卡都要有大图标：整合包是一整块，分开装是上下两块
         // （用连线串起来，因为重点就是「两台机器分开放」）。
         // 不带图标的方案卡读起来只是两段文字。
         expect(m.querySelector('.mode-graphic svg, .mode-stack svg')).toBeTruthy()
       }
-      // 一体化是推荐的默认路线
+      // 整合包是推荐的默认路线
       expect(modes[0].querySelector('.mode-tag')).toBeTruthy()
       // 分开装必须是「两个独立图标块 + 中间连线」，不是一个块里画两样
       // 东西——后者读起来像一个整体，表达不出「分开放」的意思
@@ -653,75 +659,88 @@ describe('landing page', () => {
       dom.window.close()
     })
 
-    it('defaults a Windows visitor to all-in-one and everyone else to split', () => {
-      // 一体化只发 Windows 版。给 macOS / Linux 访客默认选一个点下去没得
-      // 下的方案，等于第一步就撞墙；反过来 Windows 访客要的就是那个包。
-      const win = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
-      const winDoc = win.window.document
-      expect(
-        winDoc.querySelector('.mode-card[data-mode="allinone"]')!.getAttribute('aria-checked'),
-      ).toBe('true')
-      expect((winDoc.getElementById('step-server') as HTMLElement).hidden).toBe(true)
-      // 一体化不分服务端/客户端，第二步直接下载，序号从 1 开始
-      expect((winDoc.getElementById('step-client') as HTMLElement).hidden).toBe(false)
-      expect(winDoc.querySelector('#step-client .step-no')!.textContent).toBe('1')
-      win.window.close()
+    it('defaults every desktop visitor to integrated and phones to split', () => {
+      // 整合包覆盖三个桌面系统。手机装不了桌面壳，给手机默认选一个点下去
+      // 没得下的方案，等于第一步就撞墙。
+      for (const [ua, plat] of [
+        ['Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32'],
+        ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel'],
+        ['Mozilla/5.0 (X11; Linux x86_64)', 'Linux x86_64'],
+      ]) {
+        const dom = boot('zh-CN', undefined, ua, plat)
+        const doc = dom.window.document
+        expect(
+          doc.querySelector('.mode-card[data-mode="integrated"]')!.getAttribute('aria-checked'),
+          ua,
+        ).toBe('true')
+        expect((doc.getElementById('step-server') as HTMLElement).hidden, ua).toBe(true)
+        // 整合包不分服务端/客户端，第二步直接下载，序号从 1 开始
+        expect((doc.getElementById('step-client') as HTMLElement).hidden, ua).toBe(false)
+        expect(doc.querySelector('#step-client .step-no')!.textContent, ua).toBe('1')
+        dom.window.close()
+      }
 
-      const mac = boot('zh-CN', undefined, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel')
-      const macDoc = mac.window.document
-      expect(macDoc.querySelector('.mode-card[data-mode="split"]')!.getAttribute('aria-checked')).toBe(
+      const phone = boot('zh-CN', undefined, 'Mozilla/5.0 (Linux; Android 14; Pixel 8)', 'Linux armv8l')
+      const phoneDoc = phone.window.document
+      expect(phoneDoc.querySelector('.mode-card[data-mode="split"]')!.getAttribute('aria-checked')).toBe(
         'true',
       )
-      expect((macDoc.getElementById('step-server') as HTMLElement).hidden).toBe(false)
-      expect(macDoc.querySelector('#step-client .step-no')!.textContent).toBe('2')
-      mac.window.close()
+      expect((phoneDoc.getElementById('step-server') as HTMLElement).hidden).toBe(false)
+      expect(phoneDoc.querySelector('#step-client .step-no')!.textContent).toBe('2')
+      phone.window.close()
     })
 
-    it('only offers the all-in-one package, and greys it out off Windows', () => {
-      // 选了一体化就只有一体包一个入口：瘦客户端在这里是错的选择。
+    it('offers the integrated package on every desktop platform, and greys it out on phones', () => {
+      // 整合包覆盖 Windows / macOS / Linux：三个系统的下载都在同一块里。
       const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
       const doc = dom.window.document
-      const panel = doc.querySelector('[data-mode-panel="allinone"]')!
+      const panel = doc.querySelector('[data-mode-panel="integrated"]')!
       expect((panel as HTMLElement).hidden).toBe(false)
       expect((doc.querySelector('[data-mode-panel="split"]') as HTMLElement).hidden).toBe(true)
       expect(Array.from(panel.querySelectorAll('a[data-asset]')).map((a) => a.getAttribute('data-asset'))).toEqual(
-        ['clawbench-desktop-windows-x64-local'],
+        [
+          'clawbench-desktop-windows-x64-local',
+          'clawbench-desktop-darwin-arm64-local',
+          'clawbench-desktop-darwin-x64-local',
+          'clawbench-desktop-linux-x64-local',
+          'clawbench-desktop-linux-arm64-local',
+        ],
       )
       expect(panel.classList.contains('is-unavailable')).toBe(false)
       expect((panel.querySelector('.dl-card-warn') as HTMLElement).hidden).toBe(true)
       dom.window.close()
 
-      // 非 Windows 访客选了它：卡还在（他能看到有这东西、也能改主意），
+      // 手机访客选了它：卡还在（他能看到有这东西、也能改主意），
       // 但芯片灰掉并写明原因，而不是一个点下去 404 的按钮
-      const mac = boot('zh-CN', undefined, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel')
-      const macDoc = mac.window.document
-      ;(macDoc.querySelector('.mode-card[data-mode="allinone"]') as HTMLElement).click()
-      const macPanel = macDoc.querySelector('[data-mode-panel="allinone"]')!
-      expect(macPanel.classList.contains('is-unavailable')).toBe(true)
-      expect((macPanel.querySelector('.dl-card-warn') as HTMLElement).hidden).toBe(false)
-      const chip = macPanel.querySelector('a[data-asset]')!
+      const phone = boot('zh-CN', undefined, 'Mozilla/5.0 (Linux; Android 14; Pixel 8)', 'Linux armv8l')
+      const phoneDoc = phone.window.document
+      ;(phoneDoc.querySelector('.mode-card[data-mode="integrated"]') as HTMLElement).click()
+      const phonePanel = phoneDoc.querySelector('[data-mode-panel="integrated"]')!
+      expect(phonePanel.classList.contains('is-unavailable')).toBe(true)
+      expect((phonePanel.querySelector('.dl-card-warn') as HTMLElement).hidden).toBe(false)
+      const chip = phonePanel.querySelector('a[data-asset]')!
       expect(chip.getAttribute('aria-disabled')).toBe('true')
       // 灰掉的卡必须给一条出路，否则用户卡在死路上
-      expect((macPanel.querySelector('.dl-card-altswap') as HTMLElement).hidden).toBe(false)
-      mac.window.close()
+      expect((phonePanel.querySelector('.dl-card-altswap') as HTMLElement).hidden).toBe(false)
+      phone.window.close()
     })
 
     it('shows the "use a browser instead" note only in the split shape', () => {
-      // 一体化方案里服务端就在用户自己机器上，不存在「浏览器连另一台服务器」。
-      // 这条提示若留在一体化下，会让人以为还得去连别的机器。
+      // 整合包方案里服务端就在用户自己机器上，不存在「浏览器连另一台服务器」。
+      // 这条提示若留在整合包下，会让人以为还得去连别的机器。
       const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
       const doc = dom.window.document
       const note = doc.querySelector('.step-note[data-mode-panel="split"]') as HTMLElement
       expect(note).toBeTruthy()
       expect(note.textContent).toContain('服务器IP')
 
-      // Windows 默认是一体化：这条必须收起来
+      // Windows 默认是整合包：这条必须收起来
       expect(note.hidden).toBe(true)
       // 切到分开装：出现，并且和客户端下载卡一起在第 2 步里
       ;(doc.querySelector('.mode-card[data-mode="split"]') as HTMLElement).click()
       expect(note.hidden).toBe(false)
-      // 切回一体化：再次收起，而不是一直挂在页面上
-      ;(doc.querySelector('.mode-card[data-mode="allinone"]') as HTMLElement).click()
+      // 切回整合包：再次收起，而不是一直挂在页面上
+      ;(doc.querySelector('.mode-card[data-mode="integrated"]') as HTMLElement).click()
       expect(note.hidden).toBe(true)
       dom.window.close()
     })
@@ -747,8 +766,8 @@ describe('landing page', () => {
       expect(next.hidden).toBe(false)
       expect(next.getAttribute('href')).toBe('#step-client')
 
-      // 一体化里那张灰卡上的「换一种装法」也要能直接切过去
-      ;(doc.querySelector('.mode-card[data-mode="allinone"]') as HTMLElement).click()
+      // 整合包里那张灰卡上的「换一种装法」也要能直接切过去
+      ;(doc.querySelector('.mode-card[data-mode="integrated"]') as HTMLElement).click()
       expect(next.hidden).toBe(true)
       dom.window.close()
     })
@@ -765,7 +784,7 @@ describe('landing page', () => {
         )
 
       // 每张卡自己就写清会走几步，不用点开才知道
-      expect(flow('allinone')).toEqual(['装客户端'])
+      expect(flow('integrated')).toEqual(['装客户端'])
       expect(flow('split')).toEqual(['装服务端', '连客户端'])
 
       // 承接条一开始就跟着默认方案显示，是「选项 → 步骤」的缝合处
@@ -773,7 +792,7 @@ describe('landing page', () => {
       expect(bridge.hidden).toBe(false)
       const bridgeKey = () =>
         doc.getElementById('modeBridgeText')!.getAttribute('data-i18n-html')
-      expect(bridgeKey()).toBe('mode.bridge.allinone')
+      expect(bridgeKey()).toBe('mode.bridge.integrated')
 
       ;(doc.querySelector('.mode-card[data-mode="split"]') as HTMLElement).click()
       expect(bridgeKey()).toBe('mode.bridge.split')
@@ -802,9 +821,9 @@ describe('landing page', () => {
       expect(scrolled()).toContain('step-server')
       expect(scrolled()).not.toContain('step-client')
 
-      // 一体化没有服务端那一步，落到装客户端就是它的起点
+      // 整合包没有服务端那一步，落到装客户端就是它的起点
       scrolled().length = 0
-      ;(doc.querySelector('.mode-card[data-mode="allinone"]') as HTMLElement).click()
+      ;(doc.querySelector('.mode-card[data-mode="integrated"]') as HTMLElement).click()
       expect(scrolled()).toContain('step-client')
 
       // 回流到选择区时不应该顺手把人带到某个步骤上
@@ -839,7 +858,7 @@ describe('landing page', () => {
     })
 
     it('relabels the second step for each shape, in both languages', () => {
-      // 一体化没有服务端那一步，第二步的标题必须跟着换成「装客户端」，
+      // 整合包没有服务端那一步，第二步的标题必须跟着换成「装客户端」，
       // 否则用户会以为还缺一步没做。切语种后仍要正确。
       const dom = boot('zh-CN', undefined, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32')
       const doc = dom.window.document
@@ -920,7 +939,7 @@ describe('landing page', () => {
     it('offers exactly the artifacts release.yml publishes', () => {
       const dom = new JSDOM(html)
       const assets = cards(dom.window.document)
-      expect(assets.length).toBe(13)
+      expect(assets.length).toBe(17)
       expect(new Set(assets.map((a) => a.base)).size).toBe(assets.length)
 
       for (const { base, ext } of assets) {
@@ -963,10 +982,12 @@ describe('landing page', () => {
       )
       await new Promise((r) => setTimeout(r, 0))
       const zhHrefs = cards(zh.window.document).map((a) => a.href)
-      expect(zhHrefs.length).toBe(13)
+      expect(zhHrefs.length).toBe(17)
       // 每一枚芯片都走镜像，不能有漏网的直连
       expect(zhHrefs.filter((h) => !h.startsWith(mirror + rawPrefix))).toEqual([])
       expect(zhHrefs).toContain(`${mirror}${rawPrefix}clawbench-desktop-windows-x64-local-${tag}.zip`)
+      expect(zhHrefs).toContain(`${mirror}${rawPrefix}clawbench-desktop-darwin-arm64-local-${tag}.zip`)
+      expect(zhHrefs).toContain(`${mirror}${rawPrefix}clawbench-desktop-linux-arm64-local-${tag}.zip`)
       zh.window.close()
 
       const en = boot('en-US', () =>
@@ -1010,8 +1031,8 @@ describe('landing page', () => {
       dom.window.close()
     })
 
-    it('tucks the other platforms away and keeps every package reachable', () => {
-      // 除 Windows 外的客户端收进「其他平台」，需要时再展开。
+    it('tucks the phone client away and keeps every package reachable', () => {
+      // 三个桌面系统都直接铺在页面上；手机客户端收进折叠区，需要时再展开。
       const dom = boot('zh-CN')
       const doc = dom.window.document
 
@@ -1019,7 +1040,7 @@ describe('landing page', () => {
       expect(more.hidden).toBe(true)
       expect(
         Array.from(more.querySelectorAll('.dl-name')).map((n) => (n.textContent || '').trim()),
-      ).toEqual(['macOS', 'Linux', 'Android'])
+      ).toEqual(['Android'])
       dom.window.close()
     })
 
@@ -1039,15 +1060,15 @@ describe('landing page', () => {
       expect(btn.getAttribute('aria-expanded')).toBe('false')
 
       // 折叠与否，芯片总数不变
-      expect(doc.querySelectorAll('a[data-asset]').length).toBe(13)
+      expect(doc.querySelectorAll('a[data-asset]').length).toBe(17)
       dom.window.close()
     })
 
     it('labels the collapsed group for both languages', () => {
       // 折叠按钮是纯文字按钮，缺英文译文会静默显示中文（见文件头说明）。
       for (const [lang, expectText] of [
-        ['zh-CN', '其他平台'],
-        ['en-US', 'Other platforms'],
+        ['zh-CN', '手机'],
+        ['en-US', 'Phone'],
       ]) {
         const dom = boot(lang)
         const text = dom.window.document.getElementById('dlMore')?.textContent || ''
@@ -1112,10 +1133,11 @@ describe('landing page', () => {
       const doc = dom.window.document
       const items = Array.from(doc.querySelectorAll('.strip-list li:not(.more)'))
 
-      // 19 = the backend registry (internal/ai/backends) minus Qoder CN,
-      // which is the same product as Qoder and reads as a duplicate here.
+      // 17 = the backend registry (internal/ai/backends) minus the built-in
+      // agent (no logo of its own) and Qoder CN (same product as Qoder and
+      // reads as a duplicate here).
       // Bumping this number is the reminder to add a logo when one is added.
-      expect(items.length).toBe(19)
+      expect(items.length).toBe(17)
       for (const li of items) {
         const svg = li.querySelector('svg.strip-logo')
         expect(svg, `no inline logo for "${li.textContent?.trim()}"`).toBeTruthy()
@@ -1148,7 +1170,7 @@ describe('landing page', () => {
       const dom = new JSDOM(html)
       const doc = dom.window.document
       const items = Array.from(doc.querySelectorAll('.strip-list li'))
-      expect(items.length).toBe(19)
+      expect(items.length).toBe(17)
       for (const li of items) {
         expect(li.querySelector('svg.strip-logo-mono'), li.textContent?.trim()).toBeTruthy()
         const colour = li.querySelector('svg.strip-logo-color')
@@ -1165,9 +1187,9 @@ describe('landing page', () => {
       // compound path are filled. OpenCode's mark turns from a thick frame
       // into a solid block (or the reverse) with no other symptom.
       //
-      // Not every logo declares it (VeCLI and Command Code ship without), so
-      // the guard is "preserved where present", checked against the source
-      // files rather than a blanket assertion that would fail on those two.
+      // Not every logo declares it (Command Code ships without), so the guard
+      // is "preserved where present", checked against the source files rather
+      // than a blanket assertion that would fail on it.
       const withEvenOdd = ['opencode', 'cursor', 'grok', 'pi', 'hermesagent', 'zhipu']
       for (const slug of withEvenOdd) {
         const src = resolve(here, '../../node_modules/@lobehub/icons-static-svg/icons', slug + '.svg')
@@ -1181,7 +1203,7 @@ describe('landing page', () => {
       const dom = new JSDOM(html)
       const doc = dom.window.document
       const logos = Array.from(doc.querySelectorAll('svg.strip-logo-mono'))
-      expect(logos.length).toBe(19)
+      expect(logos.length).toBe(17)
       const kept = logos.filter((svg) => svg.getAttribute('fill-rule') === 'evenodd')
       expect(kept.length).toBeGreaterThanOrEqual(15)
       dom.window.close()

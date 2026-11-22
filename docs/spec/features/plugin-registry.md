@@ -9,7 +9,9 @@
 | `internal/plugins/plugin.go` | `Plugin` 类型 + 注册表（`Register` / `Lookup` / `All` / `ForRoute` / `Reset`） |
 | `internal/plugins/gate.go` | `Gate` 中间件 + `RejectWriter` 注入点 |
 
-它**只依赖 `internal/model`**（与 `internal/ai/backends` 的位置和约束一致）。`Plugin` 里刻意只放"声明"：`Start` / `Stop` / `Reconfigure` / `OnDisable` 是函数值，由 `cmd/server/main.go` 在注册时注入。这样本包不需要 import `service` / `handler` / `kb` / `mail`，也就不会与它们成环（`service` 与 `handler` 都可能在别的方向上需要读到功能状态）。
+它**只依赖 `internal/model`**（与 `internal/ai/backends` 的位置和约束一致）。`Plugin` 里刻意只放"声明"：`Start` / `Stop` / `Reconfigure` / `OnDisable` 是函数值，由 **插件包自己**（经 `internal/plugin/all`）在注册时注入。这样本包不需要 import `service` / `handler` / `kb` / `mail`，也就不会与它们成环（`service` 与 `handler` 都可能在别的方向上需要读到功能状态）。
+
+**声明和实现住在同一个插件目录**：`internal/plugin/<id>/` 拥有这个功能的 `plugin.go`（声明）、`routes.go`（挂接口）、`feature_switch.go`（关闭效果）与全部业务文件、测试。删掉这个目录 = 删掉这个功能，生产代码、接口、后台任务、开关一起消失，漏删的引用在编译期就报出来。插件之间不互相 import（唯一例外是 `share → live`）；它们都缺的能力先抽到公共层（`httpx` / `filex` / `cfgwrite` / `sharecore` / `stt` / `ws` / `forgepoll`），因为插件包**不能** import `internal/handler`。操作步骤见 [插件开发指南](../../plugin-dev/02-backend.md) §7。
 
 面向"要加功能的人"的操作步骤在 [插件开发指南](../../plugin-dev/README.md)，本篇讲**为什么这样设计、以及哪些性质被测试钉住了**。
 
@@ -27,9 +29,10 @@
                                  │ 遍历 internal/plugin/all
                                  ▼
                      ┌──────────────────────────────┐
-                     │  internal/plugin/<id>        │
-                     │  Register(&plugins.Plugin{…})│
+                     │  internal/plugin/<id>        │  ← 声明 + 实现 + 测试都在这里
+                     │  plugin.go: Register({…})    │
                      │  routes.go / feature_switch  │
+                     │  业务文件 / *_test.go         │
                      └───────────┬──────────────────┘
                                  │ Register
                                  ▼
@@ -67,7 +70,7 @@
 | `ID` | 稳定标识，同时是前端页签 id、`/api/features` 的键、i18n 错误键前缀 | 全小写；注册后不允许改 |
 | `Section` | `config.yaml` 里的段名（`mail` / `forge` / `kb` / …） | 空 = 这个功能没有服务端总开关（纯偏好型）。非空派生两件事：该段下每个 yaml 字段必须在 `plugin/config` 的 `Fields` 里（或登记为不可改，守卫检查），以及"这次 PATCH 关掉它了吗"的判定依据 |
 | `Enabled` | 读**实时**开关 | `nil` = 恒开。必须读包级全局 / `model.ConfigInstance`，不能读启动快照——热更新会在进程生命周期内改它 |
-| `DefaultOn` | 只用于文档与"缺键当开"的语义声明 | 真正的默认值在 `model.ApplyDefaults` 的 presence 检查里，那里是唯一实现 |
+| `DefaultOn` | 只用于文档与"缺键当开"的语义声明 | 真正的默认值在 `internal/plugin/config` 的 `Defaults`（`main` 加载配置后调 `config.ApplyDefaults`），那里是唯一实现 |
 | `APIPrefixes` | "这些路由属于我" | 有 `Section` 就必须非空（否则接口永不被门控）。精确路径或子树前缀都行，匹配见 §3 |
 | `MountRoutes` | 挂载这个功能的 HTTP 接口 | 函数住在 `internal/plugin/<id>/routes.go`。声明了前缀就必须有它（守卫），否则接口全 404 |
 | `Start(cfg)` | 启动后台资源 | 必须**幂等**（重复调用不叠加 goroutine / Manager） |

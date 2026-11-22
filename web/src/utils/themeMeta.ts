@@ -69,8 +69,6 @@ export const THEMES: ThemeMeta[] = [
 
 export const THEME_IDS: readonly string[] = THEMES.map(t => t.id)
 
-export type ThemeId = (typeof THEMES)[number]['id']
-
 // ── Dark / light classification ────────────────────────────────────────────────
 
 const DARK_THEME_IDS = new Set<string>(THEMES.filter(t => t.dark).map(t => t.id))

@@ -33,7 +33,6 @@ type Agent struct {
 	Specialty               string       `json:"specialty"`
 	Backend                 string       `json:"backend"`
 	Models                  []AgentModel `json:"models"`
-	Command                 string       `json:"command"`                 // optional: custom command path for the AI backend CLI
 	ThinkingEffort          string       `json:"thinkingEffort"`          // agent's default thinking effort; not modified by user preference
 	ThinkingEffortLevels    []string     `json:"thinkingEffortLevels"`    // valid levels for this backend, e.g. ["low","medium","high","xhigh"]
 	PreferredMode           string       `json:"preferredMode"`           // user's preferred ACP mode; empty = use agent's default
@@ -60,8 +59,11 @@ type Agent struct {
 	// no effect. Only CustomSystemPrompt is durable; this field is derived.
 	RuntimeSystemPrompt string `json:"-"`
 
-	// ACP configuration (only used when Transport != "cli")
-	Transport  string `json:"transport"`            // "cli" | "acp-stdio"; default depends on AcpCommand
+	// Transport is DERIVED at load time (see DeriveTransport), never stored or
+	// patched. There are only two values: "acp-stdio" for an agent with a
+	// command, "in-process" for the built-in agent. Empty means the agent has
+	// neither and cannot start.
+	Transport  string `json:"transport"`
 	AcpCommand string `json:"acpCommand,omitempty"` // acp-stdio: spawn command, e.g. "kimi --acp"
 
 	// CustomSystemPrompt is the user's own prompt text — the only prompt value
@@ -117,26 +119,29 @@ type Agent struct {
 	// definition of "built-in" on the server.
 	BuiltinBackend bool `json:"builtinBackend"`
 
-	// CLIModels is the pure CLI-discovered list, without any ACP merge. It is
-	// populated only in API responses, so a client can show the CLI view when the
-	// agent is switched to CLI transport without re-deriving it.
-	//
-	// Models, by contrast, carries the resolved list (ACP membership applied).
-	// Keeping both on the wire is what lets the transport toggle be a plain field
-	// read on the client instead of a merge.
-	CLIModels []AgentModel `json:"cliModels,omitempty"`
-
-	// SupportsCLI indicates whether this agent's backend has a CLI implementation
-	// (a registered CLI backend factory). Backends like grok are ACP-only and
-	// return false. Computed at load time from the ai backend factory registry.
-	SupportsCLI bool `json:"supportsCLI"`
-
 	// SupportsMidTurn indicates whether this agent's backend can inject a
 	// message into a turn that is ALREADY RUNNING instead of queueing it for the
 	// next one. Computed at load time from the backend's mid-turn policy
 	// (model.BackendSupportsMidTurn). Drives the queued-message action label:
 	// true → "insert into the current reply", false → "interrupt and send".
 	SupportsMidTurn bool `json:"supportsMidTurn"`
+
+	// The four MCP / session-list facts below are echoed so the settings UI stops
+	// matching on backend ids. Each is asked ONCE of the backend spec and carried
+	// to the client as its own field; a new backend then declares the fact in its
+	// own Spec and no Vue file needs editing.
+	//
+	// MCPUnsupportedBackend: probe measured the backend accepting `mcpServers`
+	// and ignoring it entirely.
+	MCPUnsupportedBackend bool `json:"mcpUnsupportedBackend"`
+	// MCPRejectsSSE: an `sse` server fails session/new outright on this backend.
+	MCPRejectsSSE bool `json:"mcpRejectsSse"`
+	// MCPAttachesAsync: injected servers attach AFTER session/new, so a tool may
+	// be briefly missing on the first turn.
+	MCPAttachesAsync bool `json:"mcpAttachesAsync"`
+	// ListSessionsOmitsEmptyTitle: the on-disk session list contains untitled
+	// placeholders the CLI itself would not show; the drawer hides them.
+	ListSessionsOmitsEmptyTitle bool `json:"listSessionsOmitsEmptyTitle"`
 
 	// SortOrder determines display order in agent list; lower values first.
 	SortOrder int `json:"sortOrder"`
@@ -464,8 +469,31 @@ func (a *Agent) EffectiveModeID() string {
 	return ""
 }
 
-// SupportsACP returns true if the agent has ACP capability (has an acp_command configured),
-// regardless of its current transport setting.
+// Transport values. They describe HOW a turn runs, not which backend it uses:
+// either an external agent over ACP, or ClawBench's own tool loop in this
+// process.
+const (
+	TransportACPStdio  = "acp-stdio"
+	TransportInProcess = "in-process"
+)
+
+// DeriveTransport returns the only transport this agent can run on. It is the
+// single source of truth for the Transport field: nothing persists or patches
+// it any more, so a stale column value can never steer a turn.
+func (a *Agent) DeriveTransport() string {
+	if a == nil {
+		return ""
+	}
+	if a.AcpCommand != "" {
+		return TransportACPStdio
+	}
+	if a.BuiltinBackend {
+		return TransportInProcess
+	}
+	return ""
+}
+
+// SupportsACP returns true if the agent has ACP capability (has an acp_command configured).
 func (a *Agent) SupportsACP() bool {
 	return a.AcpCommand != ""
 }
@@ -724,4 +752,35 @@ func BuildCommonPrompt() string {
 // the user message carries file attachments.
 func BuildMediaPrompt() string {
 	return strings.TrimSpace(bt(mediaRulesTemplate))
+}
+
+// PreferredModelForProvider reports the preferred model an agent should store
+// after being bound to p, given its CURRENT pin.
+//
+// The rule mirrors what a turn actually does, so the stored value stops
+// disagreeing with the value in use (issue: the settings page showed the old
+// model while every turn silently ran the provider default, and the self-test
+// reported a failure for an agent that would have worked):
+//
+//   - no pin                     → "" (the provider default is already used)
+//   - pin the provider serves    → unchanged
+//   - pin it does not serve      → the provider's default model
+//
+// "Serves" goes through providerAcceptsPin, not a bare list lookup: for a
+// backend that can declare an out-of-list id inline, a hand-typed pin is a
+// deliberate choice and has to survive a re-bind.
+//
+// A provider with no curated list gets no rewrite — it publishes nothing to
+// validate a pin against, and that is precisely the "custom…" case.
+func (a *Agent) PreferredModelForProvider(p *Provider) string {
+	if a == nil || p == nil || len(p.Models) == 0 || a.PreferredModel == "" {
+		if a == nil {
+			return ""
+		}
+		return a.PreferredModel
+	}
+	if a.providerAcceptsPin(p, a.PreferredModel) {
+		return a.PreferredModel
+	}
+	return p.DefaultModel
 }

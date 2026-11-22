@@ -1202,9 +1202,22 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		return
 	}
 
+	// An agent with no backend cannot run a turn: the backend name selects the
+	// AI implementation, the session row's backend column and every per-backend
+	// branch downstream. This used to fall back to a literal "codebuddy", which
+	// silently ran the task under an unrelated backend and wrote the resulting
+	// session under that name — the failure then looked like a codebuddy bug.
+	// Such a row should not exist; if it does, stop and say so.
 	backendName := agent.Backend
 	if backendName == "" {
-		backendName = "codebuddy"
+		slog.Error(
+			"task run aborted: agent has no backend",
+			slog.String("agent_id", agent.ID),
+			slog.Int64("task_id", task.ID),
+			slog.String("name", task.Name),
+		)
+		s.PauseTask(task.ID)
+		return
 	}
 
 	// ── Pre-AI gating script phase ───────────────────────────────────────
@@ -1348,7 +1361,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// ACP tasks have no user present to approve permission requests.
 	// Enable auto-approve so the ACP client automatically selects the first
 	// allow option, preventing indefinite blocking on permission dialogs.
-	if agent.Transport == "acp-stdio" {
+	if agent.SupportsACP() {
 		if err := UpdateSessionAutoApprove(sessionID, true); err != nil {
 			slog.Error("failed to enable auto-approve for scheduled ACP session",
 				slog.String("session_id", sessionID),
@@ -1448,7 +1461,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// same priority a chat turn uses: per-model pick > supported global default >
 	// let the agent decide. Reading agent.ThinkingEffort directly would ignore
 	// both the per-model memory and PreferredThinkingEffort.
-	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.Transport == transportACPStdio)
+	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.SupportsACP())
 
 	chatReq := ai.ChatRequest{
 		Prompt:             promptForAI,
@@ -1456,7 +1469,6 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		WorkDir:            projectPath,
 		SystemPrompt:       systemPrompt,
 		Model:              effectiveModel,
-		Command:            agent.Command,
 		AgentID:            task.AgentID,
 		ThinkingEffort:     effectiveThinking,
 		Resume:             false,

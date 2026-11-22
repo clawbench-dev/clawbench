@@ -63,7 +63,7 @@ func TestBuildChatRequest_CurrentMessageBoundExcludesQuestion(t *testing.T) {
 	setupTestDBForBuiltinHistory(t)
 	qID := seedBuiltinTurnHistory(t, "sess-bound")
 
-	req := BuildChatRequest("current question", "sess-bound", "/proj", builtinBackendID, "", "", "", "", "", "/proj", false,
+	req := BuildChatRequest("current question", "sess-bound", "/proj", builtinBackendID, "", "", "", "", "/proj", false,
 		WithCurrentMessageID(qID))
 	assertQuestionNotReplayed(t, req, "current question")
 	assert.Len(t, req.History, 2, "the earlier exchange must still be replayed")
@@ -76,7 +76,7 @@ func TestBuildChatRequest_EveryTurnBoundsItsOwnMessage(t *testing.T) {
 	setupTestDBForBuiltinHistory(t)
 	seedBuiltinTurnHistory(t, "sess-unbound")
 
-	unbound := BuildChatRequest("current question", "sess-unbound", "/proj", builtinBackendID, "", "", "", "", "", "/proj", false)
+	unbound := BuildChatRequest("current question", "sess-unbound", "/proj", builtinBackendID, "", "", "", "", "/proj", false)
 	var replayed bool
 	for _, h := range unbound.History {
 		if h.Text == "current question" {
@@ -145,11 +145,11 @@ func TestLastChatMessageID_EmptySessionIsZero(t *testing.T) {
 // backend registry lookup happens on.
 func captureTurnRequest(t *testing.T, run func() streamRunResultShared) ai.ChatRequest {
 	t.Helper()
-	prev := ai.NewBackendForAgentWithTransportFn
-	t.Cleanup(func() { ai.NewBackendForAgentWithTransportFn = prev })
+	prev := ai.NewBackendForAgentFn
+	t.Cleanup(func() { ai.NewBackendForAgentFn = prev })
 
 	var captured ai.ChatRequest
-	ai.NewBackendForAgentWithTransportFn = func(backendType, agentID, transport string) (ai.AIBackend, error) {
+	ai.NewBackendForAgentFn = func(backendType, agentID string) (ai.AIBackend, error) {
 		return &requestCapturingBackend{onExecute: func(req ai.ChatRequest) { captured = req }}, nil
 	}
 
@@ -174,3 +174,37 @@ func (b *requestCapturingBackend) ExecuteStream(_ context.Context, req ai.ChatRe
 }
 
 var _ = model.Agent{}
+
+// The turn's own attachments must reach the backend, or an image the user just
+// sent is only a path in the prompt: the model answers the path and nothing
+// shows it saw a picture. Pinned on the enqueue path, which builds its own
+// prompt and is the one most likely to lose a field.
+func TestExecuteStreamRunShared_CarriesTurnFiles(t *testing.T) {
+	setupTestDBForBuiltinHistory(t)
+	qID := seedBuiltinTurnHistory(t, "sess-files-launch")
+
+	captured := captureTurnRequest(t, func() streamRunResultShared {
+		return executeStreamRunShared(context.Background(), LaunchConfig{
+			SessionID:   "sess-files-launch",
+			ProjectPath: "/proj",
+			BackendName: builtinBackendID,
+			Message:     "current question",
+			MessageID:   qID,
+			Files:       []model.FileEntry{{Path: "/proj/.clawbench/uploads/a.png"}},
+		})
+	})
+
+	require.Len(t, captured.Files, 1, "the attachment must reach the request")
+	assert.Equal(t, "/proj/.clawbench/uploads/a.png", captured.Files[0].Path)
+}
+
+// The option itself, independent of any entry point.
+func TestBuildChatRequest_CarriesTurnFiles(t *testing.T) {
+	setupTestDBForBuiltinHistory(t)
+	files := []model.FileEntry{{Path: "/proj/a.png"}}
+
+	req := BuildChatRequest("hi", "sess-files-opt", "/proj", builtinBackendID, "", "", "", "", "/proj", true,
+		WithTurnFiles(files))
+	require.Len(t, req.Files, 1)
+	assert.Equal(t, "/proj/a.png", req.Files[0].Path)
+}

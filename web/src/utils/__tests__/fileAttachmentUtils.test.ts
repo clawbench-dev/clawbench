@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, buildSendPayload, folderRelPath, isDirUploadFile, isUrlEntry, isQuoteEntry, isSafeExternalUrl } from '@/utils/fileAttachmentUtils.ts'
+import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, buildSendPayload, buildRetryPayload, folderRelPath, isDirUploadFile, isUrlEntry, isQuoteEntry, isSafeExternalUrl } from '@/utils/fileAttachmentUtils.ts'
 
 describe('normalizeFileEntry', () => {
   it('normalizes string to { path, isDir: false } object', () => {
@@ -406,5 +406,55 @@ describe('quote entries', () => {
     expect(isQuoteEntry({ path: '', kind: 'quote' })).toBe(true)
     expect(isQuoteEntry({ path: 'x', kind: 'url', url: 'https://e.com' })).toBe(false)
     expect(isQuoteEntry({ path: '/a.go' })).toBe(false)
+  })
+})
+
+describe('buildRetryPayload', () => {
+  it('replays the attachments of the message being retried', () => {
+    // Regression: the retry path used to replay ONLY `content`, so an uploaded
+    // image was silently dropped and the model received bare text.
+    const retry = buildRetryPayload('看看这张图', [{ path: '.clawbench/uploads/1000008097.jpg', isDir: false }])
+
+    expect(retry).not.toBeNull()
+    expect(retry!.text).toBe('看看这张图')
+    expect(retry!.allFiles.some(f => f.path === '.clawbench/uploads/1000008097.jpg')).toBe(true)
+    expect(retry!.filePaths).toContain('.clawbench/uploads/1000008097.jpg')
+  })
+
+  it('retries an image-only message that has no text', () => {
+    // The truthiness guard on content used to skip these entirely, so clicking
+    // retry looked like a no-op on an image sent on its own.
+    const retry = buildRetryPayload('', [{ path: '.clawbench/uploads/pic.png', isDir: false }])
+
+    expect(retry).not.toBeNull()
+    expect(retry!.text).toBe('')
+    expect(retry!.filePaths).toEqual(['.clawbench/uploads/pic.png'])
+  })
+
+  it('handles legacy string entries from the backend', () => {
+    const retry = buildRetryPayload('hi', ['.clawbench/uploads/legacy.jpg'])
+    expect(retry!.filePaths).toEqual(['.clawbench/uploads/legacy.jpg'])
+  })
+
+  it('returns null when there is neither text nor attachments', () => {
+    // Nothing to resend — the caller must not fire an empty request.
+    expect(buildRetryPayload('', [])).toBeNull()
+    expect(buildRetryPayload(null, null)).toBeNull()
+    expect(buildRetryPayload(undefined, undefined)).toBeNull()
+  })
+
+  it('keeps a URL attachment off the filePaths channel', () => {
+    // Same routing as a first send: a URL is not a filesystem path.
+    const retry = buildRetryPayload('look', [
+      { path: 'acme/widgets#9', kind: 'url', url: 'https://github.com/acme/widgets/pull/9' },
+    ])
+    expect(retry!.filePaths).toHaveLength(0)
+    expect(retry!.allFiles.some(f => f.url === 'https://github.com/acme/widgets/pull/9')).toBe(true)
+  })
+
+  it('keeps a line-range entry on the entries channel only', () => {
+    const retry = buildRetryPayload('see', [{ path: '/src/main.go', startLine: 10, endLine: 20 }])
+    expect(retry!.filePaths).not.toContain('/src/main.go')
+    expect(retry!.allFiles.some(f => f.path === '/src/main.go' && f.startLine === 10)).toBe(true)
   })
 })

@@ -292,3 +292,63 @@ func TestDefaultModelID_KeepsNativeModelUnnamespaced(t *testing.T) {
 		t.Fatalf("default = %q, want the provider form for a listed provider model", got)
 	}
 }
+
+// PreferredModelForProvider is what the bind path stores. It has to agree with
+// what DefaultModelID() would run, or the settings page and the turn disagree.
+func TestPreferredModelForProvider(t *testing.T) {
+	gw := &model.Provider{
+		ID: 300, Name: "GW", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1",
+		Models: []string{"gw-a", "gw-b"}, DefaultModel: "gw-b",
+	}
+
+	cases := []struct {
+		name  string
+		agent *model.Agent
+		p     *model.Provider
+		want  string
+	}{
+		{
+			name:  "stale pin is replaced by the provider default",
+			agent: &model.Agent{Backend: "claude", PreferredModel: "old-model"},
+			p:     gw, want: "gw-b",
+		},
+		{
+			name:  "served pin survives",
+			agent: &model.Agent{Backend: "claude", PreferredModel: "gw-a"},
+			p:     gw, want: "gw-a",
+		},
+		{
+			name:  "no pin stays empty",
+			agent: &model.Agent{Backend: "claude"},
+			p:     gw, want: "",
+		},
+		{
+			// The escape hatch: a backend that declares the id inline keeps a
+			// hand-typed pin, so a re-bind must not clobber it.
+			name:  "declarable backend keeps an unlisted pin",
+			agent: &model.Agent{Backend: "opencode", PreferredModel: "gw-custom"},
+			p:     gw, want: "gw-custom",
+		},
+		{
+			// Nothing to validate against: an uncurated provider is exactly the
+			// case the escape hatch exists for.
+			name:  "uncurated provider leaves the pin alone",
+			agent: &model.Agent{Backend: "claude", PreferredModel: "whatever"},
+			p:     &model.Provider{ID: 301, Name: "GW2", Protocol: model.ProviderProtocolOpenAI, BaseURL: "https://gw.example/v1"},
+			want:  "whatever",
+		},
+		{
+			name:  "nil provider leaves the pin alone",
+			agent: &model.Agent{Backend: "claude", PreferredModel: "kept"},
+			p:     nil, want: "kept",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.agent.PreferredModelForProvider(tc.p); got != tc.want {
+				t.Fatalf("PreferredModelForProvider = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

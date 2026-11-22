@@ -1,6 +1,7 @@
 import { app, dialog, type BrowserWindow } from 'electron'
 import { getStore } from './store'
 import { closeDialogLabels, resolveNativeLanguage } from './labels'
+import { isEmbeddedServerActive, stopEmbeddedServer } from './localServer'
 import {
   buildCloseDialogOptions,
   interpretCloseDialog,
@@ -165,11 +166,20 @@ export async function handleCloseRequest(win: BrowserWindow): Promise<void> {
   prompting = true
   try {
     const labels = closeDialogLabels(resolveNativeLanguage())
-    const result = await dialog.showMessageBox(win, buildCloseDialogOptions(labels))
-    const { choice, next } = interpretCloseDialog(result, action)
+    // The bundled server keeps running after a plain quit, so an integrated
+    // install gets a third button that stops it on the way out.
+    const canStopServer = isEmbeddedServerActive()
+    const result = await dialog.showMessageBox(win, buildCloseDialogOptions(labels, { canStopServer }))
+    const { choice, next } = interpretCloseDialog(result, action, { canStopServer })
     if (next !== action) setCloseAction(next)
     if (choice === 'exit') quitNow()
-    else if (choice === 'tray') await hideToTray(win)
+    else if (choice === 'exit-stop') {
+      // The signal is sent synchronously; the server drains on its own after
+      // the shell is gone. Awaiting the full grace period here would freeze the
+      // dialog for up to 15 seconds.
+      void stopEmbeddedServer()
+      quitNow()
+    } else if (choice === 'tray') await hideToTray(win)
   } finally {
     prompting = false
   }

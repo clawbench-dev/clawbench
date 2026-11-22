@@ -773,7 +773,7 @@ export function selectStartupVersion(
  *     so a broken upgrade can never leave the user unable to start the app
  *   - the pointed binary is this very file (already running the pointed
  *     install) → continue rather than re-exec forever, and KEEP the pointer:
- *     a fused upgrade can legitimately install a package whose app reports an
+ *     an integrated upgrade can legitimately install a package whose app reports an
  *     older version than its directory is named after
  *   - the pointed binary exists but the OS refuses to start it (antivirus,
  *     a missing runtime) → clear the pointer and continue with THIS version;
@@ -803,7 +803,7 @@ export async function handOffToPointedVersion(runningVersion: string): Promise<b
   }
   if (sameFile) {
     // Already running the pointed install. This is the normal state after a
-    // fused upgrade whose package REUSED the previous desktop shell: the
+    // integrated upgrade whose package REUSED the previous desktop shell: the
     // directory is named after the release tag while the app inside reports the
     // reused build's version, so the pointer and `app.getVersion()` legitimately
     // differ. Deleting the pointer here would send the next cold start back to

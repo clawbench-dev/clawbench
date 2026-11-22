@@ -17,7 +17,6 @@ import {
   isEmbeddedServerUrl,
   setEmbeddedServerActive,
   startEmbeddedServer,
-  stopEmbeddedServer,
 } from './localServer'
 
 /**
@@ -171,7 +170,7 @@ app.whenReady().then(async () => {
   // as an OS dialog; that path is gone so the blocking overlay is the only
   // prompt.
   // Only the built-in server needs waiting for. A thin client has none, and a
-  // fused build whose saved target is another machine will open that machine
+  // integrated build whose saved target is another machine will open that machine
   // anyway — holding the window on the ring for a local server it is not going
   // to open would just delay a user who deliberately chose a remote one.
   const savedTarget = getStore().get('serverUrl')
@@ -242,19 +241,11 @@ app.on('window-all-closed', () => {
 // because the entries most likely still buffered are the ones around whatever
 // caused the quit.
 //
-// `will-quit`, NOT `before-quit`: a quit can still be ABORTED after
-// `before-quit` — the renderer vetoes the unload while a meeting is publishing,
-// and the user chooses to stay (see registerUnloadGuard / cancelPendingQuit).
-// Stopping the server there killed the backend of an app that then kept running,
-// leaving "cannot connect" until the whole process was killed; relaunching did
-// not help, because the single-instance lock just revealed the same broken
-// window. `will-quit` only fires when the app is really terminating. Paths that
-// skip both hooks (`app.exit`) still close the server's stdin when the process
-// dies, so the server never outlives the app.
+// The built-in server is deliberately NOT stopped here: an integrated install
+// keeps serving phones and browsers after the desktop closes, and the next
+// launch adopts the same process (see localServer.ts). Stopping it is an
+// explicit action — close dialog, tray menu, or the login page's server row.
 app.on('will-quit', () => {
-  // Closing the server's stdin is its quit signal; the call also arms a kill
-  // for the case where it does not drain in time.
-  stopEmbeddedServer()
   flushFloatingBounds()
   // The input helper is a child process; leaving it behind would keep a process
   // that can drive the desktop alive after the app is gone.

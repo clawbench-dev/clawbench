@@ -3,6 +3,10 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick, type Component } from 'vue'
 import PasswordChangeDialog from '@/components/settings/PasswordChangeDialog.vue'
+import WallpaperSetting from '@/components/settings/WallpaperSetting.vue'
+import MeetingRelaySetting from '@/components/settings/MeetingRelaySetting.vue'
+import KbSetting from '@/components/settings/KbSetting.vue'
+import { categoryItems, type ItemSpec } from '@/components/settings/settingsFieldMap'
 
 // Imported lazily (in beforeAll) rather than statically: the settings module
 // graph now reaches modules that call `useSettingsConfig()` at MODULE level
@@ -480,24 +484,51 @@ beforeAll(async () => {
   SettingsCategory = (await import('@/components/settings/SettingsCategory.vue')).default
 }, 120_000)
 
-function mountCategory(categoryId: string, { deep = false, attach = false }: { deep?: boolean; attach?: boolean } = {}) {
+/**
+ * Stubs for the card bodies that used to be static imports here.
+ *
+ * Card bodies are now lazy `cardBody` declarations owned by the field tables
+ * (and, for plugins, by the plugin directory). These names used to be stubs in
+ * every mount, which ALSO kept the async component from running its loader;
+ * with the component no longer imported by SettingsCategory, an unstubbed body
+ * would mount for real — and mounting, say, MailSetting re-supplies its own
+ * global stubs and pulls a full settings page into a unit test.
+ *
+ * `true` renders the stub WITHOUT invoking the loader, so the pages that are
+ * not under test stay inert. A test that asserts on a body removes its stub.
+ */
+const CARD_BODY_STUBS = {
+  SettingsGroupPanel: true,
+  IosInstallDrawer: true,
+  UpgradeDialog: true,
+  BottomSheet: true,
+  ProviderIcon: true,
+  PasswordChangeDialog: true,
+  ProjectsSetting: true,
+  ProjectDetailSetting: true,
+  WallpaperSetting: true,
+  TlsCertPanel: true,
+  MCPSetting: true,
+  ProviderSetting: true,
+  SkillsSetting: true,
+  SkillsDirsSetting: true,
+  SkillsReposSetting: true,
+  SkillsDiscoveredSetting: true,
+  ForgeCredentialsRow: true,
+  MailSetting: true,
+  MeetingRelaySetting: true,
+  KbSetting: true,
+} as const
+
+function mountCategory(categoryId: string, { deep = false, attach = false, stubs = {} }: { deep?: boolean; attach?: boolean; stubs?: Record<string, unknown> } = {}) {
   return mount(SettingsCategory, {
     props: { categoryId },
     attachTo: attach ? document.body : undefined,
     global: {
       plugins: [i18n],
-      stubs: deep
-        ? {}
-        : {
-            SettingsGroupPanel: true,
-            IosInstallDrawer: true,
-            UpgradeDialog: true,
-            BottomSheet: true,
-            ProviderIcon: true,
-            PasswordChangeDialog: true,
-            ProjectsSetting: true,
-            ProjectDetailSetting: true,
-          },
+      // A per-test entry overrides the default stub (e.g. `false` mounts the
+      // real card body instead of the inert stub).
+      stubs: deep ? {} : { ...CARD_BODY_STUBS, ...stubs },
     },
   })
 }
@@ -505,6 +536,23 @@ function mountCategory(categoryId: string, { deep = false, attach = false }: { d
 afterEach(() => {
   document.body.querySelectorAll('.modal-overlay').forEach((el) => el.remove())
 })
+
+/**
+ * Look up the lazy `cardBody` a page declares for one of its cards (test
+ * helper).
+ *
+ * The body is asserted by mounting it directly: under jsdom an async component
+ * whose loader dynamic-imports a module does not settle while it sits in a card
+ * slot of a mounted subtree, so "mount the page, assert the body" would hang
+ * rather than fail.
+ */
+function declaredCardBody(categoryId: string, key: string): ItemSpec {
+  const entry = categoryItems[categoryId]?.find(e => e.type === 'item' && e.spec.key === key)
+  expect(entry, `${categoryId}/${key} must exist`).toBeDefined()
+  const spec = (entry as { type: 'item'; spec: ItemSpec }).spec
+  expect(typeof spec.cardBody?.load, `${categoryId}/${key} must declare a cardBody`).toBe('function')
+  return spec
+}
 
 describe('SettingsCategory', () => {
   beforeEach(() => {
@@ -679,8 +727,13 @@ describe('SettingsCategory', () => {
     // instead of the per-meeting create form. The card body is a dedicated
     // component, and a section header with no matching render branch would
     // leave an empty card — the exact failure this pins.
-    it('renders the relay form in its own card', () => {
-      const wrapper = mountCategory('meeting')
+    it('renders the relay form in its own card', async () => {
+      // The meeting page's field table (plugins/live/settings.ts) declares
+      // MeetingRelaySetting as this card's body; the page no longer imports it.
+      // Mount the component directly — see declaredCardBody.
+      declaredCardBody('meeting', 'meetingRelay')
+      const wrapper = mount(MeetingRelaySetting, { global: { plugins: [i18n] } })
+      await flushPromises()
 
       expect(wrapper.find('[data-role="relay-url"]').exists()).toBe(true)
       expect(wrapper.find('[data-role="relay-key"]').exists()).toBe(true)
@@ -813,9 +866,17 @@ describe('SettingsCategory', () => {
       expect(mockSetLocalConfig).toHaveBeenCalledWith('locale', 'en')
     })
 
-    it('renders the wallpaper setting card', () => {
-      const wrapper = mountCategory('appearance')
-      expect(wrapper.findAllComponents({ name: 'WallpaperSetting' })).toHaveLength(1)
+    it('declares the wallpaper component as the card body', () => {
+      // The body is no longer imported by SettingsCategory: the appearance
+      // page's field table names it on the item that opens the card.
+      const spec = declaredCardBody('appearance', 'panelOpacity')
+      expect(spec.sectionHeader).toBe('settings.items.wallpaperSection')
+      // And the component itself renders (mounted directly — see the helper).
+      const wrapper = mount(WallpaperSetting, {
+        props: { description: '壁纸' },
+        global: { plugins: [i18n], stubs: { SettingsGroupPanel: true } },
+      })
+      expect(wrapper.exists()).toBe(true)
     })
 
     it('enables the panel-opacity slider once the device turns the wallpaper on', async () => {
@@ -824,9 +885,8 @@ describe('SettingsCategory', () => {
       // disabled waiting for /api/config.
       localConfig.wallpaperEnabled = true
       localConfig.wallpaperMode = 'wave'
-      const wrapper = mountCategory('appearance')
-      await wrapper.vm.$nextTick()
-      const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
+      const wallpaper = mount(WallpaperSetting, { global: { plugins: [i18n] } })
+      await flushPromises()
       const slider = wallpaper.find('input[type="range"]')
       expect(slider.attributes('disabled')).toBeUndefined()
     })
@@ -835,9 +895,8 @@ describe('SettingsCategory', () => {
       // localDefaults.wallpaperEnabled is false, so a device that never touched
       // the setting has no background and nothing to tune.
       localConfig.wallpaperEnabled = false
-      const wrapper = mountCategory('appearance')
-      await wrapper.vm.$nextTick()
-      const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
+      const wallpaper = mount(WallpaperSetting, { global: { plugins: [i18n] } })
+      await flushPromises()
       const slider = wallpaper.find('input[type="range"]')
       expect(slider.attributes('disabled')).toBeDefined()
     })
@@ -858,14 +917,9 @@ describe('SettingsCategory', () => {
         },
       }
       try {
-        const wrapper = mountCategory('appearance')
-        await wrapper.vm.$nextTick()
-        const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
-        // `SettingsCategory` renders the appearance pane through an async
-        // sub-panel, so the gallery mounts a tick later than the category
-        // itself. Awaiting only one `$nextTick()` made this pass or fail
-        // depending on what else the worker had queued (observed as a 5s
-        // timeout in the full run, green when the file ran alone).
+        // Mounted directly: the panel is the card body declared in the
+        // appearance field table, not something SettingsCategory imports.
+        const wallpaper = mount(WallpaperSetting, { global: { plugins: [i18n] } })
         await flushPromises()
         expect(wallpaper.find('img.wallpaper-gallery__thumb').exists()).toBe(true)
       } finally {
@@ -1686,8 +1740,6 @@ describe('SettingsCategory', () => {
 
     it('知识库 renders the status card plus the kb.* rows, and no master switch', async () => {
       const wrapper = mountCategory('kb')
-      await flushPromises()
-      expect(wrapper.findComponent({ name: 'KbSetting' }).exists()).toBe(true)
       for (const key of ['kb.auto_inject', 'kb.inject_top_n', 'kb.inject_max_chars', 'kb.inject_min_similarity', 'kb.max_file_mb', 'kb.max_text_mb', 'kb.poll_interval', 'kb.embed_batch_size']) {
         expect(wrapper.find(`[data-settings-key="${key}"]`).exists(), key).toBe(true)
       }
@@ -1697,6 +1749,13 @@ describe('SettingsCategory', () => {
       expect(statusRow.exists()).toBe(true)
       expect(statusRow.props().enableKey).toBe('kb.enabled')
       expect(statusRow.find('input[type="checkbox"]').exists()).toBe(false)
+
+      // The status card's body is declared in plugins/kb/settings.ts (the page
+      // no longer imports it) and mounted directly — see declaredCardBody.
+      expect(declaredCardBody('kb', 'kbStatus').sectionHeader).toBe('settings.items.kbStatusSection')
+      const card = mount(KbSetting, { global: { plugins: [i18n], stubs: { KbIndexProgress: true } } })
+      await flushPromises()
+      expect(card.find('.kb-setting').exists()).toBe(true)
     })
 
     it('RAG 检索 renders one panel and nothing from 会话管理', () => {

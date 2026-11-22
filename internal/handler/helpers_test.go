@@ -122,15 +122,14 @@ func TestResolveAgentConfig_DefaultAgent(t *testing.T) {
 
 	model.DefaultAgentID = "test-agent"
 	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Backend: "claude", Models: []model.AgentModel{{ID: "sonnet", Name: "Sonnet", Default: true}}, RuntimeSystemPrompt: "be helpful", Command: "claude"},
+		"test-agent": {ID: "test-agent", Backend: "claude", Models: []model.AgentModel{{ID: "sonnet", Name: "Sonnet", Default: true}}, RuntimeSystemPrompt: "be helpful"},
 	}
 
-	backend, agentModel, sysPrompt, cmd, ok := resolveAgentConfig("")
+	backend, agentModel, sysPrompt, ok := resolveAgentConfig("")
 	assert.True(t, ok)
 	assert.Equal(t, "claude", backend)
 	assert.Equal(t, "sonnet", agentModel)
 	assert.Equal(t, "be helpful", sysPrompt)
-	assert.Equal(t, "claude", cmd)
 }
 
 func TestResolveAgentConfig_SpecificAgent(t *testing.T) {
@@ -138,10 +137,10 @@ func TestResolveAgentConfig_SpecificAgent(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	model.Agents = map[string]*model.Agent{
-		"coder": {ID: "coder", Backend: "codebuddy", Models: []model.AgentModel{{ID: "glm-5.1", Name: "GLM 5.1", Default: true}}, RuntimeSystemPrompt: "code", Command: "cb"},
+		"coder": {ID: "coder", Backend: "codebuddy", Models: []model.AgentModel{{ID: "glm-5.1", Name: "GLM 5.1", Default: true}}, RuntimeSystemPrompt: "code"},
 	}
 
-	backend, agentModel, _, _, ok := resolveAgentConfig("coder")
+	backend, agentModel, _, ok := resolveAgentConfig("coder")
 	assert.True(t, ok)
 	assert.Equal(t, "codebuddy", backend)
 	assert.Equal(t, "glm-5.1", agentModel)
@@ -158,7 +157,7 @@ func TestResolveAgentConfig_NoDefaultNoAgents(t *testing.T) {
 	model.DefaultAgentID = ""
 	model.Agents = map[string]*model.Agent{}
 
-	_, _, _, _, ok := resolveAgentConfig("")
+	_, _, _, ok := resolveAgentConfig("")
 	assert.False(t, ok)
 }
 
@@ -168,7 +167,7 @@ func TestResolveAgentConfig_UnknownAgent(t *testing.T) {
 
 	model.Agents = map[string]*model.Agent{}
 
-	_, _, _, _, ok := resolveAgentConfig("nonexistent")
+	_, _, _, ok := resolveAgentConfig("nonexistent")
 	assert.False(t, ok)
 }
 

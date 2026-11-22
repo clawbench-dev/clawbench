@@ -79,14 +79,14 @@ func TestBuildChatRequest_ForcesFreshSessionAfterTakeover(t *testing.T) {
 	// Control: history but no native id and NO takeover → resume stays true (the
 	// legacy path, which some CLIs answer with --continue).
 	seed("plain", "")
-	plain := BuildChatRequest("next", "plain", "/proj", "codebuddy", "codebuddy", "", "", "", "", "/proj", false)
+	plain := BuildChatRequest("next", "plain", "/proj", "codebuddy", "codebuddy", "", "", "", "/proj", false)
 	assert.True(t, plain.Resume)
 	assert.NotEmpty(t, plain.ForkContext, "history must still be injected as background")
 
 	// Taken over: identical shape, but the replacement must start a fresh
 	// native session while still receiving the history.
 	seed("taken", "Claude")
-	taken := BuildChatRequest("next", "taken", "/proj", "codebuddy", "codebuddy", "", "", "", "", "/proj", false)
+	taken := BuildChatRequest("next", "taken", "/proj", "codebuddy", "codebuddy", "", "", "", "/proj", false)
 	assert.False(t, taken.Resume, "a taken-over session must not resume a native session")
 	assert.NotEmpty(t, taken.ForkContext)
 }
@@ -96,10 +96,11 @@ func TestBuildChatRequest_ForcesFreshSessionAfterTakeover(t *testing.T) {
 //   - different backend: the id belongs to another tool's storage;
 //   - custom ACP agents share the "custom-acp" backend but not the process, so
 //     the command must match too;
-//   - a CLI id handed to an ACP adapter (or the reverse) is a namespace
-//     mismatch — the pool would try to resume a session that never existed there.
+//   - the command is also what decides the transport, so "no command" vs "an
+//     ACP command" is the same mismatch: the pool would try to resume a
+//     session that never existed in the other process.
 func TestCanReuseNativeSession(t *testing.T) {
-	base := &model.Agent{ID: "a", Backend: "codebuddy", Transport: "", AcpCommand: ""}
+	base := &model.Agent{ID: "a", Backend: "codebuddy", AcpCommand: ""}
 
 	cases := []struct {
 		name string
@@ -121,20 +122,20 @@ func TestCanReuseNativeSession(t *testing.T) {
 		},
 		{
 			name: "same custom-acp backend but a different command",
-			old:  &model.Agent{ID: "a", Backend: "custom-acp", Transport: "acp-stdio", AcpCommand: "trae acp"},
-			repl: &model.Agent{ID: "b", Backend: "custom-acp", Transport: "acp-stdio", AcpCommand: "other acp"},
+			old:  &model.Agent{ID: "a", Backend: "custom-acp", AcpCommand: "trae acp"},
+			repl: &model.Agent{ID: "b", Backend: "custom-acp", AcpCommand: "other acp"},
 			want: false,
 		},
 		{
 			name: "same backend and command, both ACP",
-			old:  &model.Agent{ID: "a", Backend: "custom-acp", Transport: "acp-stdio", AcpCommand: "trae acp"},
-			repl: &model.Agent{ID: "b", Backend: "custom-acp", Transport: "acp-stdio", AcpCommand: "trae acp"},
+			old:  &model.Agent{ID: "a", Backend: "custom-acp", AcpCommand: "trae acp"},
+			repl: &model.Agent{ID: "b", Backend: "custom-acp", AcpCommand: "trae acp"},
 			want: true,
 		},
 		{
-			name: "same backend, CLI vs ACP",
+			name: "same backend, no command vs an ACP command",
 			old:  base,
-			repl: &model.Agent{ID: "b", Backend: "codebuddy", Transport: "acp-stdio"},
+			repl: &model.Agent{ID: "b", Backend: "codebuddy", AcpCommand: "codebuddy --acp"},
 			want: false,
 		},
 		{

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /**
- * Wiring guards for the built-in ("all-in-one") server's UI and lifecycle.
+ * Wiring guards for the built-in ("integrated") server's UI and lifecycle.
  *
  * `localServer.ts`, `window.ts`, `bridge.ts` and the login page all depend on
  * Electron, a spawned child process or a rendered document, so their failure
@@ -71,7 +71,7 @@ describe('login page keeps the built-in server out of the saved list', () => {
   it('defaults the selection to the server the app is connected to', () => {
     const src = readRepoFile(LOGIN)
     const render = src.match(/function renderServerList\(\) \{[\s\S]*?\n  \}/)!
-    // "First row" is the built-in one in a fused build, so returning from
+    // "First row" is the built-in one in an integrated build, so returning from
     // "reconfigure server" would preselect it and one stray click switches back.
     expect(render![0]).toContain('currentServerUrl')
     expect(render![0]).toContain('findServer(currentServerUrl)')
@@ -92,8 +92,8 @@ describe('the built-in server is not a saved row', () => {
 
   it('writes the adopted serverUrl through the remembered-choice decision', () => {
     const src = readRepoFile(LOCAL_SERVER)
-    const fn = src.match(/export async function startEmbeddedServer\(\)[\s\S]*?\n\}/)
-    expect(fn, 'startEmbeddedServer not found').not.toBeNull()
+    const fn = src.match(/function rememberServer\(port: number\)[\s\S]*?\n\}/)
+    expect(fn, 'rememberServer not found').not.toBeNull()
     expect(fn![0]).toContain('shouldAdoptEmbeddedServer(previousActive, previousEmbedded)')
     // Unconditional assignment is the regression: the built-in address must not
     // overwrite a server the user chose.
@@ -118,7 +118,7 @@ describe('a failed start does not poison every later attempt', () => {
     const src = readRepoFile(LOCAL_SERVER)
     const fn = src.match(/export async function startEmbeddedServer\(\)[\s\S]*?\n\}/)
     expect(fn, 'startEmbeddedServer not found').not.toBeNull()
-    expect(fn![0]).toContain('if (child) stopEmbeddedServer()')
+    expect(fn![0]).toContain('if (child || managedPid) await stopEmbeddedServer()')
     expect(fn![0]).toContain('stopping = false')
   })
 
@@ -133,20 +133,48 @@ describe('a failed start does not poison every later attempt', () => {
   })
 })
 
-describe('the server outlives an aborted quit', () => {
-  it('stops it on will-quit, never on before-quit', () => {
-    // `before-quit` runs even when the quit is then aborted (the renderer vetoes
-    // the unload while a meeting is publishing and the user stays). Stopping the
-    // server there left a live app with a dead backend — "cannot connect", and a
-    // relaunch only revealed the same window because of the single-instance
-    // lock.
+describe('the server outlives the app', () => {
+  it('does not stop it on will-quit', () => {
+    // An integrated install keeps serving phones and browsers after the desktop
+    // closes. Stopping the server on quit would make "quit the app" and "end
+    // the backend" the same thing again, which is exactly what this feature
+    // removed. Stopping is an explicit action (close dialog / tray / login page).
     const src = readRepoFile('desktop/src/main/index.ts')
     const willQuit = src.match(/app\.on\('will-quit',[\s\S]*?\n\}\)/)
     expect(willQuit, 'will-quit handler not found').not.toBeNull()
-    expect(willQuit![0]).toContain('stopEmbeddedServer()')
+    expect(willQuit![0]).not.toContain('stopEmbeddedServer()')
 
     const beforeQuit = src.match(/app\.on\('before-quit',[\s\S]*?\n\}\)/)
     if (beforeQuit) expect(beforeQuit[0]).not.toContain('stopEmbeddedServer()')
+  })
+
+  it('spawns it detached and adopts a server from a previous launch', () => {
+    const src = readRepoFile(LOCAL_SERVER)
+    expect(src).toContain('detached: true')
+    expect(src).toContain('adoptRunningServer(binary)')
+    expect(src).toContain('terminateServer(pid)')
+  })
+
+  it('shares the standalone data directory and migrates the old one', () => {
+    // The desktop app must see a standalone install's sessions, so both use
+    // ~/.clawbench. The old per-app copy is moved only into an empty target.
+    const src = readRepoFile(LOCAL_SERVER)
+    expect(src).toContain('embeddedDataDirFor(os.homedir())')
+    expect(src).toContain('await migrateEmbeddedDataDir()')
+    expect(src).toContain('shouldMigrateEmbeddedData')
+    // A live server we could not adopt must not be killed: it may be the user's
+    // standalone server sharing the directory.
+    expect(src).toContain('is already using ${embeddedDataDir()}')
+  })
+
+  it('offers an explicit stop action on all three surfaces', () => {
+    // Quitting no longer stops the server, so each surface a user can reach
+    // must be able to end it: the close dialog, the tray, and the login page.
+    expect(readRepoFile('desktop/assets/login.html')).toContain('stopEmbeddedServer()')
+    expect(readRepoFile('desktop/src/main/bridge.ts')).toContain("native:stop-embedded-server")
+    expect(readRepoFile('desktop/src/preload/index.ts')).toContain("native:stop-embedded-server")
+    expect(readRepoFile('desktop/src/main/floating.ts')).toContain('t.stopServer')
+    expect(readRepoFile('desktop/src/main/closeFlow.ts')).toContain("choice === 'exit-stop'")
   })
 })
 
@@ -156,7 +184,7 @@ describe('built-in detection keys on the address', () => {
     const fn = src.match(/export function checkVersionGateFor\(url: string\)[\s\S]*?\n\}/)
     expect(fn, 'checkVersionGateFor not found').not.toBeNull()
     expect(fn![0]).toContain('isEmbeddedServerUrl(url)')
-    // The old guard skipped every remote server whenever the fused build's own
+    // The old guard skipped every remote server whenever the integrated build's own
     // server happened to be running — i.e. always.
     expect(fn![0]).not.toContain('isEmbeddedServerActive()')
   })
@@ -194,10 +222,10 @@ describe('a thin client does not start a server it does not ship', () => {
   })
 
   it('still starts the bundled server when the build ships one', () => {
-    // The other direction of the same guard: a fused install must keep starting
+    // The other direction of the same guard: an integrated install must keep starting
     // its server, and a real failure there must still be reported. Asserted by
     // position, not mere presence — `if (hasEmbeddedServerBinary()) return`
-    // would pass a plain `toContain` while turning every fused install into a
+    // would pass a plain `toContain` while turning every integrated install into a
     // thin one, and a `startEmbeddedServer()` buried in dead code would too.
     const src = readRepoFile('desktop/src/main/index.ts')
     const fn = src.match(/async function startEmbeddedServerIfPresent\(\)[\s\S]*?\n\}/)
@@ -219,12 +247,12 @@ describe('a thin client does not start a server it does not ship', () => {
   })
 })
 
-describe('the version gate cannot replace a fused install', () => {
+describe('the version gate cannot replace an integrated install', () => {
   it('refuses the thin package when this client carries its own server', () => {
     // Every downloadable package is the thin one; installing it would drop
     // `server/` and the next launch would have no built-in server at all. The
     // gate now runs against remote servers too, so this guard is what keeps its
-    // "download" button from wrecking a fused install.
+    // "download" button from wrecking an integrated install.
     const src = readRepoFile('desktop/src/main/versionGate.ts')
     const fn = src.match(/export async function installServerVersion\([\s\S]*?\n\}/)
     expect(fn, 'installServerVersion not found').not.toBeNull()

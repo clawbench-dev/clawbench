@@ -26,7 +26,7 @@ export interface GroupMemberInfo {
   isHost: boolean
   /**
    * 该成员**自己**的上下文用量（成员行 context_state.usage，或活连接的缓存）。
-   * null/undefined = 从未上报（CLI 传输的智能体不上报），与「已用 0%」不同。
+   * null/undefined = 从未上报，与「已用 0%」不同。
    */
   usage?: MemberUsage | null
   /** 成员行的模型覆盖；空串 = 用智能体默认模型。 */

@@ -144,11 +144,11 @@ const mockAgents = {
     return !!a?.canRefreshModels
   }),
   canRefreshAgentState: vi.fn((agentId: string) => {
-    // Mirrors the backend split: transport decides which source can refresh.
+    // Mirrors the backend: an ACP agent refreshes by asking the agent itself;
+    // only an agent without an ACP command falls back to model discovery.
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     if (!a) return false
-    const transport = a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
-    return transport === 'acp-stdio' ? !!a.acpCommand : !!a.canRefreshModels
+    return a.acpCommand ? true : !!a.canRefreshModels
   }),
   supportsACP: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
@@ -157,14 +157,6 @@ const mockAgents = {
   isBuiltinAgent: vi.fn((agentId: string) => {
     const a = mockAgents.agents.value.find(a => a.id === agentId)
     return a?.builtinBackend === true
-  }),
-  supportsCLI: vi.fn((agentId: string) => {
-    const a = mockAgents.agents.value.find(a => a.id === agentId)
-    return a ? a.supportsCLI !== false : false
-  }),
-  getAgentTransport: vi.fn((agentId: string) => {
-    const a = mockAgents.agents.value.find(a => a.id === agentId)
-    return a?.transport || 'cli'
   }),
 }
 
@@ -241,11 +233,12 @@ describe('SessionDrawer', () => {
     expect(wrapper.find('.bottom-sheet-overlay').exists()).toBe(true)
   })
 
-  it('renders the tab bar with five tabs (usage added)', () => {
+  it('renders the tab bar without a transport tab (one path per agent)', () => {
     const wrapper = mountDrawer()
     expect(wrapper.find('.session-setting-tabs').exists()).toBe(true)
     const tabs = wrapper.findAll('.model-tab')
-    expect(tabs.length).toBe(5)
+    // model / thinking / mode / usage — no protocol picker.
+    expect(tabs.length).toBe(4)
   })
 
   it('renders all tab labels', () => {
@@ -254,8 +247,7 @@ describe('SessionDrawer', () => {
     expect(tabs[0].text()).toContain('chat.modelSwitcher.title')
     expect(tabs[1].text()).toContain('chat.thinkingEffortSwitcher.title')
     expect(tabs[2].text()).toContain('chat.modeSwitcher.title')
-    expect(tabs[3].text()).toContain('chat.transportSwitcher.title')
-    expect(tabs[4].text()).toContain('chat.sessionInfo.contextUsage')
+    expect(tabs[3].text()).toContain('chat.sessionInfo.contextUsage')
   })
 
   // ── Agent-declared extra options (issue #634) ──
@@ -274,7 +266,7 @@ describe('SessionDrawer', () => {
 
     it('is hidden when the agent advertises no extra options', () => {
       const wrapper = mountDrawer()
-      expect(wrapper.findAll('.model-tab').length).toBe(5)
+      expect(wrapper.findAll('.model-tab').length).toBe(4)
     })
 
     it('appears with the agent\'s own labels when one is advertised', async () => {
@@ -282,10 +274,10 @@ describe('SessionDrawer', () => {
       const wrapper = mountDrawer()
 
       const tabs = wrapper.findAll('.model-tab')
-      expect(tabs.length).toBe(6)
-      expect(tabs[4].text()).toContain('chat.sessionSetting.advanced')
+      expect(tabs.length).toBe(5)
+      expect(tabs[3].text()).toContain('chat.sessionSetting.advanced')
 
-      await tabs[4].trigger('click')
+      await tabs[3].trigger('click')
       expect(wrapper.find('.extra-config-title').text()).toBe('Fast mode')
       expect(wrapper.find('.extra-config-desc').text()).toBe('1.5x speed, increased usage')
 
@@ -299,7 +291,7 @@ describe('SessionDrawer', () => {
       mockIdentity.configOptions.value = [fastMode]
       const wrapper = mountDrawer()
 
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await wrapper.findAll('.extra-config-section .thinking-item')[1].trigger('click')
 
       expect(mockIdentity.setConfigOptionValue).toHaveBeenCalledWith('fast-mode', 'on')
@@ -311,10 +303,32 @@ describe('SessionDrawer', () => {
       mockIdentity.configOptions.value = [fastMode]
       const wrapper = mountDrawer()
 
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await wrapper.findAll('.extra-config-section .thinking-item')[0].trigger('click')
 
       expect(wrapper.emitted('switch-config-option')).toBeFalsy()
+    })
+
+    it('renders a boolean option as localized On/Off and sends the string form', async () => {
+      const fastToggle = {
+        configId: 'fast-toggle',
+        name: 'Fast toggle',
+        category: 'model_config',
+        type: 'boolean',
+        currentValueId: 'false',
+      }
+      mockIdentity.configOptions.value = [fastToggle]
+      const wrapper = mountDrawer()
+
+      await wrapper.findAll('.model-tab')[3].trigger('click')
+      const rows = wrapper.findAll('.extra-config-section .thinking-item')
+      expect(rows.map(r => r.text())).toEqual(['chat.sessionSetting.on', 'chat.sessionSetting.off'])
+      expect(rows[0].classes()).not.toContain('current')
+      expect(rows[1].classes()).toContain('current')
+
+      await rows[0].trigger('click')
+      expect(mockIdentity.setConfigOptionValue).toHaveBeenCalledWith('fast-toggle', 'true')
+      expect(wrapper.emitted('switch-config-option')?.[0]).toEqual([{ configId: 'fast-toggle', value: 'true' }])
     })
   })
 
@@ -423,14 +437,6 @@ describe('SessionDrawer', () => {
     expect(wrapper.vm._getActiveTab()).toBe('mode')
   })
 
-  it('updates activeTab to transport on tab click', async () => {
-    const wrapper = mountDrawer()
-    const tabs = wrapper.findAll('.model-tab')
-    await tabs[3].trigger('click')
-    await nextTick()
-    expect(wrapper.vm._getActiveTab()).toBe('transport')
-  })
-
   // ── Component emits ──
 
   it('declares close emit', () => {
@@ -470,17 +476,6 @@ describe('SessionDrawer', () => {
     expect(content.exists()).toBe(true)
   })
 
-  // ── Transport tab content ──
-
-  it('shows transport tab content when clicked', async () => {
-    const wrapper = mountDrawer()
-    const tabs = wrapper.findAll('.model-tab')
-    await tabs[3].trigger('click')
-    await nextTick()
-    const content = wrapper.find('.model-tab-content')
-    expect(content.exists()).toBe(true)
-  })
-
   // ── Model select interaction ──
 
   it('emits switch-model when model item is clicked', async () => {
@@ -501,71 +496,17 @@ describe('SessionDrawer', () => {
     expect(filtered[0].name).toContain('Sonnet')
   })
 
-  // ── Transport selection ──
-
-  it('selectTransport switches to CLI and clears ACP state', async () => {
-    const { clearModeState, clearCommandState, clearThinkingEffortState } = await import('@/composables/useSessionIdentity')
-    const { restoreOriginalModels, invalidateACPStateCache } = await import('@/composables/useAgents')
-
-    const wrapper = mountDrawer()
-
-    await wrapper.vm.selectTransport('cli')
-
-    expect(mockIdentity.currentTransport.value).toBe('cli')
-    expect(clearModeState).toHaveBeenCalled()
-    expect(clearCommandState).toHaveBeenCalled()
-    expect(clearThinkingEffortState).toHaveBeenCalled()
-    expect(restoreOriginalModels).toHaveBeenCalledWith('claude')
-    expect(invalidateACPStateCache).toHaveBeenCalledWith('claude')
-  })
-
-  it('selectTransport switches to ACP and populates ACP state', async () => {
-    const { invalidateACPStateCache, populateACPStateFromCache } = await import('@/composables/useAgents')
-
-    const wrapper = mountDrawer()
-    mockIdentity.currentTransport.value = 'cli'
-
-    await wrapper.vm.selectTransport('acp-stdio')
-
-    expect(mockIdentity.currentTransport.value).toBe('acp-stdio')
-    expect(invalidateACPStateCache).toHaveBeenCalledWith('claude')
-    expect(populateACPStateFromCache).toHaveBeenCalledWith('claude')
-  })
-
-  it('selectTransport does nothing when selecting already-active ACP', async () => {
-    const wrapper = mountDrawer()
-    mockIdentity.currentTransport.value = 'acp-stdio'
-
-    await wrapper.vm.selectTransport('acp-stdio')
-
-    // Should not emit switch-transport
-    expect(wrapper.emitted('switch-transport')).toBeFalsy()
-  })
-
-  it('selectTransport does nothing when selecting already-active CLI', async () => {
-    const wrapper = mountDrawer()
-    mockIdentity.currentTransport.value = 'cli'
-
-    await wrapper.vm.selectTransport('cli')
-
-    expect(wrapper.emitted('switch-transport')).toBeFalsy()
-  })
-
   // ── Refresh models ──
 
-  it('handleRefresh calls API and applies the resolved + CLI lists', async () => {
+  it('handleRefresh calls API and applies the resolved list', async () => {
     const newModels = [{ id: 'new-model', name: 'New Model', default: true }]
-    const cliModels = [
-      { id: 'new-model', name: 'New Model', default: true },
-      { id: 'cli-only', name: 'CLI Only' },
-    ]
-    vi.mocked(apiPost).mockResolvedValue({ models: newModels, cliModels })
+    vi.mocked(apiPost).mockResolvedValue({ models: newModels })
 
     const wrapper = mountDrawer()
     await wrapper.vm.handleRefresh()
 
     expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {}, { timeoutMs: 180000 })
-    expect(mockApplyRefreshedModelList).toHaveBeenCalledWith('claude', newModels, cliModels)
+    expect(mockApplyRefreshedModelList).toHaveBeenCalledWith('claude', newModels)
   })
 
   // The refresh lives in the sheet header because it refreshes EVERY list, not
@@ -610,27 +551,26 @@ describe('SessionDrawer', () => {
     }
   })
 
-  // A dual-transport agent currently on CLI refreshes through discovery, so it
-  // must stay hidden when it has no model source (the backend would answer
-  // ModelDiscoveryNotSupported).
-  it('hides the refresh button for a CLI agent without a model source', () => {
+  // Without a model source the backend would answer ModelDiscoveryNotSupported,
+  // so the refresh button must stay hidden.
+  it('hides the refresh button for an agent without a model source', () => {
     mockAgents.agents.value.push({
-      id: 'tmp-cli-no-source',
-      name: 'CLI No Source',
-      backend: 'cli-no-source',
+      id: 'tmp-no-source',
+      name: 'No Source',
+      backend: 'no-source',
       models: [],
       thinkingEffortLevels: [],
       preferredModel: '',
       preferredThinkingEffort: '',
       canRefreshModels: false,
-      acpCommand: 'cli-no-source --acp',
-      transport: 'cli',
+      acpCommand: '',
+      transport: '',
     } as any)
     try {
-      const wrapper = mountDrawer({ agentId: 'tmp-cli-no-source' })
+      const wrapper = mountDrawer({ agentId: 'tmp-no-source' })
       expect(wrapper.find('.refresh-btn').exists()).toBe(false)
     } finally {
-      mockAgents.agents.value = mockAgents.agents.value.filter(a => a.id !== 'tmp-cli-no-source')
+      mockAgents.agents.value = mockAgents.agents.value.filter(a => a.id !== 'tmp-no-source')
     }
   })
 
@@ -643,7 +583,7 @@ describe('SessionDrawer', () => {
       modeState: { currentModeId: 'plan', availableModes: [{ id: 'plan', name: 'Plan' }] },
       thinkingEffortState: { currentId: 'high', availableLevels: [{ id: 'high', name: 'High' }] },
     }
-    vi.mocked(apiPost).mockResolvedValue({ models: [], cliModels: [], acpState })
+    vi.mocked(apiPost).mockResolvedValue({ models: [], acpState })
 
     const wrapper = mountDrawer()
     await wrapper.vm.handleRefresh()
@@ -652,7 +592,7 @@ describe('SessionDrawer', () => {
   })
 
   it('does not touch ACP state when the response has none (CLI agent)', async () => {
-    vi.mocked(apiPost).mockResolvedValue({ models: [{ id: 'm', name: 'M', default: true }], cliModels: [] })
+    vi.mocked(apiPost).mockResolvedValue({ models: [{ id: 'm', name: 'M', default: true }] })
     mockApplyRefreshedACPState.mockClear()
 
     const wrapper = mountDrawer()
@@ -664,13 +604,13 @@ describe('SessionDrawer', () => {
   // "The agent offers nothing" is a real answer (a picked model may have been
   // removed). The old truthiness guard silently ignored the empty list.
   it('applies an empty model list instead of ignoring the response', async () => {
-    vi.mocked(apiPost).mockResolvedValue({ models: [], cliModels: [] })
+    vi.mocked(apiPost).mockResolvedValue({ models: [] })
     mockApplyRefreshedModelList.mockClear()
 
     const wrapper = mountDrawer()
     await wrapper.vm.handleRefresh()
 
-    expect(mockApplyRefreshedModelList).toHaveBeenCalledWith('claude', [], [])
+    expect(mockApplyRefreshedModelList).toHaveBeenCalledWith('claude', [])
   })
 
   it('handleRefresh shows error toast on CLINotFound', async () => {
@@ -854,14 +794,6 @@ describe('SessionDrawer', () => {
 
   // ── Thinking tab empty state for non-ACP agent ──
 
-  it('shows static thinking levels for CLI agent', async () => {
-    const wrapper = mountDrawer({ agentId: 'kimi' })
-    wrapper.vm._setActiveTab('thinking')
-    await nextTick()
-
-    const rawState = (wrapper.vm as any).$.devtoolsRawSetupState
-    expect(rawState.thinkingLevels.value).toEqual([])
-  })
 
   // ── Mode tab empty when not ACP ──
   // Note: mode tab empty hint depends on internal _setActiveTab method. Skipped.
@@ -948,75 +880,13 @@ describe('SessionDrawer', () => {
     expect(mockAgents.updateAgentField).not.toHaveBeenCalledWith('claude', 'preferredMode', 'ask')
   })
 
-  // ── Set default transport (with thinking-effort cleanup) ──
 
-  it('setDefaultTransport clears preferred thinking effort when not valid for CLI', async () => {
-    const claude = mockAgents.agents.value.find(a => a.id === 'claude')!
-    const originalPref = claude.preferredThinkingEffort
-    claude.preferredThinkingEffort = 'ultra' // not in CLI valid levels
-    const wrapper = mountDrawer()
 
-    await wrapper.vm.setDefaultTransport('cli')
 
-    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'transport', 'cli')
-    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_thinking_effort', '')
-    expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredThinkingEffort', '')
-    claude.preferredThinkingEffort = originalPref
-  })
 
-  it('setDefaultTransport also selects the transport as current (emits switch-transport)', async () => {
-    const { restoreOriginalModels, invalidateACPStateCache } = await import('@/composables/useAgents')
-    const wrapper = mountDrawer()
-
-    await wrapper.vm.setDefaultTransport('cli')
-
-    expect(wrapper.emitted('switch-transport')).toBeTruthy()
-    expect(wrapper.emitted('switch-transport')![0][0]).toBe('cli')
-    expect(mockIdentity.currentTransport.value).toBe('cli')
-    expect(restoreOriginalModels).toHaveBeenCalledWith('claude')
-    expect(invalidateACPStateCache).toHaveBeenCalledWith('claude')
-  })
-
-  it('setDefaultTransport keeps preferred thinking effort when valid for CLI', async () => {
-    vi.mocked(patchAgentPref).mockClear()
-    const wrapper = mountDrawer() // claude preferredThinkingEffort = 'high'
-    await wrapper.vm.setDefaultTransport('cli')
-    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'transport', 'cli')
-    expect(patchAgentPref).not.toHaveBeenCalledWith('claude', 'preferred_thinking_effort', '')
-  })
-
-  it('setDefaultTransport keeps preferred thinking effort when valid for ACP', async () => {
-    vi.mocked(patchAgentPref).mockClear()
-    const wrapper = mountDrawer() // claude preferredThinkingEffort = 'high', ACP levels include high
-    await wrapper.vm.setDefaultTransport('acp-stdio')
-    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'transport', 'acp-stdio')
-    expect(patchAgentPref).not.toHaveBeenCalledWith('claude', 'preferred_thinking_effort', '')
-  })
-
-  it('setDefaultTransport shows error toast when patchAgentPref rejects', async () => {
-    mockAgents.updateAgentField.mockClear()
-    vi.mocked(patchAgentPref).mockRejectedValue(new Error('fail'))
-    const wrapper = mountDrawer()
-    await wrapper.vm.setDefaultTransport('cli')
-    expect(mockAgents.updateAgentField).not.toHaveBeenCalledWith('claude', 'transport', 'cli')
-  })
 
   // ── Thinking levels in different transport modes ──
 
-  it('uses static thinking levels for CLI transport', async () => {
-    const wrapper = mountDrawer()
-    mockIdentity.currentTransport.value = 'cli'
-    wrapper.vm._setActiveTab('thinking')
-    await nextTick()
-    const rawState = (wrapper.vm as any).$.devtoolsRawSetupState
-    expect(rawState.isACP.value).toBe(false)
-    expect(rawState.thinkingLevels.value).toEqual([
-      { id: 'low', name: 'low' },
-      { id: 'medium', name: 'medium' },
-      { id: 'high', name: 'high' },
-    ])
-    mockIdentity.currentTransport.value = 'acp-stdio'
-  })
 
   it('returns empty thinking levels when ACP has no reported levels', async () => {
     const wrapper = mountDrawer()
@@ -1162,32 +1032,7 @@ describe('SessionDrawer', () => {
     expect(wrapper.vm.pendingDefaultMode).toBe('code')
   })
 
-  // ── Transport tab rendering ──
 
-  it('renders both ACP and CLI transport options for an ACP+CLI agent', async () => {
-    const wrapper = mountDrawer()
-    wrapper.vm._setActiveTab('transport')
-    await nextTick()
-    const names = wrapper.findAll('.thinking-item .model-item-name').map(n => n.text())
-    expect(names).toContain('chat.transportSwitcher.acp')
-    expect(names).toContain('chat.transportSwitcher.cli')
-  })
-
-  it('selects CLI transport via the transport tab button', async () => {
-    const { restoreOriginalModels, invalidateACPStateCache } = await import('@/composables/useAgents')
-    const wrapper = mountDrawer()
-    mockIdentity.currentTransport.value = 'acp-stdio'
-    wrapper.vm._setActiveTab('transport')
-    await nextTick()
-    const cliBtn = wrapper.findAll('.thinking-item').find(b => b.text().includes('chat.transportSwitcher.cli'))!
-    await cliBtn.trigger('click')
-    await nextTick()
-    expect(mockIdentity.currentTransport.value).toBe('cli')
-    expect(restoreOriginalModels).toHaveBeenCalled()
-    expect(invalidateACPStateCache).toHaveBeenCalled()
-    expect(wrapper.emitted('switch-transport')).toBeTruthy()
-    mockIdentity.currentTransport.value = 'acp-stdio'
-  })
 
   // ── Auto-approve toggle ──
 
@@ -1201,16 +1046,6 @@ describe('SessionDrawer', () => {
     expect(mockIdentity.toggleAutoApprove).toHaveBeenCalled()
   })
 
-  // ── Empty transport tab for non-ACP/CLI agent ──
-
-  it('does not show ACP transport option for an agent without ACP support', async () => {
-    const wrapper = mountDrawer({ agentId: 'kimi' })
-    wrapper.vm._setActiveTab('transport')
-    await nextTick()
-    const names = wrapper.findAll('.thinking-item .model-item-name').map(n => n.text())
-    expect(names).not.toContain('chat.transportSwitcher.acp')
-    expect(names).toContain('chat.transportSwitcher.cli')
-  })
 
   // ── Model set-as-default button ──
 
@@ -1274,7 +1109,7 @@ describe('SessionDrawer', () => {
   describe('usage tab', () => {
     it('renders the shared usage panel for the current session', async () => {
       const wrapper = mountDrawer()
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await nextTick()
       // The panel body is ContextUsageDetail — the same component the info-row
       // popup renders, so the two surfaces cannot drift.
@@ -1285,7 +1120,7 @@ describe('SessionDrawer', () => {
 
     it('passes the host-supplied latest reply speed to the shared panel', async () => {
       const wrapper = mountDrawer({ tokenRate: { tokensPerSecond: 21.25, genMs: 4000 } })
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await nextTick()
       const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
       expect(detail.props('tokenRate')).toEqual({ tokensPerSecond: 21.25, genMs: 4000 })
@@ -1296,7 +1131,7 @@ describe('SessionDrawer', () => {
       // (.usage-popup) supplies it. Mounted bare in this drawer the rows would
       // sit flush against the sheet edges, so the wrapper must pad them.
       const wrapper = mountDrawer()
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await nextTick()
       const content = wrapper.find('.model-tab-content')
       expect(content.classes()).toContain('usage-tab-content')
@@ -1311,7 +1146,7 @@ describe('SessionDrawer', () => {
       mockIdentity.contextUsed.value = 0
       try {
         const wrapper = mountDrawer()
-        await wrapper.findAll('.model-tab')[4].trigger('click')
+        await wrapper.findAll('.model-tab')[3].trigger('click')
         await nextTick()
         expect(wrapper.findComponent({ name: 'ContextUsageDetail' }).exists()).toBe(false)
         expect(wrapper.text()).toContain('chat.sessionSetting.noUsage')
@@ -1330,7 +1165,7 @@ describe('SessionDrawer', () => {
       mockIdentity.contextCredit.value = 12.5
       try {
         const wrapper = mountDrawer()
-        await wrapper.findAll('.model-tab')[4].trigger('click')
+        await wrapper.findAll('.model-tab')[3].trigger('click')
         await nextTick()
         const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
         expect(detail.exists()).toBe(true)
@@ -1350,12 +1185,12 @@ describe('SessionDrawer', () => {
         ...mockAgents.agents.value[0],
         id: 'tmp-builtin',
         builtinBackend: true,
-        transport: 'cli',
+        transport: 'in-process',
         acpCommand: '',
       })
       try {
         const wrapper = mountDrawer({ agentId: 'tmp-builtin' })
-        await wrapper.findAll('.model-tab')[4].trigger('click')
+        await wrapper.findAll('.model-tab')[3].trigger('click')
         await nextTick()
         const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
         expect(detail.exists()).toBe(true)
@@ -1452,7 +1287,7 @@ describe('SessionDrawer', () => {
       const wrapper = mountTargeted()
       await nextTick()
       await nextTick()
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await nextTick()
       const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
       expect(detail.exists()).toBe(true)
@@ -1467,7 +1302,7 @@ describe('SessionDrawer', () => {
       const wrapper = mountTargeted({ tokenRate: { tokensPerSecond: 999, genMs: 1000 } })
       await nextTick()
       await nextTick()
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await nextTick()
       const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
       expect(detail.props('tokenRate')).toEqual({ tokensPerSecond: 33.3, genMs: 3000 })
@@ -1539,7 +1374,7 @@ describe('SessionDrawer', () => {
       const wrapper = mountTargeted()
       await nextTick()
       await nextTick()
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await nextTick()
       wrapper.findComponent({ name: 'ContextUsageDetail' }).vm.$emit('compact')
       await nextTick()
@@ -1547,15 +1382,15 @@ describe('SessionDrawer', () => {
       expect(mockCompactMember).toHaveBeenCalledWith('member-1', 'member-1')
     })
 
-    // A CLI-transport member has no slash-command channel, so /compact would
-    // reach the model as prose; the server answers 400. Offering the button only
-    // produced an error AFTER the click.
-    it('does not offer compaction for a CLI-transport member', async () => {
-      mockApiGet.mockResolvedValue({ ...targetPayload, transport: 'cli' })
-      const wrapper = mountDrawer({ targetSessionId: 'member-1' })
+    // A member whose agent has no ACP command has no slash-command channel, so
+    // /compact would reach the model as prose; the server answers 400. Offering
+    // the button only produced an error AFTER the click.
+    it('does not offer compaction for a member whose agent has no ACP command', async () => {
+      mockApiGet.mockResolvedValue({ ...targetPayload, agentId: 'kimi', backend: 'kimi' })
+      const wrapper = mountDrawer({ targetSessionId: 'member-1', agentId: 'kimi' })
       await nextTick()
       await nextTick()
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await nextTick()
       const detail = wrapper.findComponent({ name: 'ContextUsageDetail' })
       expect(detail.exists()).toBe(true)
@@ -1566,7 +1401,7 @@ describe('SessionDrawer', () => {
       const wrapper = mountTargeted()
       await nextTick()
       await nextTick()
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await nextTick()
       expect(wrapper.findComponent({ name: 'ContextUsageDetail' }).props('showCompact')).toBe(true)
     })
@@ -1583,7 +1418,7 @@ describe('SessionDrawer', () => {
       const wrapper = mountDrawer({ targetSessionId: 'member-1' })
       await nextTick()
       await nextTick()
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await nextTick()
       wrapper.findComponent({ name: 'ContextUsageDetail' }).vm.$emit('compact')
       await nextTick()
@@ -1681,22 +1516,11 @@ describe('SessionDrawer', () => {
       const wrapper = mountMember()
       await nextTick()
       await nextTick()
-      await wrapper.findAll('.model-tab')[4].trigger('click')
+      await wrapper.findAll('.model-tab')[3].trigger('click')
       await nextTick()
       expect(wrapper.text()).not.toContain('chat.sessionSetting.noUsage')
       expect(wrapper.findComponent({ name: 'ContextUsageDetail' }).exists()).toBe(true)
     })
 
-    it('shows the protocol selection from the resolved transport', async () => {
-      const wrapper = mountMember()
-      await nextTick()
-      await nextTick()
-      await wrapper.findAll('.model-tab')[3].trigger('click')
-      await nextTick()
-      // ACP row is current — an empty transport column used to leave BOTH
-      // protocol rows unselected.
-      const rows = wrapper.findAll('.thinking-item')
-      expect(rows[0].classes()).toContain('current')
-    })
   })
 })

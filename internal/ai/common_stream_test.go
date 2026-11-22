@@ -395,46 +395,38 @@ func TestExecCommandJSON(t *testing.T) {
 	assert.Equal(t, `echo "hello\nworld"`, parsed["command"])
 }
 
-// --- BuildBaseStreamArgs resume safety tests ---
+// --- Remap chaining ---
 
-func TestBuildBaseStreamArgs_ResumeWithEmptySessionID(t *testing.T) {
-	req := ChatRequest{
-		Prompt:    "hello",
-		Resume:    true,
-		SessionID: "",
-		AgentID:   "claude",
+// dirPath→path together with path→file_path is deepseek's real ACP table. The
+// two rules form a chain, so applying them one after another would turn a
+// DIRECTORY argument into a file_path on some runs (map iteration order).
+// A rule may only consume a key the frame actually carried, which makes the
+// outcome stable: dirPath lands on "path" and stops there.
+func TestNormalizeToolInput_RemapsNeverCascade(t *testing.T) {
+	remaps := map[string]string{"dirPath": "path", "path": "file_path"}
+
+	// Repeated because the failure mode was iteration-order dependent.
+	for range 32 {
+		norm, err := normalizeToolInput(json.RawMessage(`{"dirPath":"./src"}`), remaps)
+		require.NoError(t, err)
+
+		var parsed map[string]any
+		require.NoError(t, json.Unmarshal(norm, &parsed))
+		assert.Equal(t, "./src", parsed["path"], "a directory argument must stay a path")
+		assert.NotContains(t, parsed, "file_path", "the path→file_path rule must not re-consume a key another rule created")
 	}
-	args := BuildBaseStreamArgs(req, nil)
-	// Must NOT contain --resume with empty value
-	for _, arg := range args {
-		assert.NotEqual(t, "--resume", arg, "should not pass --resume when SessionID is empty")
-	}
-	// Should still have --print and --output-format
-	assert.Contains(t, args, "--print")
-	assert.Contains(t, args, "--output-format")
 }
 
-func TestBuildBaseStreamArgs_ResumeWithSessionID(t *testing.T) {
-	req := ChatRequest{
-		Prompt:    "hello",
-		Resume:    true,
-		SessionID: "session-abc",
-		AgentID:   "claude",
-	}
-	args := BuildBaseStreamArgs(req, nil)
-	assert.Contains(t, args, "--resume")
-	assert.Contains(t, args, "session-abc")
-}
+// The same table must still map a real path to file_path: the snapshot only
+// stops CASCADING, it does not disable the rules.
+func TestNormalizeToolInput_DirectSourceStillMaps(t *testing.T) {
+	remaps := map[string]string{"dirPath": "path", "path": "file_path"}
 
-func TestBuildBaseStreamArgs_NewSessionWithID(t *testing.T) {
-	req := ChatRequest{
-		Prompt:    "hello",
-		Resume:    false,
-		SessionID: "session-abc",
-		AgentID:   "claude",
-	}
-	args := BuildBaseStreamArgs(req, nil)
-	assert.Contains(t, args, "--session-id")
-	assert.Contains(t, args, "session-abc")
-	assert.NotContains(t, args, "--resume")
+	norm, err := normalizeToolInput(json.RawMessage(`{"path":"main.go"}`), remaps)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(norm, &parsed))
+	assert.Equal(t, "main.go", parsed["file_path"])
+	assert.NotContains(t, parsed, "path")
 }

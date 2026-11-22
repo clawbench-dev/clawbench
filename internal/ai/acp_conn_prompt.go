@@ -77,10 +77,12 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		return fmt.Errorf("acp: connection not initialized")
 	}
 
+	var commandReply *asyncCommandReply
 	// Register the stream channel so SessionUpdate callbacks are forwarded
 	if client != nil {
 		slog.Info("acp conn: RegisterSession starting", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
 		client.RegisterSession(acpSID, streamCh)
+		commandReply = client.trackCommandReply(acpSID)
 		defer client.UnregisterSession(acpSID)
 	}
 
@@ -193,8 +195,16 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		}
 	}
 
+	// Antigravity (agy acp) returns end_turn while a background command is
+	// still running: the completion, any further permission requests and the
+	// final answer arrive on this same session afterwards, with no second
+	// prompt response. Keep the turn open until they land, otherwise they hit
+	// the "no route for this session" drop and the user has to type "continue"
+	// to see them (issue #644).
+	if waitErr := c.awaitBackgroundCommand(ctx, promptCtx, conn, acpSID, commandReply, &resp, streamCh); waitErr != nil {
+		return waitErr
+	}
 	c.emitPromptTailMetadata(resp, streamCh)
-
 	return nil
 }
 
@@ -288,8 +298,8 @@ func promptText(blocks []acp.ContentBlock) string {
 // before concluding a turn billed nothing.
 func promptResponseTokens(resp acp.PromptResponse, c *ACPConn) (input, output, total int) {
 	if resp.Usage != nil {
-		input = resp.Usage.InputTokens
-		output = resp.Usage.OutputTokens
+		input = int(resp.Usage.InputTokens)
+		output = int(resp.Usage.OutputTokens)
 	}
 	accIn, accOut, accTotal := c.peekMetaAccumUsage()
 	return max(input, accIn), max(output, accOut), max(input+output, accTotal)
@@ -305,13 +315,19 @@ func (c *ACPConn) emitRefusalWarningIfRefused(resp acp.PromptResponse, streamCh 
 	if resp.StopReason != acp.StopReasonRefusal {
 		return
 	}
-	// The agent's own reason, when it reports one. CodeBuddy's -32603 is a
-	// placeholder that explains nothing; its _meta carries the real cause.
-	detail := refusalDetailFromMeta(resp.Meta)
+	// The agent's own reason, when it reports one. A -32603 is a placeholder
+	// that explains nothing; a backend that stashes the real cause in _meta
+	// declares RefusalDetail and it is used instead.
+	detail := ""
+	if c.agent != nil {
+		if b := acpBehavior(c.agent.Backend); b != nil && b.RefusalDetail != nil {
+			detail = b.RefusalDetail(MetaAny(resp.Meta))
+		}
+	}
 	slog.Warn("acp conn: prompt refused by agent",
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
 		"stop_reason", resp.StopReason, "detail", detail)
-	httpStatus := acpHTTPStatusFromMeta(resp.Meta)
+	httpStatus := acpHTTPStatusFromMeta(MetaAny(resp.Meta))
 	forwardACPEvent(streamCh, StreamEvent{
 		Type:        "warning",
 		Content:     "AI request refused by the agent (model unavailable or upstream error)",
@@ -332,7 +348,7 @@ func (c *ACPConn) emitRefusalWarningIfRefused(resp acp.PromptResponse, streamCh 
 // persisted so the message record reflects why the turn ended.
 func (c *ACPConn) emitPromptTailMetadata(resp acp.PromptResponse, streamCh chan<- StreamEvent) {
 	if resp.Usage != nil || len(resp.Meta) > 0 {
-		c.emitPromptResponseUsage(resp.Usage, resp.Meta, resp.StopReason, streamCh)
+		c.emitPromptResponseUsage(resp.Usage, MetaAny(resp.Meta), resp.StopReason, streamCh)
 		return
 	}
 	if acc := c.getAndClearMetaAccum(); acc != nil {
@@ -357,6 +373,41 @@ func (c *ACPConn) emitPromptTailMetadata(resp acp.PromptResponse, streamCh chan<
 			StopReason: string(resp.StopReason),
 		}})
 	}
+}
+
+// awaitBackgroundCommand blocks until Antigravity's follow-up (command result,
+// late permission request, final answer) has finished arriving, and reports the
+// error Prompt must return when the wait could not complete.
+//
+// A wait that ends in a dead peer is deliberately NOT retryable: the prompt was
+// already accepted, so respawning and re-sending it would run the background
+// command a second time. classifyPromptError still records the crash (exit
+// code, stderr) and marks the connection dead; its wrapping keeps the error out
+// of the peer-disconnect classification that ExecuteStream retries on.
+func (c *ACPConn) awaitBackgroundCommand(ctx context.Context, promptCtx context.Context, conn *acp.ClientSideConnection, acpSID string, reply *asyncCommandReply, resp *acp.PromptResponse, streamCh chan<- StreamEvent) error {
+	if reply == nil || resp.StopReason != acp.StopReasonEndTurn {
+		return nil
+	}
+	waitStart := time.Now()
+	waited, waitErr := reply.wait(promptCtx, conn.Done())
+	if !waited {
+		return nil
+	}
+	slog.Info("acp conn: awaited background command follow-up",
+		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID,
+		"elapsed", time.Since(waitStart), "error", waitErr)
+	if waitErr == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		// Same bookkeeping as a cancel during the prompt itself: the turn
+		// already billed for the model calls it made.
+		resp.StopReason = acp.StopReasonCancelled
+		c.emitCancelledTurnUsage(streamCh)
+		c.handlePromptCancel(conn)
+		return ctx.Err()
+	}
+	return c.classifyPromptError(waitErr, conn, acpSID)
 }
 
 // classifyPromptError maps a conn.Prompt error to the appropriate wrapped
@@ -431,8 +482,8 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 	// metadata event and the usage_update payload.
 	meta := &Metadata{}
 	if usage != nil {
-		meta.InputTokens = usage.InputTokens
-		meta.OutputTokens = usage.OutputTokens
+		meta.InputTokens = int(usage.InputTokens)
+		meta.OutputTokens = int(usage.OutputTokens)
 	}
 
 	// The PromptResponse carries no cost, but agents like Claude report it on
@@ -535,12 +586,12 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 		Currency: currency,
 	}
 	if usage != nil {
-		usageState.InputTokens = usage.InputTokens
-		usageState.OutputTokens = usage.OutputTokens
-		usageState.TotalTokens = usage.TotalTokens
-		usageState.CachedReadTokens = ptrIntVal(usage.CachedReadTokens)
-		usageState.CachedWriteTokens = ptrIntVal(usage.CachedWriteTokens)
-		usageState.ThoughtTokens = ptrIntVal(usage.ThoughtTokens)
+		usageState.InputTokens = int(usage.InputTokens)
+		usageState.OutputTokens = int(usage.OutputTokens)
+		usageState.TotalTokens = int(usage.TotalTokens)
+		usageState.CachedReadTokens = ptrInt64Val(usage.CachedReadTokens)
+		usageState.CachedWriteTokens = ptrInt64Val(usage.CachedWriteTokens)
+		usageState.ThoughtTokens = ptrInt64Val(usage.ThoughtTokens)
 	}
 	// Merge per-agent _meta usage detail (e.g. Claude/Codex quota, CodeBuddy
 	// credit) into the usage_update payload so the frontend sees it live.
@@ -572,11 +623,13 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 }
 
 // ptrIntVal dereferences a *int, returning 0 for nil.
-func ptrIntVal(p *int) int {
+
+// ptrInt64Val is ptrIntVal for the 64-bit counters the v0.20 SDK uses.
+func ptrInt64Val(p *int64) int {
 	if p == nil {
 		return 0
 	}
-	return *p
+	return int(*p)
 }
 
 // setConfigOptionWithCrashCheck sets a config option, checking whether it killed

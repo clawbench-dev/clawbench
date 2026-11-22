@@ -88,7 +88,7 @@ func startOpencodeChildMappingProbe(t *testing.T, ctx context.Context, advertise
 	t.Cleanup(filter.Close)
 
 	conn := acp.NewClientSideConnection(client, recIn, filter)
-	filter.SetNotificationSink(client)
+	conn.SetUnhandledHandler(client.handleUnhandledNotification)
 
 	require.NoError(t, cmd.Start(), "spawn opencode acp")
 	t.Cleanup(func() {
@@ -105,7 +105,9 @@ func startOpencodeChildMappingProbe(t *testing.T, ctx context.Context, advertise
 		Terminal: true,
 	}
 	if advertiseChildUpdates {
-		caps.Meta = map[string]any{"opencode/child-session-updates": true}
+		meta, metaErr := acp.NewMeta(map[string]any{"opencode/child-session-updates": true})
+		require.NoError(t, metaErr)
+		caps.Meta = meta
 	}
 	_, err = conn.Initialize(initCtx, acp.InitializeRequest{
 		ProtocolVersion:    acp.ProtocolVersionNumber,
@@ -264,8 +266,8 @@ func analyzeOpenCodeChildMapping(buf *bytes.Buffer) openCodeChildMappingStats {
 				// The pending tool_call frame was not matched (different title);
 				// only treat updates whose title mentions subagent as parents.
 				title := ""
-				if tcu.Title != nil {
-					title = *tcu.Title
+				if v, ok := tcu.Title.Value(); ok {
+					title = v
 				}
 				if !strings.Contains(strings.ToLower(title), "subagent") {
 					continue
@@ -274,17 +276,19 @@ func analyzeOpenCodeChildMapping(buf *bytes.Buffer) openCodeChildMappingStats {
 				byID[call.ID] = call
 				stats.parents = append(stats.parents, call)
 			}
-			if tcu.RawInput != nil {
-				mergeMappingParentInput(call, tcu.RawInput)
+			if raw, ok := tcu.RawInput.Value(); ok {
+				mergeMappingParentInput(call, rawJSONValue(raw))
 			}
-			if tcu.Status != nil {
-				call.Status = string(*tcu.Status)
-				if *tcu.Status == acp.ToolCallStatusCompleted || *tcu.Status == acp.ToolCallStatusFailed {
+			if st, ok := tcu.Status.Value(); ok {
+				call.Status = string(st)
+				if st == acp.ToolCallStatusCompleted || st == acp.ToolCallStatusFailed {
 					call.ResultIndex = idx
 				}
 			}
-			if m := rawOutputMetadata(tcu.RawOutput); m != nil {
-				call.ResultSID = metaString(m["sessionID"])
+			if raw, ok := tcu.RawOutput.Value(); ok {
+				if m := rawOutputMetadata(rawJSONValue(raw)); m != nil {
+					call.ResultSID = metaString(m["sessionID"])
+				}
 			}
 		}
 	}

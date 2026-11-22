@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -137,7 +138,7 @@ func TestLoadSessionParsing_ToolCall_ProducesToolUseBlock(t *testing.T) {
 					ToolCallId: acp.ToolCallId("tc-read-1"),
 					Title:      "Read file contents",
 					Kind:       acp.ToolKindRead,
-					RawInput:   map[string]any{"file_path": "/tmp/test.go"},
+					RawInput:   acptest.Raw(map[string]any{"file_path": "/tmp/test.go"}),
 				},
 			},
 		},
@@ -174,7 +175,7 @@ func TestLoadSessionParsing_ToolCallUpdate_ProducesToolResultBlock(t *testing.T)
 					ToolCallId: acp.ToolCallId("tc-read-1"),
 					Title:      "Read file",
 					Kind:       acp.ToolKindRead,
-					RawInput:   map[string]any{"file_path": "/tmp/test.go"},
+					RawInput:   acptest.Raw(map[string]any{"file_path": "/tmp/test.go"}),
 				},
 			},
 		},
@@ -183,8 +184,8 @@ func TestLoadSessionParsing_ToolCallUpdate_ProducesToolResultBlock(t *testing.T)
 			Update: acp.SessionUpdate{
 				ToolCallUpdate: &acp.SessionToolCallUpdate{
 					ToolCallId: acp.ToolCallId("tc-read-1"),
-					Status:     &completed,
-					RawOutput:  "file contents here",
+					Status:     acptest.Patch(completed),
+					RawOutput:  acptest.PatchRaw("file contents here"),
 				},
 			},
 		},

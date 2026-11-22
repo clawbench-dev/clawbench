@@ -59,7 +59,7 @@ describe('ProjectDialog', () => {
 
   it('opens jump dialog when jump button clicked', async () => {
     const wrapper = mountDialog()
-    const jumpBtn = wrapper.find('.toolbar-btn.jump-btn')
+    const jumpBtn = wrapper.find('.jump-btn')
     expect(jumpBtn.exists()).toBe(true)
     await jumpBtn.trigger('click')
     await nextTick()
@@ -72,7 +72,7 @@ describe('ProjectDialog', () => {
       json: () => Promise.resolve({ path: '/home/user/src/utils', items: [] }),
     })
     const wrapper = mountDialog()
-    await wrapper.find('.toolbar-btn.jump-btn').trigger('click')
+    await wrapper.find('.jump-btn').trigger('click')
     await nextTick()
     await wrapper.find('.jump-dialog-stub').trigger('click')
     await nextTick()

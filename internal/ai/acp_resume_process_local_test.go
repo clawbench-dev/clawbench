@@ -11,6 +11,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -187,7 +188,7 @@ func TestRecoverExistingSession_TimeoutIsRetryableNotUnrecoverable(t *testing.T)
 			return nil, &acp.RequestError{
 				Code:    -32603,
 				Message: "Internal error",
-				Data:    map[string]any{"error": "context deadline exceeded"},
+				Data:    acptest.Raw(map[string]any{"error": "context deadline exceeded"}),
 			}
 		},
 	)

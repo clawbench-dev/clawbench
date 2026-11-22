@@ -15,7 +15,7 @@ type BackendSpec struct {
 	Backend              string   // backend type, e.g. "claude"
 	DefaultCmd           string   // command to detect on PATH, e.g. "claude"
 	AltCmd               string   // fallback CLI command (e.g. "deepseek" when primary is "codewhale"); used for detection if DefaultCmd not found
-	NoCLI                bool     // if true, this backend has no CLI (e.g. mock); always considered "present"
+	NoCLI                bool     // if true, this backend has no CLI binary (the built-in agent); always considered "present"
 	Name                 string   // display name, e.g. "Claude"
 	Specialty            string   // short description, e.g. "代码编写与推理"
 	ThinkingEffortLevels []string // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
@@ -38,7 +38,20 @@ type BackendSpec struct {
 	// same id against the Gateway and DOES restore history (verified by asking
 	// the model to recall a seeded secret after a hard kill).
 	ACPResumeIsProcessLocal bool
-	InstallCmd              string // npm/pip install command, e.g. "npm install -g @anthropic-ai/claude-code"; empty = not installable
+	// ACPRecoversByReportedCwd marks an agent that can RELOCATE an existing
+	// session to another directory from inside the conversation. Recovery must
+	// then ask the agent where the session actually lives (session/list) before
+	// re-attaching, because ACP requires every resume/load to carry the
+	// session's own cwd and the agent rejects a stale one.
+	//
+	// Measured on opencode: its session_move tool (typically into a git
+	// worktree) moves the session, the ACP layer neither notifies the client
+	// nor exposes a single-session lookup, so after a restart the old project
+	// root is rejected with "session ... does not belong to cwd" and the
+	// conversation becomes unrecoverable. Other ACP backends do not move a
+	// session on their own, so the extra RPC would buy nothing there.
+	ACPRecoversByReportedCwd bool
+	InstallCmd               string // npm/pip install command, e.g. "npm install -g @anthropic-ai/claude-code"; empty = not installable
 	// LoginCmd is the command the user must run once in a terminal to sign this
 	// agent in, e.g. "cmdc login". Empty = the backend does not gate sessions on
 	// a sign-in, or it advertises its own instruction. Used only to render the
@@ -77,15 +90,18 @@ type BackendSpec struct {
 	// that does not actually load its directory would then receive no skills at
 	// all. Verify against the real CLI before setting it — grep the installed
 	// binary/package for "SKILL.md" or "available_skills", and confirm the
-	// transport ClawBench uses (CLI vs ACP) shares that code path.
+	// transport ClawBench uses (an agent's ACP command) shares that code path.
 	AutoLoadsNativeSkills bool
 
 	// Builtin marks a backend whose tools are implemented by ClawBench itself
 	// rather than by an external CLI. Such a backend has no install command, no
-	// login, no external command line, no MCP injection and no skill injection
-	// — the UI must hide all of those instead of offering fields that do
-	// nothing, and the settings page must not present the tool grant as if it
-	// applied to a CLI that would ignore it.
+	// login and no external command line — the UI must hide those instead of
+	// offering fields that do nothing, and the settings page must not present
+	// the tool grant as if it applied to a CLI that would ignore it.
+	//
+	// MCP is NOT part of that list: the built-in agent runs its own MCP client
+	// (internal/mcp) and receives the same per-agent mcp_servers policy as an
+	// ACP backend.
 	//
 	// Appended (not inserted) so adding it does not re-align every field above
 	// (a cosmetic churn that hides the real change in review).
@@ -104,6 +120,26 @@ type BackendSpec struct {
 	// backend, so it belongs in that backend's Spec: the map made every new
 	// backend edit a file in another package.
 	MCPUnsupported bool
+	// MCPRejectsSSE marks a backend whose adapter fails session/new outright
+	// when given an `sse` server (codex: RequestError.invalidRequest), so the
+	// settings UI must refuse that transport instead of letting the turn die.
+	//
+	// Distinct from MCPUnsupported: that one accepts and ignores, this one
+	// rejects loudly. Both are facts about one backend, so both live here —
+	// the UI used to keep its own list of backend ids, which meant every new
+	// backend had to remember to edit a Vue file.
+	MCPRejectsSSE bool
+	// MCPAttachesAsync marks a backend that attaches the injected servers
+	// asynchronously AFTER session/new returns, so a tool from an
+	// MCP-provided server is simply not there for the first moments of the
+	// first turn. Not an error — the UI shows a "may take a moment" hint
+	// instead of pretending the config was ignored.
+	MCPAttachesAsync bool
+	// ListSessionsOmitsEmptyTitle marks a backend whose on-disk session list
+	// includes entries the CLI itself would never show, because they have no
+	// title (codex): placeholders created before the first prompt. The session
+	// drawer hides them.
+	ListSessionsOmitsEmptyTitle bool
 }
 
 // LoadBackendSpecs is set by the backends package at init time to provide
@@ -260,6 +296,12 @@ func BackendsWithModelDiscovery() []string {
 // nothing would ever populate BackendRegistry again, and every later test in
 // the binary (and the production code path it exercises) would see an empty
 // backend registry.
+//
+// It writes the package-level BackendRegistry without synchronization, which is
+// what every other reader (GetBackendRegistry and the tests that assign the var
+// directly) also does. A test that overrides the registry must therefore NOT run
+// in parallel: two such tests would race on the variable and each could restore
+// the other's snapshot. Do not add t.Parallel to a test that calls this.
 func SetBackendRegistryForTest(specs []BackendSpec) func() {
 	old := GetBackendRegistry()
 	snapshot := make([]BackendSpec, len(old))

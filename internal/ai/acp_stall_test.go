@@ -8,6 +8,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -109,7 +110,7 @@ func TestACPConn_SetToolInFlight_ViaSessionUpdate(t *testing.T) {
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId:    "call_1",
 			SessionUpdate: "tool_call_update",
-			Status:        &progress,
+			Status:        acptest.Patch(progress),
 		},
 	}, ch, ctx, conn, nil)
 	assert.True(t, conn.toolInFlight.Load())
@@ -120,7 +121,7 @@ func TestACPConn_SetToolInFlight_ViaSessionUpdate(t *testing.T) {
 		ToolCallUpdate: &acp.SessionToolCallUpdate{
 			ToolCallId:    "call_1",
 			SessionUpdate: "tool_call_update",
-			Status:        &completed,
+			Status:        acptest.Patch(completed),
 		},
 	}, ch, ctx, conn, nil)
 	assert.False(t, conn.toolInFlight.Load(), "completed tool_call_update should clear toolInFlight")
@@ -188,7 +189,7 @@ func TestIsModelProgressUpdate(t *testing.T) {
 			"agent text":     {AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{Content: acp.ContentBlock{Text: text}}},
 			"agent thinking": {AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{Content: acp.ContentBlock{Text: text}}},
 			"tool call":      {ToolCall: &acp.SessionUpdateToolCall{ToolCallId: "c1"}},
-			"tool update":    {ToolCallUpdate: &acp.SessionToolCallUpdate{ToolCallId: "c1", Status: &status}},
+			"tool update":    {ToolCallUpdate: &acp.SessionToolCallUpdate{ToolCallId: "c1", Status: acptest.Patch(status)}},
 			"plan":           {Plan: &acp.SessionUpdatePlan{}},
 			"plan update":    {PlanUpdate: &acp.SessionPlanUpdate{}},
 			"plan removed":   {PlanRemoved: &acp.SessionUpdatePlanRemoved{}},

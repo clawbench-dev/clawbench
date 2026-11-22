@@ -1396,8 +1396,3 @@ export function askItemsToInputMap(items: AskItem[]): { questions: Array<Record<
     })),
   }
 }
-
-/** True when the input carries at least one renderable question. */
-export function hasRenderableAskInput(input: unknown): boolean {
-  return normalizeAskInput(input).length > 0
-}

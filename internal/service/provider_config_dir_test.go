@@ -421,3 +421,83 @@ func TestReconcileProviderConfigDirs_ContinuesAfterOneFailure(t *testing.T) {
 	assert.NoDirExists(t, unboundDir,
 		"an unbound agent's config dir holds a plaintext key and must be removed even when another agent failed")
 }
+
+// The two lookups the service used to answer with a switch must now come from
+// the backend's own registration. A switch had two failures that this pins
+// against:
+//
+//   - adding a relocatable backend required an edit here, and forgetting it
+//     produced an isolated directory with NO symlinks — a CI-green diff whose
+//     runtime symptom is "the CLI demands a login that the user already did";
+//   - the writer's default branch was the only thing standing between an
+//     unknown backend and a silently misread config file.
+func TestConfigDirFacts_ComeFromTheBackendRegistration(t *testing.T) {
+	home := setupConfigDirTest(t)
+
+	cases := []struct {
+		backend   string
+		userDir   string
+		fileName  string
+		wantFiles []string
+	}{
+		// Each of these declares UserConfigDir + ConfigDirRender in its own
+		// registration; nothing in internal/service knows their names.
+		{backend: "kimi", userDir: ".kimi", fileName: "config.toml"},
+		// Declared as a slash-separated relative path; callers join it onto the
+		// home directory with filepath.Join, which normalizes the separator.
+		{backend: "pi", userDir: ".pi/agent", fileName: "models.json"},
+		{backend: "codebuddy", userDir: ".codebuddy", fileName: "models.json"},
+		{backend: "claude", userDir: ".claude", fileName: "settings.json"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.backend, func(t *testing.T) {
+			assert.Equal(t, tc.userDir, model.ProviderUserConfigDir(tc.backend),
+				"%s must declare the user home it links back from", tc.backend)
+			assert.Equal(t, tc.fileName, model.ProviderConfigDirFile(tc.backend),
+				"%s must declare the file ClawBench owns", tc.backend)
+			assert.True(t, model.ProviderHasConfigDirRenderer(tc.backend),
+				"%s must declare its config renderer or the binding cannot be written", tc.backend)
+
+			// The user's own directory exists with one file in it, which the
+			// per-agent copy must link back to.
+			source := filepath.Join(home, tc.userDir)
+			require.NoError(t, os.MkdirAll(source, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(source, "user-owned.txt"), []byte("x"), 0o600))
+
+			p := configDirProvider()
+			if tc.backend == "claude" {
+				// claude needs an endpoint and carries no model list.
+				p.Models = nil
+				p.DefaultModel = ""
+			}
+			require.NoError(t, service.ApplyProviderConfigDirToAgent(tc.backend, "agent-"+tc.backend, p))
+
+			dir := service.ProviderConfigDir("agent-" + tc.backend)
+			_, err := os.Stat(filepath.Join(dir, tc.fileName))
+			require.NoError(t, err, "the rendered file must be written into the per-agent dir")
+
+			link := filepath.Join(dir, "user-owned.txt")
+			target, err := os.Readlink(link)
+			require.NoError(t, err,
+				"the user's own files must be symlinked back: without this the CLI sees a login-less directory")
+			assert.Equal(t, filepath.Join(source, "user-owned.txt"), target)
+		})
+	}
+}
+
+// A backend that declares the directory but no renderer must be refused at the
+// writer, not given an empty file. This is the case a switch's `default` branch
+// covered, and it has to keep failing after the switch is gone.
+func TestApplyProviderConfigDir_RefusesBackendWithoutRenderer(t *testing.T) {
+	setupConfigDirTest(t)
+
+	// opencode is provider-capable but has no config DIRECTORY at all.
+	assert.Empty(t, model.ProviderUserConfigDir("opencode"),
+		"opencode declares no user config dir, so state-dependent lookups must not invent one")
+	assert.False(t, model.ProviderHasConfigDirRenderer("opencode"))
+
+	err := service.ApplyProviderConfigDirToAgent("opencode", "agent-x", configDirProvider())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no relocatable config directory")
+}

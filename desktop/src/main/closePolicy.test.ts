@@ -22,6 +22,7 @@ const LABELS: CloseDialogLabels = {
   detail: 'detail',
   tray: 'Minimize to tray',
   exit: 'Quit',
+  exitStop: 'Quit and stop the server',
   cancel: 'Cancel',
   remember: 'Remember',
   trayUnavailable: 'no tray',
@@ -64,6 +65,21 @@ describe('buildCloseDialogOptions', () => {
     expect(options.checkboxLabel).toBe('Remember')
     expect(options.checkboxChecked).toBe(false)
   })
+
+  it('adds "quit and stop the server" only when there is a server to stop', () => {
+    // Quitting leaves the bundled server running on purpose, so an integrated
+    // install gets a third action. A thin client has nothing to stop and must
+    // not show a dead option.
+    const withServer = buildCloseDialogOptions(LABELS, { canStopServer: true })
+    expect(withServer.buttons).toEqual([
+      'Minimize to tray',
+      'Quit',
+      'Quit and stop the server',
+      'Cancel',
+    ])
+    expect(withServer.cancelId).toBe(3)
+    expect(options.buttons).not.toContain('Quit and stop the server')
+  })
 })
 
 describe('interpretCloseDialog', () => {
@@ -90,5 +106,23 @@ describe('interpretCloseDialog', () => {
     const { choice, next } = interpretCloseDialog({ response: 2, checkboxChecked: true }, 'ask')
     expect(choice).toBeNull()
     expect(next).toBe('ask')
+  })
+
+  it('maps "quit and stop the server" and never remembers it', () => {
+    // Stopping the server is a one-off action, not a standing close behaviour:
+    // remembering it would turn every later quit into a server shutdown.
+    const { choice, next } = interpretCloseDialog(
+      { response: 2, checkboxChecked: true },
+      'ask',
+      { canStopServer: true },
+    )
+    expect(choice).toBe('exit-stop')
+    expect(next).toBe('exit')
+  })
+
+  it('treats the third button as cancel when no server is running', () => {
+    // The dialog was built without the extra button; a stray index must not
+    // quit the app.
+    expect(interpretCloseDialog({ response: 2, checkboxChecked: false }, 'ask').choice).toBeNull()
   })
 })

@@ -93,14 +93,6 @@ func SetManager(m *Manager) {
 	mgrInstance = m
 }
 
-// SetStartedForTest sets the started flag for testing purposes.
-// Production code must not use this.
-func (m *Manager) SetStartedForTest(started bool) {
-	m.startMu.Lock()
-	defer m.startMu.Unlock()
-	m.started = started
-}
-
 // IsStarted reports whether the WeChat monitor is running.
 func IsStarted() bool {
 	mgrMu.RLock()

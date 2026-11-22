@@ -8,6 +8,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
+	"clawbench/internal/ai/acptest"
 	"clawbench/internal/model"
 )
 
@@ -263,16 +264,17 @@ func TestStampParentToolCallID(t *testing.T) {
 	meta := map[string]any{}
 	upd := acp.SessionUpdate{AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
 		Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "think"}},
-		Meta:    meta,
+		Meta:    acptest.Meta(meta),
 	}}
 	stampParentToolCallID(&upd, "")
-	if _, ok := meta[metaKeyClawBenchParentToolCallID]; ok {
+	var stamped string
+	if err := upd.AgentThoughtChunk.Meta.Get(metaKeyClawBenchParentToolCallID, &stamped); err == nil {
 		t.Fatal("an empty parent id must not be stamped")
 	}
 
 	stampParentToolCallID(&upd, "call_42")
-	if got := meta[metaKeyClawBenchParentToolCallID]; got != "call_42" {
-		t.Fatalf("stamped value = %v", got)
+	if err := upd.AgentThoughtChunk.Meta.Get(metaKeyClawBenchParentToolCallID, &stamped); err != nil || stamped != "call_42" {
+		t.Fatalf("stamped value = %q (err %v)", stamped, err)
 	}
 
 	// A frame with no meta bag at all is left alone (nothing to stamp into).
@@ -290,7 +292,7 @@ func TestStampParentToolCallID(t *testing.T) {
 func TestIsOpenCodeChildSessionUpdate(t *testing.T) {
 	withKey := acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 		Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "child"}},
-		Meta:    map[string]any{metaKeyOpenCodeChildSession: true},
+		Meta:    acptest.Meta(map[string]any{metaKeyOpenCodeChildSession: true}),
 	}}
 	if !isOpenCodeChildSessionUpdate(withKey) {
 		t.Fatal("a tagged frame must be recognized as child content")
@@ -299,7 +301,7 @@ func TestIsOpenCodeChildSessionUpdate(t *testing.T) {
 	// The key's VALUE does not matter: it is a marker, not a flag.
 	withFalse := acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 		Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "x"}},
-		Meta:    map[string]any{metaKeyOpenCodeChildSession: false},
+		Meta:    acptest.Meta(map[string]any{metaKeyOpenCodeChildSession: false}),
 	}}
 	if !isOpenCodeChildSessionUpdate(withFalse) {
 		t.Fatal("the marker's value must not decide")
@@ -313,7 +315,7 @@ func TestIsOpenCodeChildSessionUpdate(t *testing.T) {
 	}
 	other := acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 		Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "x"}},
-		Meta:    map[string]any{"something": 1},
+		Meta:    acptest.Meta(map[string]any{"something": 1}),
 	}}
 	if isOpenCodeChildSessionUpdate(other) {
 		t.Fatal("an unrelated meta key must not mark the frame")
@@ -436,14 +438,8 @@ func TestExportSeams_DelegateToTheSameImplementation(t *testing.T) {
 // internal ones; a backend sizing its own channel or scanner from a copy would
 // silently produce a different buffering contract.
 func TestExportSeams_ConstantsMatchTheCore(t *testing.T) {
-	if StreamChanSize != streamChanSize {
-		t.Fatalf("StreamChanSize = %d, core %d", StreamChanSize, streamChanSize)
-	}
 	if MaxToolOutputBytes != maxToolOutputBytes {
 		t.Fatal("MaxToolOutputBytes must be the core cap")
-	}
-	if ScannerInitial != scannerInitial || ScannerMax != scannerMax {
-		t.Fatal("the scanner bounds must be the core ones")
 	}
 	if CriticalSendTimeout != criticalSendTimeout {
 		t.Fatal("CriticalSendTimeout must be the core timeout")
@@ -514,9 +510,9 @@ func TestExportSeams_RawInputAndLocations(t *testing.T) {
 	kind := acp.ToolKindRead
 	MapToolCallInputFromLocations(acp.SessionToolCallUpdate{
 		ToolCallId: "c1",
-		Title:      &title,
-		Kind:       &kind,
-		Locations:  []acp.ToolCallLocation{{Path: "/tmp/a.txt"}},
+		Title:      acptest.Patch(title),
+		Kind:       acptest.Patch(kind),
+		Locations:  acptest.Patch([]acp.ToolCallLocation{{Path: "/tmp/a.txt"}}),
 	}, tool)
 	if tool.Input == "" {
 		t.Fatal("a location-only update must still yield input")
@@ -526,7 +522,7 @@ func TestExportSeams_RawInputAndLocations(t *testing.T) {
 	tool = &ToolCall{}
 	ResolveACPToolInput(acp.SessionUpdateToolCall{
 		ToolCallId: "c1",
-		RawInput:   map[string]any{"file_path": "/tmp/b.txt"},
+		RawInput:   acptest.Raw(map[string]any{"file_path": "/tmp/b.txt"}),
 	}, tool, remaps)
 	if !strings.Contains(tool.Input, "path") {
 		t.Fatalf("the remap must be applied, got %q", tool.Input)
@@ -542,7 +538,7 @@ func TestExportSeams_RawInputAndLocations(t *testing.T) {
 func TestExportSeams_MappingWrappers(t *testing.T) {
 	// Output: rawOutput is forwarded.
 	tool := &ToolCall{}
-	MapToolCallOutput(acp.SessionToolCallUpdate{ToolCallId: "c1", RawOutput: "done"}, tool)
+	MapToolCallOutput(acp.SessionToolCallUpdate{ToolCallId: "c1", RawOutput: acptest.PatchRaw("done")}, tool)
 	if tool.Output != "done" {
 		t.Fatalf("MapToolCallOutput = %q", tool.Output)
 	}
@@ -551,7 +547,7 @@ func TestExportSeams_MappingWrappers(t *testing.T) {
 	inTool := &ToolCall{}
 	MapToolCallInput(acp.SessionToolCallUpdate{
 		ToolCallId: "c1",
-		RawInput:   map[string]any{"file_path": "/tmp/a.txt"},
+		RawInput:   acptest.PatchRaw(map[string]any{"file_path": "/tmp/a.txt"}),
 	}, inTool, "no-such-backend")
 	if inTool.Input == "" {
 		t.Fatal("MapToolCallInput must fill the input")
@@ -561,20 +557,20 @@ func TestExportSeams_MappingWrappers(t *testing.T) {
 	nameTool := &ToolCall{}
 	name := "Bash"
 	kind := acp.ToolKindExecute
-	MapToolCallName(acp.SessionToolCallUpdate{ToolCallId: "c1", Title: &name, Kind: &kind}, nameTool, "no-such-backend")
+	MapToolCallName(acp.SessionToolCallUpdate{ToolCallId: "c1", Title: acptest.Patch(name), Kind: acptest.Patch(kind)}, nameTool, "no-such-backend")
 	if nameTool.Name == "" {
 		t.Fatal("MapToolCallName must fill the name")
 	}
 
 	// The generic parsers: both must produce a call with the backend's mapping.
 	start := ParseGenericACPToolCall(acp.SessionUpdateToolCall{
-		ToolCallId: "c1", Title: "Read", Kind: kind, RawInput: map[string]any{"file_path": "/tmp/a"},
+		ToolCallId: "c1", Title: "Read", Kind: kind, RawInput: acptest.Raw(map[string]any{"file_path": "/tmp/a"}),
 	}, "no-such-backend")
 	if start == nil || start.ID != "c1" {
 		t.Fatalf("ParseGenericACPToolCall = %+v", start)
 	}
 	update := ParseGenericACPToolCallUpdate(acp.SessionToolCallUpdate{
-		ToolCallId: "c1", Status: statusPtr(acp.ToolCallStatusCompleted), RawOutput: "body",
+		ToolCallId: "c1", Status: acptest.Patch(acp.ToolCallStatusCompleted), RawOutput: acptest.PatchRaw("body"),
 	}, "no-such-backend")
 	if update == nil || !update.Done {
 		t.Fatalf("ParseGenericACPToolCallUpdate = %+v", update)
@@ -591,33 +587,24 @@ func TestExportSeams_MappingWrappers(t *testing.T) {
 	// The update-level meta accessor and the per-agent remap table.
 	meta := ACPUpdateMeta(acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 		Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "x"}},
-		Meta:    map[string]any{"k": "v"},
+		Meta:    acptest.Meta(map[string]any{"k": "v"}),
 	}})
 	if meta["k"] != "v" {
 		t.Fatalf("ACPUpdateMeta = %v", meta)
 	}
-	if got := GetRemaps("claude_acp"); got == nil && getRemaps("claude_acp") != nil {
-		t.Fatal("GetRemaps diverged")
+	if got := ACPRemapsForBackend("claude"); got == nil {
+		t.Fatal("ACPRemapsForBackend must fall back to the generic table")
 	}
 
 	// The remaining small wrappers.
-	if got := ExtractContentText(json.RawMessage(`{"type":"text","text":"hello"}`)); got == "" {
-		t.Fatal("ExtractContentText must flatten a text block")
-	}
 	if ExtractMetaUsageForTest("no-such-backend", map[string]any{}) != nil {
 		t.Fatal("an empty meta must extract nothing")
 	}
 	if IsACPToolCallWrapperForTest("anything", "no-such-backend") != isACPToolCallWrapper("anything", "no-such-backend") {
 		t.Fatal("IsACPToolCallWrapperForTest diverged")
 	}
-	if IsCLICompactionMessage(nil) != isCLICompactionMessage(nil) {
-		t.Fatal("IsCLICompactionMessage diverged")
-	}
 	if IsGrokCompactionCompleted("x") != isGrokCompactionCompleted("x") {
 		t.Fatal("IsGrokCompactionCompleted diverged")
-	}
-	if got := RedactArgs([]string{"--api-key", "secret"}); len(got) != 2 {
-		t.Fatalf("RedactArgs = %v", got)
 	}
 	if AgentProcessEnv() == nil {
 		// nil is a legitimate answer on a platform with no overrides; only the
@@ -643,7 +630,7 @@ func TestExportSeams_DebouncerAndSessionUpdate(t *testing.T) {
 	// A tagged child frame without a resolved parent is dropped entirely.
 	child := acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
 		Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "child"}},
-		Meta:    map[string]any{metaKeyOpenCodeChildSession: true},
+		Meta:    acptest.Meta(map[string]any{metaKeyOpenCodeChildSession: true}),
 	}}
 	MapACPSessionUpdateWithConnForTest(context.Background(), child, ch, conn, nil)
 	if events := collectUntilIdle(ch); len(events) != 0 {
@@ -668,11 +655,16 @@ func TestExportSeams_DebouncerAndSessionUpdate(t *testing.T) {
 	}
 }
 
-// TestExportSeams_ParentLinkResolution pins ResolveMemberParent's delegation: a
-// frame tagged with a team-member name resolves through the resolution helper,
-// and one with nothing to resolve returns "".
+// TestExportSeams_ParentLinkResolution pins the standard parent-link decoder
+// that backend attribution hooks build on: a frame with nothing to resolve
+// yields "", and the ClawBench-stamped link is preferred when present.
 func TestExportSeams_ParentLinkResolution(t *testing.T) {
-	if got := ResolveMemberParent(nil, nil); got != "" {
-		t.Fatalf("no connection and no meta must resolve to empty, got %q", got)
+	if got := ExtractParentToolCallIDForHook(nil); got != "" {
+		t.Fatalf("nil meta must resolve to empty, got %q", got)
+	}
+	if got := ExtractParentToolCallIDForHook(map[string]any{
+		metaKeyClawBenchParentToolCallID: "call_parent",
+	}); got != "call_parent" {
+		t.Fatalf("the ClawBench-stamped link must be decoded, got %q", got)
 	}
 }

@@ -43,13 +43,18 @@ func init() {
 			// in ~/.agents/skills, leaving Hermes unable to see them at all.
 			NativeSkillsDirs:      []string{".hermes/skills"},
 			AutoLoadsNativeSkills: true,
+			// Hermes attaches the injected MCP servers AFTER session/new returns,
+			// so a tool from a newly added server is briefly absent on the first
+			// turn. Not a failure: the UI shows "may take a moment" instead of
+			// leaving the user to conclude the setting did nothing.
+			MCPAttachesAsync: true,
 			// ThinkingEffortLevels is intentionally nil: Hermes has no static
 			// effort levels and advertises no `thought_level` ACP config option,
 			// so there is nothing for the UI to switch (same posture as dsh).
 		},
 		ACP: &backends.ACPPlugin{
 			ToolTitlePrefixes: HermesACPTitlePrefixes,
-			InputRemaps:       HermesACPInputRemaps,
+			// No InputRemaps: its field names are the shared generic set.
 			// Hermes accepts a "model" config option but never reads it back
 			// (acp_adapter/server.py: set_config_option only stores the value in
 			// state.config_options), so a config-option switch is a silent no-op.

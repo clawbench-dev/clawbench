@@ -172,7 +172,7 @@ func startBypassProbe(t *testing.T, ctx context.Context, cmd *exec.Cmd, client *
 
 	conn := acp.NewClientSideConnection(client, agentIn, filter)
 	conn.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	filter.SetNotificationSink(client)
+	conn.SetUnhandledHandler(client.handleUnhandledNotification)
 
 	require.NoError(t, cmd.Start(), "spawn agent")
 	t.Cleanup(func() {
@@ -187,7 +187,9 @@ func startBypassProbe(t *testing.T, ctx context.Context, cmd *exec.Cmd, client *
 		Terminal: true,
 	}
 	if extraCapMeta != nil {
-		caps.Meta = extraCapMeta
+		m, err := acp.NewMeta(extraCapMeta)
+		require.NoError(t, err)
+		caps.Meta = m
 	}
 
 	initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)

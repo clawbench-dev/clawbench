@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/acptest"
 )
 
 // These tests pin the OpenClaw ACP tool path against the rawInput shapes the
@@ -161,7 +162,7 @@ func TestParseOpenClawACPToolCall(t *testing.T) {
 			ToolCallId: "call_abc",
 			Title:      "read: path: /a/b.go",
 			Kind:       acp.ToolKindRead,
-			RawInput:   map[string]any{"path": "/a/b.go"},
+			RawInput:   acptest.Raw(map[string]any{"path": "/a/b.go"}),
 		})
 		require.NotNil(t, tool)
 		assert.Equal(t, "Read", tool.Name)
@@ -175,7 +176,7 @@ func TestParseOpenClawACPToolCall(t *testing.T) {
 			ToolCallId: "call_ls",
 			Title:      "ls: path: /tmp",
 			Kind:       acp.ToolKindRead,
-			RawInput:   map[string]any{"path": "/tmp"},
+			RawInput:   acptest.Raw(map[string]any{"path": "/tmp"}),
 		})
 		assert.JSONEq(t, `{"path":"/tmp"}`, tool.Input)
 	})
@@ -198,10 +199,10 @@ func TestParseOpenClawACPToolCallUpdate(t *testing.T) {
 		title := "exec: command: echo hi"
 		tool := parseOpenClawACPToolCallUpdate(acp.SessionToolCallUpdate{
 			ToolCallId: "call_abc",
-			Status:     &status,
-			Title:      &title,
-			RawInput:   map[string]any{"command": "echo hi"},
-			RawOutput:  map[string]any{"stdout": "hi\n"},
+			Status:     acptest.Patch(status),
+			Title:      acptest.Patch(title),
+			RawInput:   acptest.PatchRaw(map[string]any{"command": "echo hi"}),
+			RawOutput:  acptest.PatchRaw(map[string]any{"stdout": "hi\n"}),
 		})
 		require.NotNil(t, tool)
 		assert.True(t, tool.Done)
@@ -215,7 +216,7 @@ func TestParseOpenClawACPToolCallUpdate(t *testing.T) {
 		status := acp.ToolCallStatusFailed
 		tool := parseOpenClawACPToolCallUpdate(acp.SessionToolCallUpdate{
 			ToolCallId: "call_fail",
-			Status:     &status,
+			Status:     acptest.Patch(status),
 		})
 		assert.True(t, tool.Done)
 		assert.Equal(t, "error", tool.Status)
@@ -228,8 +229,8 @@ func TestParseOpenClawACPToolCallUpdate(t *testing.T) {
 		title := "Reading the file now"
 		tool := parseOpenClawACPToolCallUpdate(acp.SessionToolCallUpdate{
 			ToolCallId: "call_abc",
-			Status:     &status,
-			Title:      &title,
+			Status:     acptest.Patch(status),
+			Title:      acptest.Patch(title),
 		})
 		assert.Empty(t, tool.Name)
 	})
@@ -238,8 +239,8 @@ func TestParseOpenClawACPToolCallUpdate(t *testing.T) {
 		status := acp.ToolCallStatusInProgress
 		tool := parseOpenClawACPToolCallUpdate(acp.SessionToolCallUpdate{
 			ToolCallId: "call_notitle",
-			Status:     &status,
-			RawInput:   map[string]any{"path": "/a"},
+			Status:     acptest.Patch(status),
+			RawInput:   acptest.PatchRaw(map[string]any{"path": "/a"}),
 		})
 		assert.False(t, tool.Done)
 	})
@@ -248,14 +249,14 @@ func TestParseOpenClawACPToolCallUpdate(t *testing.T) {
 		status := acp.ToolCallStatusInProgress
 		tool := parseOpenClawACPToolCallUpdate(acp.SessionToolCallUpdate{
 			ToolCallId: "call_content",
-			Status:     &status,
-			Content: []acp.ToolCallContent{
+			Status:     acptest.Patch(status),
+			Content: acptest.Patch([]acp.ToolCallContent{
 				{
 					Content: &acp.ToolCallContentContent{
 						Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}},
 					},
 				},
-			},
+			}),
 		})
 		assert.NotNil(t, tool)
 	})
@@ -271,7 +272,7 @@ func TestParseACPToolCall_OpenClawDispatch(t *testing.T) {
 		ToolCallId: "call_1",
 		Title:      "read: path: /a/b.go",
 		Kind:       acp.ToolKindRead,
-		RawInput:   map[string]any{"path": "/a/b.go"},
+		RawInput:   acptest.Raw(map[string]any{"path": "/a/b.go"}),
 	})
 	assert.JSONEq(t, `{"file_path":"/a/b.go"}`, tool.Input,
 		"openclaw must use its per-tool normalizer, not the generic remap")
@@ -282,9 +283,9 @@ func TestParseACPToolCallUpdate_OpenClawDispatch(t *testing.T) {
 	title := "read: path: /a/b.go"
 	tool := ai.ParseACPToolCallUpdateForTest("openclaw", acp.SessionToolCallUpdate{
 		ToolCallId: "call_1",
-		Status:     &status,
-		Title:      &title,
-		RawInput:   map[string]any{"path": "/a/b.go"},
+		Status:     acptest.Patch(status),
+		Title:      acptest.Patch(title),
+		RawInput:   acptest.PatchRaw(map[string]any{"path": "/a/b.go"}),
 	})
 	assert.True(t, tool.Done)
 	assert.JSONEq(t, `{"file_path":"/a/b.go"}`, tool.Input)
@@ -296,36 +297,9 @@ func TestParseACPToolCallUpdate_OpenClawDispatch(t *testing.T) {
 	// reading file_path for the handful of frames that drop the title.
 	tool = ai.ParseACPToolCallUpdateForTest("openclaw", acp.SessionToolCallUpdate{
 		ToolCallId: "call_2",
-		Status:     &status,
-		RawInput:   map[string]any{"path": "/a/b.go"},
+		Status:     acptest.Patch(status),
+		RawInput:   acptest.PatchRaw(map[string]any{"path": "/a/b.go"}),
 	})
 	assert.JSONEq(t, `{"file_path":"/a/b.go"}`, tool.Input,
 		"an untitled update falls back to the base remaps, which include path")
-}
-
-// --- OpenClawACPBaseRemapsForTest ---
-
-// TestOpenClawACPBaseRemapsForTest_ReturnsCopy pins the reason this export
-// exists at all: the backend sub-package needs to compare the table against its
-// own, and it must not be able to change production behavior while doing so.
-// Returning the map itself would make every later frame normalize differently
-// depending on test execution order.
-func TestOpenClawACPBaseRemapsForTest_ReturnsCopy(t *testing.T) {
-	first := OpenClawACPBaseRemapsForTest()
-	require.NotEmpty(t, first, "the base table must not be empty")
-	assert.Equal(t, "file_path", first["path"],
-		"the exported copy must carry the same remaps as the package table")
-
-	first["path"] = "tampered"
-	delete(first, "oldString")
-
-	assert.Equal(t, "file_path", openClawACPBaseRemaps["path"],
-		"mutating the copy must not touch the package-level table")
-	assert.Contains(t, openClawACPBaseRemaps, "oldString",
-		"deleting a key from the copy must not remove it from the table")
-
-	// A second call sees the untouched table, not the previous caller's edits.
-	second := OpenClawACPBaseRemapsForTest()
-	assert.Equal(t, "file_path", second["path"])
-	assert.Contains(t, second, "oldString")
 }

@@ -9,6 +9,21 @@ import { _resetChatDraftsForTesting } from '@/utils/chatDraftStore.ts'
 const mockFetchItems = vi.fn()
 const mockQuickSendItems = vi.fn(() => [])
 
+// The ACP-only affordances (sync button + its label) are gated on the AGENT's
+// ACP command. This file mounts the real useAgents, so override just
+// supportsACP with a switch; every other export stays real.
+const mockAcpAgentIds = new Set<string>()
+vi.mock('@/composables/useAgents', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useAgents')>()
+  return {
+    ...actual,
+    useAgents: () => ({
+      ...actual.useAgents(),
+      supportsACP: (id: string) => mockAcpAgentIds.has(id),
+    }),
+  }
+})
+
 // Mock useChatContext for quoteData support
 const mockSetQuoteData = vi.fn()
 const mockAddAttachedFile = vi.fn()
@@ -141,6 +156,8 @@ globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
 }) as typeof setInterval
 
 afterEach(() => {
+  // A test that flips the ACP switch must not leak into the next one.
+  mockAcpAgentIds.clear()
   for (const id of pendingTimers) { clearTimeout(id) }
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
@@ -594,15 +611,16 @@ describe('ChatInputBar — quoteData chip', () => {
 })
 
 describe('ChatInputBar — user message index button', () => {
-  it('shows user message index button regardless of transport', () => {
-    const wrapper = mountInputBar({ currentTransport: '' })
+  it('shows the user message index button for a non-ACP agent', () => {
+    const wrapper = mountInputBar({})
     const buttons = wrapper.findAll('.chat-action-btn')
     const indexBtn = buttons.find(b => b.attributes('title')?.includes('消息索引') || b.attributes('title')?.includes('Message index'))
     expect(indexBtn).toBeDefined()
   })
 
-  it('shows user message index button for acp-stdio transport too', () => {
-    const wrapper = mountInputBar({ currentTransport: 'acp-stdio' })
+  it('shows the user message index button for an ACP agent too', () => {
+    mockAcpAgentIds.add('agent-1')
+    const wrapper = mountInputBar({})
     const buttons = wrapper.findAll('.chat-action-btn')
     const indexBtn = buttons.find(b => b.attributes('title')?.includes('消息索引') || b.attributes('title')?.includes('Message index'))
     expect(indexBtn).toBeDefined()
@@ -636,8 +654,8 @@ describe('ChatInputBar — action bar labels', () => {
 
     expect(actionBar(wrapper).classes()).toContain('ab--labels')
     const texts = labelTexts(wrapper)
-    // 列表、创建、搜索、跳转、归档、朗读、刷新 always render; 同步 only when
-    // the current session uses ACP transport (isACPTransport computed).
+    // 列表、创建、搜索、跳转、归档、朗读、刷新 always render; 同步 only for an
+    // agent with an ACP command (supportsACP). agent-1 has none here.
     expect(texts).toContain('列表')
     expect(texts).toContain('创建')
     expect(texts).toContain('搜索')
@@ -648,8 +666,9 @@ describe('ChatInputBar — action bar labels', () => {
     expect(texts).not.toContain('同步')
   })
 
-  it('shows the sync label for ACP transport sessions', async () => {
-    const wrapper = mountInputBar({ currentTransport: 'acp-stdio' }, { deep: true })
+  it('shows the sync label for an ACP agent', async () => {
+    mockAcpAgentIds.add('agent-1')
+    const wrapper = mountInputBar({}, { deep: true })
     await nextTick()
 
     expect(actionBar(wrapper).classes()).toContain('ab--labels')

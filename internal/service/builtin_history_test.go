@@ -485,7 +485,7 @@ func TestBuildChatRequest_BuiltinSkipsForkInjection(t *testing.T) {
 	})
 
 	req := BuildChatRequest("next question", "fork-sess", "/tmp/p", builtinBackendID,
-		builtinBackendID, "", "", "", "", "/tmp/p", false)
+		builtinBackendID, "", "", "", "/tmp/p", false)
 
 	if req.ForkContext != "" {
 		t.Fatalf("the built-in backend must not receive fork context (it replays history instead), got %d chars",
@@ -508,7 +508,7 @@ func TestBuildChatRequest_ExternalBackendKeepsForkInjection(t *testing.T) {
 	})
 
 	req := BuildChatRequest("next question", "fork-ext", "/tmp/p", "claude",
-		"claude", "", "", "", "", "/tmp/p", false)
+		"claude", "", "", "", "/tmp/p", false)
 
 	if len(req.History) != 0 {
 		t.Fatalf("an external backend must not receive replayed history, got %d", len(req.History))

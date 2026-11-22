@@ -33,9 +33,9 @@ func Register(p *BackendPlugin) {
 	plugins[p.ID] = p
 	pluginsMu.Unlock()
 
-	// CLI factory (nil for ACP-only backends).
-	if p.CLI != nil && p.CLI.NewBackend != nil {
-		ai.RegisterBackend(p.ID, p.CLI.NewBackend)
+	// In-process factory (nil for every backend that spawns an agent).
+	if p.Implementation != nil && p.Implementation.NewBackend != nil {
+		ai.RegisterBackend(p.ID, p.Implementation.NewBackend)
 	}
 
 	if p.ModelSource != nil {
@@ -46,6 +46,18 @@ func Register(p *BackendPlugin) {
 	}
 	if p.Spec.MCPUnsupported {
 		model.RegisterMCPUnsupported(p.ID)
+	}
+	if p.OrphanCmdline.Binary != "" && p.OrphanCmdline.Arg != "" {
+		ai.RegisterOrphanCmdline(p.OrphanCmdline.Binary, p.OrphanCmdline.Arg)
+	}
+	if p.Spec.MCPRejectsSSE {
+		model.RegisterMCPRejectsSSE(p.ID)
+	}
+	if p.Spec.MCPAttachesAsync {
+		model.RegisterMCPAttachesAsync(p.ID)
+	}
+	if p.Spec.ListSessionsOmitsEmptyTitle {
+		model.RegisterListSessionsOmitsEmptyTitle(p.ID)
 	}
 	if p.ProviderEnv != nil {
 		model.RegisterProviderEnvSpec(p.ID, *p.ProviderEnv)
@@ -124,15 +136,15 @@ func ResetForTest() func() {
 }
 
 // LookupACPRemaps returns the ACP input remapping map for the given backend.
-// Falls back to genericACPRemaps if the backend has no ACP plugin or no
-// non-empty InputRemaps registered.
+// Falls back to ai.GenericACPRemaps when the backend declares no table (no ACP
+// plugin, or an empty one).
 func LookupACPRemaps(backendID string) map[string]string {
 	pluginsMu.RLock()
 	defer pluginsMu.RUnlock()
 	if p, ok := plugins[backendID]; ok && p.ACP != nil && len(p.ACP.InputRemaps) > 0 {
 		return p.ACP.InputRemaps
 	}
-	return genericACPRemaps
+	return ai.GenericACPRemaps
 }
 
 // LookupACPToolCallIDPrefixes returns the ACP toolCallID prefix map for the given backend.
@@ -203,6 +215,17 @@ func LookupACPBehavior(backendID string) *ai.ACPBehavior {
 	return nil
 }
 
+// LookupACPSpawnHooks returns the backend's spawn-time argv/env customization,
+// or nil when it declares none.
+func LookupACPSpawnHooks(backendID string) *ai.ACPSpawnHooks {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok && p.ACP != nil {
+		return p.ACP.SpawnHooks
+	}
+	return nil
+}
+
 // LookupPluginCommands returns the backend's extra-command scanner, or nil.
 func LookupPluginCommands(backendID string) func() []ai.AvailableCommandInfo {
 	pluginsMu.RLock()
@@ -222,25 +245,4 @@ func LookupMidTurnInjector(backendID string) ai.MidTurnInjector {
 		return p.MidTurn
 	}
 	return nil
-}
-
-// LookupMidTurnSplitsReply reports whether the backend's mid-turn injection
-// splits the running assistant reply (true) rather than merely merging into it
-// (false). Only meaningful for backends that can inject at all — a backend with
-// no MidTurn policy returns false, which is the merge-only default.
-func LookupMidTurnSplitsReply(backendID string) bool {
-	pluginsMu.RLock()
-	defer pluginsMu.RUnlock()
-	if p, ok := plugins[backendID]; ok {
-		return p.MidTurnSplitsReply
-	}
-	return false
-}
-
-// genericACPRemaps is the fallback ACP input normalization map.
-// Migrated from common_stream.go's "generic_acp" entry.
-var genericACPRemaps = map[string]string{
-	"oldString": "old_string", "newString": "new_string",
-	"dirPath": "path", "filePath": "file_path",
-	"cellIndex": "cell_index", "cellType": "cell_type",
 }

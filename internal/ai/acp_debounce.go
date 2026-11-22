@@ -81,8 +81,8 @@ func (d *toolCallDebouncer) handleToolCallUpdate(tcu acp.SessionToolCallUpdate) 
 			event.ToolMeta = existing.event.ToolMeta
 		}
 		existing.event = event
-		if tcu.RawInput != nil {
-			existing.rawInput = tcu.RawInput
+		if raw, ok := tcu.RawInput.Value(); ok {
+			existing.rawInput = rawJSONValue(raw)
 		}
 		// Timer is already running — just wait for it.
 		return true
@@ -92,8 +92,8 @@ func (d *toolCallDebouncer) handleToolCallUpdate(tcu acp.SessionToolCallUpdate) 
 	pending := &pendingToolUpdate{
 		event: event,
 	}
-	if tcu.RawInput != nil {
-		pending.rawInput = tcu.RawInput
+	if raw, ok := tcu.RawInput.Value(); ok {
+		pending.rawInput = rawJSONValue(raw)
 	}
 	d.pending[toolCallID] = pending
 

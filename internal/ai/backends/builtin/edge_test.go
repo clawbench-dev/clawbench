@@ -68,6 +68,10 @@ func TestBuildSpec_UnknownAgentIsAnError(t *testing.T) {
 // TestBuildSpec_AgentWithoutProviderIsAnError pins the deliberate hard failure:
 // silently running on some other endpoint produces answers the user cannot
 // account for.
+//
+// It also pins that the text is LOCALIZED. The message used to be a frozen
+// English string while the locale entries sat unread in the yaml files, so a
+// Chinese UI showed English with no indication anything was wrong.
 func TestBuildSpec_AgentWithoutProviderIsAnError(t *testing.T) {
 	if model.Agents == nil {
 		model.Agents = map[string]*model.Agent{}
@@ -76,12 +80,27 @@ func TestBuildSpec_AgentWithoutProviderIsAnError(t *testing.T) {
 	model.Agents[id] = &model.Agent{ID: id, Backend: BackendID, BuiltinBackend: true}
 	defer delete(model.Agents, id)
 
+	prevLang := model.Language
+	defer func() { model.Language = prevLang }()
+
+	// Chinese UI.
+	model.Language = "zh"
 	_, err := buildSpec(ai.ChatRequest{AgentID: id})
-	if !errors.Is(err, ErrNoProvider) {
-		t.Fatalf("expected ErrNoProvider, got %v", err)
+	if !errors.Is(err, errNoProvider) {
+		t.Fatalf("expected a no-provider error, got %v", err)
 	}
-	if !strings.Contains(ErrNoProvider.Error(), "choose a provider") {
-		t.Fatalf("the error must tell the user what to do, got %q", ErrNoProvider.Error())
+	if !strings.Contains(err.Error(), "模型提供商") {
+		t.Fatalf("a Chinese UI must get the Chinese text, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "has no model provider") {
+		t.Fatalf("the English sentinel leaked into the Chinese text, got %q", err.Error())
+	}
+
+	// English UI.
+	model.Language = "en"
+	_, err = buildSpec(ai.ChatRequest{AgentID: id})
+	if !strings.Contains(err.Error(), "Model Provider") {
+		t.Fatalf("an English UI must get the English text, got %q", err.Error())
 	}
 }
 

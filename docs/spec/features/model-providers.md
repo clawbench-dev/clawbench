@@ -46,19 +46,15 @@
 | cursor | key-only | `CURSOR_API_KEY`（不支持自定义端点）；也支持私有协议 |
 | commandcode | key-only | `COMMAND_CODE_API_KEY`（完整 BYOK 仍需其 providers.json）；也支持私有协议 |
 | codex | **配置文件** | `~/.codex/config.toml` 托管块 + `CLAWBENCH_PROVIDER_API_KEY` |
-| copilot / qoder / qodercn / vecli / openclaw / custom-acp | 不支持 | 绑定时 400 `ProviderUnsupported` |
+| qoder / qodercn / openclaw / custom-acp | 不支持 | 绑定时 400 `ProviderUnsupported` |
 
 不支持的后端**不会静默无效**：PATCH 校验直接拒绝，前端对应选项灰显并说明原因。
 
 ## 注入实现
 
-三处子进程启动点，均在 `os.Environ()` 之后追加（重复键后者生效）：
+唯一子进程启动点是 ACP spawn（`internal/ai/acp_conn_lifecycle.go` 经 `providerEnvForRequest`），在 `os.Environ()` 之后追加（重复键后者生效）。
 
-- `internal/ai/cli_backend.go`（通用 CLI）
-- `internal/ai/codex_stream.go`（codex 专用流）
-- `internal/ai/acp_conn_lifecycle.go`（ACP spawn）
-
-后端 id 取**智能体**的 `Backend`，而不是 `CLIBackend.BackendName`：自定义 `command` 可能指向包装器，但变量名由声明的后端决定。
+后端 id 取**智能体**的 `Backend`：自定义 `command` 可能指向包装器，但变量名由声明的后端决定。
 
 密钥选择：
 
@@ -143,7 +139,7 @@ Codex 的 provider 是全局 `model_provider` 键，无法用环境变量表达�
 
 - 提供商编辑页可「选择模型」：从实测 `/models` 拉取，失败用权威目录兜底，也可手填；保存后即为该端点的模型集合
 - **清单不遮挡实测列表**：`GET /api/providers/{id}/models` 恒返回端点实测（或目录兜底）的 `models`，另用 `curated` 单独返回已保存清单。否则选择过一次并保存后，再打开选择器就只剩已选项，无法继续添加（实测缺陷）
-- 绑定该提供商的智能体直接继承这份清单（CLI 与 ACP 未上报时都适用），模型下拉不会再出现端点跑不了的 id
+- 绑定该提供商的智能体直接继承这份清单（ACP 未上报模型时也适用），模型下拉不会再出现端点跑不了的 id
 - 默认模型：`preferred_model` 在清单内 → 用它；否则用 `default_model`；再否则用清单第一个
 - **绑定不清除后端原生模型**：`preferred_model` 若属于该智能体自己发现的模型（如 opencode 的 `opencode/<model>`，出现在 `agents.models` 里），按原值跑、不加提供商前缀。加了前缀等于让注入的端点收到一个它从没提供过的模型名，上游直接 400；而 1:1 聊天用的是会话已存的模型，所以同一智能体只在「走默认兜底」的路径上翻车——群聊成员行、调度任务就是这两条（issue #651 群聊复现）。只有既不在提供商清单、也不在智能体自报列表里的 id 才是「自定义…」，才需要加前缀并声明进配置内容
 - **ACP 上报后仍以 ACP 为准**；清单为空时退回原来的发现逻辑

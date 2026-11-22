@@ -43,9 +43,9 @@ const i18n = createI18n({
         unverifiedNotConfirmedTitle: '升级已取消：未能确认校验风险',
         unverifiedNotConfirmedBody: '本次升级无法完全校验，而 registry 当前报告的情况与确认时不一致。',
         unverifiedNotConfirmedHint: '请重试：界面会重新检查并让你确认最新的情况。',
-        fusedNote: '当前客户端自带服务端，升级会下载并安装整个一体安装包。',
-        fusedInstalling: '正在下载并安装一体安装包…',
-        fusedInstallFailed: '一体安装包下载或安装失败。',
+        integratedNote: '当前客户端自带服务端，升级会下载并安装整个整合包。',
+        integratedInstalling: '正在下载并安装整合包…',
+        integratedInstallFailed: '整合包下载或安装失败。',
       },
     },
   },
@@ -105,7 +105,7 @@ vi.mock('@/composables/useUpgrade', async (importOriginal) => {
       isDocker: mockIsDocker,
       verificationWarning: mockVerificationWarning,
       managedByEmbedder: mockManagedByEmbedder,
-      installingFused: mockInstallingFused,
+      installingIntegrated: mockInstallingFused,
     }),
   }
 })
@@ -515,14 +515,14 @@ describe('UpgradeDialog', () => {
     })
   })
 
-  describe('fused install', () => {
+  describe('integrated install', () => {
     it('explains that the whole package is installed', async () => {
       mockManagedByEmbedder.value = true
       const wrapper = mountDialog()
       ;(wrapper!.vm as any).show()
       await nextTick()
-      expect($('.ug-fused-note')).toBeTruthy()
-      expect(document.body.textContent).toContain('一体安装包')
+      expect($('.ug-integrated-note')).toBeTruthy()
+      expect(document.body.textContent).toContain('整合包')
     })
 
     it('hides server-only warnings: no install-directory or signature advice', async () => {
@@ -545,7 +545,7 @@ describe('UpgradeDialog', () => {
       const wrapper = mountDialog()
       ;(wrapper!.vm as any).show()
       await nextTick()
-      expect(document.body.textContent).toContain('正在下载并安装一体安装包')
+      expect(document.body.textContent).toContain('正在下载并安装整合包')
       expect($('.ug-start')).toBeFalsy()
     })
   })

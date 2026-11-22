@@ -45,7 +45,7 @@ func TestBuildProviderEnv_RejectsUnsupportedProtocol(t *testing.T) {
 }
 
 func TestBuildProviderEnv_RejectsUnsupportedBackend(t *testing.T) {
-	if _, err := BuildProviderEnv("copilot", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthAuto), ""); err == nil {
+	if _, err := BuildProviderEnv("qoder", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthAuto), ""); err == nil {
 		t.Fatal("expected an error for a backend that cannot take a provider")
 	}
 	if _, err := BuildProviderEnv("nonexistent", providerForTest(ProviderProtocolOpenAI, "https://x", "k", ProviderAuthAuto), ""); err == nil {
@@ -123,8 +123,8 @@ func TestProviderEnvSupported(t *testing.T) {
 		{"opencode", ProviderProtocolOpenAI, true},
 		{"antigravity", ProviderProtocolGemini, true},
 		{"cursor", ProviderProtocolAnthropic, true}, // key-only accepts any protocol
-		{"copilot", ProviderProtocolOpenAI, false},
-		{"copilot", "", false},
+		{"qoder", ProviderProtocolOpenAI, false},
+		{"qoder", "", false},
 		{"codex", "", true},
 	}
 	for _, tc := range cases {
@@ -154,7 +154,7 @@ func TestProviderEnvSupportedProvider(t *testing.T) {
 		{"commandcode", keyOnlyWithEndpoint, false},
 		{"claude", anthropic, true},
 		{"claude", openai, false},
-		{"copilot", openai, false},
+		{"qoder", openai, false},
 		{"codex", openai, true},
 		{"cursor", nil, false},
 		{"nope", openai, false},
@@ -170,7 +170,7 @@ func TestBackendIsKeyOnly(t *testing.T) {
 	if !BackendIsKeyOnly("cursor") || !BackendIsKeyOnly("commandcode") {
 		t.Fatal("cursor and commandcode take only a credential")
 	}
-	if BackendIsKeyOnly("claude") || BackendIsKeyOnly("codex") || BackendIsKeyOnly("copilot") {
+	if BackendIsKeyOnly("claude") || BackendIsKeyOnly("codex") || BackendIsKeyOnly("qoder") {
 		t.Fatal("env/config backends are not key-only")
 	}
 }
@@ -226,7 +226,7 @@ func TestProviderAuthModeError_MatchesBuildProviderEnv(t *testing.T) {
 		// and never read an auth mode, so nothing can be wrong there.
 		{name: "key-only backend ignores auth mode", backend: "cursor", protocol: ProviderProtocolAnthropic, auth: ProviderAuthBearer},
 		{name: "config-file backend ignores auth mode", backend: "codex", protocol: ProviderProtocolOpenAI, auth: ProviderAuthBearer},
-		{name: "backend without a provider slot", backend: "copilot", protocol: ProviderProtocolOpenAI, auth: ProviderAuthAuto, wantErr: true, wantText: "openai"},
+		{name: "backend without a provider slot", backend: "qoder", protocol: ProviderProtocolOpenAI, auth: ProviderAuthAuto, wantErr: true, wantText: "openai"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

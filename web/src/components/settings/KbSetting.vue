@@ -1,7 +1,7 @@
 <template>
   <!-- Card BODY, not a page: the 知识库索引 card is opened by a placeholder item
-       in settingsFieldMap (see PLACEHOLDER_ITEMS in SettingsCategory), and the
-       kb.* configuration rows live in the cards below it. -->
+       in `plugins/kb/settings.ts`, which declares this component as its
+       `cardBody`; the kb.* configuration rows live in the cards below it. -->
   <div class="kb-setting">
     <div v-if="status" class="kb-stats">
       <div class="kb-stat">

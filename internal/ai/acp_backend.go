@@ -116,8 +116,9 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 				return
 			}
 			// ACP connection failed — surface the error directly.
-			// Do NOT fall back to CLI backend: the user chose ACP transport
-			// and silent fallback hides real problems (e.g., NewSession timeout).
+			// Do NOT fall back to another implementation: an agent with an ACP
+			// command runs over ACP, and silent fallback hides real problems
+			// (e.g., NewSession timeout).
 			if authErr := asACPAuthRequired(err); authErr != nil {
 				// Some agents gate session creation on a signed-in account and
 				// answer with a non-standard JSON-RPC code (Command Code uses
@@ -197,8 +198,8 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		slog.Info("acp perf: ExecuteStream.step3_Prompt_start", "session_id", req.SessionID, "after_emitSession", time.Since(streamStart))
 		// Skills are injected upstream in req.SystemPrompt by
 		// service.AppendSkillsSection (see service/chat_request.go and
-		// service/scheduler.go), so every transport — ACP and CLI, chat and
-		// scheduled tasks — sees the same table.
+		// service/scheduler.go), so every entry point — chat and scheduled
+		// tasks — sees the same table.
 		promptBlocks := b.buildPromptBlocks(req)
 		err = conn.Prompt(ctx, promptBlocks, ch, req)
 		if err != nil {
@@ -510,24 +511,11 @@ func acpErrorDetails(err error) (code int, httpStatus int) {
 	if !errors.As(err, &reqErr) {
 		return 0, 0
 	}
-	if reqErr.Data == nil {
+	if len(reqErr.Data) == 0 {
 		return reqErr.Code, 0
 	}
-	// Data may be a string (JSON-encoded) or an already-parsed map.
-	var raw string
-	switch v := reqErr.Data.(type) {
-	case string:
-		raw = v
-	default:
-		b, marshalErr := json.Marshal(v)
-		if marshalErr != nil {
-			return reqErr.Code, 0
-		}
-		raw = string(b)
-	}
 	// Try known shapes: {"httpStatus":500} or {"details":"... httpStatus=500 ..."}.
-	var dataMap map[string]any
-	if err := json.Unmarshal([]byte(raw), &dataMap); err == nil {
+	if dataMap := acpErrorDataMap(reqErr.Data); dataMap != nil {
 		if hs, ok := dataMap["httpStatus"].(float64); ok {
 			httpStatus = int(hs)
 		}
@@ -585,24 +573,25 @@ func isACPQuotaError(err error) bool {
 	if name, ok := data["errorName"].(string); ok && OpenCodeLimitTypes[strings.ToLower(name)] {
 		return true
 	}
-	haystack := reqErr.Message + " " + fmt.Sprint(reqErr.Data)
+	haystack := reqErr.Message + " " + string(reqErr.Data)
 	return isLimitErrorText(haystack)
 }
 
-// acpErrorDataMap normalizes a RequestError's Data into a map, accepting both
-// the already-parsed form and the JSON-string form some agents send.
-func acpErrorDataMap(data any) map[string]any {
-	if data == nil {
-		return nil
-	}
-	if m, ok := data.(map[string]any); ok {
-		return m
-	}
-	raw, ok := data.(string)
-	if !ok {
+// acpErrorDataMap normalizes a RequestError's Data into a map. The SDK keeps
+// the payload as raw JSON (v0.20), and some agents double-encode it — the
+// payload is a JSON string that holds the JSON object.
+func acpErrorDataMap(data json.RawMessage) map[string]any {
+	if len(data) == 0 {
 		return nil
 	}
 	var m map[string]any
+	if err := json.Unmarshal(data, &m); err == nil {
+		return m
+	}
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		return nil
 	}

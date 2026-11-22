@@ -35,6 +35,13 @@ const (
 // identifier the model calls AND the one the spec declares; keeping the two in
 // one constant is what stops them from drifting apart.
 //
+// MCPNamePrefix marks a tool that belongs to an external MCP server.
+//
+// It lives here rather than in the MCP adapter so the engine's prompt code can
+// name the boundary without importing the MCP client: this package is the
+// vocabulary every tool shares, and the prefix is part of that vocabulary.
+const MCPNamePrefix = "mcp__"
+
 // toolReadName is shared: ReadTool and ReadToolNoVision publish under the same
 // identifier.
 const (

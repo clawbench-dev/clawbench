@@ -137,17 +137,6 @@ vi.mock('@/utils/mailAttach', () => ({
   sendPathsByMail: mockSendPathsByMail,
 }))
 
-// Mock useToolbarOverflow — simulate wide toolbar: all demotable items inline
-vi.mock('@/composables/useToolbarOverflow', () => ({
-  useToolbarOverflow: (_getEl, getDemotableIds) => ({
-    inlineIds: computed(() => getDemotableIds()),
-    collapsedIds: computed(() => []),
-    contentWidth: ref(800),
-    startObserving: vi.fn(),
-    stopObserving: vi.fn(),
-  }),
-}))
-
 // Mock getFileType
 vi.mock('@/utils/fileType.ts', () => ({
   getFileType: (name: string) => {
@@ -315,9 +304,9 @@ describe('FileHeader', () => {
 
   describe('permanent More-menu actions', () => {
     // The 11 low-frequency / destructive actions must never occupy toolbar
-    // space, regardless of how wide the header is. useToolbarOverflow is mocked
-    // to report "everything fits", so an inline button here would be a real
-    // regression rather than an overflow artifact.
+    // space, regardless of how wide the header is — the header no longer has an
+    // overflow mechanism, so an inline button here would be a real regression
+    // rather than an overflow artifact.
     // Each entry carries the file fixture that makes the action applicable, so
     // the assertion covers the real gating rather than a permissive fixture.
     const PERMANENT_CASES: Array<{ title: string; props?: Record<string, unknown> }> = [
