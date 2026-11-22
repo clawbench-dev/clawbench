@@ -1392,6 +1392,11 @@ func TestEmitPromptResponseUsage_NilCachedState(t *testing.T) {
 	require.NotNil(t, meta, "metadata event should be emitted")
 	require.Equal(t, 10, meta.Meta.InputTokens)
 	require.Equal(t, 20, meta.Meta.OutputTokens)
+	assert.Equal(t, 30, meta.Meta.TotalTokens)
+	assert.Equal(t, 5, meta.Meta.CachedReadTokens)
+	assert.Equal(t, 6, meta.Meta.CachedWriteTokens)
+	assert.Equal(t, 7, meta.Meta.ThoughtTokens)
+	assert.Equal(t, 5, meta.Meta.CacheHitTokens)
 
 	require.NotNil(t, usageUpdate, "usage_update event should be emitted")
 	u := usageUpdate.Usage
@@ -1573,6 +1578,124 @@ func TestEmitPromptResponseUsage_PersistsStopReason(t *testing.T) {
 	assert.Equal(t, "end_turn", metaEvt.Meta.StopReason)
 	assert.Equal(t, 142, metaEvt.Meta.InputTokens)
 	assert.Equal(t, 18, metaEvt.Meta.OutputTokens)
+	assert.Equal(t, 41252, metaEvt.Meta.TotalTokens)
+}
+
+// TestEmitPromptResponseUsage_StandardACPCacheAndThought verifies that standard
+// ACP PromptResponse.Usage (without private _meta extensions, e.g. agy acp)
+// preserves TotalTokens, CachedReadTokens, CachedWriteTokens, and ThoughtTokens
+// on the metadata event and normalizes InputTokens / CacheHitTokens /
+// CacheMissTokens without double-counting.
+func TestEmitPromptResponseUsage_StandardACPCacheAndThought(t *testing.T) {
+	t.Run("cache excluded from inputTokens (agy acp shape)", func(t *testing.T) {
+		agent := &model.Agent{ID: "test-agy-usage", Backend: "antigravity", AcpCommand: "echo"}
+		conn := newACPConn(agent, "test-agy-usage")
+
+		streamCh := make(chan StreamEvent, 8)
+		var cachedRead int64 = 402992
+		var thought int64 = 42
+		usage := &acp.Usage{
+			InputTokens:      2200,
+			OutputTokens:     79,
+			TotalTokens:      405271, // 2200 + 79 + 402992
+			CachedReadTokens: &cachedRead,
+			ThoughtTokens:    &thought,
+		}
+		conn.emitPromptResponseUsage(usage, nil, "end_turn", streamCh)
+		close(streamCh)
+
+		var metaEvt *StreamEvent
+		for ev := range streamCh {
+			if ev.Type == "metadata" {
+				metaEvt = &ev
+			}
+		}
+		require.NotNil(t, metaEvt)
+		assert.Equal(t, 405192, metaEvt.Meta.InputTokens, "inputTokens normalized to full prompt (uncached + cachedRead)")
+		assert.Equal(t, 79, metaEvt.Meta.OutputTokens)
+		assert.Equal(t, 405271, metaEvt.Meta.TotalTokens)
+		assert.Equal(t, 402992, metaEvt.Meta.CachedReadTokens)
+		assert.Equal(t, 0, metaEvt.Meta.CachedWriteTokens)
+		assert.Equal(t, 42, metaEvt.Meta.ThoughtTokens)
+		assert.Equal(t, 402992, metaEvt.Meta.CacheHitTokens)
+		assert.Equal(t, 2200, metaEvt.Meta.CacheMissTokens)
+	})
+
+	t.Run("cache and thought excluded from input/output", func(t *testing.T) {
+		agent := &model.Agent{ID: "test-acp-thought-excl", Backend: "acp-stdio", AcpCommand: "echo"}
+		conn := newACPConn(agent, "test-acp-thought-excl")
+
+		streamCh := make(chan StreamEvent, 8)
+		var cachedRead int64 = 8000
+		var cachedWrite int64 = 500
+		var thought int64 = 300
+		usage := &acp.Usage{
+			InputTokens:       1000,
+			OutputTokens:      200,
+			TotalTokens:       10000, // 1000 + 200 + 8000 + 500 + 300
+			CachedReadTokens:  &cachedRead,
+			CachedWriteTokens: &cachedWrite,
+			ThoughtTokens:     &thought,
+		}
+		conn.emitPromptResponseUsage(usage, nil, "", streamCh)
+		close(streamCh)
+
+		var metaEvt *StreamEvent
+		for ev := range streamCh {
+			if ev.Type == "metadata" {
+				metaEvt = &ev
+			}
+		}
+		require.NotNil(t, metaEvt)
+		assert.Equal(t, 9500, metaEvt.Meta.InputTokens)
+		assert.Equal(t, 200, metaEvt.Meta.OutputTokens)
+		assert.Equal(t, 10000, metaEvt.Meta.TotalTokens)
+		assert.Equal(t, 8000, metaEvt.Meta.CachedReadTokens)
+		assert.Equal(t, 500, metaEvt.Meta.CachedWriteTokens)
+		assert.Equal(t, 300, metaEvt.Meta.ThoughtTokens)
+		assert.Equal(t, 8000, metaEvt.Meta.CacheHitTokens)
+		assert.Equal(t, 1000, metaEvt.Meta.CacheMissTokens)
+	})
+
+	t.Run("cache already included in inputTokens (no double count)", func(t *testing.T) {
+		agent := &model.Agent{ID: "test-acp-cache-incl", Backend: "acp-stdio", AcpCommand: "echo"}
+		conn := newACPConn(agent, "test-acp-cache-incl")
+
+		streamCh := make(chan StreamEvent, 8)
+		var cachedRead int64 = 8000
+		var thought int64 = 50
+		usage := &acp.Usage{
+			InputTokens:      10000,
+			OutputTokens:     200,
+			TotalTokens:      10200, // 10000 + 200
+			CachedReadTokens: &cachedRead,
+			ThoughtTokens:    &thought,
+		}
+		conn.emitPromptResponseUsage(usage, nil, "", streamCh)
+		close(streamCh)
+
+		var metaEvt *StreamEvent
+		for ev := range streamCh {
+			if ev.Type == "metadata" {
+				metaEvt = &ev
+			}
+		}
+		require.NotNil(t, metaEvt)
+		assert.Equal(t, 10000, metaEvt.Meta.InputTokens, "inputTokens must not be double-counted")
+		assert.Equal(t, 200, metaEvt.Meta.OutputTokens)
+		assert.Equal(t, 10200, metaEvt.Meta.TotalTokens)
+		assert.Equal(t, 8000, metaEvt.Meta.CachedReadTokens)
+		assert.Equal(t, 50, metaEvt.Meta.ThoughtTokens)
+		assert.Equal(t, 8000, metaEvt.Meta.CacheHitTokens)
+		assert.Equal(t, 2000, metaEvt.Meta.CacheMissTokens)
+	})
+
+	t.Run("nil guard does not panic", func(t *testing.T) {
+		applyPromptResponseUsageToMetadata(nil, &acp.Usage{InputTokens: 1})
+		m := &Metadata{}
+		applyPromptResponseUsageToMetadata(m, nil)
+		assert.Equal(t, 0, m.InputTokens)
+	})
 }
 
 // ---------------------------------------------------------------------------

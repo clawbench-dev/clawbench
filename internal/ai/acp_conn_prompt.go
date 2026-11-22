@@ -460,6 +460,50 @@ func acpHTTPStatusFromMeta(meta map[string]any) int {
 	return 0
 }
 
+// applyPromptResponseUsageToMetadata copies the ACP-standard PromptResponse.Usage
+// counters onto meta and normalizes the cache split to match the chat_metadata
+// ledger convention (InputTokens = full prompt including cache, CacheHitTokens =
+// cached read, CacheMissTokens = uncached input).
+//
+// Standard ACP backends like Antigravity (agy acp) report cached tokens OUTSIDE
+// InputTokens (TotalTokens = Input + Output + CachedRead + CachedWrite, or
+// + Thought when reasoning is excluded from Output). Checking that identity
+// prevents double-counting backends whose InputTokens already includes cache.
+func applyPromptResponseUsageToMetadata(meta *Metadata, usage *acp.Usage) {
+	if meta == nil || usage == nil {
+		return
+	}
+	cachedRead := ptrInt64Val(usage.CachedReadTokens)
+	cachedWrite := ptrInt64Val(usage.CachedWriteTokens)
+	thought := ptrInt64Val(usage.ThoughtTokens)
+	inputTokens := int(usage.InputTokens)
+	outputTokens := int(usage.OutputTokens)
+	totalTokens := int(usage.TotalTokens)
+
+	meta.InputTokens = inputTokens
+	meta.OutputTokens = outputTokens
+	meta.TotalTokens = totalTokens
+	meta.CachedReadTokens = cachedRead
+	meta.CachedWriteTokens = cachedWrite
+	meta.ThoughtTokens = thought
+
+	if cachedRead > 0 || cachedWrite > 0 {
+		excludedTotal := inputTokens + outputTokens + cachedRead + cachedWrite
+		cacheExcluded := totalTokens > 0 &&
+			(totalTokens == excludedTotal || (thought > 0 && totalTokens == excludedTotal+thought))
+		if cacheExcluded {
+			meta.CacheHitTokens = cachedRead
+			meta.CacheMissTokens = inputTokens
+			meta.InputTokens += cachedRead + cachedWrite
+		} else {
+			meta.CacheHitTokens = cachedRead
+			if inputTokens >= cachedRead+cachedWrite {
+				meta.CacheMissTokens = inputTokens - cachedRead - cachedWrite
+			}
+		}
+	}
+}
+
 // emitPromptResponseUsage emits metadata and usage_update events from a
 // PromptResponse.Usage (UNSTABLE ACP feature), the ACP-standard stopReason,
 // and PromptResponse._meta extensions. The metadata event ensures
@@ -481,10 +525,7 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 	// Capture the turn-level accumulation once and reuse it for both the
 	// metadata event and the usage_update payload.
 	meta := &Metadata{}
-	if usage != nil {
-		meta.InputTokens = int(usage.InputTokens)
-		meta.OutputTokens = int(usage.OutputTokens)
-	}
+	applyPromptResponseUsageToMetadata(meta, usage)
 
 	// The PromptResponse carries no cost, but agents like Claude report it on
 	// the final usage_update of the turn (e.g. cost=0.1568 USD) which reached
