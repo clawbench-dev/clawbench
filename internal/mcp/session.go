@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"clawbench/internal/model"
@@ -43,6 +44,9 @@ const (
 	defaultCallTimeout = 5 * time.Minute
 	// maxToolOutputBytes caps the text a single tool call hands to the model.
 	maxToolOutputBytes = 256 * 1024
+	// maxImageBytes caps one inline image. A server that returns a 100 MB PNG
+	// must not be able to exhaust this process's memory.
+	maxImageBytes = 8 * 1024 * 1024
 	// maxToolPages bounds tools/list pagination.
 	maxToolPages = 20
 	// stderrTailBytes is how much of a server's stderr is kept for error
@@ -102,9 +106,29 @@ type Session struct {
 func (s *Session) ServerName() string { return s.server.Name }
 
 // ListChanged reports whether the server said its tool list can change while
-// the connection is open. Callers that cache the list refresh it per turn only
-// when this is true.
+// the connection is open. The pool uses it to decide whether a refresh is worth
+// doing at all; it throttles the actual re-list.
 func (s *Session) ListChanged() bool { return s.listChanged }
+
+// Alive reports whether this connection can still serve calls.
+//
+// It is a local check, not a ping: a stdio server whose process died is known
+// dead as soon as the reader sees EOF, and an HTTP session is known expired
+// after the server answers 404. A server that merely stops answering is caught
+// by the per-call timeout, not here.
+//
+// The pool uses this to replace a dead connection instead of handing the same
+// broken session to every future turn.
+func (s *Session) Alive() bool {
+	switch tr := s.tr.(type) {
+	case *stdioTransport:
+		return tr.alive()
+	case *httpTransport:
+		return tr.alive()
+	default:
+		return true
+	}
+}
 
 // Dial connects to srv and performs the MCP handshake.
 func Dial(ctx context.Context, srv model.MCPServer, opts DialOptions) (*Session, error) {
@@ -332,6 +356,9 @@ func decodeContent(c callContent) (string, *Image) {
 		if err != nil {
 			return "(an image was returned but its base64 data could not be decoded)", nil
 		}
+		if len(data) > maxImageBytes {
+			return fmt.Sprintf("(an image of %d bytes was returned; the limit is %d bytes)", len(data), maxImageBytes), nil
+		}
 		return "", &Image{MediaType: c.MimeType, Data: data}
 	case "resource":
 		return decodeResource(c), nil
@@ -411,8 +438,15 @@ type stdioTransport struct {
 	pending map[int]chan *rpcResponse
 	done    chan struct{}
 	err     error
+	closed  bool
 
 	closeOnce sync.Once
+}
+
+func (t *stdioTransport) alive() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.err == nil && !t.closed
 }
 
 func newStdioTransport(srv model.MCPServer, workDir string) (*stdioTransport, error) {
@@ -465,7 +499,7 @@ func newStdioTransport(srv model.MCPServer, workDir string) (*stdioTransport, er
 
 func (t *stdioTransport) readLoop() {
 	for {
-		line, err := t.out.ReadBytes('\n')
+		line, err := readMessage(t.out, maxResponseBytes)
 		if len(bytes.TrimSpace(line)) > 0 {
 			if resp := parseResponseLine(line); resp != nil {
 				t.deliver(resp)
@@ -474,6 +508,31 @@ func (t *stdioTransport) readLoop() {
 		if err != nil {
 			t.fail(t.closedError(err))
 			return
+		}
+	}
+}
+
+// readMessage reads one newline-terminated message, refusing anything larger
+// than limit.
+//
+// bufio.Reader.ReadBytes has no ceiling, so a server that writes one enormous
+// line (a giant image, or a bug) would allocate it in full before any of our
+// size checks run. ReadSlice in a loop lets the limit be enforced while reading.
+func readMessage(r *bufio.Reader, limit int) ([]byte, error) {
+	var buf []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if len(buf)+len(chunk) > limit {
+			return nil, fmt.Errorf("message exceeds %d bytes", limit)
+		}
+		buf = append(buf, chunk...)
+		switch {
+		case err == nil:
+			return buf, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		default:
+			return buf, err
 		}
 	}
 }
@@ -625,6 +684,9 @@ func (t *stdioTransport) cancel(id int) {
 
 func (t *stdioTransport) close() error {
 	t.closeOnce.Do(func() {
+		t.mu.Lock()
+		t.closed = true
+		t.mu.Unlock()
 		killProcessGroup(t.cmd.Process)
 		_ = t.stdin.Close()
 		// Wait releases the stderr copy goroutine and the pipes. The process was
@@ -669,6 +731,16 @@ type httpTransport struct {
 	nextID    int
 	sessionID string
 	version   string
+
+	// dead is set when the endpoint is unreachable or the server forgot our
+	// session. Either way the connection cannot be reused, and the pool replaces
+	// it on the next turn instead of failing every call forever.
+	dead   atomic.Bool
+	closed atomic.Bool
+}
+
+func (t *httpTransport) alive() bool {
+	return !t.dead.Load() && !t.closed.Load()
 }
 
 func newHTTPTransport(srv model.MCPServer) *httpTransport {
@@ -700,6 +772,7 @@ func (t *httpTransport) call(ctx context.Context, method string, params any) (*r
 		return nil, err
 	}
 	if status == http.StatusNotFound && t.session() != "" {
+		t.dead.Store(true)
 		return nil, errSessionExpired
 	}
 	if status < 200 || status > 299 {
@@ -717,11 +790,14 @@ func (t *httpTransport) call(ctx context.Context, method string, params any) (*r
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, fmt.Errorf("response is not JSON-RPC (is this an MCP endpoint?): %s", snippet(body))
 	}
-	if parsed.Error != nil {
-		return nil, parsed.Error
-	}
+	// Check the id FIRST: a JSON-RPC error reply carries the id too, and an
+	// interleaved notification with an `error` field must not be mistaken for
+	// this request's answer.
 	if parsed.ID != id {
 		return nil, fmt.Errorf("reply id %d does not match request id %d", parsed.ID, id)
+	}
+	if parsed.Error != nil {
+		return nil, parsed.Error
 	}
 	return &parsed, nil
 }
@@ -765,6 +841,9 @@ func (t *httpTransport) post(ctx context.Context, payload any) ([]byte, int, str
 
 	resp, err := t.client.Do(req)
 	if err != nil {
+		// A transport-level failure means this connection is unusable; the pool
+		// will redial on the next turn.
+		t.dead.Store(true)
 		return nil, 0, "", fmt.Errorf("request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -789,6 +868,7 @@ func (t *httpTransport) session() string {
 }
 
 func (t *httpTransport) close() error {
+	t.closed.Store(true)
 	sessionID := t.session()
 	if sessionID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

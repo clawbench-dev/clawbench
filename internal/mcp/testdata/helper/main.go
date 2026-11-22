@@ -70,6 +70,7 @@ func run(mode string) int {
 	// spawnsilent answers nothing at all, so the probe is still blocked reading
 	// stdout when its deadline fires.
 	silent := mode == "silent" || mode == "spawnsilent"
+	listCalls := 0
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -110,12 +111,21 @@ func run(mode string) int {
 			case "notools":
 				fmt.Fprintf(writer, `{"jsonrpc":"2.0","id":%d,"result":{"tools":[]}}`+"\n", req.ID)
 			default:
+				listCalls++
+				// listchanged grows its list on every call after the first, so a
+				// test can prove the client actually re-listed instead of
+				// reusing its cached copy.
+				extra := ""
+				if mode == "listchanged" && listCalls > 1 {
+					extra = `,{"name":"gamma","description":"Added later."}`
+				}
 				fmt.Fprintf(writer,
 					`{"jsonrpc":"2.0","id":%d,"result":{"tools":[`+
 						`{"name":"alpha","description":"Echo the arguments back.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}} ,`+
 						`{"name":"beta","description":"Return text and an image.\nSecond line.","inputSchema":{"type":"object","properties":{"fail":{"type":"boolean"}}}}`+
+						`%s`+
 						`]}}`+"\n",
-					req.ID)
+					req.ID, extra)
 			}
 		case "tools/call":
 			if mode == "callhang" {

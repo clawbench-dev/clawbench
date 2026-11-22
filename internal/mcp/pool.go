@@ -41,7 +41,16 @@ const (
 	// interpreter; starting twenty at once on a laptop is how a turn times out
 	// for reasons unrelated to any one server.
 	maxConcurrentDials = 4
+	// defaultListRefreshInterval throttles tools/list for servers that
+	// advertise listChanged. Re-listing on every turn would put a round trip in
+	// front of every model call; never re-listing would make a newly added tool
+	// invisible until reconnect. 30s is the compromise.
+	defaultListRefreshInterval = 30 * time.Second
 )
+
+// listRefreshInterval is a variable so tests can drive the refresh path
+// without waiting half a minute. Production never changes it.
+var listRefreshInterval = defaultListRefreshInterval
 
 // ConnectedServer is one server with its current tool list.
 //
@@ -51,9 +60,13 @@ const (
 type ConnectedServer struct {
 	Name    string
 	Session *Session
+	// spec is what was dialed. Kept so a dead connection can be replaced
+	// without asking the caller for the server definition again.
+	spec model.MCPServer
 
-	mu    sync.RWMutex
-	tools []ToolDef
+	mu          sync.RWMutex
+	tools       []ToolDef
+	lastRefresh time.Time
 }
 
 // ServerName is the configured name of this server.
@@ -70,6 +83,19 @@ func (c *ConnectedServer) setTools(tools []ToolDef) {
 	c.mu.Lock()
 	c.tools = tools
 	c.mu.Unlock()
+}
+
+// claimRefresh reports whether this server is due for a tool-list refresh and,
+// if so, marks it as done. One check-and-set under the lock keeps two
+// concurrent turns from both paying for the same round trip.
+func (c *ConnectedServer) claimRefresh(now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if now.Sub(c.lastRefresh) < listRefreshInterval {
+		return false
+	}
+	c.lastRefresh = now
+	return true
 }
 
 // Call invokes one tool on this server.
@@ -165,6 +191,24 @@ func (p *Pool) Acquire(ctx context.Context, key string, servers []model.MCPServe
 
 	now := time.Now()
 	if e.dialed && e.fingerprint == fingerprint {
+		// A connection that was healthy last turn may have died since (a stdio
+		// process crashed, an HTTP session expired). Reusing it would make every
+		// future turn fail with "connection closed" until the config changes, so
+		// replace it now. They are already unusable, which is why closing them
+		// cannot interrupt a turn that still holds one.
+		alive, dead := splitAlive(e.servers)
+		if len(dead) > 0 {
+			e.servers = alive
+			specs := make([]model.MCPServer, 0, len(dead))
+			for _, cs := range dead {
+				specs = append(specs, cs.spec)
+			}
+			closeServers(dead)
+			dialed, dialNotes := dialAll(ctx, specs, opts)
+			e.servers = append(e.servers, dialed...)
+			e.notes = append(e.notes, dialNotes...)
+		}
+
 		e.refs++
 		e.lastUsed = now
 		cached := e.servers
@@ -335,9 +379,11 @@ func dialAll(ctx context.Context, servers []model.MCPServer, opts DialOptions) (
 				return
 			}
 			results[i] = result{server: &ConnectedServer{
-				Name:    srv.Name,
-				Session: session,
-				tools:   tools,
+				Name:        srv.Name,
+				Session:     session,
+				spec:        srv,
+				tools:       tools,
+				lastRefresh: time.Now(),
 			}}
 		}(i, srv)
 	}
@@ -360,9 +406,10 @@ func dialAll(ctx context.Context, servers []model.MCPServer, opts DialOptions) (
 // change. A server that never advertised listChanged keeps its cached list,
 // which is the common case and costs nothing.
 func refreshChangedTools(ctx context.Context, servers []*ConnectedServer) {
+	now := time.Now()
 	var wg sync.WaitGroup
 	for _, cs := range servers {
-		if !cs.Session.ListChanged() {
+		if !cs.Session.ListChanged() || !cs.claimRefresh(now) {
 			continue
 		}
 		wg.Add(1)
@@ -376,6 +423,19 @@ func refreshChangedTools(ctx context.Context, servers []*ConnectedServer) {
 		}(cs)
 	}
 	wg.Wait()
+}
+
+// splitAlive partitions connections by whether they can still serve calls.
+func splitAlive(servers []*ConnectedServer) (alive, dead []*ConnectedServer) {
+	alive = make([]*ConnectedServer, 0, len(servers))
+	for _, cs := range servers {
+		if cs.Session.Alive() {
+			alive = append(alive, cs)
+			continue
+		}
+		dead = append(dead, cs)
+	}
+	return alive, dead
 }
 
 func closeServers(servers []*ConnectedServer) {

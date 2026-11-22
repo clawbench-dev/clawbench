@@ -40,6 +40,14 @@ func withMCP(t *testing.T, policy model.MCPServerPolicy, servers ...model.MCPSer
 	return id
 }
 
+// TestBuiltinBackendSupportsMCP guards the registry fact the whole feature
+// depends on: model.ResolveMCPServers drops every server for a backend whose
+// spec is registered as MCPUnsupported. If builtin ever lands on that list
+// (a probe that only tests ACP could add it), MCP would go silent.
+func TestBuiltinBackendSupportsMCP(t *testing.T) {
+	assert.True(t, model.BackendSupportsMCP(BackendID))
+}
+
 // TestAttachMCP_PolicyNoneAttachesNothing pins the switch the settings page
 // writes: mode=none must not even resolve servers.
 func TestAttachMCP_PolicyNoneAttachesNothing(t *testing.T) {

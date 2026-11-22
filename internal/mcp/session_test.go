@@ -242,6 +242,7 @@ func TestSession_HTTP404ExpiresSession(t *testing.T) {
 	_, err = s.ListTools(ctx)
 	require.ErrorIs(t, err, errSessionExpired)
 	assert.GreaterOrEqual(t, calls, 3)
+	assert.False(t, s.Alive(), "an expired HTTP session must be reported as dead")
 }
 
 // TestSession_HTTPErrorIsReadable makes sure a gateway's error body reaches the
@@ -339,6 +340,7 @@ func TestSession_ServerNameAndNilContext(t *testing.T) {
 	defer func() { _ = s.Close() }()
 
 	assert.Equal(t, "probe-test", s.ServerName())
+	assert.True(t, s.Alive())
 
 	// A nil context must not panic: the tool interface passes Env.Ctx through,
 	// and a caller that forgot to set it should still get a working call.
@@ -385,12 +387,17 @@ func TestDecodeCallResult_RemainingShapes(t *testing.T) {
 
 	unknown, err := decodeCallResult(json.RawMessage(`{"content":[{"type":"video"}]}`))
 	require.NoError(t, err)
-	assert.Contains(t, audio.Text, "audio")
 	assert.Contains(t, unknown.Text, "video")
 
 	badImage, err := decodeCallResult(json.RawMessage(`{"content":[{"type":"image","data":"!!!"}]}`))
 	require.NoError(t, err)
 	assert.Contains(t, badImage.Text, "could not be decoded")
+
+	oversized, err := decodeCallResult(json.RawMessage(
+		`{"content":[{"type":"image","data":"` + strings.Repeat("A", 4*(maxImageBytes/3)+8) + `"}]}`,
+	))
+	require.NoError(t, err)
+	assert.Contains(t, oversized.Text, "the limit is")
 }
 
 // TestParseSSEResponse_NoReply pins the error a truncated stream produces.

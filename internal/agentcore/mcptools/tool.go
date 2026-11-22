@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"clawbench/internal/agentcore/tools"
@@ -67,33 +68,71 @@ func FromBundle(b *mcp.Bundle) []Server {
 // supportsVision decides whether an image result is handed to the model or
 // replaced with a note: sending an image to a text-only model produces a 400
 // the user cannot diagnose.
+//
+// Tools are taken round-robin across servers. Filling server by server would
+// let one large server consume the whole cap, leaving the servers after it with
+// no tools at all — the user would see a configured server that silently does
+// nothing. Round-robin guarantees every server gets a share, and the note names
+// the ones that were cut off.
 func Build(servers []Server, supportsVision bool) ([]tools.Tool, []string) {
-	var (
-		out   []tools.Tool
-		notes []string
-		used  = make(map[string]bool)
-	)
-
+	type source struct {
+		server Server
+		defs   []mcp.ToolDef
+	}
+	sources := make([]source, 0, len(servers))
 	for _, srv := range servers {
-		for _, def := range srv.Tools() {
-			if len(out) >= maxTools {
-				notes = append(notes, fmt.Sprintf(
-					"only the first %d MCP tools are available; narrow the agent's MCP selection to expose the rest",
-					maxTools,
-				))
-				return out, notes
+		defs := srv.Tools()
+		if len(defs) > 0 {
+			sources = append(sources, source{server: srv, defs: defs})
+		}
+	}
+
+	var (
+		out  []tools.Tool
+		used = make(map[string]bool)
+		took = make([]int, len(sources))
+	)
+	for len(out) < maxTools {
+		progressed := false
+		for i := range sources {
+			if took[i] >= len(sources[i].defs) {
+				continue
 			}
-			name := uniqueName(used, srv.ServerName(), def.Name)
+			def := sources[i].defs[took[i]]
+			took[i]++
+			name := uniqueName(used, sources[i].server.ServerName(), def.Name)
 			out = append(out, &tool{
-				server: srv.ServerName(),
-				srv:    srv,
+				server: sources[i].server.ServerName(),
+				srv:    sources[i].server,
 				def:    def,
 				name:   name,
 				vision: supportsVision,
 			})
+			progressed = true
+			if len(out) >= maxTools {
+				break
+			}
+		}
+		if !progressed {
+			break
 		}
 	}
-	return out, notes
+
+	var truncated []string
+	for i := range sources {
+		if took[i] < len(sources[i].defs) {
+			truncated = append(truncated, sources[i].server.ServerName())
+		}
+	}
+	if len(truncated) == 0 {
+		return out, nil
+	}
+	sort.Strings(truncated)
+	return out, []string{fmt.Sprintf(
+		"only the first %d MCP tools are available; these servers have more: %s. "+
+			"narrow the agent's MCP selection to expose the rest.",
+		maxTools, strings.Join(truncated, ", "),
+	)}
 }
 
 // tool is one MCP tool exposed to the loop.

@@ -107,6 +107,30 @@ func TestPool_RefcountKeepsLiveConnections(t *testing.T) {
 	assert.Error(t, err, "an idle connection must be closed")
 }
 
+// TestPool_RedialsDeadSession is the recovery path: a server that crashed
+// between turns must be replaced on the next Acquire, not handed out forever.
+func TestPool_RedialsDeadSession(t *testing.T) {
+	p := NewPool(time.Minute)
+	ctx := testCtx(t)
+	servers := []model.MCPServer{helperServer(t, "server")}
+
+	first := p.Acquire(ctx, "agent-1", servers, DialOptions{})
+	require.Len(t, first.Servers, 1)
+	dead := first.Servers[0].Session
+	first.Release()
+
+	// Simulate the server process dying while the entry is cached.
+	require.NoError(t, dead.Close())
+	require.False(t, dead.Alive())
+
+	second := p.Acquire(ctx, "agent-1", servers, DialOptions{})
+	require.Len(t, second.Servers, 1, "a dead connection must be replaced")
+	assert.NotSame(t, dead, second.Servers[0].Session)
+	assert.True(t, second.Servers[0].Session.Alive())
+	second.Release()
+	p.CloseAll()
+}
+
 // TestPool_IdleReapReconnects covers the other half: after a reap, the next turn
 // dials again instead of using a dead session.
 func TestPool_IdleReapReconnects(t *testing.T) {
@@ -191,6 +215,11 @@ func TestPool_ConnectedServerAccessors(t *testing.T) {
 // advertises listChanged is re-listed on the next turn, one that does not is
 // left alone.
 func TestPool_RefreshesListChangedTools(t *testing.T) {
+	// The throttle is what makes this testable without a 30s sleep.
+	old := listRefreshInterval
+	listRefreshInterval = 0
+	t.Cleanup(func() { listRefreshInterval = old })
+
 	p := NewPool(time.Minute)
 	ctx := testCtx(t)
 
@@ -201,7 +230,7 @@ func TestPool_RefreshesListChangedTools(t *testing.T) {
 
 	again := p.Acquire(ctx, "agent-1", []model.MCPServer{helperServer(t, "listchanged")}, DialOptions{})
 	require.Len(t, again.Servers, 1)
-	assert.Len(t, again.Servers[0].Tools(), 2, "the refreshed list must still be usable")
+	assert.Len(t, again.Servers[0].Tools(), 3, "the server's new tool must be visible after a refresh")
 	again.Release()
 
 	p.CloseAll()

@@ -89,6 +89,33 @@ func TestBuild_CapsToolCount(t *testing.T) {
 	assert.Contains(t, notes[0], "narrow")
 }
 
+// TestBuild_FairShareAcrossServers pins the round-robin: one huge server must
+// not starve the others out of the tool list entirely.
+func TestBuild_FairShareAcrossServers(t *testing.T) {
+	many := make([]mcp.ToolDef, maxTools*2)
+	for i := range many {
+		many[i] = mcp.ToolDef{Name: "a" + strings.Repeat("x", i)}
+	}
+	got, notes := Build([]Server{
+		&fakeServer{name: "big", tools: many},
+		&fakeServer{name: "small", tools: []mcp.ToolDef{{Name: "only"}}},
+	}, true)
+
+	require.Len(t, got, maxTools)
+	assert.Contains(t, toolNamesOf(got), "mcp__small__only", "the small server must not be starved")
+	require.Len(t, notes, 1)
+	assert.Contains(t, notes[0], "big")
+	assert.NotContains(t, notes[0], "small")
+}
+
+func toolNamesOf(list []tools.Tool) []string {
+	names := make([]string, 0, len(list))
+	for _, t := range list {
+		names = append(names, t.Name())
+	}
+	return names
+}
+
 // TestSpec_StripsUnsupportedSchemaKeys pins the schema copy: some gateways
 // reject $schema/title, and mutating the shared ToolDef would leak into the
 // next turn.

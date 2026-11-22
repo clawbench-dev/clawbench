@@ -102,6 +102,21 @@ func TestRun_ExtraToolNameCollisionIsDropped(t *testing.T) {
 	}
 }
 
+// TestSubagent_InheritsExtraTools pins the one-line consequence of childSpec
+// copying Spec: a delegated task keeps the same external tools.
+func TestSubagent_InheritsExtraTools(t *testing.T) {
+	extra := &fakeExtraTool{name: "mcp__demo__echo"}
+	parent := &taskTool{r: &runner{spec: Spec{ExtraTools: []tools.Tool{extra}}}}
+
+	child := parent.childSpec("do it", 1)
+	if len(child.ExtraTools) != 1 {
+		t.Fatalf("a sub-agent must inherit the parent's extra tools, got %d", len(child.ExtraTools))
+	}
+	if got := child.ExtraTools[0].Name(); got != "mcp__demo__echo" {
+		t.Fatalf("unexpected inherited tool %q", got)
+	}
+}
+
 // TestBuildSystemPrompt_ToolNotes pins the "unavailable" section: a server that
 // failed to attach must be explained, not silently absent.
 func TestBuildSystemPrompt_ToolNotes(t *testing.T) {
