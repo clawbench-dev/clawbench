@@ -287,6 +287,20 @@ func elicitationContent(content map[string]any) map[string]acp.ElicitationConten
 			out[k] = acp.NewElicitationContentValueString(t)
 		case []string:
 			out[k] = acp.NewElicitationContentValueStringArray(t...)
+		case []any:
+			// The HTTP handler decodes a JSON array (the card's multi-select
+			// answer) as []any, not []string. Before v0.20 the untyped Content
+			// map passed it straight through; the typed response needs an
+			// explicit conversion or the field is silently dropped.
+			values := make([]string, 0, len(t))
+			for _, e := range t {
+				if s, ok := e.(string); ok {
+					values = append(values, s)
+				}
+			}
+			if len(values) > 0 {
+				out[k] = acp.NewElicitationContentValueStringArray(values...)
+			}
 		case bool:
 			out[k] = acp.NewElicitationContentValueBoolean(t)
 		case int:

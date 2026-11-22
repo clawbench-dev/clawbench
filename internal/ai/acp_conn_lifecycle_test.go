@@ -171,6 +171,12 @@ func TestBuildInitializeRequest_CapabilitiesAreWired(t *testing.T) {
 	if req.ClientCapabilities.Elicitation == nil || req.ClientCapabilities.Elicitation.Form == nil {
 		t.Error("Initialize request must advertise form elicitation (OpenCode question tool)")
 	}
+	// Plan operations are backend-independent too: schema 1.32 sends
+	// plan_update/plan_removed only to clients that advertise them, and
+	// acp_events.go now renders both.
+	if req.ClientCapabilities.Plan == nil {
+		t.Error("Initialize request must advertise plan operations (plan_update/plan_removed)")
+	}
 
 	// A non-CodeBuddy agent must get the full capability set — proves the
 	// request is built per-agent rather than from a constant.

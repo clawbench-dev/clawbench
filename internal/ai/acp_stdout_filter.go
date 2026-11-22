@@ -106,6 +106,11 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 		// Fix string-number ID mismatch
 		fixed := fixStringNumericID(line)
 
+		// Let the SDK decode elicitation schemas whose `type` is implied by
+		// enum/oneOf/items (JSON Schema allows omitting it; the SDK's union
+		// does not). See acp_elicitation_wire.go.
+		fixed = normalizeElicitationSchema(fixed)
+
 		// Extract SessionModelState from session/new or session/resume responses.
 		// Some agents (e.g., kimi) return a "models" field that the ACP Go SDK
 		// schema does not model in its NewSessionResponse type, so it gets

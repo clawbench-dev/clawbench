@@ -178,6 +178,10 @@ func buildInitializeRequest(agent *model.Agent) acp.InitializeRequest {
 			Elicitation: &acp.ElicitationCapabilities{
 				Form: &acp.ElicitationFormCapabilities{},
 			},
+			// schema 1.32's plan operations: plan_update / plan_removed.
+			// The panel now handles both; without this an agent keeps sending
+			// the legacy `plan` shape (one plan per session, no plan IDs).
+			Plan: &acp.PlanCapabilities{},
 		},
 		ClientInfo: &acp.Implementation{
 			Name:    "clawbench",
