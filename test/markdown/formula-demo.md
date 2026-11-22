@@ -158,4 +158,78 @@ $x_{i} + y_{j}$ 也是代码
 
 ---
 
+## 根号 / 括号 / 长箭头（Issue #473 回归测试）
+
+修复前：KaTeX 画根号、上下括号、长箭头靠的是一串 SVG 线条，这些线条的数据在净化时被当成链接地址过滤掉了。结果是根号里的字母还在，根号本身没了。
+
+### 行内根号
+
+- 普通根号：$\sqrt{x}$、$\sqrt{9}=3$
+- 带上下标：$\sqrt{x_2}$、$\sqrt[3]{a}$
+- 分式里的根号：$\frac{\sqrt{a}+\sqrt{b}}{2}$
+
+### `\(...\)` 写法的行内公式
+
+修复前，`\(...\)` 里只要带反斜杠命令（`\sqrt`、`\frac` 这类），整段就认不出来，会原样显示成文本。
+
+行内：\(\sqrt{x}\)、\(\frac{a}{b}\)、\(\left( x \right)\)、\(\Gamma(z)=\int_0^\infty t^{z-1}dt\)
+
+### 上下括号
+
+行内：$\underbrace{a+b}_{2}$、$\overbrace{x+y}^{2}$
+
+显示：
+
+$$
+\underbrace{\sqrt{x}}_{\text{速度}} + \overbrace{y}^{\text{位置}}
+$$
+
+### 长箭头
+
+$$
+A \xrightarrow{f} B \xrightarrow{g} C
+$$
+
+带上下标注的长箭头：
+
+$$
+x \xrightarrow[\text{否则}]{\text{若 } x>0} y
+$$
+
+### 矩阵和分段函数（列对齐）
+
+修复前，矩阵的列对齐设置也被过滤，各列会挤在一起。
+
+$$
+\begin{pmatrix}
+a & b \\
+c & d
+\end{pmatrix}
+\quad
+\begin{cases}
+1 & x > 0 \\
+0 & x \le 0
+\end{cases}
+$$
+
+### 混在普通 Markdown 里
+
+> **速度 $\sqrt{x}$** 和 \(\sqrt{y_2}\) 都写在引用里
+
+1. 列表里的显示公式
+   $$
+   \underbrace{\sqrt{x}}_{\text{速度}} \xrightarrow{\text{加速}} y
+   $$
+
+### 代码里的公式（不应该被渲染）
+
+行内代码：`$\sqrt{x}$` 和 `\(\sqrt{y}\)`
+
+```tex
+$$\sqrt{z}$$
+\(\sqrt{w}\)
+```
+
+---
+
 提示：这些公式使用 KaTeX 渲染，支持完整的 LaTeX 数学语法。
