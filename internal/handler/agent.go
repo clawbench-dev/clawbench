@@ -266,14 +266,25 @@ func providerModelsForAgent(a *model.Agent) []model.AgentModel {
 }
 
 func catalogModelsForAgent(a *model.Agent) []model.AgentModel {
-	if a.ProviderID == nil {
+	if a.ProviderID != nil {
+		provider := model.GetProvider(*a.ProviderID)
+		if provider == nil || provider.PresetID == "" {
+			return nil
+		}
+		return model.CatalogModelsForPreset(provider.PresetID)
+	}
+	// Unbound agent: the backend's own discovered list is the only catalogue we
+	// have before ACP reports one. It is still "not confirmed to run", which is
+	// exactly what the settings picker's caveat says. Hiding it left the
+	// backends whose ACP adapter never reports a model list (kimi, qodercn,
+	// mimo, …) with an empty picker forever, even though their static catalogue
+	// is known and shown in the CLI era.
+	if len(a.Models) == 0 {
 		return nil
 	}
-	provider := model.GetProvider(*a.ProviderID)
-	if provider == nil || provider.PresetID == "" {
-		return nil
-	}
-	return model.CatalogModelsForPreset(provider.PresetID)
+	out := make([]model.AgentModel, len(a.Models))
+	copy(out, a.Models)
+	return out
 }
 
 // acpState is the cached ACP capability snapshot attached to each agent in

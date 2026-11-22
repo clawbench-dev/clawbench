@@ -180,7 +180,11 @@ func TestAppendProjectContextSection_StripsBOM(t *testing.T) {
 // it, a task would run the built-in agent with no project rules while a chat
 // turn in the same project had them.
 func TestProjectContextSectionWiredIntoBothProducers(t *testing.T) {
-	call := regexp.MustCompile(`AppendProjectContextSection\(systemPrompt,\s*projectPath,\s*\w+\)`)
+	// The guard and the call must be bound together: asserting them
+	// independently would still pass if the call drifted out of the
+	// isBuiltinBackend branch (and an external backend would then get the
+	// project rules injected a second time).
+	guardedCall := regexp.MustCompile(`isBuiltinBackend\([^)]*\)[^{]*\{[^}]{0,600}?AppendProjectContextSection\(systemPrompt,`)
 	cases := []struct {
 		file string
 		why  string
@@ -192,10 +196,8 @@ func TestProjectContextSectionWiredIntoBothProducers(t *testing.T) {
 		t.Run(tc.file, func(t *testing.T) {
 			src, err := os.ReadFile(tc.file)
 			require.NoError(t, err)
-			assert.Regexp(t, call, string(src),
-				"%s must inject the project context (%s)", tc.file, tc.why)
-			assert.Regexp(t, regexp.MustCompile(`isBuiltinBackend\(`), string(src),
-				"%s must gate the injection on the built-in backend", tc.file)
+			assert.Regexp(t, guardedCall, string(src),
+				"%s must inject the project context inside the isBuiltinBackend guard (%s)", tc.file, tc.why)
 		})
 	}
 }

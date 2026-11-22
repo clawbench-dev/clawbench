@@ -203,6 +203,51 @@ func TestSessionUpdateVariantMismatch_EveryUnionMember(t *testing.T) {
 		{"session_info_update", "session_info_update", "model_update", `"title":"t"`},
 		{"usage_update", "usage_update", "usage_pending", `"used":1,"size":2`},
 	}
+	// One hand-built frame per union member. This is the part that actually
+	// guards the case table: a frame whose typed struct is set but whose
+	// discriminator is foreign MUST be flagged. Driving it from the JSON above
+	// cannot do that — the SDK now rejects a foreign discriminator before it
+	// reaches us, so the assertion was skipped and deleting a case stayed green.
+	foreignFrames := map[string]func() acp.SessionUpdate{
+		"user_message_chunk": func() acp.SessionUpdate {
+			return acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{SessionUpdate: "x"}}
+		},
+		"agent_message_chunk": func() acp.SessionUpdate {
+			return acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{SessionUpdate: "x"}}
+		},
+		"agent_thought_chunk": func() acp.SessionUpdate {
+			return acp.SessionUpdate{AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{SessionUpdate: "x"}}
+		},
+		"tool_call": func() acp.SessionUpdate {
+			return acp.SessionUpdate{ToolCall: &acp.SessionUpdateToolCall{SessionUpdate: "x"}}
+		},
+		"tool_call_update": func() acp.SessionUpdate {
+			return acp.SessionUpdate{ToolCallUpdate: &acp.SessionToolCallUpdate{SessionUpdate: "x"}}
+		},
+		"plan": func() acp.SessionUpdate { return acp.SessionUpdate{Plan: &acp.SessionUpdatePlan{SessionUpdate: "x"}} },
+		"plan_update": func() acp.SessionUpdate {
+			return acp.SessionUpdate{PlanUpdate: &acp.SessionPlanUpdate{SessionUpdate: "x"}}
+		},
+		"plan_removed": func() acp.SessionUpdate {
+			return acp.SessionUpdate{PlanRemoved: &acp.SessionUpdatePlanRemoved{SessionUpdate: "x"}}
+		},
+		"available_commands_update": func() acp.SessionUpdate {
+			return acp.SessionUpdate{AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{SessionUpdate: "x"}}
+		},
+		"current_mode_update": func() acp.SessionUpdate {
+			return acp.SessionUpdate{CurrentModeUpdate: &acp.SessionCurrentModeUpdate{SessionUpdate: "x"}}
+		},
+		"config_option_update": func() acp.SessionUpdate {
+			return acp.SessionUpdate{ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{SessionUpdate: "x"}}
+		},
+		"session_info_update": func() acp.SessionUpdate {
+			return acp.SessionUpdate{SessionInfoUpdate: &acp.SessionSessionInfoUpdate{SessionUpdate: "x"}}
+		},
+		"usage_update": func() acp.SessionUpdate {
+			return acp.SessionUpdate{UsageUpdate: &acp.SessionUsageUpdate{SessionUpdate: "x"}}
+		},
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// The genuine variant is not flagged.
@@ -211,9 +256,14 @@ func TestSessionUpdateVariantMismatch_EveryUnionMember(t *testing.T) {
 			assert.False(t, sessionUpdateVariantMismatch(ok),
 				"a genuine %s must not be flagged", tc.name)
 
+			build, wired := foreignFrames[tc.name]
+			require.True(t, wired, "every union member needs a hand-built frame here")
+			assert.True(t, sessionUpdateVariantMismatch(build()),
+				"a %s carrying a foreign discriminator must be flagged; its case is missing", tc.name)
+
 			// A foreign discriminator no longer lands in a look-alike struct:
 			// the SDK rejects it. If a future release starts decoding one
-			// again, the guard must flag it — that is what this branch pins.
+			// again, the guard must flag it too.
 			var foreign acp.SessionUpdate
 			if err := json.Unmarshal([]byte(`{"sessionUpdate":"`+tc.foreign+`",`+tc.fields+`}`), &foreign); err == nil {
 				assert.True(t, sessionUpdateVariantMismatch(foreign),
