@@ -126,6 +126,23 @@ type Agent struct {
 	// true → "insert into the current reply", false → "interrupt and send".
 	SupportsMidTurn bool `json:"supportsMidTurn"`
 
+	// The four MCP / session-list facts below are echoed so the settings UI stops
+	// matching on backend ids. Each is asked ONCE of the backend spec and carried
+	// to the client as its own field; a new backend then declares the fact in its
+	// own Spec and no Vue file needs editing.
+	//
+	// MCPUnsupportedBackend: probe measured the backend accepting `mcpServers`
+	// and ignoring it entirely.
+	MCPUnsupportedBackend bool `json:"mcpUnsupportedBackend"`
+	// MCPRejectsSSE: an `sse` server fails session/new outright on this backend.
+	MCPRejectsSSE bool `json:"mcpRejectsSse"`
+	// MCPAttachesAsync: injected servers attach AFTER session/new, so a tool may
+	// be briefly missing on the first turn.
+	MCPAttachesAsync bool `json:"mcpAttachesAsync"`
+	// ListSessionsOmitsEmptyTitle: the on-disk session list contains untitled
+	// placeholders the CLI itself would not show; the drawer hides them.
+	ListSessionsOmitsEmptyTitle bool `json:"listSessionsOmitsEmptyTitle"`
+
 	// SortOrder determines display order in agent list; lower values first.
 	SortOrder int `json:"sortOrder"`
 

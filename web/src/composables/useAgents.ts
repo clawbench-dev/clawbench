@@ -126,6 +126,21 @@ interface AgentRecord {
    */
   skipProjectContext?: boolean
   supportsMidTurn?: boolean
+  /**
+   * The four facts below are per-backend MCP / session-list quirks the server
+   * computes from the backend's own spec (see model.BackendSpec). They used to
+   * live in the UI as hard-coded lists of backend ids.
+   *
+   * `mcpUnsupportedBackend`: the probe measured this backend accepting
+   * `mcpServers` and ignoring it entirely.
+   */
+  mcpUnsupportedBackend?: boolean
+  /** An `sse` MCP server fails session/new outright on this backend. */
+  mcpRejectsSse?: boolean
+  /** Injected MCP servers attach AFTER session/new, so a tool may lag briefly. */
+  mcpAttachesAsync?: boolean
+  /** The on-disk session list holds untitled placeholders the CLI would hide. */
+  listSessionsOmitsEmptyTitle?: boolean
   autoApprove?: boolean
   /** Hidden from every new-entry picker (new session / task / group member). */
   disabled?: boolean
@@ -653,6 +668,12 @@ export function applyResolvedModelList(
  * the discovered list is a guess until the ACP agent has reported its own
  * models (ACP has no client-side default-model concept).
  *
+ * A BUILT-IN (in-process) agent is never cleared. It has no handshake to wait
+ * for, so "no ACP state" is not "not reported yet" — its list comes from the
+ * provider the user bound, and the backend already resolved it into
+ * agent.models. Clearing it here emptied the picker and dropped the chip to
+ * "Default" the moment the user switched away from and back to that agent.
+ *
  * Returns true when an ACP-reported list was applied, false when the list was
  * cleared because the agent has not reported models yet.
  */
@@ -668,6 +689,12 @@ export function restoreACPModelView(agentId: string): boolean {
     if (ml?.models && ml.models.length > 0) {
         updateACPModelList(agentId, ml.models, ml.currentModelId)
         return true
+    }
+    if (agent.builtinBackend === true) {
+        // Keep whatever /api/agents gave us: for this agent that IS the
+        // authoritative list, and there is no later event that would bring it
+        // back into this cached view.
+        return (agent.models?.length || 0) > 0
     }
     // No ACP-reported models: an empty list is the honest answer, and it keeps
     // the send path from shipping a CLI model as the session's selection.

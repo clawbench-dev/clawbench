@@ -47,6 +47,15 @@ func Register(p *BackendPlugin) {
 	if p.Spec.MCPUnsupported {
 		model.RegisterMCPUnsupported(p.ID)
 	}
+	if p.Spec.MCPRejectsSSE {
+		model.RegisterMCPRejectsSSE(p.ID)
+	}
+	if p.Spec.MCPAttachesAsync {
+		model.RegisterMCPAttachesAsync(p.ID)
+	}
+	if p.Spec.ListSessionsOmitsEmptyTitle {
+		model.RegisterListSessionsOmitsEmptyTitle(p.ID)
+	}
 	if p.ProviderEnv != nil {
 		model.RegisterProviderEnvSpec(p.ID, *p.ProviderEnv)
 	}

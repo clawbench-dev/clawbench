@@ -6714,6 +6714,19 @@ paths:
             `AcpCommandManagedByDiscovery` 拒绝）；`false` 表示命令由用户/文件持有
             （用户自定义 ACP 智能体、YAML 定义的 agent），可编辑。前端与服务端守卫
             共用这一个判据，因此不会出现「界面让改、API 拒绝」。
+
+            另有四个**运行期派生**的后端事实（同样加载时算、非持久化列，来源于该
+            backend 自己的 spec）。它们存在的原因是前端**不再按 backend id 判定**，
+            新后端只要在自己的 spec 里声明，界面无需改动：
+
+            - `mcpUnsupportedBackend`：探测确认该后端接受 `mcpServers` 字段但完全
+              忽略，客户端应整体禁用 MCP 设置区。
+            - `mcpRejectsSse`：`sse` 传输会让该后端的 `session/new` 直接失败，客户端
+              不应允许勾选 sse 型服务器。
+            - `mcpAttachesAsync`：注入的服务器在 `session/new` **之后**才挂载，首次
+              对话里工具可能短暂缺席，界面应给提示而非当作配置无效。
+            - `listSessionsOmitsEmptyTitle`：磁盘会话列表含 CLI 自己不展示的无标题
+              占位会话，会话抽屉应过滤掉。
     post:
       tags: [Agents]
       summary: 复制 / 新建 agent

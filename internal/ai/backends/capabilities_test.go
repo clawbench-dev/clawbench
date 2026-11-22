@@ -7,6 +7,8 @@ import (
 	"clawbench/internal/ai/backends"
 	"clawbench/internal/model"
 
+	"github.com/stretchr/testify/assert"
+
 	// Register every backend so the table below sees the real set.
 	_ "clawbench/internal/ai/backends/all"
 )
@@ -125,4 +127,39 @@ func TestCapabilities_EveryBackendIsCovered(t *testing.T) {
 			t.Errorf("backend %q splits a reply it cannot inject into", p.ID)
 		}
 	}
+}
+
+// TestSpecFacts_ReachTheModelRegistries pins the four per-backend facts the
+// settings UI used to keep as its own lists of backend ids. Each one must come
+// from the backend's Spec through Register() into the model registry — if the
+// forwarding in Register is dropped, the UI silently falls back to treating
+// every backend as plain (offering sse everywhere, hiding no placeholder).
+func TestSpecFacts_ReachTheModelRegistries(t *testing.T) {
+	// MCPUnsupported: probe measured accept-and-ignore.
+	for _, backend := range []string{"dsh", "deepseek", "pi"} {
+		assert.False(t, model.BackendSupportsMCP(backend),
+			"%s must report MCP as unsupported", backend)
+	}
+	assert.True(t, model.BackendSupportsMCP("claude"),
+		"a backend the probe did not measure must keep MCP enabled")
+
+	// MCPRejectsSSE: session/new fails outright on an sse server.
+	for _, backend := range []string{"codex", "commandcode"} {
+		assert.True(t, model.BackendRejectsMCPTransport(backend, "sse"),
+			"%s must reject the sse transport", backend)
+		assert.False(t, model.BackendRejectsMCPTransport(backend, "http"),
+			"%s only rejects sse, not http", backend)
+	}
+	assert.False(t, model.BackendRejectsMCPTransport("claude", "sse"),
+		"claude accepts an sse server")
+
+	// MCPAttachesAsync: injected servers mount after session/new.
+	assert.True(t, model.BackendMCPAttachesAsync("hermes"),
+		"hermes attaches injected servers asynchronously")
+	assert.False(t, model.BackendMCPAttachesAsync("claude"))
+
+	// Untitled placeholder sessions in the on-disk list.
+	assert.True(t, model.BackendListSessionsOmitsEmptyTitle("codex"),
+		"codex lists untitled placeholders that the drawer must hide")
+	assert.False(t, model.BackendListSessionsOmitsEmptyTitle("claude"))
 }

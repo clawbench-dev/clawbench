@@ -43,6 +43,11 @@ func init() {
 			// in ~/.agents/skills, leaving Hermes unable to see them at all.
 			NativeSkillsDirs:      []string{".hermes/skills"},
 			AutoLoadsNativeSkills: true,
+			// Hermes attaches the injected MCP servers AFTER session/new returns,
+			// so a tool from a newly added server is briefly absent on the first
+			// turn. Not a failure: the UI shows "may take a moment" instead of
+			// leaving the user to conclude the setting did nothing.
+			MCPAttachesAsync: true,
 			// ThinkingEffortLevels is intentionally nil: Hermes has no static
 			// effort levels and advertises no `thought_level` ACP config option,
 			// so there is nothing for the UI to switch (same posture as dsh).

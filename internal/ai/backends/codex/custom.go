@@ -24,6 +24,15 @@ func init() {
 			// inject these again.
 			NativeSkillsDirs:      []string{".codex/skills", ".agents/skills"},
 			AutoLoadsNativeSkills: true,
+			// codex-acp rejects an `sse` MCP server outright: session/new answers
+			// RequestError.invalidRequest, so the whole session dies. The
+			// settings UI must refuse that transport rather than let the user
+			// configure a server that kills the next turn.
+			MCPRejectsSSE: true,
+			// listCodexSessionsFromDisk returns every rollout file, including the
+			// untitled placeholders codex creates before the first prompt — its
+			// own UI does not list those, so the drawer must not either.
+			ListSessionsOmitsEmptyTitle: true,
 		},
 		// Codex can inject a message into the running turn via the ACP steering
 		// extension (_session/steering). It emits no echo boundary, so the

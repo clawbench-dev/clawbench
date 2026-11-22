@@ -667,6 +667,10 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 		}
 		agent.Transport = agent.DeriveTransport()
 		agent.SupportsMidTurn = BackendSupportsMidTurn(agent.Backend)
+		agent.MCPUnsupportedBackend = !BackendSupportsMCP(agent.Backend)
+		agent.MCPRejectsSSE = BackendRejectsMCPTransport(agent.Backend, "sse")
+		agent.MCPAttachesAsync = BackendMCPAttachesAsync(agent.Backend)
+		agent.ListSessionsOmitsEmptyTitle = BackendListSessionsOmitsEmptyTitle(agent.Backend)
 		agent.ProviderProtocols = SupportedProtocols(agent.Backend)
 		agent.ProviderKeyOnly = BackendIsKeyOnly(agent.Backend)
 		agent.ProviderConfigBackend = ProviderUsesConfigFile(agent.Backend)

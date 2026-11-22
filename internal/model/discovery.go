@@ -117,6 +117,26 @@ type BackendSpec struct {
 	// backend, so it belongs in that backend's Spec: the map made every new
 	// backend edit a file in another package.
 	MCPUnsupported bool
+	// MCPRejectsSSE marks a backend whose adapter fails session/new outright
+	// when given an `sse` server (codex: RequestError.invalidRequest), so the
+	// settings UI must refuse that transport instead of letting the turn die.
+	//
+	// Distinct from MCPUnsupported: that one accepts and ignores, this one
+	// rejects loudly. Both are facts about one backend, so both live here —
+	// the UI used to keep its own list of backend ids, which meant every new
+	// backend had to remember to edit a Vue file.
+	MCPRejectsSSE bool
+	// MCPAttachesAsync marks a backend that attaches the injected servers
+	// asynchronously AFTER session/new returns, so a tool from an
+	// MCP-provided server is simply not there for the first moments of the
+	// first turn. Not an error — the UI shows a "may take a moment" hint
+	// instead of pretending the config was ignored.
+	MCPAttachesAsync bool
+	// ListSessionsOmitsEmptyTitle marks a backend whose on-disk session list
+	// includes entries the CLI itself would never show, because they have no
+	// title (codex): placeholders created before the first prompt. The session
+	// drawer hides them.
+	ListSessionsOmitsEmptyTitle bool
 }
 
 // LoadBackendSpecs is set by the backends package at init time to provide

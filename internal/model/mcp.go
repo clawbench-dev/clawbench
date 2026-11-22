@@ -126,6 +126,18 @@ var (
 	mcpUnsupported   = map[string]bool{}
 )
 
+// Two further MCP facts a backend's spec can declare, and the on-disk session
+// list quirk. All three are per-backend negatives that the settings UI used to
+// keep as its own lists of backend ids (AgentMCPSection.vue's NO_SSE_BACKENDS /
+// SLOW_START_BACKENDS and AcpSessionDrawer.vue's `backend !== 'codex'`), which
+// meant a new backend had to be remembered in a Vue file as well as here.
+var (
+	mcpCapMu         sync.RWMutex
+	mcpRejectsSSE    = map[string]bool{}
+	mcpAttachesAsync = map[string]bool{}
+	emptyTitleHidden = map[string]bool{}
+)
+
 // RegisterMCPUnsupported records that backendID silently ignores the
 // `mcpServers` field. Called by the backend registry for every plugin whose
 // Spec sets MCPUnsupported. Idempotent: re-registering the same id is a no-op.
@@ -143,6 +155,46 @@ func BackendSupportsMCP(backend string) bool {
 	mcpUnsupportedMu.RLock()
 	defer mcpUnsupportedMu.RUnlock()
 	return !mcpUnsupported[backend]
+}
+
+// RegisterMCPRejectsSSE records that backendID's adapter fails session/new when
+// handed an `sse` server. Called by the backend registry for every plugin whose
+// Spec sets MCPRejectsSSE.
+func RegisterMCPRejectsSSE(backendID string) {
+	mcpCapMu.Lock()
+	defer mcpCapMu.Unlock()
+	mcpRejectsSSE[backendID] = true
+}
+
+// RegisterMCPAttachesAsync records that backendID attaches injected servers
+// asynchronously after session/new. Called by the backend registry for every
+// plugin whose Spec sets MCPAttachesAsync.
+func RegisterMCPAttachesAsync(backendID string) {
+	mcpCapMu.Lock()
+	defer mcpCapMu.Unlock()
+	mcpAttachesAsync[backendID] = true
+}
+
+// BackendRejectsMCPTransport reports whether an MCP server of this transport
+// must not be offered for the backend at all. Only `sse` can be rejected today
+// (stdio is mandatory in ACP; http is only filtered by what the agent
+// advertised). Unknown backends are assumed to accept it.
+func BackendRejectsMCPTransport(backendID, transport string) bool {
+	if transport != "sse" {
+		return false
+	}
+	mcpCapMu.RLock()
+	defer mcpCapMu.RUnlock()
+	return mcpRejectsSSE[backendID]
+}
+
+// BackendMCPAttachesAsync reports whether the backend mounts injected servers
+// asynchronously, i.e. whether the UI should say a new server "may take a
+// moment" rather than assume the setting did nothing.
+func BackendMCPAttachesAsync(backendID string) bool {
+	mcpCapMu.RLock()
+	defer mcpCapMu.RUnlock()
+	return mcpAttachesAsync[backendID]
 }
 
 // ResolveMCPServers returns the servers to inject for one agent, already
@@ -396,4 +448,21 @@ func ValidateMCPServers(servers []MCPServer) error {
 func isMCPNameChar(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
 		(r >= '0' && r <= '9') || r == '_' || r == '-'
+}
+
+// RegisterListSessionsOmitsEmptyTitle records that backendID's on-disk session
+// list contains untitled placeholder entries the CLI itself would not show.
+// Called by the backend registry for every plugin whose Spec sets it.
+func RegisterListSessionsOmitsEmptyTitle(backendID string) {
+	mcpCapMu.Lock()
+	defer mcpCapMu.Unlock()
+	emptyTitleHidden[backendID] = true
+}
+
+// BackendListSessionsOmitsEmptyTitle reports whether untitled sessions from
+// this backend should be hidden in the session drawer.
+func BackendListSessionsOmitsEmptyTitle(backendID string) bool {
+	mcpCapMu.RLock()
+	defer mcpCapMu.RUnlock()
+	return emptyTitleHidden[backendID]
 }
