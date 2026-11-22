@@ -9,7 +9,6 @@
       :style="{ zIndex }"
       tabindex="-1"
       @click.self="handleClose"
-      @keydown.escape="handleClose"
     >
       <div
         class="modal-dialog"
@@ -56,6 +55,7 @@ import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
 import { X } from 'lucide-vue-next'
 import i18n from '@/i18n'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import { pushEscapeLayer } from '@/utils/escapeStack'
 import '@/assets/modal-card.css'
 import '@/assets/modal-footer-btn.css'
 
@@ -89,6 +89,7 @@ const everOpened = ref(false)
 const overlayRef = ref(null)
 let leaveTimer = null
 let unregisterBack = null
+let releaseEscape = null
 
 // Register a back handler while open so the Android hardware back button and
 // the web edge-swipe gesture (both dispatch `clawbench-back-press`) close this
@@ -119,6 +120,22 @@ function unregisterBackHandler() {
   }
 }
 
+// Escape is handled at window level (see utils/escapeStack), not on the
+// overlay: opening a dialog from a popup menu can leave focus on the trigger
+// behind the overlay, and an overlay-scoped handler never sees the key. The
+// stack is also what makes nesting correct — one Escape closes only the
+// topmost dialog instead of every open one.
+function registerEscape() {
+  if (releaseEscape) return
+  releaseEscape = pushEscapeLayer(handleClose)
+}
+
+function releaseEscapeLayer() {
+  if (!releaseEscape) return
+  releaseEscape()
+  releaseEscape = null
+}
+
 watch(() => props.open, (val) => {
   clearTimeout(leaveTimer)
   if (val) {
@@ -129,14 +146,21 @@ watch(() => props.open, (val) => {
       overlayRef.value?.focus()
     })
     registerBack()
+    registerEscape()
   } else if (leaving.value) {
     // Close triggered externally while animating — cancel animation, hide now
     leaving.value = false
   }
-  if (!val) unregisterBackHandler()
+  if (!val) {
+    unregisterBackHandler()
+    releaseEscapeLayer()
+  }
 }, { immediate: true })
 
-onBeforeUnmount(unregisterBackHandler)
+onBeforeUnmount(() => {
+  unregisterBackHandler()
+  releaseEscapeLayer()
+})
 
 function handleClose() {
   if (leaving.value) return

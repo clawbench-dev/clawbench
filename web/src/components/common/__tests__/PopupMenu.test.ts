@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import PopupMenu from '../PopupMenu.vue'
+import { resetEscapeLayersForTest } from '@/utils/escapeStack'
 import {
   _resetHandlers,
   canNavigateBack,
@@ -86,12 +87,18 @@ describe('PopupMenu', () => {
   })
 
   it('emits update:show false on escape', async () => {
+    // Earlier cases mount menus and never unmount; drop their layers so this
+    // keypress reaches the menu under test.
+    resetEscapeLayersForTest()
     const wrapper = mount(PopupMenu, {
       props: { show: true },
       slots: { default: '<div>Item</div>' },
       global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
     })
-    await wrapper.find('.popup-menu').trigger('keydown.escape')
+    // Escape is a window-level layer now: it must close the menu even when
+    // focus is outside it (the element-scoped handler used to require focus).
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await nextTick()
     expect(wrapper.emitted('update:show')).toBeTruthy()
   })
 
