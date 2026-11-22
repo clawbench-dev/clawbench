@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"clawbench/internal/store"
 
@@ -182,7 +183,7 @@ func TestServeACPSyncSession_IncrementalMerge(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	restore := newSyncReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
+	newSyncReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
 		{SessionId: "acp-1", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
 			MessageId: strPtr("m1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "existing"}},
 		}}},
@@ -190,7 +191,6 @@ func TestServeACPSyncSession_IncrementalMerge(t *testing.T) {
 			MessageId: strPtr("m2"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "newly added"}},
 		}}},
 	})
-	defer restore()
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/acp-sync", map[string]string{
 		"agentId":   agentID,
@@ -242,7 +242,7 @@ func TestServeACPSyncSession_NoDuplicateOfLiveMessages(t *testing.T) {
 
 	// External replay: the two live messages (user one now carries an injected
 	// system-instructions prefix) + two genuinely new messages.
-	restore := newSyncReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
+	newSyncReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
 		{SessionId: "acp-1", Update: acp.SessionUpdate{UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
 			MessageId: strPtr("x1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "[System Instructions: ...] 你叫什么名字"}},
 		}}},
@@ -256,7 +256,6 @@ func TestServeACPSyncSession_NoDuplicateOfLiveMessages(t *testing.T) {
 			MessageId: strPtr("w1"), Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "我没有年龄的概念——我是一个 AI 助手。"}},
 		}}},
 	})
-	defer restore()
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/acp-sync", map[string]string{
 		"agentId":   agentID,
@@ -289,7 +288,7 @@ func TestServeACPSyncSession_NoDuplicateOfLiveMessages(t *testing.T) {
 
 // newSyncReplayConn 同 newACPReplayConn，但预置 loadSessionActive=true 以跳过
 // SyncLoadSession 的真实 RPC，直接使用预填充的回放缓冲。
-func newSyncReplayConn(t *testing.T, agent *model.Agent, buf []acp.SessionNotification) (restore func()) {
+func newSyncReplayConn(t *testing.T, agent *model.Agent, buf []acp.SessionNotification) *ai.ClawBenchACPClient {
 	t.Helper()
 	conn := ai.NewACPConnForTest(agent, "dummy-clawbench-sid")
 	client := ai.NewClawBenchACPClient()
@@ -301,7 +300,8 @@ func newSyncReplayConn(t *testing.T, agent *model.Agent, buf []acp.SessionNotifi
 	getOrCreateConnForLoad = func(_ context.Context, _ *model.Agent, _, _, _ string) (*ai.ACPConn, error) {
 		return conn, nil
 	}
-	return func() { getOrCreateConnForLoad = orig }
+	t.Cleanup(func() { getOrCreateConnForLoad = orig })
+	return client
 }
 
 func TestHistorySyncWaitsForActiveTurn(t *testing.T) {
@@ -327,4 +327,75 @@ func TestHistorySyncWaitsForActiveTurn(t *testing.T) {
 		release()
 		require.False(t, service.IsSessionRunning(sid))
 	})
+}
+
+func TestServeACPSyncSession_CancellationPreservesHistory(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	agentID := setupACPReplayAgent(t)
+
+	for _, tc := range []struct {
+		name       string
+		activeTurn bool
+	}{
+		{"waiting for active turn", true},
+		{"settling replay", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", agentID, "", "default", "chat")
+			require.NoError(t, err)
+			service.UpdateExternalSessionID(sid, "acp-1")
+			projectID, err := store.ProjectIDForPath(env.ProjectDir)
+			require.NoError(t, err)
+			_, err = store.WriteExec("INSERT INTO chat_history (project_id, backend, session_id, role, content) VALUES (?, 'claude', ?, 'user', 'original')", projectID, sid)
+			require.NoError(t, err)
+
+			mgr := ai.GetACPConnManager()
+			live := ai.NewACPConnForTest(model.Agents[agentID], sid)
+			mgr.SetConnForTest(sid, live)
+			t.Cleanup(func() { mgr.CloseConn(sid) })
+			replay := newSyncReplayConn(t, model.Agents[agentID], []acp.SessionNotification{
+				{SessionId: "acp-1", Update: acp.SessionUpdate{AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+					Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "partial replay"}},
+				}}},
+			})
+			req := newRequest(t, http.MethodPost, "/api/ai/session/acp-sync", map[string]string{"agentId": agentID, "sessionId": sid})
+			req = withProjectCookie(req, env.ProjectDir)
+
+			synctest.Test(t, func(t *testing.T) {
+				if tc.activeTurn {
+					run, ok := service.TryClaimSessionRun(sid)
+					require.True(t, ok)
+					defer service.FinishClaimedSessionRun(run, sid)
+				}
+				// Expire before either the claim retry or the replay quiet window.
+				ctx, cancel := context.WithTimeout(req.Context(), 50*time.Millisecond)
+				defer cancel()
+				w := httptest.NewRecorder()
+				ServeACPSyncSession(w, req.WithContext(ctx))
+				require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+				assert.Empty(t, w.Body.String())
+				assert.Equal(t, tc.activeTurn, service.IsSessionRunning(sid))
+				if tc.activeTurn {
+					assert.Same(t, live, mgr.GetConn(sid))
+					assert.Equal(t, 1, replay.GetLoadSessionBufLen())
+				} else {
+					assert.Nil(t, mgr.GetConn(sid))
+					assert.Zero(t, replay.GetLoadSessionBufLen())
+				}
+			})
+			var content string
+			require.NoError(t, store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE session_id = ?", sid).Scan(&content))
+			assert.Equal(t, "original", content)
+		})
+	}
+}
+
+func TestHistorySyncAlreadyCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, release, err := claimHistorySync(ctx, "sync-already-canceled")
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, release)
+	require.False(t, service.IsSessionRunning("sync-already-canceled"))
 }
