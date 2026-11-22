@@ -1,6 +1,7 @@
 import { FolderOpen, FolderTree } from 'lucide-vue-next'
 import { store } from '@/stores/app'
 import type { DockPlugin } from '@/composables/dockPluginTypes'
+import { category as settingsCategory } from './settings'
 
 /**
  * File manager. The dock's `browse` tab used to be a hard-coded
@@ -17,7 +18,7 @@ export default {
   descriptionKey: 'settings.dockPlugins.desc.browse',
   group: 'workspace',
   closable: false,
-  settingsCategory: 'files',
+  settingsCategory,
   icon: FolderOpen,
   settingsPage: {
     group: 'dockModules',

@@ -1,6 +1,7 @@
 import { GitBranch, History } from 'lucide-vue-next'
 import { store } from '@/stores/app'
 import type { DockPlugin } from '@/composables/dockPluginTypes'
+import { category as settingsCategory } from './settings'
 
 /** Git history: working-tree badge + the project history panel. */
 export default {
@@ -10,7 +11,7 @@ export default {
   descriptionKey: 'settings.dockPlugins.desc.history',
   group: 'workspace',
   closable: true,
-  settingsCategory: 'gitHistory',
+  settingsCategory,
   icon: GitBranch,
   settingsPage: {
     group: 'dockModules',

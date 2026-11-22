@@ -4,6 +4,7 @@ import { setMeetingCreateReturn } from '@/composables/useMeetingViewState'
 import { appLog } from '@/utils/appLog'
 import { MEETING_ICON } from '@/utils/meetingIcon'
 import type { DockPlugin } from '@/composables/dockPluginTypes'
+import { category as settingsCategory } from './settings'
 
 // Lazy: useLiveShare is a large composable and the dock only needs one state
 // ref. Calling it here on first badge read avoids pulling it into module load
@@ -33,7 +34,7 @@ export default {
   descriptionKey: 'settings.dockPlugins.desc.live',
   group: 'personal',
   closable: true,
-  settingsCategory: 'meeting',
+  settingsCategory,
   icon: MEETING_ICON,
   // The settings row uses the SAME glyph as the dock tab: a second, unrelated
   // meeting icon made the page and the tab it configures look like two

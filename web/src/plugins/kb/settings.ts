@@ -18,9 +18,9 @@ export default [
     // the knowledge base is no exception.
     { type: 'item', spec: { labelKey: 'settings.items.featureStatusKb', descriptionKey: 'settings.items.kbEnabledDesc', key: 'kbEnabledStatus', type: 'info', source: 'server', statusFeature: 'kb.enabled', sectionHeader: 'settings.items.featureStatusSection' } },
     // Status card (KbSetting.vue): collection/document counters plus the
-    // reindex action. The placeholder only opens the card — the body is a
-    // dedicated component, so it must also be listed in PLACEHOLDER_ITEMS.
-    { type: 'item', spec: { labelKey: 'settings.items.kbStatusSection', key: 'kbStatus', type: 'info', source: 'server', sectionHeader: 'settings.items.kbStatusSection' } },
+    // reindex action. The item is a placeholder that opens the card and renders
+    // no row — the body is declared here, next to the fields.
+    { type: 'item', spec: { labelKey: 'settings.items.kbStatusSection', key: 'kbStatus', type: 'info', source: 'server', sectionHeader: 'settings.items.kbStatusSection', cardBody: { load: () => import('@/components/settings/KbSetting.vue') } } },
     // ── 自动注入 ──
     // What the agent receives from the knowledge base on every turn.
     { type: 'item', spec: { labelKey: 'settings.items.kbAutoInject', descriptionKey: 'settings.items.kbAutoInjectDesc', key: 'kb.auto_inject', type: 'switch', source: 'server', sectionHeader: 'settings.items.kbInjectSection' } },
