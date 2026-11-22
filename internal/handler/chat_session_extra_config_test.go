@@ -30,10 +30,16 @@ func installExtraConfigRecorder(t *testing.T, agent *model.Agent, sessionID stri
 	conn.SetSessionMappingForTest(sessionID, "acp-sid-extra-"+sessionID)
 	// The handler only accepts ids the agent advertised for THIS session, so the
 	// fixture must look like a codex connection that offered Fast mode.
-	conn.SetExtraConfigOptions([]ai.ExtraConfigOption{{
-		ConfigID: "fast-mode", Name: "Fast mode", Category: "model_config", CurrentID: "off",
-		Values: []ai.ConfigOptionValue{{ID: "off", Name: "Off"}, {ID: "on", Name: "On"}},
-	}})
+	conn.SetExtraConfigOptions([]ai.ExtraConfigOption{
+		{
+			ConfigID: "fast-mode", Name: "Fast mode", Category: "model_config", CurrentID: "off",
+			Values: []ai.ConfigOptionValue{{ID: "off", Name: "Off"}, {ID: "on", Name: "On"}},
+		},
+		{
+			ConfigID: "fast-toggle", Name: "Fast toggle", Category: "model_config",
+			Type: "boolean", CurrentID: "false",
+		},
+	})
 	ai.GetACPConnManager().SetConnForTest(sessionID, conn)
 	t.Cleanup(func() { ai.GetACPConnManager().CloseConn(sessionID) })
 
@@ -143,6 +149,49 @@ func TestApplyExtraConfigOptions_RejectsUnadvertisedIDs(t *testing.T) {
 	select {
 	case got := <-rec.ch:
 		t.Fatalf("only agent-advertised ids may pass, got %v", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// A boolean option is still carried by the same map[string]string body; the
+// handler parses it and forwards it through the boolean variant.
+func TestApplyExtraConfigOptions_Boolean(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agent := &model.Agent{ID: "extra-cfg-bool-agent", Backend: "codex", Transport: "acp-stdio", AcpCommand: "codex"}
+	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "extra-cfg-bool", agent.ID, "", "default", "chat")
+	require.NoError(t, err)
+
+	rec := installExtraConfigRecorder(t, agent, sessionID)
+
+	applyExtraConfigOptions(sessionID, map[string]string{"fast-toggle": "true"})
+
+	select {
+	case got := <-rec.ch:
+		assert.Equal(t, [2]string{"fast-toggle", "true"}, got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("boolean option must be forwarded")
+	}
+}
+
+// A non-boolean string for a boolean option is rejected before the RPC; the
+// agent would answer -32602 and the turn would surface a protocol error.
+func TestApplyExtraConfigOptions_RejectsNonBooleanValue(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agent := &model.Agent{ID: "extra-cfg-bool-bad-agent", Backend: "codex", Transport: "acp-stdio", AcpCommand: "codex"}
+	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "extra-cfg-bool-bad", agent.ID, "", "default", "chat")
+	require.NoError(t, err)
+
+	rec := installExtraConfigRecorder(t, agent, sessionID)
+
+	applyExtraConfigOptions(sessionID, map[string]string{"fast-toggle": "maybe"})
+
+	select {
+	case got := <-rec.ch:
+		t.Fatalf("non-boolean value must not reach the agent, got %v", got)
 	case <-time.After(100 * time.Millisecond):
 	}
 }

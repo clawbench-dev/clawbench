@@ -191,3 +191,28 @@ func TestSetSessionConfigOption_UnsupportedKeyedOnWireID(t *testing.T) {
 
 	assert.Empty(t, rec.all(), "unsupported (wire-id-keyed) config must not be re-sent under any spelling")
 }
+
+// A boolean option must use the boolean wire variant and share the same
+// dedup/cache bookkeeping as a select. The test hook records the string form,
+// which is also what the session cache stores.
+func TestSetSessionConfigOptionBool(t *testing.T) {
+	conn := newLiveConnForConfigTest("bool-config")
+	rec := installConfigSendRecorder(t, conn)
+
+	conn.SetSessionConfigOptionBool(context.Background(), "fast-mode", true)
+	sent := rec.all()
+	require.Len(t, sent, 1)
+	assert.Equal(t, "fast-mode", sent[0].configID)
+	assert.Equal(t, "true", sent[0].value)
+	assert.Equal(t, "true", conn.GetCurrentSelection("fast-mode"))
+
+	// The same value again is deduped.
+	conn.SetSessionConfigOptionBool(context.Background(), "fast-mode", true)
+	assert.Len(t, rec.all(), 1)
+
+	conn.SetSessionConfigOptionBool(context.Background(), "fast-mode", false)
+	sent = rec.all()
+	require.Len(t, sent, 2)
+	assert.Equal(t, "false", sent[1].value)
+	assert.Equal(t, "false", conn.GetCurrentSelection("fast-mode"))
+}

@@ -1233,6 +1233,8 @@ export default {
       advanced: 'Advanced',
       configOptionSaveFailed: 'Failed to save this option. Please retry.',
       notAvailable: 'Not available in current mode',
+      on: 'On',
+      off: 'Off',
       noUsage: 'This session has not reported any context usage yet.',
       noSearchResults: 'No matching models',
       priceHint: 'USD per million tokens (input / output)',

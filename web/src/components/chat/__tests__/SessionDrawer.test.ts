@@ -308,6 +308,28 @@ describe('SessionDrawer', () => {
 
       expect(wrapper.emitted('switch-config-option')).toBeFalsy()
     })
+
+    it('renders a boolean option as localized On/Off and sends the string form', async () => {
+      const fastToggle = {
+        configId: 'fast-toggle',
+        name: 'Fast toggle',
+        category: 'model_config',
+        type: 'boolean',
+        currentValueId: 'false',
+      }
+      mockIdentity.configOptions.value = [fastToggle]
+      const wrapper = mountDrawer()
+
+      await wrapper.findAll('.model-tab')[3].trigger('click')
+      const rows = wrapper.findAll('.extra-config-section .thinking-item')
+      expect(rows.map(r => r.text())).toEqual(['chat.sessionSetting.on', 'chat.sessionSetting.off'])
+      expect(rows[0].classes()).not.toContain('current')
+      expect(rows[1].classes()).toContain('current')
+
+      await rows[0].trigger('click')
+      expect(mockIdentity.setConfigOptionValue).toHaveBeenCalledWith('fast-toggle', 'true')
+      expect(wrapper.emitted('switch-config-option')?.[0]).toEqual([{ configId: 'fast-toggle', value: 'true' }])
+    })
   })
 
   // ── Initial state (model tab is default) ──
