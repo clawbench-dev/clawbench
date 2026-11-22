@@ -83,6 +83,11 @@ type HistoryMessage struct {
 	// order. A call with no stored result is deliberately absent: both wire
 	// protocols reject an unanswered tool_use.
 	Tools []HistoryToolCall `json:"tools,omitempty"`
+	// Files are the user turn's attachments. The prompt already names them, but
+	// a name is not the picture: a backend that can send image bytes must, or an
+	// image-only message reaches the model as a sentence about a path. Empty for
+	// assistant turns.
+	Files []model.FileEntry `json:"files,omitempty"`
 }
 
 // HistoryToolCall is one completed tool call replayed with its turn.

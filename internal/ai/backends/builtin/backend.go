@@ -159,6 +159,10 @@ func buildSpec(req ai.ChatRequest) (agentcore.Spec, error) {
 	// with tool calls expands into two messages, so two independent loops would
 	// drift and make a compaction boundary cover the wrong stored turn.
 	replay := buildHistoryReplay(req)
+	// Attached images become real image parts: the prompt only names the
+	// files, so without this an image-only message reaches the model as a
+	// sentence about a path. Gated on the model's own ability to read images.
+	replay.Messages = replayImages(replay.Messages, req.History, client.SupportsVision())
 
 	return agentcore.Spec{
 		Client:       client,
