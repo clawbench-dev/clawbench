@@ -73,3 +73,37 @@ describe('group speaker → agent config wiring', () => {
     expect(region).toMatch(/switchTab\('settings'\)/)
   })
 })
+
+/**
+ * The same destination has two MORE entry points, both inside the chat pane:
+ * the agent icon in the header and the big glyph in the empty state.
+ *
+ * They do not travel the same way — the header lives in App.vue (calls the
+ * handler directly), the glyph lives four components down (emits) — and each is
+ * a single binding that no mount-level test in this repo covers (App.vue has
+ * none; the glyph's own emit value is pinned in ChatMessageList.agentWelcome).
+ * A dropped binding on either turns it into a dead icon, which is the whole
+ * failure mode this file exists for.
+ */
+describe('header icon / empty-state glyph → agent config wiring', () => {
+  const app = stripComments(read('App.vue'))
+  const list = stripComments(read('components/chat/ChatMessageList.vue'))
+
+  it('the chat header agent icon opens the config page for the session agent', () => {
+    // Scoped to the single-agent header branch: a bare `openAgentConfig(` search
+    // would also match the handler definition and the ChatPanelContent binding.
+    const region = app.slice(app.indexOf('class="bs-header-title"'), app.indexOf('bs-header-title-editable'))
+    expect(region, 'the header icon block must exist').toContain('chat-title-agent-btn')
+    expect(region).toMatch(/@click\.stop="openAgentConfig\(\s*sessionIdentity\.currentAgentId\.value\s*\)"/)
+    // Icon-only control: it has to say what it does.
+    expect(region).toContain(`:title="t('session.configAgent')"`)
+    expect(region).toContain(`:aria-label="t('session.configAgent')"`)
+  })
+
+  it('the empty-state glyph emits open-agent-config with the agent id', () => {
+    expect(list).toMatch(/@click="emit\('open-agent-config',\s*currentAgent\.id\)"/)
+    // Without an id there is no page to open — the tile must stay inert rather
+    // than become a button that does nothing.
+    expect(list).toMatch(/v-if="currentAgent\.id"[\s\S]{0,400}agent-welcome-icon-btn/)
+  })
+})

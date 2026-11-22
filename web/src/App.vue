@@ -298,7 +298,25 @@
                       :groupRunning="sessionIdentity.runningSessions.value.has(sessionIdentity.currentSessionId.value)"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                     />
-                    <span v-else-if="sessionIdentity.currentAgentId.value" class="bs-header-title"><AgentIcon :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" size="md" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
+                    <!-- Single-agent sessions: the agent's icon doubles as the
+                         entry point to its config page (same target as the
+                         speaker avatar on a bubble and the big glyph in the
+                         empty state). The NAME stays plain text: it is squeezed
+                         between the icon and the rename pencil, and a click
+                         there would be an easy mis-tap on the title. -->
+                    <span v-else-if="sessionIdentity.currentAgentId.value" class="bs-header-title">
+                      <button
+                        type="button"
+                        class="chat-title-agent-btn"
+                        data-action="open-agent-config"
+                        :title="t('session.configAgent')"
+                        :aria-label="t('session.configAgent')"
+                        @click.stop="openAgentConfig(sessionIdentity.currentAgentId.value)"
+                      >
+                        <AgentIcon :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" size="md" />
+                      </button>
+                      {{ sessionIdentity.agentHeaderTitle.value }}
+                    </span>
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
@@ -4982,6 +5000,32 @@ onUnmounted(() => {
     height: calc(14 * var(--dp));
 }
 
+/* The agent icon in the chat title bar, made clickable (opens that agent's
+   config page). `.bs-header-title` is an inline-flex row, so this button joins
+   the row without disturbing the header's layout; negative margins keep the
+   icon in the same optical position it occupied as a bare glyph and give the
+   hit area a little padding without growing the row. */
+.chat-title-agent-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(2 * var(--dp));
+    margin: calc(-2 * var(--dp));
+    border: none;
+    background: none;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: background var(--duration-base), opacity var(--duration-base);
+}
+@media (hover: hover) {
+    .chat-title-agent-btn:hover {
+        background: rgba(0, 102, 204, 0.1);
+    }
+}
+.chat-title-agent-btn:active {
+    opacity: 0.6;
+}
 /* Rename-session icon at the right end of the chat title bar. Pushed to the
    edge with margin-left:auto so it stays put when the title is short.
    Deliberately muted at rest (the title text next to it is the primary
