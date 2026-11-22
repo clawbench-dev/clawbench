@@ -535,10 +535,12 @@ func TestCodebuddyACP_ExtProbe_CapabilityNegotiation(t *testing.T) {
 			ctx, cancel := contextWithTimeout(t, 120*time.Second)
 			defer cancel()
 
+			capMeta, metaErr := acp.NewMeta(tc.meta)
+			require.NoError(t, metaErr)
 			setup := startExtProbe(t, ctx, acp.ClientCapabilities{
 				Fs:       acp.FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true},
 				Terminal: true,
-				Meta:     tc.meta,
+				Meta:     capMeta,
 			}, tc.clientName)
 
 			// Observation only: the dumps inside startExtProbe carry the payload.
@@ -596,7 +598,7 @@ func TestCodebuddyACP_ExtProbe_ExtensionMethodRouting(t *testing.T) {
 			Terminal: true,
 			// Advertise the question capability so CodeBuddy is willing to route
 			// AskUserQuestion through the extension channel if it chooses to.
-			Meta: map[string]any{"codebuddy.ai": map[string]any{"question": true}},
+			Meta: acp.Meta{"codebuddy.ai": json.RawMessage(`{"question":true}`)},
 		},
 		ClientInfo: &acp.Implementation{Name: "clawbench-ext-probe", Version: "1.0.0"},
 	})

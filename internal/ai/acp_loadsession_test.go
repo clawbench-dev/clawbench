@@ -405,7 +405,7 @@ func TestClaudeACP_LoadSession_ConvertSessionUpdate_RawJSONIssue(t *testing.T) {
 				ToolCallId: acp.ToolCallId("tc-1"),
 				Title:      "Read",
 				Kind:       acp.ToolKindRead,
-				RawInput:   map[string]any{"file_path": "/tmp/test.go"},
+				RawInput:   json.RawMessage(`{"file_path":"/tmp/test.go"}`),
 			},
 		},
 	}
@@ -434,8 +434,8 @@ func TestClaudeACP_LoadSession_ConvertSessionUpdate_RawJSONIssue(t *testing.T) {
 		Update: acp.SessionUpdate{
 			ToolCallUpdate: &acp.SessionToolCallUpdate{
 				ToolCallId: acp.ToolCallId("tc-2"),
-				Status:     &completed,
-				RawOutput:  "file contents here",
+				Status:     acp.PatchFromPtr(&completed),
+				RawOutput:  acp.PatchSet(json.RawMessage(`"file contents here"`)),
 			},
 		},
 	}

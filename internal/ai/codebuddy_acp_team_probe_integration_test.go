@@ -222,12 +222,14 @@ func startTeamProbeWith(t *testing.T, ctx context.Context, opts teamProbeOptions
 
 	initCtx, initCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer initCancel()
+	capMeta, metaErr := acp.NewMeta(opts.clientMeta)
+	require.NoError(t, metaErr)
 	_, err = conn.Initialize(initCtx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
 			Fs:       acp.FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true},
 			Terminal: opts.advertiseTerminal,
-			Meta:     opts.clientMeta,
+			Meta:     capMeta,
 		},
 		ClientInfo: &acp.Implementation{Name: "clawbench-team-probe", Version: "1.0.0"},
 	})
@@ -395,11 +397,11 @@ func (f *teamFindings) scan(t *testing.T, notifications []acp.SessionNotificatio
 	for _, p := range perms {
 		f.permRaw = append(f.permRaw, p)
 		if len(p.Meta) > 0 {
-			f.permFrames = append(f.permFrames, p.Meta)
+			f.permFrames = append(f.permFrames, metaToMap(p.Meta))
 		}
 		// The team attribution may ride on the toolCall update instead.
-		if len(p.ToolCall.Meta) > 0 {
-			f.permFrames = append(f.permFrames, p.ToolCall.Meta)
+		if tcMeta, ok := p.ToolCall.Meta.Value(); ok && len(tcMeta) > 0 {
+			f.permFrames = append(f.permFrames, metaToMap(tcMeta))
 		}
 	}
 
@@ -411,16 +413,19 @@ func (f *teamFindings) scan(t *testing.T, notifications []acp.SessionNotificatio
 	}
 	for _, n := range notifications {
 		if n.Update.ToolCall != nil {
-			if name, ok := n.Update.ToolCall.Meta["codebuddy.ai/toolName"].(string); ok && name != "" {
+			meta := metaToMap(n.Update.ToolCall.Meta)
+			if name, ok := meta["codebuddy.ai/toolName"].(string); ok && name != "" {
 				f.toolNames["meta:"+name]++
 			}
-			f.noteSpawn(n.Update.ToolCall.Meta, string(n.Update.ToolCall.ToolCallId))
+			f.noteSpawn(meta, string(n.Update.ToolCall.ToolCallId))
 		}
 		if n.Update.ToolCallUpdate != nil {
-			if name, ok := n.Update.ToolCallUpdate.Meta["codebuddy.ai/toolName"].(string); ok && name != "" {
+			tcMeta, _ := n.Update.ToolCallUpdate.Meta.Value()
+			flat := metaToMap(tcMeta)
+			if name, ok := flat["codebuddy.ai/toolName"].(string); ok && name != "" {
 				f.toolNames["meta:"+name]++
 			}
-			f.noteSpawn(n.Update.ToolCallUpdate.Meta, string(n.Update.ToolCallUpdate.ToolCallId))
+			f.noteSpawn(flat, string(n.Update.ToolCallUpdate.ToolCallId))
 		}
 	}
 }
@@ -537,11 +542,11 @@ func teamUpdatePayload(n acp.SessionNotification) map[string]any {
 	if n.Update.SessionInfoUpdate == nil {
 		return nil
 	}
-	meta := n.Update.SessionInfoUpdate.Meta
-	if meta == nil {
+	meta, ok := n.Update.SessionInfoUpdate.Meta.Value()
+	if !ok || meta == nil {
 		return nil
 	}
-	tu, _ := meta["codebuddy.ai/teamUpdate"].(map[string]any)
+	tu, _ := metaToMap(meta)["codebuddy.ai/teamUpdate"].(map[string]any)
 	return tu
 }
 
@@ -551,19 +556,21 @@ func sessionUpdateMeta(n acp.SessionNotification) map[string]any {
 	u := n.Update
 	switch {
 	case u.SessionInfoUpdate != nil:
-		return u.SessionInfoUpdate.Meta
+		meta, _ := u.SessionInfoUpdate.Meta.Value()
+		return metaToMap(meta)
 	case u.AgentMessageChunk != nil:
-		return u.AgentMessageChunk.Meta
+		return metaToMap(u.AgentMessageChunk.Meta)
 	case u.AgentThoughtChunk != nil:
-		return u.AgentThoughtChunk.Meta
+		return metaToMap(u.AgentThoughtChunk.Meta)
 	case u.ToolCall != nil:
-		return u.ToolCall.Meta
+		return metaToMap(u.ToolCall.Meta)
 	case u.ToolCallUpdate != nil:
-		return u.ToolCallUpdate.Meta
+		meta, _ := u.ToolCallUpdate.Meta.Value()
+		return metaToMap(meta)
 	case u.UserMessageChunk != nil:
-		return u.UserMessageChunk.Meta
+		return metaToMap(u.UserMessageChunk.Meta)
 	case u.UsageUpdate != nil:
-		return u.UsageUpdate.Meta
+		return metaToMap(u.UsageUpdate.Meta)
 	default:
 		return nil
 	}
@@ -855,7 +862,11 @@ func TestCodebuddyACP_TeamMode_MemberPermission(t *testing.T) {
 		t.Logf("perm[%d] tool=%s title=%v", i, p.ToolCall.ToolCallId, p.ToolCall.Title)
 		t.Logf("  request._meta  = %s", compactJSON(mustMarshal(t, p.Meta)))
 		t.Logf("  toolCall._meta = %s", compactJSON(mustMarshal(t, p.ToolCall.Meta)))
-		for _, m := range []map[string]any{p.Meta, p.ToolCall.Meta} {
+		frames := []map[string]any{metaToMap(p.Meta)}
+		if tcMeta, ok := p.ToolCall.Meta.Value(); ok {
+			frames = append(frames, metaToMap(tcMeta))
+		}
+		for _, m := range frames {
 			if m == nil {
 				continue
 			}

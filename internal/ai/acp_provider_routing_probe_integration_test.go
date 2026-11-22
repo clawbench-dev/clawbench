@@ -95,7 +95,7 @@ func providerProbeCaps(advertiseGateway bool) acp.ClientCapabilities {
 	}
 	if advertiseGateway {
 		caps.Auth = acp.AuthCapabilities{
-			Meta: map[string]any{"gateway": true},
+			Meta: acp.Meta{"gateway": json.RawMessage("true")},
 		}
 	}
 	return caps
@@ -258,10 +258,10 @@ func probeClaudeProvidersSet(t *testing.T, ctx context.Context, b providerProbeB
 	typedCtx, typedCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer typedCancel()
 	_, typedErr := setup.conn.UnstableSetProvider(typedCtx, acp.UnstableSetProviderRequest{
-		Id:      "main",
-		ApiType: acp.UnstableLlmProtocolAnthropic,
-		BaseUrl: "https://api.deepseek.com/anthropic",
-		Headers: map[string]any{"x-api-key": "probe-key-typed"},
+		ProviderId: "main",
+		ApiType:    acp.UnstableLlmProtocolAnthropic,
+		BaseUrl:    "https://api.deepseek.com/anthropic",
+		Headers:    map[string]string{"x-api-key": "probe-key-typed"},
 	})
 	if typedErr != nil {
 		t.Logf("Q2c typed UnstableSetProvider FAILED: %v", typedErr)

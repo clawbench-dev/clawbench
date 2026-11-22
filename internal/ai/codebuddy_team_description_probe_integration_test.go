@@ -86,7 +86,11 @@ func TestCodebuddyACP_TeamMemberDescriptionProbe(t *testing.T) {
 		if info == nil {
 			continue
 		}
-		raw, ok := info.Meta[teamUpdateMetaKey].(map[string]any)
+		meta, hasMeta := info.Meta.Value()
+		if !hasMeta {
+			continue
+		}
+		raw, ok := metaToMap(meta)[teamUpdateMetaKey].(map[string]any)
 		if !ok {
 			continue
 		}

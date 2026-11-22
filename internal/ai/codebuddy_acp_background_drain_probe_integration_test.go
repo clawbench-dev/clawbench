@@ -140,7 +140,8 @@ func findUnsolicitedTurnIndex(notifs []acp.SessionNotification) int {
 		if n.Update.SessionInfoUpdate == nil {
 			continue
 		}
-		if _, ok := codeBuddyUnsolicitedTurn(n.Update.SessionInfoUpdate.Meta); ok {
+		meta, _ := n.Update.SessionInfoUpdate.Meta.Value()
+		if _, ok := codeBuddyUnsolicitedTurn(metaToMap(meta)); ok {
 			return i
 		}
 	}

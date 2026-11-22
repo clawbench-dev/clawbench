@@ -62,18 +62,21 @@ func dumpTaskToolMeta(t *testing.T, notifications []acp.SessionNotification) {
 		if tcu == nil {
 			continue
 		}
-		name, _ := n.Update.ToolCallUpdate.Meta["codebuddy.ai/toolName"].(string)
+		tcuMeta, _ := tcu.Meta.Value()
+		name, _ := metaToMap(tcuMeta)["codebuddy.ai/toolName"].(string)
 		if !taskToolNames[name] {
 			continue
 		}
 		status := "<nil>"
-		if tcu.Status != nil {
-			status = string(*tcu.Status)
+		if v, ok := tcu.Status.Value(); ok {
+			status = string(v)
 		}
+		rawOutput, _ := tcu.RawOutput.Value()
+		content, _ := tcu.Content.Value()
 		t.Logf("[wire] tool_call_update id=%s name=%q status=%s", tcu.ToolCallId, name, status)
 		t.Logf("  _meta: %s", compactJSON(mustMarshal(t, tcu.Meta)))
-		t.Logf("  rawOutput: %s", compactJSON(mustMarshal(t, tcu.RawOutput)))
-		t.Logf("  content-count=%d", len(tcu.Content))
+		t.Logf("  rawOutput: %s", compactJSON(mustMarshal(t, rawOutput)))
+		t.Logf("  content-count=%d", len(content))
 	}
 }
 
@@ -118,14 +121,19 @@ func TestCodebuddyACP_TaskTools_WireProbe(t *testing.T) {
 	var rawResponses []map[string]any
 	for _, n := range notifications {
 		tcu := n.Update.ToolCallUpdate
-		if tcu == nil || tcu.Status == nil || *tcu.Status != acp.ToolCallStatusCompleted {
+		if tcu == nil {
 			continue
 		}
-		name, _ := tcu.Meta["codebuddy.ai/toolName"].(string)
+		if st, ok := tcu.Status.Value(); !ok || st != acp.ToolCallStatusCompleted {
+			continue
+		}
+		tcuMeta, _ := tcu.Meta.Value()
+		flat := metaToMap(tcuMeta)
+		name, _ := flat["codebuddy.ai/toolName"].(string)
 		if !taskToolNames[name] {
 			continue
 		}
-		rr, ok := tcu.Meta["codebuddy.ai/rawResponse"].(map[string]any)
+		rr, ok := flat["codebuddy.ai/rawResponse"].(map[string]any)
 		if ok {
 			rawResponses = append(rawResponses, rr)
 		}

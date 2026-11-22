@@ -25,21 +25,19 @@ import (
 // 目的：把"上下文被压缩了"这个事实的**发现能力**逐后端钉死。ClawBench 用
 // `compact_detected` 内部事件驱动两件事：① 下一轮重注入系统提示
 // （chat_request.go 的 ConsumeSessionCompacted）；② 将来的"压缩可见"UI。
-// 目前只有三个后端有检测（CodeBuddy / Claude / Grok-CLI），其余后端即便真的
+// 目前只有三个后端有检测（CodeBuddy / Claude / Grok），其余后端即便真的
 // 压缩了也无从得知。本探针用**真实 agent 进程**实测每个后端的触发形态。
 //
-// 探测方式（两条路径，都是生产代码路径）：
+// 探测方式（唯一的生产路径：ACP）：
 //
-//	ACP  —— 直连 `session/new` 后发送 `/compact`，同时
-//	        ① tee 原始 JSON-RPC wire（看 agent 到底发了什么帧），
-//	        ② 走生产 acpStdoutFilter + ClawBenchACPClient，
-//	           由 mapACPSessionUpdate 产出 `compact_detected`（看现有检测是否命中）。
-//	CLI  —— 走生产 CLIBackend.ExecuteStream，只看 `compact_detected` 是否命中；
-//	        stdout 原文另存一份用于解释"没命中是因为信号形状不认识"还是"根本没发"。
+//	直连 `session/new` 后发送 `/compact`，同时
+//	① tee 原始 JSON-RPC wire（看 agent 到底发了什么帧），
+//	② 走生产 acpStdoutFilter + ClawBenchACPClient，
+//	   由 mapACPSessionUpdate 产出 `compact_detected`（看现有检测是否命中）。
 //
 // 每个后端记录：
 //   - 是否在 available_commands 里广告了 compact 命令（决定 `/compact` 是否可用）；
-//   - `/compact` 之后 `compact_detected` 命中次数与来源（acp_meta / acp_text / cli_meta / grok_event）；
+//   - `/compact` 之后 `compact_detected` 命中次数与来源（acp_meta / acp_text）；
 //   - 原始 wire 里含压缩标记的行（判断"信号存在但没被识别"）；
 //   - 压缩前后的 usage（used/size，判断"是否真的压缩了"）。
 //
@@ -82,8 +80,7 @@ var compactWireNoise = []string{
 
 // compactProbeResult is one backend's outcome.
 type compactProbeResult struct {
-	ID        string
-	Transport string // "acp" | "cli"
+	ID string
 
 	Skipped    string // non-empty ⇒ backend unavailable, no facts gathered
 	PromptErr  string // `/compact` prompt returned an error
@@ -119,11 +116,11 @@ type compactProbeResult struct {
 func (r compactProbeResult) logResult(t *testing.T) {
 	t.Helper()
 	if r.Skipped != "" {
-		t.Logf("PROBE %-12s transport=%-3s SKIP  %s", r.ID, r.Transport, r.Skipped)
+		t.Logf("PROBE %-12s SKIP  %s", r.ID, r.Skipped)
 		return
 	}
-	t.Logf("PROBE %-12s transport=%-3s detected=%d sources=%v cmd_advertised=%v usage=%s->%s stop=%s",
-		r.ID, r.Transport, r.Detected, r.Sources, r.CompactCommandAdvertised,
+	t.Logf("PROBE %-12s detected=%d sources=%v cmd_advertised=%v usage=%s->%s stop=%s",
+		r.ID, r.Detected, r.Sources, r.CompactCommandAdvertised,
 		orDash(r.UsageBefore), orDash(r.UsageAfter), orDash(r.StopReason))
 	if r.PromptErr != "" {
 		t.Logf("PROBE %-12s   prompt error: %s", r.ID, r.PromptErr)
@@ -204,7 +201,7 @@ func usageSnapshot(u *UsageState) string {
 // compactProbeACP drives one ACP backend through a real `/compact`.
 func compactProbeACP(t *testing.T, ctx context.Context, cfg acpTestConfig) compactProbeResult {
 	t.Helper()
-	res := compactProbeResult{ID: cfg.ID, Transport: "acp"}
+	res := compactProbeResult{ID: cfg.ID}
 
 	agent := buildACPAgent(cfg)
 	args := strings.Fields(cfg.AcpCommand)
@@ -229,7 +226,7 @@ func compactProbeACP(t *testing.T, ctx context.Context, cfg acpTestConfig) compa
 	client := NewClawBenchACPClient()
 	conn := acp.NewClientSideConnection(client, recIn, filter)
 	conn.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	filter.SetNotificationSink(client)
+	conn.SetUnhandledHandler(client.handleUnhandledNotification)
 
 	require.NoError(t, cmd.Start(), "spawn %s", cfg.AcpCommand)
 	t.Cleanup(func() {
@@ -388,113 +385,6 @@ func TestCompactSignalProbe_ACP(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CLI probe
-// ---------------------------------------------------------------------------
-
-// TestCompactSignalProbe_CLI runs the probe against every CLI backend.
-//
-// The CLI path only exposes the production parser's verdict (compact_detected);
-// stdout is not tee'd by CLIBackend. That is enough to answer the question the
-// probe exists for: "does ClawBench notice when THIS agent compacts?".
-func TestCompactSignalProbe_CLI(t *testing.T) {
-	// No extra registration: grok comes from its own plugin (imported through
-	// backends/all by backend_plugins_test.go), so the probe exercises the real
-	// argv builder and parser rather than a copy of them.
-	all := append(append([]cliTestConfig{}, cliBackends...), compactProbeExtraCLI...)
-	for _, cfg := range all {
-		cfg := cfg
-		t.Run(cfg.Backend, func(t *testing.T) {
-			if cfg.SetupFn != nil {
-				cfg.SetupFn(t)
-			} else {
-				requireBackendCLI(t, cfg)
-			}
-			backend, err := NewBackend(cfg.Backend)
-			require.NoError(t, err)
-
-			ctx, cancel := contextWithTimeout(t, 2*cfg.CollectTimeout+60*time.Second)
-			defer cancel()
-
-			res := compactProbeResult{ID: cfg.Backend, Transport: "cli"}
-
-			// Warm-up turn: gives the agent a session to compact.
-			warm := ChatRequest{
-				Prompt:    "Reply with the single word READY.",
-				SessionID: newSessionID(),
-				WorkDir:   testWorkDir(),
-			}
-			if cfg.Command != "" {
-				warm.Command = cfg.Command
-			}
-			warmCh, warmErr := backend.ExecuteStream(ctx, warm)
-			if warmErr != nil {
-				res.PromptErr = "warm-up: " + warmErr.Error()
-				res.logResult(t)
-				return
-			}
-			warmEvents := collectAllEvents(t, warmCh, cfg.CollectTimeout)
-			for _, ev := range warmEvents {
-				res.EventTypes = append(res.EventTypes, ev.Type)
-				if ev.Type == "compact_detected" {
-					res.Detected++
-					res.Sources = append(res.Sources, ev.Content)
-				}
-			}
-			sid := extractSessionID(warmEvents)
-			if sid == "" {
-				sid = warm.SessionID
-			}
-
-			// The compact turn. Always RESUME the warm-up session: the context
-			// being compacted must be the one the warm-up created. Passing the
-			// same id via --session-id instead would start a FRESH session
-			// (nothing to compact) on every CLI that supports resume — that
-			// mistake made an earlier run report "no signal" for claude, whose
-			// CLI does emit system/compact_boundary.
-			compactReq := ChatRequest{
-				Prompt:    "/compact",
-				SessionID: sid,
-				WorkDir:   testWorkDir(),
-				Resume:    true,
-			}
-			if cfg.Command != "" {
-				compactReq.Command = cfg.Command
-			}
-			ch, err := backend.ExecuteStream(ctx, compactReq)
-			if err != nil {
-				res.PromptErr = "compact: " + err.Error()
-				res.logResult(t)
-				return
-			}
-			events := collectAllEvents(t, ch, cfg.CollectTimeout)
-			for _, ev := range events {
-				res.EventTypes = append(res.EventTypes, ev.Type)
-				switch ev.Type {
-				case "content":
-					res.ReplyText += ev.Content
-				case "compact_detected":
-					res.Detected++
-					res.Sources = append(res.Sources, ev.Content)
-				case "metadata":
-					if ev.Meta != nil && ev.Meta.InputTokens > 0 {
-						res.UsageAfter = strconv.Itoa(ev.Meta.InputTokens)
-					}
-				case "error":
-					res.PromptErr = ev.Error
-				}
-			}
-			// NOTE: the assistant's own prose is NOT wire evidence. A CLI that
-			// does not implement `/compact` treats it as ordinary text and may
-			// write a paragraph ABOUT compaction — counting that as a signal
-			// would make every backend look detected. RawCompactLines is left
-			// empty on the CLI path on purpose: CLIBackend does not expose
-			// stdout, so the only trustworthy verdict here is `compact_detected`.
-			res.logResult(t)
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Report aggregation
 // ---------------------------------------------------------------------------
 
@@ -505,23 +395,3 @@ func TestCompactSignalProbe_Summary(t *testing.T) {
 	t.Skip("informational: the per-backend PROBE lines above ARE the summary table")
 }
 
-// ---------------------------------------------------------------------------
-// Probe-only CLI backends
-// ---------------------------------------------------------------------------
-
-// compactProbeExtraCLI are backends that have a CLI transport but no entry in
-// cliBackends (their CLI test points were never added to the shared table).
-// They are probed here without touching that table: adding an entry there would
-// enrol them in every other CLI test point, which is a separate decision.
-//
-// The args mirror backends/grok/cli.go's buildGrokStreamArgs. Kept in sync
-// manually — the probe fails loudly (not silently) if the real CLI rejects
-// them, and `TestCompactSignalProbe_CLI` logs the error.
-var compactProbeExtraCLI = []cliTestConfig{
-	{
-		Backend:        "grok",
-		CLIName:        "grok",
-		Timeout:        90 * time.Second,
-		CollectTimeout: 120 * time.Second,
-	},
-}
