@@ -191,7 +191,7 @@ export interface ClawBenchNative {
    */
   cancelSplash?(): void
   /**
-   * Install the all-in-one ("fused") desktop package for `version`.
+   * Install the integrated ("integrated") desktop package for `version`.
    *
    * Desktop only, and only meaningful when the server reports it is managed by
    * its embedder (see useUpgrade's managedByEmbedder): such an install carries
@@ -203,7 +203,7 @@ export interface ClawBenchNative {
    * Optional: older desktop builds have no such channel, and Android never
    * does. Absent ⇒ the caller must not offer the upgrade.
    */
-  installFusedUpdate?(
+  installIntegratedUpdate?(
     version: string,
     downloads: Record<string, string[]>,
     checksums: Record<string, string>,
@@ -272,7 +272,7 @@ export interface ClawBenchNative {
   probeMicrophone?(): Promise<string>
   getServerList(): Promise<string>
   /**
-   * The server this build ships with (desktop "all-in-one" builds only).
+   * The server this build ships with (desktop "integrated" builds only).
    *
    * JSON `{ url, password, running }`, or the string `"null"` when this build
    * has no built-in server. Deliberately separate from {@link getServerList}:
@@ -282,6 +282,8 @@ export interface ClawBenchNative {
    * Optional: the Android and HarmonyOS shells have no such server.
    */
   getEmbeddedServer?(): Promise<string>
+  /** Stop that server without quitting the app (desktop only). */
+  stopEmbeddedServer?(): Promise<string>
   getSavedServerConfig(): Promise<string>
   getServerUrl(): Promise<string>
   getPassword(): Promise<string>

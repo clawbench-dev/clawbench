@@ -1,68 +1,79 @@
 #!/usr/bin/env node
 /**
- * Builds the ClawBench server that ships INSIDE the desktop app.
+ * Stages the ClawBench server that ships INSIDE the desktop app.
  *
- * The "all-in-one" desktop build starts a server of its own from
- * `resources/server/` (see src/main/localServer.ts). Shipping a prebuilt binary
+ * The integrated desktop build (整合包) starts a server of its own from the app's
+ * content directory (see src/main/localServer.ts). Shipping a prebuilt binary
  * rather than downloading one on first run is deliberate: the app is usable
  * offline, the server version can never drift from the app's, and a failed
  * first-run download can never leave an app that opens to nothing.
  *
- * Only Windows is built so far — that is the platform the embedded mode is
- * specified for. Linux/macOS packages keep using the login page and a server
- * elsewhere, so this script exits successfully without producing anything there
- * instead of failing their builds.
+ * Every desktop platform is supported now. The target is chosen by
+ * `--platform`/`--arch` (or CLAWBENCH_SERVER_PLATFORM / CLAWBENCH_SERVER_ARCH),
+ * defaulting to the host — the macOS job builds two architectures in one job
+ * and must stage the matching server before each electron-builder run.
  *
- * Output: desktop/assets/server/clawbench.exe (generated, not committed).
+ * Source, in order:
+ *  1. `clawbench-server/<platform>-<arch>/clawbench[.exe]` — the release
+ *     workflow's own build, downloaded as an artifact. Preferred because it
+ *     carries the embedded frontend and the release's version stamp, both
+ *     produced exactly once by the standalone server job.
+ *  2. A local `go build` when the host matches the target.
+ *
+ * Output: desktop/assets/server/clawbench[.exe] (generated, not committed).
  */
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..', '..')
 const outDir = join(here, '..', 'assets', 'server')
-const out = join(outDir, 'clawbench.exe')
 
-/**
- * A binary the release workflow already built (artifact `windows-server`,
- * downloaded to `clawbench-server/` at the repository root).
- *
- * Preferred over building here for two reasons: that copy has the frontend
- * embedded (this repository has no `internal/frontend/dist` checked in) and the
- * release's version stamp, both produced exactly once by the standalone Windows
- * job. It is still a `go build`, so a build from source below is equivalent —
- * just slower and easy to stamp differently.
- */
-const prebuilt = join(repoRoot, 'clawbench-server', 'clawbench.exe')
+function argValue(flag) {
+  const i = process.argv.indexOf(flag)
+  return i >= 0 ? process.argv[i + 1] : undefined
+}
 
-// Always create the directory, even on hosts that produce no server: the
-// electron-builder config points `extraFiles` at it, and a missing source is
-// noisier than an empty one.
+const platform = argValue('--platform') || process.env.CLAWBENCH_SERVER_PLATFORM || process.platform
+const arch = argValue('--arch') || process.env.CLAWBENCH_SERVER_ARCH || process.arch
+const exe = platform === 'win32' ? 'clawbench.exe' : 'clawbench'
+const out = join(outDir, exe)
+const prebuilt = join(repoRoot, 'clawbench-server', `${platform}-${arch}`, exe)
+
+// Always recreate the directory: a stale binary for another platform (a local
+// macOS build after a Windows one, or vice versa) would be packaged silently.
+rmSync(outDir, { recursive: true, force: true })
 mkdirSync(outDir, { recursive: true })
 
-if (process.platform !== 'win32') {
-  // CI builds the Windows package on windows-latest, where this branch never
-  // runs; a Linux/macOS desktop package does not embed a server at all.
-  console.log('server: not a Windows build host — skipping the embedded server')
+if (platform === 'darwin') {
+  // macOS does not put the server inside the app bundle (that would invalidate
+  // its code signature). The integrated zip carries `server/` beside
+  // `ClawBench.app`, assembled by release.yml from the server artifact. There
+  // is nothing for electron-builder to stage.
+  console.log('server: macOS keeps the server beside the bundle — nothing to stage')
   process.exit(0)
 }
 
 if (existsSync(prebuilt)) {
   copyFileSync(prebuilt, out)
   assertBinary(out)
-  console.log(`server: reused the release's build (${mb(out)} MB)`)
+  console.log(`server: reused the release's ${platform}/${arch} build (${mb(out)} MB)`)
   process.exit(0)
 }
 
-// Same tags and ldflags as release.yml's server job:
+if (platform !== process.platform || arch !== process.arch) {
+  throw new Error(
+    `server: no prebuilt binary for ${platform}/${arch} at ${prebuilt}, and it cannot be cross-built here`,
+  )
+}
+
+// Same tags and ldflags as release.yml's server jobs:
 //  - `fts5` is required, not cosmetic: the build fails to compile search
 //    without it on the drivers this project uses.
 //  - Version is read from the same `git describe` the standalone packages use,
-//    so the embedded server reports the release it belongs to. The desktop job
-//    has not set the package version at prebuild time, so it comes from git
-//    here rather than from package.json.
+//    so the embedded server reports the release it belongs to.
 function describe() {
   try {
     return execFileSync('git', ['describe', '--tags', '--always'], { cwd: repoRoot, encoding: 'utf8' }).trim()
@@ -74,9 +85,9 @@ function describe() {
 }
 
 /**
- * electron-builder copies extraResources from the source directory, so the file
- * must be final here. A zero-byte or truncated artifact (a failed download saved
- * as a file) packages cleanly and only fails at the user's first launch.
+ * electron-builder copies the staged directory, so the file must be final
+ * here. A zero-byte or truncated artifact (a failed download saved as a file)
+ * packages cleanly and only fails at the user's first launch.
  */
 function assertBinary(file) {
   if (!existsSync(file) || statSync(file).size < 1_000_000) {
@@ -89,7 +100,7 @@ function mb(file) {
 }
 
 const version = describe()
-console.log(`server: building ${version}`)
+console.log(`server: building ${version} for ${platform}/${arch}`)
 execFileSync('go', [
   'build',
   '-tags', 'fts5',

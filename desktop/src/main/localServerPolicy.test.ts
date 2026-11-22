@@ -13,6 +13,7 @@ import {
   sameServerUrl,
   sessionCookieName,
   shouldAdoptEmbeddedServer,
+  versionsMatch,
 } from './localServerPolicy'
 
 describe('chooseEmbeddedPort', () => {
@@ -65,9 +66,15 @@ describe('embeddedServerArgs', () => {
       '--port', '20123',
       '--data-dir', 'C:\\Users\\me\\AppData\\ClawBench\\server',
       '--host', '0.0.0.0',
-      '--exit-on-stdin-close',
       '--managed',
     ])
+  })
+
+  it('does not tie the server to the shell', () => {
+    // The server outlives the desktop app, so a stdin-close quit signal would
+    // stop it the moment the shell exits — the exact behaviour this feature
+    // removes.
+    expect(embeddedServerArgs({ port: 1, dataDir: '/d' })).not.toContain('--exit-on-stdin-close')
   })
 
   it('honours an explicit host', () => {
@@ -163,17 +170,47 @@ describe('shouldAdoptEmbeddedServer', () => {
 })
 
 describe('embeddedServerBinaryPath', () => {
-  it('puts the server next to the app executable, in server/', () => {
+  it('puts the server next to the executable on Windows and Linux', () => {
     // electron-builder's extraFiles places it at <app root>/server/ — NOT under
     // resources/, which a desktop payload update replaces wholesale. Getting
-    // this wrong makes a fused install look like a thin one (and disables the
-    // version gate's "reinstall the all-in-one package" guard).
-    expect(embeddedServerBinaryPath('/opt/ClawBench/clawbench-desktop')).toBe(
-      path.join('/opt/ClawBench', 'server', 'clawbench.exe'),
+    // this wrong makes an integrated install look like a thin one (and disables
+    // the version gate's "reinstall the integrated package" guard).
+    expect(embeddedServerBinaryPath('/opt/ClawBench/clawbench-desktop', 'linux')).toBe(
+      path.join('/opt/ClawBench', 'server', 'clawbench'),
+    )
+    expect(embeddedServerBinaryPath('C:\\ClawBench\\clawbench-desktop.exe', 'win32')).toBe(
+      path.win32.join('C:\\ClawBench', 'server', 'clawbench.exe'),
     )
   })
 
+  it('looks beside the .app bundle on macOS', () => {
+    // The server is a SIBLING of ClawBench.app, not inside it: a macOS bundle is
+    // code-signed over its whole tree, so adding a file under Contents/ would
+    // invalidate the signature. From Contents/MacOS/ that is three levels up.
+    expect(
+      embeddedServerBinaryPath('/Applications/ClawBench.app/Contents/MacOS/clawbench-desktop', 'darwin'),
+    ).toBe(path.join('/Applications', 'server', 'clawbench'))
+  })
+
   it('never looks inside resources/', () => {
-    expect(embeddedServerBinaryPath('/opt/ClawBench/clawbench-desktop')).not.toContain('resources')
+    for (const platform of ['linux', 'win32', 'darwin'] as const) {
+      expect(embeddedServerBinaryPath('/opt/ClawBench/clawbench-desktop', platform)).not.toContain('resources')
+    }
+  })
+})
+
+describe('versionsMatch', () => {
+  it('compares the release numbers, not the git suffix', () => {
+    expect(versionsMatch('v0.145.0-12-gabc1234', '0.145.0')).toBe(true)
+    expect(versionsMatch('v0.145.0', '0.145.0')).toBe(true)
+    expect(versionsMatch('v0.144.0', '0.145.0')).toBe(false)
+  })
+
+  it('accepts a development build instead of restarting forever', () => {
+    // The repo keeps 0.1.0 as the desktop placeholder, and a source build
+    // reports "dev"; neither can be compared to a release version.
+    expect(versionsMatch('v0.145.0', '0.1.0')).toBe(true)
+    expect(versionsMatch('dev', '0.145.0')).toBe(true)
+    expect(versionsMatch('', '0.145.0')).toBe(true)
   })
 })

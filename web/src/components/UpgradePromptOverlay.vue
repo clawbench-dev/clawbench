@@ -14,11 +14,11 @@
         <a v-if="releaseNotesUrl" class="up-release-link" :href="releaseNotesUrl" target="_blank" rel="noopener noreferrer">
           {{ t('upgrade.releaseNotes', { version: latestVersion }) }}
         </a>
-        <!-- A fused install downloads the whole package through the desktop
+        <!-- A integrated install downloads the whole package through the desktop
              shell, which can take a while; keep the prompt up with a spinner
              instead of closing it into an apparently idle app. -->
-        <div v-if="installingFused" class="up-installing">
-          <LoadingIndicator size="md" :label="t('upgrade.fusedInstalling')" />
+        <div v-if="installingIntegrated" class="up-installing">
+          <LoadingIndicator size="md" :label="t('upgrade.integratedInstalling')" />
         </div>
         <div v-else class="up-footer">
           <button class="up-upgrade" @click="upgradeNow">{{ t('upgrade.upgradeNow') }}</button>
@@ -38,7 +38,7 @@ import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHand
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
 const { t } = useI18n()
-const { skipVersion: doSkip, startUpgrade, releaseNotesUrl, isDocker, installingFused } = useUpgrade()
+const { skipVersion: doSkip, startUpgrade, releaseNotesUrl, isDocker, installingIntegrated } = useUpgrade()
 
 const visible = ref(false)
 const latestVersion = ref('')
@@ -56,10 +56,10 @@ function show(latest: string, current: string) {
 async function upgradeNow() {
   // startUpgrade may open a confirmation dialog for an unverified release
   // before it does anything, so await it rather than firing and forgetting.
-  // A fused install keeps the prompt up (with a spinner) until the desktop
+  // A integrated install keeps the prompt up (with a spinner) until the desktop
   // shell finishes, then closes.
   await startUpgrade()
-  if (!installingFused.value) visible.value = false
+  if (!installingIntegrated.value) visible.value = false
 }
 
 function skipVersion() {

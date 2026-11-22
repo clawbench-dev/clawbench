@@ -543,7 +543,7 @@ const renderList = computed(() => {
       if (entry.spec.key === 'closeAction' && getNative()?.hasCustomWindowControls?.() !== true) continue
       // The desktop app owns the server it ships, so it refuses to restart it:
       // the row would only ever fail. See useUpgrade's managedByEmbedder.
-      // "Check for updates" stays — a fused install upgrades as a whole package
+      // "Check for updates" stays — a integrated install upgrades as a whole package
       // (the desktop shell downloads and installs it).
       if (entry.spec.key === 'restartServer' && upgradeManagedByEmbedder.value) continue
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue

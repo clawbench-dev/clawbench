@@ -61,10 +61,10 @@ export interface VersionGateLabels {
    * Shown instead of installing when this client ships its own server: replacing
    * it with the thin package would remove the server it carries.
    */
-  fusedUpdateTitle: string
-  fusedUpdateMessage: string
-  /** Shown when a release has no all-in-one package for this platform. */
-  fusedPackageMissing: string
+  integratedUpdateTitle: string
+  integratedUpdateMessage: string
+  /** Shown when a release has no integrated package for this platform. */
+  integratedPackageMissing: string
 }
 
 /**
@@ -84,9 +84,9 @@ export function versionGateLabels(locale: string): VersionGateLabels {
       versionReadyDetail: '重启后生效。选择“稍后”也可在下次启动时自动使用该版本。',
       restartFailedTitle: '重启失败',
       restartFailedMessage: '无法启动该版本，请手动重启应用。',
-      fusedUpdateTitle: '请安装新版安装包',
-      fusedUpdateMessage: '当前客户端自带服务端，不能只替换客户端。请下载新版的一体安装包重新安装，客户端和服务端会一起更新。',
-      fusedPackageMissing: '这个版本没有对应的一体安装包，无法在应用内升级。',
+      integratedUpdateTitle: '请安装新版整合包',
+      integratedUpdateMessage: '当前客户端自带服务端，不能只替换客户端。请下载新版的整合包重新安装，客户端和服务端会一起更新。',
+      integratedPackageMissing: '这个版本没有对应的整合包，无法在应用内升级。',
     }
   }
   return {
@@ -100,9 +100,9 @@ export function versionGateLabels(locale: string): VersionGateLabels {
     versionReadyDetail: 'It takes effect after a restart. Choosing “Later” also picks it up automatically on the next launch.',
     restartFailedTitle: 'Restart Failed',
     restartFailedMessage: 'Could not launch this version. Please restart the app manually.',
-    fusedUpdateTitle: 'Install the new package',
-    fusedUpdateMessage: 'This client ships with its own server, so the client alone cannot be replaced. Download the new all-in-one package and reinstall: client and server then update together.',
-    fusedPackageMissing: 'This release has no all-in-one package for your platform, so it cannot be installed from inside the app.',
+    integratedUpdateTitle: 'Install the new package',
+    integratedUpdateMessage: 'This client ships with its own server, so the client alone cannot be replaced. Download the new integrated package and reinstall: client and server then update together.',
+    integratedPackageMissing: 'This release has no integrated package for your platform, so it cannot be installed from inside the app.',
   }
 }
 
@@ -188,7 +188,7 @@ export interface EmbeddedServerLabels {
 }
 
 /**
- * Labels for the "all-in-one" desktop build's own server.
+ * Labels for the "integrated" desktop build's own server.
  *
  * These render outside the web page (a native dialog and the native server
  * switcher), so they cannot come from vue-i18n — same rule as the other tables
@@ -227,9 +227,10 @@ export function closeDialogLabels(locale: string): CloseDialogLabels {
     return {
       title: '关闭 ClawBench',
       message: '关闭窗口后要怎么做？',
-      detail: '「最小化到托盘」会让 ClawBench 继续在后台运行，正在执行的任务不会中断；之后可以从任务栏右下角的托盘图标重新打开。',
+      detail: '「最小化到托盘」会让 ClawBench 继续在后台运行，正在执行的任务不会中断；之后可以从任务栏右下角的托盘图标重新打开。直接退出时，本机服务仍会在后台运行，手机和其他设备还能继续连接。',
       tray: '最小化到托盘',
       exit: '退出程序',
+      exitStop: '退出并停止本机服务',
       cancel: '取消',
       remember: '记住我的选择（可在设置中修改）',
       trayUnavailable: '无法创建托盘图标，窗口已保持打开。',
@@ -239,9 +240,10 @@ export function closeDialogLabels(locale: string): CloseDialogLabels {
   return {
     title: 'Close ClawBench',
     message: 'What should closing the window do?',
-    detail: '“Minimize to tray” keeps ClawBench running in the background, so nothing that is still running is interrupted. Reopen it from the tray icon at the bottom-right of the taskbar.',
+    detail: '“Minimize to tray” keeps ClawBench running in the background, so nothing that is still running is interrupted. Reopen it from the tray icon at the bottom-right of the taskbar. If you quit, the built-in server keeps running so phones and other devices stay connected.',
     tray: 'Minimize to tray',
     exit: 'Quit the app',
+    exitStop: 'Quit and stop the built-in server',
     cancel: 'Cancel',
     remember: 'Remember my choice (change it in Settings)',
     trayUnavailable: 'Could not create a tray icon, so the window was left open.',
@@ -267,6 +269,8 @@ export interface FloatingCapsuleLabels {
   hide: string
   hideFloating: string
   quit: string
+  /** Tray action that stops the bundled server without quitting the app. */
+  stopServer: string
   /** Tooltip on the capsule body — the desktop stand-in for a long-press hint. */
   hint: string
 }
@@ -293,6 +297,7 @@ export function floatingCapsuleLabels(locale: string): FloatingCapsuleLabels {
       resetPosition: '重置位置',
       hide: '隐藏悬浮窗',
       quit: '退出 ClawBench',
+      stopServer: '停止本机服务',
       hint: '点击显示/隐藏主界面，右键更多操作',
     }
   }
@@ -309,6 +314,7 @@ export function floatingCapsuleLabels(locale: string): FloatingCapsuleLabels {
     resetPosition: 'Reset position',
     hide: 'Hide floating window',
     quit: 'Quit ClawBench',
+    stopServer: 'Stop the built-in server',
     hint: 'Click to show or hide the window, right-click for more',
   }
 }

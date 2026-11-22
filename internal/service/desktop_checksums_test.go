@@ -45,14 +45,14 @@ func TestParseSHA256SUMS(t *testing.T) {
 		strings.ToUpper(hash) + "  uppercase.zip",
 		hash + "  extra-field.zip trailing",
 		"",
-		hash + "  fused.zip",
+		hash + "  integrated.zip",
 	}, "\n")
 
 	got, err := parseSHA256SUMS(strings.NewReader(body))
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{
 		"full.zip":  hash,
-		"fused.zip": hash,
+		"integrated.zip": hash,
 	}, got)
 }
 
@@ -60,7 +60,7 @@ func TestDesktopChecksums_FetchesOnceAndFilters(t *testing.T) {
 	useRealChecksumFetch(t)
 	const tag = "v1.2.3"
 	const full = "clawbench-desktop-linux-x64-v1.2.3.zip"
-	const fused = "clawbench-desktop-windows-x64-local-v1.2.3.zip"
+	const integrated = "clawbench-desktop-windows-x64-local-v1.2.3.zip"
 	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 	hits := 0
@@ -70,7 +70,7 @@ func TestDesktopChecksums_FetchesOnceAndFilters(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write([]byte(hash + "  " + full + "\n" + hash + "  " + fused + "\n"))
+		_, _ = w.Write([]byte(hash + "  " + full + "\n" + hash + "  " + integrated + "\n"))
 	}))
 	defer srv.Close()
 
@@ -86,8 +86,8 @@ func TestDesktopChecksums_FetchesOnceAndFilters(t *testing.T) {
 	fullMap := desktopPackageChecksums(tag)
 	assert.Equal(t, map[string]string{full: hash}, fullMap)
 
-	fusedMap := FusedDesktopChecksums(tag)
-	assert.Equal(t, map[string]string{fused: hash}, fusedMap)
+	integratedMap := IntegratedDesktopChecksums(tag)
+	assert.Equal(t, map[string]string{integrated: hash}, integratedMap)
 
 	// Both calls share the per-tag cache.
 	assert.Equal(t, 1, hits)
@@ -165,7 +165,7 @@ func TestDesktopPackageChecksums_NoMatchingAssetsIsNil(t *testing.T) {
 		_, _ = w.Write([]byte(hash + "  unrelated.zip\n"))
 	})
 	assert.Nil(t, desktopPackageChecksums("v2.0.3"))
-	assert.Nil(t, FusedDesktopChecksums("v2.0.3"))
+	assert.Nil(t, IntegratedDesktopChecksums("v2.0.3"))
 }
 
 // A failure is not an answer about the release: GitHub was unreachable, or the

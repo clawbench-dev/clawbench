@@ -72,7 +72,7 @@ npm test                                # Vitest
 
 **桌面壳 ≠ 手机 App 模式**：两者都经原生桥识别为原生环境，但省电策略相反——Android 退到后台会被挂起，故隐藏时断开 WebSocket；桌面窗口只是最小化、进程仍在跑，断开 WS 等于自断通知来源。门控写成 `isAppMode && !isDesktopApp`，漏一层就让最小化后的推送静默失效。
 
-**Windows 融合版**（一体包自带服务端）：服务端以 `--managed` 启动，`/api/upgrade/start` 与 `/api/config/restart` 一律 403，`/api/upgrade/check` 返回 `managed: true`——这两条路会换掉安装包里的二进制，客户端就管不住进程了；**版本拦截里的「下载」也一样拒绝**（下载源都是瘦包，会把 `server/` 弄丢，融合版只能整包重装）。内嵌服务端**不是普通服务器条目**（存 `embeddedServerUrl`，不在 `servers` 列表），旧版本当普通条目过，导致删除后自动补回、改名造假条目、改密码无效。退出靠关 stdin（`--exit-on-stdin-close`）。详见 [`docs/spec/client/desktop-client.md`](docs/spec/client/desktop-client.md)。
+**整合包**（客户端自带服务端，Windows / macOS / Linux 都发）：服务端以 `--managed` 启动，`/api/upgrade/start` 与 `/api/config/restart` 一律 403，`/api/upgrade/check` 返回 `managed: true`——这两条路会换掉安装包里的二进制，客户端就管不住进程了；**版本拦截里的「下载」也一样拒绝**（下载源都是瘦包，会把 `server/` 弄丢，整合包只能整包重装）。**退出桌面壳不会停服务端**（`detached` 启动，日志写数据目录的 `desktop-server.log`），下次启动按 `server.pid` + `/api/health` 的 `pid` 接管同一个进程，版本不一致才停旧起新；停止是显式动作（关闭对话框 / 托盘 / 登录页「本机服务」行）。内嵌服务端**不是普通服务器条目**（存 `embeddedServerUrl`，不在 `servers` 列表），旧版本当普通条目过，导致删除后自动补回、改名造假条目、改密码无效。详见 [`docs/spec/client/desktop-client.md`](docs/spec/client/desktop-client.md)。
 
 **鸿蒙端**（`harmony/`，实验性，不进 release 流水线）：壳里只有系统能力，界面是同一份 Vue 前端。**新增原生事件必须加进 bootstrap 的 `nativeEvents` 白名单**，否则静默丢弃。宿主身份独立于 Android（`isHarmonyApp` 与 `isAndroidApp` 互斥，误并会启用安卓专属补偿与 APK 更新入口）。原生隧道只能由原生层做（ArkWeb 建不了 SSH），**不接受跳过 TLS / 主机校验换连通**。能力表报 `false` 的项是签名级权限受限，**不要用应用内弹层或空实现冒充**。口径以 `docs/harmonyos/FEATURE_PARITY.md` 为准。
 

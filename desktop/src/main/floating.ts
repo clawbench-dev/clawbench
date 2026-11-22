@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { getStore } from './store'
 import { normalizeCloseAction } from './closePolicy'
 import { isAppQuitting } from './closeFlow'
+import { isEmbeddedServerActive, stopEmbeddedServer } from './localServer'
 import { getCookieHeaderForUrl, record, recordError } from './clientLog'
 import { floatingCapsuleLabels, resolveNativeLanguage } from './labels'
 import { createMainWindow, getMainWindow, onMainWindowCreated } from './window'
@@ -564,6 +565,17 @@ function trayMenu(): Menu {
       { type: 'separator' },
       { label: t.disableFloating, click: () => applyFloatingEnabled(false) },
     )
+  }
+  // Quitting no longer stops the bundled server, so the tray needs its own
+  // explicit stop action — otherwise a user who only ever sees the tray icon
+  // has no way to end the background backend.
+  if (isEmbeddedServerActive()) {
+    items.push({
+      label: t.stopServer,
+      click: () => {
+        void stopEmbeddedServer().then(() => { if (tray) tray.setContextMenu(trayMenu()) })
+      },
+    })
   }
   items.push({ type: 'separator' }, { label: t.quit, click: () => app.quit() })
   return Menu.buildFromTemplate(items)

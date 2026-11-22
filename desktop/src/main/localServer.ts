@@ -10,7 +10,6 @@ import {
   EMBEDDED_DEFAULT_PORT,
   EMBEDDED_EXIT_GRACE_MS,
   EMBEDDED_HEALTH_INTERVAL_MS,
-  EMBEDDED_SERVER_EXE,
   EMBEDDED_STARTUP_TIMEOUT_MS,
   chooseEmbeddedPort,
   embeddedServerArgs,
@@ -22,53 +21,73 @@ import {
   sameServerUrl,
   sessionCookieName,
   shouldAdoptEmbeddedServer,
+  versionsMatch,
+  type HealthBody,
 } from './localServerPolicy'
 
 /**
- * The embedded server: an "all-in-one" desktop build starts a ClawBench server
- * of its own and quits it when the app quits.
+ * The embedded server of an integrated package (客户端和服务端装在一起).
  *
  * Lifecycle, in order:
  *
- *  1. Pick a port (the last one if free — browser storage is keyed by origin).
- *  2. Spawn `server/clawbench.exe` (next to the executable), holding its stdin. On Windows a
- *     child cannot be signalled gracefully, so the pipe IS the quit button: when
- *     this process closes it — deliberately, or by crashing — the server sees
- *     EOF and drains itself. No orphan survives the app.
+ *  1. If a server from a previous run is still alive, ADOPT it: probe its
+ *     health, confirm it is the process named by our `server.pid`, plant the
+ *     session cookie and reuse its address. This is what makes "quit the
+ *     desktop, keep the server running" work — the next launch must not spawn a
+ *     second server that can only fail on the data-directory lock.
+ *  2. Otherwise pick a port (the last one if free — browser storage is keyed by
+ *     origin) and spawn `server/clawbench[.exe]` DETACHED, with its output going
+ *     to `desktop-server.log`. The child is unreferenced, so it survives the
+ *     shell exiting or crashing.
  *  3. Poll /api/health until it identifies itself as ClawBench.
  *  4. Log in silently with the password the server generated for itself and
  *     plant the session cookie, so the app never shows the admin login form.
  *  5. Remember the URL, then let the normal window/navigation take over.
  *
+ * Quitting the shell does NOT stop the server. Stopping it is an explicit
+ * action (close dialog, tray menu, login page), because the whole point is that
+ * phones and other clients keep working after the desktop is closed.
+ *
  * Only one server per data directory is allowed (the server locks it), which is
- * why this also refuses to start a second copy: a stale server from a crashed
- * previous run would otherwise make every launch fail with "data directory in
- * use". Killing it is safe here and only here — the data directory belongs to
- * the app package, and no other ClawBench install in its right mind points at it.
+ * why a stale server from a crashed run must be replaced before spawning: the
+ * new one would wait out the 30s lock window and fail. Killing it is safe here
+ * and only here — the data directory belongs to the app package, and no other
+ * ClawBench install in its right mind points at it.
  */
 
 /** Store key: the port the embedded server used last time. */
 export const EMBEDDED_PORT_KEY = 'embeddedServerPort'
 
+/** File the server appends its own log to while running in the background. */
+const SERVER_LOG = 'desktop-server.log'
+
 let child: ChildProcess | null = null
+/**
+ * PID of the server this app manages. Set for a server we spawned AND for one
+ * adopted from a previous run (where `child` is null — there is no handle to a
+ * process started by an older shell).
+ */
+let managedPid = 0
 let serverUrl = ''
 let stopping = false
 let embeddedActive = false
+/** Cached `clawbench --version` of the bundled binary ('' when unreadable). */
+let bundledVersion: string | null = null
 
 /**
- * Whether this session runs against the embedded server.
+ * Whether this session runs against the embedded server (spawned or adopted).
  *
  * Set by index.ts after the server answered, and read by the failure path (a
  * dead built-in server gets its own explanation) and the login page (running /
- * not running). Kept separate from `child` on purpose: a failed start leaves no
- * child but must NOT look like "embedded mode, no server URL" to the rest of the
- * app — it falls back to the ordinary login page.
+ * not running). Deliberately does NOT require `child`: an adopted background
+ * server has no child handle but is very much running.
  *
  * NOT the way to ask "is this URL ours" — see {@link isEmbeddedServerUrl}: a
- * fused build keeps this server running while the user is on another machine.
+ * integrated build keeps this server running while the user is on another
+ * machine.
  */
 export function isEmbeddedServerActive(): boolean {
-  return embeddedActive && !!child && !stopping
+  return embeddedActive && !stopping
 }
 
 export function setEmbeddedServerActive(active: boolean): void {
@@ -84,10 +103,10 @@ export function getEmbeddedServerUrl(): string {
  * Whether `url` is the server this build ships with.
  *
  * Deliberately a question about the ADDRESS, not about {@link
- * isEmbeddedServerActive}: a fused build keeps its own server running while the
- * user is connected to another machine, and "we run a local server" must not
- * make that other server look like ours (the version gate, the failure dialog
- * and the login page all key off this).
+ * isEmbeddedServerActive}: an integrated build keeps its own server running
+ * while the user is connected to another machine, and "we run a local server"
+ * must not make that other server look like ours (the version gate, the failure
+ * dialog and the login page all key off this).
  */
 export function isEmbeddedServerUrl(url: string): boolean {
   if (!url) return false
@@ -116,19 +135,19 @@ export function getEmbeddedServerInfo(): EmbeddedServerInfo | null {
 
 /** Path of the server binary shipped with this app. */
 export function embeddedServerBinaryPath(): string {
-  // The app root, not `resources/`: electron-builder's `extraFiles` puts the
-  // server next to the executable precisely so a payload update (which replaces
-  // `resources/`) can never remove it. Path arithmetic lives in the policy
-  // module so it can be tested without Electron.
-  return embeddedServerBinaryPathFor(process.execPath)
+  // The app's content directory, not `resources/`: electron-builder's
+  // `extraFiles` puts the server there precisely so a payload update (which
+  // replaces `resources/`) can never remove it. Path arithmetic lives in the
+  // policy module so it can be tested without Electron.
+  return embeddedServerBinaryPathFor(process.execPath, process.platform)
 }
 
 /**
- * Whether this install carries its own server (a fused/all-in-one package).
+ * Whether this install carries its own server (an integrated package).
  *
  * Separate from {@link getEmbeddedServerInfo}: a server that never started still
- * makes this a fused install, and the difference matters to the upgrade path —
- * replacing it with a thin package would delete the only server it has.
+ * makes this an integrated install, and the difference matters to the upgrade
+ * path — replacing it with a thin package would delete the only server it has.
  */
 export function hasEmbeddedServerBinary(): boolean {
   return fs.existsSync(embeddedServerBinaryPath())
@@ -209,7 +228,7 @@ function isClawBenchProcess(pid: number): boolean {
   try {
     if (process.platform === 'win32') {
       const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8' })
-      return out.toLowerCase().includes(EMBEDDED_SERVER_EXE)
+      return out.toLowerCase().includes('clawbench.exe')
     }
     const out = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8' })
     return out.toLowerCase().includes('clawbench')
@@ -228,36 +247,131 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+/** The port a stored server URL points at, with the usual defaults. */
+function portOf(url: string): number {
+  try {
+    const u = new URL(url)
+    if (u.port) return Number(u.port)
+    return u.protocol === 'https:' ? 443 : 80
+  } catch {
+    return EMBEDDED_DEFAULT_PORT
+  }
+}
+
 /**
- * Stop a server this app left behind (a crash or a force-kill skips the stdin
- * close, and the next launch would otherwise fail on the data directory lock).
+ * Ports worth probing for a server left running by a previous launch.
  *
- * Only ever our own: the caller has already checked that the PID file names a
- * live process whose executable is ClawBench. Killing by image name instead
- * would take down a standalone install the user is running elsewhere.
+ * The recorded address is first (that is where it was last seen); the preferred
+ * port and the default cover a store that lost the address but not the data
+ * directory.
  */
-async function reapPreviousServer(pid: number): Promise<boolean> {
-  record('W', 'LocalServer', `reaping a server left behind by a previous run (pid ${pid})`)
+function candidatePorts(): number[] {
+  const out: number[] = []
+  const stored = getStore().get('embeddedServerUrl')
+  if (stored) out.push(portOf(stored))
+  const preferred = Number(getStore().get(EMBEDDED_PORT_KEY)) || EMBEDDED_DEFAULT_PORT
+  out.push(preferred, EMBEDDED_DEFAULT_PORT)
+  return [...new Set(out)]
+}
+
+/**
+ * Version of the server binary THIS package ships.
+ *
+ * The desktop shell's own `app.getVersion()` is not a reliable stand-in: a
+ * release may reuse the previous shell (unchanged client protocol) while
+ * shipping a new server, so the shell can legitimately report an older version
+ * than the binary next to it. Asking the binary is the only way to know which
+ * backend this launch is supposed to run.
+ */
+function bundledServerVersion(binary: string): string {
+  if (bundledVersion === null) {
+    try {
+      bundledVersion = execFileSync(binary, ['--version'], { encoding: 'utf8', timeout: 5000 }).trim()
+    } catch (e) {
+      record('W', 'LocalServer', `cannot read the bundled server version: ${(e as Error).message}`)
+      bundledVersion = ''
+    }
+  }
+  return bundledVersion
+}
+
+/**
+ * Take over the server a previous launch left running, or return null.
+ *
+ * The server now outlives the desktop shell, so this is the normal path on every
+ * launch after the first. Ownership is proven by the PID file naming the process
+ * that answered `/api/health`; a server we cannot identify is left alone (the
+ * port walk handles it) rather than adopted or killed.
+ *
+ * A version mismatch means the app was upgraded while the old server kept
+ * running. The old server is replaced: serving an older backend under a newer
+ * shell is exactly the inconsistency the version gate exists to prevent.
+ */
+async function adoptRunningServer(binary: string): Promise<string | null> {
+  const pid = previousServerPid()
+  if (!pid || !isClawBenchProcess(pid)) return null
+  const expected = bundledServerVersion(binary)
+  for (const port of candidatePorts()) {
+    const body = await probeHealth(port)
+    if (!isClawBenchHealth(body)) continue
+    const answeredPid = (body as HealthBody).pid
+    if (typeof answeredPid === 'number' && answeredPid !== pid) continue
+    const runningVersion = (body as HealthBody).version || ''
+    if (expected && !versionsMatch(runningVersion, expected)) {
+      record('W', 'LocalServer', `running server ${pid} is ${runningVersion}; this package ships ${expected}, replacing it`)
+      await terminateServer(pid)
+      return null
+    }
+    managedPid = pid
+    serverUrl = embeddedServerUrl(port)
+    record('I', 'LocalServer', `adopted the running server at ${serverUrl} (pid ${pid})`)
+    return serverUrl
+  }
+  return null
+}
+
+/**
+ * Stop a ClawBench server by PID: graceful where the platform has a catchable
+ * signal, forced on Windows (a console child cannot receive one), then SIGKILL
+ * if it overstays the grace period.
+ *
+ * The caller has already checked that the PID belongs to ClawBench; killing by
+ * image name instead would take down a standalone install the user runs
+ * elsewhere.
+ */
+async function terminateServer(pid: number): Promise<boolean> {
+  record('I', 'LocalServer', `stopping the built-in server (pid ${pid})`)
   try {
     if (process.platform === 'win32') {
-      // No graceful signal on Windows; the next start repairs the interrupted
-      // turn this leaves behind.
       execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore' })
     } else {
       process.kill(pid, 'SIGTERM')
     }
   } catch (e) {
-    record('I', 'LocalServer', `reap: ${(e as Error).message}`)
+    record('I', 'LocalServer', `stop: ${(e as Error).message}`)
   }
-  for (let i = 0; i < 60; i++) {
+  const deadline = Date.now() + EMBEDDED_EXIT_GRACE_MS
+  let killed = false
+  while (Date.now() < deadline) {
     if (!isProcessAlive(pid)) return true
-    if (i === 40 && process.platform !== 'win32') {
-      // The graceful drain had its chance; stop waiting on it.
-      try { process.kill(pid, 'SIGKILL') } catch { /* gone */ }
+    if (!killed && Date.now() > deadline - EMBEDDED_EXIT_GRACE_MS / 3) {
+      killed = true
+      if (process.platform !== 'win32') {
+        try { process.kill(pid, 'SIGKILL') } catch { /* gone */ }
+      }
     }
     await wait(250)
   }
-  return false
+  return !isProcessAlive(pid)
+}
+
+/**
+ * Stop a server this app left behind (a crash or a force-kill skips the graceful
+ * path, and the next launch would otherwise fail on the data directory lock).
+ */
+async function reapPreviousServer(pid: number): Promise<boolean> {
+  record('W', 'LocalServer', `reaping a server left behind by a previous run (pid ${pid})`)
+  return terminateServer(pid)
 }
 
 /** Wait until the server answers as ClawBench, or throw with what it said. */
@@ -379,6 +493,24 @@ async function plantSessionCookie(port: number, ses: Session): Promise<void> {
   saveEmbeddedPassword(password)
 }
 
+/** Remember the address this launch uses, without overriding a remote choice. */
+function rememberServer(port: number): void {
+  const store = getStore()
+  // Read BEFORE the new address is written: this is the address the last run
+  // used, which is what "the user chose the built-in server" must compare to.
+  const previousActive = store.get('serverUrl')
+  const previousEmbedded = store.get('embeddedServerUrl')
+  store.set(EMBEDDED_PORT_KEY, port)
+  store.set('embeddedServerUrl', serverUrl)
+  // Adopt the built-in server only when it is what this launch should open:
+  // nothing chosen yet, or the user was on it last time. A user who picked
+  // another machine keeps that choice — otherwise "connect to my server" would
+  // silently revert on every restart.
+  if (shouldAdoptEmbeddedServer(previousActive, previousEmbedded)) {
+    store.set('serverUrl', serverUrl)
+  }
+}
+
 /**
  * Start the embedded server and prepare the app to open it.
  *
@@ -395,7 +527,7 @@ export async function startEmbeddedServer(): Promise<string> {
   // spawning another one would only wait out the 30s lock window and fail. This
   // is the login page's retry path after a failed start — without this, every
   // retry added another server and none of them could work.
-  if (child) stopEmbeddedServer()
+  if (child || managedPid) await stopEmbeddedServer()
   // `stopEmbeddedServer` sets this and never clears it; a fresh start is a fresh
   // lifecycle. Leaving it true makes isEmbeddedServerActive() report "not
   // running" for the rest of the session, which sends the login page down the
@@ -408,11 +540,17 @@ export async function startEmbeddedServer(): Promise<string> {
   // further on every launch.
   adoptLegacyEmbeddedEntry()
 
+  // A server left running by the previous launch is the normal case now. Reuse
+  // it before touching the port or the lock.
+  const adopted = await adoptRunningServer(binary)
+  if (adopted) {
+    const port = portOf(adopted)
+    await plantSessionCookie(port, session.defaultSession)
+    rememberServer(port)
+    return adopted
+  }
+
   const store = getStore()
-  const previousActive = store.get('serverUrl')
-  // Read BEFORE the new address is written: this is the address the last run
-  // used, which is what "the user chose the built-in server" must compare to.
-  const previousEmbedded = store.get('embeddedServerUrl')
   const preferred = Number(store.get(EMBEDDED_PORT_KEY)) || EMBEDDED_DEFAULT_PORT
   // Only the user's own rows can collide with ours. The built-in server's own
   // address is never in this list (adoptLegacyEmbeddedEntry removed it), so its
@@ -441,31 +579,37 @@ export async function startEmbeddedServer(): Promise<string> {
   const args = embeddedServerArgs({ port, dataDir: embeddedDataDir() })
   record('I', 'LocalServer', `starting ${binary} ${args.join(' ')}`)
 
+  // The child is DETACHED and unreferenced: the server is meant to outlive this
+  // shell so phones and browsers keep working after the desktop is closed. Its
+  // output goes to a file because there is no pipe to read any more.
+  let logFd: number | 'ignore' = 'ignore'
+  try {
+    logFd = fs.openSync(path.join(embeddedDataDir(), SERVER_LOG), 'a')
+  } catch (e) {
+    record('W', 'LocalServer', `cannot open ${SERVER_LOG}: ${(e as Error).message}`)
+  }
   const spawned = spawn(binary, args, {
-    // stdin is OUR channel to the server (see watchParentPipe on the server
-    // side): it stays open for the life of the app and closing it is the quit.
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ['ignore', logFd, logFd],
     windowsHide: true,
     cwd: embeddedDataDir(),
+    detached: true,
   })
   child = spawned
+  managedPid = spawned.pid ?? 0
+  spawned.unref()
+  // The child owns the descriptor now; keeping the parent's copy open would
+  // hold the log file (and delay rotation/cleanup) for the shell's lifetime.
+  if (typeof logFd === 'number') {
+    try { fs.closeSync(logFd) } catch { /* already closed */ }
+  }
   spawned.once('exit', (code, signal) => {
     record('W', 'LocalServer', `server exited code=${code} signal=${signal}`)
     if (!stopping) {
       // It went away on its own: the app has nothing to talk to, and silently
       // reloading would loop. Surface it the way a failed connect is surfaced.
       serverUrl = ''
+      managedPid = 0
       embeddedActive = false
-    }
-  })
-  spawned.stderr?.on('data', (b: Buffer) => {
-    for (const line of b.toString('utf8').split('\n')) {
-      if (line.trim()) record('I', 'Server', line.trim())
-    }
-  })
-  spawned.stdout?.on('data', (b: Buffer) => {
-    for (const line of b.toString('utf8').split('\n')) {
-      if (line.trim()) record('I', 'Server', line.trim())
     }
   })
   spawned.once('error', (err) => recordError('LocalServer', err))
@@ -478,56 +622,38 @@ export async function startEmbeddedServer(): Promise<string> {
     // data-directory lock, so the next attempt (the login page's retry, or a
     // relaunch while this process lives on) would spawn a second server that can
     // only time out — the failure would stick until the whole app was killed.
-    stopEmbeddedServer()
+    await stopEmbeddedServer()
     throw err
   }
 
-  getStore().set(EMBEDDED_PORT_KEY, port)
-  getStore().set('embeddedServerUrl', serverUrl)
-  // Adopt the built-in server only when it is what this launch should open:
-  // nothing chosen yet, or the user was on it last time. A user who picked
-  // another machine keeps that choice — otherwise "connect to my server" would
-  // silently revert on every restart.
-  if (shouldAdoptEmbeddedServer(previousActive, previousEmbedded)) {
-    getStore().set('serverUrl', serverUrl)
-  }
+  rememberServer(port)
   return serverUrl
 }
 
 /**
- * Stop the embedded server: close its stdin (its quit signal), wait for a
- * graceful drain, then kill whatever is left.
+ * Stop the embedded server: graceful signal (SIGTERM / taskkill), wait for the
+ * drain, then force it if it overstays. Also works for a server adopted from a
+ * previous launch, where there is no child handle.
  *
- * Synchronous where it can be, because it runs from `will-quit`, which
- * Electron does not await. The kill timer is `unref`d so a shutdown that already
- * finished does not keep the process alive for the full grace period.
+ * Quitting the shell does NOT call this — see the module comment. It backs the
+ * three explicit stop actions (close dialog, tray menu, login page).
  */
-export function stopEmbeddedServer(): void {
+export async function stopEmbeddedServer(): Promise<void> {
   const proc = child
-  if (!proc) return
-  if (proc.exitCode !== null) {
-    // It already exited (a crash, or the previous quit path): nothing to signal.
-    child = null
-    serverUrl = ''
-    embeddedActive = false
-    return
-  }
+  const pid = managedPid || proc?.pid || previousServerPid()
   stopping = true
   child = null
+  managedPid = 0
   serverUrl = ''
   embeddedActive = false
-  try {
-    proc.stdin?.end()
-  } catch {
-    /* already gone */
+  if (!pid) return
+  if (proc && proc.exitCode !== null) return
+  if (!isProcessAlive(pid)) return
+  // A spawned child is ours by construction; an adopted PID must still prove it
+  // is ClawBench before we signal it.
+  if (!proc && !isClawBenchProcess(pid)) {
+    record('W', 'LocalServer', `refusing to stop pid ${pid}: not a ClawBench process`)
+    return
   }
-  const timer = setTimeout(() => {
-    try {
-      proc.kill()
-    } catch {
-      /* already gone */
-    }
-  }, EMBEDDED_EXIT_GRACE_MS)
-  timer.unref()
-  proc.once('exit', () => clearTimeout(timer))
+  await terminateServer(pid)
 }

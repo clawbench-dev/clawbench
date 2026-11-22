@@ -11,7 +11,7 @@ import {
   getPassword, savePassword, savePasswordFor, getPasswordFor, removePasswordFor,
   migratePasswords, getServersForRenderer, saveServerName,
 } from './secrets'
-import { getEmbeddedServerInfo, isEmbeddedServerUrl, setEmbeddedServerActive, startEmbeddedServer } from './localServer'
+import { getEmbeddedServerInfo, isEmbeddedServerUrl, setEmbeddedServerActive, startEmbeddedServer, stopEmbeddedServer } from './localServer'
 import { embeddedServerLabels, resolveNativeLanguage } from './labels'
 import { sameServerUrl } from './localServerPolicy'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
@@ -24,7 +24,7 @@ import {
   minimizeMainWindow, toggleMaximizeMainWindow, closeMainWindow, isMainWindowMaximized,
 } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob, cancelDownload } from './download'
-import { installFusedUpdate } from './fusedUpdate'
+import { installIntegratedUpdate } from './integratedUpdate'
 import { setKeepScreenOnImpl } from './powersave'
 import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification, dismissTerminalNotification } from './notification'
 import type { NotificationNav } from '../shared/types'
@@ -108,6 +108,13 @@ export function registerBridge(): void {
   // login page and the in-app switcher ask for it separately. `"null"` in a
   // thin build, where there is no such server.
   ipcMain.handle('native:get-embedded-server', () => JSON.stringify(getEmbeddedServerInfo()))
+  // Explicit stop for the background server (the login page's 本机服务 row).
+  // Quitting the shell leaves it running on purpose, so the UI must be able to
+  // end it without hunting for the process.
+  ipcMain.handle('native:stop-embedded-server', async () => {
+    await stopEmbeddedServer()
+    return JSON.stringify({ ok: true })
+  })
   ipcMain.handle('native:get-saved-server-config', () => {
     const u = getStore().get('serverUrl')
     if (!u) return '{}'
@@ -258,14 +265,14 @@ export function registerBridge(): void {
   // "download" installs the server's version (the gate stays up on failure).
   ipcMain.on('native:version-continue', () => continueVersionGate())
   ipcMain.on('native:version-download', () => { void downloadVersionFromGate() })
-  // Upgrading a fused ("all-in-one") install: the server reports the release's
+  // Upgrading a integrated ("integrated") install: the server reports the release's
   // package URLs (they are built server-side, next to the release-asset names),
   // and this side downloads and installs the whole package. Invoke rather than
   // send so the caller can keep a spinner up for the whole download.
   ipcMain.handle(
-    'native:install-fused-update',
+    'native:install-integrated-update',
     (_e, version: string, downloads: Record<string, string[]>, checksums: Record<string, string>) =>
-      installFusedUpdate(version, downloads, checksums, getMainWindow()),
+      installIntegratedUpdate(version, downloads, checksums, getMainWindow()),
   )
 
   ipcMain.handle('native:get-forwarded-ports', () => JSON.stringify(getForwardedPorts()))

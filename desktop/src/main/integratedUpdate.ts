@@ -5,18 +5,18 @@ import { platformKey } from './updater'
 import { recordError } from './clientLog'
 import { resolveNativeLanguage, versionGateLabels } from './labels'
 
-export interface FusedUpdateResult {
+export interface IntegratedUpdateResult {
   ok: boolean
   /** Why the install failed; empty when ok. */
   error: string
 }
 
 /**
- * Install the all-in-one ("fused") package for `version`.
+ * Install the integrated ("integrated") package for `version`.
  *
- * A fused install carries its own server next to the executable, so the THIN
+ * A integrated install carries its own server next to the executable, so the THIN
  * package would replace the client and leave the next launch without `server/`.
- * The all-in-one package is the only unit that updates both halves together,
+ * The integrated package is the only unit that updates both halves together,
  * which is why the server hands out its URLs (fused_downloads in
  * /api/upgrade/check) instead of the client reconstructing asset names.
  *
@@ -29,19 +29,19 @@ export interface FusedUpdateResult {
  *
  * Restarting is explicit: the user is asked, never interrupted mid-session.
  */
-export async function installFusedUpdate(
+export async function installIntegratedUpdate(
   version: string,
   downloads: Record<string, string[]>,
   checksums: Record<string, string>,
   parent: BrowserWindow | null,
-): Promise<FusedUpdateResult> {
+): Promise<IntegratedUpdateResult> {
   const labels = versionGateLabels(resolveNativeLanguage())
   const parentArg = parent ?? undefined
 
   if (!hasEmbeddedServerBinary()) {
-    // Only a fused install has something to update this way. Reaching here
+    // Only a integrated install has something to update this way. Reaching here
     // means the UI offered an action this build cannot perform.
-    recordError('FusedUpdate', 'not a fused install')
+    recordError('IntegratedUpdate', 'not a integrated install')
     return { ok: false, error: 'this build does not carry its own server' }
   }
 
@@ -52,15 +52,15 @@ export async function installFusedUpdate(
       type: 'error',
       buttons: [labels.ok],
       title: labels.downloadFailedTitle,
-      message: labels.fusedPackageMissing,
+      message: labels.integratedPackageMissing,
     })
-    return { ok: false, error: `no all-in-one package for ${key || 'this platform'}` }
+    return { ok: false, error: `no integrated package for ${key || 'this platform'}` }
   }
 
   try {
     await downloadAndInstall(urls, version, checksums)
   } catch (err) {
-    recordError('FusedUpdate', err)
+    recordError('IntegratedUpdate', err)
     await dialog.showMessageBox(parentArg as BrowserWindow, {
       type: 'error',
       buttons: [labels.ok],
@@ -84,7 +84,7 @@ export async function installFusedUpdate(
     try {
       await restartInto(version)
     } catch (err) {
-      recordError('FusedUpdate', err)
+      recordError('IntegratedUpdate', err)
       await dialog.showMessageBox(parentArg as BrowserWindow, {
         type: 'error',
         buttons: [labels.ok],

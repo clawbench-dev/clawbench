@@ -84,15 +84,15 @@ describe('versionGateLabels', () => {
     }
   })
 
-  it('explains the fused-install refusal in both languages', () => {
+  it('explains the integrated-install refusal in both languages', () => {
     // This dialog replaced the one action that would have removed `server/`.
     for (const locale of ['zh', 'en']) {
       const l = versionGateLabels(locale)
-      expect(l.fusedUpdateTitle, `${locale} title`).toBeTruthy()
-      expect(l.fusedUpdateMessage, `${locale} message`).toBeTruthy()
+      expect(l.integratedUpdateTitle, `${locale} title`).toBeTruthy()
+      expect(l.integratedUpdateMessage, `${locale} message`).toBeTruthy()
     }
     // It must say what to do instead, not merely refuse.
-    expect(versionGateLabels('en').fusedUpdateMessage.toLowerCase()).toContain('reinstall')
+    expect(versionGateLabels('en').integratedUpdateMessage.toLowerCase()).toContain('reinstall')
   })
 })
 

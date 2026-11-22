@@ -495,7 +495,7 @@
       <p class="kicker" data-i18n="dep.kicker">部署</p>
       <h2 data-i18n-html="dep.title">选一种装法，<br>剩下的跟着走。</h2>
       <p class="lede" data-i18n="dep.lede">
-        先选一体化还是分开装，下面只显示对应的步骤。
+        先选整合包还是分开装，下面只显示对应的步骤。
       </p>
     </div>
 
@@ -507,8 +507,8 @@
         <p class="step-desc" data-i18n="mode.d">两种装法功能完全一样，区别在于你要不要单独跑一个服务端。</p>
 
         <div class="mode-grid" role="radiogroup" data-i18n-label="mode.aria">
-          <button class="mode-card mode-card-accent" type="button" role="radio" aria-checked="true" data-mode="allinone">
-            <span class="mode-graphic mode-graphic-allinone" aria-hidden="true">
+          <button class="mode-card mode-card-accent" type="button" role="radio" aria-checked="true" data-mode="integrated">
+            <span class="mode-graphic mode-graphic-integrated" aria-hidden="true">
               <svg viewBox="0 0 48 48" width="42" height="42" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="7" y="8" width="34" height="24" rx="3"/>
                 <path d="M17 40h14M24 32v8"/>
@@ -517,17 +517,17 @@
             <span class="mode-body">
               <span class="mode-head">
                 <span class="mode-radio" aria-hidden="true"></span>
-                <span class="mode-name" data-i18n="mode.allinone.t">一体化安装</span>
-                <span class="mode-tag" data-i18n="mode.allinone.tag">推荐</span>
+                <span class="mode-name" data-i18n="mode.integrated.t">整合包安装</span>
+                <span class="mode-tag" data-i18n="mode.integrated.tag">推荐</span>
               </span>
-              <span class="mode-desc" data-i18n="mode.allinone.d">
+              <span class="mode-desc" data-i18n="mode.integrated.d">
                 客户端自带服务端，装完打开就能用。适合办公、日常使用——不想碰命令行，也不想多开一台机器。
               </span>
               <span class="mode-flow" aria-hidden="true">
-                <span class="mode-flow-step" data-i18n="mode.allinone.s1">装客户端</span>
+                <span class="mode-flow-step" data-i18n="mode.integrated.s1">装客户端</span>
                 <span class="mode-flow-end" data-i18n="mode.done">完成</span>
               </span>
-              <span class="mode-fit" data-i18n="mode.allinone.fit">仅 Windows · 一个安装包搞定</span>
+              <span class="mode-fit" data-i18n="mode.integrated.fit">Windows / macOS / Linux · 一个安装包搞定</span>
             </span>
           </button>
 
@@ -570,11 +570,11 @@
           <span class="mode-bridge-icon" aria-hidden="true">
             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v9M4.5 8.5 8 12l3.5-3.5"/></svg>
           </span>
-          <span data-i18n-html="mode.bridge.allinone" id="modeBridgeText">按上面的选择，下面只有 <strong>1 步</strong>：装好就是完整的一套。</span>
+          <span data-i18n-html="mode.bridge.integrated" id="modeBridgeText">按上面的选择，下面只有 <strong>1 步</strong>：装好就是完整的一套。</span>
         </p>
       </div>
 
-      <!-- 第二步：分开装时先装服务端。一体化方案不显示这一步。 -->
+      <!-- 第二步：分开装时先装服务端。整合包方案不显示这一步。 -->
       <div class="step" id="step-server" hidden>
         <span class="step-no">1</span>
         <p class="step-from" data-i18n="step.from.split">分开装 · 第 1 步，共 2 步</p>
@@ -714,7 +714,7 @@ docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data gh
         <h3 class="step-title" data-i18n="step.client.t">连客户端</h3>
         <p class="step-desc" data-i18n="step.client.d">桌面端或手机装上客户端，打开后填上一步的地址和密码。</p>
 
-        <!-- 分开装时的客户端：只有瘦客户端（它要去连别人） -->
+        <!-- 分开装时的客户端：瘦客户端（它要去连别人），三个桌面系统都给 -->
         <div class="dl-grid" data-mode-panel="split">
           <div class="dl-card dl-card-hero" data-os="win">
             <div class="dl-card-head">
@@ -727,57 +727,80 @@ docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data gh
             </div>
             <p class="dl-card-note" data-i18n="dl.splitNote">客户端只负责连接，服务端要另外装（上一步的安装包，或另一台机器）。</p>
           </div>
+          <div class="dl-card" data-os="mac">
+            <div class="dl-card-head">
+              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-mac"/></svg>
+              <span class="dl-name">macOS</span>
+              <span class="dl-meta">.zip</span>
+            </div>
+            <div class="dl-links">
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-arm64" data-mirror="1">Apple Silicon</a>
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-x64" data-mirror="1">Intel</a>
+            </div>
+          </div>
+          <div class="dl-card" data-os="linux">
+            <div class="dl-card-head">
+              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-linux"/></svg>
+              <span class="dl-name">Linux</span>
+              <span class="dl-meta">.zip</span>
+            </div>
+            <div class="dl-links">
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-x64" data-mirror="1">x64</a>
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-arm64" data-mirror="1">ARM64</a>
+            </div>
+          </div>
         </div>
 
-        <!-- 一体化方案：只有一个入口，一体包。非 Windows 访客看到的是
-             一张说明「仅 Windows」的灰卡，而不是空白。 -->
-        <div class="dl-grid dl-grid-single" data-mode-panel="allinone">
-          <div class="dl-card dl-card-hero dl-card-accent" data-os="win">
+        <!-- 整合包：三个桌面系统各一份。手机（Android）装不了桌面壳，看到的是
+             一张说明「整合包是桌面版」的灰卡，并可以直接切到分开装。 -->
+        <div class="dl-grid" data-mode-panel="integrated">
+          <div class="dl-card dl-card-accent" data-os="win">
             <div class="dl-card-head">
               <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-win"/></svg>
-              <span class="dl-name">Windows · <span data-i18n="dl.allinone">一体包</span></span>
+              <span class="dl-name">Windows · <span data-i18n="dl.integrated">整合包</span></span>
               <span class="dl-meta">.zip</span>
             </div>
             <div class="dl-links">
               <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-windows-x64-local" data-mirror="1">x64</a>
             </div>
-            <p class="dl-card-note" data-i18n="dl.allinoneNote">客户端自带服务端，装完就能用，不用另外部署。</p>
-            <p class="dl-card-warn" data-i18n="dl.allinoneWinOnly" hidden>一体化安装目前只提供 Windows 版。</p>
+            <p class="dl-card-note" data-i18n="dl.integratedNote">客户端自带服务端，装完就能用，不用另外部署。</p>
+            <p class="dl-card-warn" data-i18n="dl.integratedDesktopOnly" hidden>整合包是桌面版，手机请改用分开装。</p>
             <button class="dl-card-altswap" type="button" data-switch-to="split" data-i18n="dl.switchToSplit" hidden>
-              用别的系统？改成客户端与服务端分开装
+              手机或平板？改成客户端与服务端分开装
             </button>
+          </div>
+          <div class="dl-card dl-card-accent" data-os="mac">
+            <div class="dl-card-head">
+              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-mac"/></svg>
+              <span class="dl-name">macOS · <span data-i18n="dl.integrated">整合包</span></span>
+              <span class="dl-meta">.zip</span>
+            </div>
+            <div class="dl-links">
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-arm64-local" data-mirror="1">Apple Silicon</a>
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-x64-local" data-mirror="1">Intel</a>
+            </div>
+            <p class="dl-card-note" data-i18n="dl.integratedMacNote">解压后请让 ClawBench.app 和 server 文件夹待在一起。</p>
+          </div>
+          <div class="dl-card dl-card-accent" data-os="linux">
+            <div class="dl-card-head">
+              <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-linux"/></svg>
+              <span class="dl-name">Linux · <span data-i18n="dl.integrated">整合包</span></span>
+              <span class="dl-meta">.zip</span>
+            </div>
+            <div class="dl-links">
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-x64-local" data-mirror="1">x64</a>
+              <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-arm64-local" data-mirror="1">ARM64</a>
+            </div>
           </div>
         </div>
 
-        <!-- 两种装法都要的其他平台客户端 -->
+        <!-- 手机客户端：两种桌面装法都不覆盖 Android，单独放在折叠区 -->
         <div class="dl-more">
           <button class="dl-more-btn" type="button" id="dlMore" aria-expanded="false" aria-controls="dlMoreBody">
-            <span data-i18n="dl.more">其他平台（macOS / Linux / Android）</span>
+            <span data-i18n="dl.moreAndroid">手机（Android）</span>
             <svg class="dl-more-caret" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
           </button>
           <div class="dl-grid" id="dlMoreBody" hidden>
-            <div class="dl-card" data-os="mac">
-              <div class="dl-card-head">
-                <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-mac"/></svg>
-                <span class="dl-name">macOS</span>
-                <span class="dl-meta">.zip</span>
-              </div>
-              <div class="dl-links">
-                <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-arm64" data-mirror="1">Apple Silicon</a>
-                <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-darwin-x64" data-mirror="1">Intel</a>
-              </div>
-            </div>
-            <div class="dl-card" data-os="linux">
-              <div class="dl-card-head">
-                <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-linux"/></svg>
-                <span class="dl-name">Linux</span>
-                <span class="dl-meta">.zip</span>
-              </div>
-              <div class="dl-links">
-                <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-x64" data-mirror="1">x64</a>
-                <a class="dl-chip" href="https://github.com/clawbench-dev/clawbench/releases/latest" data-asset="clawbench-desktop-linux-arm64" data-mirror="1">ARM64</a>
-              </div>
-            </div>
             <div class="dl-card" data-os="android">
               <div class="dl-card-head">
                 <svg class="dl-icon" width="20" height="20" fill="currentColor" aria-hidden="true"><use href="#i-android"/></svg>
@@ -791,7 +814,7 @@ docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data gh
           </div>
         </div>
 
-        <!-- 这条只对分开装成立：一体化方案里服务端就在本机，
+        <!-- 这条只对分开装成立：整合包方案里服务端就在本机，
              不存在「用浏览器连另一台服务器」这回事。 -->
         <p class="step-note" data-i18n-html="step.client.note" data-mode-panel="split">不想装客户端？用任意浏览器打开同一个地址（<code>http://服务器IP:20000</code>），界面和客户端完全一致。</p>
 

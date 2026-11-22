@@ -165,18 +165,18 @@ export async function installServerVersion(
 ): Promise<boolean> {
   const parentArg = parent ?? undefined
 
-  // A fused ("all-in-one") client carries a server next to its executable, and
+  // A integrated ("integrated") client carries a server next to its executable, and
   // every downloadable package is the THIN one: installing it would replace the
   // client and leave the next launch without `server/`, i.e. without the server
   // it is built around. The gate can still report the mismatch; the update is a
-  // new fused installer, not this path.
+  // new integrated installer, not this path.
   if (hasEmbeddedServerBinary()) {
     const labels = versionGateLabels(resolveNativeLanguage())
     await dialog.showMessageBox(parentArg as BrowserWindow, {
       type: 'info',
       buttons: [labels.ok],
-      title: labels.fusedUpdateTitle,
-      message: labels.fusedUpdateMessage,
+      title: labels.integratedUpdateTitle,
+      message: labels.integratedUpdateMessage,
     })
     return false
   }

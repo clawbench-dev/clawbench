@@ -134,7 +134,7 @@ const { t } = useI18n()
 const { servers, load, save, getLabel } = useServerList()
 
 /**
- * The server this build ships with (desktop "all-in-one" builds), or null.
+ * The server this build ships with (desktop "integrated" builds), or null.
  *
  * It is not a saved server: the shell starts and stops it, and it cannot be
  * renamed or deleted. Kept in a section of its own above the user's list so

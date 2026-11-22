@@ -170,16 +170,16 @@ func desktopPackageChecksums(tag string) map[string]string {
 	return out
 }
 
-// FusedDesktopChecksums returns the fused-package entries for a tag, used by
+// IntegratedDesktopChecksums returns the fused-package entries for a tag, used by
 // /api/upgrade/check next to fused_downloads.
-func FusedDesktopChecksums(tag string) map[string]string {
+func IntegratedDesktopChecksums(tag string) map[string]string {
 	all := desktopChecksums(tag)
 	if len(all) == 0 {
 		return nil
 	}
 	out := map[string]string{}
-	for osArch := range desktopFusedAssetBase {
-		name := desktopFusedAssetName(osArch, tag)
+	for osArch := range desktopIntegratedAssetBase {
+		name := desktopIntegratedAssetName(osArch, tag)
 		if hash, ok := all[name]; ok {
 			out[name] = hash
 		}
