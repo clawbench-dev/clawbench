@@ -128,7 +128,7 @@ const showProgressDialog = ref(false)
  * All-in-one package URLs for the latest release, keyed by platform. Only
  * populated for an integrated install (a server managed by its desktop embedder),
  * where the only valid upgrade unit is the whole package — see
- * `installIntegratedUpdate`.
+ * `installFusedUpdate`.
  */
 const fusedDownloads = ref<Record<string, string[]>>({})
 
@@ -366,7 +366,7 @@ export function useUpgrade() {
         hasUpgrade.value =
           data.has_upgrade &&
           Object.keys(fusedDownloads.value).length > 0 &&
-          !!getNative()?.installIntegratedUpdate
+          !!getNative()?.installFusedUpdate
         // Server-only concerns (install-directory writability, npm signature,
         // container advice) do not apply to a package install.
         installWritable.value = true
@@ -475,7 +475,7 @@ export function useUpgrade() {
    */
   async function startFusedUpgrade(): Promise<void> {
     const native = getNative()
-    if (!native?.installIntegratedUpdate) {
+    if (!native?.installFusedUpdate) {
       hasUpgrade.value = false
       return
     }
@@ -484,7 +484,7 @@ export function useUpgrade() {
     state.error = ''
     state.error_code = ''
     try {
-      const res = await native.installIntegratedUpdate(
+      const res = await native.installFusedUpdate(
         state.latest_version,
         fusedDownloads.value,
         fusedChecksums.value,

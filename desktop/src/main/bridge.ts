@@ -265,12 +265,15 @@ export function registerBridge(): void {
   // "download" installs the server's version (the gate stays up on failure).
   ipcMain.on('native:version-continue', () => continueVersionGate())
   ipcMain.on('native:version-download', () => { void downloadVersionFromGate() })
-  // Upgrading an integrated ("integrated") install: the server reports the release's
-  // package URLs (they are built server-side, next to the release-asset names),
-  // and this side downloads and installs the whole package. Invoke rather than
-  // send so the caller can keep a spinner up for the whole download.
+  // Upgrading an integrated ("all-in-one") install: the server reports the
+  // release's package URLs (they are built server-side, next to the release-asset
+  // names), and this side downloads and installs the whole package. Invoke rather
+  // than send so the caller can keep a spinner up for the whole download.
+  //
+  // The channel name matches the preload member, which is a cross-version bridge
+  // contract and therefore keeps its original spelling (see clawbenchNative.ts).
   ipcMain.handle(
-    'native:install-integrated-update',
+    'native:install-fused-update',
     (_e, version: string, downloads: Record<string, string[]>, checksums: Record<string, string>) =>
       installIntegratedUpdate(version, downloads, checksums, getMainWindow()),
   )

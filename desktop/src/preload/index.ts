@@ -154,12 +154,16 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // Fused ("integrated") install only: downloads and installs the whole
   // package for `version`, then asks about restarting. `downloads` is the
   // platform-keyed map the server returned in /api/upgrade/check.
-  installIntegratedUpdate: (
+  // The member and channel names are the cross-version contract: shells built
+  // before the integrated rename expose only these spellings, and the web UI
+  // they load is always the server's newest build. Same reason as the
+  // `fused_downloads` JSON field — do not rename them with the internal ones.
+  installFusedUpdate: (
     version: string,
     downloads: Record<string, string[]>,
     checksums: Record<string, string>,
   ) =>
-    ipcRenderer.invoke('native:install-integrated-update', version, downloads, checksums) as Promise<{
+    ipcRenderer.invoke('native:install-fused-update', version, downloads, checksums) as Promise<{
       ok: boolean
       error: string
     }>,
