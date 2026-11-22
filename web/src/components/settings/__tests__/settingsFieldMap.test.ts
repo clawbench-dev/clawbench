@@ -456,6 +456,16 @@ describe('settingsFieldMap', () => {
     expect(entry.spec.sectionHeader).toBe('settings.items.chatMessageSection')
   })
 
+  it('chat category has a local switch for mobile Enter-to-send behavior', () => {
+    const chatEntries = categoryItems['chat']
+    const entry = chatEntries.find(e => e.type === 'item' && e.spec.key === 'mobileEnterToSend')
+    expect(entry).toBeDefined()
+    if (entry!.type !== 'item') throw new Error('expected item')
+    expect(entry.spec.source).toBe('local')
+    expect(entry.spec.type).toBe('switch')
+    expect(entry.spec.sectionHeader).toBe('settings.items.chatMessageSection')
+  })
+
   it('sessions category has a server switch for recent-activity session ordering', () => {
     // Ordering is a property of the session LIST, so it lives in 会话管理 with
     // the rest of the list options — not in 聊天 with the message display rows.
@@ -1636,6 +1646,7 @@ describe('chat and session management are separate pages', () => {
       'preventScreenLock',
       'messageDisplayMode',
       'compactToolCalls',
+      'mobileEnterToSend',
       'chat.initial_messages',
       'chat.page_size',
       'chat.system_prompt_interval',
