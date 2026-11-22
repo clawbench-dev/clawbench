@@ -137,20 +137,6 @@ func NormalizeOpenClawACPInputForTest(toolName, rawInput string) string {
 	return normalizeOpenClawACPInput(toolName, []byte(rawInput))
 }
 
-// OpenClawACPBaseRemapsForTest exports a copy of openClawACPBaseRemaps so the
-// backend sub-package's register_test.go can pin it against
-// OpenClawACPInputRemaps — the two tables live in different packages (this one
-// must not import backends/openclaw: cycle) and are kept in sync only by
-// convention. A copy, not the map itself, so a test cannot mutate production
-// state.
-func OpenClawACPBaseRemapsForTest() map[string]string {
-	out := make(map[string]string, len(openClawACPBaseRemaps))
-	for k, v := range openClawACPBaseRemaps {
-		out[k] = v
-	}
-	return out
-}
-
 // ParseOpenClawToolCallUpdateForTest exports parseOpenClawACPToolCallUpdate.
 func ParseOpenClawToolCallUpdateForTest(tcu acp.SessionToolCallUpdate) *ai.ToolCall {
 	return parseOpenClawACPToolCallUpdate(tcu)
