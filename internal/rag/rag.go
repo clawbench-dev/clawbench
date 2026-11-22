@@ -191,17 +191,6 @@ func StartRebuildCoordinator(hub *ws.StreamHub) {
 	slog.Info("rebuild coordinator initialized (on-demand, no cron)")
 }
 
-// StopRebuildCoordinator cancels any tracked rebuild and clears the coordinator.
-func StopRebuildCoordinator() {
-	mu.Lock()
-	if globalRebuildCoordinator != nil {
-		globalRebuildCoordinator.Cancel()
-	}
-	globalRebuildCoordinator = nil
-	GlobalRebuildCoordinator = nil
-	mu.Unlock()
-}
-
 // Shutdown closes the RAG store, indexer, cleanup worker, and cluster worker.
 func Shutdown() {
 	mu.Lock()

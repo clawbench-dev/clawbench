@@ -14,7 +14,6 @@ package agentcore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -242,16 +241,7 @@ const (
 	StopComplete     = "complete"
 	StopMaxRounds    = "max_rounds"
 	StopMaxToolCalls = "max_tool_calls"
-	StopTimeout      = "timeout"
-	StopCancelled    = "cancelled"
 	StopError        = "error"
-)
-
-// Errors surfaced as terminal events.
-var (
-	// ErrNoToolsConfigured means the policy granted no capabilities, so the
-	// model can only talk. That is a valid configuration, not a failure.
-	ErrNoToolsConfigured = errors.New("no tools are enabled")
 )
 
 // Run executes one turn, streaming events on the returned channel.

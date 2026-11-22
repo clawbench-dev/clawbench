@@ -146,11 +146,6 @@ type DirSearchDone struct {
 	Truncated bool `json:"truncated"`
 }
 
-// DirSearchError is sent as an SSE error event during search.
-type DirSearchError struct {
-	Message string `json:"message"`
-}
-
 // dirSearchParams holds the parsed query parameters for a directory search.
 type dirSearchParams struct {
 	path      string

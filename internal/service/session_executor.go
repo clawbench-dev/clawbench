@@ -76,10 +76,6 @@ const (
 	// eventTypeDone is the stream event type for stream completion.
 	eventTypeDone = "done"
 
-	// transportACPStdio is the ACP stdio transport type.
-	transportACPStdio = model.TransportACPStdio
-	// transportInProcess is the built-in agent's transport (this process).
-	transportInProcess = model.TransportInProcess
 	// eventTypeError is the stream event type for errors.
 	eventTypeError = "error"
 	// eventTypeSessionUpdate is the stream event type for session updates.

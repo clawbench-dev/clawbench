@@ -64,8 +64,7 @@ const (
 	// ArtifactErrImport is a dropped recording that could not be decoded. It is
 	// separate from "audio" (a recording that is gone) because the fix is a
 	// different file, not a retry.
-	ArtifactErrImport  = "import"
-	ArtifactErrUnknown = "unknown"
+	ArtifactErrImport = "import"
 )
 
 // ArtifactState is one artifact's two axes.
@@ -366,25 +365,6 @@ func ResetActiveArtifacts(token string, nowMS int64) error {
 	)
 	if err != nil {
 		return fmt.Errorf("live notes: reset active artifacts: %w", err)
-	}
-	return nil
-}
-
-// SetArtifactPendingASR records that recognition finished but the VTT write did
-// not. A retry must render instead of paying for the whole recognition again.
-func SetArtifactPendingASR(token string, atMS int64) error {
-	if atMS <= 0 {
-		atMS = time.Now().UnixMilli()
-	}
-	_, err := store.WriteExec(
-		`INSERT INTO live_notes_artifacts (token, kind, job_status, pending_asr_at, job_at)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(token, kind) DO UPDATE SET
-		   pending_asr_at = excluded.pending_asr_at, job_at = excluded.job_at`,
-		token, string(ArtifactTranscript), ArtifactJobRunning, atMS, atMS,
-	)
-	if err != nil {
-		return fmt.Errorf("live notes: mark pending asr: %w", err)
 	}
 	return nil
 }

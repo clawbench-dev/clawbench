@@ -31,9 +31,6 @@ type Manager struct {
 	recordCommand func(projectPath, command string)
 }
 
-// GlobalManager is the package-level singleton, set from main.go.
-var GlobalManager *Manager
-
 // TerminalConfig holds the terminal configuration.
 // We define a local copy to avoid circular imports with the model package.
 type TerminalConfig struct {

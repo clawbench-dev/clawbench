@@ -1,5 +1,4 @@
 import { ref } from 'vue'
-import { isDarkTheme } from '@/utils/themeMeta'
 
 /**
  * Live theme id for the public share SPA.
@@ -25,9 +24,6 @@ import { isDarkTheme } from '@/utils/themeMeta'
 export const shareThemeId = ref(
   typeof document === 'undefined' ? 'gruvbox-dark' : (document.documentElement.getAttribute('data-theme') || 'gruvbox-dark'),
 )
-
-/** Whether the current theme is dark (reactive; used by iframe-hosted viewers). */
-export const shareThemeIsDark = () => isDarkTheme(shareThemeId.value)
 
 /** Guards against double installation (the entry is evaluated once, but tests
  *  and future call sites may run this more than once). */

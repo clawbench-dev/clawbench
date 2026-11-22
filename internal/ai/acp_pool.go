@@ -794,25 +794,6 @@ func (m *ACPConnManager) GetCommandsByAgentID(agentID string) []AvailableCommand
 	return GetAgentCapabilityRegistry().GetCommands(agentID)
 }
 
-// GetClientByAgentID returns the ClawBenchACPClient for any connection
-// belonging to the given agent. Returns nil if not found.
-func (m *ACPConnManager) GetClientByAgentID(agentID string) *ClawBenchACPClient {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for key, conn := range m.conns {
-		conn.mu.Lock()
-		matched := (conn.agent != nil && conn.agent.ID == agentID) || key == agentID
-		if matched {
-			client := conn.client
-			conn.mu.Unlock()
-			return client
-		}
-		conn.mu.Unlock()
-	}
-	return nil
-}
-
 // GetCurrentModelIDByAgentID returns the current model ID from any live ACP
 // connection of the given agent. Returns "" if the agent has no active
 // connection or none has selected a model yet. This lets /api/agents report

@@ -211,11 +211,6 @@ export interface ToolUseEventData {
   member_color?: string
 }
 
-/** SSE event data for mode/config/thinking_effort events */
-export interface SseJsonData {
-  [key: string]: unknown
-}
-
 /** Chat stream event data via WebSocket */
 export interface ChatStreamEventData {
   session_id: string
@@ -227,13 +222,6 @@ export interface ChatStreamEventData {
    * block-level events to the correct bubble under concurrent streams.
    */
   message_id?: number
-}
-
-/** Polling response data */
-export interface PollResponseData {
-  messages?: ChatMessage[]
-  running?: boolean
-  sessionId?: string
 }
 
 /** Queue event data (queue_drain / queue_inject). */

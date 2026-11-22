@@ -1,16 +1,9 @@
 package model
 
 import (
-	"context"
 	"regexp"
 	"strings"
-	"time"
 )
-
-// commandContext returns a context bounded by timeout, for CLI probes.
-func commandContext(timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), timeout)
-}
 
 // ---------------------------------------------------------------------------
 // Shared post-processing

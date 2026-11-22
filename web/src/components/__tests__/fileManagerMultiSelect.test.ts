@@ -297,16 +297,6 @@ vi.mock('@/composables/useFileNavStack', () => ({
   }),
 }))
 
-vi.mock('@/composables/useToolbarOverflow', () => ({
-  useToolbarOverflow: () => ({
-    inlineIds: computed(() => ['refresh', 'newFile', 'multiselect']),
-    collapsedIds: computed(() => ['newFolder', 'upload', 'viewToggle', 'hidden']),
-    contentWidth: ref(100),
-    startObserving: vi.fn(),
-    stopObserving: vi.fn(),
-  }),
-}))
-
 vi.mock('@/composables/useChatContext', () => ({
   useChatContext: () => ({
     addAttachedFile: vi.fn(),

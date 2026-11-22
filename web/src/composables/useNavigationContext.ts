@@ -27,12 +27,6 @@ export interface NavigationOrigin {
   meetingTab?: string
 }
 
-export interface NavigationContextState {
-  origin: NavigationOrigin | null
-  active: boolean
-  busy: boolean
-}
-
 export interface NavigationContextSnapshot {
   origin: NavigationOrigin | null
   active: boolean

@@ -278,38 +278,6 @@ func GetMessageContent(id int64, sessionID string) (string, error) {
 	return ExtractPlainText(content), nil
 }
 
-// IsMessageRole checks whether the message with the given ID in the session
-// has the specified role.
-func IsMessageRole(id int64, sessionID, role string) bool {
-	var r string
-	err := store.ReadDB().QueryRow(
-		"SELECT role FROM chat_history WHERE id = ? AND session_id = ?",
-		id, sessionID,
-	).Scan(&r)
-	if err != nil {
-		return false
-	}
-	return r == role
-}
-
-// GetPrecedingUserMessageContent returns the plain-text content of the last
-// user message before the given message ID in the same session. Used for
-// building fork titles when the fork point is an assistant message.
-func GetPrecedingUserMessageContent(afterID int64, sessionID string) (string, error) {
-	var content string
-	err := store.ReadDB().QueryRow(
-		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND id < ? ORDER BY id DESC LIMIT 1",
-		sessionID, afterID,
-	).Scan(&content)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	return ExtractPlainText(content), nil
-}
-
 // GetMessageByID fetches a single chat message by its database ID.
 // Returns the complete message including all content blocks (text, thinking, tool_use).
 func GetMessageByID(id int64) (*model.ChatMessage, error) {
@@ -3459,21 +3427,15 @@ func SessionHasRealAssistantContent(sessionID string) bool {
 	return false
 }
 
-// CreateStreamingMessage inserts a fresh streaming assistant placeholder and
-// returns its id. Used when a mid-turn injection splits an assistant reply: the
-// "after" half needs its own streaming row so it finalizes independently of the
-// "before" half.
+// CreateStreamingMessageWithAgent creates a fresh streaming assistant placeholder
+// and returns its id, with speaker attribution (agentID = member row id for group
+// turns, "" otherwise). Used when a mid-turn injection splits an assistant reply:
+// the "after" half needs its own streaming row so it finalizes independently of
+// the "before" half, and it must keep its speaker.
 //
 // No anchor is needed: the injected question is materialized into chat_history
 // at injection time (before this row is created), so the new row's higher id
 // already places it directly below that question.
-func CreateStreamingMessage(projectPath, backend, sessionID string) (int64, error) {
-	return CreateStreamingMessageWithAgent(projectPath, backend, sessionID, "")
-}
-
-// CreateStreamingMessageWithAgent is CreateStreamingMessage plus speaker
-// attribution (agentID = member row id for group turns, "" otherwise). Needed
-// so a mid-turn split's "after" row keeps its speaker.
 func CreateStreamingMessageWithAgent(projectPath, backend, sessionID, agentID string) (int64, error) {
 	emptyContent, err := json.Marshal(map[string]any{"blocks": []any{}})
 	if err != nil {

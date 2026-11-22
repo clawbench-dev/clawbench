@@ -17,7 +17,6 @@ import { sameServerUrl } from './localServerPolicy'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel,
   getTransportPreference, getActiveTransport, initTransportPreference, persistTransportPreference } from './tunnel'
-import type { TransportPreference } from './transport'
 import {
   getMainWindow, createMainWindow, openSandboxWindow, showLoginPage,
   showSplashFor, dismissSplash, cancelSplash,
@@ -299,7 +298,7 @@ export function registerBridge(): void {
   ipcMain.handle('native:cancel-download', (_e, downloadId: number) => { cancelDownload(downloadId) })
   ipcMain.handle('native:download-url', (_e, url: string, fileName: string) => downloadByUrl(url, fileName))
   ipcMain.handle('native:download-blob', (_e, b64: string, fileName: string) => downloadBlob(b64, fileName))
-  ipcMain.handle('native:open-in-browser', (_e, port: number, protocol: string, host: string, p: string) => {
+  ipcMain.handle('native:open-in-browser', (_e, port: number, protocol: string, _host: string, p: string) => {
     shell.openExternal(`${protocol}://localhost:${port}${p || '/'}`)
   })
   // Open an http(s) URL in the default browser. The renderer routes the
@@ -313,7 +312,7 @@ export function registerBridge(): void {
       void shell.openExternal(url)
     }
   })
-  ipcMain.handle('native:open-in-sandbox', (_e, port: number, protocol: string, host: string, p: string, sessionId?: string) => {
+  ipcMain.handle('native:open-in-sandbox', (_e, port: number, protocol: string, host: string, p: string, _sessionId?: string) => {
     openSandboxWindow(port, protocol, host, p)
   })
 
@@ -336,7 +335,7 @@ export function registerBridge(): void {
     return clipboard.readText()
   })
   ipcMain.handle('native:share-text', (_e, text: string) => { clipboard.writeText(text); return Promise.resolve() })
-  ipcMain.handle('native:share-file', async (_e, filePath: string, mime: string) => {
+  ipcMain.handle('native:share-file', async (_e, filePath: string, _mime: string) => {
     const name = path.basename(filePath)
     const tmp = path.join(os.tmpdir(), `clawbench-share-${Date.now()}-${name}`)
     await downloadFileByPathTo(filePath, tmp)
@@ -416,7 +415,7 @@ export function registerBridge(): void {
   // that would drop it.
   ipcMain.on('native:renderer-ready', () => markRendererReady())
   ipcMain.on('native:set-push-enabled', (_e, enabled: boolean) => getStore().set('nativePushEnabled', enabled))
-  ipcMain.on('native:update-last-seen', (_e, id: string) => { /* desktop has no SharedPreferences */ })
+  ipcMain.on('native:update-last-seen', (_e, _id: string) => { /* desktop has no SharedPreferences */ })
   ipcMain.on('native:keep-screen-on', (_e, on: boolean) => setKeepScreenOnImpl(on))
   // Normalise on read: an older build may have persisted a collapsed
   // 'dark'/'light', which matches no [data-theme] rule and would leave the

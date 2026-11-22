@@ -25,9 +25,6 @@ export const FORGE_EVENT_TRANSITIONS: Record<string, string[]> = {
  */
 export const FORGE_REPO_TARGETED_TRANSITIONS: string[] = ['pipeline_done']
 
-/** Transitions that are still accepted but no longer offered (nothing derives them). */
-export const FORGE_RETIRED_TRANSITIONS: string[] = []
-
 const TRANSITION_LABEL_KEYS: Record<string, string> = {
     opened: 'task.form.eventOpened',
     closed: 'task.form.eventClosed',
