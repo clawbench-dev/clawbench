@@ -114,6 +114,28 @@ describe('click-time model switch wiring', () => {
     expect(captureIdx, 'it must be captured before the request resolves').toBeLessThan(awaitIdx)
   })
 
+  // A pick made on a NEW session has no session row to store it on. Recording it
+  // on the agent is what makes it survive: without this the next new session
+  // resolved from the agent's preference alone and silently showed the old
+  // default again (reported as "the bottom chip reverts to 默认").
+  it('remembers a pick made before the first session exists', () => {
+    const body = fnBody('async function handleSwitchModel')
+    const noSession = body.slice(body.indexOf('if (!sid)'), body.indexOf('toast.show('))
+    expect(noSession, 'the no-session path must record the pick on the agent').toMatch(
+      /persistAgentModelPref\(/,
+    )
+    // It must be AWAITED: an un-awaited write can lose a race with the first
+    // message's session creation.
+    expect(noSession, 'the write must be awaited').toMatch(/await persistAgentModelPref\(/)
+
+    // The same field the drawer's star writes. Two different fields would make
+    // "the agent's model" mean two things depending on where it was picked.
+    const pref = fnBody('async function persistAgentModelPref')
+    expect(pref, 'it must write preferred_model, like the star does').toMatch(
+      /patchAgentPref\([^)]*'preferred_model'/,
+    )
+  })
+
   it('clears the chip when the new model has no resolved level', () => {
     // The server omits `thinkingEffort` when the model has no preference and the
     // agent decides. Keeping the previous model's level would show a level the

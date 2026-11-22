@@ -882,6 +882,36 @@ describe('useAgents', () => {
       expect(getAgentModels('claude')).toEqual([])
     })
 
+    // Regression: switching away from and back to the built-in agent cleared
+    // its list. This agent has no handshake — /api/agents already returned the
+    // list resolved from its provider — so "no ACP state" must not be read as
+    // "not reported yet". With the list gone the drawer was empty and the chip
+    // fell back to "Default".
+    it('keeps a built-in agent list instead of clearing it', async () => {
+      resetAgents()
+      registerMocks()
+      mockApiGet.mockResolvedValue({
+        agents: [
+          ...JSON.parse(JSON.stringify(testAgents)),
+          {
+            id: 'builtin',
+            name: 'ClawBench Agent',
+            backend: 'builtin',
+            builtinBackend: true,
+            models: [{ id: 'deepseek-v4.1-flash', name: 'deepseek-v4.1-flash', default: true }],
+          },
+        ],
+        defaultAgent: 'claude',
+        acpStates: {},
+      })
+      await loadAgents()
+
+      const applied = restoreACPModelView('builtin')
+
+      expect(applied).toBe(true)
+      expect(getAgentModels('builtin').map(m => m.id)).toEqual(['deepseek-v4.1-flash'])
+    })
+
     it('applies the ACP list when the cache has one', async () => {
       resetAgents()
       registerMocks()

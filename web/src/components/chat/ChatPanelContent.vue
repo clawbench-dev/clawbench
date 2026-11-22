@@ -369,7 +369,7 @@ import { collectStopTargets } from '@/utils/chatStopTargets'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate, isShowingSummary, isLastAssistantMessage, normalizeDisplayMode, resolveMidTurnSupported } from '@/utils/chatSessionUtils.ts'
-import { localConfig, serverConfig } from '@/composables/useSettingsConfig'
+import { localConfig, serverConfig, patchAgentPref } from '@/composables/useSettingsConfig'
 import { nextClientSeq } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -1588,8 +1588,13 @@ async function handleSwitchModel(model) {
 
   const sid = identity.currentSessionId.value
   if (!sid) {
-    // No session yet — nothing to push; the selection rides along on the first
-    // message, exactly as before.
+    // No session yet — nothing to push, but the pick must not evaporate: the
+    // first message carries it, and the session it creates inherits it. Without
+    // recording it on the AGENT, the next new session resolved its model from
+    // the agent's preference alone and silently landed back on the old default
+    // (the reported symptom: pick a model, open a new chat, it is "Default"
+    // again). Persisting here is what makes the pick stick across sessions.
+    await persistAgentModelPref(identity.currentAgentId.value, model.id)
     return
   }
 
@@ -1646,6 +1651,25 @@ async function handleSwitchModel(model) {
     // The server rejected the switch outright and did not keep it, so the
     // optimistic chip would lie. Restore the previous model.
     restoreModelSelection(sid)
+  }
+}
+
+/**
+ * Record a model pick as the agent's preferred model, for a pick made where
+ * there is no session row to store it on.
+ *
+ * Same field the drawer's star writes (preferred_model), so the two entry
+ * points cannot disagree about what "the agent's model" means. Failures are
+ * logged and swallowed: the pick still rides along on the first message, so
+ * the user's immediate turn is correct either way — only "it also becomes the
+ * default" is lost, which is not worth an error toast mid-composition.
+ */
+async function persistAgentModelPref(agentId, modelId) {
+  if (!agentId) return
+  try {
+    await patchAgentPref(agentId, 'preferred_model', modelId)
+  } catch (err) {
+    appLog.w(TAG, 'failed to persist model preference', agentId, modelId, err)
   }
 }
 
