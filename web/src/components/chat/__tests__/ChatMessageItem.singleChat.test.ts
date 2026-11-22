@@ -105,6 +105,8 @@ describe('ChatMessageItem — single-chat speaker header', () => {
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
     expect(w.emitted('open-agent-config')?.[0]).toEqual(['agent-1'])
+    // The name is part of the same control, so it opens config too.
+    expect(btn.find('.msg-speaker-name').text()).toBe(SESSION_SPEAKER.name)
   })
 
   it('never parses group routing tags in a 1:1 reply', () => {

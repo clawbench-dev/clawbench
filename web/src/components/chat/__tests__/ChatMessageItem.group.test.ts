@@ -280,6 +280,18 @@ describe('ChatMessageItem group speaker → agent config', () => {
     expect(emitted![0][0]).toBe('real-agent-9')
   })
 
+  it('puts the speaker NAME inside the same button as the avatar', async () => {
+    // The name and the avatar are one label visually; if the name stays outside
+    // the button it looks clickable but is not (the split-target regression).
+    const w = withAgentId((id) => (id === 'member-row-1'
+      ? { name: 'Alice', backend: 'claude', avatar: '', agentName: 'Claude', agentId: 'real-agent-9' }
+      : null))()
+    const btn = w.find('.msg-speaker-btn')
+    expect(btn.find('.msg-speaker-name').exists()).toBe(true)
+    await btn.find('.msg-speaker-name').trigger('click')
+    expect(w.emitted('open-agent-config')?.[0]).toEqual(['real-agent-9'])
+  })
+
   it('keeps the avatar non-interactive when the speaker has no real agent id', () => {
     // A legacy resolver that predates agentId: the avatar must NOT become a
     // button that emits an unresolvable id.
