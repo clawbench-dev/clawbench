@@ -4616,6 +4616,33 @@ describe('compact tool calls', () => {
     expect(wrapper.find('.chat-tool-group-strip .tool-summary').text()).toBe('Bash · npm test')
   })
 
+  it('fills in the LIVE row\'s summary when it arrives after the row was built', async () => {
+    // The builtin agent announces a tool by name and sends its arguments
+    // afterwards, so this row is built with no summary and the group is never
+    // rebuilt (nothing structural changes when the description lands). It used
+    // to stay blank until the tool ENDED — the reported bug. `summary` is
+    // initialised to '' here because the `tool()` helper defaults it to the name.
+    //
+    // The block is REACTIVE, like the streaming store's: the row is only
+    // re-evaluated when the block it reads from is observed. A plain object
+    // would leave this test asserting against a render that never happened.
+    const running = reactive(tool('Bash', 't2', { done: false, status: '', summary: '' }))
+    const wrapper = mountBlocks({
+      toolCallSummary: (b: any) => b?.summary || b?.input?.description || '',
+      blocks: [tool('Read', 't1', { summary: 'run.go' }), running],
+    })
+    await nextTick()
+    const readDetail = () => wrapper.find('.chat-tool-group-strip .tool-summary')
+    // Born with nothing: the running step has no summary yet.
+    expect(readDetail().exists()).toBe(false)
+
+    // The description lands on the SAME block object; the group is untouched.
+    running.summary = '搜索胶囊相关组件'
+    await nextTick()
+    // No name prefix: the running row already shows "Bash" on the left.
+    expect(readDetail().text()).toBe('搜索胶囊相关组件')
+  })
+
   it('never folds an interactive card or an Agent card with a sub-agent group', async () => {
     const ask = {
       type: 'tool_use', name: 'AskUserQuestion', id: 'ask1', done: true,

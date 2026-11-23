@@ -56,6 +56,26 @@ export interface ToolCallGroup {
   /** One-line summary of the running tool, e.g. "npm test". */
   runningSummary: string
   /**
+   * One-line summary of the running tool, read LIVE off the block rather than
+   * frozen at build time, e.g. "npm test"; `''` when it has none yet.
+   *
+   * `runningSummary` alone is not enough for the live row. It is frozen when
+   * the group is built, and a group is only rebuilt when the run's STRUCTURE
+   * changes (step count, which step runs, failure counts). A backend that
+   * announces a tool by name and delivers its arguments afterwards — the
+   * builtin agent's `tool_start` / `tool_args` pair — therefore left the live
+   * row blank for the whole execution: the summary arrived, nothing rebuilt
+   * the group, and the row kept the empty value it was born with. It filled in
+   * only when the tool ENDED (a structural change). This is a function of the
+   * live block instead, so it sees the summary as soon as it lands.
+   *
+   * Summary only, no name prefix: the live row already shows the tool's own
+   * name on the left (it mirrors that tool's pill exactly), so a "Bash · npm
+   * test" line here would print the name twice. Unlike `lastStepDetail`, which
+   * labels a SETTLED run's last step and therefore needs the name.
+   */
+  runningDetail: () => string
+  /**
    * Name + summary of the last tool in the run that has one, e.g.
    * "Bash · rebuild the frontend"; `''` when no step has a summary.
    *
@@ -140,6 +160,11 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
     const described = runningBlock
       ? opts.describe(runningBlock)
       : { name: '', summary: '', category: '', toolName: '' }
+    // Read the running step's summary off the block at CALL time, not now: see
+    // `runningDetail`. No name prefix — the live row already prints the tool's
+    // own name beside it.
+    const runningDetail = (): string =>
+      runningBlock && opts.summarize ? opts.summarize(runningBlock) : ''
     let lastStepDetail = ''
     for (let idx = end; idx >= start; idx--) {
       const block = list[idx]
@@ -163,6 +188,7 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
       runningToolName: described.toolName,
       runningName: described.name,
       runningSummary: described.summary,
+      runningDetail,
       lastStepDetail,
     }
     groups.push(group)

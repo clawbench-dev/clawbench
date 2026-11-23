@@ -152,4 +152,60 @@ describe('buildToolCallGroups', () => {
       expect(groups[0].lastStepDetail).toBe('')
     })
   })
+
+  describe('runningDetail', () => {
+    // The builtin agent announces a tool by name and delivers its arguments
+    // afterwards, so the live row is built before the summary exists. The
+    // group is NOT rebuilt when the summary lands (nothing structural
+    // changed), so reading this at build time pinned the row to "" for the
+    // whole execution — the reported bug.
+    const withSummary = {
+      ...opts,
+      displayName: (b: any) => `Display:${b.id}`,
+      summarize: (b: any) => b.summary ?? '',
+    }
+
+    it('picks up a summary that lands AFTER the group was built', () => {
+      const running = tool('b', { done: false })
+      const { groups } = buildToolCallGroups([tool('a'), running], withSummary)
+
+      // Born before the arguments arrived: nothing to show yet.
+      expect(groups[0].runningDetail()).toBe('')
+      // `runningSummary`, the build-time copy, stays empty — that is exactly
+      // why the row could not use it.
+      expect(groups[0].runningSummary).toBe('')
+
+      // The description arrives on the SAME block object (the stream mutates
+      // it in place), and no group rebuild happens.
+      running.summary = '搜索胶囊相关组件'
+      expect(groups[0].runningDetail()).toBe('搜索胶囊相关组件')
+    })
+
+    it('carries no name prefix — the live row already prints the tool name', () => {
+      // Unlike `lastStepDetail` ("Display:b · now"), which labels a settled
+      // run's last step. The live row mirrors that tool's own pill, whose name
+      // sits on the left already.
+      const running = tool('b', { done: false })
+      const { groups } = buildToolCallGroups([tool('a'), running], withSummary)
+      running.summary = 'now'
+      expect(groups[0].runningDetail()).toBe('now')
+      expect(groups[0].runningDetail()).not.toContain('Display:b')
+    })
+
+    it('reads only the running step, not an earlier finished one', () => {
+      const running = tool('b', { done: false })
+      const { groups } = buildToolCallGroups(
+        [tool('a', { summary: 'earlier' }), running],
+        withSummary,
+      )
+      expect(groups[0].runningDetail()).toBe('')
+      running.summary = 'now'
+      expect(groups[0].runningDetail()).toBe('now')
+    })
+
+    it('is empty when nothing is running', () => {
+      const { groups } = buildToolCallGroups([tool('a', { summary: 'x' }), tool('b', { summary: 'y' })], withSummary)
+      expect(groups[0].runningDetail()).toBe('')
+    })
+  })
 })
