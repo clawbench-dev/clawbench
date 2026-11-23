@@ -86,6 +86,11 @@ func init() {
 			OpenAI:    model.ProtoEnv("", "", ""),
 			InProcess: true,
 		},
+		// The turn loop is ours, so a message can join it at the next model
+		// request and we know exactly where it entered — the reply splits, just
+		// like CodeBuddy's session/steer.
+		MidTurnInProcess:   midTurn{},
+		MidTurnSplitsReply: true,
 	})
 
 	// Mode and thinking-level options live in the capability registry so every
@@ -218,9 +223,23 @@ func (b *Backend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan
 		return nil, err
 	}
 
+	// Register the join target BEFORE the turn starts, so a message queued while
+	// the previous turn was still running can be inserted the moment this one is
+	// alive. The mailbox is sealed by the engine on its way out; cleanup here
+	// only removes the registry entry.
+	var releaseInjections func()
+	if req.SessionID != "" {
+		box := agentcore.NewInjectionMailbox()
+		spec.Injections = box
+		releaseInjections = registerInjectionBox(req.SessionID, box)
+	}
+
 	ch := make(chan ai.StreamEvent, 64)
 	go func() {
 		defer close(ch)
+		if releaseInjections != nil {
+			defer releaseInjections()
+		}
 		// One translator per turn: it tracks whether a reasoning block is
 		// still open, so the closing event is emitted exactly once.
 		tr := &translator{locale: model.Language}

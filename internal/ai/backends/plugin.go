@@ -80,8 +80,15 @@ type BackendPlugin struct {
 	// than under ACP — a non-ACP backend could implement it too.
 	MidTurn ai.MidTurnInjector
 
-	// MidTurnSplitsReply reports whether an injected message SPLITS the running	// assistant reply into two (a "before" and "after" half) rather than merely
-	// merging into it. Only meaningful when MidTurn is non-nil.
+	// MidTurnInProcess is the mid-turn policy of a backend whose turn loop runs
+	// in THIS process (the built-in agent). It is separate from MidTurn because
+	// there is no ACP transport to pass: the policy reaches its own running turn
+	// through the engine. Exactly one of MidTurn / MidTurnInProcess is set.
+	MidTurnInProcess ai.InProcessMidTurnInjector
+
+	// MidTurnSplitsReply reports whether an injected message SPLITS the running
+	// assistant reply into two (a "before" and "after" half) rather than merely
+	// merging into it. Only meaningful when MidTurn or MidTurnInProcess is set.
 	//
 	// CodeBuddy echoes the injected message back on the wire with a
 	// correlation id, so the host can cut the reply exactly at the injection

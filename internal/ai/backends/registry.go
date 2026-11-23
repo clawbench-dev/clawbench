@@ -246,3 +246,14 @@ func LookupMidTurnInjector(backendID string) ai.MidTurnInjector {
 	}
 	return nil
 }
+
+// LookupInProcessMidTurnInjector returns the mid-turn policy of a backend whose
+// turn loop runs in this process, or nil.
+func LookupInProcessMidTurnInjector(backendID string) ai.InProcessMidTurnInjector {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok {
+		return p.MidTurnInProcess
+	}
+	return nil
+}
