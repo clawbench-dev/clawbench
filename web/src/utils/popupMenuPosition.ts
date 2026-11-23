@@ -146,6 +146,27 @@ export function computeMenuStyle(
     ? computeRight(rect, effectiveMaxWidth, edgeMargin, cssViewportWidth, toCssRight)
     : computeLeft(rect, effectiveMaxWidth, edgeMargin, toCssX, cssViewportWidth)
 
+  // --- Overflow: vertical only ---
+  // The menu is a scroll container (overflowY below), so its `overflow-x`
+  // computes to `auto` as well. Anything wider than the clamp — a wide word in
+  // a label, a `min-width` written in unscaled design px, an inline row that
+  // refuses to wrap — then paints a HORIZONTAL scrollbar under the menu even
+  // though the box is already as wide as it may be. Measured: the context-usage
+  // popup showed one at a non-1.0 UI scale. Max width is the ceiling, so the
+  // content must adapt instead of scrolling sideways; `clip` also stops an
+  // over-wide child from painting outside the rounded box.
+  const overflow = { overflowX: 'clip' as const }
+  // A classic (non-overlay) vertical scrollbar takes its width out of the
+  // padding box, so the right-edge content (this popup's right-aligned numbers,
+  // sliders, value columns) ends up flush against the bar and reads as cramped.
+  // `scrollbar-gutter` reserves that lane ONLY while the box actually scrolls,
+  // which is exactly the wanted behaviour: full width when there is nothing to
+  // scroll (no dead strip), and the content pulled back off the bar when there
+  // is. Measured on the context-usage popup at a non-1.0 UI scale. It is a
+  // no-op on overlay-scrollbar platforms, where the bar covers no layout space
+  // and nothing was crowded in the first place.
+  const gutter = { scrollbarGutter: 'auto' as const }
+
   if (goBelow) {
     // Menu appears BELOW the anchor
     const top = toCssY(rect.bottom + gap)
@@ -154,6 +175,8 @@ export function computeMenuStyle(
       position: 'fixed',
       top: `${top}px`,
       ...horizontal,
+      ...overflow,
+      ...gutter,
       maxWidth: `${effectiveMaxWidth}px`,
       maxHeight: `min(${maxHeight}px, ${availableBelow / (containingBlock?.scaleY || 1)}px)`,
     }
@@ -171,6 +194,8 @@ export function computeMenuStyle(
     position: 'fixed',
     bottom: `${bottom}px`,
     ...horizontal,
+    ...overflow,
+    ...gutter,
     maxWidth: `${effectiveMaxWidth}px`,
     maxHeight: `min(${maxHeight}px, ${availableAbove / (containingBlock?.scaleY || 1)}px)`,
   }

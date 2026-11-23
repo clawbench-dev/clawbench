@@ -4451,6 +4451,27 @@ describe('compact tool calls', () => {
     expect(strip.attributes('data-category')).toBe('bash')
   })
 
+  it('names the step that is executing when a round announced several calls at once', async () => {
+    // A round can hand over several calls in one go; they run in order and all
+    // sit at `done: false` until their turn. The row has to mirror the FIRST
+    // unfinished one: its arguments are the ones that exist. Reading the last
+    // unfinished call showed "第 3 步" while step 1 ran, and since that call's
+    // arguments had not arrived yet the row had no description at all.
+    const wrapper = mountBlocks({
+      streaming: true,
+      toolCallSummary: (b: any) => b?.summary || '',
+      blocks: [
+        tool('Read', 't1', { summary: 'a.ts' }),
+        tool('Bash', 't2', { done: false, status: '', summary: '第一条：先等五秒' }),
+        tool('Bash', 't3', { done: false, status: '', summary: '' }),
+      ],
+    })
+    await nextTick()
+    const strip = wrapper.find('.chat-tool-group-strip')
+    expect(strip.find('.tool-group-step').text()).toBe('Step 2')
+    expect(strip.find('.tool-summary').text()).toBe('第一条：先等五秒')
+  })
+
   it('puts the running ring in the right-hand tail and keeps a real tool icon on the left', async () => {
     // The ring used to be the row's FIRST child: it replaced the leading icon
     // and left the right edge empty, so the row's left edge moved whenever a

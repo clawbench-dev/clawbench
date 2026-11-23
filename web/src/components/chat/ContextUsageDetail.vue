@@ -180,8 +180,16 @@ function n(key: keyof UsageSnapshot): number {
 </script>
 
 <style scoped>
+/* NO design-px min-width here. `--dp` is a length, so a px-based floor does
+   not participate in the rem-based UI scale: at scale > 1 an unscaled 180px
+   floor can even exceed the popup's shipped maxWidth (220px), and browsers then
+   clamp `max-width` up to the specified `min-width`, pushing content wider than
+   the menu box. The menu root already sets the width (and PopupMenu clips the
+   horizontal axis), so the body only has to fill it and never exceed it. */
 .usage-detail {
-  min-width: calc(180 * var(--dp));
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .usage-popup-bar {
@@ -230,16 +238,24 @@ function n(key: keyof UsageSnapshot): number {
   gap: var(--space-4);
   padding: calc(3 * var(--dp)) 0;
   font-size: var(--font-size-sm);
+  /* Rows share the menu width instead of enforcing a content-based minimum:
+     a long localized label must wrap/ellipsis, not widen the popup. */
+  min-width: 0;
 }
 
 .usage-popup-label {
   color: var(--text-secondary, #6c757d);
+  /* `min-width: 0` is what actually lets a flex item shrink below its content
+     width; without it a long word overflows the box. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .usage-popup-value {
   color: var(--text-primary);
   font-weight: var(--font-weight-medium);
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
 .usage-popup-compact {
