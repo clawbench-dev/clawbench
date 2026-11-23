@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { nextTick, ref } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
+import type { Ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import SettingsItem from '@/components/settings/SettingsItem.vue'
 
@@ -395,6 +396,93 @@ describe('SettingsItem', () => {
       expect(emitted).toBeTruthy()
       expect(emitted![emitted!.length - 1]).toEqual([90])
       vi.useRealTimers()
+    })
+
+    it('shows the value live while dragging, before the debounce emits', async () => {
+      // The readout used to follow `modelValue`, which only changes after the
+      // 300ms debounce — during a drag the label stayed on the old number,
+      // which is exactly why the user kept overshooting.
+      vi.useFakeTimers()
+      const wrapper = mountItem({ type: 'slider', modelValue: 1, min: 0.5, max: 2, step: 0.01, displayFormat: 'percent' })
+      const slider = wrapper.find('input[type="range"]')
+      await slider.setValue(1.25)
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('125%')
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      await slider.setValue(1.4)
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('140%')
+      vi.useRealTimers()
+    })
+
+    /**
+     * Mount the slider under a parent that actually round-trips the value into
+     * a ref, like SettingsCategory -> localConfig -> getItemValue does. Driving
+     * `wrapper.setProps` by hand cannot reproduce that: it lets a test flip
+     * modelValue without any echo, which hides whether the echo path works.
+     */
+    const mountWithParent = (initial: number, extra: Record<string, any> = {}) => {
+      // `extra` (min/max/step/...) is static here; a spread object inside a
+      // template string is not compiled, so it cannot be used in the template.
+      // The ref is returned as a plain function: a proxied ref is unwrapped to
+      // its value on the component instance, so `vm.value.value` is NOT the ref.
+      let read = () => initial
+      let externalSet = (_: number) => {}
+      const Parent = defineComponent({
+        components: { SettingsItem },
+        setup() {
+          const value = ref(initial)
+          read = () => value.value
+          externalSet = (n: number) => { value.value = n }
+          return { value, extra }
+        },
+        template: `<SettingsItem label="x" type="slider" :model-value="value" @update:model-value="v => value = v" v-bind="extra" />`,
+      })
+      const wrapper = mount(Parent, { global: { plugins: [i18n] } })
+      return { wrapper, read, externalSet: (n: number) => externalSet(n) }
+    }
+
+    const labelOf = (wrapper: any) => wrapper.find('.settings-item__slider-value').text()
+
+    it('keeps the dragged value through the parent echo, then follows it again', async () => {
+      vi.useFakeTimers()
+      const { wrapper, read, externalSet } = mountWithParent(1, { min: 0.5, max: 2, step: 0.01, displayFormat: 'percent' })
+      await wrapper.find('input[type="range"]').setValue(1.25)
+      expect(labelOf(wrapper)).toBe('125%')
+      // Debounce fires; the parent stores and echoes the same number.
+      await vi.advanceTimersByTimeAsync(350)
+      expect(read()).toBe(1.25)
+      expect(labelOf(wrapper)).toBe('125%')
+      // An external writer (auto-fit / another device) now changes it: the
+      // label must follow, not stay on the drag preview.
+      // Reaching into the parent's closure: mutate through a setter exposed
+      // the same way (a plain ref on the instance is unwrapped).
+      externalSet(1.5)
+      await nextTick()
+      expect(labelOf(wrapper)).toBe('150%')
+      vi.useRealTimers()
+    })
+
+    it('shows a different value the parent hands back', async () => {
+      // The parent may store something other than what was dragged (snapping,
+      // clamping); the label must show what was accepted.
+      vi.useFakeTimers()
+      const { wrapper, read, externalSet } = mountWithParent(1, { min: 0.5, max: 2, step: 0.01, displayFormat: 'percent' })
+      await wrapper.find('input[type="range"]').setValue(1.37)
+      await vi.advanceTimersByTimeAsync(350)
+      externalSet(1.35)
+      await nextTick()
+      expect(labelOf(wrapper)).toBe('135%')
+      vi.useRealTimers()
+    })
+
+    it('shows the default immediately on reset, without a flash of the old value', async () => {
+      // A parent that never echoes: the label must already read the default
+      // when the click returns. Clearing the preview to `null` instead would
+      // fall back to the old modelValue (50) for at least one frame.
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1, defaultValue: 100 })
+      await wrapper.find('input[type="range"]').setValue(70)
+      await wrapper.find('.settings-item__slider-reset').trigger('click')
+      expect(labelOf(wrapper)).toBe('100')
+      expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([100])
     })
 
     it('cancels pending debounce on reset', async () => {

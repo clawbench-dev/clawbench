@@ -647,11 +647,29 @@ function themeBaseIconFor(opt: { label: string; value: unknown }) {
 let sliderDebounceTimer: ReturnType<typeof setTimeout> | null = null
 const SLIDER_DEBOUNCE_MS = 300
 
+/**
+ * Live value for the readout label, set while dragging.
+ *
+ * The label must follow the thumb, but `modelValue` only changes after the
+ * debounce above, so `sliderDisplayValue` used to sit on the old number until
+ * the drag ended — the user could not see what they were about to pick.
+ */
+const liveSliderValue = ref<number | null>(null)
+
 onUnmounted(() => {
   if (sliderDebounceTimer) {
     clearTimeout(sliderDebounceTimer)
     sliderDebounceTimer = null
   }
+})
+
+// Whatever the parent does with the value — accept it or hand back a different
+// one — the preview is over and the label follows the value in effect again.
+// This is also what keeps a later external change (auto-fit, another device)
+// visible: the echoes of a real parent are often the same number, and a value
+// that never changes would otherwise leave a stale preview on screen forever.
+watch(() => props.modelValue, () => {
+  liveSliderValue.value = null
 })
 
 // Close editor when parent forces close (another editor opened)
@@ -716,6 +734,7 @@ function onSwitchChange(e: Event) {
 
 function onSliderInput(e: Event) {
   const value = Number((e.target as HTMLInputElement).value)
+  liveSliderValue.value = value
   // Debounce: cancel previous timer, only emit after user stops dragging
   if (sliderDebounceTimer) clearTimeout(sliderDebounceTimer)
   sliderDebounceTimer = setTimeout(() => {
@@ -725,9 +744,12 @@ function onSliderInput(e: Event) {
 }
 
 const sliderDisplayValue = computed(() => {
-  if (props.modelValue == null) return ''
-  if (props.displayFormat === 'percent') return `${Math.round((props.modelValue as number) * 100)}%`
-  return String(props.modelValue)
+  // While a drag is pending the label previews it; once the emit went out the
+  // label waits for the parent (cleared by the watch above).
+  const value = liveSliderValue.value ?? props.modelValue
+  if (value == null) return ''
+  if (props.displayFormat === 'percent') return `${Math.round((value as number) * 100)}%`
+  return String(value)
 })
 
 function resetSlider() {
@@ -735,6 +757,10 @@ function resetSlider() {
     clearTimeout(sliderDebounceTimer)
     sliderDebounceTimer = null
   }
+  // Reset is the value now in effect. Show it immediately (falling back to
+  // modelValue would flash the old value when the parent does not echo) and
+  // wait for the parent to confirm it like any other change.
+  liveSliderValue.value = props.defaultValue ?? null
   emit('update:modelValue', props.defaultValue)
 }
 
