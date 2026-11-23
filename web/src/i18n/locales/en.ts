@@ -4479,7 +4479,7 @@ export default {
       sttZhVariantTw: 'Traditional (Taiwan)',
       sttZhVariantHk: 'Traditional (Hong Kong)',
       sttEndWindowSize: 'VAD silence threshold (ms)',
-      sttEndWindowSizeDesc: 'Streaming only: how much trailing silence ends a sentence; 800-1000 recommended',
+      sttEndWindowSizeDesc: 'Streaming only: how much trailing silence ends a sentence. The engine also needs this much silence before it hands over the last sentence on release, so larger values feel slower; 800-1000 recommended',
       ragStatusSectionHeader: 'Status',
       ragEmbedderHint: 'Endpoint, model, key and chunking live in Settings → Text Embedding; session indexing and the knowledge base share that one copy.',
       embeddingServiceSection: 'Embedding service',

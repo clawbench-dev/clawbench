@@ -21,7 +21,7 @@ interface FakeNode {
 let createdFilters: FakeNode[] = []
 /** Set to make the fake context refuse to build a biquad (degradation path). */
 let failBiquad = false
-let workletNode: { port: { onmessage: ((e: { data: ArrayBuffer }) => void) | null; postMessage: ReturnType<typeof vi.fn> }; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }
+let workletNode: { port: { onmessage: ((e: { data: ArrayBuffer | string }) => void) | null; postMessage: ReturnType<typeof vi.fn> }; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }
 let audioCtx: { state: string; sampleRate: number; destination: unknown; audioWorklet: { addModule: ReturnType<typeof vi.fn> }; createMediaStreamSource: ReturnType<typeof vi.fn>; createBiquadFilter: ReturnType<typeof vi.fn>; resume: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }
 
 function installAudioFakes() {
@@ -311,11 +311,76 @@ describe('PcmStreamer', () => {
     workletNode.port.onmessage!({ data: frameAt(0) })
     workletNode.port.onmessage!({ data: frameAt(0) })
     expect(onFrame).not.toHaveBeenCalled()
-    s.flush()
+    void s.flush()
     expect(onFrame).toHaveBeenCalledTimes(2)
     // ...and the worklet is asked for the frame it has not filled yet.
     expect(workletNode.port.postMessage).toHaveBeenCalledWith('flush')
     s.stop()
+  })
+
+  it('does not resolve flush until the worklet has handed over its partial frame', async () => {
+    // The worklet answers on the audio thread, one render quantum later. The
+    // graph used to be torn down in the same turn, so that frame — the final
+    // 0–100 ms of the take — was always dropped.
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame: vi.fn() })
+    await s.start()
+    let done = false
+    const flushed = s.flush().then(() => { done = true })
+    await Promise.resolve()
+    expect(done).toBe(false)
+    workletNode.port.onmessage!({ data: 'flushed' })
+    await flushed
+    expect(done).toBe(true)
+    s.stop()
+  })
+
+  it('gives up on flush when the worklet never answers', async () => {
+    // A graph that died mid-release must not hold the take open.
+    vi.useFakeTimers()
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame: vi.fn() })
+    await s.start()
+    let done = false
+    const flushed = s.flush().then(() => { done = true })
+    await vi.advanceTimersByTimeAsync(149)
+    expect(done).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await flushed
+    expect(done).toBe(true)
+    s.stop()
+  })
+
+  it('asks for the pipeline delay after the last speech frame', async () => {
+    // The samples for the last syllable are still inside the device buffer and
+    // the audio graph when the button comes up; tearing the graph down there is
+    // what loses the ending.
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame: vi.fn() })
+    await s.start()
+    workletNode.port.onmessage!({ data: frameAt(8000) })
+    expect(s.tailWaitMs()).toBe(150)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(s.tailWaitMs()).toBe(50)
+    await vi.advanceTimersByTimeAsync(50)
+    expect(s.tailWaitMs()).toBe(0)
+    s.stop()
+  })
+
+  it('asks for nothing when the user paused before releasing', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame: vi.fn() })
+    await s.start()
+    workletNode.port.onmessage!({ data: frameAt(8000) })
+    await vi.advanceTimersByTimeAsync(1000)
+    // A pause before letting go must not add latency.
+    expect(s.tailWaitMs()).toBe(0)
+    s.stop()
+  })
+
+  it('asks for nothing before any speech was heard', () => {
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame: vi.fn() })
+    expect(s.tailWaitMs()).toBe(0)
   })
 
   it('does not build a graph when it was stopped while the worklet loaded', async () => {

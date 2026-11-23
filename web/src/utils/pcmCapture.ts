@@ -42,7 +42,14 @@ class ClawbenchPcm extends AudioWorkletProcessor {
     // utterance cannot spare.
     this.firstSize = Math.round(target / 50)
     this.first = true
-    this.port.onmessage = (e) => { if (e.data === 'flush') this.flush() }
+    this.port.onmessage = (e) => {
+      if (e.data !== 'flush') return
+      this.flush()
+      // Confirm on the same channel. The partial frame posted above is queued
+      // ahead of this marker, so the main thread learns "the tail is out"
+      // instead of guessing with a timer.
+      this.port.postMessage('flushed')
+    }
   }
   flush() {
     if (!this.out.length) return
@@ -109,6 +116,25 @@ const HANGOVER_FALLBACK_MS = 600
  * 300 ms, enough to cover the attack of a word.
  */
 const PREROLL_FRAMES = 3
+
+/**
+ * Ceiling on how long a take waits for the worklet to confirm a `flush`.
+ *
+ * The answer comes back one render quantum later — a few milliseconds — so this
+ * only exists so a graph that died mid-release cannot hold the take open.
+ */
+const FLUSH_REPLY_TIMEOUT_MS = 150
+
+/**
+ * Extra audio to keep flowing after the release.
+ *
+ * The microphone chain (device buffer, echo cancellation, resampler, worklet)
+ * delays the audio by roughly 150 ms, so the samples for the last syllable are
+ * still in flight when the button comes up. The engine's own end window is not
+ * this function's business: the server feeds that after `end` (see
+ * `sttStreamRelay.padEndWindow`), which is why this can stay small.
+ */
+const PIPELINE_SLACK_MS = 150
 
 /**
  * Encode 16 kHz mono 16-bit PCM frames as a RIFF/WAVE blob.
@@ -192,6 +218,10 @@ export class PcmStreamer {
   private gateOpenUntil = 0
   /** Frames withheld while the gate was shut, oldest first — see PREROLL_FRAMES. */
   private preroll: ArrayBuffer[] = []
+  /** Callers waiting for the worklet to confirm it emitted its partial frame. */
+  private flushWaiters: Array<() => void> = []
+  /** When the last frame above the speech threshold reached us (epoch ms). */
+  private lastVoiceAt = 0
 
   constructor(private readonly opts: PcmStreamerOptions) {}
 
@@ -219,6 +249,7 @@ export class PcmStreamer {
     this.lastSentAt = Date.now()
     this.gateOpenUntil = 0
     this.preroll = []
+    this.lastVoiceAt = 0
     const source = ctx.createMediaStreamSource(this.opts.stream)
     let tail: AudioNode = source
     if (this.opts.tuning.bandFilter) {
@@ -243,9 +274,15 @@ export class PcmStreamer {
     const threshold = rmsThreshold(this.opts.tuning)
     const gate = this.opts.tuning.voiceGate
     const hangoverMs = this.opts.tuning.hangoverMs || HANGOVER_FALLBACK_MS
-    node.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
+    node.port.onmessage = (e: MessageEvent<ArrayBuffer | string>) => {
       if (this.stopped) return
       const buf = e.data
+      if (typeof buf === 'string') {
+        // The worklet answered a `flush`; its partial frame is already queued
+        // ahead of this marker.
+        this.settleFlush()
+        return
+      }
       if (buf.byteLength < 2) {
         // "Cannot tell" must never mean "discard".
         this.lastSentAt = Date.now()
@@ -255,7 +292,14 @@ export class PcmStreamer {
       const rms = rmsFromInt16(new Int16Array(buf))
       this.opts.onLevel?.(rms)
       const now = Date.now()
-      if (gate && rms >= threshold) {
+      const loud = rms >= threshold
+      if (loud) {
+        // Anchors the release tail: the engine measures its end window from
+        // where its own detector saw speech stop — see `tailWaitMs`. Tracked
+        // with the gate off too, where it is the only speech signal there is.
+        this.lastVoiceAt = now
+      }
+      if (gate && loud) {
         // Speech (re)starts: hand over the frames that led into it, then this
         // one, and hold the gate open so the tail is not clipped either.
         for (const pending of this.preroll) this.opts.onFrame(pending)
@@ -294,6 +338,7 @@ export class PcmStreamer {
     this.preroll = []
     this.gateOpenUntil = 0
     this.lastSentAt = Date.now()
+    this.lastVoiceAt = 0
   }
 
   /**
@@ -305,17 +350,55 @@ export class PcmStreamer {
    * threshold is exactly the case where the user's last characters live in that
    * withheld buffer — and the worklet's partial frame is the last slice of all.
    * Both are real audio that simply has not been sent yet.
+   *
+   * The promise matters for the worklet's slice: it answers on the audio thread,
+   * so tearing the graph down in the same turn drops it.
    */
-  flush(): void {
+  flush(): Promise<void> {
     const held = this.preroll
     this.preroll = []
     for (const frame of held) this.opts.onFrame(frame)
-    this.node?.port.postMessage('flush')
+    const node = this.node
+    if (!node) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const settle = () => {
+        clearTimeout(timer)
+        this.flushWaiters = this.flushWaiters.filter((w) => w !== settle)
+        resolve()
+      }
+      const timer = setTimeout(settle, FLUSH_REPLY_TIMEOUT_MS)
+      this.flushWaiters.push(settle)
+      node.port.postMessage('flush')
+    })
+  }
+
+  /** Releases everyone waiting on a `flush` (the worklet answered, or the graph died). */
+  private settleFlush(): void {
+    const waiters = this.flushWaiters
+    this.flushWaiters = []
+    for (const settle of waiters) settle()
+  }
+
+  /**
+   * How long a released take must keep capturing before it may be torn down.
+   *
+   * Covers the microphone pipeline only — the samples for the last syllable are
+   * still in the device buffer, the echo canceller and the worklet when the
+   * button comes up, and tearing the graph down there is what turns 「看一下」
+   * into 「看」. Counted from the last frame the gate heard as speech, so a user
+   * who paused before letting go waits nothing.
+   */
+  tailWaitMs(): number {
+    if (!this.lastVoiceAt) return 0
+    return Math.max(0, this.lastVoiceAt + PIPELINE_SLACK_MS - Date.now())
   }
 
   /** Tears the graph down. Safe to call more than once, and before `start()`. */
   stop(): void {
     this.stopped = true
+    // A take can be torn down while it is waiting on the graph (cancel during
+    // the release tail): release those waiters instead of leaving them hanging.
+    this.settleFlush()
     if (this.node) {
       this.node.port.onmessage = null
       try { this.node.disconnect() } catch { /* already disconnected */ }
