@@ -447,6 +447,47 @@ func TestClawBenchACPClient_RequestPermission_NoRoute_AutoCancel(t *testing.T) {
 	assert.NotNil(t, resp.Outcome.Cancelled)
 }
 
+func TestClawBenchACPClient_RequestPermission_NoRoute_AutoApprove(t *testing.T) {
+	c := NewClawBenchACPClient()
+	c.connRef = &ACPConn{autoApprove: true}
+
+	req := acp.RequestPermissionRequest{
+		SessionId: acp.SessionId("sess-bg"),
+		ToolCall: acp.ToolCallUpdate{
+			ToolCallId: acp.ToolCallId("tc-bg"),
+			Title:      acptest.Patch("Bash"),
+			Kind:       acptest.Patch(acp.ToolKindExecute),
+		},
+		Options: []acp.PermissionOption{
+			{Name: "Reject", Kind: acp.PermissionOptionKindRejectOnce, OptionId: "reject"},
+			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
+		},
+	}
+
+	resp, err := c.RequestPermission(context.Background(), req)
+	assert.NoError(t, err)
+	assert.Nil(t, resp.Outcome.Cancelled)
+	if assert.NotNil(t, resp.Outcome.Selected) {
+		assert.Equal(t, acp.PermissionOptionId("allow-once"), resp.Outcome.Selected.OptionId)
+	}
+	assert.Empty(t, c.pendingPermission)
+}
+
+func TestClawBenchACPClient_RequestPermission_NoRoute_AutoApproveNoAllowOption(t *testing.T) {
+	c := NewClawBenchACPClient()
+	c.connRef = &ACPConn{autoApprove: true}
+
+	resp, err := c.RequestPermission(context.Background(), acp.RequestPermissionRequest{
+		SessionId: acp.SessionId("sess-bg"),
+		ToolCall:  acp.ToolCallUpdate{ToolCallId: acp.ToolCallId("tc-bg")},
+		Options: []acp.PermissionOption{
+			{Name: "Reject", Kind: acp.PermissionOptionKindRejectOnce, OptionId: "reject"},
+		},
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, resp.Outcome.Cancelled)
+}
+
 func TestClawBenchACPClient_RequestPermission_RespondApprove(t *testing.T) {
 	c := NewClawBenchACPClient()
 	ch := make(chan StreamEvent, 10)
