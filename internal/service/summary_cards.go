@@ -93,9 +93,14 @@ func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 }
 
 // extractFileChanges records created/modified file paths from a done tool_use
-// block, mirroring the frontend extractFileChanges semantics (Write → created,
-// Edit → modified, deduplicated). Requires a detected file path. The tool call
+// block, mirroring the frontend extractFileChanges semantics (write → created,
+// edit → modified, deduplicated). Requires a detected file path. The tool call
 // ID is captured per path so the frontend can fetch the diff on demand.
+//
+// The name match is case-insensitive: backends do not agree on casing (the
+// builtin agent reports bare lowercase `write`/`edit`, ACP backends mostly
+// PascalCase), so an exact match would drop a whole backend family from the
+// summary view's file list.
 func extractFileChanges(cards *model.SummaryCards, b model.ContentBlock) {
 	path := b.FilePath
 	if path == "" {
@@ -106,10 +111,10 @@ func extractFileChanges(cards *model.SummaryCards, b model.ContentBlock) {
 	if path == "" {
 		return
 	}
-	switch b.Name {
-	case "Write":
+	switch strings.ToLower(b.Name) {
+	case "write":
 		cards.CreatedFiles = appendFileChange(cards.CreatedFiles, path, b.ID)
-	case "Edit":
+	case "edit":
 		cards.ModifiedFiles = appendFileChange(cards.ModifiedFiles, path, b.ID)
 	}
 }

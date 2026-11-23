@@ -456,8 +456,8 @@ func TestExportSeams_ToolNameResolution(t *testing.T) {
 	if got := ToolCallIDOf(acp.ToolCallId("call_1")); got != "call_1" {
 		t.Fatalf("ToolCallIDOf = %q", got)
 	}
-	if got := NormalizeToolName("Read"); got != normalizeToolName("Read") {
-		t.Fatalf("NormalizeToolName diverged: %q", got)
+	if got, err := NormalizeToolInput([]byte(`{"filePath":"/a"}`), nil); err != nil || len(got) == 0 {
+		t.Fatalf("NormalizeToolInput = %q, %v", got, err)
 	}
 	if got := StreamErrorReason("rate limit exceeded"); got != streamErrorReason("rate limit exceeded") {
 		t.Fatalf("StreamErrorReason diverged: %q", got)

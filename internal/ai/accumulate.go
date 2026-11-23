@@ -416,7 +416,7 @@ const ToolStatusInterrupted = "interrupted"
 func CloseUnfinishedTools(blocks []model.ContentBlock) {
 	for i := range blocks {
 		b := &blocks[i]
-		if b.Type != "tool_use" || b.Done || b.Name == "PermissionApproval" {
+		if b.Type != "tool_use" || b.Done || strings.EqualFold(b.Name, "PermissionApproval") {
 			continue
 		}
 		b.Done = true
