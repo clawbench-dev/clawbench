@@ -62,12 +62,36 @@ describe('buildToolCallGroups', () => {
     expect(groups[0]).toMatchObject({ toolCount: 3, failedCount: 1, interruptedCount: 1 })
   })
 
-  it('reports the last running tool with its 1-based position', () => {
+  it('reports the tool that is executing, not the last one still waiting', () => {
+    // A round can announce several calls at once; they run in order, so all of
+    // them sit at `!done` until their turn. Only the FIRST unfinished one is
+    // executing — the row must not jump to "第 3 步" while step 1 is working.
     const { groups } = buildToolCallGroups(
       [tool('a'), tool('b', { done: false, status: '' }), tool('c', { done: false, status: '' })],
       opts,
     )
-    expect(groups[0]).toMatchObject({ runningIndex: 3, runningName: 'c' })
+    expect(groups[0]).toMatchObject({ runningIndex: 2, runningName: 'b' })
+  })
+
+  it('takes the running step summary from the tool that is executing', () => {
+    // The bug this pins: the row read the LAST unfinished call's summary, and
+    // that call has no arguments yet (they arrive when it is about to run), so
+    // the folded row showed a step number with no description for the whole
+    // time the earlier calls were running. Every expanded pill had its own
+    // summary, which is why it looked like "only the aggregate row is broken".
+    const withSummary = {
+      ...opts,
+      describe: (b: any) => ({ name: b.id, summary: b.summary ?? '', category: 'bash', toolName: 'bash' }),
+    }
+    const { groups } = buildToolCallGroups(
+      [
+        tool('first'),
+        tool('second', { done: false, status: '', summary: '第二条命令在跑' }),
+        tool('third', { done: false, status: '' }),
+      ],
+      withSummary,
+    )
+    expect(groups[0]).toMatchObject({ runningIndex: 2, runningName: 'second', runningSummary: '第二条命令在跑' })
   })
 
   it('carries the running tool category, and none once the run settles', () => {

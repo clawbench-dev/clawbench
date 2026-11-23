@@ -31,7 +31,14 @@ export interface ToolCallGroup {
   failedCount: number
   /** How many were closed without a result (turn cancelled / agent crash). */
   interruptedCount: number
-  /** 1-based position of the running tool inside the run; 0 when none runs. */
+  /**
+   * 1-based position of the tool that is EXECUTING inside the run; 0 when none
+   * runs.
+   *
+   * That is the first tool that has not finished, not the last: a round can
+   * announce several calls at once, and they run in order, so every later call
+   * also sits at `!done` until its turn comes.
+   */
   runningIndex: number
   /**
    * Whether a thinking chip in the run has not reported done yet. The caller
@@ -131,7 +138,14 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
       const block = list[idx]
       if (block?.status === 'error') failedCount++
       if (block?.status === TOOL_STATUS_INTERRUPTED) interruptedCount++
-      if (block && !block.done) {
+      // The FIRST unfinished tool is the one executing. A round may announce
+      // several calls at once and they run in order, so every later call is
+      // also `!done` until its turn arrives. Taking the LAST one made the row
+      // name the wrong step ("第 3 步" while step 1 ran) and read a summary that
+      // did not exist yet — a call's arguments only arrive when it is about to
+      // run — so the row sat there without its description for the whole time
+      // the earlier calls were working.
+      if (block && !block.done && !runningIndex) {
         runningIndex = order + 1
         runningBlock = block
       }
