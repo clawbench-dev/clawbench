@@ -3,6 +3,13 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import GitGraph from '@/components/git/GitGraph.vue'
 
+// Mirrors the geometry constants in utils/gitGraph.ts (lane spacing, side
+// padding, and the resulting minimum column width). The mocked computeGraphData
+// below must agree with the real one on ordering/width, so it derives from these.
+const LANE_WIDTH = 16
+const GRAPH_LEFT_PADDING = 8
+const MIN_GRAPH_WIDTH = LANE_WIDTH + GRAPH_LEFT_PADDING * 2
+
 vi.mock('vue-i18n', async (importOriginal) => {
   const actual: any = await importOriginal()
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
@@ -22,7 +29,7 @@ vi.mock('@/utils/gitGraph', async (importOriginal) => {
       const nodes = commits.map((c, i) => ({
         row: i,
         lane: c.lane ?? 0,
-        cx: (c.lane ?? 0) * 20 + 20,
+        cx: (c.lane ?? 0) * LANE_WIDTH + LANE_WIDTH / 2 + GRAPH_LEFT_PADDING,
         cy: i * rowHeight + rowHeight / 2,
         color: '#0066cc',
         refs: c.refs || [],
@@ -37,7 +44,10 @@ vi.mock('@/utils/gitGraph', async (importOriginal) => {
         nodes,
         lines,
         laneCount: maxLane + 1,
-        graphWidth: Math.max(40, (maxLane + 1) * 20 + 20),
+        graphWidth: Math.max(
+          MIN_GRAPH_WIDTH,
+          (maxLane + 1) * LANE_WIDTH + GRAPH_LEFT_PADDING * 2,
+        ),
         shaToLane: new Map(),
         laneBranchName: new Map(),
       }
@@ -72,7 +82,7 @@ describe('GitGraph', () => {
     const wrapper = mountGraph({ commits: [{ sha: 'a', parents: [] }, { sha: 'b', parents: ['a'] }] })
     const svg = wrapper.find('svg.git-graph-svg')
     expect(svg.exists()).toBe(true)
-    expect(svg.attributes('width')).toBe('40')
+    expect(svg.attributes('width')).toBe(String(MIN_GRAPH_WIDTH))
     expect(svg.attributes('height')).toBe('132')
   })
 
@@ -209,9 +219,9 @@ describe('GitGraph viewport-driven column width', () => {
     ;(graph.vm as any).measureViewport()
     await nextTick()
 
-    // Rows 0-9 are all lane 0 → one lane → 1 * 20 + 20 = 40.
+    // Rows 0-9 are all lane 0 → one lane → the minimum column width.
     expect((graph.vm as any).visibleLaneCount).toBe(1)
-    expect(graphWidth(wrapper)).toBe('40')
+    expect(graphWidth(wrapper)).toBe(String(MIN_GRAPH_WIDTH))
     wrapper.unmount()
   })
 
@@ -225,7 +235,7 @@ describe('GitGraph viewport-driven column width', () => {
     await nextTick()
 
     expect((graph.vm as any).visibleLaneCount).toBe(2)
-    expect(graphWidth(wrapper)).toBe('60')
+    expect(graphWidth(wrapper)).toBe(String(MIN_GRAPH_WIDTH + LANE_WIDTH))
     wrapper.unmount()
   })
 
@@ -250,7 +260,7 @@ describe('GitGraph viewport-driven column width', () => {
 
     // Rows 0-12 hold only lane-0 nodes, but the lane-2 line crosses them.
     expect((graph.vm as any).visibleLaneCount).toBe(3)
-    expect(graphWidth(wrapper)).toBe('80')
+    expect(graphWidth(wrapper)).toBe(String(MIN_GRAPH_WIDTH + 2 * LANE_WIDTH))
     wrapper.unmount()
   })
 
@@ -270,7 +280,7 @@ describe('GitGraph viewport-driven column width', () => {
     await nextTick()
 
     expect((graph.vm as any).visibleLaneCount).toBe(1)
-    expect(graphWidth(wrapper)).toBe('40')
+    expect(graphWidth(wrapper)).toBe(String(MIN_GRAPH_WIDTH))
     wrapper.unmount()
   })
 
@@ -288,9 +298,9 @@ describe('GitGraph viewport-driven column width', () => {
     ;(graph.vm as any).measureViewport()
     await nextTick()
 
-    // maxLane 1 → full width 2 * 20 + 20 = 60, not the 40 a window-based
-    // measurement would have produced.
-    expect(graphWidth(wrapper)).toBe('60')
+    // maxLane 1 → full width for 2 lanes, not the single-lane width a
+    // window-based measurement would have produced.
+    expect(graphWidth(wrapper)).toBe(String(2 * LANE_WIDTH + GRAPH_LEFT_PADDING * 2))
     wrapper.unmount()
   })
 
@@ -320,7 +330,7 @@ describe('GitGraph viewport-driven column width', () => {
     await nextTick()
 
     expect((graph.vm as any).visibleRowCount).toBe(0)
-    expect(graphWidth(wrapper)).toBe('60') // full width for 2 lanes
+    expect(graphWidth(wrapper)).toBe(String(2 * LANE_WIDTH + GRAPH_LEFT_PADDING * 2)) // full width for 2 lanes
     wrapper.unmount()
   })
 

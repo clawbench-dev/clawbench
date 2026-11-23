@@ -3,6 +3,13 @@ import { computeGraphData, computeGraphColumnWidth, refLabelText, refLabelWidth,
 
 const ROW_HEIGHT = 64
 
+// Mirrors the geometry constants in utils/gitGraph.ts.
+const LANE_WIDTH = 16
+const GRAPH_LEFT_PADDING = 8
+const MIN_GRAPH_WIDTH = LANE_WIDTH + GRAPH_LEFT_PADDING * 2
+const LANE_CX_0 = LANE_WIDTH / 2 + GRAPH_LEFT_PADDING
+const LANE_CX_1 = LANE_WIDTH + LANE_WIDTH / 2 + GRAPH_LEFT_PADDING
+
 // ─── Helper: extract connection info from graph data ───
 function getConnections(commits: any[], rowHeight = ROW_HEIGHT) {
   const { nodes, lines, laneCount, graphWidth } = computeGraphData(commits, rowHeight, undefined)
@@ -127,7 +134,7 @@ describe('computeGraphData', () => {
     expect(result.nodes).toEqual([])
     expect(result.lines).toEqual([])
     expect(result.laneCount).toBe(0)
-    expect(result.graphWidth).toBe(40)
+    expect(result.graphWidth).toBe(MIN_GRAPH_WIDTH)
   })
 
   it('returns empty data for null input', () => {
@@ -434,10 +441,10 @@ describe('node positioning', () => {
     const lane0Nodes: any[] = nodes.filter((n: any) => n.lane === 0)
     const lane1Nodes: any[] = nodes.filter((n: any) => n.lane === 1)
     for (const n of lane0Nodes) {
-      expect(n.cx).toBe(20)
+      expect(n.cx).toBe(LANE_CX_0)
     }
     for (const n of lane1Nodes) {
-      expect(n.cx).toBe(40)
+      expect(n.cx).toBe(LANE_CX_1)
     }
   })
 
@@ -460,7 +467,7 @@ describe('graph dimensions', () => {
     const { graphWidth, laneCount } = computeGraphData(commits, ROW_HEIGHT, undefined) as any
     expect(laneCount).toBe(1)
     // 1 * 20 + 10 * 2 = 40
-    expect(graphWidth).toBe(40)
+    expect(graphWidth).toBe(MIN_GRAPH_WIDTH)
   })
 
   it('graphWidth accommodates multiple lanes', () => {
@@ -471,7 +478,7 @@ describe('graph dimensions', () => {
     ]
     const { graphWidth, laneCount } = computeGraphData(commits, ROW_HEIGHT, undefined) as any
     expect(laneCount).toBeGreaterThanOrEqual(2)
-    expect(graphWidth).toBeGreaterThanOrEqual(60)
+    expect(graphWidth).toBeGreaterThanOrEqual(MIN_GRAPH_WIDTH + LANE_WIDTH)
   })
 })
 
@@ -576,7 +583,7 @@ describe('smooth bezier for cross-lane connections', () => {
     const forkBeziers = lines.filter((l: any) => {
       if (!l.path.includes('C')) return false
       // Starts at lane 0 x position
-      return l.path.startsWith('M20,')
+      return l.path.startsWith(`M${LANE_CX_0},`)
     })
 
     // The fork bezier should use parentLane color (lane 1 = orange)
@@ -592,7 +599,7 @@ describe('smooth bezier for cross-lane connections', () => {
     const { lines } = computeGraphData(MULTI_BRANCH, ROW_HEIGHT, undefined) as any
 
     // Count all bezier curves starting from L0 (fork origin)
-    const forkBeziers = lines.filter((l: any) => l.path.includes('C') && l.path.startsWith('M20,'))
+    const forkBeziers = lines.filter((l: any) => l.path.includes('C') && l.path.startsWith(`M${LANE_CX_0},`))
     // Each fork is a single smooth bezier regardless of lane gap
     expect(forkBeziers.length).toBeGreaterThanOrEqual(1)
     // No cascade segments (straight diagonal lines) should exist
@@ -615,7 +622,7 @@ describe('smooth bezier for cross-lane connections', () => {
     const mergeInBeziers = lines.filter((l: any) => {
       if (!l.path.includes('C') || l.fade) return false
       // Starts at lane 1 x position (40) and contains lane 0 x position
-      return l.path.startsWith('M40,') && l.path.includes('20,')
+      return l.path.startsWith(`M${LANE_CX_1},`) && l.path.includes(`${LANE_CX_0},`)
     })
 
     // Merge-in bezier should use childLane (lane 1 = feature branch)
@@ -994,12 +1001,12 @@ describe('fork line structure: bezier + vertical (mirror of merge-in)', () => {
     })
     expect(forkVerts.length).toBeGreaterThanOrEqual(1)
     for (const v of forkVerts) {
-      expect(v.path.startsWith('M40,')).toBe(true) // branch lane X
+      expect(v.path.startsWith(`M${LANE_CX_1},`)).toBe(true) // branch lane X
     }
 
     // No orange vertical should run on the main lane (X=20)
     const mainLaneOrange = lines.filter((l: any) =>
-      !l.path.includes('C') && l.path.startsWith('M20,') && l.color === '#e67e22'
+      !l.path.includes('C') && l.path.startsWith(`M${LANE_CX_0},`) && l.color === '#e67e22'
     )
     expect(mainLaneOrange).toHaveLength(0)
   })
@@ -1010,7 +1017,7 @@ describe('fork line structure: bezier + vertical (mirror of merge-in)', () => {
     const forkBez = lines.find((l: any) => {
       if (!l.path.includes('C') || l.fade) return false
       // Starts from lane 0 X=20 at y=101 (the merge node's bottom edge)
-      return l.path.startsWith('M20,101')
+      return l.path.startsWith(`M${LANE_CX_0},101`)
     })
     expect(forkBez).toBeDefined()
     expect(forkBez.lane).toBe(1) // parentLane
@@ -1019,7 +1026,7 @@ describe('fork line structure: bezier + vertical (mirror of merge-in)', () => {
 
   it('fork bezier control points ensure tangential entry/exit (vertical tangent)', () => {
     const { lines } = computeGraphData(SINGLE_MERGE, ROW_HEIGHT, undefined) as any
-    const forkBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith('M20,101'))
+    const forkBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith(`M${LANE_CX_0},101`))
     expect(forkBez).toBeDefined()
 
     // Parse the bezier: M startX,startY C cp1X,cp1Y cp2X,cp2Y endX,endY
@@ -1039,8 +1046,8 @@ describe('fork line structure: bezier + vertical (mirror of merge-in)', () => {
   it('fork and merge-in bezier have mirrored control point ratios', () => {
     const { lines } = computeGraphData(SINGLE_MERGE, ROW_HEIGHT, undefined) as any
 
-    const forkBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith('M20,101'))
-    const mergeInBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith('M40,320'))
+    const forkBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith(`M${LANE_CX_0},101`))
+    const mergeInBez = lines.find((l: any) => l.path.includes('C') && l.path.startsWith(`M${LANE_CX_1},320`))
 
     expect(forkBez).toBeDefined()
     expect(mergeInBez).toBeDefined()
@@ -1239,8 +1246,9 @@ describe('ref label background color', () => {
 // somewhere reaches 8 lanes reserves that width even while the visible rows use
 // one, squeezing the commit messages beside it.
 describe('computeGraphColumnWidth', () => {
-  // graphWidth for an N-lane graph: N * 20 + 20, floored at 40.
-  const fullWidthFor = (lanes: number) => Math.max(40, lanes * 20 + 20)
+  // graphWidth for an N-lane graph: N * LANE_WIDTH + 2 * padding, floored.
+  const fullWidthFor = (lanes: number) =>
+    Math.max(MIN_GRAPH_WIDTH, lanes * LANE_WIDTH + GRAPH_LEFT_PADDING * 2)
 
   function width(opts: Partial<Parameters<typeof computeGraphColumnWidth>[0]> = {}) {
     return computeGraphColumnWidth({
@@ -1254,10 +1262,10 @@ describe('computeGraphColumnWidth', () => {
   }
 
   it('shrinks to the visible lane count when the list overflows the viewport', () => {
-    // 1 visible lane → 1 * 20 + 20 = 40 (also the floor).
-    expect(width({ visibleLaneCount: 1 })).toBe(40)
-    expect(width({ visibleLaneCount: 2 })).toBe(60)
-    expect(width({ visibleLaneCount: 3 })).toBe(80)
+    // 1 visible lane → LANE_WIDTH + 2 * padding (also the floor).
+    expect(width({ visibleLaneCount: 1 })).toBe(MIN_GRAPH_WIDTH)
+    expect(width({ visibleLaneCount: 2 })).toBe(MIN_GRAPH_WIDTH + LANE_WIDTH)
+    expect(width({ visibleLaneCount: 3 })).toBe(MIN_GRAPH_WIDTH + 2 * LANE_WIDTH)
   })
 
   it('uses the full width when every loaded commit fits on screen', () => {
@@ -1279,11 +1287,11 @@ describe('computeGraphColumnWidth', () => {
   it('never collapses below one lane', () => {
     // Lane 0 always exists, so the column keeps the mainline's own track even
     // when the window reports no lanes at all.
-    expect(width({ visibleLaneCount: 0 })).toBe(40)
+    expect(width({ visibleLaneCount: 0 })).toBe(MIN_GRAPH_WIDTH)
   })
 
-  it('keeps a floor of 40px even for a single lane', () => {
-    expect(width({ fullWidth: 10, laneCount: 1, visibleLaneCount: 1 })).toBe(40)
+  it('keeps the minimum width even for a single lane', () => {
+    expect(width({ fullWidth: 10, laneCount: 1, visibleLaneCount: 1 })).toBe(MIN_GRAPH_WIDTH)
   })
 
   it('falls back to the full width when the viewport is not measured yet', () => {

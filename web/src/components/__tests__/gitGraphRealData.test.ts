@@ -21,8 +21,8 @@ import { ensureFixtures, readRepo } from './gitGraphFixtures'
 ensureFixtures()
 
 const ROW_HEIGHT = 64
-const LANE_WIDTH = 20
-const GRAPH_LEFT_PADDING = 10
+const LANE_WIDTH = 16
+const GRAPH_LEFT_PADDING = 8
 
 // ─── Coordinate helpers (mirrors gitGraph.ts) ───
 function laneCx(lane: number) {
@@ -120,7 +120,7 @@ describe('01-linear (real data)', () => {
   })
 
   it('4 vertical SVG lines: row 0→1, row 1→2, row 2→3, row 3→4', () => {
-    const x = laneCx(0) // 20
+    const x = laneCx(0) // 16
     for (let row = 0; row < 4; row++) {
       const y1 = rowCy(row) + 5
       const y2 = rowCy(row + 1) - 5
@@ -367,7 +367,7 @@ describe('partial loading - continuation lines with exact SVG paths', () => {
     // All 3 commits are on lane 0
     // Row 2 (commit 3) has parent c4416dd which is not loaded
     // Continuation line: from row 2's bottom to SVG bottom
-    const x = laneCx(0) // 20
+    const x = laneCx(0) // 16
     const y1 = rowCy(2) + 5 // 115 + 5 = 120
     const svgBottom = 3 * ROW_HEIGHT + ROW_HEIGHT // 184 (extends one row below)
     const expectedPath = `M${x},${y1} L${x},${svgBottom}`
@@ -455,7 +455,7 @@ describe('partial loading - continuation lines with exact SVG paths', () => {
   it('08-long-linear: loading 10 — last row has continuation line', () => {
     const { lines } = getGraphInfo(LONG_LINEAR)
     // Row 9 (commit 31) has parent fd5c695 which is not loaded
-    const x = laneCx(0) // 20
+    const x = laneCx(0) // 16
     const y1 = rowCy(9) + 5 // 9*46+23+5 = 437
     const svgBottom = 10 * ROW_HEIGHT + ROW_HEIGHT // 506
     const expectedPath = `M${x},${y1} L${x},${svgBottom}`
