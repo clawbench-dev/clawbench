@@ -614,6 +614,24 @@ func (c *ClawBenchACPClient) cachedToolInput(sessionID, toolCallID string) strin
 	return c.toolInputs[PermissionKey(sessionID, toolCallID)]
 }
 
+// firstAllowOptionID returns the option auto-approve should select: the first
+// allow_once / allow_always in the order the agent offered them. Both
+// auto-approve paths (with and without an active stream) go through this, so
+// they can never pick differently. Empty means the request offers no way to
+// allow it, and the caller must not approve.
+//
+// Picking allow_always is not "remember forever" on our side: the agent owns
+// that persistence and stops asking once it is granted. Either way this is one
+// answer to one request.
+func firstAllowOptionID(options []acp.PermissionOption) acp.PermissionOptionId {
+	for _, opt := range options {
+		if opt.Kind == acp.PermissionOptionKindAllowOnce || opt.Kind == acp.PermissionOptionKindAllowAlways {
+			return opt.OptionId
+		}
+	}
+	return ""
+}
+
 // RequestPermission blocks until the user responds to a permission request
 // via the HTTP API, or the context is cancelled (session cancelled/disconnected).
 // The ACP SDK dispatches inbound requests on dedicated goroutines, so blocking
@@ -670,10 +688,34 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 	c.mu.Unlock()
 
 	if !ok {
-		// No active stream — auto-cancel
+		// No active stream (e.g. an async/background wake-up after the turn
+		// ended). Interactive approval needs a stream to push the card, but
+		// auto-approve does not — grant it instead of cancelling. There is no
+		// card and no timeline row on this path, so the log line below is the
+		// only record of the approval.
 		c.mu.Lock()
 		delete(c.pendingPermission, key)
 		c.mu.Unlock()
+		if c.connRef != nil && c.connRef.IsAutoApprove() {
+			if optionID := firstAllowOptionID(p.Options); optionID != "" {
+				slog.Info(
+					"acp: auto-approving permission request (no active stream)",
+					"session_id", sessionID,
+					"tool_call_id", toolCallID,
+					"tool_name", toolName,
+					"option_id", string(optionID),
+				)
+				return acp.RequestPermissionResponse{
+					Outcome: acp.NewRequestPermissionOutcomeSelected(optionID),
+				}, nil
+			}
+		}
+		slog.Warn(
+			"acp: permission request cancelled, no active stream",
+			"session_id", sessionID,
+			"tool_call_id", toolCallID,
+			"tool_name", toolName,
+		)
 		return acp.RequestPermissionResponse{
 			Outcome: acp.NewRequestPermissionOutcomeCancelled(),
 		}, nil
@@ -730,20 +772,14 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 
 	// Auto-approve branch: immediately select the first allow option
 	if isAutoApprove {
-		allowOptionID := ""
-		for _, opt := range p.Options {
-			if opt.Kind == acp.PermissionOptionKindAllowOnce || opt.Kind == acp.PermissionOptionKindAllowAlways {
-				allowOptionID = string(opt.OptionId)
-				break
-			}
-		}
+		allowOptionID := firstAllowOptionID(p.Options)
 		if allowOptionID != "" {
 			slog.Info(
 				"acp: auto-approving permission request",
 				"session_id", sessionID,
 				"tool_call_id", toolCallID,
 				"tool_name", toolName,
-				"option_id", allowOptionID,
+				"option_id", string(allowOptionID),
 			)
 			// Remove from pending map — responding immediately
 			c.mu.Lock()
@@ -762,7 +798,7 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 			})
 
 			return acp.RequestPermissionResponse{
-				Outcome: acp.NewRequestPermissionOutcomeSelected(acp.PermissionOptionId(allowOptionID)),
+				Outcome: acp.NewRequestPermissionOutcomeSelected(allowOptionID),
 			}, nil
 		}
 		// No allow option found — fall through to normal interactive flow
