@@ -61,6 +61,25 @@ function click(el: Element, opts: MouseEventInit = {}) {
 }
 
 describe('installExternalLinkClick', () => {
+  it('delegates a tap on an unannotated localhost notice with its full URL', () => {
+    const href = 'http://127.0.0.1:23456/dashboard/preview/?level=all&lang=zh&s=sample#details'
+    const routed: string[] = []
+    dispose = installExternalLinkClick(event => {
+      const span = (event.target as Element).closest<HTMLElement>('.md-external-link')
+      if (!span?.dataset.href) return false
+      routed.push(span.dataset.href)
+      event.stopPropagation()
+      return true
+    })
+    const link = renderSpan(href)
+    const hostClick = vi.fn()
+    link.parentElement!.addEventListener('click', hostClick)
+    click(link)
+    expect(routed).toEqual([href])
+    expect(hostClick).not.toHaveBeenCalled()
+    expect(mockConfirm).not.toHaveBeenCalled()
+  })
+
   it('asks before opening, and opens only AFTER confirmation', async () => {
     dispose = installExternalLinkClick()
     const span = renderSpan('https://example.com/a')

@@ -115,10 +115,11 @@ describe('useLocalhostAnnotation', () => {
       expect(result?.fullUrl).toBe('http://localhost:3000')
     })
 
-    it('stops path at query string', () => {
-      const result = parseLocalhostUrl('http://localhost:3000/api?key=val')
-      expect(result?.path).toBe('/api')
-      expect(result?.fullUrl).toBe('http://localhost:3000/api')
+    it('preserves query strings and fragments for forwarded pages', () => {
+      const result = parseLocalhostUrl('http://localhost:3000/api?key=val&lang=zh#log')
+      expect(result?.path).toBe('/api?key=val&lang=zh#log')
+      expect(result?.fullUrl).toBe('http://localhost:3000/api?key=val&lang=zh#log')
+      expect(parseLocalhostUrl('http://localhost:3000?x=1')?.path).toBe('/?x=1')
     })
 
     it('returns null for non-localhost URL', () => {

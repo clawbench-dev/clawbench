@@ -24,7 +24,7 @@ import { isAnnotationSkipped } from '@/utils/annotationScope.ts'
  */
 
 /** Regex to match bare localhost URLs in text (not inside <a> tags) */
-const LOCALHOST_URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)(\/[^\s<>"')\]]*)?/gi
+const LOCALHOST_URL_RE = /https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)([/?#][^\s<>"')\]]*)?/gi
 
 /**
  * Check if an href points to a localhost address.
@@ -38,13 +38,14 @@ export function isLocalhostUrl(href: string): boolean {
  * Returns null if not a localhost URL.
  */
 export function parseLocalhostUrl(url: string): { port: number; protocol: string; fullUrl: string; path: string } | null {
-    const match = url.match(/^((https?):\/\/(?:localhost|127\.0\.0\.1):(\d+))(\/[^\s?#]*)?/i)
-    if (!match) return null
-    const path = match[4] || ''
+    const match = url.match(/^((https?):\/\/(?:localhost|127\.0\.0\.1):(\d+))([/?#][^\s\\]*)?$/i)
+    if (!match || Number(match[3]) < 1 || Number(match[3]) > 65535) return null
+    const suffix = match[4] || ''
+    const path = /^[?#]/.test(suffix) ? '/' + suffix : suffix
     return {
         port: parseInt(match[3]),
         protocol: match[2].toLowerCase(),
-        fullUrl: match[1] + path,
+        fullUrl: url,
         path,
     }
 }
@@ -98,17 +99,6 @@ export function annotateLocalhostUrls(html: string): string {
     if (!annotateLocalhostUrlsIn(doc)) return html
     return doc.body.innerHTML
 }
-
-// LOCALHOST_LINK_ATTR is defined in externalLinkNode.ts (leaf module) so the
-// global click layer can consult it without importing this composable's
-// port-forward/store graph. Two consumers depend on it, and both fail visibly
-// without it:
-//  - `installExternalLinkClick` must NOT intercept the click. That layer is a
-//    document-level CAPTURE listener that stops propagation, so it would run
-//    before the host's own handler and open `http://localhost:PORT` in the
-//    SYSTEM browser — where `localhost` is the device itself, not the server.
-//  - `handleLocalhostUrlClick` uses it to recognise the span (there is no
-//    `<a href>` any more) and route the click through the tunnel.
 
 /** Tag a link span as localhost-routed. Returns the same element for chaining. */
 function markLocalhostSpan(el: HTMLElement): HTMLElement {
@@ -232,18 +222,9 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
         let match: RegExpExecArray | null
         while ((match = LOCALHOST_URL_RE.exec(text)) !== null) {
             const url = match[0]
-            const port = parseInt(match[1])
-            if (port <= 0 || port > 65535) {
-                // Invalid port — treat as plain text
-                if (match.index > lastIndex) {
-                    parts.push({ text: text.slice(lastIndex, match.index), url: null, port: 0, protocol: '', path: '' })
-                }
-                parts.push({ text: url, url: null, port: 0, protocol: '', path: '' })
-                lastIndex = match.index + url.length
-                continue
-            }
-            const protocol = url.startsWith('https') ? 'https' : 'http'
-            const path = match[2] || ''
+            const parsed = parseLocalhostUrl(url)
+            if (!parsed) continue
+            const { port, protocol, path } = parsed
             // Push text before this match
             if (match.index > lastIndex) {
                 parts.push({ text: text.slice(lastIndex, match.index), url: null, port: 0, protocol: '', path: '' })
@@ -379,7 +360,7 @@ export function useLocalhostUrlClickHandler() {
         // `localhost` points at the device and the port-forwarded server is
         // unreachable. The little icon button kept working, so the regression
         // was partial and easy to miss.
-        const span = (event.target as Element).closest(`.${EXTERNAL_LINK_CLASS}[${LOCALHOST_LINK_ATTR}]`)
+        const span = (event.target as Element).closest(`.${EXTERNAL_LINK_CLASS}`)
         if (span) {
             const href = span.getAttribute('data-href') || ''
             const parsed = parseLocalhostUrl(href)
@@ -390,8 +371,8 @@ export function useLocalhostUrlClickHandler() {
                 // device's own localhost (a dead page). openLocalhostUrl already
                 // shows the reason as a toast.
                 void openLocalhostUrl(span, parsed.port, parsed.protocol, parsed.path || undefined)
+                return true
             }
-            return true
         }
 
         const anchor = (event.target as Element).closest('a[href]')

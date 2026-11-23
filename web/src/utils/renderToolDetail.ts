@@ -16,7 +16,7 @@ const TAG = 'renderToolDetail'
 import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
-import { EXTERNAL_LINK_CLASS, isExternalHref } from '@/utils/externalLinkNode.ts'
+import { EXTERNAL_LINK_CLASS, LOCALHOST_LINK_ATTR, isExternalHref } from '@/utils/externalLinkNode.ts'
 import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { isShareMode } from '@/share/shareMode'
@@ -1827,18 +1827,16 @@ function annotateLocalhostInEscapedText(text: string): string {
   // URL characters (letters, digits, :/.-?) are not changed by escapeHtml,
   // but & becomes &amp; in query strings, and = stays as-is.
   // Path group matches anything that isn't whitespace, quotes, or closing brackets.
-  const re = /https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)(\/[^\s"'>)\]]*)?/gi
-  return text.replace(re, (url, portStr) => {
-    const port = parseInt(portStr)
-    if (port <= 0 || port > 65535) return url
+  const re = /https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)([/?#][^\s"'>)\]]*)?/gi
+  return text.replace(re, (url) => {
     // Un-escape the URL for data attributes (escapeHtml turned & into &amp;, etc.)
     const rawUrl = url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
     const parsed = parseLocalhostUrl(rawUrl)
-    const protocol = parsed?.protocol || (rawUrl.startsWith('https') ? 'https' : 'http')
-    const path = parsed?.path || ''
+    if (!parsed) return url
+    const { port, protocol, path } = parsed
     // Same text treatment as every other external link, plus the tunnel open
     // button (which is what actually reaches the forwarded port in App mode).
-    const linkHtml = `<span class="${EXTERNAL_LINK_CLASS}" data-href="${escapeHtml(rawUrl)}" role="link" tabindex="0">${url}</span>`
+    const linkHtml = `<span class="${EXTERNAL_LINK_CLASS}" ${LOCALHOST_LINK_ATTR} data-href="${escapeHtml(rawUrl)}" role="link" tabindex="0">${url}</span>`
     return `${linkHtml}${localhostOpenButtonHtml(port, protocol, rawUrl, path)}`
   })
 }
