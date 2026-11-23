@@ -584,44 +584,43 @@ func (r *runner) finishAfterAnswer(out roundOutput) bool {
 	return r.tryFinish(StopComplete, 0)
 }
 
-// absorbInjections appends every message that joined the turn to the
-// conversation and announces the boundary. It reports whether any were waiting.
+// absorbInjections appends the next injected message to the conversation and
+// announces the boundary. It reports whether one was waiting.
 func (r *runner) absorbInjections() bool {
-	pending := r.spec.Injections.Take()
-	if len(pending) == 0 {
+	p, ok := r.spec.Injections.Pop()
+	if !ok {
 		return false
 	}
-	r.absorb(pending)
+	r.absorb(p)
 	return true
 }
 
-// absorb records injected messages as user turns and emits one boundary event
-// per message, in arrival order.
+// absorb records one injected message as a user turn and emits its boundary.
 //
 // The boundary goes out BEFORE the next model round produces anything, which is
 // what lets the caller finalize the reply so far and open a new assistant row
 // below the injected message.
-func (r *runner) absorb(pending []PendingInjection) {
-	for _, p := range pending {
-		r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, p.Text))
-		r.emit(Event{Kind: EventInjected, ClientUserMessageID: p.ClientUserMessageID})
-	}
+func (r *runner) absorb(p PendingInjection) {
+	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, p.Text))
+	r.emit(Event{Kind: EventInjected, ClientUserMessageID: p.ClientUserMessageID})
 }
 
 // tryFinish ends the turn unless a message was injected after the last model
 // round. It reports whether the turn ended.
 //
-// Taking and sealing happen under one lock: a concurrent Push either lands in
-// the returned batch (and therefore gets a round) or is refused (and stays in
+// Popping and sealing happen under one lock: a concurrent Push either supplies
+// the returned message (and therefore gets a round) or is refused (and stays in
 // the queue). That is the property that keeps "the insertion reported success"
 // from ever meaning "nobody answered it".
 func (r *runner) tryFinish(reason string, limit int) bool {
-	pending, sealed := r.spec.Injections.TakeOrSeal()
+	pending, ok, sealed := r.spec.Injections.PopOrSeal()
 	if sealed {
 		r.finish(reason, limit)
 		return true
 	}
-	r.absorb(pending)
+	if ok {
+		r.absorb(pending)
+	}
 	return false
 }
 

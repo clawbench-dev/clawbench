@@ -51,9 +51,9 @@ func TestInjectInProcess_RoutesToRunningTurn(t *testing.T) {
 	if !res.Injected {
 		t.Fatalf("a running turn must accept the message, got %+v", res)
 	}
-	pending := box.Take()
-	if len(pending) != 1 || pending[0].ClientUserMessageID != "q-1" || pending[0].Text != "also check b.txt" {
-		t.Fatalf("the message did not reach the mailbox: %+v", pending)
+	pending, ok := box.Pop()
+	if !ok || pending.ClientUserMessageID != "q-1" || pending.Text != "also check b.txt" {
+		t.Fatalf("the message did not reach the mailbox: %+v ok=%v", pending, ok)
 	}
 }
 
@@ -138,8 +138,8 @@ func TestInjectMidTurn_ReachesTheInProcessPolicy(t *testing.T) {
 	if !res.Injected {
 		t.Fatalf("the wired lookup must reach the running turn, got %+v", res)
 	}
-	pending := box.Take()
-	if len(pending) != 1 || pending[0].ClientUserMessageID != "q-wired" {
-		t.Fatalf("the message did not reach the mailbox: %+v", pending)
+	pending, ok := box.Pop()
+	if !ok || pending.ClientUserMessageID != "q-wired" {
+		t.Fatalf("the message did not reach the mailbox: %+v ok=%v", pending, ok)
 	}
 }

@@ -58,41 +58,45 @@ func (m *InjectionMailbox) Push(p PendingInjection) bool {
 	return true
 }
 
-// Take removes and returns everything waiting. It never seals: the caller is
-// about to run another model round, so later messages may still join.
-func (m *InjectionMailbox) Take() []PendingInjection {
+// Pop removes and returns the oldest waiting message.
+//
+// Messages are delivered ONE per model round on purpose. Absorbing a batch
+// would emit several boundaries back to back with no model output between them,
+// and the caller splits the reply at each boundary — leaving an empty assistant
+// row between two consecutive user bubbles.
+func (m *InjectionMailbox) Pop() (PendingInjection, bool) {
 	if m == nil {
-		return nil
+		return PendingInjection{}, false
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.pending) == 0 {
-		return nil
+		return PendingInjection{}, false
 	}
-	out := m.pending
-	m.pending = nil
-	return out
+	p := m.pending[0]
+	m.pending = m.pending[1:]
+	return p, true
 }
 
-// TakeOrSeal either returns the waiting messages (mailbox stays open, the caller
-// must run a round for them) or, when none are waiting, seals the mailbox and
-// reports sealed=true so the caller can end the turn.
+// PopOrSeal either removes and returns the oldest waiting message (mailbox
+// stays open, the caller must run a round for it) or, when none are waiting,
+// seals the mailbox and reports sealed=true so the caller can end the turn.
 //
 // The two outcomes are decided under one lock on purpose: that is what makes
 // "accepted" mean "will be answered".
-func (m *InjectionMailbox) TakeOrSeal() (pending []PendingInjection, sealed bool) {
+func (m *InjectionMailbox) PopOrSeal() (pending PendingInjection, ok bool, sealed bool) {
 	if m == nil {
-		return nil, true
+		return PendingInjection{}, false, true
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.pending) > 0 {
-		out := m.pending
-		m.pending = nil
-		return out, false
+		p := m.pending[0]
+		m.pending = m.pending[1:]
+		return p, true, false
 	}
 	m.sealed = true
-	return nil, true
+	return PendingInjection{}, false, true
 }
 
 // Seal closes the mailbox and returns anything that arrived before the close.

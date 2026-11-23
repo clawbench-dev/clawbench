@@ -33,24 +33,45 @@ func lastMessageText(req llm.Request) string {
 	return b.String()
 }
 
-// TestMailbox_TakeOrSealIsAtomic pins the property the whole design rests on:
-// a message is either taken (so it gets a round) or the mailbox is sealed (so
+// TestMailbox_PopOrSealIsAtomic pins the property the whole design rests on: a
+// message is either popped (so it gets a round) or the mailbox is sealed (so
 // the producer falls back to the queue). It can never be both accepted and
 // dropped.
-func TestMailbox_TakeOrSealIsAtomic(t *testing.T) {
+func TestMailbox_PopOrSealIsAtomic(t *testing.T) {
 	box := NewInjectionMailbox()
 	if !box.Push(PendingInjection{ClientUserMessageID: "q1", Text: "hello"}) {
 		t.Fatal("an open mailbox must accept a message")
 	}
-	pending, sealed := box.TakeOrSeal()
-	if sealed || len(pending) != 1 || pending[0].ClientUserMessageID != "q1" {
-		t.Fatalf("expected the pending message and an open mailbox, got %+v sealed=%v", pending, sealed)
+	p, ok, sealed := box.PopOrSeal()
+	if sealed || !ok || p.ClientUserMessageID != "q1" {
+		t.Fatalf("expected the pending message and an open mailbox, got %+v ok=%v sealed=%v", p, ok, sealed)
 	}
-	if _, sealed := box.TakeOrSeal(); !sealed {
+	if _, ok, sealed := box.PopOrSeal(); ok || !sealed {
 		t.Fatal("an empty mailbox must seal when the turn tries to end")
 	}
 	if box.Push(PendingInjection{ClientUserMessageID: "q2", Text: "late"}) {
 		t.Fatal("a sealed mailbox must refuse new messages")
+	}
+}
+
+// TestMailbox_PopDeliversOnePerRound pins the batch rule: two messages queued
+// at once are delivered one at a time, so the caller never splits the reply
+// twice with no model output in between.
+func TestMailbox_PopDeliversOnePerRound(t *testing.T) {
+	box := NewInjectionMailbox()
+	box.Push(PendingInjection{ClientUserMessageID: "q1"})
+	box.Push(PendingInjection{ClientUserMessageID: "q2"})
+
+	first, ok := box.Pop()
+	if !ok || first.ClientUserMessageID != "q1" {
+		t.Fatalf("the oldest message must come first, got %+v ok=%v", first, ok)
+	}
+	second, ok := box.Pop()
+	if !ok || second.ClientUserMessageID != "q2" {
+		t.Fatalf("the second message must come next, got %+v ok=%v", second, ok)
+	}
+	if _, ok := box.Pop(); ok {
+		t.Fatal("an empty mailbox must report no message")
 	}
 }
 
@@ -135,6 +156,47 @@ func TestRun_InjectionAfterFinalAnswerKeepsTurnAlive(t *testing.T) {
 	}
 	if terminal.Kind != EventDone || terminal.StopReason != StopComplete {
 		t.Fatalf("the turn must still end normally, got %+v", terminal)
+	}
+}
+
+// TestRun_TwoInjectionsGetSeparateRounds pins the batch rule: two messages
+// queued at once are answered one per round, so the caller never splits the
+// reply twice with no assistant output between the two user bubbles.
+func TestRun_TwoInjectionsGetSeparateRounds(t *testing.T) {
+	box := NewInjectionMailbox()
+	root := t.TempDir()
+	writeFile(t, root, "file body")
+
+	client := &scriptedClient{rounds: []func(llm.Request) []llm.Event{
+		func(req llm.Request) []llm.Event {
+			box.Push(PendingInjection{ClientUserMessageID: "q-1", Text: "first"})
+			box.Push(PendingInjection{ClientUserMessageID: "q-2", Text: "second"})
+			return toolRound("c1", "read", `{"path":"a.txt"}`)(req)
+		},
+		textRound("answer to first"),
+		textRound("answer to second"),
+	}}
+
+	events, terminal := collectAll(t, Run(context.Background(), Spec{
+		Client: client, Prompt: "hi", WorkDir: root,
+		Policy:     model.ToolPolicy{Allow: []string{model.CapFSRead}},
+		Injections: box,
+	}))
+
+	if ids := boundaryIDs(events); len(ids) != 2 || ids[0] != "q-1" || ids[1] != "q-2" {
+		t.Fatalf("expected one boundary per message in order, got %v", ids)
+	}
+	if client.roundCount() != 3 {
+		t.Fatalf("each injected message must earn its own round, got %d", client.roundCount())
+	}
+	if got := lastMessageText(client.request(1)); got != "first" {
+		t.Fatalf("round 2 must answer the first message, got %q", got)
+	}
+	if got := lastMessageText(client.request(2)); got != "second" {
+		t.Fatalf("round 3 must answer the second message, got %q", got)
+	}
+	if terminal.Kind != EventDone {
+		t.Fatalf("the turn must end normally, got %+v", terminal)
 	}
 }
 
