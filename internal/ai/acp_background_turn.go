@@ -285,13 +285,17 @@ const backgroundTurnEndWait = 30 * time.Second
 // goroutine and would overtake frames still queued in the SDK, truncating the
 // reply.
 func (c *ClawBenchACPClient) closeBackgroundTurnOnSessionEnd(acpSessionID string) bool {
+	return c.finishBackgroundTurn(acpSessionID, "", "completed", "")
+}
+
+func (c *ClawBenchACPClient) finishBackgroundTurn(acpSessionID, requestID, state, summary string) bool {
 	c.mu.Lock()
 	turn, ok := c.backgroundTurns[acpSessionID]
 	route, routed := c.sessionRoutes[acpSessionID]
 	// Ownership check: a user turn may have replaced the route (RegisterSession)
 	// while this background turn was still being consumed. Its session_end must
 	// not terminate that other turn.
-	owned := ok && routed && route == turn.route
+	owned := ok && routed && route == turn.route && (requestID == "" || requestID == turn.requestID)
 	if owned {
 		// Retire the entry so a later session_end, or a user turn taking the
 		// route over, cannot deliver a second terminal. The ROUTE stays until
@@ -311,7 +315,14 @@ func (c *ClawBenchACPClient) closeBackgroundTurnOnSessionEnd(acpSessionID string
 	// The turn ended on its own — the watchdog must not also fire and deliver a
 	// second terminal.
 	turn.stopWatchdog()
-	deliverBackgroundTurnEnd(turn, "")
+	terminal := StreamEvent{Type: "done"}
+	switch state {
+	case "failed":
+		terminal = StreamEvent{Type: "error", Error: "Background turn failed. " + summary}
+	case "stopped":
+		terminal.Type = "cancelled"
+	}
+	deliverBackgroundTerminal(turn, terminal)
 	return true
 }
 
@@ -327,7 +338,10 @@ func (c *ClawBenchACPClient) closeBackgroundTurnOnSessionEnd(acpSessionID string
 // is momentarily full the send moves to its own goroutine — the channel is FIFO,
 // so `done` still lands after every frame already queued.
 func deliverBackgroundTurnEnd(turn *backgroundTurn, reason string) {
-	done := StreamEvent{Type: "done", Reason: reason}
+	deliverBackgroundTerminal(turn, StreamEvent{Type: "done", Reason: reason})
+}
+
+func deliverBackgroundTerminal(turn *backgroundTurn, done StreamEvent) {
 	select {
 	case turn.ch <- done:
 		return

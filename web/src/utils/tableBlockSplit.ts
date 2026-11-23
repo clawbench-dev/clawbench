@@ -10,7 +10,7 @@
  *
  * 流式输出期间不拆（每来一小段就重新解析一遍太贵），定稿后再拆。
  */
-import { extractTableData } from './tableData'
+import { extractTableData, type TableMathCells } from './tableData'
 
 export interface HtmlSegment {
   kind: 'html'
@@ -21,6 +21,7 @@ export interface TableSegment {
   kind: 'table'
   headers: string[]
   rows: string[][]
+  mathCells?: TableMathCells
 }
 
 export type MessageSegment = HtmlSegment | TableSegment
@@ -51,7 +52,9 @@ export function splitTableBlocks(html: string, enabled: boolean): MessageSegment
 
     if (wrapper && table) {
       flush()
-      segments.push({ kind: 'table', ...extractTableData(table as HTMLTableElement) })
+      const mathCells: TableMathCells = new Map()
+      const data = extractTableData(table as HTMLTableElement, mathCells)
+      segments.push({ kind: 'table', ...data, mathCells: mathCells.size ? mathCells : undefined })
       continue
     }
 

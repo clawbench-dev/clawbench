@@ -111,6 +111,11 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 		// does not). See acp_elicitation_wire.go.
 		fixed = normalizeElicitationSchema(fixed)
 
+		// Rewrite Claude Code's `asyncTasks` session_info_update frames into the
+		// shape the SDK can decode (see acp_async_tasks.go), so a background
+		// task's start/finish reaches the client instead of being dropped.
+		fixed = normalizeAsyncTaskUpdate(fixed)
+
 		// Extract SessionModelState from session/new or session/resume responses.
 		// Some agents (e.g., kimi) return a "models" field that the ACP Go SDK
 		// schema does not model in its NewSessionResponse type, so it gets

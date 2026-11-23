@@ -404,13 +404,14 @@ func (m *ACPConnManager) collectIdleConns() (toClose []idleEntry, aliveCount int
 		conn.mu.Lock()
 		lastActivity := conn.lastActivityNano()
 		alive := conn.alive
+		routed := conn.hasStreamRouteLocked()
 		conn.mu.Unlock()
 
 		if !alive {
 			continue // already dead, will be respawned on next use
 		}
 		aliveCount++
-		if now.Sub(time.Unix(0, lastActivity)) < idleConnTimeout {
+		if routed || now.Sub(time.Unix(0, lastActivity)) < idleConnTimeout {
 			continue // not idle enough yet
 		}
 		// Skip connections with actively running sessions
@@ -438,38 +439,19 @@ func (m *ACPConnManager) killIdleConns(toClose []idleEntry) {
 			continue // already removed by CloseConn
 		}
 
-		// Re-check under conn.mu: the connection may have been used since
-		// the initial scan (TOCTOU race). If it's no longer idle or the
-		// session started running, skip it.
-		conn.mu.Lock()
-		lastActivity := conn.lastActivityNano()
-		alive := conn.alive
-		conn.mu.Unlock()
-
-		if !alive {
-			continue // already dead
-		}
-		if time.Since(time.Unix(0, lastActivity)) < idleConnTimeout {
-			continue // recently used, no longer idle
-		}
 		if m.isSessionRunning != nil && m.isSessionRunning(sid) {
-			continue // session started running since initial scan
+			continue
 		}
-
-		// Kill the idle connection but preserve acpSID so the session
-		// can be recovered via ResumeSession on the next prompt.
-		// Do NOT delete from pool or call close() (which clears acpSID) —
-		// that would cause amnesia if the DB external_session_id was
-		// not yet persisted (e.g., session_capture missed).
-		m.mu.Lock()
-		conn, ok = m.conns[sid]
-		m.mu.Unlock()
-
-		if ok {
+		// Check the same connection we will actually reap, including a route
+		// that may have opened since collectIdleConns.
+		conn.mu.Lock()
+		idleFor := time.Since(time.Unix(0, conn.lastActivityNano()))
+		if conn.alive && idleFor >= idleConnTimeout && !conn.hasStreamRouteLocked() {
 			slog.Info("acp: idle sweep killing idle connection (preserving acpSID for recovery)",
-				"clawbench_sid", sid, "idle_duration", time.Since(time.Unix(0, lastActivity)))
-			conn.killAndMarkDead()
+				"clawbench_sid", sid, "idle_duration", idleFor)
+			conn.killAndMarkDeadLocked()
 		}
+		conn.mu.Unlock()
 	}
 }
 
@@ -985,7 +967,8 @@ type ACPConn struct {
 	// tool_use was emitted but no tool_result yet). A no-progress stall
 	// watchdog treats an in-flight tool as activity, so long-running
 	// legitimate tools (e.g. `sleep`, builds) are never killed.
-	toolInFlight atomic.Bool
+	toolInFlight           atomic.Bool
+	backgroundTasksRunning atomic.Bool
 
 	// pendingElicitations counts `elicitation/create` requests blocking on a
 	// user answer. Like an in-flight tool, that is legitimate waiting, not a
@@ -1383,6 +1366,20 @@ func (c *ACPConn) TouchModelProgress() {
 	c.lastModelProgress.Store(time.Now().UnixNano())
 }
 
+// hasStreamRouteLocked includes retained prompts and agent-initiated turns,
+// even before their service goroutine has claimed the session.
+func (c *ACPConn) hasStreamRouteLocked() bool {
+	if c.client == nil {
+		return false
+	}
+	// Eviction can wait a sweep if a callback is changing routes.
+	if !c.client.mu.TryLock() {
+		return true
+	}
+	defer c.client.mu.Unlock()
+	return len(c.client.sessionRoutes) > 0
+}
+
 // lastActivityNano returns the later of lastUsed and lastSessionUpdate as a
 // UnixNano timestamp, representing the last time the connection did any work
 // (either an explicit use or an incoming SessionUpdate from an async workflow).
@@ -1454,7 +1451,7 @@ func (c *ACPConn) isStalled(timeout time.Duration) bool {
 	if timeout <= 0 {
 		return false
 	}
-	if c.toolInFlight.Load() {
+	if c.toolInFlight.Load() || c.backgroundTasksRunning.Load() {
 		return false
 	}
 	// A question waiting on the user is legitimate waiting too (see

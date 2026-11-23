@@ -33,6 +33,7 @@ import i18n from '@/i18n'
  * written directly at a translate call site).
  */
 export const TASK_TOOL_TITLE_KEYS: Readonly<Record<string, string>> = Object.freeze({
+  backgroundtask: 'tool.task.action.background',
   taskcreate: 'tool.task.action.create',
   taskupdate: 'tool.task.action.update',
   tasklist: 'tool.task.action.list',

@@ -26,6 +26,7 @@
           <DataTable
             :headers="state.table.headers"
             :rows="state.table.rows"
+            :math-cells="state.table.mathCells"
             :initial-mode="state.table.mode"
             :initial-wrap="state.table.wrap"
             :page-size="state.table.pageSize"

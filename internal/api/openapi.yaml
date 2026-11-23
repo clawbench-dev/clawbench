@@ -2730,7 +2730,7 @@ paths:
     post:
       tags: [Sessions]
       summary: ACP 会话同步
-      description: 对比 ACP 回放消息与本地记录，仅补插缺失消息。
+      description: 等待当前执行及后台续答完成，再从新进程回放历史并替换本地记录。
       operationId: sessionACPSync
       requestBody:
         required: true

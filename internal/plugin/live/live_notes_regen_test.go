@@ -92,7 +92,14 @@ func TestServeLiveShareNotesRegenerate_StartsAndCompletes(t *testing.T) {
 	// handler must do is START the job; the eventual completion is asserted
 	// below.
 	if resp.Session.Generation != nil {
-		assert.Equal(t, service.ArtifactTranscript, resp.Session.Generation.Step)
+		// ...and it may already be on a LATER step: the three steps run back to
+		// back, so "still on transcript" is another moment a fast machine
+		// skips (observed as a flake: expected transcript, got revised). Pin
+		// only that the step is one of this plan's, which is what the handler
+		// can be held to.
+		assert.Contains(t, []service.ArtifactKind{
+			service.ArtifactTranscript, service.ArtifactRevised, service.ArtifactMinutes,
+		}, resp.Session.Generation.Step)
 	}
 
 	pid := cacheProjectID(t, project)

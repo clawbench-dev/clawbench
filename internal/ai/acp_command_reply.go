@@ -38,20 +38,6 @@ const (
 	agyRawInputIsDaemon    = "IsDaemon"
 )
 
-func (c *ClawBenchACPClient) trackCommandReply(sessionID string) *asyncCommandReply {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.commandReplies == nil {
-		return nil
-	}
-	reply := &asyncCommandReply{commands: make(map[acp.ToolCallId]bool)}
-	c.commandReplies[sessionID] = reply
-	return reply
-}
-
-// isFiniteCommand reports whether tc is a foreground command started by the
-// current prompt — the only kind whose completion produces a follow-up. Daemons
-// outlive the turn by design and must never hold it open.
 func isFiniteCommand(tc *acp.SessionUpdateToolCall) bool {
 	if tc.Kind != acp.ToolKindExecute {
 		return false
