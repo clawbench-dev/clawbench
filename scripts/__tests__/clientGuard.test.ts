@@ -442,6 +442,29 @@ describe('release workflow wiring', () => {
     expect(yml).toMatch(/needs\.client-guard\.outputs\.desktop_source/)
   })
 
+  it('keeps the cross-version bridge names spelled as the previous shell has them', () => {
+    // The interface member and the preload member are the same cross-version
+    // contract as the `fused_downloads` JSON field. v0.146.0 renamed them to
+    // `installIntegratedUpdate` (together with the internal implementation) and
+    // the release failed here: a shell built before the rename exposes only the
+    // old name, so renaming strands every installed integrated package with no
+    // in-app upgrade — or forces a protocol bump that reinstalls every client.
+    // Pin both spellings so the internal rename cannot drag them along again.
+    expect([...bridgeMembers(repoFile(BRIDGE_CONTRACT_PATH)).keys()]).toContain(
+      'installFusedUpdate',
+    )
+    expect([...bridgeMembers(repoFile(BRIDGE_CONTRACT_PATH)).keys()]).not.toContain(
+      'installIntegratedUpdate',
+    )
+    expect([...preloadBridgeMembers(repoFile(DESKTOP_BRIDGE_IMPLEMENTATION_PATH)).keys()]).toContain(
+      'installFusedUpdate',
+    )
+    // The IPC channel is the other half: a preload calling a channel the main
+    // process no longer registers would fail at runtime, not at the gate.
+    expect(repoFile('desktop/src/main/bridge.ts')).toContain("'native:install-fused-update'")
+    expect(repoFile(DESKTOP_BRIDGE_IMPLEMENTATION_PATH)).toContain("'native:install-fused-update'")
+  })
+
   it('keeps the contract list in one place', () => {
     expect(CONTRACT_PATHS).toContain('web/src/utils/clawbenchNative.ts')
     expect(CONTRACT_PATHS).toContain('desktop/src/preload')

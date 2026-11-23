@@ -155,9 +155,11 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // package for `version`, then asks about restarting. `downloads` is the
   // platform-keyed map the server returned in /api/upgrade/check.
   //
-  // The member name is a cross-version bridge contract (a shell built before
-  // the rename exposes only this name, and the web UI is always the server's
-  // newest build), so it stays `installFusedUpdate` — see clawbenchNative.ts.
+  // The member and channel names are the cross-version contract: shells built
+  // before the integrated rename expose only these spellings, and the web UI
+  // they load is always the server's newest build. Same reason as the
+  // `fused_downloads` JSON field — do not rename them with the internal ones.
+  // See clawbenchNative.ts.
   installFusedUpdate: (
     version: string,
     downloads: Record<string, string[]>,
