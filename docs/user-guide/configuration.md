@@ -195,7 +195,7 @@
 | `doubao.enable_itn` / `enable_punc` | `true` | 数字日期规范化 / 自动标点 |
 | `doubao.enable_ddc` | `false` | 顺滑处理，去口头语和重复 |
 | `doubao.output_zh_variant` | 空 | 输出简繁：空 / `traditional` / `tw` / `hk` |
-| `doubao.end_window_size` | `800` | 流式判停的静音阈值（毫秒） |
+| `doubao.end_window_size` | `800` | 流式判停的静音阈值（毫秒）。松手后引擎也要等够这段静音才交出最后一句，所以值越大松手到出字越慢 |
 | `doubao.streaming` | `false` | 边录边传 |
 | `alibaba.api_key` | 空 | 百炼的 Key |
 | `alibaba.base_url` | `https://dashscope.aliyuncs.com` | 新加坡地域填 `https://dashscope-intl.aliyuncs.com` |
@@ -204,7 +204,7 @@
 | `alibaba.language` | `zh` | 识别语言提示，留空自动判断 |
 | `alibaba.enable_itn` / `enable_punc` | `true` | 数字日期规范化 / 自动标点 |
 | `alibaba.enable_ddc` | `false` | 顺滑处理 |
-| `alibaba.end_window_size` | `800` | 流式判停的静音阈值（毫秒） |
+| `alibaba.end_window_size` | `800` | 流式判停的静音阈值（毫秒）。松手后引擎也要等够这段静音才交出最后一句，值越大出字越慢 |
 | `alibaba.streaming` | `false` | 边录边传 |
 | `tencent.secret_id` | 空 | 腾讯云 API 密钥的 SecretId |
 | `tencent.secret_key` | 空 | 与 SecretId 配对的 SecretKey |
@@ -212,7 +212,7 @@
 | `tencent.model` | `16k_zh` | 引擎型号，同时决定语种（`16k_en`、`16k_zh_dialect` 等） |
 | `tencent.enable_itn` | `true` | 数字规范化（`convert_num_mode`） |
 | `tencent.enable_ddc` | `false` | 顺滑处理，去口头语（`filter_modal`） |
-| `tencent.end_window_size` | `1000` | 流式判停的静音阈值，500–2000 毫秒（`vad_silence_time`） |
+| `tencent.end_window_size` | `1000` | 流式判停的静音阈值，500–2000 毫秒（`vad_silence_time`）。松手后引擎也要等够这段静音，值越大出字越慢 |
 | `tencent.streaming` | `true` | 边录边传。**默认开**；关掉后浏览器把录音转成 WAV 上传（整段识别单次最多 60 秒） |
 
 > 界面入口：设置 → 语音识别。麦克风处理与「安静时不送」这几项，会议听记也共用同一份。
