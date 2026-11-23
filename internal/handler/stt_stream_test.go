@@ -407,3 +407,70 @@ func TestSTTStreamRelay_ForwardResultsStopsOnDeadConnection(t *testing.T) {
 		t.Fatal("forwardResults must return when the connection is gone")
 	}
 }
+
+// The streaming engines only close a sentence after their end window of
+// trailing silence, and a stream that ends inside that window loses the
+// sentence whole — measured against doubao: four utterances in, three in the
+// final text, the fourth absent from every intermediate result as well. The
+// client cannot supply it after the release, so `end` has to.
+func TestSTTRelayEndPadsTheEngineWindow(t *testing.T) {
+	session := &fakeStreamSession{
+		results: make(chan stt.StreamResult, 16),
+		finish:  make(chan struct{}),
+	}
+	relay := &sttStreamRelay{
+		opts:        stt.StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16},
+		session:     session,
+		endWindowMs: 300,
+	}
+
+	done, err := relay.handleControl([]byte(`{"type":"end"}`))
+	require.NoError(t, err)
+	assert.True(t, done)
+
+	writes := session.written()
+	require.Len(t, writes, 3)
+	for _, w := range writes {
+		// 100 ms of 16 kHz mono 16-bit PCM, all zeros.
+		assert.Equal(t, make([]byte, 3200), w)
+	}
+}
+
+func TestSTTRelayEndPadsInPacketsNotOneBurst(t *testing.T) {
+	// The engine folds packets that arrive back to back into one, and a single
+	// large packet is ignored outright: either way the silence never counts as
+	// an end window, and the last sentence is still dropped.
+	session := &fakeStreamSession{
+		results: make(chan stt.StreamResult, 16),
+		finish:  make(chan struct{}),
+	}
+	relay := &sttStreamRelay{
+		opts:        stt.StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16},
+		session:     session,
+		endWindowMs: 300,
+	}
+
+	started := time.Now()
+	_, err := relay.handleControl([]byte(`{"type":"end"}`))
+	require.NoError(t, err)
+
+	require.Len(t, session.written(), 3)
+	assert.GreaterOrEqual(t, time.Since(started), 2*sttEndWindowPadGap)
+}
+
+func TestSTTRelayEndSkipsThePadWithoutAWindow(t *testing.T) {
+	// Buffered engines have no end window; sending them silence would only make
+	// the final result later.
+	session := &fakeStreamSession{
+		results: make(chan stt.StreamResult, 16),
+		finish:  make(chan struct{}),
+	}
+	relay := &sttStreamRelay{
+		opts:    stt.StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16},
+		session: session,
+	}
+
+	_, err := relay.handleControl([]byte(`{"type":"end"}`))
+	require.NoError(t, err)
+	assert.Empty(t, session.written())
+}

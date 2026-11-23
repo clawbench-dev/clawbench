@@ -515,7 +515,24 @@ type sttStreamRelay struct {
 	session  stt.StreamSession
 	results  sync.WaitGroup
 	total    int
+	// Trailing silence the engine needs before it closes a sentence, in ms.
+	// See padEndWindow.
+	endWindowMs int
 }
+
+// sttEndWindowPadGap is the pause between the silence packets padEndWindow
+// sends.
+//
+// Not a comfort value: the engine folds packets that arrive back to back into
+// one, and a single large packet is ignored outright, so silence that takes no
+// wall time at all does not count as an end window. Measured against doubao
+// with four utterances in the clip: 800 ms of silence delivered in one packet,
+// or in eight packets with no gap, returns three sentences; the same eight
+// packets with a 10-30 ms gap return all four.
+const sttEndWindowPadGap = 30 * time.Millisecond
+
+// sttEndWindowPadFrameMs is the audio length of one pad packet.
+const sttEndWindowPadFrameMs = 100
 
 // serveStreamingSTT relays audio to a live streaming engine and forwards its
 // cumulative transcripts.
@@ -523,14 +540,15 @@ type sttStreamRelay struct {
 // Client → server: optional {"type":"start",...}, then binary PCM frames, then
 // {"type":"end"}. Server → client: {"type":"partial","text":<text so far>}
 // while speaking, then {"type":"done","final":<final text>}.
-func serveStreamingSTT(ctx context.Context, conn *websocket.Conn, provider stt.StreamingSTTProvider, _ model.Config) {
+func serveStreamingSTT(ctx context.Context, conn *websocket.Conn, provider stt.StreamingSTTProvider, cfg model.Config) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	relay := &sttStreamRelay{
-		conn:     conn,
-		provider: provider,
-		opts:     stt.StreamOptions{SampleRate: sttDefaultSampleRate, Channels: 1, Bits: 16},
+		conn:        conn,
+		provider:    provider,
+		opts:        stt.StreamOptions{SampleRate: sttDefaultSampleRate, Channels: 1, Bits: 16},
+		endWindowMs: cfg.STT.ActiveEndWindowMs(),
 	}
 	defer relay.close()
 
@@ -587,6 +605,33 @@ func (r *sttStreamRelay) writeAudio(ctx context.Context, pcm []byte) error {
 	return r.session.Write(pcm)
 }
 
+// padEndWindow feeds the engine the trailing silence it needs before it will
+// close the last sentence.
+//
+// The client's voice gate already forwards silence for this window while the
+// button is held; releasing early is what cuts it short, and a `finish` that
+// arrives inside the window makes the engine drop that sentence whole — the
+// audio for it was sent, it just never reaches any result. The pad goes out in
+// small packets with a gap between them (see sttEndWindowPadGap): delivered any
+// faster the engine does not treat it as elapsed silence at all.
+func (r *sttStreamRelay) padEndWindow() {
+	if r.endWindowMs <= 0 || r.session == nil {
+		return
+	}
+	rate := r.opts.SampleRate
+	if rate <= 0 {
+		rate = sttDefaultSampleRate
+	}
+	// 16-bit mono, so one millisecond is rate/1000 samples × 2 bytes.
+	frame := make([]byte, rate/1000*2*sttEndWindowPadFrameMs)
+	for sent := 0; sent < r.endWindowMs; sent += sttEndWindowPadFrameMs {
+		if err := r.session.Write(frame); err != nil {
+			return
+		}
+		time.Sleep(sttEndWindowPadGap)
+	}
+}
+
 // handleControl applies a start frame or finishes the stream.
 func (r *sttStreamRelay) handleControl(msg []byte) (bool, error) {
 	var ctl sttWSControl
@@ -603,6 +648,7 @@ func (r *sttStreamRelay) handleControl(msg []byte) (bool, error) {
 			_ = sendSTTMsg(r.conn, sttWSServerMsg{Type: sttWSDone, Final: ""})
 			return true, nil
 		}
+		r.padEndWindow()
 		_ = r.session.Finish()
 		waitForSTTResults(&r.results)
 		return true, nil

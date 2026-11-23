@@ -483,12 +483,17 @@ describe('useVoiceInput', () => {
 
     const workletNode = {
       port: {
-        onmessage: null as ((e: { data: ArrayBuffer }) => void) | null,
+        onmessage: null as ((e: { data: ArrayBuffer | string }) => void) | null,
         postMessage: vi.fn(),
       },
       connect: vi.fn(),
       disconnect: vi.fn(),
     }
+    // The real worklet answers a `flush` on the same channel, one render quantum
+    // later; the take waits for that before tearing the graph down.
+    workletNode.port.postMessage.mockImplementation((msg: unknown) => {
+      if (msg === 'flush') workletNode.port.onmessage?.({ data: 'flushed' })
+    })
     vi.stubGlobal('AudioWorkletNode', class {
       port = workletNode.port
       connect = workletNode.connect
@@ -616,12 +621,11 @@ describe('useVoiceInput', () => {
     v.cancel()
   })
 
-  // The release is meant to be instant: no drain wait, so `end` goes out and the
-  // graph comes down in the same turn. A previous version kept the graph alive
-  // until the audio inside the microphone pipeline had come through, which cost
-  // roughly 750 ms of visible lag on every release; the price of dropping it is
-  // a clipped short ending, accepted deliberately (see useVoiceInput.stop).
-  it('ends the stream immediately on release, without draining', async () => {
+  // The samples for the last syllable are still inside the device buffer and
+  // the audio graph when the button comes up. Releasing used to tear the graph
+  // down at once, which is what lost the ending; the engine's own end window is
+  // the server's job and is not part of this wait.
+  it('keeps capturing briefly after the release so the last syllable gets out', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
@@ -632,21 +636,55 @@ describe('useVoiceInput', () => {
     env.getWS()!.onopen!()
     await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
 
-    // A word that has already been heard. Under the old drain clock this
-    // started a wait of a few hundred milliseconds.
+    // Speech that has already been heard.
     env.workletNode.port.onmessage!({ data: new Int16Array(160).fill(8000).buffer })
 
-    await v.stop()
+    const stopping = v.stop()
+    // The button still feels released at once, even though audio is arriving.
     expect(v.state.value).toBe('transcribing')
     expect(v.isRecording.value).toBe(false)
 
+    // Audio that was still in the pipeline must reach the engine, and no `end`
+    // may go out ahead of it.
+    const tail = new Int16Array(160).fill(6000).buffer
+    env.workletNode.port.onmessage!({ data: tail })
+    expect(env.getWS()!.send).toHaveBeenCalledWith(tail)
+    expect(env.getWS()!.send.mock.calls.map((c) => c[0]))
+      .not.toContain(JSON.stringify({ type: 'end' }))
+
+    await stopping
+
     // No frame may be forwarded after the end marker, the marker is the last
-    // thing sent, and the graph is already down.
+    // thing sent, and the graph is down.
     const last = env.getWS()!.send.mock.calls.at(-1)![0] as string
     expect(JSON.parse(last)).toEqual({ type: 'end' })
     expect(env.workletNode.port.onmessage).toBeNull()
     expect(env.workletNode.disconnect).toHaveBeenCalled()
     expect(env.track.stop).toHaveBeenCalled()
+    v.cancel()
+  })
+
+  it('does not wait when the user paused before releasing', async () => {
+    const { serverConfig } = await import('./useSettingsConfig')
+    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
+    const env = stubStreamingEnv()
+
+    const { useVoiceInput } = await import('./useVoiceInput')
+    const v = useVoiceInput()
+    await v.start()
+    env.getWS()!.onopen!()
+    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
+
+    env.workletNode.port.onmessage!({ data: new Int16Array(160).fill(8000).buffer })
+    // Long enough for the pipeline to have delivered everything.
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    const started = Date.now()
+    await v.stop()
+    // 150 ms of pipeline slack would show up here; a pause must not add it.
+    expect(Date.now() - started).toBeLessThan(120)
+    const last = env.getWS()!.send.mock.calls.at(-1)![0] as string
+    expect(JSON.parse(last)).toEqual({ type: 'end' })
     v.cancel()
   })
 

@@ -281,3 +281,29 @@ func TestActiveAccessors(t *testing.T) {
 		t.Error("unconfigured ActiveStreaming = true, want false")
 	}
 }
+
+// TestActiveEndWindowMs pins which engine's window the relay pads. A wrong
+// answer here means the wrong amount of silence — or none at all — before the
+// engine is told the audio is over, which drops the last sentence.
+func TestActiveEndWindowMs(t *testing.T) {
+	var c STTConfig
+	c.Doubao.EndWindowSize = 800
+	c.Alibaba.EndWindowSize = 700
+	c.Tencent.EndWindowSize = 1000
+
+	for _, tc := range []struct {
+		provider string
+		want     int
+	}{
+		{"doubao", 800},
+		{"alibaba", 700},
+		{"tencent", 1000},
+		{"vllm", 0},
+		{"", 0},
+	} {
+		c.Provider = tc.provider
+		if got := c.ActiveEndWindowMs(); got != tc.want {
+			t.Errorf("ActiveEndWindowMs(%q) = %d, want %d", tc.provider, got, tc.want)
+		}
+	}
+}

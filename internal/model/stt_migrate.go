@@ -41,6 +41,25 @@ func (c STTConfig) ActiveStreaming() bool {
 	}
 }
 
+// ActiveEndWindowMs is the trailing silence the selected engine needs before it
+// closes a sentence, in milliseconds. 0 for engines that have no such window.
+//
+// The relay hands the engine this much silence before telling it the audio is
+// over. A stream that ends inside the window loses that sentence whole — not
+// just its last character — and no intermediate result ever carries it.
+func (c STTConfig) ActiveEndWindowMs() int {
+	switch c.Provider {
+	case "doubao":
+		return c.Doubao.EndWindowSize
+	case "alibaba":
+		return c.Alibaba.EndWindowSize
+	case "tencent":
+		return c.Tencent.EndWindowSize
+	default:
+		return 0
+	}
+}
+
 // legacySTTKeys are the pre-per-engine flat `stt.*` keys.
 var legacySTTKeys = []string{
 	"base_url", "api_key", "model", "resource_id", "language",
