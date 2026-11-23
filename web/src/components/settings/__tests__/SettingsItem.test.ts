@@ -303,6 +303,110 @@ describe('SettingsItem', () => {
       expect(wrapper.find('.settings-item__slider-value').text()).toBe('75%')
     })
 
+    // ── Typed-in values ──
+    // The range input moves in step jumps, so typing is the only way to land on
+    // an exact number. The field opens from the readout and speaks the SAME
+    // unit as the readout (125 for 125%), never the stored factor.
+
+    it('opens a field from the readout, prefilled in the displayed unit', async () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 1.25, min: 0.5, max: 2, step: 0.01, displayFormat: 'percent' })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      expect(input.exists()).toBe(true)
+      expect((input.element as HTMLInputElement).value).toBe('125')
+      expect(wrapper.find('.settings-item__slider-value').exists()).toBe(false)
+    })
+
+    it('commits a typed percent as the stored factor', async () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 1, min: 0.5, max: 2, step: 0.01, displayFormat: 'percent' })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('140')
+      await input.trigger('keydown.enter')
+      expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([1.4])
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('140%')
+    })
+
+    it('accepts a raw number for non-percent sliders', async () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 13, min: 8, max: 24, step: 1 })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('17')
+      await input.trigger('keydown.enter')
+      expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([17])
+    })
+
+    it('clamps a typed value to the slider range', async () => {
+      // Beyond max the thumb has nowhere to sit, so keeping the typed number
+      // would leave the label and the thumb disagreeing.
+      const wrapper = mountItem({ type: 'slider', modelValue: 1, min: 0.5, max: 1.5, step: 0.01, displayFormat: 'percent' })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('500')
+      await input.trigger('keydown.enter')
+      expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([1.5])
+    })
+
+    it('snaps a typed value to the step grid', async () => {
+      // 0.01 grid: 1.237 must not be stored as-is or the thumb lands between
+      // steps and the readout shows a number the slider cannot represent.
+      const wrapper = mountItem({ type: 'slider', modelValue: 1, min: 0.5, max: 2, step: 0.05, displayFormat: 'percent' })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('123.7')
+      await input.trigger('keydown.enter')
+      expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([1.25])
+    })
+
+    it('ignores unparseable input and closes the field', async () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1 })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('abc')
+      await input.trigger('keydown.enter')
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      expect(wrapper.find('.settings-item__slider-input').exists()).toBe(false)
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('50')
+    })
+
+    it('Escape cancels without emitting, and claims the keypress', async () => {
+      // `preventDefault` is the contract with utils/escapeStack: without it the
+      // window listener also sees this Escape and closes the settings drawer,
+      // so backing out of the field would take the whole page with it.
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1 })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('80')
+      const ev = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      input.element.dispatchEvent(ev)
+      await nextTick()
+      expect(ev.defaultPrevented).toBe(true)
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('50')
+    })
+
+    it('does not open the field when the row is disabled', async () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1, disabled: true })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      expect(wrapper.find('.settings-item__slider-input').exists()).toBe(false)
+    })
+
+    it('a typed value beats a drag still waiting on its debounce', async () => {
+      // Both paths write the same setting; the older pending drag must not
+      // fire 300ms later and silently undo what was just typed.
+      vi.useFakeTimers()
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1 })
+      await wrapper.find('input[type="range"]').setValue(70)
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('20')
+      await input.trigger('keydown.enter')
+      await vi.advanceTimersByTimeAsync(400)
+      const emitted = wrapper.emitted('update:modelValue')!
+      expect(emitted.map(e => e[0])).toEqual([20])
+      vi.useRealTimers()
+    })
+
     it('keeps the reset button in the layout, inert at the default value', () => {
       // The button must NOT be removed at the default: it is the disappearance
       // that shifted the slider and value label on every reset. It stays in

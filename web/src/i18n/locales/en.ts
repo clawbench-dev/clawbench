@@ -3854,6 +3854,7 @@ export default {
       uiScaleAutoFit: 'Auto Fit',
       uiScaleAutoFitDesc: 'Click once to compute a scale for the current screen resolution and write it to the slider below (1080p baseline, capped at 200%). Fine-tune with the slider afterwards.',
       uiScaleAutoFitDone: 'Fitted to {pct}% for the current screen',
+      sliderValueHint: 'Click to type a value',
       headerShortcutTips: 'Header shortcut tips',
       headerShortcutTipsDesc: 'Scroll shortcut usage tips in the middle of the header bar (enabled by default)',
       layoutMemory: 'Layout memory',

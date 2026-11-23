@@ -3850,6 +3850,7 @@ export default {
       uiScaleAutoFit: '自动适配',
       uiScaleAutoFitDesc: '点击一次，按当前屏幕分辨率计算合适的缩放并写入下方滑块（以 1080p 为基准，最高 200%）；之后可随时用滑块微调',
       uiScaleAutoFitDone: '已按当前屏幕适配为 {pct}%',
+      sliderValueHint: '点击可直接输入数值',
       headerShortcutTips: '顶栏快捷键提示',
       headerShortcutTipsDesc: '在顶部栏中段滚动展示快捷键使用方法（默认开启）',
       layoutMemory: '布局记忆',

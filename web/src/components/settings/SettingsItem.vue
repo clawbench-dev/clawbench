@@ -34,7 +34,30 @@
         </label>
       </template>
       <template v-else-if="type === 'slider'">
-        <span class="settings-item__slider-value">{{ sliderDisplayValue }}</span>
+        <!-- The readout doubles as the editor: clicking it turns the number
+             into a field, which is the only way to land on an exact value
+             (the range input moves in `step` jumps and is fiddly on touch). -->
+        <input
+          v-if="sliderEditing"
+          ref="sliderInputRef"
+          class="settings-item__slider-input"
+          type="text"
+          inputmode="decimal"
+          :value="sliderDraft"
+          :aria-label="label"
+          @input="sliderDraft = ($event.target as HTMLInputElement).value"
+          @keydown.enter.prevent="commitSliderInput"
+          @keydown.esc.prevent="cancelSliderInput"
+          @blur="commitSliderInput"
+          @click.stop
+        />
+        <span
+          v-else
+          class="settings-item__slider-value"
+          :class="{ 'settings-item__slider-value--editable': !disabled }"
+          :title="disabled ? '' : t('settings.items.sliderValueHint')"
+          @click.stop="startSliderEdit"
+        >{{ sliderDisplayValue }}</span>
         <!-- `max` MUST be bound before `value`: Vue patches attributes in
              template order, and a range input clamps an out-of-range value on
              assignment. With the old order (value, then max) a factor above the
@@ -751,6 +774,89 @@ const sliderDisplayValue = computed(() => {
   if (props.displayFormat === 'percent') return `${Math.round((value as number) * 100)}%`
   return String(value)
 })
+
+/**
+ * Typed-in value support.
+ *
+ * The range input only moves in `step` jumps, so landing on an exact number is
+ * fiddly — especially on touch. Clicking the readout opens a field in the SAME
+ * unit the readout shows (`125` for 125%, `13` for a raw 13), which keeps the
+ * number the user sees and the number they type identical.
+ */
+const sliderEditing = ref(false)
+const sliderDraft = ref('')
+const sliderInputRef = ref<HTMLInputElement | null>(null)
+
+/** Decimals implied by `step`, so 0.01 does not store 1.2500000000000002. */
+function stepDecimals(step: number | undefined): number {
+  if (!step || !Number.isFinite(step) || step <= 0) return 2
+  const s = String(step)
+  const dot = s.indexOf('.')
+  return dot === -1 ? 0 : Math.min(s.length - dot - 1, 6)
+}
+
+function startSliderEdit() {
+  if (props.disabled) return
+  const value = liveSliderValue.value ?? props.modelValue
+  if (value == null) return
+  sliderDraft.value = props.displayFormat === 'percent'
+    ? String(Math.round((value as number) * 100))
+    : String(value)
+  sliderEditing.value = true
+  nextTick(() => {
+    sliderInputRef.value?.focus()
+    sliderInputRef.value?.select()
+  })
+}
+
+function cancelSliderInput() {
+  sliderEditing.value = false
+}
+
+/**
+ * Commit the typed value.
+ *
+ * Anything unparseable (empty, "abc", a lone "-") is treated as a cancel: the
+ * readout returns to the value in effect rather than inventing one. A number
+ * outside [min, max] is clamped — the slider has no way to represent it, and
+ * silently keeping the typed value would show a thumb that disagrees with the
+ * label.
+ */
+function commitSliderInput() {
+  if (!sliderEditing.value) return
+  sliderEditing.value = false
+  const raw = sliderDraft.value.replace('%', '').trim()
+  if (raw === '') return
+  const typed = Number(raw)
+  if (!Number.isFinite(typed)) return
+
+  let value = props.displayFormat === 'percent' ? typed / 100 : typed
+  const lo = props.min ?? Number.NEGATIVE_INFINITY
+  const hi = props.max ?? Number.POSITIVE_INFINITY
+  value = Math.min(Math.max(value, lo), hi)
+  if (props.step && props.step > 0) {
+    const base = Number.isFinite(props.min) ? (props.min as number) : 0
+    const snapped = base + Math.round((value - base) / props.step) * props.step
+    // Re-clamp: snapping can step just past a bound when `max` is off-grid.
+    value = Math.min(Math.max(snapped, lo), hi)
+  }
+  value = Number(value.toFixed(stepDecimals(props.step)))
+  // A drag may still be waiting on its debounce; that emit would overwrite the
+  // typed value a moment later, so the typed value wins and the drag is dropped.
+  if (sliderDebounceTimer) {
+    clearTimeout(sliderDebounceTimer)
+    sliderDebounceTimer = null
+  }
+  if (value === props.modelValue) {
+    // Already in effect: just end the preview so the readout matches it.
+    liveSliderValue.value = null
+    return
+  }
+  // Show it immediately; the watch above hands control back to the parent
+  // once it has stored the value.
+  liveSliderValue.value = value
+  emit('update:modelValue', value)
+}
 
 function resetSlider() {
   if (sliderDebounceTimer) {
