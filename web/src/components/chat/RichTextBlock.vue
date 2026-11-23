@@ -1,7 +1,7 @@
 <template>
   <template v-for="(segment, index) in segments" :key="index">
     <div v-if="segment.kind === 'html'" class="md-seg" v-html="segment.html"></div>
-    <ChatTableBlock v-else :headers="segment.headers" :rows="segment.rows" />
+    <ChatTableBlock v-else :headers="segment.headers" :rows="segment.rows" :math-cells="segment.mathCells" />
   </template>
 </template>
 

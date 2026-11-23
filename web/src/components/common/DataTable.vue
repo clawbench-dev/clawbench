@@ -102,7 +102,8 @@
               :aria-sort="ariaSort(col)"
               @click="onHeaderClick(col)"
             >
-              <span class="dt-th-label">{{ headerLabel(col) }}</span>
+              <span v-if="mathCell(headers, col)" class="dt-th-label" v-html="mathCell(headers, col)" />
+              <span v-else class="dt-th-label">{{ headerLabel(col) }}</span>
               <span v-if="isData" class="dt-arrow" aria-hidden="true">{{ sortGlyph(col) }}</span>
               <button
                 v-if="isData"
@@ -145,7 +146,8 @@
               :style="frozenStyle(col)"
             >
               <span v-if="barWidth(col, row[col])" class="dt-cell-bar" :style="{ width: barWidth(col, row[col]) }" aria-hidden="true" />
-              <span class="dt-cell">{{ displayCell(col, row[col]) }}</span>
+              <span v-if="mathCell(row, col)" class="dt-cell" v-html="mathCell(row, col)" />
+              <span v-else class="dt-cell">{{ displayCell(col, row[col]) }}</span>
             </td>
           </tr>
           <tr v-if="pageRows.length === 0">
@@ -342,7 +344,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
+import type { TableMathCells } from '@/utils/tableData'
 import { useI18n } from 'vue-i18n'
 import {
   ArrowDown,
@@ -386,6 +389,7 @@ import { registerBlockLandscapeTable, unregisterBlockLandscapeTable } from '@/co
 const props = withDefaults(defineProps<{
   headers: string[]
   rows: string[][]
+  mathCells?: TableMathCells
   /** auto = 按内容判定（默认）；normal / data = 强制 */
   initialMode?: 'auto' | 'normal' | 'data'
   /** 每页行数；0 表示不分页 */
@@ -575,6 +579,10 @@ function headerLabel(col: number): string {
   return header.trim() === '' ? t('dataTable.columnFallback', { n: col + 1 }) : header
 }
 
+function mathCell(row: string[], col: number): string | undefined {
+  return props.mathCells?.get(toRaw(row))?.[col]
+}
+
 /** 只给「本来就是规范写法」的数字加千分位，`007`、`42.10` 这类原样显示。 */
 function displayCell(col: number, value: string | undefined): string {
   const raw = value ?? ''
@@ -700,6 +708,7 @@ onMounted(() => {
       snapshot: () => ({
         headers: props.headers,
         rows: props.rows,
+        mathCells: props.mathCells,
         mode: isData.value ? 'data' : 'normal',
         wrap: wrap.value,
         pageSize: pageSize.value,

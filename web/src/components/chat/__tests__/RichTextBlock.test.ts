@@ -3,6 +3,8 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import en from '@/i18n/locales/en'
 import RichTextBlock from '../RichTextBlock.vue'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
+import { splitTableBlocks } from '@/utils/tableBlockSplit'
 
 const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
 
@@ -27,6 +29,27 @@ function mountBlock(html: string, streaming = false) {
 }
 
 describe('RichTextBlock', () => {
+  it('keeps rendered formulas and single plain values when a Markdown table becomes interactive', async () => {
+    const md = [
+      '| 过程 | 熵变 $\\Delta S_{\\text{气}}$ |',
+      '| --- | --- |',
+      '| $T_r=400\\text{ K}$（可逆） | $0$ |',
+      '| &lt;b&gt; $\\sqrt{4}$ | $-19.14$ |',
+      '| `$x$` | $+25.52$ |',
+    ].join('\n')
+    const html = renderMarkdownHtml(md)
+    const wrapper = mountBlock(html, true)
+    expect(wrapper.findAll('table .katex')).toHaveLength(6)
+    await wrapper.setProps({ streaming: false })
+    expect(wrapper.findAll('.dt-grid .katex')).toHaveLength(6)
+    expect(wrapper.find('th .katex-html').exists()).toBe(true)
+    expect(wrapper.find('td .sqrt svg path[d]').exists()).toBe(true)
+    expect(wrapper.find('td b').exists()).toBe(false)
+    const table = splitTableBlocks(html, true).find(s => s.kind === 'table')
+    expect(table?.rows.map(r => r[1])).toEqual(['0', '-19.14', '+25.52'])
+    wrapper.unmount()
+  })
+
   it('renders a numeric table through the shared DataTable', () => {
     const wrapper = mountBlock(`<p>before</p>${tableBlock(NUMERIC)}<p>after</p>`)
     expect(wrapper.find('.dt').exists()).toBe(true)
