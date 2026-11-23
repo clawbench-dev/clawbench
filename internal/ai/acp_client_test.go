@@ -447,6 +447,59 @@ func TestClawBenchACPClient_RequestPermission_NoRoute_AutoCancel(t *testing.T) {
 	assert.NotNil(t, resp.Outcome.Cancelled)
 }
 
+func TestFirstAllowOptionID(t *testing.T) {
+	cases := []struct {
+		name    string
+		options []acp.PermissionOption
+		want    acp.PermissionOptionId
+	}{
+		{
+			name:    "no options",
+			options: nil,
+			want:    "",
+		},
+		{
+			name: "only reject",
+			options: []acp.PermissionOption{
+				{Name: "Reject", Kind: acp.PermissionOptionKindRejectOnce, OptionId: "reject"},
+				{Name: "Reject always", Kind: acp.PermissionOptionKindRejectAlways, OptionId: "reject-always"},
+			},
+			want: "",
+		},
+		{
+			name: "allow once after reject",
+			options: []acp.PermissionOption{
+				{Name: "Reject", Kind: acp.PermissionOptionKindRejectOnce, OptionId: "reject"},
+				{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
+			},
+			want: "allow-once",
+		},
+		{
+			name: "allow always is eligible",
+			options: []acp.PermissionOption{
+				{Name: "Allow always", Kind: acp.PermissionOptionKindAllowAlways, OptionId: "allow-always"},
+			},
+			want: "allow-always",
+		},
+		{
+			// The agent's option order wins; there is no preference for
+			// allow_once over allow_always. Pinned so a future change to that
+			// rule is deliberate.
+			name: "first allow wins",
+			options: []acp.PermissionOption{
+				{Name: "Allow always", Kind: acp.PermissionOptionKindAllowAlways, OptionId: "allow-always"},
+				{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},
+			},
+			want: "allow-always",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, firstAllowOptionID(tc.options))
+		})
+	}
+}
+
 func TestClawBenchACPClient_RequestPermission_NoRoute_AutoApprove(t *testing.T) {
 	c := NewClawBenchACPClient()
 	c.connRef = &ACPConn{autoApprove: true}
