@@ -2020,16 +2020,6 @@ const toolGroups = computed(() => {
     // instead of in the row on every streamed frame.
     displayName: (block) => toolDisplayName(block.name, block.input, block.display_name),
     summarize: (block) => cardSummary(block),
-    // Running step only: derive from the arguments when `summary` is still empty.
-    // The builtin agent fills in `input` in a later frame without refreshing
-    // `summary`, so without this the row stayed blank until the tool ended.
-    // Reads `description` directly (the field the builtin agent's bash tool
-    // documents as "what the tool card shows") rather than going through
-    // `toolCallSummary`, which would just re-read the same empty `summary`.
-    inputSummary: (block) => {
-      const desc = block?.input?.description
-      return typeof desc === 'string' ? desc : ''
-    },
   })
 })
 
@@ -2083,11 +2073,7 @@ function isGroupHeaderSummary(open: boolean, running: boolean): boolean {
  *  Nothing while unfolded: the body underneath shows every step. */
 function toolGroupDetailFor(group: ToolCallGroup, summaryHeader: boolean): string {
   if (isToolGroupOpen(group)) return ''
-  // `runningDetail` first: it reads the block live, so a summary that arrives
-  // AFTER the row was built still shows up. `runningSummary` is the frozen
-  // build-time value and is only a fallback for a group built without the
-  // getter (older callers / tests that pass a hand-made group object).
-  if (group.runningIndex) return group.runningDetail ? group.runningDetail() : group.runningSummary
+  if (group.runningIndex) return group.runningSummary
   // Between steps only a thought is live — that chip has no summary of its own,
   // and the previous step's line under it would read as the thought's.
   if (!summaryHeader) return ''
@@ -2154,15 +2140,8 @@ function groupHead(group: ToolCallGroup): ToolGroupHeadParts {
   const cached = toolGroupHeadCache.get(group)
   // Cache only what the group itself cannot change (its members are rebuilt by
   // buildToolCallGroups on every change). The open flag lives on this component
-  // and the streaming flag on the props, so both are part of the key. `detail`
-  // is deliberately EXCLUDED from the cache even though it is computed below:
-  // while a tool runs it reads the block live (a backend may deliver the
-  // summary after the group was built), and neither `open` nor `running`
-  // changes when that summary lands — so a cached copy would pin the row to the
-  // empty value it had at build time (the bug this cache used to have).
-  if (cached && cached.open === open && cached.running === running) {
-    return { ...cached.parts, detail: toolGroupDetailFor(group, isGroupHeaderSummary(open, running)) }
-  }
+  // and the streaming flag on the props, so both are part of the key.
+  if (cached && cached.open === open && cached.running === running) return cached.parts
   const summaryHeader = isGroupHeaderSummary(open, running)
   const parts: ToolGroupHeadParts = {
     title: summaryHeader

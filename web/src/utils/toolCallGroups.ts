@@ -56,26 +56,6 @@ export interface ToolCallGroup {
   /** One-line summary of the running tool, e.g. "npm test". */
   runningSummary: string
   /**
-   * One-line summary of the running tool, read LIVE off the block rather than
-   * frozen at build time, e.g. "npm test"; `''` when it has none yet.
-   *
-   * `runningSummary` alone is not enough for the live row. It is frozen when
-   * the group is built, and a group is only rebuilt when the run's STRUCTURE
-   * changes (step count, which step runs, failure counts). A backend that
-   * announces a tool by name and delivers its arguments afterwards — the
-   * builtin agent's `tool_start` / `tool_args` pair — therefore left the live
-   * row blank for the whole execution: the summary arrived, nothing rebuilt
-   * the group, and the row kept the empty value it was born with. It filled in
-   * only when the tool ENDED (a structural change). This is a function of the
-   * live block instead, so it sees the summary as soon as it lands.
-   *
-   * Summary only, no name prefix: the live row already shows the tool's own
-   * name on the left (it mirrors that tool's pill exactly), so a "Bash · npm
-   * test" line here would print the name twice. Unlike `lastStepDetail`, which
-   * labels a SETTLED run's last step and therefore needs the name.
-   */
-  runningDetail: () => string
-  /**
    * Name + summary of the last tool in the run that has one, e.g.
    * "Bash · rebuild the frontend"; `''` when no step has a summary.
    *
@@ -102,17 +82,6 @@ export interface ToolCallGroupOptions {
   displayName?: (block: any) => string
   /** One-line summary of an arbitrary tool block (the row's own summariser). */
   summarize?: (block: any) => string
-  /**
-   * Last-resort summary derived straight from the tool's arguments, used for the
-   * RUNNING step when `summarize` yields nothing.
-   *
-   * Some backends (the builtin agent) announce a tool by name and send its
-   * arguments in a later frame. That frame fills in `input` — so the unfolded
-   * pill, which renders the arguments, shows the description — but it never
-   * fills in `summary`, so a row reading only the pre-extracted summary stayed
-   * blank for the whole execution and filled in only once the tool ended.
-   */
-  inputSummary?: (block: any) => string
 }
 
 export interface ToolCallGroups {
@@ -171,21 +140,6 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
     const described = runningBlock
       ? opts.describe(runningBlock)
       : { name: '', summary: '', category: '', toolName: '' }
-    // Read the running step's summary off the block at CALL time, not now: see
-    // `runningDetail`. No name prefix — the live row already prints the tool's
-    // own name beside it.
-    //
-    // `inputSummary` is the fallback that fixes the builtin agent. It announces
-    // a tool by name first and sends the arguments afterwards; those arguments
-    // reach `block.input` (the unfolded pill renders them) but never refresh
-    // `summary`, so this row read a permanently empty label while the pill right
-    // under it showed the description. Derive it from the arguments instead.
-    const runningDetail = (): string => {
-      if (!runningBlock) return ''
-      const summary = (opts.summarize ? opts.summarize(runningBlock) : '')
-        || (opts.inputSummary ? opts.inputSummary(runningBlock) : '')
-      return summary || ''
-    }
     let lastStepDetail = ''
     for (let idx = end; idx >= start; idx--) {
       const block = list[idx]
@@ -209,7 +163,6 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
       runningToolName: described.toolName,
       runningName: described.name,
       runningSummary: described.summary,
-      runningDetail,
       lastStepDetail,
     }
     groups.push(group)
