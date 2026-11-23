@@ -267,7 +267,7 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const selfTest = useAgentSelfTest()
-const { loadAgents, getAgent, agentsLoaded, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentAvailableModes } = useAgents()
+const { loadAgents, getAgent, agentsLoaded, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentAvailableModes, getAgentAvailableConfigOptions } = useAgents()
 const activeKey = ref<string | null>(null)
 const copying = ref(false)
 
@@ -590,6 +590,50 @@ const items = computed<AgentItem[]>(() => {
     })
   }
 
+  // Agent-declared config options (issue #746): the defaults new sessions on
+  // this agent's default model start with. Labels and choices come straight
+  // from the agent, so only the boolean pair is translated.
+  for (const opt of getAgentAvailableConfigOptions(a.id)) {
+    // Only the user's remembered pick counts. The value the agent reported is
+    // NOT a default we should display as selected: it is whatever the last
+    // session happened to run, and saving it silently would pin the agent's
+    // future default (issue #746).
+    const picked = a.defaultModelConfigOptions?.[opt.configId] || ''
+    if (opt.type === 'boolean') {
+      // A switch cannot express "no default configured": it would have to show
+      // false, and saving it would pin the agent's OFF forever, with no way back
+      // to "follow the agent". Three explicit choices keep the tri-state honest.
+      result.push({
+        key: `config_option:${opt.configId}`,
+        label: opt.name || opt.configId,
+        description: opt.description,
+        type: 'select',
+        options: [
+          { label: t('settings.items.agentConfigOptionUnset'), value: '' },
+          { label: t('chat.sessionSetting.on'), value: 'true' },
+          { label: t('chat.sessionSetting.off'), value: 'false' },
+        ],
+        value: picked,
+        patchField: 'preferred_config_options',
+      })
+      continue
+    }
+    result.push({
+      key: `config_option:${opt.configId}`,
+      label: opt.name || opt.configId,
+      description: opt.description,
+      type: 'select',
+      // The empty option is "no default configured": picking it clears the
+      // stored entry, so the agent's own default applies again.
+      options: [
+        { label: t('settings.items.agentConfigOptionUnset'), value: '' },
+        ...(opt.values || []).map((v) => ({ label: v.name || v.id, value: v.id })),
+      ],
+      value: picked,
+      patchField: 'preferred_config_options',
+    })
+  }
+
   // New-session auto-approve default
   result.push({
     key: 'auto_approve',
@@ -769,6 +813,23 @@ async function handleUpdate(item: AgentItem, value: unknown) {
     if (typed === null || typed.trim() === '') return
     try {
       await patchAgentField(props.agentId, 'preferred_model', typed.trim())
+    } catch {
+      toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+    }
+    return
+  }
+
+  // Agent-declared config options: the request is a FLAT map applied to the
+  // agent's default model (issue #746), so the changed id is merged into the
+  // current picks instead of replacing them. A whole-map write would clear
+  // every other option's default.
+  if (item.patchField === 'preferred_config_options') {
+    const configId = item.key.startsWith('config_option:') ? item.key.slice('config_option:'.length) : ''
+    if (!configId) return
+    const current = { ...(getAgent(props.agentId)?.defaultModelConfigOptions || {}) }
+    current[configId] = String(value ?? '')
+    try {
+      await patchAgentField(props.agentId, 'preferred_config_options', current)
     } catch {
       toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 })
     }

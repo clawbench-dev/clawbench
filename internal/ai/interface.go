@@ -9,14 +9,20 @@ import (
 
 // ChatRequest represents a request to the AI backend
 type ChatRequest struct {
-	Prompt                 string
-	SessionID              string
-	WorkDir                string
-	SystemPrompt           string
-	Model                  string // per-request model override (empty = use global default)
-	AgentID                string // agent ID for logging and persistence
-	ThinkingEffort         string // thinking effort level, e.g., "high"; empty = auto (don't pass flag)
-	Mode                   string // ACP session mode, e.g., "code", "ask", "architect"; empty = use current
+	Prompt         string
+	SessionID      string
+	WorkDir        string
+	SystemPrompt   string
+	Model          string // per-request model override (empty = use global default)
+	AgentID        string // agent ID for logging and persistence
+	ThinkingEffort string // thinking effort level, e.g., "high"; empty = auto (don't pass flag)
+	Mode           string // ACP session mode, e.g., "code", "ask", "architect"; empty = use current
+	// ConfigOptions are the user's picks among the agent's own generic config
+	// options (wire id → value, e.g. {"fast-mode": "on"}; issue #746). Applied
+	// before the prompt like mode/effort, so a pick made while the agent was
+	// busy takes effect on the next turn instead of being lost. Ids the agent
+	// does not advertise for the model now running are skipped.
+	ConfigOptions          map[string]string
 	Resume                 bool   // If true, resume an existing session instead of creating new
 	ScheduledExecution     bool   // If true, this is a task execution — skill-level anti-recursion block
 	HasAttachments         bool   // If true, the user message carries file attachments (triggers media rules injection)

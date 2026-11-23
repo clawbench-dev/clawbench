@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,9 +18,17 @@ import (
 
 // configOptionSpec describes a config option to set before a prompt.
 type configOptionSpec struct {
-	configID string // "model", "thinkingEffort", or "mode"
+	configID string // "model", "thinkingEffort", "mode", or an agent-declared id
 	value    string // the value from ChatRequest
 	label    string // log label, e.g. "model", "thinking_effort", "mode"
+	// isBool marks an agent-declared boolean option, which must be sent with the
+	// boolean form of the RPC (a string value is rejected).
+	isBool bool
+	// updateCurrent mirrors the value into the session cache so the drawer's
+	// current selection follows without waiting for the agent's notification.
+	// Only set for agent-declared options: mode/model/effort have their own
+	// bookkeeping below.
+	updateCurrent bool
 }
 
 // Prompt sends a prompt on the ACP session and forwards events to streamCh.
@@ -98,17 +108,8 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	if err := c.applyModelSelection(ctx, acpSID, req.Model); err != nil {
 		return err
 	}
-	configs := []configOptionSpec{
-		{configID: c.resolveWireConfigID("thought_level", "thinkingEffort"), value: req.ThinkingEffort, label: "thinking_effort"},
-		{configID: c.resolveWireConfigID("mode", "mode"), value: req.Mode, label: "mode"},
-	}
-	for _, cfg := range configs {
-		if cfg.value == "" {
-			continue
-		}
-		if err := c.setConfigOptionWithCrashCheck(ctx, acpSID, cfg); err != nil {
-			return err
-		}
+	if err := c.applyTurnConfigOptions(ctx, acpSID, req); err != nil {
+		return err
 	}
 
 	// Send prompt. DO NOT add a hard timeout here — see acp_pool.go for rationale.
@@ -680,7 +681,18 @@ func (c *ACPConn) setConfigOptionWithCrashCheck(ctx context.Context, acpSID stri
 	slog.Info("acp conn: set_config_option starting",
 		"config_id", cfg.configID, "label", cfg.label, "value", cfg.value,
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
-	setErr := c.setSessionConfigOption(ctx, acpSID, cfg.configID, cfg.value)
+	var setErr error
+	if cfg.isBool {
+		parsed, ok := parseBoolConfigValue(cfg.value)
+		if !ok {
+			slog.Warn("acp conn: skipping non-boolean value for boolean config option",
+				"config_id", cfg.configID, "value", cfg.value)
+			return nil
+		}
+		setErr = c.setSessionConfigOptionBool(ctx, acpSID, cfg.configID, parsed)
+	} else {
+		setErr = c.setSessionConfigOption(ctx, acpSID, cfg.configID, cfg.value)
+	}
 	slog.Info("acp conn: set_config_option done",
 		"config_id", cfg.configID, "label", cfg.label, "value", cfg.value,
 		"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "elapsed", time.Since(configStart), "error", setErr)
@@ -720,7 +732,93 @@ func (c *ACPConn) setConfigOptionWithCrashCheck(ctx context.Context, acpSID stri
 	if cfg.configID == "model" && !c.IsConfigUnsupported("model") {
 		c.UpdateCachedCurrent("model", cfg.value)
 	}
+	if cfg.updateCurrent && !c.IsConfigUnsupported(cfg.configID) {
+		c.UpdateCachedCurrent(cfg.configID, cfg.value)
+	}
 
+	return nil
+}
+
+// applyTurnConfigOptions applies the thinking effort, mode and generic
+// agent-declared options in that order.
+//
+// Model goes first (its own dispatch, see applyModelSelection above), then the
+// well-known options, then the agent's generic ones — those are model-scoped, so
+// the model must already be the one this turn runs before the agent validates
+// them (issue #746).
+func (c *ACPConn) applyTurnConfigOptions(ctx context.Context, acpSID string, req ChatRequest) error {
+	configs := []configOptionSpec{
+		{configID: c.resolveWireConfigID("thought_level", "thinkingEffort"), value: req.ThinkingEffort, label: "thinking_effort"},
+		{configID: c.resolveWireConfigID("mode", "mode"), value: req.Mode, label: "mode"},
+	}
+	for _, cfg := range configs {
+		if cfg.value == "" {
+			continue
+		}
+		if err := c.setConfigOptionWithCrashCheck(ctx, acpSID, cfg); err != nil {
+			return err
+		}
+	}
+	return c.applyExtraConfigOptionsAtTurn(ctx, acpSID, req.ConfigOptions)
+}
+
+// parseBoolConfigValue parses the wire form of a boolean config option.
+// ok=false means the stored value is not a boolean; the caller skips that option
+// instead of failing the whole turn over a stale pick.
+func parseBoolConfigValue(value string) (parsed, ok bool) {
+	v, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, false
+	}
+	return v, true
+}
+
+// applyExtraConfigOptionsAtTurn applies the user's generic config-option picks
+// before the prompt (issue #746).
+//
+// Only ids the agent advertises for the model now running are sent. A pick can
+// outlive the model it was made under (the session keeps its stored value when
+// the model changes), and an option the model does not offer is either rejected
+// (-32602) or silently rewritten — neither is worth a round trip on every turn.
+// Unchanged values are skipped by the existing dedup in shouldSetConfig.
+func (c *ACPConn) applyExtraConfigOptionsAtTurn(ctx context.Context, acpSID string, picks map[string]string) error {
+	if len(picks) == 0 {
+		return nil
+	}
+	advertised := c.GetExtraConfigOptions()
+	if advertised == nil {
+		// A brand-new session learns its list during session/new, but the
+		// response may omit configOptions (and a resume often does), leaving the
+		// connection with nothing while the agent-level cache already knows what
+		// this model offers. Without this fallback a pick inherited from a
+		// previous session would never be applied (issue #746).
+		advertised = GetAgentCapabilityRegistry().GetExtraConfigOptions(c.AgentID(), c.GetCurrentModelID())
+	}
+	known := make(map[string]ExtraConfigOption, len(advertised))
+	for _, extra := range advertised {
+		known[extra.ConfigID] = extra
+	}
+	ids := make([]string, 0, len(picks))
+	for id := range picks {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		value := picks[id]
+		opt, ok := known[id]
+		if value == "" || !ok {
+			continue
+		}
+		if err := c.setConfigOptionWithCrashCheck(ctx, acpSID, configOptionSpec{
+			configID:      id,
+			value:         value,
+			label:         id,
+			isBool:        opt.Type == "boolean",
+			updateCurrent: true,
+		}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

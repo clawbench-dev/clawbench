@@ -6785,10 +6785,10 @@ paths:
       summary: 更新 agent
       description: |
         部分更新单个 agent（body 含 `id`）。可更新字段：
-        `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
-        `acp_command`、`name`、`specialty`、`custom_system_prompt`、
-        `avatar`、`avatar_style`、`avatar_seed`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
-        `mcp_servers`、`provider_id`、`tool_policy`、`skip_project_context`。
+        `preferred_model`/`preferred_thinking_effort`/`preferred_mode`/`preferred_config_options`/
+        `acp_command`/`name`/`specialty`/`custom_system_prompt`/
+        `avatar`/`avatar_style`/`avatar_seed`/`sort_order`/`auto_approve`/`disabled`/`project_scope`/
+        `mcp_servers`/`provider_id`/`tool_policy`/`skip_project_context`。
         `avatar` 为原始 SVG 字符串或上传图片的 `data:image/...` URI；空串恢复内置图标，
         非空时校验大小、格式与安全性。`avatar_style`/`avatar_seed` 记录生成头像所用的
         DiceBear 风格与种子（上传图片与旧头像为空）；更换 `avatar` 时未同时提供的来源字段
@@ -6796,8 +6796,7 @@ paths:
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
         无 spec 的 agent 可改**：改非空命令会重启其 ACP 连接（旧进程是用旧命令起的），
         `transport` 由命令推导、无需单独传；空串被拒（没有别的实现兜底）。内置后端的
-        命令由自动发现维护，发送即 `400` `AcpCommandManagedByDiscovery`。已废弃的
-        `transport` 字段会被忽略。
+        命令由自动发现维护，发送即 `400` `AcpCommandManagedByDiscovery`。已废弃的 `transport` 字段会被忽略。
         `disabled` 为布尔值：禁用后不再出现在任何新建入口；**默认智能体不能
         禁用**（`CannotDisableDefaultAgent`）。
         `project_scope` 为布尔值：`true` 表示「仅当前项目」（按

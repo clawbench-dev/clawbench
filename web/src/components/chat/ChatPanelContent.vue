@@ -1736,10 +1736,11 @@ function restoreModelSelection(sid) {
 /**
  * Flip an agent-declared generic option (issue #634, codex "fast-mode").
  *
- * Optimistic: the row updates immediately and the server forwards the pick to
- * the agent. Unlike thinking effort there is no per-model validation here — the
- * option only exists for models that support it (the agent stops advertising it
- * otherwise), so there is nothing to reject against.
+ * Optimistic: the row updates immediately. The server validates the id against
+ * what the agent advertised for this model, persists the pick (session
+ * context_state + the per-model default) and forwards it to the agent — so a
+ * pick made while the agent is busy is applied on the next turn instead of
+ * being lost (issue #746).
  */
 function handleSwitchConfigOption(payload) {
   const configId = payload?.configId

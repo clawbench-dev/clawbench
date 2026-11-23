@@ -53,7 +53,7 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 }))
 
 vi.mock('@/composables/useAgents', () => ({
-  useAgents: () => ({ getAgent: () => ({ name: 'A' }), getAgentAvailableModes: () => [] }),
+  useAgents: () => ({ getAgent: () => ({ name: 'A' }), getAgentAvailableModes: () => [], getAgentAvailableConfigOptions: () => [] }),
   registerIdentityUpdaters: vi.fn(),
 }))
 

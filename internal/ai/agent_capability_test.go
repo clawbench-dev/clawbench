@@ -759,6 +759,7 @@ func setupCapabilityDB(t *testing.T) *sql.DB {
 		acp_thinking_efforts_by_model TEXT NOT NULL DEFAULT '{}',
 		acp_available_commands TEXT NOT NULL DEFAULT '[]',
 		acp_available_models TEXT NOT NULL DEFAULT '[]',
+		acp_extra_config_options TEXT NOT NULL DEFAULT '{}',
 		acp_config_options TEXT NOT NULL DEFAULT '',
 		acp_load_session BOOLEAN NOT NULL DEFAULT false,
 		acp_list_sessions BOOLEAN NOT NULL DEFAULT false,
@@ -996,4 +997,71 @@ func TestRegistry_MCPCapabilitiesSupplementedByBackendSpec(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{"exa", "local-stdio"}, names,
 		"HTTP and stdio MCP servers must be resolved, while unsupported SSE stays filtered")
+}
+
+// ── Per-model generic config options (issue #746) ───────────────────────────
+//
+// The option LIST is model-scoped: codex only advertises "Fast mode" for models
+// with a fast tier. It must therefore be cached per model — an agent-wide list
+// would offer the toggle in sessions whose model cannot honor it — and persisted
+// so a NEW session can render the tab before its first message.
+
+func TestRegistry_ExtraConfigOptionsByModel(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+
+	reg.UpdateExtraConfigOptions("a1", "fast-model", []ExtraConfigOption{
+		{ConfigID: "fast-mode", Name: "Fast mode", Category: "model_config", Type: "select", CurrentID: "off"},
+	})
+	got := reg.GetExtraConfigOptions("a1", "fast-model")
+	require.Len(t, got, 1)
+	assert.Equal(t, "fast-mode", got[0].ConfigID)
+
+	// Another model's list has never been learned.
+	assert.Nil(t, reg.GetExtraConfigOptions("a1", "slow-model"))
+
+	// "Learned, and this model offers none" must be distinguishable from
+	// "unknown": the tab is hidden for the former and appears after the next
+	// session for the latter.
+	reg.UpdateExtraConfigOptions("a1", "slow-model", nil)
+	got = reg.GetExtraConfigOptions("a1", "slow-model")
+	require.NotNil(t, got)
+	assert.Empty(t, got)
+}
+
+func TestRegistry_ExtraConfigOptionsSurviveSaveAndLoad(t *testing.T) {
+	db := setupCapabilityDB(t)
+	origDB := getRegistryDB()
+	t.Cleanup(func() { SetRegistryDB(origDB) })
+	SetRegistryDB(db)
+
+	_, err := db.Exec("INSERT INTO agents (id, transport) VALUES ('acp-agent', 'acp-stdio')")
+	require.NoError(t, err)
+
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdateExtraConfigOptions("acp-agent", "glm-5.3", []ExtraConfigOption{
+		{
+			ConfigID: "fast-mode", Name: "Fast mode", Category: "model_config", Type: "select", CurrentID: "off",
+			Values: []ConfigOptionValue{{ID: "off", Name: "Off"}, {ID: "on", Name: "On"}},
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		var raw string
+		if err := db.QueryRow("SELECT acp_extra_config_options FROM agents WHERE id = 'acp-agent'").Scan(&raw); err != nil {
+			return false
+		}
+		return raw != "" && raw != "{}"
+	}, 2*time.Second, 20*time.Millisecond, "the per-model config option list must be persisted")
+
+	// Simulate a restart: clear memory, load from the database.
+	reg.ResetForTest("acp-agent")
+	reg.LoadFromDB(db)
+
+	got := reg.GetExtraConfigOptions("acp-agent", "glm-5.3")
+	require.Len(t, got, 1)
+	assert.Equal(t, "fast-mode", got[0].ConfigID)
+	// The registry records WHICH options exist, never the value a session was
+	// running: that value belongs to the session (issue #746).
+	assert.Empty(t, got[0].CurrentID)
+	require.Len(t, got[0].Values, 2)
 }

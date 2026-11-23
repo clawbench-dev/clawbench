@@ -7,6 +7,8 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/model"
 )
 
 // extraSelect builds a select config option for the tests below. `category`
@@ -272,4 +274,80 @@ func TestSnapshotCachedConfig_IncludesExtraPicks(t *testing.T) {
 	conn.UpdateCachedCurrent("fast-mode", "on")
 
 	assert.Equal(t, map[string]string{"fast-mode": "on"}, conn.snapshotCachedConfig().extras)
+}
+
+// The option list must reach the agent-level registry, keyed by the model it was
+// advertised for (issue #746). Without that, a NEW session has no list until its
+// first message creates an ACP session, and the "advanced" tab cannot render.
+func TestApplyExtractedState_ReportsExtrasPerModel(t *testing.T) {
+	agent := &model.Agent{ID: "extras-report-agent", Backend: "codex", AcpCommand: "codex"}
+	conn := newACPConn(agent, "extras-report-sid")
+
+	reg := GetAgentCapabilityRegistry()
+	reg.ResetForTest(agent.ID)
+	t.Cleanup(func() { reg.ResetForTest(agent.ID) })
+
+	modelCategory := acp.SessionConfigOptionCategoryModel
+	modelOpt := acp.SessionConfigOption{Select: &acp.SessionConfigOptionSelect{
+		Id:           acp.SessionConfigId("model"),
+		Name:         "Model",
+		Category:     &modelCategory,
+		CurrentValue: acp.SessionConfigValueId("m1"),
+		Options: acp.SessionConfigSelectOptions{Ungrouped: &acp.SessionConfigSelectOptionsUngrouped{
+			{Value: "m1", Name: "M1"},
+		}},
+	}}
+	newResp := &acp.NewSessionResponse{
+		ConfigOptions: []acp.SessionConfigOption{modelOpt, fastModeOption("off")},
+	}
+
+	ext := conn.extractSessionState(func() (*acp.NewSessionResponse, *acp.ResumeSessionResponse) {
+		return newResp, nil
+	})
+	conn.applyExtractedState(ext)
+
+	got := reg.GetExtraConfigOptions(agent.ID, "m1")
+	require.Len(t, got, 1, "the list must be cached for the model that advertised it")
+	assert.Equal(t, "fast-mode", got[0].ConfigID)
+	// The registry keeps the option's SHAPE, never the value a session ran
+	// (issue #746) — the value comes from the session or the per-model default.
+	assert.Empty(t, got[0].CurrentID)
+	assert.Nil(t, reg.GetExtraConfigOptions(agent.ID, "other-model"))
+}
+
+// The registry is the fallback that lets a NEW session render the tab before its
+// first message, so a set_config_option response may only ADD knowledge about a
+// model. An empty list there is not evidence ("this agent answered with just the
+// changed option"), and erasing a model's entry would silently hide the tab.
+func TestCacheExtrasForModel_RecordsPerModelOnly(t *testing.T) {
+	agent := &model.Agent{ID: "cache-extras-agent", Backend: "codex", AcpCommand: "codex"}
+	conn := newACPConn(agent, "cache-extras-sid")
+
+	reg := GetAgentCapabilityRegistry()
+	reg.ResetForTest(agent.ID)
+	t.Cleanup(func() { reg.ResetForTest(agent.ID) })
+
+	conn.cacheExtrasForModel(agent.ID, "m1", []ExtraConfigOption{{ConfigID: "fast-mode"}})
+	require.Len(t, reg.GetExtraConfigOptions(agent.ID, "m1"), 1)
+
+	conn.cacheExtrasForModel(agent.ID, "m1", nil)
+	require.Len(t, reg.GetExtraConfigOptions(agent.ID, "m1"), 1,
+		"an empty list from a partial response must not erase a learned model")
+	assert.Nil(t, reg.GetExtraConfigOptions(agent.ID, "m2"))
+}
+
+// ForceUpdate replaces the whole capability struct on the first session of every
+// process. The per-model option lists are accumulated knowledge and must be
+// carried through — otherwise every restart (and every first message) drops them
+// and the C1 fallback finds nothing, so a stored pick is never applied.
+func TestForceUpdate_KeepsExtraConfigOptionsByModel(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdateExtraConfigOptions("a1", "m1", []ExtraConfigOption{{ConfigID: "fast-mode"}})
+
+	applied := reg.ForceUpdateIfNeeded("a1", nil, nil, nil, nil, nil, false, false, false, false)
+	require.True(t, applied)
+
+	got := reg.GetExtraConfigOptions("a1", "m1")
+	require.Len(t, got, 1, "the per-model option list must survive ForceUpdate")
+	assert.Equal(t, "fast-mode", got[0].ConfigID)
 }

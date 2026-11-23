@@ -18,7 +18,7 @@ vi.mock('@/utils/api', async (importOriginal) => {
   }
 })
 
-const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockPatchAgentFields, mockToastShow, mockDeleteAgent, mockDuplicateAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded, mockGetServerValue } = vi.hoisted(() => ({
+const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockPatchAgentFields, mockToastShow, mockDeleteAgent, mockDuplicateAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded, mockGetServerValue, mockConfigOptions } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockPatchAgentField: vi.fn().mockResolvedValue(undefined),
@@ -32,6 +32,9 @@ const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockPatchAgentFields,
   // the component's computed tracks it (see the vi.mock body).
   mockAgentsLoaded: { value: true },
   mockGetServerValue: vi.fn(),
+  // Agent-declared config options for the default model (issue #746). Mutable
+  // per test; the factory below reads through the holder.
+  mockConfigOptions: { value: [] as Array<Record<string, unknown>> },
 }))
 
 vi.mock('vue-i18n', async (importOriginal) => {
@@ -138,6 +141,7 @@ vi.mock('@/composables/useAgents', async () => {
       // The mode picker asks the acpStates cache; the mock reports no modes so
       // the row is simply absent (the tests that need it can override).
       getAgentAvailableModes: () => [],
+      getAgentAvailableConfigOptions: () => mockConfigOptions.value,
     }),
     populateACPStateFromCache: mockPopulateACPStateFromCache,
   }
@@ -1377,5 +1381,58 @@ describe('SettingsAgentDetail', () => {
     )
     const payload = mockApiPatch.mock.calls.at(-1)![1] as Record<string, unknown>
     expect(payload).not.toHaveProperty('confirm_config_write')
+  })
+})
+
+
+// Agent-declared config options (issue #746) are the defaults new sessions on
+// this agent's default model start with. The request is a FLAT map, so the
+// changed id must be merged into the current picks — a replace would clear every
+// other option's default.
+describe('SettingsAgentDetail — agent config option defaults', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockConfigOptions.value = [
+      {
+        configId: 'fast-mode', name: 'Fast mode', description: 'Faster replies',
+        type: 'select', currentValueId: 'off',
+        values: [{ id: 'off', name: 'Off' }, { id: 'on', name: 'On' }],
+      },
+      { configId: 'fast-toggle', name: 'Fast toggle', type: 'boolean', currentValueId: 'false' },
+    ]
+  })
+
+  it('renders each option with the remembered default', () => {
+    const wrapper = mountDetail({ defaultModelConfigOptions: { 'fast-mode': 'on' } })
+    const items = wrapper.findAllComponents({ name: 'SettingsItem' })
+
+    const select = items.find((it: any) => it.props('label') === 'Fast mode')
+    expect(select).toBeTruthy()
+    expect(select!.props('modelValue')).toBe('on')
+    // The empty option is "follow the agent's own default" (issue #746).
+    expect((select!.props('options') as Array<{ value: string }>).map(o => o.value)).toEqual(['', 'off', 'on'])
+
+    const toggle = items.find((it: any) => it.props('label') === 'Fast toggle')
+    expect(toggle).toBeTruthy()
+    // A tri-state select, not a switch: "no default configured" must be
+    // expressible, otherwise saving would pin the agent's OFF forever.
+    expect(toggle!.props('type')).toBe('select')
+    expect((toggle!.props('options') as Array<{ value: string }>).map(o => o.value)).toEqual(['', 'true', 'false'])
+    expect(toggle!.props('modelValue')).toBe('')
+  })
+
+  it('patches the changed id merged into the existing picks', async () => {
+    const wrapper = mountDetail({ defaultModelConfigOptions: { 'fast-mode': 'on', 'other-opt': 'x' } })
+    const items = wrapper.findAllComponents({ name: 'SettingsItem' })
+    const toggle = items.find((it: any) => it.props('label') === 'Fast toggle')
+
+    toggle!.vm.$emit('update:modelValue', 'true')
+    await flushPromises()
+
+    expect(mockPatchAgentField).toHaveBeenCalledWith('test-agent', 'preferred_config_options', {
+      'fast-mode': 'on',
+      'other-opt': 'x',
+      'fast-toggle': 'true',
+    })
   })
 })

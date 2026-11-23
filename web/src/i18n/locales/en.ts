@@ -3887,6 +3887,7 @@ export default {
       agentPreferredThinkingEffortDesc: 'Only models that support reasoning honor this. A model that does not will fail the request rather than ignore the level',
       agentPreferredMode: 'Preferred Mode',
       agentPreferredModeDesc: 'Mode new sessions start in. A mode only narrows the tool grant above; it never widens it',
+      agentConfigOptionUnset: "Follow the agent's own default",
       agentAutoApprove: 'Auto-Approve by Default',
       agentAutoApproveDesc: 'New sessions created with this agent start with Auto-Approve on, saved to the session so it survives a reload; you can still turn it off per session',
       agentProjectOnly: 'Only This Project',

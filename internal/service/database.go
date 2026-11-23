@@ -2159,6 +2159,28 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: per-model generic config option lists (issue #746). The column is
+	// in AgentDDL for fresh installs; existing data dirs need the ALTER, without
+	// which both the registry's UPDATE and its SELECT fail on every agent.
+	var hasExtraConfigOptions int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_extra_config_options'").Scan(&hasExtraConfigOptions)
+	if hasExtraConfigOptions == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_extra_config_options TEXT NOT NULL DEFAULT '{}'"); err != nil {
+			return fmt.Errorf("failed to add acp_extra_config_options column to agents: %w", err)
+		}
+	}
+
+	// Migrate: per-model agent-config-option picks (issue #746). Keyed by model
+	// because the option LIST is model-scoped, so a pick made under one model
+	// must not leak to another.
+	var hasPreferredConfigOptions int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='preferred_config_options'").Scan(&hasPreferredConfigOptions)
+	if hasPreferredConfigOptions == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN preferred_config_options TEXT NOT NULL DEFAULT '{}'"); err != nil {
+			return fmt.Errorf("failed to add preferred_config_options column to agents: %w", err)
+		}
+	}
+
 	// Migrate: add the ACP-reported model list column. Without it the ACP model
 	// list lives only in memory, so an agent's selectable models change across a
 	// restart (CLI list before the first ACP session, ACP list after) until a new

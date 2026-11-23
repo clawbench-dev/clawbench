@@ -51,9 +51,21 @@ type AgentCapability struct {
 	ThinkingEffortsByModel map[string][]ThinkingEffortDef `json:"-"`
 	AvailableModels        []model.AgentModel
 	AvailableCommands      []AvailableCommandInfo
-	ConfigOptionState      *ConfigOptionState
-	LoadSession            *bool // AgentCapabilities.LoadSession from ACP Initialize (nil = not yet set)
-	ListSessions           *bool // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
+	// ExtraConfigOptionsByModel is the list of agent-declared generic config
+	// options (codex's "Fast mode") each MODEL advertised, keyed by model id
+	// (issue #746).
+	//
+	// Keyed by model rather than stored agent-wide on purpose: the agent only
+	// advertises an option for models that support it, so an agent-wide list
+	// would show the toggle in sessions running a model that cannot honor it.
+	// Persisted so a NEW session can render the "advanced" tab before its first
+	// message, which is impossible while the list lives only on a live
+	// connection. The "" key holds options of agents that advertise them without
+	// any model option.
+	ExtraConfigOptionsByModel map[string][]ExtraConfigOption `json:"-"`
+	ConfigOptionState         *ConfigOptionState
+	LoadSession               *bool // AgentCapabilities.LoadSession from ACP Initialize (nil = not yet set)
+	ListSessions              *bool // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
 	// DeleteSession is the ADVERTISED SessionCapabilities.Delete (nil = not yet
 	// set). It is only half the answer — see DeleteSessionConfirmed.
 	DeleteSession *bool
@@ -114,6 +126,19 @@ func (c *AgentCapability) clone() *AgentCapability {
 	}
 	out.AvailableModels = append([]model.AgentModel(nil), c.AvailableModels...)
 	out.AvailableCommands = append([]AvailableCommandInfo(nil), c.AvailableCommands...)
+	if c.ExtraConfigOptionsByModel != nil {
+		out.ExtraConfigOptionsByModel = make(map[string][]ExtraConfigOption, len(c.ExtraConfigOptionsByModel))
+		for modelID, extras := range c.ExtraConfigOptionsByModel {
+			copied := make([]ExtraConfigOption, len(extras))
+			for i, e := range extras {
+				copied[i] = e
+				if len(e.Values) > 0 {
+					copied[i].Values = append([]ConfigOptionValue(nil), e.Values...)
+				}
+			}
+			out.ExtraConfigOptionsByModel[modelID] = copied
+		}
+	}
 	if c.ConfigOptionState != nil {
 		cfg := *c.ConfigOptionState
 		out.ConfigOptionState = &cfg
@@ -134,6 +159,7 @@ func (c *AgentCapability) HasData() bool {
 		len(c.ThinkingEffortsByModel) > 0 ||
 		len(c.AvailableModels) > 0 ||
 		len(c.AvailableCommands) > 0 ||
+		len(c.ExtraConfigOptionsByModel) > 0 ||
 		c.ConfigOptionState != nil ||
 		c.LoadSession != nil ||
 		c.ListSessions != nil ||
@@ -280,6 +306,7 @@ func (r *AgentCapabilityRegistry) merge(agentID string, src *AgentCapability) {
 	if len(src.AvailableCommands) > 0 {
 		existing.AvailableCommands = src.AvailableCommands
 	}
+	mergeExtraConfigOptionsByModel(existing, src.ExtraConfigOptionsByModel)
 	if src.ConfigOptionState != nil {
 		existing.ConfigOptionState = src.ConfigOptionState
 	}
@@ -299,6 +326,21 @@ func (r *AgentCapabilityRegistry) merge(agentID string, src *AgentCapability) {
 		}
 	}
 	existing.UpdatedAt = time.Now()
+}
+
+// mergeExtraConfigOptionsByModel overlays per-model option lists. An entry with
+// an empty list is a real value ("this model offers none"), so the key is
+// written even when the list is empty.
+func mergeExtraConfigOptionsByModel(dst *AgentCapability, src map[string][]ExtraConfigOption) {
+	if len(src) == 0 {
+		return
+	}
+	if dst.ExtraConfigOptionsByModel == nil {
+		dst.ExtraConfigOptionsByModel = make(map[string][]ExtraConfigOption, len(src))
+	}
+	for modelID, extras := range src {
+		dst.ExtraConfigOptionsByModel[modelID] = extras
+	}
 }
 
 // overlayBool copies src over *dst when src was actually reported.
@@ -438,6 +480,45 @@ func (r *AgentCapabilityRegistry) UpdateMCPCapabilities(agentID string, http, ss
 	r.Update(agentID, &AgentCapability{McpHTTP: &http, McpSSE: &sse})
 }
 
+// carryAccumulatedCapabilities copies knowledge that accumulates across
+// processes into next, which ForceUpdate replaces wholesale.
+//
+// Per-model level lists, per-model config option lists and the session/delete
+// probe result are learned facts about the agent, not part of the handshake
+// snapshot a new process reports. Dropping them on the first session of every
+// process would make a restart forget every model but the one just used — and
+// for config options that means the "advanced" tab disappears until each model
+// runs a message again (issue #746).
+func carryAccumulatedCapabilities(existing, next *AgentCapability) {
+	if existing == nil || next == nil {
+		return
+	}
+	if len(existing.ThinkingEffortsByModel) > 0 {
+		merged := make(map[string][]ThinkingEffortDef, len(existing.ThinkingEffortsByModel))
+		for modelID, levels := range existing.ThinkingEffortsByModel {
+			merged[modelID] = levels
+		}
+		for modelID, levels := range next.ThinkingEffortsByModel {
+			merged[modelID] = levels
+		}
+		next.ThinkingEffortsByModel = merged
+	}
+	if len(existing.ExtraConfigOptionsByModel) > 0 {
+		merged := make(map[string][]ExtraConfigOption, len(existing.ExtraConfigOptionsByModel))
+		for modelID, extras := range existing.ExtraConfigOptionsByModel {
+			merged[modelID] = extras
+		}
+		for modelID, extras := range next.ExtraConfigOptionsByModel {
+			merged[modelID] = extras
+		}
+		next.ExtraConfigOptionsByModel = merged
+	}
+	if next.DeleteSessionProbed == nil {
+		next.DeleteSessionProbed = existing.DeleteSessionProbed
+		next.DeleteSessionConfirmed = existing.DeleteSessionConfirmed
+	}
+}
+
 // ForceUpdate replaces all capability fields for an agent (full overwrite, not merge)
 // and persists to DB asynchronously. Used when a new agent process establishes its
 // first session — the ACP response is the authoritative source of truth.
@@ -453,29 +534,7 @@ func (r *AgentCapabilityRegistry) ForceUpdate(agentID string, agentCap *AgentCap
 	}
 	agentCap.UpdatedAt = time.Now()
 	agentCap.refreshedInProcess = true
-	// The per-model level lists are ACCUMULATED knowledge (one entry per model
-	// the agent has run), not part of the "current agent process" snapshot this
-	// call replaces. Carrying them through keeps every other model's list after
-	// the first session of a process — otherwise a restart would drop them all
-	// and every session would fall back to the agent-level list again.
-	if ok && existing != nil && len(existing.ThinkingEffortsByModel) > 0 {
-		merged := make(map[string][]ThinkingEffortDef, len(existing.ThinkingEffortsByModel))
-		for modelID, levels := range existing.ThinkingEffortsByModel {
-			merged[modelID] = levels
-		}
-		for modelID, levels := range agentCap.ThinkingEffortsByModel {
-			merged[modelID] = levels
-		}
-		agentCap.ThinkingEffortsByModel = merged
-	}
-	// The session/delete probe result is likewise learned knowledge, not part of
-	// the handshake snapshot this call replaces (issue #707): dropping it would
-	// make the next delete fall back to the advertisement — which CodeBuddy does
-	// not send — until the next process respawns and probes again.
-	if ok && existing != nil && agentCap.DeleteSessionProbed == nil {
-		agentCap.DeleteSessionProbed = existing.DeleteSessionProbed
-		agentCap.DeleteSessionConfirmed = existing.DeleteSessionConfirmed
-	}
+	carryAccumulatedCapabilities(existing, agentCap)
 	r.caps[agentID] = agentCap
 	r.mu.Unlock()
 	r.persistAsync(agentID)
@@ -641,6 +700,47 @@ func (r *AgentCapabilityRegistry) GetCommands(agentID string) []AvailableCommand
 		return nil
 	}
 	return agentCap.AvailableCommands
+}
+
+// UpdateExtraConfigOptions records the generic config options ONE model
+// advertised (issue #746).
+//
+// An EMPTY list is meaningful: the agent did list configOptions and this model
+// offers none, so the model's entry is replaced by an empty slice and readers
+// stop offering the tab for it (switching back to a model that has the option
+// repopulates the entry).
+func (r *AgentCapabilityRegistry) UpdateExtraConfigOptions(agentID, modelID string, extras []ExtraConfigOption) {
+	if agentID == "" {
+		return
+	}
+	// The CURRENT value is deliberately cleared: the registry is shared by every
+	// session of the agent, and it records what options exist, not which value a
+	// session is on. Persisting the value made a NEW session display whatever the
+	// last session happened to run (issue #746); the value comes from the
+	// session's context_state or the per-model default instead.
+	copied := make([]ExtraConfigOption, len(extras))
+	for i, e := range extras {
+		e.CurrentID = ""
+		copied[i] = e
+	}
+	r.Update(agentID, &AgentCapability{
+		ExtraConfigOptionsByModel: map[string][]ExtraConfigOption{modelID: copied},
+	})
+}
+
+// GetExtraConfigOptions returns the generic config options recorded for this
+// model, or nil when that model's list has never been learned.
+//
+// A non-nil empty slice means "learned, and this model offers none" — the same
+// distinction GetExtraConfigOptions on a connection makes.
+func (r *AgentCapabilityRegistry) GetExtraConfigOptions(agentID, modelID string) []ExtraConfigOption {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agentCap, ok := r.caps[agentID]
+	if !ok || agentCap == nil {
+		return nil
+	}
+	return agentCap.ExtraConfigOptionsByModel[modelID]
 }
 
 // GetConfigState returns the config option state for an agent.
@@ -1194,6 +1294,13 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 	if string(cmdsJSON) == "null" {
 		cmdsJSON = []byte("[]")
 	}
+	// Per-model generic config option lists (issue #746). Persisted so a new
+	// session can render the "advanced" tab before its first message, which is
+	// impossible while the list lives only on a live connection.
+	extrasByModelJSON, _ := json.Marshal(agentCap.ExtraConfigOptionsByModel)
+	if string(extrasByModelJSON) == "null" {
+		extrasByModelJSON = []byte("{}")
+	}
 	// The ACP-reported model list is persisted so it survives a restart. Without
 	// it the list lives only in memory and an agent's selectable models change
 	// across a restart until a new ACP session repopulates the registry.
@@ -1235,6 +1342,7 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 			acp_thinking_efforts_by_model = ?,
 			acp_available_commands = ?,
 			acp_available_models = ?,
+			acp_extra_config_options = ?,
 			acp_config_options = ?,
 			acp_load_session = ?,
 			acp_list_sessions = ?,
@@ -1244,7 +1352,7 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 			acp_delete_session_confirmed = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		string(modesJSON), string(effortsByModelJSON), string(cmdsJSON), string(modelsJSON), configJSON,
+		string(modesJSON), string(effortsByModelJSON), string(cmdsJSON), string(modelsJSON), string(extrasByModelJSON), configJSON,
 		loadSessionVal, listSessionsVal, mcpHTTPVal, mcpSSEVal,
 		deleteProbed, deleteConfirmed, agentID)
 	return err
@@ -1255,7 +1363,7 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	rows, err := db.Query(`
 		SELECT id, acp_available_modes,
 		       acp_thinking_efforts_by_model,
-		       acp_available_commands, acp_available_models, acp_config_options,
+		       acp_available_commands, acp_available_models, acp_extra_config_options, acp_config_options,
 		       acp_load_session, acp_list_sessions, acp_mcp_http, acp_mcp_sse,
 		       acp_delete_session_probed, acp_delete_session_confirmed
 		FROM agents
@@ -1273,7 +1381,7 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	for rows.Next() {
 		var row capabilityRow
 		if err := rows.Scan(&row.agentID, &row.modes, &row.effortsByModel, &row.commands,
-			&row.models, &row.config, &row.loadSession, &row.listSessions,
+			&row.models, &row.extrasByModel, &row.config, &row.loadSession, &row.listSessions,
 			&row.mcpHTTP, &row.mcpSSE, &row.deleteProbed, &row.deleteConfirmed); err != nil {
 			slog.Warn("failed to scan agent capability row", "error", err)
 			continue
@@ -1302,6 +1410,7 @@ type capabilityRow struct {
 	effortsByModel  string
 	commands        string
 	models          string
+	extrasByModel   string
 	config          string
 	loadSession     bool
 	listSessions    bool
@@ -1315,16 +1424,17 @@ type capabilityRow struct {
 // than failing the row: the other capability fields are still worth loading.
 func (row *capabilityRow) toCapability() *AgentCapability {
 	capability := &AgentCapability{
-		AvailableModes:         decodeJSONSlice[ModeDef](row.modes),
-		ThinkingEffortsByModel: decodeEffortsByModel(row.effortsByModel),
-		AvailableCommands:      decodeJSONSlice[AvailableCommandInfo](row.commands),
-		AvailableModels:        decodeJSONSlice[model.AgentModel](row.models),
-		LoadSession:            &row.loadSession,
-		ListSessions:           &row.listSessions,
-		McpHTTP:                &row.mcpHTTP,
-		McpSSE:                 &row.mcpSSE,
-		DeleteSessionProbed:    &row.deleteProbed,
-		DeleteSessionConfirmed: &row.deleteConfirmed,
+		AvailableModes:            decodeJSONSlice[ModeDef](row.modes),
+		ThinkingEffortsByModel:    decodeEffortsByModel(row.effortsByModel),
+		AvailableCommands:         decodeJSONSlice[AvailableCommandInfo](row.commands),
+		AvailableModels:           decodeJSONSlice[model.AgentModel](row.models),
+		ExtraConfigOptionsByModel: decodeExtraConfigOptionsByModel(row.extrasByModel),
+		LoadSession:               &row.loadSession,
+		ListSessions:              &row.listSessions,
+		McpHTTP:                   &row.mcpHTTP,
+		McpSSE:                    &row.mcpSSE,
+		DeleteSessionProbed:       &row.deleteProbed,
+		DeleteSessionConfirmed:    &row.deleteConfirmed,
 	}
 	if row.config != "" {
 		var config ConfigOptionState
@@ -1362,6 +1472,21 @@ func decodeEffortsByModel(raw string) map[string][]ThinkingEffortDef {
 		return nil
 	}
 	var out map[string][]ThinkingEffortDef
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// decodeExtraConfigOptionsByModel decodes the per-model generic config option
+// lists (issue #746). An unparseable column yields nil, which reads as "never
+// learned" — the tab then appears after the next session, not with a broken
+// half-list.
+func decodeExtraConfigOptionsByModel(raw string) map[string][]ExtraConfigOption {
+	if raw == "" || raw == "{}" || raw == "null" {
+		return nil
+	}
+	var out map[string][]ExtraConfigOption
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil
 	}

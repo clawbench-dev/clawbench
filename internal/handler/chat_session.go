@@ -1174,10 +1174,25 @@ func applySessionCruise(sessionID string, enabled bool) {
 // immediately instead of leaving it on screen until the next turn starts.
 func sessionExtraConfigOptions(sessionID string) []ai.ExtraConfigOption {
 	conn := ai.GetACPConnManager().GetConn(sessionID)
-	if conn == nil {
+	if conn != nil {
+		return conn.GetExtraConfigOptions()
+	}
+	// No connection (a new session, or a switch made before the first message):
+	// answer for the model the session now runs from the agent-level cache
+	// (issue #746). Without this the drawer keeps the previous model's options
+	// after a model switch, which is the same defect issue #637 fixed for the
+	// thinking-level list.
+	agentID := service.GetSessionAgentID(sessionID)
+	if agentID == "" {
 		return nil
 	}
-	return conn.GetExtraConfigOptions()
+	modelID := service.GetSessionModel(sessionID)
+	if modelID == "" {
+		if a := model.GetAgent(agentID); a != nil {
+			modelID = a.DefaultModelID()
+		}
+	}
+	return ai.GetAgentCapabilityRegistry().GetExtraConfigOptions(agentID, modelID)
 }
 
 // attachConfigOptionsAfterModelSwitch adds the refreshed generic option list to
@@ -1195,47 +1210,183 @@ func attachConfigOptionsAfterModelSwitch(resp map[string]any, sessionID, modelID
 	}
 }
 
-// applyExtraConfigOptions forwards agent-specific select options (e.g. codex's
-// "fast-mode": on/off) to the session's live connection.
+// applyExtraConfigOptions records and forwards agent-specific config options
+// (e.g. codex's "fast-mode": on/off).
 //
 // Keys are the wire ids the agent itself advertised, so no category resolution
 // is needed. Forwarded asynchronously like mode: the click must not wait on the
 // agent, which echoes its new state back over the WebSocket.
+//
+// The pick is PERSISTED before forwarding (issue #746). Before that, a missing
+// or busy connection made the click vanish without a trace: the user saw no
+// error and the value was gone on the next reload. Storing it in the session's
+// context_state is what lets the next turn apply it (see
+// ai.ChatRequest.ConfigOptions), and it is also how a new session on the same
+// model inherits the choice (the pick is remembered on the agent per model).
 func applyExtraConfigOptions(sessionID string, opts map[string]string) {
 	if len(opts) == 0 {
 		return
 	}
 	conn := ai.GetACPConnManager().GetConn(sessionID)
-	if conn == nil {
-		return
-	}
-	// Only ids the agent itself advertised for THIS session are accepted. This
-	// is not mere validation: without it the generic channel would be a way to
-	// write "mode"/"model" behind the dedicated paths' backs — no persistence,
-	// no per-model effort validation, no auto-approve bookkeeping.
-	known := make(map[string]ai.ExtraConfigOption)
-	for _, extra := range conn.GetExtraConfigOptions() {
+	// Only ids the agent itself advertised are accepted. This is not mere
+	// validation: without it the generic channel would be a way to write
+	// "mode"/"model" behind the dedicated paths' backs — no persistence, no
+	// per-model effort validation, no auto-approve bookkeeping.
+	//
+	// With no live connection the list comes from the agent-level registry for
+	// the model this session will run; when that model's list has never been
+	// learned there is nothing to validate against, so the pick is stored and the
+	// agent gets the final say when the next turn applies it (a rejected value is
+	// dropped there, not retried forever).
+	advertised, validate := advertisedExtraConfigOptions(sessionID, conn)
+	known := make(map[string]ai.ExtraConfigOption, len(advertised))
+	for _, extra := range advertised {
 		known[extra.ConfigID] = extra
 	}
-	for id, value := range opts {
-		opt, ok := known[id]
-		if id == "" || value == "" || !ok {
-			slog.Warn("session update: ignoring config option the agent did not advertise",
-				"session_id", sessionID, "config_id", id)
-			continue
-		}
-		if opt.Type == "boolean" {
-			parsed, err := strconv.ParseBool(value)
-			if err != nil {
-				slog.Warn("session update: ignoring non-boolean value for a boolean option",
-					"session_id", sessionID, "config_id", id, "value", value)
-				continue
-			}
+	accepted := filterAcceptedConfigOptions(sessionID, opts, known, validate)
+	if len(accepted) == 0 {
+		return
+	}
+	service.PersistConfigOptionPicks(sessionID, accepted)
+	rememberConfigOptionPicks(sessionID, accepted)
+	if conn == nil {
+		// Stored, not lost: the next turn applies it (see acp Prompt).
+		slog.Info("session update: config options stored without a live connection",
+			"session_id", sessionID, "count", len(accepted))
+		return
+	}
+	for id, value := range accepted {
+		if opt, ok := known[id]; ok && opt.Type == "boolean" {
+			parsed, _ := strconv.ParseBool(value)
 			forwardSessionConfigOptionBool(sessionID, id, parsed)
 			continue
 		}
 		forwardSessionConfigOption(sessionID, id, value)
 	}
+}
+
+// filterAcceptedConfigOptions drops picks the agent cannot honor: ids it did not
+// advertise (when that is knowable), ids owned by a dedicated channel, and
+// non-boolean values for boolean options.
+func filterAcceptedConfigOptions(sessionID string, opts map[string]string, known map[string]ai.ExtraConfigOption, validate bool) map[string]string {
+	accepted := make(map[string]string, len(opts))
+	for id, value := range opts {
+		if id == "" || value == "" {
+			continue
+		}
+		// The dedicated channels own these ids: letting them through here would
+		// bypass mode/effort/model validation and bookkeeping.
+		if isDedicatedConfigID(id) {
+			slog.Warn("session update: refusing a dedicated config id on the generic channel",
+				"session_id", sessionID, "config_id", id)
+			continue
+		}
+		opt, ok := known[id]
+		if validate && !ok {
+			slog.Warn("session update: ignoring config option the agent did not advertise",
+				"session_id", sessionID, "config_id", id)
+			continue
+		}
+		if ok && opt.Type == "boolean" {
+			if _, err := strconv.ParseBool(value); err != nil {
+				slog.Warn("session update: ignoring non-boolean value for a boolean option",
+					"session_id", sessionID, "config_id", id, "value", value)
+				continue
+			}
+		}
+		accepted[id] = value
+	}
+	return accepted
+}
+
+// advertisedExtraConfigOptions resolves the config options to validate a pick
+// against, and whether validation is possible at all.
+//
+// A live connection always knows its own list (an empty one means "this agent
+// advertises none", which must reject every id). Without a connection the
+// agent-level cache answers for the model the session will run; nil there means
+// the list has never been learned, and the pick is stored unvalidated — the
+// agent gets the final say when the next turn applies it.
+func advertisedExtraConfigOptions(sessionID string, conn *ai.ACPConn) ([]ai.ExtraConfigOption, bool) {
+	if conn != nil {
+		return conn.GetExtraConfigOptions(), true
+	}
+	agentID := service.GetSessionAgentID(sessionID)
+	if agentID == "" {
+		return nil, false
+	}
+	modelID := service.GetSessionModel(sessionID)
+	if modelID == "" {
+		if a := model.GetAgent(agentID); a != nil {
+			modelID = a.DefaultModelID()
+		}
+	}
+	list := ai.GetAgentCapabilityRegistry().GetExtraConfigOptions(agentID, modelID)
+	return list, list != nil
+}
+
+// isDedicatedConfigID reports whether an id belongs to a channel with its own
+// validation and persistence (mode / model / thinking effort).
+func isDedicatedConfigID(id string) bool {
+	switch id {
+	case "mode", "model", "thought_level", "thinkingEffort", "effort":
+		return true
+	}
+	return false
+}
+
+// rememberConfigOptionPicks stores the pick on the agent, keyed by the model it
+// was made under (issue #746).
+//
+// This is what makes a NEW session start with the user's last choice on that
+// model: the session itself has no context_state yet. It is the same "last pick
+// is the default" rule ThinkingEffortByModel follows, and the settings page
+// edits the same map for the agent's default model.
+func rememberConfigOptionPicks(sessionID string, picks map[string]string) {
+	agentID := service.GetSessionAgentID(sessionID)
+	agent := model.GetAgent(agentID)
+	if agent == nil {
+		return
+	}
+	modelID := service.GetSessionModel(sessionID)
+	if modelID == "" {
+		modelID = agent.DefaultModelID()
+	}
+	current := agent.ConfigOptionsForModel(modelID)
+	merged := make(map[string]string, len(current)+len(picks))
+	for id, value := range current {
+		merged[id] = value
+	}
+	for id, value := range picks {
+		merged[id] = value
+	}
+	if mapsEqualString(merged, current) {
+		return
+	}
+	if err := service.PatchAgentFields(agentID, service.AgentPatch{
+		ConfigOptionsForModel: &service.ConfigOptionsModelPatch{ModelID: modelID, Picks: merged},
+	}); err != nil {
+		slog.Warn("failed to remember config options for model (kept in memory only)",
+			"session_id", sessionID, "agent_id", agentID, "model", modelID, "error", err)
+	}
+	// Publish to in-memory readers (copy-on-write, same as the effort memory):
+	// runs even when the DB write failed so this process still behaves.
+	model.UpdateAgent(agentID, func(a *model.Agent) {
+		a.SetConfigOptionsForModel(modelID, merged)
+	})
+}
+
+// mapsEqualString reports whether two string maps hold the same entries.
+func mapsEqualString(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // forwardSessionConfigOption pushes a config-option change to the session's ACP

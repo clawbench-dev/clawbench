@@ -288,6 +288,8 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"command": true, "thinking_effort": true, "thinking_effort_levels": true,
 		"preferred_mode": true, "preferred_model": true, "preferred_thinking_effort": true,
 		"thinking_effort_by_model": true,
+		// Per-model picks among the agent's own config options (issue #746).
+		"preferred_config_options": true,
 		"custom_system_prompt":     true, "avatar": true,
 		"avatar_style": true, "avatar_seed": true,
 		"models": true, "models_auto_detected": true, "sort_order": true,
@@ -297,7 +299,10 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		// different level set per model, so the list is keyed by model id.
 		"acp_thinking_efforts_by_model": true,
 		"acp_available_models":          true,
-		"acp_config_options":            true, "acp_mcp_http": true, "acp_mcp_sse": true,
+		// Per-model generic config option lists (issue #746): the "advanced" tab
+		// must be renderable before a session's first message.
+		"acp_extra_config_options": true,
+		"acp_config_options":       true, "acp_mcp_http": true, "acp_mcp_sse": true,
 		// session/delete probe result (issue #707): "probed" records that we got
 		// an answer at all, "confirmed" that the method actually works — some
 		// agents implement it without advertising the capability.
@@ -1427,4 +1432,34 @@ func TestPatchAgentFields_SkipProjectContext(t *testing.T) {
 	agents, err = service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	assert.False(t, agents[0].SkipProjectContext)
+}
+
+// Per-model config-option picks must be written one model at a time: the
+// read-modify-write runs in its own transaction, so saving one model's picks
+// cannot drop another model's (issue #746).
+func TestPatchAgentFields_ConfigOptionsForModel(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
+
+	require.NoError(t, service.PatchAgentFields("pi", service.AgentPatch{
+		ConfigOptionsForModel: &service.ConfigOptionsModelPatch{ModelID: "m1", Picks: map[string]string{"fast-mode": "on"}},
+	}))
+	require.NoError(t, service.PatchAgentFields("pi", service.AgentPatch{
+		ConfigOptionsForModel: &service.ConfigOptionsModelPatch{ModelID: "m2", Picks: map[string]string{"fast-mode": "off"}},
+	}))
+
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "on", agents[0].ConfigOptionsForModel("m1")["fast-mode"])
+	assert.Equal(t, "off", agents[0].ConfigOptionsForModel("m2")["fast-mode"])
+
+	// Empty picks remove that model's entry only.
+	require.NoError(t, service.PatchAgentFields("pi", service.AgentPatch{
+		ConfigOptionsForModel: &service.ConfigOptionsModelPatch{ModelID: "m1"},
+	}))
+	agents, err = service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	assert.Nil(t, agents[0].ConfigOptionsForModel("m1"))
+	assert.Equal(t, "off", agents[0].ConfigOptionsForModel("m2")["fast-mode"])
 }

@@ -153,6 +153,7 @@ AgentNotFound: Agent not found
 InvalidModelForAgent: Invalid model for this agent
 InvalidThinkingEffort: Invalid thinking effort level for this agent
 InvalidModeForAgent: Invalid mode for this agent
+InvalidConfigOption: Invalid config option for this agent
 AgentNameTaken: An agent with this name already exists
 AgentNameReserved: This name conflicts with the group-chat user name
 UserNicknameTaken: This name is already used by an agent

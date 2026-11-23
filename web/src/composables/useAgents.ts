@@ -93,6 +93,12 @@ interface AgentRecord {
    */
   thinkingEffortByModel?: Record<string, string>
   preferredMode?: string
+  /**
+   * Remembered picks among the agent's own config options for its DEFAULT
+   * model (configId → value). Flattened by the server because the settings page
+   * configures exactly that model (issue #746).
+   */
+  defaultModelConfigOptions?: Record<string, string>
   acpCommand?: string
   acpAvailableModes?: Array<{ id: string; name: string }>
   transport?: string
@@ -226,6 +232,16 @@ interface AcpState {
   }
   planState?: { entries?: Array<Record<string, unknown>> }
   loadSession?: boolean
+  /** Agent-declared generic options for the agent's default model (issue #746). */
+  configOptions?: Array<{
+    configId: string
+    name?: string
+    description?: string
+    category?: string
+    type?: string
+    currentValueId?: string
+    values?: Array<{ id: string; name?: string; description?: string }>
+  }>
 }
 
 /** Reset all module-level singleton refs — used by SPA hot project switch. */
@@ -569,6 +585,18 @@ function getEffectiveModeId(agentId: string): string {
 function getAgentAvailableModes(agentId: string): Array<{ id: string; name: string }> {
     const state = acpStatesCache[agentId] as AcpState | undefined
     return state?.modeState?.availableModes || []
+}
+
+/**
+ * The agent-declared generic config options (codex's "Fast mode") for an
+ * agent's DEFAULT model — what the settings page configures (issue #746).
+ *
+ * Read from the same acpStates cache as the modes, so the picker is driven by
+ * what the agent actually reported rather than by a hardcoded list.
+ */
+function getAgentAvailableConfigOptions(agentId: string): NonNullable<AcpState['configOptions']> {
+    const state = acpStatesCache[agentId] as AcpState | undefined
+    return state?.configOptions || []
 }
 
 /** Whether an agent runs on the in-process backend. */
@@ -963,6 +991,7 @@ export function useAgents() {
         setThinkingEffortForModelLocal,
         getEffectiveModeId,
         getAgentAvailableModes,
+        getAgentAvailableConfigOptions,
         isBuiltinAgent,
         hasPreferredMode,
         updateAgentField,

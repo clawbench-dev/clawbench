@@ -392,6 +392,17 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted) {
 	if ext.extrasKnown && (len(ext.extras) > 0 || c.HasExtraConfigOptions()) {
 		c.SetExtraConfigOptions(ext.extras)
 	}
+
+	// Persist the same list per MODEL (issue #746) so a NEW session can render
+	// the "advanced" tab before its first message. The guard mirrors the
+	// connection's: an agent that omitted the options from this response must
+	// not erase a list learned earlier — only a response that carries one, or a
+	// model we already knew advertised them, may replace the entry (with an
+	// empty list when the option is gone).
+	if ext.extrasKnown && agentID != "" &&
+		(len(ext.extras) > 0 || len(reg.GetExtraConfigOptions(agentID, reportedModelID)) > 0) {
+		reg.UpdateExtraConfigOptions(agentID, reportedModelID, ext.extras)
+	}
 }
 
 // mergeWireConfigIDs merges the config-option ids the agent advertised (per

@@ -1745,9 +1745,7 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 	// agent rejects. Only when this response carries one, or the session already
 	// had one — otherwise every agent would be flagged as "advertises extras"
 	// and start emitting empty events on every turn.
-	if extras := extractExtraConfigOptions(opts); len(extras) > 0 || c.HasExtraConfigOptions() {
-		c.SetExtraConfigOptions(extras)
-	}
+	extras := c.refreshExtrasFromSetResponse(opts)
 
 	agentID := c.AgentID()
 	if agentID == "" {
@@ -1765,6 +1763,8 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 	if modelID == "" {
 		modelID = c.GetCurrentModelID()
 	}
+	c.cacheExtrasForModel(agentID, modelID, extras)
+
 	for _, opt := range opts {
 		if opt.Select == nil || opt.Select.Category == nil {
 			continue
@@ -1794,6 +1794,38 @@ func (c *ACPConn) applyConfigOptionsFromSetResponse(opts []acp.SessionConfigOpti
 		}
 		reg.UpdateAvailableOptions(agentID, category, sel.Available)
 	}
+}
+
+// refreshExtrasFromSetResponse updates the connection's generic option list from
+// a set_config_option response and returns it.
+//
+// Only a response that carries options, or a session that already had one, may
+// replace the list: an agent that omits the field must not be read as "the
+// option is gone". A model switch that drops the option therefore clears it,
+// while an unrelated option change leaves it alone.
+func (c *ACPConn) refreshExtrasFromSetResponse(opts []acp.SessionConfigOption) []ExtraConfigOption {
+	extras := extractExtraConfigOptions(opts)
+	if len(extras) > 0 || c.HasExtraConfigOptions() {
+		c.SetExtraConfigOptions(extras)
+	}
+	return extras
+}
+
+// cacheExtrasForModel records a NON-EMPTY generic option list under the model it
+// belongs to (issue #746), so a NEW session on that model can render the tab
+// before its first message.
+//
+// Only non-empty lists: a set_config_option response that does not restate the
+// extras says nothing about the model's option set (some agents answer with only
+// the changed option). Writing an empty list from such a response would erase a
+// model's known options — the authoritative "this model offers none" signal
+// comes from session/new, which does list configOptions (see
+// applyExtractedState).
+func (c *ACPConn) cacheExtrasForModel(agentID, modelID string, extras []ExtraConfigOption) {
+	if agentID == "" || len(extras) == 0 {
+		return
+	}
+	GetAgentCapabilityRegistry().UpdateExtraConfigOptions(agentID, modelID, extras)
 }
 
 // modelIDFromConfigOptions returns the model named by a config-option set, or

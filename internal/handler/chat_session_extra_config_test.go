@@ -195,3 +195,150 @@ func TestApplyExtraConfigOptions_RejectsNonBooleanValue(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+// A pick made while the session has NO live connection must be stored, not
+// dropped (issue #746). Before this, `applyExtraConfigOptions` returned early on
+// a nil connection: the click vanished, the user saw no error, and the value was
+// gone on the next reload. Storing it is what lets the next turn apply it.
+func TestServeAISessionUpdate_ConfigOptions_NoConnPersists(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agent := &model.Agent{
+		ID: "extra-cfg-offline", Backend: "codex", AcpCommand: "codex",
+		Models: []model.AgentModel{{ID: "m1", Default: true}},
+	}
+	model.AddAgent(agent)
+	t.Cleanup(func() { model.DeleteAgent(agent.ID) })
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "offline-extra-cfg", agent.ID, "m1", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sessionID, map[string]any{
+		"configOptions": map[string]string{"fast-mode": "on"},
+	})
+	w := callHandler(ServeAISessionUpdate, req)
+	assertOK(t, w)
+
+	// Persisted for this session, so the next turn applies it.
+	picks := service.GetSessionConfigOptionPicks(sessionID)
+	require.Equal(t, "on", picks["fast-mode"])
+
+	// Remembered on the agent per model, so a NEW session on the same model
+	// starts with it instead of the agent's own default.
+	got := model.GetAgent(agent.ID)
+	require.NotNil(t, got)
+	assert.Equal(t, "on", got.ConfigOptionsForModel("m1")["fast-mode"])
+}
+
+// A new session (never sent a message, so no ACP connection) must already see
+// the agent-declared options: that is what makes the "advanced" tab render
+// before the first message. A stored pick must win over the value the agent
+// reported for itself.
+func TestSessionStateSnapshot_NewSessionConfigOptions(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agent := &model.Agent{
+		ID: "snap-cfg-agent", Backend: "codex", AcpCommand: "codex",
+		Models: []model.AgentModel{{ID: "m1", Default: true}},
+	}
+	model.AddAgent(agent)
+	t.Cleanup(func() { model.DeleteAgent(agent.ID) })
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.ResetForTest(agent.ID)
+	t.Cleanup(func() { reg.ResetForTest(agent.ID) })
+	reg.UpdateExtraConfigOptions(agent.ID, "m1", []ai.ExtraConfigOption{
+		{
+			ConfigID: "fast-mode", Name: "Fast mode", Category: "model_config", Type: "select", CurrentID: "off",
+			Values: []ai.ConfigOptionValue{{ID: "off", Name: "Off"}, {ID: "on", Name: "On"}},
+		},
+	})
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "snap-extra-cfg", agent.ID, "m1", "default", "chat")
+	require.NoError(t, err)
+
+	st := sessionStateSnapshot(sessionID, agent.ID)
+	list, ok := st.ConfigOptions.([]ai.ExtraConfigOption)
+	require.True(t, ok, "a new session must get the option list from the agent-level cache")
+	require.Len(t, list, 1)
+	// The registry holds no value; with no pick anywhere nothing is selected.
+	assert.Empty(t, list[0].CurrentID)
+
+	// The per-model default remembered on the agent is what the next turn will
+	// run, so a new session shows it.
+	model.UpdateAgent(agent.ID, func(a *model.Agent) {
+		a.SetConfigOptionsForModel("m1", map[string]string{"fast-mode": "on"})
+	})
+	st = sessionStateSnapshot(sessionID, agent.ID)
+	list, ok = st.ConfigOptions.([]ai.ExtraConfigOption)
+	require.True(t, ok)
+	require.Len(t, list, 1)
+	assert.Equal(t, "on", list[0].CurrentID)
+
+	// A pick stored on the SESSION wins over the agent-level default.
+	service.PersistConfigOptionPicks(sessionID, map[string]string{"fast-mode": "off"})
+	st = sessionStateSnapshot(sessionID, agent.ID)
+	list, ok = st.ConfigOptions.([]ai.ExtraConfigOption)
+	require.True(t, ok)
+	require.Len(t, list, 1)
+	assert.Equal(t, "off", list[0].CurrentID, "the drawer must show the session's pick")
+}
+
+// The generic channel must never carry an id that has its own channel: "mode"
+// here would bypass mode validation and its bookkeeping, and would be stored as
+// a session pick that no later code path understands.
+func TestApplyExtraConfigOptions_RefusesDedicatedIDs(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agent := &model.Agent{ID: "extra-cfg-dedicated-agent", Backend: "codex", Transport: "acp-stdio", AcpCommand: "codex"}
+	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "extra-cfg-dedicated", agent.ID, "", "default", "chat")
+	require.NoError(t, err)
+
+	rec := installExtraConfigRecorder(t, agent, sessionID)
+
+	applyExtraConfigOptions(sessionID, map[string]string{"mode": "bypassPermissions", "model": "gpt-5"})
+
+	select {
+	case got := <-rec.ch:
+		t.Fatalf("dedicated ids must not reach the agent on the generic channel, got %v", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	assert.Nil(t, service.GetSessionConfigOptionPicks(sessionID))
+}
+
+// After a model switch made BEFORE the first message there is no connection to
+// ask, so the refreshed option list must come from the agent-level cache for the
+// model the session now runs (issue #746). Otherwise the drawer keeps showing the
+// previous model's options.
+func TestSessionExtraConfigOptions_NoConnUsesRegistryForModel(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agent := &model.Agent{
+		ID: "extra-cfg-switch-agent", Backend: "codex", AcpCommand: "codex",
+		Models: []model.AgentModel{{ID: "m1", Default: true}, {ID: "m2"}},
+	}
+	model.AddAgent(agent)
+	t.Cleanup(func() { model.DeleteAgent(agent.ID) })
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.ResetForTest(agent.ID)
+	t.Cleanup(func() { reg.ResetForTest(agent.ID) })
+	reg.UpdateExtraConfigOptions(agent.ID, "m2", []ai.ExtraConfigOption{
+		{ConfigID: "fast-mode", Name: "Fast mode", Category: "model_config", Type: "select", CurrentID: "off"},
+	})
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "extra-cfg-switch", agent.ID, "m2", "default", "chat")
+	require.NoError(t, err)
+
+	got := sessionExtraConfigOptions(sessionID)
+	require.Len(t, got, 1, "the new model's list must be returned without a connection")
+	assert.Equal(t, "fast-mode", got[0].ConfigID)
+
+	// A model whose list was never learned returns nil ("omit the key").
+	service.UpdateSessionModel(sessionID, "m1")
+	assert.Nil(t, sessionExtraConfigOptions(sessionID))
+}
