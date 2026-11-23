@@ -667,10 +667,34 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 	c.mu.Unlock()
 
 	if !ok {
-		// No active stream — auto-cancel
+		// No active stream (e.g. an async/background wake-up after the turn
+		// ended). Interactive approval needs a stream to show the card, but
+		// auto-approve does not — grant it instead of cancelling.
 		c.mu.Lock()
 		delete(c.pendingPermission, key)
 		c.mu.Unlock()
+		if c.connRef != nil && c.connRef.IsAutoApprove() {
+			for _, opt := range p.Options {
+				if opt.Kind == acp.PermissionOptionKindAllowOnce || opt.Kind == acp.PermissionOptionKindAllowAlways {
+					slog.Info(
+						"acp: auto-approving permission request (no active stream)",
+						"session_id", sessionID,
+						"tool_call_id", toolCallID,
+						"tool_name", toolName,
+						"option_id", string(opt.OptionId),
+					)
+					return acp.RequestPermissionResponse{
+						Outcome: acp.NewRequestPermissionOutcomeSelected(opt.OptionId),
+					}, nil
+				}
+			}
+		}
+		slog.Warn(
+			"acp: permission request cancelled, no active stream",
+			"session_id", sessionID,
+			"tool_call_id", toolCallID,
+			"tool_name", toolName,
+		)
 		return acp.RequestPermissionResponse{
 			Outcome: acp.NewRequestPermissionOutcomeCancelled(),
 		}, nil
