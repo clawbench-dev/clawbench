@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { useSettingsConfig, applyUIScale, getUIScale, getEffectiveUIScale, applyEffectiveUIScale, autoFitUIScale, toFixedCSS, getZoomedViewport, localConfig, applyStoredTheme, syncThemeFromSystem, startSystemThemeWatcher } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getUIScale, getEffectiveUIScale, applyEffectiveUIScale, autoFitUIScale, toFixedCSS, getZoomedViewport, localConfig, applyStoredTheme, syncThemeFromSystem, startSystemThemeWatcher, patchAgentField } from '@/composables/useSettingsConfig'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
 
 // Mock api.ts
@@ -1514,3 +1514,38 @@ describe('useSettingsConfig', () => {
   })
 })
 
+
+describe('patchAgentField', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    mockedApiPatch.mockResolvedValue({})
+    mockLoadAgents.mockResolvedValue(undefined)
+  })
+
+  // These fields are server-derived: the client only sends a flat payload while
+  // the stored/mirrored shape differs (per model, closed over implications, or
+  // resolved from the cookie). Mirroring locally would show a value the server
+  // never stored, so the list must be re-fetched instead.
+  it.each([
+    'project_scope',
+    'acp_command',
+    'mcp_servers',
+    'preferred_config_options',
+    'tool_policy',
+  ])('re-fetches instead of mirroring for %s', async (field) => {
+    await patchAgentField('a1', field, 'value')
+
+    expect(mockedApiPatch).toHaveBeenCalledWith('/api/agents', { id: 'a1', [field]: 'value' })
+    expect(mockLoadAgents).toHaveBeenCalledWith(true)
+    expect(mockUpdateAgentField).not.toHaveBeenCalled()
+  })
+
+  // A plain scalar CAN be mirrored, so it must not pay for a full reload.
+  it('mirrors a locally representable field without re-fetching', async () => {
+    await patchAgentField('a1', 'preferred_model', 'gpt-5')
+
+    expect(mockedApiPatch).toHaveBeenCalledWith('/api/agents', { id: 'a1', preferred_model: 'gpt-5' })
+    expect(mockUpdateAgentField).toHaveBeenCalledWith('a1', 'preferredModel', 'gpt-5')
+    expect(mockLoadAgents).not.toHaveBeenCalledWith(true)
+  })
+})

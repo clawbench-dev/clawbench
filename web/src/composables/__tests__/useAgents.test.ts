@@ -81,7 +81,7 @@ describe('useAgents', () => {
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
     agentCanResume, supportsACP,
-    setDefaultAgent, duplicateAgent, createAcpAgent, deleteAgent, rescanAgents, reorderAgents, hasPreferredMode, applyRefreshedModelList, selectableAgents, resolveModelSelection } = useAgents()
+    setDefaultAgent, duplicateAgent, createAcpAgent, deleteAgent, rescanAgents, reorderAgents, hasPreferredMode, applyRefreshedModelList, selectableAgents, resolveModelSelection, getAgentAvailableConfigOptions } = useAgents()
 
   const mockReconcileModelSelection = vi.fn()
 
@@ -551,6 +551,52 @@ describe('useAgents', () => {
   })
 
   // --- getAgentThinkingEffortLevels ---
+
+  describe('getAgentAvailableConfigOptions', () => {
+    // The settings page builds its pickers from this list, so it must be driven
+    // by what the agent actually reported for the default model (issue #746) —
+    // a hardcoded list would offer options the agent rejects.
+    it('returns the cached generic options for the agent', async () => {
+      resetAgents()
+      registerMocks()
+      mockApiGet.mockResolvedValue({
+        agents: testAgents, defaultAgent: 'claude',
+        acpStates: {
+          claude: {
+            configOptions: [
+              {
+                configId: 'fast-mode', name: 'Fast mode', category: 'model_config',
+                type: 'select', currentValueId: 'off',
+                values: [{ id: 'off', name: 'Off' }, { id: 'on', name: 'On' }],
+              },
+            ],
+          },
+        },
+      })
+      await loadAgents()
+
+      const opts = getAgentAvailableConfigOptions('claude')
+      expect(opts).toHaveLength(1)
+      expect(opts[0].configId).toBe('fast-mode')
+      expect(opts[0].values?.map(v => v.id)).toEqual(['off', 'on'])
+    })
+
+    it('returns an empty list for an agent that reported none', async () => {
+      resetAgents()
+      registerMocks()
+      mockApiGet.mockResolvedValue({
+        agents: testAgents, defaultAgent: 'claude',
+        acpStates: { claude: { configOptions: [] } },
+      })
+      await loadAgents()
+
+      expect(getAgentAvailableConfigOptions('claude')).toEqual([])
+    })
+
+    it('returns an empty list for an unknown agent instead of throwing', () => {
+      expect(getAgentAvailableConfigOptions('no-such-agent')).toEqual([])
+    })
+  })
 
   describe('getAgentThinkingEffortLevels', () => {
     it('returns thinking effort levels for an agent with levels', () => {

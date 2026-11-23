@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 )
 
-
 // normalizeToolInput remaps camelCase input field names to canonical snake_case.
 // It accepts an optional pathMappings map to rename additional fields (e.g., dirPath->path).
 // If rawInput is not valid JSON, it returns the input unchanged.

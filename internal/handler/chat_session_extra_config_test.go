@@ -12,6 +12,7 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 )
 
 // extraConfigRecorder captures every set_config_option the handler forwards.
@@ -341,4 +342,156 @@ func TestSessionExtraConfigOptions_NoConnUsesRegistryForModel(t *testing.T) {
 	// A model whose list was never learned returns nil ("omit the key").
 	service.UpdateSessionModel(sessionID, "m1")
 	assert.Nil(t, sessionExtraConfigOptions(sessionID))
+}
+
+// TestIsDedicatedConfigID pins the id set owned by the dedicated channels. A
+// miss here silently opens a hole: the generic channel would then write mode /
+// model / effort without their validation, persistence or bookkeeping.
+func TestIsDedicatedConfigID(t *testing.T) {
+	for _, id := range []string{"mode", "model", "thought_level", "thinkingEffort", "effort"} {
+		assert.True(t, isDedicatedConfigID(id), "%q belongs to a dedicated channel", id)
+	}
+	for _, id := range []string{"fast-mode", "", "Fast-Mode", "models", "efforts"} {
+		assert.False(t, isDedicatedConfigID(id), "%q is a generic option", id)
+	}
+}
+
+// TestMapsEqualString pins the comparison used to skip a no-op agent write.
+// Both directions matter: a size mismatch must short-circuit, and a same-size
+// map with a different value must not report equal (otherwise a changed pick is
+// never persisted).
+func TestMapsEqualString(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b map[string]string
+		want bool
+	}{
+		{"both nil", nil, nil, true},
+		{"nil vs empty", nil, map[string]string{}, true},
+		{"same entries", map[string]string{"a": "1"}, map[string]string{"a": "1"}, true},
+		{"different size", map[string]string{"a": "1"}, map[string]string{"a": "1", "b": "2"}, false},
+		{"same size different value", map[string]string{"a": "1"}, map[string]string{"a": "2"}, false},
+		{"same size different key", map[string]string{"a": "1"}, map[string]string{"b": "1"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, mapsEqualString(tc.a, tc.b))
+			assert.Equal(t, tc.want, mapsEqualString(tc.b, tc.a), "must be symmetric")
+		})
+	}
+}
+
+// TestRememberConfigOptionPicks_StoresPerModel covers the mechanism that makes a
+// NEW session start with the user's last choice: the pick is merged into the
+// agent's per-model map, and a pick under the model the session runs does not
+// leak into another model's entry.
+func TestRememberConfigOptionPicks_StoresPerModel(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agent := &model.Agent{
+		ID: "remember-picks-agent", Backend: "codex", AcpCommand: "codex",
+		Models: []model.AgentModel{{ID: "m1", Default: true}, {ID: "m2"}},
+	}
+	model.AddAgent(agent)
+	t.Cleanup(func() { model.DeleteAgent(agent.ID) })
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "remember-picks", agent.ID, "m2", "default", "chat")
+	require.NoError(t, err)
+
+	rememberConfigOptionPicks(sessionID, map[string]string{"fast-mode": "on"})
+
+	a := model.GetAgent(agent.ID)
+	require.NotNil(t, a)
+	assert.Equal(t, "on", a.ConfigOptionsForModel("m2")["fast-mode"], "stored under the session's model")
+	assert.Empty(t, a.ConfigOptionsForModel("m1"), "must not leak into another model's entry")
+}
+
+// TestRememberConfigOptionPicks_MergesWithExisting keeps the other options when
+// one is updated — the map is a set of picks, not a single value.
+func TestRememberConfigOptionPicks_MergesWithExisting(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agent := &model.Agent{
+		ID: "remember-merge-agent", Backend: "codex", AcpCommand: "codex",
+		Models: []model.AgentModel{{ID: "m1", Default: true}},
+	}
+	model.AddAgent(agent)
+	t.Cleanup(func() { model.DeleteAgent(agent.ID) })
+	model.UpdateAgent(agent.ID, func(a *model.Agent) {
+		a.SetConfigOptionsForModel("m1", map[string]string{"verbose": "off"})
+	})
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "remember-merge", agent.ID, "", "default", "chat")
+	require.NoError(t, err)
+
+	// Empty model on the session: the agent's default model is used.
+	rememberConfigOptionPicks(sessionID, map[string]string{"fast-mode": "on"})
+
+	picks := model.GetAgent(agent.ID).ConfigOptionsForModel("m1")
+	require.Equal(t, "on", picks["fast-mode"])
+	assert.Equal(t, "off", picks["verbose"], "an unrelated existing pick must survive")
+}
+
+// TestRememberConfigOptionPicks_UnknownAgentIsNoop makes sure a stale session row
+// cannot panic the update path.
+func TestRememberConfigOptionPicks_UnknownAgentIsNoop(t *testing.T) {
+	assert.NotPanics(t, func() {
+		rememberConfigOptionPicks("no-such-session-at-all", map[string]string{"fast-mode": "on"})
+	})
+}
+
+// TestAdvertisedExtraConfigOptions_NoConnWithoutAgentDisablesValidation pins the
+// "nothing to validate against" contract: with no connection and no agent, the
+// caller must be told validation is impossible rather than reject every id.
+func TestAdvertisedExtraConfigOptions_NoConnWithoutAgentDisablesValidation(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agent := &model.Agent{ID: "advertised-none-agent", Backend: "codex", AcpCommand: "codex"}
+	model.AddAgent(agent)
+	t.Cleanup(func() { model.DeleteAgent(agent.ID) })
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "advertised-none", agent.ID, "", "default", "chat")
+	require.NoError(t, err)
+
+	list, validate := advertisedExtraConfigOptions(sessionID, nil)
+	assert.Nil(t, list)
+	assert.False(t, validate, "an unlearned list must not validate")
+}
+
+// TestRememberConfigOptionPicks_PersistsToDB covers the durable half: the pick
+// must survive a process restart (it is what the settings page and the next
+// session read), so the agent row has to actually be written.
+func TestRememberConfigOptionPicks_PersistsToDB(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agent := &model.Agent{
+		ID: "remember-persist-agent", Backend: "codex", AcpCommand: "codex",
+		Models: []model.AgentModel{{ID: "m1", Default: true}},
+	}
+	require.NoError(t, service.SaveAgent(store.WriteDB(), agent))
+	model.AddAgent(agent)
+	t.Cleanup(func() { model.DeleteAgent(agent.ID) })
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "remember-persist", agent.ID, "m1", "default", "chat")
+	require.NoError(t, err)
+
+	rememberConfigOptionPicks(sessionID, map[string]string{"fast-mode": "on"})
+
+	// Re-read from the database, not the in-memory agent, to prove durability.
+	loaded, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	var stored *model.Agent
+	for _, a := range loaded {
+		if a != nil && a.ID == agent.ID {
+			stored = a
+			break
+		}
+	}
+	require.NotNil(t, stored, "the agent row must exist")
+	assert.Equal(t, "on", stored.ConfigOptionsForModel("m1")["fast-mode"],
+		"the pick must be persisted, not only published in memory")
 }

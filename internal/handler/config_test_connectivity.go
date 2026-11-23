@@ -254,7 +254,7 @@ func testOpenAIAPI(ctx context.Context, client *http.Client, baseURL, apiKey, mo
 	reqURL := summarize.BuildEndpointURL(baseURL, summarize.OpenAIChatCompletionsPath)
 
 	reqBody := map[string]any{
-		"model":      modelName,
+		jsonModel:    modelName,
 		strMessages:  []map[string]string{{"role": strUser, "content": "hi"}},
 		"max_tokens": 1,
 	}
@@ -299,7 +299,7 @@ func testAnthropicAPI(ctx context.Context, client *http.Client, baseURL, apiKey,
 	reqURL := summarize.BuildEndpointURL(baseURL, summarize.AnthropicMessagesPath)
 
 	reqBody := map[string]any{
-		"model":      modelName,
+		jsonModel:    modelName,
 		strMessages:  []map[string]string{{"role": strUser, "content": "hi"}},
 		"max_tokens": 1,
 	}
@@ -856,7 +856,7 @@ func testTTSOpenAI(ctx context.Context, values map[string]any) ConnectivityTestR
 	}
 
 	payload, err := json.Marshal(map[string]any{
-		"model":           ttsModel,
+		jsonModel:         ttsModel,
 		"input":           "ok",
 		"voice":           voice,
 		"response_format": "mp3",

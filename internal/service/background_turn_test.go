@@ -403,3 +403,35 @@ func TestRunBackgroundTurn_DropsWhenShutdownStartsWhileWaiting(t *testing.T) {
 		t.Fatal("session left running after a dropped turn")
 	}
 }
+
+// TestBackgroundTurnFirstFrameUsable pins the rule that decides whether the
+// first frame of a background turn opens a bubble. Getting it backwards either
+// leaves a blank bubble for a turn that produced nothing, or silently swallows
+// the terminal frame the client needs to close the run.
+func TestBackgroundTurnFirstFrameUsable(t *testing.T) {
+	tests := []struct {
+		name     string
+		first    ai.StreamEvent
+		wantOpen bool
+	}{
+		{"content frame opens a bubble", ai.StreamEvent{Type: "text"}, true},
+		{"tool call opens a bubble", ai.StreamEvent{Type: "tool_call"}, true},
+		{"done as first frame produces nothing", ai.StreamEvent{Type: eventTypeDone}, false},
+		{"error as first frame produces nothing", ai.StreamEvent{Type: eventTypeError}, false},
+		{"cancelled as first frame produces nothing", ai.StreamEvent{Type: statusCancelled}, false},
+		{
+			"terminal with a reason still produces nothing",
+			ai.StreamEvent{Type: eventTypeDone, Reason: "stall watchdog"},
+			false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := backgroundTurnFirstFrameUsable("bg-first-frame", "timeline", tc.first)
+			if got != tc.wantOpen {
+				t.Fatalf("backgroundTurnFirstFrameUsable(%q) = %v, want %v",
+					tc.first.Type, got, tc.wantOpen)
+			}
+		})
+	}
+}
