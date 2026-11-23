@@ -80,6 +80,21 @@ describe('installExternalLinkClick', () => {
     expect(mockConfirm).not.toHaveBeenCalled()
   })
 
+  it('still asks before opening when the localhost delegate declines', async () => {
+    // App.vue installs a delegate that only claims localhost URLs. Every other
+    // external link must keep its normal confirm-then-open path — the delegate
+    // returning false must not swallow the tap.
+    const delegate = vi.fn().mockReturnValue(false)
+    dispose = installExternalLinkClick(delegate)
+    const span = renderSpan('https://example.com/ordinary')
+
+    mockConfirm.mockResolvedValue(false)
+    click(span)
+    await vi.waitFor(() => expect(mockConfirm).toHaveBeenCalled())
+    expect(delegate).toHaveBeenCalledTimes(1)
+    expect(mockConfirm).toHaveBeenCalledWith('https://example.com/ordinary', expect.any(Object))
+  })
+
   it('asks before opening, and opens only AFTER confirmation', async () => {
     dispose = installExternalLinkClick()
     const span = renderSpan('https://example.com/a')

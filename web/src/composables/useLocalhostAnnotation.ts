@@ -38,6 +38,11 @@ export function isLocalhostUrl(href: string): boolean {
  * Returns null if not a localhost URL.
  */
 export function parseLocalhostUrl(url: string): { port: number; protocol: string; fullUrl: string; path: string } | null {
+    // The suffix must be anchored at both ends (`^…$`) and may not contain a
+    // backslash: the path is handed to the native shell, which pastes it onto
+    // `protocol://localhost:port` — a `\` there would be read as a path
+    // separator by some URL parsers, so such a URL is refused instead of
+    // forwarded. Port range is checked here so every caller shares one rule.
     const match = url.match(/^((https?):\/\/(?:localhost|127\.0\.0\.1):(\d+))([/?#][^\s\\]*)?$/i)
     if (!match || Number(match[3]) < 1 || Number(match[3]) > 65535) return null
     const suffix = match[4] || ''
@@ -100,6 +105,17 @@ export function annotateLocalhostUrls(html: string): string {
     return doc.body.innerHTML
 }
 
+// LOCALHOST_LINK_ATTR is defined in externalLinkNode.ts (a leaf module) so the
+// global click layer can consult it without importing this composable's
+// port-forward / toast / store graph. Two consumers depend on it:
+//  - `installExternalLinkClick` must NOT hand the link to the system browser,
+//    where `localhost` resolves to the device itself. It first offers the tap
+//    to the host's delegate (App.vue installs one); when no delegate is
+//    installed (share page) the marker alone still lets the tap through
+//    untouched rather than opening a dead page.
+//  - `handleLocalhostUrlClick` uses it to recognise the span (there is no
+//    `<a href>` any more) and route the click through the tunnel.
+
 /** Tag a link span as localhost-routed. Returns the same element for chaining. */
 function markLocalhostSpan(el: HTMLElement): HTMLElement {
     el.setAttribute(LOCALHOST_LINK_ATTR, '')
@@ -145,7 +161,6 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
         const href = el.getAttribute(el.tagName === 'A' ? 'href' : 'data-href') || ''
         const parsed = parseLocalhostUrl(href)
         if (!parsed) continue
-        if (parsed.port <= 0 || parsed.port > 65535) continue
         if (el.tagName === 'A') {
             const span = createExternalLinkNode(doc, parsed.fullUrl, el.textContent || parsed.fullUrl)
             markLocalhostSpan(span)
@@ -173,7 +188,6 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
         const stripped = (code.textContent || '').trim()
         const parsed = parseLocalhostUrl(stripped)
         if (!parsed) continue
-        if (parsed.port <= 0 || parsed.port > 65535) continue
         // Wrap the <code> in the same text node every other external link uses,
         // so a backticked localhost URL behaves identically to a bare one.
         const wrapper = createExternalLinkNode(doc, parsed.fullUrl, '')

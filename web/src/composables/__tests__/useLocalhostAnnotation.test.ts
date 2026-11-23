@@ -122,6 +122,18 @@ describe('useLocalhostAnnotation', () => {
       expect(parseLocalhostUrl('http://localhost:3000?x=1')?.path).toBe('/?x=1')
     })
 
+    it('refuses a path containing a backslash', () => {
+      // The path is pasted onto `protocol://localhost:port` by the native
+      // shell; a backslash there is read as a path separator by some URL
+      // parsers, so such a URL must not be forwarded.
+      expect(parseLocalhostUrl('http://localhost:3000/a\\b')).toBeNull()
+    })
+
+    it('rejects an out-of-range port', () => {
+      expect(parseLocalhostUrl('http://localhost:0/x')).toBeNull()
+      expect(parseLocalhostUrl('http://localhost:65536/x')).toBeNull()
+    })
+
     it('returns null for non-localhost URL', () => {
       expect(parseLocalhostUrl('https://example.com:3000')).toBeNull()
     })
